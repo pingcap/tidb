@@ -159,9 +159,37 @@ pub(crate) fn index_join_decision(
 /// `r/planner/core/plan_cost_ver2.result` to the printed digit, including
 /// `getIndexJoinCostVer24PhysicalIndexJoin` and `compareTaskCost`.
 ///
+/// # `gorun` is NOT an oracle for these statements, and why
+///
+/// Read the paragraph below with this correction in front of it. `gorun` runs
+/// a plain session; mysql-tester, which RECORDED every `.result` this tier
+/// replays, puts extra variables in the DSN of every connection it opens, and
+/// one of them decides exactly this question:
+///
+/// ```text
+/// tidb_hash_join_concurrency = 1     (a plain session resolves to 5)
+/// ```
+///
+/// `getPlanCostVer24PhysicalHashJoin` divides the probe filter and the probe
+/// hash by `p.Concurrency`, so at 1 a hash join is charged what five workers
+/// would have shared. Measured against a `tidb-server` built from this tree
+/// (`make server`), replaying `planner/core/join_reorder_through_projection`
+/// reproduces 87 of its 94 recorded plans at concurrency 5 and 94 of 94 at
+/// concurrency 1; the SEVEN it gets wrong at 5 are seven of the eight
+/// `IndexHashJoin`/`IndexJoin` plans this switch exists to reach. On the
+/// three-join shape of `result:1042` the same statement costs `3943972.48` at
+/// concurrency 1 and `2969908.48` at 5, and at 5 the join even swaps which
+/// side it builds. `gorun` and `goeval` therefore print the plan of a
+/// DIFFERENT session than the one the recording was made in, and a per-node
+/// cost table taken from them is a table for another plan. The replay
+/// harness issues the variables (see the mysql-tester setup list in
+/// `difftests/result-tests/tests/mysqltest_connections.rs`); anything else
+/// asking Go what it costs must set them by hand.
+///
 /// What is missing is the OTHER half, and it was measured on the recorded
 /// statement at `join_reorder_through_projection.result:1169`. Under a live
-/// `gorun` binary that statement's two candidates cost:
+/// `gorun` binary -- i.e. at concurrency 5, see the correction above -- that
+/// statement's two candidates cost:
 ///
 /// ```text
 /// HashJoin_16   2492.68 = start(1497) + build(44.03) + probe(643.44) + ...
@@ -183,6 +211,23 @@ pub(crate) fn index_join_decision(
 /// [`tidb_planner::plan_cost_ver2::compare_task_cost`]. Turning this switch
 /// on before that exists still only trades one recorded instance of a
 /// statement for the other.
+///
+/// Two further inputs are now named, both measured rather than assumed:
+///
+/// * that evaluator must be handed the session's HASH-JOIN concurrency, which
+///   [`tidb_planner::plan_cost_ver2::CostSessionOpts`] does not carry -- it is
+///   a per-call field of
+///   [`tidb_planner::plan_cost_ver2::HashJoinInput::tidb_concurrency`]. For
+///   the recorded corpus that value is `1`, not the plain-session `5`; see the
+///   correction above.
+/// * the leaf half of the model is NOT a second cost model. [`crate::access_cost`]
+///   is `plan_cost_ver2.go` too -- same `MinNumRows`/`MinRowSize`/
+///   `MaxPenaltyRowCount`, same `tikv_scan_factor` `40.70` and
+///   `tidb_kv_net_factor` `3.96`, same `getTableScanPenalty` -- reached
+///   through a private copy of the leaf formulas rather than through
+///   [`tidb_planner::plan_cost_ver2`]. A join chooser built on
+///   [`tidb_planner::plan_cost_ver2`] therefore extends the leaf choosers'
+///   model, it does not fork one.
 pub(crate) const CHOOSER_IS_FAITHFUL: bool = false;
 
 /// The looked-up side [`index_join_decision`] would name if this tier could

@@ -226,18 +226,45 @@ impl Connections {
         self.next_connection_id += 1;
         session.attach_privileges(self.privileges.clone());
         session.attach_globals(self.globals.clone());
-        // mysql-tester issues these two on EVERY connection it opens, before
-        // the script's first statement, to make the executor cross a chunk
-        // boundary on small tables. They are in the recorded output's
-        // provenance, not the engine's defaults: `r/sessionctx/setvar.result`
-        // records `select @@tidb_max_chunk_size` as 32 and
-        // `@@tidb_init_chunk_size` as 1, while the registry defaults (and a
-        // `gorun` session, which is not driven by mysql-tester) answer 1024
-        // and 32. The strings are the tester binary's own, verbatim:
-        // `SET @@tidb_init_chunk_size=1` and `SET @@tidb_max_chunk_size=32`.
+        // mysql-tester puts these in the DSN of EVERY connection it opens, so
+        // the driver issues them before the script's first statement. They are
+        // in the recorded output's provenance, not the engine's defaults:
+        // `r/sessionctx/setvar.result` records `select @@tidb_max_chunk_size`
+        // as 32 and `@@tidb_init_chunk_size` as 1, while the registry defaults
+        // (and a `gorun` session, which is not driven by mysql-tester) answer
+        // 1024 and 32.
+        //
+        // The list is the tester binary's own, read out of
+        // `tests/integrationtest/mysql_tester` verbatim:
+        //
+        // ```sh
+        // strings tests/integrationtest/mysql_tester \
+        //   | grep -oE "tidb_[a-z_]+=('?[A-Za-z0-9_]+'?)"
+        // ```
+        //
+        // `tidb_hash_join_concurrency=1` is the load-bearing one for PLAN
+        // text, and it was the missing entry: `getPlanCostVer24PhysicalHashJoin`
+        // divides the probe filter and probe hash by `p.Concurrency`, so at 1
+        // a hash join costs what five workers would have shared. Measured on
+        // `planner/core/join_reorder_through_projection`'s three-join shape
+        // against a `tidb-server` built from this tree, the SAME statement
+        // costs `3943972.48` at concurrency 1 and `2969908.48` at 5 -- and at
+        // 5 the join even swaps which side it builds. Seven of that topic's
+        // eight recorded `IndexHashJoin`/`IndexJoin` plans are unreachable at
+        // concurrency 5: replaying the whole file through a HEAD-built server
+        // reproduces 87 of its 94 plans without this variable and 94 of 94
+        // with it (the four residual diffs are the harness's own
+        // `ScalarQueryCol#<id>` regex replacement). See
+        // `tidb_executor::driver::index_join_decision::CHOOSER_IS_FAITHFUL`,
+        // whose cost seam this is the session half of.
         for setup in [
             "SET @@tidb_init_chunk_size=1",
             "SET @@tidb_max_chunk_size=32",
+            "SET @@tidb_hash_join_concurrency=1",
+            "SET @@tidb_enable_analyze_snapshot=1",
+            "SET @@tidb_enable_pseudo_for_outdated_stats=false",
+            "SET @@tidb_multi_statement_mode=1",
+            "SET @@tidb_enable_clustered_index='int_only'",
         ] {
             session
                 .run(setup)
@@ -278,6 +305,52 @@ mod tests {
         match pool.current().run_with_columns(sql).unwrap() {
             tidb_session::StmtOutput::Rows { rows, .. } => format!("{rows:?}"),
             other => panic!("{sql} answered {other:?}"),
+        }
+    }
+
+    /// Every connection the replay opens carries mysql-tester's DSN session
+    /// variables, on the DEFAULT connection and on a `connect`ed peer alike.
+    ///
+    /// `tidb_hash_join_concurrency` is the one that decides recorded PLAN
+    /// text: `getPlanCostVer24PhysicalHashJoin` divides the probe filter and
+    /// probe hash by it, so a replay that let it resolve to the plain-session
+    /// `5` would be comparing against plans no recording contains. Seven of
+    /// `planner/core/join_reorder_through_projection`'s eight recorded index
+    /// joins are unreachable at `5`, measured against a `tidb-server` built
+    /// from this tree.
+    #[test]
+    fn every_connection_carries_the_mysql_tester_session_variables() {
+        let expected = [
+            ("tidb_init_chunk_size", "[[Int(1)]]"),
+            ("tidb_max_chunk_size", "[[Int(32)]]"),
+            (
+                "tidb_hash_join_concurrency",
+                "[[String(StringDatum { bytes: [49], collation: Utf8Mb4Bin })]]",
+            ),
+            ("tidb_enable_analyze_snapshot", "[[Int(1)]]"),
+            ("tidb_enable_pseudo_for_outdated_stats", "[[Int(0)]]"),
+            (
+                "tidb_multi_statement_mode",
+                "[[String(StringDatum { bytes: [79, 78], collation: Utf8Mb4Bin })]]",
+            ),
+            (
+                "tidb_enable_clustered_index",
+                "[[String(StringDatum { bytes: [73, 78, 84, 95, 79, 78, 76, 89], collation: \
+                 Utf8Mb4Bin })]]",
+            ),
+        ];
+        let mut pool = Connections::open("driver/isolation").unwrap();
+        for connection in ["default", "conn1"] {
+            if connection != "default" {
+                pool.apply(&open_root(connection)).unwrap();
+            }
+            for (name, value) in expected {
+                assert_eq!(
+                    one_cell(&mut pool, &format!("select @@{name}")),
+                    value,
+                    "connection {connection} lost mysql-tester's {name}"
+                );
+            }
         }
     }
 
