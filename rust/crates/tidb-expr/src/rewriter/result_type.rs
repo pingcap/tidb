@@ -856,9 +856,18 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         // JSON-as-canonical-text divergence documented for the JSON family
         // above, so its result cell is a string here.
         "json_search" if args.len() >= 3 => text(),
-        // String in, number out.
-        "length" | "octet_length" | "char_length" | "character_length" | "bit_length" | "ascii"
-        | "instr" | "locate" | "position" | "find_in_set" | "strcmp" | "field" => int(),
+        // String in, number out. The unlisted widths below -- `CHAR_LENGTH`,
+        // `CHARACTER_LENGTH`, `LOCATE`, `POSITION` and `FIELD` -- are
+        // `mysql.MaxIntWidth`, which is what `newReturnFieldTypeForBaseBuiltinFunc`
+        // already gives every `ETInt` result, so they need no arm of their own.
+        // `OCTET_LENGTH` is `lengthFunctionClass` and `POSITION` is
+        // `locateFunctionClass` (`builtin.go`'s `funcs` map), so each shares
+        // its alias's width.
+        "length" | "octet_length" | "bit_length" => ft_with_flen(int(), 10),
+        "ascii" | "find_in_set" => ft_with_flen(int(), 3),
+        "instr" => ft_with_flen(int(), 11),
+        "strcmp" => ft_with_flen(int(), 2),
+        "char_length" | "character_length" | "locate" | "position" | "field" => int(),
         // Go `likeFunctionClass`/`regexpLikeFunctionClass`: a one-digit
         // boolean.
         "like" | "ilike" | "regexp" => {
@@ -1947,6 +1956,32 @@ mod go_string_flen_tests {
             FieldTypeCode::VarString,
             25,
         );
+    }
+
+    /// The INT half of the same file. Go fixes a width on each of these too,
+    /// and it is not `MaxIntWidth` -- `LENGTH` is 10, `ASCII` 3, `STRCMP` 2.
+    /// Go's own rows, from the same golden table.
+    #[test]
+    fn string_builtins_returning_an_int_match_go() {
+        for (name, args, flen) in [
+            ("bit_length", vec![c_char()], 10),
+            ("ascii", vec![c_char()], 3),
+            ("ord", vec![c_char()], 10),
+            ("instr", vec![c_char(), c_char()], 11),
+            ("strcmp", vec![c_char(), c_char()], 2),
+            ("find_in_set", vec![c_int_d(), c_text_d()], 3),
+            // Go's `MaxIntWidth` rows, which the ETInt default already gives.
+            ("char_length", vec![c_char()], 20),
+            ("character_length", vec![c_char()], 20),
+            ("locate", vec![c_char(), c_char()], 20),
+            ("field", vec![c_double_d(), c_text_d()], 20),
+        ] {
+            assert_go(name, &args, FieldTypeCode::LongLong, flen);
+        }
+        // `LENGTH`'s own row is not in the golden table; `lengthFunctionClass`
+        // sets 10 and `OCTET_LENGTH` is the same class.
+        assert_go("length", &[c_char()], FieldTypeCode::LongLong, 10);
+        assert_go("octet_length", &[c_char()], FieldTypeCode::LongLong, 10);
     }
 
     /// `quoteFunctionClass`: `2 * flen + 2`. Go's rows.
