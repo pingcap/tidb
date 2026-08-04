@@ -38,10 +38,10 @@ var (
 	// concurrentReaderTotalConcurrency is the maximum concurrent-read budget used by
 	// external readers within one task.
 	concurrentReaderTotalConcurrency = 256
-	// singleWindowBufCount is the largest budget that is spent on one window
+	// singleWindowConcurrency is the largest budget that is spent on one window
 	// instead of two. Below it, halving the requests in flight costs more than
 	// overlapping the fetch with decoding saves, so read-ahead is not worth it.
-	singleWindowBufCount = 16
+	singleWindowConcurrency = 16
 )
 
 // byteReader provides structured reading on a byte stream of external storage.
@@ -118,24 +118,24 @@ func newByteReader(
 	return r, r.reload()
 }
 
-// enableConcurrentRead configures concurrent reading. bufCount is the total
-// number of bufSizePerConc buffers the caller has budgeted; they are paired into
-// double-buffered lanes, so the reader issues bufCount/2 range requests at a time
-// and prefetches the next window while the caller consumes the current one.
+// enableConcurrentRead configures concurrent reading. concurrency counts the
+// bufSizePerConc buffers the caller budgeted: a small budget fills one window, a
+// larger one is split in two so the next window is prefetched while the current
+// one is read, which halves the requests in flight.
 func (r *byteReader) enableConcurrentRead(
 	store storeapi.Storage,
 	filename string,
-	bufCount int,
+	concurrency int,
 	bufSizePerConc int,
 	bufferPool *membuf.Buffer,
 ) {
 	r.concurrentReader.store = store
 	r.concurrentReader.filename = filename
-	if bufCount <= singleWindowBufCount {
-		r.concurrentReader.concurrency = max(bufCount, 1)
+	if concurrency <= singleWindowConcurrency {
+		r.concurrentReader.concurrency = max(concurrency, 1)
 		r.concurrentReader.singleWindow = true
 	} else {
-		r.concurrentReader.concurrency = bufCount / 2
+		r.concurrentReader.concurrency = concurrency / 2
 		r.concurrentReader.singleWindow = false
 	}
 	r.concurrentReader.bufSizePerConc = bufSizePerConc

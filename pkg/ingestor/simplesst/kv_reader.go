@@ -91,11 +91,11 @@ func (r *KVReader) NextKV() (key, val []byte, err error) {
 func (r *KVReader) EnableConcurrentRead(
 	store storeapi.Storage,
 	filename string,
-	bufCount int,
+	concurrency int,
 	bufSizePerConc int,
 	bufferPool *membuf.Buffer,
 ) {
-	r.byteReader.enableConcurrentRead(store, filename, bufCount, bufSizePerConc, bufferPool)
+	r.byteReader.enableConcurrentRead(store, filename, concurrency, bufSizePerConc, bufferPool)
 }
 
 // SwitchConcurrentMode switch between concurrent read and normal read.

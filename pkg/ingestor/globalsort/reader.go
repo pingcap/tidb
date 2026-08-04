@@ -178,7 +178,7 @@ func readOneFile(
 	dataFile string,
 	startKey, endKey []byte,
 	startOffset uint64,
-	bufCount int,
+	concurrency int,
 	smallBlockBuf *membuf.Buffer,
 	largeBlockBuf *membuf.Buffer,
 	output *memKVsAndBuffers,
@@ -194,11 +194,11 @@ func readOneFile(
 	defer func() {
 		_ = rd.Close()
 	}()
-	if bufCount > 0 {
+	if concurrency > 0 {
 		rd.EnableConcurrentRead(
 			storage,
 			dataFile,
-			bufCount,
+			concurrency,
 			simplesst.ConcurrentReaderBufferSizePerConc,
 			largeBlockBuf,
 		)
