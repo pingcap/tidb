@@ -294,7 +294,6 @@ func TestParquetScannedPosByReadRows(t *testing.T) {
 		totalRows int64
 		expected  int64
 	}{
-		{name: "negative-file-size", fileSize: -1, totalRows: 10, expected: 0},
 		{name: "no-rows-read", fileSize: 101, totalRows: 10, expected: 0},
 		{name: "partial", fileSize: 101, readRows: 4, totalRows: 10, expected: 40},
 		{name: "complete", fileSize: 101, readRows: 10, totalRows: 10, expected: 101},

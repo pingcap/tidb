@@ -527,15 +527,12 @@ func (pp *Parser) SetPos(pos int64, rowID int64) error {
 // Parquet readers may preload or read ahead, so estimate source-byte progress
 // from the proportion of rows consumed by the parser.
 func (pp *Parser) ScannedPos() (int64, error) {
-	fileSize := max(pp.fileMeta.GetSourceFileSize(), int64(0))
+	fileSize := pp.fileMeta.GetSourceFileSize()
 	if pp.totalRows <= 0 {
 		return fileSize, nil
 	}
 
 	readRows := min(pp.totalReadRows, pp.totalRows)
-	if readRows == 0 {
-		return 0, nil
-	}
 	if readRows == pp.totalRows {
 		return fileSize, nil
 	}
