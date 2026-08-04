@@ -214,3 +214,95 @@ fn joins() {
         3
     );
 }
+
+/// Every leaf of a join is costed, and a leaf whose parents read only the
+/// columns an index covers reads that index instead of the table -- Go's
+/// `findBestTask` recursing into each `DataSource` below a `LogicalJoin`.
+///
+/// The second half is the safety argument this seam rests on, asserted rather
+/// than argued: the whole-index read is over the SAME rows the table scan
+/// reads, so the join's answer -- values and multiplicity, including the
+/// unmatched row a `LEFT JOIN` pads -- is byte-for-byte what it was before
+/// any leaf had a choice. The `SELECT *` control is the other side of it: a
+/// wildcard needs the columns no index carries, so that leaf keeps its scan.
+#[test]
+fn a_join_leaf_reads_a_covering_index_without_moving_a_row() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE jl (a INT PRIMARY KEY, b INT, c VARCHAR(32), KEY(b))",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE jr (a INT PRIMARY KEY, b INT, c VARCHAR(32), KEY(b))",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO jl VALUES (1, 10, 'x'), (2, 20, 'y'), (3, 30, 'z')",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO jr VALUES (7, 10, 'p'), (8, 30, 'q')",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    let plan_of = |sql: &str| {
+        let stmt = tidb_parser::parse(sql).unwrap();
+        let Stmt::Query(query) = &stmt else {
+            panic!("not a query");
+        };
+        let QueryStmt::Select(select) = &**query else {
+            panic!("not a SELECT");
+        };
+        let (_, rows) =
+            explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Row).unwrap();
+        rows.iter()
+            .map(|row| {
+                row.iter()
+                    .map(|datum| match datum {
+                        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+                        other => format!("{other:?}"),
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\t")
+            })
+            .collect::<Vec<_>>()
+    };
+
+    // `jl.b` and `jl.a` are exactly what the index on `b` carries (the
+    // clustered handle rides along), so the leaf costs a single scan of it.
+    let covering = "SELECT jl.a FROM jl LEFT JOIN jr ON jl.b = jr.b";
+    let plan = plan_of(covering);
+    assert!(
+        plan.iter()
+            .any(|line| line.contains("IndexFullScan") && line.contains("table:jl")),
+        "the jl leaf reads its covering index, got {plan:?}"
+    );
+
+    // The control: `jl.c` is in no index, so the same leaf keeps its scan.
+    let plan = plan_of("SELECT * FROM jl LEFT JOIN jr ON jl.b = jr.b");
+    assert!(
+        plan.iter()
+            .any(|line| line.contains("TableFullScan") && line.contains("table:jl")),
+        "a wildcard needs the whole row, so the leaf still scans, got {plan:?}"
+    );
+
+    // And the rows are untouched: the padded `jl.a = 2` row is still there
+    // exactly once, and `jl.a = 1`/`3` still match exactly once each.
+    assert_eq!(
+        run_select_on(covering, &catalog, &ctx).unwrap(),
+        vec![
+            vec![Datum::Int(1)],
+            vec![Datum::Int(2)],
+            vec![Datum::Int(3)],
+        ]
+    );
+}
