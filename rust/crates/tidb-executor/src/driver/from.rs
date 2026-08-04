@@ -1326,8 +1326,26 @@ pub(crate) fn build_join(
     // columns by row offset rather than by name. Each pushed conjunct STAYS
     // in `WHERE`, so it can only narrow the pairs the filter above would
     // have narrowed anyway -- see `driver::predicate_push_down`.
+    // A conjunct this join's `ON` ALREADY spells is not pushed a second time.
+    // The two spellings meet whenever a `WHERE` equality became an `ON` --
+    // which is every edge the join reorder rebuilt a tree from
+    // (`driver::join_reorder`) -- and a repeated equality is not merely noise:
+    // it doubles the hash join's key list and the `equal:[...]` the plan
+    // prints.
+    let written_on: Vec<&tidb_ast::Expr> = join
+        .on
+        .iter()
+        .flat_map(|on| {
+            let mut conjuncts = Vec::new();
+            crate::plan_trace::collect_and(on, &mut conjuncts);
+            conjuncts
+        })
+        .collect();
     let pushed: Vec<&tidb_ast::Expr> = if join.tp == tidb_ast::JoinType::Cross && !coalescing {
         crate::driver::predicate_push_down::spanning_conjuncts(demand.offered, &scope, left_width)
+            .into_iter()
+            .filter(|conjunct| !written_on.contains(conjunct))
+            .collect()
     } else {
         Vec::new()
     };

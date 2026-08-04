@@ -1262,7 +1262,38 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     //
     // Every statement named above is `PlanProperty`-kind, so `compared` holds
     // at 5639.
-    const KNOWN_DIVERGENCES: usize = 39;
+    // 39 -> 35: the DP join reorder (`tidb_executor::driver::join_reorder`),
+    // Go's `joinReorderDPSolver`. All four are in
+    // `planner/core/join_reorder_through_projection` and all four are
+    // statements the topic runs at `set tidb_opt_join_reorder_threshold = 10`
+    // -- the only enrolled setting under which Go reaches the DP at all
+    // (`rule_join_reorder.go:374`; the shipped default of `0` sends every
+    // group to the greedy solver).
+    //
+    // Each is `from t1, t5, (select t2.a as key_a, t2.b * 2 as doubled_b from
+    // t2 join t3 on t2.a = t3.a) dt where t1.a = dt.key_a and dt.key_a = t5.a
+    // [and dt.doubled_b > 100]`, recorded at
+    // `r/planner/core/join_reorder_through_projection.result:1249` and
+    // `:1399` as
+    //
+    //   MergeJoin  left key:t2.a, right key:t5.a
+    //   |- TableFullScan table:t5  keep order:true
+    //   `- MergeJoin  left key:t1.a, right key:t2.a
+    //      |- Projection -> MergeJoin(t2.a, t3.a) -> t3, t2  keep order:true
+    //      `- TableFullScan table:t1  keep order:true
+    //
+    // The WRITTEN tree joins `t1` to `t5` first, and nothing connects that
+    // pair, so this tier hashed a cartesian product and neither `t1` nor `t5`
+    // was read in any order -- which is why both had been reported as
+    // `IndexFullScan table:tN, index:b(b)` against TiDB's `TableFullScan`.
+    // Once the group is rebuilt as `(t1 join dt) join t5` the merge decision
+    // demands each side's own key order and both leaves take the handle scan,
+    // matching the recording leaf for leaf.
+    //
+    // The remaining 13 divergences in that topic are unrelated to join order:
+    // eight are TiDB reaching an `IndexRangeScan ... range: decided by [...]`
+    // (an index join's probe side) and five are a covering-index choice.
+    const KNOWN_DIVERGENCES: usize = 35;
 
     assert!(
         total.divergences.len() <= KNOWN_DIVERGENCES,

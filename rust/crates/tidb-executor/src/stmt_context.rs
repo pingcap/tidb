@@ -295,6 +295,12 @@ pub struct StmtContext {
     /// non-positive value simply means "no round may run", which is what
     /// clamping to `0` here expresses.
     cte_max_recursion_depth: u64,
+    /// Go `SessionVars.TiDBOptJoinReorderThreshold`
+    /// (`@@tidb_opt_join_reorder_threshold`, default `0`): the largest join
+    /// group the DP join-reorder solver is allowed to enumerate. At the
+    /// default NO group qualifies, so a stock session never reorders --
+    /// see [`crate::driver::join_reorder`].
+    join_reorder_threshold: i32,
     /// The sequences reachable from this statement, keyed by lowercase
     /// `db.name`, plus the session's per-sequence `LASTVAL` record.
     ///
@@ -462,6 +468,8 @@ impl StmtContext {
             allow_remove_auto_inc: false,
             div_precision_increment: 4,
             cte_max_recursion_depth: 1000,
+            join_reorder_threshold: tidb_vardef::defaults::DEF_TIDB_OPT_JOIN_REORDER_THRESHOLD
+                as i32,
             sequences: Rc::default(),
             memory: StatementMemory::default(),
             sql_mode: tidb_parser::SqlMode::default(),
@@ -706,6 +714,20 @@ impl StmtContext {
     #[must_use]
     pub fn cte_max_recursion_depth(&self) -> u64 {
         self.cte_max_recursion_depth
+    }
+
+    /// Sets `@@tidb_opt_join_reorder_threshold` for this statement.
+    #[must_use]
+    pub fn with_join_reorder_threshold(mut self, threshold: i32) -> Self {
+        self.join_reorder_threshold = threshold;
+        self
+    }
+
+    /// Go `SessionVars.TiDBOptJoinReorderThreshold`. Non-positive -- and `0`
+    /// is the shipped default -- means the DP join-reorder solver never runs.
+    #[must_use]
+    pub fn join_reorder_threshold(&self) -> i32 {
+        self.join_reorder_threshold
     }
 
     /// Sets whether `ONLY_FULL_GROUP_BY` is in effect, which a session reads

@@ -521,7 +521,18 @@ pub(crate) fn decide(
     // inner, non-coalesced join, which is the gate repeated here. The pairing
     // loop below is itself the "spans both sides" test.
     if join.tp == JoinType::Cross && !join.natural && join.using.is_empty() {
-        conjuncts.extend(offered.iter().copied());
+        // A conjunct the `ON` already spells is not counted twice. The two
+        // spellings meet whenever a `WHERE` equality became an `ON` -- which
+        // is every edge the join reorder rebuilt a tree from
+        // (`driver::join_reorder`) -- and the duplicate would ask
+        // `GetMergeJoin` to cover the SAME key twice, which no single-column
+        // order can do.
+        let repeated: Vec<&Expr> = offered
+            .iter()
+            .copied()
+            .filter(|conjunct| !conjuncts.contains(conjunct))
+            .collect();
+        conjuncts.extend(repeated);
     }
     let mut keys = Vec::new();
     for conjunct in conjuncts {

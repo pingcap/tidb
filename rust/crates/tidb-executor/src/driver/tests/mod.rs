@@ -21,6 +21,7 @@ mod index_prefix_lengths;
 mod index_prefix_reads;
 mod index_ranges;
 mod indexes;
+mod join_reorder;
 mod joins;
 mod mem_quota;
 mod point_get;

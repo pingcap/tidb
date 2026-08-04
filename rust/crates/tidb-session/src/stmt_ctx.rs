@@ -243,6 +243,15 @@ impl Session {
             .ok()
             .and_then(|value| value.parse::<i64>().ok())
             .unwrap_or(1000);
+        // Go `SessionVars.TiDBOptJoinReorderThreshold`: how large a join group
+        // the DP reorder solver may enumerate. The shipped default is `0`, so
+        // a session that never writes it never reorders.
+        let join_reorder_threshold = self
+            .vars
+            .get_system("tidb_opt_join_reorder_threshold")
+            .ok()
+            .and_then(|value| value.parse::<i32>().ok())
+            .unwrap_or(tidb_vardef::defaults::DEF_TIDB_OPT_JOIN_REORDER_THRESHOLD as i32);
         // Go `ResetContextOfStmt`: the statement's memory budget is
         // `@@tidb_mem_quota_query` under the action `@@tidb_mem_oom_action`
         // selects. An unreadable quota falls back to the shipped 1GiB rather
@@ -313,6 +322,7 @@ impl Session {
                 .with_strict(has("STRICT_TRANS_TABLES") || has("STRICT_ALL_TABLES"))
                 .with_date_modes(date_modes)
                 .with_cte_max_recursion_depth(cte_depth)
+                .with_join_reorder_threshold(join_reorder_threshold)
                 .with_only_full_group_by(has("ONLY_FULL_GROUP_BY"))
                 .with_session_state(current_db, version)
                 .with_user(self.current_user.clone(), self.login_user.clone())
@@ -362,6 +372,7 @@ impl Session {
         .with_foreign_key_checks(self.foreign_key_checks())
         .with_allow_remove_auto_inc(self.allow_remove_auto_inc())
         .with_cte_max_recursion_depth(cte_depth)
+        .with_join_reorder_threshold(join_reorder_threshold)
     }
 
     /// Go `SessionVars.ForeignKeyChecks`, read off `@@foreign_key_checks`.

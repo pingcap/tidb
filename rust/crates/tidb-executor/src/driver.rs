@@ -192,6 +192,7 @@ mod from;
 pub(crate) mod funcdep;
 mod grouping;
 pub mod infoschema_meta;
+mod join_reorder;
 pub(crate) mod leaf_demand;
 mod merge_decision;
 mod multi_dml;
@@ -346,6 +347,31 @@ pub fn run_select_meta_stmt(
     run_select_stmt(select, catalog, current_db, ctx)
 }
 
+/// Go `restoreSchemaIfChanged`, for a scope whose leaves the join reorder
+/// moved.
+///
+/// A reorder changes the ROW layout and nothing else: every column still
+/// answers to the same name, so only `*` -- which expands in row order -- can
+/// see the difference. Recording the written order in `FromScope::star` is
+/// therefore the whole restore.
+///
+/// A no-op unless every group leaf became exactly one scope table, which is
+/// what [`crate::driver::join_reorder`] only ever produces; a coalesced scope
+/// already owns `star` and is never reordered.
+fn restore_written_order(scope: &mut FromScope, written_order: &[usize]) {
+    if scope.tables.len() != written_order.len() || !scope.star.is_empty() {
+        return;
+    }
+    let mut star = Vec::with_capacity(scope.width());
+    for position in written_order {
+        let Some(table) = scope.tables.get(*position) else {
+            return;
+        };
+        star.extend(table.offset..table.offset + table.columns.len());
+    }
+    scope.star = star;
+}
+
 /// The name a source operator's `access object` prints: the alias the FROM
 /// clause gave the table, which is what Go prints too.
 fn source_table_name<'a>(scope: &'a FromScope, table: &'a str) -> &'a str {
@@ -452,8 +478,16 @@ pub(crate) fn run_select_traced(
                 offered: &offered,
                 columns: wanted.as_ref(),
             };
-            let (exec, scope) = build_join(
-                join,
+            // Go's `join_reorder` rule, which runs on the logical plan
+            // between predicate pushdown and physical planning. It only ever
+            // fires for a session that raised
+            // `tidb_opt_join_reorder_threshold`; see
+            // `driver::join_reorder`'s module doc for why that bounds it.
+            let reordered =
+                join_reorder::reorder(join, select.where_clause.as_ref(), catalog, current_db, ctx);
+            let planned = reordered.as_ref().map_or(join, |plan| &plan.join);
+            let (exec, mut scope) = build_join(
+                planned,
                 catalog,
                 current_db,
                 ctx,
@@ -462,6 +496,14 @@ pub(crate) fn run_select_traced(
                 demand,
                 &tidb_planner::physical_property::PhysicalProperty::default(),
             )?;
+            // Go's `restoreSchemaIfChanged`: the reordered join's schema is
+            // the new leaf order, and the statement's output must stay the
+            // written one. Go wraps a `Projection`; here the scope carries
+            // the display order (`FromScope::star`), which is the same escape
+            // hatch a `RIGHT JOIN` uses.
+            if let Some(plan) = &reordered {
+                restore_written_order(&mut scope, &plan.written_order);
+            }
             (Some(exec), scope)
         }
     };

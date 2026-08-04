@@ -672,8 +672,38 @@ fn join_operators_and_their_keep_order_match_recorded_tidb_plans() {
     // NOTHING REGRESSED: the set of disagreeing statements after this change
     // is a strict SUBSET of the set before it (0 newly disagreeing), and the
     // replay is unchanged at 5639 compared / `PlanProperty` 806.
+    // THIRD MEASUREMENT, after the DP join reorder
+    // (`tidb_executor::driver::join_reorder`). 99 -> 101 -> 103 plans agree on
+    // BOTH, all four in `planner/core/join_reorder_through_projection`
+    // (62 -> 66 of 82), and every one of them is a statement that topic runs
+    // at `set tidb_opt_join_reorder_threshold = 10`.
+    //
+    // WHAT THE RECORDINGS SAY. Each of the four is
+    // `from t1, t5, (select ... from t2 join t3 on t2.a = t3.a) dt where
+    // t1.a = dt.key_a and dt.key_a = t5.a [and dt.doubled_b > 100]`, whose
+    // WRITTEN tree joins `t1` to `t5` first -- a pair with no equality between
+    // them, so a cartesian product this tier hashed. `r/planner/core/
+    // join_reorder_through_projection.result:1249` and `:1399` record TiDB
+    // building `(t1 join dt) join t5` instead, three `MergeJoin`s deep with
+    // `keep order:true` on t1, t2, t3 and t5. This tier now builds the same
+    // tree, so the same four leaves keep order and the same three joins merge.
+    //
+    // THE MERGE PAIRS DID NOT MOVE (66/84 agreed, 31 extra, unchanged). The
+    // reordered plans' merges are all over MULTI-leaf subtrees, which
+    // `ordered_merge_pairs` does not count, and their one single-leaf pair
+    // `(t2, t3)` was already produced before. The 27 extras this topic owns
+    // are the `tidb_opt_join_reorder_through_proj = on` recordings, where TiDB
+    // INLINES the derived table's projection into the join group and reaches a
+    // `(t1, t2)` pair no un-inlined tree can form; projection inlining is not
+    // part of this increment.
+    //
+    // NOTHING REGRESSED: the disagreeing set is a strict subset of the one
+    // before (0 newly disagreeing), the replay is unchanged at 5639 compared,
+    // and `executor/merge_join` (246 matched, 0 diverged) and
+    // `executor/jointest/join` (801 matched, 3 diverged) did not move -- as
+    // they cannot, since neither topic raises the threshold.
     const COMPARED: usize = 182;
-    const BOTH_AGREE: usize = 99;
+    const BOTH_AGREE: usize = 103;
     const RECORDED_MERGE_PAIRS: usize = 84;
     const AGREED_MERGE_PAIRS: usize = 66;
     const EXTRA_MERGE_PAIRS: usize = 31;
