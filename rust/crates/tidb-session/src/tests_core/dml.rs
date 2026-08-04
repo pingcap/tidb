@@ -642,3 +642,98 @@ fn on_duplicate_key_update_substitutes_nested_values_references() {
     assert_eq!(error.code, 1054);
     assert_eq!(error.message, "Unknown column 'zz' in 'field list'");
 }
+
+/// Go `doDupRowUpdate`'s assignment cast (`pkg/executor/insert.go:495-521`)
+/// calls its error handler AFTER `table.CastValue`, so the warnings the cast
+/// produced are re-titled over the ALREADY-CAST value:
+///
+/// ```text
+/// _ = errorHandler(sctx, assign, &val, nil)   // val is the cast result
+/// ```
+///
+/// The VALUES-row path calls `InsertValues.handleErr` BEFORE the cast, which
+/// is why the same bad text is named `'abc'` there and `'0'` here.
+///
+/// Captured with `gorunmsg` under `sql_mode = ''`, on a two-row batch so the
+/// per-row index is visible:
+///
+/// ```text
+/// insert into o values (1,9),(2,9) on duplicate key update b='abc';
+/// show warnings;
+///   Warning 1366 Incorrect int value: '0' for column 'b' at row 1
+///   Warning 1366 Incorrect int value: '0' for column 'b' at row 2
+/// select a,b from o;  -> 1|0; 2|0
+/// ```
+///
+/// This port named the SOURCE text and hardcoded row 1 for every row of the
+/// batch.
+///
+/// NOT FIXED, and pinned nowhere because pinning a wrong answer records it as
+/// expected: the STRICT spelling. Go returns `table.CastValue`'s error
+/// UNWRAPPED there -- `[types:1292] Truncated incorrect DOUBLE value: 'abc'`,
+/// with no column and no row and a different code from the 1366 the insert
+/// spelling raises. See `tidb_executor::driver::dml`'s
+/// `cast_value_for_assignment` for why.
+#[test]
+fn an_on_duplicate_assignment_warns_over_the_cast_value_and_its_own_row() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE o (a INT PRIMARY KEY, b INT, d DATETIME)")
+        .unwrap();
+    session
+        .run("INSERT INTO o VALUES (1,1,'2020-01-01'),(2,2,'2020-01-01')")
+        .unwrap();
+    session.run("SET sql_mode = ''").unwrap();
+
+    session
+        .run(
+            "INSERT INTO o VALUES (1,9,'2020-01-01'),(2,9,'2020-01-01') \
+             ON DUPLICATE KEY UPDATE b = 'abc'",
+        )
+        .unwrap();
+    let warnings: Vec<(u16, String)> = session
+        .warnings()
+        .iter()
+        .map(|warning| (warning.code, warning.message.clone()))
+        .collect();
+    assert_eq!(
+        warnings,
+        vec![
+            (
+                1366,
+                "Incorrect int value: '0' for column 'b' at row 1".to_owned()
+            ),
+            (
+                1366,
+                "Incorrect int value: '0' for column 'b' at row 2".to_owned()
+            ),
+        ]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT a, b FROM o ORDER BY a")),
+        [["1", "0"], ["2", "0"]]
+    );
+
+    // The temporal arm names the zero datetime the failed cast produced, in
+    // its own SQL text -- Go's `types.Datum.ToString`.
+    session
+        .run("INSERT INTO o VALUES (1,9,'2020-01-01') ON DUPLICATE KEY UPDATE d = 'nope'")
+        .unwrap();
+    let warning = session.warnings().last().cloned().expect("one warning");
+    assert_eq!(warning.code, 1292);
+    assert_eq!(
+        warning.message,
+        "Incorrect datetime value: '0000-00-00 00:00:00' for column 'd' at row 1"
+    );
+
+    // An out-of-range assignment names no value at all, in either spelling.
+    session
+        .run("INSERT INTO o VALUES (2,9,'2020-01-01') ON DUPLICATE KEY UPDATE b = 99999999999999999999")
+        .unwrap();
+    let warning = session.warnings().last().cloned().expect("one warning");
+    assert_eq!(warning.code, 1264);
+    assert_eq!(
+        warning.message,
+        "Out of range value for column 'b' at row 1"
+    );
+}

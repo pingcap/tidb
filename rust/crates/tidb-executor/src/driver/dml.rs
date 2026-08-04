@@ -604,6 +604,7 @@ pub(crate) fn run_insert_traced(
                     row,
                     &insert.on_duplicate,
                     &column_list,
+                    position,
                     ctx,
                 )?;
                 continue;
@@ -734,6 +735,77 @@ pub(crate) fn cast_value_for_column(
     Ok(converted.value)
 }
 
+/// Go `doDupRowUpdate`'s assignment cast (`pkg/executor/insert.go:495-521`),
+/// which differs from the VALUES-row cast above in TWO ways.
+///
+/// ```text
+/// val, err = table.CastValue(sctx, val, c, false, false)
+/// if err != nil {
+///     return err                       // (1) RAW, not completeInsertErr'd
+/// }
+/// _ = errorHandler(sctx, assign, &val, nil)   // (2) `val` is the CAST value
+/// ```
+///
+/// (2) is what this fixes: the warnings the cast produced are rewritten with
+/// `completeInsertErr(c, val, idxInBatch, ...)` over the ALREADY-CAST value
+/// and this row's batch index, so `... ON DUPLICATE KEY UPDATE b = 'abc'`
+/// warns `Incorrect int value: '0' for column 'b' at row 1` -- the stored 0,
+/// not the source text. The VALUES path calls its handler BEFORE the cast
+/// (`InsertValues.handleErr`), which is why the same statement's plain-insert
+/// spelling names `'abc'`.
+///
+/// NOT FIXED, and captured so the gap is exact: (1). A STRICT assignment
+/// returns `table.CastValue`'s error UNWRAPPED, so TiDB answers
+///
+/// ```text
+/// b = 'abc'                  [types:1292] Truncated incorrect DOUBLE value: 'abc'
+/// d = 'nope'                 [types:1292] Incorrect datetime value: 'nope'
+/// b = 99999999999999999999   [types:1690] ... value is out of range in ...
+/// ```
+///
+/// -- no column, no row, and a DIFFERENT code from the insert spelling (1292
+/// against 1366). Reaching those needs the conversion layer to carry Go's
+/// error IDENTITY rather than only its `ScalarConversionEvent`, which is the
+/// same seam `tidb_datatype`'s `str_to_int`/`str_to_uint` truncation policy
+/// needs; neither is a rewrite of this function.
+fn cast_value_for_assignment(
+    value: Datum,
+    field_type: &FieldType,
+    column: &str,
+    row_index: usize,
+    ctx: &crate::StmtContext,
+) -> Result<Datum, DriverError> {
+    if value.is_null() || ctx.strict() {
+        return cast_value_for_column(value, field_type, column, row_index, ctx);
+    }
+    // Non-strict: run the cast with its warning SUPPRESSED, then append the
+    // source's own message over the cast value, which is Go's order.
+    let before = ctx.warning_count();
+    let cast = cast_value_for_column(value, field_type, column, row_index, ctx)?;
+    ctx.rewrite_warnings_from(before, |code, _message| {
+        let reported = match code {
+            // `completeInsertErr`'s three arms, over the CAST value.
+            1292 => DriverError::IncorrectTemporalValue {
+                type_name: tidb_datatype::type_str(field_type.code()).to_owned(),
+                value: datum_error_text(&cast),
+                column: column.to_owned(),
+                row: row_index + 1,
+            },
+            1366 => DriverError::IncorrectValue {
+                type_name: tidb_datatype::type_str(field_type.code()).to_owned(),
+                value: datum_error_text(&cast),
+                column: column.to_owned(),
+                row: row_index + 1,
+            },
+            // 1264 (out of range) and 1406 (data too long) name no value at
+            // all, so re-deriving them would only reproduce what is there.
+            _ => return None,
+        };
+        Some(reported.to_mysql_error().message)
+    });
+    Ok(cast)
+}
+
 /// Go `table.CastValue`'s temporal arm: runs `handleZeroDatetime` over the
 /// converted value and turns its verdict into a stored value, a warning plus
 /// a stored value, or a statement error.
@@ -847,6 +919,11 @@ pub(crate) fn datum_error_text(value: &Datum) -> String {
         Datum::Decimal(v) => v.to_string(),
         Datum::Bytes(b) => String::from_utf8_lossy(b).into_owned(),
         Datum::String(s) => String::from_utf8_lossy(s.bytes()).into_owned(),
+        // Go names a value with `types.Datum.ToString`, which prints a
+        // temporal in its own SQL text -- `0000-00-00 00:00:00` for the zero
+        // datetime an invalid cast produced, not a debug rendering.
+        Datum::Time(time) => time.to_string(),
+        Datum::Duration(duration) => duration.to_string(),
         other => format!("{other:?}"),
     }
 }
@@ -1002,6 +1079,7 @@ pub(crate) fn apply_on_duplicate(
     candidate: &[Datum],
     assignments: &[tidb_ast::Assignment],
     column_list: &[(String, FieldType)],
+    row_index: usize,
     ctx: &crate::StmtContext,
 ) -> Result<u64, DriverError> {
     let Some(existing) = table
@@ -1038,8 +1116,13 @@ pub(crate) fn apply_on_duplicate(
         let value = expr
             .eval(ctx, chunk.get_row(0))
             .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
-        updated[offset] =
-            cast_value_for_column(value, &field_types[offset], &column_list[offset].0, 0, ctx)?;
+        updated[offset] = cast_value_for_assignment(
+            value,
+            &field_types[offset],
+            &column_list[offset].0,
+            row_index,
+            ctx,
+        )?;
     }
     if updated == existing {
         // Captured: an update that changes nothing affects no rows.

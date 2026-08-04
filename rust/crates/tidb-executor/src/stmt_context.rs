@@ -1032,6 +1032,35 @@ impl StmtContext {
     /// appends into the same handler local evaluation writes to. Here the
     /// remote ones come last. Only the ORDER differs; both sets are reported,
     /// with their codes.
+    /// How many warnings this statement has recorded, which is Go's
+    /// `warnCnt` bookmark in `doDupRowUpdate` (`pkg/executor/insert.go:479`).
+    #[must_use]
+    pub fn warning_count(&self) -> usize {
+        self.warnings.borrow().len()
+    }
+
+    /// Go `StmtCtx.TruncateWarnings(warnCnt)` + `AppendWarnings`: rewrites
+    /// every warning raised since a [`Self::warning_count`] bookmark.
+    ///
+    /// `rewrite` is handed each warning's code and message and answers a
+    /// replacement message, or `None` to leave that warning alone. This is
+    /// how `completeInsertErr` re-titles the warnings a cast produced without
+    /// disturbing anything that was already there.
+    pub fn rewrite_warnings_from(
+        &self,
+        bookmark: usize,
+        rewrite: impl Fn(u16, &str) -> Option<String>,
+    ) {
+        let mut warnings = self.warnings.borrow_mut();
+        for (_, code, message) in warnings.iter_mut().skip(bookmark) {
+            if let Some(replacement) = rewrite(*code, message) {
+                *message = replacement;
+            }
+        }
+    }
+
+    /// Drains this statement's warnings, evaluation's first and the
+    /// coprocessor's after them (see the note above).
     #[must_use]
     pub fn take_warnings(&self) -> Vec<(WarningLevel, u16, String)> {
         let mut warnings = std::mem::take(&mut *self.warnings.borrow_mut());
