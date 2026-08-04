@@ -1899,3 +1899,47 @@ fn weight_string_and_load_file_source_vectors() {
         "STR:41"
     );
 }
+
+/// Hex/bit literals carry Go's `KindBinaryLiteral`, not `KindBytes`.
+///
+/// Go's `Datum.SetValue`/`SetValueWithDefaultCollation` route both
+/// `HexLiteral` and `BitLiteral` through `SetBinaryLiteral`
+/// (`pkg/types/datum.go:626-630`, comment: "Store as BinaryLiteral for Bit
+/// and Hex literals"), and that kind is what a numeric context reads as an
+/// unsigned INTEGER. Carrying it as `Datum::Bytes` did not merely refuse
+/// arithmetic; three of these rows were silently WRONG values before the
+/// kind was corrected (`-0x1A` was `-0`, `ABS(b'11')` was `0`, `0x1A > 25`
+/// was `0`).
+///
+/// Every expected value is what `gorun` printed for the same statement, so
+/// the AST tier is pinned to the engine and not to the chunk tier beside it.
+#[test]
+fn hex_and_bit_literals_are_binary_literals_in_a_numeric_context() {
+    for (expr, want) in [
+        ("0x1A + 1", "UINT:27"),
+        ("b'101' + 1", "UINT:6"),
+        ("abs(b'11')", "FLOAT:3"),
+        ("0x1A > 25", "INT:1"),
+        ("0xFF + 0", "UINT:255"),
+        ("b'' + 0", "UINT:0"),
+        ("0x1A * 2", "UINT:52"),
+        ("0x1A div 2", "UINT:13"),
+        ("0x20000000000000 + 1", "UINT:9007199254740993"),
+        ("b'11' + b'11'", "UINT:6"),
+        ("0x0A + 0x0A", "UINT:20"),
+        // The string context is unchanged: a literal is still its octets.
+        ("concat(0x41, 'x')", "STR:Ax"),
+        ("hex(0x1A)", "STR:1A"),
+        ("length(0x4142)", "INT:2"),
+        ("char_length(0xF0288C28)", "INT:4"),
+        ("char_length(0xE4BDA0)", "INT:3"),
+        ("0x41 = 'A'", "INT:1"),
+    ] {
+        assert_eq!(e(expr), want, "{expr}");
+    }
+    // `-0x1A` is Go's -26; only the label's TYPE differs between this tier
+    // and the chunk tier, which `gorun` cannot distinguish, so the value is
+    // what is asserted.
+    assert_eq!(e("-0x1A"), "DEC:-26");
+    assert_eq!(chunk_e("-0x1A"), "FLOAT:-26");
+}

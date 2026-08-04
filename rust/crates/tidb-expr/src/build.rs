@@ -233,18 +233,36 @@ impl BuiltStringLength {
     pub fn eval(self, argument: &Datum) -> Result<Datum, EvalError> {
         let count = match self.signature {
             StringLengthSignature::Length | StringLengthSignature::CharLengthBinary => {
-                match argument.as_raw_bytes() {
+                match stored_bytes(argument) {
                     Some(bytes) => Some(bytes.len()),
                     None => coerce_str(argument)?.map(|text| text.len()),
                 }
             }
-            StringLengthSignature::CharLengthUtf8 => match argument.as_raw_bytes() {
+            StringLengthSignature::CharLengthUtf8 => match stored_bytes(argument) {
                 Some(bytes) => Some(go_utf8_rune_count(bytes)),
                 None => coerce_str(argument)?.map(|text| text.chars().count()),
             },
         };
 
         Ok(count.map_or(Datum::Null, |count| Datum::Int(count as i64)))
+    }
+}
+
+/// The octets a string-length signature counts, for the kinds that HAVE
+/// octets.
+///
+/// Go's `builtinLengthSig` reads `EvalString`, and a hex/bit literal's string
+/// form is its raw bytes (`Datum.ToString` -> `GetBinaryLiteral().ToString()`),
+/// which is exactly what makes `CHAR_LENGTH(0xF0288C28)` 4. `as_raw_bytes`
+/// alone answers `None` for that kind, and the `coerce_str` fallback then
+/// rejects the very octets the binary signature was selected to count. The
+/// remaining `None` kinds -- numbers, temporals, and NULL -- must keep going
+/// through `coerce_str`, because only it turns NULL into a NULL result rather
+/// than a zero-length one.
+fn stored_bytes(argument: &Datum) -> Option<&[u8]> {
+    match argument {
+        Datum::BinaryLiteral(value) | Datum::Bit(value) => Some(value.as_bytes()),
+        other => other.as_raw_bytes(),
     }
 }
 

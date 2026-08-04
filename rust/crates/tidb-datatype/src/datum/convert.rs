@@ -291,11 +291,20 @@ impl Datum {
         Ok(converted)
     }
 
-    /// Source `Datum.ToBytes`.
+    /// Source `Datum.ToBytes`, whose default arm is `ToString`.
+    ///
+    /// `ToString`'s `KindBinaryLiteral`/`KindMysqlBit` arm is
+    /// `d.GetBinaryLiteral().ToString()`, which is `string(b)` -- a Go string
+    /// conversion, so the OCTETS pass through unvalidated, exactly as they do
+    /// for `KindString`/`KindBytes`. `sql_string` cannot serve that arm here
+    /// because a Rust `String` must be UTF-8, and refusing `0xAABBCCDDEEFF`
+    /// is not something Go ever does (`UNCOMPRESSED_LENGTH(0xAABBCCDDEEFF)`
+    /// is 3721182122, not an error).
     pub fn to_bytes(&self) -> Result<Vec<u8>, DatumStringError> {
         match self {
             Self::String(value) => Ok(value.bytes().to_vec()),
             Self::Bytes(value) => Ok(value.clone()),
+            Self::BinaryLiteral(value) | Self::Bit(value) => Ok(value.as_bytes().to_vec()),
             _ => self.sql_string().map(String::into_bytes),
         }
     }

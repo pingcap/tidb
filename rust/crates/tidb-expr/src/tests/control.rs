@@ -69,10 +69,15 @@ fn ifnull_source_vectors_preserve_first_non_null_value() {
         assert_eq!(e(expr), want, "{expr}");
     }
 
-    // `types.NewBinaryLiteralFromUint(0x01, -1)` is a binary datum in the Go
-    // source table.  Keep the Rust assertion on the raw bytes rather than
-    // relying on the label's control-character rendering.
-    assert_eq!(v("ifnull(null, x'01')"), Datum::new_bytes(vec![1]));
+    // `types.NewBinaryLiteralFromUint(0x01, -1)` is a `KindBinaryLiteral`
+    // datum in the Go source table, which is also the kind Go's own
+    // `SetValue` gives a hex literal (`pkg/types/datum.go:626-630`).  Keep the
+    // Rust assertion on the datum rather than relying on the label's
+    // control-character rendering.
+    assert_eq!(
+        v("ifnull(null, x'01')"),
+        Datum::new_binary_literal(tidb_datatype::BinaryLiteral::from(vec![1_u8]))
+    );
 }
 
 /// Scalar rows from `pkg/expression/builtin_control_test.go:29`

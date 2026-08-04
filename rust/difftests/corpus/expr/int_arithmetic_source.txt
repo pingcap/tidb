@@ -40,20 +40,29 @@
 ## tests about which builtin*Sig or tipb.ScalarFuncSig was CHOSEN, which
 ## observes dispatch rather than the value.
 ##
-## Three further rows are held out because tidb-expr cannot evaluate them
-## TODAY; each is pinned, with the Go answer above, by a running guard in
+## Two further rows are held out; each is pinned, with the Go answer above,
+## by a running guard in
 ## `difftests/result-tests/tests/expr_corpus_holdouts.rs`, so the gap fails
 ## loudly the day it closes rather than staying invisible:
 ##
-##   0x20000000000000 + 1                 Go UINT:9007199254740993
 ##   b'00011' + 1                         Go INT:4
 ##   mod(cast('12:34:56' as time), 122)   Go INT:114
 ##
-## The first two need a hex/bit literal to keep its binary-literal identity
-## into arithmetic (where MySQL reads it as an integer, unsigned for `0x`,
-## signed for `b''`) -- the AST evaluator carries both as plain `Datum::Bytes`,
-## which is why `ops.rs` refuses that kind rather than coercing it as text; the
-## last needs `CAST(... AS TIME)`.
+## The last needs `CAST(... AS TIME)`. The first EVALUATES today but with the
+## wrong SIGNEDNESS: Go's `DefaultTypeForValue` adds `UnsignedFlag` for a
+## `HexLiteral` and a `BinaryLiteral` but NOT for a `BitLiteral`
+## (`pkg/types/field_type.go:284-301`), so `b'<64 ones>' + 0` is INT:-1 in Go
+## and UINT:18446744073709551615 here. The distinction lives in the operand's
+## FieldType, not in its datum kind -- both literals are `KindBinaryLiteral`
+## -- and this tier carries no FieldType at all, so the row stays out until
+## the signedness is read from the type rather than from the kind.
+##
+## The HEX arithmetic row moved out of this hold-out list and into the
+## executable set below: `binary_literal.rs` now gives a hex/bit literal Go's
+## own `KindBinaryLiteral` (`pkg/types/datum.go:626-630`) instead of plain
+## `Datum::Bytes`, so MySQL's integer reading of a literal in an arithmetic
+## context survives into `ops.rs` rather than being refused as an
+## unclassifiable byte string.
 ##
 ## The two STRING-operand mod rows moved out of this hold-out list and into the
 ## executable set below: Go's arithmetic classes wrap a string argument in the
@@ -136,3 +145,4 @@ null % -1001
 null % null
 '1231' % 12
 '1231' % '12'
+0x20000000000000 + 1

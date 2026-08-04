@@ -15,36 +15,35 @@
 //! `crate::eval_in`.
 //!
 //! Real MySQL/TiDB's own `types.HexLiteral`/`types.BitLiteral` are BOTH
-//! just `[]byte` under the hood (`pkg/types/binary_literal.go`) — a hex
+//! just `[]byte` under the hood (`pkg/types/binary_literal.go`), and a hex
 //! or bit literal's default, general-context value IS its raw bytes
 //! (confirmed via `gorun`: `SELECT 0x41` is the byte `'A'`, not the
 //! integer `65`; `CONCAT('x', 0x41)` is `'xA'`; `HEX(0x1A)` round-trips
-//! to `'1A'`). Only an ARITHMETIC operator coerces a hex/bit literal to
-//! its numeric value instead (confirmed via `gorun`: `SELECT 0x1A + 1`
-//! is `27`) — but by the time `eval_in` has already reduced
-//! `Expr::Hex`/`Expr::Bit` to a `Datum`, the ORIGINAL AST shape (and
-//! thus this context) is gone, and `Datum::Bytes` in `crate::ops::
-//! eval_binary`'s own arithmetic dispatch is ALREADY `Unsupported` BY
-//! DESIGN (no general string-to-number coercion — a real, existing,
-//! deliberate scope boundary predating this file). Rather than
-//! reopening that boundary with an AST-shape-sensitive special case
-//! (context-sensitive coercion of exactly this kind is the same class
-//! of complexity `Expr::Case`'s own doc already flags as deliberately
-//! NOT replicated for branch type inference), this module deliberately
-//! implements ONLY the general/string-context value — `0x1A + 1`
-//! remains `Unsupported`, unchanged from before this file existed, a
-//! narrower but honestly-scoped improvement.
+//! to `'1A'`).
 //!
-//! `Datum::Bytes` retains every raw octet without a UTF-8 conversion. A lone
-//! `0xFF`, embedded NUL, and valid text-shaped bytes therefore follow the
-//! same representation path; only an operation that explicitly needs
-//! character semantics performs checked decoding.
+//! The DATUM KIND, though, is not `KindBytes`: Go's `SetValue` stores both
+//! literal types as `KindBinaryLiteral` (`pkg/types/datum.go:626-630`), and
+//! that kind is what an ARITHMETIC, comparison or numeric-function context
+//! reads as the literal's unsigned INTEGER value. Carrying it as
+//! `Datum::Bytes` collapsed those two meanings into one kind, and the
+//! collapse cost real answers rather than only refusals -- `gorun` says
+//! `0x1A + 1` is 27, `-0x1A` is -26, `ABS(b'11')` is 3 and `0x1A > 25` is 1,
+//! where this tier answered `Unsupported`, `-0`, `0` and `0`. Producing Go's
+//! kind makes every one of those correct through the machinery that was
+//! already in place for the chunk tier's `Datum::BinaryLiteral`.
+//!
+//! `Datum::BinaryLiteral` retains every raw octet without a UTF-8
+//! conversion. A lone `0xFF`, embedded NUL, and valid text-shaped bytes
+//! therefore follow the same representation path; only an operation that
+//! explicitly needs character semantics performs checked decoding.
+
+use tidb_datatype::BinaryLiteral;
 
 use crate::{Datum, EvalError};
 
 /// Decodes a normalized hex-literal digit string (`tidb_ast::Expr::Hex`'s
 /// own field — already lowercase, even-length hex digit PAIRS, confirmed
-/// by that type's own doc) into its raw-byte `Datum::Bytes`.
+/// by that type's own doc) into its raw-byte `Datum::BinaryLiteral`.
 pub(crate) fn hex_literal_value(digits: &str) -> Result<Datum, EvalError> {
     let bytes: Vec<u8> = digits
         .as_bytes()
@@ -75,7 +74,7 @@ pub(crate) fn hex_literal_value(digits: &str) -> Result<Datum, EvalError> {
 /// `Unsupported` rather than guessed at.
 pub(crate) fn bit_literal_value(digits: &str) -> Result<Datum, EvalError> {
     if digits.is_empty() {
-        return Ok(Datum::new_bytes(Vec::new()));
+        return bytes_to_value(Vec::new());
     }
     if digits.len() > 64 {
         return Err(EvalError::Unsupported("bit literal wider than 64 bits"));
@@ -86,6 +85,19 @@ pub(crate) fn bit_literal_value(digits: &str) -> Result<Datum, EvalError> {
     bytes_to_value(bytes[8 - byte_len..].to_vec())
 }
 
+/// Source `Datum.SetValueWithDefaultCollation`/`SetValue`, whose
+/// `case BitLiteral` and `case HexLiteral` arms BOTH read
+/// "Store as BinaryLiteral for Bit and Hex literals" and call
+/// `SetBinaryLiteral` (`pkg/types/datum.go:626-630`). A hex or bit literal
+/// is therefore `KindBinaryLiteral` in Go from the moment the parser driver
+/// builds it -- never `KindBytes` -- and that kind is what tells an
+/// arithmetic, comparison or numeric-function context to read the octets as
+/// an unsigned INTEGER rather than as text.
+///
+/// Carrying it as `Datum::Bytes` was not merely a refusal: it made
+/// `-0x1A` answer `-0` instead of Go's `-26`, `ABS(b'11')` answer `0`
+/// instead of `3`, and `0x1A > 25` answer `0` instead of `1` -- wrong
+/// values, silently.
 fn bytes_to_value(bytes: Vec<u8>) -> Result<Datum, EvalError> {
-    Ok(Datum::new_bytes(bytes))
+    Ok(Datum::new_binary_literal(BinaryLiteral::from(bytes)))
 }

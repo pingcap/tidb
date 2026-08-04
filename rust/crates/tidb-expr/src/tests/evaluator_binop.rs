@@ -453,18 +453,16 @@ fn binop_numeric_source_zero_divisor_table() {
 /// so the first row -- the one whose operand is a genuine STRING -- answers
 /// Go's 2 instead of being refused.
 ///
-/// The two `Datum::Bytes` rows are still refused, and that refusal is
-/// deliberate rather than leftover: this crate's AST evaluator uses
-/// `Datum::Bytes` as the carrier for a HEX/BIT LITERAL
-/// (`binary_literal.rs::bytes_to_value`), and Go gives a constant binary
-/// literal `ETInt`, not `ETReal` (`builtin_arithmetic.go:91`) -- so coercing
-/// that kind as text here would answer `0x20000000000000 + 1` as 1 instead of
-/// 9007199254740993. Go's own `[]byte` datum in this table is an ordinary
-/// byte string and would be 2; the two meanings share one `Datum` kind here,
-/// and the refusal is the safe half of that ambiguity. Nothing in live SQL is
-/// affected: a `VARCHAR` *and* a `VARBINARY` column both read back as
-/// `Datum::String`. The chunk rewriter, which keeps a literal as
-/// `Datum::BinaryLiteral`, already answers the hex row correctly.
+/// The two `Datum::Bytes` rows are still refused, and that refusal is now the
+/// only thing left of an ambiguity that has since been removed. A hex/bit
+/// literal used to be carried as `Datum::Bytes` too, so this kind meant both
+/// "an ordinary byte string" (Go: `ETReal`, 2) and "a constant binary
+/// literal" (Go: `ETInt`, so `0x20000000000000 + 1` is 9007199254740993);
+/// refusing was the safe half. `binary_literal.rs::bytes_to_value` now gives
+/// the literal Go's own `KindBinaryLiteral`, so only the byte-string meaning
+/// reaches here -- and answering it as `ETReal` is a separate, unclaimed
+/// piece of work, not a correctness trap. Nothing in live SQL is affected: a
+/// `VARCHAR` *and* a `VARBINARY` column both read back as `Datum::String`.
 #[test]
 fn binop_numeric_source_string_operand_rows() {
     // Go: 1 + '1' is 2, via the ETReal cast of the string.

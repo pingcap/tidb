@@ -186,11 +186,9 @@ fn sign_matches_go_source_table() {
 /// the widened double `0.10000000149011612` (captured via `gorun`, not
 /// expressible here), and `ROUND('12.6abc')` is `FLOAT:13`, not an integer.
 ///
-/// Two kinds are deliberately NOT rows, because their VALUE here is
-/// decided by an older representation boundary rather than by the signature
-/// this test pins. A bit/hex literal is raw `Datum::Bytes`
-/// (`crate::binary_literal`), so `ABS(b'11')` reads the byte as text (0), not
-/// as the integer 3. A date is its canonical STRING, so
+/// One kind is deliberately NOT a row, because its VALUE here is decided by
+/// an older representation boundary rather than by the signature this test
+/// pins. A date is its canonical STRING, so
 /// `ABS(CAST('2021-01-01' AS DATE))` takes the numeric prefix (2021), not
 /// TiDB's 20210101 -- the same answer `SQRT` of that date already gave before
 /// this change, since it always had the catch-all these functions now share.
