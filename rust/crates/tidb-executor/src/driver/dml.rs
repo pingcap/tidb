@@ -655,6 +655,27 @@ pub(crate) fn conversion_event_is_silent(event: &tidb_datatype::ScalarConversion
 /// The strict SQL mode makes a bad value fail the statement; without it the
 /// converted (clamped or truncated) value is stored and the same message is a
 /// warning, which is what `sql_mode = ''` produces in TiDB.
+///
+/// DIVERGENCE, one shape, captured with `gorunmsg` on `t(a BIGINT)`:
+/// a string whose numeric prefix is followed by garbage. Under STRICT mode
+///
+/// ```text
+/// insert into t values ('123..34')   TiDB  [types:1264] Out of range value for column 'a' at row 1
+///                                    here  [table:1366] Incorrect bigint value: '123..34' for column 'a' at row 1
+/// ```
+///
+/// The stored value and the NON-strict warning both already agree
+/// (`123`, and 1366 with that exact text), and so does the read path --
+/// `CAST('123..34' AS SIGNED)` is `123` with 1292
+/// `Truncated incorrect INTEGER value: '123..34'` on both sides. Only the
+/// strict WRITE's error identity differs: Go's `StrToInt` raises
+/// `ErrOverflow`, which `completeInsertErr` re-titles as 1264, while the
+/// conversion here reports a `ScalarConversionEvent::Truncated` and this
+/// function maps that to the "Incorrect <type> value" form.
+///
+/// Distinguishing them needs `tidb_datatype`'s conversion to carry Go's error
+/// IDENTITY beside its event -- the same seam
+/// [`cast_value_for_assignment`]'s strict arm needs.
 pub(crate) fn cast_value_for_column(
     value: Datum,
     field_type: &FieldType,

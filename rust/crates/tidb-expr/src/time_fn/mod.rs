@@ -17,6 +17,39 @@
 //! family. It owns both pure value functions and statement-clock functions;
 //! callers enter through one narrow [`dispatch`] seam instead of growing the
 //! generic builtin dispatcher or splitting helpers across unrelated modules.
+//!
+//! # Still absent from this family
+//!
+//! `ADDTIME`, `SUBTIME`, `TIMESTAMP`, `TIMESTAMPADD` and `SYSDATE`, each
+//! refused today (`this builtin is not yet built for chunk evaluation`,
+//! and `TIMESTAMPADD` earlier still at the rewriter). Captured with
+//! `gorunmsg`, TiDB answers:
+//!
+//! ```text
+//! addtime('2020-01-01 10:00:00', '01:00:00')      2020-01-01 11:00:00
+//! addtime('10:00:00', '01:00:00')                 11:00:00
+//! subtime('2020-01-01 10:00:00', '01:00:00')      2020-01-01 09:00:00
+//! timestamp('2020-01-01')                         2020-01-01 00:00:00
+//! timestamp('2020-01-01', '01:00:00')             2020-01-01 01:00:00
+//! timestampadd(minute, 5, '2020-01-01 10:00:00')  2020-01-01 10:05:00
+//! sysdate() = sysdate()                           1
+//! ```
+//!
+//! Two things make them more than a `dispatch` arm apiece, both from
+//! `pkg/expression/builtin_time.go`:
+//!
+//! * `addTimeFunctionClass.getFunction` is a TWELVE-way switch over the
+//!   `(tp1, tp2)` cross product of the two arguments' eval types, with the
+//!   result fsp `min(max(arg0Dec, arg1Dec), MaxFsp)` and a dedicated
+//!   `...Null` signature for a DATETIME second argument. Reproducing the
+//!   ANSWERS without that inference reproduces neither the result TYPE nor
+//!   the NULL cases.
+//! * `SYSDATE` is the one temporal builtin that is NOT the statement clock:
+//!   it reads the wall clock PER ROW, so `sysdate() != sysdate()` within one
+//!   row is possible where `now() = now()` is guaranteed. [`Columns::now`]
+//!   returns one fixed statement timestamp and cannot express that; a
+//!   per-row clock seam would have to be added beside it, and adding one
+//!   without the signatures above would be half a feature.
 
 pub(crate) mod calendar;
 mod convert_tz;
