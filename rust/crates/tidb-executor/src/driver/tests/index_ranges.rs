@@ -349,3 +349,87 @@ fn index_ranges_are_built_the_way_go_builds_them() {
         Some((1, vec![IndexRange::full()]))
     );
 }
+
+/// THE ROW-LEVEL PROOF that a `LIKE` bound is a weight string.
+///
+/// A range built by incrementing the RAW low bytes and then collating it is
+/// not the range Go builds, and on a case-insensitive collation the
+/// difference is not a wider scan but a MISSING one: the derived upper bound
+/// can collate to the lower bound (or below it), the range empties, and the
+/// statement answers nothing. Range text alone cannot show that -- an empty
+/// range prints as no scan at all -- so this asserts the ROWS.
+///
+/// Every expectation was captured from real TiDB (`gorun`) over
+/// `ci(a varchar(50) collate utf8mb4_general_ci, key idx(a))` holding
+/// ``'ab`q', 'abAq', 'abzz', 'abcq'``.
+#[test]
+fn a_like_over_a_case_insensitive_index_returns_gos_rows() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE ci (a VARCHAR(50) COLLATE utf8mb4_general_ci, KEY idx (a))",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO ci VALUES ('ab`q'), ('abAq'), ('abzz'), ('abcq'), ('abéxx')",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    let rows = |sql: &str| {
+        let mut out: Vec<String> = run_select_on(sql, &catalog, &crate::StmtContext::for_query())
+            .unwrap()
+            .iter()
+            .map(|row| datum_text_for_test(&row[0]))
+            .collect();
+        out.sort();
+        out
+    };
+    // `é` and `ê` share a weight, so the raw increment collated to exactly
+    // the lower bound and this answered NOTHING.
+    assert_eq!(rows("SELECT a FROM ci WHERE a LIKE 'abé%'"), ["abéxx"]);
+    // The same failure in pure ASCII: '`'+1 is 'a', whose weight is 'A''s.
+    assert_eq!(rows("SELECT a FROM ci WHERE a LIKE 'ab`%'"), ["ab`q"]);
+    // The pattern's own case must not matter -- both of these read the one
+    // row spelled `'abAq'`, which is what makes the bound a WEIGHT string
+    // rather than a text one.
+    assert_eq!(rows("SELECT a FROM ci WHERE a LIKE 'abA%'"), ["abAq"]);
+    assert_eq!(rows("SELECT a FROM ci WHERE a LIKE 'aba%'"), ["abAq"]);
+    // The direction that was merely too wide, kept as a control.
+    assert_eq!(rows("SELECT a FROM ci WHERE a LIKE 'abz%'"), ["abzz"]);
+}
+
+/// The PAD SPACE half: the stored index key has its trailing spaces trimmed,
+/// so a `LIKE` whose literal prefix ENDS in spaces must start its scan at the
+/// trimmed key or it steps straight past the entries it wants.
+///
+/// Captured from real TiDB over `bn(a varchar(50) collate utf8mb4_bin, key
+/// idx(a))`: `range:["abc","abc !")`, and
+/// `select concat('[',a,']') from bn where a like 'abc  %'` returns
+/// `[abc  ]` and `[abc  x]`.
+#[test]
+fn a_like_with_trailing_spaces_starts_at_the_trimmed_key() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE bn (a VARCHAR(50) COLLATE utf8mb4_bin, KEY idx (a))",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO bn VALUES ('abc  '), ('abc  x'), ('abc'), ('abd')",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    let mut got: Vec<String> = run_select_on(
+        "SELECT a FROM bn WHERE a LIKE 'abc  %'",
+        &catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap()
+    .iter()
+    .map(|row| datum_text_for_test(&row[0]))
+    .collect();
+    got.sort();
+    assert_eq!(got, ["abc  ", "abc  x"]);
+}

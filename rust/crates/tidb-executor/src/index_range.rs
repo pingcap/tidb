@@ -50,11 +50,19 @@
 //!   * `extractBestCNFItemRanges` / `chooseBetweenRangeAndPoint`: Go's
 //!     cost-driven preference for one CNF item's DNF ranges over the
 //!     leading-column ranges.
-//!   * collation sort keys (`convertToSortKey`) and `handleUnsignedCol`'s
-//!     signedness clamping.
+//!   * `handleUnsignedCol`'s signedness clamping.
+//!   * `convertToSortKey` for the builders whose endpoints are VALUES: they
+//!     stay text and the key codec collates them into exactly the bytes Go's
+//!     conversion produced, so the ENCODED range is Go's even though the
+//!     printed one shows the text rather than the weights. [`like`] is the
+//!     exception and does convert, because its upper bound is a weight string
+//!     with no textual preimage --- see that module.
+
+mod like;
 
 use crate::index_prefix_cut::{cut_datum_by_prefix_len, reaches_prefix_len, UNSPECIFIED_LENGTH};
 use crate::kv_table::IndexRange;
+use like::points_from_like;
 use std::cmp::Ordering;
 use tidb_ast::{BinaryOp, Expr, IsTarget};
 use tidb_datatype::{Datum, FieldType};
@@ -285,6 +293,26 @@ fn convert_point_in_place(p: &mut Point, target: &FieldType) {
         Datum::MaxValue | Datum::MinNotNull | Datum::Null => return,
         _ => {}
     }
+    // Go `convertStringFTToBinaryCollate` (`ranger.go:616`): `points2Ranges`
+    // is handed a BINARY-collated clone of the column's type, because by then
+    // every string endpoint is a weight string rather than text. Converting a
+    // weight string into the column's own collation would stamp that
+    // collation onto it, and the key codec would collate it a SECOND time --
+    // which puts the upper bound below the lower one and empties the range.
+    //
+    // This crate defers `convertToSortKey`, so only the endpoints that ARE
+    // weight strings ([`increment_sort_key`]'s, the one place a `Datum::Bytes`
+    // enters a point over a string column) need Go's binary-collated target;
+    // the text endpoints keep the column's collation and are collated once, by
+    // the codec, into the same bytes Go's conversion produced.
+    let owned;
+    let target = match (&p.value, target.eval_type()) {
+        (Datum::Bytes(_), tidb_datatype::EvalType::String) => {
+            owned = binary_collate_field_type(target);
+            &owned
+        }
+        _ => target,
+    };
     // Go tolerates exactly the overflow/truncation events below and keeps the
     // saturated boundary value; anything it propagates as an error leaves the
     // point untouched here, which is the conservative (wider range) choice.
@@ -318,6 +346,23 @@ fn convert_point_in_place(p: &mut Point, target: &FieldType) {
         // e.g. "a <= 1.9" converts to "a < 2".
         p.excl = true;
     }
+}
+
+/// Go `convertStringFTToBinaryCollate`: the same type with the `binary`
+/// charset and collation, which is what makes a conversion into it leave a
+/// weight string alone. `ENUM` and `SET` keep their own collation there,
+/// because their endpoints are the member's name rather than a weight string.
+fn binary_collate_field_type(target: &FieldType) -> FieldType {
+    if matches!(
+        target.code(),
+        tidb_datatype::FieldTypeCode::Enum | tidb_datatype::FieldTypeCode::Set
+    ) {
+        return target.clone();
+    }
+    let mut binary = target.clone();
+    binary.set_charset_name("binary");
+    binary.set_collation_name("binary");
+    binary
 }
 
 /// Go `convertPointsInPlace`.
@@ -705,96 +750,6 @@ fn points_from_not_in(list: &[Expr], zone: &tidb_datatype::SessionTimeZone) -> O
     out.push(Point::start(previous, true));
     out.push(Point::end(Datum::MaxValue, false));
     Some(out)
-}
-
-/// Go `builder.newBuildFromPatternLike`: the literal prefix before the first
-/// wildcard bounds the scan below, and that prefix's `PrefixNext` bounds it
-/// above.
-fn points_from_like(
-    pattern: &str,
-    escape: u8,
-    collation: tidb_datatype::Collation,
-    column: &RangeColumn,
-) -> Vec<Point> {
-    let string = |bytes: Vec<u8>| Datum::new_collation_string(bytes, collation);
-    if pattern.is_empty() {
-        let empty = string(Vec::new());
-        return vec![Point::start(empty.clone(), false), Point::end(empty, false)];
-    }
-    let bytes = pattern.as_bytes();
-    let mut low = Vec::with_capacity(bytes.len());
-    let mut exact = true;
-    let mut exclude = false;
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == escape {
-            i += 1;
-            low.push(if i < bytes.len() { bytes[i] } else { escape });
-            i += 1;
-            continue;
-        }
-        if bytes[i] == b'%' {
-            exact = false;
-            break;
-        }
-        if bytes[i] == b'_' {
-            // Go `points.go:775-788`: `_` matches exactly one character, so
-            // the prefix itself is longer than the match and the low bound is
-            // EXCLUSIVE -- but only under a NON-PAD-SPACE collation. Under a
-            // PAD SPACE one the stored index key has its trailing spaces
-            // trimmed, so `'abc'` and `'abc   '` are the same key and
-            // excluding the bound would MISS `'abc   '`, a wrong answer rather
-            // than a wider scan.
-            //
-            // `IsPadSpaceCollation` (`collate.go:363`) is a three-name
-            // exception list, and `binary` is one of the three -- so a
-            // `VARBINARY` key really does take the exclusive bound. Captured:
-            //
-            // ```text
-            // create table b(a varbinary(20), key(a));
-            // explain select * from b where a like 'abc_%'
-            //   IndexRangeScan  range:("abc","abd")     <- low EXCLUSIVE
-            // create table c(a varchar(20), key(a));
-            // explain select * from c where a like 'abc_%'
-            //   IndexRangeScan  range:["abc","abd")     <- low inclusive
-            // ```
-            // Spelled as Go's own three-name EXCEPTION list rather than as
-            // its complement, so a collation added later defaults to PAD
-            // SPACE -- the safe half -- exactly as it does in Go.
-            exclude = matches!(
-                collation,
-                tidb_datatype::Collation::Binary
-                    | tidb_datatype::Collation::Utf8Mb40900AiCi
-                    | tidb_datatype::Collation::Utf8Mb40900Bin
-            );
-            exact = false;
-            break;
-        }
-        low.push(bytes[i]);
-        i += 1;
-    }
-    // No literal characters before the wildcard: nothing to bound the scan.
-    if low.is_empty() {
-        return not_null_full_range();
-    }
-    if exact {
-        let value = string(low);
-        return vec![Point::start(value.clone(), false), Point::end(value, false)];
-    }
-    // Go cuts the START point before deriving the upper bound from it
-    // (`newBuildFromPatternLike`'s case 4-2 calls `cutPrefixForPoints` on the
-    // start alone, then takes `PrefixNext` of the CUT value). Deriving the
-    // bound first and cutting both would collapse `LIKE 'abcd%'` on
-    // `KEY (a(3))` onto the empty `["abc","abc")`; Go prints `["abc","abd")`.
-    let mut start = Point::start(string(low), exclude);
-    cut_prefix_for_points(std::slice::from_mut(&mut start), column);
-    let low = match &start.value {
-        Datum::String(text) => text.bytes().to_vec(),
-        Datum::Bytes(bytes) => bytes.clone(),
-        _ => Vec::new(),
-    };
-    let high = prefix_next(low);
-    vec![start, Point::end(string(high), true)]
 }
 
 /// Go `cutPrefixForPoints`: cuts every endpoint to the key part's declared
@@ -1527,7 +1482,7 @@ mod tests {
     /// what the unsigned/overflow corpus needs: Go's `convertPointInPlace`
     /// converts every range endpoint to the indexed column's type before
     /// building, and that conversion is the whole subject of those rows.
-    fn derive_typed(index: &[(&str, FieldType)], where_sql: &str) -> String {
+    pub(super) fn derive_typed(index: &[(&str, FieldType)], where_sql: &str) -> String {
         let typed: Vec<RangeColumn> = index
             .iter()
             .map(|(name, ft)| RangeColumn::whole((*name).to_owned(), ft.clone()))
