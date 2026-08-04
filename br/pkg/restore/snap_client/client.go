@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
-	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/checksum"
@@ -76,6 +75,7 @@ const (
 	ignorePlacementPolicyMode = "IGNORE"
 
 	resetSpeedLimitRetryTimes = 3
+	resetSpeedLimitTimeout    = time.Minute
 	defaultDDLConcurrency     = 64
 	maxSplitKeysOnce          = 10240
 )
@@ -92,11 +92,12 @@ type SnapClient struct {
 	pdHTTPClient pdhttp.Client
 
 	// User configurable parameters
-	cipher              *backuppb.CipherInfo
-	concurrencyPerStore uint
-	keepaliveConf       keepalive.ClientParameters
-	rateLimit           uint64
-	tlsConf             *tls.Config
+	cipher                *backuppb.CipherInfo
+	concurrencyPerStore   uint
+	regionScanConcurrency uint
+	keepaliveConf         keepalive.ClientParameters
+	rateLimit             uint64
+	tlsConf               *tls.Config
 
 	switchCh chan struct{}
 
@@ -173,7 +174,7 @@ type SnapClient struct {
 	// restore from a checkpoint inherits the same restoreUUID.
 	restoreUUID uuid.UUID
 
-	checkPrivilegeTableRowsCollateCompatiblity bool
+	privilegeTableRowsCollateCompatibility bool
 }
 
 // NewRestoreClient returns a new RestoreClient.
@@ -276,16 +277,16 @@ func (rc *SnapClient) GetSupportPolicy() bool {
 	return rc.supportPolicy
 }
 
-// SetCheckPrivilegeTableRowsCollateCompatiblity set switch to check
+// SetCheckPrivilegeTableRowsCollateCompatibility set switch to check
 // privilege tables with different collate columns
-func (rc *SnapClient) SetCheckPrivilegeTableRowsCollateCompatiblity(v bool) {
-	rc.checkPrivilegeTableRowsCollateCompatiblity = v
+func (rc *SnapClient) SetCheckPrivilegeTableRowsCollateCompatibility(v bool) {
+	rc.privilegeTableRowsCollateCompatibility = v
 }
 
-// GetCheckPrivilegeTableRowsCollateCompatiblity get switch to check
+// GetCheckPrivilegeTableRowsCollateCompatibility get switch to check
 // privilege tables with different collate columns
-func (rc *SnapClient) GetCheckPrivilegeTableRowsCollateCompatiblity() bool {
-	return rc.checkPrivilegeTableRowsCollateCompatiblity
+func (rc *SnapClient) GetCheckPrivilegeTableRowsCollateCompatibility() bool {
+	return rc.privilegeTableRowsCollateCompatibility
 }
 
 func (rc *SnapClient) updateConcurrency() {
@@ -302,6 +303,17 @@ func (rc *SnapClient) updateConcurrency() {
 func (rc *SnapClient) SetConcurrencyPerStore(c uint) {
 	log.Info("per-store download worker pool", zap.Uint("size", c))
 	rc.concurrencyPerStore = c
+}
+
+// SetRegionScanConcurrency sets max in-flight region scan requests during import.
+func (rc *SnapClient) SetRegionScanConcurrency(c uint) {
+	log.Info("region scan request concurrency", zap.Uint("size", c))
+	rc.regionScanConcurrency = c
+}
+
+// GetRegionScanConcurrency returns max in-flight region scan requests during import.
+func (rc *SnapClient) GetRegionScanConcurrency() uint {
+	return rc.regionScanConcurrency
 }
 
 func (rc *SnapClient) SetBatchDdlSize(batchDdlsize uint) {
@@ -672,8 +684,77 @@ func (rc *SnapClient) InitConnections(g glue.Glue, store kv.Storage) error {
 	return errors.Trace(err)
 }
 
-func SetSpeedLimitFn(ctx context.Context, stores []*metapb.Store, pool *tidbutil.WorkerPool) func(*SnapFileImporter, uint64) error {
+func SetSpeedLimitCallbacks(
+	ctx context.Context,
+	pdClient pd.Client,
+	pool *tidbutil.WorkerPool,
+	rateLimit uint64,
+) (func(*SnapFileImporter) error, func(*SnapFileImporter) error) {
+	var wg sync.WaitGroup
+	stopCh := make(chan struct{})
+	var stopOnce sync.Once
+	setFn := SetSpeedLimitFn(ctx, pdClient, pool)
+	return func(importer *SnapFileImporter) error {
+			if err := setFn(importer, rateLimit); err != nil {
+				return errors.Annotate(err, "failed to set download speed limit")
+			}
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				updateTicker := time.NewTicker(time.Minute * 3)
+				defer updateTicker.Stop()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-updateTicker.C:
+						if err := setFn(importer, rateLimit); err != nil {
+							log.Warn("failed to set download speed limit, retry it", zap.Error(err))
+						}
+					case <-stopCh:
+						return
+					}
+				}
+			}()
+			return nil
+		}, func(importer *SnapFileImporter) error {
+			stopOnce.Do(func() {
+				close(stopCh)
+			})
+			wg.Wait()
+
+			// In future we may need a mechanism to set speed limit in ttl. like what we do in switchmode. TODO
+			var resetErr error
+			for retry := range resetSpeedLimitRetryTimes {
+				resetCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), resetSpeedLimitTimeout)
+				resetErr = SetSpeedLimitFn(resetCtx, pdClient, pool)(importer, 0)
+				cancel()
+				if resetErr != nil {
+					log.Warn("failed to reset speed limit, retry it",
+						zap.Int("retry time", retry), logutil.ShortError(resetErr))
+					time.Sleep(time.Duration(retry+3) * time.Second)
+					continue
+				}
+				break
+			}
+			if resetErr != nil {
+				log.Error("failed to reset speed limit, please reset it manually", zap.Error(resetErr))
+			}
+			return resetErr
+		}
+}
+
+func SetSpeedLimitFn(
+	ctx context.Context,
+	pdClient pd.Client,
+	pool *tidbutil.WorkerPool,
+) func(*SnapFileImporter, uint64) error {
 	return func(importer *SnapFileImporter, limit uint64) error {
+		stores, err := conn.GetAllTiKVStoresWithRetry(ctx, pdClient, util.SkipTiFlash)
+		if err != nil {
+			return errors.Annotate(err, "failed to get stores")
+		}
+
 		eg, ectx := errgroup.WithContext(ctx)
 		for _, store := range stores {
 			if err := ectx.Err(); err != nil {
@@ -716,28 +797,9 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 		return importer.CheckMultiIngestSupport(ctx, stores)
 	})
 	if rc.rateLimit != 0 {
-		setFn := SetSpeedLimitFn(ctx, stores, rc.workerPool)
-		createCallBacks = append(createCallBacks, func(importer *SnapFileImporter) error {
-			return setFn(importer, rc.rateLimit)
-		})
-		closeCallBacks = append(closeCallBacks, func(importer *SnapFileImporter) error {
-			// In future we may need a mechanism to set speed limit in ttl. like what we do in switchmode. TODO
-			var resetErr error
-			for retry := 0; retry < resetSpeedLimitRetryTimes; retry++ {
-				resetErr = setFn(importer, 0)
-				if resetErr != nil {
-					log.Warn("failed to reset speed limit, retry it",
-						zap.Int("retry time", retry), logutil.ShortError(resetErr))
-					time.Sleep(time.Duration(retry+3) * time.Second)
-					continue
-				}
-				break
-			}
-			if resetErr != nil {
-				log.Error("failed to reset speed limit, please reset it manually", zap.Error(resetErr))
-			}
-			return resetErr
-		})
+		createCallBack, closeCallBack := SetSpeedLimitCallbacks(ctx, rc.pdClient, rc.workerPool, rc.rateLimit)
+		createCallBacks = append(createCallBacks, createCallBack)
+		closeCallBacks = append(closeCallBacks, closeCallBack)
 	}
 
 	metaClient := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, rc.storeCount+1, splitClientOpts...)
@@ -745,7 +807,7 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 
 	opt := NewSnapFileImporterOptions(
 		rc.cipher, metaClient, importCli, backend,
-		rc.rewriteMode, stores, rc.concurrencyPerStore, createCallBacks, closeCallBacks,
+		rc.rewriteMode, stores, rc.concurrencyPerStore, rc.regionScanConcurrency, createCallBacks, closeCallBacks,
 	)
 	if isRawKvMode || isTxnKvMode {
 		mode := Raw
@@ -1020,9 +1082,12 @@ func (rc *SnapClient) CreateDatabases(ctx context.Context, dbs []*metautil.Datab
 	if len(rc.dbPool) == 0 {
 		log.Info("create databases sequentially")
 		for _, db := range dbs {
-			err := rc.db.CreateDatabase(ctx, db.Info, rc.supportPolicy, rc.policyMap)
+			exists, err := rc.db.CreateDatabase(ctx, db.Info, rc.supportPolicy, rc.policyMap)
 			if err != nil {
 				return errors.Trace(err)
+			}
+			if exists {
+				db.SetReusedByPITR()
 			}
 		}
 		return nil
@@ -1035,7 +1100,14 @@ func (rc *SnapClient) CreateDatabases(ctx context.Context, dbs []*metautil.Datab
 		db := db_
 		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
 			conn := rc.dbPool[id%uint64(len(rc.dbPool))]
-			return conn.CreateDatabase(ectx, db.Info, rc.supportPolicy, rc.policyMap)
+			exists, err := conn.CreateDatabase(ectx, db.Info, rc.supportPolicy, rc.policyMap)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if exists {
+				db.SetReusedByPITR()
+			}
+			return nil
 		})
 	}
 	return eg.Wait()

@@ -15,9 +15,12 @@
 package correlated
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCorrelatedSubquery(t *testing.T) {
@@ -71,6 +74,78 @@ WHERE NOT (tlc07c2a51.col_1>=
               HAVING tlc07c2a51.col_6>0)) ;`).Check(testkit.Rows("1", "1", "1", "1", "1", "1", "1", "1", "1", "1"))
 }
 
+func TestNaturalJoinWithCorrelatedSubquery(tt *testing.T) {
+	testkit.RunTestUnderCascades(tt, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (a int)")
+		// Keep duplicate and NULL rows so the regression also pins multiplicity
+		// and NULL-handling for the correlated EXISTS predicate.
+		tk.MustExec("insert into t values (1), (1), (2), (null)")
+
+		sql := `select t1.a
+			from t t1 natural join t t2
+			where exists (select 1 from t t3 where t3.a = t1.a)
+			order by t1.a`
+		tk.MustQuery(sql).Check(testkit.Rows("1", "1", "1", "1", "2"))
+
+		if cascades == "on" {
+			return
+		}
+
+		t.Run("AlternativeLogicalPlansChooseApply", func(t *testing.T) {
+			tk.MustExec("use test")
+			tk.MustExec("drop table if exists alt_pick_t1, alt_pick_t2, alt_pick_t3")
+			tk.MustExec("create table alt_pick_t1(a int primary key)")
+			tk.MustExec("create table alt_pick_t2(a int, b int, key idx_a(a))")
+			tk.MustExec("create table alt_pick_t3(a int, c int, key idx_a(a))")
+			tk.MustExec("insert into alt_pick_t1 values (1), (2)")
+
+			vals2 := make([]string, 0, 200)
+			vals3 := make([]string, 0, 200)
+			for i := 0; i < 200; i++ {
+				vals2 = append(vals2, fmt.Sprintf("(%d, %d)", i%100, i))
+				vals3 = append(vals3, fmt.Sprintf("(%d, %d)", i%100, i))
+			}
+			tk.MustExec("insert into alt_pick_t2 values " + strings.Join(vals2, ","))
+			tk.MustExec("insert into alt_pick_t3 values " + strings.Join(vals3, ","))
+			tk.MustExec("analyze table alt_pick_t1, alt_pick_t2, alt_pick_t3")
+
+			tk.MustExec("set @@tidb_opt_enable_alternative_logical_plans=off")
+			sql := "select alt_pick_t1.a, (select count(*) from alt_pick_t2 join alt_pick_t3 on alt_pick_t2.a = alt_pick_t3.a where alt_pick_t2.a = alt_pick_t1.a) as cnt from alt_pick_t1 order by alt_pick_t1.a"
+			explainSQL := "explain format = 'brief' " + sql
+
+			offPlan := tk.MustQuery(explainSQL).Rows()
+			tk.MustQuery(sql).Check(testkit.Rows("1 4", "2 4"))
+			require.False(t, rowsContainText(offPlan, "Apply"), rowsText(offPlan))
+
+			tk.MustExec("set @@tidb_opt_enable_alternative_logical_plans=on")
+			onPlan := tk.MustQuery(explainSQL).Rows()
+			tk.MustQuery(sql).Check(testkit.Rows("1 4", "2 4"))
+			require.True(t, rowsContainText(onPlan, "Apply"), rowsText(onPlan))
+		})
+
+		t.Run("AlternativeLogicalPlansSkipSecondRoundWhenIndexJoinExists", func(t *testing.T) {
+			tk.MustExec("use test")
+			tk.MustExec("set @@tidb_opt_enable_alternative_logical_plans=on")
+			tk.MustExec("drop table if exists alt_skip_t1, alt_skip_t2")
+			tk.MustExec("create table alt_skip_t1(a int primary key)")
+			tk.MustExec("create table alt_skip_t2(a int, b int, key idx_a(a))")
+			tk.MustExec("insert into alt_skip_t1 values (1), (2), (3)")
+			tk.MustExec("insert into alt_skip_t2 values (1, 1), (1, 2), (2, 3), (3, 4)")
+			tk.MustExec("analyze table alt_skip_t1, alt_skip_t2")
+
+			sql := "select alt_skip_t1.a from alt_skip_t1 where exists (select 1 from alt_skip_t2 where alt_skip_t2.a = alt_skip_t1.a and alt_skip_t2.b > 0) order by alt_skip_t1.a"
+			plan := tk.MustQuery("explain format = 'brief' " + sql).Rows()
+			require.False(t, rowsContainText(plan, "Apply"), rowsText(plan))
+			tk.MustQuery(sql).Check(testkit.Rows("1", "2", "3"))
+			stmtCtx := tk.Session().GetSessionVars().StmtCtx
+			require.True(t, stmtCtx.AlternativeLogicalPlanDecorrelatedApply)
+			require.True(t, stmtCtx.AlternativeLogicalPlanSameOrderIndexJoin)
+		})
+	})
+}
+
 func TestWrongDecorrelate(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -83,4 +158,27 @@ func TestWrongDecorrelate(t *testing.T) {
 		"<nil> 0.00000000000000000000 60021022342",
 		" 30025.20000000000000000000 60121022342",
 		"X 6.23000000000000000000 60021022342"))
+}
+
+func rowsContainText(rows [][]any, needle string) bool {
+	for _, row := range rows {
+		for _, col := range row {
+			if strings.Contains(fmt.Sprint(col), needle) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func rowsText(rows [][]any) string {
+	lines := make([]string, 0, len(rows))
+	for _, row := range rows {
+		vals := make([]string, 0, len(row))
+		for _, col := range row {
+			vals = append(vals, fmt.Sprint(col))
+		}
+		lines = append(lines, strings.Join(vals, " "))
+	}
+	return strings.Join(lines, "\n")
 }

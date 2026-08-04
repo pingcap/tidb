@@ -217,7 +217,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrCrashedOnRepair:                          mysql.Message("Table '%-.192s' is marked as crashed and last (automatic?) repair failed", nil),
 	ErrWarningNotCompleteRollback:               mysql.Message("Some non-transactional changed tables couldn't be rolled back", nil),
 	ErrTransCacheFull:                           mysql.Message("Multi-statement transaction required more than 'maxBinlogCacheSize' bytes of storage; increase this mysqld variable and try again", nil),
-	ErrTooManyUserConnections:                   mysql.Message("User %-.64s already has more than 'maxUserConnections' active connections", nil),
+	ErrTooManyUserConnections:                   mysql.Message("User %-.64s has exceeded the 'max_user_connections' resource", nil),
 	ErrSetConstantsOnly:                         mysql.Message("You may only use constant expressions with SET", nil),
 	ErrLockWaitTimeout:                          mysql.Message("Lock wait timeout exceeded; try restarting transaction", nil),
 	ErrLockTableFull:                            mysql.Message("The total number of locks exceeds the lock table size", nil),
@@ -913,6 +913,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrFunctionalIndexOnField:                                mysql.Message("Expression index on a column is not supported. Consider using a regular index instead", nil),
 	ErrFKIncompatibleColumns:                                 mysql.Message("Referencing column '%s' and referenced column '%s' in foreign key constraint '%s' are incompatible.", nil),
 	ErrFunctionalIndexRowValueIsNotAllowed:                   mysql.Message("Expression of expression index '%s' cannot refer to a row value", nil),
+	ErrInvalidLateralJoin:                                    mysql.Message("Invalid use of LATERAL: %s", nil),
 	ErrNonBooleanExprForCheckConstraint:                      mysql.Message("An expression of non-boolean type specified to a check constraint '%s'.", nil),
 	ErrColumnCheckConstraintReferencesOtherColumn:            mysql.Message("Column check constraint '%s' references other column.", nil),
 	ErrCheckConstraintNamedFunctionIsNotAllowed:              mysql.Message("An expression of a check constraint '%s' contains disallowed function: %s.", nil),
@@ -1156,6 +1157,9 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrResourceGroupQueryRunawayInterrupted:   mysql.Message("Query execution was interrupted, identified as runaway query [%s]", nil),
 	ErrResourceGroupQueryRunawayQuarantine:    mysql.Message("Quarantined and interrupted because of being in runaway watch list", nil),
 	ErrResourceGroupInvalidBackgroundTaskName: mysql.Message("Unknown background task name '%-.192s'", nil),
+
+	ErrModifyColumnReferencedByPartialCondition: mysql.Message("Cannot drop, change or modify column '%s': it is referenced in partial index '%s'", nil),
+	ErrCheckPartialIndexWithoutFastCheck:        mysql.Message("Validation of partial indexes requires tidb_enable_fast_table_check=ON", nil),
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout:           mysql.Message("PD server timeout: %s", nil),

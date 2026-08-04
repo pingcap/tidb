@@ -56,6 +56,8 @@ type AnalyzeColumnsExecV2 struct {
 }
 
 func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2(ctx context.Context, gp *gp.Pool) *statistics.AnalyzeResults {
+	intest.Assert(e.samplingStatsConcurrency > 0,
+		"samplingStatsConcurrency must be resolved by AnalyzeExec.Next before workers fan out")
 	var ranges []*ranger.Range
 	if hc := e.handleCols; hc != nil {
 		if hc.IsInt() {
@@ -69,7 +71,7 @@ func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2(ctx context.Context, gp 
 
 	collExtStats := e.ctx.GetSessionVars().EnableExtendedStats
 	// specialIndexes holds indexes that include virtual or prefix columns. For these indexes,
-	// only the number of distinct values (NDV) is computed using TiKV. Other statistic
+	// only the number of distinct values (NDV) is computed using TiKV. Other statistics
 	// are derived from sample data processed within TiDB.
 	// The reason is that we want to keep the same row sampling for all columns.
 	specialIndexes := make([]*model.IndexInfo, 0, len(e.indexes))
@@ -89,14 +91,9 @@ func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2(ctx context.Context, gp 
 			specialIndexes = append(specialIndexes, idx)
 		}
 	}
-	samplingStatsConcurrency, err := getBuildSamplingStatsConcurrency(e.ctx)
-	if err != nil {
-		e.memTracker.Release(e.memTracker.BytesConsumed())
-		return &statistics.AnalyzeResults{Err: err, Job: e.job}
-	}
 	idxNDVPushDownCh := make(chan analyzeIndexNDVTotalResult, 1)
-	e.handleNDVForSpecialIndexes(ctx, specialIndexes, idxNDVPushDownCh, samplingStatsConcurrency)
-	count, hists, topNs, fmSketches, extStats, err := e.buildSamplingStats(ctx, gp, ranges, collExtStats, specialIndexesOffsets, idxNDVPushDownCh, samplingStatsConcurrency)
+	e.handleNDVForSpecialIndexes(ctx, specialIndexes, idxNDVPushDownCh, e.samplingStatsConcurrency)
+	count, hists, topNs, fmSketches, extStats, err := e.buildSamplingStats(ctx, gp, ranges, collExtStats, specialIndexesOffsets, idxNDVPushDownCh, e.samplingStatsConcurrency)
 	if err != nil {
 		e.memTracker.Release(e.memTracker.BytesConsumed())
 		return &statistics.AnalyzeResults{Err: err, Job: e.job}

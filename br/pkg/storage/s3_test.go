@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"math/rand"
@@ -1510,6 +1511,41 @@ func TestWalkDirWithEmptyPrefix(t *testing.T) {
 	require.Equal(t, 1, i)
 }
 
+func TestTryLockRemoteRootPathPrefix(t *testing.T) {
+	controller := gomock.NewController(t)
+	s3API := mock.NewMockS3API(controller)
+	storage := NewS3StorageForTest(
+		s3API,
+		&backuppb.S3{
+			Region:       "us-west-2",
+			Bucket:       "bucket",
+			Prefix:       "",
+			Acl:          "acl",
+			Sse:          "sse",
+			StorageClass: "sc",
+		},
+	)
+	defer controller.Finish()
+
+	s3API.EXPECT().
+		ListObjects(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput, _ ...func(*s3.Options)) (*s3.ListObjectsOutput, error) {
+			require.Equal(t, "truncating.lock", aws.ToString(input.Prefix))
+			return nil, errors.New("stop")
+		})
+	s3API.EXPECT().
+		GetObject(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *s3.GetObjectInput, _ ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
+			return nil, errors.New("no such key")
+		})
+
+	_, err := TryLockRemote(context.Background(), storage, "truncating.lock", LockMetaInput{Hint: "hint"})
+	require.Error(t, err)
+	require.ErrorContains(t, err, "during initial check")
+	var locked ErrLocked
+	require.False(t, stderrors.As(err, &locked))
+}
+
 func TestSendCreds(t *testing.T) {
 	accessKey := "ab"
 	secretAccessKey := "cd"
@@ -1670,6 +1706,31 @@ func TestS3StorageBucketRegion(t *testing.T) {
 			require.Equal(t, region, ss.GetOptions().Region)
 		}(ca.name, ca.expectRegion, ca.s3)
 	}
+}
+
+func TestS3StorageCustomAWSEndpointWithFIPSMode(t *testing.T) {
+	t.Setenv("AWS_ACCESS_KEY_ID", "ab")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "cd")
+	t.Setenv("AWS_SESSION_TOKEN", "ef")
+	t.Setenv("AWS_USE_FIPS_ENDPOINT", "true")
+
+	s := createGetBucketRegionServer("us-west-2", 200, true)
+	defer s.Close()
+
+	es, err := New(context.Background(),
+		&backuppb.StorageBackend{Backend: &backuppb.StorageBackend_S3{S3: &backuppb.S3{
+			Region:         "us-west-2",
+			Bucket:         "bucket",
+			Prefix:         "prefix",
+			Provider:       "aws",
+			Endpoint:       s.URL,
+			ForcePathStyle: true,
+		}}},
+		&ExternalStorageOptions{})
+	require.NoError(t, err)
+	ss, ok := es.(*S3Storage)
+	require.True(t, ok)
+	require.Equal(t, "us-west-2", ss.GetOptions().Region)
 }
 
 func TestRetryError(t *testing.T) {

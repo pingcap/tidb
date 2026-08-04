@@ -33,6 +33,62 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestMaxParenthesesDepth(t *testing.T) {
+	p := parser.New()
+	nestedExpr := func(depth int) string {
+		return "select " + strings.Repeat("(", depth) + "1" + strings.Repeat(")", depth)
+	}
+	nestedFuncExpr := func(depth int) string {
+		return "select " + strings.Repeat("f(", depth) + "1" + strings.Repeat(")", depth)
+	}
+	nestedLeadingHint := func(depth int) string {
+		return "select /*+ LEADING(" + strings.Repeat("(", depth) + "t" + strings.Repeat(")", depth) + ") */ * from t"
+	}
+
+	_, err := p.ParseOneStmt(nestedExpr(10000), "", "")
+	require.NoError(t, err)
+
+	_, err = p.ParseOneStmt(nestedExpr(10001), "", "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "parentheses nesting depth exceeds maximum 10000")
+
+	_, err = p.ParseOneStmt(nestedFuncExpr(10001), "", "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "parentheses nesting depth exceeds maximum 10000")
+
+	_, err = p.ParseOneStmt(nestedLeadingHint(10000), "", "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "parentheses nesting depth exceeds maximum 10000")
+}
+
+func TestMaxASTDepth(t *testing.T) {
+	p := parser.New()
+	nestedCaseExpr := func(depth int) string {
+		return "select " + strings.Repeat("case when true then ", depth) + "1" + strings.Repeat(" else 0 end", depth)
+	}
+	for _, tc := range []struct {
+		name string
+		sql  string
+	}{
+		{
+			name: "binary operation chain",
+			sql:  "select " + strings.Repeat("1+", 11000) + "1",
+		},
+		{
+			name: "unary operation chain",
+			sql:  "select " + strings.Repeat("!", 11000) + "1",
+		},
+		{
+			name: "case expression chain",
+			sql:  nestedCaseExpr(11000),
+		},
+	} {
+		_, err := p.ParseOneStmt(tc.sql, "", "")
+		require.Error(t, err, tc.name)
+		require.Contains(t, err.Error(), "AST nesting depth exceeds maximum", tc.name)
+	}
+}
+
 func TestSimple(t *testing.T) {
 	p := parser.New()
 
@@ -4850,19 +4906,37 @@ func TestOptimizerHints(t *testing.T) {
 	hints = selectStmt.TableHints
 	require.Len(t, hints, 3)
 	require.Equal(t, "leading", hints[0].HintName.L)
-	require.Len(t, hints[0].Tables, 1)
-	require.Equal(t, "t1", hints[0].Tables[0].TableName.L)
+	leadingList1, ok := hints[0].HintData.(*ast.LeadingList)
+	require.True(t, ok)
+	require.Len(t, leadingList1.Items, 1)
+	hintTable1, ok := leadingList1.Items[0].(*ast.HintTable)
+	require.True(t, ok)
+	require.Equal(t, "t1", hintTable1.TableName.L)
 
 	require.Equal(t, "leading", hints[1].HintName.L)
-	require.Len(t, hints[1].Tables, 2)
-	require.Equal(t, "t2", hints[1].Tables[0].TableName.L)
-	require.Equal(t, "t3", hints[1].Tables[1].TableName.L)
+	leadingList2, ok := hints[1].HintData.(*ast.LeadingList)
+	require.True(t, ok)
+	require.Len(t, leadingList2.Items, 2)
+	hintTable2, ok := leadingList2.Items[0].(*ast.HintTable)
+	require.True(t, ok)
+	require.Equal(t, "t2", hintTable2.TableName.L)
+	hintTable3, ok := leadingList2.Items[1].(*ast.HintTable)
+	require.True(t, ok)
+	require.Equal(t, "t3", hintTable3.TableName.L)
 
 	require.Equal(t, "leading", hints[2].HintName.L)
-	require.Len(t, hints[2].Tables, 3)
-	require.Equal(t, "t4", hints[2].Tables[0].TableName.L)
-	require.Equal(t, "t5", hints[2].Tables[1].TableName.L)
-	require.Equal(t, "t6", hints[2].Tables[2].TableName.L)
+	leadingList3, ok := hints[2].HintData.(*ast.LeadingList)
+	require.True(t, ok)
+	require.Len(t, leadingList3.Items, 3)
+	hintTable4, ok := leadingList3.Items[0].(*ast.HintTable)
+	require.True(t, ok)
+	require.Equal(t, "t4", hintTable4.TableName.L)
+	hintTable5, ok := leadingList3.Items[1].(*ast.HintTable)
+	require.True(t, ok)
+	require.Equal(t, "t5", hintTable5.TableName.L)
+	hintTable6, ok := leadingList3.Items[2].(*ast.HintTable)
+	require.True(t, ok)
+	require.Equal(t, "t6", hintTable6.TableName.L)
 
 	// Test NO_HASH_JOIN
 	stmt, _, err = p.Parse("select /*+ NO_HASH_JOIN(t1, t2), NO_HASH_JOIN(t3) */ * from t1, t2, t3", "", "")
@@ -7747,4 +7821,13 @@ func TestTableAffinityOption(t *testing.T) {
 	}
 
 	RunTest(t, table, false)
+}
+
+func TestPartialIndex(t *testing.T) {
+	cases := []testCase{
+		{"create table `t` (`id` int primary key,`col` int,index(`col`) where `col`>100)", true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`col` INT,INDEX(`col`) WHERE `col`>100)"},
+		{"create index `idx` on `t` (`col`) where `col`>100", true, "CREATE INDEX `idx` ON `t` (`col`) WHERE `col`>100"},
+		{"alter table `t` add index `idx`(`col`) where `col`>100", true, "ALTER TABLE `t` ADD INDEX `idx`(`col`) WHERE `col`>100"},
+	}
+	RunTest(t, cases, false)
 }

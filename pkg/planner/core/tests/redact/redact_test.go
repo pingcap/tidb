@@ -84,11 +84,11 @@ func TestRedactExplain(t *testing.T) {
 	// CTE
 	tk.MustQuery("explain with recursive cte(a) as (select 1 union select a + 1 from cte where a < 1000) select * from cte, t limit 100 offset 100;").Check(
 		testkit.Rows(
-			"Limit_25 100.00 root  offset:‹100›, count:‹100›",
-			"└─HashJoin_27 200.00 root  CARTESIAN inner join",
-			"  ├─CTEFullScan_31(Build) 2.00 root CTE:cte data:CTE_0",
-			"  └─TableReader_33(Probe) 100.00 root  data:TableFullScan_32",
-			"    └─TableFullScan_32 100.00 cop[tikv] table:t keep order:false, stats:pseudo",
+			"Limit_26 100.00 root  offset:‹100›, count:‹100›",
+			"└─HashJoin_28 200.00 root  CARTESIAN inner join",
+			"  ├─CTEFullScan_32(Build) 2.00 root CTE:cte data:CTE_0",
+			"  └─TableReader_34(Probe) 100.00 root  data:TableFullScan_33",
+			"    └─TableFullScan_33 100.00 cop[tikv] table:t keep order:false, stats:pseudo",
 			"CTE_0 2.00 root  Recursive CTE",
 			"├─Projection_16(Seed Part) 1.00 root  ‹1›->Column#2",
 			"│ └─TableDual_17 1.00 root  rows:1",
@@ -156,11 +156,12 @@ func TestRedactExplain(t *testing.T) {
 		"  └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"))
 	// CTE
 	tk.MustQuery("explain with recursive cte(a) as (select 1 union select a + 1 from cte where a < 1000) select * from cte, t limit 100 offset 100;").Check(
-		testkit.Rows("Limit_25 100.00 root  offset:?, count:?",
-			"└─HashJoin_27 200.00 root  CARTESIAN inner join",
-			"  ├─CTEFullScan_31(Build) 2.00 root CTE:cte data:CTE_0",
-			"  └─TableReader_33(Probe) 100.00 root  data:TableFullScan_32",
-			"    └─TableFullScan_32 100.00 cop[tikv] table:t keep order:false, stats:pseudo",
+		testkit.Rows(
+			"Limit_26 100.00 root  offset:?, count:?",
+			"└─HashJoin_28 200.00 root  CARTESIAN inner join",
+			"  ├─CTEFullScan_32(Build) 2.00 root CTE:cte data:CTE_0",
+			"  └─TableReader_34(Probe) 100.00 root  data:TableFullScan_33",
+			"    └─TableFullScan_33 100.00 cop[tikv] table:t keep order:false, stats:pseudo",
 			"CTE_0 2.00 root  Recursive CTE",
 			"├─Projection_16(Seed Part) 1.00 root  ?->Column#2",
 			"│ └─TableDual_17 1.00 root  rows:1",
@@ -195,15 +196,14 @@ func TestRedactForRangeInfo(t *testing.T) {
 	tk.MustExec("set session tidb_redact_log=ON")
 	tk.MustQuery("explain select /*+ inl_join(t2) */ * from t1 join t2 on t1.a = t2.a where t2.b in (10, 20, 30)").Check(
 		testkit.Rows(
-			"IndexJoin_12 37.46 root  inner join, inner:IndexLookUp_11, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
-			"├─TableReader_24(Build) 9990.00 root  data:Selection_23",
-			"│ └─Selection_23 9990.00 cop[tikv]  not(isnull(test.t1.a))",
-			"│   └─TableFullScan_22 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-			"└─IndexLookUp_11(Probe) 37.46 root  ",
-			"  ├─Selection_10(Build) 37.46 cop[tikv]  not(isnull(test.t2.a))",
-			"  │ └─IndexRangeScan_8 37.50 cop[tikv] table:t2, index:idx(a, b) range: decided by [eq(test.t2.a, test.t1.a) in(test.t2.b, ?, ?, ?)], keep order:false, stats:pseudo",
-			"  └─TableRowIDScan_9(Probe) 37.46 cop[tikv] table:t2 keep order:false, stats:pseudo",
-		))
+			"IndexJoin_14 37.46 root  inner join, inner:IndexLookUp_13, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+			"├─TableReader_26(Build) 9990.00 root  data:Selection_25",
+			"│ └─Selection_25 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+			"│   └─TableFullScan_24 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+			"└─IndexLookUp_13(Probe) 37.46 root  ",
+			"  ├─Selection_12(Build) 37.46 cop[tikv]  not(isnull(test.t2.a))",
+			"  │ └─IndexRangeScan_10 37.50 cop[tikv] table:t2, index:idx(a, b) range: decided by [eq(test.t2.a, test.t1.a) in(test.t2.b, ?, ?, ?)], keep order:false, stats:pseudo",
+			"  └─TableRowIDScan_11(Probe) 37.46 cop[tikv] table:t2 keep order:false, stats:pseudo"))
 }
 
 func TestJoinNotSupportedByTiFlash(t *testing.T) {

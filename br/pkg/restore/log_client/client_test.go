@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"math"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/mock"
+	"github.com/pingcap/tidb/br/pkg/operation"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
 	rawclient "github.com/pingcap/tidb/br/pkg/restore/internal/rawkv"
@@ -100,6 +102,72 @@ var deleteRangeQueryList = []*stream.PreDelRangeQuery{
 		Sql:        "INSERT IGNORE INTO mysql.gc_delete_range VALUES ",
 		ParamsList: nil,
 	},
+}
+
+func requireLockMetaInStorage(
+	ctx context.Context,
+	t *testing.T,
+	stg storage.ExternalStorage,
+	pathPrefix string,
+	resource operation.LockResourceType,
+) storage.LockMeta {
+	t.Helper()
+
+	var metas []storage.LockMeta
+	err := stg.WalkDir(ctx, &storage.WalkOption{}, func(path string, size int64) error {
+		if !strings.HasPrefix(path, pathPrefix) {
+			return nil
+		}
+		content, err := stg.ReadFile(ctx, path)
+		if err != nil {
+			return err
+		}
+		var meta storage.LockMeta
+		if err := json.Unmarshal(content, &meta); err != nil {
+			if strings.Contains(path, ".INTENT.") {
+				return nil
+			}
+			return errors.Annotatef(err, "failed to parse lock metadata from %s", path)
+		}
+		if meta.LockType == string(resource) {
+			metas = append(metas, meta)
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	require.Len(t, metas, 1)
+	return metas[0]
+}
+
+func TestGetLockedMigrationsWritesOperationMetadata(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.ToSlash(t.TempDir())
+	backend, err := storage.ParseBackend("local://"+path, nil)
+	require.NoError(t, err)
+	stg, err := storage.New(ctx, backend, nil)
+	require.NoError(t, err)
+
+	appendOpCtx, err := operation.NewContext("test append migration")
+	require.NoError(t, err)
+	appendOpCtx.SetHintField("restore_id", "123")
+	_, err = stream.MigrationExtension(stg).WithOperationContext(appendOpCtx).AppendMigration(ctx, stream.NewMigration())
+	require.NoError(t, err)
+
+	opCtx, err := operation.NewContext("test log restore")
+	require.NoError(t, err)
+	client := logclient.TEST_NewLogClient(123, 1, 2, 1, domain.NewMockDomain(), fakeSession{})
+	require.NoError(t, client.SetStorage(ctx, backend, nil))
+	client.SetRestoreID(456)
+	client.SetOperationContext(opCtx)
+
+	migs, err := client.GetLockedMigrations(ctx)
+	require.NoError(t, err)
+	defer migs.ReadLock.UnlockOnCleanUp(ctx)
+
+	meta := requireLockMetaInStorage(ctx, t, stg, "v1/LOCK", operation.LockResourceMigrationRead)
+	require.Equal(t, opCtx.OperationID, meta.OwnerID)
+	require.Contains(t, meta.Hint, "operation_started_at="+opCtx.StartedAt.Format(time.RFC3339))
+	require.Contains(t, meta.Hint, "restore_id=456")
 }
 
 func TestDeleteRangeQueryExec(t *testing.T) {
@@ -2561,4 +2629,30 @@ func (m *mockBatchProcessor) ProcessBatch(
 	cf string,
 ) ([]*logclient.KvEntryWithTS, error) {
 	return m.processFunc(ctx, files, entries, filterTS, cf)
+}
+
+func TestGetLockedMigrationsReleasesReadLockOnLoadError(t *testing.T) {
+	ctx := context.Background()
+	stg, err := storage.NewLocalStorage(t.TempDir())
+	require.NoError(t, err)
+
+	// Inject a malformed migration file so ext.Load()'s migIdOf parser fails.
+	// migIdOf takes the first 8 chars of the filename as an integer; "badfile."
+	// is not parseable, so Load() returns an error and exercises the error path
+	// in GetLockedMigrations.
+	require.NoError(t, stg.WriteFile(ctx, "v1/migrations/badfile.mgrt", []byte("garbage")))
+
+	client := logclient.TEST_NewLogClientWithStorage(stg)
+	_, err = client.GetLockedMigrations(ctx)
+	require.Error(t, err, "expected Load() to fail on malformed migration file")
+
+	var lingering []string
+	require.NoError(t, stg.WalkDir(ctx, &storage.WalkOption{
+		SubDir:    "v1",
+		ObjPrefix: "LOCK",
+	}, func(p string, _ int64) error {
+		lingering = append(lingering, p)
+		return nil
+	}))
+	require.Emptyf(t, lingering, "readLock was not released after Load error; lingering files: %v", lingering)
 }

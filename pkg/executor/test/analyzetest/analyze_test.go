@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/globalconn"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 )
@@ -168,16 +169,28 @@ func TestAnalyzeRestrict(t *testing.T) {
 			done <- err
 		}()
 
-		select {
-		case err := <-done:
-			t.Fatalf("analyze finished before cancel, err=%v", err)
-		case <-time.After(50 * time.Millisecond):
+		tkWatcher := testkit.NewTestKit(t, store)
+		tkWatcher.MustExec("use test")
+		var earlyDone bool
+		var earlyErr error
+		require.Eventually(t, func() bool {
+			select {
+			case earlyErr = <-done:
+				earlyDone = true
+				return true
+			default:
+			}
+			rows := tkWatcher.MustQuery("select state from mysql.analyze_jobs where table_name = 't'").Rows()
+			return len(rows) == 1
+		}, 5*time.Second, 20*time.Millisecond)
+		if earlyDone {
+			t.Fatalf("analyze finished before cancel, err=%v", earlyErr)
 		}
 		cancel()
 
 		select {
 		case <-done:
-			rows := tk.MustQuery("select state, fail_reason from mysql.analyze_jobs where table_name = 't' order by end_time desc limit 1").Rows()
+			rows := tkWatcher.MustQuery("select state, fail_reason from mysql.analyze_jobs where table_name = 't' order by end_time desc limit 1").Rows()
 			require.Len(t, rows, 1)
 			require.Equal(t, "failed", strings.ToLower(rows[0][0].(string)))
 			require.Contains(t, rows[0][1].(string), "context canceled")
@@ -191,15 +204,18 @@ func TestAnalyzeRestrict(t *testing.T) {
 		origSM := dom.InfoSyncer().GetSessionManager()
 		sm := &killQuerySessionManager{
 			MockSessionManager: &testkit.MockSessionManager{
-				Conn: make(map[uint64]sessiontypes.Session),
+				SerID: 1,
+				Conn:  make(map[uint64]sessiontypes.Session),
 			},
 		}
 		dom.InfoSyncer().SetSessionManager(sm)
 		defer dom.InfoSyncer().SetSessionManager(origSM)
 
 		tkAnalyze := testkit.NewTestKit(t, store)
+		connID := globalconn.NewGlobalAllocator(sm.ServerID, false).NextID()
+		tkAnalyze.Session().SetConnectionID(connID)
 		tkAnalyze.Session().SetSessionManager(sm)
-		sm.Conn[tkAnalyze.Session().GetSessionVars().ConnectionID] = tkAnalyze.Session()
+		sm.Conn[connID] = tkAnalyze.Session()
 		tkAnalyze.MustExec("use test")
 		tkAnalyze.MustExec("drop table if exists t")
 		tkAnalyze.MustExec("create table t(a int)")
@@ -222,19 +238,22 @@ func TestAnalyzeRestrict(t *testing.T) {
 			done <- err
 		}()
 
-		select {
-		case err := <-done:
-			t.Fatalf("analyze finished before kill query, err=%v", err)
-		case <-time.After(50 * time.Millisecond):
-		}
-
+		var earlyDone bool
+		var earlyErr error
 		require.Eventually(t, func() bool {
+			select {
+			case earlyErr = <-done:
+				earlyDone = true
+				return true
+			default:
+			}
 			rows := tkKiller.MustQuery("select state from mysql.analyze_jobs where table_name = 't'").Rows()
 			return len(rows) == 1
 		}, 5*time.Second, 20*time.Millisecond)
-
-		connID := tkAnalyze.Session().GetSessionVars().ConnectionID
-		tkKiller.MustExec(fmt.Sprintf("kill tidb query %d", connID))
+		if earlyDone {
+			t.Fatalf("analyze finished before kill query, err=%v", earlyErr)
+		}
+		tkKiller.MustExec(fmt.Sprintf("kill query %d", connID))
 
 		select {
 		case err := <-done:
@@ -3411,4 +3430,28 @@ func TestSkipStatsForGeneratedColumnsOnSkippedColumns(t *testing.T) {
 	require.False(t, tblStats.GetCol(tbl.Meta().Columns[2].ID).IsAnalyzed())
 	// For stored columns, we can collect statistics because the values are stored in TiKV
 	require.True(t, tblStats.GetCol(tbl.Meta().Columns[3].ID).IsAnalyzed())
+}
+
+func TestIssue66918(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t (
+		j JSON,
+		g VARCHAR(255) GENERATED ALWAYS AS ((j->'$.v')) STORED,
+		UNIQUE INDEX g_idx (g)
+	)`)
+	tk.MustExec(`INSERT INTO t(j) VALUES ('{"v":1}'), ('{"v":2}')`)
+
+	tk.MustExec("ANALYZE TABLE t")
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	tk.MustQuery("select is_index, stats_ver from mysql.stats_histograms where table_id = ? order by is_index, hist_id", tblInfo.ID).Check(testkit.Rows(
+		"0 2",
+		"1 2",
+	))
+
+	tblStats := dom.StatsHandle().GetPhysicalTableStats(tblInfo.ID, tblInfo)
+	require.True(t, tblStats.GetIdx(tblInfo.Indices[0].ID).IsAnalyzed())
 }

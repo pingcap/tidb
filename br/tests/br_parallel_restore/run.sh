@@ -720,6 +720,59 @@ test_restore_abort() {
     cleanup
 }
 
+verify_migration_read_lock_metadata() {
+    local lock_storage=$1
+    local lock_root="${lock_storage#local://}"
+
+    if [ "$lock_root" = "$lock_storage" ]; then
+        echo "ERROR: lock metadata verification currently expects local storage, got $lock_storage"
+        exit 1
+    fi
+
+    python3 - "$lock_root" <<'PY'
+import glob
+import json
+import os
+import sys
+
+lock_root = sys.argv[1]
+lock_paths = glob.glob(os.path.join(lock_root, "v1", "LOCK.READ.*"))
+if not lock_paths:
+    print(f"ERROR: no migration read lock files found under {lock_root}/v1")
+    sys.exit(1)
+
+errors = []
+for lock_path in lock_paths:
+    try:
+        with open(lock_path, encoding="utf-8") as lock_file:
+            meta = json.load(lock_file)
+    except Exception as err:
+        errors.append(f"{lock_path}: failed to parse lock metadata: {err}")
+        continue
+
+    missing = []
+    if not meta.get("owner_id"):
+        missing.append("owner_id")
+    if meta.get("lock_type") != "migration-read":
+        missing.append("lock_type=migration-read")
+    hint = meta.get("hint", "")
+    if "operation_started_at=" not in hint:
+        missing.append("operation_started_at hint")
+    if "restore_id=" not in hint:
+        missing.append("restore_id hint")
+
+    if not missing:
+        print(f"Verified migration read lock metadata: {lock_path}")
+        sys.exit(0)
+    errors.append(f"{lock_path}: missing {', '.join(missing)}; meta={meta}")
+
+print("ERROR: no migration read lock file contains the expected operation metadata")
+for err in errors:
+    print(err)
+sys.exit(1)
+PY
+}
+
 test_cross_cluster_lock_conflict() {
     echo "Test Case 7: Cross-cluster lock conflict"
     echo "This test reproduces the lock conflict when two clusters restore from the same log backup storage"
@@ -768,6 +821,7 @@ test_cross_cluster_lock_conflict() {
     # Start the first restore in background since it will complete but not release the lock
     run_br restore point --filter "${DB}1.*" --restored-ts $log_backup_ts --full-backup-storage "$LOCK_BACKUP_DIR" -s "$LOCK_LOG_BACKUP_DIR"
     export GO_FAILPOINTS=""
+    verify_migration_read_lock_metadata "$LOCK_LOG_BACKUP_DIR"
 
     echo "=== Step 2: Second restore (DB2) attempts do get read lock and append lock ==="
 

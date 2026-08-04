@@ -734,6 +734,71 @@ func TestUserVars(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, types.NewStringDatum("v2"), dt)
 }
+
+func TestTiDBOptPartialOrderedIndexForTopNSessionAndGlobal(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Test default value
+	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("DISABLE"))
+	tk.MustQuery("select @@global.tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("DISABLE"))
+
+	// Test session scope
+	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = COST")
+	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("COST"))
+	tk.MustQuery("select @@session.tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("COST"))
+	// Global should not be affected
+	tk.MustQuery("select @@global.tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("DISABLE"))
+
+	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = DISABLE")
+	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("DISABLE"))
+
+	// Test global scope
+	tk.MustExec("set @@global.tidb_opt_partial_ordered_index_for_topn = COST")
+	tk.MustQuery("select @@global.tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("COST"))
+	// New session should inherit global value
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("COST"))
+
+	// Session value should override global value
+	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = DISABLE")
+	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("DISABLE"))
+	// Global should still be COST
+	tk.MustQuery("select @@global.tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("COST"))
+
+	// Test different value formats (only DISABLE and COST are allowed)
+	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = 'COST'")
+	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("COST"))
+	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = 'DISABLE'")
+	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("DISABLE"))
+	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = 'cost'")
+	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("COST"))
+	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = 'disable'")
+	tk.MustQuery("select @@tidb_opt_partial_ordered_index_for_topn").Check(testkit.Rows("DISABLE"))
+
+	// Test disallowed values
+	require.Error(t, tk.ExecToErr("set @@tidb_opt_partial_ordered_index_for_topn = 'ON'"))
+	require.Error(t, tk.ExecToErr("set @@tidb_opt_partial_ordered_index_for_topn = 'OFF'"))
+	require.Error(t, tk.ExecToErr("set @@tidb_opt_partial_ordered_index_for_topn = 1"))
+	require.Error(t, tk.ExecToErr("set @@tidb_opt_partial_ordered_index_for_topn = 0"))
+	require.Error(t, tk.ExecToErr("set @@tidb_opt_partial_ordered_index_for_topn = 'true'"))
+	require.Error(t, tk.ExecToErr("set @@tidb_opt_partial_ordered_index_for_topn = 'false'"))
+	require.Error(t, tk.ExecToErr("set @@tidb_opt_partial_ordered_index_for_topn = 2"))
+	require.Error(t, tk.ExecToErr("set @@tidb_opt_partial_ordered_index_for_topn = -1"))
+	require.Error(t, tk.ExecToErr("set @@tidb_opt_partial_ordered_index_for_topn = 'yes'"))
+	require.Error(t, tk.ExecToErr("set @@tidb_opt_partial_ordered_index_for_topn = 'no'"))
+
+	// Verify the field is accessible in SessionVars
+	vars := tk.Session().GetSessionVars()
+	require.Equal(t, "DISABLE", vars.OptPartialOrderedIndexForTopN)
+	require.False(t, vars.IsPartialOrderedIndexForTopNEnabled())
+	tk.MustExec("set @@tidb_opt_partial_ordered_index_for_topn = COST")
+	require.Equal(t, "COST", vars.OptPartialOrderedIndexForTopN)
+	require.True(t, vars.IsPartialOrderedIndexForTopNEnabled())
+}
+
 func TestPerformanceSchemaSessionConnectAttrsSizeGlobalSQL(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

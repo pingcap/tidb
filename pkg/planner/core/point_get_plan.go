@@ -1172,14 +1172,14 @@ func newBatchPointGetPlan(
 	}
 	for _, idxInfo := range tbl.Indices {
 		if !idxInfo.Unique || idxInfo.State != model.StatePublic || (idxInfo.Invisible && !ctx.GetSessionVars().OptimizerUseInvisibleIndexes) || idxInfo.MVIndex ||
-			!indexIsAvailableByHints(
-				ctx.GetSessionVars().CurrentDB,
-				dbName,
-				tblAlias,
-				idxInfo,
-				tblHints,
-				indexHints,
-			) {
+			idxInfo.HasCondition() || !indexIsAvailableByHints(
+			ctx.GetSessionVars().CurrentDB,
+			dbName,
+			tblAlias,
+			idxInfo,
+			tblHints,
+			indexHints,
+		) {
 			continue
 		}
 		if len(idxInfo.Columns) != len(whereColNames) || idxInfo.HasPrefixIndex() {
@@ -1544,14 +1544,14 @@ func checkTblIndexForPointPlan(ctx base.PlanContext, tblName *resolve.TableNameW
 	}
 	for _, idxInfo := range tbl.Indices {
 		if !idxInfo.Unique || idxInfo.State != model.StatePublic || (idxInfo.Invisible && !ctx.GetSessionVars().OptimizerUseInvisibleIndexes) || idxInfo.MVIndex ||
-			!indexIsAvailableByHints(
-				ctx.GetSessionVars().CurrentDB,
-				dbName,
-				tblAlias,
-				idxInfo,
-				tblHints,
-				tblName.IndexHints,
-			) {
+			idxInfo.HasCondition() || !indexIsAvailableByHints(
+			ctx.GetSessionVars().CurrentDB,
+			dbName,
+			tblAlias,
+			idxInfo,
+			tblHints,
+			tblName.IndexHints,
+		) {
 			continue
 		}
 		if idxInfo.Global {
@@ -2263,10 +2263,27 @@ func buildOrderedList(ctx base.PlanContext, pointPlan base.Plan, list []*ast.Ass
 		}
 		visitInfos = append(visitInfos, vs...)
 		castToTP := col.GetStaticType()
-		if castToTP.GetType() == mysql.TypeEnum && assign.Expr.GetType().EvalType() == types.ETInt {
+		if (castToTP.GetType() == mysql.TypeEnum || castToTP.GetType() == mysql.TypeSet) &&
+			assign.Expr.GetType().EvalType() == types.ETInt {
 			castToTP.AddFlag(mysql.EnumSetAsIntFlag)
 		}
-		expr = expression.BuildCastFunction(ctx.GetExprCtx(), expr, castToTP)
+		// Point-update builds assignment expressions directly in the planner.
+		// Keep the implicit CAST for most target column types so the fast path stays
+		// aligned with normal UPDATE typing, but do not CAST unsigned numeric targets:
+		// CAST(-1 AS UNSIGNED) wraps to MAX_UINT64, while UPDATE assignment conversion
+		// must be decided by executor-side table.CastValue under the current statement
+		// context and sql_mode.
+		//
+		// This applies to more than integer columns. Unsigned decimal/real also uses the
+		// CAST path which treats negative inputs as uint64 (e.g. -1 -> 1844...),
+		// diverging from assignment semantics.
+		isUnsignedNumericTarget := mysql.HasUnsignedFlag(castToTP.GetFlag()) &&
+			(castToTP.EvalType() == types.ETInt ||
+				castToTP.EvalType() == types.ETDecimal ||
+				castToTP.EvalType() == types.ETReal)
+		if !isUnsignedNumericTarget {
+			expr = expression.BuildCastFunction(ctx.GetExprCtx(), expr, castToTP)
+		}
 		if allAssignmentsAreConstant {
 			_, isConst := expr.(*expression.Constant)
 			allAssignmentsAreConstant = isConst

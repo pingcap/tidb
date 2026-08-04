@@ -305,8 +305,12 @@ func TestSupportedSuffixForServerDisk(t *testing.T) {
 	require.NoError(t, os.WriteFile(fileName2, []byte{}, 0o644))
 	c := LoadDataController{
 		Plan: &Plan{
-			Format:       DataFormatCSV,
-			InImportInto: true,
+			Format:         DataFormatCSV,
+			InImportInto:   true,
+			Charset:        &defaultCharacterSet,
+			LineFieldsInfo: newDefaultLineFieldsInfo(),
+			FieldNullDef:   defaultFieldNullDef,
+			Parameters:     &ImportParameters{},
 		},
 		logger: zap.NewExample(),
 	}
@@ -400,6 +404,34 @@ func TestSupportedSuffixForServerDisk(t *testing.T) {
 		gotPath = append(gotPath, f.Path)
 	}
 	require.ElementsMatch(t, []string{"glob-2.csv", "glob-3.csv"}, gotPath)
+
+	testcases := []struct {
+		fileNames    []string
+		expectFormat string
+	}{
+		{
+			expectFormat: DataFormatCSV,
+			fileNames:    []string{"file1.CSV", "file1.csv.gz", "file1.csv.gz", "file1.CSV.GZIP", "file1.CSV.gzip", "file1.csv.zstd", "file1.csv.zst", "file1.csv.snappy"},
+		},
+		{
+			expectFormat: DataFormatSQL,
+			fileNames:    []string{"file2.SQL", "file2.sql.gz", "file2.SQL.GZIP", "file2.sql.zstd", "file2.sql.zstd", "file2.sql.zst", "file2.sql.zst", "file2.sql.snappy"},
+		},
+		{
+			expectFormat: DataFormatParquet,
+			fileNames:    []string{"file3.PARQUET", "file3.parquet.gz", "file3.PARQUET.GZIP", "file3.parquet.zstd", "file3.parquet.zst", "file3.parquet.snappy", "file3.parquet.snappy"},
+		},
+	}
+	for _, testcase := range testcases {
+		for _, fileName := range testcase.fileNames {
+			c.Format = DataFormatAuto
+			c.Path = path.Join(tempDir, fileName)
+			err = os.WriteFile(c.Path, []byte{}, 0o644)
+			require.NoError(t, err)
+			require.NoError(t, c.InitDataFiles(ctx))
+			require.Equal(t, testcase.expectFormat, c.Format)
+		}
+	}
 }
 
 func TestGetDataSourceType(t *testing.T) {
@@ -407,4 +439,37 @@ func TestGetDataSourceType(t *testing.T) {
 		SelectPlan: &plannercore.PhysicalSelection{},
 	}))
 	require.Equal(t, DataSourceTypeFile, getDataSourceType(&plannercore.ImportInto{}))
+}
+func TestParseFileType(t *testing.T) {
+	testCases := []struct {
+		name     string
+		path     string
+		expected string
+	}{
+		// Basic file extensions
+		{name: "sql extension", path: "test.sql", expected: DataFormatSQL},
+		{name: "parquet extension", path: "data.parquet", expected: DataFormatParquet},
+		{name: "csv extension", path: "file.csv", expected: DataFormatCSV},
+		{name: "no extension", path: "noext", expected: DataFormatCSV},
+		// Single compression extension
+		{name: "sql with gz", path: "test.sql.gz", expected: DataFormatSQL},
+		{name: "parquet with zstd", path: "data.parquet.zst", expected: DataFormatParquet},
+		{name: "csv with snappy", path: "file.csv.snappy", expected: DataFormatCSV},
+		// Edge cases after removing compression
+		{name: "only compression extension", path: "file.gz", expected: DataFormatCSV},
+		{name: "non-recognized extension after compression", path: "document.txt.gz", expected: DataFormatCSV},
+		// Case insensitivity
+		{name: "uppercase extension", path: "TEST.SQL.GZ", expected: DataFormatSQL},
+		{name: "mixed case extension", path: "file.PARQUET.zst", expected: DataFormatParquet},
+		// Multiple dots in filename
+		{name: "multiple dots in name", path: "backup.file.sql.gz", expected: DataFormatSQL},
+		{name: "hidden file with compression", path: ".hidden.sql.gz", expected: DataFormatSQL},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			actual := parseFileType(tc.path)
+			require.Equal(t, tc.expected, actual)
+		})
+	}
 }

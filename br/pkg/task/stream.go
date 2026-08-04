@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/httputil"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/operation"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/registry"
 	"github.com/pingcap/tidb/br/pkg/restore"
@@ -1105,6 +1106,9 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	formatTS := func(ts uint64) string {
 		return oracle.GetTimeFromTS(ts).Format("2006-01-02 15:04:05.0000")
 	}
+	if err := cfg.EnsureOperationContext(cmdName); err != nil {
+		return errors.Trace(err)
+	}
 	if cfg.Until == 0 {
 		return errors.Annotatef(berrors.ErrInvalidArgument, "please provide the `--until` ts")
 	}
@@ -1116,8 +1120,15 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	if err != nil {
 		return err
 	}
-	lock, err := storage.TryLockRemote(ctx, extStorage, truncateLockPath, hintOnTruncateLock)
+	truncateLockMeta, err := cfg.OperationContext.LockMeta(
+		operation.LockResourceLogTruncateExclusive, hintOnTruncateLock)
 	if err != nil {
+		return errors.Annotate(err, "failed to build log truncate lock metadata")
+	}
+	lock, err := storage.TryLockRemote(ctx, extStorage, truncateLockPath, truncateLockMeta)
+	if err != nil {
+		log.Warn("Failed to acquire log truncate lock",
+			storage.LockConflictLogFields(truncateLockPath, truncateLockMeta, err)...)
 		return err
 	}
 	defer utils.WithCleanUp(&err, 10*time.Second, func(ctx context.Context) error {
@@ -1137,7 +1148,7 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	}
 
 	if cfg.CleanUpCompactions {
-		est := stream.MigrationExtension(extStorage)
+		est := stream.MigrationExtension(extStorage).WithOperationContext(cfg.OperationContext)
 		est.Hooks = stream.NewProgressBarHooks(console)
 		newSN := math.MaxInt
 		optPrompt := stream.MMOptInteractiveCheck(func(ctx context.Context, m *backuppb.Migration) bool {
@@ -1150,12 +1161,16 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 		optAppend := stream.MMOptAppendPhantomMigration(backuppb.Migration{TruncatedTo: cfg.Until})
 		opts := []stream.MergeAndMigrateToOpt{optPrompt, optAppend, stream.MMOptAlwaysRunTruncate()}
 		var res stream.MergeAndMigratedTo
+		var mergeErr error
 		if cfg.DryRun {
 			est.DryRun(func(me stream.MigrationExt) {
-				res = me.MergeAndMigrateTo(ctx, newSN, opts...)
+				res, mergeErr = me.MergeAndMigrateTo(ctx, newSN, opts...)
 			})
 		} else {
-			res = est.MergeAndMigrateTo(ctx, newSN, opts...)
+			res, mergeErr = est.MergeAndMigrateTo(ctx, newSN, opts...)
+		}
+		if mergeErr != nil {
+			return errors.Trace(mergeErr)
 		}
 		if len(res.Warnings) > 0 {
 			glue.PrintList(console, "the following errors happened", res.Warnings, 10)
@@ -1302,7 +1317,7 @@ func checkTaskCompat(cfg *RestoreConfig, task streamhelper.Task) error {
 func checkIncompatibleChangefeed(ctx context.Context, backupTS uint64, etcdCLI *clientv3.Client) error {
 	nameSet, err := cdcutil.GetIncompatibleChangefeedsWithSafeTS(ctx, etcdCLI, backupTS)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	if !nameSet.Empty() {
 		return errors.Errorf("%splease remove changefeed(s) before restore", nameSet.MessageToUser())
@@ -1325,6 +1340,9 @@ func RunStreamRestore(
 		span1 := span.Tracer().StartSpan("task.RunStreamRestore", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+	if err := cfg.EnsureOperationContext("log-restore"); err != nil {
+		return errors.Trace(err)
 	}
 	_, s, err := GetStorage(ctx, cfg.Config.Storage, &cfg.Config)
 	if err != nil {
@@ -1429,6 +1447,12 @@ func RunStreamRestore(
 	cfg.RestoreStartTS = restoreStartTS
 	log.Info("captured restore start timestamp for blocklist",
 		zap.Uint64("restoreStartTS", restoreStartTS))
+
+	if cfg.CheckRequirements {
+		if err := checkIncompatibleChangefeed(ctx, cfg.RestoreTS, mgr.GetDomain().GetEtcdClient()); err != nil {
+			return err
+		}
+	}
 
 	// restore full snapshot.
 	if taskInfo.NeedFullRestore {
@@ -1637,7 +1661,7 @@ func restoreStream(
 			log.Info("using fine-grained scheduler pausing for log restore",
 				zap.Int("key-ranges-count", len(keyRanges)))
 			restoreSchedulersFunc, _, err = restore.FineGrainedRestorePreWork(ctx, mgr,
-				importModeSwitcher, keyRanges, cfg.Online, false)
+				importModeSwitcher, keyRanges, false)
 		} else {
 			log.Info("no key ranges to pause, skipping scheduler pausing")
 			restoreSchedulersFunc = func(context.Context) error { return nil }
@@ -1722,7 +1746,7 @@ func restoreStream(
 			return errors.Trace(err)
 		}
 
-		err = client.RestoreSSTFiles(ctx, compactedSplitIter, rewriteRules, importModeSwitcher, p.IncBy)
+		err = client.RestoreSSTFiles(ctx, compactedSplitIter, rewriteRules, importModeSwitcher, cfg.Online, p.IncBy)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1833,7 +1857,9 @@ func createLogClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, mgr *
 	if err = client.SetStorage(ctx, u, &opts); err != nil {
 		return nil, errors.Trace(err)
 	}
+	client.SetRateLimit(cfg.RateLimit)
 	client.SetCrypter(&cfg.CipherInfo)
+	client.SetRegionScanConcurrency(cfg.RegionScanConcurrency)
 	client.SetUpstreamClusterID(cfg.UpstreamClusterID)
 
 	err = client.InitClients(ctx, u, cfg.logCheckpointMetaManager, cfg.sstCheckpointMetaManager, uint(cfg.PitrConcurrency), cfg.ConcurrencyPerStore.Value)
@@ -1854,6 +1880,7 @@ func createLogClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, mgr *
 		return nil, errors.Trace(err)
 	}
 
+	client.SetOperationContext(cfg.OperationContext)
 	client.SetRestoreID(cfg.RestoreID)
 
 	return client, nil
@@ -2239,6 +2266,8 @@ func buildAndSaveIDMapIfNeeded(ctx context.Context, client *logclient.LogClient,
 	if cfg.PiTRTableTracker != nil {
 		cfg.tableMappingManager.ApplyFilterToDBReplaceMap(cfg.PiTRTableTracker)
 	}
+	// reuse existing database ids if it exists in the current cluster
+	cfg.tableMappingManager.ReuseExistingDatabaseIDs(client.GetDomain().InfoSchema())
 	// replace temp id with read global id
 	err = cfg.tableMappingManager.ReplaceTemporaryIDs(ctx, client.GenGlobalIDs)
 	if err != nil {
@@ -2267,6 +2296,7 @@ func getCurrentTSFromCheckpointOrPD(ctx context.Context, mgr *conn.Mgr, cfg *Log
 func RegisterRestoreIfNeeded(ctx context.Context, cfg *RestoreConfig, cmdName string, domain *domain.Domain) error {
 	// already registered previously
 	if cfg.RestoreID != 0 {
+		setOperationContextRestoreID(&cfg.OperationContext, cfg.RestoreID)
 		log.Info("restore task already registered, skipping re-registration",
 			zap.Uint64("restoreID", cfg.RestoreID),
 			zap.String("cmdName", cmdName))
@@ -2296,6 +2326,7 @@ func RegisterRestoreIfNeeded(ctx context.Context, cfg *RestoreConfig, cmdName st
 		return errors.Trace(err)
 	}
 	cfg.RestoreID = restoreID
+	setOperationContextRestoreID(&cfg.OperationContext, restoreID)
 
 	// the registry may have resolved a different RestoreTS from existing tasks
 	// if so, we need to apply it to the config for consistency

@@ -77,6 +77,8 @@ const (
 	RewriteModeKeyspace
 )
 
+const DownloadRateLimitTTLSeconds = 3600
+
 type storeTokenChannelMap struct {
 	sync.RWMutex
 	tokens map[uint64]chan struct{}
@@ -133,6 +135,8 @@ func newStoreTokenChannelMap(stores []*metapb.Store, bufferSize uint) *storeToke
 }
 
 type SnapFileImporter struct {
+	taskId string
+
 	cipher     *backuppb.CipherInfo
 	apiVersion kvrpcpb.APIVersion
 
@@ -147,6 +151,7 @@ type SnapFileImporter struct {
 	beforeIngestCallbacks []func(context.Context, restore.BatchBackupFileSet) (afterIngest func() error, err error)
 
 	concurrencyPerStore uint
+	pdReqTokens         chan struct{}
 
 	kvMode      KvMode
 	rawStartKey []byte
@@ -167,6 +172,8 @@ type SnapFileImporterOptions struct {
 	rewriteMode  RewriteMode
 	tikvStores   []*metapb.Store
 
+	// scanConcurrency is the max in-flight PD scan-region requests during import.
+	scanConcurrency     uint
 	concurrencyPerStore uint
 	createCallBacks     []func(*SnapFileImporter) error
 	closeCallbacks      []func(*SnapFileImporter) error
@@ -180,6 +187,7 @@ func NewSnapFileImporterOptions(
 	rewriteMode RewriteMode,
 	tikvStores []*metapb.Store,
 	concurrencyPerStore uint,
+	scanConcurrency uint,
 	createCallbacks []func(*SnapFileImporter) error,
 	closeCallbacks []func(*SnapFileImporter) error,
 ) *SnapFileImporterOptions {
@@ -190,25 +198,10 @@ func NewSnapFileImporterOptions(
 		backend:             backend,
 		rewriteMode:         rewriteMode,
 		tikvStores:          tikvStores,
+		scanConcurrency:     scanConcurrency,
 		concurrencyPerStore: concurrencyPerStore,
 		createCallBacks:     createCallbacks,
 		closeCallbacks:      closeCallbacks,
-	}
-}
-
-func NewSnapFileImporterOptionsForTest(
-	splitClient split.SplitClient,
-	importClient importclient.ImporterClient,
-	tikvStores []*metapb.Store,
-	rewriteMode RewriteMode,
-	concurrencyPerStore uint,
-) *SnapFileImporterOptions {
-	return &SnapFileImporterOptions{
-		metaClient:          splitClient,
-		importClient:        importClient,
-		tikvStores:          tikvStores,
-		rewriteMode:         rewriteMode,
-		concurrencyPerStore: concurrencyPerStore,
 	}
 }
 
@@ -221,7 +214,13 @@ func NewSnapFileImporter(
 	if options.concurrencyPerStore == 0 {
 		return nil, errors.New("concurrencyPerStore must be greater than 0")
 	}
+	var pdReqTokens chan struct{}
+	if options.scanConcurrency > 0 {
+		pdReqTokens = utils.BuildWorkerTokenChannel(options.scanConcurrency)
+	}
 	fileImporter := &SnapFileImporter{
+		taskId: uuid.New().String(),
+
 		apiVersion: apiVersion,
 		kvMode:     kvMode,
 
@@ -234,6 +233,7 @@ func NewSnapFileImporter(
 		rewriteMode:         options.rewriteMode,
 		cacheKey:            fmt.Sprintf("BR-%s-%d", time.Now().Format("20060102150405"), rand.Int63()),
 		concurrencyPerStore: options.concurrencyPerStore,
+		pdReqTokens:         pdReqTokens,
 		cond:                sync.NewCond(new(sync.Mutex)),
 		closeCallbacks:      options.closeCallbacks,
 	}
@@ -288,9 +288,39 @@ func (importer *SnapFileImporter) Close() error {
 	return nil
 }
 
+func (importer *SnapFileImporter) acquirePDReqToken(ctx context.Context) error {
+	if importer.pdReqTokens != nil {
+		select {
+		case <-ctx.Done():
+			return errors.Trace(ctx.Err())
+		case <-importer.pdReqTokens:
+			return nil
+		}
+	}
+	return nil
+}
+
+func (importer *SnapFileImporter) releasePDReqToken() {
+	if importer.pdReqTokens != nil {
+		importer.pdReqTokens <- struct{}{}
+	}
+}
+
+func (importer *SnapFileImporter) paginateScanRegion(
+	ctx context.Context, startKey, endKey []byte,
+) ([]*split.RegionInfo, error) {
+	if err := importer.acquirePDReqToken(ctx); err != nil {
+		return nil, errors.Trace(err)
+	}
+	defer importer.releasePDReqToken()
+	return split.PaginateScanRegion(ctx, importer.metaClient, startKey, endKey, split.ScanRegionPaginationLimit)
+}
+
 func (importer *SnapFileImporter) SetDownloadSpeedLimit(ctx context.Context, storeID, rateLimit uint64) error {
 	req := &import_sstpb.SetDownloadSpeedLimitRequest{
+		TaskId:     importer.taskId,
 		SpeedLimit: rateLimit,
+		TtlSeconds: DownloadRateLimitTTLSeconds,
 	}
 	_, err := importer.importClient.SetDownloadSpeedLimit(ctx, storeID, req)
 	return errors.Trace(err)
@@ -419,8 +449,7 @@ func (importer *SnapFileImporter) Import(
 
 	err = utils.WithRetry(ctx, func() error {
 		// Scan regions covered by the file range
-		regionInfos, errScanRegion := split.PaginateScanRegion(
-			ctx, importer.metaClient, startKey, endKey, split.ScanRegionPaginationLimit)
+		regionInfos, errScanRegion := importer.paginateScanRegion(ctx, startKey, endKey)
 		if errScanRegion != nil {
 			return errors.Trace(errScanRegion)
 		}

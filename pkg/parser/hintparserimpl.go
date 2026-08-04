@@ -47,6 +47,9 @@ func (hs *hintScanner) Errorf(format string, args ...interface{}) error {
 func (hs *hintScanner) Lex(lval *yyhintSymType) int {
 	tok, pos, lit := hs.scan()
 	hs.lastScanOffset = pos.Offset
+	if !hs.updateParenthesesDepth(tok) {
+		return hintInvalid
+	}
 	var errorTokenType string
 
 	switch tok {

@@ -440,6 +440,7 @@ func SetExprColumnInOperand(expr Expression) Expression {
 		for i, arg := range args {
 			args[i] = SetExprColumnInOperand(arg)
 		}
+		v.CleanHashCode()
 	}
 	return expr
 }
@@ -505,7 +506,9 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 				} else {
 					// for grouping function recreation, use clone (meta included) instead of newFunction
 					e = v.Clone()
-					e.(*ScalarFunction).Function.getArgs()[0] = newArg
+					sf := e.(*ScalarFunction)
+					sf.Function.getArgs()[0] = newArg
+					sf.CleanHashCode()
 				}
 				e.SetCoercibility(v.Coercibility())
 				e.GetType(ctx.GetEvalCtx()).SetFlag(flag)
@@ -687,7 +690,9 @@ func SubstituteCorCol2Constant(ctx BuildContext, expr Expression) (Expression, e
 			newSf = BuildCastFunction(ctx, newArgs[0], x.RetType)
 		} else if x.FuncName.L == ast.Grouping {
 			newSf = x.Clone()
-			newSf.(*ScalarFunction).GetArgs()[0] = newArgs[0]
+			sf := newSf.(*ScalarFunction)
+			sf.GetArgs()[0] = newArgs[0]
+			sf.CleanHashCode()
 		} else {
 			newSf, err = NewFunction(ctx, x.FuncName.L, x.GetType(ctx.GetEvalCtx()), newArgs...)
 		}
@@ -780,6 +785,18 @@ var symmetricOp = map[opcode.Op]opcode.Op{
 	opcode.EQ:     opcode.EQ,
 	opcode.NE:     opcode.NE,
 	opcode.NullEQ: opcode.NullEQ,
+}
+
+// CompareOpMap records all comparison operators.
+var CompareOpMap = map[string]struct{}{
+	ast.LT:     {},
+	ast.GE:     {},
+	ast.GT:     {},
+	ast.LE:     {},
+	ast.EQ:     {},
+	ast.NE:     {},
+	ast.NullEQ: {},
+	ast.In:     {},
 }
 
 func pushNotAcrossArgs(ctx BuildContext, exprs []Expression, not bool) ([]Expression, bool) {

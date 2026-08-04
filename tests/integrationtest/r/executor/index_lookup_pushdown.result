@@ -363,13 +363,13 @@ B	2	5050	500	50
 explain select /*+ index_lookup_pushdown(t2, i) */ * from t2 where b != 3 order by a desc, b desc limit 4;
 id	estRows	task	access object	operator info
 TopN_9	4.00	root		executor__index_lookup_pushdown.t2.a:desc, executor__index_lookup_pushdown.t2.b:desc, offset:0, count:4
-└─IndexLookUp_17	4.00	root		
-  ├─LocalIndexLookUp_19(Build)	4.00	cop[tikv]		index handle offsets:[]
-  │ ├─TopN_16(Build)	4.00	cop[tikv]		executor__index_lookup_pushdown.t2.a:desc, executor__index_lookup_pushdown.t2.b:desc, offset:0, count:4
-  │ │ └─Selection_15	6656.67	cop[tikv]		ne(executor__index_lookup_pushdown.t2.b, 3)
-  │ │   └─IndexFullScan_13	10000.00	cop[tikv]	table:t2, index:i(c)	keep order:false, stats:pseudo
-  │ └─TableRowIDScan_18(Probe)	4.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-  └─TableRowIDScan_14(Probe)	0.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─IndexLookUp_18	4.00	root		
+  ├─LocalIndexLookUp_20(Build)	4.00	cop[tikv]		index handle offsets:[]
+  │ ├─TopN_17(Build)	4.00	cop[tikv]		executor__index_lookup_pushdown.t2.a:desc, executor__index_lookup_pushdown.t2.b:desc, offset:0, count:4
+  │ │ └─Selection_16	6656.67	cop[tikv]		ne(executor__index_lookup_pushdown.t2.b, 3)
+  │ │   └─IndexFullScan_14	10000.00	cop[tikv]	table:t2, index:i(c)	keep order:false, stats:pseudo
+  │ └─TableRowIDScan_19(Probe)	4.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─TableRowIDScan_15(Probe)	0.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 select /*+ index_lookup_pushdown(t2, i) */ * from t2 where b != 3 order by a desc, b desc limit 4;
 a	b	c	d	e
 C	2	2080	800	20

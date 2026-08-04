@@ -1,6 +1,6 @@
 module github.com/pingcap/tidb/pkg/parser
 
-go 1.25
+go 1.25.0
 
 require (
 	github.com/cznic/mathutil v0.0.0-20181122101859-297441e03548
@@ -13,7 +13,7 @@ require (
 	github.com/stretchr/testify v1.8.4
 	go.uber.org/goleak v1.3.0
 	go.uber.org/zap v1.27.0
-	golang.org/x/text v0.19.0
+	golang.org/x/text v0.37.0
 	modernc.org/parser v1.1.0
 	modernc.org/y v1.1.0
 )
@@ -31,3 +31,7 @@ require (
 	modernc.org/sortutil v1.2.0 // indirect
 	modernc.org/strutil v1.2.0 // indirect
 )
+
+replace golang.org/x/crypto => golang.org/x/crypto v0.52.0
+
+replace golang.org/x/net => golang.org/x/net v0.55.0

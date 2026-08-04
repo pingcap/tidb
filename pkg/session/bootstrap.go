@@ -116,6 +116,7 @@ const (
 		Password_expired		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Password_last_changed	TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
 		Password_lifetime		SMALLINT UNSIGNED DEFAULT NULL,
+		Max_user_connections 	INT UNSIGNED NOT NULL DEFAULT 0,
 		PRIMARY KEY (Host, User),
 		KEY i_user (User));`
 	// CreateGlobalPrivTable is the SQL statement creates Global scope privilege table in system db.
@@ -663,7 +664,8 @@ const (
 		switch_group_name VARCHAR(32) DEFAULT '',
 		rule VARCHAR(512) DEFAULT '',
 		INDEX sql_index(resource_group_name,watch_text(700)) COMMENT "accelerate the speed when select quarantined query",
-		INDEX time_index(end_time) COMMENT "accelerate the speed when querying with active watch"
+		INDEX time_index(end_time) COMMENT "accelerate the speed when querying with active watch",
+		INDEX idx_start_time(start_time) COMMENT "accelerate the speed when syncing new watch records"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
 	// CreateDoneRunawayWatchTable stores the condition which is used to check whether query should be quarantined.
@@ -679,7 +681,8 @@ const (
 		action bigint(10),
 		switch_group_name VARCHAR(32) DEFAULT '',
 		rule VARCHAR(512) DEFAULT '',
-		done_time TIMESTAMP(6) NOT NULL
+		done_time TIMESTAMP(6) NOT NULL,
+		INDEX idx_done_time(done_time) COMMENT "accelerate the speed when syncing done watch records"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
 	// CreateRequestUnitByGroupTable stores the historical RU consumption by resource group.
@@ -1277,8 +1280,39 @@ const (
 	// Use the current sysvar default when the row is missing.
 	version228 = 228
 
+	// version 229
+	// Backfill tidb_analyze_distsql_scan_concurrency for upgraded clusters where the
+	// row in mysql.global_variables was never materialized when the variable was
+	// introduced. Use tidb_distsql_scan_concurrency to preserve old analyze behavior.
+	version229 = 229
+
+	// version 230
+	// add idx_start_time index to tidb_runaway_watch and idx_done_time index to tidb_runaway_watch_done.
+	version230 = 230
+
+	// version 231
+	// Add Max_user_connections to mysql.user.
+	version231 = 231
+
+	// version 232
+	// Repair upgrades from the v8.5.5 hotfix family back to upstream
+	// `release-8.5`. Those branches reused version224/225 for other DDLs, so
+	// clusters reach >= 224 without the upstream version224/225 schema and
+	// bootstrap then skips it as "already applied":
+	//   - release-8.5-20260323-v8.5.5 (stops at 225): in this branch version224
+	//     adds runaway watch indexes and version225 adds `Max_user_connections`,
+	//     so upstream `max_node_count` (version224) and `i_user` indexes
+	//     (version225) are both missing.
+	//   - release-8.5-20260527-v8.5.5 (stops at 224, no version225): in this
+	//     branch version224 adds `i_user` indexes, so `max_node_count` is
+	//     missing; `i_user` already exists.
+	// version232 re-applies the version224/225 DDLs; `doReentrantDDL`
+	// ignores `ErrColumnExists`/`ErrDupKeyName`, so already-present schema is a
+	// no-op (e.g. `i_user` on release-8.5-20260527-v8.5.5).
+	version232 = 232
+
 	// ...
-	// [version229, version238] is the version range reserved for patches of 8.5.x
+	// [version231, version238] is the version range reserved for patches of 8.5.x
 	// ...
 	// next version should start with 239
 
@@ -1286,7 +1320,7 @@ const (
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version228
+var currentBootstrapVersion int64 = version232
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1470,6 +1504,10 @@ var (
 		upgradeToVer226,
 		upgradeToVer227,
 		upgradeToVer228,
+		upgradeToVer229,
+		upgradeToVer230,
+		upgradeToVer231,
+		upgradeToVer232,
 	}
 )
 
@@ -3346,19 +3384,18 @@ func upgradeToVer223(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN modify_params json AFTER `error`;", infoschema.ErrColumnExists)
 }
 
-func upgradeToVer224(s sessiontypes.Session, ver int64) {
-	if ver >= version224 {
-		return
-	}
+// addMaxNodeCountColumns adds the `max_node_count` column to both global task
+// tables. Shared by upgradeToVer224 and upgradeToVer232 (the latter re-applies it
+// for clusters that skipped upstream version224).
+func addMaxNodeCountColumns(s sessiontypes.Session) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN max_node_count INT DEFAULT 0 AFTER `modify_params`;", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN max_node_count INT DEFAULT 0 AFTER `modify_params`;", infoschema.ErrColumnExists)
 }
 
-func upgradeToVer225(s sessiontypes.Session, ver int64) {
-	if ver >= version225 {
-		return
-	}
-
+// addIUserIndexes adds the `i_user` index to the seven privilege tables. Shared
+// by upgradeToVer225 and upgradeToVer232 (the latter re-applies it for clusters
+// that skipped upstream version225).
+func addIUserIndexes(s sessiontypes.Session) {
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
 	doReentrantDDL(s, "ALTER TABLE mysql.global_priv ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
 	doReentrantDDL(s, "ALTER TABLE mysql.db ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
@@ -3366,6 +3403,20 @@ func upgradeToVer225(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.columns_priv ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
 	doReentrantDDL(s, "ALTER TABLE mysql.global_grants ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
 	doReentrantDDL(s, "ALTER TABLE mysql.default_roles ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
+}
+
+func upgradeToVer224(s sessiontypes.Session, ver int64) {
+	if ver >= version224 {
+		return
+	}
+	addMaxNodeCountColumns(s)
+}
+
+func upgradeToVer225(s sessiontypes.Session, ver int64) {
+	if ver >= version225 {
+		return
+	}
+	addIUserIndexes(s)
 }
 
 // writeClusterID writes cluster id into mysql.tidb
@@ -3420,6 +3471,19 @@ func upgradeToVer228(s sessiontypes.Session, ver int64) {
 	initGlobalVariableIfNotExists(s, variable.TiDBIgnoreInlistPlanDigest, variable.Off)
 }
 
+func upgradeToVer229(s sessiontypes.Session, ver int64) {
+	if ver >= version229 {
+		return
+	}
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rows, err := sqlexec.ExecSQL(ctx, s, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;", mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBDistSQLScanConcurrency)
+	terror.MustNil(err)
+	if len(rows) == 0 || rows[0].GetString(0) == "" {
+		return
+	}
+	initGlobalVariableIfNotExists(s, variable.TiDBAnalyzeDistSQLScanConcurrency, rows[0].GetString(0))
+}
+
 func getPrimaryKeyColsOrEmpty(s sessiontypes.Session, dbName, tableName string) []string {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	rows, err := sqlexec.ExecSQL(ctx, s, `
@@ -3437,6 +3501,41 @@ func getPrimaryKeyColsOrEmpty(s sessiontypes.Session, dbName, tableName string) 
 		cols = append(cols, row.GetString(0))
 	}
 	return cols
+}
+
+func upgradeToVer230(s sessiontypes.Session, ver int64) {
+	if ver >= version230 {
+		return
+	}
+
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch ADD INDEX idx_start_time(start_time) COMMENT 'accelerate the speed when syncing new watch records'", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch_done ADD INDEX idx_done_time(done_time) COMMENT 'accelerate the speed when syncing done watch records'", dbterror.ErrDupKeyName)
+}
+
+func upgradeToVer231(s sessiontypes.Session, ver int64) {
+	if ver >= version231 {
+		return
+	}
+
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Max_user_connections` INT UNSIGNED NOT NULL DEFAULT 0 AFTER `Password_lifetime`")
+}
+
+func upgradeToVer232(s sessiontypes.Session, ver int64) {
+	if ver >= version232 {
+		return
+	}
+
+	// Re-apply the upstream version224/225 DDLs that the v8.5.5 hotfix branches
+	// skipped. We call the shared helpers directly rather than upgradeToVer224/
+	// upgradeToVer225: those guard on `ver >= version224/225`, but `ver` here is
+	// the pre-upgrade version (e.g. 225 for release-8.5-20260323-v8.5.5, 224 for
+	// release-8.5-20260527-v8.5.5), so the guards would short-circuit and skip
+	// the repair — the exact bug this version fixes. The helpers have no such
+	// guard; doReentrantDDL ignores ErrColumnExists/ErrDupKeyName, so
+	// already-present schema (e.g. i_user on release-8.5-20260527-v8.5.5) is a
+	// no-op.
+	addMaxNodeCountColumns(s)
+	addIUserIndexes(s)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
