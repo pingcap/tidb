@@ -92,11 +92,10 @@ func (r *concurrentFileReader) read(bufs [][]byte) ([][]byte, error) {
 		r.startRead(0)
 	}
 	result := <-r.resultCh
-	if result.err != nil {
-		return nil, result.err
+	if result.err == nil {
+		r.startRead(1 - result.bufferSet)
 	}
-	r.startRead(1 - result.bufferSet)
-	return result.buffers, nil
+	return result.buffers, result.err
 }
 
 func (r *concurrentFileReader) startRead(bufferSet int) {
