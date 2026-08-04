@@ -150,6 +150,39 @@ pub(crate) fn index_join_decision(
 /// Everything BELOW this switch is complete and tested: the decision, the
 /// executor ([`crate::join::IndexLookupPlan`]) and the plan text. The switch
 /// is the one piece the cost model owns.
+///
+/// # What is now known about that cost model, and what is still missing
+///
+/// Half of it exists and is validated:
+/// [`tidb_planner::plan_cost_ver2`] is Go's `plan_cost_ver2.go` -- the
+/// DEFAULT cost model -- reproducing every `estCost` in
+/// `r/planner/core/plan_cost_ver2.result` to the printed digit, including
+/// `getIndexJoinCostVer24PhysicalIndexJoin` and `compareTaskCost`.
+///
+/// What is missing is the OTHER half, and it was measured on the recorded
+/// statement at `join_reorder_through_projection.result:1169`. Under a live
+/// `gorun` binary that statement's two candidates cost:
+///
+/// ```text
+/// HashJoin_16   2492.68 = start(1497) + build(44.03) + probe(643.44) + ...
+/// IndexJoin_23  4558.90 = start(1497) + build(643.44) + buildTask(2395.20) + ...
+/// ```
+///
+/// -- and `tidb_planner::plan_cost_ver2::hash_join_cost` reproduces the
+/// 2492.68 exactly from those child costs. The decision therefore does not
+/// hinge on anything about the join itself: BOTH candidates are dominated by
+/// the cost of the OUTER SUBTREE (here `643.44`, a projection over a merge
+/// join over two table readers) and by that subtree's row count. This
+/// decision function is handed [`JoinSide`]s carrying a table, some names and
+/// some types -- no rows, no row sizes, no child cost -- so it cannot form
+/// either number.
+///
+/// The missing piece is therefore named precisely: a recursive plan-cost
+/// evaluator over THIS tier's plan tree that carries per-node rows and row
+/// sizes, whose result feeds
+/// [`tidb_planner::plan_cost_ver2::compare_task_cost`]. Turning this switch
+/// on before that exists still only trades one recorded instance of a
+/// statement for the other.
 pub(crate) const CHOOSER_IS_FAITHFUL: bool = false;
 
 /// The looked-up side [`index_join_decision`] would name if this tier could
