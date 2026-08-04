@@ -383,22 +383,25 @@ func (helper *extractHelper) extractLikePatternCol(
 			continue
 		}
 
-		var canBuildPattern bool
+		var canBuildPattern, isPrefilter bool
 		var pattern string
 		// We use '|' to combine DNF regular expression: .*a.*|.*b.*
 		// e.g:
 		// SELECT * FROM t WHERE c LIKE '%a%' OR c LIKE '%b%'
 		if fn.FuncName.L == ast.LogicOr && !toLower {
-			canBuildPattern, pattern = helper.extractOrLikePattern(ctx, fn, extractColName, extractCols, needLike2Regexp, toLower)
+			canBuildPattern, pattern, isPrefilter = helper.extractOrLikePattern(ctx, fn, extractColName, extractCols, needLike2Regexp, toLower)
 		} else {
-			canBuildPattern, pattern = helper.extractLikePattern(ctx, fn, extractColName, extractCols, needLike2Regexp, toLower)
+			canBuildPattern, pattern, isPrefilter = helper.extractLikePattern(ctx, fn, extractColName, extractCols, needLike2Regexp, toLower)
 		}
 		if canBuildPattern && toLower {
 			pattern = strings.ToLower(pattern)
 		}
 		if canBuildPattern {
 			patterns = append(patterns, pattern)
-		} else {
+		}
+		// A prefilter narrows the scan but is not exactly equivalent to the
+		// predicate, so it is pushed down *and* kept for a scalar recheck.
+		if !canBuildPattern || isPrefilter {
 			remained = append(remained, expr)
 		}
 	}
@@ -415,32 +418,36 @@ func (helper extractHelper) extractOrLikePattern(
 ) (
 	ok bool,
 	pattern string,
+	isPrefilter bool,
 ) {
 	predicates := expression.SplitDNFItems(orFunc)
 	if len(predicates) == 0 {
-		return false, ""
+		return false, "", false
 	}
 
 	patternBuilder := make([]string, 0, len(predicates))
 	for _, predicate := range predicates {
 		fn, ok := predicate.(*expression.ScalarFunction)
 		if !ok {
-			return false, ""
+			return false, "", false
 		}
 
-		ok, partPattern := helper.extractLikePattern(ctx, fn, extractColName, extractCols, needLike2Regexp, toLower)
+		ok, partPattern, partIsPrefilter := helper.extractLikePattern(ctx, fn, extractColName, extractCols, needLike2Regexp, toLower)
 		if !ok {
-			return false, ""
+			return false, "", false
 		}
+		// One inexact branch makes the whole disjunction inexact.
+		isPrefilter = isPrefilter || partIsPrefilter
 		patternBuilder = append(patternBuilder, partPattern)
 	}
-	return true, strings.Join(patternBuilder, "|")
+	return true, strings.Join(patternBuilder, "|"), isPrefilter
 }
 
 // extractLikePattern builds the pushed-down pattern for a single predicate.
 // toLower reports whether the caller folds case on both the pattern and the
-// scanned value; it decides whether a case-insensitive ILIKE can be represented
-// by the pattern at all.
+// scanned value, which decides how a case-insensitive ILIKE is represented.
+// isPrefilter reports that the pattern only narrows the scan and is not exactly
+// equivalent to the predicate, so the caller must keep a scalar recheck.
 func (helper extractHelper) extractLikePattern(
 	ctx base.PlanContext,
 	fn *expression.ScalarFunction,
@@ -451,6 +458,7 @@ func (helper extractHelper) extractLikePattern(
 ) (
 	ok bool,
 	pattern string,
+	isPrefilter bool,
 ) {
 	var colName string
 	var datums []types.Datum
@@ -459,22 +467,12 @@ func (helper extractHelper) extractLikePattern(
 		colName, datums, _ = helper.extractColBinaryOpConsExpr(ctx, extractCols, fn)
 	}
 	if colName != extractColName {
-		return false, ""
+		return false, "", false
 	}
 	switch fn.FuncName.L {
 	case ast.EQ:
-		return true, "^" + regexp.QuoteMeta(datums[0].GetString()) + "$"
+		return true, "^" + regexp.QuoteMeta(datums[0].GetString()) + "$", false
 	case ast.Like, ast.Ilike:
-		// ILIKE matches case-insensitively, but the pattern built below is
-		// case-sensitive. Callers that fold case (toLower) lower both the
-		// pattern and the scanned value, so it stays equivalent there; callers
-		// that do not -- the cluster log path sends the pattern verbatim in
-		// SearchLogRequest.Patterns and drops this predicate -- would filter out
-		// rows differing only in case, e.g. an "ERROR" line for
-		// `message ILIKE '%error%'`. Leave ILIKE to be rechecked instead.
-		if fn.FuncName.L == ast.Ilike && !toLower {
-			return false, ""
-		}
 		// The pushed-down pattern must honour the LIKE ESCAPE so it does not
 		// diverge from the original predicate (issue #69653). The escape has to
 		// be resolvable at plan time: for a constant escape (including the
@@ -483,16 +481,30 @@ func (helper extractHelper) extractLikePattern(
 		// here, so we skip extraction and let the scalar predicate be rechecked.
 		escape, ok := likeEscapeConst(fn)
 		if !ok {
-			return false, ""
+			return false, "", false
 		}
-		if needLike2Regexp {
-			return true, stringutil.CompileLike2Regexp(datums[0].GetString(), escape)
+		if !needLike2Regexp {
+			return true, datums[0].GetString(), false
 		}
-		return true, datums[0].GetString()
+		pattern = stringutil.CompileLike2Regexp(datums[0].GetString(), escape)
+		// ILIKE matches case-insensitively while the pattern above is
+		// case-sensitive. Callers that fold case (toLower) lower both the pattern
+		// and the scanned value, so it stays equivalent there. Callers that do
+		// not -- the cluster log path sends the pattern verbatim in
+		// SearchLogRequest.Patterns -- get a case-insensitive group instead, so
+		// an "ERROR" line still matches `message ILIKE '%error%'`. The scoped
+		// (?i:...) form keeps the flag from leaking across a '|' when several
+		// patterns are combined into one disjunction. Case folding there is the
+		// regexp engine's rather than ILIKE's, so it is only a prefilter and the
+		// predicate is rechecked.
+		if fn.FuncName.L == ast.Ilike && !toLower {
+			return true, "(?i:" + pattern + ")", true
+		}
+		return true, pattern, false
 	case ast.Regexp, ast.RegexpLike:
-		return true, datums[0].GetString()
+		return true, datums[0].GetString(), false
 	default:
-		return false, ""
+		return false, "", false
 	}
 }
 

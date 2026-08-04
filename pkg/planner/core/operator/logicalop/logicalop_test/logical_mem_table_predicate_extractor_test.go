@@ -541,26 +541,31 @@ func TestClusterLogTableExtractor(t *testing.T) {
 			level:     set.NewStringSet("debug", "error"),
 		},
 		{
-			// ILIKE is case-insensitive, but the pattern pushed down here is
-			// matched case-sensitively by the remote log search and replaces the
-			// predicate, so consuming it would drop rows that differ only in
-			// case (an "ERROR" line for '%error%'). Keep it as a scalar recheck.
+			// ILIKE is case-insensitive while the pattern is matched
+			// case-sensitively by the remote log search, so it is pushed down as a
+			// case-insensitive group -- an "ERROR" line still matches '%error%'.
+			// The predicate stays for a scalar recheck (see the executor test in
+			// TestClusterLogTableIlike), and a pattern is still produced so the
+			// retriever does not reject the scan as a full-log scan.
 			sql:       "select * from information_schema.cluster_log where message ilike '%error%'",
 			nodeTypes: set.NewStringSet(),
 			instances: set.NewStringSet(),
+			patterns:  []string{"(?i:^.*error.*$)"},
 		},
 		{
-			// Same for an ILIKE carrying a non-default ESCAPE.
+			// Same for an ILIKE carrying a non-default ESCAPE ('#%' is a literal '%').
 			sql:       "select * from information_schema.cluster_log where message ilike '%error#%%' escape '#'",
 			nodeTypes: set.NewStringSet(),
 			instances: set.NewStringSet(),
+			patterns:  []string{"(?i:^.*error%.*$)"},
 		},
 		{
-			// A DNF mixing ILIKE cannot be pushed down either: the combined
-			// pattern would silently lose the case-insensitive branch.
+			// In a DNF the scoped (?i:...) keeps the case-insensitive branch from
+			// leaking case folding onto the case-sensitive one across the '|'.
 			sql:       "select * from information_schema.cluster_log where (message ilike '%pd%' or message like '%tikv%')",
 			nodeTypes: set.NewStringSet(),
 			instances: set.NewStringSet(),
+			patterns:  []string{"(?i:^.*pd.*$)|^.*tikv.*$"},
 		},
 		{
 			// A case-sensitive LIKE still pushes down, honouring a custom ESCAPE
