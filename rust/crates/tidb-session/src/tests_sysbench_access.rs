@@ -502,13 +502,16 @@ fn the_sysbench_write_shapes_read_a_handle_range() {
             "1.00",
             "range:[500,500]",
         ),
-        // A write whose `WHERE` bounds no handle still reads the whole table:
-        // the narrowing is the ranger's answer, not a blanket rewrite.
+        // A write whose `WHERE` bounds no handle but names a secondary index
+        // reads through that index, exactly as the `SELECT` form does: Go plans
+        // a write's read from the same cost chooser, so `WHERE k = 500` takes
+        // `k_1` (captured for the read side; the recorded corpus shows the same
+        // for `delete from t1 where c2 = 1`).
         (
             "UPDATE sbtest1 SET c = 'x' WHERE k = 500",
-            "TableFullScan",
-            "10000.00",
-            "keep order:false",
+            "IndexRangeScan",
+            "10.00",
+            "range:[500,500]",
         ),
         // No `WHERE` at all: also the whole table, which is every row the
         // statement names.
