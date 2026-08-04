@@ -825,11 +825,12 @@ impl Partial {
                 }
             }
             Partial::AvgReal { sum, count } => Datum::Real(sum / *count as f64),
-            // Go's result column is a SIGNED `BIGINT` holding the unsigned
-            // fold's bit pattern, which is why `BIT_AND` over an all-NULL
-            // group prints `-1` rather than `18446744073709551615`
-            // (captured from TiDB).
-            Partial::Bit { acc, .. } => Datum::Int(*acc as i64),
+            // Go `typeInfer4BitFuncs` marks the column `UnsignedFlag`, and
+            // `func_bitfuncs.go`'s `AppendFinalResult2Chunk` does
+            // `AppendUint64`, so the fold is printed as the unsigned value:
+            // `BIT_AND` over an all-NULL group is `18446744073709551615`,
+            // not `-1` (captured from TiDB).
+            Partial::Bit { acc, .. } => Datum::UInt(*acc),
             // Go: population variance divides by `count`, sample variance by
             // `count - 1` and is NULL for a single row; both are NULL for an
             // empty (or all-NULL) input.

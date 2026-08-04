@@ -100,15 +100,18 @@ pub(crate) fn agg_kind_and_type(
                 });
             (AggKind::Avg, FieldType::new(code))
         }
-        // Go `typeInfer4BitFuncs`: a binary `BIGINT(21)` that never returns
-        // NULL -- an empty (or all-NULL) input folds to the operator's
-        // identity, not NULL. The column is SIGNED, which is why an all-NULL
-        // `BIT_AND` reads back as `-1` (captured from TiDB).
+        // Go `typeInfer4BitFuncs`: a binary `BIGINT(21) UNSIGNED` that never
+        // returns NULL -- an empty (or all-NULL) input folds to the
+        // operator's identity, not NULL. The UNSIGNED flag is what makes an
+        // all-NULL `BIT_AND` read back as `18446744073709551615`, and a view
+        // over one describe as `bigint(21) unsigned NO` (captured from TiDB).
         "BIT_AND" | "BIT_OR" | "BIT_XOR" => {
             let mut t = FieldType::new(FieldTypeCode::LongLong);
             t.set_flen(21);
             t.set_decimal(0);
-            t.add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+            t.add_flags(
+                tidb_datatype::FieldTypeFlags::NOT_NULL | tidb_datatype::FieldTypeFlags::UNSIGNED,
+            );
             let op = match name {
                 "BIT_AND" => crate::hash_agg::BitOp::And,
                 "BIT_OR" => crate::hash_agg::BitOp::Or,

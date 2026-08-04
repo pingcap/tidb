@@ -329,3 +329,76 @@ fn select_distinct() {
         ]
     );
 }
+
+/// `BIT_AND`/`BIT_OR`/`BIT_XOR` return BIGINT **UNSIGNED**.
+///
+/// Go `aggregation/base_func.go`'s `typeInfer4BitFuncs` adds
+/// `mysql.UnsignedFlag`, and `func_bitfuncs.go` appends the fold with
+/// `AppendUint64`. Captured from TiDB over `v BIGINT`:
+///
+/// ```text
+/// values (null)      -> 18446744073709551615 | 0                    | 0
+/// values (-1),(-1)   -> 18446744073709551615 | 18446744073709551615 | 0
+/// values (3),(5),(null) -> 1 | 7 | 6
+/// desc of a view over them -> bigint(21) unsigned NO
+/// ```
+///
+/// The all-NULL and all-`-1` rows are the ones that separate the signed
+/// reading from Go's: as a signed BIGINT they would print `-1`.
+#[test]
+fn bit_aggregates_are_unsigned() {
+    use tidb_datatype::FieldTypeCode;
+
+    fn catalog_with(rows: Vec<Vec<Datum>>) -> Catalog {
+        let mut catalog = Catalog::default();
+        catalog.register(
+            "b",
+            MemTable {
+                columns: vec![("v".to_owned(), FieldType::new(FieldTypeCode::LongLong))],
+                rows,
+            },
+        );
+        catalog
+    }
+
+    // `Datum`'s equality is NUMERIC across the integer kinds, so `Int(-1)`
+    // and `UInt(u64::MAX)` compare equal. The whole finding is about which
+    // KIND the fold lands in, so the assertion has to read the variant.
+    fn unsigned(value: &Datum) -> u64 {
+        match value {
+            Datum::UInt(bits) => *bits,
+            other => panic!("expected an unsigned datum, got {other:?}"),
+        }
+    }
+
+    let query = "SELECT BIT_AND(v), BIT_OR(v), BIT_XOR(v) FROM b";
+    let cases: Vec<(Vec<Vec<Datum>>, [u64; 3])> = vec![
+        (vec![vec![Datum::Null]], [u64::MAX, 0, 0]),
+        (
+            vec![vec![Datum::Int(-1)], vec![Datum::Int(-1)]],
+            [u64::MAX, u64::MAX, 0],
+        ),
+        (
+            vec![vec![Datum::Int(3)], vec![Datum::Int(5)], vec![Datum::Null]],
+            [1, 7, 6],
+        ),
+    ];
+    for (rows, expected) in cases {
+        let out =
+            run_select_on(query, &catalog_with(rows), &crate::StmtContext::for_query()).unwrap();
+        assert_eq!(out.len(), 1);
+        let folds: Vec<u64> = out[0].iter().map(unsigned).collect();
+        assert_eq!(folds, expected.to_vec());
+    }
+
+    // The inferred column type carries `UnsignedFlag` too, which is what
+    // makes a view over one describe as `bigint(21) unsigned NO`.
+    for name in ["BIT_AND", "BIT_OR", "BIT_XOR"] {
+        let (_, field_type) = crate::driver::agg_build::agg_kind_and_type(name, &[]).unwrap();
+        assert_ne!(
+            field_type.flags() & tidb_datatype::FieldTypeFlags::UNSIGNED,
+            0,
+            "{name} must infer an UNSIGNED column"
+        );
+    }
+}
