@@ -105,6 +105,21 @@ pub(crate) struct PlanNode {
     /// runs. `None` outside `EXPLAIN ANALYZE`, and for an operator this tier
     /// builds but does not meter.
     pub(crate) act_rows: Option<Rc<Cell<u64>>>,
+    /// `property.StatsInfo.ColNDVs[c] / RowCount` for every column of this
+    /// subtree, when one ratio holds for all of them.
+    ///
+    /// Go carries a per-column NDV map beside the row count, and
+    /// `StatsInfo.Scale` multiplies BOTH by the same factor, so the ratio is
+    /// an invariant of a subtree built out of scales. A pseudo `DataSource`
+    /// sets `ColNDVs[c] = RealtimeCount * distinctFactor` for every column
+    /// (`pkg/planner/core/stats.go`), so the whole map collapses to the one
+    /// number 0.8 -- which is what an equi-join needs and all it needs.
+    ///
+    /// `None` where that collapse does not hold: an ANALYZEd scan, whose
+    /// columns have their own histogram NDVs, and any operator whose NDVs Go
+    /// does not scale with the row count. A join over such a side prints
+    /// `N/A` rather than a number derived from the wrong NDV.
+    pub(crate) key_ndv_ratio: Option<f64>,
 }
 
 impl PlanNode {
@@ -119,7 +134,15 @@ impl PlanNode {
             label: "",
             children: Vec::new(),
             act_rows: None,
+            key_ndv_ratio: None,
         }
+    }
+
+    /// The same node, marked as carrying Go's pseudo NDV ratio for every
+    /// column (`distinctFactor`), which only a PSEUDO scan does.
+    fn with_pseudo_ndv(mut self, estimate: ScanEstimate) -> Self {
+        self.key_ndv_ratio = estimate.pseudo.then_some(DISTINCT_FACTOR);
+        self
     }
 }
 
@@ -257,6 +280,15 @@ impl PlanTrace {
         let est_rows = est.apply(self.top_est());
         let child = self.stack.pop();
         let mut node = PlanNode::new(name, est_rows, String::new(), info);
+        // `StatsInfo.Scale` multiplies `RowCount` and every `ColNDVs` entry by
+        // the SAME factor, so the ratio survives an inherit or a scale
+        // untouched. It does not survive the other two: a `Fixed` estimate
+        // came from somewhere else entirely, and Go's `LogicalLimit` clamps
+        // each NDV to the new row count rather than scaling it.
+        node.key_ndv_ratio = match est {
+            Est::Inherit | Est::Scale(_) => child.as_ref().and_then(|c| c.key_ndv_ratio),
+            Est::Fixed(_) | Est::CapAt(_) => None,
+        };
         node.children.extend(child);
         self.stack.push(node);
     }
@@ -395,12 +427,15 @@ impl PlanTrace {
     /// appends `stats:pseudo` on exactly the second case
     /// (`physical_table_scan.go`: `StatsVersion == statistics.PseudoVersion`).
     pub(crate) fn table_full_scan(&mut self, visible: &str, estimate: ScanEstimate) {
-        self.push(PlanNode::new(
-            "TableFullScan",
-            Some(estimate.rows),
-            format!("table:{visible}"),
-            format!("keep order:false{}", pseudo_suffix(estimate)),
-        ));
+        self.push(
+            PlanNode::new(
+                "TableFullScan",
+                Some(estimate.rows),
+                format!("table:{visible}"),
+                format!("keep order:false{}", pseudo_suffix(estimate)),
+            )
+            .with_pseudo_ndv(estimate),
+        );
     }
 
     /// A read of a bounded stretch of the CLUSTERED HANDLE, which REPLACES
@@ -431,16 +466,19 @@ impl PlanTrace {
         // A RENAME, not a replacement: the whole-table scan `build_from`
         // installed is the executor that runs, narrowed by the ranges it
         // accepted, so its row counter is still the right one.
-        self.rename_top(PlanNode::new(
-            "TableRangeScan",
-            Some(estimate.rows),
-            format!("table:{visible}"),
-            format!(
-                "range:{}, keep order:false{}",
-                printed.join(", "),
-                pseudo_suffix(estimate)
-            ),
-        ));
+        self.rename_top(
+            PlanNode::new(
+                "TableRangeScan",
+                Some(estimate.rows),
+                format!("table:{visible}"),
+                format!(
+                    "range:{}, keep order:false{}",
+                    printed.join(", "),
+                    pseudo_suffix(estimate)
+                ),
+            )
+            .with_pseudo_ndv(estimate),
+        );
         self.consumed = true;
     }
 
@@ -493,15 +531,18 @@ impl PlanTrace {
         index_columns: &[&str],
         estimate: ScanEstimate,
     ) {
-        self.replace_top(PlanNode::new(
-            "IndexFullScan",
-            Some(estimate.rows),
-            format!(
-                "table:{visible}, index:{index_name}({})",
-                index_columns.join(", ")
-            ),
-            format!("keep order:false{}", pseudo_suffix(estimate)),
-        ));
+        self.replace_top(
+            PlanNode::new(
+                "IndexFullScan",
+                Some(estimate.rows),
+                format!(
+                    "table:{visible}, index:{index_name}({})",
+                    index_columns.join(", ")
+                ),
+                format!("keep order:false{}", pseudo_suffix(estimate)),
+            )
+            .with_pseudo_ndv(estimate),
+        );
         // `consumed` stays false, unlike every narrowed path above: this one
         // consumed no condition, so a `Selection` on top of it still scales
         // the estimate the way Go's does over an `IndexFullScan`.
@@ -517,23 +558,26 @@ impl PlanTrace {
         estimate: ScanEstimate,
     ) {
         let printed: Vec<String> = ranges.iter().map(range_text).collect();
-        self.replace_top(PlanNode::new(
-            "IndexRangeScan",
-            // The rows the RANGES cover, which is Go's `CountAfterAccess`:
-            // the index histogram's answer when the index was analyzed, the
-            // pseudo rate when it was not. Both come from
-            // [`crate::access_cost`], the same place that costed the path.
-            Some(estimate.rows),
-            format!(
-                "table:{visible}, index:{index_name}({})",
-                index_columns.join(", ")
-            ),
-            format!(
-                "range:{}, keep order:false{}",
-                printed.join(", "),
-                pseudo_suffix(estimate)
-            ),
-        ));
+        self.replace_top(
+            PlanNode::new(
+                "IndexRangeScan",
+                // The rows the RANGES cover, which is Go's `CountAfterAccess`:
+                // the index histogram's answer when the index was analyzed, the
+                // pseudo rate when it was not. Both come from
+                // [`crate::access_cost`], the same place that costed the path.
+                Some(estimate.rows),
+                format!(
+                    "table:{visible}, index:{index_name}({})",
+                    index_columns.join(", ")
+                ),
+                format!(
+                    "range:{}, keep order:false{}",
+                    printed.join(", "),
+                    pseudo_suffix(estimate)
+                ),
+            )
+            .with_pseudo_ndv(estimate),
+        );
         self.consumed = true;
     }
 
@@ -737,6 +781,7 @@ impl PlanTrace {
         // (`flat_plan.go`'s `BuildSide`/`ProbeSide`).
         left.label = if build_is_left { "(Build)" } else { "(Probe)" };
         right.label = if build_is_left { "(Probe)" } else { "(Build)" };
+        let est_rows = full_join_row_count(&left, &right, equal.len());
         let children = if build_is_left {
             vec![left, right]
         } else {
@@ -744,8 +789,7 @@ impl PlanTrace {
         };
         self.stack.push(PlanNode {
             name: "HashJoin",
-            // Divergence 6: an equi-join's cardinality needs statistics.
-            est_rows: None,
+            est_rows,
             access: String::new(),
             info,
             // `explainJoinLeftSide` names the LEFT child's operator, and only
@@ -757,7 +801,28 @@ impl PlanTrace {
             label: "",
             children,
             act_rows: None,
+            // Go `LogicalJoin.DeriveStats` builds a fresh `ColNDVs` from both
+            // children's maps rather than scaling either one, so the single
+            // ratio this trace carries does not survive a join.
+            key_ndv_ratio: None,
         });
+        // The same rule an access path follows when its range consumed a
+        // condition: the join has now PRICED the `WHERE` conjuncts pushed
+        // into it, and `driver::predicate_push_down` COPIES rather than
+        // moves, so the `Selection` still printed above re-checks them and
+        // must not charge their selectivity a second time. Go MOVES the
+        // predicate and prints no such Selection at all.
+        //
+        // An `ON` condition is NOT a `WHERE` conjunct, so it does not set the
+        // flag: the `Selection` above an explicit `JOIN ... ON` prices a
+        // different predicate and still has to scale by it.
+        //
+        // Coarse, exactly as it is for a narrowed scan: one leftover conjunct
+        // beside the pushed one is now un-priced rather than double-priced.
+        // Of the two errors this is the smaller -- for
+        // `t1.a = t2.a and t1.b > 5` it prints 12500.00 against TiDB's
+        // 4162.50, where charging the equality twice would print 4.16.
+        self.consumed |= !pushed.is_empty();
         Ok(())
     }
 
@@ -976,6 +1041,61 @@ pub(crate) fn pseudo_selectivity_of_conjuncts(conjuncts: &[&tidb_ast::Expr]) -> 
         factor = factor.min(rate);
     }
     factor
+}
+
+/// Go `cardinality.EstimateFullJoinRowCount` over the two subtrees a
+/// [`PlanTrace::join`] is about to wrap.
+///
+/// The formula itself lives in `tidb_planner::cardinality::join`, a complete
+/// port of `pkg/planner/cardinality/join.go`; this supplies its inputs from
+/// what the trace knows.
+///
+/// A CARTESIAN join is `leftRows * rightRows` and needs no statistics at all,
+/// so it is answered whenever both children have an estimate. An equi-join
+/// divides by the larger key NDV, which needs [`PlanNode::key_ndv_ratio`];
+/// without it the join keeps Go's `N/A` rather than inventing an NDV.
+///
+/// The per-side NDV is `EstimateColsNDVWithMatchedLen`'s DEFAULT arm
+/// (`ndv.go:87-122`, with `RiskGroupNDVSkewRatio` at its shipped 0): the
+/// MAXIMUM over the keys' column NDVs, with a matched length of 1. Every
+/// column of a pseudo side has the same NDV, so that maximum is the one
+/// number `key_ndv_ratio` carries no matter how many keys the join has.
+///
+/// DIVERGENCE: TiDB pushes a null-rejecting `not(isnull(k))` under each side
+/// of an inner equi-join before it estimates, so its inputs are 9990 where
+/// this tier's are 10000, and it prints 12487.50 where this prints 12500.00.
+/// The gap is that missing rewrite, not this arithmetic -- a CARTESIAN join,
+/// which gets no such rewrite, matches TiDB exactly.
+fn full_join_row_count(left: &PlanNode, right: &PlanNode, equal_count: usize) -> Option<f64> {
+    use tidb_planner::cardinality::join::{
+        estimate_full_join_row_count, FullJoinRowCountInput, JoinKeyEstimate,
+    };
+    let (left_rows, right_rows) = (left.est_rows?, right.est_rows?);
+    let key = |node: &PlanNode| {
+        node.key_ndv_ratio
+            .zip(node.est_rows)
+            .map(|(ratio, rows)| JoinKeyEstimate::new(rows * ratio, 1, equal_count))
+    };
+    let (left_keys, right_keys) = if equal_count == 0 {
+        (JoinKeyEstimate::empty(), JoinKeyEstimate::empty())
+    } else {
+        (key(left)?, key(right)?)
+    };
+    Some(estimate_full_join_row_count(&FullJoinRowCountInput {
+        left_row_count: left_rows,
+        right_row_count: right_rows,
+        is_cartesian: equal_count == 0,
+        left_join_keys: left_keys,
+        right_join_keys: right_keys,
+        // Reached only when both equi-key slices are empty, which this tier
+        // routes to the cartesian arm above; kept explicit so the source's
+        // fallback is visible rather than silently unreachable.
+        left_non_equi_keys: JoinKeyEstimate::empty(),
+        right_non_equi_keys: JoinKeyEstimate::empty(),
+        // `vardef.DefTiDBOptJoinReorderThreshold`, and this tier has no `SET`
+        // that moves it: the 0.9-per-remaining-key correlation factor is off.
+        join_reorder_threshold: tidb_vardef::defaults::DEF_TIDB_OPT_JOIN_REORDER_THRESHOLD as i32,
+    }))
 }
 
 pub(crate) fn collect_and<'a>(expr: &'a tidb_ast::Expr, out: &mut Vec<&'a tidb_ast::Expr>) {

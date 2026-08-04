@@ -1127,3 +1127,71 @@ fn open_interval_ranges_do_not_depend_on_a_read_being_covering() {
     let (operator, _) = range_of(&mut session, "SELECT * FROM d WHERE a > 5");
     assert_eq!(operator, "  \u{2514}\u{2500}TableFullScan");
 }
+
+/// Go `cardinality.EstimateFullJoinRowCount`, which
+/// `tidb_executor::plan_trace` now calls for the `HashJoin` row that used to
+/// print `N/A`.
+///
+/// Each right-hand string is TiDB's own printed `estRows` for the same
+/// statement on the same schema, captured with `gorun`. Two of the three
+/// shapes agree exactly; the equi-join shapes are 0.1% high for ONE reason,
+/// named on its assertion.
+#[test]
+fn explain_est_rows_for_a_join() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE j1(a int, b int)").unwrap();
+    session.run("CREATE TABLE j2(a int, b int)").unwrap();
+
+    fn join_est(session: &mut Session, sql: &str) -> String {
+        let rows = row_text(session.run(&format!("EXPLAIN {sql}")));
+        let join = rows
+            .iter()
+            .find(|row| row[0].contains("HashJoin"))
+            .unwrap_or_else(|| panic!("no HashJoin row for {sql}"));
+        join[1].clone()
+    }
+
+    // EXACT. A Cartesian product is `leftRows * rightRows` and needs no
+    // statistics at all -- and TiDB derives no null-rejecting filter under a
+    // join with no join key, so both sides are the same 10000 here as there.
+    assert_eq!(
+        join_est(&mut session, "SELECT * FROM j1, j2"),
+        "100000000.00"
+    );
+
+    // DIVERGENCE, 0.1%, and only this: TiDB rewrites an inner equi-join's
+    // sides with `not(isnull(k))` before estimating, so it divides
+    // 9990 * 9990 by 7992 (= 12487.50) where this divides 10000 * 10000 by
+    // 8000. The arithmetic between those inputs is identical.
+    for equi in [
+        "SELECT * FROM j1 JOIN j2 ON j1.a = j2.a",
+        "SELECT * FROM j1 LEFT JOIN j2 ON j1.a = j2.a",
+        // TWO keys, same answer: `EstimateColsNDVWithMatchedLen`'s default
+        // arm is the MAXIMUM over the keys' column NDVs, not their product,
+        // and every column of a pseudo side has the same NDV. TiDB prints
+        // 12475.01, again its own 9980.01-row inputs.
+        "SELECT * FROM j1 JOIN j2 ON j1.a = j2.a AND j1.b = j2.b",
+    ] {
+        assert_eq!(join_est(&mut session, equi), "12500.00", "{equi}");
+    }
+
+    // A non-equality `ON` is a CARTESIAN join with an `other cond:`, so it
+    // takes the product arm. TiDB prints 99800100.00 = 9990 * 9990: `gt`
+    // rejects nulls, so its rewrite fires here too.
+    assert_eq!(
+        join_est(&mut session, "SELECT * FROM j1 JOIN j2 ON j1.a > j2.a"),
+        "100000000.00"
+    );
+
+    // An ANALYZEd side has real per-column histogram NDVs, which this tier
+    // does not carry through the trace, so the join keeps Go's `N/A` rather
+    // than dividing by the pseudo 0.8 ratio (TiDB prints 3.00 here).
+    session
+        .run("INSERT INTO j1 VALUES (1,1),(2,2),(3,3)")
+        .unwrap();
+    session.run("ANALYZE TABLE j1").unwrap();
+    assert_eq!(
+        join_est(&mut session, "SELECT * FROM j1 JOIN j2 ON j1.a = j2.a"),
+        "N/A"
+    );
+}

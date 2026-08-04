@@ -166,6 +166,11 @@ fn a_derived_table_over_no_table_reaches_table_dual() {
 /// (`test.t.a`) after eliminating the derived tables, while this tier names
 /// them by the derived alias (`test.x.a`). Both read the same rows --
 /// asserted here, not inferred.
+///
+/// The JOIN ESTIMATE is `EstimateFullJoinRowCount` on both sides now, and the
+/// remaining 0.1% -- 12500.00 against Go's 12487.50 -- is that same missing
+/// `not(isnull(...))`: Go divides 9990 * 9990 by 7992 where this divides
+/// 10000 * 10000 by 8000. Nothing else separates the two numbers.
 #[test]
 fn two_derived_tables_join_without_a_base_table() {
     let mut session = derived_session();
@@ -175,9 +180,9 @@ fn two_derived_tables_join_without_a_base_table() {
             "explain select * from (select * from t) x, (select * from t) y where x.a = y.b"
         ),
         vec![
-            "Projection_7|N/A|root||*",
-            "└─Selection_6|N/A|root||eq(test.x.a, test.y.b)",
-            "  └─HashJoin_5|N/A|root||inner join, equal:[eq(test.x.a, test.y.b)]",
+            "Projection_7|12500.00|root||*",
+            "└─Selection_6|12500.00|root||eq(test.x.a, test.y.b)",
+            "  └─HashJoin_5|12500.00|root||inner join, equal:[eq(test.x.a, test.y.b)]",
             "    ├─Projection_2(Build)|10000.00|root||*",
             "    │ └─TableFullScan_1|10000.00|root|table:t|keep order:false, stats:pseudo",
             "    └─Projection_4(Probe)|10000.00|root||*",
