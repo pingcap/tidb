@@ -2193,10 +2193,7 @@ func (cc *clientConn) cancelDispatch() {
 	}
 }
 
-func shouldInstallConnectionAliveDuringExecute(stmt ast.StmtNode, sessVars *variable.SessionVars) bool {
-	if !sessVars.IsAutocommit() || sessVars.InTxn() {
-		return false
-	}
+func shouldInstallConnectionAlive(stmt ast.StmtNode, sessVars *variable.SessionVars) bool {
 	if executeStmt, ok := stmt.(*ast.ExecuteStmt); ok {
 		prepared, err := plannercore.GetPreparedStmt(executeStmt, sessVars)
 		if err != nil || prepared.PreparedAst == nil {
@@ -2204,12 +2201,24 @@ func shouldInstallConnectionAliveDuringExecute(stmt ast.StmtNode, sessVars *vari
 		}
 		stmt = prepared.PreparedAst.Stmt
 	}
-	switch stmt.(type) {
-	case *ast.InsertStmt, *ast.UpdateStmt, *ast.DeleteStmt:
-		return true
-	default:
+	switch stmt := stmt.(type) {
+	case *ast.BRIEStmt:
+		switch stmt.Kind {
+		case ast.BRIEKindBackup, ast.BRIEKindRestore:
+			// BACKUP and RESTORE are synchronous operations that can run for a long time.
+			// Avoid unexpectedly killing them when client keepalive is not configured properly.
+			return false
+		}
+	case ast.DDLNode, *ast.AnalyzeTableStmt, *ast.LoadDataStmt, *ast.ImportIntoStmt:
+		// Avoid unexpectedly killing long-running operations when client keepalive
+		// is not configured properly.
+		return false
+	case *ast.CommitStmt, *ast.RollbackStmt:
+		// The corresponding client-go commit and rollback/cleanup actions are
+		// non-interruptible, so keep SQL transaction finalization non-interruptible too.
 		return false
 	}
+	return true
 }
 
 // The first return value indicates whether the call of handleStmt has no side effect and can be retried.
@@ -2235,8 +2244,7 @@ func (cc *clientConn) handleStmt(
 	}
 
 	clearConnectionAlive := func() {}
-	checkingConnectionAlive := shouldInstallConnectionAliveDuringExecute(stmt, cc.ctx.GetSessionVars())
-	if checkingConnectionAlive {
+	if shouldInstallConnectionAlive(stmt, cc.ctx.GetSessionVars()) {
 		clearConnectionAlive = cc.setSQLKillerConnectionAlive()
 		defer clearConnectionAlive()
 	}
@@ -2273,10 +2281,6 @@ func (cc *clientConn) handleStmt(
 	if rs != nil {
 		if cc.getStatus() == connStatusShutdown {
 			return false, exeerrors.ErrQueryInterrupted
-		}
-		if !checkingConnectionAlive {
-			clearConnectionAlive = cc.setSQLKillerConnectionAlive()
-			defer clearConnectionAlive()
 		}
 		cc.ctx.GetSessionVars().SQLKiller.SetFinishFunc(
 			func() {
