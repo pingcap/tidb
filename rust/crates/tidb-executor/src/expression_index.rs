@@ -78,6 +78,61 @@
 //! expression index only from the `GAFunction4ExpressionIndex` whitelist
 //! (`pkg/sessionctx/variable/varsutil.go`), everything else being 8200 while
 //! `allow-expression-index` is off, which is the default.
+//!
+//! # The gate is a LIST, and an ORDER
+//!
+//! Two things decide what an expression index is allowed to be, and neither
+//! is a principle that can be re-derived:
+//!
+//! * WHICH function names pass, which is [`GA_FUNCTIONS`] transcribed from
+//!   Go verbatim. `lower` is on it and `lcase` is not, though they are the
+//!   same builtin under two names -- captured, `((lcase(a)))` is 8200 and
+//!   `((lower(a)))` is accepted. Any reasoning about which functions are
+//!   "safe" gets that pair wrong.
+//! * WHICH ERROR an expression that trips several rules reports. Go's
+//!   `illegalFunctionChecker` COLLECTS flags over the whole key part and
+//!   `checkIllegalFn4Generated` reports them in a fixed order -- 3758, 1111,
+//!   3800, 3593, the arity failure, and only THEN 8200. So `((abs(a) +
+//!   sum(a)))` is 1111 and `((abs(rand())))` is 3758, captured both ways.
+//!   A walk that returns at the first offending node answers by TREE
+//!   POSITION instead, which is a different function of the same input;
+//!   [`AdmissibilityScan`] is a scan for that reason.
+//!
+//! Two SHAPES escape the gate entirely, and the port has to escape with
+//! them:
+//!
+//! * A GENERATED COLUMN. Go passes `typeColumn` there and the 8200 arm is
+//!   `genType == typeIndex` only, so `c char(20) as (lcase(a))` is accepted
+//!   -- and so is a plain `KEY (c)` over it afterwards. Captured.
+//! * A COLUMNAR (VECTOR / FULLTEXT) INDEX. `pkg/ddl/create_table.go` guards
+//!   the hidden-column build with `if constr.Tp != ast.ConstraintColumnar`,
+//!   so `VECTOR INDEX vi((vec_cosine_distance(v, '[1,2,3]')))` never meets
+//!   the GA list even though `vec_cosine_distance` is not on it. Captured:
+//!   that statement fails for a MISSING TIFLASH REPLICA, not for 8200,
+//!   while `create index i on t((vec_cosine_distance(v,'[1,2,3]')))` --
+//!   an ordinary index over the same call -- IS 8200.
+//!
+//! # What Go refuses here and this tier does not, measured
+//!
+//! `pkg/ddl/index.go`'s `checkIndexColumn` runs on the HIDDEN column after
+//! this gate and refuses two result types that this tier still accepts:
+//! 3753 `Cannot create an expression index on a function that returns a JSON
+//! or GEOMETRY value` and 3757 `... returns a BLOB or TEXT`. Captured, twelve
+//! GA functions land there -- `json_extract`, `json_array`, `json_object`,
+//! `json_set`, `json_insert`, `json_replace`, `json_remove`,
+//! `json_array_append`, `json_array_insert`, `json_merge_patch`,
+//! `json_merge_preserve`, `json_search`, `json_keys` as 3753, and
+//! `json_unquote`/`json_pretty` as 3757. It is a result-TYPE rule, not a
+//! function rule, so it is a unit of its own rather than a widening of this
+//! one; `tests_expression_indexes` records each one's Go code beside the
+//! assertion that it passes THIS gate.
+//!
+//! Two smaller residuals, both the safe direction (this tier refuses what Go
+//! accepts, never the reverse): `MATCH ... AGAINST` and `DEFAULT(a)` are
+//! ACCEPTED by Go's checker -- neither is a `FuncCallExpr` -- and are
+//! declined here. And a name that is no builtin at all is 3758 in Go
+//! (`expression.IsFunctionSupported`) where this answers 8200, which needs
+//! the whole `funcs` registry to tell from a builtin merely off the GA list.
 
 use tidb_ast::{Expr, IndexPart};
 use tidb_datatype::FieldType;
@@ -102,164 +157,387 @@ pub struct HiddenIndexColumn {
 }
 
 /// The functions Go allows a FUNCTION CALL in an expression index to be:
-/// `variable.GAFunction4ExpressionIndex`. Anything else is 8200 unless the
-/// server was started with `allow-expression-index`, which this tier does not
-/// model as settable.
-const GA_FUNCTIONS: &[&str] = &[
-    "lower",
-    "upper",
-    "md5",
-    "reverse",
-    "vitess_hash",
-    "tidb_shard",
-    "json_type",
-    "json_extract",
-    "json_unquote",
-    "json_array",
-    "json_object",
-    "json_set",
-    "json_insert",
-    "json_replace",
-    "json_remove",
-    "json_contains",
-    "json_contains_path",
-    "json_valid",
-    "json_array_append",
-    "json_array_insert",
-    "json_merge_patch",
-    "json_merge_preserve",
-    "json_pretty",
-    "json_quote",
-    "json_schema_valid",
-    "json_search",
-    "json_storage_size",
-    "json_depth",
-    "json_keys",
-    "json_length",
+/// `variable.GAFunction4ExpressionIndex`
+/// (`pkg/sessionctx/variable/varsutil.go`), paired with the argument count
+/// its `baseFunctionClass{minArgs, maxArgs}` admits
+/// (`pkg/expression/builtin.go`'s `funcs` map, read through
+/// `VerifyArgsWrapper`). `None` is Go's `maxArgs == -1`, "no upper bound".
+///
+/// A call outside this list is 8200 unless the server was started with
+/// `allow-expression-index`, which defaults off and which this tier does not
+/// model as settable, so the list IS the gate here. The list is transcribed
+/// VERBATIM rather than derived from a principle: an earlier attempt to drop
+/// an entry as redundant was falsified by the Go source, which lists it.
+const GA_FUNCTIONS: &[(&str, usize, Option<usize>)] = &[
+    ("lower", 1, Some(1)),
+    ("upper", 1, Some(1)),
+    ("md5", 1, Some(1)),
+    ("reverse", 1, Some(1)),
+    ("vitess_hash", 1, Some(1)),
+    ("tidb_shard", 1, Some(1)),
+    ("json_type", 1, Some(1)),
+    ("json_extract", 2, None),
+    ("json_unquote", 1, Some(1)),
+    ("json_array", 0, None),
+    ("json_object", 0, None),
+    ("json_set", 3, None),
+    ("json_insert", 3, None),
+    ("json_replace", 3, None),
+    ("json_remove", 2, None),
+    ("json_contains", 2, Some(3)),
+    ("json_contains_path", 3, None),
+    ("json_valid", 1, Some(1)),
+    ("json_array_append", 3, None),
+    ("json_array_insert", 3, None),
+    ("json_merge_patch", 2, None),
+    ("json_merge_preserve", 2, None),
+    ("json_pretty", 1, Some(1)),
+    ("json_quote", 1, Some(1)),
+    ("json_schema_valid", 2, Some(2)),
+    ("json_search", 3, None),
+    ("json_storage_size", 1, Some(1)),
+    ("json_depth", 1, Some(1)),
+    ("json_keys", 1, Some(2)),
+    ("json_length", 1, Some(2)),
 ];
 
-/// Go `illegalFunctionChecker` reduced to the outcomes it can reach for
-/// `typeIndex`, in the order `checkIllegalFn4Generated` reports them.
+/// Go `expression.IllegalFunctions4GeneratedColumns`
+/// (`pkg/expression/function_traits.go`), transcribed VERBATIM. Every name on
+/// it is 3758 in an expression index -- reported BEFORE the 8200 GA gate, so
+/// `abs(rand())` is 3758 and not 8200 even though `abs` is the outer call.
 ///
-/// The scan is a WHITELIST over expression forms rather than Go's blacklist
-/// over function names. That is not a shortcut: Go's blacklist is applied to
-/// `ast.FuncCallExpr`, and every call that survives it still has to be on the
-/// GA list, so the set Go accepts is `{non-call nodes} + {GA calls}`. Listing
-/// that set directly is the same set with no second list to drift.
-fn check_admissible(index_name: &str, expr: &Expr) -> Result<(), DriverError> {
-    match expr {
-        // Leaves and the operators Go never routes through a function check.
-        Expr::Column(_)
-        | Expr::Int(_)
-        | Expr::Decimal(_)
-        | Expr::Float(_)
-        | Expr::Hex(_)
-        | Expr::Bit(_)
-        | Expr::String(_)
-        | Expr::RawString(_)
-        | Expr::Null
-        | Expr::Bool(_) => Ok(()),
+/// The list is what makes an expression index deterministic: each name either
+/// reads the clock (`now`, `curdate`, `sysdate`), the session (`user`,
+/// `database`, `connection_id`, `@x` via `get_var`), or an entropy source
+/// (`rand`, `uuid`) -- values that would be frozen into the stored key at
+/// write time and no longer match on the way back out.
+const ILLEGAL_FUNCTIONS: &[&str] = &[
+    "benchmark",
+    "connection_id",
+    "curdate",
+    "current_date",
+    "current_resource_group",
+    "current_role",
+    "current_time",
+    "current_timestamp",
+    "current_user",
+    "curtime",
+    "database",
+    "found_rows",
+    "get_lock",
+    "getvar",
+    "is_free_lock",
+    "is_used_lock",
+    "json_merge",
+    "last_insert_id",
+    "load_file",
+    "localtime",
+    "localtimestamp",
+    "name_const",
+    "now",
+    "rand",
+    "random_bytes",
+    "release_all_locks",
+    "release_lock",
+    "row_count",
+    "row",
+    "schema",
+    "session_user",
+    "setvar",
+    "sleep",
+    "sysdate",
+    "system_user",
+    "tidb_bounded_staleness",
+    "tidb_current_tso",
+    "tidb_is_ddl_owner",
+    "tidb_row_checksum",
+    "tidb_version",
+    "unix_timestamp",
+    "user",
+    "utc_date",
+    "utc_time",
+    "utc_timestamp",
+    "uuid",
+    "uuid_v4",
+    "uuid_v7",
+    "uuid_short",
+    "values",
+    "version",
+];
 
-        // Go: `*ast.AggregateFuncExpr` -> ErrInvalidGroupFuncUse (1111).
-        Expr::Aggregate { .. } | Expr::GroupConcat { .. } => Err(DriverError::InvalidGroupFuncUse),
-        // Go: `*ast.RowExpr` -> ErrFunctionalIndexRowValueIsNotAllowed (3800).
-        Expr::Row(_) => Err(DriverError::FunctionalIndexRowValue(index_name.to_owned())),
-        // Go: `*ast.WindowFuncExpr` -> ErrWindowInvalidWindowFuncUse (3593).
-        Expr::Window { .. } => Err(DriverError::WindowInvalidWindowFuncUse(
-            index_name.to_owned(),
-        )),
-        // Go: `*ast.SubqueryExpr, *ast.ValuesExpr, *ast.VariableExpr` ->
-        // ErrFunctionalIndexFunctionIsNotAllowed (3758).
-        Expr::Subquery(_)
-        | Expr::Exists { .. }
-        | Expr::InSubquery { .. }
-        | Expr::CompareSubquery { .. }
-        | Expr::UserVar(_)
-        | Expr::SysVar { .. }
-        | Expr::Default(_) => Err(DriverError::FunctionalIndexFunctionNotAllowed(
-            index_name.to_owned(),
-        )),
+/// Go `illegalFunctionChecker` for `typeIndex`: one pass that COLLECTS every
+/// flag the expression trips, which `checkIllegalFn4Generated` then reports in
+/// a FIXED order.
+///
+/// The order is the whole point, and it is why this is a scan and not an
+/// early return. `((abs(a) + sum(a)))` is 1111 and not 8200 -- Go sees both
+/// the aggregate and the non-GA call, and reports the aggregate, whichever
+/// came first in the tree. An early-returning walk answers by TREE POSITION
+/// instead, which is a different function of the same input.
+#[derive(Default)]
+struct AdmissibilityScan {
+    /// Go `hasIllegalFunc`: a blocked function, a subquery, `values(x)`, or a
+    /// variable. Reported first, as 3758.
+    illegal_func: bool,
+    /// Go `hasAggFunc`: an aggregate or `GROUPING()`. Reported as 1111.
+    agg_func: bool,
+    /// Go `hasRowVal`: a row value. Reported as 3800.
+    row_val: bool,
+    /// Go `hasWindowFunc`. Reported as 3593.
+    window_func: bool,
+    /// Go `otherErr`: the arity failure `VerifyArgsWrapper` raises, and the
+    /// forms this tier declines to build. First one wins, as in Go.
+    other: Option<DriverError>,
+    /// Go `hasNotGAFunc4ExprIdx`: reported LAST, as 8200.
+    not_ga_func: bool,
+}
 
-        Expr::Paren(inner) | Expr::Unary(_, inner) => check_admissible(index_name, inner),
-        Expr::Binary(_, left, right) => {
-            check_admissible(index_name, left)?;
-            check_admissible(index_name, right)
-        }
-        Expr::Is { expr, .. } | Expr::Collate { expr, .. } => check_admissible(index_name, expr),
-        Expr::In { expr, list, .. } => {
-            check_admissible(index_name, expr)?;
-            list.iter()
-                .try_for_each(|e| check_admissible(index_name, e))
-        }
-        Expr::Between {
-            expr, low, high, ..
-        } => {
-            check_admissible(index_name, expr)?;
-            check_admissible(index_name, low)?;
-            check_admissible(index_name, high)
-        }
-        Expr::Case {
-            value,
-            when_clauses,
-            else_clause,
-        } => {
-            for expr in value
-                .iter()
-                .map(AsRef::as_ref)
-                .chain(else_clause.iter().map(AsRef::as_ref))
-            {
-                check_admissible(index_name, expr)?;
+impl AdmissibilityScan {
+    /// Go's `Enter`, which returns `skipChildren` for the arms that set a
+    /// terminal flag -- so the subtree under an aggregate or a row value is
+    /// never scanned and cannot set a flag of its own.
+    fn walk(&mut self, expr: &Expr) {
+        match expr {
+            // Leaves and the operators Go never routes through a function
+            // check: `+`, unary minus, `IS NULL`, `IN`, `BETWEEN`, `LIKE`,
+            // `REGEXP`, `CASE`, `COLLATE`, a charset introducer.
+            Expr::Column(_)
+            | Expr::Int(_)
+            | Expr::Decimal(_)
+            | Expr::Float(_)
+            | Expr::Hex(_)
+            | Expr::Bit(_)
+            | Expr::String(_)
+            | Expr::RawString(_)
+            | Expr::Null
+            | Expr::Bool(_) => {}
+
+            // Go: `*ast.AggregateFuncExpr` -> ErrInvalidGroupFuncUse (1111).
+            Expr::Aggregate { .. } | Expr::GroupConcat { .. } => self.agg_func = true,
+            // Go: `*ast.RowExpr` -> ErrFunctionalIndexRowValueIsNotAllowed.
+            Expr::Row(_) => self.row_val = true,
+            // Go: `*ast.WindowFuncExpr` -> ErrWindowInvalidWindowFuncUse.
+            Expr::Window { .. } => self.window_func = true,
+            // Go: `*ast.SubqueryExpr, *ast.ValuesExpr, *ast.VariableExpr` ->
+            // ErrFunctionalIndexFunctionIsNotAllowed (3758).
+            Expr::Subquery(_)
+            | Expr::Exists { .. }
+            | Expr::InSubquery { .. }
+            | Expr::CompareSubquery { .. }
+            | Expr::UserVar(_)
+            | Expr::SysVar { .. } => self.illegal_func = true,
+
+            Expr::Paren(inner) | Expr::Unary(_, inner) => self.walk(inner),
+            Expr::Binary(_, left, right) => {
+                self.walk(left);
+                self.walk(right);
             }
-            for (condition, result) in when_clauses {
-                check_admissible(index_name, condition)?;
-                check_admissible(index_name, result)?;
+            Expr::Is { expr, .. } | Expr::Collate { expr, .. } => self.walk(expr),
+            Expr::Like { expr, pattern, .. } | Expr::Regexp { expr, pattern, .. } => {
+                self.walk(expr);
+                self.walk(pattern);
             }
-            Ok(())
-        }
-        // Go's `*ast.FuncCastExpr` is not a function call, so it never meets
-        // the GA list. The ARRAY form is multi-valued indexing, a feature of
-        // its own that this tier does not maintain, so it is refused here
-        // rather than built as an ordinary scalar index -- which would index
-        // the whole JSON document under a multi-valued index's name.
-        Expr::Cast(cast) => {
-            if cast.array {
-                return Err(DriverError::unsupported(
-                    "a multi-valued index (CAST(... AS ... ARRAY)) is not supported yet",
-                ));
+            Expr::In { expr, list, .. } => {
+                self.walk(expr);
+                list.iter().for_each(|e| self.walk(e));
             }
-            check_admissible(index_name, &cast.expr)
+            Expr::Between {
+                expr, low, high, ..
+            } => {
+                self.walk(expr);
+                self.walk(low);
+                self.walk(high);
+            }
+            Expr::Case {
+                value,
+                when_clauses,
+                else_clause,
+            } => {
+                for expr in value
+                    .iter()
+                    .map(AsRef::as_ref)
+                    .chain(else_clause.iter().map(AsRef::as_ref))
+                {
+                    self.walk(expr);
+                }
+                for (condition, result) in when_clauses {
+                    self.walk(condition);
+                    self.walk(result);
+                }
+            }
+            Expr::Cast(cast) => {
+                // `DATE 'lit'` / `TIME 'lit'` / `TIMESTAMP 'lit'` are not
+                // casts to Go's walk at all: its parser builds them as
+                // `*ast.FuncCallExpr` named `dateliteral`/`timeliteral`/
+                // `timestampliteral`, none of which is on the GA list, so Go
+                // answers 8200. Captured:
+                //
+                // ```text
+                // create index i on t((timestamp '2020-01-01 00:00:00'));
+                //   [ddl:8200]Unsupported creating expression index containing
+                //   unsafe functions without allow-expression-index in config
+                // ```
+                //
+                // The refusal is also the one this index could not survive:
+                // the literal is folded in the writing session's `@@time_zone`
+                // and stored in the key, so a reader in another zone would
+                // compute a key that no longer matches its own rows.
+                if matches!(
+                    cast.style,
+                    tidb_ast::CastStyle::DateLiteral
+                        | tidb_ast::CastStyle::TimeLiteral
+                        | tidb_ast::CastStyle::TimestampLiteral
+                ) {
+                    self.not_ga_func = true;
+                    return;
+                }
+                // An ordinary `*ast.FuncCastExpr` is not a function call, so
+                // it never meets the GA list -- `((cast(a as char(10))))` is
+                // ACCEPTED by Go, captured. The ARRAY form is multi-valued
+                // indexing, a feature of its own that this tier does not
+                // maintain, so it is declined rather than built as an
+                // ordinary scalar index -- which would index the whole JSON
+                // document under a multi-valued index's name.
+                if cast.array {
+                    self.decline(DriverError::unsupported(
+                        "a multi-valued index (CAST(... AS ... ARRAY)) is not supported yet",
+                    ));
+                    return;
+                }
+                self.walk(&cast.expr);
+            }
+
+            Expr::Func { name, args, .. } | Expr::GenericFuncCall { name, args, .. } => {
+                self.call(name, args);
+                args.iter().for_each(|arg| self.walk(arg));
+            }
+
+            // Go reaches these as `*ast.FuncCallExpr` under a name its
+            // grammar picks -- `extract`, `locate`, `trim`, `weight_string`,
+            // `timestampadd`, `timestampdiff`, `get_format`, `convert`,
+            // `json_memberof`. NONE of those names is on the GA list, so the
+            // verdict does not depend on which: every one of them is 8200,
+            // captured through `gorun` for each form below. Their ARGUMENTS
+            // are still scanned, because Go scans them and a blocked function
+            // or an aggregate inside one outranks the 8200.
+            Expr::Extract { value: expr, .. }
+            | Expr::Interval { value: expr, .. }
+            | Expr::WeightString { expr, .. }
+            | Expr::ConvertUsing { expr, .. }
+            | Expr::GetFormat { expr, .. } => {
+                self.not_ga_func = true;
+                self.walk(expr);
+            }
+            Expr::Position {
+                substr: left,
+                str: right,
+            }
+            | Expr::TimestampDiff {
+                expr1: left,
+                expr2: right,
+                ..
+            }
+            | Expr::TimestampAdd {
+                interval: left,
+                expr: right,
+                ..
+            }
+            | Expr::MemberOf {
+                expr: left,
+                array: right,
+            } => {
+                self.not_ga_func = true;
+                self.walk(left);
+                self.walk(right);
+            }
+            Expr::Trim { expr, remstr, .. } => {
+                self.not_ga_func = true;
+                self.walk(expr);
+                remstr.iter().for_each(|e| self.walk(e));
+            }
+
+            // Every remaining form is DECLINED rather than guessed at. Go
+            // reaches some of them outside the function check and ACCEPTS
+            // them -- `MATCH ... AGAINST` and `DEFAULT(a)` are both captured
+            // as accepted -- so this is a wrong-REFUSE, the safe direction:
+            // it can only turn an index this tier would have to evaluate
+            // into an error, never build one whose stored keys disagree with
+            // the rows they index.
+            _ => self.decline(DriverError::unsupported(
+                "this expression form is not supported in an expression index yet",
+            )),
         }
+    }
 
-        Expr::Func { name, args, .. } => check_function(index_name, name, args),
-        Expr::GenericFuncCall { name, args, .. } => check_function(index_name, name, args),
+    /// Go's `*ast.FuncCallExpr` arm, in its own order: `GROUPING()` first,
+    /// then the blocked list, then arity, then the GA list.
+    fn call(&mut self, name: &str, args: &[Expr]) {
+        let name = name.to_ascii_lowercase();
+        // Go: `ast.Grouping` is counted as an aggregate, issue #49909.
+        if name == "grouping" {
+            self.agg_func = true;
+            return;
+        }
+        if ILLEGAL_FUNCTIONS.contains(&name.as_str()) {
+            self.illegal_func = true;
+            return;
+        }
+        match GA_FUNCTIONS.iter().find(|(ga, ..)| *ga == name) {
+            Some((_, min, max)) => {
+                // Go `VerifyArgsWrapper` -> `baseFunctionClass.verifyArgsByCount`.
+                if args.len() < *min || max.is_some_and(|max| args.len() > max) {
+                    self.decline(DriverError::WrongParamCountToNativeFct(name));
+                }
+            }
+            // Go also answers 3758 for a name that is not a builtin AT ALL
+            // (`IsFunctionSupported`), which needs the whole `funcs` registry
+            // to tell apart from a builtin that is merely off the GA list.
+            // Both are refusals; this tier reports the 8200 for both, and the
+            // difference is one errno on an already-failing statement.
+            None => self.not_ga_func = true,
+        }
+    }
 
-        // Every remaining form -- `EXTRACT`, `POSITION`, `TRIM`, `INTERVAL`,
-        // `MATCH ... AGAINST`, a charset introducer, ... -- is refused rather
-        // than guessed at. Go reaches most of them as `FuncCallExpr` and
-        // answers 8200, but not all, and an index built on a guess is an
-        // index that disagrees with the rows it indexes.
-        _ => Err(DriverError::unsupported(
-            "this expression form is not supported in an expression index yet",
-        )),
+    /// Go's `otherErr`, which is set once and then kept.
+    fn decline(&mut self, error: DriverError) {
+        if self.other.is_none() {
+            self.other = Some(error);
+        }
+    }
+
+    /// Go `checkIllegalFn4Generated`'s report order for `typeIndex`. Changing
+    /// it changes which error a statement that trips several flags reports.
+    fn verdict(self, index_name: &str) -> Result<(), DriverError> {
+        if self.illegal_func {
+            return Err(DriverError::FunctionalIndexFunctionNotAllowed(
+                index_name.to_owned(),
+            ));
+        }
+        if self.agg_func {
+            return Err(DriverError::InvalidGroupFuncUse);
+        }
+        if self.row_val {
+            return Err(DriverError::FunctionalIndexRowValue(index_name.to_owned()));
+        }
+        if self.window_func {
+            return Err(DriverError::WindowInvalidWindowFuncUse(
+                index_name.to_owned(),
+            ));
+        }
+        if let Some(error) = self.other {
+            return Err(error);
+        }
+        if self.not_ga_func {
+            return Err(DriverError::UnsafeFunctionInExpressionIndex);
+        }
+        Ok(())
     }
 }
 
-/// The one rule a function call in an expression index must pass: Go's GA
-/// whitelist. A call outside it is 8200 while `allow-expression-index` is
-/// off, which is how every server this tier models is configured.
-fn check_function(index_name: &str, name: &str, args: &[Expr]) -> Result<(), DriverError> {
-    let lower = name.to_ascii_lowercase();
-    // Go reaches `values(x)` as `*ast.ValuesExpr`, before any function check.
-    if lower == "values" {
-        return Err(DriverError::FunctionalIndexFunctionNotAllowed(
-            index_name.to_owned(),
-        ));
-    }
-    if !GA_FUNCTIONS.contains(&lower.as_str()) {
-        return Err(DriverError::UnsafeFunctionInExpressionIndex);
-    }
-    args.iter()
-        .try_for_each(|arg| check_admissible(index_name, arg))
+fn check_admissible(index_name: &str, expr: &Expr) -> Result<(), DriverError> {
+    let mut scan = AdmissibilityScan::default();
+    scan.walk(expr);
+    scan.verdict(index_name)
 }
 
 /// Go `BuildHiddenColumnInfo`: turns an index's EXPRESSION key parts into

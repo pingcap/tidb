@@ -359,6 +359,12 @@ pub enum DriverError {
     /// calls a function outside `GAFunction4ExpressionIndex` and the server
     /// was not started with `allow-expression-index`.
     UnsafeFunctionInExpressionIndex,
+    /// Go `expression.ErrIncorrectParameterCount` (1582), carrying the
+    /// function name: the call passes a number of arguments the builtin's
+    /// `baseFunctionClass{minArgs, maxArgs}` does not admit. Go raises it
+    /// from `VerifyArgsWrapper` inside `illegalFunctionChecker`, so an
+    /// expression index reports it BEFORE the 8200 GA gate.
+    WrongParamCountToNativeFct(String),
     /// Go `dbterror.ErrDependentByFunctionalIndex` (3837), carrying the
     /// column name: a column an expression index reads cannot be dropped or
     /// renamed.

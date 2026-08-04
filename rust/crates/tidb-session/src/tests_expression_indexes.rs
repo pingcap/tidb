@@ -601,3 +601,382 @@ fn modifying_a_depended_on_column_is_refused_even_without_a_rename() {
     // above.
     session.run("ALTER TABLE em MODIFY c BIGINT").unwrap();
 }
+
+/// Go `variable.GAFunction4ExpressionIndex`, entry by entry, so REMOVING one
+/// from the port flips its row to 8200 and DELETES a statement Go accepts.
+///
+/// Every code here was captured through `rust/difftests/gorun`. Some GA
+/// functions are still refused DOWNSTREAM of the gate by a rule this tier
+/// does not have yet (Go 3753 `Cannot create an expression index on a
+/// function that returns a JSON or GEOMETRY value` and 3757 for BLOB/TEXT,
+/// `pkg/ddl/index.go`'s `checkIndexColumn`), so those rows are asserted at
+/// the gate -- as PASSING it -- and their Go code is recorded beside them.
+#[test]
+fn every_ga_function_passes_the_gate() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE g (a CHAR(20), b JSON, i INT)")
+        .unwrap();
+    // (expression, Go's end-to-end code). `0` is accepted; 3753/3757 are the
+    // JSON/BLOB result-type gate this tier has not ported, so the assertion
+    // below is that the FUNCTION gate lets them through.
+    let ga: &[(&str, u16)] = &[
+        ("lower(a)", 0),
+        ("upper(a)", 0),
+        ("md5(a)", 0),
+        ("reverse(a)", 0),
+        ("vitess_hash(i)", 0),
+        ("tidb_shard(i)", 0),
+        ("json_type(b)", 0),
+        ("json_extract(b,'$.a')", 3753),
+        ("json_unquote(json_extract(b,'$.a'))", 3757),
+        ("json_array(i)", 3753),
+        ("json_object('k',i)", 3753),
+        ("json_set(b,'$.a',1)", 3753),
+        ("json_insert(b,'$.a',1)", 3753),
+        ("json_replace(b,'$.a',1)", 3753),
+        ("json_remove(b,'$.a')", 3753),
+        ("json_contains(b,'1')", 0),
+        ("json_contains_path(b,'one','$.a')", 0),
+        ("json_valid(a)", 0),
+        ("json_array_append(b,'$','x')", 3753),
+        ("json_array_insert(b,'$[0]','x')", 3753),
+        ("json_merge_patch(b,b)", 3753),
+        ("json_merge_preserve(b,b)", 3753),
+        ("json_pretty(b)", 3757),
+        ("json_quote(a)", 0),
+        ("json_schema_valid('{}',b)", 0),
+        ("json_search(b,'one','x')", 3753),
+        ("json_storage_size(b)", 0),
+        ("json_depth(b)", 0),
+        ("json_keys(b)", 3753),
+        ("json_length(b)", 0),
+    ];
+    assert_eq!(ga.len(), 30, "Go's list has 30 entries");
+    for (n, (expr, go_code)) in ga.iter().enumerate() {
+        let got = code(&mut session, &format!("CREATE INDEX ga{n} ON g(({expr}))"));
+        assert_ne!(
+            got,
+            Some(8200),
+            "{expr} is on GAFunction4ExpressionIndex; Go answers {go_code}, never 8200"
+        );
+    }
+}
+
+/// The mirror of [`every_ga_function_passes_the_gate`]: ADDING any of these
+/// to the port would accept a statement Go refuses. `lcase`/`ucase` are the
+/// sharp pair -- they are the same builtins as `lower`/`upper` under a second
+/// name, and Go lists only the first name, so the gate is the LIST and not a
+/// notion of which functions are safe.
+#[test]
+fn a_function_off_the_ga_list_is_8200() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE n (a CHAR(20), b JSON, i INT)")
+        .unwrap();
+    for (n, expr) in [
+        "lcase(a)",
+        "ucase(a)",
+        "concat(a,'x')",
+        "abs(i)",
+        "length(a)",
+        "sha1(a)",
+        "ifnull(i,0)",
+        "coalesce(i,0)",
+        "substring(a,1,2)",
+        "left(a,2)",
+        "hex(a)",
+        "bin(i)",
+        "crc32(a)",
+        "vec_dims(a)",
+    ]
+    .iter()
+    .enumerate()
+    {
+        assert_eq!(
+            code(&mut session, &format!("CREATE INDEX ng{n} ON n(({expr}))")),
+            Some(8200),
+            "{expr} is not on GAFunction4ExpressionIndex"
+        );
+    }
+}
+
+/// The gate walks the WHOLE expression, not its outermost call: a non-GA
+/// function anywhere under a GA one is still 8200, and a GA one under a
+/// non-GA one does not rescue it.
+#[test]
+fn the_gate_walks_into_nested_calls() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE w (a CHAR(20), i INT)").unwrap();
+    for (n, expr) in [
+        "lower(concat(a,'x'))",
+        "concat(lower(a),'x')",
+        "upper(left(a,2))",
+        "md5(concat(a,a))",
+        "abs(i)+lower(a)",
+        "cast(abs(i) as signed)",
+        "abs(cast(i as signed))",
+    ]
+    .iter()
+    .enumerate()
+    {
+        assert_eq!(
+            code(&mut session, &format!("CREATE INDEX ne{n} ON w(({expr}))")),
+            Some(8200),
+            "{expr} hides a non-GA call"
+        );
+    }
+    // ... and a GA call nested in a GA call is still accepted.
+    assert_eq!(
+        code(&mut session, "CREATE INDEX ok ON w((lower(upper(a))))"),
+        None,
+        "lower(upper(a)) is GA all the way down"
+    );
+}
+
+/// Go COLLECTS every flag `illegalFunctionChecker` trips and then reports
+/// them in a FIXED order, so which error a mixed expression gets does not
+/// depend on where in the tree the offender sits. 8200 is reported LAST, so
+/// anything else in the same expression outranks it.
+///
+/// Captured from `gorun`; an early-returning walk answers 8200 for the first
+/// six of these and is what this pins against.
+#[test]
+fn gos_report_order_outranks_the_8200_gate() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE o (a CHAR(20), i INT)").unwrap();
+    for (n, (expr, want)) in [
+        // 3758 (a blocked function / a variable / `values(x)`) beats 8200.
+        ("rand() + sum(i)", 3758),
+        ("abs(rand())", 3758),
+        ("lower(rand())", 3758),
+        ("abs(i) + @@max_connections", 3758),
+        ("abs(i) + @x", 3758),
+        ("abs(i) + values(i)", 3758),
+        ("extract(year from now())", 3758),
+        // 1111 (an aggregate) beats 8200, whichever side it is on.
+        ("abs(i) + sum(i)", 1111),
+        ("sum(i) + abs(i)", 1111),
+        ("interval(i,1,2) + sum(i)", 1111),
+        // 3800 (a row value) beats 8200.
+        ("abs(i) + (i,i)", 3800),
+        ("lower(a) + (i,i)", 3800),
+        ("trim(a) + (i,i)", 3800),
+    ]
+    .iter()
+    .enumerate()
+    {
+        assert_eq!(
+            code(&mut session, &format!("CREATE INDEX or{n} ON o(({expr}))")),
+            Some(*want),
+            "{expr}: Go reports its flags in a fixed order and 8200 comes last"
+        );
+    }
+}
+
+/// Go `expression.IllegalFunctions4GeneratedColumns` is 3758 in an expression
+/// index, and it outranks the GA gate, so a blocked name is 3758 and not
+/// 8200 even though it is equally absent from the GA list. Dropping an entry
+/// would turn its row into 8200 -- a different error for the same statement.
+#[test]
+fn a_blocked_function_is_3758_not_8200() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE il (a CHAR(20), i INT)").unwrap();
+    for (n, expr) in [
+        "rand()",
+        "now()",
+        "curdate()",
+        "curtime()",
+        "sysdate()",
+        "unix_timestamp(i)",
+        "uuid()",
+        "version()",
+        "database()",
+        "connection_id()",
+        "user()",
+        "last_insert_id()",
+        "found_rows()",
+        "benchmark(1, 1)",
+        "sleep(0)",
+        "json_merge('[]','[]')",
+        "utc_timestamp()",
+        "values(i)",
+    ]
+    .iter()
+    .enumerate()
+    {
+        assert_eq!(
+            code(&mut session, &format!("CREATE INDEX bl{n} ON il(({expr}))")),
+            Some(3758),
+            "{expr} is on IllegalFunctions4GeneratedColumns"
+        );
+    }
+}
+
+/// Go runs `VerifyArgsWrapper` inside the same walk, so a GA call with the
+/// wrong number of arguments is 1582 -- BEFORE the 8200 gate and before the
+/// expression is ever built. Without it a bad call is silently ACCEPTED here,
+/// which is how `lower(a,a)` used to build an index.
+#[test]
+fn a_ga_call_with_the_wrong_argument_count_is_1582() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE ar (a CHAR(20), b JSON, i INT)")
+        .unwrap();
+    for (n, expr) in [
+        "lower(a,a)",
+        "json_extract(b)",
+        "json_schema_valid('{}')",
+        "json_contains(b,'1','$.a','x')",
+        "json_keys(b,'$.a','x')",
+        "json_length(b,'$.a','x')",
+    ]
+    .iter()
+    .enumerate()
+    {
+        assert_eq!(
+            code(&mut session, &format!("CREATE INDEX ay{n} ON ar(({expr}))")),
+            Some(1582),
+            "{expr} has an argument count Go's baseFunctionClass refuses"
+        );
+    }
+}
+
+/// The forms Go's grammar builds as `*ast.FuncCallExpr` under a name of its
+/// own -- and a temporal LITERAL, which is `dateliteral`/`timeliteral`/
+/// `timestampliteral` to that walk. None of those names is on the GA list, so
+/// every one of them is 8200 rather than a bare "not supported".
+///
+/// The literal row is the one this index could not survive either way: the
+/// value is folded in the writing session's `@@time_zone` and stored in the
+/// key, so a reader in another zone would compute a key its own rows no
+/// longer match.
+#[test]
+fn the_forms_go_reaches_as_function_calls_are_8200() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE fc (a CHAR(20), i INT)").unwrap();
+    for (n, expr) in [
+        "interval(i,1,2)",
+        "extract(year from '2020-01-01')",
+        "position('a' in a)",
+        "trim(a)",
+        "weight_string(a)",
+        "timestampadd(day,1,'2020-01-01')",
+        "timestampdiff(day,'2020-01-01','2020-01-02')",
+        "get_format(date,'USA')",
+        "i member of ('[1,2]')",
+        "convert(a using utf8mb4)",
+        "substring(a from 1 for 2)",
+        "timestamp '2020-01-01 00:00:00'",
+        "date '2020-01-01'",
+        "time '10:00:00'",
+    ]
+    .iter()
+    .enumerate()
+    {
+        assert_eq!(
+            code(&mut session, &format!("CREATE INDEX fk{n} ON fc(({expr}))")),
+            Some(8200),
+            "{expr} is a function call to Go's walk, under a name off the GA list"
+        );
+    }
+}
+
+/// The other half of the gate: Go's checker only ever looks at FUNCTION
+/// CALLS, so operators, `CASE`, `CAST`, `LIKE`, `REGEXP`, `COLLATE`, a
+/// charset introducer and a bare literal are ACCEPTED however un-GA they
+/// look. Widening the refusal to "anything that is not a GA call" would
+/// delete every row here.
+#[test]
+fn the_forms_go_never_function_checks_are_accepted() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE op (a CHAR(20), b JSON, i INT)")
+        .unwrap();
+    for (n, expr) in [
+        "i+1",
+        "-i",
+        "i>1",
+        "i is null",
+        "i div 2",
+        "i in (1,2)",
+        "i between 1 and 2",
+        "case when i>1 then 1 else 2 end",
+        "cast(a as char(10))",
+        "cast(i as signed)",
+        "lower(a) collate utf8mb4_bin",
+        "lower(a) like 'x%'",
+        "a regexp 'x'",
+        "lower(a) is not null",
+        "not lower(a)",
+        "binary a",
+        "_utf8mb4'x'",
+        "json_extract(b,'$.a')=1",
+        "json_length(b)+1",
+        "(lower(a))",
+    ]
+    .iter()
+    .enumerate()
+    {
+        assert_eq!(
+            code(&mut session, &format!("CREATE INDEX pn{n} ON op(({expr}))")),
+            None,
+            "{expr} never reaches Go's function check"
+        );
+    }
+}
+
+/// The gate is per KEY PART and per statement shape: `CREATE TABLE ... KEY`,
+/// `UNIQUE KEY`, `ALTER TABLE ADD INDEX` and a part that is not the first all
+/// reach it, and a GENERATED COLUMN does not -- Go passes `typeColumn` there,
+/// and the 8200 arm is `genType == typeIndex` only.
+#[test]
+fn the_gate_covers_every_index_shape_but_not_a_generated_column() {
+    let mut session = Session::new();
+    assert_eq!(
+        code(
+            &mut session,
+            "CREATE TABLE s1 (a CHAR(20), KEY k((lcase(a))))"
+        ),
+        Some(8200),
+        "CREATE TABLE ... KEY"
+    );
+    assert_eq!(
+        code(
+            &mut session,
+            "CREATE TABLE s2 (a CHAR(20), UNIQUE KEY k((lcase(a))))"
+        ),
+        Some(8200),
+        "CREATE TABLE ... UNIQUE KEY"
+    );
+    session.run("CREATE TABLE s3 (a CHAR(20), i INT)").unwrap();
+    assert_eq!(
+        code(&mut session, "ALTER TABLE s3 ADD INDEX k((concat(a,'x')))"),
+        Some(8200),
+        "ALTER TABLE ADD INDEX"
+    );
+    assert_eq!(
+        code(&mut session, "CREATE INDEX k2 ON s3(i, (lcase(a)))"),
+        Some(8200),
+        "a non-first key part"
+    );
+    assert_eq!(
+        code(
+            &mut session,
+            "CREATE INDEX k3 ON s3((lower(a)), (lcase(a)))"
+        ),
+        Some(8200),
+        "a second expression part"
+    );
+    // A GENERATED COLUMN takes Go's `typeColumn` path, which has no GA gate
+    // at all -- captured: `create table t(a char(20), c char(20) as
+    // (lcase(a)))` is ACCEPTED, and so is indexing that column afterwards.
+    assert_eq!(
+        code(
+            &mut session,
+            "CREATE TABLE s4 (a CHAR(20), c CHAR(20) AS (lcase(a)), KEY (c))"
+        ),
+        None,
+        "a generated column is not gated by the GA list"
+    );
+}

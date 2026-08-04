@@ -1309,6 +1309,11 @@ impl DriverError {
              allow-expression-index in config"
                 .to_owned(),
         ),
+        DriverError::WrongParamCountToNativeFct(name) => MysqlError::new(
+            1582,
+            *b"42000",
+            format!("Incorrect parameter count in the call to native function '{name}'"),
+        ),
         // CAPTURED from TiDB: `alter table fi add index idx((a+b))` then any of
         // `drop column a` / `change column a z int` / `rename column a to z`
         // gives 3837 / HY000 / "Column 'a' has an expression index dependency
