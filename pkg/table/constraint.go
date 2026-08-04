@@ -124,6 +124,7 @@ var unsupportedNodeForCheckConstraint = map[string]struct{}{
 	ast.UUIDv7:           {},
 	ast.UUIDShort:        {},
 	ast.Sleep:            {},
+	ast.EmbedText:        {},
 }
 
 type checkConstraintChecker struct {

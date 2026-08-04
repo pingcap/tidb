@@ -339,9 +339,13 @@ func (*Manager) createSessionManager(
 	mgr.wg.RunWithLog(func() {
 		isSyncer.MDLCheckLoop(ctx)
 	})
-	mgr.wg.RunWithLog(func() {
-		minJobIDRefresher.Start(ctx)
-	})
+	shouldRunMinJobIDRefresher := true
+	failpoint.InjectCall("skipMinJobIDRefresher", &shouldRunMinJobIDRefresher)
+	if shouldRunMinJobIDRefresher {
+		mgr.wg.RunWithLog(func() {
+			minJobIDRefresher.Start(ctx)
+		})
+	}
 
 	logutil.BgLogger().Info("create cross keyspace session manager",
 		zap.String("targetKS", ks), zap.Duration("cost", time.Since(startTime)))

@@ -1920,6 +1920,97 @@ func TestApplyCacheEnabledByOuterRowCount(t *testing.T) {
 	// tac_uniq.k1 is a primary key, but joining it to tac_fan repeats every value ten times.
 	info = applyCacheInfo("select o.k1, f.k2 from tac_uniq o join tac_fan on tac_fan.k1 = o.k1 " + lateral)
 	require.Contains(t, info, "cache:ON", "a unique key duplicated by a join can still hit the cache")
+// TestCorColEqProvidesIndexOrder verifies that an `index_col = correlated_col` access condition
+// pins that column to a single value per execution, so the index columns after it can satisfy an
+// ORDER BY. The inner subquery of the correlated scalar aggregate should then read one row with a
+// Limit over an ordered scan instead of sorting the whole range with a TopN.
+func TestCorColEqProvidesIndexOrder(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tc")
+	tk.MustExec(`create table tc (
+		k1 bigint unsigned not null,
+		k2 bigint unsigned not null,
+		v int not null,
+		primary key (k1, k2) clustered,
+		key ik (k1, v, k2))`)
+	tk.MustExec("insert into tc values (1,10,1),(1,20,1),(2,30,1),(2,40,0),(3,50,0)")
+
+	// explainOf returns the operator name, task and operator info of each explain row.
+	explainOf := func(sql string) []string {
+		rows := tk.MustQuery("explain format='plan_tree' " + sql).Rows()
+		infos := make([]string, 0, len(rows))
+		for _, row := range rows {
+			infos = append(infos, fmt.Sprintf("%v %v %v", row[0], row[1], row[3]))
+		}
+		return infos
+	}
+	// hasOperator reports whether any explain row matches all the given substrings.
+	hasOperator := func(infos []string, substrs ...string) bool {
+		for _, row := range infos {
+			matched := true
+			for _, substr := range substrs {
+				if !strings.Contains(row, substr) {
+					matched = false
+					break
+				}
+			}
+			if matched {
+				return true
+			}
+		}
+		return false
+	}
+	// requireEarlyStopPlan asserts the subquery reads a single row from an ordered scan rather
+	// than sorting the whole matched range. Keeping order is not enough on its own: an
+	// aggregate over an ordered full-range scan also has no TopN, so the Limit that stops the
+	// read after one row must be there too, both in the coprocessor and at the root.
+	requireEarlyStopPlan := func(infos []string, scanOp string) {
+		t.Helper()
+		require.True(t, hasOperator(infos, scanOp, "keep order:true"),
+			"%s should keep order: %v", scanOp, infos)
+		require.True(t, hasOperator(infos, "Limit", "cop[tikv]", "count:1"),
+			"the coprocessor read should stop after one row: %v", infos)
+		require.True(t, hasOperator(infos, "Limit", "root", "count:1"),
+			"the plan should keep a root Limit of one row: %v", infos)
+		require.False(t, hasOperator(infos, "TopN"), "the sort should be eliminated: %v", infos)
+	}
+
+	// MIN over the clustered primary key (k1, k2). The correlated equality on k1 makes the
+	// rebuilt range a single point on k1, so the scan already returns k2 in order.
+	minOverPK := "select (select /*+ NO_DECORRELATE() */ min(t2.k2) from tc t2 use index (`primary`) " +
+		"where t1.k1 = t2.k1) from tc t1"
+	infos := explainOf(minOverPK)
+	requireEarlyStopPlan(infos, "TableRangeScan")
+	tk.MustQuery(minOverPK + " order by 1").Check(testkit.Rows("10", "10", "30", "30", "50"))
+
+	// Same for a secondary index ik(k1, v, k2), where k1 is pinned by the correlated equality
+	// and v by a literal equality.
+	minOverIdx := "select (select /*+ NO_DECORRELATE() */ min(t2.k2) from tc t2 use index (ik) " +
+		"where t1.k1 = t2.k1 and t2.v = 1) from tc t1"
+	infos = explainOf(minOverIdx)
+	requireEarlyStopPlan(infos, "IndexRangeScan")
+	tk.MustQuery(minOverIdx + " order by 1").Check(testkit.Rows("<nil>", "10", "10", "30", "30"))
+
+	// An explicit ORDER BY ... LIMIT inside the correlated subquery benefits the same way.
+	limitOverPK := "select (select /*+ NO_DECORRELATE() */ t2.k2 from tc t2 use index (`primary`) " +
+		"where t1.k1 = t2.k1 order by t2.k2 limit 1) from tc t1"
+	infos = explainOf(limitOverPK)
+	requireEarlyStopPlan(infos, "TableRangeScan")
+	tk.MustQuery(limitOverPK + " order by 1").Check(testkit.Rows("10", "10", "30", "30", "50"))
+
+	// A correlated *range* predicate does not pin its column to a single value, so the columns
+	// after it are not ordered and the TopN must be kept.
+	tk.MustExec("drop table if exists tr")
+	tk.MustExec("create table tr (a int, b int, c int, d int, key idx (b, c, d))")
+	tk.MustExec("insert into tr values (1,1,1,4),(2,1,2,3),(3,1,3,2),(4,2,1,1)")
+	minAfterRange := "select (select /*+ NO_DECORRELATE() */ min(t2.d) from tr t2 use index (idx) " +
+		"where t2.b = t1.b and t2.c < t1.c) from tr t1"
+	infos = explainOf(minAfterRange)
+	require.True(t, hasOperator(infos, "TopN"),
+		"a correlated range predicate must not claim order on later columns: %v", infos)
+	tk.MustQuery(minAfterRange + " order by 1").Check(testkit.Rows("<nil>", "<nil>", "3", "4"))
 }
 
 // TestExplainAnalyzeDMLCommit covers the issue #37373.

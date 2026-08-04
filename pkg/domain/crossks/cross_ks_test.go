@@ -219,6 +219,14 @@ func TestManager(t *testing.T) {
 				*shouldCloseStore = false
 			},
 		)
+		// Disable the refresher so its session does not race with the initial session count assertion.
+		skipMinJobIDRefresherCalled := false
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/skipMinJobIDRefresher",
+			func(shouldRun *bool) {
+				skipMinJobIDRefresherCalled = true
+				*shouldRun = false
+			},
+		)
 		userKS := "ksmdl"
 		userKSStore, _ := testkit.CreateMockStoreAndDomainForKS(t, userKS)
 		storeMap[userKS] = userKSStore
@@ -230,6 +238,7 @@ func TestManager(t *testing.T) {
 
 		pool, err := sysKSDom.GetKSSessPool(userKS)
 		require.NoError(t, err)
+		require.True(t, skipMinJobIDRefresherCalled)
 		t.Cleanup(func() {
 			// we have to close the cross keyspace session manager, as the
 			// store will be closed by testkit.CreateMockStoreAndDomainForKS
@@ -257,8 +266,7 @@ func TestManager(t *testing.T) {
 			})
 			require.EqualValues(t, 1, tableIDCount)
 			require.True(t, coordinator.ContainsInternalSession(se))
-			// current session, and the min-job-id refresher might also use a
-			// session, so >= 1.
+			// Other background tasks might also use a session, so >= 1.
 			require.GreaterOrEqual(t, coordinator.InternalSessionCount(), 1)
 			return nil
 		}))
