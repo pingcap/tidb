@@ -429,6 +429,40 @@ The divergence is therefore structural — a missing client-charset seam,
 not a wrong branch — and is recorded here so it is not mistaken for
 parity.
 
+Captured from TiDB (`SET NAMES gbk`, the two bytes `BF 5C`):
+
+```text
+SELECT hex('<BF><5C>')      BF5C          -- one GBK character
+SELECT '<BF><5C>'           縗
+SELECT length('<BF><5C>')   2
+```
+
+Why a lexer-side `client` field would be UNFIREABLE here, rather than
+merely unused:
+
+* The whole dangerous class needs the SECOND byte of a multi-byte
+  character to be `\`, `'` or `` ` `` — all `< 0x80`. A GBK/big5/sjis lead
+  byte is `>= 0x81`, so the pair can only be valid UTF-8 if the second
+  byte is a CONTINUATION byte, which is `>= 0x80`. The two conditions are
+  disjoint: **no byte pair that Go treats differently is ever valid
+  UTF-8.**
+* For input that IS valid UTF-8, running Go's `skipRune` under any
+  encoding copies the same bytes in a different grouping and never moves
+  a token boundary, because every non-leading byte of a UTF-8 sequence is
+  `>= 0x80` and can therefore never be a delimiter or an escape lead.
+* The bytes are refused before the lexer regardless:
+  `tidb-server/src/mysql_connection.rs`'s `COM_QUERY` arm answers
+  `ER_PARSE_ERROR "COM_QUERY is not valid UTF-8"`, and
+  `Session::run`/`tidb_parser::parse`/`Lexer::new` are all `&str`.
+
+Closing this needs a byte-oriented pipeline (`&[u8]` from the wire
+through `Lexer`), plus `@@character_set_client` reaching the parser —
+which today it does not: the session parses through
+`tidb_parser::parse_with_sql_mode`, which passes no charset at all, and
+`Parser::connection_charset` is fed only by the unused full-configuration
+entry. Adding the field alone would be a claim with no reachable
+behavior behind it.
+
 #### 12. `@@instance.x` is split differently
 
 `pkg/parser/lexer.go:624` recognizes exactly `{"global.", "session.",
