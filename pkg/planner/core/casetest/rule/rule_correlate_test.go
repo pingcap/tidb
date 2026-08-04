@@ -195,6 +195,21 @@ func explainContains(rows [][]any, substr string) bool {
 	return false
 }
 
+// explainInfoContains reports whether any operator's info column contains substr.
+// explainContains only looks at the operator id column, so access conditions,
+// ranges and filters have to be matched here instead.
+func explainInfoContains(rows [][]any, substr string) bool {
+	for _, row := range rows {
+		if len(row) < 5 {
+			continue
+		}
+		if strings.Contains(fmt.Sprintf("%v", row[4]), substr) {
+			return true
+		}
+	}
+	return false
+}
+
 // joinExplainRows formats explain rows into a single string for debug output.
 func joinExplainRows(rows [][]any) string {
 	var sb strings.Builder
@@ -358,6 +373,22 @@ func TestCorrelateAggMinMaxChoosesApply(t *testing.T) {
 	require.False(t, explainContains(rows, "StreamAgg"),
 		"expected the correlated inner side to drop the aggregation:\n%s", joinExplainRows(rows))
 	tk.MustQuery(sql + " order by 1").Check(testkit.Rows(want...))
+
+	// A range predicate on the grouping column must not cost the inner side its
+	// correlated index access: both predicates have to end up in the access
+	// conditions so each probe reads one point range rather than the whole range.
+	rangeSQL := "select s.ns_id, d.min_id from summary s " +
+		"left join (select ns_id, min(id) as min_id from journal where ns_id > 0 group by ns_id) d " +
+		"on d.ns_id = s.ns_id where s.tag = 7 and s.ns_id > 0"
+	tk.MustExec("set tidb_opt_enable_alternative_logical_plans = OFF")
+	rangeWant := testdata.ConvertRowsToStrings(tk.MustQuery(rangeSQL + " order by 1").Rows())
+	tk.MustExec("set tidb_opt_enable_alternative_logical_plans = ON")
+	rows = tk.MustQuery("explain format = 'brief' " + rangeSQL).Rows()
+	require.True(t, explainContains(rows, "Apply"),
+		"expected Apply for the range-predicate shape:\n%s", joinExplainRows(rows))
+	require.True(t, explainInfoContains(rows, "decided by [gt(test.journal.ns_id, 0) eq(test.journal.ns_id, test.summary.ns_id)]"),
+		"expected both predicates in the correlated access conditions:\n%s", joinExplainRows(rows))
+	tk.MustQuery(rangeSQL + " order by 1").Check(testkit.Rows(rangeWant...))
 }
 
 // TestCorrelateAggMinMaxParity checks that the correlate round never changes
@@ -390,6 +421,12 @@ func TestCorrelateAggMinMaxParity(t *testing.T) {
 		"select o.k, d.m from o left join (select k, min(id) m from i2 group by k order by k limit 2) d on d.k = o.k",
 		// Rejected: HAVING filters aggregated output, which has no correlated form.
 		"select o.k, d.m from o left join (select k, min(id) m from i2 group by k having min(id) > 10) d on d.k = o.k",
+		// Accepted, and the range predicate on the group key must survive being
+		// promoted alongside the correlated equality: outer k=1 matches no group.
+		"select o.k, d.m from o left join (select k, min(id) m from i2 where k > 1 group by k) d on d.k = o.k",
+		// Same, with the range predicate reaching the derived table only by being
+		// pushed through the join key from the outer query.
+		"select o.k, d.m from o left join (select k, min(id) m from i2 group by k) d on d.k = o.k where o.k > 1",
 	}
 	for _, sql := range sqls {
 		tk.MustExec("set tidb_opt_enable_alternative_logical_plans = OFF")
