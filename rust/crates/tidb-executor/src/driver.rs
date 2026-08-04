@@ -74,13 +74,110 @@ pub(crate) fn default_field_display_name(
     index: usize,
     expr: &tidb_ast::Expr,
 ) -> String {
-    match expr {
-        tidb_ast::Expr::Column(path) => path.last().cloned().unwrap_or_default(),
-        other => fields
+    if let tidb_ast::Expr::Column(path) = expr {
+        return path.last().cloned().unwrap_or_default();
+    }
+    // Go `getInnerFromParenthesesAndUnaryPlus`: the literal test looks through
+    // parentheses and a unary `+`, so `(null)` and `+1` are named as their
+    // inner literal.
+    let inner = inner_field_expr(expr);
+    // Go `buildProjectionFieldNameFromExpressions`: a literal gets special
+    // handling. This tier corrects the one case that diverges -- a bare NULL
+    // literal is named `NULL` (Go's `types.KindNull` arm), not the lowercase
+    // `null` its source text carried -- and leaves every other literal named by
+    // the text it was written with, as before.
+    if is_value_literal(inner) {
+        if matches!(inner, tidb_ast::Expr::Null) {
+            return "NULL".to_owned();
+        }
+        return fields
             .text(index)
             .and_then(|bytes| std::str::from_utf8(bytes).ok())
-            .map_or_else(|| other.restore(), str::to_owned),
+            .map_or_else(|| expr.restore(), str::to_owned);
     }
+    // Non-literal: named by its source text with MySQL special-result-field
+    // comment markers removed -- Go's
+    // `SpecFieldPattern.ReplaceAllStringFunc(field.Text(), TrimComment)`, which
+    // drops every `*/` and `/*!<version>` marker. A `/*+ hint */` therefore
+    // keeps `/*+ hint ` in the label because only the closing `*/` matches.
+    let text = fields
+        .text(index)
+        .and_then(|bytes| std::str::from_utf8(bytes).ok())
+        .map_or_else(|| expr.restore(), str::to_owned);
+    strip_spec_field_comment_markers(&text)
+}
+
+/// Go `getInnerFromParenthesesAndUnaryPlus`: strips enclosing parentheses and
+/// leading unary `+` to reach the expression that decides the column name.
+fn inner_field_expr(expr: &tidb_ast::Expr) -> &tidb_ast::Expr {
+    match expr {
+        tidb_ast::Expr::Paren(inner) | tidb_ast::Expr::Unary(tidb_ast::UnaryOp::Plus, inner) => {
+            inner_field_expr(inner)
+        }
+        other => other,
+    }
+}
+
+/// Whether `expr` is one of Go's `driver.ValueExpr` literals, which
+/// `buildProjectionFieldNameFromExpressions` names by a rule of their own
+/// rather than by the field's source text.
+fn is_value_literal(expr: &tidb_ast::Expr) -> bool {
+    matches!(
+        expr,
+        tidb_ast::Expr::Null
+            | tidb_ast::Expr::Int(_)
+            | tidb_ast::Expr::Decimal(_)
+            | tidb_ast::Expr::Float(_)
+            | tidb_ast::Expr::Hex(_)
+            | tidb_ast::Expr::Bit(_)
+            | tidb_ast::Expr::String(_)
+            | tidb_ast::Expr::RawString(_)
+            | tidb_ast::Expr::Bool(_)
+    )
+}
+
+/// Go `SpecFieldPattern.ReplaceAllStringFunc(text, TrimComment)`: removes each
+/// MySQL special-result-field comment marker -- a closing `*/`, and an opening
+/// `/*!` optionally followed by a 5-6 digit (optionally `M`-prefixed) version
+/// -- leaving the rest of the text, including a `/*+ ...` optimizer-hint
+/// opener, untouched.
+fn strip_spec_field_comment_markers(text: &str) -> String {
+    let bytes = text.as_bytes();
+    // Only ASCII marker sequences are removed from valid UTF-8, so copying the
+    // surviving bytes and reinterpreting them never splits a code point.
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        // A closing `*/`.
+        if bytes[i] == b'*' && i + 1 < bytes.len() && bytes[i + 1] == b'/' {
+            i += 2;
+            continue;
+        }
+        // An opening `/*!`, with an optional `M` and a 5-6 digit version, all
+        // of which Go's `SpecFieldPattern` consumes as one match and
+        // `TrimComment` drops.
+        if bytes[i] == b'/' && i + 2 < bytes.len() && bytes[i + 1] == b'*' && bytes[i + 2] == b'!' {
+            let mut j = i + 3;
+            if j < bytes.len() && bytes[j] == b'M' {
+                j += 1;
+            }
+            let digit_start = j;
+            while j < bytes.len() && j - digit_start < 6 && bytes[j].is_ascii_digit() {
+                j += 1;
+            }
+            // The version group is 5-6 digits, or absent; a 1-4 digit run is
+            // not a version, so the marker is still just `/*!`.
+            if j - digit_start == 0 || (5..=6).contains(&(j - digit_start)) {
+                i = j;
+                continue;
+            }
+            i += 3;
+            continue;
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8(out).unwrap_or_else(|_| text.to_owned())
 }
 use tidb_expr::schema::Schema;
 
@@ -1095,5 +1192,43 @@ pub(crate) fn eval_limit_bound(expr: &tidb_ast::Expr) -> Result<u64, DriverError
         _ => Err(DriverError::unsupported(
             "LIMIT bound must be an integer literal",
         )),
+    }
+}
+
+#[cfg(test)]
+mod field_name_tests {
+    use super::{run_select_meta_on, strip_spec_field_comment_markers, Catalog};
+
+    /// Go `SpecFieldPattern` + `TrimComment`: every closing `*/` and opening
+    /// `/*!<version>` marker is removed, and a `/*+ ...` hint opener is kept.
+    #[test]
+    fn strip_spec_field_comment_markers_matches_go_spec_field_pattern() {
+        // The optimizer-hint case the recorded corpus needs: the `*/` goes,
+        // the `/*+` stays, and the two surrounding spaces remain.
+        assert_eq!(
+            strip_spec_field_comment_markers("(select /*+ INL_JOIN(x2) */ x2.a from t)"),
+            "(select /*+ INL_JOIN(x2)  x2.a from t)"
+        );
+        // A MySQL version comment `/*!40101 ... */` loses both markers.
+        assert_eq!(
+            strip_spec_field_comment_markers("a /*!40101 + 1 */"),
+            "a  + 1 "
+        );
+        // A bare `/*!` with no version still goes.
+        assert_eq!(strip_spec_field_comment_markers("/*! x */"), " x ");
+        // Text with neither marker is untouched, multibyte included.
+        assert_eq!(strip_spec_field_comment_markers("列 + 1"), "列 + 1");
+    }
+
+    /// Go `buildProjectionFieldNameFromExpressions`: a bare NULL literal is
+    /// named `NULL`, whatever case the source text used.
+    #[test]
+    fn a_null_literal_column_is_named_uppercase_null() {
+        let ctx = crate::StmtContext::for_query();
+        let (columns, _) = run_select_meta_on("select null", &Catalog::default(), &ctx).unwrap();
+        assert_eq!(columns[0].0, "NULL");
+        // A parenthesized / unary-plus NULL reaches the same rule.
+        let (columns, _) = run_select_meta_on("select (null)", &Catalog::default(), &ctx).unwrap();
+        assert_eq!(columns[0].0, "NULL");
     }
 }

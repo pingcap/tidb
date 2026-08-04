@@ -1421,7 +1421,17 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // they move from compared-and-diverged to the `PlanWithoutProperty` skip
     // class (`5642 -> 5639` compared): TiDB's plan has no scan node to compare
     // against, and neither does this tier's.
-    const KNOWN_DIVERGENCES: usize = 58;
+    //
+    // 58 -> 54: Go's `buildProjectionFieldNameFromExpressions` column-name
+    // rules landed (`driver::default_field_display_name`). A bare NULL literal
+    // is named `NULL` (Go's `types.KindNull` arm), so `SELECT * FROM (select
+    // null) v NATURAL LEFT JOIN (select null) v1` now heads its column `NULL`
+    // not `null`; and a non-literal field's label has its MySQL
+    // special-result-field comment markers stripped (Go's `SpecFieldPattern` +
+    // `TrimComment`), so the three `select (select /*+ INL_*_JOIN(x2) */ x2.a
+    // ...) from t1` labels drop their closing `*/` to match TiDB. All four are
+    // `Rows`-kind, so `compared` holds at 5639 and matched rises.
+    const KNOWN_DIVERGENCES: usize = 54;
 
     assert!(
         total.divergences.len() <= KNOWN_DIVERGENCES,
