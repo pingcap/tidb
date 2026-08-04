@@ -104,7 +104,7 @@ pub struct Column {
     pub(crate) data: Vec<u8>,
     /// Scratch buffer sized to one fixed element; empty for a var-length column
     /// (Go `elemBuf`).
-    elem_buf: Vec<u8>,
+    pub(crate) elem_buf: Vec<u8>,
     /// Go `avoidReusing`: keep this column out of the allocator's reuse pool.
     pub avoid_reusing: bool,
 }

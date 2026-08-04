@@ -23,6 +23,9 @@
 //! `VectorFloat32`, `Reset(EvalType)`, the growth/pool/disk paths,
 //! and a `str`-typed `GetString`.
 //!
+//! [`mutrow`] adds Go's `MutRow`, the mutable one-row chunk that partition
+//! pruning and ranger detachment evaluate expressions against.
+//!
 //! [`chunk_in_disk`] adds the spill-to-disk container `DataInDiskByChunks`
 //! (Go `chunk_in_disk.go`) over the checksum-framed temporary file in
 //! [`chunk_util`]; [`row_in_disk`] carries the read-while-writing reader it
@@ -32,5 +35,6 @@ pub mod chunk;
 pub mod chunk_in_disk;
 pub mod chunk_util;
 pub mod column;
+pub mod mutrow;
 pub mod row;
 pub mod row_in_disk;
