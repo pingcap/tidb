@@ -737,6 +737,30 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
         // but the shared implementation `time_fn::dispatch` already takes the
         // unit as its first VALUE — so the unit becomes a constant argument
         // and the one implementation runs unchanged.
+        // `TIMESTAMPADD(unit, n, datetime)` is the same shape as
+        // `TIMESTAMPDIFF` below: the unit is a dedicated AST field, and
+        // `builtinTimestampAddSig.evalString` reads it as its first VALUE
+        // (`b.args[0].EvalString`), so a constant argument reproduces Go's
+        // own argument list exactly.
+        Expr::TimestampAdd {
+            unit,
+            interval,
+            expr,
+        } => {
+            let args = vec![
+                constant_string(unit),
+                rewrite_expr_resolved(interval, resolver)?,
+                rewrite_expr_resolved(expr, resolver)?,
+            ];
+            let ret_type = builtin_return_type("timestampadd", &args).ok_or(
+                EvalError::Unsupported("this builtin is not yet built for chunk evaluation"),
+            )?;
+            Ok(Expression::ScalarFunction(ScalarFunction::new(
+                CiString::new("timestampadd"),
+                ret_type,
+                args,
+            )))
+        }
         Expr::TimestampDiff { unit, expr1, expr2 } => {
             let args = vec![
                 constant_string(unit),

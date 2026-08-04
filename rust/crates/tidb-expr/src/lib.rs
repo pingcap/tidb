@@ -628,6 +628,24 @@ pub fn eval_in(expr: &Expr, cols: &dyn Columns) -> Result<Datum, EvalError> {
         Expr::Extract { unit, value } => {
             eval_func(unit, std::slice::from_ref(value.as_ref()), cols, None)
         }
+        // `TIMESTAMPADD(unit, n, datetime)`'s unit is a dedicated AST field
+        // rather than an argument expression (see
+        // `tidb_ast::Expr::TimestampAdd`), and Go's
+        // `builtinTimestampAddSig.evalString` reads it as its first VALUE --
+        // so the same implementation the chunk tier reaches through the
+        // rewriter runs here with the unit prepended as a string datum.
+        Expr::TimestampAdd {
+            unit,
+            interval,
+            expr,
+        } => {
+            let vals = vec![
+                Datum::new_string(unit.clone()),
+                eval_in(interval, cols)?,
+                eval_in(expr, cols)?,
+            ];
+            time_fn::add_sub::timestamp_add(&vals, cols)
+        }
         // `GET_FORMAT(<type>, location)` — the type is an AST selector (the
         // parser already collapsed `TIMESTAMP` into `Datetime`), so only the
         // location is evaluated; a NULL location yields NULL. Port of

@@ -976,3 +976,147 @@ fn match_against_unsupported() {
         assert_eq!(&e(expr), want, "expr: {expr}");
     }
 }
+
+/// `ADDTIME`/`SUBTIME`, pinned to what a real TiDB session ANSWERED for each
+/// statement (captured with a `gorun`-shaped oracle that also prints the
+/// result column's `FieldType`).
+///
+/// These are the CONSTANT calls, which Go constant-folds and therefore
+/// evaluates through `builtinAdd*Sig.evalString` -- its row body, not the
+/// vectorized one. The two differ, and the difference is in this table: the
+/// `'2020-01-01 10:00:00'` second argument is NULL under `ADDTIME` (the
+/// `parser.Number`/`parser.Char('-')` guard at the end of
+/// `builtinAddStringAndStringSig.evalString`) and a real value under
+/// `SUBTIME`, whose row body has no such guard.
+#[test]
+fn addtime_and_subtime_match_the_captured_session_answers() {
+    for (expr, want) in [
+        (
+            "addtime('2020-01-01 10:00:00','01:00:00')",
+            "STR:2020-01-01 11:00:00",
+        ),
+        (
+            "subtime('2020-01-01 10:00:00','01:00:00')",
+            "STR:2020-01-01 09:00:00",
+        ),
+        ("addtime('10:00:00','01:00:00')", "STR:11:00:00"),
+        ("subtime('10:00:00','01:00:00')", "STR:09:00:00"),
+        (
+            "addtime('2020-01-01','01:00:00')",
+            "STR:2020-01-01 01:00:00",
+        ),
+        (
+            "addtime('2020-01-01 10:00:00','-01:00:00')",
+            "STR:2020-01-01 09:00:00",
+        ),
+        (
+            "subtime('2020-01-01 10:00:00','-01:00:00')",
+            "STR:2020-01-01 11:00:00",
+        ),
+        (
+            "addtime('2020-01-01 10:00:00','3')",
+            "STR:2020-01-01 10:00:03",
+        ),
+        (
+            "subtime('2020-01-01 10:00:00','3')",
+            "STR:2020-01-01 09:59:57",
+        ),
+        // The row-body guard, and its absence in SUBTIME.
+        (
+            "addtime('2020-01-01 10:00:00','2020-01-01 10:00:00')",
+            "NULL",
+        ),
+        (
+            "subtime('2020-01-01 10:00:00','2020-01-01 10:00:00')",
+            "STR:2020-01-01 00:00:00",
+        ),
+        ("addtime('10:00:00','2020-01-01 10:00:00')", "NULL"),
+        // `types.ParseDuration` fails first, so this one is NULL in BOTH.
+        ("addtime('2020-01-01 10:00:00','xyz')", "NULL"),
+        ("subtime('2020-01-01 10:00:00','xyz')", "NULL"),
+        ("addtime('2020-01-01 10:00:00','3-1')", "NULL"),
+        ("addtime(null,'01:00:00')", "NULL"),
+        ("addtime('2020-01-01 10:00:00',null)", "NULL"),
+        // `strDatetimeAddDuration` raises the result to MaxFsp exactly when
+        // the sum carries a microsecond, so these two differ in WIDTH.
+        (
+            "addtime('2020-01-01 10:00:00','01:02:03.4567')",
+            "STR:2020-01-01 11:02:03.456700",
+        ),
+        ("addtime('10:00:00','01:02:03.4567')", "STR:11:02:03.456700"),
+    ] {
+        assert_eq!(e(expr), want, "{expr}");
+        assert_eq!(chunk_e(expr), want, "{expr} (chunk tier)");
+    }
+}
+
+/// `TIMESTAMP`, `TIMESTAMPADD`, captured the same way.
+#[test]
+fn timestamp_and_timestampadd_match_the_captured_session_answers() {
+    for (expr, want) in [
+        ("timestamp('2020-01-01')", "STR:2020-01-01 00:00:00"),
+        (
+            "timestamp('2020-01-01 10:00:00.123')",
+            "STR:2020-01-01 10:00:00.123",
+        ),
+        (
+            "timestamp('2020-01-01','01:00:00')",
+            "STR:2020-01-01 01:00:00",
+        ),
+        (
+            "timestamp('2020-01-01 10:00:00','01:00:00.5')",
+            "STR:2020-01-01 11:00:00.5",
+        ),
+        (
+            "timestamp('2020-01-01','-01:00:00')",
+            "STR:2019-12-31 23:00:00",
+        ),
+        ("timestamp('bad')", "NULL"),
+        ("timestamp('2020-01-01','bad')", "NULL"),
+        ("timestamp(null)", "NULL"),
+        (
+            "timestampadd(minute, 5, '2020-01-01 10:00:00')",
+            "STR:2020-01-01 10:05:00",
+        ),
+        (
+            "timestampadd(microsecond, 5, '2020-01-01 10:00:00')",
+            "STR:2020-01-01 10:00:00.000005",
+        ),
+        (
+            "timestampadd(second, 5.4, '2020-01-01 10:00:00')",
+            "STR:2020-01-01 10:00:05.400000",
+        ),
+        // `types.AddDate` CLAMPS for MONTH ...
+        (
+            "timestampadd(month, 1, '2020-01-31')",
+            "STR:2020-02-29 00:00:00",
+        ),
+        // ... while QUARTER and YEAR go through Go's own `time.AddDate`,
+        // which OVERFLOWS into the next month.
+        (
+            "timestampadd(year, 1, '2020-02-29')",
+            "STR:2021-03-01 00:00:00",
+        ),
+        (
+            "timestampadd(quarter, 1, '2020-01-01')",
+            "STR:2020-04-01 00:00:00",
+        ),
+        (
+            "timestampadd(day, -1, '2020-01-01')",
+            "STR:2019-12-31 00:00:00",
+        ),
+        (
+            "timestampadd(week, 2, '2020-01-01')",
+            "STR:2020-01-15 00:00:00",
+        ),
+        (
+            "timestampadd(hour, 1, '2020-01-01')",
+            "STR:2020-01-01 01:00:00",
+        ),
+        ("timestampadd(minute, 5, null)", "NULL"),
+        ("timestampadd(second, 1, '9999-12-31 23:59:59')", "NULL"),
+    ] {
+        assert_eq!(e(expr), want, "{expr}");
+        assert_eq!(chunk_e(expr), want, "{expr} (chunk tier)");
+    }
+}

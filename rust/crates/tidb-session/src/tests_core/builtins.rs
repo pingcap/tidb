@@ -1166,3 +1166,92 @@ fn string_operands_take_go_s_per_operator_numeric_cast() {
         [["10"], ["20"], ["0"]]
     );
 }
+
+/// `ADDTIME` over TYPED temporal columns, which is where Go's twelve-way
+/// `addTimeFunctionClass.getFunction` switch is actually observable: the
+/// same values answer differently depending on whether the column is
+/// DATETIME, DATE, TIME or VARCHAR, and a DATETIME second argument makes
+/// the whole call NULL.
+///
+/// Every expected value was captured from a real TiDB session (mock store)
+/// running exactly these statements.
+#[test]
+fn addtime_selects_its_signature_from_the_column_types() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE w(dt DATETIME(3), tm TIME(4), dt6 DATETIME(6), \
+             tm6 TIME(6), d0 DATETIME, t0 TIME, dd DATE, s VARCHAR(50))",
+        )
+        .unwrap();
+    session
+        .run(
+            "INSERT INTO w VALUES('2020-01-01 10:00:00.123','01:02:03.4567',\
+             '2020-01-01 10:00:00.123456','01:02:03.456789','2020-01-01 10:00:00',\
+             '01:02:03','2020-01-01','2020-01-01 10:00:00')",
+        )
+        .unwrap();
+    for (expr, want) in [
+        // DATETIME + TIME: the result's fsp is the DATETIME's own, because
+        // the vectorized arm hands `Time.Add` a `Duration{Fsp: -1}`. The
+        // microsecond field is exact (`.579789`) and TRUNCATED to print.
+        ("addtime(dt, tm)", "2020-01-01 11:02:03.579"),
+        ("addtime(dt6, tm6)", "2020-01-01 11:02:03.580245"),
+        ("addtime(dt, tm6)", "2020-01-01 11:02:03.579"),
+        ("addtime(dt6, tm)", "2020-01-01 11:02:03.580156"),
+        ("addtime(d0, tm)", "2020-01-01 11:02:03"),
+        ("addtime(dt, t0)", "2020-01-01 11:02:03.123"),
+        // DATE + TIME: the DATE reads as midnight and its own fsp is 0, so
+        // the DURATION's fsp decides -- the opposite operand from above.
+        ("addtime(dd, tm)", "2020-01-01 01:02:03.4567"),
+        // TIME + TIME: the larger of the two fsps.
+        ("addtime(tm, tm)", "02:04:06.9134"),
+        ("addtime(tm, tm6)", "02:04:06.913489"),
+        ("addtime(t0, tm)", "02:04:06.4567"),
+        // A VARCHAR first argument sniffs its own text at RUNTIME, and the
+        // VECTORIZED body has no `<digits>-<rest>` guard, so this is the one
+        // that differs from the constant-folded spelling (which is NULL).
+        ("addtime(s, s)", "2020-01-01 20:00:00"),
+        ("addtime(s, tm)", "2020-01-01 11:02:03.456700"),
+    ] {
+        assert_eq!(
+            session.run(&format!("SELECT {expr} FROM w")).unwrap(),
+            StmtResult::Rows(vec![vec![Datum::new_string(want)]]),
+            "{expr}"
+        );
+    }
+    // Every `...Null` signature: a DATETIME/TIMESTAMP second argument.
+    for expr in [
+        "addtime(dt, dt)",
+        "addtime(dd, dt)",
+        "addtime(tm, dt)",
+        "addtime(s, dt)",
+    ] {
+        assert_eq!(
+            session.run(&format!("SELECT {expr} FROM w")).unwrap(),
+            StmtResult::Rows(vec![vec![Datum::Null]]),
+            "{expr}"
+        );
+    }
+}
+
+/// `SYSDATE` is NOT the statement clock: `builtinSysDateWithoutFspSig`
+/// calls `time.Now()` per evaluation, where `NOW` returns the one fixed
+/// statement timestamp. Only the SHAPE is asserted -- the value is a real
+/// wall-clock reading and cannot be pinned.
+#[test]
+fn sysdate_reads_the_wall_clock_and_not_the_statement_timestamp() {
+    let mut session = Session::new();
+    let StmtResult::Rows(rows) = session.run("SELECT SYSDATE(), SYSDATE(3)").unwrap() else {
+        panic!("SYSDATE did not produce rows")
+    };
+    let text = |value: &Datum| match value {
+        Datum::String(payload) => payload.as_utf8().expect("SYSDATE is UTF-8").to_owned(),
+        other => panic!("SYSDATE did not produce a string: {other:?}"),
+    };
+    let plain = text(&rows[0][0]);
+    let with_fsp = text(&rows[0][1]);
+    assert_eq!(plain.len(), 19, "SYSDATE() width: {plain}");
+    assert_eq!(with_fsp.len(), 23, "SYSDATE(3) width: {with_fsp}");
+    assert_eq!(&with_fsp[19..20], ".", "SYSDATE(3) fraction: {with_fsp}");
+}

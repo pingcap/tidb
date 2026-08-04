@@ -209,9 +209,14 @@ pub(super) fn builtin_return_type(name: &str, args: &[Expression]) -> Option<Fie
         "now" | "current_timestamp" | "localtime" | "localtimestamp" | "utc_timestamp"
         | "curdate" | "current_date" | "utc_date"
         | "curtime" | "current_time" | "utc_time" | "monthname" | "dayname" | "last_day"
-        | "sec_to_time" | "maketime" | "makedate" | "from_days" | "date_format" | "str_to_date" => {
-            text()
-        }
+        | "sec_to_time" | "maketime" | "makedate" | "from_days" | "date_format" | "str_to_date"
+        // `ADDTIME`/`SUBTIME` return one of Go's THREE result types
+        // (`getBf4TimeAddSub`: DATETIME, TIME or STRING, chosen from the
+        // first argument's own type), `TIMESTAMP` a DATETIME and
+        // `TIMESTAMPADD`/`SYSDATE` a VarString and a DATETIME. All five land
+        // on the same documented divergence as the rest of this family: the
+        // value is the formatted string, so the reported type is text.
+        | "addtime" | "subtime" | "timestamp" | "timestampadd" | "sysdate" => text(),
         "month" | "day" | "dayofmonth" | "dayofweek" | "dayofyear" | "weekday" | "quarter"
         | "week" | "weekofyear" | "yearweek" | "year" | "hour" | "minute" | "second"
         | "microsecond" | "time_to_sec" | "to_days" | "period_add" | "period_diff"

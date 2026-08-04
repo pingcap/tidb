@@ -852,6 +852,28 @@ impl ScalarFunction {
         if let Some(result) = crate::builtin_ext::json_dispatch_typed(&upper, &vals, &arg_types) {
             return result;
         }
+        // `ADDTIME`/`SUBTIME` are the other family Go types from the
+        // ARGUMENTS' `FieldType`s rather than from their values: twelve
+        // signatures over the `(tp1, tp2)` cross product, whose arms differ
+        // in the result fsp and in whether the answer is NULL at all. Only
+        // this tier has those types; `time_fn::dispatch` below still serves
+        // the AST tier on Go's `default` branch.
+        if matches!(upper.as_str(), "ADDTIME" | "SUBTIME") && vals.len() == 2 {
+            use crate::time_fn::add_sub::{add_sub_time, kind_of, TemporalKind};
+            let kinds: [TemporalKind; 2] = [
+                kind_of(arg_types[0].as_ref(), &vals[0]),
+                kind_of(arg_types[1].as_ref(), &vals[1]),
+            ];
+            // A call whose arguments are all CONSTANT is what Go folds, and
+            // folding runs the ROW body. Anything reading a column runs the
+            // vectorized one.
+            let row_path = self
+                .args
+                .iter()
+                .all(|arg| matches!(arg, Expression::Constant(_)));
+            let sign = if upper == "SUBTIME" { -1 } else { 1 };
+            return add_sub_time(&vals, kinds, sign, row_path, ctx);
+        }
         if let Some(result) = crate::func::eval_func_values_in(&upper, &vals, ctx) {
             return result;
         }
