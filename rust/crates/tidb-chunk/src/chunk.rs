@@ -38,14 +38,14 @@ use tidb_datatype::{Datum, FieldType, MyDecimal, MySqlDuration, Time};
 pub struct Chunk {
     /// Go `sel`: the selected physical row indices, or `None` when all rows are
     /// selected.
-    sel: Option<Vec<usize>>,
-    columns: Vec<Column>,
+    pub(crate) sel: Option<Vec<usize>>,
+    pub(crate) columns: Vec<Column>,
     /// Go `numVirtualRows`: the row count when the chunk holds no columns.
-    num_virtual_rows: usize,
+    pub(crate) num_virtual_rows: usize,
     /// Go `capacity`: the max rows this chunk was sized for.
-    capacity: usize,
+    pub(crate) capacity: usize,
     /// Go `requiredRows`: how many rows the parent executor wants.
-    required_rows: usize,
+    pub(crate) required_rows: usize,
     /// Go `inCompleteChunk`: some columns are intentionally unfilled.
     in_complete_chunk: bool,
 }

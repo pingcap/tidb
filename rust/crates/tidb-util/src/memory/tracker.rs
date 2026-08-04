@@ -40,6 +40,12 @@ pub const LABEL_FOR_SESSION: i64 = -27;
 pub const LABEL_FOR_MEM_DB: i64 = -28;
 /// `LabelForGlobalAnalyzeMemory`.
 pub const LABEL_FOR_GLOBAL_ANALYZE_MEMORY: i64 = -25;
+/// `LabelForChunkDataInDiskByRows`: the row-addressed spill file.
+pub const LABEL_FOR_CHUNK_DATA_IN_DISK_BY_ROWS: i64 = -9;
+/// `LabelForRowContainer`.
+pub const LABEL_FOR_ROW_CONTAINER: i64 = -10;
+/// `LabelForChunkDataInDiskByChunks`: the chunk-addressed spill file.
+pub const LABEL_FOR_CHUNK_DATA_IN_DISK_BY_CHUNKS: i64 = -30;
 
 const SOFT_SCALE: f64 = 0.8;
 

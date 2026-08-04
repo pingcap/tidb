@@ -1548,6 +1548,8 @@ name = "tidb-chunk"
 version = "0.0.0"
 dependencies = [
  "tidb-datatype",
+ "tidb-util",
+ "tracing",
 ]
 
 [[package]]

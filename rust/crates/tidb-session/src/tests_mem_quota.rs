@@ -87,9 +87,34 @@ fn set_global_is_visible_through_an_unprefixed_read_of_a_global_only_var() {
     );
 }
 
+/// Go's own answer, measured on this branch with `testkit` over a 168 MB
+/// table and `SELECT a FROM t ORDER BY b` (`tidb_mem_oom_action = CANCEL`):
+///
+/// | `tidb_mem_quota_query` | tmp storage ON | tmp storage OFF |
+/// | --- | --- | --- |
+/// | 2 MiB   | 400000 rows | 8175 |
+/// | 8 MiB   | 400000 rows | 8175 |
+/// | 16 MiB  | 400000 rows | 8175 |
+/// | 64 MiB  | 400000 rows | 400000 rows |
+///
+/// So spilling IS what saves an over-quota `ORDER BY`, and with spilling off
+/// 8175 is Go's answer at every quota the sort does not fit in. This test
+/// pins the OFF column, which is the one this tier reproduces exactly.
+///
+/// MEASURED DIVERGENCE, at quotas far below one chunk: at
+/// `tidb_mem_quota_query = 1` Go answers 8175 even with tmp storage ON,
+/// because the READ path's own tracker is cancelled before the sort's spill
+/// action can release anything. This tier accounts in the sort only (see
+/// `tidb_executor::mem_quota`'s "WHICH OPERATORS ACCOUNT"), so with spilling
+/// on it spills and returns rows there. Closing that needs read-path
+/// accounting, not a spill change -- so the gate below is set explicitly
+/// rather than the divergence being papered over.
 #[test]
 fn a_sort_past_the_quota_reaches_the_client_as_go_s_8175() {
     let mut session = ordered_session();
+    session
+        .run("SET @@global.tidb_enable_tmp_storage_on_oom = 0")
+        .unwrap();
     session.run("SET @@tidb_mem_quota_query = 1").unwrap();
     let error = session
         .run("SELECT a FROM t ORDER BY b")

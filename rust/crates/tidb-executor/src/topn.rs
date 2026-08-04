@@ -845,7 +845,14 @@ mod tests {
         // both operators must be able to hold.
         let quota = 200_000;
 
-        let sort_memory = StatementMemory::new(quota, OomAction::Cancel, 42);
+        // Spilling OFF for the sort: the contrast this test draws is between
+        // an operator that must HOLD every row and one that holds only `n`.
+        // A spilling sort survives the same quota by writing rows out, which
+        // is a different (and now covered) behavior -- see
+        // `sort::tests::a_sort_over_the_quota_spills_to_disk_and_returns_every_row`.
+        // TopN spill itself is not ported.
+        let sort_memory =
+            StatementMemory::new(quota, OomAction::Cancel, 42).with_tmp_storage_on_oom(false);
         let mut sort = SortExec::new(
             ExecutorMeta::new(schema_of(2), 1, 4, 32),
             by(&[(0, false)]),

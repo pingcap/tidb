@@ -177,6 +177,10 @@ impl ActionOnExceed for CancelOnExceed {
 pub struct StatementMemory {
     session: Arc<Tracker>,
     stmt: Arc<Tracker>,
+    /// `@@tidb_enable_tmp_storage_on_oom` (Go `vardef.EnableTmpStorageOnOOM`,
+    /// default ON): whether an operator that can spill is allowed to, instead
+    /// of failing the statement with 8175.
+    tmp_storage_on_oom: bool,
     /// The killer [`CancelOnExceed`] signals; `None` under `LOG`, where
     /// nothing cancels.
     killer: Option<Arc<SqlKiller>>,
@@ -234,8 +238,31 @@ impl StatementMemory {
         StatementMemory {
             session,
             stmt,
+            tmp_storage_on_oom: true,
             killer,
         }
+    }
+
+    /// Sets `@@tidb_enable_tmp_storage_on_oom`. Go reads the sysvar in
+    /// `SortExec.Open`; the budget carries it here so an operator does not
+    /// need a session handle.
+    #[must_use]
+    pub fn with_tmp_storage_on_oom(mut self, enabled: bool) -> Self {
+        self.tmp_storage_on_oom = enabled;
+        self
+    }
+
+    /// Whether spilling is enabled for this statement.
+    #[must_use]
+    pub fn tmp_storage_on_oom(&self) -> bool {
+        self.tmp_storage_on_oom
+    }
+
+    /// The session root tracker, which carries the quota and is where Go
+    /// registers a spill action (`MemTracker.FallbackOldAndSetNewAction`).
+    #[must_use]
+    pub fn session_tracker(&self) -> &Arc<Tracker> {
+        &self.session
     }
 
     /// The statement tracker an operator attaches its own tracker to (Go

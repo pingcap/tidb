@@ -9,6 +9,8 @@ description = "TiDB util/chunk: the columnar row container for execution (Rust r
 
 [dependencies]
 tidb-datatype = { path = "../tidb-datatype" }
+tidb-util = { path = "../tidb-util" }
+tracing = "0.1"
 
 [lints]
 workspace = true

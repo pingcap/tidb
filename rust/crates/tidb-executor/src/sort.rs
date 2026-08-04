@@ -39,17 +39,20 @@
 //! `Next`, as Go returns it from `Next`.
 
 use std::cmp::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
 use std::sync::Arc;
 
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use tidb_chunk::chunk::Chunk;
+use tidb_chunk::row::Row;
 use tidb_datatype::{Datum, FieldType};
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_expr::Columns;
-use tidb_util::memory::Tracker;
+use tidb_util::memory::{ArcAction, Tracker};
 
 use crate::mem_quota::StatementMemory;
+use crate::sort_partition::{spill_action, SortPartition, SPILL_CHUNK_SIZE};
 
 /// Go `planner/util.ByItems`: one `ORDER BY` item -- the key expression and
 /// its direction.
@@ -60,7 +63,51 @@ pub struct SortByItem {
     pub desc: bool,
 }
 
-/// Go `SortExec` (unparallel, single in-memory partition).
+/// Evaluates every by-item against `row`, producing the row's sort key.
+///
+/// Go keeps no materialized key (`keyCmpFuncs` re-reads the chunk cell on
+/// every comparison); this port materializes one so a spilled run can be
+/// compared after its chunk is gone. See `SortPartition::add` for the memory
+/// that costs and why it is counted.
+pub fn eval_sort_key<C: Columns>(
+    by_items: &[SortByItem],
+    ctx: &C,
+    row: Row<'_>,
+) -> Result<Vec<Datum>, ExecError> {
+    let mut key = Vec::with_capacity(by_items.len());
+    for item in by_items {
+        key.push(item.expr.eval(ctx, row)?);
+    }
+    Ok(key)
+}
+
+/// Go `lessRow`: the first non-equal by-item decides, and `Desc` negates it.
+///
+/// Each key compares under ITS OWN derived collation (Go builds `keyCmpFuncs`
+/// from the by-item's `RetType`): `ORDER BY ci_col` orders `a, A, b, B`, not
+/// the byte order `A, B, a, b`.
+pub fn less_by_items(
+    by_items: &[SortByItem],
+    a: &[Datum],
+    b: &[Datum],
+) -> Result<Ordering, ExecError> {
+    for (i, item) in by_items.iter().enumerate() {
+        let mut cmp = tidb_expr::compare_datums_with_collation(
+            &a[i],
+            &b[i],
+            tidb_expr::collation_derive::collation_of_node(&item.expr),
+        )?;
+        if item.desc {
+            cmp = cmp.reverse();
+        }
+        if cmp != Ordering::Equal {
+            return Ok(cmp);
+        }
+    }
+    Ok(Ordering::Equal)
+}
+
+/// Go `SortExec` (unparallel, external): one or more sorted runs, merged.
 pub struct SortExec<C: Columns> {
     meta: ExecutorMeta,
     /// Go `ByItems`.
@@ -69,14 +116,9 @@ pub struct SortExec<C: Columns> {
     ctx: C,
     /// Go `fetched`: whether the child has been drained and sorted.
     fetched: bool,
-    /// The materialized child chunks (Go keeps rows in the sort partition's
-    /// row container).
-    child_chunks: Vec<Chunk>,
-    /// Sorted row locations: `(chunk index, row index)` per output row (Go
-    /// sorts the row pointers themselves).
-    order: Vec<(usize, usize)>,
-    /// Go `Unparallel.Idx` in spirit: how many sorted rows were emitted.
-    cursor: usize,
+    /// Go `Unparallel.sortPartitions`: the sorted runs, in creation order.
+    /// One entry, unspilled, is the common in-memory case.
+    partitions: Vec<SortPartition>,
     /// The statement's memory budget, which this operator's tracker hangs off
     /// and whose quota it checks after each `Consume`.
     memory: StatementMemory,
@@ -84,6 +126,24 @@ pub struct SortExec<C: Columns> {
     /// `StmtCtx.MemTracker`: this operator's own node in the tracker tree, so
     /// `SHOW`-style tree dumps attribute the bytes to the sort.
     tracker: Arc<Tracker>,
+    /// Go `SortExec.diskTracker`.
+    disk_tracker: Arc<tidb_util::disk::Tracker>,
+    /// Go `enableTmpStorageOnOOM` = `vardef.EnableTmpStorageOnOOM.Load()`:
+    /// `tidb_enable_tmp_storage_on_oom`. With it OFF the sort registers no
+    /// spill action, so an overrun goes straight to the 8175 cancellation --
+    /// which is exactly what this executor did before spilling existed.
+    enable_tmp_storage_on_oom: bool,
+    /// Go `spillLimit` = `MemTracker.GetBytesLimit() / 10`.
+    spill_limit: i64,
+    /// Raised by the current partition's spill action; see
+    /// `crate::sort_partition`'s module doc for why a flag stands in for
+    /// Go's spill goroutine.
+    need_spill: Arc<AtomicBool>,
+    /// The action currently registered on the session tracker, kept so
+    /// `close` can unbind it.
+    registered_action: Option<ArcAction>,
+    /// Go `spillChunkSize` (a package var so tests can shrink it).
+    spill_chunk_size: usize,
 }
 
 impl<C: Columns> SortExec<C> {
@@ -101,155 +161,187 @@ impl<C: Columns> SortExec<C> {
         memory: StatementMemory,
     ) -> Self {
         let tracker = memory.operator_tracker(meta.id());
+        let spill_limit = memory.quota() / 10;
+        let enable_tmp_storage_on_oom = memory.tmp_storage_on_oom();
         SortExec {
             meta,
             by_items,
             child,
             ctx,
             fetched: false,
-            child_chunks: Vec::new(),
-            order: Vec::new(),
-            cursor: 0,
+            partitions: Vec::new(),
             memory,
             tracker,
+            disk_tracker: tidb_util::disk::new_tracker(-1, -1),
+            enable_tmp_storage_on_oom,
+            spill_limit,
+            need_spill: Arc::new(AtomicBool::new(false)),
+            registered_action: None,
+            spill_chunk_size: SPILL_CHUNK_SIZE,
         }
     }
 
-    /// Go `fetchChunks` + the single-partition sort: drains the child,
-    /// evaluates each by-item key once per row, and stably sorts the row
-    /// locations.
+    /// Go `SetSmallSpillChunkSizeForTest`: shrink the spill chunk so a test
+    /// can produce many spilled chunks without a large data set.
+    pub fn set_spill_chunk_size_for_test(&mut self, size: usize) {
+        self.spill_chunk_size = size;
+    }
+
+    /// Bytes this sort has written to spill files (Go `SortExec.diskTracker`).
+    #[must_use]
+    pub fn bytes_in_disk(&self) -> i64 {
+        self.disk_tracker.bytes_consumed()
+    }
+
+    /// How many sorted runs the sort produced; more than one means the sort
+    /// spilled. For tests and diagnostics.
+    #[must_use]
+    pub fn num_partitions(&self) -> usize {
+        self.partitions.len()
+    }
+
+    /// Runs that actually hold rows. A spill that fires while the child is
+    /// already exhausted leaves a trailing EMPTY run, so `num_partitions`
+    /// alone does not prove the merge had anything to merge.
+    #[must_use]
+    pub fn num_non_empty_partitions(&self) -> usize {
+        self.partitions
+            .iter()
+            .filter(|partition| partition.num_rows() > 0)
+            .count()
+    }
+
+    /// Go `switchToNewSortPartition`: start a fresh run and point the spill
+    /// action at it.
+    fn new_partition(&mut self, fields: &[FieldType]) -> SortPartition {
+        let mut partition = SortPartition::new(fields.to_vec(), &self.tracker);
+        partition.set_spill_chunk_size(self.spill_chunk_size);
+        if self.enable_tmp_storage_on_oom {
+            partition.disk_tracker().attach_to(&self.disk_tracker);
+            let (action, need_spill) = spill_action(&partition, self.spill_limit);
+            self.need_spill = need_spill;
+            let action: ArcAction = action;
+            self.memory
+                .session_tracker()
+                .fallback_old_and_set_new_action(Arc::clone(&action));
+            self.registered_action = Some(action);
+        }
+        partition
+    }
+
+    /// Go `fetchChunksUnparallel` + `storeChunk`: drain the child into sorted
+    /// runs, spilling whenever the memory action says to.
     fn fetch_and_sort(&mut self) -> Result<(), ExecError> {
-        // Drain the child into materialized chunks, accounting each one as Go
-        // `sortPartition.add` does -- `chunk.RowSize*rowNum + chk.MemoryUsage()`
-        // -- and checking the quota right after, which is where Go's `Consume`
-        // fires the OOM action. Accounting INSIDE the loop is what makes a
-        // query over a large table stop early instead of first materializing
-        // everything and only then noticing.
+        let fields: Vec<FieldType> = self.meta.ret_field_types().to_vec();
+        let mut current = self.new_partition(&fields);
+
         loop {
             let mut chunk = self.child.new_chunk();
             self.child.next(&mut chunk)?;
             if chunk.num_rows() == 0 {
                 break;
             }
-            let rows = i64::try_from(chunk.num_rows()).unwrap_or(i64::MAX);
-            self.tracker
-                .consume(chunk.memory_usage() + tidb_chunk::row::ROW_SIZE * rows);
+            // Accounting happens INSIDE the loop, which is what makes a query
+            // over a large table spill (or stop) early instead of first
+            // materializing everything and only then noticing.
+            current.add(chunk, &self.by_items, &self.ctx)?;
+
+            if self.need_spill.swap(false, SeqCst) {
+                current.spill_to_disk(&self.by_items)?;
+                self.partitions.push(current);
+                current = self.new_partition(&fields);
+            }
+            // With tmp storage off (or with a partition too small to be worth
+            // a file), the action fell through to the cancellation, and this
+            // is where the statement stops with 8175.
             self.memory.check()?;
-            self.child_chunks.push(chunk);
         }
 
-        // Evaluate the sort keys once per row (Go's keyColumns equivalent).
-        let mut keys: Vec<Vec<Datum>> = Vec::new();
-        self.order.clear();
-        for (ci, chunk) in self.child_chunks.iter().enumerate() {
-            for ri in 0..chunk.num_rows() {
-                let row = chunk.get_row(ri);
-                let mut key = Vec::with_capacity(self.by_items.len());
-                let mut key_bytes = i64::try_from(size_of::<Vec<Datum>>()).unwrap_or(i64::MAX);
-                for item in &self.by_items {
-                    let datum = item.expr.eval(&self.ctx, row)?;
-                    key_bytes += i64::try_from(datum.estimated_mem_usage()).unwrap_or(i64::MAX);
-                    key.push(datum);
-                }
-                // OVER-COUNT vs Go, deliberately: Go's sort keeps no
-                // materialized key at all (`keyCmpFuncs` re-reads the chunk
-                // cell on every comparison), so `keys` is memory THIS port
-                // holds and Go does not. The tracker reports what this process
-                // actually took, because a tracker that matched Go's number
-                // while the process held more would fail to protect. It makes
-                // a sort here cross a given quota sooner than Go's does.
-                self.tracker.consume(key_bytes);
-                self.memory.check()?;
-                keys.push(key);
-                self.order.push((ci, ri));
-            }
-        }
-
-        // Go `lessRow`: first non-equal key decides; `Desc` negates it.
-        // Stable sort where Go's `sort.Slice` is unstable (see module doc).
-        // `sort_by` cannot return an error, so the first comparison error is
-        // captured and the whole sort fails afterwards -- Go's `keyCmpFuncs`
-        // reject unorderable types up front, so an error here likewise means
-        // the sort's output must not be used, and `Next` returns it.
-        let by_items = &self.by_items;
-        let mut sort_err: Option<ExecError> = None;
-        let mut indices: Vec<usize> = (0..self.order.len()).collect();
-        indices.sort_by(|&a, &b| {
-            for (i, item) in by_items.iter().enumerate() {
-                // Each key compares under ITS OWN derived collation (Go builds
-                // `keyCmpFuncs` from the by-item's `RetType`): `ORDER BY
-                // ci_col` orders `a, A, b, B`, not the byte order `A, B, a, b`.
-                let mut cmp = match tidb_expr::compare_datums_with_collation(
-                    &keys[a][i],
-                    &keys[b][i],
-                    tidb_expr::collation_derive::collation_of_node(&item.expr),
-                ) {
-                    Ok(cmp) => cmp,
-                    Err(err) => {
-                        if sort_err.is_none() {
-                            sort_err = Some(err.into());
-                        }
-                        return Ordering::Equal;
-                    }
-                };
-                if item.desc {
-                    cmp = cmp.reverse();
-                }
-                if cmp != Ordering::Equal {
-                    return cmp;
-                }
-            }
-            Ordering::Equal
-        });
-        if let Some(err) = sort_err {
-            return Err(err);
-        }
-        self.order = indices.iter().map(|&i| self.order[i]).collect();
+        current.sort(&self.by_items)?;
+        self.partitions.push(current);
         Ok(())
     }
 }
 
 impl<C: Columns> Executor for SortExec<C> {
-    /// Go `Open`: resets the fetched state and opens the child (the parallel
-    /// machinery is deferred).
+    /// Go `Open`: resets the fetched state and opens the child.
     fn open(&mut self) -> Result<(), ExecError> {
         self.fetched = false;
-        self.child_chunks.clear();
-        self.order.clear();
-        self.cursor = 0;
+        for partition in &mut self.partitions {
+            partition.close();
+        }
+        self.partitions.clear();
         // Go `SortExec.Open`: `e.memTracker.ReplaceBytesUsed(0)` -- a re-opened
         // sort (an Apply's inner side re-runs per outer row) must not keep
         // charging for rows it has just dropped.
         self.tracker.replace_bytes_used(0);
+        self.need_spill.store(false, SeqCst);
         self.child.open()
     }
 
-    /// Go `Next`: first call drains and sorts; every call then appends sorted
-    /// rows until the chunk-size bound (Go `req.IsFull()`) or exhaustion.
+    /// Go `Next`: the first call drains and sorts; every call then appends
+    /// sorted rows until the chunk-size bound or exhaustion.
+    ///
+    /// With one run this is Go's `onePartitionSorting`; with several it is
+    /// `externalSorting`, the multi-way merge over the runs.
+    ///
+    /// FAITHFUL ADAPTATION: Go's merger is a heap
+    /// (`multi_way_merge.go`); this picks the minimum by scanning the runs,
+    /// which is the same output for `k` runs and, at the handful of runs an
+    /// external sort produces, the same work. Ties resolve to the earlier run
+    /// in both, and tie order is not a guaranteed property of either.
     fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
         req.reset();
         if !self.fetched {
             self.fetch_and_sort()?;
             self.fetched = true;
         }
-        let batch = self
-            .meta
-            .max_chunk_size()
-            .min(self.order.len() - self.cursor);
-        for _ in 0..batch {
-            let (ci, ri) = self.order[self.cursor];
-            req.append_row(self.child_chunks[ci].get_row(ri));
-            self.cursor += 1;
-        }
-        Ok(())
+
+        let batch = self.meta.max_chunk_size();
+        let mut partitions = std::mem::take(&mut self.partitions);
+        let result = (|| -> Result<(), ExecError> {
+            while req.num_rows() < batch {
+                for partition in &mut partitions {
+                    partition.load_head(&self.by_items, &self.ctx)?;
+                }
+                let mut best: Option<usize> = None;
+                for (i, partition) in partitions.iter().enumerate() {
+                    let Some(key) = partition.head_key() else {
+                        continue;
+                    };
+                    match best {
+                        None => best = Some(i),
+                        Some(b) => {
+                            let other = partitions[b].head_key().expect("a loaded head");
+                            if less_by_items(&self.by_items, key, other)? == Ordering::Less {
+                                best = Some(i);
+                            }
+                        }
+                    }
+                }
+                match best {
+                    None => break,
+                    Some(i) => partitions[i].take_head_into(req),
+                }
+            }
+            Ok(())
+        })();
+        self.partitions = partitions;
+        result
     }
 
-    /// Go `Close` (minus the spill/parallel teardown, deferred): releases the
-    /// materialized rows, gives their bytes back to the statement's budget,
-    /// and closes the child.
+    /// Go `Close`: drops the runs and their spill files, unbinds the spill
+    /// action, and gives the bytes back to the statement's budget.
     fn close(&mut self) -> Result<(), ExecError> {
-        self.child_chunks.clear();
-        self.order.clear();
+        for partition in &mut self.partitions {
+            partition.close();
+        }
+        self.partitions.clear();
+        if let Some(action) = self.registered_action.take() {
+            self.memory
+                .session_tracker()
+                .unbind_action_from_hard_limit(&action);
+        }
         self.tracker.replace_bytes_used(0);
         self.child.close()
     }
@@ -325,6 +417,80 @@ mod tests {
         fn new_chunk(&self) -> Chunk {
             self.meta.new_chunk()
         }
+    }
+
+    /// A test-only source that emits `rows` in chunks of `chunk_size`, so a
+    /// sort sees several child chunks -- which is what lets a spill produce
+    /// more than one NON-EMPTY sorted run. A single-chunk source cannot: the
+    /// spill fires after the only chunk is in, leaving one full run and one
+    /// empty one, and a merge over that is not a merge at all.
+    struct ManyChunkSource {
+        meta: ExecutorMeta,
+        rows: Vec<Vec<Option<i64>>>,
+        emitted: usize,
+        chunk_size: usize,
+    }
+
+    impl Executor for ManyChunkSource {
+        fn open(&mut self) -> Result<(), ExecError> {
+            self.emitted = 0;
+            Ok(())
+        }
+        fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+            req.reset();
+            let end = (self.emitted + self.chunk_size).min(self.rows.len());
+            for row in &self.rows[self.emitted..end] {
+                for (c, v) in row.iter().enumerate() {
+                    match v {
+                        Some(v) => req.append_int64(c, *v),
+                        None => req.append_null(c),
+                    }
+                }
+            }
+            self.emitted = end;
+            Ok(())
+        }
+        fn close(&mut self) -> Result<(), ExecError> {
+            Ok(())
+        }
+        fn schema(&self) -> &Schema {
+            self.meta.schema()
+        }
+        fn ret_field_types(&self) -> &[FieldType] {
+            self.meta.ret_field_types()
+        }
+        fn init_cap(&self) -> usize {
+            self.meta.init_cap()
+        }
+        fn max_chunk_size(&self) -> usize {
+            self.meta.max_chunk_size()
+        }
+        fn new_chunk(&self) -> Chunk {
+            self.meta.new_chunk()
+        }
+    }
+
+    /// A sort over a MULTI-CHUNK source, which is what a spilling sort needs.
+    fn multi_chunk_sorter(
+        rows: &[Vec<Option<i64>>],
+        by: Vec<SortByItem>,
+        chunk_size: usize,
+        memory: StatementMemory,
+    ) -> SortExec<NoColumns> {
+        let n_cols = rows.first().map_or(1, Vec::len);
+        let source = ManyChunkSource {
+            meta: ExecutorMeta::new(schema_of(n_cols), 0, 4, chunk_size),
+            rows: rows.to_vec(),
+            emitted: 0,
+            chunk_size,
+        };
+        SortExec::new(
+            ExecutorMeta::new(schema_of(n_cols), 1, 4, 1024),
+            by,
+            Box::new(source),
+            NoColumns,
+            memory,
+        )
     }
 
     fn schema_of(n_cols: usize) -> Schema {
@@ -437,8 +603,12 @@ mod tests {
 
     #[test]
     fn crossing_the_quota_fails_the_sort_with_8175_under_cancel() {
-        // A quota far below what 4096 retained rows need.
-        let memory = StatementMemory::new(2048, OomAction::Cancel, 42);
+        // A quota far below what 4096 retained rows need, with spilling OFF
+        // (`tidb_enable_tmp_storage_on_oom = 0`). With it ON the same sort
+        // spills and completes -- see
+        // `a_sort_over_the_quota_spills_to_disk_and_returns_every_row`.
+        let memory =
+            StatementMemory::new(2048, OomAction::Cancel, 42).with_tmp_storage_on_oom(false);
         let mut exec = sorter_with_memory(
             1,
             &one_col_rows(4096),
@@ -458,7 +628,7 @@ mod tests {
 
     #[test]
     fn the_same_sort_completes_under_log_however_far_it_overruns() {
-        let memory = StatementMemory::new(2048, OomAction::Log, 42);
+        let memory = StatementMemory::new(2048, OomAction::Log, 42).with_tmp_storage_on_oom(false);
         let mut exec = sorter_with_memory(
             1,
             &one_col_rows(4096),
@@ -618,5 +788,195 @@ mod tests {
             }],
         );
         assert_eq!(collect(&mut e), Vec::<Vec<Option<i64>>>::new());
+    }
+
+    /// `tmp-storage-path` is process-global, so the tests that redirect it
+    /// must not run at the same time inside one test binary.
+    fn temp_dir_guard() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        LOCK.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn scratch_temp_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("tidb_rust_sort_spill_{name}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch temp dir");
+        dir
+    }
+
+    fn spill_files_in(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+        std::fs::read_dir(dir)
+            .map(|entries| {
+                entries
+                    .filter_map(Result::ok)
+                    .map(|entry| entry.path())
+                    .filter(|path| {
+                        path.file_name()
+                            .and_then(|name| name.to_str())
+                            .is_some_and(|name| name.contains("ChunkDataInDiskByChunks"))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Drains an executor into a flat list of first-column values.
+    fn drain_first_col(exec: &mut SortExec<NoColumns>) -> Vec<i64> {
+        let mut out = Vec::new();
+        loop {
+            let mut req = exec.new_chunk();
+            exec.next(&mut req).expect("sort must not fail");
+            if req.num_rows() == 0 {
+                return out;
+            }
+            for r in 0..req.num_rows() {
+                out.push(req.get_row(r).get_int64(0));
+            }
+        }
+    }
+
+    fn asc() -> Vec<SortByItem> {
+        vec![SortByItem {
+            expr: col_expr(0),
+            desc: false,
+        }]
+    }
+
+    /// THE SPILL TEST. A quota the sort cannot hold its rows within, with
+    /// `tidb_enable_tmp_storage_on_oom` ON: the sort must spill (proved by a
+    /// spill file existing on disk while it runs, and by the disk tracker),
+    /// must produce SEVERAL NON-EMPTY sorted runs, and must return every row
+    /// in order -- the same rows the same sort returns unspilled.
+    ///
+    /// The input values are shuffled by a stride so that consecutive runs
+    /// cover OVERLAPPING ranges. That is what makes the multi-way merge load
+    /// bearing: a merge that drained run 0 and then run 1 would emit an
+    /// unsorted sequence, and so would one that picked the wrong end.
+    #[test]
+    fn a_sort_over_the_quota_spills_to_disk_and_returns_every_row() {
+        let _guard = temp_dir_guard();
+        let dir = scratch_temp_dir("sortexec");
+        tidb_util::disk::set_temp_storage_path(&dir);
+
+        let n = 8192i64;
+        let rows: Vec<Vec<Option<i64>>> = (0..n).map(|i| vec![Some((i * 7919) % n)]).collect();
+        let mut expected: Vec<i64> = rows.iter().map(|r| r[0].expect("no nulls")).collect();
+        expected.sort_unstable();
+
+        // The unspilled reference: a quota this sort fits inside.
+        let mut reference = multi_chunk_sorter(&rows, asc(), 256, StatementMemory::default());
+        reference.open().unwrap();
+        assert_eq!(drain_first_col(&mut reference), expected);
+        assert_eq!(reference.num_partitions(), 1);
+        assert_eq!(reference.bytes_in_disk(), 0, "the reference must not spill");
+        reference.close().unwrap();
+
+        // Now the same sort under a quota it cannot hold, spilling enabled.
+        let memory = StatementMemory::new(1 << 16, OomAction::Cancel, 42);
+        let mut exec = multi_chunk_sorter(&rows, asc(), 256, memory);
+        // Small spill chunks so each run becomes many spilled chunks, the
+        // shape Go's `SetSmallSpillChunkSizeForTest` produces.
+        exec.set_spill_chunk_size_for_test(64);
+        exec.open().unwrap();
+
+        let mut got = Vec::new();
+        let mut saw_spill_file = false;
+        loop {
+            let mut req = exec.new_chunk();
+            exec.next(&mut req).expect("a spilling sort must not fail");
+            if req.num_rows() == 0 {
+                break;
+            }
+            // DISK WAS ACTUALLY USED: a spill file exists while the sort is
+            // still producing rows.
+            saw_spill_file |= !spill_files_in(&dir).is_empty();
+            for r in 0..req.num_rows() {
+                got.push(req.get_row(r).get_int64(0));
+            }
+        }
+
+        assert!(
+            saw_spill_file,
+            "no spill file was ever created -- this test proved nothing"
+        );
+        assert!(
+            exec.bytes_in_disk() > 0,
+            "the disk tracker must have counted the spilled bytes"
+        );
+        assert!(
+            exec.num_non_empty_partitions() > 1,
+            "a spilling sort must produce more than one NON-EMPTY sorted run, got {}",
+            exec.num_non_empty_partitions()
+        );
+        assert_eq!(got, expected, "spilled sort must return the same rows");
+
+        exec.close().unwrap();
+        assert!(
+            spill_files_in(&dir).is_empty(),
+            "close must remove every spill file"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A DESCENDING spilled sort, so the merge's direction is exercised in
+    /// both directions rather than only the one the ascending test pins.
+    #[test]
+    fn a_spilled_descending_sort_returns_every_row_in_order() {
+        let _guard = temp_dir_guard();
+        let dir = scratch_temp_dir("sortdesc");
+        tidb_util::disk::set_temp_storage_path(&dir);
+
+        let n = 8192i64;
+        let rows: Vec<Vec<Option<i64>>> = (0..n).map(|i| vec![Some((i * 7919) % n)]).collect();
+        let mut expected: Vec<i64> = rows.iter().map(|r| r[0].expect("no nulls")).collect();
+        expected.sort_unstable_by(|a, b| b.cmp(a));
+
+        let memory = StatementMemory::new(1 << 16, OomAction::Cancel, 42);
+        let mut exec = multi_chunk_sorter(
+            &rows,
+            vec![SortByItem {
+                expr: col_expr(0),
+                desc: true,
+            }],
+            256,
+            memory,
+        );
+        exec.set_spill_chunk_size_for_test(64);
+        exec.open().unwrap();
+        let got = drain_first_col(&mut exec);
+        assert!(exec.num_non_empty_partitions() > 1, "this test needs runs");
+        assert_eq!(got, expected);
+        exec.close().unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The gate: with `tidb_enable_tmp_storage_on_oom = 0` the SAME sort under
+    /// the SAME quota raises 8175 instead of spilling, and leaves no file.
+    #[test]
+    fn the_same_sort_raises_8175_when_tmp_storage_is_disabled() {
+        let _guard = temp_dir_guard();
+        let dir = scratch_temp_dir("sortgate");
+        tidb_util::disk::set_temp_storage_path(&dir);
+
+        let memory =
+            StatementMemory::new(1 << 15, OomAction::Cancel, 42).with_tmp_storage_on_oom(false);
+        let mut exec = sorter_with_memory(
+            1,
+            &one_col_rows(4096),
+            vec![SortByItem {
+                expr: col_expr(0),
+                desc: false,
+            }],
+            memory,
+        );
+        exec.open().unwrap();
+        let mut req = exec.new_chunk();
+        match exec.next(&mut req) {
+            Err(ExecError::MemoryExceedForQuery { conn_id }) => assert_eq!(conn_id, 42),
+            other => panic!("expected 8175 with tmp storage disabled, got {other:?}"),
+        }
+        assert!(spill_files_in(&dir).is_empty(), "no file may be written");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

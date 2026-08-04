@@ -51,6 +51,8 @@ pub(super) fn to_mysql_error(error: ExecError) -> MysqlError {
         // A porting boundary rather than a TiDB error: the carried text is
         // already the whole message, and Go has no answer to compare it with.
         ExecError::Unsupported(reason) => MysqlError::unknown(reason),
+        // Go surfaces a spill failure as the raw error from `Next`, i.e. 1105.
+        ExecError::SpillFailed(reason) => MysqlError::unknown(reason),
         // `From<ExecError> for DriverError` rewrites each of these into its
         // own driver variant, so they arrive here only from an `ExecError` a
         // caller wrapped by hand. Rendering through the twin keeps ONE

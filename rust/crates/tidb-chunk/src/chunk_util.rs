@@ -16,14 +16,28 @@
 //! to move a selected subset of a probe-result chunk into the output chunk
 //! without going cell by cell.
 //!
-//! SEED SCOPE: the in-memory copies (`CopySelectedJoinRowsDirect`,
-//! `CopySelectedJoinRowsWithSameOuterRows`, `CopySelectedRows`, `CopyRows`).
-//! DEFERRED: the spill-to-disk reader/writer half of the Go file
-//! (`diskFileReaderWriter` and friends), which needs the checksum/encrypt
-//! packages.
+//! Ported: the in-memory copies (`CopySelectedJoinRowsDirect`,
+//! `CopySelectedJoinRowsWithSameOuterRows`, `CopySelectedRows`, `CopyRows`),
+//! and the spill-to-disk [`DiskFileReaderWriter`] half of the Go file, which
+//! layers `tidb_util::checksum` over the temporary file.
+//!
+//! NOT PORTED (named): the `aes128-ctr` spill-file encryption Go enables when
+//! `security.spilled-file-encryption-method` is set. The AES-CTR layer itself
+//! IS ported (`tidb_util::encrypt`); what is missing here is the second
+//! writer/reader stack variant, so a spill file is always plaintext. The
+//! shipped default of that config option is `plaintext`, so this changes no
+//! default-configuration behavior -- but a cluster that sets the option gets
+//! plaintext spill files here, which is a security divergence and must be
+//! closed before the option is honoured.
 
 use crate::chunk::Chunk;
 use crate::column::Column;
+use std::fs::File;
+use std::io::{self, Write};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+use tidb_util::checksum;
+use tidb_util::layered_io::ReadAt;
 
 /// Go `msgErrSelNotNil`: a bulk copy refuses chunks carrying a selection
 /// vector, because the copy walks physical rows.
@@ -358,5 +372,107 @@ mod tests {
         .expect("no selection vector");
         assert!(ok);
         assert_eq!(dst_chk2.num_virtual_rows(), 2);
+    }
+}
+
+/// A random decimal run for a temporary file name, standing in for the one
+/// Go's `os.CreateTemp` appends. Uniqueness is enforced by the `create_new`
+/// retry loop in `crate::chunk_in_disk::create_temp_file`, exactly as Go's is.
+pub(crate) fn next_random_suffix() -> u64 {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos() as u64);
+    nanos.wrapping_mul(6_364_136_223_846_793_005)
+        ^ COUNTER
+            .fetch_add(1, Ordering::Relaxed)
+            .wrapping_mul(1_442_695_040_888_963_407)
+}
+
+/// Go `diskFileReaderWriter`: the temporary spill file plus the checksum layer
+/// every write passes through.
+///
+/// Reads go through a SECOND handle on the same file so a chunk can be read
+/// back while later chunks are still being appended -- and through
+/// [`crate::row_in_disk::ReaderWithCache`], because the checksum writer holds
+/// the tail of the data in a 1KiB block buffer that has not reached the file
+/// yet.
+#[derive(Default)]
+pub struct DiskFileReaderWriter {
+    /// The read handle. Go reuses one `*os.File` for both directions.
+    file: Option<File>,
+    path: Option<PathBuf>,
+    writer: Option<checksum::Writer<File>>,
+    /// Go `offWrite`: the current logical write offset.
+    off_write: i64,
+}
+
+impl DiskFileReaderWriter {
+    /// Go `initWithFileName`.
+    pub fn init_with_file_name(&mut self, file_name: &str) -> io::Result<()> {
+        let (file, path) = crate::chunk_in_disk::create_temp_file(file_name)?;
+        let write_handle = file.try_clone()?;
+        self.file = Some(file);
+        self.path = Some(path);
+        self.writer = Some(checksum::Writer::new(write_handle));
+        self.off_write = 0;
+        Ok(())
+    }
+
+    /// Whether the file has been created (Go's `l.file != nil`).
+    #[must_use]
+    pub fn is_open(&self) -> bool {
+        self.file.is_some()
+    }
+
+    /// The spill file's path, once created.
+    #[must_use]
+    pub fn path(&self) -> Option<&PathBuf> {
+        self.path.as_ref()
+    }
+
+    /// Go `write`.
+    pub fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+        let writer = self
+            .writer
+            .as_mut()
+            .ok_or_else(|| io::Error::other("spill file is not open"))?;
+        let written = writer.write(data)?;
+        self.off_write += written as i64;
+        Ok(written)
+    }
+
+    /// Go `getReader` + `getSectionReader` + `io.ReadFull`, collapsed into the
+    /// one operation every caller performs: fill `destination` from logical
+    /// offset `offset`.
+    pub fn read_full_at(&self, destination: &mut [u8], offset: i64) -> io::Result<usize> {
+        let (Some(file), Some(writer)) = (self.file.as_ref(), self.writer.as_ref()) else {
+            return Err(io::Error::other("spill file is not open"));
+        };
+        let reader = crate::row_in_disk::ReaderWithCache::new(
+            checksum::Reader::new(file),
+            writer.get_cache(),
+            writer.get_cache_data_offset(),
+        );
+        crate::chunk_in_disk::read_full_at(&reader as &dyn ReadAt, destination, offset)
+    }
+
+    /// Closes the file and REMOVES it, as Go's `DataInDiskByChunks.Close`
+    /// does. Any flush error is dropped for the same reason Go's
+    /// `terror.Call` drops it: the data is being discarded anyway.
+    pub fn close(&mut self) {
+        if let Some(writer) = self.writer.take() {
+            let _ = writer.close();
+        }
+        self.file = None;
+        if let Some(path) = self.path.take() {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+impl Drop for DiskFileReaderWriter {
+    fn drop(&mut self) {
+        self.close();
     }
 }

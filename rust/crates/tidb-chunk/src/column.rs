@@ -94,14 +94,14 @@ pub fn get_fixed_len(field_type: &FieldType) -> i64 {
 /// Go `chunk.Column`: a single columnar column of values.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Column {
-    length: usize,
+    pub(crate) length: usize,
     /// Bit `i` records row `i`: 0 = null, 1 = not-null (Go `nullBitmap`).
-    null_bitmap: Vec<u8>,
+    pub(crate) null_bitmap: Vec<u8>,
     /// Row `i` of a variable-length column starts at `data[offsets[i]]`
     /// (Go `offsets`; empty for a fixed-length column).
-    offsets: Vec<i64>,
+    pub(crate) offsets: Vec<i64>,
     /// The packed element bytes (Go `data`).
-    data: Vec<u8>,
+    pub(crate) data: Vec<u8>,
     /// Scratch buffer sized to one fixed element; empty for a var-length column
     /// (Go `elemBuf`).
     elem_buf: Vec<u8>,

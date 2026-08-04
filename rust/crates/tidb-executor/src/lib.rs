@@ -86,6 +86,7 @@ pub mod selection;
 pub mod sequence;
 mod skyline;
 pub mod sort;
+pub mod sort_partition;
 pub mod statement_pushdown;
 mod stmt_context;
 pub mod storage;

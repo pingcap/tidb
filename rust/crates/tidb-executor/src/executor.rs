@@ -60,6 +60,10 @@ pub enum ExecError {
         /// rather than being hard-coded at the wire boundary).
         charset: String,
     },
+    /// A spill-to-disk operation failed (Go returns the underlying
+    /// `os`/`chunk` error straight out of the operator's `Next`, so it reaches
+    /// the client as a generic 1105 carrying that text).
+    SpillFailed(String),
 }
 
 impl ExecError {

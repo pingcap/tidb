@@ -578,6 +578,18 @@ impl StmtContext {
         self
     }
 
+    /// Attaches `@@tidb_enable_tmp_storage_on_oom` (Go
+    /// `vardef.EnableTmpStorageOnOOM`, default ON), which decides whether an
+    /// operator that exceeds the quota spills to disk or fails with 8175.
+    ///
+    /// MUST be applied after [`StmtContext::with_mem_quota`], which rebuilds
+    /// the budget.
+    #[must_use]
+    pub fn with_tmp_storage_on_oom(mut self, enabled: bool) -> Self {
+        self.memory = self.memory.with_tmp_storage_on_oom(enabled);
+        self
+    }
+
     /// This statement's memory budget; see [`StatementMemory`].
     #[must_use]
     pub fn statement_memory(&self) -> StatementMemory {

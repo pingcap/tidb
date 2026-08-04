@@ -276,6 +276,19 @@ impl Session {
             .ok()
             .and_then(|value| value.parse::<u64>().ok())
             .unwrap_or(1024);
+        // `@@tidb_enable_tmp_storage_on_oom` (Go `vardef.EnableTmpStorageOnOOM`,
+        // shipped default ON). GLOBAL scope only, exactly like
+        // `tidb_mem_oom_action` above -- captured: a session `SET` is refused
+        // with `[variable:1229] ... should be set with SET GLOBAL`. Only an
+        // explicit OFF turns spilling off, so an unreadable value keeps the
+        // default of spilling rather than failing the statement.
+        let tmp_storage_on_oom = {
+            let value = self
+                .vars
+                .get_global("tidb_enable_tmp_storage_on_oom")
+                .unwrap_or_default();
+            !(value.eq_ignore_ascii_case("off") || value == "0")
+        };
         let oom_action = tidb_executor::OomAction::parse(
             &self
                 .vars
@@ -306,6 +319,7 @@ impl Session {
                 .with_current_role(self.current_user.as_ref().map(|_| self.current_role_text()))
                 .with_connection_id(self.connection_id)
                 .with_mem_quota(mem_quota, oom_action)
+                .with_tmp_storage_on_oom(tmp_storage_on_oom)
                 .with_rand_session(Rc::clone(&self.rand))
                 .with_last_insert_id_channel(Rc::clone(&self.published_last_insert_id))
                 .with_retry_auto_ids(Rc::clone(&self.retry_auto_ids))
@@ -331,6 +345,7 @@ impl Session {
         .with_current_role(self.current_user.as_ref().map(|_| self.current_role_text()))
         .with_connection_id(self.connection_id)
         .with_mem_quota(mem_quota, oom_action)
+        .with_tmp_storage_on_oom(tmp_storage_on_oom)
         .with_rand_session(Rc::clone(&self.rand))
         .with_last_insert_id_channel(Rc::clone(&self.published_last_insert_id))
         .with_retry_auto_ids(Rc::clone(&self.retry_auto_ids))
