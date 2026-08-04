@@ -15,6 +15,7 @@
 //! Cardinality-estimation helpers from `pkg/planner/cardinality`.
 
 pub mod cross_estimation;
+pub mod derive_stats;
 pub mod index_range_policy;
 pub mod join;
 pub mod live_index_optimizer;
