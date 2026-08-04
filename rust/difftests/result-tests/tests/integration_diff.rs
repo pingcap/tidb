@@ -1440,7 +1440,18 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // ... where a = x'..' and b = 'xb'` read through their index
     // (`IndexRangeScan`) instead of a full scan. Both are `PlanProperty`-kind,
     // so `compared` holds at 5639 and matched rises.
-    const KNOWN_DIVERGENCES: usize = 52;
+    //
+    // 52 -> 51: Go's `isPointGetPath` converts a table path whose one range is
+    // a single non-null point on the integer handle to a `Point_Get`
+    // (`find_best_task.go`'s `convertToPointGet`), even when a further conjunct
+    // stays a filter. `driver::access::single_point_handle` detects that shape
+    // in the `HandleRange` arm, so `select * from t1 where c1 = 1 and c2 > 1`
+    // plans `Point_Get` instead of a `TableRangeScan` over `[1,1]`. Still
+    // diverging in the same file is the appended-PK secondary-index range
+    // (`c1 > 1 and c2 = 1 and c3 < 1` reads `(1 1,1 +inf]`), which needs the
+    // handle appended to a non-clustered index's tail -- a documented deferred
+    // in `index_range`.
+    const KNOWN_DIVERGENCES: usize = 51;
 
     assert!(
         total.divergences.len() <= KNOWN_DIVERGENCES,

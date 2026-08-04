@@ -503,3 +503,58 @@ fn a_point_plan_keys_by_the_constant_in_the_columns_domain() {
         Vec::<Vec<Datum>>::new()
     );
 }
+
+/// Go's `isPointGetPath`/`convertToPointGet`: a table path whose one range is
+/// a single non-null point on the clustered integer handle becomes a
+/// `Point_Get` even when a further conjunct stays a filter above it. So
+/// `c1 = 1 AND c2 > 1` reads `Point_Get`, not a `TableRangeScan` over `[1,1]`.
+#[test]
+fn a_single_point_handle_range_with_a_filter_is_a_point_get() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE t1 (c1 INT PRIMARY KEY, c2 INT, c3 INT, INDEX c2 (c2))",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO t1 VALUES (1, 5, 50), (2, 20, 200)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    let stmt = tidb_parser::parse("SELECT * FROM t1 WHERE c1 = 1 AND c2 > 1").unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Row).unwrap();
+    let cell = |datum: &Datum| match datum {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+    let plan: Vec<String> = rows
+        .iter()
+        .map(|row| row.iter().map(cell).collect::<Vec<_>>().join("\t"))
+        .collect();
+    assert!(
+        plan.iter().any(|line| line.contains("Point_Get")),
+        "the single-point handle range is a Point_Get, got {plan:?}"
+    );
+    assert!(
+        !plan.iter().any(|line| line.contains("TableRangeScan")),
+        "no range scan remains, got {plan:?}"
+    );
+
+    // The row it reads is the c1 = 1 row, and c2 > 1 still filters it in.
+    assert_eq!(
+        run_select_on("SELECT c1 FROM t1 WHERE c1 = 1 AND c2 > 1", &catalog, &ctx).unwrap(),
+        vec![vec![Datum::Int(1)]]
+    );
+}

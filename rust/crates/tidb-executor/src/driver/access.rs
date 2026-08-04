@@ -168,6 +168,15 @@ pub(crate) fn commit_fast_path_source(
                         // the NULL-ended interval, leaving nothing to read.
                         if ranges.is_empty() {
                             trace.empty_range_table_dual();
+                        } else if let Some(handle) = single_point_handle(&ranges) {
+                            // Go's `isPointGetPath` converts a table path whose
+                            // one range is a single non-null point on the
+                            // integer handle to a `Point_Get`
+                            // (`find_best_task.go`: `convertToPointGet`), even
+                            // when an extra conjunct stays a filter above --
+                            // `c1 = 1 AND c2 > 1` reads `Point_Get`, not a
+                            // `TableRangeScan` over `[1,1]`.
+                            trace.point_get(source_table_name(scope, &table.name), Some(&handle));
                         } else {
                             trace.table_range_scan(
                                 source_table_name(scope, &table.name),
@@ -250,6 +259,29 @@ fn install_contradiction_dual(
         trace.empty_range_table_dual();
     }
     *from_source = Some(Box::new(exec));
+}
+
+/// The clustered integer handle a single-point table range names, when the
+/// range list is exactly one non-null point -- Go's `IsPointNonNullable` over
+/// an `IsIntHandlePath` in `isPointGetPath`.
+///
+/// `None` for anything else: several ranges, an open bound, a NULL endpoint, or
+/// a non-integer bound. A common (multi-column) handle never reaches here,
+/// because this tier only builds handle ranges over the integer handle.
+fn single_point_handle(ranges: &[IndexRange]) -> Option<TableHandle> {
+    let [range] = ranges else {
+        return None;
+    };
+    if range.low_exclusive || range.high_exclusive {
+        return None;
+    }
+    match (range.low.as_slice(), range.high.as_slice()) {
+        ([Datum::Int(low)], [Datum::Int(high)]) if low == high => Some(TableHandle::Int(*low)),
+        ([Datum::UInt(low)], [Datum::UInt(high)]) if low == high => {
+            Some(TableHandle::Int(*low as i64))
+        }
+        _ => None,
+    }
 }
 
 /// Installs the streaming index-range source for a committed index path, and
