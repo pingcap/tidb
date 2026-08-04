@@ -38,10 +38,11 @@ type concurrentFileReader struct {
 	offset   int64
 	fileSize int64
 
-	bufferSets [2][][]byte
-	started    bool
-	resultCh   chan concurrentReadResult
-	wg         sync.WaitGroup
+	singleWindow bool
+	bufferSets   [2][][]byte
+	started      bool
+	resultCh     chan concurrentReadResult
+	wg           sync.WaitGroup
 }
 
 type concurrentReadResult struct {
@@ -59,9 +60,11 @@ func newConcurrentFileReader(
 	fileSize int64,
 	concurrency int,
 	readBufferSize int,
+	singleWindow bool,
 ) (*concurrentFileReader, error) {
 	childCtx, cancel := context.WithCancel(ctx)
 	return &concurrentFileReader{
+		singleWindow:   singleWindow,
 		ctx:            childCtx,
 		cancel:         cancel,
 		concurrency:    concurrency,
@@ -74,9 +77,21 @@ func newConcurrentFileReader(
 	}, nil
 }
 
-// read returns the next in-order buffer window. While the caller consumes the
-// returned window, the reader fills the other window concurrently.
+// read returns the next in-order buffer window. Unless the reader was built for a
+// single window, it fills the other one concurrently while the caller consumes the
+// returned one.
 func (r *concurrentFileReader) read(bufs [][]byte) ([][]byte, error) {
+	if r.singleWindow {
+		if len(bufs) < r.concurrency {
+			return nil, errors.Errorf(
+				"concurrent reader needs %d buffers, got %d",
+				r.concurrency,
+				len(bufs),
+			)
+		}
+		return r.readOnce(bufs[:r.concurrency])
+	}
+
 	if len(bufs) < 2*r.concurrency {
 		return nil, errors.Errorf(
 			"concurrent reader needs %d buffers, got %d",

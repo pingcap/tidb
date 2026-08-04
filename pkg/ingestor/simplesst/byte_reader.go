@@ -38,6 +38,10 @@ var (
 	// concurrentReaderTotalConcurrency is the maximum concurrent-read budget used by
 	// external readers within one task.
 	concurrentReaderTotalConcurrency = 256
+	// singleWindowBufCount is the largest budget that is spent on one window
+	// instead of two. Below it, halving the requests in flight costs more than
+	// overlapping the fetch with decoding saves, so read-ahead is not worth it.
+	singleWindowBufCount = 16
 )
 
 // byteReader provides structured reading on a byte stream of external storage.
@@ -58,6 +62,7 @@ type byteReader struct {
 		store           storeapi.Storage
 		filename        string
 		concurrency     int
+		singleWindow    bool
 		bufSizePerConc  int
 
 		now       bool
@@ -126,7 +131,13 @@ func (r *byteReader) enableConcurrentRead(
 ) {
 	r.concurrentReader.store = store
 	r.concurrentReader.filename = filename
-	r.concurrentReader.concurrency = max(bufCount/2, 1)
+	if bufCount <= singleWindowBufCount {
+		r.concurrentReader.concurrency = max(bufCount, 1)
+		r.concurrentReader.singleWindow = true
+	} else {
+		r.concurrentReader.concurrency = bufCount / 2
+		r.concurrentReader.singleWindow = false
+	}
 	r.concurrentReader.bufSizePerConc = bufSizePerConc
 	r.concurrentReader.largeBufferPool = bufferPool
 }
@@ -193,29 +204,26 @@ func (r *byteReader) switchToConcurrentReader() error {
 		fileSize,
 		readerFields.concurrency,
 		readerFields.bufSizePerConc,
+		readerFields.singleWindow,
 	)
 	if err != nil {
 		return err
 	}
 
-	readerFields.largeBuf = make([][]byte, 2*readerFields.concurrency)
+	bufNum := 2 * readerFields.concurrency
+	if readerFields.singleWindow {
+		bufNum = readerFields.concurrency
+	}
+	readerFields.largeBuf = make([][]byte, bufNum)
 	for i := range readerFields.largeBuf {
 		readerFields.largeBuf[i], err = readerFields.largeBufferPool.TryAllocBytes(readerFields.bufSizePerConc)
+		if err == nil && readerFields.largeBuf[i] == nil {
+			err = errors.Errorf("alloc large buffer failed, size %d", readerFields.bufSizePerConc)
+		}
 		if err != nil {
 			readerFields.reader.close()
 			readerFields.reader = nil
-			readerFields.largeBufferPool.Destroy()
-			readerFields.largeBufferPool = nil
-			readerFields.largeBuf = nil
 			return err
-		}
-		if readerFields.largeBuf[i] == nil {
-			readerFields.reader.close()
-			readerFields.reader = nil
-			readerFields.largeBufferPool.Destroy()
-			readerFields.largeBufferPool = nil
-			readerFields.largeBuf = nil
-			return errors.Errorf("alloc large buffer failed, size %d", readerFields.bufSizePerConc)
 		}
 	}
 
