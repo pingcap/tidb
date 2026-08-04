@@ -53,36 +53,11 @@ func NewKVReader(
 ) (*KVReader, error) {
 	// some test use very random buf size, might < 3
 	oneThird := max(bufSize/3, 1)
-	return newKVReader(ctx, name, store, initFileOffset, oneThird, oneThird*2)
-}
-
-// NewKVReaderWithPrefetchSize creates a KV reader whose object-storage prefetch
-// buffer is sized independently of the structured-read buffer, so readBufSize is
-// used as-is rather than being carved out of one shared budget.
-func NewKVReaderWithPrefetchSize(
-	ctx context.Context,
-	name string,
-	store storeapi.Storage,
-	initFileOffset uint64,
-	readBufSize int,
-	prefetchSize int,
-) (*KVReader, error) {
-	return newKVReader(ctx, name, store, initFileOffset, max(readBufSize, 1), prefetchSize)
-}
-
-func newKVReader(
-	ctx context.Context,
-	name string,
-	store storeapi.Storage,
-	initFileOffset uint64,
-	smallBufSize int,
-	prefetchSize int,
-) (*KVReader, error) {
-	sr, err := openStoreReaderAndSeek(ctx, store, name, initFileOffset, prefetchSize)
+	sr, err := openStoreReaderAndSeek(ctx, store, name, initFileOffset, oneThird*2)
 	if err != nil {
 		return nil, err
 	}
-	br, err := newByteReader(ctx, sr, smallBufSize)
+	br, err := newByteReader(ctx, sr, oneThird)
 	if err != nil {
 		return nil, err
 	}

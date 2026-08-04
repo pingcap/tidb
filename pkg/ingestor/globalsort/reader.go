@@ -87,14 +87,16 @@ func readAllData(
 	readerMemory := semaphore.NewWeighted(memoryLimit)
 	readerMemorySizes := make([]int64, len(dataFiles))
 	totalFileSize := uint64(0)
-	// A file is charged its own range, up to whichever of the per-file cap and the
-	// whole budget is smaller.
-	perFileLimit := min(int64(maxConcurrency)*int64(simplesst.ConcurrentReaderBufferSizePerConc), memoryLimit)
+	// A file is charged whole buffers of its own range, up to whichever of the
+	// per-file cap and the whole budget is smaller. A range that cannot fill one
+	// buffer is read as a plain stream and charged nothing.
+	bufSize := int64(simplesst.ConcurrentReaderBufferSizePerConc)
+	perFileLimit := min(int64(maxConcurrency)*bufSize, memoryLimit)
 	for i := range dataFiles {
 		size := estimatedEndOffsets[i] - startOffsets[i]
 		totalFileSize += size
-		readerMemorySizes[i] = int64(min(size, uint64(perFileLimit)))
-		if readerMemorySizes[i] >= int64(simplesst.ConcurrentReaderBufferSizePerConc) {
+		readerMemorySizes[i] = int64(min(size, uint64(perFileLimit))) / bufSize * bufSize
+		if readerMemorySizes[i] > 0 {
 			logutil.Logger(ctx).Info("found hotspot file in readAllData",
 				zap.String("filename", dataFiles[i]),
 				zap.Uint64("startOffset", startOffsets[i]),
@@ -183,18 +185,12 @@ func readOneFile(
 
 	ts := time.Now()
 
-	bufCount := readerMemorySize / simplesst.ConcurrentReaderBufferSizePerConc
-	prefetchSize := 0
-	if bufCount == 0 && readerMemorySize >= 2 {
-		prefetchSize = readerMemorySize
-	}
-	rd, err := simplesst.NewKVReaderWithPrefetchSize(
+	rd, err := simplesst.NewKVReader(
 		ctx,
 		dataFile,
 		storage,
 		startOffset,
-		simplesst.DefaultReadBufferSize/3,
-		prefetchSize,
+		simplesst.DefaultReadBufferSize,
 	)
 	if err != nil {
 		return err
@@ -202,7 +198,7 @@ func readOneFile(
 	defer func() {
 		_ = rd.Close()
 	}()
-	if bufCount > 0 {
+	if bufCount := readerMemorySize / simplesst.ConcurrentReaderBufferSizePerConc; bufCount > 0 {
 		largeBlockBuf := largeBlockBufPool.NewBuffer()
 		rd.EnableConcurrentRead(
 			storage,
