@@ -2348,8 +2348,16 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 			return
 		}
 		if !busyThresholdFallback {
-			worker.storeBatchedNum.Add(uint64(batchedNum - len(remainTasks)))
-			worker.storeBatchedFallbackNum.Add(uint64(len(remainTasks)))
+			if batchedNum >= len(remainTasks) {
+				worker.storeBatchedNum.Add(uint64(batchedNum - len(remainTasks)))
+				worker.storeBatchedFallbackNum.Add(uint64(len(remainTasks)))
+			} else {
+				// Region split: more retry tasks than original batched tasks.
+				// All original tasks fell back, so no successful tasks to report.
+				// The fallback counter reflects the original batched count, not the
+				// inflated retry task count, to avoid over-counting.
+				worker.storeBatchedFallbackNum.Add(uint64(batchedNum))
+			}
 		}
 	}()
 	appendRemainTasks := func(tasks ...*copTask) {
