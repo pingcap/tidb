@@ -463,7 +463,7 @@ pub(crate) fn run_multi_update(
                     .value
                     .eval(ctx, chunk.get_row(0))
                     .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
-                new_row[assignment.column] = cast_value_for_column(
+                new_row[assignment.column] = cast_value_for_update_assignment(
                     value,
                     &table.columns[assignment.column].1,
                     &table.columns[assignment.column].0,

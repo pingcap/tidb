@@ -169,9 +169,46 @@ pub enum DriverError {
     BlobCantHaveDefault(String),
     /// Go `ErrTruncatedWrongValue` (1292).
     TruncatedIncorrectValue {
-        /// The numeric domain Go names.
-        kind: &'static str,
+        /// The domain Go names: a fixed word such as `DOUBLE` when the
+        /// conversion raised the error itself, or the column's `CompactStr`
+        /// (`decimal(4,1)`, `time`) when `castColumnValue` re-titled a bare
+        /// `ErrTruncated`.
+        kind: String,
         /// The value it could not read.
+        value: String,
+    },
+    /// Go `ErrDataTooLong` (1406) as `ProduceStrWithSpecifiedTp` raises it,
+    /// BEFORE any caller re-titles it with a column and a row. A write path
+    /// that returns `table.CastValue`'s error unchanged -- an
+    /// `ON DUPLICATE KEY UPDATE` assignment -- reports this form.
+    DataTooLongRaw {
+        /// The column's declared length.
+        field_len: u64,
+        /// The value's length in the same unit.
+        data_len: u64,
+    },
+    /// Go `ErrTruncated` (1265) raised with NO arguments, which is what a
+    /// failed ENUM/SET conversion returns.
+    ///
+    /// `castColumnValue` re-titles a bare `ErrTruncated` into
+    /// `ErrTruncatedWrongVal` for every type EXCEPT SET and ENUM, so those
+    /// two alone reach a caller still carrying the message TEMPLATE. A caller
+    /// that formats it (`completeInsertErr`) fills in the column and the row;
+    /// one that returns it unchanged prints the template verbatim, `'%s'` and
+    /// `%d` included. That is TiDB's own answer, reproduced rather than
+    /// tidied:
+    ///
+    /// ```text
+    /// insert into k (id) values (1) on duplicate key update e='zz'
+    ///   ERROR 1265 (01000): Data truncated for column '%s' at row %d
+    /// ```
+    DataTruncatedUnformatted,
+    /// Go `types.ErrWrongValue` (1292) with NO column and row appended: the
+    /// temporal form of the error a raw `table.CastValue` returns.
+    IncorrectValueRaw {
+        /// The column type's name, as Go `types.TypeStr` prints it.
+        type_name: String,
+        /// The rejected value.
         value: String,
     },
     /// Go `ErrTruncatedWrongValueForField` (1265), value form.

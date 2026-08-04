@@ -830,3 +830,206 @@ fn duplicate_entry_renders_every_datum_kind_as_go_does() {
         "2020-01-01 00:00:00-1-ASDD",
     );
 }
+
+/// Go returns `table.CastValue`'s OWN error for an ASSIGNMENT -- an
+/// `ON DUPLICATE KEY UPDATE` one always, an `UPDATE` one for everything
+/// except `ErrDataTooLong` and `ErrOverflow` -- where the VALUES row of an
+/// `INSERT` gets `completeInsertErr`'s decorated form. The two therefore
+/// carry different CODES for the same value, and the assignment names
+/// neither the column nor the row.
+///
+/// Every line below was measured against TiDB with `goerr`, an oracle built
+/// from `rust/difftests/gorun` that prints the error code and message:
+///
+/// ```text
+/// set sql_mode='STRICT_TRANS_TABLES';
+/// insert into k (id) values (1) on duplicate key update i='abc'
+///   [types:1292] Truncated incorrect DOUBLE value: 'abc'
+/// insert into k (id) values (1) on duplicate key update dc='12abc'
+///   [types:1292] Truncated incorrect decimal(4,1) value: '12abc'
+/// insert into k (id) values (1) on duplicate key update v='abcdefg'
+///   [types:1406] Data Too Long, field len 3, data len 7
+/// insert into k (id) values (1) on duplicate key update e='zz'
+///   [types:1265] Data truncated for column '%s' at row %d
+/// update k set v='abcdefg'
+///   [types:1406] Data too long for column 'v' at row 1
+/// ```
+///
+/// The `'%s'` is TiDB's, not a formatting slip here: a failed ENUM/SET cast
+/// is the one bare `ErrTruncated` that `castColumnValue` does NOT re-title,
+/// so a caller that returns it unformatted prints its template.
+#[test]
+fn an_assignment_cast_reports_cast_values_own_error() {
+    let mut session = Session::new();
+    session.run("SET sql_mode='STRICT_TRANS_TABLES'").unwrap();
+    session
+        .run(
+            "CREATE TABLE k (id INT PRIMARY KEY, i INT, u INT UNSIGNED, f FLOAT, d DOUBLE, \
+             dc DECIMAL(4,1), v VARCHAR(3), c CHAR(3), dt DATE, tm DATETIME, du TIME, \
+             y YEAR, e ENUM('x','y'), s SET('x','y'))",
+        )
+        .unwrap();
+    session.run("INSERT INTO k (id) VALUES (1)").unwrap();
+
+    // (column, written value, code, message) -- identical for the ODKU and
+    // the UPDATE spelling except where noted below.
+    let raw: [(&str, &str, u16, &str); 13] = [
+        (
+            "i",
+            "'abc'",
+            1292,
+            "Truncated incorrect DOUBLE value: 'abc'",
+        ),
+        (
+            "i",
+            "'12abc'",
+            1292,
+            "Truncated incorrect DOUBLE value: '12abc'",
+        ),
+        (
+            "u",
+            "'abc'",
+            1292,
+            "Truncated incorrect DOUBLE value: 'abc'",
+        ),
+        (
+            "f",
+            "'abc'",
+            1292,
+            "Truncated incorrect DOUBLE value: 'abc'",
+        ),
+        (
+            "d",
+            "'abc'",
+            1292,
+            "Truncated incorrect DOUBLE value: 'abc'",
+        ),
+        (
+            "dc",
+            "'abc'",
+            1292,
+            "Truncated incorrect DECIMAL value: 'abc'",
+        ),
+        (
+            "dc",
+            "'12abc'",
+            1292,
+            "Truncated incorrect decimal(4,1) value: '12abc'",
+        ),
+        ("dt", "'notadate'", 1292, "Incorrect date value: 'notadate'"),
+        (
+            "tm",
+            "'notadate'",
+            1292,
+            "Incorrect datetime value: 'notadate'",
+        ),
+        (
+            "du",
+            "'notatime'",
+            1292,
+            "Truncated incorrect time value: 'notatime'",
+        ),
+        (
+            "y",
+            "'abc'",
+            1292,
+            "Truncated incorrect DOUBLE value: 'abc'",
+        ),
+        (
+            "e",
+            "'zz'",
+            1265,
+            "Data truncated for column '%s' at row %d",
+        ),
+        (
+            "s",
+            "'zz'",
+            1265,
+            "Data truncated for column '%s' at row %d",
+        ),
+    ];
+    for (column, value, code, message) in raw {
+        for sql in [
+            format!("INSERT INTO k (id) VALUES (1) ON DUPLICATE KEY UPDATE {column}={value}"),
+            format!("UPDATE k SET {column}={value}"),
+        ] {
+            let error = session.run(&sql).unwrap_err().to_mysql_error();
+            assert_eq!(error.code, code, "{sql}");
+            assert_eq!(error.message, message, "{sql}");
+        }
+    }
+
+    // `ErrDataTooLong` is the arm the two spellings DISAGREE on: Go's
+    // `handleUpdateError` re-titles it for an UPDATE and `doDupRowUpdate`
+    // does not.
+    for column in ["v", "c"] {
+        let error = session
+            .run(&format!(
+                "INSERT INTO k (id) VALUES (1) ON DUPLICATE KEY UPDATE {column}='abcdefg'"
+            ))
+            .unwrap_err()
+            .to_mysql_error();
+        assert_eq!(error.code, 1406);
+        assert_eq!(error.message, "Data Too Long, field len 3, data len 7");
+
+        let error = session
+            .run(&format!("UPDATE k SET {column}='abcdefg'"))
+            .unwrap_err()
+            .to_mysql_error();
+        assert_eq!(error.code, 1406);
+        assert_eq!(
+            error.message,
+            format!("Data too long for column '{column}' at row 1")
+        );
+    }
+
+    // NON-STRICT is the same fork over the same naming, because Go builds
+    // the error object first and only then lets the mode decide whether it
+    // is fatal. Measured:
+    //
+    //   set sql_mode='';
+    //   update u3 set i='abc'
+    //     Warning 1292 Truncated incorrect DOUBLE value: 'abc'
+    //   insert into u3 (id) values (1) on duplicate key update i='abc'
+    //     Warning 1366 Incorrect int value: '0' for column 'i' at row 1
+    //
+    // -- the ODKU one names the CAST value (`'0'`), which is Go's
+    // `errorHandler` running `completeInsertErr` over the already-cast datum.
+    session.run("SET sql_mode=''").unwrap();
+    session.run("UPDATE k SET i='abc'").unwrap();
+    assert_eq!(
+        session
+            .warnings()
+            .iter()
+            .map(|w| (w.code, w.message.clone()))
+            .collect::<Vec<_>>(),
+        [(1292, "Truncated incorrect DOUBLE value: 'abc'".to_owned())]
+    );
+    session
+        .run("INSERT INTO k (id) VALUES (1) ON DUPLICATE KEY UPDATE i='abc'")
+        .unwrap();
+    assert_eq!(
+        session
+            .warnings()
+            .iter()
+            .map(|w| (w.code, w.message.clone()))
+            .collect::<Vec<_>>(),
+        [(
+            1366,
+            "Incorrect int value: '0' for column 'i' at row 1".to_owned()
+        )]
+    );
+    session.run("SET sql_mode='STRICT_TRANS_TABLES'").unwrap();
+
+    // The CONTROL: the same values written as an INSERT row keep Go's
+    // decorated `completeInsertErr` form, which this change does not touch.
+    let error = session
+        .run("INSERT INTO k (id, i) VALUES (2, 'abc')")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1366);
+    assert_eq!(
+        error.message,
+        "Incorrect int value: 'abc' for column 'i' at row 1"
+    );
+}

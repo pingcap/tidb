@@ -576,6 +576,27 @@ impl DriverError {
             *b"22007",
             format!("Truncated incorrect {kind} value: '{value}'"),
         ),
+        // Go: "Data Too Long, field len %d, data len %d".
+        DriverError::DataTooLongRaw {
+            field_len,
+            data_len,
+        } => MysqlError::new(
+            1406,
+            *b"22001",
+            format!("Data Too Long, field len {field_len}, data len {data_len}"),
+        ),
+        // Go's message TEMPLATE, unformatted -- see the variant's doc.
+        DriverError::DataTruncatedUnformatted => MysqlError::new(
+            1265,
+            *b"01000",
+            "Data truncated for column '%s' at row %d".to_owned(),
+        ),
+        // Go: "Incorrect %-.32s value: '%-.128s'".
+        DriverError::IncorrectValueRaw { type_name, value } => MysqlError::new(
+            1292,
+            *b"22007",
+            format!("Incorrect {type_name} value: '{value}'"),
+        ),
         // Go: "Data truncated for column '%s', value is '%s'".
         DriverError::DataTruncatedValue { column, value } => MysqlError::new(
             1265,

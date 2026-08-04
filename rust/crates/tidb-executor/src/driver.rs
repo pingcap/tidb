@@ -203,6 +203,7 @@ mod set_opr;
 mod subquery;
 #[cfg(test)]
 mod tests;
+mod write_cast;
 
 // Re-exported flat, so every caller inside and outside this module keeps
 // naming these as `driver::…` exactly as before the split.
@@ -217,6 +218,7 @@ pub(crate) use grouping::*;
 pub use params::*;
 pub use set_opr::*;
 pub(crate) use subquery::*;
+pub(crate) use write_cast::*;
 
 pub use errors::{DriverError, MysqlError, SchemaErrorKind, TxnErrorKind, VarErrorKind};
 

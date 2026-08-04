@@ -391,7 +391,7 @@ fn modify_column() {
     // left untouched.
     assert!(matches!(
         session.run("ALTER TABLE t MODIFY COLUMN b BIGINT"),
-        Err(DriverError::TruncatedIncorrectValue { kind: "DOUBLE", .. })
+        Err(DriverError::TruncatedIncorrectValue { ref kind, .. }) if kind == "DOUBLE"
     ));
     assert_eq!(
         row_text(session.run("SELECT b FROM t WHERE a = 1")),

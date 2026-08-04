@@ -1336,7 +1336,10 @@ fn modify_column_action(
         .modify_column(offset, column, new_position, zone)
         .map_err(|e| match e {
             crate::kv_table::KvTableError::TruncatedIncorrectValue { kind, value } => {
-                DriverError::TruncatedIncorrectValue { kind, value }
+                DriverError::TruncatedIncorrectValue {
+                    kind: kind.to_owned(),
+                    value,
+                }
             }
             crate::kv_table::KvTableError::DataTruncatedValue { column, value } => {
                 DriverError::DataTruncatedValue { column, value }

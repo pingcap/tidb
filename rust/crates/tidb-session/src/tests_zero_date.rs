@@ -349,6 +349,21 @@ fn timestamp_is_stricter_than_date() {
 
 /// The UPDATE half. Go derives the level per statement kind, so this is
 /// asserted separately rather than assumed to follow the INSERT.
+///
+/// An UPDATE's message is `table.CastValue`'s OWN, with no column and no
+/// row: Go's `handleUpdateError` re-titles `ErrDataTooLong` and `ErrOverflow`
+/// and returns everything else unchanged. Both lines below were re-measured
+/// against TiDB after this test asserted the INSERT's decorated form here by
+/// mistake:
+///
+/// ```text
+/// set sql_mode='NO_ZERO_DATE,NO_ZERO_IN_DATE';
+/// update u2 set v='not-a-date';
+///   Warning 1292 Incorrect date value: 'not-a-date'
+/// set sql_mode='STRICT_TRANS_TABLES,NO_ZERO_DATE,NO_ZERO_IN_DATE';
+/// update u set v='0000-00-00';
+///   ERROR 1292 (22007): Incorrect date value: '0000-00-00'
+/// ```
 #[test]
 fn update_follows_the_same_table() {
     let mut session = Session::new();
@@ -363,10 +378,7 @@ fn update_follows_the_same_table() {
     session.run("UPDATE u SET v = 'not-a-date'").unwrap();
     assert_eq!(
         warnings(&session),
-        [(
-            1292,
-            "Incorrect date value: 'not-a-date' for column 'v' at row 1".to_owned()
-        )]
+        [(1292, "Incorrect date value: 'not-a-date'".to_owned())]
     );
     assert_eq!(rows(&mut session, "SELECT v FROM u"), [["0000-00-00"]]);
 
@@ -395,10 +407,7 @@ fn update_follows_the_same_table() {
         .to_mysql_error();
     assert_eq!(
         (error.code, error.message.as_str()),
-        (
-            1292,
-            "Incorrect date value: '0000-00-00' for column 'v' at row 1"
-        )
+        (1292, "Incorrect date value: '0000-00-00'")
     );
     // A refused UPDATE leaves the row alone.
     assert_eq!(rows(&mut strict, "SELECT v FROM u"), [["2020-05-05"]]);
