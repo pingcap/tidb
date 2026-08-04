@@ -34,6 +34,7 @@
 pub mod chunk;
 pub mod chunk_in_disk;
 pub mod chunk_util;
+pub mod codec;
 pub mod column;
 pub mod mutrow;
 pub mod row;
