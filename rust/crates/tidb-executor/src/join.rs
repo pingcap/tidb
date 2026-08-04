@@ -122,6 +122,7 @@ use crate::executor::{ExecError, Executor, ExecutorMeta};
 use crate::hash_join::{row_key, BuildTable, EquiKey, KeyError};
 use crate::mem_quota::StatementMemory;
 use std::cell::Cell;
+use std::cmp::Ordering;
 use std::sync::Arc;
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType};
@@ -152,6 +153,42 @@ struct HashState {
     probe_done: bool,
 }
 
+/// One side of the merge strategy: the chunk it streams into, how far that
+/// chunk is consumed, and the group of equal-keyed rows currently held.
+///
+/// Go's `MergeJoinTable`. The group is `Vec<Vec<Datum>>` rather than Go's
+/// `chunk.RowContainer` because this tier has no spill container; the bound
+/// is the statement budget, polled after each group lands, exactly as the
+/// nested path polls it.
+struct MergeSide {
+    chunk: Chunk,
+    row: usize,
+    /// Whether the child has returned its final (empty) chunk.
+    done: bool,
+    /// The rows of the current group -- all with the same join key.
+    group: Vec<Vec<Datum>>,
+    /// The key of `group`, empty when `group` is.
+    key: Vec<Datum>,
+}
+
+impl MergeSide {
+    fn new(chunk: Chunk) -> Self {
+        MergeSide {
+            chunk,
+            row: 0,
+            done: false,
+            group: Vec::new(),
+            key: Vec::new(),
+        }
+    }
+}
+
+/// The merge strategy's live state: one [`MergeSide`] per child.
+struct MergeState {
+    left: MergeSide,
+    right: MergeSide,
+}
+
 /// A join of two children, hashing its equal conditions when it can and
 /// falling back to a nested loop when it cannot (see the module doc).
 pub struct JoinExec<C: Columns> {
@@ -166,6 +203,14 @@ pub struct JoinExec<C: Columns> {
     /// Nested loop only: whether its single all-at-once batch was emitted.
     emitted: bool,
     hash: Option<HashState>,
+    /// The merge strategy's key pairs and direction, set by the planner when
+    /// BOTH children already produce rows in the join keys' order. `None` is
+    /// every other join, and is what keeps this a fail-closed opt-in: a
+    /// strategy that assumes an order it was not promised would silently drop
+    /// rows.
+    merge: Option<crate::merge_join_plan::MergeJoinPlan>,
+    /// The merge strategy's live state; absent until the first `next()`.
+    merge_state: Option<MergeState>,
     /// How many times the `ON` clause has been evaluated. This is the cost
     /// the hash table exists to remove, so it is the number a scaling test
     /// asserts on directly instead of timing the machine.
@@ -206,6 +251,8 @@ impl<C: Columns> JoinExec<C> {
             keys,
             emitted: false,
             hash: None,
+            merge: None,
+            merge_state: None,
             condition_evals: Cell::new(0),
             memory,
             tracker,
@@ -350,6 +397,188 @@ impl<C: Columns> JoinExec<C> {
             Self::append(req, &self.padded_row(outer_row));
         }
         Ok(())
+    }
+
+    /// Declares that both children produce rows in `plan`'s key order, and
+    /// that this join may therefore merge them.
+    ///
+    /// The promise is the caller's: only `driver::from`'s merge-join decision
+    /// (see [`crate::merge_join_plan`]) makes it, and only after checking that
+    /// both sides' access paths ALREADY provide the order. A wrong promise
+    /// here loses rows silently, which is why nothing else may make it.
+    pub(crate) fn set_merge_plan(&mut self, plan: crate::merge_join_plan::MergeJoinPlan) {
+        self.merge = Some(plan);
+    }
+
+    /// Whether this join merges its two sorted children.
+    #[must_use]
+    pub fn is_merge_join(&self) -> bool {
+        self.merge.is_some()
+    }
+
+    /// Pulls the next group of equal-keyed rows into `side`, leaving it empty
+    /// when the child is exhausted.
+    ///
+    /// Go's `fetchNextInnerGroup`/`fetchNextOuterGroup`, collapsed into one:
+    /// Go splits them because its inner group spans chunks through a spill
+    /// container while its outer group stops at a chunk boundary, an
+    /// asymmetry that exists to bound memory. Here BOTH sides collect a whole
+    /// group, so the outer side's group is never split across calls and the
+    /// duplicate-key cross product below is complete on both sides -- which is
+    /// the property the asymmetric Go pair also has, reached by its own
+    /// `MultiIterator`.
+    fn fetch_group(
+        side: &mut MergeSide,
+        child: &mut dyn Executor,
+        key_offsets: &[usize],
+        types: &[FieldType],
+        tracker: &Arc<Tracker>,
+        memory: &StatementMemory,
+    ) -> Result<(), ExecError> {
+        side.group.clear();
+        side.key.clear();
+        loop {
+            if side.row >= side.chunk.num_rows() {
+                if side.done {
+                    break;
+                }
+                child.next(&mut side.chunk)?;
+                side.row = 0;
+                if side.chunk.num_rows() == 0 {
+                    side.done = true;
+                    break;
+                }
+            }
+            let row = datum_row(&side.chunk, side.row, types);
+            let key: Vec<Datum> = key_offsets.iter().map(|&at| row[at].clone()).collect();
+            if side.group.is_empty() {
+                side.key = key;
+            } else if merge_key_cmp(&side.key, &key, false)? != Ordering::Equal {
+                // The next group starts here; leave `row` unconsumed.
+                break;
+            }
+            tracker.consume(row_bytes(&row));
+            side.group.push(row);
+            side.row += 1;
+        }
+        memory.check()?;
+        Ok(())
+    }
+
+    /// The merge path: advance the side whose key falls behind, and emit the
+    /// cross product of every pair of groups whose keys are equal.
+    ///
+    /// Go's `MergeJoinExec.Next`. The three arms are Go's three: the inner
+    /// group behind (drop it), the outer group behind (emit its misses), and
+    /// the keys equal (join the two groups). This spelling drives both sides
+    /// symmetrically and lets [`Self::emit_outer_row`] -- shared with the
+    /// nested and hash paths -- apply the residual `ON` conditions and the
+    /// outer-join padding, so the three strategies cannot disagree about what
+    /// a row is.
+    fn next_merged(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+        let plan = self.merge.clone().expect("next_merged needs a merge plan");
+        let desc = plan.desc;
+        let left_keys: Vec<usize> = plan.keys.iter().map(|key| key.left).collect();
+        let right_keys: Vec<usize> = plan.keys.iter().map(|key| key.right).collect();
+        let left_types: Vec<FieldType> = self.left.ret_field_types().to_vec();
+        let right_types: Vec<FieldType> = self.right.ret_field_types().to_vec();
+        if self.merge_state.is_none() {
+            self.merge_state = Some(MergeState {
+                left: MergeSide::new(self.left.new_chunk()),
+                right: MergeSide::new(self.right.new_chunk()),
+            });
+        }
+        let tracker = Arc::clone(&self.tracker);
+        let memory = self.memory.clone();
+        let outer_is_left = self.outer_is_left();
+        loop {
+            let state = self.merge_state.as_mut().expect("just created");
+            if state.left.group.is_empty() {
+                Self::fetch_group(
+                    &mut state.left,
+                    self.left.as_mut(),
+                    &left_keys,
+                    &left_types,
+                    &tracker,
+                    &memory,
+                )?;
+            }
+            let state = self.merge_state.as_mut().expect("just created");
+            if state.right.group.is_empty() {
+                Self::fetch_group(
+                    &mut state.right,
+                    self.right.as_mut(),
+                    &right_keys,
+                    &right_types,
+                    &tracker,
+                    &memory,
+                )?;
+            }
+            let state = self.merge_state.as_mut().expect("just created");
+            let (left_empty, right_empty) =
+                (state.left.group.is_empty(), state.right.group.is_empty());
+            if left_empty && right_empty {
+                return Ok(());
+            }
+            // A side that ran out makes the other side's remaining groups all
+            // unmatched, which only an OUTER join still emits.
+            let order = if left_empty {
+                Ordering::Greater
+            } else if right_empty {
+                Ordering::Less
+            } else {
+                merge_key_cmp(&state.left.key, &state.right.key, desc)?
+            };
+            // A NULL join key needs NO special arm here. Go's
+            // `hasNullInJoinKey` drops a NULL inner group because Go MOVED the
+            // used equal conditions OUT of the condition list
+            // (`moveEqualToOtherConditions`), so nothing downstream would
+            // reject the pair. This tier keeps every `ON` conjunct in
+            // `conditions` -- the merge keys are DERIVED from them, not
+            // removed -- so `matches` evaluates `NULL = NULL`, gets NULL, and
+            // rejects the pair, after which the outer padding rule emits
+            // exactly the rows Go's skip emits. Two NULL groups are therefore
+            // allowed to meet and produce nothing, which is the same answer by
+            // the normal path instead of by a special case.
+            match order {
+                Ordering::Equal => {
+                    let left_group = std::mem::take(&mut state.left.group);
+                    let right_group = std::mem::take(&mut state.right.group);
+                    let (outer, inner) = if outer_is_left {
+                        (&left_group, &right_group)
+                    } else {
+                        (&right_group, &left_group)
+                    };
+                    for outer_row in outer {
+                        self.emit_outer_row(req, outer_row, inner.iter().cloned())?;
+                    }
+                }
+                // The left group is behind, or the right side is spent.
+                Ordering::Less => {
+                    let group = std::mem::take(&mut state.left.group);
+                    if outer_is_left {
+                        for row in &group {
+                            self.emit_outer_row(req, row, std::iter::empty())?;
+                        }
+                    }
+                }
+                Ordering::Greater => {
+                    let group = std::mem::take(&mut state.right.group);
+                    if !outer_is_left {
+                        for row in &group {
+                            self.emit_outer_row(req, row, std::iter::empty())?;
+                        }
+                    }
+                }
+            }
+            self.memory.check()?;
+            // An empty `req` is the caller's EOF signal, so a call that
+            // dropped only unmatched groups must keep going rather than
+            // report exhaustion.
+            if req.num_rows() > 0 {
+                return Ok(());
+            }
+        }
     }
 
     /// The fallback: materialize both sides and compare every pair.
@@ -527,6 +756,28 @@ fn key_error(_: KeyError) -> ExecError {
 }
 
 /// Go's condition truth test (`Datum.ToBool` via `expression.EvalBool`):
+/// Compares two merge-join keys column by column, reversing for a descending
+/// merge.
+///
+/// Go's `MergeJoinExec.compare` runs `CompareFuncs[i]` -- `GetCmpFunction` on
+/// the two key columns -- and returns at the first non-equal column. The
+/// shared `compare_datums` is that function's answer for the comparable types
+/// a merge join is offered, and is the same one [`crate::sort`] orders by, so
+/// the order the merge ASSUMES and the order a sort would PRODUCE are one
+/// implementation.
+fn merge_key_cmp(left: &[Datum], right: &[Datum], desc: bool) -> Result<Ordering, ExecError> {
+    for (a, b) in left.iter().zip(right) {
+        let mut cmp = tidb_expr::compare_datums(a, b)?;
+        if desc {
+            cmp = cmp.reverse();
+        }
+        if cmp != Ordering::Equal {
+            return Ok(cmp);
+        }
+    }
+    Ok(Ordering::Equal)
+}
+
 /// NULL and zero are false, and a string takes its numeric prefix.
 fn truthy(value: &Datum) -> Result<bool, ExecError> {
     Ok(tidb_expr::truthy_of(value)? == Some(true))
@@ -538,12 +789,16 @@ impl<C: Columns> Executor for JoinExec<C> {
         self.right.open()?;
         self.emitted = false;
         self.hash = None;
+        self.merge_state = None;
         self.condition_evals.set(0);
         Ok(())
     }
 
     fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
         req.reset();
+        if self.merge.is_some() {
+            return self.next_merged(req);
+        }
         if self.keys.is_empty() {
             return self.next_nested(req);
         }
@@ -658,7 +913,7 @@ mod tests {
     }
 
     /// `left.<lhs> = right.<rhs>`, addressed against the joined schema.
-    fn eq_on(lhs: usize, rhs: usize, left_width: usize) -> Expression {
+    pub(super) fn eq_on(lhs: usize, rhs: usize, left_width: usize) -> Expression {
         let column = |index: usize| {
             let mut column = Column::new(index as i64 + 1, long());
             column.index = index as i64;
@@ -671,7 +926,7 @@ mod tests {
         ))
     }
 
-    fn join_of(
+    pub(super) fn join_of(
         kind: JoinKind,
         conditions: Vec<Expression>,
         left: Vec<Vec<Datum>>,
@@ -691,7 +946,7 @@ mod tests {
 
     /// Drains a join to completion, exactly as a caller does: repeated
     /// `next()` until an empty chunk.
-    fn run(join: &mut JoinExec<NoColumns>) -> Vec<Vec<i64>> {
+    pub(super) fn run(join: &mut JoinExec<NoColumns>) -> Vec<Vec<i64>> {
         join.open().unwrap();
         let types = join.ret_field_types().to_vec();
         let mut out = Vec::new();
@@ -818,5 +1073,157 @@ mod tests {
             evals * 10_000 <= nested_loop_evals,
             "{evals} evaluations vs the nested loop's {nested_loop_evals}"
         );
+    }
+}
+
+#[cfg(test)]
+mod merge_path_tests {
+    use super::tests::{eq_on, join_of, run};
+    use super::JoinKind;
+    use crate::merge_join_plan::{MergeJoinKey, MergeJoinPlan};
+    use tidb_datatype::Datum;
+
+    /// The same fixture shape as the hash differential test -- duplicate keys
+    /// on both sides, keys present on one side only, and NULL keys -- but
+    /// SORTED, because that is the promise a merge join is given.
+    ///
+    /// NULLs sort first, which is where a key-ordered read puts them, so this
+    /// is a stream a real ordered scan could produce.
+    fn sorted_fixture(n: i64, modulus: i64, nulls: bool) -> Vec<Vec<Datum>> {
+        let mut rows: Vec<Vec<Datum>> = (0..n)
+            .map(|i| {
+                let key = if nulls && i % 11 == 10 {
+                    Datum::Null
+                } else {
+                    Datum::Int(i % modulus)
+                };
+                vec![key, Datum::Int(i)]
+            })
+            .collect();
+        rows.sort_by_key(|row| match row[0] {
+            Datum::Null => (0, 0),
+            Datum::Int(key) => (1, key),
+            _ => unreachable!("the fixture builds only NULLs and ints"),
+        });
+        rows
+    }
+
+    /// A multiset comparison: the merge path emits in KEY order and the hash
+    /// path in OUTER-ROW order, so the two agree on rows without agreeing on
+    /// their sequence. That difference is the algorithm, not a bug -- Go's
+    /// merge join reorders the result the same way, which is why its plans
+    /// still carry a `Sort` above when the query asked for one.
+    fn as_multiset(mut rows: Vec<Vec<i64>>) -> Vec<Vec<i64>> {
+        rows.sort_unstable();
+        rows
+    }
+
+    /// The merge path must produce the same ROWS as the hash path for every
+    /// join kind, over sorted data with duplicate keys on BOTH sides (the
+    /// group-by-group cross product), keys matched on neither side, and NULL
+    /// keys (which must match nothing, not even each other).
+    #[test]
+    fn merge_path_matches_the_hash_path_row_for_row() {
+        for kind in [JoinKind::Inner, JoinKind::Left, JoinKind::Right] {
+            let left = sorted_fixture(200, 7, true);
+            let right = sorted_fixture(200, 5, true);
+            let mut merged = join_of(kind, vec![eq_on(0, 0, 2)], left.clone(), right.clone(), 2);
+            merged.set_merge_plan(MergeJoinPlan {
+                keys: vec![MergeJoinKey { left: 0, right: 0 }],
+                desc: false,
+            });
+            assert!(merged.is_merge_join());
+            let mut hashed = join_of(kind, vec![eq_on(0, 0, 2)], left, right, 2);
+            assert!(hashed.is_hash_join());
+            assert_eq!(
+                as_multiset(run(&mut merged)),
+                as_multiset(run(&mut hashed)),
+                "{kind:?}"
+            );
+        }
+    }
+
+    /// A residual conjunct still filters the pairs a matched group produces,
+    /// and an outer row every pair rejects is still emitted NULL-padded --
+    /// the rule `emit_outer_row` owns for all three strategies.
+    #[test]
+    fn residual_conditions_still_filter_merged_groups() {
+        let left = sorted_fixture(150, 7, false);
+        let right = sorted_fixture(150, 5, false);
+        let conditions = vec![eq_on(0, 0, 2), eq_on(1, 1, 2)];
+        let mut merged = join_of(
+            JoinKind::Left,
+            conditions.clone(),
+            left.clone(),
+            right.clone(),
+            2,
+        );
+        merged.set_merge_plan(MergeJoinPlan {
+            keys: vec![MergeJoinKey { left: 0, right: 0 }],
+            desc: false,
+        });
+        let mut hashed = join_of(JoinKind::Left, conditions, left, right, 2);
+        assert_eq!(as_multiset(run(&mut merged)), as_multiset(run(&mut hashed)));
+    }
+
+    /// A DESCENDING merge reads both sides high to low, and must find the
+    /// same matches: `PhysicalMergeJoin.Desc` reverses the comparison, not
+    /// the semantics.
+    #[test]
+    fn a_descending_merge_finds_the_same_matches() {
+        let mut left = sorted_fixture(120, 7, false);
+        let mut right = sorted_fixture(120, 5, false);
+        left.reverse();
+        right.reverse();
+        let mut merged = join_of(
+            JoinKind::Inner,
+            vec![eq_on(0, 0, 2)],
+            left.clone(),
+            right.clone(),
+            2,
+        );
+        merged.set_merge_plan(MergeJoinPlan {
+            keys: vec![MergeJoinKey { left: 0, right: 0 }],
+            desc: true,
+        });
+        let mut hashed = join_of(JoinKind::Inner, vec![eq_on(0, 0, 2)], left, right, 2);
+        assert_eq!(as_multiset(run(&mut merged)), as_multiset(run(&mut hashed)));
+    }
+
+    /// One empty side: an inner join produces nothing, and an outer join
+    /// still emits every preserved row NULL-padded. This is the arm where a
+    /// merge loop most easily stops early.
+    #[test]
+    fn an_empty_side_still_emits_the_preserved_rows() {
+        for (kind, expected) in [
+            (JoinKind::Inner, 0),
+            (JoinKind::Left, 30),
+            (JoinKind::Right, 0),
+        ] {
+            let left = sorted_fixture(30, 7, false);
+            let mut merged = join_of(kind, vec![eq_on(0, 0, 2)], left, Vec::new(), 2);
+            merged.set_merge_plan(MergeJoinPlan {
+                keys: vec![MergeJoinKey { left: 0, right: 0 }],
+                desc: false,
+            });
+            assert_eq!(run(&mut merged).len(), expected, "{kind:?}");
+        }
+    }
+
+    /// A group larger than one chunk must still be one group: the merge
+    /// collects a whole run of equal keys before joining it, so a 3000-row
+    /// group spanning several source chunks fans out completely.
+    #[test]
+    fn a_group_spanning_chunks_is_still_one_group() {
+        let left: Vec<Vec<Datum>> = (0..3000)
+            .map(|i| vec![Datum::Int(1), Datum::Int(i)])
+            .collect();
+        let right = vec![vec![Datum::Int(1), Datum::Int(0)]; 3];
+        let mut merged = join_of(JoinKind::Inner, vec![eq_on(0, 0, 2)], left, right, 2);
+        merged.set_merge_plan(MergeJoinPlan {
+            keys: vec![MergeJoinKey { left: 0, right: 0 }],
+            desc: false,
+        });
+        assert_eq!(run(&mut merged).len(), 9000);
     }
 }
