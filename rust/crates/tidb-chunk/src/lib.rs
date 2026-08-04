@@ -47,4 +47,32 @@ pub mod iterator;
 pub mod list;
 pub mod mutrow;
 pub mod row;
+pub mod row_container;
+pub mod row_container_reader;
 pub mod row_in_disk;
+
+/// The spill tests all point the process-wide temporary-storage path at their
+/// own scratch directory, so exactly one of them may run at a time. ONE lock
+/// for the whole crate: a per-module lock does not serialise modules against
+/// each other, which is how a test in one module used to delete the directory
+/// another was writing into.
+#[cfg(test)]
+pub(crate) mod test_temp_storage {
+    use std::path::PathBuf;
+    use std::sync::{Mutex, MutexGuard, PoisonError};
+
+    static LOCK: Mutex<()> = Mutex::new(());
+
+    /// Held for the duration of a test that sets the temporary-storage path.
+    pub(crate) fn guard() -> MutexGuard<'static, ()> {
+        LOCK.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// A fresh scratch directory named after the test.
+    pub(crate) fn scratch_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("tidb_rust_spill_test_{name}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch temp dir");
+        dir
+    }
+}

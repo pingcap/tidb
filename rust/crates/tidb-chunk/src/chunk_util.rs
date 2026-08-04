@@ -431,6 +431,12 @@ impl DiskFileReaderWriter {
         self.path.as_ref()
     }
 
+    /// Go `offWrite`: the logical offset the next write lands at.
+    #[must_use]
+    pub fn off_write(&self) -> i64 {
+        self.off_write
+    }
+
     /// Go `write`.
     pub fn write(&mut self, data: &[u8]) -> io::Result<usize> {
         let writer = self

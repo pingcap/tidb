@@ -529,6 +529,22 @@ impl Column {
         self.length += 1;
     }
 
+    /// Go `diskFormatRow.toRow`'s not-null branch: append `cell` as one row's
+    /// raw bytes, whichever kind of column this is.
+    ///
+    /// Go writes a fixed-length cell by pointing `elemBuf` at it and calling
+    /// `finishAppendFixed`; the cell is the column's element length, so the
+    /// result is the same as appending the bytes directly.
+    pub(crate) fn append_raw_cell(&mut self, cell: &[u8]) {
+        if self.is_fixed() {
+            self.append_null_bitmap(true);
+            self.data.extend_from_slice(cell);
+            self.length += 1;
+        } else {
+            self.append_bytes(cell);
+        }
+    }
+
     /// Go `nullCount`: the number of null rows currently stored.
     #[must_use]
     pub fn null_count(&self) -> usize {

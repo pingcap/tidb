@@ -77,6 +77,9 @@ pub enum DiskError {
     Io(io::Error),
     /// One of Go's explicit `errors.New` guards on this path.
     Message(&'static str),
+    /// An error recorded earlier and replayed, such as the error a failed
+    /// spill leaves in `RowContainer`'s records.
+    Owned(String),
 }
 
 impl From<io::Error> for DiskError {
@@ -90,6 +93,7 @@ impl std::fmt::Display for DiskError {
         match self {
             DiskError::Io(error) => error.fmt(formatter),
             DiskError::Message(message) => formatter.write_str(message),
+            DiskError::Owned(message) => formatter.write_str(message),
         }
     }
 }
@@ -522,18 +526,9 @@ mod tests {
     /// `tmp-storage-path` is process-global (Go's is too: it lives in the
     /// global config), so the tests that redirect it must not run at the same
     /// time inside one test binary.
-    fn temp_dir_guard() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        LOCK.lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
+    use crate::test_temp_storage::guard as temp_dir_guard;
 
-    fn scratch_temp_dir(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("tidb_rust_spill_test_{name}"));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("scratch temp dir");
-        dir
-    }
+    use crate::test_temp_storage::scratch_dir as scratch_temp_dir;
 
     /// Builds chunk `c` of `chunks` chunks x `rows` rows, deterministically.
     fn payload_chunk(fields: &[FieldType], c: usize, rows: usize) -> Chunk {
