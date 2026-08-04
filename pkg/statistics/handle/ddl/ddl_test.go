@@ -413,7 +413,7 @@ func TestDDLHistogram(t *testing.T) {
 	require.NoError(t, err)
 	is = do.InfoSchema()
 	require.Nil(t, h.Update(context.Background(), is))
-	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
 	statsTbl = do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
