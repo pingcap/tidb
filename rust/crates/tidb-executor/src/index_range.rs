@@ -708,6 +708,7 @@ fn points_from_like(
     let bytes = pattern.as_bytes();
     let mut low = Vec::with_capacity(bytes.len());
     let mut exact = true;
+    let mut exclude = false;
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == escape {
@@ -716,10 +717,40 @@ fn points_from_like(
             i += 1;
             continue;
         }
-        if bytes[i] == b'%' || bytes[i] == b'_' {
-            // Go excludes the low bound for `_` only under a non-PAD-SPACE
-            // collation; TiDB's own default collations all pad, so the bound
-            // stays inclusive.
+        if bytes[i] == b'%' {
+            exact = false;
+            break;
+        }
+        if bytes[i] == b'_' {
+            // Go `points.go:775-788`: `_` matches exactly one character, so
+            // the prefix itself is longer than the match and the low bound is
+            // EXCLUSIVE -- but only under a NON-PAD-SPACE collation. Under a
+            // PAD SPACE one the stored index key has its trailing spaces
+            // trimmed, so `'abc'` and `'abc   '` are the same key and
+            // excluding the bound would MISS `'abc   '`, a wrong answer rather
+            // than a wider scan.
+            //
+            // `IsPadSpaceCollation` (`collate.go:363`) is a three-name
+            // exception list, and `binary` is one of the three -- so a
+            // `VARBINARY` key really does take the exclusive bound. Captured:
+            //
+            // ```text
+            // create table b(a varbinary(20), key(a));
+            // explain select * from b where a like 'abc_%'
+            //   IndexRangeScan  range:("abc","abd")     <- low EXCLUSIVE
+            // create table c(a varchar(20), key(a));
+            // explain select * from c where a like 'abc_%'
+            //   IndexRangeScan  range:["abc","abd")     <- low inclusive
+            // ```
+            // Spelled as Go's own three-name EXCEPTION list rather than as
+            // its complement, so a collation added later defaults to PAD
+            // SPACE -- the safe half -- exactly as it does in Go.
+            exclude = matches!(
+                collation,
+                tidb_datatype::Collation::Binary
+                    | tidb_datatype::Collation::Utf8Mb40900AiCi
+                    | tidb_datatype::Collation::Utf8Mb40900Bin
+            );
             exact = false;
             break;
         }
@@ -739,7 +770,7 @@ fn points_from_like(
     // start alone, then takes `PrefixNext` of the CUT value). Deriving the
     // bound first and cutting both would collapse `LIKE 'abcd%'` on
     // `KEY (a(3))` onto the empty `["abc","abc")`; Go prints `["abc","abd")`.
-    let mut start = Point::start(string(low), false);
+    let mut start = Point::start(string(low), exclude);
     cut_prefix_for_points(std::slice::from_mut(&mut start), column);
     let low = match &start.value {
         Datum::String(text) => text.bytes().to_vec(),
@@ -970,14 +1001,23 @@ fn points_on_column(
             if *not || *ilike || !is_column(expr, name) {
                 return None;
             }
-            // The pattern's own collation carries over to the bounds, so the
-            // derived endpoints sort against the column exactly as an `=`
-            // constant on the same column would.
-            let (bytes, collation) = match constant_value(pattern, zone)? {
-                Datum::String(value) => (value.bytes().to_vec(), value.collation()),
-                Datum::Bytes(value) => (value, tidb_datatype::Collation::Binary),
+            // The COLUMN's collation, not the literal's, decides both how the
+            // bounds sort and whether a `_` excludes the low bound. Go reads
+            // it from ARGUMENT 0 (`newBuildFromPatternLike`: `tpOfPattern :=
+            // expr.GetArgs()[0].GetType(...)`, and the pad-space test uses
+            // `expr.CharsetAndCollation()`, the DERIVED collation) -- which is
+            // the column's, because a column's coercibility is IMPLICIT and a
+            // literal's is COERCIBLE, so the column always wins the merge.
+            //
+            // Taking the LITERAL's collation instead read `utf8mb4_bin` off
+            // `'abc_%'` even for a `VARBINARY` key, which is a PAD SPACE
+            // collation and so silently kept the inclusive low bound.
+            let bytes = match constant_value(pattern, zone)? {
+                Datum::String(value) => value.bytes().to_vec(),
+                Datum::Bytes(value) => value,
                 _ => return None,
             };
+            let collation = column.field_type.collation();
             let pattern = String::from_utf8(bytes).ok()?;
             Some(ColumnPoints {
                 points: points_from_like(&pattern, escape.unwrap_or(b'\\'), collation, column),

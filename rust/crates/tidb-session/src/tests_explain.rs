@@ -1248,3 +1248,92 @@ fn an_is_null_on_an_integer_handle_is_a_table_dual_not_a_full_scan() {
         [["1", "10"], ["2", "20"]]
     );
 }
+
+/// `LIKE 'abc_%'` excludes its LOW bound on a NON-PAD-SPACE collation, and
+/// keeps it on a PAD SPACE one.
+///
+/// Go `newBuildFromPatternLike` (`pkg/util/ranger/points.go:775-788`) sets
+/// `exclude = true` for a `_` wildcard -- the prefix is strictly shorter than
+/// anything that matches -- but ONLY when `!collate.IsPadSpaceCollation`.
+/// Under a PAD SPACE collation the stored index key has its trailing spaces
+/// trimmed, so `'abc'` and `'abc   '` share a key and excluding the bound
+/// would MISS a matching row.
+///
+/// `IsPadSpaceCollation` (`pkg/util/collate/collate.go:363`) is a three-name
+/// exception list -- `binary`, `utf8mb4_0900_ai_ci`, `utf8mb4_0900_bin` -- and
+/// `binary` being one of them is what makes a `VARBINARY` key take the
+/// exclusive bound. A comment here used to claim TiDB's own default
+/// collations all pad, which is true of `utf8mb4_bin` and false of `binary`.
+///
+/// Captured:
+///
+/// ```text
+/// create table b(a varbinary(20), key(a));
+/// explain select * from b where a like 'abc_%'   range:("abc","abd")
+/// explain select * from b where a like 'abc%'    range:["abc","abd")
+/// create table c(a varchar(20), key(a));
+/// explain select * from c where a like 'abc_%'   range:["abc","abd")
+/// ```
+#[test]
+fn a_like_underscore_excludes_its_low_bound_only_on_a_non_pad_collation() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE b (a VARBINARY(20), KEY(a))")
+        .unwrap();
+    session
+        .run("CREATE TABLE c (a VARCHAR(20), KEY(a))")
+        .unwrap();
+    session
+        .run("INSERT INTO b VALUES ('abc'), ('abcd'), ('abd')")
+        .unwrap();
+    session
+        .run("INSERT INTO c VALUES ('abc'), ('abcd'), ('abd')")
+        .unwrap();
+
+    let range_of = |session: &mut Session, sql: &str| -> String {
+        row_text(session.run(sql))
+            .into_iter()
+            .find_map(|row| {
+                row.iter()
+                    .find(|cell| cell.starts_with("range:"))
+                    .map(|cell| cell.split(',').take(2).collect::<Vec<_>>().join(","))
+            })
+            .unwrap_or_else(|| panic!("no range in the plan for `{sql}`"))
+    };
+
+    // `binary` is NOT a PAD SPACE collation: the low bound is EXCLUSIVE.
+    assert_eq!(
+        range_of(
+            &mut session,
+            "EXPLAIN FORMAT = 'brief' SELECT * FROM b USE INDEX(a) WHERE a LIKE 'abc_%'"
+        ),
+        "range:(\"abc\",\"abd\")"
+    );
+    // `%` alone never excludes, on either collation.
+    assert_eq!(
+        range_of(
+            &mut session,
+            "EXPLAIN FORMAT = 'brief' SELECT * FROM b USE INDEX(a) WHERE a LIKE 'abc%'"
+        ),
+        "range:[\"abc\",\"abd\")"
+    );
+    // `utf8mb4_bin` PADS: the bound stays inclusive.
+    assert_eq!(
+        range_of(
+            &mut session,
+            "EXPLAIN FORMAT = 'brief' SELECT * FROM c USE INDEX(a) WHERE a LIKE 'abc_%'"
+        ),
+        "range:[\"abc\",\"abd\")"
+    );
+
+    // The narrower range must not lose a row: `LIKE` still runs above the
+    // scan, so both tables answer the same set.
+    assert_eq!(
+        row_text(session.run("SELECT a FROM b USE INDEX(a) WHERE a LIKE 'abc_%'")),
+        [["abcd"]]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT a FROM c USE INDEX(a) WHERE a LIKE 'abc_%'")),
+        [["abcd"]]
+    );
+}
