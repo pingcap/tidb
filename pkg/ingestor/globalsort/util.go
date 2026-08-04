@@ -305,29 +305,44 @@ func DivideMergeSortDataFiles(dataFiles []string, nodeCnt int, mergeConc int) ([
 	result := make([][]string, 0, nodeCnt)
 	batches := len(dataFiles) / adjustedMergeSortFileCountStep
 	rounds := batches / nodeCnt
-	for range rounds * nodeCnt {
+	fullGroupCount := rounds * nodeCnt
+	for range fullGroupCount {
 		result = append(result, dataFiles[:adjustedMergeSortFileCountStep])
 		dataFiles = dataFiles[adjustedMergeSortFileCountStep:]
 	}
-	remainder := dataFilesCnt - (nodeCnt * rounds * adjustedMergeSortFileCountStep)
+	targetFileCount := fullGroupCount * getTargetDataFileCount(adjustedMergeSortFileCountStep, mergeConc)
+	threshold := int(simplesst.GetAdjustedMergeSortOverlapThreshold(mergeConc))
+	remainder := dataFilesCnt - (fullGroupCount * adjustedMergeSortFileCountStep)
 	if remainder == 0 {
+		if targetFileCount > threshold {
+			return nil, errors.Errorf("too many merge sort target files, dataFiles=%d, nodeCnt=%d, mergeConc=%d, targetFiles=%d, threshold=%d",
+				dataFilesCnt, nodeCnt, mergeConc, targetFileCount, threshold)
+		}
 		return result, nil
 	}
-	// adjust node cnt for remainder files to avoid having too much target files.
-	adjustNodeCnt := nodeCnt
-	maxTargetFilesPerSubtask := max(simplesst.MergeSortMaxSubtaskTargetFiles, mergeConc)
-	for (rounds*nodeCnt*maxTargetFilesPerSubtask)+(adjustNodeCnt*maxTargetFilesPerSubtask) > int(simplesst.GetAdjustedMergeSortOverlapThreshold(mergeConc)) {
-		adjustNodeCnt--
-		if adjustNodeCnt == 0 {
-			return nil, errors.Errorf("unexpected zero node count, dataFiles=%d, nodeCnt=%d", dataFilesCnt, nodeCnt)
+
+	minimalFileCount := 32 // Each subtask should merge at least 32 files.
+	maxCandidateNodeCnt := max(min(remainder/minimalFileCount, nodeCnt), 1)
+	minCandidateNodeCnt := (remainder + adjustedMergeSortFileCountStep - 1) / adjustedMergeSortFileCountStep
+	minTargetFileCount := dataFilesCnt
+	selectedNodeCnt := 0
+	for candidateNodeCnt := maxCandidateNodeCnt; candidateNodeCnt >= minCandidateNodeCnt; candidateNodeCnt-- {
+		candidateTargetFileCount := targetFileCount + getEvenlyDividedTargetDataFileCount(remainder, candidateNodeCnt, mergeConc)
+		minTargetFileCount = min(minTargetFileCount, candidateTargetFileCount)
+		if candidateTargetFileCount <= threshold {
+			selectedNodeCnt = candidateNodeCnt
+			break
 		}
 	}
-	minimalFileCount := 32 // Each subtask should merge at least 32 files.
-	adjustNodeCnt = max(min(remainder/minimalFileCount, adjustNodeCnt), 1)
-	sizes := mathutil.Divide2Batches(remainder, adjustNodeCnt)
-	for _, s := range sizes {
-		result = append(result, dataFiles[:s])
-		dataFiles = dataFiles[s:]
+	if selectedNodeCnt == 0 {
+		return nil, errors.Errorf("too many merge sort target files, dataFiles=%d, nodeCnt=%d, mergeConc=%d, targetFiles=%d, threshold=%d",
+			dataFilesCnt, nodeCnt, mergeConc, minTargetFileCount, threshold)
+	}
+
+	sizes := mathutil.Divide2Batches(remainder, selectedNodeCnt)
+	for _, size := range sizes {
+		result = append(result, dataFiles[:size])
+		dataFiles = dataFiles[size:]
 	}
 	return result, nil
 }
