@@ -196,6 +196,21 @@ func (r *byteReader) switchToConcurrentReader() error {
 		return err
 	}
 	readerFields := &r.concurrentReader
+	bufNum := 2 * readerFields.concurrency
+	if readerFields.singleWindow {
+		bufNum = readerFields.concurrency
+	}
+	largeBuf := make([][]byte, bufNum)
+	for i := range largeBuf {
+		largeBuf[i], err = readerFields.largeBufferPool.TryAllocBytes(readerFields.bufSizePerConc)
+		if err == nil && largeBuf[i] == nil {
+			err = errors.Errorf("alloc large buffer failed, size %d", readerFields.bufSizePerConc)
+		}
+		if err != nil {
+			return err
+		}
+	}
+
 	readerFields.reader, err = newConcurrentFileReader(
 		r.ctx,
 		readerFields.store,
@@ -209,23 +224,7 @@ func (r *byteReader) switchToConcurrentReader() error {
 	if err != nil {
 		return err
 	}
-
-	bufNum := 2 * readerFields.concurrency
-	if readerFields.singleWindow {
-		bufNum = readerFields.concurrency
-	}
-	readerFields.largeBuf = make([][]byte, bufNum)
-	for i := range readerFields.largeBuf {
-		readerFields.largeBuf[i], err = readerFields.largeBufferPool.TryAllocBytes(readerFields.bufSizePerConc)
-		if err == nil && readerFields.largeBuf[i] == nil {
-			err = errors.Errorf("alloc large buffer failed, size %d", readerFields.bufSizePerConc)
-		}
-		if err != nil {
-			readerFields.reader.close()
-			readerFields.reader = nil
-			return err
-		}
-	}
+	readerFields.largeBuf = largeBuf
 
 	r.curBuf = readerFields.largeBuf
 	r.curBufOffset = 0
