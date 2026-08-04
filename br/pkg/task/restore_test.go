@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
+	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -1023,4 +1024,38 @@ func filterSnapshotMaps(
 			}
 		}
 	}
+}
+
+func TestSplitRegionIndexStepFlag(t *testing.T) {
+	t.Run("coarse scatter", func(t *testing.T) {
+		flags := pflag.NewFlagSet("restore", pflag.ContinueOnError)
+		task.DefineRestoreFlags(flags)
+		require.NoError(t, flags.Set("coarse-scatter", "true"))
+
+		cfg := &task.RestoreConfig{}
+		require.NoError(t, cfg.ParseFromFlags(flags, true))
+		require.True(t, cfg.CoarseScatter)
+	})
+
+	t.Run("custom", func(t *testing.T) {
+		flags := pflag.NewFlagSet("restore", pflag.ContinueOnError)
+		task.DefineRestoreFlags(flags)
+		require.NoError(t, flags.Set(task.FlagSplitRegionIndexStep, "64"))
+
+		cfg := &task.RestoreConfig{}
+		require.NoError(t, cfg.ParseFromFlags(flags, true))
+		require.Equal(t, uint(64), cfg.SplitRegionIndexStep)
+	})
+
+	t.Run("zero", func(t *testing.T) {
+		flags := pflag.NewFlagSet("restore", pflag.ContinueOnError)
+		task.DefineRestoreFlags(flags)
+		require.NoError(t, flags.Set(task.FlagSplitRegionIndexStep, "0"))
+
+		cfg := &task.RestoreConfig{}
+		err := cfg.ParseFromFlags(flags, true)
+		require.Error(t, err)
+		require.ErrorContains(t, err, task.FlagSplitRegionIndexStep)
+		require.ErrorContains(t, err, "greater than 0")
+	})
 }

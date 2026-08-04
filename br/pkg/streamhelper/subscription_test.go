@@ -19,14 +19,14 @@ import (
 )
 
 func installSubscribeSupport(c *fakeCluster) {
-	for _, s := range c.stores {
+	for _, s := range c.storeList() {
 		s.SetSupportFlushSub(true)
 	}
 }
 
 func installSubscribeSupportForRandomN(c *fakeCluster, n int) {
 	i := 0
-	for _, s := range c.stores {
+	for _, s := range c.storeList() {
 		if i == n {
 			break
 		}
@@ -84,9 +84,9 @@ func TestNormalError(t *testing.T) {
 	installSubscribeSupport(c)
 
 	sub := streamhelper.NewSubscriber(c, c)
-	c.onGetClient = oneStoreFailure()
+	c.SetOnGetClient(oneStoreFailure())
 	req.NoError(sub.UpdateStoreTopology(ctx))
-	c.onGetClient = nil
+	c.SetOnGetClient(nil)
 	req.Error(sub.PendingErrors())
 	sub.HandleErrors(ctx)
 	req.NoError(sub.PendingErrors())
@@ -129,14 +129,14 @@ func TestStoreOffline(t *testing.T) {
 	c.splitAndScatter("0001", "0002", "0003", "0008", "0009")
 	installSubscribeSupport(c)
 
-	c.onGetClient = func(u uint64) error {
+	c.SetOnGetClient(func(u uint64) error {
 		return status.Error(codes.DataLoss, "upon an eclipsed night, some of data (not all data) have fled from the dataset")
-	}
+	})
 	sub := streamhelper.NewSubscriber(c, c)
 	req.NoError(sub.UpdateStoreTopology(ctx))
 	req.Error(sub.PendingErrors())
 
-	c.onGetClient = nil
+	c.SetOnGetClient(nil)
 	sub.HandleErrors(ctx)
 	req.NoError(sub.PendingErrors())
 }
@@ -158,8 +158,8 @@ func TestStoreRemoved(t *testing.T) {
 	}
 	sub.HandleErrors(ctx)
 	req.NoError(sub.PendingErrors())
-	for _, s := range c.stores {
-		c.removeStore(s.id)
+	for _, s := range c.storeList() {
+		c.removeStore(s.ID)
 		break
 	}
 	req.NoError(sub.UpdateStoreTopology(ctx))
@@ -275,13 +275,13 @@ func TestSubscriptionIdleTimeoutClearsCacheBeforeRetry(t *testing.T) {
 	installSubscribeSupport(c)
 
 	clearedCache := make(chan uint64, 1)
-	c.onClearCache = func(storeID uint64) error {
+	c.SetOnClearCache(func(storeID uint64) error {
 		select {
 		case clearedCache <- storeID:
 		default:
 		}
 		return nil
-	}
+	})
 
 	sub := streamhelper.NewSubscriber(c, c, streamhelper.WithSubscriptionIdleTimeout(200*time.Millisecond))
 	defer sub.Drop()

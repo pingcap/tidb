@@ -85,6 +85,7 @@ func InitMetrics() {
 	InitLogBackupMetrics()
 	InitMetaMetrics()
 	InitOwnerMetrics()
+	InitRawKVMetrics()
 	InitResourceManagerMetrics()
 	InitServerMetrics()
 	InitSessionMetrics()
@@ -99,8 +100,6 @@ func InitMetrics() {
 	InitInfoSchemaV2Metrics()
 	timermetrics.InitTimerMetrics()
 
-	// For now, those metrics are initialized but not registered.
-	// They will be printed to log during restoring...
 	InitBRMetrics()
 
 	PanicCounter = NewCounterVec(
@@ -250,6 +249,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TxnStatusEnteringCounter)
 	prometheus.MustRegister(TxnDurationHistogram)
 	prometheus.MustRegister(LastCheckpoint)
+	prometheus.MustRegister(ExternalStorageCheckpoint)
 	prometheus.MustRegister(AdvancerOwner)
 	prometheus.MustRegister(AdvancerTickDuration)
 	prometheus.MustRegister(GetCheckpointBatchSize)
@@ -311,6 +311,25 @@ func RegisterMetrics() {
 	prometheus.MustRegister(BindingCacheMemLimit)
 	prometheus.MustRegister(BindingCacheNumBindings)
 	prometheus.MustRegister(InternalSessions)
+
+	prometheus.MustRegister(RestoreTableCreatedCount)
+	prometheus.MustRegister(RestoreImportFileSeconds)
+	prometheus.MustRegister(RestoreUploadSSTForPiTRSeconds)
+	prometheus.MustRegister(RestoreUploadSSTMetaForPiTRSeconds)
+
+	prometheus.MustRegister(RawKVBatchPutDurationSeconds)
+	prometheus.MustRegister(RawKVBatchPutBatchSize)
+
+	prometheus.MustRegister(MetaKVBatchFiles)
+	prometheus.MustRegister(MetaKVBatchFilteredKeys)
+	prometheus.MustRegister(MetaKVBatchKeys)
+	prometheus.MustRegister(MetaKVBatchSize)
+
+	prometheus.MustRegister(KVApplyBatchDuration)
+	prometheus.MustRegister(KVApplyBatchFiles)
+	prometheus.MustRegister(KVApplyBatchRegions)
+	prometheus.MustRegister(KVApplyBatchSize)
+	prometheus.MustRegister(KVApplyRegionFiles)
 
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
 	tikvmetrics.RegisterMetrics()

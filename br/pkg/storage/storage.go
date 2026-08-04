@@ -77,6 +77,10 @@ type WalkOption struct {
 	//
 	// The size of a deleted file should be `TombstoneSize`.
 	IncludeTombstone bool
+	// StartAfter is the key to start after. If not empty, the walk will start
+	// after the key. This is currently supported by S3-like storage, GCS and
+	// local storage.
+	StartAfter string
 }
 
 // ReadSeekCloser is the interface that groups the basic Read, Seek and Close methods.
