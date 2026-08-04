@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
@@ -315,8 +316,7 @@ func DivideMergeSortDataFiles(dataFiles []string, nodeCnt int, mergeConc int) ([
 	remainder := dataFilesCnt - (fullGroupCount * adjustedMergeSortFileCountStep)
 	if remainder == 0 {
 		if targetFileCount > threshold {
-			return nil, errors.Errorf("too many merge sort target files, dataFiles=%d, nodeCnt=%d, mergeConc=%d, targetFiles=%d, threshold=%d",
-				dataFilesCnt, nodeCnt, mergeConc, targetFileCount, threshold)
+			return nil, errdef.ErrTooManyDataFiles.GenWithStackByArgs(dataFilesCnt, mergeConc, threshold)
 		}
 		return result, nil
 	}
@@ -324,19 +324,16 @@ func DivideMergeSortDataFiles(dataFiles []string, nodeCnt int, mergeConc int) ([
 	minimalFileCount := 32 // Each subtask should merge at least 32 files.
 	maxCandidateNodeCnt := max(min(remainder/minimalFileCount, nodeCnt), 1)
 	minCandidateNodeCnt := (remainder + adjustedMergeSortFileCountStep - 1) / adjustedMergeSortFileCountStep
-	minTargetFileCount := dataFilesCnt
 	selectedNodeCnt := 0
 	for candidateNodeCnt := maxCandidateNodeCnt; candidateNodeCnt >= minCandidateNodeCnt; candidateNodeCnt-- {
 		candidateTargetFileCount := targetFileCount + getEvenlyDividedTargetDataFileCount(remainder, candidateNodeCnt, mergeConc)
-		minTargetFileCount = min(minTargetFileCount, candidateTargetFileCount)
 		if candidateTargetFileCount <= threshold {
 			selectedNodeCnt = candidateNodeCnt
 			break
 		}
 	}
 	if selectedNodeCnt == 0 {
-		return nil, errors.Errorf("too many merge sort target files, dataFiles=%d, nodeCnt=%d, mergeConc=%d, targetFiles=%d, threshold=%d",
-			dataFilesCnt, nodeCnt, mergeConc, minTargetFileCount, threshold)
+		return nil, errdef.ErrTooManyDataFiles.GenWithStackByArgs(dataFilesCnt, mergeConc, threshold)
 	}
 
 	sizes := mathutil.Divide2Batches(remainder, selectedNodeCnt)

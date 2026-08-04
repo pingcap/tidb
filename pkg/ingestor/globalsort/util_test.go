@@ -22,7 +22,9 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -413,6 +415,15 @@ func TestExternalMetaPath(t *testing.T) {
 }
 
 func TestDivideMergeSortDataFilesBasic(t *testing.T) {
+	require.Equal(t, errors.RFCErrorCode("GlobalSort:TooManyDataFiles"), errdef.ErrTooManyDataFiles.RFCCode())
+
+	requireTooManyDataFiles := func(t *testing.T, err error, dataFileCnt, concurrency, threshold int) {
+		t.Helper()
+		expected := errdef.ErrTooManyDataFiles.GenWithStackByArgs(dataFileCnt, concurrency, threshold)
+		require.True(t, errors.ErrorEqual(err, expected))
+		require.EqualError(t, err, expected.Error())
+	}
+
 	testCases := []struct {
 		fileCnt       int
 		nodeCnt       int
@@ -472,29 +483,25 @@ func TestDivideMergeSortDataFilesBasic(t *testing.T) {
 	t.Run("remainder exceeds target file threshold", func(t *testing.T) {
 		result, err := DivideMergeSortDataFiles(make([]string, 62501), 10, 1)
 		require.Nil(t, result)
-		require.ErrorContains(t, err, "targetFiles=251")
-		require.ErrorContains(t, err, "threshold=250")
+		requireTooManyDataFiles(t, err, 62501, 1, 250)
 	})
 
 	t.Run("full groups exceed target file threshold", func(t *testing.T) {
 		result, err := DivideMergeSortDataFiles(make([]string, 62750), 1, 1)
 		require.Nil(t, result)
-		require.ErrorContains(t, err, "targetFiles=251")
-		require.ErrorContains(t, err, "threshold=250")
+		requireTooManyDataFiles(t, err, 62750, 1, 250)
 	})
 
 	t.Run("fixed targets and remainder exceed target file threshold", func(t *testing.T) {
 		result, err := DivideMergeSortDataFiles(make([]string, 62751), 1, 1)
 		require.Nil(t, result)
-		require.ErrorContains(t, err, "targetFiles=252")
-		require.ErrorContains(t, err, "threshold=250")
+		requireTooManyDataFiles(t, err, 62751, 1, 250)
 	})
 
-	t.Run("reports minimum non-monotonic target file count", func(t *testing.T) {
+	t.Run("non-monotonic target file count exceeds threshold", func(t *testing.T) {
 		result, err := DivideMergeSortDataFiles(make([]string, 248128), 62, 64)
 		require.Nil(t, result)
-		require.ErrorContains(t, err, "targetFiles=4031")
-		require.ErrorContains(t, err, "threshold=4000")
+		requireTooManyDataFiles(t, err, 248128, 64, 4000)
 	})
 
 	t.Run("preserves maximum input files per subtask", func(t *testing.T) {
@@ -509,8 +516,7 @@ func TestDivideMergeSortDataFilesBasic(t *testing.T) {
 
 		result, err = DivideMergeSortDataFiles(make([]string, 940001), 2, 17)
 		require.Nil(t, result)
-		require.ErrorContains(t, err, "targetFiles=4012")
-		require.ErrorContains(t, err, "threshold=4000")
+		requireTooManyDataFiles(t, err, 940001, 17, 4000)
 	})
 
 	t.Run("large node count", func(t *testing.T) {
