@@ -178,6 +178,50 @@ fn role_identity(spec: &tidb_ast::RoleSpec) -> privilege::Account {
     (spec.role.clone(), host)
 }
 
+/// Go `executor/grant.go`'s `tlsOption2GlobalPriv` (around line 431): the
+/// `ssl_type` a `REQUIRE` clause list resolves to. Go folds a LIST, with the
+/// LAST option of each kind winning, and starts from `SslTypeNotSpecified`
+/// -- which stores and admits identically to `NONE`.
+///
+/// REFUSED, by name rather than silently accepted: `X509`, `CIPHER`,
+/// `ISSUER`, `SUBJECT`, `SAN`. Each demands a VERIFIED CLIENT CERTIFICATE
+/// CHAIN (Go's `checkSSL` reads `tlsState.VerifiedChains`), and this
+/// server's TLS is configured `with_no_client_auth()` -- it never requests a
+/// client certificate, so it can never have one to verify. Storing the
+/// requirement anyway would leave an account that Go refuses on this
+/// transport being ADMITTED here over ordinary TLS, which is the fail-OPEN
+/// direction. `TOKEN_ISSUER` is refused for the same reason one level over:
+/// it belongs to `tidb_auth_token`, whose login this tier does not serve.
+fn ssl_type_of(
+    tls_options: &[tidb_ast::AlterUserTlsOption],
+) -> Result<privilege::SslType, DriverError> {
+    let mut ssl_type = privilege::SslType::None;
+    for option in tls_options {
+        ssl_type = match option {
+            tidb_ast::AlterUserTlsOption::None => privilege::SslType::None,
+            tidb_ast::AlterUserTlsOption::Ssl => privilege::SslType::Any,
+            other => {
+                let clause = match other {
+                    tidb_ast::AlterUserTlsOption::X509 => "X509",
+                    tidb_ast::AlterUserTlsOption::Cipher(_) => "CIPHER",
+                    tidb_ast::AlterUserTlsOption::Issuer(_) => "ISSUER",
+                    tidb_ast::AlterUserTlsOption::Subject(_) => "SUBJECT",
+                    tidb_ast::AlterUserTlsOption::San(_) => "SAN",
+                    tidb_ast::AlterUserTlsOption::TokenIssuer(_) => "TOKEN_ISSUER",
+                    tidb_ast::AlterUserTlsOption::None | tidb_ast::AlterUserTlsOption::Ssl => {
+                        unreachable!("handled above")
+                    }
+                };
+                return Err(DriverError::unsupported(format!(
+                    "REQUIRE {clause} needs a verified client certificate, which this server \
+                     does not request; only REQUIRE NONE and REQUIRE SSL are supported"
+                )));
+            }
+        };
+    }
+    Ok(ssl_type)
+}
+
 impl Session {
     /// `CREATE USER [IF NOT EXISTS] <account> [IDENTIFIED BY '<password>']`.
     /// Go `simple.go`'s `executeCreateUser`, minus resource limits and
@@ -371,8 +415,7 @@ impl Session {
         comment_or_attribute: &Option<tidb_ast::CreateUserCommentOrAttribute>,
         resource_group: &Option<String>,
     ) -> Result<StmtOutput, DriverError> {
-        if !tls_options.is_empty()
-            || !resource_options.is_empty()
+        if !resource_options.is_empty()
             || comment_or_attribute.is_some()
             || resource_group.is_some()
         {
@@ -380,6 +423,7 @@ impl Session {
                 "CREATE USER options beyond the account list are not supported yet",
             ));
         }
+        let ssl_type = ssl_type_of(tls_options)?;
         // Go validates every statement-level option BEFORE writing any row,
         // so a bad `PASSWORD EXPIRE INTERVAL 0 DAY` creates no account.
         let options = PasswordOrLockOptions::load(password_options)?;
@@ -402,6 +446,7 @@ impl Session {
             // FIRST duplicate rather than batching, unlike DROP USER below.
             if registry.create_user_with_plugin(user, host, &auth_string, &plugin) {
                 options.apply(&registry, user, host);
+                registry.set_ssl_type(user, host, ssl_type);
             } else if !if_not_exists {
                 return Err(DriverError::CreateUserAlreadyExists {
                     user: user.to_owned(),
@@ -748,7 +793,6 @@ impl Session {
     ) -> Result<StmtOutput, DriverError> {
         if alter.user_function_auth.is_some()
             || alter.user_function_dual_password.is_some()
-            || !alter.tls_options.is_empty()
             || !alter.resource_options.is_empty()
             || alter.comment_or_attribute.is_some()
             || alter.resource_group.is_some()
@@ -758,6 +802,7 @@ impl Session {
             ));
         }
         let options = PasswordOrLockOptions::load(&alter.password_options)?;
+        let ssl_type = ssl_type_of(&alter.tls_options)?;
         let Some(registry) = self.privileges.clone() else {
             return Err(DriverError::unsupported(
                 "ALTER USER requires a server front end with a privilege registry",
@@ -812,7 +857,7 @@ impl Session {
                 } else if !alter.if_exists {
                     return Err(DriverError::AlterUserMissing { user, host });
                 }
-            } else if options.is_empty() {
+            } else if options.is_empty() && alter.tls_options.is_empty() {
                 return Err(DriverError::unsupported(
                     "ALTER USER options beyond IDENTIFIED [WITH] BY / password-and-lock options are not supported yet",
                 ));
@@ -822,6 +867,15 @@ impl Session {
             // Go applies the statement's options in the same UPDATE that
             // writes the password, so a statement doing both lands both.
             options.apply(&registry, &user, &host);
+            // Go REPLACES the whole `mysql.global_priv` PRIV JSON when the
+            // statement carries any `REQUIRE` clause, and leaves the row
+            // untouched when it carries none -- so `ALTER USER ... REQUIRE
+            // NONE` clears an earlier `REQUIRE SSL` (captured:
+            // `{"ssl_type":1}` becomes `{}`) while a password-only ALTER
+            // keeps it.
+            if !alter.tls_options.is_empty() {
+                registry.set_ssl_type(&user, &host, ssl_type);
+            }
         }
         // A sandboxed session escapes by giving ITSELF a new password, which
         // is the only thing it was allowed in here to do (Go's
@@ -839,8 +893,6 @@ impl Session {
     /// `plugin`, and `account_locked` (the `ACCOUNT LOCK`/`UNLOCK` flag
     /// `set_locked` writes) -- every other clause therefore prints its
     /// Go-observed DEFAULT rather than a tracked value:
-    /// - `REQUIRE NONE` always (no TLS/`REQUIRE` storage; `CREATE`/`ALTER
-    ///   USER` already reject `tls_options`, so no account can differ here).
     /// - `PASSWORD HISTORY DEFAULT` / `PASSWORD REUSE INTERVAL DEFAULT`
     ///   always (no `Password_reuse_history`/`Password_reuse_time` storage).
     /// - No ` token_issuer`, ` WITH MAX_USER_CONNECTIONS`, or ` ATTRIBUTE`
@@ -947,8 +999,12 @@ impl Session {
                 )
             })
             .unwrap_or_default();
+        // Go's `fetchShowCreateUser` reads the `mysql.global_priv` PRIV
+        // JSON's `ssl_type` for this clause (captured: `REQUIRE SSL` for an
+        // account created with it, `REQUIRE NONE` for one without).
+        let require_clause = registry.ssl_type(&user, &host).show_create_user_clause();
         let show_str = format!(
-            "CREATE USER '{user}'@'{host}' IDENTIFIED WITH '{plugin}'{auth_clause} REQUIRE NONE {expire_clause} ACCOUNT {account_clause} PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT{locking_clause}"
+            "CREATE USER '{user}'@'{host}' IDENTIFIED WITH '{plugin}'{auth_clause} REQUIRE {require_clause} {expire_clause} ACCOUNT {account_clause} PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT{locking_clause}"
         );
         // Go: `fmt.Sprintf("CREATE USER for %s", s.User)` -- `s.User.String()`
         // is unquoted `user@host` (same shape `SHOW GRANTS`'s header uses).

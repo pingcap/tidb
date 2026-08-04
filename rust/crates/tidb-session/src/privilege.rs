@@ -150,6 +150,14 @@ struct UserRecord {
     /// Go's `mysql.user.Password_last_changed` TIMESTAMP, in Unix seconds:
     /// the instant an interval-based expiry counts from.
     password_last_changed: i64,
+    /// Go's `mysql.global_priv` row for this account -- its `PRIV` JSON's
+    /// `ssl_type` member, which is where a `REQUIRE` clause is stored (NOT
+    /// in `mysql.user`). Captured: `CREATE USER 'ssl'@'%' REQUIRE SSL`
+    /// leaves `mysql.global_priv.PRIV` = `{"ssl_type":1}`, `REQUIRE X509`
+    /// leaves `{"ssl_type":2}`, and a plain account (or one later given
+    /// `REQUIRE NONE`) leaves `{}` -- `ssl_type` carries `omitempty`, so
+    /// zero and absent are the same row.
+    ssl_type: SslType,
 }
 
 /// One Go `mysql.Columns_priv` row: the privileges an account holds on a
@@ -273,6 +281,7 @@ impl PrivilegeRegistry {
                         password_expired: false,
                         password_lifetime: None,
                         password_last_changed: bootstrapped_at,
+                        ssl_type: SslType::None,
                     },
                 )
             })

@@ -99,6 +99,63 @@ pub const ALL_GLOBAL_PRIVS: &[GlobalPriv] = &[
     GlobalPriv::ReplicationSlave,
 ];
 
+/// Go `privileges.SSLType` (`privileges/cache.go` line 163): what a
+/// `REQUIRE` clause demands of the connection's transport.
+///
+/// Go's `SslTypeNotSpecified` (-1) and `SslTypeNone` (0) are the same
+/// admission answer and the same stored JSON (`ssl_type` is `omitempty`), so
+/// they collapse into one variant here rather than being carried as two
+/// values that never differ.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SslType {
+    /// `REQUIRE NONE`, or no `REQUIRE` clause: every transport is admitted.
+    #[default]
+    None,
+    /// `REQUIRE SSL` (`ssl_type` 1): the connection must be TLS, with no
+    /// certificate validation. Go's `SslTypeAny`.
+    Any,
+    /// `REQUIRE X509` (`ssl_type` 2): TLS plus a VERIFIED client
+    /// certificate chain. Go's `SslTypeX509`.
+    X509,
+    /// `REQUIRE CIPHER/ISSUER/SUBJECT/SAN` (`ssl_type` 3): TLS plus the
+    /// named certificate or cipher property. Go's `SslTypeSpecified`.
+    Specified,
+}
+
+impl SslType {
+    /// Whether an account with this requirement may authenticate over a
+    /// connection whose TLS state is `is_tls` -- Go's `checkSSL`
+    /// (`privileges.go` line 795), for a server that performs no client
+    /// certificate verification.
+    ///
+    /// `X509` and `Specified` are `false` even over TLS, and that is not a
+    /// shortcut: Go answers them from `tlsState.VerifiedChains`, and a
+    /// server configured `with_no_client_auth()` never has one, so Go's own
+    /// answer on this transport is `hasCert == false`. They are also refused
+    /// at `CREATE`/`ALTER USER` time (see `account.rs`), so no account can
+    /// reach this arm without an operator having been told why.
+    #[must_use]
+    pub fn admits(self, is_tls: bool) -> bool {
+        match self {
+            Self::None => true,
+            Self::Any => is_tls,
+            Self::X509 | Self::Specified => false,
+        }
+    }
+
+    /// The `REQUIRE <...>` clause `SHOW CREATE USER` prints
+    /// (`executor/show.go`'s `fetchShowCreateUser`).
+    #[must_use]
+    pub fn show_create_user_clause(self) -> &'static str {
+        match self {
+            Self::None => "NONE",
+            Self::Any => "SSL",
+            Self::X509 => "X509",
+            Self::Specified => "CIPHER",
+        }
+    }
+}
+
 /// One mask built from a variant list, so every named mask below is one
 /// expression rather than a hand-maintained constant that could drift from
 /// the enum.

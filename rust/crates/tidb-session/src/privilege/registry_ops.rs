@@ -143,6 +143,7 @@ impl PrivilegeRegistry {
                 password_expired: is_role,
                 password_lifetime: None,
                 password_last_changed: self.clock.now_unix(),
+                ssl_type: SslType::None,
             },
         );
         true
@@ -1121,6 +1122,27 @@ impl PrivilegeRegistry {
             .any(|(role_user, role_host)| {
                 self.has_priv_mask(&role_user, &role_host, database, table, mask)
             })
+    }
+
+    /// The account's `mysql.global_priv` `ssl_type` -- what its `REQUIRE`
+    /// clause demands of a connection. An unknown account answers
+    /// [`SslType::None`], which is what Go's `matchGlobalPriv` returning
+    /// `nil` means: `checkSSL` is not even called.
+    #[must_use]
+    pub fn ssl_type(&self, user: &str, host: &str) -> SslType {
+        self.lock()
+            .get(&(user.to_owned(), host.to_owned()))
+            .map_or(SslType::None, |record| record.ssl_type)
+    }
+
+    /// `CREATE`/`ALTER USER ... REQUIRE <...>` and `GRANT ... REQUIRE <...>`,
+    /// which all write the same `mysql.global_priv` row. Go REPLACES the
+    /// whole `PRIV` JSON, so a later `REQUIRE NONE` clears the requirement
+    /// (captured: `{"ssl_type":1}` becomes `{}`).
+    pub fn set_ssl_type(&self, user: &str, host: &str, ssl_type: SslType) {
+        if let Some(record) = self.lock().get_mut(&(user.to_owned(), host.to_owned())) {
+            record.ssl_type = ssl_type;
+        }
     }
 
     /// Go `MySQLPrivilege.DBIsVisible` (`cache.go` around line 1693): whether

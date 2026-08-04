@@ -401,3 +401,64 @@ fn show_create_user_current_user_resolves_the_session_identity() {
     let rows = row_text(session.run("SHOW CREATE USER CURRENT_USER()"));
     assert!(rows[0][0].starts_with("CREATE USER 'root'@'%' IDENTIFIED WITH"));
 }
+
+/// `REQUIRE SSL` / `REQUIRE NONE` are real stored state, and the
+/// certificate-bearing forms are refused BY NAME rather than accepted and
+/// then ignored.
+///
+/// MEASURED against a real TiDB in this checkout:
+///
+/// ```text
+/// CREATE USER 'ssl'@'%' REQUIRE SSL     mysql.global_priv.PRIV {"ssl_type":1}
+/// CREATE USER 'x509'@'%' REQUIRE X509   {"ssl_type":2}
+/// CREATE USER 'plain'@'%'               {}
+/// ALTER USER 'plain'@'%' REQUIRE SSL    {"ssl_type":1}
+/// ALTER USER 'plain'@'%' REQUIRE NONE   {}
+/// SHOW CREATE USER 'ssl'@'%'    ... AS '' REQUIRE SSL PASSWORD EXPIRE ...
+/// SHOW CREATE USER 'plain'@'%'  ... AS '' REQUIRE NONE PASSWORD EXPIRE ...
+/// ```
+///
+/// This tier stores and prints the first two `ssl_type` values and REFUSES
+/// the rest: `X509`/`CIPHER`/`ISSUER`/`SUBJECT`/`SAN` all need a verified
+/// client certificate chain, and the server's TLS never requests one, so
+/// accepting the clause would leave an account Go refuses being admitted
+/// here over ordinary TLS.
+#[test]
+fn require_ssl_is_stored_and_shown_and_the_cert_forms_are_refused_by_name() {
+    let mut session = session_with_privileges();
+    session.run("CREATE USER 'ssl'@'%' REQUIRE SSL").unwrap();
+    session.run("CREATE USER 'plain'@'%'").unwrap();
+
+    let shown = |session: &mut Session, account: &str| {
+        row_text(session.run(&format!("SHOW CREATE USER '{account}'@'%'")))[0][0].clone()
+    };
+    assert!(shown(&mut session, "ssl").contains(" REQUIRE SSL "));
+    assert!(shown(&mut session, "plain").contains(" REQUIRE NONE "));
+
+    // ALTER USER writes the same row, and REQUIRE NONE clears it.
+    session.run("ALTER USER 'plain'@'%' REQUIRE SSL").unwrap();
+    assert!(shown(&mut session, "plain").contains(" REQUIRE SSL "));
+    session.run("ALTER USER 'plain'@'%' REQUIRE NONE").unwrap();
+    assert!(shown(&mut session, "plain").contains(" REQUIRE NONE "));
+    // A password-only ALTER leaves the requirement alone.
+    session
+        .run("ALTER USER 'ssl'@'%' IDENTIFIED BY 'x'")
+        .unwrap();
+    assert!(shown(&mut session, "ssl").contains(" REQUIRE SSL "));
+
+    for sql in [
+        "CREATE USER 'c1'@'%' REQUIRE X509",
+        "CREATE USER 'c2'@'%' REQUIRE SUBJECT '/CN=x'",
+        "CREATE USER 'c3'@'%' REQUIRE ISSUER '/CN=x'",
+        "ALTER USER 'plain'@'%' REQUIRE X509",
+    ] {
+        let refusal = session.run(sql).expect_err(sql).to_mysql_error().message;
+        assert!(
+            refusal.contains("verified client certificate"),
+            "{sql} must be refused by naming why: {refusal}"
+        );
+    }
+    // The refusal is a refusal, not a silent partial write.
+    assert!(session.run("SHOW CREATE USER 'c1'@'%'").is_err());
+    assert!(shown(&mut session, "plain").contains(" REQUIRE NONE "));
+}

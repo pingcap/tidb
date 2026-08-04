@@ -49,6 +49,7 @@ use crate::mysql_tls::{ClientStream, MysqlServerTls};
 use crate::native_password::generate_handshake_salt;
 use crate::resultset_source::ResultSetSource;
 use crate::resultset_writer::ResultSetSink;
+use crate::secure_transport::TransportKind;
 use crate::sql_node::{
     ConnectionCancellation, ConnectionClose, ConnectionTracker, GeneralExecuteOutcome,
     PreparedStatement, QuerySession, QuerySessionFactory, SessionContext,
@@ -128,6 +129,11 @@ const ER_UNKNOWN_COM_ERROR_STATE: [u8; 5] = *b"08S01";
 /// errno an `ACCOUNT LOCK`'d (or ROLE) account gets, distinct from the
 /// generic access-denied a bad password or unknown user gets.
 const ER_ACCOUNT_HAS_BEEN_LOCKED: u16 = 3118;
+/// Go `errno.ErrSecureTransportRequired`. It carries no SQLSTATE mapping in
+/// `pkg/errno`, so it reports the default `HY000`.
+const ER_SECURE_TRANSPORT_REQUIRED: u16 = 3159;
+const SECURE_TRANSPORT_REQUIRED_MESSAGE: &str =
+    "Connections using insecure transport are prohibited while --require_secure_transport=ON.";
 /// Go's `mysql.ErUserAccessDeniedForUserAccountBlockedByPasswordLock`: the
 /// errno an account auto-locked by `FAILED_LOGIN_ATTEMPTS` gets, distinct
 /// again from the manual `ACCOUNT LOCK` above.
@@ -733,14 +739,41 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         } else {
             (auth_response, response_sequence)
         };
-    let auth_result = users.authenticate_native(
+    // Go's two TLS rules both live behind this call; what the connection
+    // owner knows and the account table does not is whether the socket was
+    // upgraded. Every port here is TCP -- this server opens no Unix-domain
+    // listener -- so the transport is exactly "TLS or not".
+    let auth_result = users.authenticate(
         &response.user,
         &peer_addr.ip().to_string(),
         &salt,
         &auth_response,
+        if socket.is_tls() {
+            TransportKind::DirectTls
+        } else {
+            TransportKind::PlainTcp
+        },
     );
     let identity = match auth_result {
         Ok(identity) => identity,
+        // Go refuses this one BEFORE authenticating, with its own errno,
+        // because it is a property of the connection and not of the account.
+        Err(AuthenticationFailure::SecureTransportRequired) => {
+            write_error(
+                &mut output,
+                response_sequence,
+                ER_SECURE_TRANSPORT_REQUIRED,
+                *b"HY000",
+                SECURE_TRANSPORT_REQUIRED_MESSAGE,
+                protocol_41,
+            )?;
+            return Ok(ConnectionReport {
+                connection_id,
+                queries: 0,
+                commands: *commands,
+                exit: ConnectionExit::AuthenticationRejected,
+            });
+        }
         Err(AuthenticationFailure::AccountLocked) => {
             write_error(
                 &mut output,

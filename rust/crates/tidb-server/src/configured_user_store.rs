@@ -41,6 +41,7 @@ use crate::auth_identity::{
     DEFAULT_AUTH_PLUGIN,
 };
 use crate::native_password::{verify_candidate, NativePasswordHash};
+use crate::secure_transport::{SecureTransportPolicy, TransportKind};
 
 /// Canonical identity established only after password verification succeeds.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -74,6 +75,11 @@ pub enum AuthenticationFailure {
     /// The account's password has expired and the server refuses expired
     /// logins (`disconnect_on_expired_password`, Go's default). Errno 1862.
     PasswordExpired,
+    /// The process-wide `require_secure_transport` is ON and the connection
+    /// is plaintext TCP -- Go's `conn.go:669` gate, which fires BEFORE any
+    /// account is looked up, so it is the one failure that does not depend
+    /// on who the client claims to be. Errno 8052.
+    SecureTransportRequired,
 }
 
 impl AuthenticatedIdentity {
@@ -330,6 +336,47 @@ impl ConfiguredUserStore {
         salt: &[u8],
         response: &[u8],
     ) -> Result<AuthenticatedIdentity, AuthenticationFailure> {
+        self.authenticate(
+            username,
+            remote_host,
+            salt,
+            response,
+            TransportKind::PlainTcp,
+        )
+    }
+
+    /// [`Self::authenticate_native`] told what the connection's transport
+    /// actually is, which is what the two TLS rules need.
+    ///
+    /// Go applies them at two different places and this keeps both:
+    ///
+    /// * `require_secure_transport` (`server/conn.go` line 669) is
+    ///   process-wide and fires BEFORE the account is known, so a plaintext
+    ///   connection is refused whoever it claims to be. It is read live from
+    ///   the shared GLOBAL sysvar table, so a `SET GLOBAL` takes effect on
+    ///   the next login exactly as Go's atomic does.
+    /// * the account's own `REQUIRE` clause (`privileges.go`'s `checkSSL`,
+    ///   line 795) is per-account and fires INSIDE `ConnectionVerification`,
+    ///   after the account is matched and before the password is compared --
+    ///   and reports the SAME generic `ErrAccessDenied` a wrong password
+    ///   does, so it tells a client nothing about why.
+    pub fn authenticate(
+        &self,
+        username: &str,
+        remote_host: &str,
+        salt: &[u8],
+        response: &[u8],
+        transport: TransportKind,
+    ) -> Result<AuthenticatedIdentity, AuthenticationFailure> {
+        let policy = SecureTransportPolicy::new(
+            self.global_vars
+                .get("require_secure_transport")
+                .is_ok_and(|value| value == "ON" || value == "1"),
+        );
+        if policy.admit(transport).is_err() {
+            return Err(AuthenticationFailure::SecureTransportRequired);
+        }
+        let is_tls = !matches!(transport, TransportKind::PlainTcp);
         let catalog = IdentityCatalog::new(
             self.accounts
                 .accounts()
@@ -362,6 +409,17 @@ impl ConfiguredUserStore {
             .is_some_and(|identity| self.accounts.is_role(identity.username(), identity.host()))
         {
             return Err(AuthenticationFailure::AccountLocked);
+        }
+        // Go's `checkSSL` runs on the matched account's `mysql.global_priv`
+        // row before the password is compared, and reports the generic
+        // access-denied on failure.
+        if identity.as_ref().is_some_and(|identity| {
+            !self
+                .accounts
+                .ssl_type(identity.username(), identity.host())
+                .admits(is_tls)
+        }) {
+            return Err(AuthenticationFailure::AccessDenied);
         }
         let stored = identity.as_ref().and_then(|identity| {
             self.accounts

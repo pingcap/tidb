@@ -22,6 +22,8 @@ mod auth_identity;
 mod configured_user_store;
 #[path = "../src/native_password.rs"]
 mod native_password;
+#[path = "../src/secure_transport.rs"]
+mod secure_transport;
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
