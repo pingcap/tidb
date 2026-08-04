@@ -5,6 +5,7 @@ package export
 import (
 	"context"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -903,4 +904,46 @@ func TestSetSessionParams(t *testing.T) {
 
 	err = setSessionParam(d)
 	require.NoError(t, err)
+}
+
+func TestTableChunkStatTracking(t *testing.T) {
+	// Test table chunk statistics for streaming chunk progress tracking
+
+	// Test initialization
+	stats := newTableChunkStat()
+	require.NotNil(t, stats, "Should create new chunk statistics")
+	require.Equal(t, int32(0), stats.sent.Load(), "Initial sent count should be 0")
+	require.Equal(t, int32(0), stats.finished.Load(), "Initial finished count should be 0")
+	require.False(t, stats.finalized.Load(), "Initial finalized status should be false")
+
+	// Test concurrent updates
+	var wg sync.WaitGroup
+	concurrency := 10
+	wg.Add(concurrency * 2)
+
+	// Simulate multiple goroutines sending chunks
+	for i := 0; i < concurrency; i++ {
+		go func() {
+			defer wg.Done()
+			stats.sent.Add(1)
+		}()
+	}
+
+	// Simulate multiple goroutines finishing chunks
+	for i := 0; i < concurrency; i++ {
+		go func() {
+			defer wg.Done()
+			stats.finished.Add(1)
+		}()
+	}
+
+	wg.Wait()
+
+	// Verify counts
+	require.Equal(t, int32(concurrency), stats.sent.Load(), "Sent count should match concurrent additions")
+	require.Equal(t, int32(concurrency), stats.finished.Load(), "Finished count should match concurrent additions")
+
+	// Test finalization
+	stats.finalized.Store(true)
+	require.True(t, stats.finalized.Load(), "Finalized status should be true after setting")
 }

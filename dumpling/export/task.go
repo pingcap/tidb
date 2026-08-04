@@ -104,7 +104,7 @@ func NewTaskPolicyMeta(policyName, createPolicySQL string) *TaskPolicyMeta {
 	}
 }
 
-// NewTaskTableData returns a new dumping table data task
+// NewTaskTableData returns a new dumpling table data task
 func NewTaskTableData(meta TableMeta, data TableDataIR, currentChunk, totalChunks int) *TaskTableData {
 	return &TaskTableData{
 		Meta:        meta,
@@ -143,5 +143,11 @@ func (t *TaskPolicyMeta) Brief() string {
 func (t *TaskTableData) Brief() string {
 	db, tbl := t.Meta.DatabaseName(), t.Meta.TableName()
 	idx, total := t.ChunkIndex, t.TotalChunks
+	// Streaming string-key chunking buffers tasks before the total is known
+	// and emits intermediate chunks with TotalChunks=-1; render that as "?"
+	// so log lines stay readable instead of showing (idx/-1).
+	if total < 0 {
+		return fmt.Sprintf("data of table '%s'.'%s'(%d/?)", db, tbl, idx)
+	}
 	return fmt.Sprintf("data of table '%s'.'%s'(%d/%d)", db, tbl, idx, total)
 }

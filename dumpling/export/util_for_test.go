@@ -257,6 +257,10 @@ func (m *mockTableIR) EscapeBackSlash() bool {
 	return m.escapeBackSlash
 }
 
+func (m *mockTableIR) ChunkKey() string {
+	return fmt.Sprintf("%s.%s", m.dbName, m.tblName)
+}
+
 func (m *mockTableIR) ColumnInfos() []*ColumnInfo {
 	return m.columnInfos
 }
