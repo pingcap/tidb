@@ -135,24 +135,24 @@
 //! accept the index TiDB refuses. [`go_result_type`] is the one place that
 //! divergence is undone.
 //!
-//! ## What that gate still MISSES here, measured
+//! ## The WIDTH half of the same gate
 //!
-//! The other two ways to reach it need a flen this crate does not derive.
-//! Go sizes a string builtin's result from its argument
-//! (`lowerFunctionClass.getFunction` and friends set `bf.tp`'s flen from
-//! `args[0]`, promoting the type to TEXT/MEDIUMTEXT/LONGTEXT as the width
-//! grows); this crate leaves it unspecified. So, captured against TiDB and
-//! still accepted here:
+//! Three more ways to reach it read the hidden column's flen rather than its
+//! family. They need Go's argument-driven width -- a string builtin copies
+//! `args[0]`'s flen onto its result and `baseBuiltinFunc.getRetTp` re-types a
+//! wide one as MEDIUM/LONG blob, see
+//! [`tidb_expr::rewriter`]'s result-type table -- and all three now answer
+//! Go's code:
 //!
 //! ```text
-//! index i((lower(mt)))   -- MEDIUMTEXT arg -> mediumtext result -> 3757
-//! index i((lower(t)))    -- TEXT arg -> var_string(65535) -> 1071 too long
-//! index i((lower(v)))    -- varchar(0) arg -> var_string(0) -> 3761
+//! index i((lower(mt)))   -- MEDIUMTEXT arg -> mediumblob result  -> 3757
+//! index i((lower(t)))    -- TEXT arg -> var_string(65535)        -> 1071
+//! index i((lower(v)))    -- varchar(0) arg -> var_string(0)      -> 3761
 //! ```
 //!
-//! All three are wrong-ACCEPTS. The arms are in place and correct; they fire
-//! the moment the argument-driven flen lands, which is a unit of its own
-//! (Go's per-builtin return-type derivation, not one rule).
+//! The TEXT row is the one that shows the rule is the WIDTH and not the
+//! argument's family: 65535 is one short of `getRetTp`'s MEDIUM boundary, so
+//! the result is no blob at all and the refusal is the index-too-long 1071.
 //!
 //! `CAST(... AS ... ARRAY)` is the remaining shape, and it is the opposite
 //! direction: Go ACCEPTS it as a multi-valued index, whose hidden column is

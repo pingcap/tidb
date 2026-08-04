@@ -1158,3 +1158,63 @@ fn the_result_type_refusals_reach_every_index_statement() {
         "a second key part"
     );
 }
+
+/// The three rows the type gate could not reach until the STRING family's
+/// argument-driven flen landed. All three are `checkIndexColumn` arms that
+/// read the hidden column's WIDTH rather than its family, and all three were
+/// wrong-ACCEPTS here.
+///
+/// What decides each is Go's `getFunction` copying `args[0]`'s flen onto the
+/// result and `baseBuiltinFunc.getRetTp` then re-typing a wide one:
+///
+/// ```text
+/// index i((lower(mt)))  MEDIUMTEXT  flen 16777215 -> mediumblob -> 3757
+/// index i((lower(lt)))  LONGTEXT    flen 4294967295 -> longblob -> 3757
+/// index i((lower(t)))   TEXT        flen 65535, still var_string -> 1071
+/// index i((lower(v)))   VARCHAR(0)  flen 0                       -> 3761
+/// ```
+///
+/// The TEXT row is the one that proves the rule is Go's flen and not a
+/// family test: 65535 is one short of `getRetTp`'s MEDIUM boundary, so the
+/// result is NOT a blob and the refusal is the index-too-long 1071 (65535
+/// characters at four bytes each is 262140, against a 3072-byte limit)
+/// rather than 3757.
+#[test]
+fn a_string_builtins_argument_width_reaches_the_index_type_gate() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE w (mt MEDIUMTEXT, lt LONGTEXT, t TEXT, v VARCHAR(0), c VARCHAR(20))")
+        .unwrap();
+    for name in ["lower", "upper", "reverse"] {
+        assert_eq!(
+            code(&mut session, &format!("CREATE INDEX i1 ON w(({name}(mt)))")),
+            Some(3757),
+            "{name}(mediumtext)"
+        );
+        assert_eq!(
+            code(&mut session, &format!("CREATE INDEX i2 ON w(({name}(lt)))")),
+            Some(3757),
+            "{name}(longtext)"
+        );
+        assert_eq!(
+            code(&mut session, &format!("CREATE INDEX i3 ON w(({name}(t)))")),
+            Some(1071),
+            "{name}(text)"
+        );
+        assert_eq!(
+            code(&mut session, &format!("CREATE INDEX i4 ON w(({name}(v)))")),
+            Some(3761),
+            "{name}(varchar(0))"
+        );
+        // The control: a width the gate is happy with is still accepted, so
+        // the derivation did not simply refuse the whole family.
+        assert_eq!(
+            code(
+                &mut session,
+                &format!("CREATE INDEX ok_{name} ON w(({name}(c)))")
+            ),
+            None,
+            "{name}(varchar(20))"
+        );
+    }
+}

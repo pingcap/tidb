@@ -195,6 +195,74 @@ pub(super) fn binary_literal_type(byte_len: usize, unsigned: bool) -> FieldType 
 /// under any non-default mode. They stay refused until either this gate gains
 /// session context or the remaining modes are ported.
 pub(super) fn builtin_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
+    let mut ft = builtin_return_type_before_ret_tp(name, args)?;
+    promote_wide_string_result(&mut ft);
+    Some(ft)
+}
+
+/// Go `baseBuiltinFunc.getRetTp` (`pkg/expression/builtin.go`), the step every
+/// builtin's declared type passes through on its way out of `getFunction`.
+///
+/// It is NOT an argument rule and it is not per-builtin: a string-kind result
+/// whose flen has grown past a BLOB boundary stops calling itself a
+/// `VarString`. That is the whole of Go's "TEXT promotion" -- there is no
+/// separate "a TEXT argument makes a TEXT result" rule, which is why
+/// `REVERSE(text_column)` is still a `var_string(65535)` in Go (65535 is one
+/// short of the MEDIUM boundary) while `FROM_BASE64(text_column)`, whose flen
+/// rule triples it to 196605, is a `mediumblob`.
+///
+/// Both thresholds are `>=`, and both are Go's own constants:
+/// `mysql.MaxBlobWidth` and the bare 65536 `getRetTp` spells out.
+fn promote_wide_string_result(ft: &mut FieldType) {
+    /// Go's literal `65536` in `getRetTp` -- one past `mysql.MaxBlobSize`.
+    const MEDIUM_BLOB_BOUNDARY: i64 = 65536;
+    if ft.eval_type() != tidb_datatype::EvalType::String {
+        return;
+    }
+    if ft.flen() >= MAX_BLOB_WIDTH {
+        ft.set_code(FieldTypeCode::LongBlob);
+    } else if ft.flen() >= MEDIUM_BLOB_BOUNDARY {
+        ft.set_code(FieldTypeCode::MediumBlob);
+    }
+}
+
+/// The width Go's `getFunction` reads out of `args[i]` for an argument the
+/// builtin declared as `types.ETString`.
+///
+/// `newBaseBuiltinFuncWithTp` REPLACES each element of the caller's `args`
+/// slice with its cast-wrapped self before returning, so every
+/// `args[0].GetType()` a string builtin reads afterwards is the width of the
+/// argument AS A STRING, not its declared one. That is the same quantity
+/// `CONCAT` sums, so this is [`string_cast_flen`] and not `flen()` -- which is
+/// what makes `LOWER(int_column)` 20 rather than 11 and `REVERSE(a_double)`
+/// 370 rather than unspecified.
+fn str_arg_flen(args: &[Expression], i: usize) -> i64 {
+    args.get(i)
+        .and_then(Expression::static_type)
+        .map_or(tidb_datatype::UNSPECIFIED_LENGTH, string_cast_flen)
+}
+
+/// The width of `args[i]` BEFORE any cast wrapping, for the two builtins whose
+/// `getFunction` reads the argument type before it calls
+/// `newBaseBuiltinFuncWithTp` (`UNHEX`) or declares the argument `ETInt`
+/// (`HEX`'s numeric branch, where `WrapWithCastAsInt` copies the source flen
+/// through unchanged and so cannot move it).
+/// The eval type `HEX` and `UNHEX` branch on, defaulting to the STRING branch
+/// for an argument this tier could not type -- Go always has one, so the
+/// default only decides whether the call is BUILT, never what Go would say.
+fn arg_eval_type(args: &[Expression], i: usize) -> tidb_datatype::EvalType {
+    args.get(i)
+        .and_then(Expression::static_type)
+        .map_or(tidb_datatype::EvalType::String, FieldType::eval_type)
+}
+
+fn raw_arg_flen(args: &[Expression], i: usize) -> i64 {
+    args.get(i)
+        .and_then(Expression::static_type)
+        .map_or(tidb_datatype::UNSPECIFIED_LENGTH, FieldType::flen)
+}
+
+fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<FieldType> {
     let text = || {
         let mut ft = FieldType::new(FieldTypeCode::VarString);
         ft.set_decimal(tidb_datatype::UNSPECIFIED_LENGTH);
@@ -210,11 +278,132 @@ pub(super) fn builtin_return_type(name: &str, args: &[Expression]) -> Option<Fie
         return Some(text());
     }
     Some(match name {
-        // String in, string out.
-        "upper" | "ucase" | "lower" | "lcase" | "trim" | "ltrim" | "rtrim" | "reverse" | "left"
-        | "right" | "substring" | "substr" | "mid" | "replace" | "repeat" | "lpad" | "rpad"
-        | "space" | "hex" | "elt" | "make_set" | "substring_index" | "insert_func"
-        | "char_func" | "export_set" | "quote" => text(),
+        // ---------------------------------------------------------------
+        // The STRING family's flen, `pkg/expression/builtin_string.go`.
+        //
+        // Go sizes each of these from its ARGUMENTS, and the width reaches the
+        // client as the result set's `ColumnLength`. It also decides, through
+        // [`promote_wide_string_result`], whether the result is still a
+        // `var_string` or has become a MEDIUM/LONG blob -- which is what
+        // `pkg/ddl/index.go`'s `checkIndexColumn` reads when it refuses an
+        // expression index. Every number below is Go's own, cross-checked
+        // against `pkg/expression/typeinfer_test.go`'s
+        // `createTestCase4StrFuncs` golden table.
+        // ---------------------------------------------------------------
+        // `bf.tp.SetFlen(args[0].GetType().GetFlen())`, the argument's own
+        // width passed straight through. `TRANSLATE` (`translateFunctionClass`)
+        // is the same rule and joins them here.
+        "upper" | "ucase" | "lower" | "lcase" | "reverse" | "ltrim" | "rtrim" | "left" | "right"
+        | "substring" | "substr" | "mid" | "substring_index" | "translate" => {
+            ft_with_flen(text(), str_arg_flen(args, 0))
+        }
+        // `trimFunctionClass` is the same rule for the ONE- and THREE-argument
+        // forms and, uniquely, sets no flen at all for the two-argument
+        // `TRIM(remstr FROM str)` form -- so that one stays unspecified. Go's
+        // omission, not ours.
+        "trim" => {
+            if args.len() == 2 {
+                text()
+            } else {
+                ft_with_flen(text(), str_arg_flen(args, 0))
+            }
+        }
+        // A fixed `mysql.MaxBlobWidth`, which the promotion above then turns
+        // into a LONGTEXT/LONGBLOB result.
+        "repeat" | "space" | "insert_func" | "format" => ft_with_flen(text(), MAX_BLOB_WIDTH),
+        // A fixed 64, the widest a 64-bit word can print in base 2.
+        // `convFunctionClass` (`builtin_math.go`) shares the constant.
+        "bin" | "oct" | "conv" => ft_with_flen(text(), 64),
+        // `replaceFunctionClass.fixLength`: the subject's width, grown by the
+        // replacement's excess over the needle once per whole needle that
+        // fits. Ported as the integer arithmetic Go writes, guards included.
+        "replace" if args.len() == 3 => {
+            let mut char_len = str_arg_flen(args, 0);
+            let old_len = str_arg_flen(args, 1);
+            let diff = str_arg_flen(args, 2) - old_len;
+            if diff > 0 && old_len > 0 {
+                char_len += (char_len / old_len) * diff;
+            }
+            ft_with_flen(text(), char_len)
+        }
+        // `getFlen4LpadAndRpad`: the PAD LENGTH argument decides, and only when
+        // it is a constant -- anything else, an overflowing one, or a NULL is
+        // `mysql.MaxBlobWidth`. The chosen width is then multiplied by four
+        // (the widest a character can encode to) and clamped.
+        "lpad" | "rpad" if args.len() == 3 => {
+            let flen = lpad_rpad_flen(&args[1]).saturating_mul(4);
+            ft_with_flen(text(), if flen > MAX_BLOB_WIDTH { MAX_BLOB_WIDTH } else { flen })
+        }
+        // `eltFunctionClass`: the widest selectable value, where an argument of
+        // UNKNOWN width does not widen but RESETS -- Go's condition is
+        // `flen == UnspecifiedLength || flen > bf.tp.GetFlen()`, so a later
+        // unsized argument makes the whole result unsized again.
+        "elt" if args.len() >= 2 => {
+            let mut flen = tidb_datatype::UNSPECIFIED_LENGTH;
+            for i in 1..args.len() {
+                let arg_flen = str_arg_flen(args, i);
+                if arg_flen == tidb_datatype::UNSPECIFIED_LENGTH || arg_flen > flen {
+                    flen = arg_flen;
+                }
+            }
+            ft_with_flen(text(), flen)
+        }
+        // `exportSetFunctionClass`: sixty-four copies of the wider of the ON
+        // and OFF strings, sixty-three separators between them, times four for
+        // the character width. The separator defaults to one character when
+        // the argument is absent.
+        "export_set" if args.len() >= 3 => {
+            let value_flen = str_arg_flen(args, 1).max(str_arg_flen(args, 2));
+            let separator_flen = if args.len() > 3 {
+                str_arg_flen(args, 3)
+            } else {
+                1
+            };
+            ft_with_flen(text(), (value_flen * 64 + separator_flen * 63) * 4)
+        }
+        // `makeSetFunctionClass.getFlen`: with a CONSTANT bit mask Go sizes
+        // only the members that mask selects, plus one comma between each
+        // adjacent pair; otherwise it sums every member and adds
+        // `len(args) - 2` commas.
+        "make_set" if args.len() >= 2 => {
+            let flen = make_set_flen(args);
+            ft_with_flen(text(), if flen > MAX_BLOB_WIDTH { MAX_BLOB_WIDTH } else { flen })
+        }
+        // `charFunctionClass`: four bytes per code point. The trailing
+        // argument is the USING charset (see `build.rs`'s `CHAR_FUNC` arm),
+        // which is not a code point, so Go's `len(args) - 1` counts it out.
+        "char_func" if !args.is_empty() => {
+            ft_with_flen(text(), 4 * (args.len() as i64 - 1))
+        }
+        // `quoteFunctionClass`: every character could need a backslash, plus
+        // the two surrounding quotes.
+        "quote" if args.len() == 1 => {
+            let arg_flen = str_arg_flen(args, 0);
+            let flen = if arg_flen == tidb_datatype::UNSPECIFIED_LENGTH {
+                tidb_datatype::UNSPECIFIED_LENGTH
+            } else {
+                2 * arg_flen + 2
+            };
+            ft_with_flen(text(), if flen > MAX_BLOB_WIDTH { MAX_BLOB_WIDTH } else { flen })
+        }
+        // `hexFunctionClass` picks its argument's EVAL type and so its width
+        // rule: a string-ish argument is hexed as up to four bytes per
+        // character, two hex digits each, while a numeric one is declared
+        // `ETInt` -- and `WrapWithCastAsInt` copies the source flen through
+        // unchanged, so its own width is what gets doubled.
+        "hex" if args.len() == 1 => {
+            use tidb_datatype::EvalType;
+            // An argument with no static type takes the STRING branch, which
+            // is where an unknown width lands anyway: Go always has a type
+            // here, so this is only about not refusing the call outright.
+            let flen = match arg_eval_type(args, 0) {
+                EvalType::Int | EvalType::Real | EvalType::Decimal => {
+                    scale_flen(raw_arg_flen(args, 0), 2)
+                }
+                _ => scale_flen(str_arg_flen(args, 0), 8),
+            };
+            ft_with_flen(text(), flen)
+        }
         // Go `md5FunctionClass` (`pkg/expression/builtin_encryption.go:581`):
         // connection-charset text of flen 32, the width of one hexed MD5
         // digest -- the same shape as its `SHA`/`SHA1`/`SHA2` siblings below,
@@ -222,20 +411,6 @@ pub(super) fn builtin_return_type(name: &str, args: &[Expression]) -> Option<Fie
         "md5" if args.len() == 1 => {
             let mut ft = text();
             ft.set_flen(32);
-            ft
-        }
-        // Go `translateFunctionClass.getFunction`: an `ETString` result whose
-        // flen is argument 0's own, and `SetBinFlagOrBinStr(args[0], bf.tp)`
-        // -- the latter being exactly what `derive_collation`'s `translate`
-        // arm (first argument decides) already reproduces, so only the width
-        // is set here. Both signature bodies were already ported and reachable
-        // from the AST evaluator; without this arm the chunk tier refused
-        // `TRANSLATE` outright, so live SQL never reached them.
-        "translate" if args.len() == 3 => {
-            let mut ft = text();
-            if let Some(arg) = args[0].static_type() {
-                ft.set_flen(arg.flen());
-            }
             ft
         }
         // `CONCAT`/`CONCAT_WS` are the two of that family that SIZE their
@@ -258,8 +433,37 @@ pub(super) fn builtin_return_type(name: &str, args: &[Expression]) -> Option<Fie
         // unlike the plain string-in-string-out family above, these two
         // return a BINARY-collated `VarString`, which is what makes
         // `CHAR_LENGTH(UNHEX(...))` count bytes rather than characters.
-        "unhex" | "from_base64" => {
-            let mut ft = text();
+        // `unhexFunctionClass` is the ONE builtin in the family that reads its
+        // argument's type BEFORE calling `newBaseBuiltinFuncWithTp`, so the
+        // width it halves is the DECLARED one and not the cast-as-string one:
+        // `UNHEX(int_column)` is 6, from an `int`'s eleven digits, and not 40.
+        "unhex" if args.len() == 1 => {
+            use tidb_datatype::EvalType;
+            let raw = raw_arg_flen(args, 0);
+            let flen = if raw == tidb_datatype::UNSPECIFIED_LENGTH {
+                tidb_datatype::UNSPECIFIED_LENGTH
+            } else {
+                match arg_eval_type(args, 0) {
+                    EvalType::Int | EvalType::Real | EvalType::Decimal => (raw + 1) / 2,
+                    _ => (raw * 4 + 1) / 2,
+                }
+            };
+            let mut ft = ft_with_flen(text(), flen);
+            set_binary_charset(&mut ft);
+            ft
+        }
+        // `base64FunctionClass`'s decode half: three payload bytes per four
+        // base64 characters, so the widest inflation is threefold.
+        "from_base64" if args.len() == 1 => {
+            let flen = scale_flen(str_arg_flen(args, 0), 3);
+            let mut ft = ft_with_flen(
+                text(),
+                if flen > MAX_BLOB_WIDTH {
+                    MAX_BLOB_WIDTH
+                } else {
+                    flen
+                },
+            );
             set_binary_charset(&mut ft);
             ft
         }
@@ -335,7 +539,6 @@ pub(super) fn builtin_return_type(name: &str, args: &[Expression]) -> Option<Fie
         | "json_remove" | "json_array_append" | "json_array_insert" | "json_merge"
         | "json_merge_preserve" | "json_merge_patch" => text(),
         "json_valid" | "json_contains" | "json_length" | "json_depth" => int(),
-        "conv" | "bin" | "oct" | "format" => text(),
         // Go `loadFileFunctionClass.getFunction`: an `ETString` result of
         // flen 64 in the connection charset. The VALUE is always NULL.
         "load_file" if args.len() == 1 => {
@@ -481,8 +684,7 @@ pub(super) fn builtin_return_type(name: &str, args: &[Expression]) -> Option<Fie
         // every expression this tier types as `text()`).
         "to_base64" if args.len() == 1 => {
             let mut ft = text();
-            let arg_flen = args.first()?.static_type()?.flen();
-            ft.set_flen(base64_needed_encoded_length(arg_flen));
+            ft.set_flen(base64_needed_encoded_length(str_arg_flen(args, 0)));
             ft
         }
         // The IP-address family (`pkg/expression/builtin_miscellaneous.go`).
@@ -725,6 +927,83 @@ pub(super) fn builtin_return_type(name: &str, args: &[Expression]) -> Option<Fie
         }
         _ => return None,
     })
+}
+
+/// A width multiplied by a per-character factor, with Go's one sentinel: an
+/// argument of unknown width leaves the result unknown rather than scaling
+/// `-1` into a nonsense number. `HEX`, `UNHEX` and `FROM_BASE64` each spell
+/// this guard out; sharing it is what keeps the three from drifting.
+fn scale_flen(flen: i64, factor: i64) -> i64 {
+    if flen == tidb_datatype::UNSPECIFIED_LENGTH {
+        tidb_datatype::UNSPECIFIED_LENGTH
+    } else {
+        flen.saturating_mul(factor)
+    }
+}
+
+/// Go `getFlen4LpadAndRpad` (`pkg/expression/builtin_string.go`): the pad
+/// length is knowable only from a CONSTANT argument, and a NULL, an
+/// unevaluable one, or one wider than `mysql.MaxBlobWidth` all mean "assume
+/// the widest".
+fn lpad_rpad_flen(length: &Expression) -> i64 {
+    let Expression::Constant(constant) = length else {
+        return MAX_BLOB_WIDTH;
+    };
+    let value = match &constant.value {
+        Datum::Int(v) => *v,
+        Datum::UInt(v) => i64::try_from(*v).unwrap_or(MAX_BLOB_WIDTH),
+        // Go evaluates the constant AS AN INT, so a NULL or a literal that is
+        // no integer at all takes the `isNull || err != nil` branch.
+        _ => return MAX_BLOB_WIDTH,
+    };
+    if value > MAX_BLOB_WIDTH {
+        MAX_BLOB_WIDTH
+    } else {
+        value
+    }
+}
+
+/// Go `makeSetFunctionClass.getFlen`.
+///
+/// A constant bit mask is the interesting half: Go sizes only the members that
+/// mask actually selects and puts `count - 1` commas between them, so
+/// `MAKE_SET(1, text_col, x)` is as wide as `text_col` alone. Everything else
+/// -- a non-constant mask, a NULL one, one that will not evaluate -- falls to
+/// the sum of every member plus `len(args) - 2` commas.
+fn make_set_flen(args: &[Expression]) -> i64 {
+    let member_flen = |i: usize| str_arg_flen(args, i);
+    if let Expression::Constant(constant) = &args[0] {
+        let bits = match &constant.value {
+            Datum::Int(v) => Some(*v),
+            Datum::UInt(v) => Some(*v as i64),
+            _ => None,
+        };
+        if let Some(bits) = bits {
+            let mut flen = 0_i64;
+            let mut count = 0_i64;
+            for i in 1..args.len() {
+                // Go's `1 << uint(i-1)` is 0 once the shift reaches the word
+                // width, so a 65th member is never selected.
+                let bit = u32::try_from(i - 1)
+                    .ok()
+                    .and_then(|shift| 1_i64.checked_shl(shift))
+                    .unwrap_or(0);
+                if bits & bit != 0 {
+                    flen += member_flen(i);
+                    count += 1;
+                }
+            }
+            if count > 0 {
+                flen += count - 1;
+            }
+            return flen;
+        }
+    }
+    let mut flen = 0_i64;
+    for i in 1..args.len() {
+        flen += member_flen(i);
+    }
+    flen + args.len() as i64 - 2
 }
 
 /// The flen `TO_BASE64` reports for an argument of flen `n`.
@@ -1225,5 +1504,499 @@ mod concat_flen_tests {
             flen_of("concat", &[unsized_arg, varchar(16)]),
             MAX_BLOB_WIDTH
         );
+    }
+}
+
+/// Go's `createTestCase4StrFuncs` (`pkg/expression/typeinfer_test.go`), which
+/// is TiDB's own golden table for what a string builtin reports: it builds a
+/// logical plan for `select <expr> from t` over a fixed schema and asserts the
+/// output column's type byte, charset, flag, flen and decimal.
+///
+/// Only the TYPE BYTE and the FLEN are re-asserted here -- the charset and
+/// flag are `derive_collation`'s answer, tested with that -- and only for the
+/// builtins this rewriter builds. Every expected number below is copied from
+/// that table rather than recomputed, so a rule that merely looks right does
+/// not pass.
+#[cfg(test)]
+mod go_string_flen_tests {
+    use super::*;
+
+    const UNSPECIFIED: i64 = tidb_datatype::UNSPECIFIED_LENGTH;
+
+    fn typed(code: FieldTypeCode, flen: i64, decimal: i64) -> Expression {
+        let mut ft = FieldType::new(code);
+        ft.set_flen(flen);
+        ft.set_decimal(decimal);
+        Expression::Constant(Constant::new(Datum::Null, ft))
+    }
+
+    fn literal(value: Datum, code: FieldTypeCode, flen: i64) -> Expression {
+        let mut ft = FieldType::new(code);
+        ft.set_flen(flen);
+        ft.set_decimal(UNSPECIFIED);
+        Expression::Constant(Constant::new(value, ft))
+    }
+
+    /// `c_char char(20)`.
+    fn c_char() -> Expression {
+        typed(FieldTypeCode::String, 20, UNSPECIFIED)
+    }
+    /// `c_binary binary(20)`.
+    fn c_binary() -> Expression {
+        typed(FieldTypeCode::String, 20, UNSPECIFIED)
+    }
+    /// `c_int_d int`.
+    fn c_int_d() -> Expression {
+        typed(FieldTypeCode::Long, 11, 0)
+    }
+    /// `c_double_d double`.
+    fn c_double_d() -> Expression {
+        typed(FieldTypeCode::Double, UNSPECIFIED, UNSPECIFIED)
+    }
+    /// `c_float_d float`.
+    fn c_float_d() -> Expression {
+        typed(FieldTypeCode::Float, UNSPECIFIED, UNSPECIFIED)
+    }
+    /// `c_decimal decimal(6, 3)`.
+    fn c_decimal() -> Expression {
+        typed(FieldTypeCode::NewDecimal, 6, 3)
+    }
+    /// `c_text_d text`.
+    fn c_text_d() -> Expression {
+        typed(FieldTypeCode::Blob, 65535, UNSPECIFIED)
+    }
+    /// `c_datetime datetime(2)`.
+    fn c_datetime() -> Expression {
+        typed(FieldTypeCode::Datetime, UNSPECIFIED, 2)
+    }
+    /// `c_set set('a', 'b', 'c')`.
+    fn c_set() -> Expression {
+        typed(FieldTypeCode::Set, 5, UNSPECIFIED)
+    }
+    /// `c_enum enum('a', 'b', 'c')`.
+    fn c_enum() -> Expression {
+        typed(FieldTypeCode::Enum, 1, UNSPECIFIED)
+    }
+
+    #[track_caller]
+    fn assert_go(name: &str, args: &[Expression], code: FieldTypeCode, flen: i64) {
+        let ft =
+            builtin_return_type(name, args).unwrap_or_else(|| panic!("{name} has no return type"));
+        assert_eq!((ft.code(), ft.flen()), (code, flen), "{name}");
+    }
+
+    /// The rule shape that reaches the widest part of the family:
+    /// `bf.tp.SetFlen(args[0].GetType().GetFlen())` read AFTER the argument was
+    /// wrapped in `WrapWithCastAsString`, which is why an `int` argument is 20
+    /// and a `double` one 370.
+    #[test]
+    fn arg_zero_width_family_matches_go() {
+        for name in [
+            "lower",
+            "upper",
+            "lcase",
+            "ucase",
+            "reverse",
+            "ltrim",
+            "rtrim",
+            "left",
+            "right",
+            "substr",
+            "substring",
+            "mid",
+            "substring_index",
+        ] {
+            // Go: lower(c_int_d) / reverse(c_int_d) / left(c_int_d, c_int_d).
+            assert_go(name, &[c_int_d(), c_int_d()], FieldTypeCode::VarString, 20);
+            assert_go(name, &[c_char(), c_int_d()], FieldTypeCode::VarString, 20);
+            assert_go(name, &[c_binary(), c_int_d()], FieldTypeCode::VarString, 20);
+        }
+        // `TRIM` is the same rule in its one- and three-argument forms; its
+        // two-argument form is the exception, asserted separately below.
+        assert_go("trim", &[c_int_d()], FieldTypeCode::VarString, 20);
+        assert_go(
+            "trim",
+            &[c_char(), c_char(), c_int_d()],
+            FieldTypeCode::VarString,
+            20,
+        );
+        // Go: reverse over the remaining column kinds.
+        assert_go("reverse", &[c_float_d()], FieldTypeCode::VarString, 87);
+        assert_go("reverse", &[c_double_d()], FieldTypeCode::VarString, 370);
+        assert_go("reverse", &[c_decimal()], FieldTypeCode::VarString, 9);
+        assert_go("reverse", &[c_set()], FieldTypeCode::VarString, 5);
+        assert_go("reverse", &[c_enum()], FieldTypeCode::VarString, 1);
+    }
+
+    /// A TEXT argument is the boundary case the expression-index refusals turn
+    /// on: 65535 is ONE SHORT of `getRetTp`'s MEDIUM threshold, so Go reports a
+    /// `var_string(65535)` and not a `mediumtext`. Go's own row.
+    #[test]
+    fn a_text_argument_stays_var_string_in_go() {
+        assert_go("reverse", &[c_text_d()], FieldTypeCode::VarString, 65535);
+        assert_go("lower", &[c_text_d()], FieldTypeCode::VarString, 65535);
+        // MEDIUMTEXT and LONGTEXT do cross it, which is what makes
+        // `index i((lower(mediumtext_col)))` a 3757 rather than an accept.
+        assert_go(
+            "lower",
+            &[typed(FieldTypeCode::MediumBlob, 16_777_215, UNSPECIFIED)],
+            FieldTypeCode::MediumBlob,
+            16_777_215,
+        );
+        assert_go(
+            "lower",
+            &[typed(
+                FieldTypeCode::LongBlob,
+                MAX_LONG_BLOB_WIDTH,
+                UNSPECIFIED,
+            )],
+            FieldTypeCode::LongBlob,
+            MAX_LONG_BLOB_WIDTH,
+        );
+        // And a `varchar(0)` argument keeps a ZERO-width result, which is the
+        // third refusal (3761).
+        assert_go(
+            "lower",
+            &[typed(FieldTypeCode::Varchar, 0, UNSPECIFIED)],
+            FieldTypeCode::VarString,
+            0,
+        );
+    }
+
+    /// `getRetTp`'s two thresholds are both `>=`, and both are exact: a result
+    /// of exactly 65536 IS a mediumblob and one of exactly `MaxBlobWidth` IS a
+    /// longblob. Asserted on the boundary itself because an off-by-one there
+    /// is invisible in every other row -- no column width in Go's own golden
+    /// table lands on either number.
+    #[test]
+    fn the_promotion_thresholds_are_inclusive() {
+        let at = |flen: i64| {
+            builtin_return_type("lower", &[typed(FieldTypeCode::Varchar, flen, UNSPECIFIED)])
+                .unwrap()
+                .code()
+        };
+        assert_eq!(at(65535), FieldTypeCode::VarString);
+        assert_eq!(at(65536), FieldTypeCode::MediumBlob);
+        assert_eq!(at(MAX_BLOB_WIDTH - 1), FieldTypeCode::MediumBlob);
+        assert_eq!(at(MAX_BLOB_WIDTH), FieldTypeCode::LongBlob);
+    }
+
+    /// `TRIM(remstr FROM str)` is the one form in the family whose
+    /// `getFunction` sets no flen at all.
+    #[test]
+    fn two_argument_trim_has_no_width_in_go() {
+        assert_go(
+            "trim",
+            &[c_char(), c_char()],
+            FieldTypeCode::VarString,
+            UNSPECIFIED,
+        );
+    }
+
+    /// The fixed-width members, each of which `getRetTp` then promotes.
+    #[test]
+    fn fixed_width_members_match_go() {
+        assert_go(
+            "space",
+            &[c_int_d()],
+            FieldTypeCode::LongBlob,
+            MAX_BLOB_WIDTH,
+        );
+        assert_go(
+            "repeat",
+            &[c_char(), c_int_d()],
+            FieldTypeCode::LongBlob,
+            MAX_BLOB_WIDTH,
+        );
+        assert_go(
+            "insert_func",
+            &[c_char(), c_int_d(), c_int_d(), c_char()],
+            FieldTypeCode::LongBlob,
+            MAX_BLOB_WIDTH,
+        );
+        assert_go(
+            "format",
+            &[c_double_d(), c_double_d()],
+            FieldTypeCode::LongBlob,
+            MAX_BLOB_WIDTH,
+        );
+        for name in ["bin", "oct"] {
+            assert_go(name, &[c_int_d()], FieldTypeCode::VarString, 64);
+            assert_go(name, &[c_text_d()], FieldTypeCode::VarString, 64);
+        }
+        assert_go(
+            "conv",
+            &[c_char(), c_int_d(), c_int_d()],
+            FieldTypeCode::VarString,
+            64,
+        );
+    }
+
+    /// `replaceFunctionClass.fixLength`. Go's own row is
+    /// `replace(1234, 2, 55)` -> 20, where every literal widens to
+    /// `MaxIntWidth` first and the excess term is therefore zero.
+    #[test]
+    fn replace_matches_go() {
+        assert_go(
+            "replace",
+            &[
+                literal(Datum::Int(1234), FieldTypeCode::LongLong, 4),
+                literal(Datum::Int(2), FieldTypeCode::LongLong, 1),
+                literal(Datum::Int(55), FieldTypeCode::LongLong, 2),
+            ],
+            FieldTypeCode::VarString,
+            20,
+        );
+        assert_go(
+            "replace",
+            &[c_binary(), c_int_d(), c_int_d()],
+            FieldTypeCode::VarString,
+            20,
+        );
+        // The excess term itself: a 20-wide subject, a 2-wide needle and a
+        // 5-wide replacement is 20 + (20/2)*3.
+        assert_go(
+            "replace",
+            &[
+                c_char(),
+                typed(FieldTypeCode::Varchar, 2, UNSPECIFIED),
+                typed(FieldTypeCode::Varchar, 5, UNSPECIFIED),
+            ],
+            FieldTypeCode::VarString,
+            50,
+        );
+    }
+
+    /// `getFlen4LpadAndRpad`: only a constant pad length is knowable, and it is
+    /// multiplied by four. Go's rows.
+    #[test]
+    fn lpad_and_rpad_match_go() {
+        let twelve = literal(Datum::Int(12), FieldTypeCode::LongLong, 2);
+        let go = literal(Datum::Bytes(b"go".to_vec()), FieldTypeCode::VarString, 2);
+        for name in ["lpad", "rpad"] {
+            assert_go(
+                name,
+                &[
+                    literal(Datum::Bytes(b"TiDB".to_vec()), FieldTypeCode::VarString, 4),
+                    twelve.clone(),
+                    go.clone(),
+                ],
+                FieldTypeCode::VarString,
+                48,
+            );
+            // A NON-constant length is `mysql.MaxBlobWidth` before the times
+            // four, and the clamp brings it back to `MaxBlobWidth`.
+            assert_go(
+                name,
+                &[c_char(), c_int_d(), c_char()],
+                FieldTypeCode::LongBlob,
+                MAX_BLOB_WIDTH,
+            );
+        }
+    }
+
+    /// `eltFunctionClass`: the widest selectable value, where an argument of
+    /// unknown width RESETS rather than widens.
+    #[test]
+    fn elt_matches_go() {
+        assert_go(
+            "elt",
+            &[c_int_d(), c_char(), c_char(), c_char()],
+            FieldTypeCode::VarString,
+            20,
+        );
+        assert_go(
+            "elt",
+            &[c_int_d(), c_char(), c_int_d()],
+            FieldTypeCode::VarString,
+            20,
+        );
+        assert_go(
+            "elt",
+            &[c_int_d(), c_char(), c_double_d(), c_int_d()],
+            FieldTypeCode::VarString,
+            370,
+        );
+        assert_go(
+            "elt",
+            &[c_int_d(), c_char(), c_double_d(), c_int_d(), c_binary()],
+            FieldTypeCode::VarString,
+            370,
+        );
+        // The reset: a trailing argument of unknown width takes the result
+        // back to unknown, which is Go's `flen == UnspecifiedLength ||` arm.
+        assert_go(
+            "elt",
+            &[
+                c_int_d(),
+                c_char(),
+                typed(FieldTypeCode::Varchar, UNSPECIFIED, UNSPECIFIED),
+            ],
+            FieldTypeCode::VarString,
+            UNSPECIFIED,
+        );
+    }
+
+    /// `exportSetFunctionClass`: sixty-four values and sixty-three separators,
+    /// times four. Go's three rows, all over TEXT columns.
+    #[test]
+    fn export_set_matches_go() {
+        assert_go(
+            "export_set",
+            &[c_double_d(), c_text_d(), c_text_d()],
+            FieldTypeCode::MediumBlob,
+            16_777_212,
+        );
+        assert_go(
+            "export_set",
+            &[c_double_d(), c_text_d(), c_text_d(), c_text_d()],
+            FieldTypeCode::LongBlob,
+            33_291_780,
+        );
+        assert_go(
+            "export_set",
+            &[c_double_d(), c_text_d(), c_text_d(), c_text_d(), c_int_d()],
+            FieldTypeCode::LongBlob,
+            33_291_780,
+        );
+    }
+
+    /// `makeSetFunctionClass.getFlen`, both halves: a constant mask sizes only
+    /// the members it selects, and anything else sums them all.
+    #[test]
+    fn make_set_matches_go() {
+        assert_go(
+            "make_set",
+            &[c_int_d(), c_text_d()],
+            FieldTypeCode::VarString,
+            65535,
+        );
+        assert_go(
+            "make_set",
+            &[c_int_d(), c_text_d(), c_binary()],
+            FieldTypeCode::MediumBlob,
+            65556,
+        );
+        // Go's `make_set(1, c_text_d, 0x40)`: mask 1 selects the FIRST member
+        // only, so the binary literal contributes nothing.
+        assert_go(
+            "make_set",
+            &[
+                literal(Datum::Int(1), FieldTypeCode::LongLong, 1),
+                c_text_d(),
+                literal(Datum::Bytes(vec![0x40]), FieldTypeCode::VarString, 3),
+            ],
+            FieldTypeCode::VarString,
+            65535,
+        );
+    }
+
+    /// `charFunctionClass`: four bytes per code point, the trailing USING
+    /// charset argument excluded.
+    #[test]
+    fn char_matches_go() {
+        let charset = literal(
+            Datum::Bytes(b"binary".to_vec()),
+            FieldTypeCode::VarString,
+            6,
+        );
+        assert_go(
+            "char_func",
+            &[c_int_d(), charset.clone()],
+            FieldTypeCode::VarString,
+            4,
+        );
+        assert_go(
+            "char_func",
+            &[c_int_d(), c_int_d(), charset],
+            FieldTypeCode::VarString,
+            8,
+        );
+    }
+
+    /// Go's `CONCAT`/`CONCAT_WS` rows over LITERALS, which only add up once a
+    /// literal carries the width `types.DefaultTypeForValue` gives it. They
+    /// are the check that the literal rule and the sum rule agree.
+    #[test]
+    fn concat_over_literals_matches_go() {
+        let lit = |bytes: &[u8]| {
+            literal(
+                Datum::Bytes(bytes.to_vec()),
+                FieldTypeCode::VarString,
+                bytes.len() as i64,
+            )
+        };
+        // Go: CONCAT('T', 'i', 'DB') -> 4.
+        assert_go(
+            "concat",
+            &[lit(b"T"), lit(b"i"), lit(b"DB")],
+            FieldTypeCode::VarString,
+            4,
+        );
+        // Go: CONCAT_WS('-', 'T', 'i', 'DB') -> 6, the separator counted twice.
+        assert_go(
+            "concat_ws",
+            &[lit(b"-"), lit(b"T"), lit(b"i"), lit(b"DB")],
+            FieldTypeCode::VarString,
+            6,
+        );
+        // Go: CONCAT_WS(',', 'TiDB', c_binary) -> 25.
+        assert_go(
+            "concat_ws",
+            &[lit(b","), lit(b"TiDB"), c_binary()],
+            FieldTypeCode::VarString,
+            25,
+        );
+    }
+
+    /// `quoteFunctionClass`: `2 * flen + 2`. Go's rows.
+    #[test]
+    fn quote_matches_go() {
+        assert_go("quote", &[c_int_d()], FieldTypeCode::VarString, 42);
+        assert_go("quote", &[c_float_d()], FieldTypeCode::VarString, 176);
+        assert_go("quote", &[c_double_d()], FieldTypeCode::VarString, 742);
+    }
+
+    /// `HEX` splits on the argument's eval type: a string is hexed four bytes
+    /// per character at two digits each, a number is doubled from its DECLARED
+    /// width. Go's `hex(c_char)` 160 and `hex(c_int_d)` 22.
+    #[test]
+    fn hex_matches_go() {
+        assert_go("hex", &[c_char()], FieldTypeCode::VarString, 160);
+        assert_go("hex", &[c_int_d()], FieldTypeCode::VarString, 22);
+    }
+
+    /// `UNHEX` is the family's one reader of the UNCAST argument type, which is
+    /// why Go's `unhex(c_int_d)` is 6 and not 40.
+    #[test]
+    fn unhex_matches_go() {
+        assert_go("unhex", &[c_int_d()], FieldTypeCode::VarString, 6);
+        assert_go("unhex", &[c_char()], FieldTypeCode::VarString, 40);
+    }
+
+    /// `FROM_BASE64` triples, `TO_BASE64` grows by `base64NeededEncodedLength`.
+    /// Go's rows, including the two whose triple crosses the MEDIUM boundary.
+    #[test]
+    fn base64_matches_go() {
+        assert_go("from_base64", &[c_int_d()], FieldTypeCode::VarString, 60);
+        assert_go("from_base64", &[c_float_d()], FieldTypeCode::VarString, 261);
+        assert_go(
+            "from_base64",
+            &[c_double_d()],
+            FieldTypeCode::VarString,
+            1110,
+        );
+        assert_go("from_base64", &[c_decimal()], FieldTypeCode::VarString, 27);
+        assert_go("from_base64", &[c_datetime()], FieldTypeCode::VarString, 66);
+        assert_go("from_base64", &[c_char()], FieldTypeCode::VarString, 60);
+        assert_go("from_base64", &[c_set()], FieldTypeCode::VarString, 15);
+        assert_go("from_base64", &[c_enum()], FieldTypeCode::VarString, 3);
+        assert_go(
+            "from_base64",
+            &[c_text_d()],
+            FieldTypeCode::MediumBlob,
+            196_605,
+        );
+        assert_go("to_base64", &[c_binary()], FieldTypeCode::VarString, 28);
     }
 }

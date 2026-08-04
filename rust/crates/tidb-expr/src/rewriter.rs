@@ -206,7 +206,13 @@ fn cast_target(cast_type: &tidb_ast::CastType) -> Option<(&'static str, FieldTyp
 /// non-UTF-8 write path -- a `CHARSET gbk` column would then accept `😉`
 /// (whose UTF-8 bytes happen to form legal GBK pairs) and reject `一列`.
 fn constant_string(text: &str) -> Expression {
-    let field_type = FieldType::new(FieldTypeCode::VarString);
+    let mut field_type = FieldType::new(FieldTypeCode::VarString);
+    // Go `types.DefaultTypeForValue`'s `case string` (`pkg/types/field_type.go`):
+    // `tp.SetFlen(len(x))`, the literal's BYTE length -- Go's own TODO there
+    // says it should arguably be three times that, and it is not. Without it a
+    // literal is unsized, and an unsized argument is what makes
+    // `CONCAT('T','i','DB')` report `MaxBlobWidth - 1` instead of Go's 4.
+    field_type.set_flen(text.len() as i64);
     let datum = Datum::new_collation_string(text.as_bytes().to_vec(), field_type.collation());
     Expression::Constant(Constant::new(datum, field_type))
 }
@@ -1637,27 +1643,41 @@ mod builtin_type_tests {
             base64_needed_encoded_length(6_827_690_988_321_067_804),
             tidb_datatype::UNSPECIFIED_LENGTH
         );
-        // A string LITERAL carries no flen in this tier (`constant_string`
-        // leaves it unspecified where Go's `DefaultTypeForValue` sets the
-        // literal's length), so the derived flen is unspecified too -- which
-        // is the formula's own rule, not a special case here. `TO_BASE64` is
+        // A string LITERAL is as wide as its own bytes (Go
+        // `DefaultTypeForValue`'s `SetFlen(len(x))`), so three bytes derive
+        // the four characters they encode to. `TO_BASE64` is
         // connection-charset text, never binary.
         let ft = ret_type("to_base64('abc')");
         assert_eq!(ft.code(), FieldTypeCode::VarString);
-        assert_eq!(ft.flen(), tidb_datatype::UNSPECIFIED_LENGTH);
+        assert_eq!(ft.flen(), 4);
         assert_ne!(ft.charset_name(), "binary");
     }
 
+    /// A string literal is as wide as its own bytes, which is Go's
+    /// `types.DefaultTypeForValue` (`SetFlen(len(x))` -- BYTES, so a
+    /// multi-byte character counts more than once). Asserted end to end
+    /// through the rewriter rather than on hand-built `FieldType`s, because
+    /// the literal rule and the per-builtin sum have to meet somewhere and
+    /// this is the only test that walks the join.
+    ///
+    /// Both numbers are Go's own, from `createTestCase4StrFuncs`.
+    #[test]
+    fn a_string_literal_is_as_wide_as_its_bytes() {
+        assert_eq!(ret_type("concat('T', 'i', 'DB')").flen(), 4);
+        assert_eq!(ret_type("concat_ws('-', 'T', 'i', 'DB')").flen(), 6);
+        // BYTES, not characters: Go's own TODO beside `SetFlen(len(x))` says
+        // this arguably ought to be tripled and is not.
+        assert_eq!(ret_type("concat('é')").flen(), 2);
+    }
+
     /// `TIME_FORMAT`'s flen is `(format_flen + 1) / 2 * 11`, an upper bound
-    /// on how far one specifier can expand. As with `TO_BASE64` above, a
-    /// string literal carries no flen in this tier, so a literal format
-    /// leaves the result's unspecified rather than inventing a bound; a
-    /// COLUMN format, whose flen the schema does fix, derives one.
+    /// on how far one specifier can expand. The five-byte format literal
+    /// therefore bounds the result at `(5 + 1) / 2 * 11`.
     #[test]
     fn time_format_flen_follows_the_format_argument() {
         let ft = ret_type("time_format('23:00:00', '%H %k')");
         assert_eq!(ft.code(), FieldTypeCode::VarString);
-        assert_eq!(ft.flen(), tidb_datatype::UNSPECIFIED_LENGTH);
+        assert_eq!(ft.flen(), 33);
     }
 
     /// `ANY_VALUE` is the identity on the whole `FieldType`, not merely the
