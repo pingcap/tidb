@@ -896,3 +896,232 @@ func buildReproHashJoinIssueBigRows(n int) string {
 	}
 	return strings.Join(vals, ",")
 }
+
+func TestReaderCopRequestCost(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_cost_model_version = 2")
+	tk.MustExec("set @@session.tidb_distsql_scan_concurrency = 1")
+	tk.MustExec("set @@session.tidb_enable_index_merge = 1")
+	tk.MustExec("create table t (a int primary key, b int, c int, key idx_b(b), key idx_c(c))")
+
+	traceFor := func(sql, operator string) string {
+		rows := tk.MustQuery("explain format='cost_trace' " + sql).Rows()
+		for _, row := range rows {
+			if strings.Contains(row[0].(string), operator) {
+				return row[3].(string)
+			}
+		}
+		t.Fatalf("operator %s not found in plan for %q", operator, sql)
+		return ""
+	}
+
+	indexReaderTrace := traceFor("select b from t force index(idx_b) where b in (1, 2, 3)", "IndexReader")
+	require.Contains(t, indexReaderTrace, "cop-request(ranges(3)*tidb_request_factor",
+		"an IndexReader execution should account for one cop request per access range")
+
+	tableReaderTrace := traceFor("select * from t ignore index(idx_b, idx_c) where a > 1", "TableReader")
+	require.Contains(t, tableReaderTrace, "cop-request(ranges(1)*tidb_request_factor",
+		"a TiKV TableReader execution should account for its cop request")
+
+	indexLookupTrace := traceFor("select c from t force index(idx_b) where b in (1, 2, 3)", "IndexLookUp")
+	require.Contains(t, indexLookupTrace, "cop-request(ranges(3)*tidb_request_factor",
+		"an IndexLookUp execution should account for its index-side cop requests")
+	require.Equal(t, 1, strings.Count(indexLookupTrace, "doubleRead("),
+		"the table-side handle lookup request must not be charged twice")
+
+	indexMergeTrace := traceFor("select /*+ use_index_merge(t, idx_b, idx_c) */ * from t where b = 1 or c = 2", "IndexMerge")
+	require.Equal(t, 2, strings.Count(indexMergeTrace, "cop-request(ranges(1)*tidb_request_factor"),
+		"an IndexMerge execution should account for every partial cop request")
+	require.Equal(t, 1, strings.Count(indexMergeTrace, "doubleRead("),
+		"an IndexMerge table lookup should account for its batched handle requests once")
+
+	testkit.SetTiFlashReplica(t, dom, "test", "t")
+	tiFlashTrace := traceFor("select /*+ read_from_storage(tiflash[t]) */ * from t where a > 1", "TableReader")
+	require.NotContains(t, tiFlashTrace, "tidb_request_factor",
+		"a TiFlash TableReader must not be charged for TiKV cop requests")
+}
+
+func TestLookupRequestFanoutPlanChoice(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_cost_model_version = 2")
+	tk.MustExec("set @@session.tidb_opt_enable_alternative_logical_plans = on")
+	tk.MustExec("set @@session.tidb_opt_enable_semi_join_rewrite = off")
+	tk.MustExec("set @@session.tidb_index_join_double_read_penalty_cost_rate = 0")
+	tk.MustExec(`create table obj_38m (
+		id bigint primary key,
+		workspace_id bigint not null,
+		obj_tid bigint not null,
+		tvalue_24 bigint,
+		tvalue_8 bigint,
+		sequential_id bigint,
+		label varchar(64),
+		key idx_outer(workspace_id, obj_tid, tvalue_24, label),
+		key idx_inner(workspace_id, obj_tid, tvalue_8)
+	)`)
+	tk.MustExec(`create table obj_relationship_38m (
+		workspace_id bigint not null,
+		object_id bigint not null,
+		referenced_object_id bigint not null,
+		key idx_object(workspace_id, object_id, referenced_object_id),
+		key idx_referenced(workspace_id, referenced_object_id, object_id)
+	)`)
+	tk.MustExec("set @@session.cte_max_recursion_depth = 50000")
+	tk.MustExec(`insert into obj_38m
+		select n, 1, n % 5 + 1, 24, 8, n, concat('label-', n)
+		from (
+			with recursive seq(n) as (
+				select 1
+				union all
+				select n + 1 from seq where n < 5000
+			)
+			select n from seq
+		) s`)
+	tk.MustExec(`insert into obj_relationship_38m
+		select 1, n % 5000 + 1, n * 7 % 5000 + 1
+		from (
+			with recursive seq(n) as (
+				select 1
+				union all
+				select n + 1 from seq where n < 50000
+			)
+			select n from seq
+		) s`)
+	tk.MustExec("analyze table obj_38m, obj_relationship_38m all columns")
+	testkit.SetTiFlashReplica(t, dom, "test", "obj_38m")
+	testkit.SetTiFlashReplica(t, dom, "test", "obj_relationship_38m")
+
+	planText := func(sql string) string {
+		rows := tk.MustQuery("explain format='plan_tree' " + sql).Rows()
+		var plan strings.Builder
+		for _, row := range rows {
+			fmt.Fprintln(&plan, row...)
+		}
+		return plan.String()
+	}
+
+	// issue:69392. This is the one-level request-fanout shape from the issue:
+	// an outer object scan probes a relationship index and then looks up the
+	// referenced object. With accurate request startup cost, the lookup-heavy
+	// alternative should not beat the available MPP hash-join alternative.
+	oneLevelSQL := `select o.sequential_id, o.label
+		from obj_38m o
+		where o.workspace_id = 1
+		  and o.obj_tid in (1, 2, 3, 4, 5)
+		  and o.tvalue_24 = 24
+		  and exists (
+			select 1
+			from obj_relationship_38m subR
+			join obj_38m subO1
+			  on subR.object_id = subO1.id
+			 and subO1.obj_tid in (1, 2, 3, 4, 5)
+			where subR.workspace_id = 1
+			  and o.id = subR.referenced_object_id
+			  and subO1.workspace_id = 1
+			  and subO1.tvalue_8 = 8
+		)
+		order by o.label
+		limit 1000`
+	oneLevelPlan := planText(oneLevelSQL)
+	require.Contains(t, oneLevelPlan, "HashJoin", "the one-level fanout case should use the hash-join alternative:\n%s", oneLevelPlan)
+	require.Contains(t, oneLevelPlan, "tiflash", "the one-level fanout case should use the available MPP alternative:\n%s", oneLevelPlan)
+	require.NotContains(t, oneLevelPlan, "IndexHashJoin", "the lookup-heavy alternative should not win:\n%s", oneLevelPlan)
+
+	costAndPlan := func(sql string) (float64, string) {
+		rows := tk.MustQuery("explain format='cost_trace' " + sql).Rows()
+		var cost float64
+		_, err := fmt.Sscan(rows[0][2].(string), &cost)
+		require.NoError(t, err)
+		var plan strings.Builder
+		for _, row := range rows {
+			fmt.Fprintln(&plan, row...)
+		}
+		return cost, plan.String()
+	}
+	indexJoinCost, indexJoinPlan := costAndPlan(`select /*+ inl_hash_join(subR) read_from_storage(tikv[o, subR]) */ count(*)
+		from obj_38m o
+		join obj_relationship_38m subR
+		  on subR.workspace_id = o.workspace_id
+		 and subR.referenced_object_id = o.id
+		where o.workspace_id = 1`)
+	mppCost, mppPlan := costAndPlan(`select /*+ hash_join(o, subR) read_from_storage(tiflash[o, subR]) */ count(*)
+		from obj_38m o
+		join obj_relationship_38m subR
+		  on subR.workspace_id = o.workspace_id
+		 and subR.referenced_object_id = o.id
+		where o.workspace_id = 1`)
+	require.Contains(t, indexJoinPlan, "IndexHashJoin", "the forced issue:69392 lookup candidate must remain available:\n%s", indexJoinPlan)
+	require.Contains(t, indexJoinPlan, "cop-request(", "the IndexReader probe should expose request startup cost:\n%s", indexJoinPlan)
+	require.Contains(t, mppPlan, "tiflash", "the forced issue:69392 MPP candidate must remain available:\n%s", mppPlan)
+	require.Greater(t, indexJoinCost, 2*mppCost,
+		"request fanout should make IndexHashJoin materially more expensive than MPP: index=%v mpp=%v", indexJoinCost, mppCost)
+
+	// issue:69092. Keep both EXISTS levels correlated to retain the problematic
+	// nested Apply shape and verify that request cost is owned by the Readers and
+	// naturally multiplied by the existing Apply cost formula.
+	tk.MustExec("set @@session.tidb_opt_enable_alternative_logical_plans = off")
+	nestedApplySQL := `select o.sequential_id, o.label
+		from obj_38m o
+		where o.workspace_id = 1
+		  and o.obj_tid in (1, 2, 3, 4, 5)
+		  and o.tvalue_24 = 24
+		  and exists (
+			select /*+ no_decorrelate() */ 1
+			from obj_relationship_38m r
+			join obj_38m o1
+			  on r.referenced_object_id = o1.id
+			 and o1.obj_tid in (1, 2, 3, 4, 5)
+			where r.workspace_id = 1
+			  and o.id = r.object_id
+			  and o1.workspace_id = 1
+			  and exists (
+				select /*+ no_decorrelate() */ 1
+				from obj_relationship_38m r1
+				join obj_38m o2
+				  on r1.object_id = o2.id
+				 and o2.obj_tid in (1, 2, 3, 4, 5)
+				where r1.workspace_id = 1
+				  and o1.id = r1.referenced_object_id
+				  and o2.workspace_id = 1
+				  and o2.tvalue_8 in (8, 9)
+			)
+		  )
+		order by o.label
+		limit 1000`
+	nestedRows := tk.MustQuery("explain format='cost_trace' " + nestedApplySQL).Rows()
+	var nestedApplyTrace string
+	for _, row := range nestedRows {
+		if strings.Contains(row[0].(string), "Apply") {
+			nestedApplyTrace = row[3].(string)
+			break
+		}
+	}
+	require.NotEmpty(t, nestedApplyTrace, "the forced issue:69092 regression must retain an Apply plan")
+	require.GreaterOrEqual(t, strings.Count(nestedApplyTrace, "cop-request("), 2,
+		"nested Apply should naturally amplify Reader-owned request costs: %s", nestedApplyTrace)
+	firstRequest := strings.Index(nestedApplyTrace, "cop-request(")
+	require.Contains(t, nestedApplyTrace[firstRequest:], ")*",
+		"the existing Apply multiplier should wrap the Reader-owned request cost: %s", nestedApplyTrace)
+
+	// The same SQL without NO_DECORRELATE should prefer the already-enumerated
+	// MPP alternative once the nested lookup requests are priced.
+	tk.MustExec("set @@session.tidb_opt_enable_alternative_logical_plans = on")
+	nestedDefaultSQL := strings.ReplaceAll(nestedApplySQL, "/*+ no_decorrelate() */", "")
+	nestedDefaultPlan := planText(nestedDefaultSQL)
+	require.Contains(t, nestedDefaultPlan, "HashJoin", "the nested fanout case should use the hash-join alternative:\n%s", nestedDefaultPlan)
+	require.Contains(t, nestedDefaultPlan, "tiflash", "the nested fanout case should use the available MPP alternative:\n%s", nestedDefaultPlan)
+	require.NotContains(t, nestedDefaultPlan, "Apply", "the lookup-heavy nested Apply should not win:\n%s", nestedDefaultPlan)
+
+	// A genuinely tiny build side should still be able to use an index join; the
+	// request term is a cost component, not a blanket rejection rule.
+	tk.MustExec("create table tiny_outer (k int primary key)")
+	tk.MustExec("create table tiny_inner (k int, payload int, key idx_k(k))")
+	tk.MustExec("insert into tiny_outer values (1)")
+	tk.MustExec("insert into tiny_inner values (1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6), (7, 7), (8, 8)")
+	tk.MustExec("analyze table tiny_outer, tiny_inner")
+	tinyPlan := planText("select count(*) from tiny_outer o join tiny_inner i on i.k = o.k where o.k = 1")
+	require.Contains(t, tinyPlan, "IndexJoin", "a selective one-row probe should retain the index-join option:\n%s", tinyPlan)
+}
