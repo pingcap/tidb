@@ -61,7 +61,8 @@
 //! graph -- captured: activating `ra`, with `rb` granted to `ra`, confers
 //! `rb`'s `SELECT` even though `SET ROLE ALL` never names `rb`).
 //!
-//! OUT OF SCOPE (refused rather than faked): column-level grants.
+//! COLUMN-level grants live here too (`mysql.columns_priv`); see
+//! `column_privs` below.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::atomic::AtomicBool;
@@ -373,8 +374,15 @@ mod tests {
             GlobalPriv::from_grant_name("CREATE TEMPORARY TABLES"),
             Some(GlobalPriv::CreateTemporaryTables)
         );
+        assert_eq!(
+            GlobalPriv::from_grant_name("DROP ROLE"),
+            Some(GlobalPriv::DropRole)
+        );
         assert_eq!(GlobalPriv::from_grant_name("FOOBAR"), None);
-        assert_eq!(GlobalPriv::from_grant_name("DROP ROLE"), None);
+        // Roles are ACCOUNTS, not static privileges, so a role NAME still
+        // resolves to nothing here -- which is what keeps
+        // `GRANT <role> TO <user>` off the static path.
+        assert_eq!(GlobalPriv::from_grant_name("ROLE_ADMIN"), None);
     }
 
     #[test]

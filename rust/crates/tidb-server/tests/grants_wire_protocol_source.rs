@@ -630,23 +630,19 @@ fn a_runtime_created_account_can_log_in_over_tcp_until_it_is_dropped() {
 }
 
 /// `CREATE USER ... IDENTIFIED WITH caching_sha2_password BY '<password>'`
-/// really does create the account (it shows up in `SHOW GRANTS`), but a
-/// client that authenticates the way every other login in this file does --
-/// `mysql_native_password`, the only plugin the wire front end's login path
-/// (`ConfiguredUserStore::authenticate_native`) actually verifies -- gets a
-/// clean, ordinary 1045/28000 access-denied over the real wire. No panic, no
-/// hang: the account's `authentication_string` is a `caching_sha2_password`
-/// shape (`$A$...`, 70 bytes), which never parses as a native stage-two
-/// hash, so the native verifier honestly fails it exactly like a wrong
-/// password would.
+/// creates an account that can then LOG IN, through the same statement path
+/// every other account in this file uses.
 ///
-/// DEFERRED (documented): this crate's wire front end always auth-switches
-/// every client to `mysql_native_password` (see `mysql_connection.rs`), so
-/// there is no `caching_sha2_password` SCRAMBLE exchange to attempt in the
-/// first place -- the account's plugin is stored and displayed honestly, but
-/// only a native login is ever tried, by construction.
+/// The wire front end no longer forces every client onto
+/// `mysql_native_password`: it switches to the ACCOUNT's plugin, and for the
+/// two hashing plugins runs Go's full-authentication exchange. A client that
+/// nevertheless offers a native scramble is simply switched, exactly as Go
+/// switches it. The exchange itself is pinned packet by packet in
+/// `hashing_plugin_auth_source.rs`; what this test adds is that the account
+/// `CREATE USER` wrote -- not a hand-built registry row -- is the one that
+/// opens.
 #[test]
-fn a_caching_sha2_password_account_creates_but_native_login_fails_cleanly() {
+fn a_caching_sha2_password_account_creates_and_then_logs_in() {
     let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
     let address = listener.local_addr().unwrap();
     let tracker = Arc::new(ConnectionTracker::default());
@@ -702,17 +698,28 @@ fn a_caching_sha2_password_account_creates_but_native_login_fails_cleanly() {
         "a caching_sha2_password account is a real account: {grants:?}"
     );
 
-    // A native login attempt -- with either the real password or the wrong
-    // one -- is refused the same clean way, because `dana`'s stored
-    // authentication_string is not native-shaped at all.
+    // dana connects. The client offers a native scramble; the server
+    // switches it to the account's plugin, answers fastAuthFail, and takes
+    // the cleartext.
     let mut dana = TcpStream::connect(address).unwrap();
     let dana_read = dana.try_clone().unwrap();
     let mut dana_reader = PacketReader::new(dana_read);
-    let reply = try_authenticate(&mut dana, &mut dana_reader, "dana", b"danapw");
-    assert_eq!(reply[0], 0xff, "must be a clean ERR, not a panic: {reply:?}");
-    assert_eq!(u16::from_le_bytes([reply[1], reply[2]]), 1045);
-    assert_eq!(&reply[4..9], b"28000");
+    let switch = try_authenticate(&mut dana, &mut dana_reader, "dana", b"danapw");
+    assert_eq!(
+        switch[0], 0xfe,
+        "the account's plugin drives an auth switch: {switch:?}"
+    );
+    assert!(switch[1..].starts_with(b"caching_sha2_password\0"));
+    write_packet(&mut dana, 3, b"scramble-the-server-discards");
+    dana_reader.set_sequence(4);
+    assert_eq!(dana_reader.read_packet().unwrap(), vec![1, 4]);
+    write_packet(&mut dana, 5, b"danapw\0");
+    dana_reader.set_sequence(6);
+    let ok = dana_reader.read_packet().unwrap();
+    assert_eq!(ok[0], 0, "dana's login succeeds: {ok:?}");
 
+    write_packet(&mut dana, 0, &[0x01]);
+    drop(dana);
     write_packet(&mut root, 0, &[0x01]);
     drop(root);
     let workers = acceptor.join().unwrap();
@@ -725,8 +732,8 @@ fn a_caching_sha2_password_account_creates_but_native_login_fails_cleanly() {
             .iter()
             .filter(|exit| **exit == ConnectionExit::AuthenticationRejected)
             .count(),
-        1,
-        "dana's native login attempt: {exits:?}"
+        0,
+        "no login is rejected here: {exits:?}"
     );
 }
 

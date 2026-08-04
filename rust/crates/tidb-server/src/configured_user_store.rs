@@ -31,7 +31,8 @@ use std::io::Read;
 use std::path::Path;
 
 use tidb_session::privilege::{
-    login_plugin_verification, AccountLockout, LoginPluginVerification, PrivilegeRegistry,
+    check_hashing_password, login_plugin_verification, AccountLockout, LoginPluginVerification,
+    PrivilegeRegistry,
 };
 use tidb_session::GlobalSysvars;
 
@@ -272,6 +273,32 @@ impl ConfiguredUserStore {
         self.len() == 0
     }
 
+    /// Go's `checkAuthPlugin` (`server/conn.go` line 939): the
+    /// `mysql.user.plugin` of the account the client's `(user, host)`
+    /// resolves to, which is what decides which plugin the connection is
+    /// SWITCHED to before any password is compared.
+    ///
+    /// `None` for an unknown account or one with no plugin column, which is
+    /// Go's "no user plugin set, assuming MySQL Native Password" -- and is
+    /// also why an unknown username cannot be probed by watching which
+    /// auth-switch the server sends.
+    #[must_use]
+    pub fn auth_plugin_for(&self, username: &str, remote_host: &str) -> Option<String> {
+        let catalog = IdentityCatalog::new(
+            self.accounts
+                .accounts()
+                .into_iter()
+                .map(|(user, host)| MatchedIdentity::new(&user, &host)),
+        );
+        let request = IdentityLookupRequest::new(username, remote_host, true);
+        let IdentityLookupResult::Matched(identity) = catalog.resolve(&request, &[]) else {
+            return None;
+        };
+        self.accounts
+            .plugin(identity.username(), identity.host())
+            .filter(|plugin| !plugin.is_empty())
+    }
+
     /// Resolves and verifies one native-password response against the LIVE
     /// account table.
     ///
@@ -367,6 +394,16 @@ impl ConfiguredUserStore {
                             response,
                         )
                     }
+                }
+                // `response` here is the CLEARTEXT the caching-sha2 /
+                // sm3 full-authentication exchange collected, not a
+                // scramble. Go enters its password arms only through
+                // `len(pwd) > 0 || len(authentication) > 0`, so an empty
+                // stored string AND an empty response is the passwordless
+                // success that never reaches the hash at all.
+                LoginPluginVerification::HashingPlugin(plugin) => {
+                    (encoded.is_empty() && response.is_empty())
+                        || check_hashing_password(encoded, response, plugin)
                 }
                 LoginPluginVerification::PasswordlessOnly => {
                     encoded.is_empty() && response.is_empty()

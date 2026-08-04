@@ -192,11 +192,11 @@ impl Session {
     /// Go's `executeCreateUser` gate (`executor/simple.go` around line 1051):
     /// `INSERT` on `mysql.user`, else the global `CREATE USER` privilege.
     ///
-    /// Go's role form also accepts `CreateRolePriv`, which this registry does
-    /// not model as a column at all (see `privilege::ALL_GLOBAL_PRIVS`), so
-    /// that disjunct is permanently false here and the check collapses to
-    /// `CREATE USER` -- fail-closed, and exactly Go's answer for every
-    /// account that was never granted `CREATE ROLE`.
+    /// The role form accepts `CreateRolePriv` as well (`simple.go` line
+    /// 1060), and it is a real `mysql.user` column (`Create_role_priv`), so
+    /// it is a privilege here like any other. Measured: an account holding
+    /// only `GRANT CREATE ROLE ON *.*` creates a ROLE and is refused
+    /// `CREATE USER` with `CREATE User`.
     ///
     /// The privilege text is Go's own argument VERBATIM, capitalization
     /// quirk included: `CREATE USER` reports `CREATE User`.
@@ -206,6 +206,7 @@ impl Session {
             tidb_mysql::consts::UserTable,
             privilege::GlobalPriv::Insert,
         ) || self.has_scoped_privilege("", "", privilege::GlobalPriv::CreateUser)
+            || (is_role && self.has_scoped_privilege("", "", privilege::GlobalPriv::CreateRole))
         {
             return Ok(());
         }
@@ -220,14 +221,17 @@ impl Session {
     }
 
     /// Go's `executeDropUser` gate (`executor/simple.go` around line 2519):
-    /// `DELETE` on `mysql.user`, else the global `CREATE USER` privilege
-    /// (`DropRolePriv` is unmodelled, exactly as `CreateRolePriv` is above).
+    /// `DELETE` on `mysql.user`, else the global `CREATE USER` privilege, and
+    /// for the role form `DROP ROLE` as well (measured: an account holding
+    /// only `GRANT DROP ROLE ON *.*` drops a role and is refused
+    /// `DROP USER`).
     fn require_drop_user_privilege(&self, is_role: bool) -> Result<(), DriverError> {
         if self.has_scoped_privilege(
             tidb_mysql::consts::SystemDB,
             tidb_mysql::consts::UserTable,
             privilege::GlobalPriv::Delete,
         ) || self.has_scoped_privilege("", "", privilege::GlobalPriv::CreateUser)
+            || (is_role && self.has_scoped_privilege("", "", privilege::GlobalPriv::DropRole))
         {
             return Ok(());
         }

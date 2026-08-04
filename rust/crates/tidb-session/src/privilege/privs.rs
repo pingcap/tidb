@@ -45,6 +45,8 @@ pub enum GlobalPriv {
     Trigger,
     CreateView,
     ShowView,
+    CreateRole,
+    DropRole,
     CreateTemporaryTables,
     LockTables,
     CreateRoutine,
@@ -61,8 +63,8 @@ pub enum GlobalPriv {
     GrantOption,
 }
 
-/// Go `mysql.AllGlobalPrivs`, minus `CreateRolePriv`/`DropRolePriv` (roles
-/// are out of scope here) -- the print/iteration order `SHOW GRANTS` uses.
+/// Go `mysql.AllGlobalPrivs` -- the print/iteration order `SHOW GRANTS`
+/// uses, and the exact list `GRANT ALL PRIVILEGES` expands to.
 pub const ALL_GLOBAL_PRIVS: &[GlobalPriv] = &[
     GlobalPriv::Select,
     GlobalPriv::Insert,
@@ -82,6 +84,8 @@ pub const ALL_GLOBAL_PRIVS: &[GlobalPriv] = &[
     GlobalPriv::Trigger,
     GlobalPriv::CreateView,
     GlobalPriv::ShowView,
+    GlobalPriv::CreateRole,
+    GlobalPriv::DropRole,
     GlobalPriv::CreateTemporaryTables,
     GlobalPriv::LockTables,
     GlobalPriv::CreateRoutine,
@@ -207,6 +211,8 @@ impl GlobalPriv {
             Self::Trigger => "TRIGGER",
             Self::CreateView => "CREATE VIEW",
             Self::ShowView => "SHOW VIEW",
+            Self::CreateRole => "CREATE ROLE",
+            Self::DropRole => "DROP ROLE",
             Self::CreateTemporaryTables => "CREATE TEMPORARY TABLES",
             Self::LockTables => "LOCK TABLES",
             Self::CreateRoutine => "CREATE ROUTINE",
@@ -249,6 +255,8 @@ impl GlobalPriv {
             Self::Trigger => "Trigger",
             Self::CreateView => "Create View",
             Self::ShowView => "Show View",
+            Self::CreateRole => "Create Role",
+            Self::DropRole => "Drop Role",
             Self::GrantOption => "Grant Option",
             // Go's `Priv2Str` spells the remaining entries in the same
             // uppercase form `SHOW GRANTS` prints.
@@ -282,6 +290,8 @@ impl GlobalPriv {
             "TRIGGER" => Self::Trigger,
             "CREATE VIEW" => Self::CreateView,
             "SHOW VIEW" => Self::ShowView,
+            "CREATE ROLE" => Self::CreateRole,
+            "DROP ROLE" => Self::DropRole,
             "CREATE TEMPORARY TABLES" => Self::CreateTemporaryTables,
             "LOCK TABLES" => Self::LockTables,
             "CREATE ROUTINE" => Self::CreateRoutine,

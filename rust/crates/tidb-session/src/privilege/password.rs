@@ -87,6 +87,14 @@ pub enum LoginPluginVerification {
     /// stored native hash, and accept an empty response for an empty
     /// stored string. Go's `mysql.AuthNativePassword` arm.
     NativeHash,
+    /// Re-derive the stored SHA-crypt envelope from the CLEARTEXT the client
+    /// sent and compare -- Go's `caching_sha2_password` and
+    /// `tidb_sm3_password` arms, which share one
+    /// [`check_hashing_password`] driven by SHA-256 or SM3.
+    ///
+    /// The payload is the plugin name, because the two plugins differ only
+    /// in that digest.
+    HashingPlugin(&'static str),
     /// Only a passwordless login -- empty stored string AND empty client
     /// response -- can succeed.
     ///
@@ -94,9 +102,9 @@ pub enum LoginPluginVerification {
     /// `else if len(pwd) > 0 || len(authentication) > 0`, so an account with
     /// an empty `authentication_string` that receives an empty response
     /// authenticates whatever its plugin is; this arm reproduces exactly
-    /// that, and denies the rest because this tier cannot run the plugin's
-    /// hash (`caching_sha2_password`, `tidb_sm3_password`) or does not know
-    /// it at all (Go's `default` arm, which denies).
+    /// that, and denies the rest because Go's `default` arm -- an
+    /// authentication plugin it does not know -- logs "unknown
+    /// authentication plugin" and denies.
     PasswordlessOnly,
     /// No network login can succeed, whatever the client sends.
     ///
@@ -119,6 +127,10 @@ pub enum LoginPluginVerification {
 pub fn login_plugin_verification(plugin: &str) -> LoginPluginVerification {
     if plugin.is_empty() || plugin == AuthNativePassword {
         LoginPluginVerification::NativeHash
+    } else if plugin == AuthCachingSha2Password {
+        LoginPluginVerification::HashingPlugin(AuthCachingSha2Password)
+    } else if plugin == AuthTiDBSM3Password {
+        LoginPluginVerification::HashingPlugin(AuthTiDBSM3Password)
     } else if plugin == AuthSocket
         || plugin == AuthTiDBAuthToken
         || plugin == AuthLDAPSimple
@@ -126,10 +138,20 @@ pub fn login_plugin_verification(plugin: &str) -> LoginPluginVerification {
     {
         LoginPluginVerification::Deny
     } else {
-        // `caching_sha2_password`, `tidb_sm3_password`, and any plugin name
-        // this tier does not know -- Go's `default` arm.
+        // Any plugin name this tier does not know -- Go's `default` arm.
         LoginPluginVerification::PasswordlessOnly
     }
+}
+
+/// Whether an account on `plugin` needs the CLEARTEXT password rather than a
+/// `mysql_native_password` scramble, which is what makes the wire front end
+/// run Go's `authSha`/`authSM3` full-authentication exchange for it.
+#[must_use]
+pub fn plugin_needs_cleartext(plugin: &str) -> bool {
+    matches!(
+        login_plugin_verification(plugin),
+        LoginPluginVerification::HashingPlugin(_)
+    )
 }
 
 /// One account specification's `IDENTIFIED WITH <plugin> [BY '<password>' |
@@ -257,6 +279,56 @@ pub(super) fn hash_tidb_sm3(password: &str) -> String {
         5 * SHA_CRYPT_ITERATION_MULTIPLIER,
         tidb_parser::auth::sm3_hash,
     )
+}
+
+/// Go `pkg/parser/auth.CheckHashingPassword` (`caching_sha2.go` line 193):
+/// re-derives the stored hash from `password` using the SALT AND ITERATION
+/// COUNT the stored hash itself carries, and compares the whole envelope.
+///
+/// `password` is the CLEARTEXT, not a scramble: TiDB never implements the
+/// caching fast path, so both `caching_sha2_password` and
+/// `tidb_sm3_password` always drive the client through full authentication
+/// and hand `ConnectionVerification` the plaintext (`server/conn.go`'s
+/// `authSha`/`authSM3`, and `checkPasswordForPlugin` passing
+/// `string(authentication)` straight in).
+///
+/// `false` for every malformed stored hash, which is Go's answer too: its
+/// three error returns (wrong part count, digest type other than `A`,
+/// unparsable iteration count) all reach a caller that logs and treats the
+/// check as failed.
+#[must_use]
+pub fn check_hashing_password(stored: &str, password: &[u8], plugin: &str) -> bool {
+    let hash: fn(&[u8]) -> [u8; 32] = if plugin == AuthCachingSha2Password {
+        |input| Sha256Hash::digest(input).into()
+    } else if plugin == AuthTiDBSM3Password {
+        tidb_parser::auth::sm3_hash
+    } else {
+        // Go's `switch hash` leaves `newHash` empty for an unrecognized
+        // plugin and then compares it to the stored hash, which no real
+        // stored hash equals.
+        return false;
+    };
+    // Go splits on `$`, so a valid hash is exactly `["", "A", "<iters>",
+    // "<salt><digest>"]`.
+    let parts: Vec<&str> = stored.split('$').collect();
+    let [_, "A", iterations, tail] = parts.as_slice() else {
+        return false;
+    };
+    let Ok(iterations) = u32::from_str_radix(iterations, 16) else {
+        return false;
+    };
+    let Some(salt) = tail.as_bytes().get(..SHA_CRYPT_SALT_LEN) else {
+        return false;
+    };
+    let Ok(password) = std::str::from_utf8(password) else {
+        return false;
+    };
+    sha_crypt(
+        password,
+        salt,
+        iterations * SHA_CRYPT_ITERATION_MULTIPLIER,
+        hash,
+    ) == stored
 }
 
 /// Go `pkg/parser/auth.hashCrypt`, ported 1:1 (see the numbered steps in

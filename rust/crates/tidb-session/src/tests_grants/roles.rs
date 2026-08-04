@@ -431,3 +431,73 @@ fn a_role_confers_process_only_while_it_is_active() {
     admin.run("REVOKE watcher FROM 'bob'@'%'").unwrap();
     assert_eq!(row_text(session.run("show processlist")).len(), 1);
 }
+
+/// `CREATE ROLE` and `DROP ROLE` are their own PRIVILEGES
+/// (`mysql.user.Create_role_priv` / `Drop_role_priv`), and each carries only
+/// its own statement -- the role form, never the user form.
+///
+/// MEASURED against a real TiDB session in this checkout. For an account
+/// holding only `GRANT CREATE ROLE ON *.*`:
+///
+/// ```text
+/// CREATE ROLE 'made'@'%'    OK
+/// CREATE USER 'plain'@'%'   1227 ... the CREATE User privilege(s) ...
+/// DROP ROLE 'made'@'%'      1227 ... the DROP ROLE or CREATE USER ...
+/// ```
+///
+/// and, symmetrically, for `GRANT DROP ROLE ON *.*`:
+///
+/// ```text
+/// CREATE ROLE 'x'@'%'       1227 ... the CREATE ROLE or CREATE USER ...
+/// DROP ROLE 'togo'@'%'      OK
+/// DROP USER 'rc'@'%'        1227 ... the CREATE USER privilege(s) ...
+/// ```
+///
+/// This tier used to model neither column, so BOTH `CREATE ROLE` and
+/// `DROP ROLE` were refused for an account that legitimately held them.
+#[test]
+fn create_role_and_drop_role_are_privileges_of_their_own() {
+    let privs = privilege::PrivilegeRegistry::default();
+    let mut boot = bootstrap_session(&privs);
+    for sql in [
+        "CREATE USER 'rc'@'%'",
+        "GRANT CREATE ROLE ON *.* TO 'rc'@'%'",
+        "CREATE USER 'dc'@'%'",
+        "GRANT DROP ROLE ON *.* TO 'dc'@'%'",
+        "CREATE ROLE 'togo'@'%'",
+    ] {
+        boot.run(sql).unwrap();
+    }
+    // The grant round-trips through `SHOW GRANTS` under Go's own spelling.
+    assert_eq!(
+        row_text(boot.run("SHOW GRANTS FOR 'rc'@'%'"))[0][0],
+        "GRANT CREATE ROLE ON *.* TO 'rc'@'%'",
+    );
+
+    let denied = |session: &mut Session, sql: &str| match session.run(sql) {
+        Err(error) => error.to_mysql_error(),
+        Ok(output) => panic!("{sql} must be denied, got {output:?}"),
+    };
+
+    let mut rc = session_as(&privs, boot.shared_catalog(), "rc", "%");
+    rc.run("CREATE ROLE 'made'@'%'").unwrap();
+    let refusal = denied(&mut rc, "CREATE USER 'plain'@'%'");
+    assert_eq!(refusal.code, 1227);
+    assert!(
+        refusal.message.contains("the CREATE User privilege(s)"),
+        "{}",
+        refusal.message
+    );
+    assert!(denied(&mut rc, "DROP ROLE 'made'@'%'")
+        .message
+        .contains("the DROP ROLE or CREATE USER privilege(s)"));
+
+    let mut dc = session_as(&privs, boot.shared_catalog(), "dc", "%");
+    assert!(denied(&mut dc, "CREATE ROLE 'x'@'%'")
+        .message
+        .contains("the CREATE ROLE or CREATE USER privilege(s)"));
+    dc.run("DROP ROLE 'togo'@'%'").unwrap();
+    assert!(denied(&mut dc, "DROP USER 'rc'@'%'")
+        .message
+        .contains("the CREATE USER privilege(s)"));
+}

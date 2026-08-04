@@ -56,6 +56,7 @@ use crate::sql_node::{
 use crate::wire_status::{WireStatus, SERVER_STATUS_CURSOR_EXISTS, SERVER_STATUS_LAST_ROW_SEND};
 use tidb_planner::prepared_dml::PreparedBindValue;
 use tidb_planner::transaction_control::classify_transaction_control;
+use tidb_session::privilege::plugin_needs_cleartext;
 
 /// Extracts the signed-integer parameters a point read requires, rejecting a
 /// string parameter (a point read binds only a clustered integer handle).
@@ -454,6 +455,14 @@ impl From<PacketError> for MysqlConnectionError {
     }
 }
 
+/// Go's `authSha` packet: the one-byte command that introduces a
+/// caching_sha2 / sm3 authentication decision, and the `fastAuthFail`
+/// decision itself. TiDB caches nothing and serves no RSA public key, so
+/// `fastAuthFail` is the ONLY decision it ever sends
+/// (`server/conn.go`'s "Currently we always send a FastAuthFail").
+const SHA2_FAST_AUTH_COMMAND: u8 = 1;
+const SHA2_FAST_AUTH_FAIL: u8 = 4;
+
 /// Serves one accepted socket on a MySQL port that offers no TLS.
 ///
 /// The port advertises no `CLIENT_SSL`, so a client that wants TLS is refused
@@ -671,11 +680,21 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             exit: ConnectionExit::AuthenticationRejected,
         });
     }
+    // Go `checkAuthPlugin` (`server/conn.go` line 939): the ACCOUNT's
+    // `mysql.user.plugin` -- not the plugin the client offered -- decides
+    // what this connection speaks. An account with no plugin (or none at
+    // all) is Go's "assuming MySQL Native Password".
+    let account_plugin = users
+        .auth_plugin_for(&response.user, &peer_addr.ip().to_string())
+        .unwrap_or_else(|| AUTH_NATIVE_PASSWORD.to_owned());
+    // Go switches when the server's advertised plugin differs from EITHER
+    // the account's or the client's. This server always advertises
+    // `mysql_native_password`, so that reduces to these two disjuncts.
     let (auth_response, response_sequence) = if capabilities & CLIENT_PLUGIN_AUTH != 0
-        && !response.auth_plugin.is_empty()
-        && response.auth_plugin != AUTH_NATIVE_PASSWORD
+        && (account_plugin != AUTH_NATIVE_PASSWORD
+            || (!response.auth_plugin.is_empty() && response.auth_plugin != AUTH_NATIVE_PASSWORD))
     {
-        let request = AuthSwitchRequest::new(AUTH_NATIVE_PASSWORD, salt.to_vec())
+        let request = AuthSwitchRequest::new(&account_plugin, salt.to_vec())
             .map_err(|error| MysqlConnectionError::Handshake(error.to_string()))?;
         write_payload(&mut output, reply_sequence, &request.encode_payload())?;
         reader.set_sequence(reply_sequence + 1);
@@ -683,6 +702,37 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     } else {
         (response.auth, reply_sequence)
     };
+    // Go's `authSha`/`authSM3` (`server/conn.go` lines 761 and 799), which
+    // are one function twice: TiDB implements NEITHER the cached fast path
+    // NOR the RSA public-key exchange, so it unconditionally answers
+    // `fastAuthFail` and reads the CLEARTEXT password the client then sends
+    // over what it believes is a secure channel. The reply is NUL-trimmed
+    // exactly as Go's `bytes.Trim(data, "\x00")` does.
+    //
+    // An EMPTY response skips the exchange entirely -- Go's own carve-out
+    // for issue 40831, because asking a passwordless client for a full
+    // authentication confuses it.
+    let (auth_response, response_sequence) =
+        if plugin_needs_cleartext(&account_plugin) && !auth_response.is_empty() {
+            write_payload(
+                &mut output,
+                response_sequence,
+                &[SHA2_FAST_AUTH_COMMAND, SHA2_FAST_AUTH_FAIL],
+            )?;
+            reader.set_sequence(response_sequence + 1);
+            let cleartext = reader.read_packet()?;
+            let start = cleartext
+                .iter()
+                .position(|byte| *byte != 0)
+                .unwrap_or(cleartext.len());
+            let end = cleartext
+                .iter()
+                .rposition(|byte| *byte != 0)
+                .map_or(start, |last| last + 1);
+            (cleartext[start..end].to_vec(), response_sequence + 2)
+        } else {
+            (auth_response, response_sequence)
+        };
     let auth_result = users.authenticate_native(
         &response.user,
         &peer_addr.ip().to_string(),
