@@ -1239,8 +1239,8 @@ func testHandleBatchCopResponseFallbackCountersAfterRegionSplit(t *testing.T) {
 	for _, task := range retryTasks {
 		require.Empty(t, task.batchTaskList)
 	}
-	// Retry fan-out is currently counted as two fallbacks, making the
-	// successful count negative before conversion to uint64.
-	require.Equal(t, uint64(18446744073709551615), storeBatchedNum.Load())
-	require.Equal(t, uint64(2), storeBatchedFallbackNum.Load())
+	// One failed batched input rebuilds into one retry task per new Region,
+	// but counts as exactly one fallback.
+	require.Zero(t, storeBatchedNum.Load())
+	require.Equal(t, uint64(1), storeBatchedFallbackNum.Load())
 }
