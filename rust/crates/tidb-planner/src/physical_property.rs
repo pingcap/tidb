@@ -221,7 +221,13 @@ impl PhysicalProperty {
     /// `property.NewPhysicalProperty`: a required order over `cols`, all in
     /// the same direction.
     #[must_use]
-    pub fn new(task_tp: TaskType, cols: &[i64], desc: bool, expected_cnt: f64, enforced: bool) -> Self {
+    pub fn new(
+        task_tp: TaskType,
+        cols: &[i64],
+        desc: bool,
+        expected_cnt: f64,
+        enforced: bool,
+    ) -> Self {
         Self {
             sort_items: cols.iter().map(|&col| SortItem::new(col, desc)).collect(),
             task_tp,
