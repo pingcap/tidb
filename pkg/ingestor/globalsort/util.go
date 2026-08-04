@@ -295,52 +295,55 @@ func SubtaskMetaPath(taskID int64, subtaskID int64) string {
 // subtask. It balances groups in rounds of nodeCnt to use all available
 // resources. It also limits each group's input files and caps the total target
 // files so the following ingest step can read them all.
-func DivideMergeSortDataFiles(dataFiles []string, nodeCnt int, mergeConc int) ([][]string, error) {
+func DivideMergeSortDataFiles(files []string, nodeCnt, concurrency int) ([][]string, error) {
 	if nodeCnt == 0 {
 		return nil, errors.Errorf("unsupported zero node count")
 	}
-	if len(dataFiles) == 0 {
+	if len(files) == 0 {
 		return [][]string{}, nil
 	}
-	maxFiles := simplesst.GetAdjustedMergeSortFileCountStep(mergeConc)
-	fileCnt := len(dataFiles)
+	maxFiles := simplesst.GetAdjustedMergeSortFileCountStep(concurrency)
+	fileCnt := len(files)
 	groups := make([][]string, 0, nodeCnt)
-	// Fill complete rounds first so every available subtask slot has work.
-	fullGroups := fileCnt / maxFiles / nodeCnt * nodeCnt
-	for range fullGroups {
-		groups = append(groups, dataFiles[:maxFiles])
-		dataFiles = dataFiles[maxFiles:]
+	// Part 1: Fill complete rounds of maximum-sized groups so every available
+	// subtask slot has work.
+	fullGroupCnt := fileCnt / maxFiles / nodeCnt * nodeCnt
+	for range fullGroupCnt {
+		groups = append(groups, files[:maxFiles])
+		files = files[maxFiles:]
 	}
-	targetCnt := fullGroups * getTargetDataFileCount(maxFiles, mergeConc)
-	targetLimit := int(simplesst.GetAdjustedMergeSortOverlapThreshold(mergeConc))
-	remaining := fileCnt - fullGroups*maxFiles
+	targetCnt := fullGroupCnt * getTargetDataFileCount(maxFiles, concurrency)
+	targetLimit := int(simplesst.GetAdjustedMergeSortOverlapThreshold(concurrency))
+	remaining := fileCnt - fullGroupCnt*maxFiles
 	if remaining == 0 {
 		if targetCnt > targetLimit {
-			return nil, errdef.ErrTooManyDataFiles.GenWithStackByArgs(fileCnt, mergeConc, targetLimit)
+			return nil, errdef.ErrTooManyDataFiles.GenWithStackByArgs(fileCnt, concurrency, targetLimit)
 		}
 		return groups, nil
 	}
 
+	// Part 2: Divide the remaining files evenly while preserving parallelism
+	// and keeping the target file count within the ingest limit.
 	minFiles := 32 // Each subtask should merge at least 32 files.
 	maxGroups := max(min(remaining/minFiles, nodeCnt), 1)
 	minGroups := (remaining + maxFiles - 1) / maxFiles
-	remainingGroups := 0
+	groupCnt := 0
 	// Prefer more groups for parallelism while staying within the ingest limit.
-	for candidateGroups := maxGroups; candidateGroups >= minGroups; candidateGroups-- {
-		finalTargetCnt := targetCnt + getEvenlyDividedTargetDataFileCount(remaining, candidateGroups, mergeConc)
-		if finalTargetCnt <= targetLimit {
-			remainingGroups = candidateGroups
+	for candidateCnt := maxGroups; candidateCnt >= minGroups; candidateCnt-- {
+		candidateTargetCnt := targetCnt + getEvenlyDividedTargetDataFileCount(remaining, candidateCnt, concurrency)
+		if candidateTargetCnt <= targetLimit {
+			groupCnt = candidateCnt
 			break
 		}
 	}
-	if remainingGroups == 0 {
-		return nil, errdef.ErrTooManyDataFiles.GenWithStackByArgs(fileCnt, mergeConc, targetLimit)
+	if groupCnt == 0 {
+		return nil, errdef.ErrTooManyDataFiles.GenWithStackByArgs(fileCnt, concurrency, targetLimit)
 	}
 
-	groupSizes := mathutil.Divide2Batches(remaining, remainingGroups)
-	for _, size := range groupSizes {
-		groups = append(groups, dataFiles[:size])
-		dataFiles = dataFiles[size:]
+	sizes := mathutil.Divide2Batches(remaining, groupCnt)
+	for _, size := range sizes {
+		groups = append(groups, files[:size])
+		files = files[size:]
 	}
 	return groups, nil
 }
