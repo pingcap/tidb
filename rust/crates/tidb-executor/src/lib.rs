@@ -74,6 +74,7 @@ pub mod kv_table;
 pub mod limit;
 pub mod mem_quota;
 pub mod mem_table;
+pub(crate) mod merge_join_plan;
 pub mod partition_pruning;
 pub mod partition_routing;
 pub use partition_routing::{PartitionDef, PartitionKind, PartitionSpec, RangeBound};
