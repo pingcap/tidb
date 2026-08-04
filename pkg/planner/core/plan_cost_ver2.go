@@ -373,7 +373,7 @@ func getPlanCostVer24PhysicalIndexLookUpReader(pp base.PhysicalPlan, taskType pr
 	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCostVer2, nil
 	}
-	planCost, usePaging, err := getPlanCostVer24IndexLookUpReader(indexLookUpCostInput{
+	planCost, usePaging, err := getIndexLookUpReaderCostVer2(indexLookUpCostInput{
 		ctx:         p.SCtx(),
 		indexPlan:   p.IndexPlan,
 		tablePlan:   p.TablePlan,
@@ -390,7 +390,7 @@ func getPlanCostVer24PhysicalIndexLookUpReader(pp base.PhysicalPlan, taskType pr
 	return p.PlanCostVer2, nil
 }
 
-func getPlanCostVer24IndexLookUpReader(input indexLookUpCostInput, taskType property.TaskType, option *costusage.PlanCostOption) (costusage.CostVer2, bool, error) {
+func getIndexLookUpReaderCostVer2(input indexLookUpCostInput, taskType property.TaskType, option *costusage.PlanCostOption) (costusage.CostVer2, bool, error) {
 	indexRows := getCardinality(input.indexPlan, option.CostFlag)
 	tableRows := getCardinality(input.tablePlan, option.CostFlag)
 

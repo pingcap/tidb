@@ -618,6 +618,9 @@ func getTaskPlanCost(t base.Task) (float64, bool, error) {
 // IndexLookUpReader without changing the candidate task or its plan trees.
 func getIndexLookUpReaderEquivalentCost(cop *physicalop.CopTask) (float64, error) {
 	ctx := cop.IndexPlan.SCtx()
+	// This is a speculative comparison. Clones isolate both the temporary
+	// table-side stats adjustment below and plan-cost cache writes made while
+	// recalculating physical-plan costs.
 	indexPlan, err := cop.IndexPlan.Clone(ctx)
 	if err != nil {
 		return 0, err
@@ -646,10 +649,10 @@ func getIndexLookUpReaderEquivalentCost(cop *physicalop.CopTask) (float64, error
 	}
 	option := costusage.NewDefaultPlanCostOption().WithCostFlag(costusage.CostFlagRecalculate)
 	if ctx.GetSessionVars().CostModelVersion == modelVer2 {
-		cost, _, err := getPlanCostVer24IndexLookUpReader(input, property.CopMultiReadTaskType, option)
+		cost, _, err := getIndexLookUpReaderCostVer2(input, property.CopMultiReadTaskType, option)
 		return cost.GetCost(), err
 	}
-	cost, _, err := getPlanCostVer14IndexLookUpReader(input, option)
+	cost, _, err := getIndexLookUpReaderCostVer1(input, option)
 	return cost, err
 }
 

@@ -170,7 +170,7 @@ func getPlanCostVer14PhysicalIndexLookUpReader(pp base.PhysicalPlan, _ property.
 	if p.PlanCostInit && !hasCostFlag(costFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCost, nil
 	}
-	planCost, usePaging, err := getPlanCostVer14IndexLookUpReader(indexLookUpCostInput{
+	planCost, usePaging, err := getIndexLookUpReaderCostVer1(indexLookUpCostInput{
 		ctx:         p.SCtx(),
 		indexPlan:   p.IndexPlan,
 		tablePlan:   p.TablePlan,
@@ -186,7 +186,7 @@ func getPlanCostVer14PhysicalIndexLookUpReader(pp base.PhysicalPlan, _ property.
 	return p.PlanCost, nil
 }
 
-func getPlanCostVer14IndexLookUpReader(input indexLookUpCostInput, option *costusage.PlanCostOption) (float64, bool, error) {
+func getIndexLookUpReaderCostVer1(input indexLookUpCostInput, option *costusage.PlanCostOption) (float64, bool, error) {
 	planCost := 0.0
 	// child's cost
 	for _, child := range []base.PhysicalPlan{input.indexPlan, input.tablePlan} {
