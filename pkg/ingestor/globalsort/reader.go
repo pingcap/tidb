@@ -86,16 +86,28 @@ func readAllData(
 
 	readerMemory := semaphore.NewWeighted(memoryLimit)
 	readerMemorySizes := make([]int64, len(dataFiles))
+	rangeSizes := make([]uint64, len(dataFiles))
 	totalFileSize := uint64(0)
+	bufSize := int64(simplesst.ConcurrentReaderBufferSizePerConc)
+	contenders := int64(0)
+	for i := range dataFiles {
+		rangeSizes[i] = estimatedEndOffsets[i] - startOffsets[i]
+		totalFileSize += rangeSizes[i]
+		if rangeSizes[i] >= uint64(bufSize) {
+			contenders++
+		}
+	}
 	// A file is charged whole buffers of its own range, up to whichever of the
 	// per-file cap and the whole budget is smaller. A range that cannot fill one
 	// buffer is read as a plain stream and charged nothing.
-	bufSize := int64(simplesst.ConcurrentReaderBufferSizePerConc)
 	perFileLimit := min(int64(maxConcurrency)*bufSize, memoryLimit)
+	if contenders > 1 {
+		// Share the budget out rather than letting the first files take it all:
+		// having more of them decoding at once beats reading any one of them deeper.
+		perFileLimit = min(perFileLimit, max(memoryLimit/contenders, bufSize))
+	}
 	for i := range dataFiles {
-		size := estimatedEndOffsets[i] - startOffsets[i]
-		totalFileSize += size
-		readerMemorySizes[i] = int64(min(size, uint64(perFileLimit))) / bufSize * bufSize
+		readerMemorySizes[i] = int64(min(rangeSizes[i], uint64(perFileLimit))) / bufSize * bufSize
 		if readerMemorySizes[i] > 0 {
 			logutil.Logger(ctx).Info("found hotspot file in readAllData",
 				zap.String("filename", dataFiles[i]),
