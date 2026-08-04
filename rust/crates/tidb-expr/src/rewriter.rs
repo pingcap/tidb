@@ -1063,6 +1063,114 @@ mod tests {
         rewritten.eval(&NoColumns, c.get_row(0)).unwrap()
     }
 
+    /// The flen each of these builtins reports is the CLIENT-VISIBLE
+    /// `ColumnLength` in the result-set metadata, so a wrong one is
+    /// wire-observable even when the VALUE is right. Each expectation is the
+    /// `bf.tp.SetFlen(...)` line of the owning Go `getFunction`.
+    #[test]
+    fn builtin_result_flens_match_go_getfunction() {
+        let str_arg = |text: &str| Expr::String(text.to_owned());
+        let int_arg = |text: &str| Expr::Int(text.to_owned());
+        let call = |name: &str, args: Vec<Expr>| Expr::Func {
+            name: name.to_owned(),
+            args,
+            origin_position: 0,
+        };
+        let flen = |expr: &Expr| rewrite_expr(expr).unwrap().static_type().unwrap().flen();
+
+        let uuid = "6ccd780c-baba-1026-9564-5b8c656024db";
+        for (expr, expected, why) in [
+            // `md5FunctionClass` (`builtin_encryption.go:592`) -- 32 hex
+            // digits. Its SHA siblings already carried 40 and 128; MD5 was the
+            // odd one out, lumped into the UNSIZED string family.
+            (call("MD5", vec![str_arg("a")]), 32, "md5"),
+            (call("SHA1", vec![str_arg("a")]), 40, "sha1"),
+            (
+                call("SHA2", vec![str_arg("a"), int_arg("256")]),
+                128,
+                "sha2",
+            ),
+            // `passwordFunctionClass` (`:487`) -- `mysql.PWDHashLen + 1`, the
+            // 40 hex digits plus the leading `*`.
+            (call("PASSWORD", vec![str_arg("x")]), 41, "password"),
+            // `uncompressedLengthFunctionClass` (`:972`).
+            (
+                call("UNCOMPRESSED_LENGTH", vec![str_arg("x")]),
+                10,
+                "uncompressed_length",
+            ),
+            // `uncompressFunctionClass` (`:911`) -- `mysql.MaxBlobWidth`.
+            (
+                call("UNCOMPRESS", vec![str_arg("x")]),
+                16_777_216,
+                "uncompress",
+            ),
+            // `uuidToBinFunctionClass` (`builtin_miscellaneous.go:1822`) and
+            // `binToUUIDFunctionClass` (`:1901`).
+            (call("UUID_TO_BIN", vec![str_arg(uuid)]), 16, "uuid_to_bin"),
+            (call("BIN_TO_UUID", vec![str_arg("x")]), 32, "bin_to_uuid"),
+            // `uuidTimestampFunctionClass` (`:1683`).
+            (
+                call("UUID_TIMESTAMP", vec![str_arg("x")]),
+                18,
+                "uuid_timestamp",
+            ),
+            // `tidbShardFunctionClass` (`:1988`) is 4 (a hash taken mod 256);
+            // `vitessHashFunctionClass` (`:1766`) is 20 (a full 64-bit digest).
+            (call("TIDB_SHARD", vec![int_arg("1")]), 4, "tidb_shard"),
+            (call("VITESS_HASH", vec![int_arg("1")]), 20, "vitess_hash"),
+            // The `SessionVars` readers, every one of them `SetFlen(64)` in
+            // `builtin_info.go`.
+            (call("DATABASE", vec![]), 64, "database"),
+            (call("SCHEMA", vec![]), 64, "schema"),
+            (call("VERSION", vec![]), 64, "version"),
+            (call("CURRENT_USER", vec![]), 64, "current_user"),
+            (call("CURRENT_ROLE", vec![]), 64, "current_role"),
+            (call("USER", vec![]), 64, "user"),
+            (call("SESSION_USER", vec![]), 64, "session_user"),
+            (call("SYSTEM_USER", vec![]), 64, "system_user"),
+            // `encodeFunctionClass`/`decodeFunctionClass` (`:439`, `:389`)
+            // copy argument 0's flen -- the stream cipher is
+            // length-preserving. The argument here is `MD5(...)` rather than a
+            // string LITERAL because this rewriter's `constant_string` leaves a
+            // literal's flen unspecified where Go's `DefaultTypeForValue` sizes
+            // it from the text; that gap is its own (pre-existing) divergence,
+            // and pinning it here would assert the wrong number for ENCODE.
+            (
+                call(
+                    "ENCODE",
+                    vec![call("MD5", vec![str_arg("abc")]), str_arg("k")],
+                ),
+                32,
+                "encode",
+            ),
+            (
+                call(
+                    "DECODE",
+                    vec![call("MD5", vec![str_arg("abc")]), str_arg("k")],
+                ),
+                32,
+                "decode",
+            ),
+            // `NAME_CONST` clones argument 1's WHOLE type (`:1259`), so it
+            // reports the literal's own one-digit width, not a fixed one.
+            (
+                call("NAME_CONST", vec![str_arg("a"), int_arg("5")]),
+                1,
+                "name_const",
+            ),
+        ] {
+            assert_eq!(flen(&expr), expected, "{why}");
+        }
+
+        // `AES_ENCRYPT`/`AES_DECRYPT` stay REFUSED on purpose: the ported body
+        // is `aes-128-ecb` only, while Go picks the cipher from the
+        // `block_encryption_mode` session variable, which this gate cannot
+        // see. A refusal beats a silently wrong ciphertext.
+        assert!(rewrite_expr(&call("AES_ENCRYPT", vec![str_arg("a"), str_arg("k")])).is_err());
+        assert!(rewrite_expr(&call("AES_DECRYPT", vec![str_arg("a"), str_arg("k")])).is_err());
+    }
+
     /// `IS NULL` / `IS TRUE` / `IS FALSE` (and their `IS NOT` forms) return
     /// 0 or 1 and never NULL, which is what makes the `IS NOT` wrapping NOT
     /// exact. `IS UNKNOWN` is `IS NULL`.

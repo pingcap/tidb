@@ -45,9 +45,13 @@ pub(super) fn returns_binary_string(name: &str) -> bool {
     // `weight_string` is the fourth: `weightStringFunctionClass.getFunction`
     // calls `types.SetBinChsClnFlag(bf.tp)` on a result whose bytes are a
     // collation SORT KEY, which is not text in any charset.
+    // `uuid_to_bin` (`builtin_miscellaneous.go:1822`) and `uncompress`
+    // (`builtin_encryption.go:912`) are the fifth and sixth: both end their
+    // `getFunction` with `types.SetBinChsClnFlag(bf.tp)` over a result that is
+    // raw bytes -- sixteen address bytes and an inflated payload.
     matches!(
         name,
-        "unhex" | "from_base64" | "inet6_aton" | "weight_string"
+        "unhex" | "from_base64" | "inet6_aton" | "weight_string" | "uuid_to_bin" | "uncompress"
     )
 }
 
@@ -118,6 +122,15 @@ pub(super) fn binary_literal_type(byte_len: usize, unsigned: bool) -> FieldType 
 /// `CAST`/`CONVERT` take a target type, not a value, argument;
 /// `GROUP_CONCAT` is an aggregate; `DATE_ADD`-family take an `Expr::Interval`
 /// argument that is not an expression at all.
+///
+/// `AES_ENCRYPT`/`AES_DECRYPT` are refused ON PURPOSE even though their
+/// two-argument bodies are ported: the ported body implements `aes-128-ecb`
+/// ONLY, while Go picks the cipher from the `block_encryption_mode` session
+/// variable (`builtin_encryption.go`'s `aesModeAttr` lookup). This function
+/// takes no session context, so it cannot see that variable -- typing the two
+/// names here would turn today's clean refusal into a SILENTLY WRONG ciphertext
+/// under any non-default mode. They stay refused until either this gate gains
+/// session context or the remaining modes are ported.
 pub(super) fn builtin_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
     let text = || {
         let mut ft = FieldType::new(FieldTypeCode::VarString);
@@ -137,8 +150,17 @@ pub(super) fn builtin_return_type(name: &str, args: &[Expression]) -> Option<Fie
         // String in, string out.
         "upper" | "ucase" | "lower" | "lcase" | "trim" | "ltrim" | "rtrim" | "reverse" | "left"
         | "right" | "substring" | "substr" | "mid" | "replace" | "repeat" | "lpad" | "rpad"
-        | "space" | "hex" | "md5" | "elt" | "make_set" | "substring_index" | "insert_func"
+        | "space" | "hex" | "elt" | "make_set" | "substring_index" | "insert_func"
         | "char_func" | "export_set" | "quote" => text(),
+        // Go `md5FunctionClass` (`pkg/expression/builtin_encryption.go:581`):
+        // connection-charset text of flen 32, the width of one hexed MD5
+        // digest -- the same shape as its `SHA`/`SHA1`/`SHA2` siblings below,
+        // which is why it does not belong in the unsized string family above.
+        "md5" if args.len() == 1 => {
+            let mut ft = text();
+            ft.set_flen(32);
+            ft
+        }
         // Go `translateFunctionClass.getFunction`: an `ETString` result whose
         // flen is argument 0's own, and `SetBinFlagOrBinStr(args[0], bf.tp)`
         // -- the latter being exactly what `derive_collation`'s `translate`
@@ -285,9 +307,22 @@ pub(super) fn builtin_return_type(name: &str, args: &[Expression]) -> Option<Fie
         "getvar_string" if args.len() == 1 => text(),
         // `SETVAR` reports -- and stores -- its value argument's type.
         "setvar" if args.len() == 2 => args[1].static_type().cloned().unwrap_or_else(text),
-        // Go reads these from `SessionVars`; each returns a string.
+        // Go reads these from `SessionVars`; each returns a string of flen 64
+        // (`databaseFunctionClass`, `versionFunctionClass`,
+        // `currentUserFunctionClass`, `currentRoleFunctionClass`,
+        // `userFunctionClass`, `currentResourceGroupFunctionClass` in
+        // `pkg/expression/builtin_info.go` -- every one of them ends in
+        // `bf.tp.SetFlen(64)`). `SCHEMA` is an alias of `DATABASE` and
+        // `SESSION_USER`/`SYSTEM_USER` of `USER`, sharing the same class and
+        // so the same width. `CURRENT_RESOURCE_GROUP` is deliberately absent:
+        // it has the same flen 64, but no evaluator arm exists for it, so it
+        // stays refused rather than typed-then-unevaluable.
         "database" | "schema" | "version" | "current_user" | "current_role" | "user"
-        | "session_user" | "system_user" => text(),
+        | "session_user" | "system_user" => {
+            let mut ft = text();
+            ft.set_flen(64);
+            ft
+        }
         // Go `connectionIDFunctionClass` fixes an unsigned `LongLong`.
         "connection_id" => {
             let mut ft = int();
@@ -305,8 +340,21 @@ pub(super) fn builtin_return_type(name: &str, args: &[Expression]) -> Option<Fie
         // a string constant the rewriter substitutes for the column reference
         // the parser produced -- see the `nextval` arm of
         // `rewrite_expr_resolved`.
-        "nextval" | "lastval" if args.len() == 1 => int(),
-        "setval" if args.len() == 2 => int(),
+        // `NEXTVAL`/`LASTVAL` are flen 10 (`builtin_info.go:1503,1576`);
+        // `SETVAL` instead copies its VALUE argument's flen
+        // (`builtin_info.go:1643`, `args[1]`), so `SETVAL(s, 1000)` is 4 wide.
+        "nextval" | "lastval" if args.len() == 1 => {
+            let mut ft = int();
+            ft.set_flen(10);
+            ft
+        }
+        "setval" if args.len() == 2 => {
+            let mut ft = int();
+            if let Some(arg) = args[1].static_type() {
+                ft.set_flen(arg.flen());
+            }
+            ft
+        }
         // Go `lastInsertIDFunctionClass` adds `mysql.UnsignedFlag`, which is
         // what makes `LAST_INSERT_ID(-1)` report 18446744073709551615 rather
         // than -1. Both the zero-argument and one-argument forms are the same
@@ -403,6 +451,99 @@ pub(super) fn builtin_return_type(name: &str, args: &[Expression]) -> Option<Fie
         {
             let mut ft = int();
             ft.set_flen(1);
+            ft
+        }
+        // `NAME_CONST(label, value)` is the identity on both value AND type:
+        // Go `nameConstFunctionClass.getFunction`
+        // (`pkg/expression/builtin_miscellaneous.go:1259`) clones the SECOND
+        // argument's whole `FieldType` over the builder's (`*bf.tp =
+        // *args[1].GetType(...)`), exactly as `ANY_VALUE` does with its only
+        // argument. The first argument is the column label, not part of the
+        // value.
+        "name_const" if args.len() == 2 => args[1].static_type()?.clone(),
+        // Go `uuidTimestampFunctionClass`
+        // (`builtin_miscellaneous.go:1679`): an `ETDecimal` of flen 18 and
+        // six fractional digits -- microsecond resolution on a Unix epoch.
+        "uuid_timestamp" if args.len() == 1 => {
+            let mut ft = FieldType::new(FieldTypeCode::NewDecimal);
+            ft.set_flen(18);
+            ft.set_decimal_under_limit(6);
+            ft
+        }
+        // Go `uuidToBinFunctionClass` (`builtin_miscellaneous.go:1814`): the
+        // raw sixteen address bytes, so `types.SetBinChsClnFlag` -- the same
+        // treatment `UNHEX` and `INET6_ATON` above get, and for the same
+        // reason (the result is not text in any charset).
+        "uuid_to_bin" if args.len() == 1 || args.len() == 2 => {
+            let mut ft = text();
+            set_binary_charset(&mut ft);
+            ft.set_flen(16);
+            ft.set_decimal(0);
+            ft
+        }
+        // Go `binToUUIDFunctionClass` (`builtin_miscellaneous.go:1898`): the
+        // printable 36-character dashed spelling in the CONNECTION charset,
+        // sized 32 -- Go's own width, which counts the hex digits and not the
+        // four dashes.
+        "bin_to_uuid" if args.len() == 1 || args.len() == 2 => {
+            let mut ft = text();
+            ft.set_flen(32);
+            ft.set_decimal(0);
+            ft
+        }
+        // Go `tidbShardFunctionClass` (`builtin_miscellaneous.go:1982`) and
+        // `vitessHashFunctionClass` (`:1760`): both are UNSIGNED ints with
+        // `types.SetBinChsClnFlag`. `TIDB_SHARD` is flen 4 because its value
+        // is a Vitess hash taken mod 256; `VITESS_HASH` is the full 64-bit
+        // digest, flen 20.
+        "tidb_shard" if args.len() == 1 => {
+            let mut ft = int();
+            ft.set_flen(4);
+            ft.add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
+            set_binary_charset(&mut ft);
+            ft
+        }
+        "vitess_hash" if args.len() == 1 => {
+            let mut ft = int();
+            ft.set_flen(20);
+            ft.add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
+            set_binary_charset(&mut ft);
+            ft
+        }
+        // Go `passwordFunctionClass` (`builtin_encryption.go:487`):
+        // `mysql.PWDHashLen + 1` = 41, the 40 hex digits of the double-SHA-1
+        // digest plus the leading `*`.
+        "password" if args.len() == 1 => {
+            let mut ft = text();
+            ft.set_flen(41);
+            ft
+        }
+        // Go `encodeFunctionClass`/`decodeFunctionClass`
+        // (`builtin_encryption.go:439,389`): the RC4-style stream cipher is
+        // length-preserving, so both report argument 0's own flen and NEITHER
+        // sets the binary charset -- Go leaves them in the connection charset
+        // even though `ENCODE`'s output is arbitrary bytes.
+        "encode" | "decode" if args.len() == 2 => {
+            let mut ft = text();
+            if let Some(arg) = args[0].static_type() {
+                ft.set_flen(arg.flen());
+            }
+            ft
+        }
+        // Go `uncompressFunctionClass` (`builtin_encryption.go:911`): flen
+        // `mysql.MaxBlobWidth` (16777216) with `types.SetBinChsClnFlag`, since
+        // the inflated payload is whatever bytes were compressed.
+        "uncompress" if args.len() == 1 => {
+            let mut ft = text();
+            set_binary_charset(&mut ft);
+            ft.set_flen(MAX_BLOB_WIDTH);
+            ft
+        }
+        // Go `uncompressedLengthFunctionClass` (`builtin_encryption.go:972`):
+        // an int of flen 10 read out of the payload's 4-byte length prefix.
+        "uncompressed_length" if args.len() == 1 => {
+            let mut ft = int();
+            ft.set_flen(10);
             ft
         }
         // Go `uuidVersionFunctionClass`: an int with flen 10, NOT the boolean

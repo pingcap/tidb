@@ -967,3 +967,79 @@ fn an_all_temporal_greatest_returns_the_aggregated_temporal_type() {
         assert_eq!(row_text(session.run(sql))[0][0], expected, "{sql}");
     }
 }
+
+/// The miscellaneous and encryption builtins whose bodies were already ported
+/// and unit-tested in `tidb_expr::builtin_ext::{misc,crypto}`, but which live
+/// SQL could not reach because `builtin_return_type` had no arm for their
+/// names -- the rewriter's gate is the ONLY one, and a miss there is a hard
+/// client error with no AST fallback.
+///
+/// Every expected value is a Go capture (`goeval`, one expression per line):
+///
+/// ```text
+/// password('x')                                        STR:*B69027D44F6E5EDC07F1AEAD1477967B16F28227
+/// md5('a')                                             STR:0cc175b9c0f1b6a831c399e269772661
+/// tidb_shard(1)                                        UINT:214
+/// vitess_hash(123)                                     UINT:1155070131015363447
+/// hex(uuid_to_bin('6ccd780c-...-5b8c656024db'))        STR:6CCD780CBABA102695645B8C656024DB
+/// bin_to_uuid(unhex('6CCD780C...5B8C656024DB'))        STR:6ccd780c-baba-1026-9564-5b8c656024db
+/// uuid_timestamp('6ccd780c-...-5b8c656024db')          DEC:-11129156903.290674
+/// name_const('a',5)                                    INT:5
+/// hex(encode('abc','k'))                               STR:ED1DFA
+/// uncompressed_length(unhex('08000000789C4A84...0DAC0309'))  INT:8
+/// uncompress(unhex('08000000789C4A84...0DAC0309'))           STR:aaaaaaaa
+/// ```
+#[test]
+fn misc_and_encryption_builtins_reach_live_sql() {
+    let mut session = Session::new();
+    // The payload below is exactly what Go's `COMPRESS('aaaaaaaa')` emits
+    // (captured: `select hex(compress('aaaaaaaa'))`): a four-byte
+    // little-endian original length (8) followed by the zlib stream. COMPRESS
+    // itself is NOT ported, so the fixture is spelled as a hex literal rather
+    // than as a round trip through it.
+    const COMPRESSED_AAAAAAAA: &str = "08000000789C4A840240000000FFFF0DAC0309";
+    for (sql, expected) in [
+        ("SELECT NAME_CONST('a', 5)", "5"),
+        (
+            "SELECT HEX(UUID_TO_BIN('6ccd780c-baba-1026-9564-5b8c656024db'))",
+            "6CCD780CBABA102695645B8C656024DB",
+        ),
+        (
+            "SELECT BIN_TO_UUID(UNHEX('6CCD780CBABA102695645B8C656024DB'))",
+            "6ccd780c-baba-1026-9564-5b8c656024db",
+        ),
+        (
+            "SELECT UUID_TIMESTAMP('6ccd780c-baba-1026-9564-5b8c656024db')",
+            "-11129156903.290674",
+        ),
+        ("SELECT TIDB_SHARD(1)", "214"),
+        ("SELECT VITESS_HASH(123)", "1155070131015363447"),
+        (
+            "SELECT PASSWORD('x')",
+            "*B69027D44F6E5EDC07F1AEAD1477967B16F28227",
+        ),
+        ("SELECT HEX(ENCODE('abc', 'k'))", "ED1DFA"),
+        ("SELECT DECODE(ENCODE('abc', 'k'), 'k')", "abc"),
+        ("SELECT MD5('a')", "0cc175b9c0f1b6a831c399e269772661"),
+    ] {
+        assert_eq!(row_text(session.run(sql))[0][0], expected, "{sql}");
+    }
+    assert_eq!(
+        row_text(session.run(&format!(
+            "SELECT UNCOMPRESSED_LENGTH(UNHEX('{COMPRESSED_AAAAAAAA}'))"
+        )))[0][0],
+        "8"
+    );
+    assert_eq!(
+        row_text(session.run(&format!(
+            "SELECT UNCOMPRESS(UNHEX('{COMPRESSED_AAAAAAAA}'))"
+        )))[0][0],
+        "aaaaaaaa"
+    );
+
+    // AES_ENCRYPT/AES_DECRYPT stay REFUSED on purpose: the ported body is
+    // `aes-128-ecb` only, while Go picks the cipher from
+    // `block_encryption_mode`, which this gate cannot see. A refusal beats a
+    // silently wrong ciphertext -- see `builtin_return_type`'s own doc.
+    assert!(session.run("SELECT AES_ENCRYPT('a', 'k')").is_err());
+}
