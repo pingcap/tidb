@@ -12,6 +12,7 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/executor",
+        "//pkg/kv",
         "//pkg/meta/autoid",
         "//pkg/objstore/storeapi",
         "//pkg/planner/extstore",

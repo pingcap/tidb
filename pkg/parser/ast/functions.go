@@ -371,6 +371,9 @@ const (
 	VecFromText             = "vec_from_text"
 	VecAsText               = "vec_as_text"
 
+	// embedding functions (TiDB extension)
+	EmbedText = "embed_text"
+
 	// FTS functions (tidb extension)
 	FTSMatchWord         = "fts_match_word"
 	FTSMysqlMatchAgainst = "match_against"
@@ -830,6 +833,10 @@ const (
 	AggFuncMax = "max"
 	// AggFuncMin is the name of min function.
 	AggFuncMin = "min"
+	// AggFuncMaxCount is the name of max_count function.
+	AggFuncMaxCount = "max_count"
+	// AggFuncMinCount is the name of min_count function.
+	AggFuncMinCount = "min_count"
 	// AggFuncGroupConcat is the name of group_concat function.
 	AggFuncGroupConcat = "group_concat"
 	// AggFuncBitOr is the name of bit_or function.

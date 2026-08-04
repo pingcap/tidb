@@ -1549,7 +1549,7 @@ func TestJobHeartBeatFailNotBlockOthers(t *testing.T) {
 	now = now.Add(time.Hour)
 	m.UpdateHeartBeat(ctx, se, now)
 	tkTZ := tk.Session().GetSessionVars().Location()
-	tk.MustQuery("select table_id, current_job_owner_hb_time from mysql.tidb_ttl_table_status").Sort().Check(testkit.Rows(
+	tk.MustQuery("select table_id, current_job_owner_hb_time from mysql.tidb_ttl_table_status order by table_id").Check(testkit.Rows(
 		fmt.Sprintf("%d %s", testTable1.Meta().ID, now.Add(-2*time.Hour).In(tkTZ).Format(time.DateTime)),
 		fmt.Sprintf("%d %s", testTable2.Meta().ID, now.In(tkTZ).Format(time.DateTime))))
 }

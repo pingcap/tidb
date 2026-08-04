@@ -889,6 +889,21 @@ var MetricTableMap = map[string]MetricTableDef{
 		Labels:  []string{"instance", "type", "db"},
 		Comment: "The storage size per TiKV instance",
 	},
+	"tidb_ia_remote_read_segment_count": {
+		PromQL:  `sum(increase(tidb_server_ia_remote_read_segment_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)`,
+		Labels:  []string{"instance"},
+		Comment: "The total count of IA remote read segments observed by each TiDB instance",
+	},
+	"tidb_ia_remote_read_segment_size": {
+		PromQL:  `sum(increase(tidb_server_ia_remote_read_segment_size_bytes{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)`,
+		Labels:  []string{"instance"},
+		Comment: "The total bytes of IA remote read segments observed by each TiDB instance",
+	},
+	"tidb_ia_remote_read_segment_wait_time_histogram": {
+		PromQL:  `sum(rate(tidb_server_ia_remote_read_segment_wait_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,le)`,
+		Labels:  []string{"instance", "le"},
+		Comment: "The histogram of IA remote read segment wait time observed by each TiDB instance",
+	},
 	"tikv_store_size": {
 		PromQL:  `sum(tikv_store_size_bytes{$LABEL_CONDITIONS}) by (instance,type)`,
 		Labels:  []string{"instance", "type"},

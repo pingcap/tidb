@@ -81,6 +81,36 @@ func withMinValue(minVal int64) execConcurrencySysVarOption {
 	return func(sv *SysVar) { sv.MinValue = minVal }
 }
 
+func newEmbeddingAPIKeySysVar(name string, load func() string, swap func(string) string) *SysVar {
+	return &SysVar{
+		Scope: vardef.ScopeGlobal,
+		Name:  name,
+		Value: "",
+		Type:  vardef.TypeStr,
+		SetGlobal: func(_ context.Context, _ *SessionVars, value string) error {
+			if oldValue := swap(value); oldValue != value {
+				vardef.EmbeddingConfigVersion.Inc()
+			}
+			return nil
+		},
+		GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
+			return maskEmbeddingAPIKey(load()), nil
+		},
+	}
+}
+
+// maskEmbeddingAPIKey keeps a short suffix so SQL users can identify
+// the configured credential. Log paths must fully redact the value instead.
+func maskEmbeddingAPIKey(key string) string {
+	if key == "" {
+		return ""
+	}
+	if len(key) <= 6 {
+		return "******"
+	}
+	return "******" + key[len(key)-4:]
+}
+
 // newExecConcurrencySysVar creates a session/global SysVar for executor concurrency settings.
 func newExecConcurrencySysVar(name string, defValue int, setter concurrencySetter, opts ...execConcurrencySysVarOption) *SysVar {
 	sv := &SysVar{
@@ -1208,6 +1238,40 @@ var defaultSysVars = []*SysVar{
 		},
 	},
 	{
+		Scope:    vardef.ScopeGlobal,
+		Name:     vardef.TiDBAnalyzeDefaultNumBuckets,
+		Value:    strconv.FormatUint(vardef.DefTiDBAnalyzeDefaultNumBuckets, 10),
+		Type:     vardef.TypeUnsigned,
+		MinValue: vardef.MinTiDBAnalyzeDefaultNumBuckets, MaxValue: vardef.MaxTiDBAnalyzeDefaultNumBuckets,
+		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return strconv.FormatUint(vardef.AnalyzeDefaultNumBuckets.Load(), 10), nil
+		},
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			num, err := strconv.ParseUint(val, 10, 64)
+			if err == nil {
+				vardef.AnalyzeDefaultNumBuckets.Store(num)
+			}
+			return err
+		},
+	},
+	{
+		Scope:    vardef.ScopeGlobal,
+		Name:     vardef.TiDBAnalyzeDefaultNumTopN,
+		Value:    strconv.FormatUint(vardef.DefTiDBAnalyzeDefaultNumTopN, 10),
+		Type:     vardef.TypeUnsigned,
+		MinValue: vardef.MinTiDBAnalyzeDefaultNumTopN, MaxValue: vardef.MaxTiDBAnalyzeDefaultNumTopN,
+		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return strconv.FormatUint(vardef.AnalyzeDefaultNumTopN.Load(), 10), nil
+		},
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			num, err := strconv.ParseUint(val, 10, 64)
+			if err == nil {
+				vardef.AnalyzeDefaultNumTopN.Store(num)
+			}
+			return err
+		},
+	},
+	{
 		Scope: vardef.ScopeGlobal,
 		Name:  vardef.TiDBEnableAutoAnalyzePriorityQueue,
 		Value: BoolToOnOff(vardef.DefTiDBEnableAutoAnalyzePriorityQueue),
@@ -1799,6 +1863,17 @@ var defaultSysVars = []*SysVar{
 				return err
 			}
 			vardef.HistoricalStatsDuration.Store(d)
+			return nil
+		}},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBPlanReplayerFileRetentionTime, Value: vardef.DefTiDBPlanReplayerFileRetentionTime.String(), Type: vardef.TypeDuration, MaxValue: uint64(time.Hour * 24 * 365),
+		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return vardef.GetPlanReplayerFileRetentionTime().String(), nil
+		}, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			d, err := time.ParseDuration(s)
+			if err != nil {
+				return err
+			}
+			vardef.SetPlanReplayerFileRetentionTime(d)
 			return nil
 		}},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBLowResolutionTSOUpdateInterval, Value: strconv.Itoa(vardef.DefTiDBLowResolutionTSOUpdateInterval), Type: vardef.TypeInt, MinValue: 10, MaxValue: 60000,
@@ -2860,6 +2935,10 @@ var defaultSysVars = []*SysVar{
 		s.DisableHashJoin = !TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableFullOuterJoin, Value: BoolToOnOff(vardef.DefTiDBEnableFullOuterJoin), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableFullOuterJoin = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableIndexMergeJoin, Value: BoolToOnOff(vardef.DefTiDBEnableIndexMergeJoin), Hidden: true, Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableIndexMergeJoin = TiDBOptOn(val)
 		return nil
@@ -3036,7 +3115,7 @@ var defaultSysVars = []*SysVar{
 		s.MaxPagingSize = tidbOptPositiveInt32(val, vardef.DefMaxPagingSize)
 		return nil
 	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBPagingSizeBytes, Value: strconv.Itoa(vardef.DefPagingSizeBytes), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBPagingSizeBytes, Value: strconv.Itoa(vardef.DefPagingSizeBytes), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt64, IsHintUpdatableVerified: true, SetSession: func(s *SessionVars, val string) error {
 		s.PagingSizeBytes = int(TidbOptInt64(val, int64(vardef.DefPagingSizeBytes)))
 		return nil
 	}},
@@ -3884,6 +3963,28 @@ var defaultSysVars = []*SysVar{
 			return (*SetPDClientDynamicOption.Load())(vardef.TiDBTSOClientRPCMode, val)
 		},
 	},
+	newEmbeddingAPIKeySysVar(vardef.TiDBExpEmbedJinaAIAPIKey, vardef.EmbedJinaAPIKey.Load, vardef.EmbedJinaAPIKey.Swap),
+	newEmbeddingAPIKeySysVar(vardef.TiDBExpEmbedOpenAIAPIKey, vardef.EmbedOpenAIAPIKey.Load, vardef.EmbedOpenAIAPIKey.Swap),
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBExpEmbedOpenAIAPIBase, Value: vardef.DefTiDBEmbedOpenAIAPIBase, Type: vardef.TypeStr, AllowEmpty: true,
+		SetGlobal: func(_ context.Context, _ *SessionVars, value string) error {
+			normalized, err := NormalizeOpenAIEmbeddingAPIBase(value)
+			if err != nil {
+				return err
+			}
+			oldValue := vardef.EmbedOpenAIAPIBase.Swap(normalized)
+			if resolveOpenAIEmbeddingBaseURL(oldValue) != resolveOpenAIEmbeddingBaseURL(normalized) {
+				vardef.EmbeddingConfigVersion.Inc()
+			}
+			return nil
+		},
+		GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
+			return GetOpenAIEmbeddingBaseURL(), nil
+		},
+	},
+	newEmbeddingAPIKeySysVar(vardef.TiDBExpEmbedCohereAPIKey, vardef.EmbedCohereAPIKey.Load, vardef.EmbedCohereAPIKey.Swap),
+	newEmbeddingAPIKeySysVar(vardef.TiDBExpEmbedHuggingFaceAPIKey, vardef.EmbedHuggingFaceAPIKey.Load, vardef.EmbedHuggingFaceAPIKey.Swap),
+	newEmbeddingAPIKeySysVar(vardef.TiDBExpEmbedNvidiaNIMAPIKey, vardef.EmbedNvidiaNIMAPIKey.Load, vardef.EmbedNvidiaNIMAPIKey.Swap),
+	newEmbeddingAPIKeySysVar(vardef.TiDBExpEmbedGeminiAPIKey, vardef.EmbedGeminiAPIKey.Load, vardef.EmbedGeminiAPIKey.Swap),
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBCircuitBreakerPDMetadataErrorRateThresholdRatio, Value: strconv.FormatFloat(vardef.DefTiDBCircuitBreakerPDMetaErrorRateRatio, 'f', -1, 64),
 		Type: vardef.TypeFloat, MinValue: 0, MaxValue: 1,
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
@@ -4006,6 +4107,12 @@ var defaultSysVars = []*SysVar{
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableCachePrepareStmt, Value: BoolToOnOff(vardef.DefEnableCachePrepareStmt), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableCachePrepareStmt = TiDBOptOn(val)
 		return nil
+	}},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableConnectionEventLog, Value: BoolToOnOff(vardef.DefTiDBEnableConnectionEventLog), Type: vardef.TypeBool, SetGlobal: func(_ context.Context, _ *SessionVars, val string) error {
+		vardef.EnableConnectionEventLog.Store(TiDBOptOn(val))
+		return nil
+	}, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
+		return BoolToOnOff(vardef.EnableConnectionEventLog.Load()), nil
 	}},
 }
 

@@ -71,7 +71,6 @@ func (t *memoryLimitTuner) DisableAdjustMemoryLimit() {
 func (t *memoryLimitTuner) EnableAdjustMemoryLimit() {
 	t.adjustDisabled.Add(-1)
 	t.UpdateMemoryLimit()
-	resetGlobalArbitratorLimit()
 }
 
 // tuning check the memory nextGC and judge whether this GC is trigger by memory limit.
@@ -80,7 +79,7 @@ func (t *memoryLimitTuner) tuning() {
 	t.tuningLock.Lock()
 	defer t.tuningLock.Unlock()
 
-	if !t.isValidValueSet.Load() || memory.UsingGlobalMemArbitration() {
+	if !t.isValidValueSet.Load() {
 		return
 	}
 
@@ -130,7 +129,6 @@ func (t *memoryLimitTuner) tuning() {
 				for !t.adjustPercentageInProgress.CompareAndSwap(true, false) {
 					continue
 				}
-				resetGlobalArbitratorLimit()
 			}()
 			memory.TriggerMemoryLimitGC.Store(true)
 		}
@@ -167,10 +165,6 @@ func (t *memoryLimitTuner) UpdateMemoryLimit() {
 	t.tuningLock.Lock()
 	defer t.tuningLock.Unlock()
 
-	if memory.UsingGlobalMemArbitration() {
-		return
-	}
-
 	if t.adjustPercentageInProgress.Load() {
 		if t.serverMemLimitBeforeAdjust.Load() == memory.ServerMemoryLimit.Load() && t.percentageBeforeAdjust.Load() == t.GetPercentage() {
 			return
@@ -190,6 +184,9 @@ func (t *memoryLimitTuner) calcMemoryLimit(percentage float64) int64 {
 	if t.adjustDisabled.Load() > 0 {
 		return initGOMemoryLimitValue
 	}
+	if memory.UsingGlobalMemArbitration() {
+		percentage = min(1, percentage)
+	}
 	memoryLimit := int64(float64(memory.ServerMemoryLimit.Load()) * percentage) // `tidb_server_memory_limit` * `tidb_server_memory_limit_gc_trigger`
 	if memoryLimit == 0 {
 		memoryLimit = math.MaxInt64
@@ -202,15 +199,4 @@ var initGOMemoryLimitValue int64
 func init() {
 	initGOMemoryLimitValue = debug.SetMemoryLimit(-1)
 	GlobalMemoryLimitTuner.Start()
-
-	memory.RegisterCallbackForGlobalMemArbitrator(resetGlobalArbitratorLimit)
-}
-
-func resetGlobalArbitratorLimit() {
-	GlobalMemoryLimitTuner.tuningLock.Lock()
-	defer GlobalMemoryLimitTuner.tuningLock.Unlock()
-
-	if memory.UsingGlobalMemArbitration() {
-		debug.SetMemoryLimit(int64(memory.ServerMemoryLimit.Load()))
-	}
 }
