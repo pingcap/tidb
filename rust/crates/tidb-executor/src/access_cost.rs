@@ -96,7 +96,7 @@
 //! Go keeps an index path with NO access conditions when it COVERS the
 //! statement (`keepIndex := len(path.AccessConds) > 0 || ... ||
 //! path.IsSingleScan`), gives it `ranger.FullRange()`, and prints it as
-//! `IndexFullScan`. [`covering_full_scan_candidate`] builds that candidate
+//! `IndexFullScan`. [`full_scan_candidate`] builds that candidate
 //! here, including for a statement with no `WHERE` at all. Captured on a v8.5
 //! `gorun` session over
 //! `q(id BIGINT PRIMARY KEY, score BIGINT, note VARCHAR(8), KEY s(score))`:
