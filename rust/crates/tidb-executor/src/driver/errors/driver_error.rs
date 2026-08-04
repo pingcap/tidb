@@ -70,6 +70,31 @@ pub enum DriverError {
     DuplicateColumnName(String),
     /// Go `ErrDupKeyName` (1061).
     DuplicateKeyName(String),
+    /// Go `ErrMultiplePriKey` (1068): more than one PRIMARY KEY declaration.
+    MultiplePrimaryKey,
+    /// Go `ErrTooBigPrecision` (1426), carrying the declared precision, the
+    /// column and the type's maximum.
+    TooBigPrecision {
+        /// The precision the column declared.
+        precision: i64,
+        /// The column it was declared on.
+        column: String,
+        /// The type's own maximum.
+        maximum: i64,
+    },
+    /// Go `ErrMBiggerThanD` (1427), carrying the column: `DECIMAL(M,D)` and
+    /// the float family need `M >= D`.
+    MBiggerThanD(String),
+    /// Go `ErrDuplicatedValueInType` (1291), carrying the column, the
+    /// repeated member and whether the type is ENUM or SET.
+    DuplicatedValueInType {
+        /// The column the type was declared on.
+        column: String,
+        /// The member that appears more than once.
+        value: String,
+        /// `ENUM` or `SET`, as Go spells it in the message.
+        type_name: &'static str,
+    },
     /// Go `ErrCantDropFieldOrKey` (1091), with the index-specific message.
     UnknownIndex(String),
     /// Go `ErrCantDropFieldOrKey` (1091).

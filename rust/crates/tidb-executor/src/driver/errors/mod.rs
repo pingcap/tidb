@@ -290,6 +290,39 @@ impl DriverError {
         DriverError::UnknownIndex(name) => {
             MysqlError::new(1091, *b"42000", format!("index {name} doesn't exist"))
         }
+        // Go: "Multiple primary key defined".
+        DriverError::MultiplePrimaryKey => {
+            MysqlError::new(1068, *b"42000", "Multiple primary key defined".to_owned())
+        }
+        // Go: "Too-big precision %d specified for '%-.192s'. Maximum is %d."
+        DriverError::TooBigPrecision {
+            precision,
+            column,
+            maximum,
+        } => MysqlError::new(
+            1426,
+            *b"42000",
+            format!("Too-big precision {precision} specified for '{column}'. Maximum is {maximum}."),
+        ),
+        // Go: "For float(M,D), double(M,D) or decimal(M,D), M must be >= D
+        // (column '%s')."
+        DriverError::MBiggerThanD(column) => MysqlError::new(
+            1427,
+            *b"42000",
+            format!(
+                "For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '{column}')."
+            ),
+        ),
+        // Go: "Column '%-.100s' has duplicated value '%-.64s' in %s".
+        DriverError::DuplicatedValueInType {
+            column,
+            value,
+            type_name,
+        } => MysqlError::new(
+            1291,
+            *b"HY000",
+            format!("Column '{column}' has duplicated value '{value}' in {type_name}"),
+        ),
         // Go: "Duplicate column name '%-.192s'".
         DriverError::DuplicateColumnName(name) => {
             MysqlError::new(1060, *b"42S21", format!("Duplicate column name '{name}'"))

@@ -223,12 +223,9 @@ pub fn build_field_type(
                     )))
                 }
             };
-            if fsp > 6 {
-                return Err(ColumnTypeError::new(format!(
-                    "column `{name}` declares {}({fsp}), whose fsp exceeds 6",
-                    declared.name
-                )));
-            }
+            // An out-of-range fsp is NOT refused here: Go's parser stores it
+            // and `checkColumnAttributes` refuses it afterwards with 1426.
+            // See [`check_column_attributes`].
             decimal = fsp;
             let (base, _) = code.default_length_and_decimal();
             flen = if fsp == 0 { base } else { base + 1 + fsp };
@@ -441,4 +438,93 @@ mod tests {
         let b = built("b double(12,3)");
         assert_eq!((b.flen(), b.decimal()), (12, 3));
     }
+}
+
+/// One column's declared type is refused by Go's `checkColumnAttributes`
+/// (`pkg/ddl/create_table.go:743-754`) or its ENUM/SET member check
+/// (`pkg/ddl/add_column.go:1190-1203`), with the error Go raises.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ColumnAttributeError {
+    /// Go `types.ErrMBiggerThanD` (1427): `DECIMAL`/`FLOAT`/`DOUBLE` with a
+    /// scale larger than its precision.
+    MBiggerThanD,
+    /// Go `types.ErrTooBigPrecision` (1426): a `DATETIME`/`TIMESTAMP`/`TIME`
+    /// fractional-seconds precision outside 0..=6.
+    TooBigPrecision {
+        /// The declared precision.
+        precision: i64,
+        /// `types.MaxFsp`.
+        maximum: i64,
+    },
+    /// Go `types.ErrDuplicatedValueInType` (1291): an ENUM or SET names the
+    /// same member twice.
+    DuplicatedValueInType {
+        /// The repeated member, in its DECLARED spelling.
+        value: String,
+        /// `ENUM` or `SET`, as Go spells it in the message.
+        type_name: &'static str,
+    },
+}
+
+/// Go `checkColumnAttributes` plus the ENUM/SET member check: what a built
+/// `FieldType` still has to satisfy before the column can be created.
+///
+/// Splitting this out of [`build_field_type`] is Go's own division of
+/// labour: the parser stores whatever was written, and the DDL builder is
+/// what refuses it. That is why `DATETIME(7)` is 1426 and not a parse error.
+///
+/// The duplicate-member test uses the type's COLLATION key, exactly as Go's
+/// `ctor.Key(elem)` does, so under a case-insensitive collation
+/// `ENUM('x','X')` is a duplicate too.
+///
+/// Captured from TiDB:
+///
+/// ```text
+/// create table a5(a decimal(2,5))    -> 1427 For float(M,D), double(M,D) or
+///     decimal(M,D), M must be >= D (column 'a').
+/// create table b1(a datetime(7))     -> 1426 Too-big precision 7 specified
+///     for 'a'. Maximum is 6.
+/// create table a6(a enum('x','x'))   -> 1291 Column 'a' has duplicated value
+///     'x' in ENUM
+/// create table a6b(a set('y','y'))   -> 1291 ... 'y' in SET
+/// ```
+pub fn check_column_attributes(field_type: &FieldType) -> Result<(), ColumnAttributeError> {
+    match field_type.code() {
+        FieldTypeCode::NewDecimal | FieldTypeCode::Double | FieldTypeCode::Float => {
+            if field_type.flen() < field_type.decimal() {
+                return Err(ColumnAttributeError::MBiggerThanD);
+            }
+        }
+        FieldTypeCode::Datetime | FieldTypeCode::Duration | FieldTypeCode::Timestamp => {
+            let decimal = field_type.decimal();
+            if decimal != tidb_datatype::UNSPECIFIED_FSP
+                && !(tidb_datatype::MIN_FSP..=tidb_datatype::MAX_FSP).contains(&decimal)
+            {
+                return Err(ColumnAttributeError::TooBigPrecision {
+                    precision: decimal,
+                    maximum: tidb_datatype::MAX_FSP,
+                });
+            }
+        }
+        code @ (FieldTypeCode::Enum | FieldTypeCode::Set) => {
+            let collation = field_type.collation();
+            let mut seen: Vec<Vec<u8>> = Vec::with_capacity(field_type.elems().len());
+            for member in field_type.elems() {
+                let key = collation.key(member.as_bytes());
+                if seen.contains(&key) {
+                    return Err(ColumnAttributeError::DuplicatedValueInType {
+                        value: member.clone(),
+                        type_name: if code == FieldTypeCode::Set {
+                            "SET"
+                        } else {
+                            "ENUM"
+                        },
+                    });
+                }
+                seen.push(key);
+            }
+        }
+        _ => {}
+    }
+    Ok(())
 }

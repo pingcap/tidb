@@ -294,6 +294,10 @@ impl Session {
         };
         if !is_dml {
             return tidb_executor::StmtContext::for_query()
+                // A read's error levels do not depend on the mode, but DDL
+                // takes this same context and Go's DDL checks DO read
+                // `SQLMode.HasStrictMode()`. See `StmtContext::with_strict`.
+                .with_strict(has("STRICT_TRANS_TABLES") || has("STRICT_ALL_TABLES"))
                 .with_date_modes(date_modes)
                 .with_cte_max_recursion_depth(cte_depth)
                 .with_only_full_group_by(has("ONLY_FULL_GROUP_BY"))

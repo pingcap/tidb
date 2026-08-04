@@ -139,11 +139,34 @@ pub(crate) fn field_type_of(
         resolved.collation = resolved.charset.default_collation();
     }
 
-    column_field_type::build_field_type(
+    let field_type = column_field_type::build_field_type(
         &def.name,
         &def.ty,
         resolved.charset.name(),
         resolved.collation.name(),
     )
-    .map_err(|error| DriverError::unsupported(error.reason))
+    .map_err(|error| DriverError::unsupported(error.reason))?;
+    // Go `checkColumnAttributes`: the parser stores what was written and the
+    // DDL builder is what refuses it, which is why these are coded errors and
+    // not parse failures.
+    column_field_type::check_column_attributes(&field_type).map_err(|error| match error {
+        column_field_type::ColumnAttributeError::MBiggerThanD => {
+            DriverError::MBiggerThanD(def.name.clone())
+        }
+        column_field_type::ColumnAttributeError::TooBigPrecision { precision, maximum } => {
+            DriverError::TooBigPrecision {
+                precision,
+                column: def.name.clone(),
+                maximum,
+            }
+        }
+        column_field_type::ColumnAttributeError::DuplicatedValueInType { value, type_name } => {
+            DriverError::DuplicatedValueInType {
+                column: def.name.clone(),
+                value,
+                type_name,
+            }
+        }
+    })?;
+    Ok(field_type)
 }

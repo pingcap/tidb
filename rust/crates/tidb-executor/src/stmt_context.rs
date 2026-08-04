@@ -616,6 +616,26 @@ impl StmtContext {
             .with_statement_class(StatementClass::Select)
     }
 
+    /// Sets whether this statement runs under a strict SQL mode.
+    ///
+    /// [`Self::for_dml`] derives this from the mode already, because a DML
+    /// statement's error LEVELS are derived from it in the same breath.
+    /// [`Self::for_query`] cannot: its levels are the literals Go writes for a
+    /// read, so it had to pass SOMETHING for `strict` and passed `true`.
+    ///
+    /// That placeholder is only sound while nothing reads it. DDL takes this
+    /// same non-DML context, and Go's DDL checks do read the session's mode --
+    /// `checkColumnDefaultValue` calls `SQLMode.HasStrictMode()` to decide
+    /// whether an empty BLOB/TEXT/JSON default is 1101 or a warning. Reading
+    /// the placeholder made `SET sql_mode=''` inoperative for DDL, so the
+    /// session sets the real value here instead of DDL growing a second,
+    /// parallel channel for the same fact.
+    #[must_use]
+    pub fn with_strict(mut self, strict: bool) -> Self {
+        self.strict = strict;
+        self
+    }
+
     /// Sets the session's `max_allowed_packet`.
     ///
     /// Go `EvalContext.GetMaxAllowedPacket` is what every result-sizing string

@@ -509,6 +509,15 @@ fn build_column(
     // `build_field_type` is what actually stamps `binary`/`binary` on a type
     // that carries no charset, so the resolved pair above is only an input.
     let mut field_type = build_field_type(name, &column.ty, &charset, &collate)?;
+    // Go `checkColumnAttributes` -- see the shared helper. This tier reports
+    // it as an admission refusal rather than a coded client error, which is
+    // the same reduction every other refusal here takes.
+    if let Err(error) = tidb_executor::ddl::column_field_type::check_column_attributes(&field_type)
+    {
+        return Err(DdlAdmissionError::new(format!(
+            "column `{name}` is refused by checkColumnAttributes: {error:?}"
+        )));
+    }
 
     let mut info = ColumnInfo {
         id: 0,

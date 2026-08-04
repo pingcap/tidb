@@ -630,10 +630,11 @@ pub(crate) fn primary_key_column(
             if let tidb_ast::ColumnOption::InlineKey(key) = option {
                 match key.kind {
                     tidb_ast::InlineKeyKind::Primary { storage } => {
+                        // Go `ErrMultiplePriKey` (1068), captured: `create table
+                        // b2(a int primary key, b int primary key)` answers
+                        // `Error|1068|Multiple primary key defined`.
                         if found.is_some() {
-                            return Err(DriverError::unsupported(
-                                "a table may define only one primary key",
-                            ));
+                            return Err(DriverError::MultiplePrimaryKey);
                         }
                         found = Some(PrimaryKeyDecl {
                             columns: vec![def.name.clone()],
@@ -663,9 +664,7 @@ pub(crate) fn primary_key_column(
             continue;
         }
         if found.is_some() {
-            return Err(DriverError::unsupported(
-                "a table may define only one primary key",
-            ));
+            return Err(DriverError::MultiplePrimaryKey);
         }
         let mut names = Vec::with_capacity(index.parts.len());
         let mut part_lengths: Vec<(&tidb_datatype::FieldType, i64)> =

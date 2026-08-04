@@ -1467,3 +1467,185 @@ fn create_table_bounds_the_whole_index_key_not_just_each_part() {
         &too_long(4800),
     );
 }
+
+/// `CREATE TABLE` refuses what Go refuses, with Go's code and message.
+///
+/// The live builder had none of these -- it accepted duplicate column and
+/// index names, a BLOB/TEXT/JSON default, `DECIMAL(M,D)` with `M < D`, a
+/// duplicated ENUM/SET member, and answered a generic `unsupported` for an
+/// out-of-range fsp and a second PRIMARY KEY. Every pair below is captured
+/// from TiDB with `create ...; show errors;`:
+///
+/// ```text
+/// a1(a int, a int)                        1060 Duplicate column name 'a'
+/// a2(a int, b int, key i(a), key i(b))    1061 Duplicate key name 'i'
+/// a3(a blob default 'x')                  1101 BLOB/TEXT/JSON column 'a'
+///                                              can't have a default value
+/// a3b(a text default 'x')                 1101 (same)
+/// a3c(a json default '{}')                1101 (same)
+/// a5(a decimal(2,5))                      1427 For float(M,D), double(M,D)
+///     or decimal(M,D), M must be >= D (column 'a').
+/// a6(a enum('x','x'))                     1291 Column 'a' has duplicated
+///                                              value 'x' in ENUM
+/// a6b(a set('y','y'))                     1291 ... value 'y' in SET
+/// b2(a int primary key, b int primary key) 1068 Multiple primary key defined
+/// b1(a datetime(7))                       1426 Too-big precision 7 specified
+///                                              for 'a'. Maximum is 6.
+/// ```
+#[test]
+fn create_table_refuses_what_go_refuses() {
+    let mut session = Session::new();
+    let refused = |session: &mut Session, sql: &str, code: u16, message: &str| {
+        // Name the statement on the ACCEPTED path too: a lost refusal is the
+        // failure this test exists to catch, and a bare `unwrap_err` would
+        // report every group at the same line.
+        let error = match session.run(sql) {
+            Ok(_) => panic!("{sql} was accepted; expected {code} {message}"),
+            Err(error) => error.to_mysql_error(),
+        };
+        assert_eq!(error.code, code, "{sql}");
+        assert_eq!(error.message, message, "{sql}");
+    };
+
+    let blob_default = "BLOB/TEXT/JSON column 'a' can't have a default value";
+    refused(
+        &mut session,
+        "CREATE TABLE a1 (a INT, a INT)",
+        1060,
+        "Duplicate column name 'a'",
+    );
+    refused(
+        &mut session,
+        "CREATE TABLE a2 (a INT, b INT, KEY i(a), KEY i(b))",
+        1061,
+        "Duplicate key name 'i'",
+    );
+    refused(
+        &mut session,
+        "CREATE TABLE a3 (a BLOB DEFAULT 'x')",
+        1101,
+        blob_default,
+    );
+    refused(
+        &mut session,
+        "CREATE TABLE a3b (a TEXT DEFAULT 'x')",
+        1101,
+        blob_default,
+    );
+    refused(
+        &mut session,
+        "CREATE TABLE a3c (a JSON DEFAULT '{}')",
+        1101,
+        blob_default,
+    );
+    refused(
+        &mut session,
+        "CREATE TABLE a5 (a DECIMAL(2,5))",
+        1427,
+        "For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column 'a').",
+    );
+    refused(
+        &mut session,
+        "CREATE TABLE a6 (a ENUM('x','x'))",
+        1291,
+        "Column 'a' has duplicated value 'x' in ENUM",
+    );
+    refused(
+        &mut session,
+        "CREATE TABLE a6b (a SET('y','y'))",
+        1291,
+        "Column 'a' has duplicated value 'y' in SET",
+    );
+    refused(
+        &mut session,
+        "CREATE TABLE b2 (a INT PRIMARY KEY, b INT PRIMARY KEY)",
+        1068,
+        "Multiple primary key defined",
+    );
+    refused(
+        &mut session,
+        "CREATE TABLE b1 (a DATETIME(7))",
+        1426,
+        "Too-big precision 7 specified for 'a'. Maximum is 6.",
+    );
+
+    // The valid neighbours still pass, so none of the checks is a blanket
+    // refusal: an unnamed second key, an equal M and D, and fsp 6.
+    for ok in [
+        "CREATE TABLE ok1 (a INT, b INT, KEY(a), KEY(b))",
+        "CREATE TABLE ok2 (a DECIMAL(5,5))",
+        "CREATE TABLE ok3 (a DATETIME(6), b TIME(6), c TIMESTAMP(6))",
+        "CREATE TABLE ok4 (a ENUM('x','y'), b SET('x','y'))",
+        "CREATE TABLE ok5 (a BLOB DEFAULT NULL, b JSON DEFAULT NULL)",
+        "CREATE TABLE ok6 (a INT PRIMARY KEY, b INT UNIQUE KEY)",
+    ] {
+        session.run(ok).unwrap_or_else(|e| panic!("{ok}: {e:?}"));
+    }
+}
+
+/// The OTHER half of Go's `checkColumnDefaultValue`: under a NON-strict
+/// `sql_mode` an EMPTY-STRING default on a BLOB/TEXT/JSON column is a warning
+/// rather than 1101, and Go then rewrites the default instead of keeping it.
+///
+/// This is TiDB's own `TestCheckColumnDefaultValue`
+/// (`tests/integrationtest/t/ddl/column_modify.test:149-172`); the expectations
+/// below are its recorded `.result`, verbatim:
+///
+/// ```text
+/// set sql_mode='';
+/// create table text_default_text(c1 text not null default '');
+/// show create table text_default_text;   ->  `c1` text NOT NULL
+/// create table text_default_blob(c1 blob not null default '');
+/// show create table text_default_blob;   ->  `c1` blob NOT NULL
+/// create table text_default_json(c1 json not null default '');
+/// show create table text_default_json;   ->  `c1` json NOT NULL DEFAULT 'null'
+/// ```
+///
+/// TEXT and BLOB DROP the default; JSON keeps one, rewritten to the text
+/// `null`. A non-empty default stays 1101 in every mode, which is why the
+/// strict half above and this one are both needed to pin the rule.
+///
+/// **The JSON line is deliberately not asserted here.** `normalize_column_default`
+/// still carries a blanket "a non-NULL JSON default is 1101" -- Go's
+/// `checkColumnDefaultValue` rule living inside Go's `checkDefaultValue` -- and
+/// it refuses the `null` the DDL builder rewrites. That predates this test and
+/// is unchanged by it; lifting it means sharing one helper with the three ALTER
+/// entry points that call the same function, so it is tracked separately rather
+/// than pinned wrong here.
+#[test]
+fn a_non_strict_empty_default_on_blob_text_warns_and_drops_the_default() {
+    let mut session = Session::new();
+    session.run("SET sql_mode=''").unwrap();
+
+    for (sql, column, printed) in [
+        (
+            "CREATE TABLE text_default_text (c1 TEXT NOT NULL DEFAULT '')",
+            "text_default_text",
+            "`c1` text NOT NULL",
+        ),
+        (
+            "CREATE TABLE text_default_blob (c1 BLOB NOT NULL DEFAULT '')",
+            "text_default_blob",
+            "`c1` blob NOT NULL",
+        ),
+    ] {
+        session.run(sql).unwrap_or_else(|e| panic!("{sql}: {e:?}"));
+        let created = show_create(&mut session, column);
+        assert!(
+            created.contains(printed),
+            "SHOW CREATE TABLE {column} should print `{printed}`:\n{created}"
+        );
+    }
+
+    // A NON-EMPTY default is still 1101 even here -- the non-strict relief is
+    // for the empty string alone.
+    let error = session
+        .run("CREATE TABLE text_default_scds (c1 TEXT NOT NULL DEFAULT 'scds')")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1101);
+    assert_eq!(
+        error.message,
+        "BLOB/TEXT/JSON column 'c1' can't have a default value"
+    );
+}

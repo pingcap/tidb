@@ -425,7 +425,15 @@ fn run_topic_on_this_stack(topic: &str) -> Result<CatalogReport, String> {
 /// so three catalog reads whose tables TiDB refuses to create are now
 /// refused here too, and their `SHOW CREATE TABLE` divergences vanish with
 /// the tables.
-const KNOWN_CATALOG_DIVERGENCES: usize = 102;
+/// 102 -> 100: Go's `checkColumnDefaultValue` landed on `CREATE TABLE`
+/// (#274). Under `sql_mode=''` an EMPTY default on a TEXT/BLOB column is a
+/// warning and the default is DROPPED, which is what TiDB's own
+/// `TestCheckColumnDefaultValue` records; this tier used to store the `''`
+/// and print it, so `show create table text_default_text` and
+/// `text_default_blob` both read back a `DEFAULT ''` TiDB does not print.
+/// They now MATCH rather than vanish: compared held at 219 and matched rose
+/// 117 -> 119, so no read stopped being examined.
+const KNOWN_CATALOG_DIVERGENCES: usize = 100;
 
 /// The floor on catalog reads that MATCH TiDB's recording exactly. See
 /// [`KNOWN_CATALOG_DIVERGENCES`] for why a divergence ceiling alone is not a
@@ -504,7 +512,12 @@ const MATCHED_FLOOR: usize = 114;
 /// reads back `bigint` with no `VIRTUAL GENERATED` in `Extra` -- a separate,
 /// still-open gap -- so the count could not see this: the fingerprint is the
 /// only gate that could.
-const CATALOG_DIVERGENCE_FINGERPRINT: u64 = 3_498_801_845_461_611_979;
+///
+/// Moved again with [`KNOWN_CATALOG_DIVERGENCES`] 102 -> 100: the two
+/// `SHOW CREATE TABLE` reads that stopped printing a `DEFAULT ''` TiDB does
+/// not print (`text_default_text` and `text_default_blob`) left the set, and
+/// nothing else in it changed.
+const CATALOG_DIVERGENCE_FINGERPRINT: u64 = 6_068_344_160_096_210_003;
 
 /// FNV-1a over the sorted divergence texts. Sorted because the value must
 /// depend on WHAT diverges and not on the order topics happen to run in.
