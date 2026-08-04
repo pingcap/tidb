@@ -209,15 +209,12 @@ fn locate3(vals: &[Datum]) -> Result<Datum, EvalError> {
 }
 
 /// `FORMAT(x, d, locale)`, ported from `builtinFormatWithLocaleSig` in
-/// `pkg/expression/builtin_string.go`.  A `NULL` locale uses TiDB's `en_US`
-/// fallback; the accompanying unknown-locale warning is still unraised, even
-/// though `ctx` now reaches here -- nothing has read Go's locale-registry
-/// miss into this port yet.
+/// `pkg/expression/builtin_string.go`. A `NULL` locale warns 1649 naming the
+/// literal text `NULL` and then falls back to `en_US`; an unrecognized one
+/// warns 1649 naming itself. [`format_num_locale`] owns both.
 fn format_with_locale(vals: &[Datum], ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
-    match coerce_str(&vals[2])? {
-        Some(locale) => format_num_locale(vals, &locale, ctx),
-        None => format_num_locale(vals, "en_US", ctx),
-    }
+    let locale = coerce_str(&vals[2])?;
+    format_num_locale(vals, locale.as_deref(), ctx)
 }
 
 /// `FIND_IN_SET(str, strlist)`, ported from `builtinFindInSetSig.evalInt` in
@@ -312,7 +309,7 @@ fn export_set(vals: &[Datum]) -> Result<Datum, EvalError> {
 mod tests {
     use super::{dispatch, locate3};
     use crate::coerce::coerce_str;
-    use crate::string_fn::{char_func, format_num, position, substring};
+    use crate::string_fn::{char_func, format_num, format_num_locale, position, substring};
     use crate::string_packet::to_base64;
     use crate::Datum;
 
@@ -540,10 +537,15 @@ mod tests {
         }
     }
 
-    /// Complete value-domain rows from `TestFormat`.  Go warning counts and
-    /// unsupported locale errors are session side effects; numeric-prefix
-    /// coercion, rounding, precision clamping, grouping, and NULL results
-    /// remain directly observable in this evaluator.
+    /// Complete value-domain rows from `TestFormat`: numeric-prefix
+    /// coercion, rounding, precision clamping, grouping, and NULL results.
+    ///
+    /// The result is `Datum::Bytes`, not a string, because
+    /// `tidb_mysql::locale::format_by_locale` returns BYTES -- Go's
+    /// `FormatByLocale` counts the integer part in bytes, and a grouping
+    /// separator inserted every three BYTES can split a multi-byte rune, so
+    /// there is no valid-UTF-8 carrier for its output. See
+    /// `unknown_and_null_locales_warn_1649` for the locale half.
     #[allow(clippy::excessive_precision)]
     #[test]
     fn format_matches_go_source_vectors() {
@@ -603,7 +605,9 @@ mod tests {
             (Datum::Int(1), string(""), Some("1")),
         ] {
             let result = format_num(&[number, precision], &crate::NoColumns).unwrap();
-            let expected = want.map(string).unwrap_or(Datum::Null);
+            let expected = want
+                .map(|text| Datum::new_bytes(text.as_bytes().to_vec()))
+                .unwrap_or(Datum::Null);
             assert_eq!(result, expected);
         }
         assert_eq!(
@@ -611,19 +615,109 @@ mod tests {
                 "FORMAT",
                 &[string("-12332.123456"), Datum::Int(-4), string("zh_CN")]
             ),
-            string("-12,332")
+            Datum::new_bytes(b"-12,332".to_vec())
         );
         assert_eq!(
             call(
                 "FORMAT",
                 &[string("-12332.123456"), string("4"), string("de_GE")]
             ),
-            string("-12,332.1235")
+            Datum::new_bytes(b"-12,332.1235".to_vec())
         );
         assert_eq!(
             call("FORMAT", &[Datum::Int(1), Datum::Int(4), Datum::Null]),
-            string("1.0000")
+            Datum::new_bytes(b"1.0000".to_vec())
         );
+    }
+
+    /// Go `builtinFormatWithLocaleSig.evalString`
+    /// (`pkg/expression/builtin_string.go:3685-3705`): the `found` flag
+    /// `mysql.FormatByLocale` returns raises `errUnknownLocale` (1649), with
+    /// a NULL locale warned FIRST under the literal text `NULL` and then
+    /// falling back to `en_US`.
+    ///
+    /// The live path used a second, less faithful locale table with no
+    /// `found` flag, so no locale could ever be reported unknown. The
+    /// grouping answers below did already agree; the warnings did not exist.
+    ///
+    /// Captured with `gorunmsg` on `FORMAT(1234567.891, 2, <locale>)`.
+    #[test]
+    fn unknown_and_null_locales_warn_1649() {
+        use crate::context::Columns;
+
+        #[derive(Default)]
+        struct Sink(std::cell::RefCell<Vec<(u16, String)>>);
+        impl Columns for Sink {
+            fn get(&self, _: &[String]) -> Option<Datum> {
+                None
+            }
+            fn append_warning(&self, code: u16, message: &str) {
+                self.0.borrow_mut().push((code, message.to_owned()));
+            }
+        }
+
+        let number = Datum::Real(1_234_567.891);
+        let two = Datum::Int(2);
+        for (locale, text, warnings) in [
+            // Recognized: the answer differs per locale and nothing warns.
+            (Some("de_DE"), "1.234.567,89", vec![]),
+            (Some("en_IN"), "12,34,567.89", vec![]),
+            (Some("de_CH"), "1'234'567.89", vec![]),
+            // Case-insensitive, so this is Russia's space/comma style.
+            (Some("RU_ru"), "1 234 567,89", vec![]),
+            (Some("ar_SA"), "1234567.89", vec![]),
+            (
+                Some("not_REAL"),
+                "1,234,567.89",
+                vec![(1649_u16, "Unknown locale: 'not_REAL'".to_owned())],
+            ),
+            (
+                None,
+                "1,234,567.89",
+                vec![(1649_u16, "Unknown locale: 'NULL'".to_owned())],
+            ),
+        ] {
+            let sink = Sink::default();
+            let result = format_num_locale(&[number.clone(), two.clone()], locale, &sink).unwrap();
+            assert_eq!(
+                result,
+                Datum::new_bytes(text.as_bytes().to_vec()),
+                "{locale:?}"
+            );
+            assert_eq!(sink.0.into_inner(), warnings, "{locale:?}");
+        }
+
+        // The TWO-argument form is `builtinFormatSig`, which discards `found`
+        // and never warns even though it passes the same `en_US`.
+        let sink = Sink::default();
+        format_num(&[number.clone(), two.clone()], &sink).unwrap();
+        assert!(sink.0.into_inner().is_empty());
+
+        // Through the DISPATCHER, so the three-argument arm's own NULL/found
+        // handling is covered rather than only the shared evaluator's: a NULL
+        // locale is a distinct state from the string "en_US", not a default
+        // the arm can collapse into one.
+        for (locale, warnings) in [
+            (
+                Datum::Null,
+                vec![(1649_u16, "Unknown locale: 'NULL'".to_owned())],
+            ),
+            (
+                Datum::new_string("nope_XX".to_owned()),
+                vec![(1649_u16, "Unknown locale: 'nope_XX'".to_owned())],
+            ),
+            (Datum::new_string("en_US".to_owned()), vec![]),
+        ] {
+            let sink = Sink::default();
+            dispatch(
+                "FORMAT",
+                &[number.clone(), two.clone(), locale.clone()],
+                &sink,
+            )
+            .expect("FORMAT/3 dispatches")
+            .expect("FORMAT/3 evaluates");
+            assert_eq!(sink.0.into_inner(), warnings, "{locale:?}");
+        }
     }
 
     /// Complete scalar rows from `TestExportSet`.  The Go implementation's

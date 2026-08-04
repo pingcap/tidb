@@ -1674,6 +1674,7 @@ dependencies = [
  "tidb-codec",
  "tidb-datatype",
  "tidb-error",
+ "tidb-mysql",
  "tidb-parser",
  "tidb-proto",
 ]

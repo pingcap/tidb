@@ -1224,19 +1224,36 @@ fn bit_count_string_bytes(raw: &[u8]) -> u64 {
 /// `FORMAT(x, d)`: the two-argument English-locale spelling.  See
 /// [`format_num_locale`] for the shared port of TiDB's `FORMAT` evaluator.
 pub(crate) fn format_num(vals: &[Datum], ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
-    format_num_locale(vals, "en_US", ctx)
+    format_num_locale(vals, Some("en_US"), ctx)
 }
 
-/// Shared `FORMAT(x, d[, locale])` result formatter, ported from
-/// `evalNumDecArgsForFormat`, `roundFormatArgs`, and `FormatByLocale` in
-/// `pkg/expression/builtin_string.go` and `pkg/parser/mysql/locale_format.go`.
-/// `ctx` is the statement warning sink, which `FORMAT`'s ETReal coercion of a
-/// string argument raises 1292 on. The separate UNKNOWN-LOCALE warning is
-/// still absent; unknown/`NULL` locales use TiDB's observable `en_US`
-/// fallback exactly.
+/// Shared `FORMAT(x, d[, locale])` evaluator, ported from
+/// `evalNumDecArgsForFormat` and the two `builtinFormat*Sig.evalString`
+/// bodies in `pkg/expression/builtin_string.go`.
+///
+/// ```text
+/// x, d, isNull, err := evalNumDecArgsForFormat(ctx, b, row)   // x already rounded
+/// formatString, found, err := mysql.FormatByLocale(x, d, locale)
+/// if !isNull && !found { tc.AppendWarning(errUnknownLocale.FastGenByArgs(locale)) }
+/// ```
+///
+/// The grouping itself is `tidb_mysql::locale::format_by_locale`, the
+/// complete port of `pkg/parser/mysql/locale_format.go` -- which is where
+/// the `found` flag comes from, and why the unknown-locale warning is
+/// reachable at all now. A second, less faithful locale table used to live
+/// here beside it; it had no `found` flag and so could not raise 1649.
+///
+/// `locale` is `None` for the NULL a three-argument `FORMAT` evaluated to,
+/// which Go warns about with the literal text `NULL` BEFORE it falls back to
+/// `en_US`, and `Some("en_US")` for the two-argument form, which Go's
+/// `builtinFormatSig` discards `found` for and never warns about. The two
+/// are different states, not one default.
+///
+/// `ctx` is the statement warning sink, which `FORMAT`'s ETReal coercion of
+/// a string argument raises 1292 on as well.
 pub(crate) fn format_num_locale(
     vals: &[Datum],
-    locale: &str,
+    locale: Option<&str>,
     ctx: &dyn crate::Columns,
 ) -> Result<Datum, EvalError> {
     let [number, precision, ..] = vals else {
@@ -1248,24 +1265,32 @@ pub(crate) fn format_num_locale(
     let Some(precision) = format_precision(precision)? else {
         return Ok(Datum::Null);
     };
-    let precision = precision.clamp(0, 30) as usize;
+    // `evalNumDecArgsForFormat`: `d` is clamped, the number is rounded to it,
+    // and BOTH cross into `FormatByLocale` as decimal strings.
+    let precision = precision.clamp(0, FORMAT_MAX_DECIMALS) as usize;
     let rounded = round_format_args(&number, precision);
-    let (negative, number) = rounded
-        .strip_prefix('-')
-        .map_or((false, rounded.as_str()), |n| (true, n));
-    let (integer, fraction) = number.split_once('.').unwrap_or((number, ""));
-    let (thousands, decimal, indian) = format_style(locale);
-    let mut out = String::new();
-    if negative {
-        out.push('-');
+    let (locale, is_null_locale) = match locale {
+        Some(locale) => (locale, false),
+        None => ("en_US", true),
+    };
+    if is_null_locale {
+        append_unknown_locale_warning(ctx, "NULL");
     }
-    out.push_str(&group_integer(integer, thousands, indian));
-    if precision > 0 {
-        out.push_str(decimal);
-        out.push_str(&fraction[..fraction.len().min(precision)]);
-        out.push_str(&"0".repeat(precision.saturating_sub(fraction.len())));
+    let (formatted, found) =
+        tidb_mysql::locale::format_by_locale(&rounded, &precision.to_string(), locale)
+            .map_err(|_| EvalError::Unsupported("bad FORMAT arguments"))?;
+    if !is_null_locale && !found {
+        append_unknown_locale_warning(ctx, locale);
     }
-    Ok(Datum::new_string(out))
+    Ok(Datum::new_bytes(formatted))
+}
+
+/// Go `formatMaxDecimals` (`pkg/expression/builtin_string.go`).
+const FORMAT_MAX_DECIMALS: i64 = 30;
+
+/// Go `errUnknownLocale` (`ErrUnknownLocale`, 1649).
+fn append_unknown_locale_warning(ctx: &dyn crate::Columns, locale: &str) {
+    ctx.append_warning(1649, &format!("Unknown locale: '{locale}'"));
 }
 
 fn format_number_text(
@@ -1418,56 +1443,6 @@ fn format_number_parts(negative: bool, integer: String, fraction: Vec<u8>) -> St
         out.push_str(std::str::from_utf8(&fraction).unwrap());
     }
     out
-}
-
-fn group_integer(integer: &str, separator: &str, indian: bool) -> String {
-    if separator.is_empty() || integer.len() <= 3 {
-        return integer.to_string();
-    }
-    let mut widths = vec![3usize];
-    if indian {
-        widths.extend(std::iter::repeat_n(2, integer.len()));
-    } else {
-        widths.extend(std::iter::repeat_n(3, integer.len()));
-    }
-    let mut groups = Vec::new();
-    let mut end = integer.len();
-    for width in widths {
-        if end == 0 {
-            break;
-        }
-        let start = end.saturating_sub(width);
-        groups.push(&integer[start..end]);
-        end = start;
-    }
-    groups.reverse();
-    groups.join(separator)
-}
-
-fn format_style(locale: &str) -> (&'static str, &'static str, bool) {
-    let locale = locale.to_ascii_lowercase();
-    let dot_comma = "be_by da_dk de_be de_de de_lu es_ar es_bo es_cl es_co es_ec es_es es_py es_uy es_ve fo_fo hu_hu id_id is_is lt_lt mn_mn ro_ro ru_ua sq_al tr_tr vi_vn nb_no uk_ua no_no";
-    let space_comma = "cs_cz es_cr et_ee fi_fi lv_lv mk_mk ru_ru sk_sk sv_fi sv_se";
-    let none_comma = "el_gr gl_es pt_pt sl_si ca_es de_at eu_es fr_be hr_hr it_it nl_be nl_nl pt_br fr_ca fr_fr fr_lu pl_pl fr_ch bg_bg";
-    if dot_comma.split_whitespace().any(|name| name == locale) {
-        (".", ",", false)
-    } else if space_comma.split_whitespace().any(|name| name == locale) {
-        (" ", ",", false)
-    } else if none_comma.split_whitespace().any(|name| name == locale) {
-        ("", ",", false)
-    } else if locale == "de_ch" {
-        ("'", ".", false)
-    } else if locale == "it_ch" {
-        ("'", ",", false)
-    } else if matches!(locale.as_str(), "ar_sa" | "sr_rs") {
-        ("", ".", false)
-    } else if matches!(locale.as_str(), "en_in" | "ta_in" | "te_in") {
-        (",", ".", true)
-    } else {
-        // `GetLocaleFormatStyle` returns `styleCommaDot` for both the large
-        // explicit CommaDot set and unknown locales (with a warning in Go).
-        (",", ".", false)
-    }
 }
 
 /// `CHAR(n1, n2, ...)` (parser-renamed `CHAR_FUNC`) ported from
@@ -1737,9 +1712,12 @@ mod format_tests {
         } else {
             Decimal::from_literal(number)
         });
+        // `FormatByLocale` counts and groups the integer part in BYTES, so
+        // its result is bytes rather than a UTF-8 string; every row here is
+        // ASCII, so reading them back as text is exact.
         match format_num(&[n, Datum::Int(precision)], &crate::NoColumns).unwrap() {
-            Datum::String(s) => String::from_utf8(s.bytes().to_vec()).unwrap(),
-            other => panic!("expected a string, got {other:?}"),
+            Datum::Bytes(bytes) => String::from_utf8(bytes).unwrap(),
+            other => panic!("expected bytes, got {other:?}"),
         }
     }
 

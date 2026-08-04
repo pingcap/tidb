@@ -16,6 +16,7 @@ tidb-chunk = { path = "../tidb-chunk" }
 tidb-codec = { path = "../tidb-codec" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-error = { path = "../tidb-error" }
+tidb-mysql = { path = "../tidb-mysql" }
 tidb-proto = { path = "../tidb-proto" }
 aes = { workspace = true }
 flate2 = { workspace = true }
