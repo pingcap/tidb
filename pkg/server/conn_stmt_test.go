@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/server/internal"
 	"github.com/pingcap/tidb/pkg/server/internal/column"
 	"github.com/pingcap/tidb/pkg/server/internal/resultset"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/arena"
@@ -476,6 +477,42 @@ func TestMemoryTrackForPrepareBinaryProtocol(t *testing.T) {
 		require.NoError(t, stmt.Close())
 	}
 	require.Len(t, tk.Session().GetSessionVars().MemTracker.GetChildrenForTest(), 0)
+}
+
+func TestShouldInstallConnectionAliveDuringExecute(t *testing.T) {
+	lockingSelect := &ast.SelectStmt{
+		LockInfo: &ast.SelectLockInfo{LockType: ast.SelectLockForUpdate},
+	}
+	tests := []struct {
+		name       string
+		stmt       ast.StmtNode
+		autocommit bool
+		inTxn      bool
+		expected   bool
+	}{
+		{name: "autocommit DML", stmt: &ast.UpdateStmt{}, autocommit: true, expected: true},
+		{name: "explicit transaction DML", stmt: &ast.UpdateStmt{}, autocommit: true, inTxn: true, expected: true},
+		{name: "autocommit select", stmt: &ast.SelectStmt{}, autocommit: true, expected: false},
+		{name: "explicit transaction select", stmt: &ast.SelectStmt{}, autocommit: true, inTxn: true, expected: false},
+		{name: "autocommit locking select", stmt: lockingSelect, autocommit: true, expected: false},
+		{name: "explicit transaction locking select", stmt: lockingSelect, autocommit: true, inTxn: true, expected: true},
+		{name: "autocommit off locking select", stmt: lockingSelect, expected: true},
+		{name: "autocommit do", stmt: &ast.DoStmt{}, autocommit: true, expected: false},
+		{name: "explicit transaction do", stmt: &ast.DoStmt{}, autocommit: true, inTxn: true, expected: true},
+		{name: "autocommit off do", stmt: &ast.DoStmt{}, expected: true},
+		{name: "explicit transaction DDL", stmt: &ast.CreateTableStmt{}, autocommit: true, inTxn: true, expected: false},
+		{name: "autocommit off DDL", stmt: &ast.CreateTableStmt{}, expected: false},
+		{name: "explicit transaction commit", stmt: &ast.CommitStmt{}, autocommit: true, inTxn: true, expected: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sessVars := variable.NewSessionVars(nil)
+			sessVars.SetStatusFlag(mysql.ServerStatusAutocommit, tt.autocommit)
+			sessVars.SetInTxn(tt.inTxn)
+			require.Equal(t, tt.expected, shouldInstallConnectionAliveDuringExecute(tt.stmt, sessVars))
+		})
+	}
 }
 
 func getExpectOutput(t *testing.T, originalConn *mockConn, writeFn func(conn *clientConn)) []byte {

@@ -2355,6 +2355,12 @@ func (connInfo *ConnectionInfo) IsSecureTransport() bool {
 	return false
 }
 
+// kvKillSignalHandlerSetter keeps TiDB buildable as a dependency of modules that
+// still select a client-go version without the cooperative kill-signal hook.
+type kvKillSignalHandlerSetter interface {
+	SetKillSignalHandler(interface{ HandleSignal() error })
+}
+
 // NewSessionVars creates a session vars object.
 func NewSessionVars(hctx HookContext) *SessionVars {
 	vars := &SessionVars{
@@ -2509,6 +2515,9 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
 	vars.KVVars = tikvstore.NewVariables(&vars.SQLKiller.Signal)
+	if setter, ok := any(vars.KVVars).(kvKillSignalHandlerSetter); ok {
+		setter.SetKillSignalHandler(&vars.SQLKiller)
+	}
 	vars.Concurrency = Concurrency{
 		indexLookupConcurrency:            vardef.DefIndexLookupConcurrency,
 		indexLookupJoinConcurrency:        vardef.DefIndexLookupJoinConcurrency,

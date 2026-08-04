@@ -314,13 +314,10 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 	}
 	execStmt.SetText(charset.EncodingUTF8Impl, sql)
 	clearConnectionAlive := func() {}
-	checkingConnectionAlive := false
-	if planCacheStmt != nil && planCacheStmt.PreparedAst != nil {
-		checkingConnectionAlive = shouldInstallConnectionAliveDuringExecute(planCacheStmt.PreparedAst.Stmt, vars)
-		if checkingConnectionAlive {
-			clearConnectionAlive = cc.setSQLKillerConnectionAlive()
-			defer clearConnectionAlive()
-		}
+	connectionAliveInstalled := shouldInstallConnectionAliveDuringExecute(execStmt, vars)
+	if connectionAliveInstalled {
+		clearConnectionAlive = cc.setSQLKillerConnectionAlive()
+		defer clearConnectionAlive()
 	}
 	rs, err := (&cc.ctx).ExecuteStmt(ctx, execStmt)
 	if rs == nil || err != nil {
@@ -328,7 +325,7 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 	}
 	var lazy bool
 	if rs != nil {
-		if !checkingConnectionAlive {
+		if !connectionAliveInstalled {
 			clearConnectionAlive = cc.setSQLKillerConnectionAlive()
 			defer clearConnectionAlive()
 		}
