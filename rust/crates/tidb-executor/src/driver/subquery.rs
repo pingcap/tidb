@@ -158,7 +158,16 @@ fn collect_correlated_columns(
 ) {
     let inner = match &select.from {
         None => FromScope::default(),
-        Some(join) => match build_join(join, catalog, current_db, ctx, None, None, &[]) {
+        Some(join) => match build_join(
+            join,
+            catalog,
+            current_db,
+            ctx,
+            None,
+            None,
+            &[],
+            &tidb_planner::physical_property::PhysicalProperty::default(),
+        ) {
             Ok((_, scope)) => scope,
             // An unresolvable inner FROM is reported by the inner run itself.
             Err(_) => FromScope::default(),
@@ -677,7 +686,16 @@ pub(crate) fn select_outer_scope(
     };
     match &select.from {
         None => empty(),
-        Some(join) => match build_join(join, catalog, current_db, ctx, None, None, &[]) {
+        Some(join) => match build_join(
+            join,
+            catalog,
+            current_db,
+            ctx,
+            None,
+            None,
+            &[],
+            &tidb_planner::physical_property::PhysicalProperty::default(),
+        ) {
             Ok((_, scope)) => scope,
             Err(_) => empty(),
         },

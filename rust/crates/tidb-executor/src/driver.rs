@@ -192,6 +192,7 @@ mod from;
 pub(crate) mod funcdep;
 mod grouping;
 pub mod infoschema_meta;
+mod merge_decision;
 mod multi_dml;
 mod only_full_group_by;
 mod params;
@@ -443,6 +444,7 @@ pub(crate) fn run_select_traced(
                 trace.as_deref_mut(),
                 Some(select),
                 &offered,
+                &tidb_planner::physical_property::PhysicalProperty::default(),
             )?;
             (Some(exec), scope)
         }

@@ -634,11 +634,49 @@ fn join_operators_and_their_keep_order_match_recorded_tidb_plans() {
     // list suggested), 2 where TiDB ELIMINATED an outer join entirely and this
     // tier still joins, 1 that differs only in `keep order`, and 1 where this
     // tier builds one join where TiDB builds two.
+    // SECOND MEASUREMENT, after order propagation above the first join
+    // (`tidb_executor::driver::merge_decision`). 45 -> 99 plans agree on
+    // BOTH, and the 69-plan class named above is the one that moved.
+    //
+    // WHAT THE RECORDINGS SAY ABOUT THE 54. Every one is in
+    // `planner/core/join_reorder_through_projection`, and every one has a
+    // DERIVED TABLE over a join on one side --
+    // `r/planner/core/join_reorder_through_projection.result` records e.g.
+    // `select t1.a, dt.doubled_b, dt.shifted_b from t1, (select t2.a as a2,
+    // t2.b * 2 as doubled_b, t3.b + 100 as shifted_b from t2 join t3 on t2.a
+    // = t3.a) dt where t1.a = dt.a2` as `MergeJoin` over `MergeJoin` with
+    // `keep order:true` on t1, t2 AND t3. This tier now reaches the same
+    // three: the derived table reports the inner merge's key order through
+    // its projection, and the `WHERE` equality is a join key exactly as
+    // `LogicalJoin.PredicatePushDown` makes it one.
+    //
+    // THE ORDERED-MERGE PAIRS MOVED 63 -> 66 AND 30 -> 31, with three
+    // witnesses, all in the same recording:
+    //
+    //  * `select t4.a, tt.plus from t4, (select t.a + t.b as plus, t3.a as
+    //    t3_a from (select t1.a as a, t2.b as b from t1, t2 where t1.a =
+    //    t2.a) t join t3 on t.a = t3.a) tt` -- recorded TWICE (the suite runs
+    //    each case with `tidb_opt_join_reorder_through_proj` off and on) and
+    //    recorded BOTH times as an ordered merge of `(t1, t2)`. This tier
+    //    produced none before and produces `(t1, t2)` now: +2 agreed.
+    //  * `select t1.a, v.* from t1, (select t2.a as va, t2.b * 2 as vb, t3.b
+    //    as vb2 from t2, t3 where t2.a = t3.a) v where t1.a = v.va` -- also
+    //    recorded twice. One recording is an ordered merge of `(t2, t3)`,
+    //    which this tier now reproduces: +1 agreed. The other records
+    //    `(t1, t2)` -- TiDB REORDERED the three tables and merged a pair this
+    //    tier never forms -- while this tier merges `(t2, t3)` in the
+    //    position the statement wrote: +1 extra. That extra is the join-ORDER
+    //    gap the first measurement already named, now visible on one more
+    //    statement rather than a new kind of disagreement.
+    //
+    // NOTHING REGRESSED: the set of disagreeing statements after this change
+    // is a strict SUBSET of the set before it (0 newly disagreeing), and the
+    // replay is unchanged at 5639 compared / `PlanProperty` 806.
     const COMPARED: usize = 182;
-    const BOTH_AGREE: usize = 45;
+    const BOTH_AGREE: usize = 99;
     const RECORDED_MERGE_PAIRS: usize = 84;
-    const AGREED_MERGE_PAIRS: usize = 63;
-    const EXTRA_MERGE_PAIRS: usize = 30;
+    const AGREED_MERGE_PAIRS: usize = 66;
+    const EXTRA_MERGE_PAIRS: usize = 31;
 
     assert_eq!(
         (

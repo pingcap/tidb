@@ -240,3 +240,165 @@ fn an_order_by_limit_still_sorts_rather_than_reading_the_index_in_order() {
         "no scan claims the order yet:\n{joined}"
     );
 }
+
+/// THE SHAPE THIS INCREMENT ADDED: a join whose one side is a DERIVED TABLE
+/// over a merge join merges in turn, and the outer table keeps order too.
+///
+/// `r/planner/core/join_reorder_through_projection.result:14` records, for
+/// exactly this statement:
+///
+/// ```text
+/// MergeJoin  root  inner join, left key:....t1.a, right key:....t2.a
+/// ├─Projection(Build)  root  ....t2.a, mul(....t2.b, 2)->Column, plus(....t3.b, 100)->Column
+/// │ └─MergeJoin  root  inner join, left key:....t2.a, right key:....t3.a
+/// │   ├─TableReader(Build) ... └─TableFullScan  table:t3  keep order:true
+/// │   └─TableReader(Probe) ... └─TableFullScan  table:t2  keep order:true
+/// └─TableReader(Probe) ... └─TableFullScan  table:t1  keep order:true
+/// ```
+///
+/// THREE tables keep order, and BOTH joins merge. The join key TiDB prints on
+/// the outer join is `t2.a`, not the derived table's `a2`: Go's join reorder
+/// looked THROUGH the projection and substituted the base column. This tier
+/// names the derived table's own column, which is the same column reached by
+/// a different route -- the operator and the three `keep order:true` flags
+/// are what is pinned, and the key naming difference is stated rather than
+/// asserted away.
+#[test]
+fn a_join_over_a_derived_merge_join_merges_and_all_three_scans_keep_order() {
+    let mut session = pk_session();
+    let joined = plan(
+        &mut session,
+        "explain select t1.a, dt.doubled_b, dt.shifted_b from t1, \
+         (select t2.a as a2, t2.b * 2 as doubled_b, t3.b + 100 as shifted_b \
+          from t2 join t3 on t2.a = t3.a) dt \
+         where t1.a = dt.a2",
+    )
+    .join("\n");
+    assert_eq!(
+        joined.matches("MergeJoin").count(),
+        2,
+        "the derived table reports the inner merge's order, so the outer \
+         join merges too:\n{joined}"
+    );
+    assert_eq!(
+        joined.matches("keep order:true").count(),
+        3,
+        "t1, t2 and t3 each keep order, as the recording says:\n{joined}"
+    );
+}
+
+/// The rows that plan returns, pinned against the recording's OWN row block
+/// (`r/planner/core/join_reorder_through_projection.result:28`, over that
+/// suite's data). A merge join promises order it must actually be given; this
+/// is the test that fails if the promise is empty.
+#[test]
+fn the_derived_merge_join_returns_the_recorded_rows() {
+    let mut session = Session::new();
+    for name in ["t1", "t2", "t3"] {
+        session
+            .run(&format!(
+                "create table {name}(a int, b int, c varchar(32), primary key (a), key(b))"
+            ))
+            .unwrap();
+    }
+    session
+        .run("insert into t1 values(1,10,'a1'),(2,20,'a2'),(3,30,'a3'),(4,200,'a4')")
+        .unwrap();
+    session
+        .run("insert into t2 values(1,100,'b1'),(2,200,'b2'),(3,300,'b3')")
+        .unwrap();
+    session
+        .run("insert into t3 values(1,1000,'c1'),(2,2000,'c2'),(3,3000,'c3')")
+        .unwrap();
+    let rows = row_text(session.run(
+        "select t1.a, dt.doubled_b, dt.shifted_b from t1, \
+         (select t2.a as a2, t2.b * 2 as doubled_b, t3.b + 100 as shifted_b \
+          from t2 join t3 on t2.a = t3.a) dt \
+         where t1.a = dt.a2 order by 1",
+    ));
+    assert_eq!(
+        rows,
+        vec![
+            vec!["1".to_owned(), "200".to_owned(), "1100".to_owned()],
+            vec!["2".to_owned(), "400".to_owned(), "2100".to_owned()],
+            vec!["3".to_owned(), "600".to_owned(), "3100".to_owned()],
+        ]
+    );
+}
+
+/// A THREE-table join written flat merges at both levels, and the middle join
+/// -- itself a merge -- is what the top one reads its order from. This is the
+/// join-node half of the propagation, with no derived table involved.
+#[test]
+fn a_nested_join_reports_its_merge_keys_to_the_join_above_it() {
+    let mut session = pk_session();
+    let joined = plan(
+        &mut session,
+        "explain select * from t1 join t2 on t1.a = t2.a join t3 on t1.a = t3.a",
+    )
+    .join("\n");
+    assert_eq!(
+        joined.matches("MergeJoin").count(),
+        2,
+        "the lower join's output is sorted on its keys:\n{joined}"
+    );
+    assert_eq!(joined.matches("keep order:true").count(), 3, "{joined}");
+    let rows = row_text(session.run(
+        "select t1.a, t2.a, t3.a from t1 join t2 on t1.a = t2.a \
+         join t3 on t1.a = t3.a order by 1",
+    ));
+    assert_eq!(rows.len(), 3, "{rows:?}");
+}
+
+/// A derived table whose projection DROPS the ordered column carries no
+/// order, and the join above it hashes. Go's
+/// `LogicalProjection.PreparePossibleProperties` reaches the same answer by
+/// `break`ing at the first order column the projection does not carry.
+#[test]
+fn a_derived_table_that_does_not_project_its_order_column_hashes_above() {
+    let mut session = pk_session();
+    let joined = plan(
+        &mut session,
+        "explain select t1.a from t1, (select t2.b as k from t2 join t3 on t2.a = t3.a) dt \
+         where t1.a = dt.k",
+    )
+    .join("\n");
+    assert_eq!(
+        joined.matches("MergeJoin").count(),
+        1,
+        "only the inner join merges; `k` is t2.b, which no side orders \
+         by:\n{joined}"
+    );
+}
+
+/// A derived table that REORDERS its rows carries no order upward, whatever
+/// its child provides. Go gives `LogicalSort`, `LogicalTopN`,
+/// `LogicalAggregation` and `LogicalLimit` their own
+/// `PreparePossibleProperties`; none is ported, so each is refused rather
+/// than described wrongly.
+#[test]
+fn a_derived_table_with_order_by_or_group_by_offers_no_order() {
+    let mut session = pk_session();
+    for inner in [
+        "select t2.a as a2 from t2 join t3 on t2.a = t3.a order by a2 desc",
+        "select t2.a as a2 from t2 join t3 on t2.a = t3.a group by a2",
+        "select distinct t2.a as a2 from t2 join t3 on t2.a = t3.a",
+        "select t2.a as a2 from t2 join t3 on t2.a = t3.a limit 2",
+    ] {
+        let sql = format!("explain select t1.a from t1, ({inner}) dt where t1.a = dt.a2");
+        let Ok(out) = session.run(&sql) else {
+            // A shape this tier refuses outright offers no order either, and
+            // refusing is the answer this test wants.
+            continue;
+        };
+        let joined = row_text(Ok(out))
+            .into_iter()
+            .map(|row| row.join("|"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            joined.matches("MergeJoin").count() <= 1,
+            "`{inner}` must not offer an order upward:\n{joined}"
+        );
+    }
+}
