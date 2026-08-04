@@ -65,25 +65,6 @@ fn binary_literal_arithmetic_is_still_unevaluated() {
     );
 }
 
-/// `TestArithmeticMod`'s `{"1231", 12}` and `{"1231", "12"}` rows. MySQL
-/// coerces a numeric-prefix string operand into the ETReal domain, so both are
-/// `FLOAT:7`. `ops.rs` deliberately scopes string operands to COMPARISON only;
-/// see the boundary comment there and the guard in `tests/evaluator_binop.rs`.
-#[test]
-fn string_operand_arithmetic_is_still_unevaluated() {
-    // Go: FLOAT:7 for both.
-    assert!(
-        eval_label("'1231' % 12").is_err(),
-        "string/number arithmetic now evaluates; move the row into \
-         corpus/expr/int_arithmetic_source.txt and regenerate its golden"
-    );
-    assert!(
-        eval_label("'1231' % '12'").is_err(),
-        "string/string arithmetic now evaluates; move the row into \
-         corpus/expr/int_arithmetic_source.txt and regenerate its golden"
-    );
-}
-
 /// `TestArithmeticMod`'s `types.Duration{45296s}` row: a TIME operand takes its
 /// numeric form (`123456`), so the remainder against 122 is 114. `ops.rs`
 /// already routes `Datum::Duration` through `numeric_context_value`; what is

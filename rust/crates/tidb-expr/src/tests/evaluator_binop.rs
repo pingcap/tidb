@@ -444,47 +444,39 @@ fn binop_numeric_source_zero_divisor_table() {
 }
 
 /// The three rows of `TestBinopNumeric` whose operand is a STRING or a byte
-/// slice in an ARITHMETIC position. Go's answers are asserted here verbatim;
-/// this engine refuses them instead (`ops.rs`: "not a claim that arbitrary
-/// string arithmetic is in scope for this compact value evaluator"), which is a
-/// deferral, not a disagreement about the value.
+/// slice in an ARITHMETIC position.
 ///
-/// Paired with `binop_numeric_string_operand_is_refused_today`, which RUNS: if
-/// string arithmetic ever lands, that guard fails and sends the reader here.
+/// Go's arithmetic classes never see a string argument: `getFunction` reads
+/// `numericContextResultType` for both sides, and a string's numeric context
+/// is `ETReal`, so `newBaseBuiltinFuncWithTp` wraps it in
+/// `WrapWithCastAsReal` before the signature runs. `ops.rs` now does the same,
+/// so the first row -- the one whose operand is a genuine STRING -- answers
+/// Go's 2 instead of being refused.
+///
+/// The two `Datum::Bytes` rows are still refused, and that refusal is
+/// deliberate rather than leftover: this crate's AST evaluator uses
+/// `Datum::Bytes` as the carrier for a HEX/BIT LITERAL
+/// (`binary_literal.rs::bytes_to_value`), and Go gives a constant binary
+/// literal `ETInt`, not `ETReal` (`builtin_arithmetic.go:91`) -- so coercing
+/// that kind as text here would answer `0x20000000000000 + 1` as 1 instead of
+/// 9007199254740993. Go's own `[]byte` datum in this table is an ordinary
+/// byte string and would be 2; the two meanings share one `Datum` kind here,
+/// and the refusal is the safe half of that ambiguity. Nothing in live SQL is
+/// affected: a `VARCHAR` *and* a `VARBINARY` column both read back as
+/// `Datum::String`. The chunk rewriter, which keeps a literal as
+/// `Datum::BinaryLiteral`, already answers the hex row correctly.
 #[test]
-#[ignore = "string arithmetic is a documented deferral of this value evaluator"]
 fn binop_numeric_source_string_operand_rows() {
-    let rows: Vec<(Datum, BinaryOp, Datum, f64)> = vec![
-        (Datum::Int(1), BinaryOp::Plus, Datum::new_string("1"), 2.0),
-        (
-            Datum::Int(1),
-            BinaryOp::Plus,
-            Datum::Bytes(b"1".to_vec()),
-            2.0,
-        ),
-        (
-            Datum::new_string("1"),
-            BinaryOp::Minus,
-            Datum::Bytes(b"1".to_vec()),
-            0.0,
-        ),
-    ];
-    for (lhs, op, rhs, expected) in rows {
-        let result = apply(op, lhs.clone(), rhs.clone());
-        assert_eq!(
-            result.to_f64().expect("numeric result").value,
-            expected,
-            "{lhs:?} {op:?} {rhs:?}"
-        );
-    }
-}
-
-/// Today's answer for the three rows above: a refusal, never a wrong number.
-/// This test is the reason the `#[ignore]`d one cannot go stale unnoticed.
-#[test]
-fn binop_numeric_string_operand_is_refused_today() {
+    // Go: 1 + '1' is 2, via the ETReal cast of the string.
+    assert_eq!(
+        apply(BinaryOp::Plus, Datum::Int(1), Datum::new_string("1"))
+            .to_f64()
+            .expect("numeric result")
+            .value,
+        2.0
+    );
+    // Go: 2 and 0 respectively; refused here for the reason above.
     for (lhs, op, rhs) in [
-        (Datum::Int(1), BinaryOp::Plus, Datum::new_string("1")),
         (Datum::Int(1), BinaryOp::Plus, Datum::Bytes(b"1".to_vec())),
         (
             Datum::new_string("1"),

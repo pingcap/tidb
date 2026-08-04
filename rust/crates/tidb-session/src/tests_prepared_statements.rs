@@ -317,11 +317,17 @@ fn parameter_type_comes_from_the_variable_and_the_header_stays_a_marker() {
             vec![vec!["8".to_owned(), "7".to_owned()]]
         )
     );
-    // The string case (`EXECUTE st USING @s, @s` with `@s = '7'`, captured as
-    // `8|7`) is NOT asserted here: this engine's `+` refuses a string operand
-    // outright, which is a gap in numeric coercion rather than in parameter
-    // binding. The bare `?` half of it -- the value's own kind surviving the
-    // binding -- is pinned below and in
+    // The STRING case: `@s = '7'` binds as a string, and `?+1` coerces it the
+    // way Go's arithmetic classes do. Captured from Go: `8|7`.
+    assert_eq!(
+        header_and_rows(&mut session, "EXECUTE st USING @s, @s"),
+        (
+            vec!["?+1".to_owned(), "?".to_owned()],
+            vec![vec!["8".to_owned(), "7".to_owned()]]
+        )
+    );
+    // The bare `?` half -- the value's own kind surviving the binding -- is
+    // pinned below and in
     // `parameter_values_keep_their_kind_through_the_binding`.
     assert_eq!(
         header_and_rows(&mut session, "EXECUTE st2 USING @s, @s"),

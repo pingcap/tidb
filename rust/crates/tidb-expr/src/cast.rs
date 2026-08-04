@@ -226,7 +226,7 @@ fn int_prefix_consumed_all(s: &str) -> bool {
 /// numeric and temporal sources have their own signatures and their own
 /// (overflow-shaped, not truncation-shaped) diagnostics, so they are left
 /// alone here rather than given a warning TiDB does not emit.
-fn report_int_truncation(v: &Datum, ctx: &dyn crate::Columns) -> Result<(), EvalError> {
+pub(crate) fn report_int_truncation(v: &Datum, ctx: &dyn crate::Columns) -> Result<(), EvalError> {
     let text = match v {
         Datum::String(value) => value.as_utf8().ok(),
         Datum::Bytes(value) => std::str::from_utf8(value).ok(),

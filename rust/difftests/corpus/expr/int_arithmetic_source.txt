@@ -40,22 +40,24 @@
 ## tests about which builtin*Sig or tipb.ScalarFuncSig was CHOSEN, which
 ## observes dispatch rather than the value.
 ##
-## Five further rows are held out because tidb-expr cannot evaluate them TODAY;
-## each is pinned, with the Go answer above, by a running guard in
-## `ops.rs::tests_int_arithmetic_source_gaps`, so the gap fails loudly the day
-## it closes rather than staying invisible:
+## Three further rows are held out because tidb-expr cannot evaluate them
+## TODAY; each is pinned, with the Go answer above, by a running guard in
+## `difftests/result-tests/tests/expr_corpus_holdouts.rs`, so the gap fails
+## loudly the day it closes rather than staying invisible:
 ##
 ##   0x20000000000000 + 1                 Go UINT:9007199254740993
 ##   b'00011' + 1                         Go INT:4
-##   '1231' % 12                          Go FLOAT:7
-##   '1231' % '12'                        Go FLOAT:7
 ##   mod(cast('12:34:56' as time), 122)   Go INT:114
 ##
 ## The first two need a hex/bit literal to keep its binary-literal identity
 ## into arithmetic (where MySQL reads it as an integer, unsigned for `0x`,
-## signed for `b''`); the middle two are the string-arithmetic boundary this
-## evaluator declares in `float_binary`'s neighbourhood and guards at
-## `tests/evaluator_binop.rs`; the last needs `CAST(... AS TIME)`.
+## signed for `b''`) -- the AST evaluator carries both as plain `Datum::Bytes`,
+## which is why `ops.rs` refuses that kind rather than coercing it as text; the
+## last needs `CAST(... AS TIME)`.
+##
+## The two STRING-operand mod rows moved out of this hold-out list and into the
+## executable set below: Go's arithmetic classes wrap a string argument in the
+## cast their signature names, which `ops.rs` now does too.
 12 + 1
 1.01001e0 + -0.01e0
 null + -0.11101e0
@@ -132,3 +134,5 @@ null % -0.11101e0
 null % -1001
 101 % null
 null % null
+'1231' % 12
+'1231' % '12'

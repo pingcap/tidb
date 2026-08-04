@@ -379,7 +379,7 @@ impl ScalarFunction {
         if let Some(op) = unary_op_for_name(name) {
             if self.args.len() == 1 {
                 let v = self.args[0].eval(ctx, row)?;
-                return crate::apply_unary(op, v);
+                return crate::apply_unary(op, v, ctx);
             }
         }
         // Go `builtinCaseWhen*Sig`: the arguments are the flattened

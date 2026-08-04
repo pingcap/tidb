@@ -162,12 +162,15 @@ fn numeric_prefix_strings_warn_once_per_coercion() {
     assert_eq!(row_text(session.run("SELECT ABS('12abc')")), [["12"]]);
     assert_eq!(seen(&session), [truncated("12abc")]);
 
-    // A comparison promoted to REAL raises the same warning. (Plain
-    // ARITHMETIC over a string operand is still `Unsupported` here -- see
-    // `tidb_expr::binary_literal`'s standing no-string-coercion boundary --
-    // so it has no row yet; when that boundary moves, the warning is already
-    // wired.)
+    // A comparison promoted to REAL raises the same warning.
     assert_eq!(row_text(session.run("SELECT '12abc' = 12")), [["1"]]);
+    assert_eq!(seen(&session), [truncated("12abc")]);
+
+    // And so does plain ARITHMETIC, now that a string operand takes the
+    // `ETReal` cast Go's arithmetic classes wrap it in rather than being
+    // refused. Captured: `select '12abc' + 1` -> 13 with
+    // `1292 Truncated incorrect DOUBLE value: '12abc'`.
+    assert_eq!(row_text(session.run("SELECT '12abc' + 1")), [["13"]]);
     assert_eq!(seen(&session), [truncated("12abc")]);
 
     // A complete number, a padded one, and the empty string are all silent
@@ -1042,4 +1045,124 @@ fn misc_and_encryption_builtins_reach_live_sql() {
     // `block_encryption_mode`, which this gate cannot see. A refusal beats a
     // silently wrong ciphertext -- see `builtin_return_type`'s own doc.
     assert!(session.run("SELECT AES_ENCRYPT('a', 'k')").is_err());
+}
+
+/// A string operand of an arithmetic, bitwise or unary operator, end to end
+/// through the chunk tier. `WHERE varchar_col + 0 = ...` is an everyday idiom
+/// and used to be a hard statement error.
+///
+/// Go never lets a string reach an arithmetic signature: each `getFunction`
+/// reads `numericContextResultType` (`pkg/expression/builtin_arithmetic.go:80`)
+/// for both arguments and `newBaseBuiltinFuncWithTp` wraps every argument in
+/// the cast the chosen signature's `argTps` name. A string's numeric context is
+/// always `ETReal` (`:94-100`), so the cast is fixed by the OPERATOR: `ETInt`
+/// for the bitwise family, `ETDecimal` for `DIV` (unless both sides are
+/// already `ETInt`), `ETReal` for everything else.
+///
+/// Every expectation is a Go capture (`goeval`, one expression per line):
+///
+/// ```text
+/// '3' + 1      FLOAT:4      '3' - 1     FLOAT:2     '3' * 2   FLOAT:6
+/// '3' / 2      FLOAT:1.5    '3' div 2   INT:1       '3' % 2   FLOAT:1
+/// '3' & 1      UINT:1       '3' | 4     UINT:7      '3' ^ 1   UINT:2
+/// '3' << 2     UINT:12      '3.7' + 1   FLOAT:4.7   '3' + 1.5 FLOAT:4.5
+/// 1.5 & '3'    UINT:2       'abc' + 1   FLOAT:1     '12abc'+1 FLOAT:13
+/// -'3'         FLOAT:-3     +'3'        STR:3       ~'3'      UINT:18446744073709551612
+/// '1e3' + 1    FLOAT:1001   '  7 ' + 1  FLOAT:8     '3.7' & 1 UINT:1
+/// '3.5' & 1    UINT:1       '-3' & 1    UINT:1      '7.9' div 2 INT:3
+/// 'abc' & 1    UINT:0       'abc' div 2 INT:0       '3.7' << 1  UINT:6
+/// ```
+#[test]
+fn string_operands_take_go_s_per_operator_numeric_cast() {
+    let mut session = Session::new();
+    for (sql, expected) in [
+        ("SELECT '3' + 1", "4"),
+        ("SELECT '3' - 1", "2"),
+        ("SELECT '3' * 2", "6"),
+        ("SELECT '3' / 2", "1.5"),
+        // DIV takes the DECIMAL cast, so the fraction is truncated, not
+        // rounded through a float.
+        ("SELECT '3' div 2", "1"),
+        ("SELECT '7.9' div 2", "3"),
+        // The row that TELLS the DIV cast apart from the ETReal one: a
+        // 17-digit string is exact as a DECIMAL and rounds to 1e17 as a
+        // double. Captured: `'99999999999999999' div 1` -> 99999999999999999
+        // while `'99999999999999999' + 0` -> 100000000000000000.
+        ("SELECT '99999999999999999' div 1", "99999999999999999"),
+        ("SELECT '99999999999999999' + 0", "100000000000000000"),
+        ("SELECT '3' % 2", "1"),
+        // The bitwise family takes the INT cast, which is `StrToInt`'s
+        // truncating integer prefix -- '3.7' is 3, never a rounded 4.
+        ("SELECT '3' & 1", "1"),
+        ("SELECT '3' | 4", "7"),
+        ("SELECT '3' ^ 1", "2"),
+        ("SELECT '3' << 2", "12"),
+        ("SELECT '3.7' & 1", "1"),
+        ("SELECT '3.5' & 1", "1"),
+        ("SELECT '3.7' << 1", "6"),
+        ("SELECT '-3' & 1", "1"),
+        ("SELECT 'abc' & 1", "0"),
+        ("SELECT 'abc' div 2", "0"),
+        // A numeric partner promotes through the ordinary hierarchy; only the
+        // string is converted here, and the answer still matches Go's
+        // cast-both-arguments build.
+        ("SELECT '3.7' + 1", "4.7"),
+        ("SELECT '3' + 1.5", "4.5"),
+        ("SELECT 1.5 & '3'", "2"),
+        // The numeric PREFIX rule, including the empty prefix.
+        ("SELECT 'abc' + 1", "1"),
+        ("SELECT '12abc' + 1", "13"),
+        ("SELECT '1e3' + 1", "1001"),
+        ("SELECT '  7 ' + 1", "8"),
+        // Two strings: an arithmetic operator over them is NOT a collation
+        // comparison, so both take the same cast.
+        ("SELECT '1231' % '12'", "7"),
+        // Unary. UNARY PLUS is not a function class in TiDB at all -- the
+        // parser hands the operand back untouched -- so it stays a STRING.
+        ("SELECT -'3'", "-3"),
+        ("SELECT +'3'", "3"),
+        ("SELECT ~'3'", "18446744073709551612"),
+    ] {
+        assert_eq!(row_text(session.run(sql))[0][0], expected, "{sql}");
+    }
+
+    // The truncation warning is worded from the CAST the operator chose, not
+    // from the operand: DIV's is DECIMAL where `+`'s is DOUBLE. Captured:
+    // `select 'abc' div 2` warns `1292 Truncated incorrect DECIMAL value:
+    // 'abc'`.
+    let mut warned = Session::new();
+    warned.run("SELECT 'abc' div 2").unwrap();
+    assert_eq!(
+        warned
+            .warnings()
+            .iter()
+            .map(|w| (w.code, w.message.clone()))
+            .collect::<Vec<_>>(),
+        [(1292, "Truncated incorrect DECIMAL value: 'abc'".to_owned())]
+    );
+    warned.run("SELECT 'abc' + 2").unwrap();
+    assert_eq!(
+        warned
+            .warnings()
+            .iter()
+            .map(|w| (w.code, w.message.clone()))
+            .collect::<Vec<_>>(),
+        [(1292, "Truncated incorrect DOUBLE value: 'abc'".to_owned())]
+    );
+
+    // The everyday idiom this unblocks, over a real VARCHAR column.
+    session
+        .run("CREATE TABLE s (a INT PRIMARY KEY, b VARCHAR(20))")
+        .unwrap();
+    session
+        .run("INSERT INTO s VALUES (1,'10'),(2,'20'),(3,'x')")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT a FROM s WHERE b + 0 = 20")),
+        [["2"]]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT b + 0 FROM s ORDER BY a")),
+        [["10"], ["20"], ["0"]]
+    );
 }

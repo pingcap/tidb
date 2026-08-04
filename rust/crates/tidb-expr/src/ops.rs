@@ -24,7 +24,14 @@ use crate::coerce::{
 use crate::{Datum, Decimal, EvalError};
 use tidb_datatype::{div_int64, div_int_with_uint, div_uint_with_int};
 
-pub(crate) fn eval_unary(op: UnaryOp, v: Datum) -> Result<Datum, EvalError> {
+mod real_coerce;
+pub(crate) use real_coerce::*;
+
+pub(crate) fn eval_unary(
+    op: UnaryOp,
+    v: Datum,
+    ctx: &dyn crate::context::Columns,
+) -> Result<Datum, EvalError> {
     use UnaryOp::*;
     // Every unary operator applied to NULL is NULL.
     if v == Datum::Null {
@@ -41,8 +48,30 @@ pub(crate) fn eval_unary(op: UnaryOp, v: Datum) -> Result<Datum, EvalError> {
         };
     }
     match v {
-        // Numeric coercion of strings is out of the current domain.
-        Datum::String(_) | Datum::Bytes(_) => Err(EvalError::Unsupported("string operand")),
+        // Go's unary classes never SEE a string argument: `getFunction` names
+        // the argument's eval type and `newBaseBuiltinFuncWithTp` wraps the
+        // argument in that cast before any signature runs.
+        //
+        //  * `bitNegFunctionClass` fixes `types.ETInt`
+        //    (`pkg/expression/builtin_op.go:800`), so `~'3'` is `~3`.
+        //  * `unaryMinusFunctionClass`'s default arm (`:1053-1076`) picks
+        //    `ETDecimal` only for a decimal or temporal argument and `ETReal`
+        //    for everything else, a string included -- so `-'3'` is the REAL
+        //    -3, not a decimal.
+        //  * UNARY PLUS is not a function class at all; TiDB's parser hands
+        //    back the operand untouched, so `+'3'` is still the STRING '3'.
+        //
+        // Captured (`goeval`): `-'3'` -> FLOAT:-3, `+'3'` -> STR:3,
+        // `~'3'` -> UINT:18446744073709551612.
+        Datum::String(_) | Datum::Bytes(_) => match op {
+            Plus => Ok(v),
+            Minus => Ok(Datum::Real(-to_f64_with_mysql_string(&v, ctx)?)),
+            BitNeg => {
+                crate::cast::report_int_truncation(&v, ctx)?;
+                Ok(Datum::UInt(!(crate::cast::to_i64_signed(&v) as u64)))
+            }
+            Not | NotKeyword => unreachable!("handled above"),
+        },
         Datum::Decimal(d) => match op {
             Plus => Ok(Datum::Decimal(d)),
             Minus => Ok(Datum::Decimal(d.negate())),
@@ -175,6 +204,18 @@ pub(crate) const DERIVATION_FREE_COLLATION: tidb_datatype::Collation =
 /// rewriter aggregated from the operands (Go: the comparison's own result type
 /// carries the collation `builtinCompareStringSig` compares under). Every other
 /// operand pairing ignores it, exactly as in Go.
+/// The text `Context.HandleTruncate` names in a `1292 Truncated incorrect
+/// <TYPE> value: '<text>'` warning: Go's message carries the operand's own
+/// bytes, lossily decoded here for the same reason [`bytes_to_f64`] scans
+/// them raw -- the message is diagnostic text, not a value.
+fn string_operand_text(d: &Datum) -> String {
+    match d {
+        Datum::String(s) => String::from_utf8_lossy(s.bytes()).into_owned(),
+        Datum::Bytes(s) => String::from_utf8_lossy(s).into_owned(),
+        _ => String::new(),
+    }
+}
+
 pub(crate) fn eval_binary_full(
     op: BinaryOp,
     l: Datum,
@@ -238,12 +279,20 @@ pub(crate) fn eval_binary_full(
     // Two strings compare under the collation the expression derivation
     // aggregated for THIS comparison (byte order and PAD SPACE for
     // `utf8mb4_bin`, case folding for a `_ci` collation, NO PAD for `binary`).
+    //
+    // ONLY a comparison takes this branch. An arithmetic or bitwise operator
+    // over two strings is not a collation question at all -- Go casts both
+    // arguments into the signature's numeric domain first (see the
+    // string-operand arm further down), so `'1231' % '12'` is 7, not a
+    // collation comparison that has no definition for `%`.
     let comparison = matches!(op, Eq | Ge | Gt | Le | Lt | Ne | NullEq);
-    if let (Some(a), Some(b)) = (
-        string_cmp_operand(&l, comparison),
-        string_cmp_operand(&r, comparison),
-    ) {
-        return string_compare(op, a, b, collation);
+    if comparison {
+        if let (Some(a), Some(b)) = (
+            string_cmp_operand(&l, comparison),
+            string_cmp_operand(&r, comparison),
+        ) {
+            return string_compare(op, a, b, collation);
+        }
     }
     // `Raw` and `VectorFloat32` are the two kinds that no dispatch below
     // claims, and they are rejected HERE -- as one guard, above every
@@ -364,7 +413,87 @@ pub(crate) fn eval_binary_full(
                 to_f64_with_mysql_string(&r, ctx)?,
             );
         }
-        return Err(EvalError::Unsupported("string operand"));
+        // `Datum::Bytes` is the AST tier's BINARY LITERAL carrier
+        // (`binary_literal.rs::bytes_to_value` turns `0x...`/`b'...'` into
+        // one), and Go's `numericContextResultType` gives a CONSTANT binary
+        // literal `ETInt`, not the `ETReal` every other string takes
+        // (`pkg/expression/builtin_arithmetic.go:91`) -- `0x20000000000000 + 1`
+        // is 9007199254740993, not 1. Coercing those bytes as TEXT here would
+        // trade a refusal for a wrong answer, so they stay refused; the chunk
+        // rewriter, which carries the literal as `Datum::BinaryLiteral` and so
+        // keeps its integer identity, already answers correctly.
+        //
+        // Nothing else reaches here as `Bytes`: a VARCHAR *and* a VARBINARY
+        // column both read back as `Datum::String` (the latter merely collated
+        // `binary`), which is also what makes `binary '3' + 1` FLOAT:4 in Go.
+        if matches!(l, Datum::Bytes(_)) || matches!(r, Datum::Bytes(_)) {
+            return Err(EvalError::Unsupported("binary literal operand"));
+        }
+        // Every other operator reaches its signature with the string ALREADY
+        // cast. Go's arithmetic and bitwise classes each read
+        // `numericContextResultType` (`pkg/expression/builtin_arithmetic.go:80`)
+        // for both arguments, pick one signature, and let
+        // `newBaseBuiltinFuncWithTp` wrap each argument in that signature's
+        // `argTps` cast. A string's numeric context is ALWAYS `ETReal`
+        // (`:94-100`) -- the `ETInt` shortcut at `:91` is for a CONSTANT binary
+        // literal (`0x1234`, `b'11'`) or a `BIT` column, and those arrive here
+        // as their own `Datum` kinds, not as `String`/`Bytes`. So the cast a
+        // string takes depends only on the OPERATOR:
+        //
+        //  * `& | ^ << >>` -- `bitAndFunctionClass` and friends fix `ETInt`
+        //    arguments unconditionally (`builtin_op.go`), so `'3.7' & 1` sees
+        //    `StrToInt`'s truncated 3, not a rounded 4.
+        //  * `DIV` -- `arithmeticIntDivideFunctionClass` uses `ETInt` arguments
+        //    only when BOTH sides are `ETInt`, and `ETDecimal` otherwise, so
+        //    `'7.9' DIV 2` is 3.
+        //  * `+ - * / %` -- `ETReal` wins as soon as either side is `ETReal`.
+        //
+        // Only the STRING operands are converted; a numeric partner already
+        // promotes correctly through the hierarchy below, so this stays one
+        // conversion rather than a second, rival promotion table.
+        //
+        // Captured (`goeval`): `'3'+1` FLOAT:4, `'3'/2` FLOAT:1.5,
+        // `'3' DIV 2` INT:1, `'3'%2` FLOAT:1, `'3'&1` UINT:1, `'3'<<2` UINT:12,
+        // `1.5&'3'` UINT:2, `'12abc'+1` FLOAT:13, `'abc'+1` FLOAT:1
+        // (+ warning 1292 `Truncated incorrect DOUBLE value: 'abc'`),
+        // `'abc' DIV 2` INT:0 (+ the DECIMAL-worded 1292).
+        let cast_string = |d: Datum| -> Result<Datum, EvalError> {
+            if !matches!(d, Datum::String(_) | Datum::Bytes(_)) {
+                return Ok(d);
+            }
+            match op {
+                BitAnd | BitOr | BitXor | LeftShift | RightShift => {
+                    crate::cast::report_int_truncation(&d, ctx)?;
+                    Ok(Datum::Int(crate::cast::to_i64_signed(&d)))
+                }
+                IntDiv => {
+                    let converted = d
+                        .to_decimal()
+                        .map_err(|_| EvalError::Unsupported("string operand"))?;
+                    if converted.event.is_some() {
+                        // Go's `builtinCastStringAsDecimalSig` routes
+                        // `StrToDecimal`'s truncation through
+                        // `Context.HandleTruncate`, and the message names
+                        // DECIMAL rather than the DOUBLE the real cast names.
+                        ctx.handle_truncate(&format!(
+                            "Truncated incorrect DECIMAL value: '{}'",
+                            string_operand_text(&d)
+                        ))?;
+                    }
+                    Ok(Datum::Decimal(converted.value))
+                }
+                _ => Ok(Datum::Real(to_f64_with_mysql_string(&d, ctx)?)),
+            }
+        };
+        // Neither converted operand is a string, so the recursion is one deep.
+        return eval_binary_full(
+            op,
+            cast_string(l)?,
+            cast_string(r)?,
+            div_precision_increment,
+            collation,
+            ctx,
+        );
     }
     // `Float` dominates `Decimal` in MySQL's promotion hierarchy — the
     // OPPOSITE of how `Decimal` dominates `Int` below — so this check
@@ -889,297 +1018,6 @@ pub(crate) fn to_decimal(v: Datum) -> Decimal {
                 .expect("numeric caller must supply a decimal-convertible datum")
                 .value
         }
-    }
-}
-
-/// Float (`FLOAT`/`DOUBLE`) arithmetic and comparison: an `Int` or
-/// `Decimal` operand promotes to `f64` (MySQL's implicit rule), using
-/// NATIVE `f64` arithmetic throughout — unlike `Decimal`, `Float` needs no
-/// custom digit-string math, since Rust's `f64` already implements the
-/// same IEEE-754 semantics Go's does (confirmed via direct comparison of
-/// `strconv.FormatFloat(f,'f',-1,64)` against Rust's own `f64` Display
-/// across a wide value range, including subnormals and `f64::MAX` —
-/// byte-identical in every case tried). A result that overflows to
-/// `+/-infinity` is a genuine MySQL evaluation ERROR (confirmed via
-/// `goeval`, not silently allowed as IEEE-754 would); `NullEq` has its
-/// own NULL rule; every other operator here is `NULL` if either operand
-/// is `NULL` — including `DIV`/`MOD` by zero, matching the `Int`/
-/// `Decimal` case. `DIV`'s quotient truncates toward zero, same as `Int`;
-/// bitwise/shift operators round to the nearest `i64` first, but TIES TO
-/// EVEN — the OPPOSITE tie-breaking rule from `Decimal`'s own bitwise
-/// conversion (ties away from zero), confirmed via `goeval`, not assumed.
-fn float_binary(
-    op: BinaryOp,
-    l: Datum,
-    r: Datum,
-    ctx: &dyn crate::context::Columns,
-) -> Result<Datum, EvalError> {
-    use BinaryOp::*;
-    if op == NullEq {
-        return Ok(match (&l, &r) {
-            (Datum::Null, Datum::Null) => Datum::Int(1),
-            (Datum::Null, _) | (_, Datum::Null) => Datum::Int(0),
-            _ => bool_int(to_f64(l) == to_f64(r)),
-        });
-    }
-    if l == Datum::Null || r == Datum::Null {
-        return Ok(Datum::Null);
-    }
-    // `intDivideFunctionClass.getFunction` stamps the result with
-    // `UnsignedFlag` when EITHER operand carries it, and
-    // `builtinArithmeticIntDivideDecimalSig` then reads the quotient back
-    // through `ConvertDecimalToUint`, which REJECTS a negative quotient rather
-    // than wrapping it. So `1u DIV -1` is an out-of-range error while
-    // `1u DIV -2` is an unsigned 0 -- a distinction that survives the promotion
-    // to `f64` here only if the original signedness is captured first.
-    let unsigned_div = matches!(l, Datum::UInt(_)) || matches!(r, Datum::UInt(_));
-    let a = to_f64(l);
-    let b = to_f64(r);
-    Ok(match op {
-        Plus => finite_float(a + b)?,
-        Minus => finite_float(a - b)?,
-        Mul => finite_float(a * b)?,
-        Div => {
-            if b == 0.0 {
-                ctx.handle_division_by_zero()?;
-                Datum::Null
-            } else {
-                finite_float(a / b)?
-            }
-        }
-        IntDiv => {
-            if b == 0.0 {
-                ctx.handle_division_by_zero()?;
-                Datum::Null
-            } else {
-                let quotient = (a / b).trunc();
-                if unsigned_div {
-                    if quotient < 0.0 {
-                        return Err(EvalError::IntOverflow);
-                    }
-                    Datum::UInt(f64_to_u64(quotient).ok_or(EvalError::IntOverflow)?)
-                } else {
-                    Datum::Int(f64_to_i64(quotient).ok_or(EvalError::IntOverflow)?)
-                }
-            }
-        }
-        Mod => {
-            if b == 0.0 {
-                ctx.handle_division_by_zero()?;
-                Datum::Null
-            } else {
-                finite_float(a % b)?
-            }
-        }
-        Eq => bool_int(a == b),
-        Ge => bool_int(a >= b),
-        Gt => bool_int(a > b),
-        Le => bool_int(a <= b),
-        Lt => bool_int(a < b),
-        Ne => bool_int(a != b),
-        BitAnd | BitOr | BitXor | LeftShift | RightShift => {
-            let (ai, bi) = match (
-                f64_to_i64(a.round_ties_even()),
-                f64_to_i64(b.round_ties_even()),
-            ) {
-                (Some(x), Some(y)) => (x, y),
-                _ => return Err(EvalError::IntOverflow),
-            };
-            match op {
-                BitAnd => Datum::UInt((ai as u64) & (bi as u64)),
-                BitOr => Datum::UInt((ai as u64) | (bi as u64)),
-                BitXor => Datum::UInt((ai as u64) ^ (bi as u64)),
-                LeftShift => Datum::UInt(shift_left(ai as u64, bi as u64)),
-                RightShift => Datum::UInt(shift_right(ai as u64, bi as u64)),
-                _ => unreachable!("guarded by outer match"),
-            }
-        }
-        LogicAnd | LogicOr | LogicXor | NullEq => unreachable!("handled by caller"),
-    })
-}
-
-/// Coerces a non-`NULL` value to `f64` (MySQL's implicit promotion:
-/// `Int`/`Decimal` both convert, lossily for `Decimal` past `f64`'s own
-/// precision); `Str` is unreachable here — `eval_binary` guards it out
-/// before dispatching to float handling. Also reused by `func::extremum`
-/// to promote `LEAST`/`GREATEST`'s result when any argument is `Float`.
-pub(crate) fn to_f64(v: Datum) -> f64 {
-    match v {
-        Datum::Real(f) => f,
-        Datum::Decimal(d) => d.to_f64(),
-        Datum::Int(i) => integer_to_f64(Integer::Signed(i)),
-        Datum::UInt(i) => integer_to_f64(Integer::Unsigned(i)),
-        Datum::String(_) | Datum::Bytes(_) | Datum::Null | Datum::MinNotNull | Datum::MaxValue => {
-            unreachable!("guarded by caller")
-        }
-        other => {
-            other
-                .to_f64()
-                .expect("numeric caller must supply a real-convertible datum")
-                .value
-        }
-    }
-}
-
-/// Coerces a scalar to the `ETReal` comparison/function domain used by TiDB
-/// when a string and a number meet.  The string case ports the numeric-prefix
-/// consumption performed by `types.StrToFloat`: leading ASCII whitespace and
-/// sign, digits, an optional fractional component, and a complete optional
-/// exponent are accepted; everything after that prefix is ignored.  No prefix
-/// is zero.  TiDB records truncation/overflow warnings in statement context;
-/// this value-only layer has no warning domain, but preserves the resulting
-/// numeric comparison/function value.
-///
-/// AUDIT of the `0.0` fallbacks below, against `Datum.ToFloat64` in
-/// `pkg/types/datum.go`.  Callers reached today: `float_binary` (via
-/// `eval_binary`), `math_fn::{sign, numeric_arg, ceil_floor}`,
-/// `string_fn::{field, format_number_text}`, `builtin_ext::info::real_arg`
-/// and `builtin_ext::compare2::interval_real` (which carries its own copy of
-/// the same prefix rule, with the same fallbacks).  Every verdict below is a
-/// captured TiDB answer, not a reading of the Go source alone.
-///
-/// | operand kind | Go | here | verdict |
-/// | --- | --- | --- | --- |
-/// | `Int`/`UInt`/`Real`/`Float32`/`Decimal` | value | value | MATCHES |
-/// | `String`/`Bytes`, valid UTF-8 | numeric prefix, warn 1292 | prefix | MATCHES (warning missing, see below) |
-/// | `String`/`Bytes`, INVALID UTF-8 | numeric prefix of the BYTES: `ABS(0x3132FF)` is 12 | `0.0` | DIVERGES |
-/// | `Enum` | ORDINAL: `ABS(e)` is 2 for `e='8'` of `enum('9','8','7')` | ordinal | MATCHES |
-/// | `Set` | bitmask: `ABS(s)` is 3 for `'8,9'` of `set('9','8')` | bitmask | MATCHES |
-/// | `Bit`/`BinaryLiteral` | unsigned integer value (`b'11'` is 3) | same | MATCHES |
-/// | `Time`/`Duration` | numeric form (`FORMAT_BYTES(DATE'2021-01-01')` reads 20210101) | same | MATCHES |
-/// | `Json` | `ConvertJSONToFloat` (a JSON string takes the prefix rule) | same | MATCHES |
-/// | `Raw`/`VectorFloat32` | ERROR (`SQRT(vec)`, `FIELD(1,vec)`, `INTERVAL(1,vec)` all fail) | ERROR | MATCHES |
-/// | `Null`/`MinNotNull`/`MaxValue` | ERROR | ERROR | MATCHES |
-///
-/// The last two rows are why this returns a `Result`. There is no kind whose
-/// conversion may be assumed to succeed, so there is no fallback to pick a
-/// value for and no `unreachable!` left to be wrong about: whatever
-/// `Datum::to_f64` declines, TiDB declines too, and the caller propagates it.
-///
-/// Both gaps this audit found are now CLOSED.
-///
-///  * `math_fn::{abs, sign, round_or_truncate}` matched a closed list of
-///    kinds and refused the rest, so `ABS('12abc')` was an error where TiDB
-///    answers 12. Each now ends in the `ETReal` signature Go's own
-///    per-eval-type dispatch selects, reached through this coercion.
-///  * TiDB raises `1292 Truncated incorrect DOUBLE value: '<text>'` whenever
-///    the numeric prefix is shorter than the operand, and this function is
-///    where Go raises it too (`getValidFloatPrefix` calls
-///    `ctx.HandleTruncate` before returning). `ctx` is now threaded here so
-///    the warning is raised ONCE, at the coercion, rather than once per
-///    calling builtin -- see [`raise_truncated_double`].
-pub(crate) fn to_f64_with_mysql_string(
-    v: &Datum,
-    ctx: &dyn crate::context::Columns,
-) -> Result<f64, EvalError> {
-    match v {
-        Datum::String(s) => Ok(bytes_to_f64(s.bytes(), ctx)),
-        Datum::Bytes(s) => Ok(bytes_to_f64(s, ctx)),
-        Datum::Int(_) | Datum::UInt(_) | Datum::Decimal(_) | Datum::Real(_) | Datum::Float32(_) => {
-            Ok(to_f64(v.clone()))
-        }
-        other => other
-            .to_f64()
-            .map(|converted| converted.value)
-            .map_err(|_| EvalError::Unsupported("numeric argument conversion")),
-    }
-}
-
-/// `types.StrToFloat` over the RAW BYTES of a SQL string.
-///
-/// Go strings are byte slices, so `StrToFloat` scans a `latin1`/`binary`
-/// payload exactly as it scans a UTF-8 one: `ABS(0x3132FF)` is 12, not 0.
-/// Decoding lossily is equivalent AND total here, because every byte an
-/// invalid sequence can hold is a byte the numeric-prefix scan stops on
-/// anyway -- so U+FFFD ends the prefix precisely where the raw byte would.
-/// That leaves one implementation of the prefix rule instead of a decode
-/// that can fail and a fallback that has to guess.
-///
-/// `is_function_cast` is TRUE because that is the flag the expression engine
-/// reaches this conversion with: a string operand of a real-typed builtin or
-/// comparison is wrapped in `WrapWithCastAsReal`, and
-/// `builtinCastStringAsRealSig.evalReal` calls `types.StrToFloat(ctx, val,
-/// true)`. The flag changes nothing about the VALUE, only whether the EMPTY
-/// string counts as truncated -- and captured, an empty string raises no
-/// warning at all where `'abc' + 1` raises 1292.
-fn bytes_to_f64(bytes: &[u8], ctx: &dyn crate::context::Columns) -> f64 {
-    let text = String::from_utf8_lossy(bytes);
-    let converted = tidb_datatype::str_to_float(&text, true);
-    if converted.event.is_some() {
-        raise_truncated_double(ctx, text.trim());
-    }
-    converted.value
-}
-
-/// Go `ErrTruncatedWrongVal.GenWithStackByArgs("DOUBLE", s)` at warning
-/// level: `1292 Truncated incorrect DOUBLE value: '<s>'`.
-///
-/// `s` is the string AFTER `strings.TrimSpace`, because `StrToFloat` trims
-/// before handing the value to `getValidFloatPrefix`, and both of that
-/// function's raise sites name the trimmed form (captured: a padded
-/// `' 12abc '` warns about `'12abc'`, and a padded `' 12 '` does not warn).
-///
-/// Go raises this ONCE PER EVALUATION, so a query with three rows and two
-/// coercing sites records six warnings, not one (captured:
-/// `SELECT ABS(a), a+0 FROM t` over three rows lists all six). Nothing here
-/// deduplicates, for the same reason.
-pub(crate) fn raise_truncated_double(ctx: &dyn crate::context::Columns, text: &str) {
-    ctx.append_warning(1292, &format!("Truncated incorrect DOUBLE value: '{text}'"));
-}
-
-fn real_compare(op: BinaryOp, a: f64, b: f64) -> Result<Datum, EvalError> {
-    use BinaryOp::*;
-    Ok(match op {
-        Eq | NullEq => bool_int(a == b),
-        Ge => bool_int(a >= b),
-        Gt => bool_int(a > b),
-        Le => bool_int(a <= b),
-        Lt => bool_int(a < b),
-        Ne => bool_int(a != b),
-        _ => unreachable!("caller restricts this helper to comparison operators"),
-    })
-}
-
-/// Wraps a finite `f64` as [`Datum::Real`], or reports the overflow
-/// (confirmed via `goeval`: MySQL raises a genuine evaluation error for a
-/// result that would overflow to `+/-infinity`, e.g. `1e300 * 1e300`
-/// — never silently produces IEEE-754 infinity). Also reused by
-/// `math_fn` for `POW`/`EXP`, where a `NaN` result (e.g. `POW(-2, 0.5)`,
-/// a complex result) hits this SAME check and is reported the same way —
-/// confirmed via `goeval` that real MySQL treats both alike, not assumed.
-pub(crate) fn finite_float(f: f64) -> Result<Datum, EvalError> {
-    if f.is_finite() {
-        Ok(Datum::Real(f))
-    } else {
-        Err(EvalError::FloatOverflow)
-    }
-}
-
-/// Converts an already-integer-valued `f64` to `i64`, `None` if it doesn't
-/// fit. Compares against `i64::MIN`/`MAX` as their own exact `f64`
-/// values (`-2^63`/`2^63`, both exactly representable) rather than
-/// `i64::MIN as f64`/`i64::MAX as f64` — casting `i64::MAX` to `f64`
-/// itself rounds UP to `2^63` (since `i64::MAX` isn't exactly
-/// representable), which would let an out-of-range value slip past the
-/// check.
-fn f64_to_i64(f: f64) -> Option<i64> {
-    const I64_MIN: f64 = -9223372036854775808.0;
-    const I64_MAX_EXCLUSIVE: f64 = 9223372036854775808.0;
-    if (I64_MIN..I64_MAX_EXCLUSIVE).contains(&f) {
-        Some(f as i64)
-    } else {
-        None
-    }
-}
-
-/// The unsigned counterpart of [`f64_to_i64`], with the same exact-boundary
-/// reasoning: `2^64` is exactly representable, `u64::MAX` is not.
-fn f64_to_u64(f: f64) -> Option<u64> {
-    const U64_MAX_EXCLUSIVE: f64 = 18446744073709551616.0;
-    if (0.0..U64_MAX_EXCLUSIVE).contains(&f) {
-        Some(f as u64)
-    } else {
-        None
     }
 }
 

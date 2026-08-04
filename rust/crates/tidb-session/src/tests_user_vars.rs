@@ -169,19 +169,18 @@ fn an_inline_assignment_is_visible_to_the_rest_of_its_own_row() {
     assert_eq!(one_row(&mut session, "SELECT @i := @i + 1, @i"), ["4", "4"]);
     // The assignment OUTLIVES the statement.
     assert_eq!(one_row(&mut session, "SELECT @i"), ["4"]);
-    // NOT asserted, and not a user-variable gap: Go answers
-    // `select @c := 0, @c := @c + 1, @c` with `RS:0|1|1` even though `@c` was
-    // unset when the statement was built, because an unset variable is typed
-    // as a string (Go does the same) and Go's arithmetic COERCES a string
-    // operand. This tier's arithmetic refuses one outright -- see
-    // `tidb_expr::ops`'s "string operand" -- which is a separate gap in
-    // numeric coercion, reachable with no user variable in sight.
-    //
+    // An UNSET variable is typed as a string when the statement is built (Go
+    // does the same), so this row only works because arithmetic COERCES a
+    // string operand the way Go's arithmetic classes do. Captured from Go:
+    // `select @c := 0, @c := @c + 1, @c` -> `RS:0|1|1`.
+    let mut fresh = Session::new();
+    assert_eq!(
+        one_row(&mut fresh, "SELECT @c := 0, @c := @c + 1, @c"),
+        ["0", "1", "1"]
+    );
+
     // The assigned name is case-insensitive, and the assigned value keeps its
-    // type for a LATER statement's arithmetic. (Within the SAME statement the
-    // read was already typed from the pre-statement value -- as Go's own
-    // build-time signature choice is -- which is why `@n2 := 5, @n2 + 1`
-    // lands on the string-operand gap noted above rather than here.)
+    // type for a LATER statement's arithmetic.
     assert_eq!(one_row(&mut session, "SELECT @A := 7"), ["7"]);
     assert_eq!(one_row(&mut session, "SELECT @a, @a + 1"), ["7", "8"]);
 }
