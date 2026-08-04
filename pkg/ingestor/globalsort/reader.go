@@ -111,11 +111,13 @@ func readAllData(
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
 	readConn := min(maxReaders, len(dataFiles))
 	taskCh := make(chan int)
-	output.memKVBuffers = make([]*membuf.Buffer, readConn)
+	output.memKVBuffers = make([]*membuf.Buffer, readConn*2)
 	for readIdx := range readConn {
 		eg.Go(func() error {
 			output.memKVBuffers[readIdx] = smallBlockBufPool.NewBuffer()
+			output.memKVBuffers[readIdx+readConn] = largeBlockBufPool.NewBuffer()
 			smallBlockBuf := output.memKVBuffers[readIdx]
+			largeBlockBuf := output.memKVBuffers[readIdx+readConn]
 
 			for {
 				select {
@@ -138,9 +140,9 @@ func readAllData(
 							startKey,
 							endKey,
 							startOffsets[fileIdx],
-							smallBlockBuf,
-							largeBlockBufPool,
 							int(readerMemorySize/bufSize),
+							smallBlockBuf,
+							largeBlockBuf,
 							output,
 						)
 					}()
@@ -176,22 +178,16 @@ func readOneFile(
 	dataFile string,
 	startKey, endKey []byte,
 	startOffset uint64,
-	smallBlockBuf *membuf.Buffer,
-	largeBlockBufPool *membuf.Pool,
 	bufCount int,
+	smallBlockBuf *membuf.Buffer,
+	largeBlockBuf *membuf.Buffer,
 	output *memKVsAndBuffers,
 ) error {
 	readAndSortDurHist := metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("read_one_file")
 
 	ts := time.Now()
 
-	rd, err := simplesst.NewKVReader(
-		ctx,
-		dataFile,
-		storage,
-		startOffset,
-		simplesst.DefaultReadBufferSize,
-	)
+	rd, err := simplesst.NewKVReader(ctx, dataFile, storage, startOffset, 64*1024)
 	if err != nil {
 		return err
 	}
@@ -199,7 +195,6 @@ func readOneFile(
 		_ = rd.Close()
 	}()
 	if bufCount > 0 {
-		largeBlockBuf := largeBlockBufPool.NewBuffer()
 		rd.EnableConcurrentRead(
 			storage,
 			dataFile,
