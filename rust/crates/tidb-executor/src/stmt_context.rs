@@ -326,6 +326,8 @@ pub struct StmtContext {
     /// The all-false default is TiDB's default `sql_mode` for these flags, so
     /// a context with no session behind it lexes exactly as before.
     sql_mode: tidb_parser::SqlMode,
+    /// `@@max_allowed_packet`, which the result-sizing string builtins read.
+    max_allowed_packet: u64,
     /// Which `ResetContextOfStmt` arm built this context; see
     /// [`StatementClass`]. It is an INPUT to [`StmtContext::push_down_flags`],
     /// which is why it rides the context rather than being re-derived at the
@@ -460,6 +462,9 @@ impl StmtContext {
             sequences: Rc::default(),
             memory: StatementMemory::default(),
             sql_mode: tidb_parser::SqlMode::default(),
+            // Go `vardef.DefMaxAllowedPacket`, the value a default server runs
+            // with and the one the `Columns` trait default already used.
+            max_allowed_packet: 64 << 20,
             statement_class: StatementClass::Other,
             cop_warnings: WarningCollector::new(),
         }
@@ -605,6 +610,20 @@ impl StmtContext {
     pub fn for_query() -> Self {
         Self::new(ErrorLevel::Warn, ErrorLevel::Warn, true, false)
             .with_statement_class(StatementClass::Select)
+    }
+
+    /// Sets the session's `max_allowed_packet`.
+    ///
+    /// Go `EvalContext.GetMaxAllowedPacket` is what every result-sizing string
+    /// builtin captures at build time (`builtinSpaceSig.maxAllowedPacket` and
+    /// friends). Without this the trait default -- `DefMaxAllowedPacket`, 64
+    /// MiB -- stood for every statement, so `SET GLOBAL max_allowed_packet`
+    /// moved the wire limit and left `SPACE`/`REPEAT`/`RPAD` sizing results
+    /// against the shipped default.
+    #[must_use]
+    pub fn with_max_allowed_packet(mut self, max_allowed_packet: u64) -> Self {
+        self.max_allowed_packet = max_allowed_packet;
+        self
     }
 
     /// Sets the session's `default_week_format` and `div_precision_increment`.
@@ -1118,6 +1137,10 @@ impl Columns for StmtContext {
         self.current_db.clone()
     }
 
+    fn max_allowed_packet(&self) -> u64 {
+        self.max_allowed_packet
+    }
+
     fn sysvar(&self, _scope: Option<tidb_ast::SysVarScope>, name: &str) -> Option<Datum> {
         // Only the variables a builtin reads are answered here; the session
         // resolves every other `@@var` before the driver sees the statement.
@@ -1204,6 +1227,87 @@ impl Columns for StmtContext {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Go `EvalContext.GetMaxAllowedPacket`, read by every result-sizing
+    /// string builtin: `SPACE(n)` past the limit is NULL with warning 1301
+    /// (`handleAllowedPacketOverflowed`).
+    ///
+    /// Asserted through an EVALUATED builtin rather than through the getter,
+    /// because the getter agreeing with the setter proves nothing: what broke
+    /// was that `StmtContext` did not override the trait default at all, so
+    /// every builtin sized against 64 MiB whatever the session said.
+    #[test]
+    fn a_string_builtin_sizes_its_result_against_this_contexts_packet_limit() {
+        fn space_2000(ctx: &StmtContext) -> Datum {
+            let stmt = tidb_parser::parse("SELECT SPACE(2000)").expect("the probe SQL parses");
+            let tidb_ast::Stmt::Query(query) = &stmt else {
+                panic!("not a query")
+            };
+            let tidb_ast::QueryStmt::Select(select) = &**query else {
+                panic!("not a select")
+            };
+            let tidb_ast::SelectField::Expr { expr, .. } = &select.fields.fields()[0] else {
+                panic!("not an expression field")
+            };
+            let expression =
+                tidb_expr::rewriter::rewrite_expr_resolved(expr, &tidb_expr::rewriter::NoResolver)
+                    .expect("SPACE rewrites");
+            let mut dual = tidb_chunk::chunk::Chunk::new_empty(&[]);
+            dual.set_num_virtual_rows(1);
+            expression
+                .eval(ctx, dual.get_row(0))
+                .expect("SPACE evaluates")
+        }
+
+        let default = StmtContext::for_query();
+        assert!(
+            matches!(space_2000(&default), Datum::String(_) | Datum::Bytes(_)),
+            "the shipped 64 MiB limit fits 2000 spaces"
+        );
+        assert!(default.take_warnings().is_empty());
+
+        let narrow = StmtContext::for_query().with_max_allowed_packet(1024);
+        assert_eq!(space_2000(&narrow), Datum::Null);
+        let warnings = narrow.take_warnings();
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].1, 1301);
+    }
+
+    /// Go `handleAllowedPacketOverflowed` (`pkg/expression/errors.go:88-96`)
+    /// returns the 1301 condition as an ERROR when the statement has neither
+    /// `TruncateAsWarning` nor `IgnoreTruncateErr` -- a STRICT write. Only
+    /// the warning spelling existed here, so a strict `INSERT` of an
+    /// oversized `SPACE()` silently stored NULL.
+    #[test]
+    fn a_strict_write_raises_the_packet_overflow_as_an_error() {
+        use tidb_expr::Columns;
+        // `for_dml(error_for_division_by_zero, strict, ignore_err)`.
+        let strict = StmtContext::for_dml(true, true, false).with_max_allowed_packet(1024);
+        let error = strict
+            .handle_allowed_packet_overflowed("space")
+            .expect_err("a strict write must fail rather than warn");
+        let wire =
+            crate::DriverError::Exec(crate::executor::ExecError::Eval(error)).to_mysql_error();
+        assert_eq!(wire.code, 1301);
+        assert_eq!(
+            wire.message,
+            "Result of space() was larger than max_allowed_packet (1024) - truncated"
+        );
+        assert!(
+            strict.take_warnings().is_empty(),
+            "the error arm appends no warning"
+        );
+
+        // Non-strict, and every read: the warning spelling, and the caller's
+        // NULL stands.
+        let lenient = StmtContext::for_dml(true, false, false).with_max_allowed_packet(1024);
+        lenient
+            .handle_allowed_packet_overflowed("space")
+            .expect("a non-strict write warns");
+        let warnings = lenient.take_warnings();
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].1, 1301);
+    }
 
     #[test]
     fn connection_id_absent_by_default() {

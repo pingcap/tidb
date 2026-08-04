@@ -730,8 +730,52 @@ fn extremum_return_type(args: &[Expression]) -> Option<FieldType> {
             .map(|ft| Expression::Constant(Constant::new(Datum::Null, (*ft).clone())))
             .collect();
         let mut merged = arg_numeric_type(&owned)?;
+        // Go takes GREATEST/LEAST's result type from `aggregateType`, not
+        // from a pairwise rank (`builtin_compare.go:452`), and `AggFieldType`
+        // does one thing the rank cannot: a MIXED-SIGN pair of same-width
+        // integers is promoted one rank, and LONGLONG's next rank is DECIMAL
+        // (`types/field_type.go:77-97`). That is what lets
+        // `GREATEST(CAST(9223372036854775808 AS UNSIGNED), 1)` answer
+        // 9223372036854775808 -- the signed 64-bit domain has no room for it,
+        // and an ETInt signature compares the two as signed and picks the 1.
+        let aggregated = tidb_datatype::agg_field_type(
+            &typed.iter().map(|ft| (*ft).clone()).collect::<Vec<_>>(),
+        );
+        if merged.eval_type() == tidb_datatype::EvalType::Int
+            && aggregated.eval_type() == tidb_datatype::EvalType::Decimal
+        {
+            merged = FieldType::new(FieldTypeCode::NewDecimal);
+        }
         set_numeric_len_from_args(&mut merged, &typed);
+        // `getFunction`'s ETInt arm: `bf.tp.AddFlag(resFieldType.GetFlag())`
+        // (`builtin_compare.go:523`), which is the ONLY arm that carries the
+        // aggregate's flags onto the result -- so an all-unsigned GREATEST
+        // reports UNSIGNED and every other arm does not.
+        if merged.eval_type() == tidb_datatype::EvalType::Int && aggregated.is_unsigned() {
+            merged = merged.with_added_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
+        }
         return Some(merged);
+    }
+    // Go's ETDatetime/ETTimestamp and ETDuration arms
+    // (`builtin_compare.go:543-553`): when every argument is temporal the
+    // aggregate is temporal too, and the signature returns a TIME, not text.
+    // `AggFieldType` is what widens a DATE beside a DATETIME, which is why
+    // `LEAST(date, datetime)` reads `2020-01-01 00:00:00` and not
+    // `2020-01-01`.
+    if typed.iter().all(|ft| {
+        matches!(
+            ft.eval_type(),
+            tidb_datatype::EvalType::Datetime
+                | tidb_datatype::EvalType::Timestamp
+                | tidb_datatype::EvalType::Duration
+        )
+    }) {
+        let aggregated = tidb_datatype::agg_field_type(
+            &typed.iter().map(|ft| (*ft).clone()).collect::<Vec<_>>(),
+        );
+        if aggregated.code().is_type_temporal() {
+            return Some(aggregated);
+        }
     }
     // Everything left is a MIXTURE of kinds, which Go handles the same way it
     // handles the uniform cases: `resolveType4Extremum` aggregates the

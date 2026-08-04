@@ -51,6 +51,12 @@ pub enum EvalError {
     Sequence(SequenceEvalError),
     /// Go `ErrDivisionByZero` (1365) raised at error level.
     DivisionByZero,
+    /// Go `errWarnAllowedPacketOverflowed` (1301) raised at ERROR level,
+    /// which `handleAllowedPacketOverflowed` does for a statement with
+    /// neither `TruncateAsWarning` nor `IgnoreTruncateErr` -- a strict
+    /// `INSERT`. Carries the fully formatted message, which is the same text
+    /// the warning spelling appends.
+    AllowedPacketOverflowed(String),
     /// Go `types.ErrTruncatedWrongVal` (1292) raised at error level, carrying
     /// the already-formatted message body. A SELECT never reaches this arm --
     /// `ResetContextOfStmt` gives it `WithTruncateAsWarning(true)` with no
@@ -384,26 +390,37 @@ pub trait Columns {
         64 << 20
     }
 
-    /// Go `handleAllowedPacketOverflowed` (`pkg/expression/errors.go`): a
-    /// string builtin whose result would exceed `max_allowed_packet` warns
-    /// 1301 and yields NULL.
+    /// Go `handleAllowedPacketOverflowed` (`pkg/expression/errors.go:88-96`):
+    /// a string builtin whose result would exceed `max_allowed_packet` warns
+    /// 1301 and yields NULL -- unless the statement has neither
+    /// `TruncateAsWarning` nor `IgnoreTruncateErr`, in which case the same
+    /// condition is returned as a statement ERROR.
     ///
-    /// Without this the oversized result was still NULL, but SILENTLY -- the
-    /// client had no way to tell a genuine NULL from a truncated one.
+    /// ```text
+    /// if f := tc.Flags(); f.TruncateAsWarning() || f.IgnoreTruncateErr() {
+    ///     tc.AppendWarning(err)
+    ///     return nil
+    /// }
+    /// return errors.Trace(err)
+    /// ```
     ///
-    /// NOT MODELED: Go escalates to a statement ERROR when the statement has
-    /// neither `TruncateAsWarning` nor `IgnoreTruncateErr`, i.e. a strict
-    /// `INSERT`. Spelling that needs an `EvalError` variant carrying code
-    /// 1301 plus a mapping arm in `tidb_executor`'s error table; the warning
-    /// spelling here is what every read and every non-strict write takes.
-    fn handle_allowed_packet_overflowed(&self, expr_name: &str) {
-        self.append_warning(
-            1301,
-            &format!(
-                "Result of {expr_name}() was larger than max_allowed_packet ({}) - truncated",
-                self.max_allowed_packet()
-            ),
+    /// That is the SAME pair of flags [`Columns::truncate_level`] already
+    /// reduces, so a strict `INSERT` errors and every read and non-strict
+    /// write warns. The caller's `NULL` stands on the warning arm.
+    fn handle_allowed_packet_overflowed(&self, expr_name: &str) -> Result<(), EvalError> {
+        let message = format!(
+            "Result of {expr_name}() was larger than max_allowed_packet ({}) - truncated",
+            self.max_allowed_packet()
         );
+        match self.truncate_level() {
+            // `IgnoreTruncateErr` is Go's first disjunct, which warns as well
+            // -- the source appends unconditionally on that arm.
+            ErrorLevel::Ignore | ErrorLevel::Warn => {
+                self.append_warning(1301, &message);
+                Ok(())
+            }
+            ErrorLevel::Error => Err(EvalError::AllowedPacketOverflowed(message)),
+        }
     }
 
     /// Go `SessionVars.SQLMode`'s three temporal bits, shared with the write

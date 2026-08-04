@@ -19,6 +19,7 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 use std::str::FromStr;
 
 use tidb_ast::BinaryOp;
+use tidb_datatype::TimeType;
 
 use crate::coerce::{coerce_str, integer_cmp, integer_of};
 use crate::ops::{to_decimal, to_f64};
@@ -140,6 +141,37 @@ pub(crate) fn extremum_with_mode(
             }
         }
         return Ok(Datum::new_string(best.unwrap_or_default()));
+    }
+    // Go's ETDatetime/ETTimestamp arm (`builtinGreatestTimeSig.evalTime`):
+    // every argument is cast onto the AGGREGATED temporal type before it is
+    // compared, and the winner is stamped with that type on the way out
+    // (`res.SetType(resTimeTp)`). So a DATE beside a DATETIME compares as
+    // midnight of that day and prints as a datetime -- `LEAST(date
+    // '2020-01-01', datetime '2020-01-01 10:00:00')` is `2020-01-01
+    // 00:00:00`, not `2020-01-01`.
+    if vals.iter().all(|value| matches!(value, Datum::Time(_))) {
+        let result_kind = if vals
+            .iter()
+            .all(|value| matches!(value, Datum::Time(time) if time.kind() == TimeType::Date))
+        {
+            TimeType::Date
+        } else {
+            TimeType::DateTime
+        };
+        let mut best = match &vals[0] {
+            Datum::Time(time) => *time,
+            _ => unreachable!("every value is a Time"),
+        };
+        for value in &vals[1..] {
+            let Datum::Time(time) = value else {
+                unreachable!("every value is a Time")
+            };
+            if time.compare(best) == want {
+                best = *time;
+            }
+        }
+        best.set_kind(result_kind);
+        return Ok(Datum::Time(best));
     }
     // A string operand makes aggregateType choose ETString in Go, so numeric
     // values are first rendered with EvalString and then compared under the

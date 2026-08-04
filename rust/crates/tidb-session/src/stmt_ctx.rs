@@ -257,6 +257,17 @@ impl Session {
         // `tidb_mem_oom_action` has GLOBAL scope only, so its live value is
         // the shared table's, not any session copy -- `get_system` would only
         // ever hand back the registry default.
+        // Go `SessionVars.MaxAllowedPacket`: the SESSION copy, not the live
+        // global. A SESSION write is ErrReadOnly, so only a new connection
+        // picks up a `SET GLOBAL` -- captured: after
+        // `set global max_allowed_packet = 1024`, the SAME session still
+        // reports 67108864 and still sizes `SPACE(2000)` against it.
+        let max_allowed_packet = self
+            .vars
+            .get_system("max_allowed_packet")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(64 << 20);
         let oom_action = tidb_executor::OomAction::parse(
             &self
                 .vars
@@ -289,6 +300,8 @@ impl Session {
                 .with_user_vars(Rc::clone(&self.user_vars))
                 .with_previous_statement(self.last_insert_id, self.prev_row_count)
                 .with_week_and_division_scale(week_format, div_scale)
+                .with_max_allowed_packet(max_allowed_packet)
+                .with_max_allowed_packet(max_allowed_packet)
                 .with_sequences(self.sequence_snapshot())
                 .with_sql_mode(scanner_sql_mode_of(&mode))
                 .with_clock(clock, zone);
@@ -312,6 +325,7 @@ impl Session {
         .with_user_vars(Rc::clone(&self.user_vars))
         .with_previous_statement(self.last_insert_id, self.prev_row_count)
         .with_week_and_division_scale(week_format, div_scale)
+        .with_max_allowed_packet(max_allowed_packet)
         .with_sequences(self.sequence_snapshot())
         .with_clock(clock, zone)
         .with_sql_mode(scanner_sql_mode_of(&mode))

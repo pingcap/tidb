@@ -56,11 +56,11 @@ pub(crate) fn repeat(vals: &[Datum], ctx: &dyn crate::Columns) -> Result<Datum, 
     }
     let count = count.min(i64::from(i32::MAX)) as usize;
     let Some(output_len) = value.len().checked_mul(count) else {
-        ctx.handle_allowed_packet_overflowed("repeat");
+        ctx.handle_allowed_packet_overflowed("repeat")?;
         return Ok(Datum::Null);
     };
     if output_len as u64 > ctx.max_allowed_packet() {
-        ctx.handle_allowed_packet_overflowed("repeat");
+        ctx.handle_allowed_packet_overflowed("repeat")?;
         return Ok(Datum::Null);
     }
     let mut output = Vec::with_capacity(output_len);
@@ -88,7 +88,7 @@ pub(crate) fn space(vals: &[Datum], ctx: &dyn crate::Columns) -> Result<Datum, E
     // `builtinSpaceSig.evalString` checks the session packet limit BEFORE the
     // `mysql.MaxBlobWidth` result limit, and only the first of the two warns.
     if (width as u64) > ctx.max_allowed_packet() {
-        ctx.handle_allowed_packet_overflowed("space");
+        ctx.handle_allowed_packet_overflowed("space")?;
         return Ok(Datum::Null);
     }
     const MAX_BLOB_WIDTH: i64 = 16_777_216; // pkg/parser/mysql.MaxBlobWidth
@@ -136,7 +136,7 @@ pub(crate) fn pad(
             .saturating_mul(MAX_BYTES_OF_CHARACTER)
     };
     if requested > ctx.max_allowed_packet() {
-        ctx.handle_allowed_packet_overflowed(if left { "lpad" } else { "rpad" });
+        ctx.handle_allowed_packet_overflowed(if left { "lpad" } else { "rpad" })?;
         return Ok(Datum::Null);
     }
     if !(0..=MAX_BLOB_WIDTH).contains(&len) {
@@ -249,7 +249,7 @@ pub(crate) fn weight_string(
                 )
             } else {
                 if (length - runes.len()) as u64 > ctx.max_allowed_packet() {
-                    ctx.handle_allowed_packet_overflowed("weight_string");
+                    ctx.handle_allowed_packet_overflowed("weight_string")?;
                     return Ok(Datum::Null);
                 }
                 let mut padded = bytes;
@@ -271,7 +271,7 @@ pub(crate) fn weight_string(
             } else {
                 if (length - bytes.len()) as u64 > ctx.max_allowed_packet() {
                     // Go names this one `cast_as_binary`, not `weight_string`.
-                    ctx.handle_allowed_packet_overflowed("cast_as_binary");
+                    ctx.handle_allowed_packet_overflowed("cast_as_binary")?;
                     return Ok(Datum::Null);
                 }
                 let mut padded = bytes;
@@ -319,7 +319,7 @@ pub(crate) fn to_base64(vals: &[Datum], ctx: &dyn crate::Columns) -> Result<Datu
         return Ok(Datum::Null);
     };
     if needed > ctx.max_allowed_packet() {
-        ctx.handle_allowed_packet_overflowed("to_base64");
+        ctx.handle_allowed_packet_overflowed("to_base64")?;
         return Ok(Datum::Null);
     }
     const A: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

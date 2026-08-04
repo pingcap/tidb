@@ -797,3 +797,46 @@ fn an_overflow_names_its_class_but_not_yet_its_expression() {
     // `1e308` the statement wrote.
     assert_eq!(error.message, "DOUBLE value is out of range");
 }
+
+/// Go `EvalContext.GetMaxAllowedPacket`, which every result-sizing string
+/// builtin reads (`builtinSpaceSig.maxAllowedPacket` and friends): the
+/// SESSION copy of `max_allowed_packet`, not the live global.
+///
+/// The statement context never carried it, so every builtin sized its result
+/// against the `Columns` trait default (`DefMaxAllowedPacket`, 64 MiB) no
+/// matter what the server was configured with.
+///
+/// Captured from TiDB, in this order and in ONE session:
+///
+/// ```text
+/// select space(2000) is null;              -> 0
+/// set global max_allowed_packet = 1024;
+/// select @@max_allowed_packet;             -> 67108864
+/// select space(2000) is null;              -> 0
+/// select length(repeat('ab', 2000));       -> 4000
+/// ```
+///
+/// -- a `SET GLOBAL` does NOT reach the session that issued it, which is why
+/// the session copy rather than the global table is the right read.
+#[test]
+fn a_result_sizing_builtin_reads_the_sessions_max_allowed_packet() {
+    let mut session = Session::new();
+    assert_eq!(
+        scalar_text(&mut session, "SELECT space(2000) IS NULL").as_deref(),
+        Some("0")
+    );
+    session.run("SET GLOBAL max_allowed_packet = 1024").unwrap();
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@max_allowed_packet").as_deref(),
+        Some("67108864")
+    );
+    assert_eq!(
+        scalar_text(&mut session, "SELECT space(2000) IS NULL").as_deref(),
+        Some("0"),
+        "the SET GLOBAL must not reach the session that issued it"
+    );
+    assert_eq!(
+        scalar_text(&mut session, "SELECT length(repeat('ab', 2000))").as_deref(),
+        Some("4000")
+    );
+}

@@ -41,6 +41,8 @@ const ER_UNKNOWN_COLLATION: u16 = 1273;
 const ER_DIVISION_BY_ZERO: u16 = 1365;
 /// Go `types.ErrTruncatedWrongVal`.
 const ER_TRUNCATED_WRONG_VALUE: u16 = 1292;
+/// Go `ErrWarnAllowedPacketOverflowed`.
+const ER_WARN_ALLOWED_PACKET_OVERFLOWED: u16 = 1301;
 
 /// The MySQL error an execution failure reaches the client as.
 pub(super) fn to_mysql_error(error: ExecError) -> MysqlError {
@@ -105,6 +107,11 @@ fn eval_to_mysql_error(error: EvalError) -> MysqlError {
         }
         EvalError::TruncatedWrongValue(message) => {
             MysqlError::coded(ER_TRUNCATED_WRONG_VALUE, message)
+        }
+        // Go `errWarnAllowedPacketOverflowed` (1301), the ERROR spelling of
+        // the warning a read takes: same code, same text.
+        EvalError::AllowedPacketOverflowed(message) => {
+            MysqlError::coded(ER_WARN_ALLOWED_PACKET_OVERFLOWED, message)
         }
         // A typed temporal literal raises 1292 (22007) for a parse failure and
         // 1525 (HY000) for its regex gate, so the code travels with the
@@ -188,6 +195,7 @@ mod tests {
             EvalError::IllegalMixCollation("mixed".to_owned()),
             EvalError::IllegalMixCollationGeneric("mixed".to_owned()),
             EvalError::TruncatedWrongValue("truncated".to_owned()),
+            EvalError::AllowedPacketOverflowed("overflowed".to_owned()),
         ];
         for error in coded {
             let mysql = rendered(ExecError::Eval(error.clone()));

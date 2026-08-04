@@ -875,3 +875,95 @@ fn make_set_accepts_a_bitwise_or_result() {
         [["a,b,c"]]
     );
 }
+
+/// Go `resolveType4Extremum` takes GREATEST/LEAST's result type from
+/// `aggregateType`, and `AggFieldType` does one thing a pairwise rank cannot:
+/// a MIXED-SIGN pair of same-width integers is promoted one rank, and
+/// LONGLONG's next rank is DECIMAL (`types/field_type.go:77-97`).
+///
+/// Without it the pair stayed an ETInt signature, whose comparison is signed
+/// (`builtinGreatestIntSig.evalInt` is a plain `v > maxv`), so 2^63 read back
+/// as a negative and lost to the literal 1 -- and the printed answer was the
+/// clamp `9223372036854775807`.
+///
+/// Every expectation below is TiDB's own answer, captured with `gorun` over
+/// `create table g(a bigint unsigned)` holding `9223372036854775808`.
+#[test]
+fn greatest_and_least_promote_a_mixed_sign_integer_pair_to_decimal() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE g (a BIGINT UNSIGNED)").unwrap();
+    session
+        .run("INSERT INTO g VALUES (9223372036854775808)")
+        .unwrap();
+    for (sql, expected) in [
+        (
+            "SELECT GREATEST(CAST(9223372036854775808 AS UNSIGNED), 1)",
+            "9223372036854775808",
+        ),
+        ("SELECT GREATEST(a, 1) FROM g", "9223372036854775808"),
+        ("SELECT GREATEST(a, 5) FROM g", "9223372036854775808"),
+        // A NEGATIVE literal is the case the signed comparison happened to
+        // get right, so it is not on its own evidence -- it is here because
+        // the decimal domain has to keep getting it right.
+        ("SELECT GREATEST(a, -1) FROM g", "9223372036854775808"),
+        (
+            "SELECT LEAST(CAST(9223372036854775808 AS UNSIGNED), 1)",
+            "1",
+        ),
+        // NOT mixed sign: both unsigned, so no promotion and the result
+        // stays an unsigned integer.
+        ("SELECT GREATEST(a, a) FROM g", "9223372036854775808"),
+        // NOT mixed sign the other way: two signed literals stay integers.
+        ("SELECT GREATEST(1, 2)", "2"),
+    ] {
+        assert_eq!(
+            scalar_text(&mut session, sql).as_deref(),
+            Some(expected),
+            "{sql}"
+        );
+    }
+}
+
+/// Go's ETDatetime/ETTimestamp arm of `greatestFunctionClass.getFunction`
+/// (`builtin_compare.go:546-553`): when every argument is temporal the
+/// signature returns a TIME, cast onto the AGGREGATED temporal type, not
+/// text. `builtinGreatestTimeSig.evalTime` stamps the winner with that type
+/// on the way out (`res.SetType(resTimeTp)`).
+///
+/// The all-temporal shape used to fall through to the string signature, which
+/// answered `2020-01-01` for `LEAST(date, datetime)` where TiDB answers
+/// `2020-01-01 00:00:00`, and made arithmetic on the result a string-operand
+/// error.
+///
+/// Captured with `gorun` over
+/// `create table td(d date, dt datetime, ts timestamp, tm time)` holding
+/// `2020-01-01` / `2020-01-01 10:00:00` / `2020-01-01 10:00:00` / `10:00:00`.
+#[test]
+fn an_all_temporal_greatest_returns_the_aggregated_temporal_type() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE td (d DATE, dt DATETIME, ts TIMESTAMP, tm TIME)")
+        .unwrap();
+    session
+        .run(
+            "INSERT INTO td VALUES \
+             ('2020-01-01','2020-01-01 10:00:00','2020-01-01 10:00:00','10:00:00')",
+        )
+        .unwrap();
+    for (sql, expected) in [
+        ("SELECT GREATEST(d, dt) FROM td", "2020-01-01 10:00:00"),
+        // The one that MOVED: the DATE is widened to midnight of that day and
+        // wins as a DATETIME, so it prints with a time part.
+        ("SELECT LEAST(d, dt) FROM td", "2020-01-01 00:00:00"),
+        ("SELECT GREATEST(dt, ts) FROM td", "2020-01-01 10:00:00"),
+        // ALL DATE: the aggregate stays a DATE and no time part appears.
+        ("SELECT GREATEST(d, d) FROM td", "2020-01-01"),
+        // A DURATION is its own eval type and stays one.
+        ("SELECT GREATEST(tm, tm) FROM td", "10:00:00"),
+        // The result is a TIME, so arithmetic on it is numeric rather than a
+        // string-operand refusal.
+        ("SELECT GREATEST(d, dt) + 0 FROM td", "20200101100000"),
+    ] {
+        assert_eq!(row_text(session.run(sql))[0][0], expected, "{sql}");
+    }
+}
