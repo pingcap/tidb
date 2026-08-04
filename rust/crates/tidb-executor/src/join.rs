@@ -500,7 +500,7 @@ impl<C: Columns> JoinExec<C> {
 
 /// What one materialized row costs: the `Vec` header plus each datum's own
 /// estimate, which is Go `Datum.MemUsage` summed the same way.
-fn row_bytes(row: &[Datum]) -> i64 {
+pub(crate) fn row_bytes(row: &[Datum]) -> i64 {
     let mut bytes = i64::try_from(size_of::<Vec<Datum>>()).unwrap_or(i64::MAX);
     for datum in row {
         bytes += i64::try_from(datum.estimated_mem_usage()).unwrap_or(i64::MAX);

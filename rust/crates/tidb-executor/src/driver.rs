@@ -549,6 +549,7 @@ pub(crate) fn run_select_traced(
                 ExecutorMeta::new(apply_schema.clone(), 7, INIT_CAP, MAX_CHUNK_SIZE),
                 source,
                 runner,
+                ctx.statement_memory(),
             ));
             source_schema = apply_schema;
             current_scope = applied;
@@ -700,6 +701,7 @@ pub(crate) fn run_select_traced(
                 ExecutorMeta::new(apply_schema, 7, INIT_CAP, MAX_CHUNK_SIZE),
                 source,
                 runner,
+                ctx.statement_memory(),
             ));
         }
         projected.push((

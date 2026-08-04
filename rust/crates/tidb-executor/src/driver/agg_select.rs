@@ -552,6 +552,7 @@ fn build_pre_agg_applies(
             ExecutorMeta::new(Schema::new(columns), 7, INIT_CAP, MAX_CHUNK_SIZE),
             source,
             runner,
+            ctx.statement_memory(),
         ));
     }
     Ok(source)
@@ -1235,6 +1236,7 @@ fn build_apply_chain(
             ExecutorMeta::new(Schema::new(columns), 7, INIT_CAP, MAX_CHUNK_SIZE),
             root,
             runner,
+            ctx.statement_memory(),
         ));
     }
     Ok(root)

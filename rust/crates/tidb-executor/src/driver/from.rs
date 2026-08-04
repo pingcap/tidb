@@ -759,6 +759,7 @@ pub(crate) fn build_lateral_join(
         ExecutorMeta::new(schema.clone(), 6, INIT_CAP, MAX_CHUNK_SIZE),
         left_exec,
         runner,
+        ctx.statement_memory(),
     ));
     // `JOIN LATERAL (...) x ON <cond>`: the inner join is already produced by
     // the Apply, so the ON condition is simply a filter over its rows.
