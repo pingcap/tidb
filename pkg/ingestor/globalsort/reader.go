@@ -40,12 +40,6 @@ import (
 
 const maxReadersPerCore = 16
 
-// maxConcurrency bounds the buffers one file may hold. They are paired into
-// double-buffered lanes, so this is twice the number of range requests in flight.
-// Range-GET throughput on a single object peaks around 16 in-flight requests and
-// then degrades: measured against S3, one file read at 16 reaches 810 MiB/s while
-// the same read at 64 drops to 520 MiB/s. Budget left over is better spent on more
-// files. It is a var so benchmarks can sweep it.
 var maxConcurrency = 32
 
 // readerMemoryForRange returns the reader-buffer charge for one file's byte range
@@ -60,10 +54,7 @@ func readerMemoryForRange(rangeSize uint64, memoryLimit int64) (int64, int) {
 	// A single charge must never exceed the budget: semaphore.Acquire blocks
 	// until ctx is done when n > size.
 	perFileLimit := min(int64(maxConcurrency)*bufSize, memoryLimit)
-	requested := perFileLimit
-	if rangeSize < uint64(perFileLimit) {
-		requested = int64(rangeSize)
-	}
+	requested := int64(min(rangeSize, uint64(perFileLimit)))
 	// Buffers are paired into lanes, so an odd one could not be used.
 	bufCount := int(requested/bufSize) / 2 * 2
 	if bufCount == 0 {
