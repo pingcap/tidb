@@ -197,10 +197,6 @@ type RowReceiverArr struct {
 	receivers []RowReceiverStringer
 }
 
-type rawBytesGetter interface {
-	GetRawBytes() []sql.RawBytes
-}
-
 // BindAddress implements RowReceiver.BindAddress
 func (r *RowReceiverArr) BindAddress(args []any) {
 	if r.bound {
@@ -238,7 +234,7 @@ func (r *RowReceiverArr) WriteToBufferInCsv(bf *bytes.Buffer, escapeBackslash bo
 func (r RowReceiverArr) GetRawBytes() []sql.RawBytes {
 	rawBytes := make([]sql.RawBytes, len(r.receivers))
 	for i, receiver := range r.receivers {
-		raw := receiver.(rawBytesGetter).GetRawBytes()
+		raw := receiver.GetRawBytes()
 		rawBytes[i] = raw[0]
 	}
 	return rawBytes
