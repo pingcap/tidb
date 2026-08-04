@@ -371,10 +371,13 @@ pub fn run_create_table_on(sql: &str, catalog: &mut Catalog) -> Result<bool, Dri
         catalog,
         tidb_executor_default_database(),
         CreateTableSettings::default(),
-        // A default `StmtContext` is a context with no session behind it: UTC,
-        // which is what a stock session has. The tests that call this entry
+        // A stock session's context, which is what this entry stands in for:
+        // UTC, and the SHIPPED `sql_mode`, which is strict. `StmtContext`'s
+        // DERIVED `Default` is non-strict, and DDL now reads that bit -- so
+        // taking the derived default here would have made this entry point
+        // build a catalog no stock session builds. The tests that call it
         // never set a zone; the session's own path passes its real context.
-        &crate::StmtContext::default(),
+        &crate::StmtContext::default().with_strict(true),
     )
 }
 
@@ -929,8 +932,7 @@ pub fn run_create_table_in(
             }
         }
     }
-    let (indexes, hidden_columns) =
-        table_indexes(create, &info.columns, clustered, &ctx.session_zone())?;
+    let (indexes, hidden_columns) = table_indexes(create, &info.columns, clustered, ctx)?;
     for hidden in hidden_columns {
         // Go `checkExpressionIndexAutoIncrement`: an expression index may not
         // read an AUTO_INCREMENT column. Captured as 3754 naming the index,

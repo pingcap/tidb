@@ -366,7 +366,7 @@ fn expr_collation(expr: &Expression) -> tidb_datatype::Collation {
 /// that is what makes `GROUP BY ci_col` over `a, A, b, B` produce two groups
 /// (and `utf8mb4_bin`'s PAD SPACE key group `'a'` with `'a  '`). Every
 /// non-string datum keeps its ordinary hash code.
-fn group_key_part(collation: &tidb_datatype::Collation, datum: &Datum) -> Vec<u8> {
+pub(crate) fn group_key_part(collation: &tidb_datatype::Collation, datum: &Datum) -> Vec<u8> {
     match datum.as_raw_bytes() {
         Some(bytes) => {
             let mut encoded = Vec::new();

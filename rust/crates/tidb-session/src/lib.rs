@@ -573,6 +573,7 @@ mod tests_harvested_relation_engine;
 mod tests_in_list_full_evaluation;
 #[cfg(test)]
 mod tests_index_hints;
+mod tests_index_key_length;
 #[cfg(test)]
 mod tests_join_predicate_placement;
 #[cfg(test)]

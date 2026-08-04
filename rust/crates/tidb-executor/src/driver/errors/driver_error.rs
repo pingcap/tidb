@@ -283,10 +283,16 @@ pub enum DriverError {
     /// Go `plannererrors.ErrNotSupportedYet` (1235) as the window builder
     /// raises it, carrying the feature text Go names.
     NotSupportedYet(&'static str),
-    /// Go `plannererrors.ErrWindowFrameStartIllegal` / `ErrWindowFrameIllegal`
-    /// (3586): a frame bound whose offset is negative, NULL or non-integral,
-    /// or a `start` bound that ranks AFTER its `end` bound.
+    /// Go `plannererrors.ErrWindowFrameIllegal` (3586): a frame bound whose
+    /// offset is negative, NULL or non-integral, or a `start` bound that ranks
+    /// AFTER its `end` bound.
     WindowFrameIllegal,
+    /// Go `plannererrors.ErrWindowFrameStartIllegal` (3584): the frame's START
+    /// is `UNBOUNDED FOLLOWING`, which is illegal whatever the end bound is.
+    WindowFrameStartIllegal,
+    /// Go `plannererrors.ErrWindowFrameEndIllegal` (3585): the frame's END is
+    /// `UNBOUNDED PRECEDING`, which is illegal whatever the start bound is.
+    WindowFrameEndIllegal,
     /// Go `plannererrors.ErrWindowRangeFrameOrderType` (3587): a `RANGE` frame
     /// with an `N PRECEDING`/`N FOLLOWING` bound needs exactly one `ORDER BY`
     /// expression of numeric or temporal type.

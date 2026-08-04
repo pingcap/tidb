@@ -302,22 +302,6 @@ enum Bound {
     UnboundedFollowing,
 }
 
-impl Bound {
-    /// The bound's place in Go's `UNBOUNDED PRECEDING < N PRECEDING < CURRENT
-    /// ROW < N FOLLOWING < UNBOUNDED FOLLOWING` order, which decides whether a
-    /// frame's `start` may precede its `end` REGARDLESS of the offsets' own
-    /// values.
-    fn rank(self) -> u8 {
-        match self {
-            Bound::UnboundedPreceding => 0,
-            Bound::Preceding(_) => 1,
-            Bound::CurrentRow => 2,
-            Bound::Following(_) => 3,
-            Bound::UnboundedFollowing => 4,
-        }
-    }
-}
-
 /// The resolved frame a non-ranking window function evaluates over.
 ///
 /// The two variants are the two ways a boundary is measured: `Rows` counts
@@ -395,19 +379,6 @@ impl RangeBound {
                 | RangeBound::Following(Offset::Interval { .. })
         )
     }
-
-    /// The bound's place in the same `UNBOUNDED PRECEDING < N PRECEDING <
-    /// CURRENT ROW < N FOLLOWING < UNBOUNDED FOLLOWING` order [`Bound::rank`]
-    /// uses.
-    fn rank(&self) -> u8 {
-        match self {
-            RangeBound::UnboundedPreceding => 0,
-            RangeBound::Preceding(_) => 1,
-            RangeBound::CurrentRow => 2,
-            RangeBound::Following(_) => 3,
-            RangeBound::UnboundedFollowing => 4,
-        }
-    }
 }
 
 impl Frame {
@@ -472,6 +443,12 @@ struct RangeKeys<'a> {
     /// Whether the window's own `ORDER BY` is descending, which flips what
     /// `PRECEDING` means: under `DESC` the preceding rows hold LARGER keys.
     desc: bool,
+    /// The key's own derived collation, which decides which keys the boundary
+    /// seek has already passed. Only a string key can reach here at all --
+    /// [`check_range_key`] refuses a non-numeric, non-temporal key -- so this
+    /// is `utf8mb4_bin` in practice, but it is the key's OWN collation rather
+    /// than a hard-coded one for the same reason the peer groups are.
+    collation: tidb_datatype::Collation,
 }
 
 impl RangeKeys<'_> {
@@ -562,7 +539,7 @@ impl RangeKeys<'_> {
 
     /// Whether `left` lies before `right` in the window's own direction.
     fn before(&self, left: &Datum, right: &Datum) -> Result<bool, DriverError> {
-        let ordering = tidb_expr::compare_datums(left, right)
+        let ordering = tidb_expr::compare_datums_with_collation(left, right, self.collation)
             .map_err(|e| DriverError::Exec(crate::ExecError::Eval(e)))?;
         Ok(if self.desc {
             ordering.is_gt()
@@ -620,15 +597,13 @@ fn build_frame(spec: &WindowSpec) -> Result<Frame, DriverError> {
             end: Bound::CurrentRow,
         });
     };
+    check_frame_shape(start, end)?;
     if matches!(kind, FrameKind::Range) && (has_offset(start) || has_offset(end)) {
         // A value-measured RANGE frame: its offsets are key VALUES, so they
         // are neither counted nor required to be integers, and Go validates
         // the ORDER BY shape before anything else about them.
         let range_start = build_range_bound(start)?;
         let range_end = build_range_bound(end)?;
-        if range_start.rank() > range_end.rank() {
-            return Err(DriverError::WindowFrameIllegal);
-        }
         if spec.order_by.len() != 1 {
             return Err(DriverError::WindowRangeFrameOrderType);
         }
@@ -639,14 +614,38 @@ fn build_frame(spec: &WindowSpec) -> Result<Frame, DriverError> {
     }
     let start = build_bound(start)?;
     let end = build_bound(end)?;
-    if start.rank() > end.rank() {
-        return Err(DriverError::WindowFrameIllegal);
-    }
     match kind {
         FrameKind::Rows => Ok(Frame::Rows { start, end }),
         // Only peer-based bounds: the default frame, written out.
         FrameKind::Range => Ok(Frame::Peers { start, end }),
     }
+}
+
+/// Go's `checkOriginWindowSpec` frame-shape rules, in Go's own order and
+/// BEFORE any bound's offset is folded -- which is what decides the error for
+/// `ROWS BETWEEN UNBOUNDED FOLLOWING AND 1.5 FOLLOWING` (3584, not 3586).
+///
+/// These four rules replace a `start` / `end` rank comparison: they cover
+/// every rank inversion AND the two rank-EQUAL frames a rank test cannot see
+/// -- `UNBOUNDED FOLLOWING AND UNBOUNDED FOLLOWING` and `UNBOUNDED PRECEDING
+/// AND UNBOUNDED PRECEDING`, both of which Go refuses and which otherwise
+/// silently produce an empty frame (NULL) for every row.
+fn check_frame_shape(start: &FrameBound, end: &FrameBound) -> Result<(), DriverError> {
+    if matches!(start, FrameBound::UnboundedFollowing) {
+        return Err(DriverError::WindowFrameStartIllegal);
+    }
+    if matches!(end, FrameBound::UnboundedPreceding) {
+        return Err(DriverError::WindowFrameEndIllegal);
+    }
+    let start_following = matches!(start, FrameBound::Following(_));
+    let end_preceding = matches!(end, FrameBound::Preceding(_));
+    if start_following && (end_preceding || matches!(end, FrameBound::CurrentRow)) {
+        return Err(DriverError::WindowFrameIllegal);
+    }
+    if (start_following || matches!(start, FrameBound::CurrentRow)) && end_preceding {
+        return Err(DriverError::WindowFrameIllegal);
+    }
+    Ok(())
 }
 
 /// Whether a frame bound carries any offset expression at all, which is what
@@ -723,7 +722,8 @@ fn check_range_key(frame: &Frame, key_type: Option<&FieldType>) -> Result<(), Dr
         if bound.is_interval() && !temporal {
             return Err(DriverError::WindowRangeFrameNumericType);
         }
-        if !bound.is_interval() && matches!(bound.rank(), 1 | 3) && !numeric {
+        let has_offset = matches!(bound, RangeBound::Preceding(_) | RangeBound::Following(_));
+        if !bound.is_interval() && has_offset && !numeric {
             return Err(DriverError::WindowRangeFrameTemporalType);
         }
     }
@@ -1266,14 +1266,15 @@ fn compute_one(
         _ => None,
     };
 
-    let partition_keys = eval_keys(&call.spec.partition_by, rows, field_types, resolver, ctx)?;
+    let (partition_keys, partition_collations) =
+        eval_keys(&call.spec.partition_by, rows, field_types, resolver, ctx)?;
     let order_exprs: Vec<Expr> = call
         .spec
         .order_by
         .iter()
         .map(|item: &OrderItem| item.expr.clone())
         .collect();
-    let order_keys = eval_keys(&order_exprs, rows, field_types, resolver, ctx)?;
+    let (order_keys, order_collations) = eval_keys(&order_exprs, rows, field_types, resolver, ctx)?;
 
     // A value-measured RANGE frame needs the single ORDER BY key's own type,
     // which is only known here -- Go checks it in the planner, so it fires
@@ -1291,12 +1292,15 @@ fn compute_one(
 
     // Partition on the hash encoding of the key datums, exactly as the hash
     // aggregation groups rows, keeping each partition's rows in source order.
+    // A STRING key contributes its COLLATION's sort key, which is what makes
+    // `PARTITION BY ci_col` over `a, A, b, B` produce two partitions rather
+    // than four (Go's `VecGroupChecker` compares `ConvertByCollationStr`).
     let mut partitions: std::collections::HashMap<Vec<u8>, Vec<usize>> =
         std::collections::HashMap::new();
     for (index, key) in partition_keys.iter().enumerate() {
         let mut encoded = Vec::new();
-        for datum in key {
-            encoded.extend_from_slice(&tidb_codec::hash_code(datum));
+        for (datum, collation) in key.iter().zip(&partition_collations) {
+            encoded.extend_from_slice(&crate::hash_agg::group_key_part(collation, datum));
             encoded.push(0xff); // separator: key parts are length-coded
         }
         partitions.entry(encoded).or_default().push(index);
@@ -1304,18 +1308,40 @@ fn compute_one(
 
     let mut values = vec![Datum::Null; rows.len()];
     for indices in partitions.values_mut() {
-        sort_partition(indices, &order_keys, &call.spec.order_by)?;
+        sort_partition(indices, &order_keys, &order_collations, &call.spec.order_by)?;
+        let peers = peer_groups(indices, &order_keys, &order_collations)?;
+        // The sorted single ORDER BY key a value-measured RANGE frame is
+        // computed against, under that key's own collation; the other frame
+        // kinds never look at it.
+        let range_column: Option<Vec<Datum>> =
+            matches!(call.frame, Frame::Range { .. }).then(|| {
+                indices
+                    .iter()
+                    .map(|index| order_keys[*index][0].clone())
+                    .collect()
+            });
+        let range_keys = range_column.as_ref().map(|keys| RangeKeys {
+            keys,
+            desc: call.spec.order_by[0].desc,
+            collation: order_collations
+                .first()
+                .copied()
+                .unwrap_or(tidb_datatype::Collation::DEFAULT),
+        });
         match &call.kind {
             WindowKind::RowNumber
             | WindowKind::Rank
             | WindowKind::DenseRank
             | WindowKind::PercentRank
             | WindowKind::CumeDist
-            | WindowKind::Ntile(_) => rank_partition(&call.kind, indices, &order_keys, &mut values),
+            | WindowKind::Ntile(_) => rank_partition(&call.kind, indices, &peers, &mut values),
             _ => evaluate_partition(
                 call,
                 indices,
-                &order_keys,
+                &PartitionGeometry {
+                    peers: &peers,
+                    range_keys,
+                },
                 &arg_values,
                 agg_kind.as_ref().map(|kind| {
                     (
@@ -1480,7 +1506,7 @@ impl WindowKind {
 fn evaluate_partition(
     call: &WindowCall,
     indices: &[usize],
-    order_keys: &[Vec<Datum>],
+    geometry: &PartitionGeometry<'_>,
     arg_values: &[Vec<Datum>],
     // The aggregate fold, when this is an aggregate call, paired with the
     // session's `div_precision_increment` -- the two things AVG's final
@@ -1491,34 +1517,7 @@ fn evaluate_partition(
     values: &mut [Datum],
 ) -> Result<(), DriverError> {
     let total = indices.len();
-    // The peer group each position belongs to, as a half-open range. With no
-    // window ORDER BY every key is empty, so the whole partition is one peer
-    // group -- which is exactly why an unordered window frames the partition.
-    let mut peers = vec![(0usize, total); total];
-    let mut group_start = 0;
-    for position in 1..=total {
-        let ends =
-            position == total || order_keys[indices[position]] != order_keys[indices[position - 1]];
-        if ends {
-            for entry in &mut peers[group_start..position] {
-                *entry = (group_start, position);
-            }
-            group_start = position;
-        }
-    }
-
-    // The sorted single ORDER BY key a value-measured RANGE frame is
-    // computed against; the other frame kinds never look at it.
-    let range_keys = matches!(call.frame, Frame::Range { .. }).then(|| {
-        indices
-            .iter()
-            .map(|index| order_keys[*index][0].clone())
-            .collect::<Vec<Datum>>()
-    });
-    let range_keys = range_keys.as_ref().map(|keys| RangeKeys {
-        keys,
-        desc: call.spec.order_by[0].desc,
-    });
+    let PartitionGeometry { peers, range_keys } = geometry;
 
     let arg_at = |slot: usize, position: usize| arg_values[slot][indices[position]].clone();
     for position in 0..total {
@@ -1661,7 +1660,7 @@ fn eval_keys(
     field_types: &[FieldType],
     resolver: &impl ColumnResolver,
     ctx: &StmtContext,
-) -> Result<Vec<Vec<Datum>>, DriverError> {
+) -> Result<(Vec<Vec<Datum>>, Vec<tidb_datatype::Collation>), DriverError> {
     let mut rewritten = Vec::with_capacity(exprs.len());
     for expr in exprs {
         rewritten.push(
@@ -1669,6 +1668,14 @@ fn eval_keys(
                 .map_err(|e| DriverError::Exec(crate::ExecError::Eval(e)))?,
         );
     }
+    // Each key's DERIVED collation, which is what identifies two string
+    // values as the same partition and as peers of each other -- Go builds
+    // the group checker's and the ranking functions' comparators from the
+    // by-item's own `RetType`, so a `_ci` key groups `'a'` with `'A'`.
+    let collations = rewritten
+        .iter()
+        .map(tidb_expr::collation_derive::collation_of_node)
+        .collect();
     let mut keys = Vec::with_capacity(rows.len());
     for row in rows {
         let chunk = row_chunk(row, field_types)?;
@@ -1681,7 +1688,28 @@ fn eval_keys(
         }
         keys.push(key);
     }
-    Ok(keys)
+    Ok((keys, collations))
+}
+
+/// Whether two key rows are the SAME key -- the peer/partition identity, taken
+/// under each key part's own derived collation.
+///
+/// This is the equality half of [`tidb_expr::compare_datums_with_collation`],
+/// which is what Go's `VecGroupChecker` gets by comparing
+/// `codec.ConvertByCollationStr` sort keys rather than raw bytes.
+fn keys_equal(
+    left: &[Datum],
+    right: &[Datum],
+    collations: &[tidb_datatype::Collation],
+) -> Result<bool, DriverError> {
+    for ((l, r), collation) in left.iter().zip(right).zip(collations) {
+        let ordering = tidb_expr::compare_datums_with_collation(l, r, *collation)
+            .map_err(|e| DriverError::Exec(crate::ExecError::Eval(e)))?;
+        if !ordering.is_eq() {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// Evaluates a window function's own argument expressions for every row.
@@ -1735,6 +1763,7 @@ fn eval_args(
 fn sort_partition(
     indices: &mut [usize],
     order_keys: &[Vec<Datum>],
+    order_collations: &[tidb_datatype::Collation],
     order_by: &[OrderItem],
 ) -> Result<(), DriverError> {
     if order_by.is_empty() {
@@ -1743,9 +1772,10 @@ fn sort_partition(
     let mut failure = None;
     indices.sort_by(|left, right| {
         for (position, item) in order_by.iter().enumerate() {
-            let ordering = match tidb_expr::compare_datums(
+            let ordering = match tidb_expr::compare_datums_with_collation(
                 &order_keys[*left][position],
                 &order_keys[*right][position],
+                order_collations[position],
             ) {
                 Ok(ordering) => ordering,
                 Err(error) => {
@@ -1769,17 +1799,66 @@ fn sort_partition(
     }
 }
 
+/// One partition's frame GEOMETRY: which sorted positions are peers of each
+/// other, plus the sorted `ORDER BY` key a value-measured `RANGE` frame
+/// measures against. Both are computed once per partition and read by every
+/// row of it.
+struct PartitionGeometry<'a> {
+    /// Each sorted position's peer group, as a half-open position range.
+    peers: &'a [(usize, usize)],
+    /// The single sorted key a `RANGE` frame seeks in; `None` for every other
+    /// frame kind, which never looks at a key VALUE.
+    range_keys: Option<RangeKeys<'a>>,
+}
+
+/// The peer group each SORTED POSITION of a partition belongs to, as a
+/// half-open position range.
+///
+/// Two rows are peers when their window `ORDER BY` keys are equal under those
+/// keys' OWN collations -- Go compares collation sort keys here, so on a `_ci`
+/// key `'a'` and `'A'` are one peer group and share one `RANK`, one
+/// `CUME_DIST` and one `RANGE ... CURRENT ROW` frame. With no window
+/// `ORDER BY` every key is empty, so the whole partition is one peer group --
+/// which is exactly why an unordered window frames the partition.
+fn peer_groups(
+    indices: &[usize],
+    order_keys: &[Vec<Datum>],
+    order_collations: &[tidb_datatype::Collation],
+) -> Result<Vec<(usize, usize)>, DriverError> {
+    let total = indices.len();
+    let mut peers = vec![(0usize, total); total];
+    let mut group_start = 0;
+    for position in 1..=total {
+        let ends = position == total
+            || !keys_equal(
+                &order_keys[indices[position]],
+                &order_keys[indices[position - 1]],
+                order_collations,
+            )?;
+        if ends {
+            for entry in &mut peers[group_start..position] {
+                *entry = (group_start, position);
+            }
+            group_start = position;
+        }
+    }
+    Ok(peers)
+}
+
 /// Writes one partition's ranking values into `values`, at each row's own
 /// source position.
 fn rank_partition(
     kind: &WindowKind,
     indices: &[usize],
-    order_keys: &[Vec<Datum>],
+    peer_groups: &[(usize, usize)],
     values: &mut [Datum],
 ) {
-    // Rows with no window `ORDER BY` are all peers of each other, which is
-    // exactly what an empty key compares as.
-    let peers = |left: usize, right: usize| order_keys[left] == order_keys[right];
+    // Two SORTED POSITIONS are peers when they share a peer group, which
+    // [`peer_groups`] already computed under each key's own collation -- so a
+    // `_ci` `ORDER BY` key makes `'a'` and `'A'` one rank, exactly as the
+    // frame's `CURRENT ROW` already treats them. Rows with no window
+    // `ORDER BY` all land in the single whole-partition group.
+    let peers = |left: usize, right: usize| peer_groups[left] == peer_groups[right];
     match kind {
         WindowKind::RowNumber => {
             for (position, index) in indices.iter().enumerate() {
@@ -1789,7 +1868,7 @@ fn rank_partition(
         WindowKind::Rank => {
             let mut rank = 1i64;
             for (position, index) in indices.iter().enumerate() {
-                if position > 0 && !peers(indices[position - 1], *index) {
+                if position > 0 && !peers(position - 1, position) {
                     rank = position as i64 + 1;
                 }
                 values[*index] = Datum::Int(rank);
@@ -1798,7 +1877,7 @@ fn rank_partition(
         WindowKind::DenseRank => {
             let mut rank = 1i64;
             for (position, index) in indices.iter().enumerate() {
-                if position > 0 && !peers(indices[position - 1], *index) {
+                if position > 0 && !peers(position - 1, position) {
                     rank += 1;
                 }
                 values[*index] = Datum::Int(rank);
@@ -1811,7 +1890,7 @@ fn rank_partition(
             let total = indices.len();
             let mut group_start = 0;
             for position in 1..=total {
-                if position < total && peers(indices[position - 1], indices[position]) {
+                if position < total && peers(position - 1, position) {
                     continue;
                 }
                 let value = if matches!(kind, WindowKind::CumeDist) {

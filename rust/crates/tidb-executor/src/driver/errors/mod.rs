@@ -478,6 +478,20 @@ impl DriverError {
              non-integral type"
                 .to_owned(),
         ),
+        // Go: "Window '%s': frame start cannot be UNBOUNDED FOLLOWING." --
+        // `checkOriginWindowSpec`'s FIRST rule, so it outranks every other
+        // frame complaint including a malformed end offset.
+        DriverError::WindowFrameStartIllegal => MysqlError::new(
+            3584,
+            *b"HY000",
+            "Window '<unnamed window>': frame start cannot be UNBOUNDED FOLLOWING.".to_owned(),
+        ),
+        // Go: "Window '%s': frame end cannot be UNBOUNDED PRECEDING."
+        DriverError::WindowFrameEndIllegal => MysqlError::new(
+            3585,
+            *b"HY000",
+            "Window '<unnamed window>': frame end cannot be UNBOUNDED PRECEDING.".to_owned(),
+        ),
         // Go: "Window '%s' with RANGE N PRECEDING/FOLLOWING frame requires
         // exactly one ORDER BY expression, of numeric or temporal type".
         DriverError::WindowRangeFrameOrderType => MysqlError::new(

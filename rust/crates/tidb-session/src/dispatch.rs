@@ -695,6 +695,12 @@ impl Session {
                             );
                         }
                     }
+                    // What the BUILD itself warned about -- Go's
+                    // `buildIndexColumns` files 1071 here when a non-strict
+                    // mode truncates an over-long key part. It comes AFTER the
+                    // discarded-CHECK notes, which is the order captured over
+                    // a table that triggers both.
+                    self.drain_eval_warnings(&ctx);
                     done
                 }
                 DdlStmt::CreateView(create) => {

@@ -1234,7 +1234,7 @@ fn modify_column_action(
             let length = index.prefix_length(position);
             let surviving = (field_type.code().is_type_prefixable() && field_type.flen() > length)
                 .then_some(length);
-            crate::ddl::index_prefix::key_part_length(&field_type, &def.name, surviving)?;
+            crate::ddl::index_prefix::key_part_length(&field_type, &def.name, surviving, true)?;
         }
     }
 

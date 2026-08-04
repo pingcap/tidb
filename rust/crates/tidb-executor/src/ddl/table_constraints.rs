@@ -70,8 +70,13 @@ pub(crate) fn table_indexes(
     create: &tidb_ast::CreateTableStmt,
     columns: &[ColumnInfo],
     clustered: bool,
-    zone: &tidb_datatype::SessionTimeZone,
+    ctx: &crate::StmtContext,
 ) -> Result<(Vec<KvIndex>, Vec<HiddenIndexColumn>), DriverError> {
+    let zone = &ctx.session_zone();
+    // Go `buildIndexColumns` reads the SESSION's `sql_mode` here: outside
+    // strict mode a single non-unique key part that runs past the 3072-byte
+    // limit is TRUNCATED with warning 1071 instead of refused.
+    let strict = ctx.strict();
     let column_names: Vec<String> = columns
         .iter()
         .map(|c| c.name.original().to_owned())
@@ -244,6 +249,7 @@ pub(crate) fn table_indexes(
                         &column_types[offset],
                         name,
                         *prefix_len,
+                        strict,
                     )?);
                     part_types.push(column_types[offset].clone());
                     offsets.push(offset);
@@ -267,13 +273,28 @@ pub(crate) fn table_indexes(
         // Go `buildIndexColumns`: the sum of every key part's stored bytes
         // must stay within `config.MaxIndexLength`, checked in declaration
         // order so the reported number is the running sum that crossed it.
-        crate::ddl::index_prefix::check_index_key_length(
+        let outcome = crate::ddl::index_prefix::check_index_key_length(
             part_types.iter().zip(prefix_lengths.iter().copied()),
             index.parts.len(),
             unique,
-            true,
+            strict,
         )
         .map_err(crate::ddl::index_prefix::driver_error)?;
+        if let crate::ddl::index_prefix::KeyLengthOutcome::Truncated {
+            length,
+            stored_length,
+        } = outcome
+        {
+            let reported = DriverError::TooLongKey {
+                length,
+                max: crate::ddl::index_prefix::MAX_INDEX_LENGTH,
+            }
+            .to_mysql_error();
+            ctx.append_warning_parts(reported.code, &reported.message);
+            // The downgrade arm exists only for a single key part, so this is
+            // the part the sum crossed on.
+            prefix_lengths[0] = stored_length;
+        }
         hidden.extend(built.into_iter().map(|(_, column)| column));
         push(
             &mut indexes,
@@ -692,7 +713,7 @@ pub(crate) fn primary_key_column(
             // different problem from a cut secondary-index entry: there is no
             // row to go back to for the whole value. See
             // `index_prefix::clustered_prefix_unsupported`.
-            if crate::ddl::index_prefix::key_part_length(field_type, name, *prefix_len)?
+            if crate::ddl::index_prefix::key_part_length(field_type, name, *prefix_len, true)?
                 != crate::ddl::index_prefix::UNSPECIFIED_LENGTH
             {
                 return Err(DriverError::unsupported(

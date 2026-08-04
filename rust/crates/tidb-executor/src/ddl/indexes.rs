@@ -222,10 +222,17 @@ pub(crate) fn add_index_to_table(
                     .iter()
                     .position(|candidate| candidate.name.eq_ignore_ascii_case(name))
                     .ok_or_else(|| DriverError::UnknownColumnInAlter(name.clone()))?;
+                // Go re-runs `buildIndexColumns` in the DDL job worker with a
+                // NIL context (`checkAndBuildIndexInfo` -> `BuildIndexInfo(nil,
+                // ...)`), which reads as strict whatever the session's mode
+                // is -- captured: under `sql_mode=''` a CREATE TABLE truncates
+                // the key with a warning but `ALTER TABLE ... ADD KEY` on the
+                // same column still fails 1071.
                 prefix_lengths.push(crate::ddl::index_prefix::key_part_length(
                     &table.columns[offset].field_type,
                     name,
                     *prefix_len,
+                    true,
                 )?);
                 part_types.push(table.columns[offset].field_type.clone());
                 offsets.push(offset);

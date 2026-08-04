@@ -4,6 +4,7 @@
 //! part of the window machinery under test.
 
 mod aggregates;
+mod collation;
 mod frames;
 mod ranking;
 mod specs;

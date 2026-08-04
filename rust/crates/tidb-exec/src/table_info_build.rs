@@ -198,13 +198,19 @@ fn key_length_sum<'a>(
 ) -> Refusal<()> {
     use tidb_executor::ddl::index_prefix::{check_index_key_length, PrefixError};
 
-    check_index_key_length(parts, part_count, unique, true).map_err(|error| match error {
-        PrefixError::TooLongKey { length, max } => DdlAdmissionError::with_code(
-            tidb_error::tidb::errcode::ErrTooLongKey,
-            format!("Specified key was too long ({length} bytes); max key length is {max} bytes"),
-        ),
-        other => unreachable!("the key-length sum reports only ErrTooLongKey, got {other:?}"),
-    })
+    // Strict: this tier builds a table info from an ALREADY ADMITTED catalog,
+    // so the truncating arm cannot be reached here.
+    check_index_key_length(parts, part_count, unique, true)
+        .map(|_| ())
+        .map_err(|error| match error {
+            PrefixError::TooLongKey { length, max } => DdlAdmissionError::with_code(
+                tidb_error::tidb::errcode::ErrTooLongKey,
+                format!(
+                    "Specified key was too long ({length} bytes); max key length is {max} bytes"
+                ),
+            ),
+            other => unreachable!("the key-length sum reports only ErrTooLongKey, got {other:?}"),
+        })
 }
 
 /// The MySQL error number for a refusal that has no Go code of its own.

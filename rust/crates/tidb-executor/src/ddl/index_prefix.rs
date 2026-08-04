@@ -253,18 +253,47 @@ pub fn check_index_key_length<'a>(
     part_count: usize,
     unique: bool,
     strict: bool,
-) -> Result<(), PrefixError> {
+) -> Result<KeyLengthOutcome, PrefixError> {
     let mut sum = 0;
     for (field_type, declared) in parts {
         sum += index_column_bytes(field_type, declared);
-        if sum > MAX_INDEX_LENGTH && (strict || unique || part_count > 1) {
+        if sum <= MAX_INDEX_LENGTH {
+            continue;
+        }
+        if strict || unique || part_count > 1 {
             return Err(PrefixError::TooLongKey {
                 length: sum,
                 max: MAX_INDEX_LENGTH,
             });
         }
+        // Go: `colLenPerUint := getIndexColumnLength(col, 1)` then
+        // `indexColLen = maxIndexLength / colLenPerUint`, so a utf8mb4 column
+        // keys on 768 characters and a latin1 one on 3072. The loop cannot
+        // run again -- this arm needs `part_count == 1`.
+        let per_unit = index_column_bytes(field_type, 1).max(1);
+        return Ok(KeyLengthOutcome::Truncated {
+            length: sum,
+            stored_length: MAX_INDEX_LENGTH / per_unit,
+        });
     }
-    Ok(())
+    Ok(KeyLengthOutcome::Fits)
+}
+
+/// What [`check_index_key_length`] decided about an index whose key parts sum
+/// past [`MAX_INDEX_LENGTH`] without being an outright refusal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyLengthOutcome {
+    /// Every key part fits; the index is stored exactly as written.
+    Fits,
+    /// Go's non-strict, single, non-unique key part downgrade: warn 1071 with
+    /// `length` (the sum as WRITTEN, not the stored one) and key on
+    /// `stored_length` characters instead.
+    Truncated {
+        /// The byte sum that crossed the limit, which the warning reports.
+        length: i64,
+        /// The prefix length, in characters, the key part is stored with.
+        stored_length: i64,
+    },
 }
 
 /// Go `charset.GetCharsetInfo(col.GetCharset()).Maxlen`, for the charsets a
@@ -289,15 +318,18 @@ fn charset_max_bytes(field_type: &FieldType) -> i64 {
 /// # Errors
 ///
 /// The Go error for an illegal length.
+/// `strict` is Go's `suppressTooLongKeyErr` inverted -- `buildIndexColumns`
+/// passes `!ctx.GetSQLMode().HasStrictMode()`, so outside strict mode the
+/// per-part length check is skipped and the SUM check
+/// ([`check_index_key_length`]) is what decides between truncating and
+/// refusing.
 pub fn key_part_length(
     field_type: &FieldType,
     column: &str,
     declared: Option<i64>,
+    strict: bool,
 ) -> Result<i64, crate::DriverError> {
-    // Strict mode is not threaded to this tier's DDL yet, and the strict
-    // reading is the one that refuses rather than silently truncating a key,
-    // so it is the safe default until it is.
-    stored_index_length(field_type, column, declared, true).map_err(driver_error)
+    stored_index_length(field_type, column, declared, strict).map_err(driver_error)
 }
 
 /// Go's index-length errors as the driver reports them, so an illegal key

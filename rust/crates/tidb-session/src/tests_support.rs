@@ -48,6 +48,15 @@ pub(crate) fn row_text(result: Result<StmtResult, DriverError>) -> Vec<Vec<Strin
     }
 }
 
+/// The warnings the last statement left, as `(code, message)`.
+pub(crate) fn warnings_of(session: &Session) -> Vec<(u16, String)> {
+    session
+        .warnings()
+        .iter()
+        .map(|w| (w.code, w.message.clone()))
+        .collect()
+}
+
 /// The `Create Table` text of one table.
 pub(crate) fn show_create(session: &mut Session, table: &str) -> String {
     match session
