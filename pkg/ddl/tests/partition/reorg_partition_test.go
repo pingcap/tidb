@@ -1191,3 +1191,24 @@ func TestPartitionByFailuresAddPlacementPolicyGlobalIndex(t *testing.T) {
 	afterResult := beforeResult
 	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, nil, afterResult)
 }
+
+func TestReorgPartitionGlobalIndexNonTouchedAfterDropped(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// pMax is a non-touched partition ordered after the reorganized partitions,
+	// so it must also be added to the recreated global index.
+	tk.MustExec(`create table t (a int, b int, unique key idx_b (b) global) partition by range (a) (` +
+		`partition p0 values less than (10),` +
+		`partition p1 values less than (20),` +
+		`partition p2 values less than (30),` +
+		`partition pMax values less than (maxvalue))`)
+	tk.MustExec(`insert into t values (1,10),(12,120),(25,250),(30,300)`)
+	tk.MustExec(`alter table t reorganize partition p1,p2 into (partition p1a values less than (15), partition p1b values less than (30))`)
+	tk.MustExec(`admin check table t`)
+	expected := testkit.Rows("1:10,12:120,25:250,30:300")
+	tk.MustQuery(`select group_concat(concat(a,":",b) order by b) from t use index(idx_b) where b >= 0`).Check(expected)
+	tk.MustQuery(`select group_concat(concat(a,":",b) order by b) from t ignore index(idx_b) where b >= 0`).Check(expected)
+	// A missing global index entry would also stop the unique constraint from being enforced.
+	tk.MustContainErrMsg(`insert into t values (31,300)`, "Duplicate entry")
+}
