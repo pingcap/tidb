@@ -1792,6 +1792,384 @@ func TestPlanCacheForIndexRangeFallback(t *testing.T) {
 }
 
 func TestCorColRangeWithRangeMaxSize(t *testing.T) {
+<<<<<<< HEAD
+=======
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t1, t2, t3")
+		tk.MustExec("create table t1(a int)")
+		tk.MustExec("create table t2 (a int, b int, c int, index idx_a_b(a, b))")
+		tk.MustExec("create table t3(a int primary key)")
+		tk.MustExec("insert into t1 values (2), (4), (6)")
+		tk.MustExec("insert into t2 (a, b) values (1, 2), (3, 2), (5, 2)")
+		tk.MustExec("insert into t3 values (2), (4)")
+		tk.MustExec("insert into mysql.opt_rule_blacklist value(\"decorrelate\")")
+		tk.MustExec("admin reload opt_rule_blacklist")
+		defer func() {
+			tk.MustExec("delete from mysql.opt_rule_blacklist where name = \"decorrelate\"")
+			tk.MustExec("admin reload opt_rule_blacklist")
+		}()
+
+		// Correlated column in index range.
+		tk.MustExec("set @@tidb_opt_range_max_size=1000")
+		rows := tk.MustQuery("explain format='plan_tree' select * from t1 where exists (select * from t2 where t2.a in (1, 3, 5) and b >= 2 and t2.b = t1.a)").Rows()
+		// 1000 is not enough for [1 2,1 +inf], [3 2,3 +inf], [5 2,5 +inf]. So b >= 2 is not used to build ranges.
+		require.True(t, strings.Contains(rows[4][0].(string), "Selection"))
+		require.True(t, strings.Contains(rows[4][3].(string), "ge(test.t2.b, 2)"))
+		// 1000 is not enough for [1 ?,1 ?], [3 ?,3 ?], [5 ?,5 ?] but we don't restrict range mem usage when appending col = cor_col
+		// conditions to access conditions in SplitCorColAccessCondFromFilters.
+		require.True(t, strings.Contains(rows[5][0].(string), "IndexRangeScan"))
+		require.True(t, strings.Contains(rows[5][3].(string), "range: decided by [in(test.t2.a, 1, 3, 5) eq(test.t2.b, test.t1.a)]"))
+		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Memory capacity of 1000 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen"))
+		// We need to rebuild index ranges each time the value of correlated column test.t1.a changes. We don't restrict range
+		// mem usage when rebuilding index ranges, otherwise range fallback would happen when rebuilding index ranges, causing
+		// to wrong query results.
+		tk.MustQuery("select * from t1 where exists (select * from t2 where t2.a in (1, 3, 5) and b >= 2 and t2.b = t1.a)").Check(testkit.Rows("2"))
+
+		// Correlated column in table range.
+		tk.MustExec("set @@tidb_opt_range_max_size=1")
+		rows = tk.MustQuery("explain format='plan_tree' select * from t1 where exists (select * from t3 where t3.a = t1.a)").Rows()
+		// 1 is not enough for [?,?] but we don't restrict range mem usage when adding col = cor_col to access conditions.
+		require.True(t, strings.Contains(rows[4][0].(string), "TableRangeScan"))
+		require.True(t, strings.Contains(rows[4][3].(string), "range: decided by [eq(test.t3.a, test.t1.a)]"))
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+		// We need to rebuild table ranges each time the value of correlated column test.t1.a changes. We don't restrict range
+		// mem usage when rebuilding table ranges, otherwise range fallback would happen when rebuilding table ranges, causing
+		// to wrong query results.
+		tk.MustQuery("select * from t1 where exists (select * from t3 where t3.a = t1.a)").Check(testkit.Rows("2", "4"))
+	})
+}
+
+// TestCorColRangePredicateAccess verifies that range predicates (LT/GT/LE/GE)
+// with correlated columns are used as index access conditions, not just
+// post-scan Selection filters.
+func TestCorColRangePredicateAccess(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t1")
+		tk.MustExec("create table t1 (a int primary key, b int, index ib(b))")
+		tk.MustExec("insert into t1 values (1,1),(2,2),(3,3),(4,4),(5,5)")
+		tk.MustExec("insert into mysql.opt_rule_blacklist value(\"decorrelate\")")
+		tk.MustExec("admin reload opt_rule_blacklist")
+		defer func() {
+			tk.MustExec("delete from mysql.opt_rule_blacklist where name = \"decorrelate\"")
+			tk.MustExec("admin reload opt_rule_blacklist")
+		}()
+
+		// LT with correlated column on PK (appended to secondary index ib(b)).
+		// The index is effectively (b, a) on a clustered table, so t1b.a < t1a.a
+		// should appear as an access condition in "decided by".
+		rows := tk.MustQuery("explain format='plan_tree' select * from t1 t1a where exists " +
+			"(select /*+ NO_DECORRELATE() */ 1 from t1 t1b where t1b.b = t1a.b and t1b.a < t1a.a)").Rows()
+		foundRangeAccess := false
+		for _, row := range rows {
+			info := fmt.Sprintf("%v", row[3])
+			if strings.Contains(info, "decided by") && strings.Contains(info, "lt(test.t1.a, test.t1.a)") {
+				foundRangeAccess = true
+				break
+			}
+		}
+		require.True(t, foundRangeAccess, caller+": LT correlated predicate should be in index access conditions")
+
+		// Correctness: rows where exists another row with same b but smaller a.
+		// (1,1) -> no row with b=1 and a<1 -> excluded
+		// (2,2) -> no row with b=2 and a<2 -> excluded
+		// ...all excluded since each (a,b) pair has a=b and is unique.
+		tk.MustQuery("select * from t1 t1a where exists " +
+			"(select /*+ NO_DECORRELATE() */ 1 from t1 t1b where t1b.b = t1a.b and t1b.a < t1a.a)").
+			Check(testkit.Rows())
+
+		// Insert duplicate b values so the EXISTS matches.
+		tk.MustExec("insert into t1 values (10,1),(20,2)")
+		// (1,1) -> exists (10,1) with b=1, a=10 > 1? No, need a < 1. -> excluded
+		// But (10,1) -> exists (1,1) with b=1, a=1 < 10 -> included
+		// (20,2) -> exists (2,2) with b=2, a=2 < 20 -> included
+		tk.MustQuery("select * from t1 t1a where exists " +
+			"(select /*+ NO_DECORRELATE() */ 1 from t1 t1b where t1b.b = t1a.b and t1b.a < t1a.a) order by t1a.a").
+			Check(testkit.Rows("10 1", "20 2"))
+
+		// GT with correlated column.
+		rows = tk.MustQuery("explain format='plan_tree' select * from t1 t1a where exists " +
+			"(select /*+ NO_DECORRELATE() */ 1 from t1 t1b where t1b.b = t1a.b and t1b.a > t1a.a)").Rows()
+		foundRangeAccess = false
+		for _, row := range rows {
+			info := fmt.Sprintf("%v", row[3])
+			if strings.Contains(info, "decided by") && strings.Contains(info, "gt(test.t1.a, test.t1.a)") {
+				foundRangeAccess = true
+				break
+			}
+		}
+		require.True(t, foundRangeAccess, caller+": GT correlated predicate should be in index access conditions")
+
+		// Correctness for GT.
+		// (1,1) -> exists (10,1) with b=1, a=10 > 1 -> included
+		// (2,2) -> exists (20,2) with b=2, a=20 > 2 -> included
+		// (10,1) -> need b=1 and a>10, only (1,1) has b=1 but a=1 < 10 -> excluded
+		// (20,2) -> need b=2 and a>20, only (2,2) has b=2 but a=2 < 20 -> excluded
+		tk.MustQuery("select * from t1 t1a where exists " +
+			"(select /*+ NO_DECORRELATE() */ 1 from t1 t1b where t1b.b = t1a.b and t1b.a > t1a.a) order by t1a.a").
+			Check(testkit.Rows("1 1", "2 2"))
+
+		// LE with correlated column.
+		rows = tk.MustQuery("explain format='plan_tree' select * from t1 t1a where exists " +
+			"(select /*+ NO_DECORRELATE() */ 1 from t1 t1b where t1b.b = t1a.b and t1b.a <= t1a.a)").Rows()
+		foundRangeAccess = false
+		for _, row := range rows {
+			info := fmt.Sprintf("%v", row[3])
+			if strings.Contains(info, "decided by") && strings.Contains(info, "le(test.t1.a, test.t1.a)") {
+				foundRangeAccess = true
+				break
+			}
+		}
+		require.True(t, foundRangeAccess, caller+": LE correlated predicate should be in index access conditions")
+
+		// Correctness for LE.
+		// (1,1) -> exists (1,1) with b=1, a=1 <= 1 -> included (self-match)
+		// (2,2) -> exists (2,2) with b=2, a=2 <= 2 -> included (self-match)
+		// (3,3) -> exists (3,3) with b=3, a=3 <= 3 -> included (self-match)
+		// (4,4) -> exists (4,4) with b=4, a=4 <= 4 -> included (self-match)
+		// (5,5) -> exists (5,5) with b=5, a=5 <= 5 -> included (self-match)
+		// (10,1) -> exists (1,1) with b=1, a=1 <= 10 -> included
+		// (20,2) -> exists (2,2) with b=2, a=2 <= 20 -> included
+		tk.MustQuery("select * from t1 t1a where exists " +
+			"(select /*+ NO_DECORRELATE() */ 1 from t1 t1b where t1b.b = t1a.b and t1b.a <= t1a.a) order by t1a.a").
+			Check(testkit.Rows("1 1", "2 2", "3 3", "4 4", "5 5", "10 1", "20 2"))
+
+		// GE with correlated column.
+		rows = tk.MustQuery("explain format='plan_tree' select * from t1 t1a where exists " +
+			"(select /*+ NO_DECORRELATE() */ 1 from t1 t1b where t1b.b = t1a.b and t1b.a >= t1a.a)").Rows()
+		foundRangeAccess = false
+		for _, row := range rows {
+			info := fmt.Sprintf("%v", row[3])
+			if strings.Contains(info, "decided by") && strings.Contains(info, "ge(test.t1.a, test.t1.a)") {
+				foundRangeAccess = true
+				break
+			}
+		}
+		require.True(t, foundRangeAccess, caller+": GE correlated predicate should be in index access conditions")
+
+		// Correctness for GE.
+		// (1,1) -> exists (1,1) with b=1, a=1 >= 1 -> included (self-match)
+		// (2,2) -> exists (2,2) with b=2, a=2 >= 2 -> included (self-match)
+		// (3,3) -> exists (3,3) with b=3, a=3 >= 3 -> included (self-match)
+		// (4,4) -> exists (4,4) with b=4, a=4 >= 4 -> included (self-match)
+		// (5,5) -> exists (5,5) with b=5, a=5 >= 5 -> included (self-match)
+		// (10,1) -> exists (10,1) with b=1, a=10 >= 10 -> included (self-match)
+		// (20,2) -> exists (20,2) with b=2, a=20 >= 20 -> included (self-match)
+		tk.MustQuery("select * from t1 t1a where exists " +
+			"(select /*+ NO_DECORRELATE() */ 1 from t1 t1b where t1b.b = t1a.b and t1b.a >= t1a.a) order by t1a.a").
+			Check(testkit.Rows("1 1", "2 2", "3 3", "4 4", "5 5", "10 1", "20 2"))
+
+		// Reversed argument order: correlated column on the left side of
+		// the comparison (t1a.a < t1b.a instead of t1b.a > t1a.a) must
+		// also be recognised as an index access condition.
+		rows = tk.MustQuery("explain format='plan_tree' select * from t1 t1a where exists " +
+			"(select /*+ NO_DECORRELATE() */ 1 from t1 t1b where t1b.b = t1a.b and t1a.a < t1b.a)").Rows()
+		foundRangeAccess = false
+		for _, row := range rows {
+			info := fmt.Sprintf("%v", row[3])
+			if strings.Contains(info, "decided by") && strings.Contains(info, "lt(test.t1.a, test.t1.a)") {
+				foundRangeAccess = true
+				break
+			}
+		}
+		require.True(t, foundRangeAccess, caller+": reversed-arg LT correlated predicate should be in index access conditions")
+
+		// NULL outer correlated value: col > NULL is NULL (not true), so
+		// the correlated range must not produce false-positive matches.
+		// Use a separate table since t1.a is PK and cannot be NULL.
+		tk.MustExec("drop table if exists t2")
+		tk.MustExec("create table t2 (a int, b int, index ib(b))")
+		tk.MustExec("insert into t2 values (1,1),(2,2),(3,3),(NULL,1)")
+		// Outer row (NULL,1): inner needs b=1 and a < NULL -> no match.
+		// Only (2,2) and (3,3) have inner rows with same b and smaller a... no,
+		// only rows with duplicate b values can match. b=1 has (1,1) and (NULL,1).
+		// (1,1) -> inner (NULL,1) has b=1, a=NULL < 1? -> NULL, no match. -> excluded
+		// (NULL,1) -> inner needs b=1 and a < NULL -> NULL, no match. -> excluded
+		// (2,2) -> only b=2 row is (2,2) itself, a=2 < 2 is false -> excluded
+		// (3,3) -> only b=3 row is (3,3) itself, a=3 < 3 is false -> excluded
+		tk.MustQuery("select * from t2 t2a where exists " +
+			"(select /*+ NO_DECORRELATE() */ 1 from t2 t2b where t2b.b = t2a.b and t2b.a < t2a.a) order by t2a.a").
+			Check(testkit.Rows())
+		// GT: (NULL,1) -> inner needs b=1 and a > NULL -> no match.
+		// (1,1) -> inner (NULL,1) b=1, a=NULL > 1? -> NULL, no match. -> excluded
+		tk.MustQuery("select * from t2 t2a where exists " +
+			"(select /*+ NO_DECORRELATE() */ 1 from t2 t2b where t2b.b = t2a.b and t2b.a > t2a.a) order by t2a.a").
+			Check(testkit.Rows())
+		// LE: (1,1) -> inner (1,1) b=1, a=1 <= 1 -> true (self). (NULL,1) -> a <= NULL -> no match.
+		tk.MustQuery("select * from t2 t2a where exists " +
+			"(select /*+ NO_DECORRELATE() */ 1 from t2 t2b where t2b.b = t2a.b and t2b.a <= t2a.a) order by t2a.a").
+			Check(testkit.Rows("1 1", "2 2", "3 3"))
+		// GE: same as LE with self-match.
+		tk.MustQuery("select * from t2 t2a where exists " +
+			"(select /*+ NO_DECORRELATE() */ 1 from t2 t2b where t2b.b = t2a.b and t2b.a >= t2a.a) order by t2a.a").
+			Check(testkit.Rows("1 1", "2 2", "3 3"))
+		tk.MustExec("drop table t2")
+	})
+}
+
+// TestLateralJoinCardinality verifies the row count estimated for a LATERAL join. The derived table
+// runs once per outer row and its stats already account for the correlated predicates, so the join
+// produces the product of the two sides. The estimate must not be scaled down by the NDV of the
+// correlated columns, which would apply their selectivity a second time.
+func TestLateralJoinCardinality(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table tl_inner (k1 int not null, k2 int not null, primary key (k1, k2) clustered)")
+	tk.MustExec("create table tl_outer (id int primary key, k1 int not null, key ik (k1))")
+	var inner, outer strings.Builder
+	for group := range 30 {
+		for i := range 50 {
+			if inner.Len() > 0 {
+				inner.WriteString(",")
+			}
+			fmt.Fprintf(&inner, "(%d,%d)", group, group*1000+i)
+		}
+	}
+	// 600 outer rows over the same 30 distinct keys, so each key drives 20 executions.
+	for i := range 600 {
+		if outer.Len() > 0 {
+			outer.WriteString(",")
+		}
+		fmt.Fprintf(&outer, "(%d,%d)", i, i%30)
+	}
+	tk.MustExec("insert into tl_inner values " + inner.String())
+	tk.MustExec("insert into tl_outer values " + outer.String())
+	tk.MustExec("analyze table tl_inner all columns")
+	tk.MustExec("analyze table tl_outer all columns")
+
+	// applyRowCounts returns the estimated and actual row counts of the Apply operator.
+	applyRowCounts := func(sql string) (float64, float64) {
+		t.Helper()
+		for _, row := range tk.MustQuery("explain analyze " + sql).Rows() {
+			if !strings.Contains(fmt.Sprintf("%v", row[0]), "Apply") {
+				continue
+			}
+			est, err := strconv.ParseFloat(fmt.Sprintf("%v", row[1]), 64)
+			require.NoError(t, err)
+			act, err := strconv.ParseFloat(fmt.Sprintf("%v", row[2]), 64)
+			require.NoError(t, err)
+			return est, act
+		}
+		require.FailNow(t, "no Apply in plan", sql)
+		return 0, 0
+	}
+
+	// A scalar aggregate returns exactly one row per outer row.
+	est, act := applyRowCounts("select o.k1, f.m from tl_outer o inner join lateral " +
+		"(select /*+ NO_DECORRELATE() */ min(t2.k2) as m from tl_inner t2 where t2.k1 = o.k1) f")
+	require.Equal(t, float64(600), act)
+	require.Equal(t, act, est, "a lateral scalar aggregate produces one row per outer row")
+
+	// LIMIT 3 returns three rows per outer row, since every key has more than three matches.
+	est, act = applyRowCounts("select o.k1, f.k2 from tl_outer o inner join lateral " +
+		"(select /*+ NO_DECORRELATE() */ t2.k2 from tl_inner t2 where t2.k1 = o.k1 " +
+		"order by t2.k2 limit 3) f")
+	require.Equal(t, float64(1800), act)
+	require.Equal(t, act, est, "a lateral LIMIT n produces n rows per outer row")
+
+	// An unbounded inner plan is not special either: grouping by k2 yields one row per matching
+	// row of tl_inner, so the join returns every matched row.
+	est, act = applyRowCounts("select o.k1, f.k2 from tl_outer o inner join lateral " +
+		"(select /*+ NO_DECORRELATE() */ t2.k2, count(*) c from tl_inner t2 " +
+		"where t2.k1 = o.k1 group by t2.k2) f")
+	require.Equal(t, float64(30000), act)
+	require.Equal(t, act, est, "a lateral GROUP BY produces one row per group per outer row")
+}
+
+// TestApplyCacheEnabledByOuterRowCount checks that the Apply cache is enabled from how often the
+// correlated values repeat across outer rows, which is what decides whether a lookup can hit. A
+// LATERAL join may emit several rows per outer row, and those extra rows must not be mistaken for
+// extra chances to hit the cache.
+func TestApplyCacheEnabledByOuterRowCount(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table tac_inner (k1 int not null, k2 int not null, primary key (k1, k2) clustered)")
+	tk.MustExec("create table tac_uniq (id int primary key, k1 int not null)")
+	tk.MustExec("create table tac_rep (id int primary key, k1 int not null)")
+	var inner, uniq, rep strings.Builder
+	for key := range 50 {
+		for i := range 40 {
+			if inner.Len() > 0 {
+				inner.WriteString(",")
+			}
+			fmt.Fprintf(&inner, "(%d,%d)", key, key*1000+i)
+		}
+	}
+	// One outer row per key, so no lookup can ever hit.
+	for i := range 50 {
+		if uniq.Len() > 0 {
+			uniq.WriteString(",")
+		}
+		fmt.Fprintf(&uniq, "(%d,%d)", i, i)
+	}
+	// Ten outer rows per key, so nine lookups in ten can hit.
+	for i := range 500 {
+		if rep.Len() > 0 {
+			rep.WriteString(",")
+		}
+		fmt.Fprintf(&rep, "(%d,%d)", i, i%50)
+	}
+	tk.MustExec("insert into tac_inner values " + inner.String())
+	tk.MustExec("insert into tac_uniq values " + uniq.String())
+	tk.MustExec("insert into tac_rep values " + rep.String())
+	for _, table := range []string{"tac_inner", "tac_uniq", "tac_rep"} {
+		tk.MustExec("analyze table " + table + " all columns")
+	}
+	// Keep the subquery correlated so that it is executed as an Apply.
+	tk.MustExec(`insert into mysql.opt_rule_blacklist value("decorrelate")`)
+	tk.MustExec("admin reload opt_rule_blacklist")
+	defer func() {
+		tk.MustExec(`delete from mysql.opt_rule_blacklist where name = "decorrelate"`)
+		tk.MustExec("admin reload opt_rule_blacklist")
+	}()
+
+	// applyCacheInfo returns the execution info of the Apply operator.
+	applyCacheInfo := func(sql string) string {
+		t.Helper()
+		for _, row := range tk.MustQuery("explain analyze " + sql).Rows() {
+			if strings.Contains(fmt.Sprintf("%v", row[0]), "Apply") {
+				return fmt.Sprintf("%v", row[5])
+			}
+		}
+		require.FailNow(t, "no Apply in plan", sql)
+		return ""
+	}
+
+	// The lateral derived table returns 40 rows per outer row either way, so the row count of
+	// the Apply cannot be what the decision is taken from.
+	lateral := "inner join lateral (select t2.k2 from tac_inner t2 where t2.k1 = o.k1) f"
+	info := applyCacheInfo("select o.k1, f.k2 from tac_uniq o " + lateral)
+	require.Contains(t, info, "cache:OFF", "every outer row has its own key, so the cache cannot hit")
+
+	info = applyCacheInfo("select o.k1, f.k2 from tac_rep o " + lateral)
+	require.Contains(t, info, "cache:ON", "each key repeats over ten outer rows")
+
+	// A key that is unique in its own table still repeats once an upstream join duplicates it,
+	// so what matters is the rows reaching the Apply, not the uniqueness of the column.
+	tk.MustExec("create table tac_fan (id int primary key, k1 int not null, key ik (k1))")
+	var fan strings.Builder
+	for i := range 500 {
+		if fan.Len() > 0 {
+			fan.WriteString(",")
+		}
+		fmt.Fprintf(&fan, "(%d,%d)", i, i%50)
+	}
+	tk.MustExec("insert into tac_fan values " + fan.String())
+	tk.MustExec("analyze table tac_fan all columns")
+	// tac_uniq.k1 is a primary key, but joining it to tac_fan repeats every value ten times.
+	info = applyCacheInfo("select o.k1, f.k2 from tac_uniq o join tac_fan on tac_fan.k1 = o.k1 " + lateral)
+	require.Contains(t, info, "cache:ON", "a unique key duplicated by a join can still hit the cache")
+}
+
+// TestCorColEqProvidesIndexOrder verifies that an `index_col = correlated_col` access condition
+// pins that column to a single value per execution, so the index columns after it can satisfy an
+// ORDER BY. The inner subquery of the correlated scalar aggregate should then read one row with a
+// Limit over an ordered scan instead of sorting the whole range with a TopN.
+func TestCorColEqProvidesIndexOrder(t *testing.T) {
+>>>>>>> c0e41374901 (planner: correct LATERAL join cardinality and the Apply cache decision (#70247))
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
