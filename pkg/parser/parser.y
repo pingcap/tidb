@@ -744,7 +744,6 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	addDate               "ADDDATE"
 	approxCountDistinct   "APPROX_COUNT_DISTINCT"
 	approxPercentile      "APPROX_PERCENTILE"
-	auto                  "AUTO"
 	background            "BACKGROUND"
 	bitAnd                "BIT_AND"
 	bitOr                 "BIT_OR"
@@ -7122,6 +7121,13 @@ IndexOptionList:
 				opt1.Global = true
 			} else if opt2.SplitOpt != nil {
 				opt1.SplitOpt = opt2.SplitOpt
+				opt1.AutoPresplit = false
+			} else if opt2.AutoPresplit {
+				// Explicit manual boundaries always take precedence over AUTO,
+				// regardless of the order of repeated options.
+				if opt1.SplitOpt == nil {
+					opt1.AutoPresplit = true
+				}
 			} else if len(opt2.SecondaryEngineAttr) > 0 {
 				opt1.SecondaryEngineAttr = opt2.SecondaryEngineAttr
 			} else if opt2.Condition != nil {
@@ -7200,12 +7206,14 @@ IndexOption:
 			},
 		}
 	}
-|	"PRE_SPLIT_REGIONS" EqOpt "AUTO"
+|	"PRE_SPLIT_REGIONS" EqOpt Identifier
 	{
+		if !strings.EqualFold($3, "AUTO") {
+			yylex.AppendError(yylex.Errorf("The value of PRE_SPLIT_REGIONS must be AUTO, an integer, or a split option"))
+			return 1
+		}
 		$$ = &ast.IndexOption{
-			SplitOpt: &ast.SplitOption{
-				Auto: true,
-			},
+			AutoPresplit: true,
 		}
 	}
 |	"SECONDARY_ENGINE_ATTRIBUTE" EqOpt stringLit
@@ -7771,7 +7779,6 @@ NotKeywordToken:
 	"ADDDATE"
 |	"APPROX_COUNT_DISTINCT"
 |	"APPROX_PERCENTILE"
-|	"AUTO"
 |	"BIT_AND"
 |	"BIT_OR"
 |	"BIT_XOR"

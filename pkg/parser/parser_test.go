@@ -3284,6 +3284,8 @@ func TestDDL(t *testing.T) {
 		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS 4", true, "ALTER TABLE `t` ADD INDEX(`a`) PRE_SPLIT_REGIONS = 4"},
 		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = AUTO", true, "ALTER TABLE `t` ADD INDEX(`a`) PRE_SPLIT_REGIONS = AUTO"},
 		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS AUTO", true, "ALTER TABLE `t` ADD INDEX(`a`) PRE_SPLIT_REGIONS = AUTO"},
+		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS AUTO PRE_SPLIT_REGIONS 4", true, "ALTER TABLE `t` ADD INDEX(`a`) PRE_SPLIT_REGIONS = 4"},
+		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS 4 PRE_SPLIT_REGIONS AUTO", true, "ALTER TABLE `t` ADD INDEX(`a`) PRE_SPLIT_REGIONS = 4"},
 		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = FOO", false, ""},
 		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = 'a'", false, ""},
 		{"ALTER TABLE t ADD PRIMARY KEY (a) CLUSTERED PRE_SPLIT_REGIONS = 4", true, "ALTER TABLE `t` ADD PRIMARY KEY(`a`) CLUSTERED PRE_SPLIT_REGIONS = 4"},
@@ -3294,6 +3296,9 @@ func TestDDL(t *testing.T) {
 		{"ALTER TABLE t ADD INDEX (a) comment 'a' PRE_SPLIT_REGIONS = (between (1, 'a') and (2, 'b') regions 4);", true, "ALTER TABLE `t` ADD INDEX(`a`) COMMENT 'a' PRE_SPLIT_REGIONS = (BETWEEN (1,_UTF8MB4'a') AND (2,_UTF8MB4'b') REGIONS 4)"},
 		{"CREATE INDEX idx ON t (a, b) pre_split_regions = 100", true, "CREATE INDEX `idx` ON `t` (`a`, `b`) PRE_SPLIT_REGIONS = 100"},
 		{"CREATE INDEX idx ON t (a, b) PRE_SPLIT_REGIONS AUTO", true, "CREATE INDEX `idx` ON `t` (`a`, `b`) PRE_SPLIT_REGIONS = AUTO"},
+		// Simulate an older parser that does not advertise the AUTO capability:
+		// the unsupported feature comment is ignored while add-index still parses.
+		{"CREATE INDEX idx ON t (a, b) /*T![unsupported_auto_presplit] PRE_SPLIT_REGIONS = AUTO */", true, "CREATE INDEX `idx` ON `t` (`a`, `b`)"},
 		{"CREATE INDEX idx ON t (a, b) PRE_SPLIT_REGIONS = (between (1, 'a') and (2, 'b') regions 4);", true, "CREATE INDEX `idx` ON `t` (`a`, `b`) PRE_SPLIT_REGIONS = (BETWEEN (1,_UTF8MB4'a') AND (2,_UTF8MB4'b') REGIONS 4)"},
 		{"ALTER TABLE t ADD INDEX idx(a) pre_split_regions = 100, ADD INDEX idx2(b) pre_split_regions = (by(1),(2),(3))", true, "ALTER TABLE `t` ADD INDEX `idx`(`a`) PRE_SPLIT_REGIONS = 100, ADD INDEX `idx2`(`b`) PRE_SPLIT_REGIONS = (BY (1),(2),(3))"},
 		{"ALTER TABLE t ADD KEY (a) USING HASH COMMENT 'a'", true, "ALTER TABLE `t` ADD INDEX(`a`) USING HASH COMMENT 'a'"},

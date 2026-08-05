@@ -57,14 +57,16 @@ func TestLoadStats(t *testing.T) {
 	h := dom.StatsHandle()
 
 	loaded, err := storage.LoadColumnStatsForAutoPresplit(
-		context.Background(), testKit.Session(), tableInfo.ID, colCID, tableInfo.Columns[2], 1)
+		context.Background(), testKit.Session(), tableInfo.ID, tableInfo.Columns[1], 1)
 	require.NoError(t, err)
 	require.Len(t, loaded.Column.TopN.TopN, 1)
-	require.Equal(t, uint64(3), loaded.Column.TopN.TopN[0].Count)
+	require.Equal(t, uint64(1), loaded.Column.TopN.TopN[0].Count)
+	require.NoError(t, loaded.HistogramError)
+	require.Len(t, loaded.Column.Histogram.Buckets, 2)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	_, err = storage.LoadColumnStatsForAutoPresplit(
-		ctx, testKit.Session(), tableInfo.ID, colCID, tableInfo.Columns[2], 1)
+		ctx, testKit.Session(), tableInfo.ID, tableInfo.Columns[1], 1)
 	require.ErrorIs(t, err, context.Canceled)
 
 	// Index/column stats are not loaded after analyze.
@@ -126,7 +128,7 @@ func TestLoadColumnStatsForAutoPresplitUsesOneSnapshot(t *testing.T) {
 	tblInfo := tbl.Meta()
 	colInfo := tblInfo.Columns[1]
 	before, err := storage.LoadColumnStatsForAutoPresplit(
-		context.Background(), tk.Session(), tblInfo.ID, colInfo.ID, colInfo, 2)
+		context.Background(), tk.Session(), tblInfo.ID, colInfo, 2)
 	require.NoError(t, err)
 
 	entered := make(chan struct{})
@@ -162,7 +164,7 @@ func TestLoadColumnStatsForAutoPresplitUsesOneSnapshot(t *testing.T) {
 	resultCh := make(chan loadResult, 1)
 	go func() {
 		stats, loadErr := storage.LoadColumnStatsForAutoPresplit(
-			context.Background(), tk.Session(), tblInfo.ID, colInfo.ID, colInfo, 2)
+			context.Background(), tk.Session(), tblInfo.ID, colInfo, 2)
 		resultCh <- loadResult{stats: stats, err: loadErr}
 	}()
 	select {
@@ -182,7 +184,7 @@ func TestLoadColumnStatsForAutoPresplitUsesOneSnapshot(t *testing.T) {
 	require.Equal(t, before.Column.Histogram, result.stats.Column.Histogram)
 
 	after, err := storage.LoadColumnStatsForAutoPresplit(
-		context.Background(), tk.Session(), tblInfo.ID, colInfo.ID, colInfo, 2)
+		context.Background(), tk.Session(), tblInfo.ID, colInfo, 2)
 	require.NoError(t, err)
 	require.NotEqual(t, before.Column.LastUpdateVersion, after.Column.LastUpdateVersion)
 	require.Equal(t, uint64(20), after.Column.TopN.TopN[0].Count)

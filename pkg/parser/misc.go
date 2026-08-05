@@ -183,7 +183,6 @@ var tokenMap = map[string]int{
 	"APPLY":                          apply,
 	"ATTRIBUTE":                      attribute,
 	"ATTRIBUTES":                     attributes,
-	"AUTO":                           auto,
 	"BATCH":                          batch,
 	"BACKGROUND":                     background,
 	"STATS_OPTIONS":                  statsOptions,

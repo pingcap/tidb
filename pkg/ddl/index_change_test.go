@@ -158,8 +158,14 @@ func TestAddIndexAutoPresplitLoadsLeadingColumnTopNFromStorage(t *testing.T) {
 				priority: priority,
 			})
 		})
+	jobVersion := model.GetJobVerInUse()
 	tk.MustExec("alter table t_auto_presplit add index idx_b(b) pre_split_regions auto")
 	loadedArgs := loadedTopNFromStorage.Load()
+	if jobVersion == model.JobVersion1 {
+		require.Nil(t, loadedArgs)
+		return
+	}
+	require.Equal(t, model.JobVersion2, jobVersion)
 	require.NotNil(t, loadedArgs)
 	require.Equal(t, 0, loadedArgs.isIndex)
 	require.Equal(t, int64(2), loadedArgs.histID)
