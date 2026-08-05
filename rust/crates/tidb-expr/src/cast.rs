@@ -34,9 +34,17 @@ use tidb_ast::CastType;
 /// Evaluates a [`CastType`] against an already-evaluated, non-`NULL`
 /// operand (`NULL` is handled by the caller — every target type maps
 /// `NULL` to `NULL`, so there's no per-type NULL case to write here).
+///
+/// `source` is the operand's static `FieldType` where the caller knows it, and
+/// `None` where it does not. Go picks the cast SIGNATURE from that type
+/// (`builtinCastIntAsTimeSig` vs `builtinCastStringAsTimeSig` vs ...), and the
+/// datum kind is only a proxy for it — a proxy with exactly one hole, `YEAR`,
+/// whose values are ordinary `Datum::Int`s that Go nonetheless converts by a
+/// rule of their own. See [`cast_to_time`].
 pub(crate) fn eval_cast(
     cast_type: &CastType,
     v: Datum,
+    source: Option<&tidb_datatype::FieldType>,
     ctx: &dyn crate::Columns,
 ) -> Result<Datum, EvalError> {
     if v.is_range_sentinel() {
@@ -98,8 +106,10 @@ pub(crate) fn eval_cast(
             report_decimal_production(ctx, &source, &produced, *flen, *scale);
             Ok(Datum::Decimal(produced))
         }
-        CastType::Date => cast_to_time(&v, ctx, tidb_datatype::TimeType::Date),
-        CastType::DateTime { .. } => cast_to_time(&v, ctx, tidb_datatype::TimeType::DateTime),
+        CastType::Date => cast_to_time(&v, source, ctx, tidb_datatype::TimeType::Date),
+        CastType::DateTime { .. } => {
+            cast_to_time(&v, source, ctx, tidb_datatype::TimeType::DateTime)
+        }
         CastType::Year => cast_to_year(&v),
         CastType::Double | CastType::Float => Ok(Datum::Real(to_f64_for_cast(&v))),
         CastType::Time { .. } => Err(EvalError::Unsupported("CAST AS TIME")),
@@ -650,9 +660,36 @@ fn to_f64_for_cast(v: &Datum) -> f64 {
 /// in any sql_mode.
 fn cast_to_time(
     v: &Datum,
+    source: Option<&tidb_datatype::FieldType>,
     ctx: &dyn crate::Columns,
     kind: tidb_datatype::TimeType,
 ) -> Result<Datum, EvalError> {
+    // A `YEAR` source is the one case the datum kind cannot speak for. Go
+    // `builtinCastIntAsTimeSig.evalTime` (`builtin_cast.go:1127-1131`) asks the
+    // ARGUMENT'S TYPE, not the integer's digits:
+    //
+    //   if b.args[0].GetType(ctx).GetType() == mysql.TypeYear {
+    //       res, err = types.ParseTimeFromYear(val)
+    //   } else {
+    //       res, err = types.ParseTimeFromNum(typeCtx(ctx), val, ...)
+    //   }
+    //
+    // and `types.ParseTimeFromYear` (`time.go:2072-2081`) INJECTS the value as
+    // the year FIELD -- `FromDate(int(year), 0, 0, 0, 0, 0, 0)`, so `2018` is
+    // `2018-00-00 00:00:00` -- with `0` mapping to the zero date typed
+    // `mysql.TypeDate`. Routing that same `2018` through `ParseTimeFromNum`,
+    // which reads an int as a packed `YYYYMMDD`, FAILS and yields NULL. Every
+    // other INT source keeps `ParseTimeFromNum` below.
+    if let Some(year) = year_source_value(v, source) {
+        let mut time = tidb_datatype::parse_time_from_year(year)
+            .map_err(|_| EvalError::Unsupported("a YEAR value outside the year range"))?;
+        // Go: "Truncate hh:mm:ss part if the type is Date." `ParseTimeFromYear`
+        // already yields midnight, so this only re-imposes the target's kind.
+        if kind == tidb_datatype::TimeType::Date {
+            time.set_kind(kind);
+        }
+        return Ok(Datum::Time(time));
+    }
     let Some(s) = coerce_str(v)? else {
         return Ok(Datum::Null);
     };
@@ -701,6 +738,24 @@ fn cast_to_time(
             u32::from(core.second()),
         )
     })
+}
+
+/// The integer a `YEAR`-typed operand carries, or `None` when the operand is
+/// not a `YEAR` at all.
+///
+/// The type test is Go's own (`b.args[0].GetType(ctx).GetType() ==
+/// mysql.TypeYear`); the kind test is this tier's, because a `YEAR` expression
+/// always evaluates to an integer and anything else under a `YEAR` field type
+/// is a value this tier produced, not one Go's `EvalInt` could have returned.
+fn year_source_value(v: &Datum, source: Option<&tidb_datatype::FieldType>) -> Option<i64> {
+    if source?.code() != tidb_datatype::FieldTypeCode::Year {
+        return None;
+    }
+    match v {
+        Datum::Int(value) => Some(*value),
+        Datum::UInt(value) => i64::try_from(*value).ok(),
+        _ => None,
+    }
 }
 
 /// Parses one cast operand into a `Time`, choosing the parser by SOURCE TYPE
@@ -961,6 +1016,7 @@ mod tests {
             for (ctx, expected) in [(&utc, in_utc), (&la, in_la)] {
                 let got = cast_to_time(
                     &Datum::new_string(input.to_string()),
+                    None,
                     ctx,
                     tidb_datatype::TimeType::DateTime,
                 )
@@ -976,7 +1032,7 @@ mod tests {
     }
 
     fn datetime(v: Datum) -> Datum {
-        cast_to_time(&v, &NoColumns, tidb_datatype::TimeType::DateTime).expect("cast")
+        cast_to_time(&v, None, &NoColumns, tidb_datatype::TimeType::DateTime).expect("cast")
     }
 
     /// A DECIMAL source is read as TiDB's packed `YYYYMMDD[HHMMSS]` NUMBER

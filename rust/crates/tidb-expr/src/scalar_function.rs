@@ -564,7 +564,12 @@ impl ScalarFunction {
                 let ret_type = self
                     .get_static_type()
                     .ok_or(EvalError::Unsupported("a cast with no result type"))?;
-                return crate::cast::eval_cast(&cast_type_of(target, ret_type)?, value, ctx);
+                return crate::cast::eval_cast(
+                    &cast_type_of(target, ret_type)?,
+                    value,
+                    self.args[0].static_type(),
+                    ctx,
+                );
             }
         }
         // The `DATE_ADD`/`DATE_SUB` family: the rewriter recorded the INTERVAL
@@ -929,7 +934,9 @@ fn uservar_as_kind(kind: &str, value: Datum) -> Result<Datum, EvalError> {
     };
     // No session resolver is threaded here on purpose: every target above is
     // numeric or string, so no arm reads the date modes or raises a warning.
-    crate::cast::eval_cast(&target, value, &crate::NoColumns)
+    // Every target above is numeric or string, so no arm reads the
+    // source type.
+    crate::cast::eval_cast(&target, value, None, &crate::NoColumns)
 }
 
 fn cast_type_of(target: &str, ret_type: &FieldType) -> Result<tidb_ast::CastType, EvalError> {

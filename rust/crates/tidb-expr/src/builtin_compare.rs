@@ -296,6 +296,78 @@ fn refine_numeric_constant_cmp_datetime(left: &mut Expression, right: &mut Expre
     true
 }
 
+/// Go `generateCmpSigs`' argument wrapping for the ONE operand pair whose
+/// comparison domain the value evaluator cannot recover from the datums:
+/// a `DATE`/`DATETIME`/`TIMESTAMP` expression compared with a `YEAR` one.
+///
+/// `getBaseCmpType` (`builtin_compare.go:1424-1427`) is where the pair is
+/// decided, and this is its LAST arm before the ETReal fallback:
+///
+/// ```go
+/// } else if lft != nil && rft != nil && (types.IsTemporalWithDate(lft.GetType()) && rft.GetType() == mysql.TypeYear ||
+///     lft.GetType() == mysql.TypeYear && types.IsTemporalWithDate(rft.GetType())) {
+///     return types.ETDatetime
+/// }
+/// ```
+///
+/// `types.IsTemporalWithDate` is `IsTypeTime` (`pkg/types/etc.go:119-121`):
+/// `TypeDatetime`, `TypeDate`, `TypeTimestamp` and nothing else.
+/// `GetAccurateCmpType` leaves that ETDatetime alone -- its own arms fire only
+/// for JSON, vector, ETString or ETReal -- and `generateCmpSigs` then calls
+/// `newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, tp, tp)` with
+/// `tp == ETDatetime`, which runs `WrapWithCastAsTime` over both arguments.
+///
+/// `WrapWithCastAsTime` (`builtin_cast.go:2817-2823`) inserts NOTHING on the
+/// temporal side -- `tp.GetType() == exprTp` for a DATETIME, and the explicit
+/// `(exprTp == mysql.TypeDate || exprTp == mysql.TypeTimestamp) && tp.GetType()
+/// == mysql.TypeDatetime` early return covers the other two -- so this wraps
+/// only the YEAR side, exactly as Go does. The cast itself is the YEAR-source
+/// branch of `cast::eval_cast`'s time path.
+///
+/// # Why the value evaluator cannot do this on its own
+///
+/// A YEAR column reaches it as a plain `Datum::Int`, indistinguishable from a
+/// `BIGINT`'s -- and `getBaseCmpType` sends DATETIME-vs-BIGINT to ETReal, the
+/// opposite domain. Only the FIELD TYPE separates the two, and the field type
+/// exists only here. Left alone, the comparison decided every row by
+/// `20000503164444 < 2018`, i.e. by the operator alone: `<` returned no rows
+/// and `>` returned all of them, with no error and no warning.
+fn wrap_year_operand_for_datetime_compare(left: &mut Expression, right: &mut Expression) {
+    let code = |expr: &Expression| expr.static_type().map(FieldType::code);
+    let is_temporal_with_date = |expr: &Expression| {
+        matches!(
+            code(expr),
+            Some(FieldTypeCode::Datetime | FieldTypeCode::Date | FieldTypeCode::Timestamp)
+        )
+    };
+    let is_year = |expr: &Expression| code(expr) == Some(FieldTypeCode::Year);
+
+    let year_side = if is_temporal_with_date(left) && is_year(right) {
+        right
+    } else if is_year(left) && is_temporal_with_date(right) {
+        left
+    } else {
+        return;
+    };
+    let mut target = FieldType::new(FieldTypeCode::Datetime);
+    // `WrapWithCastAsTime`'s own width/scale for an ETInt source:
+    // `tp.SetDecimal(types.MinFsp)` then `tp.SetFlen(mysql.MaxDatetimeWidthNoFsp)`.
+    target.set_decimal(0);
+    target.set_flen(19);
+    let arg = std::mem::replace(
+        year_side,
+        Expression::Constant(Constant::new(
+            Datum::Null,
+            FieldType::new(FieldTypeCode::Null),
+        )),
+    );
+    *year_side = Expression::ScalarFunction(crate::expression::ScalarFunction::new(
+        tidb_ast::CiString::new("cast_datetime"),
+        target,
+        vec![arg],
+    ));
+}
+
 /// Go `compareFunctionClass.refineArgs` (`builtin_compare.go:1778`), applied
 /// to every comparison in an already-built expression tree.
 ///
@@ -322,13 +394,30 @@ pub fn refine_comparisons(expr: &mut Expression, ctx: &dyn Columns) {
     for arg in &mut function.args {
         refine_comparisons(arg, ctx);
     }
-    let Some(op) = symmetric_op(function.func_name.lowercase()) else {
+    let name = function.func_name.lowercase();
+    let Some(mirrored) = symmetric_op(name) else {
         return;
     };
     let [left, right] = function.args.as_mut_slice() else {
         return;
     };
+    refine_args(left, right, name, mirrored, ctx);
+    // Go's own order: `getFunction` runs `refineArgs` first and only then
+    // derives the comparison type -- and the argument casts that go with it --
+    // from the arguments that survived it (`builtin_compare.go:1984-1989`).
+    wrap_year_operand_for_datetime_compare(left, right);
+}
 
+/// `refineArgs`' own body, over the two arguments of one comparison. `name` is
+/// the operator, `mirrored` its `symmetricOp`.
+fn refine_args(
+    left: &mut Expression,
+    right: &mut Expression,
+    name: &str,
+    mirrored: &str,
+    ctx: &dyn Columns,
+) {
+    let op = mirrored;
     // Rule 3 first, matching `refineArgs`' order: a datetime/timestamp
     // non-constant expression compared with a numeric constant that converts
     // to a datetime. Go returns immediately once this fires, so the int arm
@@ -348,7 +437,7 @@ pub fn refine_comparisons(expr: &mut Expression, ctx: &dyn Columns) {
         (column, Expression::Constant(constant))
             if left_is_int && !right_is_int && !matches!(column, Expression::Constant(_)) =>
         {
-            (column, constant, function.func_name.lowercase())
+            (column, constant, name)
         }
         (Expression::Constant(constant), column)
             if right_is_int && !left_is_int && !matches!(column, Expression::Constant(_)) =>

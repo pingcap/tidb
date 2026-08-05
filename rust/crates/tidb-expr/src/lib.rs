@@ -719,7 +719,9 @@ pub fn eval_in(expr: &Expr, cols: &dyn Columns) -> Result<Datum, EvalError> {
         Expr::Cast(cast) if cast.array => Err(EvalError::Unsupported("ARRAY cast type")),
         Expr::Cast(cast) => match eval_in(&cast.expr, cols)? {
             Datum::Null => Ok(Datum::Null),
-            v => cast::eval_cast(&cast.cast_type, v, cols),
+            // The AST tier carries no static types, so no source type is
+            // available; every `CAST` it evaluates routes by datum kind.
+            v => cast::eval_cast(&cast.cast_type, v, None, cols),
         },
         // `CONVERT(expr USING charset)` is a charset RETAG, not a value-type
         // cast: it stringifies (confirmed via `goeval`: `CONVERT(123 USING

@@ -556,6 +556,8 @@ mod tests_compare_refinement;
 #[cfg(test)]
 mod tests_core;
 #[cfg(test)]
+mod tests_datetime_year_compare;
+#[cfg(test)]
 mod tests_derived_agg_pruning;
 #[cfg(test)]
 mod tests_dml_lock_keys;
