@@ -107,7 +107,6 @@ var IllegalFunctions4GeneratedColumns = map[string]struct{}{
 	ast.IsFreeLock:           {},
 	ast.IsUsedLock:           {},
 	ast.JSONMerge:            {},
-	ast.EmbedText:            {},
 	ast.LastInsertId:         {},
 	ast.LoadFile:             {},
 	ast.LocalTime:            {},

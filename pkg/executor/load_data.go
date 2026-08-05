@@ -360,6 +360,7 @@ func createInsertValues(e *LoadDataWorker) (insertVal *InsertValues, err error) 
 	if len(insertColumns) > 0 {
 		ret.initEvalBuffer()
 	}
+	ret.initAutoEmbeddingGeneratedCols()
 	ret.collectRuntimeStatsEnabled()
 	return ret, nil
 }
@@ -378,8 +379,9 @@ type encodeWorker struct {
 
 // commitTask is used for passing data from processStream goroutine to commitWork goroutine.
 type commitTask struct {
-	cnt  uint64
-	rows [][]types.Datum
+	cnt      uint64
+	rowCount uint64
+	rows     [][]types.Datum
 }
 
 // processStream always tries to build a parser from channel and process it. When
@@ -453,8 +455,9 @@ func (w *encodeWorker) processOneStream(
 			}
 			goto TrySendTask
 		case outCh <- commitTask{
-			cnt:  w.curBatchCnt,
-			rows: w.rows,
+			cnt:      w.curBatchCnt,
+			rowCount: w.rowCount,
+			rows:     w.rows,
 		}:
 		}
 		// reset rows buffer, will reallocate buffer but NOT reuse
@@ -649,7 +652,7 @@ func (w *commitWorker) commitWork(ctx context.Context, inCh <-chan commitTask) (
 // commitOneTask insert Data from LoadDataWorker.rows, then commit the modification
 // like a statement.
 func (w *commitWorker) commitOneTask(ctx context.Context, task commitTask) error {
-	err := w.checkAndInsertOneBatch(ctx, task.rows, task.cnt)
+	err := w.checkAndInsertOneBatch(ctx, task.rows, task.cnt, task.rowCount)
 	if err != nil {
 		logutil.Logger(ctx).Error("commit error CheckAndInsert", zap.Error(err))
 		return err
@@ -660,7 +663,7 @@ func (w *commitWorker) commitOneTask(ctx context.Context, task commitTask) error
 	return nil
 }
 
-func (w *commitWorker) checkAndInsertOneBatch(ctx context.Context, rows [][]types.Datum, cnt uint64) error {
+func (w *commitWorker) checkAndInsertOneBatch(ctx context.Context, rows [][]types.Datum, cnt uint64, endRowCount uint64) error {
 	if w.stats != nil && w.stats.BasicRuntimeStats != nil {
 		// Since this method will not call by executor Next,
 		// so we need record the basic executor runtime stats by ourselves.
@@ -674,6 +677,10 @@ func (w *commitWorker) checkAndInsertOneBatch(ctx context.Context, rows [][]type
 		return err
 	}
 	w.Ctx().GetSessionVars().StmtCtx.AddRecordRows(cnt)
+	rows, err = w.fillAutoEmbeddingDatumsWithRowCount(ctx, rows[0:cnt], endRowCount)
+	if err != nil {
+		return err
+	}
 
 	// LOAD DATA LOW_PRIORITY should lower both read and write priority of its KV operations
 	// (unique/PK conflict checks + 2PC requests).
@@ -687,20 +694,20 @@ func (w *commitWorker) checkAndInsertOneBatch(ctx context.Context, rows [][]type
 
 	switch w.controller.OnDuplicate {
 	case ast.OnDuplicateKeyHandlingReplace:
-		return w.batchCheckAndInsert(ctx, rows[0:cnt], w.addRecordLD, true)
+		return w.batchCheckAndInsert(ctx, rows, w.addRecordLD, true)
 	case ast.OnDuplicateKeyHandlingIgnore:
-		return w.batchCheckAndInsert(ctx, rows[0:cnt], w.addRecordLD, false)
+		return w.batchCheckAndInsert(ctx, rows, w.addRecordLD, false)
 	case ast.OnDuplicateKeyHandlingError:
 		txn, err := w.Ctx().Txn(true)
 		if err != nil {
 			return err
 		}
 		dupKeyCheck := optimizeDupKeyCheckForNormalInsert(w.Ctx().GetSessionVars(), txn)
-		for i, row := range rows[0:cnt] {
+		for i, row := range rows {
 			sizeHintStep := int(w.Ctx().GetSessionVars().ShardAllocateStep)
 			if sizeHintStep > 0 && i%sizeHintStep == 0 {
 				sizeHint := sizeHintStep
-				remain := len(rows[0:cnt]) - i
+				remain := len(rows) - i
 				if sizeHint > remain {
 					sizeHint = remain
 				}
@@ -767,7 +774,8 @@ func (e *LoadDataWorker) TestLoadLocal(parser mydump.Parser) error {
 	err = committer.checkAndInsertOneBatch(
 		ctx,
 		encoder.rows,
-		encoder.curBatchCnt)
+		encoder.curBatchCnt,
+		encoder.rowCount)
 	if err != nil {
 		return err
 	}

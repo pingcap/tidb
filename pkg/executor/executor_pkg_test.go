@@ -15,6 +15,7 @@
 package executor
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"testing"
@@ -22,8 +23,11 @@ import (
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errctx"
+	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/join"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -45,6 +49,55 @@ var (
 	InspectionSummaryRules = inspectionSummaryRules
 	InspectionRules        = inspectionRules
 )
+
+func TestFillAutoEmbeddingDatumsSkipsNilRows(t *testing.T) {
+	sctx := mock.NewContext()
+	tblInfo := &model.TableInfo{
+		ID:    1,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			{
+				ID:        1,
+				Name:      ast.NewCIStr("id"),
+				Offset:    0,
+				State:     model.StatePublic,
+				FieldType: *types.NewFieldType(mysql.TypeLong),
+			},
+			{
+				ID:        2,
+				Name:      ast.NewCIStr("text"),
+				Offset:    1,
+				State:     model.StatePublic,
+				FieldType: *types.NewFieldType(mysql.TypeVarchar),
+			},
+			{
+				ID:                  3,
+				Name:                ast.NewCIStr("vec"),
+				Offset:              2,
+				State:               model.StatePublic,
+				FieldType:           *types.NewFieldType(mysql.TypeTiDBVectorFloat32),
+				GeneratedExprString: "embed_text('mock/json', text)",
+				GeneratedStored:     true,
+				Dependences:         map[string]struct{}{"text": {}},
+			},
+		},
+	}
+	tbl, err := tables.TableFromMeta(autoid.NewAllocators(false), tblInfo)
+	require.NoError(t, err)
+
+	rows := [][]types.Datum{nil}
+	insertValues := &InsertValues{
+		BaseExecutor: exec.NewBaseExecutor(sctx, nil, 0),
+		Table:        tbl,
+		GenExprs:     []expression.Expression{nil},
+	}
+
+	got, err := insertValues.fillAutoEmbeddingDatumsWithRowCount(context.Background(), rows, 1)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.Nil(t, got[0])
+}
 
 func TestBuildKvRangesForIndexJoinWithoutCwc(t *testing.T) {
 	indexRanges := make([]*ranger.Range, 0, 6)

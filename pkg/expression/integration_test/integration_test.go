@@ -21,11 +21,13 @@ import (
 	"encoding/hex"
 	"fmt"
 	"hash/crc32"
+	"io"
 	"math"
 	"math/rand"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -37,9 +39,11 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/inference"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -4548,12 +4552,6 @@ func TestEmbedTextFunction(t *testing.T) {
 	err = tk.QueryToErr(`select embed_text('mock/json', '[1, 3, 4]', '{invalid_json}')`)
 	require.ErrorContains(t, err, "EMBED_TEXT expects options in JSON format")
 
-	err = tk.ExecToErr(`create table t_embed(
-		text varchar(255),
-		vec vector(3) generated always as (embed_text('mock/json', text)) stored
-	)`)
-	require.ErrorContains(t, err, "contains a disallowed function")
-
 	originalCheckConstraint := vardef.EnableCheckConstraint.Load()
 	tk.MustExec("set @@global.tidb_enable_check_constraint = 1")
 	t.Cleanup(func() {
@@ -4568,6 +4566,186 @@ func TestEmbedTextFunction(t *testing.T) {
 		check (vec_dims(embed_text('mock/json', text)) = 3)
 	)`)
 	require.ErrorContains(t, err, "embed_text")
+}
+
+func TestAutoEmbeddingGeneratedColumnDML(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	if !enableStarterDeployModeForEmbeddingTest(t) {
+		t.Skip("EMBED_TEXT functional tests require nextgen kernel in starter deployment mode")
+	}
+	ensureMockEmbeddingProvider(t, tk)
+
+	tk.MustExec(`
+		CREATE TABLE t(
+			id INT PRIMARY KEY,
+			text TEXT,
+			vec VECTOR(3) GENERATED ALWAYS AS (embed_text('mock/json', text)) STORED
+		)
+	`)
+	tk.MustExec("insert into t values (1, '[1,2,3]', DEFAULT), (2, NULL, DEFAULT)")
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows(
+		"1 [1,2,3] [1,2,3]",
+		"2 <nil> <nil>",
+	))
+
+	tk.MustExec("update t set text = '[4,5,6]' where id = 1")
+	tk.MustQuery("select * from t where id = 1").Check(testkit.Rows("1 [4,5,6] [4,5,6]"))
+
+	err := tk.ExecToErr("update t set vec = '[1,2,3]' where id = 1")
+	require.ErrorContains(t, err, "The value specified for generated column 'vec' in table 't' is not allowed")
+
+	tk.MustExec(`
+		CREATE TABLE t_multi(
+			id INT PRIMARY KEY,
+			text_a TEXT,
+			text_b TEXT,
+			vec_a VECTOR(3) GENERATED ALWAYS AS (embed_text('mock/json', text_a)) STORED,
+			vec_b VECTOR(3) GENERATED ALWAYS AS (embed_text('mock/json', text_b, '{"plus":0.5}')) STORED
+		)
+	`)
+	tk.MustExec(`
+		INSERT INTO t_multi(id, text_a, text_b) VALUES
+			(1, '[1,2,3]', '[4,5,6]'),
+			(2, '[7,8,9]', '[10,11,12]')
+	`)
+	tk.MustQuery("select id, vec_a, vec_b from t_multi order by id").Check(testkit.Rows(
+		"1 [1,2,3] [4.5,5.5,6.5]",
+		"2 [7,8,9] [10.5,11.5,12.5]",
+	))
+
+	tk.MustExec("CREATE TABLE t_select_source(id INT PRIMARY KEY, text TEXT)")
+	tk.MustExec("INSERT INTO t_select_source VALUES (3, '[13,14,15]')")
+	tk.MustExec("INSERT INTO t(id, text) SELECT id, text FROM t_select_source")
+	tk.MustQuery("select id, vec from t where id = 3").Check(testkit.Rows("3 [13,14,15]"))
+}
+
+func TestAutoEmbeddingDDLValidation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	ensureMockEmbeddingProvider(t, tk)
+
+	enableNonStarterDeployModeForEmbeddingTest(t)
+	err := tk.ExecToErr(`
+		CREATE TABLE t_non_starter(
+			id INT PRIMARY KEY,
+			text TEXT,
+			vec VECTOR(3) GENERATED ALWAYS AS (embed_text('mock/json', text)) STORED
+		)
+	`)
+	require.ErrorContains(t, err, "EMBED_TEXT is only supported in starter deployment mode")
+	if !enableStarterDeployModeForEmbeddingTest(t) {
+		t.Skip("EMBED_TEXT functional tests require nextgen kernel in starter deployment mode")
+	}
+
+	err = tk.ExecToErr(`
+		CREATE TABLE t(
+			id INT PRIMARY KEY,
+			text TEXT,
+			vec VECTOR(3) GENERATED ALWAYS AS (embed_text('mock/json', text) + 1) STORED
+		)
+	`)
+	require.ErrorContains(t, err, "EMBED_TEXT() function must be the top-level function call in generated column expression")
+
+	err = tk.ExecToErr(`
+		CREATE TABLE t(
+			id INT PRIMARY KEY,
+			text TEXT,
+			vec VECTOR(3) GENERATED ALWAYS AS (embed_text('mock/json', text)) VIRTUAL
+		)
+	`)
+	require.ErrorContains(t, err, "EMBED_TEXT() can be only used as stored generated column")
+
+	err = tk.ExecToErr(`
+		CREATE TABLE t(
+			id INT PRIMARY KEY,
+			text TEXT,
+			vec VECTOR(3) GENERATED ALWAYS AS (embed_text(CONCAT('mock', '/json'), text)) STORED
+		)
+	`)
+	require.ErrorContains(t, err, "EMBED_TEXT() only accepts model name using string constant")
+
+	err = tk.ExecToErr(`
+		CREATE TABLE t(
+			id INT PRIMARY KEY,
+			text TEXT,
+			vec VECTOR(3) GENERATED ALWAYS AS (embed_text('mock/json', text, '{invalid_json}')) STORED
+		)
+	`)
+	require.ErrorContains(t, err, "EMBED_TEXT expects options in JSON format")
+
+	err = tk.ExecToErr(`
+		CREATE TABLE t(
+			id INT PRIMARY KEY,
+			text TEXT,
+			vec VECTOR(3) GENERATED ALWAYS AS (embed_text('mock/json', text)) STORED,
+			vec_text TEXT GENERATED ALWAYS AS (vec_as_text(vec)) STORED
+		)
+	`)
+	require.ErrorContains(t, err, "generated column on an auto-embedding column is not supported")
+
+	err = tk.ExecToErr(`
+		CREATE TABLE t(
+			id INT PRIMARY KEY,
+			vec VECTOR(3),
+			dist DOUBLE GENERATED ALWAYS AS (vec_embed_l2_distance(vec, '[1,2,3]')) STORED
+		)
+	`)
+	require.ErrorContains(t, err, "contains a disallowed function")
+
+	tk.MustExec("CREATE TABLE t_add(id INT PRIMARY KEY, text TEXT)")
+	err = tk.ExecToErr(`
+		ALTER TABLE t_add ADD COLUMN vec VECTOR(3)
+		GENERATED ALWAYS AS (embed_text('mock/json', text)) STORED
+	`)
+	require.ErrorContains(t, err, "Adding auto-embedding generated column through ALTER TABLE")
+
+	tk.MustExec(`
+		CREATE TABLE t_modify(
+			id INT PRIMARY KEY,
+			text TEXT,
+			vec VECTOR(3) GENERATED ALWAYS AS (embed_text('mock/json', text)) STORED,
+			vec_text TEXT GENERATED ALWAYS AS (text) VIRTUAL
+		)
+	`)
+	err = tk.ExecToErr("ALTER TABLE t_modify MODIFY COLUMN vec_text TEXT GENERATED ALWAYS AS (vec_as_text(vec)) VIRTUAL")
+	require.ErrorContains(t, err, "generated column on an auto-embedding column is not supported")
+}
+
+func TestAutoEmbeddingGeneratedColumnLoadData(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	if !enableStarterDeployModeForEmbeddingTest(t) {
+		t.Skip("EMBED_TEXT functional tests require nextgen kernel in starter deployment mode")
+	}
+	ensureMockEmbeddingProvider(t, tk)
+
+	tk.MustExec(`
+		CREATE TABLE t_load(
+			id INT PRIMARY KEY,
+			text TEXT,
+			vec VECTOR(3) GENERATED ALWAYS AS (embed_text('mock/json', text, '{"plus":1}')) STORED
+		)
+	`)
+	var reader io.ReadCloser = mydump.NewStringReader("1,\"[1,2,3]\"\n2,\"[4,5,6]\"\n")
+	tk.Session().SetValue(executor.LoadDataReaderBuilderKey, executor.LoadDataReaderBuilder{
+		Build: func(_ string) (io.ReadCloser, error) {
+			return reader, nil
+		},
+		Wg: &sync.WaitGroup{},
+	})
+	t.Cleanup(func() {
+		tk.Session().SetValue(executor.LoadDataReaderBuilderKey, nil)
+	})
+
+	tk.MustExec("LOAD DATA LOCAL INFILE 'auto_embedding.csv' INTO TABLE t_load FIELDS TERMINATED BY ',' ENCLOSED BY '\"' (id, text)")
+	tk.MustQuery("select id, text, vec from t_load order by id").Check(testkit.Rows(
+		"1 [1,2,3] [2,3,4]",
+		"2 [4,5,6] [5,6,7]",
+	))
 }
 
 func ensureMockEmbeddingProvider(t *testing.T, tk *testkit.TestKit) {

@@ -37,6 +37,9 @@ func TestUnfoldableFuncs(t *testing.T) {
 // - Deterministic (this excludes RAND(), UUID(), CURRENT_TIMESTAMP(), etc)
 // - Not dependent on session or global state (this excludes CONNECTION_ID(), CURRENT_USER(), etc)
 // - Functions that have system interactions (this excludes GET_LOCK(), RELEASE_LOCK(), SLEEP(), ec)
+//
+// EMBED_TEXT is an exception to the general rule above: DDL allows only its
+// specialized stored generated-column form and validates that form separately.
 func TestIllegalFunctions4GeneratedColumns(t *testing.T) {
 	builtin := GetBuiltinList()
 	legal := make([]string, 0) // Not on illegal list
@@ -95,6 +98,7 @@ func TestIllegalFunctions4GeneratedColumns(t *testing.T) {
 		"degrees",
 		"div",
 		"elt",
+		"embed_text",
 		"encode",
 		"eq",
 		"exp",

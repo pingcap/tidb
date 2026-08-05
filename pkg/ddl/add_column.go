@@ -219,6 +219,12 @@ func CreateNewColumn(ctx sessionctx.Context, schema *model.DBInfo, spec *ast.Alt
 			if err := checkIllegalFn4Generated(specNewColumn.Name.Name.L, typeColumn, option.Expr); err != nil {
 				return nil, errors.Trace(err)
 			}
+			if err := checkGeneratedColForAutoEmbedding(specNewColumn.Name.Name.L, option.Expr, option.Stored); err != nil {
+				return nil, errors.Trace(err)
+			}
+			if option.Stored && expression.IsAutoEmbedFnCallAST(option.Expr) {
+				return nil, dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("Adding auto-embedding generated column through ALTER TABLE")
+			}
 
 			if option.Stored {
 				return nil, dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("Adding generated stored column through ALTER TABLE")
