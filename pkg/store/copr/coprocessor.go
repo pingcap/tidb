@@ -654,7 +654,9 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 	}
 
 	var builder taskBuilder
-	if req.StoreBatchSize > 0 && hints != nil {
+	// StoreBatchSize is a builder-level gate. Once batching is enabled, each task
+	// is still checked for batching eligibility as it is added.
+	if canUseStoreBatchBuilder(req, hints) {
 		builder = newBatchTaskBuilder(bo, req, cache, req.ReplicaRead)
 	} else {
 		builder = newLegacyTaskBuilder(len(locs))
@@ -828,8 +830,9 @@ func (b *batchStoreTaskBuilder) handle(task *copTask) (err error) {
 			b.tasks = append(b.tasks, task)
 		}
 	}()
-	// only batch small tasks for memory control.
-	if b.limit <= 0 || !isSmallTask(task) {
+	// Limit batching to small tasks to control response memory usage. A caller may
+	// bypass the row-count check only when it guarantees bounded response sizes.
+	if b.limit <= 0 || !canStoreBatchTask(b.req, task) {
 		return nil
 	}
 	batchedTask, err := b.cache.BuildBatchTask(b.bo, b.req, task, b.replicaRead)
@@ -930,6 +933,17 @@ func isSmallTask(task *copTask) bool {
 	return task.RowCountHint > 0 &&
 		(len(task.batchTaskList) == 0 && task.RowCountHint <= CopSmallTaskRow) ||
 		(len(task.batchTaskList) > 0 && task.RowCountHint <= 2*CopSmallTaskRow)
+}
+
+// Callers opting into merged batch data own the response-size bound, so they
+// can bypass the row-count-based small-task check.
+func canStoreBatchTask(req *kv.Request, task *copTask) bool {
+	return req.AllowBatchTaskDataMerge || isSmallTask(task)
+}
+
+// Unhinted batching requires the caller to opt into the merged-data contract.
+func canUseStoreBatchBuilder(req *kv.Request, hints []int) bool {
+	return req.StoreBatchSize > 0 && (hints != nil || req.AllowBatchTaskDataMerge)
 }
 
 // smallTaskConcurrency counts the small tasks of tasks,
@@ -1754,6 +1768,8 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		Tasks:           task.ToPBBatchTasks(),
 		ConnectionId:    worker.req.ConnID,
 		ConnectionAlias: worker.req.ConnAlias,
+		// Forward the consumer capability used by handleBatchCopResponse.
+		AllowBatchTaskDataMerge: worker.req.AllowBatchTaskDataMerge,
 	}
 
 	cacheKey, cacheValue := worker.buildCacheKey(task, &copReq)
@@ -2384,6 +2400,16 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 				Data:          batchResp.Data,
 				ExecDetailsV2: batchResp.ExecDetailsV2,
 			},
+		}
+		if batchResp.GetDataMergedIntoResponse() {
+			// The task's result is already carried by the main response's data,
+			// so retain its execution details as unconsumed stats instead of
+			// handing an empty response to the result consumer.
+			if err := worker.handleCollectExecutionInfo(bo, dummyRPCCtx, resp); err != nil {
+				return batchRespList, nil, err
+			}
+			worker.stats.append(resp.detail)
+			continue
 		}
 		task := batchedTask.task
 		failpoint.Inject("batchCopRegionError", func() {
@@ -3062,7 +3088,9 @@ func optRowHint(req *kv.Request) bool {
 }
 
 func checkStoreBatchCopr(req *kv.Request) bool {
-	if req.Tp != kv.ReqTypeDAG || req.StoreType != kv.TiKV {
+	// Store batching is supported only by TiKV. Non-DAG requests must opt into
+	// handling merged task data.
+	if (req.Tp != kv.ReqTypeDAG && !req.AllowBatchTaskDataMerge) || req.StoreType != kv.TiKV {
 		return false
 	}
 	// TODO: support keep-order batch
@@ -3074,8 +3102,9 @@ func checkStoreBatchCopr(req *kv.Request) bool {
 	if req.Paging.Enable || req.Paging.PagingSizeBytes > 0 {
 		return false
 	}
-	// Disable it for internal requests to avoid regression.
-	if req.RequestSource.RequestSourceInternal {
+	// Internal requests remain disabled unless their caller explicitly opts into
+	// the merged-data contract.
+	if req.RequestSource.RequestSourceInternal && !req.AllowBatchTaskDataMerge {
 		return false
 	}
 	return true

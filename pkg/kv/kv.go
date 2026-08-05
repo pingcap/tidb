@@ -645,6 +645,10 @@ type Request struct {
 	RequestSource util.RequestSource
 	// StoreBatchSize indicates the batch size of coprocessor in the same store.
 	StoreBatchSize int
+	// AllowBatchTaskDataMerge permits batching without row-count hints and allows
+	// stores to merge child results into the main response. The caller must handle
+	// both response shapes and guarantee bounded response sizes.
+	AllowBatchTaskDataMerge bool
 	// ResourceGroupName is the name of the bind resource group.
 	ResourceGroupName string
 	// LimitSize indicates whether the request is scan and limit

@@ -234,6 +234,45 @@ func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {
 	require.Equal(t, len(tasks[0].ToPBBatchTasks()), 3)
 	require.Equal(t, tasks[0].RowCountHint, 14)
 
+	// The generic unhinted path is enabled only by the merged-data capability;
+	// it still packs and reverses each KeyRanges partition independently.
+	unhintedRanges := kv.NewPartitionedKeyRanges([][]kv.KeyRange{
+		copr.BuildKeyRanges("a", "t"), copr.BuildKeyRanges("t", "z"),
+	})
+	buildUnhinted := func(allowMerge, desc bool) ([]string, []int, int) {
+		t.Helper()
+		req = &kv.Request{
+			Tp:                      kv.ReqTypeDAG,
+			StoreType:               kv.TiKV,
+			KeyRanges:               unhintedRanges,
+			Concurrency:             6,
+			StoreBatchSize:          1,
+			AllowBatchTaskDataMerge: allowMerge,
+			Desc:                    desc,
+		}
+		req.RequestSource.RequestSourceInternal = true
+		it, errRes = copClient.BuildCopIterator(ctx, req, vars, opt)
+		require.Nil(t, errRes)
+		tasks = it.GetTasks()
+		taskStrings, childCounts := make([]string, len(tasks)), make([]int, len(tasks))
+		for i, task := range tasks {
+			taskStrings[i] = task.String()
+			childCounts[i] = len(task.ToPBBatchTasks())
+		}
+		concurrency, smallTaskConcurrency := it.GetConcurrency()
+		require.Zero(t, smallTaskConcurrency)
+		return taskStrings, childCounts, concurrency
+	}
+	ascending, childCounts, concurrency := buildUnhinted(true, false)
+	require.Equal(t, []int{1, 0, 0}, childCounts)
+	require.Equal(t, 3, concurrency)
+	unmarked, childCounts, concurrency := buildUnhinted(false, false)
+	require.Len(t, unmarked, 4)
+	require.Equal(t, []int{0, 0, 0, 0}, childCounts)
+	require.Equal(t, 4, concurrency)
+	descending, _, _ := buildUnhinted(true, true)
+	require.Equal(t, []string{ascending[1], ascending[0], ascending[2]}, descending)
+
 	// paging will disable store batch.
 	ranges = copr.BuildKeyRanges("a", "c", "d", "e", "h", "x", "y", "z")
 	req = &kv.Request{
@@ -290,23 +329,56 @@ func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {
 	require.Nil(t, errRes)
 	require.Zero(t, req.Paging.PagingSizeBytes)
 
-	// Analyze requests do not yet use store-batched coprocessor requests.
+	// Analyze requests are internal and do not carry row-count hints, but they
+	// intentionally use store-batched coprocessor requests.
 	ranges = copr.BuildKeyRanges("a", "c", "d", "e", "h", "x", "y", "z")
 	req = &kv.Request{
-		Tp:             kv.ReqTypeAnalyze,
-		StoreType:      kv.TiKV,
-		KeyRanges:      kv.NewNonParitionedKeyRangesWithHint(ranges, nil),
-		Concurrency:    15,
-		StoreBatchSize: 3,
+		Tp:                      kv.ReqTypeAnalyze,
+		StoreType:               kv.TiKV,
+		KeyRanges:               kv.NewNonParitionedKeyRangesWithHint(ranges, nil),
+		Concurrency:             15,
+		StoreBatchSize:          3,
+		AllowBatchTaskDataMerge: true,
 	}
 	req.RequestSource.RequestSourceInternal = true
 	it, errRes = copClient.BuildCopIterator(ctx, req, vars, opt)
 	require.Nil(t, errRes)
 	tasks = it.GetTasks()
-	require.Len(t, tasks, 4)
-	for _, task := range tasks {
-		require.Empty(t, task.ToPBBatchTasks())
-		require.Equal(t, -1, task.RowCountHint)
+	require.Equal(t, len(tasks), 1)
+	require.Equal(t, len(tasks[0].ToPBBatchTasks()), 3)
+	require.Equal(t, -1, tasks[0].RowCountHint)
+
+	// The merge capability must reach the wire in both directions. Canceling in
+	// the send hook keeps this check independent of response decoding.
+	ranges = copr.BuildKeyRanges("a", "c")
+	cancelSend := make(chan context.CancelFunc, 1)
+	wireFlag := make(chan bool, 1)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/store/copr/onBeforeSendReqCtx", func(rpcReq *tikvrpc.Request) {
+		copReq, ok := rpcReq.Req.(*coprocessor.Request)
+		if !ok || copReq.Tp != kv.ReqTypeAnalyze {
+			return
+		}
+		wireFlag <- copReq.AllowBatchTaskDataMerge
+		(<-cancelSend)()
+	})
+	for _, allowMerge := range []bool{false, true} {
+		sendCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		cancelSend <- cancel
+		req = &kv.Request{
+			Tp:                      kv.ReqTypeAnalyze,
+			StoreType:               kv.TiKV,
+			KeyRanges:               kv.NewNonParitionedKeyRangesWithHint(ranges, nil),
+			Concurrency:             15,
+			StoreBatchSize:          3,
+			AllowBatchTaskDataMerge: allowMerge,
+		}
+		req.RequestSource.RequestSourceInternal = true
+		resp := copClient.Send(sendCtx, req, vars, opt)
+		_, err = resp.Next(sendCtx)
+		require.ErrorIs(t, err, context.Canceled)
+		require.NoError(t, resp.Close())
+		require.Equal(t, allowMerge, <-wireFlag)
+		cancel()
 	}
 
 	// only small tasks will be batched.
