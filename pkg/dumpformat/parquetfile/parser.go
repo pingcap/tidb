@@ -632,6 +632,10 @@ func NewParser(
 	}
 	prop := parquet.NewReaderProperties(allocator)
 	prop.BufferedStreamEnabled = true
+	// Newer arrow-go rejects pages larger than MaxUncompressedPageSize
+	// (default 256 MiB) even though streaming keeps memory bounded; raise
+	// the limit when bumping.
+	prop.PageStreamingEnabled = true
 	prop.BufferSize = 1024
 
 	reader, err := file.NewParquetReader(wrapper, file.WithReadProps(prop))

@@ -27,7 +27,7 @@
 - `pkg/ingestor/globalsort/reader_test.go` - ingestor/globalsort: Tests read all data basic.
 - `pkg/ingestor/globalsort/sort_test.go` - ingestor/globalsort: Tests global sort local basic.
 - `pkg/ingestor/globalsort/split_test.go` - ingestor/globalsort: Tests general properties.
-- `pkg/ingestor/globalsort/util_test.go` - ingestor/globalsort: Tests seek props offsets.
+- `pkg/ingestor/globalsort/util_test.go` - ingestor/globalsort: Tests property seeking and batched cleanup file discovery.
 - `pkg/ingestor/globalsort/writer_test.go` - ingestor/globalsort: Tests writer.
 
 ## pkg/lightning/backend/kv
