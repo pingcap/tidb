@@ -378,9 +378,20 @@ fn a_handle_column_reads_back_in_its_own_type() {
         rows.iter().all(|row| matches!(row[0], Datum::Bit(_))),
         "a BIT primary key reads back as a bit value, got {rows:?}"
     );
+    // UNSIGNED, because a `BIT` column carries `UnsignedFlag` (Go
+    // `processColumnFlags`) and Go's `arithmeticPlusFunctionClass.getFunction`
+    // adds that flag to the RESULT when either argument has it:
+    //
+    //     if mysql.HasUnsignedFlag(args[0].GetType(...).GetFlag()) ||
+    //        mysql.HasUnsignedFlag(args[1].GetType(...).GetFlag()) {
+    //         bf.tp.AddFlag(mysql.UnsignedFlag)
+    //     }
+    //
+    // This read `Int` until the column builder ported `processColumnFlags`;
+    // the captured `0; 1` above is the same either way, since it is the VALUE.
     assert_eq!(
         run_select_on("SELECT a + 0 FROM tb", &catalog, &ctx).unwrap(),
-        vec![vec![Datum::Int(0)], vec![Datum::Int(1)]]
+        vec![vec![Datum::UInt(0)], vec![Datum::UInt(1)]]
     );
 
     // A `datetime` primary key: the handle holds the PACKED uint64, which is
