@@ -564,15 +564,28 @@ fn multi_table_dml_refuses_sources_without_a_row_identity() {
         "UPDATE IGNORE r1 JOIN r2 ON r1.id = r2.id SET r1.v = 2",
         "UPDATE r1 JOIN rv ON r1.id = rv.id SET r1.v = 2",
         "DELETE r1 FROM r1 JOIN rv ON r1.id = rv.id",
-        // Go RUNS both of these (`affected=1` each, measured through
-        // `mockstore`); a correlated per-outer-row re-read is a different
-        // read from the one this join performs, so it is refused BY NAME
-        // rather than answered with a plain derived table's rows.
-        "UPDATE r1 JOIN LATERAL (SELECT id FROM r2 WHERE id = r1.id) d ON 1=1 SET r1.v = 2",
-        "DELETE r1 FROM r1 JOIN LATERAL (SELECT id FROM r2 WHERE id = r1.id) d ON 1=1",
     ] {
         assert!(session.run(sql).is_err(), "`{sql}` should be refused");
     }
+
+    // `LATERAL` is refused BY NAME, not merely refused. Go RUNS both of these
+    // (`affected=1` each, measured through `mockstore`), so the gap is real
+    // and has to stay legible: an UNCORRELATED lateral subquery would run as
+    // an ordinary derived table if the refusal were dropped, and a
+    // CORRELATED one would come back as an unknown-column error instead --
+    // which an `is_err()` assertion cannot tell apart from this refusal.
+    for sql in [
+        "UPDATE r1 JOIN LATERAL (SELECT id FROM r2 WHERE id = r1.id) d ON 1=1 SET r1.v = 2",
+        "DELETE r1 FROM r1 JOIN LATERAL (SELECT id FROM r2 WHERE id = r1.id) d ON 1=1",
+        "UPDATE r1 JOIN LATERAL (SELECT 1 AS id) d ON 1=1 SET r1.v = 2",
+    ] {
+        let error = session.run(sql).unwrap_err().to_mysql_error();
+        assert_eq!(
+            error.message, "a LATERAL derived table is not supported in multi-table DML",
+            "{sql}"
+        );
+    }
+
     // Nothing was half-applied.
     assert_eq!(column(&mut session, "SELECT id, v FROM r1"), ["1|1"]);
 }
@@ -668,9 +681,45 @@ fn a_derived_table_source_neither_over_applies_nor_repeats() {
         ),
         0
     );
+    // The same empty derived table with NO `WHERE` at all, so nothing but the
+    // emptiness itself can stop the write. A source that stood an empty
+    // subquery up as one NULL-padded row would write all three rows here and
+    // still report 0 on the statement above, where `t1.a = NULL` filters it
+    // back out. Go: `OK affected=0`, `1|1 ; 2|2 ; 3|3` for both, and for the
+    // matching `DELETE t1 FROM u t1, (SELECT ...) t2` as well.
+    assert_eq!(
+        affected(
+            &mut session,
+            "UPDATE u t1, (SELECT a, b FROM u WHERE a < 0) t2 SET t1.b = 99"
+        ),
+        0
+    );
+    assert_eq!(
+        affected(
+            &mut session,
+            "DELETE t1 FROM u t1, (SELECT a, b FROM u WHERE a < 0) t2"
+        ),
+        0
+    );
     assert_eq!(
         column(&mut session, "SELECT a, b FROM u ORDER BY a"),
         ["1|1", "2|2", "3|3"]
+    );
+    // And the shape that DOES write through an empty derived table, so the
+    // three assertions above cannot be passed by a source that dropped the
+    // derived table's rows entirely: Go reports 3 and leaves `1|77 ; 2|77 ;
+    // 3|77`.
+    assert_eq!(
+        affected(
+            &mut session,
+            "UPDATE u t1 LEFT JOIN (SELECT a, b FROM u WHERE a < 0) t2 ON t1.a = t2.a \
+             SET t1.b = 77 WHERE t2.a IS NULL"
+        ),
+        3
+    );
+    assert_eq!(
+        column(&mut session, "SELECT a, b FROM u ORDER BY a"),
+        ["1|77", "2|77", "3|77"]
     );
 
     session
