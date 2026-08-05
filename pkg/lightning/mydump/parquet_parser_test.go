@@ -245,17 +245,13 @@ func TestParquetParserMultipleRowGroup(t *testing.T) {
 		{name: "per-column-streaming", stream: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-<<<<<<< HEAD:pkg/lightning/mydump/parquet_parser_test.go
-			parser := newParquetParserForTest(context.Background(), t, dir, fileName, tc.fileSize, ParquetFileMeta{})
-=======
 			if tc.stream {
 				originalThreshold := rowGroupInMemoryThreshold
 				rowGroupInMemoryThreshold = 1
 				defer func() { rowGroupInMemoryThreshold = originalThreshold }()
 			}
 
-			parser := newParquetParserForTest(context.Background(), t, dir, fileName, tc.fileSize, FileMeta{})
->>>>>>> c48a9917c50 (dumpformat: track Parquet scan progress by source file offset (#70307)):pkg/dumpformat/parquetfile/parser_test.go
+			parser := newParquetParserForTest(context.Background(), t, dir, fileName, tc.fileSize, ParquetFileMeta{})
 			require.Greater(t, parser.fileMeta.NumRowGroups(), 1)
 			if tc.expectWholeFileLoaded {
 				require.NotNil(t, parser.preloadBase)
@@ -289,7 +285,7 @@ func TestParquetParserMultipleRowGroup(t *testing.T) {
 
 func TestParquetScannedPosByReadRows(t *testing.T) {
 	fileMeta := &metadata.FileMetaData{}
-	parser := &Parser{fileMeta: fileMeta}
+	parser := &ParquetParser{fileMeta: fileMeta}
 	for _, tc := range []struct {
 		name      string
 		fileSize  int64
