@@ -544,6 +544,26 @@ func TestExplainAnalyzeFormatRUOutput(t *testing.T) {
 	require.Equal(t, float64(len(explainSQL)), explainRUCountUnitValue(t, rows, "tidb/sql_frontend", "frontend_compile_bytes"))
 	requireExplainRUUnitSource(t, rows, "tidb/sql_frontend", "frontend_compile_bytes", "statement_original_sql")
 
+	scalarSubquerySQL := "explain analyze format='ru' select (select 1)"
+	rows, err := queryExplainRURowsOrErr(t, tk, scalarSubquerySQL)
+	require.NoError(t, err)
+	requireExplainRUPlanRow(t, rows)
+	requireExplainRUWeightedOperatorClass(t, rows, "tidb/projection_eval")
+	requireExplainRUWeightedOperatorClass(t, rows, "tidb/row_limit")
+	require.Equal(t, 1.0, explainRUCountUnitValue(t, rows, "tidb/row_limit", "cpu_work"))
+
+	applyQuery := "select t.table_name, (select /*+ NO_DECORRELATE() */ count(*) from information_schema.columns c where c.table_schema = t.table_schema and c.table_name = t.table_name) from information_schema.tables t limit 1"
+	seenApply := false
+	// MustQuery reruns information_schema queries with a failpoint and compares
+	// results, which is unsuitable for EXPLAIN ANALYZE runtime fields.
+	for _, row := range tk.MustQueryWithContext(context.Background(), "explain analyze "+applyQuery).Rows() {
+		seenApply = seenApply || strings.Contains(fmt.Sprint(row[0]), "Apply")
+	}
+	require.True(t, seenApply)
+	rows, err = queryExplainRURowsOrErr(t, tk, "explain analyze format='ru' "+applyQuery)
+	require.NoError(t, err)
+	requireExplainRUWeightedOperatorClass(t, rows, "tidb/filter_eval")
+
 	tk.MustExec("drop table if exists explain_ru_t")
 	tk.MustExec("create table explain_ru_t(a int primary key, b varchar(20))")
 	tk.MustExec("insert into explain_ru_t values (1, 'x'), (2, 'yy')")
@@ -555,7 +575,7 @@ func TestExplainAnalyzeFormatRUOutput(t *testing.T) {
 	require.Zero(t, explainRUCountUnitValue(t, shortRows, "tikv/kv_point_lookup", "cpu_work"), shortRows)
 	require.Zero(t, explainRUCountUnitValue(t, shortRows, "tikv/kv_point_lookup", "scan_bytes"), shortRows)
 
-	_, err := queryExplainRURowsOrErr(t, tk, "explain analyze format='ru' select * from explain_ru_t where a > 0")
+	_, err = queryExplainRURowsOrErr(t, tk, "explain analyze format='ru' select * from explain_ru_t where a > 0")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "status=unknown_input")
 	require.True(t,

@@ -398,6 +398,30 @@ func (*readBillingDemoNilEmbeddedPointStatsForTest) Tp() int {
 }
 
 func TestReadBillingDemoV6FormulaContract(t *testing.T) {
+	t.Run("subquery execution classes", func(t *testing.T) {
+		ctx := mock.NewContext()
+		wrapper := ScalarSubqueryEvalCtx{}.Init(ctx, 0)
+		operator, supported, reason := readBillingDemoClassifyOperator(&FlatOperator{Origin: wrapper, IsRoot: true, StoreType: kv.TiDB})
+		require.True(t, supported)
+		require.Empty(t, reason)
+		require.Equal(t, readBillingDemoOpClassWrapper, operator.opClass)
+		require.False(t, readBillingDemoOperatorBillable(operator))
+
+		maxOneRow := physicalop.PhysicalMaxOneRow{}.Init(ctx, &property.StatsInfo{RowCount: 1}, 0)
+		operator, supported, reason = readBillingDemoClassifyOperator(&FlatOperator{Origin: maxOneRow, IsRoot: true, StoreType: kv.TiDB})
+		require.True(t, supported)
+		require.Empty(t, reason)
+		require.Equal(t, readBillingDemoOpClassLimit, operator.opClass)
+		require.True(t, readBillingDemoOperatorBillable(operator))
+
+		apply := physicalop.PhysicalApply{}.Init(ctx, &property.StatsInfo{RowCount: 1}, 0)
+		operator, supported, reason = readBillingDemoClassifyOperator(&FlatOperator{Origin: apply, IsRoot: true, StoreType: kv.TiDB})
+		require.True(t, supported)
+		require.Empty(t, reason)
+		require.Equal(t, readBillingDemoOpClassWrapper, operator.opClass)
+		require.False(t, readBillingDemoOperatorBillable(operator))
+	})
+
 	weights := readBillingDemoWeights{
 		ModelVersion: readBillingDemoModelVersion, Version: "test-v6-calibrated",
 		CPUWeight: 2, ScanWeight: 3, NetWeight: 5,

@@ -2575,7 +2575,7 @@ func readBillingDemoClassifyOperator(op *FlatOperator) (readBillingDemoOperatorR
 		return readBillingDemoOperatorResult{site: readBillingDemoSiteTiDB, opClass: readBillingDemoOpClassFilter, operatorKind: operatorKind}, true, ""
 	case plancodec.TypeProj:
 		return readBillingDemoOperatorResult{site: readBillingDemoSiteTiDB, opClass: readBillingDemoOpClassProjection, operatorKind: operatorKind}, true, ""
-	case plancodec.TypeLimit:
+	case plancodec.TypeLimit, plancodec.TypeMaxOneRow:
 		return readBillingDemoOperatorResult{site: readBillingDemoSiteTiDB, opClass: readBillingDemoOpClassLimit, operatorKind: operatorKind}, true, ""
 	case plancodec.TypeTopN:
 		return readBillingDemoOperatorResult{site: readBillingDemoSiteTiDB, opClass: readBillingDemoOpClassTopN, operatorKind: operatorKind}, true, ""
@@ -2601,7 +2601,9 @@ func readBillingDemoClassifyOperator(op *FlatOperator) (readBillingDemoOperatorR
 		return readBillingDemoOperatorResult{site: readBillingDemoSiteTiDB, opClass: readBillingDemoOpClassOverlayReader, operatorKind: operatorKind}, true, ""
 	case plancodec.TypeMemTableScan, plancodec.TypeClusterMemTableReader:
 		return readBillingDemoOperatorResult{site: readBillingDemoSiteTiDB, opClass: readBillingDemoOpClassMetadataReader, operatorKind: operatorKind}, true, ""
-	case plancodec.TypeUnion:
+	case plancodec.TypeUnion, plancodec.TypeScalarSubQuery, plancodec.TypeApply:
+		// Apply has no dedicated formula yet. Keep its executed descendants
+		// reportable without charging the Apply orchestration itself.
 		return readBillingDemoOperatorResult{site: readBillingDemoSiteTiDB, opClass: readBillingDemoOpClassWrapper, operatorKind: operatorKind}, true, ""
 	case plancodec.TypeDual:
 		return readBillingDemoOperatorResult{site: readBillingDemoSiteTiDB, opClass: readBillingDemoOpClassSynthetic, operatorKind: operatorKind}, true, ""
