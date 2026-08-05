@@ -220,6 +220,22 @@ pub enum Candidate {
         /// `p.RightConditions`.
         probe_filters: Vec<bool>,
     },
+    /// `PhysicalSort`: the ENFORCER `EnforceProperty` puts on a task that
+    /// cannot satisfy a required order by itself.
+    ///
+    /// It exists here for one reason: `findBestTask`'s enforced branch costs
+    /// the sorted alternative, and a comparison that omits the `Sort` prices a
+    /// plan nobody would run. See [`crate::find_best_task`].
+    Sort {
+        /// The single child.
+        child: Box<Candidate>,
+        /// `getCardinality(p)`, which for a sort is its child's count.
+        rows: f64,
+        /// `getAvgRowSize(p.StatsInfo(), p.Schema().Columns)`.
+        row_size: RowSize,
+        /// One flag per `ByItems` entry: whether it is a scalar function.
+        by_items: Vec<bool>,
+    },
     /// `PhysicalMergeJoin` on a root task.
     MergeJoin {
         /// The left child.
@@ -285,7 +301,8 @@ pub fn number_of_ranges(node: &Candidate) -> usize {
         }
         Candidate::Reader { child, .. }
         | Candidate::Selection { child, .. }
-        | Candidate::Projection { child, .. } => number_of_ranges(child),
+        | Candidate::Projection { child, .. }
+        | Candidate::Sort { child, .. } => number_of_ranges(child),
         Candidate::HashJoin { build, probe, .. } | Candidate::IndexJoin { build, probe, .. } => {
             number_of_ranges(build) + number_of_ranges(probe)
         }
@@ -495,6 +512,30 @@ pub fn evaluate_traced(
                 row_size: build_costed.row_size + probe_costed.row_size,
                 cost,
                 children: vec![build_costed, probe_costed],
+            }
+        }
+        Candidate::Sort {
+            child,
+            rows,
+            row_size,
+            by_items,
+        } => {
+            let child = evaluate_traced(child, env, task, option);
+            let row_size = row_size.resolve();
+            let cost = ver2::sort_cost(
+                option,
+                (*rows, row_size),
+                by_items,
+                (&env.factors, &env.cost_factors),
+                &env.session,
+                task,
+                &child.cost,
+            );
+            CostedNode {
+                rows: *rows,
+                row_size,
+                cost,
+                children: vec![child],
             }
         }
         Candidate::MergeJoin {

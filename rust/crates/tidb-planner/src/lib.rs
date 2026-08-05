@@ -41,6 +41,7 @@ pub mod eliminate_unionall_dual_item;
 pub mod explain;
 pub mod explore_mark;
 pub mod expr_iterator;
+pub mod find_best_task;
 pub mod fix_control;
 pub mod group_expr;
 pub mod handle_cols;
