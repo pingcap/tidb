@@ -805,7 +805,7 @@ fn join_operators_and_their_keep_order_match_recorded_tidb_plans() {
     // 0 diverged), `executor/jointest/join` (803 matched, 1 diverged) and
     // `planner/core/join_reorder2` (30 matched, 0 diverged) all stood still.
     //
-// SIXTH MEASUREMENT (batch47, stacked on batch45 -- its own tree read 184/105/86/71/28 over the pre-greedy base):
+    // SIXTH MEASUREMENT (batch47, stacked on batch45 -- its own tree read 184/105/86/71/28 over the pre-greedy base):
     //
     // 182/103/84/69/28 -> 184/105/86/71/28. TWO MORE STATEMENTS BECAME
     // COMPARABLE, and both AGREE; nothing that was comparable moved, and the
