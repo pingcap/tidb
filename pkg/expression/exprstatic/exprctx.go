@@ -47,6 +47,7 @@ type exprCtxState struct {
 	connectionID               uint64
 	windowingUseHighPrecision  bool
 	groupConcatMaxLen          uint64
+	newCollationEnabled        *bool
 }
 
 // ExprCtxOption is the option to create or update the `ExprContext`
@@ -142,6 +143,13 @@ func WithGroupConcatMaxLen(maxLen uint64) ExprCtxOption {
 	}
 }
 
+// WithNewCollationEnabled fixes the new-collation mode for expression building.
+func WithNewCollationEnabled(enabled bool) ExprCtxOption {
+	return func(s *exprCtxState) {
+		s.newCollationEnabled = &enabled
+	}
+}
+
 // ExprContext implements the `exprctx.ExprContext` interface.
 // The "static" means comparing with `ExprContext`, its internal state does not relay on the session or other
 // complex contexts that keeps immutable for most fields.
@@ -226,6 +234,9 @@ func (ctx *ExprContext) GetDefaultCollationForUTF8MB4() string {
 
 // NewCollationEnabled implements the `ExprContext.NewCollationEnabled`.
 func (ctx *ExprContext) NewCollationEnabled() bool {
+	if ctx.newCollationEnabled != nil {
+		return *ctx.newCollationEnabled
+	}
 	return collate.NewCollationEnabled()
 }
 

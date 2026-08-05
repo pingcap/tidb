@@ -189,7 +189,7 @@ func NewCopContextSingleIndex(
 	useNewCollate bool,
 ) (*CopContextSingleIndex, error) {
 	cols := idxInfo.Columns
-	neededCols, err := extractColumnsFromCondition(exprCtx, idxInfo, tblInfo, useNewCollate)
+	neededCols, err := tables.ExtractColumnsFromCondition(exprCtx, idxInfo, tblInfo, false)
 	if err != nil {
 		return nil, err
 	}
@@ -263,7 +263,7 @@ func NewCopContextMultiIndex(
 	for _, idxInfo := range allIdxInfo {
 		allIdxCols = append(allIdxCols, idxInfo.Columns...)
 
-		neededCols, err := extractColumnsFromCondition(exprCtx, idxInfo, tblInfo, useNewCollate)
+		neededCols, err := tables.ExtractColumnsFromCondition(exprCtx, idxInfo, tblInfo, false)
 		if err != nil {
 			return nil, err
 		}
@@ -341,33 +341,6 @@ func (c *CopContextMultiIndex) GetCondition() (expression.Expression, error) {
 		return expression.ComposeDNFCondition(c.GetBase().ExprCtx, exprs...), nil
 	}
 	return nil, nil
-}
-
-func extractColumnsFromCondition(
-	ctx expression.BuildContext,
-	idxInfo *model.IndexInfo,
-	tblInfo *model.TableInfo,
-	useNewCollate bool,
-) ([]*model.IndexColumn, error) {
-	if len(idxInfo.ConditionExprString) == 0 {
-		return nil, nil
-	}
-
-	ctx = expression.BuildContextWithUseNewCollate(ctx, useNewCollate)
-	expr, err := expression.ParseSimpleExpr(ctx, idxInfo.ConditionExprString, expression.WithTableInfo("", tblInfo))
-	if err != nil {
-		return nil, err
-	}
-
-	cols := expression.ExtractColumns(expr)
-	neededCols := make([]*model.IndexColumn, 0, len(cols))
-	for _, col := range cols {
-		neededCols = append(neededCols, &model.IndexColumn{
-			Name:   tblInfo.Columns[col.Index].Name,
-			Offset: col.Index,
-		})
-	}
-	return neededCols, nil
 }
 
 func fillUsedColumns(

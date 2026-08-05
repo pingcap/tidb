@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -143,7 +142,7 @@ func NewReorgCopContext(
 		tblInfo,
 		allIdxInfo,
 		requestSource,
-		reorgMeta.GetUseNewCollateOrDefault(collate.NewCollationEnabled()),
+		exprCtx.NewCollationEnabled(),
 	)
 }
 

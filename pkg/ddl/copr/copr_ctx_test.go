@@ -183,8 +183,9 @@ func TestCopContextConditionUsesFixedCollation(t *testing.T) {
 	}
 
 	sctx := mock.NewContext()
+	exprCtx := expression.BuildContextWithUseNewCollate(sctx.GetExprCtx(), false)
 	copCtx, err := NewCopContextSingleIndex(
-		sctx.GetExprCtx(),
+		exprCtx,
 		sctx.GetSessionVars().StmtCtx.PushDownFlags(),
 		tblInfo,
 		idxInfo,

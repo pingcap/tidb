@@ -278,6 +278,7 @@ func assertStaticExprContextEqual(t *testing.T, sctx sessionctx.Context, exprCtx
 		f.check(exprCtx)
 		ignoreFields = append(ignoreFields, "$.exprCtxState."+f.field)
 	}
+	ignoreFields = append(ignoreFields, "$.exprCtxState.newCollationEnabled")
 	deeptest.AssertDeepClonedEqual(t, expected, exprCtx, deeptest.WithIgnorePath(ignoreFields))
 
 	// check EvalContext
@@ -311,6 +312,10 @@ func newMockReorgSessCtx(store kv.Storage) sessionctx.Context {
 // compatible with newMockReorgSessCtx(nil).GetExprCtx() to make it safe to replace `mock.Context` usage.
 // After refactor, the TestReorgExprContext can be removed.
 func TestReorgExprContext(t *testing.T) {
+	origin := collate.NewCollationEnabled()
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(origin)
+
 	// test default expr context
 	store := &mockStorage{client: &mock.Client{}}
 	sctx := newMockReorgSessCtx(store)
@@ -322,26 +327,51 @@ func TestReorgExprContext(t *testing.T) {
 	defaultTypeCtx := evalCtx.TypeCtx()
 	defaultErrCtx := evalCtx.ErrCtx()
 
+	oldCollation := false
+	newCollation := true
+
 	// test expr context from DDLReorgMeta
-	for _, reorg := range []model.DDLReorgMeta{
+	for _, testCase := range []struct {
+		reorg                 model.DDLReorgMeta
+		expectedUseNewCollate bool
+	}{
 		{
-			SQLMode:           mysql.ModeStrictTransTables | mysql.ModeAllowInvalidDates,
-			Location:          &model.TimeZoneLocation{Name: "Asia/Tokyo"},
-			ReorgTp:           model.ReorgTypeIngest,
-			ResourceGroupName: "rg1",
+			reorg: model.DDLReorgMeta{
+				SQLMode:           mysql.ModeStrictTransTables | mysql.ModeAllowInvalidDates,
+				Location:          &model.TimeZoneLocation{Name: "Asia/Tokyo"},
+				ReorgTp:           model.ReorgTypeIngest,
+				ResourceGroupName: "rg1",
+				UseNewCollate:     &oldCollation,
+			},
+			expectedUseNewCollate: false,
 		},
 		{
-			SQLMode: mysql.ModeAllowInvalidDates,
-			// should load location from system value when reorg.Location is nil
-			Location:          nil,
-			ReorgTp:           model.ReorgTypeTxnMerge,
-			ResourceGroupName: "rg2",
+			reorg: model.DDLReorgMeta{
+				SQLMode: mysql.ModeAllowInvalidDates,
+				// should load location from system value when reorg.Location is nil
+				Location:          nil,
+				ReorgTp:           model.ReorgTypeTxnMerge,
+				ResourceGroupName: "rg2",
+				UseNewCollate:     &newCollation,
+			},
+			expectedUseNewCollate: true,
+		},
+		{
+			reorg: model.DDLReorgMeta{
+				SQLMode:           mysql.ModeAllowInvalidDates,
+				Location:          nil,
+				ReorgTp:           model.ReorgTypeTxnMerge,
+				ResourceGroupName: "rg3",
+			},
+			expectedUseNewCollate: true,
 		},
 	} {
+		reorg := testCase.reorg
 		sctx = newMockReorgSessCtx(store)
 		require.NoError(t, initSessCtx(sctx, &reorg))
 		ctx, err := newReorgExprCtxWithReorgMeta(&reorg, sctx.GetSessionVars().StmtCtx.WarnHandler)
 		require.NoError(t, err)
+		require.Equal(t, testCase.expectedUseNewCollate, ctx.NewCollationEnabled())
 		assertStaticExprContextEqual(t, sctx, ctx, ctx.GetStaticEvalCtx().GetWarnHandler())
 		evalCtx := ctx.GetEvalCtx()
 		tc, ec := evalCtx.TypeCtx(), evalCtx.ErrCtx()
