@@ -182,7 +182,7 @@ func TestCopContextConditionUsesFixedCollation(t *testing.T) {
 	}
 
 	sctx := mock.NewContext()
-	exprCtx := expression.BuildContextWithUseNewCollate(sctx.GetExprCtx(), false)
+	exprCtx := sctx.ExprContext.IntoStatic().Apply(exprstatic.WithNewCollationEnabled(false))
 	copCtx, err := NewCopContextSingleIndex(
 		exprCtx,
 		sctx.GetSessionVars().StmtCtx.PushDownFlags(),

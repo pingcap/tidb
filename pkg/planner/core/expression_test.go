@@ -510,8 +510,8 @@ func TestBuildExpression(t *testing.T) {
 		},
 	}
 	collationSensitiveRow := chunk.MutRowFromValues("a", "A").ToRow()
-	oldCollationCtx := expression.BuildContextWithUseNewCollate(ctx, false)
-	newCollationCtx := expression.BuildContextWithUseNewCollate(ctx, true)
+	oldCollationCtx := ctx.Apply(exprstatic.WithNewCollationEnabled(false))
+	newCollationCtx := ctx.Apply(exprstatic.WithNewCollationEnabled(true))
 	for _, test := range []struct {
 		expr        string
 		oldExpected any

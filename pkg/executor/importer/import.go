@@ -1971,7 +1971,6 @@ func createColAssignSimpleExprs(
 
 // CreateColAssignSimpleExprs creates the column assignment expressions using `expression.BuildContext`.
 func (e *LoadDataController) CreateColAssignSimpleExprs(ctx expression.BuildContext) (_ []expression.Expression, _ []contextutil.SQLWarn, retErr error) {
-	ctx = expression.BuildContextWithUseNewCollate(ctx, e.Table.UseNewCollate())
 	return createColAssignSimpleExprs(
 		e.ColumnAssignments,
 		ctx,

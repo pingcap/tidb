@@ -277,9 +277,6 @@ func (t *TableCommon) initTableIndices() error {
 		if err != nil {
 			return err
 		}
-		if err := idx.initPartialCondition(); err != nil {
-			return err
-		}
 		t.indices = append(t.indices, idx)
 	}
 	return nil

@@ -102,27 +102,6 @@ func WithCastExprTo(targetFt *types.FieldType) BuildOption {
 	}
 }
 
-type buildContextWithUseNewCollate struct {
-	BuildContext
-	useNewCollate bool
-}
-
-func (ctx *buildContextWithUseNewCollate) NewCollationEnabled() bool {
-	return ctx.useNewCollate
-}
-
-// BuildContextWithUseNewCollate fixes the new-collation mode used by
-// collation-sensitive expression builders.
-func BuildContextWithUseNewCollate(ctx BuildContext, useNewCollate bool) BuildContext {
-	if ctx == nil {
-		return nil
-	}
-	return &buildContextWithUseNewCollate{
-		BuildContext:  ctx,
-		useNewCollate: useNewCollate,
-	}
-}
-
 func getCollator(ctx BuildContext, collation string) collate.Collator {
 	return collate.GetCollatorWithCollate(ctx.NewCollationEnabled(), collation)
 }

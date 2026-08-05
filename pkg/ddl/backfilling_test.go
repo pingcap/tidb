@@ -124,8 +124,9 @@ func TestBuildIndexConditionCheckerUsesFixedCollation(t *testing.T) {
 	}
 
 	sctx := mock.NewContext()
+	exprCtx := sctx.ExprContext.IntoStatic()
 	copCtx, err := copr.NewCopContextSingleIndex(
-		expression.BuildContextWithUseNewCollate(sctx.GetExprCtx(), false),
+		exprCtx.Apply(exprstatic.WithNewCollationEnabled(false)),
 		sctx.GetSessionVars().StmtCtx.PushDownFlags(),
 		tblInfo,
 		idxInfo,
@@ -139,7 +140,7 @@ func TestBuildIndexConditionCheckerUsesFixedCollation(t *testing.T) {
 	require.False(t, matched)
 
 	copCtx, err = copr.NewCopContextSingleIndex(
-		expression.BuildContextWithUseNewCollate(sctx.GetExprCtx(), true),
+		exprCtx.Apply(exprstatic.WithNewCollationEnabled(true)),
 		sctx.GetSessionVars().StmtCtx.PushDownFlags(),
 		tblInfo,
 		idxInfo,

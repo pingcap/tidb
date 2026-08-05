@@ -283,7 +283,7 @@ func initPartition(t *partitionedTable, def model.PartitionDefinition) (*partiti
 }
 
 // NewPartitionExprBuildCtx returns a context to build partition expression.
-func NewPartitionExprBuildCtx() expression.BuildContext {
+func NewPartitionExprBuildCtx() *exprstatic.ExprContext {
 	return exprstatic.NewExprContext(
 		exprstatic.WithEvalCtx(exprstatic.NewEvalContext(
 			// Set a non-strict SQL mode and allow all date values if possible to make sure constant fold can work to
@@ -305,7 +305,7 @@ func NewPartitionExprBuildCtx() expression.BuildContext {
 
 func (t *partitionedTable) newPartitionExpr(tp ast.PartitionType, expr string, partCols []ast.CIStr, defs []model.PartitionDefinition) (*PartitionExpr, error) {
 	tblInfo := t.meta
-	ctx := expression.BuildContextWithUseNewCollate(NewPartitionExprBuildCtx(), t.UseNewCollate())
+	ctx := NewPartitionExprBuildCtx().Apply(exprstatic.WithNewCollationEnabled(t.UseNewCollate()))
 	dbName := ast.NewCIStr(ctx.GetEvalCtx().CurrentDB())
 	columns, names, err := expression.ColumnInfos2ColumnsAndNames(ctx, dbName, tblInfo.Name, tblInfo.Cols(), tblInfo)
 	if err != nil {

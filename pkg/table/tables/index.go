@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -44,13 +43,11 @@ import (
 	"go.uber.org/zap"
 )
 
-var indexConditionECtx exprctx.BuildContext
+var indexConditionECtx *exprstatic.ExprContext
 
 // indexPartialCondition is a data structure to help implement the partial index.
 type indexPartialCondition struct {
 	conditionExpr expression.Expression
-	conditionInit sync.Once
-	conditionErr  error
 	// conditionEvalBufferPool stores many eval buffer to avoid allocating chunk
 	// for evaluating partial index condition for each time.
 	// It's only initialized if the `partialConditionExpr` is not nil.
@@ -86,12 +83,16 @@ func NewIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.Index
 }
 
 func newIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, useNewCollate bool) (*index, error) {
-	return &index{
+	idx := &index{
 		idxInfo:  indexInfo,
 		tblInfo:  tblInfo,
 		phyTblID: physicalID,
 		encoder:  codec.NewEncoder(useNewCollate),
-	}, nil
+	}
+	if err := idx.initPartialCondition(); err != nil {
+		return nil, err
+	}
+	return idx, nil
 }
 
 func (c *index) initPartialCondition() error {
@@ -99,37 +100,34 @@ func (c *index) initPartialCondition() error {
 	if len(conditionString) == 0 {
 		return nil
 	}
-	c.conditionInit.Do(func() {
-		var err error
-		ctx := expression.BuildContextWithUseNewCollate(indexConditionECtx, c.encoder.UseNewCollate())
-		c.conditionExpr, err = expression.ParseSimpleExpr(ctx, conditionString, expression.WithTableInfo("", c.tblInfo))
-		if err != nil {
-			c.conditionErr = errors.Trace(err)
-			return
-		}
-		c.conditionEvalBufferPool = sync.Pool{
-			New: func() any {
-				// For INSERT path, it'll only pass all writable columns.
-				// For UPDATE/DELETE path, it'll contain all columns.
-				// As the writable columns are always at the beginning of the `tblInfo.Columns`, it'll not affect
-				// the offsets of related columns in the expression. Therefore, it's fine to always record all
-				// columns here.
-				evalBufferTypes := make([]*types.FieldType, 0, len(c.tblInfo.Columns)+1)
-				for _, col := range c.tblInfo.Columns {
-					evalBufferTypes = append(evalBufferTypes, &col.FieldType)
-				}
+	ctx := indexConditionECtx.Apply(exprstatic.WithNewCollationEnabled(c.encoder.UseNewCollate()))
+	conditionExpr, err := expression.ParseSimpleExpr(ctx, conditionString, expression.WithTableInfo("", c.tblInfo))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	c.conditionExpr = conditionExpr
+	c.conditionEvalBufferPool = sync.Pool{
+		New: func() any {
+			// For INSERT path, it'll only pass all writable columns.
+			// For UPDATE/DELETE path, it'll contain all columns.
+			// As the writable columns are always at the beginning of the `tblInfo.Columns`, it'll not affect
+			// the offsets of related columns in the expression. Therefore, it's fine to always record all
+			// columns here.
+			evalBufferTypes := make([]*types.FieldType, 0, len(c.tblInfo.Columns)+1)
+			for _, col := range c.tblInfo.Columns {
+				evalBufferTypes = append(evalBufferTypes, &col.FieldType)
+			}
 
-				if !c.tblInfo.HasClusteredIndex() {
-					// If the table doesn't have clustered index, we need to append an extra handle column.
-					evalBufferTypes = append(evalBufferTypes, types.NewFieldType(mysql.TypeLonglong))
-				}
+			if !c.tblInfo.HasClusteredIndex() {
+				// If the table doesn't have clustered index, we need to append an extra handle column.
+				evalBufferTypes = append(evalBufferTypes, types.NewFieldType(mysql.TypeLonglong))
+			}
 
-				evalBuffer := chunk.MutRowFromTypes(evalBufferTypes)
-				return &evalBuffer
-			},
-		}
-	})
-	return c.conditionErr
+			evalBuffer := chunk.MutRowFromTypes(evalBufferTypes)
+			return &evalBuffer
+		},
+	}
+	return nil
 }
 
 // Meta returns index info.
@@ -259,9 +257,6 @@ out:
 
 // MeetPartialCondition checks whether the row meets the partial index condition of the index.
 func (c *index) MeetPartialCondition(row []types.Datum) (meet bool, err error) {
-	if err := c.initPartialCondition(); err != nil {
-		return false, err
-	}
 	if c.conditionExpr == nil {
 		return true, nil
 	}
@@ -274,9 +269,6 @@ func (c *index) MeetPartialCondition(row []types.Datum) (meet bool, err error) {
 }
 
 func (c *index) MeetPartialConditionWithChunk(row chunk.Row) (meet bool, err error) {
-	if err := c.initPartialCondition(); err != nil {
-		return false, err
-	}
 	if c.conditionExpr == nil {
 		return true, nil
 	}

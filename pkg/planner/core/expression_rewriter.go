@@ -153,13 +153,7 @@ func buildSimpleExpr(ctx expression.BuildContext, node ast.ExprNode, opts ...exp
 	}
 
 	if tbl := options.SourceTable; tbl != nil && rewriter.schema == nil {
-		cols, names, err := expression.ColumnInfos2ColumnsAndNames(
-			ctx,
-			options.SourceTableDB,
-			tbl.Name,
-			tbl.Cols(),
-			tbl,
-		)
+		cols, names, err := expression.ColumnInfos2ColumnsAndNames(ctx, options.SourceTableDB, tbl.Name, tbl.Cols(), tbl)
 		if err != nil {
 			return nil, err
 		}

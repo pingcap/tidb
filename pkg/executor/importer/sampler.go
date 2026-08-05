@@ -209,7 +209,6 @@ func validateKVSizeSampleConfig(cfg *KVSizeSampleConfig) error {
 func (s *kvSizeSampler) CreateColAssignSimpleExprs(
 	ctx expression.BuildContext,
 ) (_ []expression.Expression, _ []contextutil.SQLWarn, retErr error) {
-	ctx = expression.BuildContextWithUseNewCollate(ctx, s.table.UseNewCollate())
 	return createColAssignSimpleExprs(
 		s.cfg.ColumnAssignments,
 		ctx,
