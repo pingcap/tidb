@@ -135,6 +135,7 @@ func extractJoinGroupImpl(p base.LogicalPlan) *joinGroupResult {
 		// node even if join reorder is enabled.
 		if joinOrderHintInfo != nil {
 			join.HintInfo = nil
+			join.InternalHintInfo = nil
 		}
 		return &joinGroupResult{
 			group:              []base.LogicalPlan{p},

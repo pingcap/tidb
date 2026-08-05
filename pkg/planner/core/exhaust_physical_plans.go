@@ -2218,6 +2218,20 @@ func exhaustPhysicalPlans4LogicalJoin(super base.LogicalPlan, prop *property.Phy
 		if forced && len(hashJoins) > 0 {
 			return hashJoins, true, nil
 		}
+		if p.PreferJoinType > 0 {
+			// recordWarnings only reports index-join-family hint failures for LogicalJoin.
+			// Since full outer join returns before merge join enumeration, report the
+			// merge-join hint here while leaving index-join-family hints to that path.
+			if p.PreferJoinType&h.PreferMergeJoin > 0 {
+				var mergeJoinTables []h.HintedTable
+				if p.HintInfo != nil {
+					mergeJoinTables = p.HintInfo.SortMergeJoin
+				}
+				p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf("Optimizer Hint %s or %s is inapplicable",
+					h.Restore2JoinHint(h.HintSMJ, mergeJoinTables), h.Restore2JoinHint(h.TiDBMergeJoin, mergeJoinTables)))
+			}
+			return hashJoins, false, nil
+		}
 		return hashJoins, true, nil
 	}
 	joins := make([]base.PhysicalPlan, 0, 8)

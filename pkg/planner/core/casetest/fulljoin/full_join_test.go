@@ -16,6 +16,7 @@ package fulljoin
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
@@ -148,6 +149,15 @@ func collectPhysicalJoins(p base.PhysicalPlan) []base.PhysicalJoin {
 	return joins
 }
 
+func warningText(s *plannerSuite) string {
+	warnings := s.sctx.GetSessionVars().StmtCtx.GetWarnings()
+	warnText := make([]string, 0, len(warnings))
+	for _, warn := range warnings {
+		warnText = append(warnText, warn.Err.Error())
+	}
+	return strings.Join(warnText, "\n")
+}
+
 func TestFullOuterJoinFeatureSwitchDefaultOff(t *testing.T) {
 	s := createPlannerSuite(t)
 	defer s.Close()
@@ -247,6 +257,44 @@ func TestFullOuterJoinPhysicalPlanHashJoinOnly(t *testing.T) {
 	require.True(t, ok, sql)
 	require.Equal(t, base.FullOuterJoin, hashJoin.GetJoinType(), sql)
 	require.False(t, hashJoin.UseOuterToBuild, sql)
+}
+
+func TestFullOuterJoinUnsupportedJoinMethodHintsWarn(t *testing.T) {
+	s := createPlannerSuite(t)
+	defer s.Close()
+	s.sctx.GetSessionVars().EnableFullOuterJoin = true
+
+	tests := []struct {
+		sql          string
+		warnContains []string
+	}{
+		{
+			sql: "select /*+ MERGE_JOIN(t1, t2) */ * from t t1 full outer join t t2 on t1.a = t2.a",
+			warnContains: []string{
+				"MERGE_JOIN",
+				"inapplicable",
+			},
+		},
+		{
+			sql: "select /*+ INL_JOIN(t2) */ * from t t1 full outer join t t2 on t1.a = t2.a",
+			warnContains: []string{
+				"INL_JOIN",
+				"inapplicable",
+			},
+		},
+	}
+	for _, tt := range tests {
+		s.sctx.GetSessionVars().StmtCtx.SetWarnings(nil)
+		p := optimizeWithPlanner(t, s, tt.sql)
+		hashJoin, ok := findFirstPhysicalHashJoin(p)
+		require.True(t, ok, tt.sql)
+		require.Equal(t, base.FullOuterJoin, hashJoin.GetJoinType(), tt.sql)
+
+		warnings := warningText(s)
+		for _, expected := range tt.warnContains {
+			require.Contains(t, warnings, expected, tt.sql)
+		}
+	}
 }
 
 func TestFullOuterJoinSimplifyOuterJoin(t *testing.T) {
