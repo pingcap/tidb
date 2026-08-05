@@ -1495,6 +1495,28 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // and `driver::outer_join_elimination`'s tests replay the row sets of the
     // eliminated and non-eliminated shapes against each other, NULL-only inner
     // tables included.
+    //
+    // 71 -> 69: Go's `LogicalAggregation.PruneColumns` reached a derived table
+    // (`driver::derived_agg_pruning`, wired next to the elimination above). An
+    // UNGROUPED aggregation in a derived table whose columns nothing above
+    // reads keeps only the `count(1)` Go appends when it prunes the last
+    // aggregate -- so the `DataSource` under it needs NO column and the
+    // narrowest index answers the row count. The two statements are
+    // `explain_easy`'s
+    //
+    //   select 1 from (select count(c2), count(c3) from t1) k;
+    //   select count(1) from (select max(c2), count(c3) as m from t1) k;
+    //
+    // both of which TiDB records as `IndexFullScan table:t1, index:c2(c2)`
+    // where this tier scanned the table for a `c3` nobody wanted. `compared`
+    // holds at 7885 again and `explain_easy` drops 5 -> 3.
+    //
+    // The rewrite changes what the derived table COMPUTES, so the rows are
+    // proven rather than assumed: `crates/tidb-session/src/
+    // tests_derived_agg_pruning.rs` replays the gorun captures, including the
+    // empty-table case that is the whole reason Go appends a `count(1)`
+    // instead of deleting the aggregation (an ungrouped aggregation returns
+    // one row over an empty table, and the parent counts it).
     const KNOWN_DIVERGENCES: usize = 68;
     //
     //

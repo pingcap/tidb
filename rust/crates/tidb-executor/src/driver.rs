@@ -186,6 +186,7 @@ mod agg_build;
 mod agg_select;
 mod catalog;
 mod clause_resolve;
+mod derived_agg_pruning;
 mod dml;
 mod errors;
 mod from;
@@ -445,6 +446,17 @@ pub(crate) fn run_select_traced(
         Some(rewritten) => {
             inlined = rewritten;
             &inlined
+        }
+        None => select,
+    };
+    // Go's `LogicalAggregation.PruneColumns` reaching a derived table: an
+    // ungrouped aggregation nobody reads a column of keeps only the `count(1)`
+    // that carries its row. See `driver::derived_agg_pruning`.
+    let unaggregated;
+    let select = match derived_agg_pruning::prune(select) {
+        Some(rewritten) => {
+            unaggregated = rewritten;
+            &unaggregated
         }
         None => select,
     };
