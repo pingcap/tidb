@@ -160,5 +160,17 @@ fn oct_is_signature_selected_and_not_a_member_of_the_layer() {
     // non-integer source: captured `oct('A')` is `0` and `oct(1.2345)` is `1`.
     assert_eq!(oct(Datum::new_string("A".to_string())), "STR:0");
     assert_eq!(e("oct(1.2345)"), "STR:1");
+    // The two BOUNDARIES that separate `builtinOctStringSig` from the
+    // `types.ETInt` cast by VALUE, not just by classification -- routing
+    // `OCT` through the mask would move both. Captured: `oct('')` is NULL
+    // where `CAST('' AS SIGNED)` is `0`, and `oct('18446744073709551616')`
+    // is `1777777777777777777777` (`strconv.ParseUint`'s `ErrRange` pinned
+    // at `MaxUint64`) where `CAST(... AS SIGNED)` saturates at `i64::MAX`,
+    // i.e. `777777777777777777777`.
+    assert_eq!(e("oct('')"), "NULL");
+    assert_eq!(
+        e("oct('18446744073709551616')"),
+        "STR:1777777777777777777777"
+    );
 }
 
