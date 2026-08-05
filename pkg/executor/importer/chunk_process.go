@@ -441,7 +441,10 @@ func NewFileChunkProcessor(
 	groupChecksum *verify.KVGroupChecksum,
 	collector execute.Collector,
 ) ChunkProcessor {
-	chunkLogger := logger.With(zap.String("key", chunk.GetKey()))
+	chunkLogger := logger.With(
+		zap.String("key", chunk.GetKey()),
+		zap.Int64("chunkSize", chunk.GetSize()),
+	)
 	deliver := &dataDeliver{
 		logger:        chunkLogger,
 		diskQuotaLock: diskQuotaLock,
