@@ -51,12 +51,12 @@
 //! [`collect`] is Go's `extractJoinGroup` narrowed to the shapes this tier can
 //! COST, and it declines rather than approximates: `None` leaves the caller
 //! building the tree exactly as written, which is the behaviour that predates
-//! this module. The stop conditions are Go's own
-//! (`rule_join_reorder.go:133-159`) -- an outer join, a `STRAIGHT_JOIN`, a
-//! `NATURAL`/`USING` join, a `LATERAL` derived table -- with the difference
-//! that Go keeps a stopped-at subtree as an atomic group member and still
-//! reorders around it, while this module declines the whole group. Three
-//! further declines are this module's own scope:
+//! this module. A `STRAIGHT_JOIN`, a `NATURAL`/`USING` join and a `LATERAL`
+//! derived table are Go's own stop conditions
+//! (`rule_join_reorder.go:133-140`), with the difference that Go keeps a
+//! stopped-at subtree as an atomic group member and still reorders around it,
+//! while this module declines the whole group. Three further declines are this
+//! module's own scope:
 //!
 //! * a NON-COLUMN equi key (`t1.a + 1 = t2.a`). Go materializes one with an
 //!   injected `Projection` (`baseSingleGroupJoinOrderSolver.injectExpr`);
@@ -68,6 +68,83 @@
 //! * a leaf whose row count cannot be derived -- a derived table that
 //!   aggregates, sorts, limits or unions. Guessing one would silently choose a
 //!   different join order.
+//!
+//! # CORRECTION: an OUTER join is NOT one of Go's stop conditions
+//!
+//! [`collect`] takes `join.tp != JoinType::Cross` as a decline, so a single
+//! `LEFT`/`RIGHT JOIN` anywhere in the `FROM` clause declines the WHOLE group
+//! and the statement keeps the tree it wrote. This module used to attribute
+//! that to Go. It is not Go's. `extractJoinGroupImpl`
+//! (`rule_join_reorder.go:133-158`) reads:
+//!
+//! ```go
+//! if !isJoin || (join.PreferJoinType > uint(0) && !p.SCtx().GetSessionVars().EnableAdvancedJoinHint) || join.StraightJoin ||
+//!     (join.JoinType != base.InnerJoin && join.JoinType != base.LeftOuterJoin && join.JoinType != base.RightOuterJoin) ||
+//!     ((join.JoinType == base.LeftOuterJoin || join.JoinType == base.RightOuterJoin) && join.EqualConditions == nil) ||
+//!     ...NullEQ... {
+//!     return &joinGroupResult{group: []base.LogicalPlan{p}, ...}
+//! }
+//! // If the session var is set to off, we will still reject the outer joins.
+//! if !p.SCtx().GetSessionVars().EnableOuterJoinReorder && (join.JoinType == base.LeftOuterJoin || join.JoinType == base.RightOuterJoin) {
+//!     return &joinGroupResult{group: []base.LogicalPlan{p}, ...}
+//! }
+//! ```
+//!
+//! A LEFT/RIGHT outer join CARRYING equal conditions is therefore a reorderable
+//! member of the group, and only three narrower things stop one: a SEMI/ANTI
+//! join type, an outer join with `EqualConditions == nil`, and
+//! `tidb_enable_outer_join_reorder` set OFF -- whose default is ON
+//! (`vardef.DefTiDBEnableOuterJoinReorder = true`).
+//!
+//! # What holds the seven EXTRA merges, measured rather than assumed
+//!
+//! The `join_shape` CASETEST reports seven ordered-merge pairs this tier forms
+//! and TiDB does not. Each was opened against its recording. NONE is a
+//! merge-vs-hash cost decision: in every one, TiDB's join TREE puts a
+//! different pair of leaves adjacent than this tier's does, so the pair this
+//! tier merges is one TiDB never forms at all.
+//!
+//!  * `r/planner/core/join_reorder2.result`, FOUR statements, each writing
+//!    `... left join t4 ...` (or `left join t3`) inside the group and each
+//!    carrying a `leading` hint. TiDB merges `(t1,t2)`, `(t3,t4)`, `(t1,t4)`
+//!    and `(t1,t5)` -- the hint's own first pair, every time. This tier
+//!    declines the group here and merges the WRITTEN `(t1,t3)` or `(t1,t2)`.
+//!  * `r/planner/core/join_reorder_through_projection.result:756`, the
+//!    `oj_t2`/`oj_t3`/`oj_t5` statement at
+//!    `tidb_opt_join_reorder_through_proj = on`. TiDB records
+//!    `HashJoin  inner join, equal:[eq(oj_t2.a, oj_t3.a)]` OVER
+//!    `HashJoin  left outer join, equal:[eq(Column, oj_t5.b)]` -- the left
+//!    join moved BELOW the inner one. This tier keeps `oj_t2 ⋈ oj_t3` inside
+//!    the derived table and merges it, because
+//!    [`super::through_proj::splice_join`] declines a FROM tree whose top join
+//!    is not `JoinType::Cross`, so the projection never dissolves and the
+//!    group is never `{oj_t2, oj_t3, oj_t5}` at all.
+//!  * the same topic's TWO `dt1`/`dt2` statements. Both sides DO reorder here,
+//!    and the greedy solvers pick a different FIRST pair: TiDB's leaves carry
+//!    `Selection cop[tikv]  not(isnull(mul(t1.b, 2)))` under each
+//!    injected-column leaf -- a null-rejection filter this tier does not
+//!    derive -- which lowers those leaves' row counts and so changes the
+//!    `cumCost` sort [`greedy_solve`] starts from.
+//!
+//! TWO MUTATION PROBES, run against the `join_shape` 5-tuple
+//! `(compared, both_agree, recorded, agreed, extra)`, baseline
+//! `(229, 144, 88, 80, 7)`:
+//!
+//!  * REFUSE EVERY MERGE (`merge_join_decision` returns `None` unconditionally)
+//!    gives `(229, 69, 88, 0, 0)`. `extra` reaches zero only by taking all 80
+//!    AGREED merges with it. The merges this tier forms are overwhelmingly the
+//!    ones TiDB records, and no blunt refusal separates the seven.
+//!  * REMOVE THE OUTER-JOIN DECLINE from [`collect`] alone leaves the 5-tuple
+//!    UNCHANGED at `(229, 144, 88, 80, 7)`. The decline is NECESSARY to the
+//!    four `join_reorder2` extras but not SUFFICIENT: with pseudo statistics
+//!    every leaf ties at `cumCost` 10000, so [`greedy_solve`]'s stable sort
+//!    and its strict `curCost < bestCost` reproduce the written order anyway.
+//!    What decides those four in TiDB is the `leading` hint pinning the first
+//!    pair, and the hint cannot reach a group that was declined -- so the two
+//!    gaps have to close TOGETHER or neither moves.
+//!
+//! No cost gate over the tree this module leaves standing can reach the tree
+//! TiDB records.
 //!
 //! # Go's `otherConds`, and what they do and do not change
 //!

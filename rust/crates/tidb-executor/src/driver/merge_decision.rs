@@ -80,6 +80,25 @@
 //! every row it emits -- so both are reported by the DELIVERY side, minus the
 //! side an outer join null-extends (Go's own `JoinType` check in the same
 //! function).
+//!
+//! # The residue here is NOT a missing cost comparison -- measured
+//!
+//! [`merge_join_decision`] answers `Some` whenever `GetMergeJoin` succeeds
+//! STRUCTURALLY, where Go builds the merge as one candidate among several and
+//! lets `findBestTask`'s `getTaskPlanCost` pick. That gap is real, and the
+//! standing reading was that it is what the `join_shape` CASETEST's EXTRA
+//! ordered-merge pairs measure. It is not. Every one of the seven was opened
+//! against its recording and none is a merge-vs-hash cost decision: in each,
+//! TiDB's join TREE puts a different pair of leaves adjacent than this tier's
+//! does, so the pair this tier merges is one TiDB never forms at all. The
+//! per-pair witnesses, and the two mutation probes that separate the causes,
+//! are in [`super::join_reorder`]'s module doc.
+//!
+//! One of those probes is this function's own: making it return `None`
+//! unconditionally takes the `join_shape` 5-tuple from `(229, 144, 88, 80, 7)`
+//! to `(229, 69, 88, 0, 0)`. The seven EXTRA pairs go, and all 80 AGREED go
+//! with them. A cost gate here would still be Go, but it is not what those
+//! seven need, and it cannot reach TiDB's tree from this one.
 
 use super::catalog::split_table_path;
 use super::catalog::{Catalog, TableEntry};
