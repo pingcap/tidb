@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -298,10 +299,30 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 			progress = 1
 		}
 	}
+
 	label := backfillProgressLabel(reorgInfo.Type, reorgInfo.mergingTmpIdx)
-	if label != "" {
-		getBackfillProgressByTableID(backfillMetricsTableID(reorgInfo), label, reorgInfo.SchemaName, tblInfo.Name.String()).Set(progress * 100)
+	if label == "" {
+		return
 	}
+
+	colOrIdxName := ""
+	switch reorgInfo.Type {
+	case model.ActionAddIndex, model.ActionAddPrimaryKey:
+		if idxInfo := model.FindIndexInfoByID(tblInfo.Indices, reorgInfo.currElement.ID); idxInfo != nil {
+			colOrIdxName = idxInfo.Name.O
+		}
+	case model.ActionModifyColumn:
+		for _, changingCol := range tblInfo.Columns {
+			if changingCol.ID == reorgInfo.currElement.ID {
+				colOrIdxName = getChangingColumnOriginName(changingCol)
+				break
+			}
+		}
+	case model.ActionReorganizePartition:
+	}
+
+	metricTableID := backfillMetricsTableID(reorgInfo, label)
+	getBackfillProgressByTableID(metricTableID, label, reorgInfo.SchemaName, tblInfo.Name.String(), colOrIdxName).Set(progress * 100)
 }
 
 func getTableEstimatedCount(w *worker, tblInfo *model.TableInfo) int64 {
@@ -820,6 +841,9 @@ func CleanupDDLReorgHandles(job *model.Job, w *worker, t *meta.Meta) {
 	if err != nil {
 		// ignore error, cleanup is not that critical
 		logutil.BgLogger().Warn("Failed removing the DDL reorg entry in tidb_ddl_reorg", zap.String("job", job.String()), zap.Error(err))
+	}
+	if job != nil {
+		metrics.DDLClearBackfillMetrics(job.TableID)
 	}
 }
 

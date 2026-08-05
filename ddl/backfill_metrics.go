@@ -15,17 +15,23 @@
 package ddl
 
 import (
+	"strings"
+
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-func getBackfillTotalByTableID(tableID int64, label, schemaName, tableName string) prometheus.Counter {
-	return metrics.GetBackfillTotalByTableID(tableID, label, schemaName, tableName)
+// getBackfillTotalByTableID returns the Counter showing the speed of backfilling for the given table ID and type label.
+// It also tracks the label for later cleanup by tableID.
+func getBackfillTotalByTableID(tableID int64, label, schemaName, tableName, optionalColOrIdxName string) prometheus.Counter {
+	return metrics.GetBackfillTotalByTableID(tableID, label, schemaName, tableName, optionalColOrIdxName)
 }
 
-func getBackfillProgressByTableID(tableID int64, label, schemaName, tableName string) prometheus.Gauge {
-	return metrics.GetBackfillProgressByTableID(tableID, label, schemaName, tableName)
+// getBackfillProgressByTableID returns the Gauge showing the percentage progress for the given table ID and type label.
+// It also tracks the label for later cleanup by tableID.
+func getBackfillProgressByTableID(tableID int64, label, schemaName, tableName, optionalColOrIdxName string) prometheus.Gauge {
+	return metrics.GetBackfillProgressByTableID(tableID, label, schemaName, tableName, optionalColOrIdxName)
 }
 
 func backfillProgressLabel(jobType model.ActionType, mergingTmpIdx bool) string {
@@ -37,14 +43,44 @@ func backfillProgressLabel(jobType model.ActionType, mergingTmpIdx bool) string 
 		return metrics.LblAddIndex
 	case model.ActionModifyColumn:
 		return metrics.LblModifyColumn
+	case model.ActionReorganizePartition:
+		return metrics.LblReorgPartition
 	default:
 		return ""
 	}
 }
 
-func backfillMetricsTableID(rInfo *reorgInfo) int64 {
+func backfillMetricsTableID(rInfo *reorgInfo, label string) int64 {
 	if rInfo == nil {
 		return 0
 	}
+	if !isPartitionReorgDDL(rInfo.Type) {
+		// Cleanup index rate metrics for partition DDLs (DROP/TRUNCATE PARTITION) must
+		// use the logical table ID, because the old partition physical IDs are removed
+		// from Partition.Definitions after the DDL completes, so metrics keyed by them
+		// can never be cleaned up by DDLClearBackfillMetrics.
+		if label == metrics.LblCleanupIdxRate && rInfo.Job != nil && isPartitionDropOrTruncateDDL(rInfo.Type) {
+			return rInfo.Job.TableID
+		}
+		return rInfo.PhysicalTableID
+	}
+	if rInfo.Job == nil {
+		return rInfo.PhysicalTableID
+	}
+	if isPartitionReorgBackfillMetricLabel(label) {
+		return rInfo.Job.TableID
+	}
 	return rInfo.PhysicalTableID
+}
+
+func isPartitionReorgDDL(tp model.ActionType) bool {
+	return tp == model.ActionReorganizePartition
+}
+
+func isPartitionDropOrTruncateDDL(tp model.ActionType) bool {
+	return tp == model.ActionDropTablePartition || tp == model.ActionTruncateTablePartition
+}
+
+func isPartitionReorgBackfillMetricLabel(label string) bool {
+	return label == metrics.LblReorgPartition || strings.HasPrefix(label, metrics.LblReorgPartitionRate)
 }

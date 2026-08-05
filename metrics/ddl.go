@@ -29,30 +29,36 @@ type backfillMetricRegistry struct {
 func (r *backfillMetricRegistry) register(tableID int64, typeLabel string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	labels, ok := r.byTblID[tableID]
-	if !ok {
-		labels = make(map[string]struct{}, 2)
-		r.byTblID[tableID] = labels
+	if _, ok := r.byTblID[tableID]; !ok {
+		r.byTblID[tableID] = make(map[string]struct{}, 8)
 	}
-	labels[typeLabel] = struct{}{}
+	r.byTblID[tableID][typeLabel] = struct{}{}
 }
 
 func (r *backfillMetricRegistry) clear(tableID int64) []string {
 	r.mu.Lock()
-	labels := r.byTblID[tableID]
-	delete(r.byTblID, tableID)
-	r.mu.Unlock()
-	result := make([]string, 0, len(labels))
-	for label := range labels {
-		result = append(result, label)
+	labels, ok := r.byTblID[tableID]
+	if ok {
+		delete(r.byTblID, tableID)
 	}
-	return result
-}
+	r.mu.Unlock()
+	if !ok {
+		return nil
+	}
 
-var backfillMetricsRegistry = &backfillMetricRegistry{byTblID: make(map[int64]map[string]struct{}, 64)}
+	out := make([]string, 0, len(labels))
+	for label := range labels {
+		out = append(out, label)
+	}
+	return out
+}
 
 // Metrics for the DDL package.
 var (
+	backfillMetricsRegistry = &backfillMetricRegistry{
+		byTblID: make(map[int64]map[string]struct{}, 64),
+	}
+
 	JobsGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
@@ -175,43 +181,61 @@ var (
 const (
 	LblAction = "action"
 
-	LblAddIndex      = "add_index"
-	LblAddIndexMerge = "add_index_merge_tmp"
-	LblModifyColumn  = "modify_column"
+	LblAddIndex           = "add_index"
+	LblAddIndexMerge      = "add_index_merge_tmp"
+	LblModifyColumn       = "modify_column"
+	LblReorgPartition     = "reorganize_partition"
+	LblAddIdxRate         = "add_idx_rate"
+	LblMergeTmpIdxRate    = "merge_tmp_idx_rate"
+	LblCleanupIdxRate     = "cleanup_idx_rate"
+	LblUpdateColRate      = "update_col_rate"
+	LblReorgPartitionRate = "reorg_partition_rate"
 )
 
 // GenerateReorgLabel returns the label with schema name and table name.
-func GenerateReorgLabel(label string, schemaName string, tableName string) string {
+func GenerateReorgLabel(label string, schemaName string, tableName string, optionalColOrIdxName ...string) string {
+	colOrIdxName := ""
+	if len(optionalColOrIdxName) > 0 {
+		colOrIdxName = optionalColOrIdxName[0]
+	}
 	var stringBuilder strings.Builder
-	stringBuilder.Grow(len(label) + len(schemaName) + len(tableName) + 2)
+	if len(colOrIdxName) == 0 {
+		stringBuilder.Grow(len(label) + len(schemaName) + len(tableName) + 2)
+	} else {
+		stringBuilder.Grow(len(label) + len(schemaName) + len(tableName) + len(colOrIdxName) + 3)
+	}
 	stringBuilder.WriteString(label)
 	stringBuilder.WriteString("_")
 	stringBuilder.WriteString(schemaName)
 	stringBuilder.WriteString("_")
 	stringBuilder.WriteString(tableName)
+	if len(colOrIdxName) > 0 {
+		stringBuilder.WriteString("_")
+		stringBuilder.WriteString(colOrIdxName)
+	}
 	return stringBuilder.String()
 }
 
 // GetBackfillProgressByLabel returns the Gauge showing the percentage progress for the given type label.
-func GetBackfillProgressByLabel(label string, schemaName string, tableName string) prometheus.Gauge {
-	return BackfillProgressGauge.WithLabelValues(GenerateReorgLabel(label, schemaName, tableName))
+func GetBackfillProgressByLabel(label string, schemaName string, tableName string, optionalColOrIdxName ...string) prometheus.Gauge {
+	return BackfillProgressGauge.WithLabelValues(GenerateReorgLabel(label, schemaName, tableName, optionalColOrIdxName...))
 }
 
-// GetBackfillTotalByTableID returns the counter for a table and tracks its label for cleanup.
-func GetBackfillTotalByTableID(tableID int64, label, schemaName, tableName string) prometheus.Counter {
-	typeLabel := GenerateReorgLabel(label, schemaName, tableName)
+// GetBackfillTotalByTableID returns the Counter for the given table ID and type label.
+func GetBackfillTotalByTableID(tableID int64, label, schemaName, tableName, optionalColOrIdxName string) prometheus.Counter {
+	typeLabel := GenerateReorgLabel(label, schemaName, tableName, optionalColOrIdxName)
 	backfillMetricsRegistry.register(tableID, typeLabel)
 	return BackfillTotalCounter.WithLabelValues(typeLabel)
 }
 
-// GetBackfillProgressByTableID returns the gauge for a table and tracks its label for cleanup.
-func GetBackfillProgressByTableID(tableID int64, label, schemaName, tableName string) prometheus.Gauge {
-	typeLabel := GenerateReorgLabel(label, schemaName, tableName)
+// GetBackfillProgressByTableID returns the Gauge for the given table ID and type label.
+func GetBackfillProgressByTableID(tableID int64, label, schemaName, tableName, optionalColOrIdxName string) prometheus.Gauge {
+	typeLabel := GenerateReorgLabel(label, schemaName, tableName, optionalColOrIdxName)
 	backfillMetricsRegistry.register(tableID, typeLabel)
 	return BackfillProgressGauge.WithLabelValues(typeLabel)
 }
 
-// DDLClearBackfillMetrics deletes all backfill metric series registered for tableID.
+// DDLClearBackfillMetrics deletes the backfill metrics registered under a table ID.
 func DDLClearBackfillMetrics(tableID int64) {
 	for _, typeLabel := range backfillMetricsRegistry.clear(tableID) {
 		BackfillProgressGauge.DeleteLabelValues(typeLabel)
@@ -226,14 +250,19 @@ func DDLHasBackfillMetrics() bool {
 	return len(backfillMetricsRegistry.byTblID) > 0
 }
 
-// GetBackfillLabelsForTest returns a copy of the registered labels for tableID.
+// GetBackfillLabelsForTest returns the registered labels for a table ID.
 func GetBackfillLabelsForTest(tableID int64) map[string]struct{} {
 	backfillMetricsRegistry.mu.Lock()
 	defer backfillMetricsRegistry.mu.Unlock()
-	labels := backfillMetricsRegistry.byTblID[tableID]
-	result := make(map[string]struct{}, len(labels))
-	for label := range labels {
-		result[label] = struct{}{}
+
+	labels, ok := backfillMetricsRegistry.byTblID[tableID]
+	if !ok {
+		return nil
 	}
-	return result
+
+	out := make(map[string]struct{}, len(labels))
+	for label := range labels {
+		out[label] = struct{}{}
+	}
+	return out
 }
