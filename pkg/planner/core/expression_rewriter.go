@@ -116,7 +116,6 @@ func buildSimpleExpr(ctx expression.BuildContext, node ast.ExprNode, opts ...exp
 	for _, opt := range opts {
 		opt(&options)
 	}
-	useNewCollate := ctx.NewCollationEnabled()
 
 	if options.InputSchema == nil && len(options.InputNames) > 0 {
 		return nil, errors.New("InputSchema and InputNames should be specified at the same time")
@@ -151,7 +150,6 @@ func buildSimpleExpr(ctx expression.BuildContext, node ast.ExprNode, opts ...exp
 		sourceTable:         options.SourceTable,
 		allowBuildCastArray: options.AllowCastArray,
 		asScalar:            true,
-		useNewCollate:       useNewCollate,
 	}
 
 	if tbl := options.SourceTable; tbl != nil && rewriter.schema == nil {
@@ -266,8 +264,7 @@ func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p base.LogicalP
 	if len(b.rewriterPool) < b.rewriterCounter {
 		rewriter = &expressionRewriter{
 			sctx: b.ctx.GetExprCtx(), ctx: ctx,
-			planCtx:       &exprRewriterPlanCtx{plan: p, builder: b, curClause: b.curClause, rollExpand: b.currentBlockExpand},
-			useNewCollate: collate.NewCollationEnabled(),
+			planCtx: &exprRewriterPlanCtx{plan: p, builder: b, curClause: b.curClause, rollExpand: b.currentBlockExpand},
 		}
 		b.rewriterPool = append(b.rewriterPool, rewriter)
 		return
@@ -384,8 +381,7 @@ type expressionRewriter struct {
 
 	astNodeStack []ast.Node
 
-	planCtx       *exprRewriterPlanCtx
-	useNewCollate bool
+	planCtx *exprRewriterPlanCtx
 }
 
 func (er *expressionRewriter) ctxStackLen() int {
@@ -1857,7 +1853,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		}, types.EmptyName)
 	case *ast.SetCollationExpr:
 		arg := er.ctxStack[len(er.ctxStack)-1]
-		if er.useNewCollate {
+		if er.sctx.NewCollationEnabled() {
 			var collInfo *charset.Collation
 			// TODO(bb7133): use charset.ValidCharsetAndCollation when its bug is fixed.
 			if collInfo, er.err = collate.GetCollationByName(v.Collate); er.err != nil {
@@ -2285,7 +2281,7 @@ func (er *expressionRewriter) castCollationForIn(colLen int, elemCnt int, stkLen
 	if colLen != 1 {
 		return
 	}
-	if !er.useNewCollate {
+	if !er.sctx.NewCollationEnabled() {
 		// See https://github.com/pingcap/tidb/issues/52772
 		// This function will apply CoercibilityExplicit to the casted expression, but some checks(during ColumnSubstituteImpl) is missed when the new
 		// collation is disabled, then lead to panic.
@@ -2403,7 +2399,7 @@ func (er *expressionRewriter) patternLikeOrIlikeToExpression(v *ast.PatternLikeO
 	fieldType := &types.FieldType{}
 	isPatternExactMatch := false
 	// Treat predicate 'like' or 'ilike' the same way as predicate '=' when it is an exact match and new collation is not enabled.
-	if patExpression, ok := er.ctxStack[l-1].(*expression.Constant); ok && !er.useNewCollate {
+	if patExpression, ok := er.ctxStack[l-1].(*expression.Constant); ok && !er.sctx.NewCollationEnabled() {
 		patString, isNull, err := patExpression.EvalString(er.sctx.GetEvalCtx(), chunk.Row{})
 		if err != nil {
 			er.err = err

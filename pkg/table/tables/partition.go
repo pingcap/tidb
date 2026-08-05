@@ -320,7 +320,7 @@ func newPartitionExpr(tblInfo *model.TableInfo, tp ast.PartitionType, expr strin
 	case ast.PartitionTypeHash:
 		return generateHashPartitionExpr(ctx, expr, columns, names)
 	case ast.PartitionTypeKey:
-		return generateKeyPartitionExpr(ctx, expr, partCols, columns, names, useNewCollate)
+		return generateKeyPartitionExpr(ctx, expr, partCols, columns, names)
 	case ast.PartitionTypeList:
 		return generateListPartitionExpr(ctx, tblInfo, expr, partCols, defs, columns, names)
 	}
@@ -750,9 +750,9 @@ func rangePartitionExprStrings(cols []ast.CIStr, expr string) []string {
 }
 
 func generateKeyPartitionExpr(ctx expression.BuildContext, expr string, partCols []ast.CIStr,
-	columns []*expression.Column, names types.NameSlice, useNewCollate bool) (*PartitionExpr, error) {
+	columns []*expression.Column, names types.NameSlice) (*PartitionExpr, error) {
 	ret := &PartitionExpr{
-		ForKeyPruning: &ForKeyPruning{useNewCollate: useNewCollate},
+		ForKeyPruning: &ForKeyPruning{useNewCollate: ctx.NewCollationEnabled()},
 	}
 	_, partColumns, offset, err := extractPartitionExprColumns(ctx, expr, partCols, columns, names)
 	if err != nil {

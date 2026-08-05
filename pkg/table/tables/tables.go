@@ -1528,18 +1528,12 @@ func (t *TableCommon) UseNewCollate() bool {
 }
 
 func (t *TableCommon) canSkip(col *table.Column, value *types.Datum) bool {
-	return CanSkip(t.encoder.UseNewCollate(), t.Meta(), col, value)
-}
-
-// CanSkip is for these cases, we can skip the columns in encoded row:
-// 1. the column is included in primary key;
-// 2. the column's default value is null, and the value equals to that but has no origin default;
-// 3. the column is virtual generated.
-func CanSkip(useNewCollate bool, info *model.TableInfo, col *table.Column, value *types.Datum) bool {
+	info := t.Meta()
 	if col.IsPKHandleColumn(info) {
 		return true
 	}
 	if col.IsCommonHandleColumn(info) {
+		useNewCollate := t.encoder.UseNewCollate()
 		pkIdx := FindPrimaryIndex(info)
 		for _, idxCol := range pkIdx.Columns {
 			if info.Columns[idxCol.Offset].ID != col.ID {

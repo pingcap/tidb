@@ -1947,13 +1947,11 @@ func createColAssignSimpleExprs(
 	assignments []*ast.Assignment,
 	ctx expression.BuildContext,
 	mu *sync.Mutex,
-	useNewCollate bool,
 ) (_ []expression.Expression, _ []contextutil.SQLWarn, retErr error) {
 	if mu != nil {
 		mu.Lock()
 		defer mu.Unlock()
 	}
-	ctx = expression.BuildContextWithUseNewCollate(ctx, useNewCollate)
 	res := make([]expression.Expression, 0, len(assignments))
 	var allWarnings []contextutil.SQLWarn
 	for _, assign := range assignments {
@@ -1973,11 +1971,11 @@ func createColAssignSimpleExprs(
 
 // CreateColAssignSimpleExprs creates the column assignment expressions using `expression.BuildContext`.
 func (e *LoadDataController) CreateColAssignSimpleExprs(ctx expression.BuildContext) (_ []expression.Expression, _ []contextutil.SQLWarn, retErr error) {
+	ctx = expression.BuildContextWithUseNewCollate(ctx, e.Table.UseNewCollate())
 	return createColAssignSimpleExprs(
 		e.ColumnAssignments,
 		ctx,
 		&e.colAssignMu,
-		e.Table.UseNewCollate(),
 	)
 }
 
