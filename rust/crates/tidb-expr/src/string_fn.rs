@@ -525,11 +525,34 @@ pub(crate) fn bin(vals: &[Datum]) -> Result<Datum, EvalError> {
 /// zero, and a decimal-prefix overflow stays at `u64::MAX` even if it had a
 /// leading minus sign.  Keeping that conversion local makes those cases the
 /// normal signature split rather than test-specific exceptions.
+///
+/// The split is Go's own build-time test, and it is a SIGNATURE choice rather
+/// than an argument cast, which is why `OCT` is not a member of
+/// `crate::arg_eval_type`'s `types.ETInt` layer:
+///
+/// ```go
+/// if IsBinaryLiteral(args[0]) || args[0].GetType(ctx.GetEvalCtx()).EvalType() == types.ETInt {
+/// ```
+///
+/// (`builtin_string.go:3005`). `IsBinaryLiteral` is `con.Value.Kind() ==
+/// types.KindBinaryLiteral`, this tier's [`Datum::BinaryLiteral`], and
+/// `mysql.TypeBit`'s eval type is `types.ETInt`, this tier's [`Datum::Bit`];
+/// both therefore take the INTEGER signature and render their big-endian
+/// value. ENUM and SET do NOT -- their eval type is `types.ETString` until
+/// something adds `EnumSetAsIntFlag`, and `OCT` never does. Captured from
+/// real TiDB (`gorun`) over `enum('x','y','z')` holding `'y'`,
+/// `set('a','b','c')` holding `'a,c'` and `bit(8)` holding `b'00000011'`:
+/// `oct(e)` is `0` and `oct(s)` is `0` (the STRINGS parsed), while `oct(b)`
+/// is `3` and `oct(b'01000001')` is `101`.
 pub(crate) fn oct(vals: &[Datum]) -> Result<Datum, EvalError> {
     match &vals[0] {
         Datum::Null => Ok(Datum::Null),
         Datum::Int(value) => Ok(Datum::new_string(format!("{:o}", *value as u64))),
         Datum::UInt(value) => Ok(Datum::new_string(format!("{value:o}"))),
+        Datum::Bit(bits) | Datum::BinaryLiteral(bits) => Ok(Datum::new_string(format!(
+            "{:o}",
+            bits.to_int().value()
+        ))),
         value => Ok(oct_string_bits(value)?
             .map_or(Datum::Null, |bits| Datum::new_string(format!("{bits:o}")))),
     }
@@ -919,24 +942,28 @@ pub(crate) fn str_insert(vals: &[Datum]) -> Result<Datum, EvalError> {
     // `pos` and `len` count bytes as soon as the replacement is binary.
     let binary = crate::string_signature::is_binary_str(&vals[0])
         || crate::string_signature::is_binary_str(&vals[3]);
-    let (Some(units), Datum::Int(pos), Datum::Int(len), Some(new)) = (
+    // `pos` and `len` are Go's `types.ETInt` arguments, cast by
+    // `crate::arg_eval_type`; each body below reads the `int64` carrier
+    // `b.args[i].EvalInt` returns, so an UNSIGNED position keeps its bits
+    // rather than turning the whole call NULL.
+    let (Some(units), Some(pos), Some(len), Some(new)) = (
         StrUnits::of_with_signature(&vals[0], binary)?,
-        &vals[1],
-        &vals[2],
+        crate::arg_eval_type::eval_int(&vals[1])?,
+        crate::arg_eval_type::eval_int(&vals[2])?,
         coerce_str_bytes(&vals[3])?,
     ) else {
         return Ok(Datum::Null);
     };
     let n = units.len();
-    if *pos < 1 || *pos as usize > n {
+    if pos < 1 || pos as usize > n {
         return Ok(units.pack(units.bytes().to_vec()));
     }
-    let start = (*pos - 1) as usize;
+    let start = (pos - 1) as usize;
     let remaining = n - start;
-    let take = if *len < 0 || *len as u64 > remaining as u64 {
+    let take = if len < 0 || len as u64 > remaining as u64 {
         remaining
     } else {
-        *len as usize
+        len as usize
     };
     let end = start + take;
     let mut out = units.slice(0, start).to_vec();
@@ -950,17 +977,15 @@ pub(crate) fn str_insert(vals: &[Datum]) -> Result<Datum, EvalError> {
 /// included when bit `i-1` of `bits` is `1`). `NULL` arguments are excluded
 /// even when their bit is set (matching MySQL). `NULL` if `bits` is `NULL`.
 pub(crate) fn make_set(vals: &[Datum]) -> Result<Datum, EvalError> {
-    // `bits` is read through Go's ETInt argument conversion, so a value that
-    // evaluated to the unsigned domain -- `1|4`'s bitwise OR, for one -- must
-    // still be read here rather than falling through to NULL: keep its raw
-    // 64-bit pattern, the same way `bit_count` above does, so the bit test
-    // below sees the same bits Go's signed int64 carrier would.
-    let bits = match &vals[0] {
-        Datum::Null => return Ok(Datum::Null),
-        Datum::Int(n) => *n as u64,
-        Datum::UInt(n) => *n,
-        _ => return Ok(Datum::Null),
+    // `bits` is Go's `types.ETInt` argument, cast by `crate::arg_eval_type`
+    // before this body runs, so a SET/ENUM/BIT operand reaches here as the
+    // ordinal integer Go's `builtinCastIntAsIntSig` reads out of it -- and
+    // `1|4`'s unsigned bitwise OR keeps its raw 64-bit pattern, the same way
+    // `bit_count` above does.
+    let Some(bits) = crate::arg_eval_type::eval_int(&vals[0])? else {
+        return Ok(Datum::Null);
     };
+    let bits = bits as u64;
     let mut parts = Vec::new();
     for (i, v) in vals[1..].iter().enumerate() {
         if bits & (1 << i) != 0 {

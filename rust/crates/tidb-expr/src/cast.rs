@@ -857,6 +857,80 @@ pub(crate) fn cast_arg_as_datetime(
     )
 }
 
+/// Go `WrapWithCastAsInt(ctx, expr, nil)` (`builtin_cast.go:2666-2698`),
+/// applied to an argument's VALUE for the same reason
+/// [`cast_arg_as_datetime`] is.
+///
+/// Go's own body, in full:
+///
+/// ```go
+/// if expr.GetType(ctx.GetEvalCtx()).GetType() == mysql.TypeEnum {
+///     ... expr.GetType(ctx.GetEvalCtx()).AddFlag(mysql.EnumSetAsIntFlag)
+/// }
+/// if expr.GetType(ctx.GetEvalCtx()).EvalType() == types.ETInt {
+///     return expr
+/// }
+/// tp := types.NewFieldType(mysql.TypeLonglong)
+/// ...
+/// if targetType == nil {
+///     tp.AddFlag(expr.GetType(ctx.GetEvalCtx()).GetFlag() & mysql.UnsignedFlag)
+/// }
+/// return BuildCastFunction(ctx, expr, tp)
+/// ```
+///
+/// Three of Go's rules land here, and every one of them is a KIND test, not a
+/// per-builtin condition:
+///
+///  * **The early return.** `EvalType() == types.ETInt` covers the integer
+///    types and, through `FieldType.EvalType`'s own switch
+///    (`pkg/parser/types/field_type.go:417-441`), `mysql.TypeBit` and
+///    `mysql.TypeYear` as well. In this tier those are exactly the arguments
+///    that evaluate to an [`Datum::Int`]/[`Datum::UInt`] — a `YEAR` reaches
+///    the signature as its integer either way, so unlike the ETDatetime rung
+///    the static type buys NOTHING here.
+///
+///  * **The hybrid short-circuit.** `mysql.TypeEnum` gets
+///    `EnumSetAsIntFlag`, which flips its `EvalType()` to `ETInt` and takes
+///    the early return with the ORDINAL. `mysql.TypeSet` does NOT get the
+///    flag, but the cast Go then builds routes it right back to the same
+///    reading: `castAsIntFunctionClass.getFunction` opens with
+///    `if args[0].GetType(ctx.GetEvalCtx()).Hybrid() || IsBinaryLiteral(args[0]) {
+///    sig = &builtinCastIntAsIntSig{bf} }` (`builtin_cast.go:146-147`), whose
+///    body is `b.args[0].EvalInt`. ENUM, SET, BIT and a bit/hex LITERAL
+///    therefore all reach the signature as their ordinal or bit integer, and
+///    [`Datum::to_i64_in`](tidb_datatype::Datum::to_i64_in) already reads all
+///    four that way -- so the ordinary cast below is already Go's answer for
+///    them and needs no arm of its own.
+///
+///  * **The unsigned inheritance.** `targetType` is `nil` at every
+///    `newBaseBuiltinFuncWithTp` call site (`builtin.go:202`), so the built
+///    cast is `UNSIGNED` exactly when the SOURCE type is, and that flag is
+///    what `builtinTruncateIntSig` reads back out of
+///    `b.args[1].GetType(ctx).GetFlag()` (`builtin_math.go:2166`). A tier
+///    without the source type therefore answers SIGNED, which is Go's answer
+///    for every argument that is not an unsigned non-integer.
+///
+/// Confirmed against real TiDB (`gorun`) over an `enum('x','y','z')` holding
+/// `'y'`, a `set('a','b','c')` holding `'a,c'` and a `bit(8)` holding
+/// `b'00000011'`: `make_set(e,'p','q','r')` is `q` (ordinal 2),
+/// `make_set(s,'p','q','r')` is `p,r` (bits 5) and `make_set(b,'p','q','r')`
+/// is `p,q` (bits 3).
+pub(crate) fn cast_arg_as_int(
+    v: &Datum,
+    source: Option<&tidb_datatype::FieldType>,
+    ctx: &dyn crate::Columns,
+) -> Result<Datum, EvalError> {
+    if matches!(v, Datum::Int(_) | Datum::UInt(_) | Datum::Null) {
+        return Ok(v.clone());
+    }
+    let cast = if source.is_some_and(tidb_datatype::FieldType::is_unsigned) {
+        CastType::Unsigned
+    } else {
+        CastType::Signed
+    };
+    eval_cast(&cast, v.clone(), source, ctx)
+}
+
 /// The integer a `YEAR`-typed operand carries, or `None` when the operand is
 /// not a `YEAR` at all.
 ///

@@ -506,7 +506,15 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
             tidb_datatype::EvalType::Real => FieldType::new(FieldTypeCode::Double),
             _ => int(),
         },
-        "round" | "truncate" => match arg_numeric_type(args)?.eval_type() {
+        // `ROUND`/`TRUNCATE` read the FIRST argument alone -- `argTp :=
+        // args[0].GetType(ctx.GetEvalCtx()).EvalType()` (`builtin_math.go:272`
+        // and `:2036`) -- because the second is the SCALE, declared
+        // `types.ETInt` and cast (`crate::arg_eval_type`) rather than
+        // promoted. Ranking it with the value would let a STRING scale drag
+        // the result into the real domain: captured from real TiDB (`gorun`),
+        // `round(3.14159,'100')` is `3.141590000000000000000000000000`, the
+        // same decimal as `round(3.14159,100)`, not `3.14159`.
+        "round" | "truncate" => match arg_numeric_type(&args[..1])?.eval_type() {
             tidb_datatype::EvalType::Real => FieldType::new(FieldTypeCode::Double),
             tidb_datatype::EvalType::Int if name == "round" => int(),
             _ => FieldType::new(FieldTypeCode::NewDecimal),

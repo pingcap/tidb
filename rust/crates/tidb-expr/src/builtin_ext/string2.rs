@@ -183,10 +183,12 @@ fn rtrim(value: &Datum) -> Result<Datum, EvalError> {
 /// not represented in this value-only dispatch.
 fn locate3(vals: &[Datum]) -> Result<Datum, EvalError> {
     let binary = crate::string_fn::locate_collation(&vals[0], &vals[1]) == Collation::Binary;
-    let (Some(needle), Some(haystack), Datum::Int(position)) = (
+    // The start position is Go's third `types.ETInt` argument, cast by
+    // `crate::arg_eval_type` before this body runs.
+    let (Some(needle), Some(haystack), Some(position)) = (
         StrUnits::of_with_signature(&vals[0], binary)?,
         StrUnits::of_with_signature(&vals[1], binary)?,
-        &vals[2],
+        crate::arg_eval_type::eval_int(&vals[2])?,
     ) else {
         return Ok(Datum::Null);
     };

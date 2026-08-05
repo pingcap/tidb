@@ -719,11 +719,11 @@ fn round_or_truncate(vals: &[Datum], round: bool, ctx: &dyn Columns) -> Result<D
     let int_round_is_identity = round && vals.len() == 1;
     let (v, d) = match vals {
         [v] if round => (v, 0i64),
-        [v, d] => match d {
-            Datum::Int(d) => (v, *d),
-            Datum::UInt(d) => (v, *d as i64),
-            _ => return Err(EvalError::Unsupported("non-integer scale argument")),
-        },
+        // The scale is Go's `types.ETInt` argument, cast by
+        // `crate::arg_eval_type` before this body ever sees it, so
+        // `ROUND(1.2345, '2')` arrives here as the integer `2` -- this
+        // signature no longer has, or needs, an opinion about a string scale.
+        [v, d] => (v, crate::arg_eval_type::eval_int(d)?.unwrap_or_default()),
         _ => return Err(EvalError::Unsupported("bad function arity")),
     };
     Ok(match v {

@@ -570,11 +570,17 @@ fn round_truncate() {
         e("round(3.14159, 100)"),
         "DEC:3.141590000000000000000000000000"
     );
-    // A non-integer scale argument is out of this evaluator's scope.
-    assert_eq!(
-        e("round(3.14, 2.5)"),
-        "Unsupported(\"non-integer scale argument\")"
-    );
+    // The scale is Go's `types.ETInt` argument (`crate::arg_eval_type`), so a
+    // non-integer one is CAST at build time rather than refused: the decimal
+    // rounds half-up and the string takes its integer prefix (`0` when there
+    // is none). Captured from real TiDB (`gorun`): `round(3.14, 2.5)` is
+    // `3.140`, `round(3.14, 2.4)` is `3.14`, `round(3.14,'2')` is `3.14` and
+    // `round(3.14,'abc')` is `3`.
+    assert_eq!(e("round(3.14, 2.5)"), "DEC:3.140");
+    assert_eq!(e("round(3.14, 2.4)"), "DEC:3.14");
+    assert_eq!(e("round(3.14,'2')"), "DEC:3.14");
+    assert_eq!(e("round(3.14,'abc')"), "DEC:3");
+    assert_eq!(e("truncate(3.14159,'3')"), "DEC:3.141");
 }
 
 /// Complete value/error table from `pkg/expression/builtin_math_test.go:247
