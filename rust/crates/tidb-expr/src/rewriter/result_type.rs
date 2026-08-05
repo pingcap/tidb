@@ -29,6 +29,7 @@
 use super::{Constant, Expression};
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 
+use super::control_type::set_numeric_len_from_args;
 use crate::builtin_ext::GlCmpStringMode;
 
 /// Go `types.SetBinChsClnFlag`: the binary charset/collation plus the binary
@@ -924,63 +925,19 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
             ft.add_flags(tidb_datatype::FieldTypeFlags::IS_BOOLEAN);
             ft
         }
-        // Go aggregates the branch types of these (`aggregateType`). Only a
-        // set of branches that already agree is built here; a mixed set is
-        // refused rather than guessed, because the guess sizes a chunk cell.
+        // Go runs ONE inference for the whole control family
+        // (`InferType4ControlFuncs`), and the eval type it returns is what
+        // SELECTS the signature -- so the type decides the value here, not
+        // just the printed width. It lives in [`super::control_type`].
+        //
         // `IF`'s first argument is the condition, so only its two result
-        // branches carry the type.
-        "if" if args.len() == 3 => builtin_return_type("case_when", &args[1..])?,
+        // branches carry the type; `CASE WHEN`'s caller has already reduced
+        // its flattened `cond, result, ..., else` list to the THEN/ELSE
+        // branches (the `Expr::Case` arm of `rewrite_expr_resolved`), which
+        // is Go's own `thenArgs`.
+        "if" if args.len() == 3 => super::control_type::infer_type4_control_funcs("if", &args[1..])?,
         "case_when" | "ifnull" | "coalesce" => {
-            // A NULL branch carries no type of its own -- Go's `aggregateType`
-            // ignores it -- so only the typed branches have to agree.
-            let branches = args
-                .iter()
-                .filter_map(Expression::static_type)
-                .filter(|ft| ft.code() != FieldTypeCode::Null);
-            let typed: Vec<&FieldType> = branches.collect();
-            let first = (*typed.first()?).clone();
-            // Go `types.AggFieldType` merges the string family to VarString,
-            // which is what lets `IFNULL(varchar_column, 'literal')` -- a
-            // Varchar branch and a VarString branch -- have one type. Other
-            // mixtures are refused rather than guessed, since the result type
-            // sizes a chunk cell.
-            if typed
-                .iter()
-                .all(|ft| ft.eval_type() == tidb_datatype::EvalType::String)
-            {
-                if typed.iter().any(|ft| ft.code() != first.code()) {
-                    text()
-                } else {
-                    first
-                }
-            } else if typed.iter().all(|ft| {
-                matches!(
-                    ft.eval_type(),
-                    tidb_datatype::EvalType::Int
-                        | tidb_datatype::EvalType::Decimal
-                        | tidb_datatype::EvalType::Real
-                )
-            }) {
-                // Go `InferType4ControlFuncs` merges the branches' FIELD types
-                // with `types.AggFieldType` -- the `fieldTypeMergeRules`
-                // table -- and only then reads an eval type off the result for
-                // the width rules. The table is not an eval-type widening:
-                // FLOAT beside a BIGINT literal merges to FLOAT, not DOUBLE,
-                // and that difference is a printed VALUE (Go prints a FLOAT
-                // 12.191 where a DOUBLE reads 12.190999984741211).
-                let owned: Vec<FieldType> = typed.iter().map(|ft| (*ft).clone()).collect();
-                let mut merged = tidb_datatype::agg_field_type(&owned);
-                let mut flags = merged.flags();
-                tidb_datatype::aggregate_eval_type(&owned, &mut flags);
-                merged = merged.with_flags(flags);
-                set_numeric_len_from_args(&mut merged, &typed);
-                merged
-            } else {
-                if typed.iter().any(|ft| ft.code() != first.code()) {
-                    return None;
-                }
-                first
-            }
+            super::control_type::infer_type4_control_funcs(name, args)?
         }
         _ => return None,
     })
@@ -1079,28 +1036,6 @@ pub(super) fn base64_needed_encoded_length(n: i64) -> i64 {
     length + (length - 1) / 76
 }
 
-/// Go `maxlen` (`pkg/expression/builtin_control.go`): an UNKNOWN length in
-/// either operand widens the result to `mysql.MaxRealWidth` rather than
-/// staying unknown.
-fn maxlen(lhs: i64, rhs: i64) -> i64 {
-    /// Go `mysql.MaxRealWidth`.
-    const MAX_REAL_WIDTH: i64 = 23;
-    if lhs < 0 || rhs < 0 {
-        MAX_REAL_WIDTH
-    } else {
-        lhs.max(rhs)
-    }
-}
-
-/// Go `setDecimalFromArgs` then `setFlenFromArgs`
-/// (`pkg/expression/builtin_control.go`), for a control function whose merged
-/// result is NUMERIC.
-///
-/// This is the half of `InferType4ControlFuncs` that decides how the value
-/// PRINTS: `IFNULL(0, 1.5)` is `decimal(3,1)`, so its integer branch reads
-/// back as `0.0`, not `0`. Dropping it does not merely lose display width --
-/// the merged scale is what the evaluated branch is converted onto, so an
-/// unspecified scale here is a WRONG VALUE, not a cosmetic difference.
 /// The result type of `GREATEST`/`LEAST`.
 ///
 /// Go `greatestFunctionClass.getFunction` (`pkg/expression/builtin_compare.go`)
@@ -1345,58 +1280,6 @@ fn extremum_return_type(args: &[Expression]) -> Option<FieldType> {
         return None;
     }
     Some(first)
-}
-
-/// Go `setDecimalFromArgs` then `setFlenFromArgs`, which `AggFieldType` does
-/// NOT do: the merge carries the FIRST argument's flen/decimal, so every
-/// caller of `InferType4ControlFuncs`'s merge has to re-derive both from all
-/// the arguments. `tidb_executor::window`'s `LAG`/`LEAD` inference is the
-/// other caller.
-pub fn set_numeric_len_from_args(result: &mut FieldType, args: &[&FieldType]) {
-    use tidb_datatype::EvalType;
-    let eval_type = result.eval_type();
-    // setDecimalFromArgs: ETInt has no scale; otherwise the widest argument
-    // scale, or unspecified as soon as one argument's is unspecified.
-    if eval_type == EvalType::Int {
-        result.set_decimal(0);
-    } else {
-        let mut max_decimal = 0;
-        let mut unspecified = false;
-        for arg in args {
-            if arg.decimal() == tidb_datatype::UNSPECIFIED_LENGTH {
-                unspecified = true;
-                break;
-            }
-            max_decimal = max_decimal.max(arg.decimal());
-        }
-        if unspecified {
-            result.set_decimal(tidb_datatype::UNSPECIFIED_LENGTH);
-        } else {
-            result.set_decimal_under_limit(max_decimal);
-        }
-    }
-    // setFlenFromArgs, the ETDecimal/ETInt arm: the widest INTEGRAL part
-    // (each argument's flen less its sign digit and its own scale), with the
-    // merged scale and one sign digit added back.
-    if matches!(eval_type, EvalType::Decimal | EvalType::Int) {
-        let mut max_arg_flen = 0;
-        for arg in args {
-            let sign_len = i64::from(arg.flags() & tidb_datatype::FieldTypeFlags::UNSIGNED == 0);
-            let mut flen = arg.flen() - sign_len;
-            if arg.decimal() != tidb_datatype::UNSPECIFIED_LENGTH {
-                flen -= arg.decimal();
-            }
-            max_arg_flen = maxlen(max_arg_flen, flen);
-        }
-        result.set_flen_under_limit(max_arg_flen + result.decimal() + 1);
-    } else {
-        // The trailing `else` arm: the widest argument flen as-is.
-        let mut max_len = 0;
-        for arg in args {
-            max_len = max_len.max(arg.flen());
-        }
-        result.set_flen(max_len);
-    }
 }
 
 /// The numeric type a type-preserving math builtin reports, which Go takes
