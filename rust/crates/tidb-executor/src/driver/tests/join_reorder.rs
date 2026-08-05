@@ -190,6 +190,53 @@ fn a_spanning_non_equality_conjunct_declines_the_greedy() {
     assert!(fired(sql, &catalog, 10).is_some(), "the DP arm moved");
 }
 
+/// THE SOLVER BOUNDARY, to the exact integer. This group has THREE leaves and
+/// only the greedy arm declines it, so which solver ran is directly readable
+/// from whether the reorder fired.
+///
+/// Go's `joinGroupNum > threshold` puts the switch BETWEEN `2` and `3`: at a
+/// threshold of `2` a three-leaf group is still greedy, and at `3` it is the
+/// DP. An off-by-one in either direction moves one of these four.
+#[test]
+fn the_solver_switches_between_a_threshold_of_two_and_three() {
+    let catalog = tables();
+    let sql = "SELECT t1.a FROM t1, t5, t2 \
+               WHERE t1.a = t5.a AND t5.a = t2.a AND t1.b > t2.b";
+    for greedy in [i32::MIN, 0, 1, 2] {
+        assert_eq!(
+            fired(sql, &catalog, greedy),
+            None,
+            "threshold {greedy} did not take the greedy arm",
+        );
+    }
+    for dp in [3, 4, i32::MAX] {
+        assert!(
+            fired(sql, &catalog, dp).is_some(),
+            "threshold {dp} did not take the DP arm",
+        );
+    }
+}
+
+/// THE COST SORT, where it is observable. `generateJoinOrderNode` sorts the
+/// group by `baseNodeCumCost` ASCENDING and
+/// `constructConnectedJoinTree` starts at `curJoinGroup[0]`, so the cheapest
+/// node is the seed. Here the statement writes the EXPENSIVE relation first --
+/// `dt` is a join of two tables, so its cumulative cost exceeds either base
+/// table's -- and the seed must still be `t1`.
+///
+/// Written leaf order is `dt, t1, t5`; the greedy's is `t1, dt, t5`, so `dt`
+/// moves from `0` to `1` and `t1` from `1` to `0`. Drop the sort and the seed
+/// becomes `dt`, which yields `dt, t1, t5` -- the identity.
+#[test]
+fn the_seed_is_the_cheapest_node_not_the_first_written() {
+    let catalog = tables();
+    let sql = "SELECT t1.a, dt.key_a FROM \
+        (SELECT t2.a AS key_a, t2.b * 2 AS doubled_b FROM t2 JOIN t3 ON t2.a = t3.a) dt, \
+        t1, t5 \
+        WHERE t1.a = dt.key_a AND dt.key_a = t5.a";
+    assert_eq!(fired(sql, &catalog, 0), Some(vec![1, 0, 2]));
+}
+
 /// THE SOLVER-CHOICE TABLE, as a plan-level assertion.
 ///
 /// A group of three takes the DP at a threshold of `3` or more and the greedy

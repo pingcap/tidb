@@ -1032,6 +1032,14 @@ fn construct_connected(
             // equality edge is a CARTESIAN one, which
             // `tidb_opt_cartesian_join_order_threshold` refuses at its default
             // of `0`. Both of Go's two refusal sites reduce to this one skip.
+            //
+            // It is kept even though nothing downstream could act on a
+            // cartesian step anyway -- `rebuild_node` has no `ON` to build
+            // from and would decline the whole reorder, and a cartesian's cost
+            // `L * R` can never undercut an equi-join's `L * R / ndv`. This is
+            // where Go states the rule, so this is where it is stated; a
+            // mutation that deletes it is invisible for exactly those two
+            // reasons, not because the rule does not matter.
             let used = connecting_plans(&current.plan, &node.plan, edges);
             if used.is_empty() {
                 continue;
