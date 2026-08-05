@@ -543,20 +543,20 @@ func TestDivideMergeSortDataFilesBasic(t *testing.T) {
 }
 
 func TestDivideMergeSortDataFilesSubtaskCount(t *testing.T) {
-	const mergeConc = 16
-	for _, fileCnt := range []int{3000, 4000, 40000, 400000, 712345, 1000000} {
-		for _, nodeCnt := range []int{1, 3, 7, 16, 30, 60, 97} {
-			dataFiles := make([]string, fileCnt)
-			groups, err := DivideMergeSortDataFiles(dataFiles, nodeCnt, mergeConc)
+	const Concurrency = 16
+	for _, fileCount := range []int{3000, 4000, 40000, 400000, 712345, 1000000} {
+		for _, nodeCount := range []int{1, 3, 7, 16, 30, 60, 97} {
+			dataFiles := make([]string, fileCount)
+			dataFilesGroup, err := DivideMergeSortDataFiles(dataFiles, nodeCount, Concurrency)
 			require.NoError(t, err)
-			var targetCnt int
-			for _, group := range groups {
-				targetCnt += len(splitDataFiles(group, mergeConc))
+			var totalTargetFileCount int
+			for _, group := range dataFilesGroup {
+				totalTargetFileCount += len(splitDataFiles(group, Concurrency))
 			}
 			t.Logf("node count: %d, file count: %d, group count: %d, target file count: %d",
-				nodeCnt, fileCnt, len(groups), targetCnt)
-			require.LessOrEqual(t, len(groups), 250)
-			require.LessOrEqual(t, targetCnt, 4000)
+				nodeCount, fileCount, len(dataFilesGroup), totalTargetFileCount)
+			require.LessOrEqual(t, len(dataFilesGroup), 250)
+			require.LessOrEqual(t, totalTargetFileCount, 4000)
 		}
 	}
 }
