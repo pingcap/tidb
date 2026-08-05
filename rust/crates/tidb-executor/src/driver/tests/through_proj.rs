@@ -256,23 +256,78 @@ fn a_qualified_star_expands_to_the_dissolved_fields() {
     assert_eq!(sorted(rows), sorted(kept_rows));
 }
 
-/// AN EQUALITY THAT WOULD STOP BEING `col = col` is not dissolved.
+/// AN EQUALITY THAT STOPS BEING `col = col` gets Go's INJECTED COLUMN.
 ///
-/// `t1.b = dt.doubled_b` becomes `t1.b = t2.b * 2`, and
-/// `crate::hash_join::split_equi` takes a key only when both sides are
-/// columns -- Go materializes it with `injectExpr`, which a rebuilt `FROM`
-/// clause cannot spell. Dissolving here would turn a hash join into a nested
-/// loop, so the statement keeps the derived table it was written with.
+/// `t1.b = dt.doubled_b` becomes `t1.b = t2.b * 2`, which
+/// `crate::hash_join::split_equi` cannot key on. Go's `injectExpr`
+/// materializes the computed side as a column of the branch that owns it, and
+/// `r/planner/core/join_reorder_through_projection.result:1319` records the
+/// operator that results:
+///
+/// ```text
+/// MergeJoin                 inner join, left key:t2.a, right key:t5.a
+/// ├─TableReader(Build)            TableFullScan table:t5
+/// └─MergeJoin(Probe)        inner join, left key:t2.a, right key:t3.a
+///   ├─TableReader(Build)          TableFullScan table:t3
+///   └─IndexHashJoin(Probe)  outer key:Column, inner key:t1.b
+///     ├─Projection(Build)         t2.a, mul(t2.b, 2)->Column
+///     │ └─TableReader             Selection not(isnull(mul(t2.b, 2)))
+///     └─IndexReader(Probe)        table:t1
+/// ```
+///
+/// `t5` at the top, `t3` next, and `Projection(t2)` joined against `t1` at the
+/// bottom is the ORDER this asserts. The dissolve must therefore CHANGE the
+/// plan -- the old refusal asserted the opposite -- and the leaf order it
+/// reaches is TiDB's.
 #[test]
-fn an_expression_join_key_is_declined() {
+fn an_expression_join_key_gets_an_injected_column() {
     let catalog = tables();
     let sql = "SELECT t1.a, dt.key_a FROM t1, t5, \
         (SELECT t2.a AS key_a, t2.b * 2 AS doubled_b FROM t2 JOIN t3 ON t2.a = t3.a) dt \
         WHERE t1.b = dt.doubled_b AND dt.key_a = t5.a";
-    assert_eq!(
-        plan(sql, &catalog, &ctx(true, 10)),
+    let dissolved = plan(sql, &catalog, &ctx(true, 10));
+    assert_ne!(
+        dissolved,
         plan(sql, &catalog, &ctx(false, 10)),
-        "an expression join key was dissolved",
+        "the expression join key was still declined",
+    );
+    // The `Projection` Go injects, over `t2` alone, as the BUILD side of the
+    // bottom join -- and `t5`, `t3` above it in that order.
+    assert_eq!(
+        dissolved,
+        vec![
+            "Projection_10".to_owned(),
+            "└─Selection_9".to_owned(),
+            "  └─HashJoin_8".to_owned(),
+            "    ├─IndexFullScan_1(Build)".to_owned(),
+            "    └─HashJoin_7(Probe)".to_owned(),
+            "      ├─IndexFullScan_2(Build)".to_owned(),
+            "      └─HashJoin_6(Probe)".to_owned(),
+            "        ├─Projection_4(Build)".to_owned(),
+            "        │ └─TableFullScan_3".to_owned(),
+            "        └─IndexFullScan_5(Probe)".to_owned(),
+        ],
+    );
+}
+
+/// A `leading` HINT PINS THE ORDER, so the projection is not dissolved.
+///
+/// Go dissolves AND honours the hint through `s.leadingJoinGroup`; nothing
+/// here models that prefix, so dissolving would answer a question the
+/// statement already answered.
+/// `r/planner/core/join_reorder_through_projection.result:2349` records
+/// `leading(t2, t3, t1)` keeping `MergeJoin(t2, t3)` under the injected
+/// `Projection` -- the tree the UNDISSOLVED statement already builds.
+#[test]
+fn a_leading_hint_declines_the_dissolve() {
+    let catalog = tables();
+    let sql = "SELECT /*+ leading(t2, t3, t1) */ t1.a, dt.a2 FROM t1 JOIN ( \
+        SELECT t2.a AS a2, t2.b * 2 AS doubled_b FROM t2 JOIN t3 ON t2.a = t3.a \
+        ) dt ON t1.b = dt.doubled_b";
+    assert_eq!(
+        plan(sql, &catalog, &ctx(true, 0)),
+        plan(sql, &catalog, &ctx(false, 0)),
+        "a leading hint was reordered past",
     );
 }
 

@@ -859,11 +859,56 @@ fn join_operators_and_their_keep_order_match_recorded_tidb_plans() {
     // `topn_push_down`'s own entry in `TOPICS` -- its inner sides are read as
     // full scans -- and it is the index-join increment, not the merge-join
     // one.
+    //
+    // SIXTH MEASUREMENT, after the INJECTED COLUMN
+    // (`tidb_executor::driver::through_proj::inject_expressions`). The fifth
+    // measurement's "what still does not move" paragraph named the cause of
+    // the topic's 17 extras: a dissolve that would leave `t1.b = t2.b * 2`,
+    // Go's `injectExpr` case, was declined. It is declined no longer -- the
+    // computed side is materialized as a column of a derived table wrapping
+    // the leaf that owns it, which is what Go's `Projection` over that branch
+    // is in `FROM`-clause terms.
+    //
+    // WHAT THE RECORDINGS SAY. `r/planner/core/
+    // join_reorder_through_projection.result:1319` records
+    // `select t1.a, dt.key_a from t1, t5, (select t2.a as key_a, t2.b * 2 as
+    // doubled_b from t2 join t3 on t2.a = t3.a) dt where t1.b = dt.doubled_b
+    // and dt.key_a = t5.a` as `t5` at the top, `t3` next, and
+    // `Projection  t2.a, mul(t2.b, 2)->Column` as the BUILD side of the
+    // bottom join against `t1` -- the injected column is the join key. This
+    // tier now builds that same leaf order, so the pairs it merges are the
+    // pairs the WRITTEN derived table no longer forces.
+    //
+    // BOTH_AGREE 103 -> 105 and EXTRA_MERGE_PAIRS 21 -> 6, both in this topic
+    // (66 -> 68 of 82 join plans, +17 -> +2 extras). The 15 extras that went
+    // away are all the same shape: this tier was merging `(t2, t3)` in the
+    // position the written derived table put them, where TiDB records no
+    // ordered merge there at all because it had already moved `t2` out from
+    // under `t3`.
+    //
+    // ONE STATEMENT NEEDED A SECOND RULE. `:2349` records
+    // `select /*+ leading(t2, t3, t1) */ t1.a, dt.a2 from t1 join (select
+    // t2.a as a2, t2.b * 2 as doubled_b, t3.a as a3 from t2 join t3 on
+    // t2.a = t3.a) dt on t1.b = dt.doubled_b` with `MergeJoin(t2, t3)` kept
+    // UNDER the injected `Projection`: TiDB dissolves and still honours the
+    // hint, through `s.leadingJoinGroup`. Dissolving without modelling that
+    // prefix cost that merge pair (75 -> 74) and one agreement, so
+    // `through_proj::inline` now declines on a `leading` hint outright, which
+    // keeps the written tree -- the tree that already has that merge.
+    //
+    // NOTHING REGRESSED: `compared` and `recorded_merge_pairs` are unchanged,
+    // `agreed_merge_pairs` is unchanged at 75, the replay's compared total
+    // went UP 5640 -> 5647 (seven previously skipped statements in this topic
+    // became comparable and MATCHED, `Rows` 60 -> 67), no topic's divergence
+    // count moved in either direction (the topic stays at 13, the corpus at
+    // 24), and `executor/merge_join` (246 matched, 0 diverged),
+    // `executor/jointest/join` (803 matched, 1 diverged) and
+    // `planner/core/join_reorder2` (30 matched, 0 diverged) all stood still.
     const COMPARED: usize = 231;
-    const BOTH_AGREE: usize = 135;
+    const BOTH_AGREE: usize = 137;
     const RECORDED_MERGE_PAIRS: usize = 88;
     const AGREED_MERGE_PAIRS: usize = 77;
-    const EXTRA_MERGE_PAIRS: usize = 21;
+    const EXTRA_MERGE_PAIRS: usize = 6;
 
     assert_eq!(
         (

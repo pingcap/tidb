@@ -89,19 +89,28 @@
 //! * a splice that would put two relations with the same visible name in one
 //!   scope (`from t1, (select ... from t1 join t2) dt`).
 //!
-//! A fourth is this tier's EXECUTOR boundary rather than its resolver's. Go
-//! puts an eq-edge back into `col = col` form with
-//! `baseSingleGroupJoinOrderSolver.injectExpr`, which materializes
-//! `t2.b * 2` as a column of the branch that owns it, so `t1.b = dt.doubled_b`
-//! survives the dissolve as a hash/merge/index-join KEY. A rebuilt `FROM`
-//! clause has no way to spell that injected column, and
-//! `crate::hash_join::split_equi` only takes a key whose two sides are both
-//! columns -- so the same join would come out of the dissolve as a nested loop
-//! over a residual predicate. Dissolving a projection must not make the plan
-//! worse, so an inline that would leave a non-column operand in any equality
-//! is declined and the statement keeps the derived table it was written with.
-//! Landing the injected column is the next rung, and it is the one that opens
-//! the recorded `IndexHashJoin(Projection(t2), t1)` shapes.
+//! A fourth is a `leading` hint. Go dissolves the projection AND still honours
+//! the hint, because `generateLeadingJoinGroup` puts the named prefix in
+//! `s.leadingJoinGroup` and `constructConnectedJoinTree` joins it first.
+//! Nothing downstream here models that prefix, so dissolving would hand the
+//! greedy a freedom the statement explicitly withheld. See
+//! [`inline`]'s own gate for the recorded witness.
+//!
+//! # The injected column
+//!
+//! Dissolving turns `t1.b = dt.doubled_b` into `t1.b = t2.b * 2`, which no join
+//! can KEY on -- `crate::hash_join::split_equi` takes a key only when both
+//! sides are columns. Go does not leave it that way either: `injectExpr`
+//! materializes the computed side as a real column of the branch that owns it,
+//! and `r/planner/core/join_reorder_through_projection.result:1319` shows the
+//! operator that results, `Projection  t2.a, mul(t2.b, 2)->Column`, sitting
+//! between `t2` and the join that keys on it.
+//!
+//! [`inject_expressions`] spells that `Projection` as the only thing a `FROM`
+//! clause can spell it as: a derived table wrapping the leaf, publishing that
+//! leaf's own columns plus the computed one. It cannot dissolve back, because
+//! [`inline`] runs once over the statement as written and this rewrite happens
+//! after the splice that would have consumed it.
 //!
 //! An OUTER join anywhere in the dissolved subtree is declined too. Go allows
 //! one and fences it with `nullExtendedCols` (`canInlineProjection`'s
@@ -206,6 +215,22 @@ pub(crate) fn inline(
     if !ctx.join_reorder_through_proj() {
         return None;
     }
+    // A `leading` hint PINS the join order: Go builds the named prefix into
+    // `s.leadingJoinGroup` and `constructConnectedJoinTree` joins it first
+    // (`rule_join_reorder_greedy.go:56-76`), so it dissolves the projection
+    // AND still answers to the hint. Nothing downstream here models that
+    // prefix, and dissolving without it hands the greedy a freedom the
+    // statement explicitly withheld -- `r/planner/core/
+    // join_reorder_through_projection.result:2349` records `leading(t2, t3,
+    // t1)` keeping `MergeJoin(t2, t3)` under the injected `Projection`, which
+    // is the tree the UNDISSOLVED statement already builds.
+    if select
+        .hints
+        .iter()
+        .any(|hint| hint.name.eq_ignore_ascii_case("LEADING"))
+    {
+        return None;
+    }
     let from = select.from.as_ref()?;
     let mut splice = Splice::default();
     let rewritten_from = splice_join(from, catalog, current_db, &mut splice)?;
@@ -296,35 +321,351 @@ pub(crate) fn inline(
         })
         .collect::<Option<Vec<_>>>()?;
 
-    // Every equality must still read `col = col`; see this module's doc for
-    // why an injected column is the prerequisite for anything else.
-    let mut equalities = Vec::new();
-    if let Some(where_clause) = &rewritten.where_clause {
-        crate::plan_trace::collect_and(where_clause, &mut equalities);
+    // Every equality must read `col = col` before this leaves; Go's
+    // `injectExpr` is what puts the ones that do not back into that form.
+    inject_expressions(rewritten, catalog, current_db)
+}
+
+/// Go's `baseSingleGroupJoinOrderSolver.injectExpr` (`rule_join_reorder.go:793`),
+/// spelled as a statement rewrite.
+///
+/// A dissolved projection leaves equalities like `t1.b = t2.b * 2`, which no
+/// join can KEY on. Go materializes the computed side as a real column of the
+/// branch that owns it -- `LogicalProjection{Exprs: Column2Exprs(schema)}` over
+/// that branch, then `AppendExpr` -- and rewrites the edge to name the new
+/// column. The recorded plan shows exactly that operator:
+/// `r/planner/core/join_reorder_through_projection.result:1319` has
+/// `Projection  t2.a, mul(t2.b, 2)->Column` sitting between `t2` and the join
+/// that keys on it.
+///
+/// The `FROM`-clause spelling of "a projection over one leaf, publishing that
+/// leaf's own columns plus one more" is a derived table wrapping the leaf. It
+/// cannot dissolve back: [`inline`] runs ONCE over the statement as written,
+/// and this rewrite happens after the splice that would have consumed it.
+///
+/// Declines when the equality is not a join edge between two DIFFERENT
+/// relations, which keeps the previous refusal for every shape Go's
+/// `checkConnection` would not have built an edge from either.
+fn inject_expressions(
+    mut rewritten: SelectStmt,
+    catalog: &Catalog,
+    current_db: &str,
+) -> Option<SelectStmt> {
+    let relations = base_relations(rewritten.from.as_ref()?, catalog, current_db)?;
+    let mut injections: Vec<Injection> = Vec::new();
+    // `AppendExpr`'s reuse test: the SAME expression on the SAME relation is
+    // materialized once, however many edges need it.
+    let mut register = |relation: usize, expr: &Expr| -> String {
+        if let Some(found) = injections
+            .iter()
+            .find(|i| i.relation == relation && &i.expr == expr)
+        {
+            return found.name.clone();
+        }
+        let name = format!("_inject_{}", injections.len());
+        injections.push(Injection {
+            relation,
+            expr: expr.clone(),
+            name: name.clone(),
+        });
+        name
+    };
+
+    // One walk that both decides and rewrites: every `Eq` whose two sides read
+    // two different relations and whose operands are not both columns.
+    let mut declined = false;
+    let mut rewrite = |expr: &mut Expr| {
+        let Expr::Binary(BinaryOp::Eq, lhs, rhs) = expr else {
+            return;
+        };
+        let (left_is_column, right_is_column) = (
+            matches!(strip(lhs), Expr::Column(_)),
+            matches!(strip(rhs), Expr::Column(_)),
+        );
+        if left_is_column && right_is_column {
+            return;
+        }
+        let (Some(left), Some(right)) = (
+            single_relation(lhs, &relations),
+            single_relation(rhs, &relations),
+        ) else {
+            declined = true;
+            return;
+        };
+        if left == right {
+            // Not a join edge: `checkConnection` never builds one from a
+            // condition both of whose sides live in one relation, so there is
+            // no key to preserve and nothing to inject.
+            declined = true;
+            return;
+        }
+        if !left_is_column {
+            let name = register(left, lhs);
+            **lhs = Expr::Column(vec![relations[left].visible.clone(), name]);
+        }
+        if !right_is_column {
+            let name = register(right, rhs);
+            **rhs = Expr::Column(vec![relations[right].visible.clone(), name]);
+        }
+    };
+    if let Some(where_clause) = &mut rewritten.where_clause {
+        for_each_conjunct_mut(where_clause, &mut rewrite);
     }
-    collect_on_conjuncts(rewritten.from.as_ref()?, &mut equalities);
-    if equalities.iter().any(|conjunct| {
-        matches!(conjunct, Expr::Binary(BinaryOp::Eq, lhs, rhs)
-            if !matches!(strip(lhs), Expr::Column(_)) || !matches!(strip(rhs), Expr::Column(_)))
-    }) {
+    for_each_on_conjunct_mut(rewritten.from.as_mut()?, &mut rewrite);
+    if declined {
         return None;
     }
+    if injections.is_empty() {
+        return Some(rewritten);
+    }
+    // A wrapped relation publishes ONE MORE column than the statement wrote,
+    // so a surviving `t2.*` would expand to a row shape the statement never
+    // asked for. Go never meets this: `restoreSchemaIfChanged` rebuilds the
+    // original schema by `UniqueID` above the reordered join.
+    for field in rewritten.fields.fields() {
+        if let SelectField::Wildcard(path) = field {
+            let (_, qualifier) = split_path(path)?;
+            if injections.iter().any(|i| {
+                relations[i.relation]
+                    .visible
+                    .eq_ignore_ascii_case(qualifier)
+            }) {
+                return None;
+            }
+        }
+    }
+    // A generated name a column of the wrapped table already answers to would
+    // shadow it; there is no safe rename, so decline.
+    for injection in &injections {
+        if relations[injection.relation]
+            .columns
+            .iter()
+            .any(|column| column.eq_ignore_ascii_case(&injection.name))
+        {
+            return None;
+        }
+    }
+    wrap_relations(rewritten.from.as_mut()?, &relations, &injections)?;
     Some(rewritten)
 }
 
-/// Every `ON` conjunct of a join tree.
-fn collect_on_conjuncts<'a>(join: &'a Join, out: &mut Vec<&'a Expr>) {
-    if let Some(on) = &join.on {
-        crate::plan_trace::collect_and(on, out);
-    }
-    let walk = |node: &'a JoinNode, out: &mut Vec<&'a Expr>| {
-        if let JoinNode::Join(inner) = node {
-            collect_on_conjuncts(inner, out);
+/// One expression Go would have materialized, and where.
+struct Injection {
+    /// Index into the `relations` list: the branch that owns the expression.
+    relation: usize,
+    expr: Expr,
+    /// The name the wrapper publishes it under. Go's injected column is
+    /// anonymous; a `FROM` clause has to spell one.
+    name: String,
+}
+
+/// One base-table leaf of the spliced `FROM`, as the injection needs it.
+struct Relation {
+    visible: String,
+    columns: Vec<String>,
+}
+
+/// Every base-table leaf of the spliced `FROM`, in order.
+///
+/// `None` declines: a leaf this cannot open by name is one whose columns the
+/// resolver below could attribute wrongly, and an injection put on the wrong
+/// branch is a wrong key.
+fn base_relations(join: &Join, catalog: &Catalog, current_db: &str) -> Option<Vec<Relation>> {
+    let mut relations = Vec::new();
+    collect_base_relations(join, catalog, current_db, &mut relations)?;
+    Some(relations)
+}
+
+fn collect_base_relations(
+    join: &Join,
+    catalog: &Catalog,
+    current_db: &str,
+    out: &mut Vec<Relation>,
+) -> Option<()> {
+    let node = |node: &JoinNode, out: &mut Vec<Relation>| -> Option<()> {
+        match node {
+            JoinNode::Join(inner) => collect_base_relations(inner, catalog, current_db, out),
+            JoinNode::Table(table_ref) => {
+                if table_ref.as_of.is_some() || !table_ref.partitions.is_empty() {
+                    return None;
+                }
+                let (database, name) =
+                    crate::driver::split_table_path(&table_ref.name, current_db).ok()?;
+                let TableEntry::Kv(table) = catalog.get_in(database, name)? else {
+                    return None;
+                };
+                out.push(Relation {
+                    visible: table_ref.alias.clone().unwrap_or_else(|| name.to_owned()),
+                    columns: table
+                        .visible_columns()
+                        .iter()
+                        .map(|column| column.name.clone())
+                        .collect(),
+                });
+                Some(())
+            }
+            // A derived table that did NOT dissolve is opaque here: its output
+            // names are not the catalog's, so an unqualified path could belong
+            // to it without this knowing.
+            JoinNode::Derived { .. } => None,
         }
     };
-    walk(&join.left, out);
-    if let Some(right) = &join.right {
-        walk(right, out);
+    node(&join.left, out)?;
+    match &join.right {
+        Some(right) => node(right, out),
+        None => Some(()),
+    }
+}
+
+/// Which relation an expression reads, when it reads exactly one.
+///
+/// `None` for an expression over several relations or over a name this cannot
+/// resolve -- Go's `injectExpr` puts the projection on ONE branch, so an
+/// expression spanning two has no branch to go on.
+fn single_relation(expr: &Expr, relations: &[Relation]) -> Option<usize> {
+    let mut hit = None;
+    for path in column_paths(expr) {
+        let (qualifier, name) = split_path(&path)?;
+        let mut found = None;
+        for (index, relation) in relations.iter().enumerate() {
+            if let Some(qualifier) = qualifier {
+                if !relation.visible.eq_ignore_ascii_case(qualifier) {
+                    continue;
+                }
+            }
+            if relation
+                .columns
+                .iter()
+                .any(|column| column.eq_ignore_ascii_case(name))
+            {
+                // An unqualified name two relations own is the statement's own
+                // ambiguity error, not an injection decision.
+                if found.is_some() {
+                    return None;
+                }
+                found = Some(index);
+            }
+        }
+        let found = found?;
+        if hit.is_some_and(|hit| hit != found) {
+            return None;
+        }
+        hit = Some(found);
+    }
+    hit
+}
+
+/// Runs `f` over every top-level `AND` conjunct of an expression, in place.
+fn for_each_conjunct_mut(expr: &mut Expr, f: &mut dyn FnMut(&mut Expr)) {
+    match expr {
+        Expr::Binary(BinaryOp::LogicAnd, left, right) => {
+            for_each_conjunct_mut(left, f);
+            for_each_conjunct_mut(right, f);
+        }
+        Expr::Paren(inner) => for_each_conjunct_mut(inner, f),
+        other => f(other),
+    }
+}
+
+/// The same, over every `ON` of a join tree.
+fn for_each_on_conjunct_mut(join: &mut Join, f: &mut dyn FnMut(&mut Expr)) {
+    if let Some(on) = &mut join.on {
+        for_each_conjunct_mut(on, f);
+    }
+    if let JoinNode::Join(inner) = &mut join.left {
+        for_each_on_conjunct_mut(inner, f);
+    }
+    if let Some(JoinNode::Join(inner)) = &mut join.right {
+        for_each_on_conjunct_mut(inner, f);
+    }
+}
+
+/// Replaces every injected-into leaf with the derived table that publishes its
+/// own columns plus the injected expressions -- Go's `LogicalProjection` over
+/// that branch, spelled in the `FROM`.
+fn wrap_relations(join: &mut Join, relations: &[Relation], injections: &[Injection]) -> Option<()> {
+    let mut index = 0usize;
+    wrap_node(&mut join.left, relations, injections, &mut index)?;
+    if let Some(right) = &mut join.right {
+        wrap_node(right, relations, injections, &mut index)?;
+    }
+    Some(())
+}
+
+fn wrap_node(
+    node: &mut JoinNode,
+    relations: &[Relation],
+    injections: &[Injection],
+    index: &mut usize,
+) -> Option<()> {
+    match node {
+        JoinNode::Join(inner) => {
+            wrap_node(&mut inner.left, relations, injections, index)?;
+            if let Some(right) = &mut inner.right {
+                wrap_node(right, relations, injections, index)?;
+            }
+            Some(())
+        }
+        JoinNode::Table(_) => {
+            let position = *index;
+            *index += 1;
+            let mine: Vec<&Injection> = injections
+                .iter()
+                .filter(|i| i.relation == position)
+                .collect();
+            if mine.is_empty() {
+                return Some(());
+            }
+            let relation = &relations[position];
+            // `Column2Exprs(p.Schema().Columns)`: the pass-through half, so the
+            // branch's own outputs are unchanged, then `AppendExpr` for each
+            // injected expression.
+            let mut fields: Vec<SelectField> = relation
+                .columns
+                .iter()
+                .map(|column| SelectField::Expr {
+                    expr: Expr::Column(vec![relation.visible.clone(), column.clone()]),
+                    alias: Some(column.clone()),
+                })
+                .collect();
+            for injection in mine {
+                fields.push(SelectField::Expr {
+                    expr: injection.expr.clone(),
+                    alias: Some(injection.name.clone()),
+                });
+            }
+            // The wrapper is built from a PARSED skeleton rather than a
+            // struct literal, so a clause this rewrite has no opinion about --
+            // `DISTINCT`, `LIMIT`, a lock, a hint -- is whatever an empty
+            // statement has, and stays that way when `SelectStmt` grows a
+            // field.
+            let mut subquery = match tidb_parser::parse("SELECT 1 FROM _").ok()? {
+                tidb_ast::Stmt::Query(query) => match &*query {
+                    QueryStmt::Select(select) => (**select).clone(),
+                    _ => return None,
+                },
+                _ => return None,
+            };
+            subquery.fields = fields.into();
+            subquery.from = Some(Join {
+                left: node.clone(),
+                right: None,
+                tp: JoinType::Cross,
+                straight: false,
+                on: None,
+                using: Vec::new(),
+                natural: false,
+                explicit_parens: false,
+            });
+            *node = JoinNode::Derived {
+                subquery: tidb_ast::NodeBox::new(QueryStmt::Select(Box::new(subquery))),
+                alias: Some(relation.visible.clone()),
+                lateral: false,
+                column_names: Vec::new(),
+            };
+            Some(())
+        }
+        JoinNode::Derived { .. } => None,
     }
 }
 
