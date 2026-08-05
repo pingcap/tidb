@@ -15,12 +15,6 @@
 package logicalop
 
 import (
-<<<<<<< HEAD
-	"math"
-=======
-	"slices"
->>>>>>> c0e41374901 (planner: correct LATERAL join cardinality and the Apply cache decision (#70247))
-
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -224,34 +218,6 @@ func (la *LogicalApply) DeriveStats(childStats []*property.StatsInfo, selfSchema
 				childSchema[0], childSchema[1],
 				nil, nil)
 			rowCount = la.EqualCondOutCnt
-<<<<<<< HEAD
-		} else if len(la.CorCols) > 0 {
-			// No explicit join keys; the inner plan is a correlated subquery.
-			// childStats[1] is derived for the inner plan as a standalone subtree
-			// (total rows of that plan), not a per-outer-row execution count.
-			// Dividing by the NDV of the outer correlated columns converts it to a
-			// per-outer-row estimate before multiplying by the left row count, mirroring
-			// the key-based selectivity division in EstimateFullJoinRowCount.
-			//
-			// TODO: when the inner plan is bounded by LIMIT or a scalar aggregate,
-			// rightProfile.RowCount is already effectively per-outer-row (LIMIT caps it;
-			// aggregates always return 1 row). In those cases this formula underestimates
-			// by ~NDV(outerCols). A future improvement should detect the LIMIT/aggregate
-			// case and skip the NDV scaling, restoring the correct left*right product.
-			outerCols := make([]*expression.Column, 0, len(la.CorCols))
-			for i := range la.CorCols {
-				outerCols = append(outerCols, &la.CorCols[i].Column)
-			}
-			// Use the left child's FullSchema so that redundant USING/NATURAL
-			// columns are visible to NDV estimation; fall back to childSchema[0].
-			leftSchema := childSchema[0]
-			if fs := findChildFullSchema(la.Children()[0]); fs != nil {
-				leftSchema = fs
-			}
-			outerNDV, _ := cardinality.EstimateColsNDVWithMatchedLen(outerCols, leftSchema, leftProfile)
-			rowCount = leftProfile.RowCount * rightProfile.RowCount / math.Max(outerNDV, 1)
-=======
->>>>>>> c0e41374901 (planner: correct LATERAL join cardinality and the Apply cache decision (#70247))
 		} else {
 			// Without join keys the inner plan runs once per outer row and rightProfile
 			// already describes one such execution: stats for the inner subtree are derived
