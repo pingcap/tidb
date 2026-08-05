@@ -307,6 +307,15 @@ pub struct StmtContext {
     /// and take that join's own leaves into the group -- see
     /// [`crate::driver::join_reorder`]'s inlining section.
     join_reorder_through_proj: bool,
+    /// Go `SessionVars.TiDBOptJoinReorderThroughSel`
+    /// (`@@tidb_opt_join_reorder_through_sel`, default `OFF`): whether
+    /// `extractJoinGroupImpl` may look THROUGH a `Selection` sitting on a
+    /// join -- see [`crate::driver::join_reorder`]'s barrier section.
+    join_reorder_through_sel: bool,
+    /// Go `SessionVars.EnableOuterJoinReorder`
+    /// (`@@tidb_enable_outer_join_reorder`, default `ON`): whether an outer
+    /// join carrying equal conditions may join the reorder group at all.
+    outer_join_reorder: bool,
     /// Go `SessionVars.PartitionPruneMode == Static`: see
     /// [`StmtContext::static_partition_prune`].
     static_partition_prune: bool,
@@ -481,6 +490,10 @@ impl StmtContext {
                 as i32,
             // Go `vardef.DefTiDBOptJoinReorderThroughProj`.
             join_reorder_through_proj: false,
+            // Go `vardef.DefTiDBOptJoinReorderThroughSel`.
+            join_reorder_through_sel: false,
+            // Go `vardef.DefTiDBEnableOuterJoinReorder = true`.
+            outer_join_reorder: true,
             // Go's shipped `tidb_partition_prune_mode` is `dynamic`.
             static_partition_prune: false,
             sequences: Rc::default(),
@@ -756,6 +769,39 @@ impl StmtContext {
     #[must_use]
     pub fn join_reorder_through_proj(&self) -> bool {
         self.join_reorder_through_proj
+    }
+
+    /// Sets `@@tidb_opt_join_reorder_through_sel` for this statement.
+    #[must_use]
+    pub fn with_join_reorder_through_sel(mut self, through: bool) -> Self {
+        self.join_reorder_through_sel = through;
+        self
+    }
+
+    /// Go `SessionVars.TiDBOptJoinReorderThroughSel`. `OFF` is the shipped
+    /// default, under which a `LogicalSelection` between two joins is a
+    /// barrier `extractJoinGroupImpl` stops at
+    /// (`rule_join_reorder.go:67-80`), so the relations below it form their
+    /// own group.
+    #[must_use]
+    pub fn join_reorder_through_sel(&self) -> bool {
+        self.join_reorder_through_sel
+    }
+
+    /// Sets `@@tidb_enable_outer_join_reorder` for this statement.
+    #[must_use]
+    pub fn with_outer_join_reorder(mut self, enabled: bool) -> Self {
+        self.outer_join_reorder = enabled;
+        self
+    }
+
+    /// Go `SessionVars.EnableOuterJoinReorder`, whose shipped default is ON
+    /// (`vardef.DefTiDBEnableOuterJoinReorder = true`). OFF puts back the
+    /// stop `extractJoinGroupImpl` spells right after its own list: "If the
+    /// session var is set to off, we will still reject the outer joins."
+    #[must_use]
+    pub fn outer_join_reorder(&self) -> bool {
+        self.outer_join_reorder
     }
 
     /// Sets `@@tidb_partition_prune_mode` for this statement, as the one bit

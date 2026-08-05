@@ -213,7 +213,7 @@ pub enum LogicalNode {
         /// One entry per output column.
         exprs: Vec<ProjectionExpr>,
     },
-    /// An inner `LogicalJoin`.
+    /// A `LogicalJoin`.
     Join {
         /// The build/left child.
         left: Box<LogicalNode>,
@@ -223,7 +223,36 @@ pub enum LogicalNode {
         left_keys: Vec<ColumnId>,
         /// Right-hand equi-join key columns.
         right_keys: Vec<ColumnId>,
+        /// Which side the join PRESERVES.
+        kind: JoinKind,
     },
+}
+
+/// Go `base.JoinType`, narrowed to the three kinds a `FROM` clause spells.
+///
+/// It reaches the row count through one line of `LogicalJoin.DeriveStats`
+/// (`logical_join.go:598-603`):
+///
+/// ```go
+/// count := p.EqualCondOutCnt
+/// if p.JoinType == base.LeftOuterJoin {
+///     count = math.Max(count, leftProfile.RowCount)
+/// } else if p.JoinType == base.RightOuterJoin {
+///     count = math.Max(count, rightProfile.RowCount)
+/// }
+/// ```
+///
+/// -- an outer join emits at least one row per preserved-side row, however
+/// selective its equality is.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum JoinKind {
+    /// `base.InnerJoin`.
+    #[default]
+    Inner,
+    /// `base.LeftOuterJoin`: every LEFT row survives.
+    LeftOuter,
+    /// `base.RightOuterJoin`: every RIGHT row survives.
+    RightOuter,
 }
 
 /// A node's derived stats together with its children's, so a caller can read
@@ -346,6 +375,7 @@ pub fn derive_stats(node: &LogicalNode, ctx: &DeriveStatsContext) -> DerivedNode
             right,
             left_keys,
             right_keys,
+            kind,
         } => {
             let left = derive_stats(left, ctx);
             let right = derive_stats(right, ctx);
@@ -363,6 +393,14 @@ pub fn derive_stats(node: &LogicalNode, ctx: &DeriveStatsContext) -> DerivedNode
                 right_non_equi_keys: JoinKeyEstimate::empty(),
                 join_reorder_threshold: ctx.join_reorder_threshold,
             });
+            // An outer join emits at least one row per preserved-side row
+            // (`logical_join.go:598-603`), so the equality's own estimate is
+            // only a FLOOR on the count, never a ceiling.
+            let count = match kind {
+                JoinKind::Inner => count,
+                JoinKind::LeftOuter => count.max(left.stats.row_count),
+                JoinKind::RightOuter => count.max(right.stats.row_count),
+            };
             // `LogicalJoin.DeriveStats` clamps every inherited NDV to the
             // join's own row count (`logical_join.go:604-610`).
             let col_ndvs = left

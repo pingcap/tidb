@@ -1091,14 +1091,79 @@ fn join_operators_and_their_keep_order_match_recorded_tidb_plans() {
     // one above with it, which is why EXTRA FALLS across this landing rather
     // than rising.
     //
-    // A JOIN COST MODEL is still the named prerequisite for the seven that
-    // remain: four in `join_reorder2` and three in
-    // `join_reorder_through_projection`, none of them hinted.
+    // CORRECTION (batch71). The paragraph that stood here read "A JOIN COST
+    // MODEL is still the named prerequisite for the seven that remain: four
+    // in `join_reorder2` and three in `join_reorder_through_projection`, none
+    // of them hinted." BOTH halves were wrong, and both were refuted by
+    // reading the recordings rather than by a new measurement:
+    //
+    //  * NONE of the seven was a merge-vs-hash COST decision. In every one
+    //    TiDB's join TREE put a different pair of leaves adjacent than this
+    //    tier's did, so the pair this tier merged was one TiDB never formed.
+    //  * ALL FOUR `join_reorder2` statements ARE hinted -- every one writes
+    //    `/*+ leading(...) */`, and TiDB merges the HINT's own first pair.
+    //
+    // TENTH MEASUREMENT (batch71). 144 -> 146 agreeing, merge pairs 80 -> 82
+    // AGREED and 7 -> 5 EXTRA, `compared` and `recorded_merge_pairs` still at
+    // 229 and 88. TWO statements moved, both in `planner/core/join_reorder2`
+    // and both at `set @@tidb_opt_join_reorder_through_sel = 1`:
+    //
+    //   explain format = 'plan_tree' select /*+ leading(t1, t2) */ * from t1
+    //     inner join t3 on t1.id=t3.id left join t4 on t4.id=t3.id
+    //     join t2 on t1.id=t2.id where t3.name like 'test3' or t4.name like 'test4';
+    //
+    // records (`r/planner/core/join_reorder2.result`) a `MergeJoin  inner
+    // join, left key:...t1.id, right key:...t2.id` over two `TableFullScan
+    // ... keep order:true` at the BOTTOM of the tree, under `MergeJoin
+    // inner join, left key:t1.id, right key:t3.id` and `MergeJoin  left
+    // outer join, ... left key:t3.id, right key:t4.id`. The `leading(t1, t2)`
+    // hint pins that first pair. Its `leading(t3, t4, t1, t2)` sibling
+    // records the LEFT OUTER pair `(t3, t4)` at the bottom instead, for the
+    // same reason.
+    //
+    // Both were unreachable for ONE reason with two halves, and batch69
+    // proved they are inseparable: `join_reorder::collect` declined any group
+    // holding an outer join, and nothing in the driver read the `leading`
+    // hint. Removing the decline ALONE left the 5-tuple unchanged -- with
+    // pseudo statistics every leaf ties at `cumCost` 10000, so the greedy's
+    // stable sort reproduces the written order anyway. The hint is what picks
+    // the first pair, and it cannot reach a group that was declined.
+    //
+    // THE FOUR `tidb_opt_join_reorder_through_sel = 0` COPIES DID NOT MOVE,
+    // which is the property that keeps AGREED rising rather than trading.
+    // With the variable OFF, Go's `extractJoinGroupImpl` stops at the
+    // `Selection` predicate pushdown leaves standing over the outer join --
+    // `or(like(t3.name, ...), like(t4.name, ...))` reads a null-extended
+    // column, so it can never become that join's `ON` -- and the group is
+    // split there, hint and all. `join_reorder::reorder` declines the whole
+    // group in that case, which keeps the WRITTEN tree those four record.
+    //
+    // THE FIVE THAT REMAIN, all still join-TREE divergences and none a cost
+    // decision:
+    //
+    //  * `join_reorder2`, the two `@sel_N`-qualified statements
+    //    (`leading(t1@sel_2, t4, t2@sel_2, t3@sel_2)` and
+    //    `leading(t1@sel_3, t5, t4@sel_2, t2@sel_3, t3@sel_3)`) at
+    //    `through_sel = 1`. TiDB merges `(t1, t4)` and `(t1, t5)`; this tier
+    //    merges `(t1, t2)`. Both need a group SPANNING query blocks: Go
+    //    eliminates the derived table's pure-column `Projection`, then walks
+    //    through the remaining `Selection`, so `{t1, t2, t3, t4}` is one
+    //    group and `t1@sel_2` resolves inside it. This tier's group is
+    //    `{sub, t4}`, so the hint names nothing it holds and
+    //    `join_reorder::leading_prefix` declines it silently.
+    //  * `join_reorder_through_projection`, the three statements the ninth
+    //    measurement already named: the `oj_t2`/`oj_t3`/`oj_t5` left-join
+    //    statement whose `Projection` never dissolves, and the two
+    //    `dt1`/`dt2` pairs whose leaves TiDB gives a `Selection cop[tikv]
+    //    not(isnull(mul(t1.b, 2)))` this tier does not derive.
+    //
+    // The named prerequisite for all five is therefore `extractJoinGroup`
+    // reaching ACROSS a query block, not a join cost model.
     const COMPARED: usize = 229;
-    const BOTH_AGREE: usize = 144;
+    const BOTH_AGREE: usize = 146;
     const RECORDED_MERGE_PAIRS: usize = 88;
-    const AGREED_MERGE_PAIRS: usize = 80;
-    const EXTRA_MERGE_PAIRS: usize = 7;
+    const AGREED_MERGE_PAIRS: usize = 82;
+    const EXTRA_MERGE_PAIRS: usize = 5;
 
     assert_eq!(
         (

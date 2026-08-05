@@ -72,6 +72,7 @@ fn join(
         right: Box::new(right),
         left_keys: left_keys.to_vec(),
         right_keys: right_keys.to_vec(),
+        kind: tidb_planner::cardinality::derive_stats::JoinKind::Inner,
     }
 }
 

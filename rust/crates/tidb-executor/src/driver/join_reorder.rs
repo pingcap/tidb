@@ -69,12 +69,11 @@
 //!   aggregates, sorts, limits or unions. Guessing one would silently choose a
 //!   different join order.
 //!
-//! # CORRECTION: an OUTER join is NOT one of Go's stop conditions
+//! # An OUTER join is NOT one of Go's stop conditions, and is not one here
 //!
-//! [`collect`] takes `join.tp != JoinType::Cross` as a decline, so a single
-//! `LEFT`/`RIGHT JOIN` anywhere in the `FROM` clause declines the WHOLE group
-//! and the statement keeps the tree it wrote. This module used to attribute
-//! that to Go. It is not Go's. `extractJoinGroupImpl`
+//! [`collect`] used to take `join.tp != JoinType::Cross` as a decline, so a
+//! single `LEFT`/`RIGHT JOIN` anywhere in the `FROM` clause declined the WHOLE
+//! group. That was never Go's rule. `extractJoinGroupImpl`
 //! (`rule_join_reorder.go:133-158`) reads:
 //!
 //! ```go
@@ -96,19 +95,53 @@
 //! `tidb_enable_outer_join_reorder` set OFF -- whose default is ON
 //! (`vardef.DefTiDBEnableOuterJoinReorder = true`).
 //!
-//! # What holds the seven EXTRA merges, measured rather than assumed
+//! An outer join reaches the group here under three further bounds this
+//! module states rather than approximates, each of them fail-closed:
 //!
-//! The `join_shape` CASETEST reports seven ordered-merge pairs this tier forms
-//! and TiDB does not. Each was opened against its recording. NONE is a
-//! merge-vs-hash cost decision: in every one, TiDB's join TREE puts a
-//! different pair of leaves adjacent than this tier's does, so the pair this
-//! tier merges is one TiDB never forms at all.
+//!  * its NULL-EXTENDED side must be exactly ONE relation, so it moves as a
+//!    unit ([`collect`]);
+//!  * every `ON` conjunct it carries must be an equality this module can
+//!    re-spell, which is Go's `joinTypeWithExtMsg.outerBindCondition` declined
+//!    rather than split ([`reorder`]);
+//!  * no OTHER equality may reach its extended leaf, which is what stops the
+//!    greedy joining that leaf before the outer join is formed ([`reorder`]).
+//!
+//! With an outer join in the group Go forces the GREEDY solver
+//! (`useGreedy := !allInnerJoin || ...`), so [`solve`]'s DP arm still only
+//! ever sees the all-inner shapes it was written for.
+//!
+//! # The `Selection` barrier, and why the `through_sel = 0` copies stand still
+//!
+//! `extractJoinGroupImpl` walks THROUGH a `LogicalSelection` only under
+//! `@@tidb_opt_join_reorder_through_sel` (`rule_join_reorder.go:67-80`), whose
+//! shipped default is OFF. A `WHERE` conjunct over a NULL-EXTENDED column is
+//! exactly where predicate pushdown leaves such a Selection standing: Go's
+//! `case base.LeftOuterJoin` arm derives only the RIGHT child's conditions and
+//! "right where condition cannot be pushed down", so the conjunct stops above
+//! the outer join. With the variable OFF that Selection splits the group and
+//! the `leading` hint below it names nothing the outer group holds; Go clears
+//! the hint (`join.HintInfo = nil`) and warns. [`reorder`] declines the whole
+//! group there instead of modelling the split, which keeps the WRITTEN tree --
+//! and the written tree is what the four `tidb_opt_join_reorder_through_sel =
+//! 0` recordings of `planner/core/join_reorder2` hold.
+//!
+//! # What holds the EXTRA merges, measured rather than assumed
+//!
+//! The `join_shape` CASETEST reported SEVEN ordered-merge pairs this tier
+//! formed and TiDB does not; it now reports FIVE. Each was opened against its
+//! recording. NONE is a merge-vs-hash cost decision: in every one, TiDB's join
+//! TREE puts a different pair of leaves adjacent than this tier's does, so the
+//! pair this tier merges is one TiDB never forms at all.
 //!
 //!  * `r/planner/core/join_reorder2.result`, FOUR statements, each writing
 //!    `... left join t4 ...` (or `left join t3`) inside the group and each
 //!    carrying a `leading` hint. TiDB merges `(t1,t2)`, `(t3,t4)`, `(t1,t4)`
-//!    and `(t1,t5)` -- the hint's own first pair, every time. This tier
-//!    declines the group here and merges the WRITTEN `(t1,t3)` or `(t1,t2)`.
+//!    and `(t1,t5)` -- the hint's own first pair, every time. The first TWO
+//!    name their tables without a query-block qualifier and are now reached:
+//!    `leading(t1, t2)` pins the inner pair and `leading(t3, t4, t1, t2)` pins
+//!    the LEFT OUTER one, both at `through_sel = 1`. The other two write
+//!    `t1@sel_2` / `t1@sel_3`, which resolve only inside a group that SPANS
+//!    query blocks; see [`leading_prefix`]'s named residue.
 //!  * `r/planner/core/join_reorder_through_projection.result:756`, the
 //!    `oj_t2`/`oj_t3`/`oj_t5` statement at
 //!    `tidb_opt_join_reorder_through_proj = on`. TiDB records
@@ -126,22 +159,24 @@
 //!    derive -- which lowers those leaves' row counts and so changes the
 //!    `cumCost` sort [`greedy_solve`] starts from.
 //!
-//! TWO MUTATION PROBES, run against the `join_shape` 5-tuple
-//! `(compared, both_agree, recorded, agreed, extra)`, baseline
-//! `(229, 144, 88, 80, 7)`:
+//! MUTATION PROBES, run against the `join_shape` 5-tuple
+//! `(compared, both_agree, recorded, agreed, extra)`, which is
+//! `(229, 146, 88, 82, 5)` here:
 //!
 //!  * REFUSE EVERY MERGE (`merge_join_decision` returns `None` unconditionally)
-//!    gives `(229, 69, 88, 0, 0)`. `extra` reaches zero only by taking all 80
-//!    AGREED merges with it. The merges this tier forms are overwhelmingly the
-//!    ones TiDB records, and no blunt refusal separates the seven.
-//!  * REMOVE THE OUTER-JOIN DECLINE from [`collect`] alone leaves the 5-tuple
-//!    UNCHANGED at `(229, 144, 88, 80, 7)`. The decline is NECESSARY to the
-//!    four `join_reorder2` extras but not SUFFICIENT: with pseudo statistics
-//!    every leaf ties at `cumCost` 10000, so [`greedy_solve`]'s stable sort
-//!    and its strict `curCost < bestCost` reproduce the written order anyway.
-//!    What decides those four in TiDB is the `leading` hint pinning the first
-//!    pair, and the hint cannot reach a group that was declined -- so the two
-//!    gaps have to close TOGETHER or neither moves.
+//!    gave `(229, 69, 88, 0, 0)` against the earlier baseline. `extra` reaches
+//!    zero only by taking every AGREED merge with it, so no blunt refusal
+//!    separates the ones TiDB does not record.
+//!  * REMOVE THE OUTER-JOIN ACCEPTANCE from [`collect`] -- put back
+//!    `join.tp != JoinType::Cross` as a decline -- gives
+//!    `(229, 144, 88, 80, 7)`, the old numbers exactly.
+//!  * DISABLE THE LEADING PREFIX ([`leading_prefix`] returns `None` before it
+//!    reads a hint) gives `(229, 144, 88, 80, 7)` as well, WITH the outer-join
+//!    acceptance still in place. That is batch69's finding reproduced from the
+//!    other side: with pseudo statistics every leaf ties at `cumCost` 10000,
+//!    so [`greedy_solve`]'s stable sort and its strict `curCost < bestCost`
+//!    reproduce the written order and the accepted group changes nothing on
+//!    its own. The two halves close the same two statements only TOGETHER.
 //!
 //! No cost gate over the tree this module leaves standing can reach the tree
 //! TiDB records.
@@ -203,8 +238,9 @@ use std::collections::BTreeSet;
 
 use tidb_ast::{BinaryOp, Expr, Join, JoinNode, JoinType, QueryStmt, SelectField};
 use tidb_datatype::FieldType;
+use tidb_expr::Columns as _;
 use tidb_planner::cardinality::derive_stats::{
-    derive_stats, ColumnId, DeriveStatsContext, LogicalNode, ProjectionExpr,
+    derive_stats, ColumnId, DeriveStatsContext, JoinKind, LogicalNode, ProjectionExpr,
 };
 
 use crate::driver::catalog::{Catalog, TableEntry};
@@ -319,16 +355,20 @@ impl Ids {
     }
 }
 
-/// Reorders `join` the way Go's DP solver would, or `None` to keep it as
+/// Reorders `join` the way Go's solvers would, or `None` to keep it as
 /// written.
 pub(crate) fn reorder(
     join: &Join,
+    select: &tidb_ast::SelectStmt,
     where_clause: Option<&Expr>,
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Option<Reordered> {
     let threshold = ctx.join_reorder_threshold();
+    let scope = Scope {
+        outer_join_reorder: ctx.outer_join_reorder(),
+    };
     let mut ids = Ids::default();
     let mut leaves = Vec::new();
     let mut on_conds = Vec::new();
@@ -336,6 +376,7 @@ pub(crate) fn reorder(
         join,
         catalog,
         current_db,
+        &scope,
         &mut ids,
         &mut leaves,
         &mut on_conds,
@@ -345,17 +386,26 @@ pub(crate) fn reorder(
     if leaves.len() < 2 {
         return None;
     }
-    // Go: `useGreedy = !allInnerJoin || joinGroupNum > threshold`. `collect`
-    // only yields all-inner groups, so the group size decides alone. Compared
-    // in `i64` because a session may set the threshold NEGATIVE, which is more
+    // Go's `hasOuterJoin`, and with it `allInnerJoin`.
+    let extended: BTreeSet<usize> = on_conds
+        .iter()
+        .filter_map(|cond| cond.outer.map(|outer| outer.extended))
+        .collect();
+    // Go: `useGreedy = !allInnerJoin || joinGroupNum > threshold`. Compared in
+    // `i64` because a session may set the threshold NEGATIVE, which is more
     // greedy still, not less.
-    let use_greedy = i64::from(threshold) < leaves.len() as i64;
+    let use_greedy = !extended.is_empty() || i64::from(threshold) < leaves.len() as i64;
 
     // Every conjunct the group can see: the `ON`s it absorbed and the `WHERE`
     // above it, which is where the comma spelling puts its equalities.
-    let mut conjuncts: Vec<&Expr> = on_conds.clone();
+    let mut conjuncts: Vec<(&Expr, Option<Outer>)> = on_conds
+        .iter()
+        .map(|cond| (cond.expr, cond.outer))
+        .collect();
     if let Some(where_clause) = where_clause {
-        crate::plan_trace::collect_and(where_clause, &mut conjuncts);
+        let mut flat = Vec::new();
+        crate::plan_trace::collect_and(where_clause, &mut flat);
+        conjuncts.extend(flat.into_iter().map(|expr| (expr, None)));
     }
 
     let mut edges: Vec<Edge<'_>> = Vec::new();
@@ -363,34 +413,102 @@ pub(crate) fn reorder(
     // Go's `s.otherConds` as the greedy solver first sees it, one entry per
     // conjunct, holding the leaves that conjunct reads.
     let mut others: Vec<BTreeSet<usize>> = Vec::new();
-    for conjunct in &conjuncts {
-        match classify(conjunct, &leaves)? {
+    // Go's `nullExtendedCols` half of `hasOtherJoinCondition`: a conjunct
+    // reading a null-extended column may not be used to connect a pair,
+    // because doing so would move it above the outer join that produced the
+    // NULLs it tests.
+    let mut null_extended_others = false;
+    for (conjunct, outer) in &conjuncts {
+        match classify(conjunct, &leaves, *outer)? {
             Classified::Edge(edge) => edges.push(edge),
-            Classified::Single(leaf) => filters[leaf].push((*conjunct).clone()),
-            Classified::Other(touched) => others.push(touched),
+            Classified::Single(leaf) => {
+                // A single-relation predicate over a null-extended relation is
+                // Go's `simplifyOuterJoin` case -- the outer join becomes an
+                // INNER one before reorder ever runs -- which this module does
+                // not model.
+                if extended.contains(&leaf) {
+                    return None;
+                }
+                filters[leaf].push((*conjunct).clone());
+            }
+            Classified::Other(touched) => {
+                if touched.iter().any(|leaf| extended.contains(leaf)) {
+                    null_extended_others = true;
+                } else {
+                    others.push(touched);
+                }
+            }
             Classified::Foreign if use_greedy => return None,
             Classified::Foreign => {}
         }
     }
+    // Go's `extractJoinGroupImpl` walks THROUGH a `Selection` only under
+    // `@@tidb_opt_join_reorder_through_sel` (`rule_join_reorder.go:67-80`),
+    // and a `WHERE` conjunct over a null-extended column is exactly where
+    // predicate pushdown leaves one standing: it cannot become the outer
+    // join's `ON`, so it stops above it. With the variable OFF that Selection
+    // splits the group; this module declines the whole reorder instead of
+    // modelling the split, which keeps the WRITTEN tree -- the tree the
+    // `tidb_opt_join_reorder_through_sel = 0` recordings hold.
+    if null_extended_others && !ctx.join_reorder_through_sel() {
+        return None;
+    }
     if edges.is_empty() {
         return None;
     }
+    // Every `ON` conjunct of an OUTER join has to be an equality this module
+    // can re-spell, because an outer join's `ON` decides which rows are
+    // null-extended. Go keeps the rest as `joinTypeWithExtMsg.outerBindCondition`
+    // and re-attaches it to the edge; that split is not modelled here.
+    if on_conds.iter().any(|cond| {
+        cond.outer.is_some()
+            && !matches!(
+                classify(cond.expr, &leaves, cond.outer),
+                Some(Classified::Edge(_))
+            )
+    }) {
+        return None;
+    }
+    // An outer join's null-extended leaf may be reached by that join's OWN
+    // edges and by nothing else. Another equality into it would let the greedy
+    // join it before the outer join is formed, which null-extends a different
+    // set of rows.
+    for edge in &edges {
+        let touches = [edge.left.0, edge.right.0];
+        for leaf in touches {
+            if extended.contains(&leaf) && edge.outer.map(|outer| outer.extended) != Some(leaf) {
+                return None;
+            }
+        }
+    }
     // Non-edge `ON` conjuncts are re-attached to the rebuilt root below, so
     // nothing the statement wrote is dropped. Attaching them at the root is
-    // always sound here because every join in the group is an INNER join,
-    // whose `ON` is a filter over the same pairs.
+    // sound only over an INNER root, whose `ON` is a filter over the same
+    // pairs; [`rebuild`] declines otherwise.
     let residual_on: Vec<&Expr> = on_conds
         .iter()
-        .copied()
-        .filter(|cond| !matches!(classify(cond, &leaves), Some(Classified::Edge(_))))
+        .filter(|cond| {
+            !matches!(
+                classify(cond.expr, &leaves, cond.outer),
+                Some(Classified::Edge(_))
+            )
+        })
+        .map(|cond| cond.expr)
         .collect();
 
     // Go's `not(isnull(key))`, derived by `LogicalJoin.PredicatePushDown` for
-    // every equi key on both sides.
+    // every equi key. An OUTER join derives it for the NULL-EXTENDED side
+    // alone -- `DeriveOtherConditions(p, ..., false, true)` under
+    // `case base.LeftOuterJoin` (`logical_join.go:208-212`) -- because every
+    // preserved-side row survives whether or not its key is NULL.
     let mut demands: Vec<Demand> = (0..leaves.len()).map(|_| Demand::default()).collect();
     for edge in &edges {
-        demands[edge.left.0].not_null.insert(edge.left.1);
-        demands[edge.right.0].not_null.insert(edge.right.1);
+        for side in [edge.left, edge.right] {
+            let preserved = edge.outer.is_some_and(|outer| outer.extended != side.0);
+            if !preserved {
+                demands[side.0].not_null.insert(side.1);
+            }
+        }
     }
     for (demand, filters) in demands.iter_mut().zip(filters) {
         demand.filters = filters;
@@ -404,11 +522,16 @@ pub(crate) fn reorder(
 
     let context = DeriveStatsContext::with_join_reorder_threshold(threshold);
     let plan = if use_greedy {
-        greedy_solve(&leaves, &edges, &models, &context, &others)?
+        // Go `CheckAndGenerateLeadingHint` plus `generateLeadingJoinGroup`:
+        // the tables the statement PINNED to the front of the group.
+        let leading = leading_prefix(select, &leaves, &edges, &models, &context, ctx);
+        greedy_solve(&leaves, &edges, &models, &context, &others, leading)?
     } else {
         // Go's DP arm reads `otherConds` through its own `totalNonEqEdges`,
         // which is not modelled here; the opt-in arm keeps declining to use
-        // them, which is the same tree it built before.
+        // them, which is the same tree it built before. It is only ever
+        // reached by an ALL-INNER group -- `useGreedy` above is forced by any
+        // outer join -- so its inner-only shapes stay exact.
         solve(&leaves, &edges, &models, &context)?
     };
     let mut order = Vec::new();
@@ -430,6 +553,9 @@ struct Edge<'a> {
     left: (usize, usize),
     right: (usize, usize),
     expr: &'a Expr,
+    /// Go's `joinTypes[idx]`, parallel to `eqEdges[idx]`: the join this
+    /// equality was written on, when that join is an outer one.
+    outer: Option<Outer>,
 }
 
 enum Classified<'a> {
@@ -452,7 +578,11 @@ enum Classified<'a> {
 /// `None` DECLINES the whole reorder: an equality spanning two leaves that is
 /// not a bare `col = col` is Go's injected-projection case, which this module
 /// does not build.
-fn classify<'a>(conjunct: &'a Expr, leaves: &[Leaf<'_>]) -> Option<Classified<'a>> {
+fn classify<'a>(
+    conjunct: &'a Expr,
+    leaves: &[Leaf<'_>],
+    outer: Option<Outer>,
+) -> Option<Classified<'a>> {
     let mut touched = BTreeSet::new();
     for path in column_paths(conjunct) {
         match resolve(&path, leaves) {
@@ -477,6 +607,7 @@ fn classify<'a>(conjunct: &'a Expr, leaves: &[Leaf<'_>]) -> Option<Classified<'a
                 left,
                 right,
                 expr: conjunct,
+                outer,
             }));
         }
     }
@@ -618,45 +749,139 @@ fn resolve_output(path: &[String], visible: &str, names: &[String]) -> Option<us
 // Extraction
 // ---------------------------------------------------------------------------
 
-/// Go's `extractJoinGroupImpl`, narrowed: walks the inner-join spine, pushing
-/// every leaf and every `ON` conjunct. `false` DECLINES.
+/// One `ON` conjunct together with the join that carries it.
+struct OnCond<'a> {
+    expr: &'a Expr,
+    /// `None` for an INNER join, whose `ON` is a filter over the same pairs
+    /// the `WHERE` sees. `Some` for an outer one, whose `ON` decides which
+    /// rows are NULL-EXTENDED and can therefore never be moved.
+    outer: Option<Outer>,
+}
+
+/// An outer join, as the flattened group remembers it.
+///
+/// The whole join is identified by the ONE leaf it null-extends: [`collect`]
+/// only accepts an outer join whose extended side is a single relation, so
+/// there is exactly one such leaf per outer join in the group.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Outer {
+    /// `JoinType::Left` or `JoinType::Right`, which is the side the statement
+    /// WROTE the preserved relation on and therefore the spelling the rebuilt
+    /// node has to keep.
+    tp: JoinType,
+    /// The written index of the leaf this join null-extends.
+    extended: usize,
+}
+
+/// Whether an outer join may join the group at all: Go's
+/// `SessionVars.EnableOuterJoinReorder`, plus this module's own requirement
+/// that the extended side be a single relation.
+struct Scope {
+    outer_join_reorder: bool,
+}
+
+/// Go's `extractJoinGroupImpl`, narrowed: walks the join spine, pushing every
+/// leaf and every `ON` conjunct. `false` DECLINES.
+///
+/// An outer join is NOT one of Go's stops (see the module doc); it is accepted
+/// here when it carries equal conditions, when
+/// `@@tidb_enable_outer_join_reorder` is ON, and when its NULL-EXTENDED side
+/// is a single relation. The last is this module's own bound: the extended
+/// side has to move as one unit, and a single leaf is the only unit whose
+/// atomicity [`join_shape`](self) can state without modelling Go's
+/// `outerBindCondition` split of a nested one.
 fn collect<'a>(
     join: &'a Join,
     catalog: &'a Catalog,
     current_db: &str,
+    scope: &Scope,
     ids: &mut Ids,
     leaves: &mut Vec<Leaf<'a>>,
-    on_conds: &mut Vec<&'a Expr>,
+    on_conds: &mut Vec<OnCond<'a>>,
 ) -> bool {
     // The parser's single-relation wrapper is not a join at all.
     if join.right.is_none() && join.on.is_none() && join.using.is_empty() && !join.natural {
-        return push_node(&join.left, catalog, current_db, ids, leaves, on_conds);
+        return push_node(
+            &join.left, catalog, current_db, scope, ids, leaves, on_conds,
+        );
     }
-    if join.tp != JoinType::Cross || join.straight || join.natural || !join.using.is_empty() {
+    if join.straight || join.natural || !join.using.is_empty() {
         return false;
     }
+    let Some(right) = &join.right else {
+        return false;
+    };
+    // `(join.JoinType == LeftOuterJoin || RightOuterJoin) && join.EqualConditions == nil`
+    // is Go's own stop, and an outer join with no `ON` at all cannot carry
+    // one.
+    let outer = match join.tp {
+        JoinType::Cross => None,
+        JoinType::Left | JoinType::Right => {
+            if !scope.outer_join_reorder || join.on.is_none() {
+                return false;
+            }
+            Some(join.tp)
+        }
+    };
+    // The extended side is pushed as ONE leaf; the preserved side keeps
+    // walking the spine.
+    let extended = match outer {
+        None => None,
+        Some(JoinType::Left) => {
+            if !push_node(
+                &join.left, catalog, current_db, scope, ids, leaves, on_conds,
+            ) {
+                return false;
+            }
+            let at = leaves.len();
+            match leaf_of(right, catalog, current_db, ids) {
+                Some(leaf) => leaves.push(leaf),
+                None => return false,
+            }
+            Some(at)
+        }
+        Some(_) => {
+            let at = leaves.len();
+            match leaf_of(&join.left, catalog, current_db, ids) {
+                Some(leaf) => leaves.push(leaf),
+                None => return false,
+            }
+            if !push_node(right, catalog, current_db, scope, ids, leaves, on_conds) {
+                return false;
+            }
+            Some(at)
+        }
+    };
     if let Some(on) = &join.on {
-        crate::plan_trace::collect_and(on, on_conds);
+        let mut conds = Vec::new();
+        crate::plan_trace::collect_and(on, &mut conds);
+        on_conds.extend(conds.into_iter().map(|expr| OnCond {
+            expr,
+            outer: extended.map(|extended| Outer {
+                tp: join.tp,
+                extended,
+            }),
+        }));
     }
-    if !push_node(&join.left, catalog, current_db, ids, leaves, on_conds) {
-        return false;
+    if outer.is_some() {
+        return true;
     }
-    match &join.right {
-        Some(right) => push_node(right, catalog, current_db, ids, leaves, on_conds),
-        None => true,
-    }
+    push_node(
+        &join.left, catalog, current_db, scope, ids, leaves, on_conds,
+    ) && push_node(right, catalog, current_db, scope, ids, leaves, on_conds)
 }
 
 fn push_node<'a>(
     node: &'a JoinNode,
     catalog: &'a Catalog,
     current_db: &str,
+    scope: &Scope,
     ids: &mut Ids,
     leaves: &mut Vec<Leaf<'a>>,
-    on_conds: &mut Vec<&'a Expr>,
+    on_conds: &mut Vec<OnCond<'a>>,
 ) -> bool {
     if let JoinNode::Join(inner) = node {
-        return collect(inner, catalog, current_db, ids, leaves, on_conds);
+        return collect(inner, catalog, current_db, scope, ids, leaves, on_conds);
     }
     match leaf_of(node, catalog, current_db, ids) {
         Some(leaf) => {
@@ -755,17 +980,32 @@ fn leaf_of<'a>(
             let from = select.from.as_ref()?;
             let mut inner = Vec::new();
             let mut inner_on = Vec::new();
-            if !collect(from, catalog, current_db, ids, &mut inner, &mut inner_on) {
+            // A derived table's own `FROM` is modelled by [`emit_tree`], which
+            // builds INNER joins only, so an outer join inside one is still a
+            // decline here. Go reaches it by recursing `optimizeRecursive`
+            // into the subquery; this module leaves that relation atomic.
+            let inner_scope = Scope {
+                outer_join_reorder: false,
+            };
+            if !collect(
+                from,
+                catalog,
+                current_db,
+                &inner_scope,
+                ids,
+                &mut inner,
+                &mut inner_on,
+            ) {
                 return None;
             }
-            let mut conjuncts = inner_on;
+            let mut conjuncts: Vec<&Expr> = inner_on.iter().map(|cond| cond.expr).collect();
             if let Some(where_clause) = &select.where_clause {
                 crate::plan_trace::collect_and(where_clause, &mut conjuncts);
             }
             let mut inner_edges = Vec::new();
             let mut inner_filters = vec![Vec::new(); inner.len()];
             for conjunct in &conjuncts {
-                match classify(conjunct, &inner)? {
+                match classify(conjunct, &inner, None)? {
                     Classified::Edge(edge) => inner_edges.push((edge.left, edge.right)),
                     Classified::Single(leaf) => inner_filters[leaf].push((*conjunct).clone()),
                     // A derived table's own cost model carries equi keys and
@@ -993,6 +1233,7 @@ fn emit_tree(derived: &DerivedRel<'_>, demands: &[Demand]) -> Option<LogicalNode
             right: Box::new(emit(&leaf.rel, demand)?),
             left_keys,
             right_keys,
+            kind: JoinKind::Inner,
         };
         joined.push(right);
     }
@@ -1011,6 +1252,9 @@ enum Plan {
         left: Box<Plan>,
         right: Box<Plan>,
         edges: Vec<usize>,
+        /// The spelling the rebuilt `FROM` node takes: `Cross` for an inner
+        /// join, `Left`/`Right` for the outer join this pair re-forms.
+        tp: JoinType,
     },
 }
 
@@ -1099,6 +1343,7 @@ fn solve(
                         edges,
                         leaves,
                         context,
+                        Shape::INNER,
                     );
                     // `bestPlan[nodeBitmap].cumCost > curCost` is STRICT, so
                     // the first candidate enumerated survives a tie.
@@ -1131,15 +1376,18 @@ fn solve(
 /// nothing to do; a leftover is the disconnected case and is declined, leaving
 /// the statement's own cartesian product where it was written.
 ///
-/// There is no leading hint here -- this tier has no `/*+ leading(...) */` --
-/// so Go's `leadingJoinGroup` prefix and its inapplicable-hint warning have no
-/// counterpart.
+/// `leading` is Go's `s.leadingJoinGroup` after `generateLeadingJoinGroup`:
+/// the sub-tree the statement PINNED to the front. `solve` prepends it to the
+/// sorted group so `constructConnectedJoinTree` takes it as `curJoinTree`
+/// (`rule_join_reorder_greedy.go:70-75`), and the leaves it already holds are
+/// dropped from the group.
 fn greedy_solve(
     leaves: &[Leaf<'_>],
     edges: &[Edge<'_>],
     models: &[LogicalNode],
     context: &DeriveStatsContext,
     others: &[BTreeSet<usize>],
+    leading: Option<Candidate>,
 ) -> Option<Plan> {
     // `generateJoinOrderNode`: each leaf's own `RecursiveDeriveStats` and its
     // `baseNodeCumCost`, which for a leaf is the sum of its subtree's row
@@ -1158,6 +1406,20 @@ fn greedy_solve(
     // in. That order is what the strict `<` in `construct_connected` then
     // resolves ties by, so the stability is load-bearing, not cosmetic.
     group.sort_by(|left, right| left.cum_cost.total_cmp(&right.cum_cost));
+
+    // `leadingJoinNodes := append(leadingJoinNodes, s.curJoinGroup...)`: the
+    // pinned tree goes FIRST, ahead of the sort, and the leaves it consumed
+    // leave the group.
+    if let Some(leading) = leading {
+        let mut pinned = Vec::new();
+        leading.plan.leaves(&mut pinned);
+        group.retain(|node| {
+            let mut own = Vec::new();
+            node.plan.leaves(&mut own);
+            !own.iter().any(|leaf| pinned.contains(leaf))
+        });
+        group.insert(0, leading);
+    }
 
     let tree = construct_connected(&mut group, leaves, edges, context, others);
     // Anything left over is a second connected component: Go's
@@ -1189,16 +1451,20 @@ fn construct_connected(
             // `tidb_opt_cartesian_join_order_threshold` at its default of `0`.
             // Both of Go's two refusal sites reduce to this one skip.
             let used = connecting_plans(&current.plan, &node.plan, edges);
-            if used.is_empty() {
-                let mut node_leaves = Vec::new();
-                node.plan.leaves(&mut node_leaves);
-                if !has_other_join_condition(&current_leaves, &node_leaves, others) {
-                    continue;
-                }
+            let mut node_leaves = Vec::new();
+            node.plan.leaves(&mut node_leaves);
+            if used.is_empty() && !has_other_join_condition(&current_leaves, &node_leaves, others) {
+                continue;
             }
+            // `checkConnection` reads ONE `joinTypes[idx]` per pair and, for
+            // an outer one, swaps the node positions so the side the statement
+            // wrote on the left stays on the left.
+            let Some(shape) = shape_of(&current_leaves, &node_leaves, &used, edges) else {
+                continue;
+            };
             // `curJoinTree` is Go's LEFT argument and the candidate node its
             // right; for an inner join `checkConnection` keeps those positions.
-            let candidate = build(&current, node, &used, edges, leaves, context);
+            let candidate = build(&current, node, &used, edges, leaves, context, shape);
             // `curCost < bestCost` is STRICT, so among equal costs the node
             // enumerated first -- the cheapest by the sort above -- wins.
             //
@@ -1262,6 +1528,84 @@ fn connecting(
     used
 }
 
+/// How one pair is spelled: Go's `joinTypeWithExtMsg` plus the node swap
+/// `checkConnection` performs to keep an outer join's sides where the
+/// statement wrote them.
+#[derive(Clone, Copy)]
+struct Shape {
+    /// The rebuilt `FROM` node's join type.
+    tp: JoinType,
+    /// The cost model's own kind, AFTER the swap.
+    kind: JoinKind,
+    /// Whether the candidate node takes the LEFT position.
+    swap: bool,
+}
+
+impl Shape {
+    const INNER: Self = Self {
+        tp: JoinType::Cross,
+        kind: JoinKind::Inner,
+        swap: false,
+    };
+}
+
+/// Go `checkConnection`'s join-type half: which single join type a pair's
+/// connecting edges spell, and whether the two plans have to change places.
+///
+/// `None` REFUSES the pair, which is this module's answer wherever Go's own
+/// `joinTypes[idx]` would be ambiguous or the null-extended side is not
+/// exactly one of the two plans. Refusing is fail-closed: the pair is simply
+/// not built, and if that leaves the group unconsumed [`greedy_solve`]
+/// declines the whole reorder.
+fn shape_of(
+    left_leaves: &[usize],
+    right_leaves: &[usize],
+    used: &[usize],
+    edges: &[Edge<'_>],
+) -> Option<Shape> {
+    let mut outer: Option<Outer> = None;
+    let mut inner_edge = false;
+    for index in used {
+        match edges[*index].outer {
+            None => inner_edge = true,
+            Some(next) => match outer {
+                None => outer = Some(next),
+                Some(current) if current == next => {}
+                // Two different outer joins over one pair: Go reads a single
+                // `joinTypes[idx]` here and this module will not guess which.
+                Some(_) => return None,
+            },
+        }
+    }
+    let Some(outer) = outer else {
+        return Some(Shape::INNER);
+    };
+    // An inner edge beside an outer one is the same ambiguity.
+    if inner_edge {
+        return None;
+    }
+    // The null-extended relation joins as a whole and as itself.
+    let extended_is_right = right_leaves == [outer.extended];
+    let extended_is_left = left_leaves == [outer.extended];
+    if !(extended_is_left || extended_is_right) {
+        return None;
+    }
+    match outer.tp {
+        // `A LEFT JOIN b`: the preserved side keeps the left position.
+        JoinType::Left => Some(Shape {
+            tp: JoinType::Left,
+            kind: JoinKind::LeftOuter,
+            swap: extended_is_left,
+        }),
+        // `a RIGHT JOIN B`: the extended side keeps the left position.
+        _ => Some(Shape {
+            tp: JoinType::Right,
+            kind: JoinKind::RightOuter,
+            swap: extended_is_right,
+        }),
+    }
+}
+
 /// Go `newJoinWithEdge` plus `calcJoinCumCost`.
 fn build(
     left: &Candidate,
@@ -1270,7 +1614,13 @@ fn build(
     edges: &[Edge<'_>],
     leaves: &[Leaf<'_>],
     context: &DeriveStatsContext,
+    shape: Shape,
 ) -> Candidate {
+    let (left, right) = if shape.swap {
+        (right, left)
+    } else {
+        (left, right)
+    };
     let mut left_leaves = Vec::new();
     left.plan.leaves(&mut left_leaves);
     let mut left_keys = Vec::new();
@@ -1295,6 +1645,7 @@ fn build(
         right: Box::new(right.model.clone()),
         left_keys,
         right_keys,
+        kind: shape.kind,
     };
     let cum_cost = derive_stats(&model, context).cum_cost();
     Candidate {
@@ -1302,10 +1653,113 @@ fn build(
             left: Box::new(left.plan.clone()),
             right: Box::new(right.plan.clone()),
             edges: used.to_vec(),
+            tp: shape.tp,
         },
         model,
         cum_cost,
     }
+}
+
+// ---------------------------------------------------------------------------
+// The leading hint
+// ---------------------------------------------------------------------------
+
+/// Go `CheckAndGenerateLeadingHint` (`rule_join_reorder.go:376`) followed by
+/// `baseSingleGroupJoinOrderSolver.generateLeadingJoinGroup` (`:556`).
+///
+/// The statement's `/*+ leading(a, b, ...) */` names relations of THIS group
+/// in the order they must join. Each name is found in the still-available
+/// nodes and removed, and the running tree is extended by
+/// `connectJoinNodes` -- `checkConnection` plus `makeJoin`, which is exactly
+/// [`shape_of`] plus [`build`] here. The result becomes
+/// `s.leadingJoinGroup`, which [`greedy_solve`] puts at the front of the
+/// group so `constructConnectedJoinTree` starts from it.
+///
+/// `None` leaves the group unpinned, which is Go's `ok == false` arm. Go warns
+/// there; this module warns only for the ONE reason it can state exactly --
+/// a named table this group does not hold -- because every other reason
+/// depends on machinery below.
+///
+/// NAMED RESIDUE: a hint table carrying an `@sel_N` query-block qualifier is
+/// declined SILENTLY. Go resolves such a name against the plan of that block,
+/// and a block other than this `FROM`'s own is reachable for Go only after
+/// `extractJoinGroupImpl` has looked through the `Selection`/`Projection`
+/// between them. This module's group never spans two blocks, so it cannot
+/// tell whether Go's hint applied, and a warning either way would be a guess.
+fn leading_prefix(
+    select: &tidb_ast::SelectStmt,
+    leaves: &[Leaf<'_>],
+    edges: &[Edge<'_>],
+    models: &[LogicalNode],
+    context: &DeriveStatsContext,
+    ctx: &crate::StmtContext,
+) -> Option<Candidate> {
+    use tidb_ast::{HintKind, LeadingElement};
+
+    let mut written = select.hints.iter().filter_map(|hint| match &hint.kind {
+        HintKind::Leading { elements, .. } => Some(elements),
+        _ => None,
+    });
+    let elements = written.next()?;
+    if written.next().is_some() {
+        // `if hasDiffLeadingHint { ... }` -- Go's own wording.
+        ctx.append_warning(
+            1815,
+            "We can only use one leading hint at most, when multiple leading \
+             hints are used, all leading hints will be invalid",
+        );
+        return None;
+    }
+    let node_of = |leaf: usize| Candidate {
+        plan: Plan::Leaf(leaf),
+        cum_cost: derive_stats(&models[leaf], context).cum_cost(),
+        model: models[leaf].clone(),
+    };
+    let mut available: Vec<usize> = (0..leaves.len()).collect();
+    let mut current: Option<Candidate> = None;
+    for element in elements {
+        // A parenthesized nested group is Go's recursive `LeadingList` arm,
+        // which this module does not build.
+        let LeadingElement::Table(table) = element else {
+            return None;
+        };
+        if table.qb_name.is_some() || table.db_name.is_some() {
+            return None;
+        }
+        let found = available
+            .iter()
+            .position(|leaf| leaves[*leaf].visible.eq_ignore_ascii_case(&table.name));
+        let Some(at) = found else {
+            ctx.append_warning(
+                1815,
+                "leading hint is inapplicable, check if the leading hint table is valid",
+            );
+            return None;
+        };
+        let next = node_of(available.remove(at));
+        current = Some(match current {
+            None => next,
+            Some(current) => {
+                let (mut left_leaves, mut right_leaves) = (Vec::new(), Vec::new());
+                current.plan.leaves(&mut left_leaves);
+                next.plan.leaves(&mut right_leaves);
+                // `connectJoinNodes` refuses a pair with no equality edge; the
+                // cartesian one Go still builds when the group holds no outer
+                // join has no `ON` to spell here, so it is declined too.
+                let used = connecting_plans(&current.plan, &next.plan, edges);
+                if used.is_empty() {
+                    return None;
+                }
+                let shape = shape_of(&left_leaves, &right_leaves, &used, edges)?;
+                build(&current, &next, &used, edges, leaves, context, shape)
+            }
+        });
+    }
+    // A one-table leading hint pins nothing Go's sort does not already decide.
+    let current = current?;
+    let mut pinned = Vec::new();
+    current.plan.leaves(&mut pinned);
+    (pinned.len() > 1).then_some(current)
 }
 
 // ---------------------------------------------------------------------------
@@ -1321,6 +1775,11 @@ fn rebuild(
     let JoinNode::Join(mut join) = rebuild_node(plan, leaves, edges)? else {
         return None;
     };
+    // An OUTER root's `ON` decides which rows are null-extended, so a leftover
+    // conjunct cannot be conjoined onto it the way an inner root's filter can.
+    if !residual_on.is_empty() && join.tp != JoinType::Cross {
+        return None;
+    }
     for cond in residual_on {
         join.on = Some(match join.on.take() {
             Some(existing) => Expr::Binary(
@@ -1341,6 +1800,7 @@ fn rebuild_node(plan: &Plan, leaves: &[Leaf<'_>], edges: &[Edge<'_>]) -> Option<
             left,
             right,
             edges: used,
+            tp,
         } => {
             // A join the greedy reached through `hasOtherJoinCondition` alone
             // has no equality edge, so there is no `ON` to spell here: Go puts
@@ -1357,7 +1817,7 @@ fn rebuild_node(plan: &Plan, leaves: &[Leaf<'_>], edges: &[Edge<'_>]) -> Option<
             Some(JoinNode::Join(Box::new(Join {
                 left: rebuild_node(left, leaves, edges)?,
                 right: Some(rebuild_node(right, leaves, edges)?),
-                tp: JoinType::Cross,
+                tp: *tp,
                 straight: false,
                 on: Some(on),
                 using: Vec::new(),
@@ -1421,24 +1881,38 @@ pub(crate) fn row_source(
     let mut ids = Ids::default();
     let mut leaves = Vec::new();
     let mut on_conds = Vec::new();
+    // The row counts here feed a JOIN-STRATEGY comparison, whose
+    // [`LogicalNode::Join`] is built inner-only; an outer join's own count is
+    // `max(equality estimate, preserved side)` and is not derivable from the
+    // leaf set alone. So this source keeps declining an outer-join group,
+    // which is the answer it gave before [`reorder`] started accepting one.
+    let scope = Scope {
+        outer_join_reorder: false,
+    };
     if !collect(
         join,
         catalog,
         current_db,
+        &scope,
         &mut ids,
         &mut leaves,
         &mut on_conds,
     ) {
         return None;
     }
-    let mut conjuncts: Vec<&Expr> = on_conds;
+    let mut conjuncts: Vec<(&Expr, Option<Outer>)> = on_conds
+        .iter()
+        .map(|cond| (cond.expr, cond.outer))
+        .collect();
     if let Some(where_clause) = where_clause {
-        crate::plan_trace::collect_and(where_clause, &mut conjuncts);
+        let mut flat = Vec::new();
+        crate::plan_trace::collect_and(where_clause, &mut flat);
+        conjuncts.extend(flat.into_iter().map(|expr| (expr, None)));
     }
     let mut edges = Vec::new();
     let mut filters: Vec<Vec<Expr>> = vec![Vec::new(); leaves.len()];
-    for conjunct in &conjuncts {
-        match classify(conjunct, &leaves)? {
+    for (conjunct, outer) in &conjuncts {
+        match classify(conjunct, &leaves, *outer)? {
             Classified::Edge(edge) => edges.push((edge.left, edge.right)),
             Classified::Single(leaf) => filters[leaf].push((*conjunct).clone()),
             Classified::Other(_) | Classified::Foreign => {}
@@ -1484,6 +1958,7 @@ impl RowSource {
             right: Box::new(right_model),
             left_keys,
             right_keys,
+            kind: JoinKind::Inner,
         };
         Some(JoinRows {
             left: left_rows,
@@ -1509,6 +1984,7 @@ impl RowSource {
                 right: Box::new(self.leaves[right].model.clone()),
                 left_keys,
                 right_keys,
+                kind: JoinKind::Inner,
             };
             joined.push(right);
         }

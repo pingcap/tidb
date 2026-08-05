@@ -71,6 +71,7 @@ fn fired(sql: &str, catalog: &Catalog, threshold: i32) -> Option<Vec<usize>> {
     };
     crate::driver::join_reorder::reorder(
         select.from.as_ref().unwrap(),
+        select,
         select.where_clause.as_ref(),
         catalog,
         "test",
@@ -370,10 +371,12 @@ fn a_group_with_no_equality_keeps_the_written_tree() {
     assert_eq!(fired(sql, &catalog, 10), None);
 }
 
-/// AN OUTER JOIN ANYWHERE IN THE GROUP. Go stops extracting at one unless
-/// `EnableOuterJoinReorder` is on AND the join has equality conditions
-/// (`rule_join_reorder.go:133-159`); this module declines the whole group,
-/// which is the conservative side of that rule.
+/// A SECOND EQUALITY INTO THE NULL-EXTENDED LEAF. `t5` is null-extended by
+/// the left join and is ALSO reachable from `t2` by an inner equality, so a
+/// reorder could join `t2` to `t5` before the outer join is formed -- which
+/// null-extends a different set of rows. Go carries the two edges as separate
+/// `joinTypes` entries and resolves the order through machinery this module
+/// does not have, so the whole group is declined here.
 #[test]
 fn an_edge_over_an_outer_join_is_refused() {
     let catalog = tables();
@@ -461,4 +464,167 @@ fn a_star_still_expands_in_the_written_order() {
         .collect();
     assert_eq!(numbers, vec![vec![1, 10, 1, 50, 1, 14]]);
     assert_eq!(reordered, written, "the reorder moved the output columns");
+}
+
+// ---------------------------------------------------------------------------
+// The outer-join group and the `leading` hint
+// ---------------------------------------------------------------------------
+
+/// The schema `t/planner/core/join_reorder2.test` creates.
+fn join_reorder2_tables() -> Catalog {
+    let mut catalog = Catalog::default();
+    for name in ["t1", "t2", "t3", "t4", "t5"] {
+        crate::run_create_table_on(
+            &format!("CREATE TABLE {name} (id INT NOT NULL PRIMARY KEY, name VARCHAR(100))"),
+            &mut catalog,
+        )
+        .unwrap();
+    }
+    catalog
+}
+
+/// [`fired`] with `@@tidb_opt_join_reorder_through_sel` set, which is the
+/// variable that decides whether the `Selection` over an outer join is a
+/// barrier.
+fn fired_through_sel(sql: &str, catalog: &Catalog, through_sel: bool) -> Option<Vec<usize>> {
+    let ctx = crate::StmtContext::for_query().with_join_reorder_through_sel(through_sel);
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let tidb_ast::QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    crate::driver::join_reorder::reorder(
+        select.from.as_ref().unwrap(),
+        select,
+        select.where_clause.as_ref(),
+        catalog,
+        "test",
+        &ctx,
+    )
+    .map(|plan| plan.written_order)
+}
+
+/// The two statements of `planner/core/join_reorder2` this module reaches,
+/// verbatim from `t/planner/core/join_reorder2.test:17-18`. Their written
+/// leaves are `t1`, `t3`, `t4`, `t2` in that order.
+const LEADING_T1_T2: &str = "select /*+ leading(t1, t2) */ * from t1 \
+     inner join t3 on t1.id=t3.id left join t4 on t4.id=t3.id \
+     join t2 on t1.id=t2.id where t3.name like 'test3' or t4.name like 'test4'";
+const LEADING_T3_T4: &str = "select /*+ leading(t3, t4, t1, t2) */ * from t1 \
+     inner join t3 on t1.id=t3.id left join t4 on t4.id=t3.id \
+     join t2 on t1.id=t2.id where t3.name like 'test3' or t4.name like 'test4'";
+
+/// `r/planner/core/join_reorder2.result` records, for `LEADING_T1_T2` at
+/// `set @@tidb_opt_join_reorder_through_sel = 1`:
+///
+/// ```text
+/// └─MergeJoin  left outer join, left side:MergeJoin, left key:t3.id, right key:t4.id
+///   ├─TableFullScan  table:t4  keep order:true
+///   └─MergeJoin(Probe)  inner join, left key:t1.id, right key:t3.id
+///     ├─TableFullScan  table:t3  keep order:true
+///     └─MergeJoin(Probe)  inner join, left key:t1.id, right key:t2.id
+///       ├─TableFullScan  table:t2  keep order:true
+///       └─TableFullScan  table:t1  keep order:true
+/// ```
+///
+/// -- `((t1 join t2) join t3) left join t4`, whose FIRST pair is the hint's
+/// own. The written leaves `t1, t3, t4, t2` therefore land at positions
+/// `0, 2, 3, 1`.
+#[test]
+fn a_leading_hint_pins_the_first_pair_over_an_outer_join_group() {
+    let catalog = join_reorder2_tables();
+    assert_eq!(
+        fired_through_sel(LEADING_T1_T2, &catalog, true),
+        Some(vec![0, 2, 3, 1])
+    );
+}
+
+/// The same statement's `leading(t3, t4, t1, t2)` sibling, whose pinned first
+/// pair IS the outer join: TiDB records `MergeJoin  left outer join, left
+/// side:TableReader, left key:t3.id, right key:t4.id` at the BOTTOM, under
+/// two inner merges. That is `((t3 left join t4) join t1) join t2`, so the
+/// written leaves `t1, t3, t4, t2` land at positions `2, 0, 1, 3`.
+#[test]
+fn a_leading_hint_can_pin_the_outer_join_itself() {
+    let catalog = join_reorder2_tables();
+    assert_eq!(
+        fired_through_sel(LEADING_T3_T4, &catalog, true),
+        Some(vec![2, 0, 1, 3])
+    );
+}
+
+/// The `tidb_opt_join_reorder_through_sel = 0` copies of both statements keep
+/// the WRITTEN tree, which is what `r/planner/core/join_reorder2.result`
+/// records for them: `MergeJoin  inner join, left key:t1.id, right
+/// key:t3.id` at the bottom, the pair the statement wrote.
+///
+/// `or(like(t3.name, ...), like(t4.name, ...))` reads `t4`, the null-extended
+/// relation, so predicate pushdown leaves a `Selection` standing over the
+/// outer join and `extractJoinGroupImpl` stops there unless the variable is
+/// ON.
+#[test]
+fn a_selection_over_a_null_extended_column_declines_the_group() {
+    let catalog = join_reorder2_tables();
+    assert_eq!(fired_through_sel(LEADING_T1_T2, &catalog, false), None);
+    assert_eq!(fired_through_sel(LEADING_T3_T4, &catalog, false), None);
+}
+
+/// A `leading` hint naming a relation this group does not hold is Go's
+/// `ok == false` arm: the hint is dropped and the group reorders without it.
+/// Nothing is pinned, so the greedy's own order stands -- which under pseudo
+/// statistics is the written one.
+#[test]
+fn a_leading_hint_naming_an_absent_table_pins_nothing() {
+    let catalog = join_reorder2_tables();
+    let sql = "select /*+ leading(t9, t2) */ * from t1 \
+        inner join t3 on t1.id=t3.id left join t4 on t4.id=t3.id \
+        join t2 on t1.id=t2.id where t3.name like 'test3' or t4.name like 'test4'";
+    assert_eq!(
+        fired_through_sel(sql, &catalog, true),
+        Some(vec![0, 1, 2, 3])
+    );
+}
+
+/// The reordered outer-join tree returns the SAME rows as the written one,
+/// including the row `t4` contributes nothing to and is null-extended on.
+#[test]
+fn the_reordered_outer_join_returns_the_rows_the_written_tree_does() {
+    let mut catalog = join_reorder2_tables();
+    for table in ["t1", "t2", "t3"] {
+        for id in [1, 2] {
+            run_insert_on(
+                &format!("INSERT INTO {table} VALUES ({id}, 'test{id}')"),
+                &mut catalog,
+                &crate::StmtContext::for_query(),
+            )
+            .unwrap();
+        }
+    }
+    // Only `id = 1` matches in `t4`, so the `id = 2` row is null-extended and
+    // survives on the `t3.name like 'test3'` half of the `WHERE`... which it
+    // does not match either, leaving the `t4` half to reject it. The point is
+    // that both trees agree on WHICH rows survive.
+    run_insert_on(
+        "INSERT INTO t4 VALUES (1, 'test4')",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    let sql = "select /*+ leading(t1, t2) */ * from t1 \
+        inner join t3 on t1.id=t3.id left join t4 on t4.id=t3.id \
+        join t2 on t1.id=t2.id where t3.name like 'test%' or t4.name like 'test4'";
+    let written = run_select_on(sql, &catalog, &crate::StmtContext::for_query()).unwrap();
+    let reordered = run_select_on(
+        sql,
+        &catalog,
+        &crate::StmtContext::for_query().with_join_reorder_through_sel(true),
+    )
+    .unwrap();
+    assert_eq!(written.len(), 2, "both `t1` rows survive the `WHERE`");
+    assert_eq!(
+        reordered, written,
+        "the reordered outer join dropped or duplicated a row"
+    );
 }

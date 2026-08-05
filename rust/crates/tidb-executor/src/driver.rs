@@ -671,8 +671,14 @@ pub(crate) fn run_select_traced(
             // fires for a session that raised
             // `tidb_opt_join_reorder_threshold`; see
             // `driver::join_reorder`'s module doc for why that bounds it.
-            let reordered =
-                join_reorder::reorder(join, select.where_clause.as_ref(), catalog, current_db, ctx);
+            let reordered = join_reorder::reorder(
+                join,
+                select,
+                select.where_clause.as_ref(),
+                catalog,
+                current_db,
+                ctx,
+            );
             let planned = reordered.as_ref().map_or(join, |plan| &plan.join);
             let (exec, mut scope, _) = build_join(
                 planned,
