@@ -1266,6 +1266,38 @@ func readBillingDemoExecutionMaskOwnershipValid(
 	return true
 }
 
+func readBillingDemoMaskUnexecutedCTEParts(
+	flat *FlatPhysicalPlan,
+	runtimeStats *execdetails.RuntimeStatsColl,
+	mask *readBillingDemoExecutionMask,
+) {
+	for _, tree := range flat.CTEs {
+		if len(tree) == 0 || tree[0] == nil || tree[0].Origin == nil {
+			continue
+		}
+		if _, ok := tree[0].Origin.(*physicalop.CTEDefinition); !ok {
+			continue
+		}
+		for _, partRoot := range tree[0].ChildrenIdx {
+			if partRoot <= 0 || partRoot >= len(tree) || tree[partRoot] == nil ||
+				(tree[partRoot].Label != SeedPart && tree[partRoot].Label != RecursivePart) {
+				continue
+			}
+			partEnd := tree[partRoot].ChildrenEndIdx
+			if partEnd < partRoot || partEnd >= len(tree) {
+				continue
+			}
+			partNodes := tree[partRoot : partEnd+1]
+			if readBillingDemoNodesHaveExecutionEvidence(runtimeStats, partNodes) {
+				continue
+			}
+			for _, node := range partNodes {
+				mask.skippedNodes[node] = struct{}{}
+			}
+		}
+	}
+}
+
 func buildReadBillingDemoExecutionMask(
 	flat *FlatPhysicalPlan,
 	runtimeStats *execdetails.RuntimeStatsColl,
@@ -1315,6 +1347,7 @@ func buildReadBillingDemoExecutionMask(
 	acceptedJoins := readBillingDemoRemoveConflictingSkipCandidates(eligibleJoins)
 
 	mask := newReadBillingDemoExecutionMask()
+	readBillingDemoMaskUnexecutedCTEParts(flat, runtimeStats, mask)
 	proofs := make([]readBillingDemoPlanOccurrence, 0, len(acceptedJoins)*2+len(indexLookupCandidates)*2)
 	for _, candidate := range acceptedJoins {
 		if mask.isSkipped(candidate.join.node) {
@@ -2601,9 +2634,10 @@ func readBillingDemoClassifyOperator(op *FlatOperator) (readBillingDemoOperatorR
 		return readBillingDemoOperatorResult{site: readBillingDemoSiteTiDB, opClass: readBillingDemoOpClassOverlayReader, operatorKind: operatorKind}, true, ""
 	case plancodec.TypeMemTableScan, plancodec.TypeClusterMemTableReader:
 		return readBillingDemoOperatorResult{site: readBillingDemoSiteTiDB, opClass: readBillingDemoOpClassMetadataReader, operatorKind: operatorKind}, true, ""
-	case plancodec.TypeUnion, plancodec.TypeScalarSubQuery, plancodec.TypeApply:
-		// Apply has no dedicated formula yet. Keep its executed descendants
-		// reportable without charging the Apply orchestration itself.
+	case plancodec.TypeUnion, plancodec.TypeScalarSubQuery, plancodec.TypeApply,
+		plancodec.TypeCTE, plancodec.TypeCTETable:
+		// Apply and CTE orchestration have no dedicated formulas yet. Keep their
+		// executed descendants reportable without charging the wrappers themselves.
 		return readBillingDemoOperatorResult{site: readBillingDemoSiteTiDB, opClass: readBillingDemoOpClassWrapper, operatorKind: operatorKind}, true, ""
 	case plancodec.TypeDual:
 		return readBillingDemoOperatorResult{site: readBillingDemoSiteTiDB, opClass: readBillingDemoOpClassSynthetic, operatorKind: operatorKind}, true, ""

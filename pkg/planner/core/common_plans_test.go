@@ -420,6 +420,20 @@ func TestReadBillingDemoV6FormulaContract(t *testing.T) {
 		require.Empty(t, reason)
 		require.Equal(t, readBillingDemoOpClassWrapper, operator.opClass)
 		require.False(t, readBillingDemoOperatorBillable(operator))
+
+		cte := physicalop.PhysicalCTE{}.Init(ctx, &property.StatsInfo{RowCount: 1})
+		operator, supported, reason = readBillingDemoClassifyOperator(&FlatOperator{Origin: cte, IsRoot: true, StoreType: kv.TiDB})
+		require.True(t, supported)
+		require.Empty(t, reason)
+		require.Equal(t, readBillingDemoOpClassWrapper, operator.opClass)
+		require.False(t, readBillingDemoOperatorBillable(operator))
+
+		cteTable := physicalop.PhysicalCTETable{}.Init(ctx, &property.StatsInfo{RowCount: 1})
+		operator, supported, reason = readBillingDemoClassifyOperator(&FlatOperator{Origin: cteTable, IsRoot: true, StoreType: kv.TiDB})
+		require.True(t, supported)
+		require.Empty(t, reason)
+		require.Equal(t, readBillingDemoOpClassWrapper, operator.opClass)
+		require.False(t, readBillingDemoOperatorBillable(operator))
 	})
 
 	weights := readBillingDemoWeights{
@@ -944,6 +958,43 @@ func TestReadBillingDemoV6ExpressionCountsAndOrdering(t *testing.T) {
 		})
 	}
 	schema := expression.NewSchema(col)
+
+	t.Run("cte producer parts require execution evidence", func(t *testing.T) {
+		seedLeaf := physicalop.PhysicalTableDual{RowCount: 1}.Init(ctx, stats, 0)
+		seed := physicalop.PhysicalProjection{Exprs: []expression.Expression{col}}.Init(ctx, stats, 0)
+		seed.SetChildren(seedLeaf)
+		recurLeaf := physicalop.PhysicalTableDual{RowCount: 1}.Init(ctx, stats, 0)
+		recur := physicalop.PhysicalProjection{Exprs: []expression.Expression{col}}.Init(ctx, stats, 0)
+		recur.SetChildren(recurLeaf)
+		cte := physicalop.PhysicalCTE{
+			SeedPlan:  seed,
+			RecurPlan: recur,
+			CTE:       &logicalop.CTEClass{IDForStorage: 1},
+		}.Init(ctx, stats)
+		flat := FlattenPhysicalPlan(cte, true)
+		require.Len(t, flat.CTEs, 1)
+		cteTree := flat.CTEs[0]
+		require.Len(t, cteTree[0].ChildrenIdx, 2)
+
+		assertPartSkipped := func(t *testing.T, mask *readBillingDemoExecutionMask, partRoot int, skipped bool) {
+			t.Helper()
+			require.GreaterOrEqual(t, cteTree[partRoot].ChildrenEndIdx, partRoot)
+			for idx := partRoot; idx <= cteTree[partRoot].ChildrenEndIdx; idx++ {
+				require.Equal(t, skipped, mask.isSkipped(cteTree[idx]), "idx=%d operator=%s", idx, cteTree[idx].Origin.ExplainID())
+			}
+		}
+
+		seedRoot, recurRoot := cteTree[0].ChildrenIdx[0], cteTree[0].ChildrenIdx[1]
+		mask := buildReadBillingDemoExecutionMask(flat, execdetails.NewRuntimeStatsColl(nil))
+		assertPartSkipped(t, mask, seedRoot, true)
+		assertPartSkipped(t, mask, recurRoot, true)
+
+		runtimeStats := execdetails.NewRuntimeStatsColl(nil)
+		recordRoot(runtimeStats, seed.ID(), 0)
+		mask = buildReadBillingDemoExecutionMask(flat, runtimeStats)
+		assertPartSkipped(t, mask, seedRoot, false)
+		assertPartSkipped(t, mask, recurRoot, true)
+	})
 
 	t.Run("root unary formulas use exact semantic terms", func(t *testing.T) {
 		for _, tc := range []struct {

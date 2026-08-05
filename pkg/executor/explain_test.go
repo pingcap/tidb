@@ -564,6 +564,39 @@ func TestExplainAnalyzeFormatRUOutput(t *testing.T) {
 	require.NoError(t, err)
 	requireExplainRUWeightedOperatorClass(t, rows, "tidb/filter_eval")
 
+	cteReuseQuery := "with cte(n) as (select 1 union all select 2) select count(*) from cte a join cte b on a.n = b.n"
+	cteFullScans := 0
+	for _, row := range tk.MustQuery("explain analyze " + cteReuseQuery).Rows() {
+		if strings.Contains(fmt.Sprint(row[0]), "CTEFullScan") {
+			cteFullScans++
+		}
+	}
+	require.Equal(t, 2, cteFullScans)
+	rows, err = queryExplainRURowsOrErr(t, tk, "explain analyze format='ru' "+cteReuseQuery)
+	require.NoError(t, err)
+	requireExplainRUWeightedOperatorClass(t, rows, "tidb/agg_stream")
+	cteProducerProjections := make(map[string]struct{})
+	for _, row := range rows {
+		if row[0] == "plan" && row[3] == "tidb/projection_eval" {
+			cteProducerProjections[fmt.Sprint(row[1])] = struct{}{}
+		}
+	}
+	require.Len(t, cteProducerProjections, 2)
+
+	recursiveCTEQuery := "with recursive cte(n) as (select 1 union all select n + 1 from cte where n < 2) select sum(n) from cte"
+	seenCTEFullScan, seenCTETable := false, false
+	for _, row := range tk.MustQuery("explain analyze " + recursiveCTEQuery).Rows() {
+		operator := fmt.Sprint(row[0])
+		seenCTEFullScan = seenCTEFullScan || strings.Contains(operator, "CTEFullScan")
+		seenCTETable = seenCTETable || strings.Contains(operator, "CTETable")
+	}
+	require.True(t, seenCTEFullScan)
+	require.True(t, seenCTETable)
+	rows, err = queryExplainRURowsOrErr(t, tk, "explain analyze format='ru' "+recursiveCTEQuery)
+	require.NoError(t, err)
+	requireExplainRUWeightedOperatorClass(t, rows, "tidb/filter_eval")
+	requireExplainRUWeightedOperatorClass(t, rows, "tidb/agg_stream")
+
 	tk.MustExec("drop table if exists explain_ru_t")
 	tk.MustExec("create table explain_ru_t(a int primary key, b varchar(20))")
 	tk.MustExec("insert into explain_ru_t values (1, 'x'), (2, 'yy')")
