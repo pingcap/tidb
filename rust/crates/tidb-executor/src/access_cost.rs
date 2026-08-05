@@ -717,7 +717,7 @@ pub(crate) fn enumerate_paths(
         // `range_offsets` carries the same append for the position -> row
         // offset map the access columns are read through.
         let mut range_offsets: Vec<usize> = index.column_offsets.clone();
-        if let Some(handle) = appended_handle_column(index, table, &index_columns) {
+        if let Some(handle) = appended_handle_column(index, table) {
             index_columns.push(handle.0);
             range_offsets.push(handle.1);
         }

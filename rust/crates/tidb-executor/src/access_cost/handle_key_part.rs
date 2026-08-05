@@ -62,11 +62,22 @@ use crate::kv_table::{IndexRange, KvIndex, KvTable};
 ///   `Datum::Int` whatever the column's declared flag says, so an unsigned
 ///   handle's key bytes are not the bytes its own field type would range on.
 /// * The already-present test keeps a `KEY c2(c2, c1)` from ranging on `c1`
-///   twice, which Go calls out as "may cause unexpected errors".
-/// * A PREFIX key part leaves the ranger unable to reach the bytes past it, so
-///   nothing may be appended behind one. Go states this as
-///   `len(path.Index.Columns) == len(path.IdxCols)`, which is the same refusal
-///   read off the other side: a prefix part is why those lengths differ.
+///   twice, which Go calls out as "may cause unexpected errors". MEASURED:
+///   removing it changes NO answer in this workspace, because the detacher
+///   consumes each conjunct once and so finds nothing left to range on at the
+///   repeated position. It is kept because it is Go's own condition and
+///   because a three-entry column list for a two-column key is a lie the
+///   moment the detacher stops being conjunct-consuming -- a fidelity guard,
+///   not the thing producing today's answer.
+///
+/// A PREFIX key part is NOT a reason to refuse, which was measured rather than
+/// assumed: `index sp(s(3))` over a table with an integer handle ranges
+/// `("abc" 1,"abc" +inf]` in real TiDB for `where s = 'abcdef' and c1 > 1`.
+/// The cut value is still a POINT over the key part's own stored bytes, so the
+/// handle sits directly behind it and the two-dimension range is a contiguous
+/// key interval like any other. Go's `len(path.Index.Columns) ==
+/// len(path.IdxCols)` is about a key part whose COLUMN could not be resolved,
+/// which this tier refuses one level up by skipping the index entirely.
 ///
 /// Go's remaining condition, `!path.Index.Primary`, has no representable case
 /// here: a clustered primary key never becomes a `KvIndex` (its encoding IS
@@ -75,7 +86,6 @@ use crate::kv_table::{IndexRange, KvIndex, KvTable};
 pub(super) fn appended_handle_column(
     index: &KvIndex,
     table: &KvTable,
-    index_columns: &[RangeColumn],
 ) -> Option<(RangeColumn, usize)> {
     if index.unique {
         return None;
@@ -86,12 +96,6 @@ pub(super) fn appended_handle_column(
     }
     let column = table.columns.get(handle)?;
     if column.field_type.is_unsigned() {
-        return None;
-    }
-    if index_columns
-        .iter()
-        .any(|part| part.prefix_len != crate::ddl::index_prefix::UNSPECIFIED_LENGTH)
-    {
         return None;
     }
     Some((

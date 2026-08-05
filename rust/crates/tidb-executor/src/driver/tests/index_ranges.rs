@@ -664,3 +664,219 @@ fn a_unique_index_gets_no_handle_dimension() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0][0], Datum::Int(2));
 }
+
+/// An UNSIGNED clustered handle gets no handle dimension, and the rows prove
+/// why: `KvTable::index_key` appends the handle as a SIGNED `Datum::Int`
+/// whatever the column declares, so `18446744073709551615` is stored behind
+/// the key bytes of `-1` and sorts BELOW `1`. A range of `(1, +inf]` over the
+/// column's own unsigned type would read past it and LOSE the row.
+///
+/// Go refuses the append for the same reason, spelled as
+/// `!mysql.HasUnsignedFlag(handleCol.RetType.GetFlag())`. Captured:
+///
+/// ```text
+/// create table hu (c1 bigint unsigned primary key, c2 int, index c2 (c2));
+/// explain select * from hu use index(c2) where c2 = 1 and c1 > 1;
+///   IndexRangeScan_5 | index:c2(c2) | range:[1,1]
+///   Selection_6      | gt(test.hu.c1, 1)
+/// select c1 from hu use index(c2) where c2 = 1 and c1 > 1;
+///   9223372036854775807; 9223372036854775808; 18446744073709551615
+/// ```
+#[test]
+fn an_unsigned_clustered_handle_gets_no_handle_dimension() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE hu (c1 BIGINT UNSIGNED PRIMARY KEY, c2 INT, INDEX c2 (c2))",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO hu VALUES (1, 1), (9223372036854775807, 1), \
+         (9223372036854775808, 1), (18446744073709551615, 1)",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    let rows = run_select_on(
+        "SELECT c1 FROM hu USE INDEX (c2) WHERE c2 = 1 AND c1 > 1",
+        &catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    let mut read: Vec<String> = rows.iter().map(|row| format!("{:?}", row[0])).collect();
+    read.sort();
+    assert_eq!(read.len(), 3, "an unsigned handle row was lost: {read:?}");
+    // The largest handle, the one a signed range bound sorts below zero,
+    // has to be among them.
+    assert!(
+        read.iter()
+            .any(|cell| cell.contains("18446744073709551615")),
+        "the 2^64-1 handle was lost: {read:?}"
+    );
+}
+
+/// A handle that is ALREADY a declared key part is not appended a second time
+/// -- Go's `alreadyHandle` test, whose comment is "Don't add one column twice
+/// to the index. May cause unexpected errors."
+///
+/// Captured: `KEY c2c1(c2, c1)` over `c1 BIGINT PRIMARY KEY` ranges
+/// `(1 1,1 +inf]` -- TWO dimensions, from the two DECLARED columns.
+#[test]
+fn a_handle_that_is_already_a_key_part_is_not_appended_again() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE hd (c1 BIGINT PRIMARY KEY, c2 INT, INDEX c2c1 (c2, c1))",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO hd VALUES (1, 1), (2, 1), (3, 1)",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    let Some(TableEntry::Kv(table)) = catalog.get_table_for_test("hd") else {
+        panic!("expected a kv table");
+    };
+    let columns = table
+        .columns
+        .iter()
+        .map(|c| (c.name.clone(), c.field_type.clone()))
+        .collect::<Vec<_>>();
+    let stmt =
+        tidb_parser::parse("SELECT * FROM hd USE INDEX (c2c1) WHERE c2 = 1 AND c1 > 1").unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query")
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a select")
+    };
+    let scope = crate::plan_trace::PlanTrace::single_table_scope("hd", None, columns.clone());
+    let Some(crate::driver::access::ChosenPath::Index(_, ranges, _)) = choose_index_range_path(
+        select,
+        &catalog,
+        &scope,
+        table,
+        &columns,
+        &crate::index_hints::AvailablePaths::unrestricted(),
+        false,
+    ) else {
+        panic!("expected an index path");
+    };
+    assert_eq!(
+        ranges,
+        vec![IndexRange {
+            low: vec![Datum::Int(1), Datum::Int(1)],
+            high: vec![Datum::Int(1), Datum::MaxValue],
+            low_exclusive: true,
+            high_exclusive: false,
+        }],
+        "the handle was appended behind the key part that already holds it"
+    );
+    let rows = run_select_on(
+        "SELECT c1 FROM hd USE INDEX (c2c1) WHERE c2 = 1 AND c1 > 1",
+        &catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    assert_eq!(rows.len(), 2);
+}
+
+/// A PREFIX key part takes the handle dimension too, and the rows still match
+/// a full scan.
+///
+/// This one was MEASURED against the assumption rather than derived from it:
+/// a first reading refused the append behind a prefix, on the theory that the
+/// ranger cannot reach the bytes past a cut value. Real TiDB does append, and
+/// it is right to: the cut value is a POINT over the key part's own stored
+/// bytes, so the handle sits directly behind it in the key.
+///
+/// ```text
+/// create table hp (c1 bigint primary key, s varchar(20), index sp (s(3)));
+/// insert into hp values (1,'abcdef'),(2,'abcdef'),(3,'abcdef');
+/// explain select * from hp use index(sp) where s = 'abcdef' and c1 > 1;
+///   IndexRangeScan_5(Build) | index:sp(s) | range:("abc" 1,"abc" +inf]
+/// select c1 from hp use index(sp) where s = 'abcdef' and c1 > 1;  -- 2; 3
+/// ```
+#[test]
+fn a_prefix_key_part_takes_the_handle_dimension_behind_it() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE hp (c1 BIGINT PRIMARY KEY, s VARCHAR(20), INDEX sp (s(3)))",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO hp VALUES (1, 'abcdef'), (2, 'abcdef'), (3, 'abcdef'), \
+         (4, 'abcxyz'), (5, 'zzz')",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    let ids = |sql: &str| {
+        let mut ids: Vec<i64> = run_select_on(sql, &catalog, &crate::StmtContext::for_query())
+            .unwrap()
+            .into_iter()
+            .map(|row| match row[0] {
+                Datum::Int(v) => v,
+                ref other => panic!("expected an int, got {other:?}"),
+            })
+            .collect();
+        ids.sort_unstable();
+        ids
+    };
+    // A prefix key part never covers its column, so the residual `s =
+    // 'abcdef'` still has to run over the looked-up row -- which is exactly
+    // what keeps `abcxyz` (same cut value, different column value) out.
+    assert_eq!(
+        ids("SELECT c1 FROM hp USE INDEX (sp) WHERE s = 'abcdef' AND c1 > 1"),
+        vec![2, 3]
+    );
+    for predicate in [
+        "s = 'abcdef' AND c1 > 1",
+        "s = 'abcdef' AND c1 < 3",
+        "s = 'abcxyz' AND c1 > 1",
+        "s = 'zzz' AND c1 >= 5",
+    ] {
+        assert_eq!(
+            ids(&format!(
+                "SELECT c1 FROM hp USE INDEX (sp) WHERE {predicate}"
+            )),
+            ids(&format!(
+                "SELECT c1 FROM hp IGNORE INDEX (sp) WHERE {predicate}"
+            )),
+            "index and table paths disagree on `{predicate}`"
+        );
+    }
+}
+
+/// A handle that leads its own index is not appended behind it either. This is
+/// the `alreadyHandle` case in the other order, and the one where appending
+/// twice would build a THREE-datum range over a TWO-datum key and read
+/// nothing at all.
+///
+/// Captured: `index c1c2(c1, c2)` over `c1 BIGINT PRIMARY KEY` ranges
+/// `[1 2,1 2]` for `where c1 = 1 and c2 = 2`, and returns the row.
+#[test]
+fn a_handle_that_leads_its_index_is_not_appended_behind_it() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE hr (c1 BIGINT PRIMARY KEY, c2 INT, INDEX c1c2 (c1, c2))",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO hr VALUES (1, 2), (2, 2), (3, 2)",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    let rows = run_select_on(
+        "SELECT c1 FROM hr USE INDEX (c1c2) WHERE c1 = 1 AND c2 = 2",
+        &catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    assert_eq!(rows.len(), 1, "the row was lost: {rows:?}");
+    assert_eq!(rows[0][0], Datum::Int(1));
+}
