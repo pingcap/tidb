@@ -345,6 +345,95 @@ fn parameter_type_comes_from_the_variable_and_the_header_stays_a_marker() {
     );
 }
 
+/// A field that is a bare COLUMN REFERENCE is named by its column identifier,
+/// with the qualifier dropped -- and executing a prepared statement does not
+/// change that.
+///
+/// `buildProjectionField` routes an `ast.ColumnNameExpr` field to
+/// `buildProjectionFieldNameFromColumns`, which answers
+/// `colNameField.Name.Name`; only a NON-column field falls through to the
+/// source-text rule the marker cases above pin. This tier binds by restoring
+/// the statement, so it pins the source text of the fields that need it --
+/// and pinning a column reference installs an alias that OVERRIDES the
+/// column identifier, which is a rename, not a preservation.
+///
+/// The recorded case is `executor/jointest/join`:
+///
+/// ```text
+/// prepare stmt1 from 'select m1.a from t as m1
+///                     where m1.a in (select m2.b+? from t as m2)';
+/// set @a = 1; execute stmt1 using @a;   -- header `a`, row 2
+/// ```
+///
+/// The same statement prepared with no `?` pins nothing and always printed
+/// the correct `a`, which is why the marker is what exposed this.
+#[test]
+fn a_column_reference_keeps_its_column_name_through_execute() {
+    let mut session = prepared_session();
+    session.run("CREATE TABLE mt (a INT, b INT)").unwrap();
+    session.run("INSERT INTO mt VALUES (1, 1), (2, 1)").unwrap();
+    session
+        .run(
+            "PREPARE stmt1 FROM 'select m1.a from mt as m1 \
+             where m1.a in (select m2.b+? from mt as m2)'",
+        )
+        .unwrap();
+    session.run("SET @a = 1").unwrap();
+    assert_eq!(
+        header_and_rows(&mut session, "EXECUTE stmt1 USING @a"),
+        (vec!["a".to_owned()], vec![vec!["2".to_owned()]])
+    );
+    session.run("SET @a = 0").unwrap();
+    assert_eq!(
+        header_and_rows(&mut session, "EXECUTE stmt1 USING @a"),
+        (vec!["a".to_owned()], vec![vec!["1".to_owned()]])
+    );
+
+    // The identifier is taken AS WRITTEN (`m1.A` is the column `A`), the
+    // qualifier is dropped, an explicit alias still wins, and a field that is
+    // not a column reference still keeps the source text a restore would have
+    // rewritten. All four in one statement, so the split is what is pinned.
+    session
+        .run("PREPARE mixed FROM 'select m1.A, m1.b, m1.a as x, m1.b+? from mt as m1 where m1.a = 1'")
+        .unwrap();
+    session.run("SET @i = 7").unwrap();
+    assert_eq!(
+        header_and_rows(&mut session, "EXECUTE mixed USING @i"),
+        (
+            vec![
+                "A".to_owned(),
+                "b".to_owned(),
+                "x".to_owned(),
+                "m1.b+?".to_owned()
+            ],
+            vec![vec![
+                "1".to_owned(),
+                "1".to_owned(),
+                "1".to_owned(),
+                "8".to_owned()
+            ]]
+        )
+    );
+    // The invariant behind all of it: EXECUTE names its columns exactly as
+    // the statement written out in full does.
+    assert_eq!(
+        header_and_rows(&mut session, "EXECUTE mixed USING @i").0,
+        header_and_rows(
+            &mut session,
+            "select m1.A, m1.b, m1.a as x, m1.b+7 from mt as m1 where m1.a = 1"
+        )
+        .0
+        .iter()
+        .enumerate()
+        .map(|(index, name)| if index == 3 {
+            "m1.b+?".to_owned()
+        } else {
+            name.clone()
+        })
+        .collect::<Vec<_>>()
+    );
+}
+
 /// A NULL parameter and an UNSET variable both bind NULL -- not the text
 /// "NULL", which would have made `?+1` an error instead of NULL.
 #[test]

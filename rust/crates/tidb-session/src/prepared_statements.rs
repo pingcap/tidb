@@ -332,6 +332,26 @@ fn limit_marker_orders(stmt: &Stmt) -> Vec<usize> {
 ///   RS[sum(b)]     10
 /// ```
 ///
+/// # A bare COLUMN REFERENCE is not named from the source text, and must not
+/// be pinned
+///
+/// The source-text rule above is `buildProjectionFieldNameFromExpressions`,
+/// and `buildProjectionField` only reaches it for a field that is NOT a
+/// column reference. A field whose expression is an `ast.ColumnNameExpr`
+/// takes `buildProjectionFieldNameFromColumns` instead, which names it
+/// `colNameField.Name.Name` -- the column IDENTIFIER, with the qualifier
+/// dropped. So `select m1.a` is the column `a` however it is printed, and
+/// restore cannot rename it.
+///
+/// Pinning such a field is therefore not a no-op, it is a REGRESSION: it
+/// installs `m1.a` as an explicit alias, and an explicit alias is the one
+/// thing that DOES override the column identifier
+/// (`if origField.AsName.L == ""`). `executor/jointest/join`'s
+/// `execute stmt1 using @a` over `select m1.a from t as m1 where m1.a in
+/// (select m2.b+? from t as m2)` is recorded with the header `a`; this tier
+/// printed `m1.a` for exactly that reason, and printed the correct `a` for
+/// the same statement prepared WITHOUT a `?` (which pins nothing).
+///
 /// Returns whether anything was pinned, which tells the caller whether the
 /// statement has to be restored rather than kept as written.
 fn pin_field_names(stmt: &mut Stmt) -> bool {
@@ -356,7 +376,7 @@ fn pin_field_names(stmt: &mut Stmt) -> bool {
     let mut pinned = false;
     for (field, source) in select.fields.fields_mut().iter_mut().zip(source) {
         if let SelectField::Expr { expr, alias } = field {
-            if alias.is_none() {
+            if alias.is_none() && !matches!(expr, Expr::Column(_)) {
                 *alias = Some(source.unwrap_or_else(|| expr.restore()));
                 pinned = true;
             }

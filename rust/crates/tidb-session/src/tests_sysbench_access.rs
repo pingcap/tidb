@@ -381,7 +381,30 @@ fn the_handle_range_corpus_matches_go() {
         // identical either way and is pinned by
         // `narrowed_ranges_return_the_same_rows_as_a_full_scan`, which runs
         // this very predicate.
-        ("id > 0 AND k = 4", "IndexRangeScan", "10.00", "range:[4,4]"),
+        //
+        // The RANGE half of that divergence closed: `k_1` is a non-unique
+        // index on a table whose `id` is the clustered integer handle, so
+        // Go's `fillIndexPath` appends the handle to `path.IdxCols` and the
+        // ranger narrows on BOTH columns. Captured from real TiDB with the
+        // index forced, which is the only way to see the path it costed out:
+        //
+        // ```text
+        // explain select c from sbtest1 use index(k_1) where id > 0 and k = 4
+        //   IndexRangeScan_6(Build) | 41.67 | index:k_1(k)
+        //                           | range:(4 0,4 +inf], keep order:false
+        // ```
+        //
+        // The estRows still differ (Go's 41.67 is its `adjustCountAfterAccess`
+        // raising the pruned `[4,4]` estimate of 10 to `RowCount / 0.8`, an
+        // adjustment `index_path` deliberately holds out -- see
+        // `source_row_count`), and the operator choice still differs for the
+        // reason above.
+        (
+            "id > 0 AND k = 4",
+            "IndexRangeScan",
+            "10.00",
+            "range:(4 0,4 +inf]",
+        ),
         // CLASSIFIED DIVERGENCE, in the direction of Go rather than away from
         // it. Go settles a `WHERE` that PINS handles before costing and
         // prints `Batch_Point_Get ... handle:[-1 2 150]`; this tier's

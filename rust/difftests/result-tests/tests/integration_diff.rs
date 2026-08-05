@@ -1348,7 +1348,45 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     //   instead. Sorting an index lookup's handles is an executor change whose
     //   blast radius is every non-covering index read in the corpus, so it is
     //   named here rather than attempted alongside the plan text.
-    const KNOWN_DIVERGENCES: usize = 28;
+    const KNOWN_DIVERGENCES: usize = 24;
+    //
+    //
+    // 28 -> 24 (written as 35 -> 31 in batch43's own tree, which branched before batch42), in three unrelated causes, none of them an access-path
+    // heuristic:
+    //
+    //  * THE CLUSTERED HANDLE IS AN INDEX KEY PART (1, and the whole of the
+    //    first half of TWO SINGLE CASES above). A non-unique secondary index
+    //    stores the row's handle in its KEY, so Go's `fillIndexPath` appends
+    //    it to `path.IdxCols` and the ranger narrows on it:
+    //    `where c1 > 1 and c2 = 1 and c3 < 1` is `range:(1 1,1 +inf]`, not
+    //    `range:[1,1]`. The estimate is trimmed back to the DECLARED columns
+    //    before the row count is asked for (`pruneEstimateRange`), which is
+    //    what keeps the two-dimension range from costing the index path out
+    //    of the plan. `tidb_executor::access_cost::handle_key_part` owns both
+    //    halves and the row set is pinned by
+    //    `a_handle_range_reads_the_rows_a_full_scan_reads` over negative,
+    //    zero and NULL-bearing data.
+    //
+    //  * A PREPARED FIELD THAT IS A COLUMN REFERENCE WAS RENAMED (2). This is
+    //    a WIRE HEADER, not a plan: `execute stmt1 using @a` over
+    //    `select m1.a ... where m1.a in (select m2.b+? ...)` printed the
+    //    column `m1.a` where TiDB prints `a`. Binding a `?` here means
+    //    RESTORING the statement, so unaliased fields have their source text
+    //    pinned as an alias first -- and a field that is an
+    //    `ast.ColumnNameExpr` is named by `colNameField.Name.Name` rather
+    //    than by its text, so pinning it OVERRODE the column identifier
+    //    instead of preserving it. The same statement prepared without a `?`
+    //    always printed `a`.
+    //
+    //  * `HEX` OVER A `BIT` COLUMN (1). `hexFunctionClass` switches on the
+    //    argument's EvalType and `mysql.TypeBit` is `ETInt`, so a `bit(48)`
+    //    is hexed as a NUMBER: `80A0D091A`, not the stored `00080A0D091A`.
+    //    A bit LITERAL is unaffected -- Go types it `TypeVarString` -- which
+    //    is why only a stored column exposed this.
+    //
+    // Two are `Rows`-kind and two are `PlanProperty`-kind, so `compared`
+    // holds at 5639 and matched rises.
+    const KNOWN_DIVERGENCES: usize = 24;
 
     assert!(
         total.divergences.len() <= KNOWN_DIVERGENCES,

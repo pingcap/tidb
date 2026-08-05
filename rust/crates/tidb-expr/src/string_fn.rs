@@ -399,6 +399,24 @@ fn strcmp_under(
 /// real values use the integer signature while ETString values retain their
 /// original bytes. Reusing `radix_integer_bits` keeps every numeric rounding
 /// and two's-complement edge on one source-defined conversion path.
+///
+/// # A `BIT` COLUMN is an integer argument, a bit LITERAL is not
+///
+/// `hexFunctionClass.getFunction` switches on `args[0].GetType().EvalType()`,
+/// and `mysql.TypeBit`'s eval type is `types.ETInt` -- so a `BIT(48)` column
+/// is hexed through `builtinHexIntArgSig`, which formats the VALUE and
+/// therefore drops the storage width's leading zero bytes. A bit LITERAL
+/// (`b'01000001'`) is a different type: Go stores it as `KindBinaryLiteral`
+/// typed `mysql.TypeVarString`, so it takes the string branch, and it only
+/// LOOKS like the integer answer because a literal carries no padding.
+/// Measured through `gorun` on `bit(48)` holding `0x00080A0D091A`:
+///
+/// ```text
+/// hex(b)          -> 80A0D091A     (int branch: value, no leading zeros)
+/// hex(concat(b))  -> 000000000041  (string branch on bit(48) x'0041')
+/// hex(x'0041')    -> 0041          (hex literal keeps both bytes)
+/// hex(b'01000001')-> 41            (bit literal is one byte to begin with)
+/// ```
 pub(crate) fn hex(vals: &[Datum]) -> Result<Datum, EvalError> {
     match &vals[0] {
         Datum::Null => Ok(Datum::Null),
@@ -410,6 +428,7 @@ pub(crate) fn hex(vals: &[Datum]) -> Result<Datum, EvalError> {
         | Datum::Duration(_)
         | Datum::Enum(_, _)
         | Datum::Set(_, _)
+        | Datum::Bit(_)
         | Datum::Time(_) => {
             let bits = radix_integer_bits(&vals[0])?.expect("non-NULL numeric HEX input");
             Ok(Datum::new_string(format!("{bits:X}")))
@@ -427,7 +446,7 @@ pub(crate) fn hex(vals: &[Datum]) -> Result<Datum, EvalError> {
                 .map(|byte| format!("{byte:02X}"))
                 .collect::<String>(),
         )),
-        Datum::BinaryLiteral(value) | Datum::Bit(value) => Ok(Datum::new_string(
+        Datum::BinaryLiteral(value) => Ok(Datum::new_string(
             value
                 .as_bytes()
                 .iter()
@@ -611,6 +630,12 @@ fn radix_integer_bits(value: &Datum) -> Result<Option<u64>, EvalError> {
         Datum::Real(value) => Ok(Some(round_float_to_i64_saturating(*value) as u64)),
         Datum::String(value) => Ok(Some(radix_string_bits_bytes(value.bytes()))),
         Datum::Bytes(value) => Ok(Some(radix_string_bits_bytes(value))),
+        // A `BIT` column reaches the integer signatures through
+        // `WrapWithCastAsInt` over `mysql.TypeBit`, which is `BinaryLiteral.
+        // ToInt`: the big-endian payload read as an UNSIGNED 64-bit value.
+        // Going through `to_i64` instead would refuse `bit(64)` values with
+        // the high bit set, which Go answers as `FFFFFFFFFFFFFFFF`.
+        Datum::Bit(value) => Ok(Some(value.to_int().value())),
         Datum::MinNotNull | Datum::MaxValue => {
             Err(EvalError::Unsupported("range sentinel integer argument"))
         }
@@ -1734,5 +1759,78 @@ mod format_tests {
         assert_eq!(fmt("-1234.5", 0), "-1,235");
         assert_eq!(fmt("1.9999", 2), "2.00");
         assert_eq!(fmt("123.456", -1), "123");
+    }
+}
+
+#[cfg(test)]
+mod hex_bit_column_tests {
+    use super::hex;
+    use crate::Datum;
+    use tidb_datatype::BinaryLiteral;
+
+    fn bit(bytes: &[u8]) -> Datum {
+        Datum::Bit(BinaryLiteral::from(bytes.to_vec()))
+    }
+
+    /// `hexFunctionClass.getFunction` reads `args[0].GetType().EvalType()`,
+    /// and `mysql.TypeBit` is `types.ETInt` -- so a stored `BIT` value is
+    /// hexed as a NUMBER and its storage padding disappears, where a
+    /// `BINARY`/`BLOB` of the same bytes keeps every octet.
+    ///
+    /// Captured from real TiDB through `gorun`, on `bit(48)`, `bit(64)` and
+    /// `bit(1)` columns:
+    ///
+    /// ```text
+    /// bit(48) = _binary '\0\b\n\r\t\Z'  -> 80A0D091A
+    /// bit(48) = x'0041'                 -> 41
+    /// bit(64) = all ones                -> FFFFFFFFFFFFFFFF
+    /// bit(1)  = b'1'                    -> 1
+    /// bit(48) = 0                       -> 0
+    /// blob    = unhex('00080A0D091A')   -> 00080A0D091A
+    /// ```
+    #[test]
+    fn a_bit_value_is_hexed_as_a_number_and_a_blob_is_hexed_as_bytes() {
+        let payload = [0x00, 0x08, 0x0A, 0x0D, 0x09, 0x1A];
+        assert_eq!(
+            hex(&[bit(&payload)]).unwrap(),
+            Datum::new_string("80A0D091A".to_owned())
+        );
+        // The same six bytes as a blob keep their leading zero byte: this is
+        // the pair the recording compares, and the whole difference is which
+        // signature the argument's TYPE selects.
+        assert_eq!(
+            hex(&[Datum::new_bytes(payload.to_vec())]).unwrap(),
+            Datum::new_string("00080A0D091A".to_owned())
+        );
+        assert_eq!(
+            hex(&[bit(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x41])]).unwrap(),
+            Datum::new_string("41".to_owned())
+        );
+        // A `bit(64)` with the high bit set is why this reads the payload as
+        // UNSIGNED: the signed conversion would refuse it outright.
+        assert_eq!(
+            hex(&[bit(&[0xFF; 8])]).unwrap(),
+            Datum::new_string("FFFFFFFFFFFFFFFF".to_owned())
+        );
+        assert_eq!(
+            hex(&[bit(&[0x01])]).unwrap(),
+            Datum::new_string("1".to_owned())
+        );
+        assert_eq!(
+            hex(&[bit(&[0x00; 6])]).unwrap(),
+            Datum::new_string("0".to_owned())
+        );
+    }
+
+    /// A hex LITERAL is not a `BIT` value: Go types `x'0041'` as
+    /// `mysql.TypeVarString`, so it takes the string signature and keeps its
+    /// leading zero byte. `hex(x'0041')` is `0041` in TiDB, and this is the
+    /// datum that carries it.
+    #[test]
+    fn a_binary_literal_keeps_the_string_signature() {
+        assert_eq!(
+            hex(&[Datum::BinaryLiteral(BinaryLiteral::from(vec![0x00, 0x41]))]).unwrap(),
+            Datum::new_string("0041".to_owned())
+        );
     }
 }

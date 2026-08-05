@@ -433,3 +433,234 @@ fn a_like_with_trailing_spaces_starts_at_the_trimmed_key() {
     got.sort();
     assert_eq!(got, ["abc  ", "abc  x"]);
 }
+
+/// The clustered integer handle is a trailing key part of every non-unique
+/// secondary index, so the ranger narrows on it -- Go `fillIndexPath`
+/// (`pkg/planner/core/stats.go`).
+///
+/// Captured from real TiDB on `explain_easy`'s own schema, which is where the
+/// recording's divergence lived:
+///
+/// ```text
+/// create table t1 (c1 int primary key, c2 int, c3 int, index c2 (c2));
+/// explain select * from t1 where c1 > 1 and c2 = 1 and c3 < 1;
+///   IndexRangeScan_8(Build) | index:c2(c2) | range:(1 1,1 +inf]
+/// ```
+///
+/// and on the sysbench schema, with the index forced because TiDB costs the
+/// table path cheaper there:
+///
+/// ```text
+/// explain select c from sbtest1 use index(k_1) where id > 0 and k = 4
+///   IndexRangeScan_6(Build) | index:k_1(k) | range:(4 0,4 +inf]
+/// ```
+#[test]
+fn a_non_unique_index_ranges_on_the_clustered_handle_too() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE t1 (c1 INT PRIMARY KEY, c2 INT, c3 INT, INDEX c2 (c2))",
+        &mut catalog,
+    )
+    .unwrap();
+    let Some(TableEntry::Kv(table)) = catalog.get_table_for_test("t1") else {
+        panic!("expected a kv table");
+    };
+    let columns = table
+        .columns
+        .iter()
+        .map(|c| (c.name.clone(), c.field_type.clone()))
+        .collect::<Vec<_>>();
+    let ranges = |sql: &str| {
+        let stmt = tidb_parser::parse(sql).unwrap();
+        let Stmt::Query(query) = &stmt else {
+            panic!("not a query")
+        };
+        let QueryStmt::Select(select) = &**query else {
+            panic!("not a select")
+        };
+        let scope = crate::plan_trace::PlanTrace::single_table_scope("t1", None, columns.clone());
+        match choose_index_range_path(
+            select,
+            &catalog,
+            &scope,
+            table,
+            &columns,
+            &crate::index_hints::AvailablePaths::unrestricted(),
+            false,
+        ) {
+            Some(crate::driver::access::ChosenPath::Index(_, ranges, _)) => Some(ranges),
+            Some(crate::driver::access::ChosenPath::HandleRange(ranges, _)) => {
+                panic!("expected an index path, got a handle range {ranges:?}")
+            }
+            None => panic!("expected an index path, got the whole-table scan"),
+        }
+    };
+
+    // `(1 1,1 +inf]`: the point on the declared key part, the handle's range
+    // appended behind it.
+    assert_eq!(
+        ranges("SELECT * FROM t1 WHERE c1 > 1 AND c2 = 1 AND c3 < 1"),
+        Some(vec![IndexRange {
+            low: vec![Datum::Int(1), Datum::Int(1)],
+            high: vec![Datum::Int(1), Datum::MaxValue],
+            low_exclusive: true,
+            high_exclusive: false,
+        }])
+    );
+    // With nothing said about the handle the range stops at the declared key
+    // part, exactly as it did before the handle was a key part at all.
+    assert_eq!(
+        ranges("SELECT * FROM t1 WHERE c2 = 1"),
+        Some(vec![IndexRange {
+            low: vec![Datum::Int(1)],
+            high: vec![Datum::Int(1)],
+            low_exclusive: false,
+            high_exclusive: false,
+        }])
+    );
+}
+
+/// The ROW SET, on data where a wrong second key part loses or invents rows.
+///
+/// The handle range is the only part of this that can go wrong silently: a
+/// range text is checked above, but a range whose SECOND dimension is encoded
+/// against the wrong bytes reads a different, still non-empty, set of index
+/// entries. Every predicate here is answered twice -- once through the index
+/// path and once through a table path the same statement is forced onto -- and
+/// the two must agree row for row.
+///
+/// The data is chosen so that agreement is not cheap: NEGATIVE and zero
+/// handles (the signed encoding), one `c2` value spread across many handles
+/// (so the second dimension actually cuts), a NULL `c2` (an index entry the
+/// handle range must not reach), and a handle whose value collides with a
+/// `c2` value (so a dimension read in the wrong order would still find rows).
+#[test]
+fn a_handle_range_reads_the_rows_a_full_scan_reads() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE h (c1 BIGINT PRIMARY KEY, c2 BIGINT, c3 BIGINT, INDEX c2 (c2))",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO h VALUES (-9, 1, 0), (-1, 1, 0), (0, 1, 0), (1, 1, 0), (2, 1, 0), \
+         (3, 1, 0), (4, 2, 0), (5, NULL, 0), (6, -1, 0), (7, 0, 0)",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    let ids = |sql: &str| {
+        let mut ids: Vec<i64> = run_select_on(sql, &catalog, &crate::StmtContext::for_query())
+            .unwrap()
+            .into_iter()
+            .map(|row| match row[0] {
+                Datum::Int(v) => v,
+                ref other => panic!("expected an int, got {other:?}"),
+            })
+            .collect();
+        ids.sort_unstable();
+        ids
+    };
+    for predicate in [
+        "c2 = 1 AND c1 > 1",
+        "c2 = 1 AND c1 >= 1",
+        "c2 = 1 AND c1 < 0",
+        "c2 = 1 AND c1 <= -1",
+        "c2 = 1 AND c1 BETWEEN -1 AND 2",
+        "c2 = 1 AND c1 > -100",
+        "c2 = 1 AND c1 <> 0",
+        "c2 IN (1, 2) AND c1 > 0",
+        "c2 = -1 AND c1 > 0",
+        "c2 = 0 AND c1 > 0",
+        "c2 IS NULL AND c1 > 0",
+        "c2 = 1 AND c1 > 3",
+        "c2 = 1 AND c1 > 100",
+    ] {
+        assert_eq!(
+            ids(&format!(
+                "SELECT c1 FROM h USE INDEX (c2) WHERE {predicate}"
+            )),
+            ids(&format!(
+                "SELECT c1 FROM h IGNORE INDEX (c2) WHERE {predicate}"
+            )),
+            "index and table paths disagree on `{predicate}`"
+        );
+    }
+    // The absolute answers, so that "both paths wrong the same way" is not a
+    // pass: `c2 = 1` holds for handles -9, -1, 0, 1, 2, 3.
+    assert_eq!(
+        ids("SELECT c1 FROM h USE INDEX (c2) WHERE c2 = 1 AND c1 > 1"),
+        vec![2, 3]
+    );
+    assert_eq!(
+        ids("SELECT c1 FROM h USE INDEX (c2) WHERE c2 = 1 AND c1 <= -1"),
+        vec![-9, -1]
+    );
+    assert_eq!(
+        ids("SELECT c1 FROM h USE INDEX (c2) WHERE c2 = 1 AND c1 BETWEEN -1 AND 2"),
+        vec![-1, 0, 1, 2]
+    );
+    assert_eq!(
+        ids("SELECT c1 FROM h USE INDEX (c2) WHERE c2 IS NULL AND c1 > 0"),
+        vec![5]
+    );
+}
+
+/// A UNIQUE index gets no handle appended, because a DISTINCT entry does not
+/// carry the handle in its KEY -- it lives in the value, where no range can
+/// reach it. Go states the same condition as `!path.Index.Unique`.
+#[test]
+fn a_unique_index_gets_no_handle_dimension() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE u (c1 BIGINT PRIMARY KEY, c2 BIGINT, UNIQUE KEY uc2 (c2))",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO u VALUES (1, 10), (2, 20), (3, 30)",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    let Some(TableEntry::Kv(table)) = catalog.get_table_for_test("u") else {
+        panic!("expected a kv table");
+    };
+    let columns = table
+        .columns
+        .iter()
+        .map(|c| (c.name.clone(), c.field_type.clone()))
+        .collect::<Vec<_>>();
+    let stmt =
+        tidb_parser::parse("SELECT * FROM u USE INDEX (uc2) WHERE c2 = 20 AND c1 > 1").unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query")
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a select")
+    };
+    let scope = crate::plan_trace::PlanTrace::single_table_scope("u", None, columns.clone());
+    if let Some(crate::driver::access::ChosenPath::Index(_, ranges, _)) = choose_index_range_path(
+        select,
+        &catalog,
+        &scope,
+        table,
+        &columns,
+        &crate::index_hints::AvailablePaths::unrestricted(),
+        false,
+    ) {
+        assert!(
+            ranges.iter().all(|range| range.low.len() == 1),
+            "a unique index must not range on the handle: {ranges:?}"
+        );
+    }
+    // And the rows are still right either way.
+    let rows = run_select_on(
+        "SELECT c1 FROM u USE INDEX (uc2) WHERE c2 = 20 AND c1 > 1",
+        &catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0][0], Datum::Int(2));
+}

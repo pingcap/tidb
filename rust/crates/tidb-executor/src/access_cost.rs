@@ -151,6 +151,9 @@ use crate::kv_table::{IndexRange, KvColumn, KvIndex, KvTable};
 use crate::plan_trace::PSEUDO_ROW_COUNT;
 use crate::skyline::{skyline_pruning, Candidate, ColSet, PruningContext};
 
+mod handle_key_part;
+use handle_key_part::{appended_handle_column, prune_estimate_range};
+
 /// Go `defaultVer2Factors.TiKVScan`.
 const TIKV_SCAN_FACTOR: f64 = 40.70;
 /// Go `defaultVer2Factors.TiDB2KVNet`.
@@ -687,7 +690,7 @@ pub(crate) fn enumerate_paths(
         // the hidden column an expression index was rewritten into is a
         // column of the table that no query can see, so the scope has no
         // entry at its offset.
-        let index_columns: Vec<crate::index_range::RangeColumn> = index
+        let mut index_columns: Vec<crate::index_range::RangeColumn> = index
             .column_offsets
             .iter()
             .enumerate()
@@ -707,6 +710,16 @@ pub(crate) fn enumerate_paths(
             .collect();
         if index_columns.len() != index.column_offsets.len() {
             continue;
+        }
+        // Go `fillIndexPath` (`pkg/planner/core/stats.go`): the clustered
+        // integer handle is a REAL trailing key part of every non-unique
+        // secondary index, so it joins `path.IdxCols` before the ranger runs.
+        // `range_offsets` carries the same append for the position -> row
+        // offset map the access columns are read through.
+        let mut range_offsets: Vec<usize> = index.column_offsets.clone();
+        if let Some(handle) = appended_handle_column(index, table, &index_columns) {
+            index_columns.push(handle.0);
+            range_offsets.push(handle.1);
         }
         let built = range_clause.and_then(|range_clause| {
             crate::index_range::detach_cond_and_build_range_for_index(
@@ -747,7 +760,7 @@ pub(crate) fn enumerate_paths(
         let access_columns: ColSet = built
             .access_columns
             .iter()
-            .filter_map(|position| index.column_offsets.get(*position).copied())
+            .filter_map(|position| range_offsets.get(*position).copied())
             .collect();
         let full_index_columns = full_index_columns(index, table);
         let (index_columns_map, index_filters, table_filter_count) =
@@ -1051,7 +1064,30 @@ fn index_path(
     source_row_count: f64,
     index_filter_selectivity: Option<f64>,
 ) -> AccessPath {
-    let bounds = index_row_count(index, table, &ranges, stats, realtime);
+    // Go `detachCondAndBuildRangeForPath` estimates over `pruneEstimateRange`
+    // -- the ranges trimmed back to the index's DECLARED columns -- and never
+    // over the appended handle dimension:
+    //
+    // ```go
+    // if len(indexCols) > len(path.Index.Columns) {
+    //     // Trim appended handle dimensions and keep only real
+    //     // index-definition columns for stats estimation.
+    //     indexCols = indexCols[0:len(path.Index.Columns)]
+    // }
+    // ...
+    // estimateRanges = pruneEstimateRange(path.Ranges, len(indexCols))
+    // count, err := cardinality.GetRowCountByIndexRanges(..., estimateRanges, indexCols)
+    // ```
+    //
+    // The statistics are keyed by the index as DECLARED, so estimating over a
+    // dimension the histogram never had is reading a column the estimator does
+    // not own. It also matters under pseudo rates, which is what this tier
+    // runs on: `getPseudoRowCountByIndexRanges` divides by 100 once per
+    // EQUAL-PREFIX column, so the untrimmed `(1 1,1 +inf]` estimates 33.33
+    // where the trimmed `[1,1]` estimates 10 -- and 33.33 costs the index path
+    // out of the plan that TiDB's own recording chooses.
+    let estimate_ranges = prune_estimate_range(&ranges, index.column_offsets.len());
+    let bounds = index_row_count(index, table, &estimate_ranges, stats, realtime);
     let estimated = bounds.est;
     // Go `deriveIndexPathStats`: with index filters the post-index count is
     // the access count narrowed by them, floored at the data source's own row
