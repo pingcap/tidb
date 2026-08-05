@@ -1665,7 +1665,30 @@ type topNCandidate struct {
 // carrying the value's summed count across partitions (step 1a of
 // MergePartTopNAndHistToGlobal). The encoded bytes are referenced, not
 // copied.
-func flattenSortedTopN(topNs []*TopN) []topNEntry {
+// needsDatumOrdering reports whether a type's memcomparable encoding
+// orders values differently than Datum.Compare does, which decides how
+// the TopN stream must be sorted to stay aligned with the bucket
+// stream. ENUM and SET encode as their numeric value but compare by
+// element name; BIT encodes numerically but compares as a binary
+// literal with leading zeros trimmed. Every other column type has an
+// order-preserving encoding, so the cheaper byte order is equivalent.
+func needsDatumOrdering(ft *types.FieldType) bool {
+	switch ft.GetType() {
+	case mysql.TypeEnum, mysql.TypeSet, mysql.TypeBit:
+		return true
+	default:
+		return false
+	}
+}
+
+// flattenSortedTopN returns every partition's TopN entries as one
+// stream, ordered by the same relation Pass 1 uses to walk them against
+// the bucket stream, with equal values compacted into a single entry.
+// The encoded key stays the identity: two entries are the same value
+// only if their encoded keys are equal.
+func flattenSortedTopN(
+	sc *stmtctx.StatementContext, topNs []*TopN, ft *types.FieldType, isIndex bool,
+) ([]topNEntry, error) {
 	totalTopN := 0
 	for _, topN := range topNs {
 		if topN == nil || len(topN.TopN) == 0 {
@@ -1682,9 +1705,15 @@ func flattenSortedTopN(topNs []*TopN) []topNEntry {
 			allTopN = append(allTopN, topNEntry{encoded: val.Encoded, count: val.Count})
 		}
 	}
-	slices.SortFunc(allTopN, func(a, b topNEntry) int {
-		return bytes.Compare(a.encoded, b.encoded)
-	})
+	if !isIndex && needsDatumOrdering(ft) {
+		if err := sortTopNByDatum(sc, allTopN, ft); err != nil {
+			return nil, err
+		}
+	} else {
+		slices.SortFunc(allTopN, func(a, b topNEntry) int {
+			return bytes.Compare(a.encoded, b.encoded)
+		})
+	}
 	// Compact runs of equal values (the same value can be TopN in
 	// several partitions) into one entry with the summed count, so
 	// consumers can rely on entries being unique. In place: the write
@@ -1697,7 +1726,40 @@ func flattenSortedTopN(topNs []*TopN) []topNEntry {
 		}
 		compacted = append(compacted, e)
 	}
-	return compacted
+	return compacted, nil
+}
+
+// sortTopNByDatum orders entries by their decoded values, falling back
+// to the encoded key so entries for the same value stay adjacent for
+// the compaction that follows.
+func sortTopNByDatum(sc *stmtctx.StatementContext, allTopN []topNEntry, ft *types.FieldType) error {
+	tz := sc.TimeZone()
+	datums := make(map[string]types.Datum, len(allTopN))
+	for _, e := range allTopN {
+		if _, ok := datums[string(e.encoded)]; ok {
+			continue
+		}
+		d, err := topNMetaToDatum(TopNMeta{Encoded: e.encoded}, ft, false, tz)
+		if err != nil {
+			return err
+		}
+		datums[string(e.encoded)] = d
+	}
+	var cmpErr error
+	tc := sc.TypeCtx()
+	slices.SortFunc(allTopN, func(a, b topNEntry) int {
+		da, db := datums[string(a.encoded)], datums[string(b.encoded)]
+		c, err := da.Compare(tc, &db, collate.GetBinaryCollator())
+		if err != nil {
+			cmpErr = err
+			return 0
+		}
+		if c != 0 {
+			return c
+		}
+		return bytes.Compare(a.encoded, b.encoded)
+	})
+	return cmpErr
 }
 
 // sumPartitionTotals collects the global totals from the partition
@@ -1878,7 +1940,6 @@ func MergePartTopNAndHistToGlobal(
 	}
 
 	tz := sc.TimeZone()
-	tp := firstHist.Tp.GetType()
 	statslogutil.StatsLogger().Info("MergePartTopNAndHistToGlobal start",
 		zap.Int64("histID", firstHist.ID),
 		zap.Stringer("tp", firstHist.Tp),
@@ -1897,7 +1958,10 @@ func MergePartTopNAndHistToGlobal(
 	// walks it against the bucket refs. After global TopN selection,
 	// the non-promoted values become the virtual histogram entries
 	// Pass 2 walks (step 1e).
-	allTopN := flattenSortedTopN(topNs)
+	allTopN, err := flattenSortedTopN(sc, topNs, firstHist.Tp, isIndex)
+	if err != nil {
+		return nil, nil, err
+	}
 	statslogutil.StatsLogger().Info("MergePartTopNAndHistToGlobal step 1a: sorted partition TopN",
 		zap.Int("topNEntries", len(allTopN)))
 
@@ -1958,7 +2022,7 @@ func MergePartTopNAndHistToGlobal(
 		case !bucketCur.valid():
 			consumeTopN = true
 		default:
-			d, err := topNMetaToDatum(TopNMeta{Encoded: topNCur.peekEncoded()}, tp, isIndex, tz)
+			d, err := topNMetaToDatum(TopNMeta{Encoded: topNCur.peekEncoded()}, firstHist.Tp, isIndex, tz)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -2195,7 +2259,6 @@ func (r *globalMergeRefs) mergeVirtualTopN(virtualHistTopN []topNEntry, firstHis
 	if uint64(len(r.hists))+uint64(numChunks) > math.MaxUint16 {
 		return errors.Errorf("MergePartTopNAndHistToGlobal: too many virtual histograms (%d partitions + %d virtual chunks > %d)", len(r.hists), numChunks, math.MaxUint16)
 	}
-	tp := firstHist.Tp.GetType()
 	virtualHistIdxs := make([]uint16, numChunks)
 	for k := range numChunks {
 		start := k * chunkSize
@@ -2208,7 +2271,7 @@ func (r *globalMergeRefs) mergeVirtualTopN(virtualHistTopN []topNEntry, firstHis
 				d.SetBytes(e.encoded)
 			} else {
 				var err error
-				d, err = topNMetaToDatum(TopNMeta{Encoded: e.encoded}, tp, r.isIndex, r.tz)
+				d, err = topNMetaToDatum(TopNMeta{Encoded: e.encoded}, firstHist.Tp, r.isIndex, r.tz)
 				if err != nil {
 					return err
 				}
