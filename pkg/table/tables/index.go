@@ -269,9 +269,6 @@ func (c *index) MeetPartialCondition(row []types.Datum) (meet bool, err error) {
 }
 
 func (c *index) MeetPartialConditionWithChunk(row chunk.Row) (meet bool, err error) {
-	if c.conditionExpr == nil {
-		return true, nil
-	}
 	defer func() {
 		r := recover()
 		if r != nil {
