@@ -1430,7 +1430,44 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     //
     // (The groups overlap the per-topic counts by design: a topic's entry
     // names what IT carries, this list names what the corpus owes.)
-    const KNOWN_DIVERGENCES: usize = 73;
+    // 73 -> 72 (batch50). ONE of the census's six WRONG-ROWS statements is
+    // closed: `executor/cte`'s
+    //
+    //   with recursive cte1(c1) as
+    //     (select c1 from t1 union select c1 + 1 c1 from cte1 where c1 < 4)
+    //   select * from cte1 order by c1
+    //
+    // over `t1 = (1),(1),(1),(2),(2),(2)` answered `1 1 1 2 2 2 3 4` where
+    // TiDB answers `1 2 3 4`. The recursion WAS deduplicating; the SEED was
+    // not. Go's `computeSeedPart` (`executor/cte.go:409`) hands every seed
+    // chunk to the same `tryDedupAndAdd` the recursive part uses, so a
+    // recursive `UNION`'s DISTINCT covers the seed's own duplicates too --
+    // this tier only SEEDED its hash set from the seed rows and kept them
+    // all. Nothing else moved: `executor/cte` goes 3 divergences -> 2 and
+    // every other topic's triple is identical.
+    //
+    // The other five wrong-rows statements are attributed and NOT fixed here,
+    // because both causes are a capability rather than a bug:
+    //
+    //  * FOUR are one missing capability: a CORRELATED SUBQUERY inside a
+    //    DML's own clauses. `update t1 set value = (select count(*) from t2
+    //    where t1.id = t2.id) where t1.id = 10` is refused outright with
+    //    "expression form is not yet supported by the rewriter" -- the SELECT
+    //    form of the same subquery answers correctly (3, 1, 1), so the gap is
+    //    only that `driver::dml` rewrites its `WHERE` and its `SET` against a
+    //    plain row resolver with no Apply. `planner/core/rule_constant_
+    //    propagation` carries one and `executor/parallel_apply` three (its
+    //    DELETE, UPDATE and REPLACE cases). Wiring it is not local: the KV
+    //    arms of `run_update_traced`/`run_delete_traced` hold `catalog
+    //    .get_mut_in` across the row loop, and a per-row subquery needs the
+    //    catalog READABLE inside it, so the rows must be fetched and their
+    //    inner values computed before the mutable borrow is taken.
+    //  * ONE is `ddl/serial`'s `alter table partition_table truncate
+    //    partition all`, which this tier REFUSES: `AlterTableAction::
+    //    Partition` reaches `alter_table`'s catch-all. Partition MAINTENANCE
+    //    is unwired as a whole (`AlterPartitionAction` is parse-and-restore
+    //    only), and one arm of it is not a port of the feature.
+    const KNOWN_DIVERGENCES: usize = 72;
     //
     //
     // 28 -> 24 (written as 35 -> 31 in batch43's own tree, which branched before batch42), in three unrelated causes, none of them an access-path

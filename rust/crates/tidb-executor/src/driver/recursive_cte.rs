@@ -157,6 +157,31 @@ fn run_fixpoint(
     // recursive block reads the CTE by its RENAMED column names.
     let columns = apply_column_list(columns, column_names)?;
 
+    // Go `cteProducer`: ONE hash table over everything accumulated so far,
+    // added to as rows arrive. Rebuilding it per round -- which is what
+    // folding through `combine_set_opr` did -- makes the whole fixpoint
+    // quadratic in the result size, and TiDB answers a 100,000-row recursion
+    // in seconds.
+    //
+    // The SEED goes through the same gate: `computeSeedPart`
+    // (`executor/cte.go:409`) hands every seed chunk to `tryDedupAndAdd`
+    // exactly as `computeRecursivePart` does, so the recursive `UNION`'s
+    // DISTINCT applies to the seed's own duplicates too. Seeding the set from
+    // an unfiltered `accumulated` instead answered `select c1 from t1 union
+    // select c1 + 1 from cte1 ...` over `t1 = (1),(1),(1),(2),(2),(2)` with
+    // all six seed rows kept and only the recursion deduplicated.
+    let distinct = matches!(split.op, SetOp::Union { all: false });
+    let mut seen: std::collections::HashSet<Vec<u8>> = std::collections::HashSet::new();
+    if distinct {
+        let mut unique = Vec::with_capacity(accumulated.len());
+        for row in accumulated {
+            if seen.insert(super::row_key(&row)?) {
+                unique.push(row);
+            }
+        }
+        accumulated = unique;
+    }
+
     // Reaching the target before any round runs (`LIMIT 0`, or a seed that
     // already fills it) is the same check the loop makes, not a special case:
     // it just empties the delta, so no round ever runs.
@@ -170,20 +195,6 @@ fn run_fixpoint(
     let mut round: u64 = 0;
     let depth = ctx.cte_max_recursion_depth();
     let mut scratch = catalog.clone();
-    // Go's `cteProducer.hashTbl`: ONE hash table over everything accumulated
-    // so far, added to as rows arrive. Rebuilding it per round -- which is
-    // what folding through `combine_set_opr` did -- makes the whole fixpoint
-    // quadratic in the result size, and TiDB answers a 100,000-row recursion
-    // in seconds.
-    let distinct = matches!(split.op, SetOp::Union { all: false });
-    let mut seen: std::collections::HashSet<Vec<u8>> = if distinct {
-        accumulated
-            .iter()
-            .map(|row| super::row_key(row))
-            .collect::<Result<_, _>>()?
-    } else {
-        std::collections::HashSet::new()
-    };
     while !delta.is_empty() {
         round += 1;
         if round > depth {
