@@ -139,13 +139,21 @@ pub(crate) fn field_type_of(
         resolved.collation = resolved.charset.default_collation();
     }
 
-    let field_type = column_field_type::build_field_type(
+    let mut field_type = column_field_type::build_field_type(
         &def.name,
         &def.ty,
         resolved.charset.name(),
         resolved.collation.name(),
     )
     .map_err(|error| DriverError::unsupported(error.reason))?;
+    // Go `processColumnFlags`, the SAME function `tidb_exec::table_info_build`
+    // calls -- the flags a column takes from its TYPE rather than from what
+    // was written. Without it a real `YEAR` or `BIT` column carried no
+    // `UNSIGNED` flag here, so `select a - 2000` over a `YEAR` column answered
+    // `-10` where TiDB raises 1690; the flag is invisible in every catalog
+    // surface (see the function's doc) and decides the arithmetic signature.
+    // It runs on the FINISHED type because the flen depends on `UNSIGNED`.
+    column_field_type::process_column_flags(&mut field_type);
     // Go `checkColumnAttributes`: the parser stores what was written and the
     // DDL builder is what refuses it, which is why these are coded errors and
     // not parse failures.

@@ -76,7 +76,7 @@ use tidb_datatype::{
 // `CREATE TABLE` builder; see `column_field_type`'s module doc for why.
 use tidb_executor::ddl::column_field_type::{
     build_field_type as build_shared_field_type, column_type_code as shared_column_type_code,
-    ColumnTypeError, BINARY_CHARSET,
+    process_column_flags, ColumnTypeError,
 };
 use tidb_model::column::{ColumnDefaultValue, ColumnInfo, CURR_LATEST_COLUMN_INFO_VERSION};
 use tidb_model::index::{IndexColumn, IndexInfo};
@@ -748,29 +748,6 @@ fn process_default_value(
         {
             field_type.add_flags(FieldTypeFlags::NO_DEFAULT_VALUE);
         }
-    }
-}
-
-/// Go `processColumnFlags`: the binary flag follows the resolved charset, and
-/// `ZEROFILL` implies `UNSIGNED`.
-fn process_column_flags(field_type: &mut FieldType) {
-    if field_type.eval_type().is_string_kind() {
-        if field_type.charset_name() == BINARY_CHARSET {
-            field_type.add_flags(FieldTypeFlags::BINARY);
-        } else {
-            field_type.del_flags(FieldTypeFlags::BINARY);
-        }
-    }
-    if field_type.code() == FieldTypeCode::Bit {
-        field_type.del_flags(FieldTypeFlags::BINARY);
-        field_type.add_flags(FieldTypeFlags::UNSIGNED);
-    }
-    if field_type.code() == FieldTypeCode::Year {
-        field_type.del_flags(FieldTypeFlags::BINARY);
-        field_type.add_flags(FieldTypeFlags::ZEROFILL);
-    }
-    if field_type.has_flag(FieldTypeFlags::ZEROFILL) {
-        field_type.add_flags(FieldTypeFlags::UNSIGNED);
     }
 }
 

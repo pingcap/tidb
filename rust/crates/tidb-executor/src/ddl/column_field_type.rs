@@ -285,6 +285,80 @@ pub fn build_field_type(
     Ok(field_type)
 }
 
+/// Go `processColumnFlags` (`pkg/ddl/add_column.go:1297`), the four flag rules
+/// a column takes from its TYPE rather than from what was written:
+///
+/// ```text
+/// func processColumnFlags(col *table.Column) {
+///     if col.FieldType.EvalType().IsStringKind() {
+///         if col.GetCharset() == charset.CharsetBin { col.AddFlag(mysql.BinaryFlag) }
+///         else                                      { col.DelFlag(mysql.BinaryFlag) }
+///     }
+///     if col.GetType() == mysql.TypeBit {
+///         // For BIT field, it's charset is binary but does not have binary flag.
+///         col.DelFlag(mysql.BinaryFlag); col.AddFlag(mysql.UnsignedFlag)
+///     }
+///     if col.GetType() == mysql.TypeYear {
+///         // For Year field, it's charset is binary but does not have binary flag.
+///         col.DelFlag(mysql.BinaryFlag); col.AddFlag(mysql.ZerofillFlag)
+///     }
+///     // If you specify ZEROFILL for a numeric column, MySQL automatically
+///     // adds the UNSIGNED attribute to the column.
+///     if mysql.HasZerofillFlag(col.GetFlag()) { col.AddFlag(mysql.UnsignedFlag) }
+/// }
+/// ```
+///
+/// # This is why a `YEAR` column is UNSIGNED
+///
+/// Go's own comment says bit and year "won't show its unsigned flag in `show
+/// create table`", which is why the flag is invisible in every catalog surface
+/// and yet decides arithmetic. Captured from real TiDB over `create table y (a
+/// year, b bit(8))` with the row `(1990, 1)`: `select a - 2000 from y` and
+/// `select b - 2000 from y` are BOTH errors (Go's `ErrOverflow` 1690, "BIGINT
+/// UNSIGNED value is out of range"), while `select a + 0 from y` is `1990` --
+/// so it really is the unsigned SIGNATURE and not a blanket refusal. The same
+/// capture prints `` `a` year(4) `` and `` `b` bit(8) `` in `SHOW CREATE
+/// TABLE` and `year(4)`/`bit(8)` in `information_schema.columns`, with no
+/// `unsigned` and no `zerofill` word anywhere.
+///
+/// # Order: this runs AFTER the flen is settled, never before
+///
+/// Go runs it at the END of `columnDefToCol`
+/// (`processAndCheckDefaultValueAndColumn`), and the placement is load-bearing
+/// rather than incidental: [`build_field_type`] narrows an unsigned integer's
+/// default flen by one (Go issue #4684) and `YEAR` IS one of Go's
+/// `IsTypeInteger` types, so stamping `UNSIGNED` before that point would turn
+/// `year(4)` into `year(3)`. Both callers therefore call this on the FINISHED
+/// field type.
+///
+/// The rules are idempotent, so a caller that runs it on both the create and
+/// the modify path -- as Go does, via `columnDefToCol` and
+/// `processColumnOptions` -- gets the same answer.
+pub fn process_column_flags(field_type: &mut FieldType) {
+    if field_type.eval_type().is_string_kind() {
+        if field_type.charset_name() == BINARY_CHARSET {
+            field_type.add_flags(FieldTypeFlags::BINARY);
+        } else {
+            field_type.del_flags(FieldTypeFlags::BINARY);
+        }
+    }
+    if field_type.code() == FieldTypeCode::Bit {
+        field_type.del_flags(FieldTypeFlags::BINARY);
+        field_type.add_flags(FieldTypeFlags::UNSIGNED);
+    }
+    if field_type.code() == FieldTypeCode::Year {
+        field_type.del_flags(FieldTypeFlags::BINARY);
+        field_type.add_flags(FieldTypeFlags::ZEROFILL);
+    }
+    // Go: "If you specify ZEROFILL for a numeric column, MySQL automatically
+    // adds the UNSIGNED attribute to the column." This arm is what carries
+    // `YEAR` from the arm above to UNSIGNED, so the two must stay in this
+    // order.
+    if field_type.has_flag(FieldTypeFlags::ZEROFILL) {
+        field_type.add_flags(FieldTypeFlags::UNSIGNED);
+    }
+}
+
 /// Go `adjustBlobTypesFlen`: a declared `BLOB(n)`/`TEXT(n)` becomes whichever
 /// member of the family actually holds `n` characters of this charset.
 fn adjust_blob_flen(
@@ -341,7 +415,7 @@ fn type_argument(
 
 #[cfg(test)]
 mod tests {
-    use super::build_field_type;
+    use super::{build_field_type, process_column_flags};
     use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags};
 
     /// The declared type of the one column of `CREATE TABLE probe (<decl>)`.
@@ -437,6 +511,99 @@ mod tests {
         assert_eq!((a.flen(), a.decimal()), (10, 2));
         let b = built("b double(12,3)");
         assert_eq!((b.flen(), b.decimal()), (12, 3));
+    }
+
+    /// The same column after [`process_column_flags`], which is what both
+    /// `CREATE TABLE` builders run on the finished type.
+    fn stamped(declaration: &str) -> FieldType {
+        let mut field_type = built(declaration);
+        process_column_flags(&mut field_type);
+        field_type
+    }
+
+    /// Go `processColumnFlags`, arm by arm, in ABSOLUTE flag words.
+    ///
+    /// The whole flag word is asserted rather than one bit, because the bug
+    /// this fixes was a flag that was never SET at all: an assertion that only
+    /// says "UNSIGNED is on" would still pass over a field type that had
+    /// gained three other flags it should not have.
+    ///
+    /// Captured from real TiDB over `create table y (a year, b bit(8), c int
+    /// unsigned, d int zerofill, e varchar(5))` with the row `(1990, 1, 1, 1,
+    /// 'x')`: `select a - 2000 from y`, `select b - 2000 from y`, `select c -
+    /// 2000 from y` and `select d - 2000 from y` are all errors, while `select
+    /// a + 0 from y` is `1990`.
+    #[test]
+    fn go_processcolumnflags_arm_by_arm() {
+        const UNSIGNED: u32 = FieldTypeFlags::UNSIGNED;
+        const ZEROFILL: u32 = FieldTypeFlags::ZEROFILL;
+        const BINARY: u32 = FieldTypeFlags::BINARY;
+
+        // Arm 3 then arm 4: YEAR takes ZEROFILL, which the last arm carries to
+        // UNSIGNED. Neither word is DECLARED anywhere in `a year`.
+        let year = stamped("a year");
+        assert_eq!(year.flags(), ZEROFILL | UNSIGNED);
+        // BOUNDARY: the flen must survive the new UNSIGNED. `YEAR` is one of
+        // Go's `IsTypeInteger` types and `build_field_type` narrows an
+        // unsigned integer's default flen by one, so running the flag pass
+        // BEFORE the flen is settled would answer `year(3)`.
+        assert_eq!(year.flen(), 4);
+
+        // Arm 2: BIT takes UNSIGNED and NOT ZEROFILL -- a blanket
+        // "binary-charset numeric type is zerofill" rule would answer
+        // `ZEROFILL | UNSIGNED` here.
+        let bit = stamped("b bit(8)");
+        assert_eq!(bit.flags(), UNSIGNED);
+        assert_eq!(bit.flen(), 8);
+
+        // The DECLARED sources still stand on their own and are not clobbered
+        // by the pass, and an unadorned integer gains nothing from it.
+        assert_eq!(stamped("c int unsigned").flags(), UNSIGNED);
+        assert_eq!(stamped("c2 int unsigned").flen(), 10);
+        assert_eq!(stamped("d int zerofill").flags(), ZEROFILL | UNSIGNED);
+        assert_eq!(stamped("d2 int").flags(), 0);
+        assert_eq!(stamped("d3 int").flen(), 11);
+
+        // Arm 1, both directions: the BINARY flag follows the resolved
+        // CHARSET. A `utf8mb4` string keeps none...
+        assert_eq!(stamped("e varchar(5)").flags(), 0);
+        // ...while a type whose charset resolved to `binary` keeps it. This is
+        // the arm's DEL direction: `build_field_type` already stamped BINARY
+        // for the intrinsically binary name, and the pass must leave it.
+        let blob = stamped("f blob(100)");
+        assert_eq!(blob.flags(), BINARY);
+
+        // BOUNDARY for arm 1's DEL direction: a string type that arrives
+        // carrying BINARY but resolved to a character charset loses it. This
+        // is the only case where the pass REMOVES a flag, so a port that kept
+        // only the ADD half would still pass every assertion above.
+        let mut mislabelled = built("g varchar(5)");
+        mislabelled.add_flags(FieldTypeFlags::BINARY);
+        process_column_flags(&mut mislabelled);
+        assert_eq!(mislabelled.flags(), 0);
+
+        // BOUNDARY for arms 2 and 3's own DEL: Go deletes BinaryFlag from BIT
+        // and YEAR because "it's charset is binary but does not have binary
+        // flag". Neither is string-kind, so arm 1 never reaches them and this
+        // is the only thing that clears the bit.
+        for declaration in ["h year", "i bit(8)"] {
+            let mut field_type = built(declaration);
+            field_type.add_flags(FieldTypeFlags::BINARY);
+            process_column_flags(&mut field_type);
+            assert_eq!(
+                field_type.flags() & BINARY,
+                0,
+                "{declaration} must not keep BinaryFlag"
+            );
+        }
+
+        // Idempotent, which is what lets the create and the modify path both
+        // run it as Go does.
+        let mut twice = built("j year");
+        process_column_flags(&mut twice);
+        let once = twice.flags();
+        process_column_flags(&mut twice);
+        assert_eq!(twice.flags(), once);
     }
 }
 

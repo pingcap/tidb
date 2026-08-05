@@ -15,6 +15,7 @@
 mod aggregates;
 mod catalog_version;
 mod column_defaults;
+mod column_type_flags;
 mod create_table_like;
 mod dml;
 mod index_prefix_lengths;
