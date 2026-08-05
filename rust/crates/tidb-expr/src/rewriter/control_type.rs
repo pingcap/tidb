@@ -270,8 +270,12 @@ pub fn infer_type4_control_funcs(name: &str, args: &[Expression]) -> Option<Fiel
     }
     // An ENUM/SET result is not one: the signature that runs is the Int or
     // String one, so the type reported is the one that signature returns.
-    // This is what makes `IF(c, e, e)` over `enum('c','b','a')` compare as
-    // TEXT rather than by ordinal.
+    //
+    // This is reachable ONLY through the single-typed-branch path above --
+    // `IF(c, NULL, enum_col)`. A PAIR of enums never gets here, because
+    // `fieldTypeMergeRules[TypeEnum][TypeEnum]` is already `TypeVarchar`
+    // (`types/field_type.go`'s table, row 19 column 19), so `AggFieldType`
+    // has done the rewrite before this line runs.
     if matches!(result.code(), FieldTypeCode::Enum | FieldTypeCode::Set) {
         match result_eval {
             EvalType::Int => result.set_code(FieldTypeCode::LongLong),
@@ -322,19 +326,108 @@ mod tests {
     }
 
     /// Go's `len(notNullFields) == 1` shortcut copies the ONE typed branch
-    /// whole -- no re-derivation, so a decimal keeps its own precision.
+    /// whole -- no re-derivation at all.
+    ///
+    /// The width is the boundary that shows it: an UNSIGNED `int(10)` spends
+    /// no digit on a sign, so running the merge over a one-element list
+    /// instead would put one back (`setFlenFromArgs` re-adds a sign digit
+    /// unconditionally) and report `int(11)`. A SIGNED branch, or a DECIMAL
+    /// one, round-trips through the merge unchanged and would agree either
+    /// way -- which is why this case is unsigned.
     #[test]
     fn one_typed_branch_beside_nulls_is_that_branch_exactly() {
+        let mut unsigned = FieldType::new(FieldTypeCode::Long);
+        unsigned.set_flen(10);
+        unsigned.set_decimal(0);
+        unsigned.add_flags(FieldTypeFlags::UNSIGNED);
         let ft = infer_type4_control_funcs(
             "ifnull",
             &[
                 typed(FieldTypeCode::Null),
-                arg(FieldTypeCode::NewDecimal, 8, 3),
+                Expression::Constant(Constant::new(Datum::Null, unsigned)),
             ],
         )
         .expect("typed");
-        assert_eq!(ft.code(), FieldTypeCode::NewDecimal);
-        assert_eq!((ft.flen(), ft.decimal()), (8, 3));
+        assert_eq!(ft.code(), FieldTypeCode::Long);
+        assert_eq!((ft.flen(), ft.decimal()), (10, 0));
+    }
+
+    /// The ENUM/SET rewrite's ONLY reachable path: one enum branch beside a
+    /// NULL one, where `AggFieldType` never runs. Recorded witness:
+    /// `tests/integrationtest/r/expression/misc.result:911` runs
+    /// `select if(A, null,b)=1 from t` over `b enum("b")`.
+    #[test]
+    fn a_lone_enum_branch_reports_the_varchar_its_signature_returns() {
+        let ft = infer_type4_control_funcs(
+            "if",
+            &[typed(FieldTypeCode::Null), arg(FieldTypeCode::Enum, 1, 0)],
+        )
+        .expect("typed");
+        assert_eq!(ft.code(), FieldTypeCode::Varchar);
+    }
+
+    /// `IF` never re-adds NOT NULL: `newReturnFieldTypeForBaseBuiltinFunc`
+    /// gives `bf.tp` only `mysql.BinaryFlag`, so two NOT NULL branches still
+    /// make a nullable result -- if all when-clauses are false there is
+    /// nothing to return.
+    ///
+    /// This is also the boundary for Go's `var tempFlag uint`: starting that
+    /// mask at the MERGED flags instead of at zero would let `AggFieldType`'s
+    /// `mergeTypeFlag` carry NOT NULL through, and `IF` has no tail to undo
+    /// it. `IFNULL` and `COALESCE` would both hide the change, because their
+    /// own tails put NOT NULL back.
+    #[test]
+    fn two_not_null_branches_do_not_make_an_if_not_null() {
+        let not_null = |code| {
+            let mut ft = FieldType::new(code);
+            ft.set_flen(1);
+            ft.set_decimal(0);
+            ft.add_flags(FieldTypeFlags::NOT_NULL);
+            Expression::Constant(Constant::new(Datum::Null, ft))
+        };
+        let branches = [
+            not_null(FieldTypeCode::LongLong),
+            not_null(FieldTypeCode::LongLong),
+        ];
+        let ft = infer_type4_control_funcs("if", &branches).expect("typed");
+        assert!(!ft.has_flag(FieldTypeFlags::NOT_NULL));
+        // The same two branches under IFNULL DO carry it (`builtin_control.go`
+        // `:526`), which is what makes `IFNULL(1, NULL)` a NOT NULL column.
+        let ft = infer_type4_control_funcs("ifnull", &branches).expect("typed");
+        assert!(ft.has_flag(FieldTypeFlags::NOT_NULL));
+        let with_null = [
+            not_null(FieldTypeCode::LongLong),
+            typed(FieldTypeCode::Null),
+        ];
+        let ft = infer_type4_control_funcs("ifnull", &with_null).expect("typed");
+        assert!(ft.has_flag(FieldTypeFlags::NOT_NULL));
+        // CASE WHEN clears it unconditionally (`:330-333`).
+        let ft = infer_type4_control_funcs("case_when", &branches).expect("typed");
+        assert!(!ft.has_flag(FieldTypeFlags::NOT_NULL));
+    }
+
+    /// `setFlenFromArgs` branches on `AggregateEvalType`'s answer, NOT on the
+    /// merged FIELD type's eval type, and the two genuinely differ: every
+    /// TEMPORAL eval type is `IsStringKind`, so a DURATION pair merges to a
+    /// DURATION field type whose `AggregateEvalType` is `ETString`.
+    ///
+    /// The ETString arm gives up on the width as soon as one branch has none;
+    /// the trailing arm this would otherwise take just maxes the widths and
+    /// reports the other branch's. Reading the eval type off the merged type
+    /// would agree on every NUMERIC pair, which is why the boundary is
+    /// temporal.
+    #[test]
+    fn the_width_arm_is_chosen_by_the_aggregate_eval_type() {
+        let ft = infer_type4_control_funcs(
+            "ifnull",
+            &[
+                arg(FieldTypeCode::Duration, 10, 0),
+                arg(FieldTypeCode::Duration, UNSPECIFIED_LENGTH, 0),
+            ],
+        )
+        .expect("typed");
+        assert_eq!(ft.code(), FieldTypeCode::Duration);
+        assert_eq!(ft.flen(), UNSPECIFIED_LENGTH);
     }
 
     /// Every branch NULL: a NULL column, width and scale zeroed.
