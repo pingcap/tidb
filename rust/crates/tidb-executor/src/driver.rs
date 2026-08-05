@@ -206,6 +206,7 @@ mod set_opr;
 mod subquery;
 #[cfg(test)]
 mod tests;
+mod through_proj;
 mod write_cast;
 
 // Re-exported flat, so every caller inside and outside this module keeps
@@ -431,6 +432,19 @@ pub(crate) fn run_select_traced(
         &folded
     } else {
         select
+    };
+    // Go's `tidb_opt_join_reorder_through_proj`: a derived table whose
+    // projection sits directly on a join dissolves into the statement, so the
+    // relations under it become leaves of THIS join group and the reorder can
+    // move them. Both of Go's gates and this tier's own are in
+    // `driver::through_proj`; every default session gets `None` here.
+    let inlined;
+    let select = match through_proj::inline(select, catalog, current_db, ctx) {
+        Some(rewritten) => {
+            inlined = rewritten;
+            &inlined
+        }
+        None => select,
     };
 
     // Go's `buildSelect` pushes this block's `/*+ ... */` hints and its

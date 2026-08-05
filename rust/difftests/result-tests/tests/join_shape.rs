@@ -702,11 +702,56 @@ fn join_operators_and_their_keep_order_match_recorded_tidb_plans() {
     // and `executor/merge_join` (246 matched, 0 diverged) and
     // `executor/jointest/join` (801 matched, 3 diverged) did not move -- as
     // they cannot, since neither topic raises the threshold.
+    // FOURTH MEASUREMENT, after projection inlining
+    // (`tidb_executor::driver::through_proj`), Go's
+    // `tidb_opt_join_reorder_through_proj`. The merge pairs moved for the
+    // first time: 66 -> 69 agreed and 31 -> 28 extra, all six moves inside
+    // `planner/core/join_reorder_through_projection` (59/69 +27 -> 62/69 +21
+    // for that topic) and all six on the SAME three statements. `compared`
+    // and `both_agree` did not move at all.
+    //
+    // WHAT THE RECORDINGS SAY. The three are the statements that run with the
+    // variable ON *and* a raised threshold *and* whose join equalities are all
+    // `col = col` once the derived table dissolves:
+    //
+    //  * `:1270` `select t1.a, dt.key_a, dt.doubled_b from t1, t5, (select
+    //    t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a)
+    //    dt where t1.a = dt.key_a and dt.key_a = t5.a` (threshold 10),
+    //  * `:1420` the same statement plus `and dt.doubled_b > 100`,
+    //  * `:1555` `from t1, (same dt) where t1.a = dt.key_a and dt.doubled_b >
+    //    100` (threshold 63).
+    //
+    // Each records `MergeJoin(..., MergeJoin(t1, t2))` -- one single-leaf
+    // ordered pair, `(t1, t2)` -- reachable only because TiDB's group is
+    // `{t1, t2, t3[, t5]}` rather than `{t1, dt[, t5]}`. This tier had been
+    // producing `(t2, t3)` there, the pair the WRITTEN derived table forms.
+    // So each statement loses one extra and gains one agreed: -3 extra,
+    // +3 agreed, and `recorded_merge_pairs` is unchanged because the
+    // recordings did not change.
+    //
+    // WHAT DID NOT MOVE, AND WHY. The topic's other 21 extras are the
+    // statements whose dissolve would leave a NON-COLUMN equality
+    // (`t1.b = dt.doubled_b` becomes `t1.b = t2.b * 2`). Go materializes that
+    // key with `injectExpr`; this tier's `hash_join::split_equi` takes a key
+    // only when both sides are columns, so dissolving there would turn a hash
+    // join into a nested loop -- and `driver::through_proj` declines instead.
+    // Allowing it was MEASURED: the DP then rebuilds those trees and the
+    // extras fall a further 28 -> 25, but every one of the three falls because
+    // this tier stopped merging at all, not because it merged where TiDB
+    // merges. That is a metric moving without the plan improving, so it is not
+    // taken; the injected key is the prerequisite and it is named in
+    // `driver::through_proj`'s own doc.
+    //
+    // NOTHING REGRESSED: `compared` and `both_agree` are unchanged, the
+    // replay's `planner/core/join_reorder_through_projection` is unchanged at
+    // 303 matched / 13 diverged with `Rows` 59, and `executor/merge_join`
+    // (246 matched, 0 diverged) and `executor/jointest/join` (801 matched,
+    // 3 diverged) did not move.
     const COMPARED: usize = 182;
     const BOTH_AGREE: usize = 103;
     const RECORDED_MERGE_PAIRS: usize = 84;
-    const AGREED_MERGE_PAIRS: usize = 66;
-    const EXTRA_MERGE_PAIRS: usize = 31;
+    const AGREED_MERGE_PAIRS: usize = 69;
+    const EXTRA_MERGE_PAIRS: usize = 28;
 
     assert_eq!(
         (

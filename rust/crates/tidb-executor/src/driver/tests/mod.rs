@@ -31,6 +31,7 @@ mod select_clauses;
 mod set_operations;
 mod subqueries;
 mod table_round_trip;
+mod through_proj;
 
 use super::*;
 

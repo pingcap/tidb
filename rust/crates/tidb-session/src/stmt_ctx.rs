@@ -252,6 +252,14 @@ impl Session {
             .ok()
             .and_then(|value| value.parse::<i32>().ok())
             .unwrap_or(tidb_vardef::defaults::DEF_TIDB_OPT_JOIN_REORDER_THRESHOLD as i32);
+        // Go `SessionVars.TiDBOptJoinReorderThroughProj`: whether the join
+        // group may absorb the relations under a `Projection`. Shipped `OFF`.
+        let join_reorder_through_proj = matches!(
+            self.vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_OPT_JOIN_REORDER_THROUGH_PROJ)
+                .as_deref(),
+            Ok("ON" | "on" | "1")
+        );
         // Go `SessionVars.PartitionPruneMode`: `static` makes the planner
         // fan a partitioned `DataSource` out into one child per surviving
         // partition under a `PartitionUnion`, which is a PRINTED shape rather
@@ -332,6 +340,7 @@ impl Session {
                 .with_date_modes(date_modes)
                 .with_cte_max_recursion_depth(cte_depth)
                 .with_join_reorder_threshold(join_reorder_threshold)
+                .with_join_reorder_through_proj(join_reorder_through_proj)
                 .with_static_partition_prune(static_partition_prune)
                 .with_only_full_group_by(has("ONLY_FULL_GROUP_BY"))
                 .with_session_state(current_db, version)
@@ -383,6 +392,7 @@ impl Session {
         .with_allow_remove_auto_inc(self.allow_remove_auto_inc())
         .with_cte_max_recursion_depth(cte_depth)
         .with_join_reorder_threshold(join_reorder_threshold)
+        .with_join_reorder_through_proj(join_reorder_through_proj)
         .with_static_partition_prune(static_partition_prune)
     }
 

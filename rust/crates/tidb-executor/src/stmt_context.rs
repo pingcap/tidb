@@ -301,6 +301,12 @@ pub struct StmtContext {
     /// default NO group qualifies, so a stock session never reorders --
     /// see [`crate::driver::join_reorder`].
     join_reorder_threshold: i32,
+    /// Go `SessionVars.TiDBOptJoinReorderThroughProj`
+    /// (`@@tidb_opt_join_reorder_through_proj`, default `OFF`): whether
+    /// `extractJoinGroup` may look THROUGH a `Projection` sitting on a join
+    /// and take that join's own leaves into the group -- see
+    /// [`crate::driver::join_reorder`]'s inlining section.
+    join_reorder_through_proj: bool,
     /// Go `SessionVars.PartitionPruneMode == Static`: see
     /// [`StmtContext::static_partition_prune`].
     static_partition_prune: bool,
@@ -473,6 +479,8 @@ impl StmtContext {
             cte_max_recursion_depth: 1000,
             join_reorder_threshold: tidb_vardef::defaults::DEF_TIDB_OPT_JOIN_REORDER_THRESHOLD
                 as i32,
+            // Go `vardef.DefTiDBOptJoinReorderThroughProj`.
+            join_reorder_through_proj: false,
             // Go's shipped `tidb_partition_prune_mode` is `dynamic`.
             static_partition_prune: false,
             sequences: Rc::default(),
@@ -733,6 +741,21 @@ impl StmtContext {
     #[must_use]
     pub fn join_reorder_threshold(&self) -> i32 {
         self.join_reorder_threshold
+    }
+
+    /// Sets `@@tidb_opt_join_reorder_through_proj` for this statement.
+    #[must_use]
+    pub fn with_join_reorder_through_proj(mut self, through: bool) -> Self {
+        self.join_reorder_through_proj = through;
+        self
+    }
+
+    /// Go `SessionVars.TiDBOptJoinReorderThroughProj`. `OFF` is the shipped
+    /// default, under which a `Projection` over a join is an atomic group
+    /// leaf and the relations below it never join the group.
+    #[must_use]
+    pub fn join_reorder_through_proj(&self) -> bool {
+        self.join_reorder_through_proj
     }
 
     /// Sets `@@tidb_partition_prune_mode` for this statement, as the one bit
