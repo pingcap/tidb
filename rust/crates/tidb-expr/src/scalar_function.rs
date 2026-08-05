@@ -810,10 +810,17 @@ impl ScalarFunction {
                     } else {
                         std::cmp::Ordering::Less
                     };
+                    // The argument FieldTypes travel beside the values because
+                    // Go's ETDatetime arm CASTS every argument
+                    // (`WrapWithCastAsTime`), and that cast reads the source
+                    // type -- a `year` reads as a year, not as a packed date.
+                    let arg_types: Vec<Option<tidb_datatype::FieldType>> =
+                        self.args.iter().map(|a| a.static_type().cloned()).collect();
                     return crate::builtin_ext::extremum_with_signature(
                         &vals,
                         want,
                         crate::rewriter::result_type::gl_signature(&self.args),
+                        &arg_types,
                         collation,
                         ctx,
                     );

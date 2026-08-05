@@ -69,6 +69,7 @@ fn extremum(vals: &[Datum], want: Ordering, ctx: &dyn crate::Columns) -> Result<
         vals,
         want,
         None,
+        &[],
         crate::ops::DERIVATION_FREE_COLLATION,
         ctx,
     )
@@ -219,6 +220,7 @@ pub(crate) fn extremum_with_signature(
     vals: &[Datum],
     want: Ordering,
     signature: Option<GlSignature>,
+    arg_types: &[Option<tidb_datatype::FieldType>],
     collation: tidb_datatype::Collation,
     ctx: &dyn crate::Columns,
 ) -> Result<Datum, EvalError> {
@@ -240,9 +242,7 @@ pub(crate) fn extremum_with_signature(
             signature.arg_type,
             tidb_datatype::EvalType::Datetime | tidb_datatype::EvalType::Timestamp
         ) {
-            if let Some(result) = extremum_time(vals, want, signature.ret_date) {
-                return Ok(result);
-            }
+            return extremum_time(vals, want, signature.ret_date, arg_types, ctx);
         }
         return extremum_numeric(vals, want);
     }
@@ -294,28 +294,39 @@ pub(crate) fn extremum_with_signature(
 /// -- `LEAST(date '2020-01-01', datetime '2020-01-01 10:00:00')` is
 /// `2020-01-01 00:00:00`, not `2020-01-01`.
 ///
-/// `None` when an argument's datum is not a time after all, which sends the
-/// call to [`extremum_numeric`] rather than inventing a conversion this tier
-/// has not ported.
-fn extremum_time(vals: &[Datum], want: Ordering, ret_date: bool) -> Option<Datum> {
-    let mut best = match &vals[0] {
-        Datum::Time(time) => *time,
-        _ => return None,
-    };
-    for value in &vals[1..] {
-        let Datum::Time(time) = value else {
-            return None;
+/// An argument that is not already a time is CAST into one first, because
+/// `newBaseBuiltinFuncWithTp(ctx, c.funcName, args, resTp, argTps...)` wrapped
+/// every argument in `WrapWithCastAsTime` before `evalTime` ever runs. That
+/// wrapping is the whole reason a `time` COLUMN can meet a `TIMESTAMP 'lit'`
+/// here: `AggFieldType(TypeTime, TypeDatetime)` is `TypeDatetime`
+/// (`types/field_type.go`'s merge table), so the pair selects THIS arm and the
+/// duration is converted onto the statement date. `EvalTime` reporting NULL
+/// for any argument makes the whole call NULL --
+/// `if isNull || err != nil { return types.ZeroTime, true, err }`.
+fn extremum_time(
+    vals: &[Datum],
+    want: Ordering,
+    ret_date: bool,
+    arg_types: &[Option<tidb_datatype::FieldType>],
+    ctx: &dyn crate::Columns,
+) -> Result<Datum, EvalError> {
+    let mut best: Option<tidb_datatype::Time> = None;
+    for (i, value) in vals.iter().enumerate() {
+        let source = arg_types.get(i).and_then(Option::as_ref);
+        let Datum::Time(time) = crate::cast::cast_arg_as_datetime(value, source, ctx)? else {
+            return Ok(Datum::Null);
         };
-        if time.compare(best) == want {
-            best = *time;
+        if best.is_none_or(|best| time.compare(best) == want) {
+            best = Some(time);
         }
     }
+    let mut best = best.expect("GREATEST/LEAST is rejected at arity zero");
     best.set_kind(if ret_date {
         TimeType::Date
     } else {
         TimeType::DateTime
     });
-    Some(Datum::Time(best))
+    Ok(Datum::Time(best))
 }
 
 /// Go's ETInt, ETReal, ETDecimal, ETDuration and ETVectorFloat32 arms, which

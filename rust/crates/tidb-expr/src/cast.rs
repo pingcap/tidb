@@ -788,6 +788,35 @@ fn cast_to_time_value(
         }
         return Ok(Some(time));
     }
+    // A DURATION source is the second kind whose text cannot speak for it. Go
+    // `builtinCastDurationAsTimeSig.evalTime` (`builtin_cast.go:2275-2291`)
+    // never parses `20:00:01` as a wall clock; it calls
+    // `val.ConvertToTimeWithTimestamp(tc, b.tp.GetType(), ts)`, which takes
+    // the CALENDAR DATE of the statement's own timestamp and mixes the
+    // elapsed time into it (`types/time.go:1500-1507`). Routing the text
+    // through `ParseTime` instead reads the `20` as a YEAR.
+    if let Datum::Duration(duration) = v {
+        let modes = ctx.date_modes();
+        let (utc_secs, nanos, tz_offset) = ctx
+            .now()
+            .ok_or(EvalError::Unsupported("no statement clock for a TIME cast"))?;
+        // Go reads the calendar date of `ts.In(ctx.Location())`; `now`'s third
+        // field is that location's offset AT that instant, so a fixed offset
+        // names the same civil day without re-resolving the zone.
+        let zone = chrono::FixedOffset::east_opt(tz_offset)
+            .ok_or(EvalError::Unsupported("session time-zone offset out of range"))?;
+        let Some(stamp) = chrono::DateTime::from_timestamp(utc_secs, nanos) else {
+            return Ok(None);
+        };
+        return Ok(duration
+            .convert_to_time(
+                stamp.with_timezone(&zone),
+                kind,
+                !modes.no_zero_in_date,
+                modes.allow_invalid_dates,
+            )
+            .ok());
+    }
     let Some(s) = coerce_str(v)? else {
         return Ok(None);
     };
