@@ -380,10 +380,18 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
             )))
         }
         Expr::Float(value) => Ok(constant(Datum::Real(*value), FieldTypeCode::Double)),
-        Expr::Bool(value) => Ok(constant(
-            Datum::Int(i64::from(*value)),
-            FieldTypeCode::LongLong,
-        )),
+        // A `TRUE`/`FALSE` literal is `0`/`1` typed `bigint(1)` with
+        // `IsBooleanFlag` (Go `DefaultTypeForValue` -> `KindMysqlBool`), so
+        // `JSON_ARRAY(true)` is `[true]`, not `[1]`.
+        Expr::Bool(value) => {
+            let mut ft = FieldType::new(FieldTypeCode::LongLong);
+            ft.set_flen(1);
+            ft.add_flags(tidb_datatype::FieldTypeFlags::IS_BOOLEAN);
+            Ok(Expression::Constant(Constant::new(
+                Datum::Int(i64::from(*value)),
+                ft,
+            )))
+        }
         Expr::Null => Ok(constant(Datum::Null, FieldTypeCode::Null)),
         Expr::String(text) => Ok(constant_string(text)),
         // Go's parser folds a decimal literal into a `*MyDecimal` value whose
@@ -510,6 +518,10 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
             }
             let mut ret_type = FieldType::new(FieldTypeCode::LongLong);
             ret_type.set_flen(1);
+            // `ast.In` is in Go's `booleanFunctions` map, so the result carries
+            // `IsBooleanFlag`; a `JSON_ARRAY(x IN (...))` element is JSON
+            // `true`/`false`, not `1`/`0`. The `NOT IN` wrapper reuses this type.
+            ret_type.add_flags(tidb_datatype::FieldTypeFlags::IS_BOOLEAN);
             let call = Expression::ScalarFunction(ScalarFunction::new(
                 CiString::new("in"),
                 ret_type.clone(),
@@ -535,9 +547,13 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
                 IsTarget::True => "istrue",
                 IsTarget::False => "isfalse",
             };
-            // Go's result is a one-digit integer (`flen` 1, boolean-flagged).
+            // Go's result is a one-digit integer (`flen` 1, boolean-flagged):
+            // `ast.IsNull`, `ast.IsTruthWithNull` and `ast.IsFalsity` are all in
+            // the `booleanFunctions` map, so a `JSON_ARRAY(x IS NULL)` element is
+            // JSON `true`/`false`.
             let mut ret_type = FieldType::new(FieldTypeCode::LongLong);
             ret_type.set_flen(1);
+            ret_type.add_flags(tidb_datatype::FieldTypeFlags::IS_BOOLEAN);
             let call = Expression::ScalarFunction(ScalarFunction::new(
                 CiString::new(name),
                 ret_type.clone(),
@@ -625,8 +641,12 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
             };
             let lower = compare(lower_op, value.clone(), low);
             let upper = compare(upper_op, value, high);
+            // The joining `AND`/`OR` is a `booleanFunctions` name, so the whole
+            // `BETWEEN` result is boolean-flagged: `JSON_ARRAY(x BETWEEN l AND h)`
+            // is `[true]`/`[false]`, not `[1]`/`[0]`.
             let mut ret_type = FieldType::new(FieldTypeCode::LongLong);
             ret_type.set_flen(1);
+            ret_type.add_flags(tidb_datatype::FieldTypeFlags::IS_BOOLEAN);
             Ok(Expression::ScalarFunction(ScalarFunction::new(
                 CiString::new(joiner),
                 ret_type,

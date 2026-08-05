@@ -538,7 +538,15 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         | "json_unquote" | "json_type" | "json_set" | "json_insert" | "json_replace"
         | "json_remove" | "json_array_append" | "json_array_insert" | "json_merge"
         | "json_merge_preserve" | "json_merge_patch" => text(),
-        "json_valid" | "json_contains" | "json_length" | "json_depth" => int(),
+        "json_contains" | "json_length" | "json_depth" => int(),
+        // `ast.JSONValid` and `ast.JSONSchemaValid` are in Go's
+        // `booleanFunctions` map (`json_contains`/`_length`/`_depth` are not), so
+        // their `ETInt` result carries `IsBooleanFlag`.
+        "json_valid" | "json_schema_valid" => {
+            let mut ft = int();
+            ft.add_flags(tidb_datatype::FieldTypeFlags::IS_BOOLEAN);
+            ft
+        }
         // Go `loadFileFunctionClass.getFunction`: an `ETString` result of
         // flen 64 in the connection charset. The VALUE is always NULL.
         "load_file" if args.len() == 1 => {
@@ -653,6 +661,8 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         "isnull" if args.len() == 1 => {
             let mut ft = int();
             ft.set_flen(1);
+            // `ast.IsNull` is in Go's `booleanFunctions` map.
+            ft.add_flags(tidb_datatype::FieldTypeFlags::IS_BOOLEAN);
             ft
         }
         // The hash family (`pkg/expression/builtin_encryption.go`). Each
@@ -719,10 +729,20 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
             ft.set_decimal(0);
             ft
         }
-        // The address/UUID predicates: one-digit boolean ints.
-        "is_ipv4" | "is_ipv4_compat" | "is_ipv4_mapped" | "is_ipv6" | "is_uuid"
-            if args.len() == 1 =>
-        {
+        // The IP-address predicates: one-digit boolean ints. `ast.IsIPv4`,
+        // `IsIPv4Compat`, `IsIPv4Mapped` and `IsIPv6` are in Go's
+        // `booleanFunctions` map, so their result carries `IsBooleanFlag` and a
+        // `JSON_ARRAY(is_ipv4(...))` element is JSON `true`/`false`.
+        "is_ipv4" | "is_ipv4_compat" | "is_ipv4_mapped" | "is_ipv6" if args.len() == 1 => {
+            let mut ft = int();
+            ft.set_flen(1);
+            ft.add_flags(tidb_datatype::FieldTypeFlags::IS_BOOLEAN);
+            ft
+        }
+        // `IS_UUID` is a one-digit boolean int too, but it is NOT in Go's
+        // `booleanFunctions` map, so it stays an ordinary integer (a
+        // `JSON_ARRAY(is_uuid(...))` element is `1`/`0`, matching TiDB).
+        "is_uuid" if args.len() == 1 => {
             let mut ft = int();
             ft.set_flen(1);
             ft
@@ -870,7 +890,10 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         "char_length" | "character_length" | "locate" | "position" | "field" => int(),
         // Go `likeFunctionClass`/`regexpLikeFunctionClass`: a one-digit
         // boolean.
-        "like" | "ilike" | "regexp" => {
+        // `ast.Like`, `ast.Regexp` and `ast.RegexpLike` are all in Go's
+        // `booleanFunctions` map. (`ilike` is not a Go boolean function but is
+        // kept here as a pre-existing alias of `like`.)
+        "like" | "ilike" | "regexp" | "regexp_like" => {
             let mut ft = int();
             ft.set_flen(1);
             ft.add_flags(tidb_datatype::FieldTypeFlags::IS_BOOLEAN);

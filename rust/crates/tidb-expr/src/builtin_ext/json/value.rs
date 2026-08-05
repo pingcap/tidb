@@ -26,7 +26,28 @@ use serde_json::{Number, Value as Json};
 
 use super::text::format_json;
 use crate::{Datum, EvalError, JsonError};
-use tidb_datatype::FieldType;
+use tidb_datatype::{FieldType, FieldTypeFlags};
+
+/// The integer an argument carries when it is a boolean-flagged INT, so
+/// [`json_argument`] and [`cast_as_json`] can render it as a JSON `true`/`false`
+/// literal, which is what Go's `builtinCastIntAsJSONSig.evalJSON` does when
+/// `mysql.HasIsBooleanFlag(arg.GetType().GetFlag())` is set. Every name in Go's
+/// `booleanFunctions` map (`pkg/expression/function_traits.go`) -- the
+/// comparisons, the logical connectives, `IS NULL`/`IS [NOT] TRUE|FALSE`, `IN`,
+/// `LIKE`/`REGEXP` and the `IS_IPV4*`/`IS_IPV6` predicates -- stamps this flag on
+/// its `ETInt` result, so a value produced by one of them becomes a JSON boolean
+/// rather than the integer `1`/`0`. `field_type: None` (the untyped row/AST path)
+/// carries no flag and so keeps the integer rendering.
+fn boolean_flagged_int(value: &Datum, field_type: Option<&FieldType>) -> Option<i64> {
+    if !field_type.is_some_and(|ft| ft.has_flag(FieldTypeFlags::IS_BOOLEAN)) {
+        return None;
+    }
+    match value {
+        Datum::Int(int) => Some(*int),
+        Datum::UInt(int) => Some(*int as i64),
+        _ => None,
+    }
+}
 
 /// Whether `value` is a genuine BINARY-charset payload given its source
 /// `field_type`.
@@ -152,6 +173,12 @@ pub(crate) fn cast_as_json_typed(
             )?)));
         }
     }
+    // `CAST(<boolean expr> AS JSON)` is `builtinCastIntAsJSONSig.evalJSON`'s
+    // boolean arm: a value from a `booleanFunctions` name becomes JSON
+    // `true`/`false`, exactly as it does as a `JSON_ARRAY`/`JSON_OBJECT` element.
+    if let Some(int) = boolean_flagged_int(value, field_type) {
+        return Ok(Datum::new_string(format_json(&Json::Bool(int != 0))));
+    }
     cast_as_json(value)
 }
 
@@ -198,6 +225,9 @@ pub(super) fn json_argument(
         if is_binary_datum(value, Some(field_type)) {
             return binary_opaque_json(value, field_type);
         }
+    }
+    if let Some(int) = boolean_flagged_int(value, field_type) {
+        return Ok(Json::Bool(int != 0));
     }
     if let Some(text) = json_sql_string(value)? {
         return match string {
