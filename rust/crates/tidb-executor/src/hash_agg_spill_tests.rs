@@ -218,13 +218,27 @@ fn agg_values(row: &tidb_chunk::row::Row<'_>) -> Vec<Datum> {
 /// forces has to happen several times over.
 const GROUPS: i64 = 2000;
 
-/// `GROUPS` groups of 3 rows each, INTERLEAVED so every group's rows are
-/// spread across many chunks -- which is what makes a round defer part of a
-/// group and pick it up in the next one.
+/// `GROUPS` groups of 3 rows each, in TWO layouts, because the two mistakes a
+/// spill can make need different inputs to show up:
+///
+/// * The first half is INTERLEAVED -- pass after pass over every group -- so a
+///   group's rows are spread across many chunks and many rounds. That is what
+///   catches a round that loses, duplicates or re-opens a group.
+/// * The second half is BLOCKED -- a group's three rows adjacent -- so ONE
+///   chunk holds several rows of the SAME group. That is what makes the order
+///   in which deferred rows are written to disk observable at all: with the
+///   interleaved layout alone, no two rows in a chunk share a group, and a
+///   spill that reversed them would change nothing.
 fn interleaved_rows() -> Vec<(i64, i64)> {
     let mut rows = Vec::new();
+    let split = GROUPS / 2;
     for pass in 0..3i64 {
-        for g in 0..GROUPS {
+        for g in 0..split {
+            rows.push((g, g * 10 + pass));
+        }
+    }
+    for g in split..GROUPS {
+        for pass in 0..3i64 {
             rows.push((g, g * 10 + pass));
         }
     }
