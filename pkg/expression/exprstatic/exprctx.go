@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
@@ -221,6 +222,11 @@ func (ctx *ExprContext) GetCharsetInfo() (string, string) {
 // GetDefaultCollationForUTF8MB4 implements the `ExprContext.GetDefaultCollationForUTF8MB4`.
 func (ctx *ExprContext) GetDefaultCollationForUTF8MB4() string {
 	return ctx.defaultCollationForUTF8MB4
+}
+
+// NewCollationEnabled implements the `ExprContext.NewCollationEnabled`.
+func (ctx *ExprContext) NewCollationEnabled() bool {
+	return collate.NewCollationEnabled()
 }
 
 // GetBlockEncryptionMode implements the `ExprContext.GetBlockEncryptionMode`.

@@ -112,13 +112,11 @@ func buildSimpleExpr(ctx expression.BuildContext, node ast.ExprNode, opts ...exp
 		return nil, errors.New("expression node should be present")
 	}
 
-	options := expression.BuildOptions{
-		UseNewCollate: expression.BuildContextNewCollationEnabled(ctx),
-	}
+	options := expression.BuildOptions{}
 	for _, opt := range opts {
 		opt(&options)
 	}
-	ctx = expression.BuildContextWithUseNewCollate(ctx, options.UseNewCollate)
+	useNewCollate := ctx.NewCollationEnabled()
 
 	if options.InputSchema == nil && len(options.InputNames) > 0 {
 		return nil, errors.New("InputSchema and InputNames should be specified at the same time")
@@ -153,7 +151,7 @@ func buildSimpleExpr(ctx expression.BuildContext, node ast.ExprNode, opts ...exp
 		sourceTable:         options.SourceTable,
 		allowBuildCastArray: options.AllowCastArray,
 		asScalar:            true,
-		useNewCollate:       options.UseNewCollate,
+		useNewCollate:       useNewCollate,
 	}
 
 	if tbl := options.SourceTable; tbl != nil && rewriter.schema == nil {

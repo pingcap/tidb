@@ -1953,10 +1953,11 @@ func createColAssignSimpleExprs(
 		mu.Lock()
 		defer mu.Unlock()
 	}
+	ctx = expression.BuildContextWithUseNewCollate(ctx, useNewCollate)
 	res := make([]expression.Expression, 0, len(assignments))
 	var allWarnings []contextutil.SQLWarn
 	for _, assign := range assignments {
-		newExpr, err := expression.BuildSimpleExpr(ctx, assign.Expr, expression.WithUseNewCollate(useNewCollate))
+		newExpr, err := expression.BuildSimpleExpr(ctx, assign.Expr)
 		// col assign expr warnings is static, we should generate it for each row processed.
 		// so we save it and clear it here.
 		if ctx.GetEvalCtx().WarningCount() > 0 {

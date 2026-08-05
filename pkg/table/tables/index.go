@@ -101,9 +101,8 @@ func (c *index) initPartialCondition() error {
 	}
 	c.conditionInit.Do(func() {
 		var err error
-		c.conditionExpr, err = expression.ParseSimpleExpr(indexConditionECtx, conditionString,
-			expression.WithTableInfo("", c.tblInfo),
-			expression.WithUseNewCollate(c.encoder.UseNewCollate()))
+		ctx := expression.BuildContextWithUseNewCollate(indexConditionECtx, c.encoder.UseNewCollate())
+		c.conditionExpr, err = expression.ParseSimpleExpr(ctx, conditionString, expression.WithTableInfo("", c.tblInfo))
 		if err != nil {
 			c.conditionErr = errors.Trace(err)
 			return

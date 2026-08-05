@@ -4263,11 +4263,10 @@ func buildAffectColumn(idxInfo *model.IndexInfo, tblInfo *model.TableInfo) ([]*m
 func buildIndexConditionChecker(copCtx copr.CopContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo) (func(row chunk.Row) (bool, error), error) {
 	schema, names := copCtx.GetBase().GetSchemaAndNames()
 
-	exprCtx := copCtx.GetBase().ExprCtx
+	exprCtx := expression.BuildContextWithUseNewCollate(copCtx.GetBase().ExprCtx, copCtx.GetBase().UseNewCollate)
 	expr, err := expression.ParseSimpleExpr(exprCtx,
 		idxInfo.ConditionExprString,
-		expression.WithInputSchemaAndNames(schema, names, tblInfo),
-		expression.WithUseNewCollate(copCtx.GetBase().UseNewCollate))
+		expression.WithInputSchemaAndNames(schema, names, tblInfo))
 	if err != nil {
 		return nil, err
 	}

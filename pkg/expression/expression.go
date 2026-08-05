@@ -65,8 +65,6 @@ type BuildOptions struct {
 	AllowCastArray bool
 	// TargetFieldType indicates to cast the expression to the target field type if it is not nil
 	TargetFieldType *types.FieldType
-	// UseNewCollate whether to use new collate when building expression.
-	UseNewCollate bool
 }
 
 // BuildOption is a function to apply optional settings
@@ -104,20 +102,12 @@ func WithCastExprTo(targetFt *types.FieldType) BuildOption {
 	}
 }
 
-// WithUseNewCollate fixes the collation mode used while building expressions
-// that must stay consistent with table or index encoding created earlier.
-func WithUseNewCollate(useNewCollate bool) BuildOption {
-	return func(options *BuildOptions) {
-		options.UseNewCollate = useNewCollate
-	}
-}
-
 type buildContextWithUseNewCollate struct {
 	BuildContext
 	useNewCollate bool
 }
 
-func (ctx *buildContextWithUseNewCollate) newCollationEnabled() bool {
+func (ctx *buildContextWithUseNewCollate) NewCollationEnabled() bool {
 	return ctx.useNewCollate
 }
 
@@ -133,25 +123,8 @@ func BuildContextWithUseNewCollate(ctx BuildContext, useNewCollate bool) BuildCo
 	}
 }
 
-// BuildContextNewCollationEnabled returns the fixed new-collation mode from
-// the build context, or the process default when the context does not override it.
-func BuildContextNewCollationEnabled(ctx BuildContext) bool {
-	return newCollationEnabled(ctx)
-}
-
-type buildContextNewCollationProvider interface {
-	newCollationEnabled() bool
-}
-
-func newCollationEnabled(ctx BuildContext) bool {
-	if provider, ok := ctx.(buildContextNewCollationProvider); ok {
-		return provider.newCollationEnabled()
-	}
-	return collate.NewCollationEnabled()
-}
-
 func getCollator(ctx BuildContext, collation string) collate.Collator {
-	return collate.GetCollatorWithCollate(newCollationEnabled(ctx), collation)
+	return collate.GetCollatorWithCollate(ctx.NewCollationEnabled(), collation)
 }
 
 // BuildSimpleExpr builds a simple expression from an ast node.
@@ -1155,13 +1128,11 @@ func ColumnInfos2ColumnsAndNames(
 	tblInfo *model.TableInfo,
 	opts ...BuildOption,
 ) ([]*Column, types.NameSlice, error) {
-	options := BuildOptions{
-		UseNewCollate: newCollationEnabled(ctx),
-	}
+	options := BuildOptions{}
 	for _, opt := range opts {
 		opt(&options)
 	}
-	ctx = BuildContextWithUseNewCollate(ctx, options.UseNewCollate)
+	useNewCollate := ctx.NewCollationEnabled()
 
 	columns := make([]*Column, 0, len(colInfos))
 	names := make([]*types.FieldName, 0, len(colInfos))
@@ -1192,6 +1163,7 @@ func ColumnInfos2ColumnsAndNames(
 			if !truncateIgnored {
 				// Ignore redundant warning here.
 				ctx = exprctx.CtxWithHandleTruncateErrLevel(ctx, errctx.LevelIgnore)
+				ctx = BuildContextWithUseNewCollate(ctx, useNewCollate)
 				truncateIgnored = true
 			}
 

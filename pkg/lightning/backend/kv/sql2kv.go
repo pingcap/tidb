@@ -103,6 +103,7 @@ func CollectGeneratedColumns(se *Session, tbl table.Table) ([]GeneratedCol, erro
 		})
 	}
 	schema := expression.NewSchema(exprColumns...)
+	exprCtx := expression.BuildContextWithUseNewCollate(se.GetExprCtx(), tbl.UseNewCollate())
 
 	// as long as we have a stored generated column, all columns it referred to must be evaluated as well.
 	// for simplicity we just evaluate all generated columns (virtual or not) before the last stored one.
@@ -110,11 +111,10 @@ func CollectGeneratedColumns(se *Session, tbl table.Table) ([]GeneratedCol, erro
 	for i, col := range cols {
 		if col.GeneratedExpr != nil {
 			expr, err := expression.BuildSimpleExpr(
-				se.GetExprCtx(),
+				exprCtx,
 				col.GeneratedExpr.Internal(),
 				expression.WithInputSchemaAndNames(schema, names, meta),
 				expression.WithAllowCastArray(true),
-				expression.WithUseNewCollate(tbl.UseNewCollate()),
 			)
 			if err != nil {
 				return nil, err

@@ -162,13 +162,11 @@ func TestCopContextConditionUsesFixedCollation(t *testing.T) {
 	}()
 	var seenUseNewCollates []bool
 	expression.BuildSimpleExpr = func(ctx expression.BuildContext, expr ast.ExprNode, opts ...expression.BuildOption) (expression.Expression, error) {
-		options := expression.BuildOptions{
-			UseNewCollate: collate.NewCollationEnabled(),
-		}
+		options := expression.BuildOptions{}
 		for _, opt := range opts {
 			opt(&options)
 		}
-		seenUseNewCollates = append(seenUseNewCollates, options.UseNewCollate)
+		seenUseNewCollates = append(seenUseNewCollates, ctx.NewCollationEnabled())
 		return expression.NewOne(), nil
 	}
 	idxInfo := &model.IndexInfo{

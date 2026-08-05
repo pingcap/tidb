@@ -85,16 +85,13 @@ func TestBuildIndexConditionCheckerUsesFixedCollation(t *testing.T) {
 		expression.BuildSimpleExpr = originBuildSimpleExpr
 	}()
 	expression.BuildSimpleExpr = func(ctx expression.BuildContext, _ ast.ExprNode, opts ...expression.BuildOption) (expression.Expression, error) {
-		options := expression.BuildOptions{
-			UseNewCollate: collate.NewCollationEnabled(),
-		}
+		options := expression.BuildOptions{}
 		for _, opt := range opts {
 			opt(&options)
 		}
 		if options.InputSchema == nil {
 			return expression.NewOne(), nil
 		}
-		ctx = expression.BuildContextWithUseNewCollate(ctx, options.UseNewCollate)
 		constantTp := types.NewFieldTypeWithCollation(mysql.TypeVarchar, "utf8mb4_general_ci", 16)
 		return expression.NewFunction(
 			ctx,

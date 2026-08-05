@@ -84,6 +84,7 @@ func NewCopContextBase(
 	useNewCollate bool,
 ) (*CopContextBase, error) {
 	var err error
+	exprCtx = expression.BuildContextWithUseNewCollate(exprCtx, useNewCollate)
 	usedColumnIDs := make(map[int64]struct{}, len(idxCols))
 	usedColumnIDs, err = fillUsedColumns(usedColumnIDs, idxCols, tblInfo)
 	var handleIDs []int64
@@ -133,7 +134,6 @@ func NewCopContextBase(
 		tblInfo.Name,
 		colInfos,
 		tblInfo,
-		expression.WithUseNewCollate(useNewCollate),
 	)
 	if err != nil {
 		return nil, err
@@ -233,8 +233,7 @@ func (c *CopContextSingleIndex) GetCondition() (expression.Expression, error) {
 
 	expr, err := expression.ParseSimpleExpr(c.GetBase().ExprCtx,
 		c.idxInfo.ConditionExprString,
-		expression.WithInputSchemaAndNames(schema, names, c.GetBase().TableInfo),
-		expression.WithUseNewCollate(c.GetBase().UseNewCollate))
+		expression.WithInputSchemaAndNames(schema, names, c.GetBase().TableInfo))
 	if err != nil {
 		return nil, err
 	}
@@ -324,8 +323,7 @@ func (c *CopContextMultiIndex) GetCondition() (expression.Expression, error) {
 		schema, names := c.GetBase().GetSchemaAndNames()
 		expr, err := expression.ParseSimpleExpr(c.GetBase().ExprCtx,
 			idxInfo.ConditionExprString,
-			expression.WithInputSchemaAndNames(schema, names, c.GetBase().TableInfo),
-			expression.WithUseNewCollate(c.GetBase().UseNewCollate))
+			expression.WithInputSchemaAndNames(schema, names, c.GetBase().TableInfo))
 		if err != nil {
 			return nil, err
 		}
@@ -355,9 +353,8 @@ func extractColumnsFromCondition(
 		return nil, nil
 	}
 
-	expr, err := expression.ParseSimpleExpr(ctx, idxInfo.ConditionExprString,
-		expression.WithTableInfo("", tblInfo),
-		expression.WithUseNewCollate(useNewCollate))
+	ctx = expression.BuildContextWithUseNewCollate(ctx, useNewCollate)
+	expr, err := expression.ParseSimpleExpr(ctx, idxInfo.ConditionExprString, expression.WithTableInfo("", tblInfo))
 	if err != nil {
 		return nil, err
 	}

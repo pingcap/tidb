@@ -979,7 +979,7 @@ func (lp *ForListPruning) buildListColumnsPruner(ctx expression.BuildContext,
 	p := parser.New()
 	colPrunes := make([]*ForListColumnPruning, 0, len(partCols))
 	lp.defaultPartitionIdx = -1
-	useNewCollate := expression.BuildContextNewCollationEnabled(ctx)
+	useNewCollate := ctx.NewCollationEnabled()
 	for colIdx := range partCols {
 		colInfo := model.FindColumnInfo(tblInfo.Columns, partCols[colIdx].L)
 		if colInfo == nil {
