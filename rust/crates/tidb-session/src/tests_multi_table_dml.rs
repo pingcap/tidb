@@ -564,6 +564,12 @@ fn multi_table_dml_refuses_sources_without_a_row_identity() {
         "UPDATE IGNORE r1 JOIN r2 ON r1.id = r2.id SET r1.v = 2",
         "UPDATE r1 JOIN rv ON r1.id = rv.id SET r1.v = 2",
         "DELETE r1 FROM r1 JOIN rv ON r1.id = rv.id",
+        // Go RUNS both of these (`affected=1` each, measured through
+        // `mockstore`); a correlated per-outer-row re-read is a different
+        // read from the one this join performs, so it is refused BY NAME
+        // rather than answered with a plain derived table's rows.
+        "UPDATE r1 JOIN LATERAL (SELECT id FROM r2 WHERE id = r1.id) d ON 1=1 SET r1.v = 2",
+        "DELETE r1 FROM r1 JOIN LATERAL (SELECT id FROM r2 WHERE id = r1.id) d ON 1=1",
     ] {
         assert!(session.run(sql).is_err(), "`{sql}` should be refused");
     }

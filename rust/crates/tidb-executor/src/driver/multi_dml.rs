@@ -86,6 +86,13 @@
 //! source anywhere in a multi-table DML's `FROM`. A silently half-applied
 //! multi-table write is a wrong answer no reader would notice, so each of
 //! these returns an error naming itself.
+//!
+//! `LATERAL` is a MEASURED deferral rather than an assumed one: Go runs
+//! `UPDATE w t1 JOIN LATERAL (SELECT a, b FROM w WHERE a = t1.a - 10) t2 ON
+//! 1=1 SET t1.b = t2.b` and reports 3, and the matching `DELETE` likewise.
+//! Nothing in `tests/integrationtest` writes through a `LATERAL` source, and
+//! a correlated per-outer-row re-read is a different read from the one
+//! [`join_sources`] performs, so the refusal is loud and named instead.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -285,6 +292,12 @@ fn scan_derived_table(
         None,
         &tidb_planner::physical_property::PhysicalProperty::default(),
     )?;
+    // The parser refuses `(SELECT ...) t (x, y)` in an UPDATE's `FROM`
+    // (Go errno 1064, both the comma and the JOIN spelling), so this list is
+    // empty on every statement that reaches here. It is applied anyway
+    // because the ALTERNATIVE to applying it is reading the subquery's own
+    // column names under the statement's names -- silently wrong values --
+    // the moment a parser admits the form.
     super::from::rename_derived_columns(&mut columns, column_names)?;
     Ok(MultiSource {
         zone: ctx.session_zone(),
