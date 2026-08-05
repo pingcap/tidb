@@ -362,3 +362,66 @@ fn a_cross_leaf_projection_expression_is_declined() {
         "a projection spanning two leaves was dissolved",
     );
 }
+
+/// AN EQUALITY WHOSE TWO SIDES LIVE IN ONE RELATION is not a join edge, so
+/// there is no key to preserve and nothing to inject.
+///
+/// `dt.k = dt.doubled_b` becomes `t2.a = t2.b * 2`: Go's `checkConnection`
+/// never builds an eq-edge from a condition both of whose sides come from one
+/// node, so `injectExpr` is never called for it either. Materializing a column
+/// for it anyway would wrap `t2` in a projection that buys no key, so the
+/// statement keeps the derived table it was written with.
+#[test]
+fn an_equality_inside_one_relation_is_not_injected() {
+    let catalog = tables();
+    let sql = "SELECT t1.a, dt.a2 FROM t1, \
+        (SELECT t2.a AS a2, t2.a AS k, t2.b * 2 AS doubled_b \
+         FROM t2 JOIN t3 ON t2.a = t3.a) dt \
+        WHERE t1.a = dt.a2 AND dt.k = dt.doubled_b";
+    assert_eq!(
+        plan(sql, &catalog, &ctx(true, 10)),
+        plan(sql, &catalog, &ctx(false, 10)),
+        "a single-relation equality was injected into",
+    );
+}
+
+/// A QUALIFIED `*` OVER A RELATION THE INJECTION WRAPS would gain a column.
+///
+/// `t1.b * 2 = dt.doubled_b` becomes `t1.b * 2 = t2.b * 2`, so BOTH sides are
+/// computed and both `t1` and `t2` get an injected column. `t1` is a relation
+/// the statement itself named, so `t1.*` would expand to one row shape wider
+/// than the statement asked for. Go never meets this: `restoreSchemaIfChanged`
+/// rebuilds the original schema by `UniqueID` above the reordered join.
+///
+/// The assertion is on the output column NAMES, which is the contract the
+/// restore owes; the plan may legitimately differ once it holds.
+#[test]
+fn a_wildcard_over_an_injected_relation_keeps_its_columns() {
+    let catalog = tables();
+    let sql = "SELECT t1.* FROM t1, \
+        (SELECT t2.a AS a2, t2.b * 2 AS doubled_b FROM t2 JOIN t3 ON t2.a = t3.a) dt \
+        WHERE t1.b * 2 = dt.doubled_b";
+    let (names, _) = result(sql, &catalog, &ctx(true, 10));
+    let (kept_names, _) = result(sql, &catalog, &ctx(false, 10));
+    assert_eq!(names, vec!["a".to_owned(), "b".to_owned(), "c".to_owned()]);
+    assert_eq!(names, kept_names, "the wildcard gained an injected column");
+}
+
+/// A COMPUTED OPERAND SPANNING TWO RELATIONS has no branch to sit on.
+///
+/// `injectExpr` materializes the expression as a column of ONE node -- Go's
+/// `*leftPlan` or `*rightPlan` -- so `t1.b + t5.b` belongs to neither. A
+/// wrapper for it would be a derived table whose subquery reads a column its
+/// own `FROM` does not have.
+#[test]
+fn a_computed_key_over_two_relations_is_declined() {
+    let catalog = tables();
+    let sql = "SELECT t1.a, dt.a2 FROM t1, t5, \
+        (SELECT t2.a AS a2, t2.b * 2 AS doubled_b FROM t2 JOIN t3 ON t2.a = t3.a) dt \
+        WHERE t1.a = dt.a2 AND t1.b + t5.b = dt.doubled_b";
+    assert_eq!(
+        plan(sql, &catalog, &ctx(true, 10)),
+        plan(sql, &catalog, &ctx(false, 10)),
+        "a two-relation computed key was injected",
+    );
+}
