@@ -501,14 +501,16 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 				if idxStats == nil || statistics.IndexStatsIsInvalid(sctx, idxStats, coll, idxID) {
 					continue
 				}
-				foundStats = true
 				countResult, err := GetRowCountByIndexRanges(sctx, coll, idxID, tmpRan, nil)
-				if err == nil {
-					break
+				failpoint.InjectCall("afterRecursiveIndexEstimation", idxID, &countResult, &err)
+				if err != nil {
+					continue
 				}
 				realtimeCnt, _ := coll.GetScaledRealtimeAndModifyCnt(idxStats)
 				selectivity = countResult.Est / float64(realtimeCnt)
-				maxSel = min(maxSel, countResult.MaxEst/float64(coll.RealtimeCount))
+				maxSel = min(maxSel, countResult.MaxEst/float64(realtimeCnt))
+				foundStats = true
+				break
 			}
 		}
 		if !foundStats {
