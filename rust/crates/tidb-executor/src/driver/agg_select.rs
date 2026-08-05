@@ -944,7 +944,7 @@ fn check_having_names(
 /// where Go checks them later. A subquery nested INSIDE one of these is not
 /// visited: its correlations are the middle query's outer scope, not this
 /// clause's, and the middle query reports its own.
-fn having_subqueries(expr: &tidb_ast::Expr) -> Vec<QueryStmt> {
+pub(crate) fn having_subqueries(expr: &tidb_ast::Expr) -> Vec<QueryStmt> {
     struct Collector {
         found: Vec<QueryStmt>,
     }

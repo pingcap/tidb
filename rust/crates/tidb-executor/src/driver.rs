@@ -191,6 +191,7 @@ mod errors;
 mod from;
 pub(crate) mod funcdep;
 mod grouping;
+mod having;
 pub(crate) mod index_join_decision;
 pub mod infoschema_meta;
 mod join_reorder;
@@ -909,6 +910,25 @@ pub(crate) fn run_select_traced(
             },
             Some(name),
         ));
+    }
+    // HAVING, for every query the aggregate pipeline never sees. Go builds it
+    // as a `LogicalSelection` ABOVE the select list's `Projection`, so it
+    // filters projected rows and may name only what the projection outputs;
+    // this tier evaluates the projection last, so the same filter is a
+    // `SelectionExec` over source rows with each name replaced by the field
+    // it names. See [`having::build_plain_having`] -- until it existed the
+    // clause was silently DROPPED here.
+    if let Some(having) = &select.having {
+        source = having::build_plain_having(
+            having,
+            &projected,
+            &scope,
+            &mut current_scope,
+            source,
+            catalog,
+            current_db,
+            ctx,
+        )?;
     }
     let projected_fields: Vec<SelectField> =
         projected.iter().map(|(field, _)| field.clone()).collect();

@@ -145,6 +145,245 @@ pub(crate) fn substitute_output_aliases_where(
     })
 }
 
+/// Go `havingWindowAndOrderbyExprResolver` for a NON-aggregate `SELECT`: the
+/// `HAVING` expression with every name it may use replaced by the select
+/// field it names, and `ErrUnknownColumn` for every name it may not.
+///
+/// Go builds `HAVING` as a `LogicalSelection` ABOVE the select list's
+/// `Projection` (`buildSelect`: `buildProjection` then `if sel.Having != nil {
+/// buildSelection(...) }`), so the clause sees the PROJECTION's output and
+/// nothing else. `resolveHavingAndOrderBy` runs first and is what enforces it:
+/// with no `GROUP BY` items to match, `resolveFieldsFirst` stays true, and the
+/// `havingClause` branch of `resolveFromPlan` returns `-1` for every name the
+/// select list lacks -- so a source column that is merely IN SCOPE is
+/// `ErrUnknownColumn` naming the `having clause`, in every `sql_mode`.
+///
+/// Captured from TiDB on `ht(a, b)`:
+///
+/// ```text
+/// select a from ht having b > 0        -- 1054 Unknown column 'b'
+/// select a from ht having ht.b > 0     -- 1054 Unknown column 'ht.b'
+/// select a from ht having b is null    -- 1054 (the shape, not the operator)
+/// select a, b from ht having b > 0     -- 1|10 2|20   (b IS projected)
+/// select a from ht having a > 0        -- 1;2
+/// select count(*) c from ht having c>0 -- the aggregate path, still legal
+/// select b as a from ht having a > 15  -- 20   (the ALIAS wins over ht.a)
+/// select b as a from ht having ht.a>1  -- 1054 Unknown column 'ht.a'
+/// select a+1 as a from ht having a > 2 -- 3
+/// select a from ht t1 having t1.a > 1  -- 2    (the FROM alias resolves)
+/// select a from ht t1 having ht.a > 1  -- 1054 Unknown column 'ht.a'
+/// select * from ht having b > 15       -- 2|20 (the star is unfolded first)
+/// ```
+///
+/// `fields` is the select list AS PROJECTED -- `*` already unfolded, which is
+/// Go's order (`unfoldWildStar` runs before `resolveHavingAndOrderBy`) and
+/// what makes the last capture work.
+///
+/// Subquery bodies are NOT walked: `Enter` returns `skipChildren` for
+/// `*ast.SubqueryExpr`/`*ast.ExistsSubqueryExpr`, so a correlated name inside
+/// one is resolved later, against the projection -- see
+/// [`check_having_subquery_correlations`].
+pub(crate) fn resolve_having_names(
+    having: &tidb_ast::Expr,
+    fields: &[(Option<String>, tidb_ast::Expr)],
+    resolver: &ScopeResolver<'_>,
+) -> Result<tidb_ast::Expr, DriverError> {
+    struct Rewriter<'a, 'b> {
+        fields: &'a [(Option<String>, tidb_ast::Expr)],
+        resolver: &'a ScopeResolver<'b>,
+        error: Option<DriverError>,
+    }
+    impl Rewriter<'_, '_> {
+        fn visit(&mut self, expr: &mut tidb_ast::Expr) {
+            tidb_ast::Visitable::accept(expr, self);
+        }
+    }
+    impl tidb_ast::Visitor for Rewriter<'_, '_> {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            if self.error.is_some() {
+                return true;
+            }
+            let Some(expr) = node.downcast_mut::<tidb_ast::Expr>() else {
+                return false;
+            };
+            match expr {
+                // Go enters a new context for a subquery and skips it.
+                tidb_ast::Expr::Subquery(_) | tidb_ast::Expr::Exists { .. } => true,
+                // `x IN (subquery)` / `x > ANY (subquery)`: the node itself is
+                // visited and only its `SubqueryExpr` child is skipped, so the
+                // operand BESIDE the subquery answers to this rule.
+                tidb_ast::Expr::InSubquery { expr: operand, .. }
+                | tidb_ast::Expr::CompareSubquery { left: operand, .. } => {
+                    let mut left = (**operand).clone();
+                    self.visit(&mut left);
+                    **operand = left;
+                    true
+                }
+                tidb_ast::Expr::Column(path) => {
+                    match resolve_having_column(path, self.fields, self.resolver) {
+                        Ok(replacement) => *expr = replacement,
+                        Err(error) => self.error = Some(error),
+                    }
+                    true
+                }
+                _ => false,
+            }
+        }
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            true
+        }
+    }
+    let mut rewritten = having.clone();
+    let mut visitor = Rewriter {
+        fields,
+        resolver,
+        error: None,
+    };
+    visitor.visit(&mut rewritten);
+    match visitor.error {
+        Some(error) => Err(error),
+        None => Ok(rewritten),
+    }
+}
+
+/// One `HAVING` name, resolved the way `resolveFromSelectFields` +
+/// `resolveFromPlan`'s `havingClause` branch resolve it.
+///
+/// Unqualified: Go's two `resolveFromSelectFields` passes, an alias-respecting
+/// one and an alias-IGNORING one, in that order -- which is why an alias
+/// SHADOWS a real column (`SELECT b AS a ... HAVING a` reads `b`) while an
+/// aliased field is still reachable by its own column name.
+///
+/// Qualified: Go canonicalizes the name against the FROM scope first
+/// (`resolveFromPlan`) and then requires a select field whose WRITTEN name
+/// matches the canonical one (`ColumnName.Match`: an empty qualifier matches
+/// anything, a written one must be equal). It never appends an auxiliary
+/// field for `HAVING`, so a canonical name no field matches is 1054.
+fn resolve_having_column(
+    path: &[String],
+    fields: &[(Option<String>, tidb_ast::Expr)],
+    resolver: &ScopeResolver<'_>,
+) -> Result<tidb_ast::Expr, DriverError> {
+    let written = path.join(".");
+    let column_of = |expr: &tidb_ast::Expr| match expr {
+        tidb_ast::Expr::Column(p) => Some(p.clone()),
+        _ => None,
+    };
+    if let [name] = path {
+        // Pass 1, `ignoreAsName = false`: an aliased field answers only to its
+        // alias, an unaliased column field to its column name.
+        let matched = fields.iter().find_map(|(alias, expr)| match alias {
+            Some(alias) => alias.eq_ignore_ascii_case(name).then(|| expr.clone()),
+            None => column_of(expr)
+                .filter(|p| p.last().is_some_and(|c| c.eq_ignore_ascii_case(name)))
+                .map(|_| expr.clone()),
+        });
+        // Pass 2, `ignoreAsName = true`: any column field, alias or not.
+        let matched = matched.or_else(|| {
+            fields.iter().find_map(|(_, expr)| {
+                column_of(expr)
+                    .filter(|p| p.last().is_some_and(|c| c.eq_ignore_ascii_case(name)))
+                    .map(|_| expr.clone())
+            })
+        });
+        return matched.ok_or_else(|| unknown_having_column(&written));
+    }
+    let (index, _, _) = resolver
+        .resolve(path)
+        .ok_or_else(|| unknown_having_column(&written))?;
+    let (table, column) = resolver
+        .scope
+        .tables
+        .iter()
+        .find(|table| (table.offset..table.offset + table.columns.len()).contains(&index))
+        .and_then(|table| {
+            Some((
+                table.name.clone(),
+                table.columns.get(index - table.offset)?.0.clone(),
+            ))
+        })
+        .ok_or_else(|| unknown_having_column(&written))?;
+    fields
+        .iter()
+        .find_map(|(_, expr)| {
+            let field = column_of(expr)?;
+            let (field_column, field_table) = match field.as_slice() {
+                [name] => (name, None),
+                [.., qualifier, name] => (name, Some(qualifier)),
+                [] => return None,
+            };
+            let matches = field_column.eq_ignore_ascii_case(&column)
+                && field_table.is_none_or(|q| q.eq_ignore_ascii_case(&table));
+            matches.then(|| expr.clone())
+        })
+        .ok_or_else(|| unknown_having_column(&written))
+}
+
+/// One column of the select list as the `HAVING` clause's SUBQUERIES see it:
+/// a name, the table that name is still qualified by, and the SOURCE-row
+/// expression it reads.
+///
+/// This is Go's `FieldName` on the `Projection` `HAVING` sits above -- and it
+/// is NOT the same thing [`resolve_having_column`] matches against. A field
+/// written `b AS bb` has `ColName = bb` and `TblName = ht`, so the projection
+/// answers to `bb` and to `ht.bb` but NOT to `ht.b`, while the select-field
+/// rule above still matches `ht.b` by the field's WRITTEN name. Both were
+/// captured from TiDB, and the pair is the whole reason this is a second
+/// rule:
+///
+/// ```text
+/// select b as bb from ht having (select y from hs where hs.x = bb) > 0
+///   -- 10
+/// select b as bb from ht having (select y from hs where hs.x = ht.b) > 0
+///   -- 1054 Unknown column 'ht.b' in 'having clause'
+/// select a from ht having (select y from hs where hs.x = ht.b) > 0
+///   -- 1054 Unknown column 'ht.b' in 'having clause'
+/// select a from ht having (select y from hs where hs.x = ht.a) > 0
+///   -- (no rows: the correlation is legal, nothing matches)
+/// select a, b from ht having (select y from hs where hs.x = ht.b) > 0
+///   -- 1|10
+/// ```
+pub(crate) struct HavingOutput {
+    /// The output column's name: the written alias, or the column's own name.
+    pub(crate) name: String,
+    /// The table the output is still qualified by -- present only for a plain
+    /// column field, which is the only shape Go gives an `OrigTblName`.
+    pub(crate) table: Option<String>,
+}
+
+/// Whether `path` names one of the projection's outputs, and which.
+///
+/// Go's `expression.FindFieldName` over the `Projection`'s names: an
+/// unqualified path matches by column name, a qualified one must also match
+/// the output's table.
+pub(crate) fn find_having_output<'a>(
+    path: &[String],
+    outputs: &'a [HavingOutput],
+) -> Option<&'a HavingOutput> {
+    let (name, qualifier) = match path {
+        [name] => (name, None),
+        [.., qualifier, name] => (name, Some(qualifier)),
+        [] => return None,
+    };
+    outputs.iter().find(|output| {
+        output.name.eq_ignore_ascii_case(name)
+            && qualifier.is_none_or(|q| {
+                output
+                    .table
+                    .as_deref()
+                    .is_some_and(|table| table.eq_ignore_ascii_case(q))
+            })
+    })
+}
+
+/// Go `ErrUnknownColumn` naming the `having clause`.
+pub(crate) fn unknown_having_column(name: &str) -> DriverError {
+    DriverError::UnknownColumnInClause {
+        column: name.to_owned(),
+        clause: "having clause".to_owned(),
+    }
+}
+
 /// Go `gbyResolver`, whole: a `GROUP BY` item's positions AND its select-list
 /// aliases, resolved the way that resolver does.
 ///

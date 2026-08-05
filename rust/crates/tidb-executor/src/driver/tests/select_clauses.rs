@@ -86,3 +86,296 @@ fn select_from_table_order_limit() {
         vec![vec![Datum::Int(1)], vec![Datum::Int(2)]]
     );
 }
+
+/// `HAVING` on the NON-aggregate path: the clause is a filter, and it may name
+/// only what the select list projects.
+///
+/// Go builds it as a `LogicalSelection` above the select list's `Projection`
+/// (`buildSelect`), and `resolveHavingAndOrderBy` resolves every name against
+/// the select FIELDS first -- with no `GROUP BY` items to match,
+/// `resolveFieldsFirst` stays true and the `havingClause` branch of
+/// `resolveFromPlan` returns `-1` for every name the select list lacks.
+///
+/// Before this, the driver DROPPED the clause on this path: the rows below
+/// came back unfiltered and the 1054s came back as rows.
+///
+/// Captured from real TiDB on `ht(a, b)` = (1,10),(2,20):
+///
+/// ```text
+/// select a, b from ht having b > 15    -- 2|20
+/// select a from ht having a > 1        -- 2
+/// select a from ht having b > 0        -- [planner:1054] Unknown column 'b' in 'having clause'
+/// select a from ht having ht.b > 0     -- [planner:1054] Unknown column 'ht.b' in 'having clause'
+/// select a from ht having b is null    -- [planner:1054] Unknown column 'b' in 'having clause'
+/// select a from ht having b > 0 and a > 0
+///                                      -- [planner:1054] Unknown column 'b' in 'having clause'
+/// select b as a from ht having a > 15  -- 20   (the ALIAS wins over ht.a)
+/// select b as a from ht having ht.a>1  -- [planner:1054] Unknown column 'ht.a'
+/// select a+1 as a from ht having a > 2 -- 3
+/// select a as z, b from ht having z>1  -- 2|20
+/// select 1 as one from ht having one=1 -- 1;1
+/// select a from ht t1 having t1.a > 1  -- 2
+/// select a from ht t1 having ht.a > 1  -- [planner:1054] Unknown column 'ht.a'
+/// select * from ht having b > 15       -- 2|20
+/// select a from ht having 1            -- 1;2
+/// select a from ht having 0            -- (no rows)
+/// select a from ht having null         -- (no rows)
+/// select a, b from ht having b>15 limit 1        -- 2|20
+/// select a, b from ht having a>0 order by b desc -- 2|20 1|10
+/// ```
+#[test]
+fn plain_having_filters_and_sees_only_the_select_list() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on("CREATE TABLE ht (a INT, b INT)", &mut catalog).unwrap();
+    run_insert_on(
+        "INSERT INTO ht VALUES (1, 10), (2, 20)",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    let run = |sql: &str| run_select_on(sql, &catalog, &crate::StmtContext::for_query());
+
+    // The clause FILTERS -- this is the whole point, and every row-set below
+    // was two rows before.
+    assert_eq!(
+        run("SELECT a, b FROM ht HAVING b > 15").unwrap(),
+        vec![vec![Datum::Int(2), Datum::Int(20)]]
+    );
+    assert_eq!(
+        run("SELECT a FROM ht HAVING a > 1").unwrap(),
+        vec![vec![Datum::Int(2)]]
+    );
+    assert_eq!(
+        run("SELECT * FROM ht HAVING b > 15").unwrap(),
+        vec![vec![Datum::Int(2), Datum::Int(20)]]
+    );
+    assert_eq!(
+        run("SELECT a FROM ht HAVING 1").unwrap(),
+        vec![vec![Datum::Int(1)], vec![Datum::Int(2)]]
+    );
+    assert_eq!(
+        run("SELECT a FROM ht HAVING 0").unwrap(),
+        Vec::<Vec<Datum>>::new()
+    );
+    assert_eq!(
+        run("SELECT a FROM ht HAVING NULL").unwrap(),
+        Vec::<Vec<Datum>>::new()
+    );
+    // ... below the LIMIT and below the sort, which is Go's
+    // `Selection -> Sort -> Limit`.
+    assert_eq!(
+        run("SELECT a, b FROM ht HAVING b > 15 LIMIT 1").unwrap(),
+        vec![vec![Datum::Int(2), Datum::Int(20)]]
+    );
+    assert_eq!(
+        run("SELECT a, b FROM ht HAVING a > 0 ORDER BY b DESC").unwrap(),
+        vec![
+            vec![Datum::Int(2), Datum::Int(20)],
+            vec![Datum::Int(1), Datum::Int(10)]
+        ]
+    );
+
+    // An ALIAS shadows a real column of the same name, and an aliased
+    // expression is reachable by its alias.
+    assert_eq!(
+        run("SELECT b AS a FROM ht HAVING a > 15").unwrap(),
+        vec![vec![Datum::Int(20)]]
+    );
+    assert_eq!(
+        run("SELECT a+1 AS a FROM ht HAVING a > 2").unwrap(),
+        vec![vec![Datum::Int(3)]]
+    );
+    assert_eq!(
+        run("SELECT a AS z, b FROM ht HAVING z > 1").unwrap(),
+        vec![vec![Datum::Int(2), Datum::Int(20)]]
+    );
+    assert_eq!(
+        run("SELECT 1 AS one FROM ht HAVING one = 1").unwrap(),
+        vec![vec![Datum::Int(1)], vec![Datum::Int(1)]]
+    );
+    // A FROM alias qualifies the name; the base table's own name no longer does.
+    assert_eq!(
+        run("SELECT a FROM ht t1 HAVING t1.a > 1").unwrap(),
+        vec![vec![Datum::Int(2)]]
+    );
+
+    // ... and a source column the select list does NOT project is 1054, in
+    // every spelling and every sql_mode.
+    for (sql, name) in [
+        ("SELECT a FROM ht HAVING b > 0", "b"),
+        ("SELECT a FROM ht HAVING ht.b > 0", "ht.b"),
+        ("SELECT a FROM ht HAVING b IS NULL", "b"),
+        ("SELECT a FROM ht HAVING b > 0 AND a > 0", "b"),
+        ("SELECT b AS a FROM ht HAVING ht.a > 1", "ht.a"),
+        ("SELECT a FROM ht t1 HAVING ht.a > 1", "ht.a"),
+    ] {
+        match run(sql) {
+            Err(DriverError::UnknownColumnInClause { column, clause }) => assert_eq!(
+                (column.as_str(), clause.as_str()),
+                (name, "having clause"),
+                "{sql}"
+            ),
+            other => panic!("expected 1054 for `{sql}`, got {other:?}"),
+        }
+    }
+}
+
+/// A correlated subquery in a NON-aggregate `HAVING`: an EMPTY one is NULL,
+/// so the group it belongs to is dropped -- and the names it correlates to
+/// answer to the PROJECTION, not to the source row.
+///
+/// This is the `HAVING` site of the family #290's apply-deselect fixed in the
+/// select list. Before this the clause was dropped entirely and the first
+/// query below answered BOTH rows.
+///
+/// The projection's names are what Go's `FieldName` carries: a field written
+/// `b AS bb` has `ColName = bb` and `OrigTblName = ht`, which is why `bb`
+/// resolves and `ht.b` does not -- while the select-FIELD rule one function up
+/// still matches `ht.b` by the field's written name. Both captured.
+///
+/// Captured from real TiDB on `ht(a, b)` = (1,10),(2,20) and `hs(x, y)` = (10,5):
+///
+/// ```text
+/// select a, b from ht having (select y from hs where hs.x = ht.b) > 0     -- 1|10
+/// select a, b from ht having (select y from hs where hs.x = ht.b) = 5     -- 1|10
+/// select a, b from ht having (select y from hs where hs.x = ht.b) <> 5    -- (no rows)
+/// select a, b from ht having (select y from hs where hs.x = ht.b) > 100   -- (no rows)
+/// select a, b from ht having (select y from hs where hs.x = ht.b) is null -- 2|20
+/// select a, b from ht having (select y from hs where hs.x = ht.b) is not null -- 1|10
+/// select a, b from ht having (select count(*) from hs where hs.x = ht.b) > 0  -- 1|10
+/// select a, b from ht having exists (select 1 from hs where hs.x = ht.b)      -- 1|10
+/// select a, b from ht having not exists (select 1 from hs where hs.x = ht.b)  -- 2|20
+/// select a, b from ht having ht.b in (select x from hs)                       -- 1|10
+/// select a, b from ht having (select y from hs where hs.x = b) > 0            -- 1|10
+/// select a, b from ht having (select y from hs where hs.x = ht.a) > 0    -- (no rows)
+/// select a from ht having (select count(*) from hs) > 0                  -- 1;2
+/// select b as bb from ht having (select y from hs where hs.x = bb) > 0    -- 10
+/// select a from ht having (select y from hs where hs.x = ht.b) > 0
+///   -- [planner:1054] Unknown column 'ht.b' in 'having clause'
+/// select a from ht having (select y from hs where hs.x = b) > 0
+///   -- [planner:1054] Unknown column 'b' in 'having clause'
+/// select a from ht having exists (select 1 from hs where hs.x = ht.b)
+///   -- [planner:1054] Unknown column 'ht.b' in 'having clause'
+/// select b as bb from ht having (select y from hs where hs.x = ht.b) > 0
+///   -- [planner:1054] Unknown column 'ht.b' in 'having clause'
+/// ```
+#[test]
+fn an_empty_correlated_having_subquery_is_null_and_drops_its_row() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on("CREATE TABLE ht (a INT, b INT)", &mut catalog).unwrap();
+    crate::run_create_table_on("CREATE TABLE hs (x INT, y INT)", &mut catalog).unwrap();
+    run_insert_on(
+        "INSERT INTO ht VALUES (1, 10), (2, 20)",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO hs VALUES (10, 5)",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    let run = |sql: &str| run_select_on(sql, &catalog, &crate::StmtContext::for_query());
+    let first = vec![vec![Datum::Int(1), Datum::Int(10)]];
+    let second = vec![vec![Datum::Int(2), Datum::Int(20)]];
+    let none = Vec::<Vec<Datum>>::new();
+
+    // `ht.b = 20` matches no `hs` row, so the subquery is NULL and `NULL > 0`
+    // is not true. The row is DROPPED -- it was kept before.
+    assert_eq!(
+        run("SELECT a, b FROM ht HAVING (SELECT y FROM hs WHERE hs.x = ht.b) > 0").unwrap(),
+        first
+    );
+    assert_eq!(
+        run("SELECT a, b FROM ht HAVING (SELECT y FROM hs WHERE hs.x = ht.b) = 5").unwrap(),
+        first
+    );
+    // ... and NULL is not FALSE either: `<> 5` drops both rows, the non-empty
+    // one because 5 <> 5 is false and the empty one because NULL is unknown.
+    assert_eq!(
+        run("SELECT a, b FROM ht HAVING (SELECT y FROM hs WHERE hs.x = ht.b) <> 5").unwrap(),
+        none
+    );
+    assert_eq!(
+        run("SELECT a, b FROM ht HAVING (SELECT y FROM hs WHERE hs.x = ht.b) > 100").unwrap(),
+        none
+    );
+    // IS NULL / IS NOT NULL name the same value from the other side.
+    assert_eq!(
+        run("SELECT a, b FROM ht HAVING (SELECT y FROM hs WHERE hs.x = ht.b) IS NULL").unwrap(),
+        second
+    );
+    assert_eq!(
+        run("SELECT a, b FROM ht HAVING (SELECT y FROM hs WHERE hs.x = ht.b) IS NOT NULL").unwrap(),
+        first
+    );
+    // An aggregate INSIDE the subquery counts rows rather than yielding NULL,
+    // so the empty side is `0` and still fails `> 0`.
+    assert_eq!(
+        run("SELECT a, b FROM ht HAVING (SELECT count(*) FROM hs WHERE hs.x = ht.b) > 0").unwrap(),
+        first
+    );
+    // EXISTS / NOT EXISTS / IN partition the same two rows.
+    assert_eq!(
+        run("SELECT a, b FROM ht HAVING EXISTS (SELECT 1 FROM hs WHERE hs.x = ht.b)").unwrap(),
+        first
+    );
+    assert_eq!(
+        run("SELECT a, b FROM ht HAVING NOT EXISTS (SELECT 1 FROM hs WHERE hs.x = ht.b)").unwrap(),
+        second
+    );
+    assert_eq!(
+        run("SELECT a, b FROM ht HAVING ht.b IN (SELECT x FROM hs)").unwrap(),
+        first
+    );
+    // The correlation may be written unqualified, and may name a column that
+    // matches nothing at all.
+    assert_eq!(
+        run("SELECT a, b FROM ht HAVING (SELECT y FROM hs WHERE hs.x = b) > 0").unwrap(),
+        first
+    );
+    assert_eq!(
+        run("SELECT a, b FROM ht HAVING (SELECT y FROM hs WHERE hs.x = ht.a) > 0").unwrap(),
+        none
+    );
+    // An UNcorrelated subquery is a constant and keeps every row.
+    assert_eq!(
+        run("SELECT a FROM ht HAVING (SELECT count(*) FROM hs) > 0").unwrap(),
+        vec![vec![Datum::Int(1)], vec![Datum::Int(2)]]
+    );
+    // The correlation resolves against the PROJECTION, so the underlying
+    // column's name is NOT what it answers to.
+    //
+    // DEFERRED, the other side of that same rule: a correlation to the ALIAS
+    // (`hs.x = bb`, which TiDB answers `10`) is refused rather than answered
+    // -- see `bind_having_correlations`. It is an error, not a wrong row set.
+    assert!(run("SELECT b AS bb FROM ht HAVING (SELECT y FROM hs WHERE hs.x = bb) > 0").is_err());
+    for (sql, name) in [
+        (
+            "SELECT a FROM ht HAVING (SELECT y FROM hs WHERE hs.x = ht.b) > 0",
+            "ht.b",
+        ),
+        (
+            "SELECT a FROM ht HAVING (SELECT y FROM hs WHERE hs.x = b) > 0",
+            "b",
+        ),
+        (
+            "SELECT a FROM ht HAVING EXISTS (SELECT 1 FROM hs WHERE hs.x = ht.b)",
+            "ht.b",
+        ),
+        (
+            "SELECT b AS bb FROM ht HAVING (SELECT y FROM hs WHERE hs.x = ht.b) > 0",
+            "ht.b",
+        ),
+    ] {
+        match run(sql) {
+            Err(DriverError::UnknownColumnInClause { column, clause }) => assert_eq!(
+                (column.as_str(), clause.as_str()),
+                (name, "having clause"),
+                "{sql}"
+            ),
+            other => panic!("expected 1054 for `{sql}`, got {other:?}"),
+        }
+    }
+}
