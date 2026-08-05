@@ -4244,7 +4244,8 @@ func (w *worker) reorgPartitionDataAndIndex(
 			return errors.Trace(err)
 		}
 	}
-	if _, err = findNextNonTouchedPartitionID(reorgInfo.PhysicalTableID, pi); err == nil {
+	if reorgInfo.PhysicalTableID != 0 {
+		// There are non-touched partitions to add to the new global indexes.
 		err = w.addTableIndex(jobCtx, t, reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
