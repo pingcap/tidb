@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	goerrors "errors"
 	"fmt"
 	"math"
 	"sort"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	diststorage "github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
@@ -261,8 +263,8 @@ func (*LitBackfillScheduler) GetEligibleInstances(_ context.Context, _ *proto.Ta
 }
 
 // IsRetryableErr implements scheduler.Extension interface.
-func (*LitBackfillScheduler) IsRetryableErr(error) bool {
-	return true
+func (*LitBackfillScheduler) IsRetryableErr(err error) bool {
+	return !goerrors.Is(err, errdef.ErrTooManyDataFiles)
 }
 
 // ModifyMeta implements scheduler.Extension interface.
