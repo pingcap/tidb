@@ -676,6 +676,42 @@ pub(crate) fn choose_index_range_path(
 /// The row ORDER does change (index order, not handle order), which is why
 /// [`crate::driver::from::build_from`] declines the choice for a leaf whose
 /// parent demanded an order of it.
+///
+/// # What it would take to offer a condition here, MEASURED
+///
+/// Two statements in `tests/integrationtest`'s recording turn on this, and
+/// they need DIFFERENT Go rules -- neither of them this function's:
+///
+/// * `explain_easy`: `select * from t1 left join t2 on t1.c2 = t2.c1 where
+///   t1.c1 > 1` reads `TableRangeScan table:t1 range:(1,+inf]` in TiDB and
+///   `TableFullScan` here. The rule is `LogicalJoin.PredicatePushDown`'s
+///   `LeftOuterJoin` arm: `extractOnCondition(predicates, true, false)` sends
+///   a `WHERE` conjunct on the PRESERVED side down to that child and leaves
+///   the inner side's above the join. The routing is safe on that side for a
+///   reason that needs no null reasoning -- the `WHERE` rejects the same row
+///   whether or not it was null-extended -- but the SAFETY ARGUMENT is about
+///   the leaf's position in the join tree, which this call site is not told.
+///   The single-table pipeline already builds the range
+///   ([`choose_index_range_path`] returning [`ChosenPath::HandleRange`], which
+///   `accept_handle_ranges` offers to the scan already installed), so the
+///   missing pieces are the conjunct reaching here and the preserved-side
+///   proof travelling with it.
+///
+/// * `executor/jointest/join`: `select /*+ TIDB_SMJ(t2) */ * from t1 left
+///   outer join t2 on t1.a = t2.a and t1.a != 3` reads `TableRangeScan
+///   table:t2 range:[-inf,3), (3,+inf]` in TiDB. That range is on the INNER
+///   side and comes from no `WHERE` at all: `ne(t1.a, 3)` is an ON-condition
+///   on the preserved side (it stays as the printed `left cond`), and
+///   `expression.PropConstForOuterJoin`'s `propagateColumnEQ` derives
+///   `ne(t2.a, 3)` from it through the join key, then `extractOnCondition`
+///   sorts the derived conjunct to the right child. The same pass is what
+///   emits the `not(isnull(t2.c1))` selection the first statement's recording
+///   also carries. It is a union-find solver over the join's conditions
+///   (`pkg/expression/constant_propagation.go`), not a routing rule.
+///
+/// Both are left as measured debt rather than attempted: the first needs an
+/// ancestry fact this tier does not thread to a leaf, and the second needs a
+/// solver that does not exist here yet.
 pub(crate) fn leaf_index_path(
     table: &KvTable,
     visible: &str,
