@@ -295,6 +295,32 @@ func SubtaskMetaPath(taskID int64, subtaskID int64) string {
 // subtask. It balances groups in rounds of nodeCnt to use all available
 // resources. It also limits each group's input files and caps the total target
 // files so the following ingest step can read them all.
+// since we have a 4000 hard limit on the target file count, when the concurrency
+// is larger than 16 (4000/250), DivideMergeSortDataFiles might incorrectly return
+// ErrTooManyDataFiles on some input, such as:
+//
+//	file-count=940001 / nodeCnt=2 / concurrency=17
+//
+// the 4000 is an experience value which came from internal tests where the max
+// node spec we used is 16c, we haven't tested on 32c or 64c. maybe we can remove
+// this 4000 hard limit, and calculate the limit by concurrency * 250.
+//
+// suppose we have a 8c node with cpu:mem = 1:4, but on the node only 7c and
+// 26.9GiB memory is available to tidb-server, below table give the max supported
+// row KV size before reporting ErrTooManyDataFiles for different params. such
+// as for 1 secondary index, with concurrency=1, the max all supported row KV
+// size is from 29.56TiB (when each index kv size = row kv size) to 92.98 TiB
+// (when each index kv size = 0.1 * row kv size).
+//
+//	| Index Count | Concurrency 1 | Concurrency 3  |  Concurrency 7  |
+//	| ----------: | ------------: | -------------: | --------------: |
+//	|    No index |     121.6 TiB |      364.8 TiB |       851.2 TiB |
+//	|     1 index | 29.6–93.0 TiB | 88.7–279.0 TiB | 206.9–650.9 TiB |
+//	|  16 indexes |  6.7–18.5 TiB |  20.0–55.6 TiB |  46.7–129.6 TiB |
+//	| 128 indexes |   1.0–2.7 TiB |    2.9–8.1 TiB |    6.7–18.8 TiB |
+//
+// if the 8c node is with cpu:mem = 1:2, the max supported kv size is around
+// half of above table.
 func DivideMergeSortDataFiles(files []string, nodeCnt, concurrency int) ([][]string, error) {
 	if nodeCnt == 0 {
 		return nil, errors.Errorf("unsupported zero node count")
