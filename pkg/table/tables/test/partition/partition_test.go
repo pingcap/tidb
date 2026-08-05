@@ -70,7 +70,7 @@ func TestPartitionTableUsesTableCollationSnapshot(t *testing.T) {
 	keyTblInfo := keyTbl.Meta()
 
 	collate.SetNewCollationEnabledForTest(true)
-	snapshotTbl, err := tables.TableFromMetaWithCollate(autoid.NewAllocators(tblInfo.SepAutoInc()), tblInfo, false)
+	snapshotTbl, err := tables.TableFromMetaWithCollate(false, autoid.NewAllocators(tblInfo.SepAutoInc()), tblInfo)
 	require.NoError(t, err)
 
 	pt := snapshotTbl.GetPartitionedTable()
@@ -79,7 +79,7 @@ func TestPartitionTableUsesTableCollationSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, tblInfo.Partition.Definitions[1].ID, physicalTbl.GetPhysicalID())
 
-	keySnapshotTbl, err := tables.TableFromMetaWithCollate(autoid.NewAllocators(keyTblInfo.SepAutoInc()), keyTblInfo, false)
+	keySnapshotTbl, err := tables.TableFromMetaWithCollate(false, autoid.NewAllocators(keyTblInfo.SepAutoInc()), keyTblInfo)
 	require.NoError(t, err)
 	keyPt := keySnapshotTbl.GetPartitionedTable()
 	require.NotNil(t, keyPt)

@@ -108,9 +108,9 @@ func getTableImporter(
 ) (*importer.TableImporter, error) {
 	idAlloc := kv.NewPanickingAllocators(taskMeta.Plan.TableInfo.SepAutoInc())
 	tbl, err := tables.TableFromMetaWithCollate(
+		taskMeta.Plan.GetUseNewCollateOrDefault(collate.NewCollationEnabled()),
 		idAlloc,
 		taskMeta.Plan.TableInfo,
-		taskMeta.Plan.GetUseNewCollateOrDefault(collate.NewCollationEnabled()),
 	)
 	if err != nil {
 		return nil, err

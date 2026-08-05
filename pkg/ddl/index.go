@@ -2778,7 +2778,7 @@ func writeChunk(
 			idxData := idxDataBuf[:len(index.Meta().Columns)]
 			var rsData []types.Datum
 			if needRestoreForIndexes[i] {
-				rsData = getRestoreData(c, copCtx.IndexInfo(idxID), restoreDataBuf)
+				rsData = getRestoreData(useNewCollate, c.TableInfo, copCtx.IndexInfo(idxID), c.PrimaryKeyInfo, restoreDataBuf)
 			}
 			kvBytes, err := writeOneKV(ctx, writers[i], index, loc, errCtx, writeStmtBufs, idxData, rsData, h)
 			if err != nil {

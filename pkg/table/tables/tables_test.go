@@ -429,7 +429,7 @@ func TestTableFromMetaWithCollateUsesFixedMode(t *testing.T) {
 	defer collate.SetNewCollationEnabledForTest(origin)
 	for _, useNewCollate := range []bool{false, true} {
 		collate.SetNewCollationEnabledForTest(!useNewCollate)
-		tbl, err := tables.TableFromMetaWithCollate(autoid.NewAllocators(false), tblInfo, useNewCollate)
+		tbl, err := tables.TableFromMetaWithCollate(useNewCollate, autoid.NewAllocators(false), tblInfo)
 		require.NoError(t, err)
 		require.Equal(t, useNewCollate, tbl.UseNewCollate())
 	}

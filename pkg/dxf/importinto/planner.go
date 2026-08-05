@@ -353,9 +353,9 @@ func buildControllerForPlan(p *LogicalPlan) (*importer.LoadDataController, error
 	plan, stmt := &p.Plan, p.Stmt
 	idAlloc := kv.NewPanickingAllocators(plan.TableInfo.SepAutoInc())
 	tbl, err := tables.TableFromMetaWithCollate(
+		plan.GetUseNewCollateOrDefault(collate.NewCollationEnabled()),
 		idAlloc,
 		plan.TableInfo,
-		plan.GetUseNewCollateOrDefault(collate.NewCollationEnabled()),
 	)
 	if err != nil {
 		return nil, err

@@ -82,15 +82,15 @@ func NeedRestoredData(useNewCollate bool, idxCols []*model.IndexColumn, colInfos
 
 // NewIndex builds a new Index object.
 func NewIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.IndexInfo) (table.Index, error) {
-	return newIndex(physicalID, tblInfo, indexInfo, codec.NewEncoder(collate.NewCollationEnabled()))
+	return newIndex(physicalID, tblInfo, indexInfo, collate.NewCollationEnabled())
 }
 
-func newIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, encoder codec.Encoder) (*index, error) {
+func newIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, useNewCollate bool) (*index, error) {
 	return &index{
 		idxInfo:  indexInfo,
 		tblInfo:  tblInfo,
 		phyTblID: physicalID,
-		encoder:  encoder,
+		encoder:  codec.NewEncoder(useNewCollate),
 	}, nil
 }
 
