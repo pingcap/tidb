@@ -296,10 +296,10 @@ fn single_datetime(vals: &[Datum]) -> Result<Option<(i64, u32, u32)>, EvalError>
 
 /// `builtinMonthSig.evalInt` in `pkg/expression/builtin_time.go`.
 ///
-/// The source returns the parsed month field directly with no zero
-/// rejection. An already-typed `Datum::Time` (a datetime column, a
-/// cast-to-datetime result) is a value Go's EvalTime produced non-NULL, so a
-/// zero datetime yields its stored `0` — see [`calendar::component_date`].
+/// The source returns the stored month field directly with no zero
+/// rejection, because `monthFunctionClass` declares its argument
+/// `types.ETDatetime` (`builtin_time.go:1116`) and so receives a value
+/// `EvalTime` already produced non-NULL — see [`calendar::component_date`].
 fn month(vals: &[Datum]) -> Result<Datum, EvalError> {
     Ok(calendar::component_date(vals)?
         .map_or(Datum::Null, |(_, month, _)| Datum::Int(i64::from(month))))
@@ -307,10 +307,10 @@ fn month(vals: &[Datum]) -> Result<Datum, EvalError> {
 
 /// `builtinDayOfMonthSig.evalInt` in `pkg/expression/builtin_time.go`.
 ///
-/// The source returns the parsed day field directly with no zero rejection.
-/// An already-typed `Datum::Time` (a datetime column, a cast-to-datetime
-/// result) is a value Go's EvalTime produced non-NULL, so a zero datetime
-/// yields its stored `0` — see [`calendar::component_date`].
+/// The source returns the stored day field directly with no zero rejection,
+/// because `dayOfMonthFunctionClass` declares its argument
+/// `types.ETDatetime` (`builtin_time.go:1284`) and so receives a value
+/// `EvalTime` already produced non-NULL — see [`calendar::component_date`].
 fn day_of_month(vals: &[Datum]) -> Result<Datum, EvalError> {
     Ok(calendar::component_date(vals)?
         .map_or(Datum::Null, |(_, _, day)| Datum::Int(i64::from(day))))

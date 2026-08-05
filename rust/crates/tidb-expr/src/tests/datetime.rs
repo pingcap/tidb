@@ -1213,3 +1213,155 @@ fn timestamp_and_timestampadd_match_the_captured_session_answers() {
         assert_eq!(chunk_e(expr), want, "{expr} (chunk tier)");
     }
 }
+
+/// Go's `types.ETDatetime` ARGUMENT declaration, at the value boundary
+/// (`crate::arg_eval_type`). Each of these builtins declares its temporal
+/// argument `types.ETDatetime` in `newBaseBuiltinFuncWithTp`, so
+/// `WrapWithCastAsTime` runs before the signature does and a packed
+/// `YYYYMMDDHHMMSS` INTEGER reaches it as a DATETIME.
+///
+/// NO RECORDED ROW EXISTS for any of these: `tests/integrationtest/r/**`
+/// calls this family only inside partition definitions and over already-
+/// temporal columns, which is why the whole-corpus survey does not move on
+/// this change. Every expected value below is therefore GO-DERIVED, captured
+/// from real TiDB through `gorun` (`rust/difftests/gorun`) statement by
+/// statement, and pinned here absolutely.
+#[test]
+fn an_etdatetime_argument_is_cast_before_the_signature_runs() {
+    // `monthFunctionClass`/`dayOfMonthFunctionClass`
+    // (`builtin_time.go:1116`, `:1284`): `types.ETInt, types.ETDatetime`.
+    // Captured `RS:3` and `RS:15`. Without the cast these are NULL, because
+    // a bare 14-digit run is not a calendar date to any string parser.
+    assert_eq!(e("month(20240315123045)"), "INT:3");
+    assert_eq!(e("day(20240315123045)"), "INT:15");
+    // The 8-digit form parsed even before the cast; it must not regress.
+    assert_eq!(e("month(20240315)"), "INT:3");
+    assert_eq!(e("month('20240315123045')"), "INT:3");
+
+    // `quarterFunctionClass` (`:5833`) returns the STORED month with no zero
+    // rejection, so a month-zero packed date is quarter `0` and not NULL --
+    // the boundary that proves the cast keeps a zero-in-date rather than
+    // rejecting it. Captured `RS:0` for both.
+    assert_eq!(e("quarter(20240000)"), "INT:0");
+    assert_eq!(e("month(0)"), "INT:0");
+
+    // `dateFormatFunctionClass` (`:832`): `types.ETString, types.ETDatetime,
+    // types.ETString` -- argument 0 only. Captured
+    // `RS:2024-03-15 12:30:45`. DATE_FORMAT's own body is UNCHANGED by this
+    // rung: it was already correct over a datetime string and only ever saw
+    // the wrong input.
+    assert_eq!(
+        e("date_format(20240315123045,'%Y-%m-%d %H:%i:%s')"),
+        "STR:2024-03-15 12:30:45"
+    );
+
+    // `toDaysFunctionClass` (`:6733`): `types.ETInt, types.ETDatetime`.
+    // Captured `RS:739325`.
+    assert_eq!(e("to_days(20240315123045)"), "INT:739325");
+
+    // `timestampAddFunctionClass` (`:6551`): `types.ETString, types.ETString,
+    // types.ETReal, types.ETDatetime` -- the DATETIME is argument 2, which is
+    // why the mask is `1 << 2`. Captured `RS:2024-03-16 12:30:45` and
+    // `RS:2024-03-15 13:30:45`. The HOUR row is the boundary case for that
+    // index: a mask of `1 << 1` would cast the AMOUNT instead and answer
+    // NULL, and a DAY-only assertion would not distinguish which field the
+    // unit reached.
+    assert_eq!(
+        e("timestampadd(day,1,20240315123045)"),
+        "STR:2024-03-16 12:30:45"
+    );
+    assert_eq!(
+        e("timestampadd(hour,1,20240315123045)"),
+        "STR:2024-03-15 13:30:45"
+    );
+    // The string form must be untouched by the wrap (Go's `WrapWithCastAsTime`
+    // still builds a cast over an ETString expression; it is only a
+    // DATE/DATETIME/TIMESTAMP one that early-returns).
+    assert_eq!(
+        e("timestampadd(day,1,'2024-03-15 12:30:45')"),
+        "STR:2024-03-16 12:30:45"
+    );
+
+    // `convertTzFunctionClass` (`:5424`): `types.ETDatetime, types.ETDatetime,
+    // types.ETString, types.ETString` -- the LEADING `types.ETDatetime` is the
+    // RETURN type, so the cast belongs to argument 0 and NOT to the zone
+    // strings. Captured `RS:2024-03-15 20:30:45` for both forms; a mask that
+    // treated the return type as an argument would cast `'+00:00'` and answer
+    // NULL.
+    assert_eq!(
+        e("convert_tz(20240315123045,'+00:00','+08:00')"),
+        "STR:2024-03-15 20:30:45"
+    );
+    assert_eq!(
+        e("convert_tz('2024-03-15 12:30:45','+00:00','+08:00')"),
+        "STR:2024-03-15 20:30:45"
+    );
+
+    // Both evaluators impose the layer: the chunk tier from
+    // `ScalarFunction::eval` and the row/AST tier from `func::eval_func`, so
+    // no statement can pick up the old re-derivation by choosing a plan.
+    // CONVERT_TZ is absent here only because the chunk tier does not build
+    // that builtin at all yet (`this builtin is not yet built for chunk
+    // evaluation`) -- a pre-existing gap, unrelated to this layer.
+    for (expr, want) in [
+        ("month(20240315123045)", "INT:3"),
+        ("day(20240315123045)", "INT:15"),
+        ("quarter(20240000)", "INT:0"),
+        ("month(0)", "INT:0"),
+        (
+            "date_format(20240315123045,'%Y-%m-%d %H:%i:%s')",
+            "STR:2024-03-15 12:30:45",
+        ),
+        ("to_days(20240315123045)", "INT:739325"),
+        (
+            "timestampadd(day,1,20240315123045)",
+            "STR:2024-03-16 12:30:45",
+        ),
+        (
+            "timestampadd(hour,1,20240315123045)",
+            "STR:2024-03-15 13:30:45",
+        ),
+    ] {
+        assert_eq!(chunk_e(expr), want, "{expr} (chunk tier)");
+    }
+}
+
+/// `TIMESTAMP` is the ONE member of the measured class this layer does NOT
+/// cover, and the reason is worth pinning rather than leaving as a silent
+/// gap.
+///
+/// The earlier diagnosis -- that `timestamp(20240315123045)` is NULL because
+/// the argument's STATIC TYPE is not consulted -- does not survive contact
+/// with real TiDB. Go reaches `2024-03-15 12:30:45` down EITHER branch of
+/// its `isFloat` switch; captured through `gorun`:
+///
+/// ```text
+/// select timestamp(20240315123045)    RS:2024-03-15 12:30:45   (isFloat)
+/// select timestamp('20240315123045')  RS:2024-03-15 12:30:45   (not isFloat)
+/// ```
+///
+/// so the NULL here is this tier's own `add_sub::parse_datetime` refusing a
+/// bare 14-digit run, not a missing type. `TIMESTAMP` DOES depend on its
+/// argument's type -- Go's
+/// `switch args[0].GetType(ctx.GetEvalCtx()).GetType() { case
+/// mysql.TypeFloat, mysql.TypeDouble, mysql.TypeNewDecimal,
+/// mysql.TypeLonglong: isFloat = true }` (`builtin_time.go:4592-4595`)
+/// stores the answer in the SIGNATURE (`builtinTimestamp1ArgSig{bf,
+/// isFloat}`) -- but the dependence only becomes observable where the two
+/// PARSERS disagree, which is a value carrying a fraction. Captured:
+///
+/// ```text
+/// select timestamp(20240315.5)    RS:2024-03-15 00:00:00.0   ParseTimeFromFloatString: `.5` is a SECOND fraction
+/// select timestamp('20240315.5')  RS:2024-03-15 05:00:00.0   ParseTime: `.5` is an HOUR
+/// ```
+///
+/// That is signature-selection state over an `types.ETString` argument, not
+/// an argument cast, so it is NOT this rung's `types.ETDatetime` layer and
+/// must not be smuggled into it. Both rows are NULL here today; the
+/// assertion is deliberately absolute so the gap cannot close silently.
+#[test]
+fn timestamp_stays_outside_the_etdatetime_layer_and_says_why() {
+    assert_eq!(e("timestamp(20240315123045)"), "NULL");
+    assert_eq!(e("timestamp(20240315.5)"), "NULL");
+    assert_eq!(e("timestamp('20240315.5')"), "NULL");
+}

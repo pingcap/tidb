@@ -1255,3 +1255,67 @@ fn sysdate_reads_the_wall_clock_and_not_the_statement_timestamp() {
     assert_eq!(with_fsp.len(), 23, "SYSDATE(3) width: {with_fsp}");
     assert_eq!(&with_fsp[19..20], ".", "SYSDATE(3) fraction: {with_fsp}");
 }
+
+/// Go's `types.ETDatetime` ARGUMENT declaration over real COLUMNS, which is
+/// the only place its one type-dependent rule is observable: a `YEAR` column
+/// takes `types.ParseTimeFromYear` and every other integer source takes
+/// `types.ParseTimeFromNum` (`builtin_cast.go:1127-1131`). The value tier
+/// alone cannot tell those two apart -- both are a `Datum::Int` -- so this
+/// end-to-end path is the proof that the static type reaches the cast.
+///
+/// NO RECORDED ROW EXISTS: `tests/integrationtest/r/**` never calls these
+/// builtins over a YEAR or packed-integer column, only inside partition
+/// definitions and over already-temporal columns. Every expected value is
+/// GO-DERIVED, captured from real TiDB through `gorun`.
+#[test]
+fn an_etdatetime_argument_is_cast_from_its_column_type() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE yt (y YEAR, n BIGINT, d DATE)")
+        .unwrap();
+    session
+        .run("INSERT INTO yt VALUES (2024, 20240315123045, '2024-03-15')")
+        .unwrap();
+
+    // Captured `RS:0|0|0|2024`. `ParseTimeFromYear(2024)` injects the value
+    // as the year FIELD, so the date is `2024-00-00` and the month, day and
+    // quarter are the STORED zeros -- not NULL, and not March. Routing the
+    // same integer through `ParseTimeFromNum` fails outright, so this row is
+    // the boundary case for threading the argument's FieldType at all: drop
+    // it and all four columns become NULL.
+    assert_eq!(
+        row_text(session.run("SELECT month(y), day(y), quarter(y), year(y) FROM yt")),
+        [["0", "0", "0", "2024"]]
+    );
+
+    // Captured `RS:3|15|1|2024`. The SAME integer magnitude under a BIGINT
+    // column is a packed `YYYYMMDDHHMMSS`, so it reads as a real date. The
+    // pair above and below is the whole point: one value, two column types,
+    // two different Go parsers.
+    assert_eq!(
+        row_text(session.run("SELECT month(n), day(n), quarter(n), year(n) FROM yt")),
+        [["3", "15", "1", "2024"]]
+    );
+
+    // Captured `RS:3|1|2024`. A DATE column is Go's early return
+    // (`builtin_cast.go:2821`: `exprTp == mysql.TypeDate && tp.GetType() ==
+    // mysql.TypeDatetime` returns the expression unwrapped), so the cast must
+    // be a pass-through and not re-derive anything.
+    assert_eq!(
+        row_text(session.run("SELECT month(d), quarter(d), year(d) FROM yt")),
+        [["3", "1", "2024"]]
+    );
+
+    // Captured `RS:739325|2024-03|74|2024-03-16 12:30:45`. Four more
+    // ETDatetime-declaring classes over the same packed-integer column, each
+    // with a DIFFERENT argument index (`TO_DAYS` 0, `DATE_FORMAT` 0,
+    // `TIMESTAMPDIFF` 1 and 2, `TIMESTAMPADD` 2) -- so a mask that is right
+    // for one and wrong for another cannot pass this row.
+    assert_eq!(
+        row_text(session.run(
+            "SELECT to_days(n), date_format(n,'%Y-%m'), \
+             timestampdiff(day,'2024-01-01',n), timestampadd(day,1,n) FROM yt"
+        )),
+        [["739325", "2024-03", "74", "2024-03-16 12:30:45"]]
+    );
+}

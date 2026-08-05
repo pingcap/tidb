@@ -184,7 +184,10 @@ fn calendar_part_source_vectors() {
             "{input}"
         );
     }
-    assert_eq!(quarter(&datetime_str_arg("2008-13-01")).unwrap(), Datum::Null);
+    assert_eq!(
+        quarter(&datetime_str_arg("2008-13-01")).unwrap(),
+        Datum::Null
+    );
 
     let weekday_cases = [
         ("2000-01-01", Datum::Int(5)),
@@ -196,7 +199,10 @@ fn calendar_part_source_vectors() {
         assert_eq!(weekday(&[string_datum(input)]).unwrap(), want, "{input}");
     }
 
-    assert_eq!(day_of_month(&datetime_arg(Datum::Null)).unwrap(), Datum::Null);
+    assert_eq!(
+        day_of_month(&datetime_arg(Datum::Null)).unwrap(),
+        Datum::Null
+    );
     assert_eq!(day_of_week(&[Datum::Null]).unwrap(), Datum::Null);
     assert_eq!(day_of_year(&[Datum::Null]).unwrap(), Datum::Null);
     assert_eq!(weekday(&[Datum::Null]).unwrap(), Datum::Null);
@@ -214,7 +220,10 @@ fn calendar_part_source_vectors() {
         Datum::Int(75)
     );
     assert_eq!(weekday(&[Datum::Int(20_240_315)]).unwrap(), Datum::Int(4));
-    assert_eq!(quarter(&datetime_arg(Datum::Int(20_240_315))).unwrap(), Datum::Int(1));
+    assert_eq!(
+        quarter(&datetime_arg(Datum::Int(20_240_315))).unwrap(),
+        Datum::Int(1)
+    );
     assert!(day_of_week(&[]).is_err());
     assert!(quarter(&[string_datum("2008-01-01"), Datum::Int(1)]).is_err());
 }
@@ -242,14 +251,18 @@ fn quarter_source_vectors() {
             "QUARTER({input:?})"
         );
     }
-    assert_eq!(quarter(&datetime_str_arg("2008-13-01")).unwrap(), Datum::Null);
+    assert_eq!(
+        quarter(&datetime_str_arg("2008-13-01")).unwrap(),
+        Datum::Null
+    );
     assert_eq!(quarter(&datetime_arg(Datum::Null)).unwrap(), Datum::Null);
 }
 
 /// `TestZeroDateTimeCompatibility` in `r/executor/executor.result`: a
 /// zero-datetime COLUMN (`insert ignore into t values(0,0)`) reaches these
-/// builtins as an already-typed `Datum::Time`, i.e. a value Go's EvalTime
-/// produced non-NULL. The stored-component extractors return the stored
+/// builtins as an already-typed `Datum::Time`, which is Go's own early
+/// return in `WrapWithCastAsTime` (`builtin_cast.go:2821`) — a DATETIME
+/// expression is handed to the signature unwrapped. The stored-component extractors return the stored
 /// `0`; the day-of-week family still rejects the zero date as NULL. This is
 /// distinct from the string form `YEAR("0000-00-00")`, which is NULL
 /// because the string fails NO_ZERO_DATE parsing — both are asserted
@@ -287,15 +300,22 @@ fn zero_datetime_column_matches_recorded_tidb() {
     assert_eq!(dayname(std::slice::from_ref(&zero)).unwrap(), Datum::Null);
     assert_eq!(monthname(std::slice::from_ref(&zero)).unwrap(), Datum::Null);
 
-    // The string form still parses under NO_ZERO_DATE and is NULL, NOT 0 —
-    // the typed/untyped split is the whole point.
+    // The string form is NULL, NOT 0 — and the split is now decided by ONE
+    // rule instead of by each signature: the ETDatetime argument cast
+    // (`crate::arg_eval_type`) rejects `"0000-00-00"` under NO_ZERO_DATE
+    // before the signature runs, exactly as Go's `WrapWithCastAsTime` does,
+    // while the typed zero above is Go's early return and reaches the
+    // signature intact.
     assert_eq!(
         calendar::date_part(&datetime_str_arg("0000-00-00"), |d| d.0).unwrap(),
         Datum::Null,
         "YEAR(\"0000-00-00\")"
     );
     assert_eq!(month(&datetime_str_arg("0000-00-00")).unwrap(), Datum::Null);
-    assert_eq!(quarter(&datetime_str_arg("0000-00-00")).unwrap(), Datum::Null);
+    assert_eq!(
+        quarter(&datetime_str_arg("0000-00-00")).unwrap(),
+        Datum::Null
+    );
 
     // A non-zero typed datetime still reads its real components.
     let valid = Datum::Time(
@@ -944,12 +964,8 @@ fn timestamp_diff_source_vectors() {
         );
     }
     assert_eq!(
-        calendar::timestamp_diff(&[
-            string_datum("DAY"),
-            Datum::Null,
-            string_datum("2017-01-01"),
-        ])
-        .unwrap(),
+        calendar::timestamp_diff(&[string_datum("DAY"), Datum::Null, string_datum("2017-01-01"),])
+            .unwrap(),
         Datum::Null
     );
 }

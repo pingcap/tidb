@@ -665,6 +665,13 @@ pub fn eval_in(expr: &Expr, cols: &dyn Columns) -> Result<Datum, EvalError> {
                 eval_in(interval, cols)?,
                 eval_in(expr, cols)?,
             ];
+            // This arm builds its own argument list, so it must impose the
+            // declared argument eval types itself: Go's
+            // `timestampAddFunctionClass` declares
+            // `types.ETString, types.ETString, types.ETReal, types.ETDatetime`
+            // (`builtin_time.go:6551`), and the signature body is entitled to
+            // a DATETIME third argument either way it is reached.
+            let vals = arg_eval_type::wrap_datetime_args("TIMESTAMPADD", vals, &[], cols)?;
             time_fn::add_sub::timestamp_add(&vals, cols)
         }
         // `GET_FORMAT(<type>, location)` — the type is an AST selector (the
