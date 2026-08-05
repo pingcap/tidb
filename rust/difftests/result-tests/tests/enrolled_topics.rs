@@ -309,4 +309,310 @@ pub const TOPICS: &[(&str, &str)] = &[
         "table/tables",
         "the `table` package's row and side-effect output, 22 of 32 compared",
     ),
+    // ------------------------------------------------------------------
+    // THE ENROLLMENT CENSUS (batch46). Every unenrolled topic under
+    // `tests/integrationtest/r/` was replayed through
+    // `survey_unonboarded_topics` and classified. The 33 that replayed at ZERO
+    // divergences are below, followed by the 24 whose divergences are a
+    // countable list with a NAMED cause -- the same bar the list above was
+    // built to. Together they raise the compared corpus from 5,639 of 6,882 to
+    // 7,875 of 10,747.
+    //
+    // The topics deliberately LEFT OFF, and why, are in
+    // `integration_diff::survey_unonboarded_topics`.
+    // ------------------------------------------------------------------
+    (
+        "planner/core/lateral_join",
+        "the largest topic onboarded by this census at ZERO divergences (66 of 75): a \
+     lateral derived table's rows and access properties, which nothing else on \
+     the gate reaches",
+    ),
+    (
+        "executor/distsql",
+        "61 of 61, nothing skipped -- the distsql reader's own row results, and the \
+     topic that most directly gates the double read this batch reordered",
+    ),
+    (
+        "planner/core/casetest/pushdown/push_down",
+        "51 of 59 at zero divergences: which expressions may be evaluated below the \
+     reader, read back as row results rather than as plan text",
+    ),
+    (
+        "expression/noop_functions",
+        "48 of 61: the no-op switch surface -- which statements `tidb_enable_noop_\
+     functions` accepts and which it refuses",
+    ),
+    (
+        "planner/core/casetest/partition/integration_partition",
+        "36 of 132 at zero divergences, the fifth partition topic and the one whose \
+     remainder is the honest OutOfDomain size of the partition-DDL gap",
+    ),
+    (
+        "expression/multi_valued_index",
+        "32 of 314: a multi-valued index is refused, not answered wrongly, and this \
+     is the tripwire for the day it starts being answered",
+    ),
+    (
+        "executor/stale_txn",
+        "24 of 43 at zero divergences: `AS OF TIMESTAMP` and the stale-read session \
+     variables, accepted and refused exactly where TiDB does",
+    ),
+    (
+        "expression/uuid",
+        "17 of 41: UUID and UUID_SHORT's shape and uniqueness, with the recorder \
+     rewriting the values it cannot pin",
+    ),
+    (
+        "planner/core/range_scan_for_like",
+        "16 of 226: the LIKE-to-range rewrite, which decides whether a prefix pattern \
+     reaches the index at all",
+    ),
+    (
+        "ddl/attributes_sql",
+        "12 of 30: `ALTER TABLE ... ATTRIBUTES` and the placement surface, refused \
+     where TiDB refuses it",
+    ),
+    (
+        "globalindex/update",
+        "11 of 31: UPDATE through a global index on a partitioned table",
+    ),
+    (
+        "tpch",
+        "11 of 40 at zero divergences: the TPC-H schema and its queries, the only \
+     analytic workload shape on the gate",
+    ),
+    (
+        "executor/import_into",
+        "10 of 106: `IMPORT INTO`'s statement surface, refused where TiDB refuses it",
+    ),
+    (
+        "globalindex/misc",
+        "10 of 91: the global-index odds and ends -- `ADMIN CHECK`, `SHOW CREATE \
+     TABLE` and the index's own DDL",
+    ),
+    (
+        "expression/format",
+        "9 of 9, nothing skipped: the FORMAT builtin over every rounding and locale \
+     case the topic names",
+    ),
+    (
+        "globalindex/index_join",
+        "9 of 31: an index join whose inner side is a global index",
+    ),
+    (
+        "expression/enum_set",
+        "8 of 13: ENUM and SET comparison, ordering and insertion",
+    ),
+    ("executor/kv", "7 of 16: the KV-level statement surface"),
+    (
+        "infoschema/cluster_tables",
+        "7 of 17: the CLUSTER_* information_schema tables, which exist and are \
+     readable rather than erroring",
+    ),
+    (
+        "access_path_selection",
+        "6 of 8: the access-path chooser's own topic, five of the six matches being \
+     access PROPERTIES -- so a chooser regression turns it red directly",
+    ),
+    (
+        "ddl/column_change",
+        "6 of 9: concurrent column-change states read back through DML",
+    ),
+    (
+        "globalindex/mem_index_lookup",
+        "6 of 40: a global index reached through an index LOOKUP (the double read \
+     this batch reordered), on a partitioned table",
+    ),
+    (
+        "globalindex/mem_index_merge",
+        "6 of 53: index merge over a global index",
+    ),
+    (
+        "globalindex/mem_index_reader",
+        "6 of 36: a COVERING read of a global index -- the reader whose row order \
+     this batch had to keep in INDEX order while the lookup moved to handle \
+     order",
+    ),
+    (
+        "bindinfo/temptable",
+        "4 of 38: SQL bindings against a temporary table",
+    ),
+    (
+        "types/json_binary_functions",
+        "3 of 6: the binary-JSON builtins' own topic",
+    ),
+    (
+        "globalindex/point_get",
+        "2 of 38: a point get routed through a global index",
+    ),
+    (
+        "planner/core/topn_heavy_function_optimize",
+        "2 of 6: the TopN rewrite that keeps an expensive projection off the \
+     discarded rows",
+    ),
+    (
+        "session/bootstrap_upgrade",
+        "2 of 29: the bootstrap upgrade path's own statements",
+    ),
+    ("db_integration", "1 of 11 at zero divergences"),
+    (
+        "globalindex/aggregate",
+        "1 of 16: aggregation over a global index",
+    ),
+    ("partition", "1 of 3"),
+    ("show", "1 of 5"),
+    (
+        "black_list",
+        "25 of 54 with 3 PLAN divergences, all one cause: the expression BLACK LIST \
+     (`mysql.expr_pushdown_blacklist`) is not consulted, so a scan this tier \
+     reads through `idx(b, a)` is a `TableFullScan` in the recording once `=` \
+     or `<` is blacklisted, and the third is the ranger reading `b = 1 and a > \
+     'a'` as one two-dimension range where TiDB, with `<` blacklisted, splits \
+     it into two point ranges",
+    ),
+    (
+        "ddl/db_change",
+        "20 of 33 with 3 divergences of ONE cause: `unix_timestamp(<column>)` over a \
+     row written in the same statement answers NULL where TiDB answers 0, so \
+     `floor((unix_timestamp() - unix_timestamp(a)) / 2)` is NULL rather than 0",
+    ),
+    (
+        "ddl/index_modify",
+        "33 of 39 with 3 divergences in two causes: `CREATE INDEX c ON t(b, a, b)` \
+     is accepted where TiDB raises 1060 for the repeated column, and a \
+     `_bin`-collated index restores the PADDED key bytes (` A B C`) instead of \
+     the stored value (`abc`) when the index answers the column",
+    ),
+    (
+        "ddl/serial",
+        "25 of 77 with 2 divergences: a partitioned table's rows survive a `TRUNCATE \
+     PARTITION` this tier refused (11 rows against TiDB's 0), and \
+     `auto_random(5, 31)` is accepted where TiDB raises 8216 for a range below \
+     32 bits",
+    ),
+    (
+        "ddl/table_modify",
+        "17 of 47 with 2 divergences: a database-level `COLLATE utf8_general_ci` is \
+     not inherited by a table created in it (so `SHOW CREATE TABLE` prints \
+     `utf8mb4_bin`), and `ENGINE = MERGE UNION = (x, y)` is accepted where \
+     TiDB raises 8232",
+    ),
+    (
+        "executor/autoid",
+        "the largest topic this census onboards: 411 of 458 compared with ONE \
+     divergence -- `AUTO_ID_CACHE` is not modelled, so after the cache is \
+     rebased the next id is 2 where TiDB's is 30001. Every other auto-increment \
+     and auto-random statement in the topic agrees",
+    ),
+    (
+        "executor/cte",
+        "118 of 133 with 3 divergences: a recursive CTE's UNION (not UNION ALL) does \
+     not deduplicate ACROSS iterations (1,1,1,2,2,2,3,4 for 1,2,3,4), and two \
+     refusals this tier does not make -- 1221 for a `LIMIT` inside a recursive \
+     term, and 3636 when `cte_max_recursion_depth` is exceeded",
+    ),
+    (
+        "executor/dual_password",
+        "39 of 92 with 2 divergences, both the same cause: `SHOW CREATE USER` prints \
+     a `mysql_native_password` hash this tier computes differently from TiDB's \
+     for the same password",
+    ),
+    (
+        "executor/parallel_apply",
+        "84 of 97 with 3 divergences, and they are WRONG ROWS rather than plan text: \
+     an `UPDATE`/`DELETE` whose predicate is a correlated subquery leaves rows \
+     that TiDB removes. Onboarded deliberately AS a tripwire on a known \
+     correctness gap -- the number may only go down",
+    ),
+    (
+        "executor/window",
+        "89 of 93 with ONE divergence: `LEAD(col, 1, NULL) OVER (ORDER BY col)` \
+     answers in the wrong row order and labels the column `__window_0` instead \
+     of the expression text. Every other window statement in the topic agrees, \
+     which is what makes this the window surface's gate",
+    ),
+    (
+        "explain_complex",
+        "35 of 45 with 3 PLAN divergences of one cause: an index-join inner side and \
+     two `BETWEEN`/`=` ranges are read as `TableFullScan` where TiDB narrows \
+     them -- the index-join access-path increment, not a row difference",
+    ),
+    (
+        "explain_foreign_key",
+        "26 of 41 with ONE divergence: an `UPDATE`'s `Point_Get` does not name the \
+     unique index it went through (`index:idx(id)`)",
+    ),
+    (
+        "expression/plan_cache",
+        "141 of 184 with ONE divergence: a single `@@last_plan_from_cache` reads 0 \
+     where TiDB reads 1. This is the second-largest plan-cache surface on the \
+     gate after `sessionctx/setvar`",
+    ),
+    (
+        "index_join",
+        "19 of 21 with 2 PLAN divergences, one cause: `TIDB_INLJ` builds a hash join \
+     over a full scan instead of probing `idx(a)` per outer row. The topic is \
+     named after the feature, so it is the right tripwire for the index-join \
+     increment",
+    ),
+    (
+        "infoschema/v2",
+        "27 of 34 with 2 divergences of one cause: a query filtered on \
+     `TIDB_TABLE_ID` for a memory-table id finds no row, because \
+     `information_schema.tables` does not carry ids for the CLUSTER_* tables",
+    ),
+    (
+        "planner/core/casetest/partition/partition_pruner",
+        "258 of 294 with 2 divergences -- the largest partition topic on the gate \
+     after `partition_boundaries`. One is a join's row ORDER over a partitioned \
+     inner side, the other is `a IS NULL` reading all four partitions where \
+     TiDB prunes to `p0` (the NULL partition rule)",
+    ),
+    (
+        "planner/core/fulltext_search",
+        "33 of 95 with ONE divergence, the same `@@last_plan_from_cache` as \
+     `expression/plan_cache`. Half the topic is both engines rejecting the \
+     full-text statements, which is agreement",
+    ),
+    (
+        "planner/core/join_key_type_cast",
+        "75 of 77 with 2 divergences: an `INL_JOIN` inner side is a `TableFullScan` \
+     rather than a `TableRangeScan` over the cast key, and a five-way \
+     straight-join's rows come back in a different (unordered) order",
+    ),
+    (
+        "planner/core/physical_plan",
+        "31 of 42 with 3 divergences in two causes: the deprecated INDEX MERGE JOIN \
+     hint raises no 1815 warning, and `@@last_plan_from_binding` reads 0 where \
+     TiDB reads 1",
+    ),
+    (
+        "planner/core/rule_constant_propagation",
+        "52 of 57 with ONE divergence, and 18 of its matches are access PROPERTIES: \
+     an `UPDATE` driven by a propagated constant leaves `value = 0` where TiDB \
+     writes 3",
+    ),
+    (
+        "planner/core/rule_result_reorder",
+        "28 of 29 with ONE divergence, again `@@last_plan_from_cache`. The rule that \
+     makes a result order deterministic is exactly the kind this batch's \
+     handle-order change could break, so it belongs on the gate",
+    ),
+    (
+        "session/privileges",
+        "59 of 66 with ONE divergence: `SHOW CREATE VIEW` prints an EMPTY definer \
+     (``@``) where TiDB prints `root`@`%` -- the view's definer is not recorded \
+     at creation",
+    ),
+    (
+        "table/index",
+        "37 of 44 with ONE divergence: a duplicate `CREATE INDEX ... IF NOT EXISTS` \
+     raises the 1061 as an Error where TiDB raises it as a Note",
+    ),
+    (
+        "topn_push_down",
+        "15 of 19 with 3 PLAN divergences of one cause: every index-join inner side \
+     is an `IndexFullScan` or `TableFullScan` where TiDB builds a per-probe \
+     `IndexRangeScan`. Six of the 15 matches are access properties",
+    ),
 ];

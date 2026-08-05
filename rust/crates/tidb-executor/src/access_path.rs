@@ -384,11 +384,30 @@ impl crate::table_access::TableAccess for HandleSourceExec {}
 /// (`distsql.go`, under `if w.keepOrder`). An UNORDERED double read never
 /// takes that second step, so its answer is handle-ascending per batch.
 ///
-/// [`Self::keep_order`] is this tier's `w.keepOrder`, offered by the driver
-/// through [`crate::table_access::TableAccess::accept_keep_order`] exactly
-/// when the statement's `ORDER BY` is the one this index path already
-/// produces. With it set the walk order IS the answer and no sort happens --
-/// which is the same net effect as Go's sort-then-restore, one pass cheaper.
+/// `can_reorder_handles` is this tier's `canReorderHandles`. The driver clears
+/// it through [`Self::set_covering`] for a path that needs no row lookup and
+/// through [`crate::table_access::TableAccess::accept_keep_order`] when the
+/// statement's `ORDER BY` is the one this index path already produces. Cleared,
+/// the walk order IS the answer and no sort happens -- the same net effect as
+/// Go's sort-then-restore, one pass cheaper.
+///
+/// # The boundary this rule does NOT yet know about: `UnionScan`
+///
+/// Go puts a `UnionScanExec` above the reader whenever the open transaction
+/// has written the table, and that operator MERGES the snapshot stream with
+/// the staged rows by `compare()` -- the index's own key columns first, the
+/// handle last (`pkg/executor/union_scan.go`). So a double read inside a dirty
+/// transaction answers in INDEX order in Go, whatever the lookup below it did.
+///
+/// This tier has no `UnionScan` operator: staged rows are merged at the
+/// storage seam instead (see [`crate::table_access`]), so this source cannot
+/// tell a dirty read from a clean one and sorts either way. Measured cost, as
+/// of the batch that landed the rule: THREE statements of
+/// `tests/integrationtest/t/executor/union_scan.test` (`select a, b from t use
+/// index(c) where c > 3` and its two siblings, all inside `BEGIN`) went from
+/// agreeing to disagreeing on row order, against NINE that stopped disagreeing
+/// elsewhere. The three are not a regression of this rule -- they are the
+/// missing operator, newly visible.
 pub struct IndexRangeSourceExec {
     meta: ExecutorMeta,
     table: KvTable,
@@ -1370,9 +1389,9 @@ mod tests {
     /// emitted it.
     fn read_through_index(covering: bool, keep_order: bool) -> Vec<i64> {
         let table = crossed_order_table();
-        let columns: Vec<tidb_expr::column::Column> = (0..3)
+        let columns: Vec<tidb_expr::column::Column> = (0..3i64)
             .map(|offset| {
-                let mut column = tidb_expr::column::Column::new(offset as i64 + 1, long());
+                let mut column = tidb_expr::column::Column::new(offset + 1, long());
                 column.index = offset;
                 column
             })
