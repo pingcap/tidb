@@ -473,7 +473,7 @@ func newList(e exec.Executor) *chunk.List {
 // buildTask builds a lookUpJoinTask and read Outer rows.
 // When err is not nil, task must not be nil to send the error to the main thread via task.
 func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
-	requiredRows := ow.batchSize
+	requiredRows := 0
 	reservedRows := 0
 	if ow.lookup.AdaptiveLimitController != nil {
 		var (
