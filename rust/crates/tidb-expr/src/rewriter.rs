@@ -38,6 +38,11 @@ use crate::EvalError;
 use tidb_ast::{BinaryOp, CiString, Expr, IsTarget, UnaryOp};
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 
+/// Go `mysql.DefaultDecimal` (`parser/mysql/const.go`): the value a decimal
+/// literal too large for a `MyDecimal` saturates to.
+const DEFAULT_DECIMAL_LITERAL: &str =
+    "99999999999999999999999999999999999999999999999999999999999999999";
+
 pub(crate) mod result_type;
 
 use result_type::{
@@ -383,8 +388,29 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
         Expr::String(text) => Ok(constant_string(text)),
         // Go's parser folds a decimal literal into a `*MyDecimal` value whose
         // type `DefaultTypeForValue` derives from the printed literal.
+        //
+        // `parse_mysql` is `MyDecimal.FromString`, which is exactly what
+        // `ast.NewDecimal` (`types/parser_driver/value_expr.go`) calls, and
+        // the distinction from `from_literal` is load-bearing: `FromString`
+        // honours the FIXED WORD BUFFER, so a literal with more fraction
+        // digits than a `MyDecimal` can hold comes back TRUNCATED with
+        // `ErrTruncated`, which Go swallows. `from_literal` kept all 91
+        // digits of `expression/issues`'s
+        // `select 0.000...0`, and the chunk cell that value was appended to
+        // holds 30 -- an unrepresentable value reaching a fixed cell, which
+        // panicked. TiDB records that statement's value as 72 fraction
+        // digits, which is what the word buffer leaves for a zero integer
+        // part.
         Expr::Decimal(text) => {
-            let value = tidb_datatype::Decimal::from_literal(text);
+            let (value, err) = tidb_datatype::Decimal::parse_mysql(text);
+            // Go's other disposition: a value the buffer cannot hold AT ALL
+            // (`ErrDataOutOfRange`) becomes `mysql.DefaultDecimal`, the
+            // 65-nine saturation value, rather than the partial parse.
+            let value = if matches!(err, Some(tidb_datatype::DecimalParseError::Overflow)) {
+                tidb_datatype::Decimal::parse_mysql(DEFAULT_DECIMAL_LITERAL).0
+            } else {
+                value
+            };
             let ft = decimal_literal_type(&value);
             Ok(Expression::Constant(Constant::new(
                 Datum::Decimal(value),

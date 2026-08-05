@@ -75,6 +75,18 @@ pub(crate) fn eval_cast(
                     // Go's `chs == CharsetBin` arm sets
                     // `characterLen = len(s)`.
                     report_data_too_long(ctx, bytes.len(), *n as usize);
+                    // Go `padZeroForBinaryType` (`builtin_cast.go:2249`)
+                    // refuses to BUILD a pad wider than `max_allowed_packet`,
+                    // answering NULL with the 1301 warning instead. The test
+                    // is on the declared width, before any allocation, and
+                    // that ordering is the whole point: `cast("a" as
+                    // binary(4294967295))` (`expression/issues`) otherwise
+                    // materializes four gigabytes of zeros -- 109 SECONDS of
+                    // the topic's 125, for a statement TiDB rejects outright.
+                    if bytes.len() < *n as usize && *n as u64 > ctx.max_allowed_packet() {
+                        ctx.handle_allowed_packet_overflowed("cast_as_binary")?;
+                        return Ok(Datum::Null);
+                    }
                     binary_pad_truncate(&bytes, *n as usize)
                 }
                 None => bytes,
