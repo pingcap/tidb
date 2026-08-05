@@ -667,6 +667,7 @@ pub enum SelectField {
 pub struct SelectFieldList {
     fields: Vec<SelectField>,
     text: Vec<NodeText>,
+    written_literal: Vec<bool>,
 }
 
 impl SelectFieldList {
@@ -685,6 +686,7 @@ impl SelectFieldList {
 
     /// Appends a field with empty source metadata.
     pub fn push(&mut self, field: SelectField) {
+        self.written_literal.push(was_written_as_literal(&field));
         self.fields.push(field);
         self.text.push(NodeText::default());
     }
@@ -693,6 +695,7 @@ impl SelectFieldList {
     pub fn push_with_text(&mut self, field: SelectField, source: impl Into<Vec<u8>>) {
         let mut text = NodeText::default();
         text.set_text(None, source);
+        self.written_literal.push(was_written_as_literal(&field));
         self.fields.push(field);
         self.text.push(text);
     }
@@ -706,12 +709,60 @@ impl SelectFieldList {
     pub fn original_text(&self, index: usize) -> Option<&[u8]> {
         self.text.get(index).map(NodeText::original_text)
     }
+
+    /// Whether field `index` was WRITTEN as a literal -- whether the parsed
+    /// expression, looked through parentheses and a unary `+`, was one of
+    /// Go's `driver.ValueExpr` nodes.
+    ///
+    /// Go asks this of `field.Expr` in
+    /// `buildProjectionFieldNameFromExpressions`, which decides whether an
+    /// unaliased column is named by the literal's VALUE or by the field's
+    /// source text. A `SelectField`'s expression is rewritten in place by
+    /// later passes -- variable binding substitutes `@@x` with its value,
+    /// subquery folding substitutes `(select 1)` with `1` -- so by the time
+    /// the name is chosen the expression alone can no longer tell a written
+    /// literal from a computed one. Recorded here at construction, beside the
+    /// source text and under the same alignment guarantee, it can.
+    #[must_use]
+    pub fn written_literal(&self, index: usize) -> bool {
+        self.written_literal.get(index).copied().unwrap_or(false)
+    }
+}
+
+/// Whether `field`'s expression, after Go's
+/// `getInnerFromParenthesesAndUnaryPlus`, is one of its `driver.ValueExpr`
+/// literals.
+fn was_written_as_literal(field: &SelectField) -> bool {
+    let SelectField::Expr { expr, .. } = field else {
+        return false;
+    };
+    let mut inner = expr;
+    while let Expr::Paren(next) | Expr::Unary(crate::UnaryOp::Plus, next) = inner {
+        inner = next;
+    }
+    matches!(
+        inner,
+        Expr::Null
+            | Expr::Int(_)
+            | Expr::Decimal(_)
+            | Expr::Float(_)
+            | Expr::Hex(_)
+            | Expr::Bit(_)
+            | Expr::String(_)
+            | Expr::RawString(_)
+            | Expr::Bool(_)
+    )
 }
 
 impl From<Vec<SelectField>> for SelectFieldList {
     fn from(fields: Vec<SelectField>) -> Self {
         let text = vec![NodeText::default(); fields.len()];
-        Self { fields, text }
+        let written_literal = fields.iter().map(was_written_as_literal).collect();
+        Self {
+            fields,
+            text,
+            written_literal,
+        }
     }
 }
 

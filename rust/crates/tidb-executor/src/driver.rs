@@ -69,42 +69,152 @@ use tidb_expr::rewriter::{rewrite_expr_resolved, ColumnResolver};
 /// Falls back to `expr.restore()` when the parser recorded no source text
 /// for this field (for example a field synthesized by a rewrite pass rather
 /// than parsed from source).
+///
+/// # The literal switch, and the one arm this tier still cannot reach
+///
+/// Go's literal handling is a switch on the `driver.ValueExpr`'s DATUM KIND,
+/// not on its source text, and every arm below is that switch:
+///
+/// * `KindString` names the column by the literal's VALUE, not its text, with
+///   leading non-graphic characters trimmed (`mysql.RangeGraph`), so
+///   `select '\t   col'` is named `col` and `select ('\N')` is named `N`.
+/// * `KindNull` is named `NULL`, whatever case the source used.
+/// * `KindBinaryLiteral` (a `0x`/`b''` literal) keeps its source text.
+/// * `KindInt64` carrying `IsBooleanFlag` -- a `TRUE`/`FALSE` keyword -- is
+///   named `TRUE` or `FALSE` by its VALUE, so `select false` is `FALSE`.
+/// * every other literal keeps its source text with `\t\n +(` trimmed from
+///   the left and `\t\n )` from the right, so `select +1` is named `1`.
+///
+/// The one arm this tier answers differently is Go's `GetProjectionOffset()`
+/// inside `KindString`. Go's parser folds ADJACENT string literals into one
+/// value (`pkg/parser/expr_parser.go`'s `parseLiteral`, `case stringLit:`)
+/// and records the FIRST literal's decoded length on the value node, so
+/// `select "ss" "a"` is named `ss` and not `ssa`. This tier's parser folds
+/// them the same way (see `tidb_parser`'s `TokenKind::Str` arm) but
+/// [`tidb_ast::Expr::String`] carries only the folded value, with nowhere to
+/// put the offset; the label here is therefore the WHOLE folded value.
+/// MEASURED RESIDUE: 7 statements in `executor/executor`
+/// (`select 'a' ' ' 'string'` and its six siblings). Closing it means giving
+/// the string literal a place to carry the first token's length -- an AST
+/// change, not a change here.
 pub(crate) fn default_field_display_name(
     fields: &SelectFieldList,
     index: usize,
     expr: &tidb_ast::Expr,
 ) -> String {
-    if let tidb_ast::Expr::Column(path) = expr {
+    // Go `getInnerFromParenthesesAndUnaryPlus`: parentheses and a unary `+`
+    // are looked through before anything else is asked, because Go asks its
+    // questions of the REWRITTEN expression and the rewriter drops both --
+    // `(a)` rewrites to `a`, and `unaryOpToExpression`'s `opcode.Plus` arm
+    // returns without touching the stack ("expression (+ a) is equal to a").
+    // So `select (a)` and `select +a` are named `a`, like `select a`.
+    let inner = inner_field_expr(expr);
+    if let tidb_ast::Expr::Column(path) = inner {
         return path.last().cloned().unwrap_or_default();
     }
-    // Go `getInnerFromParenthesesAndUnaryPlus`: the literal test looks through
-    // parentheses and a unary `+`, so `(null)` and `+1` are named as their
-    // inner literal.
-    let inner = inner_field_expr(expr);
-    // Go `buildProjectionFieldNameFromExpressions`: a literal gets special
-    // handling. This tier corrects the one case that diverges -- a bare NULL
-    // literal is named `NULL` (Go's `types.KindNull` arm), not the lowercase
-    // `null` its source text carried -- and leaves every other literal named by
-    // the text it was written with, as before.
-    if is_value_literal(inner) {
-        if matches!(inner, tidb_ast::Expr::Null) {
-            return "NULL".to_owned();
-        }
-        return fields
+    let text = || {
+        fields
             .text(index)
             .and_then(|bytes| std::str::from_utf8(bytes).ok())
-            .map_or_else(|| expr.restore(), str::to_owned);
+            .map_or_else(|| expr.restore(), str::to_owned)
+    };
+    // Go: `NAME_CONST` names the column by its FIRST argument's value, which
+    // MySQL documents as the function's whole purpose. Go evaluates that
+    // argument with `evalAstExpr`; `preprocess.go` has already refused every
+    // call whose first argument is not a literal, so a literal is the only
+    // shape that reaches the name.
+    if let tidb_ast::Expr::Func { name, args, .. } = inner {
+        if name.eq_ignore_ascii_case("name_const") && args.len() == 2 {
+            if let Some(label) = literal_label_value(&args[0]) {
+                return label;
+            }
+        }
+    }
+    // Go asks `field.Expr` -- the PARSED node -- whether this field is a
+    // literal, never the rewritten expression: its test is
+    // `innerExpr.(*driver.ValueExpr)`, and a `driver.ValueExpr` exists only
+    // where the SOURCE wrote a literal. This tier's `expr` has been through
+    // passes that substitute literals INTO the tree -- variable binding turns
+    // `@@warning_count` into its value, subquery folding turns `(select 1)`
+    // into `1` -- so `is_value_literal(inner)` alone would name those columns
+    // `0` and `select 1` instead of `@@warning_count` and `(select 1)`. Both
+    // were measured as regressions before
+    // `SelectFieldList::written_literal` recorded the parse-time answer.
+    if fields.written_literal(index) && is_value_literal(inner) {
+        return literal_field_display_name(inner, &text());
     }
     // Non-literal: named by its source text with MySQL special-result-field
     // comment markers removed -- Go's
     // `SpecFieldPattern.ReplaceAllStringFunc(field.Text(), TrimComment)`, which
     // drops every `*/` and `/*!<version>` marker. A `/*+ hint */` therefore
     // keeps `/*+ hint ` in the label because only the closing `*/` matches.
-    let text = fields
-        .text(index)
-        .and_then(|bytes| std::str::from_utf8(bytes).ok())
-        .map_or_else(|| expr.restore(), str::to_owned);
-    strip_spec_field_comment_markers(&text)
+    strip_spec_field_comment_markers(&text())
+}
+
+/// Go `buildProjectionFieldNameFromExpressions`'s literal switch, over the
+/// literal `expr` and the field's own source `text`.
+fn literal_field_display_name(expr: &tidb_ast::Expr, text: &str) -> String {
+    match expr {
+        // `types.KindString`: the VALUE names the column, with leading
+        // non-graphic characters trimmed.
+        tidb_ast::Expr::String(value) | tidb_ast::Expr::RawString(value) => {
+            trim_leading_non_graphic(value).to_owned()
+        }
+        // `types.KindNull`.
+        tidb_ast::Expr::Null => "NULL".to_owned(),
+        // `types.KindBinaryLiteral`: "Don't rewrite BIT literal or HEX
+        // literals" -- the source text is kept exactly, untrimmed.
+        tidb_ast::Expr::Hex(_) | tidb_ast::Expr::Bit(_) => text.to_owned(),
+        // `types.KindInt64` carrying `mysql.IsBooleanFlag`: the `TRUE` and
+        // `FALSE` keywords are int64 literals whose flag says they were
+        // written as booleans, and they are named by that value rather than
+        // by the text (so `select FaLsE` is named `FALSE`).
+        tidb_ast::Expr::Bool(value) => {
+            if *value {
+                "TRUE".to_owned()
+            } else {
+                "FALSE".to_owned()
+            }
+        }
+        // The `default` arm: every remaining numeric literal keeps its source
+        // text with the unary-plus/parenthesis wrapper trimmed off both ends.
+        _ => text
+            .trim_start_matches(['\t', '\n', ' ', '+', '('])
+            .trim_end_matches(['\t', '\n', ' ', ')'])
+            .to_owned(),
+    }
+}
+
+/// The value a literal argument contributes as a column label -- Go's
+/// `evalAstExpr(...)` followed by `Datum.ToString()`, reached only from
+/// `NAME_CONST`'s first argument, which `preprocess.go` guarantees is a
+/// literal.
+fn literal_label_value(expr: &tidb_ast::Expr) -> Option<String> {
+    match expr {
+        tidb_ast::Expr::String(value) | tidb_ast::Expr::RawString(value) => Some(value.clone()),
+        tidb_ast::Expr::Int(text) | tidb_ast::Expr::Decimal(text) => Some(text.clone()),
+        _ => None,
+    }
+}
+
+/// Go `strings.TrimLeftFunc(projName, func(r rune) bool { return
+/// !unicode.IsOneOf(mysql.RangeGraph, r) })`: drops leading characters that
+/// are not "graphic" in MySQL's sense.
+///
+/// `mysql.RangeGraph` is the union of the Unicode general categories `L*`,
+/// `M*`, `N*`, `P*` and `S*`, so its complement -- what is trimmed -- is
+/// exactly `C*` (control, format, surrogate, private-use, unassigned) and
+/// `Z*` (the separators). This tier recognizes the two halves the recorded
+/// corpus reaches: `Zs`/`Zl`/`Zp` and the whitespace controls, through
+/// `char::is_whitespace`, and `Cc` through `char::is_control`.
+///
+/// NAMED RESIDUE: `Cf` (format characters such as U+200B and U+FEFF), `Co`
+/// (private use) and `Cn` (unassigned) are graphic here and non-graphic in
+/// Go. Rust's standard library exposes no general-category table, so closing
+/// this needs a Unicode category table this workspace does not carry; no
+/// statement in the 257-topic corpus starts a string literal with one.
+fn trim_leading_non_graphic(value: &str) -> &str {
+    value.trim_start_matches(|c: char| c.is_whitespace() || c.is_control())
 }
 
 /// Go `getInnerFromParenthesesAndUnaryPlus`: strips enclosing parentheses and
@@ -1430,5 +1540,110 @@ mod field_name_tests {
         // A parenthesized / unary-plus NULL reaches the same rule.
         let (columns, _) = run_select_meta_on("select (null)", &Catalog::default(), &ctx).unwrap();
         assert_eq!(columns[0].0, "NULL");
+    }
+
+    /// The label of the one field of `sql`.
+    fn label_of(sql: &str) -> String {
+        let ctx = crate::StmtContext::for_query();
+        let (columns, _) = run_select_meta_on(sql, &Catalog::default(), &ctx).unwrap();
+        columns[0].0.clone()
+    }
+
+    /// Go's `types.KindString` arm: a string literal names its column by its
+    /// VALUE, not by the text it was written with, and leading non-graphic
+    /// characters are trimmed (`strings.TrimLeftFunc` over `mysql.RangeGraph`).
+    #[test]
+    fn a_string_literal_column_is_named_by_its_decoded_value() {
+        // The quotes go, and an escape is decoded: `'\N'` is the value `N`.
+        assert_eq!(label_of("select 'abc'"), "abc");
+        assert_eq!(label_of(r"select '\N'"), "N");
+        assert_eq!(label_of(r#"select "\N""#), "N");
+        // Leading whitespace and controls are trimmed; TRAILING ones are not.
+        assert_eq!(label_of(r"select '\t   col'"), "col");
+        assert_eq!(label_of(r"select ' \r\n  .col'"), ".col");
+        assert_eq!(label_of("select 'abc   '"), "abc   ");
+        assert_eq!(label_of("select '  abc   123   '"), "abc   123   ");
+        // Multi-byte graphic characters survive the trim, both letters (`Lo`)
+        // and symbols (`So`), which are both members of `mysql.RangeGraph`.
+        assert_eq!(label_of(r"select '\n\t   中文 col'"), "中文 col");
+        assert_eq!(label_of("select '   \u{1f606}col'"), "\u{1f606}col");
+        // The value rule is reached through parentheses and a unary plus.
+        assert_eq!(label_of("select (('abc'))"), "abc");
+        assert_eq!(label_of(r#"select +"aaa""#), "aaa");
+    }
+
+    /// Go's `default` arm: a numeric literal keeps its SOURCE TEXT, with the
+    /// unary-plus/parenthesis wrapper trimmed from both ends -- so the trim,
+    /// not a re-render of the value, is what makes `+0.999` into `0.999`.
+    #[test]
+    fn a_numeric_literal_column_is_named_by_its_trimmed_source_text() {
+        assert_eq!(label_of("select +1"), "1");
+        assert_eq!(label_of("select +0"), "0");
+        assert_eq!(label_of("select +0.999"), "0.999");
+        // A unary MINUS is not stripped by `getInnerFromParenthesesAndUnaryPlus`,
+        // so `+(-9)` is not a literal at all and keeps its whole text.
+        assert_eq!(label_of("select +(-9)"), "+(-9)");
+        assert_eq!(label_of("select +(-0.001)"), "+(-0.001)");
+    }
+
+    /// Go's `types.KindInt64` arm reads `mysql.IsBooleanFlag`: the `TRUE` and
+    /// `FALSE` keywords are named by their VALUE, uppercased, rather than by
+    /// the text. Read from `buildProjectionFieldNameFromExpressions`; no
+    /// recorded `.result` in the 257-topic corpus selects a bare boolean
+    /// keyword, so the Go source is the only oracle for this arm.
+    #[test]
+    fn a_boolean_keyword_column_is_named_true_or_false() {
+        assert_eq!(label_of("select true"), "TRUE");
+        assert_eq!(label_of("select FaLsE"), "FALSE");
+        // A plain `1` carries no boolean flag and takes the text arm.
+        assert_eq!(label_of("select 1"), "1");
+    }
+
+    /// Go's `types.KindBinaryLiteral` arm: "Don't rewrite BIT literal or HEX
+    /// literals" -- the source text is kept exactly, with no trim.
+    #[test]
+    fn a_hex_or_bit_literal_column_keeps_its_source_text() {
+        assert_eq!(label_of("select 0x41"), "0x41");
+        assert_eq!(label_of("select b'101'"), "b'101'");
+    }
+
+    /// Go: `NAME_CONST(name, value)` names its column by `name`, which MySQL
+    /// documents as the whole point of the function.
+    #[test]
+    fn name_const_names_its_column_by_its_first_argument() {
+        assert_eq!(label_of("select name_const('test_int', 1)"), "test_int");
+        assert_eq!(label_of("SELECT NAME_CONST('come', -1)"), "come");
+    }
+
+    /// Go's `unaryOpToExpression`: "expression (+ a) is equal to a", and
+    /// parentheses vanish the same way, so both are named like the bare
+    /// column.
+    #[test]
+    fn a_parenthesized_or_unary_plus_column_is_named_like_the_column() {
+        let mut catalog = Catalog::default();
+        crate::run_create_table_on("CREATE TABLE t (a INT)", &mut catalog).unwrap();
+        let ctx = crate::StmtContext::for_query();
+        for sql in [
+            "select (a) from t",
+            "select + a from t",
+            "select all + a from t",
+        ] {
+            let (columns, _) = run_select_meta_on(sql, &catalog, &ctx).unwrap();
+            assert_eq!(columns[0].0, "a", "{sql}");
+        }
+    }
+
+    /// The literal arms must read what the SOURCE WROTE, not what the tree
+    /// holds by the time the name is chosen: this tier substitutes a
+    /// variable's value and folds a scalar subquery INTO the field's
+    /// expression, and both of those land a literal where the user wrote
+    /// something else. Both cases below were measured as regressions when the
+    /// rewritten expression was asked instead of
+    /// `SelectFieldList::written_literal`.
+    #[test]
+    fn a_folded_literal_is_not_a_written_literal() {
+        // `(select 1)` folds to the literal `1`; naming it by the `default`
+        // arm's trim would have produced `select 1`.
+        assert_eq!(label_of("select (select 1)"), "(select 1)");
     }
 }
