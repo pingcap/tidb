@@ -321,17 +321,36 @@ pub(crate) fn eval_binary_full(
     {
         return Err(EvalError::UnsupportedOperandPair(l.kind(), r.kind()));
     }
-    // A datetime/date value compares in the TIME domain: Go's
-    // `GetCmpFunction` picks the datetime comparer when either side is a
-    // temporal type, parsing the other side -- a string or a number -- into a
-    // Time first. Without this branch the generic string-vs-numeric rule
-    // below would compare `'2024-12-31'` by its NUMERIC PREFIX (2024.0),
-    // which returns silently wrong rows for the `WHERE created <= 'date'`
-    // every application writes.
-    // (Time ARITHMETIC -- `created + 1` -- falls through to the numeric
-    // rules below, which is also what Go's non-comparison paths do.)
-    if (matches!(l, Datum::Time(_)) || matches!(r, Datum::Time(_)))
-        && matches!(op, Eq | Ge | Gt | Le | Lt | Ne | NullEq)
+    // A datetime/date value compares in the TIME domain against another
+    // temporal value or a STRING: Go's `getBaseCmpType` gives ETString for a
+    // pair whose eval types are both string-kind (datetime IS string-kind),
+    // and `GetAccurateCmpType` then upgrades ETString-with-a-time to
+    // ETDatetime, so `'2024-12-31'` is parsed into a Time first rather than
+    // compared by its NUMERIC PREFIX (2024.0) -- the silent wrong-row bug for
+    // the `WHERE created <= 'date'` every application writes.
+    //
+    // Against a NUMBER, Go compares in the REAL domain instead:
+    // `getBaseCmpType(ETDatetime, ETInt)` is ETReal, so `datetime_col <
+    // 20231310` is `20230809000000 < 20231310`, NOT a datetime parse of
+    // 20231310 that fails and drops the row. A numeric CONSTANT that DOES
+    // convert to a datetime has already been rewritten to a datetime constant
+    // by `refine_comparisons` (Go's `refineNumericConstantCmpDatetime`), so it
+    // reaches here as a `Time` and takes this datetime path; every numeric
+    // operand that remains -- a non-convertible constant, or a bigint column
+    // -- is one Go also compares as real, and so falls through to the
+    // `numeric_context_value` promotion below.
+    // (Time ARITHMETIC -- `created + 1` -- falls through the same way, which
+    // is also what Go's non-comparison paths do.)
+    let numeric_partner = |value: &Datum| {
+        matches!(
+            value,
+            Datum::Int(_) | Datum::UInt(_) | Datum::Decimal(_) | Datum::Real(_) | Datum::Float32(_)
+        )
+    };
+    if matches!(op, Eq | Ge | Gt | Le | Lt | Ne | NullEq)
+        && (matches!(l, Datum::Time(_)) || matches!(r, Datum::Time(_)))
+        && !(matches!(l, Datum::Time(_)) && numeric_partner(&r))
+        && !(matches!(r, Datum::Time(_)) && numeric_partner(&l))
     {
         if l == Datum::Null || r == Datum::Null {
             return Ok(if op == NullEq {

@@ -215,6 +215,87 @@ fn refine_compared_constant(
     }
 }
 
+/// Whether `expr` reads a column, i.e. is NOT a constant expression.
+///
+/// Go's `refineArgs` distinguishes its two sides by `args[i].(*Constant)`,
+/// and a `CAST` of a literal is a folded `*Constant` there. This tier folds
+/// a constant subtree in place (`constant_fold`) but does NOT rewrite the
+/// node into a `Constant`, so `cast('2023-08-09' as datetime)` stays a
+/// `ScalarFunction`. Matching Go's constant/non-constant split therefore
+/// means asking whether the expression depends on a row -- a column-free
+/// datetime expression (a folded `CAST`) is the constant side and does not
+/// trigger rule 3, which is why `cast(...) > 20230809` compares as REAL
+/// (both constants) while `datetime_col > 20230809` compares as datetime.
+fn reads_column(expr: &Expression) -> bool {
+    match expr {
+        Expression::Column(_) | Expression::CorrelatedColumn(_) => true,
+        Expression::Constant(_) => false,
+        Expression::ScalarFunction(function) => function.args.iter().any(reads_column),
+    }
+}
+
+/// Go `compareFunctionClass.refineNumericConstantCmpDatetime`
+/// (`builtin_compare.go:1876`, guarded by `matchRefineRule3Pattern` at the
+/// `refineArgs` call site, `:1802-1808`): `datetime/timestamp non-constant
+/// [cmp] numeric constant` (or its mirror). The numeric constant is converted
+/// to a `DATETIME`; on success it is REWRITTEN to that datetime constant, so
+/// the comparison that survives is datetime-to-datetime. On any conversion
+/// error or a NULL result the constant is left exactly as written -- Go's
+/// `return args` -- and the pair then compares as REAL (`getBaseCmpType`'s
+/// ETReal for datetime-vs-number), which the value evaluator reaches through
+/// its `numeric_context_value` promotion.
+///
+/// Only `mysql.TypeTimestamp`/`mysql.TypeDatetime` match Go's
+/// `matchRefineRule3Pattern`; a `DATE` or `YEAR` non-constant does not, and
+/// compares as real (DATE) or datetime-via-YEAR-cast (YEAR, a separate rule)
+/// respectively. Returns whether rule 3 claimed this comparison.
+fn refine_numeric_constant_cmp_datetime(left: &mut Expression, right: &mut Expression) -> bool {
+    // The datetime side must be a non-constant DATETIME/TIMESTAMP expression;
+    // the other side a constant whose eval type is Int/Real/Decimal.
+    let is_datetime_expr = |expr: &Expression| {
+        expr.static_type().is_some_and(|ft| {
+            matches!(
+                ft.code(),
+                FieldTypeCode::Datetime | FieldTypeCode::Timestamp
+            )
+        }) && reads_column(expr)
+    };
+    let numeric_const = |expr: &Expression| {
+        matches!(expr, Expression::Constant(_))
+            && matches!(
+                expr.static_type().map(FieldType::eval_type),
+                Some(EvalType::Int | EvalType::Real | EvalType::Decimal)
+            )
+    };
+
+    let constant = if is_datetime_expr(left) && numeric_const(right) {
+        right
+    } else if is_datetime_expr(right) && numeric_const(left) {
+        left
+    } else {
+        return false;
+    };
+    let Expression::Constant(con) = constant else {
+        return false;
+    };
+    if con.value.is_null() {
+        return true;
+    }
+    // Go `dt.ConvertTo(ctx.TypeCtx(), NewFieldType(TypeDatetime))`: an invalid
+    // datetime (e.g. `20231310`, month 13) errors and leaves the comparison
+    // unrefined. TypeDatetime carries no zone dependence, so the default UTC
+    // conversion matches.
+    let target = FieldType::new(FieldTypeCode::Datetime);
+    let flags = tidb_datatype::DEFAULT_STATEMENT_FLAGS;
+    match con.value.convert_to(&target, flags) {
+        Ok(converted) if !converted.value.is_null() => {
+            *constant = Expression::Constant(Constant::new(converted.value, target));
+        }
+        _ => {}
+    }
+    true
+}
+
 /// Go `compareFunctionClass.refineArgs` (`builtin_compare.go:1778`), applied
 /// to every comparison in an already-built expression tree.
 ///
@@ -226,12 +307,13 @@ fn refine_compared_constant(
 /// reads -- so the placement changes nothing about the result.
 ///
 /// Ported: the `int non-constant [cmp] non-int constant` arm (`:1811-1833`)
-/// and its mirror through `symmetricOp` (`:1836-1854`).
+/// and its mirror through `symmetricOp` (`:1836-1854`), and the
+/// numeric-constant-vs-datetime rule (`refineNumericConstantCmpDatetime`,
+/// `:1802-1808`) -- see [`refine_numeric_constant_cmp_datetime`].
 /// DEFERRED, each an independent rule of the same function: the `YEAR`
-/// adjustment (`:1856-1871`), the numeric-constant-vs-datetime rule
-/// (`:1802-1808`), the `NullEQ`-vs-`DURATION` rewrite (`:1795-1799`),
-/// `refineArgsByUnsignedFlag` (`:1919`), and the plan-cache guard
-/// `allowCmpArgsRefining4PlanCache` (`:1789`) -- which matters only once
+/// adjustment (`:1856-1871`), the `NullEQ`-vs-`DURATION` rewrite
+/// (`:1795-1799`), `refineArgsByUnsignedFlag` (`:1919`), and the plan-cache
+/// guard `allowCmpArgsRefining4PlanCache` (`:1789`) -- which matters only once
 /// refined plans are cached across parameter values.
 pub fn refine_comparisons(expr: &mut Expression, ctx: &dyn Columns) {
     let Expression::ScalarFunction(function) = expr else {
@@ -246,6 +328,14 @@ pub fn refine_comparisons(expr: &mut Expression, ctx: &dyn Columns) {
     let [left, right] = function.args.as_mut_slice() else {
         return;
     };
+
+    // Rule 3 first, matching `refineArgs`' order: a datetime/timestamp
+    // non-constant expression compared with a numeric constant that converts
+    // to a datetime. Go returns immediately once this fires, so the int arm
+    // below never also runs on the same comparison.
+    if refine_numeric_constant_cmp_datetime(left, right) {
+        return;
+    }
 
     let eval_type = |e: &Expression| e.static_type().map(FieldType::eval_type);
     let left_is_int = eval_type(left) == Some(EvalType::Int);

@@ -227,3 +227,58 @@ fn a_string_constant_does_not_cost_the_index_range() {
         );
     }
 }
+
+/// `TestCompareIssue38361` (`tests/integrationtest/t/executor/executor.test`):
+/// a DATETIME/TIMESTAMP compared with a numeric value is compared in the REAL
+/// domain -- `getBaseCmpType(ETDatetime, ETInt)` is ETReal -- so a datetime
+/// column against a bigint column (or a non-convertible int constant) reads
+/// the datetime's numeric form (`YYYYMMDDHHMMSS`) rather than parsing the
+/// number as a datetime and dropping the row. A numeric CONSTANT that DOES
+/// convert to a datetime is refined to a datetime constant first
+/// (`refineNumericConstantCmpDatetime`), so it compares in the datetime
+/// domain instead. The rows here are TiDB's recorded values verbatim.
+///
+/// This pins both coercion arms: mutate the value-level Time-vs-numeric route
+/// back to a datetime parse and `a < c` / `a > b` change (and `a < 20231310`
+/// becomes NULL); drop the rule-3 refinement and `a > 20230809` flips from 0
+/// (datetime equal) to 1 (real `20230809000000 > 20230809`).
+#[test]
+fn datetime_compared_with_numeric_is_real_except_convertible_constant() {
+    let mut session = Session::new();
+    for sql in [
+        "create table t(a datetime, b bigint, c bigint)",
+        "insert into t values(cast('2023-08-09 00:00:00' as datetime), 20230809, 20231310)",
+    ] {
+        session
+            .run(sql)
+            .unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+    }
+    // (query, TiDB's recorded scalar result)
+    let cases = [
+        // datetime column vs int CONSTANT: rule 3 converts the constant to a
+        // datetime when it is valid, so these compare in the datetime domain.
+        ("select a > 20230809 from t", "0"),
+        ("select a = 20230809 from t", "1"),
+        ("select a < 20230810 from t", "1"),
+        ("select 20230809 = a from t", "1"),
+        ("select 20230810 > a from t", "1"),
+        // 20231310 (month 13) does NOT convert, so it compares as real.
+        ("select a < 20231310 from t", "0"),
+        ("select 20231310 > a from t", "0"),
+        // datetime column vs bigint COLUMN: always real.
+        ("select a > b from t", "1"),
+        ("select a = b from t", "0"),
+        ("select a < b + 1 from t", "0"),
+        ("select a < c from t", "0"),
+        ("select b < a from t", "1"),
+        ("select b = a from t", "0"),
+        ("select c > a from t", "0"),
+    ];
+    for (sql, want) in cases {
+        assert_eq!(
+            row_text(session.run(sql)),
+            vec![vec![want.to_string()]],
+            "{sql}"
+        );
+    }
+}
