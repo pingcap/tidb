@@ -308,6 +308,7 @@ pub mod infoschema_meta;
 pub(crate) mod join_method_hints;
 pub(crate) mod join_reorder;
 pub(crate) mod join_search;
+pub(crate) mod leaf_access;
 pub(crate) mod leaf_demand;
 pub(crate) mod merge_decision;
 mod multi_dml;

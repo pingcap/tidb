@@ -583,7 +583,7 @@ pub(crate) fn build_from(
                     });
                     match demand.columns.and_then(|wanted| {
                         let hints = crate::index_hints::table_ref_hints(table_ref, kv).ok()?;
-                        crate::driver::access::leaf_index_path(
+                        crate::driver::leaf_access::leaf_index_path(
                             kv,
                             &visible,
                             &columns,
@@ -596,7 +596,7 @@ pub(crate) fn build_from(
                     }) {
                         Some(path) => {
                             walked_index = Some(path.order().to_vec());
-                            crate::driver::access::leaf_index_source(
+                            crate::driver::leaf_access::leaf_index_source(
                                 kv,
                                 &visible,
                                 &columns,
