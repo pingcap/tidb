@@ -195,19 +195,22 @@ func (h *Handle) GetPhysicalTableStats(physicalTableID int64, tblInfo *model.Tab
 	return tblStats
 }
 
-// AutoPresplitColumnStats is the storage result used by DDL auto pre-split.
+// AutoPresplitColumnStats preserves storage.AutoPresplitColumnStats's partial-result contract.
+// Column metadata may be present while individual NullCount, TopN, or Histogram components fail.
 type AutoPresplitColumnStats = storage.AutoPresplitColumnStats
 
-// LoadColumnStatsForAutoPresplit loads one column's metadata, TopN, and Histogram from one MVCC snapshot.
+// LoadColumnStatsForAutoPresplit loads one column's metadata, TopN, and Histogram
+// from one MVCC snapshot. Snapshot and metadata failures are returned directly; component failures
+// remain in AutoPresplitColumnStats so callers can use the other components.
 func (*Handle) LoadColumnStatsForAutoPresplit(
 	ctx context.Context,
 	sctx sessionctx.Context,
-	physicalTableID, columnID int64,
+	physicalTableID int64,
 	colInfo *model.ColumnInfo,
-	limit int,
+	maxTopNKeys int,
 ) (*AutoPresplitColumnStats, error) {
 	return storage.LoadColumnStatsForAutoPresplit(
-		ctx, sctx, physicalTableID, columnID, colInfo, limit)
+		ctx, sctx, physicalTableID, colInfo, maxTopNKeys)
 }
 
 // GetNonPseudoPhysicalTableStats retrieves the statistics for a physical table from cache, but it will not return pseudo.

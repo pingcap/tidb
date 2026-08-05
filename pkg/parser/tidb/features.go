@@ -36,6 +36,8 @@ const (
 	FeatureIDGlobalIndex = "global_index"
 	// FeatureIDPresplit is the pre-split feature.
 	FeatureIDPresplit = "pre_split"
+	// FeatureIDAutoPresplit is the automatic index pre-split feature.
+	FeatureIDAutoPresplit = "auto_presplit"
 	// FeatureIDAffinity is the `Affinity` feature.
 	FeatureIDAffinity = "affinity"
 	// FeatureIDSplitRegion is the `region split` feature.
@@ -52,6 +54,7 @@ var featureIDs = map[string]struct{}{
 	FeatureIDTTL:            {},
 	FeatureIDGlobalIndex:    {},
 	FeatureIDPresplit:       {},
+	FeatureIDAutoPresplit:   {},
 	FeatureIDAffinity:       {},
 	FeatureIDSplitRegion:    {},
 }

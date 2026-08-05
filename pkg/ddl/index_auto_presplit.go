@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"math"
 	"slices"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
@@ -33,22 +34,26 @@ import (
 	"go.uber.org/zap"
 )
 
-const boundaryRatioStep float64 = 0.02
+const (
+	boundaryRatioStep                   float64 = 0.02
+	defaultAutoPresplitStatsLoadTimeout         = 30 * time.Second
+)
 
 type autoPresplitStatsProvider interface {
 	GetPhysicalTableStats(physicalTableID int64, tblInfo *model.TableInfo) *statistics.Table
 	LoadColumnStatsForAutoPresplit(
 		ctx context.Context,
 		sctx sessionctx.Context,
-		physicalTableID, columnID int64,
+		physicalTableID int64,
 		colInfo *model.ColumnInfo,
-		limit int,
+		maxTopNKeys int,
 	) (*handle.AutoPresplitColumnStats, error)
 }
 
 type autoPresplitConfig struct {
 	minTableRows           int64
 	maxTopNKeysPerPhysical int
+	statsLoadTimeout       time.Duration
 	minStatsHealthy        int64
 	boundaryRatioStep      float64
 }
@@ -57,6 +62,7 @@ func getAutoPresplitConfig() autoPresplitConfig {
 	cfg := autoPresplitConfig{
 		minTableRows:           1_000_000,
 		maxTopNKeysPerPhysical: int(vardef.MaxTiDBAnalyzeDefaultNumTopN),
+		statsLoadTimeout:       defaultAutoPresplitStatsLoadTimeout,
 		minStatsHealthy:        80,
 		boundaryRatioStep:      boundaryRatioStep,
 	}
@@ -147,7 +153,8 @@ func planAutoPresplitWithCache(
 	// Reuse sampled boundaries for indexes sharing a leading column, avoiding duplicate
 	// statistics loads within one add-index statement.
 	if boundaryRows, ok := boundaryCache[leadingCol.ID]; ok {
-		return buildAutoPresplitIndexKeys(sctx, tblInfo, idxInfo, boundaryRows)
+		splitKeys, err := buildAutoPresplitIndexKeys(sctx, tblInfo, idxInfo, boundaryRows)
+		return splitKeys, "", err
 	}
 	colStats, loadNeeded, hasAnalyzed := statsTbl.ColumnIsLoadNeeded(leadingCol.ID, true)
 	if !hasAnalyzed {
@@ -156,9 +163,15 @@ func planAutoPresplitWithCache(
 
 	loaded := &handle.AutoPresplitColumnStats{Column: colStats}
 	if loadNeeded {
+		loadCtx, cancel := context.WithTimeout(ctx, cfg.statsLoadTimeout)
 		var err error
 		loaded, err = statsProvider.LoadColumnStatsForAutoPresplit(
-			ctx, sctx, tblInfo.ID, leadingCol.ID, leadingCol, cfg.maxTopNKeysPerPhysical)
+			loadCtx, sctx, tblInfo.ID, leadingCol, cfg.maxTopNKeysPerPhysical)
+		loadCause := context.Cause(loadCtx)
+		cancel()
+		if loadCause == context.DeadlineExceeded && context.Cause(ctx) == nil {
+			return nil, "statistics loading timed out", nil
+		}
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to load leading column statistics from storage: %w", err)
 		}
@@ -170,8 +183,8 @@ func planAutoPresplitWithCache(
 		return nil, fmt.Sprintf("leading column stats version %d is not Analyze V2", loaded.Column.StatsVer), nil
 	}
 
-	// Bound statistics events by entry count; byte budgeting adds complexity without
-	// estimating composite-index size, acceptable for best-effort auto pre-split.
+	// The configured TopN maximum equals Analyze's supported maximum, so all valid
+	// TopN entries and Histogram buckets participate in boundary planning.
 	events := make([]autoPresplitEvent, 0, cfg.maxTopNKeysPerPhysical+loaded.Column.Histogram.Len()+1)
 	if loaded.NullCountError != nil {
 		logAutoPresplitComponentFailure(tblInfo, idxInfo, "NullCount", loaded.NullCountError)
@@ -185,6 +198,7 @@ func planAutoPresplitWithCache(
 		}
 	}
 
+	topNEventCount := 0
 	if loaded.TopNError != nil {
 		logAutoPresplitComponentFailure(tblInfo, idxInfo, "TopN", loaded.TopNError)
 	} else {
@@ -193,10 +207,12 @@ func planAutoPresplitWithCache(
 		if err != nil {
 			logAutoPresplitComponentFailure(tblInfo, idxInfo, "TopN", err)
 		} else {
+			topNEventCount = len(topNEvents)
 			events = append(events, topNEvents...)
 		}
 	}
 
+	histogramEventCount := 0
 	if loaded.HistogramError != nil {
 		logAutoPresplitComponentFailure(tblInfo, idxInfo, "Histogram", loaded.HistogramError)
 	} else {
@@ -205,9 +221,15 @@ func planAutoPresplitWithCache(
 		if err != nil {
 			logAutoPresplitComponentFailure(tblInfo, idxInfo, "Histogram", err)
 		} else {
+			histogramEventCount = len(histogramEvents)
 			events = append(events, histogramEvents...)
 		}
 	}
+	logutil.DDLLogger().Info("built auto presplit statistics events",
+		zap.String("table", tblInfo.Name.L),
+		zap.String("index", idxInfo.Name.L),
+		zap.Int("topNEvents", topNEventCount),
+		zap.Int("histogramEvents", histogramEventCount))
 	events, totalCount, err := mergeAutoPresplitEvents(events)
 	if err != nil {
 		return nil, "", err
@@ -219,11 +241,11 @@ func planAutoPresplitWithCache(
 	if len(boundaryRows) == 0 {
 		return nil, "no internal distribution boundary", nil
 	}
-	splitKeys, reason, err := buildAutoPresplitIndexKeys(sctx, tblInfo, idxInfo, boundaryRows)
+	splitKeys, err := buildAutoPresplitIndexKeys(sctx, tblInfo, idxInfo, boundaryRows)
 	if err == nil && boundaryCache != nil {
 		boundaryCache[leadingCol.ID] = boundaryRows
 	}
-	return splitKeys, reason, err
+	return splitKeys, "", err
 }
 
 func buildAutoPresplitIndexKeys(
@@ -231,18 +253,18 @@ func buildAutoPresplitIndexKeys(
 	tblInfo *model.TableInfo,
 	idxInfo *model.IndexInfo,
 	boundaryRows [][]types.Datum,
-) ([][]byte, string, error) {
+) ([][]byte, error) {
 	rows := make([][]types.Datum, len(boundaryRows))
 	for i := range boundaryRows {
 		rows[i] = types.CloneRow(boundaryRows[i])
 	}
 	splitKeys, err := getSplitIdxKeysFromValueList(sctx, tblInfo, idxInfo, rows)
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to build auto presplit keys: %w", err)
+		return nil, fmt.Errorf("failed to build auto presplit keys: %w", err)
 	}
 
 	splitKeys = sortAndDedupeAutoPresplitKeys(splitKeys)
-	return splitKeys, "", nil
+	return splitKeys, nil
 }
 
 type autoPresplitEvent struct {
@@ -391,6 +413,9 @@ func sampleAutoPresplitEvents(
 	nextThresholdIndex := float64(1)
 	var cumulative uint64
 	rows := make([][]types.Datum, 0)
+	// Emit only internal cumulative-distribution quantiles. One value is emitted
+	// even if it crosses multiple thresholds, the terminal 100% boundary is
+	// excluded, and Nextafter tolerates floating-point rounding at thresholds.
 	for _, event := range events {
 		cumulative += event.count
 		nextThreshold := nextThresholdIndex * boundaryRatioStep
