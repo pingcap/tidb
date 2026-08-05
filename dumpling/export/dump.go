@@ -303,7 +303,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 		}
 	}
 
-	if conf.SQL == "" {
+	if conf.SQL == "" && len(conf.columnFilter.Filters) > 0 {
 		if err = prepareColumnProjection(tctx, conf, baseConn); err != nil {
 			close(taskIn)
 			_ = baseConn.DBConn.Close()
@@ -543,13 +543,13 @@ func buildColumnProjection(
 	if err != nil {
 		return columnProjection{}, err
 	}
-	if len(sourceColumns) == 0 {
-		return columnProjection{}, nil
-	}
-
 	selectedColumns, selectedIndexes, err := conf.columnFilter.applyToColumns(dbName, table.Name, sourceColumns)
 	if err != nil {
 		return columnProjection{}, err
+	}
+	if len(selectedColumns) == 0 {
+		// Preserve the existing empty projection for tables with only generated columns.
+		return columnProjection{}, nil
 	}
 
 	sourceFields := columnNamesToSelectFields(sourceColumns)
@@ -1421,16 +1421,22 @@ func prepareTableListToDump(tctx *tcontext.Context, conf *Config, db *sql.Conn) 
 
 func dumpTableMeta(tctx *tcontext.Context, conf *Config, conn *BaseConn, db string, table *TableInfo) (TableMeta, error) {
 	tbl := table.Name
+	var err error
 	projection, ok := conf.columnProjection[tableName{db: db, table: tbl}]
 	if !ok {
-		return nil, errors.Errorf(
-			"missing column projection for table `%s`.`%s`",
-			escapeString(db),
-			escapeString(tbl),
-		)
+		if len(conf.columnFilter.Filters) > 0 {
+			return nil, errors.Errorf(
+				"missing column projection for table `%s`.`%s`",
+				escapeString(db),
+				escapeString(tbl),
+			)
+		}
+		projection, err = buildColumnProjection(tctx, conf, conn, db, table)
+		if err != nil {
+			return nil, err
+		}
 	}
 	var (
-		err              error
 		hasImplicitRowID bool
 	)
 	if conf.ServerInfo.ServerType == version.ServerTypeTiDB {

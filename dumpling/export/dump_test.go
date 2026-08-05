@@ -645,18 +645,16 @@ func TestDumpTableMeta(t *testing.T) {
 	conf.NoSchemas = true
 	conf.Tables = NewDatabaseTables().AppendTables(database, []string{table}, []uint64{0})
 
-	mock.ExpectQuery("SHOW COLUMNS FROM").
-		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
-			AddRow("id", "int(11)", "NO", "PRI", nil, ""))
-	mock.ExpectQuery(regexp.QuoteMeta(fmt.Sprintf("SELECT `id` FROM `%s`.`%s` LIMIT 1", database, table))).
-		WillReturnRows(sqlmock.NewRowsWithColumnDefinition(
-			sqlmock.NewColumn("id").OfType("INT", int64(0)),
-		).AddRow(1))
-	require.NoError(t, prepareColumnProjection(tctx, conf, baseConn))
-
 	for serverType := version.ServerTypeUnknown; serverType < version.ServerTypeAll; serverType++ {
 		conf.ServerInfo.ServerType = serverType
 		hasImplicitRowID := false
+		mock.ExpectQuery("SHOW COLUMNS FROM").
+			WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
+				AddRow("id", "int(11)", "NO", "PRI", nil, ""))
+		mock.ExpectQuery(regexp.QuoteMeta(fmt.Sprintf("SELECT `id` FROM `%s`.`%s` LIMIT 1", database, table))).
+			WillReturnRows(sqlmock.NewRowsWithColumnDefinition(
+				sqlmock.NewColumn("id").OfType("INT", int64(0)),
+			).AddRow(1))
 		if serverType == version.ServerTypeTiDB {
 			mock.ExpectExec("SELECT _tidb_rowid from").
 				WillReturnResult(sqlmock.NewResult(0, 0))
@@ -727,7 +725,6 @@ func TestTableMetaAllGeneratedColumns(t *testing.T) {
 	mock.ExpectQuery("SHOW COLUMNS FROM").
 		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
 			AddRow("generated", "varchar(12)", "NO", "", nil, "VIRTUAL GENERATED"))
-	require.NoError(t, prepareColumnProjection(tctx, conf, baseConn))
 
 	meta, err := dumpTableMeta(tctx, conf, baseConn, database, &TableInfo{Type: TableTypeBase, Name: table})
 	require.NoError(t, err)
@@ -737,6 +734,24 @@ func TestTableMetaAllGeneratedColumns(t *testing.T) {
 	require.Empty(t, meta.ColumnTypes())
 	require.Empty(t, tableSourceColumnNames(meta))
 	require.Empty(t, tableSourceColumnTypes(meta))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestColumnProjectionMatchedGeneratedOnly(t *testing.T) {
+	tctx, mock, baseConn := newMockDumpConn(t)
+	conf := DefaultConfig()
+	conf.NoSchemas = true
+	conf.ServerInfo.ServerType = version.ServerTypeMySQL
+	conf.Tables = NewDatabaseTables().AppendTables(database, []string{table}, []uint64{0})
+	conf.columnFilter = newColumnFilterConfigForTest(t,
+		columnFilterRule{Matcher: []string{database + "." + table}, Columns: []string{"*"}},
+	)
+
+	mock.ExpectQuery("SHOW COLUMNS FROM").
+		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
+			AddRow("generated", "varchar(12)", "NO", "", nil, "VIRTUAL GENERATED"))
+	err := prepareColumnProjection(tctx, conf, baseConn)
+	require.ErrorContains(t, err, "column filter selects no writable columns")
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

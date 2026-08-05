@@ -110,10 +110,10 @@ func validateColumnFilterKeys(md toml.MetaData, flagName string) error {
 }
 
 func (c *columnFilterConfig) applyToColumns(database, table string, sourceColumns []string) ([]string, []int, error) {
-	columnRules := c.matchColumnRules(database, table)
+	columnRules, matched := c.matchColumnRules(database, table)
 
 	selectedIndexes := make([]int, 0, len(sourceColumns))
-	if len(columnRules) == 0 {
+	if !matched {
 		for i := range sourceColumns {
 			selectedIndexes = append(selectedIndexes, i)
 		}
@@ -138,14 +138,16 @@ func (c *columnFilterConfig) applyToColumns(database, table string, sourceColumn
 	return selectedColumns, selectedIndexes, nil
 }
 
-func (c *columnFilterConfig) matchColumnRules(database, table string) filter.ColumnFilterRules {
+func (c *columnFilterConfig) matchColumnRules(database, table string) (filter.ColumnFilterRules, bool) {
 	var columnRules filter.ColumnFilterRules
+	matched := false
 	// Later TOML [[filters]] entries take precedence over earlier ones.
 	for i := len(c.Filters) - 1; i >= 0; i-- {
 		rule := c.Filters[i]
 		if rule.tableFilter.MatchTable(database, table) {
+			matched = true
 			columnRules = append(columnRules, rule.columnRules...)
 		}
 	}
-	return columnRules
+	return columnRules, matched
 }
