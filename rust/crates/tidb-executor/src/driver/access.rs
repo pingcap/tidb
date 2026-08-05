@@ -831,20 +831,37 @@ pub(crate) fn leaf_index_path(
         demand.statement_forces_an_index(),
     );
     if let Some(wanted) = wanted {
-        // `matchProperty` as a FILTER over the enumeration, which is what
-        // `findBestTask`'s `if matchResult == property.PropNotMatched
-        // { continue }` is: a path whose walk does not already produce the
-        // order is not a candidate under this property at all, and there is
-        // no `Sort` enforcer below a `FROM` in this tier to make one.
-        paths.retain(|candidate| {
-            candidate
-                .path
-                .index
-                .as_ref()
-                .and_then(|(index_id, _)| {
-                    table.indexes().iter().find(|index| index.id == *index_id)
-                })
-                .is_some_and(|index| leaf_index_order(table, index, columns).starts_with(wanted))
+        // `matchProperty` as a FILTER over the enumeration.
+        //
+        // Go keeps every path in the skyline and refuses the non-matching ones
+        // one layer later -- `convertToIndexScan`/`convertToTableScan` both
+        // open with `if !prop.IsSortItemEmpty() && !candidate.matchPropResult
+        // .Matched() { return invalidTask }` -- and stops a non-matching path
+        // DOMINATING a matching one with the `matchResult` dimension,
+        // `compareBool(lhs.matchPropResult.Matched(), rhs...)`. Removing them
+        // up front reaches the same answer with one fewer moving part: a
+        // matching path is still never pruned by a non-matching one, pruning
+        // BETWEEN two matching paths is unchanged (their `matchResult` is 0),
+        // and a non-matching path could only ever have produced `invalidTask`.
+        // It is also what keeps [`crate::skyline`]'s `match_result = 0` EXACT
+        // rather than an approximation -- see that module's own doc.
+        //
+        // There is no `Sort` enforcer below a `FROM` in this tier, so an
+        // enumeration that empties here declines the order rather than paying
+        // for one.
+        paths.retain(|candidate| match &candidate.path.index {
+            Some((index_id, _)) => table
+                .indexes()
+                .iter()
+                .find(|index| index.id == *index_id)
+                .is_some_and(|index| leaf_index_order(table, index, columns).starts_with(wanted)),
+            // `matchProperty`'s int-handle branch: `if len(prop.SortItems) !=
+            // 1 || pkCol == nil { return PropNotMatched }` and then the column
+            // itself. The table path stays a COSTED candidate when it matches,
+            // which is how an ordered index that is dearer than the ordered
+            // table read still loses -- `best.index?` below then reads the
+            // table path as "keep the whole-table scan already installed".
+            None => leaf_handle_order(table, columns) == wanted,
         });
     }
     let best = crate::access_cost::choose_access_path(paths, stats, false)?;
@@ -876,6 +893,28 @@ pub(crate) fn leaf_index_path(
         order,
         keep_order: wanted.is_some(),
     })
+}
+
+/// The order a WHOLE-TABLE walk of `table` delivers, in the leaf's own row
+/// offsets -- the clustered integer handle, and nothing for a table without
+/// one.
+///
+/// The same answer [`crate::merge_join_plan::table_scan_order`] gives, read
+/// through the leaf's column list so it can be compared with
+/// [`leaf_index_order`] on one numbering.
+fn leaf_handle_order(table: &KvTable, columns: &[(String, FieldType)]) -> Vec<usize> {
+    crate::merge_join_plan::table_scan_order(table)
+        .into_iter()
+        .next()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|offset| {
+            let column = table.columns.get(offset)?;
+            columns
+                .iter()
+                .position(|(name, _)| name.eq_ignore_ascii_case(&column.name))
+        })
+        .collect()
 }
 
 /// The order an index walk of `index` delivers, as offsets into the LEAF's

@@ -117,15 +117,25 @@
 //! EXCLUDED, each with its wrong-plan direction:
 //!
 //! * `matchResult` (`matchProperty`) is held at 0. This is EXACT, not an
-//!   approximation, for the call this tier makes: the driver asks for a path
-//!   under an EMPTY physical property (any `ORDER BY` is a `Sort` above the
-//!   read), and `matchProperty` returns `PropNotMatched` for every path when
-//!   `prop.IsSortItemEmpty()`, so Go's own `compareBool(false, false)` is 0
-//!   too. The real gap is upstream and is an ENUMERATION gap, not a pruning
-//!   one: this tier never explores the second, order-carrying invocation of
-//!   `findBestTask`, so an index that would have satisfied an `ORDER BY`
-//!   without a sort is not considered. That costs a sort, it does not
-//!   mis-prune.
+//!   approximation, and it stays exact under BOTH calls this tier makes.
+//!
+//!   Under an EMPTY physical property -- the statement's own `ORDER BY` is a
+//!   `Sort` above the read -- `matchProperty` returns `PropNotMatched` for
+//!   every path, so Go's own `compareBool(false, false)` is 0 too.
+//!
+//!   Under a NON-EMPTY one -- a join leaf required to produce an order, which
+//!   [`crate::driver::access::leaf_index_path`] now asks for -- every
+//!   candidate that reaches here has ALREADY matched: that caller applies
+//!   `matchProperty` as a filter over the enumeration before pruning, so
+//!   `compareBool(true, true)` is 0 for every pair. The dimension exists in Go
+//!   to stop a non-matching path DOMINATING a matching one; a candidate list
+//!   with no non-matching path in it cannot have that happen. See that
+//!   function's own doc for why removing them up front is the same answer.
+//!
+//!   What remains upstream is an ENUMERATION gap, not a pruning one: the
+//!   STATEMENT's own `ORDER BY` still does not re-enter path selection, so an
+//!   index that would have satisfied it without a sort is not considered
+//!   there. That costs a sort, it does not mis-prune.
 //! * `getPseudoRowCountWithPartialStats` -- the one estimator branch that can
 //!   report a `MaxEst` above its `Est` while the index itself is UNANALYZED
 //!   (`row_count_index.go`'s `IndexStatsIsInvalid` arm, when the index's
