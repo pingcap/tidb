@@ -644,8 +644,21 @@ pub(crate) fn build_from(
             // schema (captured: `SELECT * FROM LATERAL (SELECT 1) x` runs).
             // Its alias column list still renames positionally.
             let _ = lateral;
-            let (exec, mut scope) =
-                build_derived_source(subquery, alias.as_deref(), catalog, current_db, ctx, trace)?;
+            // The order a join above this derived table requires OF it is an
+            // order the subquery's own leaf has to be asked for: the rows are
+            // materialized in arrival order, so asking the leaf is the whole
+            // of delivering it. Go's `PhysicalProjection.exhaustPhysicalPlans`
+            // maps the property through the select list; see
+            // `merge_decision::from_required_prop`.
+            let (exec, mut scope) = build_derived_source(
+                subquery,
+                alias.as_deref(),
+                catalog,
+                current_db,
+                ctx,
+                trace,
+                required,
+            )?;
             rename_derived_columns(&mut scope.tables[0].columns, column_names)?;
             // A derived table is MATERIALIZED here -- `build_derived_source`
             // drains its subquery into a `MemTableSourceExec`, which replays
@@ -695,6 +708,7 @@ pub(crate) fn build_derived_source(
     current_db: &str,
     ctx: &crate::StmtContext,
     trace: Option<&mut PlanTrace>,
+    required: &tidb_planner::physical_property::PhysicalProperty,
 ) -> Result<(Box<dyn Executor>, FromScope), DriverError> {
     // Captured from Go: an alias-less derived table is ErrDerivedMustHaveAlias
     // in a plain SELECT and in a view body alike.
@@ -703,7 +717,9 @@ pub(crate) fn build_derived_source(
         return Err(DriverError::DerivedMustHaveAlias);
     };
     let (columns, rows) = match subquery {
-        QueryStmt::Select(select) => run_select_traced(select, catalog, current_db, ctx, trace)?,
+        QueryStmt::Select(select) => {
+            run_select_traced(select, catalog, current_db, ctx, trace, required)?
+        }
         QueryStmt::SetOpr(set_opr) => {
             // A set operation has no traced builder: `run_set_opr_stmt` runs
             // its arms and concatenates them without recording an operator, so
@@ -1802,6 +1818,26 @@ pub(crate) fn build_join(
             crate::plan_trace::IndexJoinText {
                 reader: if index { "IndexReader" } else { "TableReader" },
                 keys,
+                lookup_is_left: decision.lookup_is_left,
+                // `getAvgRowSize(.., Schema().Columns)` for each side. Go
+                // reaches its `HistColl` branch when the child is a
+                // `DataSource`; this tier has no `HistColl` at a join's child
+                // and so takes the same function's OTHER branch, the static
+                // type width, which is what Go itself falls back to.
+                outer_row_size: crate::access_cost::schema_avg_row_size(
+                    if decision.lookup_is_left {
+                        &right_types
+                    } else {
+                        &left_types
+                    },
+                ),
+                inner_row_size: crate::access_cost::schema_avg_row_size(
+                    if decision.lookup_is_left {
+                        &left_types
+                    } else {
+                        &right_types
+                    },
+                ),
             },
             decision.lookup_is_left,
             access,
@@ -1894,7 +1930,10 @@ pub(crate) fn build_join(
             // `index_join_inner_scan`.) Nothing relies on what this join
             // asked for, so the plan must stop saying it does. See
             // `PlanTrace::retract_child_keep_order`.
-            trace.retract_child_keep_order();
+            trace.retract_child_keep_order([
+                !left_required.is_sort_item_empty(),
+                !right_required.is_sort_item_empty(),
+            ]);
         }
         if coalescing {
             // The recorder prints the `ON` as written, and a coalesced join

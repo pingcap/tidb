@@ -394,7 +394,14 @@ fn run_select_stmt(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<SelectMeta, DriverError> {
-    run_select_traced(select, catalog, current_db, ctx, None)
+    run_select_traced(
+        select,
+        catalog,
+        current_db,
+        ctx,
+        None,
+        &tidb_planner::physical_property::PhysicalProperty::default(),
+    )
 }
 
 /// [`run_select_stmt`], recording the plan it builds into `trace`.
@@ -405,12 +412,19 @@ fn run_select_stmt(
 /// `EXPLAIN ANALYZE` mode the executor is metered so the node's `actRows` is
 /// the count that operator really produced. A plan-only trace stops before
 /// the drain below, so plain `EXPLAIN` yields no result row.
+/// `required` is the order this `SELECT`'s OWN OUTPUT is asked for, in its
+/// result-field offsets -- non-empty only when a join above a DERIVED TABLE
+/// requires one of it (`from::build_from`'s `Derived` arm). Go's
+/// `PhysicalProjection.exhaustPhysicalPlans` maps it through the select list
+/// onto the `FROM`, which is what
+/// [`merge_decision::from_required_prop`] does below.
 pub(crate) fn run_select_traced(
     select: &tidb_ast::SelectStmt,
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
     mut trace: Option<&mut PlanTrace>,
+    required: &tidb_planner::physical_property::PhysicalProperty,
 ) -> Result<SelectMeta, DriverError> {
     // The statement as written, which the plan text is rendered from: the
     // rewrites below (CTE materialization, subquery folding, window
@@ -551,7 +565,13 @@ pub(crate) fn run_select_traced(
                 trace.as_deref_mut(),
                 Some(select),
                 demand,
-                &tidb_planner::physical_property::PhysicalProperty::default(),
+                // The order this select's OUTPUT was asked for, carried down
+                // onto the `FROM` it is projected from -- read off `planned`
+                // rather than the written join, because a reorder renumbers
+                // the leaves and the offsets are the reordered ones.
+                &merge_decision::from_required_prop(
+                    select, planned, required, catalog, current_db, &offered,
+                ),
             )?;
             // Go's `restoreSchemaIfChanged`: the reordered join's schema is
             // the new leaf order, and the statement's output must stay the

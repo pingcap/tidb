@@ -697,6 +697,90 @@ pub(crate) fn merge_join_decision(
     decide(join, &left, &right, &joined, required, offered)
 }
 
+/// The property a `SELECT`'s own `FROM` must satisfy so that the `SELECT`'s
+/// OUTPUT carries `required` -- the DOWNWARD half of the projection rule
+/// [`derived_properties`] already ports upward.
+///
+/// Go's `PhysicalProjection.exhaustPhysicalPlans` is the source:
+///
+/// ```text
+/// newProp, ok := p.TryToGetChildProp(prop)
+/// if !ok { return nil, true, nil }
+/// ```
+///
+/// and `TryToGetChildProp` rewrites each required sort item through the
+/// projection's expressions, taking ONLY the ones that are a bare column
+/// (`*expression.Column`) and refusing the whole property otherwise. That
+/// refusal is why this returns the EMPTY property rather than a partial one:
+/// an order the child cannot be asked for is an order the projection must not
+/// claim.
+///
+/// A derived table is that `Projection`, which is what makes this the
+/// function `build_derived_source` needs: the order a join above the derived
+/// table requires of it is an order its own leaf has to be asked for, and a
+/// materialized derived table replays its rows in arrival order, so asking
+/// the leaf is the whole of delivering it.
+///
+/// The `SELECT` clauses that REPLACE the row order rather than carry it are
+/// refused by the same list [`order_preserving_source`] holds, for the same
+/// reason: `DISTINCT`, `GROUP BY`, `ORDER BY`, `LIMIT` and a window each have
+/// their own `exhaustPhysicalPlans`, and none of them hands its child the
+/// parent's property.
+pub(crate) fn from_required_prop(
+    select: &SelectStmt,
+    from: &Join,
+    required: &tidb_planner::physical_property::PhysicalProperty,
+    catalog: &Catalog,
+    current_db: &str,
+    offered: Offered<'_>,
+) -> tidb_planner::physical_property::PhysicalProperty {
+    let empty = tidb_planner::physical_property::PhysicalProperty::default();
+    if required.is_sort_item_empty() {
+        return empty;
+    }
+    let (all_same, desc) = required.all_same_order();
+    if !all_same {
+        return empty;
+    }
+    if select.distinct
+        || !select.group_by.is_empty()
+        || select.having.is_some()
+        || !select.order_by.is_empty()
+        || select.limit.is_some()
+        || !select.windows.is_empty()
+    {
+        return empty;
+    }
+    let fields = select.fields.fields();
+    if fields
+        .iter()
+        .any(|field| projected_expr(field).is_some_and(Expr::has_aggregate_flag))
+    {
+        return empty;
+    }
+    let Some(source) = join_properties(from, catalog, current_db, offered, Phase::Promise) else {
+        return empty;
+    };
+    let mut offsets = Vec::with_capacity(required.sort_items.len());
+    for item in &required.sort_items {
+        // `TryToGetChildProp`'s `expression.Column` arm, and its refusal for
+        // every other expression shape -- including a `*`, which expands
+        // against a scope this walk does not build.
+        let Some(SelectField::Expr {
+            expr: Expr::Column(path),
+            ..
+        }) = fields.get(item.col as usize)
+        else {
+            return empty;
+        };
+        let Some(offset) = source.offset_of(path) else {
+            return empty;
+        };
+        offsets.push(offset);
+    }
+    child_required_prop(offsets.into_iter(), desc)
+}
+
 /// The property a merge join's child is required to satisfy: its own join
 /// keys' order, in the direction the parent asked for.
 ///

@@ -303,11 +303,12 @@ fn an_expression_join_key_gets_an_injected_column() {
     // the index path, which is why `IndexFullScan_1`/`_2` became
     // `TableFullScan`. TiDB prints `keep order:true` on exactly those two.
     //
-    // ONE operator still diverges: Go costs `IndexHashJoin` cheaper than
-    // `IndexJoin` at the bottom site and prints the former. Naming the two
-    // apart is NAMED RESIDUE in `crate::plan_trace` (its `IndexHashJoin`
-    // note), untouched here -- the STRATEGY family this site reaches is now
-    // Go's, and which member of it Go costs cheapest is a separate increment.
+    // SECOND CORRECTION. The bottom operator read `IndexJoin_6` here while
+    // Go's recording reads `IndexHashJoin`, and that last divergence is
+    // closed: `plan_trace::index_join_operator` costs the two kinds with the
+    // one term that differs between them and keeps the cheaper, which at this
+    // site is Go's own answer (its measurement is quoted in that function).
+    // Every node of this tree is now the recorded one.
     assert_eq!(
         dissolved,
         vec![
@@ -317,11 +318,56 @@ fn an_expression_join_key_gets_an_injected_column() {
             "    ├─TableFullScan_1(Build)".to_owned(),
             "    └─MergeJoin_7(Probe)".to_owned(),
             "      ├─TableFullScan_2(Build)".to_owned(),
-            "      └─IndexJoin_6(Probe)".to_owned(),
+            "      └─IndexHashJoin_6(Probe)".to_owned(),
             "        ├─Projection_4(Build)".to_owned(),
             "        │ └─TableFullScan_3".to_owned(),
             "        └─IndexRangeScan_5(Probe)".to_owned(),
         ],
+    );
+}
+
+/// THE OUTER LEAF OF THAT INDEX JOIN KEEPS ORDER, because the `MergeJoin`
+/// above it relies on `t2.a` and the derived table the injected `Projection`
+/// became forwards the request to the leaf that answers it.
+///
+/// `r/planner/core/join_reorder_through_projection.result:1319` records
+/// `TableFullScan table:t2 ... keep order:true` under exactly that
+/// `Projection`. Before `merge_decision::from_required_prop` this tier
+/// printed `keep order:false` there -- a `MergeJoin` over a stream nothing
+/// had put in order.
+#[test]
+fn the_index_joins_outer_leaf_is_asked_for_the_order_through_the_derived_table() {
+    let catalog = tables();
+    let sql = "SELECT t1.a, dt.key_a FROM t1, t5, \
+        (SELECT t2.a AS key_a, t2.b * 2 AS doubled_b FROM t2 JOIN t3 ON t2.a = t3.a) dt \
+        WHERE t1.b = dt.doubled_b AND dt.key_a = t5.a";
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let tidb_ast::QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) = crate::explain::explain_select_stmt(
+        select,
+        &catalog,
+        "test",
+        &ctx(true, 10),
+        crate::explain::ExplainFormat::Row,
+    )
+    .unwrap();
+    let text = |datum: &Datum| match datum {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+    let t2 = rows
+        .iter()
+        .find(|row| text(&row[0]).contains("TableFullScan_3"))
+        .expect("the injected projection's own leaf");
+    assert!(
+        text(&t2[4]).starts_with("keep order:true"),
+        "the leaf under the injected projection: {}",
+        text(&t2[4]),
     );
 }
 

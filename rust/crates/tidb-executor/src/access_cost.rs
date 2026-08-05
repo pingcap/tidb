@@ -384,6 +384,26 @@ fn estimator_options() -> EstimatorOptions {
     EstimatorOptions::default()
 }
 
+/// `getAvgRowSize(stats, cols)` for an operator whose `StatsInfo().HistColl`
+/// is nil -- Go's own comment on that branch is "Estimate using just the type
+/// info", and it sums `chunk.EstimateTypeWidth` over the schema with none of
+/// the per-column record overhead the histogram branch adds.
+///
+/// A join's child is exactly that operator in this tier: no histogram is
+/// carried up past a scan, so the type widths are the whole of the estimate.
+/// Used by the index-join naming in [`crate::plan_trace`].
+pub(crate) fn schema_avg_row_size(types: &[FieldType]) -> f64 {
+    let columns: Vec<RowSizeColumn> = types
+        .iter()
+        .map(|field_type| {
+            RowSizeColumn::without_stats(
+                row_size_type(field_type).estimate_width(field_type.flen()),
+            )
+        })
+        .collect();
+    tidb_planner::plan_cost_ver2::plan_avg_row_size(&columns, None)
+}
+
 /// Go `getAvgRowSize`'s per-column input for one table column.
 fn row_size_column(column: &KvColumn, stats: Option<&TableStatistics>) -> RowSizeColumn {
     let kind = row_size_type(&column.field_type);

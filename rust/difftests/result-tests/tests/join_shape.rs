@@ -953,11 +953,106 @@ fn join_operators_and_their_keep_order_match_recorded_tidb_plans() {
     // The number is left at 137 rather than lowered because the landing rule
     // for that increment is a floor, and none of the three classes is fixed
     // here. Lower it only together with the `IndexHashJoin` naming.
+    //
+    // CORRECTION TO THE PARAGRAPH ABOVE (batch56), measured before any code
+    // was written, by diffing this file's own disagreement list between
+    // `addfb7de00` (137) and `ffefc53163` (132).
+    //
+    //  * "6 -- the JOIN OPERATORS now match TiDB's recording exactly except
+    //    that Go prints `IndexHashJoin` ... Closing it alone would recover
+    //    all 6" is WRONG on both counts. It is SEVEN statements, and not one
+    //    of them differs only in the label: every one ALSO reports
+    //    `t2: keep order:false` where the recording says `true`. Renaming the
+    //    operator alone would have recovered ZERO of them.
+    //  * the "2 -- an index join whose OUTER side is a MATERIALIZED derived
+    //    table" class is ONE statement in the regression (the `expr_small` /
+    //    `expr_medium` / `expr_large` one), not two -- and it is the SAME
+    //    mechanism as the seven above, which makes the real split 7 + 5 + 1.
+    //
+    // The mechanism, named once for all eight: the outer side of those index
+    // joins is a derived table -- the `Projection` Go's `injectExpr` builds,
+    // which `driver::through_proj` spells as a `FROM`-clause subquery -- and
+    // `build_derived_source` planned that subquery under the EMPTY property.
+    // The order the parent `MergeJoin` requires therefore stopped at the
+    // derived table and never reached the leaf that could answer it.
+    //
+    // SEVENTH MEASUREMENT (batch56), stacked on batch55. 132 -> 141, in three
+    // steps that were each measured on their own:
+    //
+    //  1. `merge_decision::from_required_prop` -- Go's
+    //     `PhysicalProjection.exhaustPhysicalPlans` / `TryToGetChildProp`,
+    //     the DOWNWARD half of the projection rule this file's
+    //     `derived_properties` already ported upward. 132 -> 133, and the
+    //     `keep order alone` column moved 204 -> 211: the eight statements
+    //     above stopped saying `keep order:false` on a leaf TiDB records
+    //     `true` for.
+    //  2. `plan_trace::index_join_operator` -- the `IndexJoin` /
+    //     `IndexHashJoin` label, costed rather than fixed. 133 -> 140.
+    //  3. `PlanTrace::retract_child_keep_order` learning to follow the
+    //     request as far as it now travels (through a `Projection`, a
+    //     `Selection` and a `HashJoin`, stopping at the two operators that
+    //     RELY on a child's order). 140 -> 141.
+    //
+    // WHAT THE RECORDINGS SAY ABOUT THE LABEL. The census that decided it is
+    // over all 239 index joins in `tests/integrationtest/r/**`:
+    //
+    //   INL_JOIN / TIDB_INLJ hint  -> IndexJoin       81 of 82
+    //   INL_HASH_JOIN hint         -> IndexHashJoin   12 of 13
+    //   NO HINT                    -> IndexHashJoin  115, IndexJoin 32
+    //
+    // so the hint is decisive where it appears and the remaining 147 are
+    // cost. Within those 147 the split tracks the INNER READER --
+    // `inner:TableReader` (a handle probe, ONE inner row per outer row) is 15
+    // `IndexJoin` to 4 `IndexHashJoin`, while `inner:IndexReader` /
+    // `IndexLookUp` (many inner rows per outer row) is 73 `IndexHashJoin` to
+    // 15 `IndexJoin` -- which is exactly the shape of the hash-table term
+    // `index_join_operator` compares, and is why no STRUCTURAL rule was ever
+    // found for it. The site-level oracle is quoted in that function: the
+    // same statement costed by TiDB itself under `INL_JOIN` and
+    // `INL_HASH_JOIN` prints `6065326.13` and `6030776.13`.
+    //
+    // THE MERGE PAIRS MOVED 77 -> 78 AGREED AND 6 -> 8 EXTRA, three
+    // statements, all a consequence of step 1 and all with a recorded
+    // witness:
+    //
+    //  * `r/planner/core/join_reorder_through_projection.result:1219` records
+    //    `select s.*, dt.* from t_int_small s, (select l.a as key_a, l.b * 2
+    //    as doubled_b, m.b as mb from t_int_large l join t_double_medium m on
+    //    cast(l.a as double) = m.a) dt where s.a = dt.key_a` as
+    //    `MergeJoin(left key:t_int_small.a, right key:t_int_large.a)` with
+    //    `table:l keep order:true` and `table:s keep order:true` -- and `l`
+    //    sits under the injected `Projection`. This tier now reaches that
+    //    same ordered pair: +1 agreed.
+    //  * the two `select dt1.*, dt2.* from (select t1.a as a1, t1.b * 2 as
+    //    doubled1 from t1 join t2 on t1.a = t2.a) dt1, (select t3.a ... from
+    //    t3 join t4 ...) dt2 where dt1.doubled1 = dt2.doubled3` statements at
+    //    `tidb_opt_join_reorder_through_proj = on` (`:932`). TiDB dissolves
+    //    BOTH derived tables into one `{t1, t2, t3, t4}` group and costs
+    //    THREE hash joins over four `IndexFullScan`s that all say `keep
+    //    order:false`. This tier dissolves the same way and then merges
+    //    `(t1, t2)` at the bottom, because the order is now available there
+    //    and nothing prices the hash tree against it: +2 extra. That is the
+    //    costing residue below, on two more statements, and not a new kind.
+    //
+    // THE RESIDUE, counted. Against `addfb7de00`'s 137, eleven statements
+    // started agreeing and SEVEN stopped; all seven are in
+    // `planner/core/join_reorder_through_projection` and all seven are ONE
+    // class -- TiDB costs a `HashJoin` cheaper than the merge/index tree this
+    // tier now forms STRUCTURALLY (five of them the `= OFF` variants batch55
+    // already named, two of them the `dt1`/`dt2` pair above). Nothing else
+    // regressed: `compared` is unchanged at 229, `recorded_merge_pairs` at
+    // 88, and the replay is unchanged at `7885 of 10747 statements compared`
+    // with its 64 known divergences.
+    //
+    // A JOIN COST MODEL is the named prerequisite for that class, and it is
+    // the same one `driver::index_join_decision`'s module doc names: this
+    // tier chooses a merge or index join whenever the order is THERE, where
+    // Go chooses it only when it is CHEAPER.
     const COMPARED: usize = 229;
-    const BOTH_AGREE: usize = 137;
+    const BOTH_AGREE: usize = 141;
     const RECORDED_MERGE_PAIRS: usize = 88;
-    const AGREED_MERGE_PAIRS: usize = 77;
-    const EXTRA_MERGE_PAIRS: usize = 6;
+    const AGREED_MERGE_PAIRS: usize = 78;
+    const EXTRA_MERGE_PAIRS: usize = 8;
 
     assert_eq!(
         (

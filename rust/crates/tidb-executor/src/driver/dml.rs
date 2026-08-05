@@ -115,7 +115,15 @@ pub(crate) fn run_insert_traced(
     let source_rows: Option<Vec<Vec<Datum>>> = match &insert.source {
         Some(query) => Some(match &**query {
             tidb_ast::QueryStmt::Select(select) => {
-                run_select_traced(select, catalog, current_db, ctx, trace.as_deref_mut())?.1
+                run_select_traced(
+                    select,
+                    catalog,
+                    current_db,
+                    ctx,
+                    trace.as_deref_mut(),
+                    &tidb_planner::physical_property::PhysicalProperty::default(),
+                )?
+                .1
             }
             tidb_ast::QueryStmt::SetOpr(set_opr) => {
                 // EXPLAIN has never described a set-operation source.

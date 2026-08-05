@@ -245,7 +245,14 @@ pub fn explain_select_stmt(
 ) -> Result<SelectMeta, DriverError> {
     refuse_untraced_select(select)?;
     let mut trace = PlanTrace::planning();
-    run_select_traced(select, catalog, current_db, ctx, Some(&mut trace))?;
+    run_select_traced(
+        select,
+        catalog,
+        current_db,
+        ctx,
+        Some(&mut trace),
+        &tidb_planner::physical_property::PhysicalProperty::default(),
+    )?;
     Ok(render(recorded(trace)?, format))
 }
 
@@ -264,7 +271,14 @@ pub fn explain_analyze_select_stmt(
 ) -> Result<SelectMeta, DriverError> {
     refuse_untraced_select(select)?;
     let mut trace = PlanTrace::analyzing();
-    run_select_traced(select, catalog, current_db, ctx, Some(&mut trace))?;
+    run_select_traced(
+        select,
+        catalog,
+        current_db,
+        ctx,
+        Some(&mut trace),
+        &tidb_planner::physical_property::PhysicalProperty::default(),
+    )?;
     Ok(render_analyze(recorded(trace)?, format))
 }
 

@@ -754,10 +754,19 @@ impl PlanTrace {
     /// order any more. Go never printed the flag at all in that case: it
     /// costed the ordered and unordered plans and kept the one it used.
     ///
-    /// The request only ever lands on a DIRECT scan child: a child join
-    /// ignores the property it is handed and recomputes its own
-    /// (`build_join`'s `left_required`/`right_required`), so a subtree deeper
-    /// than one node carries no request of this join's to unsay.
+    /// `asked` says, per child, whether this join handed that child a
+    /// NON-EMPTY property. Only a child that was asked can carry a request to
+    /// unsay, and a child that was not asked keeps whatever its own subtree
+    /// decided -- an `ORDER BY` inside a derived table, say.
+    ///
+    /// The request lands on a scan that may be SEVERAL nodes down: a derived
+    /// table forwards the property through its select list onto its own
+    /// `FROM` (`merge_decision::from_required_prop`), so the leaf that
+    /// answered it can sit under a `Projection`, a `Selection` and a
+    /// `HashJoin`. The descent below therefore walks exactly those
+    /// pass-through shapes and STOPS at a `MergeJoin` or an index join, which
+    /// are the two operators that RELY on a child's order -- unsaying a flag
+    /// under one of those would describe a plan that cannot run.
     ///
     /// Measured: leaving these standing is the whole of a 13-plan
     /// `join_shape` regression across `planner/core/join_reorder2` and
@@ -765,18 +774,14 @@ impl PlanTrace {
     /// whose JOIN operators already agree with TiDB's recording and whose
     /// only divergence is one leaf saying `keep order:true` where TiDB says
     /// `false`.
-    pub(crate) fn retract_child_keep_order(&mut self) {
+    pub(crate) fn retract_child_keep_order(&mut self, asked: [bool; 2]) {
         let depth = self.stack.len();
         if depth < 2 {
             return;
         }
-        for at in [depth - 2, depth - 1] {
-            let node = &mut self.stack[at];
-            if !node.children.is_empty() {
-                continue;
-            }
-            if let Some(rest) = node.info.strip_prefix("keep order:true") {
-                node.info = format!("keep order:false{rest}");
+        for (at, asked) in [(depth - 2, asked[0]), (depth - 1, asked[1])] {
+            if asked {
+                retract_keep_order(&mut self.stack[at]);
             }
         }
     }
@@ -1046,6 +1051,25 @@ impl PlanTrace {
         left.label = if build_is_left { "(Build)" } else { "(Probe)" };
         right.label = if build_is_left { "(Probe)" } else { "(Build)" };
         let est_rows = full_join_row_count(&left, &right, equal.len());
+        // Which index-join executor this site's row names, decided by the one
+        // cost term that differs between them (`index_join_operator`).
+        //
+        // `probe_rows_one` is Go's `AvgInnerRowCnt`, and it is defined in
+        // `enumerateIndexJoinByOuterIdx` as `p.EqualCondOutCnt / buildRows` --
+        // the join's EQUAL-CONDITION output count over the outer row count,
+        // which is what the inner side is then planned for and therefore what
+        // `getCardinality(probe)` reads back. `est_rows` here IS that
+        // equal-condition estimate (`full_join_row_count`), so the division
+        // below is Go's own line rather than a proxy for it.
+        let index_join_name = index_lookup.as_ref().map(|text| {
+            // `build`, in Go's naming: `p.Children()[1-p.InnerChildIdx]`.
+            let outer = if text.lookup_is_left { &right } else { &left };
+            let build_rows = outer.est_rows;
+            let probe_rows_one = est_rows
+                .zip(build_rows)
+                .map(|(equal_cond_out, rows)| equal_cond_out / rows);
+            index_join_operator(build_rows, probe_rows_one, text, equal.len())
+        });
         let children = if build_is_left {
             vec![left, right]
         } else {
@@ -1054,15 +1078,15 @@ impl PlanTrace {
         self.stack.push(PlanNode {
             name: if merge_keys.is_some() {
                 "MergeJoin"
-            } else if index_lookup.is_some() {
+            } else if let Some(name) = index_join_name {
                 // Go's `IndexJoin` IS `IndexLookUpJoin`: the outer side
                 // streams in batches and the batch's inner rows are indexed
                 // by the outer key, which is exactly `crate::join`'s index
-                // strategy. RESIDUE: Go also costs `IndexHashJoin` (which
-                // hashes the OUTER batch instead) and picks it for most of
-                // the recorded plans; this tier has no join cost model, so it
-                // names the operator it actually runs.
-                "IndexJoin"
+                // strategy. `IndexHashJoin` hashes the OUTER batch instead
+                // and runs the same lookups, so the two are one executor here
+                // and differ only in the row's name -- which is settled by
+                // `index_join_operator`'s cost.
+                name
             } else {
                 "HashJoin"
             },
@@ -1444,6 +1468,116 @@ pub(crate) struct IndexJoinText {
     /// The outer and inner key column names, already qualified, in probe
     /// order.
     pub(crate) keys: Vec<(String, String)>,
+    /// Whether the LOOKED-UP (inner) side is the join's left child. The two
+    /// sides are not interchangeable in the cost below: the hash table is
+    /// built over the outer side for `IndexHashJoin` and over the inner one
+    /// for `IndexJoin`.
+    pub(crate) lookup_is_left: bool,
+    /// `getAvgRowSize(build.StatsInfo(), build.Schema().Columns)` for the
+    /// OUTER side, and the same for the INNER one. Computed where the two
+    /// sides' column types are known (`driver::from::build_join`), because a
+    /// plan row carries only their text.
+    pub(crate) outer_row_size: f64,
+    pub(crate) inner_row_size: f64,
+}
+
+/// Unsays `keep order:true` on every leaf under `node` that a join above it
+/// asked for and then did not use.
+///
+/// The walk stops at the two operators that RELY on their child's order --
+/// a `MergeJoin` on both sides, an index join on its outer one -- and passes
+/// through the shapes that do not: a `Projection` and a `Selection` carry
+/// their child's order without needing it, and a `HashJoin` needs none at all
+/// (Go's `getHashJoins` opens with "hash join doesn't promise any orders" and
+/// asks its children for none either).
+fn retract_keep_order(node: &mut PlanNode) {
+    if node.children.is_empty() {
+        if let Some(rest) = node.info.strip_prefix("keep order:true") {
+            node.info = format!("keep order:false{rest}");
+        }
+        return;
+    }
+    if !matches!(node.name, "Projection" | "Selection" | "HashJoin") {
+        return;
+    }
+    for child in &mut node.children {
+        retract_keep_order(child);
+    }
+}
+
+/// Which of Go's three index-join executors this site's plan row names.
+///
+/// Go ENUMERATES them as separate candidates -- `constructIndexJoinStatic`
+/// for `PhysicalIndexJoin` and `constructIndexHashJoinStatic` for
+/// `PhysicalIndexHashJoin`, both from `enumerateIndexJoinByOuterIdx`, in that
+/// order -- and `findBestTask` keeps the cheaper. Every term of
+/// `getIndexJoinCostVer24PhysicalIndexJoin` is shared between the two except
+/// the HASH TABLE, so the whole of the choice is that one term:
+///
+/// ```text
+/// case 1: // IndexHashJoin
+///     hashTableCost = hashBuildCostVer2(option, buildRows, buildRowSize,
+///         float64(len(p.RightJoinKeys)), cpuFactor, memFactor)
+/// default: // IndexJoin
+///     hashTableCost = hashBuildCostVer2(option, probeRowsTot, probeRowSize,
+///         float64(len(p.LeftJoinKeys)), cpuFactor, memFactor)
+/// ```
+///
+/// `IndexJoin` is enumerated FIRST and `findBestTask` replaces the incumbent
+/// only on a STRICT improvement, so an exact tie -- one inner row per outer
+/// row and two sides of equal width -- keeps `IndexJoin`. That is why the
+/// comparison below is `<` and not `<=`.
+///
+/// MEASURED, on `gorun` against this repo's own tree, for the statement
+/// `r/planner/core/join_reorder_through_projection.result:1319` records an
+/// `IndexHashJoin` for, with the two kinds forced by hint so both plans are
+/// costed at the SAME site:
+///
+/// ```text
+/// /*+ INL_JOIN(t1) */       IndexJoin_40     12500.00  6065326.13
+/// /*+ INL_HASH_JOIN(t1) */  IndexHashJoin_44 12500.00  6030776.13
+/// ```
+///
+/// 34550.00 apart, which is exactly the hash-table term's difference divided
+/// by `tidb_index_lookup_join_concurrency`. So the label at that site is a
+/// COST decision and not a structural one, which is what the census in
+/// `difftest-result-tests`' `join_shape` had left open.
+///
+/// `IndexMergeJoin` is NOT reachable here: its candidate is built only when
+/// the inner side can deliver the join keys' order, which this tier's index
+/// probe never claims (`index_join_inner_scan` writes `keep order:false` on
+/// every one of them), so its zero hash-table term never competes.
+fn index_join_operator(
+    outer: Option<f64>,
+    inner_rows_one: Option<f64>,
+    text: &IndexJoinText,
+    num_keys: usize,
+) -> &'static str {
+    use tidb_planner::plan_cost_ver2::{hash_build_cost, Ver2Factors};
+    use tidb_planner::task_type::TaskType;
+    let (Some(build_rows), Some(probe_rows_one)) = (outer, inner_rows_one) else {
+        // No estimate on one of the two sides: Go always has one, and this
+        // tier's fallback is the candidate Go enumerates first.
+        return "IndexJoin";
+    };
+    let factors = Ver2Factors::default();
+    let cpu = factors.task_cpu(TaskType::Root);
+    let mem = factors.task_mem(TaskType::Root);
+    let keys = num_keys as f64;
+    let hash_join = hash_build_cost(None, build_rows, text.outer_row_size, keys, cpu, mem);
+    let index_join = hash_build_cost(
+        None,
+        probe_rows_one * build_rows,
+        text.inner_row_size,
+        keys,
+        cpu,
+        mem,
+    );
+    if hash_join.value() < index_join.value() {
+        "IndexHashJoin"
+    } else {
+        "IndexJoin"
+    }
 }
 
 pub(crate) fn collect_and<'a>(expr: &'a tidb_ast::Expr, out: &mut Vec<&'a tidb_ast::Expr>) {
@@ -1538,4 +1672,83 @@ fn binary_func_name(op: tidb_ast::BinaryOp) -> Option<&'static str> {
         tidb_ast::BinaryOp::Div => "div",
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn index_join_text(outer_row_size: f64, inner_row_size: f64) -> IndexJoinText {
+        IndexJoinText {
+            reader: "IndexReader",
+            keys: vec![("a".to_owned(), "b".to_owned())],
+            lookup_is_left: false,
+            outer_row_size,
+            inner_row_size,
+        }
+    }
+
+    /// MUTATION PROBE for the kind ENUMERATION: a rule that always answered
+    /// one name fails one of these two.
+    ///
+    /// The two cases are Go's own two regimes. With MORE than one inner row
+    /// per outer row the index join's hash table is the bigger one -- it is
+    /// built over `probeRowsTot = probeRowsOne * buildRows` -- so
+    /// `IndexHashJoin`, whose table is only `buildRows` tall, is cheaper.
+    /// With exactly ONE inner row per outer row the two tables are the same
+    /// height and only the ROW WIDTH is left, so a wide outer side makes
+    /// `IndexJoin` the cheaper of the two.
+    #[test]
+    fn both_index_join_kinds_are_reachable() {
+        assert_eq!(
+            index_join_operator(Some(10000.0), Some(10.0), &index_join_text(16.0, 16.0), 1),
+            "IndexHashJoin",
+            "ten inner rows per outer row: the index join's table is ten times taller",
+        );
+        assert_eq!(
+            index_join_operator(Some(10000.0), Some(1.0), &index_join_text(400.0, 8.0), 1),
+            "IndexJoin",
+            "one inner row per outer row and a wide outer side",
+        );
+    }
+
+    /// MUTATION PROBE for the per-kind cost TERM: the two `hash_build_cost`
+    /// calls read different sides, and swapping their arguments flips both
+    /// answers above. Pinned as the exact tie Go's enumeration order settles:
+    /// `IndexJoin` is enumerated first and `findBestTask` replaces the
+    /// incumbent only on a STRICT improvement, so equal costs keep it.
+    #[test]
+    fn an_exact_tie_keeps_the_kind_go_enumerates_first() {
+        assert_eq!(
+            index_join_operator(Some(10000.0), Some(1.0), &index_join_text(16.0, 16.0), 1),
+            "IndexJoin",
+        );
+    }
+
+    /// MUTATION PROBE for the RETRACTION's descent: it passes through the
+    /// shapes that do not rely on their child's order and stops at the ones
+    /// that do.
+    #[test]
+    fn a_retraction_walks_past_a_projection_and_stops_at_a_merge_join() {
+        let leaf = || {
+            PlanNode::new(
+                "TableFullScan",
+                Some(1.0),
+                "table:t".to_owned(),
+                "keep order:true, stats:pseudo".to_owned(),
+            )
+        };
+        let mut through = PlanNode::new("Projection", None, String::new(), String::new());
+        through.children.push(leaf());
+        retract_keep_order(&mut through);
+        assert_eq!(through.children[0].info, "keep order:false, stats:pseudo");
+
+        let mut relied_on = PlanNode::new("MergeJoin", None, String::new(), String::new());
+        relied_on.children.push(leaf());
+        retract_keep_order(&mut relied_on);
+        assert_eq!(
+            relied_on.children[0].info, "keep order:true, stats:pseudo",
+            "a merge join RELIES on that order; unsaying it describes a plan that cannot run",
+        );
+    }
 }
