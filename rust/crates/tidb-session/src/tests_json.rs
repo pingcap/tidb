@@ -767,13 +767,14 @@ fn json_mutation_functions() {
     // which is indistinguishable from a string literal here and so
     // nests as a JSON string. A JSON COLUMN carries a real BinaryJSON
     // and does keep its structure -- see `json_column_type`.
-    // DOCUMENTED DIVERGENCE (the `builtin_ext::json` module doc's typed
-    // boolean boundary): TiDB reads `TRUE` through the argument's
-    // `IsBooleanFlag` and stores the JSON boolean `true`. This tier's
-    // value domain has no boolean datum, so `TRUE` arrives as the
-    // integer 1 -- the same value a JSON COLUMN stores for `TRUE` in
-    // TiDB itself (`json_column_type` captures that).
-    check!(r#"SELECT JSON_SET('{"a":1}','$.a',TRUE)"#, r#"{"a": 1}"#);
+    // A boolean-flagged value is stored as the JSON boolean, not the
+    // integer 1: `TRUE` reaches `json_argument` carrying `IsBooleanFlag`
+    // (every `booleanFunctions` name stamps it, and so does the `TRUE`
+    // literal), which is exactly the rule `builtinCastIntAsJSONSig.evalJSON`
+    // applies. The recording proves it -- `tests/integrationtest/r/expression/
+    // json.result:353`, `json_extract(json_set(b, '$.b', false), '$.b')` is
+    // `false`, and the `json_insert`/`json_replace` rows just below it agree.
+    check!(r#"SELECT JSON_SET('{"a":1}','$.a',TRUE)"#, r#"{"a": true}"#);
     check!(r#"SELECT JSON_SET('{"a":1}','$.a',1.5)"#, r#"{"a": 1.5}"#);
     // An out-of-range array index appends rather than padding.
     check!("SELECT JSON_SET('[1,2,3]','$[5]',9)", "[1, 2, 3, 9]");
@@ -1108,6 +1109,30 @@ fn json_schema_valid_is_allowlisted_for_expression_indexes_and_refused_by_both_d
     assert!(
         format!("{error:?}").contains("UnsafeFunctionInExpressionIndex"),
         "got {error:?}"
+    );
+}
+
+/// The IS_BOOLEAN half of the boolean-functions story, and the reason
+/// `json_schema_valid` must NOT gain a result type: `json_valid` HAS an
+/// evaluator and is in Go's `booleanFunctions`, so a `JSON_ARRAY(json_valid(x))`
+/// element is the JSON boolean `true`/`false`. The mixed row is the mutation
+/// probe -- without the flag both cells would be `1`/`0`, so a change that
+/// dropped it fails here. `json_schema_valid` shares the boolean status but has
+/// no evaluator, so it refuses rather than rendering a guessed boolean; giving
+/// it a result type to carry an unobservable flag is what moved its expression-
+/// index refusal door, which is why it deliberately has none.
+#[test]
+fn json_valid_renders_as_a_json_boolean_and_json_schema_valid_is_refused() {
+    let mut session = Session::new();
+    assert_eq!(
+        row_text(session.run("SELECT JSON_ARRAY(json_valid('{}'), json_valid('not json'))")),
+        vec![vec!["[true, false]".to_owned()]],
+    );
+    assert!(
+        session
+            .run("SELECT JSON_ARRAY(json_schema_valid('{}', '{}'))")
+            .is_err(),
+        "json_schema_valid has no evaluator, so it must refuse rather than render"
     );
 }
 

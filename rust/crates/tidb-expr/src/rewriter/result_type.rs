@@ -539,10 +539,22 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         | "json_remove" | "json_array_append" | "json_array_insert" | "json_merge"
         | "json_merge_preserve" | "json_merge_patch" => text(),
         "json_contains" | "json_length" | "json_depth" => int(),
-        // `ast.JSONValid` and `ast.JSONSchemaValid` are in Go's
-        // `booleanFunctions` map (`json_contains`/`_length`/`_depth` are not), so
-        // their `ETInt` result carries `IsBooleanFlag`.
-        "json_valid" | "json_schema_valid" => {
+        // `ast.JSONValid` is in Go's `booleanFunctions` map
+        // (`json_contains`/`_length`/`_depth` are not), so its `ETInt` result
+        // carries `IsBooleanFlag`: `JSON_ARRAY(json_valid('{}'))` is `[true]`.
+        // `json_valid` HAS an evaluator here (`builtin_ext::json::report`), so
+        // the flag is observable and the existing result-type arm is unchanged
+        // except for the flag.
+        //
+        // `ast.JSONSchemaValid` is ALSO a Go boolean function, but this tier has
+        // NO evaluator for it, so it deliberately keeps NO result-type arm:
+        // giving it one lets the rewriter build a ScalarFunction that an
+        // expression index would accept and then fail to populate. The flag is
+        // unobservable on a value that can never be produced, and refusing at the
+        // rewrite door (the Go-code-1105 wrong-refuse pinned as the safe
+        // direction by `tests_expression_indexes::every_ga_function_passes_the_gate`)
+        // is the correct behaviour.
+        "json_valid" => {
             let mut ft = int();
             ft.add_flags(tidb_datatype::FieldTypeFlags::IS_BOOLEAN);
             ft
@@ -890,10 +902,15 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         "char_length" | "character_length" | "locate" | "position" | "field" => int(),
         // Go `likeFunctionClass`/`regexpLikeFunctionClass`: a one-digit
         // boolean.
-        // `ast.Like`, `ast.Regexp` and `ast.RegexpLike` are all in Go's
-        // `booleanFunctions` map. (`ilike` is not a Go boolean function but is
-        // kept here as a pre-existing alias of `like`.)
-        "like" | "ilike" | "regexp" | "regexp_like" => {
+        // `ast.Like` and `ast.Regexp` are in Go's `booleanFunctions` map, so
+        // these operator forms are boolean-flagged. (`ilike` is not a Go boolean
+        // function but is a pre-existing alias of `like`.) `ast.RegexpLike` is a
+        // Go boolean function too, but the NAMED `REGEXP_LIKE(...)` call has no
+        // evaluator here (only the `REGEXP` operator does), so -- like
+        // `json_schema_valid` above -- it keeps no result-type arm and refuses at
+        // the rewrite door instead of gaining a ScalarFunction an expression
+        // index could accept unpopulated.
+        "like" | "ilike" | "regexp" => {
             let mut ft = int();
             ft.set_flen(1);
             ft.add_flags(tidb_datatype::FieldTypeFlags::IS_BOOLEAN);
