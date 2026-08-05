@@ -1501,6 +1501,42 @@ mod spill_tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Go's STAGE-1 spill (`loadChunksUntilTotalLimit`'s `isSpillNeeded`
+    /// break, which Go asserts through `isSpillTriggeredInStage1ForTest`): a
+    /// `LIMIT` larger than the input means the load loop never reaches
+    /// `totalLimit`, so it is the LOAD that has to notice the quota.
+    ///
+    /// Without that break the load runs to the end of the input and the TopN
+    /// holds every row at once -- one run instead of several, and a peak this
+    /// quota was supposed to bound. The answer is the same either way, which
+    /// is exactly why the RUN COUNT is what this test asserts.
+    #[test]
+    fn a_limit_larger_than_the_input_still_spills_while_loading() {
+        let _guard = temp_dir_guard();
+        let dir = scratch_temp_dir("topnstage1");
+        tidb_util::disk::set_temp_storage_path(&dir);
+
+        let rows = shuffled_rows(4096);
+        let items = [(0, false), (1, false)];
+        // Larger than the input: `loadChunksUntilTotalLimit` can never fill.
+        let count = 8192;
+        let mut reference = topn(&rows, &items, 0, count, StatementMemory::default());
+        let expected = drain(&mut reference);
+        assert_eq!(expected.len(), rows.len());
+        assert_eq!(reference.num_spilled_runs(), 0);
+
+        let mut exec = topn(&rows, &items, 0, count, tight());
+        exec.set_spill_chunk_size_for_test(64);
+        let got = drain(&mut exec);
+        assert!(
+            exec.num_spilled_runs() > 1,
+            "the load loop did not stop on the spill flag: {} run(s)",
+            exec.num_spilled_runs()
+        );
+        assert_eq!(got, expected);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// The budget must come back: a spilled run holds no statement memory, and
     /// `close` releases what the last segment's heap still held.
     #[test]
