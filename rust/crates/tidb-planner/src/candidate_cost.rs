@@ -857,6 +857,82 @@ mod tests {
         assert_eq!(number_of_ranges(&probe), 7);
     }
 
+    /// The task switch a reader performs is INVISIBLE in the cost value --
+    /// `tikv_cpu_factor` and `tidb_cpu_factor` are both `49.90`, and
+    /// `getTaskScanFactorVer2` answers `tikv_scan_factor` on either task -- so
+    /// only the trace text distinguishes them. Go's
+    /// `EXPLAIN FORMAT='cost_trace'` prints the coprocessor names below a
+    /// reader, and this pins that.
+    #[test]
+    fn a_reader_costs_its_child_on_the_coprocessor_task() {
+        let plan = Candidate::Reader {
+            child: Box::new(Candidate::Selection {
+                child: Box::new(Candidate::TableScan {
+                    rows: 6.0,
+                    row_size: RowSize::Fixed(32.0),
+                    is_child_of_inl: None,
+                    has_full_range_scan: false,
+                    penalty: TableScanPenaltyInput::default(),
+                    num_ranges: 1,
+                    desc: false,
+                }),
+                input_rows: 6.0,
+                conditions: vec![true],
+            }),
+            rows: 4.8,
+            row_size: RowSize::Fixed(32.0),
+            kind: ReaderKind::Table,
+        };
+        let option = PlanCostOption::new().with_cost_flag(crate::cost_usage::COST_FLAG_TRACE);
+        let costed = evaluate_traced(&plan, &env(), TaskType::Root, Some(&option));
+        let formula = costed
+            .cost
+            .trace()
+            .expect("the trace flag was set")
+            .formula()
+            .to_owned();
+        // Go, for the same shape: `(cpu(6*filters(1)*tikv_cpu_factor(49.9)))
+        // + ((scan(6*logrowsize(32)*tikv_scan_factor(40.7)))*1.00)` under
+        // `.../15.00`.
+        assert!(
+            formula.contains("tikv_cpu_factor"),
+            "the selection below the reader must be priced on the coprocessor: {formula}"
+        );
+        assert!(
+            !formula.contains("tidb_cpu_factor"),
+            "nothing on this plan runs on TiDB's CPU: {formula}"
+        );
+        assert!(
+            formula.contains("tidb_kv_net_factor"),
+            "the reader itself pays the TiDB-to-TiKV hop: {formula}"
+        );
+    }
+
+    /// `getPlanCostVer24PhysicalTableReader` clamps its row size to
+    /// `MinRowSize` and `getPlanCostVer24PhysicalIndexReader` does not -- the
+    /// one line that is not shared between two otherwise identical readers.
+    #[test]
+    fn only_the_table_reader_clamps_its_row_size() {
+        let narrow = |kind| Candidate::Reader {
+            child: Box::new(Candidate::IndexScan {
+                rows: 100.0,
+                row_size: RowSize::Fixed(16.0),
+                index_id: None,
+                num_ranges: 1,
+                desc: false,
+            }),
+            rows: 100.0,
+            row_size: RowSize::Fixed(1.0),
+            kind,
+        };
+        let table = evaluate(&narrow(ReaderKind::Table), &env(), TaskType::Root);
+        let index = evaluate(&narrow(ReaderKind::Index), &env(), TaskType::Root);
+        assert_eq!(table.row_size, ver2::MIN_ROW_SIZE);
+        assert_eq!(index.row_size, 1.0);
+        // `net(100*rowsize(2)*3.96)/15` against `net(100*rowsize(1)*3.96)/15`.
+        assert!((table.est_cost() - index.est_cost() - 100.0 * 3.96 / 15.0).abs() < 1e-9);
+    }
+
     /// The tie direction is `compareTaskCost`'s strict `<`.
     #[test]
     fn an_exactly_equal_alternative_never_displaces_the_incumbent() {
