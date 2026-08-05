@@ -91,7 +91,7 @@ func GetGroup(keyspaceMeta *keyspacepb.KeyspaceMeta, pdAddrs []string) (*Group, 
 		if err := validateGroupID(groupID); err != nil {
 			return nil, err
 		}
-		if !pd.IsKeyspaceUsingKeyspaceLevelGC(keyspaceMeta) && !tikv.IsCESKeyspaceLevelGC(keyspaceMeta) {
+		if !pd.IsKeyspaceUsingKeyspaceLevelGC(keyspaceMeta) && !tikv.IsCSEKeyspaceLevelGC(keyspaceMeta) {
 			return nil, errors.Annotatef(
 				ErrKeyspaceLevelGCRequired,
 				"keyspace %q configured meta service group %q",
