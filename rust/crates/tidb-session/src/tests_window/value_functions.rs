@@ -274,23 +274,9 @@ fn window_lag_and_lead() {
     );
 }
 
-/// `LAG`/`LEAD`'s three-argument result type is Go's ONE control-function
-/// inference, and these are the boundaries a merge written by hand walks
-/// around -- every one of them was WRONG while the obvious mixed-type cases
-/// above already passed.
-///
-/// Go, via `gorun` over the table these fixtures reproduce:
-///
-/// ```text
-/// desc vw;
-/// RS:c_both_null|binary(0)|YES||<nil>|;c_date_time|datetime(6)|YES||<nil>|;
-///    c_enum_null|varchar(1)|YES||<nil>|;c_null_unsigned|int(10) unsigned|YES||<nil>|
-/// select id, lag(e,1,NULL) over (order by id) from tl order by id;
-/// RS:1|<nil>;2|x
-/// ```
-#[test]
-fn window_lag_default_merge_boundaries() {
-    use tidb_datatype::{FieldTypeCode, FieldTypeFlags};
+/// The table the merge boundaries below are measured on, reproducing the one
+/// `gorun` was pointed at.
+fn merge_session() -> Session {
     let mut session = Session::new();
     session
         .run(
@@ -304,66 +290,114 @@ fn window_lag_default_merge_boundaries() {
     session
         .run("INSERT INTO tb VALUES (2,20,'y','tt',20,'2021-01-01','02:02:03.456789')")
         .unwrap();
+    session
+}
 
-    let column_type = |session: &mut Session, sql: &str| match session.run_with_columns(sql) {
+/// The result type one `LAG`/`LEAD` call reports.
+fn merged_type(session: &mut Session, sql: &str) -> tidb_datatype::FieldType {
+    match session.run_with_columns(sql) {
         Ok(StmtOutput::Rows { columns, .. }) => columns[0].1.clone(),
         other => panic!("expected rows for {sql}, got {other:?}"),
-    };
+    }
+}
 
-    // The UNSIGNED single branch. Go's `len(notNullFields) == 1` shortcut
-    // copies the one typed operand WHOLE, so an `int(10) unsigned` -- which
-    // spends no digit on a sign -- stays 10 wide. Re-deriving the width
-    // instead adds a sign digit back unconditionally and reports 11, and a
-    // SIGNED branch would round-trip and hide it.
-    let ft = column_type(
+/// Go's `len(notNullFields) == 1` shortcut copies the ONE typed operand
+/// WHOLE -- no re-derivation at all.
+///
+/// The width is the boundary that shows it: an UNSIGNED `int(10)` spends no
+/// digit on a sign, so running the merge over a one-element list instead puts
+/// one back (`setFlenFromArgs` re-adds a sign digit unconditionally) and
+/// reports 11. A SIGNED operand round-trips and would agree either way.
+///
+/// Go, via `gorun`, `desc` over a view of this call:
+/// `c_null_unsigned|int(10) unsigned`.
+#[test]
+fn window_lag_one_typed_operand_is_copied_whole() {
+    let mut session = merge_session();
+    let ft = merged_type(
         &mut session,
         "SELECT LAG(NULL,1,ua) OVER (ORDER BY id) FROM tb",
     );
-    assert_eq!(ft.code(), FieldTypeCode::Long);
-    assert_eq!(ft.flen(), 10, "Go's `desc` reports `int(10) unsigned`");
-    assert!(ft.has_flag(FieldTypeFlags::UNSIGNED));
+    assert_eq!(ft.code(), tidb_datatype::FieldTypeCode::Long);
+    assert_eq!(ft.flen(), 10);
+    assert!(ft.has_flag(tidb_datatype::FieldTypeFlags::UNSIGNED));
+}
 
-    // The LONE enum beside NULL -- the ONLY path that reaches Go's ENUM/SET
-    // rewrite, since an enum PAIR is already VARCHAR by the time
-    // `AggFieldType` returns. Keeping the ENUM type does not merely misreport
-    // it: the value comes back EMPTY instead of `x`.
-    let ft = column_type(
-        &mut session,
-        "SELECT LAG(e,1,NULL) OVER (ORDER BY id) FROM tb",
-    );
-    assert_eq!(ft.code(), FieldTypeCode::Varchar);
+/// A LONE enum operand beside a NULL one is the ONLY path that reaches Go's
+/// ENUM/SET rewrite -- an enum PAIR is already VARCHAR by the time
+/// `AggFieldType` returns, so it never gets there.
+///
+/// Keeping the ENUM type does not merely misreport it. The VALUE changes:
+///
+/// ```text
+/// select id, lag(e,1,NULL) over (order by id) from tl order by id;
+/// RS:1|<nil>;2|x
+/// ```
+#[test]
+fn window_lag_a_lone_enum_operand_reads_as_a_varchar() {
+    let mut session = merge_session();
+    let sql = "SELECT LAG(e,1,NULL) OVER (ORDER BY id) FROM tb";
     assert_eq!(
-        row_text(session.run("SELECT LAG(e,1,NULL) OVER (ORDER BY id) FROM tb")),
-        [["NULL"], ["x"]]
+        merged_type(&mut session, sql).code(),
+        tidb_datatype::FieldTypeCode::Varchar
     );
+    assert_eq!(row_text(session.run(sql)), [["NULL"], ["x"]]);
+}
 
-    // A DATE beside a TIME merges to DATETIME, and Go's
-    // `TryToFixFlenOfDatetime` then gives the result its CANONICAL width --
-    // `19 + fsp + 1` -- never an operand's. The operands here are 10 and 17
-    // wide, so any width taken from them is wrong; a DATETIME PAIR would
-    // agree either way, which is why the boundary is a mixed temporal pair.
-    let ft = column_type(
+/// A DATE beside a TIME merges to DATETIME, and Go's
+/// `TryToFixFlenOfDatetime` then gives the result its CANONICAL width --
+/// `19 + fsp + 1` -- never an operand's. The operands here are 10 and 17
+/// wide, so any width taken from them is wrong; a DATETIME PAIR agrees either
+/// way, which is why the boundary is a MIXED temporal pair.
+///
+/// This is also where the FUNCTION NAME the inference is given stops being
+/// inert. Go's per-`getFunction` flag tails belong to `IF`/`IFNULL`/
+/// `COALESCE`/`CASE WHEN`; `LEAD`/`LAG` have none there (theirs is
+/// `NewWindowFuncDesc`'s). Handing this call `IF`'s name instead would add
+/// `mysql.BinaryFlag`, and a temporal result is the one that does not already
+/// carry it.
+///
+/// Go, via `gorun`, `desc` over a view of this call: `c_date_time|datetime(6)`.
+#[test]
+fn window_lag_a_datetime_result_takes_its_canonical_width() {
+    let mut session = merge_session();
+    let ft = merged_type(
         &mut session,
         "SELECT LAG(dt,1,tm) OVER (ORDER BY id) FROM tb",
     );
-    assert_eq!(ft.code(), FieldTypeCode::Datetime);
-    assert_eq!((ft.flen(), ft.decimal()), (26, 6), "Go: `datetime(6)`");
+    assert_eq!(ft.code(), tidb_datatype::FieldTypeCode::Datetime);
+    assert_eq!((ft.flen(), ft.decimal()), (26, 6));
+    assert!(!ft.has_flag(tidb_datatype::FieldTypeFlags::BINARY));
+}
 
-    // Every operand NULL: Go zeroes the width and the scale and gives the
-    // result the binary charset -- `binary(0)`, not an unsized NULL column.
-    let ft = column_type(
+/// Every operand NULL: Go zeroes the width and the scale and gives the result
+/// the binary charset -- an unsized NULL column is not the same answer.
+///
+/// Go, via `gorun`, `desc` over a view of this call: `c_both_null|binary(0)`.
+#[test]
+fn window_lag_every_operand_null_is_a_sized_null_column() {
+    let mut session = merge_session();
+    let ft = merged_type(
         &mut session,
         "SELECT LAG(NULL,1,NULL) OVER (ORDER BY id) FROM tb",
     );
-    assert_eq!(ft.code(), FieldTypeCode::Null);
+    assert_eq!(ft.code(), tidb_datatype::FieldTypeCode::Null);
     assert_eq!((ft.flen(), ft.decimal()), (0, 0));
     assert_eq!(ft.charset_name(), "binary");
+}
 
-    // A STRING result's scale is UNSPECIFIED, which `setDecimalFromArgs`
-    // alone does not produce: it takes the widest operand scale (both are 0
-    // here) and Go's own `resultEvalType == ETString` fixup overwrites it.
-    let ft = column_type(&mut session, "SELECT LAG(v,1,a) OVER (ORDER BY id) FROM tb");
-    assert_eq!(ft.code(), FieldTypeCode::Varchar);
+/// A STRING result's scale is UNSPECIFIED, which `setDecimalFromArgs` alone
+/// does not produce: it takes the widest operand scale -- both are 0 here --
+/// and Go's own `resultEvalType == ETString` fixup overwrites it afterwards.
+///
+/// The width beside it is the ETString arm's: an INTEGER operand inside a
+/// string result is measured by what its DECLARED type can print (`INT` is
+/// 11) rather than by the 10 the VARCHAR declares.
+#[test]
+fn window_lag_a_string_result_has_no_scale() {
+    let mut session = merge_session();
+    let ft = merged_type(&mut session, "SELECT LAG(v,1,a) OVER (ORDER BY id) FROM tb");
+    assert_eq!(ft.code(), tidb_datatype::FieldTypeCode::Varchar);
     assert_eq!(
         (ft.flen(), ft.decimal()),
         (11, tidb_datatype::UNSPECIFIED_LENGTH)
