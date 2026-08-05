@@ -83,6 +83,29 @@
 //!   same walk, and the same over-approximating-in-the-safe-direction
 //!   argument, as [`super::outer_join_elimination`].
 
+//! # Which refusals are guards, and which are only narrowings
+//!
+//! Mutation-probed one at a time, each against the gorun-captured row sets in
+//! `crates/tidb-session/src/tests_derived_agg_pruning.rs`. Two are GUARDS --
+//! removing either answers a wrong row count:
+//!
+//! * "every field is an aggregate". `select 1 from (select c2 + 0 from p1) k`
+//!   is three rows; the rewrite would make it one. Note that the outer-read
+//!   check does NOT also catch this, because the derived column is named
+//!   `c2 + 0` and no outer reference collides with that name -- which is why
+//!   the test uses that spelling and not `select c2`.
+//! * the outer-read check itself. `select k.n from (select count(c2) as n
+//!   from p1) k` is 2, because `count(c2)` skips the NULL row.
+//!
+//! The rest are NARROWINGS: removing them still answers TiDB's rows, because
+//! the rewrite only ever replaces the FIELD LIST and every one of these
+//! clauses survives it intact. `GROUP BY` still groups (Go prunes a grouped
+//! aggregation's unread aggregates too), `HAVING` still tests its own
+//! aggregate, `LIMIT` still cuts, the wildcard case is already refused by
+//! `derived_field_names` returning `None`, and the idempotence guard only
+//! stops a second no-op pass. They are kept because each widening would need
+//! its own measured statement to justify it, and the corpus asks for none.
+
 use tidb_ast::{Expr, JoinNode, QueryStmt, SelectField, SelectStmt};
 use tidb_datatype::{FieldType, FieldTypeCode};
 
