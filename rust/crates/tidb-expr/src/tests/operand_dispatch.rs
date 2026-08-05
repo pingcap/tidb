@@ -259,13 +259,18 @@ fn a_duration_compares_as_a_duration_only_against_a_constant() {
 /// select d = '1234567890123456788' from dc                 0   column: DECIMAL domain
 /// select d + 0 = '1234567890123456788' from dc             0   expression over a column: same
 /// select d = '1234567890123456789.0' from dc               1
-/// select 1234567890123456789 = '1234567890123456788'       1   all constant: ETReal, and equal
+/// select 1234567890123456789.0 = '1234567890123456788'     1   all constant: ETReal, and equal
+/// select cast(1234567890123456789 as decimal(19,0))
+///          = '1234567890123456788'                          1   folded to a constant: same
 /// select d = s from dc                                     1   both columns: ETReal again
 /// ```
 ///
-/// Rows four and five are the boundary: both operands round to the SAME `f64`,
-/// so a rule that compared every decimal-vs-string pair as decimal would turn
-/// Go's 1 into 0.
+/// The last three rows are the boundary, and they must be genuinely DECIMAL
+/// constants: an INTEGER literal is ETInt and never reaches this rule at all,
+/// so `1234567890123456789 = '...'` cannot tell the `!isConst` test from its
+/// absence. All three round to the SAME `f64` as the right-hand side, so a
+/// rule that compared every decimal-vs-string pair as decimal turns Go's 1
+/// into 0.
 #[test]
 fn a_column_decimal_against_a_constant_string_compares_as_decimal() {
     let decimal19 = || {
@@ -289,7 +294,14 @@ fn a_column_decimal_against_a_constant_string_compares_as_decimal() {
     );
     assert_eq!(over_columns("d = '1234567890123456789.0'", &row()), "INT:1");
     assert_eq!(
-        over_columns("1234567890123456789 = '1234567890123456788'", &row()),
+        over_columns("1234567890123456789.0 = '1234567890123456788'", &row()),
+        "INT:1"
+    );
+    assert_eq!(
+        over_columns(
+            "cast(1234567890123456789 as decimal(19,0)) = '1234567890123456788'",
+            &row()
+        ),
         "INT:1"
     );
     assert_eq!(over_columns("d = s", &row()), "INT:1");
