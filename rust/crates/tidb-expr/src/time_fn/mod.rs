@@ -72,7 +72,7 @@ pub(crate) fn dispatch(
         "PERIOD_ADD" => period_add(vals),
         "PERIOD_DIFF" => period_diff(vals),
         "TIME_FORMAT" => time_format(vals),
-        "STR_TO_DATE" => calendar::str_to_date(vals),
+        "STR_TO_DATE" => calendar::str_to_date(vals, cols),
         "TIMEDIFF" => time_diff(vals),
         "CONVERT_TZ" => convert_tz::convert_tz(vals),
         "FROM_UNIXTIME" => session_tz::from_unixtime(vals, cols),
@@ -1704,15 +1704,131 @@ mod tests {
             ("21:13:24", "%T", Some("21:13:24")),
         ];
         for (date, format, want) in cases {
-            let got = calendar::str_to_date(&[string_datum(date), string_datum(format)]).unwrap();
+            let got = calendar::str_to_date(
+                &[string_datum(date), string_datum(format)],
+                &crate::NoColumns,
+            )
+            .unwrap();
             let want = want.map_or(Datum::Null, |want| Datum::new_string(want.to_string()));
             assert_eq!(got, want, "STR_TO_DATE({date:?}, {format:?})");
         }
         assert_eq!(
-            calendar::str_to_date(&[Datum::Null, string_datum("%Y")]).unwrap(),
+            calendar::str_to_date(&[Datum::Null, string_datum("%Y")], &crate::NoColumns).unwrap(),
             Datum::Null
         );
-        assert!(calendar::str_to_date(&[string_datum("2020")]).is_err());
+        assert!(calendar::str_to_date(&[string_datum("2020")], &crate::NoColumns).is_err());
+    }
+
+    /// A session whose `sql_mode` bits are chosen per test; everything else
+    /// is [`crate::NoColumns`]' defaults.
+    struct Modes(tidb_datatype::DateModes);
+
+    impl Columns for Modes {
+        fn get(&self, _path: &[String]) -> Option<Datum> {
+            None
+        }
+
+        fn date_modes(&self) -> tidb_datatype::DateModes {
+            self.0
+        }
+    }
+
+    /// `TestIssue9732`, recorded VERBATIM in
+    /// `tests/integrationtest/r/expression/issues.result`: the SAME six
+    /// partial-format calls answer NULL under the default `sql_mode` and a
+    /// zero-component VALUE once `NO_ZERO_DATE` is dropped from it.
+    ///
+    /// ```text
+    /// select str_to_date(1, '%m');
+    /// str_to_date(1, '%m')
+    /// NULL
+    /// ...
+    /// set sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION';
+    /// select str_to_date(1, '%m');
+    /// str_to_date(1, '%m')
+    /// 0000-01-00
+    /// ```
+    ///
+    /// Note that the second `sql_mode` still carries `NO_ZERO_IN_DATE` --
+    /// which is exactly why the deciding bit has to be `NO_ZERO_DATE` and
+    /// not the "in date" one that reads like the obvious candidate.
+    #[test]
+    fn str_to_date_partial_formats_follow_no_zero_date() {
+        let relaxed = Modes(tidb_datatype::DateModes {
+            no_zero_date: false,
+            no_zero_in_date: true,
+            allow_invalid_dates: false,
+        });
+        let cases = [
+            ("1", "%m", "0000-01-00"),
+            ("01", "%d", "0000-00-01"),
+            ("2019", "%Y", "2019-00-00"),
+            ("5,2019", "%m,%Y", "2019-05-00"),
+            ("01,2019", "%d,%Y", "2019-00-01"),
+            ("01,5", "%d,%m", "0000-05-01"),
+        ];
+        for (date, format, want) in cases {
+            let args = [string_datum(date), string_datum(format)];
+            assert_eq!(
+                calendar::str_to_date(&args, &crate::NoColumns).unwrap(),
+                Datum::Null,
+                "STR_TO_DATE({date:?}, {format:?}) under the default sql_mode"
+            );
+            assert_eq!(
+                calendar::str_to_date(&args, &relaxed).unwrap(),
+                Datum::new_string(want.to_string()),
+                "STR_TO_DATE({date:?}, {format:?}) without NO_ZERO_DATE"
+            );
+        }
+    }
+
+    /// `builtinStrToDateDurationSig.evalDuration` has NO `NO_ZERO_DATE`
+    /// rejection at all, so a TIME-only format keeps its value under the
+    /// mode that nulls a partial DATE. Recorded in
+    /// `tests/integrationtest/r/expression/issues.result` under a `sql_mode`
+    /// that DOES set `NO_ZERO_DATE`:
+    ///
+    /// ```text
+    /// select str_to_date(substr(dest,1,6),'%H%i%s') from sun;
+    /// str_to_date(substr(dest,1,6),'%H%i%s')
+    /// 20:23:10
+    /// ```
+    #[test]
+    fn str_to_date_duration_signature_ignores_no_zero_date() {
+        assert_eq!(
+            calendar::str_to_date(
+                &[string_datum("202310"), string_datum("%H%i%s")],
+                &crate::NoColumns
+            )
+            .unwrap(),
+            Datum::new_string("20:23:10".to_string()),
+        );
+    }
+
+    /// `ALLOW_INVALID_DATES` is Go `checkMonthDay`'s `maxDay = 31` branch,
+    /// the only calendar rejection `Time.Check` still applies once
+    /// `IgnoreZeroInDate` is on.
+    #[test]
+    fn str_to_date_day_of_month_follows_allow_invalid_dates() {
+        let args = [string_datum("2021-02-30"), string_datum("%Y-%m-%d")];
+        assert_eq!(
+            calendar::str_to_date(&args, &crate::NoColumns).unwrap(),
+            Datum::Null,
+            "February 30 is out of range by default"
+        );
+        assert_eq!(
+            calendar::str_to_date(
+                &args,
+                &Modes(tidb_datatype::DateModes {
+                    no_zero_date: true,
+                    no_zero_in_date: true,
+                    allow_invalid_dates: true,
+                })
+            )
+            .unwrap(),
+            Datum::new_string("2021-02-30".to_string()),
+            "ALLOW_INVALID_DATES keeps Go's maxDay = 31"
+        );
     }
 
     /// Exact source rows from `TestFromDays` at

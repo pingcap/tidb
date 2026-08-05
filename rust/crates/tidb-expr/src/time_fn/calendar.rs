@@ -772,7 +772,7 @@ pub(crate) fn date_add(
                 .value
         }
     };
-    let Some(s) = coerce_str(date)? else {
+    let Some(s) = interval_date_text(date)? else {
         return Ok(Datum::Null);
     };
     let trimmed = s.trim();
@@ -895,6 +895,74 @@ pub(crate) fn date_add(
         return Err(EvalError::Unsupported("INTERVAL unit"));
     };
     Ok(format_ymd_result(y2, m2, d2, time_suffix))
+}
+
+/// The TEXT the `DATE_ADD`/`DATE_SUB` date pipeline below should read for
+/// this operand, porting Go's per-SOURCE routing in
+/// `baseDateArithmetical` (`pkg/expression/builtin_time.go`): a STRING
+/// operand goes through `getDateFromString`'s `types.ParseTime`, but an
+/// INTEGER operand goes through `getDateFromInt`'s
+/// `types.ParseTimeFromInt64` -- which reads TiDB's PACKED
+/// `YYYYMMDD[HHMMSS]` NUMBER, not the digits of its decimal text.
+///
+/// Coercing the integer straight to text lost exactly the packed clock:
+/// `19000101000000` is 14 digits, which the wall-clock parser below only
+/// accepts in the 6-/8-digit bare forms, so every packed-datetime operand in
+/// `expression/issues` answered NULL where TiDB answers a value
+/// (`SELECT 88950327221140 - INTERVAL "100000000:214748364700"
+/// MINUTE_SECOND` is `1900-01-01 00:00:00`, and `SELECT INTERVAL 1 Year +
+/// 19000101000000` is `1901-01-01 00:00:00`).
+///
+/// The DATE-vs-DATETIME split is `parseDateTimeFromNum`'s own
+/// (`pkg/types/time.go`): the number carries a clock -- and so renders one --
+/// exactly when it reaches the `YYMMDDHHMMSS`/`YYYYMMDDHHMMSS` branches,
+/// i.e. at `101000000` and above. Below that it is `ZeroDate`'s
+/// `mysql.TypeDate` and the result keeps `DATE_ADD`'s date-only rendering,
+/// which is what an 8-digit operand already did. Go's separate
+/// `IsClockUnit(unit)` promotion needs no counterpart here: the clock units
+/// route through [`date_add_time`], which renders a time-of-day for a
+/// date-only operand already.
+///
+/// REAL and DECIMAL operands (Go's `getDateFromReal`/`getDateFromDecimal`)
+/// keep the pre-existing text coercion; no recorded row measures them.
+fn interval_date_text(date: &Datum) -> Result<Option<String>, EvalError> {
+    let number = match date {
+        Datum::Int(value) => *value,
+        Datum::UInt(value) => match i64::try_from(*value) {
+            Ok(value) => value,
+            // Beyond `i64` there is no packed date at all; Go's `EvalInt`
+            // hands `ParseTimeFromInt64` a wrapped value that fails the same
+            // way this NULL does.
+            Err(_) => return Ok(None),
+        },
+        _ => return coerce_str(date),
+    };
+    let Ok(parsed) = tidb_datatype::parse_time_from_num(
+        number,
+        tidb_datatype::TimeType::DateTime,
+        0,
+        // Go's read path (`ResetContextOfStmt`'s `*ast.SelectStmt` arm) sets
+        // `IgnoreZeroInDate` unconditionally; the wall-clock parser below
+        // still applies its own stricter rule, so this only avoids
+        // rejecting here what Go accepts here.
+        true,
+        false,
+        &chrono_tz::Tz::UTC,
+    ) else {
+        return Ok(None);
+    };
+    let core = parsed.time.core_time();
+    let (year, month, day) = (core.year(), core.month(), core.day());
+    Ok(Some(if number >= 101_000_000 {
+        format!(
+            "{year:04}-{month:02}-{day:02} {:02}:{:02}:{:02}",
+            core.hour(),
+            core.minute(),
+            core.second()
+        )
+    } else {
+        format!("{year:04}-{month:02}-{day:02}")
+    }))
 }
 
 /// Parses a STRING `INTERVAL` amount for a non-composite unit, porting
@@ -1049,7 +1117,7 @@ fn date_add_composite(
         },
         _ => return Err(EvalError::Unsupported("composite INTERVAL amount")),
     };
-    let Some(s) = coerce_str(date)? else {
+    let Some(s) = interval_date_text(date)? else {
         return Ok(Datum::Null);
     };
     let trimmed = s.trim();
@@ -1248,10 +1316,40 @@ struct ParsedDateTime {
 /// the source's typed value exposes (`YYYY-MM-DD`, `YYYY-MM-DD HH:MM:SS`, or
 /// `HH:MM:SS`).  The parser intentionally keeps the source's useful scalar
 /// grammar: numeric date/time directives, `%r`/`%T`, fractional seconds,
-/// case-insensitive AM/PM, and `%@`/`%#`/`%.` skip directives.  SQL-mode
-/// zero-date checks and the function-class result-type selection remain
-/// outside this value-only seam.
-pub(crate) fn str_to_date(vals: &[Datum]) -> Result<Datum, EvalError> {
+/// case-insensitive AM/PM, and `%@`/`%#`/`%.` skip directives.
+///
+/// # The zero-component rule is the SQL mode's, not the parser's
+///
+/// A fully-parsed date with a zero YEAR, MONTH or DAY -- what a PARTIAL
+/// format like `'%m'` alone produces -- is a VALUE in Go, not a parse
+/// failure. `types.Time.StrToDate` ends at `t.Check(typeCtx)`, whose
+/// `checkDateType` returns `nil` for an all-zero date outright and skips
+/// the zero-month/zero-day rejection entirely when `allowZeroInDate` --
+/// which `ResetContextOfStmt`'s `*ast.SelectStmt` arm sets UNCONDITIONALLY
+/// (`WithIgnoreZeroInDate(true)`), in every SQL mode. The rejection that
+/// does fire lives one level up, in the SIGNATURE, and reads a DIFFERENT
+/// mode bit:
+///
+/// ```text
+/// if sqlMode(ctx).HasNoZeroDateMode() && (t.Year() == 0 || t.Month() == 0 || t.Day() == 0) {
+/// ```
+///
+/// (`builtinStrToDateDateSig.evalTime` and `builtinStrToDateDatetimeSig`,
+/// `pkg/expression/builtin_time.go`.) So `NO_ZERO_DATE` -- NOT
+/// `NO_ZERO_IN_DATE` -- decides, and it decides for the DATE and DATETIME
+/// signatures ONLY: `builtinStrToDateDurationSig.evalDuration` carries no
+/// such check at all (its source comment marks the omission as a TODO), so
+/// a time-only format keeps its value in every mode. `expression/issues`
+/// records both halves: under the default mode `str_to_date(1, '%m')` is
+/// NULL, and with `NO_ZERO_DATE` dropped from `sql_mode` the SAME call is
+/// `0000-01-00`, while `str_to_date(substr(dest,1,6),'%H%i%s')` is
+/// `20:23:10` under a mode that has `NO_ZERO_DATE` set.
+///
+/// Rejecting a zero component unconditionally here was therefore wrong in
+/// BOTH directions -- it answered NULL for every value TiDB returns under a
+/// relaxed mode, and answered `0000-05-01` for `str_to_date('01,5','%d,%m')`
+/// where the default mode's TiDB answers NULL.
+pub(crate) fn str_to_date(vals: &[Datum], cols: &dyn crate::Columns) -> Result<Datum, EvalError> {
     if vals.len() != 2 {
         return Err(EvalError::Unsupported("bad function arity"));
     }
@@ -1437,10 +1535,23 @@ pub(crate) fn str_to_date(vals: &[Datum]) -> Result<Datum, EvalError> {
         };
     }
     if value.saw_date {
-        if !(1..=12).contains(&value.month)
-            || value.day == 0
-            || value.day > days_in_month(value.year, value.month)
-        {
+        // `types.checkMonthDay`, the one calendar rejection `Time.Check`
+        // still applies with `allowZeroInDate`: a zero month keeps Go's
+        // `maxDay = 31` initializer (the `if month > 0` guard skips the
+        // per-month table), and `ALLOW_INVALID_DATES` keeps it for every
+        // month.
+        let modes = cols.date_modes();
+        let max_day = if modes.allow_invalid_dates || value.month == 0 {
+            31
+        } else {
+            days_in_month(value.year, value.month)
+        };
+        if value.month > 12 || value.day > max_day {
+            return Ok(Datum::Null);
+        }
+        // The DATE/DATETIME signatures' own `NO_ZERO_DATE` rejection; see
+        // this function's doc.
+        if modes.no_zero_date && (value.year == 0 || value.month == 0 || value.day == 0) {
             return Ok(Datum::Null);
         }
         let date = format!("{:04}-{:02}-{:02}", value.year, value.month, value.day);

@@ -357,6 +357,66 @@ fn date_parts() {
         "STR:2021-01-06 10:30:00"
     );
     assert_eq!(e("date_add('not a date', interval 5 day)"), "NULL");
+    // Go `baseDateArithmetical.getDateFromInt` reads an INTEGER operand as
+    // TiDB's PACKED `YYYYMMDD[HHMMSS]` number (`ParseTimeFromInt64`), not as
+    // the digits of its decimal text, so a 14-digit literal carries a clock.
+    // VERBATIM from `tests/integrationtest/r/expression/issues.result`:
+    //
+    //   SELECT 19000101000000 + INTERVAL "100000000:214748364700" MINUTE_SECOND;
+    //   8895-03-27 22:11:40
+    //   SELECT 19000101000000 + INTERVAL 1 << 37 SECOND;
+    //   6255-04-08 15:04:32
+    //   SELECT 19000101000000 + INTERVAL 1 << 31 MINUTE;
+    //   5983-01-24 02:08:00
+    //   SELECT 88950327221140 - INTERVAL "100000000:214748364700" MINUTE_SECOND ;
+    //   1900-01-01 00:00:00
+    //   SELECT 62550408150432 - INTERVAL 1 << 37 SECOND;
+    //   1900-01-01 00:00:00
+    //   SELECT 59830124020800 - INTERVAL 1 << 31 MINUTE;
+    //   1900-01-01 00:00:00
+    //   SELECT INTERVAL 1 Year + 19000101000000;
+    //   1901-01-01 00:00:00
+    assert_eq!(
+        e(r#"19000101000000 + INTERVAL "100000000:214748364700" MINUTE_SECOND"#),
+        "STR:8895-03-27 22:11:40"
+    );
+    assert_eq!(
+        e("19000101000000 + INTERVAL 1 << 37 SECOND"),
+        "STR:6255-04-08 15:04:32"
+    );
+    assert_eq!(
+        e("19000101000000 + INTERVAL 1 << 31 MINUTE"),
+        "STR:5983-01-24 02:08:00"
+    );
+    assert_eq!(
+        e(r#"88950327221140 - INTERVAL "100000000:214748364700" MINUTE_SECOND"#),
+        "STR:1900-01-01 00:00:00"
+    );
+    assert_eq!(
+        e("62550408150432 - INTERVAL 1 << 37 SECOND"),
+        "STR:1900-01-01 00:00:00"
+    );
+    assert_eq!(
+        e("59830124020800 - INTERVAL 1 << 31 MINUTE"),
+        "STR:1900-01-01 00:00:00"
+    );
+    // A non-clock unit keeps the packed number's own clock, because
+    // `parseDateTimeFromNum` typed it `TypeDatetime` at `>= 101000000`.
+    assert_eq!(
+        e("INTERVAL 1 Year + 19000101000000"),
+        "STR:1901-01-01 00:00:00"
+    );
+    // Below that boundary the SAME parser returns `ZeroDate`'s
+    // `mysql.TypeDate`, so an 8-digit operand still renders date-only -- the
+    // behaviour a bare `coerce_str` already had, and the reason this split
+    // is the number's magnitude and not the interval unit.
+    assert_eq!(e("date_add(20210101, interval 5 day)"), "STR:2021-01-06");
+    // ... while a CLOCK unit renders a time-of-day for that same date-only
+    // operand, which is Go's `IsClockUnit(unit)` promotion.
+    assert_eq!(
+        e("date_add(20210101, interval 5 hour)"),
+        "STR:2021-01-01 05:00:00"
+    );
     assert_eq!(e("date_add(NULL, interval 5 day)"), "NULL");
     assert_eq!(e("date_add('2021-01-01', interval NULL day)"), "NULL");
     // A decimal interval value rounds to the nearest day, ties away
