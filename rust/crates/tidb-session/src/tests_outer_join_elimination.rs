@@ -35,6 +35,12 @@
 //! `1|1` twice in TiDB, and `u2`'s `uk(a, b)` really does not when both key
 //! parts are matched but really does when only one is.
 //!
+//! It also carries the two `explain_easy` verdicts this batch MEASURED and
+//! deliberately did not change ([`an_uncorrelated_in_subquery_answers_tidbs_rows_through_a_different_plan`]
+//! and [`a_correlated_scalar_aggregate_answers_tidbs_rows_through_an_apply`]),
+//! because a plan that is merely different needs its rows pinned even more
+//! than one that is the same.
+//!
 //! # The two gaps this measures
 //!
 //! * **`<=>` is not a join key.** TiDB does not eliminate a `n1.a <=> n2.a`
@@ -213,4 +219,91 @@ fn distinct_over_a_non_unique_key_is_a_plan_gap() {
     let sql = "select distinct d1.a, d1.b from d1 left outer join d2 on d1.a = d2.a";
     assert_eq!(rows(&mut session, sql), ["1|1", "2|2", "NULL|3"]);
     assert_eq!(tables_read(&mut session, sql), ["d1", "d2"]);
+}
+
+/// The IN-subquery verdict this batch measured but did NOT change, kept as a
+/// running assertion so the shape cannot drift unnoticed.
+///
+/// `explain_easy` records `select c1 from t1 where c1 in (select c2 from t2)`
+/// as a semi join over `IndexFullScan table:t1, index:c2(c2)`; this tier
+/// answers it with `Batch_Point_Get table:t1`, because the subquery is
+/// UNCORRELATED and `run_select_traced` folds it to a literal list before the
+/// access path is chosen (Go instead rewrites IN to a join under
+/// `tidb_opt_insubq_to_join_and_agg`, so it never runs the subquery). That is
+/// a DIFFERENT plan, not a wrong one -- these three cases are the ones where
+/// the difference could show, and all three match gorun's capture of real
+/// TiDB exactly:
+///
+/// * a NULL among the subquery's values (`s2.c2` is NULL for `c1 = 2`);
+/// * a subquery that returns ONLY NULL;
+/// * a subquery that returns NO row.
+#[test]
+fn an_uncorrelated_in_subquery_answers_tidbs_rows_through_a_different_plan() {
+    let mut session = Session::new();
+    for sql in [
+        "create table s1 (c1 int primary key, c2 int, c3 int, index c2 (c2))",
+        "create table s2 (c1 int unique, c2 int)",
+        "insert into s1 values (1,1,1),(2,2,2),(3,3,3),(4,4,4)",
+        "insert into s2 values (1,1),(2,null),(3,3),(4,3)",
+    ] {
+        session.run(sql).unwrap();
+    }
+    // gorun: RS:1;3 -- `c1 = 2` is NOT selected: `2 in (1, NULL, 3, 3)` is
+    // UNKNOWN, not true, and `c1 = 4` is not among the values at all.
+    assert_eq!(
+        rows(
+            &mut session,
+            "select c1 from s1 where c1 in (select c2 from s2)"
+        ),
+        ["1", "3"]
+    );
+    // gorun: RS: (no rows).
+    assert_eq!(
+        rows(
+            &mut session,
+            "select c1 from s1 where c1 in (select c2 from s2 where c2 is null)"
+        ),
+        Vec::<String>::new()
+    );
+    session.run("delete from s2").unwrap();
+    // gorun: RS: (no rows).
+    assert_eq!(
+        rows(
+            &mut session,
+            "select c1 from s1 where c1 in (select c2 from s2)"
+        ),
+        Vec::<String>::new()
+    );
+}
+
+/// The decorrelation verdict this batch measured but did NOT change.
+///
+/// `explain_easy` records
+/// `select (select count(1) k from t1 s where s.c1 = t1.c1 having k != 0) from t1`
+/// as a `MergeJoin` -- Go's `rule_decorrelate` turns the correlated scalar
+/// aggregate into a left outer join, and that join's ORDER requirement on
+/// `t1.c1` is what forces TiDB's `TableFullScan table:t1 keep order:true`
+/// (captured with gorun: both scans of the recorded plan are ordered table
+/// scans). This tier runs the subquery per outer row through an `Apply`
+/// (`driver::subquery`), so it has no order requirement and picks the
+/// covering `c2` index for `t1` instead -- which is the whole of the recorded
+/// access-property divergence. The ROWS are the same, and Go's own answer for
+/// them is pinned here.
+#[test]
+fn a_correlated_scalar_aggregate_answers_tidbs_rows_through_an_apply() {
+    let mut session = Session::new();
+    for sql in [
+        "create table t1 (c1 int primary key, c2 int, c3 int, index c2 (c2))",
+        "insert into t1 values (1,1,1),(2,2,2),(3,3,3)",
+    ] {
+        session.run(sql).unwrap();
+    }
+    // gorun: RS:1;1;1.
+    assert_eq!(
+        rows(
+            &mut session,
+            "select (select count(1) k from t1 s where s.c1 = t1.c1 having k != 0) from t1"
+        ),
+        ["1", "1", "1"]
+    );
 }
