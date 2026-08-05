@@ -162,6 +162,22 @@ fn datetime_date_timestamp_compared_with_year_returns_tidbs_rows() {
         rows(&mut session, "select * from ttt where ttt.a < ttt.b"),
         vec![vec!["2019-11-11 11:11:11".to_string(), "2022".to_string()]]
     );
+
+    // `getBaseCmpType`'s arm is symmetric (`lft.GetType() == mysql.TypeYear &&
+    // types.IsTemporalWithDate(rft.GetType())` is its second half), so writing
+    // the YEAR on the LEFT selects the same domain and must return the mirror
+    // of `t.a < t.b` exactly.
+    assert_eq!(
+        rows(&mut session, "select * from t where t.b > t.a"),
+        vec![
+            vec!["2000-05-03 16:44:44".to_string(), "2018".to_string()],
+            vec!["2020-10-01 11:11:11".to_string(), "2070".to_string()],
+        ]
+    );
+    assert_eq!(
+        rows(&mut session, "select * from tt where tt.b < tt.a"),
+        vec![vec!["2019-11-11".to_string(), "2000".to_string()]]
+    );
 }
 
 /// The boundaries the recorded script does not reach: YEAR 0, a NULL YEAR, the
@@ -178,10 +194,13 @@ fn datetime_date_timestamp_compared_with_year_returns_tidbs_rows() {
 ///     -- the obvious "start of the year" reading -- would put it in `=`
 ///     instead. Only `FromDate(2020, 0, 0, ...)`'s month-0/day-0 injection
 ///     answers `>`.
-///   * `id = 3` (`2000-01-01 00:00:00` vs YEAR `0`) is on the `>` side.
+///   * `id = 3` (`1990-01-01 00:00:00` vs YEAR `0`) is on the `>` side.
 ///     `AdjustYear(0, false)` returns `0` unchanged (`time.go:1279-1281`), and
 ///     `ParseTimeFromYear` maps that `0` to the ZERO DATE, below every real
-///     datetime -- not to the year 2000, and not to a failure.
+///     datetime. The datetime is deliberately BEFORE 2000: a `0` misread as
+///     the two-digit year 2000 -- the reading `AdjustYear` would give it if
+///     `adjustZero` were true -- puts this row on the `<` side instead, and a
+///     `0` that failed to convert drops it from both.
 #[test]
 fn year_zero_null_same_year_and_the_year_below() {
     let mut session = Session::new();
@@ -191,7 +210,7 @@ fn year_zero_null_same_year_and_the_year_below() {
     for sql in [
         "insert into b values(1, '2020-01-01 00:00:00', 2020)",
         "insert into b values(2, '2019-12-31 23:59:59', 2020)",
-        "insert into b values(3, '2000-01-01 00:00:00', 0)",
+        "insert into b values(3, '1990-01-01 00:00:00', 0)",
         "insert into b values(4, '2000-01-01 00:00:00', null)",
     ] {
         session
