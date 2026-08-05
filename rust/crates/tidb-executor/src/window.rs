@@ -204,7 +204,7 @@ use tidb_ast::{
     Expr, FrameBound, FrameKind, OrderItem, SelectField, SelectStmt, WindowDef, WindowFrame,
     WindowOver, WindowSpec,
 };
-use tidb_datatype::{Datum, EvalType, FieldType, FieldTypeCode, FieldTypeFlags};
+use tidb_datatype::{Datum, EvalType, FieldType, FieldTypeCode, FieldTypeFlags, TimeType};
 use tidb_expr::rewriter::{rewrite_expr_resolved, ColumnResolver};
 
 /// What this build refuses, naming the slice it does implement.
@@ -1306,6 +1306,17 @@ fn compute_one(
         partitions.entry(encoded).or_default().push(index);
     }
 
+    // Go `buildLeadLag` (`aggfuncs/builder.go:823-831`) converts a CONSTANT
+    // default to the merged type ONCE, at build time
+    // (`et.Value.ConvertTo(evalCtx.TypeCtx(), aggFuncDesc.RetTp)`); a default
+    // that is NOT a constant is never converted at all -- it is read through
+    // the evaluator exactly like the value argument, and therefore keeps its
+    // own temporal kind and scale. Both halves are captured from TiDB:
+    // `LAG(datetime6_col, 1, datetime0_col)` answers `2020-01-01 10:20:30`
+    // for the out-of-range row rather than the merged type's `.000000`, while
+    // `LAG(decimal_10_2_col, 1, 1.5)` answers the scale-padded `1.50`.
+    let constant_default = rewritten_args.get(1).is_none_or(column_free);
+
     let mut values = vec![Datum::Null; rows.len()];
     for indices in partitions.values_mut() {
         sort_partition(indices, &order_keys, &order_collations, &call.spec.order_by)?;
@@ -1341,6 +1352,7 @@ fn compute_one(
                 &PartitionGeometry {
                     peers: &peers,
                     range_keys,
+                    constant_default,
                 },
                 &arg_values,
                 agg_kind.as_ref().map(|kind| {
@@ -1390,9 +1402,35 @@ impl WindowKind {
         arg_types: &[Option<FieldType>],
         arg_exprs: &[tidb_expr::expression::Expression],
     ) -> Result<FieldType, DriverError> {
-        // The argument's own type, which every value function carries through
-        // (Go's `typeInfer4MaxMin` tail: clone it and drop NOT NULL, since an
-        // out-of-frame or out-of-range position is NULL).
+        // Go `typeInfer4MaxMin` (`aggregation/base_func.go:361-384`), which
+        // every window VALUE function shares -- `FIRST_VALUE`, `LAST_VALUE`,
+        // `NTH_VALUE`, and `LEAD`/`LAG` without a written default. Its head
+        // rewrites the ARGUMENT (a scalar `FLOAT` is cast to `DOUBLE`) and so
+        // lives where arguments are built; its tail is the result type:
+        //
+        // ```go
+        // a.RetTp = a.Args[0].GetType(ctx.GetEvalCtx())
+        // if a.Name == ast.AggFuncMax || ... || a.Name == ast.WindowFuncLag {
+        //     a.RetTp = a.Args[0].GetType(ctx.GetEvalCtx()).Clone()
+        //     a.RetTp.DelFlag(mysql.NotNullFlag)
+        // }
+        // // issue #13027, #13961
+        // if (a.RetTp.GetType() == mysql.TypeEnum || a.RetTp.GetType() == mysql.TypeSet) &&
+        //     (a.Name != ast.AggFuncFirstRow && a.Name != ast.AggFuncMax && a.Name != ast.AggFuncMin) {
+        //     a.RetTp = types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlen(mysql.MaxFieldCharLength).BuildP()
+        // }
+        // ```
+        //
+        // NOT NULL goes because an out-of-frame or out-of-range position is
+        // NULL. The ENUM/SET rewrite is UNCONDITIONAL here: the three names
+        // Go excludes -- `FIRSTROW`, `MAX`, `MIN` -- are aggregates, and none
+        // of them reaches this closure (the windowed `MAX`/`MIN` take the
+        // `WindowKind::Agg` arm, which is why `MAX(enum_col) OVER ()` still
+        // reports `enum('x','y','z')` where `LAG(enum_col, 1)` reports
+        // `char(255)`; both captured from TiDB via `gorun`).
+        //
+        // Go's `NewFieldTypeBuilder` starts from a ZERO field type, so the
+        // rewritten result keeps a scale of 0 rather than an unspecified one.
         let carried = |index: usize| {
             let mut field_type = arg_types
                 .get(index)
@@ -1400,6 +1438,13 @@ impl WindowKind {
                 .flatten()
                 .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
             field_type.del_flags(FieldTypeFlags::NOT_NULL);
+            if matches!(field_type.code(), FieldTypeCode::Enum | FieldTypeCode::Set) {
+                let mut rewritten = FieldType::new(FieldTypeCode::String);
+                // `mysql.MaxFieldCharLength`.
+                rewritten.set_flen(255);
+                rewritten.set_decimal(0);
+                return rewritten;
+            }
             field_type
         };
         Ok(match self {
@@ -1543,7 +1588,11 @@ fn evaluate_partition(
     values: &mut [Datum],
 ) -> Result<(), DriverError> {
     let total = indices.len();
-    let PartitionGeometry { peers, range_keys } = geometry;
+    let PartitionGeometry {
+        peers,
+        range_keys,
+        constant_default,
+    } = geometry;
 
     let arg_at = |slot: usize, position: usize| arg_values[slot][indices[position]].clone();
     for position in 0..total {
@@ -1568,7 +1617,14 @@ fn evaluate_partition(
                     // Go converts the default CONSTANT to the full merged
                     // type (`Value.ConvertTo(RetTp)` in `buildLeadLag`), so
                     // its own display metadata applies to it.
-                    None if default.is_some() => coerce_to_type(arg_at(1, position), result_type),
+                    None if default.is_some() => {
+                        let written = arg_at(1, position);
+                        if *constant_default {
+                            coerce_to_type(written, result_type)
+                        } else {
+                            coerce_to_domain(written, result_type)
+                        }
+                    }
                     None => Datum::Null,
                 }
             }
@@ -1615,8 +1671,18 @@ fn evaluate_partition(
                         .filter(|at| *at < high),
                 };
                 // An empty frame, or a frame shorter than NTH_VALUE's
-                // position, is NULL.
-                at.map_or(Datum::Null, |at| arg_at(0, at))
+                // position, is NULL. The row that IS in frame is read through
+                // the result's own domain, exactly as `LAG`/`LEAD` reads its
+                // -- Go gives `firstValue`/`lastValue`/`nthValue` the SAME
+                // `buildValueEvaluator(RetTp)` (`func_value.go:274`, `:321`,
+                // `:366`) over the SAME `WrapCastForAggArgs`-wrapped argument.
+                // The two only ever differ when the inferred result is not the
+                // argument's own type, which for these three is exactly the
+                // ENUM/SET rewrite: `FIRST_VALUE(enum_col)` is a `char(255)`
+                // holding the LABEL, not the enum's own value-and-name pair.
+                at.map_or(Datum::Null, |at| {
+                    coerce_to_domain(arg_at(0, at), result_type)
+                })
             }
             WindowKind::RowNumber
             | WindowKind::Rank
@@ -1635,14 +1701,102 @@ fn evaluate_partition(
 /// through a width-and-scale-applying conversion. That distinction is
 /// visible: `LAG(int_col, 1, 1.5)` returns `10`, not the scale-padded
 /// `10.0` the full `DECIMAL(12,1)` would produce.
+///
+/// A TEMPORAL operand is read even more literally than that. Go does not hand
+/// the raw operand to the evaluator at all: `WrapCastForAggArgs`
+/// (`aggregation/base_func.go:496-538`) wraps it FIRST, and the two temporal
+/// wrappers decline to wrap far more often than they wrap --
+///
+/// ```go
+/// func WrapWithCastAsTime(ctx BuildContext, expr Expression, tp *types.FieldType) Expression {
+///     exprTp := expr.GetType(ctx.GetEvalCtx()).GetType()
+///     if tp.GetType() == exprTp {
+///         return expr
+///     } else if (exprTp == mysql.TypeDate || exprTp == mysql.TypeTimestamp) && tp.GetType() == mysql.TypeDatetime {
+///         return expr
+///     }
+///     switch x := expr.GetType(ctx.GetEvalCtx()).EvalType(); x {
+///     ...
+///     case types.ETDatetime, types.ETTimestamp, types.ETDuration:
+///         tp.SetDecimal(expr.GetType(ctx.GetEvalCtx()).GetDecimal())
+/// ```
+///
+/// -- and `WrapWithCastAsDuration` returns a `TIME` operand unwrapped the same
+/// way. So a temporal operand keeps its own SCALE, and (through the second
+/// shortcut) its own KIND: TiDB answers `2020-01-01 10:20:30.123456` for
+/// `LAG(datetime6_col, 1)` and a bare `2020-03-04` for the DATE operand of a
+/// `LAG(date_col, 1, time3_col)` whose result type is `datetime(3)` -- both
+/// captured via `gorun`. Where the wrappers DO wrap, the cast's fsp is taken
+/// from the SOURCE, never from the merged result, which is why
+/// `LAG(time3_col, 1, date_col)` answers `... 01:02:03.456` and not the
+/// result type's six digits.
+///
+/// This applies to the DEFAULT operand too, and for the same reason: only a
+/// CONSTANT default gets `Value.ConvertTo(RetTp)` in `buildLeadLag`, and a
+/// constant reaches here as a string or a number rather than as a temporal
+/// datum.
 fn coerce_to_domain(value: Datum, target: &FieldType) -> Datum {
+    let temporal_target = matches!(
+        target.eval_type(),
+        EvalType::Datetime | EvalType::Timestamp | EvalType::Duration
+    );
+    if temporal_target {
+        let unwrapped = match &value {
+            Datum::Time(time) => {
+                time.kind() == time_kind_of(target.code())
+                    // `WrapWithCastAsTime`'s second shortcut.
+                    || (target.code() == FieldTypeCode::Datetime
+                        && matches!(time.kind(), TimeType::Date | TimeType::Timestamp))
+            }
+            // `WrapWithCastAsDuration`'s only shortcut.
+            Datum::Duration(_) => target.code() == FieldTypeCode::Duration,
+            _ => false,
+        };
+        if unwrapped {
+            return value;
+        }
+    }
     let mut domain = FieldType::new(target.code());
     domain.set_flen(tidb_datatype::UNSPECIFIED_LENGTH);
-    domain.set_decimal(tidb_datatype::UNSPECIFIED_FSP);
+    // The cast Go builds when it does wrap takes its fsp from the SOURCE. The
+    // two wrappers' tables agree on every temporal source, and a temporal
+    // result type can only be reached from a temporal operand, so the
+    // temporal rows are the whole reachable table.
+    domain.set_decimal(match (&value, temporal_target) {
+        (Datum::Time(time), true) => i64::from(time.fsp()),
+        (Datum::Duration(duration), true) => i64::from(duration.fsp()),
+        _ => tidb_datatype::UNSPECIFIED_FSP,
+    });
     if target.is_unsigned() {
         domain.add_flags(FieldTypeFlags::UNSIGNED);
     }
     coerce_to_type(value, &domain)
+}
+
+/// Whether an expression reads no COLUMN, which is exactly when Go's
+/// `FoldConstant` has already collapsed it into an `*expression.Constant` by
+/// the time `buildLeadLag` type-asserts on it. A non-deterministic call is
+/// still folded (into a constant carrying a deferred expression), which is
+/// why `LAG(datetime6_col, 1, NOW())` pads its default to `.000000` exactly
+/// like a written literal would -- captured from TiDB via `gorun`.
+fn column_free(expr: &tidb_expr::expression::Expression) -> bool {
+    use tidb_expr::expression::Expression;
+    match expr {
+        Expression::Column(_) | Expression::CorrelatedColumn(_) => false,
+        Expression::Constant(_) => true,
+        Expression::ScalarFunction(function) => function.args.iter().all(column_free),
+    }
+}
+
+/// The `TimeType` a temporal field-type code stores, so a `DATE` operand and
+/// a `DATE` result compare equal the way Go compares `tp.GetType()` with the
+/// expression's own `GetType()`.
+fn time_kind_of(code: FieldTypeCode) -> TimeType {
+    match code {
+        FieldTypeCode::Date => TimeType::Date,
+        FieldTypeCode::Timestamp => TimeType::Timestamp,
+        _ => TimeType::DateTime,
+    }
 }
 
 /// Converts a value into `target` exactly, leaving it untouched when the
@@ -1856,6 +2010,9 @@ struct PartitionGeometry<'a> {
     /// The single sorted key a `RANGE` frame seeks in; `None` for every other
     /// frame kind, which never looks at a key VALUE.
     range_keys: Option<RangeKeys<'a>>,
+    /// Whether `LAG`/`LEAD`'s written default is a CONSTANT -- Go's
+    /// `buildLeadLag` converts only that one to the merged type.
+    constant_default: bool,
 }
 
 /// The peer group each SORTED POSITION of a partition belongs to, as a
