@@ -135,6 +135,18 @@ pub struct KvIndex {
     /// hidden from the *planner*: it never becomes an access path, and naming
     /// it in `USE INDEX`/`FORCE INDEX` is Go's 1176 "Key ... doesn't exist".
     pub visible: bool,
+    /// Go `IndexInfo.Global`: a `GLOBAL` index of a PARTITIONED table, whose
+    /// single entry set spans every partition instead of living inside one.
+    ///
+    /// This tier does not maintain such an index differently -- it has one
+    /// physical entry set per table either way -- so the flag is carried for
+    /// the one decision Go makes with it that is visible on the wire:
+    /// `checkIndexLookUpPushDownSupported` (`planbuilder.go:1274`) refuses
+    /// `INDEX_LOOKUP_PUSHDOWN` on a global index with 1815, because a
+    /// coprocessor-local lookup cannot follow a handle out of its own region's
+    /// partition. Always false on an unpartitioned table: Go's DDL records
+    /// `GLOBAL` only where partitioning makes it mean something.
+    pub global: bool,
 }
 
 impl KvIndex {

@@ -743,3 +743,103 @@ fn the_warning_channel_can_already_carry_both_captured_hint_warnings() {
     );
     assert_eq!(session.wire_warning_count(), 2);
 }
+
+/// A COMMENT-style `use_index` restricts the candidate set exactly as the
+/// `FROM`-clause spelling does.
+///
+/// Go appends the comment hints to the very same `indexHints` slice
+/// (`getPossibleAccessPaths`, `planbuilder.go:1445`) and iterates it once, so
+/// there is one rule, not two. Before this was wired the comment spelling was
+/// only ever a source of WARNINGS: the plan disregarded it and read the table.
+///
+/// MUTATION: drop the comment-hint arm of `HintAccumulator` and this reads
+/// `TableFullScan` instead of `IndexFullScan table:t, index:idx_b(b)`.
+#[test]
+fn a_comment_index_hint_constrains_the_access_path() {
+    let mut session = hinted_session();
+
+    // Control: unhinted, `SELECT *` over a table with no `WHERE` is the
+    // cheapest full scan and reaches for no index at all.
+    assert!(!plan_uses_index(
+        &mut session,
+        "EXPLAIN SELECT * FROM t",
+        "idx_b"
+    ));
+
+    assert!(plan_uses_index(
+        &mut session,
+        "EXPLAIN SELECT /*+ use_index(t, idx_b) */ * FROM t",
+        "idx_b"
+    ));
+    // `index_lookup_pushdown` is Go's `ast.HintUse` with `PushDownLookUp`
+    // set, so it restricts identically -- which is the whole reason the
+    // recorded plan for it reads a NON-COVERING index.
+    assert!(plan_uses_index(
+        &mut session,
+        "EXPLAIN SELECT /*+ index_lookup_pushdown(t, idx_b) */ * FROM t",
+        "idx_b"
+    ));
+    // And the hint must reach the table it NAMES, not any table: an alias
+    // makes `use_index(t, ...)` match nothing (Go matches the `DataSource`'s
+    // reported name, which is the alias when one is written).
+    assert!(!plan_uses_index(
+        &mut session,
+        "EXPLAIN SELECT /*+ use_index(t, idx_b) */ * FROM t AS x",
+        "idx_b"
+    ));
+}
+
+/// `INDEX_LOOKUP_PUSHDOWN` naming a GLOBAL index of a partitioned table is
+/// Go's 1815 `checkIndexLookUpPushDownSupported` refusal -- and the plan that
+/// follows reads the TABLE, because the refusal happens AFTER the hint has
+/// already deleted every other path.
+///
+/// Recorded verbatim in
+/// `tests/integrationtest/r/executor/index_lookup_pushdown_partition.result`.
+///
+/// MUTATION: return `true` unconditionally from
+/// `check_index_look_up_push_down_supported` and the plan reads `idx_c` with
+/// no warning at all; drop only the warning and the plan stays right while
+/// the wire loses the explanation.
+#[test]
+fn index_lookup_pushdown_refuses_a_global_index_with_1815() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE tp (a INT PRIMARY KEY, b INT, c INT, KEY idx_b(b), \
+             KEY idx_c(c) GLOBAL) PARTITION BY HASH(a) PARTITIONS 4",
+        )
+        .unwrap();
+
+    // Control: the same hint on a LOCAL index of the same table is honoured,
+    // so the refusal below is about `GLOBAL` and not about partitioning.
+    assert!(plan_uses_index(
+        &mut session,
+        "EXPLAIN SELECT /*+ index_lookup_pushdown(tp, idx_b) */ * FROM tp",
+        "idx_b"
+    ));
+    assert!(reported(&session).is_empty());
+
+    let objects = access_objects(
+        &mut session,
+        "EXPLAIN SELECT /*+ index_lookup_pushdown(tp, idx_c) */ * FROM tp",
+    );
+    assert!(
+        objects.iter().all(|object| !object.contains("index:idx_c")),
+        "the refused hint must not leave the global index in the plan: {objects:?}"
+    );
+    assert!(
+        objects.iter().any(|object| object.contains("table:tp")),
+        "Go's emptied candidate set falls back to the table path: {objects:?}"
+    );
+    assert_eq!(
+        reported(&session),
+        vec![(
+            "Warning",
+            1815,
+            "hint INDEX_LOOKUP_PUSHDOWN is inapplicable, \
+             the global index in partition table is not supported"
+                .to_owned()
+        )]
+    );
+}

@@ -1038,6 +1038,9 @@ pub fn run_create_table_in(
                     crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
                     fk_offsets.len()
                 ],
+                // Local to the table it constrains: an `FKInfo` carries no
+                // `GLOBAL` to record.
+                global: false,
                 visible: true,
             });
         }

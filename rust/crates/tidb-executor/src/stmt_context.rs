@@ -301,6 +301,9 @@ pub struct StmtContext {
     /// default NO group qualifies, so a stock session never reorders --
     /// see [`crate::driver::join_reorder`].
     join_reorder_threshold: i32,
+    /// Go `SessionVars.PartitionPruneMode == Static`: see
+    /// [`StmtContext::static_partition_prune`].
+    static_partition_prune: bool,
     /// The sequences reachable from this statement, keyed by lowercase
     /// `db.name`, plus the session's per-sequence `LASTVAL` record.
     ///
@@ -470,6 +473,8 @@ impl StmtContext {
             cte_max_recursion_depth: 1000,
             join_reorder_threshold: tidb_vardef::defaults::DEF_TIDB_OPT_JOIN_REORDER_THRESHOLD
                 as i32,
+            // Go's shipped `tidb_partition_prune_mode` is `dynamic`.
+            static_partition_prune: false,
             sequences: Rc::default(),
             memory: StatementMemory::default(),
             sql_mode: tidb_parser::SqlMode::default(),
@@ -728,6 +733,31 @@ impl StmtContext {
     #[must_use]
     pub fn join_reorder_threshold(&self) -> i32 {
         self.join_reorder_threshold
+    }
+
+    /// Sets `@@tidb_partition_prune_mode` for this statement, as the one bit
+    /// the planner reads off it.
+    #[must_use]
+    pub fn with_static_partition_prune(mut self, static_prune: bool) -> Self {
+        self.static_partition_prune = static_prune;
+        self
+    }
+
+    /// Go `SessionVars.IsDynamicPartitionPruneEnabled()`, inverted:
+    /// `@@tidb_partition_prune_mode = 'static'`.
+    ///
+    /// The mode does not change WHICH rows a partitioned read returns -- both
+    /// modes read the surviving partitions and nothing else. It changes the
+    /// PLAN SHAPE Go builds and prints: `static` runs
+    /// `rule_partition_processor` and replaces the one `DataSource` with a
+    /// `PartitionUnion` over one child per surviving partition, each naming
+    /// its own partition in its access object; `dynamic` keeps one
+    /// `DataSource` reading all of them and names the set once, on the
+    /// reader above (`partition:all`). This tier's read is the same either
+    /// way, so this is consulted only where the shape is PRINTED.
+    #[must_use]
+    pub fn static_partition_prune(&self) -> bool {
+        self.static_partition_prune
     }
 
     /// Sets whether `ONLY_FULL_GROUP_BY` is in effect, which a session reads

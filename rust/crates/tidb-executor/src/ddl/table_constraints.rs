@@ -108,6 +108,7 @@ pub(crate) fn table_indexes(
         offsets: Vec<usize>,
         prefix_lengths: Vec<i64>,
         visible: bool,
+        global: bool,
     ) {
         indexes.push(KvIndex {
             id: (indexes.len() + 1) as i64,
@@ -116,6 +117,7 @@ pub(crate) fn table_indexes(
             column_offsets: offsets,
             prefix_lengths,
             visible,
+            global,
         });
     }
     /// Go `GetName4AnonymousIndex` (`pkg/ddl/executor.go`): an index written
@@ -303,6 +305,7 @@ pub(crate) fn table_indexes(
             offsets,
             prefix_lengths,
             is_visible(&index.options),
+            index.options.global,
         );
     }
     for def in &create.columns {
@@ -325,6 +328,7 @@ pub(crate) fn table_indexes(
                             vec![offset],
                             vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
                             true,
+                            false,
                         );
                     }
                     // A primary key that is not the row handle still needs an
@@ -344,6 +348,7 @@ pub(crate) fn table_indexes(
                                 vec![offset],
                                 vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
                                 true,
+                                false,
                             );
                         }
                     }

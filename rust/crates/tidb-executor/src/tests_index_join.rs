@@ -88,6 +88,7 @@ fn inner_table(rows: &[(i64, i64)]) -> KvTable {
                 column_offsets: vec![1],
                 prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
                 visible: true,
+                global: false,
             },
             &tidb_expr::NoColumns,
         )
@@ -600,6 +601,7 @@ mod decision {
                     column_offsets: vec![1],
                     prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
                     visible: true,
+                    global: false,
                 },
                 &tidb_expr::NoColumns,
             )

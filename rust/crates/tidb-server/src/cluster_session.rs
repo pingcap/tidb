@@ -447,6 +447,7 @@ pub(crate) fn kv_index(
             .map(|column| i64::from(column.length))
             .collect(),
         visible: !index.invisible,
+        global: index.global,
     })
 }
 

@@ -1293,7 +1293,62 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // The remaining 13 divergences in that topic are unrelated to join order:
     // eight are TiDB reaching an `IndexRangeScan ... range: decided by [...]`
     // (an index join's probe side) and five are a covering-index choice.
-    const KNOWN_DIVERGENCES: usize = 35;
+    // 35 -> 28: partition-aware plan TEXT plus the pushdown hint. Seven
+    // statements across the two partition-planning topics, in four named
+    // pieces; the total moved by exactly seven, so nothing outside them did.
+    //
+    // 1. COMMENT-style index hints now restrict the access paths (5 of the 7).
+    //    Go appends `PlanHints.IndexHintList` to the very same `indexHints`
+    //    slice `getPossibleAccessPaths` iterates (`planbuilder.go:1445`), so
+    //    `/*+ use_index(t, i) */` and `USE INDEX(i)` are ONE rule and both set
+    //    `path.Forced`. This tier had wired only the `FROM` spelling, so the
+    //    comment spelling produced warnings and a plan that disregarded it.
+    //    `index_lookup_pushdown` is Go's `ast.HintUse` with `PushDownLookUp`
+    //    (`hint.go:945`), which is why the recording's plans read a
+    //    NON-COVERING index -- `path.Forced` is exactly what carries such a
+    //    path through skyline pruning's `keepIndex`.
+    //
+    // 2. `INDEX_LOOKUP_PUSHDOWN` on a GLOBAL index is Go's 1815 refusal
+    //    (`checkIndexLookUpPushDownSupported`), and the plan that follows
+    //    reads the TABLE: Go sets `hasUseOrForce`/`path.Forced` BEFORE the
+    //    check and skips only the `append`, so the candidate set stays
+    //    restricted, empties, and hits the "we have to use table scan"
+    //    fallback. `KvIndex` gained Go's `IndexInfo.Global` to see it.
+    //
+    // 3. A `Batch_Point_Get` names the partitions its handles route into
+    //    (`BatchPointGetPlan.AccessObject`), deduplicated, in DEFINITION order
+    //    and declared case: `table:t, partition:p1,P2`.
+    //
+    // 4. Under `@@tidb_partition_prune_mode = 'static'` a partitioned scan
+    //    fans out into one scan per SURVIVING partition under a
+    //    `PartitionUnion`, each naming its own -- Go's
+    //    `rule_partition_processor`. The shipped `dynamic` mode is untouched,
+    //    which is why the 1,035 statements of `partition_boundaries` and the
+    //    268 of `partition_with_expression` did not move.
+    //
+    // The three that did NOT close, each for a reason outside this seam:
+    //
+    // * `planner/core/partition_pruner`'s `select * from t2 where not (a < 5)`
+    //   wants `p1 + p2` and gets all three. Go's `expression.PushDownNot`
+    //   normalizes `NOT (a < 5)` to `ge(a, 5)` during expression REWRITING --
+    //   the recording's own `Selection` reads `ge(test_partition_1.t2.a, 5)`
+    //   where this tier prints `NOT (a<5)` -- and the range builder that
+    //   drives pruning is handed the un-normalized form. The fan-out is right;
+    //   the pruning input is not, and repairing it is a rewriter change that
+    //   would move every printed `NOT` in every plan.
+    // * two `executor/index_lookup_pushdown_partition` ROW-ORDER divergences,
+    //   both of them a direct consequence of piece 1 above and both explained
+    //   by one missing rule: Go's `IndexLookUpExecutor` returns each
+    //   partition's rows in HANDLE order (it sorts the handles of a task
+    //   before the table read), so `select ... from tp3` reads `4 | 1,5 | 2,6
+    //   | 3` -- per-partition, handle-ascending. This tier walks the index and
+    //   reads each row as it finds it, so it answers in index order. One of
+    //   the two had been agreeing only because the hint was ignored and the
+    //   TABLE scan, which does read per-partition in handle order, answered
+    //   instead. Sorting an index lookup's handles is an executor change whose
+    //   blast radius is every non-covering index read in the corpus, so it is
+    //   named here rather than attempted alongside the plan text.
+    const KNOWN_DIVERGENCES: usize = 28;
 
     assert!(
         total.divergences.len() <= KNOWN_DIVERGENCES,

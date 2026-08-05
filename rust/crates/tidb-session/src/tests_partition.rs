@@ -1045,3 +1045,114 @@ fn renaming_a_partitioning_column_is_refused() {
     // The column the expression does NOT read renames.
     session.run("ALTER TABLE hp RENAME COLUMN b TO b2").unwrap();
 }
+
+/// The NON-EMPTY `access object` cells of a plan, which is where the
+/// partition annotation lands. The empty ones belong to the operators above
+/// the leaves (`Projection`, `Selection`, the union itself) and say nothing
+/// about which partition was read.
+fn plan_access_objects(session: &mut Session, sql: &str) -> Vec<String> {
+    crate::tests_support::row_text(session.run(sql))
+        .into_iter()
+        .map(|row| row[3].clone())
+        .filter(|object| !object.is_empty())
+        .collect()
+}
+
+/// Go `BatchPointGetPlan.AccessObject()`: a batch point get names the
+/// partitions its handles route into, deduplicated, in DEFINITION order and
+/// in the case they were DECLARED in.
+///
+/// Recorded verbatim in
+/// `tests/integrationtest/r/planner/core/partition_pruner.result`, whose
+/// partitions are deliberately spelled `P0`, `p1`, `P2`:
+///
+/// ```text
+/// explain format = 'brief' select * from t where a IN (1, 2);
+///   Batch_Point_Get  2.00  root  table:t, partition:p1,P2  handle:[1 2], ...
+/// ```
+///
+/// MUTATION: return an empty vector from `KvTable::handle_partition_names`
+/// and the annotation vanishes; sort the ordinals by first appearance instead
+/// of ascending, or lowercase the names, and the text stops matching TiDB's.
+#[test]
+fn a_batch_point_get_names_the_partitions_its_handles_reach() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE t (a INT PRIMARY KEY, b INT, KEY (b)) \
+             PARTITION BY HASH(a) (PARTITION P0, PARTITION p1, PARTITION P2)",
+        )
+        .unwrap();
+    session
+        .run("INSERT INTO t VALUES (1,1),(2,2),(3,3)")
+        .unwrap();
+
+    let objects = plan_access_objects(&mut session, "EXPLAIN SELECT * FROM t WHERE a IN (1, 2)");
+    assert_eq!(objects, vec!["table:t, partition:p1,P2".to_owned()]);
+    // A repeated handle contributes no second partition name.
+    assert_eq!(
+        plan_access_objects(&mut session, "EXPLAIN SELECT * FROM t WHERE a IN (1, 2, 1)"),
+        vec!["table:t, partition:p1,P2".to_owned()]
+    );
+    // Handles 1, 2, 3 land in p1, P2, P0 -- so the ASCENDING handle order and
+    // the DEFINITION order disagree, and Go sorts the ORDINALS. Without that
+    // sort this reads `p1,P2,P0`.
+    assert_eq!(
+        plan_access_objects(&mut session, "EXPLAIN SELECT * FROM t WHERE a IN (1, 2, 3)"),
+        vec!["table:t, partition:P0,p1,P2".to_owned()]
+    );
+    // Control: an UNPARTITIONED table prints no partition clause at all.
+    session
+        .run("CREATE TABLE u (a INT PRIMARY KEY, b INT)")
+        .unwrap();
+    assert_eq!(
+        plan_access_objects(&mut session, "EXPLAIN SELECT * FROM u WHERE a IN (1, 2)"),
+        vec!["table:u".to_owned()]
+    );
+}
+
+/// Go's `rule_partition_processor` under `@@tidb_partition_prune_mode =
+/// 'static'`: one scan per SURVIVING partition, under a `PartitionUnion`,
+/// each naming its own partition. Under `dynamic` -- the shipped default --
+/// there is one scan and no partition clause on it.
+///
+/// MUTATION: ignore `StmtContext::static_partition_prune` and the dynamic
+/// control below gains three scans it must not have; drop the pruning filter
+/// from `surviving_partition_names` and the range case names `p0` too.
+#[test]
+fn static_prune_mode_fans_a_partitioned_scan_out_per_partition() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE t2 (a INT) PARTITION BY RANGE (a) (\
+             PARTITION p0 VALUES LESS THAN (0), \
+             PARTITION p1 VALUES LESS THAN (10), \
+             PARTITION p2 VALUES LESS THAN (20))",
+        )
+        .unwrap();
+
+    // Control: the shipped `dynamic` mode leaves the one scan alone.
+    assert_eq!(
+        plan_access_objects(&mut session, "EXPLAIN SELECT * FROM t2 WHERE a >= 5"),
+        vec!["table:t2".to_owned()]
+    );
+
+    session
+        .run("SET @@tidb_partition_prune_mode = 'static'")
+        .unwrap();
+    // `a >= 5` cannot be in `p0` (`a < 0`), so the fan-out has TWO branches,
+    // not three: it names what survived pruning.
+    assert_eq!(
+        plan_access_objects(&mut session, "EXPLAIN SELECT * FROM t2 WHERE a >= 5"),
+        vec![
+            "table:t2, partition:p1".to_owned(),
+            "table:t2, partition:p2".to_owned(),
+        ]
+    );
+    // A statement's own `PARTITION (p)` narrows it the same way, and one
+    // surviving partition is annotated WITHOUT a union of one branch.
+    assert_eq!(
+        plan_access_objects(&mut session, "EXPLAIN SELECT * FROM t2 PARTITION (p2)"),
+        vec!["table:t2, partition:p2".to_owned()]
+    );
+}

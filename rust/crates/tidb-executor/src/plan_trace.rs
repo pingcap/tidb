@@ -276,6 +276,92 @@ impl PlanTrace {
         self.stack.push(node);
     }
 
+    /// Go's `rule_partition_processor` under `@@tidb_partition_prune_mode =
+    /// 'static'`: the ONE partitioned scan becomes one scan PER surviving
+    /// partition, each naming its own, under a `PartitionUnion`.
+    ///
+    /// Under `dynamic` -- the shipped default -- Go leaves one `DataSource`
+    /// reading every surviving partition and names the SET once on the
+    /// reader above it (`partition:all`), so nothing is fanned out and this
+    /// is not called at all.
+    ///
+    /// The fan-out is a truthful description of the read this tier already
+    /// performs: a partitioned scan walks the surviving partitions' record
+    /// ranges in physical-id order, one after another, which is exactly a
+    /// concatenation. What it does NOT reproduce is Go's placement of the
+    /// union: Go replaces the whole `DataSource` and so pushes each operator
+    /// above it (a `TopN`, a `UnionScan`) INTO every branch, while this
+    /// splices the union directly over the leaf and keeps one copy of
+    /// everything above. Both read the same rows; the branch count and the
+    /// per-branch access object agree, the operator placement does not.
+    ///
+    /// # Recorded (`tests/integrationtest/r/planner/core/partition_pruner.result`)
+    ///
+    /// ```text
+    /// set @@tidb_partition_prune_mode='static';
+    /// explain format='plan_tree' select * from t2 where not (a < 5);
+    /// PartitionUnion             root
+    /// ├─TableReader              root       data:Selection
+    /// │ └─Selection              cop[tikv]  ge(...t2.a, 5)
+    /// │   └─TableFullScan        cop[tikv]  table:t2, partition:p1
+    /// └─TableReader              root       data:Selection
+    ///   └─Selection              cop[tikv]  ge(...t2.a, 5)
+    ///     └─TableFullScan        cop[tikv]  table:t2, partition:p2
+    /// ```
+    ///
+    /// `p0` is absent because pruning already dropped it -- the fan-out names
+    /// what SURVIVED, never every declared partition.
+    pub(crate) fn partition_union(&mut self, partitions: &[String]) {
+        // Only a SCAN fans out. A point get names its own partition from the
+        // handle it already has (Go `PointGetPlan.AccessObject`) and is never
+        // a union; a `TableDual` reads nothing to divide.
+        if !self
+            .stack
+            .last()
+            .is_some_and(|top| PARTITIONED_SCANS.contains(&top.name))
+        {
+            return;
+        }
+        // Nothing to fan out: an unpartitioned table, or a pruned set of one,
+        // which Go also leaves as a bare `DataSource` rather than a union of
+        // one branch.
+        if partitions.len() < 2 {
+            if let ([partition], Some(top)) = (partitions, self.stack.last_mut()) {
+                top.access = with_partition(&top.access, partition);
+            }
+            return;
+        }
+        let Some(leaf) = self.stack.pop() else {
+            return;
+        };
+        let mut union = PlanNode::new(
+            "PartitionUnion",
+            // Go's `PhysicalUnionAll` sums its children's estimates, and each
+            // branch reads the same partition-blind estimate this tier costed
+            // the one scan with.
+            leaf.est_rows.map(|rows| rows * partitions.len() as f64),
+            String::new(),
+            String::new(),
+        );
+        union.key_ndv_ratio = leaf.key_ndv_ratio;
+        // The row counter belongs to the ONE executor underneath, which no
+        // fan-out split: attributing it to any single branch would report the
+        // whole scan's rows as one partition's. It moves to the union, whose
+        // count it really is.
+        union.act_rows = leaf.act_rows.clone();
+        for partition in partitions {
+            let mut branch = PlanNode::new(
+                leaf.name,
+                leaf.est_rows,
+                with_partition(&leaf.access, partition),
+                leaf.info.clone(),
+            );
+            branch.key_ndv_ratio = leaf.key_ndv_ratio;
+            union.children.push(branch);
+        }
+        self.stack.push(union);
+    }
+
     fn wrap(&mut self, name: &'static str, est: Est, info: String) {
         let est_rows = est.apply(self.top_est());
         let child = self.stack.pop();
@@ -493,12 +579,22 @@ impl PlanTrace {
     }
 
     /// Go's `Batch_Point_Get` fast path, which REPLACES the source scan.
-    pub(crate) fn batch_point_get(&mut self, visible: &str, handles: &[TableHandle]) {
+    ///
+    /// `partitions` is Go's `ScanAccessObject.Partitions` -- the partitions
+    /// the handles route into, already in definition order (see
+    /// [`crate::kv_table::KvTable::handle_partition_names`]). Empty on an
+    /// unpartitioned table, and then nothing is printed.
+    pub(crate) fn batch_point_get(
+        &mut self,
+        visible: &str,
+        handles: &[TableHandle],
+        partitions: &[String],
+    ) {
         let printed: Vec<String> = handles.iter().map(handle_text).collect();
         self.replace_top(PlanNode::new(
             "Batch_Point_Get",
             Some(handles.len() as f64),
-            format!("table:{visible}"),
+            format!("table:{visible}{}", partition_object(partitions)),
             format!(
                 "handle:[{}], keep order:false, desc:false",
                 printed.join(" ")
@@ -1088,6 +1184,37 @@ fn handle_text(handle: &TableHandle) -> String {
 
 /// Go's range notation: a square bracket includes the bound, a parenthesis
 /// excludes it, and an absent bound is an infinity.
+/// The leaf operators a partitioned read can be built out of -- the ones
+/// `PlanTrace::partition_union` may fan out. Every other leaf either names
+/// its partition itself (the point gets) or reads no partition at all.
+const PARTITIONED_SCANS: &[&str] = &[
+    "TableFullScan",
+    "TableRangeScan",
+    "IndexFullScan",
+    "IndexRangeScan",
+];
+
+/// Go `access.ScanAccessObject.String()` writes its three fields in a fixed
+/// order -- `table:t, partition:p, index:i(c)` -- so the partition clause
+/// goes AFTER the table and BEFORE any index, which is where this splices it
+/// into an access object the scan builders above already wrote.
+fn with_partition(access: &str, partition: &str) -> String {
+    match access.find(", ") {
+        Some(at) => format!("{}, partition:{partition}{}", &access[..at], &access[at..]),
+        None => format!("{access}, partition:{partition}"),
+    }
+}
+
+/// Go `access.ScanAccessObject.String()`'s partition clause: `,
+/// partition:p1,P2` -- one comma-separated list, in the order the caller
+/// supplied, and NOTHING at all when there are no partitions to name.
+fn partition_object(partitions: &[String]) -> String {
+    if partitions.is_empty() {
+        return String::new();
+    }
+    format!(", partition:{}", partitions.join(","))
+}
+
 pub(crate) fn range_text(range: &crate::kv_table::IndexRange) -> String {
     let low = bound_text(&range.low, "-inf", true);
     let high = bound_text(&range.high, "+inf", false);

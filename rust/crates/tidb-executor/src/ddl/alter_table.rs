@@ -220,6 +220,7 @@ pub fn run_alter_table_in(
                         unique,
                         parts: &index.parts,
                         visible: is_visible(&index.options),
+                        global: index.options.global,
                     },
                     ctx,
                 )?;
@@ -466,6 +467,9 @@ fn add_foreign_key_action(
             column_offsets: fk_offsets.clone(),
             prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; fk_offsets.len()],
             visible: true,
+            // A foreign key's auto-created index is local to the table it
+            // constrains; Go's `FKInfo` carries no `GLOBAL` to record.
+            global: false,
         });
     }
     table.add_foreign_key(foreign_key);

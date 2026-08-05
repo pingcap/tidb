@@ -390,6 +390,64 @@ impl KvTable {
             })
     }
 
+    /// Go `BatchPointGetPlan.AccessObject().Partitions`: the partitions a set
+    /// of HANDLES routes into, named as declared and in DEFINITION order,
+    /// deduplicated.
+    ///
+    /// Empty for an unpartitioned table, which is what makes the caller's
+    /// annotation unconditional: `partition:` is printed exactly when there
+    /// is something to print.
+    ///
+    /// Go builds one zero-valued row per handle, copies ONLY the handle
+    /// column into it (`physical_batch_point_get.go:900`), and evaluates the
+    /// partition expression over that -- so a partition expression reading a
+    /// column the handle does not determine sees NULL, exactly as here. A
+    /// handle that routes nowhere (`ErrNoPartitionForGivenValue`) is Go's
+    /// `pIdx = -1`, which drops the handle from the plan altogether; it
+    /// contributes no partition name either way, which is all this answers.
+    ///
+    /// # Recorded (`tests/integrationtest/r/planner/core/partition_pruner.result`)
+    ///
+    /// ```text
+    /// create table t (a int primary key, b int, key (b))
+    ///   partition by hash(a) (partition P0, partition p1, partition P2);
+    /// explain format = 'brief' select * from t where a IN (1, 2);
+    ///   Batch_Point_Get  2.00  root  table:t, partition:p1,P2  handle:[1 2], ...
+    /// ```
+    ///
+    /// The names keep the case they were DECLARED in (`p1,P2`), not the case
+    /// the statement wrote, and the order is the definition order rather than
+    /// the handle order -- Go sorts the ordinals before naming them.
+    #[must_use]
+    pub fn handle_partition_names(
+        &self,
+        handles: &[TableHandle],
+        zone: &SessionTimeZone,
+        ctx: &impl tidb_expr::Columns,
+    ) -> Vec<String> {
+        let Some(partition) = &self.partition else {
+            return Vec::new();
+        };
+        let mut ordinals: Vec<usize> = Vec::new();
+        for handle in handles {
+            let mut row = vec![Datum::Null; self.columns.len()];
+            if self.fill_handle_columns(&mut row, handle, zone).is_err() {
+                continue;
+            }
+            if let Ok(ordinal) = partition.locate_ordinal(&row, &self.columns, ctx) {
+                if !ordinals.contains(&ordinal) {
+                    ordinals.push(ordinal);
+                }
+            }
+        }
+        ordinals.sort_unstable();
+        ordinals
+            .into_iter()
+            .filter_map(|ordinal| partition.definitions.get(ordinal))
+            .map(|definition| definition.name.clone())
+            .collect()
+    }
+
     /// Every physical table id a READ of this table has to touch, ascending.
     ///
     /// A read that has only a HANDLE cannot route -- the partition is a
@@ -1869,6 +1927,7 @@ mod tests {
             column_offsets: vec![1],
             prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
             visible: true,
+            global: false,
         });
         let zone = tidb_datatype::SessionTimeZone::utc();
         let written = t

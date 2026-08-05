@@ -520,8 +520,26 @@ pub(crate) fn run_select_traced(
         &scope,
         &mut from_source,
         trace.as_deref_mut(),
-        &ctx.session_zone(),
+        ctx,
     )?;
+    // Go's `rule_partition_processor` runs after the access path is chosen
+    // and BEFORE anything above the scan is built, which is exactly here: the
+    // leaf is final (renamed or replaced by whichever path won) and nothing
+    // sits over it yet. It only ever fires under `@@tidb_partition_prune_mode
+    // = 'static'`; the shipped `dynamic` leaves the one scan alone.
+    if ctx.static_partition_prune() {
+        if let (Some(trace), Some(table)) = (
+            trace.as_deref_mut(),
+            crate::driver::access::sole_kv_table(&select.from, catalog, current_db),
+        ) {
+            trace.partition_union(&crate::driver::access::surviving_partition_names(
+                select,
+                crate::driver::access::sole_table_ref(&select.from),
+                &table,
+                &ctx.session_zone(),
+            ));
+        }
+    }
     // Column pruning: over a single base-table scan the fast paths left
     // alone, narrow the scan -- and with it the scope -- to the columns the
     // statement actually reads.

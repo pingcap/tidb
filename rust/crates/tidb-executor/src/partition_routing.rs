@@ -192,6 +192,22 @@ impl PartitionSpec {
         Ok(self.definitions[index].id)
     }
 
+    /// [`PartitionSpec::locate`] as the partition's ORDINAL -- Go's
+    /// `GetPartitionIdxByRow`, the number `EXPLAIN`'s access object indexes
+    /// `Partition.Definitions` with.
+    ///
+    /// # Errors
+    ///
+    /// The same [`RoutingError`]s [`PartitionSpec::locate`] raises.
+    pub fn locate_ordinal<S: crate::generated_column::GeneratedColumnSlot>(
+        &self,
+        row: &[Datum],
+        columns: &[S],
+        ctx: &impl tidb_expr::Columns,
+    ) -> Result<usize, RoutingError> {
+        self.locate_index(row, columns, ctx)
+    }
+
     /// [`PartitionSpec::locate`] as the partition's ORDINAL, which is what
     /// the per-method rules are written in terms of.
     fn locate_index<S: crate::generated_column::GeneratedColumnSlot>(

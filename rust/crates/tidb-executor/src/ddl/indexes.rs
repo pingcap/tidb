@@ -73,6 +73,7 @@ pub fn run_create_index_in(
             unique,
             parts: &create.parts,
             visible: is_visible(&create.options),
+            global: create.options.global,
         },
         ctx,
     )
@@ -145,6 +146,8 @@ pub(crate) struct IndexSpec<'a> {
     pub parts: &'a [tidb_ast::IndexPart],
     /// Go `!IndexInfo.Invisible`.
     pub visible: bool,
+    /// Go `IndexInfo.Global`, read off the statement's `GLOBAL` keyword.
+    pub global: bool,
 }
 
 /// Adds one index to a table, shared by `CREATE INDEX` and
@@ -167,6 +170,7 @@ pub(crate) fn add_index_to_table(
         unique,
         parts,
         visible,
+        global,
     } = index;
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
         return Err(DriverError::Schema(crate::SchemaErrorKind::UnknownTable(
@@ -308,6 +312,7 @@ pub(crate) fn add_index_to_table(
                 column_offsets: offsets,
                 prefix_lengths,
                 visible,
+                global,
             },
             ctx,
         )

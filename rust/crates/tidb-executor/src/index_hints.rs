@@ -17,11 +17,10 @@
 //!
 //! This is Go's `getPossibleAccessPaths`
 //! (`pkg/planner/core/planbuilder.go:1440`) with everything this tier has no
-//! analogue for -- TiFlash engines, MV/global indexes, index-merge and
-//! index-lookup-pushdown hints -- left out. What remains is the whole of the
-//! rule for a TiKV single-store table, and it is deliberately structured the
-//! way Go structures it, because the surprising parts are all in the
-//! structure:
+//! analogue for -- TiFlash engines, MV indexes, index-merge hints -- left
+//! out. What remains is the whole of the rule for a TiKV single-store table,
+//! and it is deliberately structured the way Go structures it, because the
+//! surprising parts are all in the structure:
 //!
 //! * `FORCE` and `USE` are the SAME hint. Go says so in place: "Currently we
 //!   don't distinguish between `FORCE` and `USE` because our cost estimation
@@ -49,7 +48,10 @@
 //!   wanted that index, and for `IGNORE` just as much as for `USE`/`FORCE`.
 //!   An INVISIBLE index is not in `publicPaths` and so is exactly this error
 //!   too. Only the comment spelling `/*+ use_index(t, x) */` downgrades it to
-//!   a warning; that spelling does not reach here.
+//!   a warning and skips the name -- see
+//!   [`HintAccumulator::take_comment_hints`], which is otherwise the SAME
+//!   loop over the SAME accumulator, because in Go it is literally the same
+//!   loop over one appended slice.
 //! * A `FOR JOIN`/`FOR ORDER BY`/`FOR GROUP BY` qualifier takes the hint out
 //!   of scan-path selection entirely (`hint.HintScope != ast.HintForScan ->
 //!   continue`), INCLUDING its name validation: `USE INDEX FOR JOIN
@@ -138,14 +140,47 @@ impl AvailablePaths {
     /// The error is Go's `plannererrors.ErrKeyDoesNotExist`, raised on the
     /// first unresolvable name.
     pub(crate) fn resolve(table: &KvTable, hints: &[IndexHint]) -> Result<Self, DriverError> {
-        // Go's `hasScanHint` / `hasUseOrForce`. Both are needed: a statement
-        // with only `IGNORE INDEX` has a scan hint but no forced set, and
-        // must fall through to `available = publicPaths`.
-        let mut has_scan_hint = false;
-        let mut has_use_or_force = false;
-        let mut forced_indexes = Vec::new();
-        let mut forced_table = false;
-        let mut ignored = Vec::new();
+        let mut accumulator = HintAccumulator::default();
+        accumulator.take_from_clause(table, hints)?;
+        Ok(accumulator.finish())
+    }
+}
+
+/// Go's `hasScanHint` / `hasUseOrForce` / `available` / `ignored` locals,
+/// carried across the TWO loops `getPossibleAccessPaths` runs over the one
+/// `indexHints` slice: the `FROM`-clause hints it was handed, and the
+/// comment-style hints it appends to the same slice before iterating.
+///
+/// They are one accumulator here because they are one slice there. A comment
+/// `use_index` and a `FROM`-clause `USE INDEX` restrict the SAME candidate
+/// set, and `hasUseOrForce` is set by whichever came first -- so a statement
+/// carrying one of each must not resolve to two independent answers.
+#[derive(Default)]
+struct HintAccumulator {
+    /// Go `hasScanHint`: some scan-scoped hint was written at all.
+    has_scan_hint: bool,
+    /// Go `hasUseOrForce`: some non-`IGNORE` hint RESOLVED to a path. A name
+    /// that resolved and was then dropped for another reason still sets it,
+    /// which is why `index_lookup_pushdown` on a global index leaves the
+    /// candidate set restricted-and-empty rather than unrestricted.
+    has_use_or_force: bool,
+    /// The index ids that reached Go's `available`.
+    forced_indexes: Vec<i64>,
+    /// Whether the table path was named (`USE INDEX ()`, `USE INDEX(primary)`
+    /// on a handle primary key).
+    forced_table: bool,
+    /// The ids `IGNORE INDEX` named, applied last.
+    ignored: Vec<i64>,
+}
+
+impl HintAccumulator {
+    /// Go's `indexHints[i]` for `i < indexHintsLen`: the `FROM`-clause
+    /// spelling, whose unresolvable name is a statement-level 1176.
+    fn take_from_clause(
+        &mut self,
+        table: &KvTable,
+        hints: &[IndexHint],
+    ) -> Result<(), DriverError> {
         for hint in hints {
             // Go: `if hint.HintScope != ast.HintForScan { continue }`. The
             // name is not even looked up, so a `FOR JOIN` hint naming a
@@ -153,33 +188,17 @@ impl AvailablePaths {
             if hint.scope != IndexHintScope::All {
                 continue;
             }
-            has_scan_hint = true;
+            self.has_scan_hint = true;
             // `USE INDEX ()`: no names and not an ignore, so Go takes
             // `getTablePath` and forces it. `IGNORE INDEX ()` is a syntax
             // error and never reaches here.
             if hint.indexes.is_empty() && hint.kind != IndexHintKind::Ignore {
-                has_use_or_force = true;
-                forced_table = true;
+                self.has_use_or_force = true;
+                self.forced_table = true;
             }
             for name in &hint.indexes {
                 match resolve_index_name(table, name) {
-                    Some(HintedPath::Index(id)) => {
-                        if hint.kind == IndexHintKind::Ignore {
-                            ignored.push(id);
-                        } else {
-                            has_use_or_force = true;
-                            forced_indexes.push(id);
-                        }
-                    }
-                    // `IGNORE INDEX(primary)` names the table path, which
-                    // `removeIgnoredPaths` refuses to remove -- so ignoring
-                    // it does nothing at all.
-                    Some(HintedPath::Table) => {
-                        if hint.kind != IndexHintKind::Ignore {
-                            has_use_or_force = true;
-                            forced_table = true;
-                        }
-                    }
+                    Some(path) => self.take_resolved(hint.kind, path),
                     None => {
                         return Err(DriverError::KeyNotExists {
                             key: name.clone(),
@@ -189,6 +208,109 @@ impl AvailablePaths {
                 }
             }
         }
+        Ok(())
+    }
+
+    /// One resolved hinted name, in the two ways Go treats it.
+    fn take_resolved(&mut self, kind: IndexHintKind, path: HintedPath) {
+        match (kind, path) {
+            (IndexHintKind::Ignore, HintedPath::Index(id)) => self.ignored.push(id),
+            // `IGNORE INDEX(primary)` names the table path, which
+            // `removeIgnoredPaths` refuses to remove -- so ignoring it does
+            // nothing at all.
+            (IndexHintKind::Ignore, HintedPath::Table) => {}
+            (_, HintedPath::Index(id)) => {
+                self.has_use_or_force = true;
+                self.forced_indexes.push(id);
+            }
+            (_, HintedPath::Table) => {
+                self.has_use_or_force = true;
+                self.forced_table = true;
+            }
+        }
+    }
+
+    /// Go's `indexHints[i]` for `i >= indexHintsLen`: the COMMENT spelling,
+    /// which `getPossibleAccessPaths` appends to the very same slice and then
+    /// iterates identically -- so it restricts the candidate set exactly as
+    /// the `FROM` spelling does, and `path.Forced` is set by either.
+    ///
+    /// The two differences are both below, and both are Go's:
+    ///
+    /// * an unresolvable name is skipped rather than raised, because the
+    ///   comment spelling reports it as a WARNING -- already appended by
+    ///   [`report_comment_index_hints`], which runs over the whole statement.
+    ///   Skipping without setting `hasUseOrForce` is what keeps
+    ///   `use_index(t, no_such_idx)` from deleting every path;
+    /// * `index_lookup_pushdown` additionally runs
+    ///   `checkIndexLookUpPushDownSupported`, and a refusal drops the path
+    ///   AFTER `hasUseOrForce` and `path.Forced` were already set. That order
+    ///   is the whole behaviour of the global-index case: the candidate set
+    ///   stays RESTRICTED, the named index is not in it, and Go's
+    ///   "we have to use table scan" fallback in [`Self::finish`] supplies
+    ///   the table path. The plan reads the table and the warning explains
+    ///   why -- not an index scan, and not an error.
+    fn take_comment_hints(
+        &mut self,
+        select: &tidb_ast::SelectStmt,
+        table_ref: &tidb_ast::TableRef,
+        table: &KvTable,
+        current_db: &str,
+        ctx: &crate::StmtContext,
+    ) {
+        for hint in &select.hints {
+            let tidb_ast::HintKind::Index {
+                table: hinted,
+                indexes,
+                ..
+            } = &hint.kind
+            else {
+                continue;
+            };
+            let Some(kind) = comment_hint_kind(&hint.name) else {
+                continue;
+            };
+            let db = hinted.db_name.as_deref().unwrap_or(current_db);
+            if !comment_hint_matches(table_ref, hinted, db, current_db) {
+                continue;
+            }
+            self.has_scan_hint = true;
+            // Go builds `IndexHint{IndexNames: hint.Indexes}`, so a hint with
+            // no names at all reaches the `IndexNames == nil` branch and
+            // forces the TABLE path -- the comment spelling of
+            // `USE INDEX ()`.
+            if indexes.is_empty() && kind.hint != IndexHintKind::Ignore {
+                self.has_use_or_force = true;
+                self.forced_table = true;
+            }
+            for name in indexes {
+                let Some(path) = resolve_index_name(table, name) else {
+                    continue;
+                };
+                if kind.push_down_look_up
+                    && matches!(path, HintedPath::Index(id)
+                        if !check_index_look_up_push_down_supported(table, id, ctx))
+                {
+                    // Go sets both flags BEFORE the check and skips only the
+                    // append, so the set stays restricted and empties out.
+                    self.has_use_or_force = true;
+                    continue;
+                }
+                self.take_resolved(kind.hint, path);
+            }
+        }
+    }
+
+    /// Go's tail of `getPossibleAccessPaths`: restrict, then remove the
+    /// ignored, then fall back to the table path.
+    fn finish(self) -> AvailablePaths {
+        let Self {
+            has_scan_hint,
+            has_use_or_force,
+            forced_indexes,
+            forced_table,
+            ignored,
+        } = self;
         let (mut forced_indexes, mut table) = if has_scan_hint && has_use_or_force {
             (Some(forced_indexes), forced_table)
         } else {
@@ -204,15 +326,120 @@ impl AvailablePaths {
                 table = true;
             }
         }
-        Ok(Self {
+        AvailablePaths {
             forced_indexes,
             table,
             ignored,
-        })
+        }
     }
 }
 
+/// One comment-style index hint's meaning for scan-path selection: Go's
+/// `hintType` / `pushDownLookUp` pair from `ParsePlanHints`
+/// (`pkg/util/hint/hint.go:930`).
+struct CommentHintKind {
+    /// The `ast.IndexHintType` Go records. `ORDER_INDEX`/`NO_ORDER_INDEX`
+    /// carry their own Go constants, but `getPossibleAccessPaths` only ever
+    /// asks whether the type is `HintIgnore`, and they are not -- so they
+    /// restrict and force exactly as `USE_INDEX` does. What their own
+    /// constants additionally decide (`path.ForceKeepOrder` /
+    /// `path.ForceNoKeepOrder`) is a keep-order property this tier does not
+    /// model, and is deliberately not represented here.
+    hint: IndexHintKind,
+    /// Go `HintedIndex.PushDownLookUp`: only `INDEX_LOOKUP_PUSHDOWN` sets it,
+    /// and it is what subjects the named path to
+    /// [`check_index_look_up_push_down_supported`].
+    push_down_look_up: bool,
+}
+
+/// Go's `case HintUseIndex, HintIgnoreIndex, HintForceIndex, HintOrderIndex,
+/// HintNoOrderIndex, HintIndexLookUpPushDown` arm: which comment hint names
+/// become an `indexHintList` entry at all, and as what.
+///
+/// `USE_INDEX_MERGE` is deliberately absent: Go collects it into a SEPARATE
+/// `indexMergeHintList` that `getPossibleAccessPaths` never reads, so it
+/// restricts nothing here.
+fn comment_hint_kind(name: &str) -> Option<CommentHintKind> {
+    let (hint, push_down_look_up) = match name {
+        "USE_INDEX" | "ORDER_INDEX" | "NO_ORDER_INDEX" => (IndexHintKind::Use, false),
+        "IGNORE_INDEX" => (IndexHintKind::Ignore, false),
+        "FORCE_INDEX" => (IndexHintKind::Force, false),
+        "INDEX_LOOKUP_PUSHDOWN" => (IndexHintKind::Use, true),
+        _ => return None,
+    };
+    Some(CommentHintKind {
+        hint,
+        push_down_look_up,
+    })
+}
+
+/// Go `HintedIndex.Match` against ONE table reference: the hint's table name
+/// against the `DataSource`'s reported name -- the ALIAS whenever one is
+/// written -- and the hint's database, defaulted to the current one, against
+/// the reference's. Both case-insensitively.
+fn comment_hint_matches(
+    table_ref: &tidb_ast::TableRef,
+    hinted: &tidb_ast::HintTable,
+    hinted_db: &str,
+    current_db: &str,
+) -> bool {
+    let referenced = table_ref
+        .alias
+        .as_deref()
+        .or_else(|| table_ref.name.last().map(String::as_str));
+    if !referenced.is_some_and(|name| name.eq_ignore_ascii_case(&hinted.name)) {
+        return false;
+    }
+    crate::driver::split_table_path_pub(&table_ref.name, current_db)
+        .is_ok_and(|(database, _)| database.eq_ignore_ascii_case(hinted_db))
+}
+
+/// Go `checkIndexLookUpPushDownSupported` (`pkg/planner/core/planbuilder.go`):
+/// whether `INDEX_LOOKUP_PUSHDOWN` may be honoured for one index, appending
+/// Go's 1815 with the specific reason when it may not.
+///
+/// Go tests nine reasons in a fixed order and reports the FIRST that holds.
+/// Only ONE of them is a fact this tier can observe: a GLOBAL index of a
+/// partitioned table. The other eight are conditions no statement reaching
+/// this engine is in -- an old-encoding common handle, a temporary or cached
+/// table, a multi-valued index, a non-`REPEATABLE-READ` isolation, a follower
+/// read, a stale or historical read, `tidb_max_keys_read` -- and each of them
+/// is refused or unrepresentable earlier, so testing them here would add
+/// arms no statement can take. When one becomes reachable it belongs here,
+/// ABOVE the global-index arm, in Go's order.
+///
+/// # Recorded (`tests/integrationtest/r/executor/index_lookup_pushdown_partition.result`)
+///
+/// ```text
+/// explain select /*+ index_lookup_pushdown(tp1, c) */ * from tp1;
+///   TableReader_5 ... partition:all  data:TableFullScan_4
+///   Warning 1815 hint INDEX_LOOKUP_PUSHDOWN is inapplicable, the global index in partition table is not supported
+/// ```
+///
+/// The plan reads the TABLE, not the hinted index: the refusal happens after
+/// the hint has already restricted the candidate set, and the emptied set
+/// falls back to the table path.
+fn check_index_look_up_push_down_supported(
+    table: &KvTable,
+    index_id: i64,
+    ctx: &crate::StmtContext,
+) -> bool {
+    let global = table
+        .plan_indexes()
+        .any(|index| index.id == index_id && index.global);
+    if global {
+        ctx.append_warning_parts(
+            1815,
+            "hint INDEX_LOOKUP_PUSHDOWN is inapplicable, \
+             the global index in partition table is not supported",
+        );
+        return false;
+    }
+    true
+}
+
 /// What one hinted name resolved to.
+#[derive(Clone, Copy)]
 enum HintedPath {
     /// A visible secondary index of the table.
     Index(i64),
@@ -254,6 +481,25 @@ pub(crate) fn table_ref_hints(
         return Ok(AvailablePaths::unrestricted());
     }
     AvailablePaths::resolve(table, &table_ref.hints)
+}
+
+/// Both spellings of one single-table `SELECT`'s scan hints, resolved into
+/// the candidate set the optimizer may cost -- Go's whole
+/// `getPossibleAccessPaths` over the `indexHints` slice it built from the
+/// `FROM` clause AND the query block's comment hints.
+pub(crate) fn single_table_scan_hints(
+    select: &tidb_ast::SelectStmt,
+    table_ref: Option<&tidb_ast::TableRef>,
+    table: &KvTable,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<AvailablePaths, DriverError> {
+    let mut accumulator = HintAccumulator::default();
+    if let Some(table_ref) = table_ref {
+        accumulator.take_from_clause(table, &table_ref.hints)?;
+        accumulator.take_comment_hints(select, table_ref, table, current_db, ctx);
+    }
+    Ok(accumulator.finish())
 }
 
 /// Raises Go's 1176 for any index hint in a `FROM` clause naming an index its

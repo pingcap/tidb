@@ -1781,6 +1781,7 @@ mod tests {
             column_offsets: vec![0],
             prefix_lengths: vec![prefix_len],
             visible: true,
+            global: false,
         };
         assert!(!is_covering(&index(3), &table, &[0]));
         // No declared length, or one that already reaches the column's own
@@ -1814,6 +1815,7 @@ mod tests {
                     column_offsets: vec![1],
                     prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
                     visible: true,
+                    global: false,
                 },
                 &tidb_expr::NoColumns,
             )

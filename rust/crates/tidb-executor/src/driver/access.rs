@@ -69,8 +69,12 @@ pub(crate) fn commit_fast_path_source(
     scope: &FromScope,
     from_source: &mut Option<Box<dyn Executor>>,
     mut trace: Option<&mut PlanTrace>,
-    zone: &tidb_datatype::SessionTimeZone,
+    ctx: &crate::StmtContext,
 ) -> Result<Option<IndexAccessOrder>, DriverError> {
+    // Go's `PlanBuilder` reads the zone off the same `sessionctx` every other
+    // decision here reads; taking it from `ctx` keeps the two from being
+    // separately supplied and separately wrong.
+    let zone = &ctx.session_zone();
     let mut index_order: Option<IndexAccessOrder> = None;
     let Some(table) = single_kv_table(&select.from, catalog, current_db) else {
         return Ok(None);
@@ -81,10 +85,13 @@ pub(crate) fn commit_fast_path_source(
     // The names were already validated for every table of the `FROM`
     // (`index_hints::validate_join_index_hints`), so this cannot be the site
     // that raises 1176.
-    let hints = match single_table_ref(&select.from) {
-        Some(table_ref) => crate::index_hints::table_ref_hints(table_ref, &table)?,
-        None => crate::index_hints::AvailablePaths::unrestricted(),
-    };
+    let hints = crate::index_hints::single_table_scan_hints(
+        select,
+        single_table_ref(&select.from),
+        &table,
+        current_db,
+        ctx,
+    )?;
     // Go's `PredicateSimplification` plans a `TableDual rows:0` before any path
     // is costed when the `WHERE` is provably contradictory on some column
     // (`b = 1 AND b = 2`), which is index-independent: it reads no row whether
@@ -128,7 +135,11 @@ pub(crate) fn commit_fast_path_source(
             zone.clone(),
         );
         if let Some(trace) = trace.as_deref_mut() {
-            trace.batch_point_get(source_table_name(scope, &table.name), &handles);
+            trace.batch_point_get(
+                source_table_name(scope, &table.name),
+                &handles,
+                &table.handle_partition_names(&handles, zone, ctx),
+            );
             // The rows are read lazily, so the count is the source's live one
             // rather than a `Vec`'s length.
             trace.set_scan_act_rows(exec.produced_rows());
@@ -246,6 +257,43 @@ pub(crate) fn commit_fast_path_source(
         *from_source = Some(Box::new(exec));
     }
     Ok(index_order)
+}
+
+/// The partitions a single-table `SELECT` still reads, named as declared and
+/// in definition order -- Go's `PartitionProcessor` output, which is the list
+/// `EXPLAIN` fans a static-mode plan out over.
+///
+/// Two narrowings compose, in either order and both cumulative, exactly as
+/// [`crate::KvTable::restrict_read_to_partitions`] composes them for the read
+/// itself: the statement's own `PARTITION (p, ...)` list, and whatever the
+/// `WHERE` pruned. Empty for an unpartitioned table.
+///
+/// An unresolvable `PARTITION (p)` name answers the FULL list rather than
+/// failing here: the read has already raised 1735 for it, and this is only
+/// ever asked for a plan that got built.
+pub(crate) fn surviving_partition_names(
+    select: &tidb_ast::SelectStmt,
+    table_ref: Option<&tidb_ast::TableRef>,
+    table: &KvTable,
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Vec<String> {
+    let Some(partition) = table.partition() else {
+        return Vec::new();
+    };
+    let selected = table_ref
+        .map(|table_ref| table_ref.partitions.as_slice())
+        .filter(|names| !names.is_empty())
+        .and_then(|names| {
+            crate::partition_pruning::ids_for_selected_partitions(partition, names).ok()
+        });
+    let pruned = pruned_partition_ids(select, table, zone);
+    partition
+        .definitions
+        .iter()
+        .filter(|def| selected.as_ref().is_none_or(|ids| ids.contains(&def.id)))
+        .filter(|def| pruned.as_ref().is_none_or(|ids| ids.contains(&def.id)))
+        .map(|def| def.name.clone())
+        .collect()
 }
 
 /// Installs a zero-row [`TableDualExec`] for a contradictory `WHERE` and
@@ -1381,13 +1429,7 @@ fn collect_conjuncts<'a>(expr: &'a tidb_ast::Expr, out: &mut Vec<&'a tidb_ast::E
 /// REFERENCE, not just the table it resolves to: the `USE`/`FORCE`/`IGNORE
 /// INDEX` hints that decide which paths exist live on the reference.
 pub(crate) fn single_table_ref(from: &Option<tidb_ast::Join>) -> Option<&tidb_ast::TableRef> {
-    let join = from.as_ref()?;
-    if join.right.is_some() {
-        return None;
-    }
-    let JoinNode::Table(table_ref) = &join.left else {
-        return None;
-    };
+    let table_ref = sole_table_ref(from)?;
     // A `PARTITION (...)` restriction is refused by `build_from`; declining
     // the fast path here too keeps a point get from answering a statement the
     // scan would have rejected.
@@ -1395,6 +1437,39 @@ pub(crate) fn single_table_ref(from: &Option<tidb_ast::Join>) -> Option<&tidb_as
         return None;
     }
     Some(table_ref)
+}
+
+/// [`single_table_ref`] WITHOUT its fast-path refusal: the one table a `FROM`
+/// names, whether or not the statement narrowed it with `PARTITION (...)`.
+///
+/// The refusal above is about which ACCESS PATHS may be chosen. Callers that
+/// only want to know which table -- and which partitions of it -- the
+/// statement reads want this one, so that a `PARTITION (p)` narrowing is
+/// reported rather than silently read as "no single table".
+pub(crate) fn sole_table_ref(from: &Option<tidb_ast::Join>) -> Option<&tidb_ast::TableRef> {
+    let join = from.as_ref()?;
+    if join.right.is_some() {
+        return None;
+    }
+    let JoinNode::Table(table_ref) = &join.left else {
+        return None;
+    };
+    Some(table_ref)
+}
+
+/// [`single_kv_table`] over [`sole_table_ref`]: the stored table a `FROM`
+/// names even when a `PARTITION (...)` list narrowed it.
+pub(crate) fn sole_kv_table(
+    from: &Option<tidb_ast::Join>,
+    catalog: &Catalog,
+    current_db: &str,
+) -> Option<KvTable> {
+    let table_ref = sole_table_ref(from)?;
+    let (database, name) = split_table_path(&table_ref.name, current_db).ok()?;
+    match catalog.get_in(database, name)? {
+        TableEntry::Kv(kv) => Some(kv.clone()),
+        TableEntry::Mem(_) | TableEntry::View(_) | TableEntry::Sequence(_) => None,
+    }
 }
 
 pub(crate) fn single_kv_table(

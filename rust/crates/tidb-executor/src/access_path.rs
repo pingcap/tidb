@@ -886,6 +886,7 @@ mod tests {
                         column_offsets: vec![1],
                         prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
                         visible: true,
+                        global: false,
                     },
                     &tidb_expr::NoColumns,
                 )
