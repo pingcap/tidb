@@ -551,6 +551,12 @@ fn window_value_functions_rewrite_a_lone_enum_or_set_to_a_char() {
         let ft = merged_type(&mut session, sql);
         assert_eq!(ft.code(), FieldTypeCode::String, "result type for {sql}");
         assert_eq!(ft.flen(), 255, "`mysql.MaxFieldCharLength` for {sql}");
+        // Source-derived rather than captured: `NewFieldTypeBuilder` starts
+        // from a ZERO field type and only `SetType`/`SetFlen` are called, so
+        // the scale is 0 and not the unspecified one a fresh `NewFieldType`
+        // would carry. No catalog surface prints a CHAR's scale, so Go's own
+        // constructor is the oracle here.
+        assert_eq!(ft.decimal(), 0, "a zero field type's scale for {sql}");
         assert_eq!(row_text(session.run(sql)), rows, "answer for {sql}");
     }
 
