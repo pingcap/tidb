@@ -82,7 +82,6 @@ func (s *resourceGroupProviderStub) Get(ctx context.Context, key []byte, opts ..
 func newStarterControllerForTest(t *testing.T, provider rmclient.ResourceGroupProvider) *rmclient.ResourceGroupsController {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
 
 	require.NoError(t, deploymode.Set(deploymode.Starter))
 	controller, err := rmclient.NewResourceGroupController(
@@ -96,6 +95,7 @@ func newStarterControllerForTest(t *testing.T, provider rmclient.ResourceGroupPr
 	require.NoError(t, err)
 	controller.Start(ctx)
 	t.Cleanup(func() {
+		cancel()
 		require.NoError(t, controller.Stop())
 	})
 	return controller
