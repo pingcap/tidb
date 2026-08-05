@@ -175,24 +175,43 @@ fn the_cartesian_refusal_leaves_a_second_component_behind() {
 }
 
 /// A NON-EQUALITY CONJUNCT SPANNING TWO LEAVES is one of Go's `otherConds`,
-/// which `makeJoin` hands to whichever join first covers it and
-/// `hasOtherJoinCondition` counts as a connection. The greedy arm models
-/// neither, so it declines; the DP arm, which only a raised threshold reaches,
-/// keeps its existing behaviour of ignoring the conjunct while costing.
+/// and it does NOT stop the greedy: `hasOtherJoinCondition` only ever makes a
+/// pair MORE joinable, and `LogicalJoin.DeriveStats` never reads
+/// `OtherConditions`, so the conjunct moves no row count and the equality graph
+/// alone decides the order. The group here is connected by `t1.a = t5.a` and
+/// `t5.a = t2.a`, so both arms reorder it and reach the same tree.
 ///
-/// Misplacing such a conjunct is exactly the failure this decline forecloses.
+/// This test guards the DECLINE that used to sit here: re-introducing it turns
+/// the two `Some`s into `None`s.
 #[test]
-fn a_spanning_non_equality_conjunct_declines_the_greedy() {
+fn a_spanning_non_equality_conjunct_no_longer_stops_the_greedy() {
     let catalog = tables();
     let sql = "SELECT t1.a FROM t1, t5, t2 \
                WHERE t1.a = t5.a AND t5.a = t2.a AND t1.b > t2.b";
+    let without = "SELECT t1.a FROM t1, t5, t2 WHERE t1.a = t5.a AND t5.a = t2.a";
+    assert_eq!(fired(sql, &catalog, 0), fired(without, &catalog, 0));
+    assert!(fired(sql, &catalog, 0).is_some(), "the greedy declined");
+    assert!(fired(sql, &catalog, 10).is_some(), "the DP arm declined");
+}
+
+/// A CONJUNCT WITH NO COLUMN OF THIS GROUP still declines the greedy arm, and
+/// for a reason the previous decline blurred: Go's `ExprFromSchema` answers
+/// TRUE for a constant or a purely correlated expression against ANY schema,
+/// which makes it one of `makeJoin`'s `leftConds` and therefore a child
+/// `Selection` with a selectivity this module would have to invent -- not one
+/// of the `otherConds` that cost nothing.
+#[test]
+fn a_conjunct_owning_no_column_of_the_group_declines_the_greedy() {
+    let catalog = tables();
+    let sql = "SELECT t1.a FROM t1, t5, t2 \
+               WHERE t1.a = t5.a AND t5.a = t2.a AND 1";
     assert_eq!(fired(sql, &catalog, 0), None, "the greedy did not decline");
-    assert!(fired(sql, &catalog, 10).is_some(), "the DP arm moved");
+    assert!(fired(sql, &catalog, 10).is_some(), "the DP arm declined");
 }
 
 /// THE SOLVER BOUNDARY, to the exact integer. This group has THREE leaves and
-/// only the greedy arm declines it, so which solver ran is directly readable
-/// from whether the reorder fired.
+/// only the greedy arm declines it -- on the zero-column conjunct above -- so
+/// which solver ran is directly readable from whether the reorder fired.
 ///
 /// Go's `joinGroupNum > threshold` puts the switch BETWEEN `2` and `3`: at a
 /// threshold of `2` a three-leaf group is still greedy, and at `3` it is the
@@ -201,7 +220,7 @@ fn a_spanning_non_equality_conjunct_declines_the_greedy() {
 fn the_solver_switches_between_a_threshold_of_two_and_three() {
     let catalog = tables();
     let sql = "SELECT t1.a FROM t1, t5, t2 \
-               WHERE t1.a = t5.a AND t5.a = t2.a AND t1.b > t2.b";
+               WHERE t1.a = t5.a AND t5.a = t2.a AND 1";
     for greedy in [i32::MIN, 0, 1, 2] {
         assert_eq!(
             fired(sql, &catalog, greedy),
@@ -215,6 +234,53 @@ fn the_solver_switches_between_a_threshold_of_two_and_three() {
             "threshold {dp} did not take the DP arm",
         );
     }
+}
+
+/// GO'S `hasOtherJoinCondition`, asserted DIRECTLY, because nothing this
+/// module emits can show it.
+///
+/// The rule makes a pair with no equality edge joinable, and every such join
+/// then reaches [`rebuild_node`] with no `ON` to spell -- which declines. So
+/// the rule can turn one decline into another decline and never a tree, and a
+/// mutation that breaks it survives every plan-level test in this file. Pinning
+/// the predicate itself is the only test that can fail.
+///
+/// The three cases are Go's three `ExprFromSchema` calls: covered by the merged
+/// schema, not covered by the left alone, not covered by the right alone.
+#[test]
+fn a_conjunct_connects_only_when_it_straddles_both_sides() {
+    use std::collections::BTreeSet;
+    let straddling = |leaves: [usize; 2]| BTreeSet::from(leaves);
+    // `{0,2}` straddles `[0] x [2]`.
+    assert!(crate::driver::join_reorder::has_other_join_condition(
+        &[0],
+        &[2],
+        &[straddling([0, 2])],
+    ));
+    // Covered by the LEFT alone: Go's `leftConds`, not a connection.
+    assert!(!crate::driver::join_reorder::has_other_join_condition(
+        &[0, 2],
+        &[1],
+        &[straddling([0, 2])],
+    ));
+    // Covered by the RIGHT alone.
+    assert!(!crate::driver::join_reorder::has_other_join_condition(
+        &[1],
+        &[0, 2],
+        &[straddling([0, 2])],
+    ));
+    // Not covered by the merged schema at all: it reaches a third leaf.
+    assert!(!crate::driver::join_reorder::has_other_join_condition(
+        &[0],
+        &[1],
+        &[straddling([0, 2])],
+    ));
+    // No conjunct at all leaves the pair cartesian.
+    assert!(!crate::driver::join_reorder::has_other_join_condition(
+        &[0],
+        &[2],
+        &[],
+    ));
 }
 
 /// THE COST SORT, where it is observable. `generateJoinOrderNode` sorts the

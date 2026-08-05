@@ -69,15 +69,50 @@
 //!   aggregates, sorts, limits or unions. Guessing one would silently choose a
 //!   different join order.
 //!
-//! The GREEDY arm declines one thing more, because it is the default solver
-//! and a wrong order there is corpus-wide rather than opt-in: a conjunct that
-//! spans several leaves without being an equality, or that reads a column this
-//! group does not own. Such a conjunct is one of Go's `otherConds`, and it
-//! changes greedy decisions in two ways this module does not model -- Go's
-//! `hasOtherJoinCondition` makes a pair NON-cartesian and therefore joinable,
-//! and `makeJoin` hands the conjunct to whichever join first covers it, which
-//! moves that join's row count. Declining keeps the written tree instead of
-//! guessing.
+//! # Go's `otherConds`, and what they do and do not change
+//!
+//! A conjunct that spans several leaves without being an equality is one of
+//! Go's `otherConds`. Measured against Go rather than assumed, it reaches the
+//! greedy solver through exactly ONE door and no other:
+//!
+//! * `checkConnectionAndMakeJoin` computes
+//!   `isCartesian = len(usedEdges) == 0 && !s.hasOtherJoinCondition(l, r)`
+//!   (`rule_join_reorder_greedy.go:170`). A pair with NO equality edge is
+//!   therefore joinable whenever a single non-equality conjunct straddles it --
+//!   no equality edge is required alongside -- and, being non-cartesian, it
+//!   also escapes both the `cartesianThreshold <= 0` refusal and the
+//!   cost-ratio penalty. This is [`has_other_join_condition`].
+//! * `makeJoin` hands each conjunct to the FIRST join whose merged schema
+//!   covers it and drops it from the set the later steps see
+//!   (`s.otherConds = finalRemainOthers`), so a conjunct connects at most one
+//!   pair. That shrinking set has NO counterpart here, and not by omission:
+//!   `constructConnectedJoinTree` only ever GROWS `curJoinTree`, and the left
+//!   argument of every later `hasOtherJoinCondition` call is exactly its leaf
+//!   set. A conjunct Go would have dropped is one the growing tree already
+//!   covers, so `!ExprFromSchema(cond, leftPlan.Schema())` already rejects it
+//!   -- the same conjunct, at the same step, for the same reason. Threading a
+//!   second copy of that test would be an untestable duplicate of the first.
+//!
+//! What it does NOT do is move a row count. `LogicalJoin.DeriveStats` feeds
+//! `EstimateFullJoinRowCount` from `p.EqualConditions` alone
+//! (`logical_join.go:572`); `OtherConditions` are not read there, and
+//! `calcJoinCumCost` reads only `join.StatsInfo().RowCount`. A conjunct placed
+//! on a join costs that join nothing. (Go's `leftConds`/`rightConds` DO become
+//! child `Selection`s and so do move a count, but those are single-relation
+//! conjuncts, which this module already pushes into a leaf's [`Demand`].)
+//!
+//! Two spellings stay declined, because Go's answer for them is not measurable
+//! from a `FROM` clause:
+//!
+//! * a conjunct reading a column this group does not own (an outer-query
+//!   correlation) or no column at all. Go's `ExprFromSchema` answers TRUE for
+//!   both against ANY schema, which makes them `leftConds` -- a child
+//!   `Selection` whose selectivity this module would have to invent.
+//! * a chosen join with no equality edge at all. Go spells the conjunct into
+//!   that join's `OtherConditions`; here the conjunct is still sitting in the
+//!   statement's own `WHERE`, which this tier applies independently of the
+//!   `FROM` tree, so copying it into an `ON` would evaluate it twice and can
+//!   double its warnings. [`rebuild_node`] declines instead.
 //!
 //! # The cost model is not re-derived here
 //!
@@ -248,14 +283,16 @@ pub(crate) fn reorder(
 
     let mut edges: Vec<Edge<'_>> = Vec::new();
     let mut filters: Vec<Vec<Expr>> = vec![Vec::new(); leaves.len()];
+    // Go's `s.otherConds` as the greedy solver first sees it, one entry per
+    // conjunct, holding the leaves that conjunct reads.
+    let mut others: Vec<BTreeSet<usize>> = Vec::new();
     for conjunct in &conjuncts {
         match classify(conjunct, &leaves)? {
             Classified::Edge(edge) => edges.push(edge),
             Classified::Single(leaf) => filters[leaf].push((*conjunct).clone()),
-            // Go's `otherConds`; see the module doc for why the default solver
-            // declines rather than models them.
-            Classified::Spanning if use_greedy => return None,
-            Classified::Spanning => {}
+            Classified::Other(touched) => others.push(touched),
+            Classified::Foreign if use_greedy => return None,
+            Classified::Foreign => {}
         }
     }
     if edges.is_empty() {
@@ -290,8 +327,11 @@ pub(crate) fn reorder(
 
     let context = DeriveStatsContext::with_join_reorder_threshold(threshold);
     let plan = if use_greedy {
-        greedy_solve(&leaves, &edges, &models, &context)?
+        greedy_solve(&leaves, &edges, &models, &context, &others)?
     } else {
+        // Go's DP arm reads `otherConds` through its own `totalNonEqEdges`,
+        // which is not modelled here; the opt-in arm keeps declining to use
+        // them, which is the same tree it built before.
         solve(&leaves, &edges, &models, &context)?
     };
     let mut order = Vec::new();
@@ -319,9 +359,15 @@ enum Classified<'a> {
     Edge(Edge<'a>),
     /// A conjunct over exactly one leaf.
     Single(usize),
-    /// A conjunct over several leaves, or over columns this group does not
-    /// own (an outer-query correlation).
-    Spanning,
+    /// Go's `otherConds`: a conjunct over SEVERAL leaves of this group, none
+    /// of them foreign. Carries which leaves, which is all the two rules that
+    /// read it -- [`has_other_join_condition`] and the `remaining` threading --
+    /// ever ask.
+    Other(BTreeSet<usize>),
+    /// A conjunct over columns this group does not own (an outer-query
+    /// correlation), or over no column at all. See the module doc for why Go's
+    /// answer for these is not measurable from a `FROM` clause.
+    Foreign,
 }
 
 /// Which leaves a conjunct touches, and whether it is a join connector.
@@ -337,7 +383,7 @@ fn classify<'a>(conjunct: &'a Expr, leaves: &[Leaf<'_>]) -> Option<Classified<'a
                 touched.insert(leaf);
             }
             // A path this group does not own is no leaf's own filter.
-            None => return Some(Classified::Spanning),
+            None => return Some(Classified::Foreign),
         }
     }
     if let Expr::Binary(BinaryOp::Eq, lhs, rhs) = conjunct {
@@ -358,11 +404,38 @@ fn classify<'a>(conjunct: &'a Expr, leaves: &[Leaf<'_>]) -> Option<Classified<'a
         }
     }
     match touched.len() {
+        // A conjunct over no column at all is Go's `leftConds`, not one of its
+        // `otherConds`; see the module doc.
+        0 => Some(Classified::Foreign),
         1 => Some(Classified::Single(
             touched.into_iter().next().expect("one leaf"),
         )),
-        _ => Some(Classified::Spanning),
+        _ => Some(Classified::Other(touched)),
     }
+}
+
+/// Go `baseSingleGroupJoinOrderSolver.hasOtherJoinCondition`
+/// (`rule_join_reorder.go:721`).
+///
+/// TRUE when some remaining `otherCond` reads columns from BOTH sides -- Go's
+/// three tests `ExprFromSchema(cond, merged)`, `!ExprFromSchema(cond, left)`
+/// and `!ExprFromSchema(cond, right)`, over leaf sets rather than schemas
+/// because a leaf here is exactly one schema. Its `nullExtendedCols` test has
+/// no counterpart: [`collect`] only ever yields an ALL-INNER group, which
+/// null-extends nothing.
+pub(crate) fn has_other_join_condition(
+    left: &[usize],
+    right: &[usize],
+    remaining: &[BTreeSet<usize>],
+) -> bool {
+    remaining.iter().any(|touched| {
+        let covered = touched
+            .iter()
+            .all(|leaf| left.contains(leaf) || right.contains(leaf));
+        covered
+            && !touched.iter().all(|leaf| left.contains(leaf))
+            && !touched.iter().all(|leaf| right.contains(leaf))
+    })
 }
 
 fn strip(expr: &Expr) -> &Expr {
@@ -618,7 +691,9 @@ fn leaf_of<'a>(
                 match classify(conjunct, &inner)? {
                     Classified::Edge(edge) => inner_edges.push((edge.left, edge.right)),
                     Classified::Single(leaf) => inner_filters[leaf].push((*conjunct).clone()),
-                    Classified::Spanning => {}
+                    // A derived table's own cost model carries equi keys and
+                    // per-leaf filters only; its `otherConds` reach neither.
+                    Classified::Other(_) | Classified::Foreign => {}
                 }
             }
             let column_ids = ids.take(names.len());
@@ -974,10 +1049,10 @@ fn solve(
 /// Go's shape is: sort the group by `baseNodeCumCost` ascending, then peel one
 /// CONNECTED tree at a time with `constructConnectedJoinTree`, and finally
 /// `makeBushyJoin` the peeled trees into a cartesian product. This module
-/// accepts only a connected equality graph, so the first peel consumes the
-/// whole group and the bushy step has nothing to do; a leftover is the
-/// disconnected case and is declined, leaving the statement's own cartesian
-/// product where it was written.
+/// accepts only a group the FIRST peel consumes whole -- connected by equality
+/// edges, by `others` straddling it, or by both -- so the bushy step has
+/// nothing to do; a leftover is the disconnected case and is declined, leaving
+/// the statement's own cartesian product where it was written.
 ///
 /// There is no leading hint here -- this tier has no `/*+ leading(...) */` --
 /// so Go's `leadingJoinGroup` prefix and its inapplicable-hint warning have no
@@ -987,6 +1062,7 @@ fn greedy_solve(
     edges: &[Edge<'_>],
     models: &[LogicalNode],
     context: &DeriveStatsContext,
+    others: &[BTreeSet<usize>],
 ) -> Option<Plan> {
     // `generateJoinOrderNode`: each leaf's own `RecursiveDeriveStats` and its
     // `baseNodeCumCost`, which for a leaf is the sum of its subtree's row
@@ -1006,7 +1082,7 @@ fn greedy_solve(
     // resolves ties by, so the stability is load-bearing, not cosmetic.
     group.sort_by(|left, right| left.cum_cost.total_cmp(&right.cum_cost));
 
-    let tree = construct_connected(&mut group, leaves, edges, context);
+    let tree = construct_connected(&mut group, leaves, edges, context, others);
     // Anything left over is a second connected component: Go's
     // `makeBushyJoin` case, declined here.
     group.is_empty().then_some(tree.plan)
@@ -1022,33 +1098,37 @@ fn construct_connected(
     leaves: &[Leaf<'_>],
     edges: &[Edge<'_>],
     context: &DeriveStatsContext,
+    others: &[BTreeSet<usize>],
 ) -> Candidate {
     let mut current = group.remove(0);
     loop {
+        let mut current_leaves = Vec::new();
+        current.plan.leaves(&mut current_leaves);
         let mut best: Option<(usize, Candidate)> = None;
         for (index, node) in group.iter().enumerate() {
-            // Go's `checkConnectionAndMakeJoin`. With no `otherConds` in play
-            // -- the greedy arm declines a group that has any -- a pair with no
-            // equality edge is a CARTESIAN one, which
-            // `tidb_opt_cartesian_join_order_threshold` refuses at its default
-            // of `0`. Both of Go's two refusal sites reduce to this one skip.
-            //
-            // It is kept even though nothing downstream could act on a
-            // cartesian step anyway -- `rebuild_node` has no `ON` to build
-            // from and would decline the whole reorder, and a cartesian's cost
-            // `L * R` can never undercut an equi-join's `L * R / ndv`. This is
-            // where Go states the rule, so this is where it is stated; a
-            // mutation that deletes it is invisible for exactly those two
-            // reasons, not because the rule does not matter.
+            // Go's `checkConnectionAndMakeJoin`: a pair with no equality edge
+            // is CARTESIAN only when no remaining `otherCond` straddles it, and
+            // a cartesian one is refused by
+            // `tidb_opt_cartesian_join_order_threshold` at its default of `0`.
+            // Both of Go's two refusal sites reduce to this one skip.
             let used = connecting_plans(&current.plan, &node.plan, edges);
             if used.is_empty() {
-                continue;
+                let mut node_leaves = Vec::new();
+                node.plan.leaves(&mut node_leaves);
+                if !has_other_join_condition(&current_leaves, &node_leaves, others) {
+                    continue;
+                }
             }
             // `curJoinTree` is Go's LEFT argument and the candidate node its
             // right; for an inner join `checkConnection` keeps those positions.
             let candidate = build(&current, node, &used, edges, leaves, context);
             // `curCost < bestCost` is STRICT, so among equal costs the node
             // enumerated first -- the cheapest by the sort above -- wins.
+            //
+            // Go's cartesian cost-ratio penalty never applies: a pair reaching
+            // here either used an equality edge or was made NON-cartesian by
+            // `hasOtherJoinCondition`, and `bestIsCartesian` stays false for
+            // both.
             let better = best
                 .as_ref()
                 .is_none_or(|(_, best)| candidate.cum_cost < best.cum_cost);
@@ -1185,6 +1265,12 @@ fn rebuild_node(plan: &Plan, leaves: &[Leaf<'_>], edges: &[Edge<'_>]) -> Option<
             right,
             edges: used,
         } => {
+            // A join the greedy reached through `hasOtherJoinCondition` alone
+            // has no equality edge, so there is no `ON` to spell here: Go puts
+            // the conjunct in `OtherConditions`, while here it is still in the
+            // statement's own `WHERE`. `reduce` over an empty `used` yields
+            // `None`, which declines the whole reorder rather than copying a
+            // `WHERE` conjunct into an `ON` and evaluating it twice.
             let on =
                 used.iter()
                     .map(|index| edges[*index].expr.clone())
