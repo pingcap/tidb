@@ -550,10 +550,10 @@ func TestDivideMergeSortDataFilesSubtaskCount(t *testing.T) {
 			dataFilesGroup, err := DivideMergeSortDataFiles(dataFiles, nodeCount, Concurrency)
 			require.NoError(t, err)
 			var totalTargetFileCount int
-			for _, group := range dataFilesGroup {
-				totalTargetFileCount += len(splitDataFiles(group, Concurrency))
+			for _, dataFiles := range dataFilesGroup {
+				totalTargetFileCount += len(splitDataFiles(dataFiles, Concurrency))
 			}
-			t.Logf("node count: %d, file count: %d, group count: %d, target file count: %d",
+			t.Logf("nodeCount: %d, fileCount: %d, subtaskCount:%d, totalTargetFileCount: %d",
 				nodeCount, fileCount, len(dataFilesGroup), totalTargetFileCount)
 			require.LessOrEqual(t, len(dataFilesGroup), 250)
 			require.LessOrEqual(t, totalTargetFileCount, 4000)
