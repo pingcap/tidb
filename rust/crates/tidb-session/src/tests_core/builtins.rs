@@ -1143,6 +1143,131 @@ fn the_temporal_greatest_result_type_follows_the_aggregate_not_the_values() {
     }
 }
 
+/// A `DATE 'lit'` / `TIMESTAMP 'lit'` is TEMPORALLY TYPED, exactly like a
+/// column of that type -- Go's `dateLiteralFunctionClass.getFunction` calls
+/// `setDecimalAndFlenForDate` and its timestamp twin
+/// `setDecimalAndFlenForDatetime(tm.Fsp())` -- so `resolveType4Extremum` sees
+/// it and every one of these answers changes with it.
+///
+/// The literal used to fold to a VarString, which made a literal invisible
+/// where a COLUMN of the same type was not. The first two rows below are the
+/// trap: when the literal happens to WIN, a string compare prints the same
+/// text and the bug is invisible; only a row where a NUMBER wins shows it.
+///
+/// Recorded oracle (`tests/integrationtest/r/expression/issues.result`, the
+/// `TestIssue38736`/`greatest` block) for the four SELECTs; the two arithmetic
+/// rows are captured with `gorun` and are the pure TYPE proof -- a VarString
+/// operand would be read as the leading `2020`, not as the packed number.
+///
+/// ```text
+/// select date '2020-01-01' + 0, timestamp '2020-01-01 10:00:00.5' + 0
+///   RS:20200101|20200101100000.5
+/// ```
+#[test]
+fn a_temporal_literal_is_typed_where_a_column_of_that_type_is() {
+    let mut session = Session::new();
+    for (sql, expected) in [
+        // The literal WINS: a string compare prints the same text, so this
+        // row alone cannot tell the two rules apart.
+        (
+            "SELECT GREATEST(date '2005-05-05', 20010101, 20040404, 20030303)",
+            "2005-05-05",
+        ),
+        // A NUMBER wins, and only the typed literal reformats it as a date.
+        (
+            "SELECT GREATEST(date '1995-05-05', 19910101, 20050505, 19930303)",
+            "2005-05-05",
+        ),
+        (
+            "SELECT GREATEST(date'101001', '19990329', 120101)",
+            "2012-01-01",
+        ),
+        // Two literals: `AggFieldType(TypeDate, TypeDatetime)` widens the
+        // winning DATE onto midnight rather than printing it bare.
+        (
+            "SELECT GREATEST(date '21000101', timestamp '2069-12-31 12:00:00')",
+            "2100-01-01 00:00:00",
+        ),
+        ("SELECT date '2020-01-01' + 0", "20200101"),
+        (
+            "SELECT timestamp '2020-01-01 10:00:00.5' + 0",
+            "20200101100000.5",
+        ),
+    ] {
+        assert_eq!(row_text(session.run(sql))[0][0], expected, "{sql}");
+    }
+}
+
+/// Go's ETDatetime GREATEST/LEAST arm CASTS its arguments before comparing
+/// them (`newBaseBuiltinFuncWithTp(ctx, funcName, args, resTp, argTps...)`
+/// wraps each in `WrapWithCastAsTime`), and a DURATION's cast is
+/// `builtinCastDurationAsTimeSig`: `ConvertToTimeWithTimestamp` mixes the
+/// elapsed time into the calendar date of the STATEMENT TIMESTAMP, in the
+/// SESSION's zone. `AggFieldType(TypeTime, TypeDatetime)` is `TypeDatetime`,
+/// so a `time` column beside a `TIMESTAMP 'lit'` lands here.
+///
+/// The boundary that matters is which argument WINS. The recorded corpus only
+/// has the literal winning (`greatest(c, timestamp '2069-12-31 12:00:00')`),
+/// and every wrong conversion still answers 2069 there. These rows put the
+/// DURATION on the winning side, where the converted date is the printed
+/// answer -- and then move the session zone across the date line, where a
+/// conversion done in UTC prints the same day for both.
+///
+/// Captured with `gorun`, statement clock pinned so the answer is stable:
+///
+/// ```text
+/// SET timestamp=UNIX_TIMESTAMP('2011-11-01 17:48:00');   -- 09:48:00Z
+/// create table td(tm time); insert into td values('10:00:00');
+/// select greatest(tm, timestamp '2000-01-01 00:00:00')     2011-11-01 10:00:00
+/// least   (tm, timestamp '2000-01-01 00:00:00')            2000-01-01 00:00:00
+/// greatest(tm, date '2000-01-01')                          2011-11-01 10:00:00
+/// greatest(tm, timestamp '2000-01-01 00:00:00.5')          2011-11-01 10:00:00
+/// least   (tm, timestamp '2000-01-01 00:00:00.5')          2000-01-01 00:00:00.5
+/// time_zone='+13:00'  greatest(tm, timestamp '2000-01-01 00:00:00')
+///                                                          2011-11-01 10:00:00
+/// time_zone='-11:00'  same statement                       2011-10-31 10:00:00
+/// ```
+#[test]
+fn a_duration_beside_a_temporal_literal_lands_on_the_statement_date() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE td (tm TIME)").unwrap();
+    session.run("INSERT INTO td VALUES ('10:00:00')").unwrap();
+    // 2011-11-01 17:48:00 at +08:00, the zone the capture ran under.
+    session.run("SET timestamp = 1320140880").unwrap();
+    for (sql, expected) in [
+        (
+            "SELECT GREATEST(tm, timestamp '2000-01-01 00:00:00') FROM td",
+            "2011-11-01 10:00:00",
+        ),
+        (
+            "SELECT LEAST(tm, timestamp '2000-01-01 00:00:00') FROM td",
+            "2000-01-01 00:00:00",
+        ),
+        (
+            "SELECT GREATEST(tm, date '2000-01-01') FROM td",
+            "2011-11-01 10:00:00",
+        ),
+        (
+            "SELECT GREATEST(tm, timestamp '2000-01-01 00:00:00.5') FROM td",
+            "2011-11-01 10:00:00",
+        ),
+        // The LITERAL's own fsp survives the compare and is printed.
+        (
+            "SELECT LEAST(tm, timestamp '2000-01-01 00:00:00.5') FROM td",
+            "2000-01-01 00:00:00.5",
+        ),
+    ] {
+        assert_eq!(row_text(session.run(sql))[0][0], expected, "{sql}");
+    }
+    // The same instant, two zones on opposite sides of the date line: the
+    // calendar day is the SESSION's, not UTC's.
+    let sql = "SELECT GREATEST(tm, timestamp '2000-01-01 00:00:00') FROM td";
+    session.run("SET time_zone = '+13:00'").unwrap();
+    assert_eq!(row_text(session.run(sql))[0][0], "2011-11-01 10:00:00");
+    session.run("SET time_zone = '-11:00'").unwrap();
+    assert_eq!(row_text(session.run(sql))[0][0], "2011-10-31 10:00:00");
+}
+
 /// The miscellaneous and encryption builtins whose bodies were already ported
 /// and unit-tested in `tidb_expr::builtin_ext::{misc,crypto}`, but which live
 /// SQL could not reach because `builtin_return_type` had no arm for their
