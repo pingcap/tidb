@@ -1386,8 +1386,8 @@ mod tests {
 
     /// Reads [`crossed_order_table`] through an `IndexRangeSourceExec` over
     /// the whole of `ibc`, returning the `a` column in the order the source
-    /// emitted it.
-    fn read_through_index(covering: bool, keep_order: bool) -> Vec<i64> {
+    /// emitted it. `cap` is a pushed row cap, Go's `PushedLimit`.
+    fn read_through_index(covering: bool, keep_order: bool, cap: Option<u64>) -> Vec<i64> {
         let table = crossed_order_table();
         let columns: Vec<tidb_expr::column::Column> = (0..3i64)
             .map(|offset| {
@@ -1409,6 +1409,10 @@ mod tests {
         if keep_order {
             use crate::table_access::TableAccess;
             assert!(exec.accept_keep_order());
+        }
+        if let Some(cap) = cap {
+            use crate::table_access::TableAccess;
+            assert!(exec.accept_scan_limit(cap));
         }
         exec.open().unwrap();
         let mut out = Vec::new();
@@ -1438,7 +1442,7 @@ mod tests {
     /// index-ascending.
     #[test]
     fn an_unordered_double_read_answers_in_handle_order() {
-        assert_eq!(read_through_index(false, false), vec![1, 2, 3, 4]);
+        assert_eq!(read_through_index(false, false, None), vec![1, 2, 3, 4]);
     }
 
     /// A COVERING path is Go's `PhysicalIndexReader`: it never builds a handle
@@ -1451,7 +1455,7 @@ mod tests {
     /// answers `Yz, xy, z` -- index order, against handle order `xy, Yz, z`.
     #[test]
     fn a_covering_index_read_answers_in_index_order() {
-        assert_eq!(read_through_index(true, false), vec![2, 4, 3, 1]);
+        assert_eq!(read_through_index(true, false, None), vec![2, 4, 3, 1]);
     }
 
     /// `keep order:true` is the other half of the boundary: the plan asked for
@@ -1460,7 +1464,41 @@ mod tests {
     /// reorder instead, which is the same answer one pass cheaper.
     #[test]
     fn a_kept_order_double_read_answers_in_index_order() {
-        assert_eq!(read_through_index(false, true), vec![2, 4, 3, 1]);
+        assert_eq!(read_through_index(false, true, None), vec![2, 4, 3, 1]);
+    }
+
+    /// THE ROW-SET HALF of the rule, and the only one whose failure loses
+    /// rows rather than reordering them: a pushed cap truncates the INDEX
+    /// stream, and the sort happens to what is left.
+    ///
+    /// Go's `extractTaskHandles` reads the index in index order and stops at
+    /// `w.PushedLimit.Offset + w.PushedLimit.Count` (`distsql.go`: `leftCnt :=
+    /// w.PushedLimit.Offset + w.PushedLimit.Count - w.scannedKeys`, and the
+    /// per-row `if w.scannedKeys > (...) { return handles, nil, nil }`). The
+    /// batch it returns is only THEN handed to `buildTableReaderFromHandles`,
+    /// which sorts it. So the rows a capped double read keeps are the
+    /// index-order prefix, and they are ANSWERED in handle order.
+    ///
+    /// Over [`crossed_order_table`] the two orders disagree on WHICH rows a
+    /// cap of THREE keeps, not merely on their sequence. The index walk is
+    /// `a = 2, 4, 3, 1`, so the prefix is the rows `{2, 4, 3}`, answered
+    /// handle-ascending as `2, 3, 4`. Sorting the whole batch FIRST and
+    /// truncating after would keep handles `1, 2, 3` -- `a = 1, 2, 3`, which
+    /// DROPS row `a = 4` and invents row `a = 1`. That is why this assertion
+    /// is the ordered vector and not a length: a length passes both ways.
+    #[test]
+    fn a_pushed_cap_keeps_the_index_prefix_and_answers_it_in_handle_order() {
+        assert_eq!(read_through_index(false, false, Some(3)), vec![2, 3, 4]);
+    }
+
+    /// The same boundary on the ordered side, and the reason it is a SECOND
+    /// test rather than the same one: `keep order:true` skips the reorder, so
+    /// the same three rows leave in the index's own sequence, `2, 4, 3`. The
+    /// two expectations are different vectors over the same row set, so
+    /// neither can pass by agreeing with the other while both are wrong.
+    #[test]
+    fn a_capped_kept_order_double_read_answers_the_index_prefix_in_index_order() {
+        assert_eq!(read_through_index(false, true, Some(3)), vec![2, 4, 3]);
     }
 
     /// The driver's own half of the rule: `keep order:true` has to be
