@@ -544,7 +544,10 @@ pub(crate) fn build_from(
             // by the DELIVERY report at the end of this arm. It is set where
             // the index source is built rather than predicted from
             // `keep_order`, so the report cannot drift from the build.
-            let mut walked_index = false;
+            // The order the branch that RAN delivers, in this leaf's own row
+            // offsets. Empty until an index branch fills it in; the table
+            // branch's answer is read off the catalog at the end of the arm.
+            let mut walked_index: Option<Vec<usize>> = None;
             let exec: Box<dyn Executor> = match entry {
                 TableEntry::Mem(mem) => Box::new(MemTableSourceExec::new(
                     ExecutorMeta::new(schema, 0, INIT_CAP, MAX_CHUNK_SIZE),
@@ -557,20 +560,28 @@ pub(crate) fn build_from(
                 // can return is a WHOLE covering index -- the same rows the
                 // scan below reads, through a narrower structure.
                 //
-                // Two refusals, both about the ORDER an index walk produces
-                // rather than about the rows:
+                // `keep_order` no longer DELETES that costing. It narrows it:
+                // Go's `findBestTask` under a NON-EMPTY property enumerates
+                // the same paths and drops the ones `matchProperty` says do
+                // not already walk in the required order, so an ordered
+                // parent gets the cheapest ORDERED index instead of no index
+                // at all. `wanted_order` below is that property.
                 //
-                // * `keep_order` is a parent that DEMANDED the handle's order
-                //   of this scan (`build_join`'s merge decision, made before
-                //   this child existed and unable to re-plan it afterwards).
-                //   An index walk is not that order.
-                // * `demand.columns == None` is a caller with no statement
-                //   above the `FROM`, and a single base table -- which
-                //   `driver::access::commit_fast_path_source` costs WITH its
-                //   `WHERE`, so a second, condition-blind choice here would
-                //   only be the worse of the two.
+                // One refusal is left, and it is not about order:
+                // `demand.columns == None` is a caller with no statement
+                // above the `FROM`, and a single base table -- which
+                // `driver::access::commit_fast_path_source` costs WITH its
+                // `WHERE`, so a second, condition-blind choice here would
+                // only be the worse of the two.
                 TableEntry::Kv(kv) => {
-                    match demand.columns.filter(|_| !keep_order).and_then(|wanted| {
+                    let wanted_order: Option<Vec<usize>> = keep_order.then(|| {
+                        required
+                            .sort_items
+                            .iter()
+                            .map(|item| item.col as usize)
+                            .collect()
+                    });
+                    match demand.columns.and_then(|wanted| {
                         let hints = crate::index_hints::table_ref_hints(table_ref, kv).ok()?;
                         crate::driver::access::leaf_index_path(
                             kv,
@@ -580,10 +591,11 @@ pub(crate) fn build_from(
                             &hints,
                             catalog,
                             &ctx.session_zone(),
+                            wanted_order.as_deref(),
                         )
                     }) {
                         Some(path) => {
-                            walked_index = true;
+                            walked_index = Some(path.order().to_vec());
                             crate::driver::access::leaf_index_source(
                                 kv,
                                 &visible,
@@ -626,24 +638,30 @@ pub(crate) fn build_from(
             // is the verify half of `merge_decision`'s promise/verify
             // contract.
             //
-            // A leaf that took the index branch walks in index-key order (or,
-            // for a double read, in handle order after the lookup), and
-            // neither is a `table_scan_orders` answer, so it reports nothing.
-            // `keep_order` is the second gate and not `required`: a leaf that
-            // DECLINED the request took its cheapest path, and reporting an
-            // order there would be the exact promise-without-delivery this
-            // contract exists to refuse.
+            // A leaf that took the index branch answers in the order that
+            // WALK produces, which is the index's own key order -- and only
+            // because it was built with `keep order:true`, which stops the
+            // source from reordering its lookup batches by handle. The order
+            // is carried out of the path the chooser returned, not recomputed
+            // here, so it cannot name an index the leaf did not walk.
             //
-            // `table_scan_orders` and NOT `table_orders`: the promise may
-            // grow into Go's index branch of `PreparePossibleProperties`, and
-            // a verify side that re-reads the promise agrees with itself
+            // `keep_order` is the second gate on the table branch and not
+            // `required`: a leaf that DECLINED the request took its cheapest
+            // path, and reporting an order there would be the exact
+            // promise-without-delivery this contract exists to refuse.
+            //
+            // `table_scan_orders` and NOT `table_orders`: the promise NOW
+            // carries Go's index branch of `PreparePossibleProperties`, and a
+            // verify side that re-read the promise would agree with itself
             // rather than checking anything. That coincidence hid a silent
-            // row drop -- see
-            // `crate::merge_join_plan::table_scan_order`.
-            let delivered = if keep_order && !walked_index {
-                crate::driver::merge_decision::table_scan_orders(entry, &column_names)
-            } else {
-                Delivered::new()
+            // row drop -- see `crate::merge_join_plan::table_scan_order`.
+            let delivered = match &walked_index {
+                Some(order) if !order.is_empty() => vec![order.clone()],
+                Some(_) => Delivered::new(),
+                None if keep_order => {
+                    crate::driver::merge_decision::table_scan_orders(entry, &column_names)
+                }
+                None => Delivered::new(),
             };
             Ok((meter(exec, trace), scope, delivered))
         }
@@ -1343,7 +1361,24 @@ pub(crate) fn build_join(
         current_db,
         required,
         demand.offered,
-    );
+    )
+    // `GetMergeJoin` succeeding structurally is NECESSARY but not SUFFICIENT.
+    // Before any cost is compared, `exhaustPhysicalPlans4LogicalJoin` reads
+    // the statement's join-method hints and three of its arms settle the whole
+    // candidate list: a forced hash join returns before a merge candidate is
+    // built, a forced index join returns the index candidates alone, and a
+    // `NO_MERGE_JOIN` deletes the family outright. That gate is Go's, and it
+    // is what separates the FIVE `topn_push_down` statements that differ only
+    // by their hint. See `driver::join_method_hints`.
+    .filter(|_| {
+        demand.join_hints.is_none_or(|hints| {
+            let (left, right) = crate::driver::join_method_hints::side_aliases(join);
+            hints.merge_join_allowed(
+                (left.as_deref(), right.as_deref()),
+                required.is_sort_item_empty(),
+            )
+        })
+    });
     // The same walk's other answer: the orders each side's output already
     // carries, which is Go's `p.LeftProperties` / `p.RightProperties` and the
     // input the join enumeration reads to decide whether a merge join is a

@@ -109,6 +109,11 @@ pub(crate) struct FromDemand<'a> {
     /// [`crate::driver::join_reorder::row_source`] declines, which the search
     /// reads as "this site cannot be priced" and refuses.
     pub(crate) rows: Option<&'a crate::driver::join_reorder::RowSource>,
+    /// The join algorithms the statement NAMED, or `None` when it named none
+    /// -- Go's `hintInfo == nil` in `SetPreferredJoinTypeAndOrder`. A join
+    /// site reads it before it decides a merge join; see
+    /// [`crate::driver::join_method_hints`].
+    pub(crate) join_hints: Option<&'a crate::driver::join_method_hints::JoinMethodHints>,
 }
 
 impl FromDemand<'_> {
@@ -118,6 +123,7 @@ impl FromDemand<'_> {
             offered: &[],
             columns: None,
             rows: None,
+            join_hints: None,
         }
     }
 }

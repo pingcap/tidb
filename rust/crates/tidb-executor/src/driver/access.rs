@@ -421,6 +421,7 @@ fn commit_index_range_source(
                 &index.name,
                 &index_columns,
                 estimate,
+                false,
             );
         } else {
             trace.index_range_scan(
@@ -762,6 +763,35 @@ pub(crate) fn choose_index_range_path(
 /// Both are left as measured debt rather than attempted: the first needs an
 /// ancestry fact this tier does not thread to a leaf, and the second needs a
 /// solver that does not exist here yet.
+///
+/// # The ORDER request
+///
+/// `wanted` is Go's `prop.SortItems` for this `DataSource`, as offsets into
+/// the leaf's own row. `None` is the EMPTY property -- `findBestTask` with
+/// nothing to satisfy, which is the call this function has always been.
+/// `Some` is `convertToIndexScan` under a non-empty one, where a candidate
+/// survives only when `matchProperty` says its walk already produces the
+/// order:
+///
+/// ```text
+/// // matchProperty, the non-int-handle branch
+/// if len(idxCols) < len(prop.SortItems) { return property.PropNotMatched }
+/// // ... prop.SortItems must be a PREFIX of idxCols
+/// ```
+///
+/// The table path is never returned by this function, so the caller reads a
+/// `None` the same way under both: keep the whole-table scan already
+/// installed, and report the order THAT walk delivers. Under an order request
+/// that is the fail-closed answer -- the handle order either satisfies the
+/// request, in which case the caller's own delivery report says so, or it does
+/// not and the parent's merge join is dropped by the verify half of the
+/// contract in [`crate::driver::merge_decision`].
+// Eight, and the eighth is the ORDER the caller must satisfy: Go reaches it as
+// `findBestTask`'s own `prop` argument, a second parameter beside the plan
+// rather than a field of any of the others. Grouping the catalog inputs into a
+// wrapper would name the table twice without changing what travels; the
+// sibling choosers in this module carry the same allow.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn leaf_index_path(
     table: &KvTable,
     visible: &str,
@@ -770,6 +800,7 @@ pub(crate) fn leaf_index_path(
     hints: &crate::index_hints::AvailablePaths,
     catalog: &Catalog,
     zone: &tidb_datatype::SessionTimeZone,
+    wanted: Option<&[usize]>,
 ) -> Option<LeafIndexPath> {
     // A partitioned leaf would need the pruning this call site has no
     // conditions to run, and Go's `hasPartitionScan` penalty with it.
@@ -786,7 +817,7 @@ pub(crate) fn leaf_index_path(
     };
     let stats = catalog.table_statistics(table.table_id);
     let stats = stats.as_ref().map(AsRef::as_ref);
-    let paths = crate::access_cost::enumerate_paths(
+    let mut paths = crate::access_cost::enumerate_paths(
         table,
         columns,
         None,
@@ -799,6 +830,23 @@ pub(crate) fn leaf_index_path(
         false,
         demand.statement_forces_an_index(),
     );
+    if let Some(wanted) = wanted {
+        // `matchProperty` as a FILTER over the enumeration, which is what
+        // `findBestTask`'s `if matchResult == property.PropNotMatched
+        // { continue }` is: a path whose walk does not already produce the
+        // order is not a candidate under this property at all, and there is
+        // no `Sort` enforcer below a `FROM` in this tier to make one.
+        paths.retain(|candidate| {
+            candidate
+                .path
+                .index
+                .as_ref()
+                .and_then(|(index_id, _)| {
+                    table.indexes().iter().find(|index| index.id == *index_id)
+                })
+                .is_some_and(|index| leaf_index_order(table, index, columns).starts_with(wanted))
+        });
+    }
     let best = crate::access_cost::choose_access_path(paths, stats, false)?;
     let (index_id, ranges) = best.index?;
     // Stated as a guard rather than assumed: with no `WHERE` to detach, the
@@ -808,11 +856,57 @@ pub(crate) fn leaf_index_path(
     if ranges.len() != 1 || !ranges[0].is_full() {
         return None;
     }
+    // The order the BUILT source will deliver, which is the index walk's own
+    // only when this path was chosen to satisfy a property: without that, the
+    // source reorders its lookup batches by handle and answers in neither
+    // order. An empty answer here is a leaf that promises nothing.
+    let order = match wanted {
+        Some(_) => table
+            .indexes()
+            .iter()
+            .find(|index| index.id == index_id)
+            .map(|index| leaf_index_order(table, index, columns))
+            .unwrap_or_default(),
+        None => Vec::new(),
+    };
     Some(LeafIndexPath {
         index_id,
         ranges,
         estimate: best.estimate,
+        order,
+        keep_order: wanted.is_some(),
     })
+}
+
+/// The order an index walk of `index` delivers, as offsets into the LEAF's
+/// row (the layout `columns` describes), or the empty order when a key part
+/// names a column that row does not carry.
+///
+/// [`crate::kv_table::KvIndex::ordered_column_offsets`] is the cut at the
+/// first PREFIX key part, which is Go's `idxColLens[colIdx] ==
+/// types.UnspecifiedLength` test made unrepresentable. The name lookup is the
+/// same one [`crate::driver::merge_decision`] does: an expression index's
+/// hidden column is a column of the TABLE that no query row carries, so it
+/// truncates the order rather than pointing at the wrong offset.
+fn leaf_index_order(
+    table: &KvTable,
+    index: &crate::kv_table::KvIndex,
+    columns: &[(String, FieldType)],
+) -> Vec<usize> {
+    let mut order = Vec::with_capacity(index.ordered_column_offsets().len());
+    for offset in index.ordered_column_offsets() {
+        let Some(column) = table.columns.get(*offset) else {
+            break;
+        };
+        let Some(at) = columns
+            .iter()
+            .position(|(name, _)| name.eq_ignore_ascii_case(&column.name))
+        else {
+            break;
+        };
+        order.push(at);
+    }
+    order
 }
 
 /// The whole-index path a join leaf committed to: what
@@ -821,6 +915,22 @@ pub(crate) struct LeafIndexPath {
     index_id: i64,
     ranges: Vec<IndexRange>,
     estimate: crate::access_cost::ScanEstimate,
+    /// The order this walk delivers, in the leaf's own row offsets. Read back
+    /// by [`crate::driver::from::build_from`] as the leaf's DELIVERY report;
+    /// see [`leaf_index_order`].
+    order: Vec<usize>,
+    /// Go's `PhysicalIndexScan.KeepOrder`: whether this path was chosen to
+    /// SATISFY a property, which is what makes the source answer in index
+    /// order rather than reordering its handle batches
+    /// ([`IndexRangeSourceExec::set_covering`]).
+    keep_order: bool,
+}
+
+impl LeafIndexPath {
+    /// The order the walk this path describes delivers.
+    pub(crate) fn order(&self) -> &[usize] {
+        &self.order
+    }
 }
 
 /// The streaming source and the `EXPLAIN` node for an index path a leaf
@@ -843,8 +953,10 @@ pub(crate) fn leaf_index_source(
         index_id,
         ranges,
         estimate,
+        order: _,
+        keep_order,
     } = path;
-    let exec = IndexRangeSourceExec::new(
+    let mut exec = IndexRangeSourceExec::new(
         ExecutorMeta::new(
             Schema::new(source_schema_columns(columns)),
             0,
@@ -856,6 +968,14 @@ pub(crate) fn leaf_index_source(
         ranges,
         zone.clone(),
     );
+    if keep_order {
+        // Go's `keep order:true` index read: `canReorderHandles` is false, so
+        // the lookup batches are sorted BACK into index order and the rows
+        // leave in the order the walk produced them. Without this the source
+        // answers in handle order, which is the exact promise-without-delivery
+        // a parent merge join must never be given.
+        exec.set_covering();
+    }
     if let Some(trace) = trace {
         let index = table
             .indexes()
@@ -868,7 +988,7 @@ pub(crate) fn leaf_index_source(
             .map(|offset| index_key_part_name(table, *offset))
             .collect();
         let index_columns: Vec<&str> = index_columns.iter().map(String::as_str).collect();
-        trace.index_full_scan(visible, &index.name, &index_columns, estimate);
+        trace.index_full_scan(visible, &index.name, &index_columns, estimate, keep_order);
         trace.set_scan_act_rows(exec.produced_rows());
     }
     Box::new(exec)

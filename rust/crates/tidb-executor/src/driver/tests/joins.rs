@@ -383,18 +383,25 @@ fn a_promise_the_child_cannot_deliver_falls_back_instead_of_dropping_rows() {
 /// reported exactly the one order a `TableFullScan` walks in.
 ///
 /// MEASURED: growing `provided_orders` into Go's index branch of
-/// `PreparePossibleProperties` (`logical_datasource.go:343`, the increment
-/// `crate::merge_join_plan`'s module doc defers) while that coincidence held
-/// made this query return TWO rows instead of three -- a merge join formed on
-/// `s` over two leaves that were still walking in `h` order, so it advanced
-/// past groups its input never separated. Not a worse plan: a wrong answer.
+/// `PreparePossibleProperties` (`logical_datasource.go:343`) while that
+/// coincidence held made this query return TWO rows instead of three -- a
+/// merge join formed on `s` over two leaves that were still walking in `h`
+/// order, so it advanced past groups its input never separated. Not a worse
+/// plan: a wrong answer.
 ///
 /// The tables below are written so handle order and `s` order DISAGREE on
-/// both sides, which is what makes the drop observable at all. This test
-/// passes today and must keep passing when that increment lands: the leaf
-/// under `keep_order` builds a `TableFullScan`, so it may report the handle
-/// order and nothing else, and a merge join promised `s` then fails
-/// verification and falls back to hashing.
+/// both sides, which is what makes the drop observable at all.
+///
+/// That increment HAS now landed, and this test is what pins the reason it is
+/// safe. The leaf asked for `s` order takes the `ks` index -- Go's
+/// `convertToIndexScan` under a non-empty property -- and delivers `s` order
+/// because it was BUILT with `keep order:true`; the merge join above it then
+/// merges a stream that really is grouped by `s`. Both readings, the fallback
+/// and the index walk, have to answer three rows, and the assertion below does
+/// not care which one ran: a bijection is a bijection. Mutating either half --
+/// the order filter in `driver::access::leaf_index_path`, or the
+/// `keep_order`-gated `set_covering` that stops the source reordering its
+/// handle batches -- is what makes it fail.
 #[test]
 fn a_leaf_delivers_only_the_order_its_scan_walks_in() {
     let mut catalog = Catalog::default();
@@ -428,4 +435,187 @@ fn a_leaf_delivers_only_the_order_its_scan_walks_in() {
             vec![Datum::Int(3), Datum::Int(1)],
         ],
     );
+}
+
+/// THE ORDERED-LEAF PIN: a leaf asked for an order it cannot walk in handle
+/// order answers with the INDEX that walks in it, and says `keep order:true`.
+///
+/// This is Go's `convertToIndexScan` under a NON-EMPTY property. The leaf used
+/// to DELETE its index candidates the moment a parent required an order
+/// (`demand.columns.filter(|_| !keep_order)`), so a merge join over an index
+/// column could never form and TiDB's own recording of exactly that shape --
+/// `tests/integrationtest/r/topn_push_down.result:237`, a `MergeJoin` over two
+/// `IndexFullScan ... keep order:true` -- was unreachable here.
+///
+/// The shape below is that recording's, reduced to one table: `t(a int not
+/// null, index idx(a))` self-joined on `a`, whose only order is the index's.
+///
+/// Two assertions, and the second is the one that makes the first SAFE:
+///
+///  * the two leaves read `idx` and print `keep order:true`, so the plan is
+///    TiDB's;
+///  * the rows are the full product, which is what a merge join over a stream
+///    that is really grouped by `a` returns. A leaf that printed `keep
+///    order:true` while its source reordered handle batches would drop rows
+///    here instead -- that is the failure
+///    [`a_leaf_delivers_only_the_order_its_scan_walks_in`] measured.
+#[test]
+fn a_leaf_asked_for_an_index_order_walks_the_index_and_says_so() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE oi (a INT NOT NULL, KEY idx (a))",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO oi VALUES (1), (2), (2), (3)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    let sql = "SELECT t1.a, t2.a FROM oi t1 JOIN oi t2 ON t1.a = t2.a";
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Row).unwrap();
+    let plan: Vec<String> = rows
+        .iter()
+        .map(|row| {
+            row.iter()
+                .map(|datum| match datum {
+                    Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+                    other => format!("{other:?}"),
+                })
+                .collect::<Vec<_>>()
+                .join("\t")
+        })
+        .collect();
+    assert!(
+        plan.iter().any(|line| line.contains("MergeJoin")),
+        "the two index orders make a merge join available, got {plan:?}"
+    );
+    for side in ["table:t1", "table:t2"] {
+        assert!(
+            plan.iter().any(|line| {
+                line.contains("IndexFullScan")
+                    && line.contains(side)
+                    && line.contains("keep order:true")
+            }),
+            "{side} walks idx in order, got {plan:?}"
+        );
+    }
+
+    // `a = 2` appears twice on each side, so the join is 1 + 4 + 1 = 6 rows.
+    let mut got = run_select_on(sql, &catalog, &ctx).unwrap();
+    got.sort_by_key(|row| format!("{row:?}"));
+    assert_eq!(
+        got,
+        vec![
+            vec![Datum::Int(1), Datum::Int(1)],
+            vec![Datum::Int(2), Datum::Int(2)],
+            vec![Datum::Int(2), Datum::Int(2)],
+            vec![Datum::Int(2), Datum::Int(2)],
+            vec![Datum::Int(2), Datum::Int(2)],
+            vec![Datum::Int(3), Datum::Int(3)],
+        ],
+    );
+}
+
+/// THE HINT PIN: the same three statements, separated by nothing but their
+/// join hint, plan three different joins -- which is Go's
+/// `exhaustPhysicalPlans4LogicalJoin` reading `PreferJoinType` BEFORE it costs
+/// anything.
+///
+/// Reduced from `tests/integrationtest/t/topn_push_down.test`, where TiDB
+/// records a `MergeJoin` for `TIDB_SMJ`, a `HashJoin` for `TIDB_HJ` and an
+/// `IndexJoin` for `TIDB_INLJ` over the very same `t t1 join t t2 on t1.a =
+/// t2.a`. Without the gate in [`crate::driver::join_method_hints`] all three
+/// merge here, which the `join_shape` casetest counts as EXTRA merge pairs.
+#[test]
+fn a_join_hint_decides_the_family_before_any_cost_is_compared() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE hj (a INT NOT NULL, KEY idx (a))",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on("INSERT INTO hj VALUES (1), (2), (3)", &mut catalog, &ctx).unwrap();
+
+    let joins_of = |sql: &str| {
+        let stmt = tidb_parser::parse(sql).unwrap();
+        let Stmt::Query(query) = &stmt else {
+            panic!("not a query");
+        };
+        let QueryStmt::Select(select) = &**query else {
+            panic!("not a SELECT");
+        };
+        let (_, rows) =
+            explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Row).unwrap();
+        rows.iter()
+            .map(|row| {
+                row.iter()
+                    .map(|datum| match datum {
+                        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+                        other => format!("{other:?}"),
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\t")
+            })
+            .collect::<Vec<_>>()
+    };
+    let body = "* FROM hj t1 JOIN hj t2 ON t1.a = t2.a";
+
+    let merged = joins_of(&format!("SELECT /*+ TIDB_SMJ(t1, t2) */ {body}"));
+    assert!(
+        merged.iter().any(|line| line.contains("MergeJoin")),
+        "TIDB_SMJ keeps the merge candidate, got {merged:?}"
+    );
+    for (hint, why) in [
+        (
+            "TIDB_HJ(t1, t2)",
+            "getHashJoins returns forced and the merge is never built",
+        ),
+        (
+            "TIDB_INLJ(t2)",
+            "handleForceIndexJoinHints returns the index candidates alone",
+        ),
+    ] {
+        let plan = joins_of(&format!("SELECT /*+ {hint} */ {body}"));
+        assert!(
+            !plan.iter().any(|line| line.contains("MergeJoin")),
+            "{hint}: {why}, got {plan:?}"
+        );
+    }
+
+    // Whichever family runs, the rows are the same three pairs.
+    for hint in ["TIDB_SMJ(t1, t2)", "TIDB_HJ(t1, t2)", "TIDB_INLJ(t2)"] {
+        let mut got = run_select_on(
+            &format!("SELECT /*+ {hint} */ t1.a, t2.a FROM hj t1 JOIN hj t2 ON t1.a = t2.a"),
+            &catalog,
+            &ctx,
+        )
+        .unwrap();
+        got.sort_by_key(|row| format!("{row:?}"));
+        assert_eq!(
+            got,
+            vec![
+                vec![Datum::Int(1), Datum::Int(1)],
+                vec![Datum::Int(2), Datum::Int(2)],
+                vec![Datum::Int(3), Datum::Int(3)],
+            ],
+            "{hint} changed the row set",
+        );
+    }
 }

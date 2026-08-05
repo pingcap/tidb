@@ -636,6 +636,7 @@ impl PlanTrace {
         index_name: &str,
         index_columns: &[&str],
         estimate: ScanEstimate,
+        keep_order: bool,
     ) {
         self.replace_top(
             PlanNode::new(
@@ -645,7 +646,7 @@ impl PlanTrace {
                     "table:{visible}, index:{index_name}({})",
                     index_columns.join(", ")
                 ),
-                format!("keep order:false{}", pseudo_suffix(estimate)),
+                format!("keep order:{keep_order}{}", pseudo_suffix(estimate)),
             )
             .with_pseudo_ndv(estimate),
         );

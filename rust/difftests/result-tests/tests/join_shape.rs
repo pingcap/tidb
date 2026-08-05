@@ -1048,11 +1048,57 @@ fn join_operators_and_their_keep_order_match_recorded_tidb_plans() {
     // the same one `driver::index_join_decision`'s module doc names: this
     // tier chooses a merge or index join whenever the order is THERE, where
     // Go chooses it only when it is CHEAPER.
+    // NINTH MEASUREMENT (batch67). 141 -> 144 agreeing, merge pairs 78 -> 80
+    // AGREED and 8 -> 7 EXTRA, with `compared` and `recorded_merge_pairs`
+    // still at 229 and 88. THREE statements moved, and every one of them was
+    // read off `JOIN_SHAPE_SHOW_DISAGREEMENTS=1` against its recording.
+    //
+    // THE TWO THE ACCESS PATH UNLOCKED (78 -> 80). `topn_push_down` records
+    //
+    //   explain format = 'plan_tree' select /*+ TIDB_SMJ(t1, t2) */ * from t
+    //     t1 join t t2 on t1.a = t2.a limit 5;
+    //
+    // as a `MergeJoin` over two `IndexReader`/`IndexFullScan table:t?,
+    // index:idx(a)  keep order:true` -- `r/topn_push_down.result:237-244`,
+    // and its `left join ... where t2.a is null` sibling four lines below. The
+    // topic went `0/2 (+0 extra)` -> `2/2 (+0 extra)`. Both were unreachable
+    // for one reason: the leaf DELETED every index candidate the moment a
+    // parent required an order, so a table with no clustered integer handle
+    // could answer no order at all. It now enumerates them and keeps the ones
+    // `matchProperty` says already walk in the required order (Go's
+    // `convertToIndexScan` under a non-empty property), and reports the index
+    // order only when the source was built `keep order:true`.
+    //
+    // THE ONE THE HINT GATE REMOVED (8 -> 7). `join_reorder_through_projection`
+    //
+    //   select /*+ leading(t2, t3, t1) */ t1.a, dt.a2 from t1 join (
+    //     select /*+ hash_join(t2) */ t2.a as a2, t2.b * 2 as doubled_b,
+    //            t3.a as a3 from t2 join t3 on t2.a = t3.a) dt
+    //   on t1.b = dt.doubled_b;
+    //
+    // recorded NO ordered merge; this tier merged `(t2, t3)`. The subquery
+    // writes `hash_join(t2)`, and `exhaustPhysicalPlans4LogicalJoin` reads
+    // that BEFORE it costs anything: `hashJoins, forced := getHashJoins(...);
+    // if forced && len(hashJoins) > 0 { return hashJoins, true, nil }`. See
+    // `tidb_executor::driver::join_method_hints`.
+    //
+    // THE FOUR THAT NEVER APPEARED. The access-path change ALONE measured
+    // `(229, 141, 88, 80, 12)` -- four new extras, all of them
+    // `topn_push_down`'s `TIDB_INLJ(t2)` and `TIDB_HJ(t1, t2)` variants of the
+    // same statement the `TIDB_SMJ` pair above comes from. TiDB reaches its
+    // `IndexJoin` and `HashJoin` there by the same hint arms, not by costing
+    // the merge join dearer. The gate removes all four and the pre-existing
+    // one above with it, which is why EXTRA FALLS across this landing rather
+    // than rising.
+    //
+    // A JOIN COST MODEL is still the named prerequisite for the seven that
+    // remain: four in `join_reorder2` and three in
+    // `join_reorder_through_projection`, none of them hinted.
     const COMPARED: usize = 229;
-    const BOTH_AGREE: usize = 141;
+    const BOTH_AGREE: usize = 144;
     const RECORDED_MERGE_PAIRS: usize = 88;
-    const AGREED_MERGE_PAIRS: usize = 78;
-    const EXTRA_MERGE_PAIRS: usize = 8;
+    const AGREED_MERGE_PAIRS: usize = 80;
+    const EXTRA_MERGE_PAIRS: usize = 7;
 
     assert_eq!(
         (

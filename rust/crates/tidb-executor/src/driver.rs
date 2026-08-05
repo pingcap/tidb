@@ -305,6 +305,7 @@ mod grouping;
 mod having;
 pub(crate) mod index_join_decision;
 pub mod infoschema_meta;
+pub(crate) mod join_method_hints;
 pub(crate) mod join_reorder;
 pub(crate) mod join_search;
 pub(crate) mod leaf_demand;
@@ -654,10 +655,15 @@ pub(crate) fn run_select_traced(
                 current_db,
                 ctx,
             );
+            // Go's `SetPreferredJoinTypeAndOrder`: the statement's own join
+            // hints, which decide at some sites which physical families are
+            // enumerated AT ALL. See `driver::join_method_hints`.
+            let join_hints = join_method_hints::JoinMethodHints::of_select(select);
             let demand = leaf_demand::FromDemand {
                 offered: &offered,
                 columns: wanted.as_ref(),
                 rows: row_source.as_ref(),
+                join_hints: (!join_hints.is_empty()).then_some(&join_hints),
             };
             // Go's `join_reorder` rule, which runs on the logical plan
             // between predicate pushdown and physical planning. It only ever

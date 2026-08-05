@@ -1784,7 +1784,7 @@ fn trace_write_index_scan(
         .collect();
     let index_columns: Vec<&str> = index_columns.iter().map(String::as_str).collect();
     if ranges.len() == 1 && ranges[0].is_full() {
-        trace.index_full_scan(visible, &index.name, &index_columns, estimate);
+        trace.index_full_scan(visible, &index.name, &index_columns, estimate, false);
     } else {
         trace.index_range_scan(visible, &index.name, &index_columns, ranges, estimate);
     }

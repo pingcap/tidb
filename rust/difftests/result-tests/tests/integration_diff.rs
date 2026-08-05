@@ -1555,7 +1555,50 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // that none of these numbers can show, because none of those three topics
     // is enrolled. That is the frontier this ratchet does not reach, and it is
     // why the per-topic replay is run alongside it.
-    const KNOWN_DIVERGENCES: usize = 77;
+    //
+    // 77 -> 75, and `compared` 8098 -> 8099. Two topics moved and no other
+    // topic's matched/diverged/skipped triple changed at all:
+    //
+    //  * `planner/core/join_reorder_through_projection` 11 -> 9 diverged. Both
+    //    entries are the same recorded statement,
+    //
+    //      select /*+ leading(ab) */ mp.id, ms.note from jt_mp mp
+    //        left join jt_ms ms on mp.ms_id = ms.id
+    //        left join jt_ch ch on mp.pay_receive_id = ch.channel_id
+    //                          and mp.payline_id * 100 = ch.pay_kind
+    //        left join jt_ab ab on ab.user_id = mp.user_id
+    //                          and ab.site_code = mp.site_code
+    //      where ab.regpkgid = 1;
+    //
+    //    where TiDB records `IndexFullScan table:ch, index:channel_id(
+    //    channel_id, pay_kind)` and this tier read `TableFullScan table:ch`.
+    //    The leaf `ch` is required to produce `channel_id` order and USED to
+    //    have its index candidates deleted outright for exactly that reason;
+    //    it now enumerates them under the order (`tidb_executor::driver::
+    //    access::leaf_index_path`'s `wanted` filter, Go's `convertToIndexScan`
+    //    under a non-empty property) and walks the index TiDB walks.
+    //
+    //  * `executor/merge_join` 246 -> 247 matched, `OutOfDomain` 13 -> 12.
+    //    `TestMergeJoinDifferentTypes`' own statement,
+    //
+    //      create table t1(a bigint, b bit(1), index idx_a(a));
+    //      create table t2(a bit(1) not null, b bit(1), index idx_a(a));
+    //      select hex(t1.a), hex(t2.a) from t1 inner join t2 on t1.a=t2.a;
+    //
+    //    was REFUSED here with `join key value outside its column's comparison
+    //    domain` -- this tier's hash join cannot key a `bit(1)` against a
+    //    `bigint`. Both tables carry `idx_a(a)`, so the merge join TiDB plans
+    //    for it is now available and the statement answers TiDB's own recorded
+    //    rows. That is the +1 on `compared`, and it MATCHED.
+    //
+    // The same landing gates the merge candidate on the statement's join-
+    // method hints before any cost is compared (`tidb_executor::driver::
+    // join_method_hints`). It moves nothing in this replay -- the four
+    // statements it decides are `topn_push_down`'s, whose recorded access
+    // property this reader already matched -- and everything in the
+    // `join_shape` casetest, where it is what keeps EXTRA merge pairs from
+    // rising. Two oracles, two different questions about the same commit.
+    const KNOWN_DIVERGENCES: usize = 75;
     //
     //
     // 28 -> 24 (written as 35 -> 31 in batch43's own tree, which branched before batch42), in three unrelated causes, none of them an access-path

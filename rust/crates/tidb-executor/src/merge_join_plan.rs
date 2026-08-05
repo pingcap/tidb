@@ -33,10 +33,9 @@
 //! hand each child a required property over its own join keys
 //! (`tryToGetChildReqProp`).
 //!
-//! # What this port covers, and what it does NOT
+//! # What this port covers
 //!
-//! Only the **int-handle branch** of `PreparePossibleProperties`. That is a
-//! deliberate boundary, not an oversight:
+//! BOTH branches of `PreparePossibleProperties`.
 //!
 //! The int-handle order is one a table read ALREADY produces. This tier's
 //! base-table source streams a key-ordered snapshot (see
@@ -46,10 +45,22 @@
 //! same object, with `keep order:true` where Go prints `keep order:true`.
 //!
 //! The INDEX branch is different in kind: satisfying an index order means
-//! CHOOSING an index path where this tier reads the table, which changes the
-//! printed access object and is the follow-on increment. Adding it here
-//! without the cost model that picks between the paths measured 61 -> 101
-//! divergences once already.
+//! CHOOSING an index path where this tier would otherwise read the table,
+//! which changes the printed access object. It landed with the two pieces that
+//! make it safe, and NOT before:
+//!
+//!  * the leaf can BUILD that walk -- Go's `convertToIndexScan` under a
+//!    non-empty property, which is the order filter in
+//!    [`crate::driver::access::leaf_index_path`] -- and reports the index
+//!    order only when it was built with `keep order:true`, so the promise and
+//!    the delivery are two separate statements;
+//!  * the candidate list is gated by the statement's join-method HINTS before
+//!    any cost is compared ([`crate::driver::join_method_hints`]), which is
+//!    what `exhaustPhysicalPlans4LogicalJoin` does first.
+//!
+//! An earlier attempt at the index branch WITHOUT either measured 61 -> 101
+//! divergences; a second, with the leaf still walking in handle order,
+//! measured a row DROP (see [`table_scan_order`]).
 //!
 //! Unsigned int handles are excluded for the same reason
 //! [`crate::handle_range`]'s `handle_column` excludes them: TiDB stores an
@@ -90,7 +101,44 @@ pub(crate) struct MergeJoinPlan {
 /// empty answer is the correct one for a table without a clustered integer
 /// primary key, and it makes every caller below decline a merge join.
 pub(crate) fn provided_orders(table: &KvTable) -> Vec<Vec<usize>> {
-    table_scan_order(table)
+    let mut orders = table_scan_order(table);
+    orders.extend(index_orders(table));
+    orders
+}
+
+/// The INDEX branch of the same Go loop:
+///
+/// ```text
+/// if len(path.IdxCols) == 0 { continue }
+/// result = append(result, make([]*expression.Column, len(path.IdxCols)))
+/// copy(result[len(result)-1], path.IdxCols)
+/// ```
+///
+/// One order per access path, which for an index path is its key parts in
+/// key order. Go's `EqCondCount` suffixes are NOT produced here: they are the
+/// orders left over once a leading key part is pinned to a constant by a
+/// pushed-down `=`, and no condition reaches a join leaf in this tier (see
+/// [`crate::driver::access::leaf_index_path`]'s "why no `WHERE` reaches it"),
+/// so `path.EqCondCount` is zero at every site this answers for.
+///
+/// A key part with a declared PREFIX length is where the list stops:
+/// [`crate::kv_table::KvIndex::ordered_column_offsets`] cuts it, because the
+/// entry holds `'abc'` where the row holds `'abcdef'` and the index does not
+/// order by that column at all. Go reaches the same answer one layer later,
+/// in `matchProperty`'s `idxColLens[colIdx] == types.UnspecifiedLength`.
+///
+/// This is the PROMISE half only. Whether a leaf can be BUILT to walk one of
+/// these orders is [`crate::driver::access::leaf_ordered_index_path`], and
+/// whether it actually was is what the leaf reports back -- see
+/// [`table_scan_order`] for the row drop that conflating the two once hid.
+fn index_orders(table: &KvTable) -> Vec<Vec<usize>> {
+    table
+        .plan_indexes()
+        .filter_map(|index| {
+            let ordered = index.ordered_column_offsets();
+            (!ordered.is_empty()).then(|| ordered.to_vec())
+        })
+        .collect()
 }
 
 /// The orders a whole-table scan of `table` ACTUALLY walks in -- the record
