@@ -1387,6 +1387,14 @@ impl DriverError {
             *b"42S02",
             format!("Unknown table '{table}' in MULTI DELETE"),
         ),
+        // Go: "The target table %-.100s of the %s is not updatable".
+        // 1288 is absent from Go's `mysql.MySQLState`, so it carries the
+        // default state.
+        DriverError::NonUpdatableTable { table, statement } => MysqlError::new(
+            1288,
+            *b"HY000",
+            format!("The target table {table} of the {statement} is not updatable"),
+        ),
         // Go: "Can't group on '%-.192s'".
         DriverError::WrongGroupField(field) => MysqlError::new(
             1056,

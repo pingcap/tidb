@@ -749,6 +749,55 @@ pub(crate) fn build_derived_source(
     trace: Option<&mut PlanTrace>,
     required: &tidb_planner::physical_property::PhysicalProperty,
 ) -> Result<(Box<dyn Executor>, FromScope), DriverError> {
+    let (alias, columns, rows) =
+        derived_source_relation(subquery, alias, catalog, current_db, ctx, trace, required)?;
+    let schema_columns: Vec<Column> = columns
+        .iter()
+        .enumerate()
+        .map(|(i, (_, ft))| {
+            let mut col = Column::new((i + 1) as i64, ft.clone());
+            col.index = i as i64;
+            col
+        })
+        .collect();
+    let exec: Box<dyn Executor> = Box::new(MemTableSourceExec::new(
+        ExecutorMeta::new(Schema::new(schema_columns), 0, INIT_CAP, MAX_CHUNK_SIZE),
+        rows,
+    ));
+    let scope = FromScope {
+        tables: vec![FromTable {
+            name: alias.to_owned(),
+            // An alias is the only qualifier a derived table answers to.
+            database: None,
+            columns,
+            offset: 0,
+            func_deps: Default::default(),
+        }],
+        zone: ctx.session_zone(),
+        ..FromScope::default()
+    };
+    Ok((exec, scope))
+}
+
+/// A derived table's MATERIALIZED relation: the alias it answers to, its
+/// column list and its rows.
+///
+/// Split out of [`build_derived_source`] because a multi-table write's `FROM`
+/// needs the rows themselves rather than an executor over them (see
+/// `multi_dml`, whose joined row carries a per-table row identity beside the
+/// values). Both callers therefore apply ONE reading of the two rules a
+/// derived table's NAME and SHAPE must satisfy -- Go's
+/// `ErrDerivedMustHaveAlias` (1248) and `ErrDupFieldName` (1060) -- instead of
+/// two that can drift.
+pub(crate) fn derived_source_relation<'a>(
+    subquery: &QueryStmt,
+    alias: Option<&'a str>,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    trace: Option<&mut PlanTrace>,
+    required: &tidb_planner::physical_property::PhysicalProperty,
+) -> Result<(&'a str, Vec<(String, FieldType)>, Vec<Vec<Datum>>), DriverError> {
     // Captured from Go: an alias-less derived table is ErrDerivedMustHaveAlias
     // in a plain SELECT and in a view body alike.
     let alias = alias.filter(|alias| !alias.is_empty());
@@ -781,32 +830,7 @@ pub(crate) fn build_derived_source(
             return Err(DriverError::DuplicateColumnName(name.clone()));
         }
     }
-    let schema_columns: Vec<Column> = columns
-        .iter()
-        .enumerate()
-        .map(|(i, (_, ft))| {
-            let mut col = Column::new((i + 1) as i64, ft.clone());
-            col.index = i as i64;
-            col
-        })
-        .collect();
-    let exec: Box<dyn Executor> = Box::new(MemTableSourceExec::new(
-        ExecutorMeta::new(Schema::new(schema_columns), 0, INIT_CAP, MAX_CHUNK_SIZE),
-        rows,
-    ));
-    let scope = FromScope {
-        tables: vec![FromTable {
-            name: alias.to_owned(),
-            // An alias is the only qualifier a derived table answers to.
-            database: None,
-            columns,
-            offset: 0,
-            func_deps: Default::default(),
-        }],
-        zone: ctx.session_zone(),
-        ..FromScope::default()
-    };
-    Ok((exec, scope))
+    Ok((alias, columns, rows))
 }
 
 /// Applies a derived table's `(c1, c2, ...)` alias column list.

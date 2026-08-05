@@ -470,6 +470,19 @@ pub enum DriverError {
     /// names a target the `FROM`/`USING` clause does not provide -- which
     /// includes naming an aliased source by its stored table name.
     UnknownTableInMultiDelete(String),
+    /// Go `plannererrors.ErrNonUpdatableTable` (1288): a write named a source
+    /// that IS in the `FROM` but is not a base table -- a derived table, a
+    /// CTE, a view or a sequence. Go decides this by ABSENCE from
+    /// `updatableTableListResolver`'s list (`buildUpdateLists`'s
+    /// `!foundListItem`) and from `collectTableName`'s `canUpdate` for
+    /// `DELETE`. The second field is the statement Go names in the message,
+    /// `UPDATE` or `DELETE`.
+    NonUpdatableTable {
+        /// The source as the statement named it: its alias once it has one.
+        table: String,
+        /// `UPDATE` or `DELETE`, as Go's message spells it.
+        statement: &'static str,
+    },
     /// Go `plannererrors.ErrWrongGroupField` (1056): a `GROUP BY` position
     /// resolves to an aggregate or window-function select field, which
     /// cannot itself be grouped on.

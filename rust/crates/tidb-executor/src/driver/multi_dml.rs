@@ -67,11 +67,25 @@
 //!   caps the JOINED ROWS the statement reaches -- the same "rows reached,
 //!   not rows changed" reading the single-table path already has.
 //!
+//! * **A derived table is a READ source, never a target.** Go builds the
+//!   whole `FROM` (`buildResultSetNode`) before it decides what is writable,
+//!   and decides that separately: `updatableTableListResolver.Leave` adds a
+//!   `TableSource` to the updatable list only when
+//!   `v.Source.(*ast.TableName)` succeeds, so a subquery source is simply
+//!   absent from it. `buildUpdateLists` then turns that absence into an
+//!   error at the `SET` column -- "1: update (select * from t1) t1 set b =
+//!   1111111 ----- (no updatable table here) ... subQuery is not counted as
+//!   updatable table", `ErrNonUpdatableTable` (1288). `DELETE` reaches the
+//!   same place through `collectTableName`, whose `canUpdate` is likewise
+//!   the `*ast.TableName` type assertion. So `UPDATE t t1, (SELECT ...) t2
+//!   SET t1.b = t2.b` WRITES, and only a `SET`/`DELETE` target naming `t2`
+//!   is refused.
+//!
 //! DEFERRED (documented, and refused rather than approximated): `UPDATE
-//! IGNORE` over a join, and a derived table, view, `NATURAL`/`USING` join or
-//! `LATERAL` source anywhere in a multi-table DML's `FROM`. A silently
-//! half-applied multi-table write is a wrong answer no reader would notice,
-//! so each of these returns an error naming itself.
+//! IGNORE` over a join, and a view, `NATURAL`/`USING` join or `LATERAL`
+//! source anywhere in a multi-table DML's `FROM`. A silently half-applied
+//! multi-table write is a wrong answer no reader would notice, so each of
+//! these returns an error naming itself.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -89,17 +103,32 @@ enum RowId {
     Mem(usize),
 }
 
-/// One base table participating in a multi-table DML statement's `FROM`.
+/// Where a `FROM` source's rows live, and therefore whether a write may name
+/// it. This is Go's `updatableTableListResolver`/`collectTableName` decision,
+/// which both make by the same test -- `x.Source.(*ast.TableName)` -- and
+/// which is settled once here rather than at each write site.
+enum SourceOrigin {
+    /// A base table, identified for writing back by schema and stored name.
+    Base {
+        /// The schema the table really lives in.
+        database: String,
+        /// The stored table name.
+        name: String,
+    },
+    /// A derived table: rows materialized from a subquery, with no base-table
+    /// identity behind them. A read source only.
+    Derived,
+}
+
+/// One source participating in a multi-table DML statement's `FROM`.
 struct SourceTable {
     /// The name the statement qualifies it with: the alias when it has one.
     visible: String,
     /// The schema, when a `db.t` reference may still name it -- `None` once
     /// an alias has replaced the whole path, exactly as in [`FromTable`].
     qualifiable_db: Option<String>,
-    /// The schema the table really lives in, for writing back.
-    database: String,
-    /// The stored table name, for writing back.
-    name: String,
+    /// Whether a write may name this source, and where it writes if so.
+    origin: SourceOrigin,
     columns: Vec<(String, FieldType)>,
     /// Where this table's columns start in the joined row.
     offset: usize,
@@ -108,6 +137,15 @@ struct SourceTable {
 impl SourceTable {
     fn end(&self) -> usize {
         self.offset + self.columns.len()
+    }
+
+    /// Go's `ErrNonUpdatableTable` for this source, so the two write sites
+    /// that can reach a non-updatable source raise ONE error.
+    fn not_updatable(&self, statement: &'static str) -> DriverError {
+        DriverError::NonUpdatableTable {
+            table: self.visible.clone(),
+            statement,
+        }
     }
 }
 
@@ -205,12 +243,61 @@ fn build_multi_node(
             scan_base_table(table_ref, catalog, current_db, &ctx.session_zone())
         }
         tidb_ast::JoinNode::Join(join) => build_multi_source(join, catalog, current_db, ctx),
-        // A derived table's rows have no base-table identity to write back
-        // to, so there is nothing to approximate here.
-        tidb_ast::JoinNode::Derived { .. } => Err(DriverError::unsupported(
-            "a derived table is not supported in multi-table DML",
-        )),
+        tidb_ast::JoinNode::Derived {
+            subquery,
+            alias,
+            lateral,
+            column_names,
+        } => scan_derived_table(subquery, alias.as_deref(), *lateral, column_names, catalog, current_db, ctx),
     }
+}
+
+/// Materializes a derived table as a READ-ONLY source of the join.
+///
+/// It goes through `from::derived_source_relation`, so the alias rule
+/// (`ErrDerivedMustHaveAlias`) and the duplicate-column rule
+/// (`ErrDupFieldName`) are the SELECT path's own, not a second reading of
+/// them. Its rows carry no [`RowId`]: Go's updatable list never contains a
+/// subquery source, so no write can name it and there is no identity to
+/// invent.
+fn scan_derived_table(
+    subquery: &tidb_ast::QueryStmt,
+    alias: Option<&str>,
+    lateral: bool,
+    column_names: &[String],
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<MultiSource, DriverError> {
+    if lateral {
+        // A LATERAL source is re-evaluated per outer row, which is a
+        // different read than the one this join performs.
+        return Err(DriverError::unsupported(
+            "a LATERAL derived table is not supported in multi-table DML",
+        ));
+    }
+    let (alias, mut columns, rows) = super::from::derived_source_relation(
+        subquery,
+        alias,
+        catalog,
+        current_db,
+        ctx,
+        None,
+        &tidb_planner::physical_property::PhysicalProperty::default(),
+    )?;
+    super::from::rename_derived_columns(&mut columns, column_names)?;
+    Ok(MultiSource {
+        zone: ctx.session_zone(),
+        tables: vec![SourceTable {
+            visible: alias.to_owned(),
+            // An alias is the only qualifier a derived table answers to.
+            qualifiable_db: None,
+            origin: SourceOrigin::Derived,
+            columns,
+            offset: 0,
+        }],
+        rows: rows.into_iter().map(|row| (vec![None], row)).collect(),
+    })
 }
 
 /// Reads one base table's rows together with their handles.
@@ -259,8 +346,10 @@ fn scan_base_table(
         tables: vec![SourceTable {
             visible,
             qualifiable_db: table_ref.alias.is_none().then(|| database.to_owned()),
-            database: database.to_owned(),
-            name: name.to_owned(),
+            origin: SourceOrigin::Base {
+                database: database.to_owned(),
+                name: name.to_owned(),
+            },
             columns,
             offset: 0,
         }],
@@ -517,6 +606,12 @@ fn resolve_assignments(
         let slot = source
             .table_of_column(offset)
             .ok_or(DriverError::unsupported("SET column outside the join"))?;
+        // Go `buildUpdateLists`, the `!foundListItem` branch: the column
+        // resolved, but against a source the updatable list does not hold --
+        // "subQuery is not counted as updatable table".
+        if matches!(source.tables[slot].origin, SourceOrigin::Derived) {
+            return Err(source.tables[slot].not_updatable("UPDATE"));
+        }
         resolved.push(MultiAssignment {
             slot,
             column: offset - source.tables[slot].offset,
@@ -534,8 +629,13 @@ fn write_row(
     row: &[Datum],
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
+    // Only a `SourceOrigin::Base` reaches here: `resolve_assignments` refused
+    // every other kind before a single row was read.
+    let SourceOrigin::Base { database, name } = &table.origin else {
+        return Err(table.not_updatable("UPDATE"));
+    };
     let entry = catalog
-        .get_mut_in(&table.database, &table.name)
+        .get_mut_in(database, name)
         .ok_or(DriverError::unsupported("unknown table"))?;
     match (entry, id) {
         (TableEntry::Mem(mem), RowId::Mem(index)) => {
@@ -575,7 +675,11 @@ pub(crate) fn run_multi_delete(
         for &slot in &target_slots {
             let Some(id) = &ids[slot] else { continue };
             let table = &source.tables[slot];
-            doomed.insert((table.database.clone(), table.name.clone(), id.clone()));
+            // `resolve_delete_targets` admitted only base sources.
+            let SourceOrigin::Base { database, name } = &table.origin else {
+                return Err(table.not_updatable("DELETE"));
+            };
+            doomed.insert((database.clone(), name.clone(), id.clone()));
         }
     }
 
@@ -631,6 +735,15 @@ fn resolve_delete_targets(
                     Some(db) if db.eq_ignore_ascii_case(schema) => {}
                     _ => continue,
                 }
+            }
+            // Go's `collectTableName` records the source under this very
+            // name whether or not it is updatable, and the caller splits the
+            // two outcomes: a name the `FROM` never provides is 1109
+            // ("check sql like: `delete b from (select * from t) as a, t`"),
+            // while a name it provides NON-updatably is 1288 ("check sql
+            // like: `delete a from (select * from t) as a, t`").
+            if matches!(table.origin, SourceOrigin::Derived) {
+                return Err(table.not_updatable("DELETE"));
             }
             found = true;
             if !slots.contains(&slot) {

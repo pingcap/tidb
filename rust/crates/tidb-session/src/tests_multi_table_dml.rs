@@ -563,12 +563,298 @@ fn multi_table_dml_refuses_sources_without_a_row_identity() {
     for sql in [
         "UPDATE IGNORE r1 JOIN r2 ON r1.id = r2.id SET r1.v = 2",
         "UPDATE r1 JOIN rv ON r1.id = rv.id SET r1.v = 2",
-        "UPDATE r1 JOIN (SELECT 1 AS id) d ON r1.id = d.id SET r1.v = 2",
         "DELETE r1 FROM r1 JOIN rv ON r1.id = rv.id",
-        "DELETE r1 FROM r1 JOIN (SELECT 1 AS id) d ON r1.id = d.id",
     ] {
         assert!(session.run(sql).is_err(), "`{sql}` should be refused");
     }
     // Nothing was half-applied.
     assert_eq!(column(&mut session, "SELECT id, v FROM r1"), ["1|1"]);
+}
+
+/// A derived table is a READ source of a multi-table write, and the base
+/// table joined against it IS written.
+///
+/// This is the statement `executor/union_scan` carries -- Go, `mockstore`:
+/// `update t t1, (select a, b from t) t2 set t1.b = t2.b where t1.a = t2.a +
+/// 10` over `(1,1),(2,2),(3,3),(11,11),(12,12),(13,13)` reports
+/// `OK affected=3` and leaves `1|1 ; 2|2 ; 3|3 ; 11|1 ; 12|2 ; 13|3`.
+///
+/// The assertion is the ORDERED POST-UPDATE CONTENTS, not the affected-row
+/// count: a count of 3 also comes back from a write that changed the WRONG
+/// three rows, or that wrote the right rows with the wrong values, so a
+/// count alone cannot tell a correct write from either. Rows `1`, `2` and
+/// `3` are here precisely because nothing may write them -- `t2.a + 10` is
+/// never `1`, `2` or `3` -- so an over-applying rule fails this test on the
+/// first three entries of the vector.
+#[test]
+fn multi_table_update_reads_a_derived_table_and_writes_the_base_table() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (a INT PRIMARY KEY, b INT)")
+        .unwrap();
+    session
+        .run("INSERT INTO t VALUES (1,1),(2,2),(3,3),(11,11),(12,12),(13,13)")
+        .unwrap();
+
+    assert_eq!(
+        affected(
+            &mut session,
+            "UPDATE /*+ INL_JOIN(t1) */ t t1, (SELECT a, b FROM t) t2 \
+             SET t1.b = t2.b WHERE t1.a = t2.a + 10"
+        ),
+        3
+    );
+    assert_eq!(
+        column(&mut session, "SELECT a, b FROM t ORDER BY a"),
+        ["1|1", "2|2", "3|3", "11|1", "12|2", "13|3"]
+    );
+}
+
+/// The derived table is a SNAPSHOT the whole statement reads, so a write is
+/// never visible to a later row of the same statement.
+///
+/// Go, `mockstore`, over the same six rows: `... WHERE t1.a = t2.a + 1`
+/// reports `OK affected=4` and leaves `1|1 ; 2|1 ; 3|2 ; 11|11 ; 12|11 ;
+/// 13|12`. Row `3` takes `2`, which is row `2`'s value BEFORE this statement
+/// changed it to `1` -- a re-reading derived table would leave `3|1`, and the
+/// affected count would be 4 either way.
+#[test]
+fn a_derived_table_source_is_read_once_before_any_row_is_written() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (a INT PRIMARY KEY, b INT)")
+        .unwrap();
+    session
+        .run("INSERT INTO t VALUES (1,1),(2,2),(3,3),(11,11),(12,12),(13,13)")
+        .unwrap();
+
+    assert_eq!(
+        affected(
+            &mut session,
+            "UPDATE t t1, (SELECT a, b FROM t) t2 SET t1.b = t2.b WHERE t1.a = t2.a + 1"
+        ),
+        4
+    );
+    assert_eq!(
+        column(&mut session, "SELECT a, b FROM t ORDER BY a"),
+        ["1|1", "2|1", "3|2", "11|11", "12|11", "13|12"]
+    );
+}
+
+/// A derived table that matches NOTHING writes nothing, and one that matches
+/// a base row TWICE writes it once.
+///
+/// Both halves are aimed at over-application, which an affected-row count
+/// hides: Go reports `OK affected=0` for the empty join and leaves
+/// `1|1 ; 2|2 ; 3|3`, and reports `OK affected=1` for the doubled join,
+/// leaving `1|11 ; 2|20` -- not `1|12`.
+#[test]
+fn a_derived_table_source_neither_over_applies_nor_repeats() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE u (a INT PRIMARY KEY, b INT)")
+        .unwrap();
+    session.run("INSERT INTO u VALUES (1,1),(2,2),(3,3)").unwrap();
+    assert_eq!(
+        affected(
+            &mut session,
+            "UPDATE u t1, (SELECT a, b FROM u WHERE a < 0) t2 SET t1.b = 99 WHERE t1.a = t2.a"
+        ),
+        0
+    );
+    assert_eq!(
+        column(&mut session, "SELECT a, b FROM u ORDER BY a"),
+        ["1|1", "2|2", "3|3"]
+    );
+
+    session
+        .run("CREATE TABLE y (id INT PRIMARY KEY, v INT)")
+        .unwrap();
+    session.run("INSERT INTO y VALUES (1,10),(2,20)").unwrap();
+    assert_eq!(
+        affected(
+            &mut session,
+            "UPDATE y JOIN (SELECT 1 AS k UNION ALL SELECT 1) d ON y.id = d.k SET y.v = y.v + 1"
+        ),
+        1
+    );
+    assert_eq!(
+        column(&mut session, "SELECT id, v FROM y ORDER BY id"),
+        ["1|11", "2|20"]
+    );
+
+    session.run("CREATE TABLE z (id INT PRIMARY KEY)").unwrap();
+    session.run("INSERT INTO z VALUES (1),(2)").unwrap();
+    assert_eq!(
+        affected(
+            &mut session,
+            "DELETE z FROM z JOIN (SELECT 1 AS k UNION ALL SELECT 1) d ON z.id = d.k"
+        ),
+        1
+    );
+    assert_eq!(column(&mut session, "SELECT id FROM z ORDER BY id"), ["2"]);
+}
+
+/// An outer join's NULL-padded side is still not written when one of the two
+/// sides is a derived table, and the derived table's own NULL padding is
+/// simply values.
+///
+/// Go, `mockstore`, over `u(1,1),(2,2),(3,3)`:
+/// `UPDATE u t1 LEFT JOIN (SELECT a, b FROM u WHERE a > 100) t2 ON t1.a =
+/// t2.a SET t1.b = IFNULL(t2.b, -1)` reports 3 and leaves `1|-1 ; 2|-1 ;
+/// 3|-1` -- the derived side padded, the base side written.
+/// `UPDATE (SELECT 1 AS a UNION ALL SELECT 9) d LEFT JOIN v t2 ON d.a = t2.a
+/// SET t2.b = 55` reports 1 over `v(1,1),(2,2),(3,3)` and leaves
+/// `1|55 ; 2|2 ; 3|3`: the `9` row padded `t2`, so nothing was written for
+/// it, and `2`/`3` were never joined at all.
+#[test]
+fn an_outer_join_against_a_derived_table_writes_only_the_rows_that_matched() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE u (a INT PRIMARY KEY, b INT)")
+        .unwrap();
+    session.run("INSERT INTO u VALUES (1,1),(2,2),(3,3)").unwrap();
+    assert_eq!(
+        affected(
+            &mut session,
+            "UPDATE u t1 LEFT JOIN (SELECT a, b FROM u WHERE a > 100) t2 ON t1.a = t2.a \
+             SET t1.b = IFNULL(t2.b, -1)"
+        ),
+        3
+    );
+    assert_eq!(
+        column(&mut session, "SELECT a, b FROM u ORDER BY a"),
+        ["1|-1", "2|-1", "3|-1"]
+    );
+
+    session
+        .run("CREATE TABLE v (a INT PRIMARY KEY, b INT)")
+        .unwrap();
+    session.run("INSERT INTO v VALUES (1,1),(2,2),(3,3)").unwrap();
+    assert_eq!(
+        affected(
+            &mut session,
+            "UPDATE (SELECT 1 AS a UNION ALL SELECT 9) d LEFT JOIN v t2 ON d.a = t2.a \
+             SET t2.b = 55"
+        ),
+        1
+    );
+    assert_eq!(
+        column(&mut session, "SELECT a, b FROM v ORDER BY a"),
+        ["1|55", "2|2", "3|3"]
+    );
+}
+
+/// A derived table is not a WRITE target, and saying so is a different error
+/// from naming a table the `FROM` never provides.
+///
+/// Go, `mockstore`, error codes read off the returned `*terror.Error`:
+///
+/// * `update t t1, (select a, b from t) t2 set t2.b = 5 ...` ->
+///   `[planner:1288]The target table t2 of the UPDATE is not updatable`
+/// * `update (select a, b from t) t1 set t1.b = 1` -> the same 1288, which is
+///   `buildUpdateLists`'s own first documented case ("no updatable table
+///   here").
+/// * `delete t2 from t t1, (select a, b from t) t2 ...` ->
+///   `[planner:1288]The target table t2 of the DELETE is not updatable`
+/// * `delete zz from t t1, (select a, b from t) t2 ...` ->
+///   `[planner:1109]Unknown table 'zz' in MULTI DELETE` -- a name the `FROM`
+///   does not carry at all is still 1109, so the two refusals cannot be
+///   collapsed into one.
+/// * `update x t1, (select a, a from x) t2 ...` -> `[planner:1060]Duplicate
+///   column name 'a'` and `update x t1, (select a from x) set ...` ->
+///   `[ddl:1248]Every derived table must have its own alias`: the derived
+///   table's own shape rules apply here exactly as in a `SELECT`.
+#[test]
+fn a_derived_table_is_not_a_write_target() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (a INT PRIMARY KEY, b INT)")
+        .unwrap();
+    session.run("INSERT INTO t VALUES (1,1),(2,2),(3,3)").unwrap();
+
+    for (sql, code, message) in [
+        (
+            "UPDATE t t1, (SELECT a, b FROM t) t2 SET t2.b = 5 WHERE t1.a = t2.a",
+            1288,
+            "The target table t2 of the UPDATE is not updatable",
+        ),
+        (
+            "UPDATE (SELECT a, b FROM t) t1 SET t1.b = 1",
+            1288,
+            "The target table t1 of the UPDATE is not updatable",
+        ),
+        (
+            "DELETE t2 FROM t t1, (SELECT a, b FROM t) t2 WHERE t1.a = t2.a",
+            1288,
+            "The target table t2 of the DELETE is not updatable",
+        ),
+        (
+            "DELETE zz FROM t t1, (SELECT a, b FROM t) t2 WHERE t1.a = t2.a",
+            1109,
+            "Unknown table 'zz' in MULTI DELETE",
+        ),
+        (
+            "UPDATE t t1, (SELECT a, a FROM t) t2 SET t1.b = 1",
+            1060,
+            "Duplicate column name 'a'",
+        ),
+        (
+            "UPDATE t t1, (SELECT a FROM t) SET t1.b = 1",
+            1248,
+            "Every derived table must have its own alias",
+        ),
+    ] {
+        let error = session.run(sql).unwrap_err().to_mysql_error();
+        assert_eq!((error.code, error.message.as_str()), (code, message), "{sql}");
+    }
+    // Not one of the six refusals wrote anything.
+    assert_eq!(
+        column(&mut session, "SELECT a, b FROM t ORDER BY a"),
+        ["1|1", "2|2", "3|3"]
+    );
+
+    // A derived table standing FIRST in the `FROM` still lets the base table
+    // beside it be written: Go reports 3 and leaves `1|7 ; 2|7 ; 3|7`.
+    assert_eq!(
+        affected(
+            &mut session,
+            "UPDATE (SELECT a, b FROM t) t1, t t2 SET t2.b = 7 WHERE t1.a = t2.a"
+        ),
+        3
+    );
+    assert_eq!(
+        column(&mut session, "SELECT a, b FROM t ORDER BY a"),
+        ["1|7", "2|7", "3|7"]
+    );
+}
+
+/// A derived table's own expressions are computed once and joined as values:
+/// an aggregate one is a single row that every base row matches, and the base
+/// row whose value ALREADY equals it is not counted.
+///
+/// Go, `mockstore`, over `x(1,1),(2,2),(3,3)`:
+/// `UPDATE x t1, (SELECT MAX(a) AS m FROM x) t2 SET t1.b = t2.m` reports
+/// `OK affected=2` -- not 3 -- and leaves `1|3 ; 2|3 ; 3|3`. Row `3` was
+/// already `3`, so it is written but not COUNTED, which is the multi-table
+/// path's "affected rows are CHANGED rows" rule reaching a derived source.
+#[test]
+fn an_aggregate_derived_table_joins_as_one_row_and_counts_only_changes() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE x (a INT PRIMARY KEY, b INT)")
+        .unwrap();
+    session.run("INSERT INTO x VALUES (1,1),(2,2),(3,3)").unwrap();
+
+    assert_eq!(
+        affected(
+            &mut session,
+            "UPDATE x t1, (SELECT MAX(a) AS m FROM x) t2 SET t1.b = t2.m"
+        ),
+        2
+    );
+    assert_eq!(
+        column(&mut session, "SELECT a, b FROM x ORDER BY a"),
+        ["1|3", "2|3", "3|3"]
+    );
 }
