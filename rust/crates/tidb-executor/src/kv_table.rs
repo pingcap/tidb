@@ -144,6 +144,25 @@ pub struct KvTable {
     /// Writes ignore it: a row's partition is a function of the ROW (Go's
     /// `locatePartition`), never of the statement's restriction.
     read_partitions: Option<Vec<i64>>,
+    /// Go `session.HasDirtyContent(tid)` (`pkg/session/txn.go`): whether the
+    /// transaction this table copy belongs to has STAGED a row write to it.
+    ///
+    /// Go answers the question by seeking the table's key prefix in the
+    /// transaction's membuffer -- `it.Valid() && bytes.HasPrefix(it.Key(),
+    /// seekKey)`. This tier stages a transaction as a private catalog COPY
+    /// rather than a membuffer, so the staged keys are indistinguishable from
+    /// the committed ones once written; the flag is what keeps the question
+    /// answerable. It is set by the three row writes below, and cleared for
+    /// every statement that does not continue an open transaction
+    /// (`tidb_session`'s `execute_statement`) -- which is precisely when Go's
+    /// membuffer is empty.
+    ///
+    /// Its ONE reader is the planner-side gate Go spells
+    /// `tableHasDirtyContent` (`pkg/planner/core/util.go:156`), which decides
+    /// whether a `UnionScan` sits above the reader; see
+    /// [`crate::access_path::IndexRangeSourceExec`] for the row ORDER that
+    /// operator imposes.
+    dirty_content: bool,
 }
 
 /// A failure while encoding or decoding table bytes.
@@ -260,7 +279,21 @@ impl KvTable {
             max_foreign_key_id: 0,
             partition: None,
             read_partitions: None,
+            dirty_content: false,
         }
+    }
+
+    /// Go `session.HasDirtyContent(tid)`: whether the open transaction has
+    /// staged a row write to this table. See the field's own doc.
+    #[must_use]
+    pub fn has_dirty_content(&self) -> bool {
+        self.dirty_content
+    }
+
+    /// Forgets the staged writes: the state Go's membuffer is in at the start
+    /// of a transaction. See [`crate::driver::Catalog::clear_dirty_content`].
+    pub fn clear_dirty_content(&mut self) {
+        self.dirty_content = false;
     }
 
     /// Builds the table `CREATE TABLE ... LIKE self` creates: Go
@@ -1340,6 +1373,7 @@ impl KvTable {
         self.store
             .set(key, value)
             .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+        self.dirty_content = true;
         Ok(handle)
     }
 
@@ -1592,7 +1626,9 @@ impl KvTable {
         }
         self.store
             .set(key, value)
-            .map_err(|e| KvTableError::Storage(format!("{e:?}")))
+            .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+        self.dirty_content = true;
+        Ok(())
     }
 
     /// Removes the row stored under `handle`.
@@ -1611,7 +1647,9 @@ impl KvTable {
         };
         self.store
             .delete(key)
-            .map_err(|e| KvTableError::Storage(format!("{e:?}")))
+            .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+        self.dirty_content = true;
+        Ok(())
     }
 }
 

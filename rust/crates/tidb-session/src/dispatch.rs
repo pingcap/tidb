@@ -270,6 +270,16 @@ impl Session {
     }
 
     pub(crate) fn execute_statement(&mut self, sql: &str) -> Result<StmtOutput, DriverError> {
+        // Go hands every statement that is not continuing an open transaction
+        // a FRESH membuffer, so `session.HasDirtyContent` answers false for
+        // every table at this point -- and `BEGIN` therefore starts from an
+        // empty one. A transaction here is a private catalog copy instead, so
+        // the staged-write marks have to be told where that boundary is; this
+        // is the only door a statement arrives through, so it is the only
+        // place that has to say. See `Catalog::clear_dirty_content`.
+        if !self.in_transaction() {
+            self.lock_catalog()?.clear_dirty_content();
+        }
         // One parse serves every door below. `sql_mode` is what decides how a
         // statement lexes, and nothing between here and execution changes it
         // -- the `SET` that could is itself one of these doors, and it returns

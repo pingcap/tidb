@@ -385,29 +385,38 @@ impl crate::table_access::TableAccess for HandleSourceExec {}
 /// takes that second step, so its answer is handle-ascending per batch.
 ///
 /// `can_reorder_handles` is this tier's `canReorderHandles`. The driver clears
-/// it through [`Self::set_covering`] for a path that needs no row lookup and
-/// through [`crate::table_access::TableAccess::accept_keep_order`] when the
-/// statement's `ORDER BY` is the one this index path already produces. Cleared,
-/// the walk order IS the answer and no sort happens -- the same net effect as
-/// Go's sort-then-restore, one pass cheaper.
+/// it through [`Self::answer_in_index_order`] for the paths whose answer IS the
+/// index walk, and through
+/// [`crate::table_access::TableAccess::accept_keep_order`] when the statement's
+/// `ORDER BY` is the one this index path already produces. Cleared, the walk
+/// order IS the answer and no sort happens -- the same net effect as Go's
+/// sort-then-restore, one pass cheaper.
 ///
-/// # The boundary this rule does NOT yet know about: `UnionScan`
+/// # `UnionScan`: why a DIRTY table clears it too
 ///
 /// Go puts a `UnionScanExec` above the reader whenever the open transaction
-/// has written the table, and that operator MERGES the snapshot stream with
-/// the staged rows by `compare()` -- the index's own key columns first, the
-/// handle last (`pkg/executor/union_scan.go`). So a double read inside a dirty
-/// transaction answers in INDEX order in Go, whatever the lookup below it did.
+/// has written the table (`tableHasDirtyContent` ->
+/// `session.HasDirtyContent`), and that operator MERGES the snapshot stream
+/// with the staged rows by `compare()`. For a double read it orders on
+/// `usedIndex` -- the offsets of the INDEX's own columns, filled in by
+/// `builder.go`'s `*IndexLookUpExecutor` arm -- and falls through to
+/// `handleCols.Compare` when they tie (`pkg/executor/union_scan.go:310`). So a
+/// double read inside a dirty transaction answers in index-key-then-handle
+/// order in Go, whatever the lookup below it did.
 ///
-/// This tier has no `UnionScan` operator: staged rows are merged at the
-/// storage seam instead (see [`crate::table_access`]), so this source cannot
-/// tell a dirty read from a clean one and sorts either way. Measured cost, as
-/// of the batch that landed the rule: THREE statements of
-/// `tests/integrationtest/t/executor/union_scan.test` (`select a, b from t use
-/// index(c) where c > 3` and its two siblings, all inside `BEGIN`) went from
-/// agreeing to disagreeing on row order, against NINE that stopped disagreeing
-/// elsewhere. The three are not a regression of this rule -- they are the
-/// missing operator, newly visible.
+/// This tier has no `UnionScan` OPERATOR and does not need one: a transaction
+/// stages into a private catalog copy, so the staged rows are already in the
+/// one stream this source walks (which is why read-your-own-writes works here
+/// without any of this). What the operator contributes that the storage seam
+/// does not is the ORDER, and merging one index-ordered stream with another is
+/// just that stream -- so the whole of `compare()` reduces, here, to leaving
+/// the handle batch unsorted.
+///
+/// The gate is [`crate::kv_table::KvTable::has_dirty_content`], Go's
+/// `HasDirtyContent` narrowed to this tier's staging. It is deliberately NOT
+/// "inside a transaction": Go asks per TABLE, so a clean table read inside a
+/// dirty transaction still gets no `UnionScan` and still answers in handle
+/// order.
 pub struct IndexRangeSourceExec {
     meta: ExecutorMeta,
     table: KvTable,
@@ -496,14 +505,21 @@ impl IndexRangeSourceExec {
         Rc::clone(&self.produced)
     }
 
-    /// Declares this path COVERING -- Go's `path.IsSingleScan`, which lowers
-    /// to a `PhysicalIndexReader` and never builds a handle batch, so its rows
-    /// leave in index order.
+    /// Declares that this read's answer IS its index walk, so no handle batch
+    /// is ever sorted. Two source rules reach it, and they are different
+    /// rules about the same order:
     ///
-    /// This tier reads the row through the handle either way, because it has
-    /// no index-only reader; the declaration is what keeps the ORDER of the
-    /// two readers apart. See the type doc.
-    pub(crate) fn set_covering(&mut self) {
+    /// * a COVERING path -- Go's `path.IsSingleScan`, which lowers to a
+    ///   `PhysicalIndexReader` that never builds a handle batch at all. This
+    ///   tier reads the row through the handle either way, because it has no
+    ///   index-only reader, so the declaration is what keeps the ORDER of the
+    ///   two readers apart;
+    /// * a DIRTY table -- Go's `UnionScanExec` above the reader, whose
+    ///   `compare()` re-imposes index-key-then-handle order on whatever the
+    ///   lookup below it produced.
+    ///
+    /// See the type doc for both.
+    pub(crate) fn answer_in_index_order(&mut self) {
         self.can_reorder_handles = false;
     }
 
@@ -1404,7 +1420,7 @@ mod tests {
             tidb_datatype::SessionTimeZone::utc(),
         );
         if covering {
-            exec.set_covering();
+            exec.answer_in_index_order();
         }
         if keep_order {
             use crate::table_access::TableAccess;

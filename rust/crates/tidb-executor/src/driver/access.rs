@@ -380,8 +380,14 @@ fn commit_index_range_source(
     // This tier reads the row either way (it has no index-only reader), so the
     // difference has to be declared here rather than shown by the executor's
     // shape.
-    if covering {
-        exec.set_covering();
+    //
+    // A DIRTY table reaches the same answer by the other door: Go's
+    // `tableHasDirtyContent` (`pkg/planner/core/logical_plan_builder.go:5316`)
+    // puts a `UnionScanExec` above the reader, and its `compare()` orders on
+    // the index's own columns before the handle -- so a double read inside a
+    // transaction that has written this table answers in index order too.
+    if covering || table.has_dirty_content() {
+        exec.answer_in_index_order();
     }
     let index = table
         .indexes()

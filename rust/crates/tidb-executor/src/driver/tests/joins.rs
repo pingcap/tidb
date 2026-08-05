@@ -400,7 +400,7 @@ fn a_promise_the_child_cannot_deliver_falls_back_instead_of_dropping_rows() {
 /// and the index walk, have to answer three rows, and the assertion below does
 /// not care which one ran: a bijection is a bijection. Mutating either half --
 /// the order filter in `driver::access::leaf_index_path`, or the
-/// `keep_order`-gated `set_covering` that stops the source reordering its
+/// `keep_order`-gated `answer_in_index_order` that stops the source reordering its
 /// handle batches -- is what makes it fail.
 #[test]
 fn a_leaf_delivers_only_the_order_its_scan_walks_in() {

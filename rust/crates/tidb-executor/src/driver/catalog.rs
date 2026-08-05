@@ -544,6 +544,32 @@ impl Catalog {
         self.version
     }
 
+    /// Empties every table's staged-write mark: the state Go's transaction
+    /// membuffer is in before a transaction has written anything, which is
+    /// what `session.HasDirtyContent` (`pkg/session/txn.go:730`) reads.
+    ///
+    /// A transaction stages its writes in a private COPY of this catalog
+    /// rather than a membuffer, so the copy has to be told where the
+    /// transaction begins. `tidb_session` calls this at the one boundary Go's
+    /// membuffer is empty at: the start of a statement that does not continue
+    /// an already-open transaction -- which covers both an explicit `BEGIN`
+    /// (Go allocates it a fresh membuffer) and every autocommit statement (Go
+    /// discards the previous one at commit).
+    ///
+    /// The mark itself never changes what a read RETURNS -- the staged rows
+    /// are in this catalog either way, which is why read-your-own-writes works
+    /// without it. It changes what a read is entitled to REORDER; see
+    /// [`crate::kv_table::KvTable::has_dirty_content`].
+    pub fn clear_dirty_content(&mut self) {
+        for database in self.databases.values_mut() {
+            for entry in database.tables.values_mut() {
+                if let TableEntry::Kv(table) = entry {
+                    table.clear_dirty_content();
+                }
+            }
+        }
+    }
+
     /// Publishes one table's loaded statistics, which the access-path choice
     /// and `EXPLAIN`'s `estRows` then read instead of the pseudo constants.
     ///

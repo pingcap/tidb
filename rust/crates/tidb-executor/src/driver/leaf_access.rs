@@ -297,7 +297,7 @@ pub(crate) struct LeafIndexPath {
     /// Go's `PhysicalIndexScan.KeepOrder`: whether this path was chosen to
     /// SATISFY a property, which is what makes the source answer in index
     /// order rather than reordering its handle batches
-    /// ([`IndexRangeSourceExec::set_covering`]).
+    /// ([`IndexRangeSourceExec::answer_in_index_order`]).
     keep_order: bool,
 }
 
@@ -349,7 +349,19 @@ pub(crate) fn leaf_index_source(
         // leave in the order the walk produced them. Without this the source
         // answers in handle order, which is the exact promise-without-delivery
         // a parent merge join must never be given.
-        exec.set_covering();
+        //
+        // A DIRTY table is NOT gated here, though Go wraps a join leaf's
+        // reader in `UnionScanExec` exactly as it wraps a single-table read's
+        // (`buildUnionScanFromReader` is reached per `DataSource`). MEASURED:
+        // adding `|| table.has_dirty_content()` changes no row order this tier
+        // can produce -- a leaf that reaches this builder is already answering
+        // in index order for both the clean and the dirty read of the same
+        // join, with either hash side forced -- and it would leave
+        // `LeafIndexPath::order` reporting an order the source now delivers
+        // but does not promise. The single-table gate in
+        // `super::access::commit_index_range_source` is the one that moves
+        // rows.
+        exec.answer_in_index_order();
     }
     if let Some(trace) = trace {
         let index = table

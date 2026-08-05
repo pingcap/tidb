@@ -625,6 +625,8 @@ mod tests_timezone_storage;
 #[cfg(test)]
 mod tests_topn;
 #[cfg(test)]
+mod tests_union_scan;
+#[cfg(test)]
 mod tests_user_vars;
 #[cfg(test)]
 mod tests_views;
