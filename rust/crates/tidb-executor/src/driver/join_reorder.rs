@@ -12,9 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go's `joinReorderDPSolver`, over the `FROM` clause this tier plans from.
+//! Go's join reorder -- BOTH solvers -- over the `FROM` clause this tier plans
+//! from.
 //!
-//! # When this runs at all, and why that bounds its blast radius
+//! # Which solver runs
 //!
 //! `JoinReOrderSolver.optimizeRecursive` picks between two solvers
 //! (`rule_join_reorder.go:374`):
@@ -23,14 +24,27 @@
 //! useGreedy := !allInnerJoin || joinGroupNum > ctx.GetSessionVars().TiDBOptJoinReorderThreshold
 //! ```
 //!
-//! and `vardef.DefTiDBOptJoinReorderThreshold` is `0`, so a stock session
-//! ALWAYS takes the greedy solver -- `joinGroupNum` is at least 2 whenever
-//! there is a group to reorder at all. Only a session that has RAISED
-//! `tidb_opt_join_reorder_threshold` reaches the DP, which is why this module
-//! reproduces the DP and not the greedy solver, and why a default session's
-//! plan is unchanged by this module's existence. The one enrolled topic that
-//! raises the threshold is `planner/core/join_reorder_through_projection`,
-//! which sets it to `10`, `3` and `63` around the statements it exercises.
+//! [`collect`] only ever yields an ALL-INNER group -- an outer join is one of
+//! its stop conditions -- so `allInnerJoin` is true here and the choice is the
+//! group size alone:
+//!
+//! | `joinGroupNum` | `tidb_opt_join_reorder_threshold` | solver |
+//! | --- | --- | --- |
+//! | `< 2` | any | neither; there is no group to reorder |
+//! | `n >= 2` | `n <= threshold` | [`solve`], Go's `joinReorderDPSolver` |
+//! | `n >= 2` | `n > threshold` | [`greedy_solve`], Go's `joinReorderGreedySolver` |
+//!
+//! `vardef.DefTiDBOptJoinReorderThreshold` is `0`, so a stock session always
+//! lands in the last row: the GREEDY solver is the default one, and it fires
+//! on every multi-relation inner join. The DP is reachable only from a session
+//! that RAISED the threshold; the one enrolled topic that does is
+//! `planner/core/join_reorder_through_projection`, which sets it to `10`, `3`
+//! and `63` around the statements it exercises.
+//!
+//! The threshold is not only the solver switch: it also gates the `0.9`
+//! per-remaining-key correlation factor in `EstimateFullJoinRowCount`
+//! (`cardinality/join.go:45`), which is why the cost model each solver reads
+//! is built from the SAME [`DeriveStatsContext::with_join_reorder_threshold`].
 //!
 //! # What is reordered, and what is declined
 //!
@@ -54,6 +68,16 @@
 //! * a leaf whose row count cannot be derived -- a derived table that
 //!   aggregates, sorts, limits or unions. Guessing one would silently choose a
 //!   different join order.
+//!
+//! The GREEDY arm declines one thing more, because it is the default solver
+//! and a wrong order there is corpus-wide rather than opt-in: a conjunct that
+//! spans several leaves without being an equality, or that reads a column this
+//! group does not own. Such a conjunct is one of Go's `otherConds`, and it
+//! changes greedy decisions in two ways this module does not model -- Go's
+//! `hasOtherJoinCondition` makes a pair NON-cartesian and therefore joinable,
+//! and `makeJoin` hands the conjunct to whichever join first covers it, which
+//! moves that join's row count. Declining keeps the written tree instead of
+//! guessing.
 //!
 //! # The cost model is not re-derived here
 //!
@@ -193,9 +217,6 @@ pub(crate) fn reorder(
     ctx: &crate::StmtContext,
 ) -> Option<Reordered> {
     let threshold = ctx.join_reorder_threshold();
-    if threshold <= 0 {
-        return None;
-    }
     let mut ids = Ids::default();
     let mut leaves = Vec::new();
     let mut on_conds = Vec::new();
@@ -209,11 +230,14 @@ pub(crate) fn reorder(
     ) {
         return None;
     }
-    // Go: `useGreedy = !allInnerJoin || joinGroupNum > threshold`; the DP runs
-    // on the complement.
-    if leaves.len() < 2 || leaves.len() > threshold as usize {
+    if leaves.len() < 2 {
         return None;
     }
+    // Go: `useGreedy = !allInnerJoin || joinGroupNum > threshold`. `collect`
+    // only yields all-inner groups, so the group size decides alone. Compared
+    // in `i64` because a session may set the threshold NEGATIVE, which is more
+    // greedy still, not less.
+    let use_greedy = i64::from(threshold) < leaves.len() as i64;
 
     // Every conjunct the group can see: the `ON`s it absorbed and the `WHERE`
     // above it, which is where the comma spelling puts its equalities.
@@ -228,6 +252,9 @@ pub(crate) fn reorder(
         match classify(conjunct, &leaves)? {
             Classified::Edge(edge) => edges.push(edge),
             Classified::Single(leaf) => filters[leaf].push((*conjunct).clone()),
+            // Go's `otherConds`; see the module doc for why the default solver
+            // declines rather than models them.
+            Classified::Spanning if use_greedy => return None,
             Classified::Spanning => {}
         }
     }
@@ -261,7 +288,12 @@ pub(crate) fn reorder(
         .collect();
     let models = models?;
 
-    let plan = solve(&leaves, &edges, &models, threshold)?;
+    let context = DeriveStatsContext::with_join_reorder_threshold(threshold);
+    let plan = if use_greedy {
+        greedy_solve(&leaves, &edges, &models, &context)?
+    } else {
+        solve(&leaves, &edges, &models, &context)?
+    };
     let mut order = Vec::new();
     plan.leaves(&mut order);
     let mut written_order = vec![0; leaves.len()];
@@ -854,9 +886,8 @@ fn solve(
     leaves: &[Leaf<'_>],
     edges: &[Edge<'_>],
     models: &[LogicalNode],
-    threshold: i32,
+    context: &DeriveStatsContext,
 ) -> Option<Plan> {
-    let context = DeriveStatsContext::with_join_reorder_threshold(threshold);
     // `bfsGraph`: relabel the nodes breadth-first from node 0. This is what
     // fixes the subset enumeration order below, and therefore which of two
     // EQUAL-cost candidates survives the strict `>` update test.
@@ -893,7 +924,7 @@ fn solve(
         let model = models[*node].clone();
         best[1 << visit] = Some(Candidate {
             plan: Plan::Leaf(*node),
-            cum_cost: derive_stats(&model, &context).cum_cost(),
+            cum_cost: derive_stats(&model, context).cum_cost(),
             model,
         });
     }
@@ -915,7 +946,7 @@ fn solve(
                         &used,
                         edges,
                         leaves,
-                        &context,
+                        context,
                     );
                     // `bestPlan[nodeBitmap].cumCost > curCost` is STRICT, so
                     // the first candidate enumerated survives a tie.
@@ -932,6 +963,118 @@ fn solve(
         }
     }
     best[(1 << count) - 1].take().map(|best| best.plan)
+}
+
+// ---------------------------------------------------------------------------
+// The greedy solver
+// ---------------------------------------------------------------------------
+
+/// Go `joinReorderGreedySolver.solve` (`rule_join_reorder_greedy.go:48`).
+///
+/// Go's shape is: sort the group by `baseNodeCumCost` ascending, then peel one
+/// CONNECTED tree at a time with `constructConnectedJoinTree`, and finally
+/// `makeBushyJoin` the peeled trees into a cartesian product. This module
+/// accepts only a connected equality graph, so the first peel consumes the
+/// whole group and the bushy step has nothing to do; a leftover is the
+/// disconnected case and is declined, leaving the statement's own cartesian
+/// product where it was written.
+///
+/// There is no leading hint here -- this tier has no `/*+ leading(...) */` --
+/// so Go's `leadingJoinGroup` prefix and its inapplicable-hint warning have no
+/// counterpart.
+fn greedy_solve(
+    leaves: &[Leaf<'_>],
+    edges: &[Edge<'_>],
+    models: &[LogicalNode],
+    context: &DeriveStatsContext,
+) -> Option<Plan> {
+    // `generateJoinOrderNode`: each leaf's own `RecursiveDeriveStats` and its
+    // `baseNodeCumCost`, which for a leaf is the sum of its subtree's row
+    // counts -- exactly [`DerivedNode::cum_cost`].
+    let mut group: Vec<Candidate> = models
+        .iter()
+        .enumerate()
+        .map(|(index, model)| Candidate {
+            plan: Plan::Leaf(index),
+            cum_cost: derive_stats(model, context).cum_cost(),
+            model: model.clone(),
+        })
+        .collect();
+    // `slices.SortStableFunc(..., cmp.Compare(i.cumCost, j.cumCost))`: ascending,
+    // and STABLE, so equal-cost leaves keep the order the statement wrote them
+    // in. That order is what the strict `<` in `construct_connected` then
+    // resolves ties by, so the stability is load-bearing, not cosmetic.
+    group.sort_by(|left, right| left.cum_cost.total_cmp(&right.cum_cost));
+
+    let tree = construct_connected(&mut group, leaves, edges, context);
+    // Anything left over is a second connected component: Go's
+    // `makeBushyJoin` case, declined here.
+    group.is_empty().then_some(tree.plan)
+}
+
+/// Go `joinReorderGreedySolver.constructConnectedJoinTree`.
+///
+/// Takes the cheapest remaining node as the tree, then repeatedly joins in the
+/// remaining node that yields the cheapest cumulative cost, stopping when no
+/// remaining node connects.
+fn construct_connected(
+    group: &mut Vec<Candidate>,
+    leaves: &[Leaf<'_>],
+    edges: &[Edge<'_>],
+    context: &DeriveStatsContext,
+) -> Candidate {
+    let mut current = group.remove(0);
+    loop {
+        let mut best: Option<(usize, Candidate)> = None;
+        for (index, node) in group.iter().enumerate() {
+            // Go's `checkConnectionAndMakeJoin`. With no `otherConds` in play
+            // -- the greedy arm declines a group that has any -- a pair with no
+            // equality edge is a CARTESIAN one, which
+            // `tidb_opt_cartesian_join_order_threshold` refuses at its default
+            // of `0`. Both of Go's two refusal sites reduce to this one skip.
+            let used = connecting_plans(&current.plan, &node.plan, edges);
+            if used.is_empty() {
+                continue;
+            }
+            // `curJoinTree` is Go's LEFT argument and the candidate node its
+            // right; for an inner join `checkConnection` keeps those positions.
+            let candidate = build(&current, node, &used, edges, leaves, context);
+            // `curCost < bestCost` is STRICT, so among equal costs the node
+            // enumerated first -- the cheapest by the sort above -- wins.
+            let better = best
+                .as_ref()
+                .is_none_or(|(_, best)| candidate.cum_cost < best.cum_cost);
+            if better {
+                best = Some((index, candidate));
+            }
+        }
+        // `if bestJoin == nil { break }`: the connected subgraph is exhausted.
+        let Some((index, candidate)) = best else {
+            return current;
+        };
+        group.remove(index);
+        current = candidate;
+    }
+}
+
+/// Go `checkConnection`'s equality half, between two already-built subtrees.
+///
+/// An edge counts only when it has one endpoint on each side; an edge whose
+/// endpoints both sit inside `left` was consumed by a join further down.
+fn connecting_plans(left: &Plan, right: &Plan, edges: &[Edge<'_>]) -> Vec<usize> {
+    let mut left_leaves = Vec::new();
+    left.leaves(&mut left_leaves);
+    let mut right_leaves = Vec::new();
+    right.leaves(&mut right_leaves);
+    edges
+        .iter()
+        .enumerate()
+        .filter(|(_, edge)| {
+            (left_leaves.contains(&edge.left.0) && right_leaves.contains(&edge.right.0))
+                || (left_leaves.contains(&edge.right.0) && right_leaves.contains(&edge.left.0))
+        })
+        .map(|(index, _)| index)
+        .collect()
 }
 
 /// Go `nodesAreConnected`, equality edges only.

@@ -1,15 +1,17 @@
 //! WHEN THE JOIN REORDER FIRES, AND WHAT IT LEAVES ALONE.
 //!
-//! Every test here names the gate it is about and asserts the PLAN, because
-//! the reorder's whole observable effect is which relation ends up under which
-//! join. The oracle for the one plan that IS reordered is TiDB's own
+//! Every test here names the gate it is about and asserts either the PLAN or
+//! the leaf order the reorder chose, because that is the reorder's whole
+//! observable effect. The oracle for the plan that IS reordered is TiDB's own
 //! recording, quoted in [`the_dp_builds_the_tree_tidb_records`].
 //!
-//! The three refusals are the load-bearing ones: a group with no equality is a
-//! cartesian product Go's `makeBushyJoin` owns and this tier declines, an
-//! outer join is Go's own stop condition (`rule_join_reorder.go:133-159`), and
-//! a threshold that no group fits under is the DEFAULT session -- which is why
-//! a stock TiDB never reaches the DP at all.
+//! Both solvers are covered. A DEFAULT session takes the GREEDY one
+//! (`tidb_opt_join_reorder_threshold` is `0` and every group is bigger), so
+//! that arm is the one with corpus-wide reach; the DP is reachable only from a
+//! session that raised the threshold. The refusals are the load-bearing tests:
+//! a decline leaves the statement's written tree alone, and after the greedy
+//! landed "the two thresholds agree" no longer proves one, so every refusal
+//! asserts [`fired`] is `None` instead.
 
 use super::*;
 
@@ -51,6 +53,30 @@ fn plan(sql: &str, catalog: &Catalog, threshold: i32) -> Vec<String> {
             other => format!("{other:?}"),
         })
         .collect()
+}
+
+/// Whether the reorder FIRED, and where each written leaf ended up.
+///
+/// `None` is a decline, which is the assertion every refusal test below wants:
+/// once the greedy runs at the default threshold, "the two thresholds agree"
+/// no longer distinguishes a refusal from two solvers reaching the same tree.
+fn fired(sql: &str, catalog: &Catalog, threshold: i32) -> Option<Vec<usize>> {
+    let ctx = crate::StmtContext::for_query().with_join_reorder_threshold(threshold);
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let tidb_ast::QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    crate::driver::join_reorder::reorder(
+        select.from.as_ref().unwrap(),
+        select.where_clause.as_ref(),
+        catalog,
+        "test",
+        &ctx,
+    )
+    .map(|plan| plan.written_order)
 }
 
 /// The statement the recorded topic runs at
@@ -102,38 +128,121 @@ fn the_dp_builds_the_tree_tidb_records() {
 
 /// THE DEFAULT SESSION. `vardef.DefTiDBOptJoinReorderThreshold` is `0`, and
 /// `useGreedy := ... || joinGroupNum > threshold` is then true for every group
-/// (the smallest is 2), so Go takes the greedy solver and this tier takes the
-/// tree as written. This is what makes the reorder's blast radius on every
-/// topic that does not `SET` the variable exactly zero.
+/// (the smallest is 2), so Go takes the GREEDY solver -- which is why this is
+/// the arm that fires on every multi-relation inner join in the corpus.
+///
+/// The written leaf order is `t1, t5, dt`; the greedy's is `t1, dt, t5`, so
+/// `t5` moves from position `1` to position `2` and `dt` from `2` to `1`. That
+/// is the tree TiDB records, quoted in [`the_dp_builds_the_tree_tidb_records`].
+///
+/// This exact order is what a REVERSED cost sort would break: `dt` is the most
+/// expensive node, so a descending sort starts the tree there and reaches
+/// `(dt, t1), t5` instead.
 #[test]
-fn the_default_threshold_keeps_the_written_tree() {
+fn the_default_threshold_takes_the_greedy_solver() {
     let catalog = tables();
-    let written = plan(THREE_WAY, &catalog, 0);
-    assert_ne!(
-        written,
+    assert_eq!(fired(THREE_WAY, &catalog, 0), Some(vec![0, 2, 1]));
+    assert_eq!(
+        plan(THREE_WAY, &catalog, 0),
         plan(THREE_WAY, &catalog, 10),
-        "the default threshold produced the DP's tree",
+        "the greedy and the DP disagree on the recorded statement",
     );
-    // `(t1, t5)` is the written bottom join, and it has no equality: a
-    // cartesian product, which is precisely what the reorder removes.
+    // The written bottom join `(t1, t5)` has no equality: a cartesian product,
+    // which is precisely what the reorder removes. Nothing hashes afterwards.
     assert!(
-        written.iter().any(|row| row.contains("HashJoin")),
-        "the written tree should still hash: {written:?}",
+        !plan(THREE_WAY, &catalog, 0)
+            .iter()
+            .any(|row| row.contains("HashJoin")),
+        "the greedy left the written cartesian join in place",
     );
 }
 
-/// A group LARGER than the threshold takes the same greedy path. Two tables
-/// under a threshold of `1` is Go's `joinGroupNum > threshold`.
+/// THE CARTESIAN REFUSAL. `checkConnectionAndMakeJoin` returns no join at all
+/// when the pair has no equality edge and
+/// `tidb_opt_cartesian_join_order_threshold` is not positive -- and its default
+/// is `0`. So `t1--t5` is joinable and `t2` never is: the greedy peels one
+/// connected tree and leaves `t2` behind, which is Go's `makeBushyJoin` case
+/// and this module's decline.
+///
+/// Dropping the refusal makes the greedy swallow `t2` and return a tree, which
+/// this `None` catches.
 #[test]
-fn a_group_larger_than_the_threshold_keeps_the_written_tree() {
+fn the_cartesian_refusal_leaves_a_second_component_behind() {
+    let catalog = tables();
+    let sql = "SELECT t1.a FROM t1, t5, t2 WHERE t1.a = t5.a";
+    assert_eq!(fired(sql, &catalog, 0), None);
+    assert_eq!(fired(sql, &catalog, 10), None);
+}
+
+/// A NON-EQUALITY CONJUNCT SPANNING TWO LEAVES is one of Go's `otherConds`,
+/// which `makeJoin` hands to whichever join first covers it and
+/// `hasOtherJoinCondition` counts as a connection. The greedy arm models
+/// neither, so it declines; the DP arm, which only a raised threshold reaches,
+/// keeps its existing behaviour of ignoring the conjunct while costing.
+///
+/// Misplacing such a conjunct is exactly the failure this decline forecloses.
+#[test]
+fn a_spanning_non_equality_conjunct_declines_the_greedy() {
+    let catalog = tables();
+    let sql = "SELECT t1.a FROM t1, t5, t2 \
+               WHERE t1.a = t5.a AND t5.a = t2.a AND t1.b > t2.b";
+    assert_eq!(fired(sql, &catalog, 0), None, "the greedy did not decline");
+    assert!(fired(sql, &catalog, 10).is_some(), "the DP arm moved");
+}
+
+/// THE SOLVER-CHOICE TABLE, as a plan-level assertion.
+///
+/// A group of three takes the DP at a threshold of `3` or more and the greedy
+/// below that (`joinGroupNum > threshold`). Both solvers agree here, so the
+/// assertion is that every threshold reorders -- the boundary is exercised,
+/// not the disagreement.
+#[test]
+fn every_threshold_reorders_and_the_boundary_is_go_s() {
+    let catalog = tables();
+    for threshold in [i32::MIN, -1, 0, 1, 2, 3, 4, 10, i32::MAX] {
+        assert_eq!(
+            fired(THREE_WAY, &catalog, threshold),
+            Some(vec![0, 2, 1]),
+            "threshold {threshold} produced a different tree",
+        );
+    }
+}
+
+/// A TWO-NODE GROUP. Go's rule fires (`joinGroupNum > 1`) and the greedy runs,
+/// but with one edge and two nodes there is only one tree to build, so the
+/// cheapest node takes the left and the reorder is observable only when the
+/// written order already had the expensive one first. Both leaves here are the
+/// same pseudo size, so the STABLE sort keeps the written order and the tree
+/// comes back unchanged -- fired, and a no-op.
+#[test]
+fn a_two_node_group_is_solved_and_leaves_equal_costs_where_they_were() {
+    let catalog = tables();
+    let sql = "SELECT t1.a FROM t1, t5 WHERE t1.a = t5.a";
+    assert_eq!(fired(sql, &catalog, 0), Some(vec![0, 1]));
+}
+
+/// A ONE-NODE `FROM` is not a group at all: Go's rule needs
+/// `len(curJoinGroup) > 1` before it picks a solver.
+#[test]
+fn a_single_relation_is_not_a_group() {
+    let catalog = tables();
+    assert_eq!(fired("SELECT a FROM t1 WHERE a = 1", &catalog, 0), None);
+}
+
+/// A group of three under a threshold of `2` is `joinGroupNum > threshold`,
+/// the greedy arm, and the reorder happens there too -- Go's default solver is
+/// not a "leave it alone" solver.
+#[test]
+fn a_group_larger_than_the_threshold_is_still_reordered() {
     let catalog = tables();
     let sql = "SELECT t1.a FROM t1, t5, \
         (SELECT t2.a AS key_a FROM t2 JOIN t3 ON t2.a = t3.a) dt \
         WHERE t1.a = dt.key_a AND dt.key_a = t5.a";
-    assert_eq!(
-        plan(sql, &catalog, 2),
-        plan(sql, &catalog, 0),
-        "a three-relation group was reordered under a threshold of 2",
+    let greedy = plan(sql, &catalog, 2);
+    assert_eq!(greedy, plan(sql, &catalog, 0));
+    assert!(
+        !greedy.iter().any(|row| row.contains("HashJoin")),
+        "the written cartesian join survived the greedy: {greedy:?}",
     );
 }
 
@@ -144,24 +253,8 @@ fn a_group_larger_than_the_threshold_keeps_the_written_tree() {
 fn a_group_with_no_equality_keeps_the_written_tree() {
     let catalog = tables();
     let sql = "SELECT t1.a FROM t1, t5, t2 WHERE t1.b > 1";
-    assert_eq!(
-        plan(sql, &catalog, 10),
-        plan(sql, &catalog, 0),
-        "an edgeless group was reordered",
-    );
-}
-
-/// A group whose equality graph is DISCONNECTED is the same refusal: `t1--t5`
-/// is an edge and `t2` is joined to nothing.
-#[test]
-fn a_disconnected_group_keeps_the_written_tree() {
-    let catalog = tables();
-    let sql = "SELECT t1.a FROM t1, t5, t2 WHERE t1.a = t5.a";
-    assert_eq!(
-        plan(sql, &catalog, 10),
-        plan(sql, &catalog, 0),
-        "a disconnected group was reordered",
-    );
+    assert_eq!(fired(sql, &catalog, 0), None);
+    assert_eq!(fired(sql, &catalog, 10), None);
 }
 
 /// AN OUTER JOIN ANYWHERE IN THE GROUP. Go stops extracting at one unless
@@ -172,11 +265,8 @@ fn a_disconnected_group_keeps_the_written_tree() {
 fn an_edge_over_an_outer_join_is_refused() {
     let catalog = tables();
     let sql = "SELECT t1.a FROM t1 LEFT JOIN t5 ON t1.a = t5.a JOIN t2 ON t5.a = t2.a";
-    assert_eq!(
-        plan(sql, &catalog, 10),
-        plan(sql, &catalog, 0),
-        "a group containing an outer join was reordered",
-    );
+    assert_eq!(fired(sql, &catalog, 0), None);
+    assert_eq!(fired(sql, &catalog, 10), None);
 }
 
 /// A `STRAIGHT_JOIN` is the user asking for the written order, and is Go's
@@ -186,11 +276,8 @@ fn a_straight_join_is_refused() {
     let catalog = tables();
     let sql = "SELECT t1.a FROM t1 STRAIGHT_JOIN t5 ON t1.a = t5.a \
                JOIN t2 ON t5.a = t2.a";
-    assert_eq!(
-        plan(sql, &catalog, 10),
-        plan(sql, &catalog, 0),
-        "a STRAIGHT_JOIN group was reordered",
-    );
+    assert_eq!(fired(sql, &catalog, 0), None);
+    assert_eq!(fired(sql, &catalog, 10), None);
 }
 
 /// A NON-COLUMN equi key is Go's `injectExpr` case, which materializes the
@@ -207,11 +294,8 @@ fn a_non_column_equi_key_is_refused() {
     let catalog = tables();
     let sql = "SELECT t1.a FROM t1, t5, t2 \
                WHERE t1.a + 1 = t5.a AND t1.a = t2.a AND t2.a = t5.a";
-    assert_eq!(
-        plan(sql, &catalog, 10),
-        plan(sql, &catalog, 0),
-        "a group with a computed equi key was reordered",
-    );
+    assert_eq!(fired(sql, &catalog, 0), None);
+    assert_eq!(fired(sql, &catalog, 10), None);
 }
 
 /// The reorder changes the ROW LAYOUT, and `*` expands in row order: Go
