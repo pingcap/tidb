@@ -732,7 +732,7 @@ func (*AdaptiveLimitController) notifyLocked(ch chan struct{}) {
 	}
 }
 
-func normalizeAdaptiveWindow(initial, maximum uint64) (uint64, uint64) {
+func normalizeAdaptiveWindow(initial, maximum uint64) (normalizedInitial, normalizedMaximum uint64) {
 	if initial == 0 {
 		initial = 1
 	}
