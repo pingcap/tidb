@@ -174,20 +174,20 @@ func TestAdaptiveLimitEligibility(t *testing.T) {
 	directProjection = &ProjectionExec{
 		BaseExecutorV2: exec.NewBaseExecutorV2(sctx.GetSessionVars(), nil, 7, directProjection),
 	}
-	require.Same(t, directLookup, findAdaptiveLimitIndexLookup(directProjection))
-	require.True(t, adaptiveLimitDirectIndexLookupEligible(directLookup))
+	require.Same(t, directLookup, findAdaptiveLimitIndexLookupCandidate(directProjection))
 	directSelection := &SelectionExec{
 		BaseExecutorV2: exec.NewBaseExecutorV2(sctx.GetSessionVars(), nil, 8, directLookup),
 	}
-	require.Nil(t, findAdaptiveLimitIndexLookup(directSelection))
+	require.Nil(t, findAdaptiveLimitIndexLookupCandidate(directSelection))
 	directLookup.PushedLimit = &physicalop.PushedDownLimit{Count: 10}
-	require.False(t, adaptiveLimitDirectIndexLookupEligible(directLookup))
+	require.Nil(t, findAdaptiveLimitIndexLookupCandidate(directLookup))
 	directLookup.PushedLimit = nil
 	directController := exec.NewAdaptiveLimitLookupController(100, 32, 128, 32, 128)
 	directLookup.adaptiveLimitController = directController
 	directLookup.reportAdaptiveLimitStats = true
 	require.Same(t, directController, directLookup.adaptiveLimitController)
 	require.True(t, directLookup.reportAdaptiveLimitStats)
+	require.Nil(t, findAdaptiveLimitIndexLookupCandidate(directLookup))
 
 	controller := exec.NewAdaptiveLimitController(exec.AdaptiveLimitConfig{
 		DemandRows: 100, InitialOuterWindow: 32, MaxOuterWindow: 128,
@@ -201,7 +201,8 @@ func TestAdaptiveLimitEligibility(t *testing.T) {
 		},
 		keepOrder: true,
 	}
-	require.True(t, attachAdaptiveLimitIndexLookup(indexLookup, controller))
+	require.Same(t, indexLookup, findAdaptiveLimitIndexLookupCandidate(indexLookup))
+	indexLookup.adaptiveLimitController = controller
 	require.Same(t, controller, indexLookup.adaptiveLimitController)
 	reserved, ok, err := controller.ReserveLookup(context.Background(), 32)
 	require.NoError(t, err)
@@ -315,7 +316,7 @@ func TestAdaptiveLimitEligibility(t *testing.T) {
 
 	assertIneligible := func() {
 		indexLookup.adaptiveLimitController = nil
-		require.False(t, attachAdaptiveLimitIndexLookup(indexLookup, controller))
+		require.Nil(t, findAdaptiveLimitIndexLookupCandidate(indexLookup))
 		require.Nil(t, indexLookup.adaptiveLimitController)
 	}
 
@@ -336,7 +337,8 @@ func TestAdaptiveLimitEligibility(t *testing.T) {
 	assertIneligible()
 	indexLookup.idxPlans = []base.PhysicalPlan{indexScan}
 	indexLookup.adaptiveLimitController = nil
-	require.True(t, attachAdaptiveLimitIndexLookup(indexLookup, controller))
+	require.Same(t, indexLookup, findAdaptiveLimitIndexLookupCandidate(indexLookup))
+	indexLookup.adaptiveLimitController = controller
 	require.Same(t, controller, indexLookup.adaptiveLimitController)
 	indexLookup.idxPlans = []base.PhysicalPlan{
 		&physicalop.PhysicalIndexScan{GroupByColIdxs: []int{0}},
