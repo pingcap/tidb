@@ -752,6 +752,63 @@ func TestExplainAnalyzeFormatRUOutput(t *testing.T) {
 	require.Len(t, rangeScanIDs, 1, rows)
 	require.Equal(t, map[string]struct{}{"tablefullscan": {}}, rangeScanKinds, rows)
 	require.Equal(t, map[string]struct{}{"table_reader": {}}, readerKinds, rows)
+
+	tk.MustExec("set tidb_enable_index_merge=on")
+	tk.MustExec("drop table if exists explain_ru_index_merge")
+	tk.MustExec("create table explain_ru_index_merge(id int primary key, a int, b int, key idx_a(a), key idx_b(b))")
+	tk.MustExec("insert into explain_ru_index_merge values (1, 1, 2), (2, 2, 1)")
+	for _, tc := range []struct {
+		name     string
+		query    string
+		wantLock bool
+	}{
+		{
+			name:  "union all empty",
+			query: "select /*+ use_index_merge(explain_ru_index_merge, idx_a, idx_b) */ * from explain_ru_index_merge where a = 99 or b = 99",
+		},
+		{
+			name:     "locking union all empty",
+			query:    "select /*+ use_index_merge(explain_ru_index_merge, idx_a, idx_b) */ * from explain_ru_index_merge where a = 99 or b = 99 for update",
+			wantLock: true,
+		},
+	} {
+		t.Run("index merge "+tc.name, func(t *testing.T) {
+			ordinaryRows := tk.MustQuery("explain analyze " + tc.query).Rows()
+			seenIndexMerge, seenLock := false, false
+			for _, row := range ordinaryRows {
+				seenIndexMerge = seenIndexMerge || strings.Contains(fmt.Sprint(row[0]), "IndexMerge")
+				seenLock = seenLock || strings.Contains(fmt.Sprint(row[0]), "SelectLock")
+			}
+			require.True(t, seenIndexMerge, ordinaryRows)
+			require.Equal(t, tc.wantLock, seenLock, ordinaryRows)
+
+			ctx := execdetails.ContextWithInitializedExecDetails(context.Background())
+			execdetails.RUV2MetricsFromContext(ctx).AddResourceManagerReadCnt(1)
+			execdetails.RUV2MetricsFromContext(ctx).AddTiKVCoprocessorResponseBytes(10)
+			ruRows, err := queryExplainRURowsOrErrWithContext(ctx, t, tk, "explain analyze format='ru' "+tc.query)
+			require.NoError(t, err)
+			requireExplainRUOperatorClass(t, ruRows, "tidb/reader_transport")
+			requireExplainRUUnitAbsent(t, ruRows, "read_request_count")
+			requireExplainRUUnitAbsent(t, ruRows, "write_request_count")
+
+			scanIDs := make(map[any]struct{})
+			readerTransportRows := 0
+			for _, row := range ruRows {
+				if len(row) != 17 || row[0] != "plan" {
+					continue
+				}
+				if row[3] == "tikv/kv_range_scan" {
+					scanIDs[row[1]] = struct{}{}
+				}
+				if row[3] == "tidb/reader_transport" && row[11] == "net_bytes" {
+					readerTransportRows++
+					require.Equal(t, "index_merge", row[2])
+				}
+			}
+			require.Len(t, scanIDs, 2, ruRows)
+			require.Equal(t, 1, readerTransportRows, ruRows)
+		})
+	}
 }
 
 func TestExplainAnalyzeFormatRUTiKVCopOperatorClasses(t *testing.T) {

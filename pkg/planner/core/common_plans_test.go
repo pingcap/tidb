@@ -1403,6 +1403,716 @@ func TestReadBillingDemoV6ExpressionCountsAndOrdering(t *testing.T) {
 		require.True(t, transportSeen)
 	})
 
+	t.Run("index merge accepts a proven skipped table leg", func(t *testing.T) {
+		type indexMergeSkipFixture struct {
+			flat         *FlatPhysicalPlan
+			runtime      *execdetails.RuntimeStatsColl
+			merge        *physicalop.PhysicalIndexMergeReader
+			mergeNode    *FlatOperator
+			partialRoots []*FlatOperator
+			tableRoot    *FlatOperator
+		}
+		newFixture := func(t *testing.T, intersection bool) indexMergeSkipFixture {
+			t.Helper()
+			partialOne := physicalop.PhysicalIndexScan{}.Init(ctx, 0)
+			partialTwo := physicalop.PhysicalIndexScan{}.Init(ctx, 0)
+			tableScan := physicalop.PhysicalTableScan{}.Init(ctx, 0)
+			tableScan.Table = &model.TableInfo{}
+			partialOne.SetSchema(schema)
+			partialTwo.SetSchema(schema)
+			tableScan.SetSchema(schema)
+			merge := physicalop.PhysicalIndexMergeReader{
+				IsIntersectionType: intersection,
+				PartialPlansRaw:    []base.PhysicalPlan{partialOne, partialTwo},
+				TablePlan:          tableScan,
+			}.Init(ctx, 0)
+			fixture := indexMergeSkipFixture{
+				flat:    FlattenPhysicalPlan(merge, false),
+				runtime: execdetails.NewRuntimeStatsColl(nil),
+				merge:   merge,
+			}
+			require.NotNil(t, fixture.flat)
+			for _, node := range fixture.flat.Main {
+				switch node.Origin {
+				case merge:
+					fixture.mergeNode = node
+				case partialOne, partialTwo:
+					fixture.partialRoots = append(fixture.partialRoots, node)
+				case tableScan:
+					fixture.tableRoot = node
+				}
+			}
+			require.NotNil(t, fixture.mergeNode)
+			require.Len(t, fixture.partialRoots, 2)
+			require.NotNil(t, fixture.tableRoot)
+			return fixture
+		}
+		recordProof := func(fixture indexMergeSkipFixture, partialRows []uint64) {
+			recordRoot(fixture.runtime, fixture.merge.ID(), 0)
+			require.Len(t, partialRows, len(fixture.partialRoots))
+			for i, partial := range fixture.partialRoots {
+				rows := partialRows[i]
+				totalKeys := int64(rows)
+				if totalKeys == 0 {
+					totalKeys = 1
+				}
+				recordCopSummary(fixture.runtime, partial.Origin.ID(), rows, &tikvutil.ScanDetail{
+					TotalKeys:         totalKeys,
+					ProcessedKeys:     int64(rows),
+					ProcessedKeysSize: int64(rows) * 8,
+				})
+			}
+		}
+
+		for _, tc := range []struct {
+			name         string
+			intersection bool
+			partialRows  []uint64
+		}{
+			{name: "union all empty", partialRows: []uint64{0, 0}},
+			{name: "intersection disjoint", intersection: true, partialRows: []uint64{2, 3}},
+			{name: "intersection one empty", intersection: true, partialRows: []uint64{0, 3}},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				fixture := newFixture(t, tc.intersection)
+				recordProof(fixture, tc.partialRows)
+				ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = fixture.runtime
+				metrics := execdetails.NewRUV2Metrics()
+				metrics.AddResourceManagerReadCnt(1)
+				metrics.AddTiKVCoprocessorResponseBytes(10)
+
+				result := buildReadBillingDemoExecutionResult(ctx, fixture.merge, &ast.SelectStmt{}, nil, metrics)
+				require.Equal(t, readBillingDemoStatusSuccess, result.status, result.reason)
+				partialSeen, transportSeen := 0, 0
+				mergeSeen := false
+				for _, operator := range result.operators {
+					require.NotEqual(t, fixture.tableRoot.ExplainID().String(), operator.id)
+					if operator.id == fixture.merge.ExplainID().String() {
+						mergeSeen = true
+						require.Empty(t, operator.units)
+					}
+					for i, partial := range fixture.partialRoots {
+						if operator.id == partial.ExplainID().String() {
+							partialSeen++
+							require.Equal(t, float64(tc.partialRows[i]*8), readBillingDemoUnitValue(operator.units, readBillingDemoUnitScanBytes, readBillingDemoInputSideAll))
+						}
+					}
+					if operator.id == "reader_transport@statement" {
+						transportSeen++
+						require.Equal(t, "index_merge", operator.operatorKind)
+						require.Equal(t, 10.0, readBillingDemoUnitValue(operator.units, readBillingDemoUnitNetBytes, readBillingDemoInputSideAll))
+					}
+				}
+				require.Equal(t, 2, partialSeen)
+				require.Equal(t, 1, transportSeen)
+				require.True(t, mergeSeen)
+			})
+		}
+
+		t.Run("normal hit keeps the table leg", func(t *testing.T) {
+			fixture := newFixture(t, false)
+			recordRoot(fixture.runtime, fixture.merge.ID(), 1)
+			for _, partial := range fixture.partialRoots {
+				recordCopSummary(fixture.runtime, partial.Origin.ID(), 1, &tikvutil.ScanDetail{TotalKeys: 1, ProcessedKeys: 1, ProcessedKeysSize: 8})
+			}
+			recordCopSummary(fixture.runtime, fixture.tableRoot.Origin.ID(), 1, &tikvutil.ScanDetail{TotalKeys: 1, ProcessedKeys: 1, ProcessedKeysSize: 16})
+			mask := buildReadBillingDemoExecutionMask(fixture.flat, fixture.runtime)
+			require.False(t, mask.isSkipped(fixture.tableRoot))
+			ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = fixture.runtime
+			metrics := execdetails.NewRUV2Metrics()
+			metrics.AddResourceManagerReadCnt(1)
+			metrics.AddTiKVCoprocessorResponseBytes(10)
+			result := buildReadBillingDemoExecutionResult(ctx, fixture.merge, &ast.SelectStmt{}, nil, metrics)
+			require.Equal(t, readBillingDemoStatusSuccess, result.status, result.reason)
+			tableSeen := false
+			for _, operator := range result.operators {
+				tableSeen = tableSeen || operator.id == fixture.tableRoot.ExplainID().String()
+			}
+			require.True(t, tableSeen)
+		})
+
+		t.Run("table evidence is not masked", func(t *testing.T) {
+			fixture := newFixture(t, false)
+			recordProof(fixture, []uint64{0, 0})
+			fixture.runtime.GetBasicRuntimeStats(fixture.tableRoot.Origin.ID(), true).RecordBytes(0, 0)
+			mask := buildReadBillingDemoExecutionMask(fixture.flat, fixture.runtime)
+			require.False(t, mask.isSkipped(fixture.tableRoot))
+		})
+
+		t.Run("plan ID alias is not masked", func(t *testing.T) {
+			fixture := newFixture(t, true)
+			recordProof(fixture, []uint64{2, 3})
+			alias := *fixture.tableRoot
+			alias.ChildrenIdx = nil
+			alias.ChildrenEndIdx = 0
+			fixture.flat.CTEs = append(fixture.flat.CTEs, FlatPlanTree{&alias})
+			mask := buildReadBillingDemoExecutionMask(fixture.flat, fixture.runtime)
+			require.False(t, mask.isSkipped(fixture.tableRoot))
+		})
+
+		for _, tc := range []struct {
+			name   string
+			mutate func(indexMergeSkipFixture)
+		}{
+			{
+				name: "missing root completion",
+				mutate: func(fixture indexMergeSkipFixture) {
+					for _, partial := range fixture.partialRoots {
+						recordCopSummary(fixture.runtime, partial.Origin.ID(), 0, &tikvutil.ScanDetail{TotalKeys: 1})
+					}
+				},
+			},
+			{
+				name: "nonzero root output",
+				mutate: func(fixture indexMergeSkipFixture) {
+					recordProof(fixture, []uint64{0, 0})
+					recordRoot(fixture.runtime, fixture.merge.ID(), 1)
+				},
+			},
+			{
+				name: "partial summary coverage mismatch",
+				mutate: func(fixture indexMergeSkipFixture) {
+					recordProof(fixture, []uint64{0, 0})
+					fixture.runtime.RecordExpectedCopTasks([]int{fixture.partialRoots[0].Origin.ID()})
+				},
+			},
+			{
+				name: "malformed partial label",
+				mutate: func(fixture indexMergeSkipFixture) {
+					recordProof(fixture, []uint64{0, 0})
+					fixture.partialRoots[0].Label = ProbeSide
+				},
+			},
+			{
+				name: "first child gap in parent closure",
+				mutate: func(fixture indexMergeSkipFixture) {
+					recordProof(fixture, []uint64{0, 0})
+					gapPlan := physicalop.PhysicalTableDual{RowCount: 0}.Init(ctx, stats, 0)
+					gap := &FlatOperator{Origin: gapPlan, ChildrenEndIdx: 1, IsRoot: true, StoreType: kv.TiDB}
+					original := fixture.flat.Main
+					fixture.flat.Main = FlatPlanTree{original[0], gap, original[1], original[2], original[3]}
+					fixture.mergeNode.ChildrenIdx = []int{2, 3, 4}
+					fixture.mergeNode.ChildrenEndIdx = 4
+					fixture.partialRoots[0].ChildrenEndIdx = 2
+					fixture.partialRoots[1].ChildrenEndIdx = 3
+					fixture.tableRoot.ChildrenEndIdx = 4
+				},
+			},
+		} {
+			t.Run(tc.name+" is not masked", func(t *testing.T) {
+				fixture := newFixture(t, false)
+				tc.mutate(fixture)
+				mask := buildReadBillingDemoExecutionMask(fixture.flat, fixture.runtime)
+				require.False(t, mask.isSkipped(fixture.tableRoot))
+			})
+		}
+
+		t.Run("whole table subtree masking respects descendant evidence", func(t *testing.T) {
+			partialOne := physicalop.PhysicalIndexScan{}.Init(ctx, 0)
+			partialTwo := physicalop.PhysicalIndexScan{}.Init(ctx, 0)
+			tableScan := physicalop.PhysicalTableScan{}.Init(ctx, 0)
+			tableScan.Table = &model.TableInfo{}
+			tableSelection := physicalop.PhysicalSelection{Conditions: []expression.Expression{col}}.Init(ctx, stats, 0)
+			partialOne.SetSchema(schema)
+			partialTwo.SetSchema(schema)
+			tableScan.SetSchema(schema)
+			tableSelection.SetChildren(tableScan)
+			merge := physicalop.PhysicalIndexMergeReader{
+				PartialPlansRaw: []base.PhysicalPlan{partialOne, partialTwo},
+				TablePlan:       tableSelection,
+			}.Init(ctx, 0)
+			flat := FlattenPhysicalPlan(merge, false)
+			runtimeStats := execdetails.NewRuntimeStatsColl(nil)
+			recordRoot(runtimeStats, merge.ID(), 0)
+			recordCopSummary(runtimeStats, partialOne.ID(), 0, &tikvutil.ScanDetail{TotalKeys: 1})
+			recordCopSummary(runtimeStats, partialTwo.ID(), 0, &tikvutil.ScanDetail{TotalKeys: 1})
+
+			mask := buildReadBillingDemoExecutionMask(flat, runtimeStats)
+			for _, node := range flat.Main {
+				if node.Origin == tableSelection || node.Origin == tableScan {
+					require.True(t, mask.isSkipped(node))
+				}
+			}
+
+			runtimeStats.GetBasicRuntimeStats(tableScan.ID(), true).RecordBytes(0, 0)
+			mask = buildReadBillingDemoExecutionMask(flat, runtimeStats)
+			for _, node := range flat.Main {
+				if node.Origin == tableSelection || node.Origin == tableScan {
+					require.False(t, mask.isSkipped(node))
+				}
+			}
+		})
+	})
+
+	t.Run("exact zero limits mask unexecuted descendants", func(t *testing.T) {
+		assertFrontend := func(t *testing.T, result readBillingDemoResult, sql string) {
+			t.Helper()
+			for _, operator := range result.operators {
+				if operator.id == "frontend@statement" {
+					require.Equal(t, float64(len(sql)), readBillingDemoUnitValue(operator.units, readBillingDemoUnitFrontendCompileBytes, readBillingDemoInputSideAll))
+					return
+				}
+			}
+			require.Fail(t, "frontend unit is missing")
+		}
+		newStmt := func(sql string) *ast.SelectStmt {
+			stmt := &ast.SelectStmt{}
+			stmt.SetText(nil, sql)
+			return stmt
+		}
+		newZeroLookup := func() *physicalop.PhysicalIndexLookUpReader {
+			indexScan := physicalop.PhysicalIndexScan{}.Init(ctx, 0)
+			tableScan := physicalop.PhysicalTableScan{}.Init(ctx, 0)
+			tableScan.Table = &model.TableInfo{}
+			indexScan.SetSchema(schema)
+			tableScan.SetSchema(schema)
+			lookup := (physicalop.PhysicalIndexLookUpReader{
+				IndexPlan:   indexScan,
+				TablePlan:   tableScan,
+				PushedLimit: &physicalop.PushedDownLimit{Count: 0},
+			}).Init(ctx, 0, plannerutil.IndexLookUpPushDownNone)
+			lookup.SetSchema(schema)
+			return lookup
+		}
+		newZeroMerge := func() *physicalop.PhysicalIndexMergeReader {
+			partialOne := physicalop.PhysicalIndexScan{}.Init(ctx, 0)
+			partialTwo := physicalop.PhysicalIndexScan{}.Init(ctx, 0)
+			tableScan := physicalop.PhysicalTableScan{}.Init(ctx, 0)
+			tableScan.Table = &model.TableInfo{}
+			partialOne.SetSchema(schema)
+			partialTwo.SetSchema(schema)
+			tableScan.SetSchema(schema)
+			merge := physicalop.PhysicalIndexMergeReader{
+				PartialPlansRaw: []base.PhysicalPlan{partialOne, partialTwo},
+				TablePlan:       tableScan,
+				PushedLimit:     &physicalop.PushedDownLimit{Count: 0},
+			}.Init(ctx, 0)
+			merge.SetSchema(schema)
+			return merge
+		}
+
+		t.Run("explicit physical limit", func(t *testing.T) {
+			child := physicalop.PhysicalProjection{Exprs: []expression.Expression{col}}.Init(ctx, stats, 0)
+			child.SetSchema(schema)
+			limit := physicalop.PhysicalLimit{Offset: 7, Count: 0}.Init(ctx, stats, 0)
+			limit.SetChildren(child)
+			limit.SetSchema(schema)
+			runtimeStats := execdetails.NewRuntimeStatsColl(nil)
+			ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = runtimeStats
+			const sql = "select a from t limit 7, 0"
+
+			result := buildReadBillingDemoResult(ctx, limit, newStmt(sql), nil, execdetails.NewRUV2Metrics())
+			require.Equal(t, readBillingDemoStatusSuccess, result.status, result.reason)
+			limitSeen := false
+			for _, operator := range result.operators {
+				require.NotEqual(t, child.ExplainID().String(), operator.id)
+				if operator.id == limit.ExplainID().String() {
+					limitSeen = true
+					require.Zero(t, readBillingDemoUnitValue(operator.units, readBillingDemoUnitCPUWork, readBillingDemoInputSideAll))
+					require.Equal(t, readBillingDemoInputSourcePhysicalPlan, readBillingDemoUnitSource(operator.units, readBillingDemoUnitCPUWork, readBillingDemoInputSideAll))
+				}
+			}
+			require.True(t, limitSeen)
+			assertFrontend(t, result, sql)
+		})
+
+		for _, tc := range []struct {
+			name string
+			plan func() base.PhysicalPlan
+		}{
+			{
+				name: "embedded index lookup limit",
+				plan: func() base.PhysicalPlan {
+					indexScan := physicalop.PhysicalIndexScan{}.Init(ctx, 0)
+					tableScan := physicalop.PhysicalTableScan{}.Init(ctx, 0)
+					tableScan.Table = &model.TableInfo{}
+					indexScan.SetSchema(schema)
+					tableScan.SetSchema(schema)
+					indexScan.SetStats(stats)
+					tableScan.SetStats(stats)
+					lookup := (physicalop.PhysicalIndexLookUpReader{
+						IndexPlan:   indexScan,
+						TablePlan:   tableScan,
+						PushedLimit: &physicalop.PushedDownLimit{Offset: 9, Count: 0},
+					}).Init(ctx, 0, plannerutil.IndexLookUpPushDownNone)
+					lookup.SetSchema(schema)
+					return lookup
+				},
+			},
+			{
+				name: "embedded pushdown index lookup limit",
+				plan: func() base.PhysicalPlan {
+					indexScan := physicalop.PhysicalIndexScan{}.Init(ctx, 0)
+					tableScan := physicalop.PhysicalTableScan{}.Init(ctx, 0)
+					tableScan.Table = &model.TableInfo{}
+					indexScan.SetSchema(schema)
+					tableScan.SetSchema(schema)
+					indexScan.SetStats(stats)
+					tableScan.SetStats(stats)
+					lookup := (physicalop.PhysicalIndexLookUpReader{
+						IndexPlan:   indexScan,
+						TablePlan:   tableScan,
+						PushedLimit: &physicalop.PushedDownLimit{Count: 0},
+					}).Init(ctx, 0, plannerutil.IndexLookUpPushDownByHint)
+					require.True(t, lookup.IndexLookUpPushDown)
+					lookup.SetSchema(schema)
+					return lookup
+				},
+			},
+			{
+				name: "embedded index merge limit",
+				plan: func() base.PhysicalPlan {
+					partialOne := physicalop.PhysicalIndexScan{}.Init(ctx, 0)
+					partialTwo := physicalop.PhysicalIndexScan{}.Init(ctx, 0)
+					tableScan := physicalop.PhysicalTableScan{}.Init(ctx, 0)
+					tableScan.Table = &model.TableInfo{}
+					partialOne.SetSchema(schema)
+					partialTwo.SetSchema(schema)
+					tableScan.SetSchema(schema)
+					merge := physicalop.PhysicalIndexMergeReader{
+						PartialPlansRaw: []base.PhysicalPlan{partialOne, partialTwo},
+						TablePlan:       tableScan,
+						PushedLimit:     &physicalop.PushedDownLimit{Offset: 11, Count: 0},
+					}.Init(ctx, 0)
+					merge.SetSchema(schema)
+					return merge
+				},
+			},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				plan := tc.plan()
+				flat := FlattenPhysicalPlan(plan, true)
+				require.NotNil(t, flat)
+				require.Greater(t, len(flat.Main), 1)
+				runtimeStats := execdetails.NewRuntimeStatsColl(nil)
+				ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = runtimeStats
+				sql := "select /* " + tc.name + " */ a from t limit 0"
+
+				result := buildReadBillingDemoResult(ctx, plan, newStmt(sql), nil, execdetails.NewRUV2Metrics())
+				require.Equal(t, readBillingDemoStatusSuccess, result.status, result.reason)
+				for _, operator := range result.operators {
+					require.NotEqual(t, "reader_transport@statement", operator.id)
+					require.NotEqual(t, "point_lookup@statement", operator.id)
+					for _, descendant := range flat.Main[1:] {
+						require.NotEqual(t, descendant.ExplainID().String(), operator.id)
+					}
+				}
+				assertFrontend(t, result, sql)
+			})
+		}
+
+		t.Run("parents consume masked direct children as zero", func(t *testing.T) {
+			for _, tc := range []struct {
+				name     string
+				build    func() base.PhysicalPlan
+				explicit bool
+			}{
+				{
+					name: "projection over physical limit",
+					build: func() base.PhysicalPlan {
+						leaf := physicalop.PhysicalTableDual{RowCount: 1}.Init(ctx, stats, 0)
+						leaf.SetSchema(schema)
+						limit := physicalop.PhysicalLimit{Count: 0}.Init(ctx, stats, 0)
+						limit.SetChildren(leaf)
+						limit.SetSchema(schema)
+						projection := physicalop.PhysicalProjection{Exprs: []expression.Expression{col}}.Init(ctx, stats, 0)
+						projection.SetChildren(limit)
+						projection.SetSchema(schema)
+						return projection
+					},
+					explicit: true,
+				},
+				{
+					name: "selection over embedded index lookup",
+					build: func() base.PhysicalPlan {
+						selection := physicalop.PhysicalSelection{Conditions: []expression.Expression{col}}.Init(ctx, stats, 0)
+						selection.SetChildren(newZeroLookup())
+						return selection
+					},
+				},
+				{
+					name: "projection over embedded index merge",
+					build: func() base.PhysicalPlan {
+						projection := physicalop.PhysicalProjection{Exprs: []expression.Expression{col}}.Init(ctx, stats, 0)
+						projection.SetChildren(newZeroMerge())
+						projection.SetSchema(schema)
+						return projection
+					},
+				},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					plan := tc.build()
+					flat := FlattenPhysicalPlan(plan, true)
+					require.NotNil(t, flat)
+					require.Len(t, flat.Main[0].ChildrenIdx, 1)
+					childIdx := flat.Main[0].ChildrenIdx[0]
+					child := flat.Main[childIdx]
+					runtimeStats := execdetails.NewRuntimeStatsColl(nil)
+					recordRoot(runtimeStats, plan.ID(), 0)
+					ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = runtimeStats
+					mask := buildReadBillingDemoExecutionMask(flat, runtimeStats)
+					if tc.explicit {
+						require.True(t, mask.isExplicitZeroLimit(child))
+					} else {
+						require.True(t, mask.suppressesTransportProducer(child))
+					}
+					for idx := childIdx + 1; idx <= child.ChildrenEndIdx; idx++ {
+						require.True(t, mask.isSkipped(flat.Main[idx]))
+					}
+
+					result := buildReadBillingDemoExecutionResult(ctx, plan, &ast.SelectStmt{}, nil, execdetails.NewRUV2Metrics())
+					require.Equal(t, readBillingDemoStatusSuccess, result.status, result.reason)
+					parentSeen := false
+					for _, operator := range result.operators {
+						require.NotEqual(t, "reader_transport@statement", operator.id)
+						if operator.id == plan.ExplainID().String() {
+							parentSeen = true
+							require.Zero(t, readBillingDemoUnitValue(operator.units, readBillingDemoUnitCPUWork, readBillingDemoInputSideAll))
+							require.Equal(t, readBillingDemoInputSourcePhysicalPlan, readBillingDemoUnitSource(operator.units, readBillingDemoUnitCPUWork, readBillingDemoInputSideAll))
+						}
+					}
+					require.True(t, parentSeen)
+				})
+			}
+		})
+
+		t.Run("join preserves the active side beside a masked child", func(t *testing.T) {
+			active := physicalop.PhysicalTableDual{RowCount: 5}.Init(ctx, stats, 0)
+			active.SetSchema(schema)
+			zeroLookup := newZeroLookup()
+			join := physicalop.PhysicalMergeJoin{
+				BasePhysicalJoin: physicalop.BasePhysicalJoin{OtherConditions: expression.CNFExprs{col}},
+			}.Init(ctx, stats, 0)
+			join.SetChildren(active, zeroLookup)
+			join.SetSchema(schema)
+			flat := FlattenPhysicalPlan(join, true)
+			require.NotNil(t, flat)
+			runtimeStats := execdetails.NewRuntimeStatsColl(nil)
+			recordRoot(runtimeStats, join.ID(), 0)
+			recordRoot(runtimeStats, active.ID(), 5)
+			ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = runtimeStats
+			mask := buildReadBillingDemoExecutionMask(flat, runtimeStats)
+			zeroChildSeen := false
+			for _, childIdx := range flat.Main[0].ChildrenIdx {
+				if flat.Main[childIdx].Origin == zeroLookup {
+					zeroChildSeen = true
+					require.True(t, mask.suppressesTransportProducer(flat.Main[childIdx]))
+				}
+			}
+			require.True(t, zeroChildSeen)
+
+			result := buildReadBillingDemoExecutionResult(ctx, join, &ast.SelectStmt{}, nil, execdetails.NewRUV2Metrics())
+			require.Equal(t, readBillingDemoStatusSuccess, result.status, result.reason)
+			joinSeen := false
+			for _, operator := range result.operators {
+				require.NotEqual(t, "reader_transport@statement", operator.id)
+				if operator.id == join.ExplainID().String() {
+					joinSeen = true
+					require.Equal(t, 5.0, readBillingDemoUnitValue(operator.units, readBillingDemoUnitCPUWork, readBillingDemoInputSideAll))
+					require.Equal(t, readBillingDemoInputSourceRuntimeChildActRows, readBillingDemoUnitSource(operator.units, readBillingDemoUnitCPUWork, readBillingDemoInputSideAll))
+					require.Zero(t, readBillingDemoUnitValue(operator.units, readBillingDemoUnitJoinOutputRows, readBillingDemoInputSideAll))
+				}
+			}
+			require.True(t, joinSeen)
+		})
+
+		t.Run("contradictory and malformed candidates remain active", func(t *testing.T) {
+			type fixture struct {
+				lookup  *physicalop.PhysicalIndexLookUpReader
+				flat    *FlatPhysicalPlan
+				runtime *execdetails.RuntimeStatsColl
+			}
+			newFixture := func(t *testing.T) fixture {
+				t.Helper()
+				indexScan := physicalop.PhysicalIndexScan{}.Init(ctx, 0)
+				tableScan := physicalop.PhysicalTableScan{}.Init(ctx, 0)
+				tableScan.Table = &model.TableInfo{}
+				indexScan.SetSchema(schema)
+				tableScan.SetSchema(schema)
+				lookup := (physicalop.PhysicalIndexLookUpReader{
+					IndexPlan:   indexScan,
+					TablePlan:   tableScan,
+					PushedLimit: &physicalop.PushedDownLimit{Count: 0},
+				}).Init(ctx, 0, plannerutil.IndexLookUpPushDownNone)
+				lookup.SetSchema(schema)
+				flat := FlattenPhysicalPlan(lookup, true)
+				require.NotNil(t, flat)
+				return fixture{lookup: lookup, flat: flat, runtime: execdetails.NewRuntimeStatsColl(nil)}
+			}
+			assertActive := func(t *testing.T, fixture fixture) {
+				t.Helper()
+				mask := buildReadBillingDemoExecutionMask(fixture.flat, fixture.runtime)
+				for _, node := range fixture.flat.Main {
+					require.False(t, mask.isSkipped(node))
+					require.False(t, mask.suppressesTransportProducer(node))
+				}
+			}
+
+			for _, tc := range []struct {
+				name   string
+				mutate func(fixture)
+			}{
+				{
+					name: "positive count",
+					mutate: func(fixture fixture) {
+						fixture.lookup.PushedLimit.Count = 1
+					},
+				},
+				{
+					name: "nonzero root output",
+					mutate: func(fixture fixture) {
+						recordRoot(fixture.runtime, fixture.lookup.ID(), 1)
+					},
+				},
+				{
+					name: "descendant byte evidence",
+					mutate: func(fixture fixture) {
+						fixture.runtime.GetBasicRuntimeStats(fixture.flat.Main[1].Origin.ID(), true).RecordBytes(0, 0)
+					},
+				},
+				{
+					name: "plan ID alias",
+					mutate: func(fixture fixture) {
+						alias := *fixture.flat.Main[1]
+						alias.ChildrenIdx = nil
+						alias.ChildrenEndIdx = 0
+						fixture.flat.CTEs = append(fixture.flat.CTEs, FlatPlanTree{&alias})
+					},
+				},
+				{
+					name: "first child gap",
+					mutate: func(fixture fixture) {
+						gapPlan := physicalop.PhysicalTableDual{RowCount: 0}.Init(ctx, stats, 0)
+						gap := &FlatOperator{Origin: gapPlan, ChildrenEndIdx: 1, IsRoot: true, StoreType: kv.TiDB}
+						original := fixture.flat.Main
+						fixture.flat.Main = FlatPlanTree{original[0], gap, original[1], original[2]}
+						fixture.flat.Main[0].ChildrenIdx = []int{2, 3}
+						fixture.flat.Main[0].ChildrenEndIdx = 3
+						fixture.flat.Main[2].ChildrenEndIdx = 2
+						fixture.flat.Main[3].ChildrenEndIdx = 3
+					},
+				},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					fixture := newFixture(t)
+					tc.mutate(fixture)
+					assertActive(t, fixture)
+				})
+			}
+		})
+
+		t.Run("nested exact zero candidates keep the outermost", func(t *testing.T) {
+			for _, tc := range []struct {
+				name string
+				plan func() base.PhysicalPlan
+			}{
+				{
+					name: "limit over embedded lookup",
+					plan: func() base.PhysicalPlan {
+						limit := physicalop.PhysicalLimit{Count: 0}.Init(ctx, stats, 0)
+						limit.SetChildren(newZeroLookup())
+						limit.SetSchema(schema)
+						return limit
+					},
+				},
+				{
+					name: "nested physical limits",
+					plan: func() base.PhysicalPlan {
+						leaf := physicalop.PhysicalTableDual{RowCount: 1}.Init(ctx, stats, 0)
+						leaf.SetSchema(schema)
+						inner := physicalop.PhysicalLimit{Count: 0}.Init(ctx, stats, 0)
+						inner.SetChildren(leaf)
+						inner.SetSchema(schema)
+						outer := physicalop.PhysicalLimit{Count: 0}.Init(ctx, stats, 0)
+						outer.SetChildren(inner)
+						outer.SetSchema(schema)
+						return outer
+					},
+				},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					plan := tc.plan()
+					flat := FlattenPhysicalPlan(plan, true)
+					require.NotNil(t, flat)
+					runtimeStats := execdetails.NewRuntimeStatsColl(nil)
+					ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = runtimeStats
+					mask := buildReadBillingDemoExecutionMask(flat, runtimeStats)
+					require.True(t, mask.isExplicitZeroLimit(flat.Main[0]))
+					require.False(t, mask.suppressesTransportProducer(flat.Main[0]))
+					for _, node := range flat.Main[1:] {
+						require.True(t, mask.isSkipped(node))
+						require.False(t, mask.isExplicitZeroLimit(node))
+						require.False(t, mask.suppressesTransportProducer(node))
+					}
+
+					result := buildReadBillingDemoExecutionResult(ctx, plan, &ast.SelectStmt{}, nil, execdetails.NewRUV2Metrics())
+					require.Equal(t, readBillingDemoStatusSuccess, result.status, result.reason)
+					require.Len(t, result.operators, 1)
+					require.Equal(t, plan.ExplainID().String(), result.operators[0].id)
+					require.Zero(t, readBillingDemoUnitValue(result.operators[0].units, readBillingDemoUnitCPUWork, readBillingDemoInputSideAll))
+					require.Equal(t, readBillingDemoInputSourcePhysicalPlan, readBillingDemoUnitSource(result.operators[0].units, readBillingDemoUnitCPUWork, readBillingDemoInputSideAll))
+				})
+			}
+		})
+
+		t.Run("independent real reader remains billable", func(t *testing.T) {
+			zeroIndexScan := physicalop.PhysicalIndexScan{}.Init(ctx, 0)
+			zeroTableScan := physicalop.PhysicalTableScan{}.Init(ctx, 0)
+			zeroTableScan.Table = &model.TableInfo{}
+			zeroIndexScan.SetSchema(schema)
+			zeroTableScan.SetSchema(schema)
+			zeroLookup := (physicalop.PhysicalIndexLookUpReader{
+				IndexPlan:   zeroIndexScan,
+				TablePlan:   zeroTableScan,
+				PushedLimit: &physicalop.PushedDownLimit{Count: 0},
+			}).Init(ctx, 0, plannerutil.IndexLookUpPushDownNone)
+			zeroLookup.SetSchema(schema)
+
+			realScan := physicalop.PhysicalTableScan{}.Init(ctx, 0)
+			realScan.Table = &model.TableInfo{}
+			realScan.SetSchema(schema)
+			realReader := physicalop.PhysicalTableReader{StoreType: kv.TiKV, TablePlan: realScan}.Init(ctx, 0)
+			realReader.SetSchema(schema)
+			zeroFlat := FlattenPhysicalPlan(zeroLookup, true)
+			realFlat := FlattenPhysicalPlan(realReader, true)
+			flat := &FlatPhysicalPlan{Main: zeroFlat.Main, ScalarSubQueries: []FlatPlanTree{realFlat.Main}}
+			runtimeStats := execdetails.NewRuntimeStatsColl(nil)
+			recordRoot(runtimeStats, realReader.ID(), 1)
+			recordCopSummary(runtimeStats, realScan.ID(), 1, &tikvutil.ScanDetail{TotalKeys: 1, ProcessedKeys: 1, ProcessedKeysSize: 8})
+			mask := buildReadBillingDemoExecutionMask(flat, runtimeStats)
+			require.True(t, mask.suppressesTransportProducer(zeroFlat.Main[0]))
+			for _, node := range zeroFlat.Main[1:] {
+				require.True(t, mask.isSkipped(node))
+			}
+			for _, node := range realFlat.Main {
+				require.False(t, mask.isSkipped(node))
+				require.False(t, mask.suppressesTransportProducer(node))
+			}
+
+			result := readBillingDemoResult{status: readBillingDemoStatusSuccess, reason: readBillingDemoReasonNone}
+			status, operator := appendReadBillingDemoTree(&result, ctx, runtimeStats, zeroFlat.Main, mask)
+			require.Equal(t, readBillingDemoStatusSuccess, status, operator.reason)
+			status, operator = appendReadBillingDemoTree(&result, ctx, runtimeStats, realFlat.Main, mask)
+			require.Equal(t, readBillingDemoStatusSuccess, status, operator.reason)
+			metrics := execdetails.NewRUV2Metrics()
+			metrics.AddResourceManagerReadCnt(1)
+			metrics.AddTiKVCoprocessorResponseBytes(10)
+			transport, present := readBillingDemoReaderTransport(flat, runtimeStats, metrics, false, mask)
+			require.True(t, present)
+			require.Equal(t, readBillingDemoStatusOperatorOK, transport.status, transport.reason)
+			require.Equal(t, "table_reader", transport.operatorKind)
+			require.Equal(t, 10.0, readBillingDemoUnitValue(transport.units, readBillingDemoUnitNetBytes, readBillingDemoInputSideAll))
+			realScanSeen := false
+			for _, operator := range result.operators {
+				if operator.id == realScan.ExplainID().String() {
+					realScanSeen = true
+					require.Equal(t, 8.0, readBillingDemoUnitValue(operator.units, readBillingDemoUnitScanBytes, readBillingDemoInputSideAll))
+				}
+			}
+			require.True(t, realScanSeen)
+		})
+	})
+
 	t.Run("index lookup skipped table proof is fail closed", func(t *testing.T) {
 		type indexLookupSkipFixture struct {
 			flat       *FlatPhysicalPlan
