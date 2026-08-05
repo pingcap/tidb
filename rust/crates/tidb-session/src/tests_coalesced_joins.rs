@@ -506,3 +506,87 @@ fn alias_session() -> Session {
         .unwrap();
     session
 }
+
+/// `t.*` loses the coalesced-away copy when the OUTERMOST `FROM` join is an
+/// INNER join carrying an `ON` clause -- and keeps it for every other shape.
+///
+/// This is not a rule anyone would write down; it falls out of Go returning a
+/// `LogicalSelection` for that one shape ("Keep these expressions as a
+/// LogicalSelection upon the inner join, in order to apply possible
+/// decorrelate optimizations"), which leaves `unfoldWildStar`'s type switch
+/// with no `LogicalJoin` to read `FullSchema` off. `t.*` then unfolds against
+/// the plan's OUTPUT names, where the redundant copy is not present.
+///
+/// Every line below is a `gorun` capture against real TiDB, on `s1(a, b)`,
+/// `s2(a, c)`, `s3(a, d)` holding one row each:
+///
+/// ```text
+/// select s2.* from s1 join s2 using(a) join s3 on(s2.a=s3.a);      -- 20
+/// select s2.* from s3 join (s1 join s2 using(a)) on(s2.a=s3.a);    -- 20
+/// select s2.* from s1 natural join s2 join s3 on(s2.a=s3.a);       -- 20
+/// select s2.* from s1 join s2 using(a) left join s3 on(s2.a=s3.a); -- 1|20
+/// select s2.* from s1 join s2 using(a), s3;                        -- 1|20
+/// select s2.* from s1 join s2 using(a);                            -- 1|20
+/// select s1.* from s1 join s2 using(a) join s3 on(s2.a=s3.a);      -- 1|10
+/// select s2.a from s1 join s2 using(a) join s3 on(s2.a=s3.a);      -- 1
+/// select *     from s1 join s2 using(a) join s3 on(s2.a=s3.a);     -- 1|10|20|1|30
+/// ```
+///
+/// `s1.*` keeping both columns is what pins that this hides the REDUNDANT
+/// copy specifically and not "the join column": `a` survives on the side that
+/// won the coalescing.
+#[test]
+fn a_qualified_star_loses_the_coalesced_copy_under_an_inner_join_with_on() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE s1 (a INT, b INT)").unwrap();
+    session.run("CREATE TABLE s2 (a INT, c INT)").unwrap();
+    session.run("CREATE TABLE s3 (a INT, d INT)").unwrap();
+    session.run("INSERT INTO s1 VALUES (1, 10)").unwrap();
+    session.run("INSERT INTO s2 VALUES (1, 20)").unwrap();
+    session.run("INSERT INTO s3 VALUES (1, 30)").unwrap();
+
+    for sql in [
+        "SELECT s2.* FROM s1 JOIN s2 USING(a) JOIN s3 ON(s2.a = s3.a)",
+        "SELECT s2.* FROM s3 JOIN (s1 JOIN s2 USING(a)) ON(s2.a = s3.a)",
+        "SELECT s2.* FROM s1 NATURAL JOIN s2 JOIN s3 ON(s2.a = s3.a)",
+    ] {
+        assert_eq!(columns(&mut session, sql), ["c"], "{sql}");
+        assert_eq!(rows(&mut session, sql), ["20"], "{sql}");
+    }
+
+    // An OUTER join attaches its `ON` to the join itself, a comma join has no
+    // `ON` at all, and a lone coalesced join is the join -- all three keep the
+    // `LogicalJoin` at the top, so all three keep `s2.a`.
+    for sql in [
+        "SELECT s2.* FROM s1 JOIN s2 USING(a) LEFT JOIN s3 ON(s2.a = s3.a)",
+        "SELECT s2.* FROM s1 JOIN s2 USING(a), s3",
+        "SELECT s2.* FROM s1 JOIN s2 USING(a)",
+    ] {
+        assert_eq!(columns(&mut session, sql), ["a", "c"], "{sql}");
+        assert_eq!(rows(&mut session, sql), ["1|20"], "{sql}");
+    }
+
+    // The side that KEPT the common column is untouched, the unqualified `*`
+    // is untouched, and naming the column explicitly still reaches it.
+    let inner_on = "FROM s1 JOIN s2 USING(a) JOIN s3 ON(s2.a = s3.a)";
+    assert_eq!(
+        columns(&mut session, &format!("SELECT s1.* {inner_on}")),
+        ["a", "b"]
+    );
+    assert_eq!(
+        rows(&mut session, &format!("SELECT s1.* {inner_on}")),
+        ["1|10"]
+    );
+    assert_eq!(
+        columns(&mut session, &format!("SELECT * {inner_on}")),
+        ["a", "b", "c", "a", "d"]
+    );
+    assert_eq!(
+        rows(&mut session, &format!("SELECT * {inner_on}")),
+        ["1|10|20|1|30"]
+    );
+    assert_eq!(
+        rows(&mut session, &format!("SELECT s2.a {inner_on}")),
+        ["1"]
+    );
+}

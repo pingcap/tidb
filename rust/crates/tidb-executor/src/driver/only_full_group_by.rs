@@ -520,10 +520,13 @@ pub(super) fn bare_columns(expr: &tidb_ast::Expr) -> Vec<Vec<String>> {
                 tidb_ast::Expr::Window { .. } => true,
                 // A subquery has its OWN scope: `s.k` in `(SELECT ... WHERE
                 // s.k = t.g)` names the subquery's table, not this one. The
-                // outer names it correlates to (`t.g`) go unchecked here,
-                // which is the permissive side -- Go reaches them through
-                // `collect_outer_columns`, a widening this rule has no
-                // captured case for.
+                // outer names it correlates to (`t.g`) go unchecked here.
+                // For `HAVING` that gap is closed one level up, in
+                // `agg_select::check_having_names`, which collects the
+                // correlated names separately and holds them to the same rule
+                // (Go binds them later, against the aggregation's output).
+                // For this rule's own `ORDER BY`/`GROUP BY` callers it stays
+                // the permissive side, with no captured case either way.
                 tidb_ast::Expr::Subquery(_) | tidb_ast::Expr::Exists { .. } => true,
                 tidb_ast::Expr::InSubquery { expr, .. } => {
                     self.found.extend(bare_columns(expr));

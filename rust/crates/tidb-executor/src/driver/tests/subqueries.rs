@@ -516,3 +516,88 @@ fn grouped_correlated_subqueries() {
     )
     .is_err());
 }
+
+/// A subquery does not launder a `HAVING` column reference: the name it
+/// CORRELATES to answers to the same scope rule as one written in the clause
+/// directly, and TiDB reports it under the same `having clause`.
+///
+/// Go reaches this without a second pass --
+/// `havingWindowAndOrderbyExprResolver.Enter` returns `skipChildren` for a
+/// subquery, so the correlated name is bound later against the outer plan,
+/// which at `HAVING` time is the aggregation's output.
+///
+/// Captured from real TiDB on `ht(a, b)` = (1,1),(2,2) and `hs(x, y)` = (1,5):
+///
+/// ```text
+/// select a from ht group by a having (select y from hs where hs.x = ht.b) > 0;
+///   [planner:1054]Unknown column 'ht.b' in 'having clause'
+/// select a from ht group by a having exists (select 1 from hs where hs.x = ht.b);
+///   [planner:1054]Unknown column 'ht.b' in 'having clause'
+/// select a from ht group by a having a in (select x from hs where hs.y = ht.b);
+///   [planner:1054]Unknown column 'ht.b' in 'having clause'
+/// select max(b) from ht having (select y from hs where hs.x = ht.b) > 0;
+///   [planner:1054]Unknown column 'ht.b' in 'having clause'
+/// select a from ht group by a having (select y from hs where hs.x = ht.a) > 0;  -- 1
+/// select a from ht group by a having (select count(*) from hs) > 0;             -- 1;2
+/// select a, b from ht having (select y from hs where hs.x = ht.b) > 0;          -- 1|1
+/// ```
+#[test]
+fn a_having_subquery_may_only_correlate_to_the_aggregations_output() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on("CREATE TABLE ht (a INT, b INT)", &mut catalog).unwrap();
+    crate::run_create_table_on("CREATE TABLE hs (x INT, y INT)", &mut catalog).unwrap();
+    run_insert_on(
+        "INSERT INTO ht VALUES (1, 1), (2, 2)",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO hs VALUES (1, 5)",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+
+    // `b` is neither grouped nor in the select list, so no spelling of the
+    // subquery reaches it -- and the name is reported AS WRITTEN.
+    for sql in [
+        "SELECT a FROM ht GROUP BY a HAVING (SELECT y FROM hs WHERE hs.x = ht.b) > 0",
+        "SELECT a FROM ht GROUP BY a HAVING EXISTS (SELECT 1 FROM hs WHERE hs.x = ht.b)",
+        "SELECT a FROM ht GROUP BY a HAVING a IN (SELECT x FROM hs WHERE hs.y = ht.b)",
+        "SELECT max(b) FROM ht HAVING (SELECT y FROM hs WHERE hs.x = ht.b) > 0",
+    ] {
+        match run_select_on(sql, &catalog, &crate::StmtContext::for_query()) {
+            Err(DriverError::UnknownColumnInClause { column, clause }) => {
+                assert_eq!(
+                    (column.as_str(), clause.as_str()),
+                    ("ht.b", "having clause"),
+                    "{sql}"
+                );
+            }
+            other => panic!("expected 1054 for `{sql}`, got {other:?}"),
+        }
+    }
+
+    // A grouped column, an UNcorrelated subquery, and a column the select list
+    // carries are all still reachable -- the refusal is about the scope, not
+    // about subqueries in `HAVING`.
+    assert!(run_select_on(
+        "SELECT a FROM ht GROUP BY a HAVING (SELECT y FROM hs WHERE hs.x = ht.a) > 0",
+        &catalog,
+        &crate::StmtContext::for_query()
+    )
+    .is_ok());
+    assert!(run_select_on(
+        "SELECT a FROM ht GROUP BY a HAVING (SELECT count(*) FROM hs) > 0",
+        &catalog,
+        &crate::StmtContext::for_query()
+    )
+    .is_ok());
+    assert!(run_select_on(
+        "SELECT a, b FROM ht HAVING (SELECT y FROM hs WHERE hs.x = ht.b) > 0",
+        &catalog,
+        &crate::StmtContext::for_query()
+    )
+    .is_ok());
+}

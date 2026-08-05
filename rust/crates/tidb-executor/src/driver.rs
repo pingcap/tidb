@@ -924,8 +924,18 @@ pub(crate) fn run_select_traced(
                 // `*` expands to every column of every FROM table in order,
                 // `t.*` to one table's (Go's unfoldWildStar). A coalesced
                 // join reorders the former and hides the duplicates from it;
-                // `t.*` is untouched, so `u2.*` still reports `u2`'s own copy
-                // of a `USING` column (captured from Go).
+                // `t.*` normally is untouched, so `u2.*` still reports `u2`'s
+                // own copy of a `USING` column (captured from Go).
+                //
+                // The exception is Go's `fullSchema == nil` fallback, which
+                // hides the redundant copy from `t.*` as well -- see
+                // [`FromScope::qualified_star_is_output_only`] for the shape
+                // that produces it and the captures.
+                let hidden: &[usize] = if current_scope.qualified_star_is_output_only {
+                    &current_scope.coalesced
+                } else {
+                    &[]
+                };
                 let selected: Vec<&FromTable> = match qualifier.last() {
                     None => {
                         for (index, name, ft) in scope.star_columns() {
@@ -953,6 +963,9 @@ pub(crate) fn run_select_traced(
                 for table in selected {
                     for (i, (name, ft)) in table.columns.iter().enumerate() {
                         let index = table.offset + i;
+                        if hidden.contains(&index) {
+                            continue;
+                        }
                         let mut col = Column::new((index + 1) as i64, ft.clone());
                         col.index = index as i64;
                         exprs.push(Expression::Column(col));

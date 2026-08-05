@@ -48,6 +48,46 @@ pub(crate) struct FromScope {
     /// order: a coalesced join puts the common columns first and a RIGHT
     /// join reports its two sides right-then-left. Empty means row order.
     pub(crate) star: Vec<usize>,
+    /// Whether `t.*` must expand against the VISIBLE columns rather than the
+    /// table's own -- Go's `unfoldWildStar` falling through to
+    /// `p.OutputNames()` because its type switch found no `LogicalJoin`.
+    ///
+    /// `buildJoin` returns a `LogicalSelection` WRAPPING the join whenever an
+    /// INNER join carries an `ON` clause:
+    ///
+    /// ```go
+    /// // Keep these expressions as a LogicalSelection upon the inner join, in
+    /// // order to apply possible decorrelate optimizations. The ON clause is
+    /// // actually treated as a WHERE clause now.
+    /// if joinPlan.JoinType == base.InnerJoin {
+    ///     sel := logicalop.LogicalSelection{Conditions: onCondition}.Init(...)
+    ///     sel.SetChildren(joinPlan)
+    ///     return sel, nil
+    /// }
+    /// ```
+    ///
+    /// so the `FullSchema` that holds a coalesced join's REDUNDANT copies is
+    /// not reachable from the top of the `FROM` plan, and `t.*` sees only the
+    /// coalesced output names. The observable effect is a column that
+    /// disappears from the result, measured through `gorun`:
+    ///
+    /// ```text
+    /// select s2.* from s1 join s2 using(a) join s3 on(s2.a=s3.a);  -- 20
+    /// select s2.* from s1 join s2 using(a) left join s3 on(...);   -- 1|20
+    /// select s2.* from s1 join s2 using(a), s3;                    -- 1|20
+    /// select s2.* from s1 join s2 using(a);                        -- 1|20
+    /// select s2.a from s1 join s2 using(a) join s3 on(s2.a=s3.a);  -- 1
+    /// ```
+    ///
+    /// Only the OUTERMOST join decides it, which is why `build_join` sets it
+    /// unconditionally rather than merging a child's answer in: an inner join
+    /// with `ON` above a `USING` join hides the copies, and a `USING` join
+    /// above an inner join with `ON` does not.
+    ///
+    /// The flag is inert wherever nothing was coalesced -- with no redundant
+    /// copy the two expansions are the same list -- which is every `FROM`
+    /// shape but this one.
+    pub(crate) qualified_star_is_output_only: bool,
 }
 
 impl Default for FromScope {
@@ -61,6 +101,7 @@ impl Default for FromScope {
             tables: Vec::new(),
             coalesced: Vec::new(),
             star: Vec::new(),
+            qualified_star_is_output_only: false,
             zone: tidb_expr::SessionTimeZone::utc(),
         }
     }
@@ -1585,6 +1626,10 @@ pub(crate) fn build_join(
             trace.refuse("this join's plan is not supported yet");
         }
     }
+    // Set, never merged: this is a property of the node at the TOP of the
+    // `FROM` plan, and the top is whichever `build_join` returns last. See
+    // [`FromScope::qualified_star_is_output_only`].
+    scope.qualified_star_is_output_only = join.tp == tidb_ast::JoinType::Cross && join.on.is_some();
     Ok((meter(exec, trace), scope))
 }
 

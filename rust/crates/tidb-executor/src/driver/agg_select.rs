@@ -850,7 +850,18 @@ fn lower_select_fields(
 fn check_having_names(
     having: &tidb_ast::Expr,
     state: &AggPipelineState,
+    resolver: &ScopeResolver<'_>,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
+    let known = |name: &str| {
+        state
+            .names
+            .iter()
+            .chain(state.group_by_names.iter())
+            .any(|candidate| candidate.eq_ignore_ascii_case(name))
+    };
     for path in super::only_full_group_by::bare_columns(having) {
         let name = path.last().cloned().unwrap_or_default();
         // `__apply_N` is the placeholder a correlated subquery leaves behind,
@@ -859,19 +870,111 @@ fn check_having_names(
         if name.starts_with("__apply_") || crate::window::is_window_column(&name) {
             continue;
         }
-        let known = |candidates: &[String]| {
-            candidates
-                .iter()
-                .any(|candidate| candidate.eq_ignore_ascii_case(&name))
-        };
-        if !known(&state.names) && !known(&state.group_by_names) {
+        if !known(&name) {
             return Err(DriverError::UnknownColumnInClause {
                 column: name,
                 clause: "having clause".to_owned(),
             });
         }
     }
+    // A SUBQUERY DOES NOT LAUNDER THE REFERENCE. `bare_columns` stops at a
+    // subquery because its columns name the subquery's own `FROM`; the ones it
+    // CORRELATES to are this clause's, and they answer to the same rule.
+    //
+    // Go gets there without a second pass:
+    // `havingWindowAndOrderbyExprResolver.Enter` returns `skipChildren` for
+    // `*ast.SubqueryExpr`/`*ast.ExistsSubqueryExpr`, so the correlated name is
+    // resolved LATER, when the subquery is built -- against the outer plan,
+    // which at `HAVING` time is the AGGREGATION's output. A column the
+    // aggregation does not carry is nowhere to be found, and the clause it is
+    // reported under is still `having clause`. Captured from real TiDB, on
+    // `ht(a, b)` and `hs(x, y)`:
+    //
+    // ```text
+    // select a from ht group by a having (select y from hs where hs.x = ht.b) > 0;
+    //   [planner:1054]Unknown column 'ht.b' in 'having clause'
+    // select a from ht group by a having exists (select 1 from hs where hs.x = ht.b);
+    //   [planner:1054]Unknown column 'ht.b' in 'having clause'
+    // select a from ht group by a having a in (select x from hs where hs.y = ht.b);
+    //   [planner:1054]Unknown column 'ht.b' in 'having clause'
+    // select max(b) from ht having (select y from hs where hs.x = ht.b) > 0;
+    //   [planner:1054]Unknown column 'ht.b' in 'having clause'
+    // select a, b from ht having (select y from hs where hs.x = ht.b) > 0;  -- 1|1
+    // select a from ht group by a having (select y from hs where hs.x = ht.a) > 0;  -- 1
+    // ```
+    //
+    // The last two are why this is the aggregation's OUTPUT and not the group
+    // keys: `b` in the select list makes `ht.b` reachable with no `GROUP BY`
+    // at all.
+    //
+    // The name is reported AS WRITTEN (`ht.b`, not `b`), which is Go's
+    // `ErrUnknownColumn.GenWithStackByArgs(v.Name, ...)` over a
+    // `*ast.ColumnName`.
+    let mut correlated = Vec::new();
+    for query in having_subqueries(having) {
+        crate::driver::subquery::collect_correlated_columns_query(
+            &query,
+            resolver.scope,
+            catalog,
+            current_db,
+            &mut correlated,
+            ctx,
+        );
+    }
+    for path in correlated {
+        let Some(name) = path.last() else { continue };
+        if name.starts_with("__apply_") || crate::window::is_window_column(name) {
+            continue;
+        }
+        if !known(name) {
+            return Err(DriverError::UnknownColumnInClause {
+                column: path.join("."),
+                clause: "having clause".to_owned(),
+            });
+        }
+    }
     Ok(())
+}
+
+/// Every subquery body directly under a `HAVING` expression.
+///
+/// This is the set `havingWindowAndOrderbyExprResolver.Enter` skips
+/// (`*ast.SubqueryExpr`, `*ast.ExistsSubqueryExpr`, and the subquery operand
+/// of `IN`/`ANY`/`ALL`), collected so their correlated names can be checked
+/// where Go checks them later. A subquery nested INSIDE one of these is not
+/// visited: its correlations are the middle query's outer scope, not this
+/// clause's, and the middle query reports its own.
+fn having_subqueries(expr: &tidb_ast::Expr) -> Vec<QueryStmt> {
+    struct Collector {
+        found: Vec<QueryStmt>,
+    }
+    impl tidb_ast::Visitor for Collector {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            let Some(expr) = node.downcast_ref::<tidb_ast::Expr>() else {
+                return false;
+            };
+            match expr {
+                tidb_ast::Expr::Subquery(subquery)
+                | tidb_ast::Expr::Exists { subquery, .. }
+                | tidb_ast::Expr::InSubquery { subquery, .. }
+                | tidb_ast::Expr::CompareSubquery { subquery, .. } => {
+                    self.found.push((**subquery).clone());
+                    // The operand beside the subquery (`expr IN (...)`'s left
+                    // side) is a plain expression `bare_columns` already
+                    // walked, so stopping here loses nothing.
+                    true
+                }
+                _ => false,
+            }
+        }
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            true
+        }
+    }
+    let mut collector = Collector { found: Vec::new() };
+    let mut owned = expr.clone();
+    tidb_ast::Visitable::accept(&mut owned, &mut collector);
+    collector.found
 }
 
 fn hoist_having_and_order_by(
@@ -900,7 +1003,7 @@ fn hoist_having_and_order_by(
             };
             let having =
                 &substitute_output_aliases_where(having, select.fields.fields(), false, &known)?;
-            check_having_names(having, state)?;
+            check_having_names(having, state, resolver, catalog, current_db, ctx)?;
             let (expr, found) = extract_and_hoist_subquery(
                 having,
                 resolver.scope,
