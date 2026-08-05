@@ -804,10 +804,29 @@ fn join_operators_and_their_keep_order_match_recorded_tidb_plans() {
     // moved in either direction, and `executor/merge_join` (246 matched,
     // 0 diverged), `executor/jointest/join` (803 matched, 1 diverged) and
     // `planner/core/join_reorder2` (30 matched, 0 diverged) all stood still.
-    const COMPARED: usize = 182;
-    const BOTH_AGREE: usize = 103;
-    const RECORDED_MERGE_PAIRS: usize = 84;
-    const AGREED_MERGE_PAIRS: usize = 75;
+    //
+// SIXTH MEASUREMENT (batch47, stacked on batch45 -- its own tree read 184/105/86/71/28 over the pre-greedy base):
+    //
+    // 182/103/84/69/28 -> 184/105/86/71/28. TWO MORE STATEMENTS BECAME
+    // COMPARABLE, and both AGREE; nothing that was comparable moved, and the
+    // extras are unchanged. Both are the same statement in
+    // `planner/core/join_reorder_through_projection`, which reads a derived
+    // table whose column is an ALIAS over a `GROUP BY`:
+    //
+    //   select t1.a, dt.key_a, dt.sum_b from t1 join (
+    //     select t2.a as key_a, sum(t3.b) as sum_b
+    //     from t2 join t3 on t2.a = t3.a group by t2.a with rollup) dt
+    //   on t1.a = dt.key_a;
+    //
+    // A grouped plain field used to REPORT the aggregation's internal column
+    // name (`a`) instead of the written alias (`key_a`), so `dt.key_a` did
+    // not resolve and the statement produced no plan to compare. TiDB names
+    // it `key_a` -- captured, and now held by
+    // `tidb_session::tests_prepared_statements::a_group_by_field_keeps_its_written_alias_in_the_header`.
+    const COMPARED: usize = 184;
+    const BOTH_AGREE: usize = 105;
+    const RECORDED_MERGE_PAIRS: usize = 86;
+    const AGREED_MERGE_PAIRS: usize = 77;
     const EXTRA_MERGE_PAIRS: usize = 21;
 
     assert_eq!(

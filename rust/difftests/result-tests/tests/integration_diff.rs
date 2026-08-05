@@ -1348,7 +1348,27 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     //   instead. Sorting an index lookup's handles is an executor change whose
     //   blast radius is every non-covering index read in the corpus, so it is
     //   named here rather than attempted alongside the plan text.
-    const KNOWN_DIVERGENCES: usize = 24;
+    //
+    // 24 -> 26, and THE DEBT DID NOT GROW -- the COMPARED SET did. `compared`
+    // rises 5639 -> 5641 because two statements that produced no plan at all
+    // now produce one, and both land in the already-listed NO COVERING-INDEX
+    // PREFERENCE class (`t1`: TiDB `IndexFullScan index:b(b)`, this tier
+    // `TableFullScan`). They are the same statement, replayed twice, in
+    // `planner/core/join_reorder_through_projection`:
+    //
+    //   explain format = 'plan_tree' select t1.a, dt.key_a, dt.sum_b from t1
+    //     join (select t2.a as key_a, sum(t3.b) as sum_b
+    //           from t2 join t3 on t2.a = t3.a group by t2.a with rollup) dt
+    //     on t1.a = dt.key_a;
+    //
+    // `dt.key_a` names a derived-table column that is an ALIAS over a
+    // `GROUP BY`. A grouped plain field used to report the AGGREGATION's own
+    // column name (`a`) rather than the written alias, so the reference did
+    // not resolve; TiDB names it `key_a`. The same fix moves `join_shape` in
+    // the improving direction (182/103 -> 184/105 compared/agreeing, extras
+    // unchanged), and no previously compared statement moved: every other
+    // topic's matched/diverged/skipped triple is identical.
+    const KNOWN_DIVERGENCES: usize = 26;
     //
     //
     // 28 -> 24 (written as 35 -> 31 in batch43's own tree, which branched before batch42), in three unrelated causes, none of them an access-path

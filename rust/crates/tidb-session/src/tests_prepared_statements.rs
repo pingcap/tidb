@@ -725,3 +725,91 @@ fn using_admits_user_variables_only() {
         1064
     );
 }
+
+/// An explicit alias on a plain COLUMN field survives `GROUP BY`, on the
+/// direct and the prepared path alike.
+///
+/// Go's `buildProjection` names a projected column `field.AsName` whenever the
+/// field was written with one -- the grouping below it changes nothing about
+/// that. This tier lowers a plain field in an aggregate query into a
+/// `FIRST_ROW` carrier named by the COLUMN, because that is the namespace
+/// `HAVING` and `GROUP BY` resolve against, and used to REPORT that internal
+/// name: `select b as x from ht group by b` printed the header `b`.
+///
+/// The same name is what a DERIVED TABLE's columns are addressed by, so the
+/// loss reached further than the wire header.
+///
+/// Captured from real TiDB on `ht(a, b)` = (1,10),(2,20):
+///
+/// ```text
+/// select b as x from ht group by b                      -- header: x
+/// select b as x, count(*) as c from ht group by b       -- header: x, c
+/// select b as x from ht group by b having x > 0         -- header: x
+/// select b from ht group by b                           -- header: b
+/// prepare p from 'select b as x from ht group by b'; execute p
+///                                                       -- header: x
+/// select t1.a as k, dt.key_a from ht t1
+///   join (select b as key_a from ht group by b) dt on t1.b = dt.key_a
+///                                                       -- header: k, key_a
+/// ```
+#[test]
+fn a_group_by_field_keeps_its_written_alias_in_the_header() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE ht (a int, b int)").unwrap();
+    session.run("INSERT INTO ht VALUES (1,10),(2,20)").unwrap();
+
+    assert_eq!(
+        header_and_rows(&mut session, "SELECT b AS x FROM ht GROUP BY b").0,
+        vec!["x".to_owned()]
+    );
+    assert_eq!(
+        header_and_rows(
+            &mut session,
+            "SELECT b AS x, count(*) AS c FROM ht GROUP BY b"
+        )
+        .0,
+        vec!["x".to_owned(), "c".to_owned()]
+    );
+    assert_eq!(
+        header_and_rows(
+            &mut session,
+            "SELECT b AS x FROM ht GROUP BY b HAVING x > 0"
+        )
+        .0,
+        vec!["x".to_owned()]
+    );
+    // ... and an UNaliased field is still named by its column, which is the
+    // half that was already right.
+    assert_eq!(
+        header_and_rows(&mut session, "SELECT b FROM ht GROUP BY b").0,
+        vec!["b".to_owned()]
+    );
+
+    // The prepared path names its columns exactly as the direct one does.
+    session
+        .run("PREPARE p FROM 'select b as x from ht group by b'")
+        .unwrap();
+    assert_eq!(
+        header_and_rows(&mut session, "EXECUTE p"),
+        (
+            vec!["x".to_owned()],
+            vec![vec!["10".to_owned()], vec!["20".to_owned()]]
+        )
+    );
+
+    // The alias is also how a DERIVED TABLE's column is addressed.
+    assert_eq!(
+        header_and_rows(
+            &mut session,
+            "SELECT t1.a AS k, dt.key_a FROM ht t1 \
+             JOIN (SELECT b AS key_a FROM ht GROUP BY b) dt ON t1.b = dt.key_a"
+        ),
+        (
+            vec!["k".to_owned(), "key_a".to_owned()],
+            vec![
+                vec!["1".to_owned(), "10".to_owned()],
+                vec!["2".to_owned(), "20".to_owned()]
+            ]
+        )
+    );
+}

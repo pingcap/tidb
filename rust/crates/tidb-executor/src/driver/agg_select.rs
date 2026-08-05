@@ -817,6 +817,19 @@ fn lower_select_fields(
                     order_by: Vec::new(),
                     arg_orig_name: String::new(),
                 });
+                // The aggregation's own column keeps the COLUMN's name, which
+                // is the namespace `HAVING` and `GROUP BY` resolve against
+                // (`SELECT b AS x ... GROUP BY b HAVING b > 0` is legal in Go
+                // because the group item matched `b`, not the alias). The
+                // OUTPUT name is a separate question, and it is the written
+                // alias -- Go's `buildProjection` names the projected column
+                // `field.AsName` whenever there is one, aggregate or not.
+                // Without this the alias was LOST for exactly this shape:
+                // `select b as x from ht group by b` reported the header `b`
+                // where TiDB reports `x`.
+                if let Some(name) = state.slot_names.last_mut() {
+                    *name = Some(display.clone());
+                }
                 state.names.push(match other {
                     tidb_ast::Expr::Column(path) => {
                         path.last().cloned().unwrap_or_else(|| other.restore())
@@ -1681,19 +1694,40 @@ fn build_final_projection(
                 root,
                 ctx.clone(),
             ));
-            let projected_names: Vec<String> = state
-                .slot_names
-                .iter()
-                .zip(&sources)
-                .map(|(forced, &i)| forced.clone().unwrap_or_else(|| state.names[i].clone()))
-                .collect();
             let projected_types: Vec<FieldType> =
                 sources.iter().map(|&i| state.types[i].clone()).collect();
-            state.names = projected_names;
+            state.names = output_names(state, &sources);
             state.types = projected_types;
+        } else {
+            // No projection was NEEDED -- the aggregation's columns already
+            // are the select list, in order -- but the names it reports are
+            // still the field's own, not the aggregation's. This is where the
+            // written alias used to be lost: `state.names` here holds the
+            // COLUMN name a plain grouped field rides under.
+            state.names = output_names(state, &sources);
         }
     }
     Ok(root)
+}
+
+/// The name each select field reports, over the aggregation's columns.
+///
+/// Go's `buildProjection` names a projected column `field.AsName` when the
+/// field was written with one and its own derived name otherwise, which is
+/// what `slot_names` records; `state.names` holds the AGGREGATION's column
+/// names, which a grouped plain column keeps under the COLUMN's name so that
+/// `HAVING` and `GROUP BY` still resolve against it.
+fn output_names(state: &AggPipelineState, sources: &[usize]) -> Vec<String> {
+    state
+        .slot_names
+        .iter()
+        .zip(sources)
+        .map(|(forced, &i)| {
+            forced
+                .clone()
+                .unwrap_or_else(|| state.names.get(i).cloned().unwrap_or_default())
+        })
+        .collect()
 }
 
 /// Stage 11 (distinct + drain): `SELECT DISTINCT` over the aggregate result,
