@@ -1048,6 +1048,28 @@ fn greatest_and_least_compare_in_the_aggregated_argument_domain() {
     }
 }
 
+/// Go's `else if resTp == types.ETJson { ...; argTp = types.ETString; resTp =
+/// types.ETString }` (`builtin_compare.go:508-512`): a JSON aggregate is the
+/// one eval type GREATEST/LEAST refuse to compare in their own domain -- they
+/// warn and compare the RENDERED TEXT instead.
+///
+/// The fixture is chosen so the two domains disagree: as text `'9'` is above
+/// `'10'`, as numbers it is below. Captured with `gorun` over
+/// `create table jt(a json, b json)` holding `'10'` and `'9'`:
+/// `greatest(a,b)` is `9` and `least(a,b)` is `10`.
+#[test]
+fn a_json_greatest_compares_the_rendered_text() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE jt (a JSON, b JSON)").unwrap();
+    session.run("INSERT INTO jt VALUES ('10','9')").unwrap();
+    for (sql, expected) in [
+        ("SELECT GREATEST(a, b) FROM jt", "9"),
+        ("SELECT LEAST(a, b) FROM jt", "10"),
+    ] {
+        assert_eq!(row_text(session.run(sql))[0][0], expected, "{sql}");
+    }
+}
+
 /// The miscellaneous and encryption builtins whose bodies were already ported
 /// and unit-tested in `tidb_expr::builtin_ext::{misc,crypto}`, but which live
 /// SQL could not reach because `builtin_return_type` had no arm for their
