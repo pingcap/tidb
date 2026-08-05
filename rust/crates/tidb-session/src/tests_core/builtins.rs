@@ -971,6 +971,83 @@ fn an_all_temporal_greatest_returns_the_aggregated_temporal_type() {
     }
 }
 
+/// Go's `argTp := resTp` (`builtin_compare.go:504`): GREATEST/LEAST compare in
+/// the domain the ARGUMENT TYPES aggregate to, which is fixed before any value
+/// exists. Reading the domain off the runtime datum instead answers a
+/// different question for every argument whose declared type and datum
+/// disagree about a domain -- an ENUM, a SET and a BIT are all such arguments,
+/// and each one used to compare as a NUMBER against its ordinal.
+///
+/// Every expectation is captured with `gorun` over
+/// `create table q(e1 enum('{}','[1]','x'), e2 enum('a','b','!'),
+/// s1 set('a','b','c'), s2 set('a','b','c'), b64 bit(64), tm time)`
+/// holding `'{}'` / `'!'` / `'b'` / `'a'` / `9007199254740993` / `'10:00:00'`.
+#[test]
+fn greatest_and_least_compare_in_the_aggregated_argument_domain() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE q (e1 ENUM('{}','[1]','x'), e2 ENUM('a','b','!'), \
+             s1 SET('a','b','c'), s2 SET('a','b','c'), b64 BIT(64), tm TIME)",
+        )
+        .unwrap();
+    session
+        .run("INSERT INTO q VALUES ('{}','!','b','a',9007199254740993,'10:00:00')")
+        .unwrap();
+    for (sql, expected) in [
+        // An ENUM beside an integer aggregates to a string kind, so the `2` is
+        // stringified and the NAMES are compared. `'{}'` is ordinal 1 but
+        // sorts ABOVE `'2'`, so both answers invert between the two domains.
+        ("SELECT GREATEST(e1, 2) FROM q", "{}"),
+        ("SELECT LEAST(e1, 2) FROM q", "2"),
+        // The MIRROR of that boundary, so the fix cannot be a blanket
+        // inversion: `'!'` is ordinal 3 -- ABOVE the literal 2 -- and sorts
+        // BELOW `'2'`. The ordinal domain and the name domain disagree here in
+        // the opposite direction, and TiDB still answers by name.
+        ("SELECT GREATEST(e2, 2) FROM q", "2"),
+        ("SELECT LEAST(e2, 2) FROM q", "!"),
+        // The EQUAL-ordinal boundary: set member `'b'` has ordinal 2, exactly
+        // the literal, so an ordinal comparison finds a tie and keeps the
+        // first argument for BOTH -- which is right for GREATEST by accident
+        // and wrong for LEAST.
+        ("SELECT GREATEST(s1, 2) FROM q", "b"),
+        ("SELECT LEAST(s1, 2) FROM q", "2"),
+        ("SELECT GREATEST(s2, 2) FROM q", "a"),
+        ("SELECT LEAST(s2, 2) FROM q", "2"),
+        // A BIT is NOT a string kind: it aggregates into the numeric domain
+        // and must keep comparing as a number.
+        ("SELECT GREATEST(b64, 2) FROM q", "9007199254740993"),
+        ("SELECT LEAST(b64, 2) FROM q", "2"),
+        // 2^53 and 2^53+1 are the SAME f64, so a numeric domain that rounds
+        // through a double cannot separate them.
+        (
+            "SELECT GREATEST(b64, 9007199254740992) FROM q",
+            "9007199254740993",
+        ),
+        (
+            "SELECT LEAST(b64, 9007199254740992) FROM q",
+            "9007199254740992",
+        ),
+        // OVER-APPLICATION guard. A DURATION aggregate is Go's ETDuration arm,
+        // not a string one: sending everything that is neither a number nor a
+        // date through the string signature would make this arithmetic a
+        // string-operand read of `10:00:00` instead of `100000`.
+        ("SELECT GREATEST(tm, tm) + 0 FROM q", "100000"),
+        // The ETString return type is Go's `mysql.TypeVarString`, never an
+        // argument's ENUM/SET code -- an ENUM result column declares a
+        // name/value cell that `builtinGreatestStringSig`'s plain string
+        // cannot fill.
+        ("SELECT GREATEST(e1, e1) FROM q", "{}"),
+        ("SELECT LEAST(s1, s1) FROM q", "b"),
+        // Two DIFFERENT enums aggregate to a VARCHAR, and their ordinals (1
+        // and 3) rank the opposite way from their names.
+        ("SELECT GREATEST(e1, e2) FROM q", "{}"),
+        ("SELECT LEAST(e1, e2) FROM q", "!"),
+    ] {
+        assert_eq!(row_text(session.run(sql))[0][0], expected, "{sql}");
+    }
+}
+
 /// The miscellaneous and encryption builtins whose bodies were already ported
 /// and unit-tested in `tidb_expr::builtin_ext::{misc,crypto}`, but which live
 /// SQL could not reach because `builtin_return_type` had no arm for their
