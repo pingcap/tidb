@@ -1386,7 +1386,6 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     //
     // Two are `Rows`-kind and two are `PlanProperty`-kind, so `compared`
     // holds at 5639 and matched rises.
-    const KNOWN_DIVERGENCES: usize = 24;
 
     assert!(
         total.divergences.len() <= KNOWN_DIVERGENCES,
