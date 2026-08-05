@@ -16,11 +16,13 @@ package statistics
 
 import (
 	"bytes"
+	"fmt"
 	"math/rand"
 	"sort"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
@@ -77,6 +79,15 @@ func FuzzMergePartTopNAndHistToGlobal(f *testing.F) {
 	// Index seeds: int and varchar source values.
 	f.Add(int64(20), uint8(3), uint8(3), uint8(2), uint8(4), uint8(3), false, uint8(0), uint8(1))
 	f.Add(int64(21), uint8(4), uint8(4), uint8(2), uint8(6), uint8(4), true, uint8(1), uint8(1))
+	// One seed per added type, so `go test` alone covers them.
+	for _, tp := range []uint8{fuzzTpEnumSmall, fuzzTpEnumLarge, fuzzTpSetSmall,
+		fuzzTpSetLarge, fuzzTpBit, fuzzTpDatetime, fuzzTpFloat} {
+		f.Add(int64(100)+int64(tp), uint8(3), uint8(3), uint8(2), uint8(4), uint8(3), true, tp, uint8(0))
+		f.Add(int64(200)+int64(tp), uint8(2), uint8(2), uint8(1), uint8(3), uint8(2), false, tp, uint8(0))
+		// The same type through the index path, where the bound is the
+		// encoded key rather than the typed value.
+		f.Add(int64(300)+int64(tp), uint8(3), uint8(3), uint8(2), uint8(4), uint8(3), true, tp, uint8(1))
+	}
 
 	f.Fuzz(func(t *testing.T, seed int64,
 		numParts, bucketsPerPart, topNPerPart, expBuckets, globalTopN uint8,
@@ -92,7 +103,7 @@ func FuzzMergePartTopNAndHistToGlobal(f *testing.F) {
 			topNPerPart > 5,
 			expBuckets == 0 || expBuckets > 32,
 			globalTopN > 16,
-			tpKind > 1,
+			tpKind >= fuzzTpCount,
 			isIndexFlag > 1:
 			t.Skip("input dimensions out of range")
 		}
@@ -100,10 +111,28 @@ func FuzzMergePartTopNAndHistToGlobal(f *testing.F) {
 
 		sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
 		killer := sqlkiller.SQLKiller{}
-		tp := fuzzFieldType(tpKind, isIndex)
+		spec := fuzzTypeSpecOf(tpKind, isIndex)
+		tp := spec.ft
 		rng := rand.New(rand.NewSource(seed))
 
-		gen := newFuzzValueGen(tpKind, rng)
+		// A small domain cannot supply 2 distinct bounds per bucket for
+		// every partition. Shrink the shape instead of skipping, so
+		// these types still get exercised.
+		if spec.domain > 0 {
+			perPart := spec.domain / (2 * int(numParts))
+			if perPart == 0 {
+				overlap = true
+				perPart = spec.domain / 2
+			}
+			if perPart == 0 {
+				t.Skip("value domain too small for even one bucket")
+			}
+			if int(bucketsPerPart) > perPart {
+				bucketsPerPart = uint8(perPart)
+			}
+		}
+
+		gen := newFuzzValueGen(tpKind, spec, rng)
 
 		var totalRows int64
 		hists := make([]*Histogram, numParts)
@@ -133,10 +162,22 @@ func FuzzMergePartTopNAndHistToGlobal(f *testing.F) {
 				seen[key] = struct{}{}
 				vals = append(vals, v)
 			}
+			// Bounds are ordered the way the stored bound compares. A
+			// column histogram keeps the typed value and is ordered by
+			// Datum.Compare, which for ENUM, SET and BIT is not the
+			// encoded order. An index histogram stores the encoded key
+			// itself, so it is ordered by those bytes.
 			sort.Slice(vals, func(i, j int) bool {
-				ai, _ := codec.EncodeKey(sc.TimeZone(), nil, vals[i])
-				aj, _ := codec.EncodeKey(sc.TimeZone(), nil, vals[j])
-				return bytes.Compare(ai, aj) < 0
+				if isIndex {
+					ai, _ := codec.EncodeKey(sc.TimeZone(), nil, vals[i])
+					aj, _ := codec.EncodeKey(sc.TimeZone(), nil, vals[j])
+					return bytes.Compare(ai, aj) < 0
+				}
+				c, err := vals[i].Compare(sc.TypeCtx(), &vals[j], collate.GetBinaryCollator())
+				if err != nil {
+					return false
+				}
+				return c < 0
 			})
 
 			h := NewHistogram(1, 0, 0, 0, tp, chunk.InitialCapacity, 0)
@@ -260,16 +301,94 @@ func FuzzMergePartTopNAndHistToGlobal(f *testing.F) {
 	})
 }
 
-// fuzzFieldType picks the histogram field type for the given tpKind
-// (0=Long, 1=Varchar). Index histograms always use TypeBlob.
-func fuzzFieldType(tpKind uint8, isIndex bool) *types.FieldType {
+// Fuzzable column types. Long and Varchar keep their historical
+// numbers so the existing seed corpus keeps its meaning.
+const (
+	fuzzTpLong = iota
+	fuzzTpVarchar
+	fuzzTpEnumSmall
+	fuzzTpEnumLarge
+	fuzzTpSetSmall
+	fuzzTpSetLarge
+	fuzzTpBit
+	fuzzTpDatetime
+	fuzzTpFloat
+	fuzzTpCount
+)
+
+// fuzzTypeSpec is one fuzzable type: the field type a histogram of it
+// carries, its element list where that applies, and how many distinct
+// values exist. ENUM and SET names are deliberately the reverse of
+// their numeric order, because those types encode by value but compare
+// by name, and that disagreement is what the merge has to survive.
+type fuzzTypeSpec struct {
+	ft          *types.FieldType
+	elems       []string
+	elemCollate string
+	domain      int // distinct values available, 0 when effectively unbounded
+}
+
+func reversedElems(n int) []string {
+	elems := make([]string, n)
+	for i := range elems {
+		elems[i] = fmt.Sprintf("e%04d", n-i)
+	}
+	return elems
+}
+
+// fuzzTypeSpecOf picks the type for the given tpKind. An index
+// histogram stores the encoded key as its bound, so its field type is
+// TypeBlob, but the values themselves are still of the logical type.
+func fuzzTypeSpecOf(tpKind uint8, isIndex bool) fuzzTypeSpec {
+	spec := fuzzLogicalTypeSpec(tpKind)
 	if isIndex {
-		return types.NewFieldType(mysql.TypeBlob)
+		spec.ft = types.NewFieldType(mysql.TypeBlob)
 	}
-	if tpKind == 1 {
-		return types.NewFieldType(mysql.TypeVarchar)
+	return spec
+}
+
+func fuzzLogicalTypeSpec(tpKind uint8) fuzzTypeSpec {
+	withElems := func(tp byte, n int) fuzzTypeSpec {
+		ft := types.NewFieldType(tp)
+		elems := reversedElems(n)
+		ft.SetElems(elems)
+		ft.SetCollate(charset.CollationUTF8MB4)
+		domain := n
+		if tp == mysql.TypeSet {
+			// A SET value is a bitmap over the elements.
+			domain = (1 << n) - 1
+		}
+		return fuzzTypeSpec{ft: ft, elems: elems, elemCollate: charset.CollationUTF8MB4, domain: domain}
 	}
-	return types.NewFieldType(mysql.TypeLong)
+	switch tpKind {
+	case fuzzTpVarchar:
+		return fuzzTypeSpec{ft: types.NewFieldType(mysql.TypeVarchar)}
+	case fuzzTpEnumSmall:
+		// One byte of storage in MySQL, up to 255 elements.
+		return withElems(mysql.TypeEnum, 6)
+	case fuzzTpEnumLarge:
+		// Past 255 elements the index needs two bytes.
+		return withElems(mysql.TypeEnum, 300)
+	case fuzzTpSetSmall:
+		// Up to 8 elements the bitmap fits in one byte.
+		return withElems(mysql.TypeSet, 6)
+	case fuzzTpSetLarge:
+		// Past 8 elements the bitmap spans two bytes, and a value can
+		// name several elements at once.
+		return withElems(mysql.TypeSet, 12)
+	case fuzzTpBit:
+		ft := types.NewFieldType(mysql.TypeBit)
+		ft.SetFlen(16)
+		return fuzzTypeSpec{ft: ft, domain: 1 << 16}
+	case fuzzTpDatetime:
+		ft := types.NewFieldType(mysql.TypeDatetime)
+		ft.SetDecimal(0)
+		return fuzzTypeSpec{ft: ft}
+	case fuzzTpFloat:
+		return fuzzTypeSpec{ft: types.NewFieldType(mysql.TypeFloat)}
+	default:
+		return fuzzTypeSpec{ft: types.NewFieldType(mysql.TypeLong)}
+	}
 }
 
 // boundAsBytes converts a typed datum into the Bytes-kind form an
@@ -284,22 +403,25 @@ func boundAsBytes(t *testing.T, sc *stmtctx.StatementContext, d types.Datum) typ
 
 // fuzzValueGen produces random datums of the configured type. Each
 // partition gets a band of values; with overlap=false the bands are
-// disjoint, with overlap=true they share a common space.
+// disjoint, with overlap=true they share a common space. Types with a
+// small domain always overlap, since there is not enough room to give
+// every partition its own band.
 type fuzzValueGen struct {
-	rng    *rand.Rand
-	tpKind uint8
+	rng  *rand.Rand
+	spec fuzzTypeSpec
+	kind uint8
 }
 
-func newFuzzValueGen(tpKind uint8, rng *rand.Rand) *fuzzValueGen {
-	return &fuzzValueGen{rng: rng, tpKind: tpKind}
+func newFuzzValueGen(tpKind uint8, spec fuzzTypeSpec, rng *rand.Rand) *fuzzValueGen {
+	return &fuzzValueGen{rng: rng, spec: spec, kind: tpKind}
 }
 
 const fuzzIntraPartRange = 100
 
 // value returns a random datum within the given partition's band.
 func (g *fuzzValueGen) value(part uint8, overlap bool) types.Datum {
-	switch g.tpKind {
-	case 1:
+	switch g.kind {
+	case fuzzTpVarchar:
 		// Varchar: 4 lowercase ASCII letters. With overlap=false the
 		// first character is set from a per-partition prefix to keep
 		// bands lexicographically disjoint.
@@ -311,6 +433,45 @@ func (g *fuzzValueGen) value(part uint8, overlap bool) types.Datum {
 			buf[0] = 'A' + part // 'A'..'P' for parts 0..15
 		}
 		return types.NewStringDatum(string(buf))
+	case fuzzTpEnumSmall, fuzzTpEnumLarge:
+		var d types.Datum
+		val := uint64(g.rng.Intn(len(g.spec.elems)) + 1)
+		e, err := types.ParseEnumValue(g.spec.elems, val)
+		if err != nil {
+			return d
+		}
+		d.SetMysqlEnum(e, g.spec.elemCollate)
+		return d
+	case fuzzTpSetSmall, fuzzTpSetLarge:
+		var d types.Datum
+		val := uint64(g.rng.Intn(g.spec.domain) + 1)
+		set, err := types.ParseSetValue(g.spec.elems, val)
+		if err != nil {
+			return d
+		}
+		d.SetMysqlSet(set, g.spec.elemCollate)
+		return d
+	case fuzzTpBit:
+		var d types.Datum
+		// Two bytes, so values with a zero high byte and values
+		// without one both occur.
+		d.SetMysqlBit(types.NewBinaryLiteralFromUint(uint64(g.rng.Intn(1<<16)), 2))
+		return d
+	case fuzzTpDatetime:
+		base := 0
+		if !overlap {
+			base = int(part) * 400
+		}
+		day := base + g.rng.Intn(fuzzIntraPartRange)
+		t := types.NewTime(types.FromDate(2000+day/365, 1+(day/31)%12, 1+day%28, 0, 0, 0, 0),
+			mysql.TypeDatetime, 0)
+		return types.NewTimeDatum(t)
+	case fuzzTpFloat:
+		base := float64(0)
+		if !overlap {
+			base = float64(part) * fuzzIntraPartRange * 4
+		}
+		return types.NewFloat32Datum(float32(base + float64(g.rng.Intn(fuzzIntraPartRange)) + 0.5))
 	default:
 		base := int64(0)
 		if !overlap {
