@@ -1126,6 +1126,18 @@ fn the_temporal_greatest_result_type_follows_the_aggregate_not_the_values() {
         // parse -- keeps its own text and wins on `[` sorting above `2`.
         ("SELECT GREATEST(j, d) FROM td", "[1]"),
         ("SELECT LEAST(j, d) FROM td", "2020-01-01"),
+        // The temporal scan PREFERS a DATETIME argument over a DATE one
+        // wherever they sit in the list, so a string beside both compares as
+        // a DATETIME. Taking the first temporal instead would parse all three
+        // as DATEs and collapse them onto the same day.
+        (
+            "SELECT GREATEST(d, dt, '2020-01-01 05:00:00') FROM td",
+            "2020-01-01 10:00:00",
+        ),
+        (
+            "SELECT LEAST(d, dt, '2020-01-01 05:00:00') FROM td",
+            "2020-01-01 00:00:00",
+        ),
     ] {
         assert_eq!(row_text(session.run(sql))[0][0], expected, "{sql}");
     }
