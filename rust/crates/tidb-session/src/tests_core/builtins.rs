@@ -1070,6 +1070,54 @@ fn a_json_greatest_compares_the_rendered_text() {
     }
 }
 
+/// `fieldTimeType` is read off the AGGREGATE, not off the arriving times:
+/// `builtinGreatestTimeSig`'s `cmpAsDate` is
+/// `aggType.GetType() == mysql.TypeDate`, and the winner is converted to that
+/// type on the way out.
+///
+/// An expression can carry a DATETIME type while every value it produces is a
+/// pure DATE -- `IFNULL(d, dt)` is exactly that, since `InferType4ControlFuncs`
+/// merges the two branches but the branch that runs is the DATE one. The two
+/// rules answer differently there and only the aggregate's is TiDB's.
+///
+/// Captured with `gorun` over `create table td(d date, dt datetime, j json)`
+/// holding `2020-01-01` / `2020-01-01 10:00:00` / `[1]`.
+#[test]
+fn the_temporal_greatest_result_type_follows_the_aggregate_not_the_values() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE td (d DATE, dt DATETIME, j JSON)")
+        .unwrap();
+    session
+        .run("INSERT INTO td VALUES ('2020-01-01','2020-01-01 10:00:00','[1]')")
+        .unwrap();
+    for (sql, expected) in [
+        // Both values are `2020-01-01`, both datum kinds are DATE -- and the
+        // aggregate is still a DATETIME, so the answer carries a time part.
+        (
+            "SELECT GREATEST(d, IFNULL(d, dt)) FROM td",
+            "2020-01-01 00:00:00",
+        ),
+        (
+            "SELECT LEAST(d, IFNULL(d, dt)) FROM td",
+            "2020-01-01 00:00:00",
+        ),
+        (
+            "SELECT GREATEST(d, COALESCE(d, dt)) FROM td",
+            "2020-01-01 00:00:00",
+        ),
+        // A JSON argument beside a DATE does NOT aggregate to JSON: JSON
+        // merges with anything else to a VARCHAR, which is why Go's ETJson
+        // arm and its compare-as-time arm can never both apply. Here the DATE
+        // selects the compare-as-date signature and `[1]` -- which does not
+        // parse -- keeps its own text and wins on `[` sorting above `2`.
+        ("SELECT GREATEST(j, d) FROM td", "[1]"),
+        ("SELECT LEAST(j, d) FROM td", "2020-01-01"),
+    ] {
+        assert_eq!(row_text(session.run(sql))[0][0], expected, "{sql}");
+    }
+}
+
 /// The miscellaneous and encryption builtins whose bodies were already ported
 /// and unit-tested in `tidb_expr::builtin_ext::{misc,crypto}`, but which live
 /// SQL could not reach because `builtin_return_type` had no arm for their
