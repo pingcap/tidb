@@ -361,9 +361,34 @@ impl crate::table_access::TableAccess for HandleSourceExec {}
 /// Go's `IndexRangeScan` with the table-row lookup above it, collapsed into
 /// one operator because this tier prints one node for the pair.
 ///
-/// Rows leave in index-key order within a range, and the ranges are walked in
-/// the order the plan lists them -- the property a `LIMIT` under an `ORDER BY`
-/// on the index columns relies on (Go's `keep order:true`).
+/// # Which order the rows leave in
+///
+/// The index is *walked* in index-key order within a range, and the ranges in
+/// the order the plan lists them. The rows do not necessarily *leave* in that
+/// order, and that is Go's rule, not an accident of this tier.
+///
+/// Go's `IndexLookUpExecutor` collects a BATCH of handles from the index
+/// (`indexWorker.extractTaskHandles`, `w.batchSize` entries, doubling per
+/// batch up to `@@tidb_index_lookup_size`), and the table read for that batch
+/// goes through `buildTableReaderFromHandles(..., canReorderHandles = true)`,
+/// which SORTS the batch by handle before turning it into key ranges
+/// (`builder.go`: `slices.SortFunc(handles, ...i.Compare(j))`; the comment on
+/// `lookupTableTask.indexOrder` states the same thing -- "the handles fetched
+/// from index is originally ordered by index, but we need handles to be
+/// ordered by itself to do table request"). So the rows of one batch come back
+/// in HANDLE order.
+///
+/// Only then, and only when the plan asked for `keep order:true`, does
+/// `tableWorker.executeTask` put the index order back: it looks each row's
+/// handle up in `task.indexOrder` and `sort.Sort(task)`s by that rank
+/// (`distsql.go`, under `if w.keepOrder`). An UNORDERED double read never
+/// takes that second step, so its answer is handle-ascending per batch.
+///
+/// [`Self::keep_order`] is this tier's `w.keepOrder`, offered by the driver
+/// through [`crate::table_access::TableAccess::accept_keep_order`] exactly
+/// when the statement's `ORDER BY` is the one this index path already
+/// produces. With it set the walk order IS the answer and no sort happens --
+/// which is the same net effect as Go's sort-then-restore, one pass cheaper.
 pub struct IndexRangeSourceExec {
     meta: ExecutorMeta,
     table: KvTable,
@@ -383,10 +408,39 @@ pub struct IndexRangeSourceExec {
     filter: Option<crate::predicate_pushdown::ScanFilterProbe>,
     /// A pushed row cap (`offset + count`); see [`Executor::accept_scan_limit`].
     limit: Option<u64>,
+    /// Go's `canReorderHandles` (`builder.go`): whether this read may answer
+    /// in handle order. FALSE for the two reads whose answer is the index
+    /// walk itself -- a COVERING path, which is Go's `PhysicalIndexReader`
+    /// and builds no handle batch at all, and a `keep order:true` lookup,
+    /// which sorts the batch back into index order after reading it. See the
+    /// type doc.
+    can_reorder_handles: bool,
+    /// The current handle batch -- Go's `lookupTableTask.handles`, already
+    /// sorted unless [`Self::keep_order`].
+    batch: Vec<TableHandle>,
+    /// How much of `batch` has been read.
+    batch_at: usize,
+    /// Go's `indexWorker.batchSize`: how many handles the next batch collects,
+    /// doubling per batch up to [`MAX_HANDLE_BATCH`].
+    batch_size: usize,
     /// The session `time_zone` the index probe and the row are encoded and
     /// decoded in; see [`HandleSourceExec`].
     zone: SessionTimeZone,
 }
+
+/// Go's `indexWorker.batchSize` at its first batch.
+///
+/// Go derives it from the chunk's `RequiredRows` and the plan's estimated row
+/// count (`IndexLookUpExecutor.calculateBatchSize` -> `CalculateBatchSize`),
+/// which for an unbounded read starts at `tidb_max_chunk_size` and is doubled
+/// until it covers the estimate. This tier starts at the same 1,024 and does
+/// the same doubling BETWEEN batches, but does not consult the row estimate
+/// for the FIRST one: the estimate lives in the planner and the batch is only
+/// observable as a row-order boundary past 1,024 rows of one index read.
+const INIT_HANDLE_BATCH: usize = 1024;
+
+/// Go's `@@tidb_index_lookup_size` default, the cap on the doubling above.
+const MAX_HANDLE_BATCH: usize = 20000;
 
 impl IndexRangeSourceExec {
     /// Builds a source over `ranges` of the index `index_id`.
@@ -409,6 +463,10 @@ impl IndexRangeSourceExec {
             scanned: Rc::new(Cell::new(0)),
             filter: None,
             limit: None,
+            can_reorder_handles: true,
+            batch: Vec::new(),
+            batch_at: 0,
+            batch_size: INIT_HANDLE_BATCH,
             zone,
         }
     }
@@ -417,6 +475,53 @@ impl IndexRangeSourceExec {
     #[must_use]
     pub fn produced_rows(&self) -> Rc<Cell<u64>> {
         Rc::clone(&self.produced)
+    }
+
+    /// Declares this path COVERING -- Go's `path.IsSingleScan`, which lowers
+    /// to a `PhysicalIndexReader` and never builds a handle batch, so its rows
+    /// leave in index order.
+    ///
+    /// This tier reads the row through the handle either way, because it has
+    /// no index-only reader; the declaration is what keeps the ORDER of the
+    /// two readers apart. See the type doc.
+    pub(crate) fn set_covering(&mut self) {
+        self.can_reorder_handles = false;
+    }
+
+    /// The next handle to READ A ROW FOR: Go's `lookupTableTask` walk, which
+    /// is the index walk regrouped into batches and each batch sorted.
+    ///
+    /// A pushed cap truncates the batch the way Go's `PushedLimit` truncates
+    /// `extractTaskHandles`' output (`distsql.go`: `leftCnt :=
+    /// w.PushedLimit.Offset + w.PushedLimit.Count - w.scannedKeys`) -- BEFORE
+    /// the sort, so the rows a `LIMIT` keeps are the index-order prefix even
+    /// though they are answered in handle order.
+    fn next_lookup_handle(&mut self) -> Result<Option<TableHandle>, ExecError> {
+        if self.batch_at == self.batch.len() {
+            let mut want = self.batch_size;
+            if let Some(limit) = self.limit {
+                let remaining = limit.saturating_sub(self.produced.get());
+                want = want.min(usize::try_from(remaining).unwrap_or(usize::MAX));
+            }
+            self.batch.clear();
+            self.batch_at = 0;
+            while self.batch.len() < want {
+                let Some(handle) = self.next_handle()? else {
+                    break;
+                };
+                self.batch.push(handle);
+            }
+            self.batch_size = (self.batch_size * 2).min(MAX_HANDLE_BATCH);
+            if self.can_reorder_handles {
+                self.batch.sort();
+            }
+            if self.batch.is_empty() {
+                return Ok(None);
+            }
+        }
+        let handle = self.batch[self.batch_at].clone();
+        self.batch_at += 1;
+        Ok(Some(handle))
     }
 
     /// The next handle in index order across all ranges, opening the next
@@ -451,6 +556,9 @@ impl Executor for IndexRangeSourceExec {
         self.cursor = None;
         self.produced.set(0);
         self.scanned.set(0);
+        self.batch.clear();
+        self.batch_at = 0;
+        self.batch_size = INIT_HANDLE_BATCH;
         Ok(())
     }
 
@@ -463,9 +571,11 @@ impl Executor for IndexRangeSourceExec {
                 // is read and no row past it is looked up.
                 self.cursor = None;
                 self.next_range = self.ranges.len();
+                self.batch.clear();
+                self.batch_at = 0;
                 return Ok(());
             }
-            let Some(handle) = self.next_handle()? else {
+            let Some(handle) = self.next_lookup_handle()? else {
                 return Ok(());
             };
             let row = self
@@ -554,6 +664,14 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
 
     fn scanned_rows_counter(&self) -> Option<Rc<Cell<u64>>> {
         Some(Rc::clone(&self.scanned))
+    }
+
+    /// Go's `keep order:true` on the `IndexRangeScan` of an `IndexLookUp`.
+    /// Accepting means the handle batch is read in index order rather than
+    /// handle order; see the type doc.
+    fn accept_keep_order(&mut self) -> bool {
+        self.can_reorder_handles = false;
+        true
     }
 }
 
@@ -1194,5 +1312,135 @@ mod tests {
             "4",
             "the scan reports the four rows it read, not {ROWS}"
         );
+    }
+
+    /// A table whose INDEX order and HANDLE order disagree in both
+    /// directions: `t(a, b, c)` under `ibc(b, c)`, with the handle being the
+    /// allocated `_tidb_rowid` (= insertion order = `a`).
+    ///
+    /// ```text
+    ///   handle  a  b   c        index order (b, c, handle)
+    ///        1  1  2  20          (1,30,h2) (1,40,h4) (2,10,h3) (2,20,h1)
+    ///        2  2  1  30        handle order
+    ///        3  3  2  10          h1 h2 h3 h4
+    ///        4  4  1  40
+    /// ```
+    ///
+    /// So an index walk answers `a = 2, 4, 3, 1` and a handle-ordered read
+    /// answers `a = 1, 2, 3, 4`. The second key part is what makes the
+    /// KEEP-ORDER case observable too: `ORDER BY b` leaves two pairs tied, and
+    /// the index breaks those ties by `c` where a handle-ordered read breaks
+    /// them by handle.
+    fn crossed_order_table() -> KvTable {
+        let mut table = KvTable::with_storage(
+            81,
+            vec![column("a", 1), column("b", 2), column("c", 3)],
+            Box::new(MemTableStorage::default()),
+        );
+        table
+            .create_index(
+                crate::kv_table::KvIndex {
+                    id: 1,
+                    name: "ibc".to_owned(),
+                    unique: false,
+                    column_offsets: vec![1, 2],
+                    prefix_lengths: vec![
+                        crate::ddl::index_prefix::UNSPECIFIED_LENGTH,
+                        crate::ddl::index_prefix::UNSPECIFIED_LENGTH,
+                    ],
+                    visible: true,
+                    global: false,
+                },
+                &tidb_expr::NoColumns,
+            )
+            .unwrap();
+        for (a, b, c) in [(1, 2, 20), (2, 1, 30), (3, 2, 10), (4, 1, 40)] {
+            table
+                .insert_row(
+                    &[Datum::Int(a), Datum::Int(b), Datum::Int(c)],
+                    &tidb_expr::NoColumns,
+                )
+                .unwrap();
+        }
+        table
+    }
+
+    /// Reads [`crossed_order_table`] through an `IndexRangeSourceExec` over
+    /// the whole of `ibc`, returning the `a` column in the order the source
+    /// emitted it.
+    fn read_through_index(covering: bool, keep_order: bool) -> Vec<i64> {
+        let table = crossed_order_table();
+        let columns: Vec<tidb_expr::column::Column> = (0..3)
+            .map(|offset| {
+                let mut column = tidb_expr::column::Column::new(offset as i64 + 1, long());
+                column.index = offset;
+                column
+            })
+            .collect();
+        let mut exec = IndexRangeSourceExec::new(
+            ExecutorMeta::new(tidb_expr::schema::Schema::new(columns), 0, 32, 1024),
+            table,
+            1,
+            vec![IndexRange::full()],
+            tidb_datatype::SessionTimeZone::utc(),
+        );
+        if covering {
+            exec.set_covering();
+        }
+        if keep_order {
+            use crate::table_access::TableAccess;
+            assert!(exec.accept_keep_order());
+        }
+        exec.open().unwrap();
+        let mut out = Vec::new();
+        loop {
+            let mut req = exec.new_chunk();
+            exec.next(&mut req).unwrap();
+            if req.num_rows() == 0 {
+                break;
+            }
+            for row in 0..req.num_rows() {
+                out.push(req.get_row(row).get_int64(0));
+            }
+        }
+        exec.close().unwrap();
+        out
+    }
+
+    /// THE RULE: an UNORDERED double read answers in HANDLE order, not in
+    /// index order.
+    ///
+    /// Go's `IndexLookUpExecutor` sorts each task's handle batch before the
+    /// table read (`buildTableReaderFromHandles(..., canReorderHandles=true)`
+    /// -> `slices.SortFunc(handles, i.Compare(j))`) and only puts the index
+    /// order back `if w.keepOrder`. Captured in the corpus as
+    /// `executor/index_lookup_pushdown_partition`'s `select ... from tp3`,
+    /// whose recorded rows are handle-ascending per partition rather than
+    /// index-ascending.
+    #[test]
+    fn an_unordered_double_read_answers_in_handle_order() {
+        assert_eq!(read_through_index(false, false), vec![1, 2, 3, 4]);
+    }
+
+    /// A COVERING path is Go's `PhysicalIndexReader`: it never builds a handle
+    /// batch, so there is nothing to reorder and the rows leave in INDEX
+    /// order.
+    ///
+    /// This is not a detail -- it is the boundary that keeps the rule above
+    /// from being a blanket sort. Captured (v8.5): `SELECT b FROM t WHERE b
+    /// LIKE '%'` over `t(a,b,c)` with `kb(b)` plans an `IndexFullScan` and
+    /// answers `Yz, xy, z` -- index order, against handle order `xy, Yz, z`.
+    #[test]
+    fn a_covering_index_read_answers_in_index_order() {
+        assert_eq!(read_through_index(true, false), vec![2, 4, 3, 1]);
+    }
+
+    /// `keep order:true` is the other half of the boundary: the plan asked for
+    /// the index's own order, so Go re-sorts the batch back into it
+    /// (`sort.Sort(task)` under `if w.keepOrder`) and this tier skips the
+    /// reorder instead, which is the same answer one pass cheaper.
+    #[test]
+    fn a_kept_order_double_read_answers_in_index_order() {
+        assert_eq!(read_through_index(false, true), vec![2, 4, 3, 1]);
     }
 }

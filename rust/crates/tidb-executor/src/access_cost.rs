@@ -1187,6 +1187,23 @@ fn index_path(
 /// accepts a key part only when its length is unspecified or already reaches
 /// the column's `Flen`. Captured: `explain select a from t where a =
 /// 'abcdef'` over `key idx(a(3))` is an `IndexLookUp`, not an `IndexReader`.
+/// Go's `path.IsSingleScan` for a named index of `table`: whether reading
+/// `index_id` answers the statement without a row lookup.
+///
+/// This is the same [`is_covering`] the cost model runs, re-asked by the
+/// caller that has to know which READER a chosen index path lowers to --
+/// Go's `PhysicalIndexReader` (one scan) or `PhysicalIndexLookUpReader` (the
+/// double read, whose handle batch is reordered). An unknown index id is not
+/// covering, which is the fail-closed answer: it costs a lookup that returns
+/// the same rows.
+pub(crate) fn index_is_covering(table: &KvTable, index_id: i64, needed_columns: &[usize]) -> bool {
+    table
+        .indexes()
+        .iter()
+        .find(|index| index.id == index_id)
+        .is_some_and(|index| is_covering(index, table, needed_columns))
+}
+
 fn is_covering(index: &KvIndex, table: &KvTable, needed_columns: &[usize]) -> bool {
     needed_columns.iter().all(|offset| {
         let flen = table

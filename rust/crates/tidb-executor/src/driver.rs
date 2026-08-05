@@ -655,6 +655,9 @@ pub(crate) fn run_select_traced(
         &resolver,
         &mut source,
     );
+    // `keep order`: whether the source's own walk order is the answer's, which
+    // is what decides whether an index lookup reorders its handle batch.
+    offer_keep_order(select, index_order.as_ref(), &resolver, &mut source);
 
     // A `WHERE` whose conjuncts all moved into the scan still records its
     // `Selection`, over the predicate as written, and meters the filtered

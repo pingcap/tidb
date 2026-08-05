@@ -211,7 +211,7 @@ pub(crate) fn commit_fast_path_source(
                     }
                 }
             }
-            Some(ChosenPath::Index(index_id, ranges, estimate)) => {
+            Some(ChosenPath::Index(index_id, ranges, estimate, covering)) => {
                 commit_index_range_source(
                     &table,
                     scope,
@@ -219,6 +219,7 @@ pub(crate) fn commit_fast_path_source(
                     index_id,
                     ranges,
                     estimate,
+                    covering,
                     from_source,
                     trace.as_deref_mut(),
                     &mut index_order,
@@ -355,12 +356,14 @@ fn commit_index_range_source(
     index_id: i64,
     ranges: Vec<IndexRange>,
     estimate: crate::access_cost::ScanEstimate,
+    // Go's `path.IsSingleScan`; see [`ChosenPath::Index`].
+    covering: bool,
     from_source: &mut Option<Box<dyn Executor>>,
     trace: Option<&mut PlanTrace>,
     index_order: &mut Option<IndexAccessOrder>,
     zone: &tidb_datatype::SessionTimeZone,
 ) {
-    let exec = IndexRangeSourceExec::new(
+    let mut exec = IndexRangeSourceExec::new(
         ExecutorMeta::new(
             Schema::new(source_schema_columns(columns)),
             0,
@@ -372,6 +375,14 @@ fn commit_index_range_source(
         ranges.clone(),
         zone.clone(),
     );
+    // A covering path is Go's `PhysicalIndexReader`: the index answers on its
+    // own, no handle batch is ever built, and the rows leave in INDEX order.
+    // This tier reads the row either way (it has no index-only reader), so the
+    // difference has to be declared here rather than shown by the executor's
+    // shape.
+    if covering {
+        exec.set_covering();
+    }
     let index = table
         .indexes()
         .iter()
@@ -539,6 +550,38 @@ pub(crate) fn offer_scan_limit(
         access.accept_scan_limit(cap);
     }
 }
+
+/// Tells the source whether the order it walks in is the order the statement
+/// asked for -- Go's `keep order:true`, which for an `IndexLookUp` decides
+/// whether the handle batch is answered in index order or in handle order
+/// (see [`crate::table_access::TableAccess::accept_keep_order`]).
+///
+/// The condition is the SAME [`order_is_index_order`] the limit push-down
+/// asks, because it is the same question: Go derives both from one required
+/// physical property. It is asked here without the limit, since `keep order`
+/// is a property of the read and not of any cap on it.
+///
+/// Like `offer_scan_limit` this must run before any wrapper goes over the
+/// source, and unlike it, nothing above depends on the answer -- a source
+/// that refuses is still correct.
+pub(crate) fn offer_keep_order(
+    select: &tidb_ast::SelectStmt,
+    index_order: Option<&IndexAccessOrder>,
+    resolver: &ScopeResolver<'_>,
+    source: &mut Box<dyn Executor>,
+) {
+    let Some(order) = index_order else {
+        return;
+    };
+    if select.order_by.is_empty()
+        || !order_is_index_order(select, &order.column_offsets, order.single_range, resolver)
+    {
+        return;
+    }
+    if let Some(access) = source.table_access() {
+        access.accept_keep_order();
+    }
+}
 /// The index access path a `WHERE` should be read through, when an index
 /// beats the full table scan.
 ///
@@ -560,8 +603,12 @@ pub(crate) fn offer_scan_limit(
 /// lowers to follows from which; splitting the two here keeps the driver from
 /// having to ask an `Option<index>` what kind of scan it is holding.
 pub(crate) enum ChosenPath {
-    /// An index path: the index's id and the ranges of it to read.
-    Index(i64, Vec<IndexRange>, crate::access_cost::ScanEstimate),
+    /// An index path: the index's id, the ranges of it to read, its
+    /// estimate, and Go's `path.IsSingleScan` -- whether the index alone
+    /// answers the statement (`PhysicalIndexReader`) or a row lookup follows
+    /// it (`PhysicalIndexLookUpReader`), which is what decides the row ORDER
+    /// (see [`crate::access_path::IndexRangeSourceExec`]).
+    Index(i64, Vec<IndexRange>, crate::access_cost::ScanEstimate, bool),
     /// A table path the ranger narrowed, over the clustered integer handle.
     /// An EMPTY range list is the contradictory `WHERE` that reads nothing.
     HandleRange(Vec<IndexRange>, crate::access_cost::ScanEstimate),
@@ -640,7 +687,10 @@ pub(crate) fn choose_index_range_path(
     let best = crate::access_cost::choose_access_path(paths, stats, cap.is_some())?;
     let estimate = best.estimate;
     match (best.index, best.table_ranges) {
-        (Some((index_id, ranges)), _) => Some(ChosenPath::Index(index_id, ranges, estimate)),
+        (Some((index_id, ranges)), _) => {
+            let covering = crate::access_cost::index_is_covering(table, index_id, &needed);
+            Some(ChosenPath::Index(index_id, ranges, estimate, covering))
+        }
         (None, Some(ranges)) => Some(ChosenPath::HandleRange(ranges, estimate)),
         // The table path the ranger narrowed nothing on: the whole-table read
         // `build_from` already installed is the answer, unchanged.

@@ -186,4 +186,23 @@ pub trait TableAccess {
         let _ = keep;
         false
     }
+
+    /// Tells this source that the order it WALKS its access object in is the
+    /// order the statement asked for -- Go's `keep order:true` on a scan,
+    /// which is `IndexLookUpExecutor.keepOrder` at run time.
+    ///
+    /// Unlike the offers above this one takes over no work and can be refused
+    /// with no consequence at all: it does not license the driver to drop a
+    /// `Sort`, and this tier's `ORDER BY` always keeps its `SortExec`. What it
+    /// buys is TIE ORDER. Go's unordered double read answers in HANDLE order
+    /// (see [`crate::access_path::IndexRangeSourceExec`]) and its ordered one
+    /// answers in index order; a source told nothing would give handle order
+    /// for both, and rows that tie on the `ORDER BY` key would then leave in
+    /// the wrong order under a stable sort.
+    ///
+    /// A source with only one order to give ignores this and stays correct,
+    /// which is why the default answers `false`.
+    fn accept_keep_order(&mut self) -> bool {
+        false
+    }
 }

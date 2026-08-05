@@ -252,7 +252,7 @@ fn index_ranges_are_built_the_way_go_builds_them() {
             &crate::index_hints::AvailablePaths::unrestricted(),
             false,
         ) {
-            Some(crate::driver::access::ChosenPath::Index(id, ranges, _)) => Some((id, ranges)),
+            Some(crate::driver::access::ChosenPath::Index(id, ranges, _, _)) => Some((id, ranges)),
             Some(crate::driver::access::ChosenPath::HandleRange(ranges, _)) => {
                 panic!("expected an index path, got a handle range {ranges:?}")
             }
@@ -488,7 +488,7 @@ fn a_non_unique_index_ranges_on_the_clustered_handle_too() {
             &crate::index_hints::AvailablePaths::unrestricted(),
             false,
         ) {
-            Some(crate::driver::access::ChosenPath::Index(_, ranges, _)) => Some(ranges),
+            Some(crate::driver::access::ChosenPath::Index(_, ranges, _, _)) => Some(ranges),
             Some(crate::driver::access::ChosenPath::HandleRange(ranges, _)) => {
                 panic!("expected an index path, got a handle range {ranges:?}")
             }
@@ -640,7 +640,7 @@ fn a_unique_index_gets_no_handle_dimension() {
         panic!("not a select")
     };
     let scope = crate::plan_trace::PlanTrace::single_table_scope("u", None, columns.clone());
-    if let Some(crate::driver::access::ChosenPath::Index(_, ranges, _)) = choose_index_range_path(
+    if let Some(crate::driver::access::ChosenPath::Index(_, ranges, _, _)) = choose_index_range_path(
         select,
         &catalog,
         &scope,
@@ -752,7 +752,7 @@ fn a_handle_that_is_already_a_key_part_is_not_appended_again() {
         panic!("not a select")
     };
     let scope = crate::plan_trace::PlanTrace::single_table_scope("hd", None, columns.clone());
-    let Some(crate::driver::access::ChosenPath::Index(_, ranges, _)) = choose_index_range_path(
+    let Some(crate::driver::access::ChosenPath::Index(_, ranges, _, _)) = choose_index_range_path(
         select,
         &catalog,
         &scope,
