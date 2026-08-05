@@ -615,4 +615,34 @@ pub const TOPICS: &[(&str, &str)] = &[
      is an `IndexFullScan` or `TableFullScan` where TiDB builds a per-probe \
      `IndexRangeScan`. Six of the 15 matches are access properties",
     ),
+    (
+        "window_function",
+        "23 of 27 with 4 PLAN divergences of ONE cause, already carried elsewhere: \
+     `select sum(a) over(...) from t` reads only the indexed column, so TiDB \
+     scans the narrow index (`IndexFullScan index:idx(a)`) and this tier scans \
+     the table. Twelve of the 23 matches are access properties, which is what \
+     the topic buys: it is the only enrolled topic whose plans are WINDOW plans",
+    ),
+    (
+        "executor/expand",
+        "61 of 71 with 4 ROW divergences of ONE cause: `GROUP BY a, b WITH ROLLUP` \
+     answers NULL for the aggregate on every SUPER-AGGREGATE row where TiDB \
+     answers that group's total (`SELECT a, SUM(b) ... WITH ROLLUP` gives \
+     `1 NULL` for TiDB's `1 4`, and `NULL NULL` for TiDB's `NULL 14`). The \
+     grouping columns and the row COUNT already agree everywhere, so what is \
+     missing is the aggregate's re-accumulation over the rolled-up level, not \
+     the Expand rewrite. Enrolled because it is the only topic on the gate \
+     that replays ROLLUP row results at all",
+    ),
+    (
+        "session/vars",
+        "116 of 127 with 5 divergences in FOUR causes, all of them about a \
+     variable's own value rather than about a query: `@@time_zone` reads \
+     `SYSTEM` where the recording session reads `Asia/Shanghai`; a \
+     `SET_VAR(sql_auto_is_null=1)` hint takes effect here and is ignored by \
+     TiDB; `@@warning_count` reads 0 where TiDB counts 1; and reading a \
+     GLOBAL-only variable through `@@session.` / `@@local.` is accepted here \
+     where TiDB raises 1238 (2 statements). It is the densest variable-behavior \
+     topic in the suite, and 96 of its matches are ROW results",
+    ),
 ];

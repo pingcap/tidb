@@ -176,9 +176,18 @@ fn warning_comparison_covers_only_enable_warnings_statements() {
     // 3,787 statements and NOT ONE warning-gated statement, so the gate's
     // reach per topic did not change; it was extended by exactly the two
     // topics that use the directive.
+    //
+    // Re-read again after batch57's three enrollments (`window_function`,
+    // `executor/expand`, `session/vars`), which add 225 statements
+    // (10,747 + 225 = 10,972). The WARNING half of that move is ONE of the
+    // three: `session/vars` runs 8 statements under `--enable_warnings`, which
+    // is what a topic about variable behavior would: the warning is how a
+    // variable reports that it refused or clamped a value. `window_function`
+    // and `executor/expand` add 98 statements and NOT ONE warning-gated
+    // statement. 49 + 8 = 57.
     assert_eq!(
         (covered, total),
-        (49, 10747),
+        (57, 10972),
         "the warning gate's reach changed; re-read what it now covers rather \
          than updating this number to match"
     );
@@ -1527,7 +1536,26 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // `MergeJoin`s over an index join, with the two upper leaves reading the
     // TABLE in handle order instead of walking a covering index. `compared`
     // holds at 7885: nothing entered or left the comparable set.
-    const KNOWN_DIVERGENCES: usize = 64;
+    //
+    // 64 -> 77, and THE DEBT DID NOT GROW -- the COMPARED SET did, 7885 ->
+    // 8098. Batch57 enrolled three topics that had fallen to at most five
+    // divergences, and all thirteen new entries are theirs, each named in that
+    // topic's own entry in `enrolled_topics::TOPICS`: `window_function` 4
+    // (one cause, the covering-index preference already carried above),
+    // `executor/expand` 4 (one cause, `WITH ROLLUP` answering NULL for the
+    // super-aggregate rows), `session/vars` 5 (four causes, all of them a
+    // variable's own value). 4 + 4 + 5 = 13 exactly, and no divergence
+    // appeared inside the 106 topics that were already enrolled: every one of
+    // their matched/diverged/skipped triples is identical across the move.
+    //
+    // The same commit took the LITERAL COLUMN LABEL class off the unenrolled
+    // frontier -- `buildProjectionFieldNameFromExpressions`'s literal switch,
+    // measured at `executor/executor` 129 -> 116, `expression/builtin`
+    // 97 -> 90 and `expression/issues` 154 -> 150 -- which is 24 statements
+    // that none of these numbers can show, because none of those three topics
+    // is enrolled. That is the frontier this ratchet does not reach, and it is
+    // why the per-topic replay is run alongside it.
+    const KNOWN_DIVERGENCES: usize = 77;
     //
     //
     // 28 -> 24 (written as 35 -> 31 in batch43's own tree, which branched before batch42), in three unrelated causes, none of them an access-path
