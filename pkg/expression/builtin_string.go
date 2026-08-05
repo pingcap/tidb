@@ -4327,7 +4327,7 @@ func (b *builtinWeightStringSig) evalString(ctx EvalContext, row chunk.Row) (str
 			}
 			str += strings.Repeat(" ", b.length-lenRunes)
 		}
-		ctor = collate.GetCollator(b.args[0].GetType(ctx).GetCollate())
+		ctor = b.collator()
 	case weightStringPaddingAsBinary:
 		lenStr := len(str)
 		if b.length < lenStr {
@@ -4341,9 +4341,9 @@ func (b *builtinWeightStringSig) evalString(ctx EvalContext, row chunk.Row) (str
 			}
 			str += strings.Repeat("\x00", b.length-lenStr)
 		}
-		ctor = collate.GetCollator(charset.CollationBin)
+		ctor = collate.GetBinaryCollator()
 	case weightStringPaddingNone:
-		ctor = collate.GetCollator(b.args[0].GetType(ctx).GetCollate())
+		ctor = b.collator()
 	default:
 		return "", false, ErrIncorrectType.GenWithStackByArgs(ast.WeightString, string(b.padding))
 	}

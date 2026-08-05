@@ -26,9 +26,11 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/errctx"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -36,6 +38,8 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/deeptest"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -69,6 +73,89 @@ func TestIndexInfoNotFoundIsNonRetryable(t *testing.T) {
 	err := errors.Annotatef(errIndexInfoNotFound, "index info not found: %d", 1)
 	require.True(t, isIndexInfoNotFoundErr(err))
 	require.False(t, (&backfillDistExecutor{}).IsRetryableError(err))
+}
+
+func TestBuildIndexConditionCheckerUsesFixedCollation(t *testing.T) {
+	origin := collate.NewCollationEnabled()
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(origin)
+
+	originBuildSimpleExpr := expression.BuildSimpleExpr
+	defer func() {
+		expression.BuildSimpleExpr = originBuildSimpleExpr
+	}()
+	expression.BuildSimpleExpr = func(ctx expression.BuildContext, _ ast.ExprNode, opts ...expression.BuildOption) (expression.Expression, error) {
+		options := expression.BuildOptions{
+			UseNewCollate: collate.NewCollationEnabled(),
+		}
+		for _, opt := range opts {
+			opt(&options)
+		}
+		if options.InputSchema == nil {
+			return expression.NewOne(), nil
+		}
+		ctx = expression.BuildContextWithUseNewCollate(ctx, options.UseNewCollate)
+		constantTp := types.NewFieldTypeWithCollation(mysql.TypeVarchar, "utf8mb4_general_ci", 16)
+		return expression.NewFunction(
+			ctx,
+			ast.EQ,
+			types.NewFieldType(mysql.TypeTiny),
+			options.InputSchema.Columns[0],
+			&expression.Constant{Value: types.NewDatum("A"), RetType: constantTp},
+		)
+	}
+
+	colTp := types.NewFieldTypeWithCollation(mysql.TypeVarchar, "utf8mb4_general_ci", 16)
+	colInfo := &model.ColumnInfo{
+		ID:        1,
+		Offset:    0,
+		Name:      ast.NewCIStr("c0"),
+		FieldType: *colTp,
+		State:     model.StatePublic,
+	}
+	idxInfo := &model.IndexInfo{
+		ID:                  1,
+		Name:                ast.NewCIStr("idx"),
+		Columns:             []*model.IndexColumn{{Name: colInfo.Name, Offset: colInfo.Offset}},
+		State:               model.StatePublic,
+		ConditionExprString: "c0 = 'A'",
+	}
+	tblInfo := &model.TableInfo{
+		Name:    ast.NewCIStr("t"),
+		Columns: []*model.ColumnInfo{colInfo},
+		Indices: []*model.IndexInfo{idxInfo},
+	}
+
+	sctx := mock.NewContext()
+	copCtx, err := copr.NewCopContextSingleIndex(
+		sctx.GetExprCtx(),
+		sctx.GetSessionVars().StmtCtx.PushDownFlags(),
+		tblInfo,
+		idxInfo,
+		"",
+		false,
+	)
+	require.NoError(t, err)
+	checker, err := buildIndexConditionChecker(copCtx, tblInfo, idxInfo)
+	require.NoError(t, err)
+	matched, err := checker(chunk.MutRowFromValues("a").ToRow())
+	require.NoError(t, err)
+	require.False(t, matched)
+
+	copCtx, err = copr.NewCopContextSingleIndex(
+		sctx.GetExprCtx(),
+		sctx.GetSessionVars().StmtCtx.PushDownFlags(),
+		tblInfo,
+		idxInfo,
+		"",
+		true,
+	)
+	require.NoError(t, err)
+	checker, err = buildIndexConditionChecker(copCtx, tblInfo, idxInfo)
+	require.NoError(t, err)
+	matched, err = checker(chunk.MutRowFromValues("a").ToRow())
+	require.NoError(t, err)
+	require.True(t, matched)
 }
 
 func TestPickBackfillType(t *testing.T) {

@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/stretchr/testify/require"
 )
 
@@ -408,7 +409,7 @@ func TestTableFromMeta(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestSetTableUseNewCollateUsesFixedMode(t *testing.T) {
+func TestTableFromMetaForSnapshotUsesFixedMode(t *testing.T) {
 	tblInfo := &model.TableInfo{
 		ID:    1,
 		Name:  ast.NewCIStr("t"),
@@ -424,10 +425,12 @@ func TestSetTableUseNewCollateUsesFixedMode(t *testing.T) {
 		},
 	}
 
+	origin := collate.NewCollationEnabled()
+	defer collate.SetNewCollationEnabledForTest(origin)
 	for _, useNewCollate := range []bool{false, true} {
-		tbl, err := tables.TableFromMeta(autoid.NewAllocators(false), tblInfo)
+		collate.SetNewCollationEnabledForTest(!useNewCollate)
+		tbl, err := tables.TableFromMetaForSnapshot(autoid.NewAllocators(false), tblInfo, useNewCollate)
 		require.NoError(t, err)
-		require.NoError(t, tables.SetTableUseNewCollate(tbl, useNewCollate))
 		require.Equal(t, useNewCollate, tbl.UseNewCollate())
 	}
 }

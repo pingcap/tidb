@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -282,63 +283,6 @@ func initPartition(t *partitionedTable, def model.PartitionDefinition) (*partiti
 	return &newPart, nil
 }
 
-func (t *partitionedTable) setUseNewCollate(useNewCollate bool) error {
-	if err := t.TableCommon.setUseNewCollate(useNewCollate); err != nil {
-		return err
-	}
-	if err := t.rebuildPartitionExprs(useNewCollate); err != nil {
-		return err
-	}
-	for _, p := range t.partitions {
-		if err := p.TableCommon.setUseNewCollate(useNewCollate); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (t *partitionedTable) rebuildPartitionExprs(useNewCollate bool) error {
-	pi := t.meta.GetPartitionInfo()
-	if pi == nil {
-		t.partitionExpr = nil
-		t.reorgPartitionExpr = nil
-		return nil
-	}
-
-	partitionExpr, err := newPartitionExpr(t.meta, pi.Type, pi.Expr, pi.Columns, pi.Definitions, useNewCollate)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	t.partitionExpr = partitionExpr
-
-	if t.reorgPartitionExpr == nil {
-		return nil
-	}
-
-	var (
-		tp   = pi.Type
-		expr = pi.Expr
-		cols = pi.Columns
-		defs []model.PartitionDefinition
-	)
-	if pi.DDLState == model.StateDeleteReorganization || pi.DDLState == model.StatePublic {
-		defs = pi.DroppingDefinitions
-	} else {
-		defs = pi.AddingDefinitions
-	}
-	if pi.NewTableID != 0 {
-		tp = pi.DDLType
-		expr = pi.DDLExpr
-		cols = pi.DDLColumns
-	}
-	reorgPartitionExpr, err := newPartitionExpr(t.meta, tp, expr, cols, defs, useNewCollate)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	t.reorgPartitionExpr = reorgPartitionExpr
-	return nil
-}
-
 // NewPartitionExprBuildCtx returns a context to build partition expression.
 func NewPartitionExprBuildCtx() expression.BuildContext {
 	return exprstatic.NewExprContext(
@@ -363,13 +307,13 @@ func NewPartitionExprBuildCtx() expression.BuildContext {
 func newPartitionExpr(tblInfo *model.TableInfo, tp ast.PartitionType, expr string, partCols []ast.CIStr, defs []model.PartitionDefinition, useNewCollate bool) (*PartitionExpr, error) {
 	ctx := NewPartitionExprBuildCtx()
 	dbName := ast.NewCIStr(ctx.GetEvalCtx().CurrentDB())
-	columns, names, err := expression.ColumnInfos2ColumnsAndNamesWithCollate(
+	columns, names, err := expression.ColumnInfos2ColumnsAndNames(
 		ctx,
 		dbName,
 		tblInfo.Name,
 		tblInfo.Cols(),
 		tblInfo,
-		useNewCollate,
+		expression.WithUseNewCollate(useNewCollate),
 	)
 	if err != nil {
 		return nil, err
@@ -430,7 +374,7 @@ func (kp *ForKeyPruning) LocateKeyPartition(numParts uint64, r []types.Datum) (i
 		if val.Kind() == types.KindNull {
 			h.Write([]byte{0})
 		} else {
-			data, err := val.ToHashKey()
+			data, err := datumToHashKeyWithCollation(&val, kp.useNewCollate)
 			if err != nil {
 				return 0, err
 			}
@@ -438,6 +382,19 @@ func (kp *ForKeyPruning) LocateKeyPartition(numParts uint64, r []types.Datum) (i
 		}
 	}
 	return int(h.Sum32() % uint32(numParts)), nil
+}
+
+func datumToHashKeyWithCollation(d *types.Datum, useNewCollate bool) ([]byte, error) {
+	switch d.Kind() {
+	case types.KindString, types.KindBytes:
+		return collate.GetCollatorWithCollate(useNewCollate, d.Collation()).Key(d.GetString()), nil
+	default:
+		str, err := d.ToString()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return collate.GetCollatorWithCollate(useNewCollate, d.Collation()).Key(str), nil
+	}
 }
 
 func initEvalBufferType(t *partitionedTable) {
@@ -517,7 +474,8 @@ func parseSimpleExprWithNames(p *parser.Parser, ctx expression.BuildContext, exp
 
 // ForKeyPruning is used for key partition pruning.
 type ForKeyPruning struct {
-	KeyPartCols []*expression.Column
+	KeyPartCols   []*expression.Column
+	useNewCollate bool
 }
 
 // ForListPruning is used for list partition pruning.
@@ -804,7 +762,7 @@ func rangePartitionExprStrings(cols []ast.CIStr, expr string) []string {
 func generateKeyPartitionExpr(ctx expression.BuildContext, expr string, partCols []ast.CIStr,
 	columns []*expression.Column, names types.NameSlice, useNewCollate bool) (*PartitionExpr, error) {
 	ret := &PartitionExpr{
-		ForKeyPruning: &ForKeyPruning{},
+		ForKeyPruning: &ForKeyPruning{useNewCollate: useNewCollate},
 	}
 	_, partColumns, offset, err := extractPartitionExprColumns(ctx, expr, partCols, columns, names, useNewCollate)
 	if err != nil {

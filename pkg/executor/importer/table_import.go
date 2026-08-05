@@ -93,12 +93,9 @@ var (
 
 func newEncodingTable(e *LoadDataController) (table.Table, error) {
 	idAlloc := kv.NewPanickingAllocators(e.Table.Meta().SepAutoInc())
-	tbl, err := tables.TableFromMeta(idAlloc, e.Table.Meta())
+	tbl, err := tables.TableFromMetaForSnapshot(idAlloc, e.Table.Meta(), e.Table.UseNewCollate())
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", e.Table.Meta().Name)
-	}
-	if err := tables.SetTableUseNewCollate(tbl, e.Table.UseNewCollate()); err != nil {
-		return nil, err
 	}
 	return tbl, nil
 }

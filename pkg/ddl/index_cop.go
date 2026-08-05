@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -64,7 +65,7 @@ func wrapInBeginRollback(se *sess.Session, f func(startTS uint64) error) error {
 }
 
 func buildTableScan(ctx context.Context, c *copr.CopContextBase, distSQLCtx *distsqlctx.DistSQLContext, startTS uint64, start, end kv.Key, selectExpr expression.Expression) (distsql.SelectResult, bool, error) {
-	dagPB, conditionPushed, err := buildDAGPB(ctx, c.ExprCtx, distSQLCtx, c.PushDownFlags, c.TableInfo, c.ColumnInfos, selectExpr)
+	dagPB, conditionPushed, err := buildDAGPB(ctx, c.ExprCtx, distSQLCtx, c.PushDownFlags, c.UseNewCollate, c.TableInfo, c.ColumnInfos, selectExpr)
 	if err != nil {
 		return nil, false, err
 	}
@@ -172,7 +173,7 @@ func getRestoreData(useNewCollate bool, tblInfo *model.TableInfo, targetIdx, pkI
 	return dtToRestored
 }
 
-func buildDAGPB(ctx context.Context, exprCtx exprctx.BuildContext, distSQLCtx *distsqlctx.DistSQLContext, pushDownFlags uint64, tblInfo *model.TableInfo, colInfos []*model.ColumnInfo, selectExpr expression.Expression) (*tipb.DAGRequest, bool, error) {
+func buildDAGPB(ctx context.Context, exprCtx exprctx.BuildContext, distSQLCtx *distsqlctx.DistSQLContext, pushDownFlags uint64, useNewCollate bool, tblInfo *model.TableInfo, colInfos []*model.ColumnInfo, selectExpr expression.Expression) (*tipb.DAGRequest, bool, error) {
 	conditionPushed := false
 
 	dagReq := &tipb.DAGRequest{}
@@ -187,7 +188,7 @@ func buildDAGPB(ctx context.Context, exprCtx exprctx.BuildContext, distSQLCtx *d
 	}
 
 	var selectionPB *tipb.Executor
-	if selectExpr != nil {
+	if selectExpr != nil && useNewCollate == collate.NewCollationEnabled() {
 		selectionPB, err = constructSelectionPB(exprCtx, selectExpr, distSQLCtx, tblScanPB)
 	}
 
@@ -199,10 +200,18 @@ func buildDAGPB(ctx context.Context, exprCtx exprctx.BuildContext, distSQLCtx *d
 	} else {
 		if selectExpr != nil {
 			selectExprStr := selectExpr.StringWithCtx(exprCtx.GetEvalCtx(), errors.RedactLogDisable)
-			logutil.Logger(ctx).Info("fail to push down the selection expression for index condition",
-				zap.String("table", tblInfo.Name.O),
-				zap.String("expr", selectExprStr),
-				zap.Error(err))
+			if useNewCollate != collate.NewCollationEnabled() {
+				logutil.Logger(ctx).Info("skip pushing down the selection expression for index condition due to collation mode mismatch",
+					zap.String("table", tblInfo.Name.O),
+					zap.String("expr", selectExprStr),
+					zap.Bool("useNewCollate", useNewCollate),
+					zap.Bool("globalUseNewCollate", collate.NewCollationEnabled()))
+			} else {
+				logutil.Logger(ctx).Info("fail to push down the selection expression for index condition",
+					zap.String("table", tblInfo.Name.O),
+					zap.String("expr", selectExprStr),
+					zap.Error(err))
+			}
 		}
 		dagReq.Executors = append(dagReq.Executors, tblScanPB)
 	}

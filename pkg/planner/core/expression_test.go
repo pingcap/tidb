@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/stretchr/testify/require"
 )
 
@@ -487,6 +488,55 @@ func TestBuildExpression(t *testing.T) {
 	val, _, err = expr.EvalInt(evalCtx, chunk.MutRowFromValues("", 1, 2).ToRow())
 	require.NoError(t, err)
 	require.Equal(t, int64(10), val)
+
+	origin := collate.NewCollationEnabled()
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(origin)
+	collationSensitiveTbl := &model.TableInfo{
+		Name: ast.NewCIStr("tc"),
+		Columns: []*model.ColumnInfo{
+			{
+				Name:      ast.NewCIStr("c0"),
+				Offset:    0,
+				State:     model.StatePublic,
+				FieldType: *types.NewFieldTypeWithCollation(mysql.TypeVarchar, "utf8mb4_general_ci", 16),
+			},
+			{
+				Name:      ast.NewCIStr("c1"),
+				Offset:    1,
+				State:     model.StatePublic,
+				FieldType: *types.NewFieldTypeWithCollation(mysql.TypeVarchar, "utf8mb4_general_ci", 16),
+			},
+		},
+	}
+	collationSensitiveRow := chunk.MutRowFromValues("a", "A").ToRow()
+	expr, err = buildExpr(t, ctx, "c0 = 'A'", expression.WithTableInfo("", collationSensitiveTbl), expression.WithUseNewCollate(false))
+	require.NoError(t, err)
+	val, isNull, err := expr.EvalInt(evalCtx, collationSensitiveRow)
+	require.NoError(t, err)
+	require.False(t, isNull)
+	require.Zero(t, val)
+
+	expr, err = buildExpr(t, ctx, "c0 = 'A'", expression.WithTableInfo("", collationSensitiveTbl), expression.WithUseNewCollate(true))
+	require.NoError(t, err)
+	val, isNull, err = expr.EvalInt(evalCtx, collationSensitiveRow)
+	require.NoError(t, err)
+	require.False(t, isNull)
+	require.Equal(t, int64(1), val)
+
+	expr, err = buildExpr(t, ctx, "c0 in (c1)", expression.WithTableInfo("", collationSensitiveTbl), expression.WithUseNewCollate(false))
+	require.NoError(t, err)
+	val, isNull, err = expr.EvalInt(evalCtx, collationSensitiveRow)
+	require.NoError(t, err)
+	require.False(t, isNull)
+	require.Zero(t, val)
+
+	expr, err = buildExpr(t, ctx, "c0 in (c1)", expression.WithTableInfo("", collationSensitiveTbl), expression.WithUseNewCollate(true))
+	require.NoError(t, err)
+	val, isNull, err = expr.EvalInt(evalCtx, collationSensitiveRow)
+	require.NoError(t, err)
+	require.False(t, isNull)
+	require.Equal(t, int64(1), val)
 
 	// build expression without enough columns
 	_, err = buildExpr(t, ctx, "1+a")

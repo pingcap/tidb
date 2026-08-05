@@ -137,7 +137,29 @@ func TestCopContextConditionUsesFixedCollation(t *testing.T) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(origin)
 
+	colTp := types.NewFieldTypeWithCollation(mysql.TypeVarchar, "utf8mb4_general_ci", 16)
+	colInfo := &model.ColumnInfo{
+		ID:        1,
+		Offset:    0,
+		Name:      ast.NewCIStr("c0"),
+		FieldType: *colTp,
+		State:     model.StatePublic,
+	}
+	generatedColInfo := &model.ColumnInfo{
+		ID:                  2,
+		Offset:              1,
+		Name:                ast.NewCIStr("g0"),
+		FieldType:           *colTp,
+		State:               model.StatePublic,
+		GeneratedExprString: "lower(c0)",
+		GeneratedStored:     false,
+		Dependences:         map[string]struct{}{"c0": {}},
+	}
+
 	originBuildSimpleExpr := expression.BuildSimpleExpr
+	defer func() {
+		expression.BuildSimpleExpr = originBuildSimpleExpr
+	}()
 	var seenUseNewCollates []bool
 	expression.BuildSimpleExpr = func(ctx expression.BuildContext, expr ast.ExprNode, opts ...expression.BuildOption) (expression.Expression, error) {
 		options := expression.BuildOptions{
@@ -149,28 +171,16 @@ func TestCopContextConditionUsesFixedCollation(t *testing.T) {
 		seenUseNewCollates = append(seenUseNewCollates, options.UseNewCollate)
 		return expression.NewOne(), nil
 	}
-	defer func() {
-		expression.BuildSimpleExpr = originBuildSimpleExpr
-	}()
-
-	colTp := types.NewFieldTypeWithCollation(mysql.TypeVarchar, "utf8mb4_general_ci", 16)
-	colInfo := &model.ColumnInfo{
-		ID:        1,
-		Offset:    0,
-		Name:      ast.NewCIStr("c0"),
-		FieldType: *colTp,
-		State:     model.StatePublic,
-	}
 	idxInfo := &model.IndexInfo{
 		ID:                  1,
 		Name:                ast.NewCIStr("idx"),
-		Columns:             []*model.IndexColumn{{Name: colInfo.Name, Offset: colInfo.Offset}},
+		Columns:             []*model.IndexColumn{{Name: generatedColInfo.Name, Offset: generatedColInfo.Offset}},
 		State:               model.StatePublic,
 		ConditionExprString: "1",
 	}
 	tblInfo := &model.TableInfo{
 		Name:    ast.NewCIStr("t"),
-		Columns: []*model.ColumnInfo{colInfo},
+		Columns: []*model.ColumnInfo{colInfo, generatedColInfo},
 		Indices: []*model.IndexInfo{idxInfo},
 	}
 

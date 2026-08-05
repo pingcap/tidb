@@ -65,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -336,10 +337,10 @@ type Plan struct {
 	// the keyspace name when submitting this job, only for import-into
 	Keyspace string
 	// UseNewCollate captures whether the new collation implementation was enabled
-	// when this import plan's target table snapshot was created. Import execution
-	// may happen in another keyspace, so key and expression encoding must use this
-	// captured value instead of the executor process default. Nil means old metadata
-	// and should fall back to the caller-provided default.
+	// in the submitting keyspace. Import execution may happen in another keyspace,
+	// so key and expression encoding must use this captured value instead of the
+	// executor process default. Nil means old metadata and should fall back to the
+	// caller-provided default.
 	UseNewCollate *bool `json:"use_new_collate,omitempty"`
 }
 
@@ -364,8 +365,8 @@ func (p *Plan) GetUseNewCollateOrDefault(defaultVal bool) bool {
 	return *p.UseNewCollate
 }
 
-// setUseNewCollate stores the new-collation mode captured from the target table
-// snapshot.
+// setUseNewCollate stores the new-collation mode captured from the submitting
+// keyspace.
 func (p *Plan) setUseNewCollate(useNewCollate bool) {
 	p.UseNewCollate = &useNewCollate
 }
@@ -574,7 +575,7 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 		User:                   userSctx.GetSessionVars().User.String(),
 		Keyspace:               userSctx.GetStore().GetKeyspace(),
 	}
-	p.setUseNewCollate(tbl.UseNewCollate())
+	p.setUseNewCollate(collate.NewCollationEnabled())
 	if err := p.initOptions(ctx, userSctx, plan.Options); err != nil {
 		return nil, err
 	}

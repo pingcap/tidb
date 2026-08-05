@@ -46,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
@@ -109,16 +108,9 @@ func NewAddIndexIngestPipeline(
 	concurrency int,
 	collector execute.Collector,
 ) (*operator.AsyncPipeline, error) {
-	indexes := make([]table.Index, 0, len(idxInfos))
-	for _, idxInfo := range idxInfos {
-		index, err := tables.NewIndex(tbl.GetPhysicalID(), tbl.Meta(), idxInfo)
-		if err != nil {
-			return nil, err
-		}
-		if err := tables.SetIndexUseNewCollate(index, tbl.UseNewCollate()); err != nil {
-			return nil, err
-		}
-		indexes = append(indexes, index)
+	indexes, err := indexesForBackfill(tbl, idxInfos)
+	if err != nil {
+		return nil, err
 	}
 	reqSrc := getDDLRequestSource(model.ActionAddIndex)
 	copCtx, err := NewReorgCopContext(reorgMeta, tbl.Meta(), idxInfos, reqSrc)
@@ -170,16 +162,9 @@ func NewWriteIndexToExternalStoragePipeline(
 	collector execute.Collector,
 	tikvCodec tikv.Codec,
 ) (*operator.AsyncPipeline, error) {
-	indexes := make([]table.Index, 0, len(idxInfos))
-	for _, idxInfo := range idxInfos {
-		index, err := tables.NewIndex(tbl.GetPhysicalID(), tbl.Meta(), idxInfo)
-		if err != nil {
-			return nil, err
-		}
-		if err := tables.SetIndexUseNewCollate(index, tbl.UseNewCollate()); err != nil {
-			return nil, err
-		}
-		indexes = append(indexes, index)
+	indexes, err := indexesForBackfill(tbl, idxInfos)
+	if err != nil {
+		return nil, err
 	}
 	reqSrc := getDDLRequestSource(model.ActionAddIndex)
 	copCtx, err := NewReorgCopContext(reorgMeta, tbl.Meta(), idxInfos, reqSrc)
@@ -223,6 +208,23 @@ func NewWriteIndexToExternalStoragePipeline(
 	return operator.NewAsyncPipeline(
 		srcOp, scanOp, writeOp, sinkOp,
 	), nil
+}
+
+func indexesForBackfill(tbl table.PhysicalTable, idxInfos []*model.IndexInfo) ([]table.Index, error) {
+	indexesByID := make(map[int64]table.Index, len(tbl.Indices()))
+	for _, idx := range tbl.Indices() {
+		indexesByID[idx.Meta().ID] = idx
+	}
+
+	indexes := make([]table.Index, 0, len(idxInfos))
+	for _, idxInfo := range idxInfos {
+		idx, ok := indexesByID[idxInfo.ID]
+		if !ok {
+			return nil, errors.Errorf("index ID %d not found in physical table %d", idxInfo.ID, tbl.GetPhysicalID())
+		}
+		indexes = append(indexes, idx)
+	}
+	return indexes, nil
 }
 
 func createChunkPool(copCtx copr.CopContext, reorgMeta *model.DDLReorgMeta) *sync.Pool {

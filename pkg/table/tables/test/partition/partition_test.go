@@ -17,6 +17,7 @@ package partition
 import (
 	"context"
 	"fmt"
+	"hash/crc32"
 	"math/rand"
 	"slices"
 	"strconv"
@@ -57,21 +58,54 @@ func TestPartitionTableUsesTableCollationSnapshot(t *testing.T) {
 		partition p0 values in ('a'),
 		partition p_default values in (default)
 	)`)
+	tk.MustExec(`create table t_key_collate_snapshot (
+		a varchar(16) collate utf8mb4_general_ci
+	) partition by key(a) partitions 8`)
 
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_collate_snapshot"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
+	keyTbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_key_collate_snapshot"))
+	require.NoError(t, err)
+	keyTblInfo := keyTbl.Meta()
 
 	collate.SetNewCollationEnabledForTest(true)
-	snapshotTbl, err := tables.TableFromMeta(autoid.NewAllocators(tblInfo.SepAutoInc()), tblInfo)
+	snapshotTbl, err := tables.TableFromMetaForSnapshot(autoid.NewAllocators(tblInfo.SepAutoInc()), tblInfo, false)
 	require.NoError(t, err)
-	require.NoError(t, tables.SetTableUseNewCollate(snapshotTbl, false))
 
 	pt := snapshotTbl.GetPartitionedTable()
 	require.NotNil(t, pt)
 	physicalTbl, err := pt.GetPartitionByRow(tk.Session().GetExprCtx().GetEvalCtx(), types.MakeDatums("A"))
 	require.NoError(t, err)
 	require.Equal(t, tblInfo.Partition.Definitions[1].ID, physicalTbl.GetPhysicalID())
+
+	keySnapshotTbl, err := tables.TableFromMetaForSnapshot(autoid.NewAllocators(keyTblInfo.SepAutoInc()), keyTblInfo, false)
+	require.NoError(t, err)
+	keyPt := keySnapshotTbl.GetPartitionedTable()
+	require.NotNil(t, keyPt)
+	keyPartitionIdx := func(useNewCollate bool, val string) int {
+		h := crc32.NewIEEE()
+		h.Write(collate.GetCollatorWithCollate(useNewCollate, "utf8mb4_general_ci").Key(val))
+		return int(h.Sum32() % uint32(len(keyTblInfo.Partition.Definitions)))
+	}
+	var (
+		keyVal         string
+		expectedKeyIdx int
+	)
+	for _, val := range []string{"A", "B", "Aa", "aA", "abc", "ABC", "xYz"} {
+		oldIdx := keyPartitionIdx(false, val)
+		if oldIdx != keyPartitionIdx(true, val) {
+			keyVal = val
+			expectedKeyIdx = oldIdx
+			break
+		}
+	}
+	require.NotEmpty(t, keyVal)
+	keyDatum := types.NewStringDatum(keyVal)
+	keyDatum.SetCollation("utf8mb4_general_ci")
+	physicalTbl, err = keyPt.GetPartitionByRow(tk.Session().GetExprCtx().GetEvalCtx(), []types.Datum{keyDatum})
+	require.NoError(t, err)
+	require.Equal(t, keyTblInfo.Partition.Definitions[expectedKeyIdx].ID, physicalTbl.GetPhysicalID())
 }
 
 func TestPartitionAddRecord(t *testing.T) {

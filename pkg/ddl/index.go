@@ -82,7 +82,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
@@ -4249,7 +4248,7 @@ func buildAffectColumn(idxInfo *model.IndexInfo, tblInfo *model.TableInfo) ([]*m
 
 	// Build affect column for partial index.
 	if idxInfo.HasCondition() {
-		cols, err := tables.ExtractColumnsFromCondition(ectx, idxInfo, tblInfo, true, collate.NewCollationEnabled())
+		cols, err := tables.ExtractColumnsFromCondition(ectx, idxInfo, tblInfo, true)
 		if err != nil {
 			return nil, err
 		}
@@ -4265,7 +4264,10 @@ func buildIndexConditionChecker(copCtx copr.CopContext, tblInfo *model.TableInfo
 	schema, names := copCtx.GetBase().GetSchemaAndNames()
 
 	exprCtx := copCtx.GetBase().ExprCtx
-	expr, err := expression.ParseSimpleExpr(exprCtx, idxInfo.ConditionExprString, expression.WithInputSchemaAndNames(schema, names, tblInfo))
+	expr, err := expression.ParseSimpleExpr(exprCtx,
+		idxInfo.ConditionExprString,
+		expression.WithInputSchemaAndNames(schema, names, tblInfo),
+		expression.WithUseNewCollate(copCtx.GetBase().UseNewCollate))
 	if err != nil {
 		return nil, err
 	}

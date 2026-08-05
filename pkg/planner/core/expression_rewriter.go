@@ -118,6 +118,7 @@ func buildSimpleExpr(ctx expression.BuildContext, node ast.ExprNode, opts ...exp
 	for _, opt := range opts {
 		opt(&options)
 	}
+	ctx = expression.BuildContextWithUseNewCollate(ctx, options.UseNewCollate)
 
 	if options.InputSchema == nil && len(options.InputNames) > 0 {
 		return nil, errors.New("InputSchema and InputNames should be specified at the same time")
@@ -156,7 +157,14 @@ func buildSimpleExpr(ctx expression.BuildContext, node ast.ExprNode, opts ...exp
 	}
 
 	if tbl := options.SourceTable; tbl != nil && rewriter.schema == nil {
-		cols, names, err := expression.ColumnInfos2ColumnsAndNames(ctx, options.SourceTableDB, tbl.Name, tbl.Cols(), tbl)
+		cols, names, err := expression.ColumnInfos2ColumnsAndNames(
+			ctx,
+			options.SourceTableDB,
+			tbl.Name,
+			tbl.Cols(),
+			tbl,
+			expression.WithUseNewCollate(options.UseNewCollate),
+		)
 		if err != nil {
 			return nil, err
 		}

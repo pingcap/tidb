@@ -112,6 +112,42 @@ func WithUseNewCollate(useNewCollate bool) BuildOption {
 	}
 }
 
+type buildContextWithUseNewCollate struct {
+	BuildContext
+	useNewCollate bool
+}
+
+func (ctx *buildContextWithUseNewCollate) newCollationEnabled() bool {
+	return ctx.useNewCollate
+}
+
+// BuildContextWithUseNewCollate fixes the new-collation mode used by
+// collation-sensitive expression builders.
+func BuildContextWithUseNewCollate(ctx BuildContext, useNewCollate bool) BuildContext {
+	if ctx == nil {
+		return nil
+	}
+	return &buildContextWithUseNewCollate{
+		BuildContext:  ctx,
+		useNewCollate: useNewCollate,
+	}
+}
+
+type buildContextNewCollationProvider interface {
+	newCollationEnabled() bool
+}
+
+func newCollationEnabled(ctx BuildContext) bool {
+	if provider, ok := ctx.(buildContextNewCollationProvider); ok {
+		return provider.newCollationEnabled()
+	}
+	return collate.NewCollationEnabled()
+}
+
+func getCollator(ctx BuildContext, collation string) collate.Collator {
+	return collate.GetCollatorWithCollate(newCollationEnabled(ctx), collation)
+}
+
 // BuildSimpleExpr builds a simple expression from an ast node.
 // This function is used to build some "simple" expressions with limited context.
 // The below expressions are not supported:
@@ -1106,19 +1142,20 @@ func TableInfo2SchemaAndNames(ctx BuildContext, dbName ast.CIStr, tbl *model.Tab
 }
 
 // ColumnInfos2ColumnsAndNames converts the ColumnInfo to the *Column and NameSlice.
-func ColumnInfos2ColumnsAndNames(ctx BuildContext, dbName, tblName ast.CIStr, colInfos []*model.ColumnInfo, tblInfo *model.TableInfo) ([]*Column, types.NameSlice, error) {
-	return ColumnInfos2ColumnsAndNamesWithCollate(ctx, dbName, tblName, colInfos, tblInfo, collate.NewCollationEnabled())
-}
-
-// ColumnInfos2ColumnsAndNamesWithCollate converts the ColumnInfo to the *Column
-// and NameSlice with a fixed collation mode.
-func ColumnInfos2ColumnsAndNamesWithCollate(
+func ColumnInfos2ColumnsAndNames(
 	ctx BuildContext,
 	dbName, tblName ast.CIStr,
 	colInfos []*model.ColumnInfo,
 	tblInfo *model.TableInfo,
-	useNewCollate bool,
+	opts ...BuildOption,
 ) ([]*Column, types.NameSlice, error) {
+	options := BuildOptions{
+		UseNewCollate: collate.NewCollationEnabled(),
+	}
+	for _, opt := range opts {
+		opt(&options)
+	}
+
 	columns := make([]*Column, 0, len(colInfos))
 	names := make([]*types.FieldName, 0, len(colInfos))
 	for i, col := range colInfos {
@@ -1162,7 +1199,7 @@ func ColumnInfos2ColumnsAndNamesWithCollate(
 			e, err := BuildSimpleExpr(ctx, expr,
 				WithInputSchemaAndNames(mockSchema, names, tblInfo),
 				WithAllowCastArray(true),
-				WithUseNewCollate(useNewCollate))
+				WithUseNewCollate(options.UseNewCollate))
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}

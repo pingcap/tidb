@@ -68,6 +68,7 @@ go_library(
         "//pkg/util",
         "//pkg/util/cdcutil",
         "//pkg/util/chunk",
+        "//pkg/util/collate",
         "//pkg/util/context",
         "//pkg/util/cpu",
         "//pkg/util/dbterror",

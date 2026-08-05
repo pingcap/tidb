@@ -165,6 +165,16 @@ func MockTableFromMeta(tblInfo *model.TableInfo) table.Table {
 
 // TableFromMeta creates a Table instance from model.TableInfo.
 func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Table, error) {
+	return tableFromMeta(allocs, tblInfo, collate.NewCollationEnabled())
+}
+
+// TableFromMetaForSnapshot creates a Table instance using the collation mode
+// captured with the table metadata snapshot.
+func TableFromMetaForSnapshot(allocs autoid.Allocators, tblInfo *model.TableInfo, useNewCollate bool) (table.Table, error) {
+	return tableFromMeta(allocs, tblInfo, useNewCollate)
+}
+
+func tableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo, useNewCollate bool) (table.Table, error) {
 	if tblInfo.State == model.StateNone {
 		return nil, table.ErrTableStateCantNone.GenWithStackByArgs(tblInfo.Name)
 	}
@@ -214,7 +224,7 @@ func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Ta
 	if err != nil {
 		return nil, err
 	}
-	t := newTableCommon(tblInfo, tblInfo.ID, columns, allocs, constraints, collate.NewCollationEnabled())
+	t := newTableCommon(tblInfo, tblInfo.ID, columns, allocs, constraints, useNewCollate)
 	if tblInfo.GetPartitionInfo() == nil {
 		if err := t.initTableIndices(); err != nil {
 			return nil, err
@@ -225,24 +235,6 @@ func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Ta
 		return &t, nil
 	}
 	return newPartitionedTable(&t, tblInfo)
-}
-
-// SetTableUseNewCollate sets the new-collation mode for a Table built by TableFromMeta.
-// For partitioned tables, it also rebuilds partition expressions and updates all
-// physical partitions.
-func SetTableUseNewCollate(tbl table.Table, useNewCollate bool) error {
-	switch t := tbl.(type) {
-	case *partitionedTable:
-		return t.setUseNewCollate(useNewCollate)
-	case *partition:
-		return t.TableCommon.setUseNewCollate(useNewCollate)
-	case *cachedTable:
-		return t.TableCommon.setUseNewCollate(useNewCollate)
-	case *TableCommon:
-		return t.setUseNewCollate(useNewCollate)
-	default:
-		return errors.Errorf("unexpected table type %T", tbl)
-	}
 }
 
 func buildGeneratedExpr(tblInfo *model.TableInfo, genExpr string) (ast.ExprNode, error) {
@@ -285,33 +277,14 @@ func (t *TableCommon) initTableIndices() error {
 		}
 
 		// Use partition ID for index, because TableCommon may be table or partition.
-		idx, err := NewIndex(t.physicalTableID, tblInfo, idxInfo)
+		idx, err := newIndex(t.physicalTableID, tblInfo, idxInfo, t.encoder.UseNewCollate())
 		if err != nil {
 			return err
 		}
-		if err := SetIndexUseNewCollate(idx, t.encoder.UseNewCollate()); err != nil {
+		if err := idx.initPartialCondition(); err != nil {
 			return err
 		}
-		intest.AssertFunc(func() bool {
-			// `TableCommon.indices` is type of `[]table.Index` to implement interface method `Table.Indices`.
-			// However, we have an assumption that the specific type of each element in it should always be `*index`.
-			// We have this assumption because some codes access the inner method of `*index`,
-			// and they use `asIndex` to cast `table.Index` to `*index`.
-			_, ok := idx.(*index)
-			intest.Assert(ok, "index should be type of `*index`")
-			return true
-		})
 		t.indices = append(t.indices, idx)
-	}
-	return nil
-}
-
-func (t *TableCommon) setUseNewCollate(useNewCollate bool) error {
-	t.encoder = codec.NewEncoder(useNewCollate)
-	for _, idx := range t.indices {
-		if err := SetIndexUseNewCollate(idx, useNewCollate); err != nil {
-			return err
-		}
 	}
 	return nil
 }

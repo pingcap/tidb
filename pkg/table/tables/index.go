@@ -62,9 +62,7 @@ type index struct {
 	idxInfo  *model.IndexInfo
 	tblInfo  *model.TableInfo
 	phyTblID int64
-	// initNeedRestoreData is used to initialize `needRestoredData` in `index.Create()`.
-	// This routine cannot be done in `NewIndex()` because `needRestoreData` relies on `NewCollationEnabled()` and
-	// the collation global variable is initialized *after* `NewIndex()`.
+	// initNeedRestoreData lazily initializes `needRestoredData` from the index encoder.
 	initNeedRestoreData sync.Once
 	needRestoredData    bool
 	encoder             codec.Encoder
@@ -84,34 +82,16 @@ func NeedRestoredData(useNewCollate bool, idxCols []*model.IndexColumn, colInfos
 
 // NewIndex builds a new Index object.
 func NewIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.IndexInfo) (table.Index, error) {
-	index := &index{
+	return newIndex(physicalID, tblInfo, indexInfo, collate.NewCollationEnabled())
+}
+
+func newIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, useNewCollate bool) (*index, error) {
+	return &index{
 		idxInfo:  indexInfo,
 		tblInfo:  tblInfo,
 		phyTblID: physicalID,
-	}
-	index.setUseNewCollate(collate.NewCollationEnabled())
-	return index, nil
-}
-
-// SetIndexUseNewCollate sets the new-collation mode for an Index built by NewIndex.
-// It also rebuilds the partial-index condition with the same mode.
-func SetIndexUseNewCollate(idx table.Index, useNewCollate bool) error {
-	index, ok := idx.(*index)
-	if !ok {
-		return errors.Errorf("unexpected index type %T", idx)
-	}
-	index.setUseNewCollate(useNewCollate)
-	return index.initPartialCondition()
-}
-
-func (c *index) setUseNewCollate(useNewCollate bool) {
-	c.encoder = codec.NewEncoder(useNewCollate)
-	c.initNeedRestoreData = sync.Once{}
-	c.needRestoredData = false
-	c.conditionExpr = nil
-	c.conditionInit = sync.Once{}
-	c.conditionErr = nil
-	c.conditionEvalBufferPool = sync.Pool{}
+		encoder:  codec.NewEncoder(useNewCollate),
+	}, nil
 }
 
 func (c *index) initPartialCondition() error {
@@ -1001,14 +981,13 @@ func GenIndexValueFromIndex(key []byte, value []byte, tblInfo *model.TableInfo, 
 // ExtractColumnsFromCondition returns the columns that are referenced in the index condition expression.
 // If `includeColumnsReferencedByVirtualGeneratedColumns` is true, it will recursively extract the columns from the virtual generated columns.
 // The returned columns might be duplicated.
-func ExtractColumnsFromCondition(ctx expression.BuildContext, idxInfo *model.IndexInfo, tblInfo *model.TableInfo, includeColumnsReferencedByVirtualGeneratedColumns bool, useNewCollate bool) ([]*model.IndexColumn, error) {
+func ExtractColumnsFromCondition(ctx expression.BuildContext, idxInfo *model.IndexInfo, tblInfo *model.TableInfo, includeColumnsReferencedByVirtualGeneratedColumns bool) ([]*model.IndexColumn, error) {
 	if len(idxInfo.ConditionExprString) == 0 {
 		return nil, nil
 	}
 
 	expr, err := expression.ParseSimpleExpr(ctx, idxInfo.ConditionExprString,
-		expression.WithTableInfo("", tblInfo),
-		expression.WithUseNewCollate(useNewCollate))
+		expression.WithTableInfo("", tblInfo))
 	if err != nil {
 		return nil, err
 	}

@@ -139,7 +139,7 @@ func newBaseBuiltinFunc(ctx BuildContext, funcName string, args []Expression, tp
 		tp:   tp,
 	}
 	bf.SetCharsetAndCollation(ec.Charset, ec.Collation)
-	bf.setCollator(collate.GetCollator(ec.Collation))
+	bf.setCollator(getCollator(ctx, ec.Collation))
 	bf.SetCoercibility(ec.Coer)
 	bf.SetRepertoire(ec.Repe)
 	adjustNullFlagForReturnType(ctx.GetEvalCtx(), funcName, args, bf)
@@ -230,7 +230,7 @@ func newBaseBuiltinFuncWithTp(ctx BuildContext, funcName string, args []Expressi
 		tp:   fieldType,
 	}
 	bf.SetCharsetAndCollation(ec.Charset, ec.Collation)
-	bf.setCollator(collate.GetCollator(ec.Collation))
+	bf.setCollator(getCollator(ctx, ec.Collation))
 	bf.SetCoercibility(ec.Coer)
 	bf.SetRepertoire(ec.Repe)
 	// note this function must be called after wrap cast function to the args
@@ -290,7 +290,7 @@ func newBaseBuiltinFuncWithFieldTypes(ctx BuildContext, funcName string, args []
 		tp:   fieldType,
 	}
 	bf.SetCharsetAndCollation(ec.Charset, ec.Collation)
-	bf.setCollator(collate.GetCollator(ec.Collation))
+	bf.setCollator(getCollator(ctx, ec.Collation))
 	bf.SetCoercibility(ec.Coer)
 	bf.SetRepertoire(ec.Repe)
 	// note this function must be called after wrap cast function to the args
@@ -486,7 +486,7 @@ func newBaseBuiltinCastFunc4String(ctx BuildContext, funcName string, args []Exp
 			tp:   tp,
 		}
 		bf.SetCharsetAndCollation(tp.GetCharset(), tp.GetCollate())
-		bf.setCollator(collate.GetCollator(tp.GetCollate()))
+		bf.setCollator(getCollator(ctx, tp.GetCollate()))
 		bf.SetCoercibility(CoercibilityExplicit)
 		bf.SetExplicitCharset(true)
 		if tp.GetCharset() == charset.CharsetASCII {
