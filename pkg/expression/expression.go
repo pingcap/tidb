@@ -133,6 +133,12 @@ func BuildContextWithUseNewCollate(ctx BuildContext, useNewCollate bool) BuildCo
 	}
 }
 
+// BuildContextNewCollationEnabled returns the fixed new-collation mode from
+// the build context, or the process default when the context does not override it.
+func BuildContextNewCollationEnabled(ctx BuildContext) bool {
+	return newCollationEnabled(ctx)
+}
+
 type buildContextNewCollationProvider interface {
 	newCollationEnabled() bool
 }
@@ -1150,11 +1156,12 @@ func ColumnInfos2ColumnsAndNames(
 	opts ...BuildOption,
 ) ([]*Column, types.NameSlice, error) {
 	options := BuildOptions{
-		UseNewCollate: collate.NewCollationEnabled(),
+		UseNewCollate: newCollationEnabled(ctx),
 	}
 	for _, opt := range opts {
 		opt(&options)
 	}
+	ctx = BuildContextWithUseNewCollate(ctx, options.UseNewCollate)
 
 	columns := make([]*Column, 0, len(colInfos))
 	names := make([]*types.FieldName, 0, len(colInfos))
@@ -1198,8 +1205,7 @@ func ColumnInfos2ColumnsAndNames(
 			}
 			e, err := BuildSimpleExpr(ctx, expr,
 				WithInputSchemaAndNames(mockSchema, names, tblInfo),
-				WithAllowCastArray(true),
-				WithUseNewCollate(options.UseNewCollate))
+				WithAllowCastArray(true))
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}

@@ -113,7 +113,7 @@ func buildSimpleExpr(ctx expression.BuildContext, node ast.ExprNode, opts ...exp
 	}
 
 	options := expression.BuildOptions{
-		UseNewCollate: collate.NewCollationEnabled(),
+		UseNewCollate: expression.BuildContextNewCollationEnabled(ctx),
 	}
 	for _, opt := range opts {
 		opt(&options)
@@ -163,7 +163,6 @@ func buildSimpleExpr(ctx expression.BuildContext, node ast.ExprNode, opts ...exp
 			tbl.Name,
 			tbl.Cols(),
 			tbl,
-			expression.WithUseNewCollate(options.UseNewCollate),
 		)
 		if err != nil {
 			return nil, err
