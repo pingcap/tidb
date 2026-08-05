@@ -355,3 +355,50 @@ fn unary_minus_promotes_to_decimal_only_for_a_constant() {
         "INT:-1990"
     );
 }
+
+/// Not an argument-descriptor rule, but the one the descriptor's
+/// `typeInfer` port exposed: a DECIMAL reaching a bitwise operator is
+/// converted by Go's own `WrapWithCastAsInt`, and
+/// `builtinCastDecimalAsIntSig` SATURATES at the `BIGINT` boundary with a
+/// 1292 rather than failing the statement.
+///
+/// ```text
+/// select -10000000000000000000 | 0             9223372036854775808
+/// select -10000000000000000000 & -1            9223372036854775808
+/// select ~ -10000000000000000000               9223372036854775807
+/// select 100000000000000000000000.5 | 0        9223372036854775807
+/// select --9223372036854775808 | 0             9223372036854775807
+/// ```
+///
+/// The last three rows are the boundaries: the negative and positive
+/// saturation limits differ, and the fifth row only reaches a decimal at all
+/// because `typeInfer` promoted the constant negation. `tests/integrationtest/
+/// r/expression/issues.result:922-924` is the recorded row that a hard error
+/// here would drop.
+#[test]
+fn a_decimal_bitwise_operand_saturates_the_way_gos_cast_does() {
+    let column = || vec![("c", FieldType::new(FieldTypeCode::Long), Datum::Int(0))];
+    assert_eq!(
+        over_columns("-10000000000000000000 | c", &column()),
+        "UINT:9223372036854775808"
+    );
+    assert_eq!(
+        over_columns("-10000000000000000000 & -1", &column()),
+        "UINT:9223372036854775808"
+    );
+    assert_eq!(
+        over_columns("~ -10000000000000000000", &column()),
+        "UINT:9223372036854775807"
+    );
+    assert_eq!(
+        over_columns("100000000000000000000000.5 | c", &column()),
+        "UINT:9223372036854775807"
+    );
+    assert_eq!(
+        over_columns("--9223372036854775808 | c", &column()),
+        "UINT:9223372036854775807"
+    );
+    // A decimal that FITS is untouched, so the saturation is not a blanket
+    // clamp: 7.5 rounds half away from zero to 8.
+    assert_eq!(over_columns("7.5 | c", &column()), "UINT:8");
+}

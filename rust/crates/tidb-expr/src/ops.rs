@@ -82,10 +82,7 @@ pub(crate) fn eval_unary(
             Minus => Ok(Datum::Decimal(d.negate())),
             // `~x` rounds to the nearest integer first (ties away from zero),
             // then flips the bits exactly like the `Int` case.
-            BitNeg => d
-                .round_to_i64()
-                .map(|i| Datum::UInt(!(i as u64)))
-                .ok_or(EvalError::IntOverflow),
+            BitNeg => Ok(Datum::UInt(!(decimal_bit_operand(&d, ctx)? as u64))),
             Not | NotKeyword => unreachable!("handled above"),
         },
         // Negating a finite f64 is always finite, so no overflow check is
@@ -827,12 +824,9 @@ fn decimal_binary(
         },
         // Bitwise/shift operators work on integers in MySQL, so a decimal
         // operand rounds to the nearest `i64` first (ties away from zero),
-        // same as unary `~` above.
+        // same as unary `~` above -- and SATURATES there rather than failing.
         BitAnd | BitOr | BitXor | LeftShift | RightShift => {
-            let (ai, bi) = match (a.round_to_i64(), b.round_to_i64()) {
-                (Some(x), Some(y)) => (x, y),
-                _ => return Err(EvalError::IntOverflow),
-            };
+            let (ai, bi) = (decimal_bit_operand(&a, ctx)?, decimal_bit_operand(&b, ctx)?);
             match op {
                 BitAnd => Datum::UInt((ai as u64) & (bi as u64)),
                 BitOr => Datum::UInt((ai as u64) | (bi as u64)),
@@ -844,6 +838,42 @@ fn decimal_binary(
         }
         LogicAnd | LogicOr | LogicXor | NullEq => unreachable!("handled by caller"),
     })
+}
+
+/// A DECIMAL reaching a bitwise or shift operator, as the `i64` Go's own
+/// argument cast hands the signature.
+///
+/// Go never coerces such an operand at the operator; `bitAndFunctionClass` and
+/// friends declare `types.ETInt` arguments, so `newBaseBuiltinFuncWithTp`
+/// inserts a real CAST node and `builtinCastDecimalAsIntSig`
+/// (`pkg/expression/builtin_cast.go:1566-1596`) is what runs. That sig rounds
+/// half-up, calls `MyDecimal.ToInt` -- which SATURATES at the `BIGINT`
+/// boundary and returns `ErrOverflow` alongside the saturated value -- and then
+/// downgrades the overflow to a `1292 Truncated incorrect DECIMAL value`
+/// through `ec.HandleErrorWithAlias`. The statement survives.
+///
+/// Failing instead was a wrong ANSWER, not a conservative refusal. Captured:
+///
+/// ```text
+/// select -10000000000000000000 | 0                 9223372036854775808
+/// select -10000000000000000000 & -1                9223372036854775808
+/// select ~ -10000000000000000000                   9223372036854775807
+/// select 100000000000000000000000.5 | 0            9223372036854775807
+/// select --9223372036854775808 | 0                 9223372036854775807
+/// ```
+///
+/// and `tests/integrationtest/r/expression/issues.result:922-924` records
+/// `SELECT * FROM t0 WHERE -10000000000000000000 | t0.c0` returning its row --
+/// which only happens because the saturated `i64::MIN` is truthy.
+fn decimal_bit_operand(
+    value: &Decimal,
+    ctx: &dyn crate::context::Columns,
+) -> Result<i64, EvalError> {
+    if let Some(exact) = value.round_to_i64() {
+        return Ok(exact);
+    }
+    ctx.handle_truncate(&format!("Truncated incorrect DECIMAL value: '{value}'"))?;
+    Ok(value.round_to_i64_saturating())
 }
 
 /// Coerces a non-`NULL` value to [`Decimal`] (an `Int` promotes to scale 0);
