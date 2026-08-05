@@ -2738,9 +2738,7 @@ func (worker *copIteratorWorker) collectUnconsumedCopRuntimeStats(bo *Backoffer,
 	if worker.kvclient.Stats != nil && worker.stats != nil {
 		copStats := &CopRuntimeStats{}
 		worker.collectKVClientRuntimeStats(copStats, bo, rpcCtx)
-		worker.stats.Lock()
-		worker.stats.stats = append(worker.stats.stats, copStats)
-		worker.stats.Unlock()
+		worker.stats.append(copStats)
 	}
 }
 
@@ -2756,6 +2754,19 @@ type CopRuntimeStats struct {
 type copIteratorRuntimeStats struct {
 	sync.Mutex
 	stats []*CopRuntimeStats
+}
+
+func (s *copIteratorRuntimeStats) append(copStats *CopRuntimeStats) {
+	// The receiver and copStats are nil when the iterator was built without
+	// EnableCollectExecutionInfo, which leaves worker.stats and resp.detail
+	// unset. That happens when tidb_enable_collect_execution_info is off, and
+	// always for requests that never enable it, such as Analyze and Checksum.
+	if s == nil || copStats == nil {
+		return
+	}
+	s.Lock()
+	s.stats = append(s.stats, copStats)
+	s.Unlock()
 }
 
 func (worker *copIteratorWorker) handleTiDBSendReqErr(err error, task *copTask) (*copTaskResult, error) {
