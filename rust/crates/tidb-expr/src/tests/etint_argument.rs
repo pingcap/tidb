@@ -16,12 +16,16 @@
 //! `datetime.rs`'s `an_etdatetime_argument_is_cast_before_the_signature_runs`
 //! covers, kept in its own file so neither grows toward the size ratchet.
 //!
-//! NO RECORDED ROW EXISTS for any assertion here. `tests/integrationtest/r/**`
-//! calls `ROUND`/`TRUNCATE` only with literal integer scales and `INSERT`/
-//! `LOCATE`/`MAKE_SET` only with literal integer positions, which is why the
-//! whole-corpus survey does not move on this change. Every expected value is
-//! therefore GO-DERIVED, captured statement by statement from real TiDB
-//! through `gorun` (`rust/difftests/gorun`) and pinned absolutely.
+//! Almost every expected value here is GO-DERIVED, captured statement by
+//! statement from real TiDB through `gorun` (`rust/difftests/gorun`) and
+//! pinned absolutely: `tests/integrationtest/r/**` calls `INSERT`/`LOCATE`/
+//! `MAKE_SET` only with literal integer positions, so the corpus cannot speak
+//! for them.
+//!
+//! FOUR statements in the corpus DO exercise this change, and each names its
+//! recorded witness below: the three string-scale `ROUND` calls at
+//! `r/expression/misc.result:941-946` and `r/expression/issues.result:1412`,
+//! and `OCT` over a `BIT(8)` column at `r/expression/issues.result:80-84`.
 
 use super::*;
 use crate::arg_eval_type::wrap_int_args;
@@ -74,6 +78,13 @@ fn the_int_cast_boundary_is_the_ordinary_cast_as_signed() {
         ("round(3.14,2.4)", "DEC:3.14"),
         // A leading-run parse, not a full parse: `'2x'` is `2`.
         ("round(3.14159,'2x')", "DEC:3.14"),
+        // The corpus's own shape, RECORDED at
+        // `r/expression/misc.result:941-946`: `round("1200","1")` inside a
+        // `<=>` comparison, where the whole statement was refused before.
+        // A STRING first argument is Go's `argTp = types.ETReal` arm
+        // (`builtin_math.go:273`), so the answer is a REAL `1200` and not a
+        // decimal -- captured, `select round("1200","1")` is `1200`.
+        ("round(\"1200\",\"1\")", "FLOAT:1200"),
     ] {
         let (row, chunk) = both(expr);
         assert_eq!(row, want, "{expr}");
@@ -129,6 +140,68 @@ fn every_hybrid_etint_argument_reads_as_its_ordinal() {
     }
 }
 
+/// The cast Go builds is a real `CAST(... AS SIGNED)`, so it raises that
+/// cast's WARNING -- a side effect the replay harness is structurally blind
+/// to (it compares rows, not warnings), which is why it is pinned here.
+/// Captured from real TiDB through `show warnings`: `round(3.14,'abc')`,
+/// `make_set('x','a','b')` and `insert('abcdef','2x',2,'X')` each raise
+/// exactly one `Warning|1292|Truncated incorrect INTEGER value: '<text>'`,
+/// naming the ORIGINAL text of the argument the layer cast.
+#[test]
+fn the_int_cast_raises_the_cast_s_own_1292() {
+    #[derive(Default)]
+    struct Sink {
+        warnings: std::cell::RefCell<Vec<String>>,
+    }
+    impl crate::Columns for Sink {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+        fn append_warning(&self, code: u16, message: &str) {
+            self.warnings.borrow_mut().push(format!("{code} {message}"));
+        }
+    }
+
+    for (name, vals, want) in [
+        (
+            "ROUND",
+            vec![Datum::Int(3), Datum::new_string("abc".to_string())],
+            "1292 Truncated incorrect INTEGER value: 'abc'",
+        ),
+        (
+            "MAKE_SET",
+            vec![Datum::new_string("x".to_string())],
+            "1292 Truncated incorrect INTEGER value: 'x'",
+        ),
+        (
+            "INSERT",
+            vec![
+                Datum::new_string("abcdef".to_string()),
+                Datum::new_string("2x".to_string()),
+                Datum::Int(2),
+                Datum::new_string("X".to_string()),
+            ],
+            "1292 Truncated incorrect INTEGER value: '2x'",
+        ),
+    ] {
+        let sink = Sink::default();
+        wrap_int_args(name, vals, &[], &sink).unwrap();
+        assert_eq!(sink.warnings.into_inner(), vec![want.to_string()], "{name}");
+    }
+
+    // An argument the cast consumes WHOLE raises nothing, which is the half
+    // that makes the warning above evidence rather than noise.
+    let sink = Sink::default();
+    wrap_int_args(
+        "ROUND",
+        vec![Datum::Int(3), Datum::new_string("2".to_string())],
+        &[],
+        &sink,
+    )
+    .unwrap();
+    assert!(sink.warnings.into_inner().is_empty());
+}
+
 /// `OCT` is the measured NON-member: its `types.ETInt` `argTps` entry is
 /// chosen by the argument's own type, so what varies is the SIGNATURE and the
 /// two signatures disagree about the same hybrid value. Captured over the
@@ -149,6 +222,13 @@ fn oct_is_signature_selected_and_not_a_member_of_the_layer() {
         oct(Datum::Set(MysqlSet::new("a,c", 5), Collation::Utf8Mb4Bin)),
         "STR:0"
     );
+    // The BIT arm is the one row here with a RECORDED witness:
+    // `tests/integrationtest/r/expression/issues.result:80-84` replays
+    // `SELECT b+0, BIN(b), OCT(b), HEX(b) FROM t` over a `BIT(8)` column and
+    // records `255 11111111 377 FF`, `10 1010 12 A`, `5 101 5 5`.
+    for (value, want) in [(255u64, "STR:377"), (10, "STR:12"), (5, "STR:5")] {
+        assert_eq!(oct(Datum::Bit(BinaryLiteral::from_uint(value, None))), want);
+    }
     assert_eq!(oct(Datum::Bit(BinaryLiteral::from_uint(3, None))), "STR:3");
     // `b'01000001'` is the byte `A`; the INTEGER signature renders 65 as
     // octal `101`, while a text parse of `A` would be `0`.
