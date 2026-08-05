@@ -486,7 +486,8 @@ fn refine_args(
     let eval_type = |e: &Expression| e.static_type().map(FieldType::eval_type);
     let left_is_int = eval_type(left) == Some(EvalType::Int);
     let right_is_int = eval_type(right) == Some(EvalType::Int);
-    let is_year = |e: &Expression| e.static_type().map(FieldType::code) == Some(FieldTypeCode::Year);
+    let is_year =
+        |e: &Expression| e.static_type().map(FieldType::code) == Some(FieldTypeCode::Year);
     let (left_is_year, right_is_year) = (is_year(left), is_year(right));
 
     refine_int_operand_constant(left, right, left_is_int, right_is_int, name, op, ctx);

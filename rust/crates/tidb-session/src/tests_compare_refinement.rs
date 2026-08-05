@@ -329,7 +329,7 @@ fn year_column_compared_with_an_int_constant_takes_the_two_digit_window() {
     let mut session = Session::new();
     for sql in [
         "create table ty(k int, y year)",
-        "insert into ty values (1,2018),(2,0),(3,1999),(4,2069),(5,1970)",
+        "insert into ty values (1,2018),(2,0),(3,1999),(4,2069),(5,1970),(6,2155)",
     ] {
         session
             .run(sql)
@@ -364,6 +364,7 @@ fn year_column_compared_with_an_int_constant_takes_the_two_digit_window() {
             vec!["3".to_string(), "1999".to_string()],
             vec!["4".to_string(), "2069".to_string()],
             vec!["5".to_string(), "1970".to_string()],
+            vec!["6".to_string(), "2155".to_string()],
         ]
     );
     // The window's own boundary, as a PARTITION: 70 is 1970 and 69 is 2069,
@@ -377,6 +378,7 @@ fn year_column_compared_with_an_int_constant_takes_the_two_digit_window() {
             vec!["3".to_string(), "1999".to_string()],
             vec!["4".to_string(), "2069".to_string()],
             vec!["5".to_string(), "1970".to_string()],
+            vec!["6".to_string(), "2155".to_string()],
         ]
     );
     assert_eq!(
@@ -390,7 +392,7 @@ fn year_column_compared_with_an_int_constant_takes_the_two_digit_window() {
     //
     // ```text
     // select k, y=69, y=70, y=18, y="18", y="0", y="0000", y=0 from ty order by k;
-    // RS:1|0|0|1|1|0|0|0;2|0|0|0|0|0|1|1;3|0|0|0|0|0|0|0;4|1|0|0|0|0|0|0;5|0|1|0|0|0|0|0
+    // RS:1|0|0|1|1|0|0|0;2|0|0|0|0|0|1|1;3|0|0|0|0|0|0|0;4|1|0|0|0|0|0|0;5|0|1|0|0|0|0|0;6|0|0|0|0|0|0|0
     // ```
     //
     // Column by column: `69` is 2069 (row 4 alone), `70` is 1970 (row 5
@@ -399,7 +401,8 @@ fn year_column_compared_with_an_int_constant_takes_the_two_digit_window() {
     // ETString arm. `'0'` is 2000 and matches NOTHING while `'0000'` and the
     // integer `0` are both the zero year: the `adjustZero = len(s) != 4`
     // split, and the reason Go's own arm passes `false` for an integer.
-    let scalars = "select k, y=69, y=70, y=18, y=\"18\", y=\"0\", y=\"0000\", y=0 from ty order by k";
+    let scalars =
+        "select k, y=69, y=70, y=18, y=\"18\", y=\"0\", y=\"0000\", y=0 from ty order by k";
     assert_eq!(
         row_text(session.run(scalars)),
         vec![
@@ -408,6 +411,7 @@ fn year_column_compared_with_an_int_constant_takes_the_two_digit_window() {
             vec!["3", "0", "0", "0", "0", "0", "0", "0"],
             vec!["4", "1", "0", "0", "0", "0", "0", "0"],
             vec!["5", "0", "1", "0", "0", "0", "0", "0"],
+            vec!["6", "0", "0", "0", "0", "0", "0", "0"],
         ]
         .into_iter()
         .map(|row| row.into_iter().map(String::from).collect::<Vec<_>>())
@@ -415,10 +419,11 @@ fn year_column_compared_with_an_int_constant_takes_the_two_digit_window() {
     );
 
     // Out of the YEAR domain: `AdjustYear` reports `ErrWarnDataOutOfRange`
-    // alongside a CLAMPED value, and Go keeps the clamp only when there was
-    // no error -- so 2156 stays 2156 and selects nothing rather than being
-    // silently pulled down to the 2155 boundary, where it would have matched
-    // a row. `RS:` (empty) for both halves.
+    // alongside a CLAMPED value (`if y > int64(MaxYear) { return int64(MaxYear), ... }`),
+    // and Go keeps the clamp only when there was NO error -- so 2156 stays
+    // 2156 and selects nothing. Row 6 holds 2155 precisely so that taking
+    // the clamp would move a row INTO this answer: `RS:` (empty) is the
+    // proof that the `failed == nil` gate is the one being applied.
     assert_eq!(
         row_text(session.run("select k,y from ty where y = 2156")),
         Vec::<Vec<String>>::new()
@@ -459,7 +464,7 @@ fn casting_a_zero_year_to_char_renders_four_digits() {
     let mut session = Session::new();
     for sql in [
         "create table ty(k int, y year)",
-        "insert into ty values (1,2018),(2,0)",
+        "insert into ty values (0,2018),(2,0)",
     ] {
         session
             .run(sql)
@@ -484,10 +489,23 @@ fn casting_a_zero_year_to_char_renders_four_digits() {
             vec!["0000".to_string(), "4".to_string(), "30303030".to_string()],
         ]
     );
-    // The control: `k` is an ordinary INT holding the same `Datum::Int`
-    // values, and `RS:1;2` shows it is untouched.
+    // The control, and it is deliberately a ZERO: `k` is an ordinary INT
+    // whose first row holds the very same `Datum::Int(0)` the YEAR column
+    // above renders as `'0000'`. Only the static type separates them, so a
+    // rule that fired on the DATUM rather than on the source type would print
+    // `0000` here too. `RS:0|1;2|1` (`length` proves the width).
     assert_eq!(
-        row_text(session.run("select cast(k as char) from ty order by k")),
-        vec![vec!["1".to_string()], vec!["2".to_string()]]
+        row_text(session.run("select cast(k as char), length(cast(k as char)) from ty order by k")),
+        vec![
+            vec!["0".to_string(), "1".to_string()],
+            vec!["2".to_string(), "1".to_string()],
+        ]
+    );
+    // Same reading with no column at all: a bare integer literal is a
+    // `Datum::Int(0)` whose static type is LONGLONG, and `RS:0` is what
+    // TiDB prints.
+    assert_eq!(
+        row_text(session.run("select cast(0 as char)")),
+        vec![vec!["0".to_string()]]
     );
 }
