@@ -1467,7 +1467,35 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     //    Partition` reaches `alter_table`'s catch-all. Partition MAINTENANCE
     //    is unwired as a whole (`AlterPartitionAction` is parse-and-restore
     //    only), and one arm of it is not a port of the feature.
-    const KNOWN_DIVERGENCES: usize = 72;
+    //
+    // 73 -> 71: Go's `rule_join_elimination` landed
+    // (`driver::outer_join_elimination`, wired into `run_select_traced` between
+    // the join-reorder-through-projection inline and the `FROM` build). An
+    // outer join whose null-producing side no column of the statement reads,
+    // and whose inner join keys contain a unique key of that side, is replaced
+    // by its outer side alone -- so the inner table is not read at all, which
+    // is what TiDB records as `<not read>`. The two statements are
+    // `explain_easy`'s
+    //
+    //   select t1.a, t1.b from t1 left outer join t2 on t1.a = t2.a;
+    //   select distinct t1.a, t1.b from t1 left outer join t2 on t1.a = t2.a;
+    //
+    // where `t2.a` is `t2`'s PRIMARY KEY, so Go's ground (1) applies to both
+    // and its duplicate-agnostic ground (2) is not needed for either. Both now
+    // read `t1` through `IndexFullScan index:PRIMARY(a, b)` exactly as TiDB
+    // does -- not a separate fix: with `t2` gone the `FROM` is one table, and
+    // the covering-index preference that was already there picks the same path
+    // TiDB picks. `compared` holds at 7885 (nothing entered or left the
+    // comparison; two statements moved from diverged to matched), and
+    // `explain_easy` drops 7 -> 5.
+    //
+    // Both were `PlanProperty`-kind, so no row result moved. That is not an
+    // assumption: the rule's own precondition is that the eliminated side
+    // contributes no column to the output and cannot multiply an outer row,
+    // and `driver::outer_join_elimination`'s tests replay the row sets of the
+    // eliminated and non-eliminated shapes against each other, NULL-only inner
+    // tables included.
+    const KNOWN_DIVERGENCES: usize = 68;
     //
     //
     // 28 -> 24 (written as 35 -> 31 in batch43's own tree, which branched before batch42), in three unrelated causes, none of them an access-path

@@ -199,6 +199,7 @@ pub(crate) mod leaf_demand;
 mod merge_decision;
 mod multi_dml;
 mod only_full_group_by;
+mod outer_join_elimination;
 mod params;
 mod point_get_key;
 mod predicate_push_down;
@@ -444,6 +445,19 @@ pub(crate) fn run_select_traced(
         Some(rewritten) => {
             inlined = rewritten;
             &inlined
+        }
+        None => select,
+    };
+    // Go's `rule_join_elimination`: an outer join whose null-producing side
+    // nobody reads and which cannot duplicate an outer row is dropped, so the
+    // inner table is never accessed at all. See
+    // `driver::outer_join_elimination` for the half of Go's rule this
+    // implements and for every shape it refuses.
+    let unjoined;
+    let select = match outer_join_elimination::eliminate(select, catalog, current_db) {
+        Some(rewritten) => {
+            unjoined = rewritten;
+            &unjoined
         }
         None => select,
     };

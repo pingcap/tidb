@@ -904,7 +904,29 @@ fn join_operators_and_their_keep_order_match_recorded_tidb_plans() {
     // 24), and `executor/merge_join` (246 matched, 0 diverged),
     // `executor/jointest/join` (803 matched, 1 diverged) and
     // `planner/core/join_reorder2` (30 matched, 0 diverged) all stood still.
-    const COMPARED: usize = 231;
+    // COMPARED 231 -> 229, AND THAT IS THE IMPROVING DIRECTION HERE, which is
+    // the one case the warning above does not cover: the two statements that
+    // left had a join on THIS side ONLY.
+    //
+    // Go's `rule_join_elimination` landed (`driver::outer_join_elimination`),
+    // and `explain_easy`'s
+    //
+    //   select t1.a, t1.b from t1 left outer join t2 on t1.a = t2.a;
+    //   select distinct t1.a, t1.b from t1 left outer join t2 on t1.a = t2.a;
+    //
+    // are recorded by TiDB as `IndexReader -> IndexFullScan index:PRIMARY(a, b)`
+    // with NO join operator at all (`tests/integrationtest/r/explain_easy.result`
+    // :484 and :488). They were `compared` because this tier still built a
+    // `HashJoin` where the recording has none, and they counted against
+    // `BOTH_AGREE`. Now neither side has a join, so they move to the joinless
+    // population -- `784 -> 786 joinless plans`, the exact +2 that answers the
+    // -2 here. `BOTH_AGREE` is unchanged at 137 precisely because they were
+    // never agreeing; `explain_easy` reads `19 of 33` where it read `19 of 35`.
+    //
+    // Every merge-pair number stands still (88/77/+6): no ordered merge is
+    // involved on either side of either statement, and `explain_easy`'s own
+    // `0/2 (+0 extra)` is unchanged.
+    const COMPARED: usize = 229;
     const BOTH_AGREE: usize = 137;
     const RECORDED_MERGE_PAIRS: usize = 88;
     const AGREED_MERGE_PAIRS: usize = 77;

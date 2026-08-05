@@ -41,12 +41,15 @@
 //! `#[ignore]`d test carrying Go's answer PLUS a running test pinning today's
 //! behavior so the ignored one cannot go stale unnoticed:
 //!
-//! * **No outer-to-inner conversion.** Go's `rule_outer_to_inner_join.go` is
-//!   transcreated as `tidb_planner::outer_to_inner_join`, but only as the rule
-//!   wrapper over a caller-owned plan adapter that nothing implements, so it
-//!   never runs over a plan. The 4 cases of `TestSimplifyOuterJoin` whose
-//!   `WHERE` rejects a NULL-extended row therefore keep their
-//!   `left outer join`.
+//! * **No outer-to-inner conversion.** Go's `rule_outer_to_inner_join.go` has
+//!   no counterpart on the live path at all. There WAS a
+//!   `tidb_planner/src/outer_to_inner_join.rs` on disk, but it was never
+//!   declared in `lib.rs` and so never compiled, and it held only the Go
+//!   wrapper's delegation to `LogicalPlan.ConvertOuterToInnerJoin` -- not the
+//!   null-rejection analysis, which is where the rule actually lives. It was
+//!   deleted rather than left standing as evidence of coverage that did not
+//!   exist. The 4 cases of `TestSimplifyOuterJoin` whose `WHERE` rejects a
+//!   NULL-extended row therefore keep their `left outer join`.
 //! * **No predicate reaches either scan.** In all 38 cases every condition
 //!   stays at the join or in the `Selection` above it; no `DataSource`-level
 //!   `PushedDownConds` equivalent exists, which is what all 30 `Left`/`Right`
@@ -369,8 +372,8 @@ fn simplify_outer_join_does_not_convert_any_outer_join_today() {
 
 /// Go's answer, asserted as Go gives it. Blocked on the outer-to-inner rule
 /// (`pkg/planner/core/rule_outer_to_inner_join.go`) actually running over a
-/// plan in this tier: `tidb_planner::outer_to_inner_join` is only the source
-/// wrapper, over a caller-owned plan adapter that nothing implements.
+/// plan in this tier. Nothing in `tidb_planner` implements it; the file that
+/// once looked like it did was never compiled (see this module's own doc).
 #[test]
 #[ignore = "no outer-to-inner join conversion runs in this tier; Go's join type asserted"]
 fn simplify_outer_join_converts_a_null_rejecting_where_to_inner() {

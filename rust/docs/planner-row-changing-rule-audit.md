@@ -23,10 +23,35 @@ observed.
 transcreations of the Go rule *wrappers*, not of the rules**, and **none of
 them is on the live query path**.
 
-* `outer_to_inner_join.rs:50` transcreates `rule_outer_to_inner_join.go:39`
-  faithfully — including the fact that the Go wrapper does nothing but
-  delegate to `LogicalPlan.ConvertOuterToInnerJoin`. The delegate (the actual
-  null-rejection analysis) has no Rust counterpart.
+* `outer_to_inner_join.rs` transcribed `rule_outer_to_inner_join.go:39` —
+  including the fact that the Go wrapper does nothing but delegate to
+  `LogicalPlan.ConvertOuterToInnerJoin`, whose null-rejection analysis has no
+  Rust counterpart. It was **deleted** (batch52): it was never declared in
+  `tidb-planner/src/lib.rs`, so no crate in the workspace ever compiled it —
+  proved by appending `compile_error!` to it and building
+  `--workspace --tests` clean. A delegation to a delegate nobody wrote, in a
+  file nobody compiles, is not coverage.
+* Three more never-compiled files went with it in batch52, on the same
+  evidence (`compile_error!` appended, `cargo build --workspace --tests`
+  clean): `logical_property.rs` (Go's memo `LogicalProperty` over opaque
+  identity tokens — this tier has no memo group to hold one),
+  `logical_mock.rs` (Go's test-only `MockDataSource.Init`, over an opaque
+  `PlanContext` token — this tier has no `BaseLogicalPlan`), and
+  `wrap_cast.rs`. `wrap_cast.rs` is the sharpest case: Go's
+  `WrapCastForAggFuncs` is a five-line mode gate whose whole content is the
+  delegate `baseFuncDesc.WrapCastForAggArgs`, and that delegate's rules —
+  the `noNeedCastAggFuncs` set keyed BY FUNCTION NAME, the `RetTp.EvalType()`
+  dispatch, the per-argument `TypeNull` skip, the `LEAD`/`LAG`/`NTH_VALUE`
+  second-argument skip — could not be expressed in the file at all: its own
+  constructor `new_agg_function` passes `""` for the name.
+  `crates/tidb-planner/src/configured_catalog.rs` is NOT in this class and was
+  kept: it is compiled, through `#[path = "configured_catalog.rs"]` in
+  `read_only_scan.rs`, and `lib.rs`'s `pub use read_only_scan::configured_catalog`
+  re-exports it rather than shadowing a rival.
+* A workspace-wide sweep for `.rs` files named by no `mod` declaration and no
+  `#[path]` attribute finds nothing else: the remaining hits are `include!`d
+  generated tables (`tidb-datatype`'s `charset_data/*`, `encoding_labels.rs`),
+  Cargo's own auto-discovered `src/bin/*` targets, and a fuzz target.
 * `topn_push_down.rs:31` likewise wraps `rule_topn_push_down.go` and delegates.
 * `max_min_elimination.rs`, `column_pruning.rs`, `condition_to_dual.rs`,
   `rule_set.rs` model the *legality classification* over caller-supplied
