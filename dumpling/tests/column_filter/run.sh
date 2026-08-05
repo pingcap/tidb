@@ -20,7 +20,7 @@ export DUMPLING_TEST_DATABASE="$DB_NAME"
 check_csv_output() {
 	output_file="${DUMPLING_OUTPUT_DIR}/${DB_NAME}.${TABLE_NAME}.000000000.csv"
 	actual=$(tr -d '\r' < "$output_file")
-	expected=$(printf "id,name\n1,alice\n2,bob")
+	expected=$(printf '"id","name"\n1,"alice"\n2,"bob"')
 	echo "expected ${expected}, actual ${actual}"
 	[ "$actual" = "$expected" ]
 
