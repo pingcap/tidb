@@ -1126,14 +1126,7 @@ func ColumnInfos2ColumnsAndNames(
 	dbName, tblName ast.CIStr,
 	colInfos []*model.ColumnInfo,
 	tblInfo *model.TableInfo,
-	opts ...BuildOption,
 ) ([]*Column, types.NameSlice, error) {
-	options := BuildOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
-	useNewCollate := ctx.NewCollationEnabled()
-
 	columns := make([]*Column, 0, len(colInfos))
 	names := make([]*types.FieldName, 0, len(colInfos))
 	for i, col := range colInfos {
@@ -1163,7 +1156,6 @@ func ColumnInfos2ColumnsAndNames(
 			if !truncateIgnored {
 				// Ignore redundant warning here.
 				ctx = exprctx.CtxWithHandleTruncateErrLevel(ctx, errctx.LevelIgnore)
-				ctx = BuildContextWithUseNewCollate(ctx, useNewCollate)
 				truncateIgnored = true
 			}
 
