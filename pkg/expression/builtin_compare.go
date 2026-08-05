@@ -703,7 +703,7 @@ func (b *builtinGreatestStringSig) evalString(ctx EvalContext, row chunk.Row) (m
 		if isNull || err != nil {
 			return maxv, isNull, err
 		}
-		if types.CompareString(v, maxv, b.collation) > 0 {
+		if b.collator().Compare(v, maxv) > 0 {
 			maxv = v
 		}
 	}
@@ -1047,7 +1047,7 @@ func (b *builtinLeastStringSig) evalString(ctx EvalContext, row chunk.Row) (minv
 		if isNull || err != nil {
 			return minv, isNull, err
 		}
-		if types.CompareString(v, minv, b.collation) < 0 {
+		if b.collator().Compare(v, minv) < 0 {
 			minv = v
 		}
 	}

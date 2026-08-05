@@ -44,6 +44,7 @@ func (c *ilikeFunctionClass) getFunction(ctx BuildContext, args []Expression) (b
 	if err != nil {
 		return nil, err
 	}
+	bf.setCollator(getCollator(ctx, collate.ConvertAndGetBinCollation(bf.collation)))
 	bf.tp.SetFlen(1)
 	sig := &builtinIlikeSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_IlikeSig)
@@ -96,7 +97,7 @@ func (b *builtinIlikeSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, 
 	var pattern collate.WildcardPattern
 	if b.args[1].ConstLevel() >= ConstOnlyInContext && b.args[2].ConstLevel() >= ConstOnlyInContext {
 		pattern, err = b.patternCache.getOrInitCache(ctx, func() (collate.WildcardPattern, error) {
-			ret := collate.ConvertAndGetBinCollator(b.collation).Pattern()
+			ret := b.collator().Pattern()
 			ret.Compile(patternStr, byte(escape))
 			return ret, nil
 		})
@@ -106,7 +107,7 @@ func (b *builtinIlikeSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, 
 			return 0, true, err
 		}
 	} else {
-		pattern = collate.ConvertAndGetBinCollator(b.collation).Pattern()
+		pattern = b.collator().Pattern()
 		pattern.Compile(patternStr, byte(escape))
 	}
 	return boolToInt64(pattern.DoMatch(valStr)), false, nil

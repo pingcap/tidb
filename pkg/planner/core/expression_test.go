@@ -512,33 +512,50 @@ func TestBuildExpression(t *testing.T) {
 	collationSensitiveRow := chunk.MutRowFromValues("a", "A").ToRow()
 	oldCollationCtx := expression.BuildContextWithUseNewCollate(ctx, false)
 	newCollationCtx := expression.BuildContextWithUseNewCollate(ctx, true)
-	expr, err = buildExpr(t, oldCollationCtx, "c0 = 'A'", expression.WithTableInfo("", collationSensitiveTbl))
-	require.NoError(t, err)
-	val, isNull, err := expr.EvalInt(evalCtx, collationSensitiveRow)
-	require.NoError(t, err)
-	require.False(t, isNull)
-	require.Zero(t, val)
+	for _, test := range []struct {
+		expr        string
+		oldExpected any
+		newExpected any
+	}{
+		{"c0 = 'A'", int64(0), int64(1)},
+		{"c0 <=> c1", int64(0), int64(1)},
+		{"c0 != c1", int64(1), int64(0)},
+		{"c1 < c0", int64(1), int64(0)},
+		{"c0 <= c1", int64(0), int64(1)},
+		{"c0 > c1", int64(1), int64(0)},
+		{"c1 >= c0", int64(0), int64(1)},
+		{"c0 between c1 and c1", int64(0), int64(1)},
+		{"c0 in (c1)", int64(0), int64(1)},
+		{"c0 like c1", int64(0), int64(1)},
+		{"c0 ilike c1", int64(1), int64(1)},
+		{"c0 regexp c1", int64(1), int64(1)},
+		{"if(c0 = c1, 'same', 'different')", "different", "same"},
+		{"nullif(c0, c1)", "a", nil},
+		{"case when c0 = c1 then 'same' else 'different' end", "different", "same"},
+		{"case c0 when c1 then 'same' else 'different' end", "different", "same"},
+		{"strcmp(c0, c1)", int64(1), int64(0)},
+		{"field(c0, c1)", int64(0), int64(1)},
+		{"find_in_set(c0, c1)", int64(0), int64(1)},
+		{"greatest(c1, c0)", "a", "A"},
+		{"least(c0, c1)", "A", "a"},
+		{"locate(c1, c0)", int64(0), int64(1)},
+		{"position(c1 in c0)", int64(0), int64(1)},
+		{"locate(c1, c0, 1)", int64(1), int64(1)},
+		{"instr(c0, c1)", int64(1), int64(1)},
+		{"weight_string(c0)", "a", "\x00A"},
+	} {
+		expr, err = buildExpr(t, oldCollationCtx, test.expr, expression.WithTableInfo("", collationSensitiveTbl))
+		require.NoError(t, err)
+		result, err := expr.Eval(evalCtx, collationSensitiveRow)
+		require.NoError(t, err)
+		require.Equal(t, test.oldExpected, result.GetValue(), test.expr)
 
-	expr, err = buildExpr(t, newCollationCtx, "c0 = 'A'", expression.WithTableInfo("", collationSensitiveTbl))
-	require.NoError(t, err)
-	val, isNull, err = expr.EvalInt(evalCtx, collationSensitiveRow)
-	require.NoError(t, err)
-	require.False(t, isNull)
-	require.Equal(t, int64(1), val)
-
-	expr, err = buildExpr(t, oldCollationCtx, "c0 in (c1)", expression.WithTableInfo("", collationSensitiveTbl))
-	require.NoError(t, err)
-	val, isNull, err = expr.EvalInt(evalCtx, collationSensitiveRow)
-	require.NoError(t, err)
-	require.False(t, isNull)
-	require.Zero(t, val)
-
-	expr, err = buildExpr(t, newCollationCtx, "c0 in (c1)", expression.WithTableInfo("", collationSensitiveTbl))
-	require.NoError(t, err)
-	val, isNull, err = expr.EvalInt(evalCtx, collationSensitiveRow)
-	require.NoError(t, err)
-	require.False(t, isNull)
-	require.Equal(t, int64(1), val)
+		expr, err = buildExpr(t, newCollationCtx, test.expr, expression.WithTableInfo("", collationSensitiveTbl))
+		require.NoError(t, err)
+		result, err = expr.Eval(evalCtx, collationSensitiveRow)
+		require.NoError(t, err)
+		require.Equal(t, test.newExpected, result.GetValue(), test.expr)
+	}
 
 	// build expression without enough columns
 	_, err = buildExpr(t, ctx, "1+a")
