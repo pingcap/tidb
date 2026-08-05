@@ -272,8 +272,11 @@ pub(crate) fn wrap_int_args(
 ///    no-op -- an integer argument beside an ENUM really is stringified --
 ///    but it is a CONSEQUENCE of the aggregated type, which no per-name mask
 ///    can hold. Captured over `enum('{}','[1]','x')` holding `'{}'`:
-///    `greatest(e,2)` is `{}` and `least(e,2)` is `2`, where this tier
-///    answers `2` and `{}`. That is a signature-selection rung of its own.
+///    `greatest(e,2)` is `{}` and `least(e,2)` is `2`. That signature-
+///    selection rung has since LANDED, in
+///    `crate::rewriter::result_type::gl_signature` feeding
+///    `builtin_ext::extremum_with_signature`; the entry stays here as the
+///    measurement that sent it there, not as work outstanding.
 ///
 ///  * **`INTERVAL`** (`builtin_compare.go:1207-1213`): `argTps, argTp :=
 ///    make([]types.EvalType, 0, len(args)), types.ETReal` and

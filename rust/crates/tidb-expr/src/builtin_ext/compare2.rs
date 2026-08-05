@@ -147,6 +147,74 @@ pub struct GlSignature {
 /// which is why `'zzz'` -- not the date -- is the greatest. Note also that this
 /// signature compares with `strings.Compare`, NOT the collator: only the
 /// `Directly` mode is collation-aware.
+///
+/// # What this selection does NOT decide
+///
+/// Go's three numeric arms differ only in which cast
+/// `newBaseBuiltinFuncWithTp` wrapped the arguments in, so they share
+/// [`extremum_numeric`] here -- and that block still reads the result's
+/// promotion off the runtime datums rather than off the aggregate. One
+/// measured consequence, present before this selection landed and unchanged by
+/// it: over `create table g(i int, d decimal(10,3))` holding `-5` and `2.500`,
+/// TiDB answers `least(i, d)` with `-5` and this tier with `-5.000`.
+/// `WrapWithCastAsDecimal` takes each argument's OWN decimal
+/// (`tp.SetDecimalUnderLimit(expr.GetType().GetDecimal())`), so an integer
+/// COLUMN keeps scale 0 -- while the all-constant `least(1, 2.5)` really is
+/// `1.0`, which is the capture the block was built on. Separating a typed
+/// integer argument from a folded integer constant is the next rung, not this
+/// one.
+///
+/// # Mutation probes
+///
+/// Run against `cargo test -p tidb-expr -p tidb-session -p
+/// difftest-result-tests`:
+///
+///  * IGNORE the passed signature and always take the value-derived one --
+///    killed by `greatest_least_source_vectors_compare_strings_as_time`.
+///  * `ret_date` forced to `false` -- killed by
+///    `an_all_temporal_greatest_returns_the_aggregated_temporal_type`.
+///  * DROP the ETJson-to-ETString fold -- killed only after
+///    `a_json_greatest_compares_the_rendered_text` was added; a JSON aggregate
+///    needs two values that rank one way as text and the other as numbers
+///    (`'10'` and `'9'`), because identical JSON arguments agree in both
+///    domains.
+///  * `ret_date` from the DATUM kinds instead of the aggregate -- killed only
+///    after `the_temporal_greatest_result_type_follows_the_aggregate_not_the
+///    _values`. A declared type and its datums differ only where an
+///    expression's type is merged from branches it did not take, which is what
+///    `IFNULL(d, dt)` is.
+///  * DROP the ENUM/SET/JSON widening in `extremum_return_type` -- killed by a
+///    PANIC, not a wrong value: the chunk column expects a name/value cell.
+///  * Route ETDuration through the STRING arm (over-application) -- killed only
+///    after `100:00:00`/`20:00:00` was added. The declared duration result type
+///    casts a stray string answer straight back into a duration, so this hides
+///    completely unless the two domains ORDER the values differently.
+///  * DROP the time arm entirely -- killed by both temporal tests.
+///  * DROP the temporal scan's DATETIME preference -- killed only after
+///    `greatest(d, dt, '2020-01-01 05:00:00')` was added.
+///  * FLATTEN the value-derived fallback to one domain -- killed by
+///    `expr_eval_matches_go_engine`.
+///
+/// TWO SURVIVED, and both are argued rather than fixture-covered:
+///
+///  * DROP the `cmpStringMode != Directly => argTp = ETString` override.
+///    Go writes it as the `if` arm of an `if`/`else if` whose `else` handles
+///    ETJson, and `resolveType4Extremum` only leaves `Directly` when the
+///    aggregate is a string KIND -- which is `ETString || ETJson`. So the
+///    override can differ from the ETJson fold only for a JSON aggregate that
+///    also has a temporal argument, and `mergeFieldType` sends JSON beside
+///    anything else to VARCHAR. CAPTURED, closing the hole: `greatest(j, d)`
+///    over a JSON and a DATE column is `[1]`, the compare-as-date answer, not
+///    a JSON one. The branch is unreachable; the faithful form is kept because
+///    it is Go's, and because Go's ordering DOES decide whether
+///    `unsupportedJSONComparison` warns.
+///  * DROP `gl_signature`'s requirement that EVERY argument be statically
+///    typed, aggregating only the typed ones. No fixture reaches it because
+///    the rewriter types every expression it hands to `eval_by_signature`
+///    today -- but `ScalarFunction::ret_type` is an `Option`, so an inner
+///    builtin the return-type table cannot name would make the aggregate a
+///    claim about a partial argument list. Go always holds every type, so
+///    naming a domain from a subset is a claim Go never makes.
 pub(crate) fn extremum_with_signature(
     vals: &[Datum],
     want: Ordering,
