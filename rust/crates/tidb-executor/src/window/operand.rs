@@ -167,3 +167,61 @@ pub(super) fn coerce_to_type(value: Datum, target: &FieldType) -> Datum {
         Err(_) => value,
     }
 }
+
+/// Go's `WrapCastForAggArgs` does not hand `WrapWithCastAsTime` a scratch
+/// type -- it hands it `a.RetTp`, the RESULT type, and that function writes
+/// into it:
+///
+/// ```go
+/// case types.ETDatetime, types.ETTimestamp, types.ETDuration:
+///     tp.SetDecimal(expr.GetType(ctx.GetEvalCtx()).GetDecimal())
+/// ...
+/// case mysql.TypeDatetime, mysql.TypeTimestamp:
+///     tp.SetFlen(mysql.MaxDatetimeWidthNoFsp)
+///     if tp.GetDecimal() > 0 {
+///         tp.SetFlen(tp.GetFlen() + 1 + tp.GetDecimal())
+///     }
+/// ```
+///
+/// So an argument the wrapper decides to wrap NARROWS the merged result to
+/// its own scale. `desc` over a view of
+/// `lag(datetime6_col, 1, time3_col)` reports `datetime(3)`, not the
+/// `datetime(6)` `InferType4ControlFuncs` returned (captured via `gorun`) --
+/// while the `datetime(6)` operand itself still answers with all six digits,
+/// because it is the argument that was NOT wrapped.
+///
+/// Only a `DATETIME`/`TIMESTAMP` result can be rewritten this way. Go's flen
+/// switch has a `DATE` arm as well, but a `DATE` result means both operands
+/// were dates, and a date operand is never wrapped into a date result.
+pub(super) fn wrap_cast_rewrites_a_temporal_result(
+    result: &mut FieldType,
+    arg_types: &[Option<FieldType>],
+) {
+    if !matches!(
+        result.eval_type(),
+        EvalType::Datetime | EvalType::Timestamp
+    ) {
+        return;
+    }
+    for arg in arg_types.iter().flatten() {
+        // Go's loop skips a NULL-typed argument outright, and
+        // `WrapWithCastAsTime` returns the argument unwrapped -- writing
+        // nothing -- for the same two shortcuts [`coerce_to_domain`] reads.
+        if arg.code() == FieldTypeCode::Null
+            || arg.code() == result.code()
+            || (result.code() == FieldTypeCode::Datetime
+                && matches!(arg.code(), FieldTypeCode::Date | FieldTypeCode::Timestamp))
+        {
+            continue;
+        }
+        result.set_decimal(match arg.eval_type() {
+            EvalType::Int => 0,
+            EvalType::String | EvalType::Real | EvalType::Json => 6,
+            EvalType::Datetime | EvalType::Timestamp | EvalType::Duration => arg.decimal(),
+            EvalType::Decimal => arg.decimal().min(6),
+            EvalType::VectorFloat32 => result.decimal(),
+        });
+        let decimal = result.decimal();
+        result.set_flen(if decimal > 0 { 19 + 1 + decimal } else { 19 });
+    }
+}

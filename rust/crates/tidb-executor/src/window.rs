@@ -1451,7 +1451,7 @@ impl WindowKind {
             }
             field_type
         };
-        Ok(match self {
+        let mut inferred = match self {
             WindowKind::RowNumber | WindowKind::Rank | WindowKind::DenseRank => {
                 let mut field_type = FieldType::new(FieldTypeCode::LongLong);
                 field_type.set_flen(21);
@@ -1569,7 +1569,12 @@ impl WindowKind {
                 }
                 merged
             }
-        })
+        };
+        // Go hands `WrapWithCastAsTime` the RESULT type ITSELF, and that
+        // function MUTATES it -- so wrapping an argument can narrow the
+        // result the merge just produced.
+        operand::wrap_cast_rewrites_a_temporal_result(&mut inferred, arg_types);
+        Ok(inferred)
     }
 }
 

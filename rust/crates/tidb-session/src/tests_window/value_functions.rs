@@ -716,3 +716,52 @@ fn window_lag_still_converts_a_written_constant_default() {
         [["3.00"], ["1.50"]]
     );
 }
+
+/// `WrapCastForAggArgs` is handed `a.RetTp` ITSELF, so an argument it wraps
+/// writes its own scale back into the RESULT -- and the argument it does NOT
+/// wrap keeps a scale the result no longer has.
+///
+/// A `DATETIME(6)` argument beside a `TIME(3)` default merges to
+/// `datetime(6)`, the `TIME(3)` operand is the one that gets wrapped, and:
+///
+/// ```text
+/// select id, lag(t6,1,d3) over (order by id) from w;
+/// RS:1|2026-08-06 01:02:03.456;2|2020-01-01 10:20:30.123456
+/// select id, lag(d3,1,t6) over (order by id) from w;
+/// RS:1|2020-01-01 10:20:30.123456;2|2026-08-06 01:02:03.456
+/// ```
+///
+/// with `desc` over a view of either reporting `datetime(3)`. (Both from
+/// `gorun`.)
+///
+/// Those two lines are what separates "the cast's fsp comes from the SOURCE"
+/// from "it comes from the result": SIX digits and THREE appear in the same
+/// column, so no single result scale can produce them, and the reported
+/// `datetime(3)` is neither operand's merge.
+#[test]
+fn window_lag_lets_a_wrapped_temporal_argument_narrow_the_result() {
+    let mut session = typed_value_session();
+    for sql in [
+        "SELECT LAG(t6,1,d3) OVER (ORDER BY id) FROM w",
+        "SELECT LAG(d3,1,t6) OVER (ORDER BY id) FROM w",
+    ] {
+        let ft = merged_type(&mut session, sql);
+        assert_eq!(ft.code(), tidb_datatype::FieldTypeCode::Datetime);
+        assert_eq!(
+            (ft.flen(), ft.decimal()),
+            (23, 3),
+            "the wrapped TIME(3) operand narrows the merged datetime(6): {sql}"
+        );
+        let rows = row_text(session.run(sql));
+        let (datetime_row, time_row) = if sql.contains("LAG(t6") {
+            (&rows[1], &rows[0])
+        } else {
+            (&rows[0], &rows[1])
+        };
+        assert_eq!(datetime_row, &["2020-01-01 10:20:30.123456"]);
+        assert!(
+            time_row[0].ends_with(" 01:02:03.456"),
+            "the TIME(3) operand keeps its OWN three digits: {time_row:?}"
+        );
+    }
+}
