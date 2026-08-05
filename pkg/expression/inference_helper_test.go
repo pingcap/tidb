@@ -56,7 +56,18 @@ func TestExtractAutoEmbedInfoFromAST(t *testing.T) {
 		OptsInJSON:            `{"plus":0.5}`,
 	}))
 	require.False(t, info.Equal(&AutoEmbedInfo{ModelNameWithProvider: "mock/other"}))
+	require.False(t, info.Equal(nil))
+	require.False(t, (*AutoEmbedInfo)(nil).Equal(info))
 	require.True(t, (*AutoEmbedInfo)(nil).Equal(nil))
+
+	info, err = ExtractAutoEmbedInfoFromAST(parseAutoEmbedExpr(t,
+		`embed_text('mock/json', text, '')`))
+	require.NoError(t, err)
+	require.Equal(t, &AutoEmbedInfo{ModelNameWithProvider: "mock/json"}, info)
+	info, err = ExtractAutoEmbedInfoFromAST(parseAutoEmbedExpr(t,
+		`embed_text('mock/json', text)`))
+	require.NoError(t, err)
+	require.Equal(t, &AutoEmbedInfo{ModelNameWithProvider: "mock/json"}, info)
 
 	tests := []struct {
 		expr string
@@ -64,8 +75,11 @@ func TestExtractAutoEmbedInfoFromAST(t *testing.T) {
 	}{
 		{"vec_dims(vec)", "only generated columns using EMBED_TEXT() are allowed"},
 		{"embed_text('mock/json')", "invalid EMBED_TEXT() usage"},
+		{"embed_text('mock/json', text, '{}', 'extra')", "invalid EMBED_TEXT() usage"},
 		{"embed_text(model, text)", "model name using string constant"},
+		{"embed_text(1, text)", "model name using string constant"},
 		{"embed_text('mock/json', text, opts)", "JSON options using string constant"},
+		{"embed_text('mock/json', text, 1)", "JSON options using string constant"},
 		{"embed_text('mock/json', text, '{invalid}')", "expects options in JSON format"},
 		{"embed_text('mock/json', text, '[]')", "expects options in JSON format"},
 		{"embed_text('mock/json', text, 'null')", "expects options in JSON format"},

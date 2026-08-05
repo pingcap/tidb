@@ -21,11 +21,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/join"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/inference"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -50,7 +53,7 @@ var (
 	InspectionRules        = inspectionRules
 )
 
-func TestFillAutoEmbeddingDatumsSkipsNilRows(t *testing.T) {
+func TestFillAutoEmbeddingDatums(t *testing.T) {
 	sctx := mock.NewContext()
 	tblInfo := &model.TableInfo{
 		ID:    1,
@@ -92,11 +95,95 @@ func TestFillAutoEmbeddingDatumsSkipsNilRows(t *testing.T) {
 		Table:        tbl,
 		GenExprs:     []expression.Expression{nil},
 	}
+	generatedCols := insertValues.getAutoEmbeddingGeneratedCols()
+	require.Len(t, generatedCols, 1)
+	require.Equal(t, 2, generatedCols[0].offset)
+	require.Same(t, tbl.Cols()[2], generatedCols[0].column)
+	require.True(t, insertValues.autoEmbeddingGeneratedColsInited)
+	require.Equal(t, generatedCols, insertValues.getAutoEmbeddingGeneratedCols())
 
 	got, err := insertValues.fillAutoEmbeddingDatumsWithRowCount(context.Background(), rows, 1)
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	require.Nil(t, got[0])
+
+	emptyRows, err := insertValues.fillAutoEmbeddingDatums(context.Background(), nil)
+	require.NoError(t, err)
+	require.Nil(t, emptyRows)
+
+	withoutGeneratedCols := &InsertValues{
+		BaseExecutor: exec.NewBaseExecutor(sctx, nil, 0),
+	}
+	plainRows := [][]types.Datum{types.MakeDatums(1, "plain")}
+	got, err = withoutGeneratedCols.fillAutoEmbeddingDatumsWithRowCount(context.Background(), plainRows, 1)
+	require.NoError(t, err)
+	require.Equal(t, plainRows, got)
+	require.True(t, withoutGeneratedCols.autoEmbeddingGeneratedColsInited)
+
+	if !kerneltype.IsNextGen() {
+		return
+	}
+	originalMode := deploymode.Get()
+	require.NoError(t, deploymode.Set(deploymode.Premium))
+	t.Cleanup(func() {
+		require.NoError(t, deploymode.Set(originalMode))
+	})
+
+	modelExpr := &expression.Constant{
+		Value:   types.NewDatum("mock/json"),
+		RetType: types.NewFieldType(mysql.TypeString),
+	}
+	textExpr := &expression.Column{
+		Index:   1,
+		RetType: types.NewFieldType(mysql.TypeString),
+	}
+	optionsExpr := &expression.Constant{
+		Value:   types.NewDatum(`{"plus":1}`),
+		RetType: types.NewFieldType(mysql.TypeString),
+	}
+	embedExpr, err := expression.NewFunction(
+		sctx,
+		ast.EmbedText,
+		types.NewFieldType(mysql.TypeTiDBVectorFloat32),
+		modelExpr,
+		textExpr,
+		optionsExpr,
+	)
+	require.NoError(t, err)
+	insertValues = &InsertValues{
+		BaseExecutor: exec.NewBaseExecutor(sctx, nil, 0),
+		Table:        tbl,
+		GenExprs:     []expression.Expression{embedExpr},
+		rowCount:     3,
+	}
+	validRows := [][]types.Datum{
+		types.MakeDatums(1, "[1,2,3]", nil),
+		types.MakeDatums(2, nil, nil),
+		nil,
+	}
+	_, err = insertValues.fillAutoEmbeddingDatums(context.Background(), validRows)
+	require.ErrorContains(t, err, "EMBED_TEXT is only supported in starter deployment mode")
+
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+	embedFn := inference.NewEmbedFn()
+	t.Cleanup(inference.SetDefaultEmbedFnForTest(embedFn))
+
+	got, err = insertValues.fillAutoEmbeddingDatums(context.Background(), validRows)
+	require.NoError(t, err)
+	require.Equal(t, "[2,3,4]", got[0][2].GetVectorFloat32().String())
+	require.True(t, got[1][2].IsNull())
+	require.Nil(t, got[2])
+
+	invalidRows := [][]types.Datum{types.MakeDatums(3, "not-json", nil)}
+	_, err = insertValues.fillAutoEmbeddingDatumsWithRowCount(context.Background(), invalidRows, 3)
+	require.Error(t, err)
+
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = insertValues.fillAutoEmbeddingDatumsWithRowCount(canceledCtx, [][]types.Datum{
+		types.MakeDatums(4, "[4,5,6]", nil),
+	}, 4)
+	require.ErrorIs(t, err, context.Canceled)
 }
 
 func TestBuildKvRangesForIndexJoinWithoutCwc(t *testing.T) {
