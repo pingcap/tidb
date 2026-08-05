@@ -657,35 +657,32 @@ fn cast_to_time(
         return Ok(Datum::Null);
     };
     let modes = ctx.date_modes();
-    // The zone is the SESSION's, as Go's `builtinCastStringAsTimeSig` passes
-    // `ctx.TypeCtx()`. It does more than TIMESTAMP's range check: a literal
-    // whose fraction is wider than `fsp` ROUNDS, and Go applies that carry to
-    // the INSTANT in `ctx.Location()`, so a carry landing on a DST transition
-    // moves the wall clock by the offset change too. CAPTURED from real TiDB:
-    // `cast('2011-03-13 01:59:59.9999999' as datetime)` is
-    // `2011-03-13 02:00:00` under `time_zone='UTC'` and `03:00:00` under
-    // `'America/Los_Angeles'` (02:00 does not exist there), and
-    // `cast('2011-11-06 01:59:59.9999999' as datetime)` is `02:00:00` under
-    // UTC and `01:00:00` there (the repeated hour). Hardcoding UTC returned
-    // the UTC answer for every session.
-    let parsed = tidb_datatype::parse_time(
-        &s,
-        kind,
-        i64::from(tidb_datatype::get_fsp(&s)),
-        false,
-        true,
-        modes.allow_invalid_dates,
-        &ctx.time_zone(),
-    );
-    let Ok(parsed) = parsed else {
+    // Go routes each source TYPE to its own parser, not its text: only the
+    // STRING/BYTES signatures (`builtinCastStringAsTimeSig`) parse the wall-
+    // clock text through `ParseTime`. An INT source takes `ParseTimeFromNum`,
+    // and a REAL/DECIMAL source takes `ParseTimeFromFloatString`, both of which
+    // read the value as TiDB's packed `YYYYMMDD[HHMMSS]` NUMBER -- not as a
+    // free-form date string. Funnelling a decimal through the string parser is
+    // what made `cast(121212.1111 as datetime)` absorb `.1111` as a clock
+    // (`2012-12-12 11:11:00`) and `cast(111.1 as datetime)` fail outright,
+    // where TiDB answers `2012-12-12 00:00:00` and `2000-01-11 00:00:00`
+    // (`expression/cast`). The parser choice mirrors `Datum::convert_to_time`,
+    // the faithful write-path port.
+    let parsed = parse_time_by_source(v, &s, kind, modes.allow_invalid_dates, &ctx.time_zone());
+    let Ok(time) = parsed else {
         return Ok(invalid_time_warning(ctx, &s));
     };
-    // Go's SECOND check, deliberately after the parse and independent of the
-    // flags: an all-zero result is rejected by NO_ZERO_DATE alone.
-    if parsed.time.is_zero() && modes.no_zero_date {
+    // Go's SECOND check is the STRING signature's ALONE
+    // (`builtinCastStringAsTimeSig`: `res.IsZero() && HasNoZeroDateMode()`).
+    // The INT/REAL/DECIMAL signatures have no such rejection -- a numeric zero
+    // is the zero time, not NULL (Go `#11203`), so `cast(0 as datetime)` and a
+    // `0`-valued double/decimal column read `0000-00-00 00:00:00`, matching
+    // `expression/cast`. Gating this on the text sources keeps the numeric
+    // sources on Go's own no-rejection path.
+    if matches!(v, Datum::String(_) | Datum::Bytes(_)) && time.is_zero() && modes.no_zero_date {
         return Ok(invalid_time_warning(ctx, &s));
     }
-    let core = parsed.time.core_time();
+    let core = time.core_time();
     let (y, m, d) = (
         i64::from(core.year()),
         u32::from(core.month()),
@@ -704,6 +701,92 @@ fn cast_to_time(
             u32::from(core.second()),
         )
     })
+}
+
+/// Parses one cast operand into a `Time`, choosing the parser by SOURCE TYPE
+/// the way Go's per-signature `builtinCast*AsTimeSig` split does (see
+/// [`cast_to_time`]'s doc for why the text is not enough). The read-path flags
+/// are the string signature's own: `allow_zero_in_date` is UNCONDITIONALLY
+/// `true` (a SELECT reads a zero-in-date back intact), and `allow_invalid_date`
+/// follows `ALLOW_INVALID_DATES`. `Err(())` is Go's parse failure, which the
+/// caller turns into a 1292 warning plus NULL.
+///
+/// The parser routing mirrors `Datum::convert_to_time`, the faithful write-path
+/// port: INT/UINT -> `parse_time_from_num`, DECIMAL -> `parse_time_from_decimal`,
+/// REAL/FLOAT -> `parse_time_from_float64`. A UINT beyond `i64::MAX` cannot be a
+/// packed datetime and is a parse failure. The float/decimal parsers classify
+/// DATE-vs-DATETIME by digit count, so the target `kind` is re-imposed with
+/// `set_kind` -- exactly what `convert_to_time` does after those two parsers.
+fn parse_time_by_source(
+    v: &Datum,
+    text: &str,
+    kind: tidb_datatype::TimeType,
+    allow_invalid: bool,
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Result<tidb_datatype::Time, ()> {
+    match v {
+        Datum::Int(value) => {
+            tidb_datatype::parse_time_from_num(*value, kind, 0, true, allow_invalid, zone)
+                .map(|parsed| parsed.time)
+                .map_err(|_| ())
+        }
+        Datum::UInt(value) => {
+            let signed = i64::try_from(*value).map_err(|_| ())?;
+            tidb_datatype::parse_time_from_num(signed, kind, 0, true, allow_invalid, zone)
+                .map(|parsed| parsed.time)
+                .map_err(|_| ())
+        }
+        Datum::Decimal(value) => {
+            let mut time = tidb_datatype::parse_time_from_decimal(value, true, allow_invalid, zone)
+                .map_err(|_| ())?;
+            time.set_kind(kind);
+            Ok(time)
+        }
+        Datum::Real(value) => real_to_time(*value, kind, allow_invalid, zone),
+        Datum::Float32(value) => real_to_time(*value, kind, allow_invalid, zone),
+        // STRING/BYTES and every other coercible source keep Go's
+        // `builtinCastStringAsTimeSig` path: parse the wall-clock TEXT.
+        //
+        // The zone is the SESSION's, as Go's `builtinCastStringAsTimeSig` passes
+        // `ctx.TypeCtx()`. It does more than TIMESTAMP's range check: a literal
+        // whose fraction is wider than `fsp` ROUNDS, and Go applies that carry to
+        // the INSTANT in `ctx.Location()`, so a carry landing on a DST transition
+        // moves the wall clock by the offset change too. CAPTURED from real TiDB:
+        // `cast('2011-03-13 01:59:59.9999999' as datetime)` is
+        // `2011-03-13 02:00:00` under `time_zone='UTC'` and `03:00:00` under
+        // `'America/Los_Angeles'` (02:00 does not exist there), and
+        // `cast('2011-11-06 01:59:59.9999999' as datetime)` is `02:00:00` under
+        // UTC and `01:00:00` there (the repeated hour). Hardcoding UTC returned
+        // the UTC answer for every session.
+        _ => tidb_datatype::parse_time(
+            text,
+            kind,
+            i64::from(tidb_datatype::get_fsp(text)),
+            false,
+            true,
+            allow_invalid,
+            zone,
+        )
+        .map(|parsed| parsed.time)
+        .map_err(|_| ()),
+    }
+}
+
+/// REAL/FLOAT source shared by `Real` and `Float32`: Go
+/// `builtinCastRealAsTimeSig` reads the float's packed-number form. `0.0` is
+/// the zero time rather than a failure (Go's `#11203` guard); the float parser
+/// already returns the zero time for a `0` integer part, so no special case is
+/// needed here.
+fn real_to_time(
+    value: f64,
+    kind: tidb_datatype::TimeType,
+    allow_invalid: bool,
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Result<tidb_datatype::Time, ()> {
+    let mut time =
+        tidb_datatype::parse_time_from_float64(value, true, allow_invalid, zone).map_err(|_| ())?;
+    time.set_kind(kind);
+    Ok(time)
 }
 
 /// Go `handleInvalidTimeError` on the read path: `ErrWrongValue` (1292)
@@ -890,5 +973,93 @@ mod tests {
                 );
             }
         }
+    }
+
+    fn datetime(v: Datum) -> Datum {
+        cast_to_time(&v, &NoColumns, tidb_datatype::TimeType::DateTime).expect("cast")
+    }
+
+    /// A DECIMAL source is read as TiDB's packed `YYYYMMDD[HHMMSS]` NUMBER
+    /// (Go `builtinCastDecimalAsTimeSig` -> `ParseTimeFromFloatString`), NOT as
+    /// wall-clock text. Funnelling `121212.1111` through the STRING parser made
+    /// it absorb the `.1111` fraction as a clock (`2012-12-12 11:11:00`) where
+    /// TiDB reads the whole-date number `121212` and answers midnight
+    /// (`expression/cast`: `cast(d2 as datetime)` over `121212.1111`).
+    #[test]
+    fn a_decimal_source_reads_the_packed_number_not_the_wall_clock_text() {
+        assert_eq!(
+            datetime(Datum::Decimal(Decimal::from_literal("121212.1111"))),
+            Datum::new_string("2012-12-12 00:00:00".to_string()),
+        );
+        // A number shorter than a full date is zero-padded YYMMDD, so `111`
+        // is `00-01-11` -> `2000-01-11`; the string parser rejected it as NULL.
+        assert_eq!(
+            datetime(Datum::Decimal(Decimal::from_literal("111.1"))),
+            Datum::new_string("2000-01-11 00:00:00".to_string()),
+        );
+        // A month of 13 is still an invalid date -> NULL, unchanged.
+        assert_eq!(
+            datetime(Datum::Decimal(Decimal::from_literal("1311.1"))),
+            Datum::Null,
+        );
+    }
+
+    /// A REAL/DOUBLE source takes the same packed-number reading
+    /// (Go `builtinCastRealAsTimeSig`), so `1122.1` is `00-11-22`.
+    #[test]
+    fn a_real_source_reads_the_packed_number() {
+        assert_eq!(
+            datetime(Datum::Real(1122.1)),
+            Datum::new_string("2000-11-22 00:00:00".to_string()),
+        );
+        assert_eq!(
+            datetime(Datum::Float32(1122.1)),
+            Datum::new_string("2000-11-22 00:00:00".to_string()),
+        );
+    }
+
+    /// An INTEGER source is `ParseTimeFromNum` (Go `builtinCastIntAsTimeSig`):
+    /// `20170118` is the packed date, no fractional text to misread.
+    #[test]
+    fn an_integer_source_reads_the_packed_number() {
+        assert_eq!(
+            datetime(Datum::Int(20_170_118)),
+            Datum::new_string("2017-01-18 00:00:00".to_string()),
+        );
+    }
+
+    /// Go's numeric cast signatures have NO `NO_ZERO_DATE` rejection (the
+    /// `#11203` guard: a zero number is the zero time, never NULL), unlike the
+    /// STRING signature. Under the default SQL mode -- which DOES carry
+    /// `NO_ZERO_DATE` ([`NoColumns`] answers `TIDB_DEFAULT_SQL_MODE`) -- a zero
+    /// INT/REAL/DECIMAL therefore reads `0000-00-00 00:00:00`, matching
+    /// `expression/cast`'s `(0, 0, 0)` row, while a zero-date STRING is still
+    /// rejected to NULL.
+    #[test]
+    fn a_numeric_zero_is_the_zero_time_not_null() {
+        let zero = Datum::new_string("0000-00-00 00:00:00".to_string());
+        assert_eq!(datetime(Datum::Int(0)), zero, "int 0");
+        assert_eq!(datetime(Datum::UInt(0)), zero, "uint 0");
+        assert_eq!(datetime(Datum::Real(0.0)), zero, "real 0");
+        assert_eq!(
+            datetime(Datum::Decimal(Decimal::from_literal("0"))),
+            zero,
+            "decimal 0"
+        );
+        // The STRING signature keeps Go's zero-date rejection under NO_ZERO_DATE.
+        assert_eq!(
+            datetime(Datum::new_string("0000-00-00 00:00:00".to_string())),
+            Datum::Null,
+            "a zero-date STRING is still rejected"
+        );
+    }
+
+    /// The STRING path is unchanged: a wall-clock literal still parses as text.
+    #[test]
+    fn a_string_source_is_unchanged() {
+        assert_eq!(
+            datetime(Datum::new_string("2017-01-18 12:34:56".to_string())),
+            Datum::new_string("2017-01-18 12:34:56".to_string()),
+        );
     }
 }
