@@ -212,7 +212,7 @@ func MergeOverlappingFiles(
 	return err
 }
 
-func getTargetDataFileCount(fileCount, concurrency int) int {
+func getTargetFileCount(fileCount, concurrency int) int {
 	if fileCount == 0 {
 		return 0
 	}
@@ -223,18 +223,20 @@ func getTargetDataFileCount(fileCount, concurrency int) int {
 	return shares
 }
 
-func getEvenlyDividedTargetDataFileCount(total, groups, concurrency int) int {
-	quotient := total / groups
-	remainder := total % groups
-	return remainder*getTargetDataFileCount(quotient+1, concurrency) +
-		(groups-remainder)*getTargetDataFileCount(quotient, concurrency)
+// getGroupedTargetFileCount returns the total target file count when the input
+// files are divided as evenly as possible among groupCount groups.
+func getGroupedTargetFileCount(total, groupCount, concurrency int) int {
+	quotient := total / groupCount
+	remainder := total % groupCount
+	return remainder*getTargetFileCount(quotient+1, concurrency) +
+		(groupCount-remainder)*getTargetFileCount(quotient, concurrency)
 }
 
 // split input data files into multiple shares evenly, with the max number files
 // in each share MaxMergingFilesPerThread, if there are not enough files, merge at
 // least 2 files in one batch.
 func splitDataFiles(paths []string, concurrency int) [][]string {
-	shares := getTargetDataFileCount(len(paths), concurrency)
+	shares := getTargetFileCount(len(paths), concurrency)
 	if shares == 0 {
 		return nil
 	}

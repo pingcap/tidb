@@ -338,7 +338,7 @@ func DivideMergeSortDataFiles(files []string, nodeCnt, concurrency int) ([][]str
 		groups = append(groups, files[:maxFiles])
 		files = files[maxFiles:]
 	}
-	targetCnt := fullGroupCnt * getTargetDataFileCount(maxFiles, concurrency)
+	targetCnt := fullGroupCnt * getTargetFileCount(maxFiles, concurrency)
 	targetLimit := int(simplesst.GetAdjustedMergeSortOverlapThreshold(concurrency))
 	remaining := fileCnt - fullGroupCnt*maxFiles
 	if remaining == 0 {
@@ -356,7 +356,7 @@ func DivideMergeSortDataFiles(files []string, nodeCnt, concurrency int) ([][]str
 	groupCnt := 0
 	// Prefer more groups for parallelism while staying within the ingest limit.
 	for candidateCnt := maxGroups; candidateCnt >= minGroups; candidateCnt-- {
-		candidateTargetCnt := targetCnt + getEvenlyDividedTargetDataFileCount(remaining, candidateCnt, concurrency)
+		candidateTargetCnt := targetCnt + getGroupedTargetFileCount(remaining, candidateCnt, concurrency)
 		if candidateTargetCnt <= targetLimit {
 			groupCnt = candidateCnt
 			break
