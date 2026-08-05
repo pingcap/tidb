@@ -1242,7 +1242,21 @@ fn extremum_return_type(args: &[Expression]) -> Option<FieldType> {
         .iter()
         .all(|ft| ft.eval_type() == tidb_datatype::EvalType::String)
     {
-        if typed.iter().any(|ft| ft.code() != first.code()) {
+        // Go's ETString return type is `newReturnFieldTypeForBaseBuiltinFunc`'s
+        // `mysql.TypeVarString` (`builtin.go`), never an argument's own code.
+        // Keeping the argument's code is a survivable approximation for a
+        // CHAR/VARCHAR/BLOB argument, whose width and collation it also
+        // carries -- but an ENUM or SET column type declares a NAME/VALUE
+        // cell, and `builtinGreatestStringSig` writes a plain string into it.
+        // `GREATEST(e, e)` over one `enum('{}','[1]','x')` is TiDB's `{}`; a
+        // declared ENUM result made this tier read that `{}` back as an
+        // element name missing its 8-byte ordinal prefix.
+        if typed.iter().any(|ft| ft.code() != first.code())
+            || matches!(
+                first.code(),
+                FieldTypeCode::Enum | FieldTypeCode::Set | FieldTypeCode::Json
+            )
+        {
             let mut merged = FieldType::new(FieldTypeCode::VarString);
             merged.set_decimal(tidb_datatype::UNSPECIFIED_LENGTH);
             return Some(merged);
