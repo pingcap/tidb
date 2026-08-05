@@ -112,3 +112,62 @@ pub(super) fn json_object(
     }
     Ok(Datum::new_string(format_json(&Json::Object(object))))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tidb_datatype::{FieldTypeCode, FieldTypeFlags};
+
+    fn boolean_int() -> FieldType {
+        let mut ft = FieldType::new(FieldTypeCode::LongLong);
+        ft.set_flen(1);
+        ft.add_flags(FieldTypeFlags::IS_BOOLEAN);
+        ft
+    }
+
+    /// A `booleanFunctions` result (here the `IS_BOOLEAN` flag stands in for the
+    /// static type of a `1<2`/`IN`/`IS NULL`/`IS_IPV4` argument) becomes a JSON
+    /// `true`/`false` literal, exactly as `builtinCastIntAsJSONSig.evalJSON`
+    /// does. A plain integer -- the `1+1`, `IS_UUID`, or untyped row/AST case
+    /// Go leaves OUT of the boolean map -- keeps its numeric rendering, so the
+    /// fix cannot silently turn every integer into a boolean.
+    #[test]
+    fn a_boolean_flagged_int_is_a_json_literal_and_a_plain_int_is_a_number() {
+        let one = Datum::Int(1);
+        let zero = Datum::Int(0);
+        assert_eq!(
+            json_array(
+                &[one.clone(), zero.clone()],
+                &[Some(boolean_int()), Some(boolean_int())],
+            )
+            .unwrap(),
+            Datum::new_string("[true, false]".to_owned()),
+        );
+        // Same values, no boolean flag: the numeric rendering is unchanged.
+        assert_eq!(
+            json_array(
+                &[one.clone(), zero.clone()],
+                &[
+                    Some(FieldType::new(FieldTypeCode::LongLong)),
+                    Some(FieldType::new(FieldTypeCode::LongLong)),
+                ],
+            )
+            .unwrap(),
+            Datum::new_string("[1, 0]".to_owned()),
+        );
+        // The untyped row/AST path (no field type) also keeps the number.
+        assert_eq!(
+            json_array(&[one], &[None]).unwrap(),
+            Datum::new_string("[1]".to_owned()),
+        );
+        // JSON_OBJECT threads the same value coercion for its values.
+        assert_eq!(
+            json_object(
+                &[Datum::new_string("k".to_owned()), zero],
+                &[None, Some(boolean_int())],
+            )
+            .unwrap(),
+            Datum::new_string("{\"k\": false}".to_owned()),
+        );
+    }
+}
