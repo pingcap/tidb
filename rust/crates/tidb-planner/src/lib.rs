@@ -22,6 +22,7 @@ pub mod access_path;
 pub mod aggregation_descriptor;
 pub mod base_traits;
 pub mod by_item;
+pub mod candidate_cost;
 pub mod cardinality;
 pub mod column_length;
 pub mod column_pruning;
