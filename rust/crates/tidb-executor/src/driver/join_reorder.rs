@@ -1290,3 +1290,188 @@ fn rebuild_node(plan: &Plan, leaves: &[Leaf<'_>], edges: &[Edge<'_>]) -> Option<
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// The row source
+// ---------------------------------------------------------------------------
+
+/// Every relation of one `FROM`'s join group with the row count
+/// [`derive_stats`] derives for it, keyed by the name a column reference
+/// reaches it by.
+///
+/// # Why this exists beside the DP solver
+///
+/// The DP above builds exactly these models, costs them, and throws them away.
+/// A join-strategy chooser needs the same numbers
+/// ([`crate::driver::join_search`]), and the ONE other place this tier derives
+/// a per-node row count is [`crate::plan_trace::PlanTrace`], which the driver
+/// constructs only for `EXPLAIN`. Reading rows off the trace would make the
+/// STRATEGY depend on whether the statement is being explained; this source
+/// reads the statement, the catalog and the statistics and nothing else, so it
+/// answers identically either way. That equality is a test, not a claim:
+/// `crate::tests_join_search::the_choice_is_the_same_under_explain_and_bare_execution`.
+///
+/// It is built from the join group as WRITTEN, before any reorder, because the
+/// leaves and their pushed-down predicates are the same set either way and
+/// only the tree over them moves.
+pub(crate) struct RowSource {
+    leaves: Vec<RowLeaf>,
+    /// `(leaf, column)` pairs, as [`Edge`] holds them.
+    edges: Vec<((usize, usize), (usize, usize))>,
+    context: DeriveStatsContext,
+}
+
+/// One relation of the group: how it is named, what it models, and the
+/// [`ColumnId`] of each of its output columns.
+struct RowLeaf {
+    visible: String,
+    model: LogicalNode,
+    ids: Vec<ColumnId>,
+}
+
+/// Builds the [`RowSource`] of one `FROM`, or `None` for a group whose shape
+/// [`emit`] cannot model.
+///
+/// The inputs are exactly [`reorder`]'s, and the work up to the models is the
+/// same work; only the DP is not run.
+pub(crate) fn row_source(
+    join: &Join,
+    where_clause: Option<&Expr>,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Option<RowSource> {
+    let mut ids = Ids::default();
+    let mut leaves = Vec::new();
+    let mut on_conds = Vec::new();
+    if !collect(
+        join,
+        catalog,
+        current_db,
+        &mut ids,
+        &mut leaves,
+        &mut on_conds,
+    ) {
+        return None;
+    }
+    let mut conjuncts: Vec<&Expr> = on_conds;
+    if let Some(where_clause) = where_clause {
+        crate::plan_trace::collect_and(where_clause, &mut conjuncts);
+    }
+    let mut edges = Vec::new();
+    let mut filters: Vec<Vec<Expr>> = vec![Vec::new(); leaves.len()];
+    for conjunct in &conjuncts {
+        match classify(conjunct, &leaves)? {
+            Classified::Edge(edge) => edges.push((edge.left, edge.right)),
+            Classified::Single(leaf) => filters[leaf].push((*conjunct).clone()),
+            Classified::Other(_) | Classified::Foreign => {}
+        }
+    }
+    let mut demands: Vec<Demand> = (0..leaves.len()).map(|_| Demand::default()).collect();
+    for (left, right) in &edges {
+        demands[left.0].not_null.insert(left.1);
+        demands[right.0].not_null.insert(right.1);
+    }
+    for (demand, filters) in demands.iter_mut().zip(filters) {
+        demand.filters = filters;
+    }
+    let rows: Option<Vec<RowLeaf>> = leaves
+        .iter()
+        .zip(&demands)
+        .map(|(leaf, demand)| {
+            Some(RowLeaf {
+                visible: leaf.visible.clone(),
+                model: emit(&leaf.rel, demand)?,
+                ids: (0..leaf.columns.len())
+                    .map(|column| column_id(&leaf.rel, column))
+                    .collect::<Option<Vec<_>>>()?,
+            })
+        })
+        .collect();
+    Some(RowSource {
+        leaves: rows?,
+        edges,
+        context: DeriveStatsContext::with_join_reorder_threshold(ctx.join_reorder_threshold()),
+    })
+}
+
+impl RowSource {
+    /// The rows of a joined pair, and of each side, in one walk: the three
+    /// counts a join-strategy comparison reads.
+    pub(crate) fn rows_of_join(&self, left: &[String], right: &[String]) -> Option<JoinRows> {
+        let (left_rows, left_model, left_at) = self.model_of(left)?;
+        let (right_rows, right_model, right_at) = self.model_of(right)?;
+        let (left_keys, right_keys) = self.keys_between(&left_at, &right_at)?;
+        let model = LogicalNode::Join {
+            left: Box::new(left_model),
+            right: Box::new(right_model),
+            left_keys,
+            right_keys,
+        };
+        Some(JoinRows {
+            left: left_rows,
+            right: right_rows,
+            joined: derive_stats(&model, &self.context).stats.row_count,
+        })
+    }
+
+    /// The model of one side, its row count, and which leaves it holds.
+    fn model_of(&self, names: &[String]) -> Option<(f64, LogicalNode, Vec<usize>)> {
+        let at: Option<Vec<usize>> = names
+            .iter()
+            .map(|name| self.leaves.iter().position(|leaf| leaf.visible == *name))
+            .collect();
+        let at = at?;
+        let (&first, rest) = at.split_first()?;
+        let mut model = self.leaves[first].model.clone();
+        let mut joined = vec![first];
+        for &right in rest {
+            let (left_keys, right_keys) = self.keys_between(&joined, &[right])?;
+            model = LogicalNode::Join {
+                left: Box::new(model),
+                right: Box::new(self.leaves[right].model.clone()),
+                left_keys,
+                right_keys,
+            };
+            joined.push(right);
+        }
+        let rows = derive_stats(&model, &self.context).stats.row_count;
+        Some((rows, model, at))
+    }
+
+    /// The equality keys connecting two disjoint leaf sets, as `derive_stats`
+    /// keys a [`LogicalNode::Join`] -- the same walk [`build`] does.
+    fn keys_between(
+        &self,
+        left: &[usize],
+        right: &[usize],
+    ) -> Option<(Vec<ColumnId>, Vec<ColumnId>)> {
+        let mut left_keys = Vec::new();
+        let mut right_keys = Vec::new();
+        for (a, b) in &self.edges {
+            let pair = if left.contains(&a.0) && right.contains(&b.0) {
+                Some((*a, *b))
+            } else if left.contains(&b.0) && right.contains(&a.0) {
+                Some((*b, *a))
+            } else {
+                None
+            };
+            if let Some((near, far)) = pair {
+                left_keys.push(*self.leaves[near.0].ids.get(near.1)?);
+                right_keys.push(*self.leaves[far.0].ids.get(far.1)?);
+            }
+        }
+        Some((left_keys, right_keys))
+    }
+}
+
+/// The three row counts one join site's comparison reads.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct JoinRows {
+    /// The left child's `StatsInfo().RowCount`.
+    pub(crate) left: f64,
+    /// The right child's.
+    pub(crate) right: f64,
+    /// The join's own.
+    pub(crate) joined: f64,
+}

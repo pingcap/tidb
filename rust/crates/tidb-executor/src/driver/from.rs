@@ -1168,6 +1168,26 @@ pub(crate) fn build_join(
         required,
         demand.offered,
     );
+    // The same walk's other answer: the orders each side's output already
+    // carries, which is Go's `p.LeftProperties` / `p.RightProperties` and the
+    // input the join enumeration reads to decide whether a merge join is a
+    // candidate at all (`driver::join_search`). Computed here for the same
+    // reason the merge decision is -- before the children exist.
+    let search_orders = join.right.as_ref().and_then(|right| {
+        let left = crate::driver::merge_decision::possible_properties(
+            &join.left,
+            catalog,
+            current_db,
+            demand.offered,
+        )?;
+        let right = crate::driver::merge_decision::possible_properties(
+            right,
+            catalog,
+            current_db,
+            demand.offered,
+        )?;
+        Some((left.orders, right.orders))
+    });
     let (left_required, right_required) = match &merge {
         // `tryToGetChildReqProp`: each child is required to produce ITS OWN
         // join keys' order, in the direction the parent asked for.
@@ -1477,7 +1497,28 @@ pub(crate) fn build_join(
     // It is asked only where the merge decision declined, and it refuses a
     // coalesced join for the same reason the merge one is dropped there --
     // that scope addresses columns by row offset, not by name.
-    let index_join = (!coalescing)
+    //
+    // WHICH strategy this site may use is asked of Go's own enumeration --
+    // `exhaustPhysicalPlans4LogicalJoin` under the property this join was
+    // required to produce -- and not of the structural rule underneath. See
+    // `driver::join_search`.
+    let chosen = crate::driver::join_search::choose(&crate::driver::join_search::SearchInput {
+        join,
+        join_type: match kind {
+            JoinKind::Inner => tidb_planner::find_best_task::LogicalJoinType::Inner,
+            JoinKind::Left => tidb_planner::find_best_task::LogicalJoinType::LeftOuter,
+            JoinKind::Right => tidb_planner::find_best_task::LogicalJoinType::RightOuter,
+        },
+        keys: &split.keys,
+        left_width,
+        width: scope.width(),
+        orders: search_orders
+            .as_ref()
+            .map(|(left, right)| (left.as_slice(), right.as_slice())),
+        required,
+        rows: demand.rows,
+    });
+    let index_join = (!coalescing && chosen == crate::driver::join_search::Chosen::Index)
         .then(|| {
             let (left_side, right_side) = crate::driver::index_join_decision::join_sides(
                 join,

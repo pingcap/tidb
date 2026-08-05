@@ -418,16 +418,15 @@ fn one_key_repeated_across_a_batch_is_probed_once() {
     );
 }
 
-/// The decision's own gate, and the switch above it.
+/// The decision itself: WHICH side, WHICH object, WHICH range text.
 ///
-/// `index_join_decision` is what `driver::from::build_join` calls, and it
-/// answers `None` for everything while
-/// [`crate::driver::index_join_decision::CHOOSER_IS_FAITHFUL`] is `false`.
-/// `index_join_candidate` is the decision underneath it, which this pins so
-/// the machinery cannot rot while the switch is off.
+/// `index_join_decision` is what `driver::from::build_join` calls, and it is
+/// reached only where [`crate::driver::join_search`] answered `Index` -- which
+/// over the whole replay is nowhere, so everything below is pinned by these
+/// tests alone. See `crate::tests_join_search` for the census that says so.
 mod decision {
     use super::{column, inner_table, long};
-    use crate::driver::index_join_decision::{index_join_candidate, index_join_decision, JoinSide};
+    use crate::driver::index_join_decision::{index_join_decision, JoinSide};
     use crate::hash_join::EquiKey;
     use crate::join::JoinKind;
     use crate::kv_table::KvTable;
@@ -475,29 +474,12 @@ mod decision {
         }
     }
 
-    /// The switch is what `build_join` sees, and it is off: the SAME
-    /// arguments the candidate below accepts are refused here. Turning
-    /// `CHOOSER_IS_FAITHFUL` on without the cost comparison named in its doc
-    /// turns this test red, which is the point of stating it twice.
-    #[test]
-    fn the_live_chooser_refuses_everything_while_the_switch_is_off() {
-        let table = inner_table(&[(1, 1)]);
-        assert!(index_join_decision(
-            JoinKind::Inner,
-            &key(),
-            &outer_side(),
-            &inner_side(&table),
-            false,
-        )
-        .is_none());
-    }
-
-    /// The candidate under the switch: an index on the join key, with Go's
+    /// An index on the join key, with Go's
     /// `eq(<index column>, <outer key>)` range text.
     #[test]
     fn an_index_on_the_join_key_is_a_candidate_with_gos_range_text() {
         let table = inner_table(&[(1, 1)]);
-        let decision = index_join_candidate(
+        let decision = index_join_decision(
             JoinKind::Inner,
             &key(),
             &outer_side(),
@@ -523,7 +505,7 @@ mod decision {
     #[test]
     fn an_aliased_inner_side_keeps_the_tables_own_name_inside_the_range() {
         let table = inner_table(&[(1, 1)]);
-        let decision = index_join_candidate(
+        let decision = index_join_decision(
             JoinKind::Inner,
             &key(),
             &outer_side(),
@@ -546,7 +528,7 @@ mod decision {
     #[test]
     fn a_chosen_merge_join_refuses_the_candidate() {
         let table = inner_table(&[(1, 1)]);
-        assert!(index_join_candidate(
+        assert!(index_join_decision(
             JoinKind::Inner,
             &key(),
             &outer_side(),
@@ -561,7 +543,7 @@ mod decision {
     fn an_outer_join_never_looks_up_the_preserved_side() {
         let table = inner_table(&[(1, 1)]);
         // The table is on the LEFT, which a LEFT join preserves.
-        assert!(index_join_candidate(
+        assert!(index_join_decision(
             JoinKind::Left,
             &key(),
             &inner_side(&table),
@@ -571,17 +553,28 @@ mod decision {
         .is_none());
     }
 
-    /// A named outer key is refused: every recorded plan whose outer key is a
-    /// column TiDB can name is a merge or a hash join.
+    /// WHAT THE OUTER KEY'S NAME NO LONGER DECIDES.
+    ///
+    /// This decision used to refuse a NAMED outer key -- a proxy for "no
+    /// index can pre-sort this key, so Go is choosing between an index join
+    /// and a hash join". The proxy is gone: whether the index strategy is
+    /// admissible at all is `driver::join_search`'s question, asked of Go's
+    /// own enumeration under the property the site was required to produce.
+    /// This decision answers only WHICH side, WHICH object and WHICH ranges,
+    /// and the name is now irrelevant to it.
     #[test]
-    fn a_named_outer_key_is_refused() {
+    fn a_named_outer_key_is_no_longer_this_decisions_business() {
         let table = inner_table(&[(1, 1)]);
         let mut outer = outer_side();
         outer.names = vec!["db.o.a".to_owned(), "db.o.b".to_owned()];
+        let decision =
+            index_join_decision(JoinKind::Inner, &key(), &outer, &inner_side(&table), false)
+                .expect("the side is still a base table with an index on the key");
         assert!(
-            index_join_candidate(JoinKind::Inner, &key(), &outer, &inner_side(&table), false)
-                .is_none()
+            !decision.lookup_is_left,
+            "the inner side is the RIGHT one here"
         );
+        assert_eq!(decision.range_info, "[eq(db.t.b, db.o.b)]");
     }
 
     /// An unsigned indexed column is refused against a signed probe: the
@@ -609,7 +602,7 @@ mod decision {
         table
             .insert_row(&[Datum::Int(1), Datum::UInt(1)], &tidb_expr::NoColumns)
             .unwrap();
-        assert!(index_join_candidate(
+        assert!(index_join_decision(
             JoinKind::Inner,
             &key(),
             &outer_side(),

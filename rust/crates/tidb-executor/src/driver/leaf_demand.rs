@@ -103,6 +103,12 @@ pub(crate) struct FromDemand<'a> {
     /// the caller has no statement to compute them from -- which every leaf
     /// reads as "every column", the answer it gave before this existed.
     pub(crate) columns: Option<&'a LeafDemand>,
+    /// Every relation of this `FROM` with the row count `derive_stats` gives
+    /// it -- the estimate owner the join-strategy search prices its
+    /// candidates with. `None` is a `FROM` whose shape
+    /// [`crate::driver::join_reorder::row_source`] declines, which the search
+    /// reads as "this site cannot be priced" and refuses.
+    pub(crate) rows: Option<&'a crate::driver::join_reorder::RowSource>,
 }
 
 impl FromDemand<'_> {
@@ -111,6 +117,7 @@ impl FromDemand<'_> {
         FromDemand {
             offered: &[],
             columns: None,
+            rows: None,
         }
     }
 }

@@ -195,9 +195,10 @@ mod grouping;
 mod having;
 pub(crate) mod index_join_decision;
 pub mod infoschema_meta;
-mod join_reorder;
+pub(crate) mod join_reorder;
+pub(crate) mod join_search;
 pub(crate) mod leaf_demand;
-mod merge_decision;
+pub(crate) mod merge_decision;
 mod multi_dml;
 mod only_full_group_by;
 mod outer_join_elimination;
@@ -516,9 +517,23 @@ pub(crate) fn run_select_traced(
             let wanted = access::single_kv_table(&select.from, catalog, current_db)
                 .is_none()
                 .then(|| leaf_demand::LeafDemand::of_select(select));
+            // The estimate owner: every relation of this `FROM` with the row
+            // count `derive_stats` derives for it, read off the statement,
+            // the catalog and the statistics. It is built here, beside the
+            // reorder that costs the same models, because both need the join
+            // group as WRITTEN -- and NOT off `PlanTrace`, which exists only
+            // under `EXPLAIN`. See `driver::join_search`.
+            let row_source = join_reorder::row_source(
+                join,
+                select.where_clause.as_ref(),
+                catalog,
+                current_db,
+                ctx,
+            );
             let demand = leaf_demand::FromDemand {
                 offered: &offered,
                 columns: wanted.as_ref(),
+                rows: row_source.as_ref(),
             };
             // Go's `join_reorder` rule, which runs on the logical plan
             // between predicate pushdown and physical planning. It only ever

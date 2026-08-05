@@ -97,6 +97,8 @@ pub mod table_access;
 pub mod table_dual;
 #[cfg(test)]
 mod tests_index_join;
+#[cfg(test)]
+mod tests_join_search;
 pub mod topn;
 pub mod topn_spill;
 pub mod view;
