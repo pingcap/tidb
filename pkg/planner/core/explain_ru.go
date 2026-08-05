@@ -100,6 +100,8 @@ const (
 	readBillingDemoReasonIncompleteCopRuntimeRows     = "incomplete_cop_runtime_rows"
 	readBillingDemoReasonDependentCopInputUnavailable = "dependent_cop_input_unavailable"
 	readBillingDemoReasonInvalidOrderingWork          = "invalid_ordering_work"
+	readBillingDemoReasonInvalidShuffleStructure      = "invalid_shuffle_structure"
+	readBillingDemoReasonInvalidShuffleWork           = "invalid_shuffle_work"
 	readBillingDemoReasonMissingOrderingProjection    = "missing_ordering_projection"
 	readBillingDemoReasonMissingExpressionCount       = "missing_expression_count"
 	readBillingDemoReasonInvalidTopNBound             = "invalid_topn_bound"
@@ -130,6 +132,7 @@ const (
 	readBillingDemoOpClassHashJoin                    = "join_hash"
 	readBillingDemoOpClassMergeJoin                   = "join_merge"
 	readBillingDemoOpClassLookupJoin                  = "join_lookup"
+	readBillingDemoOpClassShuffle                     = "shuffle"
 	readBillingDemoOpClassReaderReceive               = "reader_receive"
 	readBillingDemoOpClassLookupReader                = "lookup_reader"
 	readBillingDemoOpClassOverlayReader               = "overlay_reader"
@@ -147,6 +150,8 @@ const (
 	readBillingDemoOperatorTxnPrewrite                = "txn_prewrite"
 	readBillingDemoOperatorTxnWrite                   = "txn_write"
 	readBillingDemoOperatorParserOptimizer            = "parser_optimizer"
+	readBillingDemoOperatorHashShuffle                = "hash_shuffle"
+	readBillingDemoOperatorRangeShuffle               = "range_shuffle"
 	readBillingDemoUnitFixedEvents                    = "fixed_events"
 	readBillingDemoUnitInputRows                      = "input_rows"
 	readBillingDemoUnitInputBytes                     = "input_bytes"
@@ -189,6 +194,7 @@ const (
 	readBillingDemoInputSourceSnapshotRuntimeStats    = "snapshot_runtime_stats"
 	readBillingDemoInputSourcePhysicalPlan            = "physical_plan"
 	readBillingDemoInputSourceHashJoinRuntime         = "hash_join_runtime_stats"
+	readBillingDemoInputSourceShuffleDataSourceRows   = "shuffle_data_source_act_rows"
 	readBillingDemoInputSideAll                       = "all"
 	readBillingDemoInputSideBuild                     = "build"
 	readBillingDemoInputSideProbe                     = "probe"
@@ -327,6 +333,7 @@ type readBillingDemoIndexLookupSkipCandidate struct {
 type readBillingDemoExecutionMask struct {
 	skippedNodes       map[*FlatOperator]struct{}
 	skippedInnerByJoin map[*FlatOperator]*FlatOperator
+	planIDOccurrences  map[int]int
 }
 
 func (m *readBillingDemoExecutionMask) isSkipped(node *FlatOperator) bool {
@@ -816,6 +823,7 @@ func newReadBillingDemoExecutionMask() *readBillingDemoExecutionMask {
 	return &readBillingDemoExecutionMask{
 		skippedNodes:       make(map[*FlatOperator]struct{}),
 		skippedInnerByJoin: make(map[*FlatOperator]*FlatOperator),
+		planIDOccurrences:  make(map[int]int),
 	}
 }
 
@@ -1321,6 +1329,9 @@ func buildReadBillingDemoExecutionMask(
 			})
 		}
 	}
+	for planID, occurrences := range ownership {
+		emptyMask.planIDOccurrences[planID] = len(occurrences)
+	}
 
 	joinCandidates := make([]readBillingDemoSkipCandidate, 0)
 	indexLookupCandidates := make([]readBillingDemoIndexLookupSkipCandidate, 0)
@@ -1347,6 +1358,7 @@ func buildReadBillingDemoExecutionMask(
 	acceptedJoins := readBillingDemoRemoveConflictingSkipCandidates(eligibleJoins)
 
 	mask := newReadBillingDemoExecutionMask()
+	mask.planIDOccurrences = emptyMask.planIDOccurrences
 	readBillingDemoMaskUnexecutedCTEParts(flat, runtimeStats, mask)
 	proofs := make([]readBillingDemoPlanOccurrence, 0, len(acceptedJoins)*2+len(indexLookupCandidates)*2)
 	for _, candidate := range acceptedJoins {
@@ -2538,7 +2550,8 @@ func readBillingDemoOperatorBillable(op readBillingDemoOperatorResult) bool {
 	case readBillingDemoOpClassFilter, readBillingDemoOpClassProjection, readBillingDemoOpClassLimit,
 		readBillingDemoOpClassTopN, readBillingDemoOpClassSort, readBillingDemoOpClassWindow,
 		readBillingDemoOpClassHashAgg, readBillingDemoOpClassStreamAgg, readBillingDemoOpClassHashJoin,
-		readBillingDemoOpClassMergeJoin, readBillingDemoOpClassLookupJoin, readBillingDemoOpClassRangeScan,
+		readBillingDemoOpClassMergeJoin, readBillingDemoOpClassLookupJoin, readBillingDemoOpClassShuffle,
+		readBillingDemoOpClassRangeScan,
 		readBillingDemoOpClassReaderTransport, readBillingDemoOpClassOverlayReader,
 		readBillingDemoOpClassKVMutation, readBillingDemoOpClassKVWrite, readBillingDemoOpClassSQLFrontend:
 		return true
@@ -2598,6 +2611,22 @@ func readBillingDemoClassifyOperator(op *FlatOperator) (readBillingDemoOperatorR
 		return readBillingDemoOperatorResult{site: readBillingDemoSiteTiDB, opClass: readBillingDemoOpClassWrapper, operatorKind: operatorKind}, true, ""
 	case plancodec.TypeExchangeReceiver, plancodec.TypeExchangeSender:
 		return readBillingDemoOperatorResult{site: readBillingDemoSiteTiDB, opClass: readBillingDemoOpClassReaderReceive, operatorKind: operatorKind}, false, readBillingDemoReasonUnsupportedMPP
+	case plancodec.TypeShuffle:
+		shuffle, ok := op.Origin.(*physicalop.PhysicalShuffle)
+		if !ok {
+			return readBillingDemoOperatorResult{site: readBillingDemoSiteTiDB, opClass: readBillingDemoOpClassShuffle, operatorKind: operatorKind}, false, readBillingDemoReasonUnsupportedOperator
+		}
+		switch shuffle.SplitterType {
+		case physicalop.PartitionHashSplitterType:
+			operatorKind = readBillingDemoOperatorHashShuffle
+		case physicalop.PartitionRangeSplitterType:
+			operatorKind = readBillingDemoOperatorRangeShuffle
+		default:
+			return readBillingDemoOperatorResult{site: readBillingDemoSiteTiDB, opClass: readBillingDemoOpClassShuffle, operatorKind: operatorKind}, false, readBillingDemoReasonUnsupportedOperator
+		}
+		return readBillingDemoOperatorResult{site: readBillingDemoSiteTiDB, opClass: readBillingDemoOpClassShuffle, operatorKind: operatorKind}, true, ""
+	case plancodec.TypeShuffleReceiver:
+		return readBillingDemoOperatorResult{site: readBillingDemoSiteTiDB, opClass: readBillingDemoOpClassWrapper, operatorKind: operatorKind}, true, ""
 	case plancodec.TypeIndexMerge:
 		return readBillingDemoOperatorResult{site: readBillingDemoSiteTiDB, opClass: readBillingDemoOpClassLookupReader, operatorKind: operatorKind}, true, ""
 	case plancodec.TypeLock:
@@ -2783,6 +2812,9 @@ func readBillingDemoRootUnits(
 	if !validMask {
 		return nil, readBillingDemoReasonUnsupportedCopStructure, false
 	}
+	if operator.opClass == readBillingDemoOpClassShuffle {
+		return readBillingDemoShuffleUnits(runtimeStats, tree, op, executionMask)
+	}
 	outputRows, hasOutputRows := readBillingDemoPlanActRows(runtimeStats, op.Origin.ID())
 	if !hasOutputRows || outputRows < 0 {
 		return nil, readBillingDemoReasonMissingRuntimeRows, false
@@ -2871,6 +2903,79 @@ func readBillingDemoRootUnits(
 		units = append(units, readBillingDemoRuntimeChunkOutputUnits(outputRows, outputBytes)...)
 	}
 	return units, "", true
+}
+
+func readBillingDemoShuffleUnits(
+	runtimeStats *execdetails.RuntimeStatsColl,
+	tree FlatPlanTree,
+	op *FlatOperator,
+	executionMask *readBillingDemoExecutionMask,
+) ([]readBillingDemoUnit, string, bool) {
+	if op == nil || op.Origin == nil {
+		return nil, readBillingDemoReasonInvalidShuffleStructure, false
+	}
+	shuffle, ok := op.Origin.(*physicalop.PhysicalShuffle)
+	if !ok || len(shuffle.DataSources) == 0 || len(shuffle.DataSources) != len(shuffle.ByItemArrays) {
+		return nil, readBillingDemoReasonInvalidShuffleStructure, false
+	}
+
+	seenDataSources := make(map[int]struct{}, len(shuffle.DataSources))
+	var totalWork int64
+	for i, dataSource := range shuffle.DataSources {
+		if dataSource == nil || dataSource.ID() <= 0 {
+			return nil, readBillingDemoReasonInvalidShuffleStructure, false
+		}
+		planID := dataSource.ID()
+		if _, exists := seenDataSources[planID]; exists {
+			return nil, readBillingDemoReasonInvalidShuffleStructure, false
+		}
+		seenDataSources[planID] = struct{}{}
+		if executionMask != nil && executionMask.planIDOccurrences[planID] != 1 {
+			return nil, readBillingDemoReasonInvalidShuffleStructure, false
+		}
+
+		occurrences := 0
+		for _, node := range tree {
+			if node == nil || node.Origin == nil {
+				continue
+			}
+			if node.Origin.ID() == planID {
+				occurrences++
+			}
+		}
+		if occurrences != 1 {
+			return nil, readBillingDemoReasonInvalidShuffleStructure, false
+		}
+
+		rows, _, hasRows := readBillingDemoRootOutputRowsAndBytes(runtimeStats, planID)
+		if !hasRows {
+			return nil, readBillingDemoReasonMissingRuntimeRows, false
+		}
+		if rows < 0 || len(shuffle.ByItemArrays[i]) > math.MaxInt64-1 {
+			return nil, readBillingDemoReasonInvalidShuffleWork, false
+		}
+		multiplier := int64(len(shuffle.ByItemArrays[i])) + 1
+		if rows > math.MaxInt64/multiplier {
+			return nil, readBillingDemoReasonInvalidShuffleWork, false
+		}
+		work := rows * multiplier
+		if totalWork > math.MaxInt64-work {
+			return nil, readBillingDemoReasonInvalidShuffleWork, false
+		}
+		totalWork += work
+	}
+
+	work := float64(totalWork)
+	if work < 0 || math.IsNaN(work) || math.IsInf(work, 0) {
+		return nil, readBillingDemoReasonInvalidShuffleWork, false
+	}
+	return []readBillingDemoUnit{{
+		unit:        readBillingDemoUnitCPUWork,
+		source:      readBillingDemoInputSourceShuffleDataSourceRows,
+		side:        readBillingDemoInputSideAll,
+		value:       work,
+		widthSource: explainRUWidthSourceNotApplicable,
+	}}, "", true
 }
 
 func readBillingDemoRuntimeChunkOutputUnits(rows, bytes int64) []readBillingDemoUnit {

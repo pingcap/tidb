@@ -597,6 +597,73 @@ func TestExplainAnalyzeFormatRUOutput(t *testing.T) {
 	requireExplainRUWeightedOperatorClass(t, rows, "tidb/filter_eval")
 	requireExplainRUWeightedOperatorClass(t, rows, "tidb/agg_stream")
 
+	tk.MustExec("set @@tidb_streamagg_concurrency = 2")
+	shuffleQuery := "select /*+ stream_agg() */ table_schema, count(*) from information_schema.tables group by table_schema"
+	seenShuffle, seenShuffleReceiver := false, false
+	// MustQuery reruns information_schema queries under a failpoint, which is
+	// unsuitable for comparing EXPLAIN ANALYZE runtime fields.
+	for _, row := range tk.MustQueryWithContext(context.Background(), "explain analyze "+shuffleQuery).Rows() {
+		operator := fmt.Sprint(row[0])
+		seenShuffle = seenShuffle || strings.Contains(operator, "Shuffle_")
+		seenShuffleReceiver = seenShuffleReceiver || strings.Contains(operator, "ShuffleReceiver_")
+	}
+	require.True(t, seenShuffle)
+	require.True(t, seenShuffleReceiver)
+	shuffleInputRows, err := strconv.ParseFloat(fmt.Sprint(tk.MustQuery("select count(*) from information_schema.tables").Rows()[0][0]), 64)
+	require.NoError(t, err)
+	rows, err = queryExplainRURowsOrErr(t, tk, "explain analyze format='ru' "+shuffleQuery)
+	require.NoError(t, err)
+	require.Empty(t, rows[0][14])
+	require.Equal(t, 2*shuffleInputRows, explainRUCountUnitValue(t, rows, "tidb/shuffle", "cpu_work"))
+	requireExplainRUUnitSource(t, rows, "tidb/shuffle", "cpu_work", "shuffle_data_source_act_rows")
+	requireExplainRUWeightedOperatorClass(t, rows, "tidb/agg_stream")
+	requireExplainRUOperatorUnitAbsent(t, rows, "tidb/shuffle", "net_bytes")
+	requireExplainRUOperatorUnitAbsent(t, rows, "tidb/shuffle", "scan_bytes")
+	requireExplainRUOperatorUnitAbsent(t, rows, "tidb/shuffle", "hash_state_rows")
+	requireExplainRUOperatorUnitAbsent(t, rows, "tidb/shuffle", "join_output_rows")
+	seenHashShuffle := false
+	for _, row := range rows {
+		if len(row) == 17 && row[0] == "plan" && row[3] == "tidb/shuffle" {
+			seenHashShuffle = seenHashShuffle || row[2] == "hash_shuffle"
+		}
+	}
+	require.True(t, seenHashShuffle)
+
+	compositeShuffleQuery := "select /*+ stream_agg() */ table_schema, table_type, count(*) from information_schema.tables group by table_schema, table_type"
+	rows, err = queryExplainRURowsOrErr(t, tk, "explain analyze format='ru' "+compositeShuffleQuery)
+	require.NoError(t, err)
+	require.Equal(t, 3*shuffleInputRows, explainRUCountUnitValue(t, rows, "tidb/shuffle", "cpu_work"))
+
+	tk.MustExec("set @@tidb_streamagg_concurrency = 4")
+	rows, err = queryExplainRURowsOrErr(t, tk, "explain analyze format='ru' "+shuffleQuery)
+	require.NoError(t, err)
+	require.Equal(t, 2*shuffleInputRows, explainRUCountUnitValue(t, rows, "tidb/shuffle", "cpu_work"))
+
+	tk.MustExec("set @@tidb_merge_join_concurrency = 2")
+	mergeJoinQuery := "with recursive a(n) as (select 1 union all select n + 1 from a where n < 10), b(n) as (select 1 union all select n + 1 from b where n < 100) select /*+ MERGE_JOIN(a, b) */ count(*) from a join b on a.n % 2 = b.n % 2"
+	mergeShuffleCount, mergeReceiverCount := 0, 0
+	mergePlanRows := tk.MustQueryWithContext(context.Background(), "explain analyze "+mergeJoinQuery).Rows()
+	for _, row := range mergePlanRows {
+		operator := fmt.Sprint(row[0])
+		if strings.Contains(operator, "Shuffle_") {
+			mergeShuffleCount++
+		}
+		if strings.Contains(operator, "ShuffleReceiver_") {
+			mergeReceiverCount++
+		}
+	}
+	require.Equal(t, 1, mergeShuffleCount, mergePlanRows)
+	require.Equal(t, 2, mergeReceiverCount, mergePlanRows)
+	rows, err = queryExplainRURowsOrErr(t, tk, "explain analyze format='ru' "+mergeJoinQuery)
+	require.NoError(t, err)
+	require.Equal(t, 220.0, explainRUCountUnitValue(t, rows, "tidb/shuffle", "cpu_work"))
+	require.Equal(t, 500.0, explainRUCountUnitValue(t, rows, "tidb/join_merge", "join_output_rows"))
+
+	zeroSideMergeJoinQuery := "with recursive a(n) as (select 1 union all select n + 1 from a where n < 10), b(n) as (select 1 union all select n + 1 from b where n < 100) select /*+ MERGE_JOIN(a, b) */ count(*) from a join b on a.n % 2 = b.n % 2 where b.n < 0"
+	rows, err = queryExplainRURowsOrErr(t, tk, "explain analyze format='ru' "+zeroSideMergeJoinQuery)
+	require.NoError(t, err)
+	require.Equal(t, 20.0, explainRUCountUnitValue(t, rows, "tidb/shuffle", "cpu_work"))
+
 	tk.MustExec("drop table if exists explain_ru_t")
 	tk.MustExec("create table explain_ru_t(a int primary key, b varchar(20))")
 	tk.MustExec("insert into explain_ru_t values (1, 'x'), (2, 'yy')")
@@ -1329,6 +1396,7 @@ func TestReadBillingDemoMetricsHook(t *testing.T) {
 	batchPointGetCPUWork := metrics.ReadBillingDemoBaseUnitsCounter.WithLabelValues("tikv", "kv_point_lookup", "batch_point_get", "cpu_work", "snapshot_runtime_stats", "all", "v6", "v6-frontend-compile-work-uncalibrated")
 	mutationCPUWork := metrics.ReadBillingDemoBaseUnitsCounter.WithLabelValues("tidb", "kv_mutation", "memdb_mutation", "cpu_work", "stmt_memdb_mutation_calls", "all", "v6", "v6-frontend-compile-work-uncalibrated")
 	mutationCount := metrics.ReadBillingDemoBaseUnitsCounter.WithLabelValues("tidb", "kv_mutation", "memdb_mutation", "encoded_mutation_count", "stmt_memdb_mutation_calls", "all", "v6", "v6-frontend-compile-work-uncalibrated")
+	shuffleCPUWork := metrics.ReadBillingDemoBaseUnitsCounter.WithLabelValues("tidb", "shuffle", "hash_shuffle", "cpu_work", "shuffle_data_source_act_rows", "all", "v6", "v6-frontend-compile-work-uncalibrated")
 	writeKeys := metrics.ReadBillingDemoBaseUnitsCounter.WithLabelValues("tikv", "kv_write", "txn_write", "write_keys", "commit_detail", "all", "v6", "v6-frontend-compile-work-uncalibrated")
 	writeBytes := metrics.ReadBillingDemoBaseUnitsCounter.WithLabelValues("tikv", "kv_write", "txn_write", "write_bytes", "commit_detail", "all", "v6", "v6-frontend-compile-work-uncalibrated")
 
@@ -1346,6 +1414,15 @@ func TestReadBillingDemoMetricsHook(t *testing.T) {
 	tk.MustQuery(`select site, op_class, operator_kind, unit, input_source, input_side, model_version, weight_version, sample_count, value > 0 from information_schema.statements_summary_read_billing_demo_base_units where digest_text = 'select ? + ?' and unit = 'cpu_work'`).Check(testkit.Rows("tidb projection_eval projection cpu_work runtime_child_act_rows all v6 v6-frontend-compile-work-uncalibrated 1 1"))
 	tk.MustQuery(`select site, op_class, operator_kind, unit, input_source, input_side, model_version, weight_version, sample_count, value from information_schema.statements_summary_read_billing_demo_base_units where digest_text = 'select ? + ?' and unit = 'frontend_compile_bytes'`).Check(testkit.Rows(fmt.Sprintf("tidb sql_frontend parser_optimizer frontend_compile_bytes statement_original_sql all v6 v6-frontend-compile-work-uncalibrated 1 %d", len("select 1 + 1"))))
 	tk.MustQuery(`select site, op_class, operator_kind, status, reason, count from information_schema.statements_summary_read_billing_demo_status where digest_text = 'select ? + ?' and site = 'statement'`).Check(testkit.Rows("statement statement statement success none 1"))
+
+	tk.MustExec("set @@tidb_streamagg_concurrency = 2")
+	shuffleInputRows, err := strconv.ParseFloat(fmt.Sprint(tk.MustQuery("select count(*) from information_schema.tables").Rows()[0][0]), 64)
+	require.NoError(t, err)
+	beforeShuffleCPUWork := readExecutorCounterValue(t, shuffleCPUWork)
+	shuffleQuery := "select /*+ stream_agg() */ table_schema, count(*) from information_schema.tables group by table_schema"
+	require.NotEmpty(t, tk.MustQueryWithContext(context.Background(), shuffleQuery).Rows())
+	require.Equal(t, beforeShuffleCPUWork+2*shuffleInputRows, readExecutorCounterValue(t, shuffleCPUWork))
+	tk.MustQuery(`select sample_count, value from information_schema.statements_summary_read_billing_demo_base_units where site = 'tidb' and op_class = 'shuffle' and operator_kind = 'hash_shuffle' and unit = 'cpu_work' and input_source = 'shuffle_data_source_act_rows' and input_side = 'all'`).Check(testkit.Rows(fmt.Sprintf("1 %v", 2*shuffleInputRows)))
 
 	const preparedFrontendSQL = "insert into read_billing_frontend_cache values (?)"
 	tk.MustExec("set tidb_enable_prepared_plan_cache=on")

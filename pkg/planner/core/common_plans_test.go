@@ -434,6 +434,27 @@ func TestReadBillingDemoV6FormulaContract(t *testing.T) {
 		require.Empty(t, reason)
 		require.Equal(t, readBillingDemoOpClassWrapper, operator.opClass)
 		require.False(t, readBillingDemoOperatorBillable(operator))
+
+		shuffle := physicalop.PhysicalShuffle{SplitterType: physicalop.PartitionHashSplitterType}.Init(ctx, &property.StatsInfo{RowCount: 1}, 0)
+		operator, supported, reason = readBillingDemoClassifyOperator(&FlatOperator{Origin: shuffle, IsRoot: true, StoreType: kv.TiDB})
+		require.True(t, supported)
+		require.Empty(t, reason)
+		require.Equal(t, readBillingDemoOpClassShuffle, operator.opClass)
+		require.Equal(t, readBillingDemoOperatorHashShuffle, operator.operatorKind)
+		require.True(t, readBillingDemoOperatorBillable(operator))
+
+		shuffle.SplitterType = physicalop.PartitionRangeSplitterType
+		operator, supported, reason = readBillingDemoClassifyOperator(&FlatOperator{Origin: shuffle, IsRoot: true, StoreType: kv.TiDB})
+		require.True(t, supported)
+		require.Empty(t, reason)
+		require.Equal(t, readBillingDemoOperatorRangeShuffle, operator.operatorKind)
+
+		receiver := physicalop.PhysicalShuffleReceiverStub{}.Init(ctx, &property.StatsInfo{RowCount: 1}, 0)
+		operator, supported, reason = readBillingDemoClassifyOperator(&FlatOperator{Origin: receiver, IsRoot: true, StoreType: kv.TiDB})
+		require.True(t, supported)
+		require.Empty(t, reason)
+		require.Equal(t, readBillingDemoOpClassWrapper, operator.opClass)
+		require.False(t, readBillingDemoOperatorBillable(operator))
 	})
 
 	weights := readBillingDemoWeights{
@@ -994,6 +1015,136 @@ func TestReadBillingDemoV6ExpressionCountsAndOrdering(t *testing.T) {
 		mask = buildReadBillingDemoExecutionMask(flat, runtimeStats)
 		assertPartSkipped(t, mask, seedRoot, false)
 		assertPartSkipped(t, mask, recurRoot, true)
+	})
+
+	t.Run("shuffle uses each data source once", func(t *testing.T) {
+		buildShuffle := func(rows []int, keyCounts []int, concurrency int) (*physicalop.PhysicalShuffle, FlatPlanTree, *execdetails.RuntimeStatsColl) {
+			t.Helper()
+			require.Len(t, keyCounts, len(rows))
+			dataSources := make([]base.PhysicalPlan, 0, len(rows))
+			receivers := make([]base.PhysicalPlan, 0, len(rows))
+			byItemArrays := make([][]expression.Expression, 0, len(rows))
+			for i, rowCount := range rows {
+				dataSource := physicalop.PhysicalTableDual{RowCount: rowCount}.Init(ctx, stats, 0)
+				receiver := physicalop.PhysicalShuffleReceiverStub{DataSource: dataSource}.Init(ctx, stats, 0)
+				dataSources = append(dataSources, dataSource)
+				receivers = append(receivers, receiver)
+				byItems := make([]expression.Expression, keyCounts[i])
+				for j := range byItems {
+					byItems[j] = col
+				}
+				byItemArrays = append(byItemArrays, byItems)
+			}
+			head := physicalop.PhysicalUnionAll{}.Init(ctx, stats, 0)
+			head.SetChildren(receivers...)
+			shuffle := physicalop.PhysicalShuffle{
+				Concurrency:  concurrency,
+				DataSources:  dataSources,
+				SplitterType: physicalop.PartitionHashSplitterType,
+				ByItemArrays: byItemArrays,
+			}.Init(ctx, stats, 0)
+			shuffle.SetChildren(head)
+			tree := FlattenPhysicalPlan(shuffle, true).Main
+			runtimeStats := execdetails.NewRuntimeStatsColl(nil)
+			recordRoot(runtimeStats, shuffle.ID(), 97)
+			for i, dataSource := range dataSources {
+				recordRoot(runtimeStats, receivers[i].ID(), rows[i]*concurrency)
+				recordRoot(runtimeStats, dataSource.ID(), rows[i])
+				occurrences := 0
+				for _, node := range tree {
+					if node.Origin.ID() == dataSource.ID() {
+						occurrences++
+					}
+				}
+				require.Equal(t, 1, occurrences)
+			}
+			return shuffle, tree, runtimeStats
+		}
+
+		shuffleUnits := func(t *testing.T, shuffle *physicalop.PhysicalShuffle, tree FlatPlanTree, runtimeStats *execdetails.RuntimeStatsColl) ([]readBillingDemoUnit, string, bool) {
+			t.Helper()
+			return readBillingDemoRootUnits(runtimeStats, tree, 0, tree[0], readBillingDemoOperatorResult{opClass: readBillingDemoOpClassShuffle})
+		}
+
+		shuffle, tree, runtimeStats := buildShuffle([]int{3}, []int{1}, 2)
+		units, reason, ok := shuffleUnits(t, shuffle, tree, runtimeStats)
+		require.True(t, ok, reason)
+		require.Empty(t, reason)
+		require.Equal(t, 6.0, readBillingDemoUnitValue(units, readBillingDemoUnitCPUWork, readBillingDemoInputSideAll))
+		require.Equal(t, readBillingDemoInputSourceShuffleDataSourceRows, readBillingDemoUnitSource(units, readBillingDemoUnitCPUWork, readBillingDemoInputSideAll))
+		require.Len(t, units, 1)
+
+		result := readBillingDemoResult{status: readBillingDemoStatusSuccess, reason: readBillingDemoReasonNone}
+		status, failedOperator := appendReadBillingDemoTree(&result, ctx, runtimeStats, tree)
+		require.Equal(t, readBillingDemoStatusSuccess, status, failedOperator)
+		var shuffleCPUUnits, receiverOperators, dataSourceOperators int
+		for _, operator := range result.operators {
+			switch operator.operatorKind {
+			case readBillingDemoOperatorHashShuffle:
+				for _, unit := range operator.units {
+					if unit.unit == readBillingDemoUnitCPUWork {
+						shuffleCPUUnits++
+					}
+				}
+			case "shufflereceiver":
+				receiverOperators++
+				require.Empty(t, operator.units)
+			case "tabledual":
+				dataSourceOperators++
+			}
+		}
+		require.Equal(t, 1, shuffleCPUUnits)
+		require.Equal(t, 1, receiverOperators)
+		require.Equal(t, 1, dataSourceOperators)
+
+		shuffle, tree, runtimeStats = buildShuffle([]int{3}, []int{2}, 2)
+		units, reason, ok = shuffleUnits(t, shuffle, tree, runtimeStats)
+		require.True(t, ok, reason)
+		require.Equal(t, 9.0, readBillingDemoUnitValue(units, readBillingDemoUnitCPUWork, readBillingDemoInputSideAll))
+
+		shuffle, tree, runtimeStats = buildShuffle([]int{2, 5}, []int{1, 1}, 2)
+		units, reason, ok = shuffleUnits(t, shuffle, tree, runtimeStats)
+		require.True(t, ok, reason)
+		require.Equal(t, 14.0, readBillingDemoUnitValue(units, readBillingDemoUnitCPUWork, readBillingDemoInputSideAll))
+		shuffle.Concurrency = 8
+		concurrentUnits, concurrentReason, concurrentOK := shuffleUnits(t, shuffle, tree, runtimeStats)
+		require.True(t, concurrentOK, concurrentReason)
+		require.Equal(t, 14.0, readBillingDemoUnitValue(concurrentUnits, readBillingDemoUnitCPUWork, readBillingDemoInputSideAll))
+
+		shuffle, tree, runtimeStats = buildShuffle([]int{0, 5}, []int{1, 1}, 4)
+		units, reason, ok = shuffleUnits(t, shuffle, tree, runtimeStats)
+		require.True(t, ok, reason)
+		require.Equal(t, 10.0, readBillingDemoUnitValue(units, readBillingDemoUnitCPUWork, readBillingDemoInputSideAll))
+
+		missingStats := execdetails.NewRuntimeStatsColl(nil)
+		recordRoot(missingStats, shuffle.DataSources[1].ID(), 5)
+		_, reason, ok = shuffleUnits(t, shuffle, tree, missingStats)
+		require.False(t, ok)
+		require.Equal(t, readBillingDemoReasonMissingRuntimeRows, reason)
+
+		shuffle.ByItemArrays = shuffle.ByItemArrays[:1]
+		_, reason, ok = shuffleUnits(t, shuffle, tree, runtimeStats)
+		require.False(t, ok)
+		require.Equal(t, readBillingDemoReasonInvalidShuffleStructure, reason)
+		shuffle.ByItemArrays = append(shuffle.ByItemArrays, []expression.Expression{col})
+
+		shuffle.DataSources[1] = shuffle.DataSources[0]
+		_, reason, ok = shuffleUnits(t, shuffle, tree, runtimeStats)
+		require.False(t, ok)
+		require.Equal(t, readBillingDemoReasonInvalidShuffleStructure, reason)
+
+		shuffle, tree, runtimeStats = buildShuffle([]int{1}, []int{1}, 2)
+		aliasedMask := newReadBillingDemoExecutionMask()
+		aliasedMask.planIDOccurrences[shuffle.DataSources[0].ID()] = 2
+		_, reason, ok = readBillingDemoRootUnits(runtimeStats, tree, 0, tree[0], readBillingDemoOperatorResult{opClass: readBillingDemoOpClassShuffle}, aliasedMask)
+		require.False(t, ok)
+		require.Equal(t, readBillingDemoReasonInvalidShuffleStructure, reason)
+
+		overflowStats := execdetails.NewRuntimeStatsColl(nil)
+		recordRoot(overflowStats, shuffle.DataSources[0].ID(), math.MaxInt64)
+		_, reason, ok = shuffleUnits(t, shuffle, tree, overflowStats)
+		require.False(t, ok)
+		require.Equal(t, readBillingDemoReasonInvalidShuffleWork, reason)
 	})
 
 	t.Run("root unary formulas use exact semantic terms", func(t *testing.T) {

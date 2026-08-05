@@ -46,6 +46,18 @@ Point lookup coverage keeps the typed storage-work contract, with one narrow loc
 
 Locking SELECT is supported without introducing request work. `SelectLock` is a non-billable TiDB wrapper, and the `Lock` flag on PointGet/BatchPointGet does not change the storage-work formula. Pessimistic-lock, lock-wait, retry, and related RPC activity is intentionally ignored because v6 has no request unit or coefficient. If a locking point read is satisfied by the lock cache and its typed snapshot reports zero completed point responses, it publishes zero point work under the existing coverage rule; if point storage responses are present, only their typed `TotalKeys` and `ProcessedKeysSize` are consumed. Lock counters and lock response payloads are never substituted for scan detail, reader network bytes, or committed write work.
 
+### TiDB local Shuffle amendment (normative)
+
+TiDB root `PhysicalShuffle` is weight-bearing under `site=tidb`, `op_class=shuffle`, and bounded `operator_kind=hash_shuffle` or `range_shuffle`. It emits exactly one existing `cpu_work` semantic unit with `input_source=shuffle_data_source_act_rows` and `input_side=all`; it adds no unit, weight, normalization, model version, or weight version. For DataSource index `i`, let `n_i` be the completed runtime output rows under `PhysicalShuffle.DataSources[i].ID()` and `k_i` be `len(PhysicalShuffle.ByItemArrays[i])`. The formula is:
+
+    cpu_work = sum_i n_i * (1 + k_i)
+
+The base `n_i` term owns hash/group boundary selection, worker selection, and in-process row dispatch. The `n_i*k_i` term owns partition-key evaluation and encoding. `Shuffle.actRows`, worker-tail output rows, receiver rows, and concurrency are not formula inputs. A MergeJoin Shuffle therefore aggregates its two DataSources once at the owning Shuffle even though the worker plan contains two receivers. Sort, Window, StreamAgg, MergeJoin, readers, and scans keep their independent existing units.
+
+`PhysicalShuffleReceiverStub` is a transparent non-billable wrapper. Traversal continues through its `DataSource`, so the wrapper neither truncates descendant collection nor republishes Shuffle work. TiFlash MPP `ExchangeSender` and `ExchangeReceiver` remain unsupported and are not reclassified as local Shuffle.
+
+The constructor requires nonempty equal-length `DataSources` and `ByItemArrays`, a positive unique plan ID for every DataSource, exactly one occurrence across the flattened main/CTE/scalar-subquery tree set and in the current tree, and a `BasicRuntimeStats` byte record for every DataSource. The byte record distinguishes build-time registration from successful `Next` evidence and admits an explicitly observed zero rows. Duplicate/aliased IDs, missing evidence, negative rows, checked integer multiply/add overflow, and non-finite converted work fail closed. The resulting unit never emits `net_bytes`, `scan_bytes`, `hash_state_rows`, or `join_output_rows`; TiDB chunk/channel Shuffle is not a network boundary.
+
 ## Historical v5 amendment (superseded for version and remote writes)
 
 The immutable output pair is `model_version='v5'` and `weight_version='v5-storage-work-uncalibrated'`. A weight container is valid only when its embedded model version is exactly `v5`, its weight version is calibrated and not the shipped uncalibrated label, all five RU weights are finite and non-negative, and `MutationBytesPerCPUUnit` is finite and positive. EXPLAIN notes include both versions. Historical v4 rows remain self-describing; no v4 result is recomputed or silently relabeled.
@@ -77,6 +89,10 @@ All four output surfaces consume the same frozen result. Positive typed point da
 
 ## Progress
 
+- [x] (2026-08-05 15:50+08:00) Reconstructed local Shuffle planning, executor construction, flat-plan traversal, and Basic runtime evidence. Confirmed that one producer executor exists per `PhysicalShuffle.DataSources` entry, receiver stubs are reused across workers, and the flat tree follows each receiver to its DataSource once.
+- [x] (2026-08-05 15:50+08:00) Selected direct DataSource-plan-ID attribution with one aggregate Shuffle `cpu_work` unit, transparent receivers, checked arithmetic, and explicit-zero evidence. Rejected Shuffle output rows, receiver rows, flat direct-child rows, and concurrency multipliers.
+- [x] (2026-08-05 16:00+08:00) Added failure-before planner and executor regressions. Before the implementation, the planner classification/formula cases failed and the real StreamAgg plan stopped with `unsupported_operator operator=tidb/reader_receive/shuffle`; the latter also showed DataSource `actRows=838` versus Shuffle `actRows=5`.
+- [x] (2026-08-05 16:18+08:00) Implemented bounded hash/range Shuffle classification, one aggregate DataSource-owned CPU unit, transparent receivers, and checked fail-closed arithmetic. Formula, FORMAT RU, real two-source MergeJoin/zero-side, concurrency, forbidden-unit, Prometheus, and statement-summary regressions pass. Ready `make lint`, formatting, and diff checks pass with every failpoint refcount restored to zero. The Bazel gate found no file/import/top-level-test/module/Bazel trigger, so `make bazel_prepare` was intentionally skipped.
 - [x] (2026-08-05 14:30+08:00) Reproduced the PointGet boundaries against a cleanup-safe real TiKV playground before changing production code. Ordinary primary-key, unique-index first-leg, and BatchPointGet misses retained typed `TotalKeys`; a partition-pruned PointGet became `partition:dual` with no Snapshot stats and failed `missing_point_scan_stats`. Pessimistic PointGet/BatchPointGet `FOR UPDATE` plans used locking paths with no Get/BatchGet scan detail and were rejected by the syntax gate.
 - [x] (2026-08-05 14:35+08:00) Added fail-before regressions for the local completed-zero short circuit and locking SELECT, then implemented the narrow Basic-stats proof, non-billable Lock wrapper, and lock-independent point formula. Focused planner and executor WIP suites pass under the failpoint wrapper with every reference count restored to zero.
 - [x] (2026-08-05 14:48+08:00) Reran cleanup-safe TiUP verification with the current TiDB and fixed local PD/TiKV binaries. Primary-key, unique-index-first-leg, and BatchPointGet misses retained exact `cpu_work=1/1/2`; partition-dual PointGet published exact zero work. Pessimistic PointGet hit/miss, BatchPointGet, range SELECT, and UPDATE all completed without lock-derived units or unsupported status, while range scan/CPU/network and mutation diagnostics remained visible. The exact tag, binary, PD/TiDB/TiKV ports, and data directory were cleaned and verified absent.
@@ -192,6 +208,15 @@ All four output surfaces consume the same frozen result. Positive typed point da
 
 ## Surprises & Discoveries
 
+- Observation: local Shuffle has one physical DataSource executor per `PhysicalShuffle.DataSources` entry, while each worker receives the same producer through a reused receiver-stub plan ID.
+  Evidence: `pkg/executor/builder.go::buildShuffle` builds `shuffle.dataSources` before the worker loop, allocates one stub per DataSource, then reuses those stubs while building every worker. `pkg/executor/shuffle.go::fetchDataAndSplit` starts one goroutine per DataSource and dispatches each fetched row to one worker.
+
+- Observation: the static flat plan does not duplicate a DataSource merely because it is also referenced by `PhysicalShuffle.DataSources`.
+  Evidence: `pkg/planner/core/flat_plan.go::flattenRecursively` has no special DataSource traversal for `PhysicalShuffle`; it reaches the producer once through `PhysicalShuffleReceiverStub.DataSource`. The MergeJoin fixture in `tests/integrationtest/r/executor/merge_join.result` shows one Shuffle, two receivers, and one reader subtree under each receiver.
+
+- Observation: root runtime-stat existence alone cannot distinguish a never-run DataSource from an observed zero, but the preview byte-record sentinel can.
+  Evidence: executor construction precreates Basic stats by plan ID; successful `exec.Next` calls record bytes when preview collection is active, including the final empty chunk. `BasicRuntimeStats.HasBytes()` therefore rejects build-only zero state and accepts a completed zero-row producer without adding a Shuffle-specific runtime datum.
+
 - Observation: a physical PointGet can complete without ever constructing a PointGet executor or its Snapshot stats.
   Evidence: partition pruning returns `TableDualExec` for an empty partition before PointGet runtime-stat registration, while the flattened physical plan still contains the PointGet ID. Real TiKV rendered `partition:dual`, no Get/ScanDetail, and completed zero-row Basic stats. This is distinct from a constructed remote point executor whose response omitted typed detail.
 
@@ -298,6 +323,14 @@ All four output surfaces consume the same frozen result. Positive typed point da
   Evidence: `UnionScanExec.getOneRow` merges `getSnapshotRow` and `getAddedRow`; `RuntimeStatsColl` records the direct child and UnionScan output rows but no separate count of mem-buffer rows considered by the merge. Output rows cannot reconstruct input work because deletes, replacements, and predicates can suppress rows.
 
 ## Decision Log
+
+- Decision: charge TiDB local Shuffle once at `PhysicalShuffle` as `sum_i data_source_rows_i * (1 + partition_expression_count_i)`, using each DataSource plan ID's byte-bearing Basic runtime stats.
+  Rationale: the DataSource is where rows enter `fetchDataAndSplit`; Shuffle output and worker-tail rows can reflect Window/Agg/Join cardinality instead. Direct plan-ID ownership avoids multiplying by receiver count or worker concurrency and needs no executor change.
+  Date/Author: 2026-08-05 / Codex.
+
+- Decision: classify `PhysicalShuffleReceiverStub` as a transparent wrapper and leave TiFlash Exchange operators under the existing MPP rejection.
+  Rationale: receivers are in-process worker input boundaries and carry no independent work formula. The existing flat traversal already reaches their DataSource children, while Exchange operators are distributed network boundaries outside this amendment.
+  Date/Author: 2026-08-05 / Codex.
 
 - Decision: accept a missing PointGet/BatchPointGet snapshot group as exact zero only when the same plan ID has completed byte-bearing Basic stats and zero actual rows.
   Rationale: this narrowly recognizes the post-flattening TableDual replacement without weakening typed coverage for constructed executors. Basic stats prove completion only; they supply no key count or byte value. Missing completion evidence and nonzero output remain fail-closed.
@@ -714,6 +747,14 @@ All outputs must switch together: EXPLAIN unit rows, `total_preview_ru`, Prometh
 
 ## Plan of Work
 
+### Milestone 4: add TiDB local Shuffle work without changing the model
+
+In `pkg/planner/core/explain_ru.go`, add the bounded Shuffle op class, hash/range kinds, and DataSource-row input source. Classify only root `PhysicalShuffle` as billable and `PhysicalShuffleReceiverStub` as a non-billable wrapper; preserve the existing Exchange rejection. Before the generic root unary path reads an operator's own rows, construct one aggregate Shuffle `cpu_work` unit directly from `PhysicalShuffle.DataSources` and `ByItemArrays`. Require structural alignment, positive unique DataSource IDs, globally exclusive flattened-plan ownership plus one current-tree occurrence per ID, byte-bearing root stats, non-negative rows, and checked multiplication/addition. Do not emit output shadows or any non-CPU Shuffle unit.
+
+Extend the existing preview RU tests rather than adding a top-level suite. Private planner tests prove exact one-key, composite-key, two-source, zero-side, missing-evidence, alias, shape, and overflow outcomes. Executor tests use actual local Shuffle plans to prove FORMAT='RU', concurrency invariance, receiver transparency, descendant preservation, absent forbidden units, unchanged v6 labels, and absent uncalibrated totals. No new top-level test or case-map entry is needed. No executor, runtime-stat, public API, weight, normalization, or Bazel target change is expected.
+
+Acceptance: a single-input `n=3,k=1` Shuffle emits one `cpu_work=6`; `n=3,k=2` emits 9; a two-input `(2,5)` one-key Shuffle emits 14 regardless of Shuffle output rows or concurrency; an explicitly completed zero side contributes zero while the other side remains visible. Any missing or ambiguous DataSource evidence fails closed, receivers emit no units, descendants remain independently collected, and TiFlash Exchange stays unsupported.
+
 ### Milestone 1: represent v4 work without changing collection
 
 In `pkg/planner/core/explain_ru.go`, keep the five bounded weight-bearing unit names (`cpu_work`, `scan_bytes`, `net_bytes`, `hash_state_rows`, and `join_output_rows`), the validated model-bound weight container, and one formula application function. Keep expression and raw point/mutation values diagnostic and zero-weight.
@@ -761,6 +802,7 @@ Acceptance: internal formula tests observe exact calibrated totals. EXPLAIN, met
 | HashAgg `group_rows` | Agg node own runtime rows | TiKV additionally needs expected/observed coverage | no |
 | HashJoin `hash_state_rows` | v1 hash-table `Len` plus NAAJ null-bucket entries; v2 row-table `validKeyCount` | completed build round, cumulative across rebuilds | **yes, Join only** |
 | Join `output_rows` | Join node own `BasicRuntimeStats.GetActRows` | executed root stat required | no |
+| local Shuffle `cpu_work` | each `PhysicalShuffle.DataSources[i]` Basic rows plus `len(ByItemArrays[i])` | equal nonempty arrays, unique/owned plan IDs, byte-bearing Basic evidence, checked `sum_i n_i*(1+k_i)` | no |
 | `mutation_count/bytes` | `StatementContext` preview mutation recorder | current attempted-call semantics | no |
 | remote-write coverage | current statement's `RUV2Metrics.ResourceManagerWriteCnt` | diagnostic sentinel only; zero DML is complete, positive/missing DML and every COMMIT are partial | no |
 
@@ -814,6 +856,8 @@ The implementation is accepted only when all of the following are observable.
 With private test weights set to simple values inside `pkg/planner/core`, table-driven formula tests show exact results for every operator row in the formula table, including zero rows, one row, multiple expressions, multi-key joins, all three IndexJoin-family key representations, V1 NAAJ null-bucket state, and Window frame expressions. Sort uses `log2(max(rows,2))`; positive-count TopN uses `log2(max(min(rows,offset+count),2))` with checked addition, while zero-count TopN emits zero work. Cases cover nonzero offset, `k>rows`, a legal bound near `MaxUint64`, and overflow rejection. Neither ordering operator has an expression/key-count multiplier, and unmaterialized scalar ordering expressions fail closed rather than being charged there.
 
 End-to-end `EXPLAIN ANALYZE FORMAT='RU'` cases cover Selection/Projection, Sort/TopN, Table/Index scans, each reader family including IndexMerge, typed PointGet/BatchPointGet storage work, UnionScan, Stream/HashAgg, Merge/Hash/IndexJoin, Limit, Window, autocommit write, explicit DML plus COMMIT, unsupported ROLLBACK, and zero-mutation/zero-row cases. DML/COMMIT cases prove the v5 remote-work partial reasons without emitting request base units. Each attributable case exposes coefficient-free units, source, and model/weight versions. Because package-external tests use uncalibrated production defaults, they assert absent `total_preview_ru`; exact totals belong to private core formula tests.
+
+Local Shuffle coverage additionally proves single and composite partition-key formulas, two differently sized MergeJoin inputs whose Join output differs from their sum, one explicitly empty side, and concurrency invariance. FORMAT='RU' and the statement-summary detail use `tidb/shuffle/{hash_shuffle,range_shuffle}`, `cpu_work`, `shuffle_data_source_act_rows`, and `all`; no Shuffle row appears for `net_bytes`, `scan_bytes`, `hash_state_rows`, or `join_output_rows`. Receiver status is non-billable, descendants remain visible once, and the uncalibrated v6 weight/total contract is unchanged.
 
 A multi-reader or IndexMerge case proves that statement `net_bytes` appears once while every scan retains its own `scan_bytes`. PointGet and BatchPointGet cases prove exact `TotalKeys` CPU work, exact processed bytes, five raw diagnostics, present-zero acceptance, coverage mismatch rejection, completed-zero local replacement, locking acceptance without lock work, multi-plan checked accumulation, and independent coexistence with reader network transport. DML point plans use the same plan-local typed source. A UnionScan case proves `cpu_work` equals direct-child rows. IndexJoin emits no Join-local transport term. Sort/TopN cases retain their materialization, saturation, offset, overflow, and fast-path coverage. Reader gates distinguish missing evidence from attributable zero bytes. ROLLBACK remains explicitly unsupported.
 
@@ -908,3 +952,5 @@ Revision note (2026-08-03): before external v6 testing began, the same model gai
 Revision note (2026-08-03): missing frontend source text no longer atomically fails the preview result. It omits only `frontend_compile_bytes`, keeps all other units and any calibrated total they produce, and remains distinct from an observed zero-byte sample. The output intentionally does not distinguish this undercount from plan-cache-hit exclusion.
 
 Revision note (2026-08-05): real TiKV exposed a standalone IndexLookUp zero-handle gap analogous to, but structurally distinct from, the earlier IndexJoin empty-outer case. A non-pushdown IndexLookUp may complete its index phase with zero rows and never construct its table task; treating the absent table stats as a required scan suppressed the whole statement. The v6 execution mask now omits only an exactly identified table subtree after completed-zero lookup and complete zero-row index-cop proof, absence of all table execution evidence, and global plan-ID ownership validation. Actual index scan and network units remain visible, formulas and weights do not change, ambiguous cases remain fail-closed, and pushdown `LocalIndexLookUp` stays unsupported.
+
+Revision note (2026-08-05): TiDB-local root `PhysicalShuffle` now reuses `cpu_work` and `CPUWeight` with `sum_i n_i*(1+k_i)`, where byte-bearing Basic runtime stats under each unique DataSource plan ID prove completed rows, including zero. One owning Shuffle aggregates all DataSources; concurrency and receiver multiplicity do not multiply work, `Shuffle.actRows` is never a formula input, and receiver stubs remain transparent non-billable wrappers. TiFlash Exchange, other semantic units, normalization, model v6, and `v6-frontend-compile-work-uncalibrated` remain unchanged.
