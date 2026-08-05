@@ -447,21 +447,30 @@ mod decision {
             types: vec![long(), long()],
             // The projected expression Go prints as a bare `Column`.
             names: vec!["Column".to_owned(), "Column".to_owned()],
+            origin: None,
         }
     }
 
     /// The inner side as `build_join` builds it: the types are the CHILD
     /// EXECUTOR's, which for a base table read whole are the table's own.
     fn inner_side(table: &KvTable) -> JoinSide<'_> {
+        aliased_inner_side(table, "t")
+    }
+
+    /// The same side written under `visible`, whose `origin` stays the
+    /// table's own `db.t` however it is aliased -- which is what the range
+    /// text is qualified from.
+    fn aliased_inner_side<'a>(table: &'a KvTable, visible: &str) -> JoinSide<'a> {
         JoinSide {
             table: Some(table),
-            visible: "t".to_owned(),
+            visible: visible.to_owned(),
             types: table
                 .visible_columns()
                 .iter()
                 .map(|column| column.field_type.clone())
                 .collect(),
-            names: vec!["db.t.a".to_owned(), "db.t.b".to_owned()],
+            names: vec![format!("db.{visible}.a"), format!("db.{visible}.b")],
+            origin: Some("db.t".to_owned()),
         }
     }
 
@@ -498,6 +507,37 @@ mod decision {
         assert!(!decision.lookup_is_left);
         assert_eq!(decision.probe_keys, vec![0]);
         assert_eq!(decision.range_info, "[eq(db.t.b, Column)]");
+    }
+
+    /// An ALIAS renames the access object and NOTHING inside the range.
+    ///
+    /// Go prints the looked-up column through `Column.StringWithCtx`, which
+    /// reads `OrigName` -- the name the column was DECLARED under, which no
+    /// alias touches. The recorded plan states both halves in one row:
+    /// `r/planner/core/join_reorder_through_projection.result:1056` reads
+    /// `table:outer_t, index:b(b)` and, on the same line,
+    /// `range: decided by [eq(planner__core__join_reorder_through_projection
+    /// .t1.b, Column)]`. Qualifying the range off the scope printed the alias
+    /// in both places, which is a plan text TiDB never writes.
+    #[test]
+    fn an_aliased_inner_side_keeps_the_tables_own_name_inside_the_range() {
+        let table = inner_table(&[(1, 1)]);
+        let decision = index_join_candidate(
+            JoinKind::Inner,
+            &key(),
+            &outer_side(),
+            &aliased_inner_side(&table, "outer_t"),
+            false,
+        )
+        .expect("an index on `b` and a computed outer key");
+        assert_eq!(
+            decision.range_info, "[eq(db.t.b, Column)]",
+            "the range names the table, not the alias it is written under"
+        );
+        assert_eq!(
+            decision.visible, "outer_t",
+            "while the access object DOES name the alias"
+        );
     }
 
     /// A merge join already chosen wins: Go never costs an index join for a

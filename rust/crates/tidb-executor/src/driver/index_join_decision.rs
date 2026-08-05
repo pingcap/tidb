@@ -100,6 +100,15 @@ pub(crate) struct JoinSide<'a> {
     /// order. A column no name reaches -- a projected expression -- is Go's
     /// bare `Column`.
     pub(crate) names: Vec<String>,
+    /// `<database>.<table>` for the base table this side reads, written under
+    /// the table's OWN name rather than the alias it is written under.
+    ///
+    /// Go's `Column.StringWithCtx` prints `OrigName`, which a table alias does
+    /// NOT rename: the recorded plan for `from t1 outer_t, (...)` carries
+    /// `table:outer_t` in the access object and
+    /// `<db>.t1.b` in the same row's `range: decided by [...]`. Qualifying the
+    /// range's inner column off the scope would print the alias in both.
+    pub(crate) origin: Option<String>,
 }
 
 /// The looked-up side of `join`, or `None` when neither side qualifies.
@@ -140,18 +149,20 @@ pub(crate) fn index_join_decision(
 ///   (result:1584 and result:1607). Replay: 13 -> 22 divergences.
 ///
 /// What separates the recorded index joins from the recorded hash joins over
-/// the same shape is TiDB's COST comparison (`compareTaskCost` over the
-/// `IndexJoinProp` task `buildDataSource2IndexScanByIndexJoinProp` builds),
-/// which needs a physical-plan IR and a join cost model this tier does not
-/// have -- see `crate::driver::merge_decision` for the same seam. A
-/// structural chooser here can only trade one recorded instance of a
-/// statement for the other, never reduce the divergence count.
+/// the same shape is not a property this decision can read at all: it is
+/// WHICH JOIN TREE the statement was reordered into before any strategy was
+/// costed. The section below measures that. A structural chooser here can
+/// only trade one recorded instance of a statement for the other, never
+/// reduce the divergence count.
 ///
-/// Everything BELOW this switch is complete and tested: the decision, the
-/// executor ([`crate::join::IndexLookupPlan`]) and the plan text. The switch
-/// is the one piece the cost model owns.
+/// Everything BELOW this switch is exercised by
+/// `crate::tests_index_join`: the decision, the executor
+/// ([`crate::join::IndexLookupPlan`]) and the plan text. It is not thereby
+/// PROVEN -- running the replay with the switch on is what found the range
+/// text naming an inner table by its alias instead of by its own name (Go's
+/// `OrigName`, see [`JoinSide::origin`]), which no test below reached.
 ///
-/// # What is now known about that cost model, and what is still missing
+/// # What the cost model is, and what it turns out not to decide
 ///
 /// Half of it exists and is validated:
 /// [`tidb_planner::plan_cost_ver2`] is Go's `plan_cost_ver2.go` -- the
@@ -186,40 +197,56 @@ pub(crate) fn index_join_decision(
 /// `difftests/result-tests/tests/mysqltest_connections.rs`); anything else
 /// asking Go what it costs must set them by hand.
 ///
-/// What is missing is the OTHER half, and it was measured on the recorded
-/// statement at `join_reorder_through_projection.result:1169`. Under a live
-/// `gorun` binary -- i.e. at concurrency 5, see the correction above -- that
-/// statement's two candidates cost:
+/// # A cost evaluator is NOT the missing piece. Join reorder is.
+///
+/// The paragraph above named the missing piece as "a recursive plan-cost
+/// evaluator over THIS tier's plan tree". That is now FALSIFIED, by asking a
+/// `tidb-server` built from this tree the one question that separates the two
+/// explanations: hold the statement, the data, the session variables and the
+/// statistics fixed, and move only `tidb_opt_join_reorder_through_proj`.
+///
+/// The subject is `result:1042`'s statement, on a COLD database (so pseudo
+/// statistics answer 10000 rows, as they did when the file was recorded):
 ///
 /// ```text
-/// HashJoin_16   2492.68 = start(1497) + build(44.03) + probe(643.44) + ...
-/// IndexJoin_23  4558.90 = start(1497) + build(643.44) + buildTask(2395.20) + ...
+/// OFF  HashJoin(Projection(MergeJoin(MergeJoin(t3,t2), t4)), t1)
+///        t1: TableFullScan                       <- read WHOLE
+/// ON   MergeJoin(t4, MergeJoin(t3, IndexHashJoin(Projection(t2), t1)))
+///        t1: IndexRangeScan range: decided by [eq(<db>.t1.b, Column)]
 /// ```
 ///
-/// -- and `tidb_planner::plan_cost_ver2::hash_join_cost` reproduces the
-/// 2492.68 exactly from those child costs. The decision therefore does not
-/// hinge on anything about the join itself: BOTH candidates are dominated by
-/// the cost of the OUTER SUBTREE (here `643.44`, a projection over a merge
-/// join over two table readers) and by that subtree's row count. This
-/// decision function is handed [`JoinSide`]s carrying a table, some names and
-/// some types -- no rows, no row sizes, no child cost -- so it cannot form
-/// either number.
+/// The two plans are not two strategies over one join tree; they are two
+/// JOIN TREES. Under `on`, Go's `join_reorder` looks through the projection,
+/// pulls the `t1` join out of the derived table and lands it at the BOTTOM of
+/// a left-deep chain -- and only in that position does the index join win.
+/// Under `off` the tree is the one THIS TIER builds, and on that tree TiDB's
+/// own cost model chooses the hash join over a whole-table read of `t1`,
+/// which is exactly what this switch's `false` already produces.
 ///
-/// The missing piece is therefore named precisely: a recursive plan-cost
-/// evaluator over THIS tier's plan tree that carries per-node rows and row
-/// sizes, whose result feeds
-/// [`tidb_planner::plan_cost_ver2::compare_task_cost`]. Turning this switch
-/// on before that exists still only trades one recorded instance of a
-/// statement for the other.
+/// So a faithful cost evaluator over this tier's tree would agree with TiDB
+/// about this tier's tree, and this tier's tree is the `off` one. The
+/// evaluator cannot reach the `on` plan because the join it would have to
+/// cost does not exist here.
 ///
-/// Two further inputs are now named, both measured rather than assumed:
+/// Measured end to end, at commit `250d117`: flipping this switch to `true`
+/// takes `planner/core/join_reorder_through_projection` from 13 divergences
+/// to 22 and fixes ZERO of the eight targets. The topic records every
+/// statement under BOTH settings of the variable and this decision is blind
+/// to it, so the gate fires on both instances -- right on the `on` one, wrong
+/// on the `off` one -- and the `on` instances still diverge for their own
+/// reasons (`t5`'s covering-index choice, and TiDB reading `t1` whole under a
+/// shape this tier plans differently). "Trades one recorded instance of a
+/// statement for the other" was the right prediction; the count is 13 -> 22
+/// with a FIXED column of zero.
 ///
-/// * that evaluator must be handed the session's HASH-JOIN concurrency, which
-///   [`tidb_planner::plan_cost_ver2::CostSessionOpts`] does not carry -- it is
-///   a per-call field of
-///   [`tidb_planner::plan_cost_ver2::HashJoinInput::tidb_concurrency`]. For
-///   the recorded corpus that value is `1`, not the plain-session `5`; see the
-///   correction above.
+/// The named prerequisite is therefore `tidb_opt_join_reorder_through_proj`
+/// itself -- `pkg/planner/core/rule_join_reorder.go`'s projection inlining
+/// and its `colExprMap` substitution -- not [`tidb_planner::plan_cost_ver2`].
+/// A cost comparison becomes the deciding input only AFTER the reordered tree
+/// exists to compare over.
+///
+/// One further input stays true and is kept:
+///
 /// * the leaf half of the model is NOT a second cost model. [`crate::access_cost`]
 ///   is `plan_cost_ver2.go` too -- same `MinNumRows`/`MinRowSize`/
 ///   `MaxPenaltyRowCount`, same `tikv_scan_factor` `40.70` and
@@ -364,7 +391,8 @@ fn decide_over(
     let (index_id, probe_keys) = best?;
     let index = table.indexes().iter().find(|i| i.id == index_id)?;
     // Go `indexJoinPathRangeInfo`: `eq(<index column>, <outer key>)` per
-    // covered index column, in index order.
+    // covered index column, in index order. The index column is Go's
+    // `OrigName`, which an alias does not rename -- see [`JoinSide::origin`].
     let range_info = format!(
         "[{}]",
         probe_keys
@@ -374,7 +402,7 @@ fn decide_over(
                 let column = index.column_offsets[at];
                 format!(
                     "eq({}, {})",
-                    inner.names[column],
+                    inner_column_name(inner, column),
                     outer.names[outer_at(&keys[*key])]
                 )
             })
@@ -390,6 +418,20 @@ fn decide_over(
         visible: inner.visible.clone(),
         range_info,
     })
+}
+
+/// One looked-up column as `EXPLAIN` prints it INSIDE a range, which is Go's
+/// `OrigName`: `<database>.<table>.<column>` written under the TABLE's own
+/// name, never the alias the side is read under.
+///
+/// The scope-qualified name is the fallback for a side whose origin was not
+/// resolved; a decision is only ever reached for a side that HAS one, so the
+/// fallback is unreachable in practice rather than a second spelling.
+fn inner_column_name(inner: &JoinSide<'_>, column: usize) -> String {
+    match (&inner.origin, inner.table) {
+        (Some(origin), Some(table)) => format!("{origin}.{}", table.columns[column].name),
+        _ => inner.names[column].clone(),
+    }
 }
 
 /// Whether an outer value of type `outer` IS a probe of an indexed column of
@@ -451,6 +493,7 @@ pub(crate) fn join_sides<'a>(
             visible: String::new(),
             types: Vec::new(),
             names: Vec::new(),
+            origin: None,
         },
     };
     (left, right)
@@ -475,23 +518,27 @@ fn side_of<'a>(
             }
         })
         .collect();
-    let (table, visible) = single_table_of(node, catalog, current_db)
-        .map_or((None, String::new()), |(kv, visible)| (Some(kv), visible));
+    let read = single_table_of(node, catalog, current_db);
+    let visible = read
+        .as_ref()
+        .map_or_else(String::new, |(_, visible, _)| visible.clone());
+    let origin = read.as_ref().map(|(_, _, origin)| origin.clone());
     JoinSide {
-        table,
+        table: read.map(|(kv, ..)| kv),
         visible,
         types: types.to_vec(),
         names,
+        origin,
     }
 }
 
-/// The base table `node` reads whole, with the name it is written under, or
-/// `None` for every other shape.
+/// The base table `node` reads whole, the name it is written under, and its
+/// own `<database>.<table>` qualification -- or `None` for every other shape.
 fn single_table_of<'a>(
     node: &tidb_ast::JoinNode,
     catalog: &'a Catalog,
     current_db: &str,
-) -> Option<(&'a KvTable, String)> {
+) -> Option<(&'a KvTable, String, String)> {
     // `FROM a, b` wraps its left relation in a single-child join node, the
     // same peeling `crate::column_prune` does.
     let mut node = node;
@@ -520,7 +567,7 @@ fn single_table_of<'a>(
         return None;
     };
     let visible = table_ref.alias.clone().unwrap_or_else(|| name.to_owned());
-    Some((kv, visible))
+    Some((kv, visible, format!("{database}.{name}")))
 }
 
 /// Which of a side's columns `EXPLAIN` prints as a bare `Column`, one flag
