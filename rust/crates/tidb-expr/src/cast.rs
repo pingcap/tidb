@@ -61,7 +61,7 @@ pub(crate) fn eval_cast(
             Ok(Datum::UInt(to_u64_unsigned(&v, ctx)))
         }
         CastType::Char { len, .. } => {
-            let text = datum_sql_string(&v)?;
+            let text = string_source_text(&v, source)?;
             Ok(Datum::new_string(match len {
                 Some(n) => {
                     report_data_too_long(ctx, text.chars().count(), *n as usize);
@@ -76,7 +76,15 @@ pub(crate) fn eval_cast(
             // UTF-8 decoding: `CAST('你好world' AS BINARY(5))` deliberately
             // keeps the first five bytes, even though that suffix is not a
             // complete UTF-8 sequence (see `TestCastFunctions`).
-            let bytes = datum_binary_bytes(&v)?;
+            // The YEAR-zero rendering is the SAME signature's, because a
+            // BINARY target only changes `b.tp`'s charset: Go still picks
+            // `builtinCastIntAsStringSig` from the ARGUMENT's ETInt eval type
+            // and only then pads. Captured: `hex(cast(y as binary))` over a
+            // zero YEAR is `30303030`, i.e. `"0000"`.
+            let bytes = match year_zero_string(&v, source) {
+                Some(text) => text.into_bytes(),
+                None => datum_binary_bytes(&v)?,
+            };
             Ok(Datum::new_bytes(match len {
                 Some(n) => {
                     // A binary target measures in BYTES, not characters:
@@ -188,6 +196,47 @@ fn datum_sql_string(value: &Datum) -> Result<String, EvalError> {
     value
         .sql_string()
         .map_err(|_| EvalError::Unsupported("invalid UTF-8 string coercion"))
+}
+
+/// Go `builtinCastIntAsStringSig.evalString`'s last rendering rule
+/// (`pkg/expression/builtin_cast.go:1098`):
+///
+/// ```go
+/// if tp.GetType() == mysql.TypeYear && res == "0" {
+///     res = "0000"
+/// }
+/// ```
+///
+/// `tp` is `b.args[0].GetType(ctx)` -- the SOURCE's static type, not the
+/// datum's. A zero YEAR is a `Datum::Int(0)` indistinguishable from a
+/// `BIGINT` zero, and the two render differently: `CAST(y AS CHAR)` is
+/// `'0000'` where `CAST(i AS CHAR)` is `'0'`. Captured over
+/// `t(y year, i int)` holding `(0, 0)`:
+///
+/// ```text
+/// select cast(y as char), length(cast(y as char)), cast(i as char) from t;
+/// 0000    4    0
+/// ```
+///
+/// `Some` only for that one value: every other YEAR is already its own four
+/// digits (the domain is `0` and `1901..=2155`), which is why Go tests the
+/// RENDERED text rather than the integer.
+fn year_zero_string(value: &Datum, source: Option<&tidb_datatype::FieldType>) -> Option<String> {
+    if source.map(tidb_datatype::FieldType::code) != Some(tidb_datatype::FieldTypeCode::Year) {
+        return None;
+    }
+    matches!(value, Datum::Int(0) | Datum::UInt(0)).then(|| "0000".to_owned())
+}
+
+/// [`year_zero_string`] over the ordinary string rendering.
+fn string_source_text(
+    value: &Datum,
+    source: Option<&tidb_datatype::FieldType>,
+) -> Result<String, EvalError> {
+    match year_zero_string(value, source) {
+        Some(text) => Ok(text),
+        None => datum_sql_string(value),
+    }
 }
 
 /// Returns the byte payload used by Go's `builtinCast*AsStringSig` binary

@@ -282,3 +282,212 @@ fn datetime_compared_with_numeric_is_real_except_convertible_constant() {
         );
     }
 }
+
+/// `year_col <cmp> <int constant>`: the constant moves through MySQL's
+/// two-digit YEAR window ONCE, at build time, so `y < 30` means `y < 2030`.
+///
+/// # The silent row loss this closes
+///
+/// `select * from ty where y < 30` over `(2018, 0, 1999, 2069, 1970)` returned
+/// ONE row here and FOUR in TiDB, and its mirror `30 > y` did the same: a
+/// YEAR column reaches the value evaluator as a plain `Datum::Int`, so
+/// `2018 < 30` decided every row. No error, no warning -- three rows simply
+/// were not there.
+///
+/// # The Go that decides it
+///
+/// `compareFunctionClass.refineArgs` (`pkg/expression/builtin_compare.go`
+/// :1856-1873) has one arm per side, both reading the OTHER argument's static
+/// type:
+///
+/// ```go
+/// // year type [cmp] int constant
+/// if arg1IsCon && arg1IsInt && arg0Type.GetType() == mysql.TypeYear && !arg1.Value.IsNull() {
+///     adjusted, failed := types.AdjustYear(arg1.Value.GetInt64(), false)
+///     if failed == nil {
+///         arg1.Value.SetInt64(adjusted)
+///         finalArg1 = arg1
+///     }
+/// }
+/// ```
+///
+/// and `types.AdjustYear` (`pkg/types/time.go:1278`) is the window itself:
+/// `0..=69` becomes `2000+y`, `70..=99` becomes `1900+y`, a literal `0` stays
+/// `0` because `adjustZero` is false, and anything outside `1901..=2155`
+/// reports an error, which the `failed == nil` gate turns into "leave the
+/// comparison exactly as written".
+///
+/// A STRING constant takes a different route to the same place:
+/// `RefineComparedConstant`'s `EQ`/`ETString` arm (`:1633-1657`) returns the
+/// constant converted to the column's YEAR type, and THAT conversion passes
+/// `adjustZero = len(s) != 4` -- which is why `y = '0'` is `2000` and matches
+/// nothing while `y = '0000'` is `0` and matches the zero year.
+///
+/// Every expectation below is quoted from `gorun` over this exact fixture.
+#[test]
+fn year_column_compared_with_an_int_constant_takes_the_two_digit_window() {
+    let mut session = Session::new();
+    for sql in [
+        "create table ty(k int, y year)",
+        "insert into ty values (1,2018),(2,0),(3,1999),(4,2069),(5,1970)",
+    ] {
+        session
+            .run(sql)
+            .unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+    }
+
+    // `RS:1|2018;2|0;3|1999;5|1970` -- FOUR of the five rows, and which one is
+    // missing is the whole proof: 30 became 2030, so 2069 is the only year
+    // above it. Unadjusted, `y < 30` selects the zero year ALONE.
+    let below_2030 = vec![
+        vec!["1".to_string(), "2018".to_string()],
+        vec!["2".to_string(), "0".to_string()],
+        vec!["3".to_string(), "1999".to_string()],
+        vec!["5".to_string(), "1970".to_string()],
+    ];
+    assert_eq!(
+        row_text(session.run("select k,y from ty where y < 30 order by k")),
+        below_2030
+    );
+    // `symmetricOp`'s mirror: the constant on the LEFT is the OTHER of Go's
+    // two arms (`arg0IsCon && arg0IsInt && arg1Type.GetType() == mysql.TypeYear`).
+    assert_eq!(
+        row_text(session.run("select k,y from ty where 30 > y order by k")),
+        below_2030
+    );
+    // `RS:2|0;3|1999;4|2069;5|1970` -- `!=` is refined too, so 2018 is the
+    // row that leaves rather than the row that stays.
+    assert_eq!(
+        row_text(session.run("select k,y from ty where y != 18 order by k")),
+        vec![
+            vec!["2".to_string(), "0".to_string()],
+            vec!["3".to_string(), "1999".to_string()],
+            vec!["4".to_string(), "2069".to_string()],
+            vec!["5".to_string(), "1970".to_string()],
+        ]
+    );
+    // The window's own boundary, as a PARTITION: 70 is 1970 and 69 is 2069,
+    // so these two predicates split the table at a point no unadjusted
+    // comparison can produce -- `y >= 70` keeps every row but the zero year.
+    // `RS:1|2018;3|1999;4|2069;5|1970` and `RS:2|0`.
+    assert_eq!(
+        row_text(session.run("select k,y from ty where y >= 70 order by k")),
+        vec![
+            vec!["1".to_string(), "2018".to_string()],
+            vec!["3".to_string(), "1999".to_string()],
+            vec!["4".to_string(), "2069".to_string()],
+            vec!["5".to_string(), "1970".to_string()],
+        ]
+    );
+    assert_eq!(
+        row_text(session.run("select k,y from ty where y < 70 order by k")),
+        vec![vec!["2".to_string(), "0".to_string()]]
+    );
+
+    // The same rules read as SCALARS, one column per constant, so the
+    // `AdjustYear` mapping is pinned value by value rather than only through
+    // a row set. Quoted from `gorun`:
+    //
+    // ```text
+    // select k, y=69, y=70, y=18, y="18", y="0", y="0000", y=0 from ty order by k;
+    // RS:1|0|0|1|1|0|0|0;2|0|0|0|0|0|1|1;3|0|0|0|0|0|0|0;4|1|0|0|0|0|0|0;5|0|1|0|0|0|0|0
+    // ```
+    //
+    // Column by column: `69` is 2069 (row 4 alone), `70` is 1970 (row 5
+    // alone) -- the 69/70 hinge, which no other rule puts THERE. `'18'` is
+    // 2018 exactly as the integer 18 is, which is `RefineComparedConstant`'s
+    // ETString arm. `'0'` is 2000 and matches NOTHING while `'0000'` and the
+    // integer `0` are both the zero year: the `adjustZero = len(s) != 4`
+    // split, and the reason Go's own arm passes `false` for an integer.
+    let scalars = "select k, y=69, y=70, y=18, y=\"18\", y=\"0\", y=\"0000\", y=0 from ty order by k";
+    assert_eq!(
+        row_text(session.run(scalars)),
+        vec![
+            vec!["1", "0", "0", "1", "1", "0", "0", "0"],
+            vec!["2", "0", "0", "0", "0", "0", "1", "1"],
+            vec!["3", "0", "0", "0", "0", "0", "0", "0"],
+            vec!["4", "1", "0", "0", "0", "0", "0", "0"],
+            vec!["5", "0", "1", "0", "0", "0", "0", "0"],
+        ]
+        .into_iter()
+        .map(|row| row.into_iter().map(String::from).collect::<Vec<_>>())
+        .collect::<Vec<_>>()
+    );
+
+    // Out of the YEAR domain: `AdjustYear` reports `ErrWarnDataOutOfRange`
+    // alongside a CLAMPED value, and Go keeps the clamp only when there was
+    // no error -- so 2156 stays 2156 and selects nothing rather than being
+    // silently pulled down to the 2155 boundary, where it would have matched
+    // a row. `RS:` (empty) for both halves.
+    assert_eq!(
+        row_text(session.run("select k,y from ty where y = 2156")),
+        Vec::<Vec<String>>::new()
+    );
+    // `IN` is NOT `compareFunctionClass`, so `refineArgs` never runs on it:
+    // Go answers `RS:` here even though `y = 18` finds a row. This is the
+    // control that keeps the adjustment from being applied by some broader
+    // rule than the one Go wrote.
+    assert_eq!(
+        row_text(session.run("select k,y from ty where y in (18, 99)")),
+        Vec::<Vec<String>>::new()
+    );
+}
+
+/// `CAST(<year column> AS CHAR)` renders a zero YEAR as `'0000'`, which no
+/// other `Datum::Int(0)` does.
+///
+/// Go `builtinCastIntAsStringSig.evalString` (`builtin_cast.go:1090-1099`)
+/// formats the integer first and then overrides ONE rendering from the
+/// source's static type:
+///
+/// ```go
+/// tp := b.args[0].GetType(ctx)
+/// if !mysql.HasUnsignedFlag(tp.GetFlag()) {
+///     res = strconv.FormatInt(val, 10)
+/// } else {
+///     res = strconv.FormatUint(uint64(val), 10)
+/// }
+/// if tp.GetType() == mysql.TypeYear && res == "0" {
+///     res = "0000"
+/// }
+/// ```
+///
+/// The INT column in the same row is the control: the two datums are both
+/// `Datum::Int(0)` and only the static type separates them.
+#[test]
+fn casting_a_zero_year_to_char_renders_four_digits() {
+    let mut session = Session::new();
+    for sql in [
+        "create table ty(k int, y year)",
+        "insert into ty values (1,2018),(2,0)",
+    ] {
+        session
+            .run(sql)
+            .unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+    }
+    // ```text
+    // select cast(y as char), length(cast(y as char)), hex(cast(y as binary)) from ty order by k;
+    // RS:2018|4|32303138;0000|4|30303030
+    // ```
+    //
+    // `length` and `hex` are there because `'0000'` and `'0'` are not
+    // distinguishable by eye in a result grid, and the BINARY target proves
+    // the rendering happens in the SIGNATURE rather than in the CHAR arm --
+    // Go picks `builtinCastIntAsStringSig` for both and only the padding
+    // differs.
+    assert_eq!(
+        row_text(session.run(
+            "select cast(y as char), length(cast(y as char)), hex(cast(y as binary)) from ty order by k"
+        )),
+        vec![
+            vec!["2018".to_string(), "4".to_string(), "32303138".to_string()],
+            vec!["0000".to_string(), "4".to_string(), "30303030".to_string()],
+        ]
+    );
+    // The control: `k` is an ordinary INT holding the same `Datum::Int`
+    // values, and `RS:1;2` shows it is untouched.
+    assert_eq!(
+        row_text(session.run("select cast(k as char) from ty order by k")),
+        vec![vec!["1".to_string()], vec!["2".to_string()]]
+    );
+}

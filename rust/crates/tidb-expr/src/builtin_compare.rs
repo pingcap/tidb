@@ -205,10 +205,62 @@ fn refine_compared_constant(
             }
             Some(int_constant(folded.value))
         }
-        // `:1622-1638`: `int = 1.1` is definitely false, and so is
-        // `int = '1.1'`; both are Go's `isExceptional`, which this port
-        // answers by leaving the comparison alone (see the doc above).
-        "eq" | "nulleq" => None,
+        // `:1622-1657`: Go's `EQ`/`NullEQ` case switches on the CONSTANT's
+        // own eval type, and the two halves are not the same rule.
+        //
+        // ```go
+        // case opcode.NullEQ, opcode.EQ:
+        //     switch con.GetType(ctx.GetEvalCtx()).EvalType() {
+        //     case types.ETReal, types.ETDecimal:
+        //         return con, true
+        //     case types.ETString:
+        //         ...
+        //         doubleDatum, err = dt.ConvertTo(evalCtx.TypeCtx(), types.NewFieldType(mysql.TypeDouble))
+        //         if err != nil { return con, false }
+        //         if doubleDatum.GetFloat64() != math.Trunc(doubleDatum.GetFloat64()) {
+        //             return con, true
+        //         }
+        //         return &Constant{Value: intDatum, RetType: &targetFieldType, ...}, false
+        //     }
+        // ```
+        //
+        // A REAL/DECIMAL constant is Go's `isExceptional` -- `int = 1.1` is
+        // definitely false -- which this port answers by leaving the
+        // comparison alone (see the doc above). A STRING constant is NOT:
+        // when the string reads as a WHOLE double it is refined to
+        // `intDatum`, and Go's own comment says which target that arm exists
+        // for:
+        //
+        // ```text
+        // 2. When `targetFieldType.GetType()` is `TypeYear`, we can not compare `doubleDatum` with `intDatum` directly,
+        //    because we'll convert values in the ranges '0' to '69' and '70' to '99' to YEAR values in the ranges
+        //    2000 to 2069 and 1970 to 1999.
+        // 3. Suppose the value of `con` is 2, when `targetFieldType.GetType()` is `TypeYear`, the value of `doubleDatum`
+        //    will be 2.0 and the value of `intDatum` will be 2002 in this case.
+        // ```
+        //
+        // On an ordinary INT target the arm is unreachable for a whole
+        // string: `intDatum` and the string then compare EQUAL and
+        // `RefineComparedConstant` has already returned above. A YEAR target
+        // is the case where they differ WITHOUT the constant being inexact,
+        // because `convert_to_year` applied the two-digit window -- `y = '18'`
+        // converts to 2018 while the string reads as 18.0.
+        "eq" | "nulleq" => {
+            // A `None` ret_type is a nil `*types.FieldType`, which Go never
+            // builds here; it takes the unrefined answer.
+            if con.ret_type.as_ref().map(FieldType::eval_type) != Some(EvalType::String) {
+                return None;
+            }
+            // The fold's own string->double coercion, raising the truncation
+            // once more when the string is partial -- the same second warning
+            // the `Floor`/`Ceil` arm above raises.
+            let value = con.value.to_f64().ok()?.value;
+            note_string_truncation(ctx, &con.value).ok()?;
+            if value != value.trunc() {
+                return None;
+            }
+            Some(int_constant(int_datum))
+        }
         // Go's switch has no `NE` arm: a `!=` whose constant is inexact
         // falls through to `return con, false`.
         _ => None,
@@ -426,13 +478,39 @@ fn refine_args(
         return;
     }
 
+    // Go reads BOTH argument types once, at the top of `refineArgs`
+    // (`:1779-1783`), and every later arm tests those captured values -- not
+    // the type of whatever constant an earlier arm may have substituted. That
+    // ordering is what keeps the two rules below disjoint; see
+    // [`adjust_year_int_constant`].
     let eval_type = |e: &Expression| e.static_type().map(FieldType::eval_type);
     let left_is_int = eval_type(left) == Some(EvalType::Int);
     let right_is_int = eval_type(right) == Some(EvalType::Int);
+    let is_year = |e: &Expression| e.static_type().map(FieldType::code) == Some(FieldTypeCode::Year);
+    let (left_is_year, right_is_year) = (is_year(left), is_year(right));
 
-    // `int non-constant [cmp] non-int constant`, then its mirror. The
-    // constant side keeps the operator seen from the COLUMN's side, which is
-    // why the mirrored call uses `symmetricOp`.
+    refine_int_operand_constant(left, right, left_is_int, right_is_int, name, op, ctx);
+    adjust_year_int_constant(
+        left,
+        right,
+        (left_is_int, right_is_int),
+        (left_is_year, right_is_year),
+    );
+}
+
+/// `int non-constant [cmp] non-int constant` (`builtin_compare.go:1811-1833`)
+/// and its mirror through `symmetricOp` (`:1836-1854`). The constant side
+/// keeps the operator seen from the COLUMN's side, which is why the mirrored
+/// call passes `mirrored`.
+fn refine_int_operand_constant(
+    left: &mut Expression,
+    right: &mut Expression,
+    left_is_int: bool,
+    right_is_int: bool,
+    name: &str,
+    mirrored: &str,
+    ctx: &dyn Columns,
+) {
     let (column, constant, op) = match (left, right) {
         (column, Expression::Constant(constant))
             if left_is_int && !right_is_int && !matches!(column, Expression::Constant(_)) =>
@@ -442,7 +520,7 @@ fn refine_args(
         (Expression::Constant(constant), column)
             if right_is_int && !left_is_int && !matches!(column, Expression::Constant(_)) =>
         {
-            (column, constant, op)
+            (column, constant, mirrored)
         }
         _ => return,
     };
@@ -451,6 +529,80 @@ fn refine_args(
     };
     if let Some(refined) = refine_compared_constant(ctx, &target, constant, op) {
         *constant = refined;
+    }
+}
+
+/// `int constant [cmp] year type` and `year type [cmp] int constant`
+/// (`builtin_compare.go:1856-1873`), the arms that make `year_col < 30` mean
+/// `year_col < 2030`:
+///
+/// ```go
+/// // int constant [cmp] year type
+/// if arg0IsCon && arg0IsInt && arg1Type.GetType() == mysql.TypeYear && !arg0.Value.IsNull() {
+///     adjusted, failed := types.AdjustYear(arg0.Value.GetInt64(), false)
+///     if failed == nil {
+///         arg0.Value.SetInt64(adjusted)
+///         finalArg0 = arg0
+///     }
+/// }
+/// // year type [cmp] int constant
+/// if arg1IsCon && arg1IsInt && arg0Type.GetType() == mysql.TypeYear && !arg1.Value.IsNull() {
+///     ...
+/// }
+/// ```
+///
+/// # Why the value evaluator cannot do this on its own
+///
+/// A YEAR column reaches it as a plain `Datum::Int`, indistinguishable from a
+/// `BIGINT`'s, so `y < 30` decided every row by `2018 < 30` and returned only
+/// the zero year where TiDB returns the whole table. The two-digit window is
+/// a property of the COLUMN'S TYPE, and the type exists only here.
+///
+/// The two arms cannot both fire on one comparison, and neither can fire on a
+/// constant [`refine_int_operand_constant`] just substituted: Go tests the
+/// ORIGINAL argument's eval type (`arg1IsInt`), which is `ETString` exactly
+/// when that substitution happened. `y = '18'` is therefore adjusted once, by
+/// `convert_to_year` inside [`refine_compared_constant`], and `y = 18` once,
+/// here.
+///
+/// `failed == nil` is the whole gate. Go's `AdjustYear` CLAMPS an out-of-range
+/// year and reports `ErrWarnDataOutOfRange` alongside it; the caller keeps the
+/// clamped value only when there was no error, so a year outside 1901..=2155
+/// leaves the comparison exactly as written -- which is what
+/// [`tidb_datatype::adjust_year`]'s `Err` says without a clamp to discard.
+fn adjust_year_int_constant(
+    left: &mut Expression,
+    right: &mut Expression,
+    (left_is_int, right_is_int): (bool, bool),
+    (left_is_year, right_is_year): (bool, bool),
+) {
+    if left_is_int && right_is_year {
+        adjust_year_in_place(left);
+    }
+    if right_is_int && left_is_year {
+        adjust_year_in_place(right);
+    }
+}
+
+/// Go `arg.Value.SetInt64(types.AdjustYear(arg.Value.GetInt64(), false))`,
+/// applied only when the side is a non-NULL constant.
+///
+/// Go reads the datum with `GetInt64`, which on a `KindUint64` returns the
+/// same 64 bits reinterpreted; both integer datums are read that way here.
+/// Any other datum shape under an `ETInt` static type is a hybrid
+/// (`BIT`/`ENUM`/`SET`) whose `GetInt64` reads Go's unrelated `i` field, so
+/// this leaves it alone rather than inventing a year for it.
+fn adjust_year_in_place(side: &mut Expression) {
+    let Expression::Constant(constant) = side else {
+        return;
+    };
+    let value = match &constant.value {
+        Datum::Int(value) => *value,
+        Datum::UInt(value) => *value as i64,
+        _ => return,
+    };
+    if let Ok(adjusted) = tidb_datatype::adjust_year(value, false) {
+        constant.value = Datum::Int(adjusted);
     }
 }
 
