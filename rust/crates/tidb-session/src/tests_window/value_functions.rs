@@ -715,6 +715,73 @@ fn window_lag_still_converts_a_written_constant_default() {
         row_text(session.run("SELECT LAG(dc,1,3) OVER (ORDER BY id) FROM q")),
         [["3.00"], ["1.50"]]
     );
+    // Go type-asserts on the default AFTER `FoldConstant` has run, so an
+    // expression that reads no column is a constant however it was written:
+    //
+    // ```text
+    // select id, lag(dc,1,1+0.5) over (order by id) from q;   RS:1|1.50;2|1.50
+    // ```
+    assert_eq!(
+        row_text(session.run("SELECT LAG(dc,1,1+0.5) OVER (ORDER BY id) FROM q")),
+        [["1.50"], ["1.50"]]
+    );
+    // The boundary beside it: `CONCAT` folds just as readily, but it folds to
+    // a STRING, so the merge is a VARCHAR and there is no scale to pad to.
+    //
+    // ```text
+    // select id, lag(dc,1,concat('1','.5')) over (order by id) from q;   RS:1|1.5;2|1.50
+    // ```
+    assert_eq!(
+        row_text(session.run("SELECT LAG(dc,1,CONCAT('1','.5')) OVER (ORDER BY id) FROM q")),
+        [["1.5"], ["1.50"]]
+    );
+
+    // And the other side of the same test: an expression that DOES read a
+    // column never folds, so it is never converted. The recursion into a
+    // function's ARGUMENTS is what decides that, and these are where it
+    // shows -- each default is a function call, each merges to a type with
+    // something to pad TO (`decimal(11,2)` and `datetime(6)`, from `desc`),
+    // and none of them is padded:
+    //
+    // ```text
+    // select id, lag(dc,1,dc1) over (order by id) from q1;        RS:1|7.5;2|1.50
+    // select id, lag(dc,1,abs(dc1)) over (order by id) from q1;   RS:1|7.5;2|1.50
+    // select id, lag(dc,1,-dc1) over (order by id) from q1;       RS:1|-7.5;2|1.50
+    // select id, lag(t6,1,ifnull(t0,t0)) over (order by id) from q2;
+    // RS:1|2020-01-01 10:20:30;2|2020-01-01 10:20:30.123456
+    // ```
+    //
+    // over `create table q1(id int, dc decimal(10,2), dc1 decimal(10,1))`
+    // holding `(1,1.50,7.5)` and `(2,2.50,8.5)`. (All from `gorun`.)
+    session
+        .run("CREATE TABLE q1 (id INT, dc DECIMAL(10,2), dc1 DECIMAL(10,1))")
+        .unwrap();
+    session
+        .run("INSERT INTO q1 VALUES (1,1.50,7.5),(2,2.50,8.5)")
+        .unwrap();
+    for sql in [
+        "SELECT LAG(dc,1,dc1) OVER (ORDER BY id) FROM q1",
+        "SELECT LAG(dc,1,ABS(dc1)) OVER (ORDER BY id) FROM q1",
+    ] {
+        assert_eq!(row_text(session.run(sql)), [["7.5"], ["1.50"]], "{sql}");
+    }
+    assert_eq!(
+        row_text(session.run("SELECT LAG(dc,1,-dc1) OVER (ORDER BY id) FROM q1")),
+        [["-7.5"], ["1.50"]]
+    );
+    session
+        .run("CREATE TABLE q2 (id INT, t6 DATETIME(6), t0 DATETIME)")
+        .unwrap();
+    session
+        .run(
+            "INSERT INTO q2 VALUES (1,'2020-01-01 10:20:30.123456','2020-01-01 10:20:30'),\
+             (2,'2021-01-01 10:20:30.123456','2021-01-01 10:20:30')",
+        )
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT LAG(t6,1,IFNULL(t0,t0)) OVER (ORDER BY id) FROM q2")),
+        [["2020-01-01 10:20:30"], ["2020-01-01 10:20:30.123456"]]
+    );
 }
 
 /// `WrapCastForAggArgs` is handed `a.RetTp` ITSELF, so an argument it wraps
@@ -741,6 +808,22 @@ fn window_lag_still_converts_a_written_constant_default() {
 #[test]
 fn window_lag_lets_a_wrapped_temporal_argument_narrow_the_result() {
     let mut session = typed_value_session();
+    // The write-back is keyed on WHICH argument the wrapper touched, not on
+    // where it sits: a `DATE` operand is shortcut past in either position, so
+    // `lag(time3_col, 1, date_col)` reports `datetime(3)` even though the
+    // DATE comes last (`desc` over a view of it, from `gorun`) -- narrowing
+    // on the shortcut operand instead would report `datetime(0)`.
+    for sql in [
+        "SELECT LAG(d3,1,dt) OVER (ORDER BY id) FROM w",
+        "SELECT LAG(dt,1,d3) OVER (ORDER BY id) FROM w",
+    ] {
+        let ft = merged_type(&mut session, sql);
+        assert_eq!(
+            (ft.code(), ft.flen(), ft.decimal()),
+            (tidb_datatype::FieldTypeCode::Datetime, 23, 3),
+            "the DATE operand is shortcut past in either position: {sql}"
+        );
+    }
     for sql in [
         "SELECT LAG(t6,1,d3) OVER (ORDER BY id) FROM w",
         "SELECT LAG(d3,1,t6) OVER (ORDER BY id) FROM w",
