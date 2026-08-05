@@ -453,16 +453,16 @@ fn binop_numeric_source_zero_divisor_table() {
 /// so the first row -- the one whose operand is a genuine STRING -- answers
 /// Go's 2 instead of being refused.
 ///
-/// The two `Datum::Bytes` rows are still refused, and that refusal is now the
-/// only thing left of an ambiguity that has since been removed. A hex/bit
-/// literal used to be carried as `Datum::Bytes` too, so this kind meant both
-/// "an ordinary byte string" (Go: `ETReal`, 2) and "a constant binary
-/// literal" (Go: `ETInt`, so `0x20000000000000 + 1` is 9007199254740993);
-/// refusing was the safe half. `binary_literal.rs::bytes_to_value` now gives
-/// the literal Go's own `KindBinaryLiteral`, so only the byte-string meaning
-/// reaches here -- and answering it as `ETReal` is a separate, unclaimed
-/// piece of work, not a correctness trap. Nothing in live SQL is affected: a
-/// `VARCHAR` *and* a `VARBINARY` column both read back as `Datum::String`.
+/// The two `Datum::Bytes` rows are answered now too. They used to be refused,
+/// because a hex/bit literal was once carried as `Datum::Bytes` as well, so
+/// the kind meant both "an ordinary byte string" (Go: `ETReal`, 2) and "a
+/// constant binary literal" (Go: `ETInt`, so `0x20000000000000 + 1` is
+/// 9007199254740993) and refusing was the safe half of an ambiguity.
+/// `binary_literal.rs::bytes_to_value` now gives the literal Go's own
+/// `KindBinaryLiteral`, so ONLY the byte-string meaning reaches here and the
+/// refusal had nothing left to protect -- while it did cost real answers:
+/// `SELECT VERSION() + 0` (Go: 8) and `SELECT DATABASE() + 0` (Go: 0) are
+/// `Datum::Bytes` operands and were hard statement errors.
 #[test]
 fn binop_numeric_source_string_operand_rows() {
     // Go: 1 + '1' is 2, via the ETReal cast of the string.
@@ -473,21 +473,29 @@ fn binop_numeric_source_string_operand_rows() {
             .value,
         2.0
     );
-    // Go: 2 and 0 respectively; refused here for the reason above.
-    for (lhs, op, rhs) in [
-        (Datum::Int(1), BinaryOp::Plus, Datum::Bytes(b"1".to_vec())),
+    // Go: 2 and 0, and now answered rather than refused.
+    for (lhs, op, rhs, want) in [
+        (
+            Datum::Int(1),
+            BinaryOp::Plus,
+            Datum::Bytes(b"1".to_vec()),
+            2.0,
+        ),
         (
             Datum::new_string("1"),
             BinaryOp::Minus,
             Datum::Bytes(b"1".to_vec()),
+            0.0,
         ),
     ] {
-        assert!(
-            matches!(
-                apply_binary(op, lhs.clone(), rhs.clone()),
-                Err(EvalError::Unsupported(_))
-            ),
-            "{lhs:?} {op:?} {rhs:?} must still be refused, not answered wrongly"
+        assert_eq!(
+            apply_binary(op, lhs.clone(), rhs.clone())
+                .unwrap_or_else(|e| panic!("{lhs:?} {op:?} {rhs:?}: {e:?}"))
+                .to_f64()
+                .expect("numeric result")
+                .value,
+            want,
+            "{lhs:?} {op:?} {rhs:?}"
         );
     }
 }
@@ -578,11 +586,25 @@ fn temporal_operand_takes_gos_numeric_context() {
         apply(BinaryOp::Lt, time.clone(), time.clone()),
         Datum::Int(0)
     );
-    // Against a string it compares in the duration domain, so an unpadded
-    // literal still matches; against a number, numerically.
+    // Against a STRING this tier compares as TEXT, because
+    // `GetAccurateCmpType` only upgrades a duration-vs-text pair to the
+    // DURATION domain when the duration side is a `*Column`
+    // (`builtin_compare.go:1467-1483`), and this tier has no column. Captured
+    // from a real TiDB, which is where the earlier `1` for the unpadded
+    // literal came from -- but from a query whose duration side WAS a column:
+    //
+    // ```text
+    // select time'01:00:00' = '1:00:00'    0     no column: TEXT comparison
+    // select time'01:00:00' = '01:00:00'   1
+    // select time'01:00:00' > '00:30:00'   1
+    // select time'01:00:00' = 10000        1
+    // select time'01:00:00' <=> 'xyz'      0     unparseable, but still TEXT
+    // select t = '1:00:00' from tt         1     `t TIME` column: DURATION
+    // select t = 'xyz'     from tt         NULL  and only there does 1292 fire
+    // ```
     assert_eq!(
         apply(BinaryOp::Eq, time.clone(), Datum::new_string("1:00:00")),
-        Datum::Int(1)
+        Datum::Int(0)
     );
     assert_eq!(
         apply(BinaryOp::Eq, time.clone(), Datum::new_string("01:00:00")),
@@ -596,10 +618,15 @@ fn temporal_operand_takes_gos_numeric_context() {
         apply(BinaryOp::Eq, time.clone(), Datum::Int(10_000)),
         Datum::Int(1)
     );
-    // An unparseable literal warns 1292 and compares as NULL, never as false.
+    // An unparseable literal is FALSE here, not NULL: the 1292-and-NULL path
+    // belongs to the duration domain, which a column-less pair never enters.
+    assert_eq!(
+        apply(BinaryOp::NullEq, time.clone(), Datum::new_string("xyz")),
+        Datum::Int(0)
+    );
     assert_eq!(
         apply(BinaryOp::Eq, time, Datum::new_string("zzz")),
-        Datum::Null
+        Datum::Int(0)
     );
 }
 

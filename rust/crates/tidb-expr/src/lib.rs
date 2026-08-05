@@ -463,7 +463,7 @@ pub fn apply_unary(
     v: Datum,
     ctx: &dyn crate::context::Columns,
 ) -> Result<Datum, EvalError> {
-    eval_unary(op, v, ctx)
+    eval_unary(op, v, ops::Operand::Literal, ctx)
 }
 
 /// `AVG`'s `SUM / COUNT`, exposed so `tidb-exec` can compute it without
@@ -594,7 +594,7 @@ pub fn eval_in(expr: &Expr, cols: &dyn Columns) -> Result<Datum, EvalError> {
             .sysvar(*scope, name)
             .ok_or(EvalError::Unsupported("unknown system variable")),
         Expr::Paren(e) => eval_in(e, cols),
-        Expr::Unary(op, e) => eval_unary(*op, eval_in(e, cols)?, cols),
+        Expr::Unary(op, e) => eval_unary(*op, eval_in(e, cols)?, ops::Operand::Literal, cols),
         // `ROW(...) <op> ROW(...)` — see `crate::row`'s own doc for
         // why this is a special case rather than a new `Datum`
         // variant: real MySQL/TiDB restricts a bare `ROW(...)` to

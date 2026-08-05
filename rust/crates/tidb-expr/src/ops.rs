@@ -24,12 +24,17 @@ use crate::coerce::{
 use crate::{Datum, Decimal, EvalError};
 use tidb_datatype::{div_int64, div_int_with_uint, div_uint_with_int};
 
+mod integer_coerce;
+mod operand;
 mod real_coerce;
+use integer_coerce::*;
+pub(crate) use operand::{Operand, Operands};
 pub(crate) use real_coerce::*;
 
 pub(crate) fn eval_unary(
     op: UnaryOp,
     v: Datum,
+    arg: Operand<'_>,
     ctx: &dyn crate::context::Columns,
 ) -> Result<Datum, EvalError> {
     use UnaryOp::*;
@@ -107,26 +112,22 @@ pub(crate) fn eval_unary(
                 .ok_or(EvalError::IntOverflow),
             Not | NotKeyword => unreachable!("handled above"),
         },
+        // A unary minus over the integer domain is ONE rule, and its
+        // signedness is the ARGUMENT'S FLAG rather than the datum kind -- Go
+        // reinterprets the same int64 as `uint64(val)` when the flag is set,
+        // which is how `-year_col` is -1990 and not an overflow. Unary PLUS is
+        // deliberately not routed through it: TiDB's parser hands the operand
+        // straight back rather than building a function, so it must not
+        // retype anything.
         Datum::Int(i) => Ok(match op {
             Plus => Datum::Int(i),
-            // Negating the one signed magnitude without an i64 counterpart
-            // promotes to DECIMAL, rather than wrapping back to Int::MIN.
-            // This is the second unary-minus step in `--9223372036854775808`.
-            Minus if i == i64::MIN => Datum::Decimal(Decimal::from_uint(1_u64 << 63)),
-            Minus => Datum::Int(-i),
+            Minus => return unary_minus_integer(i as u64, arg.is_unsigned(), arg),
             BitNeg => Datum::UInt(!(i as u64)),
             Not | NotKeyword => unreachable!("handled above"),
         }),
         Datum::UInt(i) => Ok(match op {
             Plus => Datum::UInt(i),
-            // A unary minus keeps an ordinary unsigned magnitude in the
-            // signed domain when it fits, preserves the one representable
-            // `-2^63` boundary, and otherwise promotes to DECIMAL instead
-            // of wrapping through an invented UInt result. This is the
-            // parser/evaluator outcome TiDB exposes for `-u64::MAX`.
-            Minus if i <= i64::MAX as u64 => Datum::Int(-(i as i64)),
-            Minus if i == (1_u64 << 63) => Datum::Int(i64::MIN),
-            Minus => Datum::Decimal(Decimal::from_uint(i).negate()),
+            Minus => return unary_minus_integer(i, true, arg),
             BitNeg => Datum::UInt(!i),
             Not | NotKeyword => unreachable!("handled above"),
         }),
@@ -166,6 +167,7 @@ pub(crate) fn eval_binary_with_div_precision(
         r,
         div_precision_increment,
         DERIVATION_FREE_COLLATION,
+        Operands::LITERALS,
         ctx,
     )
 }
@@ -222,12 +224,36 @@ pub(crate) fn eval_binary_full(
     r: Datum,
     div_precision_increment: u32,
     collation: tidb_datatype::Collation,
+    operands: Operands<'_>,
     ctx: &dyn crate::context::Columns,
 ) -> Result<Datum, EvalError> {
     use BinaryOp::*;
     if l.is_range_sentinel() || r.is_range_sentinel() {
         return Err(EvalError::Unsupported("range sentinel expression operand"));
     }
+    // Go's integer signatures never ask a value whether it is unsigned; they
+    // ask the ARGUMENT'S FIELD TYPE and reinterpret the same int64 through it
+    // (`isLHSUnsigned := mysql.HasUnsignedFlag(s.args[0].GetType(ctx).GetFlag())`
+    // in `builtinArithmeticMinusIntSig.evalInt`, and the identical line in
+    // every sibling sig). The flag and the datum kind agree for a `BIGINT
+    // UNSIGNED`, which reads back as `Datum::UInt` -- but NOT for a `YEAR`,
+    // which Go's DDL stamps `ZEROFILL` and therefore `UNSIGNED`
+    // (`pkg/ddl/add_column.go:1309-1319`) while its value reads back as a
+    // plain `Datum::Int`. Reinterpreting the bits HERE, once, is exactly Go's
+    // `uval := uint64(val)` and leaves every operator below reading one fact
+    // (`Integer::Unsigned`) instead of two.
+    let l = unsigned_operand(l, operands.lhs);
+    let r = unsigned_operand(r, operands.rhs);
+    // Go's `intDivideFunctionClass` stamps its result `UnsignedFlag` when
+    // EITHER argument carries it and `builtinArithmeticIntDivideDecimalSig`
+    // then reads the quotient back through `ToUint`, which REJECTS a negative
+    // quotient rather than wrapping it. A `DOUBLE UNSIGNED` or `DECIMAL
+    // UNSIGNED` operand is not a `Datum::UInt`, so that flag has to travel
+    // with the descriptor or the rejection never happens.
+    let unsigned_pair = matches!(l, Datum::UInt(_))
+        || matches!(r, Datum::UInt(_))
+        || operands.lhs.is_unsigned()
+        || operands.rhs.is_unsigned();
     // `<=>` never propagates NULL.  Handle its NULL cases before selecting a
     // comparison type, matching `compareFunctionClass` in
     // `pkg/expression/builtin_compare.go`; this also lets `NULL <=> '1'`
@@ -361,12 +387,34 @@ pub(crate) fn eval_binary_full(
         }
         return time_compare(op, &l, &r, ctx);
     }
-    // A `TIME` compared with a string compares in the DURATION domain: Go's
-    // `RefineComparedConstant` turns the string constant into a duration, so
-    // `tm = '1:00:00'` is TRUE for `01:00:00` (verified via `gorun`). Without
-    // this the numeric substitution below would compare `10000` against the
-    // string's NUMERIC PREFIX (1), i.e. silently drop the row.
-    if matches!(op, Eq | Ge | Gt | Le | Lt | Ne | NullEq) {
+    // A `TIME` compared with a string compares in the DURATION domain -- but
+    // only for the ONE pairing Go's `GetAccurateCmpType` upgrades:
+    //
+    // ```go
+    // } else if isTemporalColumn(ctx, lhs) && isRHSConst ||
+    //     isTemporalColumn(ctx, rhs) && isLHSConst {
+    //     col, isLHSColumn := lhs.(*Column)
+    //     if !isLHSColumn { col = rhs.(*Column) }
+    //     if col.GetType(ctx).GetType() == mysql.TypeDuration { cmpType = types.ETDuration }
+    // }
+    // ```
+    // (`pkg/expression/builtin_compare.go:1467-1483`). A `TIME` COLUMN against
+    // a CONSTANT is a duration comparison; ANY other duration-vs-text pairing
+    // keeps `getBaseCmpType`'s answer, which is ETString because ETDuration is
+    // string-kind -- so the duration compares by its own FORMATTED TEXT.
+    //
+    // That is not a distinction without a difference. Captured from a real
+    // TiDB over `t TIME '01:00:00', v VARCHAR '1:00:00'`:
+    //
+    // ```text
+    // select t = '1:00:00' from tt                 1   duration compare
+    // select t = concat('1:00',':00') from tt      1   folded to a constant
+    // select t = v from tt                         0   STRING '01:00:00' vs '1:00:00'
+    // select time'01:00:00' = '1:00:00'            0   no column, so string too
+    // ```
+    let duration_vs_constant = (operands.lhs.is_duration_column() && operands.rhs.is_constant())
+        || (operands.rhs.is_duration_column() && operands.lhs.is_constant());
+    if duration_vs_constant && matches!(op, Eq | Ge | Gt | Le | Lt | Ne | NullEq) {
         let text_side = |value: &Datum| match value {
             Datum::String(value) => Some(String::from_utf8_lossy(value.bytes()).into_owned()),
             Datum::Bytes(value) => Some(String::from_utf8_lossy(value).into_owned()),
@@ -393,6 +441,26 @@ pub(crate) fn eval_binary_full(
             return Ok(ordering_to_bool(op, ordering));
         }
     }
+    // The other half of that rule: an ungated duration-vs-text COMPARISON is
+    // `getBaseCmpType`'s ETString (both eval types are string-kind), so the
+    // duration is compared as the TEXT it prints as. Substituting its string
+    // form and re-entering is what keeps the collation, the PAD rule and the
+    // `<=>` handling single-sourced in the string branch above rather than
+    // reimplemented here.
+    if matches!(op, Eq | Ge | Gt | Le | Lt | Ne | NullEq) {
+        let is_text = |value: &Datum| matches!(value, Datum::String(_) | Datum::Bytes(_));
+        let as_text = |duration: &tidb_datatype::MySqlDuration| {
+            Datum::new_collation_string(duration.to_string(), collation)
+        };
+        let rewritten = match (&l, &r) {
+            (Datum::Duration(a), other) if is_text(other) => Some((as_text(a), r.clone())),
+            (other, Datum::Duration(b)) if is_text(other) => Some((l.clone(), as_text(b))),
+            _ => None,
+        };
+        if let Some((l, r)) = rewritten {
+            return eval_binary_full(op, l, r, div_precision_increment, collation, operands, ctx);
+        }
+    }
     // Every remaining use of a temporal operand -- arithmetic, and comparing
     // two `TIME`s -- evaluates it in its NUMERIC context, which is what Go's
     // `numericContextResultType` (`pkg/expression/builtin_arithmetic.go:80`)
@@ -411,6 +479,7 @@ pub(crate) fn eval_binary_full(
             numeric_context_value(r),
             div_precision_increment,
             collation,
+            operands,
             ctx,
         );
     }
@@ -426,28 +495,84 @@ pub(crate) fn eval_binary_full(
             if l == Datum::Null || r == Datum::Null {
                 return Ok(Datum::Null);
             }
+            // ONE pairing escapes that ETReal, and `f64`'s 53-bit mantissa is
+            // why:
+            //
+            // ```go
+            // if (lhsEvalType == types.ETDecimal && !isLHSConst && rhsEvalType.IsStringKind() && isRHSConst) ||
+            //     (rhsEvalType == types.ETDecimal && !isRHSConst && lhsEvalType.IsStringKind() && isLHSConst) {
+            //     // Do comparison as decimal rather than float, in order not to lose precision.
+            //     cmpType = types.ETDecimal
+            // }
+            // ```
+            // (`pkg/expression/builtin_compare.go:1457-1466`). Captured over
+            // `d DECIMAL(19,0)` holding 1234567890123456789:
+            // `d = '1234567890123456788'` is 0 in Go and was 1 here -- both
+            // operands round to the same `f64` -- while the all-constant
+            // `1234567890123456789 = '1234567890123456788'` stays ETReal and
+            // really is 1. The asymmetric `!isConst` test is the whole rule:
+            // it fires only when the DECIMAL side is a column or an
+            // expression over one.
+            let decimal_vs_const_string = |numeric: Operand<'_>, text: Operand<'_>| {
+                numeric.eval_type() == Some(tidb_datatype::EvalType::Decimal)
+                    && !numeric.is_constant()
+                    && text.is_string_kind()
+                    && text.is_constant()
+            };
+            if decimal_vs_const_string(operands.lhs, operands.rhs)
+                || decimal_vs_const_string(operands.rhs, operands.lhs)
+            {
+                // Go's ETDecimal comparer reaches its operands through
+                // `WrapWithCastAsDecimal`, so the STRING side takes
+                // `builtinCastStringAsDecimalSig` -- `StrToDecimal` plus the
+                // DECIMAL-worded 1292 the `DIV` cast below raises from the
+                // same place.
+                let as_decimal = |d: Datum| -> Result<Datum, EvalError> {
+                    if !matches!(d, Datum::String(_) | Datum::Bytes(_)) {
+                        return Ok(d);
+                    }
+                    let converted = d
+                        .to_decimal()
+                        .map_err(|_| EvalError::Unsupported("string operand"))?;
+                    if converted.event.is_some() {
+                        ctx.handle_truncate(&format!(
+                            "Truncated incorrect DECIMAL value: '{}'",
+                            string_operand_text(&d)
+                        ))?;
+                    }
+                    Ok(Datum::Decimal(converted.value))
+                };
+                return decimal_binary(op, as_decimal(l)?, as_decimal(r)?, unsigned_pair, ctx);
+            }
             return real_compare(
                 op,
                 to_f64_with_mysql_string(&l, ctx)?,
                 to_f64_with_mysql_string(&r, ctx)?,
             );
         }
-        // `Datum::Bytes` is the AST tier's BINARY LITERAL carrier
-        // (`binary_literal.rs::bytes_to_value` turns `0x...`/`b'...'` into
-        // one), and Go's `numericContextResultType` gives a CONSTANT binary
-        // literal `ETInt`, not the `ETReal` every other string takes
-        // (`pkg/expression/builtin_arithmetic.go:91`) -- `0x20000000000000 + 1`
-        // is 9007199254740993, not 1. Coercing those bytes as TEXT here would
-        // trade a refusal for a wrong answer, so they stay refused; the chunk
-        // rewriter, which carries the literal as `Datum::BinaryLiteral` and so
-        // keeps its integer identity, already answers correctly.
+        // `Datum::Bytes` used to be REFUSED here, on the reasoning that it was
+        // the AST tier's binary-literal carrier and that reading those octets
+        // as TEXT would answer `0x20000000000000 + 1` with 1 instead of
+        // 9007199254740993. That reasoning outlived its facts: `0x...` and
+        // `b'...'` became `Datum::BinaryLiteral` (see `binary_literal.rs`,
+        // which is where Go's `KindBinaryLiteral` and its unsigned INTEGER
+        // reading now live), and `BinaryLiteral` is intercepted by
+        // `integer_of` further down. What actually reaches here as `Bytes` is
+        // ordinary session TEXT -- `DATABASE()`, `USER()`, `CURRENT_USER()`,
+        // `LEFT(VERSION(),1)` -- for which Go's `numericContextResultType`
+        // returns the same ETReal every other string takes, because
+        // `isConstantBinaryLiteral` requires BOTH a binary-str type AND a
+        // `KindBinaryLiteral` datum. The refusal therefore turned Go's
+        // `SELECT VERSION() + 0` -> 8 and `SELECT DATABASE() + 0` -> 0 into a
+        // hard statement error. Bytes now falls into the same cast below as
+        // every other string, which is what makes those two answer 8 and 0 --
+        // truncation warning included, since `to_f64_with_mysql_string` raises
+        // its own 1292.
         //
-        // Nothing else reaches here as `Bytes`: a VARCHAR *and* a VARBINARY
-        // column both read back as `Datum::String` (the latter merely collated
-        // `binary`), which is also what makes `binary '3' + 1` FLOAT:4 in Go.
-        if matches!(l, Datum::Bytes(_)) || matches!(r, Datum::Bytes(_)) {
-            return Err(EvalError::Unsupported("binary literal operand"));
-        }
+        // A VARCHAR *and* a VARBINARY column both read back as `Datum::String`
+        // (the latter merely collated `binary`), which is what makes
+        // `binary '3' + 1` FLOAT:4 in Go; those took this path already.
+        //
         // Every other operator reaches its signature with the string ALREADY
         // cast. Go's arithmetic and bitwise classes each read
         // `numericContextResultType` (`pkg/expression/builtin_arithmetic.go:80`)
@@ -511,6 +636,7 @@ pub(crate) fn eval_binary_full(
             cast_string(r)?,
             div_precision_increment,
             collation,
+            operands,
             ctx,
         );
     }
@@ -527,7 +653,7 @@ pub(crate) fn eval_binary_full(
     if matches!(l, Datum::Real(_) | Datum::Float32(_))
         || matches!(r, Datum::Real(_) | Datum::Float32(_))
     {
-        return float_binary(op, l, r, ctx);
+        return float_binary(op, l, r, unsigned_pair, ctx);
     }
     // `/` always promotes both operands to Decimal and produces a Decimal
     // result — even for two Int operands, MySQL's `/` never yields an Int
@@ -553,7 +679,7 @@ pub(crate) fn eval_binary_full(
     // A Decimal operand (an Int operand promotes to a scale-0 decimal, MySQL's
     // implicit rule) arithmetics/compares exactly; handles its own NullEq.
     if matches!(l, Datum::Decimal(_)) || matches!(r, Datum::Decimal(_)) {
-        return decimal_binary(op, l, r, ctx);
+        return decimal_binary(op, l, r, unsigned_pair, ctx);
     }
     if op == NullEq {
         return null_safe_eq(l, r);
@@ -582,200 +708,6 @@ pub(crate) fn eval_binary_full(
         _ => return Err(EvalError::UnsupportedOperandPair(l.kind(), r.kind())),
     };
     integer_binary(op, a, b, ctx)
-}
-
-fn integer_binary(
-    op: BinaryOp,
-    a: Integer,
-    b: Integer,
-    ctx: &dyn crate::context::Columns,
-) -> Result<Datum, EvalError> {
-    use BinaryOp::*;
-    let lhs_unsigned = matches!(a, Integer::Unsigned(_));
-    let rhs_unsigned = matches!(b, Integer::Unsigned(_));
-    let unsigned = lhs_unsigned || rhs_unsigned;
-    let bits_a = integer_bits(a);
-    let bits_b = integer_bits(b);
-    Ok(match op {
-        Plus => return integer_add(a, b),
-        // `-` reports `ErrOverflow` exactly where Go `builtinArithmeticMinusIntSig`
-        // does — via [`minus_overflows`], a line-for-line port of Go's
-        // `overflowCheck` (verified against goeval across every branch). A
-        // non-overflowing result keeps its wrapped two's-complement value, typed
-        // by `unsigned`.
-        Minus => {
-            if minus_overflows(lhs_unsigned, rhs_unsigned, bits_a as i64, bits_b as i64) {
-                return Err(EvalError::IntOverflow);
-            }
-            integer_result(unsigned, bits_a.wrapping_sub(bits_b))
-        }
-        // `*` matches Go's two sigs, selected by whether either operand is
-        // unsigned (`getFunction`: `HasUnsignedFlag(lhs) || HasUnsignedFlag(rhs)`
-        // == this `unsigned`). `builtinArithmeticMultiplyIntUnsignedSig` multiplies
-        // the u64 bit patterns and errors when the product wraps
-        // (`unsignedA != 0 && result/unsignedA != unsignedB`); `...MultiplyIntSig`
-        // multiplies as i64 (`a != 0 && result/a != b`, plus the `MinInt64 * -1`
-        // case). Both are exactly `checked_mul` on the respective type.
-        Mul => {
-            if unsigned {
-                return bits_a
-                    .checked_mul(bits_b)
-                    .map(Datum::UInt)
-                    .ok_or(EvalError::IntOverflow);
-            }
-            return (bits_a as i64)
-                .checked_mul(bits_b as i64)
-                .map(Datum::Int)
-                .ok_or(EvalError::IntOverflow);
-        }
-        // `DIV`/`MOD` by zero yield NULL in MySQL. `DIV` truncates toward zero.
-        IntDiv => {
-            if bits_b == 0 {
-                ctx.handle_division_by_zero()?;
-                Datum::Null
-            } else {
-                // Go selects a different checked helper for every signedness
-                // pair.  In particular, a mixed signed/unsigned quotient is
-                // an unsigned result and rejects a negative quotient instead
-                // of dividing the raw two's-complement bit patterns.
-                let quotient = match (a, b) {
-                    (Integer::Unsigned(lhs), Integer::Unsigned(rhs)) => lhs / rhs,
-                    (Integer::Unsigned(lhs), Integer::Signed(rhs)) => {
-                        div_uint_with_int(lhs, rhs).map_err(|_| EvalError::IntOverflow)?
-                    }
-                    (Integer::Signed(lhs), Integer::Unsigned(rhs)) => {
-                        div_int_with_uint(lhs, rhs).map_err(|_| EvalError::IntOverflow)?
-                    }
-                    (Integer::Signed(lhs), Integer::Signed(rhs)) => {
-                        return div_int64(lhs, rhs)
-                            .map(Datum::Int)
-                            .map_err(|_| EvalError::IntOverflow);
-                    }
-                };
-                Datum::UInt(quotient)
-            }
-        }
-        Mod => {
-            if bits_b == 0 {
-                ctx.handle_division_by_zero()?;
-                Datum::Null
-            } else {
-                // MOD's result flag follows the left operand only.  Go's
-                // mixed-sign implementations also preserve the dividend sign
-                // instead of taking a remainder over raw unsigned bits.
-                match (a, b) {
-                    (Integer::Unsigned(lhs), Integer::Unsigned(rhs)) => Datum::UInt(lhs % rhs),
-                    (Integer::Unsigned(lhs), Integer::Signed(rhs)) => {
-                        Datum::UInt(lhs % rhs.unsigned_abs())
-                    }
-                    (Integer::Signed(lhs), Integer::Unsigned(rhs)) => {
-                        let remainder = if lhs < 0 {
-                            -((lhs.unsigned_abs() % rhs) as i64)
-                        } else {
-                            (lhs as u64 % rhs) as i64
-                        };
-                        Datum::Int(remainder)
-                    }
-                    (Integer::Signed(lhs), Integer::Signed(rhs)) => {
-                        Datum::Int(lhs.wrapping_rem(rhs))
-                    }
-                }
-            }
-        }
-        BitAnd => Datum::UInt(bits_a & bits_b),
-        BitOr => Datum::UInt(bits_a | bits_b),
-        BitXor => Datum::UInt(bits_a ^ bits_b),
-        LeftShift => Datum::UInt(shift_left(bits_a, bits_b)),
-        RightShift => Datum::UInt(shift_right(bits_a, bits_b)),
-        Eq => bool_int(integer_cmp(a, b).is_eq()),
-        Ge => bool_int(integer_cmp(a, b).is_ge()),
-        Gt => bool_int(integer_cmp(a, b).is_gt()),
-        Le => bool_int(integer_cmp(a, b).is_le()),
-        Lt => bool_int(integer_cmp(a, b).is_lt()),
-        Ne => bool_int(!integer_cmp(a, b).is_eq()),
-        Div => unreachable!("handled above"),
-        LogicAnd | LogicOr | LogicXor | NullEq => unreachable!("handled above"),
-    })
-}
-
-fn integer_result(unsigned: bool, bits: u64) -> Datum {
-    if unsigned {
-        Datum::UInt(bits)
-    } else {
-        Datum::Int(bits as i64)
-    }
-}
-
-/// Integer `+` with TiDB's overflow rule (`builtinArithmeticPlusIntSig`): the
-/// result is `UNSIGNED` when either operand is, and any result past that type's
-/// range is `ErrOverflow`, never a silent wrap. Go errors in every signedness
-/// case rather than adding the raw two's-complement bits, so each case maps to a
-/// checked operation: a mixed sum underflows past `0` when a negative addend
-/// exceeds the unsigned operand, or overflows past `u64::MAX`.
-fn integer_add(a: Integer, b: Integer) -> Result<Datum, EvalError> {
-    match (a, b) {
-        (Integer::Signed(x), Integer::Signed(y)) => x
-            .checked_add(y)
-            .map(Datum::Int)
-            .ok_or(EvalError::IntOverflow),
-        (Integer::Unsigned(x), Integer::Unsigned(y)) => x
-            .checked_add(y)
-            .map(Datum::UInt)
-            .ok_or(EvalError::IntOverflow),
-        (Integer::Unsigned(x), Integer::Signed(y)) | (Integer::Signed(y), Integer::Unsigned(x)) => {
-            let sum = if y < 0 {
-                x.checked_sub(y.unsigned_abs())
-            } else {
-                x.checked_add(y.unsigned_abs())
-            };
-            sum.map(Datum::UInt).ok_or(EvalError::IntOverflow)
-        }
-    }
-}
-
-/// A line-for-line port of Go `builtinArithmeticMinusIntSig.overflowCheck`:
-/// `true` when `a - b` overflows the result type. `a`/`b` are the operands
-/// reinterpreted as `i64` (Go passes the raw `int64` bits). `signed` is
-/// `!lhs_unsigned && !rhs_unsigned` — Go's `forceToSigned` is the
-/// `NO_UNSIGNED_SUBTRACTION` sql_mode, which this context-free layer does not
-/// model, so this is the default (mode off). The branch structure and the final
-/// condition mirror Go exactly; verified against goeval across every branch.
-fn minus_overflows(lhs_unsigned: bool, rhs_unsigned: bool, a: i64, b: i64) -> bool {
-    let signed = !lhs_unsigned && !rhs_unsigned;
-    let res = a.wrapping_sub(b);
-    let (ua, ub) = (a as u64, b as u64);
-    let mut res_unsigned = false;
-    if lhs_unsigned {
-        if rhs_unsigned {
-            if ua < ub {
-                if res >= 0 {
-                    return true;
-                }
-            } else {
-                res_unsigned = true;
-            }
-        } else if b >= 0 {
-            if ua > ub {
-                res_unsigned = true;
-            }
-        } else if ua > u64::MAX - b.unsigned_abs() {
-            // Go `testIfSumOverflowsUll(ua, uint64(-b))`.
-            return true;
-        } else {
-            res_unsigned = true;
-        }
-    } else if rhs_unsigned {
-        // Go `uint64(a - math.MinInt64) < ub`.
-        if (a.wrapping_sub(i64::MIN) as u64) < ub {
-            return true;
-        }
-    } else if a > 0 && b < 0 {
-        res_unsigned = true;
-    } else if a < 0 && b > 0 && res >= 0 {
-        return true;
-    }
-    (!signed && !res_unsigned && res < 0)
-        || (signed && res_unsigned && (res as u64) > i64::MAX as u64)
 }
 
 /// Evaluates a context-free binary operation with TiDB's default
@@ -809,6 +741,7 @@ fn decimal_binary(
     op: BinaryOp,
     l: Datum,
     r: Datum,
+    unsigned_pair: bool,
     ctx: &dyn crate::context::Columns,
 ) -> Result<Datum, EvalError> {
     use BinaryOp::*;
@@ -869,6 +802,17 @@ fn decimal_binary(
                 Datum::Null
             } else {
                 match a.div_rem(&b) {
+                    // Go reads the quotient back through `ToUint` when EITHER
+                    // argument carries `UnsignedFlag`
+                    // (`builtin_arithmetic.go:952-967`), and `ToUint` REFUSES a
+                    // negative value rather than wrapping it -- so
+                    // `double_unsigned_col DIV -1` is `ErrOverflow "BIGINT
+                    // UNSIGNED"`, not the two's-complement 18446744073709551609
+                    // this returned. The one negative quotient that survives is
+                    // Go's own `(-1, 0]` exception, and `div_rem` has already
+                    // truncated that to 0.
+                    Some((q, _)) if unsigned_pair && q < 0 => return Err(EvalError::IntOverflow),
+                    Some((q, _)) if unsigned_pair => Datum::UInt(q as u64),
                     Some((q, _)) => Datum::Int(q),
                     None => return Err(EvalError::IntOverflow),
                 }
@@ -1111,24 +1055,6 @@ fn string_compare(
     })
 }
 
-/// MySQL shifts operate on 64-bit unsigned values; a shift amount `>= 64`
-/// yields 0.
-fn shift_left(a: u64, b: u64) -> u64 {
-    if b >= 64 {
-        0
-    } else {
-        a << b
-    }
-}
-
-fn shift_right(a: u64, b: u64) -> u64 {
-    if b >= 64 {
-        0
-    } else {
-        a >> b
-    }
-}
-
 /// FALSE dominates; otherwise NULL propagates if either side is unknown.
 /// Also called directly from `crate::eval_in`'s `BETWEEN` handling (`x >= lo
 /// AND x <= hi`), not just from `eval_binary`'s `LogicAnd` arm.
@@ -1198,7 +1124,7 @@ fn null_safe_eq(l: Datum, r: Datum) -> Result<Datum, EvalError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        bytes_to_f64, eval_binary, eval_binary_full, to_f64_with_mysql_string,
+        bytes_to_f64, eval_binary, eval_binary_full, to_f64_with_mysql_string, Operands,
         DERIVATION_FREE_COLLATION,
     };
     use crate::{Datum, Decimal, EvalError};
@@ -1287,6 +1213,7 @@ mod tests {
                 Datum::Int(12),
                 4,
                 DERIVATION_FREE_COLLATION,
+                Operands::LITERALS,
                 &log,
             ),
             Ok(Datum::Int(1))
@@ -1299,6 +1226,7 @@ mod tests {
                 s("3xyz"),
                 4,
                 DERIVATION_FREE_COLLATION,
+                Operands::LITERALS,
                 &log,
             ),
             Ok(Datum::Int(0))

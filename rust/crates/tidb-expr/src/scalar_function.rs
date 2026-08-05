@@ -377,12 +377,17 @@ impl ScalarFunction {
                 // The statement context travels with the operands, so a
                 // zero divisor reaches the same warning/error policy the AST
                 // evaluator applies.
+                // The ARGUMENT EXPRESSIONS travel with the values. Go's
+                // operator dispatch reads `args[i].GetType(ctx)` and the
+                // `args[i].(*Constant)` type switch to pick a signature, and a
+                // `Datum` records neither -- see `ops::operand`.
                 return crate::ops::eval_binary_full(
                     op,
                     lhs,
                     rhs,
                     ctx.div_precision_increment(),
                     self.derived_collation(),
+                    crate::ops::Operands::of(&self.args[0], &self.args[1]),
                     ctx,
                 );
             }
@@ -390,7 +395,12 @@ impl ScalarFunction {
         if let Some(op) = unary_op_for_name(name) {
             if self.args.len() == 1 {
                 let v = self.args[0].eval(ctx, row)?;
-                return crate::apply_unary(op, v, ctx);
+                return crate::ops::eval_unary(
+                    op,
+                    v,
+                    crate::ops::Operand::Expr(&self.args[0]),
+                    ctx,
+                );
             }
         }
         // Go `builtinCaseWhen*Sig`: the arguments are the flattened
@@ -727,14 +737,23 @@ impl ScalarFunction {
             let value = self.args[0].eval(ctx, row)?;
             let mut found_null = value.is_null();
             let mut found_match = false;
-            for item in &self.args[1..] {
-                let item = item.eval(ctx, row)?;
+            for item_expr in &self.args[1..] {
+                let item = item_expr.eval(ctx, row)?;
                 match crate::ops::eval_binary_full(
                     tidb_ast::BinaryOp::Eq,
                     value.clone(),
                     item,
                     ctx.div_precision_increment(),
                     collation,
+                    // Go's `inFunctionClass` gives EVERY argument `args[0]`'s
+                    // own eval type rather than running `GetAccurateCmpType`
+                    // per pair, so the item's constant-ness does not steer it
+                    // there. Handing the real argument expressions over is
+                    // still strictly more information than claiming both are
+                    // literals; what remains unported is the unconditional
+                    // cast to `args[0]`'s type, which shows up only for a
+                    // temporal `args[0]` against a non-constant text item.
+                    crate::ops::Operands::of(&self.args[0], item_expr),
                     ctx,
                 )? {
                     Datum::Int(0) => {}

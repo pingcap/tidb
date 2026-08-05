@@ -26,15 +26,11 @@
 //!   type plus `AddFlag(mysql.UnsignedFlag)`; not boolean functions.
 //! - `not` (`unaryNotFunctionClass`): base ETInt, `SetFlen(1)`, boolean.
 //! - `bitneg` (`bitNegFunctionClass`): base ETInt plus `UnsignedFlag`.
-//! - `unaryminus`: its own type logic; only the plain int and real paths are
-//!   ported (see [`infer_unary_op_type`]).
+//! - `unaryminus`: its own type logic (see [`infer_unary_op_type`]).
 //!
 //! DEFERRED (documented): `wrapWithIsTrue` on logic and/or arguments mutates
 //! the *args* (istrue_with_null wrappers), not the result type, and is not
-//! ported; `unaryMinusFunctionClass`'s int-overflow-to-decimal promotion
-//! (`typeInfer` on a constant `-(max int + 1)`), its decimal/temporal arms,
-//! and the column-arg flen reservation are deferred -- those paths return
-//! `None` here so the rewriter keeps its placeholder.
+//! ported.
 
 use crate::builtin_arithmetic::new_return_field_type;
 use crate::expression::Expression;
@@ -66,15 +62,40 @@ pub fn infer_op_type(name: &str) -> Option<FieldType> {
     }
 }
 
+/// Go `unaryMinusFunctionClass.handleIntOverflow`
+/// (`pkg/expression/builtin_op.go:980-997`), asked only where `typeInfer` asks
+/// it: of an ETInt argument that Go's constant folding has turned into a
+/// `*Constant`.
+///
+/// ```go
+/// if mysql.HasUnsignedFlag(arg.GetType(ctx).GetFlag()) {
+///     uval := arg.Value.GetUint64()
+///     if uval > uint64(-math.MinInt64) { return true }
+/// } else {
+///     val := arg.Value.GetInt64()
+///     if val == math.MinInt64 { return true }
+/// }
+/// ```
+fn int_negation_overflows(arg: &Expression, arg_ft: &FieldType) -> bool {
+    let Some(value) = crate::constant_fold::folded_value(arg) else {
+        return false;
+    };
+    if arg_ft.is_unsigned() {
+        matches!(value, tidb_datatype::Datum::UInt(bits) if bits > 1_u64 << 63)
+    } else {
+        matches!(value, tidb_datatype::Datum::Int(i64::MIN))
+    }
+}
+
 /// The result `FieldType` Go's unary operator function classes derive in
 /// `getFunction`, for the unary scalar-function `name`
 /// (`not`/`bitneg`/`unaryminus`).
 ///
-/// `unaryminus` ports only the simple paths: an ETInt argument (without the
-/// constant-int-overflow promotion to decimal) keeps ETInt with decimal 0, and
-/// an ETReal argument keeps ETReal; both then reserve one extra display digit
-/// (`SetFlenUnderLimit(argFlen + 1)`, the non-column arm). The decimal,
-/// temporal, and overflow arms are deferred and return `None`.
+/// `unaryminus`: an ETInt argument keeps ETInt with decimal 0 UNLESS Go's
+/// `typeInfer` promotes it (see [`int_negation_overflows`]), an ETReal
+/// argument keeps ETReal, and a decimal or temporal argument keeps the decimal
+/// domain with the argument's own scale. The flen reserves one extra display
+/// digit except over a column whose declared width already covers the sign.
 ///
 /// Returns `None` for any other function name (including `unaryplus`, whose Go
 /// class returns the argument unchanged rather than building a function).
@@ -98,9 +119,19 @@ pub fn infer_unary_op_type(name: &str, arg: &Expression) -> Option<FieldType> {
         "unaryminus" => {
             let arg_ft = arg.static_type()?;
             let eval_type = arg_ft.eval_type();
+            let int_overflow = eval_type == EvalType::Int && int_negation_overflows(arg, arg_ft);
             let mut ret = match eval_type {
-                // DEFERRED: the constant `intOverflow` check (typeInfer) that
-                // promotes `-(literal beyond max int64)` to decimal.
+                // Go's `typeInfer` REPLACES the Int signature with the decimal
+                // one when a CONSTANT argument's negation leaves `BIGINT`, so
+                // `SELECT --9223372036854775808` is the decimal
+                // 9223372036854775808 and not a clamped `BIGINT`.
+                EvalType::Int if int_overflow => {
+                    let mut ret = new_return_field_type(EvalType::Decimal);
+                    // `bf.tp.SetDecimal(0)` runs for BOTH arms of Go's
+                    // `case types.ETInt`.
+                    ret.set_decimal(0);
+                    ret
+                }
                 EvalType::Int => {
                     let mut ret = new_return_field_type(EvalType::Int);
                     ret.set_decimal(0);
@@ -136,6 +167,7 @@ pub fn infer_unary_op_type(name: &str, arg: &Expression) -> Option<FieldType> {
             let column_keeps_width = is_column
                 && (eval_type == EvalType::Decimal
                     || (eval_type == EvalType::Int
+                        && !int_overflow
                         && arg_ft.flags() & FieldTypeFlags::UNSIGNED == 0));
             if column_keeps_width {
                 ret.set_flen_under_limit(arg_ft.flen());

@@ -48,6 +48,7 @@ pub(super) fn float_binary(
     op: BinaryOp,
     l: Datum,
     r: Datum,
+    unsigned_pair: bool,
     ctx: &dyn crate::context::Columns,
 ) -> Result<Datum, EvalError> {
     use BinaryOp::*;
@@ -66,9 +67,13 @@ pub(super) fn float_binary(
     // `builtinArithmeticIntDivideDecimalSig` then reads the quotient back
     // through `ConvertDecimalToUint`, which REJECTS a negative quotient rather
     // than wrapping it. So `1u DIV -1` is an out-of-range error while
-    // `1u DIV -2` is an unsigned 0 -- a distinction that survives the promotion
-    // to `f64` here only if the original signedness is captured first.
-    let unsigned_div = matches!(l, Datum::UInt(_)) || matches!(r, Datum::UInt(_));
+    // `1u DIV -2` is an unsigned 0.
+    //
+    // `unsigned_pair` is the caller's answer because the `Datum` alone cannot
+    // give it: `DOUBLE UNSIGNED` and `DOUBLE` both read back as `Datum::Real`,
+    // so deriving it from the operand KIND here missed every unsigned
+    // floating-point column.
+    let unsigned_div = unsigned_pair;
     let a = to_f64(l);
     let b = to_f64(r);
     Ok(match op {

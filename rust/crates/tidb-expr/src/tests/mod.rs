@@ -24,6 +24,7 @@ mod control;
 mod datetime;
 mod evaluator_binop;
 mod math;
+mod operand_dispatch;
 
 /// Parses and evaluates a constant expression to its label.
 pub(super) fn e(expr: &str) -> String {
