@@ -1661,31 +1661,15 @@ type topNCandidate struct {
 }
 
 // flattenSortedTopN flattens every partition's TopN entries into one
-// slice sorted by encoded key with a single entry per unique value,
-// carrying the value's summed count across partitions (step 1a of
+// slice with a single entry per unique value, carrying that value's
+// summed count across partitions (step 1a of
 // MergePartTopNAndHistToGlobal). The encoded bytes are referenced, not
 // copied.
-// needsDatumOrdering reports whether a type's memcomparable encoding
-// orders values differently than Datum.Compare does, which decides how
-// the TopN stream must be sorted to stay aligned with the bucket
-// stream. ENUM and SET encode as their numeric value but compare by
-// element name; BIT encodes numerically but compares as a binary
-// literal with leading zeros trimmed. Every other column type has an
-// order-preserving encoding, so the cheaper byte order is equivalent.
-func needsDatumOrdering(ft *types.FieldType) bool {
-	switch ft.GetType() {
-	case mysql.TypeEnum, mysql.TypeSet, mysql.TypeBit:
-		return true
-	default:
-		return false
-	}
-}
-
-// flattenSortedTopN returns every partition's TopN entries as one
-// stream, ordered by the same relation Pass 1 uses to walk them against
-// the bucket stream, with equal values compacted into a single entry.
-// The encoded key stays the identity: two entries are the same value
-// only if their encoded keys are equal.
+//
+// The order is the one Pass 1 walks the entries against the bucket
+// stream with, which sortTopNEntries decides. Either way the encoded
+// key stays the identity: two entries are the same value only if their
+// encoded keys are equal.
 func flattenSortedTopN(
 	sc *stmtctx.StatementContext, topNs []*TopN, ft *types.FieldType, isIndex bool,
 ) ([]topNEntry, error) {
@@ -1705,14 +1689,8 @@ func flattenSortedTopN(
 			allTopN = append(allTopN, topNEntry{encoded: val.Encoded, count: val.Count})
 		}
 	}
-	if !isIndex && needsDatumOrdering(ft) {
-		if err := sortTopNByDatum(sc, allTopN, ft); err != nil {
-			return nil, err
-		}
-	} else {
-		slices.SortFunc(allTopN, func(a, b topNEntry) int {
-			return bytes.Compare(a.encoded, b.encoded)
-		})
+	if err := sortTopNEntries(sc, allTopN, ft, isIndex); err != nil {
+		return nil, err
 	}
 	// Compact runs of equal values (the same value can be TopN in
 	// several partitions) into one entry with the summed count, so
@@ -1729,10 +1707,35 @@ func flattenSortedTopN(
 	return compacted, nil
 }
 
-// sortTopNByDatum orders entries by their decoded values, falling back
-// to the encoded key so entries for the same value stay adjacent for
-// the compaction that follows.
-func sortTopNByDatum(sc *stmtctx.StatementContext, allTopN []topNEntry, ft *types.FieldType) error {
+// sortTopNEntries orders the flattened stream the way Pass 1 walks it
+// against the bucket stream. That is the encoded byte order, except for
+// ENUM and SET, which encode as their numeric value but compare by
+// element name, and BIT, which encodes numerically but compares as a
+// binary literal with leading zeros trimmed. Those three have to be
+// ordered by their decoded values, with the encoded key as a tie-break
+// so entries for the same value stay adjacent for the compaction that
+// follows. An index bound is the encoded key itself, so the index path
+// never needs this. TestTopNOrderingMatchesDatumOrder pins the type
+// list against what the encodings actually do.
+func sortTopNEntries(
+	sc *stmtctx.StatementContext, allTopN []topNEntry, ft *types.FieldType, isIndex bool,
+) error {
+	byteOrdered := isIndex
+	switch ft.GetType() {
+	case mysql.TypeEnum, mysql.TypeSet, mysql.TypeBit:
+	default:
+		byteOrdered = true
+	}
+	if byteOrdered {
+		slices.SortFunc(allTopN, func(a, b topNEntry) int {
+			return bytes.Compare(a.encoded, b.encoded)
+		})
+		return nil
+	}
+
+	// Keyed by value, not by entry: the same value is typically in many
+	// partitions' TopN, and these types have few distinct values, so
+	// this decodes once per value rather than once per entry.
 	tz := sc.TimeZone()
 	datums := make(map[string]types.Datum, len(allTopN))
 	for _, e := range allTopN {

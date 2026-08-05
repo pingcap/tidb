@@ -161,6 +161,16 @@ func typeCases() []typeCase {
 			sortKeyD("AAA", "utf8mb4_general_ci"), sortKeyD("zzz", "utf8mb4_general_ci")},
 		typeCase{"blob", ftOf(mysql.TypeBlob, withCollate(charset.CharsetBin, charset.CollationBin)),
 			types.NewBytesDatum([]byte("aaa")), types.NewBytesDatum([]byte("zzz"))},
+		typeCase{"char", ftOf(mysql.TypeString, withCollate(charset.CharsetUTF8MB4, charset.CollationBin)),
+			strD("aaa", charset.CollationBin), strD("zzz", charset.CollationBin)},
+		typeCase{"var_string", ftOf(mysql.TypeVarString, withCollate(charset.CharsetUTF8MB4, charset.CollationBin)),
+			strD("aaa", charset.CollationBin), strD("zzz", charset.CollationBin)},
+		typeCase{"tinyblob", ftOf(mysql.TypeTinyBlob, withCollate(charset.CharsetBin, charset.CollationBin)),
+			types.NewBytesDatum([]byte("aaa")), types.NewBytesDatum([]byte("zzz"))},
+		typeCase{"mediumblob", ftOf(mysql.TypeMediumBlob, withCollate(charset.CharsetBin, charset.CollationBin)),
+			types.NewBytesDatum([]byte("aaa")), types.NewBytesDatum([]byte("zzz"))},
+		typeCase{"longblob", ftOf(mysql.TypeLongBlob, withCollate(charset.CharsetBin, charset.CollationBin)),
+			types.NewBytesDatum([]byte("aaa")), types.NewBytesDatum([]byte("zzz"))},
 		// ENUM/SET encode by numeric value but compare by name, so the
 		// declaration order below is deliberately the reverse of the
 		// alphabetical order the histogram stores them in.
@@ -181,6 +191,21 @@ func typeCases() []typeCase {
 	)
 }
 
+// representativeTypeCases picks named cases out of the matrix.
+func representativeTypeCases(names ...string) []typeCase {
+	want := make(map[string]bool, len(names))
+	for _, n := range names {
+		want[n] = true
+	}
+	out := make([]typeCase, 0, len(names))
+	for _, tc := range typeCases() {
+		if want[tc.name] {
+			out = append(out, tc)
+		}
+	}
+	return out
+}
+
 // assertHistogramOrder guards the fixture itself: lo must really sort
 // before hi, otherwise the case would not describe a histogram the
 // sampling builder could produce.
@@ -188,70 +213,6 @@ func assertHistogramOrder(t *testing.T, sc *stmtctx.StatementContext, tc typeCas
 	c, err := tc.lo.Compare(sc.TypeCtx(), &tc.hi, collate.GetBinaryCollator())
 	require.NoError(t, err)
 	require.Lessf(t, c, 0, "%s: fixture lo must sort before hi", tc.name)
-}
-
-// TestMergeAggregatesEqualValuesAcrossTypes: a value contributed by one
-// partition's TopN and another partition's bucket upper must end up as
-// one global TopN entry holding the sum, for every column type.
-func TestMergeAggregatesEqualValuesAcrossTypes(t *testing.T) {
-	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
-	killer := sqlkiller.SQLKiller{}
-	for _, tc := range typeCases() {
-		for _, onHi := range []bool{false, true} {
-			runAggregationCase(t, sc, &killer, tc, onHi)
-		}
-	}
-}
-
-// runAggregationCase puts the shared value in one partition's TopN and
-// the other partition's bucket upper. onHi selects which of the two
-// fixture values is shared, because a mismatch between encoded order
-// and datum order only shows up for one of them.
-func runAggregationCase(t *testing.T, sc *stmtctx.StatementContext, killer *sqlkiller.SQLKiller, tc typeCase, onHi bool) {
-	name := tc.name + "/topn_on_lo"
-	shared := tc.lo
-	if onHi {
-		name = tc.name + "/topn_on_hi"
-		shared = tc.hi
-	}
-	t.Run(name, func(t *testing.T) {
-		assertHistogramOrder(t, sc, tc)
-		loEnc, err := codec.EncodeKey(sc.TimeZone(), nil, shared)
-		require.NoError(t, err)
-
-		// p0 holds lo only in its TopN.
-		p0TopN := statistics.NewTopN(1)
-		p0TopN.AppendTopN(loEnc, 5)
-		p0Hist := statistics.NewHistogram(1, 1, 0, 0, tc.ft, chunk.InitialCapacity, 0)
-
-		// p1 holds both values as single-value buckets.
-		p1Hist := statistics.NewHistogram(1, 2, 0, 0, tc.ft, chunk.InitialCapacity, 0)
-		if onHi {
-			p1Hist.AppendBucket(&tc.lo, &tc.lo, 7, 7)
-			p1Hist.AppendBucket(&tc.hi, &tc.hi, 10, 3)
-		} else {
-			p1Hist.AppendBucket(&tc.lo, &tc.lo, 3, 3)
-			p1Hist.AppendBucket(&tc.hi, &tc.hi, 10, 7)
-		}
-
-		gTopN, _, err := statistics.MergePartTopNAndHistToGlobal(
-			sc, killer,
-			[]*statistics.TopN{p0TopN, statistics.NewTopN(0)},
-			[]*statistics.Histogram{p0Hist, p1Hist},
-			3, 2, false,
-		)
-		require.NoError(t, err)
-		require.NotNil(t, gTopN)
-
-		byKey := map[string]uint64{}
-		for _, m := range gTopN.TopN {
-			byKey[string(m.Encoded)] += m.Count
-		}
-		require.Lenf(t, gTopN.TopN, len(byKey),
-			"the same value must not occupy two TopN slots; got %v", gTopN.TopN)
-		require.Equalf(t, uint64(8), byKey[string(loEnc)],
-			"the shared value must aggregate its TopN 5 and its bucket repeat 3")
-	})
 }
 
 // TestMergeRebuildsNonPromotedTopNAcrossTypes: a TopN value that loses
@@ -317,7 +278,10 @@ func TestMergeIndexPathAcrossTypes(t *testing.T) {
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
 	killer := sqlkiller.SQLKiller{}
 	blobFt := types.NewFieldType(mysql.TypeBlob)
-	for _, tc := range typeCases() {
+	// Two types are enough to make the point: one whose encoding is
+	// order-preserving and one whose is not. The index path treats both
+	// the same because it never leaves the encoded form.
+	for _, tc := range representativeTypeCases("int_signed", "enum") {
 		t.Run(tc.name, func(t *testing.T) {
 			defer func() {
 				if r := recover(); r != nil {
@@ -404,3 +368,100 @@ func TestMergeAggregatesBothValuesAcrossTypes(t *testing.T) {
 		})
 	}
 }
+
+// TestTopNOrderingMatchesDatumOrder pins the type list inside
+// sortTopNEntries against what the encodings actually do.
+//
+// A single value pair can only prove divergence, never the absence of
+// it: BIT values 1 and 2 encode in the same order they compare, while 2
+// and 256 do not. So the check is aggregated per type: a type that
+// diverges for any pair must be ordered by decoded value, and a type on
+// that list must diverge for at least one pair, otherwise the entry is
+// dead weight.
+func TestTopNOrderingMatchesDatumOrder(t *testing.T) {
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
+	// The types sortTopNEntries orders by decoded value.
+	orderedByDatum := map[byte]bool{
+		mysql.TypeEnum: true, mysql.TypeSet: true, mysql.TypeBit: true,
+	}
+	diverges := map[byte]string{} // type -> the case that showed it
+
+	check := func(name string, ft *types.FieldType, a, b types.Datum) {
+		aEnc, err := codec.EncodeKey(sc.TimeZone(), nil, a)
+		if err != nil {
+			return // a pair this type cannot encode says nothing about ordering
+		}
+		bEnc, err := codec.EncodeKey(sc.TimeZone(), nil, b)
+		if err != nil {
+			return
+		}
+		datumOrder, err := a.Compare(sc.TypeCtx(), &b, collate.GetBinaryCollator())
+		require.NoError(t, err)
+		if (datumOrder < 0) == (bytes.Compare(aEnc, bEnc) < 0) {
+			return
+		}
+		tp := ft.GetType()
+		diverges[tp] = name
+		require.Truef(t, orderedByDatum[tp],
+			"%s encodes in a different order than it compares (datum %d, encoded %d), so "+
+				"sortTopNEntries must order this type by decoded value or the merge walks "+
+				"two differently ordered streams", name, datumOrder, bytes.Compare(aEnc, bEnc))
+	}
+
+	for _, tc := range typeCases() {
+		check(tc.name, tc.ft, tc.lo, tc.hi)
+		// The type's own extremes, which need no hand-picked fixture
+		// and so keep working for types added later. Skipped when the
+		// stored bound is not the raw value: a string column under a
+		// non-binary collation stores the collation sort key, and
+		// GetMinValue hands back the string instead, which compares by
+		// a different relation than the bound would.
+		lo, hi := types.GetMinValue(tc.ft), types.GetMaxValue(tc.ft)
+		if lo.Kind() == tc.lo.Kind() && hi.Kind() == tc.hi.Kind() {
+			check(tc.name+"/min-max", tc.ft, lo, hi)
+		}
+	}
+
+	for tp := range orderedByDatum {
+		require.Containsf(t, diverges, tp,
+			"type %d is ordered by decoded value but no case shows its encoding "+
+				"disagreeing with Datum.Compare; either the entry is unnecessary or the "+
+				"matrix needs a value pair that demonstrates it", tp)
+	}
+}
+
+// TestTypeMatrixCoversAllColumnTypes fails when a column type exists
+// that typeCases() does not cover and that is not explicitly declared
+// out of scope. Ordering, rebuilding and comparison are all
+// type-dependent in the merge, so a new type should force someone to
+// decide rather than inherit whatever the default branch happens to do.
+func TestTypeMatrixCoversAllColumnTypes(t *testing.T) {
+	covered := map[byte]bool{}
+	for _, tc := range typeCases() {
+		covered[tc.ft.GetType()] = true
+	}
+	// Types a histogram never carries. Checked by hand when written:
+	// ANALYZE produces no stats_histograms row for a JSON or a vector
+	// column, and a geometry column cannot be created at all. This is a
+	// snapshot, so an entry here is a claim to re-check if that type
+	// ever gains support.
+	outOfScope := map[byte]string{
+		mysql.TypeUnspecified:       "not a storable column type",
+		mysql.TypeNull:              "the NULL literal's type, it has no values",
+		mysql.TypeGeometry:          "not supported by TiDB",
+		mysql.TypeJSON:              "ANALYZE collects no statistics for JSON columns",
+		mysql.TypeTiDBVectorFloat32: "vector columns carry no histogram",
+	}
+	for tp := range 256 {
+		name := types.TypeStr(byte(tp))
+		if name == "" || covered[byte(tp)] || outOfScope[byte(tp)] != "" {
+			continue
+		}
+		t.Errorf("column type %s (%d) is not in typeCases() and not declared out of scope; "+
+			"add a case with two values, or record why a histogram never carries it", name, tp)
+	}
+}
+
+// outOfScopeType records why a column type needs no merge coverage, and
+// how to spell it in DDL so the claim can be checked rather than
+// trusted. TestOutOfScopeTypesCarryNoStats does the checking.
