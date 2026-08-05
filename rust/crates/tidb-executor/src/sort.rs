@@ -791,19 +791,11 @@ mod tests {
     }
 
     /// `tmp-storage-path` is process-global, so the tests that redirect it
-    /// must not run at the same time inside one test binary.
-    fn temp_dir_guard() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        LOCK.lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
-    fn scratch_temp_dir(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("tidb_rust_sort_spill_{name}"));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("scratch temp dir");
-        dir
-    }
+    /// must not run at the same time inside one test binary -- and that
+    /// includes the aggregation's and the TopN's spill tests, which is why the
+    /// lock is the CRATE's rather than this module's.
+    use crate::test_temp_storage::guard as temp_dir_guard;
+    use crate::test_temp_storage::scratch_dir as scratch_temp_dir;
 
     fn spill_files_in(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
         std::fs::read_dir(dir)

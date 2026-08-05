@@ -1317,6 +1317,7 @@ fn distinct_over(
         agg_funcs,
         child,
         ctx.clone(),
+        ctx.statement_memory(),
     )
 }
 

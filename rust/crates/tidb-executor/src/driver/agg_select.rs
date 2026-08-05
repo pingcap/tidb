@@ -1269,6 +1269,7 @@ fn build_aggregation(
             std::mem::take(&mut state.agg_funcs),
             source,
             ctx.clone(),
+            ctx.statement_memory(),
         ))
     };
     let root = match trace {

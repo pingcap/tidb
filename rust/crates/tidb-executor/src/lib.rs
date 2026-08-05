@@ -44,6 +44,7 @@
 pub mod access_cost;
 pub mod access_path;
 pub mod admin_check;
+pub mod agg_spill;
 pub mod analyze;
 pub mod apply;
 mod approx_count_distinct;
@@ -65,6 +66,8 @@ pub mod generated_column_substitute;
 mod go_quote;
 pub(crate) mod handle_range;
 pub mod hash_agg;
+#[cfg(test)]
+mod hash_agg_spill_tests;
 mod hash_join;
 mod index_hints;
 mod index_prefix_cut;
@@ -150,3 +153,30 @@ pub use tidb_expr::{
 };
 pub use topn::TopNExec;
 pub use view::{run_create_view_in, run_drop_view_in, view_column_list};
+
+/// The spill tests all point the PROCESS-WIDE temporary-storage path at their
+/// own scratch directory, so exactly one of them may run at a time. ONE lock
+/// for the whole crate: a per-module lock does not serialise modules against
+/// each other, which is how a test in one module can delete the directory
+/// another is writing into. (`tidb-chunk` carries the same module for the same
+/// reason.)
+#[cfg(test)]
+pub(crate) mod test_temp_storage {
+    use std::path::PathBuf;
+    use std::sync::{Mutex, MutexGuard, PoisonError};
+
+    static LOCK: Mutex<()> = Mutex::new(());
+
+    /// Held for the duration of a test that sets the temporary-storage path.
+    pub(crate) fn guard() -> MutexGuard<'static, ()> {
+        LOCK.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// A fresh scratch directory named after the test.
+    pub(crate) fn scratch_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("tidb_rust_exec_spill_test_{name}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch temp dir");
+        dir
+    }
+}

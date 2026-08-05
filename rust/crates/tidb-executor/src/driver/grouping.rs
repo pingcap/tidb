@@ -251,6 +251,7 @@ pub(crate) fn run_rollup_aggregate(
                 agg_funcs.to_vec(),
                 pass_source,
                 ctx.clone(),
+                ctx.statement_memory(),
             );
             // This pass rolls up positions `k..`, which IS the grouping bit
             // each GROUPING() call reports -- the one thing that distinguishes
