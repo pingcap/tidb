@@ -485,6 +485,14 @@ fn compare_output(
         Some(PlanStatement::RunDefaultExplain(sql)) => sql.as_str(),
         _ => stmt.sql.as_str(),
     };
+    // A statement that PANICS takes the process with it, so its identity is
+    // not in any report -- and attributing a crashing topic means knowing
+    // which statement it died on. `INTEGRATION_TRACE_SQL=1` names each
+    // statement BEFORE it runs, so the last line printed is the one that
+    // crashed. Off by default: a replay prints 30,000 lines with it on.
+    if std::env::var_os("INTEGRATION_TRACE_SQL").is_some() {
+        eprintln!("SQL> {sql}");
+    }
     let outcome = session.run_with_columns(sql);
     match (outcome, recorded_error) {
         // TiDB rejected it and so did we. The wording is TiDB's; only the

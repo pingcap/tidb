@@ -110,11 +110,17 @@ fn is_explainable(rest: &str) -> bool {
 /// Classifies one statement as a plan statement, if it is one.
 pub fn plan_statement(sql: &str) -> Option<PlanStatement> {
     let sql = sql.trim().trim_end_matches(';');
+    // Matched over BYTES rather than a `&str` slice: the spellings are all
+    // ASCII, and a statement whose first bytes are not (`create database
+    // 数据库...`, which `ddl/db` has) would have `sql[..keyword.len()]` land
+    // inside a multi-byte character and panic. Bytes have no such boundary,
+    // so the non-ASCII statement is simply not an EXPLAIN.
     let keyword = EXPLAIN_SPELLINGS.iter().find(|keyword| {
-        sql.len() > keyword.len()
-            && sql[..keyword.len()].eq_ignore_ascii_case(keyword)
-            && !sql.as_bytes()[keyword.len()].is_ascii_alphanumeric()
-            && sql.as_bytes()[keyword.len()] != b'_'
+        let bytes = sql.as_bytes();
+        bytes.len() > keyword.len()
+            && bytes[..keyword.len()].eq_ignore_ascii_case(keyword.as_bytes())
+            && !bytes[keyword.len()].is_ascii_alphanumeric()
+            && bytes[keyword.len()] != b'_'
     })?;
     let rest = sql[keyword.len()..].trim_start();
     let lower = rest.to_ascii_lowercase();

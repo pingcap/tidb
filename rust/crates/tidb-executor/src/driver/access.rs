@@ -1664,13 +1664,15 @@ pub(crate) fn try_batch_point_get(
         if index.has_prefix() {
             continue;
         }
-        if !columns[index.column_offsets[0]]
-            .0
-            .eq_ignore_ascii_case(name)
-        {
+        // Resolved through `get` for the same reason the single point get
+        // does: an EXPRESSION key part's hidden generated column sits past
+        // the end of the scope's visible columns, and no `IN` list names it.
+        let Some((index_column, field_type)) = columns.get(index.column_offsets[0]) else {
+            continue;
+        };
+        if !index_column.eq_ignore_ascii_case(name) {
             continue;
         }
-        let field_type = &columns[index.column_offsets[0]].1;
         let mut converted = Vec::with_capacity(values.len());
         for value in &values {
             let Some(value) = point_get_value(field_type, value) else {
@@ -1914,11 +1916,21 @@ pub(crate) fn try_point_get(
         }
         let mut values = Vec::with_capacity(index.column_offsets.len());
         for offset in &index.column_offsets {
-            let name = &columns[*offset].0;
-            let Some(pair) = pairs
-                .iter()
-                .find(|pair| pair.column.eq_ignore_ascii_case(name))
-            else {
+            // Go `getIndexValues` resolves each key part by NAME against the
+            // `WHERE`'s pairs, so a key part the statement cannot name
+            // declines the whole index. The hidden generated column an
+            // EXPRESSION key part was rewritten into is exactly such a part:
+            // it lives past the end of the scope's visible column list, and
+            // `tidb_shard(a)` is not a name any `WHERE` writes. Resolving the
+            // name through `get` makes "no visible column at that offset" and
+            // "not pinned by the WHERE" the same answer -- without it the
+            // offset indexes past the end and panics, which is what
+            // `explain_shard_index`'s `where a=100` reached.
+            let Some(pair) = columns.get(*offset).and_then(|(name, _)| {
+                pairs
+                    .iter()
+                    .find(|pair| pair.column.eq_ignore_ascii_case(name))
+            }) else {
                 values.clear();
                 break;
             };

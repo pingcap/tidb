@@ -693,7 +693,7 @@ pub(crate) fn run_select_traced(
             let mut applied = scope.clone();
             let mut value_type = FieldType::new(FieldTypeCode::LongLong);
             if matches!(correlated.kind, SubqueryKind::Scalar) {
-                value_type = subquery_result_type(&correlated, catalog, current_db, ctx)
+                value_type = subquery_result_type(&correlated, &scope, catalog, current_db, ctx)
                     .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
             }
             applied.tables.push(FromTable {
@@ -850,8 +850,9 @@ pub(crate) fn run_select_traced(
         if let Some(correlated) = correlated {
             let mut value_type = FieldType::new(FieldTypeCode::LongLong);
             if matches!(correlated.kind, SubqueryKind::Scalar) {
-                value_type = subquery_result_type(&correlated, catalog, current_db, ctx)
-                    .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
+                value_type =
+                    subquery_result_type(&correlated, &current_scope, catalog, current_db, ctx)
+                        .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
             }
             let inner_scope = current_scope.clone();
             current_scope.tables.push(FromTable {

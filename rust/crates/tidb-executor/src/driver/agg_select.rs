@@ -437,8 +437,14 @@ impl PreAggApplyHoister<'_> {
                 return Ok(());
             };
             let value_type = if matches!(correlated.kind, SubqueryKind::Scalar) {
-                subquery_result_type(&correlated, self.catalog, self.current_db, self.ctx)
-                    .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong))
+                subquery_result_type(
+                    &correlated,
+                    self.outer,
+                    self.catalog,
+                    self.current_db,
+                    self.ctx,
+                )
+                .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong))
             } else {
                 FieldType::new(FieldTypeCode::LongLong)
             };

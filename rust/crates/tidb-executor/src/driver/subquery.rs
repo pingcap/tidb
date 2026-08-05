@@ -34,24 +34,43 @@ use std::borrow::Cow;
 use super::*;
 /// The type of the column an Apply appends for a correlated scalar subquery.
 ///
-/// Go infers it statically from the subquery's select field; here the query is
-/// planned with every correlated column bound to NULL, which reaches the same
-/// field type without depending on any outer row -- and it must, because the
-/// appended column's width is fixed before the first inner run (a `SUM` is a
-/// 40-byte decimal, not an 8-byte integer). Falling back to `LongLong`
-/// matches what the rest of the seed does for an uninferred expression.
+/// Go infers it statically from the subquery's select field, where a
+/// correlated reference is a `CorrelatedColumn` carrying the OUTER column's
+/// own `RetType`. Here the query is planned once with every correlated column
+/// bound to a stand-in value, which reaches the same field type without
+/// depending on any outer row -- and it must, because the appended column's
+/// width is fixed before the first inner run (a `SUM` is a 40-byte decimal,
+/// not an 8-byte integer).
+///
+/// The stand-in is [`probe_datum`] of the outer column's own type, NOT a bare
+/// NULL, for the reason `build_lateral_join` already states for the `LATERAL`
+/// shape: a NULL erases the type it stood for, so `select t.a from t t1 limit
+/// 1` infers `NULL`, whose chunk column is variable-length, and the first
+/// inner run then appends an 8-byte integer into a zero-width cell and panics.
+/// Both Apply shapes now settle their inner column the one way.
+///
+/// `outer` is the scope the correlated columns bind against. Falling back to
+/// `LongLong` matches what the rest of the seed does for an uninferred
+/// expression.
 pub(crate) fn subquery_result_type(
     correlated: &CorrelatedSubquery,
+    outer: &FromScope,
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Option<FieldType> {
-    let nulls: Vec<(Vec<String>, Datum)> = correlated
+    let resolver = ScopeResolver { scope: outer };
+    let probes: Vec<(Vec<String>, Datum)> = correlated
         .columns
         .iter()
-        .map(|path| (path.clone(), Datum::Null))
+        .map(|path| {
+            let datum = resolver.resolve(path).map_or(Datum::Null, |(_, ft, _)| {
+                crate::driver::from::probe_datum(&ft)
+            });
+            (path.clone(), datum)
+        })
         .collect();
-    let typed = bind_subquery_columns(&correlated.select, &nulls).ok()?;
+    let typed = bind_subquery_columns(&correlated.select, &probes).ok()?;
     run_select_stmt(&typed, catalog, current_db, ctx)
         .ok()
         .and_then(|(columns, _)| columns.first().map(|(_, ft)| ft.clone()))
@@ -1105,7 +1124,7 @@ pub(crate) fn extract_and_hoist_subquery(
         return Ok((rewritten, false));
     };
     let value_type = if matches!(correlated.kind, SubqueryKind::Scalar) {
-        subquery_result_type(&correlated, catalog, current_db, ctx)
+        subquery_result_type(&correlated, outer, catalog, current_db, ctx)
             .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong))
     } else {
         FieldType::new(FieldTypeCode::LongLong)
