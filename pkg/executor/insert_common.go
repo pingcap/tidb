@@ -51,6 +51,9 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// Limit concurrent auto-embedding evaluations for generated columns. The
+// inference runtime may further deduplicate and batch provider requests, so
+// this is not a direct provider HTTP concurrency limit.
 const autoEmbeddingEvalMaxConcurrentTasks = 800
 
 type autoEmbeddingGeneratedColumn struct {

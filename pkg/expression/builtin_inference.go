@@ -81,7 +81,10 @@ func (b *builtinEmbedTextSig) evalVectorFloat32(ctx EvalContext, row chunk.Row) 
 	}
 
 	sctx, err := b.GetSessionContext(ctx)
-	if err != nil || sctx == nil {
+	if err != nil {
+		return types.ZeroVectorFloat32, false, fmt.Errorf("EMBED_TEXT requires session context: %w", err)
+	}
+	if sctx == nil {
 		return types.ZeroVectorFloat32, false, fmt.Errorf("EMBED_TEXT requires session context")
 	}
 	embedArgs, isNull, err := EvalEmbedTextArgs(ctx, row, b.args)

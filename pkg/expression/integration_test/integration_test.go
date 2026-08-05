@@ -4730,10 +4730,9 @@ func TestAutoEmbeddingGeneratedColumnLoadData(t *testing.T) {
 			vec VECTOR(3) GENERATED ALWAYS AS (embed_text('mock/json', text, '{"plus":1}')) STORED
 		)
 	`)
-	var reader io.ReadCloser = mydump.NewStringReader("1,\"[1,2,3]\"\n2,\"[4,5,6]\"\n")
 	tk.Session().SetValue(executor.LoadDataReaderBuilderKey, executor.LoadDataReaderBuilder{
 		Build: func(_ string) (io.ReadCloser, error) {
-			return reader, nil
+			return mydump.NewStringReader("1,\"[1,2,3]\"\n2,\"[4,5,6]\"\n"), nil
 		},
 		Wg: &sync.WaitGroup{},
 	})
