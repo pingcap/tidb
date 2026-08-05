@@ -5218,10 +5218,7 @@ func buildIndexPresplitOpt(indexOpt *ast.IndexOption) (*model.IndexArgSplitOpt, 
 	}
 	opt := indexOpt.SplitOpt
 	if opt == nil {
-		return nil, false, nil
-	}
-	if opt.Auto {
-		return nil, true, nil
+		return nil, indexOpt.AutoPresplit, nil
 	}
 	if len(opt.ValueLists) > 0 {
 		valLists := make([][]string, 0, len(opt.ValueLists))

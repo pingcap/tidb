@@ -64,6 +64,10 @@ func preSplitIndexRegions(
 	autoPresplitBoundaryCache := make(map[int64][][]types.Datum)
 	for i, idxInfo := range allIndexInfos {
 		idxArg := args.IndexArgs[i]
+		logger := logutil.DDLLogger().With(
+			zap.String("table", tblInfo.Name.L),
+			zap.String("index", idxInfo.Name.L),
+		)
 		var splitResult splitIndexRegionResult
 		if idxArg.AutoPresplit {
 			var skipReason string
@@ -74,17 +78,14 @@ func preSplitIndexRegions(
 				return ctxErr
 			}
 			if err != nil {
-				logutil.DDLLogger().Warn("auto presplit index region failed, continue add-index",
-					zap.String("table", tblInfo.Name.L),
-					zap.String("index", idxInfo.Name.L),
-					zap.Error(err))
+				// AUTO is an optional optimization, so ordinary planning or Region
+				// failures are logged and add-index continues. Explicit manual
+				// pre-splitting remains strict and returns its failures below.
+				logger.Warn("auto presplit index region failed, continue add-index", zap.Error(err))
 				continue
 			}
 			if skipReason != "" {
-				logutil.DDLLogger().Info("skip auto presplit index region",
-					zap.String("table", tblInfo.Name.L),
-					zap.String("index", idxInfo.Name.L),
-					zap.String("reason", skipReason))
+				logger.Info("skip auto presplit index region", zap.String("reason", skipReason))
 				continue
 			}
 		} else {
@@ -103,19 +104,14 @@ func preSplitIndexRegions(
 			failpoint.InjectCall("beforePresplitIndex", splitKeys)
 			splitResult, err = splitIndexRegionAndWait(ctx, sctx, store, tblInfo, idxInfo, splitKeys)
 			if err != nil {
-				logutil.DDLLogger().Error("split table index region failed",
-					zap.String("table", tblInfo.Name.L),
-					zap.String("index", tblInfo.Name.L),
-					zap.Error(err))
+				logger.Error("split table index region failed", zap.Error(err))
 				return errors.Trace(err)
 			}
 			if splitResult.unsupported {
 				continue
 			}
 		}
-		logutil.DDLLogger().Info("split table index region finished",
-			zap.String("table", tblInfo.Name.L),
-			zap.String("index", idxInfo.Name.L),
+		logger.Info("split table index region finished",
 			zap.Int("splitRegions", splitResult.splitRegions),
 			zap.Int("scatterRegions", splitResult.scatterRegions))
 	}
