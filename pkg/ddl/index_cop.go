@@ -146,10 +146,13 @@ func completeErr(err error, idxInfo *model.IndexInfo) error {
 	return errors.Trace(err)
 }
 
-func getRestoreData(useNewCollate bool, tblInfo *model.TableInfo, targetIdx, pkIdx *model.IndexInfo, handleDts []types.Datum) []types.Datum {
+func getRestoreData(c *copr.CopContextBase, targetIdx *model.IndexInfo, handleDts []types.Datum) []types.Datum {
+	useNewCollate := c.ExprCtx.NewCollationEnabled()
+	tblInfo := c.TableInfo
 	if !useNewCollate || !tblInfo.IsCommonHandle || tblInfo.CommonHandleVersion == 0 {
 		return nil
 	}
+	pkIdx := c.PrimaryKeyInfo
 	if pkIdx == nil {
 		return nil
 	}

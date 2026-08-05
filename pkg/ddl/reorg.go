@@ -805,8 +805,7 @@ func GetTableMaxHandle(ctx *ReorgContext, store kv.Storage, startTS uint64, tbl 
 	}
 	row := chk.GetRow(0)
 	if tblInfo.IsCommonHandle {
-		pkIdx := tables.FindPrimaryIndex(tblInfo)
-		maxHandle, err = buildCommonHandleFromChunkRow(tbl.UseNewCollate(), time.UTC, tblInfo, pkIdx, handleCols, row)
+		maxHandle, err = buildCommonHandleFromChunkRow(tbl, time.UTC, handleCols, row)
 		return maxHandle, false, err
 	}
 	return kv.IntHandle(row.GetInt64(0)), false, nil
@@ -851,8 +850,9 @@ func buildHandleCols(tbl table.PhysicalTable) []*model.ColumnInfo {
 	return handleCols
 }
 
-func buildCommonHandleFromChunkRow(useNewCollate bool, loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
-	cols []*model.ColumnInfo, row chunk.Row) (kv.Handle, error) {
+func buildCommonHandleFromChunkRow(tbl table.PhysicalTable, loc *time.Location, cols []*model.ColumnInfo, row chunk.Row) (kv.Handle, error) {
+	tblInfo := tbl.Meta()
+	idxInfo := tables.FindPrimaryIndex(tblInfo)
 	fieldTypes := make([]*types.FieldType, 0, len(cols))
 	for _, col := range cols {
 		fieldTypes = append(fieldTypes, &col.FieldType)
@@ -861,7 +861,7 @@ func buildCommonHandleFromChunkRow(useNewCollate bool, loc *time.Location, tblIn
 	tablecodec.TruncateIndexValues(tblInfo, idxInfo, datumRow)
 
 	var handleBytes []byte
-	handleBytes, err := codec.NewEncoder(useNewCollate).EncodeKey(loc, nil, datumRow...)
+	handleBytes, err := codec.NewEncoder(tbl.UseNewCollate()).EncodeKey(loc, nil, datumRow...)
 	if err != nil {
 		return nil, err
 	}

@@ -409,7 +409,7 @@ func TestTableFromMeta(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestTableFromMetaForSnapshotUsesFixedMode(t *testing.T) {
+func TestTableFromMetaWithCollateUsesFixedMode(t *testing.T) {
 	tblInfo := &model.TableInfo{
 		ID:    1,
 		Name:  ast.NewCIStr("t"),
@@ -429,7 +429,7 @@ func TestTableFromMetaForSnapshotUsesFixedMode(t *testing.T) {
 	defer collate.SetNewCollationEnabledForTest(origin)
 	for _, useNewCollate := range []bool{false, true} {
 		collate.SetNewCollationEnabledForTest(!useNewCollate)
-		tbl, err := tables.TableFromMetaForSnapshot(autoid.NewAllocators(false), tblInfo, useNewCollate)
+		tbl, err := tables.TableFromMetaWithCollate(autoid.NewAllocators(false), tblInfo, useNewCollate)
 		require.NoError(t, err)
 		require.Equal(t, useNewCollate, tbl.UseNewCollate())
 	}

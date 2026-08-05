@@ -107,7 +107,7 @@ func getTableImporter(
 	logger *zap.Logger,
 ) (*importer.TableImporter, error) {
 	idAlloc := kv.NewPanickingAllocators(taskMeta.Plan.TableInfo.SepAutoInc())
-	tbl, err := tables.TableFromMetaForSnapshot(
+	tbl, err := tables.TableFromMetaWithCollate(
 		idAlloc,
 		taskMeta.Plan.TableInfo,
 		taskMeta.Plan.GetUseNewCollateOrDefault(collate.NewCollationEnabled()),

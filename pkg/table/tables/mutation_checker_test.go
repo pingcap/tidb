@@ -82,8 +82,13 @@ func TestCompareIndexData(t *testing.T) {
 			indexCols = append(indexCols, &model.IndexColumn{Offset: i, Length: data.indexLength[i]})
 		}
 		indexInfo := &model.IndexInfo{Name: ast.NewCIStr("i0"), Columns: indexCols}
+		tbl := &TableCommon{
+			meta:    &model.TableInfo{Name: ast.NewCIStr("t")},
+			Columns: cols,
+			encoder: codec.NewEncoder(collate.NewCollationEnabled()),
+		}
 
-		err := compareIndexData(collate.NewCollationEnabled(), tc, cols, data.indexData, data.inputData, indexInfo, &model.TableInfo{Name: ast.NewCIStr("t")}, nil)
+		err := compareIndexData(tbl, tc, data.indexData, data.inputData, indexInfo, nil)
 		require.Equal(t, data.correct, err == nil, "case id = %v", caseID)
 	}
 }
@@ -379,7 +384,7 @@ func requireDecodedIndexValuesMatchRow(
 		require.NoError(t, err)
 		indexData = append(indexData, datum)
 	}
-	require.NoError(t, compareIndexData(table.encoder.UseNewCollate(), tc, table.Columns, indexData, row, indexInfo, table.Meta(), nil))
+	require.NoError(t, compareIndexData(table, tc, indexData, row, indexInfo, nil))
 }
 
 func buildIndexKeyValue(index table.Index, rowToInsert []types.Datum, tc types.Context,

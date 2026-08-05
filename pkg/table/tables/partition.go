@@ -116,8 +116,7 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 		return nil, table.ErrUnknownPartition
 	}
 	ret := &partitionedTable{TableCommon: tbl.Copy()}
-	useNewCollate := tbl.encoder.UseNewCollate()
-	partitionExpr, err := newPartitionExpr(tblInfo, pi.Type, pi.Expr, pi.Columns, pi.Definitions, useNewCollate)
+	partitionExpr, err := ret.newPartitionExpr(pi.Type, pi.Expr, pi.Columns, pi.Definitions)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -183,7 +182,7 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 		} else {
 			tblInfo.Indices = origIndices
 		}
-		t.TableCommon = newTableCommon(tblInfo, p.ID, tbl.Columns, tbl.allocs, tbl.Constraints, tbl.encoder.UseNewCollate())
+		t.TableCommon = newTableCommon(tblInfo, p.ID, tbl.Columns, tbl.allocs, tbl.Constraints, tbl.encoder)
 		if err := t.initTableIndices(); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -217,9 +216,9 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 	if pi.DDLState == model.StateDeleteReorganization || pi.DDLState == model.StatePublic {
 		// TODO: Explicitly explain the different DDL/New fields!
 		if pi.NewTableID != 0 {
-			ret.reorgPartitionExpr, err = newPartitionExpr(tblInfo, pi.DDLType, pi.DDLExpr, pi.DDLColumns, pi.DroppingDefinitions, useNewCollate)
+			ret.reorgPartitionExpr, err = ret.newPartitionExpr(pi.DDLType, pi.DDLExpr, pi.DDLColumns, pi.DroppingDefinitions)
 		} else {
-			ret.reorgPartitionExpr, err = newPartitionExpr(tblInfo, pi.Type, pi.Expr, pi.Columns, pi.DroppingDefinitions, useNewCollate)
+			ret.reorgPartitionExpr, err = ret.newPartitionExpr(pi.Type, pi.Expr, pi.Columns, pi.DroppingDefinitions)
 		}
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -243,10 +242,10 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 		if len(pi.AddingDefinitions) > 0 {
 			if pi.NewTableID != 0 {
 				// REMOVE PARTITIONING or PARTITION BY
-				ret.reorgPartitionExpr, err = newPartitionExpr(tblInfo, pi.DDLType, pi.DDLExpr, pi.DDLColumns, pi.AddingDefinitions, useNewCollate)
+				ret.reorgPartitionExpr, err = ret.newPartitionExpr(pi.DDLType, pi.DDLExpr, pi.DDLColumns, pi.AddingDefinitions)
 			} else {
 				// REORGANIZE PARTITION
-				ret.reorgPartitionExpr, err = newPartitionExpr(tblInfo, pi.Type, pi.Expr, pi.Columns, pi.AddingDefinitions, useNewCollate)
+				ret.reorgPartitionExpr, err = ret.newPartitionExpr(pi.Type, pi.Expr, pi.Columns, pi.AddingDefinitions)
 			}
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -275,7 +274,7 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 
 func initPartition(t *partitionedTable, def model.PartitionDefinition) (*partition, error) {
 	var newPart partition
-	newPart.TableCommon = newTableCommon(t.meta, def.ID, t.Columns, t.allocs, t.Constraints, t.encoder.UseNewCollate())
+	newPart.TableCommon = newTableCommon(t.meta, def.ID, t.Columns, t.allocs, t.Constraints, t.encoder)
 	if err := newPart.initTableIndices(); err != nil {
 		return nil, err
 	}
@@ -304,8 +303,9 @@ func NewPartitionExprBuildCtx() expression.BuildContext {
 	)
 }
 
-func newPartitionExpr(tblInfo *model.TableInfo, tp ast.PartitionType, expr string, partCols []ast.CIStr, defs []model.PartitionDefinition, useNewCollate bool) (*PartitionExpr, error) {
-	ctx := expression.BuildContextWithUseNewCollate(NewPartitionExprBuildCtx(), useNewCollate)
+func (t *partitionedTable) newPartitionExpr(tp ast.PartitionType, expr string, partCols []ast.CIStr, defs []model.PartitionDefinition) (*PartitionExpr, error) {
+	tblInfo := t.meta
+	ctx := expression.BuildContextWithUseNewCollate(NewPartitionExprBuildCtx(), t.UseNewCollate())
 	dbName := ast.NewCIStr(ctx.GetEvalCtx().CurrentDB())
 	columns, names, err := expression.ColumnInfos2ColumnsAndNames(ctx, dbName, tblInfo.Name, tblInfo.Cols(), tblInfo)
 	if err != nil {
@@ -367,7 +367,7 @@ func (kp *ForKeyPruning) LocateKeyPartition(numParts uint64, r []types.Datum) (i
 		if val.Kind() == types.KindNull {
 			h.Write([]byte{0})
 		} else {
-			data, err := datumToHashKeyWithCollation(&val, kp.useNewCollate)
+			data, err := kp.datumToHashKey(&val)
 			if err != nil {
 				return 0, err
 			}
@@ -377,16 +377,16 @@ func (kp *ForKeyPruning) LocateKeyPartition(numParts uint64, r []types.Datum) (i
 	return int(h.Sum32() % uint32(numParts)), nil
 }
 
-func datumToHashKeyWithCollation(d *types.Datum, useNewCollate bool) ([]byte, error) {
+func (kp *ForKeyPruning) datumToHashKey(d *types.Datum) ([]byte, error) {
 	switch d.Kind() {
 	case types.KindString, types.KindBytes:
-		return collate.GetCollatorWithCollate(useNewCollate, d.Collation()).Key(d.GetString()), nil
+		return collate.GetCollatorWithCollate(kp.useNewCollate, d.Collation()).Key(d.GetString()), nil
 	default:
 		str, err := d.ToString()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		return collate.GetCollatorWithCollate(useNewCollate, d.Collation()).Key(str), nil
+		return collate.GetCollatorWithCollate(kp.useNewCollate, d.Collation()).Key(str), nil
 	}
 }
 
@@ -1694,7 +1694,7 @@ func GetReorganizedPartitionedTable(t table.Table) (table.PartitionedTable, erro
 	if err != nil {
 		return nil, err
 	}
-	tc := newTableCommon(tblInfo, tblInfo.ID, t.Cols(), t.Allocators(nil), constraints, t.UseNewCollate())
+	tc := newTableCommon(tblInfo, tblInfo.ID, t.Cols(), t.Allocators(nil), constraints, codec.NewEncoder(t.UseNewCollate()))
 
 	// and rebuild the partitioning structure
 	return newPartitionedTable(&tc, tblInfo)

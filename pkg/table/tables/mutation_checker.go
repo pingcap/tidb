@@ -283,9 +283,9 @@ func checkIndexKeys(
 
 		// When it is in add index new backfill state.
 		if len(value) == 0 || isTmpIdxValAndDeleted {
-			err = compareIndexData(useNewCollate, tc, t.Columns, indexData, rowToRemove, indexInfo, t.Meta(), extraIndexesLayout.GetIndexLayout(idxID))
+			err = compareIndexData(t, tc, indexData, rowToRemove, indexInfo, extraIndexesLayout.GetIndexLayout(idxID))
 		} else {
-			err = compareIndexData(useNewCollate, tc, t.Columns, indexData, rowToInsert, indexInfo, t.Meta(), extraIndexesLayout.GetIndexLayout(idxID))
+			err = compareIndexData(t, tc, indexData, rowToInsert, indexInfo, extraIndexesLayout.GetIndexLayout(idxID))
 		}
 		if err != nil {
 			return errors.Trace(err)
@@ -368,9 +368,8 @@ func collectTableMutationsFromBufferStage(t *TableCommon, memBuffer kv.MemBuffer
 // compareIndexData compares the decoded index data with the input data.
 // Returns error if the index data is not a subset of the input data.
 func compareIndexData(
-	useNewCollate bool,
-	tc types.Context, cols []*table.Column, indexData, input []types.Datum, indexInfo *model.IndexInfo,
-	tableInfo *model.TableInfo,
+	t *TableCommon,
+	tc types.Context, indexData, input []types.Datum, indexInfo *model.IndexInfo,
 	extraIndexLayout table.IndexRowLayoutOption,
 ) error {
 	for i := range indexData {
@@ -384,23 +383,23 @@ func compareIndexData(
 
 		tablecodec.TruncateIndexValue(
 			&expectedDatum, indexInfo.Columns[i],
-			cols[offsetInTable].ColumnInfo,
+			t.Columns[offsetInTable].ColumnInfo,
 		)
 		tablecodec.TruncateIndexValue(
 			&decodedMutationDatum, indexInfo.Columns[i],
-			cols[offsetInTable].ColumnInfo,
+			t.Columns[offsetInTable].ColumnInfo,
 		)
 
 		comparison, err := CompareIndexAndVal(tc, expectedDatum, decodedMutationDatum,
-			collate.GetCollatorWithCollate(useNewCollate, decodedMutationDatum.Collation()),
-			cols[offsetInTable].ColumnInfo.FieldType.IsArray() && expectedDatum.Kind() == types.KindMysqlJSON)
+			collate.GetCollatorWithCollate(t.UseNewCollate(), decodedMutationDatum.Collation()),
+			t.Columns[offsetInTable].ColumnInfo.FieldType.IsArray() && expectedDatum.Kind() == types.KindMysqlJSON)
 		if err != nil {
 			return errors.Trace(err)
 		}
 
 		if comparison != 0 {
 			err = ErrInconsistentIndexedValue.GenWithStackByArgs(
-				tableInfo.Name.O, indexInfo.Name.O, cols[offsetInTable].ColumnInfo.Name.O,
+				t.meta.Name.O, indexInfo.Name.O, t.Columns[offsetInTable].ColumnInfo.Name.O,
 				decodedMutationDatum.String(), expectedDatum.String(),
 			)
 			logutil.BgLogger().Error("inconsistent indexed value in index insertion", zap.Error(err))

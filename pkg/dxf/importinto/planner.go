@@ -352,7 +352,7 @@ func (*PostProcessSpec) ToSubtaskMeta(planCtx planner.PlanCtx) ([]byte, error) {
 func buildControllerForPlan(p *LogicalPlan) (*importer.LoadDataController, error) {
 	plan, stmt := &p.Plan, p.Stmt
 	idAlloc := kv.NewPanickingAllocators(plan.TableInfo.SepAutoInc())
-	tbl, err := tables.TableFromMetaForSnapshot(
+	tbl, err := tables.TableFromMetaWithCollate(
 		idAlloc,
 		plan.TableInfo,
 		plan.GetUseNewCollateOrDefault(collate.NewCollationEnabled()),

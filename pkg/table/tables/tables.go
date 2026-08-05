@@ -141,7 +141,7 @@ func MockTableFromMeta(tblInfo *model.TableInfo) table.Table {
 	if err != nil {
 		return nil
 	}
-	t := newTableCommon(tblInfo, tblInfo.ID, columns, autoid.NewAllocators(false), constraints, collate.NewCollationEnabled())
+	t := newTableCommon(tblInfo, tblInfo.ID, columns, autoid.NewAllocators(false), constraints, codec.NewEncoder(collate.NewCollationEnabled()))
 	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
 		ret, err := newCachedTable(&t)
 		if err != nil {
@@ -165,16 +165,15 @@ func MockTableFromMeta(tblInfo *model.TableInfo) table.Table {
 
 // TableFromMeta creates a Table instance from model.TableInfo.
 func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Table, error) {
-	return tableFromMeta(allocs, tblInfo, collate.NewCollationEnabled())
+	return tableFromMeta(allocs, tblInfo, codec.NewEncoder(collate.NewCollationEnabled()))
 }
 
-// TableFromMetaForSnapshot creates a Table instance using the collation mode
-// captured with the table metadata snapshot.
-func TableFromMetaForSnapshot(allocs autoid.Allocators, tblInfo *model.TableInfo, useNewCollate bool) (table.Table, error) {
-	return tableFromMeta(allocs, tblInfo, useNewCollate)
+// TableFromMetaWithCollate creates a Table instance using the specified collation mode.
+func TableFromMetaWithCollate(allocs autoid.Allocators, tblInfo *model.TableInfo, useNewCollate bool) (table.Table, error) {
+	return tableFromMeta(allocs, tblInfo, codec.NewEncoder(useNewCollate))
 }
 
-func tableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo, useNewCollate bool) (table.Table, error) {
+func tableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo, encoder codec.Encoder) (table.Table, error) {
 	if tblInfo.State == model.StateNone {
 		return nil, table.ErrTableStateCantNone.GenWithStackByArgs(tblInfo.Name)
 	}
@@ -224,7 +223,7 @@ func tableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo, useNewCol
 	if err != nil {
 		return nil, err
 	}
-	t := newTableCommon(tblInfo, tblInfo.ID, columns, allocs, constraints, useNewCollate)
+	t := newTableCommon(tblInfo, tblInfo.ID, columns, allocs, constraints, encoder)
 	if tblInfo.GetPartitionInfo() == nil {
 		if err := t.initTableIndices(); err != nil {
 			return nil, err
@@ -249,7 +248,7 @@ func buildGeneratedExpr(tblInfo *model.TableInfo, genExpr string) (ast.ExprNode,
 	return expr, nil
 }
 
-func newTableCommon(tblInfo *model.TableInfo, physicalTableID int64, cols []*table.Column, allocs autoid.Allocators, constraints []*table.Constraint, useNewCollate bool) TableCommon {
+func newTableCommon(tblInfo *model.TableInfo, physicalTableID int64, cols []*table.Column, allocs autoid.Allocators, constraints []*table.Constraint, encoder codec.Encoder) TableCommon {
 	t := TableCommon{
 		tableID:         tblInfo.ID,
 		physicalTableID: physicalTableID,
@@ -259,7 +258,7 @@ func newTableCommon(tblInfo *model.TableInfo, physicalTableID int64, cols []*tab
 		Constraints:     constraints,
 		recordPrefix:    tablecodec.GenTableRecordPrefix(physicalTableID),
 		indexPrefix:     tablecodec.GenTableIndexPrefix(physicalTableID),
-		encoder:         codec.NewEncoder(useNewCollate),
+		encoder:         encoder,
 	}
 	if tblInfo.IsSequence() {
 		t.sequence = &sequenceCommon{meta: tblInfo.Sequence}
@@ -277,7 +276,7 @@ func (t *TableCommon) initTableIndices() error {
 		}
 
 		// Use partition ID for index, because TableCommon may be table or partition.
-		idx, err := newIndex(t.physicalTableID, tblInfo, idxInfo, t.encoder.UseNewCollate())
+		idx, err := newIndex(t.physicalTableID, tblInfo, idxInfo, t.encoder)
 		if err != nil {
 			return err
 		}
