@@ -2738,9 +2738,7 @@ func (worker *copIteratorWorker) collectUnconsumedCopRuntimeStats(bo *Backoffer,
 	if worker.kvclient.Stats != nil && worker.stats != nil {
 		copStats := &CopRuntimeStats{}
 		worker.collectKVClientRuntimeStats(copStats, bo, rpcCtx)
-		worker.stats.Lock()
-		worker.stats.stats = append(worker.stats.stats, copStats)
-		worker.stats.Unlock()
+		worker.stats.append(copStats)
 	}
 }
 
@@ -2756,6 +2754,15 @@ type CopRuntimeStats struct {
 type copIteratorRuntimeStats struct {
 	sync.Mutex
 	stats []*CopRuntimeStats
+}
+
+func (s *copIteratorRuntimeStats) append(copStats *CopRuntimeStats) {
+	if s == nil || copStats == nil {
+		return
+	}
+	s.Lock()
+	s.stats = append(s.stats, copStats)
+	s.Unlock()
 }
 
 func (worker *copIteratorWorker) handleTiDBSendReqErr(err error, task *copTask) (*copTaskResult, error) {
