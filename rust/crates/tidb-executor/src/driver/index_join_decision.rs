@@ -363,6 +363,50 @@ pub(crate) fn index_join_decision(
 ///   above was read that way, and `format='verbose'` alone is not enough --
 ///   an index join's inner subtree PRINTS total rows and is COSTED per outer
 ///   row, so only the trace shows which one a formula used.
+///
+/// # The comparison EXISTS now, and it is an ENUMERATION rule, not a cost one
+///
+/// [`tidb_planner::find_best_task`] is the `(logical plan, required property)`
+/// recursion the section above named as the prerequisite, ported for
+/// `LogicalJoin`. It reproduces BOTH rows of the table above, and the reason
+/// is not a cost comparison at all -- it is which candidates Go enumerates:
+///
+/// * `getHashJoins` opens with "hash join doesn't promise any orders" and
+///   returns NOTHING under a non-empty `prop.SortItems`. On `result:1042` the
+///   join sits under a parent `MergeJoin`'s key order, so the cheaper
+///   `HashJoin_94 2373179.65` is not a candidate there; the search picks
+///   `IndexHashJoin_51 4606578.48`, and the SAME site under the empty property
+///   picks the hash join. The property, not the cost, is the difference.
+/// * `constructIndexJoinStatic` hands the OUTER child `prop.SortItems`
+///   unchanged, which is what keeps the parent merge joins alive and what
+///   makes the outer side take its DEARER ordered read
+///   (`Projection_52 517108.73` rather than `Projection_61 317954.13`).
+/// * `getEnforcedMergeJoin` is reached only under a `MERGE_JOIN` hint or with
+///   hash join disabled, so the `Sort`-enforced merge that beats Go's own plan
+///   on `result:1169` is a plan no unhinted enumeration generates.
+/// * `findBestTask`'s enforcer branch runs only when `prop.CanAddEnforcer`,
+///   and `PhysicalMergeJoin.tryToGetChildReqProp` builds its children's
+///   properties with `enforced: false`. A join under a merge-join parent
+///   therefore never prices a `Sort` of its own -- so "the enforcer-Sort
+///   alternative is always in the comparison" was wrong.
+///
+/// The switch still stays `false`, and for the ONE reason that survived:
+/// nothing calls the search. [`tidb_planner::find_best_task`] takes its row
+/// counts through a caller-supplied cost model, and this tier's only per-node
+/// row estimate still lives in [`crate::plan_trace::PlanTrace`], which the
+/// driver builds for `EXPLAIN` alone. Re-measured at the commit that landed
+/// the search, flipping this switch -- which would put the STRUCTURAL gate
+/// below back in charge, not the search -- moves every control the wrong way:
+///
+/// | | `false` | `true` |
+/// | --- | --- | --- |
+/// | `join_reorder_through_projection` diverged | `15` of `346` | `27` of `346` |
+/// | topic join plans agreeing | `70` of `84` | `56` of `84` |
+/// | corpus `join shape` agreeing on BOTH | `137` of `231` | `123` of `231` |
+///
+/// The named prerequisite is now exactly one thing: an estimate owner both
+/// `EXPLAIN` and the chooser read, so the driver can hand
+/// [`tidb_planner::find_best_task`] the rows its candidates need.
 pub(crate) const CHOOSER_IS_FAITHFUL: bool = false;
 
 /// The looked-up side [`index_join_decision`] would name if this tier could
