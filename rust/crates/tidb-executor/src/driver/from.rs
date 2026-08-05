@@ -323,6 +323,53 @@ fn table_func_deps(
     deps
 }
 
+/// `enumerateIndexJoinByOuterIdx`'s property split, decided from the required
+/// columns alone: the side that holds every one of them takes `prop`, the
+/// other takes the empty property.
+///
+/// `left_width` is where the right child's columns start in the joined row,
+/// or `None` when this tier could not describe the two sides -- in which case
+/// neither can be named the outer one and both are asked for nothing.
+fn index_join_child_props(
+    required: &tidb_planner::physical_property::PhysicalProperty,
+    left_width: Option<usize>,
+) -> (
+    tidb_planner::physical_property::PhysicalProperty,
+    tidb_planner::physical_property::PhysicalProperty,
+) {
+    let empty = tidb_planner::physical_property::PhysicalProperty::default;
+    let Some(left_width) = left_width.filter(|_| !required.is_sort_item_empty()) else {
+        return (empty(), empty());
+    };
+    let (all_same, desc) = required.all_same_order();
+    if !all_same {
+        return (empty(), empty());
+    }
+    let cols: Vec<usize> = required
+        .sort_items
+        .iter()
+        .map(|item| item.col as usize)
+        .collect();
+    if cols.iter().all(|col| *col < left_width) {
+        (
+            crate::driver::merge_decision::child_required_prop(cols.into_iter(), desc),
+            empty(),
+        )
+    } else if cols.iter().all(|col| *col >= left_width) {
+        (
+            empty(),
+            crate::driver::merge_decision::child_required_prop(
+                cols.into_iter().map(|col| col - left_width),
+                desc,
+            ),
+        )
+    } else {
+        // The order straddles the join: no side can provide it alone, which
+        // is exactly what `AllColsFromSchema` refuses for both candidates.
+        (empty(), empty())
+    }
+}
+
 /// The column orders an executor a `FROM` builder just built ACTUALLY
 /// produces, as offsets into its own row -- Go's `PossiblePropertiesInfo
 /// .Orders` read off the PHYSICAL plan instead of the logical one.
@@ -415,7 +462,8 @@ pub(crate) fn build_from(
     // descending order no forward scan walks) leaves the scan free to take its
     // cheapest path, and `EXPLAIN` prints `keep order:false` because that is
     // what it does.
-    let keep_order = required.need_keep_order() && leaf_can_keep_order(node, catalog, current_db, required);
+    let keep_order =
+        required.need_keep_order() && leaf_can_keep_order(node, catalog, current_db, required);
     match node {
         JoinNode::Table(table_ref) => {
             // A `db.t` reference resolves in that schema; a bare `t` resolves
@@ -1264,7 +1312,7 @@ pub(crate) fn build_join(
     // input the join enumeration reads to decide whether a merge join is a
     // candidate at all (`driver::join_search`). Computed here for the same
     // reason the merge decision is -- before the children exist.
-    let search_orders = join.right.as_ref().and_then(|right| {
+    let sides = join.right.as_ref().and_then(|right| {
         let left = crate::driver::merge_decision::possible_properties(
             &join.left,
             catalog,
@@ -1277,8 +1325,11 @@ pub(crate) fn build_join(
             current_db,
             demand.offered,
         )?;
-        Some((left.orders, right.orders))
+        Some((left, right))
     });
+    let search_orders = sides
+        .as_ref()
+        .map(|(left, right)| (left.orders.clone(), right.orders.clone()));
     let (left_required, right_required) = match &merge {
         // `tryToGetChildReqProp`: each child is required to produce ITS OWN
         // join keys' order, in the direction the parent asked for.
@@ -1299,10 +1350,27 @@ pub(crate) fn build_join(
             required.clone(),
             tidb_planner::physical_property::PhysicalProperty::default(),
         ),
-        None => (
-            tidb_planner::physical_property::PhysicalProperty::default(),
-            tidb_planner::physical_property::PhysicalProperty::default(),
-        ),
+        // No merge join here -- but an INDEX join may still be the plan, and
+        // `enumerateIndexJoinByOuterIdx` re-plans its OUTER side under the
+        // SAME property this join was asked for:
+        //
+        // ```text
+        // if !prop.AllColsFromSchema(outerSchema) { continue }
+        // ...
+        // chReqProps[outerIdx] = &property.PhysicalProperty{
+        //     TaskTp: property.RootTaskType, ExpectedCnt: math.MaxFloat64,
+        //     SortItems: prop.SortItems,
+        // }
+        // ```
+        //
+        // That `AllColsFromSchema` guard is also what NAMES the outer side
+        // here, before either child exists: an index join cannot promise an
+        // order over a column its inner side owns, so the side holding every
+        // required column is the only side that can be outer. Which side the
+        // decision finally looks up is settled after the children are built;
+        // if it turns out not to be an index join at all, the request is
+        // unsaid again (`PlanTrace::retract_child_keep_order`).
+        None => index_join_child_props(required, sides.as_ref().map(|(left, _)| left.width)),
     };
     let (mut left_exec, left_scope, left_delivered) = build_from(
         &join.left,
@@ -1777,22 +1845,6 @@ pub(crate) fn build_join(
                 .collect()
         }),
     };
-    if let Some(trace) = trace.as_deref_mut() {
-        if coalescing {
-            // The recorder prints the `ON` as written, and a coalesced join
-            // has none -- its equalities are synthesized here.
-            trace.refuse("NATURAL and USING joins are not printed yet");
-        } else if trace
-            .join(join, &scope, current_db, &pushed, &strategy)
-            .is_err()
-        {
-            trace.refuse("this join's plan is not supported yet");
-        }
-    }
-    // Set, never merged: this is a property of the node at the TOP of the
-    // `FROM` plan, and the top is whichever `build_join` returns last. See
-    // [`FromScope::qualified_star_is_output_only`].
-    scope.qualified_star_is_output_only = join.tp == tidb_ast::JoinType::Cross && join.on.is_some();
     // What this join DELIVERS to its own parent, read off the plan just
     // committed to rather than promised for it.
     //
@@ -1814,11 +1866,7 @@ pub(crate) fn build_join(
         crate::driver::merge_decision::union_orders(
             join.tp,
             vec![plan.keys.iter().map(|key| key.left).collect()],
-            vec![plan
-                .keys
-                .iter()
-                .map(|key| key.right + left_width)
-                .collect()],
+            vec![plan.keys.iter().map(|key| key.right + left_width).collect()],
         )
     } else if let Some(decision) = &index_join {
         let outer = if decision.lookup_is_left {
@@ -1837,6 +1885,32 @@ pub(crate) fn build_join(
     } else {
         Delivered::new()
     };
+    if let Some(trace) = trace.as_deref_mut() {
+        if merged.is_none() && index_join.is_none() {
+            // This join asked its children to keep order and then HASHED --
+            // it relies on neither child's order. (A merge join relies on
+            // both; an index join streams its outer side in order, and its
+            // inner side's row was already rewritten to `keep order:false` by
+            // `index_join_inner_scan`.) Nothing relies on what this join
+            // asked for, so the plan must stop saying it does. See
+            // `PlanTrace::retract_child_keep_order`.
+            trace.retract_child_keep_order();
+        }
+        if coalescing {
+            // The recorder prints the `ON` as written, and a coalesced join
+            // has none -- its equalities are synthesized here.
+            trace.refuse("NATURAL and USING joins are not printed yet");
+        } else if trace
+            .join(join, &scope, current_db, &pushed, &strategy)
+            .is_err()
+        {
+            trace.refuse("this join's plan is not supported yet");
+        }
+    }
+    // Set, never merged: this is a property of the node at the TOP of the
+    // `FROM` plan, and the top is whichever `build_join` returns last. See
+    // [`FromScope::qualified_star_is_output_only`].
+    scope.qualified_star_is_output_only = join.tp == tidb_ast::JoinType::Cross && join.on.is_some();
     Ok((meter(exec, trace), scope, delivered))
 }
 

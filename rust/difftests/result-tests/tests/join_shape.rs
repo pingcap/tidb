@@ -926,6 +926,33 @@ fn join_operators_and_their_keep_order_match_recorded_tidb_plans() {
     // Every merge-pair number stands still (88/77/+6): no ordered merge is
     // involved on either side of either statement, and `explain_easy`'s own
     // `0/2 (+0 extra)` is unchanged.
+    // MEASURED AND DELIBERATELY NOT MOVED (batch55). Restoring the join
+    // PROMISE to Go's `PreparePossibleProperties` union, with the delivery
+    // VERIFIED after the children are built
+    // (`tidb_executor::driver::merge_decision`'s CORRECTION), takes
+    // `BOTH_AGREE` to 132 -- 8 plans of `join_reorder_through_projection`
+    // start agreeing and 13 stop. The replay improved at the same time
+    // (`integration_diff`'s 68 -> 64) and every merge-pair number stood still
+    // (88/77/+6), so this is NOT a regression in what the tier computes; it
+    // is the cost of forming more merge and index joins without a costing
+    // layer to choose among them. The 13 fall in exactly three named classes,
+    // read off `JOIN_SHAPE_SHOW_DISAGREEMENTS=1`:
+    //
+    //  * 6 -- the JOIN OPERATORS now match TiDB's recording exactly except
+    //    that Go prints `IndexHashJoin` where this tier prints `IndexJoin`.
+    //    Go costs the two and keeps the cheaper; naming them apart is
+    //    pre-existing NAMED RESIDUE in `tidb_executor::plan_trace`. Closing
+    //    it alone would recover all 6.
+    //  * 5 -- the `@@tidb_opt_join_reorder_through_proj = OFF` variants,
+    //    where TiDB costs a `HashJoin` cheaper than the merge/index join this
+    //    tier now forms structurally. Also the costing layer.
+    //  * 2 -- an index join whose OUTER side is a MATERIALIZED derived table,
+    //    whose leaf therefore never receives the property and prints
+    //    `keep order:false` where TiDB prints `true`.
+    //
+    // The number is left at 137 rather than lowered because the landing rule
+    // for that increment is a floor, and none of the three classes is fixed
+    // here. Lower it only together with the `IndexHashJoin` naming.
     const COMPARED: usize = 229;
     const BOTH_AGREE: usize = 137;
     const RECORDED_MERGE_PAIRS: usize = 88;

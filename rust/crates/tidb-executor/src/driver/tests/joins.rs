@@ -306,3 +306,68 @@ fn a_join_leaf_reads_a_covering_index_without_moving_a_row() {
         ]
     );
 }
+
+/// THE ROW-DROP PIN: a parent merge join over a child join that HASHES.
+///
+/// This is the exact hazard `crate::driver::merge_decision`'s narrowing once
+/// existed to prevent, and the reason the narrowing could be removed. The
+/// shape:
+///
+/// ```text
+///   mid JOIN top ON mid.a = top.a         -- promise says mid.a is ordered
+///   └─ bot JOIN mid ON bot.k = mid.k      -- hashes: k is no table's handle
+/// ```
+///
+/// `PreparePossibleProperties` UNIONS its children's orders, so the bottom
+/// join PROMISES `bot.a` and `mid.a` -- both are clustered integer handles.
+/// The parent reads that promise and forms a merge join on `mid.a`. But the
+/// bottom join hashes (its own key `k` is on no provided order), and a hash
+/// join emits its rows in its PROBE side's order, which here is `bot`'s. A
+/// merge join over that stream would advance past groups the input never
+/// separated and silently DROP rows.
+///
+/// The VERIFY step is what stops it: both children are built first, each
+/// reports what it actually delivers, and the bottom join reports nothing --
+/// so the parent falls back to hashing. The assertion below is the full,
+/// correct row set. Delete the `merge.filter(...)` in
+/// `crate::driver::from::build_join` and this test loses rows.
+#[test]
+fn a_promise_the_child_cannot_deliver_falls_back_instead_of_dropping_rows() {
+    let mut catalog = Catalog::default();
+    for ddl in [
+        "CREATE TABLE bot (a BIGINT PRIMARY KEY, k BIGINT)",
+        "CREATE TABLE mid (a BIGINT PRIMARY KEY, k BIGINT)",
+        "CREATE TABLE top (a BIGINT PRIMARY KEY)",
+    ] {
+        crate::run_create_table_on(ddl, &mut catalog).unwrap();
+    }
+    let ctx = crate::StmtContext::for_query();
+    // `mid` is written so that joining on `k` emits its rows in an order that
+    // is NOT `mid.a` ascending -- which is the whole point: the promise says
+    // `mid.a`, the hash join delivers `bot.a`.
+    for insert in [
+        "INSERT INTO bot VALUES (1, 7), (2, 7), (3, 8)",
+        "INSERT INTO mid VALUES (10, 8), (20, 7), (30, 7)",
+        "INSERT INTO top VALUES (10), (20), (30)",
+    ] {
+        run_insert_on(insert, &mut catalog, &ctx).unwrap();
+    }
+    let sql = "SELECT bot.a, mid.a, top.a FROM bot \
+        JOIN mid ON bot.k = mid.k \
+        JOIN top ON mid.a = top.a";
+    let mut rows = run_select_on(sql, &catalog, &ctx).unwrap();
+    rows.sort_by_key(|row| format!("{row:?}"));
+    // Every `(bot, mid)` pair that shares a `k`, each matched to its one
+    // `top` row: `k=7` pairs bot 1,2 with mid 20,30 (four rows) and `k=8`
+    // pairs bot 3 with mid 10 (one row).
+    assert_eq!(
+        rows,
+        vec![
+            vec![Datum::Int(1), Datum::Int(20), Datum::Int(20)],
+            vec![Datum::Int(1), Datum::Int(30), Datum::Int(30)],
+            vec![Datum::Int(2), Datum::Int(20), Datum::Int(20)],
+            vec![Datum::Int(2), Datum::Int(30), Datum::Int(30)],
+            vec![Datum::Int(3), Datum::Int(10), Datum::Int(10)],
+        ],
+    );
+}

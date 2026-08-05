@@ -740,6 +740,47 @@ impl PlanTrace {
         Ok(())
     }
 
+    /// UNSAYS a `keep order:true` this join asked its children for and then
+    /// did not use.
+    ///
+    /// `build_join` decides its merge join BEFORE its children exist, out of
+    /// the PROMISE (`merge_decision`'s `Phase::Promise` -- Go's
+    /// `PreparePossibleProperties` union), and hands each child a property
+    /// over its own join keys. A leaf that can answer such a property records
+    /// `keep order:true`, because that is what Go prints for a scan a parent
+    /// relies on. When the promise is then not VERIFIED -- the built child did
+    /// not deliver, or the key did not survive to the executor's own equality
+    /// split -- the join falls back to hashing and nothing relies on that
+    /// order any more. Go never printed the flag at all in that case: it
+    /// costed the ordered and unordered plans and kept the one it used.
+    ///
+    /// The request only ever lands on a DIRECT scan child: a child join
+    /// ignores the property it is handed and recomputes its own
+    /// (`build_join`'s `left_required`/`right_required`), so a subtree deeper
+    /// than one node carries no request of this join's to unsay.
+    ///
+    /// Measured: leaving these standing is the whole of a 13-plan
+    /// `join_shape` regression across `planner/core/join_reorder2` and
+    /// `planner/core/join_reorder_through_projection`, in every case a plan
+    /// whose JOIN operators already agree with TiDB's recording and whose
+    /// only divergence is one leaf saying `keep order:true` where TiDB says
+    /// `false`.
+    pub(crate) fn retract_child_keep_order(&mut self) {
+        let depth = self.stack.len();
+        if depth < 2 {
+            return;
+        }
+        for at in [depth - 2, depth - 1] {
+            let node = &mut self.stack[at];
+            if !node.children.is_empty() {
+                continue;
+            }
+            if let Some(rest) = node.info.strip_prefix("keep order:true") {
+                node.info = format!("keep order:false{rest}");
+            }
+        }
+    }
+
     /// A `WHERE` over whatever the access path produced.
     ///
     /// The access path's own estimate already reflects the conditions it

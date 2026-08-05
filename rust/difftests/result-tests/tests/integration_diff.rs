@@ -1517,7 +1517,17 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // empty-table case that is the whole reason Go appends a `count(1)`
     // instead of deleting the aggregation (an ungrouped aggregation returns
     // one row over an empty table, and the parent counts it).
-    const KNOWN_DIVERGENCES: usize = 68;
+    // 68 -> 64. The join PROMISE is Go's `PreparePossibleProperties` union
+    // again (`tidb_executor::driver::merge_decision`'s CORRECTION), so a
+    // parent merge join forms above a child that only COULD produce its
+    // order, and the child is then VERIFIED after it is built. Four
+    // statements of `planner/core/join_reorder_through_projection` reach
+    // TiDB's recorded tree as a result -- the shape at
+    // `r/planner/core/join_reorder_through_projection.result:1042`, two
+    // `MergeJoin`s over an index join, with the two upper leaves reading the
+    // TABLE in handle order instead of walking a covering index. `compared`
+    // holds at 7885: nothing entered or left the comparable set.
+    const KNOWN_DIVERGENCES: usize = 64;
     //
     //
     // 28 -> 24 (written as 35 -> 31 in batch43's own tree, which branched before batch42), in three unrelated causes, none of them an access-path
