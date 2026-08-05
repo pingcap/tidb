@@ -117,16 +117,13 @@ func (ts *TiDBStatement) AppendParam(paramID int, data []byte) error {
 	}
 	// If len(data) is 0, append an empty byte slice to the end to distinguish no data and no parameter.
 	if len(data) == 0 {
+		released := int64(len(ts.boundParams[paramID]))
+		if released > 0 {
+			ts.ctx.GetSessionVars().MemTracker.Consume(-released)
+			ts.boundLongDataBytes -= released
+		}
 		ts.boundParams[paramID] = []byte{}
-if len(data) == 0 {
-	released := int64(len(ts.boundParams[paramID]))
-	if released > 0 {
-		ts.ctx.GetSessionVars().MemTracker.Consume(-released)
-		ts.boundLongDataBytes -= released
-	}
-	ts.boundParams[paramID] = []byte{}
-	return nil
-}
+		return nil
 	}
 	// Once either limit has been exceeded for this statement, keep SEND_LONG_DATA
 	// silent and refuse further growth until RESET/EXECUTE clears the buffers.
