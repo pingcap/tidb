@@ -371,3 +371,61 @@ fn a_promise_the_child_cannot_deliver_falls_back_instead_of_dropping_rows() {
         ],
     );
 }
+
+/// THE PROMISE-GROWTH PIN: a leaf reports the order its scan WALKS IN, not
+/// the orders the catalog says some access path of that table could produce.
+///
+/// `crate::driver::merge_decision`'s promise/verify contract rests on the
+/// verify side reading the BUILD. It once read
+/// `merge_decision::table_orders` -- the same function the PROMISE is made
+/// from -- which agreed with itself by construction and verified nothing. It
+/// happened to be right only because `merge_join_plan::provided_orders`
+/// reported exactly the one order a `TableFullScan` walks in.
+///
+/// MEASURED: growing `provided_orders` into Go's index branch of
+/// `PreparePossibleProperties` (`logical_datasource.go:343`, the increment
+/// `crate::merge_join_plan`'s module doc defers) while that coincidence held
+/// made this query return TWO rows instead of three -- a merge join formed on
+/// `s` over two leaves that were still walking in `h` order, so it advanced
+/// past groups its input never separated. Not a worse plan: a wrong answer.
+///
+/// The tables below are written so handle order and `s` order DISAGREE on
+/// both sides, which is what makes the drop observable at all. This test
+/// passes today and must keep passing when that increment lands: the leaf
+/// under `keep_order` builds a `TableFullScan`, so it may report the handle
+/// order and nothing else, and a merge join promised `s` then fails
+/// verification and falls back to hashing.
+#[test]
+fn a_leaf_delivers_only_the_order_its_scan_walks_in() {
+    let mut catalog = Catalog::default();
+    for ddl in [
+        "CREATE TABLE il (h BIGINT PRIMARY KEY, s BIGINT NOT NULL, KEY ks (s))",
+        "CREATE TABLE ir (h BIGINT PRIMARY KEY, s BIGINT NOT NULL, KEY ks (s))",
+    ] {
+        crate::run_create_table_on(ddl, &mut catalog).unwrap();
+    }
+    let ctx = crate::StmtContext::for_query();
+    for insert in [
+        "INSERT INTO il VALUES (1, 30), (2, 10), (3, 20)",
+        "INSERT INTO ir VALUES (1, 20), (2, 30), (3, 10)",
+    ] {
+        run_insert_on(insert, &mut catalog, &ctx).unwrap();
+    }
+    let mut rows = run_select_on(
+        "SELECT il.h, ir.h FROM il JOIN ir ON il.s = ir.s",
+        &catalog,
+        &ctx,
+    )
+    .unwrap();
+    rows.sort_by_key(|row| format!("{row:?}"));
+    // Each `s` value appears once on each side, so the join is a bijection:
+    // three rows, whatever algorithm runs.
+    assert_eq!(
+        rows,
+        vec![
+            vec![Datum::Int(1), Datum::Int(2)],
+            vec![Datum::Int(2), Datum::Int(3)],
+            vec![Datum::Int(3), Datum::Int(1)],
+        ],
+    );
+}

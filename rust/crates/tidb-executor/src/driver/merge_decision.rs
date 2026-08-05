@@ -337,13 +337,37 @@ fn properties(
 /// not across them -- Go reaches the same answer through `PartitionProcessor`,
 /// whose `PartitionUnion` offers no order.
 pub(crate) fn table_orders(entry: &TableEntry, columns: &[String]) -> Vec<Vec<usize>> {
+    orders_of(entry, columns, crate::merge_join_plan::provided_orders)
+}
+
+/// What a whole-table scan of `entry` DELIVERS, in the same row identity
+/// [`table_orders`] answers in.
+///
+/// [`super::from::build_from`]'s leaf reports this and not [`table_orders`].
+/// The two agree today and are still separate calls: `table_orders` is the
+/// PROMISE a merge join is offered and may grow into Go's index branch, while
+/// this is a statement about the `TableFullScan` that was built. Reading the
+/// promise on the verify side is not a verification at all -- it agreed with
+/// itself by construction, and the module doc's claim that the check "reads
+/// the built plan's own answer" was true only by coincidence. See
+/// [`crate::merge_join_plan::table_scan_order`] for the row drop that
+/// coincidence hid.
+pub(crate) fn table_scan_orders(entry: &TableEntry, columns: &[String]) -> Vec<Vec<usize>> {
+    orders_of(entry, columns, crate::merge_join_plan::table_scan_order)
+}
+
+fn orders_of(
+    entry: &TableEntry,
+    columns: &[String],
+    of_table: fn(&crate::kv_table::KvTable) -> Vec<Vec<usize>>,
+) -> Vec<Vec<usize>> {
     let TableEntry::Kv(kv) = entry else {
         return Vec::new();
     };
     if kv.partition().is_some() {
         return Vec::new();
     }
-    crate::merge_join_plan::provided_orders(kv)
+    of_table(kv)
         .into_iter()
         .filter_map(|order| {
             order

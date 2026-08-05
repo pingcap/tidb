@@ -90,6 +90,30 @@ pub(crate) struct MergeJoinPlan {
 /// empty answer is the correct one for a table without a clustered integer
 /// primary key, and it makes every caller below decline a merge join.
 pub(crate) fn provided_orders(table: &KvTable) -> Vec<Vec<usize>> {
+    table_scan_order(table)
+}
+
+/// The orders a whole-table scan of `table` ACTUALLY walks in -- the record
+/// key's own order, which for an integer handle is that column's order.
+///
+/// This is deliberately a DIFFERENT function from [`provided_orders`] even
+/// though the two agree today, and the difference is the whole point.
+/// [`provided_orders`] is Go's `PreparePossibleProperties`: a claim about the
+/// orders SOME access path of this table could produce, which is what a merge
+/// join is offered. This one is a statement about the executor
+/// [`crate::driver::from::build_from`] actually builds for a leaf, and it can
+/// never say more than a `TableFullScan` delivers.
+///
+/// MEASURED, and the reason the two are separated: growing
+/// [`provided_orders`] into Go's index branch while the leaf's DELIVERED
+/// orders were read from that same function made a merge join form over an
+/// index column while the leaf walked in handle order, and rows were silently
+/// DROPPED -- see
+/// [`crate::driver::tests::joins::a_leaf_delivers_only_the_order_its_scan_walks_in`].
+/// The promise/verify contract in [`crate::driver::merge_decision`] can only
+/// catch that if the verify side reads the BUILD, so the build side gets its
+/// own name here rather than sharing the promise's.
+pub(crate) fn table_scan_order(table: &KvTable) -> Vec<Vec<usize>> {
     let Some(offset) = table.pk_handle_offset() else {
         return Vec::new();
     };

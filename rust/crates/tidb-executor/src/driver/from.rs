@@ -540,6 +540,11 @@ pub(crate) fn build_from(
                 })
                 .collect();
             let schema = Schema::new(schema_columns);
+            // Which of the two base-table branches below actually ran, read
+            // by the DELIVERY report at the end of this arm. It is set where
+            // the index source is built rather than predicted from
+            // `keep_order`, so the report cannot drift from the build.
+            let mut walked_index = false;
             let exec: Box<dyn Executor> = match entry {
                 TableEntry::Mem(mem) => Box::new(MemTableSourceExec::new(
                     ExecutorMeta::new(schema, 0, INIT_CAP, MAX_CHUNK_SIZE),
@@ -577,14 +582,17 @@ pub(crate) fn build_from(
                             &ctx.session_zone(),
                         )
                     }) {
-                        Some(path) => crate::driver::access::leaf_index_source(
-                            kv,
-                            &visible,
-                            &columns,
-                            path,
-                            trace.as_deref_mut(),
-                            &ctx.session_zone(),
-                        ),
+                        Some(path) => {
+                            walked_index = true;
+                            crate::driver::access::leaf_index_source(
+                                kv,
+                                &visible,
+                                &columns,
+                                path,
+                                trace.as_deref_mut(),
+                                &ctx.session_zone(),
+                            )
+                        }
                         None => Box::new(TableScanExec::new(
                             ExecutorMeta::new(schema, 0, INIT_CAP, MAX_CHUNK_SIZE),
                             restricted_to_partitions(kv, &table_ref.partitions, name)?,
@@ -614,13 +622,26 @@ pub(crate) fn build_from(
                 zone: ctx.session_zone(),
                 ..FromScope::default()
             };
-            // What this leaf DELIVERS. `keep_order` is the gate and not
-            // `required`: a leaf that declined the request took its cheapest
-            // path, which for a covering-index walk is not the handle's
-            // order at all. Reporting the handle order there would be the
-            // exact promise-without-delivery this contract exists to refuse.
-            let delivered = if keep_order {
-                crate::driver::merge_decision::table_orders(entry, &column_names)
+            // What this leaf DELIVERS -- read off the branch that RAN, which
+            // is the verify half of `merge_decision`'s promise/verify
+            // contract.
+            //
+            // A leaf that took the index branch walks in index-key order (or,
+            // for a double read, in handle order after the lookup), and
+            // neither is a `table_scan_orders` answer, so it reports nothing.
+            // `keep_order` is the second gate and not `required`: a leaf that
+            // DECLINED the request took its cheapest path, and reporting an
+            // order there would be the exact promise-without-delivery this
+            // contract exists to refuse.
+            //
+            // `table_scan_orders` and NOT `table_orders`: the promise may
+            // grow into Go's index branch of `PreparePossibleProperties`, and
+            // a verify side that re-reads the promise agrees with itself
+            // rather than checking anything. That coincidence hid a silent
+            // row drop -- see
+            // `crate::merge_join_plan::table_scan_order`.
+            let delivered = if keep_order && !walked_index {
+                crate::driver::merge_decision::table_scan_orders(entry, &column_names)
             } else {
                 Delivered::new()
             };
