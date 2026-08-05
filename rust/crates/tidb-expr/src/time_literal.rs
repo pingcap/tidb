@@ -35,6 +35,17 @@
 //!    prints `14:00:00.010`. `CAST(... AS DATETIME)` has decimal 0 and
 //!    prints no fraction at all -- which is why the fraction cannot be
 //!    restored by changing the cast.
+//! 4. THE LITERAL IS TEMPORALLY TYPED. Go's two function classes declare
+//!    `types.ETDatetime` and then `setDecimalAndFlenForDate` /
+//!    `setDecimalAndFlenForDatetime(tm.Fsp())`, so `DATE 'lit'` reports
+//!    `mysql.TypeDate` and `TIMESTAMP 'lit'` `mysql.TypeDatetime` -- exactly
+//!    the types a `date`/`datetime` COLUMN reports. Every consumer that
+//!    branches on "is this argument temporal?" therefore treats the literal
+//!    and the column alike. This module returns that `FieldType` beside the
+//!    value for that reason; folding to a `VarString` (what it used to do)
+//!    made a literal invisible to `resolveType4Extremum`, to comparison
+//!    refinement, and to anything else that reads
+//!    `types.IsTypeTemporal(arg.GetType())`.
 //!
 //! Go does all three while BUILDING the expression, and so does this: the
 //! literal folds to its formatted value here, and no per-row work remains.
@@ -55,7 +66,12 @@
 use crate::EvalError;
 use regex::Regex;
 use std::sync::OnceLock;
-use tidb_datatype::TimeType;
+use tidb_datatype::{FieldType, FieldTypeCode, Time, TimeType};
+
+/// Go `mysql.MaxDateWidth`: `'YYYY-MM-DD'`.
+const MAX_DATE_WIDTH: i64 = 10;
+/// Go `mysql.MaxDatetimeWidthNoFsp`: `'YYYY-MM-DD HH:MM:SS'`.
+const MAX_DATETIME_WIDTH_NO_FSP: i64 = 19;
 
 /// Go's `timestampPattern`, transcreated character for character from
 /// `pkg/expression/builtin_time.go`. `\d` and `\s` are spelled out as their
@@ -109,11 +125,17 @@ fn date_pattern() -> &'static Regex {
 pub(crate) fn date_literal(
     text: &str,
     zone: &tidb_datatype::SessionTimeZone,
-) -> Result<String, EvalError> {
+) -> Result<(Time, FieldType), EvalError> {
     if !date_pattern().is_match(text) {
         return Err(wrong_value(1292, "date", text));
     }
-    parse(text, TimeType::Date, 0, zone).map_err(|()| wrong_value(1292, "date", text))
+    let time = parse(text, TimeType::Date, 0, zone).map_err(|()| wrong_value(1292, "date", text))?;
+    // Go `setDecimalAndFlenForDate` (`pkg/expression/builtin.go:1065`):
+    // `SetDecimal(0)`, `SetFlen(mysql.MaxDateWidth)`, `SetType(mysql.TypeDate)`.
+    let mut ft = FieldType::new(FieldTypeCode::Date);
+    ft.set_decimal(0);
+    ft.set_flen(MAX_DATE_WIDTH);
+    Ok((time, ft))
 }
 
 /// Go `builtinTimestampLiteralSig`: the value of `TIMESTAMP 'lit'`, or the
@@ -125,12 +147,23 @@ pub(crate) fn date_literal(
 pub(crate) fn timestamp_literal(
     text: &str,
     zone: &tidb_datatype::SessionTimeZone,
-) -> Result<String, EvalError> {
+) -> Result<(Time, FieldType), EvalError> {
     if !timestamp_pattern().is_match(text) {
         return Err(wrong_value(1525, "datetime", text));
     }
     let fsp = i64::from(tidb_datatype::get_fsp(text));
-    parse(text, TimeType::DateTime, fsp, zone).map_err(|()| wrong_value(1292, "datetime", text))
+    let time = parse(text, TimeType::DateTime, fsp, zone)
+        .map_err(|()| wrong_value(1292, "datetime", text))?;
+    // Go `setDecimalAndFlenForDatetime(tm.Fsp())`
+    // (`pkg/expression/builtin.go:1056`): the base type for the `ETDatetime`
+    // return is already `mysql.TypeDatetime`, and only the scale and width
+    // move -- `MaxDatetimeWidthNoFsp + fsp`, plus one for the `.` separator
+    // when there is a fraction at all.
+    let fsp = i64::from(time.fsp());
+    let mut ft = FieldType::new(FieldTypeCode::Datetime);
+    ft.set_decimal_under_limit(fsp);
+    ft.set_flen_under_limit(MAX_DATETIME_WIDTH_NO_FSP + fsp + i64::from(fsp > 0));
+    Ok((time, ft))
 }
 
 /// The parse runs in the SESSION's zone, as Go's does.
@@ -162,9 +195,9 @@ fn parse(
     kind: TimeType,
     fsp: i64,
     zone: &tidb_datatype::SessionTimeZone,
-) -> Result<String, ()> {
+) -> Result<Time, ()> {
     tidb_datatype::parse_time(text, kind, fsp, false, true, true, zone)
-        .map(|parsed| parsed.time.to_string())
+        .map(|parsed| parsed.time)
         .map_err(|_| ())
 }
 
@@ -180,6 +213,13 @@ fn wrong_value(code: u16, kind: &str, text: &str) -> EvalError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The printed value, which is all the pre-typing form of this module
+    /// returned. The TYPE half is asserted separately in
+    /// [`the_literal_reports_gos_own_temporal_type`].
+    fn shown(result: Result<(Time, FieldType), EvalError>) -> String {
+        result.unwrap().0.to_string()
+    }
 
     /// The three properties this module exists for, one case each, taken from
     /// `tests/integrationtest/r/types/time.result`.
@@ -199,11 +239,11 @@ mod tests {
         ));
         // The literal's own fsp survives into the printed value.
         assert_eq!(
-            timestamp_literal("2024-01-01 14:00:00.010", &utc).unwrap(),
+            shown(timestamp_literal("2024-01-01 14:00:00.010", &utc)),
             "2024-01-01 14:00:00.010"
         );
         assert_eq!(
-            timestamp_literal("2024-01-01 14:00:00", &utc).unwrap(),
+            shown(timestamp_literal("2024-01-01 14:00:00", &utc)),
             "2024-01-01 14:00:00"
         );
         // DATE refuses a literal carrying a time part.
@@ -211,7 +251,7 @@ mod tests {
             date_literal("2024-01-01 01:12:31", &utc),
             Err(EvalError::WrongTemporalLiteral { code: 1292, .. })
         ));
-        assert_eq!(date_literal("2024-01-01", &utc).unwrap(), "2024-01-01");
+        assert_eq!(shown(date_literal("2024-01-01", &utc)), "2024-01-01");
     }
 
     /// The fold rounds in the SESSION zone, not in UTC: the capture in
@@ -235,19 +275,51 @@ mod tests {
                 "2011-11-06 01:00:00.000000",
             ),
         ] {
-            assert_eq!(timestamp_literal(input, &utc).unwrap(), in_utc, "{input}");
-            assert_eq!(timestamp_literal(input, &la).unwrap(), in_la, "{input}");
+            assert_eq!(shown(timestamp_literal(input, &utc)), in_utc, "{input}");
+            assert_eq!(shown(timestamp_literal(input, &la)), in_la, "{input}");
         }
         // An explicit offset in the literal normalizes into the session zone
         // (the divergence the module doc used to pin as UTC-only): 14:00 at
         // +02:00 is 12:00 UTC and 04:00 in Los Angeles (PST, -08:00).
         assert_eq!(
-            timestamp_literal("2024-01-01 14:00:00+02:00", &utc).unwrap(),
+            shown(timestamp_literal("2024-01-01 14:00:00+02:00", &utc)),
             "2024-01-01 12:00:00"
         );
         assert_eq!(
-            timestamp_literal("2024-01-01 14:00:00+02:00", &la).unwrap(),
+            shown(timestamp_literal("2024-01-01 14:00:00+02:00", &la)),
             "2024-01-01 04:00:00"
         );
+    }
+
+    /// Go's `setDecimalAndFlenForDate` / `setDecimalAndFlenForDatetime`, the
+    /// half a printed VALUE cannot show. `DATE 'lit'` is `mysql.TypeDate`
+    /// with `MaxDateWidth` and scale 0; `TIMESTAMP 'lit'` is
+    /// `mysql.TypeDatetime` whose scale is the LITERAL TEXT's own fsp and
+    /// whose width grows by that fsp plus the `.` separator.
+    ///
+    /// The scale is read off the parsed `Time`, not off the text, so a
+    /// literal whose fraction is wider than `MaxFsp` reports the CLAMPED 6 --
+    /// the value rounds to six digits and the declared scale must agree with
+    /// it, or the chunk cell and the header disagree.
+    #[test]
+    fn the_literal_reports_gos_own_temporal_type() {
+        let utc = tidb_datatype::SessionTimeZone::utc();
+        let (_, date) = date_literal("2024-01-01", &utc).unwrap();
+        assert_eq!(date.code(), FieldTypeCode::Date);
+        assert_eq!((date.flen(), date.decimal()), (10, 0));
+
+        for (text, decimal, flen) in [
+            ("2024-01-01 14:00:00", 0, 19),
+            ("2024-01-01 14:00:00.010", 3, 23),
+            ("2024-01-01 14:00:00.123456", 6, 26),
+            // Wider than `MaxFsp`: the parse rounds to six digits, so the
+            // reported scale is six and not the nine the text carries.
+            ("2024-01-01 14:00:00.123456789", 6, 26),
+        ] {
+            let (time, ft) = timestamp_literal(text, &utc).unwrap();
+            assert_eq!(ft.code(), FieldTypeCode::Datetime, "{text}");
+            assert_eq!((ft.flen(), ft.decimal()), (flen, decimal), "{text}");
+            assert_eq!(i64::from(time.fsp()), decimal, "{text}");
+        }
     }
 }

@@ -963,18 +963,28 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
         {
             let text = literal_text(&cast.expr, resolver)?;
             let zone = resolver.time_zone();
-            let value = match cast.style {
+            let (time, ret_type) = match cast.style {
                 tidb_ast::CastStyle::DateLiteral => {
                     crate::time_literal::date_literal(&text, &zone)?
                 }
                 _ => crate::time_literal::timestamp_literal(&text, &zone)?,
             };
-            // The value is a formatted string for the same reason
-            // `cast_target` types the temporal casts `VarString`: this crate
-            // has no `Time` cell in the chunk column domain.
+            // The folded constant carries Go's OWN result type -- `TypeDate`
+            // or `TypeDatetime` with the literal's fsp -- over the same
+            // `Datum::Time` cell a `date`/`datetime` COLUMN reads out of a
+            // chunk row (`tidb_chunk::row::Row::get_datum`). It used to fold
+            // to a `VarString`, which is why every consumer that asks Go's
+            // question "is any argument temporal?" answered no for a literal
+            // and yes for a column: `GREATEST(date 'lit', 19910101, ...)`
+            // compared as TEXT and printed `20050505` where TiDB prints
+            // `2005-05-05`, and `GREATEST(date 'lit', timestamp 'lit')`
+            // dropped the widened `00:00:00`. Typing it here fixes them all
+            // at once, in the same place Go sets the type
+            // (`dateLiteralFunctionClass.getFunction`), rather than teaching
+            // each consumer about literals.
             Ok(Expression::Constant(Constant::new(
-                Datum::new_string(value),
-                FieldType::new(FieldTypeCode::VarString),
+                Datum::Time(time),
+                ret_type,
             )))
         }
         Expr::Cast(cast) => {
