@@ -713,6 +713,55 @@ fn cast_to_time(
     ctx: &dyn crate::Columns,
     kind: tidb_datatype::TimeType,
 ) -> Result<Datum, EvalError> {
+    let Some(time) = cast_to_time_value(v, source, ctx, kind)? else {
+        return Ok(Datum::Null);
+    };
+    // A `YEAR` source is the one arm whose result carries a ZERO month and
+    // day (`ParseTimeFromYear(2019)` is `2019-00-00`), and the rendering
+    // below cannot carry those through the comparison rules, which read the
+    // datum's KIND -- `tests_datetime_year_compare` in `tidb-session` pins
+    // `2019` as strictly less than `2019-11-11 11:11:11`. Keep the
+    // `types.Time` `builtinCastIntAsTimeSig` produced.
+    if year_source_value(v, source).is_some() {
+        return Ok(Datum::Time(time));
+    }
+    let core = time.core_time();
+    let (y, m, d) = (
+        i64::from(core.year()),
+        u32::from(core.month()),
+        u32::from(core.day()),
+    );
+    Ok(if kind == tidb_datatype::TimeType::Date {
+        // Go: "Truncate hh:mm:ss part if the type is Date."
+        format_ymd_result(y, m, d, None)
+    } else {
+        format_ymdhms_result(
+            y,
+            m,
+            d,
+            u32::from(core.hour()),
+            u32::from(core.minute()),
+            u32::from(core.second()),
+        )
+    })
+}
+
+/// The `types.Time` Go's chosen `builtinCast*AsTimeSig` produces, BEFORE this
+/// tier renders it as a string. `None` is Go's NULL (any warning already
+/// raised).
+///
+/// [`cast_to_time`] is this plus the rendering; the argument-cast seam
+/// ([`crate::arg_eval_type`]) is this WITHOUT it, because the rendering is
+/// lossy in exactly the place Go's `ETDatetime` argument layer is not: a
+/// `types.Time` carries a zero month or day as a stored field, while
+/// `format_ymd*_result` collapses any zero year to the literal `0000-00-00`
+/// and answers NULL outside `1..=9999`.
+fn cast_to_time_value(
+    v: &Datum,
+    source: Option<&tidb_datatype::FieldType>,
+    ctx: &dyn crate::Columns,
+    kind: tidb_datatype::TimeType,
+) -> Result<Option<tidb_datatype::Time>, EvalError> {
     // A `YEAR` source is the one case the datum kind cannot speak for. Go
     // `builtinCastIntAsTimeSig.evalTime` (`builtin_cast.go:1127-1131`) asks the
     // ARGUMENT'S TYPE, not the integer's digits:
@@ -737,10 +786,10 @@ fn cast_to_time(
         if kind == tidb_datatype::TimeType::Date {
             time.set_kind(kind);
         }
-        return Ok(Datum::Time(time));
+        return Ok(Some(time));
     }
     let Some(s) = coerce_str(v)? else {
-        return Ok(Datum::Null);
+        return Ok(None);
     };
     let modes = ctx.date_modes();
     // Go routes each source TYPE to its own parser, not its text: only the
@@ -756,7 +805,8 @@ fn cast_to_time(
     // the faithful write-path port.
     let parsed = parse_time_by_source(v, &s, kind, modes.allow_invalid_dates, &ctx.time_zone());
     let Ok(time) = parsed else {
-        return Ok(invalid_time_warning(ctx, &s));
+        invalid_time_warning(ctx, &s);
+        return Ok(None);
     };
     // Go's SECOND check is the STRING signature's ALONE
     // (`builtinCastStringAsTimeSig`: `res.IsZero() && HasNoZeroDateMode()`).
@@ -766,27 +816,45 @@ fn cast_to_time(
     // `expression/cast`. Gating this on the text sources keeps the numeric
     // sources on Go's own no-rejection path.
     if matches!(v, Datum::String(_) | Datum::Bytes(_)) && time.is_zero() && modes.no_zero_date {
-        return Ok(invalid_time_warning(ctx, &s));
+        invalid_time_warning(ctx, &s);
+        return Ok(None);
     }
-    let core = time.core_time();
-    let (y, m, d) = (
-        i64::from(core.year()),
-        u32::from(core.month()),
-        u32::from(core.day()),
-    );
-    Ok(if kind == tidb_datatype::TimeType::Date {
-        // Go: "Truncate hh:mm:ss part if the type is Date."
-        format_ymd_result(y, m, d, None)
-    } else {
-        format_ymdhms_result(
-            y,
-            m,
-            d,
-            u32::from(core.hour()),
-            u32::from(core.minute()),
-            u32::from(core.second()),
-        )
-    })
+    Ok(Some(time))
+}
+
+/// Go's `WrapWithCastAsTime(ctx, expr, types.NewFieldType(mysql.TypeDatetime))`
+/// (`pkg/expression/builtin_cast.go:2817`), applied to an argument's VALUE
+/// because this tier has no build-time expression rewrite to hang the cast on.
+///
+/// Go's early return is the whole of the special-casing:
+///
+/// ```go
+/// exprTp := expr.GetType(ctx.GetEvalCtx()).GetType()
+/// if tp.GetType() == exprTp {
+///     return expr
+/// } else if (exprTp == mysql.TypeDate || exprTp == mysql.TypeTimestamp) && tp.GetType() == mysql.TypeDatetime {
+///     return expr
+/// }
+/// ```
+///
+/// -- i.e. a DATE, DATETIME or TIMESTAMP expression is handed through
+/// untouched. In this tier those three are exactly the expressions that
+/// evaluate to a [`Datum::Time`], so ONE pass-through arm covers all of Go's
+/// early return; everything else goes through the cast Go builds, which is
+/// [`cast_to_time_value`] (the same function `CAST(x AS DATETIME)` uses,
+/// YEAR hole and all).
+pub(crate) fn cast_arg_as_datetime(
+    v: &Datum,
+    source: Option<&tidb_datatype::FieldType>,
+    ctx: &dyn crate::Columns,
+) -> Result<Datum, EvalError> {
+    if matches!(v, Datum::Time(_) | Datum::Null) {
+        return Ok(v.clone());
+    }
+    Ok(
+        cast_to_time_value(v, source, ctx, tidb_datatype::TimeType::DateTime)?
+            .map_or(Datum::Null, Datum::Time),
+    )
 }
 
 /// The integer a `YEAR`-typed operand carries, or `None` when the operand is
@@ -895,9 +963,8 @@ fn real_to_time(
 
 /// Go `handleInvalidTimeError` on the read path: `ErrWrongValue` (1292)
 /// becomes a warning and the cast yields NULL.
-fn invalid_time_warning(ctx: &dyn crate::Columns, input: &str) -> Datum {
+fn invalid_time_warning(ctx: &dyn crate::Columns, input: &str) {
     ctx.append_warning(1292, &format!("Incorrect datetime value: '{input}'"));
-    Datum::Null
 }
 
 /// `CAST(... AS YEAR)`: the operand's calendar year if it parses as a

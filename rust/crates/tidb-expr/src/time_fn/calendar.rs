@@ -19,35 +19,43 @@ use crate::coerce::coerce_str;
 use crate::{Datum, EvalError};
 
 /// The calendar `(year, month, day)` a *component* date-part function
-/// (`YEAR`/`MONTH`/`DAYOFMONTH`/`QUARTER`) reads, matching Go's contract of
-/// `EvalTime` first, then reading the field directly with no zero rejection.
-///
-/// A `Datum::Time` is a value Go's `EvalTime` already produced (a datetime
-/// column read, a cast-to-datetime result), so `EvalTime` returned it
-/// non-`NULL` and its stored fields are authoritative EVEN when zero:
-/// `builtinYearSig`/`MonthSig`/`DayOfMonthSig`/`QuarterSig` return
-/// `date.Year()` / `date.Month()` / `date.Day()` with no `InvalidZero` check,
-/// so a zero datetime yields the stored `0` (confirmed against real TiDB's
+/// (`YEAR`/`MONTH`/`DAYOFMONTH`/`QUARTER`) reads, which in Go is the whole of
+/// the function body: `builtinYearSig`/`MonthSig`/`DayOfMonthSig`/`QuarterSig`
+/// return `date.Year()` / `date.Month()` / `date.Day()` off the value
+/// `EvalTime` handed them, with NO parsing and NO `InvalidZero` check -- so a
+/// zero datetime yields the stored `0` (confirmed against real TiDB's
 /// recorded `r/executor/executor.result` `TestZeroDateTimeCompatibility`:
 /// `YEAR(v1)`/`MONTH(v1)`/`DAYOFMONTH(v1)`/`QUARTER(v1)` over a zero-datetime
-/// column are all `0`). Any other datum is a string/number whose date value
-/// is decided HERE exactly as `EvalTime` decides it for a string under
-/// `NO_ZERO_DATE`: a zero or invalid-zero date fails [`parse_date_ymd`] and
-/// the caller yields `NULL` (the same recording's `YEAR("0000-00-00")` is
-/// `NULL`, distinct from the typed-zero column above).
+/// column are all `0`).
+///
+/// Go can be that short because all four classes declare their argument
+/// `types.ETDatetime` (`builtin_time.go:1116`, `:1284`, `:1620`, `:5833`),
+/// which makes `newBaseBuiltinFuncWithTp` wrap it in `WrapWithCastAsTime`
+/// before the signature ever runs. [`crate::arg_eval_type`] is that wrap, so
+/// this function is now equally short: a temporal value or `NULL` is ALL that
+/// can arrive, and a string is decided by the cast -- one rule, in one place,
+/// instead of one per call site.
 pub(crate) fn component_date(vals: &[Datum]) -> Result<Option<(i64, u32, u32)>, EvalError> {
-    if vals.len() != 1 {
+    let [value] = vals else {
         return Err(EvalError::Unsupported("bad function arity"));
+    };
+    match value {
+        Datum::Time(time) => {
+            let core = time.core_time();
+            Ok(Some((
+                i64::from(core.year()),
+                u32::from(core.month()),
+                u32::from(core.day()),
+            )))
+        }
+        Datum::Null => Ok(None),
+        // Unreachable through either evaluator: both apply the ETDatetime
+        // argument cast first. Refusing loudly keeps a future caller that
+        // forgets it from silently re-deriving a date of its own.
+        _ => Err(EvalError::Unsupported(
+            "a date-part argument reached the signature without its ETDatetime cast",
+        )),
     }
-    if let Datum::Time(time) = &vals[0] {
-        let core = time.core_time();
-        return Ok(Some((
-            i64::from(core.year()),
-            u32::from(core.month()),
-            u32::from(core.day()),
-        )));
-    }
-    Ok(coerce_str(&vals[0])?.and_then(|s| parse_date_ymd(&s)))
 }
 
 /// The calendar `(year, month, day)` parsed from a single-argument
@@ -111,30 +119,6 @@ pub(crate) fn parse_date_ymd(s: &str) -> Option<(i64, u32, u32)> {
         return None;
     }
     Some((year, month, day))
-}
-
-/// Parses the month-zero date form accepted by `QUARTER` when TiDB's
-/// `IgnoreZeroInDate` flag is enabled.  Only month zero is relaxed here;
-/// nonzero months continue through strict calendar validation.
-pub(crate) fn parse_date_with_zero_month(s: &str) -> Option<(i64, u32, u32)> {
-    if let Some(date) = parse_date_ymd(s) {
-        return Some(date);
-    }
-    let input = s.trim();
-    let date = input
-        .split_once(char::is_whitespace)
-        .map_or(input, |(date, _)| date);
-    let parts = split_numeric_components(date)?;
-    let [(year, year_digits), (month, _), (day, _)] = parts.as_slice() else {
-        return None;
-    };
-    if *month == 0 {
-        if *day == 0 || *day > 31 {
-            return None;
-        }
-        return Some((expand_year(*year, *year_digits), 0, *day));
-    }
-    None
 }
 
 /// The `(hour, minute, second)` extracted from a single-argument time-part

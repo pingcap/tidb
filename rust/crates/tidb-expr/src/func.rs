@@ -152,6 +152,11 @@ pub(crate) fn eval_func(
     } else {
         vals
     };
+    // Go's `newBaseBuiltinFuncWithTp` argument-cast layer. This tier has no
+    // static argument types (see `crate::arg_eval_type`), so it gets Go's
+    // wrap from the values alone -- which is everything except the `YEAR`
+    // distinction, a type no value can carry.
+    let vals = crate::arg_eval_type::wrap_datetime_args(name.as_str(), vals, &[], cols)?;
     if let Some(result) = crate::math_fn::dispatch(name.as_str(), args, &vals, cols, function_key) {
         return result;
     }

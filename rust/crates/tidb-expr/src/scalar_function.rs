@@ -884,6 +884,12 @@ impl ScalarFunction {
         // `dispatch` below and stays the documented partial boundary.
         let arg_types: Vec<Option<FieldType>> =
             self.args.iter().map(|a| a.static_type().cloned()).collect();
+        // Go's `newBaseBuiltinFuncWithTp` argument-cast layer
+        // (`crate::arg_eval_type`), the one point where a builtin's declared
+        // argument eval types are imposed. Only this tier has the static
+        // types Go's `WrapWithCastAsTime` reads, so only here can a `YEAR`
+        // argument take Go's `ParseTimeFromYear`.
+        let vals = crate::arg_eval_type::wrap_datetime_args(&upper, vals, &arg_types, ctx)?;
         if let Some(result) = crate::builtin_ext::json_dispatch_typed(&upper, &vals, &arg_types) {
             return result;
         }
