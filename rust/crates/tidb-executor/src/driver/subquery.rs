@@ -187,7 +187,7 @@ fn collect_correlated_columns(
             crate::driver::leaf_demand::FromDemand::none(),
             &tidb_planner::physical_property::PhysicalProperty::default(),
         ) {
-            Ok((_, scope)) => scope,
+            Ok((_, scope, _)) => scope,
             // An unresolvable inner FROM is reported by the inner run itself.
             Err(_) => FromScope::default(),
         },
@@ -715,7 +715,7 @@ pub(crate) fn select_outer_scope(
             crate::driver::leaf_demand::FromDemand::none(),
             &tidb_planner::physical_property::PhysicalProperty::default(),
         ) {
-            Ok((_, scope)) => scope,
+            Ok((_, scope, _)) => scope,
             Err(_) => empty(),
         },
     }

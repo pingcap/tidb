@@ -323,6 +323,58 @@ fn table_func_deps(
     deps
 }
 
+/// The column orders an executor a `FROM` builder just built ACTUALLY
+/// produces, as offsets into its own row -- Go's `PossiblePropertiesInfo
+/// .Orders` read off the PHYSICAL plan instead of the logical one.
+///
+/// This is the VERIFY half of the promise/verify contract; the PROMISE half is
+/// [`crate::driver::merge_decision::possible_properties`]. See that module's
+/// doc for why the two exist and what the narrowing they replaced cost.
+pub(crate) type Delivered = Vec<Vec<usize>>;
+
+/// Whether a base-table leaf can answer `required` with the order it reads in
+/// anyway, which is the only way this tier produces an order at all -- there
+/// is no `Sort` enforcer below a `FROM`.
+fn leaf_can_keep_order(
+    node: &JoinNode,
+    catalog: &Catalog,
+    current_db: &str,
+    required: &tidb_planner::physical_property::PhysicalProperty,
+) -> bool {
+    let JoinNode::Table(table_ref) = node else {
+        // Only the table arm reads the answer; a join re-decides for itself
+        // and a derived table is materialized.
+        return true;
+    };
+    if !table_ref.partitions.is_empty() || table_ref.as_of.is_some() {
+        return false;
+    }
+    // A forward scan walks ascending. Go reaches a DESCENDING order by setting
+    // `PhysicalTableScan.Desc` and reading the range backwards, which this
+    // tier's scan does not do, so a descending demand is declined rather than
+    // answered with the ascending stream.
+    let (all_same, desc) = required.all_same_order();
+    if !all_same || desc {
+        return false;
+    }
+    let Ok((database, name)) = split_table_path(&table_ref.name, current_db) else {
+        return false;
+    };
+    let Some(entry) = catalog.get_in(database, name) else {
+        return false;
+    };
+    let columns: Vec<String> = entry.column_list().into_iter().map(|(c, _)| c).collect();
+    let wanted: Vec<usize> = required
+        .sort_items
+        .iter()
+        .map(|item| item.col as usize)
+        .collect();
+    crate::driver::merge_decision::delivers(
+        &crate::driver::merge_decision::table_orders(entry, &columns),
+        &wanted,
+    )
+}
+
 /// Builds the `FROM` scope and the executor that produces its rows.
 ///
 /// Go's `buildJoin` builds a left-deep tree of `LogicalJoin`s over the
@@ -348,16 +400,22 @@ pub(crate) fn build_from(
     mut trace: Option<&mut PlanTrace>,
     demand: crate::driver::leaf_demand::FromDemand<'_>,
     required: &tidb_planner::physical_property::PhysicalProperty,
-) -> Result<(Box<dyn Executor>, FromScope), DriverError> {
+) -> Result<(Box<dyn Executor>, FromScope, Delivered), DriverError> {
     // Go's `findBestTask(prop)` asks a child for a plan that SATISFIES the
     // property and lets the child answer with the path that does. This tier
-    // has no such recursion (see `crate::merge_join_plan`), so the property
-    // arrives already checked: the only caller that asks for an order is
-    // `build_join`'s merge decision, and it asks only when the path this
-    // builder would have taken anyway already produces that order. The scan
-    // therefore RECORDS the order rather than choosing to produce it, which is
-    // exactly what Go prints for the same case.
-    let keep_order = required.need_keep_order();
+    // cannot re-plan a built child, so it answers the same question from the
+    // other end: the property arrives as a REQUEST, the builder takes the path
+    // that would satisfy it when one exists, and the third return value says
+    // what the executor it built actually delivers. `build_join` reads that
+    // answer back before it commits to a merge join -- the VERIFY half of the
+    // contract in `merge_decision`'s module doc.
+    //
+    // `keep_order` is therefore a request the leaf may DECLINE: a demand this
+    // table cannot produce (no clustered integer handle, a partitioned read, a
+    // descending order no forward scan walks) leaves the scan free to take its
+    // cheapest path, and `EXPLAIN` prints `keep order:false` because that is
+    // what it does.
+    let keep_order = required.need_keep_order() && leaf_can_keep_order(node, catalog, current_db, required);
     match node {
         JoinNode::Table(table_ref) => {
             // A `db.t` reference resolves in that schema; a bare `t` resolves
@@ -404,7 +462,9 @@ pub(crate) fn build_from(
                     catalog,
                     ctx,
                 )?;
-                return Ok((meter(exec, trace), scope));
+                // A view's body is a whole statement, whose row order this
+                // tier does not describe.
+                return Ok((meter(exec, trace), scope, Delivered::new()));
             }
             // A sequence is in the table namespace but is not a row source.
             // Go refuses it in the planner -- captured: `select * from s1` is
@@ -419,6 +479,9 @@ pub(crate) fn build_from(
                 ));
             }
             let columns = entry.column_list();
+            // The leaf's row layout by name, which is the identity
+            // `merge_decision`'s orders are written in.
+            let column_names: Vec<String> = columns.iter().map(|(name, _)| name.clone()).collect();
             let schema_columns: Vec<Column> = columns
                 .iter()
                 .enumerate()
@@ -503,7 +566,17 @@ pub(crate) fn build_from(
                 zone: ctx.session_zone(),
                 ..FromScope::default()
             };
-            Ok((meter(exec, trace), scope))
+            // What this leaf DELIVERS. `keep_order` is the gate and not
+            // `required`: a leaf that declined the request took its cheapest
+            // path, which for a covering-index walk is not the handle's
+            // order at all. Reporting the handle order there would be the
+            // exact promise-without-delivery this contract exists to refuse.
+            let delivered = if keep_order {
+                crate::driver::merge_decision::table_orders(entry, &column_names)
+            } else {
+                Delivered::new()
+            };
+            Ok((meter(exec, trace), scope, delivered))
         }
         JoinNode::Join(join) => {
             // A nested join builds full width: see `build_join`'s `prune`.
@@ -526,7 +599,23 @@ pub(crate) fn build_from(
             let (exec, mut scope) =
                 build_derived_source(subquery, alias.as_deref(), catalog, current_db, ctx, trace)?;
             rename_derived_columns(&mut scope.tables[0].columns, column_names)?;
-            Ok((exec, scope))
+            // A derived table is MATERIALIZED here -- `build_derived_source`
+            // drains its subquery into a `MemTableSourceExec`, which replays
+            // the rows in the order they arrived -- so what it delivers is
+            // what its inner `FROM` delivered, projected through its select
+            // list. `Phase::Delivered` is that walk, and it is a conservative
+            // LOWER bound on the inner build (see its doc): the inner join
+            // forms its candidates from the PROMISE and verifies them the same
+            // way this one does, so it can only deliver more.
+            let delivered = crate::driver::merge_decision::delivered_properties(
+                node,
+                catalog,
+                current_db,
+                demand.offered,
+            )
+            .map(|properties| properties.orders)
+            .unwrap_or_default();
+            Ok((exec, scope, delivered))
         }
     }
 }
@@ -726,7 +815,7 @@ pub(crate) fn build_lateral_join(
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
-) -> Result<(Box<dyn Executor>, FromScope), DriverError> {
+) -> Result<(Box<dyn Executor>, FromScope, Delivered), DriverError> {
     // Go's own rejections, in `buildLateralJoin`'s order.
     if join.natural {
         return Err(DriverError::InvalidLateralJoin(
@@ -887,7 +976,9 @@ pub(crate) fn build_lateral_join(
             ctx.clone(),
         ));
     }
-    Ok((exec, scope))
+    // An Apply's row order follows its OUTER side, which this tier does not
+    // describe here.
+    Ok((exec, scope, Delivered::new()))
 }
 
 /// How deep a view may nest before the reference is called invalid. A view
@@ -1138,7 +1229,7 @@ pub(crate) fn build_join(
     prune: Option<&tidb_ast::SelectStmt>,
     demand: crate::driver::leaf_demand::FromDemand<'_>,
     required: &tidb_planner::physical_property::PhysicalProperty,
-) -> Result<(Box<dyn Executor>, FromScope), DriverError> {
+) -> Result<(Box<dyn Executor>, FromScope, Delivered), DriverError> {
     // `FROM a, b` parses as the single-relation wrapper AROUND the real join,
     // while `FROM a JOIN b ON ...` is the join node itself. Unwrapping here
     // keeps the two spellings one shape for the prune request below --
@@ -1213,7 +1304,7 @@ pub(crate) fn build_join(
             tidb_planner::physical_property::PhysicalProperty::default(),
         ),
     };
-    let (mut left_exec, left_scope) = build_from(
+    let (mut left_exec, left_scope, left_delivered) = build_from(
         &join.left,
         catalog,
         current_db,
@@ -1223,8 +1314,9 @@ pub(crate) fn build_join(
         &left_required,
     )?;
     let Some(right_node) = &join.right else {
-        // The single-table wrapper the parser always produces.
-        return Ok((left_exec, left_scope));
+        // The single-table wrapper the parser always produces: it delivers
+        // exactly what its one child does.
+        return Ok((left_exec, left_scope, left_delivered));
     };
     if let JoinNode::Derived {
         subquery,
@@ -1250,7 +1342,7 @@ pub(crate) fn build_join(
         );
     }
     let coalescing = join.natural || !join.using.is_empty();
-    let (mut right_exec, right_scope) = build_from(
+    let (mut right_exec, right_scope, right_delivered) = build_from(
         right_node,
         catalog,
         current_db,
@@ -1259,6 +1351,30 @@ pub(crate) fn build_join(
         demand,
         &right_required,
     )?;
+
+    // VERIFY -- the second half of the promise/verify contract (see
+    // `merge_decision`'s module doc). `merge` was formed from the PROMISE:
+    // Go's `PreparePossibleProperties` union, which says which orders a
+    // child's output COULD be produced in, not which one it was built in.
+    // Both children have now been built, under exactly the properties that
+    // decision asked of them, and each reported what it ACTUALLY delivers.
+    //
+    // A merge join whose child did not deliver would compare groups its input
+    // never separated and silently DROP rows. That hazard is why this tier
+    // once narrowed the promise itself; it is removed here instead, and
+    // removed by READING the built plan rather than by predicting it, so the
+    // check cannot drift from what runs. A promise verification cannot
+    // deliver falls back to the hash join, which needs no order at all.
+    //
+    // The key offsets are the pre-prune ones on both sides, which is the same
+    // identity `build_from` reported its delivery in; the pruning below
+    // renumbers the joined row and happens after this.
+    let merge = merge.filter(|decision| {
+        let left_keys: Vec<usize> = decision.plan.keys.iter().map(|key| key.left).collect();
+        let right_keys: Vec<usize> = decision.plan.keys.iter().map(|key| key.right).collect();
+        crate::driver::merge_decision::delivers(&left_delivered, &left_keys)
+            && crate::driver::merge_decision::delivers(&right_delivered, &right_keys)
+    });
 
     // The joined scope: the right tables' columns follow the left's.
     let mut left_width = left_scope.width();
@@ -1345,6 +1461,11 @@ pub(crate) fn build_join(
     // widths below are read back off the narrowed scope rather than assumed.
     // A coalesced join is exempt: its scope addresses columns by row offset
     // in `star`/`coalesced`, which renumbering would invalidate.
+    // Whether the joined row was RENUMBERED below. A pruned join is the top
+    // of its `FROM` plan (only the outermost one is offered a `prune`), so it
+    // has no parent to report a delivery to -- and the offsets its children
+    // reported are no longer the offsets of its row.
+    let mut pruned = false;
     if let Some(select) = prune.filter(|_| !coalescing) {
         if let Some((left_columns, right_columns)) = crate::column_prune::prune_join_sides(
             select,
@@ -1353,6 +1474,7 @@ pub(crate) fn build_join(
             &mut left_exec,
             &mut right_exec,
         ) {
+            pruned = true;
             left_width = left_columns.len();
             scope.tables[0].columns = left_columns;
             scope.tables[0].offset = 0;
@@ -1538,7 +1660,7 @@ pub(crate) fn build_join(
             )
         })
         .flatten();
-    let index_text = index_join.map(|decision| {
+    let index_text = index_join.as_ref().map(|decision| {
         let source = crate::access_path::IndexJoinLookupExec::new(
             ExecutorMeta::new(
                 Schema::new(
@@ -1671,7 +1793,51 @@ pub(crate) fn build_join(
     // `FROM` plan, and the top is whichever `build_join` returns last. See
     // [`FromScope::qualified_star_is_output_only`].
     scope.qualified_star_is_output_only = join.tp == tidb_ast::JoinType::Cross && join.on.is_some();
-    Ok((meter(exec, trace), scope))
+    // What this join DELIVERS to its own parent, read off the plan just
+    // committed to rather than promised for it.
+    //
+    //  * A MERGE join emits its rows in key order, and its two key lists are
+    //    equal in every row it emits, so both describe the output.
+    //  * An INDEX join streams its OUTER side and emits each outer row's
+    //    matches together, in outer order (`JoinExec::next_index_lookup`
+    //    walks `state.outer` by cursor). That is Go's
+    //    `PhysicalIndexHashJoin.KeepOuterOrder`, and it is the line that keeps
+    //    a parent merge join alive above an index join.
+    //  * A HASH join promises no order -- `getHashJoins`'s own first
+    //    sentence -- and neither does a nested-loop one.
+    //
+    // Either way the side an outer join NULL-EXTENDS is dropped, which is
+    // `union_orders`' whole job.
+    let delivered = if pruned {
+        Delivered::new()
+    } else if let Some(plan) = &merged {
+        crate::driver::merge_decision::union_orders(
+            join.tp,
+            vec![plan.keys.iter().map(|key| key.left).collect()],
+            vec![plan
+                .keys
+                .iter()
+                .map(|key| key.right + left_width)
+                .collect()],
+        )
+    } else if let Some(decision) = &index_join {
+        let outer = if decision.lookup_is_left {
+            right_delivered
+                .iter()
+                .map(|order| order.iter().map(|at| at + left_width).collect())
+                .collect()
+        } else {
+            left_delivered.clone()
+        };
+        if decision.lookup_is_left {
+            crate::driver::merge_decision::union_orders(join.tp, Vec::new(), outer)
+        } else {
+            crate::driver::merge_decision::union_orders(join.tp, outer, Vec::new())
+        }
+    } else {
+        Delivered::new()
+    };
+    Ok((meter(exec, trace), scope, delivered))
 }
 
 /// `kv` with any `PARTITION (p, ...)` restriction on the reference applied,

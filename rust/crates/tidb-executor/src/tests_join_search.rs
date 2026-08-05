@@ -169,29 +169,53 @@ fn the_choice_is_the_same_under_explain_and_bare_execution() {
 
 /// THE CENSUS, at the statement the whole decision exists for.
 ///
-/// Every site of `result:1042` is refused because the property it is asked for
-/// is EMPTY, which is what puts `getHashJoins` back in the enumeration. That
-/// is not a property of the index rule; it is a property of what sits ABOVE
-/// these joins -- nothing, because
-/// [`crate::driver::merge_decision::join_properties`] reports only the order a
-/// join's OWN chosen plan produces, and with no index join the bottom join
-/// produces none. See [`crate::driver::index_join_decision`]'s history.
+/// CORRECTION. This test used to assert the opposite -- that EVERY site of
+/// `result:1042` is refused because the property it is asked for is EMPTY,
+/// which is what puts `getHashJoins` back in the enumeration. That was not a
+/// property of the index rule but of what sat ABOVE these joins: nothing,
+/// because `merge_decision::join_properties` reported only the order a join's
+/// OWN chosen plan produces, and with no index join the bottom join produced
+/// none. The circle is documented at the top of
+/// [`crate::driver::merge_decision`].
+///
+/// With the PROMISE restored to Go's `PreparePossibleProperties` union and
+/// the delivery VERIFIED after the children are built, the bottom site is
+/// asked for `{t2.a asc}` by the merge join above it, `getHashJoins` answers
+/// nothing under that non-empty property, and the index join is the choice by
+/// elimination -- which is the operator TiDB's own recording carries there.
 #[test]
-fn result_1042_is_refused_at_every_site_because_no_order_is_required_of_it() {
+fn result_1042_requires_an_order_of_its_bottom_site_and_reaches_the_index_join() {
     let catalog = tables();
-    for answer in answers_explained(RESULT_1042, &catalog) {
-        assert!(
-            !answer.ordered,
-            "a site of result:1042 was asked for an order: {answer:?}",
-        );
-        assert_eq!(
-            answer.chosen,
-            Chosen::Refused(Refusal::HashAlsoEnumerated),
-            "unexpected answer at {:?} x {:?}",
-            answer.left,
-            answer.right,
-        );
-    }
+    let census: Vec<String> = answers_explained(RESULT_1042, &catalog)
+        .iter()
+        .map(|answer| {
+            format!(
+                "{} x {} ordered={} {:?}",
+                answer.left.join(","),
+                answer.right.join(","),
+                answer.ordered,
+                answer.chosen,
+            )
+        })
+        .collect();
+    assert_eq!(
+        census,
+        vec![
+            // The site TiDB records an `IndexHashJoin` at. Asked for the
+            // order the merge join above it needs, and answered by
+            // elimination.
+            "outer_t x t2 ordered=true Index",
+            // The MIDDLE merge join is itself asked for `{t2.a asc}` by the
+            // top one, so `getHashJoins` is silent there too -- but a merge
+            // join IS still enumerated (it is the plan this tier builds), and
+            // choosing between two families is the costing layer this tier
+            // refuses. The chooser's refusal costs nothing here: the merge is
+            // `merge_decision`'s answer, not this chooser's.
+            "outer_t,t2 x t4 ordered=true Refused(MergeAlsoEnumerated)",
+            // The TOP join is asked for nothing, so hash is enumerated again.
+            "outer_t,t2,t4 x t3 ordered=false Refused(HashAlsoEnumerated)",
+        ],
+    );
 }
 
 /// THE WIRING IS LIVE, not dead.

@@ -293,19 +293,34 @@ fn an_expression_join_key_gets_an_injected_column() {
     );
     // The `Projection` Go injects, over `t2` alone, as the BUILD side of the
     // bottom join -- and `t5`, `t3` above it in that order.
+    //
+    // CORRECTION. This pinned the ALL-HASH tree until the promise/verify
+    // contract landed (see `crate::driver::merge_decision`'s CORRECTION). It
+    // now pins TiDB's own SHAPE, quoted in this test's doc above: two
+    // `MergeJoin`s over an index join, with the two upper leaves reading the
+    // TABLE in handle order rather than walking a covering index -- an index
+    // walk is not the handle's order, so a leaf asked for that order declines
+    // the index path, which is why `IndexFullScan_1`/`_2` became
+    // `TableFullScan`. TiDB prints `keep order:true` on exactly those two.
+    //
+    // ONE operator still diverges: Go costs `IndexHashJoin` cheaper than
+    // `IndexJoin` at the bottom site and prints the former. Naming the two
+    // apart is NAMED RESIDUE in `crate::plan_trace` (its `IndexHashJoin`
+    // note), untouched here -- the STRATEGY family this site reaches is now
+    // Go's, and which member of it Go costs cheapest is a separate increment.
     assert_eq!(
         dissolved,
         vec![
             "Projection_10".to_owned(),
             "└─Selection_9".to_owned(),
-            "  └─HashJoin_8".to_owned(),
-            "    ├─IndexFullScan_1(Build)".to_owned(),
-            "    └─HashJoin_7(Probe)".to_owned(),
-            "      ├─IndexFullScan_2(Build)".to_owned(),
-            "      └─HashJoin_6(Probe)".to_owned(),
+            "  └─MergeJoin_8".to_owned(),
+            "    ├─TableFullScan_1(Build)".to_owned(),
+            "    └─MergeJoin_7(Probe)".to_owned(),
+            "      ├─TableFullScan_2(Build)".to_owned(),
+            "      └─IndexJoin_6(Probe)".to_owned(),
             "        ├─Projection_4(Build)".to_owned(),
             "        │ └─TableFullScan_3".to_owned(),
-            "        └─IndexFullScan_5(Probe)".to_owned(),
+            "        └─IndexRangeScan_5(Probe)".to_owned(),
         ],
     );
 }

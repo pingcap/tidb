@@ -40,29 +40,46 @@
 //! children's orders off the `LogicalJoin` and requires the join keys to be
 //! FULLY covered on the left and matched as a prefix on the right.
 //!
-//! # The ONE deliberate divergence, and why it is the safe direction
+//! # CORRECTION (this file used to report something narrower)
 //!
-//! Go's `LogicalJoin.PreparePossibleProperties` reports the UNION of its two
-//! children's orders -- `resultProperties := leftProperties ++
-//! rightProperties` -- with the null-extended side dropped for an outer join.
-//! That is a LOGICAL claim about which orders the join's output COULD be
-//! produced in, not about the plan finally chosen: a `PhysicalHashJoin`
-//! carries none of them. Go is safe because a parent that requires one of
-//! those orders re-asks the child through `findBestTask(prop)`, and the child
-//! either answers with a plan that satisfies it or an enforced `Sort` is
-//! added.
+//! This module ONCE reported, for a join node, the order that join's own
+//! chosen plan produces -- its merge keys when it merged, and NOTHING when it
+//! hashed -- rather than Go's union. The reasoning was sound for a one-pass
+//! builder: promising an order a hash join then fails to deliver would let a
+//! parent merge join silently drop rows.
 //!
-//! This tier has no such second pass -- `build_join` builds executors
-//! bottom-up and a child cannot be re-planned once built. Reporting Go's
-//! logical union here would promise an order a hash join then fails to
-//! deliver, and the merge executor would silently drop rows. So a join node
-//! reports the order ITS OWN chosen plan produces: its merge keys when it
-//! merges, and NOTHING when it hashes. That is the same set Go's physical
-//! layer ends up with, reached one pass earlier.
+//! The consequence was measured over the enrolled replay: the bottom join of
+//! a three-way tree hashes, therefore reports no order, therefore no parent
+//! merge ever forms, therefore no site ever REQUIRES an order -- and the
+//! index-join path, which only Go's non-empty property unlocks (`getHashJoins`
+//! returns nothing under a non-empty `prop.SortItems`), was reachable at zero
+//! sites.
+//!
+//! Go's escape is TWO PHASES, and this tier now has both:
+//!
+//!  * PROMISE (logical, this module). `LogicalJoin.PreparePossibleProperties`
+//!    reports the UNION of its two children's orders -- `resultProperties :=
+//!    leftProperties ++ rightProperties` -- with the null-extended side
+//!    dropped for an outer join. It is a claim about which orders the join's
+//!    output COULD be produced in, NOT about the plan finally chosen. That
+//!    union is what [`possible_properties`] returns again, verbatim.
+//!  * VERIFY (physical, [`super::from::build_join`]). Go re-asks a child
+//!    through `findBestTask(prop)` and the child either answers with a plan
+//!    that satisfies the property or loses on cost. This tier cannot re-ask,
+//!    but it CAN check: `build_from` now reports the orders the executor it
+//!    just built ACTUALLY produces, and `build_join` keeps its merge plan only
+//!    when both children delivered. A promise verification cannot deliver
+//!    falls back to the hash join.
+//!
+//! The verification is not a prediction, so it cannot drift from the build:
+//! it reads the built plan's own answer. That is what makes the row-drop
+//! hazard the narrowing existed to prevent structurally impossible rather than
+//! argued away -- see `from::tests` `a_promise_the_child_cannot_deliver_falls_back`.
 //!
 //! A merged join's output is sorted by BOTH key lists -- the two are equal in
-//! every row it emits -- so both are reported, minus the side an outer join
-//! null-extends (Go's own `JoinType` check in the same function).
+//! every row it emits -- so both are reported by the DELIVERY side, minus the
+//! side an outer join null-extends (Go's own `JoinType` check in the same
+//! function).
 
 use super::catalog::split_table_path;
 use super::catalog::{Catalog, TableEntry};
@@ -205,6 +222,28 @@ pub(crate) struct MergeDecision {
     pub(crate) names: Vec<(RelColumn, RelColumn)>,
 }
 
+/// WHICH of the two questions a properties walk is answering.
+///
+/// The pair is Go's own split, and the reason the narrowing this module once
+/// carried is gone (see the CORRECTION at the top).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Phase {
+    /// `PreparePossibleProperties`: which orders this subtree's output COULD
+    /// be produced in. A join unions its two children's, because a parent that
+    /// wants one of them will re-ask for it.
+    Promise,
+    /// What the subtree WOULD be built as under the EMPTY property, which is
+    /// the only property anything below a derived table is ever asked for. A
+    /// join reports the order its own chosen plan produces -- its merge keys
+    /// when it merges, and nothing when it hashes.
+    ///
+    /// This is a conservative LOWER bound: the real build forms its merge
+    /// candidates from [`Phase::Promise`] and can therefore deliver MORE than
+    /// this says. Under-reporting only ever declines a parent's merge, which
+    /// is the safe direction; over-reporting would drop rows.
+    Delivered,
+}
+
 /// The orders a `FROM` node's output already carries, or `None` when this
 /// tier cannot describe the node at all.
 ///
@@ -216,6 +255,29 @@ pub(crate) fn possible_properties(
     catalog: &Catalog,
     current_db: &str,
     offered: Offered<'_>,
+) -> Option<SideProperties> {
+    properties(node, catalog, current_db, offered, Phase::Promise)
+}
+
+/// [`possible_properties`] in the [`Phase::Delivered`] reading: what the
+/// executor `build_from` would build for this node under the EMPTY property
+/// actually produces.
+pub(crate) fn delivered_properties(
+    node: &JoinNode,
+    catalog: &Catalog,
+    current_db: &str,
+    offered: Offered<'_>,
+) -> Option<SideProperties> {
+    properties(node, catalog, current_db, offered, Phase::Delivered)
+}
+
+/// Both readings, one walk.
+fn properties(
+    node: &JoinNode,
+    catalog: &Catalog,
+    current_db: &str,
+    offered: Offered<'_>,
+    phase: Phase,
 ) -> Option<SideProperties> {
     match node {
         JoinNode::Table(table_ref) => {
@@ -236,33 +298,12 @@ pub(crate) fn possible_properties(
                 .into_iter()
                 .map(|(column, _)| column)
                 .collect();
-            let orders = match entry {
-                // Only a real key-value table streams in key order; a view or
-                // a memory table carries none, and says so while still
-                // letting a path name its columns.
-                TableEntry::Kv(kv) if kv.partition().is_none() => {
-                    crate::merge_join_plan::provided_orders(kv)
-                        .into_iter()
-                        .filter_map(|order| {
-                            order
-                                .into_iter()
-                                .map(|at| {
-                                    let column = &kv.columns.get(at)?.name;
-                                    columns
-                                        .iter()
-                                        .position(|name| name.eq_ignore_ascii_case(column))
-                                })
-                                .collect::<Option<Vec<usize>>>()
-                        })
-                        .collect()
-                }
-                _ => Vec::new(),
-            };
+            let orders = table_orders(entry, &columns);
             Some(SideProperties::single(visible, columns, orders))
         }
         // A nested join is offered the SAME `WHERE` conjuncts, which is
         // what `build_from` hands it.
-        JoinNode::Join(join) => join_properties(join, catalog, current_db, offered),
+        JoinNode::Join(join) => join_properties(join, catalog, current_db, offered, phase),
         JoinNode::Derived {
             subquery,
             alias,
@@ -279,9 +320,52 @@ pub(crate) fn possible_properties(
                 column_names,
                 catalog,
                 current_db,
+                phase,
             )
         }
     }
+}
+
+/// `DataSource.PreparePossibleProperties` for one catalog entry, as offsets
+/// into the row `columns` names -- which is the row both this module's
+/// properties and [`super::from::build_from`]'s executor lay out.
+///
+/// Only a real key-value table read WHOLE streams in key order; a view, a
+/// memory table and a partitioned table each carry none, and say so while
+/// still letting a column path name their columns. A partitioned table reads
+/// partition by partition, so its stream is ordered within each partition and
+/// not across them -- Go reaches the same answer through `PartitionProcessor`,
+/// whose `PartitionUnion` offers no order.
+pub(crate) fn table_orders(entry: &TableEntry, columns: &[String]) -> Vec<Vec<usize>> {
+    let TableEntry::Kv(kv) = entry else {
+        return Vec::new();
+    };
+    if kv.partition().is_some() {
+        return Vec::new();
+    }
+    crate::merge_join_plan::provided_orders(kv)
+        .into_iter()
+        .filter_map(|order| {
+            order
+                .into_iter()
+                .map(|at| {
+                    let column = &kv.columns.get(at)?.name;
+                    columns
+                        .iter()
+                        .position(|name| name.eq_ignore_ascii_case(column))
+                })
+                .collect::<Option<Vec<usize>>>()
+        })
+        .collect()
+}
+
+/// Whether an executor that delivers `delivered` satisfies a demand for
+/// `wanted` -- `wanted` must be a PREFIX of one delivered order.
+///
+/// A prefix and not a subset: an order `(a, b)` describes rows grouped by `a`
+/// first, so a demand for `(b)` alone is not met by it.
+pub(crate) fn delivers(delivered: &[Vec<usize>], wanted: &[usize]) -> bool {
+    delivered.iter().any(|order| order.starts_with(wanted))
 }
 
 /// [`possible_properties`] for a join node: the two sides' relations
@@ -291,44 +375,54 @@ pub(crate) fn join_properties(
     catalog: &Catalog,
     current_db: &str,
     offered: Offered<'_>,
+    phase: Phase,
 ) -> Option<SideProperties> {
     let Some(right_node) = &join.right else {
         // The single-relation wrapper the parser always produces.
-        return possible_properties(&join.left, catalog, current_db, offered);
+        return properties(&join.left, catalog, current_db, offered, phase);
     };
     if join.natural || !join.using.is_empty() {
         // A coalesced join's scope addresses columns by row offset rather
         // than by name, and its output row is not the two sides concatenated.
         return None;
     }
-    let left = possible_properties(&join.left, catalog, current_db, offered)?;
-    let right = possible_properties(right_node, catalog, current_db, offered)?;
+    let left = properties(&join.left, catalog, current_db, offered, phase)?;
+    let right = properties(right_node, catalog, current_db, offered, phase)?;
     let mut joined = SideProperties::concat(&left, &right)?;
-    // The property this join is asked for is the empty one: no caller demands
-    // an order from a `FROM` node yet, and the empty property's
-    // `AllSameOrder` is Go's ascending answer.
-    let required = tidb_planner::physical_property::PhysicalProperty::default();
-    if let Some(decision) = decide(join, &left, &right, &joined, &required, offered) {
-        let left_order: Vec<usize> = decision.plan.keys.iter().map(|key| key.left).collect();
-        let right_order: Vec<usize> = decision
-            .plan
-            .keys
+    let shift = |orders: &[Vec<usize>]| -> Vec<Vec<usize>> {
+        orders
             .iter()
-            .map(|key| key.right + left.width)
-            .collect();
-        joined.orders = orders_of_merged_join(join.tp, left_order, right_order);
-    }
+            .map(|order| order.iter().map(|at| at + left.width).collect())
+            .collect()
+    };
+    joined.orders = match phase {
+        // Go's union, verbatim -- see the CORRECTION at the top of this
+        // module for what it replaced and what now makes it safe.
+        Phase::Promise => union_orders(join.tp, left.orders.clone(), shift(&right.orders)),
+        // The order this join's own chosen plan produces under the EMPTY
+        // property, which is the only property a subtree reached this way is
+        // asked for. A merge join emits its rows in key order and its two key
+        // lists are equal in every row it emits, so both describe the output;
+        // a hash join describes none.
+        Phase::Delivered => {
+            let required = tidb_planner::physical_property::PhysicalProperty::default();
+            match decide(join, &left, &right, &joined, &required, offered) {
+                Some(decision) => union_orders(
+                    join.tp,
+                    vec![decision.plan.keys.iter().map(|key| key.left).collect()],
+                    shift(&[decision.plan.keys.iter().map(|key| key.right).collect()]),
+                ),
+                None => Vec::new(),
+            }
+        }
+    };
     Some(joined)
 }
 
-/// The orders a MERGED join's output carries, given the order its left keys
-/// impose and the order its right keys impose.
+/// `LogicalJoin.PreparePossibleProperties`'s body: the two children's orders
+/// CONCATENATED, minus the side an outer join null-extends.
 ///
-/// A merge join emits its rows in key order and its two key lists are EQUAL in
-/// every row it emits, so both describe the output -- except for the side an
-/// outer join null-extends, whose column carries NULL on the extended rows and
-/// is therefore not sorted at all. That exception is Go's, verbatim, from the
-/// same function this module ports (`logical_join.go:653`):
+/// Go, verbatim (`logical_join.go:653`):
 ///
 /// ```text
 /// if p.JoinType == base.LeftOuterJoin || p.JoinType == base.LeftOuterSemiJoin {
@@ -336,20 +430,28 @@ pub(crate) fn join_properties(
 /// } else if p.JoinType == base.RightOuterJoin {
 ///     leftProperties = nil
 /// }
+/// resultProperties := make([][]*expression.Column, len(leftProperties)+len(rightProperties))
 /// ```
 ///
-/// `JoinType::Cross` is this AST's spelling of the INNER join (see
-/// `build_join`'s `JoinKind` mapping), which null-extends neither side.
-fn orders_of_merged_join(
+/// The null-extended side's column carries NULL on the extended rows and is
+/// therefore not sorted at all, which is why Go drops it. `JoinType::Cross` is
+/// this AST's spelling of the INNER join (see `build_join`'s `JoinKind`
+/// mapping), which null-extends neither side.
+///
+/// The same function serves both phases: the PROMISE unions the two children's
+/// own orders, and the DELIVERY of a merged join unions its two key lists,
+/// which are equal in every row it emits.
+pub(crate) fn union_orders(
     join_type: JoinType,
-    left_order: Vec<usize>,
-    right_order: Vec<usize>,
+    left_orders: Vec<Vec<usize>>,
+    right_orders: Vec<Vec<usize>>,
 ) -> Vec<Vec<usize>> {
-    match join_type {
-        JoinType::Cross => vec![left_order, right_order],
-        JoinType::Left => vec![left_order],
-        JoinType::Right => vec![right_order],
-    }
+    let (left_orders, right_orders) = match join_type {
+        JoinType::Cross => (left_orders, right_orders),
+        JoinType::Left => (left_orders, Vec::new()),
+        JoinType::Right => (Vec::new(), right_orders),
+    };
+    left_orders.into_iter().chain(right_orders).collect()
 }
 
 /// [`possible_properties`] for a derived table:
@@ -367,6 +469,7 @@ fn derived_properties(
     column_names: &[String],
     catalog: &Catalog,
     current_db: &str,
+    phase: Phase,
 ) -> Option<SideProperties> {
     let QueryStmt::Select(select) = subquery else {
         return None;
@@ -374,7 +477,7 @@ fn derived_properties(
     // A derived table's own `WHERE` is the one offered INSIDE it, which is
     // what `run_select_stmt` hands its `FROM`.
     let inner_offered = offered_conjuncts(select.where_clause.as_ref());
-    let inner = order_preserving_source(select, catalog, current_db, &inner_offered)?;
+    let inner = order_preserving_source(select, catalog, current_db, &inner_offered, phase)?;
     // Go's `oldCols`/`newCols`: the projection's BARE-COLUMN expressions, and
     // where each lands in the projection's own schema.
     let mut columns = Vec::with_capacity(select.fields.fields().len());
@@ -464,6 +567,7 @@ fn order_preserving_source(
     catalog: &Catalog,
     current_db: &str,
     offered: Offered<'_>,
+    phase: Phase,
 ) -> Option<SideProperties> {
     if select.distinct
         || !select.group_by.is_empty()
@@ -484,7 +588,7 @@ fn order_preserving_source(
     }
     // A `WHERE` is `LogicalSelection`, which passes its child's orders
     // through unchanged.
-    join_properties(select.from.as_ref()?, catalog, current_db, offered)
+    join_properties(select.from.as_ref()?, catalog, current_db, offered, phase)
 }
 
 /// The expression a select field projects, when it projects one.
@@ -681,16 +785,31 @@ mod tests {
     #[test]
     fn an_outer_join_drops_the_null_extended_sides_order() {
         assert_eq!(
-            orders_of_merged_join(JoinType::Cross, vec![0], vec![3]),
+            union_orders(JoinType::Cross, vec![vec![0]], vec![vec![3]]),
             vec![vec![0], vec![3]]
         );
         assert_eq!(
-            orders_of_merged_join(JoinType::Left, vec![0], vec![3]),
+            union_orders(JoinType::Left, vec![vec![0]], vec![vec![3]]),
             vec![vec![0]]
         );
         assert_eq!(
-            orders_of_merged_join(JoinType::Right, vec![0], vec![3]),
+            union_orders(JoinType::Right, vec![vec![0]], vec![vec![3]]),
             vec![vec![3]]
+        );
+    }
+
+    /// The PROMISE is a union and not a pick: a join whose two children each
+    /// carry an order reports BOTH, which is what lets a parent merge on
+    /// either. Go's `len(leftProperties)+len(rightProperties)`.
+    #[test]
+    fn the_promise_unions_both_children() {
+        assert_eq!(
+            union_orders(
+                JoinType::Cross,
+                vec![vec![0], vec![1]],
+                vec![vec![2], vec![3]]
+            ),
+            vec![vec![0], vec![1], vec![2], vec![3]]
         );
     }
 

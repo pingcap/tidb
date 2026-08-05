@@ -543,7 +543,7 @@ pub(crate) fn run_select_traced(
             let reordered =
                 join_reorder::reorder(join, select.where_clause.as_ref(), catalog, current_db, ctx);
             let planned = reordered.as_ref().map_or(join, |plan| &plan.join);
-            let (exec, mut scope) = build_join(
+            let (exec, mut scope, _) = build_join(
                 planned,
                 catalog,
                 current_db,
