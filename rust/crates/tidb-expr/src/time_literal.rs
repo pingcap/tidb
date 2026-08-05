@@ -129,7 +129,8 @@ pub(crate) fn date_literal(
     if !date_pattern().is_match(text) {
         return Err(wrong_value(1292, "date", text));
     }
-    let time = parse(text, TimeType::Date, 0, zone).map_err(|()| wrong_value(1292, "date", text))?;
+    let time =
+        parse(text, TimeType::Date, 0, zone).map_err(|()| wrong_value(1292, "date", text))?;
     // Go `setDecimalAndFlenForDate` (`pkg/expression/builtin.go:1065`):
     // `SetDecimal(0)`, `SetFlen(mysql.MaxDateWidth)`, `SetType(mysql.TypeDate)`.
     let mut ft = FieldType::new(FieldTypeCode::Date);

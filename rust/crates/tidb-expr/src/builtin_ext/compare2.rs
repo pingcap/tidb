@@ -65,14 +65,7 @@ fn extremum(vals: &[Datum], want: Ordering, ctx: &dyn crate::Columns) -> Result<
     // evaluator's ([`extremum_with_signature`]'s other caller,
     // `ScalarFunction::eval_by_signature`) -- this tier asks for the
     // value-derived signature and the connection default collation.
-    extremum_with_signature(
-        vals,
-        want,
-        None,
-        &[],
-        crate::ops::DERIVATION_FREE_COLLATION,
-        ctx,
-    )
+    extremum_with_signature(vals, want, None, crate::ops::DERIVATION_FREE_COLLATION, ctx)
 }
 
 /// Go `GLCmpStringMode` (`pkg/expression/builtin_compare.go`): which of the
@@ -195,8 +188,14 @@ pub struct GlSignature {
 ///    `greatest(d, dt, '2020-01-01 05:00:00')` was added.
 ///  * FLATTEN the value-derived fallback to one domain -- killed by
 ///    `expr_eval_matches_go_engine`.
+///  * DROP the ETDatetime arm's ARGUMENT CAST, back to requiring every datum
+///    to already be a `Datum::Time` -- killed by
+///    `a_duration_beside_a_temporal_literal_lands_on_the_statement_date`, and
+///    by `expression/issues` losing the statement to an out-of-domain refusal.
+///  * Route ETDuration through the TIME arm as well (over-application) --
+///    killed by `greatest_and_least_compare_in_the_aggregated_argument_domain`.
 ///
-/// TWO SURVIVED, and both are argued rather than fixture-covered:
+/// THREE SURVIVED, and all three are argued rather than fixture-covered:
 ///
 ///  * DROP the `cmpStringMode != Directly => argTp = ETString` override.
 ///    Go writes it as the `if` arm of an `if`/`else if` whose `else` handles
@@ -216,11 +215,22 @@ pub struct GlSignature {
 ///    builtin the return-type table cannot name would make the aggregate a
 ///    claim about a partial argument list. Go always holds every type, so
 ///    naming a domain from a subset is a claim Go never makes.
+///  * SKIP an argument whose cast reports NULL instead of making the whole
+///    call NULL (Go: `if isNull || err != nil { return types.ZeroTime, true,
+///    err }`). No value reaches it. Every argument this arm can receive is
+///    either already a `Datum::Time` -- which `cast_arg_as_datetime` hands
+///    through -- or a `Datum::Duration`, whose conversion is anchored on
+///    `@@timestamp` (bounded below by the epoch and above by its own
+///    `MaxValue`) and shifted by at most `±838:59:59`, so the result stays
+///    inside year `1..=9999` and the conversion cannot fail. CAPTURED at the
+///    lower end: `@@timestamp = 1` with `time '-838:59:59'` is
+///    `1969-11-27 01:00:01`, not NULL. The faithful form is kept because it is
+///    Go's, and because it is the only correct answer the moment either bound
+///    widens.
 pub(crate) fn extremum_with_signature(
     vals: &[Datum],
     want: Ordering,
     signature: Option<GlSignature>,
-    arg_types: &[Option<tidb_datatype::FieldType>],
     collation: tidb_datatype::Collation,
     ctx: &dyn crate::Columns,
 ) -> Result<Datum, EvalError> {
@@ -242,7 +252,7 @@ pub(crate) fn extremum_with_signature(
             signature.arg_type,
             tidb_datatype::EvalType::Datetime | tidb_datatype::EvalType::Timestamp
         ) {
-            return extremum_time(vals, want, signature.ret_date, arg_types, ctx);
+            return extremum_time(vals, want, signature.ret_date, ctx);
         }
         return extremum_numeric(vals, want);
     }
@@ -307,13 +317,23 @@ fn extremum_time(
     vals: &[Datum],
     want: Ordering,
     ret_date: bool,
-    arg_types: &[Option<tidb_datatype::FieldType>],
     ctx: &dyn crate::Columns,
 ) -> Result<Datum, EvalError> {
     let mut best: Option<tidb_datatype::Time> = None;
-    for (i, value) in vals.iter().enumerate() {
-        let source = arg_types.get(i).and_then(Option::as_ref);
-        let Datum::Time(time) = crate::cast::cast_arg_as_datetime(value, source, ctx)? else {
+    for value in vals {
+        // No SOURCE type travels with the value, and this is the one cast kind
+        // that needs none: `cast_arg_as_datetime` reads it ONLY to tell a YEAR
+        // from a packed `YYYYMMDD` integer, and a YEAR cannot reach this arm.
+        // Go's own merge table settles it -- `mysql.TypeYear` against
+        // `TypeTimestamp`, `TypeDate`, `TypeTime` and `TypeDatetime` is
+        // `mysql.TypeVarchar` in every direction (`types/field_type.go`'s
+        // `fieldTypeMergeRules`) -- so a YEAR argument always aggregates to a
+        // string kind and takes the compare-as-time signature instead.
+        // CAPTURED, closing it: over a `year` column holding 2019 beside a
+        // `datetime` holding `2020-01-01 10:00:00`, `least(y, dt)` is `2019`
+        // and not `2019-00-00 00:00:00` -- the unparsed text the string
+        // signature keeps, not a converted time.
+        let Datum::Time(time) = crate::cast::cast_arg_as_datetime(value, None, ctx)? else {
             return Ok(Datum::Null);
         };
         if best.is_none_or(|best| time.compare(best) == want) {

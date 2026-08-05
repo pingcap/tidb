@@ -795,6 +795,19 @@ fn cast_to_time_value(
     // the CALENDAR DATE of the statement's own timestamp and mixes the
     // elapsed time into it (`types/time.go:1500-1507`). Routing the text
     // through `ParseTime` instead reads the `20` as a YEAR.
+    //
+    // Neither half of this is visible in the recorded corpus: every recorded
+    // statement that reaches it has the OTHER argument winning, so any wrong
+    // conversion still prints the recorded answer. Both are pinned by
+    // `a_duration_beside_a_temporal_literal_lands_on_the_statement_date` in
+    // `tidb-session`, which puts the duration on the winning side and then
+    // moves the session zone across the date line.
+    //
+    // The two date-mode flags SURVIVED their own mutation (hardcoding both to
+    // `false` moves nothing): `mixDateAndDuration` always starts from a real
+    // calendar date, so no zero or invalid component can arise for them to
+    // rule on. They are passed because Go passes its `ctx`, not because a
+    // value distinguishes them.
     if let Datum::Duration(duration) = v {
         let modes = ctx.date_modes();
         let (utc_secs, nanos, tz_offset) = ctx
@@ -803,8 +816,9 @@ fn cast_to_time_value(
         // Go reads the calendar date of `ts.In(ctx.Location())`; `now`'s third
         // field is that location's offset AT that instant, so a fixed offset
         // names the same civil day without re-resolving the zone.
-        let zone = chrono::FixedOffset::east_opt(tz_offset)
-            .ok_or(EvalError::Unsupported("session time-zone offset out of range"))?;
+        let zone = chrono::FixedOffset::east_opt(tz_offset).ok_or(EvalError::Unsupported(
+            "session time-zone offset out of range",
+        ))?;
         let Some(stamp) = chrono::DateTime::from_timestamp(utc_secs, nanos) else {
             return Ok(None);
         };

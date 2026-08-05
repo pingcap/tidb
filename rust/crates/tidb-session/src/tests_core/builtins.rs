@@ -1268,6 +1268,62 @@ fn a_duration_beside_a_temporal_literal_lands_on_the_statement_date() {
     assert_eq!(row_text(session.run(sql))[0][0], "2011-10-31 10:00:00");
 }
 
+/// A YEAR argument NEVER selects GREATEST/LEAST's temporal signature, whatever
+/// it stands beside. Go's own merge table settles it: `mysql.TypeYear` against
+/// `TypeTimestamp`, `TypeDate`, `TypeTime` and `TypeDatetime` is
+/// `mysql.TypeVarchar` in every direction (`types/field_type.go`'s
+/// `fieldTypeMergeRules`), so the aggregate is a string kind and the
+/// compare-as-time signature runs -- where `2019` does not parse as a time and
+/// keeps its own text, sorting lexically.
+///
+/// This is the measurement that lets `extremum_time` pass NO source type into
+/// its argument cast: the YEAR distinction is the ONLY thing that cast reads a
+/// source type for, and no YEAR can reach it.
+///
+/// Captured with `gorun` over `create table ty(y year, dt datetime)` holding
+/// `2019` / `2020-01-01 10:00:00`:
+///
+/// ```text
+/// greatest(y, dt)                             2020-01-01 10:00:00
+/// least   (y, dt)                             2019
+/// greatest(y, timestamp '2018-01-01 00:00:00')  2019
+/// least   (y, timestamp '2018-01-01 00:00:00')  2018-01-01 00:00:00
+/// greatest(y, date '2018-01-01')                2019
+/// least   (y, date '2018-01-01')                2018-01-01
+/// cast(y as datetime)                         2019-00-00 00:00:00
+/// ```
+///
+/// The last row is the contrast: the CAST does convert a YEAR, and would have
+/// answered `2019-00-00 00:00:00` inside GREATEST too had the signature ever
+/// routed one there.
+#[test]
+fn a_year_never_reaches_the_temporal_greatest_signature() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE ty (y YEAR, dt DATETIME)")
+        .unwrap();
+    session
+        .run("INSERT INTO ty VALUES (2019, '2020-01-01 10:00:00')")
+        .unwrap();
+    for (sql, expected) in [
+        ("SELECT GREATEST(y, dt) FROM ty", "2020-01-01 10:00:00"),
+        ("SELECT LEAST(y, dt) FROM ty", "2019"),
+        (
+            "SELECT GREATEST(y, timestamp '2018-01-01 00:00:00') FROM ty",
+            "2019",
+        ),
+        (
+            "SELECT LEAST(y, timestamp '2018-01-01 00:00:00') FROM ty",
+            "2018-01-01 00:00:00",
+        ),
+        ("SELECT GREATEST(y, date '2018-01-01') FROM ty", "2019"),
+        ("SELECT LEAST(y, date '2018-01-01') FROM ty", "2018-01-01"),
+        ("SELECT CAST(y AS DATETIME) FROM ty", "2019-00-00 00:00:00"),
+    ] {
+        assert_eq!(row_text(session.run(sql))[0][0], expected, "{sql}");
+    }
+}
+
 /// The miscellaneous and encryption builtins whose bodies were already ported
 /// and unit-tested in `tidb_expr::builtin_ext::{misc,crypto}`, but which live
 /// SQL could not reach because `builtin_return_type` had no arm for their
