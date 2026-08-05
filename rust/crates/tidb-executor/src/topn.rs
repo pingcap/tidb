@@ -55,12 +55,13 @@
 //!   honestly.
 //! * **The final sort is stable** where Go's `slices.SortFunc` is not; only
 //!   the order of exactly-tying rows can differ, which Go does not guarantee.
-//! * **No spill, no parallel workers, no `RankInfo`.** Go's spill helper,
-//!   worker pool and `ROW_NUMBER`-style rank truncation are deferred; on a
-//!   quota breach this operator raises the quota error exactly as
-//!   [`crate::sort::SortExec`] does.
+//! * **No parallel workers, no `RankInfo`.** Go's worker pool and
+//!   `ROW_NUMBER`-style rank truncation are deferred. The SPILL is ported --
+//!   see [`crate::topn_spill`] for the mechanism and for the two places the
+//!   single-threaded shape differs from Go's.
 
 use std::cmp::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
 use std::sync::Arc;
 
 use crate::executor::{ExecError, Executor, ExecutorMeta};
@@ -68,10 +69,11 @@ use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType};
 use tidb_expr::schema::Schema;
 use tidb_expr::Columns;
-use tidb_util::memory::Tracker;
+use tidb_util::memory::{ArcAction, Tracker};
 
 use crate::mem_quota::StatementMemory;
-use crate::sort::SortByItem;
+use crate::sort::{less_by_items, SortByItem};
+use crate::topn_spill::{SpilledRun, TopNSpillAction, SPILL_CHUNK_SIZE};
 
 /// Go `topNCompactionFactor`: rebuild the row store once it holds more than
 /// this many times the retained row count.
@@ -111,6 +113,29 @@ pub struct TopNExec<C: Columns> {
     memory: StatementMemory,
     /// Go `TopNExec.memTracker`.
     tracker: Arc<Tracker>,
+    /// Go `TopNExec.diskTracker`.
+    disk_tracker: Arc<tidb_util::disk::Tracker>,
+    /// Go `enableTmpStorageOnOOM`: with `tidb_enable_tmp_storage_on_oom` off,
+    /// no spill action is registered and an overrun goes straight to 8175.
+    enable_tmp_storage_on_oom: bool,
+    /// Raised by the spill action; see [`crate::topn_spill`].
+    need_spill: Arc<AtomicBool>,
+    /// The action registered on the session tracker, kept so `close` can
+    /// unbind it.
+    registered_action: Option<ArcAction>,
+    /// Go `spillHelper.sortedRowsInDisk`: the sorted runs, in spill order.
+    /// Empty means the TopN answered entirely in memory.
+    runs: Vec<SpilledRun>,
+    /// How many runs this execution spilled. It SURVIVES `close`, which drops
+    /// the runs themselves -- so a test (or a diagnostic) can still tell a
+    /// spilled execution from an in-memory one after the operator closed.
+    spilled_runs: usize,
+    /// Rows the merge has taken off the runs so far, including the `offset`
+    /// rows it dropped -- Go's `outputRowNum`, which is compared against BOTH
+    /// `offset` and `offset + count`.
+    merged: u64,
+    /// Go `spillChunkSize` (a package var so tests can shrink it).
+    spill_chunk_size: usize,
 }
 
 impl<C: Columns> TopNExec<C> {
@@ -132,6 +157,7 @@ impl<C: Columns> TopNExec<C> {
     ) -> Self {
         let count = count.min(u64::MAX - offset);
         let tracker = memory.operator_tracker(meta.id());
+        let enable_tmp_storage_on_oom = memory.tmp_storage_on_oom();
         TopNExec {
             meta,
             by_items,
@@ -147,7 +173,33 @@ impl<C: Columns> TopNExec<C> {
             cmp_err: None,
             memory,
             tracker,
+            disk_tracker: tidb_util::disk::new_tracker(-1, -1),
+            enable_tmp_storage_on_oom,
+            need_spill: Arc::new(AtomicBool::new(false)),
+            registered_action: None,
+            runs: Vec::new(),
+            spilled_runs: 0,
+            merged: 0,
+            spill_chunk_size: SPILL_CHUNK_SIZE,
         }
+    }
+
+    /// Go `SetSmallSpillChunkSizeForTest`.
+    pub fn set_spill_chunk_size_for_test(&mut self, size: usize) {
+        self.spill_chunk_size = size;
+    }
+
+    /// Bytes this TopN has written to spill files (Go `TopNExec.diskTracker`).
+    #[must_use]
+    pub fn bytes_in_disk(&self) -> i64 {
+        self.disk_tracker.bytes_consumed()
+    }
+
+    /// How many sorted runs the TopN spilled; zero means it stayed in memory
+    /// (Go `IsSpillTriggeredForTest` is `> 0`).
+    #[must_use]
+    pub fn num_spilled_runs(&self) -> usize {
+        self.spilled_runs
     }
 
     /// How many rows the store holds (Go `chunk.List.Len`).
@@ -374,7 +426,15 @@ impl<C: Columns> TopNExec<C> {
     }
 
     /// Go `loadChunksUntilTotalLimit` + `executeTopNWhenNoSpillTriggered` +
-    /// `executeTopN` + the ascending sort of `generateTopNResults`.
+    /// `executeTopN` + the ascending sort of `generateTopNResults`, run as
+    /// SEGMENTS: a segment ends when the child is exhausted, or when the spill
+    /// action says the store has to go to disk.
+    ///
+    /// One segment with no spill is the whole in-memory operator, unchanged.
+    /// Each spill turns the segment's heap into one sorted run
+    /// (`executeTopNWhenSpillTriggered` -> `spillHeap`) and the next segment
+    /// starts from an empty heap over the rest of the child -- which is what
+    /// Go's `topNWorker`s do, on one thread instead of `Concurrency` of them.
     fn fetch_and_select(&mut self) -> Result<(), ExecError> {
         // Go's `AttachChild` turns a zero-count TopN into a dual, so this
         // operator is never asked for zero rows in Go. Answering it without
@@ -383,6 +443,30 @@ impl<C: Columns> TopNExec<C> {
             return Ok(());
         }
 
+        loop {
+            let exhausted = self.run_one_segment()?;
+            if exhausted {
+                break;
+            }
+            self.spill_heap()?;
+        }
+
+        // Go `spillRemainingRowsWhenNeeded`: once ANY run exists, the rows
+        // still in the heap have to join them on disk, or the merge would not
+        // see them at all.
+        if !self.runs.is_empty() && !self.row_ptrs.is_empty() {
+            self.spill_heap()?;
+        }
+        if !self.runs.is_empty() {
+            return Ok(());
+        }
+
+        self.sort_survivors_ascending()
+    }
+
+    /// One segment. Returns `true` when the child is exhausted (no spill is
+    /// pending), `false` when the segment stopped because a spill is needed.
+    fn run_one_segment(&mut self) -> Result<bool, ExecError> {
         // Phase 1: fill the store to `totalLimit` rows.
         while (self.stored_len() as u64) < self.total_limit {
             let mut chunk = self.child.new_chunk();
@@ -392,6 +476,11 @@ impl<C: Columns> TopNExec<C> {
             }
             self.add_chunk(chunk)?;
             self.account()?;
+            // Go `loadChunksUntilTotalLimit`: the load stops on a needed spill
+            // even before the store is full.
+            if self.need_spill.load(SeqCst) {
+                break;
+            }
         }
         self.row_ptrs = (0..self.chunks.len())
             .flat_map(|c| (0..self.chunks[c].num_rows()).map(move |r| (c, r)))
@@ -405,12 +494,15 @@ impl<C: Columns> TopNExec<C> {
             self.heap_pop();
         }
         self.take_cmp_err()?;
+        if self.need_spill.load(SeqCst) {
+            return Ok(false);
+        }
 
         let mut child_chunk = self.child.new_chunk();
         loop {
             self.child.next(&mut child_chunk)?;
             if child_chunk.num_rows() == 0 {
-                break;
+                return Ok(true);
             }
             // Go `processChk`: one row at a time against the heap's max.
             for r in 0..child_chunk.num_rows() {
@@ -429,10 +521,40 @@ impl<C: Columns> TopNExec<C> {
                 self.do_compaction();
             }
             self.account()?;
+            if self.need_spill.load(SeqCst) {
+                return Ok(false);
+            }
         }
+    }
 
-        // Phase 3: ascending order over the survivors, then emit from
-        // `offset` (Go seeds `chkHeap.idx` with it).
+    /// Go `spillHeap`: sort the heap's retained rows ASCENDING, write them out
+    /// as one run, and clear the heap (Go `chkHeap.clear`).
+    fn spill_heap(&mut self) -> Result<(), ExecError> {
+        self.sort_survivors_ascending()?;
+        if !self.row_ptrs.is_empty() {
+            let field_types = self.child.ret_field_types().to_vec();
+            let run = SpilledRun::write(
+                &field_types,
+                &self.chunks,
+                &self.row_ptrs,
+                self.spill_chunk_size,
+                &self.disk_tracker,
+            )?;
+            self.runs.push(run);
+            self.spilled_runs += 1;
+        }
+        self.chunks.clear();
+        self.keys.clear();
+        self.row_ptrs.clear();
+        self.idx = 0;
+        self.tracker.replace_bytes_used(0);
+        self.need_spill.store(false, SeqCst);
+        Ok(())
+    }
+
+    /// Phase 3: ascending order over the survivors, then emit from `offset`
+    /// (Go seeds `chkHeap.idx` with it).
+    fn sort_survivors_ascending(&mut self) -> Result<(), ExecError> {
         let mut ptrs = std::mem::take(&mut self.row_ptrs);
         let mut order: Vec<usize> = (0..ptrs.len()).collect();
         // `sort_by` cannot borrow `self` mutably, so the keys are lifted out
@@ -473,6 +595,59 @@ impl<C: Columns> TopNExec<C> {
         Ok(())
     }
 
+    /// Go `generateResultWithMultiWayMerge`: merge the sorted runs, drop the
+    /// first `offset` merged rows and stop at `offset + count`.
+    ///
+    /// ONE PATH for any number of runs, where Go splits out
+    /// `GenerateTopNResultsWhenSpillOnlyOnce` for the single-run case. With
+    /// one run the merge degenerates to a sequential read of that run, which
+    /// is exactly what Go's shortcut does -- and this port's runs are never
+    /// longer than `offset + count`, so the cut Go's shortcut omits can never
+    /// fire either.
+    ///
+    /// FAITHFUL ADAPTATION: Go's merger is a heap (`multi_way_merge.go`); this
+    /// picks the minimum by scanning the runs, the same choice
+    /// [`crate::sort::SortExec`]'s merge made and the same output for the
+    /// handful of runs a spill produces. Ties resolve to the earlier run in
+    /// both.
+    fn next_merged(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+        let batch = self.meta.max_chunk_size();
+        let limit = self.total_limit;
+        let mut runs = std::mem::take(&mut self.runs);
+        let result = (|| -> Result<(), ExecError> {
+            while req.num_rows() < batch && self.merged < limit {
+                for run in &mut runs {
+                    run.load_head(&self.by_items, &self.ctx)?;
+                }
+                let mut best: Option<usize> = None;
+                for (i, run) in runs.iter().enumerate() {
+                    let Some(key) = run.head_key() else {
+                        continue;
+                    };
+                    match best {
+                        None => best = Some(i),
+                        Some(b) => {
+                            let other = runs[b].head_key().expect("a loaded head");
+                            if less_by_items(&self.by_items, key, other)? == Ordering::Less {
+                                best = Some(i);
+                            }
+                        }
+                    }
+                }
+                let Some(i) = best else { break };
+                if self.merged >= self.offset {
+                    runs[i].take_head_into(req);
+                } else {
+                    runs[i].drop_head();
+                }
+                self.merged += 1;
+            }
+            Ok(())
+        })();
+        self.runs = runs;
+        result
+    }
+
     /// Surfaces the first comparison error a sift or sort captured.
     fn take_cmp_err(&mut self) -> Result<(), ExecError> {
         match self.cmp_err.take() {
@@ -490,9 +665,33 @@ impl<C: Columns> Executor for TopNExec<C> {
         self.row_ptrs.clear();
         self.idx = 0;
         self.cmp_err = None;
+        for run in &mut self.runs {
+            run.close();
+        }
+        self.runs.clear();
+        self.spilled_runs = 0;
+        self.merged = 0;
+        self.need_spill.store(false, SeqCst);
         // Go `TopNExec.Open`: an operator re-opened by an Apply's inner side
         // must not keep charging for the rows it just dropped.
         self.tracker.replace_bytes_used(0);
+        // Go `OpenSelf`: the spill action is registered on the session
+        // tracker's HARD-limit slot, and only with
+        // `tidb_enable_tmp_storage_on_oom` on.
+        if let Some(action) = self.registered_action.take() {
+            self.memory
+                .session_tracker()
+                .unbind_action_from_hard_limit(&action);
+        }
+        if self.enable_tmp_storage_on_oom {
+            let (action, need_spill) = TopNSpillAction::new(&self.tracker);
+            self.need_spill = need_spill;
+            let action: ArcAction = action;
+            self.memory
+                .session_tracker()
+                .fallback_old_and_set_new_action(Arc::clone(&action));
+            self.registered_action = Some(action);
+        }
         self.child.open()
     }
 
@@ -501,6 +700,9 @@ impl<C: Columns> Executor for TopNExec<C> {
         if !self.fetched {
             self.fetch_and_select()?;
             self.fetched = true;
+        }
+        if !self.runs.is_empty() {
+            return self.next_merged(req);
         }
         let remaining = self.row_ptrs.len().saturating_sub(self.idx);
         let batch = self.meta.max_chunk_size().min(remaining);
@@ -516,6 +718,15 @@ impl<C: Columns> Executor for TopNExec<C> {
         self.chunks.clear();
         self.keys.clear();
         self.row_ptrs.clear();
+        for run in &mut self.runs {
+            run.close();
+        }
+        self.runs.clear();
+        if let Some(action) = self.registered_action.take() {
+            self.memory
+                .session_tracker()
+                .unbind_action_from_hard_limit(&action);
+        }
         self.tracker.replace_bytes_used(0);
         self.child.close()
     }
@@ -605,7 +816,7 @@ mod tests {
         }
     }
 
-    fn schema_of(n_cols: usize) -> Schema {
+    pub(super) fn schema_of(n_cols: usize) -> Schema {
         let cols = (0..n_cols)
             .map(|i| {
                 let mut c = Column::new(i as i64 + 1, long());
@@ -622,7 +833,11 @@ mod tests {
         Expression::Column(c)
     }
 
-    fn source(rows: &[Vec<Option<i64>>], n_cols: usize, batch: usize) -> Box<dyn Executor> {
+    pub(super) fn source(
+        rows: &[Vec<Option<i64>>],
+        n_cols: usize,
+        batch: usize,
+    ) -> Box<dyn Executor> {
         Box::new(ChunkedSource {
             meta: ExecutorMeta::new(schema_of(n_cols), 0, 4, 32),
             rows: rows.to_vec(),
@@ -631,7 +846,7 @@ mod tests {
         })
     }
 
-    fn by(items: &[(usize, bool)]) -> Vec<SortByItem> {
+    pub(super) fn by(items: &[(usize, bool)]) -> Vec<SortByItem> {
         items
             .iter()
             .map(|&(idx, desc)| SortByItem {
@@ -688,7 +903,7 @@ mod tests {
         )
     }
 
-    fn drain(exec: &mut dyn Executor) -> Vec<Vec<Option<i64>>> {
+    pub(super) fn drain(exec: &mut dyn Executor) -> Vec<Vec<Option<i64>>> {
         exec.open().unwrap();
         let n_cols = exec.ret_field_types().len();
         let mut out = Vec::new();
@@ -850,7 +1065,8 @@ mod tests {
         // A spilling sort survives the same quota by writing rows out, which
         // is a different (and now covered) behavior -- see
         // `sort::tests::a_sort_over_the_quota_spills_to_disk_and_returns_every_row`.
-        // TopN spill itself is not ported.
+        // The TopN's own spill is covered in `spill_tests` below; it does not
+        // fire here, because a bounded heap does not reach this quota.
         let sort_memory =
             StatementMemory::new(quota, OomAction::Cancel, 42).with_tmp_storage_on_oom(false);
         let mut sort = SortExec::new(
@@ -1093,5 +1309,218 @@ mod tests {
                 "n_rows={n_rows} batch={batch} total={total} desc={desc}"
             );
         }
+    }
+}
+
+/// The TopN SPILL tests: an over-quota `ORDER BY ... LIMIT` must answer
+/// exactly what the same TopN answers with room to spare, IN THE SAME ORDER.
+///
+/// The oracle is the dual run the aggregation's and the join's spill tests
+/// use, plus the independent `Sort` + `Limit` pair the in-memory tests already
+/// check against -- so a spilled TopN is pinned to a separately written
+/// implementation, not only to itself.
+#[cfg(test)]
+mod spill_tests {
+    use super::tests::{by, drain, schema_of, source};
+    use super::*;
+    use crate::mem_quota::OomAction;
+    use crate::test_temp_storage::{guard as temp_dir_guard, scratch_dir as scratch_temp_dir};
+    use tidb_expr::NoColumns;
+
+    fn topn(
+        rows: &[Vec<Option<i64>>],
+        items: &[(usize, bool)],
+        offset: u64,
+        count: u64,
+        memory: StatementMemory,
+    ) -> TopNExec<NoColumns> {
+        TopNExec::new(
+            ExecutorMeta::new(schema_of(2), 1, 4, 32),
+            by(items),
+            source(rows, 2, 32),
+            NoColumns,
+            offset,
+            count,
+            memory,
+        )
+    }
+
+    fn spill_files_in(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+        std::fs::read_dir(dir)
+            .map(|entries| {
+                entries
+                    .filter_map(Result::ok)
+                    .map(|entry| entry.path())
+                    .filter(|path| {
+                        path.file_name()
+                            .and_then(|name| name.to_str())
+                            .is_some_and(|name| name.contains("ChunkDataInDiskByChunks"))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Keys drawn from a domain SMALLER than the input, so ties straddle the
+    /// `count` boundary, and shuffled by a stride so consecutive runs cover
+    /// OVERLAPPING ranges -- which is what makes the multi-way merge load
+    /// bearing rather than a concatenation.
+    fn shuffled_rows(n: i64) -> Vec<Vec<Option<i64>>> {
+        (0..n)
+            .map(|i| vec![Some((i * 7919) % (n / 4)), Some(i)])
+            .collect()
+    }
+
+    /// A quota this TopN's store cannot stay inside, but large enough that the
+    /// operator's own bytes clear `hasEnoughDataToSpill`'s fifth.
+    fn tight() -> StatementMemory {
+        StatementMemory::new(1 << 14, OomAction::Cancel, 42)
+    }
+
+    /// THE TOPN SPILL TEST.
+    #[test]
+    fn an_over_quota_topn_returns_exactly_what_the_unspilled_one_returns() {
+        let _guard = temp_dir_guard();
+        let dir = scratch_temp_dir("topnexec");
+        tidb_util::disk::set_temp_storage_path(&dir);
+
+        let rows = shuffled_rows(4096);
+        let items = [(0, false), (1, false)];
+
+        // The reference: a quota this TopN fits inside.
+        let mut reference = topn(&rows, &items, 0, 300, StatementMemory::default());
+        let expected = drain(&mut reference);
+        assert_eq!(expected.len(), 300);
+        assert_eq!(
+            reference.num_spilled_runs(),
+            0,
+            "the reference must not spill"
+        );
+
+        let mut exec = topn(&rows, &items, 0, 300, tight());
+        exec.set_spill_chunk_size_for_test(64);
+        exec.open().unwrap();
+        let mut got = Vec::new();
+        let mut saw_spill_file = false;
+        let mut req = exec.new_chunk();
+        loop {
+            exec.next(&mut req).expect("a spilling TopN must not fail");
+            if req.num_rows() == 0 {
+                break;
+            }
+            saw_spill_file |= !spill_files_in(&dir).is_empty();
+            for r in 0..req.num_rows() {
+                let row = req.get_row(r);
+                got.push(vec![Some(row.get_int64(0)), Some(row.get_int64(1))]);
+            }
+        }
+
+        assert!(
+            exec.num_spilled_runs() > 1,
+            "a spilling TopN must produce more than one run to merge, got {}",
+            exec.num_spilled_runs()
+        );
+        assert!(saw_spill_file, "no spill file existed while the TopN ran");
+        assert!(exec.bytes_in_disk() > 0, "the disk tracker counted nothing");
+        assert_eq!(got, expected, "a spilled TopN changed its answer");
+        exec.close().unwrap();
+        assert!(
+            spill_files_in(&dir).is_empty(),
+            "close must remove every spill file"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The OFFSET path through the merge: Go counts every merged row against
+    /// both `offset` and `offset + count`, so the rows dropped before the
+    /// offset are the merged ones, not each run's own first rows.
+    #[test]
+    fn a_spilled_topn_with_an_offset_drops_the_same_rows() {
+        let _guard = temp_dir_guard();
+        let dir = scratch_temp_dir("topnoffset");
+        tidb_util::disk::set_temp_storage_path(&dir);
+
+        let rows = shuffled_rows(4096);
+        let items = [(0, false), (1, false)];
+        let mut reference = topn(&rows, &items, 137, 200, StatementMemory::default());
+        let expected = drain(&mut reference);
+        assert_eq!(expected.len(), 200);
+
+        let mut exec = topn(&rows, &items, 137, 200, tight());
+        exec.set_spill_chunk_size_for_test(64);
+        let got = drain(&mut exec);
+        assert!(exec.num_spilled_runs() > 1, "this test needs a merge");
+        assert_eq!(got, expected);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A DESCENDING spilled TopN, so the merge's direction is exercised both
+    /// ways rather than only the one the ascending test pins.
+    #[test]
+    fn a_spilled_descending_topn_returns_the_same_rows() {
+        let _guard = temp_dir_guard();
+        let dir = scratch_temp_dir("topndesc");
+        tidb_util::disk::set_temp_storage_path(&dir);
+
+        let rows = shuffled_rows(4096);
+        let items = [(0, true), (1, true)];
+        let mut reference = topn(&rows, &items, 0, 250, StatementMemory::default());
+        let expected = drain(&mut reference);
+
+        let mut exec = topn(&rows, &items, 0, 250, tight());
+        exec.set_spill_chunk_size_for_test(64);
+        let got = drain(&mut exec);
+        assert!(exec.num_spilled_runs() > 1, "this test needs a merge");
+        assert_eq!(got, expected);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The gate: with `tidb_enable_tmp_storage_on_oom` OFF the same TopN under
+    /// the same quota raises 8175 and writes no file.
+    #[test]
+    fn the_same_topn_raises_8175_when_tmp_storage_is_disabled() {
+        let _guard = temp_dir_guard();
+        let dir = scratch_temp_dir("topngate");
+        tidb_util::disk::set_temp_storage_path(&dir);
+
+        let rows = shuffled_rows(4096);
+        let mut exec = topn(
+            &rows,
+            &[(0, false), (1, false)],
+            0,
+            300,
+            tight().with_tmp_storage_on_oom(false),
+        );
+        exec.open().unwrap();
+        let mut req = exec.new_chunk();
+        match exec.next(&mut req) {
+            Err(ExecError::MemoryExceedForQuery { conn_id }) => assert_eq!(conn_id, 42),
+            other => panic!("expected 8175 with tmp storage disabled, got {other:?}"),
+        }
+        assert!(spill_files_in(&dir).is_empty(), "no file may be written");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The budget must come back: a spilled run holds no statement memory, and
+    /// `close` releases what the last segment's heap still held.
+    #[test]
+    fn a_spilled_topn_returns_every_byte_on_close() {
+        let _guard = temp_dir_guard();
+        let dir = scratch_temp_dir("topnbudget");
+        tidb_util::disk::set_temp_storage_path(&dir);
+
+        let memory = tight();
+        let mut exec = topn(
+            &shuffled_rows(4096),
+            &[(0, false), (1, false)],
+            0,
+            300,
+            memory.clone(),
+        );
+        exec.set_spill_chunk_size_for_test(64);
+        let _ = drain(&mut exec);
+        assert!(exec.num_spilled_runs() > 0, "this test needs a spill");
+        assert_eq!(memory.bytes_consumed(), 0);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -63,6 +63,7 @@ fn out_schema() -> Schema {
         FieldType::new(FieldTypeCode::NewDecimal),
         long(),
         long(),
+        FieldType::new(FieldTypeCode::VarString),
     ];
     Schema::new(
         types
@@ -122,7 +123,14 @@ impl Executor for ManyChunkSource {
     }
 }
 
-/// `SELECT g, COUNT(v), SUM(v), MIN(v), MAX(v) FROM t GROUP BY g`.
+/// `SELECT g, COUNT(v), SUM(v), MIN(v), MAX(v), GROUP_CONCAT(v) FROM t
+/// GROUP BY g`.
+///
+/// GROUP_CONCAT is here to make ROW ORDER WITHIN A GROUP observable: the other
+/// five are order-insensitive, so they cannot tell a spill that preserved a
+/// group's row order from one that reversed it. Go's rounds do preserve it --
+/// a group is either OPEN this round (and every one of its rows folds in) or
+/// deferred whole, so no group is ever fed its rows out of order.
 fn grouped(rows: &[(i64, i64)], batch: usize, memory: StatementMemory) -> HashAggExec<NoColumns> {
     let source = ManyChunkSource {
         meta: ExecutorMeta::new(schema_of(2), 0, batch, batch),
@@ -139,6 +147,12 @@ fn grouped(rows: &[(i64, i64)], batch: usize, memory: StatementMemory) -> HashAg
             AggFunc::new(AggKind::Sum, Some(col(1))),
             AggFunc::new(AggKind::Min, Some(col(1))),
             AggFunc::new(AggKind::Max, Some(col(1))),
+            AggFunc::new(
+                AggKind::GroupConcat {
+                    separator: ",".to_owned(),
+                },
+                Some(col(1)),
+            ),
         ],
         Box::new(source),
         NoColumns,
@@ -186,29 +200,49 @@ fn spill_files_in(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
         .unwrap_or_default()
 }
 
-/// The four aggregate cells of one output row, as datums: COUNT, SUM
-/// (decimal), MIN, MAX.
+/// The five aggregate cells of one output row, as datums: COUNT, SUM
+/// (decimal), MIN, MAX, GROUP_CONCAT.
 fn agg_values(row: &tidb_chunk::row::Row<'_>) -> Vec<Datum> {
     let types = [
         long(),
         FieldType::new(FieldTypeCode::NewDecimal),
         long(),
         long(),
+        FieldType::new(FieldTypeCode::VarString),
     ];
-    (1..5).map(|c| row.get_datum(c, &types[c - 1])).collect()
+    (1..6).map(|c| row.get_datum(c, &types[c - 1])).collect()
 }
 
-/// 500 groups of 8 rows each, INTERLEAVED so every group's rows are spread
-/// across many chunks -- which is what makes a round defer part of a group
-/// and pick it up in the next one.
+/// The number of distinct groups the spill tests aggregate over. It is large
+/// enough that the group table cannot fit the quota below, and the round it
+/// forces has to happen several times over.
+const GROUPS: i64 = 2000;
+
+/// `GROUPS` groups of 3 rows each, INTERLEAVED so every group's rows are
+/// spread across many chunks -- which is what makes a round defer part of a
+/// group and pick it up in the next one.
 fn interleaved_rows() -> Vec<(i64, i64)> {
     let mut rows = Vec::new();
-    for pass in 0..8i64 {
-        for g in 0..500i64 {
+    for pass in 0..3i64 {
+        for g in 0..GROUPS {
             rows.push((g, g * 10 + pass));
         }
     }
     rows
+}
+
+/// A quota the group table cannot fit inside. It has to leave headroom
+/// between the SOFT limit that starts a spill (80%) and the HARD limit that
+/// cancels: the groups a round has already opened keep growing after the
+/// spill starts, because their remaining rows still fold in.
+///
+/// The bar is set by how many groups a round must hold: with a group table
+/// entry of ~1.3KB (six aggregate states) and `GROUPS` groups, a quota this
+/// size gives a round a few hundred groups, so the aggregation finishes in a
+/// handful of rounds -- well inside Go's `maxSpillTimes` of 10, past which the
+/// action stops spilling and the statement fails at the hard limit instead.
+fn tight_quota() -> i64 {
+    1 << 20
 }
 
 /// THE AGGREGATION SPILL TEST.
@@ -223,13 +257,13 @@ fn an_over_quota_group_by_answers_exactly_what_the_unspilled_one_answers() {
     // The reference: a quota this aggregation fits inside.
     let mut reference = grouped(&rows, 64, StatementMemory::default());
     let expected = drain(&mut reference);
-    assert_eq!(expected.len(), 500);
+    assert_eq!(expected.len(), GROUPS as usize);
     assert_eq!(reference.spill_times(), 0, "the reference must not spill");
     assert_eq!(reference.bytes_in_disk(), 0);
     reference.close().unwrap();
 
     // The same aggregation under a quota it cannot hold its groups within.
-    let memory = StatementMemory::new(1 << 17, OomAction::Cancel, 42);
+    let memory = StatementMemory::new(tight_quota(), OomAction::Cancel, 42);
     let mut exec = grouped(&rows, 64, memory);
     exec.open().unwrap();
     let mut got = BTreeMap::new();
@@ -285,7 +319,7 @@ fn the_same_group_by_raises_8175_when_tmp_storage_is_disabled() {
     tidb_util::disk::set_temp_storage_path(&dir);
 
     let memory =
-        StatementMemory::new(1 << 17, OomAction::Cancel, 42).with_tmp_storage_on_oom(false);
+        StatementMemory::new(tight_quota(), OomAction::Cancel, 42).with_tmp_storage_on_oom(false);
     let mut exec = grouped(&interleaved_rows(), 64, memory);
     exec.open().unwrap();
     let mut req = exec.new_chunk();
@@ -306,10 +340,10 @@ fn each_round_gives_the_statements_budget_back() {
     let dir = scratch_temp_dir("hashaggbudget");
     tidb_util::disk::set_temp_storage_path(&dir);
 
-    let memory = StatementMemory::new(1 << 17, OomAction::Cancel, 42);
+    let memory = StatementMemory::new(tight_quota(), OomAction::Cancel, 42);
     let mut exec = grouped(&interleaved_rows(), 64, memory.clone());
     let got = drain(&mut exec);
-    assert_eq!(got.len(), 500);
+    assert_eq!(got.len(), GROUPS as usize);
     assert!(exec.spill_times() > 1, "this test needs several rounds");
     exec.close().unwrap();
     assert_eq!(
