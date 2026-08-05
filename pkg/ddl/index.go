@@ -4264,9 +4264,7 @@ func buildIndexConditionChecker(copCtx copr.CopContext, tblInfo *model.TableInfo
 	schema, names := copCtx.GetBase().GetSchemaAndNames()
 
 	exprCtx := copCtx.GetBase().ExprCtx
-	expr, err := expression.ParseSimpleExpr(exprCtx,
-		idxInfo.ConditionExprString,
-		expression.WithInputSchemaAndNames(schema, names, tblInfo))
+	expr, err := expression.ParseSimpleExpr(exprCtx, idxInfo.ConditionExprString, expression.WithInputSchemaAndNames(schema, names, tblInfo))
 	if err != nil {
 		return nil, err
 	}
