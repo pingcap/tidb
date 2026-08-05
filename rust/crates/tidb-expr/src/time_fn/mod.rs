@@ -296,21 +296,24 @@ fn single_datetime(vals: &[Datum]) -> Result<Option<(i64, u32, u32)>, EvalError>
 
 /// `builtinMonthSig.evalInt` in `pkg/expression/builtin_time.go`.
 ///
-/// The source returns the parsed month field directly. Whether a month-zero
-/// value reaches this function is decided by EvalTime's StatementContext type
-/// flags, which are not present at this value-only boundary.
+/// The source returns the parsed month field directly with no zero
+/// rejection. An already-typed `Datum::Time` (a datetime column, a
+/// cast-to-datetime result) is a value Go's EvalTime produced non-NULL, so a
+/// zero datetime yields its stored `0` — see [`calendar::component_date`].
 fn month(vals: &[Datum]) -> Result<Datum, EvalError> {
-    Ok(single_date(vals)?.map_or(Datum::Null, |(_, month, _)| Datum::Int(i64::from(month))))
+    Ok(calendar::component_date(vals)?
+        .map_or(Datum::Null, |(_, month, _)| Datum::Int(i64::from(month))))
 }
 
 /// `builtinDayOfMonthSig.evalInt` in `pkg/expression/builtin_time.go`.
 ///
-/// The source returns the parsed day field directly. Its zero-date result is
-/// selected earlier by EvalTime using StatementContext type flags; this
-/// value-only evaluator has no such flag and therefore keeps its existing
-/// strict-date boundary rather than pretending one SQL mode is universal.
+/// The source returns the parsed day field directly with no zero rejection.
+/// An already-typed `Datum::Time` (a datetime column, a cast-to-datetime
+/// result) is a value Go's EvalTime produced non-NULL, so a zero datetime
+/// yields its stored `0` — see [`calendar::component_date`].
 fn day_of_month(vals: &[Datum]) -> Result<Datum, EvalError> {
-    Ok(single_date(vals)?.map_or(Datum::Null, |(_, _, day)| Datum::Int(i64::from(day))))
+    Ok(calendar::component_date(vals)?
+        .map_or(Datum::Null, |(_, _, day)| Datum::Int(i64::from(day))))
 }
 
 /// `builtinDayOfWeekSig.evalInt`: Sunday is 1 through Saturday 7. Invalid
@@ -343,13 +346,20 @@ fn weekday(vals: &[Datum]) -> Result<Datum, EvalError> {
     )
 }
 
-/// `builtinQuarterSig.evalInt`, returning 1-4 for a strict date. The source
-/// can additionally return 0 for a parsed month-zero date when its
-/// StatementContext permits invalid-zero components; that context-dependent
-/// path remains outside this value-only boundary.
+/// `builtinQuarterSig.evalInt` = `(date.Month() + 2) / 3`, returning 1-4 for
+/// a real date and `0` for a month-zero one — with no zero rejection. An
+/// already-typed `Datum::Time` (a datetime column, a cast-to-datetime result)
+/// is a value Go's EvalTime produced non-NULL, so a zero datetime yields the
+/// stored month `0` and hence quarter `0` (real TiDB's recorded
+/// `QUARTER(v1)` over a zero-datetime column is `0`). A string argument keeps
+/// the existing lenient month-zero parse.
 fn quarter(vals: &[Datum]) -> Result<Datum, EvalError> {
     if vals.len() != 1 {
         return Err(EvalError::Unsupported("bad function arity"));
+    }
+    if let Datum::Time(time) = &vals[0] {
+        let month = u32::from(time.core_time().month());
+        return Ok(Datum::Int(i64::from(month.div_ceil(3))));
     }
     let Some(input) = coerce_str(&vals[0])? else {
         return Ok(Datum::Null);
@@ -1251,6 +1261,81 @@ mod tests {
         }
         assert_eq!(quarter(&[string_datum("2008-13-01")]).unwrap(), Datum::Null);
         assert_eq!(quarter(&[Datum::Null]).unwrap(), Datum::Null);
+    }
+
+    /// `TestZeroDateTimeCompatibility` in `r/executor/executor.result`: a
+    /// zero-datetime COLUMN (`insert ignore into t values(0,0)`) reaches these
+    /// builtins as an already-typed `Datum::Time`, i.e. a value Go's EvalTime
+    /// produced non-NULL. The stored-component extractors return the stored
+    /// `0`; the day-of-week family still rejects the zero date as NULL. This is
+    /// distinct from the string form `YEAR("0000-00-00")`, which is NULL
+    /// because the string fails NO_ZERO_DATE parsing — both are asserted
+    /// absolutely so a "both NULL" (or "both 0") regression fails.
+    #[test]
+    fn zero_datetime_column_matches_recorded_tidb() {
+        use tidb_datatype::{CoreTime, Time, TimeType};
+
+        let zero = Datum::Time(Time::new(CoreTime::default(), TimeType::DateTime, 0).unwrap());
+        // Stored-component extractors return the stored 0 for a typed zero
+        // datetime (Go: `date.Year()`/`Month()`/`Day()`, `(Month()+2)/3`).
+        assert_eq!(
+            calendar::date_part(std::slice::from_ref(&zero), |d| d.0).unwrap(),
+            Datum::Int(0),
+            "YEAR(zero-datetime)"
+        );
+        assert_eq!(month(std::slice::from_ref(&zero)).unwrap(), Datum::Int(0));
+        assert_eq!(
+            day_of_month(std::slice::from_ref(&zero)).unwrap(),
+            Datum::Int(0)
+        );
+        assert_eq!(quarter(std::slice::from_ref(&zero)).unwrap(), Datum::Int(0));
+
+        // The day-of-week family rejects a zero date as NULL (Go:
+        // `InvalidZero()` -> NULL + warning 1292), even when typed.
+        assert_eq!(
+            day_of_week(std::slice::from_ref(&zero)).unwrap(),
+            Datum::Null
+        );
+        assert_eq!(
+            day_of_year(std::slice::from_ref(&zero)).unwrap(),
+            Datum::Null
+        );
+        assert_eq!(weekday(std::slice::from_ref(&zero)).unwrap(), Datum::Null);
+        assert_eq!(dayname(std::slice::from_ref(&zero)).unwrap(), Datum::Null);
+        assert_eq!(monthname(std::slice::from_ref(&zero)).unwrap(), Datum::Null);
+
+        // The string form still parses under NO_ZERO_DATE and is NULL, NOT 0 —
+        // the typed/untyped split is the whole point.
+        assert_eq!(
+            calendar::date_part(&[string_datum("0000-00-00")], |d| d.0).unwrap(),
+            Datum::Null,
+            "YEAR(\"0000-00-00\")"
+        );
+        assert_eq!(month(&[string_datum("0000-00-00")]).unwrap(), Datum::Null);
+        assert_eq!(quarter(&[string_datum("0000-00-00")]).unwrap(), Datum::Null);
+
+        // A non-zero typed datetime still reads its real components.
+        let valid = Datum::Time(
+            Time::new(
+                CoreTime::from_date(2024, 3, 15, 0, 0, 0, 0),
+                TimeType::DateTime,
+                0,
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            calendar::date_part(std::slice::from_ref(&valid), |d| d.0).unwrap(),
+            Datum::Int(2024)
+        );
+        assert_eq!(month(std::slice::from_ref(&valid)).unwrap(), Datum::Int(3));
+        assert_eq!(
+            day_of_month(std::slice::from_ref(&valid)).unwrap(),
+            Datum::Int(15)
+        );
+        assert_eq!(
+            quarter(std::slice::from_ref(&valid)).unwrap(),
+            Datum::Int(1)
+        );
     }
 
     #[test]

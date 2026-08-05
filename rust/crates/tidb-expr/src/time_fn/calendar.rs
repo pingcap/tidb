@@ -18,23 +18,47 @@ use crate::cast::to_i64_signed;
 use crate::coerce::coerce_str;
 use crate::{Datum, EvalError};
 
+/// The calendar `(year, month, day)` a *component* date-part function
+/// (`YEAR`/`MONTH`/`DAYOFMONTH`/`QUARTER`) reads, matching Go's contract of
+/// `EvalTime` first, then reading the field directly with no zero rejection.
+///
+/// A `Datum::Time` is a value Go's `EvalTime` already produced (a datetime
+/// column read, a cast-to-datetime result), so `EvalTime` returned it
+/// non-`NULL` and its stored fields are authoritative EVEN when zero:
+/// `builtinYearSig`/`MonthSig`/`DayOfMonthSig`/`QuarterSig` return
+/// `date.Year()` / `date.Month()` / `date.Day()` with no `InvalidZero` check,
+/// so a zero datetime yields the stored `0` (confirmed against real TiDB's
+/// recorded `r/executor/executor.result` `TestZeroDateTimeCompatibility`:
+/// `YEAR(v1)`/`MONTH(v1)`/`DAYOFMONTH(v1)`/`QUARTER(v1)` over a zero-datetime
+/// column are all `0`). Any other datum is a string/number whose date value
+/// is decided HERE exactly as `EvalTime` decides it for a string under
+/// `NO_ZERO_DATE`: a zero or invalid-zero date fails [`parse_date_ymd`] and
+/// the caller yields `NULL` (the same recording's `YEAR("0000-00-00")` is
+/// `NULL`, distinct from the typed-zero column above).
+pub(crate) fn component_date(vals: &[Datum]) -> Result<Option<(i64, u32, u32)>, EvalError> {
+    if vals.len() != 1 {
+        return Err(EvalError::Unsupported("bad function arity"));
+    }
+    if let Datum::Time(time) = &vals[0] {
+        let core = time.core_time();
+        return Ok(Some((
+            i64::from(core.year()),
+            u32::from(core.month()),
+            u32::from(core.day()),
+        )));
+    }
+    Ok(coerce_str(&vals[0])?.and_then(|s| parse_date_ymd(&s)))
+}
+
 /// The calendar `(year, month, day)` parsed from a single-argument
-/// date-part function's argument: `NULL` if it doesn't coerce to a string
-/// or doesn't parse as a valid date (see [`parse_date_ymd`]).
+/// date-part function's argument, honoring an already-typed `Datum::Time`
+/// (including a zero datetime) via [`component_date`]: `NULL` only if it does
+/// not coerce/parse as a valid date (see [`parse_date_ymd`]).
 pub(crate) fn date_part(
     vals: &[Datum],
     f: impl Fn((i64, u32, u32)) -> i64,
 ) -> Result<Datum, EvalError> {
-    if vals.len() != 1 {
-        return Err(EvalError::Unsupported("bad function arity"));
-    }
-    let Some(s) = coerce_str(&vals[0])? else {
-        return Ok(Datum::Null);
-    };
-    match parse_date_ymd(&s) {
-        Some(ymd) => Ok(Datum::Int(f(ymd))),
-        None => Ok(Datum::Null),
-    }
+    Ok(component_date(vals)?.map_or(Datum::Null, |ymd| Datum::Int(f(ymd))))
 }
 
 /// Parses a date or datetime string's calendar date into `(year, month,
