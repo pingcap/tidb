@@ -985,8 +985,7 @@ func ExtractColumnsFromCondition(ctx expression.BuildContext, idxInfo *model.Ind
 		return nil, nil
 	}
 
-	expr, err := expression.ParseSimpleExpr(ctx, idxInfo.ConditionExprString,
-		expression.WithTableInfo("", tblInfo))
+	expr, err := expression.ParseSimpleExpr(ctx, idxInfo.ConditionExprString, expression.WithTableInfo("", tblInfo))
 	if err != nil {
 		return nil, err
 	}

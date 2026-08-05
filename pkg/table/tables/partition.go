@@ -307,13 +307,7 @@ func NewPartitionExprBuildCtx() expression.BuildContext {
 func newPartitionExpr(tblInfo *model.TableInfo, tp ast.PartitionType, expr string, partCols []ast.CIStr, defs []model.PartitionDefinition, useNewCollate bool) (*PartitionExpr, error) {
 	ctx := expression.BuildContextWithUseNewCollate(NewPartitionExprBuildCtx(), useNewCollate)
 	dbName := ast.NewCIStr(ctx.GetEvalCtx().CurrentDB())
-	columns, names, err := expression.ColumnInfos2ColumnsAndNames(
-		ctx,
-		dbName,
-		tblInfo.Name,
-		tblInfo.Cols(),
-		tblInfo,
-	)
+	columns, names, err := expression.ColumnInfos2ColumnsAndNames(ctx, dbName, tblInfo.Name, tblInfo.Cols(), tblInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -466,8 +460,7 @@ func parseSimpleExprWithNames(p *parser.Parser, ctx expression.BuildContext, exp
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return expression.BuildSimpleExpr(ctx, exprNode,
-		expression.WithInputSchemaAndNames(schema, names, nil))
+	return expression.BuildSimpleExpr(ctx, exprNode, expression.WithInputSchemaAndNames(schema, names, nil))
 }
 
 // ForKeyPruning is used for key partition pruning.
@@ -869,8 +862,7 @@ func extractPartitionExprColumns(ctx expression.BuildContext, expr string, partC
 			return nil, nil, nil, errors.New("expression should not be an empty string")
 		}
 		schema := expression.NewSchema(columns...)
-		expr, err := expression.ParseSimpleExpr(ctx, expr,
-			expression.WithInputSchemaAndNames(schema, names, nil))
+		expr, err := expression.ParseSimpleExpr(ctx, expr, expression.WithInputSchemaAndNames(schema, names, nil))
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -1352,8 +1344,7 @@ func generateHashPartitionExpr(ctx expression.BuildContext, exprStr string,
 	if err != nil {
 		return nil, err
 	}
-	exprs, err := expression.BuildSimpleExpr(ctx, origExpr,
-		expression.WithInputSchemaAndNames(schema, names, nil))
+	exprs, err := expression.BuildSimpleExpr(ctx, origExpr, expression.WithInputSchemaAndNames(schema, names, nil))
 	if err != nil {
 		// If it got an error here, ddl may hang forever, so this error log is important.
 		logutil.BgLogger().Error("wrong table partition expression", zap.String("expression", exprStr), zap.Error(err))
