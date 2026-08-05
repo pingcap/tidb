@@ -114,7 +114,6 @@ func TestNewCopContextSingleIndex(t *testing.T) {
 			mockTableInfo,
 			mockIdxInfo,
 			"",
-			false,
 		)
 		require.NoError(t, err)
 		base := copCtx.GetBase()
@@ -190,7 +189,6 @@ func TestCopContextConditionUsesFixedCollation(t *testing.T) {
 		tblInfo,
 		idxInfo,
 		"",
-		false,
 	)
 	require.NoError(t, err)
 	condition, err := copCtx.GetCondition()

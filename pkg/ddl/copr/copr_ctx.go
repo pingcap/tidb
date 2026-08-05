@@ -46,7 +46,6 @@ type CopContextBase struct {
 	ExprCtx        exprctx.BuildContext
 	PushDownFlags  uint64
 	RequestSource  string
-	UseNewCollate  bool
 
 	ColumnInfos []*model.ColumnInfo
 	FieldTypes  []*types.FieldType
@@ -75,16 +74,15 @@ type CopContextMultiIndex struct {
 
 // NewCopContextBase creates a CopContextBase.
 // `idxCols` contains all the index columns and also the columns referenced by the index condition.
+// The new-collation mode is carried by `exprCtx`.
 func NewCopContextBase(
 	exprCtx exprctx.BuildContext,
 	pushDownFlags uint64,
 	tblInfo *model.TableInfo,
 	idxCols []*model.IndexColumn,
 	requestSource string,
-	useNewCollate bool,
 ) (*CopContextBase, error) {
 	var err error
-	exprCtx = expression.BuildContextWithUseNewCollate(exprCtx, useNewCollate)
 	usedColumnIDs := make(map[int64]struct{}, len(idxCols))
 	usedColumnIDs, err = fillUsedColumns(usedColumnIDs, idxCols, tblInfo)
 	var handleIDs []int64
@@ -147,7 +145,6 @@ func NewCopContextBase(
 		ExprCtx:                     exprCtx,
 		PushDownFlags:               pushDownFlags,
 		RequestSource:               requestSource,
-		UseNewCollate:               useNewCollate,
 		ColumnInfos:                 colInfos,
 		FieldTypes:                  fieldTps,
 		ExprColumnInfos:             expColInfos,
@@ -157,14 +154,13 @@ func NewCopContextBase(
 	}, nil
 }
 
-// NewCopContext creates a CopContext with a fixed collation mode.
+// NewCopContext creates a CopContext. The new-collation mode is carried by `exprCtx`.
 func NewCopContext(
 	exprCtx exprctx.BuildContext,
 	pushDownFlags uint64,
 	tblInfo *model.TableInfo,
 	allIdxInfo []*model.IndexInfo,
 	requestSource string,
-	useNewCollate bool,
 ) (CopContext, error) {
 	if len(allIdxInfo) == 1 {
 		return NewCopContextSingleIndex(
@@ -173,20 +169,18 @@ func NewCopContext(
 			tblInfo,
 			allIdxInfo[0],
 			requestSource,
-			useNewCollate,
 		)
 	}
-	return NewCopContextMultiIndex(exprCtx, pushDownFlags, tblInfo, allIdxInfo, requestSource, useNewCollate)
+	return NewCopContextMultiIndex(exprCtx, pushDownFlags, tblInfo, allIdxInfo, requestSource)
 }
 
-// NewCopContextSingleIndex creates a CopContextSingleIndex with a fixed collation mode.
+// NewCopContextSingleIndex creates a CopContextSingleIndex.
 func NewCopContextSingleIndex(
 	exprCtx exprctx.BuildContext,
 	pushDownFlags uint64,
 	tblInfo *model.TableInfo,
 	idxInfo *model.IndexInfo,
 	requestSource string,
-	useNewCollate bool,
 ) (*CopContextSingleIndex, error) {
 	cols := idxInfo.Columns
 	neededCols, err := tables.ExtractColumnsFromCondition(exprCtx, idxInfo, tblInfo, false)
@@ -196,7 +190,7 @@ func NewCopContextSingleIndex(
 	cols = append(cols, neededCols...)
 	cols = tables.DedupIndexColumns(cols)
 
-	base, err := NewCopContextBase(exprCtx, pushDownFlags, tblInfo, cols, requestSource, useNewCollate)
+	base, err := NewCopContextBase(exprCtx, pushDownFlags, tblInfo, cols, requestSource)
 	if err != nil {
 		return nil, err
 	}
@@ -246,14 +240,13 @@ func (c *CopContextSingleIndex) GetCondition() (expression.Expression, error) {
 	return expr, nil
 }
 
-// NewCopContextMultiIndex creates a CopContextMultiIndex with a fixed collation mode.
+// NewCopContextMultiIndex creates a CopContextMultiIndex.
 func NewCopContextMultiIndex(
 	exprCtx exprctx.BuildContext,
 	pushDownFlags uint64,
 	tblInfo *model.TableInfo,
 	allIdxInfo []*model.IndexInfo,
 	requestSource string,
-	useNewCollate bool,
 ) (*CopContextMultiIndex, error) {
 	approxColLen := 0
 	for _, idxInfo := range allIdxInfo {
@@ -271,7 +264,7 @@ func NewCopContextMultiIndex(
 	}
 	allIdxCols = tables.DedupIndexColumns(allIdxCols)
 
-	base, err := NewCopContextBase(exprCtx, pushDownFlags, tblInfo, allIdxCols, requestSource, useNewCollate)
+	base, err := NewCopContextBase(exprCtx, pushDownFlags, tblInfo, allIdxCols, requestSource)
 	if err != nil {
 		return nil, err
 	}

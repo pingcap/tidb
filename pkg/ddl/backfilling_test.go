@@ -125,12 +125,11 @@ func TestBuildIndexConditionCheckerUsesFixedCollation(t *testing.T) {
 
 	sctx := mock.NewContext()
 	copCtx, err := copr.NewCopContextSingleIndex(
-		sctx.GetExprCtx(),
+		expression.BuildContextWithUseNewCollate(sctx.GetExprCtx(), false),
 		sctx.GetSessionVars().StmtCtx.PushDownFlags(),
 		tblInfo,
 		idxInfo,
 		"",
-		false,
 	)
 	require.NoError(t, err)
 	checker, err := buildIndexConditionChecker(copCtx, tblInfo, idxInfo)
@@ -140,12 +139,11 @@ func TestBuildIndexConditionCheckerUsesFixedCollation(t *testing.T) {
 	require.False(t, matched)
 
 	copCtx, err = copr.NewCopContextSingleIndex(
-		sctx.GetExprCtx(),
+		expression.BuildContextWithUseNewCollate(sctx.GetExprCtx(), true),
 		sctx.GetSessionVars().StmtCtx.PushDownFlags(),
 		tblInfo,
 		idxInfo,
 		"",
-		true,
 	)
 	require.NoError(t, err)
 	checker, err = buildIndexConditionChecker(copCtx, tblInfo, idxInfo)

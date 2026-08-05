@@ -65,7 +65,7 @@ func wrapInBeginRollback(se *sess.Session, f func(startTS uint64) error) error {
 }
 
 func buildTableScan(ctx context.Context, c *copr.CopContextBase, distSQLCtx *distsqlctx.DistSQLContext, startTS uint64, start, end kv.Key, selectExpr expression.Expression) (distsql.SelectResult, bool, error) {
-	dagPB, conditionPushed, err := buildDAGPB(ctx, c.ExprCtx, distSQLCtx, c.PushDownFlags, c.UseNewCollate, c.TableInfo, c.ColumnInfos, selectExpr)
+	dagPB, conditionPushed, err := buildDAGPB(ctx, c.ExprCtx, distSQLCtx, c.PushDownFlags, c.TableInfo, c.ColumnInfos, selectExpr)
 	if err != nil {
 		return nil, false, err
 	}
@@ -173,8 +173,9 @@ func getRestoreData(useNewCollate bool, tblInfo *model.TableInfo, targetIdx, pkI
 	return dtToRestored
 }
 
-func buildDAGPB(ctx context.Context, exprCtx exprctx.BuildContext, distSQLCtx *distsqlctx.DistSQLContext, pushDownFlags uint64, useNewCollate bool, tblInfo *model.TableInfo, colInfos []*model.ColumnInfo, selectExpr expression.Expression) (*tipb.DAGRequest, bool, error) {
+func buildDAGPB(ctx context.Context, exprCtx exprctx.BuildContext, distSQLCtx *distsqlctx.DistSQLContext, pushDownFlags uint64, tblInfo *model.TableInfo, colInfos []*model.ColumnInfo, selectExpr expression.Expression) (*tipb.DAGRequest, bool, error) {
 	conditionPushed := false
+	useNewCollate := exprCtx.NewCollationEnabled()
 
 	dagReq := &tipb.DAGRequest{}
 	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(exprCtx.GetEvalCtx().Location())

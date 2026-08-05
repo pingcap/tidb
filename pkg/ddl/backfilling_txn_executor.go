@@ -142,7 +142,6 @@ func NewReorgCopContext(
 		tblInfo,
 		allIdxInfo,
 		requestSource,
-		exprCtx.NewCollationEnabled(),
 	)
 }
 
