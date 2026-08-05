@@ -39,8 +39,8 @@ type adaptiveYieldWindow struct {
 }
 
 type admissionBlockStats struct {
-	waiters      int
 	blockedSince time.Time
+	waiters      int
 	blockedTime  time.Duration
 }
 
@@ -113,60 +113,41 @@ type AdaptiveLimitConfig struct {
 // reservation must eventually be committed, completed, aborted, or cleared by
 // Stop. All mutable state below is protected by mu.
 type AdaptiveLimitController struct {
-	mu sync.Mutex
-
-	mode adaptiveLimitMode
-
-	// LIMIT demand and progress are measured in final output rows.
-	demandRows uint64
-	outputRows uint64
-	// Outer-stage counters are measured in outer rows.
-	outerFetched           uint64 // Committed by the outer worker.
-	outerConsumed          uint64 // Fully probed by IndexLookUpJoin.
-	outerReserved          uint64 // Admitted but not yet committed.
-	outerOutstandingAtStop uint64
-	outerAdmissionBlocked  admissionBlockStats
-	// One outer row may produce output across several Next calls. Retain that
-	// output until the outer row is fully consumed and can form a yield sample.
-	pendingOuterOutput uint64
-	recentOuterYield   adaptiveYieldWindow
-
-	// Lookup-stage input is measured in handles and output in table rows.
-	lookupReserved          uint64 // Admitted handles not yet completed or aborted.
-	lookupHandles           uint64 // Handles from fully consumed lookup tasks.
-	lookupRows              uint64 // Rows returned by those lookup tasks.
-	recentLookupYield       adaptiveYieldWindow
-	lookupOutstandingAtStop uint64
+	outerChanged            chan struct{}
+	stopCh                  chan struct{}
+	lookupChanged           chan struct{}
 	lookupAdmissionBlocked  admissionBlockStats
-
-	// Windows are logical admission budgets. A worker may not have more than
-	// its current window outstanding at one time.
-	initialOuterWindow uint64
-	maxOuterWindow     uint64
-	outerWindow        uint64
-	// Growth barriers require new completed input before another feedback-driven
-	// increase; no-output counters drive growth when no ratio is available.
-	outerGrowthBarrier uint64
-	outerNoOutputRows  uint64
-
-	initialLookupWindow uint64
-	maxLookupWindow     uint64
-	lookupWindow        uint64
-	// lookupBatchSize is execution granularity, not a second logical budget.
-	// The physical lookup window rounds the logical window to whole batches.
-	initialLookupBatchSize uint64
-	maxLookupBatchSize     uint64
-	lookupBatchSize        uint64
-	lookupGrowthProgress   uint64
-	lookupNoOutputRows     uint64
-	lookupInNoOutputPhase  bool
-
-	stopped bool
-	// Notifications are edge-triggered wakeups. Their size-one buffers coalesce
-	// repeated state changes while no producer is waiting.
-	outerChanged  chan struct{}
-	lookupChanged chan struct{}
-	stopCh        chan struct{}
+	outerAdmissionBlocked   admissionBlockStats
+	recentLookupYield       adaptiveYieldWindow
+	recentOuterYield        adaptiveYieldWindow
+	outerGrowthBarrier      uint64
+	maxOuterWindow          uint64
+	pendingOuterOutput      uint64
+	outerReserved           uint64
+	outerWindow             uint64
+	lookupHandles           uint64
+	lookupRows              uint64
+	outerConsumed           uint64
+	lookupOutstandingAtStop uint64
+	demandRows              uint64
+	outerFetched            uint64
+	initialOuterWindow      uint64
+	lookupReserved          uint64
+	outerOutstandingAtStop  uint64
+	outerNoOutputRows       uint64
+	initialLookupWindow     uint64
+	maxLookupWindow         uint64
+	lookupWindow            uint64
+	initialLookupBatchSize  uint64
+	maxLookupBatchSize      uint64
+	lookupBatchSize         uint64
+	lookupGrowthProgress    uint64
+	lookupNoOutputRows      uint64
+	outputRows              uint64
+	mu                      sync.Mutex
+	stopped                 bool
+	lookupInNoOutputPhase   bool
+	mode                    adaptiveLimitMode
 }
 
 // NewAdaptiveLimitController creates a statement-local admission controller.
