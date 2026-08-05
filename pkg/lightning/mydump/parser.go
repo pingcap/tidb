@@ -159,7 +159,8 @@ type Parser interface {
 	// TODO: replace pos with a new structure to specify position offset and rows offset
 	Pos() (pos int64, rowID int64)
 	SetPos(pos int64, rowID int64) error
-	// ScannedPos always returns the current file reader pointer's location
+	// ScannedPos returns monotonic source-byte progress. A parser may estimate
+	// this when its physical reads do not correspond directly to parsed rows.
 	ScannedPos() (int64, error)
 	Close() error
 	ReadRow() error
