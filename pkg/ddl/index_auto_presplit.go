@@ -198,7 +198,6 @@ func planAutoPresplitWithCache(
 		}
 	}
 
-	topNEventCount := 0
 	if loaded.TopNError != nil {
 		logAutoPresplitComponentFailure(tblInfo, idxInfo, "TopN", loaded.TopNError)
 	} else {
@@ -207,12 +206,10 @@ func planAutoPresplitWithCache(
 		if err != nil {
 			logAutoPresplitComponentFailure(tblInfo, idxInfo, "TopN", err)
 		} else {
-			topNEventCount = len(topNEvents)
 			events = append(events, topNEvents...)
 		}
 	}
 
-	histogramEventCount := 0
 	if loaded.HistogramError != nil {
 		logAutoPresplitComponentFailure(tblInfo, idxInfo, "Histogram", loaded.HistogramError)
 	} else {
@@ -221,15 +218,9 @@ func planAutoPresplitWithCache(
 		if err != nil {
 			logAutoPresplitComponentFailure(tblInfo, idxInfo, "Histogram", err)
 		} else {
-			histogramEventCount = len(histogramEvents)
 			events = append(events, histogramEvents...)
 		}
 	}
-	logutil.DDLLogger().Info("built auto presplit statistics events",
-		zap.String("table", tblInfo.Name.L),
-		zap.String("index", idxInfo.Name.L),
-		zap.Int("topNEvents", topNEventCount),
-		zap.Int("histogramEvents", histogramEventCount))
 	events, totalCount, err := mergeAutoPresplitEvents(events)
 	if err != nil {
 		return nil, "", err
