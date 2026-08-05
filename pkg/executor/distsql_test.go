@@ -354,6 +354,8 @@ func TestAdaptiveLimitExecution(t *testing.T) {
 	require.LessOrEqual(t, lookupHandles, uint64(4))
 	require.LessOrEqual(t, outerConsumed, outerFetched)
 	require.LessOrEqual(t, lookupRows, lookupHandles)
+	require.LessOrEqual(t, outerOutstanding, uint64(4))
+	require.LessOrEqual(t, lookupOutstanding, uint64(4))
 	lowSelectivitySQL := `select /*+ inl_join(i) */ o.order_key, i.v
 		from adaptive_outer o use index(idx_order_key)
 		join adaptive_inner i use index(idx_join_key) on o.join_key = i.join_key

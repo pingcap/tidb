@@ -2195,6 +2195,8 @@ func (e *IndexLookUpRunTimeStats) Merge(other execdetails.RuntimeStats) {
 	e.NextWaitIndexScan += tmp.NextWaitIndexScan
 	e.NextWaitTableLookUpBuild += tmp.NextWaitTableLookUpBuild
 	e.NextWaitTableLookUpResp += tmp.NextWaitTableLookUpResp
+	// The snapshot describes one executor lifecycle, so retain the first copy
+	// instead of accumulating the same statement-local counters during merges.
 	if e.adaptiveLimitSnapshot == nil && tmp.adaptiveLimitSnapshot != nil {
 		snapshot := *tmp.adaptiveLimitSnapshot
 		e.adaptiveLimitSnapshot = &snapshot

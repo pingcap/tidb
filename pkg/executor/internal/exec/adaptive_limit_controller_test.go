@@ -494,6 +494,7 @@ func TestAdaptiveLimitControllerMergesConcurrentLookupBlocks(t *testing.T) {
 	controller := newAdaptiveLimitControllerForTest(1000, 1, 1, 1, 1)
 	reserved, ok := reserveLookupForTest(t, controller, 1)
 	require.True(t, ok)
+	blockedStart := time.Now()
 
 	type reservationResult struct {
 		admitted bool
@@ -517,8 +518,7 @@ func TestAdaptiveLimitControllerMergesConcurrentLookupBlocks(t *testing.T) {
 		return controller.lookupAdmissionBlocked.waiters == 2
 	}, time.Second, time.Millisecond)
 
-	blockedStart := time.Now()
-	controller.CompleteLookup(reserved, reserved, 0)
+	controller.AbortLookup(reserved)
 	firstResult := <-results
 	require.True(t, firstResult.admitted)
 	require.NoError(t, firstResult.err)
@@ -526,12 +526,43 @@ func TestAdaptiveLimitControllerMergesConcurrentLookupBlocks(t *testing.T) {
 	secondResult := <-results
 	require.True(t, secondResult.admitted)
 	require.NoError(t, secondResult.err)
+	controller.AbortLookup(1)
 
 	snapshot := controller.Snapshot()
 	blockedElapsed := time.Since(blockedStart)
 	require.Greater(t, snapshot.LookupAdmissionBlocked, time.Duration(0))
 	require.LessOrEqual(t, snapshot.LookupAdmissionBlocked, blockedElapsed+50*time.Millisecond)
+	require.Zero(t, snapshot.LookupReserved)
+
+	controller.Reset()
+	require.Zero(t, controller.Snapshot().LookupAdmissionBlocked)
+	reserved, ok = reserveLookupForTest(t, controller, 1)
+	require.True(t, ok)
+	for range 2 {
+		go func() {
+			started <- struct{}{}
+			_, admitted, err := controller.ReserveLookup(context.Background(), 1)
+			results <- reservationResult{admitted: admitted, err: err}
+		}()
+	}
+	for range 2 {
+		<-started
+	}
+	require.Eventually(t, func() bool {
+		controller.mu.Lock()
+		defer controller.mu.Unlock()
+		return controller.lookupAdmissionBlocked.waiters == 2
+	}, time.Second, time.Millisecond)
 	controller.Stop()
+	controller.mu.Lock()
+	require.Zero(t, controller.lookupAdmissionBlocked.waiters)
+	controller.mu.Unlock()
+	for range 2 {
+		result := <-results
+		require.False(t, result.admitted)
+		require.NoError(t, result.err)
+	}
+	require.Equal(t, uint64(reserved), controller.Snapshot().LookupOutstandingAtStop)
 }
 
 func BenchmarkAdaptiveLimitControllerObserveJoinProgress(b *testing.B) {

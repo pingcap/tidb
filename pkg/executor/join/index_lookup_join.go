@@ -1027,6 +1027,8 @@ func (e *indexLookUpJoinRuntimeStats) Merge(rs execdetails.RuntimeStats) {
 	e.innerWorker.fetch += tmp.innerWorker.fetch
 	e.innerWorker.build += tmp.innerWorker.build
 	e.innerWorker.join += tmp.innerWorker.join
+	// The snapshot describes one executor lifecycle, so retain the first copy
+	// instead of accumulating the same statement-local counters during merges.
 	if e.adaptiveLimitSnapshot == nil && tmp.adaptiveLimitSnapshot != nil {
 		snapshot := *tmp.adaptiveLimitSnapshot
 		e.adaptiveLimitSnapshot = &snapshot

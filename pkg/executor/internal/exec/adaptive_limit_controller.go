@@ -218,13 +218,6 @@ func newAdaptiveLimitController(config AdaptiveLimitConfig, mode adaptiveLimitMo
 // Callers must ensure all producers from the previous lifecycle have exited.
 func (c *AdaptiveLimitController) Reset() {
 	c.mu.Lock()
-	if !c.stopped && c.outputRows == 0 && c.outerFetched == 0 && c.outerConsumed == 0 &&
-		c.outerReserved == 0 && c.lookupReserved == 0 && c.lookupHandles == 0 && c.lookupRows == 0 &&
-		c.outerOutstandingAtStop == 0 && c.lookupOutstandingAtStop == 0 && c.outerWindow == c.initialOuterWindow &&
-		c.lookupWindow == c.initialLookupWindow {
-		c.mu.Unlock()
-		return
-	}
 	c.outputRows = 0
 	c.outerFetched = 0
 	c.outerConsumed = 0
@@ -374,6 +367,19 @@ func (c *AdaptiveLimitController) endAdmissionBlockedLocked(outer bool, now time
 		stats.blockedTime += now.Sub(stats.blockedSince)
 		stats.blockedSince = time.Time{}
 	}
+}
+
+func (c *AdaptiveLimitController) finishAdmissionBlockedLocked(outer bool, now time.Time) {
+	stats := &c.lookupAdmissionBlocked
+	if outer {
+		stats = &c.outerAdmissionBlocked
+	}
+	if stats.waiters == 0 {
+		return
+	}
+	stats.blockedTime += now.Sub(stats.blockedSince)
+	stats.blockedSince = time.Time{}
+	stats.waiters = 0
 }
 
 // CommitOuter converts an outer reservation into rows actually fetched.
@@ -694,8 +700,8 @@ func (c *AdaptiveLimitController) stopLocked() {
 	}
 	c.stopped = true
 	now := time.Now()
-	c.endAdmissionBlockedLocked(true, now)
-	c.endAdmissionBlockedLocked(false, now)
+	c.finishAdmissionBlockedLocked(true, now)
+	c.finishAdmissionBlockedLocked(false, now)
 	c.outerOutstandingAtStop = saturatingAdd(
 		c.outerFetched-min(c.outerFetched, c.outerConsumed),
 		c.outerReserved,

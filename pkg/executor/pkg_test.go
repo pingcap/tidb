@@ -261,9 +261,14 @@ func TestAdaptiveLimitEligibility(t *testing.T) {
 	indexLookup.idxPlans = []base.PhysicalPlan{indexScan}
 	indexLookup.dagPB = &tipb.DAGRequest{OutputOffsets: []uint32{0}}
 	indexLookup.handleCols = []*expression.Column{handleColumn}
+	extractController := exec.NewAdaptiveLimitController(exec.AdaptiveLimitConfig{
+		DemandRows: 100, InitialOuterWindow: 2, MaxOuterWindow: 128,
+		InitialLookupWindow: 2, MaxLookupWindow: 128,
+		InitialLookupBatchSize: 2, MaxLookupBatchSize: 128,
+	})
 	worker = &indexWorker{
 		idxLookup:               indexLookup,
-		adaptiveLimitController: controller,
+		adaptiveLimitController: extractController,
 		batchSize:               2,
 		maxBatchSize:            2,
 		maxChunkSize:            32,
@@ -289,11 +294,16 @@ func TestAdaptiveLimitEligibility(t *testing.T) {
 		InitialLookupWindow: 2, MaxLookupWindow: 128,
 		InitialLookupBatchSize: 2, MaxLookupBatchSize: 128,
 	})
-	worker.adaptiveLimitController = canceledController
-	worker.batchSize = 2
+	canceledWorker := &indexWorker{
+		idxLookup:               indexLookup,
+		adaptiveLimitController: canceledController,
+		batchSize:               2,
+		maxBatchSize:            2,
+		maxChunkSize:            32,
+	}
 	canceledCtx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err = worker.extractLookupTaskData(
+	_, err = canceledWorker.extractLookupTaskData(
 		canceledCtx,
 		&oversizedChunkSelectResult{rows: []int64{1}},
 		nil,
@@ -333,8 +343,11 @@ func TestAdaptiveLimitEligibility(t *testing.T) {
 	}
 	assertIneligible()
 	indexLookup.byItems = nil
-	indexLookup.idxPlans = nil
+	indexLookup.idxPlans = []base.PhysicalPlan{indexScan}
 	indexLookup.indexLookUpPushDown = true
+	assertIneligible()
+	indexLookup.indexLookUpPushDown = false
+	indexLookup.PushedLimit = &physicalop.PushedDownLimit{Count: 10}
 	assertIneligible()
 }
 
