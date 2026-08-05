@@ -273,3 +273,161 @@ fn window_lag_and_lead() {
         ]
     );
 }
+
+/// `LAG`/`LEAD`'s three-argument result type is Go's ONE control-function
+/// inference, and these are the boundaries a merge written by hand walks
+/// around -- every one of them was WRONG while the obvious mixed-type cases
+/// above already passed.
+///
+/// Go, via `gorun` over the table these fixtures reproduce:
+///
+/// ```text
+/// desc vw;
+/// RS:c_both_null|binary(0)|YES||<nil>|;c_date_time|datetime(6)|YES||<nil>|;
+///    c_enum_null|varchar(1)|YES||<nil>|;c_null_unsigned|int(10) unsigned|YES||<nil>|
+/// select id, lag(e,1,NULL) over (order by id) from tl order by id;
+/// RS:1|<nil>;2|x
+/// ```
+#[test]
+fn window_lag_default_merge_boundaries() {
+    use tidb_datatype::{FieldTypeCode, FieldTypeFlags};
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE tb (id INT, ua INT UNSIGNED, e ENUM('x','y'), v VARCHAR(10), \
+             a INT, dt DATE, tm TIME(6))",
+        )
+        .unwrap();
+    session
+        .run("INSERT INTO tb VALUES (1,10,'x','ss',10,'2020-01-01','01:02:03.456789')")
+        .unwrap();
+    session
+        .run("INSERT INTO tb VALUES (2,20,'y','tt',20,'2021-01-01','02:02:03.456789')")
+        .unwrap();
+
+    let column_type = |session: &mut Session, sql: &str| match session.run_with_columns(sql) {
+        Ok(StmtOutput::Rows { columns, .. }) => columns[0].1.clone(),
+        other => panic!("expected rows for {sql}, got {other:?}"),
+    };
+
+    // The UNSIGNED single branch. Go's `len(notNullFields) == 1` shortcut
+    // copies the one typed operand WHOLE, so an `int(10) unsigned` -- which
+    // spends no digit on a sign -- stays 10 wide. Re-deriving the width
+    // instead adds a sign digit back unconditionally and reports 11, and a
+    // SIGNED branch would round-trip and hide it.
+    let ft = column_type(
+        &mut session,
+        "SELECT LAG(NULL,1,ua) OVER (ORDER BY id) FROM tb",
+    );
+    assert_eq!(ft.code(), FieldTypeCode::Long);
+    assert_eq!(ft.flen(), 10, "Go's `desc` reports `int(10) unsigned`");
+    assert!(ft.has_flag(FieldTypeFlags::UNSIGNED));
+
+    // The LONE enum beside NULL -- the ONLY path that reaches Go's ENUM/SET
+    // rewrite, since an enum PAIR is already VARCHAR by the time
+    // `AggFieldType` returns. Keeping the ENUM type does not merely misreport
+    // it: the value comes back EMPTY instead of `x`.
+    let ft = column_type(
+        &mut session,
+        "SELECT LAG(e,1,NULL) OVER (ORDER BY id) FROM tb",
+    );
+    assert_eq!(ft.code(), FieldTypeCode::Varchar);
+    assert_eq!(
+        row_text(session.run("SELECT LAG(e,1,NULL) OVER (ORDER BY id) FROM tb")),
+        [["NULL"], ["x"]]
+    );
+
+    // A DATE beside a TIME merges to DATETIME, and Go's
+    // `TryToFixFlenOfDatetime` then gives the result its CANONICAL width --
+    // `19 + fsp + 1` -- never an operand's. The operands here are 10 and 17
+    // wide, so any width taken from them is wrong; a DATETIME PAIR would
+    // agree either way, which is why the boundary is a mixed temporal pair.
+    let ft = column_type(
+        &mut session,
+        "SELECT LAG(dt,1,tm) OVER (ORDER BY id) FROM tb",
+    );
+    assert_eq!(ft.code(), FieldTypeCode::Datetime);
+    assert_eq!((ft.flen(), ft.decimal()), (26, 6), "Go: `datetime(6)`");
+
+    // Every operand NULL: Go zeroes the width and the scale and gives the
+    // result the binary charset -- `binary(0)`, not an unsized NULL column.
+    let ft = column_type(
+        &mut session,
+        "SELECT LAG(NULL,1,NULL) OVER (ORDER BY id) FROM tb",
+    );
+    assert_eq!(ft.code(), FieldTypeCode::Null);
+    assert_eq!((ft.flen(), ft.decimal()), (0, 0));
+    assert_eq!(ft.charset_name(), "binary");
+
+    // A STRING result's scale is UNSPECIFIED, which `setDecimalFromArgs`
+    // alone does not produce: it takes the widest operand scale (both are 0
+    // here) and Go's own `resultEvalType == ETString` fixup overwrites it.
+    let ft = column_type(&mut session, "SELECT LAG(v,1,a) OVER (ORDER BY id) FROM tb");
+    assert_eq!(ft.code(), FieldTypeCode::Varchar);
+    assert_eq!(
+        (ft.flen(), ft.decimal()),
+        (11, tidb_datatype::UNSPECIFIED_LENGTH)
+    );
+}
+
+/// Go's `aggregation.NewWindowFuncDesc` LEAD/LAG arm (`window_func.go:66-74`)
+/// uses `SetFlag`, which REPLACES the whole flag mask -- so two NOT NULL
+/// operands do not merely add NOT NULL, they DROP UNSIGNED, and the same
+/// call over nullable columns prints the opposite sign.
+///
+/// Go, via `gorun`:
+///
+/// ```text
+/// select id, lag(bu,1,bu2) over (order by id) from tu order by id;   -- both NOT NULL
+/// RS:1|-6;2|-1
+/// select id, lag(bn,1,bn) over (order by id) from tu order by id;    -- both nullable
+/// RS:1|18446744073709551615;2|18446744073709551615
+/// ```
+///
+/// `desc` over a VIEW of these calls reports `bigint(21) unsigned` for BOTH,
+/// so the view's stored metadata is NOT the oracle here -- the printed value
+/// is, and it is what these two lines pin.
+#[test]
+fn window_lag_two_not_null_operands_drop_unsigned() {
+    use tidb_datatype::FieldTypeFlags;
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE tu (id INT, bu BIGINT UNSIGNED NOT NULL, \
+             bu2 BIGINT UNSIGNED NOT NULL, bn BIGINT UNSIGNED)",
+        )
+        .unwrap();
+    session
+        .run("INSERT INTO tu VALUES (1, 18446744073709551615, 18446744073709551610, 18446744073709551615)")
+        .unwrap();
+    session
+        .run("INSERT INTO tu VALUES (2, 18446744073709551614, 18446744073709551609, 18446744073709551614)")
+        .unwrap();
+
+    let both_not_null = "SELECT LAG(bu,1,bu2) OVER (ORDER BY id) FROM tu";
+    match session.run_with_columns(both_not_null).unwrap() {
+        StmtOutput::Rows { columns, .. } => {
+            let ft = &columns[0].1;
+            assert!(ft.has_flag(FieldTypeFlags::NOT_NULL));
+            assert!(
+                !ft.has_flag(FieldTypeFlags::UNSIGNED),
+                "`SetFlag(NotNullFlag)` replaces the mask the merge wrote"
+            );
+        }
+        other => panic!("expected rows, got {other:?}"),
+    }
+    // Out of range takes the default column, in range takes the value
+    // column; BOTH are read as the bit pattern the signed result prints.
+    assert_eq!(row_text(session.run(both_not_null)), [["-6"], ["-1"]]);
+
+    // One nullable operand and the `SetFlag` never runs, so the merge's own
+    // UNSIGNED survives and the very same bits print unsigned.
+    assert_eq!(
+        row_text(session.run("SELECT LAG(bn,1,bn) OVER (ORDER BY id) FROM tu")),
+        [["18446744073709551615"], ["18446744073709551615"]]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT LAG(bu,1,bn) OVER (ORDER BY id) FROM tu")),
+        [["18446744073709551615"], ["18446744073709551615"]]
+    );
+}

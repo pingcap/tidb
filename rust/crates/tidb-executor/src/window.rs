@@ -204,7 +204,7 @@ use tidb_ast::{
     Expr, FrameBound, FrameKind, OrderItem, SelectField, SelectStmt, WindowDef, WindowFrame,
     WindowOver, WindowSpec,
 };
-use tidb_datatype::{agg_field_type, Datum, FieldType, FieldTypeCode, FieldTypeFlags};
+use tidb_datatype::{Datum, EvalType, FieldType, FieldTypeCode, FieldTypeFlags};
 use tidb_expr::rewriter::{rewrite_expr_resolved, ColumnResolver};
 
 /// What this build refuses, naming the slice it does implement.
@@ -1458,41 +1458,67 @@ impl WindowKind {
                 return Ok(field_type);
             }
             WindowKind::Value { .. } => carried(0),
-            // Go `typeInfer4LeadLag`: the argument's own type without a
-            // written default, and the MERGE of the argument's and the
-            // default's types with one.
+            // Go `typeInfer4LeadLag` (`aggregation/base_func.go:431-439`):
+            // without a written default it is `typeInfer4MaxMin`, the same
+            // carried argument type every other value function takes.
             WindowKind::LagLead { default: None, .. } => carried(0),
+            // WITH a written default it is not a merge of its own at all --
+            // Go's whole body is
+            //
+            // ```go
+            // // Merge the type of first and third argument.
+            // a.RetTp, _ = expression.InferType4ControlFuncs(ctx, a.Name, a.Args[0], a.Args[2])
+            // ```
+            //
+            // the SAME call `IF`, `IFNULL`, `COALESCE` and `CASE WHEN` make
+            // (`builtin_control.go:241`, whose doc line names `LEAD and LAG`
+            // among its callers). So it is shared here for the same reason Go
+            // shares it: a second copy of this merge is a copy that drifts.
+            // The one this replaced had drifted in four places, each with a
+            // captured witness --
+            //
+            //  * it re-derived the width even when only ONE operand was
+            //    typed, where Go copies that operand WHOLE:
+            //    `LAG(NULL, 1, int_unsigned_col)` is `int(10) unsigned`, and
+            //    the re-derivation added back a sign digit the column does
+            //    not spend.
+            //  * it kept the operand's own ENUM type, where Go rewrites a
+            //    lone enum branch to the VARCHAR its signature returns:
+            //    `LAG(enum_col, 1, NULL)` reads `x`, not the empty string.
+            //  * it skipped `TryToFixFlenOfDatetime`, so a `DATE`/`TIME` pair
+            //    merged to `datetime(6)` reported the TIME's width of 17
+            //    rather than the canonical 26.
+            //  * it left an all-NULL result unsized instead of Go's `(0, 0)`.
             WindowKind::LagLead {
-                default: Some(_), ..
+                is_lag,
+                default: Some(_),
+                ..
             } => {
-                let argument = carried(0);
-                let default = carried(1);
-                // Go's `InferType4ControlFuncs` ignores a NULL-typed operand
-                // entirely: with only one non-NULL type left the result is
-                // that type, so `LAG(int_col, 1, NULL)` stays `BIGINT`.
-                match arg_types.get(1).cloned().flatten() {
-                    None => argument,
-                    Some(written) if matches!(written.code(), FieldTypeCode::Null) => argument,
-                    // Go's `InferType4ControlFuncs` does NOT stop at
-                    // `AggFieldType`: that merge carries the FIRST argument's
-                    // flen/decimal, so `setDecimalFromArgs`/`setFlenFromArgs`
-                    // re-derive both from ALL the arguments. Captured,
-                    // `LAG(bigint_col, 1, 1.5)` prints `1.5` -- without the
-                    // re-derivation the result keeps the BIGINT's scale of 0
-                    // and the default ROUNDS to `2`.
-                    Some(_) => {
-                        let operands = [argument, default];
-                        let mut merged = agg_field_type(&operands);
-                        let mut flags = merged.flags();
-                        tidb_datatype::aggregate_eval_type(&operands, &mut flags);
-                        merged = merged.with_flags(flags);
-                        tidb_expr::rewriter::set_numeric_len_from_args(
-                            &mut merged,
-                            &[&operands[0], &operands[1]],
-                        );
-                        merged
-                    }
+                // `value_args` puts the value argument and the default in
+                // exactly Go's `a.Args[0], a.Args[2]` order and nothing else.
+                let name = if *is_lag { "lag" } else { "lead" };
+                let mut merged = tidb_expr::rewriter::infer_type4_control_funcs(name, arg_exprs)
+                    // Go always has a static type for both; `None` is
+                    // only this tier's "I could not type the arguments".
+                    .unwrap_or_else(|| carried(0));
+                // Go `aggregation.NewWindowFuncDesc`'s own `LEAD`/`LAG` arm
+                // (`window_func.go:66-74`), which runs on whatever
+                // `typeInfer4LeadLag` returned. `SetFlag` REPLACES the mask,
+                // so a written default beside a NOT NULL argument does not
+                // merely add NOT NULL -- it DROPS UNSIGNED, which is why
+                // `LAG(bigint_unsigned_not_null, 1, other_not_null)` prints
+                // `-1` where the same call over NULLABLE columns prints
+                // `18446744073709551615` (both captured from TiDB).
+                let both_not_null = arg_exprs.iter().all(|expr| {
+                    expr.static_type()
+                        .is_some_and(|ft| ft.has_flag(FieldTypeFlags::NOT_NULL))
+                });
+                if both_not_null {
+                    merged.set_flags(FieldTypeFlags::NOT_NULL);
+                } else {
+                    merged.del_flags(FieldTypeFlags::NOT_NULL);
                 }
+                merged
             }
         })
     }
@@ -1625,6 +1651,27 @@ fn coerce_to_domain(value: Datum, target: &FieldType) -> Datum {
 fn coerce_to_type(value: Datum, target: &FieldType) -> Datum {
     if value.is_null() {
         return value;
+    }
+    // An INTEGER result is never range-converted, in EITHER role. Go's
+    // `value4Int` stores what `EvalInt` handed it -- the raw 64-bit pattern
+    // -- and appends it with `AppendInt64`, leaving the RESULT column's
+    // UNSIGNED flag to decide how it prints; and a constant default whose
+    // `ConvertTo` overflows is KEPT as written and then read the same way.
+    // Both roads end at the bit pattern, never at a saturated bound, and the
+    // merged type is exactly where the two signednesses meet:
+    // `LAG(bigint_unsigned_not_null, 1, other_unsigned_not_null)` merges to a
+    // SIGNED result (Go's `SetFlag(NotNullFlag)` drops UNSIGNED) and TiDB
+    // answers `-6`/`-1`, not the clamped `9223372036854775807`.
+    if target.eval_type() == EvalType::Int {
+        match (&value, target.is_unsigned()) {
+            (Datum::UInt(bits), false) => return Datum::Int(*bits as i64),
+            (Datum::Int(bits), true) => return Datum::UInt(*bits as u64),
+            (Datum::Int(_) | Datum::UInt(_), _) => return value,
+            // A non-integer datum still converts: Go reaches an integer
+            // result from one only through `ConvertTo`/`EvalInt`, both of
+            // which round rather than reinterpret.
+            _ => {}
+        }
     }
     match value.convert_to(target, tidb_datatype::DEFAULT_STATEMENT_FLAGS) {
         Ok(converted) => converted.value,
