@@ -980,19 +980,25 @@ fn an_all_temporal_greatest_returns_the_aggregated_temporal_type() {
 ///
 /// Every expectation is captured with `gorun` over
 /// `create table q(e1 enum('{}','[1]','x'), e2 enum('a','b','!'),
-/// s1 set('a','b','c'), s2 set('a','b','c'), b64 bit(64), tm time)`
-/// holding `'{}'` / `'!'` / `'b'` / `'a'` / `9007199254740993` / `'10:00:00'`.
+/// s1 set('a','b','c'), s2 set('a','b','c'), b64 bit(64), tm time,
+/// tm100 time, tm20 time)`
+/// holding `'{}'` / `'!'` / `'b'` / `'a'` / `9007199254740993` / `'10:00:00'` /
+/// `'100:00:00'` / `'20:00:00'`.
 #[test]
 fn greatest_and_least_compare_in_the_aggregated_argument_domain() {
     let mut session = Session::new();
     session
         .run(
             "CREATE TABLE q (e1 ENUM('{}','[1]','x'), e2 ENUM('a','b','!'), \
-             s1 SET('a','b','c'), s2 SET('a','b','c'), b64 BIT(64), tm TIME)",
+             s1 SET('a','b','c'), s2 SET('a','b','c'), b64 BIT(64), tm TIME, \
+             tm100 TIME, tm20 TIME)",
         )
         .unwrap();
     session
-        .run("INSERT INTO q VALUES ('{}','!','b','a',9007199254740993,'10:00:00')")
+        .run(
+            "INSERT INTO q VALUES \
+             ('{}','!','b','a',9007199254740993,'10:00:00','100:00:00','20:00:00')",
+        )
         .unwrap();
     for (sql, expected) in [
         // An ENUM beside an integer aggregates to a string kind, so the `2` is
@@ -1033,6 +1039,13 @@ fn greatest_and_least_compare_in_the_aggregated_argument_domain() {
         // date through the string signature would make this arithmetic a
         // string-operand read of `10:00:00` instead of `100000`.
         ("SELECT GREATEST(tm, tm) + 0 FROM q", "100000"),
+        // The same guard where the DECLARED result type cannot cover for it.
+        // A duration result column casts a stray string answer straight back
+        // into a duration, so it hides a wrong domain unless the two domains
+        // ORDER the values differently: `100:00:00` is the larger duration and
+        // `20:00:00` is the larger text.
+        ("SELECT GREATEST(tm100, tm20) FROM q", "100:00:00"),
+        ("SELECT LEAST(tm100, tm20) FROM q", "20:00:00"),
         // The ETString return type is Go's `mysql.TypeVarString`, never an
         // argument's ENUM/SET code -- an ENUM result column declares a
         // name/value cell that `builtinGreatestStringSig`'s plain string
