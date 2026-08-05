@@ -23,6 +23,7 @@ mod compare;
 mod control;
 mod datetime;
 mod etint_argument;
+mod etstring_argument;
 mod evaluator_binop;
 mod math;
 mod operand_dispatch;

@@ -891,6 +891,7 @@ impl ScalarFunction {
         // argument take Go's `ParseTimeFromYear`.
         let vals = crate::arg_eval_type::wrap_datetime_args(&upper, vals, &arg_types, ctx)?;
         let vals = crate::arg_eval_type::wrap_int_args(&upper, vals, &arg_types, ctx)?;
+        let vals = crate::arg_eval_type::wrap_string_args(&upper, vals, &arg_types, ctx)?;
         if let Some(result) = crate::builtin_ext::json_dispatch_typed(&upper, &vals, &arg_types) {
             return result;
         }

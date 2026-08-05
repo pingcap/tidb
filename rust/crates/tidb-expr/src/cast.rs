@@ -931,6 +931,82 @@ pub(crate) fn cast_arg_as_int(
     eval_cast(&cast, v.clone(), source, ctx)
 }
 
+/// Go `WrapWithCastAsString(ctx, expr)` (`builtin_cast.go:2769-2813`), applied
+/// to an argument's VALUE for the same reason [`cast_arg_as_datetime`] is.
+///
+/// Go's body is one early return and then a pile of RESULT-TYPE arithmetic:
+///
+/// ```go
+/// exprTp := expr.GetType(ctx.GetEvalCtx())
+/// if exprTp.EvalType() == types.ETString {
+///     return expr
+/// }
+/// argLen := exprTp.GetFlen()
+/// ... // argLen adjustments, then charset/collation on the built `tp`
+/// return BuildCastFunction(ctx, expr, tp)
+/// ```
+///
+/// Everything after the early return sets `tp`'s FLEN and CHARSET, which are
+/// metadata: none of the `argLen` arms can truncate, because every one of them
+/// is at least as wide as the rendering it describes (`mysql.MaxIntWidth` for
+/// an integer, `GetFlen()+3` for a decimal, `-1` -- unspecified -- for a
+/// float). So at the VALUE seam this cast is the early return plus "render
+/// the value's text", and the two things worth transcribing are which values
+/// take the early return and what BIT renders as.
+///
+///  * **The early return** is `EvalType() == types.ETString`, and
+///    `FieldType.EvalType` (`pkg/parser/types/field_type.go:436-441`) puts
+///    `mysql.TypeEnum` and `mysql.TypeSet` there unless they carry
+///    `EnumSetAsIntFlag` -- a flag only `WrapWithCastAsInt` ever adds. An
+///    ENUM or SET argument is therefore NOT wrapped, and the signature body
+///    reads it with `EvalString`, which is its NAME. Captured from real TiDB
+///    (`gorun`) over an `enum('{}','[1]','x')` holding `'{}'`: `quote(e)` is
+///    `'{}'` and `ltrim(e)` is `{}` -- the name, never the ordinal `1`. This
+///    is the exact OPPOSITE of [`cast_arg_as_int`]'s hybrid arm, where the
+///    same column reaches the signature as its ordinal.
+///
+///  * **BIT is the one hybrid that is NOT string-typed**: `mysql.TypeBit` is
+///    `ETInt`, so it does not take the early return. The cast Go then builds
+///    lands on `castAsStringFunctionClass.getFunction`'s own hybrid arm
+///    (`builtin_cast.go:315-321`), whose `castBitAsUnBinary` test is false
+///    here because `WrapWithCastAsString` already set the target charset to
+///    `charset.CharsetBin` for `TypeBit` (`:2801-2804`) -- so the signature
+///    is `builtinCastStringAsStringSig` and the value is the bit's RAW BYTES,
+///    not its decimal digits. Captured over a `bit(8)` holding `b'11111111'`:
+///    `hex(ltrim(b))` is `FF`, and `hex(quote(b))` is `27EFBFBD27` -- one
+///    0xFF byte that `Quote`'s own `[]rune` conversion then replaces.
+///
+/// `source` is unused: unlike [`cast_arg_as_datetime`]'s `YEAR` and
+/// [`cast_arg_as_int`]'s `UNSIGNED`, nothing this cast produces depends on a
+/// fact the datum does not already carry.
+pub(crate) fn cast_arg_as_string(
+    v: &Datum,
+    _source: Option<&tidb_datatype::FieldType>,
+    _ctx: &dyn crate::Columns,
+) -> Result<Datum, EvalError> {
+    match v {
+        // Go's early return: every `types.ETString` eval type, which is every
+        // string kind plus the two string-typed hybrids. Passing the datum
+        // through UNCHANGED (rather than flattening it to bytes here) is what
+        // keeps a `Datum::String`'s collation and a `Datum::Bytes`'s binary
+        // signature readable by the body -- see `crate::string_signature`.
+        Datum::Null
+        | Datum::String(_)
+        | Datum::Bytes(_)
+        | Datum::Enum(..)
+        | Datum::Set(..)
+        | Datum::BinaryLiteral(_) => Ok(v.clone()),
+        // The BIT arm above: raw bytes under the binary charset Go's `tp`
+        // was given, which in this tier is `Datum::Bytes`.
+        Datum::Bit(bits) => Ok(Datum::new_bytes(bits.as_bytes().to_vec())),
+        // Everything else takes one of `castAsStringFunctionClass`'s
+        // per-source signatures, all of which render the value's own text
+        // under the connection charset -- which is exactly what
+        // `crate::coerce::coerce_str_bytes` already is.
+        _ => Ok(crate::coerce::coerce_str_bytes(v)?.map_or(Datum::Null, Datum::new_string)),
+    }
+}
+
 /// The integer a `YEAR`-typed operand carries, or `None` when the operand is
 /// not a `YEAR` at all.
 ///

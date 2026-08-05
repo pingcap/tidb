@@ -155,23 +155,50 @@ fn translate_binary(vals: &[Datum]) -> Result<Datum, EvalError> {
 /// `LTRIM(str)`, ported from `builtinLTrimSig.evalString` in
 /// `pkg/expression/builtin_string.go`.
 ///
-/// TiDB passes the argument through ETString, then calls Go's
-/// `strings.TrimLeft(str, " ")`: it removes only U+0020 SPACE, not general
-/// Unicode whitespace.  Keeping the character pattern literal prevents Rust
-/// from accidentally accepting tabs, CR, or LF as trimmable input.
+/// TiDB passes the argument through ETString (`builtin_string.go:2029`, now
+/// `crate::arg_eval_type`'s cast), then calls Go's `strings.TrimLeft(str,
+/// " ")`: it removes only U+0020 SPACE, not general Unicode whitespace.
+/// Keeping the pattern literal prevents Rust from accidentally accepting
+/// tabs, CR, or LF as trimmable input.
+///
+/// The scan is over BYTES because Go's is: `strings.TrimLeft` works on a Go
+/// string, which is not UTF-8 validated, and U+0020 is a single byte that
+/// cannot occur inside a multi-byte UTF-8 sequence, so a byte scan and a
+/// character scan strip exactly the same prefix. Captured from real TiDB
+/// (`gorun`), `hex(ltrim(v))` over a `varbinary` holding `0xFF` is `FF` and
+/// `hex(ltrim(b))` over a `bit(8)` holding `b'11111111'` is `FF`; both were
+/// hard errors under the previous UTF-8 coercion.
 fn ltrim(value: &Datum) -> Result<Datum, EvalError> {
-    Ok(coerce_str(value)?.map_or(Datum::Null, |value| {
-        Datum::new_string(value.trim_start_matches(' ').to_string())
-    }))
+    trimmed(value, |bytes| {
+        let cut = bytes.iter().take_while(|&&byte| byte == b' ').count();
+        bytes[cut..].to_vec()
+    })
 }
 
 /// `RTRIM(str)`, ported from `builtinRTrimSig.evalString` in
 /// `pkg/expression/builtin_string.go`; it has the same ETString and
 /// U+0020-only contract as [`ltrim`].
 fn rtrim(value: &Datum) -> Result<Datum, EvalError> {
-    Ok(coerce_str(value)?.map_or(Datum::Null, |value| {
-        Datum::new_string(value.trim_end_matches(' ').to_string())
-    }))
+    trimmed(value, |bytes| {
+        let cut = bytes.iter().rev().take_while(|&&byte| byte == b' ').count();
+        bytes[..bytes.len() - cut].to_vec()
+    })
+}
+
+/// The shared half of [`ltrim`] and [`rtrim`]: read the `types.ETString`
+/// argument's bytes, strip, and hand the result back under the argument's own
+/// charset -- Go's `SetBinFlagOrBinStr(argType, bf.tp)`, which both function
+/// classes call on `args[0]`.
+fn trimmed(value: &Datum, strip: fn(&[u8]) -> Vec<u8>) -> Result<Datum, EvalError> {
+    let Some(bytes) = crate::arg_eval_type::eval_string(value)? else {
+        return Ok(Datum::Null);
+    };
+    let stripped = strip(&bytes);
+    Ok(if crate::string_signature::is_binary_str(value) {
+        Datum::new_bytes(stripped)
+    } else {
+        Datum::new_string(stripped)
+    })
 }
 
 /// `LOCATE(substr, str, pos)`, ported from `builtinLocate3ArgsSig` and
@@ -1060,7 +1087,20 @@ mod tests {
         }
         for name in ["LTRIM", "RTRIM"] {
             assert_eq!(call(name, &[Datum::Null]), Datum::Null);
-            assert_eq!(call(name, &[Datum::Int(123)]), string("123"));
+            // Go declares this argument `types.ETString`, so an INTEGER one
+            // is already rendered by the time the signature body runs --
+            // `crate::arg_eval_type::wrap_string_args` does it, not this
+            // body. Handing the body an un-cast integer is a refusal now,
+            // which is the layer's contract; the wrap is what makes the
+            // Go-derived answer come back.
+            let cast = crate::arg_eval_type::wrap_string_args(
+                name,
+                vec![Datum::Int(123)],
+                &[],
+                &crate::NoColumns,
+            )
+            .unwrap();
+            assert_eq!(call(name, &cast), string("123"));
             assert!(dispatch(name, &[], &crate::NoColumns).is_none());
         }
     }

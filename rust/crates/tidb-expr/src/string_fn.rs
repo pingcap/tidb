@@ -739,15 +739,50 @@ pub(crate) fn field_with_collation(
     if vals[0] == Datum::Null {
         return Ok(Datum::Int(0));
     }
-    let mode = if vals
-        .iter()
-        .all(|value| matches!(value, Datum::Null | Datum::String(_) | Datum::Bytes(_)))
-    {
+    // Go's two flags, verbatim (`builtin_string.go:2774-2776`):
+    //
+    // ```go
+    // argTp := args[i].GetType(ctx.GetEvalCtx()).EvalType()
+    // isAllString = isAllString && (argTp == types.ETString)
+    // isAllNumber = isAllNumber && (argTp == types.ETInt)
+    // ```
+    //
+    // so the membership question is `FieldType.EvalType()`, not the datum's
+    // kind -- and that switch (`pkg/parser/types/field_type.go:417-441`) puts
+    // ENUM and SET under `types.ETString` (they reach the signature as their
+    // NAME) and `mysql.TypeBit` under `types.ETInt`. Captured from real TiDB
+    // (`gorun`) over `enum('a','b','c')` holding `'b'` and `set('a','b')`
+    // holding `'a,b'`: `field(e,'b')` and `field(s,'a,b')` are both `1`, and
+    // `field(x'61','a')` is `1`; this tier answered `0` to all three while
+    // the hybrids fell through to the REAL signature, which compares an
+    // enum's ORDINAL. The mixed lists still do exactly that, and correctly:
+    // `field(e,2)` is `1` and `field(e,b)` is `0` in both engines.
+    //
+    // `Datum::Null` stays a member of BOTH arms. Go's `mysql.TypeNull`
+    // answers `types.ETString`, so a NULL LITERAL would be string-only there
+    // -- but this tier cannot tell a NULL literal from a NULL-valued INT
+    // column, and reading every NULL as string-typed would push
+    // `field(int_col, null_int_col, ...)` onto the REAL signature, which
+    // loses integers past 2^53. Neutral is the reading that is right whenever
+    // the argument's own type is what Go looked at.
+    let mode = if vals.iter().all(|value| {
+        matches!(
+            value,
+            Datum::Null
+                | Datum::String(_)
+                | Datum::Bytes(_)
+                | Datum::Enum(..)
+                | Datum::Set(..)
+                | Datum::BinaryLiteral(_)
+        )
+    }) {
         FieldComparisonMode::String
-    } else if vals
-        .iter()
-        .all(|value| matches!(value, Datum::Null | Datum::Int(_) | Datum::UInt(_)))
-    {
+    } else if vals.iter().all(|value| {
+        matches!(
+            value,
+            Datum::Null | Datum::Int(_) | Datum::UInt(_) | Datum::Bit(_)
+        )
+    }) {
         FieldComparisonMode::Integer
     } else {
         FieldComparisonMode::Real
@@ -770,11 +805,17 @@ pub(crate) fn field_with_collation(
             // own collator, which is where a `_ci` collation folds case and a
             // PAD SPACE one ignores trailing blanks.
             FieldComparisonMode::String => {
-                let (Some(needle), Some(candidate)) = (vals[0].as_raw_bytes(), v.as_raw_bytes())
-                else {
+                // `builtinFieldStringSig.evalInt` is `b.args[i].EvalString`,
+                // which is `crate::arg_eval_type::eval_string` -- the same
+                // reader that gives an ENUM its NAME, and the reason this arm
+                // admits the hybrids the mode test above just let in.
+                let (Some(needle), Some(candidate)) = (
+                    crate::arg_eval_type::eval_string(&vals[0])?,
+                    crate::arg_eval_type::eval_string(v)?,
+                ) else {
                     return Err(EvalError::Unsupported("non-string FIELD string operand"));
                 };
-                collation.compare(needle, candidate) == std::cmp::Ordering::Equal
+                collation.compare(&needle, &candidate) == std::cmp::Ordering::Equal
             }
             FieldComparisonMode::Integer => {
                 crate::eval_binary(tidb_ast::BinaryOp::Eq, vals[0].clone(), v.clone())?
@@ -801,36 +842,38 @@ enum FieldComparisonMode {
 }
 
 /// `ELT(n, a, b, c, ...)`: the `n`-th (1-based) following argument, or
-/// `NULL` if `n` is out of range or `NULL`. TiDB evaluates `n` through its
-/// ETInt conversion, then evaluates the selected argument through ETString.
+/// `NULL` if `n` is out of range or `NULL`.
+///
+/// Go declares `argTps[0] = types.ETInt` and `types.ETString` for every
+/// following position (`builtin_string.go:3305-3309`), so both readings below
+/// are `crate::arg_eval_type`'s, not this body's -- `builtinEltSig.evalString`
+/// is `b.args[0].EvalInt` then `b.args[idx].EvalString` and nothing else.
+/// Reading the selected argument as BYTES is what the routing bought:
+/// captured from real TiDB (`gorun`), `hex(elt(1,v))` over a `varbinary`
+/// holding `0xFF` is `FF`, where the previous UTF-8 coercion here raised a
+/// hard error.
+///
+/// The result charset is Go's `if types.IsBinaryStr(argType) {
+/// types.SetBinChsClnFlag(bf.tp) }` over `args[1:]` (`:3314-3318`): ANY
+/// binary candidate makes the whole function binary, not just the selected
+/// one.
 pub(crate) fn elt(vals: &[Datum]) -> Result<Datum, EvalError> {
-    let index = match &vals[0] {
-        Datum::Null => return Ok(Datum::Null),
-        Datum::Int(n) => *n,
-        Datum::UInt(n) => match i64::try_from(*n) {
-            Ok(n) => n,
-            Err(_) => return Ok(Datum::Null),
-        },
-        Datum::Decimal(n) => n.round_to_i64_saturating(),
-        Datum::Real(n) => round_float_to_i64_saturating(*n),
-        Datum::String(n) => n.as_utf8().map(parse_string_i64_saturating).unwrap_or(0),
-        Datum::Bytes(n) => std::str::from_utf8(n)
-            .map(parse_string_i64_saturating)
-            .unwrap_or(0),
-        Datum::MinNotNull | Datum::MaxValue => {
-            return Err(EvalError::Unsupported("range sentinel ELT index"));
-        }
-        other => {
-            other
-                .to_i64()
-                .map_err(|_| EvalError::Unsupported("ELT index conversion"))?
-                .value
-        }
+    let Some(index) = crate::arg_eval_type::eval_int(&vals[0])? else {
+        return Ok(Datum::Null);
     };
     if index < 1 || index as usize >= vals.len() {
         return Ok(Datum::Null);
     }
-    Ok(coerce_str(&vals[index as usize])?.map_or(Datum::Null, Datum::new_string))
+    let Some(selected) = crate::arg_eval_type::eval_string(&vals[index as usize])? else {
+        return Ok(Datum::Null);
+    };
+    Ok(
+        if vals[1..].iter().any(crate::string_signature::is_binary_str) {
+            Datum::new_bytes(selected)
+        } else {
+            Datum::new_string(selected)
+        },
+    )
 }
 
 /// `CONCAT_WS(sep, a, b, ...)`: joins the non-`NULL` arguments with `sep`.
@@ -1160,13 +1203,25 @@ pub(crate) fn ord(vals: &[Datum]) -> Result<Datum, EvalError> {
 /// `QUOTE(s)`: `s` wrapped in single quotes with `'`, `\`, NUL and Ctrl-Z
 /// backslash-escaped — a value safe to paste into SQL. A `NULL` argument
 /// yields the four-character string `NULL` (NOT SQL `NULL`), matching MySQL.
+///
+/// Go's `Quote` (`builtin_string.go:3228-3229`) opens with `runes :=
+/// []rune(str)` and writes the runes back out, so the argument's BYTES are
+/// decoded as UTF-8 with one U+FFFD substituted per malformed byte -- a
+/// LOSSY step that is part of the answer, not an error. Captured from real
+/// TiDB (`gorun`): `hex(quote(v))` over a `varbinary` holding `0xFF` is
+/// `27EFBFBD27`, i.e. `'` U+FFFD `'`, and the same three bytes come back for
+/// a `bit(8)` holding `b'11111111'`. The argument itself is
+/// `crate::arg_eval_type`'s `types.ETString` cast
+/// (`builtin_string.go:3180`).
 pub(crate) fn quote(vals: &[Datum]) -> Result<Datum, EvalError> {
-    let Some(s) = coerce_str(&vals[0])? else {
+    let Some(bytes) = crate::arg_eval_type::eval_string(&vals[0])? else {
         return Ok(Datum::new_string("NULL".to_string()));
     };
-    let mut out = String::with_capacity(s.len() + 2);
+    let mut out = String::with_capacity(bytes.len() + 2);
     out.push('\'');
-    for c in s.chars() {
+    // `String::from_utf8_lossy` is Go's `[]rune` conversion: both replace
+    // each malformed byte with U+FFFD rather than refusing the value.
+    for c in String::from_utf8_lossy(&bytes).chars() {
         match c {
             '\'' => out.push_str("\\'"),
             '\\' => out.push_str("\\\\"),
@@ -1176,7 +1231,13 @@ pub(crate) fn quote(vals: &[Datum]) -> Result<Datum, EvalError> {
         }
     }
     out.push('\'');
-    Ok(Datum::new_string(out))
+    // Go's `SetBinFlagOrBinStr(args[0].GetType(...), bf.tp)` (`:3184`): a
+    // binary argument makes the quoted result binary too.
+    Ok(if crate::string_signature::is_binary_str(&vals[0]) {
+        Datum::new_bytes(out.into_bytes())
+    } else {
+        Datum::new_string(out)
+    })
 }
 
 /// `BIT_COUNT(n)`: the number of set bits in `n` (as an unsigned 64-bit

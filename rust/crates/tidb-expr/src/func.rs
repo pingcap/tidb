@@ -158,6 +158,7 @@ pub(crate) fn eval_func(
     // distinction, a type no value can carry.
     let vals = crate::arg_eval_type::wrap_datetime_args(name.as_str(), vals, &[], cols)?;
     let vals = crate::arg_eval_type::wrap_int_args(name.as_str(), vals, &[], cols)?;
+    let vals = crate::arg_eval_type::wrap_string_args(name.as_str(), vals, &[], cols)?;
     if let Some(result) = crate::math_fn::dispatch(name.as_str(), args, &vals, cols, function_key) {
         return result;
     }

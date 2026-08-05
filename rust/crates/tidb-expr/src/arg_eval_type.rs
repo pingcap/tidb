@@ -45,16 +45,18 @@
 //!
 //! # Scope
 //!
-//! The `types.ETDatetime` and `types.ETInt` columns of the switch above are
-//! built here. The other six cast kinds are the remaining rungs of the same
-//! structural change and are deliberately absent -- an argument at a position
-//! this module does not name is passed through byte-for-byte, exactly as
-//! before.
+//! The `types.ETDatetime`, `types.ETInt` and `types.ETString` columns of the
+//! switch above are built here. The other five cast kinds are the remaining
+//! rungs of the same structural change and are deliberately absent -- an
+//! argument at a position this module does not name is passed through
+//! byte-for-byte, exactly as before.
 //!
 //! A name whose `argTps` entry is chosen by the ARGUMENT'S OWN TYPE is not a
-//! member of this layer even when the entry it chooses is one of those two,
+//! member of this layer even when the entry it chooses is one of those three,
 //! because what varies then is the SIGNATURE, not the cast. `OCT` is the
-//! measured example -- see [`int_arg_mask`]'s doc.
+//! measured example for `types.ETInt` -- see [`int_arg_mask`]'s doc -- and
+//! `types.ETString` turns out to be made almost ENTIRELY of that shape; see
+//! [`string_arg_mask`]'s doc for the five names measured and declined.
 
 use crate::{Columns, Datum, EvalError};
 use tidb_datatype::FieldType;
@@ -178,6 +180,11 @@ pub(crate) fn wrap_datetime_args(
 /// where the rest of Go's signature selection already lives.
 pub(crate) const fn int_arg_mask(name: &str) -> ArgMask {
     match name.as_bytes() {
+        // `builtin_string.go:3305-3306` `argTps := make([]types.EvalType, 0,
+        // len(args))` then `argTps = append(argTps, types.ETInt)`
+        // (eltFunctionClass) -- the SELECTOR. Its `types.ETString` tail is
+        // [`string_arg_mask`]'s.
+        b"ELT" => 1 << 0,
         // `builtin_math.go:276-279` `argTps := []types.EvalType{argTp}` then
         // `if len(args) > 1 { argTps = append(argTps, types.ETInt) }`
         // (roundFunctionClass) -- argument 0's type is DERIVED from the
@@ -224,6 +231,149 @@ pub(crate) fn wrap_int_args(
     )
 }
 
+/// The argument positions at which Go declares `types.ETString`, for the
+/// builtins routed through this layer. `0` for every other name.
+///
+/// # The mask's TOP BIT repeats
+///
+/// Go builds a variadic `argTps` with a LOOP -- `for i := 1; i < length; i++ {
+/// argTps = append(argTps, types.ETString) }` -- so "every position from here
+/// on" is a declaration this mask has to be able to express, and `ELT` accepts
+/// an unbounded argument list. [`wrap`] therefore reads bit 31 as covering
+/// every position from 31 upward. That is not a special case bolted on: it is
+/// what makes `!1` (this file's spelling of Go's loop) mean the same thing at
+/// argument 40 that it means at argument 2, and it is also why no call can
+/// shift past the mask's width.
+///
+/// # `types.ETString` is mostly NOT an argument cast, and here is the census
+///
+/// Five of the seven names measured as `types.ETString` candidates declare it
+/// from the ARGUMENTS' OWN TYPES, so what varies is the SIGNATURE and the
+/// entry they then declare is a no-op. Each is quoted here so no later unit
+/// re-measures it:
+///
+///  * **`FIELD`** (`builtin_string.go:2772-2781`):
+///    ```go
+///    isAllString = isAllString && (argTp == types.ETString)
+///    ...
+///    if isAllString { argTp = types.ETString } else if isAllNumber { argTp = types.ETInt }
+///    ```
+///    The `types.ETString` branch is taken only when EVERY argument already
+///    has `EvalType() == types.ETString`, which is exactly
+///    `WrapWithCastAsString`'s early return -- so on that branch the cast
+///    casts nothing. What the flag really picks is
+///    `builtinFieldStringSig` vs `builtinFieldIntSig` vs
+///    `builtinFieldRealSig`, and those three disagree about the same values.
+///    `FIELD`'s mode selection is owned by `string_fn::field_with_collation`.
+///
+///  * **`GREATEST`/`LEAST`** (`builtin_compare.go:502-513`): `argTp` comes
+///    from `resolveType4Extremum`, i.e. `aggregateType(ctx, args).EvalType()`,
+///    and then selects one of eight signatures. The cast here is NOT a
+///    no-op -- an integer argument beside an ENUM really is stringified --
+///    but it is a CONSEQUENCE of the aggregated type, which no per-name mask
+///    can hold. Captured over `enum('{}','[1]','x')` holding `'{}'`:
+///    `greatest(e,2)` is `{}` and `least(e,2)` is `2`, where this tier
+///    answers `2` and `{}`. That is a signature-selection rung of its own.
+///
+///  * **`INTERVAL`** (`builtin_compare.go:1207-1213`): `argTps, argTp :=
+///    make([]types.EvalType, 0, len(args)), types.ETReal` and
+///    `if allInt { argTp = types.ETInt }`. `types.ETString` does not occur in
+///    `INTERVAL` at all; it was mis-listed as a candidate.
+///
+///  * **`JSON_VALID`** (`builtin_json.go:1129-1149`): `switch argType` over
+///    `args[0].GetType(...).EvalType()` picks
+///    `builtinJSONValid{JSON,String,Others}Sig`, and its `types.ETString`
+///    arm is reached only when the argument is already `types.ETString`.
+///
+///  * **`JSON_TYPE`** (`builtin_json.go:119`):
+///    `newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString,
+///    types.ETJson)` -- the `types.ETString` is the RETURN type and the
+///    single argument is `types.ETJson`. This is the off-by-one the
+///    `argTps...` TAIL rule exists to catch.
+///
+/// `JSON_QUOTE` and `JSON_UNQUOTE` do declare `types.ETString` for argument
+/// 0, and are still not members: `jsonQuoteFunctionClass.verifyArgs`
+/// (`:1576`) REFUSES any argument whose `EvalType() != types.ETString`, and
+/// `jsonUnquoteFunctionClass.verifyArgs` refuses everything
+/// `verifyJSONArgsType` does not allow, so the declared cast can only ever
+/// meet a value that takes its own early return. Captured: `json_quote(i)`
+/// over an `int` column is an ERROR, not `"42"`. Their real build-time rule
+/// is that VERIFIER, which has no `argTps` entry at all and belongs to a
+/// build-time argument-refusal rung.
+///
+/// `TRIM` is a fourth non-member for a mechanical reason: its direction is an
+/// AST selector, so `crate::lib`'s `Expr::Trim` arm and
+/// `scalar_function`'s `ltrim_with`/`rtrim_with` arm build their own argument
+/// lists and never reach the shared entry points this layer sits at. Both
+/// already read their arguments as bytes.
+const fn string_arg_mask(name: &str) -> ArgMask {
+    match name.as_bytes() {
+        // `builtin_string.go:3305-3309` `argTps = append(argTps, types.ETInt)`
+        // then `for i := 1; i < len(args); i++ { argTps = append(argTps,
+        // types.ETString) }` (eltFunctionClass) -- every position but the
+        // selector, for any arity, which is what the repeating top bit says.
+        b"ELT" => !1,
+        // `builtin_string.go:3180` `types.ETString, types.ETString`
+        // (quoteFunctionClass) -- the leading entry is the RETURN type.
+        b"QUOTE" => 1 << 0,
+        // `builtin_string.go:2029` `types.ETString, types.ETString`
+        // (lTrimFunctionClass) and `:2098` the same for `rTrimFunctionClass`.
+        b"LTRIM" | b"RTRIM" => 1 << 0,
+        _ => 0,
+    }
+}
+
+/// Applies Go's build-time `WrapWithCastAsString` to every argument whose
+/// declared eval type is `types.ETString`. `arg_types` is accepted for the
+/// shape [`wrap`] imposes and is unused -- see [`crate::cast::cast_arg_as_string`]
+/// for why this cast kind alone needs nothing the datum does not carry.
+pub(crate) fn wrap_string_args(
+    name: &str,
+    vals: Vec<Datum>,
+    arg_types: &[Option<FieldType>],
+    ctx: &dyn Columns,
+) -> Result<Vec<Datum>, EvalError> {
+    wrap(
+        string_arg_mask(name),
+        vals,
+        arg_types,
+        ctx,
+        crate::cast::cast_arg_as_string,
+    )
+}
+
+/// The `EvalString` a signature body reads out of an argument this layer has
+/// already cast: Go's `string`, which is a BYTE sequence and is never
+/// validated as UTF-8. `None` is Go's NULL.
+///
+/// The four kinds below are exactly the ones
+/// [`cast_arg_as_string`](crate::cast::cast_arg_as_string) leaves alone,
+/// because they are the ones whose `EvalType()` is already `types.ETString`;
+/// ENUM and SET read as their NAME, which is what Go's `EvalString` on a
+/// hybrid column returns.
+///
+/// Reading BYTES here is the whole point of the rung for this cast kind. The
+/// bodies routed through it used to funnel their argument through
+/// `crate::coerce::coerce_str`, whose UTF-8 check turned every binary
+/// argument into a hard evaluation error where TiDB answers a value:
+/// captured, `hex(elt(1,v))` and `hex(ltrim(v))` over a `varbinary` holding
+/// `0xFF` are `FF`, and `hex(quote(v))` is `27EFBFBD27`.
+pub(crate) fn eval_string(v: &Datum) -> Result<Option<Vec<u8>>, EvalError> {
+    match v {
+        Datum::Null => Ok(None),
+        Datum::String(value) => Ok(Some(value.bytes().to_vec())),
+        Datum::Bytes(value) => Ok(Some(value.clone())),
+        Datum::BinaryLiteral(value) => Ok(Some(value.as_bytes().to_vec())),
+        Datum::Enum(value, _) => Ok(Some(value.to_string().into_bytes())),
+        Datum::Set(value, _) => Ok(Some(value.to_string().into_bytes())),
+        // Same contract as [`eval_int`]: the layer named this position
+        // `types.ETString`, so an un-cast datum here means an evaluator entry
+        // point reached the signature without passing through
+        // [`wrap_string_args`]. Refuse loudly rather than re-deriving.
+        _ => Err(EvalError::Unsupported("un-cast types.ETString argument")),
+    }
+}
+
 /// The `EvalInt` a signature body reads out of an argument this layer has
 /// already cast: Go's `int64` carrier, whose 64 bits are the same ones an
 /// UNSIGNED argument holds (`b.args[i].EvalInt` never re-reads the flag --
@@ -250,6 +400,11 @@ pub(crate) fn eval_int(v: &Datum) -> Result<Option<i64>, EvalError> {
 /// The `for i := range args` loop of `newBaseBuiltinFuncWithTp`, with the
 /// switch arm passed in. Every cast kind is this loop and a different
 /// `cast_arg_as_*`, which is the whole reason the mask is a mask.
+///
+/// Bit 31 covers every position from 31 upward, which is what lets one mask
+/// express Go's variadic `for i := 1; i < length; i++` declarations (see
+/// [`string_arg_mask`]) and is simultaneously why no argument list, however
+/// long, can shift past the mask's width.
 fn wrap(
     mask: ArgMask,
     mut vals: Vec<Datum>,
@@ -261,7 +416,7 @@ fn wrap(
         return Ok(vals);
     }
     for (index, value) in vals.iter_mut().enumerate() {
-        if mask & (1 << index) == 0 {
+        if mask & (1 << index.min(31)) == 0 {
             continue;
         }
         *value = cast(value, arg_types.get(index).and_then(Option::as_ref), ctx)?;
