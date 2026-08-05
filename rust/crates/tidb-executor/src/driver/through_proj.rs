@@ -54,14 +54,20 @@
 //!
 //! # When it runs
 //!
-//! Only when BOTH `@@tidb_opt_join_reorder_through_proj` is ON and
-//! `@@tidb_opt_join_reorder_threshold` is positive. The variable is Go's own
-//! gate. The threshold is this tier's: dissolving a projection is only ever
-//! useful because a REORDER can then move the freed relations, and
-//! [`crate::driver::join_reorder`] models Go's DP solver alone -- which, per
-//! that module's own doc, is the arm a positive threshold selects. Rewriting
-//! the statement without a reorder behind it would change plans for a shape
-//! this tier has no model of, so the gate is the conjunction.
+//! Only when `@@tidb_opt_join_reorder_through_proj` is ON, which is Go's own
+//! and only gate (`extractJoinGroupImpl`, `rule_join_reorder.go:80`). It is
+//! OFF by default, so a stock session never dissolves anything.
+//!
+//! This module briefly carried a second gate of its own -- a POSITIVE
+//! `@@tidb_opt_join_reorder_threshold` -- because dissolving a projection is
+//! useful only when a reorder can then move the freed relations, and
+//! [`crate::driver::join_reorder`] modelled Go's DP solver alone, the arm a
+//! positive threshold selects. That gate is gone: the greedy solver, which a
+//! DEFAULT threshold selects, is modelled too, so the shape Go inlines for is
+//! reachable at every threshold, exactly as in Go. The topic that exercises
+//! this runs almost all of its statements at
+//! `tidb_opt_join_reorder_through_proj = on` with the threshold left at its
+//! default `0`, which is the greedy arm.
 //!
 //! # What is declined
 //!
@@ -190,14 +196,14 @@ fn split_path(path: &[String]) -> Option<(Option<&String>, &String)> {
 ///
 /// Returns the rewritten statement when at least one derived table dissolved,
 /// and `None` when the statement is left exactly as written -- which is every
-/// statement a stock session runs, since both gates are off by default.
+/// statement a stock session runs, since the gate is off by default.
 pub(crate) fn inline(
     select: &SelectStmt,
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Option<SelectStmt> {
-    if !ctx.join_reorder_through_proj() || ctx.join_reorder_threshold() <= 0 {
+    if !ctx.join_reorder_through_proj() {
         return None;
     }
     let from = select.from.as_ref()?;

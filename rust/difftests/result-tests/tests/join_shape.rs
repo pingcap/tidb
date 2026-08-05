@@ -747,11 +747,68 @@ fn join_operators_and_their_keep_order_match_recorded_tidb_plans() {
     // 303 matched / 13 diverged with `Rows` 59, and `executor/merge_join`
     // (246 matched, 0 diverged) and `executor/jointest/join` (801 matched,
     // 3 diverged) did not move.
+    // FIFTH MEASUREMENT, after Go's GREEDY join-reorder solver
+    // (`rule_join_reorder_greedy.go`) landed beside the DP, and after
+    // `driver::through_proj` dropped the extra gate that had required a
+    // POSITIVE threshold. Go's own gate is the variable alone; the threshold
+    // gate existed only because this tier modelled the DP arm, which a
+    // positive threshold selects. With the greedy modelled, the whole topic
+    // reaches the inlining it records.
+    //
+    // The greedy ALONE moved nothing: 61 statements corpus-wide had their tree
+    // moved by it and every compared figure -- replay, per-topic divergences,
+    // and all five numbers here -- stayed bit-identical. Relaxing the gate is
+    // what moved the merge pairs: 69 -> 75 agreed and 28 -> 21 extra, every
+    // one of the thirteen inside
+    // `planner/core/join_reorder_through_projection` (62/69 +24 -> 68/69 +17),
+    // and the disagreeing set is a strict SUBSET of the one before -- seven
+    // statements left it and none joined.
+    //
+    // WHAT THE RECORDING SAYS, for one of the seven
+    // (`r/planner/core/join_reorder_through_projection.result:1531`, at
+    // `tidb_opt_join_reorder_through_proj = on` and the threshold left at its
+    // default `0`, so Go is on the GREEDY arm):
+    //
+    // ```text
+    // select t1.a, dt.key_a, dt.doubled_b from t1,
+    //   (select t2.a as key_a, t2.b * 2 as doubled_b
+    //    from t2 join t3 on t2.a = t3.a) dt
+    // where t1.a = dt.key_a and dt.doubled_b > 100;
+    //
+    // MergeJoin              inner join, left key:t2.a, right key:t3.a
+    // ├─TableReader(Build)         TableFullScan table:t3  keep order:true
+    // └─MergeJoin(Probe)     inner join, left key:t2.a, right key:t1.a
+    //   ├─TableReader(Build)       TableFullScan table:t1  keep order:true
+    //   └─TableReader(Probe)       Selection gt(mul(t2.b, 2), 100)
+    //                                └─TableFullScan table:t2 keep order:true
+    // ```
+    //
+    // The group is `{t1, t2, t3}` only because `dt` dissolved. `t2` carries
+    // the pushed `gt(mul(t2.b, 2), 100)` so it is the CHEAPEST node and the
+    // greedy starts there; `t1` and `t3` tie, so the stable sort's written
+    // order takes `t1` first, and the tree is `(t2, t1), t3` -- the recorded
+    // one, whose single-leaf ordered pair is `(t1, t2)`. This tier had been
+    // producing `(t2, t3)`, the pair the WRITTEN derived table forms. That is
+    // one extra lost and one agreed gained per statement.
+    //
+    // WHAT STILL DOES NOT MOVE. The topic's remaining 17 extras are the
+    // statements whose dissolve would leave a NON-COLUMN equality
+    // (`t1.b = dt.doubled_b` becomes `t1.b = t2.b * 2`), Go's `injectExpr`
+    // case, which `driver::through_proj` declines; the reasoning in the fourth
+    // measurement above is unchanged.
+    //
+    // NOTHING REGRESSED: `compared`, `both_agree` and
+    // `recorded_merge_pairs` are unchanged; the replay's compared total went
+    // UP, 5639 -> 5640 (one previously skipped statement in this topic became
+    // comparable and MATCHED, `Rows` 59 -> 60), no topic's divergence count
+    // moved in either direction, and `executor/merge_join` (246 matched,
+    // 0 diverged), `executor/jointest/join` (803 matched, 1 diverged) and
+    // `planner/core/join_reorder2` (30 matched, 0 diverged) all stood still.
     const COMPARED: usize = 182;
     const BOTH_AGREE: usize = 103;
     const RECORDED_MERGE_PAIRS: usize = 84;
-    const AGREED_MERGE_PAIRS: usize = 69;
-    const EXTRA_MERGE_PAIRS: usize = 28;
+    const AGREED_MERGE_PAIRS: usize = 75;
+    const EXTRA_MERGE_PAIRS: usize = 21;
 
     assert_eq!(
         (

@@ -156,20 +156,26 @@ fn the_variable_off_keeps_the_derived_table_whole() {
     );
 }
 
-/// GATE TWO, this tier's: dissolving is only useful because a REORDER can then
-/// move the freed relations, and the reorder is the DP arm alone -- which a
-/// non-positive `@@tidb_opt_join_reorder_threshold` never reaches. The shipped
-/// default is `0`, so this is the gate that makes the rewrite invisible to
-/// every session that has not opted in.
+/// THE THRESHOLD IS NOT A GATE. `@@tidb_opt_join_reorder_through_proj` is Go's
+/// only condition (`extractJoinGroupImpl`), and the topic that exercises this
+/// runs almost every one of its statements with the variable ON and the
+/// threshold left at its default `0` -- which is Go's GREEDY solver, modelled
+/// in `driver::join_reorder`. So the dissolve must happen at the default
+/// threshold too, and it must reach the same tree the DP does here.
 ///
-/// Remove the threshold check and this fails.
+/// Restore the old `threshold <= 0` gate and this fails.
 #[test]
-fn the_default_threshold_keeps_the_derived_table_whole() {
+fn the_default_threshold_still_dissolves_the_derived_table() {
     let catalog = tables();
-    assert_eq!(
+    assert_ne!(
         plan(THREE_WAY, &catalog, &ctx(true, 0)),
         plan(THREE_WAY, &catalog, &ctx(false, 0)),
-        "the projection dissolved under the default threshold",
+        "the projection did not dissolve under the default threshold",
+    );
+    assert_eq!(
+        plan(THREE_WAY, &catalog, &ctx(true, 0)),
+        plan(THREE_WAY, &catalog, &ctx(true, 10)),
+        "the greedy and the DP disagree once the projection dissolves",
     );
 }
 
