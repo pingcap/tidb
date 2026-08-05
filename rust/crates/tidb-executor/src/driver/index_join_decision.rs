@@ -263,6 +263,14 @@ pub(crate) fn index_join_decision(
 /// | `join_shape` agreements | `105` | `91` |
 /// | topic join plans | `68` of `82` | `54` of `82` |
 ///
+/// Those `false` figures are the ones that commit measured; the corpus has
+/// moved under them since, so read them as a BEFORE/AFTER pair and not as a
+/// current baseline. Re-measured with the switch still `false`, the replay
+/// reports `planner/core/join_reorder_through_projection: 311 matched, 15
+/// diverged, 20 skipped of 346` and `70 of 84 join plans agree`, under a
+/// corpus-wide `join shape over 106 topics: 137 of 231 join plans agree on
+/// BOTH`.
+///
 /// So the tree was necessary and is not sufficient. What the numbers now
 /// isolate is the thing the paragraph above deferred and nothing has supplied:
 /// the COMPARISON. [`index_join_candidate`] answers "could an index join be
@@ -270,10 +278,76 @@ pub(crate) fn index_join_decision(
 /// decision -- so the index join is taken wherever it is possible rather than
 /// wherever it is cheaper, which is why the agreements fall on a tree that
 /// otherwise got closer to TiDB's. The missing input is a recursive
-/// [`tidb_planner::plan_cost_ver2`] evaluation of both candidate plans, and it
-/// is now the ONLY missing input, which it was not before.
+/// [`tidb_planner::plan_cost_ver2`] evaluation of both candidate plans.
 ///
-/// One further input stays true and is kept:
+/// # The evaluator EXISTS now, and "the only missing input" was wrong twice
+///
+/// [`tidb_planner::candidate_cost`] is that recursion: `GetPlanCostVer2` over
+/// a whole candidate plan, children first. It is validated node by node
+/// against `EXPLAIN FORMAT='cost_trace'` from a `tidb-server` built from this
+/// tree in a session carrying mysql-tester's DSN variables -- every node of
+/// `result:1042`'s recorded `IndexHashJoin`, every node of `result:1169`'s
+/// recorded `IndexJoin`, and every node of the HASH-JOIN ALTERNATIVE a
+/// `hash_join()` hint makes the same server print at the same join. All three
+/// reproduce to the printed digit.
+///
+/// The paragraph above then called that evaluation the ONLY missing input.
+/// Building it falsified the claim twice over.
+///
+/// ## First: the evaluator needs a row count this tier cannot supply
+///
+/// `getCardinality(p)` is read at EVERY node, and the dominant index-join
+/// term is `buildRows*10*tidb_cpu_factor` -- `3,992,000` of `result:1042`'s
+/// `4,606,578.48`. This tier derives a per-node row estimate in exactly one
+/// place, [`crate::plan_trace::PlanTrace`], which the driver constructs only
+/// for `EXPLAIN`. A comparison wired to it would make the STRATEGY depend on
+/// whether the statement is being explained -- `EXPLAIN` printing an index
+/// join over a pipeline that hash-joins. The prerequisite is an estimate
+/// owner both the recorder and the chooser read, which `PlanTrace` is not.
+///
+/// ## Second: a comparison AT THIS JOIN is not the comparison Go makes
+///
+/// Measured on the same server, holding the statement, the data and the
+/// session fixed, and moving only a `hash_join()` hint:
+///
+/// | | `result:1042` (pseudo) | `result:1169` (ANALYZEd) |
+/// | --- | --- | --- |
+/// | Go's recorded join | `IndexHashJoin_51 10000.00 4606578.48` | `IndexJoin_31 2.00 4106.23` |
+/// | the hash alternative | `HashJoin_94 10000.00 2373179.65` | `HashJoin_38 2.00 2423.24` |
+/// | cheaper AT THE JOIN | hash, by `2233398.83` | hash, by `1682.99` |
+/// | Go's whole tree | `Projection_23 15625.00 5540964.75` | `Projection_15 2.00 4578.26` |
+/// | the alternative's tree | `Projection_23 15625.00 7196543.24` | `Projection_15 2.00 3007.87` |
+/// | cheaper AS A TREE | index, by `1655578.49` | hash, by `1570.39` |
+/// | Go's actual choice | INDEX | INDEX |
+///
+/// Both columns refute a local comparison, and for different reasons.
+///
+/// On `result:1042` the hash join is cheaper at the join and the index join
+/// is cheaper as a tree, because the index-join task PRESERVES the outer
+/// side's order: the two parent `MergeJoin`s stay merge joins. Drop the
+/// order and they become hash joins over whole re-reads
+/// (`HashJoin_78`, `HashJoin_24`), and even the CHILDREN change -- the
+/// index-join build reads `t2` in order (`TableReader_55 8000.00 435671.93`)
+/// while the hash-join build reads `t2`'s index unordered
+/// (`IndexReader_67 8000.00 236517.33`). The two candidates are not two
+/// strategies over one pair of children; Go's `findBestTask` re-plans each
+/// side under the required property and compares whole TASKS.
+///
+/// On `result:1169` the hash tree is cheaper at the join AND as a tree
+/// (`2987.11` against `4557.50` at the parent `MergeJoin_18`, the extra
+/// `Sort_57 2.00 2535.84` included), and Go still records the index join.
+/// So on that statement not even a whole-task comparison reproduces Go's
+/// choice: the cheaper plan is one the unhinted enumeration never generates.
+/// Reproducing Go's recorded CHOICE and minimising Go's cost are not the
+/// same objective.
+///
+/// The named prerequisite is therefore `findBestTask`'s required-property
+/// propagation -- the thing that decides which child plans each candidate is
+/// even allowed to compare over -- and not a bigger evaluator. The evaluator
+/// is done and is not the blocker; it is kept, validated, and unused by this
+/// switch.
+///
+/// Two further inputs stay true and are kept:
 ///
 /// * the leaf half of the model is NOT a second cost model. [`crate::access_cost`]
 ///   is `plan_cost_ver2.go` too -- same `MinNumRows`/`MinRowSize`/
@@ -283,6 +357,12 @@ pub(crate) fn index_join_decision(
 ///   [`tidb_planner::plan_cost_ver2`]. A join chooser built on
 ///   [`tidb_planner::plan_cost_ver2`] therefore extends the leaf choosers'
 ///   model, it does not fork one.
+/// * `gorun` is still not an oracle for these statements, but the SERVER is:
+///   `make server`, then a session issuing mysql-tester's seven setup
+///   variables, then `EXPLAIN FORMAT='cost_trace'`. Every number in the table
+///   above was read that way, and `format='verbose'` alone is not enough --
+///   an index join's inner subtree PRINTS total rows and is COSTED per outer
+///   row, so only the trace shows which one a formula used.
 pub(crate) const CHOOSER_IS_FAITHFUL: bool = false;
 
 /// The looked-up side [`index_join_decision`] would name if this tier could

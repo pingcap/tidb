@@ -60,11 +60,11 @@
 
 use crate::cardinality::row_size::RowSizeColumn;
 use crate::cost_usage::{CostVer2, PlanCostOption};
+use crate::physical_table_reader::StoreType;
 use crate::plan_cost_ver2::{
     self as ver2, CostFactorVars, CostSessionOpts, HashJoinInput, IndexJoinInput, NetOwner,
     TableScanInput, TableScanPenaltyInput, Ver2Factors,
 };
-use crate::physical_table_reader::StoreType;
 use crate::task_type::TaskType;
 
 /// The session and factor state one costing run reads, Go's
@@ -107,10 +107,7 @@ impl RowSize {
     pub fn resolve(&self) -> f64 {
         match self {
             Self::Fixed(size) => *size,
-            Self::Schema {
-                columns,
-                hist_coll,
-            } => ver2::plan_avg_row_size(columns, *hist_coll),
+            Self::Schema { columns, hist_coll } => ver2::plan_avg_row_size(columns, *hist_coll),
         }
     }
 }
@@ -292,7 +289,9 @@ pub fn number_of_ranges(node: &Candidate) -> usize {
         Candidate::HashJoin { build, probe, .. } | Candidate::IndexJoin { build, probe, .. } => {
             number_of_ranges(build) + number_of_ranges(probe)
         }
-        Candidate::MergeJoin { left, right, .. } => number_of_ranges(left) + number_of_ranges(right),
+        Candidate::MergeJoin { left, right, .. } => {
+            number_of_ranges(left) + number_of_ranges(right)
+        }
     }
 }
 
