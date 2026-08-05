@@ -245,6 +245,34 @@ pub(crate) fn index_join_decision(
 /// A cost comparison becomes the deciding input only AFTER the reordered tree
 /// exists to compare over.
 ///
+/// # That prerequisite has since LANDED, and the switch still cannot flip
+///
+/// `driver::through_proj::inject_expressions` now materializes Go's
+/// `injectExpr` column, so the `on` tree above is a tree this tier BUILDS:
+/// for `result:1319`'s statement it reaches `t5` on top, `t3` next, and
+/// `Projection(t2)` joined against `t1` at the bottom -- the recorded leaf
+/// order, the one the paragraph above said the evaluator could not reach.
+///
+/// Re-measured on that tree, flipping this switch to `true` is WORSE than it
+/// was before the reorder existed:
+///
+/// | | `false` | `true` |
+/// | --- | --- | --- |
+/// | topic divergences | `13` | `25` (was `22` at `250d117`) |
+/// | corpus divergences | `24` | `36` |
+/// | `join_shape` agreements | `105` | `91` |
+/// | topic join plans | `68` of `82` | `54` of `82` |
+///
+/// So the tree was necessary and is not sufficient. What the numbers now
+/// isolate is the thing the paragraph above deferred and nothing has supplied:
+/// the COMPARISON. [`index_join_candidate`] answers "could an index join be
+/// built here", and with the switch on that structural answer becomes the
+/// decision -- so the index join is taken wherever it is possible rather than
+/// wherever it is cheaper, which is why the agreements fall on a tree that
+/// otherwise got closer to TiDB's. The missing input is a recursive
+/// [`tidb_planner::plan_cost_ver2`] evaluation of both candidate plans, and it
+/// is now the ONLY missing input, which it was not before.
+///
 /// One further input stays true and is kept:
 ///
 /// * the leaf half of the model is NOT a second cost model. [`crate::access_cost`]
