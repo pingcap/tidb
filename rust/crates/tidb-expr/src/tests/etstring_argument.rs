@@ -19,19 +19,24 @@
 //! # Recorded witnesses, and Go-derived values
 //!
 //! The corpus DOES speak for this rung, at
-//! `t/expression/builtin.test:1589-1590` (issue #50850):
+//! `t/expression/builtin.test:1590` (issue #50850):
 //!
 //! ```sql
 //! create table t3 (col1 double NOT NULL, col2 bit(8) NOT NULL);
 //! insert into t3 (col1, col2) values (2306.9705216860984, x'31'), ... (9546.629394674586, x'ff'), ...;
-//! select hex(r) as r0 from (select ELT(2, col1, col2) as r from t3 group by ELT(2, col1, col2)) as t order by r0;
+//! select hex(r) as r0 from (select distinct ELT(2, col1, col2) as r from t3) as t order by r0;
 //! ```
 //!
-//! whose recording (`r/expression/builtin.result:3338-3347`) is the ten bit
+//! whose recording (`r/expression/builtin.result:3350-3359`) is the ten bit
 //! values `01 31 34 5D 65 A5 A6 B1 D5 FF` -- the BIT column's RAW BYTES, four
 //! of which are not valid UTF-8 on their own. This tier used to raise a hard
 //! evaluation error on that statement and the replay counted it OUT OF DOMAIN;
-//! it is now compared and matched. Everything else below is GO-DERIVED,
+//! it is now compared and matched, and the whole-corpus survey moved by
+//! exactly that one statement (`expression/builtin` 1092 -> 1093 matched,
+//! `OutOfDomain` 137 -> 136, every other topic's counts unchanged). Its
+//! `group by` twin on line 1589 is NOT the witness: this tier refuses it with
+//! `FieldNotInGroupBy` over `col1`, which is an unrelated standing gap.
+//! Everything else below is GO-DERIVED,
 //! captured statement by statement from real TiDB through `gorun`
 //! (`rust/difftests/gorun`) over
 //!
@@ -274,6 +279,83 @@ fn the_space_scan_is_one_sided_and_byte_exact() {
             "{name}({input:?})"
         );
     }
+}
+
+/// The `types.ETInt` and REAL signatures of `FIELD` disagree only ABOVE
+/// `2^53`, which is where the two mode-membership rules have to be measured
+/// rather than reasoned -- every case in
+/// [`field_reads_a_hybrid_by_its_own_eval_type`] gives the same answer under
+/// either signature, because an enum ordinal and a `bit(8)` are both exact as
+/// `f64`.
+///
+/// Captured from real TiDB over `b64 bit(64)` holding `9007199254740993`
+/// (`2^53+1`):
+///
+/// ```text
+/// field(b64, 9007199254740992)                        -> 0
+/// field(b64, 9007199254740993)                        -> 1
+/// field(9223372036854775807, e, 9223372036854775806)  -> 2
+/// ```
+///
+/// The first two say BIT must be in the INTEGER arm: the real signature
+/// collapses `2^53` and `2^53+1` onto one double and would answer `1` to
+/// both. The third says an ENUM must NOT be: the list is
+/// `(int, enum, int)`, Go's `isAllNumber` is false because the enum is
+/// `types.ETString`, and the REAL signature it therefore picks is what makes
+/// `i64::MAX` match `i64::MAX - 1` at position 2. Adding ENUM to the integer
+/// arm -- the plausible-looking symmetry -- answers `0` there.
+#[test]
+fn the_field_mode_arms_are_measured_above_the_double_boundary() {
+    let e = Datum::Enum(MysqlEnum::new("b", 2), Collation::Utf8Mb4Bin);
+    let big_bit = Datum::Bit(BinaryLiteral::from_uint(9_007_199_254_740_993, None));
+    let cases: [(Vec<Datum>, i64); 3] = [
+        (vec![big_bit.clone(), Datum::Int(9_007_199_254_740_992)], 0),
+        (vec![big_bit, Datum::Int(9_007_199_254_740_993)], 1),
+        (vec![Datum::Int(i64::MAX), e, Datum::Int(i64::MAX - 1)], 2),
+    ];
+    for (vals, want) in cases {
+        assert_eq!(
+            crate::string_fn::field(&vals, &NoColumns).unwrap(),
+            Datum::Int(want),
+            "field({vals:?})"
+        );
+    }
+}
+
+/// `ELT`'s RESULT charset is Go's `for _, arg := range args[1:] { if
+/// types.IsBinaryStr(argType) { types.SetBinChsClnFlag(bf.tp) } }`
+/// (`builtin_string.go:3314-3318`) -- ANY candidate, not the selected one.
+/// The difference is visible through any function that reads the charset back
+/// off its argument; captured from real TiDB:
+///
+/// ```text
+/// upper(elt(1,'a',x'61'))  -> a      (binary result: UPPER is a no-op)
+/// upper(elt(1,'a','x'))    -> A
+/// ```
+///
+/// Both calls SELECT the same non-binary `'a'`, so a rule that asked only the
+/// selected argument answers `A` to both.
+#[test]
+fn elt_takes_its_result_charset_from_every_candidate() {
+    assert_eq!(
+        both("upper(elt(1,'a',x'61'))"),
+        ("STR:a".into(), "STR:a".into())
+    );
+    assert_eq!(
+        both("upper(elt(1,'a','x'))"),
+        ("STR:A".into(), "STR:A".into())
+    );
+    // The same fact at the value seam: a binary candidate anywhere makes the
+    // whole result `Datum::Bytes`, which is what `is_binary_str` then reads.
+    let vals = vec![
+        Datum::Int(1),
+        Datum::new_string("a"),
+        Datum::new_bytes(b"a".to_vec()),
+    ];
+    assert_eq!(
+        crate::string_fn::elt(&vals).unwrap(),
+        Datum::new_bytes(b"a".to_vec())
+    );
 }
 
 /// `FIELD` is the measured NON-member, and this is what it costs to get it
