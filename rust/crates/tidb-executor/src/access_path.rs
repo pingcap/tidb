@@ -1443,4 +1443,76 @@ mod tests {
     fn a_kept_order_double_read_answers_in_index_order() {
         assert_eq!(read_through_index(false, true), vec![2, 4, 3, 1]);
     }
+
+    /// The driver's own half of the rule: `keep order:true` has to be
+    /// OFFERED, and an `ORDER BY` that TIES is what makes the offer
+    /// observable.
+    ///
+    /// `t(a, b, c)` over `ibc(b, c)`, 200 rows in handle order, `b` DESCENDING
+    /// in pairs and `c` reversed inside each pair:
+    ///
+    /// ```text
+    ///   handle  b   c        index order inside b = 50: h4 h3 h2 h1
+    ///        1  50   4        handle order inside b = 50: h1 h2 h3 h4
+    ///        2  50   3
+    ///        3  50   2
+    ///        4  50   1
+    ///        5  49   4
+    /// ```
+    ///
+    /// `WHERE b = 50 ORDER BY b` is a single POINT range, which is what keeps
+    /// the non-covering index path ahead of the scan (Go's `prefer_range`
+    /// rule wants a non-zero `eq_or_in_count`), and every row it returns TIES
+    /// on the `ORDER BY` key. The `Sort` above is this tier's STABLE one, so
+    /// the four rows leave in exactly the order the source produced them:
+    /// Go's `keep order:true` answer is the index's (`c` ascending), where an
+    /// unordered double read would answer handle-ascending.
+    #[test]
+    fn the_driver_offers_keep_order_to_an_order_by_the_index_produces() {
+        let ctx = crate::StmtContext::for_query();
+        let mut catalog = Catalog::default();
+        catalog.register_kv("t", paired_order_table(200));
+        let rows =
+            run_select_on("SELECT a FROM t WHERE b = 50 ORDER BY b", &catalog, &ctx).unwrap();
+        assert_eq!(first_column(&rows), vec![4, 3, 2, 1]);
+    }
+
+    /// [`the_driver_offers_keep_order_to_an_order_by_the_index_produces`]'s
+    /// table: `n` rows whose handle order, `b` order and `c` order all
+    /// disagree. See that test for the layout.
+    fn paired_order_table(n: i64) -> KvTable {
+        let mut table = KvTable::with_storage(
+            82,
+            vec![column("a", 1), column("b", 2), column("c", 3)],
+            Box::new(MemTableStorage::default()),
+        );
+        table
+            .create_index(
+                crate::kv_table::KvIndex {
+                    id: 1,
+                    name: "ibc".to_owned(),
+                    unique: false,
+                    column_offsets: vec![1, 2],
+                    prefix_lengths: vec![
+                        crate::ddl::index_prefix::UNSPECIFIED_LENGTH,
+                        crate::ddl::index_prefix::UNSPECIFIED_LENGTH,
+                    ],
+                    visible: true,
+                    global: false,
+                },
+                &tidb_expr::NoColumns,
+            )
+            .unwrap();
+        for handle in 1..=n {
+            let b = n / 4 - (handle - 1) / 4;
+            let c = 4 - (handle - 1) % 4;
+            table
+                .insert_row(
+                    &[Datum::Int(handle), Datum::Int(b), Datum::Int(c)],
+                    &tidb_expr::NoColumns,
+                )
+                .unwrap();
+        }
+        table
+    }
 }
