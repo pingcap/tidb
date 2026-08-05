@@ -60,15 +60,15 @@ pub(crate) fn dispatch(
 /// the signatures built by `leastFunctionClass` and
 /// `greatestFunctionClass` in `pkg/expression/builtin_compare.go`.
 fn extremum(vals: &[Datum], want: Ordering, ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
-    // The AST/value evaluator has no argument `FieldType`s, so it can neither
-    // see a temporal argument nor read a derived collation. Both are the chunk
-    // evaluator's ([`extremum_with_mode`]'s other caller,
-    // `ScalarFunction::eval_by_signature`) -- this tier asks for Go's
-    // no-temporal, connection-default answer.
-    extremum_with_mode(
+    // The AST/value evaluator has no argument `FieldType`s, so it can name
+    // neither Go's signature nor a derived collation. Both are the chunk
+    // evaluator's ([`extremum_with_signature`]'s other caller,
+    // `ScalarFunction::eval_by_signature`) -- this tier asks for the
+    // value-derived signature and the connection default collation.
+    extremum_with_signature(
         vals,
         want,
-        GlCmpStringMode::Directly,
+        None,
         crate::ops::DERIVATION_FREE_COLLATION,
         ctx,
     )
@@ -90,9 +90,46 @@ pub enum GlCmpStringMode {
     AsDatetime,
 }
 
+/// Go's `resolveType4Extremum` answer for one GREATEST/LEAST call: which of
+/// the eight signatures `getFunction` built. Produced by
+/// `crate::rewriter::result_type::gl_signature`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GlSignature {
+    /// Go `argTp` -- `aggregateType(args).EvalType()`, forced to
+    /// `types.ETString` by a non-`Directly` compare mode or by an ETJson
+    /// aggregate. This is what Go's `switch` selects on.
+    pub arg_type: tidb_datatype::EvalType,
+    /// Which of the three ETString signatures.
+    pub cmp_string_mode: GlCmpStringMode,
+    /// `fieldTimeType == GLRetDate`, i.e. `builtinGreatestTimeSig`'s
+    /// `cmpAsDate`.
+    pub ret_date: bool,
+}
+
 /// [`extremum`] with the two things only the chunk evaluator knows: the
-/// temporal compare mode `resolveType4Extremum` derived from the argument
-/// FieldTypes, and the collation `deriveCollation` derived for the function.
+/// SIGNATURE `resolveType4Extremum` derived from the argument FieldTypes, and
+/// the collation `deriveCollation` derived for the function.
+///
+/// The signature is the load-bearing half. Go's `argTp` is the AGGREGATE of
+/// the argument types, so it fixes the comparison domain before any value
+/// exists; reading the domain off the runtime datums instead answers a
+/// different question whenever an argument's declared type and its datum
+/// disagree about a domain. Every MySQL type whose datum is neither a string
+/// nor a number is such an argument. CAPTURED from TiDB over
+/// `enum('{}','[1]','x')` holding `'{}'` and `set('a','b','c')` holding
+/// `'b'`:
+///
+/// ```text
+/// greatest(e, 2) -> {}      least(e, 2) -> 2
+/// greatest(s, 2) -> b       least(s, 2) -> 2
+/// ```
+///
+/// Both aggregate to a string kind, so Go stringifies the `2` and compares
+/// text. A value-derived domain sees an ENUM datum beside an integer, compares
+/// them as numbers against the enum's ORDINAL, and returns the two answers
+/// swapped -- and returns the enum datum itself where a string was declared,
+/// which the wire encoder then renders as its raw 8-byte ordinal followed by
+/// the name.
 ///
 /// `mode != Directly` is `builtinGreatestCmpStringAsTimeSig` /
 /// `builtinLeastCmpStringAsTimeSig`: EVERY argument is parsed as a time and
@@ -110,10 +147,10 @@ pub enum GlCmpStringMode {
 /// which is why `'zzz'` -- not the date -- is the greatest. Note also that this
 /// signature compares with `strings.Compare`, NOT the collator: only the
 /// `Directly` mode is collation-aware.
-pub(crate) fn extremum_with_mode(
+pub(crate) fn extremum_with_signature(
     vals: &[Datum],
     want: Ordering,
-    mode: GlCmpStringMode,
+    signature: Option<GlSignature>,
     collation: tidb_datatype::Collation,
     ctx: &dyn crate::Columns,
 ) -> Result<Datum, EvalError> {
@@ -122,6 +159,24 @@ pub(crate) fn extremum_with_mode(
     }
     if vals.contains(&Datum::Null) {
         return Ok(Datum::Null);
+    }
+    let signature = signature.unwrap_or_else(|| value_derived_signature(vals));
+    let mode = signature.cmp_string_mode;
+    if signature.arg_type != tidb_datatype::EvalType::String {
+        // Go's ETDatetime/ETTimestamp arm; every other arm -- ETInt, ETReal,
+        // ETDecimal, ETDuration, ETVectorFloat32 -- shares the
+        // compare-and-return block at the bottom, which is what those five
+        // `evalXxx` bodies do once `newBaseBuiltinFuncWithTp` has cast the
+        // arguments into the domain.
+        if matches!(
+            signature.arg_type,
+            tidb_datatype::EvalType::Datetime | tidb_datatype::EvalType::Timestamp
+        ) {
+            if let Some(result) = extremum_time(vals, want, signature.ret_date) {
+                return Ok(result);
+            }
+        }
+        return extremum_numeric(vals, want);
     }
     if mode != GlCmpStringMode::Directly {
         let cmp_as_date = mode == GlCmpStringMode::AsDate;
@@ -142,64 +197,67 @@ pub(crate) fn extremum_with_mode(
         }
         return Ok(Datum::new_string(best.unwrap_or_default()));
     }
-    // Go's ETDatetime/ETTimestamp arm (`builtinGreatestTimeSig.evalTime`):
-    // every argument is cast onto the AGGREGATED temporal type before it is
-    // compared, and the winner is stamped with that type on the way out
-    // (`res.SetType(resTimeTp)`). So a DATE beside a DATETIME compares as
-    // midnight of that day and prints as a datetime -- `LEAST(date
-    // '2020-01-01', datetime '2020-01-01 10:00:00')` is `2020-01-01
-    // 00:00:00`, not `2020-01-01`.
-    if vals.iter().all(|value| matches!(value, Datum::Time(_))) {
-        let result_kind = if vals
-            .iter()
-            .all(|value| matches!(value, Datum::Time(time) if time.kind() == TimeType::Date))
-        {
-            TimeType::Date
-        } else {
-            TimeType::DateTime
-        };
-        let mut best = match &vals[0] {
-            Datum::Time(time) => *time,
-            _ => unreachable!("every value is a Time"),
-        };
-        for value in &vals[1..] {
-            let Datum::Time(time) = value else {
-                unreachable!("every value is a Time")
-            };
-            if time.compare(best) == want {
-                best = *time;
-            }
+    // Go `builtinGreatestStringSig.evalString`: every argument is rendered
+    // with `EvalString` -- the cast `newBaseBuiltinFuncWithTp` already wrapped
+    // it in -- and compared with `types.CompareString(v, maxv, b.collation)`,
+    // the function's own derived collator rather than raw bytes. This covers
+    // `TestGreatestLeastFunc`'s `("123a", "b", "c", 12)` row: GREATEST is
+    // `"c"`, LEAST is `"12"`. CAPTURED from TiDB:
+    // `greatest('a' collate utf8mb4_general_ci, 'B')` is `B` and `least(...)`
+    // is `a`, the SWAP of the byte answer; and under the PAD SPACE default
+    // `greatest('a', 'a ')` is `a`, because the two compare EQUAL and Go keeps
+    // the earlier argument.
+    let collator = tidb_datatype::get_collator(collation.name());
+    let mut best = extremum_string_value(&vals[0])?;
+    for v in &vals[1..] {
+        let candidate = extremum_string_value(v)?;
+        if collator.compare(&candidate, &best) == want {
+            best = candidate;
         }
-        best.set_kind(result_kind);
-        return Ok(Datum::Time(best));
     }
-    // A string operand makes aggregateType choose ETString in Go, so numeric
-    // values are first rendered with EvalString and then compared under the
-    // string collation. This directly covers TestGreatestLeastFunc's
-    // `("123a", "b", "c", 12)` row: GREATEST is `"c"`, LEAST is `"12"`.
-    // Keep raw bytes for existing String/Bytes values; only scalar numerics
-    // need textual rendering here.
-    if vals
-        .iter()
-        .any(|v| matches!(v, Datum::String(_) | Datum::Bytes(_)))
-    {
-        // Go `builtinGreatestStringSig.evalString` compares with
-        // `types.CompareString(v, maxv, b.collation)` -- the function's own
-        // derived collator, not raw bytes. CAPTURED from TiDB:
-        // `greatest('a' collate utf8mb4_general_ci, 'B')` is `B` and
-        // `least(...)` is `a`, the SWAP of the byte answer; and under the
-        // PAD SPACE default `greatest('a', 'a ')` is `a`, because the two
-        // compare EQUAL and Go keeps the earlier argument.
-        let collator = tidb_datatype::get_collator(collation.name());
-        let mut best = extremum_string_value(&vals[0])?;
-        for v in &vals[1..] {
-            let candidate = extremum_string_value(v)?;
-            if collator.compare(&candidate, &best) == want {
-                best = candidate;
-            }
+    Ok(Datum::new_string(best))
+}
+
+/// Go's ETDatetime/ETTimestamp arm (`builtinGreatestTimeSig.evalTime`): every
+/// argument is cast onto the AGGREGATED temporal type before it is compared,
+/// and the winner is converted to that type on the way out
+/// (`res.Convert(tc, getAccurateTimeTypeForGLRet(b.cmpAsDate))`). So a DATE
+/// beside a DATETIME compares as midnight of that day and prints as a datetime
+/// -- `LEAST(date '2020-01-01', datetime '2020-01-01 10:00:00')` is
+/// `2020-01-01 00:00:00`, not `2020-01-01`.
+///
+/// `None` when an argument's datum is not a time after all, which sends the
+/// call to [`extremum_numeric`] rather than inventing a conversion this tier
+/// has not ported.
+fn extremum_time(vals: &[Datum], want: Ordering, ret_date: bool) -> Option<Datum> {
+    let mut best = match &vals[0] {
+        Datum::Time(time) => *time,
+        _ => return None,
+    };
+    for value in &vals[1..] {
+        let Datum::Time(time) = value else {
+            return None;
+        };
+        if time.compare(best) == want {
+            best = *time;
         }
-        return Ok(Datum::new_string(best));
     }
+    best.set_kind(if ret_date {
+        TimeType::Date
+    } else {
+        TimeType::DateTime
+    });
+    Some(Datum::Time(best))
+}
+
+/// Go's ETInt, ETReal, ETDecimal, ETDuration and ETVectorFloat32 arms, which
+/// all read `for i := range b.args { ... if v > maxv { maxv = v } }` over
+/// arguments `newBaseBuiltinFuncWithTp` has already cast into the domain.
+///
+/// The domain that the aggregate named is reproduced here from the arguments
+/// rather than from the winner: which argument wins must not decide the
+/// result's type.
+fn extremum_numeric(vals: &[Datum], want: Ordering) -> Result<Datum, EvalError> {
     let op = if want == Ordering::Greater {
         BinaryOp::Gt
     } else {
@@ -259,6 +317,34 @@ pub(crate) fn extremum_with_mode(
         return Ok(Datum::Decimal(to_decimal(best)));
     }
     Ok(best)
+}
+
+/// The signature for a caller with no argument `FieldType`s at all.
+///
+/// Go always has them, so this is not a second rule but the same question
+/// asked of the only evidence the AST/value tier holds: a datum's own kind.
+/// The three answers it can give are the three Go arms this file implements,
+/// and the compare mode is `Directly` because a temporal ARGUMENT is exactly
+/// what a bare datum cannot reveal.
+fn value_derived_signature(vals: &[Datum]) -> GlSignature {
+    use tidb_datatype::EvalType;
+    let arg_type = if vals.iter().all(|v| matches!(v, Datum::Time(_))) {
+        EvalType::Datetime
+    } else if vals
+        .iter()
+        .any(|v| matches!(v, Datum::String(_) | Datum::Bytes(_)))
+    {
+        EvalType::String
+    } else {
+        EvalType::Real
+    };
+    GlSignature {
+        arg_type,
+        cmp_string_mode: GlCmpStringMode::Directly,
+        ret_date: vals
+            .iter()
+            .all(|v| matches!(v, Datum::Time(time) if time.kind() == TimeType::Date)),
+    }
 }
 
 fn extremum_string_value(value: &Datum) -> Result<Vec<u8>, EvalError> {

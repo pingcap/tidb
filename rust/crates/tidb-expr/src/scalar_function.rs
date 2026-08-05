@@ -810,10 +810,10 @@ impl ScalarFunction {
                     } else {
                         std::cmp::Ordering::Less
                     };
-                    return crate::builtin_ext::extremum_with_mode(
+                    return crate::builtin_ext::extremum_with_signature(
                         &vals,
                         want,
-                        crate::rewriter::result_type::gl_cmp_string_mode(&self.args),
+                        crate::rewriter::result_type::gl_signature(&self.args),
                         collation,
                         ctx,
                     );
