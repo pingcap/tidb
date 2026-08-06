@@ -162,10 +162,10 @@ pub fn get_sys_var(name: &str) -> Option<&'static SysVarDef> {
 /// the exact `AllowEmpty: true` / `AllowEmptyAll: true` name sets are
 /// transcribed from `pkg/sessionctx/variable/sysvar.go`.
 const ALLOW_EMPTY_VARS: &[&str] = &[
-    "enable_resource_metering",
     "identity",
     "last_insert_id",
     "tidb_current_ts",
+    "tidb_enable_top_sql",
     "tidb_enable_stmt_summary",
     "tidb_read_staleness",
     "tidb_schema_version_cache_limit",
@@ -184,7 +184,7 @@ const ALLOW_EMPTY_VARS: &[&str] = &[
 /// is the one that matters for transactions: an empty mode is neither
 /// `pessimistic` nor a rejected enum value -- Go's `decideTxnMode` reads
 /// anything other than `pessimistic` as optimistic.
-const ALLOW_EMPTY_ALL_VARS: &[&str] = &["tidb_capture_plan_baseline", "tidb_txn_mode"];
+const ALLOW_EMPTY_ALL_VARS: &[&str] = &["tidb_capture_plan_baselines", "tidb_txn_mode"];
 
 /// Go `SysVar.Aliases`: writing one of these names writes the other too, so
 /// the pair is a single value under two spellings. Go applies the alias in
@@ -709,6 +709,24 @@ mod tests {
         assert_eq!(sv.validate("OFF").unwrap().value, "OFF");
         // The part that IS ported agrees with Go.
         assert_eq!(sv.validate("ON").unwrap().value, "ON");
+    }
+
+    #[test]
+    fn allow_empty_tables_name_live_registry_entries() {
+        for name in ALLOW_EMPTY_VARS.iter().chain(ALLOW_EMPTY_ALL_VARS) {
+            assert!(
+                get_sys_var(name).is_some(),
+                "the hand-maintained allow-empty table names no registry entry: {name}"
+            );
+        }
+        assert_eq!(
+            get_sys_var("tidb_capture_plan_baselines")
+                .unwrap()
+                .validate_in_scope("", SCOPE_GLOBAL)
+                .unwrap()
+                .value,
+            ""
+        );
     }
 
     /// Go `checkBoolSystemVar`: ON/OFF in any case, 0 and 1, and nothing else

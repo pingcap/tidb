@@ -15,8 +15,8 @@ After this work, encrypted spill files no longer fall back to plaintext, the dif
 - [x] (2026-08-06) Port, validate, commit, and mutation-probe Task A's checksum-over-AES-CTR spill stack (`82e0e9add2ed9f0a810f87c4a3220396628f7de3`).
 - [x] (2026-08-06) Finish Task D validation and four mutation probes for the six-constant Ruby resolver and formatter rollback.
 - [x] (2026-08-06) Diagnose and align all fourteen Task C topics, enroll the one eligible topic, and complete five mutation probes.
-- [ ] Re-derive, document, commit, and probe Task B's three measurements on the post-Task-C tip.
-- [ ] Run handoff gates and the repository Ready profile, self-review the diff, and prepare the parent-ordered SHA handoff.
+- [x] (2026-08-06) Re-derive, document, commit, and complete four mutation probes for Task B's three measurements on the post-Task-C tip.
+- [x] (2026-08-06) Run the handoff gates and repository Ready profile, self-review the 27-path diff, and prepare the parent-ordered SHA handoff.
 
 ## Surprises & Discoveries
 
@@ -30,6 +30,8 @@ After this work, encrypted spill files no longer fall back to plaintext, the dif
   Evidence: the command reports pre-existing diffs in `tidb-executor/src/driver/multi_dml.rs`, `tidb-executor/src/window/operand.rs`, `tidb-expr/src/arg_eval_type.rs`, `tidb-expr/src/string_fn.rs`, `tidb-expr/src/tests/etint_argument.rs`, and `tidb-session/src/tests_multi_table_dml.rs`; Task D touches none of them.
 - Observation: the first checked-in conflict resolver was too narrow for the actual stacked conflicts and could leave a resolved file behind when formatting failed.
   Evidence: it accepted only `KNOWN_DIVERGENCES`, while the current ratchets also use `COMPARED`, `BOTH_AGREE`, `RECORDED_MERGE_PAIRS`, `AGREED_MERGE_PAIRS`, and `EXTRA_MERGE_PAIRS`; the replacement's `test_restores_the_conflict_when_formatting_fails` detects removal of the rollback write.
+- Observation: the old re-census report's `40/16/892` and `732` writable-unread counts are stale on this branch.
+  Evidence: `env LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 ruby -EUTF-8:UTF-8 rust/difftests/tools/sysvar-census.rb` prints `census: declared=948 runtime_behavior=42 set_or_validation_only=16 behaviorally_unread=890 sum=948` and `writability: writable_declared=785 writable_behaviorally_unread=730 read_only_or_scope_none_unread=160`; the two additional runtime readers are `txn.rs`'s `autocommit` and `stmt_ctx.rs`'s `version`.
 
 ## Decision Log
 
@@ -45,11 +47,13 @@ After this work, encrypted spill files no longer fall back to plaintext, the dif
 
 ## Outcomes & Retrospective
 
-The overall bundle remains incomplete. Tasks A, C, and D are committed and restored after their mutation probes; this section will be updated after Task B and at final handoff.
+All four requested tasks are implemented, committed, restored after their mutation probes, and covered by the combined Ready validation. The only red command is the required `cargo fmt --all --check`, which reports seven pre-existing formatting drifts outside the A-D diff; the touched `difftest-result-tests` package passes its scoped fmt check.
 
 Task D now uses the standard-library-only Ruby resolver at `rust/difftests/resolve-ratchet-conflict.rb`. Its four synthetic tests cover both-side narrative preservation, exact constant de-duplication without touching same-named constants outside the conflict, caller-owned values for all six integration and join-shape ratchets, formatter invocation, and byte-for-byte restoration of the original conflict when formatting fails.
 
 Task C aligns all 257 integration topics at the recording-reader layer. The replay gate grows from `integrationtest replay over 109 topics: 8099 of 10972 statements compared` to `integrationtest replay over 110 topics: 8234 of 11465 statements compared`; `planner/core/integration_partition` is the only newly aligned topic below the five-divergence enrollment bar.
+
+Task B replaces the stale sysvar and oracle claims with executable measurements. The current source has 42 runtime-behavior readers, 16 SET/validation-only readers, 890 behaviorally unread variables, and 730 writable-but-unread variables. The replay compares warnings on only 62 of 11,465 statements, and its 715 `BothRejected` statements discard both engines' error details rather than compare errno or text.
 
 ## Context and Orientation
 
@@ -141,6 +145,35 @@ Task C mutation evidence, after saving the four mutated files in `/tmp/tidb-task
     Remove the eligible topic from enrollment -> warning_comparison_covers_only_enable_warnings_statements FAILED at 57 of 10972 instead of 62 of 11465
     Restore all four saved files -> cmp reported identical; git status showed only untracked tgt/
 
+Task B evidence on the current tip:
+
+    census: declared=948 runtime_behavior=42 set_or_validation_only=16 behaviorally_unread=890 sum=948
+    writability: writable_declared=785 writable_behaviorally_unread=730 read_only_or_scope_none_unread=160
+    Go hook occurrences: Validation=95; SetSession=278
+    warning gate reaches 62 of 11465 statements across 110 topics
+    named tests: warning_comparison_covers_only_enable_warnings_statements PASS; allow_empty_tables_name_live_registry_entries PASS
+
+Task B mutation evidence, after saving the three mutated files in `/tmp/tidb-task-b-probes.MWFTXn`:
+
+    Remove autocommit from runtime readers -> test_current_source_counts_are_pinned FAILED at 41/16/891 and 731 writable-unread
+    Remove tidb_retry_limit from the priority report -> test_priority_classification_is_present FAILED
+    Restore stale enable_resource_metering allow-empty name -> allow_empty_tables_name_live_registry_entries FAILED
+    Restore singular tidb_capture_plan_baseline allow-empty name -> allow_empty_tables_name_live_registry_entries FAILED
+    Restore all three saved files -> cmp reported identical; 2 runs, 12 assertions, 0 failures, 0 errors, 0 skips
+
+Final Ready evidence:
+
+    cargo nextest run -p tidb-chunk -p tidb-util -p tidb-session -j12 -> 1310 passed, 9 skipped
+    cargo nextest run -p difftest-result-tests -j12 -> 99 passed, 5 skipped
+    ruby rust/difftests/tools/resolve-ratchet-conflict-test.rb -> 4 runs, 41 assertions, 0 failures
+    ruby rust/difftests/tools/sysvar-census-test.rb -> 2 runs, 12 assertions, 0 failures
+    cargo fmt -p difftest-result-tests --check -> PASS
+    cargo fmt --all --check -> FAIL on seven pre-existing files outside this bundle
+    cargo clippy --all-targets -j12 -> PASS with three pre-existing warning classes outside the changed lines
+    make lint -> exit 0; its macOS run still prints the existing gobinaryrow internal-package and BSD find diagnostics
+    git diff --check d93e689e89b67fc940f0cfacee9e96ac513c9a58..HEAD -> PASS
+    self-review -> 27 expected paths, no integration result oracle changes, no probe files, and tgt/ remains untracked
+
 The handoff forbids pushing. The final artifact is a local branch name plus `git log --format="%h %p %s"` in parent order.
 
 ## Interfaces and Dependencies
@@ -151,4 +184,4 @@ Task C uses the existing `difftest` replay APIs and `tidb-session` in-memory exe
 
 Task A reuses `tidb_util::encrypt::{CtrCipher, Writer, Reader}`, `tidb_util::checksum::{Writer, Reader}`, `tidb_util::layered_io::{CloseWrite, ReadAt}`, and `row_in_disk::ReaderWithCache`. New public configuration should be a narrow Rust enum rather than a stringly typed session dependency because `tidb-chunk` currently has no server configuration object.
 
-Revision note: created on 2026-08-06 from the four-task handoff; reconciled on the dedicated resumed worktree after Task A and updated with Task D mutation evidence.
+Revision note: created on 2026-08-06 from the four-task handoff; reconciled on the dedicated resumed worktree and updated through all four task-level mutation gates.

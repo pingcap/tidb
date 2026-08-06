@@ -16,7 +16,19 @@ Rust catalog parsed from its own source. Constants that Go computes at init
 (`strconv.Itoa(config...)`, `GetDefault*()`) are marked below as unverifiable
 from source alone.
 
-**Nothing in this document was executed.** See "What is unverified" at the end.
+The behavioral census is independently executable:
+
+```sh
+LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 \
+  ruby -EUTF-8:UTF-8 rust/difftests/tools/sysvar-census.rb
+```
+
+The script parses every `SysVarDef`, locates direct `get_system`/`get_global`
+consumers, checks source evidence for dynamic helper and special-hook readers,
+and then classifies the remainder. It deliberately does not count
+`SELECT @@x` or `SHOW VARIABLES`: those generic paths can echo every stored
+entry but do not make a variable affect SQL, planning, execution, protocol, or
+SET semantics.
 
 ---
 
@@ -29,10 +41,87 @@ from source alone.
 | Name-set difference | **0** — every name matches exactly, and every Rust name is lowercase |
 | Declarative fields compared (scope, type, default, read-only, min, max, allow-auto, auto-convert-negative-bool) across the 938 source-resolvable entries | **0 divergences** |
 | `PossibleValues` divergences | **2** (both fixed in this change) |
-| Ranked behavioural findings | **14** |
-| Go `Validation` closures in the registry | 94; **87 unmodelled** in Rust |
-| Go `SetSession` closures in the registry | 279; a handful modelled |
-| "Present but unwired" (accepted, stored, never read) | **9** named below |
+| Runtime-behavior consumers | **42** |
+| SET/validation-only consumers | **16** |
+| Behaviorally unread entries | **890** |
+| Writable but behaviorally unread entries | **730** |
+| Read-only or scope-none and behaviorally unread | **160** |
+| Go `Validation: func` occurrences | **95**; Rust models **15** unique variables |
+| Go `SetSession: func` occurrences | **278**; a small subset modelled |
+
+The quoted census output is:
+
+```text
+census: declared=948 runtime_behavior=42 set_or_validation_only=16 behaviorally_unread=890 sum=948
+writability: writable_declared=785 writable_behaviorally_unread=730 read_only_or_scope_none_unread=160
+```
+
+The raw Go hook counts come from source occurrence counts:
+
+```text
+$ rg -o 'Validation:\s*func' pkg/sessionctx/variable/{sysvar.go,noop.go} | wc -l
+95
+$ rg -o 'SetSession:\s*func' pkg/sessionctx/variable/{sysvar.go,noop.go} | wc -l
+278
+```
+
+The old statement "901 of 948 stored-never-read, 34 wired" cannot be
+reproduced from this repository's history or current source. It also mixed
+three different states: a variable that changes runtime behavior, a variable
+read only while validating another `SET`, and a variable that is merely
+accepted and echoed. The three-way census above replaces it.
+
+The 42 runtime names are printed by the script. The 16 SET/validation-only
+names are `offline_mode`, `read_only`, `super_read_only`,
+`tidb_capture_plan_baselines`, `tidb_enable_fast_analyze`,
+`tidb_enable_legacy_instance_scope`, `tidb_enable_list_partition`,
+`tidb_enable_table_partition`, `tidb_prepared_plan_cache_size`,
+`tidb_session_alias`, `tidb_session_plan_cache_size`,
+`tidb_skip_isolation_level_check`, `transaction_isolation`,
+`transaction_read_only`, `tx_isolation`, and `tx_read_only`.
+
+---
+
+## Highest-value oracle blind spots
+
+1. **Error code and text are never compared when both engines reject.**
+   `mysqltest_script::Stmt` stores only `expect_error: bool`; the parser drops
+   the code after `--error`. Then `integration_diff::compare_output` takes
+   `(Err(_), true)`, records `BothRejected`, and discards both Rust's error and
+   TiDB's recorded `Error ...` line. The current replay prints:
+
+   ```text
+   integrationtest replay over 110 topics: 8234 of 11465 statements compared
+   skips by class: {"BothRejected": 715, "OutOfDomain": 2386, ...}
+   ```
+
+   All 715 are therefore agreement only on rejection. A wrong errno, SQLSTATE,
+   error argument, or message still passes. The next harness investment should
+   preserve the `--error` tokens, parse the recorded error line, and compare at
+   least errno before making message comparison a second ratchet.
+
+2. **Warnings are compared on only 62 statements.** The current named gate
+   prints:
+
+   ```text
+   warning gate reaches 62 of 11465 statements across 110 topics
+   ```
+
+   Statements outside those 62 can add, lose, reorder, or change warnings
+   without affecting replay. The recordings do not contain those warnings,
+   so closing this needs a live-server/wire oracle or new recordings rather
+   than a more permissive reader.
+
+3. **730 writable variables can be set and read back without affecting
+   behavior.** The highest-value client-facing entries are
+   `character_set_client`, `max_execution_time`, `transaction_isolation` /
+   `tx_isolation` (their refusal/warning contract is wired, execution is not),
+   `tidb_replica_read`, `tidb_retry_limit`,
+   `tidb_disable_txn_auto_retry`, `tidb_max_chunk_size`,
+   `tidb_init_chunk_size`, `tidb_request_source_type`, and
+   `tidb_scatter_region`. This is a product gap and an oracle gap together:
+   generic `SELECT @@x` coverage proves storage while masking the absent
+   consumer.
 
 ---
 
@@ -40,7 +129,7 @@ from source alone.
 
 ### Rank 1 — a switch that is never read, or a value the engine cannot reach
 
-#### F1. All 28 `ScopeInstance` variables are unsettable and unreadable
+#### F1. All 28 `ScopeInstance` variables were unsettable and unreadable — **FIXED**
 
 * Go: `pkg/sessionctx/variable/variable.go:265` — `validateScope` accepts
   `ScopeGlobal` when `sv.HasGlobalScope() || sv.HasInstanceScope()`;
@@ -108,55 +197,50 @@ from source alone.
   * Pinned in `tests_global_vars.rs`, including the mutation probe that a
     genuinely SESSION-only variable still refuses `SET GLOBAL` with 1228.
 
-#### F2. `tidb_enable_clustered_index` — accepted, stored, never read
+#### F2. `tidb_enable_clustered_index` — **FIXED**, now a DDL behavior reader
 
 * Go: `pkg/sessionctx/variable/sysvar.go:2782`, `TypeEnum`,
   `PossibleValues {OFF, ON, INT_ONLY}`, default `ON`, plus a `SetSession`
   closure writing `SessionVars.EnableClusteredIndex`, read by the DDL table
   builder to decide whether a table's PK becomes the row handle.
-* Rust: the catalog entry exists and is correct
-  (`sysvar/catalog/ddl_schema.rs:208`, and `tidb-vardef/src/tidb_vars.rs:787`
-  defines the name constant) — but the *name constant has no consumer*, and
-  the only non-catalog mention in the workspace is a comment at
-  `rust/crates/tidb-exec/src/cluster_ddl.rs:244`. No code path calls
-  `get_system("tidb_enable_clustered_index")`.
+* Rust now reads the enum in `Session::clustered_index_mode`
+  (`tidb-session/src/stmt_ctx.rs`) and passes the resulting
+  `ClusteredIndexDefMode` through DDL table construction. `OFF`, `ON`, and
+  `INT_ONLY` keep their three-way Go meaning; this is one of the 42 runtime
+  consumers in the fresh census.
 * Distinguishing case:
   ```sql
   SET @@tidb_enable_clustered_index = 'OFF';
   CREATE TABLE t (a VARCHAR(10) PRIMARY KEY, b INT);
   SHOW CREATE TABLE t;
   ```
-  Go: `PRIMARY KEY (a) /*T![clustered_index] NONCLUSTERED */`, and the row key
-  is `_tidb_rowid`. Rust: unaffected by the SET — whatever the DDL path
-  hardcodes.
-* The `INT_ONLY` third value makes this worse than a boolean: any reader added
-  later that treats it as ON/OFF will get `INT_ONLY` wrong.
-* The clustered-index DDL path is owned by another unit in this session; this
-  is reported, not touched.
+  Go and Rust now both print
+  `PRIMARY KEY (a) /*T![clustered_index] NONCLUSTERED */`, and use
+  `_tidb_rowid` as the handle.
+* Remaining gap: Go's deprecation warning around `INT_ONLY` is still one of
+  the unmodelled `Validation` closures.
 
-#### F3. `max_allowed_packet` is a compile-time constant, and `SET SESSION` on it is not refused
+#### F3. `max_allowed_packet` — SET and expression sizing fixed; wire limit remains node config
 
-* Go: `pkg/sessionctx/variable/sysvar.go:2193`. Its `Validation` closure does
-  two things Rust does neither of:
+* Go: `pkg/sessionctx/variable/sysvar.go:2193`. Its `Validation` closure defines
+  the two behaviors Rust originally lacked:
   1. `SET SESSION max_allowed_packet = ...` is **refused**:
      `ErrReadOnly.GenWithStackByArgs("SESSION", "max_allowed_packet", "GLOBAL")`
      (1621, "SESSION variable 'max_allowed_packet' is read-only. Use SET GLOBAL
      to assign the value").
   2. The accepted global value is truncated **down to a multiple of 1024** with
      `ErrTruncatedWrongValue`.
-* Rust: `vars.rs:334` accepts the session write with only the `TypeUnsigned`
-  range check (`MinValue 1024`). And the wire layer never reads the variable at
-  all: `rust/crates/tidb-protocol/src/packet.rs:24` hardcodes
-  `DEFAULT_MAX_ALLOWED_PACKET: usize = 64 << 20`, used at `packet.rs:151`.
+* Rust originally accepted the session write and used the 64 MiB default for
+  all result-sizing builtins.
 * Distinguishing case:
   ```sql
   SET SESSION max_allowed_packet = 1048576;
   ```
-  Go: `ERROR 1621 (HY000)`. Rust: `Query OK`.
+  Go and Rust now both answer `ERROR 1621 (HY000)`.
   ```sql
   SET GLOBAL max_allowed_packet = 1025; SELECT @@global.max_allowed_packet;
   ```
-  Go: `1024` plus warning 1292. Rust: `1025`, no warning.
+  Go and Rust now both store `1024` and append warning 1292.
 * **Both SET behaviours FIXED.** The 1024-rounding is in
   `SysVarDef::run_validation`, where the existing `truncated` flag already
   carries `ErrTruncatedWrongValue` (1292) naming the value as TYPED; the
@@ -164,15 +248,14 @@ from source alone.
   `VarErrorKind::SessionScopeIsReadOnly` → 1621. The refusal cannot be a scope
   bit: the variable still HAS session scope for READING, and only the write is
   refused.
-* **The wire READER is NOT fixed, and was misdiagnosed above.**
-  `packet.rs`'s `DEFAULT_MAX_ALLOWED_PACKET` is a correctly-named *default*:
-  `PacketReader` already carries a per-connection `max_allowed_packet` field
-  with `with_max_allowed_packet`/`set_max_allowed_packet`. What is missing is
-  the caller — `tidb-server` (`sql_node.rs:1561`, `node_config.rs:383`,
-  and the long-data buffer bound at `mysql_connection.rs:282`) passes the
-  constant and never re-reads the variable after a `SET GLOBAL`. That is a
-  `tidb-server` change, not a `tidb-protocol` one; recorded here rather than
-  faked.
+* **The SQL behavior reader is now fixed.** `Session::statement_context` reads
+  the session copy and passes it through `StmtContext::with_max_allowed_packet`,
+  which `SPACE()` and the other result-sizing builtins consume. A global write
+  affects a newly seeded session, not the current session, matching Go.
+* **The network packet limit is still node configuration, not the sysvar.**
+  `PacketReader` already accepts a per-connection limit, and `tidb-server`
+  supplies `NodeConfig::max_allowed_packet`; a later `SET GLOBAL` does not
+  reconfigure an existing connection's packet reader or long-data buffer.
 * Go's third refusal, `errSetGlobalMaxAllowedPacket` in starter deployments
   (`deploymode.IsStarter()`), has no deployment mode to key off in this tier
   and is not modelled.
@@ -207,26 +290,20 @@ from source alone.
   `EXPLAIN ANALYZE` execution info and through memory tracking); Rust's chunk
   size is unchanged.
 
-#### F6. Isolation level: `SERIALIZABLE` and `READ-UNCOMMITTED` are accepted
+#### F6. Isolation level: SET validation fixed, transaction behavior still unread
 
 * Go: `pkg/sessionctx/variable/varsutil.go:116` `checkIsolationLevel` — both
   values raise `ErrUnsupportedIsolationLevel` (8048) **unless**
   `tidb_skip_isolation_level_check` is ON, in which case they are accepted with
   that error as a *warning*. Wired to both spellings at `sysvar.go:2100`
   (`tx_isolation`) and `:2106` (`transaction_isolation`).
-* Rust: neither spelling has a `Validation` in `sysvar.rs::run_validation`. The
-  machinery exists but is dead: `rust/crates/tidb-exec/src/isolation_state.rs`
-  and `SysVarErrorCode::UNSUPPORTED_ISOLATION_LEVEL`
-  (`rust/crates/tidb-exec/src/sysvar_error.rs:53`, code 8048) are referenced
-  **only by their own source tests**.
+* Rust now validates both spellings in `variables.rs::check_isolation_level`,
+  including the `tidb_skip_isolation_level_check` warning downgrade.
 * Distinguishing case:
   ```sql
   SET SESSION transaction_isolation = 'SERIALIZABLE';
   ```
-  Go: `ERROR 8048 (HY000): The isolation level 'SERIALIZABLE' is not supported.
-  Set tidb_skip_isolation_level_check=1 to skip this error`. Rust: accepted and
-  stored — and since nothing downstream reads it, the session silently keeps
-  running at snapshot isolation while reporting SERIALIZABLE.
+  Go and Rust now both raise 8048 unless the skip switch is on.
 * **FIXED** in `variables.rs::check_isolation_level`, which is where both
   halves of Go's closure can reach what they need: the skip switch is read
   from the session and the downgraded warning is appended to it. The refusal
@@ -234,11 +311,11 @@ from source alone.
   *normalized* value, so the ordinal and lower-case spellings are refused with
   it; the two accepted levels store and read back unchanged, on both spellings
   of the variable name. Pinned in `tests_global_vars.rs`.
-* Still open, and deliberately not faked: nothing downstream READS the stored
+* Still open, and deliberately not faked: nothing downstream reads the stored
   level. `tidb-exec/src/isolation_state.rs` is now reachable from a correct
   SET, but the executor does not consult it — a `READ-COMMITTED` session still
-  runs at the tier's one isolation. That reader belongs to the transaction
-  seam, not to the variable layer.
+  runs at the tier's one isolation. That is why both spellings are classified
+  as SET/validation-only rather than runtime behavior.
 
 ### Rank 2 — validation contract inverted or absent
 
@@ -279,28 +356,30 @@ from source alone.
   Go: `ERROR 1105 (HY000): invalid value for 'bogus', it should be either '',
   'table' or 'global'`. Rust: accepted.
 
-#### F9. 87 of Go's 94 `Validation` closures are unmodelled
+#### F9. Rust models 15 variables with Go `Validation` closures out of 95
 
-`sysvar.rs::run_validation` models 6 (`timestamp`, `time_zone`,
+`sysvar.rs::run_validation` and the SET dispatch model 15 unique variables:
+`timestamp`, `time_zone`,
 `tidb_enable_table_partition`, `tidb_enable_list_partition`,
-`tidb_session_alias`, `sql_mode`), plus `tidb_enable_fast_analyze` in the
-dispatch layer. The remaining 87 fall into three contract classes, and the
-difference between them is exactly the "clamp vs refuse" distinction:
+`tidb_session_alias`, `max_allowed_packet`, `sql_mode`,
+`tidb_enable_fast_analyze`, both isolation spellings, and the five
+read-only-noop variables. The unmodelled remainder falls into three contract
+classes, and the difference between them is exactly the "clamp vs refuse"
+distinction:
 
 * **REFUSE-WITH-ERROR** (Rust currently accepts): `secure_auth`,
-  `max_allowed_packet` (session scope), `tx_isolation`/`transaction_isolation`,
   `tidb_scatter_region`, `character_set_*` and `collation_*`
   (`checkCharacterSet` / `checkCollation` → 1115 "Unknown character set"),
   `tidb_partition_prune_mode`, `tidb_isolation_read_engines`,
   `tidb_read_consistency`, `tidb_replica_read`, `require_secure_transport`,
-  `read_only` / `super_read_only` / `offline_mode` / `tidb_super_read_only`,
+  `tidb_super_read_only`,
   `validate_password.*`, `tidb_analyze_version`, `tidb_dml_type`.
   The `sysvar.rs` test `per_variable_validation_closures_are_not_modelled`
   already pins this for `secure_auth`; that pin covers one variable, not the
   class.
-* **REWRITE-THE-VALUE** (Rust stores what was typed): `tidb_disable_txn_auto_retry`
-  (F4), `tidb_scatter_region` lower-casing (F8), `max_allowed_packet`
-  1024-rounding (F3).
+* **REWRITE-THE-VALUE** (Rust stores what was typed):
+  `tidb_disable_txn_auto_retry` (F4) and `tidb_scatter_region` lower-casing
+  (F8).
 * **WARN-ONLY** (Rust is silent): `tidb_enable_clustered_index` `INT_ONLY`
   deprecation warning (`sysvar.go:2784`), the 10 `newExecConcurrencySysVar`
   entries' `appendDeprecationWarning(..., tidb_executor_concurrency)`
@@ -382,37 +461,40 @@ the single most likely place for a silent feature-switch hole, and it is clean.
 
 ---
 
-## "Present but unwired": accepted and stored, never read
+## Behavioral census and priority unread variables
 
-Nine, each verified by grepping every crate for the literal name and for the
-`tidb-vardef` constant, excluding the catalog files and tests:
+The census categories are mutually exclusive:
 
-| Variable | Name constant | Consumers found |
-| --- | --- | --- |
-| `tidb_enable_clustered_index` | `tidb-vardef/src/tidb_vars.rs:787` | none (one comment) |
-| `tidb_retry_limit` | `tidb_vars.rs:136` | none |
-| `tidb_disable_txn_auto_retry` | `tidb_vars.rs:140` | none |
-| `tidb_max_chunk_size` | `tidb_vars.rs:473` | name-list membership only |
-| `tidb_init_chunk_size` | `tidb_vars.rs:540` | name-list membership only |
-| `max_allowed_packet` | — | none; wire uses a `const` |
-| `transaction_isolation` / `tx_isolation` | — | none outside the alias pair |
-| `tidb_request_source_type` | — | none |
-| `tidb_scatter_region` | — | none |
+* **Runtime behavior** means the value changes parsing, planning, execution,
+  DDL, protocol result encoding, or a session state machine. Forty-two entries are
+  in this class. Newly landed readers explicitly included here are
+  `tidb_enable_clustered_index`, `max_allowed_packet`,
+  `tidb_opt_join_reorder_through_proj`, and `tidb_partition_prune_mode`.
+* **SET/validation-only** means Rust reads or special-cases the variable only
+  while validating, warning about, routing, or aliasing a SET. Sixteen entries
+  are in this class. `tidb_skip_isolation_level_check` and
+  `tidb_enable_legacy_instance_scope` are here: both have real consumers, but
+  neither changes ordinary statement execution.
+* **Behaviorally unread** means no source-backed consumer in either class.
+  Generic storage, `SELECT @@x`, and `SHOW VARIABLES` still work. There are
+  890 such entries; 730 are writable.
 
-Dispositions after this change:
+The highest-priority unread variables are:
 
-| Variable | Disposition |
+| Variable | Why it matters |
 | --- | --- |
-| `transaction_isolation` / `tx_isolation` | SET contract wired (8048 + skip-switch warning). The READER is the transaction seam's; not faked. |
-| `max_allowed_packet` | SET contract wired (1621 + 1024-rounding). The wire reader needs a `tidb-server` change (see F3); the `tidb-protocol` side already takes a per-connection limit. |
-| `tidb_max_chunk_size` / `tidb_init_chunk_size` | The clamp fires; the missing reader is the chunk allocator in `tidb-exec`/`tidb-executor`, outside this seam. Threading it is a one-line read at the allocator once that unit lands — the variable layer has nothing left to add. |
-| `tidb_request_source_type` | No consumer exists in this tier at all: there is no request-source field on the coprocessor request this node builds. Documented, not faked. |
-| `tidb_scatter_region` | No region-scatter path exists (DDL does not pre-split). Its `Validation` (lower-case + refuse outside `''`/`table`/`global`) is still unmodelled: `ValidationError::Refused` carries a `&'static str`, and Go's message interpolates the offending value, so wiring it needs that variant to carry an owned string. Left for the F9 sweep. |
-| `tidb_retry_limit` / `tidb_disable_txn_auto_retry` | Untouched: both need the retry seam (F4), including the inverted `always returns ON` contract. |
+| `character_set_client` | Common connector/session setup; the parser does not consume the stored client charset. |
+| `max_execution_time` | Common ORM/driver timeout; accepted without enforcing a statement deadline. |
+| `transaction_isolation` / `tx_isolation` | SET refusal/warning behavior is wired, but accepted levels do not select a transaction isolation implementation. |
+| `tidb_replica_read` | Operational read-routing control; no request-routing consumer. |
+| `tidb_retry_limit` / `tidb_disable_txn_auto_retry` | Retry policy is client-visible under conflicts; neither reaches a retry loop, and the latter's deprecated-value rewrite is also missing. |
+| `tidb_max_chunk_size` / `tidb_init_chunk_size` | Common mysql-tester DSN settings and executor tuning knobs; stored but not read by chunk allocation. |
+| `tidb_request_source_type` | Real clients and tools label requests for admission/observability; no request field consumes it. |
+| `tidb_scatter_region` | DDL placement behavior and its validation/lower-casing are both absent. |
 
-Every `tidb-vardef` name constant in the workspace was checked; those five are
-the ones that are *defined and never referenced*, which is a cheap standing
-detector for this class.
+This table replaces the old nine-name sample. That sample correctly found
+several high-value gaps, but it was not a census and became stale as clustered
+index and result-size readers landed.
 
 ---
 
@@ -496,7 +578,7 @@ These were compared and agree; re-auditing them is wasted effort.
 12. **Scope-error selection for the two scopes Rust does implement.**
     `SET SESSION` on a global-only variable → 1229; `SET GLOBAL` on a
     session-only variable → 1228; read-only → 1238. Matches `validateScope`
-    apart from F1 (instance) and F10 (internal).
+    apart from F10 (internal); F1's instance tier is now modelled.
 
 ---
 
@@ -540,23 +622,24 @@ scope.
 
 ---
 
-## What is unverified because nothing can execute here
+## Verification and remaining limits
 
-`syspolicyd` on this machine wedges every freshly built binary at `_dyld_start`.
-Therefore:
+The 2026-08-05 re-census executed the checked-in script and the integration
+replay/warning gates quoted above. The allow-empty registry fix was also pinned
+by `sysvar::tests::allow_empty_tables_name_live_registry_entries`: the test
+failed before the fix on the stale `enable_resource_metering` name and passed
+after `tidb_enable_top_sql` plus plural `tidb_capture_plan_baselines` replaced
+the stale entries.
 
-* **No test was run.** `cargo check` and `cargo clippy` are the only gates
-  applied to the change in this document.
-* **No SQL was executed.** Every "distinguishing case" above is derived from
-  reading both implementations; none was confirmed against a live `tidb-server`
-  or through `gorun`/`goeval`.
-* **Go defaults computed at init were not verified from source**: entries whose
+Still not verified by this audit:
+
+* No live Go server was started for every ranked sysvar case. Go behavior in
+  those cases remains source-derived or inherited from the captures already
+  documented beside the implementation.
+* Go defaults computed at init were not re-derived from source: entries whose
   `Value` is `strconv.Itoa(config.GetGlobalConfig()...)`, `GetDefault*()`, or a
-  `versioninfo` concatenation. The Rust table's own provenance (captured from a
-  running `GetSysVars()`) is the better evidence for those, and it is the reason
-  this audit reports zero default divergences with confidence for the resolvable
-  938 and *inherited* confidence for the rest.
-* **The two fixes in this change are unverified by test.** They are pure data
-  edits to `possible_values` with `cargo check`/`cargo clippy` clean; the
-  registry's `the_registry_is_complete_and_sorted` test is unaffected (neither
-  edit changes a name, a count, or the ordering).
+  `versioninfo` concatenation. The Rust catalog was generated from a running Go
+  registry, which remains the stronger source for those values.
+* The census proves whether a source consumer exists, not that every consumer
+  matches all Go semantics. The ranked findings above remain the semantic
+  review of the highest-risk readers and missing hooks.
