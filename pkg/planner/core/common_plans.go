@@ -655,6 +655,20 @@ type Explain struct {
 	BriefBinaryPlan string
 }
 
+// IsAnalyzeRU returns whether this is an EXPLAIN ANALYZE FORMAT='ru' statement.
+func (e *Explain) IsAnalyzeRU() bool {
+	return e.Analyze && strings.ToLower(e.Format) == types.ExplainFormatRU
+}
+
+// CheckSupportedExecution returns an error for explain formats accepted by the
+// optimizer but not executable yet.
+func (e *Explain) CheckSupportedExecution() error {
+	if e.IsAnalyzeRU() {
+		return errors.Errorf("explain analyze format '%s' is not supported now", e.Format)
+	}
+	return nil
+}
+
 // GetBriefBinaryPlan returns the binary plan of the plan for explainfor.
 func GetBriefBinaryPlan(p base.Plan) string {
 	var plan base.Plan = p
@@ -735,6 +749,8 @@ func (e *Explain) prepareSchema() error {
 		fieldNames = []string{"binary plan"}
 	case format == types.ExplainFormatTiDBJSON:
 		fieldNames = []string{"TiDB_JSON"}
+	case format == types.ExplainFormatRU:
+		fieldNames = []string{"RU"}
 	case e.Explore:
 		fieldNames = []string{"statement", "binding_hint", "plan", "plan_digest", "avg_latency", "exec_times", "avg_scan_rows",
 			"avg_returned_rows", "latency_per_returned_row", "scan_rows_per_returned_row", "recommend", "reason",
