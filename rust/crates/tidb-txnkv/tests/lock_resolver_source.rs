@@ -639,6 +639,53 @@ fn an_expired_txn_not_found_lock_escalates_to_rollback_if_not_exist() {
     assert_eq!(recorded.resolves[0].1.commit_version, 0);
 }
 
+/// Go `lock_resolver.go:712-722` splits a determined commit on one comparison:
+/// `status.IsCommitted() && status.CommitTS() > callerStartTS` is `canIgnore`
+/// and `<= callerStartTS` is `canAccess`. The equal case is the whole rule. A
+/// transaction that committed at exactly the reader's own timestamp is visible
+/// to that reader, so its value must be read *through* the lock via
+/// `Context.committed_locks`; filing it under `resolved_locks` instead tells
+/// TiKV to step over a row the reader is entitled to, and the read comes back
+/// short with no error to show for it.
+#[test]
+fn a_commit_at_the_readers_own_timestamp_is_read_through_not_stepped_over() {
+    let caller_start_ts = 1_300 << 18;
+    for (commit_ts, expected) in [
+        (
+            caller_start_ts,
+            accessing(
+                vec![ResolvedTxnStatus::Committed(caller_start_ts)],
+                vec![1_000 << 18],
+            ),
+        ),
+        (
+            caller_start_ts + 1,
+            ignoring(
+                vec![ResolvedTxnStatus::Committed(caller_start_ts + 1)],
+                vec![1_000 << 18],
+            ),
+        ),
+    ] {
+        let (runtime, _) = runtime(vec![KvrpcCheckTxnStatusResponse {
+            commit_version: commit_ts,
+            ..KvrpcCheckTxnStatusResponse::default()
+        }]);
+        assert_eq!(
+            resolve_optimistic_locks(
+                &runtime,
+                &[secondary()],
+                caller_start_ts,
+                &KvrpcContext::default(),
+                &call(),
+                &FixedTimestampSource::new(1_100 << 18),
+                true,
+            ),
+            Ok(expected),
+            "a commit at {commit_ts} seen by a reader at {caller_start_ts}"
+        );
+    }
+}
+
 /// A txnNotFound whose lock has *not* expired is a concurrent prewrite whose
 /// primary simply has not landed yet: back off and ask again, never roll it
 /// back. Go `bo.Backoff(retry.BoTxnNotFound, err)` (`lock_resolver.go:975`).
@@ -1393,27 +1440,96 @@ fn a_readers_lock_sets_accumulate_across_resolves_and_reach_every_request() {
     assert!(context.resolved_locks.is_empty());
     assert!(context.committed_locks.is_empty());
 
+    // Round one: the reader met a pushed transaction and one that had already
+    // committed before it.
     sets.absorb(&ignoring(Vec::new(), vec![1_000 << 18]));
     sets.absorb(&accessing(
         vec![ResolvedTxnStatus::Committed(1_200 << 18)],
         vec![900 << 18],
     ));
-    // A second meeting with the same pushed transaction must not duplicate it.
-    sets.absorb(&ignoring(Vec::new(), vec![1_000 << 18, 1_100 << 18]));
+    // Round two names only what round two met. `LockRecoveryResult` is built
+    // fresh per resolve, so these rounds are genuinely disjoint — which is what
+    // makes this an accumulator rather than a latch. A set that replaced
+    // instead of accumulating would drop round one's ids right here, and the
+    // retry would meet those same locks again: the deadloop
+    // `client_helper.go:51-56` says `ClientHelper` exists to prevent.
+    sets.absorb(&ignoring(Vec::new(), vec![1_100 << 18]));
+    sets.absorb(&accessing(
+        vec![ResolvedTxnStatus::Committed(1_150 << 18)],
+        vec![950 << 18],
+    ));
+    // A second meeting with the same pushed transaction must not duplicate it:
+    // Go `TSSet` is a map, so `Put` of a known id is a no-op.
+    sets.absorb(&ignoring(Vec::new(), vec![1_000 << 18]));
 
     let mut context = KvrpcContext::default();
     sets.stamp(&mut context);
     assert_eq!(
         context.resolved_locks,
         vec![1_000 << 18, 1_100 << 18],
-        "IgnoreLocks -> Context.resolved_locks"
+        "IgnoreLocks -> Context.resolved_locks, accumulated over every round"
     );
     assert_eq!(
         context.committed_locks,
-        vec![900 << 18],
-        "AccessLocks -> Context.committed_locks"
+        vec![900 << 18, 950 << 18],
+        "AccessLocks -> Context.committed_locks, accumulated over every round"
     );
     assert!(!sets.is_empty());
+}
+
+/// Go must reset the set by hand, because its snapshot timestamp is mutable:
+///
+/// ```text
+/// // Invalidate cache if the snapshotTS change!
+/// s.version = ts
+/// ...
+/// // And also remove the minCommitTS pushed information.
+/// s.resolvedLocks = util.TSSet{}
+/// ```
+/// (`txnkv/txnsnapshot/snapshot.go:195-201`, `SetSnapshotTS`.)
+///
+/// The reset is not bookkeeping. "TiKV pushed this owner's min-commit-ts above
+/// the reader" is a fact about one exact timestamp; carried to a later, larger
+/// one it becomes a lie, and the reader steps over a lock whose value it should
+/// now see. Here the timestamp is bound once at construction alongside the set
+/// that is classified against it, so there is no moment at which the two can
+/// disagree and nothing to reset. This test is what keeps that true: a setter
+/// added later would reintroduce Go's hazard without reintroducing Go's reset.
+#[test]
+fn a_readers_lock_sets_cannot_outlive_the_timestamp_they_were_classified_against() {
+    let coordinator_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("src/transaction/coordinator");
+    let mut sources = Vec::new();
+    for entry in std::fs::read_dir(&coordinator_dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_some_and(|extension| extension == "rs") {
+            sources.push((path.clone(), std::fs::read_to_string(&path).unwrap()));
+        }
+    }
+    assert!(sources.len() > 1, "coordinator sources were not found");
+    for (path, source) in &sources {
+        for reassignment in ["self.start_ts =", "self.resolved_locks ="] {
+            assert!(
+                !source.contains(reassignment),
+                "{} reassigns `{reassignment}`: a snapshot timestamp that can move \
+                 needs Go's `SetSnapshotTS` reset of the pushed-min-commit-ts set",
+                path.display()
+            );
+        }
+    }
+    // Born together, in the one constructor, so neither can be refreshed
+    // without the other.
+    let coordinator = &sources
+        .iter()
+        .find(|(path, _)| path.ends_with("mod.rs"))
+        .expect("coordinator mod.rs")
+        .1;
+    assert_eq!(
+        coordinator
+            .matches("resolved_locks: crate::lock::SnapshotLockSet::default()")
+            .count(),
+        1
+    );
 }
 
 /// The snapshot read path must fill the sets before it retries and stamp them
