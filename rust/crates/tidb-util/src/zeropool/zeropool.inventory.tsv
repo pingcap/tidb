@@ -1,0 +1,33 @@
+# lockdown-inventory-v1
+# owning-go-source	pkg/util/zeropool/pool.go
+# source-sha256	6f55a4b32126c0e2ad1d5883fc5a3efbfbc02a1f2e64c9afb869660e6d5e763a
+id	category	go_item	status	rust_symbol	evidence
+D01	declaration	Pool[T any] type	PORTED	Pool	lockdown_inventory_matches_go_source_and_rust_symbols
+D02	field	Pool.items sync.Pool stores pointers whose values are available	PORTED	Pool::items	source_factory_and_zero_value_boundaries_are_exact
+D03	field	Pool.pointers sync.Pool stores reusable empty *T containers	DECLINED	-	Rust moves T directly and therefore needs no interface-boxing pointer pool
+R01	rule	The zero value of Pool is valid and returns zero T while empty	PORTED	Pool::default	source_factory_and_zero_value_boundaries_are_exact
+R02	rule	Go supplies a zero value for every T any without a trait bound	DECLINED	-	Rust Pool::new Pool::get and Pool::put require T: Default; Rust types without Default cannot use this API
+R03	rule	A Pool must not be copied after first use	PORTED	Pool	Rust Pool contains a non-Clone Mutex and exposes no Clone implementation
+F01	function	New[T any](item func() T) Pool[T]	PORTED	Pool::new	source_factory_and_zero_value_boundaries_are_exact
+R04	rule	New returns the Pool by value	PORTED	Pool::new	lockdown_inventory_matches_go_source_and_rust_symbols
+R05	rule	New installs item as the empty-items factory	PORTED	Pool::factory	source_factory_and_zero_value_boundaries_are_exact
+R06	rule	The empty-items factory invokes item and supplies its value to Get	PORTED	Pool::get	source_factory_and_zero_value_boundaries_are_exact
+R07	rule	A nil item function is accepted by New and panics when an empty Get invokes it	DECLINED	-	Go oracle: nil_factory_panic type=runtime.errorString value=runtime error: invalid memory address or nil pointer dereference; Rust closures are non-null
+R08	rule	Go item functions have no Send Sync or static lifetime constraint	DECLINED	-	Rust Pool::new requires Fn() -> T + Send + Sync + 'static so a shared Mutex pool remains thread-safe
+F02	function	(*Pool[T]).Get() T	PORTED	Pool::get	source_factory_and_zero_value_boundaries_are_exact
+R09	rule	Get first requests a value from items	PORTED	Pool::get	source_factory_and_zero_value_boundaries_are_exact
+B01	branch	Get receives nil when a zero-value Pool is empty	PORTED	Pool::get	source_factory_and_zero_value_boundaries_are_exact
+R10	rule	The nil branch returns zero T without adding a pointer to pointers	PORTED	Pool::get	source_factory_and_zero_value_boundaries_are_exact
+B02	branch	The pooled any value fails the *T type assertion	UNREACHABLE	-	items is private and this file only puts *T values; Rust typed Vec<T> makes the mismatch unrepresentable
+R11	rule	Get copies the pooled T out of its *T container for the caller	PORTED	Pool::get	get_moves_value_without_retaining_a_duplicate
+R12	rule	Get overwrites the reusable *T container with zero T so it retains no caller value	PORTED	Pool::get	get_moves_value_without_retaining_a_duplicate
+R13	rule	Get puts the cleared *T container into the secondary pointers pool	DECLINED	-	Rust ownership moves T out directly and retains no empty pointer container
+R14	rule	Get returns the extracted item	PORTED	Pool::get	source_factory_and_zero_value_boundaries_are_exact
+F03	function	(*Pool[T]).Put(item T)	PORTED	Pool::put	source_factory_and_zero_value_boundaries_are_exact
+B03	branch	Put reuses a non-nil *T from pointers	DECLINED	-	Rust stores T directly and has no secondary pointer pool
+B04	branch	Put allocates new(T) when pointers is empty	DECLINED	-	Rust stores T directly; Vec capacity allocation is the corresponding storage cost
+R15	rule	Put writes item into the selected storage slot	PORTED	Pool::put	source_factory_and_zero_value_boundaries_are_exact
+R16	rule	Put makes the item available to a later Get	PORTED	Pool::put	source_factory_and_zero_value_boundaries_are_exact
+R17	rule	Get and Put may be called concurrently	PORTED	Pool	TestPool
+R18	rule	sync.Pool may discard any stored item at any time including across garbage collection	DECLINED	-	Go oracle after Put(123) and two runtime.GC calls: two_gc_get=-1 from factory; Rust retains entries until Get or Pool drop
+R19	rule	The secondary pointer pool avoids an allocation on most warmed Get Put pairs	PORTED	Pool	does_not_allocate_after_warmup
