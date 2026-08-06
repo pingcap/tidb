@@ -221,9 +221,13 @@ func TestAdaptiveLimitEligibility(t *testing.T) {
 	pendingTracker := memory.NewTracker(-1, -1)
 	worker := &indexWorker{adaptiveLimitController: controller, batchSize: 2, memTracker: pendingTracker}
 	handles := make([]kv.Handle, 0, 2)
+	var pendingHandlesMemUsage int64
 	for i := range 5 {
-		handles = worker.appendExtractedHandle(handles, kv.IntHandle(i))
+		var pendingHandleMemUsage int64
+		handles, pendingHandleMemUsage = worker.appendExtractedHandle(handles, kv.IntHandle(i))
+		pendingHandlesMemUsage += pendingHandleMemUsage
 	}
+	worker.consumePendingHandlesMemory(pendingHandlesMemUsage)
 	require.Len(t, handles, 2)
 	require.Len(t, worker.pendingHandles, 3)
 	require.Positive(t, pendingTracker.BytesConsumed())
@@ -238,9 +242,13 @@ func TestAdaptiveLimitEligibility(t *testing.T) {
 	require.Empty(t, worker.pendingHandles)
 	require.Zero(t, pendingTracker.BytesConsumed())
 	handles = handles[:0]
+	pendingHandlesMemUsage = 0
 	for i := range 4 {
-		handles = worker.appendExtractedHandle(handles, kv.IntHandle(i))
+		var pendingHandleMemUsage int64
+		handles, pendingHandleMemUsage = worker.appendExtractedHandle(handles, kv.IntHandle(i))
+		pendingHandlesMemUsage += pendingHandleMemUsage
 	}
+	worker.consumePendingHandlesMemory(pendingHandlesMemUsage)
 	require.Len(t, worker.pendingHandles, 2)
 	require.Positive(t, pendingTracker.BytesConsumed())
 	worker.releasePendingHandles()
@@ -274,10 +282,11 @@ func TestAdaptiveLimitEligibility(t *testing.T) {
 		maxBatchSize:            2,
 		maxChunkSize:            32,
 		PushedLimit:             &physicalop.PushedDownLimit{Count: 5},
+		memTracker:              pendingTracker,
 	}
 	result := &oversizedChunkSelectResult{rows: []int64{1, 2, 3, 4, 5}}
 	chk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 32)
-	for _, expected := range [][]int64{{1, 2}, {3, 4}, {5}} {
+	for round, expected := range [][]int64{{1, 2}, {3, 4}, {5}} {
 		handles, _, err := worker.extractTaskHandles(context.Background(), chk, result, []int{0})
 		require.NoError(t, err)
 		extracted := make([]int64, 0, len(handles))
@@ -285,6 +294,12 @@ func TestAdaptiveLimitEligibility(t *testing.T) {
 			extracted = append(extracted, handle.IntValue())
 		}
 		require.Equal(t, expected, extracted)
+		require.Len(t, worker.pendingHandles, []int{3, 1, 0}[round])
+		if round < 2 {
+			require.Positive(t, pendingTracker.BytesConsumed())
+		} else {
+			require.Zero(t, pendingTracker.BytesConsumed())
+		}
 	}
 	require.True(t, worker.reachedPushedLimit())
 	require.Empty(t, worker.pendingHandles)

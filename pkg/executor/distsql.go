@@ -1832,6 +1832,14 @@ func (w *indexWorker) extractLookUpPushDownRowsOrHandles(ctx context.Context, it
 
 func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult, handleOffset []int) (
 	handles []kv.Handle, retChk *chunk.Chunk, err error) {
+	// A SelectResult may return more rows than requested. Charge excess handles
+	// once per extraction while preserving accounting on every return path.
+	var pendingHandlesMemUsage int64
+	if w.adaptiveLimitController != nil {
+		defer func() {
+			w.consumePendingHandlesMemory(pendingHandlesMemUsage)
+		}()
+	}
 	// PushedLimit would always be nil for CheckIndex or CheckTable, we add this check just for insurance.
 	checkLimit := (w.PushedLimit != nil) && (w.checkIndexValue == nil)
 	handles = w.takePendingHandles(handles)
@@ -1876,7 +1884,9 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 			if err != nil {
 				return handles, retChk, err
 			}
-			handles = w.appendExtractedHandle(handles, h)
+			var pendingHandleMemUsage int64
+			handles, pendingHandleMemUsage = w.appendExtractedHandle(handles, h)
+			pendingHandlesMemUsage += pendingHandleMemUsage
 		}
 		if w.checkIndexValue != nil {
 			if retChk == nil {
@@ -1920,20 +1930,21 @@ func (w *indexWorker) reachedPushedLimit() bool {
 		w.scannedKeys >= w.PushedLimit.Count+w.PushedLimit.Offset
 }
 
-func (w *indexWorker) appendExtractedHandle(handles []kv.Handle, handle kv.Handle) []kv.Handle {
+func (w *indexWorker) appendExtractedHandle(handles []kv.Handle, handle kv.Handle) ([]kv.Handle, int64) {
 	if w.adaptiveLimitController != nil && len(handles) >= w.batchSize {
 		w.pendingHandles = append(w.pendingHandles, handle)
-		w.consumePendingHandleMemory(handle)
-		return handles
+		if w.memTracker == nil {
+			return handles, 0
+		}
+		return handles, size.SizeOfInterface + int64(handle.MemUsage())
 	}
-	return append(handles, handle)
+	return append(handles, handle), 0
 }
 
-func (w *indexWorker) consumePendingHandleMemory(handle kv.Handle) {
-	if w.memTracker == nil {
+func (w *indexWorker) consumePendingHandlesMemory(usage int64) {
+	if w.memTracker == nil || usage <= 0 {
 		return
 	}
-	usage := size.SizeOfInterface + int64(handle.MemUsage())
 	w.pendingHandlesMemUsage += usage
 	w.memTracker.Consume(usage)
 }
