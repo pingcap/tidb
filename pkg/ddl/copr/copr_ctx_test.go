@@ -160,11 +160,7 @@ func TestCopContextConditionUsesFixedCollation(t *testing.T) {
 		expression.BuildSimpleExpr = originBuildSimpleExpr
 	}()
 	var seenUseNewCollates []bool
-	expression.BuildSimpleExpr = func(ctx expression.BuildContext, expr ast.ExprNode, opts ...expression.BuildOption) (expression.Expression, error) {
-		options := expression.BuildOptions{}
-		for _, opt := range opts {
-			opt(&options)
-		}
+	expression.BuildSimpleExpr = func(ctx expression.BuildContext, expr ast.ExprNode, _ ...expression.BuildOption) (expression.Expression, error) {
 		seenUseNewCollates = append(seenUseNewCollates, ctx.NewCollationEnabled())
 		return expression.NewOne(), nil
 	}

@@ -112,7 +112,7 @@ func buildSimpleExpr(ctx expression.BuildContext, node ast.ExprNode, opts ...exp
 		return nil, errors.New("expression node should be present")
 	}
 
-	options := expression.BuildOptions{}
+	var options expression.BuildOptions
 	for _, opt := range opts {
 		opt(&options)
 	}

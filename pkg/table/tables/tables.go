@@ -514,7 +514,7 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, txn kv.Transaction,
 	key := t.RecordKey(h)
 	evalCtx := sctx.GetExprCtx().GetEvalCtx()
 	tc, ec := evalCtx.TypeCtx(), evalCtx.ErrCtx()
-	err = encodeRowBuffer.WriteMemBufferEncoded(t.encoder, sctx.GetRowEncodingConfig(), tc.Location(), ec, memBuffer, key, h)
+	err = encodeRowBuffer.WriteMemBufferEncoded(sctx.GetRowEncodingConfig(), tc.Location(), ec, memBuffer, key, h)
 	if err != nil {
 		return err
 	}
@@ -919,7 +919,7 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 		}
 	}
 
-	err = encodeRowBuffer.WriteMemBufferEncoded(t.encoder, sctx.GetRowEncodingConfig(), tc.Location(), ec, memBuffer, key, recordID, flags...)
+	err = encodeRowBuffer.WriteMemBufferEncoded(sctx.GetRowEncodingConfig(), tc.Location(), ec, memBuffer, key, recordID, flags...)
 	if err != nil {
 		return nil, err
 	}

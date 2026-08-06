@@ -1666,6 +1666,10 @@ func (b *builtinLocate3ArgsUTF8Sig) evalInt(ctx EvalContext, row chunk.Row) (int
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
+	if collate.IsCICollation(b.collation) {
+		subStr = strings.ToLower(subStr)
+		str = strings.ToLower(str)
+	}
 	pos, isNull, err := b.args[2].EvalInt(ctx, row)
 	// Transfer the argument which starts from 1 to real index which starts from 0.
 	pos--

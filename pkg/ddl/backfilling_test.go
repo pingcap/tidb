@@ -85,7 +85,7 @@ func TestBuildIndexConditionCheckerUsesFixedCollation(t *testing.T) {
 		expression.BuildSimpleExpr = originBuildSimpleExpr
 	}()
 	expression.BuildSimpleExpr = func(ctx expression.BuildContext, _ ast.ExprNode, opts ...expression.BuildOption) (expression.Expression, error) {
-		options := expression.BuildOptions{}
+		var options expression.BuildOptions
 		for _, opt := range opts {
 			opt(&options)
 		}
