@@ -131,7 +131,7 @@ mod tests {
     }
 
     impl<T: ?Sized> AmbiguousIfClone<()> for T {}
-    impl<T: ?Sized + Clone> AmbiguousIfClone<u8> for T {}
+    impl<T: Clone> AmbiguousIfClone<u8> for T {}
 
     const ITERATIONS: usize = 1_000_000;
     const CONCURRENCY: usize = u8::MAX as usize;
