@@ -1,0 +1,13 @@
+# lockdown-inventory-v1
+# owning-go-source	pkg/util/vitess/vitess_hash.go
+# source-sha256	0486d95f1004def99ad658e1418710620899673ece932c015d5ba9ed217eb80c
+id	category	go_item	status	rust_symbol	evidence
+D01	declaration	nullKeyBlock package variable	PORTED	NULL_KEY_BLOCK	source_boundary_vectors_are_exact
+F01	function	init eagerly constructs nullKeyBlock at package initialization	DECLINED	-	Go FIPS oracle panics in vitess.init.0 before main; Rust LazyLock constructs on first hash call
+B01	branch	init panics when des.NewCipher returns an error	DECLINED	-	GODEBUG=fips140=only oracle: panic crypto/des: use of DES is not allowed in FIPS 140-only mode
+R01	rule	init uses an eight-byte all-zero DES key	PORTED	NULL_KEY	source_boundary_vectors_are_exact
+F02	function	HashUint64	PORTED	hash_uint64	source_boundary_vectors_are_exact
+R02	rule	HashUint64 serializes shardKey as eight big-endian bytes	PORTED	hash_uint64	source_boundary_vectors_are_exact
+R03	rule	HashUint64 encrypts exactly one DES block with nullKeyBlock	PORTED	hash_uint64	source_boundary_vectors_are_exact
+R04	rule	HashUint64 interprets the encrypted block as big-endian uint64	PORTED	hash_uint64	source_boundary_vectors_are_exact
+R05	rule	HashUint64 returns a nil error after successful package initialization	DECLINED	-	Go oracle input=0000000000000000 output=8CA64DE9C1B123A7 err=<nil>; Rust API omits the infallible post-init error
