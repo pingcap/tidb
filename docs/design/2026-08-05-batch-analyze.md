@@ -60,6 +60,51 @@ The same mechanism can batch `ANALYZE` requests for multiple Regions on the same
 
 ### Batched Analyze Requests
 
+#### Add a Finalizer
+
+To fit the requirements of `ANALYZE` requests, the missing piece is that the current batch-request mechanism sends individual `StoreBatchTaskResponse` entries, leaving no opportunity to merge them.
+
+This document proposes adding one extra step before TiKV sends the batched responses back to TiDB: a finalizer that is responsible for merging the sub-task responses into the main response.
+
+The new [workflow](https://editor.plantuml.com/uml/jPRTRjf048NlUOfHRjggeW-GYog4G2_w8mIeKYjkrlPWHbdlklj3Ifw-isiRx3HjWW5VWH7ppPbpTkmRwuHnlf1mmMlWo4c4XTC6XxV2fHlCOAnBerEqLXkOIlq03-GsC2Kb93qAHreTIxb8xrr4oSEYb4gX75mjwUuMHjz6Ntxyd5o1i33YtdUFU05AUrXZIQXS15OVpqFv_Br3cQYir5HpcYzdeSnHP33JMiRIuKC_0MtAoHLUHZJc3Z_MOx-6XKyASh3sKWwjA4f9AWSdxBs5PCSwywD3FAWTRK4-6UtBfjY-U9oa3GUgZvQ_AHCb4ZwY1gsN3WeqUT2ovY2uJRZzowCzqluMfSaFZmnL1beXU2NChfEu-MoyKcyBGPLCU5yjZBWlbk465pE4zbsNiiycSqAOc17sYsSrAD9DUt90AiEIE-1AShTIWdifMJAQBKRDs1g2xL1YJ8STANDqtgWevkb_eKJJm___QGas964KiAvM91FwNRMMXl0rz0xMfy46Zl9UWjX9BJAxKjoGZlpeJVtpaPG56efTLuK2CsjAQPNstPbFA3EHtelyq6YfbKLWcrUgcwLvyrkTgLTHddC_g6aCoGx8NbeExhSEPYjbV41E8qHASogPKQ-qQxX3ILiELAgBX1GBuRS2HvONzmkJ-IUbTt-lHoZj-BnHlk44hS_p77c6icmPRC1uPO4gstdZu-5XTXh5yqxghDet5l0tfZw-1wNik3ESQMS_d4AP2f9iRlKGONTbEEmnNhmOQKkP5tAViBweGTZmqPjBNeCRnl1hwny0) is as follows:
+
+![](https://img.plantuml.biz/plantuml/png/jPRTRjf048NlUOfHRjggeW-GYog4G2_w8mIeKYjkrlPWHbdlklj3Ifw-isiRx3HjWW5VWH7ppPbpTkmRwuHnlf1mmMlWo4c4XTC6XxV2fHlCOAnBerEqLXkOIlq03-GsC2Kb93qAHreTIxb8xrr4oSEYb4gX75mjwUuMHjz6Ntxyd5o1i33YtdUFU05AUrXZIQXS15OVpqFv_Br3cQYir5HpcYzdeSnHP33JMiRIuKC_0MtAoHLUHZJc3Z_MOx-6XKyASh3sKWwjA4f9AWSdxBs5PCSwywD3FAWTRK4-6UtBfjY-U9oa3GUgZvQ_AHCb4ZwY1gsN3WeqUT2ovY2uJRZzowCzqluMfSaFZmnL1beXU2NChfEu-MoyKcyBGPLCU5yjZBWlbk465pE4zbsNiiycSqAOc17sYsSrAD9DUt90AiEIE-1AShTIWdifMJAQBKRDs1g2xL1YJ8STANDqtgWevkb_eKJJm___QGas964KiAvM91FwNRMMXl0rz0xMfy46Zl9UWjX9BJAxKjoGZlpeJVtpaPG56efTLuK2CsjAQPNstPbFA3EHtelyq6YfbKLWcrUgcwLvyrkTgLTHddC_g6aCoGx8NbeExhSEPYjbV41E8qHASogPKQ-qQxX3ILiELAgBX1GBuRS2HvONzmkJ-IUbTt-lHoZj-BnHlk44hS_p77c6icmPRC1uPO4gstdZu-5XTXh5yqxghDet5l0tfZw-1wNik3ESQMS_d4AP2f9iRlKGONTbEEmnNhmOQKkP5tAViBweGTZmqPjBNeCRnl1hwny0)
+
+1. During a full-sampling `ANALYZE`, TiDB divides the scan into Region tasks and groups the tasks that target the same TiKV store.
+2. TiDB enables result merging and sends each group as a single unary coprocessor RPC, placing one task in the main request and the rest in `StoreBatchTask` entries.
+3. TiKV schedules each Region task independently in its read pool and keeps the successful statistics in their mergeable, unserialized form.
+4. Once all results are in, TiKV schedules the batch finalizer in the same read pool. The finalizer merges the successful payloads into the main result and serializes it once.
+5. TiKV returns the merged main response together with the remaining `StoreBatchTaskResponse` entries. TiDB consumes the merged payload and handles failed or unmerged tasks as before.
+
+The finalizer merges as many successful, mergeable results as it can into the main response. If a merge fails, TiKV still returns the results that were merged successfully, along with the failed tasks as separate entries. TiDB can then use the partial result and retry only the tasks that failed.
+
+On the TiKV side, we extend the abstraction so that any request type can use the new mechanism, rather than adding special handling only for `ANALYZE`.
+
+```rust
+pub trait MergeableResult: Any + Send {
+    fn merge(&mut self, other: Box<dyn MergeableResult>);
+    fn into_data(self: Box<Self>) -> Result<Vec<u8>>;
+}
+
+/// A coprocessor response together with its response-data memory trace.
+pub type TracedResponse = MemoryTraceGuard<coppb::Response>;
+
+/// The output of handling a unary request. It always owns the response and
+/// records separately whether its data is ready or still mergeable.
+pub struct HandlerOutput {
+    response: TracedResponse,
+    state: HandlerOutputState,
+}
+
+/// Whether the response data is ready or still mergeable and unserialized.
+enum HandlerOutputState {
+    Ready,
+    Mergeable(Box<dyn MergeableResult>),
+}
+```
+
+A request type that wants to use this mechanism must produce batched results that implement the `MergeableResult` trait. Its handler then returns a `HandlerOutput`, which carries a tracked response together with a state. The state indicates whether the output is a finished result, ready to send as is, or a mergeable result that the finalizer will combine at the end.
+
 ## Test Design
 
 ### Functional Tests
