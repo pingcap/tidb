@@ -5718,6 +5718,9 @@ func (b *PlanBuilder) buildExplainPlan(targetPlan base.Plan, format string, expl
 	if format == types.ExplainFormatTrueCardCost && !analyze {
 		return nil, errors.Errorf("'explain format=%v' cannot work without 'analyze', please use 'explain analyze format=%v'", format, format)
 	}
+	if format == types.ExplainFormatRU && !analyze {
+		return nil, errors.Errorf("'explain format=%v' cannot work without 'analyze', please use 'explain analyze format=%v'", format, format)
+	}
 
 	p := &Explain{
 		TargetPlan:       targetPlan,
