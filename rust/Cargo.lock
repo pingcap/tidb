@@ -1614,6 +1614,7 @@ dependencies = [
  "chrono-tz",
  "prost",
  "serde_json",
+ "sha2",
  "tidb-ast",
  "tidb-codec",
  "tidb-datatype",

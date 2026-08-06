@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Next-generation read-only-variable predicate from
-//! `pkg/sessionctx/vardef/runtime.go`.
+//! LOCKDOWN owner for Go `pkg/sessionctx/vardef/runtime.go`.
 //!
-//! The Go boundary lowercases a variable name and checks six next-generation
-//! variables. This leaf preserves only that case-insensitive predicate;
-//! runtime kernel selection, variable registration/defaults, lease atomics,
-//! and SET dispatch remain outside the executor/session metadata owner.
+//! `nextgen_readonly_vars.inventory.tsv` classifies every declaration,
+//! function, and branch in that source. The read-only-variable predicate is
+//! ported here. The source's three process-global leases are explicitly
+//! declined: Rust owns the schema lease in `tidb-server::NodeConfig` and has no
+//! stats reload or plan-replayer GC worker to consume the other two leases.
 
 /// Variable names treated as read-only by the next-generation kernel.
 pub const NEXTGEN_READ_ONLY_VARIABLES: &[&str] = &[
@@ -33,7 +33,6 @@ pub const NEXTGEN_READ_ONLY_VARIABLES: &[&str] = &[
 /// Returns whether `name` is read-only in the next-generation kernel.
 #[must_use]
 pub fn is_read_only_var_in_nextgen(name: &str) -> bool {
-    NEXTGEN_READ_ONLY_VARIABLES
-        .iter()
-        .any(|candidate| candidate.eq_ignore_ascii_case(name))
+    let name = name.to_lowercase();
+    NEXTGEN_READ_ONLY_VARIABLES.contains(&name.as_str())
 }
