@@ -36,6 +36,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/slowlogrule"
@@ -755,6 +757,97 @@ func TestFinishExecuteStmtSyncsTiDBRUV2FromRUDetails(t *testing.T) {
 				require.Empty(t, rawUnits)
 			})
 		}
+	})
+
+	t.Run("preview RU isolates scalar subqueries from a following fast plan", func(t *testing.T) {
+		core, recorded := observer.New(zap.InfoLevel)
+		oldLogger := logutil.GeneralLogger
+		logutil.GeneralLogger = zap.New(core)
+		oldGeneralLog := vardef.ProcessGeneralLog.Swap(false)
+		t.Cleanup(func() {
+			logutil.GeneralLogger = oldLogger
+			vardef.ProcessGeneralLog.Store(oldGeneralLog)
+		})
+
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table scalar_subquery_fast_plan_ru (id int primary key, v int)")
+		tk.MustExec("insert into scalar_subquery_fast_plan_ru values (1, 10)")
+		tk.MustExec("set tidb_enable_read_billing_demo = on")
+		tk.MustExec("begin")
+		tk.MustExec("insert into scalar_subquery_fast_plan_ru values (2, 20), (3, 30)")
+		tk.MustExec("delete from scalar_subquery_fast_plan_ru where id in (2, 3)")
+		vardef.ProcessGeneralLog.Store(true)
+		recorded.TakeAll()
+
+		scalarSQL := "select (select count(*) from scalar_subquery_fast_plan_ru where v > 0)"
+		tk.MustQuery(scalarSQL).Check(testkit.Rows("1"))
+		require.NotEmpty(t, tk.Session().GetSessionVars().MapScalarSubQ)
+		scalarPlan, ok := tk.Session().GetSessionVars().StmtCtx.GetPlan().(base.Plan)
+		require.True(t, ok)
+		require.NotEmpty(t, plannercore.FlattenPhysicalPlan(scalarPlan, true).ScalarSubQueries)
+		recorded.TakeAll()
+
+		pointSQL := "select v from scalar_subquery_fast_plan_ru where id = 2"
+		tk.MustQuery(pointSQL).Check(testkit.Rows())
+		vars := tk.Session().GetSessionVars()
+		require.Empty(t, vars.MapScalarSubQ)
+		require.Contains(t, fmt.Sprintf("%T", vars.StmtCtx.GetPlan()), "PointGetPlan")
+		pointPlan, ok := vars.StmtCtx.GetPlan().(base.Plan)
+		require.True(t, ok)
+		require.Empty(t, plannercore.FlattenPhysicalPlan(pointPlan, true).ScalarSubQueries)
+
+		entries := recorded.TakeAll()
+		var completionEntries []observer.LoggedEntry
+		for _, entry := range entries {
+			if entry.Message == "GENERAL_LOG_RU_UNITS" {
+				completionEntries = append(completionEntries, entry)
+			}
+		}
+		require.Len(t, completionEntries, 1)
+		requireReadBillingDemoGeneralLogIdentity(t, completionEntries[0], pointSQL)
+		rawUnits, ok := completionEntries[0].ContextMap()["units"].([]any)
+		require.True(t, ok)
+		require.NotEmpty(t, rawUnits)
+		require.True(t, slices.ContainsFunc(rawUnits, func(raw any) bool {
+			unit, ok := raw.(map[string]any)
+			return ok && unit["op_class"] == "kv_point_lookup" && unit["operator_kind"] == "point_get"
+		}))
+
+		// A non-prepared plan-cache hit also returns before buildLogicalPlan.
+		// Warm a BatchPointGet, then prove a newly registered scalar subquery
+		// cannot leak into the cached fast plan.
+		tk.MustExec("set tidb_enable_non_prepared_plan_cache = on")
+		batchSQL := "select v from scalar_subquery_fast_plan_ru where id in (2, 3)"
+		tk.MustQuery(batchSQL).Check(testkit.Rows())
+		tk.MustQuery(scalarSQL).Check(testkit.Rows("1"))
+		require.NotEmpty(t, vars.MapScalarSubQ)
+		recorded.TakeAll()
+
+		tk.MustQuery(batchSQL).Check(testkit.Rows())
+		require.True(t, vars.FoundInPlanCache)
+		require.Empty(t, vars.MapScalarSubQ)
+		require.Contains(t, fmt.Sprintf("%T", vars.StmtCtx.GetPlan()), "BatchPointGetPlan")
+		batchPlan, ok := vars.StmtCtx.GetPlan().(base.Plan)
+		require.True(t, ok)
+		require.Empty(t, plannercore.FlattenPhysicalPlan(batchPlan, true).ScalarSubQueries)
+		entries = recorded.TakeAll()
+		completionEntries = completionEntries[:0]
+		for _, entry := range entries {
+			if entry.Message == "GENERAL_LOG_RU_UNITS" {
+				completionEntries = append(completionEntries, entry)
+			}
+		}
+		require.Len(t, completionEntries, 1)
+		requireReadBillingDemoGeneralLogIdentity(t, completionEntries[0], batchSQL)
+		rawUnits, ok = completionEntries[0].ContextMap()["units"].([]any)
+		require.True(t, ok)
+		require.NotEmpty(t, rawUnits)
+		require.True(t, slices.ContainsFunc(rawUnits, func(raw any) bool {
+			unit, ok := raw.(map[string]any)
+			return ok && unit["op_class"] == "kv_point_lookup" && unit["operator_kind"] == "batch_point_get"
+		}))
 	})
 
 	t.Run("preview RU outputs preserve a skipped lookup inner", func(t *testing.T) {

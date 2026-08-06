@@ -177,6 +177,7 @@ go_test(
         "//pkg/meta/model",
         "//pkg/metrics",
         "//pkg/param",
+        "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/auth",
         "//pkg/parser/charset",
@@ -212,6 +213,7 @@ go_test(
         "//pkg/util/context",
         "//pkg/util/dbterror/exeerrors",
         "//pkg/util/execdetails",
+        "//pkg/util/logutil",
         "//pkg/util/plancodec",
         "//pkg/util/replayer",
         "//pkg/util/sqlexec",
@@ -234,5 +236,7 @@ go_test(
         "@com_github_tikv_client_go_v2//util",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_goleak//:goleak",
+        "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zaptest/observer",
     ],
 )

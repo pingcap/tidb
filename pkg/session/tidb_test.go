@@ -395,6 +395,35 @@ func TestRUV2MetricsIsolatedPerStatementInExplicitTxn(t *testing.T) {
 
 		MustExec(t, se, "insert into pre_exec_retry_count values (2, 2)")
 	})
+
+	t.Run("optimistic transaction replay isolates scalar subquery plans", func(t *testing.T) {
+		MustExec(t, se, "use test")
+		MustExec(t, se, "set @@session.tidb_txn_mode = 'optimistic'")
+		MustExec(t, se, "set @@session.tidb_disable_txn_auto_retry = off")
+		MustExec(t, se, "set @@session.tidb_retry_limit = 3")
+		MustExec(t, se, "set @@session.tidb_enable_non_prepared_plan_cache_for_dml = off")
+		MustExec(t, se, "drop table if exists scalar_subquery_retry")
+		MustExec(t, se, "create table scalar_subquery_retry (id int primary key, v int)")
+		MustExec(t, se, "insert into scalar_subquery_retry values (1, 1), (2, 2)")
+
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/sessiontxn/isolation/injectOptimisticTxnRetryable", `return(true)`))
+		defer func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/sessiontxn/isolation/injectOptimisticTxnRetryable"))
+		}()
+		MustExec(t, se, "begin optimistic")
+		MustExec(t, se, "update scalar_subquery_retry set v = (select max(v) from scalar_subquery_retry) where id = 1")
+		require.NotEmpty(t, se.GetSessionVars().MapScalarSubQ)
+		MustExec(t, se, "update scalar_subquery_retry set v = v + 1 where id = 2")
+		require.Empty(t, se.GetSessionVars().MapScalarSubQ)
+
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/mockCommitError8942", `1*return(true)->return(false)`))
+		defer func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/mockCommitError8942"))
+		}()
+		MustExec(t, se, "commit")
+		require.Greater(t, se.GetSessionVars().StmtCtx.ExecRetryCount, uint64(0))
+		require.Empty(t, se.GetSessionVars().MapScalarSubQ)
+	})
 }
 
 func TestRUV2MetricsWriteRequestsInPessimisticTxn(t *testing.T) {

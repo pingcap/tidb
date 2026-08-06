@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
@@ -60,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/arena"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
@@ -67,6 +69,8 @@ import (
 	"github.com/stretchr/testify/require"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/testutils"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func TestMatchIdentityWithVariantsStarter(t *testing.T) {
@@ -1302,6 +1306,62 @@ func TestPrefetchPointKeys4Delete(t *testing.T) {
 	require.Equal(t, 6, tk.Session().GetSessionVars().TxnCtx.PessimisticCacheHit)
 	tk.MustExec("commit")
 	tk.MustQuery("select * from prefetch").Check(testkit.Rows())
+
+	// Verify the SELECT fast-plan entries returned by prefetchPointPlanKeys are
+	// isolated from scalar subqueries registered by an earlier statement in the
+	// same multi-statement request.
+	logCore, recorded := observer.New(zap.InfoLevel)
+	oldLogger := logutil.GeneralLogger
+	logutil.GeneralLogger = zap.New(logCore)
+	oldGeneralLog := vardef.ProcessGeneralLog.Swap(false)
+	t.Cleanup(func() {
+		logutil.GeneralLogger = oldLogger
+		vardef.ProcessGeneralLog.Store(oldGeneralLog)
+	})
+	tk.MustExec("insert into prefetch values (1, 1, 1)")
+	tk.MustExec("set tidb_enable_read_billing_demo = on")
+	tk.MustExec("begin optimistic")
+	tk.MustExec("insert into prefetch values (2, 2, 2)")
+	tk.MustExec("delete from prefetch where a = 2 and b = 2")
+	pointSQL := "select c from prefetch where a = 2 and b = 2"
+	multiQuery := "select (select count(*) from prefetch where c > 0);" + pointSQL + ";"
+	stmts, err := cc.ctx.Parse(ctx, multiQuery)
+	require.NoError(t, err)
+	plans, err := cc.prefetchPointPlanKeys(ctx, stmts, multiQuery)
+	require.NoError(t, err)
+	require.Len(t, plans, 2)
+	require.Nil(t, plans[0])
+	require.Contains(t, fmt.Sprintf("%T", plans[1]), "PointGetPlan")
+
+	vardef.ProcessGeneralLog.Store(true)
+	recorded.TakeAll()
+	err = cc.handleQuery(ctx, multiQuery)
+	require.NoError(t, err)
+	vars := tk.Session().GetSessionVars()
+	require.Empty(t, vars.MapScalarSubQ)
+	require.Contains(t, fmt.Sprintf("%T", vars.StmtCtx.GetPlan()), "PointGetPlan")
+	_, pointDigest := parser.NormalizeDigest(pointSQL)
+	var pointCompletion map[string]any
+	for _, entry := range recorded.TakeAll() {
+		fields := entry.ContextMap()
+		if entry.Message == "GENERAL_LOG_RU_UNITS" && fields["sql_digest"] == pointDigest.String() {
+			pointCompletion = fields
+		}
+	}
+	require.NotNil(t, pointCompletion)
+	rawUnits, ok := pointCompletion["units"].([]any)
+	require.True(t, ok)
+	require.NotEmpty(t, rawUnits)
+	foundPointUnit := false
+	for _, raw := range rawUnits {
+		unit, ok := raw.(map[string]any)
+		if ok && unit["op_class"] == "kv_point_lookup" && unit["operator_kind"] == "point_get" {
+			foundPointUnit = true
+			break
+		}
+	}
+	require.True(t, foundPointUnit)
+	tk.MustExec("commit")
 }
 
 func TestPrefetchBatchPointGet(t *testing.T) {
