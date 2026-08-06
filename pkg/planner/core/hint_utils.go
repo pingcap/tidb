@@ -568,6 +568,10 @@ func genJoinOrderHintFromRootPhysicalJoin(
 func extractOrderedPhysicalJoinGroup(p base.PhysicalJoin, visitedIDs map[int]struct{}, depth uint) []base.PhysicalPlan {
 	visitedIDs[p.ID()] = struct{}{}
 
+	// TODO(#70351): Traverse join-group-preserving PhysicalSelection and PhysicalProjection wrappers.
+	// Until then, extraction may stop at these wrappers and does not guarantee reproduction of the complete
+	// physical join order.
+
 	// 1. sanity checks
 
 	// In our join reorder implementation, cartesian join will break the join relationship and make its two children

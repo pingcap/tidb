@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/joinorder"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/types"
@@ -28,191 +29,137 @@ import (
 )
 
 func TestMatchLeadingHintTableToOperandFailClosed(t *testing.T) {
-	newDataSource := func(ctx *mock.Context, offset int, table string) *logicalop.DataSource {
-		plan := logicalop.DataSource{}.Init(ctx, offset)
-		plan.SetOutputNames(types.NameSlice{
-			&types.FieldName{
-				DBName:  ast.NewCIStr("test"),
-				TblName: ast.NewCIStr(table),
-				ColName: ast.NewCIStr("a"),
-			},
-		})
-		return plan
+	identity := func(table string, offset int) *h.HintedTable {
+		return &h.HintedTable{DBName: ast.NewCIStr("test"), TblName: ast.NewCIStr(table), SelectOffset: offset}
 	}
-	assertMatch := func(t *testing.T, plan base.Plan, table string, owner int, matched bool) {
-		match := plannerutil.MatchLeadingHintTableToOperand(
-			plan,
-			&ast.HintTable{TableName: ast.NewCIStr(table)},
-			owner,
-		)
-		require.Equal(t, matched, match.Matched)
-		require.False(t, match.OwnerVisible)
+	occurrence := func(table string, qb, nodeID int, kind plannerutil.IdentityOccurrenceKind) plannerutil.IdentityOccurrence {
+		return plannerutil.IdentityOccurrence{Identity: *identity(table, qb), StartQB: qb, NodeID: nodeID, Kind: kind}
+	}
+	hintTable := func(table string) *ast.HintTable {
+		return &ast.HintTable{TableName: ast.NewCIStr(table)}
+	}
+	qualifiedHint := func(table string, qb int) *ast.HintTable {
+		return &ast.HintTable{TableName: ast.NewCIStr(table), QBName: ast.NewCIStr("sel_" + string(rune('0'+qb)))}
+	}
+	uniqueOwner := func(table string) plannerutil.OwnerResolution {
+		return plannerutil.OwnerResolution{Kind: plannerutil.OwnerUnique, Identity: identity(table, 1)}
+	}
+	match := func(table *ast.HintTable, facts plannerutil.OperandIdentityFacts, aliases []h.SelectBlockAlias) joinorder.LeadingMatch {
+		return joinorder.MatchLeadingHint(table, facts, aliases, 1)
 	}
 
-	tests := []struct {
-		name        string
-		ownerOffset int
-		matched     bool
-	}{
-		{
-			name:        "invalid owner rejects unique raw identity",
-			ownerOffset: -1,
-		},
-		{
-			name:        "no derived candidate allows semi rewrite compatibility",
-			ownerOffset: 1,
-			matched:     true,
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			ctx := mock.NewContext()
-			plan := newDataSource(ctx, 2, "t3")
-			assertMatch(t, plan, "t3", test.ownerOffset, test.matched)
-		})
-	}
-
-	t.Run("broken derived alias remains rejected while concrete base is compatible", func(t *testing.T) {
-		ctx := mock.NewContext()
-		leaf := newDataSource(ctx, 2, "t2")
-		wrapper := logicalop.LogicalProjection{}.Init(ctx, 2)
-		wrapper.SetOutputNames(types.NameSlice{
-			&types.FieldName{
-				DBName:  ast.NewCIStr("test"),
-				TblName: ast.NewCIStr("d2"),
-				ColName: ast.NewCIStr("a"),
-			},
-		})
-		wrapper.SetChildren(leaf)
-		direct := []ast.HintTable{
-			{},
-			{},
-			{DBName: ast.NewCIStr("test"), TableName: ast.NewCIStr("d2")},
+	t.Run("owner state admission matrix", func(t *testing.T) {
+		concrete := []plannerutil.IdentityOccurrence{occurrence("t2", 2, 10, plannerutil.ConcreteOccurrence)}
+		tests := []struct {
+			name  string
+			owner plannerutil.OwnerResolution
+			want  joinorder.LeadingMatchKind
+		}{
+			{name: "unique", owner: uniqueOwner("dt"), want: joinorder.LeadingLegacyRaw},
+			{name: "absent", owner: plannerutil.OwnerResolution{Kind: plannerutil.OwnerAbsent}, want: joinorder.LeadingLegacyRaw},
+			{name: "broken", owner: plannerutil.OwnerResolution{Kind: plannerutil.OwnerBrokenAliasChain}, want: joinorder.LeadingLegacyRaw},
+			{name: "ambiguous", owner: plannerutil.OwnerResolution{Kind: plannerutil.OwnerAmbiguous}, want: joinorder.LeadingAmbiguous},
 		}
+		for _, test := range tests {
+			t.Run(test.name, func(t *testing.T) {
+				got := match(hintTable("t2"), plannerutil.OperandIdentityFacts{Owner: test.owner, Occurrences: concrete}, nil)
+				require.Equal(t, test.want, got.Kind)
+			})
+		}
+	})
+
+	t.Run("broken alias itself and qualified paths are rejected", func(t *testing.T) {
+		facts := plannerutil.OperandIdentityFacts{
+			Owner: plannerutil.OwnerResolution{Kind: plannerutil.OwnerBrokenAliasChain},
+			Occurrences: []plannerutil.IdentityOccurrence{
+				occurrence("d2", 2, 9, plannerutil.AliasCandidateOccurrence),
+				occurrence("t2", 2, 10, plannerutil.ConcreteOccurrence),
+			},
+		}
+		require.Equal(t, joinorder.LeadingNoMatch, match(hintTable("d2"), facts, nil).Kind)
+		require.Equal(t, joinorder.LeadingLegacyRaw, match(hintTable("t2"), facts, nil).Kind)
+		require.Equal(t, joinorder.LeadingNoMatch, match(qualifiedHint("t2", 2), facts, nil).Kind)
+	})
+
+	t.Run("match kinds and capabilities", func(t *testing.T) {
 		aliases := []h.SelectBlockAlias{
-			{},
-			{},
+			{SelectOffset: 9, VisibleOffset: 1, DBName: ast.NewCIStr("test"), TableName: ast.NewCIStr("unrelated")}, {},
+			{SelectOffset: 2, VisibleOffset: 1, DBName: ast.NewCIStr("test"), TableName: ast.NewCIStr("dt")},
+		}
+		tests := []struct {
+			name     string
+			table    *ast.HintTable
+			facts    plannerutil.OperandIdentityFacts
+			aliases  []h.SelectBlockAlias
+			kind     joinorder.LeadingMatchKind
+			matched  bool
+			preserve bool
+		}{
 			{
-				SelectOffset:  2,
-				VisibleOffset: 0,
-				DBName:        ast.NewCIStr("test"),
-				TableName:     ast.NewCIStr("d2"),
+				name: "canonical owner", table: hintTable("dt"),
+				facts: plannerutil.OperandIdentityFacts{Owner: uniqueOwner("dt")},
+				kind:  joinorder.LeadingCanonicalOwner, matched: true, preserve: true,
 			},
-		}
-		ctx.GetSessionVars().PlannerSelectBlockAsName.Store(&direct)
-		ctx.GetSessionVars().PlannerSelectBlockAliasInfo.Store(&aliases)
-
-		assertMatch(t, wrapper, "d2", 1, false)
-		assertMatch(t, wrapper, "t2", 1, true)
-	})
-
-	t.Run("single-leaf wrapper requires matching leaf provenance", func(t *testing.T) {
-		ctx := mock.NewContext()
-		leaf := newDataSource(ctx, 2, "t2")
-		wrapper := logicalop.LogicalProjection{}.Init(ctx, 2)
-		wrapper.SetOutputNames(types.NameSlice{
-			&types.FieldName{
-				DBName:  ast.NewCIStr("test"),
-				TblName: ast.NewCIStr("d2"),
-				ColName: ast.NewCIStr("a"),
-			},
-		})
-		wrapper.SetChildren(leaf)
-
-		assertMatch(t, wrapper, "d2", 1, false)
-		assertMatch(t, wrapper, "t2", 1, true)
-	})
-
-	t.Run("same-name wrapper is concrete when its unique leaf proves it", func(t *testing.T) {
-		ctx := mock.NewContext()
-		leaf := newDataSource(ctx, 2, "t3")
-		wrapper := logicalop.LogicalProjection{}.Init(ctx, 2)
-		wrapper.SetOutputNames(types.NameSlice{
-			&types.FieldName{
-				DBName:  ast.NewCIStr("test"),
-				TblName: ast.NewCIStr("t3"),
-				ColName: ast.NewCIStr("a"),
-			},
-		})
-		wrapper.SetChildren(leaf)
-
-		assertMatch(t, wrapper, "t3", 1, true)
-	})
-
-	t.Run("multi-leaf wrapper cannot prove one concrete identity", func(t *testing.T) {
-		ctx := mock.NewContext()
-		left := newDataSource(ctx, 1, "t2")
-		right := newDataSource(ctx, 1, "t3")
-		join := logicalop.LogicalJoin{}.Init(ctx, 2)
-		join.SetOutputNames(types.NameSlice{
-			&types.FieldName{
-				DBName:  ast.NewCIStr("test"),
-				TblName: ast.NewCIStr("t3"),
-				ColName: ast.NewCIStr("a"),
-			},
-		})
-		join.SetChildren(left, right)
-
-		assertMatch(t, join, "t3", 1, false)
-	})
-
-	t.Run("same-name self-join leaves remain distinct raw occurrences", func(t *testing.T) {
-		ctx := mock.NewContext()
-		left := newDataSource(ctx, 2, "t3")
-		right := newDataSource(ctx, 2, "t3")
-		join := logicalop.LogicalJoin{}.Init(ctx, 2)
-		join.SetOutputNames(types.NameSlice{
-			&types.FieldName{
-				DBName:  ast.NewCIStr("test"),
-				TblName: ast.NewCIStr("t3"),
-				ColName: ast.NewCIStr("a"),
-			},
-		})
-		join.SetChildren(left, right)
-
-		assertMatch(t, join, "t3", 1, false)
-	})
-
-	t.Run("qualified same-offset self-join leaves are ambiguous", func(t *testing.T) {
-		ctx := mock.NewContext()
-		left := newDataSource(ctx, 2, "t3")
-		right := newDataSource(ctx, 2, "t3")
-		join := logicalop.LogicalJoin{}.Init(ctx, 2)
-		join.SetOutputNames(types.NameSlice{
-			&types.FieldName{
-				DBName:  ast.NewCIStr("test"),
-				TblName: ast.NewCIStr("t3"),
-				ColName: ast.NewCIStr("a"),
-			},
-		})
-		join.SetChildren(left, right)
-		direct := []ast.HintTable{
-			{},
-			{},
-			{DBName: ast.NewCIStr("test"), TableName: ast.NewCIStr("dt")},
-		}
-		aliases := []h.SelectBlockAlias{
-			{},
-			{},
 			{
-				SelectOffset:  2,
-				VisibleOffset: 1,
-				DBName:        ast.NewCIStr("test"),
-				TableName:     ast.NewCIStr("dt"),
+				name: "raw concrete", table: hintTable("t2"),
+				facts: plannerutil.OperandIdentityFacts{Owner: uniqueOwner("dt"), Occurrences: []plannerutil.IdentityOccurrence{occurrence("t2", 2, 10, plannerutil.ConcreteOccurrence)}},
+				kind:  joinorder.LeadingLegacyRaw, matched: true,
+			},
+			{
+				name: "qualified concrete", table: qualifiedHint("t2", 2),
+				facts: plannerutil.OperandIdentityFacts{Owner: uniqueOwner("dt"), Occurrences: []plannerutil.IdentityOccurrence{occurrence("t2", 2, 10, plannerutil.ConcreteOccurrence)}},
+				kind:  joinorder.LeadingLegacyQualifiedConcrete, matched: true,
+			},
+			{
+				name: "qualified owner visible", table: qualifiedHint("dt", 2),
+				facts:   plannerutil.OperandIdentityFacts{Owner: uniqueOwner("dt"), Occurrences: []plannerutil.IdentityOccurrence{occurrence("dt", 2, 9, plannerutil.AliasCandidateOccurrence)}},
+				aliases: aliases, kind: joinorder.LeadingQualifiedOwnerVisible, matched: true, preserve: true,
+			},
+			{
+				name: "positional owner visible", table: qualifiedHint("dt", 2),
+				facts:   plannerutil.OperandIdentityFacts{Owner: uniqueOwner("dt")},
+				aliases: aliases, kind: joinorder.LeadingLegacyPositionalOwnerVisible, matched: true, preserve: true,
 			},
 		}
-		ctx.GetSessionVars().PlannerSelectBlockAsName.Store(&direct)
-		ctx.GetSessionVars().PlannerSelectBlockAliasInfo.Store(&aliases)
+		for _, test := range tests {
+			t.Run(test.name, func(t *testing.T) {
+				got := match(test.table, test.facts, test.aliases)
+				require.Equal(t, test.kind, got.Kind)
+				require.Equal(t, test.matched, got.Matched())
+				require.Equal(t, test.preserve, got.PreserveBoundary())
+			})
+		}
+	})
 
-		match := plannerutil.MatchLeadingHintTableToOperand(
-			join,
-			&ast.HintTable{
-				TableName: ast.NewCIStr("t3"),
-				QBName:    ast.NewCIStr("sel_2"),
+	t.Run("ambiguity cannot fall through", func(t *testing.T) {
+		facts := plannerutil.OperandIdentityFacts{
+			Owner: uniqueOwner("t2"),
+			Occurrences: []plannerutil.IdentityOccurrence{
+				occurrence("t2", 2, 10, plannerutil.ConcreteOccurrence),
+				occurrence("t2", 2, 11, plannerutil.ConcreteOccurrence),
 			},
-			1,
-		)
-		require.False(t, match.Matched)
-		require.False(t, match.OwnerVisible)
+		}
+		aliases := []h.SelectBlockAlias{{}, {}, {SelectOffset: 2, VisibleOffset: 1, DBName: ast.NewCIStr("test"), TableName: ast.NewCIStr("t2")}}
+		for _, table := range []*ast.HintTable{hintTable("t2"), qualifiedHint("t2", 2)} {
+			got := match(table, facts, aliases)
+			require.Equal(t, joinorder.LeadingAmbiguous, got.Kind)
+			require.False(t, got.Matched())
+			require.False(t, got.PreserveBoundary())
+		}
+	})
+
+	t.Run("multiple operands matching one hint are rejected", func(t *testing.T) {
+		ctx := mock.NewContext()
+		newDataSource := func() *logicalop.DataSource {
+			plan := logicalop.DataSource{}.Init(ctx, 1)
+			plan.SetOutputNames(types.NameSlice{&types.FieldName{
+				DBName: ast.NewCIStr("test"), TblName: ast.NewCIStr("t1"), ColName: ast.NewCIStr("a"),
+			}})
+			return plan
+		}
+		plans := []base.LogicalPlan{newDataSource(), newDataSource()}
+		_, remaining, ok := joinorder.FindAndRemovePlanByAstHint(ctx, plans, hintTable("t1"), 1, func(plan base.LogicalPlan) base.LogicalPlan { return plan })
+		require.False(t, ok)
+		require.Len(t, remaining, 2)
 	})
 }

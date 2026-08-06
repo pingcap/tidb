@@ -19,9 +19,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/util/hint"
-	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 // JoinMethodHint records the join method hint for a vertex.
@@ -368,11 +366,10 @@ func FindAndRemovePlanByAstHint[T any](
 	matchIdx := -1
 	for i, joinGroup := range plans {
 		plan := getPlan(joinGroup)
-		if !util.MatchLeadingHintTableToOperand(plan, astTbl, targetOwnerOffset).Matched {
+		if !matchLeadingHintToPlan(plan, astTbl, targetOwnerOffset).Matched() {
 			continue
 		}
 		if matchIdx != -1 {
-			intest.Assert(false, "leading table identity matches multiple join operands")
 			return zero, plans, false
 		}
 		matchIdx = i
@@ -408,7 +405,7 @@ func containsTableInLeadingList(
 	for _, item := range leadingList.Items {
 		switch element := item.(type) {
 		case *ast.HintTable:
-			if util.MatchLeadingHintTableToOperand(plan, element, targetOwnerOffset).OwnerVisible {
+			if matchLeadingHintToPlan(plan, element, targetOwnerOffset).PreserveBoundary() {
 				return true
 			}
 		case *ast.LeadingList:
