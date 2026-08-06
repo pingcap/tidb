@@ -16,6 +16,7 @@ package handle_test
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"sync/atomic"
 	"testing"
@@ -30,9 +31,12 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testenv"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/backoff"
+	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
@@ -167,11 +171,49 @@ func TestGetTargetScope(t *testing.T) {
 }
 
 func TestHandles(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	uri := "s3://bucket/path/to/folder"
-	vardef.CloudStorageURI.Store(uri)
-	mockURI := handle.GetCloudStorageURI(context.Background(), store)
-	require.Equal(t, mockURI, "s3://bucket/path/to/folder/1") // mock store always get cluster ID 1
+	if kerneltype.IsNextGen() {
+		testenv.UpdateConfigForNextgen(t)
+	}
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	bak := vardef.CloudStorageURI.Load()
+	semEnabledBak := sem.IsEnabled()
+	t.Cleanup(func() {
+		vardef.CloudStorageURI.Store(bak)
+		require.NoError(t, store.Close())
+		if semEnabledBak {
+			sem.Enable()
+		} else {
+			sem.Disable()
+		}
+	})
+	for _, semEnable := range []bool{true, false} {
+		for j, cs := range []struct {
+			in       string
+			semOut   string
+			noSemOut string
+		}{
+			{"", "", ""},
+			{"s3://bucket", "s3://bucket/dxf/", "s3://bucket/dxf/"},
+			{"s3://bucket/", "s3://bucket/dxf/", "s3://bucket/dxf/"},
+			{"s3://bucket/path", "s3://bucket/path/dxf/", "s3://bucket/path/dxf/1/"},
+			{"s3://bucket/path/", "s3://bucket/path/dxf/", "s3://bucket/path/dxf/1/"},
+			{"s3://bucket/path/sub", "s3://bucket/path/sub/dxf/", "s3://bucket/path/sub/dxf/1/"},
+			{"s3://bucket/path/sub/", "s3://bucket/path/sub/dxf/", "s3://bucket/path/sub/dxf/1/"},
+		} {
+			t.Run(fmt.Sprintf("sem=%t,j=%d,uri=%s", semEnable, j, cs.in), func(t *testing.T) {
+				vardef.CloudStorageURI.Store(cs.in)
+				expect := cs.noSemOut
+				if semEnable {
+					expect = cs.semOut
+					sem.Enable()
+				} else {
+					sem.Disable()
+				}
+				require.Equal(t, expect, handle.GetCloudStorageURI(context.Background(), store))
+			})
+		}
+	}
 }
 
 func TestGetDefaultRegionSplitConfig(t *testing.T) {

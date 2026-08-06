@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/meta_storagepb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
@@ -33,8 +34,11 @@ import (
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
+	"github.com/tikv/client-go/v2/tikvrpc"
+	tikvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/constants"
 	"github.com/tikv/pd/client/opt"
@@ -136,6 +140,44 @@ func TestBuildCopIteratorWithRowCountHint(t *testing.T) {
 	require.Equal(t, rateLimit.GetCapacity(), 4)
 }
 
+func TestBuildCopIteratorWithSharedRequestRateLimit(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer require.NoError(t, store.Close())
+
+	copClient := store.GetClient().(*copr.CopClient)
+	ctx := context.Background()
+	killed := uint32(0)
+	vars := kv.NewVariables(&killed)
+	opt := &kv.ClientSendOption{}
+	ranges := copr.BuildKeyRanges("a", "z")
+
+	testCases := []struct {
+		name      string
+		keepOrder bool
+	}{
+		{name: "keep-order", keepOrder: true},
+		{name: "non-keep-order", keepOrder: false},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			shared := tikvutil.NewRateLimit(7)
+			req := &kv.Request{
+				Tp:                   kv.ReqTypeDAG,
+				KeyRanges:            kv.NewNonPartitionedKeyRanges(ranges),
+				Concurrency:          15,
+				KeepOrder:            tc.keepOrder,
+				CoprRequestRateLimit: shared,
+			}
+			it, errRes := copClient.BuildCopIterator(ctx, req, vars, opt)
+			require.Nil(t, errRes)
+			require.Same(t, shared, it.GetRequestRateLimit())
+			require.Equal(t, 7, it.GetRequestRateLimit().GetCapacity())
+		})
+	}
+}
+
 func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {
 	// nil --- 'g' --- 'n' --- 't' --- nil
 	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
@@ -200,9 +242,10 @@ func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {
 		Concurrency:    15,
 		StoreBatchSize: 3,
 		Paging: struct {
-			Enable        bool
-			MinPagingSize uint64
-			MaxPagingSize uint64
+			Enable          bool
+			MinPagingSize   uint64
+			MaxPagingSize   uint64
+			PagingSizeBytes uint64
 		}{
 			Enable:        true,
 			MinPagingSize: 1,
@@ -213,6 +256,39 @@ func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {
 	require.Nil(t, errRes)
 	tasks = it.GetTasks()
 	require.Equal(t, len(tasks), 4)
+
+	// byte-budget paging disables store batch without changing row-count paging.
+	ranges = copr.BuildKeyRanges("a", "c", "d", "e", "h", "x", "y", "z")
+	req = &kv.Request{
+		Tp:             kv.ReqTypeDAG,
+		StoreType:      kv.TiKV,
+		KeyRanges:      kv.NewNonParitionedKeyRangesWithHint(ranges, []int{1, 1, 3, 3}),
+		Concurrency:    15,
+		StoreBatchSize: 3,
+	}
+	req.Paging.PagingSizeBytes = uint64(4 * 1024 * 1024)
+	it, errRes = copClient.BuildCopIterator(ctx, req, vars, opt)
+	require.Nil(t, errRes)
+	tasks = it.GetTasks()
+	require.Equal(t, len(tasks), 4)
+	require.False(t, req.Paging.Enable)
+	require.Zero(t, req.Paging.MinPagingSize)
+	require.Zero(t, req.Paging.MaxPagingSize)
+	// The byte budget is kept for TiKV DAG requests.
+	require.Equal(t, uint64(4*1024*1024), req.Paging.PagingSizeBytes)
+
+	// byte-budget paging only applies to TiKV DAG requests; a non-DAG request
+	// drops the budget so req.Paging.PagingSizeBytes is the single source of truth.
+	req = &kv.Request{
+		Tp:          kv.ReqTypeAnalyze,
+		StoreType:   kv.TiKV,
+		KeyRanges:   kv.NewNonParitionedKeyRangesWithHint(copr.BuildKeyRanges("a", "c"), nil),
+		Concurrency: 15,
+	}
+	req.Paging.PagingSizeBytes = uint64(4 * 1024 * 1024)
+	_, errRes = copClient.BuildCopIterator(ctx, req, vars, opt)
+	require.Nil(t, errRes)
+	require.Zero(t, req.Paging.PagingSizeBytes)
 
 	// only small tasks will be batched.
 	ranges = copr.BuildKeyRanges("a", "b", "h", "i", "o", "p")
@@ -377,14 +453,48 @@ func TestDMLWithLiteCopWorker(t *testing.T) {
 		tk.MustExec("insert into t1 (b) select b from t1;")
 	}
 	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("2048"))
-	tk.MustQuery("split table t1 by (1025);").Check(testkit.Rows("1 1"))
 	tk.MustExec("set @@tidb_enable_paging = off")
+	tk.MustExec("set @@tidb_session_alias = 'dml_lite_worker_fallback'")
 	var fallbackTriggered atomic.Bool
 	copr.SetLiteWorkerFallbackHookForTest(func() {
 		fallbackTriggered.Store(true)
 	})
 	defer copr.SetLiteWorkerFallbackHookForTest(nil)
+
+	// First run update before split, it should not trigger fallback.
 	tk.MustExec("update t1 set b=b+1 where id >= 0;")
+	require.False(t, fallbackTriggered.Load(), "unexpected lite worker fallback before split")
+
+	// Then split while the next update request is paused so fallback path is deterministically exercised.
+	fallbackTriggered.Store(false)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var blocked atomic.Bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/store/copr/onBeforeSendReqCtx", func(req *tikvrpc.Request) {
+		copReq, ok := req.Req.(*coprocessor.Request)
+		if !ok || copReq.ConnectionAlias != "dml_lite_worker_fallback" {
+			return
+		}
+		if blocked.CompareAndSwap(false, true) {
+			close(entered)
+			<-release
+		}
+	})
+	done := make(chan error, 1)
+	go func() {
+		_, err := tk.Exec("update t1 set b=b+1 where id >= 0;")
+		done <- err
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		require.Fail(t, "timeout waiting for cop request")
+	}
+	tkSplit := testkit.NewTestKit(t, store)
+	tkSplit.MustExec("use test")
+	tkSplit.MustQuery("split table t1 by (1025);").Check(testkit.Rows("1 1"))
+	close(release)
+	require.NoError(t, <-done)
 	require.True(t, fallbackTriggered.Load(), "lite worker fallback hook not triggered")
 
 	// Test select after split table.

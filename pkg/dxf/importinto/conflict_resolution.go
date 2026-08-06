@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	dxfhandle "github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
@@ -28,9 +27,10 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -48,6 +48,7 @@ type conflictResolutionStepExecutor struct {
 }
 
 var _ execute.StepExecutor = &conflictResolutionStepExecutor{}
+var _ execute.Collector = &conflictResolutionStepExecutor{}
 
 // NewConflictResolutionStepExecutor creates a new StepExecutor for conflict
 // resolution step, exported for test.
@@ -113,7 +114,7 @@ func (e *conflictResolutionStepExecutor) RunSubtask(ctx context.Context, subtask
 
 func (e *conflictResolutionStepExecutor) resolveConflictsOfKVGroup(
 	ctx context.Context,
-	objStore storage.ExternalStorage,
+	objStore storeapi.Storage,
 	concurrency int,
 	kvGroup string,
 	ci *engineapi.ConflictInfo,
@@ -130,18 +131,28 @@ func (e *conflictResolutionStepExecutor) resolveConflictsOfKVGroup(
 		task.End(zapcore.ErrorLevel, err)
 	}()
 
+	targetIdx, err := getKVGroupIndexInfo(e.tableImporter, kvGroup)
+	if err != nil {
+		return err
+	}
 	encoders, err := createEncoders(concurrency, e.tableImporter)
 	if err != nil {
 		return err
 	}
 
 	eg, egCtx := tidbutil.NewErrorGroupWithRecoverWithCtx(ctx)
-	pairCh := external.ReadKVFilesAsync(egCtx, eg, objStore, ci.Files)
+	pairCh := globalsort.ReadKVFilesAsync(egCtx, eg, objStore, ci.Files)
+	deleterChs, needDispatch := createConflictHandlerChannels(pairCh, concurrency, targetIdx)
 	for i := range concurrency {
 		encoder := encoders[i]
-		deleter := conflictedkv.NewDeleter(e.tableImporter.Table, e.logger, e.store, kvGroup, encoder)
+		deleter := conflictedkv.NewDeleter(e.tableImporter.Table, e.logger, e.store, kvGroup, encoder, e, e.GetMeterRecorder())
 		eg.Go(func() error {
-			return deleter.Run(egCtx, pairCh)
+			return deleter.Run(egCtx, deleterChs[i])
+		})
+	}
+	if needDispatch {
+		eg.Go(func() error {
+			return dispatchMVIndexKVPairs(egCtx, e.store, pairCh, deleterChs, targetIdx)
 		})
 	}
 
@@ -160,6 +171,14 @@ func (e *conflictResolutionStepExecutor) RealtimeSummary() *execute.SubtaskSumma
 
 func (e *conflictResolutionStepExecutor) ResetSummary() {
 	e.summary.Reset()
+}
+
+// Accepted implements Collector.Accepted interface.
+func (*conflictResolutionStepExecutor) Accepted(_ int64) {}
+
+// Processed implements Collector.Processed interface.
+func (e *conflictResolutionStepExecutor) Processed(processedConflictKVs, _ int64) {
+	e.summary.Processed.Add(processedConflictKVs)
 }
 
 // when create encoder, if the table have generated column, when calling

@@ -18,9 +18,9 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
@@ -31,6 +31,24 @@ import (
 	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/stretchr/testify/require"
 )
+
+func withStatsLease(t *testing.T, lease time.Duration, body func()) {
+	t.Helper()
+	originalLease := vardef.GetStatsLease()
+	vardef.SetStatsLease(lease)
+	defer vardef.SetStatsLease(originalLease)
+	body()
+}
+
+func withIsFullCacheFunc(t *testing.T, isFullCache func(types.StatsCache, uint64) bool, body func()) {
+	t.Helper()
+	originalIsFullCacheFunc := handle.IsFullCacheFunc
+	handle.IsFullCacheFunc = isFullCache
+	defer func() {
+		handle.IsFullCacheFunc = originalIsFullCacheFunc
+	}()
+	body()
+}
 
 func maxPhysicalTableID(h *handle.Handle, is infoschema.InfoSchema) int64 {
 	var maxID int64
@@ -59,10 +77,17 @@ func TestLiteInitStatsWithTableIDs(t *testing.T) {
 	session.MustExec(t, se, "create table t1( id int, a int, b int, index idx(id, a));")
 	session.MustExec(t, se, "create table t2( id int, a int, b int, index idx(id, a));")
 	session.MustExec(t, se, "create table t3( id int, a int, b int, index idx(id, a));")
+	session.MustExec(t, se, "create table dropped_t( id int, a int, b int, index idx(id, a));")
+	session.MustExec(t, se, `create table partitioned_t(id int, a int, b int, index idx(id, a))
+		partition by range (id) (
+			partition p0 values less than (10),
+			partition p1 values less than (20))`)
 	session.MustExec(t, se, "insert into t1 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);")
 	session.MustExec(t, se, "insert into t2 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);")
 	session.MustExec(t, se, "insert into t3 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);")
-	session.MustExec(t, se, "analyze table t1, t2, t3 all columns;")
+	session.MustExec(t, se, "insert into dropped_t values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);")
+	session.MustExec(t, se, "insert into partitioned_t values (1, 1, 1), (11, 11, 11);")
+	session.MustExec(t, se, "analyze table t1, t2, t3, dropped_t, partitioned_t all columns;")
 	is := dom.InfoSchema()
 	tbl1, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
@@ -70,41 +95,60 @@ func TestLiteInitStatsWithTableIDs(t *testing.T) {
 	require.NoError(t, err)
 	tbl3, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t3"))
 	require.NoError(t, err)
-
-	dom.Close()
-
-	vardef.SetStatsLease(-1)
-	dom, err = session.BootstrapSession(store)
+	droppedTbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("dropped_t"))
 	require.NoError(t, err)
-	h := dom.StatsHandle()
-	_, ok := h.Get(tbl1.Meta().ID)
-	require.False(t, ok)
-	require.NoError(t, h.InitStatsLite(context.Background(), tbl1.Meta().ID))
-	_, ok = h.Get(tbl1.Meta().ID)
-	require.True(t, ok)
-	_, ok = h.Get(tbl2.Meta().ID)
-	require.False(t, ok)
-	_, ok = h.Get(tbl3.Meta().ID)
-	require.False(t, ok)
-
-	// Make sure it can be loaded multiple times.
-	require.NoError(t, h.InitStatsLite(context.Background(), tbl1.Meta().ID, tbl2.Meta().ID))
-	_, ok = h.Get(tbl1.Meta().ID)
-	require.True(t, ok)
-	_, ok = h.Get(tbl2.Meta().ID)
-	require.True(t, ok)
-	_, ok = h.Get(tbl3.Meta().ID)
-	require.False(t, ok)
-
-	require.NoError(t, h.InitStatsLite(context.Background()))
-	_, ok = h.Get(tbl1.Meta().ID)
-	require.True(t, ok)
-	_, ok = h.Get(tbl2.Meta().ID)
-	require.True(t, ok)
-	_, ok = h.Get(tbl3.Meta().ID)
-	require.True(t, ok)
+	partitionedTbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("partitioned_t"))
+	require.NoError(t, err)
+	partitionInfo := partitionedTbl.Meta().GetPartitionInfo()
+	require.NotNil(t, partitionInfo)
+	partitionIDs := make([]int64, 0, len(partitionInfo.Definitions))
+	for _, def := range partitionInfo.Definitions {
+		partitionIDs = append(partitionIDs, def.ID)
+	}
+	session.MustExec(t, se, "drop table dropped_t")
+	droppedTableID := droppedTbl.Meta().ID
 
 	dom.Close()
+
+	withStatsLease(t, -1, func() {
+		dom, err = session.BootstrapSession(store)
+		require.NoError(t, err)
+		h := dom.StatsHandle()
+		_, ok := h.Get(tbl1.Meta().ID)
+		require.False(t, ok)
+		require.NoError(t, h.InitStatsLite(context.Background(), dom.InfoSchema(), tbl1.Meta().ID))
+		_, ok = h.Get(tbl1.Meta().ID)
+		require.True(t, ok)
+		_, ok = h.Get(tbl2.Meta().ID)
+		require.False(t, ok)
+		_, ok = h.Get(tbl3.Meta().ID)
+		require.False(t, ok)
+
+		// Make sure it can be loaded multiple times.
+		require.NoError(t, h.InitStatsLite(context.Background(), dom.InfoSchema(), tbl1.Meta().ID, tbl2.Meta().ID))
+		_, ok = h.Get(tbl1.Meta().ID)
+		require.True(t, ok)
+		_, ok = h.Get(tbl2.Meta().ID)
+		require.True(t, ok)
+		_, ok = h.Get(tbl3.Meta().ID)
+		require.False(t, ok)
+
+		require.NoError(t, h.InitStatsLite(context.Background(), dom.InfoSchema()))
+		_, ok = h.Get(tbl1.Meta().ID)
+		require.True(t, ok)
+		_, ok = h.Get(tbl2.Meta().ID)
+		require.True(t, ok)
+		_, ok = h.Get(tbl3.Meta().ID)
+		require.True(t, ok)
+		_, ok = h.Get(droppedTableID)
+		require.False(t, ok)
+		for _, partitionID := range partitionIDs {
+			_, ok = h.Get(partitionID)
+			require.True(t, ok)
+		}
+
+		dom.Close()
+	})
 }
 
 func TestNonLiteInitStatsWithTableIDs(t *testing.T) {
@@ -129,45 +173,46 @@ func TestNonLiteInitStatsWithTableIDs(t *testing.T) {
 
 	dom.Close()
 
-	vardef.SetStatsLease(-1)
-	dom, err = session.BootstrapSession(store)
-	require.NoError(t, err)
-	is = dom.InfoSchema()
-	h := dom.StatsHandle()
-	_, ok := h.Get(tbl1.Meta().ID)
-	require.False(t, ok)
-	require.NoError(t, h.InitStats(context.Background(), is, tbl1.Meta().ID))
-	stats1, ok := h.Get(tbl1.Meta().ID)
-	require.True(t, ok)
-	require.True(t, stats1.GetIdx(1).IsFullLoad())
-	_, ok = h.Get(tbl2.Meta().ID)
-	require.False(t, ok)
-	_, ok = h.Get(tbl3.Meta().ID)
-	require.False(t, ok)
+	withStatsLease(t, -1, func() {
+		dom, err = session.BootstrapSession(store)
+		require.NoError(t, err)
+		is = dom.InfoSchema()
+		h := dom.StatsHandle()
+		_, ok := h.Get(tbl1.Meta().ID)
+		require.False(t, ok)
+		require.NoError(t, h.InitStats(context.Background(), is, tbl1.Meta().ID))
+		stats1, ok := h.Get(tbl1.Meta().ID)
+		require.True(t, ok)
+		require.True(t, stats1.GetIdx(1).IsFullLoad())
+		_, ok = h.Get(tbl2.Meta().ID)
+		require.False(t, ok)
+		_, ok = h.Get(tbl3.Meta().ID)
+		require.False(t, ok)
 
-	// Make sure it can be loaded multiple times.
-	require.NoError(t, h.InitStats(context.Background(), is, tbl1.Meta().ID, tbl2.Meta().ID))
-	stats1, ok = h.Get(tbl1.Meta().ID)
-	require.True(t, ok)
-	require.True(t, stats1.GetIdx(1).IsFullLoad())
-	stats2, ok := h.Get(tbl2.Meta().ID)
-	require.True(t, ok)
-	require.True(t, stats2.GetIdx(1).IsFullLoad())
-	_, ok = h.Get(tbl3.Meta().ID)
-	require.False(t, ok)
+		// Make sure it can be loaded multiple times.
+		require.NoError(t, h.InitStats(context.Background(), is, tbl1.Meta().ID, tbl2.Meta().ID))
+		stats1, ok = h.Get(tbl1.Meta().ID)
+		require.True(t, ok)
+		require.True(t, stats1.GetIdx(1).IsFullLoad())
+		stats2, ok := h.Get(tbl2.Meta().ID)
+		require.True(t, ok)
+		require.True(t, stats2.GetIdx(1).IsFullLoad())
+		_, ok = h.Get(tbl3.Meta().ID)
+		require.False(t, ok)
 
-	require.NoError(t, h.InitStats(context.Background(), is))
-	stats1, ok = h.Get(tbl1.Meta().ID)
-	require.True(t, ok)
-	require.True(t, stats1.GetIdx(1).IsFullLoad())
-	stats2, ok = h.Get(tbl2.Meta().ID)
-	require.True(t, ok)
-	require.True(t, stats2.GetIdx(1).IsFullLoad())
-	stats3, ok := h.Get(tbl3.Meta().ID)
-	require.True(t, ok)
-	require.True(t, stats3.GetIdx(1).IsFullLoad())
+		require.NoError(t, h.InitStats(context.Background(), is))
+		stats1, ok = h.Get(tbl1.Meta().ID)
+		require.True(t, ok)
+		require.True(t, stats1.GetIdx(1).IsFullLoad())
+		stats2, ok = h.Get(tbl2.Meta().ID)
+		require.True(t, ok)
+		require.True(t, stats2.GetIdx(1).IsFullLoad())
+		stats3, ok := h.Get(tbl3.Meta().ID)
+		require.True(t, ok)
+		require.True(t, stats3.GetIdx(1).IsFullLoad())
 
-	dom.Close()
+		dom.Close()
+	})
 }
 
 func TestConcurrentlyInitStatsWithMemoryLimit(t *testing.T) {
@@ -176,10 +221,11 @@ func TestConcurrentlyInitStatsWithMemoryLimit(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Performance.LiteInitStats = false
 	})
-	handle.IsFullCacheFunc = func(cache types.StatsCache, total uint64) bool {
+	withIsFullCacheFunc(t, func(cache types.StatsCache, total uint64) bool {
 		return true
-	}
-	testConcurrentlyInitStats(t)
+	}, func() {
+		testConcurrentlyInitStats(t)
+	})
 }
 
 func TestConcurrentlyInitStatsWithoutMemoryLimit(t *testing.T) {
@@ -188,10 +234,11 @@ func TestConcurrentlyInitStatsWithoutMemoryLimit(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Performance.LiteInitStats = false
 	})
-	handle.IsFullCacheFunc = func(cache types.StatsCache, total uint64) bool {
+	withIsFullCacheFunc(t, func(cache types.StatsCache, total uint64) bool {
 		return false
-	}
-	testConcurrentlyInitStats(t)
+	}, func() {
+		testConcurrentlyInitStats(t)
+	})
 }
 
 func testConcurrentlyInitStats(t *testing.T) {
@@ -241,14 +288,10 @@ func testConcurrentlyInitStats(t *testing.T) {
 			require.False(t, col.IsAllEvicted())
 		}
 	}
+	lastTable, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t9"))
+	require.NoError(t, err)
 	maxID := maxPhysicalTableID(h, is)
-	if kerneltype.IsClassic() {
-		require.Equal(t, int64(130), maxID)
-	} else {
-		// In next-gen, the table ID is different from classic because the system table IDs and the regular table IDs are different,
-		// so the next-gen table ID will be ahead of the classic table ID.
-		require.Equal(t, int64(23), maxID)
-	}
+	require.Equal(t, lastTable.Meta().ID, maxID)
 }
 
 func TestDropTableBeforeConcurrentlyInitStats(t *testing.T) {
@@ -273,25 +316,57 @@ func testDropTableBeforeInitStats(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	tk.MustExec("create table t( id int, a int, b int, index idx(id, a));")
-	tk.MustExec("insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);")
-	tk.MustExec("insert into t select * from t where id<>2;")
-	tk.MustExec("insert into t select * from t where id<>2;")
-	tk.MustExec("insert into t select * from t where id<>2;")
-	tk.MustExec("insert into t select * from t where id<>2;")
-	tk.MustExec("analyze table t all columns;")
-	tk.MustExec("drop table t")
-	h := dom.StatsHandle()
+	tk.MustExec("create table dropped_t( id int, a int, b int, index idx(id, a));")
+	tk.MustExec("create table kept_t( id int, a int, b int, index idx(id, a));")
+	tk.MustExec(`create table partitioned_t(id int, a int, b int, index idx(id, a))
+		partition by range (id) (
+			partition p0 values less than (10),
+			partition p1 values less than (20))`)
+	tk.MustExec("insert into dropped_t values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);")
+	tk.MustExec("insert into dropped_t select * from dropped_t where id<>2;")
+	tk.MustExec("insert into dropped_t select * from dropped_t where id<>2;")
+	tk.MustExec("insert into dropped_t select * from dropped_t where id<>2;")
+	tk.MustExec("insert into dropped_t select * from dropped_t where id<>2;")
+	tk.MustExec("insert into kept_t values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);")
+	tk.MustExec("insert into partitioned_t values (1, 1, 1), (11, 11, 11);")
+	tk.MustExec("analyze table dropped_t, kept_t, partitioned_t all columns;")
 	is := dom.InfoSchema()
+	droppedTbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("dropped_t"))
+	require.NoError(t, err)
+	keptTbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("kept_t"))
+	require.NoError(t, err)
+	partitionedTbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("partitioned_t"))
+	require.NoError(t, err)
+	partitionInfo := partitionedTbl.Meta().GetPartitionInfo()
+	require.NotNil(t, partitionInfo)
+	partitionIDs := make([]int64, 0, len(partitionInfo.Definitions))
+	for _, def := range partitionInfo.Definitions {
+		partitionIDs = append(partitionIDs, def.ID)
+	}
+	droppedTableID := droppedTbl.Meta().ID
+	keptTableID := keptTbl.Meta().ID
+	tk.MustExec("drop table dropped_t")
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_meta where table_id = %d", droppedTableID)).Check(testkit.Rows("1"))
+	h := dom.StatsHandle()
+	h.Clear()
+	is = dom.InfoSchema()
 	require.NoError(t, h.InitStats(context.Background(), is))
+	_, ok := h.Get(droppedTableID)
+	require.False(t, ok)
+	_, ok = h.Get(keptTableID)
+	require.True(t, ok)
+	for _, partitionID := range partitionIDs {
+		_, ok = h.Get(partitionID)
+		require.True(t, ok)
+	}
 }
 
 func TestSkipStatsInitWithSkipInitStats(t *testing.T) {
-	config.GetGlobalConfig().Performance.SkipInitStats = true
-	defer func() {
-		config.GetGlobalConfig().Performance.SkipInitStats = false
-	}()
-
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.SkipInitStats = true
+	})
 	store, dom := session.CreateStoreAndBootstrap(t)
 	defer store.Close()
 	se := session.CreateSessionAndSetID(t, store)
@@ -301,17 +376,20 @@ func TestSkipStatsInitWithSkipInitStats(t *testing.T) {
 	session.MustExec(t, se, "analyze table t all columns;")
 	dom.Close()
 
-	vardef.SetStatsLease(3)
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-	h := dom.StatsHandle()
-	<-h.InitStatsDone
-	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
-	require.NoError(t, err)
-	_, ok := h.StatsCache.Get(tbl.Meta().ID)
-	require.False(t, ok)
-	dom.Close()
+	// Keep the periodic stats updater enabled, but give the assertion time to
+	// observe the skipped init path before the first background refresh.
+	withStatsLease(t, 3*time.Second, func() {
+		dom, err := session.BootstrapSession(store)
+		require.NoError(t, err)
+		h := dom.StatsHandle()
+		<-h.InitStatsDone
+		is := dom.InfoSchema()
+		tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+		require.NoError(t, err)
+		_, ok := h.StatsCache.Get(tbl.Meta().ID)
+		require.False(t, ok)
+		dom.Close()
+	})
 }
 
 func TestNonLiteInitStatsAndCheckTheLastTableStats(t *testing.T) {
@@ -336,23 +414,24 @@ func TestNonLiteInitStatsAndCheckTheLastTableStats(t *testing.T) {
 
 	dom.Close()
 
-	vardef.SetStatsLease(-1)
-	dom, err = session.BootstrapSession(store)
-	require.NoError(t, err)
-	is = dom.InfoSchema()
-	h := dom.StatsHandle()
-	_, ok := h.Get(tbl1.Meta().ID)
-	require.False(t, ok)
-	require.NoError(t, h.InitStats(context.Background(), is))
-	stats1, ok := h.Get(tbl1.Meta().ID)
-	require.True(t, ok)
-	require.True(t, stats1.GetIdx(1).IsFullLoad())
-	stats2, ok := h.Get(tbl2.Meta().ID)
-	require.True(t, ok)
-	require.True(t, stats2.GetIdx(1).IsFullLoad())
-	stats3, ok := h.Get(tbl3.Meta().ID)
-	require.True(t, ok)
-	require.True(t, stats3.GetIdx(1).IsFullLoad())
+	withStatsLease(t, -1, func() {
+		dom, err = session.BootstrapSession(store)
+		require.NoError(t, err)
+		is = dom.InfoSchema()
+		h := dom.StatsHandle()
+		_, ok := h.Get(tbl1.Meta().ID)
+		require.False(t, ok)
+		require.NoError(t, h.InitStats(context.Background(), is))
+		stats1, ok := h.Get(tbl1.Meta().ID)
+		require.True(t, ok)
+		require.True(t, stats1.GetIdx(1).IsFullLoad())
+		stats2, ok := h.Get(tbl2.Meta().ID)
+		require.True(t, ok)
+		require.True(t, stats2.GetIdx(1).IsFullLoad())
+		stats3, ok := h.Get(tbl3.Meta().ID)
+		require.True(t, ok)
+		require.True(t, stats3.GetIdx(1).IsFullLoad())
 
-	dom.Close()
+		dom.Close()
+	})
 }

@@ -15,6 +15,7 @@
 package stmtctx_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -27,6 +28,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -216,6 +219,90 @@ func TestMarshalSQLWarn(t *testing.T) {
 	require.NoError(t, err)
 	tk.Session().GetSessionVars().StmtCtx.SetWarnings(newWarns)
 	tk.MustQuery("show warnings").Check(rows)
+}
+
+func TestLogicalPlanBuildStateRestore(t *testing.T) {
+	sc := stmtctx.NewStmtCtx()
+	sc.AppendWarning(errors.New("baseline warning"))
+	sc.AppendExtraWarning(errors.New("baseline extra warning"))
+	sc.Tables = []stmtctx.TableEntry{{DB: "test", Table: "t"}}
+	sc.TableStats = map[int64]any{42: "baseline stats"}
+	sc.LockTableIDs = map[int64]struct{}{1: {}}
+	tblInfo := &model.TableInfo{ID: 42}
+	sc.TblInfo2UnionScan = map[*model.TableInfo]bool{tblInfo: true}
+	sc.UseDynamicPruneMode = true
+	sc.ViewDepth = 2
+	sc.ColRefFromUpdatePlan.Insert(7)
+	sc.SetCacheType(contextutil.SessionNonPrepared)
+	sc.EnablePlanCache()
+
+	state := sc.SaveLogicalPlanBuildState()
+
+	sc.AppendWarning(errors.New("candidate warning"))
+	sc.AppendExtraWarning(errors.New("candidate extra warning"))
+	sc.Tables = []stmtctx.TableEntry{{DB: "candidate", Table: "t2"}}
+	sc.TableStats = map[int64]any{99: "candidate stats"}
+	sc.LockTableIDs[2] = struct{}{}
+	sc.TblInfo2UnionScan = map[*model.TableInfo]bool{{ID: 99}: false}
+	sc.UseDynamicPruneMode = false
+	sc.ViewDepth = 9
+	sc.ColRefFromUpdatePlan.Insert(9)
+	sc.SetSkipPlanCache("candidate reason")
+
+	sc.RestoreLogicalPlanBuildState(state)
+
+	warnings := sc.GetWarnings()
+	require.Len(t, warnings, 1)
+	require.Equal(t, "baseline warning", warnings[0].Err.Error())
+
+	extraWarnings := sc.GetExtraWarnings()
+	require.Len(t, extraWarnings, 1)
+	require.Equal(t, "baseline extra warning", extraWarnings[0].Err.Error())
+
+	require.Equal(t, []stmtctx.TableEntry{{DB: "test", Table: "t"}}, sc.Tables)
+	require.Equal(t, map[int64]any{42: "baseline stats"}, sc.TableStats)
+	require.Equal(t, map[int64]struct{}{1: {}}, sc.LockTableIDs)
+	require.Equal(t, map[*model.TableInfo]bool{tblInfo: true}, sc.TblInfo2UnionScan)
+	require.True(t, sc.UseDynamicPartitionPrune())
+	require.Equal(t, int32(2), sc.ViewDepth)
+	require.True(t, sc.ColRefFromUpdatePlan.Has(7))
+	require.False(t, sc.ColRefFromUpdatePlan.Has(9))
+	require.True(t, sc.UseCache())
+	require.Empty(t, sc.PlanCacheUnqualified())
+}
+
+func TestQBHintHandlerBuildState(t *testing.T) {
+	handler := hint.NewQBHintHandler(nil)
+	handler.QBNameToSelOffset = map[string]int{"qb_1": 1}
+	handler.ViewQBNameToTable = map[string][]ast.HintTable{
+		"view_qb": {{TableName: ast.NewCIStr("t")}},
+	}
+	handler.ViewQBNameToHints = map[string][]*ast.TableOptimizerHint{
+		"view_qb": {{HintName: ast.NewCIStr("merge_join")}},
+	}
+	handler.Enter(&ast.SelectStmt{})
+	handler.Enter(&ast.SelectStmt{})
+	state := handler.NewBuildState()
+	hints := handler.GetCurrentStmtHints([]*ast.TableOptimizerHint{
+		{HintName: ast.NewCIStr("use_index"), QBName: ast.NewCIStr("qb_1")},
+	}, 1, state)
+	handler.MarkViewQBNameUsed("view_qb", state)
+
+	require.Len(t, hints, 1)
+	require.Equal(t, "use_index", hints[0].HintName.L)
+
+	require.Equal(t, 2, handler.MaxSelectStmtOffset())
+	require.Equal(t, map[string]int{"qb_1": 1}, handler.QBNameToSelOffset)
+	require.Equal(t, map[string][]*ast.TableOptimizerHint{
+		"view_qb": {{HintName: ast.NewCIStr("merge_join")}},
+	}, handler.ViewQBNameToHints)
+	require.Equal(t, map[string][]ast.HintTable{
+		"view_qb": {{TableName: ast.NewCIStr("t")}},
+	}, handler.ViewQBNameToTable)
+	require.Equal(t, map[int][]*ast.TableOptimizerHint{
+		1: {{HintName: ast.NewCIStr("use_index"), QBName: ast.NewCIStr("qb_1")}},
+	}, state.QBOffsetToHints)
+	require.Equal(t, map[string]struct{}{"view_qb": {}}, state.ViewQBNameUsed)
 }
 
 func TestApproxRuntimeInfo(t *testing.T) {
@@ -500,6 +587,49 @@ func TestReservedRowIDAlloc(t *testing.T) {
 	id, ok = reserved.Consume()
 	require.False(t, ok)
 	require.Equal(t, int64(0), id)
+}
+
+func TestUsedStatsInfoForTableWriteToSlowLog(t *testing.T) {
+	// pseudo stats: Version=0
+	sPseudo := &stmtctx.UsedStatsInfoForTable{
+		Name:          "t1",
+		Version:       0,
+		RealtimeCount: 1000,
+		ModifyCount:   100,
+	}
+	var buf bytes.Buffer
+	sPseudo.WriteToSlowLog(&buf)
+	out := buf.String()
+	// pseudo returns early, so no "[index][column]" part
+	require.NotContains(t, out, "][")
+	require.Equal(t, "t1:stats_meta_version=pseudo[realtime_count=1000;modify_count=100]", out)
+
+	// real stats: Version != 0
+	buf.Reset()
+	sReal := &stmtctx.UsedStatsInfoForTable{
+		Name:          "orders",
+		Version:       5,
+		RealtimeCount: 1000000,
+		ModifyCount:   500,
+	}
+	sReal.WriteToSlowLog(&buf)
+	out = buf.String()
+	require.Equal(t, "orders:stats_meta_version=5[realtime_count=1000000;modify_count=500]", out)
+
+	// real stats with column/index load status
+	buf.Reset()
+	sWithStatus := &stmtctx.UsedStatsInfoForTable{
+		Name:                  "t2",
+		Version:               10,
+		RealtimeCount:         2000,
+		ModifyCount:           0,
+		IndexStatsLoadStatus:  map[int64]string{1: "allLoaded"},
+		ColumnStatsLoadStatus: map[int64]string{2: "onlyCmsEvicted"},
+	}
+	sWithStatus.WriteToSlowLog(&buf)
+	out = buf.String()
+	// TblInfo is nil so column/index names fall back to "ID <id>"; order: [index][column]
+	require.Equal(t, "t2:stats_meta_version=10[realtime_count=2000;modify_count=0][ID 1:allLoaded][ID 2:onlyCmsEvicted]", out)
 }
 
 func BenchmarkErrCtx(b *testing.B) {

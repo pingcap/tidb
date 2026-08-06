@@ -36,14 +36,15 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
+	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -54,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/gcworker"
@@ -66,12 +68,15 @@ import (
 	"github.com/pingcap/tidb/pkg/util/deadlockhistory"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/tikv"
+	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/clients/router"
-	pd "github.com/tikv/pd/client/http"
+	pdhttp "github.com/tikv/pd/client/http"
 	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
 	"go.uber.org/zap"
 )
 
@@ -141,12 +146,17 @@ func NewRegionHandler(tool *handler.TikvHandlerTool) *RegionHandler {
 // TableHandler is the handler for list table's regions.
 type TableHandler struct {
 	*handler.TikvHandlerTool
-	op string
+	pdClient pd.Client
+	op       string
 }
 
 // NewTableHandler creates a new TableHandler.
 func NewTableHandler(tool *handler.TikvHandlerTool, op string) *TableHandler {
-	return &TableHandler{tool, op}
+	return &TableHandler{
+		TikvHandlerTool: tool,
+		pdClient:        tool.RegionCache.PDClient().WithCallerComponent(caller.TikvHandler),
+		op:              op,
+	}
 }
 
 // DDLHistoryJobHandler is the handler for list job history.
@@ -164,9 +174,19 @@ type DDLResignOwnerHandler struct {
 	store kv.Storage
 }
 
+// DDLCheckHandler is the handler for triggering admin check index.
+type DDLCheckHandler struct {
+	*handler.TikvHandlerTool
+}
+
 // NewDDLResignOwnerHandler creates a new DDLResignOwnerHandler.
 func NewDDLResignOwnerHandler(store kv.Storage) *DDLResignOwnerHandler {
 	return &DDLResignOwnerHandler{store}
+}
+
+// NewDDLCheckHandler creates a new DDLCheckHandler.
+func NewDDLCheckHandler(tool *handler.TikvHandlerTool) *DDLCheckHandler {
+	return &DDLCheckHandler{tool}
 }
 
 // ServerInfoHandler is the handler for getting statistics.
@@ -1173,12 +1193,89 @@ func (h DDLResignOwnerHandler) ServeHTTP(w http.ResponseWriter, req *http.Reques
 	handler.WriteData(w, "success!")
 }
 
+// ServeHTTP handles request of triggering admin check index.
+// This endpoint is used for online diagnosis and relies on fast check table mode.
+func (h DDLCheckHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		handler.WriteError(w, errors.Errorf("This api only support POST method"))
+		return
+	}
+
+	params := mux.Vars(req)
+	dbName := params[handler.DBName]
+	tableName := params[handler.TableName]
+	indexName := params[handler.IndexName]
+	if dbName == "" || tableName == "" || indexName == "" {
+		handler.WriteError(w, errors.Errorf("db, table and index are required"))
+		return
+	}
+
+	sctx, err := session.CreateSession(h.Store)
+	if err != nil {
+		handler.WriteError(w, err)
+		return
+	}
+	defer sctx.Close()
+
+	if err := sctx.GetSessionVars().SetSystemVar(vardef.TiDBFastCheckTable, vardef.On); err != nil {
+		handler.WriteError(w, err)
+		return
+	}
+
+	quotedTableName := executor.TableName(dbName, tableName)
+	quotedIndexName := "`" + strings.ReplaceAll(indexName, "`", "``") + "`"
+	checkSQL := fmt.Sprintf("admin check index %s %s", quotedTableName, quotedIndexName)
+
+	rs, err := sctx.Execute(req.Context(), checkSQL)
+	rows, rowsErr := collectRecordSetRows(req.Context(), sctx, rs)
+	if rowsErr != nil {
+		handler.WriteError(w, rowsErr)
+		return
+	}
+
+	result := map[string]any{
+		"db":        dbName,
+		"table":     tableName,
+		"index":     indexName,
+		"check_sql": checkSQL,
+	}
+	if len(rows) > 0 {
+		result["rows"] = rows
+	}
+
+	if err != nil {
+		result["result"] = "failed"
+		result["error"] = err.Error()
+		handler.WriteData(w, result)
+		return
+	}
+
+	result["result"] = "success"
+	handler.WriteData(w, result)
+}
+
+func collectRecordSetRows(ctx context.Context, se sessionapi.Session, rss []sqlexec.RecordSet) ([][]string, error) {
+	rows := make([][]string, 0)
+	for _, one := range rss {
+		if one == nil {
+			continue
+		}
+		sRows, err := session.ResultSetToStringSlice(ctx, se, one)
+		if err != nil {
+			terror.Call(one.Close)
+			return nil, err
+		}
+		rows = append(rows, sRows...)
+	}
+	return rows, nil
+}
+
 func (h *TableHandler) getPDAddr() ([]string, error) {
 	etcd, ok := h.Store.(kv.EtcdBackend)
 	if !ok {
 		return nil, errors.New("not implemented")
 	}
-	pdAddrs, err := etcd.EtcdAddrs()
+	pdAddrs, err := etcd.GetPDAddrs()
 	if err != nil {
 		return nil, err
 	}
@@ -1203,7 +1300,7 @@ func (h *TableHandler) addScatterSchedule(startKey, endKey []byte, name string) 
 	if err != nil {
 		return err
 	}
-	scheduleURL := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), pdAddrs[0], pd.Schedulers)
+	scheduleURL := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), pdAddrs[0], pdhttp.Schedulers)
 	resp, err := util.InternalHTTPClient().Post(scheduleURL, "application/json", bytes.NewBuffer(v))
 	if err != nil {
 		return err
@@ -1219,7 +1316,7 @@ func (h *TableHandler) deleteScatterSchedule(name string) error {
 	if err != nil {
 		return err
 	}
-	scheduleURL := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), pdAddrs[0], pd.ScatterRangeSchedulerWithName(name))
+	scheduleURL := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), pdAddrs[0], pdhttp.ScatterRangeSchedulerWithName(name))
 	req, err := http.NewRequest(http.MethodDelete, scheduleURL, nil)
 	if err != nil {
 		return err
@@ -1355,7 +1452,7 @@ func (h *TableHandler) getRegionsByID(tbl table.Table, id int64, name string) (*
 	// for record
 	startKey, endKey := tablecodec.GetTableHandleKeyRange(id)
 	ctx := context.Background()
-	pdCli := h.RegionCache.PDClient()
+	pdCli := h.pdClient
 	regions, err := pdCli.BatchScanRegions(ctx, []router.KeyRange{{StartKey: startKey, EndKey: endKey}}, -1, opt.WithAllowFollowerHandle())
 	if err != nil {
 		return nil, err
@@ -1921,6 +2018,124 @@ func (h *TestHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
+type rowKeyDeleteResponse struct {
+	Key string `json:"key"`
+}
+
+// DeleteKeyHandler is the handler for deleting row/index keys. It's used for testing GC and lock resolving.
+type DeleteKeyHandler struct {
+	*handler.TikvHandlerTool
+}
+
+// NewDeleteKeyHandler creates a new DeleteKeyHandler.
+func NewDeleteKeyHandler(tool *handler.TikvHandlerTool) *DeleteKeyHandler {
+	return &DeleteKeyHandler{
+		TikvHandlerTool: tool,
+	}
+}
+
+// Supported operations:
+//   - /test/delete/rowkey/{db}/{table}?handle={intHandle}
+//   - /test/delete/rowkey/{db}/{table}?{pkCol}={pkVal}[&{pkCol2}={pkVal2}...]
+//     (for clustered common handle tables)
+//   - /test/delete/indexkey/{db}/{table}/{index}?handle={intHandle}&{idxCol}={idxVal}[&{idxCol2}={idxVal2}...]
+//   - /test/delete/indexkey/{db}/{table}/{index}?{idxCol}={idxVal}[&{idxCol2}={idxVal2}...]
+//     (for index keys; clustered common handle tables can use PK columns instead of handle)
+func (h *DeleteKeyHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		handler.WriteError(w, errors.Errorf("This api only support POST method"))
+		return
+	}
+	pathParams := mux.Vars(req)
+	values := make(url.Values)
+	if err := parseQuery(req.URL.RawQuery, values, true); err != nil {
+		handler.WriteError(w, err)
+		return
+	}
+
+	indexName := pathParams[handler.IndexName]
+	handleStr := values.Get(handler.Handle)
+	dbName := pathParams[handler.DBName]
+	if dbName == "" {
+		handler.WriteError(w, errors.BadRequestf("db is required"))
+		return
+	}
+	tableName := pathParams[handler.TableName]
+	if tableName == "" {
+		handler.WriteError(w, errors.BadRequestf("table is required"))
+		return
+	}
+
+	tb, err := h.GetTable(dbName, tableName)
+	if err != nil {
+		handler.WriteError(w, err)
+		return
+	}
+
+	handleParams := make(map[string]string, 1)
+	if handleStr != "" {
+		handleParams[handler.Handle] = handleStr
+	}
+	handle, err := h.GetHandle(tb, handleParams, values)
+	if err != nil {
+		handler.WriteError(w, err)
+		return
+	}
+
+	store, ok := h.Store.(kv.Storage)
+	if !ok {
+		handler.WriteError(w, errors.New("store does not support kv operations"))
+		return
+	}
+
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTools)
+	var encodedKey []byte
+	if indexName == "" {
+		encodedKey = tablecodec.EncodeRecordKey(tb.RecordPrefix(), handle)
+	} else {
+		var idxCols []*model.ColumnInfo
+		var idx table.Index
+		for _, v := range tb.Indices() {
+			if strings.EqualFold(v.Meta().Name.String(), indexName) {
+				for _, c := range v.Meta().Columns {
+					idxCols = append(idxCols, tb.Meta().Columns[c.Offset])
+				}
+				idx = v
+				break
+			}
+		}
+		if idx == nil {
+			handler.WriteError(w, errors.NotFoundf("Index %s not found!", indexName))
+			return
+		}
+		sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
+		idxRow, err := h.FormValue2DatumRow(sc, values, idxCols)
+		if err != nil {
+			handler.WriteError(w, err)
+			return
+		}
+		encodedKey, _, err = idx.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), idxRow, handle, nil)
+		if err != nil {
+			handler.WriteError(w, err)
+			return
+		}
+	}
+	err = kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+		if intest.InTest {
+			// since CheckResourceTagForTopSQLInGoTest is enabled in TestMain,
+			// this tagger is required.
+			txn.SetOption(kv.ResourceGroupTagger, ddlutil.GetInternalResourceGroupTaggerForTopSQL())
+		}
+		return txn.Delete(encodedKey)
+	})
+	if err != nil {
+		handler.WriteError(w, err)
+		return
+	}
+
+	handler.WriteData(w, rowKeyDeleteResponse{Key: strings.ToUpper(hex.EncodeToString(encodedKey))})
+}
+
 // Supported operations:
 //   - resolvelock?safepoint={uint64}&physical={bool}:
 //   - safepoint: resolve all locks whose timestamp is less than the safepoint.
@@ -2068,9 +2283,9 @@ func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 			return m.SetIngestMaxBatchSplitRanges(int(value))
 		}
 		updateGlobal = func(v float64) float64 {
-			old := local.CurrentMaxBatchSplitRanges.Load()
+			old := ingestctrl.CurrentMaxBatchSplitRanges.Load()
 			intV := int(v)
-			local.CurrentMaxBatchSplitRanges.Store(&intV)
+			ingestctrl.CurrentMaxBatchSplitRanges.Store(&intV)
 			return float64(*old)
 		}
 	case IngestParamMaxSplitRangesPerSec:
@@ -2081,8 +2296,8 @@ func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 			return m.SetIngestMaxSplitRangesPerSec(value)
 		}
 		updateGlobal = func(v float64) float64 {
-			old := local.CurrentMaxSplitRangesPerSec.Load()
-			local.CurrentMaxSplitRangesPerSec.Store(&v)
+			old := ingestctrl.CurrentMaxSplitRangesPerSec.Load()
+			ingestctrl.CurrentMaxSplitRangesPerSec.Store(&v)
 			return *old
 		}
 	case IngestParamMaxPerSecond:
@@ -2093,8 +2308,8 @@ func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 			return m.SetIngestMaxPerSec(value)
 		}
 		updateGlobal = func(v float64) float64 {
-			old := local.CurrentMaxIngestPerSec.Load()
-			local.CurrentMaxIngestPerSec.Store(&v)
+			old := ingestctrl.CurrentMaxIngestPerSec.Load()
+			ingestctrl.CurrentMaxIngestPerSec.Store(&v)
 			return *old
 		}
 	case IngestParamMaxInflight:
@@ -2106,9 +2321,9 @@ func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 			return m.SetIngestMaxInflight(int(value))
 		}
 		updateGlobal = func(v float64) float64 {
-			old := local.CurrentMaxIngestInflight.Load()
+			old := ingestctrl.CurrentMaxIngestInflight.Load()
 			intV := int(v)
-			local.CurrentMaxIngestInflight.Store(&intV)
+			ingestctrl.CurrentMaxIngestInflight.Store(&intV)
 			return float64(*old)
 		}
 	default:

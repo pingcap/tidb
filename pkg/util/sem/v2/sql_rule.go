@@ -16,9 +16,8 @@ package sem
 
 import (
 	"net/url"
-	"strings"
 
-	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 )
 
@@ -83,27 +82,9 @@ var AlterTableAttributesRule SQLRule = func(stmt ast.StmtNode) bool {
 	return false
 }
 
-// ImportWithExternalIDRule SQLRule returns true if the SQL statement is related to importing data with an external ID.
-var ImportWithExternalIDRule SQLRule = func(stmt ast.StmtNode) bool {
-	switch importStmt := stmt.(type) {
-	case *ast.ImportIntoStmt:
-		u, err := url.Parse(importStmt.Path)
-		if err != nil {
-			return false
-		}
-		if storage.IsS3(u) {
-			values := u.Query()
-			for k := range values {
-				lowerK := strings.ToLower(k)
-				if lowerK == storage.S3ExternalID {
-					return true
-				}
-			}
-		}
-	default:
-		return false
-	}
-
+// ImportWithExternalIDRule SQLRule is kept for compatibility with existing SEM configs.
+// Import external ID checks are handled outside the restricted SQL rule list.
+var ImportWithExternalIDRule SQLRule = func(_ ast.StmtNode) bool {
 	return false
 }
 
@@ -127,7 +108,7 @@ var ImportFromLocalRule SQLRule = func(stmt ast.StmtNode) bool {
 		if err != nil {
 			return false
 		}
-		return storage.IsLocal(u)
+		return objstore.IsLocal(u)
 	case *ast.LoadDataStmt:
 		if stmt.FileLocRef == ast.FileLocClient {
 			return false
@@ -138,7 +119,7 @@ var ImportFromLocalRule SQLRule = func(stmt ast.StmtNode) bool {
 			return false
 		}
 
-		return storage.IsLocal(u)
+		return objstore.IsLocal(u)
 	}
 
 	return false

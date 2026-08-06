@@ -24,16 +24,17 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -48,10 +49,10 @@ type mergeSortExecutor struct {
 	ptbl          table.PhysicalTable
 	cloudStoreURI string
 
-	mergeOp atomic.Pointer[external.MergeOperator]
+	mergeOp atomic.Pointer[globalsort.MergeOperator]
 
 	mu                  sync.Mutex
-	subtaskSortedKVMeta *external.SortedKVMeta
+	subtaskSortedKVMeta *globalsort.SortedKVMeta
 	summary             *execute.SubtaskSummary
 }
 
@@ -97,8 +98,8 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		return err
 	}
 
-	m.subtaskSortedKVMeta = &external.SortedKVMeta{}
-	onWriterClose := func(summary *external.WriterSummary) {
+	m.subtaskSortedKVMeta = &globalsort.SortedKVMeta{}
+	onWriterClose := func(summary *simplesst.WriterSummary) {
 		m.mu.Lock()
 		m.subtaskSortedKVMeta.MergeSummary(summary)
 		m.mu.Unlock()
@@ -106,18 +107,18 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 
 	prefix := path.Join(strconv.Itoa(int(subtask.TaskID)), strconv.Itoa(int(subtask.ID)))
 	res := m.GetResource()
-	memSizePerCon := res.Mem.Capacity() / res.CPU.Capacity()
-	partSize := max(external.MinUploadPartSize, memSizePerCon*int64(external.MaxMergingFilesPerThread)/external.MaxUploadPartCount)
+	memSizePerCon := res.MemoryPerCore()
+	partSize := max(simplesst.MinUploadPartSize, memSizePerCon*int64(globalsort.MaxMergingFilesPerThread)/simplesst.MaxUploadPartCount)
 
 	wctx := workerpool.NewContext(ctx)
-	op := external.NewMergeOperator(
+	op := globalsort.NewMergeOperator(
 		wctx,
 		objStore,
 		partSize,
 		prefix,
-		external.DefaultBlockSize,
+		simplesst.DefaultBlockSize,
 		onWriterClose,
-		external.NewMergeCollector(ctx, nil),
+		globalsort.NewMergeCollector(ctx, nil),
 		int(res.CPU.Capacity()),
 		true,
 		engineapi.OnDuplicateKeyError,
@@ -128,7 +129,7 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 
 	failpoint.InjectCall("mergeOverlappingFiles", op)
 
-	err = external.MergeOverlappingFiles(
+	err = globalsort.MergeOverlappingFiles(
 		wctx,
 		sm.DataFiles,
 		int(m.GetResource().CPU.Capacity()), // the concurrency used to split subtask
@@ -153,12 +154,12 @@ func (*mergeSortExecutor) Cleanup(ctx context.Context) error {
 	return nil
 }
 
-func (m *mergeSortExecutor) onFinished(ctx context.Context, subtask *proto.Subtask, sm *BackfillSubTaskMeta, extStore storage.ExternalStorage) error {
+func (m *mergeSortExecutor) onFinished(ctx context.Context, subtask *proto.Subtask, sm *BackfillSubTaskMeta, extStore storeapi.Storage) error {
 	logutil.Logger(ctx).Info("merge sort finish subtask")
-	sm.MetaGroups = []*external.SortedKVMeta{m.subtaskSortedKVMeta}
+	sm.MetaGroups = []*globalsort.SortedKVMeta{m.subtaskSortedKVMeta}
 	m.subtaskSortedKVMeta = nil
 	// write external meta to storage when using global sort
-	if err := writeExternalBackfillSubTaskMeta(ctx, extStore, sm, external.SubtaskMetaPath(subtask.TaskID, subtask.ID)); err != nil {
+	if err := writeExternalBackfillSubTaskMeta(ctx, extStore, sm, globalsort.SubtaskMetaPath(subtask.TaskID, subtask.ID)); err != nil {
 		return err
 	}
 

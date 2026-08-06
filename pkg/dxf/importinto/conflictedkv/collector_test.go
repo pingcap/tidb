@@ -16,6 +16,7 @@ package conflictedkv
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path"
 	"strings"
@@ -24,13 +25,14 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
@@ -43,6 +45,7 @@ func TestCollectResultMerge(t *testing.T) {
 	checkResultFn := func(expected, in *CollectResult) {
 		require.EqualValues(t, expected.RowCount, in.RowCount)
 		require.EqualValues(t, expected.TotalFileSize, in.TotalFileSize)
+		require.EqualValues(t, expected.RowRecordingCapped, in.RowRecordingCapped)
 		require.EqualValues(t, expected.Checksum.Sum(), in.Checksum.Sum())
 		require.EqualValues(t, expected.Checksum.SumKVS(), in.Checksum.SumKVS())
 		require.EqualValues(t, expected.Checksum.SumSize(), in.Checksum.SumSize())
@@ -52,10 +55,11 @@ func TestCollectResultMerge(t *testing.T) {
 	r1 := NewCollectResult(keyspace)
 	otherSum := verification.MakeKVChecksumWithKeyspace(keyspace, 10, 1, 1)
 	r2 := &CollectResult{
-		RowCount:      10,
-		TotalFileSize: 100,
-		Checksum:      &otherSum,
-		Filenames:     []string{"file1"},
+		RowCount:           10,
+		TotalFileSize:      100,
+		RowRecordingCapped: true,
+		Checksum:           &otherSum,
+		Filenames:          []string{"file1"},
 	}
 	r1.Merge(r2)
 	checkResultFn(r2, r1)
@@ -80,6 +84,7 @@ func TestCollectResultMerge(t *testing.T) {
 	r1.Merge(r4)
 	require.EqualValues(t, int64(30), r1.RowCount)
 	require.EqualValues(t, int64(300), r1.TotalFileSize)
+	require.True(t, r1.RowRecordingCapped)
 	require.EqualValues(t, uint64(3), r1.Checksum.Sum())
 	require.EqualValues(t, uint64(3), r1.Checksum.SumKVS())
 	require.EqualValues(t, uint64(30), r1.Checksum.SumSize())
@@ -88,9 +93,27 @@ func TestCollectResultMerge(t *testing.T) {
 
 type mockKVStore struct {
 	tidbkv.Storage
+	codec tikv.Codec
+}
+
+type mockWriter struct {
+	closeErr   error
+	closeCount int
+}
+
+func (w *mockWriter) Write(_ context.Context, p []byte) (int, error) {
+	return len(p), nil
+}
+
+func (w *mockWriter) Close(context.Context) error {
+	w.closeCount++
+	return w.closeErr
 }
 
 func (s *mockKVStore) GetCodec() tikv.Codec {
+	if s.codec != nil {
+		return s.codec
+	}
 	if kerneltype.IsClassic() {
 		return tikv.NewCodecV1(tikv.ModeTxn)
 	}
@@ -98,12 +121,43 @@ func (s *mockKVStore) GetCodec() tikv.Codec {
 	return codec
 }
 
+type decodeErrorCodec struct {
+	tikv.Codec
+	err error
+}
+
+func (c *decodeErrorCodec) DecodeKey([]byte) ([]byte, error) {
+	return nil, c.err
+}
+
 func TestCollectorHandleEncodedRow(t *testing.T) {
 	logger := zap.Must(zap.NewDevelopment())
 	ctx := context.Background()
 
+	t.Run("uses storage codec to decode conflict keys", func(t *testing.T) {
+		objStore := objstore.NewMemStorage()
+		t.Cleanup(func() {
+			objStore.Close()
+		})
+		decodeErr := errors.New("decode key")
+		store := &mockKVStore{codec: &decodeErrorCodec{
+			Codec: tikv.NewCodecV1(tikv.ModeTxn),
+			err:   decodeErr,
+		}}
+		coll := NewCollector(
+			nil, logger, objStore, store, "test",
+			globalsort.DataKVGroup, nil, nil, nil, nil, nil, nil,
+		)
+		ch := make(chan *simplesst.KVPair, 1)
+		ch <- &simplesst.KVPair{Key: []byte("encoded-key")}
+		close(ch)
+
+		require.ErrorIs(t, coll.Run(ctx, ch), decodeErr)
+		require.NoError(t, coll.Close(ctx))
+	})
+
 	doTestFn := func(t *testing.T, kvGroup string, maxSize int64, outFileCnt int) {
-		objStore := storage.NewMemStorage()
+		objStore := objstore.NewMemStorage()
 		t.Cleanup(func() {
 			objStore.Close()
 		})
@@ -114,23 +168,23 @@ func TestCollectorHandleEncodedRow(t *testing.T) {
 		})
 		store := &mockKVStore{}
 		var sharedSize atomic.Int64
+		var sharedTotalFileSize atomic.Int64
+		localSet := NewBoundedKeySet(logger, &sharedSize, units.MiB)
 		coll := NewCollector(
 			nil, logger, objStore, store, "test",
-			kvGroup, nil, nil, NewBoundedHandleSet(logger, &sharedSize, units.MiB),
+			kvGroup, nil, nil, localSet, &sharedTotalFileSize, nil, nil,
 		)
 		rowCount := 48
 		for i := range rowCount {
 			// when write to the conflicted row file, it will be formated as `("id", "value")`
 			row := []types.Datum{types.NewStringDatum("id"), types.NewStringDatum("value")}
 			pairs := &kv.Pairs{Pairs: []common.KvPair{{Key: []byte(fmt.Sprint(123 * (i + 1)))}}}
-			require.NoError(t, coll.HandleEncodedRow(ctx, tidbkv.IntHandle(i), row, pairs))
+			require.NoError(t, coll.HandleEncodedRow(ctx, tidbkv.Key{byte(i)}, row, pairs))
 		}
 		require.NoError(t, coll.Close(ctx))
-		if kvGroup == external.DataKVGroup {
-			require.Empty(t, coll.hdlSet.handles)
-		} else {
-			require.Equal(t, rowCount, len(coll.hdlSet.handles))
-		}
+		// Local row-key tracking is owned by IndexKVHandler after it loads and
+		// handles a row, not by Collector.HandleEncodedRow.
+		require.Empty(t, localSet.rowKeys)
 		kvBytes := 184 + rowCount*len(store.GetCodec().GetKeyspace())
 		// for nextgen, the crc sum of keyspace is 0 since the row number is even.
 		crcSum := uint64(14672641476652606594)
@@ -158,14 +212,169 @@ func TestCollectorHandleEncodedRow(t *testing.T) {
 	for _, c := range [][2]int{{90, 8}, {300, 3}, {800, 1}} {
 		maxSize, outFileCnt := c[0], c[1]
 		t.Run(fmt.Sprintf("data kv, max file size %d bytes", maxSize), func(t *testing.T) {
-			doTestFn(t, external.DataKVGroup, int64(maxSize), outFileCnt)
+			doTestFn(t, globalsort.DataKVGroup, int64(maxSize), outFileCnt)
 		})
 	}
 
 	for _, c := range [][2]int{{90, 8}, {300, 3}, {800, 1}} {
 		maxSize, outFileCnt := c[0], c[1]
 		t.Run(fmt.Sprintf("index kv, max file size %d bytes", maxSize), func(t *testing.T) {
-			doTestFn(t, external.IndexID2KVGroup(1), int64(maxSize), outFileCnt)
+			doTestFn(t, globalsort.IndexID2KVGroup(1), int64(maxSize), outFileCnt)
 		})
 	}
+}
+
+func TestCollectorHandleEncodedRowMaxTotalFileSize(t *testing.T) {
+	logger := zap.Must(zap.NewDevelopment())
+	ctx := context.Background()
+
+	objStore := objstore.NewMemStorage()
+	t.Cleanup(func() {
+		objStore.Close()
+	})
+	bakFileSize := MaxConflictRowFileSize
+	MaxConflictRowFileSize = units.MiB
+	t.Cleanup(func() {
+		MaxConflictRowFileSize = bakFileSize
+	})
+	bakTotalFileSize := maxTotalConflictRowFileSize
+	maxTotalConflictRowFileSize = 32
+	t.Cleanup(func() {
+		maxTotalConflictRowFileSize = bakTotalFileSize
+	})
+
+	store := &mockKVStore{}
+	var sharedSize atomic.Int64
+	var sharedTotalFileSize atomic.Int64
+	coll := NewCollector(
+		nil, logger, objStore, store, "test",
+		globalsort.DataKVGroup, nil, nil, NewBoundedKeySet(logger, &sharedSize, units.MiB), &sharedTotalFileSize, nil, nil,
+	)
+
+	rowCount := 5
+	expectedSum := verification.NewKVChecksumWithKeyspace(store.GetCodec().GetKeyspace())
+	for i := range rowCount {
+		row := []types.Datum{types.NewStringDatum("id"), types.NewStringDatum("value")}
+		pairs := &kv.Pairs{Pairs: []common.KvPair{{Key: []byte(fmt.Sprint(123 * (i + 1)))}}}
+		require.NoError(t, coll.HandleEncodedRow(ctx, tidbkv.Key{byte(i)}, row, pairs))
+		expectedSum.Update(pairs.Pairs)
+	}
+	require.NoError(t, coll.Close(ctx))
+
+	require.EqualValues(t, 48, sharedTotalFileSize.Load())
+	require.EqualValues(t, rowCount, coll.result.RowCount)
+	require.EqualValues(t, 32, coll.result.TotalFileSize)
+	require.True(t, coll.result.RowRecordingCapped)
+	require.True(t, coll.stopRecording)
+	require.Nil(t, coll.writer)
+	require.EqualValues(t, expectedSum.Sum(), coll.result.Checksum.Sum())
+	require.EqualValues(t, expectedSum.SumKVS(), coll.result.Checksum.SumKVS())
+	require.EqualValues(t, expectedSum.SumSize(), coll.result.Checksum.SumSize())
+	require.Equal(t, []string{path.Join("test", "data-0001.txt")}, coll.result.Filenames)
+
+	content, err := objStore.ReadFile(ctx, coll.result.Filenames[0])
+	require.NoError(t, err)
+	lines := strings.Split(strings.TrimSpace(string(content)), "\n")
+	require.Len(t, lines, 2)
+
+	t.Run("close failure on size-limit path still clears writer", func(t *testing.T) {
+		writer := &mockWriter{closeErr: fmt.Errorf("close failed")}
+		testCollector := &Collector{
+			logger:       logger,
+			handler:      &BaseHandler{},
+			result:       NewCollectResult(nil),
+			writer:       writer,
+			currFileSize: 16,
+		}
+
+		err := testCollector.onTotalSizeLimitExceeded(ctx, 64, 32, 32)
+		require.ErrorContains(t, err, "close failed")
+		require.True(t, testCollector.stopRecording)
+		require.True(t, testCollector.result.RowRecordingCapped)
+		require.Nil(t, testCollector.writer)
+		require.Zero(t, testCollector.currFileSize)
+		require.Equal(t, 1, writer.closeCount)
+		require.NoError(t, testCollector.Close(ctx))
+		require.Equal(t, 1, writer.closeCount)
+	})
+
+	t.Run("close failure on switch file path still clears writer", func(t *testing.T) {
+		writer := &mockWriter{closeErr: fmt.Errorf("close failed")}
+		testCollector := &Collector{
+			logger:       logger,
+			handler:      &BaseHandler{},
+			result:       NewCollectResult(nil),
+			writer:       writer,
+			currFileSize: 16,
+		}
+
+		err := testCollector.switchFile(ctx)
+		require.ErrorContains(t, err, "close failed")
+		require.Nil(t, testCollector.writer)
+		require.Equal(t, int64(16), testCollector.currFileSize)
+		require.Equal(t, 1, writer.closeCount)
+		require.NoError(t, testCollector.Close(ctx))
+		require.Equal(t, 1, writer.closeCount)
+	})
+}
+
+func TestCollectorHandleEncodedRowMaxTotalFileSizeSharedByCollectors(t *testing.T) {
+	logger := zap.Must(zap.NewDevelopment())
+	ctx := context.Background()
+
+	objStore := objstore.NewMemStorage()
+	t.Cleanup(func() {
+		objStore.Close()
+	})
+	bakFileSize := MaxConflictRowFileSize
+	MaxConflictRowFileSize = units.MiB
+	t.Cleanup(func() {
+		MaxConflictRowFileSize = bakFileSize
+	})
+	bakTotalFileSize := maxTotalConflictRowFileSize
+	maxTotalConflictRowFileSize = 48
+	t.Cleanup(func() {
+		maxTotalConflictRowFileSize = bakTotalFileSize
+	})
+
+	store := &mockKVStore{}
+	var sharedSize atomic.Int64
+	var sharedTotalFileSize atomic.Int64
+	coll1 := NewCollector(
+		nil, logger, objStore, store, "test1",
+		globalsort.DataKVGroup, nil, nil, NewBoundedKeySet(logger, &sharedSize, units.MiB), &sharedTotalFileSize, nil, nil,
+	)
+	coll2 := NewCollector(
+		nil, logger, objStore, store, "test2",
+		globalsort.DataKVGroup, nil, nil, NewBoundedKeySet(logger, &sharedSize, units.MiB), &sharedTotalFileSize, nil, nil,
+	)
+
+	row := []types.Datum{types.NewStringDatum("id"), types.NewStringDatum("value")}
+	for i := range 3 {
+		pairs := &kv.Pairs{Pairs: []common.KvPair{{Key: []byte(fmt.Sprintf("a-%d", i))}}}
+		require.NoError(t, coll1.HandleEncodedRow(ctx, tidbkv.Key{byte(i)}, row, pairs))
+	}
+	for i := range 3 {
+		pairs := &kv.Pairs{Pairs: []common.KvPair{{Key: []byte(fmt.Sprintf("b-%d", i))}}}
+		require.NoError(t, coll2.HandleEncodedRow(ctx, tidbkv.Key{byte(i)}, row, pairs))
+	}
+	require.NoError(t, coll1.Close(ctx))
+	require.NoError(t, coll2.Close(ctx))
+
+	require.EqualValues(t, 64, sharedTotalFileSize.Load())
+	require.EqualValues(t, 3, coll1.result.RowCount)
+	require.EqualValues(t, 48, coll1.result.TotalFileSize)
+	require.False(t, coll1.result.RowRecordingCapped)
+	require.EqualValues(t, 3, coll2.result.RowCount)
+	require.EqualValues(t, 0, coll2.result.TotalFileSize)
+	require.True(t, coll2.result.RowRecordingCapped)
+	require.False(t, coll1.stopRecording)
+	require.True(t, coll2.stopRecording)
+	require.Equal(t, []string{path.Join("test1", "data-0001.txt")}, coll1.result.Filenames)
+	require.Empty(t, coll2.result.Filenames)
+
+	content, err := objStore.ReadFile(ctx, coll1.result.Filenames[0])
+	require.NoError(t, err)
+	lines := strings.Split(strings.TrimSpace(string(content)), "\n")
+	require.Len(t, lines, 3)
 }

@@ -361,7 +361,7 @@ create table if not exists drop_test (a int);
 drop table if exists drop_test;
 create table drop_test (a int);
 drop table drop_test;
--- error 1105
+-- error 8267
 drop table mysql.gc_delete_range;
 
 # TestCreateDropView
@@ -371,7 +371,7 @@ create or replace view drop_test as select 1,2;
 -- error 1051
 drop table drop_test;
 drop view if exists drop_test;
--- error 1105
+-- error 8267
 drop view mysql.gc_delete_range;
 -- error 1051
 drop view drop_test;

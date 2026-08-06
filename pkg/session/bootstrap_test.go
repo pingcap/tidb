@@ -15,7 +15,6 @@
 package session
 
 import (
-	"cmp"
 	"context"
 	"crypto/tls"
 	"fmt"
@@ -48,28 +47,36 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore/teststore"
 	"github.com/pingcap/tidb/pkg/table/tblsession"
 	"github.com/pingcap/tidb/pkg/telemetry"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/tests/v3/integration"
 )
 
 func TestMySQLDBTables(t *testing.T) {
-	require.Len(t, tablesInSystemDatabase, 52,
-		"remember to add the new tables to versionedBootstrapSchemas too")
-	testTableBasicInfoSlice(t, tablesInSystemDatabase)
+	require.Len(t, systemTablesOfBaseNextGenVersion, 52, "DO NOT CHANGE IT")
+	for _, verBoot := range versionedBootstrapSchemas {
+		for _, schInfo := range verBoot.databases {
+			testTableBasicInfoSlice(t, schInfo.Tables, "IF NOT EXISTS mysql.%s (")
+		}
+	}
 	reservedIDs := make([]int64, 0, len(ddlTableVersionTables)*2)
 	for _, v := range ddlTableVersionTables {
 		for _, tbl := range v.tables {
 			reservedIDs = append(reservedIDs, tbl.ID)
 		}
 	}
-	for _, tbl := range tablesInSystemDatabase {
-		reservedIDs = append(reservedIDs, tbl.ID)
+	for _, verBoot := range versionedBootstrapSchemas {
+		for _, schInfo := range verBoot.databases {
+			for _, tblInfo := range schInfo.Tables {
+				reservedIDs = append(reservedIDs, tblInfo.ID)
+			}
+		}
 	}
 	for _, db := range systemDatabases {
 		reservedIDs = append(reservedIDs, db.ID)
 	}
 	slices.Sort(reservedIDs)
-	require.IsIncreasing(t, reservedIDs, "used IDs should be in increasing order")
+	require.IsIncreasing(t, reservedIDs, "reserved IDs shouldn't be reused")
 	require.Greater(t, reservedIDs[0], metadef.ReservedGlobalIDLowerBound, "reserved ID should be greater than ReservedGlobalIDLowerBound")
 	require.LessOrEqual(t, reservedIDs[len(reservedIDs)-1], metadef.ReservedGlobalIDUpperBound, "reserved ID should be less than or equal to ReservedGlobalIDUpperBound")
 }
@@ -278,9 +285,9 @@ func TestBootstrapWithError(t *testing.T) {
 }
 
 func TestDDLTableCreateBackfillTable(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/skipCheckReservedSchemaObjInNextGen", "return(true)")
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
-	se := CreateSessionAndSetID(t, store)
 
 	txn, err := store.Begin()
 	require.NoError(t, err)
@@ -290,20 +297,29 @@ func TestDDLTableCreateBackfillTable(t *testing.T) {
 	require.GreaterOrEqual(t, ver, meta.BackfillTableVersion)
 
 	// downgrade `mDDLTableVersion`
-	m.SetDDLTableVersion(meta.MDLTableVersion)
-	MustExec(t, se, "drop table mysql.tidb_background_subtask")
-	MustExec(t, se, "drop table mysql.tidb_background_subtask_history")
+	require.NoError(t, m.SetDDLTableVersion(meta.MDLTableVersion))
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+
+	dom.Close()
+
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	m = meta.NewMutator(txn)
+	systemDBID, err := m.GetSystemDBID()
+	require.NoError(t, err)
+	require.NoError(t, m.DropTableOrView(systemDBID, metadef.TiDBBackgroundSubtaskTableID))
+	require.NoError(t, m.DropTableOrView(systemDBID, metadef.TiDBBackgroundSubtaskHistoryTableID))
 	// TODO(lance6716): remove it after tidb_ddl_notifier GA
-	MustExec(t, se, "drop table mysql.tidb_ddl_notifier")
+	require.NoError(t, m.DropTableOrView(systemDBID, metadef.TiDBDDLNotifierTableID))
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 
 	// to upgrade session for create ddl related tables
-	dom.Close()
 	dom, err = BootstrapSession(store)
 	require.NoError(t, err)
 
-	se = CreateSessionAndSetID(t, store)
+	se := CreateSessionAndSetID(t, store)
 	MustExec(t, se, "select * from mysql.tidb_background_subtask")
 	MustExec(t, se, "select * from mysql.tidb_background_subtask_history")
 	dom.Close()
@@ -927,27 +943,33 @@ func TestTiDBUpgradeToVer140(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, int64(ver139), ver)
 	}
+	checkUpgraded := func() {
+		s := CreateSessionAndSetID(t, store)
+		defer s.Close()
+		ver, err := GetBootstrapVersion(s)
+		require.NoError(t, err)
+		require.Less(t, int64(ver139), ver)
+	}
 
 	// drop column task_key and then upgrade
 	s := CreateSessionAndSetID(t, store)
 	MustExec(t, s, "alter table mysql.tidb_global_task drop column task_key")
 	resetTo139(s)
+	s.Close()
 	do.Close()
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
-	ver, err := GetBootstrapVersion(s)
-	require.NoError(t, err)
-	require.Less(t, int64(ver139), ver)
-	dom.Close()
+	checkUpgraded()
 
-	// upgrade with column task_key exists
+	// Create the reset session while the current domain is still alive; sessions
+	// bound to a closed domain can fail schema validation on commit.
 	s = CreateSessionAndSetID(t, store)
 	resetTo139(s)
+	s.Close()
+	dom.Close()
 	dom, err = BootstrapSession(store)
 	require.NoError(t, err)
-	ver, err = GetBootstrapVersion(s)
-	require.NoError(t, err)
-	require.Less(t, int64(ver139), ver)
+	checkUpgraded()
 	dom.Close()
 }
 
@@ -1471,6 +1493,7 @@ func TestTiDBUpgradeToVer209(t *testing.T) {
 }
 
 func TestIssue61890(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/skipCheckReservedSchemaObjInNextGen", "return(true)")
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
@@ -1532,7 +1555,7 @@ func makeStore(t *testing.T, keyspaceMeta *keyspacepb.KeyspaceMeta, isHasPrefix 
 	t.Cleanup(func() {
 		ddl.CloseOwnerManager(mockStore)
 	})
-	dom, err := domap.getWithEtcdClient(mockStore, etcdClient)
+	dom, err := domap.getWithEtcdClient(mockStore, etcdClient, nil)
 	require.NoError(t, err)
 	defer dom.Close()
 
@@ -1572,6 +1595,10 @@ type mockEtcdBackend struct {
 }
 
 func (mebd *mockEtcdBackend) EtcdAddrs() ([]string, error) {
+	return mebd.pdAddrs, nil
+}
+
+func (mebd *mockEtcdBackend) GetPDAddrs() ([]string, error) {
 	return mebd.pdAddrs, nil
 }
 
@@ -1690,6 +1717,65 @@ func TestTiDBUpgradeToVer252(t *testing.T) {
 	require.Contains(t, createTblSQL, "`update_time` timestamp(6)")
 }
 
+func TestTiDBUpgradeToVer254(t *testing.T) {
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	ver253 := version253
+	seV253 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(ver253))
+	require.NoError(t, err)
+	RevertVersionAndVariables(t, seV253, ver253)
+	err = txn.Commit(ctx)
+	require.NoError(t, err)
+	store.SetOption(StoreBootstrappedKey, nil)
+
+	getTableCreateSQLFn := func(se sessionapi.Session, tableName string) string {
+		res := MustExecToRecodeSet(t, se, fmt.Sprintf("show create table mysql.%s", tableName))
+		chk := res.NewChunk(nil)
+		err = res.Next(ctx, chk)
+		require.NoError(t, err)
+		require.Equal(t, 1, chk.NumRows())
+		return string(chk.GetRow(0).GetBytes(1))
+	}
+
+	// Verify the indexes exist after bootstrap
+	createWatchSQL := getTableCreateSQLFn(seV253, "tidb_runaway_watch")
+	require.Contains(t, createWatchSQL, "idx_start_time")
+	createWatchDoneSQL := getTableCreateSQLFn(seV253, "tidb_runaway_watch_done")
+	require.Contains(t, createWatchDoneSQL, "idx_done_time")
+
+	// Remove the indexes to simulate the old version
+	seV253.SetValue(sessionctx.Initing, true)
+	seV253.GetSessionVars().SQLMode = mysql.ModeNone
+	mustExecute(seV253, "ALTER TABLE mysql.tidb_runaway_watch DROP INDEX idx_start_time")
+	mustExecute(seV253, "ALTER TABLE mysql.tidb_runaway_watch_done DROP INDEX idx_done_time")
+	createWatchSQL = getTableCreateSQLFn(seV253, "tidb_runaway_watch")
+	require.NotContains(t, createWatchSQL, "idx_start_time")
+	createWatchDoneSQL = getTableCreateSQLFn(seV253, "tidb_runaway_watch_done")
+	require.NotContains(t, createWatchDoneSQL, "idx_done_time")
+
+	// Upgrade to current version
+	dom.Close()
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err := GetBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+
+	// Verify the indexes have been created after upgrade
+	createWatchSQL = getTableCreateSQLFn(seCurVer, "tidb_runaway_watch")
+	require.Contains(t, createWatchSQL, "idx_start_time")
+	createWatchDoneSQL = getTableCreateSQLFn(seCurVer, "tidb_runaway_watch_done")
+	require.Contains(t, createWatchDoneSQL, "idx_done_time")
+}
+
 func TestWriteClusterIDToMySQLTiDBWhenUpgradingTo242(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
@@ -1798,33 +1884,34 @@ func TestBindInfoUniqueIndex(t *testing.T) {
 }
 
 func TestVersionedBootstrapSchemas(t *testing.T) {
-	require.True(t, slices.IsSortedFunc(versionedBootstrapSchemas, func(a, b versionedBootstrapSchema) int {
-		return cmp.Compare(a.ver, b.ver)
-	}), "versionedBootstrapSchemas should be sorted by version")
-
 	// make sure that later change won't affect existing version schemas.
 	require.Len(t, versionedBootstrapSchemas[0].databases[0].Tables, 52)
 	require.Len(t, versionedBootstrapSchemas[0].databases[1].Tables, 0)
 
-	allIDs := make([]int64, 0, len(versionedBootstrapSchemas))
-	var allTableCount int
+	versions := make([]int, 0, len(versionedBootstrapSchemas))
+	dbNameToID := make(map[string]int64)
+	allTableIDs := make([]int64, 0, len(versionedBootstrapSchemas))
 	for _, vbs := range versionedBootstrapSchemas {
+		versions = append(versions, int(vbs.ver))
 		for _, db := range vbs.databases {
 			require.Greater(t, db.ID, metadef.ReservedGlobalIDLowerBound)
 			require.LessOrEqual(t, db.ID, metadef.ReservedGlobalIDUpperBound)
-			allIDs = append(allIDs, db.ID)
+			if existingID, ok := dbNameToID[db.Name]; ok {
+				require.Equalf(t, existingID, db.ID, "database %s should have consistent ID across versions", db.Name)
+			} else {
+				dbNameToID[db.Name] = db.ID
+			}
 
-			testTableBasicInfoSlice(t, db.Tables)
-			allTableCount += len(db.Tables)
+			testTableBasicInfoSlice(t, db.Tables, "IF NOT EXISTS mysql.%s (")
 			for _, tbl := range db.Tables {
-				allIDs = append(allIDs, tbl.ID)
+				allTableIDs = append(allTableIDs, tbl.ID)
 			}
 		}
 	}
-	require.Len(t, tablesInSystemDatabase, allTableCount,
-		"versionedBootstrapSchemas should have the same number of tables as tablesInSystemDatabase")
-	slices.Sort(allIDs)
-	require.IsIncreasing(t, allIDs, "versionedBootstrapSchemas should not have duplicate IDs")
+	require.IsIncreasing(t, versions,
+		"versions in versionedBootstrapSchemas should be monotonically increasing, and cannot have duplicate versions")
+	slices.Sort(allTableIDs)
+	require.IsIncreasing(t, allTableIDs, "versionedBootstrapSchemas should not have duplicate table IDs")
 }
 
 func TestCheckSystemTableConstraint(t *testing.T) {

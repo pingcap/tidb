@@ -75,6 +75,21 @@ type SelectResult interface {
 	Close() error
 }
 
+// GetSelectResultConcurrency returns the internal cop iterator concurrency for a SelectResult.
+// The bool return value indicates whether the underlying implementation exposes this information.
+func GetSelectResultConcurrency(sr SelectResult) (concurrency int, extraConcurrency int, ok bool) {
+	r, ok := sr.(*selectResult)
+	if !ok || r == nil {
+		return 0, 0, false
+	}
+	ci, ok := r.resp.(copr.CopInfo)
+	if !ok {
+		return 0, 0, false
+	}
+	concurrency, extraConcurrency = ci.GetConcurrency()
+	return concurrency, extraConcurrency, true
+}
+
 // SelectResultRow indicates the row returned by the SelectResultIter
 type SelectResultRow struct {
 	// `ChannelIndex` indicates the index where this row locates.
@@ -388,6 +403,19 @@ func (r *selectResult) fetchRespWithIntermediateResults(ctx context.Context, int
 		duration := time.Since(startTime)
 		r.fetchDuration += duration
 		if err != nil {
+			// On error paths with a non-nil resultSubset (e.g. ErrMaxKeysReadExceeded),
+			// still merge CopExecDetails so ProcessedKeys reaches StmtCtx.ExecDetails
+			// (feeds tidb_keys_examined and the slow query log). Skip
+			// updateCopRuntimeStats because r.selectResp is not unmarshaled on this
+			// path, so there are no ExecutionSummaries for per-operator stats.
+			if resultSubset != nil {
+				if hasStats, ok := resultSubset.(CopRuntimeStats); ok {
+					if copStats := hasStats.GetCopRuntimeStats(); copStats != nil {
+						r.ctx.ExecDetails.MergeCopExecDetails(&copStats.CopExecDetails, duration)
+						r.ctx.ExecDetails.MergeReadPoolTaskDetails(copStats.ReadPoolTaskDetails)
+					}
+				}
+			}
 			return errors.Trace(err)
 		}
 		if r.selectResp != nil {
@@ -448,6 +476,7 @@ func (r *selectResult) fetchRespWithIntermediateResults(ctx context.Context, int
 					return err
 				}
 				r.ctx.ExecDetails.MergeCopExecDetails(&copStats.CopExecDetails, duration)
+				r.ctx.ExecDetails.MergeReadPoolTaskDetails(copStats.ReadPoolTaskDetails)
 			}
 		}
 		if len(r.selectResp.Chunks) != 0 {
@@ -643,9 +672,14 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 		}
 	}
 
-	if ruDetailsRaw := ctx.Value(clientutil.RUDetailsCtxKey); ruDetailsRaw != nil && r.storeType == kv.TiFlash {
-		if err = execdetails.MergeTiFlashRUConsumption(r.selectResp.GetExecutionSummaries(), ruDetailsRaw.(*clientutil.RUDetails)); err != nil {
-			return err
+	if r.storeType == kv.TiFlash {
+		ruv2Metrics := execdetails.RUV2MetricsFromContext(ctx)
+		if ruv2Metrics == nil || !ruv2Metrics.Bypass() {
+			if ruDetailsRaw := ctx.Value(clientutil.RUDetailsCtxKey); ruDetailsRaw != nil {
+				if err = execdetails.MergeTiFlashRUConsumption(r.selectResp.GetExecutionSummaries(), ruDetailsRaw.(*clientutil.RUDetails)); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	if copStats.TimeDetail.ProcessTime > 0 {
@@ -653,7 +687,14 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 	}
 	if hasExecutor {
 		if len(r.copPlanIDs) > 0 {
-			r.ctx.RuntimeStatsColl.RecordCopStats(r.copPlanIDs[len(r.copPlanIDs)-1], r.storeType, copStats.ScanDetail, copStats.TimeDetail, nil)
+			r.ctx.RuntimeStatsColl.RecordCopStats(
+				r.copPlanIDs[len(r.copPlanIDs)-1],
+				r.storeType,
+				copStats.ScanDetail,
+				copStats.TimeDetail,
+				copStats.ReadPoolTaskDetails,
+				nil,
+			)
 		}
 		recordExecutionSummariesForTiFlashTasks(r.ctx.RuntimeStatsColl, r.selectResp.GetExecutionSummaries(), r.storeType, r.copPlanIDs)
 		// report MPP cross AZ network traffic bytes to resource control manager.
@@ -687,7 +728,14 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 			}
 			planID := r.copPlanIDs[i]
 			if i == len(r.copPlanIDs)-1 {
-				r.ctx.RuntimeStatsColl.RecordCopStats(planID, r.storeType, copStats.ScanDetail, copStats.TimeDetail, summary)
+				r.ctx.RuntimeStatsColl.RecordCopStats(
+					planID,
+					r.storeType,
+					copStats.ScanDetail,
+					copStats.TimeDetail,
+					copStats.ReadPoolTaskDetails,
+					summary,
+				)
 			} else if summary != nil {
 				r.ctx.RuntimeStatsColl.RecordOneCopTask(planID, r.storeType, summary)
 			}
@@ -737,6 +785,7 @@ func (r *selectResult) close() error {
 			for _, copStats := range unconsumedCopStats {
 				_ = r.updateCopRuntimeStats(context.Background(), copStats, time.Duration(0), true)
 				r.ctx.ExecDetails.MergeCopExecDetails(&copStats.CopExecDetails, 0)
+				r.ctx.ExecDetails.MergeReadPoolTaskDetails(copStats.ReadPoolTaskDetails)
 			}
 		}
 	}

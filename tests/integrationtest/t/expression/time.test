@@ -406,3 +406,4 @@ select addtime(col0, col1) from t order by col0, col1, col2 asc;
 select subtime(col0, col1) from t order by col0, col1, col2 asc;
 select addtime(col0, col2) from t order by col0, col1, col2 asc;
 select subtime(col0, col2) from t order by col0, col1, col2 asc;
+set sql_mode=default;

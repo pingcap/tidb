@@ -15,24 +15,29 @@
 package importintotest
 
 import (
+	"context"
 	"encoding/json"
+	goerrors "errors"
 	"fmt"
 	"math/rand"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/docker/go-units"
 	"github.com/fsouza/fake-gcs-server/fakestorage"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv"
 	"github.com/pingcap/tidb/pkg/executor/importer"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
+	"github.com/tikv/client-go/v2/util"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -92,7 +97,7 @@ func (s *mockGCSSuite) testConflictResolutionWithColumnVarsAndOptions(tblSQL str
 		})
 	}
 	// we need the intermediate files to check meta.
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/lightning/backend/external/skipCleanUpFiles", `return(true)`)
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/ingestor/globalsort/skipCleanUpFiles", `return(true)`)
 	s.T().Cleanup(func() {
 		testutils.RemoveAllObjects(s.T(), s.server, "conflicts")
 		testutils.RemoveAllObjects(s.T(), s.server, "sorted")
@@ -109,7 +114,8 @@ func (s *mockGCSSuite) testConflictResolutionWithColumnVarsAndOptions(tblSQL str
 
 	sortStorageURI := fmt.Sprintf("gs://sorted?endpoint=%s", gcsEndpoint)
 	importSQL := fmt.Sprintf(`import into t %s FROM 'gs://conflicts/t.*.csv?endpoint=%s'
-		with __max_engine_size = '1', cloud_storage_uri='%s'`, columnVars, gcsEndpoint, sortStorageURI)
+		with __max_engine_size = '1', cloud_storage_uri='%s', on_duplicate_key='capture'`,
+		columnVars, gcsEndpoint, sortStorageURI)
 	if len(options) > 0 {
 		importSQL = fmt.Sprintf("%s, %s", importSQL, options)
 	}
@@ -150,9 +156,6 @@ func (s *mockGCSSuite) testConflictResolutionWithColumnVarsAndOptions(tblSQL str
 }
 
 func (s *mockGCSSuite) TestGlobalSortConflictResolutionBasicCases() {
-	if kerneltype.IsNextGen() {
-		s.T().Skip("nextgen need more work to support conflict resolution")
-	}
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 
@@ -455,10 +458,89 @@ abc,10,11,11,11,11
 	})
 }
 
+func (s *mockGCSSuite) TestGlobalSortMultiValuedUniqueIndexCountsConflictedRowOnce() {
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+
+	bak := conflictedkv.BufferedHandleLimit
+	conflictedkv.BufferedHandleLimit = 2
+	s.T().Cleanup(func() {
+		conflictedkv.BufferedHandleLimit = bak
+	})
+
+	// The next-gen resource planner assigns one slot to this tiny input by
+	// default. Amplify its estimated size so the concurrent dispatcher and
+	// collectors are exercised.
+	testfailpoint.Enable(
+		s.T(),
+		"github.com/pingcap/tidb/pkg/executor/importer/amplifyRealSize",
+		fmt.Sprintf("return(%d)", 2*units.GiB),
+	)
+
+	// Issue #69799: handle 1 occurs in separate buffers because its two array
+	// elements conflict with different rows.
+	jobID := s.testConflictResolutionWithOptions(
+		`create table t (
+			pk bigint primary key clustered,
+			a json not null,
+			unique key uk_a ((cast(a->'$' as unsigned array)))
+		)`,
+		[]string{"1,\"[1000,2000]\"\n2,\"[1000]\"\n3,\"[2000]\"\n"},
+		[]string{},
+		"checksum_table = 'required'",
+	)
+	s.Greater(s.getTaskByJob(jobID).RequiredSlots, 1)
+}
+
+func (s *mockGCSSuite) TestGlobalSortResolvesGlobalIndexConflictsAcrossPartitions() {
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+
+	// Issue #69800: the global index uses the logical table ID, while the
+	// conflicting record KVs are stored under their physical partition IDs.
+	s.testConflictResolutionWithOptions(
+		`create table t (
+			id bigint not null,
+			p int not null,
+			u int not null,
+			payload varchar(20),
+			unique key uk_u (u) global
+		) partition by range (p) (
+			partition p0 values less than (10),
+			partition p1 values less than (maxvalue)
+		)`,
+		[]string{"1,1,10,a\n2,11,10,b\n3,12,30,c\n"},
+		[]string{"3 12 30 c"},
+		"checksum_table = 'required'",
+	)
+
+	s.tk.MustQuery("select * from t force index (uk_u) order by id").
+		Check(testkit.Rows("3 12 30 c"))
+}
+
+func (s *mockGCSSuite) TestGlobalSortDistinguishesCommonHandlesWithSameString() {
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+
+	// Issue #69801: these distinct common handles both stringify as
+	// "{x, y, z}" but belong to different unique-index conflict groups.
+	s.testConflictResolutionWithOptions(
+		`create table t (
+			pk1 varchar(32) not null,
+			pk2 varchar(32) not null,
+			u1 int not null,
+			u2 int not null,
+			primary key (pk1, pk2) clustered,
+			unique key uk1 (u1),
+			unique key uk2 (u2)
+		)`,
+		[]string{"\"x, y\",z,10,100\na,b,10,101\nx,\"y, z\",20,200\nc,d,21,200\n"},
+		[]string{},
+		"checksum_table = 'required'",
+	)
+}
+
 func (s *mockGCSSuite) TestGlobalSortConflictResolutionMultipleSubtasks() {
-	if kerneltype.IsNextGen() {
-		s.T().Skip("nextgen need more work to support conflict resolution")
-	}
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 
@@ -561,7 +643,7 @@ func (s *mockGCSSuite) checkMergeStepConflictInfo(jobID int64) {
 	kvGroupCanConflict := make(map[string]bool, len(taskMeta.Plan.TableInfo.Indices)+1)
 	kvGroupCanConflict["data"] = taskMeta.Plan.TableInfo.HasClusteredIndex()
 	for _, idx := range taskMeta.Plan.TableInfo.Indices {
-		kvGroupCanConflict[external.IndexID2KVGroup(idx.ID)] = idx.Unique
+		kvGroupCanConflict[globalsort.IndexID2KVGroup(idx.ID)] = idx.Unique
 	}
 	store, err := importer.GetSortStore(s.ctx, taskMeta.Plan.CloudStorageURI)
 	s.NoError(err)
@@ -581,9 +663,6 @@ func (s *mockGCSSuite) checkMergeStepConflictInfo(jobID int64) {
 }
 
 func (s *mockGCSSuite) TestGlobalSortConflictFoundInMergeSort() {
-	if kerneltype.IsNextGen() {
-		s.T().Skip("nextgen need more work to support conflict resolution")
-	}
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 
@@ -625,9 +704,6 @@ func (s *mockGCSSuite) TestGlobalSortConflictFoundInMergeSort() {
 }
 
 func (s *mockGCSSuite) TestGlobalSortRetryOnConflictResolutionStep() {
-	if kerneltype.IsNextGen() {
-		s.T().Skip("nextgen need more work to support conflict resolution")
-	}
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 
@@ -665,9 +741,6 @@ func (s *mockGCSSuite) TestGlobalSortRetryOnConflictResolutionStep() {
 }
 
 func (s *mockGCSSuite) TestGlobalSortConflictedRowsExceedMaxFileSize() {
-	if kerneltype.IsNextGen() {
-		s.T().Skip("nextgen need more work to support conflict resolution")
-	}
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/dxf/importinto/forceHandleConflictsBySingleThread", "return(true)")
@@ -706,15 +779,12 @@ func (s *mockGCSSuite) TestGlobalSortConflictedRowsExceedMaxFileSize() {
 }
 
 func (s *mockGCSSuite) TestGlobalSortTooManyConflictedRowsFromIndex() {
-	if kerneltype.IsNextGen() {
-		s.T().Skip("nextgen need more work to support conflict resolution")
-	}
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/dxf/importinto/forceHandleConflictsBySingleThread", "return(true)")
 	var fpEntered atomic.Int32
-	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv/mockHandleSetSizeLimit", func(limitP *int64) {
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv/mockKeySetSizeLimit", func(limitP *int64) {
 		*limitP = 0
 		fpEntered.CompareAndSwap(0, 1)
 	})
@@ -744,4 +814,173 @@ func (s *mockGCSSuite) TestGlobalSortTooManyConflictedRowsFromIndex() {
 	ppMeta := &importinto.PostProcessStepMeta{}
 	s.NoError(json.Unmarshal(subtasks[0].Meta, ppMeta))
 	s.True(ppMeta.TooManyConflictsFromIndex)
+}
+
+func (s *mockGCSSuite) TestGlobalSortOnDuplicateKeyError() {
+	sourceBucket := fmt.Sprintf("on-duplicate-key-src-%d", rand.Int())
+	sortedBucket := fmt.Sprintf("on-duplicate-key-sorted-%d", rand.Int())
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: sourceBucket})
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: sortedBucket})
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: sourceBucket, Name: "t.0.csv"},
+		Content: []byte(`
+1,1
+1,2
+2,2
+`),
+	})
+	s.T().Cleanup(func() {
+		testutils.RemoveAllObjects(s.T(), s.server, sourceBucket)
+		testutils.RemoveAllObjects(s.T(), s.server, sortedBucket)
+	})
+
+	dbName := fmt.Sprintf("on_duplicate_key%d", rand.Int())
+	s.prepareAndUseDB(dbName)
+	s.tk.MustExec("create table t(a int primary key, b int)")
+
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/storage/testSetLastTaskID", "return(true)")
+	sortStorageURI := fmt.Sprintf("gs://%s?endpoint=%s", sortedBucket, gcsEndpoint)
+	importSQL := fmt.Sprintf(`import into t FROM 'gs://%s/t.*.csv?endpoint=%s'
+		with __max_engine_size='1', cloud_storage_uri='%s'`, sourceBucket, gcsEndpoint, sortStorageURI)
+	err := s.tk.QueryToErr(importSQL)
+	s.Error(err)
+	s.Contains(strings.ToLower(err.Error()), "duplicate")
+	s.T().Logf("the task id is %d", storage.TestLastTaskID.Load())
+	taskMgr, err := storage.GetTaskManager()
+	s.NoError(err)
+	ctx := util.WithInternalSourceType(context.Background(), "taskManager")
+	// wait cleanup done, so the table mode is switched back to normal
+	s.Eventually(func() bool {
+		_, err2 := taskMgr.GetTaskByID(ctx, storage.TestLastTaskID.Load())
+		return goerrors.Is(err2, storage.ErrTaskNotFound)
+	}, 30*time.Second, 100*time.Millisecond)
+	s.tk.MustExec("truncate table t")
+	err = s.tk.QueryToErr(fmt.Sprintf(`%s, on_duplicate_key='error'`, importSQL))
+	s.Error(err)
+	s.Contains(strings.ToLower(err.Error()), "duplicate")
+
+	s.Eventually(func() bool {
+		_, err2 := taskMgr.GetTaskByID(ctx, storage.TestLastTaskID.Load())
+		return goerrors.Is(err2, storage.ErrTaskNotFound)
+	}, 30*time.Second, 100*time.Millisecond)
+	importSQL = fmt.Sprintf(`%s, on_duplicate_key='capture'`, importSQL)
+	s.tk.MustQuery(importSQL)
+	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows("2 2"))
+}
+
+func subtaskStateCount(subtasks []*proto.Subtask, state proto.SubtaskState) int {
+	count := 0
+	for _, st := range subtasks {
+		if st.State == state {
+			count++
+		}
+	}
+	return count
+}
+
+func (s *mockGCSSuite) runImportWithGlobalSortOnDupError(sourceContents []string, extraOptions string) (int64, error) {
+	sourceBucket := fmt.Sprintf("on-duplicate-key-step-src-%d", rand.Int())
+	sortedBucket := fmt.Sprintf("on-duplicate-key-step-sorted-%d", rand.Int())
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: sourceBucket})
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: sortedBucket})
+	for i, content := range sourceContents {
+		s.server.CreateObject(fakestorage.Object{
+			ObjectAttrs: fakestorage.ObjectAttrs{
+				BucketName: sourceBucket,
+				Name:       fmt.Sprintf("t.%d.csv", i),
+			},
+			Content: []byte(content),
+		})
+	}
+	s.T().Cleanup(func() {
+		testutils.RemoveAllObjects(s.T(), s.server, sourceBucket)
+		testutils.RemoveAllObjects(s.T(), s.server, sortedBucket)
+	})
+
+	dbName := fmt.Sprintf("on_duplicate_key_step_%d", rand.Int())
+	s.prepareAndUseDB(dbName)
+	s.tk.MustExec("create table t(a int primary key, b int)")
+
+	sortStorageURI := fmt.Sprintf("gs://%s?endpoint=%s", sortedBucket, gcsEndpoint)
+	importSQL := fmt.Sprintf(`import into t FROM 'gs://%s/t.*.csv?endpoint=%s'
+		with cloud_storage_uri='%s', on_duplicate_key='error'`,
+		sourceBucket, gcsEndpoint, sortStorageURI)
+	if len(extraOptions) > 0 {
+		importSQL = fmt.Sprintf("%s, %s", importSQL, extraOptions)
+	}
+
+	storage.TestLastTaskID.Store(0)
+	err := s.tk.QueryToErr(importSQL)
+	return storage.TestLastTaskID.Load(), err
+}
+
+func (s *mockGCSSuite) assertNormalizedDuplicateKeyErr(err error) {
+	s.Require().Error(err)
+	s.Contains(err.Error(), "[executor:8167]")
+	s.NotContains(err.Error(), "found duplicate key")
+}
+
+func (s *mockGCSSuite) TestGlobalSortOnDuplicateKeyErrorByStep() {
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/storage/testSetLastTaskID", "return(true)")
+
+	s.Run("encode-step", func() {
+		taskID, err := s.runImportWithGlobalSortOnDupError(
+			[]string{
+				"1,1\n1,2\n2,2\n",
+			},
+			"",
+		)
+		s.assertNormalizedDuplicateKeyErr(err)
+		s.Greater(taskID, int64(0))
+
+		encodeSubtasks := s.getSubtasksOfStep(taskID, proto.ImportStepEncodeAndSort)
+		s.Greater(len(encodeSubtasks), 0)
+		s.Greater(subtaskStateCount(encodeSubtasks, proto.SubtaskStateFailed), 0)
+		s.Len(s.getSubtasksOfStep(taskID, proto.ImportStepMergeSort), 0)
+		s.Len(s.getSubtasksOfStep(taskID, proto.ImportStepWriteAndIngest), 0)
+	})
+
+	s.Run("merge-step", func() {
+		taskID, err := s.runImportWithGlobalSortOnDupError(
+			[]string{
+				"1,1\n2,2\n",
+				"1,3\n3,3\n",
+			},
+			"__max_engine_size='1', __force_merge_step",
+		)
+		s.assertNormalizedDuplicateKeyErr(err)
+		s.Greater(taskID, int64(0))
+
+		encodeSubtasks := s.getSubtasksOfStep(taskID, proto.ImportStepEncodeAndSort)
+		s.Greater(len(encodeSubtasks), 0)
+		s.Zero(subtaskStateCount(encodeSubtasks, proto.SubtaskStateFailed))
+
+		mergeSubtasks := s.getSubtasksOfStep(taskID, proto.ImportStepMergeSort)
+		s.Greater(len(mergeSubtasks), 0)
+		s.Greater(subtaskStateCount(mergeSubtasks, proto.SubtaskStateFailed), 0)
+		s.Len(s.getSubtasksOfStep(taskID, proto.ImportStepWriteAndIngest), 0)
+	})
+
+	s.Run("ingest-step", func() {
+		taskID, err := s.runImportWithGlobalSortOnDupError(
+			[]string{
+				"1,1\n2,2\n",
+				"1,3\n3,3\n",
+			},
+			"__max_engine_size='1'",
+		)
+		s.assertNormalizedDuplicateKeyErr(err)
+		s.Greater(taskID, int64(0))
+
+		encodeSubtasks := s.getSubtasksOfStep(taskID, proto.ImportStepEncodeAndSort)
+		s.Greater(len(encodeSubtasks), 0)
+		s.Zero(subtaskStateCount(encodeSubtasks, proto.SubtaskStateFailed))
+
+		// Overlap is intentionally tiny in this case, so merge-sort is skipped and
+		// duplicate check happens when write+ingest loads KVs.
+		s.Len(s.getSubtasksOfStep(taskID, proto.ImportStepMergeSort), 0)
+		ingestSubtasks := s.getSubtasksOfStep(taskID, proto.ImportStepWriteAndIngest)
+		s.Greater(len(ingestSubtasks), 0)
+		s.Greater(subtaskStateCount(ingestSubtasks, proto.SubtaskStateFailed), 0)
+	})
 }

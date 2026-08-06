@@ -92,7 +92,7 @@ show warnings;
 explain analyze format = 'plan_cache' select * from t;
 --enable_result_log
 select @@last_plan_from_cache;
-explain select * from t;
+explain format='plan_tree' select * from t;
 select @@last_plan_from_cache;
 explain format = 'plan_tree' select * from t;
 select @@last_plan_from_cache;
@@ -155,11 +155,11 @@ grant select, show view on executor__explain.v3 to 'explain'@'%';
 
 connection conn1;
 -- error 1142
-explain select * from v1;
+explain format='plan_tree' select * from v1;
 -- error 1345
-explain select * from v2;
-explain select * from t3;
-explain select * from v3;
+explain format='plan_tree' select * from v2;
+explain format='plan_tree' select * from t3;
+explain format='plan_tree' select * from v3;
 disconnect conn1;
 
 

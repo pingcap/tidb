@@ -46,7 +46,7 @@ func TestPublishToTableStore(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	t.Cleanup(func() {
-		tk.MustExec("TRUNCATE mysql." + metadef.NotifierTableName)
+		tk.MustExec("delete from mysql." + metadef.NotifierTableName)
 	})
 
 	ctx := context.Background()
@@ -212,7 +212,7 @@ func TestDeliverOrderAndCleanup(t *testing.T) {
 		require.NoError(t, err2)
 		closeFn()
 		return count == 0
-	}, time.Second, 50*time.Millisecond)
+	}, 5*time.Second, 50*time.Millisecond)
 
 	require.Equal(t, []int64{1000, 1001, 1002}, *id1)
 	require.Equal(t, []int64{1000, 1001, 1002}, *id2)

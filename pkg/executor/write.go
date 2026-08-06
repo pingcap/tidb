@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -380,7 +381,7 @@ func addUnchangedKeysForLockByRow(
 	}
 	if keySet&lockRowKey > 0 {
 		unchangedRowKey := tablecodec.EncodeRowKeyWithHandle(physicalID, h)
-		txnCtx.AddUnchangedKeyForLock(unchangedRowKey)
+		txnCtx.AddUnchangedKeyForLock(unchangedRowKey, false)
 		count++
 	}
 	if keySet&lockUniqueKeys > 0 {
@@ -395,20 +396,35 @@ func addUnchangedKeysForLockByRow(
 			if err != nil {
 				return count, err
 			}
+			idxTblID := physicalID
+			fullHandle := h
+			if meta.Global {
+				idxTblID = t.Meta().ID
+				if pi := t.Meta().GetPartitionInfo(); pi != nil && pi.NewTableID != 0 {
+					if isNew, ok := pi.DDLChangedIndex[meta.ID]; ok && isNew {
+						idxTblID = pi.NewTableID
+					}
+				}
+				if _, ok := fullHandle.(kv.PartitionHandle); !ok &&
+					meta.GlobalIndexVersion >= model.GlobalIndexVersionV1 {
+					fullHandle = kv.NewPartitionHandle(physicalID, fullHandle)
+				}
+			}
 			unchangedUniqueKey, _, err := tablecodec.GenIndexKey(
+				codec.NewEncoder(collate.NewCollationEnabled()),
 				stmtCtx.TimeZone(),
 				idx.TableMeta(),
 				meta,
-				physicalID,
+				idxTblID,
 				ukVals,
-				h,
+				fullHandle,
 				nil,
 			)
 			err = stmtCtx.HandleError(err)
 			if err != nil {
 				return count, err
 			}
-			txnCtx.AddUnchangedKeyForLock(unchangedUniqueKey)
+			txnCtx.AddUnchangedKeyForLock(unchangedUniqueKey, false)
 			count++
 		}
 	}

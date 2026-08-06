@@ -15,6 +15,8 @@
 package core
 
 import (
+	"math"
+	"math/bits"
 	"reflect"
 	"strings"
 	"testing"
@@ -23,12 +25,17 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
+	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
@@ -112,10 +119,194 @@ func TestMPPJoinKeyTypeConvert(t *testing.T) {
 	testJoinKeyTypeConvert(t, bigIntType, bigIntType, bigIntType, false, false)
 	testJoinKeyTypeConvert(t, unsignedBigIntType, bigIntType, decimalType, true, true)
 	testJoinKeyTypeConvert(t, bigIntType, unsignedBigIntType, decimalType, true, true)
+
+	t.Run("overlong type chunk reuse uses reusable chunk size", func(t *testing.T) {
+		sctx := coretestsdk.MockContext()
+		defer func() {
+			domain.GetDomain(sctx).StatsHandle().Close()
+		}()
+
+		originMaxMemoryLimitForOverlongType := MaxMemoryLimitForOverlongType
+		originMaxChunkSize := sctx.GetSessionVars().MaxChunkSize
+		defer func() {
+			MaxMemoryLimitForOverlongType = originMaxMemoryLimitForOverlongType
+			sctx.GetSessionVars().MaxChunkSize = originMaxChunkSize
+		}()
+
+		// Keep enough bounded overlong columns so that the same row count flips once MaxChunkSize grows.
+		columns := make([]*expression.Column, 0, 80)
+		for i := range 80 {
+			colType := types.NewFieldType(mysql.TypeVarchar)
+			colType.SetFlen(1001)
+			columns = append(columns, &expression.Column{RetType: colType, UniqueID: int64(i + 1)})
+		}
+		readerSchema := expression.NewSchema(columns...)
+		reader := physicalop.PhysicalTableReader{}.Init(sctx.GetPlanCtx(), 0)
+		reader.PhysicalSchemaProducer.SetSchema(readerSchema)
+		buildTrustedHistColl := func(cols []*expression.Column, rowCount int64, avgColSize int64) *statistics.HistColl {
+			histColl := statistics.NewHistColl(1, rowCount, 0, len(cols), 0)
+			for _, col := range cols {
+				histColl.SetCol(col.UniqueID, &statistics.Column{
+					Histogram: *statistics.NewHistogram(col.UniqueID, rowCount, 0, 0, col.RetType, 0, avgColSize*rowCount),
+				})
+			}
+			return histColl
+		}
+
+		MaxMemoryLimitForOverlongType = math.MaxInt64
+		reader.SetStats(&property.StatsInfo{
+			RowCount: 2048,
+			HistColl: &statistics.HistColl{},
+		})
+		require.True(t, shouldSkipReuseChunkForPhysicalPlan(reader))
+
+		MaxMemoryLimitForOverlongType = 0
+		reader.SetStats(&property.StatsInfo{
+			RowCount: 2048,
+		})
+		require.True(t, shouldSkipReuseChunkForPhysicalPlan(reader))
+
+		reader.SetStats(&property.StatsInfo{
+			RowCount: 2048,
+			HistColl: &statistics.HistColl{Pseudo: true},
+		})
+		require.True(t, shouldSkipReuseChunkForPhysicalPlan(reader))
+
+		wideColumns := make([]*expression.Column, 0, 40)
+		for i := range 40 {
+			colType := types.NewFieldType(mysql.TypeVarchar)
+			colType.SetFlen(1000001)
+			wideColumns = append(wideColumns, &expression.Column{RetType: colType, UniqueID: int64(1000 + i + 1)})
+		}
+		reader.PhysicalSchemaProducer.SetSchema(expression.NewSchema(wideColumns...))
+		reader.SetStats(&property.StatsInfo{
+			RowCount: 2048,
+		})
+		require.True(t, shouldSkipReuseChunkForPhysicalPlan(reader))
+
+		reader.PhysicalSchemaProducer.SetSchema(readerSchema)
+		reader.SCtx().GetSessionVars().MaxChunkSize = 1024
+		reader.SetStats(&property.StatsInfo{
+			RowCount: 2048,
+			HistColl: &statistics.HistColl{},
+		})
+		require.True(t, shouldSkipReuseChunkForPhysicalPlan(reader))
+
+		reader.SetStats(&property.StatsInfo{
+			RowCount: 2048,
+			HistColl: buildTrustedHistColl(columns, 2048, 500),
+		})
+		reader.SCtx().GetSessionVars().MaxChunkSize = 32
+		require.False(t, shouldSkipReuseChunkForPhysicalPlan(reader))
+
+		reader.SCtx().GetSessionVars().MaxChunkSize = 1024
+		require.True(t, shouldSkipReuseChunkForPhysicalPlan(reader))
+	})
+
+	t.Run("point get uses exact row bound for overlong type estimation", func(t *testing.T) {
+		sctx := coretestsdk.MockContext()
+		defer func() {
+			domain.GetDomain(sctx).StatsHandle().Close()
+		}()
+
+		pointGet := newPointGetPlan(
+			sctx.GetPlanCtx(),
+			"test",
+			expression.NewSchema(),
+			&model.TableInfo{Name: ast.NewCIStr("t")},
+			nil,
+		)
+
+		estimatedRows, hasTrustedStats := estimateReusableChunkRowsForOverlongType(pointGet)
+		require.Equal(t, float64(1), estimatedRows)
+		require.True(t, hasTrustedStats)
+	})
+
+	t.Run("batch point get participates in overlong type chunk reuse gating", func(t *testing.T) {
+		sctx := coretestsdk.MockContext()
+		defer func() {
+			domain.GetDomain(sctx).StatsHandle().Close()
+		}()
+
+		originMaxMemoryLimitForOverlongType := MaxMemoryLimitForOverlongType
+		originMaxChunkSize := sctx.GetSessionVars().MaxChunkSize
+		defer func() {
+			MaxMemoryLimitForOverlongType = originMaxMemoryLimitForOverlongType
+			sctx.GetSessionVars().MaxChunkSize = originMaxChunkSize
+		}()
+
+		MaxMemoryLimitForOverlongType = 0
+
+		columns := make([]*expression.Column, 0, 80)
+		for i := range 80 {
+			colType := types.NewFieldType(mysql.TypeVarchar)
+			colType.SetFlen(1001)
+			columns = append(columns, &expression.Column{RetType: colType, UniqueID: int64(2000 + i + 1)})
+		}
+		batchPointGet := (&physicalop.BatchPointGetPlan{TblInfo: &model.TableInfo{}}).Init(
+			sctx.GetPlanCtx(),
+			&property.StatsInfo{RowCount: 2048},
+			expression.NewSchema(columns...),
+			nil,
+			0,
+		)
+
+		sctx.GetSessionVars().MaxChunkSize = 32
+		require.False(t, shouldSkipReuseChunkForPhysicalPlan(batchPointGet))
+
+		sctx.GetSessionVars().MaxChunkSize = 1024
+		require.True(t, shouldSkipReuseChunkForPhysicalPlan(batchPointGet))
+
+		jsonBatchPointGet := (&physicalop.BatchPointGetPlan{TblInfo: &model.TableInfo{}}).Init(
+			sctx.GetPlanCtx(),
+			&property.StatsInfo{RowCount: 1},
+			expression.NewSchema(&expression.Column{
+				RetType:  types.NewFieldType(mysql.TypeJSON),
+				UniqueID: int64(3001),
+			}),
+			nil,
+			0,
+		)
+		skipReuseChunk, continueIterating := checkSkipReuseChunkForOverlongType(sctx.GetPlanCtx(), jsonBatchPointGet)
+		require.True(t, skipReuseChunk)
+		require.False(t, continueIterating)
+	})
 }
 
 // Test for core.handleFineGrainedShuffle()
 func TestHandleFineGrainedShuffle(t *testing.T) {
+	t.Run("refresh cached logical cores when tiflash restarts", func(t *testing.T) {
+		const staleAddr = "127.0.0.1:3933"
+		const validAddr = "127.0.0.2:3933"
+		copr.GlobalMPPServerInfoManager.Delete(staleAddr)
+		copr.GlobalMPPServerInfoManager.Delete(validAddr)
+		t.Cleanup(func() {
+			copr.GlobalMPPServerInfoManager.Delete(staleAddr)
+			copr.GlobalMPPServerInfoManager.Delete(validAddr)
+		})
+
+		copr.GlobalMPPServerInfoManager.Add(&copr.MPPServerInfo{
+			Address:         staleAddr,
+			LogicalCPUCount: 8,
+			StartTimestamp:  100,
+		})
+		copr.GlobalMPPServerInfoManager.Add(&copr.MPPServerInfo{
+			Address:         validAddr,
+			LogicalCPUCount: 16,
+			StartTimestamp:  200,
+		})
+
+		serversNeedingRefresh, minLogicalCores := splitTiFlashLogicalCoreCache([]infoschema.ServerInfo{
+			{Address: staleAddr, StartTimestamp: 101},
+			{Address: validAddr, StartTimestamp: 200},
+		})
+
+		require.Equal(t, uint64(16), minLogicalCores)
+		require.Len(t, serversNeedingRefresh, 1)
+		require.Equal(t, staleAddr, serversNeedingRefresh[0].Address)
+		require.Equal(t, int64(101), serversNeedingRefresh[0].StartTimestamp)
+	})
+
 	sortItem := property.SortItem{
 		Col:  nil,
 		Desc: true,
@@ -454,4 +645,29 @@ func TestCanTiFlashUseHashJoinV2(t *testing.T) {
 	hashJoin.IsNullEQ = append(hashJoin.IsNullEQ, true)
 	// can not use hash join v2 due to null eq
 	require.False(t, hashJoin.CanTiFlashUseHashJoinV2(sctx))
+}
+
+func TestOptRuleListFlagAlignment(t *testing.T) {
+	// Each position in optRuleList is gated by the corresponding entry in
+	// optRuleFlags. Flag values are stable bitmasks, so a rule can be inserted
+	// into the execution order without changing existing flag values.
+	require.Equalf(t, len(optRuleList), len(optRuleFlags),
+		"optRuleList length (%d) does not match optRuleFlags length (%d); "+
+			"did you add a rule without a flag or vice versa?",
+		len(optRuleList), len(optRuleFlags))
+
+	seenFlags := make(map[uint64]struct{}, len(optRuleFlags))
+	for i, flag := range optRuleFlags {
+		require.NotZerof(t, flag, "optRuleFlags[%d] must not be zero", i)
+		require.Zerof(t, flag&(flag-1), "optRuleFlags[%d] must contain exactly one bit", i)
+		_, ok := seenFlags[flag]
+		require.Falsef(t, ok, "optRuleFlags[%d] duplicates flag %d", i, flag)
+		seenFlags[flag] = struct{}{}
+	}
+
+	numFlags := bits.Len64(rule.FlagFullTextIndexResolveReject)
+	require.Equalf(t, numFlags, len(seenFlags),
+		"unique optRuleFlags count (%d) does not match Flag* count (%d); "+
+			"did you add a flag without mapping it to a rule or vice versa?",
+		len(seenFlags), numFlags)
 }

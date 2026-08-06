@@ -183,6 +183,7 @@ func (e *BatchPointGetExec) Close() error {
 	if e.RuntimeStats() != nil {
 		defer func() {
 			sc := e.Ctx().GetSessionVars().StmtCtx
+			sc.MergeReadPoolTaskDetails(e.stats.SnapshotRuntimeStats.GetReadPoolTaskDetails())
 			sc.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 			timeDetail := e.stats.SnapshotRuntimeStats.GetTimeDetail()
 			if timeDetail != nil {
@@ -508,7 +509,7 @@ func LockKeys(ctx context.Context, sctx sessionctx.Context, lockWaitTime int64, 
 	}
 
 	txnCtx := sessVars.TxnCtx
-	lctx, err := newLockCtx(sctx, lockWaitTime, len(keys))
+	lctx, err := newLockCtx(sctx, lockWaitTime, len(keys), false)
 	if err != nil {
 		return err
 	}

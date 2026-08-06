@@ -454,6 +454,15 @@ func (b *builtinIntAnyValueSig) evalInt(ctx EvalContext, row chunk.Row) (int64, 
 	return b.args[0].EvalInt(ctx, row)
 }
 
+func (b *builtinIntAnyValueSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	if !b.tp.Hybrid() {
+		return b.baseBuiltinFunc.evalString(ctx, row)
+	}
+	// ANY_VALUE can preserve a hybrid return field while using the integer signature.
+	// String contexts still need the underlying hybrid value in its string form.
+	return b.args[0].EvalString(ctx, row)
+}
+
 type builtinJSONAnyValueSig struct {
 	baseBuiltinFunc
 
@@ -1540,7 +1549,7 @@ func (c *uuidv4FunctionClass) getFunction(ctx BuildContext, args []Expression) (
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(36)
 	sig := &builtinUUIDv4Sig{bf}
-	sig.setPbCode(tipb.ScalarFuncSig_UUID)
+	sig.setPbCode(tipb.ScalarFuncSig_UUIDv4)
 	return sig, nil
 }
 
@@ -1587,7 +1596,7 @@ func (c *uuidv7FunctionClass) getFunction(ctx BuildContext, args []Expression) (
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(36)
 	sig := &builtinUUIDv7Sig{bf}
-	sig.setPbCode(tipb.ScalarFuncSig_UUID)
+	sig.setPbCode(tipb.ScalarFuncSig_UUIDv7)
 	return sig, nil
 }
 
@@ -1631,6 +1640,7 @@ func (c *uuidVersionFunctionClass) getFunction(ctx BuildContext, args []Expressi
 	}
 	bf.tp.SetFlen(10)
 	sig := &builtinUUIDVersionSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_UUIDVersion)
 	return sig, nil
 }
 
@@ -1677,6 +1687,7 @@ func (c *uuidTimestampFunctionClass) getFunction(ctx BuildContext, args []Expres
 	bf.tp.SetFlen(18)
 	bf.tp.SetDecimalUnderLimit(6)
 	sig := &builtinUUIDTimestampSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_UUIDTimestamp)
 	return sig, nil
 }
 

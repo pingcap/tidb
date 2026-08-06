@@ -137,13 +137,14 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 }
 
 func (t *ttlScanTask) doScanWithSession(ctx context.Context, delCh chan<- *ttlDeleteTask, rawSess session.Session) error {
-	// TODO: merge the ctx and the taskCtx in ttl scan task, to allow both "cancel" and gracefully stop workers
-	// now, the taskCtx is only check at the beginning of every loop
 	taskCtx := t.ctx
 	tracer := metrics.PhaseTracerFromCtx(ctx)
 	defer tracer.EnterPhase(tracer.Phase())
 
 	tracer.EnterPhase(metrics.PhaseOther)
+	// Keep the SQL execution context canceled when either the worker or the TTL task stops.
+	scanCtx, cancelScanCtx := context.WithCancel(ctx)
+	defer cancelScanCtx()
 	doScanFinished, setDoScanFinished := context.WithCancel(context.Background())
 	wg := util.WaitGroupWrapper{}
 	wg.Run(func() {
@@ -153,6 +154,7 @@ func (t *ttlScanTask) doScanWithSession(ctx context.Context, delCh chan<- *ttlDe
 		case <-doScanFinished.Done():
 			return
 		}
+		cancelScanCtx()
 		logger := t.taskLogger(logutil.BgLogger())
 		logger.Info("kill the running statement in scan task because the task or worker cancelled")
 		rawSess.KillStmt()
@@ -201,7 +203,7 @@ func (t *ttlScanTask) doScanWithSession(ctx context.Context, delCh chan<- *ttlDe
 		)
 	}
 
-	sess, restoreSession, err := NewScanSession(rawSess, t.tbl, t.ExpireTime)
+	sess, restoreSession, err := NewScanSession(scanCtx, rawSess, t.tbl, t.ExpireTime)
 	if err != nil {
 		return err
 	}
@@ -242,11 +244,11 @@ func (t *ttlScanTask) doScanWithSession(ctx context.Context, delCh chan<- *ttlDe
 		}
 
 		sqlStart := time.Now()
-		rows, retryable, sqlErr := sess.ExecuteSQLWithCheck(ctx, sql)
+		rows, retryable, sqlErr := sess.ExecuteSQLWithCheck(scanCtx, sql)
 		selectInterval := time.Since(sqlStart)
 		if sqlErr != nil {
 			metrics.SelectErrorDuration.Observe(selectInterval.Seconds())
-			needRetry := retryable && retryTimes < scanTaskExecuteSQLMaxRetry && ctx.Err() == nil && t.ctx.Err() == nil
+			needRetry := retryable && retryTimes < scanTaskExecuteSQLMaxRetry && scanCtx.Err() == nil
 			logutil.BgLogger().Warn("execute query for ttl scan task failed",
 				zap.String("SQL", sql),
 				zap.Int("retryTimes", retryTimes),
@@ -262,8 +264,8 @@ func (t *ttlScanTask) doScanWithSession(ctx context.Context, delCh chan<- *ttlDe
 
 			tracer.EnterPhase(metrics.PhaseWaitRetry)
 			select {
-			case <-ctx.Done():
-				return ctx.Err()
+			case <-scanCtx.Done():
+				return scanCtx.Err()
 			case <-time.After(scanTaskExecuteSQLRetryInterval):
 			}
 			tracer.EnterPhase(metrics.PhaseOther)
@@ -289,8 +291,8 @@ func (t *ttlScanTask) doScanWithSession(ctx context.Context, delCh chan<- *ttlDe
 
 		tracer.EnterPhase(metrics.PhaseDispatch)
 		select {
-		case <-ctx.Done():
-			return ctx.Err()
+		case <-scanCtx.Done():
+			return scanCtx.Err()
 		case delCh <- delTask:
 			t.statistics.IncTotalRows(len(lastResult))
 		}

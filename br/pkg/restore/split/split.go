@@ -36,18 +36,42 @@ const (
 	ScatterWaitUpperInterval = 30 * time.Minute
 
 	ScanRegionPaginationLimit = 128
+
+	// DefaultRegionIndexStep is the default number of split-key indexes between two rough split keys.
+	DefaultRegionIndexStep uint = 128
 )
+
+// NormalizeRegionIndexStep returns the default rough split step when the configured value is unset.
+func NormalizeRegionIndexStep(regionIndexStep uint) uint {
+	if regionIndexStep == 0 {
+		return DefaultRegionIndexStep
+	}
+	return regionIndexStep
+}
 
 // RegionSplitter is a executor of region split by rules.
 type RegionSplitter struct {
-	client SplitClient
+	client          SplitClient
+	regionIndexStep uint
+	coarseScatter   bool
 }
 
 // NewRegionSplitter returns a new RegionSplitter.
 func NewRegionSplitter(client SplitClient) *RegionSplitter {
+	return NewRegionSplitterWithRegionIndexStep(client, DefaultRegionIndexStep)
+}
+
+// NewRegionSplitterWithRegionIndexStep returns a new RegionSplitter with the configured rough split step.
+func NewRegionSplitterWithRegionIndexStep(client SplitClient, regionIndexStep uint) *RegionSplitter {
 	return &RegionSplitter{
-		client: client,
+		client:          client,
+		regionIndexStep: NormalizeRegionIndexStep(regionIndexStep),
 	}
+}
+
+// SetCoarseScatter makes only rough split regions scattered.
+func (rs *RegionSplitter) SetCoarseScatter(coarseScatter bool) {
+	rs.coarseScatter = coarseScatter
 }
 
 // ExecuteSortedKeysOnRegion expose the function `SplitWaitAndScatter` of split client.
@@ -80,22 +104,24 @@ func (rs *RegionSplitter) executeSplitByRanges(
 ) error {
 	startTime := time.Now()
 	// Choose the rough region split keys,
-	// each splited region contains 128 regions to be splitted.
-	const regionIndexStep = 128
-
-	roughSortedSplitKeys := make([][]byte, 0, len(sortedKeys)/regionIndexStep+1)
-	for curRegionIndex := regionIndexStep; curRegionIndex < len(sortedKeys); curRegionIndex += regionIndexStep {
-		roughSortedSplitKeys = append(roughSortedSplitKeys, sortedKeys[curRegionIndex])
+	// each split region contains regionIndexStep regions to be split.
+	var roughSortedSplitKeys [][]byte
+	if rs.regionIndexStep < uint(len(sortedKeys)) {
+		regionIndexStep := int(rs.regionIndexStep)
+		roughSortedSplitKeys = make([][]byte, 0, len(sortedKeys)/regionIndexStep+1)
+		for curRegionIndex := regionIndexStep; curRegionIndex < len(sortedKeys); curRegionIndex += regionIndexStep {
+			roughSortedSplitKeys = append(roughSortedSplitKeys, sortedKeys[curRegionIndex])
+		}
 	}
 	if len(roughSortedSplitKeys) > 0 {
-		if err := rs.executeSplitByKeys(ctx, roughSortedSplitKeys); err != nil {
+		if err := rs.executeSplitByKeys(ctx, roughSortedSplitKeys, true); err != nil {
 			return errors.Trace(err)
 		}
 	}
 	log.Info("finish spliting regions roughly", zap.Duration("take", time.Since(startTime)))
 
 	// Then send split requests to each TiKV.
-	if err := rs.executeSplitByKeys(ctx, sortedKeys); err != nil {
+	if err := rs.executeSplitByKeys(ctx, sortedKeys, !rs.coarseScatter); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -110,9 +136,10 @@ func (rs *RegionSplitter) executeSplitByRanges(
 func (rs *RegionSplitter) executeSplitByKeys(
 	ctx context.Context,
 	sortedKeys [][]byte,
+	scatter bool,
 ) error {
 	startTime := time.Now()
-	scatterRegions, err := rs.client.SplitKeysAndScatter(ctx, sortedKeys)
+	scatterRegions, err := rs.splitKeys(ctx, sortedKeys, scatter)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -124,6 +151,13 @@ func (rs *RegionSplitter) executeSplitByKeys(
 		log.Info("finish splitting regions.", zap.Duration("take", time.Since(startTime)))
 	}
 	return nil
+}
+
+func (rs *RegionSplitter) splitKeys(ctx context.Context, sortedKeys [][]byte, scatter bool) ([]*RegionInfo, error) {
+	if scatter {
+		return rs.client.SplitKeysAndScatter(ctx, sortedKeys)
+	}
+	return rs.client.SplitKeys(ctx, sortedKeys)
 }
 
 // waitRegionsScattered try to wait mutilple regions scatterd in 3 minutes.
@@ -152,7 +186,10 @@ func (rs *RegionSplitter) WaitForScatterRegionsTimeout(ctx context.Context, regi
 	return leftRegions
 }
 
-func checkRegionConsistency(startKey, endKey []byte, regions []*RegionInfo) error {
+// checkRegionConsistency checks the readiness and continuity of regions.
+// if the argument `limitted` is true, regions are regarded as limitted scanned result.
+// so it will not compare `endKey` with the last region's `EndKey`.
+func checkRegionConsistency(startKey, endKey []byte, regions []*RegionInfo, limitted bool) error {
 	// current pd can't guarantee the consistency of returned regions
 	if len(regions) == 0 {
 		return errors.Annotatef(berrors.ErrPDBatchScanRegion, "scan region return empty result, startKey: %s, endKey: %s",
@@ -165,7 +202,7 @@ func checkRegionConsistency(startKey, endKey []byte, regions []*RegionInfo) erro
 			regions[0].Region.Id,
 			redact.Key(regions[0].Region.StartKey), redact.Key(startKey),
 			regions[0].Region.RegionEpoch.String())
-	} else if len(regions[len(regions)-1].Region.EndKey) != 0 &&
+	} else if !limitted && len(regions[len(regions)-1].Region.EndKey) != 0 &&
 		bytes.Compare(regions[len(regions)-1].Region.EndKey, endKey) < 0 {
 		return errors.Annotatef(berrors.ErrPDBatchScanRegion,
 			"last region %d's endKey(%s) < endKey(%s), region epoch: %s",
@@ -179,10 +216,18 @@ func checkRegionConsistency(startKey, endKey []byte, regions []*RegionInfo) erro
 		return errors.Annotatef(berrors.ErrPDBatchScanRegion,
 			"region %d's leader is nil", cur.Region.Id)
 	}
+	if cur.Leader.StoreId == 0 {
+		return errors.Annotatef(berrors.ErrPDBatchScanRegion,
+			"region %d's leader's store id is 0", cur.Region.Id)
+	}
 	for _, r := range regions[1:] {
 		if r.Leader == nil {
 			return errors.Annotatef(berrors.ErrPDBatchScanRegion,
 				"region %d's leader is nil", r.Region.Id)
+		}
+		if r.Leader.StoreId == 0 {
+			return errors.Annotatef(berrors.ErrPDBatchScanRegion,
+				"region %d's leader's store id is 0", r.Region.Id)
 		}
 		if !bytes.Equal(cur.Region.EndKey, r.Region.StartKey) {
 			return errors.Annotatef(berrors.ErrPDBatchScanRegion,
@@ -195,6 +240,76 @@ func checkRegionConsistency(startKey, endKey []byte, regions []*RegionInfo) erro
 	}
 
 	return nil
+}
+
+func scanRegionsLimitWithRetry(
+	ctx context.Context, client SplitClient, startKey, endKey []byte, limit int, mustLeader bool,
+) ([]*RegionInfo, bool, error) {
+	var (
+		batch []*RegionInfo
+		err   error
+	)
+	_ = utils.WithRetry(ctx, func() error {
+		defer func() { mustLeader = mustLeader || err != nil }()
+		if mustLeader {
+			batch, err = client.ScanRegions(ctx, startKey, endKey, limit)
+		} else {
+			batch, err = client.ScanRegions(ctx, startKey, endKey, limit, opt.WithAllowFollowerHandle())
+		}
+		if err != nil {
+			return err
+		}
+		if err = checkRegionConsistency(startKey, endKey, batch, true); err != nil {
+			log.Warn("failed to scan region, retrying",
+				logutil.ShortError(err),
+				zap.Int("regionLength", len(batch)))
+			return err
+		}
+		return nil
+	}, NewWaitRegionOnlineBackoffer())
+	return batch, mustLeader, err
+}
+
+// PaginateScanRegionWithCodecAware scans a logical KV range. Callers pass
+// logical start and end keys, and this helper converts them to PD scan keys
+// before scanning. Without a CodecPDClient it uses codec.EncodeBytes and
+// returns PD-encoded region boundary keys. With a CodecPDClient it decodes the
+// input range before scanning and re-encodes returned region boundaries through
+// the active codec.
+func PaginateScanRegionWithCodecAware(
+	ctx context.Context, client SplitClient, startKey, endKey []byte, limit int,
+) ([]*RegionInfo, error) {
+	var encodeRegionRange func([]byte, []byte) ([]byte, []byte)
+	if codecCli := client.GetCodecPDClient(); codecCli != nil {
+		var err error
+		cd := codecCli.GetCodec()
+		encodeRegionRange = cd.EncodeRegionRange
+		startKey, endKey, err = cd.DecodeRange(startKey, endKey)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		startKey = codec.EncodeBytes(nil, startKey)
+		endKey = codec.EncodeBytes(nil, endKey)
+	}
+	regions, err := PaginateScanRegion(ctx, client, startKey, endKey, limit)
+	if err != nil {
+		return nil, err
+	}
+	if encodeRegionRange != nil {
+		// codec PD client will return the region with keys after decode.
+		encodeRegionKeys(regions, encodeRegionRange)
+	}
+	return regions, nil
+}
+
+func encodeRegionKeys(regions []*RegionInfo, encodeRegionRange func([]byte, []byte) ([]byte, []byte)) {
+	for _, region := range regions {
+		if region == nil || region.Region == nil {
+			continue
+		}
+		region.Region.StartKey, region.Region.EndKey = encodeRegionRange(region.Region.StartKey, region.Region.EndKey)
+	}
 }
 
 // PaginateScanRegion scan regions with a limit pagination and return all regions
@@ -210,24 +325,17 @@ func PaginateScanRegion(
 
 	var (
 		lastRegions []*RegionInfo
-		lastErr     error
+		err         error
+		mustLeader  = false
 		backoffer   = NewWaitRegionOnlineBackoffer()
 	)
 	_ = utils.WithRetry(ctx, func() error {
-		var err error
-		defer func() {
-			lastErr = err
-		}()
+		defer func() { mustLeader = true }()
 		regions := make([]*RegionInfo, 0, 16)
 		scanStartKey := startKey
 		for {
 			var batch []*RegionInfo
-			if lastErr != nil {
-				batch, err = client.ScanRegions(ctx, scanStartKey, endKey, limit)
-			} else {
-				batch, err = client.ScanRegions(ctx, scanStartKey, endKey, limit, opt.WithAllowFollowerHandle())
-			}
-
+			batch, mustLeader, err = scanRegionsLimitWithRetry(ctx, client, scanStartKey, endKey, limit, mustLeader)
 			if err != nil {
 				err = errors.Annotatef(berrors.ErrPDBatchScanRegion.Wrap(err), "scan regions from start-key:%s, err: %s",
 					redact.Key(scanStartKey), err.Error())
@@ -252,7 +360,7 @@ func PaginateScanRegion(
 		}
 		lastRegions = regions
 
-		if err = checkRegionConsistency(startKey, endKey, regions); err != nil {
+		if err = checkRegionConsistency(startKey, endKey, regions, false); err != nil {
 			log.Warn("failed to scan region, retrying",
 				logutil.ShortError(err),
 				zap.Int("regionLength", len(regions)))
@@ -261,7 +369,7 @@ func PaginateScanRegion(
 		return nil
 	}, backoffer)
 
-	return lastRegions, lastErr
+	return lastRegions, err
 }
 
 // checkPartRegionConsistency only checks the continuity of regions and the first region consistency.

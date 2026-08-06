@@ -248,27 +248,34 @@ GRANT DROP ON privilege__privileges.* TO  'tester'@'localhost';
 alter table pt exchange partition p0 with table nt;
 CREATE USER 'test_import_into'@'localhost';
 GRANT SELECT ON privilege__privileges.* TO 'test_import_into'@'localhost';
+flush privileges;
 CREATE TABLE IF NOT EXISTS t(a int);
 IMPORT INTO t FROM '/file.csv';
 Error 1142 (42000): UPDATE command denied to user 'test_import_into'@'localhost' for table 't'
 GRANT SELECT on *.* to 'test_import_into'@'localhost';
+flush privileges;
 IMPORT INTO t FROM '/file.csv';
 Error 1142 (42000): UPDATE command denied to user 'test_import_into'@'localhost' for table 't'
 GRANT UPDATE on *.* to 'test_import_into'@'localhost';
+flush privileges;
 IMPORT INTO t FROM '/file.csv';
 Error 1142 (42000): INSERT command denied to user 'test_import_into'@'localhost' for table 't'
 GRANT INSERT on *.* to 'test_import_into'@'localhost';
+flush privileges;
 IMPORT INTO t FROM '/file.csv';
 Error 1142 (42000): DELETE command denied to user 'test_import_into'@'localhost' for table 't'
 GRANT DELETE on *.* to 'test_import_into'@'localhost';
+flush privileges;
 IMPORT INTO t FROM '/file.csv';
 Error 1142 (42000): ALTER command denied to user 'test_import_into'@'localhost' for table 't'
 GRANT ALTER on *.* to 'test_import_into'@'localhost';
+flush privileges;
 IMPORT INTO t FROM '/file.csv';
 Error 1227 (42000): Access denied; you need (at least one of) the FILE privilege(s) for this operation
 DROP USER 'test_import_into'@'localhost';
 CREATE USER 'test_import_into'@'localhost';
 GRANT FILE on *.* to 'test_import_into'@'localhost';
+flush privileges;
 IMPORT INTO t FROM '/file.csv';
 Error 1142 (42000): SELECT command denied to user 'test_import_into'@'localhost' for table 't'
 drop table if exists t;

@@ -5,6 +5,7 @@ package snapclient
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -21,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -139,6 +141,11 @@ var unRecoverableTable = map[string]map[string]struct{}{
 
 		"tidb_pitr_id_map":      {},
 		"tidb_restore_registry": {},
+		// tidb_masking_policy contains table_id and column_id that reference other tables.
+		// Since BR may rewrite table IDs during restore, directly restoring this table's data
+		// would result in mismatched IDs. The table structure should be restored via DDL
+		// instead, similar to other DDL-related system tables.
+		"tidb_masking_policy": {},
 	},
 	"sys": {
 		// replace into view is not supported now
@@ -146,13 +153,13 @@ var unRecoverableTable = map[string]map[string]struct{}{
 	},
 }
 
-type checkPrivilegeTableRowsCollateCompatiblitySQLPair struct {
+type checkPrivilegeTableRowsCollateCompatibilitySQLPair struct {
 	upstreamCollateSQL   string
 	downstreamCollateSQL string
 	columns              map[string]struct{}
 }
 
-var collateCompatibilityTables = map[string]map[string]checkPrivilegeTableRowsCollateCompatiblitySQLPair{
+var collateCompatibilityTables = map[string]map[string]checkPrivilegeTableRowsCollateCompatibilitySQLPair{
 	"mysql": {
 		"db": {
 			upstreamCollateSQL:   "SELECT COUNT(1) FROM __TiDB_BR_Temporary_mysql.db",
@@ -475,9 +482,27 @@ func (rc *SnapClient) afterSystemTablesReplaced(ctx context.Context, db string, 
 }
 
 // replaceTemporaryTableToSystable replaces the temporary table to real system table.
-func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *model.TableInfo, db *database) error {
+func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *model.TableInfo, db *database) (retErr error) {
 	dbName := db.Name.L
 	tableName := ti.Name.L
+	if rc.txnTotalSizeLimit > 0 {
+		sessionVars := rc.db.Session().GetSessionCtx().GetSessionVars()
+		originMemQuota := sessionVars.MemQuotaQuery
+		if err := sessionVars.SetSystemVar(vardef.TiDBMemQuotaQuery, strconv.FormatUint(rc.txnTotalSizeLimit, 10)); err != nil {
+			return berrors.ErrUnknown.Wrap(err).GenWithStack("failed to set session variable %s", vardef.TiDBMemQuotaQuery)
+		}
+		defer func() {
+			if err := sessionVars.SetSystemVar(vardef.TiDBMemQuotaQuery, strconv.FormatInt(originMemQuota, 10)); err != nil {
+				log.Warn("failed to restore session variable",
+					zap.String("var", vardef.TiDBMemQuotaQuery),
+					zap.Int64("restore-to", originMemQuota),
+					zap.Error(err),
+				)
+				retErr = multierr.Append(retErr, berrors.ErrUnknown.Wrap(err).GenWithStack("failed to set session variable %s", vardef.TiDBMemQuotaQuery))
+			}
+		}()
+	}
+
 	execSQL := func(ctx context.Context, sql string) error {
 		// SQLs here only contain table name and database name, seems it is no need to redact them.
 		if err := rc.db.Session().Execute(ctx, sql); err != nil {
@@ -531,7 +556,7 @@ func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *m
 		log.Info("replace into existing table",
 			zap.String("table", tableName),
 			zap.Stringer("schema", db.Name))
-		if rc.checkPrivilegeTableRowsCollateCompatiblity {
+		if rc.privilegeTableRowsCollateCompatibility {
 			if err := rc.checkPrivilegeTableRowsCollateCompatibility(ctx, dbName, tableName, ti, db.ExistingTables[tableName]); err != nil {
 				return err
 			}
@@ -607,11 +632,17 @@ func CheckSysTableCompatibility(dom *domain.Domain, tables []*metautil.Table, co
 			col := ti.Columns[i]
 			backupCol := backupColMap[col.Name.L]
 			if backupCol == nil {
-				// skip when the backed up mysql.user table is missing columns.
+				// mysql.user may gain new columns in newer TiDB versions. In that case the
+				// schemas are still logically compatible, but loading the backed-up data
+				// directly into the temporary table with the newer schema can fail checksum
+				// validation because the upstream snapshot does not contain the new column.
+				// Fall back to non-physical loading for mysql.user when the backup is
+				// missing target columns.
 				if backupTi.Name.L == sysUserTableName {
 					log.Warn("missing column in backup data",
 						zap.Stringer("table", table.Info.Name),
 						zap.String("col", fmt.Sprintf("%s %s", col.Name, col.FieldType.String())))
+					canLoadSysTablePhysical = false
 					continue
 				}
 				log.Error("missing column in backup data",
@@ -688,11 +719,11 @@ func (rc *SnapClient) checkPrivilegeTableRowsCollateCompatibility(
 	dbNameL, tableNameL string,
 	upstreamTable, downstreamTable *model.TableInfo,
 ) error {
-	collateCompatiblityTableMap, exists := collateCompatibilityTables[dbNameL]
+	collateCompatibilityTableMap, exists := collateCompatibilityTables[dbNameL]
 	if !exists {
 		return nil
 	}
-	collateCompatibilityColumnMap, exists := collateCompatiblityTableMap[tableNameL]
+	collateCompatibilityColumnMap, exists := collateCompatibilityTableMap[tableNameL]
 	if !exists {
 		return nil
 	}

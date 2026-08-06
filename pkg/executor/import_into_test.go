@@ -21,12 +21,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -39,6 +41,7 @@ import (
 	semv1 "github.com/pingcap/tidb/pkg/util/sem"
 	semv2 "github.com/pingcap/tidb/pkg/util/sem/v2"
 	"github.com/stretchr/testify/require"
+	tikvutil "github.com/tikv/client-go/v2/util"
 )
 
 var (
@@ -117,8 +120,8 @@ func TestClassicS3ExternalID(t *testing.T) {
 				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/importer/NewImportPlan", func(plan *plannercore.ImportInto) {
 					u, err := url.Parse(plan.Path)
 					require.NoError(t, err)
-					require.Contains(t, u.Query(), storage.S3ExternalID)
-					require.Equal(t, "allowed", u.Query().Get(storage.S3ExternalID))
+					require.Contains(t, u.Query(), s3like.S3ExternalID)
+					require.Equal(t, "allowed", u.Query().Get(s3like.S3ExternalID))
 					panic("FAIL IT, AS WE CANNOT RUN IT HERE")
 				})
 				tk.MustExec("IMPORT INTO test.t FROM 's3://bucket?EXTERNAL-ID=allowed'")
@@ -132,8 +135,8 @@ func TestClassicS3ExternalID(t *testing.T) {
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/importer/NewImportPlan", func(plan *plannercore.ImportInto) {
 			u, err := url.Parse(plan.Path)
 			require.NoError(t, err)
-			require.Contains(t, u.Query(), storage.S3ExternalID)
-			require.Equal(t, "allowed", u.Query().Get(storage.S3ExternalID))
+			require.Contains(t, u.Query(), s3like.S3ExternalID)
+			require.Equal(t, "allowed", u.Query().Get(s3like.S3ExternalID))
 			panic("FAIL IT, AS WE CANNOT RUN IT HERE")
 		})
 		tk.MustExec("IMPORT INTO test.t FROM 's3://bucket?EXTERNAL-ID=allowed'")
@@ -149,7 +152,7 @@ func TestNextGenS3ExternalID(t *testing.T) {
 	outerTK := testkit.NewTestKit(t, store)
 	outerTK.MustExec("create table test.t (id int);")
 
-	t.Run("SEM enabled, forbid set S3 external ID", func(t *testing.T) {
+	t.Run("SEM enabled, forbid set external ID for S3 like store", func(t *testing.T) {
 		for i, fns := range semTestPatternFns {
 			t.Run(fmt.Sprint(i), func(t *testing.T) {
 				tk := testkit.NewTestKit(t, store)
@@ -157,12 +160,29 @@ func TestNextGenS3ExternalID(t *testing.T) {
 				t.Cleanup(func() {
 					fns[1](t, tk)
 				})
-				tk.MustMatchErrMsg("IMPORT INTO test.t FROM 's3://bucket?EXTERNAL-ID=abc'", `(?i).*Feature 'IMPORT INTO .*external.*' is not supported when security enhanced mode is enabled`)
+				for _, schema := range []string{"s3", "oss"} {
+					tk.MustMatchErrMsg(fmt.Sprintf("IMPORT INTO test.t FROM '%s://bucket?EXTERNAL-ID=abc'", schema), `(?i).*Feature 'IMPORT INTO .*external.*' is not supported when security enhanced mode is enabled`)
+				}
 			})
 		}
 	})
 
-	t.Run("SEM enabled, set S3 external ID to keyspace name", func(t *testing.T) {
+	t.Run("SEM enabled, require explicit auth for S3 like store", func(t *testing.T) {
+		for i, fns := range semTestPatternFns {
+			t.Run(fmt.Sprint(i), func(t *testing.T) {
+				tk := testkit.NewTestKit(t, store)
+				fns[0](t, tk)
+				t.Cleanup(func() {
+					fns[1](t, tk)
+				})
+				for _, schema := range []string{"s3", "oss"} {
+					tk.MustMatchErrMsg(fmt.Sprintf("IMPORT INTO test.t FROM '%s://bucket'", schema), `(?i).*Feature 'IMPORT INTO .*without access key/secret access key or role ARN' is not supported when security enhanced mode is enabled`)
+				}
+			})
+		}
+	})
+
+	t.Run("SEM enabled, set external ID to keyspace name", func(t *testing.T) {
 		bak := config.GetGlobalKeyspaceName()
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.KeyspaceName = "aaa"
@@ -182,12 +202,14 @@ func TestNextGenS3ExternalID(t *testing.T) {
 				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/importer/NewImportPlan", func(plan *plannercore.ImportInto) {
 					u, err := url.Parse(plan.Path)
 					require.NoError(t, err)
-					require.Contains(t, u.Query(), storage.S3ExternalID)
-					require.Equal(t, "aaa", u.Query().Get(storage.S3ExternalID))
+					require.Contains(t, u.Query(), s3like.S3ExternalID)
+					require.Equal(t, "aaa", u.Query().Get(s3like.S3ExternalID))
 					panic("FAIL IT, AS WE CANNOT RUN IT HERE")
 				})
-				err := tk.QueryToErr("IMPORT INTO test.t FROM 's3://bucket'")
-				require.ErrorContains(t, err, "FAIL IT, AS WE CANNOT RUN IT HERE")
+				for _, schema := range []string{"s3", "oss"} {
+					err := tk.QueryToErr(fmt.Sprintf("IMPORT INTO test.t FROM '%s://bucket?access-key=ak&secret-access-key=sk'", schema))
+					require.ErrorContains(t, err, "FAIL IT, AS WE CANNOT RUN IT HERE")
+				}
 			})
 		}
 	})
@@ -207,8 +229,8 @@ func TestNextGenS3ExternalID(t *testing.T) {
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/importer/NewImportPlan", func(plan *plannercore.ImportInto) {
 			u, err := url.Parse(plan.Path)
 			require.NoError(t, err)
-			require.Contains(t, u.Query(), storage.S3ExternalID)
-			require.Equal(t, "allowed", u.Query().Get(storage.S3ExternalID))
+			require.Contains(t, u.Query(), s3like.S3ExternalID)
+			require.Equal(t, "allowed", u.Query().Get(s3like.S3ExternalID))
 			panic("FAIL IT, AS WE CANNOT RUN IT HERE")
 		})
 		err := tk.QueryToErr("IMPORT INTO test.t FROM 's3://bucket?external-id=allowed'")
@@ -235,6 +257,73 @@ func TestNextGenUnsupportedLocalSortAndOptions(t *testing.T) {
 	}
 }
 
+func TestCancelImportJobWithoutDXFTask(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("import job and dxf task is submitted together in classic, no such case")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	ctx := tikvutil.WithInternalSourceType(context.Background(), kv.InternalDistTask)
+	manager, err := storage.GetTaskManager()
+	require.NoError(t, err)
+	require.NoError(t, manager.InitMeta(ctx, ":4000", ""))
+
+	assertNoDXFTask := func(jobID int64) {
+		taskKey := importinto.TaskKey(jobID)
+		tk.MustQuery("select count(1) from mysql.tidb_global_task where task_key = ?", taskKey).
+			Check(testkit.Rows("0"))
+		tk.MustQuery("select count(1) from mysql.tidb_global_task_history where task_key = ?", taskKey).
+			Check(testkit.Rows("0"))
+	}
+
+	jobID, err := importer.CreateJob(ctx, tk.Session().GetSQLExecutor(), "test", "t", 1,
+		tk.Session().GetSessionVars().User.String(), "", &importer.ImportParameters{
+			Format: importer.DataFormatCSV,
+		}, 0)
+	require.NoError(t, err)
+	assertNoDXFTask(jobID)
+
+	tk.MustExec(fmt.Sprintf("cancel import job %d", jobID))
+	tk.MustQuery("select status, error_message from mysql.tidb_import_jobs where id = ?", jobID).
+		Check(testkit.Rows("cancelled cancelled by user"))
+	assertNoDXFTask(jobID)
+
+	backgroundJobID, err := importer.CreateJob(ctx, tk.Session().GetSQLExecutor(), "test", "t", 1,
+		tk.Session().GetSessionVars().User.String(), "", &importer.ImportParameters{
+			Format: importer.DataFormatCSV,
+		}, 0)
+	require.NoError(t, err)
+	assertNoDXFTask(backgroundJobID)
+
+	// The KILL path enters the helper with a fresh background context.
+	require.NoError(t, executor.CancelAndWaitImportJobForTest(context.Background(), backgroundJobID))
+	tk.MustQuery("select status, error_message from mysql.tidb_import_jobs where id = ?", backgroundJobID).
+		Check(testkit.Rows("cancelled cancelled by user"))
+	assertNoDXFTask(backgroundJobID)
+
+	err = tk.ExecToErr(fmt.Sprintf("cancel import job %d", jobID))
+	require.ErrorIs(t, err, exeerrors.ErrLoadDataInvalidOperation)
+	require.ErrorContains(t, err, "The current job status cannot perform the operation. CANCEL")
+	tk.MustQuery("select status, error_message from mysql.tidb_import_jobs where id = ?", jobID).
+		Check(testkit.Rows("cancelled cancelled by user"))
+	assertNoDXFTask(jobID)
+
+	runningJobID, err := importer.CreateJob(ctx, tk.Session().GetSQLExecutor(), "test", "t", 1,
+		tk.Session().GetSessionVars().User.String(), "", &importer.ImportParameters{
+			Format: importer.DataFormatCSV,
+		}, 0)
+	require.NoError(t, err)
+	require.NoError(t, importer.StartJob(ctx, tk.Session().GetSQLExecutor(), runningJobID, importer.JobStepImporting))
+	assertNoDXFTask(runningJobID)
+
+	err = tk.ExecToErr(fmt.Sprintf("cancel import job %d", runningJobID))
+	require.ErrorContains(t, err, "job state changed during cancel, please try again later")
+	tk.MustQuery("select status, step from mysql.tidb_import_jobs where id = ?", runningJobID).
+		Check(testkit.Rows("running importing"))
+	assertNoDXFTask(runningJobID)
+}
+
 func testNextGenUnsupportedLocalSortAndOptions(t *testing.T, store kv.Storage, initFn func(t *testing.T, tk *testkit.TestKit)) {
 	t.Run("import from select", func(t *testing.T) {
 		tk := testkit.NewTestKit(t, store)
@@ -247,7 +336,7 @@ func testNextGenUnsupportedLocalSortAndOptions(t *testing.T, store kv.Storage, i
 	t.Run("local sort", func(t *testing.T) {
 		tk := testkit.NewTestKit(t, store)
 		initFn(t, tk)
-		err := tk.QueryToErr("IMPORT INTO test.t FROM 's3://bucket/*.csv'")
+		err := tk.QueryToErr("IMPORT INTO test.t FROM 's3://bucket/*.csv?access-key=ak&secret-access-key=sk'")
 		require.ErrorIs(t, err, plannererrors.ErrNotSupportedWithSem)
 		require.ErrorContains(t, err, "IMPORT INTO with local sort")
 	})
@@ -275,7 +364,7 @@ func testNextGenUnsupportedLocalSortAndOptions(t *testing.T, store kv.Storage, i
 			"checksum_table",
 			"record_errors",
 		} {
-			err := tk.QueryToErr(fmt.Sprintf("IMPORT INTO test.t FROM 's3://bucket/*.csv' with %s='1'", option))
+			err := tk.QueryToErr(fmt.Sprintf("IMPORT INTO test.t FROM 's3://bucket/*.csv?access-key=ak&secret-access-key=sk' with %s='1'", option))
 			require.ErrorIs(t, err, exeerrors.ErrLoadDataUnsupportedOption)
 			require.ErrorContains(t, err, option)
 		}
@@ -283,7 +372,7 @@ func testNextGenUnsupportedLocalSortAndOptions(t *testing.T, store kv.Storage, i
 			"__force_merge_step",
 			"__manual_recovery",
 		} {
-			err := tk.QueryToErr(fmt.Sprintf("IMPORT INTO test.t FROM 's3://bucket/*.csv' with %s", option))
+			err := tk.QueryToErr(fmt.Sprintf("IMPORT INTO test.t FROM 's3://bucket/*.csv?access-key=ak&secret-access-key=sk' with %s", option))
 			require.ErrorIs(t, err, exeerrors.ErrLoadDataUnsupportedOption)
 			require.ErrorContains(t, err, option)
 		}

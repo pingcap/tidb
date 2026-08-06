@@ -269,7 +269,7 @@ var columnValueGetterMap = map[string]func(*TxnInfo) types.Datum{
 			} else {
 				first = false
 			}
-			str.WriteString(fmt.Sprintf("%d", tblID))
+			fmt.Fprintf(&str, "%d", tblID)
 		}
 		return types.NewDatum(str.String())
 	},

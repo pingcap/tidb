@@ -103,7 +103,18 @@ func (p *LogicalSequence) DeriveStats(childStats []*property.StatsInfo, _ *expre
 
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.
 
-// PreparePossibleProperties inherits BaseLogicalPlan.LogicalPlan.<13th> implementation.
+// PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
+func (p *LogicalSequence) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
+	hasTiFlash := len(childrenProperties) > 0
+	for _, child := range childrenProperties {
+		if child == nil {
+			continue
+		}
+		hasTiFlash = hasTiFlash && child.HasTiFlash
+	}
+	p.hasTiFlash = hasTiFlash
+	return &base.PossiblePropertiesInfo{HasTiFlash: p.hasTiFlash}
+}
 
 // ExtractCorrelatedCols inherits BaseLogicalPlan.LogicalPlan.<15th> implementation.
 
@@ -122,7 +133,5 @@ func (p *LogicalSequence) DeriveStats(childStats []*property.StatsInfo, _ *expre
 // ExtractFD inherits BaseLogicalPlan.LogicalPlan.<22nd> implementation.
 
 // GetBaseLogicalPlan inherits BaseLogicalPlan.LogicalPlan.<23rd> implementation.
-
-// ConvertOuterToInnerJoin inherits BaseLogicalPlan.LogicalPlan.<24th> implementation.
 
 // *************************** end implementation of logicalPlan interface ***************************

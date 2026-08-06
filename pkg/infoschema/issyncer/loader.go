@@ -85,6 +85,7 @@ type Loader struct {
 	// loading system tables
 	crossKS bool
 	logger  *zap.Logger
+	filter  Filter
 
 	// below fields are set when running background routines
 	// Note: for cross keyspace loader, we don't set below fields as system tables
@@ -98,13 +99,14 @@ type Loader struct {
 	sysExecutorFactory func() (pools.Resource, error)
 }
 
-func newLoader(store kv.Storage, infoCache *infoschema.InfoCache, deferFn *deferFn) *Loader {
+func newLoader(store kv.Storage, infoCache *infoschema.InfoCache, deferFn *deferFn, filter Filter) *Loader {
 	mode := LoadModeAuto
 	return &Loader{
 		mode:      mode,
 		store:     store,
 		infoCache: infoCache,
 		deferFn:   deferFn,
+		filter:    filter,
 		logger:    logutil.BgLogger().With(zap.Stringer("mode", mode)),
 	}
 }
@@ -251,6 +253,11 @@ func (l *Loader) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
+
+	maskingPolicies, err := l.fetchMaskingPolicies(m)
+	if err != nil {
+		return nil, false, currentSchemaVersion, nil, err
+	}
 	infoschema_metrics.LoadSchemaDurationLoadAll.Observe(time.Since(startTime).Seconds())
 
 	data := l.infoCache.Data
@@ -265,7 +272,7 @@ func (l *Loader) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 	}
 	builder := infoschema.NewBuilder(l, schemaCacheSize, l.sysExecutorFactory, data, useV2).
 		WithCrossKS(l.crossKS)
-	err = builder.InitWithDBInfos(schemas, policies, resourceGroups, neededSchemaVersion)
+	err = builder.InitWithDBInfos(schemas, policies, resourceGroups, maskingPolicies, neededSchemaVersion)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
@@ -289,6 +296,16 @@ func (l *Loader) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 }
 
 func (l *Loader) skipLoadingDiff(diff *model.SchemaDiff) bool {
+	if l.filter != nil {
+		var latestIS infoschema.InfoSchema
+		if l.infoCache != nil {
+			latestIS = l.infoCache.GetLatest()
+		}
+		if l.filter.SkipLoadDiff(diff, latestIS) {
+			return true
+		}
+	}
+
 	if !l.crossKS {
 		return false
 	}
@@ -412,6 +429,17 @@ func (l *Loader) fetchAllSchemasWithTables(m meta.Reader, schemaCacheSize uint64
 			return nil, errors.New("system database not found")
 		}
 		allSchemas = []*model.DBInfo{dbInfo}
+	} else if l.filter != nil {
+		allSchemas = make([]*model.DBInfo, 0, 6)
+		err := m.IterDatabases(func(dbInfo *model.DBInfo) error {
+			if !l.filter.SkipLoadSchema(dbInfo) {
+				allSchemas = append(allSchemas, dbInfo)
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
 	} else {
 		allSchemas, err = m.ListDatabases()
 		if err != nil {
@@ -453,6 +481,12 @@ func (*Loader) fetchResourceGroups(m meta.Reader) ([]*model.ResourceGroupInfo, e
 		return nil, err
 	}
 	return allResourceGroups, nil
+}
+
+func (*Loader) fetchMaskingPolicies(_ meta.Reader) ([]*model.MaskingPolicyInfo, error) {
+	// Masking policies are loaded lazily from mysql.tidb_masking_policy in infoschema.
+	// Keep the loader API shape unchanged for minimal phase4 churn.
+	return nil, nil
 }
 
 func (*Loader) fetchSchemasWithTables(ctx context.Context, schemas []*model.DBInfo, m meta.Reader, schemaCacheSize uint64) error {

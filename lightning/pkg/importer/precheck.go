@@ -19,9 +19,9 @@ import (
 	"database/sql"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/lightning/pkg/checkpoints"
 	ropts "github.com/pingcap/tidb/lightning/pkg/importer/opts"
 	"github.com/pingcap/tidb/lightning/pkg/precheck"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -44,6 +44,7 @@ type PrecheckItemBuilder struct {
 	checkpointsDB checkpoints.DB
 	pdAddrsGetter func(context.Context) []string
 	targetDB      *sql.DB
+	keyspaceName  string
 }
 
 // NewPrecheckItemBuilderFromConfig creates a new PrecheckItemBuilder from config
@@ -106,6 +107,19 @@ func NewPrecheckItemBuilder(
 	pdHTTPCli pdhttp.Client,
 	targetDB *sql.DB,
 ) *PrecheckItemBuilder {
+	return newPrecheckItemBuilderWithKeyspaceName(
+		cfg, dbMetas, preInfoGetter, checkpointsDB, pdHTTPCli, targetDB, cfg.TikvImporter.KeyspaceName)
+}
+
+func newPrecheckItemBuilderWithKeyspaceName(
+	cfg *config.Config,
+	dbMetas []*mydump.MDDatabaseMeta,
+	preInfoGetter PreImportInfoGetter,
+	checkpointsDB checkpoints.DB,
+	pdHTTPCli pdhttp.Client,
+	targetDB *sql.DB,
+	keyspaceName string,
+) *PrecheckItemBuilder {
 	pdAddrsGetter := func(context.Context) []string {
 		return []string{cfg.TiDB.PdAddr}
 	}
@@ -130,6 +144,7 @@ func NewPrecheckItemBuilder(
 		checkpointsDB: checkpointsDB,
 		pdAddrsGetter: pdAddrsGetter,
 		targetDB:      targetDB,
+		keyspaceName:  keyspaceName,
 	}
 }
 
@@ -161,7 +176,7 @@ func (b *PrecheckItemBuilder) BuildPrecheckItem(checkID precheck.CheckItemID) (p
 	case precheck.CheckLocalTempKVDir:
 		return NewLocalTempKVDirCheckItem(b.cfg, b.preInfoGetter, b.dbMetas), nil
 	case precheck.CheckTargetUsingCDCPITR:
-		return NewCDCPITRCheckItem(b.cfg, b.pdAddrsGetter), nil
+		return newCDCPITRCheckItemWithKeyspaceName(b.cfg, b.pdAddrsGetter, b.keyspaceName), nil
 	case precheck.CheckPDTiDBFromSameCluster:
 		return NewPDTiDBFromSameClusterCheckItem(b.targetDB, b.pdAddrsGetter), nil
 	default:

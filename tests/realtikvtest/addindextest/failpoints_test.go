@@ -21,6 +21,7 @@ import (
 )
 
 func TestFailpointsCreateNonUniqueIndex(t *testing.T) {
+	enableFastAddIndexFailpoints(t)
 	if !*FullMode {
 		t.Skip()
 	}
@@ -34,6 +35,7 @@ func TestFailpointsCreateNonUniqueIndex(t *testing.T) {
 }
 
 func TestFailpointsCreateUniqueIndex(t *testing.T) {
+	enableFastAddIndexFailpoints(t)
 	if !*FullMode {
 		t.Skip()
 	}
@@ -50,6 +52,7 @@ func TestFailpointsCreatePrimaryKeyFailpoints(t *testing.T) {
 	if !*FullMode {
 		t.Skip()
 	}
+	enableFastAddIndexFailpoints(t)
 	ctx := testutils.InitTest(t)
 	testutils.TestOneIndexFrame(ctx, 0, testutils.AddIndexPK)
 }
@@ -58,11 +61,13 @@ func TestFailpointsCreateGenColIndex(t *testing.T) {
 	if !*FullMode {
 		t.Skip()
 	}
+	enableFastAddIndexFailpoints(t)
 	ctx := testutils.InitTestFailpoint(t)
 	testutils.TestOneIndexFrame(ctx, 29, testutils.AddIndexGenCol)
 }
 
 func TestFailpointsCreateMultiColsIndex(t *testing.T) {
+	enableFastAddIndexFailpoints(t)
 	if !*FullMode {
 		t.Skip()
 	}

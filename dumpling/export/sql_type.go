@@ -5,7 +5,6 @@ package export
 import (
 	"bytes"
 	"database/sql"
-	"encoding/base64"
 	"fmt"
 )
 
@@ -57,6 +56,7 @@ func initColTypeRowReceiverMap() {
 		dataTypeInt[s] = struct{}{}
 	}
 	for _, s := range dataTypeNumArr {
+		dataTypeNum[s] = struct{}{}
 		colTypeRowReceiverMap[s] = SQLTypeNumberMaker
 	}
 	for _, s := range dataTypeBinArr {
@@ -65,7 +65,7 @@ func initColTypeRowReceiverMap() {
 	}
 }
 
-var dataTypeString, dataTypeInt, dataTypeBin = make(map[string]struct{}), make(map[string]struct{}), make(map[string]struct{})
+var dataTypeString, dataTypeInt, dataTypeNum, dataTypeBin = make(map[string]struct{}), make(map[string]struct{}), make(map[string]struct{}), make(map[string]struct{})
 
 func escapeBackslashSQL(s []byte, bf *bytes.Buffer) {
 	var (
@@ -103,60 +103,11 @@ func escapeBackslashSQL(s []byte, bf *bytes.Buffer) {
 	bf.Write(s[last:])
 }
 
-func escapeBackslashCSV(s []byte, bf *bytes.Buffer, opt *csvOption) {
-	var (
-		escape  byte
-		last    int
-		specCmt byte
-	)
-	if len(opt.delimiter) > 0 {
-		specCmt = opt.delimiter[0] // if csv has a delimiter, we should use backslash to comment the delimiter in field value
-	} else if len(opt.separator) > 0 {
-		specCmt = opt.separator[0] // if csv's delimiter is "", we should escape the separator to avoid error
-	}
-
-	for i := range s {
-		escape = 0
-
-		switch s[i] {
-		case 0: /* Must be escaped for 'mysql' */
-			escape = '0'
-		case '\r':
-			escape = 'r'
-		case '\n': /* escaped for line terminators */
-			escape = 'n'
-		case '\\':
-			escape = '\\'
-		case specCmt:
-			escape = specCmt
-		}
-
-		if escape != 0 {
-			bf.Write(s[last:i])
-			bf.WriteByte('\\')
-			bf.WriteByte(escape)
-			last = i + 1
-		}
-	}
-	bf.Write(s[last:])
-}
-
 func escapeSQL(s []byte, bf *bytes.Buffer, escapeBackslash bool) { // revive:disable-line:flag-parameter
 	if escapeBackslash {
 		escapeBackslashSQL(s, bf)
 	} else {
 		bf.Write(bytes.ReplaceAll(s, quotationMark, twoQuotationMarks))
-	}
-}
-
-func escapeCSV(s []byte, bf *bytes.Buffer, escapeBackslash bool, opt *csvOption) { // revive:disable-line:flag-parameter
-	switch {
-	case escapeBackslash:
-		escapeBackslashCSV(s, bf, opt)
-	case len(opt.delimiter) > 0:
-		bf.Write(bytes.ReplaceAll(s, opt.delimiter, append(opt.delimiter, opt.delimiter...)))
-	default:
-		bf.Write(s)
 	}
 }
 
@@ -220,14 +171,16 @@ func (r *RowReceiverArr) WriteToBuffer(bf *bytes.Buffer, escapeBackslash bool) {
 	bf.WriteByte(')')
 }
 
-// WriteToBufferInCsv implements Stringer.WriteToBufferInCsv
-func (r *RowReceiverArr) WriteToBufferInCsv(bf *bytes.Buffer, escapeBackslash bool, opt *csvOption) {
-	for i, receiver := range r.receivers {
-		receiver.WriteToBufferInCsv(bf, escapeBackslash, opt)
-		if i != len(r.receivers)-1 {
-			bf.Write(opt.separator)
-		}
+// GetRawBytes implements Stringer.GetRawBytes.
+func (r RowReceiverArr) GetRawBytes() []sql.RawBytes {
+	return r.appendRawBytes(make([]sql.RawBytes, 0, len(r.receivers)))
+}
+
+func (r RowReceiverArr) appendRawBytes(dst []sql.RawBytes) []sql.RawBytes {
+	for _, receiver := range r.receivers {
+		dst = append(dst, receiver.GetRawBytes()[0])
 	}
+	return dst
 }
 
 // SQLTypeNumber implements RowReceiverStringer which represents numeric type columns in database
@@ -244,13 +197,9 @@ func (s SQLTypeNumber) WriteToBuffer(bf *bytes.Buffer, _ bool) {
 	}
 }
 
-// WriteToBufferInCsv implements Stringer.WriteToBufferInCsv
-func (s SQLTypeNumber) WriteToBufferInCsv(bf *bytes.Buffer, _ bool, opt *csvOption) {
-	if s.RawBytes != nil {
-		bf.Write(s.RawBytes)
-	} else {
-		bf.WriteString(opt.nullValue)
-	}
+// GetRawBytes implements Stringer.GetRawBytes.
+func (s *SQLTypeNumber) GetRawBytes() []sql.RawBytes {
+	return []sql.RawBytes{s.RawBytes}
 }
 
 // SQLTypeString implements RowReceiverStringer which represents string type columns in database
@@ -274,15 +223,9 @@ func (s *SQLTypeString) WriteToBuffer(bf *bytes.Buffer, escapeBackslash bool) {
 	}
 }
 
-// WriteToBufferInCsv implements Stringer.WriteToBufferInCsv
-func (s *SQLTypeString) WriteToBufferInCsv(bf *bytes.Buffer, escapeBackslash bool, opt *csvOption) {
-	if s.RawBytes != nil {
-		bf.Write(opt.delimiter)
-		escapeCSV(s.RawBytes, bf, escapeBackslash, opt)
-		bf.Write(opt.delimiter)
-	} else {
-		bf.WriteString(opt.nullValue)
-	}
+// GetRawBytes implements Stringer.GetRawBytes.
+func (s *SQLTypeString) GetRawBytes() []sql.RawBytes {
+	return []sql.RawBytes{s.RawBytes}
 }
 
 // SQLTypeBytes implements RowReceiverStringer which represents bytes type columns in database
@@ -304,20 +247,7 @@ func (s *SQLTypeBytes) WriteToBuffer(bf *bytes.Buffer, _ bool) {
 	}
 }
 
-// WriteToBufferInCsv implements Stringer.WriteToBufferInCsv
-func (s *SQLTypeBytes) WriteToBufferInCsv(bf *bytes.Buffer, escapeBackslash bool, opt *csvOption) {
-	if s.RawBytes != nil {
-		bf.Write(opt.delimiter)
-		switch opt.binaryFormat {
-		case BinaryFormatHEX:
-			fmt.Fprintf(bf, "%x", s.RawBytes)
-		case BinaryFormatBase64:
-			bf.WriteString(base64.StdEncoding.EncodeToString(s.RawBytes))
-		default:
-			escapeCSV(s.RawBytes, bf, escapeBackslash, opt)
-		}
-		bf.Write(opt.delimiter)
-	} else {
-		bf.WriteString(opt.nullValue)
-	}
+// GetRawBytes implements Stringer.GetRawBytes.
+func (s *SQLTypeBytes) GetRawBytes() []sql.RawBytes {
+	return []sql.RawBytes{s.RawBytes}
 }

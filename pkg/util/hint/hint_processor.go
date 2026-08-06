@@ -119,6 +119,47 @@ func ExtractTableHintsFromStmtNode(node ast.Node, warnHandler hintWarnHandler) [
 	}
 }
 
+func containTableHint(hints []*ast.TableOptimizerHint, hintName string) bool {
+	for _, hint := range hints {
+		if hint.HintName.L == hintName {
+			return true
+		}
+	}
+	return false
+}
+
+// ContainTableHintInStmtNode checks whether the statement contains the target table hint.
+func ContainTableHintInStmtNode(node ast.Node, hintName string) bool {
+	switch x := node.(type) {
+	case *ast.SelectStmt:
+		return containTableHint(x.TableHints, hintName)
+	case *ast.UpdateStmt:
+		return containTableHint(x.TableHints, hintName)
+	case *ast.DeleteStmt:
+		return containTableHint(x.TableHints, hintName)
+	case *ast.InsertStmt:
+		if containTableHint(x.TableHints, hintName) {
+			return true
+		}
+		if x.Select == nil {
+			return false
+		}
+		return ContainTableHintInStmtNode(x.Select, hintName)
+	case *ast.SetOprStmt:
+		if x.SelectList == nil {
+			return false
+		}
+		for _, s := range x.SelectList.Selects {
+			if ContainTableHintInStmtNode(s, hintName) {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
+}
+
 // checkInsertStmtHintDuplicated check whether existed the duplicated hints in both insertStmt and its selectStmt.
 // If existed, it would send a warning message.
 func checkInsertStmtHintDuplicated(node ast.Node, warnHandler hintWarnHandler) {

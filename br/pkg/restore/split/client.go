@@ -32,9 +32,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
+	tikvclient "github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
 	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -58,7 +60,7 @@ var (
 // SplitClient is an external client used by RegionSplitter.
 type SplitClient interface {
 	// GetStore gets a store by a store id.
-	GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error)
+	GetStore(ctx context.Context, storeID uint64, opts ...opt.GetStoreOption) (*metapb.Store, error)
 	// GetRegion gets a region which includes a specified key.
 	GetRegion(ctx context.Context, key []byte) (*RegionInfo, error)
 	// GetRegionByID gets a region by a region id.
@@ -67,6 +69,9 @@ type SplitClient interface {
 	// new regions. It returns the new regions that need to be called with
 	// WaitRegionsScattered.
 	SplitKeysAndScatter(ctx context.Context, sortedSplitKeys [][]byte) ([]*RegionInfo, error)
+	// SplitKeys splits the related regions of the keys without scattering the new
+	// regions.
+	SplitKeys(ctx context.Context, sortedSplitKeys [][]byte) ([]*RegionInfo, error)
 
 	// SplitWaitAndScatter splits a region from a batch of keys, waits for the split
 	// is finished, and scatters the new regions. It will return the original region,
@@ -106,6 +111,19 @@ type SplitClient interface {
 	// The first return value is always the number of regions that are not finished
 	// scattering no matter what the error is.
 	WaitRegionsScattered(ctx context.Context, regionInfos []*RegionInfo) (notFinished int, err error)
+	// GetCodecPDClient returns the underlying codec PD client if one is used.
+	// There are two types of PD client, although they both implement the
+	// pd.Client interface, they have different requirements on the keys passed in:
+	//
+	// 1. normal PD client requires the keys passed in to be encoded in memory
+	// comparable way through codec.EncodeBytes. If we are using keyspace, it
+	// requires the keyspace prefix already included before codec.EncodeBytes.
+	//
+	// 2. codec PD client does the same encode internally, but it requires the keys
+	// to be the same as the keys encoded by KV encoder, i.e. there is no additional
+	// encode from codec.EncodeBytes, and if it's codec V2, the passed key should
+	// NOT contain the keyspace.
+	GetCodecPDClient() *tikvclient.CodecPDClient
 }
 
 // pdClient is a wrapper of pd client, can be used by RegionSplitter.
@@ -125,6 +143,8 @@ type pdClient struct {
 	onSplit          func(key [][]byte)
 	splitConcurrency int
 	splitBatchKeyCnt int
+	// see comments of SplitClient.GetCodecPDClient for details.
+	isCodecPDClient bool
 }
 
 type ClientOptionalParameter func(*pdClient)
@@ -143,6 +163,14 @@ func WithOnSplit(onSplit func(key [][]byte)) ClientOptionalParameter {
 	}
 }
 
+func withCallerComponent(client pd.Client, component caller.Component) pd.Client {
+	if _, ok := client.(*tikvclient.CodecPDClient); ok {
+		// Keep codec-aware clients intact so callers can retrieve the same wrapper.
+		return client
+	}
+	return client.WithCallerComponent(component)
+}
+
 // NewClient creates a SplitClient.
 //
 // splitBatchKeyCnt controls how many keys are sent to TiKV in a batch in split
@@ -156,7 +184,7 @@ func NewClient(
 	opts ...ClientOptionalParameter,
 ) SplitClient {
 	cli := &pdClient{
-		client:           client,
+		client:           withCallerComponent(client, caller.GetComponent(1)),
 		httpCli:          httpCli,
 		tlsConf:          tlsConf,
 		storeCache:       make(map[uint64]*metapb.Store),
@@ -167,6 +195,27 @@ func NewClient(
 		opt(cli)
 	}
 	return cli
+}
+
+// NewCodecAwareClient creates a SplitClient with a codec PD client.
+func NewCodecAwareClient(
+	client *tikvclient.CodecPDClient,
+	httpCli pdhttp.Client,
+	tlsConf *tls.Config,
+	splitBatchKeyCnt int,
+	splitConcurrency int,
+	opts ...ClientOptionalParameter,
+) SplitClient {
+	cli := NewClient(client, httpCli, tlsConf, splitBatchKeyCnt, splitConcurrency, opts...).(*pdClient)
+	cli.isCodecPDClient = true
+	return cli
+}
+
+func (c *pdClient) GetCodecPDClient() *tikvclient.CodecPDClient {
+	if c == nil || !c.isCodecPDClient {
+		return nil
+	}
+	return c.client.(*tikvclient.CodecPDClient)
 }
 
 func (c *pdClient) needScatter(ctx context.Context) bool {
@@ -257,14 +306,14 @@ func (c *pdClient) tryScatterRegions(ctx context.Context, regionInfo []*RegionIn
 	return nil, nil
 }
 
-func (c *pdClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error) {
+func (c *pdClient) GetStore(ctx context.Context, storeID uint64, opts ...opt.GetStoreOption) (*metapb.Store, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	store, ok := c.storeCache[storeID]
 	if ok {
 		return store, nil
 	}
-	store, err := c.client.GetStore(ctx, storeID)
+	store, err := c.client.GetStore(ctx, storeID, opts...)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -566,7 +615,29 @@ func (c *pdClient) hasHealthyRegion(ctx context.Context, regionID uint64) (bool,
 	return len(regionInfo.PendingPeers) == 0, nil
 }
 
+func (c *pdClient) getEncodedKeys(start, end []byte) (encodedStart, encodedEnd []byte, err error) {
+	if codecCli := c.GetCodecPDClient(); codecCli != nil {
+		cd := codecCli.GetCodec()
+		encodedStart, encodedEnd, err = cd.DecodeRange(start, end)
+		if err != nil {
+			return nil, nil, err
+		}
+	} else {
+		encodedStart = codec.EncodeBytesExt(nil, start, c.isRawKv)
+		encodedEnd = codec.EncodeBytesExt(nil, end, c.isRawKv)
+	}
+	return encodedStart, encodedEnd, nil
+}
+
 func (c *pdClient) SplitKeysAndScatter(ctx context.Context, sortedSplitKeys [][]byte) ([]*RegionInfo, error) {
+	return c.splitKeys(ctx, sortedSplitKeys, true)
+}
+
+func (c *pdClient) SplitKeys(ctx context.Context, sortedSplitKeys [][]byte) ([]*RegionInfo, error) {
+	return c.splitKeys(ctx, sortedSplitKeys, false)
+}
+
+func (c *pdClient) splitKeys(ctx context.Context, sortedSplitKeys [][]byte, scatter bool) ([]*RegionInfo, error) {
 	if len(sortedSplitKeys) == 0 {
 		return nil, nil
 	}
@@ -575,12 +646,14 @@ func (c *pdClient) SplitKeysAndScatter(ctx context.Context, sortedSplitKeys [][]
 	// sortedSplitKeys length is 1, scan region may return empty result. So we
 	// increase the end key a bit. If the end key is on the region boundaries, it
 	// will be skipped by getSplitKeysOfRegions.
-	scanStart := codec.EncodeBytesExt(nil, sortedSplitKeys[0], c.isRawKv)
 	lastKey := kv.Key(sortedSplitKeys[len(sortedSplitKeys)-1])
 	if len(lastKey) > 0 {
 		lastKey = lastKey.Next()
 	}
-	scanEnd := codec.EncodeBytesExt(nil, lastKey, c.isRawKv)
+	scanStart, scanEnd, err := c.getEncodedKeys(sortedSplitKeys[0], lastKey)
+	if err != nil {
+		return nil, err
+	}
 
 	// mu protects ret, retrySplitKeys, lastSplitErr
 	mu := sync.Mutex{}
@@ -588,17 +661,25 @@ func (c *pdClient) SplitKeysAndScatter(ctx context.Context, sortedSplitKeys [][]
 	retrySplitKeys := make([][]byte, 0, len(sortedSplitKeys))
 	var lastSplitErr error
 
-	err := utils.WithRetryReturnLastErr(ctx, func() error {
+	err = utils.WithRetryReturnLastErr(ctx, func() error {
 		ret = ret[:0]
 
 		if len(retrySplitKeys) > 0 {
-			scanStart = codec.EncodeBytesExt(nil, retrySplitKeys[0], c.isRawKv)
 			lastKey2 := kv.Key(retrySplitKeys[len(retrySplitKeys)-1])
-			scanEnd = codec.EncodeBytesExt(nil, lastKey2.Next(), c.isRawKv)
+			scanStart, scanEnd, err = c.getEncodedKeys(retrySplitKeys[0], lastKey2.Next())
+			if err != nil {
+				return err
+			}
 		}
 		regions, err := PaginateScanRegion(ctx, c, scanStart, scanEnd, ScanRegionPaginationLimit)
 		if err != nil {
 			return err
+		}
+		if codecCli := c.GetCodecPDClient(); codecCli != nil {
+			// codec PD client will return the region with keys after decode,
+			// but here we expected encoded ones.
+			// we can enhance this part to avoid encode region keys again later.
+			encodeRegionKeys(regions, codecCli.GetCodec().EncodeRegionRange)
 		}
 		log.Info("paginate scan regions",
 			zap.Int("count", len(regions)),
@@ -616,7 +697,7 @@ func (c *pdClient) SplitKeysAndScatter(ctx context.Context, sortedSplitKeys [][]
 		for region, splitKeys := range splitKeyMap {
 			workerPool.ApplyOnErrorGroup(eg, func() error {
 				// TODO(lance6716): add error handling to retry from scan or retry from split
-				newRegions, err2 := c.SplitWaitAndScatter(eCtx, region, splitKeys)
+				newRegions, err2 := c.splitWaitAndMaybeScatter(eCtx, region, splitKeys, scatter)
 				if err2 != nil {
 					if common.IsContextCanceledError(err2) {
 						return err2
@@ -631,14 +712,16 @@ func (c *pdClient) SplitKeysAndScatter(ctx context.Context, sortedSplitKeys [][]
 					return nil
 				}
 
-				if len(newRegions) != len(splitKeys) {
+				if scatter && len(newRegions) != len(splitKeys) {
 					log.Warn("split key count and new region count mismatch",
 						zap.Int("new region count", len(newRegions)),
 						zap.Int("split key count", len(splitKeys)))
 				}
-				mu.Lock()
-				ret = append(ret, newRegions...)
-				mu.Unlock()
+				if scatter {
+					mu.Lock()
+					ret = append(ret, newRegions...)
+					mu.Unlock()
+				}
 				return nil
 			})
 		}
@@ -659,6 +742,10 @@ func isNonRetryErrForSplit(err error) bool {
 }
 
 func (c *pdClient) SplitWaitAndScatter(ctx context.Context, region *RegionInfo, keys [][]byte) ([]*RegionInfo, error) {
+	return c.splitWaitAndMaybeScatter(ctx, region, keys, true)
+}
+
+func (c *pdClient) splitWaitAndMaybeScatter(ctx context.Context, region *RegionInfo, keys [][]byte, scatter bool) ([]*RegionInfo, error) {
 	failpoint.Inject("failToSplit", func(_ failpoint.Value) {
 		failpoint.Return(nil, errors.New("retryable error"))
 	})
@@ -691,12 +778,14 @@ func (c *pdClient) SplitWaitAndScatter(ctx context.Context, region *RegionInfo, 
 			if err = ctx.Err(); err != nil {
 				return nil, errors.Trace(err)
 			}
-			err = c.scatterRegions(ctx, newRegionsOfBatch)
-			if err != nil {
-				tidblogutil.Logger(ctx).Warn(
-					"scatter regions failed, will continue anyway",
-					zap.Error(err),
-				)
+			if scatter {
+				err = c.scatterRegions(ctx, newRegionsOfBatch)
+				if err != nil {
+					tidblogutil.Logger(ctx).Warn(
+						"scatter regions failed, will continue anyway",
+						zap.Error(err),
+					)
+				}
 			}
 			if c.onSplit != nil {
 				c.onSplit(keys[start:end])

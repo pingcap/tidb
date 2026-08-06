@@ -15,13 +15,17 @@
 package ingest_test
 
 import (
+	"encoding/json"
 	"fmt"
+	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	ingesttestutil "github.com/pingcap/tidb/pkg/ddl/ingest/testutil"
@@ -381,7 +385,7 @@ func TestAddIndexDuplicateMessage(t *testing.T) {
 
 	var errDML error
 	var once sync.Once
-	failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/ingest/afterMockWriterWriteRow", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/ingest/afterMockWriterWriteRow", func() {
 		once.Do(func() {
 			_, errDML = tk1.Exec("insert into t values (2, 1, 2);")
 		})
@@ -400,6 +404,11 @@ func TestMultiSchemaAddIndexMerge(t *testing.T) {
 	tk.MustExec("use test")
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
+
+	oldMockExecAfterWriteRow := ingest.MockExecAfterWriteRow
+	t.Cleanup(func() {
+		ingest.MockExecAfterWriteRow = oldMockExecAfterWriteRow
+	})
 
 	for _, createTableSQL := range []string{
 		"create table t (a int, b int);",
@@ -438,7 +447,7 @@ func TestAddIndexIngestJobWriteConflict(t *testing.T) {
 	tk.MustExec("set global tidb_enable_dist_task = off;")
 
 	injected := false
-	failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/afterRunIngestReorgJob", func(job *model.Job, done bool) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunIngestReorgJob", func(job *model.Job, done bool) {
 		if done && !injected {
 			tk2 := testkit.NewTestKit(t, store)
 			tk2.MustExec("use test")
@@ -451,7 +460,7 @@ func TestAddIndexIngestJobWriteConflict(t *testing.T) {
 		}
 	})
 	rowCnt := atomic.Int32{}
-	failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/ingest/onMockWriterWriteRow", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/ingest/onMockWriterWriteRow", func() {
 		rowCnt.Add(1)
 	})
 	tk.MustExec("alter table t add index idx(b);")
@@ -679,6 +688,257 @@ func TestModifyColumnWithMultipleIndex(t *testing.T) {
 			tk.MustExec("alter table t modify a bit(5) not null")
 			tk.MustExec("admin check table t;")
 		})
+	}
+}
+
+// TestCheckpointInstanceAddrValidation tests that checkpoint instance address
+// validation works correctly. When instance address changes (e.g., after restart
+// or owner transfer), the local checkpoint should not be used.
+// This covers issues #43983 and #43957.
+// The bug was: using host:port as instance identifier caused issues when
+// the same host:port was reused after restart but local data was stale.
+// The fix uses AdvertiseAddress + TempDir as a more unique identifier.
+func TestCheckpointInstanceAddrValidation(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("add-index always runs on DXF with ingest mode in nextgen")
+	}
+	store := testkit.CreateMockStore(t)
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("set global tidb_enable_dist_task = 0;")
+
+	tk.MustExec("create table t (a int primary key, b int);")
+	for i := range 10 {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i, i))
+	}
+
+	// Test that InstanceAddr uses AdvertiseAddress + TempDir (not just Host:Port)
+	// The fix ensures we use config.AdvertiseAddress + port + tempDir as identifier
+	cfg := config.GetGlobalConfig()
+	instanceAddr := ingest.InstanceAddr()
+	require.NotEmpty(t, instanceAddr)
+
+	// Instance address should contain the temp dir path (this is the key fix)
+	// Format should be "host:port:tempDir"
+	require.NotEmpty(t, cfg.TempDir)
+	tempDirSuffix := ":" + cfg.TempDir
+	require.True(t, strings.HasSuffix(instanceAddr, tempDirSuffix), "instance addr should end with temp dir, got: %s", instanceAddr)
+
+	dsn := strings.TrimSuffix(instanceAddr, tempDirSuffix)
+	host, port, err := net.SplitHostPort(dsn)
+	require.NoError(t, err, "instance addr should contain host:port, got: %s", instanceAddr)
+	require.Equal(t, strconv.Itoa(int(cfg.Port)), port)
+	if cfg.AdvertiseAddress != "" {
+		require.Equal(t, cfg.AdvertiseAddress, host)
+	} else {
+		require.NotEqual(t, "0.0.0.0", host, "instance addr should not use default host")
+	}
+
+	// Track that checkpoint mechanism is exercised
+	checkpointExercised := atomic.Bool{}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/ingest/afterMockWriterWriteRow", func() {
+		checkpointExercised.Store(true)
+	})
+
+	// Add index and verify checkpoint works
+	tk.MustExec("alter table t add index idx(b);")
+
+	// Key assertion: checkpoint mechanism should have been exercised
+	require.True(t, checkpointExercised.Load(), "checkpoint mechanism should have been exercised during add index")
+
+	tk.MustExec("admin check table t;")
+}
+
+// TestCheckpointPhysicalIDValidation tests that checkpoint saves physical_id
+// that matches actual partition IDs from information_schema.
+func TestCheckpointPhysicalIDValidation(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("add-index always runs on DXF with ingest mode in nextgen")
+	}
+	store := testkit.CreateMockStore(t)
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("set global tidb_enable_dist_task = 0;")
+
+	// Create partitioned table
+	tk.MustExec(`create table t (
+		a int primary key,
+		b int
+	) partition by hash(a) partitions 4;`)
+	for i := range 20 {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i, i))
+	}
+
+	// Get valid partition IDs from information_schema
+	partitionRows := tk.MustQuery("select TIDB_PARTITION_ID from information_schema.partitions where table_schema='test' and table_name='t';").Rows()
+	require.Len(t, partitionRows, 4)
+	validPartIDs := make(map[int64]struct{}, len(partitionRows))
+	for _, row := range partitionRows {
+		var pidStr string
+		switch v := row[0].(type) {
+		case int64:
+			pidStr = strconv.FormatInt(v, 10)
+		case string:
+			pidStr = v
+		case []byte:
+			pidStr = string(v)
+		default:
+			require.Failf(t, "unexpected partition id type", "%T", row[0])
+		}
+		pid, err := strconv.ParseInt(pidStr, 10, 64)
+		require.NoError(t, err)
+		validPartIDs[pid] = struct{}{}
+	}
+
+	// Track physical_id from checkpoint during add index
+	var observedPhysicalID atomic.Int64
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/ingest/onMockWriterWriteRow", func() {
+		if observedPhysicalID.Load() != 0 {
+			return
+		}
+		tk2 := testkit.NewTestKit(t, store)
+		rows := tk2.MustQuery("select reorg_meta from mysql.tidb_ddl_reorg where ele_type = '_idx_' limit 1;").Rows()
+		if len(rows) > 0 && rows[0][0] != nil {
+			var raw []byte
+			switch v := rows[0][0].(type) {
+			case []byte:
+				raw = v
+			case string:
+				raw = []byte(v)
+			default:
+				return
+			}
+			var reorgMeta ingest.JobReorgMeta
+			if err := json.Unmarshal(raw, &reorgMeta); err != nil || reorgMeta.Checkpoint == nil {
+				return
+			}
+			if reorgMeta.Checkpoint.PhysicalID > 0 {
+				observedPhysicalID.Store(reorgMeta.Checkpoint.PhysicalID)
+			}
+		}
+	})
+
+	tk.MustExec("alter table t add index idx(b);")
+	tk.MustExec("admin check table t;")
+
+	// Key assertion: observed physical_id must be a valid partition ID
+	physicalID := observedPhysicalID.Load()
+	require.NotZero(t, physicalID, "should have observed physical_id in checkpoint")
+	_, exists := validPartIDs[physicalID]
+	require.True(t, exists, "physical_id %d should be a valid partition ID", physicalID)
+}
+
+// TestAddIndexWithEmptyPartitions tests that add index correctly iterates through
+// all partitions including empty ones, and reorg physical_id is always valid.
+// This covers #44265 where empty partitions could cause checkpoint issues.
+func TestAddIndexWithEmptyPartitions(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("add-index always runs on DXF with ingest mode in nextgen")
+	}
+	store := testkit.CreateMockStore(t)
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("set global tidb_enable_dist_task = 0;")
+
+	// Create partitioned table with empty partitions (p1, p3 are empty)
+	tk.MustExec(`create table t (
+		a int primary key,
+		b int
+	) partition by range(a) (
+		partition p0 values less than (100),
+		partition p1 values less than (200),
+		partition p2 values less than (300),
+		partition p3 values less than (400)
+	);`)
+	// Only insert into p0 and p2, leaving p1 and p3 empty
+	for i := range 10 {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i, i))
+	}
+	for i := 200; i < 210; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i, i))
+	}
+
+	// Get all partition IDs including empty ones
+	partitionRows := tk.MustQuery("select TIDB_PARTITION_ID from information_schema.partitions where table_schema='test' and table_name='t';").Rows()
+	require.Len(t, partitionRows, 4)
+	allPartIDs := make(map[int64]struct{}, len(partitionRows))
+	for _, row := range partitionRows {
+		var pidStr string
+		switch v := row[0].(type) {
+		case string:
+			pidStr = v
+		case []byte:
+			pidStr = string(v)
+		default:
+			require.Failf(t, "unexpected partition id type", "%T", row[0])
+		}
+		pid, err := strconv.ParseInt(pidStr, 10, 64)
+		require.NoError(t, err)
+		allPartIDs[pid] = struct{}{}
+	}
+
+	// Track physical_id from tidb_ddl_reorg.physical_id column after each partition completes
+	var observedIDs []int64
+	var mu sync.Mutex
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterUpdatePartitionReorgInfo", func(job *model.Job) {
+		if job.Type != model.ActionAddIndex {
+			return
+		}
+		tk2 := testkit.NewTestKit(t, store)
+		// Query physical_id column directly from tidb_ddl_reorg - this is the NEXT partition to process
+		rows := tk2.MustQuery("select physical_id from mysql.tidb_ddl_reorg where job_id = ? limit 1;", job.ID).Rows()
+		if len(rows) > 0 && rows[0][0] != nil {
+			var pidStr string
+			switch v := rows[0][0].(type) {
+			case int64:
+				if v != 0 {
+					mu.Lock()
+					observedIDs = append(observedIDs, v)
+					mu.Unlock()
+				}
+				return
+			case string:
+				pidStr = v
+			case []byte:
+				pidStr = string(v)
+			default:
+				return
+			}
+			if pidStr == "" || pidStr == "0" {
+				return
+			}
+			pid, err := strconv.ParseInt(pidStr, 10, 64)
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			observedIDs = append(observedIDs, pid)
+			mu.Unlock()
+		}
+	})
+
+	tk.MustExec("alter table t add index idx(b);")
+	tk.MustExec("admin check table t;")
+
+	// Verify data-index consistency
+	rs1 := tk.MustQuery("select count(*) from t use index(idx);").Rows()
+	rs2 := tk.MustQuery("select count(*) from t ignore index(idx);").Rows()
+	require.Equal(t, rs1[0][0], rs2[0][0])
+	require.Equal(t, "20", rs1[0][0])
+
+	// Key assertion: should observe partition switches for all 4 partitions
+	// afterUpdatePartitionReorgInfo triggers after each partition completes, recording the NEXT partition ID
+	mu.Lock()
+	defer mu.Unlock()
+	// Should observe at least 3 partition switches (p0->p1, p1->p2, p2->p3)
+	require.GreaterOrEqual(t, len(observedIDs), 3, "should observe at least 3 partition switches for 4 partitions")
+	// All observed IDs must be valid partition IDs (including empty partitions p1, p3)
+	for _, pid := range observedIDs {
+		_, exists := allPartIDs[pid]
+		require.True(t, exists, "physical_id %d should be a valid partition ID", pid)
 	}
 }
 

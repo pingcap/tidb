@@ -33,7 +33,6 @@ var UnCacheableFunctions = map[string]struct{}{
 	ast.Like:                 {},
 
 	// functions below are incompatible with (non-prep) plan cache, we'll fix them one by one later.
-	ast.JSONExtract:      {}, // cannot pass TestFuncJSON
 	ast.JSONObject:       {},
 	ast.JSONArray:        {},
 	ast.Coalesce:         {},
@@ -65,6 +64,7 @@ var unFoldableFunctions = map[string]struct{}{
 	ast.LastVal:   {},
 	ast.SetVal:    {},
 	ast.AnyValue:  {},
+	ast.EmbedText: {},
 }
 
 // DisableFoldFunctions stores functions which prevent child scope functions from being constant folded.
@@ -107,6 +107,7 @@ var IllegalFunctions4GeneratedColumns = map[string]struct{}{
 	ast.IsFreeLock:           {},
 	ast.IsUsedLock:           {},
 	ast.JSONMerge:            {},
+	ast.EmbedText:            {},
 	ast.LastInsertId:         {},
 	ast.LoadFile:             {},
 	ast.LocalTime:            {},
@@ -261,6 +262,7 @@ var mutableEffectsFunctions = map[string]struct{}{
 	ast.SetVar:      {},
 	ast.GetVar:      {},
 	ast.AnyValue:    {},
+	ast.EmbedText:   {},
 }
 
 // some functions do NOT have right implementations, but may have noop ones(like with any inputs, always return 1)

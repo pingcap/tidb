@@ -34,8 +34,8 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
 	"github.com/pingcap/tidb/pkg/executor/importer"
-	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -49,7 +49,7 @@ import (
 )
 
 // SubmitStandaloneTask submits a task to the distribute framework that only runs on the current node.
-// when import from server-disk, pass engine checkpoints too, as scheduler might run on another
+// when import from server-disk, pass engine chunks too, as scheduler might run on another
 // node where we can't access the data files.
 func SubmitStandaloneTask(ctx context.Context, plan *importer.Plan, stmt string, chunkMap map[int32][]importer.Chunk) (int64, *proto.TaskBase, error) {
 	serverInfo, err := infosync.GetServerInfo()
@@ -62,6 +62,17 @@ func SubmitStandaloneTask(ctx context.Context, plan *importer.Plan, stmt string,
 // SubmitTask submits a task to the distribute framework that runs on all managed nodes.
 func SubmitTask(ctx context.Context, plan *importer.Plan, stmt string) (int64, *proto.TaskBase, error) {
 	return doSubmitTask(ctx, plan, stmt, nil, nil)
+}
+
+// ShouldUseAsyncPrepare returns whether IMPORT INTO should use
+// DXF prepare-mode asynchronous prepare.
+// Nextgen only supports global sort for IMPORT INTO in production, but local
+// sort can still be exercised in tests, so keep the IsGlobalSort check.
+func ShouldUseAsyncPrepare(plan *importer.Plan) bool {
+	failpoint.Inject("mockDisableAsyncPrepare", func() {
+		failpoint.Return(false)
+	})
+	return plan != nil && kerneltype.IsNextGen() && plan.IsGlobalSort()
 }
 
 func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instance *serverinfo.ServerInfo, chunkMap map[int32][]importer.Chunk) (int64, *proto.TaskBase, error) {
@@ -81,6 +92,13 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 		Stmt:              stmt,
 		EligibleInstances: instances,
 		ChunkMap:          chunkMap,
+	}
+	asyncPrepare := ShouldUseAsyncPrepare(plan)
+	if asyncPrepare {
+		logicalPlan.PrepareMode = proto.PrepareModeRequired
+		// below params will be filled later in async prepare, init to 1 temporarily.
+		plan.ThreadCnt = 1
+		plan.MaxNodeCnt = 1
 	}
 	planCtx := planner.PlanCtx{
 		Ctx:        ctx,
@@ -127,6 +145,7 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 	// TODO: we need to cleanup the job, if we failed to submit the task to DXF service.
 	dxfTaskMgr := taskManager
 	if runningOnUserKS {
+		failpoint.InjectCall("afterUserImportJobCreatedBeforeDXFTask", jobID)
 		var err2 error
 		dxfTaskMgr, err2 = storage.GetDXFSvcTaskMgr()
 		if err2 != nil {
@@ -151,14 +170,21 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 	if err != nil {
 		return 0, nil, err
 	}
-
-	logutil.BgLogger().Info("job submitted to task queue",
+	logFields := []zap.Field{
 		zap.Int64("job-id", jobID),
 		zap.String("task-key", task.Key),
 		zap.Int64("task-id", task.ID),
-		zap.String("data-size", units.BytesSize(float64(plan.TotalFileSize))),
-		zap.Int("thread-cnt", plan.ThreadCnt),
-		zap.Bool("global-sort", plan.IsGlobalSort()))
+		zap.Bool("global-sort", plan.IsGlobalSort()),
+		zap.Bool("async-prepare", asyncPrepare),
+	}
+	if !asyncPrepare {
+		logFields = append(logFields,
+			zap.String("data-size", units.BytesSize(float64(plan.TotalFileSize))),
+			zap.Int("thread-cnt", plan.ThreadCnt),
+			zap.Int("max-node-cnt", plan.MaxNodeCnt),
+		)
+	}
+	logutil.BgLogger().Info("job submitted to task queue", logFields...)
 
 	return jobID, task, nil
 }
@@ -184,6 +210,12 @@ type RuntimeInfo struct {
 }
 
 var notAvailable = "N/A"
+
+func (ri *RuntimeInfo) isConflictStep() bool {
+	// Conflict steps track "processed" by conflicted-row count, not by byte size
+	// like other import steps.
+	return ri.Step == proto.ImportStepCollectConflicts || ri.Step == proto.ImportStepConflictResolution
+}
 
 // Percent returns the progress percentage of the current step.
 func (ri *RuntimeInfo) Percent() string {
@@ -225,12 +257,26 @@ func (ri *RuntimeInfo) ETA() string {
 
 // TotalSize returns the total size of the current step in human-readable format.
 func (ri *RuntimeInfo) TotalSize() string {
+	if ri.isConflictStep() {
+		return fmt.Sprintf("%d conflicts", ri.Total)
+	}
 	return units.BytesSize(float64(ri.Total))
 }
 
 // ProcessedSize returns the processed size of the current step in human-readable format.
 func (ri *RuntimeInfo) ProcessedSize() string {
+	if ri.isConflictStep() {
+		return fmt.Sprintf("%d conflicts", ri.Processed)
+	}
 	return units.BytesSize(float64(ri.Processed))
+}
+
+// SpeedStr returns the processing speed of the current step in human-readable format.
+func (ri *RuntimeInfo) SpeedStr() string {
+	if ri.isConflictStep() {
+		return fmt.Sprintf("%d conflicts/s", ri.Speed)
+	}
+	return fmt.Sprintf("%s/s", units.BytesSize(float64(ri.Speed)))
 }
 
 // convertToMySQLTime converts go time to MySQL time with the specified location.
@@ -300,7 +346,7 @@ func GetRuntimeInfoForJob(
 
 	ri.Speed = 0
 	for _, s := range summaries {
-		ri.Processed += s.Bytes.Load()
+		ri.Processed += s.Processed.Load()
 		ri.ImportRows += s.RowCnt.Load()
 		ri.Speed += s.GetSpeedInTimeRange(currentTime, timeRange)
 		if s.UpdateTime().After(latestTime) {
@@ -321,6 +367,10 @@ func GetRuntimeInfoForJob(
 		ri.Total = taskMeta.Summary.EncodeSummary.Bytes
 	case proto.ImportStepMergeSort:
 		ri.Total = taskMeta.Summary.MergeSummary.Bytes
+	case proto.ImportStepCollectConflicts:
+		ri.Total = taskMeta.Summary.CollectConflictsSummary.RowCnt
+	case proto.ImportStepConflictResolution:
+		ri.Total = taskMeta.Summary.ResolveConflictsSummary.RowCnt
 	}
 
 	if !latestTime.IsZero() {
@@ -354,7 +404,7 @@ func GetJobLastUpdateTime(ctx context.Context, jobID int64) (types.Time, error) 
 					union
 				select state_update_time from mysql.tidb_background_subtask_history where task_key = %?
 			) t`,
-			task.ID, task.ID,
+			storage.TaskIDToKey(task.ID), storage.TaskIDToKey(task.ID),
 		)
 		return err
 	})
@@ -368,9 +418,5 @@ func GetJobLastUpdateTime(ctx context.Context, jobID int64) (types.Time, error) 
 
 // TaskKey returns the task key for a job.
 func TaskKey(jobID int64) string {
-	if kerneltype.IsNextGen() {
-		ks := keyspace.GetKeyspaceNameBySettings()
-		return fmt.Sprintf("%s/%s/%d", ks, proto.ImportInto, jobID)
-	}
-	return fmt.Sprintf("%s/%d", proto.ImportInto, jobID)
+	return taskkey.ForJob(jobID)
 }

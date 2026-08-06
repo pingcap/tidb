@@ -198,6 +198,13 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 		if t.Meta().IsCommonHandle && v.Meta().Primary {
 			continue
 		}
+		ok, err1 := v.MeetPartialCondition(row)
+		if err1 != nil {
+			return nil, err1
+		}
+		if !ok {
+			continue
+		}
 		colVals, err1 := v.FetchValues(row, nil)
 		if err1 != nil {
 			return nil, err1
@@ -293,7 +300,7 @@ func getOldRow(ctx context.Context, sctx sessionctx.Context, txn kv.Transaction,
 	}
 
 	cols := t.WritableCols()
-	oldRow, oldRowMap, err := tables.DecodeRawRowData(sctx.GetExprCtx(), t.Meta(), handle, cols, oldValue)
+	oldRow, oldRowMap, err := tables.DecodeRawRowData(sctx.GetExprCtx(), t, handle, cols, oldValue)
 	if err != nil {
 		return nil, err
 	}

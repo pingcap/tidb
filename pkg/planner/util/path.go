@@ -50,6 +50,8 @@ type AccessPath struct {
 	IdxCols        []*expression.Column
 	IdxColLens     []int
 	// ConstCols indicates whether the column is constant under the given conditions for all index columns.
+	// A column is also marked when an access condition restricts it to a single value only at execution
+	// time, i.e. `index_col = correlated_col`. See markConstCol.
 	ConstCols []bool
 	Ranges    []*ranger.Range
 	// CountAfterAccess is the row count after we apply range seek and before we use other filter to filter data.
@@ -136,6 +138,10 @@ type AccessPath struct {
 	Forced           bool
 	ForceKeepOrder   bool
 	ForceNoKeepOrder bool
+	// ForcePartialOrder means whether to force using "current path + partial order optimize".
+	// Only when "Index is Force", "Partial Order is enable" and "Index can match partial order property"
+	// this flag will be set to true.
+	ForcePartialOrder bool
 	// IsSingleScan indicates whether the path is a single index/table scan or table access after index scan.
 	IsSingleScan bool
 
@@ -156,6 +162,9 @@ type AccessPath struct {
 	// This field is used to rebuild GroupedRanges from ranges using GroupRangesByCols().
 	// It's used in plan cache or Apply.
 	GroupByColIdxs []int
+
+	// Disables plan cache for plans using this Path.
+	NoncacheableReason string
 }
 
 // Clone returns a deep copy of the original AccessPath.
@@ -189,11 +198,13 @@ func (path *AccessPath) Clone() *AccessPath {
 		Forced:                       path.Forced,
 		ForceKeepOrder:               path.ForceKeepOrder,
 		ForceNoKeepOrder:             path.ForceNoKeepOrder,
+		ForcePartialOrder:            path.ForcePartialOrder,
 		IsSingleScan:                 path.IsSingleScan,
 		IsUkShardIndexPath:           path.IsUkShardIndexPath,
 		KeepIndexMergeORSourceFilter: path.KeepIndexMergeORSourceFilter,
 		GroupedRanges:                make([][]*ranger.Range, 0, len(path.GroupedRanges)),
 		GroupByColIdxs:               slices.Clone(path.GroupByColIdxs),
+		NoncacheableReason:           path.NoncacheableReason,
 	}
 	if path.IndexMergeORSourceFilter != nil {
 		ret.IndexMergeORSourceFilter = path.IndexMergeORSourceFilter.Clone()
@@ -231,7 +242,11 @@ func (path *AccessPath) IsTiFlashSimpleTablePath() bool {
 
 // SplitCorColAccessCondFromFilters move the necessary filter in the form of index_col = corrlated_col to access conditions.
 // The function consider the `idx_col_1 = const and index_col_2 = cor_col and index_col_3 = const` case.
+// It also supports a trailing range predicate (LT/GT/LE/GE) with a correlated column on the last
+// access column, e.g. `idx_col_1 = cor_col AND idx_col_2 < cor_col`.
 // It enables more index columns to be considered. The range will be rebuilt in 'ResolveCorrelatedColumns'.
+// Each equality it moves also marks the matched index column in AccessPath.ConstCols, so that the
+// order the remaining index columns provide can be recognized. See markConstCol for the reasoning.
 func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext, eqOrInCount int) (access, remained []expression.Expression) {
 	access = make([]expression.Expression, len(path.IdxCols)-eqOrInCount)
 	used := make([]bool, len(path.TableFilters))
@@ -263,10 +278,34 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext
 			if path.IdxColLens[i] == types.UnspecifiedLength {
 				used[j] = true
 				usedCnt++
+				path.markConstCol(i)
 			}
 			break
 		}
 		if !matched {
+			// Try a range predicate (LT/GT/LE/GE) with a correlated column.
+			// A range predicate terminates the access prefix, so we only
+			// attempt this when no EQ match was found.
+			for j, filter := range path.TableFilters {
+				if used[j] {
+					continue
+				}
+				if isColRangeCorCol(filter, path.IdxCols[i]) {
+					ctx.GetExprCtx().SetSkipPlanCache("Correlated subquery is not cached currently")
+					access[i-eqOrInCount] = filter
+					// Range predicates must also remain as post-scan filters
+					// because the index range is a superset when prefix lengths
+					// are involved, and to be safe we always keep the filter.
+					access = access[:i-eqOrInCount+1]
+					remained = make([]expression.Expression, 0, len(path.TableFilters)-usedCnt)
+					for k, ok := range used {
+						if !ok {
+							remained = append(remained, path.TableFilters[k]) // nozero
+						}
+					}
+					return access, remained
+				}
+			}
 			access = access[:i-eqOrInCount]
 			break
 		}
@@ -278,6 +317,28 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext
 		}
 	}
 	return access, remained
+}
+
+// markConstCol records that path.IdxCols[idx] is restricted to a single value by an access
+// condition, so callers that reason about index order (matchProperty) may skip over it.
+//
+// The ranger cannot build a range for `index_col = correlated_col` at plan time, so such a
+// column is neither point-ranged in path.Ranges nor marked in ConstCols by
+// DetachCondAndBuildRangeForIndex. The range is instead rebuilt per execution of the inner
+// subtree in ResolveCorrelatedColumns/rebuildIndexRanges, and because the condition is an
+// equality that rebuilt range is always a single point on this column. Hence the index columns
+// after it stay sorted, exactly as they would be for a literal equality, and an ORDER BY on
+// them can be satisfied by the scan order instead of a sort.
+//
+// Only full-length columns may be marked: on a prefix column the stored value is truncated, so
+// an equality does not pin the column to one value.
+func (path *AccessPath) markConstCol(idx int) {
+	if path.ConstCols == nil {
+		path.ConstCols = make([]bool, len(path.IdxCols))
+	}
+	if idx < len(path.ConstCols) {
+		path.ConstCols[idx] = true
+	}
 }
 
 // isColEqConstant checks if the expression is eq function that one side is column and the other side is constant.
@@ -296,6 +357,42 @@ func isColEqCorCol(expr expression.Expression, col *expression.Column) bool {
 		return ok
 	}
 	return isColEqExpr(expr, col, isCorCol)
+}
+
+// isColRangeCorCol checks if the expression is a range comparison (LT/GT/LE/GE)
+// where one side is the given column and the other side is a correlated column.
+func isColRangeCorCol(expr expression.Expression, col *expression.Column) bool {
+	f, ok := expr.(*expression.ScalarFunction)
+	if !ok {
+		return false
+	}
+	switch f.FuncName.L {
+	case ast.LT, ast.GT, ast.LE, ast.GE:
+	default:
+		return false
+	}
+	_, collation := f.CharsetAndCollation()
+	if c, ok := f.GetArgs()[0].(*expression.Column); ok {
+		if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(collation, c.RetType.GetCollate()) {
+			return false
+		}
+		if _, ok := f.GetArgs()[1].(*expression.CorrelatedColumn); ok {
+			if col.EqualColumn(c) {
+				return true
+			}
+		}
+	}
+	if c, ok := f.GetArgs()[1].(*expression.Column); ok {
+		if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(collation, c.RetType.GetCollate()) {
+			return false
+		}
+		if _, ok := f.GetArgs()[0].(*expression.CorrelatedColumn); ok {
+			if col.EqualColumn(c) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // isColEqExpr checks if the expression is eq function that one side is column and the other side passes checkFn.
@@ -473,4 +570,29 @@ func (path *AccessPath) IsFullScanRange(tableInfo *model.TableInfo) bool {
 		return true
 	}
 	return false
+}
+
+// IsUndetermined checks if the path is undetermined.
+// The undetermined path is the one that may not be always valid.
+// e.g. The multi value index for JSON is not always valid, because the index must be used with JSON functions.
+func (path *AccessPath) IsUndetermined() bool {
+	if path.IsTablePath() || path.Index == nil {
+		return false
+	}
+	if path.Index.MVIndex || path.Index.ConditionExprString != "" {
+		return true
+	}
+	return false
+}
+
+// IsIndexJoinUnapplicable checks if the path is unapplicable for index join.
+// If path is mv index path:
+// for mv index like mvi(a, json, b), if driving condition is a=1, and we build a prefix scan with range [1,1]
+// on mvi, it will return many index rows which breaks handle-unique attribute here.
+// So we cannot use mv index path for index join.
+// If path is partial index path:
+// We need to first determine whether we already meet the partial index condition.
+// Currently we don't support that, so we conservatively return true here.
+func (path *AccessPath) IsIndexJoinUnapplicable() bool {
+	return path.IsUndetermined()
 }

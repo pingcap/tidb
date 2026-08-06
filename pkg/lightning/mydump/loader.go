@@ -21,15 +21,17 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/compressedio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	regexprrouter "github.com/pingcap/tidb/pkg/util/regexpr-router"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
@@ -61,7 +63,7 @@ func NewMDDatabaseMeta(charSet string) *MDDatabaseMeta {
 }
 
 // GetSchema gets the schema SQL for a source database.
-func (m *MDDatabaseMeta) GetSchema(ctx context.Context, store storage.ExternalStorage) string {
+func (m *MDDatabaseMeta) GetSchema(ctx context.Context, store storeapi.Storage) string {
 	if m.SchemaFile.FileMeta.Path != "" {
 		schema, err := ExportStatement(ctx, store, m.SchemaFile, m.charSet)
 		if err != nil {
@@ -90,13 +92,6 @@ type MDTableMeta struct {
 	IsRowOrdered bool
 }
 
-// ParquetFileMeta contains some analyzed metadata for a parquet file by MyDumper Loader.
-type ParquetFileMeta struct {
-	// memory usage for reader, preserve for later PR
-	MemoryUsage int
-	Loc         *time.Location
-}
-
 // SourceFileMeta contains some analyzed metadata for a source file by MyDumper Loader.
 type SourceFileMeta struct {
 	Path        string
@@ -115,7 +110,7 @@ type SourceFileMeta struct {
 	Rows     int64
 
 	// ParquetMeta store meta only used for parquet
-	ParquetMeta ParquetFileMeta
+	ParquetMeta parquetfile.FileMeta
 }
 
 // NewMDTableMeta creates an Mydumper table meta with specified character set.
@@ -126,7 +121,7 @@ func NewMDTableMeta(charSet string) *MDTableMeta {
 }
 
 // GetSchema gets the table-creating SQL for a source table.
-func (m *MDTableMeta) GetSchema(ctx context.Context, store storage.ExternalStorage) (string, error) {
+func (m *MDTableMeta) GetSchema(ctx context.Context, store storeapi.Storage) (string, error) {
 	schemaFilePath := m.SchemaFile.FileMeta.Path
 	if len(schemaFilePath) <= 0 {
 		return "", errors.Errorf("schema file is missing for the table '%s.%s'", m.DB, m.Name)
@@ -159,6 +154,11 @@ type MDLoaderSetupConfig struct {
 
 	// ScanFileConcurrency specifes the concurrency of scaning source files.
 	ScanFileConcurrency int
+
+	// SkipRealSizeEstimation specifies whether to skip estimating `SourceFileMeta.RealSize` during loader setup.
+	// When enabled, `SourceFileMeta.RealSize` will be set to `SourceFileMeta.FileSize`, and parquet statistics
+	// will not be sampled.
+	SkipRealSizeEstimation bool
 
 	// ReturnPartialResultOnError specifies whether the currently scanned files are analyzed,
 	// and return the partial result.
@@ -195,6 +195,14 @@ func WithScanFileConcurrency(concurrency int) MDLoaderSetupOption {
 		if concurrency > 0 {
 			cfg.ScanFileConcurrency = concurrency
 		}
+	}
+}
+
+// WithSkipRealSizeEstimation generates an option that controls whether to skip estimating `SourceFileMeta.RealSize`
+// during loader setup. When enabled, parquet file statistics will not be sampled.
+func WithSkipRealSizeEstimation(skip bool) MDLoaderSetupOption {
+	return func(cfg *MDLoaderSetupConfig) {
+		cfg.SkipRealSizeEstimation = skip
 	}
 }
 
@@ -254,7 +262,7 @@ func NewLoaderCfg(cfg *config.Config) LoaderConfig {
 
 // MDLoader is for 'Mydumper File Loader', which loads the files in the data source and generates a set of metadata.
 type MDLoader struct {
-	store      storage.ExternalStorage
+	store      storeapi.Storage
 	dbs        []*MDDatabaseMeta
 	filter     filter.Filter
 	router     *regexprrouter.RouteTable
@@ -282,6 +290,7 @@ type mdLoaderSetup struct {
 	tableDatas    []FileInfo
 	dbIndexMap    map[string]int
 	tableIndexMap map[filter.Table]int
+	viewIndexMap  map[filter.Table]int
 	setupCfg      *MDLoaderSetupConfig
 
 	// store file info of parquet from parallel reading
@@ -290,11 +299,11 @@ type mdLoaderSetup struct {
 
 // NewLoader constructs a MyDumper loader that scanns the data source and constructs a set of metadatas.
 func NewLoader(ctx context.Context, cfg LoaderConfig, opts ...MDLoaderSetupOption) (*MDLoader, error) {
-	u, err := storage.ParseBackend(cfg.SourceURL, nil)
+	u, err := objstore.ParseBackend(cfg.SourceURL, nil)
 	if err != nil {
 		return nil, common.NormalizeError(err)
 	}
-	s, err := storage.New(ctx, u, &storage.ExternalStorageOptions{})
+	s, err := objstore.New(ctx, u, &storeapi.Options{})
 	if err != nil {
 		return nil, common.NormalizeError(err)
 	}
@@ -304,7 +313,7 @@ func NewLoader(ctx context.Context, cfg LoaderConfig, opts ...MDLoaderSetupOptio
 
 // NewLoaderWithStore constructs a MyDumper loader with the provided external storage that scanns the data source and constructs a set of metadatas.
 func NewLoaderWithStore(ctx context.Context, cfg LoaderConfig,
-	store storage.ExternalStorage, opts ...MDLoaderSetupOption) (*MDLoader, error) {
+	store storeapi.Storage, opts ...MDLoaderSetupOption) (*MDLoader, error) {
 	var r *regexprrouter.RouteTable
 	var err error
 
@@ -361,6 +370,7 @@ func NewLoaderWithStore(ctx context.Context, cfg LoaderConfig,
 		loader:        mdl,
 		dbIndexMap:    make(map[string]int),
 		tableIndexMap: make(map[filter.Table]int),
+		viewIndexMap:  make(map[filter.Table]int),
 		setupCfg:      mdLoaderSetupCfg,
 	}
 
@@ -481,7 +491,7 @@ func (s *mdLoaderSetup) setup(ctx context.Context) error {
 		}
 
 		// process file size for parquet files
-		if info.FileMeta.Type == SourceTypeParquet {
+		if info.FileMeta.Type == SourceTypeParquet && !s.setupCfg.SkipRealSizeEstimation {
 			v, _ := s.sampledParquetInfos.Load(info.TableName.String())
 			pinfo, _ := v.(parquetInfo)
 			info.FileMeta.RealSize = int64(float64(info.FileMeta.FileSize) * pinfo.compressionRatio)
@@ -530,18 +540,17 @@ func (s *mdLoaderSetup) setup(ctx context.Context) error {
 	if len(s.viewSchemas) != 0 {
 		// setup view schema
 		for _, fileInfo := range s.viewSchemas {
-			_, tableExists := s.insertView(fileInfo)
-			if !tableExists {
-				// we are not expect the user only has view schema without table schema when user use dumpling to get view.
-				// remove the last `-view.sql` from path as the relate table schema file path
-				return common.ErrInvalidSchemaFile.GenWithStack("invalid view schema file, miss host table schema for view '%s'", fileInfo.TableName.Name)
+			if _, viewExists := s.insertView(fileInfo); viewExists && s.loader.router == nil {
+				return common.ErrInvalidSchemaFile.GenWithStack("invalid view schema file, duplicated item - %s", fileInfo.FileMeta.Path)
 			}
 		}
 	}
 
-	// Sql file for restore data
+	s.pruneViewPlaceholders(ctx)
+
+	// SQL files for importing data.
 	for _, fileInfo := range s.tableDatas {
-		// set a dummy `FileInfo` here without file meta because we needn't restore the table schema
+		// Set a dummy `FileInfo` here without file meta because we needn't import the table schema.
 		tableMeta, _, _ := s.insertTable(FileInfo{TableName: fileInfo.TableName})
 		tableMeta.DataFiles = append(tableMeta.DataFiles, fileInfo)
 		tableMeta.TotalSize += fileInfo.FileMeta.RealSize
@@ -578,7 +587,7 @@ type FileIterator interface {
 }
 
 type allFileIterator struct {
-	store        storage.ExternalStorage
+	store        storeapi.Storage
 	maxScanFiles int
 }
 
@@ -587,7 +596,7 @@ func (iter *allFileIterator) IterateFiles(ctx context.Context, hdl FileHandler) 
 	// meaning the file and chunk orders will be the same everytime it is called
 	// (as long as the source is immutable).
 	totalScannedFileCount := 0
-	err := iter.store.WalkDir(ctx, &storage.WalkOption{}, func(path string, size int64) error {
+	err := iter.store.WalkDir(ctx, &storeapi.WalkOption{}, func(path string, size int64) error {
 		totalScannedFileCount++
 		if iter.maxScanFiles > 0 && totalScannedFileCount > iter.maxScanFiles {
 			return common.ErrTooManySourceFiles
@@ -622,14 +631,19 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, f RawFile) (*File
 
 	switch res.Type {
 	case SourceTypeSQL, SourceTypeCSV:
-		info.FileMeta.RealSize = EstimateRealSizeForFile(ctx, info.FileMeta, s.loader.GetStore())
+		if !s.setupCfg.SkipRealSizeEstimation {
+			info.FileMeta.RealSize = EstimateRealSizeForFile(ctx, info.FileMeta, s.loader.GetStore())
+		}
 	case SourceTypeParquet:
+		if s.setupCfg.SkipRealSizeEstimation {
+			break
+		}
 		tableName := info.TableName.String()
 
 		// Only sample once for each table
 		_, loaded := s.sampledParquetInfos.LoadOrStore(tableName, parquetInfo{})
 		if !loaded {
-			rows, rowSize, err := SampleStatisticsFromParquet(ctx, info.FileMeta.Path, s.loader.GetStore())
+			rows, rowSize, err := parquetfile.SampleStatisticsFromParquet(ctx, info.FileMeta.Path, s.loader.GetStore())
 			if err != nil {
 				logger.Error("fail to sample parquet row size", zap.String("category", "loader"),
 					zap.String("schema", res.Schema), zap.String("table", res.Name),
@@ -802,7 +816,7 @@ func (s *mdLoaderSetup) insertTable(fileInfo FileInfo) (tblMeta *MDTableMeta, db
 	return ptr, dbExists, false
 }
 
-func (s *mdLoaderSetup) insertView(fileInfo FileInfo) (dbExists bool, tableExists bool) {
+func (s *mdLoaderSetup) insertView(fileInfo FileInfo) (dbExists bool, viewExists bool) {
 	dbFileInfo := FileInfo{
 		TableName: filter.Table{
 			Schema: fileInfo.TableName.Schema,
@@ -810,19 +824,60 @@ func (s *mdLoaderSetup) insertView(fileInfo FileInfo) (dbExists bool, tableExist
 		FileMeta: SourceFileMeta{Type: SourceTypeSchemaSchema},
 	}
 	dbMeta, dbExists := s.insertDB(dbFileInfo)
-	_, ok := s.tableIndexMap[fileInfo.TableName]
-	if ok {
-		meta := &MDTableMeta{
-			DB:           fileInfo.TableName.Schema,
-			Name:         fileInfo.TableName.Name,
-			SchemaFile:   fileInfo,
-			charSet:      s.loader.charSet,
-			IndexRatio:   0.0,
-			IsRowOrdered: true,
-		}
-		dbMeta.Views = append(dbMeta.Views, meta)
+	_, viewExists = s.viewIndexMap[fileInfo.TableName]
+	if !viewExists {
+		s.viewIndexMap[fileInfo.TableName] = len(dbMeta.Views)
 	}
-	return dbExists, ok
+	meta := &MDTableMeta{
+		DB:           fileInfo.TableName.Schema,
+		Name:         fileInfo.TableName.Name,
+		SchemaFile:   fileInfo,
+		charSet:      s.loader.charSet,
+		IndexRatio:   0.0,
+		IsRowOrdered: true,
+	}
+	dbMeta.Views = append(dbMeta.Views, meta)
+	return dbExists, viewExists
+}
+
+func (s *mdLoaderSetup) pruneViewPlaceholders(ctx context.Context) {
+	if len(s.viewIndexMap) == 0 || len(s.tableIndexMap) == 0 {
+		return
+	}
+
+	// Dumpling emits a table schema file for each view before the dedicated view
+	// schema file is discovered. Once the view list is complete, drop those
+	// placeholder tables so schema import only sees the real table objects.
+	const maxPrunedTableLogSamples = 20
+	prunedCount := 0
+	prunedTables := make([]string, 0, maxPrunedTableLogSamples)
+	for _, dbMeta := range s.loader.dbs {
+		filtered := dbMeta.Tables[:0]
+		for _, tableMeta := range dbMeta.Tables {
+			if _, ok := s.viewIndexMap[tableKey(tableMeta.DB, tableMeta.Name)]; ok {
+				prunedCount++
+				if len(prunedTables) < maxPrunedTableLogSamples {
+					prunedTables = append(prunedTables, common.UniqueTable(tableMeta.DB, tableMeta.Name))
+				}
+				continue
+			}
+			filtered = append(filtered, tableMeta)
+		}
+		dbMeta.Tables = filtered
+	}
+	if prunedCount > 0 {
+		logutil.Logger(ctx).Info("pruned view placeholder tables",
+			zap.String("category", "loader"),
+			zap.Int("count", prunedCount),
+			zap.Strings("tables(sampled)", prunedTables))
+	}
+
+	clear(s.tableIndexMap)
+	for _, dbMeta := range s.loader.dbs {
+		for i, tableMeta := range dbMeta.Tables {
+			s.tableIndexMap[tableKey(tableMeta.DB, tableMeta.Name)] = i
+		}
+	}
 }
 
 // GetDatabases gets the list of scanned MDDatabaseMeta for the loader.
@@ -831,7 +886,7 @@ func (l *MDLoader) GetDatabases() []*MDDatabaseMeta {
 }
 
 // GetStore gets the external storage used by the loader.
-func (l *MDLoader) GetStore() storage.ExternalStorage {
+func (l *MDLoader) GetStore() storeapi.Storage {
 	return l.store
 }
 
@@ -853,8 +908,8 @@ func (l *MDLoader) GetAllFiles() map[string]FileInfo {
 
 func calculateFileBytes(ctx context.Context,
 	dataFile string,
-	compressType storage.CompressType,
-	store storage.ExternalStorage,
+	compressType compressedio.CompressType,
+	store storeapi.Storage,
 	offset int64) (tot int, pos int64, err error) {
 	bytes := make([]byte, sampleCompressedFileSize)
 	reader, err := store.Open(ctx, dataFile, nil)
@@ -863,8 +918,8 @@ func calculateFileBytes(ctx context.Context,
 	}
 	defer reader.Close()
 
-	decompressConfig := storage.DecompressConfig{ZStdDecodeConcurrency: 1}
-	compressReader, err := storage.NewLimitedInterceptReader(reader, compressType, decompressConfig, offset)
+	decompressConfig := compressedio.DecompressConfig{ZStdDecodeConcurrency: 1}
+	compressReader, err := objstore.NewLimitedInterceptReader(reader, compressType, decompressConfig, offset)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
@@ -905,7 +960,7 @@ func calculateFileBytes(ctx context.Context,
 // EstimateRealSizeForFile estimate the real size for the file.
 // If the file is not compressed, the real size is the same as the file size.
 // If the file is compressed, the real size is the estimated uncompressed size.
-func EstimateRealSizeForFile(ctx context.Context, fileMeta SourceFileMeta, store storage.ExternalStorage) int64 {
+func EstimateRealSizeForFile(ctx context.Context, fileMeta SourceFileMeta, store storeapi.Storage) int64 {
 	if fileMeta.Compression == CompressionNone {
 		return fileMeta.FileSize
 	}
@@ -922,7 +977,7 @@ func EstimateRealSizeForFile(ctx context.Context, fileMeta SourceFileMeta, store
 }
 
 // SampleFileCompressRatio samples the compress ratio of the compressed file. Exported for test.
-func SampleFileCompressRatio(ctx context.Context, fileMeta SourceFileMeta, store storage.ExternalStorage) (float64, error) {
+func SampleFileCompressRatio(ctx context.Context, fileMeta SourceFileMeta, store storeapi.Storage) (float64, error) {
 	failpoint.Inject("SampleFileCompressPercentage", func(val failpoint.Value) {
 		switch v := val.(type) {
 		case string:

@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
@@ -44,10 +45,12 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
-	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/texttree"
 	"github.com/pingcap/tipb/go-tipb"
 )
+
+// LoadPlanReplayerForExplainExplore loads a plan replayer file and returns the target SQL for EXPLAIN EXPLORE.
+var LoadPlanReplayerForExplainExplore func(sessionctx.Context, string) (string, error)
 
 // ShowDDL is for showing DDL information.
 type ShowDDL struct {
@@ -288,8 +291,10 @@ const (
 	OpFlushBindings
 	// OpCaptureBindings is used to capture plan bindings.
 	OpCaptureBindings
-	// OpReloadBindings is used to reload plan binding.
+	// OpReloadBindings is used to reload plan binding in this node.
 	OpReloadBindings
+	// OpReloadClusterBindings is used to reload plan binding in the entire cluster.
+	OpReloadClusterBindings
 	// OpSetBindingStatus is used to set binding status.
 	OpSetBindingStatus
 	// OpSQLBindDropByDigest is used to drop SQL binds by digest
@@ -304,9 +309,10 @@ const (
 type SQLBindPlan struct {
 	physicalop.SimpleSchemaProducer
 
-	IsGlobal  bool
-	SQLBindOp SQLBindOpType
-	Details   []*SQLBindOpDetail
+	IsGlobal     bool
+	SQLBindOp    SQLBindOpType
+	Details      []*SQLBindOpDetail
+	IsFromRemote bool
 }
 
 // SQLBindOpDetail represents the detail of an operation on a single binding.
@@ -341,31 +347,23 @@ type Simple struct {
 	ResolveCtx *resolve.Context
 }
 
-// MemoryUsage return the memory usage of Simple
-func (s *Simple) MemoryUsage() (sum int64) {
-	if s == nil {
-		return
-	}
-
-	sum = s.SimpleSchemaProducer.MemoryUsage() + size.SizeOfInterface + size.SizeOfBool + size.SizeOfUint64
-	return
-}
-
-// PhysicalSimpleWrapper is a wrapper of `Simple` to implement physical plan interface.
+// PhysicalPlanWrapper is a wrapper to wrap any Plan to a PhysicalPlan.
 //
 //	Used for simple statements executing in coprocessor.
-type PhysicalSimpleWrapper struct {
+type PhysicalPlanWrapper struct {
 	physicalop.BasePhysicalPlan
-	Inner Simple
+	Inner base.Plan
 }
 
 // MemoryUsage return the memory usage of PhysicalSimpleWrapper
-func (p *PhysicalSimpleWrapper) MemoryUsage() (sum int64) {
+func (p *PhysicalPlanWrapper) MemoryUsage() (sum int64) {
 	if p == nil {
 		return
 	}
 
-	sum = p.BasePhysicalPlan.MemoryUsage() + p.Inner.MemoryUsage()
+	// base.Plan doesn't have MemoryUsage method, so we just use a fixed size.
+	planMem := int64(256)
+	sum = p.BasePhysicalPlan.MemoryUsage() + planMem
 	return
 }
 
@@ -489,6 +487,7 @@ type UnlockStats struct {
 type PlanReplayer struct {
 	physicalop.SimpleSchemaProducer
 	ExecStmt          ast.StmtNode
+	StmtList          []string // For PLAN REPLAYER DUMP EXPLAIN ( "sql1", "sql2", ... )
 	Analyze           bool
 	Load              bool
 	File              string
@@ -648,6 +647,7 @@ type Explain struct {
 	Analyze          bool
 	Explore          bool   // EXPLAIN EXPLORE statement
 	SQLDigest        string // "EXPLAIN EXPLORE <sql_digest>"
+	ReplayerFile     string // "EXPLAIN EXPLORE REPLAYER <replayer_file_path>"
 	ExecStmt         ast.StmtNode
 	RuntimeStatsColl *execdetails.RuntimeStatsColl
 
@@ -692,6 +692,19 @@ func (e *Explain) prepareSchema() error {
 	if format == types.ExplainFormatTraditional {
 		format = types.ExplainFormatROW
 		e.Format = types.ExplainFormatROW
+	}
+	// Ensure StmtCtx.ExplainFormat is set early so shouldRemoveColumnNumbers can access it
+	// This needs to be set before any ExplainInfo() calls are made
+	// ResetContextOfStmt already set ExplainFormat to the original format (normalized to lowercase),
+	// so we preserve that value instead of overwriting it with the converted format
+	if e.SCtx() != nil {
+		stmtCtx := e.SCtx().GetSessionVars().StmtCtx
+		stmtCtx.InExplainStmt = true
+		// Only set ExplainFormat if it's not already set (it should be set in ResetContextOfStmt)
+		// This preserves the original format value for test compatibility
+		if stmtCtx.ExplainFormat == "" {
+			stmtCtx.ExplainFormat = format
+		}
 	}
 	switch {
 	case (format == types.ExplainFormatROW || format == types.ExplainFormatBrief || format == types.ExplainFormatPlanCache) && (!e.Analyze && e.RuntimeStatsColl == nil):
@@ -747,11 +760,26 @@ func (e *Explain) prepareSchema() error {
 }
 
 func (e *Explain) renderResultForExplore() error {
-	bindingHandle := domain.GetDomain(e.SCtx()).BindingHandle()
 	sqlOrDigest := e.SQLDigest
-	if sqlOrDigest == "" {
+	if e.ReplayerFile != "" {
+		if LoadPlanReplayerForExplainExplore == nil {
+			return errors.NewNoStackError("EXPLAIN EXPLORE REPLAYER is not available")
+		}
+		sctx, err := AsSctx(e.SCtx())
+		if err != nil {
+			return err
+		}
+		sqlOrDigest, err = LoadPlanReplayerForExplainExplore(sctx, e.ReplayerFile)
+		if err != nil {
+			return err
+		}
+	} else if sqlOrDigest == "" {
+		if e.ExecStmt == nil {
+			return errors.NewNoStackError("EXPLAIN EXPLORE target SQL is empty")
+		}
 		sqlOrDigest = e.ExecStmt.Text()
 	}
+	bindingHandle := domain.GetDomain(e.SCtx()).BindingHandle()
 	plans, err := bindingHandle.ExplorePlansForSQL(e.SCtx(), sqlOrDigest, e.Analyze)
 	if err != nil {
 		return err
@@ -775,10 +803,23 @@ func (e *Explain) renderResultForExplore() error {
 			strconv.FormatFloat(p.ScanRowsPerReturnRow, 'f', -1, 64),
 			p.Recommend,
 			p.Reason,
-			fmt.Sprintf("EXPLAIN ANALYZE '%v'", p.PlanDigest),
-			fmt.Sprintf("CREATE GLOBAL BINDING FROM HISTORY USING PLAN DIGEST '%v'", p.PlanDigest)})
+			fmt.Sprintf("EXPLAIN ANALYZE %v", p.BindSQL),
+			fmt.Sprintf("CREATE GLOBAL BINDING USING %v", p.BindSQL)})
 	}
 	return nil
+}
+
+func (e *Explain) shouldDecodeBriefBinaryPlan() bool {
+	if e.BriefBinaryPlan == "" {
+		return false
+	}
+	if e.RuntimeStatsColl == nil {
+		return true
+	}
+	// Prepared Execute plans can keep ParamMarker or DeferredExpr nodes whose values
+	// belong to the original execution context, so live rendering may evaluate missing params.
+	_, isExecute := e.TargetPlan.(*Execute)
+	return isExecute
 }
 
 // RenderResult renders the explain result as specified format.
@@ -830,8 +871,9 @@ func (e *Explain) RenderResult() error {
 			e.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("'explain format=true_card_cost' cannot support this plan"))
 		}
 	}
-	// For explain for connection, we can directly decode the binary plan to get the explain rows.
-	if e.BriefBinaryPlan != "" {
+	// EXPLAIN FOR CONNECTION should prefer the live runtime stats collector because
+	// BriefBinaryPlan is only a snapshot taken when ProcessInfo was recorded.
+	if e.shouldDecodeBriefBinaryPlan() {
 		if strings.ToLower(e.Format) != types.ExplainFormatBrief && strings.ToLower(e.Format) != types.ExplainFormatROW && strings.ToLower(e.Format) != types.ExplainFormatVerbose {
 			return errors.Errorf("explain format '%s' for connection is not supported now", e.Format)
 		}
@@ -841,6 +883,13 @@ func (e *Explain) RenderResult() error {
 		}
 		e.Rows = rows
 		return nil
+	}
+	// Ensure StmtCtx.ExplainFormat is set to match e.Format so shouldRemoveColumnNumbers can access it
+	// e.Format is already normalized to lowercase in planbuilder.go and may have been converted from Traditional to ROW in prepareSchema()
+	// prepareSchema() already set ExplainFormat (preserving the original from ResetContextOfStmt), so we just ensure InExplainStmt is set
+	if e.SCtx() != nil {
+		e.SCtx().GetSessionVars().StmtCtx.InExplainStmt = true
+		// ExplainFormat should already be set correctly in prepareSchema() or ResetContextOfStmt
 	}
 	switch strings.ToLower(e.Format) {
 	case types.ExplainFormatROW, types.ExplainFormatBrief, types.ExplainFormatVerbose, types.ExplainFormatTrueCardCost, types.ExplainFormatCostTrace, types.ExplainFormatPlanCache, types.ExplainFormatPlanTree:
@@ -1086,6 +1135,13 @@ func getOperatorInfo(p base.Plan, format string) (estRows, estCost, costFormula,
 	estCost = "N/A"
 	costFormula = "N/A"
 	sctx := p.SCtx()
+	// Ensure StmtCtx.ExplainFormat is set before calling ExplainInfo() so shouldRemoveColumnNumbers can access it
+	// format is already normalized to lowercase when passed from ExplainFlatPlanInRowFormat (which uses e.Format)
+	if sctx != nil {
+		stmtCtx := sctx.GetSessionVars().StmtCtx
+		stmtCtx.InExplainStmt = true
+		stmtCtx.ExplainFormat = format
+	}
 	if isPhysicalPlan {
 		if format != types.ExplainFormatPlanTree {
 			estRows = strconv.FormatFloat(pp.GetEstRowCountForDisplay(), 'f', 2, 64)
@@ -1113,6 +1169,8 @@ func getOperatorInfo(p base.Plan, format string) (estRows, estCost, costFormula,
 		}
 		operatorInfo = p.ExplainInfo()
 	}
+
+	// Column numbers are now removed in column.ExplainInfo() when format is plan_tree
 	return estRows, estCost, costFormula, accessObject, operatorInfo
 }
 

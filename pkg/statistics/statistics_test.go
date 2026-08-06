@@ -101,7 +101,7 @@ func (r *recordSet) Close() error {
 }
 
 func buildPK(sctx sessionctx.Context, numBuckets, id int64, records sqlexec.RecordSet) (int64, *Histogram, error) {
-	b := NewSortedBuilder(sctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeLonglong), Version1)
+	b := NewSortedBuilder(sctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeLonglong), Version2)
 	ctx := context.Background()
 	for {
 		req := records.NewChunk(nil)
@@ -172,7 +172,7 @@ func TestMergeHistogram(t *testing.T) {
 	for _, tt := range tests {
 		lh := mockHistogram(tt.leftLower, tt.leftNum)
 		rh := mockHistogram(tt.rightLower, tt.rightNum)
-		h, err := MergeHistograms(sc, lh, rh, bucketCount, Version1)
+		h, err := MergeHistograms(sc, lh, rh, bucketCount, Version2)
 		require.NoError(t, err)
 		require.Equal(t, tt.ndv, h.NDV)
 		require.Equal(t, tt.bucketNum, h.Len())
@@ -480,7 +480,7 @@ func checkRepeats(t *testing.T, hg *Histogram) {
 }
 
 func buildIndex(sctx sessionctx.Context, numBuckets, id int64, records sqlexec.RecordSet) (int64, *Histogram, *CMSketch, error) {
-	b := NewSortedBuilder(sctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeBlob), Version1)
+	b := NewSortedBuilder(sctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeBlob), Version2)
 	cms := NewCMSketch(8, 2048)
 	ctx := context.Background()
 	req := records.NewChunk(nil)
@@ -550,7 +550,7 @@ func SubTestBuild() func(*testing.T) {
 		count = col.LessRowCount(nil, types.NewIntDatum(1))
 		require.Equal(t, 5, int(count))
 
-		colv2, topnv2, err := BuildHistAndTopN(ctx, int(bucketCount), topNCount, 2, collector, types.NewFieldType(mysql.TypeLonglong), true, nil, false)
+		colv2, topnv2, err := BuildHistAndTopN(ctx, int(bucketCount), topNCount, 2, collector, types.NewFieldType(mysql.TypeLonglong), true, nil)
 		require.NoError(t, err)
 		require.NotNil(t, topnv2.TopN)
 		// The most common one's occurrence is 9990, the second most common one's occurrence is 30.

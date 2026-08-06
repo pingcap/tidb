@@ -62,6 +62,19 @@ func TestPushDownToTiFlashWithKeepOrder(t *testing.T) {
 	})
 }
 
+func TestVirtualColumnIndexPushdown(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec(`create table t (id int,
+deleted_at datetime(3) NOT NULL DEFAULT '1970-01-01 01:00:01.000',
+is_deleted tinyint(1) GENERATED ALWAYS AS ((deleted_at > _utf8mb4'1970-01-01 01:00:01.000')) VIRTUAL NOT NULL,
+key k(id, is_deleted))`)
+		tk.MustExec(`begin`)
+		tk.MustExec(`insert into t (id, deleted_at) values (1, now())`)
+		tk.MustHavePlan(`select /* issue:54870 */ 1 from t where id=1 and is_deleted=true`, "IndexRangeScan")
+	})
+}
+
 func TestPushDownToTiFlashWithKeepOrderInFastMode(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		testKit.MustExec("use test")

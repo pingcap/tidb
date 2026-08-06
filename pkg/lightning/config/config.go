@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/cpu"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	router "github.com/pingcap/tidb/pkg/util/table-router"
 	"go.uber.org/atomic"
@@ -61,6 +62,8 @@ const (
 	BackendLocal = "local"
 	// BackendImportInto is a constant for choosing the "ImportInto" backend in the configuration.
 	BackendImportInto = "import-into"
+	// UnlimitedQuota is the default value of DiskQuota, which means no limit.
+	UnlimitedQuota = ByteSize(math.MaxInt64)
 
 	// CheckpointDriverMySQL is a constant for choosing the "MySQL" checkpoint driver in the configuration.
 	CheckpointDriverMySQL = "mysql"
@@ -365,12 +368,17 @@ func (l *Lightning) adjust(i *TikvImporter) {
 			l.MetaSchemaName = defaultMetaSchemaName
 		}
 		// RegionConcurrency > NumCPU is meaningless.
-		cpuCount := runtime.NumCPU()
+		cpuCount := cpu.GetCPUCount()
 		if l.RegionConcurrency > cpuCount {
 			l.RegionConcurrency = cpuCount
 		}
 	case BackendImportInto:
-		// TODO: set default values for import-into backend
+		if len(l.MetaSchemaName) == 0 {
+			l.MetaSchemaName = defaultMetaSchemaName
+		}
+		if l.TableConcurrency == 0 {
+			l.TableConcurrency = l.RegionConcurrency
+		}
 	}
 }
 
@@ -1110,6 +1118,15 @@ type TikvImporter struct {
 	KeyspaceName      string `toml:"keyspace-name" json:"keyspace-name"`
 	AddIndexBySQL     bool   `toml:"add-index-by-sql" json:"add-index-by-sql"`
 
+	// StripS3ExternalIDForImportSQL strips explicit S3 external ID from
+	// generated IMPORT INTO SQL resource parameters while keeping the original
+	// source path unchanged for Lightning storage access. This compatibility flag
+	// is only for callers that need to work with older IMPORT INTO planners that
+	// reject explicit S3 external ID.
+	// Deprecated: remove this flag after downstream callers no longer need to
+	// keep compatibility with those older planners.
+	StripS3ExternalIDForImportSQL bool `toml:"-" json:"-"`
+
 	EngineMemCacheSize      ByteSize `toml:"engine-mem-cache-size" json:"engine-mem-cache-size"`
 	LocalWriterMemCacheSize ByteSize `toml:"local-writer-mem-cache-size" json:"local-writer-mem-cache-size"`
 	StoreWriteBWLimit       ByteSize `toml:"store-write-bwlimit" json:"store-write-bwlimit"`
@@ -1454,7 +1471,7 @@ func (c *Conflict) adjust(i *TikvImporter) error {
 func NewConfig() *Config {
 	return &Config{
 		App: Lightning{
-			RegionConcurrency:  runtime.NumCPU(),
+			RegionConcurrency:  cpu.GetCPUCount(),
 			TableConcurrency:   0,
 			IndexConcurrency:   0,
 			IOConcurrency:      5,
@@ -1508,7 +1525,7 @@ func NewConfig() *Config {
 			RegionSplitBatchSize:    DefaultRegionSplitBatchSize,
 			RegionSplitConcurrency:  runtime.GOMAXPROCS(0),
 			RegionCheckBackoffLimit: DefaultRegionCheckBackoffLimit,
-			DiskQuota:               ByteSize(math.MaxInt64),
+			DiskQuota:               UnlimitedQuota,
 			DuplicateResolution:     NoneOnDup,
 			PausePDSchedulerScope:   PausePDSchedulerScopeTable,
 			BlockSize:               DefaultBlockSize,

@@ -16,6 +16,7 @@ package intset
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"math/bits"
 
@@ -219,6 +220,14 @@ func (s FastIntSet) largeToSmall() (small uint64, otherValues bool) {
 		panic("set contains no large")
 	}
 	return s.small, s.large.Min() < 0 || s.large.Max() >= smallCutOff
+}
+
+// GetSmallUInt64 returns the small uint64 if the set contains only small values, otherwise returns an error.
+func (s FastIntSet) GetSmallUInt64() (uint64, error) {
+	if s.large != nil {
+		return 0, errors.New("set contains large values, cannot get small uint64")
+	}
+	return s.small, nil
 }
 
 // *************************************************************************

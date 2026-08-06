@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
-	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/checksum"
@@ -53,7 +52,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -75,7 +76,8 @@ const (
 	ignorePlacementPolicyMode = "IGNORE"
 
 	resetSpeedLimitRetryTimes = 3
-	defaultDDLConcurrency     = 100
+	resetSpeedLimitTimeout    = time.Minute
+	defaultDDLConcurrency     = 64
 	maxSplitKeysOnce          = 10240
 )
 
@@ -91,11 +93,14 @@ type SnapClient struct {
 	pdHTTPClient pdhttp.Client
 
 	// User configurable parameters
-	cipher              *backuppb.CipherInfo
-	concurrencyPerStore uint
-	keepaliveConf       keepalive.ClientParameters
-	rateLimit           uint64
-	tlsConf             *tls.Config
+	cipher                *backuppb.CipherInfo
+	concurrencyPerStore   uint
+	regionScanConcurrency uint
+	splitRegionIndexStep  uint
+	coarseScatter         bool
+	keepaliveConf         keepalive.ClientParameters
+	rateLimit             uint64
+	tlsConf               *tls.Config
 
 	switchCh chan struct{}
 
@@ -141,6 +146,8 @@ type SnapClient struct {
 
 	batchDdlSize uint
 
+	txnTotalSizeLimit uint64
+
 	// if fullClusterRestore = true:
 	// - if there's system tables in the backup(backup data since br 5.1.0), the cluster should be a fresh cluster
 	//	without user database or table. and system tables about privileges is restored together with user data.
@@ -170,7 +177,7 @@ type SnapClient struct {
 	// restore from a checkpoint inherits the same restoreUUID.
 	restoreUUID uuid.UUID
 
-	checkPrivilegeTableRowsCollateCompatiblity bool
+	privilegeTableRowsCollateCompatibility bool
 }
 
 // NewRestoreClient returns a new RestoreClient.
@@ -181,11 +188,12 @@ func NewRestoreClient(
 	keepaliveConf keepalive.ClientParameters,
 ) *SnapClient {
 	return &SnapClient{
-		pdClient:      pdClient,
-		pdHTTPClient:  pdHTTPCli,
-		tlsConf:       tlsConf,
-		keepaliveConf: keepaliveConf,
-		switchCh:      make(chan struct{}),
+		pdClient:             pdClient,
+		pdHTTPClient:         pdHTTPCli,
+		tlsConf:              tlsConf,
+		keepaliveConf:        keepaliveConf,
+		splitRegionIndexStep: split.DefaultRegionIndexStep,
+		switchCh:             make(chan struct{}),
 	}
 }
 
@@ -273,24 +281,21 @@ func (rc *SnapClient) GetSupportPolicy() bool {
 	return rc.supportPolicy
 }
 
-// SetCheckPrivilegeTableRowsCollateCompatiblity set switch to check
+// SetCheckPrivilegeTableRowsCollateCompatibility set switch to check
 // privilege tables with different collate columns
-func (rc *SnapClient) SetCheckPrivilegeTableRowsCollateCompatiblity(v bool) {
-	rc.checkPrivilegeTableRowsCollateCompatiblity = v
+func (rc *SnapClient) SetCheckPrivilegeTableRowsCollateCompatibility(v bool) {
+	rc.privilegeTableRowsCollateCompatibility = v
 }
 
-// GetCheckPrivilegeTableRowsCollateCompatiblity get switch to check
+// GetCheckPrivilegeTableRowsCollateCompatibility get switch to check
 // privilege tables with different collate columns
-func (rc *SnapClient) GetCheckPrivilegeTableRowsCollateCompatiblity() bool {
-	return rc.checkPrivilegeTableRowsCollateCompatiblity
+func (rc *SnapClient) GetCheckPrivilegeTableRowsCollateCompatibility() bool {
+	return rc.privilegeTableRowsCollateCompatibility
 }
 
 func (rc *SnapClient) updateConcurrency() {
-	// we believe 32 is large enough for download worker pool.
-	// it won't reach the limit if sst files distribute evenly.
-	// when restore memory usage is still too high, we should reduce concurrencyPerStore
-	// to sarifice some speed to reduce memory usage.
-	count := uint(rc.storeCount) * rc.concurrencyPerStore * 32
+	const downloadWorkerPoolSizePerStore uint = 7186
+	count := uint(rc.storeCount) * downloadWorkerPoolSizePerStore
 	log.Info("download coarse worker pool", zap.Uint("size", count))
 	rc.workerPool = tidbutil.NewWorkerPool(count, "file")
 }
@@ -301,8 +306,45 @@ func (rc *SnapClient) SetConcurrencyPerStore(c uint) {
 	rc.concurrencyPerStore = c
 }
 
+// SetRegionScanConcurrency sets max in-flight region scan requests during import.
+func (rc *SnapClient) SetRegionScanConcurrency(c uint) {
+	log.Info("region scan request concurrency", zap.Uint("size", c))
+	rc.regionScanConcurrency = c
+}
+
+// GetRegionScanConcurrency returns max in-flight region scan requests during import.
+func (rc *SnapClient) GetRegionScanConcurrency() uint {
+	return rc.regionScanConcurrency
+}
+
+// SetSplitRegionIndexStep sets the rough split step during snapshot restore.
+func (rc *SnapClient) SetSplitRegionIndexStep(step uint) {
+	log.Info("split region index step", zap.Uint("step", step))
+	rc.splitRegionIndexStep = split.NormalizeRegionIndexStep(step)
+}
+
+// GetSplitRegionIndexStep returns the rough split step during snapshot restore.
+func (rc *SnapClient) GetSplitRegionIndexStep() uint {
+	return rc.splitRegionIndexStep
+}
+
+// SetCoarseScatter controls whether only rough split regions are scattered.
+func (rc *SnapClient) SetCoarseScatter(coarseScatter bool) {
+	log.Info("coarse scatter", zap.Bool("enabled", coarseScatter))
+	rc.coarseScatter = coarseScatter
+}
+
+// GetCoarseScatter returns whether only rough split regions are scattered.
+func (rc *SnapClient) GetCoarseScatter() bool {
+	return rc.coarseScatter
+}
+
 func (rc *SnapClient) SetBatchDdlSize(batchDdlsize uint) {
 	rc.batchDdlSize = batchDdlsize
+}
+
+func (rc *SnapClient) SetTxnTotalSizeLimit(txnTotalSizeLimit uint64) {
+	rc.txnTotalSizeLimit = txnTotalSizeLimit
 }
 
 func (rc *SnapClient) GetBatchDdlSize() uint {
@@ -665,8 +707,77 @@ func (rc *SnapClient) InitConnections(g glue.Glue, store kv.Storage) error {
 	return errors.Trace(err)
 }
 
-func SetSpeedLimitFn(ctx context.Context, stores []*metapb.Store, pool *tidbutil.WorkerPool) func(*SnapFileImporter, uint64) error {
+func SetSpeedLimitCallbacks(
+	ctx context.Context,
+	pdClient pd.Client,
+	pool *tidbutil.WorkerPool,
+	rateLimit uint64,
+) (func(*SnapFileImporter) error, func(*SnapFileImporter) error) {
+	var wg sync.WaitGroup
+	stopCh := make(chan struct{})
+	var stopOnce sync.Once
+	setFn := SetSpeedLimitFn(ctx, pdClient, pool)
+	return func(importer *SnapFileImporter) error {
+			if err := setFn(importer, rateLimit); err != nil {
+				return errors.Annotate(err, "failed to set download speed limit")
+			}
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				updateTicker := time.NewTicker(time.Minute * 3)
+				defer updateTicker.Stop()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-updateTicker.C:
+						if err := setFn(importer, rateLimit); err != nil {
+							log.Warn("failed to set download speed limit, retry it", zap.Error(err))
+						}
+					case <-stopCh:
+						return
+					}
+				}
+			}()
+			return nil
+		}, func(importer *SnapFileImporter) error {
+			stopOnce.Do(func() {
+				close(stopCh)
+			})
+			wg.Wait()
+
+			// In future we may need a mechanism to set speed limit in ttl. like what we do in switchmode. TODO
+			var resetErr error
+			for retry := range resetSpeedLimitRetryTimes {
+				resetCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), resetSpeedLimitTimeout)
+				resetErr = SetSpeedLimitFn(resetCtx, pdClient, pool)(importer, 0)
+				cancel()
+				if resetErr != nil {
+					log.Warn("failed to reset speed limit, retry it",
+						zap.Int("retry time", retry), logutil.ShortError(resetErr))
+					time.Sleep(time.Duration(retry+3) * time.Second)
+					continue
+				}
+				break
+			}
+			if resetErr != nil {
+				log.Error("failed to reset speed limit, please reset it manually", zap.Error(resetErr))
+			}
+			return resetErr
+		}
+}
+
+func SetSpeedLimitFn(
+	ctx context.Context,
+	pdClient pd.Client,
+	pool *tidbutil.WorkerPool,
+) func(*SnapFileImporter, uint64) error {
 	return func(importer *SnapFileImporter, limit uint64) error {
+		stores, err := conn.GetAllTiKVStoresWithRetry(ctx, pdClient, util.SkipTiFlash)
+		if err != nil {
+			return errors.Annotate(err, "failed to get stores")
+		}
+
 		eg, ectx := errgroup.WithContext(ctx)
 		for _, store := range stores {
 			if err := ectx.Err(); err != nil {
@@ -708,29 +819,13 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 	createCallBacks = append(createCallBacks, func(importer *SnapFileImporter) error {
 		return importer.CheckMultiIngestSupport(ctx, stores)
 	})
+	createCallBacks = append(createCallBacks, func(importer *SnapFileImporter) error {
+		return importer.CheckPeerDownloadRetrySupport(ctx, stores)
+	})
 	if rc.rateLimit != 0 {
-		setFn := SetSpeedLimitFn(ctx, stores, rc.workerPool)
-		createCallBacks = append(createCallBacks, func(importer *SnapFileImporter) error {
-			return setFn(importer, rc.rateLimit)
-		})
-		closeCallBacks = append(closeCallBacks, func(importer *SnapFileImporter) error {
-			// In future we may need a mechanism to set speed limit in ttl. like what we do in switchmode. TODO
-			var resetErr error
-			for retry := range resetSpeedLimitRetryTimes {
-				resetErr = setFn(importer, 0)
-				if resetErr != nil {
-					log.Warn("failed to reset speed limit, retry it",
-						zap.Int("retry time", retry), logutil.ShortError(resetErr))
-					time.Sleep(time.Duration(retry+3) * time.Second)
-					continue
-				}
-				break
-			}
-			if resetErr != nil {
-				log.Error("failed to reset speed limit, please reset it manually", zap.Error(resetErr))
-			}
-			return resetErr
-		})
+		createCallBack, closeCallBack := SetSpeedLimitCallbacks(ctx, rc.pdClient, rc.workerPool, rc.rateLimit)
+		createCallBacks = append(createCallBacks, createCallBack)
+		closeCallBacks = append(closeCallBacks, closeCallBack)
 	}
 
 	metaClient := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, rc.storeCount+1, splitClientOpts...)
@@ -738,7 +833,7 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 
 	opt := NewSnapFileImporterOptions(
 		rc.cipher, metaClient, importCli, backend,
-		rc.rewriteMode, stores, rc.concurrencyPerStore, createCallBacks, closeCallBacks,
+		rc.rewriteMode, stores, rc.concurrencyPerStore, rc.regionScanConcurrency, false, createCallBacks, closeCallBacks,
 	)
 	if isRawKvMode || isTxnKvMode {
 		mode := Raw
@@ -1013,9 +1108,12 @@ func (rc *SnapClient) CreateDatabases(ctx context.Context, dbs []*metautil.Datab
 	if len(rc.dbPool) == 0 {
 		log.Info("create databases sequentially")
 		for _, db := range dbs {
-			err := rc.db.CreateDatabase(ctx, db.Info, rc.supportPolicy, rc.policyMap)
+			exists, err := rc.db.CreateDatabase(ctx, db.Info, rc.supportPolicy, rc.policyMap)
 			if err != nil {
 				return errors.Trace(err)
+			}
+			if exists {
+				db.SetReusedByPITR()
 			}
 		}
 		return nil
@@ -1028,7 +1126,14 @@ func (rc *SnapClient) CreateDatabases(ctx context.Context, dbs []*metautil.Datab
 		db := db_
 		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
 			conn := rc.dbPool[id%uint64(len(rc.dbPool))]
-			return conn.CreateDatabase(ectx, db.Info, rc.supportPolicy, rc.policyMap)
+			exists, err := conn.CreateDatabase(ectx, db.Info, rc.supportPolicy, rc.policyMap)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if exists {
+				db.SetReusedByPITR()
+			}
+			return nil
 		})
 	}
 	return eg.Wait()
@@ -1104,6 +1209,8 @@ func (rc *SnapClient) createTables(
 		}
 	}
 	cts := make([]*restoreutils.CreatedTable, 0, len(tables))
+	var tablesWithMergeOption []*restoreutils.CreatedTable
+
 	for _, table := range tables {
 		newTableInfo, err := restore.GetTableSchema(rc.dom, table.DB.Name, table.Info.Name)
 		if err != nil {
@@ -1124,8 +1231,110 @@ func (rc *SnapClient) createTables(
 		}
 		log.Debug("new created tables", zap.Any("table", ct))
 		cts = append(cts, ct)
+
+		// Collect tables that need merge_option (either table-level or partition-level)
+		if table.IsMergeOptionAllowed || len(table.PartitionMergeOptionAllowed) > 0 {
+			tablesWithMergeOption = append(tablesWithMergeOption, ct)
+		}
 	}
+
+	// Batch set merge_option for collected tables and partitions
+	if len(tablesWithMergeOption) > 0 {
+		err := rc.setMergeOptionForTables(ctx, tablesWithMergeOption)
+		if err != nil {
+			return nil, errors.Annotatef(err, "failed to batch set merge_option for tables")
+		}
+	}
+
 	return cts, nil
+}
+
+// setMergeOptionForTables sets merge_option for multiple tables and partitions using batch update
+func (rc *SnapClient) setMergeOptionForTables(ctx context.Context, createdTables []*restoreutils.CreatedTable) error {
+	if len(createdTables) == 0 {
+		return nil
+	}
+
+	log.Info("batch setting merge_option for tables and partitions", zap.Int("count", len(createdTables)))
+
+	var rulesToSet []*label.Rule
+
+	for _, ct := range createdTables {
+		table := ct.OldTable
+		newTableInfo := ct.Table
+		// Set merge_option for the table itself if IsMergeOptionAllowed is true
+		if table.IsMergeOptionAllowed {
+			rule := label.NewRule()
+			// Use .L (lowercase) to match DDL behavior for case-insensitive matching
+			dbName := table.DB.Name.L
+			tableName := table.Info.Name.L
+			// Set labels including merge_option before calling Reset()
+			rule.Labels = []pdhttp.RegionLabel{
+				{Key: "merge_option", Value: "allow"},
+			}
+			// Use Reset() to set ID, RuleType, Data, Index, and add/update db/table labels
+			// Reset() uses the NEW table ID (after restore)
+			rule.Reset(rc.dom.Store().GetCodec(), dbName, tableName, "", newTableInfo.ID)
+
+			rulesToSet = append(rulesToSet, rule)
+		}
+
+		// Set merge_option for partitions if PartitionMergeOptionAllowed is set
+		if len(table.PartitionMergeOptionAllowed) > 0 &&
+			table.Info.Partition != nil && len(table.Info.Partition.Definitions) > 0 &&
+			newTableInfo.Partition != nil && len(newTableInfo.Partition.Definitions) > 0 {
+			newPartitionMap := make(map[string]*model.PartitionDefinition)
+			for i := range newTableInfo.Partition.Definitions {
+				def := &newTableInfo.Partition.Definitions[i]
+				newPartitionMap[def.Name.O] = def
+			}
+
+			for _, oldDef := range table.Info.Partition.Definitions {
+				// Only set merge_option for partitions that have it enabled
+				// Use .O (original) for map lookup to preserve case, but .L for rule ID matching
+				if table.PartitionMergeOptionAllowed[oldDef.Name.O] {
+					// Find the corresponding new partition definition
+					newDef, exists := newPartitionMap[oldDef.Name.O]
+					if !exists {
+						log.Warn("partition not found in restored table, skipping merge_option",
+							zap.String("partition", oldDef.Name.O))
+						continue
+					}
+
+					rule := label.NewRule()
+					// Use .L (lowercase) to match DDL behavior for case-insensitive matching
+					dbName := table.DB.Name.L
+					tableName := table.Info.Name.L
+					partitionName := oldDef.Name.L
+					// Set labels including merge_option before calling Reset()
+					rule.Labels = []pdhttp.RegionLabel{
+						{Key: "merge_option", Value: "allow"},
+					}
+					// Use Reset() to set ID, RuleType, Data, Index, and add/update db/table/partition labels
+					// Reset() uses the NEW partition ID (after restore)
+					rule.Reset(rc.dom.Store().GetCodec(), dbName, tableName, partitionName, newDef.ID)
+
+					rulesToSet = append(rulesToSet, rule)
+				}
+			}
+		}
+	}
+
+	// Put label rules to PD in batches to avoid overwhelming PD
+	totalRules := len(rulesToSet)
+	for batch := range slices.Chunk(rulesToSet, utils.LabelRuleBatchSize) {
+		log.Debug("putting label rules batch",
+			zap.Int("batch_size", len(batch)),
+			zap.Int("total", totalRules))
+
+		err := infosync.UpdateLabelRules(ctx, label.NewRulePatch(batch, nil))
+		if err != nil {
+			return errors.Annotatef(err, "failed to put label rules (batch_size=%d, total=%d) for merge_option to PD", len(batch), totalRules)
+		}
+	}
+
+	log.Info("successfully put all label rules", zap.Int("total_rules", totalRules))
+	return nil
 }
 
 // SortTablesBySchemaID sorts tables by their schema ID to ensure tables in the same schema

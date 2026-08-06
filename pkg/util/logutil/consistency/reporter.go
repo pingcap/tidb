@@ -47,13 +47,18 @@ var (
 	ErrAdminCheckInconsistentWithColInfo = dbterror.ClassExecutor.NewStd(errno.ErrDataInconsistentMismatchIndex)
 )
 
+// GetMVCCByKeyResp get the MVCC resp.
+func GetMVCCByKeyResp(tikvStore helper.Storage, key kv.Key) (*kvrpcpb.MvccGetByKeyResponse, error) {
+	h := helper.NewHelper(tikvStore)
+	return h.GetMvccByEncodedKey(key)
+}
+
 // GetMvccByKey gets the MVCC value by key, and returns a json string including decoded data
 func GetMvccByKey(tikvStore helper.Storage, key kv.Key, decodeMvccFn func(kv.Key, *kvrpcpb.MvccGetByKeyResponse, map[string]any)) string {
 	if key == nil {
 		return ""
 	}
-	h := helper.NewHelper(tikvStore)
-	data, err := h.GetMvccByEncodedKey(key)
+	mvccResp, err := GetMVCCByKeyResp(tikvStore, key)
 	if err != nil {
 		return ""
 	}
@@ -64,11 +69,11 @@ func GetMvccByKey(tikvStore helper.Storage, key kv.Key, decodeMvccFn func(kv.Key
 	resp := map[string]any{
 		"key":      decodeKey,
 		"regionID": regionID,
-		"mvcc":     data,
+		"mvcc":     mvccResp,
 	}
 
 	if decodeMvccFn != nil {
-		decodeMvccFn(key, data, resp)
+		decodeMvccFn(key, mvccResp, resp)
 	}
 
 	rj, err := json.Marshal(resp)
@@ -261,9 +266,41 @@ func (r *Reporter) ReportAdminCheckInconsistent(ctx context.Context, handle kv.H
 		zap.Stringer("index", redact.Stringer(rmode, idxRow)),
 		zap.Stringer("row", redact.Stringer(rmode, tblRow)),
 	}
-	if rmode != errors.RedactLogEnable {
-		store, ok := r.Storage.(helper.Storage)
-		if ok {
+	if handle.IsInt() {
+		fs = append(fs, zap.Int64("int_handle", handle.IntValue()))
+	}
+
+	store, ok := r.Storage.(helper.Storage)
+	if ok {
+		addMVCCFields := func(title string, mvccResp *kvrpcpb.MvccGetByKeyResponse) {
+			for i, w := range mvccResp.Info.Writes {
+				wClone := *w
+				wClone.ShortValue = nil
+				bytes, err := json.Marshal(&wClone)
+				if err == nil {
+					fs = append(fs, zap.String(fmt.Sprintf("%s_mvcc_write_%d", title, i), string(bytes)))
+				}
+			}
+			for i, v := range mvccResp.Info.Values {
+				vClone := *v
+				vClone.Value = nil
+				bytes, err := json.Marshal(&vClone)
+				if err == nil {
+					fs = append(fs, zap.String(fmt.Sprintf("%s_mvcc_value_%d", title, i), string(bytes)))
+				}
+			}
+		}
+		hdlMvccResp, err := GetMVCCByKeyResp(store, r.HandleEncode(handle))
+		if err == nil && hdlMvccResp.Info != nil {
+			addMVCCFields("row", hdlMvccResp)
+		}
+		if idxRow != nil {
+			idxMvccResp, err := GetMVCCByKeyResp(store, r.IndexEncode(idxRow))
+			if err == nil && idxMvccResp.Info != nil {
+				addMVCCFields("index", idxMvccResp)
+			}
+		}
+		if rmode != errors.RedactLogEnable {
 			fs = append(fs, zap.String("row_mvcc", redact.String(rmode, GetMvccByKey(store, r.HandleEncode(handle), DecodeRowMvccData(r.Tbl)))))
 			if idxRow != nil {
 				fs = append(fs, zap.String("index_mvcc", redact.String(rmode, GetMvccByKey(store, r.IndexEncode(idxRow), DecodeIndexMvccData(r.Idx)))))

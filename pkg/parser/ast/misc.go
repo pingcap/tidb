@@ -217,6 +217,8 @@ type ExplainStmt struct {
 	Explore bool
 	// SQLDigest to explain, used in `EXPLAIN EXPLORE <sql_digest>`.
 	SQLDigest string
+	// ReplayerFile to load, used in `EXPLAIN EXPLORE REPLAYER <replayer_file_path>`.
+	ReplayerFile string
 	// PlanDigest to explain, used in `EXPLAIN [ANALYZE] <plan_digest>`.
 	PlanDigest string
 }
@@ -242,7 +244,10 @@ func (n *ExplainStmt) Restore(ctx *format.RestoreCtx) error {
 	}
 	if n.Explore {
 		ctx.WriteKeyWord("EXPLORE ")
-		if n.SQLDigest != "" {
+		if n.ReplayerFile != "" {
+			ctx.WriteKeyWord("REPLAYER ")
+			ctx.WriteString(n.ReplayerFile)
+		} else if n.SQLDigest != "" {
 			ctx.WriteString(n.SQLDigest)
 		}
 	} else if !n.Analyze || strings.ToLower(n.Format) != "row" {
@@ -301,6 +306,10 @@ type PlanReplayerStmt struct {
 	// 2. plan replayer dump explain <analyze> 'file'
 	File string
 
+	// StmtList is used for PLAN REPLAYER DUMP EXPLAIN [ANALYZE] ( "sql1", "sql2", ... )
+	// When non-nil, multiple SQL strings are dumped in one command.
+	StmtList []string
+
 	// Fields below are currently useless.
 
 	// Where is the where clause in select statement.
@@ -346,6 +355,17 @@ func (n *PlanReplayerStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("EXPLAIN ANALYZE ")
 	} else {
 		ctx.WriteKeyWord("EXPLAIN ")
+	}
+	if len(n.StmtList) > 0 {
+		ctx.WritePlain("(")
+		for i, s := range n.StmtList {
+			if i > 0 {
+				ctx.WritePlain(", ")
+			}
+			ctx.WriteString(s)
+		}
+		ctx.WritePlain(")")
+		return nil
 	}
 	if n.Stmt == nil {
 		if len(n.File) > 0 {
@@ -996,7 +1016,11 @@ func (n *VariableAssignment) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteName(n.Name)
 		ctx.WritePlain("=")
 	}
-	if n.Name == TiDBCloudStorageURI {
+	if n.IsSystem && isEmbeddingAPIKeySysVar(n.Name) {
+		// API keys must not be exposed through statement restoration used by
+		// processlist, statement logging, and audit paths.
+		ctx.WriteString("******")
+	} else if n.Name == TiDBCloudStorageURI {
 		// need to redact the url for safety when `show processlist;`
 		ctx.WritePlain(RedactURL(n.Value.(ValueExpr).GetString()))
 	} else if err := n.Value.Restore(ctx); err != nil {
@@ -1009,6 +1033,20 @@ func (n *VariableAssignment) Restore(ctx *format.RestoreCtx) error {
 		}
 	}
 	return nil
+}
+
+func isEmbeddingAPIKeySysVar(name string) bool {
+	_, ok := embeddingAPIKeySysVars[strings.ToLower(name)]
+	return ok
+}
+
+var embeddingAPIKeySysVars = map[string]struct{}{
+	"tidb_exp_embed_jina_ai_api_key":     {},
+	"tidb_exp_embed_openai_api_key":      {},
+	"tidb_exp_embed_cohere_api_key":      {},
+	"tidb_exp_embed_huggingface_api_key": {},
+	"tidb_exp_embed_nvidia_nim_api_key":  {},
+	"tidb_exp_embed_gemini_api_key":      {},
 }
 
 // Accept implements Node interface.
@@ -1039,6 +1077,7 @@ const (
 	FlushHosts
 	FlushLogs
 	FlushClientErrorsSummary
+	FlushStatsDelta
 )
 
 // LogType is the log type used in FLUSH statement.
@@ -1063,6 +1102,8 @@ type FlushStmt struct {
 	Tables          []*TableName // For FlushTableStmt, if Tables is empty, it means flush all tables.
 	ReadLock        bool
 	Plugins         []string
+	IsCluster       bool           // For FlushStatsDelta, whether to flush cluster-wide stats delta
+	FlushObjects    []*StatsObject // For FlushStatsDelta, scoped objects (db.tbl, db.*, *.*). Always non-empty.
 }
 
 // Restore implements Node interface.
@@ -1122,6 +1163,22 @@ func (n *FlushStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord(logType)
 	case FlushClientErrorsSummary:
 		ctx.WriteKeyWord("CLIENT_ERRORS_SUMMARY")
+	case FlushStatsDelta:
+		ctx.WriteKeyWord("STATS_DELTA")
+		for i, obj := range n.FlushObjects {
+			if i == 0 {
+				ctx.WritePlain(" ")
+			} else {
+				ctx.WritePlain(", ")
+			}
+			if err := obj.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore FlushStmt.FlushObjects[%d]", i)
+			}
+		}
+		if n.IsCluster {
+			ctx.WritePlain(" ")
+			ctx.WriteKeyWord("CLUSTER")
+		}
 	default:
 		return errors.New("Unsupported type of FlushStmt")
 	}
@@ -1278,7 +1335,7 @@ func (n *SetStmt) Accept(v Visitor) (Node, bool) {
 }
 
 // SecureText implements SensitiveStatement interface.
-// need to redact the tidb_cloud_storage_url for safety when `show processlist;`
+// Sensitive variable values are redacted by VariableAssignment.Restore.
 func (n *SetStmt) SecureText() string {
 	redactedStmt := *n
 	var sb strings.Builder
@@ -1371,8 +1428,9 @@ func (n *SetCharsetStmt) Accept(v Visitor) (Node, bool) {
 type SetPwdStmt struct {
 	stmtNode
 
-	User     *auth.UserIdentity
-	Password string
+	User                  *auth.UserIdentity
+	Password              string
+	RetainCurrentPassword bool
 }
 
 // Restore implements Node interface.
@@ -1386,12 +1444,24 @@ func (n *SetPwdStmt) Restore(ctx *format.RestoreCtx) error {
 	}
 	ctx.WritePlain("=")
 	ctx.WriteString(n.Password)
+	if n.RetainCurrentPassword {
+		ctx.WriteKeyWord(" RETAIN CURRENT PASSWORD")
+	}
 	return nil
 }
 
 // SecureText implements SensitiveStatement interface.
 func (n *SetPwdStmt) SecureText() string {
-	return fmt.Sprintf("set password for user %s", n.User)
+	// n.User can be nil for the current-user form (`SET PASSWORD = '...'`),
+	// matching Restore's handling. Avoid leaking `<nil>` into redacted SQL.
+	base := "set password"
+	if n.User != nil {
+		base = fmt.Sprintf("set password for user %s", n.User)
+	}
+	if n.RetainCurrentPassword {
+		return base + " RETAIN CURRENT PASSWORD"
+	}
+	return base
 }
 
 // Accept implements Node Accept interface.
@@ -1511,9 +1581,10 @@ func (n *SetDefaultRoleStmt) Accept(v Visitor) (Node, bool) {
 
 // UserSpec is used for parsing create user statement.
 type UserSpec struct {
-	User    *auth.UserIdentity
-	AuthOpt *AuthOption
-	IsRole  bool
+	User               *auth.UserIdentity
+	AuthOpt            *AuthOption
+	DualPasswordOption DualPasswordOptionType
+	IsRole             bool
 }
 
 // Restore implements Node interface.
@@ -1527,10 +1598,19 @@ func (n *UserSpec) Restore(ctx *format.RestoreCtx) error {
 			return errors.Annotate(err, "An error occurred while restore UserSpec.AuthOpt")
 		}
 	}
+	if n.DualPasswordOption != 0 {
+		ctx.WritePlain(" ")
+		if err := n.DualPasswordOption.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore UserSpec.DualPasswordOption")
+		}
+	}
 	return nil
 }
 
-// SecurityString formats the UserSpec without password information.
+// SecurityString formats the UserSpec without password information. The
+// dual-password clause (RETAIN CURRENT PASSWORD / DISCARD OLD PASSWORD) is
+// non-secret and is surfaced verbatim so the redacted output preserves the
+// fact that the statement targets the secondary-password slot.
 func (n *UserSpec) SecurityString() string {
 	withPassword := false
 	if opt := n.AuthOpt; opt != nil {
@@ -1538,8 +1618,18 @@ func (n *UserSpec) SecurityString() string {
 			withPassword = true
 		}
 	}
+	dualClause := ""
+	switch n.DualPasswordOption {
+	case DualPasswordRetainCurrent:
+		dualClause = " RETAIN CURRENT PASSWORD"
+	case DualPasswordDiscardOld:
+		dualClause = " DISCARD OLD PASSWORD"
+	}
 	if withPassword {
-		return fmt.Sprintf("{%s password = ***}", n.User)
+		return fmt.Sprintf("{%s password = ***%s}", n.User, dualClause)
+	}
+	if dualClause != "" {
+		return fmt.Sprintf("{%s%s}", n.User, dualClause)
 	}
 	return n.User.String()
 }
@@ -1663,6 +1753,36 @@ const (
 
 	UserResourceGroupName
 )
+
+// DualPasswordOptionType identifies the per-UserSpec MySQL 8.0 dual-password
+// clause (RETAIN CURRENT PASSWORD or DISCARD OLD PASSWORD). The grammar
+// attaches it to the UserSpec rather than to AlterUserStmt because MySQL
+// allows different dual-password actions per spec inside a multi-user ALTER
+// USER statement. Dedicated to dual-password semantics so the AST does not
+// conflate it with PasswordOrLockOption (account lock, expiration,
+// failed-login policy, etc.) which has different per-statement scoping rules.
+// The zero value means "no dual-password clause".
+type DualPasswordOptionType int
+
+const (
+	// DualPasswordRetainCurrent corresponds to RETAIN CURRENT PASSWORD.
+	DualPasswordRetainCurrent DualPasswordOptionType = iota + 1
+	// DualPasswordDiscardOld corresponds to DISCARD OLD PASSWORD.
+	DualPasswordDiscardOld
+)
+
+// Restore implements Node interface.
+func (t DualPasswordOptionType) Restore(ctx *format.RestoreCtx) error {
+	switch t {
+	case DualPasswordRetainCurrent:
+		ctx.WriteKeyWord("RETAIN CURRENT PASSWORD")
+	case DualPasswordDiscardOld:
+		ctx.WriteKeyWord("DISCARD OLD PASSWORD")
+	default:
+		return errors.Errorf("Unsupported DualPasswordOptionType %d", t)
+	}
+	return nil
+}
 
 type PasswordOrLockOption struct {
 	Type  int
@@ -1842,14 +1962,20 @@ func (n *CreateUserStmt) SecureText() string {
 type AlterUserStmt struct {
 	stmtNode
 
-	IfExists                 bool
-	CurrentAuth              *AuthOption
-	Specs                    []*UserSpec
-	AuthTokenOrTLSOptions    []*AuthTokenOrTLSOption
-	ResourceOptions          []*ResourceOption
-	PasswordOrLockOptions    []*PasswordOrLockOption
-	CommentOrAttributeOption *CommentOrAttributeOption
-	ResourceGroupNameOption  *ResourceGroupNameOption
+	IfExists    bool
+	CurrentAuth *AuthOption
+	// CurrentDualPasswordOption carries the dual-password clause attached to the
+	// `ALTER USER USER() ...` (current-user) form. The named-user form stores
+	// its dual-password clause on the per-UserSpec DualPasswordOption instead.
+	// The executor must propagate this into the synthetic UserSpec it builds
+	// from CurrentAuth so downstream code paths only need to inspect Specs.
+	CurrentDualPasswordOption DualPasswordOptionType
+	Specs                     []*UserSpec
+	AuthTokenOrTLSOptions     []*AuthTokenOrTLSOption
+	ResourceOptions           []*ResourceOption
+	PasswordOrLockOptions     []*PasswordOrLockOption
+	CommentOrAttributeOption  *CommentOrAttributeOption
+	ResourceGroupNameOption   *ResourceGroupNameOption
 }
 
 // Restore implements Node interface.
@@ -1863,6 +1989,19 @@ func (n *AlterUserStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain("() ")
 		if err := n.CurrentAuth.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore AlterUserStmt.CurrentAuth")
+		}
+		if n.CurrentDualPasswordOption != 0 {
+			ctx.WritePlain(" ")
+			if err := n.CurrentDualPasswordOption.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore AlterUserStmt.CurrentDualPasswordOption")
+			}
+		}
+	} else if n.CurrentDualPasswordOption != 0 {
+		// Standalone DISCARD OLD PASSWORD on the current-user form (no IDENTIFIED BY).
+		ctx.WriteKeyWord("USER")
+		ctx.WritePlain("() ")
+		if err := n.CurrentDualPasswordOption.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore AlterUserStmt.CurrentDualPasswordOption")
 		}
 	}
 	for i, v := range n.Specs {
@@ -2544,6 +2683,7 @@ const (
 	AdminUnsetBDRRole
 	AdminAlterDDLJob
 	AdminWorkloadRepoCreate
+	AdminReloadClusterBindings
 	// adminTpCount is the total number of admin statement types.
 	adminTpCount
 )
@@ -2811,6 +2951,8 @@ func (n *AdminStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("EVOLVE BINDINGS")
 	case AdminReloadBindings:
 		ctx.WriteKeyWord("RELOAD BINDINGS")
+	case AdminReloadClusterBindings:
+		ctx.WriteKeyWord("RELOAD CLUSTER BINDINGS")
 	case AdminReloadStatistics:
 		ctx.WriteKeyWord("RELOAD STATS_EXTENDED")
 	case AdminFlushPlanCache:
@@ -3799,7 +3941,7 @@ func RedactURL(str string) string {
 
 	var redactKeys map[string]struct{}
 	switch strings.ToLower(scheme) {
-	case "s3", "ks3":
+	case "s3", "ks3", "oss":
 		redactKeys = map[string]struct{}{
 			"access-key":        {},
 			"secret-access-key": {},
@@ -3807,7 +3949,9 @@ func RedactURL(str string) string {
 		}
 	case "azure", "azblob":
 		redactKeys = map[string]struct{}{
-			"sas-token": {},
+			"account-key":    {},
+			"encryption-key": {},
+			"sas-token":      {},
 		}
 	}
 
@@ -4076,7 +4220,7 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 	}
 	// Hints without args except query block.
 	switch n.HintName.L {
-	case "mpp_1phase_agg", "mpp_2phase_agg", "hash_agg", "stream_agg", "agg_to_cop", "read_consistent_replica", "no_index_merge", "ignore_plan_cache", "limit_to_cop", "straight_join", "merge", "no_decorrelate":
+	case "mpp_1phase_agg", "mpp_2phase_agg", "hash_agg", "stream_agg", "agg_to_cop", "read_consistent_replica", "no_index_merge", "ignore_plan_cache", "use_plan_cache", "limit_to_cop", "straight_join", "merge", "no_decorrelate":
 		ctx.WritePlain(")")
 		return nil
 	}

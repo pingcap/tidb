@@ -55,12 +55,11 @@ func Selectivity(
 	filledPaths []*planutil.AccessPath,
 ) (
 	result float64,
-	retStatsNodes []*StatsNode,
 	err error,
 ) {
 	// If the table's count is zero or conditions are empty, we should return 100% selectivity.
 	if coll.RealtimeCount == 0 || len(exprs) == 0 {
-		return 1, nil, nil
+		return 1, nil
 	}
 	ret := 1.0
 	sc := ctx.GetSessionVars().StmtCtx
@@ -70,7 +69,7 @@ func Selectivity(
 	if len(exprs) > 63 || (coll.ColNum() == 0 && coll.IdxNum() == 0) {
 		ret = pseudoSelectivity(ctx, coll, exprs)
 		ctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptSelectivityFactor)
-		return ret, nil, nil
+		return ret, nil
 	}
 
 	var nodes []*StatsNode
@@ -109,13 +108,20 @@ func Selectivity(
 			// column stats can be ignored.
 			continue
 		}
+		if col.RetType != nil && col.RetType.EvalType() == types.ETJson {
+			// JSON columns have no column statistics (ANALYZE builds none; only
+			// multi-valued indexes over them are analyzed), so they contribute no
+			// selectivity. Skip them to avoid recording a meaningless, stats-load-
+			// timing-dependent status that surfaces as stats:partial[<json col>:...].
+			continue
+		}
 		id := col.UniqueID
 		colStats := coll.GetCol(id)
 		if colStats != nil {
 			maskCovered, ranges, _, _, err :=
 				getMaskAndRanges(ctx, remainedExprs, ranger.ColumnRangeType, nil, nil, col)
 			if err != nil {
-				return 0, nil, errors.Trace(err)
+				return 0, errors.Trace(err)
 			}
 			nodes = append(nodes, &StatsNode{Tp: ColType, ID: id, mask: maskCovered, Ranges: ranges, numCols: 1})
 			var cnt float64
@@ -124,7 +130,7 @@ func Selectivity(
 				nodes[len(nodes)-1].Tp = PkType
 				cntEst, err = GetRowCountByColumnRanges(ctx, coll, id, ranges, true)
 				if err != nil {
-					return 0, nil, errors.Trace(err)
+					return 0, errors.Trace(err)
 				}
 				cnt = cntEst.Est
 				nodes[len(nodes)-1].Selectivity = cnt / float64(coll.RealtimeCount)
@@ -132,7 +138,7 @@ func Selectivity(
 			}
 			cntEst, err = GetRowCountByColumnRanges(ctx, coll, id, ranges, false)
 			if err != nil {
-				return 0, nil, errors.Trace(err)
+				return 0, errors.Trace(err)
 			}
 			cnt = cntEst.Est
 			nodes[len(nodes)-1].Selectivity = cnt / float64(coll.RealtimeCount)
@@ -188,11 +194,11 @@ func Selectivity(
 			maskCovered, ranges, partCover, minAccessCondsForDNFCond, err :=
 				getMaskAndRanges(ctx, remainedExprs, ranger.IndexRangeType, lengths, id2Paths[idxStats.ID], idxCols...)
 			if err != nil {
-				return 0, nil, errors.Trace(err)
+				return 0, errors.Trace(err)
 			}
-			countResult, err := GetRowCountByIndexRanges(ctx, coll, id, ranges, nil)
+			countResult, err := GetRowCountByIndexRanges(ctx, coll, id, ranges, idxCols)
 			if err != nil {
-				return 0, nil, errors.Trace(err)
+				return 0, errors.Trace(err)
 			}
 			countResult.DivideAll(float64(coll.RealtimeCount))
 			selectivity, minSelectivity, maxSelectivity := countResult.Est, countResult.MinEst, countResult.MaxEst
@@ -246,6 +252,48 @@ func Selectivity(
 					notCoveredDNF[i] = x
 					continue
 				case ast.Like, ast.Ilike, ast.Regexp, ast.RegexpLike:
+					notCoveredStrMatch[i] = x
+					continue
+				case ast.FTSMysqlMatchAgainst:
+					// FTSMysqlMatchAgainst is opaque to the stats engine — its
+					// evalReal errors when called outside TiFlash, so TopN-based
+					// estimation can't run on it directly and the generic fallback
+					// would use SelectivityFactor (0.8) regardless of column stats.
+					// Substitute the equivalent ILIKE-based expression so the cost
+					// of round 1's native plan reflects the column's histogram /
+					// TopN rather than the flat default — this affects join order,
+					// index selection, etc., even though round 1's plan is the
+					// only candidate when every predicate MATCH is native-viable
+					// (the fts-like-fallback round only fires when round 1 is
+					// discarded).
+					//
+					// The substitution only fires for single-column MATCH(...);
+					// GetSelectivityByFilter declines multi-column expressions, so a
+					// multi-column substitute would just fall through to the same
+					// str-match default that the un-substituted FTS expression already
+					// receives. BuildFTSToILikeExpressionFromBuiltin returns an error
+					// for the multi-column case to keep that path explicit here.
+					if substitute, err := expression.BuildFTSToILikeExpressionFromBuiltin(ctx.GetExprCtx(), x); err == nil {
+						switch sub := substitute.(type) {
+						case *expression.ScalarFunction:
+							notCoveredStrMatch[i] = sub
+							continue
+						case *expression.Constant:
+							// AGAINST(NULL) produces Constant(NULL) (preserves SQL
+							// three-valued logic — matches the planner-side
+							// matchAgainstToLike NULL fast-path); empty-string
+							// search produces Constant(0). Route either to the
+							// constants bucket so the stats engine recognizes the
+							// substitute as constant-false (the IsNull / ToBool
+							// pass at line ~309 zeroes selectivity for both
+							// shapes) instead of applying the str-match default
+							// (0.1).
+							notCoveredConstants[i] = sub
+							continue
+						}
+					}
+					// Fall through if substitution failed; the FTS expression will
+					// use the str-match default selectivity (0.1) instead of 0.8.
 					notCoveredStrMatch[i] = x
 					continue
 				case ast.UnaryNot:
@@ -323,7 +371,7 @@ OUTER:
 				cnfItems = append(cnfItems, cond)
 			}
 
-			curSelectivity, _, err := Selectivity(ctx, coll, cnfItems, nil)
+			curSelectivity, err := Selectivity(ctx, coll, cnfItems, nil)
 			if err != nil {
 				logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
 				curSelectivity = ctx.GetSessionVars().SelectivityFactor
@@ -388,7 +436,7 @@ OUTER:
 
 	// Don't allow the result to be less than 1 row
 	ret = max(ret, 1.0/float64(coll.RealtimeCount))
-	return ret, nodes, nil
+	return ret, nil
 }
 
 // CalcTotalSelectivityForMVIdxPath calculates the total selectivity for the given partial paths of an MV index merge path.
@@ -956,7 +1004,14 @@ func GetSelectivityByFilter(sctx planctx.PlanContext, coll *statistics.HistColl,
 	// The buckets lower bounds are used as random samples and are regarded equally.
 	if hist != nil && histTotalCnt > 0 {
 		selected = selected[:0]
-		selected, err = expression.VectorizedFilter(sctx.GetExprCtx().GetEvalCtx(), vecEnabled, []expression.Expression{filters}, chunk.NewIterator4Chunk(hist.Bounds), selected)
+		// hist.Bounds is a stats-cache chunk that can be shared by planner sessions.
+		// VectorizedFilter reads the input chunk's existing Sel as a caller mask
+		// and also rewrites Sel while evaluating the filter. Use a shallow chunk
+		// header copy so the bound column data is reused, but the evaluation owns
+		// its Sel state; then clear that Sel to sample all histogram bounds.
+		histBounds := hist.Bounds.Prune([]int{0})
+		histBounds.SetSel(nil)
+		selected, err = expression.VectorizedFilter(sctx.GetExprCtx().GetEvalCtx(), vecEnabled, []expression.Expression{filters}, chunk.NewIterator4Chunk(histBounds), selected)
 		if err != nil {
 			return false, 0, err
 		}

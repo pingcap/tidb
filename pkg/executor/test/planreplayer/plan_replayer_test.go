@@ -16,16 +16,22 @@ package planreplayer
 
 import (
 	"archive/zip"
+	"bytes"
+	"context"
 	"fmt"
-	"os"
+	"io"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/pkg/planner/extstore"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/stretchr/testify/require"
 )
@@ -55,7 +61,63 @@ func checkFileName(s string) bool {
 	return false
 }
 
+type planReplayerPresignStorage struct {
+	storeapi.Storage
+	url string
+}
+
+func (s planReplayerPresignStorage) PresignFile(context.Context, string, time.Duration) (string, error) {
+	return s.url, nil
+}
+
+func requirePlanReplayerFileToken(t *testing.T, rows [][]any) string {
+	require.Len(t, rows, 1)
+	require.Len(t, rows[0], 2)
+	require.Equal(t, "File token", rows[0][0])
+	token, ok := rows[0][1].(string)
+	require.True(t, ok)
+	require.NotEmpty(t, token)
+	return token
+}
+
+func hasTiFlashTask(rows [][]any) bool {
+	for _, row := range rows {
+		if len(row) > 2 && strings.Contains(fmt.Sprint(row[2]), "tiflash") {
+			return true
+		}
+	}
+	return false
+}
+
+func requireZipFileContains(t *testing.T, content []byte, fileName, expected string) {
+	reader, err := zip.NewReader(bytes.NewReader(content), int64(len(content)))
+	require.NoError(t, err)
+	for _, file := range reader.File {
+		if file.Name != fileName {
+			continue
+		}
+		r, err := file.Open()
+		require.NoError(t, err)
+		data, err := io.ReadAll(r)
+		require.NoError(t, err)
+		require.NoError(t, r.Close())
+		require.Contains(t, string(data), expected)
+		return
+	}
+	require.FailNowf(t, "missing file in zip", "file %s not found", fileName)
+}
+
 func TestPlanReplayer(t *testing.T) {
+	tempDir := t.TempDir()
+	ctx := context.Background()
+	storage, err := extstore.NewExtStorage(ctx, "file://"+tempDir, "")
+	require.NoError(t, err)
+	extstore.SetGlobalExtStorageForTest(storage)
+	defer func() {
+		extstore.SetGlobalExtStorageForTest(nil)
+		storage.Close()
+	}()
+
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", `return(true)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount"))
@@ -67,7 +129,6 @@ func TestPlanReplayer(t *testing.T) {
 	tk.MustExec("create table t(a int, b int, index idx_a(a))")
 	tk.MustExec("alter table t set tiflash replica 1")
 	tk.MustQuery("plan replayer dump explain select * from t where a=10")
-	defer os.RemoveAll(replayer.GetPlanReplayerDirName())
 	tk.MustQuery("plan replayer dump explain select /*+ read_from_storage(tiflash[t]) */ * from t")
 
 	tk.MustExec("create table t1 (a int)")
@@ -88,7 +149,67 @@ func TestPlanReplayer(t *testing.T) {
 	require.Len(t, rows, 1)
 }
 
+func TestPlanReplayerLoadTiFlashPlanWithHypoReplica(t *testing.T) {
+	tempDir := t.TempDir()
+	ctx := context.Background()
+	storage, err := extstore.NewExtStorage(ctx, "file://"+tempDir, "")
+	require.NoError(t, err)
+	extstore.SetGlobalExtStorageForTest(storage)
+	defer func() {
+		extstore.SetGlobalExtStorageForTest(nil)
+		storage.Close()
+	}()
+
+	const mockTiFlashStoreCount = "github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount"
+	require.NoError(t, failpoint.Enable(mockTiFlashStoreCount, `return(true)`))
+	defer func() {
+		_ = failpoint.Disable(mockTiFlashStoreCount)
+	}()
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_load_tiflash(a int, b int, index idx_a(a))")
+	tk.MustExec("alter table t_load_tiflash set tiflash replica 1")
+	testkit.SetTiFlashReplica(t, dom, "test", "t_load_tiflash")
+	res := tk.MustQuery("plan replayer dump explain select /*+ read_from_storage(tiflash[t_load_tiflash]) */ * from t_load_tiflash")
+	tiflashFileName := requirePlanReplayerFileToken(t, res.Rows())
+	filePath := filepath.Join(replayer.GetPlanReplayerDirName(), tiflashFileName)
+
+	fileReader, err := storage.Open(ctx, filePath, nil)
+	require.NoError(t, err)
+	content, err := io.ReadAll(fileReader)
+	require.NoError(t, err)
+	require.NoError(t, fileReader.Close())
+	requireZipFileContains(t, content, "explain.txt", "tiflash")
+
+	require.NoError(t, failpoint.Disable(mockTiFlashStoreCount))
+	loadStore := testkit.CreateMockStore(t)
+	loadTK := testkit.NewTestKit(t, loadStore)
+	loadTK.MustExec(fmt.Sprintf("plan replayer load '%s'", strings.ReplaceAll(filepath.Join(tempDir, filePath), "'", "''")))
+	// TestKit executes the SQL marker; clientConn normally completes the local-file
+	// transfer and calls Update, so feed the dumped bytes directly here.
+	loadInfo, ok := loadTK.Session().Value(executor.PlanReplayerLoadVarKey).(*executor.PlanReplayerLoadInfo)
+	require.True(t, ok)
+	defer loadTK.Session().ClearValue(executor.PlanReplayerLoadVarKey)
+	require.NoError(t, loadInfo.Update(content))
+
+	loadTK.MustExec("use test")
+	rows := loadTK.MustQuery("explain select /*+ read_from_storage(tiflash[t_load_tiflash]) */ * from t_load_tiflash").Rows()
+	require.True(t, hasTiFlashTask(rows), rows)
+}
+
 func TestPlanReplayerCaptureSEM(t *testing.T) {
+	tempDir := t.TempDir()
+	ctx := context.Background()
+	storage, err := extstore.NewExtStorage(ctx, "file://"+tempDir, "")
+	require.NoError(t, err)
+	extstore.SetGlobalExtStorageForTest(storage)
+	defer func() {
+		extstore.SetGlobalExtStorageForTest(nil)
+		storage.Close()
+	}()
+
 	originSEM := config.GetGlobalConfig().Security.EnableSEM
 	defer func() {
 		config.GetGlobalConfig().Security.EnableSEM = originSEM
@@ -99,7 +220,6 @@ func TestPlanReplayerCaptureSEM(t *testing.T) {
 	tk.MustExec("plan replayer capture '123' '123';")
 	tk.MustExec("create table t(id int)")
 	tk.MustQuery("plan replayer dump explain select * from t")
-	defer os.RemoveAll(replayer.GetPlanReplayerDirName())
 	tk.MustQuery("select count(*) from mysql.plan_replayer_status").Check(testkit.Rows("1"))
 }
 
@@ -128,14 +248,50 @@ func TestPlanReplayerCapture(t *testing.T) {
 	tk.MustExec("execute stmt using @number,@number")
 	task := dom.GetPlanReplayerHandle().DrainTask()
 	require.NotNil(t, task)
+
+	statsSQL := "select * from t where id = 1"
+	normalSQL := "select count(*) from t where id = 2"
+	tk.MustQuery(statsSQL)
+	_, statsSQLDigest := tk.Session().GetSessionVars().StmtCtx.SQLDigest()
+	_, statsPlanDigest := tk.Session().GetSessionVars().StmtCtx.GetPlanDigest()
+
+	tk.MustQuery(normalSQL)
+	_, normalSQLDigest := tk.Session().GetSessionVars().StmtCtx.SQLDigest()
+	_, normalPlanDigest := tk.Session().GetSessionVars().StmtCtx.GetPlanDigest()
+
+	tk.MustExec(fmt.Sprintf("plan replayer capture '%v' '%v'", statsSQLDigest.String(), statsPlanDigest.String()))
+	tk.MustExec(fmt.Sprintf("plan replayer capture '%v' '%v'", normalSQLDigest.String(), normalPlanDigest.String()))
+	err = dom.GetPlanReplayerHandle().CollectPlanReplayerTask()
+	require.NoError(t, err)
+
+	statsStmt, err := tk.Session().Parse(context.Background(), statsSQL)
+	require.NoError(t, err)
+	statsCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsForegroundPriority)
+	rs, err := tk.Session().ExecuteStmt(statsCtx, statsStmt[0])
+	require.NoError(t, err)
+	tk.ResultSetToResultWithCtx(statsCtx, rs, statsSQL).Check(testkit.Rows())
+
+	tk.MustQuery(normalSQL)
+	task = dom.GetPlanReplayerHandle().DrainTask()
+	require.Equal(t, normalSQLDigest.String(), task.SQLDigest)
 }
 
 func TestPlanReplayerContinuesCapture(t *testing.T) {
+	tempDir := t.TempDir()
+	ctx := context.Background()
+	storage, err := extstore.NewExtStorage(ctx, "file://"+tempDir, "")
+	require.NoError(t, err)
+	extstore.SetGlobalExtStorageForTest(storage)
+	defer func() {
+		extstore.SetGlobalExtStorageForTest(nil)
+		storage.Close()
+	}()
+
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("set @@global.tidb_enable_historical_stats='OFF'")
-	_, err := tk.Exec("set @@global.tidb_enable_plan_replayer_continuous_capture='ON'")
+	_, err = tk.Exec("set @@global.tidb_enable_plan_replayer_continuous_capture='ON'")
 	require.Error(t, err)
 	require.Equal(t, err.Error(), "tidb_enable_historical_stats should be enabled before enabling tidb_enable_plan_replayer_continuous_capture")
 
@@ -152,25 +308,224 @@ func TestPlanReplayerContinuesCapture(t *testing.T) {
 	require.NotNil(t, task)
 	worker := prHandle.GetWorker()
 	success := worker.HandleTask(task)
-	defer os.RemoveAll(replayer.GetPlanReplayerDirName())
 	require.True(t, success)
 	tk.MustQuery("select count(*) from mysql.plan_replayer_status").Check(testkit.Rows("1"))
 }
 
 func TestPlanReplayerDumpSingle(t *testing.T) {
+	ctx := context.Background()
+	tempDir := t.TempDir()
+	storage, err := extstore.NewExtStorage(ctx, "file://"+tempDir, "")
+	require.NoError(t, err)
+	extstore.SetGlobalExtStorageForTest(storage)
+	defer func() {
+		extstore.SetGlobalExtStorageForTest(nil)
+		storage.Close()
+	}()
+
+	dir := t.TempDir()
+	logFile := filepath.Join(dir, "tidb.log")
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Log.File.Filename = logFile
+	})
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t_dump_single")
 	tk.MustExec("create table t_dump_single(a int)")
 	res := tk.MustQuery("plan replayer dump explain select * from t_dump_single")
-	defer os.RemoveAll(replayer.GetPlanReplayerDirName())
-	path := testdata.ConvertRowsToStrings(res.Rows())
+	fileName := requirePlanReplayerFileToken(t, res.Rows())
 
-	reader, err := zip.OpenReader(filepath.Join(replayer.GetPlanReplayerDirName(), path[0]))
+	filePath := filepath.Join(replayer.GetPlanReplayerDirName(), fileName)
+	fileReader, err := storage.Open(ctx, filePath, nil)
 	require.NoError(t, err)
-	defer func() { require.NoError(t, reader.Close()) }()
+	defer fileReader.Close()
+
+	content, err := io.ReadAll(fileReader)
+	require.NoError(t, err)
+
+	readerAt := bytes.NewReader(content)
+	reader, err := zip.NewReader(readerAt, int64(len(content)))
+	require.NoError(t, err)
 	for _, file := range reader.File {
 		require.True(t, checkFileName(file.Name), file.Name)
+	}
+}
+
+func TestExplainExploreReplayer(t *testing.T) {
+	ctx := context.Background()
+	tempDir := t.TempDir()
+	storage, err := extstore.NewExtStorage(ctx, "file://"+tempDir, "")
+	require.NoError(t, err)
+	extstore.SetGlobalExtStorageForTest(storage)
+	defer func() {
+		extstore.SetGlobalExtStorageForTest(nil)
+		storage.Close()
+	}()
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_explain_explore_replayer(a int, b int, key(a))")
+	tk.MustExec("insert into t_explain_explore_replayer values (1, 1), (2, 2), (3, 1)")
+	tk.MustExec("analyze table t_explain_explore_replayer")
+	tk.MustExec("create global binding using select * from test.t_explain_explore_replayer where b=1")
+	res := tk.MustQuery("plan replayer dump explain select * from test.t_explain_explore_replayer where b=1")
+	fileName := requirePlanReplayerFileToken(t, res.Rows())
+
+	loadStore := testkit.CreateMockStore(t)
+	loadTK := testkit.NewTestKit(t, loadStore)
+	replayerPath := filepath.Join(tempDir, replayer.GetPlanReplayerDirName(), fileName)
+	replayerPath = strings.ReplaceAll(replayerPath, "'", "''")
+	for range 2 {
+		rows := loadTK.MustQuery(fmt.Sprintf("explain explore replayer '%s'", replayerPath)).Rows()
+		require.NotEmpty(t, rows)
+		for _, row := range rows {
+			require.NotEmpty(t, row[3])
+		}
+	}
+}
+
+func TestPlanReplayerDumpPresignedURLOutput(t *testing.T) {
+	ctx := context.Background()
+	tempDir := t.TempDir()
+	storage, err := extstore.NewExtStorage(ctx, "file://"+tempDir, "")
+	require.NoError(t, err)
+	const presignedURL = "https://example.com/replayer.zip?X-Amz-Expires=3600&X-Amz-Signature=test"
+	extstore.SetGlobalExtStorageForTest(planReplayerPresignStorage{
+		Storage: storage,
+		url:     presignedURL,
+	})
+	defer func() {
+		extstore.SetGlobalExtStorageForTest(nil)
+		storage.Close()
+	}()
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_presign(a int)")
+	tk.MustQuery("plan replayer dump explain select * from t_presign").Check(testkit.RowsWithSep("|",
+		"Download URL|"+presignedURL,
+		"Expires in|1h0m0s",
+		"Browser|Open the Download URL directly before it expires",
+		"curl|curl -L '"+presignedURL+"' -o plan_replayer.zip",
+		"Note|If the URL expires, rerun PLAN REPLAYER DUMP to get a new one",
+	))
+	require.Equal(t, presignedURL, tk.Session().GetSessionVars().LastPlanReplayerToken)
+}
+
+func TestPlanReplayerDumpMultipleError(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int)")
+
+	// empty statement list should return error
+	tk.MustContainErrMsg("plan replayer dump explain ()", "[parser:1064]")
+
+	// one error statement
+	tk.MustContainErrMsg("plan replayer dump explain ('select x om t')", "[parser:1064]")
+
+	// multiple error statements
+	tk.MustContainErrMsg("plan replayer dump explain ('select x from t', 'select y om t')", "[parser:1064]")
+}
+
+func TestPlanReplayerDumpMultiple(t *testing.T) {
+	const numStmts = 50
+	const numTables = 5
+	ctx := context.Background()
+	tempDir := t.TempDir()
+	storage, err := extstore.NewExtStorage(ctx, "file://"+tempDir, "")
+	require.NoError(t, err)
+	extstore.SetGlobalExtStorageForTest(storage)
+	defer func() {
+		extstore.SetGlobalExtStorageForTest(nil)
+		storage.Close()
+	}()
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	// Prepare multiple databases and tables for multi-SQL dump.
+	dbs := []string{"test", "test_multi_db1", "test_multi_db2", "test_multi_db3", "test_multi_db4"}
+	for _, db := range dbs {
+		tk.MustExec(fmt.Sprintf("create database if not exists %s", db))
+	}
+	for _, db := range dbs {
+		tk.MustExec("use " + db)
+		for i := 1; i <= numTables; i++ {
+			tableName := fmt.Sprintf("t_dump_multi_%d", i)
+			tk.MustExec(fmt.Sprintf("drop table if exists %s", tableName))
+			tk.MustExec(fmt.Sprintf("create table %s(a int, b int)", tableName))
+			tk.MustExec(fmt.Sprintf("insert into %s values (1, 1)", tableName))
+			tk.MustExec(fmt.Sprintf("insert into %s values (2, 2)", tableName))
+			tk.MustExec(fmt.Sprintf("insert into %s values (3, 3)", tableName))
+			tk.MustExec(fmt.Sprintf("insert into %s values (4, 4)", tableName))
+			tk.MustExec(fmt.Sprintf("insert into %s values (5, 5)", tableName))
+			tk.MustExec(fmt.Sprintf("analyze table %s", tableName))
+		}
+	}
+	tk.MustExec("use test")
+
+	// Build multiple SQL statements using the tables across multiple databases with fully
+	// qualified names (db.table) so the plan replayer extractor finds them regardless
+	// of current DB / schema sync.
+	stmts := make([]string, numStmts)
+	pairMod := len(dbs) * numTables
+	for i := 0; i < numStmts; i++ {
+		// Make sure every (db, table) pair is covered at least once.
+		pairIdx := i % pairMod
+		db := dbs[pairIdx/numTables]
+		tbl := (pairIdx % numTables) + 1
+		switch i % 4 {
+		case 0:
+			stmts[i] = fmt.Sprintf("'select * from %s.t_dump_multi_%d'", db, tbl)
+		case 1:
+			stmts[i] = fmt.Sprintf("'select * from %s.t_dump_multi_%d where a=1'", db, tbl)
+		case 2:
+			stmts[i] = fmt.Sprintf("'select * from %s.t_dump_multi_%d where b>0'", db, tbl)
+		default:
+			// join two tables, potentially across databases
+			t2 := (tbl % numTables) + 1
+			otherDB := dbs[(i+1)%len(dbs)]
+			stmts[i] = fmt.Sprintf("'select * from %s.t_dump_multi_%d, %s.t_dump_multi_%d where %s.t_dump_multi_%d.a=%s.t_dump_multi_%d.a'",
+				db, tbl, otherDB, t2, db, tbl, otherDB, t2)
+		}
+	}
+	sqlCmd := "plan replayer dump explain (" + strings.Join(stmts, ", ") + ")"
+	res := tk.MustQuery(sqlCmd)
+	fileName := requirePlanReplayerFileToken(t, res.Rows())
+
+	filePath := filepath.Join(replayer.GetPlanReplayerDirName(), fileName)
+	fileReader, err := storage.Open(ctx, filePath, nil)
+	require.NoError(t, err)
+	defer fileReader.Close()
+
+	content, err := io.ReadAll(fileReader)
+	require.NoError(t, err)
+
+	readerAt := bytes.NewReader(content)
+	zr, err := zip.NewReader(readerAt, int64(len(content)))
+	require.NoError(t, err)
+
+	names := make(map[string]struct{})
+	for _, f := range zr.File {
+		names[f.Name] = struct{}{}
+	}
+	for i := 0; i < numStmts; i++ {
+		require.Contains(t, names, fmt.Sprintf("sql/sql%d.sql", i))
+		require.Contains(t, names, fmt.Sprintf("explain/explain%d.txt", i))
+	}
+	require.NotContains(t, names, "explain.txt") // single explain.txt is not used for multi-SQL
+
+	// Check stats and schema files for all tables in all databases
+	for _, db := range dbs {
+		for i := 1; i <= numTables; i++ {
+			tableName := fmt.Sprintf("t_dump_multi_%d", i)
+			statsName := fmt.Sprintf("stats/%s.%s.json", db, tableName)
+			schemaName := fmt.Sprintf("schema/%s.%s.schema.txt", db, tableName)
+			require.Contains(t, names, statsName, "missing stats file for db=%s table=%s (expected %s)", db, tableName, statsName)
+			require.Contains(t, names, schemaName, "missing schema file for db=%s table=%s (expected %s)", db, tableName, schemaName)
+		}
 	}
 }

@@ -3,8 +3,8 @@
     "name": "TestCollationColumnEstimate",
     "cases": [
       "show stats_topn",
-      "explain select * from t where a='aÄa'",
-      "explain select * from t where a > 'aÄa'"
+      "explain format = 'brief' select * from t where a='aÄa'",
+      "explain format = 'brief' select * from t where a > 'aÄa'"
     ]
   },
   {
@@ -180,22 +180,22 @@
   {
     "name": "TestColumnIndexNullEstimation",
     "cases": [
-      "explain select b from t where b is null",
-      "explain select b from t where b is not null",
-      "explain select b from t where b is null or b > 3",
-      "explain select b from t use index(idx_b)",
-      "explain select b from t where b < 4",
-      "explain select * from t where a is null",
-      "explain select * from t where a is not null",
-      "explain select * from t where a is null or a > 3",
-      "explain select * from t",
-      "explain select * from t where a < 4"
+      "explain format = 'brief' select b from t where b is null",
+      "explain format = 'brief' select b from t where b is not null",
+      "explain format = 'brief' select b from t where b is null or b > 3",
+      "explain format = 'brief' select b from t use index(idx_b)",
+      "explain format = 'brief' select b from t where b < 4",
+      "explain format = 'brief' select * from t where a is null",
+      "explain format = 'brief' select * from t where a is not null",
+      "explain format = 'brief' select * from t where a is null or a > 3",
+      "explain format = 'brief' select * from t",
+      "explain format = 'brief' select * from t where a < 4"
     ]
   },
   {
     "name": "TestUniqCompEqualEst",
     "cases": [
-      "explain select * from t where a = 1 and b = 5 and 1 = 1"
+      "explain format = 'brief' select * from t where a = 1 and b = 5 and 1 = 1"
     ]
   },
   {

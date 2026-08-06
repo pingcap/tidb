@@ -147,3 +147,8 @@ func (uc *unicode0900AICICollator) KeyWithoutTrimRightSpace(str string) []byte {
 func (uc *unicode0900AICICollator) Pattern() WildcardPattern {
 	return uc.impl.Pattern()
 }
+
+// MaxKeyLen implements Collator interface.
+func (uc *unicode0900AICICollator) MaxKeyLen(s string) int {
+	return utf8.RuneCountInString(s) * 16
+}

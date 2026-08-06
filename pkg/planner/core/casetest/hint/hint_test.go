@@ -290,10 +290,10 @@ func TestOptimizeHintOnPartitionTable(t *testing.T) {
 		for i, tt := range input {
 			testdata.OnRecord(func() {
 				output[i].SQL = tt
-				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'brief' " + tt).Rows())
+				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'plan_tree' " + tt).Rows())
 				output[i].Warn = testdata.ConvertRowsToStrings(testKit.MustQuery("show warnings").Rows())
 			})
-			testKit.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
+			testKit.MustQuery("explain format = 'plan_tree' " + tt).Check(testkit.Rows(output[i].Plan...))
 			testKit.MustQuery("show warnings").Check(testkit.Rows(output[i].Warn...))
 		}
 		testKit.MustQuery("SELECT /*+ MAX_EXECUTION_TIME(10)  */ SLEEP(5)").Check(testkit.Rows("0"))
@@ -321,10 +321,10 @@ func TestHints(t *testing.T) {
 		for i, tt := range input {
 			testdata.OnRecord(func() {
 				output[i].SQL = tt
-				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'brief' " + tt).Rows())
+				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'plan_tree' " + tt).Rows())
 				output[i].Warn = testdata.ConvertRowsToStrings(testKit.MustQuery("show warnings").Rows())
 			})
-			testKit.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
+			testKit.MustQuery("explain format = 'plan_tree' " + tt).Check(testkit.Rows(output[i].Plan...))
 			testKit.MustQuery("show warnings").Check(testkit.Rows(output[i].Warn...))
 		}
 	})

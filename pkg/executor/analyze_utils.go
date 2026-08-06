@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	stderrors "errors"
 	"strconv"
 	"sync"
 
@@ -42,10 +43,7 @@ func adaptiveAnlayzeDistSQLConcurrency(ctx context.Context, sctx sessionctx.Cont
 		logutil.BgLogger().Warn("Information about TiKV store status can be gotten only when the storage is TiKV")
 		return vardef.DefAnalyzeDistSQLScanConcurrency
 	}
-	tikvHelper := &helper.Helper{
-		Store:       tikvStore,
-		RegionCache: tikvStore.GetRegionCache(),
-	}
+	tikvHelper := helper.NewHelper(tikvStore)
 	pdCli, err := tikvHelper.TryGetPDHTTPClient()
 	if err != nil {
 		logutil.BgLogger().Warn("fail to TryGetPDHTTPClient", zap.Error(err))
@@ -106,6 +104,18 @@ func getAnalyzePanicErr(r any) error {
 		return err
 	}
 	return errors.Trace(errAnalyzeWorkerPanic)
+}
+
+func normalizeCtxErrWithCause(ctx context.Context, err error) error {
+	if err == nil {
+		return nil
+	}
+	if stderrors.Is(err, context.Canceled) || stderrors.Is(err, context.DeadlineExceeded) {
+		if cause := context.Cause(ctx); cause != nil {
+			return cause
+		}
+	}
+	return err
 }
 
 // analyzeResultsNotifyWaitGroupWrapper is a wrapper for sync.WaitGroup

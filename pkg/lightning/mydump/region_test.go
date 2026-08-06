@@ -20,10 +20,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	. "github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -198,7 +199,7 @@ func TestMakeTableRegionsSplitLargeFile(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	store, err := storage.NewLocalStorage(".")
+	store, err := objstore.NewLocalStorage(".")
 	assert.NoError(t, err)
 
 	meta.DataFiles[0].FileMeta.Compression = CompressionNone
@@ -230,6 +231,62 @@ func TestMakeTableRegionsSplitLargeFile(t *testing.T) {
 	}
 }
 
+func TestParquetFileRegionUsesRealSizeForEngineAllocation(t *testing.T) {
+	const (
+		compressedFileSize = int64(40)
+		realSize           = int64(400)
+		engineDataSize     = int64(200)
+	)
+	makeParquetFile := func(path string) FileInfo {
+		return FileInfo{FileMeta: SourceFileMeta{
+			Path:     path,
+			Type:     SourceTypeParquet,
+			FileSize: compressedFileSize,
+			RealSize: realSize,
+		}}
+	}
+	meta := &MDTableMeta{
+		DB:   "db",
+		Name: "tbl",
+		DataFiles: []FileInfo{
+			makeParquetFile("a.parquet"),
+			makeParquetFile("b.parquet"),
+			makeParquetFile("c.parquet"),
+		},
+		IsRowOrdered: true,
+	}
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/mydump/mockParquetRowCount", "return(100)")
+
+	ctx := context.Background()
+	store, err := objstore.NewLocalStorage(".")
+	require.NoError(t, err)
+
+	divideConfig := &DataDivideConfig{
+		ColumnCnt:           1,
+		EngineDataSize:      engineDataSize,
+		MaxChunkSize:        engineDataSize,
+		Concurrency:         1,
+		EngineConcurrency:   10,
+		BatchImportRatio:    0.75,
+		Store:               store,
+		TableMeta:           meta,
+		SkipParquetRowCount: true,
+	}
+	regions, err := MakeTableRegions(ctx, divideConfig)
+	require.NoError(t, err)
+	require.Len(t, regions, 3)
+
+	maxEngineID := regions[0].EngineID
+	for _, region := range regions[1:] {
+		if region.EngineID > maxEngineID {
+			maxEngineID = region.EngineID
+		}
+	}
+	require.Greater(t, maxEngineID, int32(0),
+		"engine allocation should use RealSize; FileSize alone would keep all files on engine 0")
+}
+
 func TestCompressedMakeSourceFileRegion(t *testing.T) {
 	meta := &MDTableMeta{
 		DB:   "csv",
@@ -249,7 +306,7 @@ func TestCompressedMakeSourceFileRegion(t *testing.T) {
 	colCnt := 3
 
 	ctx := context.Background()
-	store, err := storage.NewLocalStorage(".")
+	store, err := objstore.NewLocalStorage(".")
 	assert.NoError(t, err)
 	compressRatio, err := SampleFileCompressRatio(ctx, fileInfo.FileMeta, store)
 	require.NoError(t, err)
@@ -299,7 +356,7 @@ func TestSplitLargeFile(t *testing.T) {
 	fileSize := dataFileInfo.Size()
 	fileInfo := FileInfo{FileMeta: SourceFileMeta{Path: filePath, Type: SourceTypeCSV, FileSize: fileSize}}
 	ioWorker := worker.NewPool(context.Background(), 4, "io")
-	store, err := storage.NewLocalStorage(".")
+	store, err := objstore.NewLocalStorage(".")
 	assert.NoError(t, err)
 	divideConfig := NewDataDivideConfig(cfg, 3, ioWorker, store, meta)
 	columns := []string{"a", "b", "c"}
@@ -367,7 +424,7 @@ func TestSplitLargeFileNoNewLineAtEOF(t *testing.T) {
 	fileInfo := FileInfo{FileMeta: SourceFileMeta{Path: fileName, Type: SourceTypeCSV, FileSize: fileSize}}
 	ioWorker := worker.NewPool(context.Background(), 4, "io")
 
-	store, err := storage.NewLocalStorage(dir)
+	store, err := objstore.NewLocalStorage(dir)
 	require.NoError(t, err)
 	divideConfig := NewDataDivideConfig(cfg, 2, ioWorker, store, meta)
 	columns := []string{"a", "b"}
@@ -417,7 +474,7 @@ func TestSplitLargeFileWithCustomTerminator(t *testing.T) {
 	fileInfo := FileInfo{FileMeta: SourceFileMeta{Path: fileName, Type: SourceTypeCSV, FileSize: fileSize}}
 	ioWorker := worker.NewPool(context.Background(), 4, "io")
 
-	store, err := storage.NewLocalStorage(dir)
+	store, err := objstore.NewLocalStorage(dir)
 	require.NoError(t, err)
 	divideConfig := NewDataDivideConfig(cfg, 3, ioWorker, store, meta)
 
@@ -472,7 +529,7 @@ func TestSplitLargeFileOnlyOneChunk(t *testing.T) {
 	columns := []string{"field1", "field2"}
 	ioWorker := worker.NewPool(context.Background(), 4, "io")
 
-	store, err := storage.NewLocalStorage(dir)
+	store, err := objstore.NewLocalStorage(dir)
 	require.NoError(t, err)
 	divideConfig := NewDataDivideConfig(cfg, 2, ioWorker, store, meta)
 
@@ -510,7 +567,7 @@ func TestSplitLargeFileSeekInsideCRLF(t *testing.T) {
 	fileInfo := FileInfo{FileMeta: SourceFileMeta{Path: fileName, Type: SourceTypeCSV, FileSize: fileSize}}
 	ioWorker := worker.NewPool(context.Background(), 4, "io")
 
-	store, err := storage.NewLocalStorage(dir)
+	store, err := objstore.NewLocalStorage(dir)
 	require.NoError(t, err)
 
 	// if we don't set terminator, it will get the wrong result

@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/ranger"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/size"
 	sliceutil "github.com/pingcap/tidb/pkg/util/slice"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
@@ -78,6 +79,27 @@ func buildInvertedIndexExtra(indexInfo *model.IndexInfo) *ColumnarIndexExtra {
 			},
 		},
 	}
+}
+
+func buildFullTextIndexExtra(indexInfo *model.IndexInfo, queryInfo *tipb.FTSQueryInfo) *ColumnarIndexExtra {
+	return &ColumnarIndexExtra{
+		IndexInfo: indexInfo,
+		QueryInfo: &tipb.ColumnarIndexInfo{
+			IndexType: tipb.ColumnarIndexType_TypeFulltext,
+			Index: &tipb.ColumnarIndexInfo_FtsQueryInfo{
+				FtsQueryInfo: queryInfo,
+			},
+		},
+	}
+}
+
+func (p *PhysicalTableScan) hasFullTextIndexPushDown() bool {
+	for _, idx := range p.UsedColumnarIndexes {
+		if idx.QueryInfo != nil && idx.QueryInfo.IndexType == tipb.ColumnarIndexType_TypeFulltext {
+			return true
+		}
+	}
+	return false
 }
 
 // PhysicalTableScan represents a table scan plan.
@@ -172,6 +194,9 @@ func GetPhysicalScan4LogicalTableScan(s *logicalop.LogicalTableScan, schema *exp
 	}.Init(s.SCtx(), s.QueryBlockOffset())
 	ts.SetStats(stats)
 	ts.SetSchema(schema.Clone())
+	if ds.FtsPushDown != nil {
+		ts.UsedColumnarIndexes = append(ts.UsedColumnarIndexes, buildFullTextIndexExtra(ds.FtsPushDown.IndexInfo, ds.FtsPushDown.QueryInfo))
+	}
 	return ts
 }
 
@@ -217,6 +242,9 @@ func GetOriginalPhysicalTableScan(ds *logicalop.DataSource, prop *property.Physi
 	if isMatchProp && prop.VectorProp.VSInfo == nil {
 		ts.Desc = prop.SortItems[0].Desc
 		ts.KeepOrder = true
+	}
+	if ds.FtsPushDown != nil {
+		ts.UsedColumnarIndexes = append(ts.UsedColumnarIndexes, buildFullTextIndexExtra(ds.FtsPushDown.IndexInfo, ds.FtsPushDown.QueryInfo))
 	}
 	return ts, rowCount
 }
@@ -279,6 +307,7 @@ func (p *PhysicalTableScan) Clone(newCtx base.PlanContext) (base.PhysicalPlan, e
 	clonedScan.AccessCondition = util.CloneExprs(p.AccessCondition)
 	clonedScan.FilterCondition = util.CloneExprs(p.FilterCondition)
 	clonedScan.LateMaterializationFilterCondition = util.CloneExprs(p.LateMaterializationFilterCondition)
+	clonedScan.PlanPartInfo = p.PlanPartInfo.Clone()
 	if p.Table != nil {
 		clonedScan.Table = p.Table.Clone()
 	}
@@ -397,7 +426,7 @@ func (p *PhysicalTableScan) ResolveCorrelatedColumns() ([]*ranger.Range, error) 
 
 // ExplainID overrides the ExplainID in order to match different range.
 func (p *PhysicalTableScan) ExplainID(isChildOfIndexLookUp ...bool) fmt.Stringer {
-	return stringutil.MemoizeStr(func() string {
+	return stringutil.StringerFunc(func() string {
 		if p.SCtx() != nil && p.SCtx().GetSessionVars().StmtCtx.IgnoreExplainIDSuffix {
 			return p.TP(isChildOfIndexLookUp...)
 		}
@@ -434,7 +463,7 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 	}
 
 	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
-	redact := p.SCtx().GetSessionVars().EnableRedactLog
+	redactMode := p.SCtx().GetSessionVars().EnableRedactLog
 	var buffer strings.Builder
 	if len(p.RangeInfo) > 0 {
 		if !normalized {
@@ -453,7 +482,7 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 				if i != 0 {
 					buffer.WriteString(" ")
 				}
-				buffer.WriteString(AccessCondition.StringWithCtx(ectx, redact))
+				buffer.WriteString(AccessCondition.StringWithCtx(ectx, redactMode))
 			}
 			buffer.WriteString("], ")
 		}
@@ -463,7 +492,7 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 		} else if !p.IsFullScan() {
 			buffer.WriteString("range:")
 			for _, idxRange := range p.Ranges {
-				buffer.WriteString(idxRange.Redact(redact))
+				buffer.WriteString(idxRange.Redact(redactMode))
 				buffer.WriteString(", ")
 			}
 		}
@@ -505,61 +534,123 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 			if i != 0 {
 				buffer.WriteString(", ")
 			}
-			buffer.WriteString(runtimeFilter.ExplainInfo(false))
+			buffer.WriteString(runtimeFilter.ExplainInfo(false, ectx))
 		}
 	}
-	if len(p.UsedColumnarIndexes) > 0 {
-		annIndexes := make([]string, 0, len(p.UsedColumnarIndexes))
-		invertedIndexes := make([]string, 0, len(p.UsedColumnarIndexes))
-		for _, idx := range p.UsedColumnarIndexes {
-			if idx == nil {
-				continue
-			}
-			if idx.QueryInfo != nil && idx.QueryInfo.IndexType == tipb.ColumnarIndexType_TypeVector {
-				annIndexBuffer := bytes.NewBuffer(make([]byte, 0, 256))
-				annIndexBuffer.WriteString(idx.QueryInfo.GetAnnQueryInfo().GetDistanceMetric().String())
-				annIndexBuffer.WriteString("(")
-				annIndexBuffer.WriteString(idx.QueryInfo.GetAnnQueryInfo().GetColumnName())
-				annIndexBuffer.WriteString("..")
-				if normalized {
-					annIndexBuffer.WriteString("[?]")
-				} else {
-					v, _, err := types.ZeroCopyDeserializeVectorFloat32(idx.QueryInfo.GetAnnQueryInfo().RefVecF32)
-					if err != nil {
-						annIndexBuffer.WriteString("[?]")
-					} else {
-						annIndexBuffer.WriteString(v.TruncatedString())
-					}
-				}
-				annIndexBuffer.WriteString(", limit:")
-				if normalized {
-					annIndexBuffer.WriteString("?")
-				} else {
-					fmt.Fprint(annIndexBuffer, idx.QueryInfo.GetAnnQueryInfo().TopK)
-				}
-				annIndexBuffer.WriteString(")")
-
-				if idx.QueryInfo.GetAnnQueryInfo().GetEnableDistanceProj() {
-					annIndexBuffer.WriteString("->")
-					cols := p.Schema().Columns
-					annIndexBuffer.WriteString(cols[len(cols)-1].String())
-				}
-				annIndexes = append(annIndexes, annIndexBuffer.String())
-			} else if idx.QueryInfo.IndexType == tipb.ColumnarIndexType_TypeInverted && idx.QueryInfo != nil {
-				invertedIndexes = append(invertedIndexes, idx.IndexInfo.Name.L)
-			}
-		}
-		if len(annIndexes) > 0 {
-			buffer.WriteString(", annIndex:")
-			buffer.WriteString(strings.Join(annIndexes, ", "))
-		}
-		if len(invertedIndexes) > 0 {
-			buffer.WriteString(", invertedindex:")
-			buffer.WriteString(strings.Join(invertedIndexes, ", "))
-		}
+	if columnarIndexes := p.explainColumnarIndexes(normalized, redactMode, ectx); columnarIndexes != "" {
+		buffer.WriteString(columnarIndexes)
 	}
 
 	return buffer.String()
+}
+
+func (p *PhysicalTableScan) explainColumnarIndexes(normalized bool, redactMode string, ectx expression.EvalContext) string {
+	if len(p.UsedColumnarIndexes) == 0 {
+		return ""
+	}
+
+	annIndexes := make([]string, 0, len(p.UsedColumnarIndexes))
+	invertedIndexes := make([]string, 0, len(p.UsedColumnarIndexes))
+	ftsIndexes := make([]string, 0, len(p.UsedColumnarIndexes))
+	for _, idx := range p.UsedColumnarIndexes {
+		if idx == nil || idx.QueryInfo == nil {
+			continue
+		}
+
+		switch idx.QueryInfo.IndexType {
+		case tipb.ColumnarIndexType_TypeVector:
+			annIndexes = append(annIndexes, p.explainANNIndex(idx, normalized, ectx))
+		case tipb.ColumnarIndexType_TypeInverted:
+			invertedIndexes = append(invertedIndexes, idx.IndexInfo.Name.L)
+		case tipb.ColumnarIndexType_TypeFulltext:
+			if ftsIndex := p.explainFullTextIndex(idx, normalized, redactMode, ectx); ftsIndex != "" {
+				ftsIndexes = append(ftsIndexes, ftsIndex)
+			}
+		}
+	}
+
+	buffer := &strings.Builder{}
+	if len(annIndexes) > 0 {
+		buffer.WriteString(", annIndex:")
+		buffer.WriteString(strings.Join(annIndexes, ", "))
+	}
+	if len(invertedIndexes) > 0 {
+		buffer.WriteString(", invertedindex:")
+		buffer.WriteString(strings.Join(invertedIndexes, ", "))
+	}
+	if len(ftsIndexes) > 0 {
+		buffer.WriteString(", ftsIndex:")
+		buffer.WriteString(strings.Join(ftsIndexes, ", "))
+	}
+	return buffer.String()
+}
+
+func (p *PhysicalTableScan) explainANNIndex(idx *ColumnarIndexExtra, normalized bool, ectx expression.EvalContext) string {
+	annQueryInfo := idx.QueryInfo.GetAnnQueryInfo()
+	annIndexBuffer := bytes.NewBuffer(make([]byte, 0, 256))
+	annIndexBuffer.WriteString(annQueryInfo.GetDistanceMetric().String())
+	annIndexBuffer.WriteString("(")
+	annIndexBuffer.WriteString(annQueryInfo.GetColumnName())
+	annIndexBuffer.WriteString("..")
+	if normalized {
+		annIndexBuffer.WriteString("[?]")
+	} else {
+		v, _, err := types.ZeroCopyDeserializeVectorFloat32(annQueryInfo.RefVecF32)
+		if err != nil {
+			annIndexBuffer.WriteString("[?]")
+		} else {
+			annIndexBuffer.WriteString(v.TruncatedString())
+		}
+	}
+	annIndexBuffer.WriteString(", limit:")
+	if normalized {
+		annIndexBuffer.WriteString("?")
+	} else {
+		fmt.Fprint(annIndexBuffer, annQueryInfo.TopK)
+	}
+	annIndexBuffer.WriteString(")")
+
+	if annQueryInfo.GetEnableDistanceProj() {
+		annIndexBuffer.WriteString("->")
+		cols := p.Schema().Columns
+		annIndexBuffer.WriteString(cols[len(cols)-1].ExplainInfo(ectx))
+	}
+	return annIndexBuffer.String()
+}
+
+func (p *PhysicalTableScan) explainFullTextIndex(idx *ColumnarIndexExtra, normalized bool, redactMode string, ectx expression.EvalContext) string {
+	ftsQueryInfo := idx.QueryInfo.GetFtsQueryInfo()
+	if ftsQueryInfo == nil {
+		return ""
+	}
+
+	ftsIndexBuffer := &strings.Builder{}
+	ftsIndexBuffer.Grow(128)
+	if ftsQueryInfo.TopK != nil && *ftsQueryInfo.TopK < ^uint32(0) {
+		ftsIndexBuffer.WriteString("top")
+		if normalized {
+			ftsIndexBuffer.WriteString("K")
+		} else {
+			fmt.Fprint(ftsIndexBuffer, *ftsQueryInfo.TopK)
+		}
+		ftsIndexBuffer.WriteString(" ")
+	}
+	if normalized {
+		ftsIndexBuffer.WriteString("?")
+	} else {
+		redact.WriteRedact(ftsIndexBuffer, ftsQueryInfo.QueryText, redactMode)
+	}
+	if len(ftsQueryInfo.ColumnNames) > 0 {
+		ftsIndexBuffer.WriteString(" IN ")
+		ftsIndexBuffer.WriteString(ftsQueryInfo.ColumnNames[0])
+	}
+	cols := p.Schema().Columns
+	if len(cols) > 0 && ftsQueryInfo.QueryType == tipb.FTSQueryType_FTSQueryTypeWithScore &&
+		cols[len(cols)-1].ID == model.VirtualColFTSScoreID {
+		ftsIndexBuffer.WriteString("->")
+		ftsIndexBuffer.WriteString(cols[len(cols)-1].ExplainInfo(ectx))
+	}
+	return ftsIndexBuffer.String()
 }
 
 func (p *PhysicalTableScan) haveCorCol() bool {
@@ -636,7 +727,16 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType,
 // GetScanRowSize is to get the row size when to scan.
 func (p *PhysicalTableScan) GetScanRowSize() float64 {
 	if p.StoreType == kv.TiKV {
-		return cardinality.GetTableAvgRowSize(p.SCtx(), p.TblColHists, p.TblCols, p.StoreType, true)
+		cols := p.TblCols
+		// _tidb_commit_ts is not a real extra column stored in the disk, and it should not bring extra cost, so we
+		// exclude it from the cost here.
+		for i, col := range cols {
+			if col.ID == model.ExtraCommitTSID {
+				cols = slices.Delete(slices.Clone(cols), i, i+1)
+				break
+			}
+		}
+		return cardinality.GetTableAvgRowSize(p.SCtx(), p.TblColHists, cols, p.StoreType, true)
 	}
 	// If `p.handleCol` is nil, then the schema of tableScan doesn't have handle column.
 	// This logic can be ensured in column pruning.
@@ -795,7 +895,7 @@ func BuildIndexMergeTableScan(ds *logicalop.DataSource, tableFilters []expressio
 		pushedFilters = pushedFilters1
 		remainingFilters = append(remainingFilters, remainingFilters1...)
 		if len(pushedFilters) != 0 {
-			selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, pushedFilters, nil)
+			selectivity, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, pushedFilters, nil)
 			if err != nil {
 				logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 				selectivity = cost.SelectionFactor
@@ -833,10 +933,41 @@ func BuildIndexMergeTableScan(ds *logicalop.DataSource, tableFilters []expressio
 				ts.Columns = append(ts.Columns, col.ToInfo())
 			}
 		}
-	} else if !ts.Schema().Contains(ts.HandleCols.GetCol(0)) {
+	} else if ts.HandleCols != nil && !ts.Schema().Contains(ts.HandleCols.GetCol(0)) {
 		ts.Schema().Append(ts.HandleCols.GetCol(0))
 		ts.Columns = append(ts.Columns, model.NewExtraHandleColInfo())
 		columnAdded = true
+	} else if ds.Table.Type().IsClusterTable() {
+		// For cluster tables without HandleCols, use the first column like preferKeyColumnFromTable does.
+		// This handles the case when column-prune-logical rule is blocked and cluster tables don't have
+		// their handle cols set up through the normal column pruning path.
+		if len(ts.TblCols) > 0 {
+			col := ts.TblCols[0]
+			if !ts.Schema().Contains(col) {
+				ts.Schema().Append(col)
+				// Find the corresponding ColumnInfo from table metadata
+				if colInfo := model.FindColumnInfoByID(ts.Table.Columns, col.ID); colInfo != nil {
+					ts.Columns = append(ts.Columns, colInfo)
+				} else {
+					ts.Columns = append(ts.Columns, col.ToInfo())
+				}
+				columnAdded = true
+			}
+		} else if len(ts.Table.Columns) > 0 {
+			// Fallback to table metadata columns
+			colMeta := ts.Table.Columns[0]
+			col := &expression.Column{
+				RetType:  colMeta.FieldType.Clone(),
+				UniqueID: ts.SCtx().GetSessionVars().AllocPlanColumnID(),
+				ID:       colMeta.ID,
+				OrigName: fmt.Sprintf("%v.%v.%v", ts.DBName, ts.Table.Name, colMeta.Name),
+			}
+			if !ts.Schema().Contains(col) {
+				ts.Schema().Append(col)
+				ts.Columns = append(ts.Columns, colMeta)
+				columnAdded = true
+			}
+		}
 	}
 
 	// For the global index of the partitioned table, we also need the PhysicalTblID to identify the rows from each partition.
@@ -874,7 +1005,15 @@ func extractFiltersForIndexMerge(ctx expression.PushDownContext, filters []expre
 func setIndexMergeTableScanHandleCols(ds *logicalop.DataSource, ts *PhysicalTableScan) (err error) {
 	handleCols := ds.HandleCols
 	if handleCols == nil {
-		handleCols = util.NewIntHandleCols(ds.NewExtraHandleSchemaCol())
+		if (ds.TableInfo.PKIsHandle || ds.TableInfo.IsCommonHandle) && ds.UnMutableHandleCols != nil {
+			handleCols = ds.UnMutableHandleCols
+		} else if ds.Table.Type().IsClusterTable() {
+			// For cluster tables without handles, ts.HandleCols remains nil.
+			// Cluster tables don't support ExtraHandleID (-1) as they are memory tables.
+			return nil
+		} else {
+			handleCols = util.NewIntHandleCols(ds.NewExtraHandleSchemaCol())
+		}
 	}
 	hdColNum := handleCols.NumCols()
 	exprCols := make([]*expression.Column, 0, hdColNum)

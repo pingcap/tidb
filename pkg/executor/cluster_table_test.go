@@ -27,6 +27,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 )
@@ -198,6 +200,23 @@ select 7;`
 		sql = fmt.Sprintf(cas.sql, "cluster_slow_query")
 		tk.MustQuery(sql).Check(testkit.RowsWithSep("|", cas.result...))
 	}
+
+	executor.DashboardSlowLogReadBlockCnt4Test = 0
+	// 2020-02-16T00:00:00.000000+08:00
+	unixTimeStart := time.Date(2020, 2, 16, 0, 0, 0, 0, time.FixedZone("CST", 8*3600))
+	// 2020-02-17T00:00:00.000000+08:00
+	unixTimeEnd := time.Date(2020, 2, 17, 0, 0, 0, 0, time.FixedZone("CST", 8*3600))
+	// check dashboard query pattern. Only reduce limit to check if it works.
+	sql := fmt.Sprintf(`SELECT Digest, Query, Conn_ID, (UNIX_TIMESTAMP(Time) + 0E0) AS timestamp, Query_time, Mem_max
+				FROM INFORMATION_SCHEMA.CLUSTER_SLOW_QUERY
+                WHERE Time BETWEEN FROM_UNIXTIME(%d) AND FROM_UNIXTIME(%d)
+                ORDER BY Time DESC LIMIT 2`, unixTimeStart.Unix(), unixTimeEnd.Unix())
+	rows := tk.MustQuery(sql).Rows()
+	require.Equal(t, 2, len(rows))
+	require.Equal(t, "select 5;", rows[0][1])
+	require.Equal(t, "select 4;", rows[1][1])
+	// 3 means we read 2 blocks of logData3, and last block of logData2
+	require.EqualValues(t, 3, executor.DashboardSlowLogReadBlockCnt4Test)
 }
 
 func TestIssue20236(t *testing.T) {
@@ -372,4 +391,39 @@ func removeFiles(t *testing.T, fileNames []string) {
 	for _, fileName := range fileNames {
 		require.NoError(t, os.Remove(fileName))
 	}
+}
+
+func TestClusterTableSlowQuerySessionConnectAttrs(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	srv := createRPCServer(t, dom)
+	defer srv.Stop()
+
+	logData := `
+# Time: 2024-01-15T10:00:00.000000+08:00
+# Txn_start_ts: 123456789
+# User@Host: root[root] @ localhost [127.0.0.1]
+# Query_time: 0.5
+# Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
+# Is_internal: false
+# Succ: true
+` + testutil.DefaultSessionConnectAttrsSlowLogLine() + `
+select * from t;`
+	fileName := "tidb-slow-query-attrs.log"
+	prepareLogs(t, []string{logData}, []string{fileName})
+	defer removeFiles(t, []string{fileName})
+
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Log.SlowQueryFile = fileName
+	})
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use information_schema")
+
+	// Verify Session_connect_attrs column is present in cluster_slow_query as well.
+	clusterRows := tk.MustQuery("select Session_connect_attrs from information_schema.cluster_slow_query " +
+		"where time > '2024-01-01 00:00:00' and query = 'select * from t;'").Rows()
+	require.Len(t, clusterRows, 1)
+	clusterAttrsStr := clusterRows[0][0].(string)
+	testutil.RequireContainsDefaultSessionConnectAttrs(t, clusterAttrsStr)
 }

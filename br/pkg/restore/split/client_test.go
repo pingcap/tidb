@@ -14,9 +14,21 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+func TestGetCodecPDClient(t *testing.T) {
+	require.Nil(t, (&pdClient{}).GetCodecPDClient())
+	require.Nil(t, (&pdClient{client: NewMockPDClientForSplit()}).GetCodecPDClient())
+	codecPDClient := &tikv.CodecPDClient{}
+	require.Nil(t, (&pdClient{client: codecPDClient}).GetCodecPDClient())
+	require.Same(t, codecPDClient, (&pdClient{client: codecPDClient, isCodecPDClient: true}).GetCodecPDClient())
+	require.Same(t, codecPDClient, NewCodecAwareClient(codecPDClient, nil, nil, 0, 0).GetCodecPDClient())
+	require.Nil(t, NewFakeSplitClient().GetCodecPDClient())
+	require.Nil(t, NewTestClient(nil, nil, 0).GetCodecPDClient())
+}
 
 func TestBatchSplit(t *testing.T) {
 	backup := maxBatchSplitSize
@@ -107,7 +119,23 @@ func TestSplitScatter(t *testing.T) {
 		}
 	}
 
-	_, err := mockClient.SplitKeysAndScatter(ctx, splitKeys)
+	noScatterPDClient := NewMockPDClientForSplit()
+	noScatterPDClient.SetRegions(keys)
+	noScatterClient := &pdClient{
+		client:           noScatterPDClient,
+		splitConcurrency: 20,
+		splitBatchKeyCnt: 100,
+	}
+	noScatterSplitKeys := make([][]byte, 0, len(splitKeys))
+	for _, key := range splitKeys {
+		noScatterSplitKeys = append(noScatterSplitKeys, append([]byte(nil), key...))
+	}
+	_, err := noScatterClient.SplitKeys(ctx, noScatterSplitKeys)
+	require.NoError(t, err)
+	require.Positive(t, noScatterPDClient.splitRegions.count)
+	require.Zero(t, noScatterPDClient.scatterRegions.regionCount)
+
+	_, err = mockClient.SplitKeysAndScatter(ctx, splitKeys)
 	require.NoError(t, err)
 
 	// check split ranges
@@ -230,7 +258,7 @@ func TestScanRegionEmptyResult(t *testing.T) {
 	mockPDClient := NewMockPDClientForSplit()
 	keys := [][]byte{[]byte(""), []byte("")}
 	mockPDClient.SetRegions(keys)
-	mockPDClient.scanRegions.errors = []error{nil, nil, nil, nil}
+	mockPDClient.scanRegions.errors = []error{nil, nil, nil, nil, nil, nil, nil, nil}
 	mockClient := &pdClient{
 		client:           mockPDClient,
 		splitBatchKeyCnt: 100,

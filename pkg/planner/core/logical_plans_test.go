@@ -61,7 +61,7 @@ func TestPredicatePushDown(t *testing.T) {
 		nodeW := resolve.NewNodeW(stmt)
 		p, err := BuildLogicalPlanForTest(ctx, s.GetSCtx(), nodeW, s.GetIS())
 		require.NoError(t, err)
-		p, err = logicalOptimize(context.TODO(), rule.FlagConvertOuterToInnerJoin|rule.FlagPredicatePushDown|rule.FlagDecorrelate|rule.FlagPruneColumns|rule.FlagPruneColumnsAgain|rule.FlagPredicateSimplification, p.(base.LogicalPlan))
+		p, err = logicalOptimize(context.TODO(), rule.FlagPredicatePushDown|rule.FlagDecorrelate|rule.FlagPruneColumns|rule.FlagPruneColumnsAgain|rule.FlagPredicateSimplification, p.(base.LogicalPlan))
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[ith] = ToString(p)
@@ -219,7 +219,7 @@ func TestSimplifyOuterJoin(t *testing.T) {
 		nodeW := resolve.NewNodeW(stmt)
 		p, err := BuildLogicalPlanForTest(ctx, s.GetSCtx(), nodeW, s.GetIS())
 		require.NoError(t, err, comment)
-		p, err = logicalOptimize(context.TODO(), rule.FlagPredicatePushDown|rule.FlagPruneColumns|rule.FlagPruneColumnsAgain|rule.FlagConvertOuterToInnerJoin, p.(base.LogicalPlan))
+		p, err = logicalOptimize(context.TODO(), rule.FlagPredicatePushDown|rule.FlagPruneColumns|rule.FlagPruneColumnsAgain, p.(base.LogicalPlan))
 		require.NoError(t, err, comment)
 		planString := ToString(p)
 		testdata.OnRecord(func() {
@@ -415,11 +415,58 @@ func TestDupRandJoinCondsPushDown(t *testing.T) {
 	require.True(t, ok, comment)
 	join, ok := proj.Children()[0].(*logicalop.LogicalJoin)
 	require.True(t, ok, comment)
-	leftPlan, ok := join.Children()[0].(*logicalop.LogicalSelection)
+	_, ok = join.Children()[0].(*logicalop.LogicalSelection)
+	require.False(t, ok, comment)
+	otherCond := expression.StringifyExpressionsWithCtx(s.GetCtx().GetExprCtx().GetEvalCtx(), join.OtherConditions)
+	require.Equal(t, "[gt(cast(test.t.a, double BINARY), rand()) gt(cast(test.t.a, double BINARY), rand())]", otherCond, comment)
+
+	sql = "select * from t as t1 join t t2 on t1.a = t2.a where t1.a = rand()"
+	comment = fmt.Sprintf("for %s", sql)
+	stmt, err = s.GetParser().ParseOneStmt(sql, "", "")
+	require.NoError(t, err, comment)
+	nodeW = resolve.NewNodeW(stmt)
+	p, err = BuildLogicalPlanForTest(context.Background(), s.GetSCtx(), nodeW, s.GetIS())
+	require.NoError(t, err, comment)
+	p, err = logicalOptimize(context.TODO(), rule.FlagPredicatePushDown, p.(base.LogicalPlan))
+	require.NoError(t, err, comment)
+	proj, ok = p.(*logicalop.LogicalProjection)
 	require.True(t, ok, comment)
-	leftCond := expression.StringifyExpressionsWithCtx(s.GetCtx().GetExprCtx().GetEvalCtx(), leftPlan.Conditions)
-	// Condition with mutable function cannot be de-duplicated when push down join conds.
-	require.Equal(t, "[gt(cast(test.t.a, double BINARY), rand()) gt(cast(test.t.a, double BINARY), rand())]", leftCond, comment)
+	join, ok = proj.Children()[0].(*logicalop.LogicalJoin)
+	require.True(t, ok, comment)
+	_, ok = join.Children()[0].(*logicalop.LogicalSelection)
+	require.False(t, ok, comment)
+	leftProj, ok := join.Children()[0].(*logicalop.LogicalProjection)
+	require.True(t, ok, comment)
+	rightProj, ok := join.Children()[1].(*logicalop.LogicalProjection)
+	require.True(t, ok, comment)
+	require.Len(t, join.OtherConditions, 1, comment)
+	require.Len(t, join.EqualConditions, 1, comment)
+	otherFn, ok := join.OtherConditions[0].(*expression.ScalarFunction)
+	require.True(t, ok, comment)
+	require.Equal(t, ast.EQ, otherFn.FuncName.L, comment)
+	require.Same(t, leftProj.Schema().Columns[len(leftProj.Schema().Columns)-1], otherFn.GetArgs()[0], comment)
+	require.Same(t, rightProj.Schema().Columns[len(rightProj.Schema().Columns)-1], otherFn.GetArgs()[1], comment)
+	require.Equal(t, "[cast(test.t.a, double BINARY)]", expression.StringifyExpressionsWithCtx(s.GetCtx().GetExprCtx().GetEvalCtx(), []expression.Expression{leftProj.Exprs[len(leftProj.Exprs)-1]}), comment)
+	require.Equal(t, "[rand()]", expression.StringifyExpressionsWithCtx(s.GetCtx().GetExprCtx().GetEvalCtx(), []expression.Expression{rightProj.Exprs[len(rightProj.Exprs)-1]}), comment)
+
+	sql = "select * from t as t1 left join t t2 on t1.a = t2.a and t2.a < @var1"
+	comment = fmt.Sprintf("for %s", sql)
+	stmt, err = s.GetParser().ParseOneStmt(sql, "", "")
+	require.NoError(t, err, comment)
+	nodeW = resolve.NewNodeW(stmt)
+	p, err = BuildLogicalPlanForTest(context.Background(), s.GetSCtx(), nodeW, s.GetIS())
+	require.NoError(t, err, comment)
+	p, err = logicalOptimize(context.TODO(), rule.FlagPredicatePushDown, p.(base.LogicalPlan))
+	require.NoError(t, err, comment)
+	if proj, isProj := p.(*logicalop.LogicalProjection); isProj {
+		p = proj.Children()[0]
+	}
+	join, ok = p.(*logicalop.LogicalJoin)
+	require.True(t, ok, comment)
+	_, ok = join.Children()[1].(*logicalop.LogicalSelection)
+	require.False(t, ok, comment)
+	require.Empty(t, join.RightConditions, comment)
+	require.Equal(t, "[lt(cast(test.t.a, double BINARY), cast(getvar(var1), double BINARY))]", expression.StringifyExpressionsWithCtx(s.GetCtx().GetExprCtx().GetEvalCtx(), join.OtherConditions), comment)
 }
 
 func TestTablePartition(t *testing.T) {
@@ -1363,6 +1410,30 @@ func TestVisitInfo(t *testing.T) {
 			},
 		},
 		{
+			sql: "flush stats_delta ttt",
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "ttt", "", nil, false, nil, false},
+			},
+		},
+		{
+			sql: "flush stats_delta test.ttt, test.*",
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "", "", nil, false, nil, false},
+			},
+		},
+		{
+			sql: "flush stats_delta test.*",
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "", "", nil, false, nil, false},
+			},
+		},
+		{
+			sql: "flush stats_delta *.*",
+			ans: []visitInfo{
+				{mysql.SelectPriv, "", "", "", plannererrors.ErrPrivilegeCheckFail, false, nil, false},
+			},
+		},
+		{
 			sql: "SET GLOBAL wait_timeout=12345",
 			ans: []visitInfo{
 				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, []string{"SYSTEM_VARIABLES_ADMIN"}, false},
@@ -2137,7 +2208,7 @@ func TestUpdateEQCond(t *testing.T) {
 	}{
 		{
 			sql:  "select t1.a from t t1, t t2 where t1.a = t2.a+1",
-			best: "Join{DataScan(t1)->DataScan(t2)->Projection}(test.t.a,Column#25)->Projection->Projection",
+			best: "Join{DataScan(t1)->DataScan(t2)->Projection}(test.t.a,Column#27)->Projection->Projection",
 		},
 	}
 	s := coretestsdk.CreatePlannerSuiteElems()
@@ -2233,11 +2304,11 @@ func TestResolvingCorrelatedAggregate(t *testing.T) {
 		},
 		{
 			sql:  "select (select sum(count(a))) from t",
-			best: "Apply{DataScan(t)->Aggr(count(test.t.a))->Dual->Aggr(sum(Column#13))->MaxOneRow}->Projection",
+			best: "Apply{DataScan(t)->Aggr(count(test.t.a))->Dual->Aggr(sum(Column#14))->MaxOneRow}->Projection",
 		},
 		{
 			sql:  "select (select sum(count(n.a)) from t) from t n",
-			best: "Apply{DataScan(n)->Aggr(count(test.t.a))->DataScan(t)->Aggr(sum(Column#25))->MaxOneRow}->Projection",
+			best: "Apply{DataScan(n)->Aggr(count(test.t.a))->DataScan(t)->Aggr(sum(Column#27))->MaxOneRow}->Projection",
 		},
 		{
 			sql:  "select (select cnt from (select count(a) as cnt) n) from t",
@@ -2438,13 +2509,13 @@ func TestRollupExpand(t *testing.T) {
 	require.Equal(t, len(builder.currentBlockExpand.LevelExprs), 3)
 	// for grouping set {}: gid = '00' = 0
 	require.Equal(t, expression.ExplainExpressionList(s.GetCtx().GetExprCtx().GetEvalCtx(), expand.LevelExprs[0], expand.Schema(), errors.RedactLogDisable),
-		"test.t.a, <nil>->Column#13, <nil>->Column#14, 0->gid")
+		"test.t.a, <nil>->Column#14, <nil>->Column#15, 0->gid")
 	// for grouping set {a}: gid = '01' = 1
 	require.Equal(t, expression.ExplainExpressionList(s.GetCtx().GetExprCtx().GetEvalCtx(), expand.LevelExprs[1], expand.Schema(), errors.RedactLogDisable),
-		"test.t.a, Column#13, <nil>->Column#14, 1->gid")
+		"test.t.a, Column#14, <nil>->Column#15, 1->gid")
 	// for grouping set {a,b}: gid = '11' = 3
 	require.Equal(t, expression.ExplainExpressionList(s.GetCtx().GetExprCtx().GetEvalCtx(), expand.LevelExprs[2], expand.Schema(), errors.RedactLogDisable),
-		"test.t.a, Column#13, Column#14, 3->gid")
+		"test.t.a, Column#14, Column#15, 3->gid")
 
 	require.Equal(t, expand.Schema().Len(), 4)
 	// source column a should be kept as real.

@@ -1,0 +1,179 @@
+# TestJoinKeyTypeCastBasic
+# When joining INT and VARCHAR columns, the planner should rewrite the
+# implicit double-cast join condition into an integer equality with a
+# guard predicate and projection, enabling index usage on the INT column.
+
+drop table if exists t_int, t_varchar;
+create table t_int (id int primary key, v int);
+create table t_varchar (id varchar(20) primary key, v int);
+
+insert into t_int values (1, 10), (2, 20), (3, 30), (100, 100), (0, 0);
+insert into t_varchar values ('1', 10), ('2', 20), ('4', 40), ('1.5', 15), ('abc', 99), ('100', 100), ('0', 0);
+analyze table t_int;
+analyze table t_varchar;
+
+# Basic inner join: should produce EqualConditions (not OtherConditions with casts).
+explain format = 'brief' select * from t_int join t_varchar on t_int.id = t_varchar.id;
+
+# Verify correctness: '1.5' should NOT match int 1, 'abc' SHOULD match int 0
+# (since CAST('abc' AS DOUBLE) = 0.0 and CAST(0 AS DOUBLE) = 0.0).
+select * from t_int join t_varchar on t_int.id = t_varchar.id order by t_int.id;
+
+# Left outer join: unmatched left rows should still appear with NULLs.
+select * from t_int left join t_varchar on t_int.id = t_varchar.id order by t_int.id;
+
+# Right outer join: unmatched right rows should still appear.
+select * from t_varchar right join t_int on t_int.id = t_varchar.id order by t_int.id;
+
+# TestJoinKeyTypeCastVariousIntTypes
+# Different INT widths should all work.
+drop table if exists t_tiny, t_big;
+create table t_tiny (id tinyint primary key, v int);
+create table t_big (id bigint primary key, v int);
+
+insert into t_tiny values (1, 10), (2, 20), (127, 127);
+insert into t_big values (1, 10), (3, 30), (9999999999, 99);
+
+select * from t_tiny join t_varchar on t_tiny.id = t_varchar.id order by t_tiny.id;
+select * from t_big join t_varchar on t_big.id = t_varchar.id order by t_big.id;
+
+# TestJoinKeyTypeCastUnsignedSkipped
+# Unsigned INT columns should NOT be rewritten (out of scope for initial implementation).
+drop table if exists t_uint;
+create table t_uint (id int unsigned primary key, v int);
+insert into t_uint values (1, 10), (2, 20);
+
+# This should still work correctly (using the original double-cast path).
+explain format = 'brief' select * from t_uint join t_varchar on t_uint.id = t_varchar.id;
+select * from t_uint join t_varchar on t_uint.id = t_varchar.id order by t_uint.id;
+
+# TestJoinKeyTypeCastMixedConditions
+# A join with both type-matched and type-mismatched conditions.
+drop table if exists t_mixed_int, t_mixed_str;
+create table t_mixed_int (id int, name varchar(20), index idx_id(id));
+create table t_mixed_str (id varchar(20), name varchar(20), index idx_id(id));
+
+insert into t_mixed_int values (1, 'a'), (2, 'b'), (3, 'c');
+insert into t_mixed_str values ('1', 'a'), ('2', 'x'), ('1.5', 'a');
+
+# name = name is same-type (goes to EqualConditions normally).
+# id = id is type-mismatched (rewritten by our rule).
+explain format = 'brief' select * from t_mixed_int join t_mixed_str on t_mixed_int.id = t_mixed_str.id and t_mixed_int.name = t_mixed_str.name;
+select * from t_mixed_int join t_mixed_str on t_mixed_int.id = t_mixed_str.id and t_mixed_int.name = t_mixed_str.name order by t_mixed_int.id;
+
+# TestJoinKeyTypeCastNullHandling
+# NULL values should not produce false matches.
+drop table if exists t_null_int, t_null_str;
+create table t_null_int (id int, v int);
+create table t_null_str (id varchar(20), v int);
+
+insert into t_null_int values (1, 10), (NULL, 20);
+insert into t_null_str values ('1', 10), (NULL, 20), ('2', 30);
+
+select * from t_null_int join t_null_str on t_null_int.id = t_null_str.id order by t_null_int.id, t_null_str.id;
+select * from t_null_int left join t_null_str on t_null_int.id = t_null_str.id order by t_null_int.id, t_null_str.id;
+
+# TestJoinKeyTypeCastVarcharOnLeft
+# When the VARCHAR column is on the left side of the join, the guard and
+# projection must be placed on the left child (not the right).
+explain format = 'brief' select * from t_varchar join t_int on t_varchar.id = t_int.id;
+select * from t_varchar join t_int on t_varchar.id = t_int.id order by t_int.id;
+
+# TestJoinKeyTypeCastPreservedSideOuterJoin
+# When the VARCHAR side is the preserved (outer) side of a LEFT/RIGHT JOIN,
+# the guard must NOT be pushed there — it would incorrectly remove rows
+# that should appear with NULL-padded columns.
+drop table if exists t_outer_str, t_outer_int;
+create table t_outer_str (id varchar(20), v int);
+create table t_outer_int (id int primary key, v int);
+insert into t_outer_str values ('1', 10), ('1.5', 15), ('abc', 99), (NULL, 0);
+insert into t_outer_int values (1, 10), (2, 20);
+
+# VARCHAR is the preserved (left) side: '1.5', 'abc', and NULL must
+# still appear with NULLs for the int columns.
+select * from t_outer_str left join t_outer_int on t_outer_str.id = t_outer_int.id order by t_outer_str.id, t_outer_str.v;
+
+# INT is the preserved (left) side: guard on the inner VARCHAR side is fine.
+select * from t_outer_int left join t_outer_str on t_outer_int.id = t_outer_str.id order by t_outer_int.id;
+
+# RIGHT JOIN with VARCHAR as the preserved (right) side: must not push guard.
+select * from t_outer_int right join t_outer_str on t_outer_int.id = t_outer_str.id order by t_outer_str.id, t_outer_str.v;
+
+# RIGHT JOIN with INT as the preserved (right) side: guard on VARCHAR (left) is fine.
+select * from t_outer_str right join t_outer_int on t_outer_str.id = t_outer_int.id order by t_outer_int.id;
+
+# TestJoinKeyTypeCastNullSafeEQ
+# Null-safe equality (<=>) must not be rewritten because the guard
+# uses = which filters NULLs, breaking NULL<=>NULL semantics.
+drop table if exists t_nseq_int, t_nseq_str;
+create table t_nseq_int (id int, v int);
+create table t_nseq_str (id varchar(20), v int);
+insert into t_nseq_int values (1, 10), (NULL, 20);
+insert into t_nseq_str values ('1', 10), (NULL, 20);
+
+# With <=>, NULL should match NULL.
+select * from t_nseq_int join t_nseq_str on t_nseq_int.id <=> t_nseq_str.id order by t_nseq_int.v;
+
+# TestJoinKeyTypeCastOverflow
+# VARCHAR values larger than INT64_MAX must not produce incorrect matches.
+drop table if exists t_overflow_int, t_overflow_str;
+create table t_overflow_int (id bigint primary key, v int);
+create table t_overflow_str (id varchar(30), v int);
+
+insert into t_overflow_int values (9223372036854775807, 1);
+insert into t_overflow_str values ('9223372036854775807', 10), ('9223372036854775808', 20), ('99999999999999999999', 30);
+
+# Only '9223372036854775807' should match (exact INT64_MAX).
+# '9223372036854775808' overflows SIGNED and must not match.
+select * from t_overflow_int join t_overflow_str on t_overflow_int.id = t_overflow_str.id;
+
+# TestJoinKeyTypeCastWhereClause
+# The optimization should also work when the join condition comes from WHERE.
+select * from t_int, t_varchar where t_int.id = t_varchar.id order by t_int.id;
+
+# TestJoinKeyTypeCastIndexJoin
+# Demonstrate that IndexJoin is now viable for INT-vs-VARCHAR joins.
+# Before the optimization, the condition was in OtherConditions with DOUBLE
+# casts on both sides, so IndexJoin was impossible. After the rewrite, the
+# INT column is a bare join key and its index can be used.
+drop table if exists t_idx_int, t_idx_str;
+create table t_idx_int (id int primary key, v int);
+create table t_idx_str (id varchar(20), v int, index idx_id(id));
+
+insert into t_idx_int values (1, 10), (2, 20), (3, 30);
+insert into t_idx_str values ('1', 10), ('2', 20), ('1.5', 15);
+analyze table t_idx_int;
+analyze table t_idx_str;
+
+# With INL_JOIN hint on the INT table: should produce IndexJoin using the PK.
+explain format = 'brief' select /*+ INL_JOIN(t_idx_int) */ * from t_idx_int join t_idx_str on t_idx_int.id = t_idx_str.id;
+
+# Verify correctness: '1.5' must NOT match int 1.
+select /*+ INL_JOIN(t_idx_int) */ * from t_idx_int join t_idx_str on t_idx_int.id = t_idx_str.id order by t_idx_int.id;
+
+# With INL_JOIN hint on the VARCHAR table: the rewritten join key on the
+# VARCHAR side is CAST(id AS SIGNED), not the original indexed column, so
+# IndexJoin on t_idx_str's index must NOT be chosen.
+explain format = 'brief' select /*+ INL_JOIN(t_idx_str) */ * from t_idx_int join t_idx_str on t_idx_int.id = t_idx_str.id;
+
+# TestJoinKeyTypeCastExplicitCast
+# Explicit CAST(col AS DOUBLE) in join conditions produces the same plan-tree
+# pattern as implicit type coercion (updateEQCond materializes the CAST into a
+# child Projection). The rule rewrites both identically. This is intentional:
+# for values within DOUBLE's exact integer range the results are identical, and
+# for values outside that range the INT comparison is more precise.
+explain format = 'brief' select * from t_int join t_varchar on cast(t_int.id as double) = cast(t_varchar.id as double);
+select * from t_int join t_varchar on cast(t_int.id as double) = cast(t_varchar.id as double) order by t_int.id;
+
+# TestJoinKeyTypeCastMultiWayJoin
+# Complex multi-way join with VARCHAR vs INT across multiple joins.
+# Regression test: must not produce "Can't find column" errors.
+drop table if exists t_mj;
+create table t_mj (a varchar(1), b integer);
+insert into t_mj values ('1', 1), ('2', 2);
+
+select * from t_mj t1
+  join t_mj t2 on t1.b = t2.b
+  join t_mj t3
+  join (t_mj t4 straight_join t_mj t5 on t4.a = t5.b) on t1.b = t4.b
+where t1.a = t5.b;

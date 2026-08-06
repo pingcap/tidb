@@ -20,14 +20,14 @@ import (
 	"strconv"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	dxfstorage "github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -53,19 +53,19 @@ func (*BackfillCleanUpS3) CleanUp(ctx context.Context, task *proto.Task) error {
 	if len(taskMeta.CloudStorageURI) == 0 {
 		return nil
 	}
-	backend, err := storage.ParseBackend(taskMeta.CloudStorageURI, nil)
+	backend, err := objstore.ParseBackend(taskMeta.CloudStorageURI, nil)
 	logger := logutil.Logger(ctx).With(zap.Int64("task-id", task.ID))
 	if err != nil {
 		logger.Warn("failed to parse cloud storage uri", zap.Error(err))
 		return err
 	}
-	extStore, err := storage.NewWithDefaultOpt(ctx, backend)
+	extStore, err := objstore.NewWithDefaultOpt(ctx, backend)
 	if err != nil {
 		logger.Warn("failed to create cloud storage", zap.Error(err))
 		return err
 	}
 	prefix := strconv.Itoa(int(task.ID))
-	err = external.CleanUpFiles(ctx, extStore, prefix)
+	err = globalsort.CleanUpFiles(ctx, extStore, prefix)
 	if err != nil {
 		logger.Warn("cannot cleanup cloud storage files", zap.Error(err))
 		return err
@@ -74,7 +74,7 @@ func (*BackfillCleanUpS3) CleanUp(ctx context.Context, task *proto.Task) error {
 	// for old task meta version, we use job ID as prefix to clean up files.
 	if taskMeta.Version < BackfillTaskMetaVersion1 {
 		oldPrefix := strconv.Itoa(int(taskMeta.Job.ID))
-		err = external.CleanUpFiles(ctx, extStore, oldPrefix)
+		err = globalsort.CleanUpFiles(ctx, extStore, oldPrefix)
 		if err != nil {
 			logger.Warn("cannot cleanup cloud storage files", zap.Error(err))
 			return err
@@ -109,7 +109,7 @@ func sendMeterOnCleanUp(ctx context.Context, task *proto.Task, logger *zap.Logge
 			return errors.Trace(err)
 		}
 		rowCount += summary.RowCnt.Load()
-		indexKVSize += summary.Bytes.Load()
+		indexKVSize += summary.Processed.Load()
 	}
 	return handle.SendRowAndSizeMeterData(ctx, task, rowCount, 0, indexKVSize, logger)
 }

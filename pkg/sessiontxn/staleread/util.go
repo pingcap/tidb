@@ -16,6 +16,7 @@ package staleread
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"github.com/pingcap/failpoint"
@@ -31,6 +32,10 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/tikv/client-go/v2/oracle"
 )
+
+// minTSO is 2013-01-01T00:00:00Z in milliseconds since epoch.
+// Serves as a reasonable lower bound for any TiDB physical TSO.
+const minTSO = 1356998400000
 
 // CalculateAsOfTsExpr calculates the TsExpr of AsOfClause to get a StartTS.
 func CalculateAsOfTsExpr(ctx context.Context, sctx planctx.PlanContext, tsExpr ast.ExprNode) (uint64, error) {
@@ -52,6 +57,57 @@ func CalculateAsOfTsExpr(ctx context.Context, sctx planctx.PlanContext, tsExpr a
 		return 0, plannererrors.ErrAsOf.FastGenWithCause("as of timestamp cannot be NULL")
 	}
 
+	// We first try to parse as a datetime, and only fall back to parsing as a raw TSO if the datetime conversion fails.
+	// Note that this behaves differently than `tidb_snapshot` for compact dates such as 'YYYYMMDDHHMMSS' or 'YYYYMMDDHH',
+	// that can parse both as date time and integers. `tidb_snapshot` treats them as integers, while we parse them as datetimes,
+	// to maintain backwards compatibility.
+	ts, datetimeErr := parseTsExprAsDatetime(ctx, sctx, tsVal)
+	if datetimeErr == nil {
+		return ts, nil
+	}
+
+	// If datetime conversion failed, try to parse as a TiDB TSO (not a Unix timestamp).
+	// A TiDB TSO encodes a physical timestamp (ms since epoch) in the high bits and a logical
+	// counter in the low 18 bits
+	tso, ok := tsoFromDatum(tsVal)
+	if !ok {
+		return 0, plannererrors.ErrAsOf.FastGenWithCause("cannot parse AS OF TIMESTAMP expression as datetime or TSO")
+	}
+
+	physicalMS := oracle.ExtractPhysical(tso)
+	if physicalMS <= minTSO {
+		return 0, plannererrors.ErrAsOf.FastGenWithCause("invalid TSO timestamp: TSO is before 2013-01-01")
+	}
+	// Validate that the TSO does not exceed the current PD timestamp to preserve
+	// linearizability when async commit is enabled
+	if err := sessionctx.ValidateSnapshotReadTS(ctx, sctx.GetStore(), tso, true); err != nil {
+		return 0, err
+	}
+	return tso, nil
+}
+
+// tsoFromDatum extracts a uint64 TSO value from a Datum.
+func tsoFromDatum(d types.Datum) (uint64, bool) {
+	switch d.Kind() {
+	case types.KindString, types.KindBytes:
+		if tso, err := strconv.ParseUint(d.GetString(), 10, 64); err == nil {
+			return tso, true
+		}
+	case types.KindInt64:
+		if v := d.GetInt64(); v > 0 {
+			return uint64(v), true
+		}
+	case types.KindUint64:
+		if v := d.GetUint64(); v > 0 {
+			return v, true
+		}
+	}
+	return 0, false
+}
+
+// parseTsExprAsDatetime tries to parse the value as a datetime and convert it to TSO.
+// It handles all valid datetime formats including compact format like YYYYMMDDHHMMSS.
+func parseTsExprAsDatetime(_ context.Context, sctx planctx.PlanContext, tsVal types.Datum) (uint64, error) {
 	toTypeTimestamp := types.NewFieldType(mysql.TypeTimestamp)
 	// We need at least the millisecond here, so set fsp to 3.
 	toTypeTimestamp.SetDecimal(3)

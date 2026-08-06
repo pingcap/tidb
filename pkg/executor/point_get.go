@@ -56,14 +56,14 @@ func (b *executorBuilder) buildPointGet(p *physicalop.PointGetPlan) exec.Executo
 		return nil
 	}
 
-	isTableDual, err := p.PrunePartitions(b.ctx)
+	isTableDual, err := p.PrunePartitions(b.sctx)
 	if err != nil {
 		b.err = err
 		return nil
 	}
 	if isTableDual {
 		return &TableDualExec{
-			BaseExecutorV2: exec.NewBaseExecutorV2(b.ctx.GetSessionVars(), p.Schema(), p.ID()),
+			BaseExecutorV2: exec.NewBaseExecutorV2(b.sctx.GetSessionVars(), p.Schema(), p.ID()),
 			numDualRows:    0,
 			numReturned:    0,
 		}
@@ -76,10 +76,10 @@ func (b *executorBuilder) buildPointGet(p *physicalop.PointGetPlan) exec.Executo
 		}()
 	}
 
-	b.ctx.GetSessionVars().StmtCtx.IsTiKV.Store(true)
+	b.sctx.GetSessionVars().StmtCtx.IsTiKV.Store(true)
 
 	e := &PointGetExecutor{
-		BaseExecutor:       exec.NewBaseExecutor(b.ctx, p.Schema(), p.ID()),
+		BaseExecutor:       exec.NewBaseExecutor(b.sctx, p.Schema(), p.ID()),
 		indexUsageReporter: b.buildIndexUsageReporter(p, false),
 		txnScope:           b.txnScope,
 		readReplicaScope:   b.readReplicaScope,
@@ -273,6 +273,7 @@ func (e *PointGetExecutor) Close() error {
 	if e.stats != nil {
 		defer func() {
 			sc := e.Ctx().GetSessionVars().StmtCtx
+			sc.MergeReadPoolTaskDetails(e.stats.SnapshotRuntimeStats.GetReadPoolTaskDetails())
 			sc.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 			timeDetail := e.stats.SnapshotRuntimeStats.GetTimeDetail()
 			if timeDetail != nil {
@@ -606,7 +607,7 @@ func (e *PointGetExecutor) lockKeyBase(ctx context.Context,
 			return nil, err
 		}
 
-		lockCtx, err := newLockCtx(e.Ctx(), lockWaitTime, 1)
+		lockCtx, err := newLockCtx(e.Ctx(), lockWaitTime, 1, false)
 		if err != nil {
 			return nil, err
 		}

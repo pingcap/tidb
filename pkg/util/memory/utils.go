@@ -17,6 +17,8 @@ package memory
 import (
 	"container/list"
 	"math/bits"
+	"runtime"
+	"runtime/metrics"
 	"sync/atomic"
 	"time"
 
@@ -167,14 +169,43 @@ func (n *Notifer) WeakWake() {
 	n.wake()
 }
 
-// HashStr hashes a string to a uint64 value
-func HashStr(key string) uint64 {
-	hashKey := initHashKey
-	for _, c := range key {
-		hashKey *= prime64
-		hashKey ^= uint64(c)
+// InvalidDigestID disables digest profile lookup and update.
+const InvalidDigestID uint64 = 0
+
+// DigestIDBuilder incrementally builds a digest profile ID without allocating
+// a composite key string.
+type DigestIDBuilder struct {
+	hash uint64
+}
+
+// NewDigestIDBuilder creates a DigestIDBuilder.
+func NewDigestIDBuilder() DigestIDBuilder {
+	return DigestIDBuilder{hash: initHashKey}
+}
+
+// AddString adds a length-prefixed string component to the digest profile ID.
+func (b *DigestIDBuilder) AddString(value string) {
+	b.addUint64(uint64(len(value)))
+	for i := range len(value) {
+		b.addByte(value[i])
 	}
-	return hashKey
+}
+
+func (b *DigestIDBuilder) addUint64(value uint64) {
+	for range 8 {
+		b.addByte(byte(value))
+		value >>= 8
+	}
+}
+
+func (b *DigestIDBuilder) addByte(value byte) {
+	b.hash *= prime64
+	b.hash ^= uint64(value)
+}
+
+// Sum64 returns the digest profile ID.
+func (b *DigestIDBuilder) Sum64() uint64 {
+	return b.hash
 }
 
 // HashEvenNum hashes a uint64 even number to a uint64 value
@@ -250,3 +281,66 @@ func intoRatio(x float64) (zMilli int64) {
 }
 
 type cpuCacheLinePad cpu.CacheLinePad
+
+// RuntimeMemStats represents the runtime memory statistics
+type RuntimeMemStats struct {
+	HeapAlloc, HeapInuse, TotalFree, MemOffHeap, NumGC uint64
+}
+
+var gcTracker struct {
+	lastGCTime atomic.Int64 // approximate time of last GC in unix nano
+	lastNumGC  atomic.Uint64
+}
+
+func approxLastGCTime() int64 {
+	return gcTracker.lastGCTime.Load()
+}
+
+// SampleRuntimeMemStats samples the runtime memory statistics efficiently without STW
+func SampleRuntimeMemStats() (s RuntimeMemStats) {
+	heapSample := [7]metrics.Sample{
+		// heap alloc
+		{Name: "/memory/classes/heap/objects:bytes"},
+		// heap available
+		{Name: "/memory/classes/heap/unused:bytes"}, // unused
+		{Name: "/memory/classes/heap/free:bytes"},
+		{Name: "/memory/classes/heap/released:bytes"},
+		// memory total
+		{Name: "/memory/classes/total:bytes"},
+		// total free
+		{Name: "/gc/heap/frees:bytes"},
+		// total GC cycles
+		{Name: "/gc/cycles/total:gc-cycles"},
+	}
+	metrics.Read(heapSample[:])
+	s = RuntimeMemStats{
+		HeapAlloc: heapSample[0].Value.Uint64(),
+		HeapInuse: heapSample[0].Value.Uint64() + heapSample[1].Value.Uint64(), // inuse = alloc + unused
+		TotalFree: heapSample[5].Value.Uint64(),
+		NumGC:     heapSample[6].Value.Uint64(),
+	}
+
+	total := heapSample[4].Value.Uint64()
+	heap := heapSample[0].Value.Uint64() + heapSample[1].Value.Uint64() + heapSample[2].Value.Uint64() + heapSample[3].Value.Uint64()
+	if total > heap {
+		s.MemOffHeap = total - heap
+	}
+
+	if s.NumGC > gcTracker.lastNumGC.Load() {
+		gcTracker.lastGCTime.Store(now().UnixNano())
+		gcTracker.lastNumGC.Store(s.NumGC)
+	}
+
+	return s
+}
+
+// IntoRuntimeMemStats converts runtime.MemStats to RuntimeMemStats
+func IntoRuntimeMemStats(s *runtime.MemStats) RuntimeMemStats {
+	return RuntimeMemStats{
+		HeapAlloc:  s.HeapAlloc,
+		HeapInuse:  s.HeapInuse,
+		TotalFree:  s.TotalAlloc - s.Alloc,
+		MemOffHeap: s.Sys - s.HeapSys,
+		NumGC:      uint64(s.NumGC),
+	}
+}

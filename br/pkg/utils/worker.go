@@ -10,6 +10,11 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	DefaultWorkerTokenChannelSize = 128
+	MaxWorkerTokenChannelSize     = 30 * 1024 * 1024 // 30M
+)
+
 // PanicToErr recovers when the execution get panicked, and set the error provided by the arg.
 // generally, this would be used with named return value and `defer`, like:
 //
@@ -66,6 +71,14 @@ func AsyncStreamBy[T any](generator func() (T, error)) <-chan Result[T] {
 }
 
 func BuildWorkerTokenChannel(size uint) chan struct{} {
+	if size == 0 {
+		size = DefaultWorkerTokenChannelSize
+		log.Warn("build worker token channel: size is 0, set to default value", zap.Uint("new size", size))
+	}
+	if size > MaxWorkerTokenChannelSize {
+		size = MaxWorkerTokenChannelSize
+		log.Warn("build worker token channel: size is greater than max value, set to max value", zap.Uint("new size", size))
+	}
 	ch := make(chan struct{}, size)
 	for range size {
 		ch <- struct{}{}

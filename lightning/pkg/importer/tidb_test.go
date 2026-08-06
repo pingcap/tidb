@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -126,10 +126,10 @@ func TestLoadSchemaInfo(t *testing.T) {
 		return tableInfos, nil
 	})
 	require.NoError(t, err)
-	require.Equal(t, map[string]*checkpoints.TidbDBInfo{
+	require.Equal(t, map[string]*importdef.DBInfo{
 		"db": {
 			Name: "db",
-			Tables: map[string]*checkpoints.TidbTableInfo{
+			Tables: map[string]*importdef.TableInfo{
 				"t1": {
 					ID:      100,
 					DB:      "db",

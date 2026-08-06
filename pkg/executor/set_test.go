@@ -23,14 +23,19 @@ import (
 	"net/http"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/extworkload"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -39,7 +44,120 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mock"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/stretchr/testify/require"
+	pd "github.com/tikv/pd/client"
 )
+
+type setGCLifeTimeManager struct {
+	extworkload.Manager
+	gcLifeTime time.Duration
+	updateCnt  int
+	role       config.ExternalWorkloadRole
+	meta       *keyspacepb.KeyspaceMeta
+}
+
+func (m *setGCLifeTimeManager) Role() config.ExternalWorkloadRole {
+	return m.role
+}
+
+func (m *setGCLifeTimeManager) Meta() *keyspacepb.KeyspaceMeta {
+	return m.meta
+}
+
+func (m *setGCLifeTimeManager) UpdateGCLifeTime(_ context.Context, gcLifeTime time.Duration) error {
+	m.updateCnt++
+	m.gcLifeTime = gcLifeTime
+	return nil
+}
+
+func TestSetGCLifeTimeNotifiesExternalWorkloadWithEffectiveValue(t *testing.T) {
+	keyspaceLevelMeta := &keyspacepb.KeyspaceMeta{Config: map[string]string{
+		pd.KeyspaceConfigGCManagementType: pd.KeyspaceConfigGCManagementTypeKeyspaceLevel,
+	}}
+	cases := []struct {
+		name           string
+		role           config.ExternalWorkloadRole
+		meta           *keyspacepb.KeyspaceMeta
+		setValue       string
+		expectedGlobal time.Duration
+		expectedNotify time.Duration
+		expectedUpdate int
+	}{
+		{name: "master", role: config.RoleMaster, meta: keyspaceLevelMeta, setValue: "24h", expectedGlobal: 24 * time.Hour, expectedNotify: 24 * time.Hour, expectedUpdate: 1},
+		{name: "GCV2 worker", role: config.RoleGCV2Worker, meta: keyspaceLevelMeta, setValue: "24h", expectedGlobal: 24 * time.Hour, expectedNotify: 24 * time.Hour, expectedUpdate: 1},
+		{name: "TTL worker", role: config.RoleTTLTaskWorker, meta: keyspaceLevelMeta, setValue: "24h", expectedGlobal: 24 * time.Hour, expectedNotify: 24 * time.Hour, expectedUpdate: 1},
+		{name: "auto analyze worker", role: config.RoleAutoAnalyzeWorker, meta: keyspaceLevelMeta, setValue: "24h", expectedGlobal: 24 * time.Hour, expectedNotify: 24 * time.Hour, expectedUpdate: 1},
+		{name: "minimum value", role: config.RoleMaster, meta: keyspaceLevelMeta, setValue: "1m", expectedGlobal: 10 * time.Minute, expectedNotify: 10 * time.Minute, expectedUpdate: 1},
+		{name: "unified GC", role: config.RoleMaster, meta: &keyspacepb.KeyspaceMeta{}, setValue: "24h", expectedGlobal: 24 * time.Hour, expectedUpdate: 0},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			mgr := &setGCLifeTimeManager{role: tc.role, meta: tc.meta}
+			extworkload.SetManagerForStore(store, mgr)
+
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec(fmt.Sprintf("set global tidb_gc_life_time = '%s'", tc.setValue))
+			tk.MustQuery("select @@global.tidb_gc_life_time").Check(testkit.Rows(tc.expectedGlobal.String()))
+			require.Equal(t, tc.expectedUpdate, mgr.updateCnt)
+			require.Equal(t, tc.expectedNotify, mgr.gcLifeTime)
+		})
+	}
+}
+
+func TestSetEmbeddingAPIKeyRedactedForAuditPlugin(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	receivedValues := make(map[string]string)
+	const pluginName = "audit_embedding_api_key_redaction"
+	require.NoError(t, plugin.StaticPlugins.Add(pluginName, func() *plugin.Manifest {
+		return plugin.ExportManifest(&plugin.AuditManifest{
+			Manifest: plugin.Manifest{
+				Kind:    plugin.Audit,
+				Name:    pluginName,
+				Version: 1,
+				OnInit: func(context.Context, *plugin.Manifest) error {
+					return nil
+				},
+			},
+			OnGlobalVariableEvent: func(_ context.Context, _ *variable.SessionVars, name, value string) {
+				receivedValues[name] = value
+			},
+		})
+	}))
+	t.Cleanup(plugin.StaticPlugins.Clear)
+
+	pluginCfg := plugin.Config{Plugins: []string{pluginName + "-1"}}
+	require.NoError(t, plugin.Load(context.Background(), pluginCfg))
+	require.NoError(t, plugin.Init(context.Background(), pluginCfg))
+	t.Cleanup(func() { plugin.Shutdown(context.Background()) })
+
+	originalVersion := vardef.EmbeddingConfigVersion.Load()
+	t.Cleanup(func() { vardef.EmbeddingConfigVersion.Store(originalVersion) })
+	apiKeys := []struct {
+		name  string
+		load  func() string
+		store func(string)
+	}{
+		{name: vardef.TiDBExpEmbedJinaAIAPIKey, load: vardef.EmbedJinaAPIKey.Load, store: vardef.EmbedJinaAPIKey.Store},
+		{name: vardef.TiDBExpEmbedOpenAIAPIKey, load: vardef.EmbedOpenAIAPIKey.Load, store: vardef.EmbedOpenAIAPIKey.Store},
+		{name: vardef.TiDBExpEmbedCohereAPIKey, load: vardef.EmbedCohereAPIKey.Load, store: vardef.EmbedCohereAPIKey.Store},
+		{name: vardef.TiDBExpEmbedHuggingFaceAPIKey, load: vardef.EmbedHuggingFaceAPIKey.Load, store: vardef.EmbedHuggingFaceAPIKey.Store},
+		{name: vardef.TiDBExpEmbedNvidiaNIMAPIKey, load: vardef.EmbedNvidiaNIMAPIKey.Load, store: vardef.EmbedNvidiaNIMAPIKey.Store},
+		{name: vardef.TiDBExpEmbedGeminiAPIKey, load: vardef.EmbedGeminiAPIKey.Load, store: vardef.EmbedGeminiAPIKey.Store},
+	}
+	for _, apiKey := range apiKeys {
+		originalValue := apiKey.load()
+		t.Cleanup(func() { apiKey.store(originalValue) })
+	}
+
+	tk := testkit.NewTestKit(t, store)
+	for _, apiKey := range apiKeys {
+		tk.MustExec(fmt.Sprintf("SET @@GLOBAL.%s = 'secret-%s'", apiKey.name, apiKey.name))
+		require.Equal(t, "******", receivedValues[apiKey.name])
+	}
+	require.Len(t, receivedValues, len(apiKeys))
+}
 
 func TestSetVar(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -553,15 +671,6 @@ func TestSetVar(t *testing.T) {
 		tk.MustGetErrMsg(fmt.Sprintf("SET @@global.%s = 46;", v), "Unknown charset 46")
 		tk.MustGetErrMsg(fmt.Sprintf("SET @@%s = 46;", v), "Unknown charset 46")
 	}
-
-	tk.MustExec("SET SESSION tidb_enable_extended_stats = on")
-	tk.MustQuery("select @@session.tidb_enable_extended_stats").Check(testkit.Rows("1"))
-	tk.MustExec("SET SESSION tidb_enable_extended_stats = off")
-	tk.MustQuery("select @@session.tidb_enable_extended_stats").Check(testkit.Rows("0"))
-	tk.MustExec("SET GLOBAL tidb_enable_extended_stats = on")
-	tk.MustQuery("select @@global.tidb_enable_extended_stats").Check(testkit.Rows("1"))
-	tk.MustExec("SET GLOBAL tidb_enable_extended_stats = off")
-	tk.MustQuery("select @@global.tidb_enable_extended_stats").Check(testkit.Rows("0"))
 
 	tk.MustExec("SET SESSION tidb_allow_fallback_to_tikv = 'tiflash'")
 	tk.MustQuery("select @@session.tidb_allow_fallback_to_tikv").Check(testkit.Rows("tiflash"))
@@ -1825,4 +1934,28 @@ func TestDivPrecisionIncrement(t *testing.T) {
 
 	// Test set global.
 	tk.MustExec("set global div_precision_increment = 4")
+}
+
+func TestSetTiDBServiceScopeCaseInsensitive(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	originConfig := config.GetGlobalConfig()
+	originServiceScope := vardef.ServiceScope.Load()
+	t.Cleanup(func() {
+		config.StoreGlobalConfig(originConfig)
+		vardef.ServiceScope.Store(originServiceScope)
+	})
+
+	tk.MustExec("set global tidb_service_scope='BaCkGround'")
+	tk.MustQuery("select @@global.tidb_service_scope").Check(testkit.Rows("background"))
+	require.Equal(t, "background", vardef.ServiceScope.Load())
+	require.Equal(t, "background", config.GetGlobalConfig().Instance.TiDBServiceScope)
+	tk.MustQuery("select role from mysql.dist_framework_meta where host=':4000'").Check(testkit.Rows("background"))
+
+	tk.MustExec("set instance tidb_service_scope='BackGround'")
+	tk.MustQuery("select @@global.tidb_service_scope").Check(testkit.Rows("background"))
+	require.Equal(t, "background", vardef.ServiceScope.Load())
+	require.Equal(t, "background", config.GetGlobalConfig().Instance.TiDBServiceScope)
+	tk.MustQuery("select role from mysql.dist_framework_meta where host=':4000'").Check(testkit.Rows("background"))
 }

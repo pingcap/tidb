@@ -5,8 +5,8 @@
       {
         "SQL": "SELECT t1.id1, t1.id2, SUM(t1.id3)  FROM t1, t2  WHERE t1.id1=t2.id1 AND t1.id2=t2.id2  GROUP BY t1.id1, t1.id2;",
         "Plan": [
-          "Projection root  test.t1.id1, test.t1.id2, Column#11",
-          "└─Projection root  cast(test.t1.id3, decimal(32,0) BINARY)->Column#11, test.t1.id1, test.t1.id2",
+          "Projection root  test.t1.id1, test.t1.id2, Column",
+          "└─Projection root  cast(test.t1.id3, decimal(32,0) BINARY)->Column, test.t1.id1, test.t1.id2",
           "  └─HashJoin root  inner join, equal:[eq(test.t1.id1, test.t2.id1) eq(test.t1.id2, test.t2.id2)]",
           "    ├─IndexReader(Build) root  index:IndexFullScan",
           "    │ └─IndexFullScan cop[tikv] table:t2, index:UK_id1_id2(id1, id2) keep order:false, stats:pseudo",
@@ -18,9 +18,9 @@
       {
         "SQL": "SELECT t1.id1, t1.id2, SUM(t1.id3)  FROM t1, t4  WHERE t1.id1=t4.id1 AND t1.id2=t4.id2  GROUP BY t1.id1, t1.id2;",
         "Plan": [
-          "Projection root  test.t1.id1, test.t1.id2, Column#11",
-          "└─HashAgg root  group by:Column#16, Column#17, funcs:sum(Column#15)->Column#11, funcs:firstrow(Column#16)->test.t1.id1, funcs:firstrow(Column#17)->test.t1.id2",
-          "  └─Projection root  cast(test.t1.id3, decimal(10,0) BINARY)->Column#15, test.t1.id1->Column#16, test.t1.id2->Column#17",
+          "Projection root  test.t1.id1, test.t1.id2, Column",
+          "└─HashAgg root  group by:Column, Column, funcs:sum(Column)->Column, funcs:firstrow(Column)->test.t1.id1, funcs:firstrow(Column)->test.t1.id2",
+          "  └─Projection root  cast(test.t1.id3, decimal(10,0) BINARY)->Column, test.t1.id1->Column, test.t1.id2->Column",
           "    └─HashJoin root  inner join, equal:[eq(test.t1.id1, test.t4.id1) eq(test.t1.id2, test.t4.id2)]",
           "      ├─IndexReader(Build) root  index:IndexFullScan",
           "      │ └─IndexFullScan cop[tikv] table:t4, index:UK_id1_id2(id1, id2) keep order:false, stats:pseudo",
@@ -32,8 +32,8 @@
       {
         "SQL": "SELECT t1.id1, t1.id2, COUNT(t1.id3) FROM t1, t2 WHERE t1.id1 = t2.id1 GROUP BY t1.id1, t1.id2;",
         "Plan": [
-          "Projection root  test.t1.id1, test.t1.id2, Column#11",
-          "└─HashAgg root  group by:test.t1.id1, test.t1.id2, funcs:count(test.t1.id3)->Column#11, funcs:firstrow(test.t1.id1)->test.t1.id1, funcs:firstrow(test.t1.id2)->test.t1.id2",
+          "Projection root  test.t1.id1, test.t1.id2, Column",
+          "└─HashAgg root  group by:test.t1.id1, test.t1.id2, funcs:count(test.t1.id3)->Column, funcs:firstrow(test.t1.id1)->test.t1.id1, funcs:firstrow(test.t1.id2)->test.t1.id2",
           "  └─HashJoin root  inner join, equal:[eq(test.t1.id1, test.t2.id1)]",
           "    ├─IndexReader(Build) root  index:IndexFullScan",
           "    │ └─IndexFullScan cop[tikv] table:t2, index:UK_id1_id2(id1, id2) keep order:false, stats:pseudo",
@@ -45,8 +45,8 @@
       {
         "SQL": "SELECT t1.id1, t1.id2, COUNT(t1.id3) FROM t1, t2, t3 WHERE t1.id1=t2.id1 AND t1.id2=t2.id2   AND t2.id1=t3.id1 AND t2.id2=t3.id2 GROUP BY t1.id1, t1.id2;",
         "Plan": [
-          "Projection root  test.t1.id1, test.t1.id2, Column#16",
-          "└─Projection root  1->Column#16, test.t1.id1, test.t1.id2",
+          "Projection root  test.t1.id1, test.t1.id2, Column",
+          "└─Projection root  1->Column, test.t1.id1, test.t1.id2",
           "  └─HashJoin root  inner join, equal:[eq(test.t2.id1, test.t3.id1) eq(test.t2.id2, test.t3.id2)]",
           "    ├─IndexReader(Build) root  index:IndexFullScan",
           "    │ └─IndexFullScan cop[tikv] table:t3, index:UK_id1_id2(id1, id2) keep order:false, stats:pseudo",
@@ -61,8 +61,8 @@
       {
         "SQL": "SELECT t1.id1, t1.id2, COUNT(t1.id3) FROM t1, t2, t4 WHERE t1.id1=t2.id1 AND t1.id2=t2.id2   AND t2.id1=t4.id1 AND t2.id2=t4.id2 GROUP BY t1.id1, t1.id2;",
         "Plan": [
-          "Projection root  test.t1.id1, test.t1.id2, Column#16",
-          "└─HashAgg root  group by:test.t1.id1, test.t1.id2, funcs:count(test.t1.id3)->Column#16, funcs:firstrow(test.t1.id1)->test.t1.id1, funcs:firstrow(test.t1.id2)->test.t1.id2",
+          "Projection root  test.t1.id1, test.t1.id2, Column",
+          "└─HashAgg root  group by:test.t1.id1, test.t1.id2, funcs:count(test.t1.id3)->Column, funcs:firstrow(test.t1.id1)->test.t1.id1, funcs:firstrow(test.t1.id2)->test.t1.id2",
           "  └─HashJoin root  inner join, equal:[eq(test.t2.id1, test.t4.id1) eq(test.t2.id2, test.t4.id2)]",
           "    ├─IndexReader(Build) root  index:IndexFullScan",
           "    │ └─IndexFullScan cop[tikv] table:t4, index:UK_id1_id2(id1, id2) keep order:false, stats:pseudo",
@@ -77,8 +77,8 @@
       {
         "SQL": "SELECT t1.id1, t1.id2, COUNT(t1.id3) FROM t1, t2, t3, t4 WHERE t1.id1=t2.id1 AND t1.id2=t2.id2   AND t2.id1=t3.id1 AND t2.id2=t3.id2 AND t3.id1=t4.id1 AND t3.id2=t4.id2 GROUP BY t1.id1, t1.id2;",
         "Plan": [
-          "Projection root  test.t1.id1, test.t1.id2, Column#21",
-          "└─HashAgg root  group by:test.t1.id1, test.t1.id2, funcs:count(test.t1.id3)->Column#21, funcs:firstrow(test.t1.id1)->test.t1.id1, funcs:firstrow(test.t1.id2)->test.t1.id2",
+          "Projection root  test.t1.id1, test.t1.id2, Column",
+          "└─HashAgg root  group by:test.t1.id1, test.t1.id2, funcs:count(test.t1.id3)->Column, funcs:firstrow(test.t1.id1)->test.t1.id1, funcs:firstrow(test.t1.id2)->test.t1.id2",
           "  └─MergeJoin root  inner join, left key:test.t3.id1, test.t3.id2, right key:test.t4.id1, test.t4.id2",
           "    ├─IndexReader(Build) root  index:IndexFullScan",
           "    │ └─IndexFullScan cop[tikv] table:t4, index:UK_id1_id2(id1, id2) keep order:true, stats:pseudo",
@@ -97,10 +97,10 @@
       {
         "SQL": "SELECT t1.id1, t1.id2, COUNT(t1.id3) FROM t1, t2 WHERE ABS(t1.id1) = t2.id1 AND t1.id2 = t2.id2 GROUP BY t1.id1, t1.id2;",
         "Plan": [
-          "Projection root  test.t1.id1, test.t1.id2, Column#11",
-          "└─Projection root  1->Column#11, test.t1.id1, test.t1.id2",
-          "  └─HashJoin root  inner join, equal:[eq(test.t2.id2, test.t1.id2) eq(test.t2.id1, Column#12)]",
-          "    ├─Projection(Build) root  test.t1.id1, test.t1.id2, abs(test.t1.id1)->Column#12",
+          "Projection root  test.t1.id1, test.t1.id2, Column",
+          "└─Projection root  1->Column, test.t1.id1, test.t1.id2",
+          "  └─HashJoin root  inner join, equal:[eq(test.t2.id2, test.t1.id2) eq(test.t2.id1, Column)]",
+          "    ├─Projection(Build) root  test.t1.id1, test.t1.id2, abs(test.t1.id1)->Column",
           "    │ └─TableReader root  data:TableFullScan",
           "    │   └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
           "    └─IndexReader(Probe) root  index:IndexFullScan",
@@ -111,10 +111,10 @@
       {
         "SQL": "SELECT t1.id1, t1.id2, COUNT(t1.id3) FROM t1, t2 WHERE t1.id1 = ABS(t2.id1) AND t1.id2 = t2.id2 GROUP BY t1.id1, t1.id2;",
         "Plan": [
-          "Projection root  test.t1.id1, test.t1.id2, Column#11",
-          "└─HashAgg root  group by:test.t1.id1, test.t1.id2, funcs:count(test.t1.id3)->Column#11, funcs:firstrow(test.t1.id1)->test.t1.id1, funcs:firstrow(test.t1.id2)->test.t1.id2",
-          "  └─HashJoin root  inner join, equal:[eq(test.t1.id2, test.t2.id2) eq(test.t1.id1, Column#12)]",
-          "    ├─Projection(Build) root  test.t2.id2, abs(test.t2.id1)->Column#12",
+          "Projection root  test.t1.id1, test.t1.id2, Column",
+          "└─HashAgg root  group by:test.t1.id1, test.t1.id2, funcs:count(test.t1.id3)->Column, funcs:firstrow(test.t1.id1)->test.t1.id1, funcs:firstrow(test.t1.id2)->test.t1.id2",
+          "  └─HashJoin root  inner join, equal:[eq(test.t1.id2, test.t2.id2) eq(test.t1.id1, Column)]",
+          "    ├─Projection(Build) root  test.t2.id2, abs(test.t2.id1)->Column",
           "    │ └─IndexReader root  index:IndexFullScan",
           "    │   └─IndexFullScan cop[tikv] table:t2, index:UK_id1_id2(id1, id2) keep order:false, stats:pseudo",
           "    └─TableReader(Probe) root  data:TableFullScan",
@@ -125,7 +125,7 @@
       {
         "SQL": "SELECT t1.id1, t1.id2, SUM(t1.id3) FROM t1 WHERE EXISTS ( SELECT 1 FROM t2 WHERE t1.id1=t2.id1 AND t1.id2=t2.id2 ) GROUP BY t1.id1, t1.id2;",
         "Plan": [
-          "Projection root  test.t1.id1, test.t1.id2, cast(test.t1.id3, decimal(32,0) BINARY)->Column#12",
+          "Projection root  test.t1.id1, test.t1.id2, cast(test.t1.id3, decimal(32,0) BINARY)->Column",
           "└─HashJoin root  semi join, left side:TableReader, equal:[eq(test.t1.id1, test.t2.id1) eq(test.t1.id2, test.t2.id2)]",
           "  ├─IndexReader(Build) root  index:IndexFullScan",
           "  │ └─IndexFullScan cop[tikv] table:t2, index:UK_id1_id2(id1, id2) keep order:false, stats:pseudo",
@@ -137,8 +137,8 @@
       {
         "SQL": "SELECT t1.id1, t1.id2, COUNT(t1.id3) FROM t1 left join t2 on t1.id1 = t2.id1 and t1.id2 = t2.id2  inner join t3 on t1.id1 = t3.id1 and t1.id2 = t3.id2 GROUP BY t1.id1, t1.id2;",
         "Plan": [
-          "Projection root  test.t1.id1, test.t1.id2, Column#16",
-          "└─Projection root  1->Column#16, test.t1.id1, test.t1.id2",
+          "Projection root  test.t1.id1, test.t1.id2, Column",
+          "└─Projection root  1->Column, test.t1.id1, test.t1.id2",
           "  └─HashJoin root  inner join, equal:[eq(test.t1.id1, test.t3.id1) eq(test.t1.id2, test.t3.id2)]",
           "    ├─IndexReader(Build) root  index:IndexFullScan",
           "    │ └─IndexFullScan cop[tikv] table:t3, index:UK_id1_id2(id1, id2) keep order:false, stats:pseudo",
@@ -153,8 +153,8 @@
       {
         "SQL": "SELECT t1.id1, t1.id2, COUNT(t1.id3) FROM t1 left join t2 on t1.id1 = t2.id1 and t1.id2 = t2.id2  inner join t4 on t1.id1 = t4.id1 and t1.id2 = t4.id2 GROUP BY t1.id1, t1.id2;",
         "Plan": [
-          "Projection root  test.t1.id1, test.t1.id2, Column#16",
-          "└─HashAgg root  group by:test.t1.id1, test.t1.id2, funcs:count(test.t1.id3)->Column#16, funcs:firstrow(test.t1.id1)->test.t1.id1, funcs:firstrow(test.t1.id2)->test.t1.id2",
+          "Projection root  test.t1.id1, test.t1.id2, Column",
+          "└─HashAgg root  group by:test.t1.id1, test.t1.id2, funcs:count(test.t1.id3)->Column, funcs:firstrow(test.t1.id1)->test.t1.id1, funcs:firstrow(test.t1.id2)->test.t1.id2",
           "  └─HashJoin root  inner join, equal:[eq(test.t1.id1, test.t4.id1) eq(test.t1.id2, test.t4.id2)]",
           "    ├─IndexReader(Build) root  index:IndexFullScan",
           "    │ └─IndexFullScan cop[tikv] table:t4, index:UK_id1_id2(id1, id2) keep order:false, stats:pseudo",
@@ -174,7 +174,7 @@
       {
         "SQL": "select /*+ read_from_storage(tiflash[t1]) */ /*+ use_index(t1) */ /*+ agg_to_cop() hash_agg() */  bit_and(t1.col_2) as r0, bit_xor(t1.col_2) as r1 , substring(t1.col_2 ,4) as r2 from t1 where t1.col_1 in ('04:00:09.00' ,'21:06:18.00' ,'18:43:53.00') group by t1.col_1,t1.col_2  having not(t1.col_1 <> '06:32:23.00');",
         "Plan": [
-          "Projection root  ifnull(cast(test.t1.col_2, bigint(21) UNSIGNED BINARY), 18446744073709551615)->Column#7, ifnull(cast(test.t1.col_2, bigint(21) UNSIGNED BINARY), 0)->Column#8, substring(cast(test.t1.col_2, var_string(20)), 4)->Column#9",
+          "Projection root  ifnull(cast(test.t1.col_2, bigint(21) UNSIGNED BINARY), 18446744073709551615)->Column, ifnull(cast(test.t1.col_2, bigint(21) UNSIGNED BINARY), 0)->Column, substring(cast(test.t1.col_2, var_string(20)), 4)->Column",
           "└─TableDual root  rows:0"
         ],
         "Warn": [

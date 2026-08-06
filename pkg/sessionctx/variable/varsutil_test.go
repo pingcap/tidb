@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -91,6 +92,7 @@ func TestNewSessionVars(t *testing.T) {
 	require.Equal(t, vardef.DefTiDBAnalyzeVersion, vars.AnalyzeVersion)
 	require.Equal(t, vardef.DefCTEMaxRecursionDepth, vars.CTEMaxRecursionDepth)
 	require.Equal(t, int64(vardef.DefTiDBTmpTableMaxSize), vars.TMPTableSize)
+	require.Equal(t, vardef.DefOptEnableAlternativeLogicalPlans, vars.EnableAlternativeLogicalPlans)
 
 	assertFieldsGreaterThanZero(t, reflect.ValueOf(vars.MemQuota))
 	assertFieldsGreaterThanZero(t, reflect.ValueOf(vars.BatchSize))
@@ -156,7 +158,7 @@ func TestVarsutil(t *testing.T) {
 		err          error
 	}{
 		{"Europe/Helsinki", "Europe/Helsinki", true, -2 * time.Hour, nil},
-		{"US/Eastern", "US/Eastern", true, 5 * time.Hour, nil},
+		{"America/New_York", "America/New_York", true, 5 * time.Hour, nil},
 		// TODO: Check it out and reopen this case.
 		// {"SYSTEM", "Local", false, 0},
 		{"+10:00", "", true, -10 * time.Hour, nil},
@@ -210,6 +212,11 @@ func TestVarsutil(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, v.BatchInsert)
 
+	require.False(t, v.EnableAlternativeLogicalPlans)
+	err = v.SetSystemVar(vardef.TiDBOptEnableAlternativeLogicalPlans, "1")
+	require.NoError(t, err)
+	require.True(t, v.EnableAlternativeLogicalPlans)
+
 	require.Equal(t, 32, v.InitChunkSize)
 	require.Equal(t, 1024, v.MaxChunkSize)
 	err = v.SetSystemVar(vardef.TiDBMaxChunkSize, "2")
@@ -230,6 +237,11 @@ func TestVarsutil(t *testing.T) {
 	err = v.SetSystemVar(vardef.TiDBOptimizerSelectivityLevel, "1")
 	require.NoError(t, err)
 	require.Equal(t, 1, v.OptimizerSelectivityLevel)
+
+	require.Equal(t, vardef.DefTiDBOptIndexPruneThreshold, v.OptIndexPruneThreshold)
+	err = v.SetSystemVar(vardef.TiDBOptIndexPruneThreshold, "1")
+	require.NoError(t, err)
+	require.Equal(t, 1, v.OptIndexPruneThreshold)
 
 	require.Equal(t, vardef.DefTiDBEnableOuterJoinReorder, v.EnableOuterJoinReorder)
 	err = v.SetSystemVar(vardef.TiDBOptimizerEnableOuterJoinReorder, "OFF")
@@ -258,6 +270,14 @@ func TestVarsutil(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "5", val)
 	require.Equal(t, 5, v.TiDBOptJoinReorderThreshold)
+
+	require.Equal(t, vardef.DefTiDBOptEnableAdvancedJoinReorder, v.TiDBOptEnableAdvancedJoinReorder)
+	err = v.SetSystemVar(vardef.TiDBOptEnableAdvancedJoinReorder, "OFF")
+	require.NoError(t, err)
+	require.Equal(t, false, v.TiDBOptEnableAdvancedJoinReorder)
+	err = v.SetSystemVar(vardef.TiDBOptEnableAdvancedJoinReorder, "ON")
+	require.NoError(t, err)
+	require.Equal(t, true, v.TiDBOptEnableAdvancedJoinReorder)
 
 	err = v.SetSystemVar(vardef.TiDBLowResolutionTSO, "1")
 	require.NoError(t, err)
@@ -361,11 +381,16 @@ func TestVarsutil(t *testing.T) {
 	require.Equal(t, 5.0, v.GetConcurrencyFactor())
 
 	err = v.SetSystemVar(vardef.TiDBReplicaRead, "follower")
-	require.NoError(t, err)
-	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), vardef.TiDBReplicaRead)
-	require.NoError(t, err)
-	require.Equal(t, "follower", val)
-	require.Equal(t, kv.ReplicaReadFollower, v.replicaRead)
+	if kerneltype.IsNextGen() {
+		require.Error(t, err)
+		require.True(t, ErrNotSupportedInNextGen.Equal(err))
+	} else {
+		require.NoError(t, err)
+		val, err = v.GetSessionOrGlobalSystemVar(context.Background(), vardef.TiDBReplicaRead)
+		require.NoError(t, err)
+		require.Equal(t, "follower", val)
+		require.Equal(t, kv.ReplicaReadFollower, v.replicaRead)
+	}
 	err = v.SetSystemVar(vardef.TiDBReplicaRead, "leader")
 	require.NoError(t, err)
 	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), vardef.TiDBReplicaRead)
@@ -373,11 +398,16 @@ func TestVarsutil(t *testing.T) {
 	require.Equal(t, "leader", val)
 	require.Equal(t, kv.ReplicaReadLeader, v.replicaRead)
 	err = v.SetSystemVar(vardef.TiDBReplicaRead, "leader-and-follower")
-	require.NoError(t, err)
-	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), vardef.TiDBReplicaRead)
-	require.NoError(t, err)
-	require.Equal(t, "leader-and-follower", val)
-	require.Equal(t, kv.ReplicaReadMixed, v.replicaRead)
+	if kerneltype.IsNextGen() {
+		require.Error(t, err)
+		require.True(t, ErrNotSupportedInNextGen.Equal(err))
+	} else {
+		require.NoError(t, err)
+		val, err = v.GetSessionOrGlobalSystemVar(context.Background(), vardef.TiDBReplicaRead)
+		require.NoError(t, err)
+		require.Equal(t, "leader-and-follower", val)
+		require.Equal(t, kv.ReplicaReadMixed, v.replicaRead)
+	}
 
 	for _, c := range []struct {
 		a string

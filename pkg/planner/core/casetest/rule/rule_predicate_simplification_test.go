@@ -136,13 +136,13 @@ func TestPredicateSimplification(tt *testing.T) {
 			testdata.OnRecord(func() {
 				output[i].SQL = tt
 				tk.MustQuery(tt)
-				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("EXPLAIN FORMAT='brief' " + tt).Rows())
+				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'plan_tree' " + tt).Rows())
 				output[i].Warning = testdata.ConvertRowsToStrings(tk.MustQuery("show warnings").Rows())
 				tk.MustQuery(tt)
 				output[i].LastPlanFromCache = testdata.ConvertRowsToStrings(tk.MustQuery("select @@last_plan_from_cache").Rows())
 			})
 			tk.MustQuery(tt)
-			res := tk.MustQuery("EXPLAIN FORMAT='brief' " + tt)
+			res := tk.MustQuery("explain format = 'plan_tree' " + tt)
 			res.Check(testkit.Rows(output[i].Plan...))
 			tk.MustQuery("show warnings").Check(testkit.Rows(output[i].Warning...))
 			tk.MustQuery(tt)

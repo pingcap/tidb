@@ -15,27 +15,27 @@ load stats 's/wout_cluster_index_tbl_0.json';
 load stats 's/wout_cluster_index_tbl_2.json';
 explain format='plan_tree' select count(*) from with_cluster_index.tbl_0 where col_0 < 5429  ;
 id	task	access object	operator info
-HashAgg	root		funcs:count(Column#7)->Column#6
+HashAgg	root		funcs:count(Column)->Column
 └─IndexReader	root		index:HashAgg
-  └─HashAgg	cop[tikv]		funcs:count(1)->Column#7
+  └─HashAgg	cop[tikv]		funcs:count(1)->Column
     └─IndexRangeScan	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[-inf,5429), keep order:false
 explain format='plan_tree' select count(*) from wout_cluster_index.tbl_0 where col_0 < 5429  ;
 id	task	access object	operator info
-HashAgg	root		funcs:count(Column#8)->Column#7
+HashAgg	root		funcs:count(Column)->Column
 └─IndexReader	root		index:HashAgg
-  └─HashAgg	cop[tikv]		funcs:count(1)->Column#8
+  └─HashAgg	cop[tikv]		funcs:count(1)->Column
     └─IndexRangeScan	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[-inf,5429), keep order:false
 explain format='plan_tree' select count(*) from with_cluster_index.tbl_0 where col_0 < 41  ;
 id	task	access object	operator info
-StreamAgg	root		funcs:count(Column#8)->Column#6
+StreamAgg	root		funcs:count(Column)->Column
 └─IndexReader	root		index:StreamAgg
-  └─StreamAgg	cop[tikv]		funcs:count(1)->Column#8
+  └─StreamAgg	cop[tikv]		funcs:count(1)->Column
     └─IndexRangeScan	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[-inf,41), keep order:false
 explain format='plan_tree' select count(*) from wout_cluster_index.tbl_0 where col_0 < 41  ;
 id	task	access object	operator info
-StreamAgg	root		funcs:count(Column#9)->Column#7
+StreamAgg	root		funcs:count(Column)->Column
 └─IndexReader	root		index:StreamAgg
-  └─StreamAgg	cop[tikv]		funcs:count(1)->Column#9
+  └─StreamAgg	cop[tikv]		funcs:count(1)->Column
     └─IndexRangeScan	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[-inf,41), keep order:false
 explain format='plan_tree' select col_14 from with_cluster_index.tbl_2 where col_11 <> '2013-11-01' ;
 id	task	access object	operator info
@@ -50,15 +50,15 @@ TableReader	root		data:Projection
     └─TableFullScan	cop[tikv]	table:tbl_2	keep order:false
 explain format='plan_tree' select sum( col_4 ) from with_cluster_index.tbl_0 where col_3 != '1993-12-02' ;
 id	task	access object	operator info
-HashAgg	root		funcs:sum(Column#7)->Column#6
+HashAgg	root		funcs:sum(Column)->Column
 └─TableReader	root		data:HashAgg
-  └─HashAgg	cop[tikv]		funcs:sum(with_cluster_index.tbl_0.col_4)->Column#7
+  └─HashAgg	cop[tikv]		funcs:sum(with_cluster_index.tbl_0.col_4)->Column
     └─TableRangeScan	cop[tikv]	table:tbl_0	range:[-inf,1993-12-02 00:00:00), (1993-12-02 00:00:00,+inf], keep order:false
 explain format='plan_tree' select sum( col_4 ) from wout_cluster_index.tbl_0 where col_3 != '1993-12-02' ;
 id	task	access object	operator info
-HashAgg	root		funcs:sum(Column#8)->Column#7
+HashAgg	root		funcs:sum(Column)->Column
 └─TableReader	root		data:HashAgg
-  └─HashAgg	cop[tikv]		funcs:sum(wout_cluster_index.tbl_0.col_4)->Column#8
+  └─HashAgg	cop[tikv]		funcs:sum(wout_cluster_index.tbl_0.col_4)->Column
     └─Selection	cop[tikv]		ne(wout_cluster_index.tbl_0.col_3, 1993-12-02 00:00:00.000000)
       └─TableFullScan	cop[tikv]	table:tbl_0	keep order:false
 explain format='plan_tree' select col_0 from with_cluster_index.tbl_0 where col_0 <= 0  ;
@@ -94,26 +94,26 @@ HashJoin	root		right outer join, left side:TableReader, equal:[eq(wout_cluster_i
     └─TableFullScan	cop[tikv]	table:tbl_2	keep order:false
 explain format='plan_tree' select count(*) from with_cluster_index.tbl_0 where col_0 <= 0 ;
 id	task	access object	operator info
-StreamAgg	root		funcs:count(Column#8)->Column#6
+StreamAgg	root		funcs:count(Column)->Column
 └─IndexReader	root		index:StreamAgg
-  └─StreamAgg	cop[tikv]		funcs:count(1)->Column#8
+  └─StreamAgg	cop[tikv]		funcs:count(1)->Column
     └─IndexRangeScan	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[-inf,0], keep order:false
 explain format='plan_tree' select count(*) from wout_cluster_index.tbl_0 where col_0 <= 0 ;
 id	task	access object	operator info
-StreamAgg	root		funcs:count(Column#9)->Column#7
+StreamAgg	root		funcs:count(Column)->Column
 └─IndexReader	root		index:StreamAgg
-  └─StreamAgg	cop[tikv]		funcs:count(1)->Column#9
+  └─StreamAgg	cop[tikv]		funcs:count(1)->Column
     └─IndexRangeScan	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[-inf,0], keep order:false
 explain format='plan_tree' select count(*) from with_cluster_index.tbl_0 where col_0 >= 803163  ;
 id	task	access object	operator info
-StreamAgg	root		funcs:count(Column#8)->Column#6
+StreamAgg	root		funcs:count(Column)->Column
 └─IndexReader	root		index:StreamAgg
-  └─StreamAgg	cop[tikv]		funcs:count(1)->Column#8
+  └─StreamAgg	cop[tikv]		funcs:count(1)->Column
     └─IndexRangeScan	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[803163,+inf], keep order:false
 explain format='plan_tree' select count(*) from wout_cluster_index.tbl_0 where col_0 >= 803163  ;
 id	task	access object	operator info
-StreamAgg	root		funcs:count(Column#9)->Column#7
+StreamAgg	root		funcs:count(Column)->Column
 └─IndexReader	root		index:StreamAgg
-  └─StreamAgg	cop[tikv]		funcs:count(1)->Column#9
+  └─StreamAgg	cop[tikv]		funcs:count(1)->Column
     └─IndexRangeScan	cop[tikv]	table:tbl_0, index:idx_3(col_0)	range:[803163,+inf], keep order:false
 set @@tidb_enable_outer_join_reorder=false;

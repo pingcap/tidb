@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"go.uber.org/zap"
@@ -134,6 +135,10 @@ func generateNormalIndexPartialPath(
 	item expression.Expression,
 	candidatePath *util.AccessPath,
 ) (paths *util.AccessPath, needSelection bool) {
+	// Reject partial index first.
+	if candidatePath.Index != nil && candidatePath.Index.HasCondition() {
+		return nil, false
+	}
 	pushDownCtx := util.GetPushDownCtx(ds.SCtx())
 	cnfItems := expression.SplitCNFItems(item)
 	pushedDownCNFItems := make([]expression.Expression, 0, len(cnfItems))
@@ -218,6 +223,7 @@ func accessPathsForConds(
 		if ds.TableInfo.IsCommonHandle {
 			newPath.IsCommonHandlePath = true
 			newPath.Index = path.Index
+			newPath.NoncacheableReason = path.NoncacheableReason
 		} else {
 			newPath.IsIntHandlePath = true
 		}
@@ -238,6 +244,7 @@ func accessPathsForConds(
 		}
 	} else {
 		newPath.Index = path.Index
+		newPath.NoncacheableReason = path.NoncacheableReason
 		if !isInIndexMergeHints(ds, newPath.Index.Name.L) {
 			return nil
 		}
@@ -384,7 +391,7 @@ func generateANDIndexMerge4NormalIndex(ds *logicalop.DataSource, normalPathCnt i
 	}
 
 	// 3. Estimate the row count after partial paths.
-	sel, _, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, partialFilters, nil)
+	sel, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, partialFilters, nil)
 	if err != nil {
 		logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
 		sel = cost.SelectionFactor
@@ -457,7 +464,7 @@ func generateMVIndexMergePartialPaths4And(ds *logicalop.DataSource, normalPathCn
 			// derive each mutation access filters
 			accessFilters[mvColOffset] = mvFilterMu
 
-			partialPaths, isIntersection, ok, err := buildPartialPaths4MVIndex(ds.SCtx(), accessFilters, idxCols, possibleMVIndexPaths[idx].Index, ds.TableStats.HistColl)
+			partialPaths, isIntersection, ok, err := buildPartialPaths4MVIndexWithPath(ds.SCtx(), accessFilters, idxCols, possibleMVIndexPaths[idx], ds.TableStats.HistColl)
 			if err != nil {
 				logutil.BgLogger().Debug("build index merge partial mv index paths failed", zap.Error(err))
 				return nil, nil, err
@@ -523,7 +530,7 @@ func generateOtherIndexMerge(ds *logicalop.DataSource, regularPathCount int, ind
 		skipRangeScanCheck := fixcontrol.GetBoolWithDefault(
 			ds.SCtx().GetSessionVars().GetOptimizerFixControlMap(),
 			fixcontrol.Fix52869,
-			false,
+			true,
 		)
 		ds.SCtx().GetSessionVars().RecordRelevantOptFix(fixcontrol.Fix52869)
 		if !skipRangeScanCheck {
@@ -750,7 +757,7 @@ func generateANDIndexMerge4MVIndex(ds *logicalop.DataSource, normalPathCnt int, 
 			continue
 		}
 
-		partialPaths, isIntersection, ok, err := buildPartialPaths4MVIndex(ds.SCtx(), accessFilters, idxCols, ds.PossibleAccessPaths[idx].Index, ds.TableStats.HistColl)
+		partialPaths, isIntersection, ok, err := buildPartialPaths4MVIndexWithPath(ds.SCtx(), accessFilters, idxCols, ds.PossibleAccessPaths[idx], ds.TableStats.HistColl)
 		if err != nil {
 			return err
 		}
@@ -802,9 +809,32 @@ func buildPartialPathUp4MVIndex(
 	return indexMergePath
 }
 
-// buildPartialPaths4MVIndex builds partial paths by using these accessFilters upon this MVIndex.
+// buildPartialPaths4MVIndexWithPath builds partial paths by using these accessFilters upon this MVIndex.
 // The accessFilters must be corresponding to these idxCols.
 // OK indicates whether it builds successfully. These partial paths should be ignored if ok==false.
+func buildPartialPaths4MVIndexWithPath(
+	sctx planctx.PlanContext,
+	accessFilters []expression.Expression,
+	idxCols []*expression.Column,
+	path *util.AccessPath,
+	histColl *statistics.HistColl,
+) (
+	partialPaths []*util.AccessPath,
+	isIntersection bool,
+	ok bool,
+	err error,
+) {
+	partialPaths, isIntersection, ok, err = buildPartialPaths4MVIndex(sctx, accessFilters, idxCols, path.Index, histColl)
+	if ok && err == nil {
+		if path.NoncacheableReason != "" {
+			for _, p := range partialPaths {
+				p.NoncacheableReason = path.NoncacheableReason
+			}
+		}
+	}
+	return
+}
+
 func buildPartialPaths4MVIndex(
 	sctx planctx.PlanContext,
 	accessFilters []expression.Expression,
@@ -1023,7 +1053,7 @@ func collectFilters4MVIndex(
 				usedAsAccess[i] = true
 				found = true
 				// access filter type on mv col overrides normal col for the return value of this function
-				if accessTp == unspecifiedFilterTp || accessTp == eqOnNonMVColTp {
+				if accessTp == unspecifiedFilterTp || accessTp == eqOrInOnNonMVColTp {
 					accessTp = tp
 				}
 				break
@@ -1151,6 +1181,23 @@ func cleanAccessPathForMVIndexHint(ds *logicalop.DataSource) {
 	}
 }
 
+func cleanAccessPathForFTS(ds *logicalop.DataSource) error {
+	if ds.FtsPushDown == nil {
+		return nil
+	}
+	validPaths := make([]*util.AccessPath, 0, len(ds.PossibleAccessPaths))
+	for _, p := range ds.PossibleAccessPaths {
+		if p.StoreType == kv.TiFlash {
+			validPaths = append(validPaths, p)
+		}
+	}
+	if len(validPaths) == 0 {
+		return plannererrors.ErrInternal.GenWithStack("Full text search can be only executed in a columnar storage (TiFlash), but it is not available. Possible reasons: TiFlash is not deployed; columnar replica is not set on this table; columnar replica is not available due to SQL hint /*+ read_from_storage */ or tidb_isolation_read_engines variable.")
+	}
+	ds.PossibleAccessPaths = validPaths
+	return nil
+}
+
 // indexMergeContainSpecificIndex checks whether the index merge path contains at least one index in the `indexSet`
 func indexMergeContainSpecificIndex(path *util.AccessPath, indexSet map[int64]struct{}) bool {
 	if path.PartialIndexPaths == nil {
@@ -1178,7 +1225,7 @@ func indexMergeContainSpecificIndex(path *util.AccessPath, indexSet map[int64]st
 
 const (
 	unspecifiedFilterTp int = iota
-	eqOnNonMVColTp
+	eqOrInOnNonMVColTp
 	multiValuesOROnMVColTp
 	multiValuesANDOnMVColTp
 	singleValueOnMVColTp
@@ -1272,7 +1319,23 @@ func checkAccessFilter4IdxCol(
 	}
 
 	// else: non virtual column
-	if sf.FuncName.L != ast.EQ { // only support EQ now
+	if sf.FuncName.L == ast.In {
+		args := sf.GetArgs()
+		if len(args) < 2 {
+			return false, unspecifiedFilterTp
+		}
+		c, isCol := args[0].(*expression.Column)
+		if !isCol || !c.Equal(sctx.GetExprCtx().GetEvalCtx(), idxCol) {
+			return false, unspecifiedFilterTp
+		}
+		for _, arg := range args[1:] {
+			if _, isCon := arg.(*expression.Constant); !isCon {
+				return false, unspecifiedFilterTp
+			}
+		}
+		return true, eqOrInOnNonMVColTp
+	}
+	if sf.FuncName.L != ast.EQ {
 		return false, unspecifiedFilterTp
 	}
 	args := sf.GetArgs()
@@ -1291,7 +1354,7 @@ func checkAccessFilter4IdxCol(
 		return false, unspecifiedFilterTp
 	}
 	if argCol.Equal(sctx.GetExprCtx().GetEvalCtx(), idxCol) {
-		return true, eqOnNonMVColTp
+		return true, eqOrInOnNonMVColTp
 	}
 	return false, unspecifiedFilterTp
 }

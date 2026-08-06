@@ -173,8 +173,8 @@ const (
 		count 						BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
 		snapshot        			BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
 		last_stats_histograms_version 	BIGINT(64) UNSIGNED DEFAULT NULL,
-		INDEX idx_ver(version),
-		UNIQUE INDEX tbl(table_id)
+		PRIMARY KEY (table_id) CLUSTERED,
+		INDEX idx_ver(version)
 	);`
 
 	// CreateStatsHistogramsTable stores the statistics of table columns.
@@ -192,7 +192,7 @@ const (
 		flag 				BIGINT(64) NOT NULL DEFAULT 0,
 		correlation 		DOUBLE NOT NULL DEFAULT 0,
 		last_analyze_pos 	LONGBLOB DEFAULT NULL,
-		UNIQUE INDEX tbl(table_id, is_index, hist_id)
+		PRIMARY KEY (table_id, is_index, hist_id) CLUSTERED
 	);`
 
 	// CreateStatsBucketsTable stores the histogram info for every table columns.
@@ -206,7 +206,7 @@ const (
 		upper_bound LONGBLOB NOT NULL,
 		lower_bound LONGBLOB ,
 		ndv         BIGINT NOT NULL DEFAULT 0,
-		UNIQUE INDEX tbl(table_id, is_index, hist_id, bucket_id)
+		PRIMARY KEY (table_id, is_index, hist_id, bucket_id) CLUSTERED
 	);`
 
 	// CreateGCDeleteRangeTable stores schemas which can be deleted by DeleteRange.
@@ -293,7 +293,7 @@ const (
 		is_index 	TINYINT(2) NOT NULL,
 		hist_id 	BIGINT(64) NOT NULL,
 		value 		LONGBLOB,
-		INDEX tbl(table_id, is_index, hist_id)
+		PRIMARY KEY (table_id, is_index, hist_id) CLUSTERED
 	);`
 
 	// CreateExprPushdownBlacklistTable stores the expressions which are not allowed to be pushed down.
@@ -382,7 +382,7 @@ const (
 		seq_no bigint(64) NOT NULL comment 'sequence number of the gzipped data slice',
 		version bigint(64) NOT NULL comment 'stats version which corresponding to stats:version in EXPLAIN',
 		create_time datetime(6) NOT NULL,
-		UNIQUE KEY table_version_seq (table_id, version, seq_no),
+		PRIMARY KEY (table_id, version, seq_no) CLUSTERED,
 		KEY table_create_time (table_id, create_time, seq_no),
     	KEY idx_create_time (create_time)
 	);`
@@ -394,7 +394,7 @@ const (
 		version bigint(64) NOT NULL comment 'stats version which corresponding to stats:version in EXPLAIN',
     	source varchar(40) NOT NULL,
 		create_time datetime(6) NOT NULL,
-		UNIQUE KEY table_version (table_id, version),
+		PRIMARY KEY (table_id, version) CLUSTERED,
 		KEY table_create_time (table_id, create_time),
     	KEY idx_create_time (create_time)
 	);`
@@ -461,7 +461,7 @@ const (
 		modify_count bigint(64) NOT NULL DEFAULT 0,
 		count bigint(64) NOT NULL DEFAULT 0,
 		version bigint(64) UNSIGNED NOT NULL DEFAULT 0,
-		PRIMARY KEY (table_id));`
+		PRIMARY KEY (table_id) CLUSTERED);`
 
 	// CreatePasswordHistoryTable is a table save history passwd.
 	CreatePasswordHistoryTable = `CREATE TABLE  IF NOT EXISTS mysql.password_history (
@@ -646,7 +646,8 @@ const (
 		switch_group_name VARCHAR(32) DEFAULT '',
 		rule VARCHAR(512) DEFAULT '',
 		INDEX sql_index(resource_group_name,watch_text(700)) COMMENT "accelerate the speed when select quarantined query",
-		INDEX time_index(end_time) COMMENT "accelerate the speed when querying with active watch"
+		INDEX time_index(end_time) COMMENT "accelerate the speed when querying with active watch",
+		INDEX idx_start_time(start_time) COMMENT "accelerate the speed when syncing new watch records"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
 	// CreateTiDBRunawayWatchDoneTable stores the condition which is used to check whether query should be quarantined.
@@ -662,7 +663,8 @@ const (
 		action bigint(10),
 		switch_group_name VARCHAR(32) DEFAULT '',
 		rule VARCHAR(512) DEFAULT '',
-		done_time TIMESTAMP(6) NOT NULL
+		done_time TIMESTAMP(6) NOT NULL,
+		INDEX idx_done_time(done_time) COMMENT "accelerate the speed when syncing done watch records"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
 	// CreateRequestUnitByGroupTable stores the historical RU consumption by resource group.
@@ -789,6 +791,27 @@ const (
 		value json NOT NULL,
 		index idx_version_category_type (version, category, type),
 		index idx_table_id (table_id));`
+
+	// CreateTiDBMaskingPolicyTable is a table to store masking policy metadata.
+	CreateTiDBMaskingPolicyTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_masking_policy (
+		policy_id BIGINT(64) NOT NULL AUTO_INCREMENT,
+		policy_name VARCHAR(64) NOT NULL,
+		db_name VARCHAR(64) NOT NULL,
+		table_name VARCHAR(64) NOT NULL,
+		table_id BIGINT(64) NOT NULL,
+		column_name VARCHAR(64) NOT NULL,
+		column_id BIGINT(64) NOT NULL,
+		expression TEXT NOT NULL,
+		status VARCHAR(16) NOT NULL,
+		masking_type VARCHAR(32) NOT NULL,
+		restrict_on VARCHAR(256) NOT NULL DEFAULT 'NONE',
+		created_at DATETIME(6) NOT NULL,
+		updated_at DATETIME(6) NOT NULL,
+		created_by VARCHAR(288) NOT NULL DEFAULT '',
+		PRIMARY KEY(policy_id),
+		UNIQUE KEY uk_table_policy(table_id, policy_name),
+		UNIQUE KEY uk_table_column(table_id, column_id)
+		);`
 )
 
 // all below are related to DDL or DXF tables

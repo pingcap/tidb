@@ -34,6 +34,8 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -47,7 +49,8 @@ var indexConditionECtx exprctx.BuildContext
 // indexPartialCondition is a data structure to help implement the partial index.
 type indexPartialCondition struct {
 	conditionExpr expression.Expression
-	// conditionEvalBufferPool stores many eval buffer to avoid allocating chunk for evaluating partial index condition for each time.
+	// conditionEvalBufferPool stores many eval buffer to avoid allocating chunk
+	// for evaluating partial index condition for each time.
 	// It's only initialized if the `partialConditionExpr` is not nil.
 	conditionEvalBufferPool sync.Pool
 }
@@ -62,14 +65,15 @@ type index struct {
 	// the collation global variable is initialized *after* `NewIndex()`.
 	initNeedRestoreData sync.Once
 	needRestoredData    bool
-
+	encoder             codec.Encoder
 	indexPartialCondition
 }
 
 // NeedRestoredData checks whether the index columns needs restored data.
-func NeedRestoredData(idxCols []*model.IndexColumn, colInfos []*model.ColumnInfo) bool {
+func NeedRestoredData(useNewCollate bool, idxCols []*model.IndexColumn, colInfos []*model.ColumnInfo) bool {
 	for _, idxCol := range idxCols {
-		if model.ColumnNeedRestoredData(idxCol, colInfos) {
+		col := colInfos[idxCol.Offset]
+		if types.NeedRestoredDataWithCollate(model.GetIdxChangingFieldType(idxCol, col), useNewCollate) {
 			return true
 		}
 	}
@@ -78,16 +82,29 @@ func NeedRestoredData(idxCols []*model.IndexColumn, colInfos []*model.ColumnInfo
 
 // NewIndex builds a new Index object.
 func NewIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.IndexInfo) (table.Index, error) {
+	return NewIndexWithCollate(collate.NewCollationEnabled(), physicalID, tblInfo, indexInfo)
+}
+
+// NewIndexWithCollate builds a new Index object with the specified collation setting.
+func NewIndexWithCollate(
+	useNewCollate bool,
+	physicalID int64,
+	tblInfo *model.TableInfo,
+	indexInfo *model.IndexInfo,
+) (table.Index, error) {
 	index := &index{
 		idxInfo:  indexInfo,
 		tblInfo:  tblInfo,
 		phyTblID: physicalID,
+		encoder:  codec.NewEncoder(useNewCollate),
 	}
 
 	conditionString := indexInfo.ConditionExprString
 	if len(conditionString) > 0 {
 		var err error
-		index.conditionExpr, err = expression.ParseSimpleExpr(indexConditionECtx, conditionString, expression.WithTableInfo("", tblInfo))
+		index.conditionExpr, err = expression.ParseSimpleExpr(indexConditionECtx, conditionString,
+			expression.WithTableInfo("", tblInfo),
+			expression.WithUseNewCollate(useNewCollate))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -145,6 +162,7 @@ func (c *index) castIndexValuesToChangingTypes(indexedValues []types.Datum) erro
 // indexed values should be distinct in storage (i.e. whether handle is encoded in the key).
 func (c *index) GenIndexKey(ec errctx.Context, loc *time.Location, indexedValues []types.Datum, h kv.Handle, buf []byte) (key []byte, distinct bool, err error) {
 	idxTblID := c.phyTblID
+	fullHandle := h
 	if c.idxInfo.Global {
 		idxTblID = c.tblInfo.ID
 		pi := c.tblInfo.GetPartitionInfo()
@@ -154,13 +172,19 @@ func (c *index) GenIndexKey(ec errctx.Context, loc *time.Location, indexedValues
 				idxTblID = pi.NewTableID
 			}
 		}
+
+		if _, ok := fullHandle.(kv.PartitionHandle); !ok &&
+			c.idxInfo.GlobalIndexVersion >= model.GlobalIndexVersionV1 {
+			fullHandle = kv.NewPartitionHandle(c.phyTblID, h)
+		}
 	}
 
 	if err = c.castIndexValuesToChangingTypes(indexedValues); err != nil {
 		return
 	}
 
-	key, distinct, err = tablecodec.GenIndexKey(loc, c.tblInfo, c.idxInfo, idxTblID, indexedValues, h, buf)
+	key, distinct, err = tablecodec.GenIndexKey(c.encoder, loc, c.tblInfo, c.idxInfo,
+		idxTblID, indexedValues, fullHandle, buf)
 	err = ec.HandleError(err)
 	return
 }
@@ -169,14 +193,15 @@ func (c *index) GenIndexKey(ec errctx.Context, loc *time.Location, indexedValues
 func (c *index) GenIndexValue(ec errctx.Context, loc *time.Location, distinct, untouched bool, indexedValues []types.Datum,
 	h kv.Handle, restoredData []types.Datum, buf []byte) ([]byte, error) {
 	c.initNeedRestoreData.Do(func() {
-		c.needRestoredData = NeedRestoredData(c.idxInfo.Columns, c.tblInfo.Columns)
+		c.needRestoredData = NeedRestoredData(c.encoder.UseNewCollate(), c.idxInfo.Columns, c.tblInfo.Columns)
 	})
 
 	if err := c.castIndexValuesToChangingTypes(indexedValues); err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	idx, err := tablecodec.GenIndexValuePortal(loc, c.tblInfo, c.idxInfo, c.needRestoredData, distinct, untouched, indexedValues, h, c.phyTblID, restoredData, buf)
+	idx, err := tablecodec.GenIndexValuePortal(c.encoder.UseNewCollate(), loc, c.tblInfo,
+		c.idxInfo, c.needRestoredData, distinct, untouched, indexedValues, h, c.phyTblID, restoredData, buf)
 	err = ec.HandleError(err)
 	return idx, err
 }
@@ -235,15 +260,6 @@ out:
 
 // MeetPartialCondition checks whether the row meets the partial index condition of the index.
 func (c *index) MeetPartialCondition(row []types.Datum) (meet bool, err error) {
-	defer func() {
-		r := recover()
-		if r != nil {
-			err = errors.Errorf("panic in MeetPartialCondition: %v", r)
-			intest.Assert(false, "should never panic in MeetPartialCondition")
-			logutil.BgLogger().Warn("panic in MeetPartialCondition", zap.Error(err), zap.Any("recover message", r))
-		}
-	}()
-
 	if c.conditionExpr == nil {
 		return true, nil
 	}
@@ -252,7 +268,20 @@ func (c *index) MeetPartialCondition(row []types.Datum) (meet bool, err error) {
 	defer c.conditionEvalBufferPool.Put(evalBuffer)
 	evalBuffer.SetDatums(row...)
 
-	datum, isNull, err := c.conditionExpr.EvalInt(indexConditionECtx.GetEvalCtx(), evalBuffer.ToRow())
+	return c.MeetPartialConditionWithChunk(evalBuffer.ToRow())
+}
+
+func (c *index) MeetPartialConditionWithChunk(row chunk.Row) (meet bool, err error) {
+	defer func() {
+		r := recover()
+		if r != nil {
+			err = errors.Errorf("panic in MeetPartialConditionWithChunk: %v", r)
+			intest.Assert(false, "should never panic in MeetPartialConditionWithChunk")
+			logutil.BgLogger().Warn("panic in MeetPartialConditionWithChunk", zap.Error(err), zap.Any("recover message", r))
+		}
+	}()
+
+	datum, isNull, err := c.conditionExpr.EvalInt(indexConditionECtx.GetEvalCtx(), row)
 	if err != nil {
 		return false, err
 	}
@@ -393,9 +422,9 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 			}
 			if !ignoreAssertion && !untouched {
 				if opt.DupKeyCheck() == table.DupKeyCheckLazy && !txn.IsPessimistic() {
-					err = txn.SetAssertion(key, kv.SetAssertUnknown)
+					err = setAssertion(txn, key, kv.AssertUnknown)
 				} else {
-					err = txn.SetAssertion(key, kv.SetAssertNotExist)
+					err = setAssertion(txn, key, kv.AssertNotExist)
 				}
 			}
 			if err != nil {
@@ -434,7 +463,7 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 					for _, id := range c.tblInfo.Partition.IDsInDDLToIgnore() {
 						if id == partHandle.PartitionID {
 							// Simply overwrite it
-							err = txn.SetAssertion(key, kv.SetAssertUnknown)
+							err = setAssertion(txn, key, kv.AssertUnknown)
 							if err != nil {
 								return nil, err
 							}
@@ -519,9 +548,9 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 				continue
 			}
 			if lazyCheck && !txn.IsPessimistic() {
-				err = txn.SetAssertion(key, kv.SetAssertUnknown)
+				err = setAssertion(txn, key, kv.AssertUnknown)
 			} else {
-				err = txn.SetAssertion(key, kv.SetAssertNotExist)
+				err = setAssertion(txn, key, kv.AssertNotExist)
 			}
 			if err != nil {
 				return nil, err
@@ -630,7 +659,7 @@ func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue
 		}
 		if c.idxInfo.State == model.StatePublic {
 			// If the index is in public state, delete this index means it must exists.
-			err = txn.SetAssertion(key, kv.SetAssertExist)
+			err = setAssertion(txn, key, kv.AssertExist)
 		}
 		if err != nil {
 			return err

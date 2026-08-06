@@ -140,8 +140,11 @@ func ColumnStatsIsInvalid(colStats *Column, sctx planctx.PlanContext, histColl *
 			return true
 		}
 		stmtctx := sctx.GetSessionVars().StmtCtx
+		// Internal pseudo columns (eg: _tidb_rowid with ID -1) don't have persisted column stats.
+		isNonInternalColumnID := cid > 0
 		if (colStats == nil || !colStats.IsStatsInitialized() || colStats.IsLoadNeeded()) &&
 			stmtctx != nil &&
+			isNonInternalColumnID &&
 			!histColl.CanNotTriggerLoad {
 			asyncload.AsyncLoadHistogramNeededItems.Insert(model.TableItemID{
 				TableID:          histColl.PhysicalID,

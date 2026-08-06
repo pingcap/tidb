@@ -11,6 +11,8 @@ go_test(
     shard_count = 8,
     deps = [
         "//pkg/config",
+        "//pkg/config/deploymode",
+        "//pkg/config/kerneltype",
         "//pkg/metrics",
         "//pkg/server",
         "//pkg/server/internal/testserverclient",
@@ -21,6 +23,7 @@ go_test(
         "//pkg/store/mockstore/unistore",
         "//pkg/testkit/testsetup",
         "//pkg/util",
+        "//pkg/util/tls",
         "//pkg/util/topsql/state",
         "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_pingcap_errors//:errors",
