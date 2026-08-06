@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Complete transcreation of `pkg/util/size`.
+//! Lockdown owner for `pkg/util/size/size.go`.
 //!
-//! `size.go` maps to this module and `BUILD.bazel` maps to the `tidb-util`
-//! manifest. The package has no tests, `TestMain`, benchmarks, fuzz targets,
-//! examples, fixtures, generated files, or build-tag variants.
+//! `size.inventory.tsv` classifies every declaration in that Go file. The
+//! source fingerprint and Rust symbol gate below make an unreviewed source or
+//! inventory drift fail.
 //!
 //! These values deliberately retain the Go source ABI used by TiDB memory
 //! accounting. In particular, they do not claim that an arbitrary Rust
@@ -68,7 +68,98 @@ pub const SIZE_OF_MAP: i64 = WORD_SIZE;
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        collections::{BTreeMap, BTreeSet},
+        fmt::Write as _,
+    };
+
+    use sha2::{Digest, Sha256};
+
     use super::*;
+
+    const GO_SOURCE: &[u8] = include_bytes!("../../../../../pkg/util/size/size.go");
+    const LOCKDOWN_INVENTORY: &str = include_str!("size.inventory.tsv");
+    const EXPECTED_ITEMS: [(&str, (&str, &str)); 20] = [
+        ("D01", ("PORTED", "KB")),
+        ("D02", ("PORTED", "MB")),
+        ("D03", ("PORTED", "GB")),
+        ("D04", ("PORTED", "TB")),
+        ("D05", ("PORTED", "PB")),
+        ("D06", ("PORTED", "SIZE_OF_SLICE")),
+        ("D07", ("PORTED", "SIZE_OF_BYTE")),
+        ("D08", ("PORTED", "SIZE_OF_STRING")),
+        ("D09", ("PORTED", "SIZE_OF_BOOL")),
+        ("D10", ("PORTED", "SIZE_OF_POINTER")),
+        ("D11", ("PORTED", "SIZE_OF_INTERFACE")),
+        ("D12", ("PORTED", "SIZE_OF_FLOAT64")),
+        ("D13", ("PORTED", "SIZE_OF_UINT64")),
+        ("D14", ("PORTED", "SIZE_OF_INT32")),
+        ("D15", ("PORTED", "SIZE_OF_INT")),
+        ("D16", ("PORTED", "SIZE_OF_UINT8")),
+        ("D17", ("PORTED", "SIZE_OF_UINT")),
+        ("D18", ("PORTED", "SIZE_OF_FUNC")),
+        ("D19", ("PORTED", "SIZE_OF_INT64")),
+        ("D20", ("PORTED", "SIZE_OF_MAP")),
+    ];
+
+    #[test]
+    fn lockdown_inventory_matches_go_source_and_rust_symbols() {
+        let recorded_hash = LOCKDOWN_INVENTORY
+            .lines()
+            .find_map(|line| line.strip_prefix("# source-sha256\t"))
+            .expect("inventory records the owning Go source SHA-256");
+        assert_eq!(recorded_hash, sha256_hex(GO_SOURCE), "Go source drifted");
+
+        let mut lines = LOCKDOWN_INVENTORY
+            .lines()
+            .filter(|line| !line.is_empty() && !line.starts_with('#'));
+        assert_eq!(
+            lines.next(),
+            Some("id\tcategory\tgo_item\tstatus\trust_symbol\tevidence")
+        );
+
+        let allowed_statuses = BTreeSet::from(["PORTED", "DECLINED", "UNREACHABLE"]);
+        let mut actual = BTreeMap::new();
+        for line in lines {
+            let columns: Vec<_> = line.split('\t').collect();
+            assert_eq!(columns.len(), 6, "invalid inventory row: {line}");
+            assert!(
+                allowed_statuses.contains(columns[3]),
+                "unclassified inventory row: {line}"
+            );
+            assert!(
+                !columns[5].is_empty(),
+                "inventory evidence is required: {line}"
+            );
+            assert!(
+                actual
+                    .insert(columns[0], (columns[3], columns[4]))
+                    .is_none(),
+                "duplicate inventory id: {}",
+                columns[0]
+            );
+        }
+        assert_eq!(actual, BTreeMap::from(EXPECTED_ITEMS));
+
+        let _: [u64; 5] = [KB, MB, GB, TB, PB];
+        let _: [i64; 15] = [
+            SIZE_OF_SLICE,
+            SIZE_OF_BYTE,
+            SIZE_OF_STRING,
+            SIZE_OF_BOOL,
+            SIZE_OF_POINTER,
+            SIZE_OF_INTERFACE,
+            SIZE_OF_FLOAT64,
+            SIZE_OF_UINT64,
+            SIZE_OF_INT32,
+            SIZE_OF_INT,
+            SIZE_OF_UINT8,
+            SIZE_OF_UINT,
+            SIZE_OF_FUNC,
+            SIZE_OF_INT64,
+            SIZE_OF_MAP,
+        ];
+    }
 
     #[test]
     fn source_constant_table_is_exact_for_the_target_word_size() {
@@ -91,5 +182,14 @@ mod tests {
         assert_eq!(SIZE_OF_FUNC, WORD_SIZE);
         assert_eq!(SIZE_OF_INT64, 8);
         assert_eq!(SIZE_OF_MAP, WORD_SIZE);
+    }
+
+    fn sha256_hex(input: &[u8]) -> String {
+        Sha256::digest(input)
+            .iter()
+            .fold(String::with_capacity(64), |mut output, byte| {
+                write!(output, "{byte:02x}").expect("write to String");
+                output
+            })
     }
 }
