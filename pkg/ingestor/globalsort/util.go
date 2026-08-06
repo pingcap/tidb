@@ -295,6 +295,16 @@ func SubtaskMetaPath(taskID int64, subtaskID int64) string {
 // subtask. It balances groups in rounds of nodeCnt to use all available
 // resources. It also limits each group's input files and caps the total target
 // files so the following ingest step can read them all.
+//
+// Known issue: the target file count is exact only when merge execution uses
+// the same concurrency passed here. Distributed add-index and IMPORT INTO do
+// not persist that concurrency in merge subtask metadata; they derive it again
+// from the current execution resource. If the resource changes after planning,
+// the merge subtasks can produce more files than estimated here and exceed the
+// total file count expected by the ingest step. Fixing this requires pinning the
+// concurrency across planning, merge execution, and ingest, or revalidating and
+// regenerating all pending merge groups when it changes.
+//
 // since we have a 4000 hard limit on the target file count, when the concurrency
 // is larger than 16 (4000/250), DivideMergeSortDataFiles might incorrectly return
 // ErrTooManyDataFiles on some input, such as:
