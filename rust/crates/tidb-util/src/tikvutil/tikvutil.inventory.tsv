@@ -1,0 +1,8 @@
+# lockdown-inventory-v1
+# owning-go-source	pkg/util/tikvutil/tikvutil.go
+# source-sha256	d7ed4273a9648aa17c5f018237bb9ae794894184bd2a62321a9e7f4a289babce
+id	category	go_item	status	rust_symbol	evidence
+D01	declaration	CommitterConcurrency exported package variable stores the current tidb_committer_concurrency value	PORTED	COMMITTER_CONCURRENCY	global_default_matches_the_source_sysvar_default
+R01	rule	CommitterConcurrency uses go.uber.org/atomic.Int32 for sequentially consistent atomic access	PORTED	AtomicInt32	source_atomic_int32_contract_is_complete
+R02	rule	CommitterConcurrency is initialized to 128	PORTED	COMMITTER_CONCURRENCY	global_default_matches_the_source_sysvar_default
+R03	rule	CommitterConcurrency is a rebindable *atomic.Int32 package variable and can be assigned another pointer or nil	DECLINED	-	Go oracle: rebound current=64 original=128 same_pointer=false; nil_assignment current_nil=true; Rust exposes a non-null non-rebindable static
