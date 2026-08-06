@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Complete transcreation of `pkg/util/slice`.
+//! Lockdown owner for `pkg/util/slice/slice.go`.
 //!
-//! `slice.go` maps to this module and the original `TestSlice` is retained by
-//! name. Go's `TestMain` installs common Go test state and third-party goleak
-//! exclusions; this Rust module owns no global state or background workers, so
-//! it needs neither hook nor exclusion. `BUILD.bazel` maps to this module and
-//! its tests. The source package has no benchmarks, generated files, build
-//! tags, fixtures, or other support data.
+//! `slice.inventory.tsv` classifies every function, branch, and state rule in
+//! that Go file. The source fingerprint and Rust symbol gate below make an
+//! unreviewed source or inventory drift fail. The original `TestSlice` is
+//! retained by name. Go's `TestMain` installs common Go test state and
+//! third-party goleak exclusions; this Rust module owns no global state or
+//! background workers, so it needs neither hook nor exclusion.
 
 /// Returns true when every item matches `predicate`.
 ///
@@ -52,9 +52,40 @@ pub fn deep_clone<T: Clone>(slice: Option<&[T]>) -> Option<Vec<T>> {
 #[cfg(test)]
 #[allow(non_snake_case)]
 mod tests {
-    use std::cell::Cell;
+    use std::{
+        cell::{Cell, RefCell},
+        collections::{BTreeMap, BTreeSet},
+        fmt::Write as _,
+        rc::Rc,
+    };
+
+    use sha2::{Digest, Sha256};
 
     use super::{all_of, deep_clone, int64s_to_strings};
+
+    const GO_SOURCE: &[u8] = include_bytes!("../../../../pkg/util/slice/slice.go");
+    const LOCKDOWN_INVENTORY: &str = include_str!("slice.inventory.tsv");
+    const EXPECTED_ITEMS: [(&str, (&str, &str)); 19] = [
+        ("F01", ("PORTED", "all_of")),
+        ("R01", ("PORTED", "all_of")),
+        ("R02", ("PORTED", "all_of")),
+        ("R03", ("PORTED", "all_of")),
+        ("B01", ("PORTED", "all_of")),
+        ("B02", ("PORTED", "all_of")),
+        ("B03", ("PORTED", "all_of")),
+        ("F02", ("PORTED", "int64s_to_strings")),
+        ("R04", ("PORTED", "int64s_to_strings")),
+        ("B04", ("PORTED", "int64s_to_strings")),
+        ("B05", ("PORTED", "int64s_to_strings")),
+        ("R05", ("PORTED", "int64s_to_strings")),
+        ("F03", ("PORTED", "deep_clone")),
+        ("B06", ("PORTED", "deep_clone")),
+        ("B07", ("PORTED", "deep_clone")),
+        ("R06", ("PORTED", "deep_clone")),
+        ("B08", ("PORTED", "deep_clone")),
+        ("B09", ("PORTED", "deep_clone")),
+        ("R07", ("PORTED", "deep_clone")),
+    ];
 
     #[test]
     fn TestSlice() {
@@ -92,8 +123,11 @@ mod tests {
     #[test]
     fn int64s_to_strings_preserves_source_decimal_domain() {
         assert!(int64s_to_strings(&[]).is_empty());
+        let input = [i64::MIN, -1, 0, 1, i64::MAX];
+        let output = int64s_to_strings(&input);
+        assert_eq!(output.capacity(), input.len());
         assert_eq!(
-            int64s_to_strings(&[i64::MIN, -1, 0, 1, i64::MAX]),
+            output,
             [
                 "-9223372036854775808",
                 "-1",
@@ -115,5 +149,92 @@ mod tests {
         assert_eq!(source, ["left", "right"]);
         assert_eq!(cloned, ["left-changed", "right"]);
         assert_eq!(cloned.capacity(), source.len());
+    }
+
+    #[test]
+    fn deep_clone_invokes_clone_once_per_item_in_source_order() {
+        struct CloneProbe {
+            id: i32,
+            calls: Rc<RefCell<Vec<i32>>>,
+        }
+
+        impl Clone for CloneProbe {
+            fn clone(&self) -> Self {
+                self.calls.borrow_mut().push(self.id);
+                Self {
+                    id: self.id,
+                    calls: Rc::clone(&self.calls),
+                }
+            }
+        }
+
+        let calls = Rc::new(RefCell::new(Vec::new()));
+        let source = [1, 2, 3].map(|id| CloneProbe {
+            id,
+            calls: Rc::clone(&calls),
+        });
+        let cloned = deep_clone(Some(&source)).expect("present source");
+
+        assert_eq!(&*calls.borrow(), &[1, 2, 3]);
+        assert_eq!(
+            cloned.iter().map(|probe| probe.id).collect::<Vec<_>>(),
+            [1, 2, 3]
+        );
+    }
+
+    #[test]
+    fn lockdown_inventory_matches_go_source_and_rust_symbols() {
+        let recorded_hash = LOCKDOWN_INVENTORY
+            .lines()
+            .find_map(|line| line.strip_prefix("# source-sha256\t"))
+            .expect("inventory records the owning Go source SHA-256");
+        assert_eq!(recorded_hash, sha256_hex(GO_SOURCE), "Go source drifted");
+
+        let mut lines = LOCKDOWN_INVENTORY
+            .lines()
+            .filter(|line| !line.is_empty() && !line.starts_with('#'));
+        assert_eq!(
+            lines.next(),
+            Some("id\tcategory\tgo_item\tstatus\trust_symbol\tevidence")
+        );
+
+        let allowed_statuses = BTreeSet::from(["PORTED", "DECLINED", "UNREACHABLE"]);
+        let mut actual = BTreeMap::new();
+        for line in lines {
+            let columns: Vec<_> = line.split('\t').collect();
+            assert_eq!(columns.len(), 6, "invalid inventory row: {line}");
+            assert!(
+                allowed_statuses.contains(columns[3]),
+                "unclassified inventory row: {line}"
+            );
+            assert!(
+                !columns[5].is_empty(),
+                "inventory evidence is required: {line}"
+            );
+            assert!(
+                actual
+                    .insert(columns[0], (columns[3], columns[4]))
+                    .is_none(),
+                "duplicate inventory id: {}",
+                columns[0]
+            );
+        }
+        assert_eq!(actual, BTreeMap::from(EXPECTED_ITEMS));
+
+        fn even(value: &i32) -> bool {
+            value % 2 == 0
+        }
+        assert!(all_of(&[2, 4], even));
+        let _: fn(&[i64]) -> Vec<String> = int64s_to_strings;
+        let _: for<'a> fn(Option<&'a [String]>) -> Option<Vec<String>> = deep_clone::<String>;
+    }
+
+    fn sha256_hex(input: &[u8]) -> String {
+        Sha256::digest(input)
+            .iter()
+            .fold(String::with_capacity(64), |mut output, byte| {
+                write!(output, "{byte:02x}").expect("write to String");
+                output
+            })
     }
 }

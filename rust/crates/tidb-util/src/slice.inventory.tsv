@@ -1,0 +1,23 @@
+# lockdown-inventory-v1
+# owning-go-source	pkg/util/slice/slice.go
+# source-sha256	7cd1bb4402d53901a203f8f4075859a4149f5c2fd440d23336747163c833970b
+id	category	go_item	status	rust_symbol	evidence
+F01	function	AllOf	PORTED	all_of	lockdown_inventory_matches_go_source_and_rust_symbols
+R01	rule	AllOf: inspect elements in source order through slices.ContainsFunc	PORTED	all_of	all_of_preserves_source_order_short_circuit_and_empty_truth
+R02	rule	AllOf closure: negate p(x) for ContainsFunc	PORTED	all_of	all_of_preserves_source_order_short_circuit_and_empty_truth
+R03	rule	AllOf return: negate ContainsFunc result	PORTED	all_of	TestSlice
+B01	branch	AllOf: empty slice invokes no predicate and returns true	PORTED	all_of	all_of_preserves_source_order_short_circuit_and_empty_truth
+B02	branch	AllOf: first false predicate stops iteration and returns false	PORTED	all_of	all_of_preserves_source_order_short_circuit_and_empty_truth
+B03	branch	AllOf: all predicates true returns true	PORTED	all_of	TestSlice
+F02	function	Int64sToStrings	PORTED	int64s_to_strings	lockdown_inventory_matches_go_source_and_rust_symbols
+R04	rule	Int64sToStrings: allocate output length equal to input length	PORTED	int64s_to_strings	int64s_to_strings_preserves_source_decimal_domain
+B04	branch	Int64sToStrings range: empty input executes no body	PORTED	int64s_to_strings	int64s_to_strings_preserves_source_decimal_domain
+B05	branch	Int64sToStrings range: execute once per indexed input element	PORTED	int64s_to_strings	int64s_to_strings_preserves_source_decimal_domain
+R05	rule	Int64sToStrings: FormatInt base 10 into the matching index	PORTED	int64s_to_strings	int64s_to_strings_preserves_source_decimal_domain
+F03	function	DeepClone	PORTED	deep_clone	lockdown_inventory_matches_go_source_and_rust_symbols
+B06	branch	DeepClone: nil input returns nil	PORTED	deep_clone	deep_clone_preserves_nil_empty_and_element_clone_ownership
+B07	branch	DeepClone: non-nil input proceeds to allocation	PORTED	deep_clone	deep_clone_preserves_nil_empty_and_element_clone_ownership
+R06	rule	DeepClone: allocate length zero and capacity len(s)	PORTED	deep_clone	deep_clone_preserves_nil_empty_and_element_clone_ownership
+B08	branch	DeepClone range: present empty input executes no body and stays non-nil	PORTED	deep_clone	deep_clone_preserves_nil_empty_and_element_clone_ownership
+B09	branch	DeepClone range: execute once per source element in order	PORTED	deep_clone	deep_clone_invokes_clone_once_per_item_in_source_order
+R07	rule	DeepClone: append exactly one item.Clone result per element	PORTED	deep_clone	deep_clone_invokes_clone_once_per_item_in_source_order
