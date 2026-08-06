@@ -654,7 +654,8 @@ type sortRange struct {
 // And this two can be merged as [a, max(b, d)].
 // Otherwise they aren't overlapped.
 //
-// The function does not modify the caller's ranges (see issue #69779).
+// The function may reuse the caller's backing slice, but never mutates
+// the caller's Range objects in-place (see issue #69779).
 func UnionRanges(sctx *rangerctx.RangerContext, ranges Ranges, mergeConsecutive bool) (Ranges, error) {
 	if len(ranges) == 0 {
 		return nil, nil
