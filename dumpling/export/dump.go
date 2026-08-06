@@ -1768,10 +1768,13 @@ func tidbStartGCSavepointUpdateService(d *Dumper) error {
 			go updateServiceSafePoint(tctx, d.tidbPDClientForGC, defaultDumpGCSafePointTTL, snapshotTS)
 		}
 	} else if si.ServerType == version.ServerTypeTiDB {
-		tctx.L().Warn("If the amount of data to dump is large, criteria: (data more than 60GB or dumped time more than 10 minutes)\n" +
-			"you'd better adjust the tikv_gc_life_time to avoid export failure due to TiDB GC during the dump process.\n" +
-			"Before dumping: run sql `update mysql.tidb set VARIABLE_VALUE = '720h' where VARIABLE_NAME = 'tikv_gc_life_time';` in tidb.\n" +
-			"After dumping: run sql `update mysql.tidb set VARIABLE_VALUE = '10m' where VARIABLE_NAME = 'tikv_gc_life_time';` in tidb.\n")
+		// Before TiDB v5.0.0, GC lifetime was configured through the tikv_gc_life_time
+		// row in mysql.tidb. Starting with v5.0.0, use the tidb_gc_life_time system variable.
+		tctx.L().Warn("If the amount of data to dump is large (more than 60 GB or expected to take more than 10 minutes),\n" +
+			"consider increasing tidb_gc_life_time to prevent historical data from being collected during the dump.\n" +
+			"Before dumping, record the current value with `SELECT @@GLOBAL.tidb_gc_life_time;`,\n" +
+			"then run `SET GLOBAL tidb_gc_life_time = '720h';`.\n" +
+			"After dumping, restore tidb_gc_life_time to the recorded value.\n")
 	}
 	return nil
 }

@@ -17,6 +17,7 @@ package ddl
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"math"
 	"testing"
 	"time"
@@ -27,6 +28,7 @@ import (
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
+	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -66,10 +68,22 @@ func TestDoneTaskKeeper(t *testing.T) {
 	require.True(t, bytes.Equal(n.nextKey, kv.Key("h")))
 }
 
-func TestIndexInfoNotFoundIsNonRetryable(t *testing.T) {
-	err := errors.Annotatef(errIndexInfoNotFound, "index info not found: %d", 1)
-	require.True(t, isIndexInfoNotFoundErr(err))
-	require.False(t, (&backfillDistExecutor{}).IsRetryableError(err))
+func TestBackfillRetryableErrors(t *testing.T) {
+	t.Run("index info not found is non-retryable for executor", func(t *testing.T) {
+		err := errors.Annotatef(errIndexInfoNotFound, "index info not found: %d", 1)
+		require.True(t, isIndexInfoNotFoundErr(err))
+		require.False(t, (&backfillDistExecutor{}).IsRetryableError(err))
+	})
+
+	t.Run("too many data files is non-retryable for scheduler", func(t *testing.T) {
+		err := fmt.Errorf(
+			"generate merge-sort plan failed: %w",
+			errdef.ErrTooManyDataFiles.GenWithStackByArgs(1000, 1, 250),
+		)
+		sch := &LitBackfillScheduler{}
+		require.False(t, sch.IsRetryableErr(err))
+		require.True(t, sch.IsRetryableErr(errors.New("temporary scheduler error")))
+	})
 }
 
 func TestPickBackfillType(t *testing.T) {

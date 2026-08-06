@@ -1742,7 +1742,7 @@ func restoreStream(
 
 	// Always run the post-work even on error, so we don't stuck in the import
 	// mode or emptied schedulers
-	defer restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulersFunc)
+	defer restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulersFunc, cfg.Online)
 
 	migs, err := client.GetLockedMigrations(ctx)
 	if err != nil {
@@ -1878,6 +1878,7 @@ func restoreStream(
 			ctx,
 			sstFileSets,
 			importModeSwitcher,
+			cfg.Online,
 			cfg.snapshotRestoreDataSize,
 			checkpointSSTSize,
 			p.IncBy,

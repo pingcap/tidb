@@ -376,7 +376,9 @@ func (b *Batch) processBatch(key batchKey, thisBatch *batchedCalls, embedder bas
 
 	// Make the actual embeddings call
 	// The embedding call will be cancelled only if all calls in this batch are cancelled.
-	reqCtx, cancelReq := context.WithCancel(context.Background())
+	// A batch has its own cancellation lifecycle, but retaining the first
+	// active caller's values preserves tracing metadata for the provider call.
+	reqCtx, cancelReq := context.WithCancel(context.WithoutCancel(activeCalls[0].ctx))
 	var watcherWG util.WaitGroupWrapper
 	watcherWG.RunWithRecover(func() {
 		// Waiting sequentially is intentional: the loop can finish only after
