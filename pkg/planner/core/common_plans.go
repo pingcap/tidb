@@ -736,6 +736,7 @@ func (e *Explain) prepareSchema() error {
 	case format == types.ExplainFormatTiDBJSON:
 		fieldNames = []string{"TiDB_JSON"}
 	case format == types.ExplainFormatRU:
+		// TODO: Populate RU-specific columns after per-operator RU attribution is available.
 		fieldNames = []string{"id", "task", "actRows", "selfRU", "cumRU", "cumRU%", "detail"}
 	case e.Explore:
 		fieldNames = []string{"statement", "binding_hint", "plan", "plan_digest", "avg_latency", "exec_times", "avg_scan_rows",
@@ -1139,6 +1140,7 @@ func prepareRUOperatorInfo(flatOp *FlatOperator, runtimeStatsColl *execdetails.R
 	}
 	taskType, id := getExplainIDAndTaskTp(flatOp)
 	actRows, _, _, _ := getRuntimeInfoStr(p.SCtx(), p, runtimeStatsColl)
+	// TODO: Replace the empty RU columns with real selfRU, cumRU, cumRU%, and detail values.
 	return append(rows, []string{id, taskType, actRows, "", "", "", ""})
 }
 
