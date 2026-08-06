@@ -158,7 +158,7 @@ func extractKeyErr(err error) error {
 		return nil
 	}
 	if e, ok := errors.Cause(err).(*tikverr.ErrSharedLockLost); ok {
-		return kv.ErrSharedLockLost.GenWithStackByArgs(e.StartTs, redact.Key(e.Key))
+		return kv.ErrSharedLockLost.GenWithStackByArgs(e.GetStartTs(), redact.Key(e.GetKey()))
 	}
 	if e, ok := errors.Cause(err).(*tikverr.ErrWriteConflict); ok {
 		return newWriteConflictError(e.WriteConflict)
