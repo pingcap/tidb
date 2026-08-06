@@ -12,6 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//! Lockdown owner for `pkg/util/mathutil/exponential_average.go`.
+//!
+//! `exponential_average.inventory.tsv` classifies every declaration, function,
+//! branch, and state-update rule in that Go file. The source fingerprint and
+//! Rust symbol gate below make an unreviewed source or inventory drift fail.
+
 /// An exponential moving average measurement. Like the Go source, callers
 /// need exclusive access while updating it.
 #[derive(Clone, Debug)]
@@ -64,6 +70,37 @@ impl ExponentialMovingAverage {
 #[allow(non_snake_case)]
 mod tests {
     use super::*;
+    use sha2::{Digest, Sha256};
+    use std::{
+        collections::{BTreeMap, BTreeSet},
+        fmt::Write as _,
+        panic::catch_unwind,
+    };
+
+    const GO_SOURCE: &[u8] =
+        include_bytes!("../../../../../pkg/util/mathutil/exponential_average.go");
+    const LOCKDOWN_INVENTORY: &str = include_str!("exponential_average.inventory.tsv");
+    const EXPECTED_ITEMS: [(&str, (&str, &str)); 19] = [
+        ("D01", ("PORTED", "ExponentialMovingAverage")),
+        ("D02", ("PORTED", "ExponentialMovingAverage::value")),
+        ("D03", ("PORTED", "ExponentialMovingAverage::sum")),
+        ("D04", ("PORTED", "ExponentialMovingAverage::factor")),
+        ("D05", ("PORTED", "ExponentialMovingAverage::warmup_window")),
+        ("D06", ("PORTED", "ExponentialMovingAverage::count")),
+        ("F01", ("PORTED", "ExponentialMovingAverage::new")),
+        ("B01", ("PORTED", "ExponentialMovingAverage::new")),
+        ("B02", ("PORTED", "ExponentialMovingAverage::new")),
+        ("B03", ("PORTED", "ExponentialMovingAverage::new")),
+        ("R01", ("PORTED", "ExponentialMovingAverage::new")),
+        ("F02", ("PORTED", "ExponentialMovingAverage::add")),
+        ("B04", ("PORTED", "ExponentialMovingAverage::add")),
+        ("R02", ("PORTED", "ExponentialMovingAverage::add")),
+        ("R03", ("PORTED", "ExponentialMovingAverage::add")),
+        ("R04", ("PORTED", "ExponentialMovingAverage::add")),
+        ("B05", ("PORTED", "ExponentialMovingAverage::add")),
+        ("R05", ("PORTED", "ExponentialMovingAverage::add")),
+        ("F03", ("PORTED", "ExponentialMovingAverage::get")),
+    ];
 
     const SAMPLES: [f64; 100] = [
         1576.0, 1524.0, 6746.0, 6426.0, 9476.0, 1721.0, 8528.0, 7827.0, 8613.0, 6969.0, 4200.0,
@@ -92,5 +129,136 @@ mod tests {
         let mut window = ExponentialMovingAverage::new(f64::NAN, 0);
         window.add(1.0);
         assert!(window.get().is_nan());
+    }
+
+    #[test]
+    fn lockdown_inventory_matches_go_source_and_rust_symbols() {
+        let recorded_hash = LOCKDOWN_INVENTORY
+            .lines()
+            .find_map(|line| line.strip_prefix("# source-sha256\t"))
+            .expect("inventory records the owning Go source SHA-256");
+        assert_eq!(recorded_hash, sha256_hex(GO_SOURCE), "Go source drifted");
+
+        let mut lines = LOCKDOWN_INVENTORY
+            .lines()
+            .filter(|line| !line.is_empty() && !line.starts_with('#'));
+        assert_eq!(
+            lines.next(),
+            Some("id\tcategory\tgo_item\tstatus\trust_symbol\tevidence")
+        );
+
+        let allowed_statuses = BTreeSet::from(["PORTED", "DECLINED", "UNREACHABLE"]);
+        let mut actual = BTreeMap::new();
+        for line in lines {
+            let columns: Vec<_> = line.split('\t').collect();
+            assert_eq!(columns.len(), 6, "invalid inventory row: {line}");
+            assert!(
+                allowed_statuses.contains(columns[3]),
+                "unclassified inventory row: {line}"
+            );
+            assert!(
+                !columns[5].is_empty(),
+                "inventory evidence is required: {line}"
+            );
+            assert!(
+                actual
+                    .insert(columns[0], (columns[3], columns[4]))
+                    .is_none(),
+                "duplicate inventory id: {}",
+                columns[0]
+            );
+        }
+        assert_eq!(actual, BTreeMap::from(EXPECTED_ITEMS));
+
+        let _: fn(f64, isize) -> ExponentialMovingAverage = ExponentialMovingAverage::new;
+        let _: fn(&mut ExponentialMovingAverage, f64) = ExponentialMovingAverage::add;
+        let _: fn(&ExponentialMovingAverage) -> f64 = ExponentialMovingAverage::get;
+        let model = ExponentialMovingAverage::new(0.5, 2);
+        assert_eq!(model.value.to_bits(), 0.0_f64.to_bits());
+        assert_eq!(model.sum.to_bits(), 0.0_f64.to_bits());
+        assert_eq!(model.factor, 0.5);
+        assert_eq!(model.warmup_window, 2);
+        assert_eq!(model.count, 0);
+    }
+
+    #[test]
+    fn constructor_rejects_closed_interval_boundaries() {
+        for factor in [
+            f64::NEG_INFINITY,
+            -f64::MIN_POSITIVE,
+            0.0,
+            -0.0,
+            1.0,
+            f64::INFINITY,
+        ] {
+            let panic = catch_unwind(|| ExponentialMovingAverage::new(factor, 1))
+                .expect_err("closed-interval factor must panic");
+            assert_eq!(panic_message(panic), "factor must be (0, 1)");
+        }
+    }
+
+    #[test]
+    fn constructor_admits_open_interval_neighbors_and_nan() {
+        for factor in [f64::from_bits(1), f64::from_bits(1.0_f64.to_bits() - 1)] {
+            let mut model = ExponentialMovingAverage::new(factor, 0);
+            model.add(8.0);
+            assert_eq!(model.get(), 8.0 * factor);
+        }
+
+        let mut model = ExponentialMovingAverage::new(f64::NAN, 0);
+        model.add(8.0);
+        assert!(model.get().is_nan());
+    }
+
+    #[test]
+    fn nonpositive_warmup_starts_in_ema_branch() {
+        for warmup_window in [-1, 0] {
+            let mut model = ExponentialMovingAverage::new(0.25, warmup_window);
+            model.add(8.0);
+            assert_eq!(model.get(), 2.0);
+            model.add(8.0);
+            assert_eq!(model.get(), 3.5);
+        }
+    }
+
+    #[test]
+    fn warmup_boundary_uses_mean_then_ema() {
+        let mut model = ExponentialMovingAverage::new(0.25, 2);
+        assert_eq!(model.get().to_bits(), 0.0_f64.to_bits());
+
+        model.add(2.0);
+        assert_eq!(model.get(), 2.0);
+        model.add(6.0);
+        assert_eq!(model.get(), 4.0);
+        model.add(12.0);
+        assert_eq!(model.get(), 6.0);
+    }
+
+    #[test]
+    fn add_preserves_source_ieee754_propagation() {
+        let mut model = ExponentialMovingAverage::new(0.5, 1);
+        model.add(f64::INFINITY);
+        assert!(model.get().is_infinite() && model.get().is_sign_positive());
+        model.add(f64::NEG_INFINITY);
+        assert!(model.get().is_nan());
+    }
+
+    fn sha256_hex(input: &[u8]) -> String {
+        Sha256::digest(input)
+            .iter()
+            .fold(String::with_capacity(64), |mut output, byte| {
+                write!(output, "{byte:02x}").expect("write to String");
+                output
+            })
+    }
+
+    fn panic_message(panic: Box<dyn std::any::Any + Send>) -> String {
+        match panic.downcast::<String>() {
+            Ok(message) => *message,
+            Err(panic) => match panic.downcast::<&'static str>() {
+                Ok(message) => (*message).to_owned(),
+                Err(_) => "non-string panic".to_owned(),
+            },
+        }
     }
 }

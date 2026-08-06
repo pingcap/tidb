@@ -37,6 +37,7 @@ tracing = "0.1"
 tidb-hack = { path = "../tidb-hack" }
 
 [dev-dependencies]
+sha2.workspace = true
 standard-fastrand = { package = "fastrand", version = "2" }
 
 [[bench]]

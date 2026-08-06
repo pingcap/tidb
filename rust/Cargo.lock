@@ -1909,6 +1909,7 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
+ "sha2",
  "tidb-error",
  "tidb-hack",
  "tidb-log",

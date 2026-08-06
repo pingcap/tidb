@@ -1,0 +1,23 @@
+# lockdown-inventory-v1
+# owning-go-source	pkg/util/mathutil/exponential_average.go
+# source-sha256	4fb0f2e3553446ee55a3aaeb619cfd322b7908f2d0a7b1b25e0a56d6aa7920b7
+id	category	go_item	status	rust_symbol	evidence
+D01	declaration	ExponentialMovingAverage type	PORTED	ExponentialMovingAverage	lockdown_inventory_matches_go_source_and_rust_symbols
+D02	field	ExponentialMovingAverage.value	PORTED	ExponentialMovingAverage::value	lockdown_inventory_matches_go_source_and_rust_symbols
+D03	field	ExponentialMovingAverage.sum	PORTED	ExponentialMovingAverage::sum	lockdown_inventory_matches_go_source_and_rust_symbols
+D04	field	ExponentialMovingAverage.factor	PORTED	ExponentialMovingAverage::factor	lockdown_inventory_matches_go_source_and_rust_symbols
+D05	field	ExponentialMovingAverage.warmupWindow	PORTED	ExponentialMovingAverage::warmup_window	lockdown_inventory_matches_go_source_and_rust_symbols
+D06	field	ExponentialMovingAverage.count	PORTED	ExponentialMovingAverage::count	lockdown_inventory_matches_go_source_and_rust_symbols
+F01	function	NewExponentialMovingAverage	PORTED	ExponentialMovingAverage::new	constructor_rejects_closed_interval_boundaries
+B01	branch	NewExponentialMovingAverage: factor >= 1	PORTED	ExponentialMovingAverage::new	constructor_rejects_closed_interval_boundaries
+B02	branch	NewExponentialMovingAverage: factor <= 0	PORTED	ExponentialMovingAverage::new	constructor_rejects_closed_interval_boundaries
+B03	branch	NewExponentialMovingAverage: both comparisons false	PORTED	ExponentialMovingAverage::new	constructor_admits_open_interval_neighbors_and_nan
+R01	rule	NewExponentialMovingAverage: zero value/sum/count and preserve arguments	PORTED	ExponentialMovingAverage::new	lockdown_inventory_matches_go_source_and_rust_symbols
+F02	function	ExponentialMovingAverage.Add	PORTED	ExponentialMovingAverage::add	warmup_boundary_uses_mean_then_ema
+B04	branch	Add: count < warmupWindow	PORTED	ExponentialMovingAverage::add	warmup_boundary_uses_mean_then_ema
+R02	rule	Add warmup: increment count	PORTED	ExponentialMovingAverage::add	warmup_boundary_uses_mean_then_ema
+R03	rule	Add warmup: accumulate sum	PORTED	ExponentialMovingAverage::add	warmup_boundary_uses_mean_then_ema
+R04	rule	Add warmup: value = sum / count	PORTED	ExponentialMovingAverage::add	warmup_boundary_uses_mean_then_ema
+B05	branch	Add: count >= warmupWindow	PORTED	ExponentialMovingAverage::add	nonpositive_warmup_starts_in_ema_branch
+R05	rule	Add EMA: value*(1-factor) + sample*factor	PORTED	ExponentialMovingAverage::add	warmup_boundary_uses_mean_then_ema
+F03	function	ExponentialMovingAverage.Get	PORTED	ExponentialMovingAverage::get	warmup_boundary_uses_mean_then_ema
