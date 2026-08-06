@@ -1,0 +1,11 @@
+# lockdown-inventory-v1
+# owning-go-source	pkg/util/nocopy/nocopy.go
+# source-sha256	e02781234846ccc78f8ad9e88486d1e26c99a0ab3d113cd06639cc339cbd992d
+id	category	go_item	status	rust_symbol	evidence
+D01	declaration	NoCopy type	PORTED	NoCopy	lockdown_inventory_matches_go_source_and_rust_symbols
+R01	rule	NoCopy has zero fields and zero size	PORTED	NoCopy	source_zero_value_and_no_op_methods_are_preserved
+R02	rule	NoCopy implements sync.Locker so go vet rejects copies	PORTED	NoCopy	compile_fail_NoCopy_move
+F01	function	NoCopy.Lock	PORTED	NoCopy::lock	lockdown_inventory_matches_go_source_and_rust_symbols
+R03	rule	NoCopy.Lock has a pointer receiver and empty body	PORTED	NoCopy::lock	source_zero_value_and_no_op_methods_are_preserved
+F02	function	NoCopy.Unlock	PORTED	NoCopy::unlock	lockdown_inventory_matches_go_source_and_rust_symbols
+R04	rule	NoCopy.Unlock has a pointer receiver and empty body	PORTED	NoCopy::unlock	source_zero_value_and_no_op_methods_are_preserved
