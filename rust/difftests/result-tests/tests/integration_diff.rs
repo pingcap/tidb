@@ -70,7 +70,7 @@ use std::path::PathBuf;
 use enrolled_topics::TOPICS;
 use integration_plan_property::{access_property, plan_statement, PlanStatement};
 use mysqltest_connections::Connections;
-use mysqltest_script::{align, parse_test, split_warnings, Item, Stmt};
+use mysqltest_script::{align_bytes, parse_test, recording_path, split_warnings_bytes, Item, Stmt};
 use tidb_datatype::Datum;
 use tidb_session::{Session, StmtOutput};
 
@@ -119,9 +119,10 @@ fn topics_are_listed_once_each() {
 /// calls it a match.
 ///
 /// That is not a hypothesis. This test parses the onboarded scripts with the
-/// replay's own reader and counts the statements the gate can see: 29 of 6,564
-/// -- 0.4%. The blind spot is the other 6,535, and it is the reason a fix that
-/// added three real `CAST` truncation warnings moved neither ratchet.
+/// replay's own reader and prints the current reach. The latest measured line
+/// is `warning gate reaches 62 of 11465 statements across 110 topics`; it is
+/// the reason a fix that adds a real warning outside those 62 can move neither
+/// ratchet.
 ///
 /// The blind spot is in the RECORDING, not in this reader, and that is the
 /// part worth knowing before anyone tries to close it. mysqltest writes a
@@ -131,7 +132,7 @@ fn topics_are_listed_once_each() {
 /// nothing for `set @@session.tidb_enable_fast_analyze=1` and only shows that
 /// it warns because the script asks on the next line. So there is no reader
 /// change that widens this gate against the recordings we have -- comparing
-/// warnings on the other 4,878 needs TiDB's warnings from somewhere else, a
+/// warnings outside the printed gate needs TiDB's warnings from somewhere else, a
 /// re-recording or a live server, not a better comparison.
 ///
 /// The number is pinned so that widening or narrowing the warning gate is a
@@ -185,9 +186,14 @@ fn warning_comparison_covers_only_enable_warnings_statements() {
     // variable reports that it refused or clamped a value. `window_function`
     // and `executor/expand` add 98 statements and NOT ONE warning-gated
     // statement. 49 + 8 = 57.
+    //
+    // The harness-alignment enrollment adds
+    // `planner/core/integration_partition`, whose output line is `5 of 493`.
+    // The resulting current oracle line is `warning gate reaches 62 of 11465
+    // statements across 110 topics`.
     assert_eq!(
         (covered, total),
-        (57, 10972),
+        (62, 11465),
         "the warning gate's reach changed; re-read what it now covers rather \
          than updating this number to match"
     );
@@ -281,19 +287,50 @@ fn cell(value: &Datum) -> String {
     value.sql_string().unwrap_or_else(|_| value.label())
 }
 
+fn cell_bytes(value: &Datum) -> Vec<u8> {
+    if value.is_null() {
+        return b"NULL".to_vec();
+    }
+    value
+        .to_bytes()
+        .unwrap_or_else(|_| value.label().into_bytes())
+}
+
 /// Renders a result set as the recorder does: a tab-separated header of column
 /// names, then one tab-separated line per row.
-fn render_rows(columns: &[(String, tidb_datatype::FieldType)], rows: &[Vec<Datum>]) -> Vec<String> {
+fn render_rows(
+    columns: &[(String, tidb_datatype::FieldType)],
+    rows: &[Vec<Datum>],
+) -> Vec<Vec<u8>> {
     let mut out = vec![columns
         .iter()
         .map(|(name, _)| name.clone())
         .collect::<Vec<_>>()
-        .join("\t")];
-    out.extend(
-        rows.iter()
-            .map(|row| row.iter().map(cell).collect::<Vec<_>>().join("\t")),
-    );
+        .join("\t")
+        .into_bytes()];
+    out.extend(rows.iter().map(|row| {
+        let mut line = Vec::new();
+        for (index, value) in row.iter().enumerate() {
+            if index > 0 {
+                line.push(b'\t');
+            }
+            line.extend(cell_bytes(value));
+        }
+        line
+    }));
     out
+}
+
+fn display_line(line: &[u8]) -> String {
+    String::from_utf8_lossy(line).into_owned()
+}
+
+fn display_block(lines: &[Vec<u8>]) -> String {
+    lines
+        .iter()
+        .map(|line| display_line(line))
+        .collect::<Vec<_>>()
+        .join(" / ")
 }
 
 /// Compares one statement's outcome against its recorded block.
@@ -304,7 +341,7 @@ fn render_rows(columns: &[(String, tidb_datatype::FieldType)], rows: &[Vec<Datum
 fn compare(
     session: &mut Session,
     stmt: &Stmt,
-    recorded: &[String],
+    recorded: &[Vec<u8>],
     report: &mut TopicReport,
 ) -> Result<MatchKind, Option<String>> {
     // `--enable_warnings` appended this statement's `SHOW WARNINGS` to its own
@@ -312,7 +349,7 @@ fn compare(
     // the halves separately is what makes these statements comparable at all,
     // and it puts the warning texts themselves under the gate.
     let (rows, warnings) = if stmt.warnings {
-        let (rows, warnings) = split_warnings(recorded);
+        let (rows, warnings) = split_warnings_bytes(recorded);
         (rows, Some(warnings))
     } else {
         (recorded, None)
@@ -335,7 +372,7 @@ fn compare(
 
 /// Records that a statement OUTSIDE the warning gate raised a warning here.
 ///
-/// The gate reaches 28 of 4,906 statements
+/// The gate reaches 62 of 11,465 statements
 /// ([`warning_comparison_covers_only_enable_warnings_statements`]); for the
 /// rest the replay compares rows only, so a warning is invisible either way.
 /// This measures one half of that blind spot -- what THIS engine raises where
@@ -430,12 +467,21 @@ fn survey_unwatched_warning(session: &mut Session, stmt: &Stmt) {
 /// `SHOW WARNINGS` does not consume what it reports and the buffer is reset by
 /// the next statement anyway, so asking here is observationally neutral -- it
 /// is also exactly what mysqltest itself did to produce the recording.
-fn warning_difference(session: &mut Session, want: Option<&[String]>) -> Option<String> {
+fn warning_difference(session: &mut Session, want: Option<&[Vec<u8>]>) -> Option<String> {
     let ours = match session.run_with_columns("SHOW WARNINGS") {
         Ok(StmtOutput::Rows { columns: _, rows }) => rows
             .iter()
-            .map(|row| row.iter().map(cell).collect::<Vec<_>>().join("\t"))
-            .collect::<Vec<String>>(),
+            .map(|row| {
+                let mut line = Vec::new();
+                for (index, value) in row.iter().enumerate() {
+                    if index > 0 {
+                        line.push(b'\t');
+                    }
+                    line.extend(cell_bytes(value));
+                }
+                line
+            })
+            .collect::<Vec<Vec<u8>>>(),
         _ => return Some("  rust: SHOW WARNINGS answered with no result set".to_owned()),
     };
     let want = want.unwrap_or(&[]);
@@ -447,12 +493,12 @@ fn warning_difference(session: &mut Session, want: Option<&[String]>) -> Option<
         if want.is_empty() {
             "<none>".to_owned()
         } else {
-            want.join(" / ")
+            display_block(want)
         },
         if ours.is_empty() {
             "<none>".to_owned()
         } else {
-            ours.join(" / ")
+            display_block(&ours)
         }
     ))
 }
@@ -462,7 +508,7 @@ fn warning_difference(session: &mut Session, want: Option<&[String]>) -> Option<
 fn compare_output(
     session: &mut Session,
     stmt: &Stmt,
-    recorded: &[String],
+    recorded: &[Vec<u8>],
     report: &mut TopicReport,
 ) -> Result<MatchKind, Option<String>> {
     if let Some(reason) = stmt.blocker {
@@ -481,7 +527,7 @@ fn compare_output(
     let recorded_error = stmt.expect_error
         || recorded
             .first()
-            .is_some_and(|line| line.starts_with("Error "));
+            .is_some_and(|line| line.starts_with(b"Error "));
 
     // A plan statement runs as this tier's own default EXPLAIN whatever format
     // the recording asked for -- see `PlanStatement::RunDefaultExplain`.
@@ -517,7 +563,9 @@ fn compare_output(
         }
         (Ok(_), true) => Err(Some(format!(
             "  tidb: {}\n  rust: accepted the statement",
-            recorded.first().map_or("<error>", String::as_str)
+            recorded
+                .first()
+                .map_or_else(|| "<error>".to_owned(), |line| display_line(line))
         ))),
         (Err(error), false) => {
             report.skip(SkipClass::OutOfDomain);
@@ -528,12 +576,20 @@ fn compare_output(
         }
         (Ok(StmtOutput::Rows { columns, rows }), false) => {
             let mut ours = render_rows(&columns, &rows);
-            let mut theirs: Vec<String> = recorded.to_vec();
+            let mut theirs: Vec<Vec<u8>> = recorded.to_vec();
             if plan.is_some() {
                 // Drop the header on both sides: a plan's columns are fixed,
                 // and only the access rows carry the guarded property.
-                let want = access_property(&theirs[1.min(theirs.len())..]);
-                let got = access_property(&ours[1..]);
+                let theirs_text = theirs
+                    .iter()
+                    .map(|line| display_line(line))
+                    .collect::<Vec<_>>();
+                let ours_text = ours
+                    .iter()
+                    .map(|line| display_line(line))
+                    .collect::<Vec<_>>();
+                let want = access_property(&theirs_text[1.min(theirs_text.len())..]);
+                let got = access_property(&ours_text[1..]);
                 // Only the tables THIS side read are asserted, per
                 // `access_property`'s own contract.
                 let mut differences = Vec::new();
@@ -571,17 +627,17 @@ fn compare_output(
             // the recorder sorts ROWS, then writes them -- puts both sides in
             // the same units, so a multi-line cell compares by its text
             // instead of always diverging on the line count.
-            let ours: Vec<String> = ours
+            let ours: Vec<Vec<u8>> = ours
                 .iter()
-                .flat_map(|line| line.split('\n').map(str::to_owned))
+                .flat_map(|line| line.split(|byte| *byte == b'\n').map(|part| part.to_vec()))
                 .collect();
             if ours == theirs {
                 Ok(MatchKind::Rows)
             } else {
                 Err(Some(format!(
                     "  tidb: {}\n  rust: {}",
-                    theirs.join(" / "),
-                    ours.join(" / ")
+                    display_block(&theirs),
+                    display_block(&ours)
                 )))
             }
         }
@@ -589,7 +645,7 @@ fn compare_output(
         (Ok(_), false) if recorded.is_empty() => Ok(MatchKind::SideEffect),
         (Ok(other), false) => Err(Some(format!(
             "  tidb: {}\n  rust: {other:?}",
-            recorded.join(" / ")
+            display_block(recorded)
         ))),
     }
 }
@@ -618,10 +674,11 @@ fn run_topic_on_this_stack(topic: &str) -> Result<TopicReport, String> {
     let dir = integrationtest_dir();
     let script = fs::read_to_string(dir.join(format!("t/{topic}.test")))
         .map_err(|e| format!("read t/{topic}.test: {e}"))?;
-    let recorded = fs::read_to_string(dir.join(format!("r/{topic}.result")))
-        .map_err(|e| format!("read r/{topic}.result: {e}"))?;
+    let recorded_path = recording_path(&dir, topic);
+    let recorded =
+        fs::read(&recorded_path).map_err(|e| format!("read {}: {e}", recorded_path.display()))?;
     let items = parse_test(&script)?;
-    let aligned = align(&items, &recorded)?;
+    let aligned = align_bytes(&items, &recorded)?;
 
     let mut report = TopicReport::default();
     let mut connections = Connections::open(topic)?;
@@ -638,7 +695,11 @@ fn run_topic_on_this_stack(topic: &str) -> Result<TopicReport, String> {
             }
             Item::Echo(_) => continue,
         };
-        match compare(connections.current(), stmt, &block, &mut report) {
+        let outcome = compare(connections.current(), stmt, &block, &mut report);
+        if matches!(outcome, Err(None)) && !stmt.expect_error {
+            connections.recover_account_row_from_unsupported_create_user(&stmt.sql);
+        }
+        match outcome {
             Ok(kind) => report.matched(kind),
             Err(None) => {}
             Err(Some(detail)) => report
@@ -1598,7 +1659,18 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // property this reader already matched -- and everything in the
     // `join_shape` casetest, where it is what keeps EXTRA merge pairs from
     // rising. Two oracles, two different questions about the same commit.
-    const KNOWN_DIVERGENCES: usize = 75;
+    //
+    // 75 -> 78: the byte-preserving result reader made all eight charset
+    // recordings align, and the mode-aware path selector did the same for the
+    // four dual-recording collation topics. Of those twelve plus the two
+    // account-setup topics, only `planner/core/integration_partition` is at
+    // the enrollment bar: 132 matched, 3 diverged, 358 skipped of 493. All
+    // three divergences are one cascade, named in `enrolled_topics`: an
+    // `INSERT ... SELECT` from a partitioned table silently copies zero rows
+    // into the ordinary reference table instead of refusing the read. The
+    // other thirteen topics carry 9 to 173 divergences and stay off the gate.
+    //
+    const KNOWN_DIVERGENCES: usize = 78;
     //
     //
     // 28 -> 24 (written as 35 -> 31 in batch43's own tree, which branched before batch42), in three unrelated causes, none of them an access-path
@@ -1698,8 +1770,8 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
 /// candidate, which is the point -- `plan_cache` at 1,128 matched is among the
 /// largest candidates in the suite.
 ///
-/// The remaining 12 are NOT the reader's bug, and each is named here so no
-/// later unit has to rediscover that:
+/// The remaining 12 were all harness gaps and are now covered by the byte
+/// reader and dual-recording selector below:
 ///
 ///   8 topics whose `r/*.result` is not valid UTF-8, because the recording
 ///     holds deliberately invalid byte sequences -- these are the charset
@@ -1708,8 +1780,8 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
 ///     `new_character_set_builtin`, `planner/core/integration`,
 ///     `planner/core/integration_partition`,
 ///     `planner/core/tests/prepare/issue`). Reading them means carrying the
-///     recording as BYTES rather than as `String`, which is a real change to
-///     every comparison here, not a parser fix.
+///     recording as BYTES rather than as `String`; [`align_bytes`] now keeps
+///     those octets intact through row comparison.
 ///   4 topics with no `r/*.result` at all: `collation_agg_func`,
 ///     `collation_check_use_collation`, `collation_misc`,
 ///     `collation_pointget`. Each has TWO recordings instead --
@@ -1718,7 +1790,8 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
 ///     not a single `t`/`r` pair at all. Aligning them means choosing which
 ///     recording the replay's own collation configuration corresponds to,
 ///     which is a claim about this engine's collation support, not a parser
-///     fix.
+///     fix. [`recording_path`] chooses the recording for the live collation
+///     mode.
 #[test]
 #[ignore = "inventory tool: lists every topic the reader cannot align, with its cause"]
 fn survey_unaligned_topics() {
@@ -1734,17 +1807,18 @@ fn survey_unaligned_topics() {
                 continue;
             }
         };
-        let recorded = match fs::read_to_string(dir.join(format!("r/{topic}.result"))) {
-            Ok(text) => text,
+        let result_path = recording_path(&dir, &topic);
+        let recorded = match fs::read(&result_path) {
+            Ok(bytes) => bytes,
             Err(e) => {
                 unaligned += 1;
-                eprintln!("UNALIGNED  {topic}: read .result: {e}");
+                eprintln!("UNALIGNED  {topic}: read {}: {e}", result_path.display());
                 continue;
             }
         };
         match parse_test(&script).and_then(|items| {
             let count = items.len();
-            align(&items, &recorded).map(|_| count)
+            align_bytes(&items, &recorded).map(|_| count)
         }) {
             Ok(count) => {
                 aligned += 1;

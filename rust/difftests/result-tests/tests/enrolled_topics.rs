@@ -645,4 +645,12 @@ pub const TOPICS: &[(&str, &str)] = &[
      where TiDB raises 1238 (2 statements). It is the densest variable-behavior \
      topic in the suite, and 96 of its matches are ROW results",
     ),
+    (
+        "planner/core/integration_partition",
+        "132 matched and 3 ROW divergences of one cause: `INSERT INTO tref SELECT * \
+     FROM t` reads a partitioned source as an empty relation instead of refusing \
+     it, so the ordinary reference table `tref` is empty in all three later \
+     checks. The topic is otherwise a large named partition-refusal surface: 319 \
+     statements are OutOfDomain and 38 are rejected by both engines",
+    ),
 ];

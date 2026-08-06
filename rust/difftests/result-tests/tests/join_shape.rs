@@ -98,7 +98,7 @@ use std::fs;
 use enrolled_topics::TOPICS;
 use integration_plan_property::{plan_statement, PlanStatement};
 use mysqltest_connections::Connections;
-use mysqltest_script::{align, parse_test, split_warnings, Item, Stmt};
+use mysqltest_script::{align_bytes, parse_test, recording_path, split_warnings_bytes, Item, Stmt};
 use tidb_datatype::Datum;
 use tidb_session::{Session, StmtOutput};
 
@@ -420,10 +420,11 @@ fn run_topic_on_this_stack(topic: &str) -> Result<Report, String> {
     let dir = difftest::parser_oracle::repo_root().join("tests/integrationtest");
     let script = fs::read_to_string(dir.join(format!("t/{topic}.test")))
         .map_err(|e| format!("read t/{topic}.test: {e}"))?;
-    let recorded = fs::read_to_string(dir.join(format!("r/{topic}.result")))
-        .map_err(|e| format!("read r/{topic}.result: {e}"))?;
+    let recorded_path = recording_path(&dir, topic);
+    let recorded =
+        fs::read(&recorded_path).map_err(|e| format!("read {}: {e}", recorded_path.display()))?;
     let items = parse_test(&script)?;
-    let aligned = align(&items, &recorded)?;
+    let aligned = align_bytes(&items, &recorded)?;
 
     let mut report = Report::default();
     let mut connections = Connections::open(topic)?;
@@ -437,6 +438,9 @@ fn run_topic_on_this_stack(topic: &str) -> Result<Report, String> {
             Item::Echo(_) => continue,
         };
         compare_statement(connections.current(), topic, stmt, &block, &mut report);
+        if !stmt.expect_error {
+            connections.recover_account_row_from_unsupported_create_user(&stmt.sql);
+        }
     }
     Ok(report)
 }
@@ -445,11 +449,11 @@ fn compare_statement(
     session: &mut Session,
     topic: &str,
     stmt: &Stmt,
-    block: &[String],
+    block: &[Vec<u8>],
     report: &mut Report,
 ) {
     let recorded = if stmt.warnings {
-        split_warnings(block).0
+        split_warnings_bytes(block).0
     } else {
         block
     };
@@ -468,7 +472,11 @@ fn compare_statement(
             return;
         }
     };
-    if stmt.expect_error || recorded.first().is_some_and(|l| l.starts_with("Error ")) {
+    if stmt.expect_error
+        || recorded
+            .first()
+            .is_some_and(|line| line.starts_with(b"Error "))
+    {
         report.unreachable += 1;
         return;
     }
@@ -481,7 +489,11 @@ fn compare_statement(
         .map(|row| row.iter().map(cell).collect::<Vec<_>>().join("\t"))
         .collect();
     // Drop the header on the recorded side; ours carries none.
-    let theirs = &recorded[1.min(recorded.len())..];
+    let recorded_text = recorded
+        .iter()
+        .map(|line| String::from_utf8_lossy(line).into_owned())
+        .collect::<Vec<_>>();
+    let theirs = &recorded_text[1.min(recorded_text.len())..];
     let got = join_shape(&ours);
     let want = join_shape(theirs);
 
@@ -1159,8 +1171,15 @@ fn join_operators_and_their_keep_order_match_recorded_tidb_plans() {
     //
     // The named prerequisite for all five is therefore `extractJoinGroup`
     // reaching ACROSS a query block, not a join cost model.
-    const COMPARED: usize = 229;
-    const BOTH_AGREE: usize = 146;
+    //
+    // The harness-alignment enrollment adds exactly three comparable join
+    // plans from `planner/core/integration_partition`; its printed topic line
+    // is `3 of 3 join plans agree, ordered-merge pairs 0/0 (+0 extra)`.
+    // Therefore only `compared` and `both_agree` move in the current oracle:
+    // `left: (232, 144, 88, 78, 8)`.
+    //
+    const COMPARED: usize = 232;
+    const BOTH_AGREE: usize = 149;
     const RECORDED_MERGE_PAIRS: usize = 88;
     const AGREED_MERGE_PAIRS: usize = 82;
     const EXTRA_MERGE_PAIRS: usize = 5;

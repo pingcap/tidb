@@ -96,7 +96,7 @@ use std::fs;
 
 use integration_plan_property::plan_statement;
 use mysqltest_connections::Connections;
-use mysqltest_script::{align, parse_test, split_warnings, Item, Stmt};
+use mysqltest_script::{align_bytes, parse_test, recording_path, split_warnings_bytes, Item, Stmt};
 use tidb_datatype::Datum;
 use tidb_session::{Session, StmtOutput};
 
@@ -254,12 +254,25 @@ impl CatalogReport {
     }
 }
 
-/// Renders one result cell the way the recorder writes it.
-fn cell(value: &Datum) -> String {
+fn cell_bytes(value: &Datum) -> Vec<u8> {
     if value.is_null() {
-        return "NULL".to_owned();
+        return b"NULL".to_vec();
     }
-    value.sql_string().unwrap_or_else(|_| value.label())
+    value
+        .to_bytes()
+        .unwrap_or_else(|_| value.label().into_bytes())
+}
+
+fn display_line(line: &[u8]) -> String {
+    String::from_utf8_lossy(line).into_owned()
+}
+
+fn display_block(lines: &[Vec<u8>]) -> String {
+    lines
+        .iter()
+        .map(|line| display_line(line))
+        .collect::<Vec<_>>()
+        .join(" / ")
 }
 
 /// Renders a result set as the recorder does: a tab-separated header of column
@@ -271,21 +284,28 @@ fn render(
     columns: &[(String, tidb_datatype::FieldType)],
     rows: &[Vec<Datum>],
     sorted: bool,
-) -> Vec<String> {
+) -> Vec<Vec<u8>> {
     let mut out = vec![columns
         .iter()
         .map(|(name, _)| name.clone())
         .collect::<Vec<_>>()
-        .join("\t")];
-    out.extend(
-        rows.iter()
-            .map(|row| row.iter().map(cell).collect::<Vec<_>>().join("\t")),
-    );
+        .join("\t")
+        .into_bytes()];
+    out.extend(rows.iter().map(|row| {
+        let mut line = Vec::new();
+        for (index, value) in row.iter().enumerate() {
+            if index > 0 {
+                line.push(b'\t');
+            }
+            line.extend(cell_bytes(value));
+        }
+        line
+    }));
     if sorted {
         out[1..].sort();
     }
     out.iter()
-        .flat_map(|line| line.split('\n').map(str::to_owned))
+        .flat_map(|line| line.split(|byte| *byte == b'\n').map(|part| part.to_vec()))
         .collect()
 }
 
@@ -293,7 +313,7 @@ fn render(
 fn compare_catalog(
     session: &mut Session,
     stmt: &Stmt,
-    recorded: &[String],
+    recorded: &[Vec<u8>],
     report: &mut CatalogReport,
 ) {
     if let Some(reason) = stmt.blocker {
@@ -311,14 +331,14 @@ fn compare_catalog(
     // warning texts themselves are gated by `integration_diff`, whose unit is
     // the statement; this tier's unit is the catalog read's rows.
     let recorded = if stmt.warnings {
-        split_warnings(recorded).0
+        split_warnings_bytes(recorded).0
     } else {
         recorded
     };
     let recorded_error = stmt.expect_error
         || recorded
             .first()
-            .is_some_and(|line| line.starts_with("Error "));
+            .is_some_and(|line| line.starts_with(b"Error "));
     let outcome = session.run_with_columns(&stmt.sql);
     let mut skip = |class: SkipClass| {
         *report.skipped.entry(format!("{class:?}")).or_default() += 1;
@@ -329,11 +349,13 @@ fn compare_catalog(
         (Ok(_), true) => report.divergences.push(format!(
             "\n--- {}\n  tidb: {}\n  rust: accepted the statement",
             stmt.sql,
-            recorded.first().map_or("<error>", String::as_str)
+            recorded
+                .first()
+                .map_or_else(|| "<error>".to_owned(), |line| display_line(line))
         )),
         (Ok(StmtOutput::Rows { columns, rows }), false) => {
             let ours = render(&columns, &rows, stmt.sorted);
-            let mut theirs: Vec<String> = recorded.to_vec();
+            let mut theirs: Vec<Vec<u8>> = recorded.to_vec();
             if stmt.sorted && !theirs.is_empty() {
                 theirs[1..].sort();
             }
@@ -343,8 +365,8 @@ fn compare_catalog(
                 report.divergences.push(format!(
                     "\n--- {}\n  tidb: {}\n  rust: {}",
                     stmt.sql,
-                    theirs.join(" / "),
-                    ours.join(" / ")
+                    display_block(&theirs),
+                    display_block(&ours)
                 ));
             }
         }
@@ -363,10 +385,11 @@ fn run_topic_on_this_stack(topic: &str) -> Result<CatalogReport, String> {
     let dir = difftest::parser_oracle::repo_root().join("tests/integrationtest");
     let script = fs::read_to_string(dir.join(format!("t/{topic}.test")))
         .map_err(|e| format!("read t/{topic}.test: {e}"))?;
-    let recorded = fs::read_to_string(dir.join(format!("r/{topic}.result")))
-        .map_err(|e| format!("read r/{topic}.result: {e}"))?;
+    let recorded_path = recording_path(&dir, topic);
+    let recorded =
+        fs::read(&recorded_path).map_err(|e| format!("read {}: {e}", recorded_path.display()))?;
     let items = parse_test(&script)?;
-    let aligned = align(&items, &recorded)?;
+    let aligned = align_bytes(&items, &recorded)?;
 
     let mut report = CatalogReport::default();
     let mut connections = Connections::open(topic)?;
@@ -385,6 +408,9 @@ fn run_topic_on_this_stack(topic: &str) -> Result<CatalogReport, String> {
             // Not compared -- but RUN, because the catalog reads after it
             // describe the schema this statement leaves behind.
             drop(connections.current().run_with_columns(&stmt.sql));
+            if !stmt.expect_error {
+                connections.recover_account_row_from_unsupported_create_user(&stmt.sql);
+            }
             report.ran_for_effect += 1;
         }
     }

@@ -33,6 +33,33 @@
 //! matching is per-line trimmed on both sides.
 #![allow(dead_code)]
 
+use std::path::{Path, PathBuf};
+
+const DUAL_COLLATION_RECORDINGS: &[&str] = &[
+    "collation_agg_func",
+    "collation_check_use_collation",
+    "collation_misc",
+    "collation_pointget",
+];
+
+/// Returns the recording that corresponds to this process's collation mode.
+///
+/// The four collation topics have no unsuffixed result: TiDB records an
+/// enabled and a disabled oracle separately. Every other topic keeps the
+/// ordinary `r/<topic>.result` path.
+pub fn recording_path(integrationtest_dir: &Path, topic: &str) -> PathBuf {
+    let suffix = if DUAL_COLLATION_RECORDINGS.contains(&topic) {
+        if tidb_datatype::new_collation_enabled() {
+            "_enabled"
+        } else {
+            "_disabled"
+        }
+    } else {
+        ""
+    };
+    integrationtest_dir.join(format!("r/{topic}{suffix}.result"))
+}
+
 /// One `.test` item that produces output in the `.result` stream.
 #[derive(Debug)]
 pub enum Item {
@@ -44,6 +71,8 @@ pub enum Item {
     /// not the server. See [`ConnectionCmd`].
     Connection(ConnectionCmd),
 }
+
+pub type AlignedBytes<'a> = Vec<(&'a Item, Vec<Vec<u8>>)>;
 
 /// One mysqltest connection command.
 ///
@@ -312,13 +341,41 @@ pub fn parse_test(text: &str) -> Result<Vec<Item>, String> {
 /// See the module docs for why the echoes are located in order rather than
 /// parsed out of the result file on their own.
 pub fn align<'a>(items: &'a [Item], result: &str) -> Result<Vec<(&'a Item, Vec<String>)>, String> {
-    let lines: Vec<&str> = result.lines().collect();
+    align_bytes(items, result.as_bytes())?
+        .into_iter()
+        .map(|(item, block)| {
+            block
+                .into_iter()
+                .map(|line| {
+                    String::from_utf8(line)
+                        .map_err(|error| format!("recorded output is not valid UTF-8: {error}"))
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .map(|block| (item, block))
+        })
+        .collect()
+}
+
+/// Byte-preserving form of [`align`].
+///
+/// Several charset integration recordings deliberately contain invalid UTF-8.
+/// Their raw result cells are part of the oracle, so decoding the entire file
+/// before alignment would either reject those topics or corrupt the bytes that
+/// need to be compared.
+pub fn align_bytes<'a>(items: &'a [Item], result: &[u8]) -> Result<AlignedBytes<'a>, String> {
+    let mut lines: Vec<&[u8]> = result
+        .split(|byte| *byte == b'\n')
+        .map(|line| line.strip_suffix(b"\r").unwrap_or(line))
+        .collect();
+    if lines.last().is_some_and(|line| line.is_empty()) {
+        lines.pop();
+    }
     let mut out = Vec::with_capacity(items.len());
     let mut cursor = 0usize;
 
     for (index, item) in items.iter().enumerate() {
         let echo = item.echo_lines();
-        if !matches_at(&lines, cursor, &echo) {
+        if !matches_at_bytes(&lines, cursor, &echo) {
             return Err(format!(
                 "recorded output does not echo item {index} (`{}`) at result line {}",
                 echo.join(" "),
@@ -346,7 +403,7 @@ pub fn align<'a>(items: &'a [Item], result: &str) -> Result<Vec<(&'a Item, Vec<S
                             next_echo.join(" ")
                         ));
                     }
-                    if matches_at(&lines, probe, &next_echo) {
+                    if matches_at_bytes(&lines, probe, &next_echo) {
                         break probe;
                     }
                     probe += 1;
@@ -356,7 +413,10 @@ pub fn align<'a>(items: &'a [Item], result: &str) -> Result<Vec<(&'a Item, Vec<S
         };
         out.push((
             item,
-            lines[cursor..end].iter().map(|l| (*l).to_owned()).collect(),
+            lines[cursor..end]
+                .iter()
+                .map(|line| line.to_vec())
+                .collect(),
         ));
         cursor = end;
     }
@@ -391,12 +451,41 @@ pub fn split_warnings(recorded: &[String]) -> (&[String], Option<&[String]>) {
     }
 }
 
+/// Byte-preserving form of [`split_warnings`].
+pub fn split_warnings_bytes(recorded: &[Vec<u8>]) -> (&[Vec<u8>], Option<&[Vec<u8>]>) {
+    match recorded
+        .iter()
+        .position(|line| trim_ascii(line) == WARNINGS_HEADER.as_bytes())
+    {
+        Some(at) => (&recorded[..at], Some(&recorded[at + 1..])),
+        None => (recorded, None),
+    }
+}
+
 fn matches_at(lines: &[&str], at: usize, echo: &[&str]) -> bool {
     at + echo.len() <= lines.len()
         && lines[at..at + echo.len()]
             .iter()
             .zip(echo)
             .all(|(have, want)| have.trim() == *want)
+}
+
+fn matches_at_bytes(lines: &[&[u8]], at: usize, echo: &[&str]) -> bool {
+    at + echo.len() <= lines.len()
+        && lines[at..at + echo.len()]
+            .iter()
+            .zip(echo)
+            .all(|(have, want)| trim_ascii(have) == want.as_bytes())
+}
+
+fn trim_ascii(mut bytes: &[u8]) -> &[u8] {
+    while bytes.first().is_some_and(u8::is_ascii_whitespace) {
+        bytes = &bytes[1..];
+    }
+    while bytes.last().is_some_and(u8::is_ascii_whitespace) {
+        bytes = &bytes[..bytes.len() - 1];
+    }
+    bytes
 }
 
 #[cfg(test)]
@@ -416,6 +505,33 @@ mod tests {
         assert!(matches!(aligned[0].0, Item::Stmt(s) if s.sorted && !s.expect_error));
         assert!(aligned[1].1.is_empty());
         assert!(matches!(aligned[2].0, Item::Stmt(s) if s.expect_error));
+    }
+
+    #[test]
+    fn byte_alignment_preserves_non_utf8_result_cells() {
+        let items = parse_test("select a from t;\nselect 2;\n").unwrap();
+        let recorded = b"select a from t;\na\n\xff\nselect 2;\n2\n2\n";
+        let aligned = align_bytes(&items, recorded).unwrap();
+        assert_eq!(aligned[0].1, vec![b"a".to_vec(), b"\xff".to_vec()]);
+        assert_eq!(aligned[1].1, vec![b"2".to_vec(), b"2".to_vec()]);
+    }
+
+    #[test]
+    fn collation_topics_select_the_recording_for_the_live_mode() {
+        let root = Path::new("/integrationtest");
+        let suffix = if tidb_datatype::new_collation_enabled() {
+            "enabled"
+        } else {
+            "disabled"
+        };
+        assert_eq!(
+            recording_path(root, "collation_misc"),
+            root.join(format!("r/collation_misc_{suffix}.result"))
+        );
+        assert_eq!(
+            recording_path(root, "executor/charset"),
+            root.join("r/executor/charset.result")
+        );
     }
 
     #[test]

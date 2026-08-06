@@ -111,7 +111,7 @@ impl Connections {
             next_connection_id: 1,
         };
         let database = topic_database(topic);
-        let mut session = pool.new_session("root", ANY_HOST);
+        let mut session = pool.new_session("root", ANY_HOST, None)?;
         session
             .run(&format!("create database if not exists `{database}`"))
             .map_err(|e| format!("create topic database `{database}`: {e:?}"))?;
@@ -151,18 +151,8 @@ impl Connections {
                          such account in the registry after the replay's own account statements"
                     ));
                 };
-                let mut session = self.new_session(user, &matched_host);
-                if db.is_empty() {
-                    // An omitted db means NO schema, not the topic's: the
-                    // statement after `connect (conn1, localhost, root,,)` in
-                    // `executor/show` is a `show tables` whose recording is
-                    // `Error 1046 (3D000): No database selected`.
-                    session.deselect_database();
-                } else {
-                    session
-                        .select_database(db)
-                        .map_err(|e| format!("connect ({name}, ...) database `{db}`: {e:?}"))?;
-                }
+                let session =
+                    self.new_session(user, &matched_host, (!db.is_empty()).then_some(db.as_str()))?;
                 // A `connect` MAKES THE NEW CONNECTION CURRENT: the statement
                 // after `connect (conn1, localhost, u_version29,, ...)` in
                 // `session/privileges` records `u_version29@%` from
@@ -218,14 +208,32 @@ impl Connections {
 
     /// One new connection over the shared state, in the order the server's own
     /// `open_session` installs it.
-    fn new_session(&mut self, user: &str, host: &str) -> Session {
+    fn new_session(
+        &mut self,
+        user: &str,
+        host: &str,
+        initial_database: Option<&str>,
+    ) -> Result<Session, String> {
         let mut session = Session::with_catalog(SharedCatalog::clone(&self.catalog));
         let identity = format!("{user}@{host}");
         session.set_user(identity.clone(), identity);
         session.set_connection_id(self.next_connection_id);
         self.next_connection_id += 1;
-        session.attach_privileges(self.privileges.clone());
         session.attach_globals(self.globals.clone());
+        // A mysqltest `connect (..., db)` puts `db` in the initial handshake;
+        // it is not a SQL `USE db`. The recording proves the distinction in
+        // `ddl/sequence`: an account with no visible privilege on the schema
+        // still authenticates with it as the current database, and the first
+        // table/sequence operation is where 1142 is raised. Select it before
+        // installing the privilege registry so the ordinary SQL `USE` path
+        // keeps its 1044 visibility gate.
+        session.deselect_database();
+        if let Some(database) = initial_database {
+            session
+                .select_database(database)
+                .map_err(|error| format!("initial database `{database}`: {error:?}"))?;
+        }
+        session.attach_privileges(self.privileges.clone());
         // mysql-tester puts these in the DSN of EVERY connection it opens, so
         // the driver issues them before the script's first statement. They are
         // in the recorded output's provenance, not the engine's defaults:
@@ -270,7 +278,34 @@ impl Connections {
                 .run(setup)
                 .expect("mysql-tester's per-connection setup is accepted");
         }
-        session
+        Ok(session)
+    }
+
+    /// Preserves the account-row side effect of an unsupported account
+    /// annotation so a later mysqltest `connect` can authenticate it.
+    ///
+    /// The statement itself remains an OutOfDomain skip and its annotation is
+    /// not fabricated. Only the parsed `CREATE USER ... COMMENT/ATTRIBUTE`
+    /// account identities are copied, and only after the caller established
+    /// that TiDB expected the statement to succeed.
+    pub fn recover_account_row_from_unsupported_create_user(&self, sql: &str) {
+        let Ok(tidb_ast::Stmt::Ddl(ddl)) = tidb_parser::parse(sql) else {
+            return;
+        };
+        let tidb_ast::DdlStmt::CreateUser {
+            users,
+            comment_or_attribute: Some(_),
+            ..
+        } = ddl.as_ref()
+        else {
+            return;
+        };
+        for spec in users {
+            if !spec.user.current_user {
+                self.privileges
+                    .create_user(&spec.user.user, &spec.user.host, "");
+            }
+        }
     }
 }
 
@@ -404,6 +439,44 @@ mod tests {
         assert_eq!(
             pool.current().authenticated_identity(),
             Some(("u1", "localhost"))
+        );
+    }
+
+    #[test]
+    fn initial_database_is_selected_before_sql_use_privilege_checks() {
+        let mut pool = Connections::open("driver/accounts").unwrap();
+        pool.current()
+            .run("create user no_db_privilege@localhost")
+            .unwrap();
+        pool.apply(&ConnectionCmd::Open {
+            name: "conn1".to_owned(),
+            host: "localhost".to_owned(),
+            user: "no_db_privilege".to_owned(),
+            db: topic_database("driver/accounts"),
+        })
+        .unwrap();
+        assert_eq!(
+            pool.current().current_database(),
+            topic_database("driver/accounts")
+        );
+    }
+
+    #[test]
+    fn unsupported_account_annotations_still_leave_the_recorded_account_row() {
+        let mut pool = Connections::open("driver/accounts").unwrap();
+        pool.recover_account_row_from_unsupported_create_user(
+            "CREATE USER testuser1 ATTRIBUTE '{\"name\": \"Tom\"}';",
+        );
+        pool.apply(&ConnectionCmd::Open {
+            name: "conn1".to_owned(),
+            host: "localhost".to_owned(),
+            user: "testuser1".to_owned(),
+            db: String::new(),
+        })
+        .unwrap();
+        assert_eq!(
+            pool.current().authenticated_identity(),
+            Some(("testuser1", "%"))
         );
     }
 }

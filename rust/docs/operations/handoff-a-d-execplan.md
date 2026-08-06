@@ -14,7 +14,7 @@ After this work, encrypted spill files no longer fall back to plaintext, the dif
 - [x] (2026-08-06) Resume the dedicated `codex/handoff-tidb-rust` worktree at base `d93e689e89b67fc940f0cfacee9e96ac513c9a58`.
 - [x] (2026-08-06) Port, validate, commit, and mutation-probe Task A's checksum-over-AES-CTR spill stack (`82e0e9add2ed9f0a810f87c4a3220396628f7de3`).
 - [x] (2026-08-06) Finish Task D validation and four mutation probes for the six-constant Ruby resolver and formatter rollback.
-- [ ] Diagnose and align all fourteen Task C topics, enroll eligible topics, commit, and probe the gates.
+- [x] (2026-08-06) Diagnose and align all fourteen Task C topics, enroll the one eligible topic, and complete five mutation probes.
 - [ ] Re-derive, document, commit, and probe Task B's three measurements on the post-Task-C tip.
 - [ ] Run handoff gates and the repository Ready profile, self-review the diff, and prepare the parent-ordered SHA handoff.
 
@@ -45,9 +45,11 @@ After this work, encrypted spill files no longer fall back to plaintext, the dif
 
 ## Outcomes & Retrospective
 
-The overall bundle remains incomplete. Tasks A and D are committed and restored after their mutation probes; this section will be updated after every remaining committed task and at final handoff.
+The overall bundle remains incomplete. Tasks A, C, and D are committed and restored after their mutation probes; this section will be updated after Task B and at final handoff.
 
 Task D now uses the standard-library-only Ruby resolver at `rust/difftests/resolve-ratchet-conflict.rb`. Its four synthetic tests cover both-side narrative preservation, exact constant de-duplication without touching same-named constants outside the conflict, caller-owned values for all six integration and join-shape ratchets, formatter invocation, and byte-for-byte restoration of the original conflict when formatting fails.
+
+Task C aligns all 257 integration topics at the recording-reader layer. The replay gate grows from `integrationtest replay over 109 topics: 8099 of 10972 statements compared` to `integrationtest replay over 110 topics: 8234 of 11465 statements compared`; `planner/core/integration_partition` is the only newly aligned topic below the five-divergence enrollment bar.
 
 ## Context and Orientation
 
@@ -105,6 +107,39 @@ Task D replacement mutation evidence, run with `ruby rust/difftests/tools/resolv
     Ignore caller-supplied values -> three named tests FAILED
     Remove formatter rollback write -> test_restores_the_conflict_when_formatting_fails FAILED
     Restore both saved files -> 4 runs, 41 assertions, 0 failures, 0 errors, 0 skips
+
+Task C current-oracle evidence:
+
+    integrationtest replay over 109 topics: 8099 of 10972 statements compared
+    integrationtest replay over 110 topics: 8234 of 11465 statements compared
+    warning gate reaches 62 of 11465 statements across 110 topics
+    257 topics align, 0 do not
+
+The fourteen formerly blocked topics now report these `(matched, diverged, total)` tuples:
+
+    executor/charset (135, 16, 214)
+    executor/insert (1082, 88, 1400)
+    expression/charset_and_collation (496, 49, 733)
+    new_character_set (95, 14, 110)
+    new_character_set_builtin (154, 39, 221)
+    planner/core/integration (1189, 173, 1598)
+    planner/core/integration_partition (132, 3, 493)
+    planner/core/tests/prepare/issue (275, 19, 321)
+    collation_agg_func (51, 15, 71)
+    collation_check_use_collation (79, 9, 92)
+    collation_misc (63, 12, 90)
+    collation_pointget (72, 28, 105)
+    ddl/sequence (187, 27, 268)
+    executor/simple (220, 9, 357)
+
+Task C mutation evidence, after saving the four mutated files in `/tmp/tidb-task-c-probes.JzOnwP`:
+
+    Replace the production byte reader with UTF-8 decoding -> integrationtest_replay_matches_recorded_tidb_output FAILED on integration_partition.result
+    Drop the live collation recording suffix -> collation_topics_select_the_recording_for_the_live_mode FAILED
+    Install privilege checks before the mysqltest initial database -> initial_database_is_selected_before_sql_use_privilege_checks FAILED
+    Remove unsupported CREATE USER account-row recovery -> unsupported_account_annotations_still_leave_the_recorded_account_row FAILED
+    Remove the eligible topic from enrollment -> warning_comparison_covers_only_enable_warnings_statements FAILED at 57 of 10972 instead of 62 of 11465
+    Restore all four saved files -> cmp reported identical; git status showed only untracked tgt/
 
 The handoff forbids pushing. The final artifact is a local branch name plus `git log --format="%h %p %s"` in parent order.
 
