@@ -320,7 +320,7 @@ func TestTableRowsOnlySkipsColumnLengthRead(t *testing.T) {
 	// which write directly to the mysql stats tables the cache queries, so no
 	// stats-handle refresh is needed for the assertions.
 	var colLengthReads atomic.Int64
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/statistics/handle/cache/getColLengthTables",
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/statistics/handle/storage/getColLengthTables",
 		func() { colLengthReads.Add(1) })
 
 	tk.MustExec("use test")
