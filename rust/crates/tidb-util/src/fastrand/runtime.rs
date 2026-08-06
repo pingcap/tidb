@@ -70,9 +70,12 @@ mod tests {
     use super::{uint32, Wyrand, RANDOM};
 
     const GO_SOURCE: &[u8] = include_bytes!("../../../../../pkg/util/fastrand/runtime.go");
+    const RUST_SOURCE: &str = include_str!("runtime.rs");
     const LOCKDOWN_INVENTORY: &str = include_str!("runtime.inventory.tsv");
     const EXPECTED_INVENTORY_SHA256: &str =
-        "c2c38f2e1a4242d329141f24fb5ffbec9afba638eff092fbc5e53c813b155696";
+        "214192d13a3da7def207f4b493521dff3f265f498d5a898a1090e9dfef61eef8";
+    const EXPECTED_RUST_PRODUCTION_SHA256: &str =
+        "56729015f4def133f09c1f286bfc85e0a771782459480be5fac10aab117caa66";
     const EXPECTED_ITEMS: [(&str, (&str, &str)); 9] = [
         ("D01", ("DECLINED", "-")),
         ("F01", ("PORTED", "uint32")),
@@ -131,6 +134,27 @@ mod tests {
 
         let _: fn() -> u32 = uint32;
         RANDOM.with(|_: &Cell<Wyrand>| {});
+    }
+
+    #[test]
+    fn source_lock_free_production_path_is_stable() {
+        let production = RUST_SOURCE
+            .split_once("#[cfg(test)]")
+            .expect("runtime module keeps tests after production code")
+            .0;
+        assert_eq!(
+            sha256_hex(production.as_bytes()),
+            EXPECTED_RUST_PRODUCTION_SHA256,
+            "Rust production path drifted"
+        );
+        assert!(production.contains("thread_local!"));
+        assert!(production.contains("Cell<Wyrand>"));
+        for locking_primitive in ["Mutex", "RwLock", "OnceLock", ".lock("] {
+            assert!(
+                !production.contains(locking_primitive),
+                "lock-free path contains {locking_primitive}"
+            );
+        }
     }
 
     #[test]
