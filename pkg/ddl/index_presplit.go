@@ -48,7 +48,7 @@ func preSplitIndexRegions(
 	allIndexInfos []*model.IndexInfo,
 	reorgMeta *model.DDLReorgMeta,
 	args *model.ModifyIndexArgs,
-	statsProvider autoPresplitStatsProvider,
+	statsProvider autoPreSplitStatsProvider,
 ) error {
 	warnHandler := contextutil.NewStaticWarnHandler(0)
 	exprCtx, err := newReorgExprCtxWithReorgMeta(reorgMeta, warnHandler)
@@ -61,7 +61,7 @@ func preSplitIndexRegions(
 	// normal index keyspace here.
 	splitOnTempIdx := reorgMeta.ReorgTp == model.ReorgTypeIngest ||
 		reorgMeta.ReorgTp == model.ReorgTypeTxnMerge
-	autoPresplitBoundaryCache := make(map[int64][][]types.Datum)
+	autoPreSplitBoundaryCache := make(map[int64][][]types.Datum)
 	for i, idxInfo := range allIndexInfos {
 		idxArg := args.IndexArgs[i]
 		logger := logutil.DDLLogger().With(
@@ -69,11 +69,11 @@ func preSplitIndexRegions(
 			zap.String("index", idxInfo.Name.L),
 		)
 		var splitResult splitIndexRegionResult
-		if idxArg.AutoPresplit {
+		if idxArg.AutoPreSplit {
 			var skipReason string
-			splitResult, skipReason, err = autoPresplitIndexRegion(
+			splitResult, skipReason, err = autoPreSplitIndexRegion(
 				ctx, sctx, store, tblInfo, idxInfo, statsProvider,
-				autoPresplitBoundaryCache, splitOnTempIdx)
+				autoPreSplitBoundaryCache, splitOnTempIdx)
 			if ctxErr := context.Cause(ctx); ctxErr != nil {
 				return ctxErr
 			}
@@ -118,18 +118,18 @@ func preSplitIndexRegions(
 	return nil
 }
 
-func autoPresplitIndexRegion(
+func autoPreSplitIndexRegion(
 	ctx context.Context,
 	sctx sessionctx.Context,
 	store kv.Storage,
 	tblInfo *model.TableInfo,
 	idxInfo *model.IndexInfo,
-	statsProvider autoPresplitStatsProvider,
+	statsProvider autoPreSplitStatsProvider,
 	boundaryCache map[int64][][]types.Datum,
 	splitOnTempIdx bool,
 ) (splitResult splitIndexRegionResult, skipReason string, err error) {
-	splitKeys, reason, err := planAutoPresplitWithCache(
-		ctx, sctx, statsProvider, tblInfo, idxInfo, getAutoPresplitConfig(), boundaryCache)
+	splitKeys, reason, err := planAutoPreSplitWithCache(
+		ctx, sctx, statsProvider, tblInfo, idxInfo, getAutoPreSplitConfig(), boundaryCache)
 	if err != nil {
 		return splitIndexRegionResult{}, "", err
 	}

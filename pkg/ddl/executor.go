@@ -4955,7 +4955,7 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 		}
 	}
 
-	splitOpt, autoPresplit, err := buildIndexPresplitOpt(indexOption)
+	splitOpt, autoPreSplit, err := buildIndexPreSplitOpt(indexOption)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -4985,7 +4985,7 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 			SQLMode:                 sqlMode,
 			Global:                  false,
 			IsPK:                    true,
-			AutoPresplit:            autoPresplit,
+			AutoPreSplit:            autoPreSplit,
 			SplitOpt:                splitOpt,
 		}},
 		OpType: model.OpAddIndex,
@@ -5276,7 +5276,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		return e.addHypoIndexIntoCtx(ctx, ti.Schema, ti.Name, indexInfo)
 	}
 
-	splitOpt, autoPresplit, err := buildIndexPresplitOpt(indexOption)
+	splitOpt, autoPreSplit, err := buildIndexPreSplitOpt(indexOption)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -5315,7 +5315,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 			IndexOption:             indexOption,
 			HiddenCols:              hiddenCols,
 			Global:                  global,
-			AutoPresplit:            autoPresplit,
+			AutoPreSplit:            autoPreSplit,
 			SplitOpt:                splitOpt,
 			ConditionString:         conditionString,
 		}},
@@ -5335,13 +5335,13 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	return errors.Trace(err)
 }
 
-func buildIndexPresplitOpt(indexOpt *ast.IndexOption) (*model.IndexArgSplitOpt, bool, error) {
+func buildIndexPreSplitOpt(indexOpt *ast.IndexOption) (*model.IndexArgSplitOpt, bool, error) {
 	if indexOpt == nil {
 		return nil, false, nil
 	}
 	opt := indexOpt.SplitOpt
 	if opt == nil {
-		return nil, indexOpt.AutoPresplit, nil
+		return nil, indexOpt.AutoPreSplit, nil
 	}
 	if len(opt.ValueLists) > 0 {
 		valLists := make([][]string, 0, len(opt.ValueLists))

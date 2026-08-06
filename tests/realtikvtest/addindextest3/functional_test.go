@@ -162,7 +162,7 @@ func TestTiDBEncodeKeyTempIndexKey(t *testing.T) {
 	require.Equal(t, 2, strings.Count(rs, "writes"), rs)
 }
 
-func TestAddIndexPresplitIndexRegions(t *testing.T) {
+func TestAddIndexPreSplitIndexRegions(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("DXF and fast reorg are always enabled on nextgen")
 	}
@@ -261,7 +261,7 @@ func TestAddIndexPresplitIndexRegions(t *testing.T) {
 	checkSplitKeys(tablecodec.TempIndexPrefix|nextIdxID(), 2, true)
 }
 
-func TestAddIndexPresplitFunctional(t *testing.T) {
+func TestAddIndexPreSplitFunctional(t *testing.T) {
 	testutil.ReduceCheckInterval(t)
 	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 	tk := testkit.NewTestKit(t, store)

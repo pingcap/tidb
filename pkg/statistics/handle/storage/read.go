@@ -88,13 +88,13 @@ func HistMetaFromStorageWithHighPriority(sctx sessionctx.Context, item *model.Ta
 	return histMetaFromStorage(util.StatsCtx, sctx, item, possibleColInfo, 0, kv.PriorityHigh)
 }
 
-// AutoPresplitColumnStats is a partial result for DDL automatic pre-splitting.
+// ColumnDistributionStats is a partial result of loading column distribution statistics from storage.
 // Column is nil when histogram metadata does not exist. A non-nil Column always
 // contains metadata, but TopN and Histogram are loaded only for Analyze V2.
 // Component errors do not invalidate the other components or become the outer
 // loader error. A negative metadata null count is replaced with zero and reported
 // through NullCountError.
-type AutoPresplitColumnStats struct {
+type ColumnDistributionStats struct {
 	Column *statistics.Column
 	// TopNError reports only the TopN load failure; Histogram and NullCount may remain usable.
 	TopNError error
@@ -104,19 +104,19 @@ type AutoPresplitColumnStats struct {
 	NullCountError error
 }
 
-// LoadColumnStatsForAutoPresplit loads one column's metadata, TopN, and Histogram
+// LoadColumnDistributionStats loads one column's metadata, TopN, and Histogram
 // from one MVCC snapshot with normal priority. Snapshot/metadata failures are
 // returned as the outer error because the statistics identity and version cannot
 // be established. TopN and Histogram failures are stored independently in the
-// partial result. maxTopNKeys matches Analyze's supported TopN maximum in the DDL
-// caller, while Histogram always loads all buckets.
-func LoadColumnStatsForAutoPresplit(
+// partial result. maxTopNKeys limits the loaded TopN entries, while Histogram
+// always loads all buckets.
+func LoadColumnDistributionStats(
 	ctx context.Context,
 	sctx sessionctx.Context,
 	physicalTableID int64,
 	colInfo *model.ColumnInfo,
 	maxTopNKeys int,
-) (*AutoPresplitColumnStats, error) {
+) (*ColumnDistributionStats, error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStatsForegroundPriority)
 	snapshot, err := sctx.GetStore().GetOracle().GetTimestamp(
 		ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
@@ -130,7 +130,7 @@ func LoadColumnStatsForAutoPresplit(
 	if err != nil {
 		return nil, err
 	}
-	result := &AutoPresplitColumnStats{}
+	result := &ColumnDistributionStats{}
 	if histMeta == nil {
 		return result, nil
 	}
