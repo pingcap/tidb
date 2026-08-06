@@ -274,6 +274,9 @@ func (it *vectorFloat32Iterator) Next(d *types.Datum) error {
 		if rep == 0 {
 			break
 		}
+		if rep != 1 {
+			return errors.Errorf("invalid repetition level %d within list", rep)
+		}
 		it.levelOffset++
 
 		switch {

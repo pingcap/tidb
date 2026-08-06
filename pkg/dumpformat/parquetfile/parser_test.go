@@ -322,6 +322,18 @@ func TestParquetVectorList(t *testing.T) {
 		require.Nil(t, parser)
 		require.ErrorContains(t, err, "unsupported parquet list encoding: element physical type=INT64")
 	})
+
+	t.Run("malformed-continuation-repetition-level", func(t *testing.T) {
+		iter := newVectorFloat32Iterator(2)
+		iter.maxDef = 3
+		iter.levelsBuffered = 2
+		iter.values[0], iter.values[1] = 1, 2
+		iter.defLevels[0], iter.defLevels[1] = 3, 3
+		iter.repLevels[0], iter.repLevels[1] = 0, 2
+
+		var value types.Datum
+		require.ErrorContains(t, iter.Next(&value), "invalid repetition level 2 within list")
+	})
 }
 
 func TestParquetParser(t *testing.T) {
