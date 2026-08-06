@@ -670,6 +670,12 @@ const (
 	// TiDBStmtSummaryMaxSQLLength indicates the max length of displayed normalized sql and sample sql.
 	TiDBStmtSummaryMaxSQLLength = "tidb_stmt_summary_max_sql_length"
 
+	// TiDBStmtSummaryPersistEvicted controls whether per-record LRU evictions are persisted to the statement summary log.
+	TiDBStmtSummaryPersistEvicted = "tidb_stmt_summary_persist_evicted"
+
+	// TiDBStmtSummaryGroupByUser indicates whether statement summaries are grouped by executing user.
+	TiDBStmtSummaryGroupByUser = "tidb_stmt_summary_group_by_user"
+
 	// TiDBIgnoreInlistPlanDigest enables TiDB to generate the same plan digest with SQL using different in-list arguments.
 	TiDBIgnoreInlistPlanDigest = "tidb_ignore_inlist_plan_digest"
 
@@ -1515,6 +1521,8 @@ const (
 	DefTiDBStmtSummaryHistorySize                     = 24
 	DefTiDBStmtSummaryMaxStmtCount                    = 3000
 	DefTiDBStmtSummaryMaxSQLLength                    = 4096
+	DefTiDBStmtSummaryPersistEvicted                  = false
+	DefTiDBStmtSummaryGroupByUser                     = false
 	DefTiDBCapturePlanBaseline                        = Off
 	DefTiDBIgnoreInlistPlanDigest                     = true
 	DefTiDBEnableIndexMerge                           = true
