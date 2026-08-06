@@ -35,7 +35,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use crossbeam_channel::{bounded, select, Receiver, Sender};
 
@@ -284,6 +284,18 @@ impl Watcher {
 
     /// Go `Start`: begins polling every `d`.
     pub fn start(&mut self, d: Duration) -> Result<(), WatchError> {
+        self.start_with_ticker(crossbeam_channel::tick(d))
+    }
+
+    /// [`Watcher::start`] with an explicit tick source instead of a clock.
+    ///
+    /// Go's `doWatch` already selects on `ticker.C`, so the poll trigger is a
+    /// channel either way; naming it lets a caller decide *when* a poll
+    /// observes the filesystem. Tests use this to take a snapshot only after
+    /// their filesystem mutation has fully landed, which makes every emitted
+    /// event a function of the final state rather than of where the poll
+    /// happened to interleave with a half-finished `write`/`rename`.
+    fn start_with_ticker(&mut self, ticker: Receiver<Instant>) -> Result<(), WatchError> {
         if self
             .running
             .compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst)
@@ -300,7 +312,7 @@ impl Watcher {
         let events_tx = self.events_tx.take().expect("events sender present");
         let errors_tx = self.errors_tx.take().expect("errors sender present");
         self.handle = Some(std::thread::spawn(move || {
-            do_watch(d, &state, &closed_rx, &events_tx, &errors_tx);
+            do_watch(&ticker, &state, &closed_rx, &events_tx, &errors_tx);
         }));
         Ok(())
     }
@@ -338,19 +350,24 @@ impl Drop for Watcher {
     }
 }
 
-/// Go `doWatch`: the poll loop, ticking every `d`.
+/// Go `doWatch`: the poll loop, running one poll per tick.
 fn do_watch(
-    d: Duration,
+    ticker: &Receiver<Instant>,
     state: &Arc<Mutex<State>>,
     closed_rx: &Receiver<()>,
     events_tx: &Sender<Event>,
     errors_tx: &Sender<WatchError>,
 ) {
-    let ticker = crossbeam_channel::tick(d);
     loop {
         select! {
             recv(closed_rx) -> _ => return,
-            recv(ticker) -> _ => {
+            // A disconnected tick source means no further poll can ever be
+            // requested, so it stops the loop. Go's `time.Ticker` channel is
+            // never closed, so this arm is unreachable via `start`.
+            recv(ticker) -> tick => {
+                if tick.is_err() {
+                    return;
+                }
                 let Some(curr) = list_for_all(state, closed_rx, errors_tx) else {
                     return;
                 };
@@ -584,7 +601,18 @@ mod tests {
     }
 
     // Go TestWatcher: create/modify/chmod/rename/remove/create/move over a
-    // temp directory, polling every 10ms.
+    // temp directory.
+    //
+    // Go drives this with a 10ms ticker, which makes each assertion a bet that
+    // the mutation lands wholly between two polls. It does not always: a poll
+    // that lists while `Rename` is in flight legitimately sees the file in
+    // both directories (Create) or in neither (Remove), and one that lists
+    // between a truncating open and its write legitimately reports two
+    // Modifies. Those are honest observations of a poller, not watcher bugs,
+    // so the fix is to stop racing the poller rather than to widen a timeout:
+    // this test supplies the ticks itself, one per mutation, after the
+    // mutation has returned. Every poll then sees a settled filesystem and
+    // every event below is determined, not probable.
     #[test]
     fn watcher_lifecycle() {
         let dir = std::env::temp_dir().join(format!("tidb_watcher_test_{}", std::process::id()));
@@ -598,14 +626,28 @@ mod tests {
 
         let mut w = Watcher::new();
         w.add(&dir.to_string_lossy()).unwrap();
-        w.start(Duration::from_millis(10)).unwrap();
+        // Rendezvous: `poll()` returns only once the watch thread has taken
+        // the tick, and the thread lists only after that.
+        let (tick_tx, tick_rx) = bounded::<Instant>(0);
+        w.start_with_ticker(tick_rx).unwrap();
+        let poll = || tick_tx.send(Instant::now()).unwrap();
 
         // create
         std::fs::write(&old_path, b"").unwrap();
+        poll();
         assert_event(&w, &old_path, op::CREATE);
 
-        // modify
-        std::fs::write(&old_path, b"meaningless content").unwrap();
+        // modify: Go opens O_WRONLY and writes once. `fs::write` would open
+        // O_TRUNC first, a second metadata change the Go test never makes.
+        {
+            use std::io::Write;
+            let mut f = std::fs::OpenOptions::new()
+                .write(true)
+                .open(&old_path)
+                .unwrap();
+            f.write_all(b"meaningless content").unwrap();
+        }
+        poll();
         assert_event(&w, &old_path, op::MODIFY);
 
         // chmod
@@ -613,18 +655,22 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&old_path, std::fs::Permissions::from_mode(0o777)).unwrap();
         }
+        poll();
         assert_event(&w, &old_path, op::CHMOD);
 
         // rename (within the same directory)
         std::fs::rename(&old_path, &new_path).unwrap();
+        poll();
         assert_event(&w, &old_path, op::RENAME);
 
         // remove
         std::fs::remove_file(&new_path).unwrap();
+        poll();
         assert_event(&w, &new_path, op::REMOVE);
 
         // create again
         std::fs::write(&old_path, b"").unwrap();
+        poll();
         assert_event(&w, &old_path, op::CREATE);
 
         // move to another (independent) directory, like Go's second TempDir
@@ -634,6 +680,7 @@ mod tests {
         w.add(&dir2.to_string_lossy()).unwrap();
         let old_path2 = dir2.join(old_name).to_string_lossy().into_owned();
         std::fs::rename(&old_path, &old_path2).unwrap();
+        poll();
         assert_event(&w, &old_path, op::MOVE);
 
         w.close();
