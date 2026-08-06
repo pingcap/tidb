@@ -40,6 +40,24 @@ Since FMSketch is a mergeable data structure, nothing prevents us from merging s
 
 ### Current Implementation
 
+Before diving into the new design, let's take a look at the current batch-request implementation.
+
+Currently, store-batched coprocessor requests are used for handle-based table reads. They combine eligible small Region tasks targeting the same TiKV store into a single unary coprocessor RPC.
+
+The [workflow](https://editor.plantuml.com/uml/lPPDJiCm48NtESM85GY50tI14EL721PLMzW0Ysaoj5OTZsKxG6_Fn0qaaK3Gj7HMJYlvytjlnWcS-O0kb8M6Vwm4WWgQO5WwHoR09B2Zz1n3jg0SXcmTP-GzExZI_BO5PY-LW1NBLAOiYfQ3gReuXnkJq_iTy_BU7W3wvhcqkyIqhHfg9Lv6sdgv8ypjGmTpQNBBgWPzFkm6CoRCOSIiuzxLef-43cOlbNG2Ja_h10OmAMU52X1mfYbz8MbmMVkbXzbAvCuLcyqmTR8jmhLZGVe2jMwsZdRwQghwgMamdmcB538vi24e3RfLfoV6e-6JEInGcNW4E5vFT1pegVpm-7pqBUQhVGHKnIsGwWOevMeW5AjgX-AUIWosSWGvbrvjfYPsKjeHCwPGEXFbEFAb3c39zKZa9pKDQOJP4kS4qHrXMJQU04t-PBecZUl_7f__YcbrGKkFXD5m-bRJ0W9fzVO0BaYhL_5A_4fhlzOE-bwOlLG2XeCahUQB0FoonRNr2sQw8CZgbrf1sGADyeMa8XqxYsyt3y6XaN1SEDa2KurtphARw1AGcpTjZ2lDcFlUkxSmrS17u_wp4ZWJJlt1yG40) is as follows:
+
+![](https://img.plantuml.biz/plantuml/png/lPPDJiCm48NtESM85GY50tI14EL721PLMzW0Ysaoj5OTZsKxG6_Fn0qaaK3Gj7HMJYlvytjlnWcS-O0kb8M6Vwm4WWgQO5WwHoR09B2Zz1n3jg0SXcmTP-GzExZI_BO5PY-LW1NBLAOiYfQ3gReuXnkJq_iTy_BU7W3wvhcqkyIqhHfg9Lv6sdgv8ypjGmTpQNBBgWPzFkm6CoRCOSIiuzxLef-43cOlbNG2Ja_h10OmAMU52X1mfYbz8MbmMVkbXzbAvCuLcyqmTR8jmhLZGVe2jMwsZdRwQghwgMamdmcB538vi24e3RfLfoV6e-6JEInGcNW4E5vFT1pegVpm-7pqBUQhVGHKnIsGwWOevMeW5AjgX-AUIWosSWGvbrvjfYPsKjeHCwPGEXFbEFAb3c39zKZa9pKDQOJP4kS4qHrXMJQU04t-PBecZUl_7f__YcbrGKkFXD5m-bRJ0W9fzVO0BaYhL_5A_4fhlzOE-bwOlLG2XeCahUQB0FoonRNr2sQw8CZgbrf1sGADyeMa8XqxYsyt3y6XaN1SEDa2KurtphARw1AGcpTjZ2lDcFlUkxSmrS17u_wp4ZWJJlt1yG40)
+
+1. During the table-fetch phase of an `IndexLookUp` query, TiDB divides the handle reads into Region tasks and groups eligible small tasks that target the same TiKV store.
+
+2. TiDB sends each group as a single unary coprocessor RPC, placing one task in the main request and the rest in `StoreBatchTask` entries.
+
+3. TiKV schedules each Region task independently in its read pool and collects the results.
+
+4. TiKV returns the main response together with the corresponding `StoreBatchTaskResponse` entries. TiDB then unpacks them into per-Region results. TiKV never merges the payloads.
+
+The same mechanism can batch `ANALYZE` requests for multiple Regions on the same TiKV store. However, it must be extended to merge the individual statistics payloads on TiKV and return the combined payload in the main response.
+
 ### Batched Analyze Requests
 
 ## Test Design
