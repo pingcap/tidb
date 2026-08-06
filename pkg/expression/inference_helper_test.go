@@ -22,52 +22,52 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func parseAutoEmbedExpr(t *testing.T, expr string) ast.ExprNode {
+func parseEmbedTextExpr(t *testing.T, expr string) ast.ExprNode {
 	t.Helper()
 	stmt, err := parser.New().ParseOneStmt("select "+expr, "", "")
 	require.NoError(t, err)
 	return stmt.(*ast.SelectStmt).Fields.Fields[0].Expr
 }
 
-func TestAutoEmbedASTHelpers(t *testing.T) {
-	direct := parseAutoEmbedExpr(t, "EMBED_TEXT('mock/json', text)")
-	nested := parseAutoEmbedExpr(t, "vec_dims(embed_text('mock/json', text))")
-	other := parseAutoEmbedExpr(t, "vec_dims(vec)")
+func TestEmbedTextASTHelpers(t *testing.T) {
+	direct := parseEmbedTextExpr(t, "EMBED_TEXT('mock/json', text)")
+	nested := parseEmbedTextExpr(t, "vec_dims(embed_text('mock/json', text))")
+	other := parseEmbedTextExpr(t, "vec_dims(vec)")
 
-	require.True(t, ContainsAutoEmbedFnAST(direct))
-	require.True(t, ContainsAutoEmbedFnAST(nested))
-	require.False(t, ContainsAutoEmbedFnAST(other))
-	require.False(t, ContainsAutoEmbedFnAST(nil))
-	require.True(t, IsAutoEmbedFnCallAST(direct))
-	require.False(t, IsAutoEmbedFnCallAST(nested))
-	require.False(t, IsAutoEmbedFnCallAST(other))
+	require.True(t, ContainsEmbedTextFunc(direct))
+	require.True(t, ContainsEmbedTextFunc(nested))
+	require.False(t, ContainsEmbedTextFunc(other))
+	require.False(t, ContainsEmbedTextFunc(nil))
+	require.True(t, IsEmbedTextFuncCall(direct))
+	require.False(t, IsEmbedTextFuncCall(nested))
+	require.False(t, IsEmbedTextFuncCall(other))
 }
 
-func TestExtractAutoEmbedInfoFromAST(t *testing.T) {
-	info, err := ExtractAutoEmbedInfoFromAST(parseAutoEmbedExpr(t,
+func TestExtractEmbedTextInfo(t *testing.T) {
+	info, err := ExtractEmbedTextInfo(parseEmbedTextExpr(t,
 		`embed_text('mock/json', text, '{"plus":0.5}')`))
 	require.NoError(t, err)
-	require.Equal(t, &AutoEmbedInfo{
+	require.Equal(t, &EmbedTextInfo{
 		ModelNameWithProvider: "mock/json",
 		OptsInJSON:            `{"plus":0.5}`,
 	}, info)
-	require.True(t, info.Equal(&AutoEmbedInfo{
+	require.True(t, info.Equal(&EmbedTextInfo{
 		ModelNameWithProvider: "mock/json",
 		OptsInJSON:            `{"plus":0.5}`,
 	}))
-	require.False(t, info.Equal(&AutoEmbedInfo{ModelNameWithProvider: "mock/other"}))
+	require.False(t, info.Equal(&EmbedTextInfo{ModelNameWithProvider: "mock/other"}))
 	require.False(t, info.Equal(nil))
-	require.False(t, (*AutoEmbedInfo)(nil).Equal(info))
-	require.True(t, (*AutoEmbedInfo)(nil).Equal(nil))
+	require.False(t, (*EmbedTextInfo)(nil).Equal(info))
+	require.True(t, (*EmbedTextInfo)(nil).Equal(nil))
 
-	info, err = ExtractAutoEmbedInfoFromAST(parseAutoEmbedExpr(t,
+	info, err = ExtractEmbedTextInfo(parseEmbedTextExpr(t,
 		`embed_text('mock/json', text, '')`))
 	require.NoError(t, err)
-	require.Equal(t, &AutoEmbedInfo{ModelNameWithProvider: "mock/json"}, info)
-	info, err = ExtractAutoEmbedInfoFromAST(parseAutoEmbedExpr(t,
+	require.Equal(t, &EmbedTextInfo{ModelNameWithProvider: "mock/json"}, info)
+	info, err = ExtractEmbedTextInfo(parseEmbedTextExpr(t,
 		`embed_text('mock/json', text)`))
 	require.NoError(t, err)
-	require.Equal(t, &AutoEmbedInfo{ModelNameWithProvider: "mock/json"}, info)
+	require.Equal(t, &EmbedTextInfo{ModelNameWithProvider: "mock/json"}, info)
 
 	tests := []struct {
 		expr string
@@ -85,7 +85,7 @@ func TestExtractAutoEmbedInfoFromAST(t *testing.T) {
 		{"embed_text('mock/json', text, 'null')", "expects options in JSON format"},
 	}
 	for _, test := range tests {
-		_, err := ExtractAutoEmbedInfoFromAST(parseAutoEmbedExpr(t, test.expr))
+		_, err := ExtractEmbedTextInfo(parseEmbedTextExpr(t, test.expr))
 		require.ErrorContains(t, err, test.err, test.expr)
 	}
 }

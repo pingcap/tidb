@@ -53,7 +53,7 @@ var (
 	InspectionRules        = inspectionRules
 )
 
-func TestFillAutoEmbeddingDatums(t *testing.T) {
+func TestFillEmbedTextValues(t *testing.T) {
 	sctx := mock.NewContext()
 	tblInfo := &model.TableInfo{
 		ID:    1,
@@ -95,19 +95,19 @@ func TestFillAutoEmbeddingDatums(t *testing.T) {
 		Table:        tbl,
 		GenExprs:     []expression.Expression{nil},
 	}
-	generatedCols := insertValues.getAutoEmbeddingGeneratedCols()
+	generatedCols := insertValues.getEmbedTextGeneratedCols()
 	require.Len(t, generatedCols, 1)
 	require.Equal(t, 2, generatedCols[0].offset)
 	require.Same(t, tbl.Cols()[2], generatedCols[0].column)
-	require.True(t, insertValues.autoEmbeddingGeneratedColsInited)
-	require.Equal(t, generatedCols, insertValues.getAutoEmbeddingGeneratedCols())
+	require.True(t, insertValues.embedTextGeneratedColsInitialized)
+	require.Equal(t, generatedCols, insertValues.getEmbedTextGeneratedCols())
 
-	got, err := insertValues.fillAutoEmbeddingDatumsWithRowCount(context.Background(), rows, 1)
+	got, err := insertValues.fillEmbedTextValuesWithRowCount(context.Background(), rows, 1)
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	require.Nil(t, got[0])
 
-	emptyRows, err := insertValues.fillAutoEmbeddingDatums(context.Background(), nil)
+	emptyRows, err := insertValues.fillEmbedTextValues(context.Background(), nil)
 	require.NoError(t, err)
 	require.Nil(t, emptyRows)
 
@@ -115,10 +115,10 @@ func TestFillAutoEmbeddingDatums(t *testing.T) {
 		BaseExecutor: exec.NewBaseExecutor(sctx, nil, 0),
 	}
 	plainRows := [][]types.Datum{types.MakeDatums(1, "plain")}
-	got, err = withoutGeneratedCols.fillAutoEmbeddingDatumsWithRowCount(context.Background(), plainRows, 1)
+	got, err = withoutGeneratedCols.fillEmbedTextValuesWithRowCount(context.Background(), plainRows, 1)
 	require.NoError(t, err)
 	require.Equal(t, plainRows, got)
-	require.True(t, withoutGeneratedCols.autoEmbeddingGeneratedColsInited)
+	require.True(t, withoutGeneratedCols.embedTextGeneratedColsInitialized)
 
 	if !kerneltype.IsNextGen() {
 		return
@@ -161,26 +161,26 @@ func TestFillAutoEmbeddingDatums(t *testing.T) {
 		types.MakeDatums(2, nil, nil),
 		nil,
 	}
-	_, err = insertValues.fillAutoEmbeddingDatums(context.Background(), validRows)
+	_, err = insertValues.fillEmbedTextValues(context.Background(), validRows)
 	require.ErrorContains(t, err, "EMBED_TEXT is only supported in starter deployment mode")
 
 	require.NoError(t, deploymode.Set(deploymode.Starter))
 	embedFn := inference.NewEmbedFn()
 	t.Cleanup(inference.SetDefaultEmbedFnForTest(embedFn))
 
-	got, err = insertValues.fillAutoEmbeddingDatums(context.Background(), validRows)
+	got, err = insertValues.fillEmbedTextValues(context.Background(), validRows)
 	require.NoError(t, err)
 	require.Equal(t, "[2,3,4]", got[0][2].GetVectorFloat32().String())
 	require.True(t, got[1][2].IsNull())
 	require.Nil(t, got[2])
 
 	invalidRows := [][]types.Datum{types.MakeDatums(3, "not-json", nil)}
-	_, err = insertValues.fillAutoEmbeddingDatumsWithRowCount(context.Background(), invalidRows, 3)
+	_, err = insertValues.fillEmbedTextValuesWithRowCount(context.Background(), invalidRows, 3)
 	require.Error(t, err)
 
 	canceledCtx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err = insertValues.fillAutoEmbeddingDatumsWithRowCount(canceledCtx, [][]types.Datum{
+	_, err = insertValues.fillEmbedTextValuesWithRowCount(canceledCtx, [][]types.Datum{
 		types.MakeDatums(4, "[4,5,6]", nil),
 	}, 4)
 	require.ErrorIs(t, err, context.Canceled)

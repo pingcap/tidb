@@ -130,9 +130,9 @@ func TestEmbedTextBuiltinNullAndErrors(t *testing.T) {
 	})
 	require.ErrorIs(t, err, types.ErrOverflow)
 
-	_, _, err = EvalEmbedTextArgsFromExpression(evalCtx, chunk.Row{}, stringConst("not a function"))
+	_, _, err = EvalEmbedTextArgsFromExpr(evalCtx, chunk.Row{}, stringConst("not a function"))
 	require.ErrorContains(t, err, "expects EMBED_TEXT()")
-	_, _, err = EvalEmbedTextArgsFromExpression(evalCtx, chunk.Row{}, &ScalarFunction{})
+	_, _, err = EvalEmbedTextArgsFromExpr(evalCtx, chunk.Row{}, &ScalarFunction{})
 	require.ErrorContains(t, err, "expects EMBED_TEXT()")
 
 	_, err = EvalEmbedTextArgsToDatum(nil, nil, &EmbedTextArgs{})
@@ -146,7 +146,7 @@ func TestEmbedTextBuiltinNullAndErrors(t *testing.T) {
 		stringConst("[1,2,3]"),
 	)
 	require.NoError(t, err)
-	parsedArgs, isNull, err := EvalEmbedTextArgsFromExpression(evalCtx, chunk.Row{}, fn)
+	parsedArgs, isNull, err := EvalEmbedTextArgsFromExpr(evalCtx, chunk.Row{}, fn)
 	require.NoError(t, err)
 	require.False(t, isNull)
 	require.Equal(t, "mock/json", parsedArgs.Model)

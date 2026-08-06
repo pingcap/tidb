@@ -98,15 +98,15 @@ func (b *builtinEmbedTextSig) evalVectorFloat32(ctx EvalContext, row chunk.Row) 
 	return datum.GetVectorFloat32(), false, nil
 }
 
-// EvalEmbedTextArgsFromExpression evaluates the arguments of a direct
+// EvalEmbedTextArgsFromExpr evaluates the arguments of a direct
 // EMBED_TEXT scalar expression without calling the embedding provider.
-func EvalEmbedTextArgsFromExpression(ctx EvalContext, row chunk.Row, expr Expression) (*EmbedTextArgs, bool, error) {
+func EvalEmbedTextArgsFromExpr(ctx EvalContext, row chunk.Row, expr Expression) (*EmbedTextArgs, bool, error) {
 	sf, ok := expr.(*ScalarFunction)
 	if !ok {
-		return nil, false, fmt.Errorf("auto-embedding generated column expects EMBED_TEXT()")
+		return nil, false, fmt.Errorf("generated-column evaluation expects EMBED_TEXT()")
 	}
 	if _, ok := sf.Function.(*builtinEmbedTextSig); !ok {
-		return nil, false, fmt.Errorf("auto-embedding generated column expects EMBED_TEXT()")
+		return nil, false, fmt.Errorf("generated-column evaluation expects EMBED_TEXT()")
 	}
 	return EvalEmbedTextArgs(ctx, row, sf.GetArgs())
 }

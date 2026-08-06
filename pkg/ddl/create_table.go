@@ -558,7 +558,7 @@ func checkGeneratedColumn(ctx *metabuild.Context, schemaName ast.CIStr, tableNam
 				if err := checkIllegalFn4Generated(colDef.Name.Name.L, typeColumn, option.Expr); err != nil {
 					return errors.Trace(err)
 				}
-				if err := checkGeneratedColForAutoEmbedding(colDef.Name.Name.L, option.Expr, option.Stored); err != nil {
+				if err := checkEmbedTextGeneratedColumn(colDef.Name.Name.L, option.Expr, option.Stored); err != nil {
 					return errors.Trace(err)
 				}
 			}
@@ -602,11 +602,11 @@ func checkGeneratedColumn(ctx *metabuild.Context, schemaName ast.CIStr, tableNam
 		}
 	}
 
-	autoEmbeddingCols := make(map[string]struct{})
+	embedTextCols := make(map[string]struct{})
 	for _, colDef := range colDefs {
 		for _, option := range colDef.Options {
-			if option.Tp == ast.ColumnOptionGenerated && expression.IsAutoEmbedFnCallAST(option.Expr) {
-				autoEmbeddingCols[colDef.Name.Name.L] = struct{}{}
+			if option.Tp == ast.ColumnOptionGenerated && expression.IsEmbedTextFuncCall(option.Expr) {
+				embedTextCols[colDef.Name.Name.L] = struct{}{}
 			}
 		}
 	}
@@ -614,9 +614,9 @@ func checkGeneratedColumn(ctx *metabuild.Context, schemaName ast.CIStr, tableNam
 		if !colInfo.generated {
 			continue
 		}
-		for depCol := range autoEmbeddingCols {
-			if _, ok := colInfo.dependences[depCol]; ok {
-				return errGeneratedColumnDependsOnAutoEmbedding(colName, depCol)
+		for depCol := range colInfo.dependences {
+			if _, ok := embedTextCols[depCol]; ok {
+				return embedTextDependencyErr(colName, depCol)
 			}
 		}
 	}

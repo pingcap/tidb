@@ -51,12 +51,12 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// Limit concurrent auto-embedding evaluations for generated columns. The
+// Limit concurrent EMBED_TEXT evaluations for generated columns. The
 // inference runtime may further deduplicate and batch provider requests, so
 // this is not a direct provider HTTP concurrency limit.
-const autoEmbeddingEvalMaxConcurrentTasks = 800
+const embedTextEvalConcurrency = 800
 
-type autoEmbeddingGeneratedColumn struct {
+type embedTextGeneratedColumn struct {
 	offset int
 	column *table.Column
 	expr   expression.Expression
@@ -80,9 +80,9 @@ type InsertValues struct {
 	Columns []*ast.ColumnName
 	Lists   [][]expression.Expression
 
-	GenExprs                         []expression.Expression
-	autoEmbeddingGeneratedCols       []autoEmbeddingGeneratedColumn
-	autoEmbeddingGeneratedColsInited bool
+	GenExprs                          []expression.Expression
+	embedTextGeneratedCols            []embedTextGeneratedColumn
+	embedTextGeneratedColsInitialized bool
 
 	insertColumns []*table.Column
 
@@ -208,7 +208,7 @@ func (e *InsertValues) initInsertColumns() error {
 	if err != nil {
 		return err
 	}
-	e.initAutoEmbeddingGeneratedCols()
+	e.initEmbedTextGeneratedCols()
 	return nil
 }
 
@@ -227,37 +227,37 @@ func (e *InsertValues) initEvalBuffer() {
 	e.evalBuffer = chunk.MutRowFromTypes(e.evalBufferTypes)
 }
 
-func (e *InsertValues) initAutoEmbeddingGeneratedCols() {
-	e.autoEmbeddingGeneratedColsInited = true
+func (e *InsertValues) initEmbedTextGeneratedCols() {
+	e.embedTextGeneratedColsInitialized = true
 	if len(e.GenExprs) == 0 || e.Table == nil {
-		e.autoEmbeddingGeneratedCols = nil
+		e.embedTextGeneratedCols = nil
 		return
 	}
 
-	autoEmbeddingCols := make([]autoEmbeddingGeneratedColumn, 0)
+	embedTextCols := make([]embedTextGeneratedColumn, 0)
 	generatedExprIdx := -1
 	for colIdx, generatedCol := range e.Table.Cols() {
 		if !generatedCol.IsGenerated() {
 			continue
 		}
 		generatedExprIdx++
-		if !expression.IsAutoEmbedFnCallAST(generatedCol.GeneratedExpr.Internal()) {
+		if !expression.IsEmbedTextFuncCall(generatedCol.GeneratedExpr.Internal()) {
 			continue
 		}
-		autoEmbeddingCols = append(autoEmbeddingCols, autoEmbeddingGeneratedColumn{
+		embedTextCols = append(embedTextCols, embedTextGeneratedColumn{
 			offset: colIdx,
 			column: generatedCol,
 			expr:   e.GenExprs[generatedExprIdx],
 		})
 	}
-	e.autoEmbeddingGeneratedCols = autoEmbeddingCols
+	e.embedTextGeneratedCols = embedTextCols
 }
 
-func (e *InsertValues) getAutoEmbeddingGeneratedCols() []autoEmbeddingGeneratedColumn {
-	if !e.autoEmbeddingGeneratedColsInited {
-		e.initAutoEmbeddingGeneratedCols()
+func (e *InsertValues) getEmbedTextGeneratedCols() []embedTextGeneratedColumn {
+	if !e.embedTextGeneratedColsInitialized {
+		e.initEmbedTextGeneratedCols()
 	}
-	return e.autoEmbeddingGeneratedCols
+	return e.embedTextGeneratedCols
 }
 
 func (e *InsertValues) lazilyInitColDefaultValBuf() (ok bool) {
@@ -307,7 +307,7 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 			if err != nil {
 				return err
 			}
-			rows, err = e.fillAutoEmbeddingDatums(ctx, rows)
+			rows, err = e.fillEmbedTextValues(ctx, rows)
 			if err != nil {
 				return err
 			}
@@ -332,7 +332,7 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 	if err != nil {
 		return err
 	}
-	rows, err = e.fillAutoEmbeddingDatums(ctx, rows)
+	rows, err = e.fillEmbedTextValues(ctx, rows)
 	if err != nil {
 		return err
 	}
@@ -588,7 +588,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 				memUsageOfExtraCols = types.EstimatedMemUsage(extraColsInSel[0], len(extraColsInSel))
 				totalMemDelta += memUsageOfRows + memUsageOfExtraCols
 				e.Ctx().GetSessionVars().CurrInsertBatchExtraCols = extraColsInSel
-				rows, err = e.fillAutoEmbeddingDatums(ctx, rows)
+				rows, err = e.fillEmbedTextValues(ctx, rows)
 				if err != nil {
 					return err
 				}
@@ -613,7 +613,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 			memTracker.Consume(memUsageOfRows + memUsageOfExtraCols)
 			e.Ctx().GetSessionVars().CurrInsertBatchExtraCols = extraColsInSel
 		}
-		rows, err = e.fillAutoEmbeddingDatums(ctx, rows)
+		rows, err = e.fillEmbedTextValues(ctx, rows)
 		if err != nil {
 			return err
 		}
@@ -703,16 +703,16 @@ func (e *InsertValues) getColDefaultValue(idx int, col *table.Column) (d types.D
 	return defaultVal, nil
 }
 
-func (e *InsertValues) fillAutoEmbeddingDatums(ctx context.Context, rows [][]types.Datum) ([][]types.Datum, error) {
-	return e.fillAutoEmbeddingDatumsWithRowCount(ctx, rows, e.rowCount)
+func (e *InsertValues) fillEmbedTextValues(ctx context.Context, rows [][]types.Datum) ([][]types.Datum, error) {
+	return e.fillEmbedTextValuesWithRowCount(ctx, rows, e.rowCount)
 }
 
-func (e *InsertValues) fillAutoEmbeddingDatumsWithRowCount(ctx context.Context, rows [][]types.Datum, endRowCount uint64) ([][]types.Datum, error) {
+func (e *InsertValues) fillEmbedTextValuesWithRowCount(ctx context.Context, rows [][]types.Datum, endRowCount uint64) ([][]types.Datum, error) {
 	if len(rows) == 0 {
 		return rows, nil
 	}
-	autoEmbeddingGeneratedCols := e.getAutoEmbeddingGeneratedCols()
-	if len(autoEmbeddingGeneratedCols) == 0 {
+	embedTextGeneratedCols := e.getEmbedTextGeneratedCols()
+	if len(embedTextGeneratedCols) == 0 {
 		return rows, nil
 	}
 
@@ -722,28 +722,28 @@ func (e *InsertValues) fillAutoEmbeddingDatumsWithRowCount(ctx context.Context, 
 		firstBatchRowIdx = endRowCount - rowCount
 	}
 
-	type autoEmbeddingEvalTask struct {
+	type embedTextEvalTask struct {
 		rowIdx       int
-		generatedCol autoEmbeddingGeneratedColumn
+		generatedCol embedTextGeneratedColumn
 		row          chunk.Row
 	}
-	type autoEmbeddingEvalResult struct {
+	type embedTextEvalResult struct {
 		val types.Datum
 		err error
 	}
-	type autoEmbeddingEvalInput struct {
+	type embedTextEvalInput struct {
 		args   *expression.EmbedTextArgs
 		isNull bool
 	}
 
-	tasks := make([]autoEmbeddingEvalTask, 0, len(rows)*len(autoEmbeddingGeneratedCols))
+	tasks := make([]embedTextEvalTask, 0, len(rows)*len(embedTextGeneratedCols))
 	for rowIdx, row := range rows {
 		if row == nil {
 			continue
 		}
 		evalRow := chunk.MutRowFromDatums(row).ToRow()
-		for _, generatedCol := range autoEmbeddingGeneratedCols {
-			tasks = append(tasks, autoEmbeddingEvalTask{
+		for _, generatedCol := range embedTextGeneratedCols {
+			tasks = append(tasks, embedTextEvalTask{
 				rowIdx:       rowIdx,
 				generatedCol: generatedCol,
 				row:          evalRow,
@@ -758,10 +758,10 @@ func (e *InsertValues) fillAutoEmbeddingDatumsWithRowCount(ctx context.Context, 
 		return nil, err
 	}
 
-	results := make([]autoEmbeddingEvalResult, len(tasks))
-	inputs := make([]autoEmbeddingEvalInput, len(tasks))
+	results := make([]embedTextEvalResult, len(tasks))
+	inputs := make([]embedTextEvalInput, len(tasks))
 	for i, task := range tasks {
-		embedArgs, isNull, err := expression.EvalEmbedTextArgsFromExpression(e.Ctx().GetExprCtx().GetEvalCtx(), task.row, task.generatedCol.expr)
+		embedArgs, isNull, err := expression.EvalEmbedTextArgsFromExpr(e.Ctx().GetExprCtx().GetEvalCtx(), task.row, task.generatedCol.expr)
 		if err != nil || isNull {
 			results[i].err = err
 			inputs[i].isNull = isNull
@@ -771,7 +771,7 @@ func (e *InsertValues) fillAutoEmbeddingDatumsWithRowCount(ctx context.Context, 
 	}
 
 	group, groupCtx := errgroup.WithContext(ctx)
-	group.SetLimit(autoEmbeddingEvalMaxConcurrentTasks)
+	group.SetLimit(embedTextEvalConcurrency)
 	for i := range tasks {
 		group.Go(func() error {
 			if err := groupCtx.Err(); err != nil {
@@ -942,7 +942,7 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 	// full row copy O(columns) allocation for every generated column — O(G*C) total.
 	mutRow := chunk.MutRowFromDatums(row)
 	for i, gCol := range gCols {
-		if expression.IsAutoEmbedFnCallAST(gCol.GeneratedExpr.Internal()) {
+		if expression.IsEmbedTextFuncCall(gCol.GeneratedExpr.Internal()) {
 			continue
 		}
 		colIdx := gCol.ColumnInfo.Offset

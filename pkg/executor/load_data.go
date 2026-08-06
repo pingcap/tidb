@@ -360,7 +360,7 @@ func createInsertValues(e *LoadDataWorker) (insertVal *InsertValues, err error) 
 	if len(insertColumns) > 0 {
 		ret.initEvalBuffer()
 	}
-	ret.initAutoEmbeddingGeneratedCols()
+	ret.initEmbedTextGeneratedCols()
 	ret.collectRuntimeStatsEnabled()
 	return ret, nil
 }
@@ -677,7 +677,7 @@ func (w *commitWorker) checkAndInsertOneBatch(ctx context.Context, rows [][]type
 		return err
 	}
 	w.Ctx().GetSessionVars().StmtCtx.AddRecordRows(cnt)
-	rows, err = w.fillAutoEmbeddingDatumsWithRowCount(ctx, rows[0:cnt], endRowCount)
+	rows, err = w.fillEmbedTextValuesWithRowCount(ctx, rows[0:cnt], endRowCount)
 	if err != nil {
 		return err
 	}

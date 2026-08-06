@@ -4647,7 +4647,7 @@ func TestAutoEmbeddingDDLValidation(t *testing.T) {
 			vec VECTOR(3) GENERATED ALWAYS AS (embed_text('mock/json', text) + 1) STORED
 		)
 	`)
-	require.ErrorContains(t, err, "EMBED_TEXT() function must be the top-level function call in generated column expression")
+	require.ErrorContains(t, err, "using EMBED_TEXT() as a nested expression")
 
 	err = tk.ExecToErr(`
 		CREATE TABLE t(
@@ -4656,7 +4656,7 @@ func TestAutoEmbeddingDDLValidation(t *testing.T) {
 			vec VECTOR(3) GENERATED ALWAYS AS (embed_text('mock/json', text)) VIRTUAL
 		)
 	`)
-	require.ErrorContains(t, err, "EMBED_TEXT() can be only used as stored generated column")
+	require.ErrorContains(t, err, "using EMBED_TEXT() in a virtual generated column")
 
 	err = tk.ExecToErr(`
 		CREATE TABLE t(
@@ -4684,7 +4684,7 @@ func TestAutoEmbeddingDDLValidation(t *testing.T) {
 			vec_text TEXT GENERATED ALWAYS AS (vec_as_text(vec)) STORED
 		)
 	`)
-	require.ErrorContains(t, err, "generated column on an auto-embedding column is not supported")
+	require.ErrorContains(t, err, "generated column 'vec_text' depends on generated column 'vec' that uses EMBED_TEXT()")
 
 	err = tk.ExecToErr(`
 		CREATE TABLE t(
@@ -4695,12 +4695,20 @@ func TestAutoEmbeddingDDLValidation(t *testing.T) {
 	`)
 	require.ErrorContains(t, err, "contains a disallowed function")
 
+	err = tk.ExecToErr(`
+		CREATE TABLE t_functional_index(
+			text TEXT,
+			INDEX idx ((vec_dims(embed_text('mock/json', text))))
+		)
+	`)
+	require.ErrorContains(t, err, "contains a disallowed function")
+
 	tk.MustExec("CREATE TABLE t_add(id INT PRIMARY KEY, text TEXT)")
 	err = tk.ExecToErr(`
 		ALTER TABLE t_add ADD COLUMN vec VECTOR(3)
 		GENERATED ALWAYS AS (embed_text('mock/json', text)) STORED
 	`)
-	require.ErrorContains(t, err, "Adding auto-embedding generated column through ALTER TABLE")
+	require.ErrorContains(t, err, "adding a generated column using EMBED_TEXT() through ALTER TABLE")
 
 	tk.MustExec(`
 		CREATE TABLE t_modify(
@@ -4711,7 +4719,7 @@ func TestAutoEmbeddingDDLValidation(t *testing.T) {
 		)
 	`)
 	err = tk.ExecToErr("ALTER TABLE t_modify MODIFY COLUMN vec_text TEXT GENERATED ALWAYS AS (vec_as_text(vec)) VIRTUAL")
-	require.ErrorContains(t, err, "generated column on an auto-embedding column is not supported")
+	require.ErrorContains(t, err, "generated column 'vec_text' depends on generated column 'vec' that uses EMBED_TEXT()")
 }
 
 func TestAutoEmbeddingGeneratedColumnLoadData(t *testing.T) {

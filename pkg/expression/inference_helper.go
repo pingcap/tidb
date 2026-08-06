@@ -21,27 +21,27 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 )
 
-// AutoEmbedInfo describes how an auto-embedding generated column produces its value.
-type AutoEmbedInfo struct {
+// EmbedTextInfo describes the constant arguments of an EMBED_TEXT generated-column expression.
+type EmbedTextInfo struct {
 	ModelNameWithProvider string
 	OptsInJSON            string
 }
 
-// Equal compares auto-embedding metadata. Options are intentionally compared as
+// Equal compares EMBED_TEXT metadata. Options are intentionally compared as
 // raw JSON text because extraction preserves the user-specified constant rather
 // than producing a canonical JSON representation.
-func (info *AutoEmbedInfo) Equal(other *AutoEmbedInfo) bool {
+func (info *EmbedTextInfo) Equal(other *EmbedTextInfo) bool {
 	if info == nil || other == nil {
 		return info == other
 	}
 	return info.ModelNameWithProvider == other.ModelNameWithProvider && info.OptsInJSON == other.OptsInJSON
 }
 
-type autoEmbedFnVisitor struct {
+type embedTextFnVisitor struct {
 	found bool
 }
 
-func (v *autoEmbedFnVisitor) Enter(in ast.Node) (ast.Node, bool) {
+func (v *embedTextFnVisitor) Enter(in ast.Node) (ast.Node, bool) {
 	if fnCall, ok := in.(*ast.FuncCallExpr); ok && fnCall.FnName.L == ast.EmbedText {
 		v.found = true
 		return in, true
@@ -49,30 +49,30 @@ func (v *autoEmbedFnVisitor) Enter(in ast.Node) (ast.Node, bool) {
 	return in, false
 }
 
-func (*autoEmbedFnVisitor) Leave(in ast.Node) (ast.Node, bool) {
+func (*embedTextFnVisitor) Leave(in ast.Node) (ast.Node, bool) {
 	return in, true
 }
 
-// ContainsAutoEmbedFnAST reports whether expr contains EMBED_TEXT at any level.
-func ContainsAutoEmbedFnAST(expr ast.ExprNode) bool {
+// ContainsEmbedTextFunc reports whether expr contains EMBED_TEXT at any level.
+func ContainsEmbedTextFunc(expr ast.ExprNode) bool {
 	if expr == nil {
 		return false
 	}
-	visitor := &autoEmbedFnVisitor{}
+	visitor := &embedTextFnVisitor{}
 	expr.Accept(visitor)
 	return visitor.found
 }
 
-// IsAutoEmbedFnCallAST reports whether expr is a direct EMBED_TEXT call. It does
-// not validate the argument shape; use ExtractAutoEmbedInfoFromAST for that.
-func IsAutoEmbedFnCallAST(expr ast.ExprNode) bool {
+// IsEmbedTextFuncCall reports whether expr is a direct EMBED_TEXT call. It does
+// not validate the argument shape; use ExtractEmbedTextInfo for that.
+func IsEmbedTextFuncCall(expr ast.ExprNode) bool {
 	fnCall, ok := expr.(*ast.FuncCallExpr)
 	return ok && fnCall.FnName.L == ast.EmbedText
 }
 
-// ExtractAutoEmbedInfoFromAST validates a direct EMBED_TEXT call used by an
-// auto-embedding generated column and returns its constant model and options.
-func ExtractAutoEmbedInfoFromAST(expr ast.ExprNode) (*AutoEmbedInfo, error) {
+// ExtractEmbedTextInfo validates a direct EMBED_TEXT call used by a generated
+// column and returns its constant model and options.
+func ExtractEmbedTextInfo(expr ast.ExprNode) (*EmbedTextInfo, error) {
 	fnCall, ok := expr.(*ast.FuncCallExpr)
 	if !ok || fnCall.FnName.L != ast.EmbedText {
 		return nil, fmt.Errorf("only generated columns using EMBED_TEXT() are allowed")
@@ -90,7 +90,7 @@ func ExtractAutoEmbedInfoFromAST(expr ast.ExprNode) (*AutoEmbedInfo, error) {
 		return nil, fmt.Errorf("EMBED_TEXT() only accepts model name using string constant")
 	}
 
-	info := &AutoEmbedInfo{ModelNameWithProvider: model}
+	info := &EmbedTextInfo{ModelNameWithProvider: model}
 	if len(fnCall.Args) == 2 {
 		return info, nil
 	}
