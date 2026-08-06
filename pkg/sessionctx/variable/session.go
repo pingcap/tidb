@@ -284,6 +284,7 @@ func ruv2WeightsFromConfig(cfg config.RUV2Config) execdetails.RUV2Weights {
 		PlanDeriveStatsPaths:    cfg.PlanDeriveStatsPaths,
 		ResourceManagerReadCnt:  cfg.ResourceManagerReadCnt,
 		ResourceManagerWriteCnt: cfg.ResourceManagerWriteCnt,
+		WriteKeys:               cfg.WriteKeys,
 		SessionParserTotal:      cfg.SessionParserTotal,
 		TxnCnt:                  cfg.TxnCnt,
 	}
@@ -1506,6 +1507,9 @@ type SessionVars struct {
 	// UseHashJoinV2 indicates whether to use hash join v2.
 	UseHashJoinV2 bool
 
+	// EnableFullOuterJoin indicates whether to enable full outer join.
+	EnableFullOuterJoin bool
+
 	// EnableHistoricalStats indicates whether to enable historical statistics.
 	EnableHistoricalStats bool
 
@@ -1768,6 +1772,10 @@ type SessionVars struct {
 	// NOTE: all statement relate operation should use StmtCtx.ResourceGroupName instead.
 	// NOTE: please don't change it directly. Use `SetResourceGroupName`, because it'll need to inc/dec the metrics
 	ResourceGroupName string
+
+	// PagingSizeBytes is the byte budget per page.
+	// 0 means disabled.
+	PagingSizeBytes int
 
 	// PessimisticTransactionFairLocking controls whether fair locking for pessimistic transaction
 	// is enabled.
@@ -2466,6 +2474,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		Enable1PC:                        vardef.DefTiDBEnable1PC,
 		GuaranteeLinearizability:         vardef.DefTiDBGuaranteeLinearizability,
 		AnalyzeVersion:                   vardef.DefTiDBAnalyzeVersion,
+		EnableFullOuterJoin:              vardef.DefTiDBEnableFullOuterJoin,
 		EnableIndexMergeJoin:             vardef.DefTiDBEnableIndexMergeJoin,
 		AllowFallbackToTiKV:              make(map[kv.StoreType]struct{}),
 		CTEMaxRecursionDepth:             vardef.DefCTEMaxRecursionDepth,
@@ -2489,6 +2498,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableLateMaterialization:        vardef.DefTiDBOptEnableLateMaterialization,
 		TiFlashComputeDispatchPolicy:     tiflashcompute.DispatchPolicyConsistentHash,
 		ResourceGroupName:                resourcegroup.DefaultResourceGroupName,
+		PagingSizeBytes:                  vardef.DefPagingSizeBytes,
 		DefaultCollationForUTF8MB4:       mysql.DefaultCollationName,
 		GroupConcatMaxLen:                vardef.DefGroupConcatMaxLen,
 		EnableRedactLog:                  vardef.DefTiDBRedactLog,
@@ -3245,7 +3255,7 @@ func (s *SessionVars) DecodeSessionStates(_ context.Context, sessionStates *sess
 	s.HypoTiFlashReplicas = sessionStates.HypoTiFlashReplicas
 
 	// Decode StatementContext.
-	s.StmtCtx.SetAffectedRows(uint64(sessionStates.LastAffectedRows))
+	s.StmtCtx.PrevAffectedRows = sessionStates.LastAffectedRows
 	s.StmtCtx.PrevLastInsertID = sessionStates.LastInsertID
 	s.StmtCtx.SetWarnings(sessionStates.Warnings)
 	return
@@ -3685,11 +3695,11 @@ func (s *SessionVars) GetStrMatchDefaultSelectivity() float64 {
 // Note:
 //
 //	  0 is a special value, which means the default selectivity is 0.9 and TopN assisted estimation is enabled.
-//	  0.8 (the default value) is also a special value. For backward compatibility, when the variable is set to 0.8, we
+//	  0.8 is also a special value. For backward compatibility, when the variable is set to 0.8, we
 //	keep the default selectivity of like/regexp and not like/regexp all 0.8.
 func (s *SessionVars) GetNegateStrMatchDefaultSelectivity() float64 {
-	if s.DefaultStrMatchSelectivity == vardef.DefTiDBDefaultStrMatchSelectivity {
-		return vardef.DefTiDBDefaultStrMatchSelectivity
+	if s.DefaultStrMatchSelectivity == vardef.DefOptSelectivityFactor {
+		return vardef.DefOptSelectivityFactor
 	}
 	return 1 - s.GetStrMatchDefaultSelectivity()
 }

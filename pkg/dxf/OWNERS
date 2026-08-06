@@ -2,4 +2,4 @@
 options:
   no_parent_owners: true
 approvers:
-  - sig-approvers-disttask
+  - sig-approvers-dxf

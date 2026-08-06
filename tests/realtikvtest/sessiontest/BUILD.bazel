@@ -4,6 +4,7 @@ go_test(
     name = "sessiontest_test",
     timeout = "moderate",
     srcs = [
+        "cross_ks_gc_test.go",
         "infoschema_test.go",
         "infoschema_v2_test.go",
         "main_test.go",
@@ -12,7 +13,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-    shard_count = 17,
+    shard_count = 18,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
@@ -24,6 +25,7 @@ go_test(
         "//pkg/sessionctx/vardef",
         "//pkg/store/helper",
         "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
         "//pkg/util/sqlkiller",
         "//tests/realtikvtest",
         "@com_github_pingcap_failpoint//:failpoint",

@@ -166,8 +166,12 @@ func TestSlowLogFormat(t *testing.T) {
 		CopExecDetails: execdetails.CopExecDetails{
 			BackoffTime: time.Millisecond,
 			ScanDetail: &util.ScanDetail{
-				ProcessedKeys: 20001,
-				TotalKeys:     10000,
+				ProcessedKeys:               20001,
+				TotalKeys:                   10000,
+				IaCacheHitCount:             2,
+				IaRemoteReadSegmentCount:    4,
+				IaRemoteReadSegmentBytes:    4096,
+				IaRemoteReadSegmentDuration: 15 * time.Millisecond,
 			},
 			TimeDetail: util.TimeDetail{
 				ProcessTime: time.Second * time.Duration(2),
@@ -241,6 +245,9 @@ func TestSlowLogFormat(t *testing.T) {
 # Optimize_time: 0.00000001 Opt_logical: 0.00000001 Opt_physical: 0.00000001 Opt_binding_match: 0.00000001 Opt_stats_sync_wait: 0.00000001 Opt_stats_derive: 0.00000001
 # Wait_TS: 0.000000003
 # Process_time: 2 Wait_time: 60 Backoff_time: 0.001 Request_count: 2 Process_keys: 20001 Total_keys: 10000
+# IA_remote_read_segment_count: 4
+# IA_remote_read_segment_size: 4096
+# IA_remote_read_segment_wait_time: 0.015
 # DB: test
 # Index_names: [t1:a,t2:b]
 # Is_internal: true
@@ -385,6 +392,20 @@ func TestSlowLogFormat(t *testing.T) {
 	// Restore for subsequent assertions.
 	logItems.SessionConnectAttrs = nil
 
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceObservability = config.KeyspaceObservability{
+			Fields: []config.KeyspaceObservabilityField{{
+				Source:       "meta_a",
+				SlowLogField: "Keyspace_meta_slow_a",
+			}},
+		}
+		require.NoError(t, conf.ResolveKeyspaceObservability(map[string]string{"meta_a": "value_a"}))
+	})
+	logString = seVar.SlowLogFormat(logItems)
+	require.Equal(t, resultFields+"\n"+"# Keyspace_meta_slow_a: value_a\n"+sql, logString)
+
 	// test PrepareSlowLogItemsForRules and CompleteSlowLogItemsForRules
 	seVar.SlowLogRules = slowlogrule.NewSessionSlowLogRules(&slowlogrule.SlowLogRules{
 		Fields: map[string]struct{}{
@@ -481,6 +502,7 @@ func TestSlowLogFormatIncludesTiFlashRUInRUV2Metrics(t *testing.T) {
 			PlanDeriveStatsPaths:    cfg.RUV2.PlanDeriveStatsPaths,
 			ResourceManagerReadCnt:  cfg.RUV2.ResourceManagerReadCnt,
 			ResourceManagerWriteCnt: cfg.RUV2.ResourceManagerWriteCnt,
+			WriteKeys:               cfg.RUV2.WriteKeys,
 			SessionParserTotal:      cfg.RUV2.SessionParserTotal,
 			TxnCnt:                  cfg.RUV2.TxnCnt,
 		}, variable.NewSessionVars(nil).RUV2Weights())

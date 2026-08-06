@@ -752,6 +752,12 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 		return b.buildResultSetNode(ctx, joinNode.Left, false)
 	}
 
+	if joinNode.Tp == ast.FullJoin {
+		// Reject FULL OUTER JOIN before LATERAL handling. Otherwise the
+		// LogicalApply path can consume the join type and treat it as an inner join.
+		return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("FULL OUTER JOIN")
+	}
+
 	// Detect whether the right subtree contains any LATERAL table source.
 	// This is used only to decide whether to push outerSchemas before building
 	// the right side, so that nested LATERAL sources can resolve outer columns.
@@ -2117,12 +2123,14 @@ func (b *PlanBuilder) buildProjection4Union(_ context.Context, u *logicalop.Logi
 }
 
 func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (base.LogicalPlan, error) {
+	var currentLayerCTEs []*cteInfo
 	if setOpr.With != nil {
 		l := len(b.outerCTEs)
 		defer func() {
 			b.outerCTEs = b.outerCTEs[:l]
 		}()
-		_, err := b.buildWith(ctx, setOpr.With)
+		var err error
+		currentLayerCTEs, err = b.buildWith(ctx, setOpr.With)
 		if err != nil {
 			return nil, err
 		}
@@ -2202,9 +2210,9 @@ func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (
 		}
 		proj.SetOutputNames(setOprPlan.OutputNames()[:oldLen])
 		proj.SetSchema(schema)
-		return proj, nil
+		return b.tryToBuildSequence(currentLayerCTEs, proj), nil
 	}
-	return setOprPlan, nil
+	return b.tryToBuildSequence(currentLayerCTEs, setOprPlan), nil
 }
 
 func (b *PlanBuilder) buildSemiJoinForSetOperator(
@@ -4962,10 +4970,6 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		return nil, err
 	}
 	tableInfo := tbl.Meta()
-	if b.ctx.GetSessionVars().IsMPPAllowed() &&
-		tableInfo.TiFlashReplica != nil && tableInfo.TiFlashReplica.Count > 0 && tableInfo.TiFlashReplica.Available {
-		sessionVars.StmtCtx.IsTiFlash.Store(true)
-	}
 
 	if b.isCreateView && tableInfo.TempTableType == model.TempTableLocal {
 		return nil, plannererrors.ErrViewSelectTemporaryTable.GenWithStackByArgs(tn.Name)
@@ -5491,20 +5495,20 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName ast.CIStr, tableIn
 
 // checkRecursiveView checks whether this view is recursively defined.
 func (b *PlanBuilder) checkRecursiveView(dbName ast.CIStr, tableName ast.CIStr) (func(), error) {
-	viewFullName := dbName.L + "." + tableName.L
+	viewFullName := newSchemaTableKey(dbName, tableName)
 	if b.buildingViewStack == nil {
-		b.buildingViewStack = set.NewStringSet()
+		b.buildingViewStack = make(map[schemaTableKey]struct{})
 	}
 	// If this view has already been on the building stack, it means
 	// this view contains a recursive definition.
-	if b.buildingViewStack.Exist(viewFullName) {
+	if _, ok := b.buildingViewStack[viewFullName]; ok {
 		return nil, plannererrors.ErrViewRecursive.GenWithStackByArgs(dbName.O, tableName.O)
 	}
 	// If the view is being renamed, we return the mysql compatible error message.
 	if b.capFlag&renameView != 0 && viewFullName == b.renamingViewName {
 		return nil, plannererrors.ErrNoSuchTable.GenWithStackByArgs(dbName.O, tableName.O)
 	}
-	b.buildingViewStack.Insert(viewFullName)
+	b.buildingViewStack[viewFullName] = struct{}{}
 	return func() { delete(b.buildingViewStack, viewFullName) }, nil
 }
 
@@ -5795,6 +5799,12 @@ func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan base.LogicalPlan, onCon
 		} else {
 			joinPlan.JoinType = base.SemiJoin
 		}
+	}
+	if b.ctx.GetSessionVars().EnableAlternativeLogicalPlans &&
+		!forceRewrite &&
+		!b.ctx.GetSessionVars().EnableSemiJoinRewrite &&
+		joinPlan.JoinType == base.SemiJoin {
+		b.ctx.GetSessionVars().StmtCtx.MarkAlternativeLogicalPlanSemiJoinRewrite()
 	}
 	// Apply forces to choose hash join currently, so don't worry the hints will take effect if the semi join is in one apply.
 	joinPlan.SetPreferredJoinTypeAndOrder(b.TableHints())

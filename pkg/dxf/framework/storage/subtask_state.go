@@ -80,7 +80,7 @@ func (mgr *TaskManager) FailSubtask(ctx context.Context, execID string, taskID i
 		proto.SubtaskStateFailed,
 		serializeErr(err),
 		execID,
-		taskID,
+		TaskIDToKey(taskID),
 		proto.SubtaskStatePending,
 		proto.SubtaskStateRunning)
 	return err1
@@ -99,11 +99,10 @@ func (mgr *TaskManager) CancelSubtask(ctx context.Context, execID string, taskID
 		end_time = CURRENT_TIMESTAMP()
 		where exec_id = %? and
 		task_key = %? and
-		state in (%?, %?)
-		limit 1;`,
+		state in (%?, %?);`,
 		proto.SubtaskStateCanceled,
 		execID,
-		taskID,
+		TaskIDToKey(taskID),
 		proto.SubtaskStatePending,
 		proto.SubtaskStateRunning)
 	return err1
@@ -115,7 +114,7 @@ func (mgr *TaskManager) PauseSubtasks(ctx context.Context, execID string, taskID
 		return err
 	}
 	_, err := mgr.ExecuteSQLWithNewSession(ctx,
-		`update mysql.tidb_background_subtask set state = "paused" where task_key = %? and state in ("running", "pending") and exec_id = %?`, taskID, execID)
+		`update mysql.tidb_background_subtask set state = "paused" where task_key = %? and state in ("running", "pending") and exec_id = %?`, TaskIDToKey(taskID), execID)
 	return err
 }
 
@@ -125,7 +124,7 @@ func (mgr *TaskManager) ResumeSubtasks(ctx context.Context, taskID int64) error 
 		return err
 	}
 	_, err := mgr.ExecuteSQLWithNewSession(ctx,
-		`update mysql.tidb_background_subtask set state = "pending", error = null where task_key = %? and state = "paused"`, taskID)
+		`update mysql.tidb_background_subtask set state = "pending", error = null where task_key = %? and state = "paused"`, TaskIDToKey(taskID))
 	return err
 }
 

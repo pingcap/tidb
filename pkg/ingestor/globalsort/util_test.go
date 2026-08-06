@@ -21,228 +21,36 @@ import (
 	"slices"
 	"sync/atomic"
 	"testing"
-	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/errdef"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/objstore"
-	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/require"
 )
 
-type blockingOpenMemStorage struct {
-	*objstore.MemStorage
-	releaseCh chan struct{}
-	startedCh chan struct{}
-	current   atomic.Int32
-	max       atomic.Int32
+type walkCountingStorage struct {
+	storeapi.Storage
+	count atomic.Int32
 }
 
-func (s *blockingOpenMemStorage) Open(
+func (s *walkCountingStorage) WalkDir(
 	ctx context.Context,
-	path string,
-	o *storeapi.ReaderOption,
-) (objectio.Reader, error) {
-	cur := s.current.Add(1)
-	for {
-		oldMax := s.max.Load()
-		if cur <= oldMax || s.max.CompareAndSwap(oldMax, cur) {
-			break
-		}
-	}
-	select {
-	case s.startedCh <- struct{}{}:
-	default:
-	}
-	select {
-	case <-s.releaseCh:
-	case <-ctx.Done():
-		s.current.Add(-1)
-		return nil, ctx.Err()
-	}
-	s.current.Add(-1)
-	return s.MemStorage.Open(ctx, path, o)
-}
-
-func TestGetReadRangeFromProps(t *testing.T) {
-	ctx := context.Background()
-	store := objstore.NewMemStorage()
-
-	// file1 has props at offsets 10, 30, 50 with keys "key1", "key3", "key5"
-	rc1 := &rangePropertiesCollector{
-		props: []*rangeProperty{
-			{firstKey: []byte("key1"), offset: 10, size: 10, keys: 1},
-			{firstKey: []byte("key3"), offset: 30, size: 10, keys: 1},
-			{firstKey: []byte("key5"), offset: 50, size: 10, keys: 1},
-		},
-	}
-	file1 := "/test1"
-	w1, err := store.Create(ctx, file1, nil)
-	require.NoError(t, err)
-	_, err = w1.Write(ctx, rc1.encode())
-	require.NoError(t, err)
-	err = w1.Close(ctx)
-	require.NoError(t, err)
-
-	// file2 has props at offsets 20, 40 with keys "key2", "key4"
-	rc2 := &rangePropertiesCollector{
-		props: []*rangeProperty{
-			{firstKey: []byte("key2"), offset: 20, size: 10, keys: 1},
-			{firstKey: []byte("key4"), offset: 40, size: 10, keys: 1},
-		},
-	}
-	file2 := "/test2"
-	w2, err := store.Create(ctx, file2, nil)
-	require.NoError(t, err)
-	_, err = w2.Write(ctx, rc2.encode())
-	require.NoError(t, err)
-	err = w2.Close(ctx)
-	require.NoError(t, err)
-
-	paths := []string{file1, file2}
-
-	// single key between props
-	got, err := getReadRangeFromProps(ctx, [][]byte{[]byte("key2.5")}, paths, store)
-	require.NoError(t, err)
-	// key2.5: file1 => prop "key1" matches (offset=10), file2 => prop "key2" matches (offset=20)
-	require.Equal(t, []uint64{10, 20}, got[0])
-
-	// two keys between props
-	got, err = getReadRangeFromProps(ctx, [][]byte{[]byte("key2.5"), []byte("key2.6")}, paths, store)
-	require.NoError(t, err)
-	require.Equal(t, []uint64{10, 20}, got[0])
-	require.Equal(t, []uint64{10, 20}, got[1])
-
-	// key exactly on a prop boundary
-	got, err = getReadRangeFromProps(ctx, [][]byte{[]byte("key3")}, paths, store)
-	require.NoError(t, err)
-	// key3: file1 => prop "key3" matches (offset=30), file2 => prop "key2" matches (offset=20)
-	require.Equal(t, []uint64{30, 20}, got[0])
-
-	// two keys, second exactly on a prop boundary
-	got, err = getReadRangeFromProps(ctx, [][]byte{[]byte("key2.5"), []byte("key3")}, paths, store)
-	require.NoError(t, err)
-	require.Equal(t, []uint64{10, 20}, got[0])
-	require.Equal(t, []uint64{30, 20}, got[1])
-
-	// key below all props
-	got, err = getReadRangeFromProps(ctx, [][]byte{[]byte("key0")}, paths, store)
-	require.NoError(t, err)
-	// key0: no prop <= key0, so offset stays at zero default
-	require.Equal(t, []uint64{0, 0}, got[0])
-
-	// key exactly on first prop
-	got, err = getReadRangeFromProps(ctx, [][]byte{[]byte("key1")}, paths, store)
-	require.NoError(t, err)
-	// key1: file1 => prop "key1" matches (offset=10), file2 => no prop <= key1 so 0
-	require.Equal(t, []uint64{10, 0}, got[0])
-
-	// two keys: one below all, one on first prop
-	got, err = getReadRangeFromProps(ctx, [][]byte{[]byte("key0"), []byte("key1")}, paths, store)
-	require.NoError(t, err)
-	require.Equal(t, []uint64{0, 0}, got[0])
-	require.Equal(t, []uint64{10, 0}, got[1])
-
-	// key above all props
-	got, err = getReadRangeFromProps(ctx, [][]byte{[]byte("key999")}, paths, store)
-	require.NoError(t, err)
-	// key999: file1 => last prop "key5" (offset=50), file2 => last prop "key4" (offset=40)
-	require.Equal(t, []uint64{50, 40}, got[0])
-
-	// two identical keys above all props
-	got, err = getReadRangeFromProps(ctx, [][]byte{[]byte("key999"), []byte("key999")}, paths, store)
-	require.NoError(t, err)
-	require.Equal(t, []uint64{50, 40}, got[0])
-	require.Equal(t, []uint64{50, 40}, got[1])
-
-	// empty stat file should return zero offsets
-	file3 := "/test3"
-	w3, err := store.Create(ctx, file3, nil)
-	require.NoError(t, err)
-	err = w3.Close(ctx)
-	require.NoError(t, err)
-	got, err = getReadRangeFromProps(ctx, [][]byte{[]byte("key3")}, []string{file1, file2, file3}, store)
-	require.NoError(t, err)
-	require.Equal(t, []uint64{30, 20, 0}, got[0])
-}
-
-func TestGetReadRangeFromPropsEmptyJobKeys(t *testing.T) {
-	ctx := context.Background()
-	store := objstore.NewMemStorage()
-
-	writer, err := store.Create(ctx, "/test-empty-job-keys", nil)
-	require.NoError(t, err)
-	_, err = writer.Write(ctx, (&rangePropertiesCollector{
-		props: []*rangeProperty{{firstKey: []byte("key1"), offset: 10, size: 10, keys: 1}},
-	}).encode())
-	require.NoError(t, err)
-	err = writer.Close(ctx)
-	require.NoError(t, err)
-
-	got, err := getReadRangeFromProps(ctx, nil, []string{"/test-empty-job-keys"}, store)
-	require.NoError(t, err)
-	require.Empty(t, got)
-}
-
-func TestGetReadRangeFromPropsLimitsParallelRead(t *testing.T) {
-	backup := getReadRangeFromPropsConcurrency
-	getReadRangeFromPropsConcurrency = 2
-	defer func() {
-		getReadRangeFromPropsConcurrency = backup
-	}()
-
-	ctx := context.Background()
-	store := &blockingOpenMemStorage{
-		MemStorage: objstore.NewMemStorage(),
-		releaseCh:  make(chan struct{}),
-		startedCh:  make(chan struct{}, 16),
-	}
-
-	paths := make([]string, 5)
-	for i := range paths {
-		paths[i] = fmt.Sprintf("/test-open-limit-%d", i)
-		writer, err := store.Create(ctx, paths[i], nil)
-		require.NoError(t, err)
-		_, err = writer.Write(ctx, (&rangePropertiesCollector{
-			props: []*rangeProperty{{firstKey: []byte("key1"), offset: 10, size: 10, keys: 1}},
-		}).encode())
-		require.NoError(t, err)
-		err = writer.Close(ctx)
-		require.NoError(t, err)
-	}
-
-	errCh := make(chan error, 1)
-	go func() {
-		_, err := getReadRangeFromProps(ctx, [][]byte{[]byte("key1")}, paths, store)
-		errCh <- err
-	}()
-
-	for range 2 {
-		select {
-		case <-store.startedCh:
-		case <-time.After(3 * time.Second):
-			t.Fatal("timed out waiting for limited parallel reads to start")
-		}
-	}
-
-	// The errgroup limit prevents additional goroutines from entering Open.
-	select {
-	case <-store.startedCh:
-		t.Fatal("more than 2 concurrent opens detected despite concurrency limit")
-	default:
-	}
-	require.EqualValues(t, 2, store.max.Load())
-
-	close(store.releaseCh)
-	require.NoError(t, <-errCh)
+	opt *storeapi.WalkOption,
+	fn func(path string, size int64) error,
+) error {
+	s.count.Add(1)
+	return s.Storage.WalkDir(ctx, opt, fn)
 }
 
 func TestGetAllFileNames(t *testing.T) {
 	ctx := context.Background()
 	store := objstore.NewMemStorage()
-	w := NewWriterBuilder().
-		SetMemorySizeLimit(10*(lengthBytes*2+2)).
-		SetBlockSize(10*(lengthBytes*2+2)).
+	w := simplesst.NewWriterBuilder().
+		SetMemorySizeLimit(10*(simplesst.LengthBytes*2+2)).
+		SetBlockSize(10*(simplesst.LengthBytes*2+2)).
 		SetPropSizeDistance(5).
 		SetPropKeysDistance(3).
 		Build(store, "/subtask", "0")
@@ -261,9 +69,9 @@ func TestGetAllFileNames(t *testing.T) {
 	err := w.Close(ctx)
 	require.NoError(t, err)
 
-	w2 := NewWriterBuilder().
-		SetMemorySizeLimit(10*(lengthBytes*2+2)).
-		SetBlockSize(10*(lengthBytes*2+2)).
+	w2 := simplesst.NewWriterBuilder().
+		SetMemorySizeLimit(10*(simplesst.LengthBytes*2+2)).
+		SetBlockSize(10*(simplesst.LengthBytes*2+2)).
 		SetPropSizeDistance(5).
 		SetPropKeysDistance(3).
 		Build(store, "/subtask", "3")
@@ -275,9 +83,9 @@ func TestGetAllFileNames(t *testing.T) {
 	err = w2.Close(ctx)
 	require.NoError(t, err)
 
-	w3 := NewWriterBuilder().
-		SetMemorySizeLimit(10*(lengthBytes*2+2)).
-		SetBlockSize(10*(lengthBytes*2+2)).
+	w3 := simplesst.NewWriterBuilder().
+		SetMemorySizeLimit(10*(simplesst.LengthBytes*2+2)).
+		SetBlockSize(10*(simplesst.LengthBytes*2+2)).
 		SetPropSizeDistance(5).
 		SetPropKeysDistance(3).
 		Build(store, "/subtask", "12")
@@ -288,7 +96,7 @@ func TestGetAllFileNames(t *testing.T) {
 	err = w3.Close(ctx)
 	require.NoError(t, err)
 
-	filenames, err := GetAllFileNames(ctx, store, "subtask")
+	filenames, err := simplesst.GetAllFileNames(ctx, store, "subtask")
 	require.NoError(t, err)
 	filenames = removePartitionPrefix(t, filenames)
 	require.Equal(t, []string{
@@ -301,15 +109,13 @@ func TestGetAllFileNames(t *testing.T) {
 	}, filenames)
 }
 
-func TestCleanUpFiles(t *testing.T) {
-	ctx := context.Background()
-	store := objstore.NewMemStorage()
-	w := NewWriterBuilder().
-		SetMemorySizeLimit(10*(lengthBytes*2+2)).
-		SetBlockSize(10*(lengthBytes*2+2)).
+func writeCleanupTestFiles(ctx context.Context, t *testing.T, store storeapi.Storage, dir string) {
+	w := simplesst.NewWriterBuilder().
+		SetMemorySizeLimit(10*(simplesst.LengthBytes*2+2)).
+		SetBlockSize(10*(simplesst.LengthBytes*2+2)).
 		SetPropSizeDistance(5).
 		SetPropKeysDistance(3).
-		Build(store, "/subtask", "0")
+		Build(store, dir, "0")
 	keys := make([][]byte, 0, 30)
 	values := make([][]byte, 0, 30)
 	for i := range 30 {
@@ -320,62 +126,47 @@ func TestCleanUpFiles(t *testing.T) {
 		err := w.WriteRow(ctx, key, values[i], nil)
 		require.NoError(t, err)
 	}
-	err := w.Close(ctx)
-	require.NoError(t, err)
+	require.NoError(t, w.Close(ctx))
+}
 
-	filenames, err := GetAllFileNames(ctx, store, "subtask")
+func TestCleanUpFiles(t *testing.T) {
+	ctx := context.Background()
+	baseStore := objstore.NewMemStorage()
+	store := &walkCountingStorage{Storage: baseStore}
+	writeCleanupTestFiles(ctx, t, store, "/subtask")
+	writeCleanupTestFiles(ctx, t, store, "/subtask2")
+	writeCleanupTestFiles(ctx, t, store, "/kept")
+
+	filenames, err := simplesst.GetAllFileNames(ctx, store, "subtask", "subtask2")
 	require.NoError(t, err)
 	filenames = removePartitionPrefix(t, filenames)
 	require.Equal(t, []string{
 		"/subtask/0/0", "/subtask/0/1", "/subtask/0/2",
 		"/subtask/0_stat/0", "/subtask/0_stat/1", "/subtask/0_stat/2",
+		"/subtask2/0/0", "/subtask2/0/1", "/subtask2/0/2",
+		"/subtask2/0_stat/0", "/subtask2/0_stat/1", "/subtask2/0_stat/2",
 	}, filenames)
+	require.Equal(t, int32(1), store.count.Load())
 
-	require.NoError(t, CleanUpFiles(ctx, store, "subtask"))
+	store.count.Store(0)
+	require.NoError(t, CleanUpFiles(ctx, store, "subtask", "subtask2"))
+	require.Equal(t, int32(1), store.count.Load())
 
-	filenames, err = GetAllFileNames(ctx, store, "subtask")
+	filenames, err = simplesst.GetAllFileNames(ctx, baseStore, "subtask", "subtask2")
 	require.NoError(t, err)
 	require.Equal(t, []string(nil), filenames)
-}
-
-func TestGetMaxOverlapping(t *testing.T) {
-	// [1, 3), [2, 4)
-	points := []Endpoint{
-		{Key: []byte{1}, Tp: InclusiveStart, Weight: 1},
-		{Key: []byte{3}, Tp: ExclusiveEnd, Weight: 1},
-		{Key: []byte{2}, Tp: InclusiveStart, Weight: 1},
-		{Key: []byte{4}, Tp: ExclusiveEnd, Weight: 1},
-	}
-	require.EqualValues(t, 2, GetMaxOverlapping(points))
-	// [1, 3), [2, 4), [3, 5)
-	points = []Endpoint{
-		{Key: []byte{1}, Tp: InclusiveStart, Weight: 1},
-		{Key: []byte{3}, Tp: ExclusiveEnd, Weight: 1},
-		{Key: []byte{2}, Tp: InclusiveStart, Weight: 1},
-		{Key: []byte{4}, Tp: ExclusiveEnd, Weight: 1},
-		{Key: []byte{3}, Tp: InclusiveStart, Weight: 1},
-		{Key: []byte{5}, Tp: ExclusiveEnd, Weight: 1},
-	}
-	require.EqualValues(t, 2, GetMaxOverlapping(points))
-	// [1, 3], [2, 4], [3, 5]
-	points = []Endpoint{
-		{Key: []byte{1}, Tp: InclusiveStart, Weight: 1},
-		{Key: []byte{3}, Tp: InclusiveEnd, Weight: 1},
-		{Key: []byte{2}, Tp: InclusiveStart, Weight: 1},
-		{Key: []byte{4}, Tp: InclusiveEnd, Weight: 1},
-		{Key: []byte{3}, Tp: InclusiveStart, Weight: 1},
-		{Key: []byte{5}, Tp: InclusiveEnd, Weight: 1},
-	}
-	require.EqualValues(t, 3, GetMaxOverlapping(points))
+	filenames, err = simplesst.GetAllFileNames(ctx, baseStore, "kept")
+	require.NoError(t, err)
+	require.Len(t, filenames, 6)
 }
 
 func TestSortedKVMeta(t *testing.T) {
-	summary := []*WriterSummary{
+	summary := []*simplesst.WriterSummary{
 		{
 			Min:       []byte("a"),
 			Max:       []byte("b"),
 			TotalSize: 123,
-			MultipleFilesStats: []MultipleFilesStat{
+			MultipleFilesStats: []simplesst.MultipleFilesStat{
 				{
 					Filenames: [][2]string{
 						{"f1", "stat1"},
@@ -389,7 +180,7 @@ func TestSortedKVMeta(t *testing.T) {
 			Min:       []byte("x"),
 			Max:       []byte("y"),
 			TotalSize: 177,
-			MultipleFilesStats: []MultipleFilesStat{
+			MultipleFilesStats: []simplesst.MultipleFilesStat{
 				{
 					Filenames: [][2]string{
 						{"f3", "stat3"},
@@ -425,7 +216,7 @@ func TestSortedKVMeta(t *testing.T) {
 	meta00.Merge(meta1)
 	require.Equal(t, meta0, meta00)
 
-	meta0.MergeSummary(&WriterSummary{Min: []byte("xx"), Max: []byte("yy"), ConflictInfo: engineapi.ConflictInfo{Count: 2, Files: []string{"b.txt"}}})
+	meta0.MergeSummary(&simplesst.WriterSummary{Min: []byte("xx"), Max: []byte("yy"), ConflictInfo: engineapi.ConflictInfo{Count: 2, Files: []string{"b.txt"}}})
 	require.EqualValues(t, engineapi.ConflictInfo{Count: 3, Files: []string{"a.txt", "b.txt"}}, meta0.ConflictInfo)
 }
 
@@ -616,143 +407,23 @@ func TestReadWriteJSON(t *testing.T) {
 func TestExternalMetaPath(t *testing.T) {
 	require.Equal(t, "1/plan/merge-sort/1/meta.json", PlanMetaPath(1, "merge-sort", 1))
 	require.Equal(t, "2/plan/ingest/3/meta.json", PlanMetaPath(2, "ingest", 3))
+	require.Equal(t, "1/plan/prepared/meta.json", PreparedMetaPath(1))
+	require.Equal(t, "2/plan/prepared/meta.json", PreparedMetaPath(2))
 
 	require.Equal(t, "1/1/meta.json", SubtaskMetaPath(1, 1))
 	require.Equal(t, "2/3/meta.json", SubtaskMetaPath(2, 3))
 }
 
-func TestRemoveDuplicates(t *testing.T) {
-	valGetter := func(e *int) []byte {
-		return []byte{byte(*e)}
-	}
-	cases := []struct {
-		in   []int
-		out  []int
-		dups []int
-	}{
-		// no duplicates
-		{in: []int{}, out: []int{}, dups: []int{}},
-		{in: []int{1}, out: []int{1}, dups: []int{}},
-		{in: []int{1, 2}, out: []int{1, 2}, dups: []int{}},
-		{in: []int{1, 2, 3}, out: []int{1, 2, 3}, dups: []int{}},
-		{in: []int{1, 2, 3, 4, 5}, out: []int{1, 2, 3, 4, 5}, dups: []int{}},
-		// duplicates at beginning
-		{in: []int{1, 1}, out: []int{}, dups: []int{1, 1}},
-		{in: []int{1, 1, 1}, out: []int{}, dups: []int{1, 1, 1}},
-		{in: []int{1, 1, 2, 3}, out: []int{2, 3}, dups: []int{1, 1}},
-		{in: []int{1, 1, 1, 2, 3}, out: []int{2, 3}, dups: []int{1, 1, 1}},
-		// duplicates in middle
-		{in: []int{1, 2, 2, 3}, out: []int{1, 3}, dups: []int{2, 2}},
-		{in: []int{1, 2, 2, 2, 3}, out: []int{1, 3}, dups: []int{2, 2, 2}},
-		{in: []int{1, 2, 2, 2, 3, 3, 4}, out: []int{1, 4}, dups: []int{2, 2, 2, 3, 3}},
-		{in: []int{1, 2, 2, 2, 3, 3, 4, 4, 5}, out: []int{1, 5}, dups: []int{2, 2, 2, 3, 3, 4, 4}},
-		{in: []int{1, 2, 2, 2, 3, 4, 4, 5}, out: []int{1, 3, 5}, dups: []int{2, 2, 2, 4, 4}},
-		{in: []int{1, 2, 2, 2, 3, 4, 4, 5, 5, 6, 7, 8, 8, 9}, out: []int{1, 3, 6, 7, 9}, dups: []int{2, 2, 2, 4, 4, 5, 5, 8, 8}},
-		// duplicates at end
-		{in: []int{1, 2, 3, 3}, out: []int{1, 2}, dups: []int{3, 3}},
-		{in: []int{1, 2, 3, 3, 3}, out: []int{1, 2}, dups: []int{3, 3, 3}},
-		// mixing
-		{in: []int{1, 1, 2, 3, 3, 4}, out: []int{2, 4}, dups: []int{1, 1, 3, 3}},
-		{in: []int{1, 2, 3, 3, 4, 4}, out: []int{1, 2}, dups: []int{3, 3, 4, 4}},
-		{in: []int{1, 1, 2, 3, 4, 4}, out: []int{2, 3}, dups: []int{1, 1, 4, 4}},
-		{in: []int{1, 1, 2, 2, 3, 3}, out: []int{}, dups: []int{1, 1, 2, 2, 3, 3}},
-		{in: []int{1, 1, 2, 2, 2, 3, 3}, out: []int{}, dups: []int{1, 1, 2, 2, 2, 3, 3}},
-		{in: []int{1, 1, 2, 2, 2, 3, 3, 4, 4}, out: []int{}, dups: []int{1, 1, 2, 2, 2, 3, 3, 4, 4}},
-		{in: []int{1, 1, 2, 2, 2, 3, 3, 4, 4, 5, 5}, out: []int{}, dups: []int{1, 1, 2, 2, 2, 3, 3, 4, 4, 5, 5}},
-		{in: []int{1, 1, 2, 2, 2, 3, 4, 4, 5, 5}, out: []int{3}, dups: []int{1, 1, 2, 2, 2, 4, 4, 5, 5}},
-		{in: []int{1, 1, 2, 2, 2, 3, 4, 4, 5, 5, 6, 7, 8, 8, 9, 9}, out: []int{3, 6, 7}, dups: []int{1, 1, 2, 2, 2, 4, 4, 5, 5, 8, 8, 9, 9}},
-	}
-
-	for i, c := range cases {
-		t.Run(fmt.Sprintf("case-%d", i), func(t *testing.T) {
-			require.True(t, slices.IsSorted(c.in))
-			require.True(t, slices.IsSorted(c.out))
-			require.True(t, slices.IsSorted(c.dups))
-			require.Equal(t, len(c.dups), len(c.in)-len(c.out))
-			tmpIn := make([]int, len(c.in))
-			copy(tmpIn, c.in)
-			out, dups, dupCnt := removeDuplicates(tmpIn, valGetter, true)
-			require.EqualValues(t, c.out, out)
-			require.EqualValues(t, c.dups, dups)
-			require.Equal(t, dupCnt, len(dups))
-
-			tmpIn = make([]int, len(c.in))
-			copy(tmpIn, c.in)
-			out, dups, dupCnt = removeDuplicates(tmpIn, valGetter, false)
-			require.EqualValues(t, c.out, out)
-			require.Empty(t, dups)
-			require.Equal(t, dupCnt, len(c.dups))
-		})
-	}
-}
-
-func TestRemoveDuplicatesMoreThan2(t *testing.T) {
-	valGetter := func(e *int) []byte {
-		return []byte{byte(*e)}
-	}
-	cases := []struct {
-		in    []int
-		out   []int
-		dups  []int
-		total int
-	}{
-		// no duplicates
-		{in: []int{}, out: []int{}, dups: []int{}, total: 0},
-		{in: []int{1}, out: []int{1}, dups: []int{}, total: 0},
-		{in: []int{1, 2}, out: []int{1, 2}, dups: []int{}, total: 0},
-		{in: []int{1, 2, 3}, out: []int{1, 2, 3}, dups: []int{}, total: 0},
-		{in: []int{1, 2, 3, 4, 5}, out: []int{1, 2, 3, 4, 5}, dups: []int{}, total: 0},
-		// duplicates at beginning
-		{in: []int{1, 1}, out: []int{1, 1}, dups: []int{}, total: 2},
-		{in: []int{1, 1, 1}, out: []int{1, 1}, dups: []int{1}, total: 3},
-		{in: []int{1, 1, 1, 1}, out: []int{1, 1}, dups: []int{1, 1}, total: 4},
-		{in: []int{1, 1, 1, 1, 1}, out: []int{1, 1}, dups: []int{1, 1, 1}, total: 5},
-		{in: []int{1, 1, 2, 3}, out: []int{1, 1, 2, 3}, dups: []int{}, total: 2},
-		{in: []int{1, 1, 1, 2, 3}, out: []int{1, 1, 2, 3}, dups: []int{1}, total: 3},
-		{in: []int{1, 1, 1, 1, 2, 3}, out: []int{1, 1, 2, 3}, dups: []int{1, 1}, total: 4},
-		// duplicates in middle
-		{in: []int{1, 2, 2, 3}, out: []int{1, 2, 2, 3}, dups: []int{}, total: 2},
-		{in: []int{1, 2, 2, 2, 3}, out: []int{1, 2, 2, 3}, dups: []int{2}, total: 3},
-		{in: []int{1, 2, 2, 2, 2, 3}, out: []int{1, 2, 2, 3}, dups: []int{2, 2}, total: 4},
-		{in: []int{1, 2, 2, 2, 2, 2, 3}, out: []int{1, 2, 2, 3}, dups: []int{2, 2, 2}, total: 5},
-		{in: []int{1, 2, 2, 2, 3, 3, 4}, out: []int{1, 2, 2, 3, 3, 4}, dups: []int{2}, total: 5},
-		{in: []int{1, 2, 2, 2, 3, 3, 4, 4, 5}, out: []int{1, 2, 2, 3, 3, 4, 4, 5}, dups: []int{2}, total: 7},
-		{in: []int{1, 2, 2, 2, 3, 4, 4, 5}, out: []int{1, 2, 2, 3, 4, 4, 5}, dups: []int{2}, total: 5},
-		{in: []int{1, 2, 2, 2, 3, 4, 4, 5, 5, 5, 6, 7, 8, 8, 9}, out: []int{1, 2, 2, 3, 4, 4, 5, 5, 6, 7, 8, 8, 9}, dups: []int{2, 5}, total: 10},
-		// duplicates at end
-		{in: []int{1, 2, 3, 3}, out: []int{1, 2, 3, 3}, dups: []int{}, total: 2},
-		{in: []int{1, 2, 3, 3, 3}, out: []int{1, 2, 3, 3}, dups: []int{3}, total: 3},
-		{in: []int{1, 2, 3, 3, 3, 3}, out: []int{1, 2, 3, 3}, dups: []int{3, 3}, total: 4},
-		{in: []int{1, 2, 3, 3, 3, 3, 3}, out: []int{1, 2, 3, 3}, dups: []int{3, 3, 3}, total: 5},
-		// mixing
-		{in: []int{1, 1, 1, 1, 1, 2, 3, 3, 3, 4}, out: []int{1, 1, 2, 3, 3, 4}, dups: []int{1, 1, 1, 3}, total: 8},
-		{in: []int{1, 2, 3, 3, 3, 4, 4, 4}, out: []int{1, 2, 3, 3, 4, 4}, dups: []int{3, 4}, total: 6},
-		{in: []int{1, 1, 1, 2, 3, 4, 4, 4}, out: []int{1, 1, 2, 3, 4, 4}, dups: []int{1, 4}, total: 6},
-		{in: []int{1, 1, 1, 2, 2, 2, 3, 3, 3}, out: []int{1, 1, 2, 2, 3, 3}, dups: []int{1, 2, 3}, total: 9},
-		{in: []int{1, 1, 2, 2, 2, 3, 3}, out: []int{1, 1, 2, 2, 3, 3}, dups: []int{2}, total: 7},
-		{in: []int{1, 1, 2, 2, 2, 3, 3, 4, 4, 4}, out: []int{1, 1, 2, 2, 3, 3, 4, 4}, dups: []int{2, 4}, total: 10},
-		{in: []int{1, 1, 2, 2, 2, 3, 3, 4, 4, 4, 5, 5}, out: []int{1, 1, 2, 2, 3, 3, 4, 4, 5, 5}, dups: []int{2, 4}, total: 12},
-		{in: []int{1, 1, 2, 2, 2, 3, 4, 4, 4, 5, 5, 5}, out: []int{1, 1, 2, 2, 3, 4, 4, 5, 5}, dups: []int{2, 4, 5}, total: 11},
-		{in: []int{1, 1, 2, 2, 2, 3, 4, 4, 5, 5, 5, 6, 7, 8, 8, 9, 9}, out: []int{1, 1, 2, 2, 3, 4, 4, 5, 5, 6, 7, 8, 8, 9, 9}, dups: []int{2, 5}, total: 14},
-	}
-
-	for i, c := range cases {
-		t.Run(fmt.Sprintf("case-%d", i), func(t *testing.T) {
-			require.True(t, slices.IsSorted(c.in))
-			require.True(t, slices.IsSorted(c.out))
-			require.True(t, slices.IsSorted(c.dups))
-			require.Equal(t, len(c.dups), len(c.in)-len(c.out))
-			tmpIn := make([]int, len(c.in))
-			copy(tmpIn, c.in)
-			out, dups, totalDup := removeDuplicatesMoreThanTwo(tmpIn, valGetter)
-			require.EqualValues(t, c.out, out)
-			require.EqualValues(t, c.dups, dups)
-			require.Equal(t, c.total, totalDup)
-		})
-	}
-}
-
 func TestDivideMergeSortDataFilesBasic(t *testing.T) {
+	require.Equal(t, errors.RFCErrorCode("GlobalSort:TooManyDataFiles"), errdef.ErrTooManyDataFiles.RFCCode())
+
+	requireTooManyDataFiles := func(t *testing.T, err error, dataFileCnt, concurrency, threshold int) {
+		t.Helper()
+		expected := errdef.ErrTooManyDataFiles.GenWithStackByArgs(dataFileCnt, concurrency, threshold)
+		require.True(t, errors.ErrorEqual(err, expected))
+		require.EqualError(t, err, expected.Error())
+	}
+
 	testCases := []struct {
 		fileCnt       int
 		nodeCnt       int
@@ -783,6 +454,92 @@ func TestDivideMergeSortDataFilesBasic(t *testing.T) {
 			require.EqualValues(t, tc.expectedSizes, actualSizes)
 		})
 	}
+
+	t.Run("exact target file count", func(t *testing.T) {
+		items := make([]string, 4580)
+		result, err := DivideMergeSortDataFiles(items, 8, 1)
+		require.NoError(t, err)
+		require.Len(t, result, 24)
+		expectedSizes := append(slices.Repeat([]int{250}, 16), 73, 73, 73, 73, 72, 72, 72, 72)
+		totalTargetFileCount := 0
+		for i, group := range result {
+			require.Len(t, group, expectedSizes[i])
+			totalTargetFileCount += len(splitDataFiles(group, 1))
+		}
+		require.Equal(t, 24, totalTargetFileCount)
+		require.LessOrEqual(t, totalTargetFileCount, 250)
+	})
+
+	t.Run("at target file threshold", func(t *testing.T) {
+		result, err := DivideMergeSortDataFiles(make([]string, 62500), 10, 1)
+		require.NoError(t, err)
+		totalTargetFileCount := 0
+		for _, group := range result {
+			totalTargetFileCount += len(splitDataFiles(group, 1))
+		}
+		require.Equal(t, 250, totalTargetFileCount)
+	})
+
+	t.Run("remainder exceeds target file threshold", func(t *testing.T) {
+		result, err := DivideMergeSortDataFiles(make([]string, 62501), 10, 1)
+		require.Nil(t, result)
+		requireTooManyDataFiles(t, err, 62501, 1, 250)
+	})
+
+	t.Run("full groups exceed target file threshold", func(t *testing.T) {
+		result, err := DivideMergeSortDataFiles(make([]string, 62750), 1, 1)
+		require.Nil(t, result)
+		requireTooManyDataFiles(t, err, 62750, 1, 250)
+	})
+
+	t.Run("fixed targets and remainder exceed target file threshold", func(t *testing.T) {
+		result, err := DivideMergeSortDataFiles(make([]string, 62751), 1, 1)
+		require.Nil(t, result)
+		requireTooManyDataFiles(t, err, 62751, 1, 250)
+	})
+
+	t.Run("non-monotonic target file count exceeds threshold", func(t *testing.T) {
+		result, err := DivideMergeSortDataFiles(make([]string, 248128), 62, 64)
+		require.Nil(t, result)
+		requireTooManyDataFiles(t, err, 248128, 64, 4000)
+	})
+
+	t.Run("preserves maximum input files per subtask", func(t *testing.T) {
+		result, err := DivideMergeSortDataFiles(make([]string, 940000), 2, 17)
+		require.NoError(t, err)
+		totalTargetFileCount := 0
+		for _, group := range result {
+			require.LessOrEqual(t, len(group), 4000)
+			totalTargetFileCount += len(splitDataFiles(group, 17))
+		}
+		require.LessOrEqual(t, totalTargetFileCount, 4000)
+
+		result, err = DivideMergeSortDataFiles(make([]string, 940001), 2, 17)
+		require.Nil(t, result)
+		requireTooManyDataFiles(t, err, 940001, 17, 4000)
+	})
+
+	t.Run("large node count", func(t *testing.T) {
+		var result [][]string
+		var err error
+		allocs := testing.AllocsPerRun(1, func() {
+			result, err = DivideMergeSortDataFiles(make([]string, 32000), 32000, 16)
+		})
+		require.NoError(t, err)
+		require.Less(t, allocs, float64(100))
+
+		result, err = DivideMergeSortDataFiles(make([]string, 1000000), 1000000, 16)
+		require.NoError(t, err)
+		require.Len(t, result, 250)
+		totalTargetFileCount := 0
+		maxFiles := simplesst.GetAdjustedMergeSortFileCountStep(16)
+		for _, group := range result {
+			require.Len(t, group, 4000)
+			require.LessOrEqual(t, len(group), maxFiles)
+			totalTargetFileCount += len(splitDataFiles(group, 16))
+		}
+		require.Equal(t, 4000, totalTargetFileCount)
+	})
 }
 
 func TestDivideMergeSortDataFilesSubtaskCount(t *testing.T) {

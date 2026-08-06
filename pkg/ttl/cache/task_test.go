@@ -40,27 +40,48 @@ func newTaskGetter(ctx context.Context, t *testing.T, tk *testkit.TestKit) *task
 	}
 }
 
+func newTTLTaskTestKit(t *testing.T) *testkit.TestKit {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	dom.TTLJobManager().Stop()
+	require.NoError(t, dom.TTLJobManager().WaitStopped(context.Background(), time.Minute))
+
+	tk := testkit.NewTestKit(t, store)
+	tk.Session().GetSessionVars().TimeZone = time.Local
+	return tk
+}
+
 func (tg *taskGetter) mustGetTestTask() *cache.TTLTask {
 	sql, args := cache.SelectFromTTLTaskWithJobID("test-job")
 	rs, err := tg.tk.Session().ExecuteInternal(tg.ctx, sql, args...)
 	require.NoError(tg.t, err)
 	rows, err := session.GetRows4Test(context.Background(), tg.tk.Session(), rs)
 	require.NoError(tg.t, err)
+	require.Len(tg.t, rows, 1)
 	task, err := cache.RowToTTLTask(tg.tk.Session().GetSessionVars().Location(), rows[0])
 	require.NoError(tg.t, err)
 	return task
 }
 
 func TestRowToTTLTask(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.Session().GetSessionVars().TimeZone = time.Local
+	tk := newTTLTaskTestKit(t)
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTTL)
 	tg := newTaskGetter(ctx, t, tk)
 
 	now := time.Now()
 	now = now.Round(time.Second)
+
+	// Keep a matching running TTL job status to prevent task GC from removing
+	// this test row during the test.
+	_, err := tk.Session().ExecuteInternal(
+		ctx,
+		`INSERT INTO mysql.tidb_ttl_table_status (
+			table_id, parent_table_id, current_job_id,
+			current_job_owner_id, current_job_owner_hb_time, current_job_status
+		) VALUES (%?, %?, %?, %?, %?, %?)`,
+		1, 1, "test-job", "test-owner", now.Add(time.Hour), "running",
+	)
+	require.NoError(t, err)
 
 	sql, args, err := cache.InsertIntoTTLTask(tk.Session().GetSessionVars().Location(), "test-job", 1, 1, nil, nil, now, now)
 	require.NoError(t, err)
@@ -92,9 +113,7 @@ func TestRowToTTLTask(t *testing.T) {
 }
 
 func TestInsertIntoTTLTask(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.Session().GetSessionVars().TimeZone = time.Local
+	tk := newTTLTaskTestKit(t)
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTTL)
 	tg := newTaskGetter(ctx, t, tk)

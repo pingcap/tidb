@@ -34,17 +34,28 @@ go_test(
     timeout = "short",
     srcs = [
         "bitset_bench_test.go",
+<<<<<<< HEAD
         "leading_identity_test.go",
+=======
+        "join_order_test.go",
+>>>>>>> b76bfbc56bcb6bbfaf9d27f320fa07d9f8975ccf
     ],
     embed = [":joinorder"],
     flaky = True,
+    shard_count = 2,
     deps = [
+<<<<<<< HEAD
         "//pkg/parser/ast",
         "//pkg/planner/core/base",
         "//pkg/planner/core/operator/logicalop",
         "//pkg/planner/util",
         "//pkg/types",
         "//pkg/util/hint",
+=======
+        "//pkg/domain",
+        "//pkg/planner/core/operator/logicalop",
+        "//pkg/planner/util/coretestsdk",
+>>>>>>> b76bfbc56bcb6bbfaf9d27f320fa07d9f8975ccf
         "//pkg/util/intset",
         "//pkg/util/mock",
         "@com_github_bits_and_blooms_bitset//:bitset",

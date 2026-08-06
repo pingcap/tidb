@@ -21,6 +21,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/ddl/jobsubmit"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/testargsv1"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -33,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -73,6 +76,15 @@ func NewJobSubmitterForTest() *JobSubmitter {
 
 func (s *JobSubmitter) DDLJobDoneChMap() *generic.SyncMap[int64, chan struct{}] {
 	return s.ddlJobDoneChMap
+}
+
+// GenGIDAndInsertJobsWithRetry generates job related global ID and inserts DDL jobs to the DDL job
+// table with retry. job id allocation and job insertion are in the same transaction,
+// as we want to make sure DDL jobs are inserted in id order, then we can query from
+// a min job ID when scheduling DDL jobs to mitigate https://github.com/pingcap/tidb/issues/52905.
+// so this function has side effect, it will set table/db/job id of 'jobs'.
+func (s *JobSubmitter) GenGIDAndInsertJobsWithRetry(ctx context.Context, ddlSe *sess.Session, jobWs []*JobWrapper) error {
+	return jobsubmit.GenGIDAndInsertJobsWithRetry(ctx, ddlSe, jobWrappersToSpecs(jobWs), s.registerJobDoneChannels)
 }
 
 func TestGetIntervalFromPolicy(t *testing.T) {
@@ -151,6 +163,58 @@ func TestModifyColumn(t *testing.T) {
 		} else {
 			require.EqualError(t, err, tt.err.Error())
 		}
+	}
+}
+
+func TestProcessModifyColumnOptionsGenerated(t *testing.T) {
+	sctx := mock.NewContext()
+
+	// Test that ProcessModifyColumnOptions sets RestoreWithoutSchemaName | RestoreWithoutTableName
+	// when restoring generated column expressions, so table-qualified column references are stripped.
+	// This covers the same behavior as create_table.go, add_column.go, etc.
+	testCases := []struct {
+		alterTableSQL  string
+		colName        string
+		expectedExpr   string
+		expectedStored bool
+	}{
+		{
+			alterTableSQL:  "ALTER TABLE t MODIFY COLUMN b INT GENERATED ALWAYS AS (t.a + 1) STORED",
+			colName:        "b",
+			expectedExpr:   "`a` + 1",
+			expectedStored: true,
+		},
+		{
+			alterTableSQL:  "ALTER TABLE t MODIFY COLUMN c VARCHAR(100) GENERATED ALWAYS AS (LOWER(t.a)) STORED",
+			colName:        "c",
+			expectedExpr:   "lower(`a`)",
+			expectedStored: true,
+		},
+		{
+			alterTableSQL:  "ALTER TABLE t MODIFY COLUMN d INT GENERATED ALWAYS AS (t.a * t.b) VIRTUAL",
+			colName:        "d",
+			expectedExpr:   "`a` * `b`",
+			expectedStored: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		stmt, err := parser.New().ParseOneStmt(tc.alterTableSQL, "", "")
+		require.NoError(t, err)
+		alterStmt := stmt.(*ast.AlterTableStmt)
+		options := alterStmt.Specs[0].NewColumns[0].Options
+
+		col := &table.Column{
+			ColumnInfo: &model.ColumnInfo{
+				Name: ast.NewCIStr(tc.colName),
+			},
+		}
+
+		err = ProcessModifyColumnOptions(sctx, col, options)
+		require.NoError(t, err)
+		require.Equal(t, tc.expectedExpr, col.GeneratedExprString, "generated expr string mismatch for %q", tc.alterTableSQL)
+		require.Equal(t, tc.expectedStored, col.GeneratedStored)
+		require.NotNil(t, col.GeneratedExpr)
 	}
 }
 

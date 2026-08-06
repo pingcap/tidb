@@ -712,6 +712,7 @@ func TestStatementCtx(t *testing.T) {
 				return nil
 			},
 			checkFunc: func(tk *testkit.TestKit, param any) {
+				require.Equal(t, uint64(0), tk.Session().AffectedRows())
 				tk.MustQuery("select row_count()").Check(testkit.Rows("-1"))
 			},
 		},

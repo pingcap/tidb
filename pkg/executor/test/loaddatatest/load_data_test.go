@@ -25,13 +25,19 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/resourcemanager"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/gctuner"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -486,10 +492,43 @@ func TestLoadDataFromServerFile(t *testing.T) {
 	require.ErrorContains(t, err, "[executor:8154]Don't support load data from tidb-server's disk.")
 }
 
+var fix56408Store kv.Storage
+
+func prepareFix56408Store() func() {
+	gctuner.GlobalMemoryLimitTuner.Stop()
+	store, err := mockstore.NewMockStore()
+	if err != nil {
+		panic(err)
+	}
+
+	vardef.SetSchemaLease(500 * time.Millisecond)
+	session.DisableStats4Test()
+	domain.DisablePlanReplayerBackgroundJob4Test()
+	domain.DisableDumpHistoricalStats4Test()
+	dom, err := session.BootstrapSession(store)
+	if err != nil {
+		_ = store.Close()
+		panic(err)
+	}
+	dom.SetStatsUpdating(true)
+	sm := testkit.MockSessionManager{}
+	dom.InfoSyncer().SetSessionManager(&sm)
+	fix56408Store = store
+
+	return func() {
+		fix56408Store = nil
+		dom.Close()
+		if err := store.Close(); err != nil {
+			panic(err)
+		}
+		resourcemanager.InstanceResourceManager.Reset()
+	}
+}
+
 func TestFix56408(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("USE test; DROP TABLE IF EXISTS load_data_replace;")
+	require.NotNil(t, fix56408Store)
+	tk := testkit.NewTestKit(t, fix56408Store)
+	tk.MustExec("USE test; DROP TABLE IF EXISTS a;")
 	tk.MustExec("create table a(id int,name varchar(20),addr varchar(100),primary key (id) nonclustered);")
 	loadSQL := "LOAD DATA LOCAL INFILE '/tmp/nonexistence.csv' REPLACE INTO TABLE a FIELDS terminated by '|';"
 	ctx := tk.Session().(sessionctx.Context)

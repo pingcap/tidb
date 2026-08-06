@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
@@ -49,8 +50,8 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/recording"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -106,7 +107,11 @@ func getTableImporter(
 	logger *zap.Logger,
 ) (*importer.TableImporter, error) {
 	idAlloc := kv.NewPanickingAllocators(taskMeta.Plan.TableInfo.SepAutoInc())
-	tbl, err := tables.TableFromMeta(idAlloc, taskMeta.Plan.TableInfo)
+	tbl, err := tables.TableFromMetaWithCollate(
+		taskMeta.Plan.GetUseNewCollateOrDefault(collate.NewCollationEnabled()),
+		idAlloc,
+		taskMeta.Plan.TableInfo,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -123,9 +128,19 @@ func getTableImporter(
 	}
 
 	failpoint.Inject("createTableImporterForTest", func() {
-		failpoint.Return(importer.NewTableImporterForTest(ctx, controller, strconv.FormatInt(taskID, 10), store))
+		failpoint.Return(importer.NewTableImporterForTest(
+			ctx,
+			controller,
+			strconv.FormatInt(taskID, 10),
+			store,
+		))
 	})
-	return importer.NewTableImporter(ctx, controller, strconv.FormatInt(taskID, 10), store)
+	return importer.NewTableImporter(
+		ctx,
+		controller,
+		strconv.FormatInt(taskID, 10),
+		store,
+	)
 }
 
 func (s *importStepExecutor) Init(ctx context.Context) (err error) {
@@ -160,8 +175,8 @@ func (s *importStepExecutor) Init(ctx context.Context) (err error) {
 		}()
 	}
 	s.dataKVMemSizePerCon, s.perIndexKVMemSizePerCon = getWriterMemorySizeLimit(s.GetResource(), s.tableImporter.Plan)
-	s.dataBlockSize = globalsort.GetAdjustedBlockSize(s.dataKVMemSizePerCon, tidbconfig.MaxTxnEntrySizeLimit)
-	s.indexBlockSize = globalsort.GetAdjustedBlockSize(s.perIndexKVMemSizePerCon, globalsort.DefaultBlockSize)
+	s.dataBlockSize = simplesst.GetAdjustedBlockSize(s.dataKVMemSizePerCon, tidbconfig.MaxTxnEntrySizeLimit)
+	s.indexBlockSize = simplesst.GetAdjustedBlockSize(s.perIndexKVMemSizePerCon, simplesst.DefaultBlockSize)
 	s.concurrency = int(s.GetResource().CPU.Capacity())
 	s.logger.Info("KV writer memory buf info",
 		zap.String("data-buf-limit", units.BytesSize(float64(s.dataKVMemSizePerCon))),
@@ -187,7 +202,7 @@ func (s *importStepExecutor) estimateAndSetConcurrency(ctx context.Context, chun
 		}
 	}
 
-	peakMem, err := s.tableImporter.EstimateParquetReaderMemory(ctx, targetChunk.Path)
+	peakMem, err := s.tableImporter.EstimateParquetReaderMemory(ctx, targetChunk.Path, targetChunk.FileSize)
 	if err != nil {
 		s.logger.Warn("failed to estimate parquet reader memory, using CPU-based concurrency",
 			zap.Error(err))
@@ -237,7 +252,7 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		objStore                  storeapi.Storage
 	)
 	defer func() {
-		task.End(zapcore.ErrorLevel, err, zap.Int64("data-kv-files", dataKVFiles.Load()),
+		task.End2(zapcore.ErrorLevel, err, zap.Int64("data-kv-files", dataKVFiles.Load()),
 			zap.Int64("index-kv-files", indexKVFiles.Load()),
 			zap.Stringer("obj-store-access", accessRec))
 	}()
@@ -267,6 +282,7 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 			return errors.Trace(err)
 		}
 	}
+	logger.Info("start processing chunks", zap.Int("chunkCount", len(subtaskMeta.Chunks)))
 
 	var dataEngine, indexEngine *backend.OpenedEngine
 	defer func() {
@@ -448,8 +464,8 @@ var _ execute.StepExecutor = &mergeSortStepExecutor{}
 
 func (m *mergeSortStepExecutor) Init(context.Context) error {
 	dataKVMemSizePerCon, perIndexKVMemSizePerCon := getWriterMemorySizeLimit(m.GetResource(), &m.taskMeta.Plan)
-	m.dataKVPartSize = max(globalsort.MinUploadPartSize, int64(dataKVMemSizePerCon*uint64(globalsort.MaxMergingFilesPerThread)/globalsort.MaxUploadPartCount))
-	m.indexKVPartSize = max(globalsort.MinUploadPartSize, int64(perIndexKVMemSizePerCon*uint64(globalsort.MaxMergingFilesPerThread)/globalsort.MaxUploadPartCount))
+	m.dataKVPartSize = max(simplesst.MinUploadPartSize, int64(dataKVMemSizePerCon*uint64(globalsort.MaxMergingFilesPerThread)/simplesst.MaxUploadPartCount))
+	m.indexKVPartSize = max(simplesst.MinUploadPartSize, int64(perIndexKVMemSizePerCon*uint64(globalsort.MaxMergingFilesPerThread)/simplesst.MaxUploadPartCount))
 
 	m.logger.Info("merge sort partSize",
 		zap.String("data-kv", units.BytesSize(float64(m.dataKVPartSize))),
@@ -487,12 +503,12 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	logger := m.logger.With(zap.Int64("subtask-id", subtask.ID), zap.String("kv-group", sm.KVGroup))
 	task := log.BeginTask(logger, "run subtask")
 	defer func() {
-		task.End(zapcore.ErrorLevel, err, zap.Stringer("obj-store-access", accessRec))
+		task.End2(zapcore.ErrorLevel, err, zap.Stringer("obj-store-access", accessRec))
 	}()
 
 	var mu sync.Mutex
 	m.subtaskSortedKVMeta = &globalsort.SortedKVMeta{}
-	onWriterClose := func(summary *globalsort.WriterSummary) {
+	onWriterClose := func(summary *simplesst.WriterSummary) {
 		mu.Lock()
 		defer mu.Unlock()
 		m.subtaskSortedKVMeta.MergeSummary(summary)
@@ -519,7 +535,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		objStore,
 		partSize,
 		prefix,
-		globalsort.DefaultOneWriterBlockSize,
+		simplesst.DefaultOneWriterBlockSize,
 		onWriterClose,
 		globalsort.NewMergeCollector(ctx, &m.summary),
 		int(m.GetResource().CPU.Capacity()),
@@ -711,7 +727,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 		zap.String("kv-group", sm.KVGroup))
 	task := log.BeginTask(logger, "run subtask")
 	defer func() {
-		task.End(zapcore.ErrorLevel, err, zap.Stringer("obj-store-access", accessRec))
+		task.End2(zapcore.ErrorLevel, err, zap.Stringer("obj-store-access", accessRec))
 	}()
 
 	_, engineUUID := backend.MakeUUID("", subtask.ID)
@@ -864,7 +880,6 @@ func (p *postProcessStepExecutor) RunSubtask(ctx context.Context, subtask *proto
 
 type importExecutor struct {
 	*taskexecutor.BaseTaskExecutor
-	store        tidbkv.Storage
 	indicesGenKV map[int64]importer.GenKVIndex
 }
 
@@ -879,7 +894,6 @@ func NewImportExecutor(
 
 	s := &importExecutor{
 		BaseTaskExecutor: taskexecutor.NewBaseTaskExecutor(subCtx, task, param),
-		store:            param.Store,
 	}
 	s.BaseTaskExecutor.Extension = s
 	return s
@@ -903,7 +917,7 @@ func (e *importExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor
 	if err := json.Unmarshal(task.Meta, &taskMeta); err != nil {
 		return nil, errors.Trace(err)
 	}
-	logger := logutil.BgLogger().With(
+	logger := logutil.ErrVerboseLogger().With(
 		zap.Int64("task-id", task.ID),
 		zap.String("task-key", task.Key),
 		zap.String("step", proto.Step2Str(task.Type, task.Step)),
@@ -911,18 +925,7 @@ func (e *importExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor
 	indicesGenKV := importer.GetIndicesGenKV(taskMeta.Plan.TableInfo)
 	logger.Info("got indices that generate kv", zap.Any("indices", indicesGenKV))
 
-	store := e.store
-	if e.store.GetKeyspace() != task.Keyspace {
-		var err error
-		err = e.GetTaskTable().WithNewSession(func(se sessionctx.Context) error {
-			store, err = se.GetSQLServer().GetKSStore(task.Keyspace)
-			return err
-		})
-		if err != nil {
-			return nil, err
-		}
-	}
-
+	store := e.TaskRuntime.Store()
 	switch task.Step {
 	case proto.ImportStepImport, proto.ImportStepEncodeAndSort:
 		return &importStepExecutor{

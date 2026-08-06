@@ -29,6 +29,7 @@ import (
 	mockexecute "github.com/pingcap/tidb/pkg/dxf/framework/mock/execute"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
+	mockDispatch "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/mock"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
@@ -341,30 +342,152 @@ func TestDXFAlwaysEnabledOnNextGen(t *testing.T) {
 }
 
 func TestMaxRuntimeSlots(t *testing.T) {
-	c := testutil.NewTestDXFContext(t, 1, 16, true)
+	t.Run("limit-runtime-slots-in-target-steps", func(t *testing.T) {
+		c := testutil.NewTestDXFContext(t, 1, 16, true)
 
-	registerExampleTask(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
+		registerExampleTask(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
 
-	var callCount atomic.Int32
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/beforeSetFrameworkInfo", func(rc *proto.StepResource) {
-		val := callCount.Add(1)
-		if val == 1 {
-			require.Equal(t, 12, int(rc.CPU.Capacity()))
-		} else {
-			require.Equal(t, 16, int(rc.CPU.Capacity()))
-		}
+		var callCount atomic.Int32
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/beforeSetFrameworkInfo", func(rc *proto.StepResource) {
+			val := callCount.Add(1)
+			if val == 1 {
+				require.Equal(t, 12, int(rc.CPU.Capacity()))
+			} else {
+				require.Equal(t, 16, int(rc.CPU.Capacity()))
+			}
+		})
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/storage/beforeSubmitTask",
+			func(requiredSlots *int, params *proto.ExtraParams) {
+				params.MaxRuntimeSlots = 12
+				params.TargetSteps = []proto.Step{proto.StepOne}
+			},
+		)
+		scope := handle.GetTargetScope()
+		cpuCount, err := c.TaskMgr.GetCPUCountOfNode(c.Ctx)
+		require.NoError(t, err)
+		require.Equal(t, 16, cpuCount)
+		task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", scope, 16)
+		require.Equal(t, proto.TaskStateSucceed, task.State)
+		require.EqualValues(t, 2, callCount.Load())
 	})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/storage/beforeSubmitTask",
-		func(requiredSlots *int, params *proto.ExtraParams) {
-			params.MaxRuntimeSlots = 12
-			params.TargetSteps = []proto.Step{proto.StepOne}
-		},
-	)
-	scope := handle.GetTargetScope()
-	cpuCount, err := c.TaskMgr.GetCPUCountOfNode(c.Ctx)
-	require.NoError(t, err)
-	require.Equal(t, 16, cpuCount)
-	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", scope, 16)
-	require.Equal(t, proto.TaskStateSucceed, task.State)
-	require.EqualValues(t, 2, callCount.Load())
+
+	t.Run("prepare-mode-required-propagates-onprepare-updates", func(t *testing.T) {
+		c := testutil.NewTestDXFContext(t, 1, 16, true)
+		const (
+			prepareMeta     = `{"prepare":"done"}`
+			prepareSlots    = 7
+			prepareNodeCap  = 1
+			initialTaskMeta = `{"prepare":"init"}`
+		)
+		var onPrepareCalled atomic.Int32
+		var stepOneTaskSeen atomic.Int32
+
+		stepTransition := map[proto.Step]proto.Step{
+			proto.StepPrepared: proto.StepOne,
+			proto.StepOne:      proto.StepDone,
+		}
+		schedulerExt := mockDispatch.NewMockExtension(c.MockCtrl)
+		schedulerExt.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return().AnyTimes()
+		schedulerExt.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+		schedulerExt.EXPECT().IsRetryableErr(gomock.Any()).Return(false).AnyTimes()
+		schedulerExt.EXPECT().GetNextStep(gomock.Any()).DoAndReturn(
+			func(task *proto.TaskBase) proto.Step {
+				nextStep, ok := stepTransition[task.Step]
+				require.True(t, ok, "unexpected step: %s", task.Step)
+				return nextStep
+			},
+		).AnyTimes()
+		schedulerExt.EXPECT().OnPrepare(gomock.Any(), gomock.Any(), gomock.Any()).
+			DoAndReturn(func(_ context.Context, _ storage.TaskHandle, task *proto.Task) error {
+				onPrepareCalled.Add(1)
+				task.Meta = []byte(prepareMeta)
+				task.RequiredSlots = prepareSlots
+				task.MaxNodeCount = prepareNodeCap
+				return nil
+			}).Times(1)
+		schedulerExt.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+			DoAndReturn(func(_ context.Context, _ storage.TaskHandle, task *proto.Task, _ []string, nextStep proto.Step) ([][]byte, error) {
+				require.Equal(t, proto.StepOne, nextStep)
+				require.Equal(t, proto.StepPrepared, task.Step)
+				require.Equal(t, []byte(prepareMeta), task.Meta)
+				require.Equal(t, prepareSlots, task.RequiredSlots)
+				require.Equal(t, prepareNodeCap, task.MaxNodeCount)
+				return [][]byte{[]byte("step-one-subtask")}, nil
+			}).Times(1)
+		schedulerExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(1)
+
+		executorExt := testutil.GetCommonTaskExecutorExt(c.MockCtrl, func(task *proto.Task) (execute.StepExecutor, error) {
+			if task.Step == proto.StepOne {
+				stepOneTaskSeen.Add(1)
+				require.Equal(t, []byte(prepareMeta), task.Meta)
+				require.Equal(t, prepareSlots, task.RequiredSlots)
+				require.Equal(t, prepareNodeCap, task.MaxNodeCount)
+			}
+			return testutil.GetCommonStepExecutor(c.MockCtrl, task.Step, func(_ context.Context, subtask *proto.Subtask) error {
+				require.Equal(t, proto.StepOne, subtask.Step)
+				return nil
+			}), nil
+		})
+		testutil.RegisterExampleTask(t, schedulerExt, executorExt, testutil.GetCommonCleanUpRoutine(c.MockCtrl))
+
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/storage/beforeSubmitTask",
+			func(_ *int, params *proto.ExtraParams) {
+				params.PrepareMode = proto.PrepareModeRequired
+			},
+		)
+		scope := handle.GetTargetScope()
+		task, err := handle.SubmitTask(c.Ctx, "prepare-mode-required", proto.TaskTypeExample, c.Store.GetKeyspace(), 1, scope, 0, []byte(initialTaskMeta))
+		require.NoError(t, err)
+		doneTask := testutil.WaitTaskDone(c.Ctx, t, task.Key)
+		require.Equal(t, proto.TaskStateSucceed, doneTask.State)
+		require.EqualValues(t, 1, onPrepareCalled.Load())
+		require.EqualValues(t, 1, stepOneTaskSeen.Load())
+	})
+
+	t.Run("prepare-mode-disabled-keeps-backward-compatible-path", func(t *testing.T) {
+		c := testutil.NewTestDXFContext(t, 1, 16, true)
+		const initialTaskMeta = `{"prepare":"old-disabled"}`
+
+		stepTransition := map[proto.Step]proto.Step{
+			proto.StepInit: proto.StepOne,
+			proto.StepOne:  proto.StepDone,
+		}
+		schedulerExt := mockDispatch.NewMockExtension(c.MockCtrl)
+		schedulerExt.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return().AnyTimes()
+		schedulerExt.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+		schedulerExt.EXPECT().IsRetryableErr(gomock.Any()).Return(false).AnyTimes()
+		schedulerExt.EXPECT().GetNextStep(gomock.Any()).DoAndReturn(
+			func(task *proto.TaskBase) proto.Step {
+				nextStep, ok := stepTransition[task.Step]
+				require.True(t, ok, "unexpected step: %s", task.Step)
+				return nextStep
+			},
+		).AnyTimes()
+		schedulerExt.EXPECT().OnPrepare(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+		schedulerExt.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+			DoAndReturn(func(_ context.Context, _ storage.TaskHandle, task *proto.Task, _ []string, nextStep proto.Step) ([][]byte, error) {
+				require.Equal(t, proto.StepOne, nextStep)
+				require.Equal(t, proto.StepInit, task.Step)
+				require.Equal(t, []byte(initialTaskMeta), task.Meta)
+				return [][]byte{[]byte("step-one-subtask")}, nil
+			}).Times(1)
+		schedulerExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(1)
+
+		executorExt := testutil.GetCommonTaskExecutorExt(c.MockCtrl, func(task *proto.Task) (execute.StepExecutor, error) {
+			if task.Step == proto.StepOne {
+				require.Equal(t, []byte(initialTaskMeta), task.Meta)
+			}
+			return testutil.GetCommonStepExecutor(c.MockCtrl, task.Step, func(_ context.Context, subtask *proto.Subtask) error {
+				require.Equal(t, proto.StepOne, subtask.Step)
+				return nil
+			}), nil
+		})
+		testutil.RegisterExampleTask(t, schedulerExt, executorExt, testutil.GetCommonCleanUpRoutine(c.MockCtrl))
+
+		scope := handle.GetTargetScope()
+		task, err := handle.SubmitTask(c.Ctx, "prepare-mode-disabled", proto.TaskTypeExample, c.Store.GetKeyspace(), 1, scope, 0, []byte(initialTaskMeta))
+		require.NoError(t, err)
+		doneTask := testutil.WaitTaskDone(c.Ctx, t, task.Key)
+		require.Equal(t, proto.TaskStateSucceed, doneTask.State)
+	})
 }

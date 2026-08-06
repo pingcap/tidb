@@ -15,9 +15,18 @@
 package physicalop
 
 import (
+	"math"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression/aggregation"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -41,6 +50,72 @@ func TestFlattenListPushDownPlan(t *testing.T) {
 	require.Same(t, plans[1], flatten[2])
 	require.Same(t, plans[2], flatten[1])
 	require.Same(t, plans[3], flatten[0])
+}
+
+func TestTryToGetMppHashAggsForMaxMinCount(t *testing.T) {
+	buildAgg := func(aggName string, withGroupBy bool) *logicalop.LogicalAggregation {
+		ctx := mock.NewContext()
+		argCol := &expression.Column{
+			UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
+			RetType:  types.NewFieldType(mysql.TypeLonglong),
+		}
+		aggDesc, err := aggregation.NewAggFuncDesc(ctx.GetExprCtx(), aggName, []expression.Expression{argCol}, false)
+		require.NoError(t, err)
+		groupByItems := make([]expression.Expression, 0, 1)
+		schemaCols := make([]*expression.Column, 0, 2)
+		schemaCols = append(schemaCols, &expression.Column{
+			UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
+			RetType:  aggDesc.RetTp,
+		})
+		if withGroupBy {
+			groupByCol := &expression.Column{
+				UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
+				RetType:  types.NewFieldType(mysql.TypeLonglong),
+			}
+			groupByItems = append(groupByItems, groupByCol)
+			schemaCols = append(schemaCols, groupByCol)
+		}
+		la := logicalop.LogicalAggregation{
+			AggFuncs:     []*aggregation.AggFuncDesc{aggDesc},
+			GroupByItems: groupByItems,
+		}.Init(ctx.GetPlanCtx(), 0)
+		la.SetSchema(expression.NewSchema(schemaCols...))
+		la.SetStats(&property.StatsInfo{RowCount: 1024})
+		return la
+	}
+
+	containsRunMode := func(plans []base.PhysicalPlan, mode AggMppRunMode) bool {
+		for _, plan := range plans {
+			hashAgg, ok := plan.(*PhysicalHashAgg)
+			if ok && hashAgg.MppRunMode == mode {
+				return true
+			}
+		}
+		return false
+	}
+
+	prop := &property.PhysicalProperty{
+		TaskTp:         property.RootTaskType,
+		ExpectedCnt:    math.MaxFloat64,
+		MPPPartitionTp: property.AnyType,
+	}
+
+	normalAggPlans := tryToGetMppHashAggs(buildAgg(ast.AggFuncMax, true), prop)
+	require.True(t, containsRunMode(normalAggPlans, Mpp2Phase))
+
+	for _, aggName := range []string{ast.AggFuncMaxCount, ast.AggFuncMinCount} {
+		plans := tryToGetMppHashAggs(buildAgg(aggName, true), prop)
+		require.NotEmpty(t, plans)
+		require.False(t, containsRunMode(plans, Mpp2Phase))
+		require.False(t, containsRunMode(plans, MppTiDB))
+	}
+
+	for _, aggName := range []string{ast.AggFuncMaxCount, ast.AggFuncMinCount} {
+		plans := tryToGetMppHashAggs(buildAgg(aggName, false), prop)
+		require.NotEmpty(t, plans)
+		require.True(t, containsRunMode(plans, MppScalar))
+		require.False(t, containsRunMode(plans, MppTiDB))
+	}
 }
 
 func TestFlattenTreePushDownPlan(t *testing.T) {

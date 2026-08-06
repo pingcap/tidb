@@ -1069,21 +1069,20 @@ SELECT column_name, LOWER(column_type), is_nullable
 FROM information_schema.columns
 WHERE table_schema='mysql' AND table_name='tidb_masking_policy'
 ORDER BY ordinal_position`).Check(testkit.Rows(
-		"policy_id bigint(20) NO",
-		"schema_name varchar(64) NO",
-		"table_name varchar(64) NO",
-		"table_id bigint(20) NO",
-		"column_id bigint(20) NO",
-		"column_name varchar(64) NO",
+		"policy_id bigint(64) NO",
 		"policy_name varchar(64) NO",
-		"masking_type varchar(32) NO",
+		"db_name varchar(64) NO",
+		"table_name varchar(64) NO",
+		"table_id bigint(64) NO",
+		"column_name varchar(64) NO",
+		"column_id bigint(64) NO",
 		"expression text NO",
+		"status varchar(16) NO",
+		"masking_type varchar(32) NO",
 		"restrict_on varchar(256) NO",
-		"status enum('enabled','disabled') YES",
-		"created_at timestamp YES",
-		"created_by varchar(128) YES",
-		"updated_by varchar(128) YES",
-		"updated_at timestamp YES",
+		"created_at datetime(6) NO",
+		"updated_at datetime(6) NO",
+		"created_by varchar(288) NO",
 	))
 	tk.MustQuery(`
 SELECT index_name, non_unique, seq_in_index, column_name
@@ -1091,8 +1090,6 @@ FROM information_schema.statistics
 WHERE table_schema='mysql' AND table_name='tidb_masking_policy'
 ORDER BY index_name, seq_in_index`).Check(testkit.Rows(
 		"PRIMARY 0 1 policy_id",
-		"idx_schema_table 1 1 schema_name",
-		"idx_schema_table 1 2 table_name",
 		"uk_table_column 0 1 table_id",
 		"uk_table_column 0 2 column_id",
 		"uk_table_policy 0 1 table_id",
@@ -1100,59 +1097,115 @@ ORDER BY index_name, seq_in_index`).Check(testkit.Rows(
 	))
 }
 
-func TestUpgradeVersion260MaskingPolicy(t *testing.T) {
+func TestUpgradeVersion280MaskingPolicy(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
-	const fromVersion = 254
+	for _, fromVersion := range []int{189, 254} {
+		t.Run(fmt.Sprintf("from_version_%d", fromVersion), func(t *testing.T) {
+			store, dom := session.CreateStoreAndBootstrap(t)
+			defer func() { require.NoError(t, store.Close()) }()
 
-	store, dom := session.CreateStoreAndBootstrap(t)
-	defer func() { require.NoError(t, store.Close()) }()
+			se := session.CreateSessionAndSetID(t, store)
+			txn, err := store.Begin()
+			require.NoError(t, err)
+			m := meta.NewMutator(txn)
+			err = m.FinishBootstrap(int64(fromVersion))
+			require.NoError(t, err)
+			err = txn.Commit(context.Background())
+			require.NoError(t, err)
+			revertVersionAndVariables(t, se, fromVersion)
 
-	seV254 := session.CreateSessionAndSetID(t, store)
-	txn, err := store.Begin()
-	require.NoError(t, err)
-	m := meta.NewMutator(txn)
-	err = m.FinishBootstrap(int64(fromVersion))
-	require.NoError(t, err)
-	err = txn.Commit(context.Background())
-	require.NoError(t, err)
-	revertVersionAndVariables(t, seV254, fromVersion)
+			is := dom.InfoSchema()
+			policyTbl, err := is.TableByName(context.Background(), ast.NewCIStr("mysql"), ast.NewCIStr("tidb_masking_policy"))
+			require.NoError(t, err)
+			policyDBID := policyTbl.Meta().DBID
+			policyTblID := policyTbl.Meta().ID
+			require.False(t, metadef.IsReservedID(policyTblID), "classic bootstrap should allocate a global table ID")
 
-	is := dom.InfoSchema()
-	policyTbl, err := is.TableByName(context.Background(), ast.NewCIStr("mysql"), ast.NewCIStr("tidb_masking_policy"))
-	require.NoError(t, err)
-	policyDBID := policyTbl.Meta().DBID
-	policyTblID := policyTbl.Meta().ID
+			txn, err = store.Begin()
+			require.NoError(t, err)
+			m = meta.NewMutator(txn)
+			err = m.DropTableOrView(policyDBID, policyTblID)
+			require.NoError(t, err)
+			exists, err := m.CheckTableExists(policyDBID, policyTblID)
+			require.NoError(t, err)
+			require.False(t, exists)
+			err = txn.Commit(context.Background())
+			require.NoError(t, err)
 
-	txn, err = store.Begin()
-	require.NoError(t, err)
-	m = meta.NewMutator(txn)
-	err = m.DropTableOrView(policyDBID, policyTblID)
-	require.NoError(t, err)
-	exists, err := m.CheckTableExists(policyDBID, policyTblID)
-	require.NoError(t, err)
-	require.False(t, exists)
-	err = txn.Commit(context.Background())
-	require.NoError(t, err)
+			store.SetOption(session.StoreBootstrappedKey, nil)
+			ver, err := session.GetBootstrapVersion(se)
+			require.NoError(t, err)
+			require.Equal(t, int64(fromVersion), ver)
+			dom.Close()
 
-	store.SetOption(session.StoreBootstrappedKey, nil)
-	ver, err := session.GetBootstrapVersion(seV254)
-	require.NoError(t, err)
-	require.Equal(t, int64(fromVersion), ver)
-	dom.Close()
+			newVer, err := session.BootstrapSession(store)
+			require.NoError(t, err)
+			defer newVer.Close()
 
-	newVer, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-	defer newVer.Close()
+			seLatestV := session.CreateSessionAndSetID(t, store)
+			ver, err = session.GetBootstrapVersion(seLatestV)
+			require.NoError(t, err)
+			require.Equal(t, session.CurrentBootstrapVersion, ver)
 
-	seLatestV := session.CreateSessionAndSetID(t, store)
-	ver, err = session.GetBootstrapVersion(seLatestV)
-	require.NoError(t, err)
-	require.Equal(t, session.CurrentBootstrapVersion, ver)
+			upgradedPolicyTbl, err := newVer.InfoSchema().TableByName(
+				context.Background(), ast.NewCIStr("mysql"), ast.NewCIStr("tidb_masking_policy"))
+			require.NoError(t, err)
+			require.False(t, metadef.IsReservedID(upgradedPolicyTbl.Meta().ID),
+				"classic upgrade should allocate a global table ID")
+			require.NotEqual(t, policyTblID, upgradedPolicyTbl.Meta().ID,
+				"recreating the table must not reuse a dropped physical table ID")
 
-	tk := testkit.NewTestKit(t, store)
-	checkTiDBMaskingPolicyTableSchema(t, tk)
+			tk := testkit.NewTestKit(t, store)
+			checkTiDBMaskingPolicyTableSchema(t, tk)
+		})
+	}
+
+	for _, tc := range []struct {
+		name                      string
+		simulateConcurrentUpgrade bool
+	}{
+		{name: "normal_restart_after_system_table_rename"},
+		{name: "upgrade_completed_after_initial_version_read", simulateConcurrentUpgrade: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, dom := session.CreateStoreAndBootstrap(t)
+			defer func() { require.NoError(t, store.Close()) }()
+
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("RENAME TABLE mysql.tidb_masking_policy TO mysql.tidb_masking_policy_bak")
+			dom.Close()
+
+			if tc.simulateConcurrentUpgrade {
+				txn, err := store.Begin()
+				require.NoError(t, err)
+				require.NoError(t, meta.NewMutator(txn).FinishBootstrap(189))
+				require.NoError(t, txn.Commit(context.Background()))
+
+				// Simulate another TiDB completing the upgrade after this TiDB reads
+				// the old bootstrap version but before it acquires the upgrade lock.
+				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/session/afterGetStoreBootstrapVersion", func(ver int64) {
+					require.Equal(t, int64(189), ver)
+					txn, err := store.Begin()
+					require.NoError(t, err)
+					require.NoError(t, meta.NewMutator(txn).FinishBootstrap(session.CurrentBootstrapVersion))
+					require.NoError(t, txn.Commit(context.Background()))
+				})
+			}
+			store.SetOption(session.StoreBootstrappedKey, nil)
+
+			restartedDom, err := session.BootstrapSession(store)
+			require.NoError(t, err)
+			defer restartedDom.Close()
+
+			tk = testkit.NewTestKit(t, store)
+			tk.MustQuery("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='mysql' AND table_name='tidb_masking_policy'").
+				Check(testkit.Rows("0"))
+			tk.MustQuery("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='mysql' AND table_name='tidb_masking_policy_bak'").
+				Check(testkit.Rows("1"))
+		})
+	}
 }
 
 func TestUpgradeWithAnalyzeColumnOptions(t *testing.T) {

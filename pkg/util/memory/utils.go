@@ -169,14 +169,43 @@ func (n *Notifer) WeakWake() {
 	n.wake()
 }
 
-// HashStr hashes a string to a uint64 value
-func HashStr(key string) uint64 {
-	hashKey := initHashKey
-	for _, c := range key {
-		hashKey *= prime64
-		hashKey ^= uint64(c)
+// InvalidDigestID disables digest profile lookup and update.
+const InvalidDigestID uint64 = 0
+
+// DigestIDBuilder incrementally builds a digest profile ID without allocating
+// a composite key string.
+type DigestIDBuilder struct {
+	hash uint64
+}
+
+// NewDigestIDBuilder creates a DigestIDBuilder.
+func NewDigestIDBuilder() DigestIDBuilder {
+	return DigestIDBuilder{hash: initHashKey}
+}
+
+// AddString adds a length-prefixed string component to the digest profile ID.
+func (b *DigestIDBuilder) AddString(value string) {
+	b.addUint64(uint64(len(value)))
+	for i := range len(value) {
+		b.addByte(value[i])
 	}
-	return hashKey
+}
+
+func (b *DigestIDBuilder) addUint64(value uint64) {
+	for range 8 {
+		b.addByte(byte(value))
+		value >>= 8
+	}
+}
+
+func (b *DigestIDBuilder) addByte(value byte) {
+	b.hash *= prime64
+	b.hash ^= uint64(value)
+}
+
+// Sum64 returns the digest profile ID.
+func (b *DigestIDBuilder) Sum64() uint64 {
+	return b.hash
 }
 
 // HashEvenNum hashes a uint64 even number to a uint64 value

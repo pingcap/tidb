@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"hash/crc32"
 	"path"
 	"sync"
 	"sync/atomic"
@@ -34,9 +35,12 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -53,8 +57,8 @@ type collectConflictsStepExecutor struct {
 
 	// per subtask fields
 	currSubtaskID               int64
-	sizeOfHandlesFromIndex      atomic.Int64
-	sizeLimitOfHandlesFromIndex int64
+	sizeOfRowKeysFromIndex      atomic.Int64
+	sizeLimitOfRowKeysFromIndex int64
 	sizeOfConflictRowFiles      atomic.Int64
 	result                      *conflictedkv.CollectResult
 	// one conflicted row might generate multiple conflicted UK KV, this set is
@@ -63,7 +67,7 @@ type collectConflictsStepExecutor struct {
 	// if we have 2 rows (1, 3, 4), (2, 3, 4), one pair of conflicted UK KV will
 	// be generated for kv group u1 and u2 respectively.
 	// this also means we need to process conflicted UK KV group one by one.
-	sharedHandleSet *conflictedkv.BoundedHandleSet
+	sharedRowKeySet *conflictedkv.BoundedKeySet
 	summary         execute.SubtaskSummary
 }
 
@@ -138,13 +142,13 @@ func (e *collectConflictsStepExecutor) onFinished(_ context.Context, subtask *pr
 		zap.Stringer("checksum", e.result.Checksum),
 		zap.Strings("targetFiles", e.result.Filenames),
 		zap.String("fileSize", units.BytesSize(float64(e.result.TotalFileSize))),
-		zap.Bool("skipSaveHandle", e.sharedHandleSet.BoundExceeded()),
+		zap.Bool("rowKeySetLimitExceeded", e.sharedRowKeySet.BoundExceeded()),
 	)
 	subtaskMeta.Checksum = newFromKVChecksum(e.result.Checksum)
 	subtaskMeta.ConflictedRowCount = e.result.RowCount
 	subtaskMeta.ConflictedRowFilenames = e.result.Filenames
 	subtaskMeta.ConflictedRowRecordingCapped = e.result.RowRecordingCapped
-	subtaskMeta.TooManyConflictsFromIndex = e.sharedHandleSet.BoundExceeded()
+	subtaskMeta.TooManyConflictsFromIndex = e.sharedRowKeySet.BoundExceeded()
 	newMeta, err := subtaskMeta.Marshal()
 	if err != nil {
 		return errors.Trace(err)
@@ -174,22 +178,28 @@ func (e *collectConflictsStepExecutor) collectConflictsOfKVGroup(
 
 	eg, egCtx := tidbutil.NewErrorGroupWithRecoverWithCtx(ctx)
 
-	pairCh := globalsort.ReadKVFilesAsync(egCtx, eg, objStore, ci.Files)
-
+	targetIdx, err := getKVGroupIndexInfo(e.tableImporter, kvGroup)
+	if err != nil {
+		return err
+	}
 	encoders, err := createEncoders(concurrency, e.tableImporter)
 	if err != nil {
 		return err
 	}
 
+	pairCh := globalsort.ReadKVFilesAsync(egCtx, eg, objStore, ci.Files)
+	collectorChs, needDispatch := createConflictHandlerChannels(pairCh, concurrency, targetIdx)
+
 	var (
 		mu             sync.Mutex
-		mergedLocalSet = conflictedkv.NewBoundedHandleSet(e.logger, &e.sizeOfHandlesFromIndex, e.sizeLimitOfHandlesFromIndex)
+		mergedLocalSet = conflictedkv.NewBoundedKeySet(e.logger, &e.sizeOfRowKeysFromIndex, e.sizeLimitOfRowKeysFromIndex)
 	)
 	for i := range concurrency {
+		collectorCh := collectorChs[i]
 		encoder := encoders[i]
 		uid := uuid.New().String()
 		filenamePrefix := getConflictRowFilenamePrefix(e.task.ID, e.currSubtaskID, uid)
-		localSet := conflictedkv.NewBoundedHandleSet(e.logger, &e.sizeOfHandlesFromIndex, e.sizeLimitOfHandlesFromIndex)
+		localSet := conflictedkv.NewBoundedKeySet(e.logger, &e.sizeOfRowKeysFromIndex, e.sizeLimitOfRowKeysFromIndex)
 		collector := conflictedkv.NewCollector(
 			e.tableImporter.Table,
 			e.logger,
@@ -198,7 +208,7 @@ func (e *collectConflictsStepExecutor) collectConflictsOfKVGroup(
 			filenamePrefix,
 			kvGroup,
 			encoder,
-			e.sharedHandleSet,
+			e.sharedRowKeySet,
 			localSet,
 			&e.sizeOfConflictRowFiles,
 			e,
@@ -215,7 +225,12 @@ func (e *collectConflictsStepExecutor) collectConflictsOfKVGroup(
 				e.result.Merge(collector.GetCollectResult())
 				mu.Unlock()
 			}()
-			return collector.Run(egCtx, pairCh)
+			return collector.Run(egCtx, collectorCh)
+		})
+	}
+	if needDispatch {
+		eg.Go(func() error {
+			return dispatchMVIndexKVPairs(egCtx, e.store, pairCh, collectorChs, targetIdx)
 		})
 	}
 
@@ -223,20 +238,103 @@ func (e *collectConflictsStepExecutor) collectConflictsOfKVGroup(
 		return err
 	}
 
-	e.sharedHandleSet.Merge(mergedLocalSet)
+	e.sharedRowKeySet.Merge(mergedLocalSet)
 	return nil
+}
+
+func getKVGroupIndexInfo(tableImporter *importer.TableImporter, kvGroup string) (*model.IndexInfo, error) {
+	if kvGroup == globalsort.DataKVGroup {
+		return nil, nil
+	}
+
+	indexID, err := globalsort.KVGroup2IndexID(kvGroup)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	tblMeta := tableImporter.Table.Meta()
+	targetIdx := model.FindIndexInfoByID(tblMeta.Indices, indexID)
+	if targetIdx == nil {
+		// should not happen
+		return nil, errors.Errorf("index %d from KV group %q not found in table %s", indexID, kvGroup, tblMeta.Name)
+	}
+	return targetIdx, nil
+}
+
+func createConflictHandlerChannels(
+	pairCh chan *simplesst.KVPair,
+	concurrency int,
+	targetIdx *model.IndexInfo,
+) ([]chan *simplesst.KVPair, bool) {
+	handlerChs := make([]chan *simplesst.KVPair, concurrency)
+	// there might be multiple UK KV for MV index for a single row, when they
+	// are handled concurrently, we want to make sure UK KVs for some row route
+	// to the same handler to properly handle them.
+	needDispatch := concurrency > 1 && targetIdx != nil && targetIdx.MVIndex
+	for i := range handlerChs {
+		handlerChs[i] = pairCh
+		if needDispatch {
+			// A handler processes BufferedHandleLimit index handles in one batch.
+			// Buffer one batch so a busy handler does not block dispatch to the others.
+			handlerChs[i] = make(chan *simplesst.KVPair, conflictedkv.BufferedHandleLimit)
+		}
+	}
+	return handlerChs, needDispatch
+}
+
+func dispatchMVIndexKVPairs(
+	ctx context.Context,
+	store tidbkv.Storage,
+	pairCh <-chan *simplesst.KVPair,
+	handlerChs []chan *simplesst.KVPair,
+	targetIdx *model.IndexInfo,
+) error {
+	defer func() {
+		for _, handlerCh := range handlerChs {
+			close(handlerCh)
+		}
+	}()
+
+	for {
+		var pair *simplesst.KVPair
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case p, ok := <-pairCh:
+			if !ok {
+				return nil
+			}
+			pair = p
+		}
+
+		key, err := store.GetCodec().DecodeKey(pair.Key)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		handle, err := tablecodec.DecodeIndexHandle(key, pair.Value, len(targetIdx.Columns))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		// Keep all index KVs for one row in the same handler.
+		handlerIdx := int(crc32.ChecksumIEEE(handle.Encoded()) % uint32(len(handlerChs)))
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case handlerChs[handlerIdx] <- pair:
+		}
+	}
 }
 
 // right now we only have 1 subtask, but later we might have multiple subtasks
 // to run it distributively.
 func (e *collectConflictsStepExecutor) resetForNewSubtask(subtaskID int64) {
 	e.currSubtaskID = subtaskID
-	e.sizeOfHandlesFromIndex.Store(0)
+	e.sizeOfRowKeysFromIndex.Store(0)
 	e.sizeOfConflictRowFiles.Store(0)
-	// we use half of the subtask memory to cache the conflict row handle from index.
-	e.sizeLimitOfHandlesFromIndex = e.GetResource().Mem.Capacity() / 2
+	// we use half of the subtask memory to cache conflict row keys from indexes.
+	e.sizeLimitOfRowKeysFromIndex = e.GetResource().Mem.Capacity() / 2
 	e.result = conflictedkv.NewCollectResult(e.store.GetCodec().GetKeyspace())
-	e.sharedHandleSet = conflictedkv.NewBoundedHandleSet(e.logger, &e.sizeOfHandlesFromIndex, e.sizeLimitOfHandlesFromIndex)
+	e.sharedRowKeySet = conflictedkv.NewBoundedKeySet(e.logger, &e.sizeOfRowKeysFromIndex, e.sizeLimitOfRowKeysFromIndex)
 }
 
 func (e *collectConflictsStepExecutor) Cleanup(_ context.Context) (err error) {

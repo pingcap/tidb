@@ -147,6 +147,39 @@ func TestPlannerIssueRegressions(t *testing.T) {
 		tk.MustQuery("select * from v")
 	}
 
+	// issue-68164-dotted-schema-table-keys
+	{
+		tk := prepareSharedTestKit(t)
+		tk.MustExec("drop database if exists `a`")
+		tk.MustExec("drop database if exists `a.b`")
+		tk.MustExec("drop database if exists `v`")
+		tk.MustExec("drop database if exists `v.b`")
+		tk.MustExec("create database `a`")
+		tk.MustExec("create database `a.b`")
+		tk.MustExec("create table `a`.`b.c` (id int primary key)")
+		tk.MustExec("create table `a.b`.`c` (id int primary key)")
+		tk.MustExec("insert into `a`.`b.c` values (1)")
+		tk.MustExec("insert into `a.b`.`c` values (2)")
+		tk.MustQuery("select * from `a`.`b.c`, `a.b`.`c` for update of `a.b`.`c`").
+			Check(testkit.Rows("1 2"))
+		tk.MustQuery("select t2.id from `a`.`b.c` as t1, `a.b`.`c` as t2 for update of `a.b`.`c`").
+			Check(testkit.Rows("2"))
+		tk.MustQuery("show warnings").CheckContain("Use the alias 't2'")
+		tk.MustContainErrMsg("select * from `a`.`b.c`, `A`.`B.C`",
+			"[planner:1066]Not unique table/alias: 'B.C'")
+
+		tk.MustExec("create database `v`")
+		tk.MustExec("create database `v.b`")
+		tk.MustExec("create view `v`.`b.c` as select 1 as id")
+		tk.MustExec("create view `v.b`.`c` as select * from `v`.`b.c`")
+		tk.MustQuery("select * from `v.b`.`c`").Check(testkit.Rows("1"))
+
+		tk.MustExec("drop database `a`")
+		tk.MustExec("drop database `a.b`")
+		tk.MustExec("drop database `v`")
+		tk.MustExec("drop database `v.b`")
+	}
+
 	// index-merge-with-generated-column
 	{
 		tk := prepareSharedTestKit(t)
@@ -931,6 +964,21 @@ ORDER BY t1.a, t2.a, t3.a, var`
 		tk.MustExec("insert into t_range_cols values (1), (11), (null)")
 		tk.MustQuery("select /* issue:65991 */ a from t_range_cols where 1 <=> a").Check(testkit.Rows("1"))
 		tk.MustQuery("select /* issue:65991 */ a from t_range_cols where null <=> a").Check(testkit.Rows("<nil>"))
+	})
+
+	// issue-66706-decimal-scale-leak-through-sign-view-predicate
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		resetTestDB(t, tk)
+		tk.MustExec("CREATE TABLE t0(c0 NUMERIC)")
+		tk.MustExec("CREATE TABLE t1 LIKE t0")
+		tk.MustExec("REPLACE INTO t0 VALUES (-1780864408)")
+		tk.MustExec("INSERT INTO t1 VALUES (1448472626)")
+		tk.MustExec("CREATE OR REPLACE VIEW v0(c0) AS SELECT 0.99 FROM t1, t0")
+
+		tk.MustQuery("SELECT /* issue:66706 */ v0.c0 FROM v0 WHERE SIGN(v0.c0)").Check(testkit.Rows("0.99"))
+		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
+		tk.MustQuery("SELECT /* issue:66706 */ ref0 FROM (SELECT v0.c0 AS ref0, SIGN(v0.c0) AS ref1 FROM v0) AS s WHERE ref1").Check(testkit.Rows("0.99"))
+		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
 	})
 }
 

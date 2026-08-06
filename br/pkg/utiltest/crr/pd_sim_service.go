@@ -18,10 +18,12 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
+	streamconfig "github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
@@ -33,6 +35,11 @@ func (p *PDSim) GetLogBackupClient(ctx context.Context, storeID uint64) (logback
 
 func (p *PDSim) ClearCache(ctx context.Context, storeID uint64) error {
 	return p.Cluster.ClearCache(ctx, storeID)
+}
+
+func (p *PDSim) GetLogBackupFlushInterval(ctx context.Context) (time.Duration, error) {
+	_ = ctx
+	return streamconfig.DefaultCommandConfig().GetResolveLockInterval(), nil
 }
 
 func (p *PDSim) Begin(ctx context.Context, ch chan<- streamhelper.TaskEvent) error {

@@ -103,6 +103,10 @@ func (*schedulerImpl) GetNextStep(task *proto.TaskBase) proto.Step {
 	}
 }
 
+func (*schedulerImpl) OnPrepare(context.Context, storage.TaskHandle, *proto.Task) error {
+	return nil
+}
+
 type postCleanupImpl struct{}
 
 func (*postCleanupImpl) CleanUp(_ context.Context, task *proto.Task) error {

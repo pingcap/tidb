@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -98,7 +99,7 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	}
 
 	m.subtaskSortedKVMeta = &globalsort.SortedKVMeta{}
-	onWriterClose := func(summary *globalsort.WriterSummary) {
+	onWriterClose := func(summary *simplesst.WriterSummary) {
 		m.mu.Lock()
 		m.subtaskSortedKVMeta.MergeSummary(summary)
 		m.mu.Unlock()
@@ -107,7 +108,7 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	prefix := path.Join(strconv.Itoa(int(subtask.TaskID)), strconv.Itoa(int(subtask.ID)))
 	res := m.GetResource()
 	memSizePerCon := res.MemoryPerCore()
-	partSize := max(globalsort.MinUploadPartSize, memSizePerCon*int64(globalsort.MaxMergingFilesPerThread)/globalsort.MaxUploadPartCount)
+	partSize := max(simplesst.MinUploadPartSize, memSizePerCon*int64(globalsort.MaxMergingFilesPerThread)/simplesst.MaxUploadPartCount)
 
 	wctx := workerpool.NewContext(ctx)
 	op := globalsort.NewMergeOperator(
@@ -115,7 +116,7 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		objStore,
 		partSize,
 		prefix,
-		globalsort.DefaultBlockSize,
+		simplesst.DefaultBlockSize,
 		onWriterClose,
 		globalsort.NewMergeCollector(ctx, nil),
 		int(res.CPU.Capacity()),

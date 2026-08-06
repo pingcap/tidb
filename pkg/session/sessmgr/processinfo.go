@@ -139,27 +139,28 @@ func (pi *ProcessInfo) ToRow(tz *time.Location) []any {
 	bytesConsumed := int64(0)
 	diskConsumed := int64(0)
 	var memArbitration, memWaitArbitrateStartTime, memWaitArbitrateBytes any
-	if pi.StmtCtx != nil {
-		if pi.MemTracker != nil {
-			bytesConsumed = pi.MemTracker.BytesConsumed()
-		}
-		if dur := pi.StmtCtx.MemTracker.MemArbitration(); dur > 0 {
-			memArbitration = dur.Seconds()
-		}
-		if ts, sz := pi.StmtCtx.MemTracker.WaitArbitrate(); sz > 0 {
-			memWaitArbitrateStartTime = ts.In(tz).Format("2006-01-02 15:04:05.999")
-			memWaitArbitrateBytes = sz
-		}
-		if pi.DiskTracker != nil {
-			diskConsumed = pi.DiskTracker.BytesConsumed()
+	var affectedRows any
+	if pi.RefCountOfStmtCtx != nil && pi.RefCountOfStmtCtx.TryIncrease() {
+		defer pi.RefCountOfStmtCtx.Decrease()
+		if pi.StmtCtx != nil {
+			if pi.MemTracker != nil {
+				bytesConsumed = pi.MemTracker.BytesConsumed()
+			}
+			if dur := pi.StmtCtx.MemTracker.MemArbitration(); dur > 0 {
+				memArbitration = dur.Seconds()
+			}
+			if ts, sz := pi.StmtCtx.MemTracker.WaitArbitrate(); sz > 0 {
+				memWaitArbitrateStartTime = ts.In(tz).Format("2006-01-02 15:04:05.999")
+				memWaitArbitrateBytes = sz
+			}
+			if pi.DiskTracker != nil {
+				diskConsumed = pi.DiskTracker.BytesConsumed()
+			}
+			affectedRows = pi.StmtCtx.AffectedRows()
 		}
 	}
 
-	var affectedRows any
 	var cpuUsages ppcpuusage.CPUUsages
-	if pi.StmtCtx != nil {
-		affectedRows = pi.StmtCtx.AffectedRows()
-	}
 	if pi.SQLCPUUsage != nil {
 		cpuUsages = pi.SQLCPUUsage.GetCPUUsages()
 	}
@@ -241,6 +242,29 @@ type InfoSchemaCoordinator interface {
 	// after flashback cluster, we need to kill all connections except the one
 	// initiating the flashback, to make sure they use the latest info.
 	KillNonFlashbackClusterConn()
+}
+
+const (
+	// NormalCloseMsgKillStmt marks a connection closed by a SQL KILL statement.
+	NormalCloseMsgKillStmt = "kill stmt"
+	// NormalCloseMsgKillStmtFromRemote marks a connection closed by a SQL KILL statement redirected from another TiDB node.
+	NormalCloseMsgKillStmtFromRemote = "kill stmt from remote"
+)
+
+// NormalCloseKiller is implemented by session managers that can record why a killed connection is treated as normally closed.
+type NormalCloseKiller interface {
+	KillWithNormalCloseMsg(connectionID uint64, query bool, maxExecutionTime bool, runaway bool, normalCloseMsg string)
+}
+
+// KillWithNormalCloseMsg kills a connection and records a normal-close reason when the session manager supports it.
+func KillWithNormalCloseMsg(sm Manager, connectionID uint64, query bool, maxExecutionTime bool, runaway bool, normalCloseMsg string) {
+	if normalCloseMsg != "" {
+		if killer, ok := sm.(NormalCloseKiller); ok {
+			killer.KillWithNormalCloseMsg(connectionID, query, maxExecutionTime, runaway, normalCloseMsg)
+			return
+		}
+	}
+	sm.Kill(connectionID, query, maxExecutionTime, runaway)
 }
 
 // Manager is an interface for session manage. Show processlist and

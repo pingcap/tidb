@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/testutil"
 	"github.com/pingcap/tidb/pkg/dxf/operator"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
@@ -50,6 +51,8 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 	"github.com/stretchr/testify/require"
@@ -99,7 +102,7 @@ func checkFileCleaned(t *testing.T, jobID, taskID int64, sortStorageURI string) 
 	require.NoError(t, err)
 	for _, id := range []int64{jobID, taskID} {
 		prefix := strconv.Itoa(int(id))
-		files, err := globalsort.GetAllFileNames(context.Background(), extStore, prefix)
+		files, err := simplesst.GetAllFileNames(context.Background(), extStore, prefix)
 		require.NoError(t, err)
 		require.Greater(t, jobID, int64(0))
 		require.Equal(t, 0, len(files))
@@ -112,7 +115,7 @@ func checkFileExist(t *testing.T, sortStorageURI string, dir, keyword string) {
 	require.NoError(t, err)
 	extStore, err := objstore.NewWithDefaultOpt(context.Background(), storeBackend)
 	require.NoError(t, err)
-	dataFiles, err := globalsort.GetAllFileNames(context.Background(), extStore, dir)
+	dataFiles, err := simplesst.GetAllFileNames(context.Background(), extStore, dir)
 	require.NoError(t, err)
 	filteredFiles := make([]string, 0)
 	for _, f := range dataFiles {
@@ -163,7 +166,7 @@ func TestGlobalSortBasic(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	ch := make(chan struct{})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/doCleanupTask", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/processCleanupTaskBatch", func() {
 		ch <- struct{}{}
 	})
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/WaitCleanUpFinished", func() {
@@ -198,6 +201,12 @@ func TestGlobalSortBasic(t *testing.T) {
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		jobID = job.ID
 	})
+
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/checkEnableStreaming",
+		func(enabled bool) {
+			require.True(t, enabled, "streaming should be enabled with global sort")
+		},
+	)
 
 	tk.MustExec("alter table t add index idx(a);")
 	checkDataAndShowJobs(t, tk, size)
@@ -281,6 +290,14 @@ func TestGlobalSortMultiSchemaChange(t *testing.T) {
 					t.Skip("DXF is always enabled on nextgen")
 				}
 			}
+
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/checkEnableStreaming",
+				func(enabled bool) {
+					expected := tc.cloudStorageURI != ""
+					require.Equal(t, expected, enabled)
+				},
+			)
+
 			if kerneltype.IsClassic() {
 				tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = " + tc.enableFastReorg + ";")
 				tk.MustExec("set @@global.tidb_enable_dist_task = " + tc.enableDistTask + ";")
@@ -572,7 +589,7 @@ func TestIngestUseGivenTS(t *testing.T) {
 
 	dts := []types.Datum{types.NewIntDatum(1)}
 	sctx := tk.Session().GetSessionVars().StmtCtx
-	idxKey, _, err := tablecodec.GenIndexKey(sctx.TimeZone(), tblInfo, idxInfo, tblInfo.ID, dts, kv.IntHandle(1), nil)
+	idxKey, _, err := tablecodec.GenIndexKey(codec.NewEncoder(collate.NewCollationEnabled()), sctx.TimeZone(), tblInfo, idxInfo, tblInfo.ID, dts, kv.IntHandle(1), nil)
 	require.NoError(t, err)
 	tikvStore := dom.Store().(helper.Storage)
 	newHelper := helper.NewHelper(tikvStore)

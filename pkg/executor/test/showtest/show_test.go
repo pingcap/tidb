@@ -422,6 +422,7 @@ func TestIssue11165(t *testing.T) {
 	tk.MustExec("CREATE ROLE 'r_manager';")
 	tk.MustExec("CREATE USER 'manager'@'localhost';")
 	tk.MustExec("GRANT 'r_manager' TO 'manager'@'localhost';")
+	tk.MustExec("SET DEFAULT ROLE NONE TO 'missing_manager'@'localhost';")
 
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "manager", Hostname: "localhost", AuthUsername: "manager", AuthHostname: "localhost"}, nil, nil, nil))
 	tk.MustExec("SET DEFAULT ROLE ALL TO 'manager'@'localhost';")

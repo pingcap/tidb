@@ -26,14 +26,15 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/dxf/framework/dxfmetric"
+	"github.com/pingcap/tidb/pkg/dxf/framework/dxfutil"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/metering"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
-	"github.com/pingcap/tidb/pkg/kv"
 	llog "github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
@@ -61,6 +62,9 @@ var (
 
 var (
 	// ErrCancelSubtask is the cancel cause when cancelling subtasks.
+	// Step executors may also return this error directly from RunSubtask, for
+	// example when propagating context.Cause(ctx). The framework treats it as an
+	// expected cancellation instead of a subtask failure.
 	ErrCancelSubtask = errors.New("cancel subtasks")
 	// ErrNonIdempotentSubtask means the subtask is left in running state and is not idempotent,
 	// so cannot be run again.
@@ -74,17 +78,17 @@ type Param struct {
 	nodeRc    *proto.NodeResource
 	// id, it's the same as server id now, i.e. host:port.
 	execID string
-	Store  kv.Storage
+	// TaskRuntime is the non-owning task keyspace runtime view. Managers own its release.
+	TaskRuntime sqlsvrapi.Runtime
 }
 
 // NewParamForTest creates a new Param for test.
-func NewParamForTest(taskTable TaskTable, slotMgr *slotManager, nodeRc *proto.NodeResource, execID string, store kv.Storage) Param {
+func NewParamForTest(taskTable TaskTable, slotMgr *slotManager, nodeRc *proto.NodeResource, execID string) Param {
 	return Param{
 		taskTable: taskTable,
 		slotMgr:   slotMgr,
 		nodeRc:    nodeRc,
 		execID:    execID,
-		Store:     store,
 	}
 }
 
@@ -255,8 +259,8 @@ func (e *BaseTaskExecutor) updateSubtaskSummaryLoop(
 }
 
 // Init implements the TaskExecutor interface.
-func (*BaseTaskExecutor) Init(_ context.Context) error {
-	return nil
+func (e *BaseTaskExecutor) Init(_ context.Context) error {
+	return dxfutil.CheckTaskRuntime(e.TaskRuntime, e.GetTaskBase().Keyspace)
 }
 
 // Ctx returns the context of the task executor.
@@ -391,10 +395,10 @@ func (e *BaseTaskExecutor) Run() {
 			// task executor keeps running its subtasks even though some subtask
 			// might have failed, we rely on scheduler to detect the error, and
 			// notify task executor or manager to cancel.
-			if llog.IsContextCanceledError(err) {
-				// Context canceled is expected when scheduler/manager cancels executor,
-				// so log as info instead of a subtask failure.
-				e.sampleLogger.Info("subtask run canceled by context", llog.ShortError(err))
+			if goerrors.Is(err, ErrCancelSubtask) || llog.IsContextCanceledError(err) {
+				// Cancellation is expected when scheduler/manager cancels executor or
+				// the task enters reverting, so log as info instead of a subtask failure.
+				e.sampleLogger.Info("subtask run canceled", llog.ShortError(err))
 			} else {
 				e.sampleLogger.Error("run subtask failed", zap.Error(err))
 			}

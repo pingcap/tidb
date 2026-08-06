@@ -23,11 +23,13 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/stretchr/testify/require"
 )
 
@@ -76,11 +78,28 @@ func TestExplainFor(t *testing.T) {
 				buf.WriteString(fmt.Sprintf("%v", v))
 			}
 		}
-		require.Regexp(t, `TableReader(?:_\d+)? 10000\.00 0 root  time:0s, open:0s, close:0s, loops:0(?:, RU:\d+\.\d+)? data:TableFullScan(?:_\d+)? N/A N/A\n`+
+		require.Regexp(t, `TableReader(?:_\d+)? 10000\.00 0 root  time:[^ ]+.* data:TableFullScan(?:_\d+)? N/A N/A\n`+
 			`└─TableFullScan(?:_\d+)? 10000\.00 0 cop\[tikv\] table:t1 .* keep order:false, stats:pseudo N/A N/A`,
 			buf.String())
 	}
 	tkRoot.MustQuery("select * from t1;")
+	tkRootProcess = tkRoot.Session().ShowProcess()
+	require.NotEmpty(t, tkRootProcess.BriefBinaryPlan)
+	targetPlan, ok := tkRootProcess.Plan.(base.Plan)
+	require.True(t, ok)
+	statsColl := execdetails.NewRuntimeStatsColl(nil)
+	statsColl.GetBasicRuntimeStats(targetPlan.ID(), true).Record(time.Millisecond, 7)
+	// Keep the binary snapshot stale while replacing RuntimeStatsColl to verify live stats rendering.
+	processWithLiveStats := *tkRootProcess
+	processWithLiveStats.RuntimeStatsColl = statsColl
+	ps = []*sessmgr.ProcessInfo{&processWithLiveStats}
+	tkStatsExplain := testkit.NewTestKit(t, store)
+	tkStatsExplain.MustExec("use test")
+	tkStatsExplain.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	rows := tkStatsExplain.MustQuery(fmt.Sprintf("explain for connection %d", processWithLiveStats.ID)).Rows()
+	require.Len(t, rows, 2)
+	require.Len(t, rows[0], 9)
+	require.Equal(t, "7", rows[0][2])
 	check()
 	tkRoot.MustQuery("explain analyze format = 'brief' select * from t1;")
 	check()

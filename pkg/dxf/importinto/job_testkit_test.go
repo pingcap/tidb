@@ -106,7 +106,7 @@ func TestSubmitTaskNextgen(t *testing.T) {
 
 	ctx := util.WithInternalSourceType(context.Background(), kv.InternalDistTask)
 
-	manuallyInitFn := func(t *testing.T, currKSStore, sysKSStore kv.Storage) {
+	manuallyInitFn := func(t *testing.T, currKSStore, sysKSStore kv.Storage) *storage.TaskManager {
 		t.Helper()
 		// as we have disabled the dist task in domain, we need init the task manager
 		// and framework meta manually.
@@ -127,6 +127,26 @@ func TestSubmitTaskNextgen(t *testing.T) {
 			storage.SetDXFSvcTaskMgr(sysKSTaskMgr)
 		}
 		require.NoError(t, sysKSTaskMgr.InitMeta(ctx, "tidb", "dxf_service"))
+		return sysKSTaskMgr
+	}
+	setupUserKeyspaceImportJob := func(t *testing.T) (int64, *storage.TaskManager) {
+		t.Helper()
+		sysKSTK.MustExec("delete from mysql.tidb_import_jobs")
+		sysKSTK.MustExec("delete from mysql.tidb_global_task")
+		sysKSTK.MustExec("delete from mysql.tidb_global_task_history")
+		userKSTK.MustExec("delete from mysql.tidb_import_jobs")
+		userKSTK.MustExec("delete from mysql.tidb_global_task")
+		userKSTK.MustExec("delete from mysql.tidb_global_task_history")
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.KeyspaceName = "ks"
+		})
+		sysKSTaskMgr := manuallyInitFn(t, userKSStore, sysKSStore)
+
+		conn := userKSTK.Session().GetSQLExecutor()
+		jobID, err := importer.CreateJob(ctx, conn, "test", "t", 1,
+			userKSTK.Session().GetSessionVars().User.String(), "", &importer.ImportParameters{}, 123)
+		require.NoError(t, err)
+		return jobID, sysKSTaskMgr
 	}
 
 	t.Run("submit task in system keyspace", func(t *testing.T) {
@@ -165,6 +185,119 @@ func TestSubmitTaskNextgen(t *testing.T) {
 		// the reverse is not true.
 		sysKSTK.MustQuery("select count(1) from mysql.tidb_import_jobs where id = ?", jobID).Check(testkit.Rows("0"))
 		userKSTK.MustQuery("select count(1) from mysql.tidb_global_task where id = ?", task.ID).Check(testkit.Rows("0"))
+	})
+
+	t.Run("cancel dangling user keyspace job without DXF task", func(t *testing.T) {
+		jobID, _ := setupUserKeyspaceImportJob(t)
+		sysKSTK.MustQuery("select count(1) from mysql.tidb_global_task where task_key = ?", importinto.TaskKey(jobID)).
+			Check(testkit.Rows("0"))
+
+		userKSTK.MustExec(fmt.Sprintf("cancel import job %d", jobID))
+
+		userKSTK.MustQuery("select status, error_message from mysql.tidb_import_jobs where id = ?", jobID).
+			Check(testkit.Rows("cancelled cancelled by user"))
+		sysKSTK.MustQuery("select count(1) from mysql.tidb_global_task where task_key = ?", importinto.TaskKey(jobID)).
+			Check(testkit.Rows("0"))
+	})
+
+	t.Run("cancel user keyspace job with an archived reverted DXF task", func(t *testing.T) {
+		jobID, sysKSTaskMgr := setupUserKeyspaceImportJob(t)
+		taskID, err := sysKSTaskMgr.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, "", 1, "", 0, proto.ExtraParams{}, nil)
+		require.NoError(t, err)
+		// This is a synthetic state, not a normal real-world scheduler outcome:
+		// onReverting calls importScheduler.OnDone to fail or cancel the job before
+		// RevertedTask marks the DXF task reverted. Bypassing OnDone here isolates
+		// the check that an existing terminal task is not treated as a missing task.
+		require.NoError(t, sysKSTaskMgr.RevertTask(ctx, taskID, proto.TaskStatePending, fmt.Errorf("already reverted")))
+		require.NoError(t, sysKSTaskMgr.RevertedTask(ctx, taskID))
+		task, err := sysKSTaskMgr.GetTaskByID(ctx, taskID)
+		require.NoError(t, err)
+		require.NoError(t, sysKSTaskMgr.TransferTasks2History(ctx, []*proto.Task{task}))
+		sysKSTK.MustQuery("select count(1) from mysql.tidb_global_task where id = ?", taskID).
+			Check(testkit.Rows("0"))
+		sysKSTK.MustQuery("select state from mysql.tidb_global_task_history where id = ?", taskID).
+			Check(testkit.Rows(string(proto.TaskStateReverted)))
+
+		userKSTK.MustExec(fmt.Sprintf("cancel import job %d", jobID))
+
+		userKSTK.MustQuery("select status from mysql.tidb_import_jobs where id = ?", jobID).
+			Check(testkit.Rows("pending"))
+		sysKSTK.MustQuery("select state from mysql.tidb_global_task_history where id = ?", taskID).
+			Check(testkit.Rows(string(proto.TaskStateReverted)))
+	})
+
+	t.Run("cancel pending user keyspace job when task is created after lookup miss", func(t *testing.T) {
+		jobID, sysKSTaskMgr := setupUserKeyspaceImportJob(t)
+		sysKSTK.MustQuery("select count(1) from mysql.tidb_global_task where task_key = ?", importinto.TaskKey(jobID)).
+			Check(testkit.Rows("0"))
+
+		var lateTaskID atomic.Int64
+		callbackErrCh := make(chan error, 1)
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/afterCancelImportTaskProbeMiss",
+			func(probeMissJobID int64) {
+				if probeMissJobID != jobID {
+					callbackErrCh <- fmt.Errorf("unexpected job ID %d", probeMissJobID)
+					return
+				}
+				taskID, err := sysKSTaskMgr.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, "", 1, "", 0, proto.ExtraParams{}, nil)
+				if err != nil {
+					callbackErrCh <- err
+					return
+				}
+				lateTaskID.Store(taskID)
+			},
+		)
+
+		cancelErrCh := make(chan error, 1)
+		go func() {
+			_, err := userKSTK.Exec(fmt.Sprintf("cancel import job %d", jobID))
+			cancelErrCh <- err
+		}()
+
+		select {
+		case err := <-cancelErrCh:
+			require.NoError(t, err)
+		case <-time.After(5 * time.Second):
+			if taskID := lateTaskID.Load(); taskID != 0 {
+				require.NoError(t, sysKSTaskMgr.FailTask(ctx, taskID, proto.TaskStatePending, fmt.Errorf("unblock timed out cancel")))
+				<-cancelErrCh
+			}
+			require.FailNow(t, "cancel import waited for a task created after the cancel-by-key miss")
+		}
+		select {
+		case err := <-callbackErrCh:
+			require.NoError(t, err)
+		default:
+		}
+
+		userKSTK.MustQuery("select status, error_message from mysql.tidb_import_jobs where id = ?", jobID).
+			Check(testkit.Rows("cancelled cancelled by user"))
+		sysKSTK.MustQuery("select state from mysql.tidb_global_task where task_key = ?", importinto.TaskKey(jobID)).
+			Check(testkit.Rows(string(proto.TaskStatePending)))
+	})
+
+	t.Run("submit global-sort task uses async prepare mode", func(t *testing.T) {
+		sysKSTK.MustExec("delete from mysql.tidb_import_jobs")
+		sysKSTK.MustExec("delete from mysql.tidb_global_task")
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.KeyspaceName = keyspace.System
+		})
+		manuallyInitFn(t, sysKSStore, sysKSStore)
+
+		jobID, task, err := importinto.SubmitTask(ctx, &importer.Plan{
+			TableInfo:       &model.TableInfo{},
+			Parameters:      &importer.ImportParameters{},
+			ThreadCnt:       16,
+			MaxNodeCnt:      8,
+			CloudStorageURI: "local:///tmp/prepare-mode-sort",
+		}, "import into t from 's3://bucket/test.csv'")
+		require.NoError(t, err)
+		sysKSTK.MustQuery("select count(1) from mysql.tidb_import_jobs where id = ?", jobID).Check(testkit.Rows("1"))
+		sysKSTK.MustQuery(
+			"select concurrency, max_node_count, json_extract(extra_params, '$.prepare_mode') "+
+				"from mysql.tidb_global_task where id = ?",
+			task.ID,
+		).Check(testkit.Rows("1 1 1"))
 	})
 }
 
@@ -263,6 +396,68 @@ func TestGetTaskImportedRows(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 300, runInfo.ImportRows)
 	require.Equal(t, "30", runInfo.Percent())
+}
+
+func TestGetJobLastUpdateTime(t *testing.T) {
+	_, manager, ctx := testutil.InitTableTest(t)
+	require.NoError(t, manager.InitMeta(ctx, ":4000", ""))
+
+	const (
+		jobID             = int64(9527)
+		adjacentTaskID    = int64(9007199254740992)
+		targetTaskID      = int64(9007199254740993)
+		targetHistoryTime = int64(1000)
+		adjacentHistTime  = int64(2000)
+		targetActiveTime  = int64(1500)
+		adjacentLiveTime  = int64(2500)
+	)
+	_, err := manager.ExecuteSQLWithNewSession(ctx,
+		"alter table mysql.tidb_global_task auto_increment = 9007199254740992")
+	require.NoError(t, err)
+
+	gotAdjacentTaskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID+1), proto.ImportInto,
+		"", 1, "", 0, proto.ExtraParams{}, nil)
+	require.NoError(t, err)
+	require.Equal(t, adjacentTaskID, gotAdjacentTaskID)
+	gotTargetTaskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto,
+		"", 1, "", 0, proto.ExtraParams{}, nil)
+	require.NoError(t, err)
+	require.Equal(t, targetTaskID, gotTargetTaskID)
+
+	updateSubtaskTime := func(id, updateTime int64) {
+		_, err = manager.ExecuteSQLWithNewSession(ctx, `
+			update mysql.tidb_background_subtask
+			set state_update_time = %?
+			where id = %?`, updateTime, id)
+		require.NoError(t, err)
+	}
+	targetHistoryID := testutil.InsertSubtask(t, manager, targetTaskID, proto.ImportStepEncodeAndSort,
+		"tidb-1", nil, proto.SubtaskStateSucceed, proto.ImportInto, 1)
+	adjacentHistoryID := testutil.InsertSubtask(t, manager, adjacentTaskID, proto.ImportStepEncodeAndSort,
+		"tidb-1", nil, proto.SubtaskStateSucceed, proto.ImportInto, 1)
+	updateSubtaskTime(targetHistoryID, targetHistoryTime)
+	updateSubtaskTime(adjacentHistoryID, adjacentHistTime)
+
+	targetTask, err := manager.GetTaskByID(ctx, targetTaskID)
+	require.NoError(t, err)
+	adjacentTask, err := manager.GetTaskByID(ctx, adjacentTaskID)
+	require.NoError(t, err)
+	require.NoError(t, manager.TransferTasks2History(ctx, []*proto.Task{targetTask, adjacentTask}))
+
+	targetActiveID := testutil.InsertSubtask(t, manager, targetTaskID, proto.ImportStepWriteAndIngest,
+		"tidb-1", nil, proto.SubtaskStateRunning, proto.ImportInto, 1)
+	adjacentActiveID := testutil.InsertSubtask(t, manager, adjacentTaskID, proto.ImportStepWriteAndIngest,
+		"tidb-1", nil, proto.SubtaskStateRunning, proto.ImportInto, 1)
+	updateSubtaskTime(targetActiveID, targetActiveTime)
+	updateSubtaskTime(adjacentActiveID, adjacentLiveTime)
+
+	expectedRows, err := manager.ExecuteSQLWithNewSession(ctx, "select from_unixtime(%?)", targetActiveTime)
+	require.NoError(t, err)
+	require.Len(t, expectedRows, 1)
+
+	lastUpdateTime, err := importinto.GetJobLastUpdateTime(ctx, jobID)
+	require.NoError(t, err)
+	require.Equal(t, expectedRows[0].GetTime(0), lastUpdateTime)
 }
 
 func TestShowImportProgress(t *testing.T) {
