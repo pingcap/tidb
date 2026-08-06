@@ -1,0 +1,17 @@
+# lockdown-inventory-v1
+# owning-go-source	pkg/util/versioninfo/versioninfo.go
+# source-sha256	daa224cf8308f7b9de126919839ed95de7028e67b989d3d1d772d60309603003
+id	category	go_item	status	rust_symbol	evidence
+D01	declaration	CommunityEdition constant	PORTED	COMMUNITY_EDITION	source_storage_class_and_override_boundaries_are_exact
+D02	declaration	TiDBBuildTS variable	PORTED	TIDB_BUILD_TS	lockdown_inventory_matches_go_source_and_rust_symbols
+D03	declaration	TiDBGitHash variable	PORTED	TIDB_GIT_HASH	lockdown_inventory_matches_go_source_and_rust_symbols
+D04	declaration	TiDBGitBranch variable	PORTED	TIDB_GIT_BRANCH	lockdown_inventory_matches_go_source_and_rust_symbols
+D05	declaration	TiDBEdition variable	PORTED	TIDB_EDITION	lockdown_inventory_matches_go_source_and_rust_symbols
+D06	declaration	TiDBEnterpriseExtensionGitHash variable	PORTED	TIDB_ENTERPRISE_EXTENSION_GIT_HASH	lockdown_inventory_matches_go_source_and_rust_symbols
+R01	rule	CommunityEdition is the literal Community	PORTED	COMMUNITY_EDITION	source_storage_class_and_override_boundaries_are_exact
+R02	rule	TiDBBuildTS defaults to None and accepts a verbatim build stamp	PORTED	TIDB_BUILD_TS	source_storage_class_and_override_boundaries_are_exact
+R03	rule	TiDBGitHash defaults to None and accepts a verbatim build stamp	PORTED	TIDB_GIT_HASH	source_storage_class_and_override_boundaries_are_exact
+R04	rule	TiDBGitBranch defaults to None and accepts a verbatim build stamp	PORTED	TIDB_GIT_BRANCH	source_storage_class_and_override_boundaries_are_exact
+R05	rule	TiDBEdition defaults to CommunityEdition and accepts a verbatim build stamp	PORTED	TIDB_EDITION	source_storage_class_and_override_boundaries_are_exact
+R06	rule	TiDBEnterpriseExtensionGitHash defaults to the empty string and accepts a verbatim build stamp	PORTED	TIDB_ENTERPRISE_EXTENSION_GIT_HASH	source_storage_class_and_override_boundaries_are_exact
+R07	rule	The five version fields are mutable process globals after initialization	DECLINED	-	Go declares the fields in a var block and a probe reassigned all five; Rust has no production consumers and intentionally exposes build metadata as immutable compile-time constants
