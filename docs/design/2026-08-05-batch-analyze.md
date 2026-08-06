@@ -74,9 +74,11 @@ The new [workflow](https://editor.plantuml.com/uml/jPRTRjf048NlUOfHRjggeW-GYog4G
 2. TiDB enables result merging and sends each group as a single unary coprocessor RPC, placing one task in the main request and the rest in `StoreBatchTask` entries.
 3. TiKV schedules each Region task independently in its read pool and keeps the successful statistics in their mergeable, unserialized form.
 4. Once all results are in, TiKV schedules the batch finalizer in the same read pool. The finalizer merges the successful payloads into the main result and serializes it once.
-5. TiKV returns the merged main response together with the remaining `StoreBatchTaskResponse` entries. TiDB consumes the merged payload and handles failed or unmerged tasks as before.
+5. TiKV returns the merged main response together with the corresponding `StoreBatchTaskResponse` entries. TiDB consumes the merged payload and handles failed or unmerged tasks as before.
 
-The finalizer merges as many successful, mergeable results as it can into the main response. If a merge fails, TiKV still returns the results that were merged successfully, along with the failed tasks as separate entries. TiDB can then use the partial result and retry only the tasks that failed.
+The finalizer merges each successful, compatible child result into an error-free, mergeable main result. A child task that fails or produces a non-mergeable result remains a normal `StoreBatchTaskResponse`. TiDB consumes successful unmerged results through the existing path and retries only failed tasks.
+
+Finalizer-level failures, however, are atomic. If the finalizer cannot be scheduled, exceeds its deadline, or fails to serialize a main result that has already absorbed child results, TiKV returns no partial merged data or merge acknowledgments. TiDB can then safely retry the entire batch without losing or double-counting any Region's result.
 
 On the TiKV side, we extend the abstraction so that any request type can use the new mechanism, rather than adding special handling only for `ANALYZE`.
 
@@ -104,6 +106,58 @@ enum HandlerOutputState {
 ```
 
 A request type that wants to use this mechanism must produce batched results that implement the `MergeableResult` trait. Its handler then returns a `HandlerOutput`, which carries a tracked response together with a state. The state indicates whether the output is a finished result, ready to send as is, or a mergeable result that the finalizer will combine at the end.
+
+#### Explicitly Opt-in
+
+`ANALYZE` is not blocked during a rolling cluster upgrade, so a TiDB instance may send requests to TiKV instances running a different version. The compatibility concern is the wire format rather than whether the statistics are mathematically mergeable: an older TiDB expects each child result in its own `StoreBatchTaskResponse.data` and cannot infer that an empty child payload has been moved into the main response. TiKV must therefore use the merged response shape only when the request explicitly indicates that the client supports it.
+
+```protobuf
+message Request {
+	...
+  // Signals that the client supports merging results from the batched tasks in
+  // `tasks` into `Response.data` instead of returning each result in its own
+  // `StoreBatchTaskResponse.data`. For example, a batched analyze request may
+  // merge per-region sampling results into one result.
+  //
+  // For every merged task, the store still adds a `StoreBatchTaskResponse`
+  // with `data_merged_into_response` set. The store may return some or all task
+  // results separately even when this field is set, so the client must handle
+  // both merged and per-task results.
+  bool allow_batch_task_data_merge = 18;
+  ...
+}
+message Response {
+	...
+	// StoreBatchTaskResponse is the collection of batch task responses.
+  repeated StoreBatchTaskResponse batch_responses = 13;
+	...
+}
+
+message StoreBatchTaskResponse {
+	...
+	// Indicates that this task's result was merged into the enclosing
+  // `Response.data`, so this message's `data` is empty. The store sets this
+  // field only when the client enables `Request.allow_batch_task_data_merge`.
+  //
+  // This message still identifies the merged task by `task_id` and carries its
+  // execution details.
+  bool data_merged_into_response = 7;
+	...
+}
+```
+
+Therefore, we add a new field, `allow_batch_task_data_merge`, to the `Request` proto message. It signals that the client can handle merged batched task results, but it does not require TiKV to merge every result. During an upgrade, an old TiDB never sets this field, so TiKV retains the existing per-Region response shape and the old client never receives a merged result it cannot interpret.
+
+For every child result merged into `Response.data`, TiKV retains the corresponding `StoreBatchTaskResponse`, leaves its `data` empty, and sets `data_merged_into_response`. The entry continues to carry the task ID and execution details. A failed or non-mergeable child remains a normal per-task response with the flag unset.
+
+A response may therefore contain both merged and per-task results. TiDB consumes the merged data from the main response, skips the empty payloads marked as merged, and handles unmerged child responses through the existing path.
+
+Both [TiUP](https://github.com/pingcap/tiup/blob/9f6ebb7edc26ca0ba53b9f4a70de22388f865910/pkg/cluster/spec/spec.go#L843-L873) and [TiDB Operator](https://docs.pingcap.com/tidb-in-kubernetes/stable/upgrade-a-tidb-cluster/#rolling-update-introduction) upgrade TiKV before TiDB by default; the following table summarizes the mixed-version scenarios relevant to this protocol, where "old" means a version without the two negotiation fields and "new" means a version with them.
+
+| TiDB sender | TiKV receiver | When it can occur | Protocol behavior | Why it is safe |
+| --- | --- | --- | --- | --- |
+| Old | New | While TiKV is being upgraded, after TiKV finishes but before TiDB starts, or from an old TiDB instance while TiDB is rolling | `allow_batch_task_data_merge` is absent and defaults to `false`. New TiKV therefore returns every child result separately and does not set `data_merged_into_response`. | Old TiDB receives the response shape it already understands. |
+| New | Old | Not produced by the default TiUP or TiDB Operator upgrade order, but possible under the current TiDB Cloud release model, with pinned component versions, or during a manual upgrade | Old TiKV ignores the unknown `allow_batch_task_data_merge` field and returns every child result separately. `data_merged_into_response` is absent and reads as `false`. | New TiDB treats every child response as unmerged and processes it through the existing path. |
 
 ## Test Design
 
