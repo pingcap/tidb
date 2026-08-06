@@ -68,6 +68,9 @@ mod vector;
 mod vector_inventory;
 
 #[cfg(test)]
+mod vector_functions_inventory;
+
+#[cfg(test)]
 mod decimal_tests;
 
 #[cfg(test)]

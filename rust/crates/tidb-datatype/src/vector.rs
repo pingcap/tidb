@@ -240,7 +240,7 @@ impl VectorFloat32 {
         Ok(())
     }
 
-    /// Squared L2 distance with source float32 accumulation.
+    /// Squared L2 distance with source float32 fused accumulation.
     pub fn l2_squared_distance(&self, other: &Self) -> Result<f64, VectorError> {
         self.check_identical_dims(other)?;
         let distance =
@@ -249,7 +249,7 @@ impl VectorFloat32 {
                 .zip(&other.elements)
                 .fold(0.0_f32, |distance, (left, right)| {
                     let difference = left - right;
-                    distance + difference * difference
+                    difference.mul_add(difference, distance)
                 });
         Ok(f64::from(distance))
     }
@@ -259,14 +259,16 @@ impl VectorFloat32 {
         Ok(self.l2_squared_distance(other)?.sqrt())
     }
 
-    /// Inner product with source float32 accumulation.
+    /// Inner product with source float32 fused accumulation.
     pub fn inner_product(&self, other: &Self) -> Result<f64, VectorError> {
         self.check_identical_dims(other)?;
         Ok(f64::from(
             self.elements
                 .iter()
                 .zip(&other.elements)
-                .fold(0.0_f32, |result, (left, right)| result + left * right),
+                .fold(0.0_f32, |result, (left, right)| {
+                    left.mul_add(*right, result)
+                }),
         ))
     }
 
@@ -282,9 +284,9 @@ impl VectorFloat32 {
             (0.0_f32, 0.0_f32, 0.0_f32),
             |(dot, left_norm, right_norm), (left, right)| {
                 (
-                    dot + left * right,
-                    left_norm + left * left,
-                    right_norm + right * right,
+                    left.mul_add(*right, dot),
+                    left.mul_add(*left, left_norm),
+                    right.mul_add(*right, right_norm),
                 )
             },
         );
@@ -312,7 +314,10 @@ impl VectorFloat32 {
     pub fn l2_norm(&self) -> f64 {
         self.elements
             .iter()
-            .fold(0.0, |norm, value| norm + f64::from(*value).powi(2))
+            .fold(0.0, |norm, value| {
+                let value = f64::from(*value);
+                norm + value * value
+            })
             .sqrt()
     }
 
@@ -355,6 +360,15 @@ impl VectorFloat32 {
         Ok(Self { elements })
     }
 }
+
+// Compile-time anchor for the private Go-source helper. The adjacent lockdown
+// inventory names this constant so renaming or removing the Rust symbol cannot
+// leave a stale PORTED row that still compiles.
+#[cfg(test)]
+pub(crate) const CHECK_IDENTICAL_DIMS_SYMBOL: fn(
+    &VectorFloat32,
+    &VectorFloat32,
+) -> Result<(), VectorError> = VectorFloat32::check_identical_dims;
 
 /// Checks source dimension bounds.
 pub fn check_vector_dim_valid(dimensions: isize) -> Result<(), VectorError> {
@@ -590,27 +604,5 @@ mod tests {
         };
         assert!(vector.is_zero_value());
         assert_eq!(vector.to_string(), "[]");
-    }
-
-    #[test]
-    fn vector_functions_cover_source_precision_errors_and_edge_cases() {
-        let left = VectorFloat32::must_create(vec![1.0, 2.0, 3.0]);
-        let right = VectorFloat32::must_create(vec![4.0, 5.0, 6.0]);
-        assert_eq!(left.l2_squared_distance(&right).unwrap(), 27.0);
-        assert_eq!(left.l2_distance(&right).unwrap(), 27_f64.sqrt());
-        assert_eq!(left.inner_product(&right).unwrap(), 32.0);
-        assert_eq!(left.negative_inner_product(&right).unwrap(), -32.0);
-        assert_eq!(left.l1_distance(&right).unwrap(), 9.0);
-        assert_eq!(left.add(&right).unwrap().elements(), [5.0, 7.0, 9.0]);
-        assert_eq!(right.sub(&left).unwrap().elements(), [3.0, 3.0, 3.0]);
-        assert_eq!(left.mul(&right).unwrap().elements(), [4.0, 10.0, 18.0]);
-        assert!(left.add(&VectorFloat32::must_create(vec![1.0])).is_err());
-        assert!(VectorFloat32::must_create(vec![f32::MAX])
-            .add(&VectorFloat32::must_create(vec![f32::MAX]))
-            .is_err());
-        assert!(VectorFloat32::default()
-            .cosine_distance(&VectorFloat32::default())
-            .unwrap()
-            .is_nan());
     }
 }
