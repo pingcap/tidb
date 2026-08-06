@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"go.uber.org/zap"
 )
@@ -155,6 +156,9 @@ func ExtractKeyExistsErrFromIndex(key kv.Key, value []byte, tblInfo *model.Table
 func extractKeyErr(err error) error {
 	if err == nil {
 		return nil
+	}
+	if e, ok := errors.Cause(err).(*tikverr.ErrSharedLockLost); ok {
+		return kv.ErrSharedLockLost.GenWithStackByArgs(e.StartTs, redact.Key(e.Key))
 	}
 	if e, ok := errors.Cause(err).(*tikverr.ErrWriteConflict); ok {
 		return newWriteConflictError(e.WriteConflict)

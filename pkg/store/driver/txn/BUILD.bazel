@@ -26,6 +26,7 @@ go_library(
         "//pkg/util",
         "//pkg/util/intest",
         "//pkg/util/logutil",
+        "//pkg/util/redact",
         "//pkg/util/tracing",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
@@ -58,7 +59,9 @@ go_test(
     shard_count = 5,
     deps = [
         "//pkg/kv",
+        "//pkg/parser/terror",
         "//pkg/testkit/testsetup",
+        "//pkg/util/dbterror/exeerrors",
         "//pkg/util/mock",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
