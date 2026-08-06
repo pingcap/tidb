@@ -407,7 +407,7 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 		" default is true, the incremental restore will not perform rewrite on the incremental data"+
 		" meanwhile the incremental restore will not allow to restore 3 backfilled type ddl jobs,"+
 		" these ddl jobs are Add index, Modify column and Reorganize partition")
-	flags.Bool(FlagSysCheckCollation, false, "whether check the privileges table rows to permit to restore the privilege data"+
+	flags.Bool(FlagSysCheckCollation, true, "whether check the privileges table rows to permit to restore the privilege data"+
 		" from utf8mb4_bin collate column to utf8mb4_general_ci collate column")
 	flags.Uint(FlagSplitRegionIndexStep, restoresplit.DefaultRegionIndexStep,
 		"number of split-key indexes between two rough split keys during snapshot restore.")
@@ -1659,7 +1659,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		log.Info("start to restore pd scheduler")
 		// run the post-work to avoid being stuck in the import
 		// mode or emptied schedulers.
-		restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulersFunc)
+		restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulersFunc, cfg.Online)
 		log.Info("finish restoring pd scheduler")
 	}()
 

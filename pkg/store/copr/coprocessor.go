@@ -2342,14 +2342,18 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 		return nil, nil, nil
 	}
 	batchedNum := len(tasks)
+	// A failed input task can be rebuilt into multiple retry tasks. Count the
+	// original fallback once so retry fan-out cannot make the successful count
+	// negative before conversion to uint64.
+	fallbackNum := 0
 	busyThresholdFallback := false
 	defer func() {
 		if err != nil {
 			return
 		}
 		if !busyThresholdFallback {
-			worker.storeBatchedNum.Add(uint64(batchedNum - len(remainTasks)))
-			worker.storeBatchedFallbackNum.Add(uint64(len(remainTasks)))
+			worker.storeBatchedNum.Add(uint64(batchedNum - fallbackNum))
+			worker.storeBatchedFallbackNum.Add(uint64(fallbackNum))
 		}
 	}()
 	appendRemainTasks := func(tasks ...*copTask) {
@@ -2404,6 +2408,7 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 			if err != nil {
 				return batchRespList, nil, err
 			}
+			fallbackNum++
 			appendRemainTasks(remains...)
 			continue
 		}
@@ -2413,6 +2418,7 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 				return batchRespList, nil, err
 			}
 			task.meetLockFallback = true
+			fallbackNum++
 			appendRemainTasks(task)
 			continue
 		}
@@ -2475,6 +2481,7 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 				zap.ByteString("lastRangeEndKey", lastRangeEndKey),
 				zap.String("storeAddr", task.storeAddr))
 		}
+		fallbackNum++
 		appendRemainTasks(t.task)
 	}
 	if regionErr := getRegionError(bo.GetCtx(), resp); regionErr != nil && regionErr.ServerIsBusy != nil &&

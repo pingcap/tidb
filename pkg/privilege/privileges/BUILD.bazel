@@ -7,6 +7,7 @@ go_library(
         "errors.go",
         "privileges.go",
         "tidb_auth_token.go",
+        "user_attributes_filter.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/privilege/privileges",
     visibility = ["//visibility:public"],

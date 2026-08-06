@@ -17,15 +17,26 @@ package operator
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
+	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/task"
+	"github.com/pingcap/tidb/pkg/keyspace"
+	"github.com/pingcap/tidb/pkg/metaservice"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
+	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/tests/v3/integration"
 )
 
 type syncedStorage struct {
@@ -36,6 +47,22 @@ type syncedStorage struct {
 func (s syncedStorage) FileSynced(context.Context, string) (bool, error) {
 	return s.synced, nil
 }
+
+type metaServiceGroupPDClient struct {
+	pd.Client
+	members      []*pdpb.Member
+	keyspaceMeta *keyspacepb.KeyspaceMeta
+}
+
+func (c *metaServiceGroupPDClient) GetAllMembers(context.Context) (*pdpb.GetMembersResponse, error) {
+	return &pdpb.GetMembersResponse{Members: c.members}, nil
+}
+
+func (c *metaServiceGroupPDClient) LoadKeyspace(context.Context, string) (*keyspacepb.KeyspaceMeta, error) {
+	return c.keyspaceMeta, nil
+}
+
+func (*metaServiceGroupPDClient) Close() {}
 
 func TestNewEtcdClientConfig(t *testing.T) {
 	ctx := context.Background()
@@ -59,6 +86,54 @@ func TestNewEtcdClientConfig(t *testing.T) {
 	require.Equal(t, 5*time.Second, etcdCfg.DialTimeout)
 	require.Equal(t, ctx, etcdCfg.Context)
 	require.Len(t, etcdCfg.DialOptions, 4)
+}
+
+func TestDialEtcdWithCfgUsesMetaServiceGroup(t *testing.T) {
+	integration.BeforeTestExternal(t)
+	metaCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	defer metaCluster.Terminate(t)
+
+	keyspaceMeta := &keyspacepb.KeyspaceMeta{
+		Id:   46,
+		Name: "ks5",
+		Config: map[string]string{
+			"gc_management_type":      "keyspace_level",
+			metaservice.GroupIDKey:    "group5",
+			metaservice.GroupAddrsKey: strings.Join(metaCluster.Client(0).Endpoints(), ","),
+		},
+	}
+	codec, err := tikv.NewCodecV2(tikv.ModeTxn, keyspaceMeta)
+	require.NoError(t, err)
+
+	mockPD := &metaServiceGroupPDClient{
+		members: []*pdpb.Member{{
+			ClientUrls: []string{"http://127.0.0.1:2379"},
+		}},
+		keyspaceMeta: keyspaceMeta,
+	}
+	orig := newPDClientWithAPIContext
+	newPDClientWithAPIContext = func(context.Context, pd.APIContext, caller.Component, []string, pd.SecurityOption, ...opt.ClientOption) (pd.Client, error) {
+		return mockPD, nil
+	}
+	t.Cleanup(func() {
+		newPDClientWithAPIContext = orig
+	})
+
+	etcdCli, err := dialEtcdWithCfg(context.Background(), task.Config{
+		PD:           []string{"127.0.0.1:2379"},
+		KeyspaceName: keyspaceMeta.Name,
+	})
+	require.NoError(t, err)
+	defer etcdCli.Close()
+
+	_, err = etcdCli.Put(context.Background(), "crr-key", "1")
+	require.NoError(t, err)
+
+	prefix := keyspace.MakeKeyspaceEtcdNamespace(codec)
+	resp, err := metaCluster.Client(0).Get(context.Background(), prefix, clientv3.WithPrefix())
+	require.NoError(t, err)
+	require.Len(t, resp.Kvs, 1)
+	require.Contains(t, string(resp.Kvs[0].Key), "crr-key")
 }
 
 func TestNewCRRCheckpointServiceRejectsNonLogBackupUpstream(t *testing.T) {
