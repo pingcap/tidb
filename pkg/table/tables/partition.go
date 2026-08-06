@@ -367,7 +367,7 @@ func (kp *ForKeyPruning) LocateKeyPartition(numParts uint64, r []types.Datum) (i
 		if val.Kind() == types.KindNull {
 			h.Write([]byte{0})
 		} else {
-			data, err := datumToHashKeyWithCollation(&val, kp.useNewCollate)
+			data, err := kp.datumToHashKey(&val)
 			if err != nil {
 				return 0, err
 			}
@@ -377,16 +377,16 @@ func (kp *ForKeyPruning) LocateKeyPartition(numParts uint64, r []types.Datum) (i
 	return int(h.Sum32() % uint32(numParts)), nil
 }
 
-func datumToHashKeyWithCollation(d *types.Datum, useNewCollate bool) ([]byte, error) {
+func (kp *ForKeyPruning) datumToHashKey(d *types.Datum) ([]byte, error) {
 	switch d.Kind() {
 	case types.KindString, types.KindBytes:
-		return collate.GetCollatorWithCollate(useNewCollate, d.Collation()).Key(d.GetString()), nil
+		return collate.GetCollatorWithCollate(kp.useNewCollate, d.Collation()).Key(d.GetString()), nil
 	default:
 		str, err := d.ToString()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		return collate.GetCollatorWithCollate(useNewCollate, d.Collation()).Key(str), nil
+		return collate.GetCollatorWithCollate(kp.useNewCollate, d.Collation()).Key(str), nil
 	}
 }
 
