@@ -1,0 +1,92 @@
+# lockdown-inventory-v1
+# owning-go-source	pkg/types/vector.go
+# source-sha256	3f833eb599672f37fa3e056c2d85b578c5bd1a378155c7b64ddccc454aaa6e61
+# owning-go-test	pkg/types/vector_test.go
+# test-sha256	167de06e188ae18c58fede0569064b7b156b49fe6873faf7c55d89974584b31a
+# adjacent-go-source	pkg/types/vector_functions.go is implemented in vector.rs but is not claimed by this inventory
+# package-claim	File-level LOCKDOWN for pkg/types/vector.go only; pkg/types and vector_functions.go are not claimed complete
+id	category	go_item	status	rust_symbol	evidence
+D01	declaration	VectorFloat32 logical vector type	PORTED	VectorFloat32	vector_go_source_lockdown_inventory_and_symbols
+D02	declaration	ZeroVectorFloat32 empty value	PORTED	VectorFloat32::default	vector_clone_zero_and_memory_rules_match_source
+R01	representation	VectorFloat32 stores header and elements in one data []byte	DECLINED	-	vector_declined_and_unreachable_seams_are_explicit: Rust uses aligned Vec<f32> and materializes the identical wire image
+R02	rule	storage and exchange bytes are little-endian length plus float32 bits	PORTED	VectorFloat32::serialize	vector_wire_format_and_decode_rules_match_source
+F01	function	init() host-endian guard	DECLINED	-	vector_declined_and_unreachable_seams_are_explicit: Rust uses explicit to_le_bytes/from_le_bytes and never aliases host-endian f32 memory as wire bytes
+B01	branch	init returns on a little-endian host	UNREACHABLE	-	vector_declined_and_unreachable_seams_are_explicit: Rust wire behavior is host-independent by construction
+B02	branch	init panics on a non-little-endian host	UNREACHABLE	-	vector_declined_and_unreachable_seams_are_explicit: Rust has no host-endian branch because aligned elements are encoded explicitly
+F02	function	CreateVectorFloat32(vector []float32)	PORTED	VectorFloat32::create	vector_constructor_and_dimension_rules_match_source
+B03	branch	CreateVectorFloat32 rejects NaN	PORTED	VectorFloat32::create	vector_constructor_and_dimension_rules_match_source
+B04	branch	CreateVectorFloat32 rejects positive and negative infinity	PORTED	VectorFloat32::create	vector_constructor_and_dimension_rules_match_source
+B05	branch	CreateVectorFloat32 accepts every finite vector without applying the column dimension limit	PORTED	VectorFloat32::create	vector_constructor_and_dimension_rules_match_source
+B06	branch	CreateVectorFloat32 copies caller elements into independent storage	PORTED	VectorFloat32::create	vector_clone_zero_and_memory_rules_match_source
+F03	function	MustCreateVectorFloat32(v []float32)	PORTED	VectorFloat32::must_create	vector_constructor_and_dimension_rules_match_source
+B07	branch	MustCreateVectorFloat32 panics with the constructor error	PORTED	VectorFloat32::must_create	vector_constructor_and_dimension_rules_match_source
+B08	branch	MustCreateVectorFloat32 returns a valid vector	PORTED	VectorFloat32::must_create	vector_constructor_and_dimension_rules_match_source
+F04	function	InitVectorFloat32(dims int)	PORTED	VectorFloat32::init	vector_constructor_and_dimension_rules_match_source
+B09	branch	InitVectorFloat32 negative dims panic while constructing the Go byte slice	UNREACHABLE	-	vector_declined_and_unreachable_seams_are_explicit: Rust init takes usize so a negative dimension cannot cross its type boundary
+R03	rule	InitVectorFloat32 zero-fills every element	PORTED	VectorFloat32::init	vector_constructor_and_dimension_rules_match_source
+F05	function	CheckVectorDimValid(dim int)	PORTED	check_vector_dim_valid	vector_constructor_and_dimension_rules_match_source
+B10	branch	CheckVectorDimValid rejects dim below zero with exact message	PORTED	check_vector_dim_valid	vector_constructor_and_dimension_rules_match_source
+B11	branch	CheckVectorDimValid rejects dim above 16383 with exact message	PORTED	check_vector_dim_valid	vector_constructor_and_dimension_rules_match_source
+B12	branch	CheckVectorDimValid accepts both inclusive bounds	PORTED	check_vector_dim_valid	vector_constructor_and_dimension_rules_match_source
+F06	function	VectorFloat32.CheckDimsFitColumn(expectedFlen int)	PORTED	VectorFloat32::check_dims_fit_column	vector_constructor_and_dimension_rules_match_source
+B13	branch	CheckDimsFitColumn accepts UnspecifiedLength	PORTED	VectorFloat32::check_dims_fit_column	vector_constructor_and_dimension_rules_match_source
+B14	branch	CheckDimsFitColumn accepts an exact dimension	PORTED	VectorFloat32::check_dims_fit_column	vector_constructor_and_dimension_rules_match_source
+B15	branch	CheckDimsFitColumn rejects a specified mismatch with exact message	PORTED	VectorFloat32::check_dims_fit_column	vector_constructor_and_dimension_rules_match_source
+F07	function	VectorFloat32.Len()	PORTED	VectorFloat32::len	vector_constructor_and_dimension_rules_match_source
+F08	function	VectorFloat32.Elements()	PORTED	VectorFloat32::elements_mut	vector_constructor_and_dimension_rules_match_source
+B16	branch	Elements returns nil for a zero-dimensional Go vector	UNREACHABLE	-	vector_declined_and_unreachable_seams_are_explicit: Rust slices have one empty value and no observable nil slice state
+B17	branch	Elements returns mutable elements for a nonempty vector	PORTED	VectorFloat32::elements_mut	vector_constructor_and_dimension_rules_match_source
+F09	function	VectorFloat32.TruncatedString()	PORTED	VectorFloat32::truncated_string	vector_text_parse_and_format_rules_match_source
+B18	branch	TruncatedString renders at most five elements without a suffix	PORTED	VectorFloat32::truncated_string	vector_text_parse_and_format_rules_match_source
+B19	branch	TruncatedString appends the exact remaining-count suffix above five elements	PORTED	VectorFloat32::truncated_string	vector_text_parse_and_format_rules_match_source
+B20	branch	TruncatedString inserts commas only after the first element	PORTED	VectorFloat32::truncated_string	vector_text_parse_and_format_rules_match_source
+R04	rule	TruncatedString formats float32 with Go g precision 2	PORTED	VectorFloat32::truncated_string	vector_text_parse_and_format_rules_match_source
+F10	function	VectorFloat32.String()	PORTED	ToString::to_string	vector_text_parse_and_format_rules_match_source
+B21	branch	String renders an empty vector as []	PORTED	ToString::to_string	vector_text_parse_and_format_rules_match_source
+B22	branch	String inserts commas only after the first element	PORTED	ToString::to_string	vector_text_parse_and_format_rules_match_source
+R05	rule	String uses Go fixed shortest float32 text without exponent notation	PORTED	ToString::to_string	vector_text_parse_and_format_rules_match_source
+F11	function	VectorFloat32.ZeroCopySerialize()	DECLINED	-	vector_declined_and_unreachable_seams_are_explicit: Rust serialize returns owned bytes because its aligned Vec<f32> is not the wire buffer
+R06	rule	ZeroCopySerialize returns bytes aliasing the Go vector	DECLINED	-	Go oracle printed serialize_alias|value=2; Rust deliberately has no mutable wire alias
+F12	function	VectorFloat32.SerializeTo(b []byte)	PORTED	VectorFloat32::serialize_to	vector_wire_format_and_decode_rules_match_source
+R07	rule	SerializeTo appends after and preserves an existing prefix	PORTED	VectorFloat32::serialize_to	vector_wire_format_and_decode_rules_match_source
+F13	function	VectorFloat32.SerializedSize()	PORTED	VectorFloat32::serialized_size	vector_wire_format_and_decode_rules_match_source
+F14	function	VectorFloat32.EstimatedMemUsage()	PORTED	VectorFloat32::estimated_mem_usage	vector_clone_zero_and_memory_rules_match_source
+F15	function	PeekBytesAsVectorFloat32(b []byte)	PORTED	peek_vector_float32	vector_wire_format_and_decode_rules_match_source
+B23	branch	PeekBytesAsVectorFloat32 rejects headers shorter than four bytes with exact length	PORTED	peek_vector_float32	vector_wire_format_and_decode_rules_match_source
+R08	rule	PeekBytesAsVectorFloat32 reads the dimension as little-endian uint32	PORTED	peek_vector_float32	vector_wire_format_and_decode_rules_match_source
+B24	branch	PeekBytesAsVectorFloat32 lets uint32 size arithmetic wrap to zero or four	DECLINED	-	Go oracle printed header=40000000 n=4 and header=ffffffff n=0; Rust rejects size overflow to preserve decoder progress
+B25	branch	PeekBytesAsVectorFloat32 rejects a short payload with actual and expected lengths	PORTED	peek_vector_float32	vector_wire_format_and_decode_rules_match_source
+B26	branch	PeekBytesAsVectorFloat32 returns the first complete vector size and ignores suffix bytes	PORTED	peek_vector_float32	vector_wire_format_and_decode_rules_match_source
+F16	function	ZeroCopyDeserializeVectorFloat32(b []byte)	PORTED	deserialize_vector_float32	vector_wire_format_and_decode_rules_match_source
+B27	branch	ZeroCopyDeserializeVectorFloat32 propagates a peek error without consuming input	PORTED	deserialize_vector_float32	vector_wire_format_and_decode_rules_match_source
+R09	rule	ZeroCopyDeserializeVectorFloat32 aliases the caller's input bytes	DECLINED	-	Go oracle printed deserialize_alias|value=2 after input mutation; Rust copies into aligned Vec<f32>
+B28	branch	ZeroCopyDeserializeVectorFloat32 returns the decoded vector and unconsumed suffix	PORTED	deserialize_vector_float32	vector_wire_format_and_decode_rules_match_source
+B29	branch	ZeroCopyDeserializeVectorFloat32 preserves raw NaN and infinity bits	PORTED	deserialize_vector_float32	vector_wire_format_and_decode_rules_match_source
+B30	branch	ZeroCopyDeserializeVectorFloat32 accepts finite dimensions above 16383	PORTED	deserialize_vector_float32	vector_wire_format_and_decode_rules_match_source
+B31	branch	ZeroCopyDeserializeVectorFloat32 accepts wrapped malformed headers	DECLINED	-	vector_declined_and_unreachable_seams_are_explicit: representation cannot carry Go's zero-byte or header-only huge-dimension vector safely
+F17	function	ParseVectorFloat32(s string)	PORTED	VectorFloat32::parse	vector_text_parse_and_format_rules_match_source
+B32	branch	ParseVectorFloat32 rejects trimmed exact null with Invalid vector text	PORTED	VectorFloat32::parse	vector_text_parse_and_format_rules_match_source
+B33	branch	ParseVectorFloat32 rejects invalid JSON non-arrays non-numbers and trailing nonspace	PORTED	VectorFloat32::parse	vector_text_parse_and_format_rules_match_source
+B34	branch	ParseVectorFloat32 accepts trailing JSON whitespace	PORTED	VectorFloat32::parse	vector_text_parse_and_format_rules_match_source
+B35	branch	ParseVectorFloat32 ReadArray NaN error branch	UNREACHABLE	-	Go oracle printed [NaN] as Invalid vector text because strict JSON fails before this branch
+B36	branch	ParseVectorFloat32 ReadArray infinity error branch	UNREACHABLE	-	Go oracle printed [Infinity] and numeric f64 overflow as Invalid vector text before this branch
+B37	branch	ParseVectorFloat32 rejects values outside the inclusive float32 range with Go exponent text	PORTED	VectorFloat32::parse	vector_text_parse_and_format_rules_match_source
+B38	branch	ParseVectorFloat32 converts accepted f64 values to float32 including signed zero and underflow	PORTED	VectorFloat32::parse	vector_text_parse_and_format_rules_match_source
+B39	branch	ParseVectorFloat32 reports parser errors before value and dimension checks	PORTED	VectorFloat32::parse	vector_text_parse_and_format_rules_match_source
+B40	branch	ParseVectorFloat32 reports a captured value error before dimension checks	PORTED	VectorFloat32::parse	vector_text_parse_and_format_rules_match_source
+B41	branch	ParseVectorFloat32 accepts no remaining bytes	PORTED	VectorFloat32::parse	vector_text_parse_and_format_rules_match_source
+B42	branch	ParseVectorFloat32 accepts whitespace-only remaining bytes	PORTED	VectorFloat32::parse	vector_text_parse_and_format_rules_match_source
+B43	branch	ParseVectorFloat32 rejects nonspace remaining bytes	PORTED	VectorFloat32::parse	vector_text_parse_and_format_rules_match_source
+B44	branch	ParseVectorFloat32 rejects dimension 16384 after values are read	PORTED	VectorFloat32::parse	vector_text_parse_and_format_rules_match_source
+B45	branch	ParseVectorFloat32 accepts dimension 16383 and copies every value	PORTED	VectorFloat32::parse	vector_text_parse_and_format_rules_match_source
+F18	function	VectorFloat32.Clone()	PORTED	Clone::clone	vector_clone_zero_and_memory_rules_match_source
+R10	rule	Clone is deep and later element mutation does not alias the source	PORTED	Clone::clone	vector_clone_zero_and_memory_rules_match_source
+F19	function	VectorFloat32.IsZeroValue()	PORTED	VectorFloat32::is_zero_value	vector_clone_zero_and_memory_rules_match_source
+B46	branch	IsZeroValue returns true at dimension zero	PORTED	VectorFloat32::is_zero_value	vector_clone_zero_and_memory_rules_match_source
+B47	branch	IsZeroValue returns false above dimension zero	PORTED	VectorFloat32::is_zero_value	vector_clone_zero_and_memory_rules_match_source
+T01	test	TestVectorEndianess	PORTED	vector_wire_format_and_decode_rules_match_source	vector_go_source_lockdown_inventory_and_symbols
+T02	test	TestZeroVector	PORTED	vector_clone_zero_and_memory_rules_match_source	vector_go_source_lockdown_inventory_and_symbols
+T03	test	TestVectorParse	PORTED	vector_text_parse_and_format_rules_match_source	vector_go_source_lockdown_inventory_and_symbols
+T04	test	TestVectorDatum	DECLINED	-	The SetVectorFloat32/GetVectorFloat32 assertions own pkg/types/datum.go rather than vector.go
+T05	test	TestVectorCompare	DECLINED	-	Compare owns pkg/types/vector_functions.go; its existing Rust implementation is explicitly outside this inventory
+T06	test	TestVectorSerialize	PORTED	vector_wire_format_and_decode_rules_match_source	vector_go_source_lockdown_inventory_and_symbols

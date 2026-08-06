@@ -12,10 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Complete `pkg/types/vector.go` and `vector_functions.go` transcreation.
+//! `pkg/types/vector.go` and `vector_functions.go` transcreation.
+//!
+//! `vector.inventory.tsv` LOCKDOWNs `vector.go`. The adjacent arithmetic
+//! source remains implemented here but is outside that inventory.
 
 use std::cmp::Ordering;
 use std::fmt;
+
+use serde_json::value::RawValue;
 
 /// Maximum dimension accepted by TiDB's VECTOR type.
 pub const MAX_VECTOR_DIMENSION: usize = 16_383;
@@ -38,11 +43,13 @@ impl fmt::Display for VectorError {
 
 impl std::error::Error for VectorError {}
 
-/// A finite little-endian TiDB `VECTOR<FLOAT32>`.
+/// A little-endian TiDB `VECTOR<FLOAT32>`.
 ///
 /// Go stores the serialized header and values in one byte slice. Rust stores
 /// aligned `f32` elements and produces the same wire image, eliminating the
-/// unsafe byte-to-float aliasing seam.
+/// unsafe byte-to-float aliasing seam. Validated constructors reject nonfinite
+/// values, while mutable elements and raw wire decode preserve the source's
+/// ability to carry arbitrary `f32` bits.
 #[derive(Clone, Default, PartialEq)]
 pub struct VectorFloat32 {
     elements: Vec<f32>,
@@ -74,7 +81,6 @@ impl VectorFloat32 {
     /// Creates a vector after rejecting NaN and infinity.
     pub fn create(elements: impl Into<Vec<f32>>) -> Result<Self, VectorError> {
         let elements = elements.into();
-        check_vector_dim_valid(elements.len() as isize)?;
         for value in &elements {
             if value.is_nan() {
                 return Err(VectorError::new("NaN not allowed in vector"));
@@ -115,7 +121,7 @@ impl VectorFloat32 {
 
     /// Mutably borrows the elements, matching Go `Elements`.
     ///
-    /// Callers must preserve the finite-value invariant, as in the source.
+    /// Like the source, this does not revalidate values written by the caller.
     pub fn elements_mut(&mut self) -> &mut [f32] {
         &mut self.elements
     }
@@ -181,16 +187,19 @@ impl VectorFloat32 {
         if text.trim() == "null" {
             return Err(VectorError::new(format!("Invalid vector text: {text}")));
         }
-        let values: Vec<f64> = serde_json::from_str(text)
+        let values: Vec<&RawValue> = serde_json::from_str(text)
             .map_err(|_| VectorError::new(format!("Invalid vector text: {text}")))?;
-        check_vector_dim_valid(values.len() as isize)?;
         let mut elements = Vec::with_capacity(values.len());
         for value in values {
+            let value = value
+                .get()
+                .parse::<f64>()
+                .map_err(|_| VectorError::new(format!("Invalid vector text: {text}")))?;
             if value.is_nan() {
                 return Err(VectorError::new("NaN not allowed in vector"));
             }
             if value.is_infinite() {
-                return Err(VectorError::new("infinite value not allowed in vector"));
+                return Err(VectorError::new(format!("Invalid vector text: {text}")));
             }
             if !(-f64::from(f32::MAX)..=f64::from(f32::MAX)).contains(&value) {
                 return Err(VectorError::new(format!(
@@ -200,6 +209,7 @@ impl VectorFloat32 {
             }
             elements.push(value as f32);
         }
+        check_vector_dim_valid(elements.len() as isize)?;
         Ok(Self { elements })
     }
 
@@ -211,9 +221,11 @@ impl VectorFloat32 {
     /// Lexicographically compares elements, then dimensions.
     pub fn compare(&self, other: &Self) -> Ordering {
         for (left, right) in self.elements.iter().zip(&other.elements) {
-            match left.partial_cmp(right).expect("vectors contain no NaN") {
-                Ordering::Equal => {}
-                ordering => return ordering,
+            if left < right {
+                return Ordering::Less;
+            }
+            if left > right {
+                return Ordering::Greater;
             }
         }
         self.len().cmp(&other.len())
@@ -461,7 +473,7 @@ pub fn deserialize_vector_float32(bytes: &[u8]) -> Result<(VectorFloat32, &[u8])
             chunk.try_into().expect("fixed vector element"),
         )));
     }
-    Ok((VectorFloat32::create(elements)?, &bytes[length..]))
+    Ok((VectorFloat32 { elements }, &bytes[length..]))
 }
 
 #[cfg(test)]
