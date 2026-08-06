@@ -241,12 +241,8 @@ func (ts *TiDBStatement) Reset() error {
 
 // Close implements PreparedStatement Close method.
 func (ts *TiDBStatement) Close() error {
-<<<<<<< HEAD
-=======
 	ts.releaseBoundLongData()
 
-	resultset.ReportCursorRUV2Delta(ts.rs, 0)
->>>>>>> bff12635288 (server: limit the size for COM_STMT_SEND_LONG_DATA in each connection (#70350))
 	if ts.rs != nil && ts.rs.GetRowIterator() != nil {
 		ts.rs.GetRowIterator().Close()
 	}

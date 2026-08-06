@@ -22,15 +22,7 @@ import (
 	"fmt"
 	"testing"
 
-<<<<<<< HEAD
-=======
 	"github.com/pingcap/errors"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
->>>>>>> bff12635288 (server: limit the size for COM_STMT_SEND_LONG_DATA in each connection (#70350))
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	servererr "github.com/pingcap/tidb/pkg/server/err"
 	"github.com/pingcap/tidb/pkg/server/internal"
@@ -39,12 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/arena"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-<<<<<<< HEAD
-=======
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
-	"github.com/pingcap/tidb/pkg/util/execdetails"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
->>>>>>> bff12635288 (server: limit the size for COM_STMT_SEND_LONG_DATA in each connection (#70350))
 	"github.com/stretchr/testify/require"
 )
 
