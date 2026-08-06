@@ -755,10 +755,10 @@ type IndexOption struct {
 	PrimaryKeyTp PrimaryKeyType
 	Global       bool
 	SplitOpt     *SplitOption `json:"-"` // SplitOption contains expr nodes, which cannot marshal for DDL job arguments.
-	// AutoPresplit enables leading-column-only, best-effort automatic pre-splitting
+	// AutoPreSplit enables leading-column-only, best-effort automatic pre-splitting
 	// for add-index DDL. Parsed ASTs keep it mutually exclusive with SplitOpt; if a
 	// caller constructs both fields manually, SplitOpt takes precedence.
-	AutoPresplit               bool `json:"-"`
+	AutoPreSplit               bool `json:"-"`
 	SecondaryEngineAttr        string
 	AddColumnarReplicaOnDemand int
 	Condition                  ExprNode `json:"-"` // Condition contains expr nodes, which cannot marshal for DDL job arguments. It's used for partial index.
@@ -775,7 +775,7 @@ func (n *IndexOption) IsEmpty() bool {
 		n.Global ||
 		n.Visibility != IndexVisibilityDefault ||
 		n.SplitOpt != nil ||
-		n.AutoPresplit ||
+		n.AutoPreSplit ||
 		len(n.SecondaryEngineAttr) > 0 ||
 		n.Condition != nil {
 		return false
@@ -863,7 +863,7 @@ func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 		if hasPrevOption {
 			ctx.WritePlain(" ")
 		}
-		err := ctx.WriteWithSpecialComments(tidb.FeatureIDPresplit, func() error {
+		err := ctx.WriteWithSpecialComments(tidb.FeatureIDPreSplit, func() error {
 			ctx.WriteKeyWord("PRE_SPLIT_REGIONS")
 			ctx.WritePlain(" = ")
 			if n.SplitOpt.Num != 0 && len(n.SplitOpt.Lower) == 0 {
@@ -881,11 +881,11 @@ func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 			return err
 		}
 		hasPrevOption = true
-	} else if n.AutoPresplit {
+	} else if n.AutoPreSplit {
 		if hasPrevOption {
 			ctx.WritePlain(" ")
 		}
-		err := ctx.WriteWithSpecialComments(tidb.FeatureIDAutoPresplit, func() error {
+		err := ctx.WriteWithSpecialComments(tidb.FeatureIDAutoPreSplit, func() error {
 			ctx.WriteKeyWord("PRE_SPLIT_REGIONS")
 			ctx.WritePlain(" = ")
 			ctx.WriteKeyWord("AUTO")

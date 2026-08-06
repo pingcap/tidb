@@ -195,21 +195,21 @@ func (h *Handle) GetPhysicalTableStats(physicalTableID int64, tblInfo *model.Tab
 	return tblStats
 }
 
-// AutoPresplitColumnStats preserves storage.AutoPresplitColumnStats's partial-result contract.
+// ColumnDistributionStats preserves storage.ColumnDistributionStats's partial-result contract.
 // Column metadata may be present while individual NullCount, TopN, or Histogram components fail.
-type AutoPresplitColumnStats = storage.AutoPresplitColumnStats
+type ColumnDistributionStats = storage.ColumnDistributionStats
 
-// LoadColumnStatsForAutoPresplit loads one column's metadata, TopN, and Histogram
+// LoadColumnDistributionStats loads one column's metadata, TopN, and Histogram
 // from one MVCC snapshot. Snapshot and metadata failures are returned directly; component failures
-// remain in AutoPresplitColumnStats so callers can use the other components.
-func (*Handle) LoadColumnStatsForAutoPresplit(
+// remain in ColumnDistributionStats so callers can use the other components.
+func (*Handle) LoadColumnDistributionStats(
 	ctx context.Context,
 	sctx sessionctx.Context,
 	physicalTableID int64,
 	colInfo *model.ColumnInfo,
 	maxTopNKeys int,
-) (*AutoPresplitColumnStats, error) {
-	return storage.LoadColumnStatsForAutoPresplit(
+) (*ColumnDistributionStats, error) {
+	return storage.LoadColumnDistributionStats(
 		ctx, sctx, physicalTableID, colInfo, maxTopNKeys)
 }
 

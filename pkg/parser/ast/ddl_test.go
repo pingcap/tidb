@@ -994,7 +994,7 @@ func TestTableOptionTTLRestoreWithTTLEnableOffFlag(t *testing.T) {
 	}
 }
 
-func TestPresplitIndexSpecialComments(t *testing.T) {
+func TestPreSplitIndexSpecialComments(t *testing.T) {
 	specialCmtFlag := format.DefaultRestoreFlags | format.RestoreTiDBSpecialComment
 	cases := []struct {
 		sourceSQL string

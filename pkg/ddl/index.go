@@ -1215,9 +1215,9 @@ SwitchIndexState:
 			job.State = model.JobStateCancelled
 			return ver, err
 		}
-		var statsProvider autoPresplitStatsProvider
+		var statsProvider autoPreSplitStatsProvider
 		for _, idxArg := range args.IndexArgs {
-			if idxArg.AutoPresplit {
+			if idxArg.AutoPreSplit {
 				statsProvider = w.ddlCtx.statsHandle
 				break
 			}

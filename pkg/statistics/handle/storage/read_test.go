@@ -56,7 +56,7 @@ func TestLoadStats(t *testing.T) {
 	idxBID := tableInfo.Indices[0].ID
 	h := dom.StatsHandle()
 
-	loaded, err := storage.LoadColumnStatsForAutoPresplit(
+	loaded, err := storage.LoadColumnDistributionStats(
 		context.Background(), testKit.Session(), tableInfo.ID, tableInfo.Columns[1], 1)
 	require.NoError(t, err)
 	require.Len(t, loaded.Column.TopN.TopN, 1)
@@ -65,7 +65,7 @@ func TestLoadStats(t *testing.T) {
 	require.Len(t, loaded.Column.Histogram.Buckets, 2)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err = storage.LoadColumnStatsForAutoPresplit(
+	_, err = storage.LoadColumnDistributionStats(
 		ctx, testKit.Session(), tableInfo.ID, tableInfo.Columns[1], 1)
 	require.ErrorIs(t, err, context.Canceled)
 
@@ -110,7 +110,7 @@ func TestLoadStats(t *testing.T) {
 	require.True(t, idx.IsFullLoad())
 }
 
-func TestLoadColumnStatsForAutoPresplitUsesOneSnapshot(t *testing.T) {
+func TestLoadColumnDistributionStatsUsesOneSnapshot(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	writerTK := testkit.NewTestKit(t, store)
@@ -127,7 +127,7 @@ func TestLoadColumnStatsForAutoPresplitUsesOneSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	colInfo := tblInfo.Columns[1]
-	before, err := storage.LoadColumnStatsForAutoPresplit(
+	before, err := storage.LoadColumnDistributionStats(
 		context.Background(), tk.Session(), tblInfo.ID, colInfo, 2)
 	require.NoError(t, err)
 
@@ -158,12 +158,12 @@ func TestLoadColumnStatsForAutoPresplitUsesOneSnapshot(t *testing.T) {
 	})
 
 	type loadResult struct {
-		stats *storage.AutoPresplitColumnStats
+		stats *storage.ColumnDistributionStats
 		err   error
 	}
 	resultCh := make(chan loadResult, 1)
 	go func() {
-		stats, loadErr := storage.LoadColumnStatsForAutoPresplit(
+		stats, loadErr := storage.LoadColumnDistributionStats(
 			context.Background(), tk.Session(), tblInfo.ID, colInfo, 2)
 		resultCh <- loadResult{stats: stats, err: loadErr}
 	}()
@@ -183,7 +183,7 @@ func TestLoadColumnStatsForAutoPresplitUsesOneSnapshot(t *testing.T) {
 	require.Equal(t, before.Column.TopN, result.stats.Column.TopN)
 	require.Equal(t, before.Column.Histogram, result.stats.Column.Histogram)
 
-	after, err := storage.LoadColumnStatsForAutoPresplit(
+	after, err := storage.LoadColumnDistributionStats(
 		context.Background(), tk.Session(), tblInfo.ID, colInfo, 2)
 	require.NoError(t, err)
 	require.NotEqual(t, before.Column.LastUpdateVersion, after.Column.LastUpdateVersion)
