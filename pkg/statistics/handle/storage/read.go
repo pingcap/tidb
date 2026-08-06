@@ -20,11 +20,13 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/asyncload"
@@ -37,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
@@ -82,6 +85,96 @@ func statsMetaCountAndModifyCount(
 
 // HistMetaFromStorageWithHighPriority reads the meta info of the histogram from the storage.
 func HistMetaFromStorageWithHighPriority(sctx sessionctx.Context, item *model.TableItemID, possibleColInfo *model.ColumnInfo) (*statistics.Histogram, int64, error) {
+	return histMetaFromStorage(util.StatsCtx, sctx, item, possibleColInfo, 0)
+}
+
+// AutoPresplitColumnStats contains one leading column's statistics loaded for DDL auto pre-split.
+// Metadata errors are returned directly because StatsVer cannot be confirmed without metadata.
+// Component errors are independent best-effort failures.
+type AutoPresplitColumnStats struct {
+	Column         *statistics.Column
+	TopNError      error
+	HistogramError error
+	NullCountError error
+}
+
+// LoadColumnStatsForAutoPresplit loads one column's metadata, TopN, and Histogram
+// from one MVCC snapshot.
+func LoadColumnStatsForAutoPresplit(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	physicalTableID, columnID int64,
+	colInfo *model.ColumnInfo,
+	limit int,
+) (*AutoPresplitColumnStats, error) {
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStatsForegroundPriority)
+	if cause := context.Cause(ctx); cause != nil {
+		return nil, cause
+	}
+	version, err := sctx.GetStore().CurrentVersion(oracle.GlobalTxnScope)
+	if err != nil {
+		return nil, err
+	}
+	if cause := context.Cause(ctx); cause != nil {
+		return nil, cause
+	}
+
+	item := &model.TableItemID{TableID: physicalTableID, ID: columnID}
+	histMeta, statsVer, err := histMetaFromStorage(ctx, sctx, item, colInfo, version.Ver)
+	if cause := context.Cause(ctx); cause != nil {
+		return nil, cause
+	}
+	if err != nil {
+		return nil, err
+	}
+	result := &AutoPresplitColumnStats{}
+	if histMeta == nil {
+		return result, nil
+	}
+	result.Column = &statistics.Column{
+		PhysicalID:        physicalTableID,
+		Info:              colInfo,
+		Histogram:         *histMeta,
+		StatsVer:          statsVer,
+		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+	}
+	if histMeta.NullCount < 0 {
+		result.NullCountError = errors.Errorf("negative null count %d", histMeta.NullCount)
+		result.Column.NullCount = 0
+	}
+	if statsVer != statistics.Version2 {
+		return result, nil
+	}
+
+	if limit > 0 {
+		result.Column.TopN, result.TopNError = topNFromStorageWithPriorityAndLimit(
+			ctx, sctx, physicalTableID, 0, columnID, kv.PriorityNormal, limit, version.Ver)
+		if cause := context.Cause(ctx); cause != nil {
+			return nil, cause
+		}
+	}
+
+	histogram, histogramErr := histogramFromStorageWithPriority(
+		ctx, sctx, physicalTableID, columnID, &colInfo.FieldType,
+		histMeta.NDV, 0, histMeta.LastUpdateVersion, result.Column.NullCount,
+		histMeta.TotColSize, histMeta.Correlation, kv.PriorityNormal, version.Ver)
+	if cause := context.Cause(ctx); cause != nil {
+		return nil, cause
+	}
+	result.HistogramError = histogramErr
+	if histogramErr == nil && histogram != nil {
+		result.Column.Histogram = *histogram
+	}
+	return result, nil
+}
+
+func histMetaFromStorage(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	item *model.TableItemID,
+	possibleColInfo *model.ColumnInfo,
+	snapshot uint64,
+) (*statistics.Histogram, int64, error) {
 	isIndex := 0
 	var tp *types.FieldType
 	if item.IsIndex {
@@ -90,12 +183,9 @@ func HistMetaFromStorageWithHighPriority(sctx sessionctx.Context, item *model.Ta
 	} else {
 		tp = &possibleColInfo.FieldType
 	}
-	rows, _, err := util.ExecRows(sctx,
-		"select high_priority distinct_count, version, null_count, tot_col_size, stats_ver, correlation from mysql.stats_histograms where table_id = %? and hist_id = %? and is_index = %?",
-		item.TableID,
-		item.ID,
-		isIndex,
-	)
+	sql := "select high_priority distinct_count, version, null_count, tot_col_size, stats_ver, correlation from mysql.stats_histograms where table_id = %? and hist_id = %? and is_index = %?"
+	rows, _, err := execRowsAtSnapshot(
+		ctx, sctx, snapshot, sql, item.TableID, item.ID, isIndex)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -122,6 +212,26 @@ func HistogramFromStorageWithPriority(
 	corr float64,
 	priority int,
 ) (*statistics.Histogram, error) {
+	return histogramFromStorageWithPriority(
+		util.StatsCtx, sctx, tableID, colID, tp, distinct, isIndex,
+		ver, nullCount, totColSize, corr, priority, 0)
+}
+
+func histogramFromStorageWithPriority(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	tableID int64,
+	colID int64,
+	tp *types.FieldType,
+	distinct int64,
+	isIndex int,
+	ver uint64,
+	nullCount int64,
+	totColSize int64,
+	corr float64,
+	priority int,
+	snapshot uint64,
+) (*statistics.Histogram, error) {
 	selectPrefix := "select "
 	switch priority {
 	case kv.PriorityHigh:
@@ -129,7 +239,9 @@ func HistogramFromStorageWithPriority(
 	case kv.PriorityLow:
 		selectPrefix += "low_priority "
 	}
-	rows, fields, err := util.ExecRows(sctx, selectPrefix+"count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets where table_id = %? and is_index = %? and hist_id = %? order by bucket_id", tableID, isIndex, colID)
+	sql := selectPrefix + "count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets where table_id = %? and is_index = %? and hist_id = %? order by bucket_id"
+	rows, fields, err := execRowsAtSnapshot(
+		ctx, sctx, snapshot, sql, tableID, isIndex, colID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -204,11 +316,63 @@ func CMSketchFromStorage(sctx sessionctx.Context, tblID int64, isIndex int, hist
 
 // TopNFromStorage reads TopN from storage
 func TopNFromStorage(sctx sessionctx.Context, tblID int64, isIndex int, histID int64) (_ *statistics.TopN, err error) {
-	rows, _, err := util.ExecRows(sctx, "select HIGH_PRIORITY value, count from mysql.stats_top_n where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
+	return topNFromStorageWithPriorityAndLimit(util.StatsCtx, sctx, tblID, isIndex, histID, kv.PriorityHigh, 0, 0)
+}
+
+// TopNFromStorageWithPriorityAndLimit reads at most limit TopN values with the highest counts from storage.
+func TopNFromStorageWithPriorityAndLimit(ctx context.Context, sctx sessionctx.Context, tblID int64, isIndex int, histID int64, priority, limit int) (_ *statistics.TopN, err error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStatsForegroundPriority)
+	return topNFromStorageWithPriorityAndLimit(ctx, sctx, tblID, isIndex, histID, priority, limit, 0)
+}
+
+func topNFromStorageWithPriorityAndLimit(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	tblID int64,
+	isIndex int,
+	histID int64,
+	priority int,
+	limit int,
+	snapshot uint64,
+) (_ *statistics.TopN, err error) {
+	failpoint.InjectCall("beforeTopNFromStorageWithPriority", tblID, isIndex, histID, priority)
+	selectPrefix := "select "
+	switch priority {
+	case kv.PriorityHigh:
+		selectPrefix += "high_priority "
+	case kv.PriorityLow:
+		selectPrefix += "low_priority "
+	}
+	query := selectPrefix + "value, count from mysql.stats_top_n where table_id = %? and is_index = %? and hist_id = %?"
+	args := []any{tblID, isIndex, histID}
+	if limit > 0 {
+		query += " order by count desc, value limit %?"
+		args = append(args, limit)
+	}
+	rows, _, err := execRowsAtSnapshot(ctx, sctx, snapshot, query, args...)
 	if err != nil || len(rows) == 0 {
 		return nil, err
 	}
 	return statistics.DecodeTopN(rows), nil
+}
+
+func execRowsAtSnapshot(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	snapshot uint64,
+	sql string,
+	args ...any,
+) ([]chunk.Row, []*resolve.ResultField, error) {
+	if snapshot == 0 {
+		return util.ExecRowsWithCtx(ctx, sctx, sql, args...)
+	}
+	return sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{
+		sqlexec.ExecOptionWithSnapshot(snapshot),
+		sqlexec.ExecOptionUseCurSession,
+	}, sql, args...)
 }
 
 // FMSketchFromStorage reads FMSketch from storage

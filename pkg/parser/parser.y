@@ -7191,13 +7191,35 @@ IndexOption:
 			SplitOpt: $4.(*ast.SplitOption),
 		}
 	}
-|	"PRE_SPLIT_REGIONS" EqOpt Int64Num
+|	"PRE_SPLIT_REGIONS" EqOpt SimpleExpr
 	{
-		$$ = &ast.IndexOption{
-			SplitOpt: &ast.SplitOption{
-				Num: $3.(int64),
-			},
+		splitOpt := &ast.SplitOption{}
+		switch value := $3.(type) {
+		case ast.ValueExpr:
+			switch num := value.GetValue().(type) {
+			case int64:
+				splitOpt.Num = num
+			case uint64:
+				_, rangeErrMsg := getInt64FromNUM(num)
+				yylex.AppendError(yylex.Errorf(rangeErrMsg))
+				return 1
+			default:
+				yylex.AppendError(ErrSyntax)
+				return 1
+			}
+		case *ast.ColumnNameExpr:
+			if value.Name.Schema.O != "" ||
+				value.Name.Table.O != "" ||
+				!strings.EqualFold(value.Name.Name.O, "AUTO") {
+				yylex.AppendError(ErrSyntax)
+				return 1
+			}
+			splitOpt.Auto = true
+		default:
+			yylex.AppendError(ErrSyntax)
+			return 1
 		}
+		$$ = &ast.IndexOption{SplitOpt: splitOpt}
 	}
 |	"SECONDARY_ENGINE_ATTRIBUTE" EqOpt stringLit
 	{

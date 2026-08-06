@@ -4835,6 +4835,7 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 		}
 	}
 
+	autoPresplit := indexOption != nil && indexOption.SplitOpt != nil && indexOption.SplitOpt.Auto
 	splitOpt, err := buildIndexPresplitOpt(indexOption)
 	if err != nil {
 		return errors.Trace(err)
@@ -4855,6 +4856,9 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
+	if autoPresplit {
+		persistAutoPresplitInterval(job)
+	}
 
 	args := &model.ModifyIndexArgs{
 		IndexArgs: []*model.IndexArg{{
@@ -4865,6 +4869,7 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 			SQLMode:                 sqlMode,
 			Global:                  false,
 			IsPK:                    true,
+			AutoPresplit:            autoPresplit,
 			SplitOpt:                splitOpt,
 		}},
 		OpType: model.OpAddIndex,
@@ -5152,6 +5157,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		return e.addHypoIndexIntoCtx(ctx, ti.Schema, ti.Name, indexInfo)
 	}
 
+	autoPresplit := indexOption != nil && indexOption.SplitOpt != nil && indexOption.SplitOpt.Auto
 	splitOpt, err := buildIndexPresplitOpt(indexOption)
 	if err != nil {
 		return errors.Trace(err)
@@ -5167,6 +5173,9 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	job.CDCWriteSource = ctx.GetSessionVars().CDCWriteSource
 	job.AddSystemVars(vardef.TiDBEnableDDLAnalyze, getEnableDDLAnalyze(ctx))
 	job.AddSystemVars(vardef.TiDBAnalyzeVersion, getAnalyzeVersion(ctx))
+	if autoPresplit {
+		persistAutoPresplitInterval(job)
+	}
 
 	err = initJobReorgMetaFromVariables(e.ctx, job, t, ctx)
 	if err != nil {
@@ -5191,6 +5200,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 			IndexOption:             indexOption,
 			HiddenCols:              hiddenCols,
 			Global:                  global,
+			AutoPresplit:            autoPresplit,
 			SplitOpt:                splitOpt,
 			ConditionString:         conditionString,
 		}},
@@ -5216,6 +5226,9 @@ func buildIndexPresplitOpt(indexOpt *ast.IndexOption) (*model.IndexArgSplitOpt, 
 	}
 	opt := indexOpt.SplitOpt
 	if opt == nil {
+		return nil, nil
+	}
+	if opt.Auto {
 		return nil, nil
 	}
 	if len(opt.ValueLists) > 0 {
