@@ -344,7 +344,7 @@ func CastColumnValueWithStrictMode(val types.Datum, tp *types.FieldType) (casted
 func CastColumnValue(ctx expression.BuildContext, val types.Datum, col *model.ColumnInfo, returnErr, forceIgnoreTruncate bool) (casted types.Datum, err error) {
 	evalCtx := ctx.GetEvalCtx()
 	ft := &col.FieldType
-	useLegacyCollation := !ctx.NewCollationEnabled() && (ft.GetType() == mysql.TypeEnum || ft.GetType() == mysql.TypeSet)
+	useLegacyCollation := (ft.GetType() == mysql.TypeEnum || ft.GetType() == mysql.TypeSet) && !ctx.NewCollationEnabled()
 	if useLegacyCollation {
 		// Legacy ENUM/SET name matching is binary even when the field metadata has a non-binary collation.
 		ft = ft.Clone()
