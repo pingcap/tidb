@@ -341,6 +341,7 @@ pub mod builtin_compare;
 mod builtin_ext;
 pub mod builtin_op;
 mod cast;
+mod cast_inventory;
 mod coerce;
 pub mod collation_derive;
 pub mod column;

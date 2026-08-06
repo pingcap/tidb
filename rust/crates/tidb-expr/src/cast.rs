@@ -17,12 +17,24 @@
 //! handled directly in `crate::eval_in`'s own `Expr::ConvertUsing` arm —
 //! this crate has no charset domain at all).
 //!
-//! `TIME`/`JSON` targets are deliberately `Unsupported` — see
-//! `tidb_ast::CastType`'s own doc for why (no `TIME`/`JSON` value domain
-//! exists in this crate). Every other rule here (string-to-number prefix
-//! parsing width, rounding tie-breaking per source type, `UNSIGNED`'s
-//! negative-float-clamps-to-zero rule, `DECIMAL`'s precision clamp,
-//! `BINARY`'s NUL-padding) was confirmed via `goeval`, not assumed — see
+//! **The complete, classified inventory of this file's Go source
+//! (`pkg/expression/builtin_cast.go`, all 151 functions) is
+//! [`crate::cast_inventory`]**, together with the gate that fails when it
+//! goes stale. Read that before opening this file to find out what is
+//! missing; it exists because six separate units reopened this one from a
+//! divergence without ever saying what else was absent.
+//!
+//! The `TIME` target is the one whole Go function class this file declines
+//! (`castAsDurationFunctionClass`, seven signatures). Its standing reason —
+//! "no `TIME` value domain exists in this crate" — is FALSE and is corrected
+//! in the inventory's section 2f: the domain exists, the wiring does not.
+//! The `JSON` target is not declined at all; it is delegated to
+//! [`crate::builtin_ext::cast_as_json_typed`] (inventory 2g).
+//!
+//! Every other rule here (string-to-number prefix parsing width, rounding
+//! tie-breaking per source type, `UNSIGNED`'s negative-float-clamps-to-zero
+//! rule, `DECIMAL`'s precision clamp, `BINARY`'s NUL-padding, the temporal
+//! target's own fsp) was confirmed via `goeval`/`gorun`, not assumed — see
 //! each function's own doc for the specific probe.
 
 use crate::coerce::coerce_str;
@@ -749,6 +761,47 @@ fn cast_to_time(
     Ok(cast_to_time_value(v, source, ctx, kind, fsp)?.map_or(Datum::Null, Datum::Time))
 }
 
+/// Go's "Truncate hh:mm:ss part if the type is Date", which every one of the
+/// six `builtinCast*AsTimeSig` bodies repeats verbatim:
+///
+/// ```go
+/// if b.tp.GetType() == mysql.TypeDate {
+///     res.SetCoreTime(types.FromDate(res.Year(), res.Month(), res.Day(), 0, 0, 0, 0))
+/// }
+/// ```
+///
+/// Written ONCE here, at the one place every source arm passes through, rather
+/// than six times. It is a real value rule, not a rendering one, because the
+/// stored clock outlives the DATE rendering that hides it:
+/// `CAST(CAST('2020-01-01 10:30:00' AS DATE) AS DATETIME)` is
+/// `2020-01-01 00:00:00` in TiDB (captured, `gorun`), and without this it
+/// would be `10:30:00` -- a value the earlier formatted-string rendering
+/// could not express and so could not get wrong.
+///
+/// The `YEAR` arm returns BEFORE this, and must: Go's own `SetCoreTime` there
+/// is a no-op on already-midnight fields, but the arm's Time is `TypeDatetime`
+/// and answering a Date target with a Date-typed value would drop the
+/// `00:00:00` TiDB prints.
+fn truncate_clock_for_date(
+    mut time: tidb_datatype::Time,
+    kind: tidb_datatype::TimeType,
+) -> tidb_datatype::Time {
+    if kind != tidb_datatype::TimeType::Date {
+        return time;
+    }
+    let core = time.core_time();
+    time.set_core_time(tidb_datatype::CoreTime::from_date(
+        core.year() as u16,
+        core.month(),
+        core.day(),
+        0,
+        0,
+        0,
+        0,
+    ));
+    time
+}
+
 /// The `types.Time` Go's chosen `builtinCast*AsTimeSig` produces. `None` is
 /// Go's NULL (any warning already raised). `fsp` is Go's `b.tp.GetDecimal()`,
 /// the TARGET's own fractional-seconds precision, which every signature passes
@@ -840,6 +893,7 @@ fn cast_to_time_value(
                 modes.allow_invalid_dates,
             )
             .and_then(|time| time.round_frac(fsp, &ctx.time_zone()))
+            .map(|time| truncate_clock_for_date(time, kind))
             .ok());
     }
     let Some(s) = coerce_str(v)? else {
@@ -880,7 +934,7 @@ fn cast_to_time_value(
         invalid_time_warning(ctx, &s);
         return Ok(None);
     }
-    Ok(Some(time))
+    Ok(Some(truncate_clock_for_date(time, kind)))
 }
 
 /// Go's `WrapWithCastAsTime(ctx, expr, types.NewFieldType(mysql.TypeDatetime))`
@@ -1484,5 +1538,273 @@ mod tests {
             datetime(Datum::new_string("2017-01-18 12:34:56".to_string())),
             "2017-01-18 12:34:56",
         );
+    }
+
+    /// `CAST(x AS DATETIME(N))` carries the TARGET's fsp, per SOURCE KIND.
+    ///
+    /// CAPTURED from real TiDB (`gorun`) over
+    /// `tf(y year, d date, dt datetime(4), s varchar(40), i bigint, f double,
+    /// dc decimal(20,4), tm time(3))` holding
+    /// `(2019, '2020-02-03', '2020-02-03 11:22:33.4567',
+    /// '2020-02-03 11:22:33.987654', 20200203112233, 20200203112233.5,
+    /// 20200203112233.5000, '12:34:56.789')`:
+    ///
+    /// ```text
+    /// cast(y  as datetime(3))  2019-00-00 00:00:00       <- NO fraction
+    /// cast(d  as datetime(3))  2020-02-03 00:00:00.000
+    /// cast(dt as datetime(3))  2020-02-03 11:22:33.457   <- rounds .4567
+    /// cast(s  as datetime(3))  2020-02-03 11:22:33.988   <- rounds .987654
+    /// cast(i  as datetime(3))  2020-02-03 11:22:33.000
+    /// cast(f  as datetime(3))  2020-02-03 11:22:33.500
+    /// cast(dc as datetime(3))  2020-02-03 11:22:33.500
+    /// cast(dt as datetime(0))  2020-02-03 11:22:33
+    /// cast(dt as datetime(6))  2020-02-03 11:22:33.456700
+    /// cast(0  as datetime(3))  0000-00-00 00:00:00       <- NO fraction
+    /// ```
+    ///
+    /// The YEAR row is the one Go's `builtinCastIntAsTimeSig` never rounds
+    /// (`ParseTimeFromYear` then no `RoundFrac`), and the zero row is
+    /// `RoundFrac`'s own `t.IsZero()` early return. Both are the boundary
+    /// cases: an fsp applied unconditionally would print `.000` for them.
+    #[test]
+    fn the_target_fsp_reaches_every_source_kind() {
+        let text = |s: &str| Datum::new_string(s.to_owned());
+        for (source, fsp, want) in [
+            (
+                text("2020-02-03 11:22:33.987654"),
+                3,
+                "2020-02-03 11:22:33.988",
+            ),
+            (
+                text("2020-02-03 11:22:33.4567"),
+                3,
+                "2020-02-03 11:22:33.457",
+            ),
+            (text("2020-02-03 11:22:33.4567"), 0, "2020-02-03 11:22:33"),
+            (
+                text("2020-02-03 11:22:33.4567"),
+                6,
+                "2020-02-03 11:22:33.456700",
+            ),
+            (text("2020-02-03"), 3, "2020-02-03 00:00:00.000"),
+            (Datum::Int(20_200_203_112_233), 3, "2020-02-03 11:22:33.000"),
+            (
+                Datum::Real(20_200_203_112_233.5),
+                3,
+                "2020-02-03 11:22:33.500",
+            ),
+            (
+                Datum::Decimal(Decimal::from_literal("20200203112233.5000")),
+                3,
+                "2020-02-03 11:22:33.500",
+            ),
+            // `RoundFrac`'s `t.IsZero()` early return: a zero number keeps
+            // fsp 0 whatever the target asks for.
+            (Datum::Int(0), 3, "0000-00-00 00:00:00"),
+        ] {
+            assert_eq!(
+                datetime_fsp(source.clone(), fsp),
+                want,
+                "{source:?} @ {fsp}"
+            );
+        }
+    }
+
+    /// The target fsp ROUNDS, and the carry crosses the day boundary.
+    ///
+    /// This is the half a rendering-only fsp cannot reach: with the literal's
+    /// own precision handed to the parser, `.5` survived to the renderer and
+    /// was TRUNCATED away. CAPTURED (`gorun`):
+    /// `cast('2020-01-01 23:59:59.5' as datetime)` is `2020-01-02 00:00:00`,
+    /// `... as datetime(1)` is `2020-01-01 23:59:59.5`, and
+    /// `cast('2020-01-01 23:59:59.6' as date)` is `2020-01-02`.
+    #[test]
+    fn the_target_fsp_rounds_and_the_carry_crosses_midnight() {
+        assert_eq!(
+            datetime_fsp(Datum::new_string("2020-01-01 23:59:59.5".to_owned()), 0),
+            "2020-01-02 00:00:00"
+        );
+        assert_eq!(
+            datetime_fsp(Datum::new_string("2020-01-01 23:59:59.5".to_owned()), 1),
+            "2020-01-01 23:59:59.5"
+        );
+        let date = cast_to_time(
+            &Datum::new_string("2020-01-01 23:59:59.6".to_owned()),
+            None,
+            &NoColumns,
+            tidb_datatype::TimeType::Date,
+            0,
+        )
+        .expect("cast");
+        assert_eq!(rendered(&date), "2020-01-02");
+    }
+
+    /// A zero YEAR field keeps its own month and day.
+    ///
+    /// The old renderer was `DATE_ADD`'s `format_ymdhms_result`, whose first
+    /// line is `if y == 0 { return "0000-00-00 {h}:{m}:{s}" }` -- it collapsed
+    /// the month and day of any zero-year value. CAPTURED (`gorun`):
+    /// `cast('0000-01-02 03:04:05' as datetime)` is `0000-01-02 03:04:05`,
+    /// `cast('0000-01-02' as date)` is `0000-01-02`, and
+    /// `cast('2020-00-03 01:02:03' as datetime)` keeps its zero MONTH too.
+    #[test]
+    fn a_zero_year_keeps_its_month_and_day() {
+        assert_eq!(
+            datetime(Datum::new_string("0000-01-02 03:04:05".to_owned())),
+            "0000-01-02 03:04:05"
+        );
+        assert_eq!(
+            datetime(Datum::new_string("2020-00-03 01:02:03".to_owned())),
+            "2020-00-03 01:02:03"
+        );
+        assert_eq!(
+            datetime_fsp(Datum::new_string("0000-01-02 03:04:05.5".to_owned()), 2),
+            "0000-01-02 03:04:05.50"
+        );
+    }
+
+    /// A DURATION source lands on the statement's calendar date and keeps the
+    /// TARGET's fsp, rounding to it.
+    ///
+    /// Go `builtinCastDurationAsTimeSig` is
+    /// `val.ConvertToTimeWithTimestamp(tc, b.tp.GetType(), ts)` followed by
+    /// `res.RoundFrac(tc, b.tp.GetDecimal())`. CAPTURED (`gorun`) on
+    /// 2026-08-06 over `tm time(3)` holding `12:34:56.789`:
+    /// `cast(tm as datetime(3))` is `2026-08-06 12:34:56.789` and
+    /// `cast(tm as date)` is `2026-08-06`. The fsp-1 row is this test's own
+    /// boundary: it is the only one where dropping the `RoundFrac` is visible,
+    /// because at fsp 3 the duration's own precision already matches.
+    #[test]
+    fn a_duration_source_takes_the_statement_date_and_the_target_fsp() {
+        struct AtNoon;
+        impl crate::Columns for AtNoon {
+            fn get(&self, _: &[String]) -> Option<Datum> {
+                None
+            }
+            // 2026-08-06T00:00:00Z, UTC: the calendar date Go reads off
+            // `ts.In(ctx.Location())`.
+            fn now(&self) -> Option<(i64, u32, i32)> {
+                Some((1_785_974_400, 0, 0))
+            }
+        }
+        let duration = Datum::Duration(
+            tidb_datatype::MySqlDuration::new(12, 34, 56, 789_000, 3).expect("a duration"),
+        );
+        for (kind, fsp, want) in [
+            (
+                tidb_datatype::TimeType::DateTime,
+                3,
+                "2026-08-06 12:34:56.789",
+            ),
+            (
+                tidb_datatype::TimeType::DateTime,
+                1,
+                "2026-08-06 12:34:56.8",
+            ),
+            (tidb_datatype::TimeType::DateTime, 0, "2026-08-06 12:34:57"),
+            (tidb_datatype::TimeType::Date, 0, "2026-08-06"),
+        ] {
+            let got = cast_to_time(&duration, None, &AtNoon, kind, fsp).expect("cast");
+            assert_eq!(rendered(&got), want, "{kind:?} @ {fsp}");
+        }
+    }
+
+    /// A `DATE` target ZEROES the clock in the VALUE, not just in the
+    /// rendering.
+    ///
+    /// Go repeats `res.SetCoreTime(types.FromDate(res.Year(), res.Month(),
+    /// res.Day(), 0, 0, 0, 0))` in six signatures; the stored clock is
+    /// observable through a second cast. CAPTURED (`gorun`):
+    /// `cast(cast('2020-01-01 10:30:00' as date) as datetime)` is
+    /// `2020-01-01 00:00:00`, and the `datetime(3)` form is `...00.000`.
+    ///
+    /// This is the case a formatted-string result could not get wrong,
+    /// because the clock had nowhere to survive -- so it is exactly the case
+    /// answering a `Datum::Time` had to add a rule for.
+    #[test]
+    fn a_date_target_zeroes_the_clock_in_the_value() {
+        let date = cast_to_time(
+            &Datum::new_string("2020-01-01 10:30:00".to_owned()),
+            None,
+            &NoColumns,
+            tidb_datatype::TimeType::Date,
+            0,
+        )
+        .expect("cast");
+        assert_eq!(rendered(&date), "2020-01-01");
+        let Datum::Time(inner) = date else {
+            panic!("a DATE cast must be a Datum::Time")
+        };
+        assert_eq!(
+            datetime(Datum::Time(inner)),
+            "2020-01-01 00:00:00",
+            "the clock must be GONE from the value, not merely hidden"
+        );
+        assert_eq!(
+            datetime_fsp(Datum::Time(inner), 3),
+            "2020-01-01 00:00:00.000"
+        );
+    }
+
+    /// A `Datum::Time` source is RE-TYPED and ROUNDED, never re-parsed.
+    ///
+    /// Go `builtinCastTimeAsTimeSig` is `res.Convert(tc, b.tp.GetType())` then
+    /// `res.RoundFrac(tc, b.tp.GetDecimal())`. CAPTURED (`gorun`) over
+    /// `dt datetime(4)` holding `2020-02-03 11:22:33.4567`:
+    /// `cast(dt as datetime(3))` is `...33.457`, `cast(dt as datetime(6))` is
+    /// `...33.456700`, and `cast(dt as date)` is `2020-02-03`.
+    #[test]
+    fn a_time_source_is_retyped_and_rounded() {
+        let source = tidb_datatype::parse_time(
+            "2020-02-03 11:22:33.4567",
+            tidb_datatype::TimeType::DateTime,
+            4,
+            false,
+            true,
+            false,
+            &tidb_datatype::SessionTimeZone::utc(),
+        )
+        .expect("the source value")
+        .time;
+        assert_eq!(
+            datetime_fsp(Datum::Time(source), 3),
+            "2020-02-03 11:22:33.457"
+        );
+        assert_eq!(
+            datetime_fsp(Datum::Time(source), 6),
+            "2020-02-03 11:22:33.456700"
+        );
+        let date = cast_to_time(
+            &Datum::Time(source),
+            None,
+            &NoColumns,
+            tidb_datatype::TimeType::Date,
+            0,
+        )
+        .expect("cast");
+        assert_eq!(rendered(&date), "2020-02-03");
+    }
+
+    /// A `YEAR` source keeps `ParseTimeFromYear`'s DATETIME type even under a
+    /// DATE target, and takes no fsp.
+    ///
+    /// Go's `builtinCastIntAsTimeSig` ends with
+    /// `res.SetCoreTime(types.FromDate(res.Year(), res.Month(), res.Day(), 0,
+    /// 0, 0, 0))` for a DATE target -- it rewrites the CLOCK FIELDS (already
+    /// midnight) and never calls `SetType`. CAPTURED (`gorun`) over
+    /// `y year` holding `2019`: `cast(y as date)` is `2019-00-00 00:00:00`,
+    /// NOT `2019-00-00`.
+    #[test]
+    fn a_year_source_renders_as_a_datetime_under_a_date_target() {
+        let mut year_type = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Year);
+        year_type.set_flen(4);
+        for (kind, fsp) in [
+            (tidb_datatype::TimeType::Date, 0),
+            (tidb_datatype::TimeType::DateTime, 3),
+        ] {
+            let got = cast_to_time(&Datum::Int(2019), Some(&year_type), &NoColumns, kind, fsp)
+                .expect("cast");
+            assert_eq!(rendered(&got), "2019-00-00 00:00:00", "{kind:?} @ {fsp}");
+        }
     }
 }

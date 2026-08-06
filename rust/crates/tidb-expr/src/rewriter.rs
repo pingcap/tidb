@@ -1605,6 +1605,32 @@ mod builtin_type_tests {
         }
     }
 
+    /// A temporal CAST declares Go's own result type, not a string.
+    ///
+    /// `castAsTimeFunctionClass` types its result `TypeDate`/`TypeDatetime`
+    /// with the widths `WrapWithCastAsTime` spells out (`MaxDateWidth` 10,
+    /// `MaxDatetimeWidthNoFsp` 19, plus `1 + decimal` for an fsp). This arm
+    /// used to answer `VarString` because `cast::eval_cast` rendered a
+    /// temporal target into formatted text; the consequence was structural,
+    /// not cosmetic -- `LAG(datetime6_col, 1, CAST(...))` merged to VARCHAR
+    /// where TiDB merges to `datetime(6)`.
+    #[test]
+    fn a_temporal_cast_declares_a_temporal_result_type() {
+        for (sql, code, flen, decimal) in [
+            ("cast(a as date)", FieldTypeCode::Date, 10, 0),
+            ("cast(a as datetime)", FieldTypeCode::Datetime, 19, 0),
+            ("cast(a as datetime(3))", FieldTypeCode::Datetime, 23, 3),
+            ("cast(a as datetime(6))", FieldTypeCode::Datetime, 26, 6),
+        ] {
+            let ft = ret_type(sql);
+            assert_eq!(
+                (ft.code(), ft.flen(), ft.decimal()),
+                (code, flen, decimal),
+                "{sql}"
+            );
+        }
+    }
+
     fn eval(sql_expr: &str) -> Datum {
         let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
         chunk.set_num_virtual_rows(1);

@@ -216,21 +216,38 @@ pub enum CastType {
     },
     /// `DATE`.
     Date,
-    /// `DATETIME[(fsp)]`. `fsp` (fractional seconds precision) is parsed
-    /// and restored for fidelity but not modelled at evaluation time —
-    /// this crate's date values have no fractional-second component at
-    /// all (see `tidb_expr::date_fn`'s own doc).
+    /// `DATETIME[(fsp)]`. `fsp` (fractional seconds precision) is parsed,
+    /// restored, AND modelled at evaluation time: it is Go's own
+    /// `b.tp.GetDecimal()`, which every `builtinCast*AsTimeSig` hands to its
+    /// parser or applies with `RoundFrac`, and `tidb_expr::cast` answers a
+    /// `Datum::Time` carrying it (`cast('...12:00:00.123456' as datetime(3))`
+    /// is `...12:00:00.123`, and the rounding CARRIES:
+    /// `cast('2020-01-01 23:59:59.5' as datetime)` is `2020-01-02 00:00:00`).
+    ///
+    /// This doc used to say the fsp was "not modelled at evaluation time —
+    /// this crate's date values have no fractional-second component at all",
+    /// which was true of an earlier formatted-string result and false of
+    /// every version since `tidb_datatype::Time` reached the cast path.
     DateTime {
         /// The fractional-seconds-precision digit, if given.
         fsp: Option<u32>,
     },
-    /// `TIME[(fsp)]`. Parses and restores fully, but evaluation is
-    /// deliberately `Unsupported` — MySQL `TIME` is an elapsed-time
-    /// domain (can exceed 24 hours, can be negative), genuinely different
-    /// from this crate's `DATE`/`DATETIME` (plain formatted strings) and
-    /// not yet modelled at all (confirmed via `goeval`: a `TIME`-typed
-    /// result is a `KindMysqlDuration` Datum, a value kind this project's
-    /// oracle tooling doesn't even have a comparison label for yet).
+    /// `TIME[(fsp)]`. Parses and restores fully; evaluation is
+    /// `Unsupported`.
+    ///
+    /// The REASON this doc used to give — "not yet modelled at all",
+    /// an elapsed-time domain this crate lacks — is STALE and wrong.
+    /// Measured: `tidb_datatype::MySqlDuration` exists with
+    /// `round_frac`/`to_number`/`Display`, `tidb_datatype::parse_duration`
+    /// and `number_to_duration` are public, `Time::to_duration` exists,
+    /// `Datum::convert_to_duration_target` is a complete write-path port,
+    /// `tidb_chunk::Row::get_datum` reads a `FieldTypeCode::Duration` cell as
+    /// `Datum::Duration`, and `tidb_expr::ops` already compares and
+    /// arithmetics on one. What is missing is the CAST WIRING: Go's
+    /// `castAsDurationFunctionClass` and its seven signatures, each with its
+    /// own parser and its own truncation-becomes-NULL rule. See
+    /// `tidb_expr::cast_inventory`'s section 2f for the full list and for why
+    /// it is filed as a rung of its own rather than half-built.
     Time {
         /// The fractional-seconds-precision digit, if given.
         fsp: Option<u32>,

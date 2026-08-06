@@ -1277,6 +1277,54 @@ mod tests {
         assert_eq!(rand.eval(&columns, row).unwrap(), Datum::Real(0.75));
     }
 
+    /// The rewriter records only the target KIND in the function name, so
+    /// every width the cast target carries has to travel in the RESULT TYPE
+    /// and be read back here -- Go's own `b.tp.GetFlen()`/`GetDecimal()`.
+    ///
+    /// The `datetime` row is the one that was WRONG: the arm read
+    /// `fsp: None` unconditionally, so `cast::eval_cast` -- which has had the
+    /// fsp rule since it was written -- never saw the width and
+    /// `cast(a as datetime(3))` printed `2020-01-01 12:00:00` where TiDB
+    /// prints `2020-01-01 12:00:00.123` (`expression/cast`, recorded).
+    #[test]
+    fn a_cast_target_reads_its_widths_back_out_of_the_result_type() {
+        use tidb_ast::CastType;
+
+        let typed = |code, flen: i64, decimal: i64| {
+            let mut ft = FieldType::new(code);
+            ft.set_flen(flen);
+            ft.set_decimal(decimal);
+            ft
+        };
+        let datetime3 = typed(FieldTypeCode::Datetime, 23, 3);
+        assert_eq!(
+            cast_type_of("datetime", &datetime3).unwrap(),
+            CastType::DateTime { fsp: Some(3) }
+        );
+        // A bare DATETIME is DATETIME(0), which must stay distinguishable
+        // from "unspecified" only in name: both render no fraction.
+        assert_eq!(
+            cast_type_of("datetime", &typed(FieldTypeCode::Datetime, 19, 0)).unwrap(),
+            CastType::DateTime { fsp: Some(0) }
+        );
+        // A DATE target has no fsp at all, whatever the type says.
+        assert_eq!(
+            cast_type_of("date", &datetime3).unwrap(),
+            CastType::Date,
+            "a DATE target never carries a fraction"
+        );
+        // The other width-carrying targets, unchanged, as the control: if the
+        // result type ever stopped carrying widths this would fail too.
+        assert_eq!(
+            cast_type_of("decimal", &typed(FieldTypeCode::NewDecimal, 10, 2)).unwrap(),
+            CastType::Decimal { flen: 10, scale: 2 }
+        );
+        assert_eq!(
+            cast_type_of("binary", &typed(FieldTypeCode::VarString, 5, 0)).unwrap(),
+            CastType::Binary { len: Some(5) }
+        );
+    }
+
     #[test]
     fn different_functions_hash_differently() {
         let mut a = plus(vec![Expression::Column(Column::new(1, ft()))]);
