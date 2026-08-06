@@ -148,13 +148,6 @@ type infoschemaMinTS interface {
 	GetAndResetRecentInfoSchemaTS(now uint64) uint64
 }
 
-// WithoutStatusEndpointClaim prevents the InfoSyncer from claiming the configured status endpoint.
-// It is intended only for the non-serving Domain created while initializing global variables.
-// A serving primary TiDB Domain must keep the default endpoint-claim behavior.
-func WithoutStatusEndpointClaim() serverinfo.SyncerOption {
-	return serverinfo.WithoutStatusEndpointClaim()
-}
-
 // GlobalInfoSyncerInit return a new InfoSyncer. It is exported for testing.
 func GlobalInfoSyncerInit(
 	ctx context.Context,

@@ -37,10 +37,10 @@ import (
 // serverStatusAddressPath stores active advertised status endpoint claims.
 const serverStatusAddressPath = "/tidb/server/status_addr"
 
-type statusEndpointClaimState int
+type endpointClaimState int
 
 const (
-	statusEndpointClaimSkipped statusEndpointClaimState = iota
+	statusEndpointClaimSkipped endpointClaimState = iota
 	statusEndpointClaimAcquired
 	statusEndpointClaimConflict
 	statusEndpointClaimCheckFailed
@@ -48,7 +48,7 @@ const (
 
 // statusEndpointClaimResult carries the outcome and diagnostic details of one claim attempt.
 type statusEndpointClaimResult struct {
-	state         statusEndpointClaimState
+	state         endpointClaimState
 	endpoint      string
 	claimKey      string
 	localID       string
@@ -141,19 +141,7 @@ func (c *statusEndpointClaim) acquire(ctx context.Context, lease clientv3.LeaseI
 	defer cancel()
 
 	created, observed, err := c.tryCreate(claimCtx, lease)
-	if err != nil {
-		result.state = statusEndpointClaimCheckFailed
-		result.err = err
-		return result
-	}
-	if created {
-		result.state = statusEndpointClaimAcquired
-		return result
-	}
-	result.existingID = observed.id
-	result.existingLease = observed.lease
-	if observed.id != result.localID {
-		result.state = statusEndpointClaimConflict
+	if result.applyCreateResult(created, observed, err) {
 		return result
 	}
 
@@ -169,25 +157,36 @@ func (c *statusEndpointClaim) acquire(ctx context.Context, lease clientv3.LeaseI
 	}
 
 	created, observed, err = c.tryCreate(claimCtx, lease)
-	if err != nil {
-		result.state = statusEndpointClaimCheckFailed
-		result.err = err
-		return result
-	}
-	if created {
-		result.state = statusEndpointClaimAcquired
-		return result
-	}
-	result.existingID = observed.id
-	result.existingLease = observed.lease
-	if observed.id != result.localID {
-		result.state = statusEndpointClaimConflict
+	if result.applyCreateResult(created, observed, err) {
 		return result
 	}
 
 	result.state = statusEndpointClaimCheckFailed
 	result.err = errors.New("advertised status endpoint claim changed while reattaching the same server info ID")
 	return result
+}
+
+func (r *statusEndpointClaimResult) applyCreateResult(
+	created bool,
+	observed observedStatusEndpointClaim,
+	err error,
+) bool {
+	if err != nil {
+		r.state = statusEndpointClaimCheckFailed
+		r.err = err
+		return true
+	}
+	if created {
+		r.state = statusEndpointClaimAcquired
+		return true
+	}
+	r.existingID = observed.id
+	r.existingLease = observed.lease
+	if observed.id != r.localID {
+		r.state = statusEndpointClaimConflict
+		return true
+	}
+	return false
 }
 
 func (c *statusEndpointClaim) tryCreate(
@@ -271,13 +270,12 @@ func (c *statusEndpointClaim) reportResult(result statusEndpointClaimResult) {
 	}
 }
 
-func (c *statusEndpointClaim) cleanupFields(lease clientv3.LeaseID, action string) []zap.Field {
+func (c *statusEndpointClaim) cleanupFields(lease clientv3.LeaseID) []zap.Field {
 	return []zap.Field{
 		zap.String("advertised-status-endpoint", c.endpoint),
 		zap.String("claim-key", c.key),
 		zap.String("local-server-info-id", c.localID),
 		zap.String("lease-id", tidbutil.FormatLeaseID(lease)),
-		zap.String("action", action),
 	}
 }
 

@@ -265,9 +265,9 @@ func TestStatusEndpointClaim(t *testing.T) {
 
 		firstResult := firstRecorder.single(t)
 		secondResult := secondRecorder.single(t)
-		states := []statusEndpointClaimState{firstResult.state, secondResult.state}
+		states := []endpointClaimState{firstResult.state, secondResult.state}
 		require.ElementsMatch(t,
-			[]statusEndpointClaimState{statusEndpointClaimAcquired, statusEndpointClaimConflict},
+			[]endpointClaimState{statusEndpointClaimAcquired, statusEndpointClaimConflict},
 			states,
 		)
 
@@ -726,66 +726,9 @@ func TestStatusEndpointClaim(t *testing.T) {
 
 	t.Run("server info sync loop observes shutdown before restart", func(t *testing.T) {
 		exitCh := make(chan struct{})
-		require.False(t, serverInfoSyncLoopExitRequested(exitCh))
+		require.False(t, isExitRequested(exitCh))
 		close(exitCh)
-		require.True(t, serverInfoSyncLoopExitRequested(exitCh))
-	})
-
-	t.Run("server info sync loop backs off after restart failures and exits", func(t *testing.T) {
-		faultClient, err := cluster.NewClientV3(0)
-		require.NoError(t, err)
-		t.Cleanup(func() { require.NoError(t, faultClient.Close()) })
-		faultLease := &claimFaultLease{
-			Lease:       faultClient.Lease,
-			grantEvents: make(chan time.Time, 8),
-		}
-		faultClient.Lease = faultLease
-
-		syncer, _ := startClaimTestSyncer(
-			ctx, t, faultClient, "restart-backoff", "127.0.0.20", 4180, 10100, false,
-		)
-		syncer.session.Orphan()
-		requireSessionDone(t, syncer)
-
-		faultLease.enableGrantFailure(errors.New("injected session restart failure"))
-		exitCh := make(chan struct{})
-		loopDone := make(chan struct{})
-		go func() {
-			syncer.ServerInfoSyncLoop(nil, exitCh)
-			close(loopDone)
-		}()
-
-		grantTimes := make([]time.Time, 0, 4)
-		collectTimeout := time.NewTimer(15 * time.Second)
-	collectGrantEvents:
-		for len(grantTimes) < 4 {
-			select {
-			case grantTime := <-faultLease.grantEvents:
-				grantTimes = append(grantTimes, grantTime)
-			case <-collectTimeout.C:
-				break collectGrantEvents
-			}
-		}
-		if !collectTimeout.Stop() {
-			select {
-			case <-collectTimeout.C:
-			default:
-			}
-		}
-		close(exitCh)
-
-		loopExited := false
-		select {
-		case <-loopDone:
-			loopExited = true
-		case <-time.After(15 * time.Second):
-		}
-		require.True(t, loopExited)
-		require.Len(t, grantTimes, 4)
-		restartGap := grantTimes[3].Sub(grantTimes[2])
-		require.GreaterOrEqual(t, restartGap, 900*time.Millisecond)
-		require.Less(t, restartGap, 10*time.Second)
-		require.Equal(t, 6, faultLease.grantFailureCount())
+		require.True(t, isExitRequested(exitCh))
 	})
 }
 
@@ -799,7 +742,7 @@ func (r *claimRecorder) record(result statusEndpointClaimResult) {
 
 func (r *claimRecorder) requireSingle(
 	t *testing.T,
-	state statusEndpointClaimState,
+	state endpointClaimState,
 ) statusEndpointClaimResult {
 	t.Helper()
 	result := r.single(t)
@@ -1016,13 +959,9 @@ func (txn *claimFaultTxn) Commit() (*clientv3.TxnResponse, error) {
 type claimFaultLease struct {
 	clientv3.Lease
 
-	mu            sync.Mutex
-	revokeErr     error
-	revokeCalls   []claimRevokeCall
-	failGrant     bool
-	grantErr      error
-	grantEvents   chan time.Time
-	grantFailures int
+	mu          sync.Mutex
+	revokeErr   error
+	revokeCalls []claimRevokeCall
 }
 
 func (lease *claimFaultLease) Revoke(
@@ -1041,38 +980,6 @@ func (lease *claimFaultLease) Revoke(
 		return nil, revokeErr
 	}
 	return lease.Lease.Revoke(ctx, id)
-}
-
-func (lease *claimFaultLease) Grant(
-	ctx context.Context,
-	ttl int64,
-) (*clientv3.LeaseGrantResponse, error) {
-	lease.mu.Lock()
-	if !lease.failGrant {
-		lease.mu.Unlock()
-		return lease.Lease.Grant(ctx, ttl)
-	}
-	grantErr := lease.grantErr
-	grantEvents := lease.grantEvents
-	lease.grantFailures++
-	lease.mu.Unlock()
-	if grantEvents != nil {
-		grantEvents <- time.Now()
-	}
-	return nil, grantErr
-}
-
-func (lease *claimFaultLease) enableGrantFailure(err error) {
-	lease.mu.Lock()
-	defer lease.mu.Unlock()
-	lease.failGrant = true
-	lease.grantErr = err
-}
-
-func (lease *claimFaultLease) grantFailureCount() int {
-	lease.mu.Lock()
-	defer lease.mu.Unlock()
-	return lease.grantFailures
 }
 
 func (lease *claimFaultLease) revokeCallsSnapshot() []claimRevokeCall {

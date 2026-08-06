@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
@@ -80,7 +79,7 @@ func (dm *domainMap) GetOrCreateWithFilter(store kv.Storage, filter issyncer.Fil
 }
 
 func (dm *domainMap) getDomainForGlobalVarInit(store kv.Storage) (d *domain.Domain, err error) {
-	return dm.getWithEtcdClient(store, nil, systemDBFilter{}, infosync.WithoutStatusEndpointClaim())
+	return dm.getWithEtcdClient(store, nil, systemDBFilter{}, serverinfo.WithoutStatusEndpointClaim())
 }
 
 func (dm *domainMap) getWithEtcdClient(

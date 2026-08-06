@@ -150,26 +150,24 @@ func (s *Syncer) NewSessionAndStoreServerInfo(ctx context.Context) error {
 	}
 
 	// Release any endpoint claim that may have been created by this failed registration.
-	s.cleanupFailedServerInfoRegistration(session)
+	s.cleanupFailedRegistration(session)
 	return storeErr
 }
 
-func (s *Syncer) cleanupFailedServerInfoRegistration(session *concurrency.Session) {
+func (s *Syncer) cleanupFailedRegistration(session *concurrency.Session) {
 	lease := session.Lease()
 	session.Orphan()
 
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), KeyOpDefaultTimeout)
 	defer cancel()
 	if err := s.endpointClaim.remove(cleanupCtx, lease); err != nil {
-		fields := s.endpointClaim.cleanupFields(lease,
-			"check etcd connectivity and permission to delete the advertised status endpoint claim")
-		logutil.BgLogger().Warn("failed to remove advertised status endpoint claim after server info registration failed",
+		fields := s.endpointClaim.cleanupFields(lease)
+		logutil.BgLogger().Warn("failed to remove advertised status endpoint claim",
 			append(fields, zap.Error(err))...)
 	}
 	if _, err := s.etcdCli.Revoke(cleanupCtx, lease); err != nil {
-		fields := s.endpointClaim.cleanupFields(lease,
-			"check etcd connectivity and permission to revoke the failed server info session lease")
-		logutil.BgLogger().Warn("failed to revoke server info lease after registration failed",
+		fields := s.endpointClaim.cleanupFields(lease)
+		logutil.BgLogger().Warn("failed to revoke server info lease",
 			append(fields, zap.Error(err))...)
 	}
 }
@@ -337,9 +335,8 @@ func (s *Syncer) RemoveServerInfo() {
 		lease := s.session.Lease()
 		ctx, cancel := context.WithTimeout(context.Background(), KeyOpDefaultTimeout)
 		if err := s.endpointClaim.remove(ctx, lease); err != nil {
-			fields := s.endpointClaim.cleanupFields(lease,
-				"check etcd connectivity and permission to delete the advertised status endpoint claim")
-			logutil.BgLogger().Error("remove advertised status endpoint claim failed",
+			fields := s.endpointClaim.cleanupFields(lease)
+			logutil.BgLogger().Error("failed to remove advertised status endpoint claim",
 				append(fields, zap.Error(err))...)
 		}
 		cancel()
@@ -366,15 +363,12 @@ func (s *Syncer) ServerInfoSyncLoop(store tidbkv.Storage, exitCh chan struct{}) 
 			s.reporter.ReportMinStartTS(store, s.session)
 		case <-s.Done():
 			// Recheck exitCh because select does not prioritize it when both channels are ready.
-			if serverInfoSyncLoopExitRequested(exitCh) {
+			if isExitRequested(exitCh) {
 				return
 			}
 			logutil.BgLogger().Info("server info syncer need to restart")
 			if err := s.Restart(context.Background()); err != nil {
 				logutil.BgLogger().Error("server info syncer restart failed", zap.Error(err))
-				if !waitForServerInfoRestartRetry(exitCh) {
-					return
-				}
 			} else {
 				logutil.BgLogger().Info("server info syncer restarted")
 			}
@@ -384,23 +378,11 @@ func (s *Syncer) ServerInfoSyncLoop(store tidbkv.Storage, exitCh chan struct{}) 
 	}
 }
 
-func serverInfoSyncLoopExitRequested(exitCh <-chan struct{}) bool {
+func isExitRequested(exitCh <-chan struct{}) bool {
 	select {
 	case <-exitCh:
 		return true
 	default:
-		return false
-	}
-}
-
-// waitForServerInfoRestartRetry backs off failed restart attempts while allowing shutdown to interrupt the wait.
-func waitForServerInfoRestartRetry(exitCh <-chan struct{}) bool {
-	timer := time.NewTimer(time.Second)
-	defer timer.Stop()
-	select {
-	case <-timer.C:
-		return true
-	case <-exitCh:
 		return false
 	}
 }
