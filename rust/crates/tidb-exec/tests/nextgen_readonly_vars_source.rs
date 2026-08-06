@@ -166,16 +166,23 @@ fn declined_lease_runtime_seams_are_explicit() {
     assert!(server_boot.contains("spawn_catalog_reloader"));
     assert!(server_boot.contains("config.schema_lease"));
 
+    let declined_items: Vec<&str> = INVENTORY
+        .lines()
+        .filter(|line| !line.is_empty() && !line.starts_with('#') && !line.starts_with("id\t"))
+        .map(|line| line.split('\t').collect::<Vec<_>>())
+        .filter(|row| row.get(3) == Some(&"DECLINED"))
+        .map(|row| row[2])
+        .collect();
     for declined in [
-        "SetSchemaLease",
-        "GetSchemaLease",
-        "SetStatsLease",
-        "GetStatsLease",
-        "SetPlanReplayerGCLease",
-        "GetPlanReplayerGCLease",
+        "SetSchemaLease(lease time.Duration)",
+        "GetSchemaLease() time.Duration",
+        "SetStatsLease(lease time.Duration)",
+        "GetStatsLease() time.Duration",
+        "SetPlanReplayerGCLease(lease time.Duration)",
+        "GetPlanReplayerGCLease() time.Duration",
     ] {
         assert!(
-            INVENTORY.contains(declined),
+            declined_items.contains(&declined),
             "missing decline for {declined}"
         );
     }
