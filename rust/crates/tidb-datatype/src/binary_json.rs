@@ -140,8 +140,14 @@ pub enum BinaryJSONError {
     KeyTooLong,
     /// One UTF-16 high or low surrogate appeared without its pair.
     LoneSurrogate,
-    /// A modifying operation received a wildcard, range, recursive, or root path.
-    InvalidPath,
+    /// JSON modification received different path and value counts.
+    IncorrectParameterCount,
+    /// A modifying path contains `*`, `**`, or an array range.
+    InvalidPathMultipleSelection,
+    /// JSON_ARRAY_INSERT did not receive an exact array-cell path.
+    InvalidPathArrayCell,
+    /// A root-only path was used where removing the document is forbidden.
+    VacuousPath,
 }
 
 impl fmt::Display for BinaryJSONError {
@@ -158,7 +164,16 @@ impl fmt::Display for BinaryJSONError {
                 "[types:8129]TiDB does not yet support JSON objects with the key length >= 65536",
             ),
             Self::LoneSurrogate => formatter.write_str("invalid lone UTF-16 surrogate"),
-            Self::InvalidPath => formatter.write_str("invalid JSON path for modification"),
+            Self::IncorrectParameterCount => formatter.write_str("Incorrect parameter count"),
+            Self::InvalidPathMultipleSelection => formatter.write_str(
+                "In this situation, path expressions may not contain the * and ** tokens or an array range.",
+            ),
+            Self::InvalidPathArrayCell => {
+                formatter.write_str("A path expression is not a path to a cell in an array.")
+            }
+            Self::VacuousPath => {
+                formatter.write_str("The path expression '$' is not allowed in this context.")
+            }
         }
     }
 }
@@ -522,13 +537,32 @@ pub fn unquote_string(text: &str) -> Result<String, BinaryJSONError> {
 
 /// Quotes a JSON path key, leaving an unescaped ECMAScript identifier bare.
 pub fn quote_json_string(text: &str) -> String {
-    let quoted = serde_json::to_string(text).expect("Rust string is valid JSON text");
-    if is_ecmascript_identifier(text)
-        && quoted.as_bytes()[1..quoted.len() - 1] == text.as_bytes()[..]
-    {
-        text.to_owned()
-    } else {
+    let mut quoted = String::with_capacity(text.len() + 2);
+    quoted.push('"');
+    let mut escaped = false;
+    for ch in text.chars() {
+        let replacement = match ch {
+            '\\' => Some("\\\\"),
+            '"' => Some("\\\""),
+            '\u{8}' => Some("\\b"),
+            '\u{c}' => Some("\\f"),
+            '\n' => Some("\\n"),
+            '\r' => Some("\\r"),
+            '\t' => Some("\\t"),
+            _ => None,
+        };
+        if let Some(replacement) = replacement {
+            escaped = true;
+            quoted.push_str(replacement);
+        } else {
+            quoted.push(ch);
+        }
+    }
+    if escaped || !is_ecmascript_identifier(text) {
+        quoted.push('"');
         quoted
+    } else {
+        text.to_owned()
     }
 }
 
@@ -673,6 +707,11 @@ pub fn compare_binary_json(left: &BinaryJSON, right: &BinaryJSON) -> Ordering {
     if left_rank != right_rank {
         return left_rank.cmp(&right_rank);
     }
+    if left_rank == 4 {
+        if let Some(ordering) = compare_binary_json_number(left, right) {
+            return ordering;
+        }
+    }
     if left.type_code == JSON_TYPE_CODE_OPAQUE && right.type_code == JSON_TYPE_CODE_OPAQUE {
         return match (left.opaque(), right.opaque()) {
             (Ok(left), Ok(right)) => left.bytes.cmp(&right.bytes),
@@ -709,6 +748,62 @@ pub fn compare_binary_json(left: &BinaryJSON, right: &BinaryJSON) -> Ordering {
         (Ok(left), Ok(right)) => compare_json_value(&left, &right),
         _ => left.value.cmp(&right.value),
     }
+}
+
+fn compare_binary_json_number(left: &BinaryJSON, right: &BinaryJSON) -> Option<Ordering> {
+    let float_integer = |real: f64, integer: f64| {
+        if (real - integer).abs() < FLOAT_EPSILON {
+            Ordering::Equal
+        } else if real < integer {
+            Ordering::Less
+        } else {
+            Ordering::Greater
+        }
+    };
+    Some(match (left.type_code, right.type_code) {
+        (JSON_TYPE_CODE_INT64, JSON_TYPE_CODE_INT64) => left.as_i64()?.cmp(&right.as_i64()?),
+        (JSON_TYPE_CODE_INT64, JSON_TYPE_CODE_UINT64) => {
+            let left = left.as_i64()?;
+            if left < 0 {
+                Ordering::Less
+            } else {
+                (left as u64).cmp(&right.as_u64()?)
+            }
+        }
+        (JSON_TYPE_CODE_UINT64, JSON_TYPE_CODE_INT64) => {
+            let right = right.as_i64()?;
+            if right < 0 {
+                Ordering::Greater
+            } else {
+                left.as_u64()?.cmp(&(right as u64))
+            }
+        }
+        (JSON_TYPE_CODE_UINT64, JSON_TYPE_CODE_UINT64) => left.as_u64()?.cmp(&right.as_u64()?),
+        (JSON_TYPE_CODE_FLOAT64, JSON_TYPE_CODE_INT64) => {
+            float_integer(left.as_f64()?, right.as_i64()? as f64)
+        }
+        (JSON_TYPE_CODE_FLOAT64, JSON_TYPE_CODE_UINT64) => {
+            float_integer(left.as_f64()?, right.as_u64()? as f64)
+        }
+        (JSON_TYPE_CODE_INT64, JSON_TYPE_CODE_FLOAT64) => {
+            float_integer(right.as_f64()?, left.as_i64()? as f64).reverse()
+        }
+        (JSON_TYPE_CODE_UINT64, JSON_TYPE_CODE_FLOAT64) => {
+            float_integer(right.as_f64()?, left.as_u64()? as f64).reverse()
+        }
+        (JSON_TYPE_CODE_FLOAT64, JSON_TYPE_CODE_FLOAT64) => {
+            let left = left.as_f64()?;
+            let right = right.as_f64()?;
+            if left < right {
+                Ordering::Less
+            } else if left == right {
+                Ordering::Equal
+            } else {
+                Ordering::Greater
+            }
+        }
+        _ => return None,
+    })
 }
 
 fn compare_container_nodes(left: &JSONNode, right: &JSONNode) -> Ordering {
@@ -1610,7 +1705,10 @@ mod tests {
             ("null", "null"),
             ("\"", r#""\"""#),
             ("'", "\"'\""),
+            ("''", "\"''\""),
             ("", "\"\""),
+            ("a\0b", "\"a\0b\""),
+            ("a\u{1}b", "\"a\u{1}b\""),
             ("\\ \" \u{8} \u{c} \n \r \t", r#""\\ \" \b \f \n \r \t""#),
         ] {
             assert_eq!(quote_json_string(raw), quoted, "{raw:?}");
@@ -1684,6 +1782,7 @@ mod tests {
         };
         for (left, right, expected) in [
             (int(-1), uint(u64::MAX), Ordering::Less),
+            (int(3), uint(1_u64 << 63), Ordering::Less),
             (
                 int(922_337_203_685_477_580),
                 int(922_337_203_685_477_580),
@@ -1749,6 +1848,45 @@ mod tests {
                 "{left} < {right}"
             );
         }
+
+        for (left, right, expected) in [
+            ("[1]", "[1,0]", Ordering::Less),
+            ("[1,2]", "[1,3]", Ordering::Less),
+            (r#"{"a":1}"#, r#"{"a":1,"b":2}"#, Ordering::Less),
+            (r#"{"a":1}"#, r#"{"b":1}"#, Ordering::Less),
+            (r#"{"a":1}"#, r#"{"a":2}"#, Ordering::Less),
+        ] {
+            assert_eq!(
+                compare_binary_json(
+                    &BinaryJSON::parse(left).unwrap(),
+                    &BinaryJSON::parse(right).unwrap(),
+                ),
+                expected,
+                "{left} against {right}"
+            );
+        }
+
+        assert_eq!(
+            compare_binary_json(
+                &BinaryJSON::from_opaque(Opaque {
+                    type_code: 1,
+                    bytes: vec![7],
+                }),
+                &BinaryJSON::from_opaque(Opaque {
+                    type_code: 2,
+                    bytes: vec![7],
+                }),
+            ),
+            Ordering::Equal
+        );
+        let nan = BinaryJSON::from_encoded_parts(
+            JSON_TYPE_CODE_FLOAT64,
+            f64::NAN.to_bits().to_le_bytes(),
+        );
+        let zero =
+            BinaryJSON::from_encoded_parts(JSON_TYPE_CODE_FLOAT64, 0_f64.to_bits().to_le_bytes());
+        assert_eq!(compare_binary_json(&nan, &zero), Ordering::Greater);
+        assert_eq!(compare_binary_json(&zero, &nan), Ordering::Greater);
 
         let time =
             Time::from_date_checked(2020, 2, 3, 4, 5, 6, 123_456, TimeType::DateTime, 3).unwrap();

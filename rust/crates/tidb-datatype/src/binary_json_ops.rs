@@ -49,8 +49,10 @@ impl BinaryJSON {
     ) -> Result<Option<BinaryJSON>, BinaryJSONError> {
         let root = self.to_node()?;
         let mut matches = Vec::new();
-        let mut seen = HashSet::new();
         for path in paths {
+            // Go deduplicates recursive matches within one path expression,
+            // but deliberately starts a fresh identity set for the next path.
+            let mut seen = HashSet::new();
             extract_value(&root, path.legs(), &mut matches, &mut seen);
         }
         if matches.is_empty() {
@@ -143,12 +145,12 @@ impl BinaryJSON {
         mode: JSONModifyType,
     ) -> Result<BinaryJSON, BinaryJSONError> {
         if paths.len() != values.len() {
-            return Err(BinaryJSONError::InvalidPath);
+            return Err(BinaryJSONError::IncorrectParameterCount);
         }
         let mut document = self.to_node()?;
         for (path, value) in paths.iter().zip(values) {
             if path.contains_any_asterisk() || path.contains_any_range() {
-                return Err(BinaryJSONError::InvalidPath);
+                return Err(BinaryJSONError::InvalidPathMultipleSelection);
             }
             document = modify_node(document, path.legs(), value.to_node()?, mode);
         }
@@ -161,13 +163,10 @@ impl BinaryJSON {
         path: &JSONPathExpression,
         value: &BinaryJSON,
     ) -> Result<BinaryJSON, BinaryJSONError> {
-        if path.contains_any_asterisk() || path.contains_any_range() {
-            return Err(BinaryJSONError::InvalidPath);
-        }
         let Some((parent, JSONPathLeg::Array(JSONPathArraySelection::Index(index)))) =
             path.pop_last()
         else {
-            return Err(BinaryJSONError::InvalidPath);
+            return Err(BinaryJSONError::InvalidPathArrayCell);
         };
         let Some(parent_value) = self.extract(std::slice::from_ref(&parent))? else {
             return Ok(self.clone());
@@ -201,7 +200,11 @@ impl BinaryJSON {
         let mut document = self.to_node()?;
         for path in paths {
             if path.legs().is_empty() || path.contains_any_asterisk() || path.contains_any_range() {
-                return Err(BinaryJSONError::InvalidPath);
+                return Err(if path.legs().is_empty() {
+                    BinaryJSONError::VacuousPath
+                } else {
+                    BinaryJSONError::InvalidPathMultipleSelection
+                });
             }
             remove_node(&mut document, path.legs());
         }
@@ -232,27 +235,50 @@ impl BinaryJSON {
         &self,
         paths: &[JSONPathExpression],
     ) -> Result<Vec<(JSONPathExpression, BinaryJSON)>, BinaryJSONError> {
+        let mut output = Vec::new();
+        self.walk_with(paths, |path, value| {
+            output.push((path, value));
+            Ok(false)
+        })?;
+        Ok(output)
+    }
+
+    /// Walks selected subtrees until the callback asks to stop or returns an error.
+    ///
+    /// The callback contract is the source package's `BinaryJSON.Walk`: `Ok(true)`
+    /// stops the entire traversal successfully, while an error is returned unchanged.
+    pub fn walk_with<F>(
+        &self,
+        paths: &[JSONPathExpression],
+        mut callback: F,
+    ) -> Result<(), BinaryJSONError>
+    where
+        F: FnMut(JSONPathExpression, BinaryJSON) -> Result<bool, BinaryJSONError>,
+    {
         let root = self.to_node()?;
-        let mut roots = Vec::new();
+        let mut seen = HashSet::new();
         if paths.is_empty() {
-            roots.push((JSONPathExpression::default(), &root));
-        } else {
-            for path in paths {
-                select_walk_roots(
-                    &root,
-                    path.legs(),
-                    JSONPathExpression::default(),
-                    &mut roots,
-                );
+            walk_value_with(
+                &root,
+                JSONPathExpression::default(),
+                &mut seen,
+                &mut callback,
+            )?;
+            return Ok(());
+        }
+        for path in paths {
+            let mut visit_root =
+                |fullpath, value| walk_value_with(value, fullpath, &mut seen, &mut callback);
+            if select_walk_roots_with(
+                &root,
+                path.legs(),
+                JSONPathExpression::default(),
+                &mut visit_root,
+            )? {
+                break;
             }
         }
-
-        let mut seen = HashSet::new();
-        let mut output = Vec::new();
-        for (path, value) in roots {
-            walk_value(value, path, &mut seen, &mut output)?;
-        }
-        Ok(output)
+        Ok(())
     }
 
     /// Extracts path matches without scalar-to-array autowrapping.
@@ -265,16 +291,16 @@ impl BinaryJSON {
     ) -> Result<Vec<(JSONPathExpression, BinaryJSON)>, BinaryJSONError> {
         let root = self.to_node()?;
         let mut matches = Vec::new();
-        select_walk_roots(
+        select_walk_roots_with(
             &root,
             path.legs(),
             JSONPathExpression::default(),
-            &mut matches,
-        );
-        matches
-            .into_iter()
-            .map(|(path, value)| Ok((path, BinaryJSON::from_node(value)?)))
-            .collect()
+            &mut |path, value| {
+                matches.push((path, BinaryJSON::from_node(value)?));
+                Ok(false)
+            },
+        )?;
+        Ok(matches)
     }
 
     /// Implements JSON_SEARCH over string values.
@@ -333,13 +359,9 @@ pub fn peek_binary_json_len(bytes: &[u8]) -> Result<usize, BinaryJSONError> {
         crate::JSON_TYPE_CODE_DURATION => 12,
         _ => return Err(BinaryJSONError::InvalidBinary),
     };
-    let total = 1_usize
+    1_usize
         .checked_add(payload_len)
-        .ok_or(BinaryJSONError::InvalidBinary)?;
-    if total > bytes.len() {
-        return Err(BinaryJSONError::InvalidBinary);
-    }
-    Ok(total)
+        .ok_or(BinaryJSONError::InvalidBinary)
 }
 
 /// Implements MySQL JSON_CONTAINS structural containment.
@@ -360,18 +382,38 @@ pub fn overlaps_binary_json(
 
 /// Implements MySQL JSON_MERGE_PRESERVE.
 pub fn merge_binary_json(values: &[BinaryJSON]) -> Result<BinaryJSON, BinaryJSONError> {
-    let mut values = values
+    let values = values
         .iter()
         .map(BinaryJSON::to_node)
         .collect::<Result<Vec<_>, _>>()?;
-    let merged = if values.is_empty() {
-        JSONNode::Array(Vec::new())
-    } else {
-        let mut result = values.remove(0);
-        for value in values {
-            result = merge_preserve_node(result, value);
+    let mut values = values.into_iter().peekable();
+    let mut groups = Vec::new();
+    while let Some(value) = values.next() {
+        if matches!(value, JSONNode::Object(_)) {
+            let mut object = value;
+            while values
+                .peek()
+                .is_some_and(|value| matches!(value, JSONNode::Object(_)))
+            {
+                object = merge_preserve_node(object, values.next().unwrap());
+            }
+            groups.push(object);
+        } else {
+            groups.push(value);
         }
-        result
+    }
+    let merged = if groups.len() == 1 {
+        groups.pop().unwrap()
+    } else {
+        JSONNode::Array(
+            groups
+                .into_iter()
+                .flat_map(|value| match value {
+                    JSONNode::Array(values) => values,
+                    value => vec![value],
+                })
+                .collect(),
+        )
     };
     BinaryJSON::from_node(&merged)
 }
@@ -474,15 +516,17 @@ fn extract_descendants<'a>(
     }
 }
 
-fn select_walk_roots<'a>(
+fn select_walk_roots_with<'a, E, F>(
     value: &'a JSONNode,
     legs: &[JSONPathLeg],
     path: JSONPathExpression,
-    output: &mut Vec<(JSONPathExpression, &'a JSONNode)>,
-) {
+    callback: &mut F,
+) -> Result<bool, E>
+where
+    F: FnMut(JSONPathExpression, &'a JSONNode) -> Result<bool, E>,
+{
     let Some((leg, remain)) = legs.split_first() else {
-        output.push((path, value));
-        return;
+        return callback(path, value);
     };
     match leg {
         JSONPathLeg::Key(key) if key == "*" => {
@@ -490,35 +534,53 @@ fn select_walk_roots<'a>(
                 let mut values = values.iter().collect::<Vec<_>>();
                 values.sort_unstable_by(|left, right| left.0.as_bytes().cmp(right.0.as_bytes()));
                 for (key, value) in values {
-                    select_walk_roots(value, remain, path.push_back_key(key), output);
+                    if select_walk_roots_with(value, remain, path.push_back_key(key), callback)? {
+                        return Ok(true);
+                    }
                 }
             }
         }
         JSONPathLeg::Key(key) => {
             if let JSONNode::Object(values) = value {
                 if let Some((_, value)) = values.iter().find(|(name, _)| name == key) {
-                    select_walk_roots(value, remain, path.push_back_key(key), output);
+                    return select_walk_roots_with(
+                        value,
+                        remain,
+                        path.push_back_key(key),
+                        callback,
+                    );
                 }
             }
         }
         JSONPathLeg::Array(selection) => {
             if let JSONNode::Array(values) = value {
                 for index in selected_indices(selection, values.len()) {
-                    select_walk_roots(
+                    if select_walk_roots_with(
                         &values[index],
                         remain,
                         path.push_back_index(index as i64),
-                        output,
-                    );
+                        callback,
+                    )? {
+                        return Ok(true);
+                    }
                 }
             }
         }
         JSONPathLeg::DoubleAsterisk => {
-            select_walk_roots(value, remain, path.clone(), output);
+            if select_walk_roots_with(value, remain, path.clone(), callback)? {
+                return Ok(true);
+            }
             match value {
                 JSONNode::Array(values) => {
                     for (index, value) in values.iter().enumerate() {
-                        select_walk_roots(value, legs, path.push_back_index(index as i64), output);
+                        if select_walk_roots_with(
+                            value,
+                            legs,
+                            path.push_back_index(index as i64),
+                            callback,
+                        )? {
+                            return Ok(true);
+                        }
                     }
                 }
                 JSONNode::Object(values) => {
@@ -526,41 +588,53 @@ fn select_walk_roots<'a>(
                     values
                         .sort_unstable_by(|left, right| left.0.as_bytes().cmp(right.0.as_bytes()));
                     for (key, value) in values {
-                        select_walk_roots(value, legs, path.push_back_key(key), output);
+                        if select_walk_roots_with(value, legs, path.push_back_key(key), callback)? {
+                            return Ok(true);
+                        }
                     }
                 }
                 _ => {}
             }
         }
     }
+    Ok(false)
 }
 
-fn walk_value(
+fn walk_value_with<F>(
     value: &JSONNode,
     path: JSONPathExpression,
     seen: &mut HashSet<String>,
-    output: &mut Vec<(JSONPathExpression, BinaryJSON)>,
-) -> Result<(), BinaryJSONError> {
+    callback: &mut F,
+) -> Result<bool, BinaryJSONError>
+where
+    F: FnMut(JSONPathExpression, BinaryJSON) -> Result<bool, BinaryJSONError>,
+{
     if !seen.insert(path.to_string()) {
-        return Ok(());
+        return Ok(false);
     }
-    output.push((path.clone(), BinaryJSON::from_node(value)?));
+    if callback(path.clone(), BinaryJSON::from_node(value)?)? {
+        return Ok(true);
+    }
     match value {
         JSONNode::Array(values) => {
             for (index, value) in values.iter().enumerate() {
-                walk_value(value, path.push_back_index(index as i64), seen, output)?;
+                if walk_value_with(value, path.push_back_index(index as i64), seen, callback)? {
+                    return Ok(true);
+                }
             }
         }
         JSONNode::Object(values) => {
             let mut values = values.iter().collect::<Vec<_>>();
             values.sort_unstable_by(|left, right| left.0.as_bytes().cmp(right.0.as_bytes()));
             for (key, value) in values {
-                walk_value(value, path.push_back_key(key), seen, output)?;
+                if walk_value_with(value, path.push_back_key(key), seen, callback)? {
+                    return Ok(true);
+                }
             }
         }
         _ => {}
     }
-    Ok(())
+    Ok(false)
 }
 
 fn like_matches(text: &str, pattern: &str, escape: char) -> bool {
@@ -892,12 +966,19 @@ fn node_is_null(value: &JSONNode) -> bool {
 fn decode_uvarint_for_peek(bytes: &[u8]) -> Result<(usize, usize), BinaryJSONError> {
     let mut value = 0_usize;
     for (index, byte) in bytes.iter().copied().enumerate().take(10) {
+        if index == 9 && byte > 1 {
+            return Err(BinaryJSONError::InvalidBinary);
+        }
         value |= usize::from(byte & 0x7f) << (index * 7);
         if byte < 0x80 {
             return Ok((value, index + 1));
         }
     }
-    Err(BinaryJSONError::InvalidBinary)
+    if bytes.len() < 10 {
+        Ok((0, 0))
+    } else {
+        Err(BinaryJSONError::InvalidBinary)
+    }
 }
 
 fn modify_node(
@@ -1195,6 +1276,20 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_duplicate_paths_preserve_source_multiplicity() {
+        let document = json(r#"[1,{"a":2},3]"#);
+        let path = parse_json_path_expr("$[1]").unwrap();
+        assert_eq!(
+            document
+                .extract(&[path.clone(), path])
+                .unwrap()
+                .unwrap()
+                .to_string(),
+            r#"[{"a": 2}, {"a": 2}]"#
+        );
+    }
+
+    #[test]
     fn test_binary_json_type_unquote_keys_and_depth() {
         for (input, expected) in [
             (r#"{"a":"b"}"#, "OBJECT"),
@@ -1274,6 +1369,8 @@ mod tests {
 
     #[test]
     fn test_binary_json_merge_and_contains_source_rows() {
+        assert_eq!(merge_binary_json(&[]).unwrap().to_string(), "[]");
+        assert_eq!(merge_patch_binary_json(&[]).unwrap(), None);
         for (inputs, expected) in [
             (vec![r#"{"a":1}"#, r#"{"b":2}"#], r#"{"a":1,"b":2}"#),
             (vec![r#"{"a":1}"#, r#"{"a":2}"#], r#"{"a":[1,2]}"#),
@@ -1299,6 +1396,10 @@ mod tests {
             (
                 vec![r#"{"comment":"1234"}"#, r#"{"comment":"abc"}"#],
                 r#"{"comment":["1234","abc"]}"#,
+            ),
+            (
+                vec![r#"{"a":1}"#, "0", r#"{"b":1}"#, r#"{"c":2}"#],
+                r#"[{"a":1},0,{"b":1,"c":2}]"#,
             ),
         ] {
             let inputs = inputs.into_iter().map(json).collect::<Vec<_>>();
@@ -1352,10 +1453,47 @@ mod tests {
 
         assert!(overlaps_binary_json(&json("[1,2]"), &json("[2,3]")).unwrap());
         assert!(!overlaps_binary_json(&json("[1,2]"), &json("[3,4]")).unwrap());
+        assert!(overlaps_binary_json(&json("2"), &json("[1,2]")).unwrap());
+        assert!(overlaps_binary_json(&json("[1,2]"), &json("2")).unwrap());
+        assert!(overlaps_binary_json(&json(r#"{"a":1}"#), &json(r#"{"a":1,"b":2}"#)).unwrap());
+        assert!(!overlaps_binary_json(&json(r#"{"a":[1,2]}"#), &json(r#"{"a":[2]}"#)).unwrap());
+        assert!(!overlaps_binary_json(&json(r#"{"a":1}"#), &json("1")).unwrap());
+        assert!(!overlaps_binary_json(&json("[[1,2]]"), &json("[2]")).unwrap());
+        assert!(overlaps_binary_json(&json("1"), &json("1")).unwrap());
+        assert!(!overlaps_binary_json(&json("1"), &json("2")).unwrap());
     }
 
     #[test]
     fn test_binary_json_modify_and_remove_source_rows() {
+        let empty_paths = Vec::<JSONPathExpression>::new();
+        assert_eq!(
+            json("null")
+                .modify(&empty_paths, &[json("1")], JSONModifyType::Set)
+                .unwrap_err(),
+            BinaryJSONError::IncorrectParameterCount
+        );
+        assert_eq!(
+            json("null")
+                .modify(
+                    &[parse_json_path_expr("$.*").unwrap()],
+                    &[json("1")],
+                    JSONModifyType::Set,
+                )
+                .unwrap_err(),
+            BinaryJSONError::InvalidPathMultipleSelection
+        );
+        assert_eq!(
+            json("[]")
+                .array_insert(&parse_json_path_expr("$").unwrap(), &json("1"))
+                .unwrap_err(),
+            BinaryJSONError::InvalidPathArrayCell
+        );
+        assert_eq!(
+            json("null")
+                .remove(&[parse_json_path_expr("$").unwrap()])
+                .unwrap_err(),
+            BinaryJSONError::VacuousPath
+        );
         for (base, path, value, expected, mode) in [
             ("null", "$", "{}", "{}", JSONModifyType::Set),
             ("{}", "$.a", "3", r#"{"a":3}"#, JSONModifyType::Set),
@@ -1552,6 +1690,13 @@ mod tests {
                 .to_string(),
             "[1, 2]"
         );
+        assert_eq!(
+            json(r#"[1,{"a":2},3]"#)
+                .array_insert(&parse_json_path_expr("$.*[0]").unwrap(), &json("9"))
+                .unwrap()
+                .to_string(),
+            r#"[1, {"a": 2}, 3]"#
+        );
     }
 
     #[test]
@@ -1574,6 +1719,26 @@ mod tests {
         }
         assert!(peek_binary_json_len(&[]).is_err());
         assert!(peek_binary_json_len(b"\\bfnrtuz0").is_err());
+
+        for (prefix, required) in [
+            (vec![crate::JSON_TYPE_CODE_INT64], 9),
+            (vec![crate::JSON_TYPE_CODE_LITERAL], 2),
+            (vec![crate::JSON_TYPE_CODE_DURATION], 13),
+            (vec![crate::JSON_TYPE_CODE_STRING, 5], 7),
+            (
+                vec![crate::JSON_TYPE_CODE_OBJECT, 0, 0, 0, 0, 100, 0, 0, 0],
+                101,
+            ),
+            (vec![crate::JSON_TYPE_CODE_STRING], 1),
+            (vec![crate::JSON_TYPE_CODE_STRING, 0x80], 1),
+            (vec![crate::JSON_TYPE_CODE_OPAQUE, 0], 2),
+        ] {
+            assert_eq!(
+                peek_binary_json_len(&prefix).unwrap(),
+                required,
+                "{prefix:?}"
+            );
+        }
 
         let values = [
             json("[]"),
@@ -1736,6 +1901,53 @@ mod tests {
                 .to_string(),
             r#"["$[0]", "$[2].x"]"#
         );
+
+        let pattern_document = json(r#"["a%","a_","ab","好"]"#);
+        for (pattern, escape, expected) in [
+            ("a%", '\\', Some(r#"["$[0]", "$[1]", "$[2]"]"#)),
+            ("a_", '\\', Some(r#"["$[0]", "$[1]", "$[2]"]"#)),
+            (r"a\%", '\\', Some(r#""$[0]""#)),
+            (r"a\_", '\\', Some(r#""$[1]""#)),
+            (r"a\", '\\', None),
+            ("_", '\\', Some(r#""$[3]""#)),
+            (r"a\%", '\0', None),
+        ] {
+            assert_eq!(
+                pattern_document
+                    .search(JSONSearchMode::All, pattern, escape, &[])
+                    .unwrap()
+                    .map(|value| value.to_string()),
+                expected.map(str::to_owned),
+                "pattern={pattern:?} escape={escape:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_walk_callback_stop_and_error_propagation() {
+        let document = json(r#"[1,{"a":2},3]"#);
+        let mut stopped_paths = Vec::new();
+        document
+            .walk_with(&[], |path, _| {
+                stopped_paths.push(path.to_string());
+                Ok(stopped_paths.len() == 2)
+            })
+            .unwrap();
+        assert_eq!(stopped_paths, ["$", "$[0]"]);
+
+        let mut error_paths = Vec::new();
+        let error = document
+            .walk_with(&[], |path, _| {
+                error_paths.push(path.to_string());
+                if error_paths.len() == 2 {
+                    Err(BinaryJSONError::InvalidText)
+                } else {
+                    Ok(false)
+                }
+            })
+            .unwrap_err();
+        assert_eq!(error, BinaryJSONError::InvalidText);
+        assert_eq!(error_paths, ["$", "$[0]"]);
     }
 
     #[test]

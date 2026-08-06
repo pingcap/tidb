@@ -65,6 +65,9 @@ pub mod utf8_encoding;
 mod vector;
 
 #[cfg(test)]
+mod json_binary_functions_inventory;
+
+#[cfg(test)]
 mod vector_inventory;
 
 #[cfg(test)]
