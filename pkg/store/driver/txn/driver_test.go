@@ -83,6 +83,14 @@ func TestSharedLockLostErrorMapping(t *testing.T) {
 	require.False(t, stderrors.As(err, &deadlock))
 	require.False(t, exeerrors.ErrDeadlock.Equal(err))
 
+	emptyErr := extractKeyErr(errors.WithStack(&tikverr.ErrSharedLockLost{}))
+	require.EqualError(
+		t,
+		emptyErr,
+		"[tikv:9015]Shared lock was lost during lock upgrade; transaction cannot continue, txnStartTS=0, key=",
+	)
+	require.True(t, kv.ErrSharedLockLost.Equal(emptyErr))
+
 	errors.RedactLogEnabled.Store(errors.RedactLogEnable)
 	redactedErr := extractKeyErr(newClientErr())
 	require.EqualError(
