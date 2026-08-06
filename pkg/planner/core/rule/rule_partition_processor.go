@@ -278,7 +278,8 @@ func (s *PartitionProcessor) getUsedKeyPartitions(ctx base.PlanContext,
 	pi := tbl.Meta().Partition
 	partExpr := tbl.(base.PartitionTable).PartitionExpr()
 	partCols, colLen := partExpr.GetPartColumnsForKeyPartition(columns)
-	pe := &tables.ForKeyPruning{KeyPartCols: partCols}
+	pe := *partExpr.ForKeyPruning
+	pe.KeyPartCols = partCols
 	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(ctx.GetRangerCtx(), conds, partCols, colLen, ctx.GetSessionVars().RangeMaxSize)
 	if err != nil {
 		return nil, err
