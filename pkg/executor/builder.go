@@ -1442,9 +1442,6 @@ func (b *executorBuilder) buildExplain(v *plannercore.Explain) exec.Executor {
 		BaseExecutor: exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID()),
 		explain:      v,
 	}
-	if v.IsAnalyzeRU() {
-		return explainExec
-	}
 	if v.Analyze {
 		if b.sctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil {
 			b.sctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)

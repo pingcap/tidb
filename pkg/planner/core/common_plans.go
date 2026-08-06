@@ -655,20 +655,6 @@ type Explain struct {
 	BriefBinaryPlan string
 }
 
-// IsAnalyzeRU returns whether this is an EXPLAIN ANALYZE FORMAT='ru' statement.
-func (e *Explain) IsAnalyzeRU() bool {
-	return e.Analyze && strings.ToLower(e.Format) == types.ExplainFormatRU
-}
-
-// CheckSupportedExecution returns an error for explain formats accepted by the
-// optimizer but not executable yet.
-func (e *Explain) CheckSupportedExecution() error {
-	if e.IsAnalyzeRU() {
-		return errors.Errorf("explain analyze format '%s' is not supported now", e.Format)
-	}
-	return nil
-}
-
 // GetBriefBinaryPlan returns the binary plan of the plan for explainfor.
 func GetBriefBinaryPlan(p base.Plan) string {
 	var plan base.Plan = p
@@ -750,7 +736,7 @@ func (e *Explain) prepareSchema() error {
 	case format == types.ExplainFormatTiDBJSON:
 		fieldNames = []string{"TiDB_JSON"}
 	case format == types.ExplainFormatRU:
-		fieldNames = []string{"RU"}
+		fieldNames = []string{"id", "task", "actRows", "selfRU", "cumRU", "cumRU%", "detail"}
 	case e.Explore:
 		fieldNames = []string{"statement", "binding_hint", "plan", "plan_digest", "avg_latency", "exec_times", "avg_scan_rows",
 			"avg_returned_rows", "latency_per_returned_row", "scan_rows_per_returned_row", "recommend", "reason",
@@ -948,6 +934,9 @@ func (e *Explain) RenderResult() error {
 			return err
 		}
 		e.Rows = append(e.Rows, []string{str})
+	case types.ExplainFormatRU:
+		flat := FlattenPhysicalPlan(e.TargetPlan, true)
+		e.Rows = ExplainFlatPlanInRUFormat(flat, e.RuntimeStatsColl)
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
@@ -1120,6 +1109,37 @@ func prepareOperatorInfo(flatOp *FlatOperator, format string, analyze bool,
 		row = append(row, taskType, accessObject, operatorInfo)
 	}
 	return append(rows, row)
+}
+
+// ExplainFlatPlanInRUFormat returns the explain analyze result with RU columns.
+func ExplainFlatPlanInRUFormat(flat *FlatPhysicalPlan, runtimeStatsColl *execdetails.RuntimeStatsColl) (rows [][]string) {
+	if flat == nil || len(flat.Main) == 0 || flat.InExplain {
+		return
+	}
+	for _, flatOp := range flat.Main {
+		rows = prepareRUOperatorInfo(flatOp, runtimeStatsColl, rows)
+	}
+	for _, cte := range flat.CTEs {
+		for _, flatOp := range cte {
+			rows = prepareRUOperatorInfo(flatOp, runtimeStatsColl, rows)
+		}
+	}
+	for _, subQ := range flat.ScalarSubQueries {
+		for _, flatOp := range subQ {
+			rows = prepareRUOperatorInfo(flatOp, runtimeStatsColl, rows)
+		}
+	}
+	return
+}
+
+func prepareRUOperatorInfo(flatOp *FlatOperator, runtimeStatsColl *execdetails.RuntimeStatsColl, rows [][]string) [][]string {
+	p := flatOp.Origin
+	if p.ExplainID().String() == "_0" {
+		return rows
+	}
+	taskType, id := getExplainIDAndTaskTp(flatOp)
+	actRows, _, _, _ := getRuntimeInfoStr(p.SCtx(), p, runtimeStatsColl)
+	return append(rows, []string{id, taskType, actRows, "", "", "", ""})
 }
 
 func (e *Explain) prepareOperatorInfoForJSONFormat(p base.Plan, taskType, explainID string) *ExplainInfoForEncode {

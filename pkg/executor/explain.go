@@ -54,9 +54,6 @@ type ExplainExec struct {
 
 // Open implements the Executor Open interface.
 func (e *ExplainExec) Open(ctx context.Context) error {
-	if err := e.explain.CheckSupportedExecution(); err != nil {
-		return err
-	}
 	if e.explain.Analyze && e.analyzeExec != nil {
 		return exec.Open(ctx, e.analyzeExec)
 	}
@@ -164,9 +161,6 @@ func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 }
 
 func (e *ExplainExec) generateExplainInfo(ctx context.Context) (rows [][]string, err error) {
-	if err = e.explain.CheckSupportedExecution(); err != nil {
-		return nil, err
-	}
 	if e.explain.Analyze {
 		if err = e.executeAnalyzeExec(ctx); err != nil {
 			return nil, err
