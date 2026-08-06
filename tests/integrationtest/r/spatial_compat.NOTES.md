@@ -48,3 +48,77 @@ github.com/peterstace/simplefeatures (pure Go, same OGC Simple Feature Access
 spec as GEOS/JTS/PostGIS). The recorded result remains byte-identical to MySQL
 8.0.46 (`diff r/spatial_compat.result r/spatial_compat.result.mysql` is empty),
 so OGC boundary semantics still match — now with no cgo dependency.
+
+## NEW (2026-06, broader corpus vs MySQL 9.7.1)
+
+Found by the standalone `spatial-compat` harness in `tidb-dev-hacks`
+(`spatial-compat/`), which replays a wider mysql-tester corpus against a MySQL
+oracle and a PoC `tidb-server`. Golden recorded from MySQL 9.7.1; PoC at
+`v9.0.0-beta.2.pre` (`49ddda26fb`). Accessors, planar `ST_Distance`, the
+predicate set, `ST_Area`/`ST_Length`/`ST_Centroid`/`ST_IsValid`, the WKB
+round-trip, and **spatial-index result-equivalence** all still match MySQL.
+Three new divergences:
+
+### 3. ST_Envelope ring orientation (compat)
+
+`ST_AsText(ST_Envelope(POLYGON((0 0,10 0,10 10,0 10,0 0))))`:
+
+| | ring |
+|---|---|
+| MySQL | `POLYGON((0 0,10 0,10 10,0 10,0 0))` (CCW from lower-left) |
+| PoC   | `POLYGON((0 0,0 10,10 10,10 0,0 0))` (CW from lower-left) |
+
+Same bbox (`ST_Equals` would agree), but the WKT text differs, so anything that
+string-compares the envelope diverges. Emit the envelope ring CCW to match MySQL.
+
+### 4. ST_AsGeoJSON formatting (cosmetic compat gap)
+
+| | `ST_AsGeoJSON(POINT(5 5))` |
+|---|---|
+| MySQL | `{"type": "Point", "coordinates": [5.0, 5.0]}` |
+| PoC   | `{"type":"Point","coordinates":[5,5]}` |
+
+MySQL adds a space after `:`/`,` and renders integer coords as floats (`5.0`).
+Same class as the ST_AsText spacing gap fixed above — the GeoJSON formatter needs
+the same MySQL-matching pass.
+
+### 5. SRID 4326 axis order (correctness/compat)
+
+`ST_Distance_Sphere` over identical SRID-4326 literals diverges because MySQL
+follows the EPSG:4326 authority order **(lat, long)** while the PoC reads
+**(long, lat)**: London→Paris 343493.6 m (MySQL) vs 403518.2 m (PoC);
+London→NYC 5570841.3 m vs 8246307.2 m. A real portability hazard for SRID-4326
+data moved from MySQL; reconcile to the authority axis order (or document and
+provide axis-order handling). Downstream: with MySQL lat,long literals near the
+antimeridian/poles the PoC's long,lat reading puts coordinates out of range and
+returns NULL distances where MySQL returns finite ones.
+
+## NEW (2026-06, extended corpus — more findings)
+
+Extending the corpus (relationship matrix, multi-geometries, collections) turned
+up three more divergences and a set of missing functions.
+
+### 6. ST_GeometryType collection name
+
+MySQL returns `GEOMCOLLECTION`; the PoC returns `GEOMETRYCOLLECTION`. (All other
+type names match.)
+
+### 7. ST_Crosses / ST_Overlaps NULL semantics (compat)
+
+MySQL returns NULL when the operand dimensions make the predicate undefined (OGC):
+`ST_Overlaps` for different-dimension operands, `ST_Crosses` when the first
+operand's dimension is not lower than the second's. The PoC returns a concrete 0/1
+instead. E.g. `ST_Crosses(polygon, polygon)` and `ST_Crosses(polygon, line)` and
+`ST_Overlaps(polygon, line)` are NULL in MySQL but 0/1 in the PoC.
+
+### 8. Missing functions (next compat slice)
+
+- `ST_Distance` rejects non-POINT arguments (errno 1105, "only POINT arguments are
+  supported in the POC"); MySQL supports point-line, point-polygon, polygon-polygon.
+- Not implemented (errno 1305): `ST_NumPoints`, `ST_StartPoint`, `ST_EndPoint`,
+  `ST_PointN`, `ST_ExteriorRing`, `ST_NumInteriorRings`, `ST_NumGeometries`,
+  `ST_IsSimple`.
+
+Source: the standalone `spatial-compat` harness in `tidb-dev-hacks`; MySQL 8.0.46 /
+8.4 / 9.7.1 are byte-identical on the corpus, so a single MySQL-9 golden is the
+oracle. Spatial-index result-equivalence still holds.
