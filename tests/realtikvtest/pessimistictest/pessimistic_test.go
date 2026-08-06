@@ -739,7 +739,7 @@ func TestWaitLockKill(t *testing.T) {
 	_, err := tk2.Exec("update test_kill set c = c + 1 where id = 1")
 	wg.Done()
 	require.Error(t, err)
-	require.True(t, terror.ErrorEqual(err, storeerr.ErrQueryInterrupted))
+	require.True(t, exeerrors.ErrQueryInterrupted.Equal(err))
 	tk.MustExec("rollback")
 }
 

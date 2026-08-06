@@ -2194,9 +2194,6 @@ func (cc *clientConn) cancelDispatch() {
 }
 
 func shouldInstallConnectionAliveDuringExecute(stmt ast.StmtNode, sessVars *variable.SessionVars) bool {
-	if !sessVars.IsAutocommit() || sessVars.InTxn() {
-		return false
-	}
 	if executeStmt, ok := stmt.(*ast.ExecuteStmt); ok {
 		prepared, err := plannercore.GetPreparedStmt(executeStmt, sessVars)
 		if err != nil || prepared.PreparedAst == nil {
@@ -2204,9 +2201,26 @@ func shouldInstallConnectionAliveDuringExecute(stmt ast.StmtNode, sessVars *vari
 		}
 		stmt = prepared.PreparedAst.Stmt
 	}
-	switch stmt.(type) {
+	explicitTxn := !sessVars.IsAutocommit() || sessVars.InTxn()
+	switch stmt := stmt.(type) {
 	case *ast.InsertStmt, *ast.UpdateStmt, *ast.DeleteStmt:
 		return true
+	case *ast.DoStmt:
+		// DO is evaluated without returning a result set, so an explicit
+		// transaction needs the probe during ExecuteStmt.
+		return explicitTxn
+	case *ast.SelectStmt:
+		if !explicitTxn || stmt.LockInfo == nil {
+			return false
+		}
+		// Pessimistic locking reads are drained and acquire their locks during
+		// ExecuteStmt, before the result-set probe can be installed.
+		switch stmt.LockInfo.LockType {
+		case ast.SelectLockForUpdate, ast.SelectLockForUpdateNoWait, ast.SelectLockForUpdateWaitN,
+			ast.SelectLockForShare, ast.SelectLockForShareNoWait:
+			return true
+		}
+		return false
 	default:
 		return false
 	}
@@ -2235,8 +2249,8 @@ func (cc *clientConn) handleStmt(
 	}
 
 	clearConnectionAlive := func() {}
-	checkingConnectionAlive := shouldInstallConnectionAliveDuringExecute(stmt, cc.ctx.GetSessionVars())
-	if checkingConnectionAlive {
+	connectionAliveInstalled := shouldInstallConnectionAliveDuringExecute(stmt, cc.ctx.GetSessionVars())
+	if connectionAliveInstalled {
 		clearConnectionAlive = cc.setSQLKillerConnectionAlive()
 		defer clearConnectionAlive()
 	}
@@ -2274,7 +2288,7 @@ func (cc *clientConn) handleStmt(
 		if cc.getStatus() == connStatusShutdown {
 			return false, exeerrors.ErrQueryInterrupted
 		}
-		if !checkingConnectionAlive {
+		if !connectionAliveInstalled {
 			clearConnectionAlive = cc.setSQLKillerConnectionAlive()
 			defer clearConnectionAlive()
 		}

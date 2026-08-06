@@ -43,6 +43,7 @@ func TestContextDetach(t *testing.T) {
 		BackOffWeight:   2,
 		Killed:          &sqlkiller.Signal,
 	}
+	kvVars.SetKillSignalHandler(sqlkiller)
 	warnHandler := contextutil.NewStaticWarnHandler(5)
 
 	obj := &DistSQLContext{
@@ -115,6 +116,14 @@ func TestContextDetach(t *testing.T) {
 		}))
 
 	staticObj := obj.Detach()
+	if got := staticObj.KVVars.LoadKillSignalHandler(); got != sqlkiller {
+		t.Fatalf("unexpected cloned kill signal handler: %T", got)
+	}
+	kvVars.SetKillSignalHandler(nil)
+	if got := staticObj.KVVars.LoadKillSignalHandler(); got != sqlkiller {
+		t.Fatalf("cloned kill signal handler changed with the original: %T", got)
+	}
+	staticObj.KVVars.SetKillSignalHandler(nil)
 
 	deeptest.AssertDeepClonedEqual(t, obj, staticObj,
 		deeptest.WithIgnorePath([]string{

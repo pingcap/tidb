@@ -122,9 +122,10 @@ func (dctx *DistSQLContext) Detach() *DistSQLContext {
 	newCPUUsages := new(ppcpuusage.SQLCPUUsages)
 	newCPUUsages.SetCPUUsages(dctx.CPUUsage.GetCPUUsages())
 	newCtx.CPUUsage = newCPUUsages
-	newCtx.KVVars = new(tikvstore.Variables)
-	*newCtx.KVVars = *dctx.KVVars
-	newCtx.KVVars.Killed = &newCtx.SQLKiller.Signal
+	newCtx.KVVars = tikvstore.NewVariables(&newCtx.SQLKiller.Signal)
+	newCtx.KVVars.BackoffLockFast = dctx.KVVars.BackoffLockFast
+	newCtx.KVVars.BackOffWeight = dctx.KVVars.BackOffWeight
+	newCtx.KVVars.SetKillSignalHandler(dctx.KVVars.LoadKillSignalHandler())
 	if dctx.MaxKeysReadCounter != nil {
 		newCtx.MaxKeysReadCounter = new(atomic.Uint64)
 	}
