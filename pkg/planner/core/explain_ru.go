@@ -879,13 +879,15 @@ func readBillingDemoOptionalExecutionMask(
 	}
 }
 
-func readBillingDemoLookupJoinChildIDs(node *FlatOperator) (innerPlanID, outerPlanID int, ok bool) {
+func readBillingDemoJoinChildIDs(node *FlatOperator) (innerPlanID, outerPlanID int, ok bool) {
 	if node == nil || node.Origin == nil || !node.IsRoot {
 		return 0, 0, false
 	}
 	var plan base.PhysicalPlan
 	var innerIdx int
 	switch join := node.Origin.(type) {
+	case *physicalop.PhysicalApply:
+		plan, innerIdx = join, join.InnerChildIdx
 	case *physicalop.PhysicalIndexJoin:
 		plan, innerIdx = join, join.InnerChildIdx
 	case *physicalop.PhysicalIndexHashJoin:
@@ -1034,7 +1036,7 @@ func readBillingDemoSkipCandidateAt(tree FlatPlanTree, treeOrdinal, joinIdx int)
 		return candidate, false
 	}
 	joinNode := tree[joinIdx]
-	innerPlanID, outerPlanID, ok := readBillingDemoLookupJoinChildIDs(joinNode)
+	innerPlanID, outerPlanID, ok := readBillingDemoJoinChildIDs(joinNode)
 	if !ok || joinNode.Origin.ID() <= 0 || len(joinNode.ChildrenIdx) != 2 ||
 		joinNode.ChildrenEndIdx < joinIdx || joinNode.ChildrenEndIdx >= len(tree) {
 		return candidate, false

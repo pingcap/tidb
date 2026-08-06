@@ -469,6 +469,9 @@ The remaining dated decisions document v4 and v5 evolution. Where one conflicts 
 
 - Decision: a proven-skipped inner contributes exact zero input to its owning lookup Join and emits no phantom operator, status, scan, CPU, or transport units.
   Rationale: with an observed empty outer, the Join's expression work and output term are both exactly zero. Actual outer scan and statement transport remain visible, while every missing or contradictory case outside the narrow proof continues to fail closed. General Log, Prometheus, statement summary, and `EXPLAIN ANALYZE FORMAT='RU'` continue to consume the same frozen result.
+
+- Decision: `PhysicalApply` reuses the same completed-zero outer and absent-inner execution proof to omit its unexecuted inner subtree.
+  Rationale: successful serial and parallel Apply execution does not open the inner executor when the completed outer produces no rows. Apply remains a non-billable wrapper and gains no formula or unit; only the proven-unexecuted inner contributes zero. Inner execution evidence, missing completion sentinels, malformed structure, or plan-ID aliases retain the existing fail-closed behavior.
   Date/Author: 2026-07-29 / Codex
 
 - Decision: recognize the table subtree of a non-pushdown `PhysicalIndexLookUpReader` as proven skipped only when the lookup root has completed byte-bearing zero-row Basic stats, the exact index cop root has complete expected/observed task coverage with zero produced rows, and the exact table subtree has no Basic byte, cop task, ScanDetail, SelectResult, or Snapshot evidence.

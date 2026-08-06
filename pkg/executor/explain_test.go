@@ -564,6 +564,22 @@ func TestExplainAnalyzeFormatRUOutput(t *testing.T) {
 	require.NoError(t, err)
 	requireExplainRUWeightedOperatorClass(t, rows, "tidb/filter_eval")
 
+	tk.MustExec("create table ru_apply_inner (a int, index(a))")
+	zeroOuterApplyQuery := "select t.table_name, (select /*+ NO_DECORRELATE() */ max(i.a) from ru_apply_inner i where i.a = length(t.table_name)) from information_schema.tables t where t.table_schema = 'missing_schema'"
+	originalParallelApply := tk.MustQuery("select @@tidb_enable_parallel_apply").Rows()[0][0]
+	for _, parallel := range []int{0, 1} {
+		tk.MustExec(fmt.Sprintf("set @@tidb_enable_parallel_apply = %d", parallel))
+		seenApply = false
+		for _, row := range tk.MustQueryWithContext(context.Background(), "explain analyze "+zeroOuterApplyQuery).Rows() {
+			seenApply = seenApply || strings.Contains(fmt.Sprint(row[0]), "Apply")
+		}
+		require.True(t, seenApply)
+		rows, err = queryExplainRURowsOrErr(t, tk, "explain analyze format='ru' "+zeroOuterApplyQuery)
+		require.NoError(t, err, "parallel_apply=%d", parallel)
+		requireExplainRUWeightedOperatorClass(t, rows, "tidb/sql_frontend")
+	}
+	tk.MustExec(fmt.Sprintf("set @@tidb_enable_parallel_apply = %v", originalParallelApply))
+
 	cteReuseQuery := "with cte(n) as (select 1 union all select 2) select count(*) from cte a join cte b on a.n = b.n"
 	cteFullScans := 0
 	for _, row := range tk.MustQuery("explain analyze " + cteReuseQuery).Rows() {
