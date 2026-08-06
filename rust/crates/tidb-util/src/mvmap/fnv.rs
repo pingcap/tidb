@@ -34,7 +34,7 @@ pub(super) fn fnv_hash64(data: &[u8]) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{OFFSET64, PRIME64, fnv_hash64};
+    use super::{fnv_hash64, OFFSET64, PRIME64};
     use sha2::{Digest, Sha256};
     use std::{collections::BTreeMap, fs, path::PathBuf};
 
