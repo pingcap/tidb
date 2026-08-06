@@ -1617,10 +1617,25 @@ mod builtin_type_tests {
     #[test]
     fn a_temporal_cast_declares_a_temporal_result_type() {
         for (sql, code, flen, decimal) in [
-            ("cast(a as date)", FieldTypeCode::Date, 10, 0),
-            ("cast(a as datetime)", FieldTypeCode::Datetime, 19, 0),
-            ("cast(a as datetime(3))", FieldTypeCode::Datetime, 23, 3),
-            ("cast(a as datetime(6))", FieldTypeCode::Datetime, 26, 6),
+            ("cast('2020-01-01' as date)", FieldTypeCode::Date, 10, 0),
+            (
+                "cast('2020-01-01' as datetime)",
+                FieldTypeCode::Datetime,
+                19,
+                0,
+            ),
+            (
+                "cast('2020-01-01' as datetime(3))",
+                FieldTypeCode::Datetime,
+                23,
+                3,
+            ),
+            (
+                "cast('2020-01-01' as datetime(6))",
+                FieldTypeCode::Datetime,
+                26,
+                6,
+            ),
         ] {
             let ft = ret_type(sql);
             assert_eq!(
