@@ -47,9 +47,10 @@
 //! the aggregation back under the quota. That is why an over-quota `GROUP BY`
 //! can spill and finish while the 8175 path remains reachable.
 //!
-//! DIVERGENCE, recorded and unchanged from the sort and the join: Go's spill
-//! files are optionally ENCRYPTED (`config.Security.SpilledFileEncryptionMethod`);
-//! nothing on this tier encrypts them.
+//! The shared `tidb-chunk` spill container now implements Go's optional
+//! `aes128-ctr` file stack. The bounded server still has no top-level config
+//! loader to call that container's process-wide config seam, so its startup
+//! remains plaintext and rejects unsupported command-line options loudly.
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering::SeqCst};
 use std::sync::Arc;

@@ -48,10 +48,10 @@
 //!   emitting; nothing on this tier consumes memory during emission, so the
 //!   flag is always false here and the branch it guards is unreachable.
 //!
-//! DIVERGENCE, recorded and unchanged from the sort, the join and the
-//! aggregation: Go's spill files are optionally ENCRYPTED
-//! (`config.Security.SpilledFileEncryptionMethod`); nothing on this tier
-//! encrypts them.
+//! The shared `tidb-chunk` spill container now implements Go's optional
+//! `aes128-ctr` file stack. The bounded server still has no top-level config
+//! loader to call that container's process-wide config seam, so its startup
+//! remains plaintext and rejects unsupported command-line options loudly.
 
 use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
 use std::sync::Arc;

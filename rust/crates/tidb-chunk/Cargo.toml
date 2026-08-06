@@ -12,5 +12,8 @@ tidb-datatype = { path = "../tidb-datatype" }
 tidb-util = { path = "../tidb-util" }
 tracing = "0.1"
 
+[dev-dependencies]
+tidb-util = { path = "../tidb-util", features = ["testexport"] }
+
 [lints]
 workspace = true

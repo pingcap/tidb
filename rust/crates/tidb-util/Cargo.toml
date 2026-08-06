@@ -15,6 +15,7 @@ default = []
 enableassert = []
 intest = []
 race = []
+testexport = []
 
 [dependencies]
 crossbeam-channel = "0.5"

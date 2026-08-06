@@ -21,23 +21,20 @@
 //! and the spill-to-disk [`DiskFileReaderWriter`] half of the Go file, which
 //! layers `tidb_util::checksum` over the temporary file.
 //!
-//! NOT PORTED (named): the `aes128-ctr` spill-file encryption Go enables when
-//! `security.spilled-file-encryption-method` is set. The AES-CTR layer itself
-//! IS ported (`tidb_util::encrypt`); what is missing here is the second
-//! writer/reader stack variant, so a spill file is always plaintext. The
-//! shipped default of that config option is `plaintext`, so this changes no
-//! default-configuration behavior -- but a cluster that sets the option gets
-//! plaintext spill files here, which is a security divergence and must be
-//! closed before the option is honoured.
+//! The spill stack has both Go variants: checksum -> file for `plaintext`, and
+//! checksum -> AES-CTR -> file for `aes128-ctr`. [`set_spilled_file_encryption_method`]
+//! is the config seam; the bounded server does not yet load the top-level Go
+//! config tree, so its startup path must call that seam before it can claim to
+//! honour `security.spilled-file-encryption-method`.
 
 use crate::chunk::Chunk;
 use crate::column::Column;
 use std::fs::File;
 use std::io::{self, Write};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
-use tidb_util::checksum;
+use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use tidb_util::layered_io::ReadAt;
+use tidb_util::{checksum, encrypt};
 
 /// Go `msgErrSelNotNil`: a bulk copy refuses chunks carrying a selection
 /// vector, because the copy walks physical rows.
@@ -389,20 +386,84 @@ pub(crate) fn next_random_suffix() -> u64 {
             .wrapping_mul(1_442_695_040_888_963_407)
 }
 
-/// Go `diskFileReaderWriter`: the temporary spill file plus the checksum layer
-/// every write passes through.
+/// Process-wide choice corresponding to Go's
+/// `config.Security.SpilledFileEncryptionMethod`.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum SpilledFileEncryptionMethod {
+    /// Go `SpilledFileEncryptionMethodPlaintext`.
+    #[default]
+    Plaintext,
+    /// Go `SpilledFileEncryptionMethodAES128CTR`.
+    Aes128Ctr,
+}
+
+static SPILLED_FILE_ENCRYPTION_METHOD: AtomicU8 = AtomicU8::new(0);
+
+/// Sets the process-wide spill-file encryption method.
+///
+/// Go reads this choice from its global config whenever it creates a spill
+/// file. A Rust config loader must call this equivalent seam once at startup;
+/// tests may switch it while holding their process-global spill guard.
+pub fn set_spilled_file_encryption_method(method: SpilledFileEncryptionMethod) {
+    let value = match method {
+        SpilledFileEncryptionMethod::Plaintext => 0,
+        SpilledFileEncryptionMethod::Aes128Ctr => 1,
+    };
+    SPILLED_FILE_ENCRYPTION_METHOD.store(value, Ordering::SeqCst);
+}
+
+/// Returns the method new spill files will use.
+#[must_use]
+pub fn spilled_file_encryption_method() -> SpilledFileEncryptionMethod {
+    match SPILLED_FILE_ENCRYPTION_METHOD.load(Ordering::SeqCst) {
+        0 => SpilledFileEncryptionMethod::Plaintext,
+        _ => SpilledFileEncryptionMethod::Aes128Ctr,
+    }
+}
+
+enum DiskWriter {
+    Plaintext(checksum::Writer<File>),
+    Aes128Ctr {
+        writer: checksum::Writer<encrypt::Writer<File>>,
+        cipher: encrypt::CtrCipher,
+    },
+}
+
+impl DiskWriter {
+    fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+        match self {
+            Self::Plaintext(writer) => writer.write(data),
+            Self::Aes128Ctr { writer, .. } => writer.write(data),
+        }
+    }
+
+    fn checksum_cache(&self) -> (&[u8], i64) {
+        match self {
+            Self::Plaintext(writer) => (writer.get_cache(), writer.get_cache_data_offset()),
+            Self::Aes128Ctr { writer, .. } => (writer.get_cache(), writer.get_cache_data_offset()),
+        }
+    }
+
+    fn close(self) -> io::Result<()> {
+        match self {
+            Self::Plaintext(writer) => writer.close(),
+            Self::Aes128Ctr { writer, .. } => writer.close(),
+        }
+    }
+}
+
+#[derive(Default)]
+/// Go `diskFileReaderWriter`: a temporary spill file plus checksum framing and
+/// optional AES-CTR encryption.
 ///
 /// Reads go through a SECOND handle on the same file so a chunk can be read
-/// back while later chunks are still being appended -- and through
-/// [`crate::row_in_disk::ReaderWithCache`], because the checksum writer holds
-/// the tail of the data in a 1KiB block buffer that has not reached the file
-/// yet.
-#[derive(Default)]
+/// back while later chunks are still being appended. Each live writer cache
+/// is overlaid in source order before the logical checksum payload is read.
 pub struct DiskFileReaderWriter {
     /// The read handle. Go reuses one `*os.File` for both directions.
     file: Option<File>,
     path: Option<PathBuf>,
-    writer: Option<checksum::Writer<File>>,
+    writer: Option<DiskWriter>,
     /// Go `offWrite`: the current logical write offset.
     off_write: i64,
 }
@@ -410,13 +471,43 @@ pub struct DiskFileReaderWriter {
 impl DiskFileReaderWriter {
     /// Go `initWithFileName`.
     pub fn init_with_file_name(&mut self, file_name: &str) -> io::Result<()> {
+        let cipher = match spilled_file_encryption_method() {
+            SpilledFileEncryptionMethod::Plaintext => None,
+            SpilledFileEncryptionMethod::Aes128Ctr => Some(encrypt::CtrCipher::new()?),
+        };
+        self.init_with_file_name_and_optional_cipher(file_name, cipher)
+    }
+
+    fn init_with_file_name_and_optional_cipher(
+        &mut self,
+        file_name: &str,
+        cipher: Option<encrypt::CtrCipher>,
+    ) -> io::Result<()> {
         let (file, path) = crate::chunk_in_disk::create_temp_file(file_name)?;
         let write_handle = file.try_clone()?;
         self.file = Some(file);
         self.path = Some(path);
-        self.writer = Some(checksum::Writer::new(write_handle));
+        self.writer = Some(match cipher {
+            None => DiskWriter::Plaintext(checksum::Writer::new(write_handle)),
+            Some(cipher) => {
+                let encrypting = encrypt::Writer::new(write_handle, &cipher);
+                DiskWriter::Aes128Ctr {
+                    writer: checksum::Writer::new(encrypting),
+                    cipher,
+                }
+            }
+        });
         self.off_write = 0;
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn init_with_file_name_and_cipher(
+        &mut self,
+        file_name: &str,
+        cipher: encrypt::CtrCipher,
+    ) -> io::Result<()> {
+        self.init_with_file_name_and_optional_cipher(file_name, Some(cipher))
     }
 
     /// Whether the file has been created (Go's `l.file != nil`).
@@ -437,6 +528,11 @@ impl DiskFileReaderWriter {
         self.off_write
     }
 
+    #[cfg(test)]
+    pub(crate) fn is_encrypted(&self) -> bool {
+        matches!(self.writer, Some(DiskWriter::Aes128Ctr { .. }))
+    }
+
     /// Go `write`.
     pub fn write(&mut self, data: &[u8]) -> io::Result<usize> {
         let writer = self
@@ -455,12 +551,33 @@ impl DiskFileReaderWriter {
         let (Some(file), Some(writer)) = (self.file.as_ref(), self.writer.as_ref()) else {
             return Err(io::Error::other("spill file is not open"));
         };
-        let reader = crate::row_in_disk::ReaderWithCache::new(
-            checksum::Reader::new(file),
-            writer.get_cache(),
-            writer.get_cache_data_offset(),
-        );
-        crate::chunk_in_disk::read_full_at(&reader as &dyn ReadAt, destination, offset)
+        let (checksum_cache, checksum_cache_offset) = writer.checksum_cache();
+        match writer {
+            DiskWriter::Plaintext(_) => {
+                let reader = crate::row_in_disk::ReaderWithCache::new(
+                    checksum::Reader::new(file),
+                    checksum_cache,
+                    checksum_cache_offset,
+                );
+                crate::chunk_in_disk::read_full_at(&reader as &dyn ReadAt, destination, offset)
+            }
+            DiskWriter::Aes128Ctr { writer, cipher } => {
+                let encrypting = writer.underlying();
+                let decrypted = encrypt::Reader::new(file, cipher);
+                let decrypted_with_cache = crate::row_in_disk::ReaderWithCache::new(
+                    decrypted,
+                    encrypting.get_cache(),
+                    encrypting.get_cache_data_offset(),
+                );
+                let checksummed = checksum::Reader::new(decrypted_with_cache);
+                let reader = crate::row_in_disk::ReaderWithCache::new(
+                    checksummed,
+                    checksum_cache,
+                    checksum_cache_offset,
+                );
+                crate::chunk_in_disk::read_full_at(&reader as &dyn ReadAt, destination, offset)
+            }
+        }
     }
 
     /// Closes the file and REMOVES it, as Go's `DataInDiskByChunks.Close`

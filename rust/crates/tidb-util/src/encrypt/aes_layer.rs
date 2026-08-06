@@ -42,7 +42,6 @@ impl CtrCipher {
         let mut key = [0_u8; AES_BLOCK_SIZE];
         getrandom::fill(&mut key)
             .map_err(|error| io::Error::other(format!("random AES key: {error}")))?;
-        let block = AesCipher::new(&key).map_err(|error| io::Error::other(error.to_string()))?;
         if encrypt_block_size % AES_BLOCK_SIZE as i64 != 0 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -58,12 +57,34 @@ impl CtrCipher {
                 break candidate;
             }
         };
+        Self::new_with_material(key, nonce, encrypt_block_size)
+    }
+
+    fn new_with_material(
+        key: [u8; AES_BLOCK_SIZE],
+        nonce: u64,
+        encrypt_block_size: i64,
+    ) -> io::Result<Self> {
+        if encrypt_block_size % AES_BLOCK_SIZE as i64 != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "invalid encrypt block size",
+            ));
+        }
+        let block = AesCipher::new(&key).map_err(|error| io::Error::other(error.to_string()))?;
         Ok(Self {
             block: Arc::new(block),
             nonce,
             encrypt_block_size,
             aes_block_count: encrypt_block_size / AES_BLOCK_SIZE as i64,
         })
+    }
+
+    /// Builds a deterministic cipher for cross-language fixtures.
+    #[cfg(feature = "testexport")]
+    #[doc(hidden)]
+    pub fn new_for_test(key: [u8; AES_BLOCK_SIZE], nonce: u64) -> io::Result<Self> {
+        Self::new_with_material(key, nonce, DEFAULT_ENCRYPT_BLOCK_SIZE)
     }
 
     fn stream(&self, counter: u64) -> CtrStream {

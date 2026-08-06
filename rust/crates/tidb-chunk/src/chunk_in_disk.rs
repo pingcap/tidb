@@ -419,6 +419,38 @@ mod tests {
     use crate::chunk::Chunk;
     use tidb_datatype::FieldTypeCode;
 
+    const ENCRYPTED_GO_VECTORS: &str =
+        include_str!("../../../difftests/chunk-tests/fixtures/encrypted_spill_vectors.tsv");
+
+    fn encrypted_go_vector(key: &str) -> &'static str {
+        ENCRYPTED_GO_VECTORS
+            .lines()
+            .find_map(|line| line.strip_prefix(key)?.strip_prefix('\t'))
+            .unwrap_or_else(|| panic!("encrypted fixture line {key} missing"))
+    }
+
+    fn bytes_of(hex: &str) -> Vec<u8> {
+        hex.as_bytes()
+            .chunks_exact(2)
+            .map(|pair| {
+                u8::from_str_radix(std::str::from_utf8(pair).expect("hex pair"), 16)
+                    .expect("hex byte")
+            })
+            .collect()
+    }
+
+    fn fixture_cipher(key: &str) -> tidb_util::encrypt::CtrCipher {
+        let specification = encrypted_go_vector(key);
+        let (key_hex, nonce_hex) = specification
+            .strip_prefix("key=")
+            .and_then(|value| value.split_once(",nonce="))
+            .expect("key and nonce fixture");
+        let key: [u8; 16] = bytes_of(key_hex).try_into().expect("AES-128 key");
+        let nonce: [u8; 8] = bytes_of(nonce_hex).try_into().expect("CTR nonce");
+        tidb_util::encrypt::CtrCipher::new_for_test(key, u64::from_be_bytes(nonce))
+            .expect("fixture cipher")
+    }
+
     /// Hex dumps of `d.buf` after `serializeDataToBuf`, produced by the REAL
     /// Go serializer in `pkg/util/chunk/chunk_in_disk.go` (a throwaway test in
     /// that package, run through `go test -overlay`), not by this port. Each
@@ -546,6 +578,45 @@ mod tests {
         chk
     }
 
+    fn encrypted_chunks() -> (Vec<FieldType>, Vec<Chunk>) {
+        let fields = vec![
+            FieldType::new(FieldTypeCode::Varchar),
+            FieldType::new(FieldTypeCode::LongLong),
+        ];
+        let mut chunks = Vec::new();
+        for chunk_idx in 0..9usize {
+            let mut chk = Chunk::new_with_capacity(&fields, 32);
+            for row_idx in 0..32usize {
+                let ordinal = chunk_idx * 32 + row_idx;
+                chk.append_string(0, &"x".repeat(ordinal % 31 + 1));
+                if ordinal % 11 == 5 {
+                    chk.append_null(1);
+                } else {
+                    chk.append_int64(1, (ordinal * 17) as i64 - 9);
+                }
+            }
+            chunks.push(chk);
+        }
+        (fields, chunks)
+    }
+
+    fn render_encrypted_chunks(container: &mut DataInDiskByChunks) -> String {
+        let mut parts = Vec::new();
+        for chunk_idx in 0..container.num_chunks() {
+            let chk = container.get_chunk(chunk_idx).expect("get_chunk");
+            for row_idx in 0..chk.num_rows() {
+                let row = chk.get_row(row_idx);
+                let second = if row.is_null(1) {
+                    "NULL".to_owned()
+                } else {
+                    hex(row.get_raw(1))
+                };
+                parts.push(format!("{},{}", hex(row.get_raw(0)), second));
+            }
+        }
+        parts.join("|")
+    }
+
     /// A real spill: writes chunks to a real file in a real directory, proves
     /// the file exists and is non-empty, reads every row back, and proves the
     /// file is gone after `close`.
@@ -606,6 +677,64 @@ mod tests {
 
         container.close();
         assert!(!path.exists(), "close must remove the spill file");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn encrypted_chunk_file_matches_go_and_reads_through_both_live_caches() {
+        let _guard = temp_dir_guard();
+        let dir = scratch_temp_dir("encrypted-chunks");
+        disk::set_temp_storage_path(&dir);
+        disk::check_and_init_temp_dir().expect("temp dir");
+
+        let (fields, chunks) = encrypted_chunks();
+        let mut container = DataInDiskByChunks::new(fields, "oracle");
+        container
+            .data_file
+            .init_with_file_name_and_cipher(
+                "oracle-encrypted-chunks",
+                fixture_cipher("chunks.data.cipher"),
+            )
+            .expect("data file");
+        for chk in &chunks {
+            container.add(chk).expect("add");
+        }
+
+        let data = std::fs::read(container.data_file.path().expect("data path")).expect("read");
+        assert_eq!(hex(&data), encrypted_go_vector("chunks.data"));
+        assert_eq!(
+            render_encrypted_chunks(&mut container),
+            encrypted_go_vector("chunks.readback")
+        );
+
+        drop(container);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn process_wide_aes_mode_selects_the_encrypted_stack() {
+        struct RestoreEncryptionMethod(crate::chunk_util::SpilledFileEncryptionMethod);
+        impl Drop for RestoreEncryptionMethod {
+            fn drop(&mut self) {
+                crate::chunk_util::set_spilled_file_encryption_method(self.0);
+            }
+        }
+
+        let _guard = temp_dir_guard();
+        let dir = scratch_temp_dir("encrypted-mode");
+        disk::set_temp_storage_path(&dir);
+        let _restore = RestoreEncryptionMethod(crate::chunk_util::spilled_file_encryption_method());
+        crate::chunk_util::set_spilled_file_encryption_method(
+            crate::chunk_util::SpilledFileEncryptionMethod::Aes128Ctr,
+        );
+
+        let fields = int64_fields();
+        let mut container = DataInDiskByChunks::new(fields, "mode");
+        container.add(&int64_chunk()).expect("add");
+        assert!(container.data_file.is_encrypted());
+        assert_eq!(container.get_chunk(0).expect("get_chunk").num_rows(), 3);
+
+        drop(container);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

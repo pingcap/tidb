@@ -33,14 +33,10 @@
 //! because the tail of the stream sits in the writer's block buffer and has
 //! NOT reached the file, yet must still be readable.
 //!
-//! NOT PORTED (named, not silently missing): the `aes128-ctr` variant of the
-//! writer/reader stack. Go's `diskFileReaderWriter.initWithFileName` inserts
-//! an `encrypt.Writer` under the checksum layer when
-//! `security.spilled-file-encryption-method` is not `plaintext`; this port
-//! always writes plaintext, the same divergence `crate::chunk_util` already
-//! records for the chunk-addressed container. The AES-CTR layer itself is
-//! ported (`tidb_util::encrypt`); the missing piece is the second stack
-//! variant, and it must be closed before the config option is honoured.
+//! The `aes128-ctr` writer/reader stack is ported in
+//! [`crate::chunk_util::DiskFileReaderWriter`]. It preserves both live caches:
+//! checksum payload not yet framed and framed plaintext not yet encrypted to
+//! disk. Go-written deterministic file images below pin both layers.
 
 use std::io;
 
@@ -431,12 +427,43 @@ mod tests {
     /// output.
     const GO_VECTORS: &str =
         include_str!("../../../difftests/chunk-tests/fixtures/row_in_disk_vectors.tsv");
+    const ENCRYPTED_GO_VECTORS: &str =
+        include_str!("../../../difftests/chunk-tests/fixtures/encrypted_spill_vectors.tsv");
 
     fn go_vector(key: &str) -> &'static str {
         GO_VECTORS
             .lines()
             .find_map(|line| line.strip_prefix(key)?.strip_prefix('\t'))
             .unwrap_or_else(|| panic!("fixture line {key} missing"))
+    }
+
+    fn encrypted_go_vector(key: &str) -> &'static str {
+        ENCRYPTED_GO_VECTORS
+            .lines()
+            .find_map(|line| line.strip_prefix(key)?.strip_prefix('\t'))
+            .unwrap_or_else(|| panic!("encrypted fixture line {key} missing"))
+    }
+
+    fn bytes_of(hex: &str) -> Vec<u8> {
+        hex.as_bytes()
+            .chunks_exact(2)
+            .map(|pair| {
+                u8::from_str_radix(std::str::from_utf8(pair).expect("hex pair"), 16)
+                    .expect("hex byte")
+            })
+            .collect()
+    }
+
+    fn fixture_cipher(key: &str) -> tidb_util::encrypt::CtrCipher {
+        let specification = encrypted_go_vector(key);
+        let (key_hex, nonce_hex) = specification
+            .strip_prefix("key=")
+            .and_then(|value| value.split_once(",nonce="))
+            .expect("key and nonce fixture");
+        let key: [u8; 16] = bytes_of(key_hex).try_into().expect("AES-128 key");
+        let nonce: [u8; 8] = bytes_of(nonce_hex).try_into().expect("CTR nonce");
+        tidb_util::encrypt::CtrCipher::new_for_test(key, u64::from_be_bytes(nonce))
+            .expect("fixture cipher")
     }
 
     fn hex_of(bytes: &[u8]) -> String {
@@ -503,6 +530,25 @@ mod tests {
         (fields, chunks)
     }
 
+    fn encrypted_case() -> (Vec<FieldType>, Vec<Chunk>) {
+        let fields = vec![FieldType::new(C::Varchar), FieldType::new(C::LongLong)];
+        let mut chunks = Vec::new();
+        for chunk_idx in 0..9usize {
+            let mut chk = Chunk::new_with_capacity(&fields, 32);
+            for row_idx in 0..32usize {
+                let ordinal = chunk_idx * 32 + row_idx;
+                chk.append_string(0, &"x".repeat(ordinal % 31 + 1));
+                if ordinal % 11 == 5 {
+                    chk.append_null(1);
+                } else {
+                    chk.append_int64(1, (ordinal * 17) as i64 - 9);
+                }
+            }
+            chunks.push(chk);
+        }
+        (fields, chunks)
+    }
+
     fn spill(fields: &[FieldType], chunks: &[Chunk]) -> DataInDiskByRows {
         let mut container = DataInDiskByRows::new(fields.to_vec());
         for chk in chunks {
@@ -529,6 +575,28 @@ mod tests {
                     })
                     .collect();
                 parts.push(format!("{chk_idx}:{row_idx}={}", cells.join(",")));
+            }
+        }
+        parts.join("|")
+    }
+
+    fn render_encrypted_rows(container: &DataInDiskByRows) -> String {
+        let mut parts = Vec::new();
+        for chk_idx in 0..container.num_chunks() {
+            for row_idx in 0..container.num_rows_of_chunk(chk_idx) {
+                let ptr = RowPtr::new(chk_idx as u32, row_idx as u32);
+                let (chk, idx) = container.get_row(ptr).expect("get_row");
+                let row = chk.get_row(idx);
+                let cells: Vec<String> = (0..container.field_types().len())
+                    .map(|col_idx| {
+                        if row.is_null(col_idx) {
+                            "NULL".to_owned()
+                        } else {
+                            hex_of(row.get_raw(col_idx))
+                        }
+                    })
+                    .collect();
+                parts.push(cells.join(","));
             }
         }
         parts.join("|")
@@ -585,7 +653,7 @@ mod tests {
     /// Go's plain and `WithChecksum` variants differ only by the config knob
     /// `SpilledFileEncryptionMethod`; the checksum layer is unconditional in
     /// `initWithFileName`, so both Go variants produce the byte image asserted
-    /// here. The `AndEncrypt` variants are the unported encryption stack.
+    /// here. The `AndEncrypt` variants have their own Go file-image test below.
     #[test]
     fn mixed_columns_spill_to_gos_bytes() {
         let (fields, chunks) = mixed_case();
@@ -604,6 +672,47 @@ mod tests {
     fn many_checksum_blocks_spill_to_gos_bytes() {
         let (fields, chunks) = many_blocks_case();
         run_case("many_blocks", fields, chunks);
+    }
+
+    #[test]
+    fn encrypted_row_files_match_go_and_read_through_both_live_caches() {
+        let _guard = temp_dir_guard();
+        let dir = scratch_temp_dir("encrypted-rows");
+        disk::set_temp_storage_path(&dir);
+        disk::check_and_init_temp_dir().expect("temp dir");
+
+        let (fields, chunks) = encrypted_case();
+        let mut container = DataInDiskByRows::new(fields);
+        container
+            .data_file
+            .init_with_file_name_and_cipher(
+                "encrypted-rows-data",
+                fixture_cipher("rows.data.cipher"),
+            )
+            .expect("data file");
+        container
+            .offset_file
+            .init_with_file_name_and_cipher(
+                "encrypted-rows-offsets",
+                fixture_cipher("rows.offsets.cipher"),
+            )
+            .expect("offset file");
+        for chk in &chunks {
+            container.add(chk).expect("add");
+        }
+
+        let data = std::fs::read(container.data_file.path().expect("data path")).expect("read");
+        let offsets =
+            std::fs::read(container.offset_file.path().expect("offset path")).expect("read");
+        assert_eq!(hex_of(&data), encrypted_go_vector("rows.data"));
+        assert_eq!(hex_of(&offsets), encrypted_go_vector("rows.offsets"));
+        assert_eq!(
+            render_encrypted_rows(&container),
+            encrypted_go_vector("rows.readback")
+        );
+
+        drop(container);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Go `GetChunk`: a whole spilled chunk read back at once must equal the

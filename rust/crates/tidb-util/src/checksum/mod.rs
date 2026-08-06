@@ -154,6 +154,16 @@ where
         self.flushed_user_data_count
     }
 
+    /// Returns the next writer layer.
+    ///
+    /// A spill reader needs the live cache of every writer layer: checksum's
+    /// logical tail and, when enabled, the plaintext tail still buffered by
+    /// the AES-CTR writer underneath it.
+    #[must_use]
+    pub const fn underlying(&self) -> &W {
+        &self.underlying
+    }
+
     /// Flushes and closes every owned writer layer.
     pub fn close(mut self) -> io::Result<()> {
         self.flush_buffer()?;
