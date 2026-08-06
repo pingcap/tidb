@@ -65,9 +65,6 @@ func TestInfo(t *testing.T) {
 		t.Skip("ETCD use ip:port as unix socket address, skip when it is unavailable.")
 	}
 
-	// NOTICE: this failpoint has been REMOVED, be aware of this if you want to reopen this test.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/infosync/FailPlacement", `return(true)`))
-
 	s, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 
@@ -99,10 +96,8 @@ func TestInfo(t *testing.T) {
 	)
 	ddl.DisableTiFlashPoll(dom.ddl)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/MockReplaceDDL", `return(true)`))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/NoDDLDispatchLoop", `return(true)`))
 	require.NoError(t, dom.Init(sysMockFactory, nil))
 	require.NoError(t, dom.Start(ddl.Bootstrap))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/NoDDLDispatchLoop"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/MockReplaceDDL"))
 
 	// Test for GetServerInfo and GetServerInfoByID.
@@ -174,8 +169,6 @@ func TestInfo(t *testing.T) {
 
 	err = dom.refreshServerIDTTL(goCtx)
 	require.NoError(t, err)
-
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/infosync/FailPlacement"))
 }
 
 func TestStatWorkRecoverFromPanic(t *testing.T) {
