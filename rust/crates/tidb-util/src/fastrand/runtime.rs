@@ -12,6 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//! Lockdown owner for `pkg/util/fastrand/runtime.go`.
+//!
+//! `runtime.inventory.tsv` classifies the source declaration and the behavior
+//! reached through its `runtime.cheaprand` link. Rust preserves the lock-free
+//! Wyrand path used by Go on the supported 64-bit targets, but has no Go
+//! `go:linkname` or per-M state and therefore uses per-thread state instead.
+
 use std::cell::Cell;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -54,20 +61,101 @@ pub fn uint32() -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
+    use std::cell::Cell;
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::fmt::Write as _;
 
-    use super::uint32;
+    use sha2::{Digest, Sha256};
+
+    use super::{uint32, Wyrand, RANDOM};
+
+    const GO_SOURCE: &[u8] = include_bytes!("../../../../../pkg/util/fastrand/runtime.go");
+    const LOCKDOWN_INVENTORY: &str = include_str!("runtime.inventory.tsv");
+    const EXPECTED_INVENTORY_SHA256: &str =
+        "c2c38f2e1a4242d329141f24fb5ffbec9afba638eff092fbc5e53c813b155696";
+    const EXPECTED_ITEMS: [(&str, (&str, &str)); 9] = [
+        ("D01", ("DECLINED", "-")),
+        ("F01", ("PORTED", "uint32")),
+        ("R01", ("PORTED", "uint32")),
+        ("R02", ("PORTED", "RANDOM")),
+        ("R03", ("DECLINED", "-")),
+        ("B01", ("PORTED", "uint32")),
+        ("B02", ("DECLINED", "-")),
+        ("R04", ("DECLINED", "-")),
+        ("R05", ("DECLINED", "-")),
+    ];
 
     #[test]
-    fn runtime_source_is_thread_local_lock_free_and_progresses() {
-        let values = (0..32).map(|_| uint32()).collect::<HashSet<_>>();
-        assert!(values.len() > 1);
+    fn lockdown_inventory_matches_go_source_and_rust_symbols() {
+        let recorded_hash = LOCKDOWN_INVENTORY
+            .lines()
+            .find_map(|line| line.strip_prefix("# source-sha256\t"))
+            .expect("inventory records the owning Go source SHA-256");
+        assert_eq!(recorded_hash, sha256_hex(GO_SOURCE), "Go source drifted");
+        assert_eq!(
+            sha256_hex(LOCKDOWN_INVENTORY.as_bytes()),
+            EXPECTED_INVENTORY_SHA256,
+            "lockdown inventory drifted"
+        );
 
-        let workers = (0..8)
-            .map(|_| std::thread::spawn(|| (0..128).map(|_| uint32()).collect::<Vec<_>>()))
-            .collect::<Vec<_>>();
-        for worker in workers {
-            assert_eq!(worker.join().expect("random worker").len(), 128);
+        let mut lines = LOCKDOWN_INVENTORY
+            .lines()
+            .filter(|line| !line.is_empty() && !line.starts_with('#'));
+        assert_eq!(
+            lines.next(),
+            Some("id\tcategory\tgo_item\tstatus\trust_symbol\tevidence")
+        );
+
+        let allowed_statuses = BTreeSet::from(["PORTED", "DECLINED", "UNREACHABLE"]);
+        let mut actual = BTreeMap::new();
+        for line in lines {
+            let columns: Vec<_> = line.split('\t').collect();
+            assert_eq!(columns.len(), 6, "invalid inventory row: {line}");
+            assert!(
+                allowed_statuses.contains(columns[3]),
+                "unclassified inventory row: {line}"
+            );
+            assert!(
+                !columns[5].is_empty(),
+                "inventory evidence is required: {line}"
+            );
+            assert!(
+                actual
+                    .insert(columns[0], (columns[3], columns[4]))
+                    .is_none(),
+                "duplicate inventory id: {}",
+                columns[0]
+            );
         }
+        assert_eq!(actual, BTreeMap::from(EXPECTED_ITEMS));
+
+        let _: fn() -> u32 = uint32;
+        RANDOM.with(|_: &Cell<Wyrand>| {});
+    }
+
+    #[test]
+    fn source_arm64_wyrand_and_thread_local_state_are_exact() {
+        const SOURCE_VALUES_FROM_SEED_ZERO: [u32; 2] = [0x8f59_a58e, 0xff4e_856d];
+
+        RANDOM.with(|state| state.set(Wyrand::new(0)));
+
+        let worker_values = std::thread::spawn(|| {
+            RANDOM.with(|state| state.set(Wyrand::new(0)));
+            [uint32(), uint32()]
+        })
+        .join()
+        .expect("random worker");
+
+        assert_eq!(worker_values, SOURCE_VALUES_FROM_SEED_ZERO);
+        assert_eq!([uint32(), uint32()], SOURCE_VALUES_FROM_SEED_ZERO);
+    }
+
+    fn sha256_hex(input: &[u8]) -> String {
+        Sha256::digest(input)
+            .iter()
+            .fold(String::with_capacity(64), |mut output, byte| {
+                write!(output, "{byte:02x}").expect("write to String");
+                output
+            })
     }
 }
