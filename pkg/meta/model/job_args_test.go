@@ -1097,7 +1097,7 @@ func TestAddIndexArgs(t *testing.T) {
 	}
 
 	autoArgs := &ModifyIndexArgs{IndexArgs: []*IndexArg{{
-		AutoPresplit: true,
+		AutoPreSplit: true,
 	}}}
 	for _, tp := range []ActionType{ActionAddIndex, ActionAddPrimaryKey} {
 		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
@@ -1105,7 +1105,7 @@ func TestAddIndexArgs(t *testing.T) {
 			require.NoError(t, j2.Decode(getJobBytes(t, autoArgs, v, tp)))
 			args, err := GetModifyIndexArgs(j2)
 			require.NoError(t, err)
-			require.Equal(t, v == JobVersion2, args.IndexArgs[0].AutoPresplit)
+			require.Equal(t, v == JobVersion2, args.IndexArgs[0].AutoPreSplit)
 			require.Nil(t, args.IndexArgs[0].SplitOpt)
 		}
 	}
