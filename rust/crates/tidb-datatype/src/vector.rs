@@ -12,7 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Complete `pkg/types/vector.go` and `vector_functions.go` transcreation.
+//! The `pkg/types/vector.go` owner for `VectorFloat32` construction, wire
+//! encoding, parsing, and display. `vector_functions.go` shares the type but
+//! has a separate source inventory; this file-lockdown does not silently use
+//! that second Go file as evidence for this one.
 
 use std::cmp::Ordering;
 use std::fmt;
@@ -38,11 +41,13 @@ impl fmt::Display for VectorError {
 
 impl std::error::Error for VectorError {}
 
-/// A finite little-endian TiDB `VECTOR<FLOAT32>`.
+/// A little-endian TiDB `VECTOR<FLOAT32>`.
 ///
 /// Go stores the serialized header and values in one byte slice. Rust stores
 /// aligned `f32` elements and produces the same wire image, eliminating the
-/// unsafe byte-to-float aliasing seam.
+/// unsafe byte-to-float aliasing seam. Constructors and text parsing reject
+/// non-finite elements, while deserialization deliberately preserves them:
+/// `ZeroCopyDeserializeVectorFloat32` in Go does no element validation.
 #[derive(Clone, Default, PartialEq)]
 pub struct VectorFloat32 {
     elements: Vec<f32>,
@@ -74,7 +79,6 @@ impl VectorFloat32 {
     /// Creates a vector after rejecting NaN and infinity.
     pub fn create(elements: impl Into<Vec<f32>>) -> Result<Self, VectorError> {
         let elements = elements.into();
-        check_vector_dim_valid(elements.len() as isize)?;
         for value in &elements {
             if value.is_nan() {
                 return Err(VectorError::new("NaN not allowed in vector"));
@@ -115,7 +119,8 @@ impl VectorFloat32 {
 
     /// Mutably borrows the elements, matching Go `Elements`.
     ///
-    /// Callers must preserve the finite-value invariant, as in the source.
+    /// Callers may install non-finite values, as Go's mutable `Elements` view
+    /// and its byte deserializer both permit.
     pub fn elements_mut(&mut self) -> &mut [f32] {
         &mut self.elements
     }
@@ -211,9 +216,14 @@ impl VectorFloat32 {
     /// Lexicographically compares elements, then dimensions.
     pub fn compare(&self, other: &Self) -> Ordering {
         for (left, right) in self.elements.iter().zip(&other.elements) {
-            match left.partial_cmp(right).expect("vectors contain no NaN") {
-                Ordering::Equal => {}
-                ordering => return ordering,
+            // Go is intentionally written as two comparisons, not `cmp`:
+            // NaN is neither greater nor less, so the loop proceeds to the
+            // next element and finally compares dimensions.
+            if left > right {
+                return Ordering::Greater;
+            }
+            if left < right {
+                return Ordering::Less;
             }
         }
         self.len().cmp(&other.len())
@@ -461,7 +471,10 @@ pub fn deserialize_vector_float32(bytes: &[u8]) -> Result<(VectorFloat32, &[u8])
             chunk.try_into().expect("fixed vector element"),
         )));
     }
-    Ok((VectorFloat32::create(elements)?, &bytes[length..]))
+    // Go's ZeroCopyDeserializeVectorFloat32 validates only the byte length;
+    // it deliberately does not call CreateVectorFloat32. In particular, a
+    // serialized NaN remains a successful vector, not a parse error.
+    Ok((VectorFloat32 { elements }, &bytes[length..]))
 }
 
 #[cfg(test)]
@@ -521,6 +534,62 @@ mod tests {
         assert_eq!(round_trip, parsed);
         assert_eq!(remaining, [1, 2, 3, 4]);
         assert!(deserialize_vector_float32(&[0xF1, 0xFC]).is_err());
+    }
+
+    /// Go's `CreateVectorFloat32` does not apply `CheckVectorDimValid`; that
+    /// check belongs solely to `ParseVectorFloat32` after JSON decoding.
+    #[test]
+    fn source_create_does_not_apply_the_parse_dimension_limit() {
+        let vector = VectorFloat32::create(vec![0.0; MAX_VECTOR_DIMENSION + 1]).unwrap();
+        assert_eq!(vector.len(), MAX_VECTOR_DIMENSION + 1);
+        assert!(check_vector_dim_valid(vector.len() as isize).is_err());
+    }
+
+    /// `ZeroCopyDeserializeVectorFloat32` checks framing, not element values.
+    /// The `0x7fc00000` payload is a quiet NaN in source little-endian order.
+    #[test]
+    fn source_deserialize_preserves_nonfinite_payloads() {
+        let bytes = [1, 0, 0, 0, 0, 0, 0xc0, 0x7f];
+        let (vector, remainder) = deserialize_vector_float32(&bytes).unwrap();
+        assert!(remainder.is_empty());
+        assert!(vector.elements()[0].is_nan());
+        // Go's two ordered comparisons both answer false for NaN.
+        assert_eq!(vector.compare(&vector), Ordering::Equal);
+        assert_eq!(vector.serialize(), bytes);
+    }
+
+    /// This is the deliberate safety boundary recorded in vector_inventory:
+    /// Go wraps `uint32` length arithmetic and returns a malformed vector;
+    /// Rust refuses to manufacture an impossible safe slice.
+    #[test]
+    fn malformed_wrapped_vector_length_is_rejected() {
+        assert!(peek_vector_float32(&[0, 0, 0, 0x40]).is_err());
+    }
+
+    #[test]
+    fn source_clone_is_deep_and_display_rules_hold() {
+        let mut original = VectorFloat32::must_create(vec![1.0, 0.00012, 20_000.0]);
+        let copied = original.clone();
+        original.elements_mut()[0] = 2.0;
+        assert_eq!(copied.elements(), [1.0, 0.00012, 20_000.0]);
+        assert_eq!(copied.to_string(), "[1,0.00012,20000]");
+        assert_eq!(copied.truncated_string(), "[1,0.00012,2e+04]");
+        assert_eq!(copied.check_dims_fit_column(None), Ok(()));
+        assert!(copied.check_dims_fit_column(Some(2)).is_err());
+        assert_eq!(
+            copied.estimated_mem_usage(),
+            std::mem::size_of::<VectorFloat32>() + copied.serialized_size()
+        );
+    }
+
+    #[test]
+    fn go_test_vector_datum() {
+        let datum = crate::Datum::new_vector_float32(VectorFloat32::default());
+        let crate::Datum::VectorFloat32(vector) = datum else {
+            panic!("vector datum must retain its source type");
+        };
+        assert!(vector.is_zero_value());
+        assert_eq!(vector.to_string(), "[]");
     }
 
     #[test]
