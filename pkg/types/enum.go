@@ -49,7 +49,11 @@ func (e Enum) ToNumber() float64 {
 
 // ParseEnum creates a Enum with item name or value.
 func ParseEnum(elems []string, name string, collation string) (Enum, error) {
-	if enumName, err := ParseEnumName(elems, name, collation); err == nil {
+	return parseEnum(elems, name, collate.GetCollator(collation))
+}
+
+func parseEnum(elems []string, name string, collator collate.Collator) (Enum, error) {
+	if enumName, err := parseEnumName(elems, name, collator); err == nil {
 		return enumName, nil
 	}
 	// name doesn't exist, maybe an integer?
@@ -62,9 +66,12 @@ func ParseEnum(elems []string, name string, collation string) (Enum, error) {
 
 // ParseEnumName creates a Enum with item name.
 func ParseEnumName(elems []string, name string, collation string) (Enum, error) {
-	ctor := collate.GetCollator(collation)
+	return parseEnumName(elems, name, collate.GetCollator(collation))
+}
+
+func parseEnumName(elems []string, name string, collator collate.Collator) (Enum, error) {
 	for i, n := range elems {
-		if ctor.Compare(n, name) == 0 {
+		if collator.Compare(n, name) == 0 {
 			return Enum{Name: n, Value: uint64(i) + 1}, nil
 		}
 	}

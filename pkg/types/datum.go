@@ -1751,17 +1751,17 @@ func (d *Datum) convertToMysqlEnum(ctx Context, target *FieldType) (Datum, error
 	)
 	switch d.k {
 	case KindString, KindBytes, KindBinaryLiteral:
-		e, err = ParseEnum(target.GetElems(), d.GetString(), target.GetCollate())
+		e, err = parseEnum(target.GetElems(), d.GetString(), ctx.getCollator(target.GetCollate()))
 	case KindMysqlEnum:
 		if d.i == 0 {
 			// MySQL enum zero value has an empty string name(Enum{Name: '', Value: 0}). It is
 			// different from the normal enum string value(Enum{Name: '', Value: n}, n > 0).
 			e = Enum{}
 		} else {
-			e, err = ParseEnum(target.GetElems(), d.GetMysqlEnum().Name, target.GetCollate())
+			e, err = parseEnum(target.GetElems(), d.GetMysqlEnum().Name, ctx.getCollator(target.GetCollate()))
 		}
 	case KindMysqlSet:
-		e, err = ParseEnum(target.GetElems(), d.GetMysqlSet().Name, target.GetCollate())
+		e, err = parseEnum(target.GetElems(), d.GetMysqlSet().Name, ctx.getCollator(target.GetCollate()))
 	default:
 		var uintDatum Datum
 		uintDatum, err = d.convertToUint(ctx, target)
@@ -1783,11 +1783,11 @@ func (d *Datum) convertToMysqlSet(ctx Context, target *FieldType) (Datum, error)
 	)
 	switch d.k {
 	case KindString, KindBytes, KindBinaryLiteral:
-		s, err = ParseSet(target.GetElems(), d.GetString(), target.GetCollate())
+		s, err = parseSet(target.GetElems(), d.GetString(), ctx.getCollator(target.GetCollate()))
 	case KindMysqlEnum:
-		s, err = ParseSet(target.GetElems(), d.GetMysqlEnum().Name, target.GetCollate())
+		s, err = parseSet(target.GetElems(), d.GetMysqlEnum().Name, ctx.getCollator(target.GetCollate()))
 	case KindMysqlSet:
-		s, err = ParseSet(target.GetElems(), d.GetMysqlSet().Name, target.GetCollate())
+		s, err = parseSet(target.GetElems(), d.GetMysqlSet().Name, ctx.getCollator(target.GetCollate()))
 	case KindVectorFloat32:
 		return invalidConv(d, mysql.TypeSet)
 	default:

@@ -51,7 +51,11 @@ func (e Set) Copy() Set {
 
 // ParseSet creates a Set with name or value.
 func ParseSet(elems []string, name string, collation string) (Set, error) {
-	if setName, err := ParseSetName(elems, name, collation); err == nil {
+	return parseSet(elems, name, collate.GetCollator(collation))
+}
+
+func parseSet(elems []string, name string, collator collate.Collator) (Set, error) {
+	if setName, err := parseSetName(elems, name, collator); err == nil {
 		return setName, nil
 	}
 	// name doesn't exist, maybe an integer?
@@ -64,22 +68,24 @@ func ParseSet(elems []string, name string, collation string) (Set, error) {
 
 // ParseSetName creates a Set with name.
 func ParseSetName(elems []string, name string, collation string) (Set, error) {
+	return parseSetName(elems, name, collate.GetCollator(collation))
+}
+
+func parseSetName(elems []string, name string, collator collate.Collator) (Set, error) {
 	if len(name) == 0 {
 		return zeroSet, nil
 	}
 
-	ctor := collate.GetCollator(collation)
-
 	seps := strings.Split(name, ",")
 	marked := make(map[string]struct{}, len(seps))
 	for _, s := range seps {
-		marked[string(ctor.Key(s))] = struct{}{}
+		marked[string(collator.Key(s))] = struct{}{}
 	}
 	items := make([]string, 0, len(seps))
 
 	value := uint64(0)
 	for i, n := range elems {
-		key := string(ctor.Key(n))
+		key := string(collator.Key(n))
 		if _, ok := marked[key]; ok {
 			value |= 1 << uint64(i)
 			delete(marked, key)

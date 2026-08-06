@@ -17,6 +17,7 @@ package types
 import (
 	"time"
 
+	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
@@ -200,9 +201,11 @@ func (f Flags) WithCastTimeToYearThroughConcat(flag bool) Flags {
 
 // Context provides the information when converting between different types.
 type Context struct {
-	flags       Flags
-	loc         *time.Location
-	warnHandler contextutil.WarnAppender
+	flags                  Flags
+	newCollationEnabled    bool
+	hasNewCollationEnabled bool
+	loc                    *time.Location
+	warnHandler            contextutil.WarnAppender
 }
 
 // NewContext creates a new `Context`
@@ -225,6 +228,21 @@ func (c *Context) WithFlags(f Flags) Context {
 	ctx := *c
 	ctx.flags = f
 	return ctx
+}
+
+// WithNewCollationEnabled returns a new context that uses the specified collation mode for type conversion.
+func (c *Context) WithNewCollationEnabled(enabled bool) Context {
+	ctx := *c
+	ctx.newCollationEnabled = enabled
+	ctx.hasNewCollationEnabled = true
+	return ctx
+}
+
+func (c *Context) getCollator(collation string) collate.Collator {
+	if c.hasNewCollationEnabled {
+		return collate.GetCollatorWithCollate(c.newCollationEnabled, collation)
+	}
+	return collate.GetCollator(collation)
 }
 
 // WithLocation returns a new context with the given location
