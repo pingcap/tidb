@@ -1142,7 +1142,8 @@ fn json_valid_renders_as_a_json_boolean_and_json_schema_valid_is_refused() {
 /// CAPTURED from a running TiDB: `json_type(cast(cast(1 as unsigned) as
 /// json))` is `UNSIGNED INTEGER`, a date is `DATE`, a datetime `DATETIME`, a
 /// time `TIME`, and `cast(x'aabb' as json)` is `BLOB`. This tier answers
-/// `INTEGER` for the first and RAISES for the rest.
+/// `INTEGER` for the first, `STRING` for the two temporal ones (whose JSON
+/// VALUE is now byte-identical to TiDB's), and RAISES for the binary one.
 ///
 /// `BinaryJSON::type_name` (`tidb-datatype`) already produces every one of
 /// those names correctly, and routing `json_type`'s `Datum::Json` arm
@@ -1175,16 +1176,39 @@ fn json_type_loses_gos_typed_names_at_cast_not_at_json_type() {
     );
     // Go: DATE / DATETIME / BLOB. Here the CAST itself cannot render them as
     // JSON text, so the statement raises before JSON_TYPE runs.
+    // Go: DATE / DATETIME. The temporal CAST now produces a `Datum::Time`
+    // rather than formatted text, so the JSON VALUE is byte-identical to
+    // TiDB's -- captured (`gorun`): `cast(cast('2020-01-01' as date) as
+    // json)` is `"2020-01-01"` and the datetime form is
+    // `"2020-01-01 01:02:03.000000"` (Go `builtinCastTimeAsJSONSig` sets
+    // `MaxFsp` for a DATETIME). Both used to RAISE. Only the TYPE NAME is
+    // still lost, which is this test's own subject: the JSON tier carries
+    // text, so a temporal document reads back as `STRING`.
+    assert_eq!(
+        text(
+            &mut session,
+            "SELECT cast(cast('2020-01-01' as date) as json)"
+        ),
+        Ok("\"2020-01-01\"".to_owned())
+    );
+    assert_eq!(
+        text(
+            &mut session,
+            "SELECT cast(cast('2020-01-01 01:02:03' as datetime) as json)"
+        ),
+        Ok("\"2020-01-01 01:02:03.000000\"".to_owned())
+    );
     for sql in [
         "SELECT json_type(cast(cast('2020-01-01' as date) as json))",
         "SELECT json_type(cast(cast('2020-01-01 00:00:00' as datetime) as json))",
-        "SELECT json_type(cast(x'aabb' as json))",
     ] {
-        assert!(
-            text(&mut session, sql).is_err(),
-            "{sql} unexpectedly answered"
-        );
+        assert_eq!(text(&mut session, sql), Ok("STRING".to_owned()), "{sql}");
     }
+    // A binary literal still has no JSON `Opaque` rendering at all.
+    assert!(
+        text(&mut session, "SELECT json_type(cast(x'aabb' as json))").is_err(),
+        "a binary literal cast to JSON still raises"
+    );
     // The paths that do NOT go through a typed literal agree with Go.
     assert_eq!(
         text(&mut session, "SELECT json_type('1')"),

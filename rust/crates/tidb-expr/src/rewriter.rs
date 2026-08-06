@@ -182,14 +182,30 @@ fn cast_target(cast_type: &tidb_ast::CastType) -> Option<(&'static str, FieldTyp
             ft.set_decimal(i64::from(*scale));
             ft
         }
-        // DOCUMENTED DIVERGENCE: `cast::eval_cast` produces a FORMATTED
-        // STRING for a temporal target (see its own doc -- this crate has no
-        // `Time` value in the cast path), so the chunk column that holds the
-        // result has to be a string column. The VALUE matches TiDB exactly;
-        // the reported column TYPE is `VarString` where TiDB says `DATE` or
-        // `DATETIME`. Typing it as Go does would put a string into a
-        // fixed-width temporal cell, which panics rather than mistyping.
-        CastType::Date | CastType::DateTime { .. } => FieldType::new(FieldTypeCode::VarString),
+        // Go `castAsTimeFunctionClass`'s own `c.tp`, whose widths
+        // `WrapWithCastAsTime` (`builtin_cast.go:2838-2846`) spells out:
+        // `MaxDateWidth` (10) for a DATE, `MaxDatetimeWidthNoFsp` (19) for a
+        // DATETIME, plus `1 + decimal` when the target carries an fsp.
+        //
+        // This USED to be a `VarString`, because `cast::eval_cast` rendered a
+        // temporal target into formatted text. It answers `Datum::Time` now
+        // -- the same cell a `date`/`datetime` COLUMN reads out of a chunk row
+        // (`tidb_chunk::row::Row::get_datum`) -- so the declared type is Go's.
+        // The old typing is what made `LAG(datetime6_col, 1, CAST(...))` merge
+        // to VARCHAR where TiDB merges to `datetime(6)`.
+        CastType::Date => {
+            let mut ft = FieldType::new(FieldTypeCode::Date);
+            ft.set_flen(10);
+            ft.set_decimal(0);
+            ft
+        }
+        CastType::DateTime { fsp } => {
+            let decimal = i64::from(fsp.unwrap_or(0));
+            let mut ft = FieldType::new(FieldTypeCode::Datetime);
+            ft.set_flen(if decimal > 0 { 19 + 1 + decimal } else { 19 });
+            ft.set_decimal(decimal);
+            ft
+        }
         // Likewise, the year cast yields an integer value here.
         CastType::Year => FieldType::new(FieldTypeCode::LongLong),
         CastType::Double | CastType::Float => FieldType::new(FieldTypeCode::Double),

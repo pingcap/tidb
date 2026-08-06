@@ -57,6 +57,36 @@ fn rust_eval_label(expr: &str) -> Result<String, String> {
     }
 }
 
+/// The golden label a `TIME:` result would have been recorded under.
+///
+/// The oracle cannot tell a `types.Time` from a string. `goeval`'s own
+/// `label` (`rust/difftests/goeval/main.go:113-114`) is:
+///
+/// ```go
+/// case types.KindMysqlTime:
+///     return "STR:" + d.GetMysqlTime().String()
+/// ```
+///
+/// -- the SAME `STR:` prefix `KindString`/`KindBytes` get one arm above. So a
+/// golden `STR:2021-01-01` for `cast('2021-01-01' as date)` is not evidence
+/// that Go returned a string; it is evidence that Go returned a value whose
+/// rendering is `2021-01-01`, and the Go engine's own
+/// `builtinCastStringAsTimeSig` returns a `types.Time` there.
+///
+/// This collapses the RUST label the same way rather than widening the
+/// comparison: the rendered text is still compared byte for byte, and a
+/// `TIME:` whose text differs still fails. Recording `TIME:` in the goldens
+/// instead would need a `goeval` change plus a regeneration of every topic
+/// that contains a temporal expression, which is a separate, corpus-wide
+/// edit; this keeps the oracle's own limitation named at the one place it
+/// matters.
+fn goeval_collapsed_time(label: &str) -> String {
+    match label.strip_prefix("TIME:") {
+        Some(text) => format!("STR:{text}"),
+        None => label.to_owned(),
+    }
+}
+
 #[test]
 fn expr_eval_matches_go_engine() {
     let root = difftest::parser_oracle::repo_root();
@@ -80,7 +110,7 @@ fn expr_eval_matches_go_engine() {
             continue;
         }
         match rust_eval_label(expr) {
-            Ok(got) if &got == want => matched += 1,
+            Ok(got) if &got == want || goeval_collapsed_time(&got) == *want => matched += 1,
             Ok(got) => failures.push(format!("\n--- {expr}\n  go  : {want}\n  rust: {got}")),
             Err(e) => failures.push(format!(
                 "\n--- {expr}\n  go  : {want}\n  rust: <error: {e}>"

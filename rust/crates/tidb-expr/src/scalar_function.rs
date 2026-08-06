@@ -982,7 +982,16 @@ fn cast_type_of(target: &str, ret_type: &FieldType) -> Result<tidb_ast::CastType
             scale: u32::try_from(ret_type.decimal()).unwrap_or(0),
         },
         "date" => CastType::Date,
-        "datetime" => CastType::DateTime { fsp: None },
+        // The target fsp travels in the RESULT TYPE's `decimal`, the same
+        // place Go's `b.tp.GetDecimal()` reads it from, because the rewriter
+        // records only the target KIND in the function name. Dropping it here
+        // (this arm read `fsp: None` unconditionally) is what made
+        // `cast(a as datetime(3))` print `2020-01-01 12:00:00` where TiDB
+        // prints `2020-01-01 12:00:00.123` (`expression/cast`, recorded) --
+        // `cast::eval_cast` had the rule and never saw the width.
+        "datetime" => CastType::DateTime {
+            fsp: u32::try_from(ret_type.decimal()).ok(),
+        },
         "year" => CastType::Year,
         "double" => CastType::Double,
         "json" => CastType::Json,
