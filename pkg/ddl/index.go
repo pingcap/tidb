@@ -1215,8 +1215,20 @@ SwitchIndexState:
 			job.State = model.JobStateCancelled
 			return ver, err
 		}
-		err = preSplitIndexRegions(jobCtx.stepCtx, w.sess.Context, jobCtx.store, tblInfo, allIndexInfos, job.ReorgMeta, args)
+		var statsProvider autoPreSplitStatsProvider
+		for _, idxArg := range args.IndexArgs {
+			if idxArg.AutoPreSplit {
+				statsProvider = w.ddlCtx.statsHandle
+				break
+			}
+		}
+		err = preSplitIndexRegions(
+			jobCtx.stepCtx, w.sess.Context, jobCtx.store, tblInfo, allIndexInfos,
+			job.ReorgMeta, args, statsProvider)
 		if err != nil {
+			if dbterror.ErrPausedDDLJob.Equal(err) {
+				return ver, nil
+			}
 			if !isRetryableJobError(err, job.ErrorCount) {
 				job.State = model.JobStateCancelled
 			}

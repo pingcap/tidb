@@ -28,7 +28,11 @@ Add index is a “normal” DDL action in terms of SQL surface, but the job args
 - Expression / generated-key indexes may introduce hidden columns:
   - Build: `pkg/ddl/executor.go:checkIndexNameAndColumns`
   - Publish: `pkg/ddl/index.go:moveAndUpdateHiddenColumnsToPublic` (done when moving `StateNone` → `StateDeleteOnly`)
-- Pre-split index regions (optional `SPLIT` clause on index option):
+- Pre-split index regions (optional `PRE_SPLIT_REGIONS` index option):
+  - Manual forms persist either a region count, explicit `BY` values, or `BETWEEN` bounds with a region count in each `model.IndexArgSplitOpt`.
+  - `PRE_SPLIT_REGIONS AUTO` persists a per-index AUTO marker and derives boundaries only from the leading index column's existing Analyze V2 statistics.
+  - AUTO is best-effort: ineligible statistics or failures while planning, splitting, or scattering are logged and do not fail add-index. It may skip partitioned or partial indexes, leading string prefix indexes, small tables, or missing, pseudo, outdated, unhealthy, or non-V2 statistics. Therefore, successful add-index does not guarantee that AUTO split any Regions.
+  - Manual pre-splitting is strict: invalid options or runtime split failures are returned to the add-index job instead of being ignored.
   - Parse: `pkg/ddl/executor.go:buildIndexPresplitOpt`
   - Execute: `pkg/ddl/index_presplit.go:preSplitIndexRegions`
 

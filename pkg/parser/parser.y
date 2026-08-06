@@ -7121,6 +7121,13 @@ IndexOptionList:
 				opt1.Global = true
 			} else if opt2.SplitOpt != nil {
 				opt1.SplitOpt = opt2.SplitOpt
+				opt1.AutoPreSplit = false
+			} else if opt2.AutoPreSplit {
+				// Explicit manual boundaries always take precedence over AUTO,
+				// regardless of the order of repeated options.
+				if opt1.SplitOpt == nil {
+					opt1.AutoPreSplit = true
+				}
 			} else if len(opt2.SecondaryEngineAttr) > 0 {
 				opt1.SecondaryEngineAttr = opt2.SecondaryEngineAttr
 			} else if opt2.Condition != nil {
@@ -7197,6 +7204,16 @@ IndexOption:
 			SplitOpt: &ast.SplitOption{
 				Num: $3.(int64),
 			},
+		}
+	}
+|	"PRE_SPLIT_REGIONS" EqOpt Identifier
+	{
+		if !strings.EqualFold($3, "AUTO") {
+			yylex.AppendError(yylex.Errorf("The value of PRE_SPLIT_REGIONS must be AUTO, an integer, or a split option"))
+			return 1
+		}
+		$$ = &ast.IndexOption{
+			AutoPreSplit: true,
 		}
 	}
 |	"SECONDARY_ENGINE_ATTRIBUTE" EqOpt stringLit
