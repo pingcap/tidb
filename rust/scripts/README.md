@@ -67,6 +67,8 @@ releases the build-directory lock before running test binaries, so the nested
 
 ## Running the test suite
 
+For a stacked narrative-plus-ratchet conflict, run `ruby rust/difftests/resolve-ratchet-conflict.rb <file> NAME=VALUE [NAME=VALUE ...]`; it keeps both comment blocks, deduplicates the supported integration and join-shape constants, runs `cargo fmt`, and restores the original conflict if formatting fails.
+
 Prefer **`cargo nextest run`** over `cargo test` — it runs test binaries in
 parallel and is substantially faster on a many-core machine:
 
