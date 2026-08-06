@@ -26,6 +26,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -4098,7 +4099,16 @@ func (b *builtinInstrUTF8Sig) evalInt(ctx EvalContext, row chunk.Row) (int64, bo
 	if IsNull || err != nil {
 		return 0, true, err
 	}
-	return locateStringWithCollator(str, substr, b.collator()), false, nil
+	if collate.IsCICollation(b.collation) {
+		str = strings.ToLower(str)
+		substr = strings.ToLower(substr)
+	}
+
+	idx := strings.Index(str, substr)
+	if idx == -1 {
+		return 0, false, nil
+	}
+	return int64(utf8.RuneCountInString(str[:idx]) + 1), false, nil
 }
 
 // evalInt evals INSTR(str,substr), case sensitive.

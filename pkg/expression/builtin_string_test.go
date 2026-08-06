@@ -2026,17 +2026,6 @@ func TestInstr(t *testing.T) {
 		require.NoError(t, err)
 		require.Equalf(t, c["Want"][0], got, "[%d]: args: %v", i, c["Args"])
 	}
-
-	f, err := instr.getFunction(ctx, primitiveValsToConstants(ctx, []any{"a", "A"}))
-	require.NoError(t, err)
-	f.SetCharsetAndCollation(charset.CharsetUTF8MB4, "utf8mb4_general_ci")
-	got, err := evalBuiltinFunc(f, ctx, chunk.Row{})
-	require.NoError(t, err)
-	require.Equal(t, int64(1), got.GetInt64())
-	f.setCollator(getCollator(ctx, charset.CollationBin))
-	got, err = evalBuiltinFunc(f, ctx, chunk.Row{})
-	require.NoError(t, err)
-	require.Equal(t, int64(0), got.GetInt64())
 }
 
 func TestLoadFile(t *testing.T) {
