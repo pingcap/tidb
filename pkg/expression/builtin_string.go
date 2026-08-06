@@ -26,7 +26,6 @@ import (
 	"math"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -1665,10 +1664,6 @@ func (b *builtinLocate3ArgsUTF8Sig) evalInt(ctx EvalContext, row chunk.Row) (int
 	str, isNull, err := b.args[1].EvalString(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
-	}
-	if collate.IsCICollation(b.collation) {
-		subStr = strings.ToLower(subStr)
-		str = strings.ToLower(str)
 	}
 	pos, isNull, err := b.args[2].EvalInt(ctx, row)
 	// Transfer the argument which starts from 1 to real index which starts from 0.
@@ -4103,16 +4098,7 @@ func (b *builtinInstrUTF8Sig) evalInt(ctx EvalContext, row chunk.Row) (int64, bo
 	if IsNull || err != nil {
 		return 0, true, err
 	}
-	if collate.IsCICollation(b.collation) {
-		str = strings.ToLower(str)
-		substr = strings.ToLower(substr)
-	}
-
-	idx := strings.Index(str, substr)
-	if idx == -1 {
-		return 0, false, nil
-	}
-	return int64(utf8.RuneCountInString(str[:idx]) + 1), false, nil
+	return locateStringWithCollator(str, substr, b.collator()), false, nil
 }
 
 // evalInt evals INSTR(str,substr), case sensitive.
