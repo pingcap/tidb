@@ -1,0 +1,26 @@
+# lockdown-inventory-v1
+# owning-go-source	pkg/util/texttree/texttree.go
+# source-sha256	4a4710c5308f82d91d0d3e064d0570dbbf15de208a88f8719cefa9e708d5c251
+id	category	go_item	status	rust_symbol	evidence
+D01	declaration	TreeBody constant	PORTED	TREE_BODY	source_constants_are_exact
+D02	declaration	TreeMiddleNode constant	PORTED	TREE_MIDDLE_NODE	source_constants_are_exact
+D03	declaration	TreeLastNode constant	PORTED	TREE_LAST_NODE	source_constants_are_exact
+D04	declaration	TreeGap constant	PORTED	TREE_GAP	source_constants_are_exact
+D05	declaration	TreeNodeIdentifier constant	PORTED	TREE_NODE_IDENTIFIER	source_constants_are_exact
+F01	function	Indent4Child	PORTED	indent_4_child	indent_4_child_preserves_source_rune_rules
+B01	branch	Indent4Child !isLastChild skips replacement	PORTED	indent_4_child	indent_4_child_preserves_source_rune_rules
+B02	branch	Indent4Child isLastChild scans runes right-to-left	PORTED	indent_4_child	indent_4_child_preserves_source_rune_rules
+B03	branch	Indent4Child replaces the closest TreeBody with TreeGap and breaks	PORTED	indent_4_child	indent_4_child_preserves_source_rune_rules
+B04	branch	Indent4Child leaves runes unchanged when no TreeBody exists	PORTED	indent_4_child	indent_4_child_preserves_source_rune_rules
+B05	rule	Indent4Child always appends TreeBody then TreeGap	PORTED	indent_4_child	indent_4_child_preserves_source_rune_rules
+R01	rule	Indent4Child []rune conversion replaces invalid UTF-8	DECLINED	-	Go oracle indent_true_invalid bytes=efbfbd20efbfbde2948220; Rust &str excludes invalid UTF-8
+F02	function	PrettyIdentifier	PORTED	pretty_identifier	pretty_identifier_preserves_source_rune_rules
+B06	branch	PrettyIdentifier empty indent returns id unchanged	PORTED	pretty_identifier	pretty_identifier_preserves_source_rune_rules
+B07	branch	PrettyIdentifier scans runes right-to-left and skips non-TreeBody runes	PORTED	pretty_identifier	pretty_identifier_preserves_source_rune_rules
+B08	branch	PrettyIdentifier last child replaces closest TreeBody with TreeLastNode	PORTED	pretty_identifier	pretty_identifier_preserves_source_rune_rules
+B09	branch	PrettyIdentifier non-last child replaces closest TreeBody with TreeMiddleNode	PORTED	pretty_identifier	pretty_identifier_preserves_source_rune_rules
+B10	branch	PrettyIdentifier leaves the prefix unchanged when no TreeBody exists	PORTED	pretty_identifier	pretty_identifier_preserves_source_rune_rules
+B11	rule	PrettyIdentifier replaces the final indent rune with TreeNodeIdentifier	PORTED	pretty_identifier	pretty_identifier_preserves_source_rune_rules
+B12	rule	PrettyIdentifier concatenates converted indent with id	PORTED	pretty_identifier	pretty_identifier_preserves_source_rune_rules
+R02	rule	PrettyIdentifier []rune(indent) conversion replaces invalid UTF-8	DECLINED	-	Go oracle pretty_invalid_indent bytes=efbfbde2949ce29480e6a087; Rust &str excludes invalid UTF-8
+R03	rule	PrettyIdentifier preserves arbitrary invalid UTF-8 bytes in id	DECLINED	-	Go oracle pretty_invalid_id_nonempty_indent bytes=e2949ce29480ff; Rust &str excludes invalid UTF-8

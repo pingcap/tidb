@@ -12,14 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Complete transcreation of Go `pkg/util/texttree` (`texttree.go`).
+//! Lockdown owner for `pkg/util/texttree/texttree.go`.
 //!
-//! Helpers for rendering the box-drawing tree indentation used in `EXPLAIN`
-//! output. Go works on `[]rune`; Rust's [`char`] is the same Unicode scalar
-//! value, so the algorithms carry over directly on `Vec<char>`.
+//! `texttree.inventory.tsv` classifies every declaration, branch, and rule in
+//! that Go file. The source fingerprint, inventory fingerprint, and Rust symbol
+//! gate below make unreviewed source or inventory drift fail.
 //!
-//! `main_test.go` is a goroutine-leak `TestMain` with no observable behavior of
-//! its own; it has no Rust equivalent.
+//! For valid UTF-8, Go's `[]rune` and Rust's [`char`] preserve the same Unicode
+//! scalar values, so the source algorithms carry over directly on `Vec<char>`.
+//! The inventory explicitly declines Go's arbitrary-byte string domain because
+//! this module's existing public API accepts `&str`.
 
 /// Indicates the current operator sub-tree is not finished, still has child
 /// operators to be attached on.
@@ -92,11 +94,127 @@ pub fn pretty_identifier(id: &str, indent: &str, is_last_child: bool) -> String 
 
 #[cfg(test)]
 mod tests {
-    use super::{indent_4_child, pretty_identifier};
+    use std::{
+        collections::{BTreeMap, BTreeSet},
+        fmt::Write as _,
+    };
 
-    // Go `TestPrettyIdentifier`.
+    use sha2::{Digest, Sha256};
+
+    use super::*;
+
+    const GO_SOURCE: &[u8] = include_bytes!("../../../../pkg/util/texttree/texttree.go");
+    const LOCKDOWN_INVENTORY: &str = include_str!("texttree.inventory.tsv");
+    const EXPECTED_INVENTORY_SHA256: &str =
+        "f9da248738225c41915fc4e069046bd025a14468404f18dcf99085da6b51b1f9";
+    const EXPECTED_ITEMS: [(&str, (&str, &str)); 22] = [
+        ("D01", ("PORTED", "TREE_BODY")),
+        ("D02", ("PORTED", "TREE_MIDDLE_NODE")),
+        ("D03", ("PORTED", "TREE_LAST_NODE")),
+        ("D04", ("PORTED", "TREE_GAP")),
+        ("D05", ("PORTED", "TREE_NODE_IDENTIFIER")),
+        ("F01", ("PORTED", "indent_4_child")),
+        ("B01", ("PORTED", "indent_4_child")),
+        ("B02", ("PORTED", "indent_4_child")),
+        ("B03", ("PORTED", "indent_4_child")),
+        ("B04", ("PORTED", "indent_4_child")),
+        ("B05", ("PORTED", "indent_4_child")),
+        ("R01", ("DECLINED", "-")),
+        ("F02", ("PORTED", "pretty_identifier")),
+        ("B06", ("PORTED", "pretty_identifier")),
+        ("B07", ("PORTED", "pretty_identifier")),
+        ("B08", ("PORTED", "pretty_identifier")),
+        ("B09", ("PORTED", "pretty_identifier")),
+        ("B10", ("PORTED", "pretty_identifier")),
+        ("B11", ("PORTED", "pretty_identifier")),
+        ("B12", ("PORTED", "pretty_identifier")),
+        ("R02", ("DECLINED", "-")),
+        ("R03", ("DECLINED", "-")),
+    ];
+
     #[test]
-    fn pretty_identifier_test() {
+    fn lockdown_inventory_matches_go_source_and_rust_symbols() {
+        let recorded_hash = LOCKDOWN_INVENTORY
+            .lines()
+            .find_map(|line| line.strip_prefix("# source-sha256\t"))
+            .expect("inventory records the owning Go source SHA-256");
+        assert_eq!(recorded_hash, sha256_hex(GO_SOURCE), "Go source drifted");
+        assert_eq!(
+            sha256_hex(LOCKDOWN_INVENTORY.as_bytes()),
+            EXPECTED_INVENTORY_SHA256,
+            "lockdown inventory drifted"
+        );
+
+        let mut lines = LOCKDOWN_INVENTORY
+            .lines()
+            .filter(|line| !line.is_empty() && !line.starts_with('#'));
+        assert_eq!(
+            lines.next(),
+            Some("id\tcategory\tgo_item\tstatus\trust_symbol\tevidence")
+        );
+
+        let allowed_statuses = BTreeSet::from(["PORTED", "DECLINED", "UNREACHABLE"]);
+        let mut actual = BTreeMap::new();
+        for line in lines {
+            let columns: Vec<_> = line.split('\t').collect();
+            assert_eq!(columns.len(), 6, "invalid inventory row: {line}");
+            assert!(
+                allowed_statuses.contains(columns[3]),
+                "unclassified inventory row: {line}"
+            );
+            assert!(
+                !columns[5].is_empty(),
+                "inventory evidence is required: {line}"
+            );
+            assert!(
+                actual
+                    .insert(columns[0], (columns[3], columns[4]))
+                    .is_none(),
+                "duplicate inventory id: {}",
+                columns[0]
+            );
+        }
+        assert_eq!(actual, BTreeMap::from(EXPECTED_ITEMS));
+
+        let _: [char; 5] = [
+            TREE_BODY,
+            TREE_MIDDLE_NODE,
+            TREE_LAST_NODE,
+            TREE_GAP,
+            TREE_NODE_IDENTIFIER,
+        ];
+        let _: fn(&str, bool) -> String = indent_4_child;
+        let _: fn(&str, &str, bool) -> String = pretty_identifier;
+    }
+
+    #[test]
+    fn source_constants_are_exact() {
+        assert_eq!(
+            (
+                TREE_BODY,
+                TREE_MIDDLE_NODE,
+                TREE_LAST_NODE,
+                TREE_GAP,
+                TREE_NODE_IDENTIFIER
+            ),
+            ('│', '├', '└', ' ', '─')
+        );
+    }
+
+    #[test]
+    fn indent_4_child_preserves_source_rune_rules() {
+        assert_eq!(indent_4_child("    ", false), "    │ ");
+        assert_eq!(indent_4_child("    ", true), "    │ ");
+        assert_eq!(indent_4_child("   │ ", true), "     │ ");
+        assert_eq!(indent_4_child("", false), "│ ");
+        assert_eq!(indent_4_child("", true), "│ ");
+        assert_eq!(indent_4_child("α│x│y", false), "α│x│y│ ");
+        assert_eq!(indent_4_child("α│x│y", true), "α│x y│ ");
+        assert_eq!(indent_4_child("αxy", true), "αxy│ ");
+    }
+
+    #[test]
+    fn pretty_identifier_preserves_source_rune_rules() {
         assert_eq!(pretty_identifier("test", "", false), "test");
         assert_eq!(pretty_identifier("test", "  │  ", false), "  ├ ─test");
         assert_eq!(
@@ -105,13 +223,19 @@ mod tests {
         );
         assert_eq!(pretty_identifier("test", "  │  ", true), "  └ ─test");
         assert_eq!(pretty_identifier("test", "\t\t│\t\t", true), "\t\t└\t─test");
+        assert_eq!(pretty_identifier("标", "", false), "标");
+        assert_eq!(pretty_identifier("标", "α│x│y", false), "α│x├─标");
+        assert_eq!(pretty_identifier("标", "α│x│y", true), "α│x└─标");
+        assert_eq!(pretty_identifier("标", "αxy", false), "αx─标");
+        assert_eq!(pretty_identifier("标", "界", true), "─标");
     }
 
-    // Go `TestIndent4Child`.
-    #[test]
-    fn indent_4_child_test() {
-        assert_eq!(indent_4_child("    ", false), "    │ ");
-        assert_eq!(indent_4_child("    ", true), "    │ ");
-        assert_eq!(indent_4_child("   │ ", true), "     │ ");
+    fn sha256_hex(input: &[u8]) -> String {
+        Sha256::digest(input)
+            .iter()
+            .fold(String::with_capacity(64), |mut output, byte| {
+                write!(output, "{byte:02x}").expect("write to String");
+                output
+            })
     }
 }
