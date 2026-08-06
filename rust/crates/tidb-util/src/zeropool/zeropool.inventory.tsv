@@ -7,7 +7,7 @@ D02	field	Pool.items sync.Pool stores pointers whose values are available	PORTED
 D03	field	Pool.pointers sync.Pool stores reusable empty *T containers	DECLINED	-	Rust moves T directly and therefore needs no interface-boxing pointer pool
 R01	rule	The zero value of Pool is valid and returns zero T while empty	PORTED	Pool::default	source_factory_and_zero_value_boundaries_are_exact
 R02	rule	Go supplies a zero value for every T any without a trait bound	DECLINED	-	Rust Pool::new Pool::get and Pool::put require T: Default; Rust types without Default cannot use this API
-R03	rule	A Pool must not be copied after first use	PORTED	Pool	Rust Pool contains a non-Clone Mutex and exposes no Clone implementation
+R03	rule	A Pool must not be copied after first use	PORTED	Pool	pool_cannot_be_copied_after_use
 F01	function	New[T any](item func() T) Pool[T]	PORTED	Pool::new	source_factory_and_zero_value_boundaries_are_exact
 R04	rule	New returns the Pool by value	PORTED	Pool::new	lockdown_inventory_matches_go_source_and_rust_symbols
 R05	rule	New installs item as the empty-items factory	PORTED	Pool::factory	source_factory_and_zero_value_boundaries_are_exact
@@ -31,3 +31,4 @@ R16	rule	Put makes the item available to a later Get	PORTED	Pool::put	source_fac
 R17	rule	Get and Put may be called concurrently	PORTED	Pool	TestPool
 R18	rule	sync.Pool may discard any stored item at any time including across garbage collection	DECLINED	-	Go oracle after Put(123) and two runtime.GC calls: two_gc_get=-1 from factory; Rust retains entries until Get or Pool drop
 R19	rule	The secondary pointer pool avoids an allocation on most warmed Get Put pairs	PORTED	Pool	does_not_allocate_after_warmup
+R20	rule	Go sync.Pool has no mutex-poison failure mode	PORTED	Pool::items	poisoned_mutex_does_not_add_a_failure_mode proves Rust recovers a poisoned Mutex instead of adding a failure mode

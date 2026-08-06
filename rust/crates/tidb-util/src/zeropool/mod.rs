@@ -92,8 +92,8 @@ mod tests {
     const GO_SOURCE: &[u8] = include_bytes!("../../../../../pkg/util/zeropool/pool.go");
     const LOCKDOWN_INVENTORY: &str = include_str!("zeropool.inventory.tsv");
     const EXPECTED_INVENTORY_SHA256: &str =
-        "b38fead6a9148fb25bfe876eb31641cf4824d3ea8bb12b434d16204bebe14c05";
-    const EXPECTED_ITEMS: [(&str, (&str, &str)); 29] = [
+        "86d36b5d6a27a1b37459fd1386f5dfeb7b1590eacda2e67ad949d6f32d246adb";
+    const EXPECTED_ITEMS: [(&str, (&str, &str)); 30] = [
         ("D01", ("PORTED", "Pool")),
         ("D02", ("PORTED", "Pool::items")),
         ("D03", ("DECLINED", "-")),
@@ -123,7 +123,15 @@ mod tests {
         ("R17", ("PORTED", "Pool")),
         ("R18", ("DECLINED", "-")),
         ("R19", ("PORTED", "Pool")),
+        ("R20", ("PORTED", "Pool::items")),
     ];
+
+    trait AmbiguousIfClone<A> {
+        fn marker() {}
+    }
+
+    impl<T: ?Sized> AmbiguousIfClone<()> for T {}
+    impl<T: ?Sized + Clone> AmbiguousIfClone<u8> for T {}
 
     const ITERATIONS: usize = 1_000_000;
     const CONCURRENCY: usize = u8::MAX as usize;
@@ -230,6 +238,27 @@ mod tests {
         assert_eq!(drops.load(Ordering::SeqCst), 0);
         drop(item);
         assert_eq!(drops.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn pool_cannot_be_copied_after_use() {
+        let _ = <Pool<Vec<u8>> as AmbiguousIfClone<_>>::marker;
+    }
+
+    #[test]
+    fn poisoned_mutex_does_not_add_a_failure_mode() {
+        let pool = Arc::new(Pool::<usize>::default());
+        let poisoning_pool = Arc::clone(&pool);
+        assert!(thread::spawn(move || {
+            let _guard = poisoning_pool.items.lock().expect("unpoisoned mutex");
+            panic!("poison the pool mutex");
+        })
+        .join()
+        .is_err());
+        assert!(pool.items.is_poisoned());
+
+        pool.put(7);
+        assert_eq!(pool.get(), 7);
     }
 
     #[test]
