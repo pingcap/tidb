@@ -882,9 +882,16 @@ fn cast_to_time_value(
             return Ok(None);
         };
         // Go: `res, err = res.RoundFrac(tc, b.tp.GetDecimal())` right after
-        // the conversion. Captured over `tm time(3)` holding `12:34:56.789`:
-        // `cast(tm as datetime(3))` keeps `.789` and `cast(tm as date)` is
-        // the bare statement date.
+        // the conversion, and NOTHING ELSE. This is the ONE
+        // `builtinCast*AsTimeSig` with no "Truncate hh:mm:ss part if the type
+        // is Date" line, so a DATE target keeps the duration's CLOCK in the
+        // value even though the DATE rendering hides it. Captured (`gorun`)
+        // over `tm time(3)` holding `12:34:56.789` on 2026-08-06:
+        // `cast(tm as date)` prints `2026-08-06` but
+        // `cast(cast(tm as date) as datetime)` is `2026-08-06 12:34:56`, NOT
+        // midnight. Calling [`truncate_clock_for_date`] here -- which the
+        // other five arms do need -- was wrong, and the mutation that removed
+        // it SURVIVED, which is what sent this back to the Go source.
         return Ok(duration
             .convert_to_time(
                 stamp.with_timezone(&zone),
@@ -893,7 +900,6 @@ fn cast_to_time_value(
                 modes.allow_invalid_dates,
             )
             .and_then(|time| time.round_frac(fsp, &ctx.time_zone()))
-            .map(|time| truncate_clock_for_date(time, kind))
             .ok());
     }
     let Some(s) = coerce_str(v)? else {
@@ -1707,6 +1713,41 @@ mod tests {
             let got = cast_to_time(&duration, None, &AtNoon, kind, fsp).expect("cast");
             assert_eq!(rendered(&got), want, "{kind:?} @ {fsp}");
         }
+
+        // The DURATION source is the ONE arm Go gives no "Truncate hh:mm:ss
+        // part if the type is Date": its DATE result keeps the clock, and a
+        // second cast reveals it. CAPTURED (`gorun`) over the same column:
+        // `cast(cast(tm as date) as datetime)` is `2026-08-06 12:34:56`, not
+        // `2026-08-06 00:00:00`.
+        //
+        // This one assertion is load-bearing TWICE. It is the only fixture
+        // that distinguishes:
+        //  * applying `truncate_clock_for_date` on this arm (Go does not) --
+        //    a mutation that removed it SURVIVED everything else; and
+        //  * `parse_time_by_source`'s own `Datum::Time` arm from the text
+        //    fallback, because `Time`'s DATE rendering drops the clock, so
+        //    re-parsing the text answers midnight where Go's
+        //    `builtinCastTimeAsTimeSig` (`Convert` + `RoundFrac`, never a
+        //    re-parse) keeps it.
+        let as_date =
+            cast_to_time(&duration, None, &AtNoon, tidb_datatype::TimeType::Date, 0).expect("cast");
+        let Datum::Time(inner) = as_date else {
+            panic!("a DATE cast must be a Datum::Time")
+        };
+        assert_eq!(
+            rendered(
+                &cast_to_time(
+                    &Datum::Time(inner),
+                    None,
+                    &AtNoon,
+                    tidb_datatype::TimeType::DateTime,
+                    0,
+                )
+                .expect("cast")
+            ),
+            "2026-08-06 12:34:56",
+            "a duration's DATE result keeps its clock in the value"
+        );
     }
 
     /// A `DATE` target ZEROES the clock in the VALUE, not just in the
