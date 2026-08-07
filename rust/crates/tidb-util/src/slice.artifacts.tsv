@@ -1,0 +1,12 @@
+# pkg-slice-artifacts-v1
+# zero	build_tags	0
+# zero	platform_variants	0
+# zero	code_generated	0
+# zero	go_generate	0
+# zero	go_embed	0
+# zero	tracked_testdata	0
+path	role	sha256
+pkg/util/slice/BUILD.bazel	build	764e4887dbbd32b2088a5334b2c1290fa901fe0d581153a950d1b009ad51e7de
+pkg/util/slice/main_test.go	test-support	53d6fcd083db19b908006557cee85cc90e842b72d52579b2b85a68b86772179c
+pkg/util/slice/slice.go	production	7cd1bb4402d53901a203f8f4075859a4149f5c2fd440d23336747163c833970b
+pkg/util/slice/slice_test.go	test	23b14a7d7fd19fece9346a19a6c9967488c3281a78e9cf606bf2cb85a872470d

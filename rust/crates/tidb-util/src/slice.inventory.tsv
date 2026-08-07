@@ -1,23 +1,43 @@
-# lockdown-inventory-v1
-# owning-go-source	pkg/util/slice/slice.go
-# source-sha256	7cd1bb4402d53901a203f8f4075859a4149f5c2fd440d23336747163c833970b
-id	category	go_item	status	rust_symbol	evidence
-F01	function	AllOf	PORTED	all_of	lockdown_inventory_matches_go_source_and_rust_symbols
-R01	rule	AllOf: inspect elements in source order through slices.ContainsFunc	PORTED	all_of	all_of_preserves_source_order_short_circuit_and_empty_truth
-R02	rule	AllOf closure: negate p(x) for ContainsFunc	PORTED	all_of	all_of_preserves_source_order_short_circuit_and_empty_truth
-R03	rule	AllOf return: negate ContainsFunc result	PORTED	all_of	TestSlice
-B01	branch	AllOf: empty slice invokes no predicate and returns true	PORTED	all_of	all_of_preserves_source_order_short_circuit_and_empty_truth
-B02	branch	AllOf: first false predicate stops iteration and returns false	PORTED	all_of	all_of_preserves_source_order_short_circuit_and_empty_truth
-B03	branch	AllOf: all predicates true returns true	PORTED	all_of	TestSlice
-F02	function	Int64sToStrings	PORTED	int64s_to_strings	lockdown_inventory_matches_go_source_and_rust_symbols
-R04	rule	Int64sToStrings: allocate output length equal to input length	PORTED	int64s_to_strings	int64s_to_strings_preserves_source_decimal_domain
-B04	branch	Int64sToStrings range: empty input executes no body	PORTED	int64s_to_strings	int64s_to_strings_preserves_source_decimal_domain
-B05	branch	Int64sToStrings range: execute once per indexed input element	PORTED	int64s_to_strings	int64s_to_strings_preserves_source_decimal_domain
-R05	rule	Int64sToStrings: FormatInt base 10 into the matching index	PORTED	int64s_to_strings	int64s_to_strings_preserves_source_decimal_domain
-F03	function	DeepClone	PORTED	deep_clone	lockdown_inventory_matches_go_source_and_rust_symbols
-B06	branch	DeepClone: nil input returns nil	PORTED	deep_clone	deep_clone_preserves_nil_empty_and_element_clone_ownership
-B07	branch	DeepClone: non-nil input proceeds to allocation	PORTED	deep_clone	deep_clone_preserves_nil_empty_and_element_clone_ownership
-R06	rule	DeepClone: allocate length zero and capacity len(s)	PORTED	deep_clone	deep_clone_preserves_nil_empty_and_element_clone_ownership
-B08	branch	DeepClone range: present empty input executes no body and stays non-nil	PORTED	deep_clone	deep_clone_preserves_nil_empty_and_element_clone_ownership
-B09	branch	DeepClone range: execute once per source element in order	PORTED	deep_clone	deep_clone_invokes_clone_once_per_item_in_source_order
-R07	rule	DeepClone: append exactly one item.Clone result per element	PORTED	deep_clone	deep_clone_invokes_clone_once_per_item_in_source_order
+# pkg-slice-obligations-v1
+obligation_id	category	source_path	ast_anchor	node_sha256	owner	status	rust_symbol	evidence	mutation_policy
+O7dd7e8a19a73079d	test_main	pkg/util/slice/main_test.go	TestMain	d11620807604065247ad8929750f05253ac5709d14da04be7888aa128c70c1a8	TestMain	DECLINED	-	source-quote:go_testsetup_and_goleak_only	classification-evidence-gate
+Od63a12b80a74dbf4	test_row	pkg/util/slice/main_test.go	TestMain/composite:1/element:0	02c5b54baa79aa721ac0d8ae08c21fea4842beccff6bedfbf4d58dd3bc65ac11	TestMain	DECLINED	-	source-quote:go_testsetup_and_goleak_only	classification-evidence-gate
+Ofcae321774aa8f5f	test_row	pkg/util/slice/main_test.go	TestMain/composite:1/element:1	7dff9b05a1b906df6f04cdbed1cf6ed5e3b3071d1d11b406c39e111901f12bd0	TestMain	DECLINED	-	source-quote:go_testsetup_and_goleak_only	classification-evidence-gate
+O1d04c021f3c43f3c	test_row	pkg/util/slice/main_test.go	TestMain/composite:1/element:2	f98532b02d1e36b1082d611b087502514ad461824a4defeb28c01ac47c49546b	TestMain	DECLINED	-	source-quote:go_testsetup_and_goleak_only	classification-evidence-gate
+O734d33e917167bb6	test_row	pkg/util/slice/main_test.go	TestMain/composite:1/element:3	3b68f0438d52cb12418c036d95b9fdf80880b5908d4d3c40ee17e9d83fec15b5	TestMain	DECLINED	-	source-quote:go_testsetup_and_goleak_only	classification-evidence-gate
+O97df6ec524e19653	function	pkg/util/slice/slice.go	AllOf	2a7b33e3e7a5515949a1f27c3db2dee416a75542027981431a800532f63ae83d	AllOf	PORTED	all_of	rust-test:slice_lockdown_inventory_is_complete_and_symbols_compile	compile-owner-gate
+O65601ca3cb397017	closure	pkg/util/slice/slice.go	AllOf/closure:1	6ee89c39b43a043b6cc64476cc49b09aeefe680e2cdf61d07349e8229b8f2737	AllOf	PORTED	all_of	rust-test:all_of_preserves_source_order_short_circuit_and_empty_truth	behavior-mutation
+Oea00018b9dc1a4e7	function	pkg/util/slice/slice.go	DeepClone	d2d95f7bc1ee5ce997d1963fa491e8e21cff8e911da2f20eeccbd5ee67e4d887	DeepClone	PORTED	deep_clone	rust-test:slice_lockdown_inventory_is_complete_and_symbols_compile	compile-owner-gate
+O62d5f7d1cf2bcd94	branch	pkg/util/slice/slice.go	DeepClone/if:1/false	43ca1edbf27e93c964c1f3dacca532fb6564552c4b07d7cf9ec6ca7f5b60c2c9	DeepClone	PORTED	deep_clone	rust-test:deep_clone_preserves_nil_empty_and_element_clone_ownership	behavior-mutation
+Oa70ec2dfa363c4a1	branch	pkg/util/slice/slice.go	DeepClone/if:1/true	43ca1edbf27e93c964c1f3dacca532fb6564552c4b07d7cf9ec6ca7f5b60c2c9	DeepClone	PORTED	deep_clone	rust-test:deep_clone_preserves_nil_empty_and_element_clone_ownership	behavior-mutation
+O911025669a74a15b	loop	pkg/util/slice/slice.go	DeepClone/loop:1/enters	94398d2f6bf320b2c73122f34258ed7433a84467cb2af75b797300d487d43bd4	DeepClone	PORTED	deep_clone	rust-test:deep_clone_invokes_clone_once_per_item_in_source_order	behavior-mutation
+Of6e784c5518afdb4	loop	pkg/util/slice/slice.go	DeepClone/loop:1/zero_iterations	94398d2f6bf320b2c73122f34258ed7433a84467cb2af75b797300d487d43bd4	DeepClone	PORTED	deep_clone	rust-test:deep_clone_preserves_nil_empty_and_element_clone_ownership	behavior-mutation
+Oecdbb499ede00ec5	function	pkg/util/slice/slice.go	Int64sToStrings	c013bd0f9e5c49b8e98b188d85e792b2c725ecd08c0b0d3d71190003874ac166	Int64sToStrings	PORTED	int64s_to_strings	rust-test:slice_lockdown_inventory_is_complete_and_symbols_compile	compile-owner-gate
+O9f5666bd321250d0	loop	pkg/util/slice/slice.go	Int64sToStrings/loop:1/enters	aec358c038ddfbf53e91684f91c5e3a28f1161bee669c8c1f7f8da1ac08e17d1	Int64sToStrings	PORTED	int64s_to_strings	rust-test:int64s_to_strings_preserves_source_decimal_domain	behavior-mutation
+O5211334ba4c29833	loop	pkg/util/slice/slice.go	Int64sToStrings/loop:1/zero_iterations	aec358c038ddfbf53e91684f91c5e3a28f1161bee669c8c1f7f8da1ac08e17d1	Int64sToStrings	PORTED	int64s_to_strings	rust-test:int64s_to_strings_preserves_source_decimal_domain	behavior-mutation
+Od720e8b3560c9142	test	pkg/util/slice/slice_test.go	TestSlice	30d57c9490ec3172d09125ebb843caa0af4ee11e92b9993ab11fdd217e16f193	TestSlice	PORTED	TestSlice	rust-test:TestSlice	test-evidence-gate
+Oc5e487afccbf39f9	test_assertion	pkg/util/slice/slice_test.go	TestSlice/assertion:1:Equal	bfedfe9c3ca35608d9bf10189d8cd8a082296c444fbfd4d64d19301007644bc6	TestSlice	PORTED	TestSlice	rust-test:TestSlice	test-evidence-gate
+O6706c91bd169222e	test_helper_closure	pkg/util/slice/slice_test.go	TestSlice/closure:1	30d57c9490ec3172d09125ebb843caa0af4ee11e92b9993ab11fdd217e16f193	TestSlice	PORTED	TestSlice	rust-test:TestSlice	test-evidence-gate
+O09d7e3729644ee3a	test_helper_closure	pkg/util/slice/slice_test.go	TestSlice/closure:2	c135f9613a1a65bf981af578d87ab34befee6173b15b53c5df993aec362121b9	TestSlice	PORTED	TestSlice	rust-test:TestSlice	test-evidence-gate
+O5fe6a28a7809b66f	test_row	pkg/util/slice/slice_test.go	TestSlice/composite:1/element:0	0bacb17a6cfb64ac90c27bfa475c998fc7824961b620dfbe35970ddfa0b6d065	TestSlice	PORTED	TestSlice	rust-test:TestSlice	test-evidence-gate
+Ob35746d0c47b5d74	test_row	pkg/util/slice/slice_test.go	TestSlice/composite:1/element:1	33935d710222a06d04382e390ef33cfa00f43540aee205f87f5d565e82df0f95	TestSlice	PORTED	TestSlice	rust-test:TestSlice	test-evidence-gate
+O098ac7a814670464	test_row	pkg/util/slice/slice_test.go	TestSlice/composite:1/element:2	f67f45e0340cba8c7ebcbdacde198bbf0adb34611e4f2c8d6936e4ffb2fd555b	TestSlice	PORTED	TestSlice	rust-test:TestSlice	test-evidence-gate
+O4c1c1a8663d6fbba	test_row	pkg/util/slice/slice_test.go	TestSlice/composite:1/element:3	3ae7fa707064ddaf7b6c7f7e34a5c6e3ef9d2b31a216f4d6f2d6715de712808e	TestSlice	PORTED	TestSlice	rust-test:TestSlice	test-evidence-gate
+Oeb9c7ae8d80566df	test_row	pkg/util/slice/slice_test.go	TestSlice/composite:2/element:0	19d9ceb283a2c127e2c2f498fb84d707db97242210d5ff2bc1a35e2a371e43ae	TestSlice	PORTED	TestSlice	rust-test:TestSlice	test-evidence-gate
+Ob31abf36ac8c4543	test_row	pkg/util/slice/slice_test.go	TestSlice/composite:2/element:1	debc2f07db78d52d2def07b7bc620d7042367501d9439a62ba09b559a98e0957	TestSlice	PORTED	TestSlice	rust-test:TestSlice	test-evidence-gate
+O5f2a3a98461bfaef	test_row	pkg/util/slice/slice_test.go	TestSlice/composite:4/element:0	73d126472b0f9dd53cecf6224371e1f0ab6894050eb786429743c373aeefa31f	TestSlice	PORTED	TestSlice	rust-test:TestSlice	test-evidence-gate
+Od2cc419239080298	test_row	pkg/util/slice/slice_test.go	TestSlice/composite:4/element:1	98151954f217a510702d236de168cc35d0ab2f99c4479cc9b07eeede7ef73a66	TestSlice	PORTED	TestSlice	rust-test:TestSlice	test-evidence-gate
+O1e77363210e49f21	test_row	pkg/util/slice/slice_test.go	TestSlice/composite:5/element:0	e79e418e48623569d75e2a7b09ae88ed9b77b126a445b9ff9dc6989a08efa079	TestSlice	PORTED	TestSlice	rust-test:TestSlice	test-evidence-gate
+Of4df02834eee8847	test_row	pkg/util/slice/slice_test.go	TestSlice/composite:5/element:1	913da1f8df6f8fd47593840d533ba0458cc9873996bf310460abb495b34c232a	TestSlice	PORTED	TestSlice	rust-test:TestSlice	test-evidence-gate
+O9e31e9c1503f84b6	test_row	pkg/util/slice/slice_test.go	TestSlice/composite:5/element:2	ac11339ffa8f270c4f781e0a3922bb1c80d9dee6e4b6911ca34538ed9ae03caa	TestSlice	PORTED	TestSlice	rust-test:TestSlice	test-evidence-gate
+Obac38cdcd1b62ad1	test_row	pkg/util/slice/slice_test.go	TestSlice/composite:6/element:0	c3aef75aa87bb703faf5f365820972c055f161b6c1e106d60667c84c4867ce17	TestSlice	PORTED	TestSlice	rust-test:TestSlice	test-evidence-gate
+O6e7869dce28a7ffb	test_row	pkg/util/slice/slice_test.go	TestSlice/composite:6/element:1	98151954f217a510702d236de168cc35d0ab2f99c4479cc9b07eeede7ef73a66	TestSlice	PORTED	TestSlice	rust-test:TestSlice	test-evidence-gate
+O3ea31ec5685620a3	test_row	pkg/util/slice/slice_test.go	TestSlice/composite:7/element:0	e79e418e48623569d75e2a7b09ae88ed9b77b126a445b9ff9dc6989a08efa079	TestSlice	PORTED	TestSlice	rust-test:TestSlice	test-evidence-gate
+O21fd55d4e966372d	test_row	pkg/util/slice/slice_test.go	TestSlice/composite:7/element:1	ac11339ffa8f270c4f781e0a3922bb1c80d9dee6e4b6911ca34538ed9ae03caa	TestSlice	PORTED	TestSlice	rust-test:TestSlice	test-evidence-gate
+Ob857610a8e3f84bd	test_row	pkg/util/slice/slice_test.go	TestSlice/composite:8/element:0	640e38199e6c13cdff0d3c59cbd9b3d42474d79690252def20b08b032dc6d165	TestSlice	PORTED	TestSlice	rust-test:TestSlice	test-evidence-gate
+O74e54ca7bc450007	test_row	pkg/util/slice/slice_test.go	TestSlice/composite:8/element:1	debc2f07db78d52d2def07b7bc620d7042367501d9439a62ba09b559a98e0957	TestSlice	PORTED	TestSlice	rust-test:TestSlice	test-evidence-gate
+O88c4b1943d7d0250	test_row	pkg/util/slice/slice_test.go	TestSlice/composite:9/element:0	913da1f8df6f8fd47593840d533ba0458cc9873996bf310460abb495b34c232a	TestSlice	PORTED	TestSlice	rust-test:TestSlice	test-evidence-gate
+O03c7115b25005a03	test_row	pkg/util/slice/slice_test.go	TestSlice/composite:9/element:1	913da1f8df6f8fd47593840d533ba0458cc9873996bf310460abb495b34c232a	TestSlice	PORTED	TestSlice	rust-test:TestSlice	test-evidence-gate
+O821de48f600aef58	test_row	pkg/util/slice/slice_test.go	TestSlice/composite:9/element:2	3089c464221340fed4229d6ba913a04224c91b44158c22163e8849eb7dcc4878	TestSlice	PORTED	TestSlice	rust-test:TestSlice	test-evidence-gate
+Of1e3ec99f3d69ec9	test_loop	pkg/util/slice/slice_test.go	TestSlice/loop:1/enters	61fc07721a93a25d1cc2f43eabc0f35d94f83f03f932783638f9c2baad238d16	TestSlice	PORTED	TestSlice	rust-test:TestSlice	test-evidence-gate
+O4b0aefa9873f1bb4	test_loop	pkg/util/slice/slice_test.go	TestSlice/loop:1/zero_iterations	61fc07721a93a25d1cc2f43eabc0f35d94f83f03f932783638f9c2baad238d16	TestSlice	PORTED	TestSlice	rust-test:TestSlice	test-evidence-gate

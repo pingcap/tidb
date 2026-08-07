@@ -12,14 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Lockdown owner for `pkg/util/slice/slice.go`.
+//! Lockdown owner for the complete Go `pkg/util/slice` package.
 //!
-//! `slice.inventory.tsv` classifies every function, branch, and state rule in
-//! that Go file. The source fingerprint and Rust symbol gate below make an
-//! unreviewed source or inventory drift fail. The original `TestSlice` is
-//! retained by name. Go's `TestMain` installs common Go test state and
-//! third-party goleak exclusions; this Rust module owns no global state or
-//! background workers, so it needs neither hook nor exclusion.
+//! `slice.artifacts.tsv` fingerprints every direct package artifact and
+//! `slice.inventory.tsv` classifies every generated Go AST obligation. The
+//! original `TestSlice` is retained by name. Go's `TestMain` installs common
+//! Go test state and third-party goleak exclusions; this Rust module owns no
+//! matching global state or background workers.
 
 /// Returns true when every item matches `predicate`.
 ///
@@ -63,28 +62,20 @@ mod tests {
 
     use super::{all_of, deep_clone, int64s_to_strings};
 
+    const GO_BUILD: &[u8] = include_bytes!("../../../../pkg/util/slice/BUILD.bazel");
+    const GO_MAIN_TEST: &[u8] = include_bytes!("../../../../pkg/util/slice/main_test.go");
     const GO_SOURCE: &[u8] = include_bytes!("../../../../pkg/util/slice/slice.go");
+    const GO_TEST: &[u8] = include_bytes!("../../../../pkg/util/slice/slice_test.go");
+    const ARTIFACT_MANIFEST: &str = include_str!("slice.artifacts.tsv");
     const LOCKDOWN_INVENTORY: &str = include_str!("slice.inventory.tsv");
-    const EXPECTED_ITEMS: [(&str, (&str, &str)); 19] = [
-        ("F01", ("PORTED", "all_of")),
-        ("R01", ("PORTED", "all_of")),
-        ("R02", ("PORTED", "all_of")),
-        ("R03", ("PORTED", "all_of")),
-        ("B01", ("PORTED", "all_of")),
-        ("B02", ("PORTED", "all_of")),
-        ("B03", ("PORTED", "all_of")),
-        ("F02", ("PORTED", "int64s_to_strings")),
-        ("R04", ("PORTED", "int64s_to_strings")),
-        ("B04", ("PORTED", "int64s_to_strings")),
-        ("B05", ("PORTED", "int64s_to_strings")),
-        ("R05", ("PORTED", "int64s_to_strings")),
-        ("F03", ("PORTED", "deep_clone")),
-        ("B06", ("PORTED", "deep_clone")),
-        ("B07", ("PORTED", "deep_clone")),
-        ("R06", ("PORTED", "deep_clone")),
-        ("B08", ("PORTED", "deep_clone")),
-        ("B09", ("PORTED", "deep_clone")),
-        ("R07", ("PORTED", "deep_clone")),
+    const DECLINED_EVIDENCE: &str = "source-quote:go_testsetup_and_goleak_only";
+    const SYMBOL_EVIDENCE: &str =
+        "rust-test:slice_lockdown_inventory_is_complete_and_symbols_compile";
+    const ARTIFACTS: [(&str, &str, &[u8]); 4] = [
+        ("pkg/util/slice/BUILD.bazel", "build", GO_BUILD),
+        ("pkg/util/slice/main_test.go", "test-support", GO_MAIN_TEST),
+        ("pkg/util/slice/slice.go", "production", GO_SOURCE),
+        ("pkg/util/slice/slice_test.go", "test", GO_TEST),
     ];
 
     #[test]
@@ -183,43 +174,189 @@ mod tests {
     }
 
     #[test]
-    fn lockdown_inventory_matches_go_source_and_rust_symbols() {
-        let recorded_hash = LOCKDOWN_INVENTORY
-            .lines()
-            .find_map(|line| line.strip_prefix("# source-sha256\t"))
-            .expect("inventory records the owning Go source SHA-256");
-        assert_eq!(recorded_hash, sha256_hex(GO_SOURCE), "Go source drifted");
+    fn slice_lockdown_inventory_is_complete_and_symbols_compile() {
+        let expected_manifest_prefix = [
+            "# pkg-slice-artifacts-v1",
+            "# zero\tbuild_tags\t0",
+            "# zero\tplatform_variants\t0",
+            "# zero\tcode_generated\t0",
+            "# zero\tgo_generate\t0",
+            "# zero\tgo_embed\t0",
+            "# zero\ttracked_testdata\t0",
+            "path\trole\tsha256",
+        ];
+        let mut manifest_lines = ARTIFACT_MANIFEST.lines();
+        for expected in expected_manifest_prefix {
+            assert_eq!(manifest_lines.next(), Some(expected));
+        }
+        let mut manifest = BTreeMap::new();
+        for line in manifest_lines {
+            let columns: Vec<_> = line.split('\t').collect();
+            assert_eq!(columns.len(), 3, "invalid artifact row: {line}");
+            assert!(manifest
+                .insert(columns[0], (columns[1], columns[2]))
+                .is_none());
+        }
+        assert_eq!(manifest.len(), ARTIFACTS.len());
+        for (path, role, bytes) in ARTIFACTS {
+            assert!(manifest
+                .get(path)
+                .is_some_and(|(actual_role, actual_hash)| {
+                    *actual_role == role && *actual_hash == sha256_hex(bytes)
+                }));
+        }
 
         let mut lines = LOCKDOWN_INVENTORY
             .lines()
             .filter(|line| !line.is_empty() && !line.starts_with('#'));
         assert_eq!(
             lines.next(),
-            Some("id\tcategory\tgo_item\tstatus\trust_symbol\tevidence")
+            Some(
+                "obligation_id\tcategory\tsource_path\tast_anchor\tnode_sha256\towner\tstatus\trust_symbol\tevidence\tmutation_policy"
+            )
         );
 
         let allowed_statuses = BTreeSet::from(["PORTED", "DECLINED", "UNREACHABLE"]);
-        let mut actual = BTreeMap::new();
+        let mut ids = BTreeSet::new();
+        let mut anchors = BTreeSet::new();
+        let mut categories = BTreeMap::new();
+        let mut statuses = BTreeMap::new();
+        let mut declined = BTreeSet::new();
         for line in lines {
             let columns: Vec<_> = line.split('\t').collect();
-            assert_eq!(columns.len(), 6, "invalid inventory row: {line}");
+            assert_eq!(columns.len(), 10, "invalid inventory row: {line}");
             assert!(
-                allowed_statuses.contains(columns[3]),
+                allowed_statuses.contains(columns[6]),
                 "unclassified inventory row: {line}"
             );
             assert!(
-                !columns[5].is_empty(),
+                !columns[8].is_empty(),
                 "inventory evidence is required: {line}"
             );
+            assert!(ids.insert(columns[0]), "duplicate id: {line}");
             assert!(
-                actual
-                    .insert(columns[0], (columns[3], columns[4]))
-                    .is_none(),
-                "duplicate inventory id: {}",
-                columns[0]
+                anchors.insert((columns[2], columns[3])),
+                "duplicate anchor: {line}"
             );
+            *categories.entry(columns[1]).or_insert(0usize) += 1;
+            *statuses.entry(columns[6]).or_insert(0usize) += 1;
+
+            match (columns[2], columns[1], columns[5], columns[3]) {
+                ("pkg/util/slice/slice.go", "function", owner, anchor)
+                    if owner == anchor
+                        && matches!(owner, "AllOf" | "DeepClone" | "Int64sToStrings") =>
+                {
+                    let symbol = match owner {
+                        "AllOf" => "all_of",
+                        "DeepClone" => "deep_clone",
+                        _ => "int64s_to_strings",
+                    };
+                    assert_eq!(
+                        columns[6..10],
+                        ["PORTED", symbol, SYMBOL_EVIDENCE, "compile-owner-gate"]
+                    );
+                }
+                ("pkg/util/slice/slice.go", "branch" | "closure" | "loop", owner, anchor)
+                    if anchor.starts_with(owner)
+                        && matches!(owner, "AllOf" | "DeepClone" | "Int64sToStrings") =>
+                {
+                    let (symbol, evidence) = match owner {
+                        "AllOf" => (
+                            "all_of",
+                            "rust-test:all_of_preserves_source_order_short_circuit_and_empty_truth",
+                        ),
+                        "Int64sToStrings" => (
+                            "int64s_to_strings",
+                            "rust-test:int64s_to_strings_preserves_source_decimal_domain",
+                        ),
+                        "DeepClone" if columns[1] == "loop" && anchor.ends_with("/enters") => (
+                            "deep_clone",
+                            "rust-test:deep_clone_invokes_clone_once_per_item_in_source_order",
+                        ),
+                        _ => (
+                            "deep_clone",
+                            "rust-test:deep_clone_preserves_nil_empty_and_element_clone_ownership",
+                        ),
+                    };
+                    assert_eq!(
+                        columns[6..10],
+                        ["PORTED", symbol, evidence, "behavior-mutation"]
+                    );
+                }
+                (
+                    "pkg/util/slice/slice_test.go",
+                    "test" | "test_assertion" | "test_helper_closure" | "test_loop" | "test_row",
+                    "TestSlice",
+                    anchor,
+                ) if anchor.starts_with("TestSlice") => {
+                    assert_eq!(
+                        columns[6..10],
+                        [
+                            "PORTED",
+                            "TestSlice",
+                            "rust-test:TestSlice",
+                            "test-evidence-gate"
+                        ]
+                    );
+                }
+                ("pkg/util/slice/main_test.go", "test_main" | "test_row", "TestMain", anchor) => {
+                    assert!(matches!(
+                        anchor,
+                        "TestMain"
+                            | "TestMain/composite:1/element:0"
+                            | "TestMain/composite:1/element:1"
+                            | "TestMain/composite:1/element:2"
+                            | "TestMain/composite:1/element:3"
+                    ));
+                    assert_eq!(
+                        columns[6..10],
+                        [
+                            "DECLINED",
+                            "-",
+                            DECLINED_EVIDENCE,
+                            "classification-evidence-gate"
+                        ]
+                    );
+                    declined.insert(anchor);
+                }
+                _ => panic!("unexpected slice inventory row: {line}"),
+            }
         }
-        assert_eq!(actual, BTreeMap::from(EXPECTED_ITEMS));
+        assert_eq!(ids.len(), 41);
+        assert_eq!(
+            categories,
+            BTreeMap::from([
+                ("branch", 2),
+                ("closure", 1),
+                ("function", 3),
+                ("loop", 4),
+                ("test", 1),
+                ("test_assertion", 1),
+                ("test_helper_closure", 2),
+                ("test_loop", 2),
+                ("test_main", 1),
+                ("test_row", 24),
+            ])
+        );
+        assert_eq!(statuses, BTreeMap::from([("DECLINED", 5), ("PORTED", 36)]));
+        assert_eq!(
+            declined,
+            BTreeSet::from([
+                "TestMain",
+                "TestMain/composite:1/element:0",
+                "TestMain/composite:1/element:1",
+                "TestMain/composite:1/element:2",
+                "TestMain/composite:1/element:3",
+            ])
+        );
+
+        let go_main = std::str::from_utf8(GO_MAIN_TEST).expect("Go support is UTF-8");
+        assert!(go_main.contains("testsetup.SetupForCommonTest()"));
+        assert!(go_main.contains("goleak.VerifyTestMain"));
+        assert_eq!(go_main.matches("goleak.IgnoreTopFunction").count(), 4);
+        assert!(std::str::from_utf8(GO_TEST)
+            .expect("Go test is UTF-8")
+            .contains("func TestSlice"));
 
         fn even(value: &i32) -> bool {
             value % 2 == 0
@@ -227,6 +364,11 @@ mod tests {
         assert!(all_of(&[2, 4], even));
         let _: fn(&[i64]) -> Vec<String> = int64s_to_strings;
         let _: for<'a> fn(Option<&'a [String]>) -> Option<Vec<String>> = deep_clone::<String>;
+        let _: fn() = TestSlice;
+        let _: fn() = all_of_preserves_source_order_short_circuit_and_empty_truth;
+        let _: fn() = int64s_to_strings_preserves_source_decimal_domain;
+        let _: fn() = deep_clone_preserves_nil_empty_and_element_clone_ownership;
+        let _: fn() = deep_clone_invokes_clone_once_per_item_in_source_order;
     }
 
     fn sha256_hex(input: &[u8]) -> String {

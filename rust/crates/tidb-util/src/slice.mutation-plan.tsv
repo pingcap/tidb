@@ -1,0 +1,9 @@
+# pkg-slice-mutation-plan-v1
+suite_id	source_owners	mutation_count	source_file	named_tests	rules
+S001-all-of	AllOf	3	rust/crates/tidb-util/src/slice.rs	slice::tests::all_of_preserves_source_order_short_circuit_and_empty_truth	empty truth, source order, predicate result and short circuit
+S002-int64-strings	Int64sToStrings	3	rust/crates/tidb-util/src/slice.rs	slice::tests::int64s_to_strings_preserves_source_decimal_domain	empty output, source order, signed base-ten formatting
+S003-deep-clone	DeepClone	4	rust/crates/tidb-util/src/slice.rs	slice::tests::deep_clone_preserves_nil_empty_and_element_clone_ownership;slice::tests::deep_clone_invokes_clone_once_per_item_in_source_order	nil versus empty, capacity, source order, one clone per element
+S004-go-test-mapping	TestSlice	1	rust/crates/tidb-util/src/slice.inventory.tsv	pkg-slice-lockdown.py --inventory-only	original Go test, assertion, closure, loop, and table-row evidence
+S005-declined-support	TestMain	5	rust/crates/tidb-util/src/slice.inventory.tsv	pkg-slice-lockdown.py --inventory-only	TestMain and each Go-only leak-exemption row retain individual decline evidence
+S006-artifact-drift	BUILD.bazel,main_test.go,slice.go,slice_test.go	4	pkg/util/slice/BUILD.bazel|pkg/util/slice/main_test.go|pkg/util/slice/slice.go|pkg/util/slice/slice_test.go	pkg-slice-lockdown.py --inventory-only	every direct package artifact hash and AST boundary
+S007-symbol-gate	all_of,int64s_to_strings,deep_clone	3	rust/crates/tidb-util/src/slice.rs	slice::tests::slice_lockdown_inventory_is_complete_and_symbols_compile	all three compiled function owners
