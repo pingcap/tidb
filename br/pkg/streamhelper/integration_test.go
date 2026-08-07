@@ -48,25 +48,33 @@ func getRandomLocalAddr() url.URL {
 }
 
 func runEtcd(t *testing.T) (*embed.Etcd, *clientv3.Client) {
-	cfg := embed.NewConfig()
-	cfg.Dir = t.TempDir()
-	clientURL := getRandomLocalAddr()
-	cfg.ListenClientUrls = []url.URL{clientURL}
-	cfg.ListenPeerUrls = []url.URL{getRandomLocalAddr()}
-	cfg.LogLevel = "fatal"
-	etcd, err := embed.StartEtcd(cfg)
-	if err != nil {
-		log.Panic("failed to start etcd server", logutil.ShortError(err))
+	const maxEtcdStartAttempts = 10
+	for attempt := range maxEtcdStartAttempts {
+		cfg := embed.NewConfig()
+		cfg.Dir = t.TempDir()
+		clientURL := getRandomLocalAddr()
+		cfg.ListenClientUrls = []url.URL{clientURL}
+		cfg.ListenPeerUrls = []url.URL{getRandomLocalAddr()}
+		cfg.LogLevel = "fatal"
+		etcd, err := embed.StartEtcd(cfg)
+		if err != nil {
+			if attempt == maxEtcdStartAttempts-1 {
+				log.Panic("failed to start etcd server", logutil.ShortError(err))
+			}
+			continue
+		}
+		<-etcd.Server.ReadyNotify()
+		cliCfg := clientv3.Config{
+			Endpoints: []string{clientURL.String()},
+		}
+		cli, err := clientv3.New(cliCfg)
+		if err != nil {
+			etcd.Close()
+			log.Panic("failed to connect to etcd server", logutil.ShortError(err))
+		}
+		return etcd, cli
 	}
-	<-etcd.Server.ReadyNotify()
-	cliCfg := clientv3.Config{
-		Endpoints: []string{clientURL.String()},
-	}
-	cli, err := clientv3.New(cliCfg)
-	if err != nil {
-		log.Panic("failed to connect to etcd server", logutil.ShortError(err))
-	}
-	return etcd, cli
+	panic("unreachable")
 }
 
 func simpleRanges(tableCount int) streamhelper.Ranges {
@@ -138,7 +146,10 @@ func rangeIsEmpty(t *testing.T, prefix []byte, etcd *embed.Etcd) {
 
 func TestIntegration(t *testing.T) {
 	etcd, cli := runEtcd(t)
-	defer etcd.Server.Stop()
+	t.Cleanup(func() {
+		require.NoError(t, cli.Close())
+		etcd.Close()
+	})
 	metaCli := streamhelper.MetaDataClient{Client: cli}
 	t.Run("TestBasic", func(t *testing.T) { testBasic(t, metaCli, etcd) })
 	t.Run("testGetStorageCheckpoint", func(t *testing.T) { testGetStorageCheckpoint(t, metaCli) })
