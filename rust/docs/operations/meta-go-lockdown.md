@@ -68,8 +68,11 @@ claim the whole `pkg/meta` Go package is transcreated.
   worktrees. One first-pass
   survivor exposed duplicated reverse-iterator boundary logic; the two paths
   were consolidated and the same inclusive-boundary mutation then failed.
-- [ ] Run Ready and independent clean-worktree gates at the exact returned
-  SHA, verify ratchets directly, dual-push, and reclaim only unit-owned paths.
+- [x] (2026-08-07) Ran Ready validation and the independent clean-worktree
+  full Rust workspace at the receipt candidate; direct greps confirm query 0,
+  catalog 100, table 1, and integration 75, all unchanged.
+- [ ] Dual-push the receipt commit and reclaim only unit-owned paths; exact
+  remote refs and cleanup are necessarily reported after this checked-in plan.
 
 ## Surprises & Discoveries
 
@@ -136,13 +139,16 @@ claim the whole `pkg/meta` Go package is transcreated.
 
 ## Outcomes & Retrospective
 
-The exact 154-function/498-outcome production denominator and complete support
-denominator are checked in. The implementation and inventory gates pass the
-crate's complete default-feature test surface, including captured Go Job
-vectors and source-order storage-failure boundaries. Mutation proof, concrete
-resource-group integration, Ready validation, the clean-workspace gate, and
-dual-remote shipping remain; no final completion or ratchet claim is made at
-this checkpoint.
+The lockdown is complete at its source-file boundary: all 85 declarations,
+154 functions, and 498 branch outcomes are PORTED, and all 37 original
+test/build-support rows are classified. Default and next-gen crate tests,
+warnings-denied clippy, the source-size ratchet, and the full Rust workspace
+pass in isolated targets. `make -j12 lint` exits zero while emitting its
+inherited internal-package and macOS `find -n` diagnostics. Workspace-wide
+format checking still identifies only the accepted base's five unowned files
+in `tidb-executor`, `tidb-expr`, and `tidb-session`; owned-package formatting
+passes. No differential oracle or ratchet moved. That is a successful
+completeness lockdown, not a failure to move an oracle.
 
 ## Context and Orientation
 
