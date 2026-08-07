@@ -40,7 +40,7 @@
 
 Adaptive LIMIT Scan adds a lightweight controller to one statement execution. The controller translates the remaining LIMIT demand into admission windows for supported execution stages. Workers must reserve capacity before admitting more work, report the actual input and output after that work is consumed, and stop admitting work when the LIMIT is satisfied.
 
-The initial implementation targets the ordered `IndexLookUpJoin` plan involved in [issue #66658](https://github.com/pingcap/tidb/issues/66658) and the related direct ordered `IndexLookUp` plan. The feature is guarded by `tidb_enable_adaptive_limit_scan` and is disabled by default.
+The initial implementation targets the ordered `IndexLookUpJoin` plan involved in [issue #66658](https://github.com/pingcap/tidb/issues/66658) and the related direct ordered `IndexLookUp` plan. The feature can be enabled or disabled through `tidb_enable_adaptive_limit_scan`.
 
 ## Motivation or Background
 
@@ -645,6 +645,6 @@ The initial implementation intentionally leaves these questions open:
 
 - What signal can safely adjust effective DistSQL concurrency without causing oscillation or head-of-line stalls?
 - Should ordered dispatch enforce a strict task frontier rather than only a row-admission window?
-- Which metrics and eligibility skip reasons should be exposed before the feature is enabled by default?
+- Which metrics and eligibility skip reasons should be exposed for rollout and troubleshooting?
 - What performance thresholds should gate expansion beyond the #66658 plan shape?
 - Should a future historical profile influence only initial windows, and how should it be invalidated across schema, plan, and statistics changes?

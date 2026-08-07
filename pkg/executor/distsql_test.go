@@ -279,6 +279,7 @@ func TestAdaptiveLimitExecution(t *testing.T) {
 		innerValues = append(innerValues, fmt.Sprintf("(%d,%d,%d)", 1000+i, i, i))
 	}
 	tk.MustExec("insert into adaptive_inner values " + strings.Join(innerValues, ","))
+	tk.MustQuery("select @@tidb_enable_adaptive_limit_scan").Check(testkit.Rows("1"))
 	tk.MustExec("set tidb_enable_adaptive_limit_scan = on")
 	tk.MustExec("set tidb_index_join_batch_size = 32")
 	tk.MustExec("set tidb_index_lookup_size = 32")
