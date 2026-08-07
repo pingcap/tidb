@@ -24,6 +24,31 @@ use crate::{
     substitute_missing_collation_to_default, supported_collations, Charset, Collation, Collator,
 };
 
+struct NewCollationModeGuard {
+    original: bool,
+    _registry_guard: std::sync::MutexGuard<'static, ()>,
+}
+
+impl NewCollationModeGuard {
+    fn set(enabled: bool) -> Self {
+        let registry_guard = crate::charset::REGISTRY_TEST_LOCK
+            .lock()
+            .expect("charset test lock poisoned");
+        let original = new_collation_enabled();
+        set_new_collation_enabled(enabled);
+        Self {
+            original,
+            _registry_guard: registry_guard,
+        }
+    }
+}
+
+impl Drop for NewCollationModeGuard {
+    fn drop(&mut self) {
+        set_new_collation_enabled(self.original);
+    }
+}
+
 fn signed(ordering: Ordering) -> i8 {
     match ordering {
         Ordering::Less => -1,
@@ -199,10 +224,7 @@ fn key_executes_all_original_columns() {
 
 #[test]
 fn registry_and_mode_execute_all_original_get_collator_rows() {
-    let _guard = crate::charset::REGISTRY_TEST_LOCK
-        .lock()
-        .expect("charset test lock poisoned");
-    set_new_collation_enabled(true);
+    let _mode = NewCollationModeGuard::set(true);
     let rows = [
         ("binary", Collation::Binary),
         ("utf8mb4_bin", Collation::Utf8Mb4Bin),
@@ -285,7 +307,6 @@ fn registry_and_mode_execute_all_original_get_collator_rows() {
     for id in [63, 46, 83, 45, 33, 224, 255, 309, 192, 2048, 9999] {
         assert_eq!(get_collator_by_id(id), Collator::DerivedBinary);
     }
-    set_new_collation_enabled(false);
 }
 
 /// Every general-CI and UCA-4.0 assertion attributable to
@@ -332,10 +353,7 @@ fn invalid_utf8_executes_all_original_collator_assertions() {
 
 #[test]
 fn mode_id_and_helper_functions_follow_source() {
-    let _guard = crate::charset::REGISTRY_TEST_LOCK
-        .lock()
-        .expect("charset test lock poisoned");
-    set_new_collation_enabled(true);
+    let _mode = NewCollationModeGuard::set(true);
     assert!(new_collation_enabled());
     assert_eq!(
         get_charset_info("gbk").unwrap().default_collation,
@@ -403,15 +421,11 @@ fn mode_id_and_helper_functions_follow_source() {
     assert!(!is_bin_collation("gbk_bin"));
     assert!(!is_pad_space_collation("utf8mb4_0900_ai_ci"));
     assert!(is_pad_space_collation("gbk_chinese_ci"));
-    set_new_collation_enabled(false);
 }
 
 #[test]
 fn wildcard_patterns_follow_each_source_collator_family() {
-    let _guard = crate::charset::REGISTRY_TEST_LOCK
-        .lock()
-        .expect("charset test lock poisoned");
-    set_new_collation_enabled(true);
+    let _mode = NewCollationModeGuard::set(true);
     for (collator, pattern, matching, rejected) in [
         (Collator::New(Collation::Binary), "a_中%", "ab中文", "a中文"),
         (Collator::DerivedBinary, "a_中%", "ab中文", "a中文"),
@@ -447,7 +461,6 @@ fn wildcard_patterns_follow_each_source_collator_family() {
     let reordered = get_collator("binary").pattern("%_", b'\\');
     assert!(reordered.is_match(b"x"));
     assert!(reordered.is_match(b"xyz"));
-    set_new_collation_enabled(false);
 }
 
 #[test]
@@ -483,6 +496,9 @@ fn pinyin_stub_preserves_source_panic() {
 /// that diverged, so a future edit to either one cannot reintroduce the split.
 #[test]
 fn the_registry_and_the_const_path_give_one_default_collation_per_charset() {
+    let _guard = crate::charset::REGISTRY_TEST_LOCK
+        .lock()
+        .expect("charset test lock poisoned");
     for charset in [
         Charset::Binary,
         Charset::Ascii,
