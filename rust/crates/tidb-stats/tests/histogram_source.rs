@@ -27,22 +27,457 @@ use std::{collections::HashSet, fs, path::PathBuf};
 
 use sha2::{Digest, Sha256};
 use tidb_datatype::{Collation, Datum};
+use tidb_stats::average_count::avg_count_per_not_null_value;
 use tidb_stats::histogram::{
     deep_slice, merge_histograms, merge_partition_histograms, Bucket, Histogram,
-    HistogramMergeError, PartitionMergeOptions, TopNMergeEntry,
+    HistogramMergeError, OutOfRangeContext, PartitionMergeOptions, TopNMergeEntry,
+    OUT_OF_RANGE_BETWEEN_RATE,
 };
+use tidb_stats::overlap_geometry::{left_overlap_percent, right_overlap_percent};
+use tidb_stats::row_estimate::{calculate_skew_ratio_counts, default_row_est, RowEstimate};
+use tidb_stats::stats_version::{
+    is_analyzed, is_column_analyzed_or_synthesized, VERSION_0, VERSION_1, VERSION_2,
+};
+use tidb_stats::status::{StatsLoadedStatus, ALL_EVICTED, ALL_LOADED};
 
 const EPS: f64 = 1e-9;
 const INVENTORY: &str = include_str!("../src/histogram.inventory.tsv");
+const DECLINE_EVIDENCE: &str = include_str!("../src/histogram.evidence.tsv");
+const MUTATION_PLAN: &str = include_str!("../src/histogram.mutation-plan.tsv");
 const GO_HISTOGRAM_SHA256: &str =
     "1233e0a3430067400eaee5d562772cc83541fce8ae8b3e4579895a574c8c1024";
 const GO_HISTOGRAM_TEST_SHA256: &str =
     "8adb0d249a37ffa08c859ea1709426cfc0e98c4fc5a7ff689726fce0a1904a7a";
+const GO_HISTOGRAM_BENCH_SHA256: &str =
+    "7c7a0a4ca77720ea94afa353ed1070cce6b03f6735f87780ca4767e10ff74780";
 const GO_ADJACENT_TEST_SHA256: &str =
     "2252313be49f161986afe7a94c379ca875bf79930b4f6c52a0b5e3cd9ffafe35";
 const RUST_HISTOGRAM_SHA256: &str =
-    "58f3cc4b6310825cd1f27950c23ffa67a09d6e5983f16a534405d782fdcb7ba8";
-const INVENTORY_SHA256: &str = "95c7cdd2d211a9e5cdc31c1506468e25328f36b1bc1e9bbce70c5661ac5989dd";
+    "f01d5fe10a8bae9531c6588c84f31fdfa14c9c1c0dd386c5a2c1145c35cbfb95";
+const INVENTORY_SHA256: &str = "377ef285f6824b12d7f89e74b3ab2f41d4b49dc0de6b7205ff6b4a51dc0353e5";
+const DECLINE_EVIDENCE_SHA256: &str =
+    "6a741b83456edbeaba33893451c26c006171d608f99b28a894140586132d6a21";
+const MUTATION_PLAN_SHA256: &str =
+    "b5a1f4e0120c3014ec80c0a0e01bef887f78978c6dc11cb618263db8aab67c2b";
+
+const COMPILE_ANCHORED_SYMBOLS: &[&str] = &[
+    "ALL_EVICTED",
+    "ALL_LOADED",
+    "Bucket",
+    "BucketForMerging",
+    "BucketForMerging::clone",
+    "BucketForMerging::from_histogram",
+    "BucketForMerging::from_topn",
+    "Histogram",
+    "Histogram::abs_row_count_difference",
+    "Histogram::append_bucket",
+    "Histogram::append_bucket_with_ndv",
+    "Histogram::between_row_count",
+    "Histogram::binary_search_remove_value",
+    "Histogram::bucket_count",
+    "Histogram::copy",
+    "Histogram::equal_row_count",
+    "Histogram::get_increase_factor",
+    "Histogram::get_lower",
+    "Histogram::get_upper",
+    "Histogram::greater_row_count",
+    "Histogram::len",
+    "Histogram::less_row_count",
+    "Histogram::less_row_count_with_bkt_idx",
+    "Histogram::locate_bucket",
+    "Histogram::lower_to_datum",
+    "Histogram::merge_neighbor_buckets",
+    "Histogram::new",
+    "Histogram::not_null_count",
+    "Histogram::out_of_range",
+    "Histogram::out_of_range_row_count",
+    "Histogram::pop_first_bucket",
+    "Histogram::remove_values",
+    "Histogram::standardize_for_v2_analyze_index",
+    "Histogram::total_row_count",
+    "Histogram::truncate",
+    "Histogram::update_last_bucket",
+    "Histogram::upper_to_datum",
+    "IntBucket",
+    "OUT_OF_RANGE_BETWEEN_RATE",
+    "RowEstimate",
+    "RowEstimate::add",
+    "RowEstimate::add_all",
+    "RowEstimate::clamp",
+    "RowEstimate::divide_all",
+    "RowEstimate::multiply_all",
+    "RowEstimate::subtract",
+    "StatsLoadedStatus",
+    "StatsLoadedStatus::all_evicted",
+    "StatsLoadedStatus::copy",
+    "StatsLoadedStatus::full_load",
+    "StatsLoadedStatus::is_all_evicted",
+    "StatsLoadedStatus::is_essential_stats_loaded",
+    "StatsLoadedStatus::is_full_load",
+    "StatsLoadedStatus::is_load_needed",
+    "StatsLoadedStatus::stats_initialized",
+    "TopNMergeEntry",
+    "VERSION_0",
+    "VERSION_1",
+    "VERSION_2",
+    "avg_count_per_not_null_value",
+    "buckets_are_sorted",
+    "calculate_skew_ratio_counts",
+    "consecutive_histogram",
+    "deep_slice",
+    "default_row_est",
+    "is_analyzed",
+    "is_column_analyzed_or_synthesized",
+    "left_overlap_percent",
+    "merge_bucket",
+    "merge_bucket_ndv",
+    "merge_histograms",
+    "merge_partition_buckets",
+    "merge_partition_histograms",
+    "right_overlap_percent",
+    "sort_buckets_by_upper_bound",
+    "source_index_merge_histogram",
+    "source_merge_bucket_ndv_matches_all_go_cases",
+    "source_merge_histograms_matches_go_cases",
+    "source_merge_partition_level_hist_matches_all_go_cases",
+    "source_standardize_v2_index_matches_all_go_tables",
+    "source_truncate_histogram_keeps_metadata_and_prefix",
+];
+
+const PORTED_SYMBOL_TESTS: &[(&str, &str)] = &[
+    (
+        "ALL_EVICTED",
+        "status_source::source_all_evicted_status_requires_reload_and_loses_essential_stats",
+    ),
+    (
+        "ALL_LOADED",
+        "status_source::source_full_load_status_is_initialized_without_reload",
+    ),
+    (
+        "Bucket",
+        "histogram_source::source_int_histogram_basic_shape",
+    ),
+    (
+        "BucketForMerging",
+        "histogram_source::source_merge_partition_level_hist_matches_all_go_cases",
+    ),
+    (
+        "BucketForMerging::clone",
+        "histogram_source::source_merge_partition_level_hist_matches_all_go_cases",
+    ),
+    (
+        "BucketForMerging::from_histogram",
+        "histogram_source::source_merge_partition_level_hist_matches_all_go_cases",
+    ),
+    (
+        "BucketForMerging::from_topn",
+        "histogram_source::source_partition_merge_empty_error_and_topn_boundaries_match_oracle",
+    ),
+    (
+        "Histogram",
+        "histogram_source::source_int_histogram_basic_shape",
+    ),
+    (
+        "Histogram::abs_row_count_difference",
+        "histogram_source::source_out_of_range_estimation_matches_go_boundaries",
+    ),
+    (
+        "Histogram::append_bucket",
+        "histogram_source::source_merge_histograms_matches_go_cases",
+    ),
+    (
+        "Histogram::append_bucket_with_ndv",
+        "histogram_source::source_merge_partition_level_hist_matches_all_go_cases",
+    ),
+    (
+        "Histogram::between_row_count",
+        "histogram_source::source_int_histogram_between_row_count_probes",
+    ),
+    (
+        "Histogram::binary_search_remove_value",
+        "histogram_source::source_topn_removal_matches_go_boundaries",
+    ),
+    (
+        "Histogram::bucket_count",
+        "histogram_source::source_int_histogram_equal_less_greater_probes",
+    ),
+    (
+        "Histogram::copy",
+        "histogram_source::source_bound_access_copy_and_deep_slice_match_go_ownership",
+    ),
+    (
+        "Histogram::equal_row_count",
+        "histogram_source::source_int_histogram_equal_less_greater_probes",
+    ),
+    (
+        "Histogram::get_increase_factor",
+        "histogram_source::source_out_of_range_estimation_matches_go_boundaries",
+    ),
+    (
+        "Histogram::get_lower",
+        "histogram_source::source_bound_access_copy_and_deep_slice_match_go_ownership",
+    ),
+    (
+        "Histogram::get_upper",
+        "histogram_source::source_bound_access_copy_and_deep_slice_match_go_ownership",
+    ),
+    (
+        "Histogram::greater_row_count",
+        "histogram_source::source_int_histogram_equal_less_greater_probes",
+    ),
+    (
+        "Histogram::len",
+        "histogram_source::source_int_histogram_basic_shape",
+    ),
+    (
+        "Histogram::less_row_count",
+        "histogram_source::source_int_histogram_equal_less_greater_probes",
+    ),
+    (
+        "Histogram::less_row_count_with_bkt_idx",
+        "histogram_source::source_int_histogram_equal_less_greater_probes",
+    ),
+    (
+        "Histogram::locate_bucket",
+        "histogram_source::source_int_histogram_equal_less_greater_probes",
+    ),
+    (
+        "Histogram::lower_to_datum",
+        "histogram_source::source_bound_access_copy_and_deep_slice_match_go_ownership",
+    ),
+    (
+        "Histogram::merge_neighbor_buckets",
+        "histogram_source::source_merge_histograms_matches_go_cases",
+    ),
+    (
+        "Histogram::new",
+        "histogram_source::source_merge_histograms_matches_go_cases",
+    ),
+    (
+        "Histogram::not_null_count",
+        "histogram_source::source_int_histogram_basic_shape",
+    ),
+    (
+        "Histogram::out_of_range",
+        "histogram_source::source_out_of_range_estimation_matches_go_boundaries",
+    ),
+    (
+        "Histogram::out_of_range_row_count",
+        "histogram_source::source_out_of_range_estimation_matches_go_boundaries",
+    ),
+    (
+        "Histogram::pop_first_bucket",
+        "histogram_source::source_merge_histograms_matches_go_cases",
+    ),
+    (
+        "Histogram::remove_values",
+        "histogram_source::source_topn_removal_matches_go_boundaries",
+    ),
+    (
+        "Histogram::standardize_for_v2_analyze_index",
+        "histogram_source::source_standardize_v2_index_matches_all_go_tables",
+    ),
+    (
+        "Histogram::total_row_count",
+        "histogram_source::source_int_histogram_basic_shape",
+    ),
+    (
+        "Histogram::truncate",
+        "histogram_source::source_truncate_histogram_keeps_metadata_and_prefix",
+    ),
+    (
+        "Histogram::update_last_bucket",
+        "histogram_source::source_merge_histograms_matches_go_cases",
+    ),
+    (
+        "Histogram::upper_to_datum",
+        "histogram_source::source_bound_access_copy_and_deep_slice_match_go_ownership",
+    ),
+    (
+        "IntBucket",
+        "histogram_source::source_merge_partition_level_hist_matches_all_go_cases",
+    ),
+    (
+        "OUT_OF_RANGE_BETWEEN_RATE",
+        "histogram_source::source_out_of_range_estimation_matches_go_boundaries",
+    ),
+    (
+        "RowEstimate",
+        "row_estimate_source::source_default_estimate_repeats_value",
+    ),
+    (
+        "RowEstimate::add",
+        "row_estimate_source::source_arithmetic_methods_update_all_fields_in_place",
+    ),
+    (
+        "RowEstimate::add_all",
+        "row_estimate_source::source_arithmetic_methods_update_all_fields_in_place",
+    ),
+    (
+        "RowEstimate::clamp",
+        "row_estimate_source::source_clamp_keeps_default_between_min_and_max",
+    ),
+    (
+        "RowEstimate::divide_all",
+        "row_estimate_source::source_arithmetic_methods_update_all_fields_in_place",
+    ),
+    (
+        "RowEstimate::multiply_all",
+        "row_estimate_source::source_arithmetic_methods_update_all_fields_in_place",
+    ),
+    (
+        "RowEstimate::subtract",
+        "row_estimate_source::source_arithmetic_methods_update_all_fields_in_place",
+    ),
+    (
+        "StatsLoadedStatus",
+        "status_source::source_zero_value_is_uninitialized_and_does_not_reload",
+    ),
+    (
+        "StatsLoadedStatus::all_evicted",
+        "status_source::source_all_evicted_status_requires_reload_and_loses_essential_stats",
+    ),
+    (
+        "StatsLoadedStatus::copy",
+        "status_source::source_copy_is_value_independent",
+    ),
+    (
+        "StatsLoadedStatus::full_load",
+        "status_source::source_full_load_status_is_initialized_without_reload",
+    ),
+    (
+        "StatsLoadedStatus::is_all_evicted",
+        "status_source::source_all_evicted_status_requires_reload_and_loses_essential_stats",
+    ),
+    (
+        "StatsLoadedStatus::is_essential_stats_loaded",
+        "status_source::source_all_evicted_status_requires_reload_and_loses_essential_stats",
+    ),
+    (
+        "StatsLoadedStatus::is_full_load",
+        "status_source::source_full_load_status_is_initialized_without_reload",
+    ),
+    (
+        "StatsLoadedStatus::is_load_needed",
+        "status_source::source_all_evicted_status_requires_reload_and_loses_essential_stats",
+    ),
+    (
+        "StatsLoadedStatus::stats_initialized",
+        "status_source::source_full_load_status_is_initialized_without_reload",
+    ),
+    (
+        "TopNMergeEntry",
+        "histogram_source::source_topn_removal_matches_go_boundaries",
+    ),
+    (
+        "VERSION_0",
+        "stats_version_source::source_version_constants_and_analyzed_predicate_match",
+    ),
+    (
+        "VERSION_1",
+        "stats_version_source::source_version_constants_and_analyzed_predicate_match",
+    ),
+    (
+        "VERSION_2",
+        "stats_version_source::source_version_constants_and_analyzed_predicate_match",
+    ),
+    (
+        "avg_count_per_not_null_value",
+        "average_count_source::source_average_scales_nonnull_count_and_ndv_together",
+    ),
+    (
+        "buckets_are_sorted",
+        "histogram_source::source_merge_partition_level_hist_matches_all_go_cases",
+    ),
+    (
+        "calculate_skew_ratio_counts",
+        "row_estimate_source::source_skew_ratio_matches_default_min_max_formula",
+    ),
+    (
+        "consecutive_histogram",
+        "histogram_source::source_merge_histograms_matches_go_cases",
+    ),
+    (
+        "deep_slice",
+        "histogram_source::source_bound_access_copy_and_deep_slice_match_go_ownership",
+    ),
+    (
+        "default_row_est",
+        "row_estimate_source::source_default_estimate_repeats_value",
+    ),
+    (
+        "is_analyzed",
+        "stats_version_source::source_version_constants_and_analyzed_predicate_match",
+    ),
+    (
+        "is_column_analyzed_or_synthesized",
+        "stats_version_source::source_column_predicate_accepts_analyzed_or_synthesized_stats",
+    ),
+    (
+        "left_overlap_percent",
+        "overlap_geometry_source::source_left_overlap_clips_to_histogram_triangle",
+    ),
+    (
+        "merge_bucket",
+        "histogram::tests::source_merge_bucket_ndv_matches_all_go_cases",
+    ),
+    (
+        "merge_bucket_ndv",
+        "histogram::tests::source_merge_bucket_ndv_matches_all_go_cases",
+    ),
+    (
+        "merge_histograms",
+        "histogram_source::source_merge_histograms_matches_go_cases",
+    ),
+    (
+        "merge_partition_buckets",
+        "histogram_source::source_merge_partition_level_hist_matches_all_go_cases",
+    ),
+    (
+        "merge_partition_histograms",
+        "histogram_source::source_merge_partition_level_hist_matches_all_go_cases",
+    ),
+    (
+        "right_overlap_percent",
+        "overlap_geometry_source::source_right_overlap_clips_to_histogram_triangle",
+    ),
+    (
+        "sort_buckets_by_upper_bound",
+        "histogram_source::source_merge_partition_level_hist_matches_all_go_cases",
+    ),
+    (
+        "source_index_merge_histogram",
+        "histogram_source::source_merge_partition_level_hist_matches_all_go_cases",
+    ),
+    (
+        "source_merge_bucket_ndv_matches_all_go_cases",
+        "histogram::tests::source_merge_bucket_ndv_matches_all_go_cases",
+    ),
+    (
+        "source_merge_histograms_matches_go_cases",
+        "histogram_source::source_merge_histograms_matches_go_cases",
+    ),
+    (
+        "source_merge_partition_level_hist_matches_all_go_cases",
+        "histogram_source::source_merge_partition_level_hist_matches_all_go_cases",
+    ),
+    (
+        "source_standardize_v2_index_matches_all_go_tables",
+        "histogram_source::source_standardize_v2_index_matches_all_go_tables",
+    ),
+    (
+        "source_truncate_histogram_keeps_metadata_and_prefix",
+        "histogram_source::source_truncate_histogram_keeps_metadata_and_prefix",
+    ),
+];
+
+const HISTOGRAM_RS: &str = include_str!("../src/histogram.rs");
+const HISTOGRAM_SOURCE_RS: &str = include_str!("histogram_source.rs");
+const ROW_ESTIMATE_SOURCE_RS: &str = include_str!("row_estimate_source.rs");
+const STATUS_SOURCE_RS: &str = include_str!("status_source.rs");
+const STATS_VERSION_SOURCE_RS: &str = include_str!("stats_version_source.rs");
+const OVERLAP_GEOMETRY_SOURCE_RS: &str = include_str!("overlap_geometry_source.rs");
+const AVERAGE_COUNT_SOURCE_RS: &str = include_str!("average_count_source.rs");
 
 fn repository_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -61,9 +496,63 @@ fn sha256_file(path: &PathBuf) -> String {
 fn inventory_rows() -> Vec<Vec<&'static str>> {
     INVENTORY
         .lines()
+        .filter(|line| {
+            !line.is_empty() && !line.starts_with('#') && !line.starts_with("obligation_id\t")
+        })
+        .map(|line| line.split('\t').collect())
+        .collect()
+}
+
+fn decline_evidence_rows() -> Vec<Vec<&'static str>> {
+    DECLINE_EVIDENCE
+        .lines()
         .filter(|line| !line.is_empty() && !line.starts_with('#') && !line.starts_with("id\t"))
         .map(|line| line.split('\t').collect())
         .collect()
+}
+
+fn mutation_plan_rows() -> Vec<Vec<&'static str>> {
+    MUTATION_PLAN
+        .lines()
+        .filter(|line| {
+            !line.is_empty() && !line.starts_with('#') && !line.starts_with("mutation_id\t")
+        })
+        .map(|line| line.split('\t').collect())
+        .collect()
+}
+
+fn ported_test_source(identity: &str) -> Option<(&str, &'static str)> {
+    [
+        ("histogram::tests::", HISTOGRAM_RS),
+        ("histogram_source::", HISTOGRAM_SOURCE_RS),
+        ("row_estimate_source::", ROW_ESTIMATE_SOURCE_RS),
+        ("status_source::", STATUS_SOURCE_RS),
+        ("stats_version_source::", STATS_VERSION_SOURCE_RS),
+        ("overlap_geometry_source::", OVERLAP_GEOMETRY_SOURCE_RS),
+        ("average_count_source::", AVERAGE_COUNT_SOURCE_RS),
+    ]
+    .into_iter()
+    .find_map(|(prefix, source)| identity.strip_prefix(prefix).map(|name| (name, source)))
+}
+
+fn source_declares_test(source: &str, test_name: &str) -> bool {
+    let declaration = format!("fn {test_name}(");
+    let mut previous_nonempty = "";
+    for line in source.lines() {
+        if line.trim_start().starts_with(&declaration) {
+            return previous_nonempty.trim() == "#[test]";
+        }
+        if !line.trim().is_empty() {
+            previous_nonempty = line;
+        }
+    }
+    false
+}
+
+fn file_size_and_lines(path: &PathBuf) -> (usize, usize) {
+    let bytes = fs::read(path).expect("read locked source");
+    let lines = bytes.iter().filter(|&&byte| byte == b'\n').count();
+    (bytes.len(), lines)
 }
 
 fn assert_close(actual: f64, expected: f64, label: &str) {
@@ -103,7 +592,20 @@ fn int_histogram() -> Histogram {
 #[test]
 fn source_int_histogram_basic_shape() {
     let hist = int_histogram();
+    assert_eq!(hist.id, 1);
+    assert_eq!(hist.ndv, 40);
+    assert_eq!(hist.null_count, 5);
+    assert_eq!(hist.last_update_version, 0);
+    assert_eq!(hist.tot_col_size, 0);
+    assert_eq!(hist.correlation, 0.0);
     assert_eq!(hist.len(), 4);
+    assert_eq!(
+        hist.buckets
+            .iter()
+            .map(|bucket| (bucket.count, bucket.repeat, bucket.ndv))
+            .collect::<Vec<_>>(),
+        vec![(10, 2, 8), (20, 3, 9), (35, 1, 10), (45, 5, 5)]
+    );
     assert_close(hist.not_null_count(), 45.0, "not_null_count");
     assert_close(hist.total_row_count(), 50.0, "total_row_count");
 }
@@ -184,6 +686,127 @@ fn source_int_histogram_between_row_count_probes() {
         assert_close(result.min_est, est, &format!("between[{a},{b}).min"));
         assert_close(result.max_est, est, &format!("between[{a},{b}).max"));
     }
+}
+
+#[test]
+fn source_topn_removal_matches_go_boundaries() {
+    let mut single = int_histogram();
+    single
+        .binary_search_remove_value(&Datum::new_int(9), 2, Collation::Binary)
+        .unwrap();
+    assert_int_buckets(
+        &single,
+        &[
+            (0, 9, 8, 0, 7),
+            (10, 19, 18, 3, 9),
+            (20, 29, 33, 1, 10),
+            (40, 49, 43, 5, 5),
+        ],
+    );
+
+    let unchanged = int_histogram();
+    for value in [-1, 50] {
+        let mut actual = unchanged.clone();
+        actual
+            .binary_search_remove_value(&Datum::new_int(value), 9, Collation::Binary)
+            .unwrap();
+        assert_eq!(actual, unchanged);
+    }
+
+    let mut bulk = Histogram::new(1, 12, 0, 0, 3, 0);
+    for (lower, upper, count, repeat, ndv) in
+        [(1_u8, 3_u8, 5, 1, 3), (4, 6, 10, 2, 3), (7, 9, 15, 3, 3)]
+    {
+        bulk.append_bucket_with_ndv(
+            Datum::Bytes(vec![lower]),
+            Datum::Bytes(vec![upper]),
+            count,
+            repeat,
+            ndv,
+        );
+    }
+    bulk.remove_values(
+        &[
+            TopNMergeEntry {
+                value: Datum::Bytes(vec![2]),
+                count: 2,
+            },
+            TopNMergeEntry {
+                value: Datum::Bytes(vec![6]),
+                count: 3,
+            },
+            TopNMergeEntry {
+                value: Datum::Bytes(vec![8]),
+                count: 4,
+            },
+            TopNMergeEntry {
+                value: Datum::Bytes(vec![9]),
+                count: 5,
+            },
+        ],
+        Collation::Binary,
+    )
+    .unwrap();
+    assert_eq!(
+        bulk.buckets
+            .iter()
+            .map(|bucket| (bucket.count, bucket.repeat, bucket.ndv))
+            .collect::<Vec<_>>(),
+        vec![(3, 1, 2), (5, 0, 2), (1, 0, 1)]
+    );
+}
+
+#[test]
+fn source_out_of_range_estimation_matches_go_boundaries() {
+    let histogram = int_histogram();
+    assert!(!histogram.out_of_range(&Datum::new_int(0), Collation::Binary));
+    assert!(!histogram.out_of_range(&Datum::new_int(49), Collation::Binary));
+    assert!(histogram.out_of_range(&Datum::new_int(-1), Collation::Binary));
+    assert!(histogram.out_of_range(&Datum::new_int(50), Collation::Binary));
+    assert_eq!(histogram.abs_row_count_difference(60), 10.0);
+    assert_eq!(histogram.get_increase_factor(100), 2.0);
+
+    let context = OutOfRangeContext {
+        realtime_row_count: 60,
+        modify_count: 10,
+        hist_ndv: 40,
+        unsigned: false,
+        allow_use_modify_count: true,
+        skew_ratio: 0.0,
+    };
+    let estimate =
+        histogram.out_of_range_row_count(&Datum::new_int(-49), &Datum::new_int(-1), context);
+    assert_close(estimate.est, 2.399000416493128, "out-of-range estimate");
+    assert_close(estimate.min_est, 1.0, "out-of-range minimum");
+    assert_close(estimate.max_est, 9.596001665972512, "out-of-range maximum");
+
+    let determinate = histogram.out_of_range_row_count(
+        &Datum::new_int(-49),
+        &Datum::new_int(-1),
+        OutOfRangeContext {
+            allow_use_modify_count: false,
+            ..context
+        },
+    );
+    assert_eq!(determinate, default_row_est(1.125));
+
+    let impossible_unsigned = histogram.out_of_range_row_count(
+        &Datum::new_int(-5),
+        &Datum::new_int(-1),
+        OutOfRangeContext {
+            unsigned: true,
+            ..context
+        },
+    );
+    assert_eq!(impossible_unsigned, default_row_est(0.0));
+    assert_eq!(
+        Histogram::default().out_of_range_row_count(
+            &Datum::new_int(-1),
+            &Datum::new_int(1),
+            context,
+        ),
+        default_row_est(0.0)
+    );
 }
 
 fn str_bucket(lower: &str, upper: &str, count: i64, repeat: i64, ndv: i64) -> Bucket {
@@ -728,11 +1351,87 @@ fn source_bound_access_copy_and_deep_slice_match_go_ownership() {
 }
 
 #[test]
+fn lockdown_public_and_test_histogram_symbols_compile() {
+    let _ = std::mem::size_of::<Bucket>();
+    let _ = std::mem::size_of::<Histogram>();
+    let _ = std::mem::size_of::<IntBucket>();
+    let _ = std::mem::size_of::<RowEstimate>();
+    let _ = std::mem::size_of::<StatsLoadedStatus>();
+    let _ = std::mem::size_of::<TopNMergeEntry>();
+    let _ = ALL_EVICTED;
+    let _ = ALL_LOADED;
+    let _ = OUT_OF_RANGE_BETWEEN_RATE;
+    let _ = VERSION_0;
+    let _ = VERSION_1;
+    let _ = VERSION_2;
+    let _ = Histogram::abs_row_count_difference;
+    let _ = Histogram::append_bucket;
+    let _ = Histogram::append_bucket_with_ndv;
+    let _ = Histogram::between_row_count;
+    let _ = Histogram::binary_search_remove_value;
+    let _ = Histogram::bucket_count;
+    let _ = Histogram::copy;
+    let _ = Histogram::equal_row_count;
+    let _ = Histogram::get_increase_factor;
+    let _ = Histogram::get_lower;
+    let _ = Histogram::get_upper;
+    let _ = Histogram::greater_row_count;
+    let _ = Histogram::len;
+    let _ = Histogram::less_row_count;
+    let _ = Histogram::less_row_count_with_bkt_idx;
+    let _ = Histogram::locate_bucket;
+    let _ = Histogram::lower_to_datum;
+    let _ = Histogram::new;
+    let _ = Histogram::not_null_count;
+    let _ = Histogram::out_of_range;
+    let _ = Histogram::out_of_range_row_count;
+    let _ = Histogram::remove_values;
+    let _ = Histogram::standardize_for_v2_analyze_index;
+    let _ = Histogram::total_row_count;
+    let _ = Histogram::truncate;
+    let _ = Histogram::upper_to_datum;
+    let _ = RowEstimate::add;
+    let _ = RowEstimate::add_all;
+    let _ = RowEstimate::clamp;
+    let _ = RowEstimate::divide_all;
+    let _ = RowEstimate::multiply_all;
+    let _ = RowEstimate::subtract;
+    let _ = StatsLoadedStatus::all_evicted;
+    let _ = StatsLoadedStatus::copy;
+    let _ = StatsLoadedStatus::full_load;
+    let _ = StatsLoadedStatus::is_all_evicted;
+    let _ = StatsLoadedStatus::is_essential_stats_loaded;
+    let _ = StatsLoadedStatus::is_full_load;
+    let _ = StatsLoadedStatus::is_load_needed;
+    let _ = StatsLoadedStatus::stats_initialized;
+    let _ = avg_count_per_not_null_value;
+    let _ = calculate_skew_ratio_counts;
+    let _ = consecutive_histogram;
+    let _ = deep_slice::<u8>;
+    let _ = default_row_est;
+    let _ = is_analyzed;
+    let _ = is_column_analyzed_or_synthesized;
+    let _ = left_overlap_percent;
+    let _ = merge_histograms;
+    let _ = merge_partition_histograms;
+    let _ = right_overlap_percent;
+    let _ = source_index_merge_histogram;
+    let _ = source_merge_histograms_matches_go_cases;
+    let _ = source_merge_partition_level_hist_matches_all_go_cases;
+    let _ = source_standardize_v2_index_matches_all_go_tables;
+    let _ = source_truncate_histogram_keeps_metadata_and_prefix;
+}
+
+#[test]
 fn lockdown_histogram_sources_match_pinned_sha256() {
     let root = repository_root();
     let locked_sources = [
         ("pkg/statistics/histogram.go", GO_HISTOGRAM_SHA256),
         ("pkg/statistics/histogram_test.go", GO_HISTOGRAM_TEST_SHA256),
+        (
+            "pkg/statistics/histogram_bench_test.go",
+            GO_HISTOGRAM_BENCH_SHA256,
+        ),
         ("pkg/statistics/statistics_test.go", GO_ADJACENT_TEST_SHA256),
         (
             "rust/crates/tidb-stats/src/histogram.rs",
@@ -742,38 +1441,96 @@ fn lockdown_histogram_sources_match_pinned_sha256() {
             "rust/crates/tidb-stats/src/histogram.inventory.tsv",
             INVENTORY_SHA256,
         ),
+        (
+            "rust/crates/tidb-stats/src/histogram.evidence.tsv",
+            DECLINE_EVIDENCE_SHA256,
+        ),
+        (
+            "rust/crates/tidb-stats/src/histogram.mutation-plan.tsv",
+            MUTATION_PLAN_SHA256,
+        ),
     ];
     for (path, expected) in locked_sources {
         assert_eq!(sha256_file(&root.join(path)), expected, "SHA drift: {path}");
     }
     assert!(INVENTORY.contains(&format!("# source-sha256\t{GO_HISTOGRAM_SHA256}")));
     assert!(INVENTORY.contains(&format!("# test-sha256\t{GO_HISTOGRAM_TEST_SHA256}")));
+    assert!(INVENTORY.contains(&format!("# benchmark-sha256\t{GO_HISTOGRAM_BENCH_SHA256}")));
     assert!(INVENTORY.contains(&format!(
         "# adjacent-test-sha256\t{GO_ADJACENT_TEST_SHA256}"
     )));
+    for (path, bytes, lines) in [
+        ("pkg/statistics/histogram.go", 73_562, 1_993),
+        ("pkg/statistics/histogram_test.go", 21_210, 737),
+        ("pkg/statistics/histogram_bench_test.go", 3_193, 108),
+        ("pkg/statistics/statistics_test.go", 24_480, 726),
+    ] {
+        assert_eq!(
+            file_size_and_lines(&root.join(path)),
+            (bytes, lines),
+            "size drift: {path}"
+        );
+    }
+    for ratchet in [
+        "# source-bytes\t73562",
+        "# source-lines\t1993",
+        "# test-bytes\t21210",
+        "# test-lines\t737",
+        "# benchmark-bytes\t3193",
+        "# benchmark-lines\t108",
+        "# adjacent-test-bytes\t24480",
+        "# adjacent-test-lines\t726",
+    ] {
+        assert!(
+            INVENTORY.contains(ratchet),
+            "missing inventory ratchet: {ratchet}"
+        );
+    }
 }
 
 #[test]
 fn lockdown_histogram_inventory_has_complete_shape_and_allowed_statuses() {
     let rows = inventory_rows();
-    assert_eq!(rows.len(), 329);
+    assert_eq!(rows.len(), 668);
     let mut ids = HashSet::new();
     for row in &rows {
-        assert_eq!(row.len(), 6, "malformed inventory row: {row:?}");
+        assert_eq!(row.len(), 9, "malformed inventory row: {row:?}");
         assert!(ids.insert(row[0]), "duplicate inventory id: {}", row[0]);
+        assert!(row[0].starts_with('O'), "invalid obligation id: {row:?}");
+        assert!(!row[2].is_empty(), "missing source path: {row:?}");
+        assert!(!row[3].is_empty(), "missing AST anchor: {row:?}");
         assert!(
-            matches!(row[3], "PORTED" | "DECLINED" | "UNREACHABLE"),
+            row[4].len() == 64 && row[4].bytes().all(|byte| byte.is_ascii_hexdigit()),
+            "invalid node hash: {row:?}"
+        );
+        assert!(!row[5].is_empty(), "missing owner: {row:?}");
+        assert!(
+            matches!(row[6], "PORTED" | "DECLINED" | "UNREACHABLE"),
             "unsupported status: {row:?}"
         );
-        assert!(!row[5].is_empty(), "missing evidence: {row:?}");
+        assert!(!row[8].is_empty(), "missing evidence: {row:?}");
+        if row[6] == "PORTED" {
+            assert_ne!(row[7], "-", "PORTED row lacks a Rust symbol: {row:?}");
+        } else {
+            assert_eq!(row[7], "-", "non-PORTED row claims a Rust symbol: {row:?}");
+        }
     }
 
     for (category, expected) in [
-        ("declaration", 19),
+        ("benchmark", 1),
+        ("branch", 344),
+        ("closure", 6),
+        ("const", 9),
+        ("declaration", 7),
+        ("field", 37),
         ("function", 84),
-        ("branch", 173),
-        ("loop", 45),
+        ("loop", 90),
+        ("short_circuit", 66),
         ("test", 8),
+        ("test_helper", 6),
+        ("test_support_const", 3),
+        ("test_support_declaration", 3),
+        ("test_support_var", 1),
     ] {
         assert_eq!(
             rows.iter().filter(|row| row[1] == category).count(),
@@ -781,96 +1538,196 @@ fn lockdown_histogram_inventory_has_complete_shape_and_allowed_statuses() {
             "category count: {category}"
         );
     }
-    for (status, expected) in [("PORTED", 242), ("DECLINED", 86), ("UNREACHABLE", 1)] {
+    for (status, expected) in [("PORTED", 498), ("DECLINED", 169), ("UNREACHABLE", 1)] {
         assert_eq!(
-            rows.iter().filter(|row| row[3] == status).count(),
+            rows.iter().filter(|row| row[6] == status).count(),
             expected,
             "status count: {status}"
         );
     }
-}
-
-fn ported_symbol_is_defined(symbol: &str) -> bool {
-    let sources = [
-        include_str!("../src/histogram.rs"),
-        include_str!("../src/row_estimate.rs"),
-        include_str!("../src/average_count.rs"),
-        include_str!("../src/overlap_geometry.rs"),
-        include_str!("../src/stats_version.rs"),
-        include_str!("../src/status.rs"),
-        include_str!("histogram_source.rs"),
-    ];
-    if let Some(owner) = symbol.strip_suffix("::clone") {
-        return sources
-            .iter()
-            .any(|source| source.contains(&format!("struct {owner}")) && source.contains("Clone"));
+    for (source, expected) in [
+        ("pkg/statistics/histogram.go", 636),
+        ("pkg/statistics/histogram_test.go", 22),
+        ("pkg/statistics/histogram_bench_test.go", 8),
+        ("pkg/statistics/statistics_test.go", 2),
+    ] {
+        assert_eq!(
+            rows.iter().filter(|row| row[2] == source).count(),
+            expected,
+            "source obligation count: {source}"
+        );
     }
-    let leaf = symbol.rsplit("::").next().expect("non-empty Rust symbol");
-    let definitions = [
-        format!("fn {leaf}("),
-        format!("fn {leaf}<"),
-        format!("struct {leaf}"),
-        format!("enum {leaf}"),
-        format!("const {leaf}:"),
-    ];
-    sources.iter().any(|source| {
-        definitions
-            .iter()
-            .any(|definition| source.contains(definition))
-    })
+    assert!(
+        rows.windows(2).all(|pair| {
+            (pair[0][2], pair[0][3], pair[0][1]) <= (pair[1][2], pair[1][3], pair[1][1])
+        }),
+        "inventory is not in deterministic AST order"
+    );
+    assert!(INVENTORY.contains("# production-obligations\t636"));
+    assert!(INVENTORY.contains("# source-owned-test-support-obligations\t32"));
 }
 
 #[test]
 fn lockdown_every_ported_histogram_symbol_still_exists() {
+    let inventory_symbols = inventory_rows()
+        .into_iter()
+        .filter(|row| row[6] == "PORTED")
+        .map(|row| row[7])
+        .collect::<HashSet<_>>();
+    let anchored_symbols = COMPILE_ANCHORED_SYMBOLS
+        .iter()
+        .copied()
+        .collect::<HashSet<_>>();
+    assert!(
+        !inventory_symbols.contains("-"),
+        "PORTED row lacks a Rust symbol"
+    );
+    assert_eq!(anchored_symbols.len(), COMPILE_ANCHORED_SYMBOLS.len());
+    assert_eq!(inventory_symbols, anchored_symbols);
+}
+
+#[test]
+fn lockdown_every_ported_histogram_obligation_names_an_existing_boundary_test() {
+    let symbol_tests = PORTED_SYMBOL_TESTS
+        .iter()
+        .copied()
+        .collect::<std::collections::HashMap<_, _>>();
+    assert_eq!(symbol_tests.len(), PORTED_SYMBOL_TESTS.len());
+    assert_eq!(symbol_tests.len(), COMPILE_ANCHORED_SYMBOLS.len());
+
+    let anchored_symbols = COMPILE_ANCHORED_SYMBOLS
+        .iter()
+        .copied()
+        .collect::<HashSet<_>>();
+    assert_eq!(
+        symbol_tests.keys().copied().collect::<HashSet<_>>(),
+        anchored_symbols
+    );
+
+    let mut referenced_tests = HashSet::new();
     for row in inventory_rows()
         .into_iter()
-        .filter(|row| row[3] == "PORTED")
+        .filter(|row| row[6] == "PORTED")
     {
-        assert_ne!(row[4], "-", "PORTED row lacks a Rust symbol: {row:?}");
+        let test_identity = symbol_tests
+            .get(row[7])
+            .unwrap_or_else(|| panic!("PORTED symbol has no boundary test mapping: {row:?}"));
+        let expected_evidence = format!("rust-test:{test_identity}");
+        assert_eq!(row[8], expected_evidence, "wrong PORTED evidence: {row:?}");
+        referenced_tests.insert(*test_identity);
+    }
+
+    let mapped_tests = symbol_tests.values().copied().collect::<HashSet<_>>();
+    assert_eq!(referenced_tests, mapped_tests);
+    for identity in referenced_tests {
+        let (test_name, source) = ported_test_source(identity)
+            .unwrap_or_else(|| panic!("unknown Rust test module in evidence: {identity}"));
         assert!(
-            ported_symbol_is_defined(row[4]),
-            "PORTED symbol disappeared: {} ({})",
-            row[4],
-            row[2]
+            source_declares_test(source, test_name),
+            "evidence names a missing #[test]: {identity}"
         );
     }
 }
 
 #[test]
-fn lockdown_declined_and_unreachable_histogram_obligations_have_evidence() {
+fn lockdown_histogram_mutation_plan_covers_independent_rule_families() {
+    let rows = mutation_plan_rows();
+    assert_eq!(rows.len(), 21);
+    let mut ids = HashSet::new();
+    let mut families = HashSet::new();
+    for (index, row) in rows.iter().enumerate() {
+        assert_eq!(row.len(), 7, "malformed mutation plan row: {row:?}");
+        assert_eq!(row[0], format!("M{:02}", index + 1));
+        assert!(ids.insert(row[0]), "duplicate mutation ID: {}", row[0]);
+        assert!(
+            families.insert(row[1]),
+            "duplicate mutation rule family: {}",
+            row[1]
+        );
+        assert!(!row[2].is_empty(), "missing mutation target path: {row:?}");
+        assert!(
+            !row[3].is_empty(),
+            "missing mutation target symbol: {row:?}"
+        );
+        assert!(!row[4].is_empty(), "missing mutation operation: {row:?}");
+        let (test_name, source) = ported_test_source(row[5])
+            .unwrap_or_else(|| panic!("unknown mutation test module: {row:?}"));
+        assert!(
+            source_declares_test(source, test_name),
+            "mutation names a missing #[test]: {row:?}"
+        );
+        assert!(
+            matches!(row[6], "assertion_failure" | "compilation_failure"),
+            "unknown mutation outcome: {row:?}"
+        );
+    }
+    assert_eq!(ids.len(), 21);
+    assert_eq!(families.len(), 21);
+}
+
+#[test]
+fn lockdown_declined_histogram_evidence_is_source_backed() {
     let rows = inventory_rows();
+    let evidence = decline_evidence_rows();
+    assert_eq!(evidence.len(), 11);
+    let mut evidence_ids = HashSet::new();
+    for row in &evidence {
+        assert_eq!(row.len(), 4, "malformed decline evidence: {row:?}");
+        assert!(
+            evidence_ids.insert(row[0]),
+            "duplicate decline evidence: {}",
+            row[0]
+        );
+        assert!(
+            row[1].contains("pkg/statistics/"),
+            "missing Go source evidence: {row:?}"
+        );
+        assert!(
+            !row[2].is_empty(),
+            "missing Rust boundary evidence: {row:?}"
+        );
+        assert!(!row[3].is_empty(), "missing verification identity: {row:?}");
+    }
     let declined = rows
         .iter()
-        .filter(|row| row[3] == "DECLINED")
+        .filter(|row| row[6] == "DECLINED")
         .collect::<Vec<_>>();
-    assert_eq!(declined.len(), 86);
-    assert!(declined.iter().all(|row| {
-        row[4] == "-"
-            && row[5] == "dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner"
-    }));
+    assert_eq!(declined.len(), 169);
     assert!(declined
         .iter()
-        .any(|row| row[2].starts_with("Histogram.SplitRange:")));
+        .all(|row| row[7] == "-" && evidence_ids.contains(row[8])));
+    let used_evidence = declined.iter().map(|row| row[8]).collect::<HashSet<_>>();
+    assert_eq!(used_evidence, evidence_ids);
     assert!(declined
         .iter()
-        .any(|row| row[2].starts_with("HistogramToProto:")));
+        .any(|row| row[3].starts_with("Histogram.SplitRange/")));
+    assert!(declined
+        .iter()
+        .any(|row| row[3].starts_with("HistogramToProto/")));
+    assert!(declined
+        .iter()
+        .any(|row| row[3] == "type:Histogram/field:0:Tp"));
+    assert!(declined
+        .iter()
+        .any(|row| row[3] == "type:Histogram/field:3:Scalars"));
+}
 
+#[test]
+fn lockdown_unreachable_histogram_obligation_has_measured_proof() {
+    let rows = inventory_rows();
     let unreachable = rows
         .iter()
-        .filter(|row| row[3] == "UNREACHABLE")
+        .filter(|row| row[6] == "UNREACHABLE")
         .collect::<Vec<_>>();
     assert_eq!(unreachable.len(), 1);
+    assert_eq!(unreachable[0][3], "TopNMeta.buildBucket4Merging/closure:1");
     assert_eq!(
-        unreachable[0][2],
-        "TopNMeta.buildBucket4Merging:1604 failpoint closure enableTopNNDV"
-    );
-    assert_eq!(
-        unreachable[0][5],
+        unreachable[0][8],
         "measured_go_oracle_topn_bucket_ndv=0_after_enable"
     );
     assert!(rows.iter().any(|row| {
-        row[2].starts_with("TopNMeta.buildBucket4Merging:1601 if analyzeVer <= Version2")
-            && row[3] == "PORTED"
-            && row[4] == "BucketForMerging::from_topn"
+        row[3].starts_with("TopNMeta.buildBucket4Merging/if:1/")
+            && row[6] == "PORTED"
+            && row[7] == "BucketForMerging::from_topn"
     }));
 }
