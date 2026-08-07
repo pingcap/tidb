@@ -933,7 +933,7 @@ mod tests {
     }
 
     #[test]
-    fn test_convert_kind_dst_gap_and_overflow_source_rows() {
+    fn test_convert_kind_dst_gap_source_row() {
         let los_angeles: chrono_tz::Tz = "America/Los_Angeles".parse().unwrap();
         let datetime = Time::new(
             CoreTime::from_date(2018, 3, 11, 2, 0, 16, 0),
@@ -946,16 +946,35 @@ mod tests {
             .unwrap();
         assert!(adjusted);
         assert_eq!(timestamp.to_string(), "2018-03-11 03:00:00");
+    }
 
-        for (core, overflow) in [
-            (CoreTime::from_date(2012, 12, 31, 11, 30, 45, 0), false),
-            (CoreTime::from_date(999, 12, 31, 22, 0, 0, 0), false),
-            (CoreTime::from_date(9999, 12, 31, 23, 59, 59, 0), false),
-            (CoreTime::from_date(1, 1, 1, 0, 0, 0, 0), false),
-            (CoreTime::from_date(0, 1, 1, 0, 0, 0, 0), true),
+    #[test]
+    fn test_time_overflow_source_rows() {
+        for (input, overflow) in [
+            ("2012-12-31 11:30:45", false),
+            ("12-12-31 11:30:45", false),
+            ("2012-12-31", false),
+            ("20121231", false),
+            ("2012-02-29", false),
+            ("2018-01-01 18", false),
+            ("18-01-01 18", false),
+            ("2018.01.01", false),
+            ("2018.01.01 00:00:00", false),
+            ("2018/01/01-00:00:00", false),
+            ("0999-12-31 22:00:00", false),
+            ("9999-12-31 23:59:59", false),
+            ("0001-01-01 00:00:00", false),
+            ("0001-01-01 23:59:59", false),
+            ("0000-01-01 00:00:00", true),
         ] {
-            let value = Time::new(core, TimeType::DateTime, 0).unwrap();
-            assert_eq!(value.is_overflow(&chrono_tz::UTC).unwrap(), overflow);
+            let value = crate::parse_datetime(input, &chrono_tz::UTC, true, false)
+                .unwrap()
+                .time;
+            assert_eq!(
+                value.is_overflow(&chrono_tz::UTC).unwrap(),
+                overflow,
+                "{input}"
+            );
         }
     }
 
@@ -1410,7 +1429,7 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_timestamp_source_bounds_and_dst_rows() {
+    fn test_check_timestamp_source_rows() {
         let shanghai: chrono_tz::Tz = "Asia/Shanghai".parse().unwrap();
         let los_angeles: chrono_tz::Tz = "America/Los_Angeles".parse().unwrap();
         let london: chrono_tz::Tz = "Europe/London".parse().unwrap();
