@@ -26,10 +26,10 @@ The unit branch is `codex/task325-tidb-stats-histogram-lockdown`. The collaborat
 - [x] (2026-08-07) Completed WIP validation: three exact failpoint-wrapped Go tests passed with refcount restored to zero; Rust library tests passed 6/6 and aggregate tests 377/377; crate clippy with warnings denied, package formatting, and `git diff --check` passed.
 - [x] (2026-08-07) Executed all 21 mutations at immutable provisional SHA `4576fa8aea3a0d713d66b403aaad381331fc1c83`; every intended test or compile gate failed, every target was restored, and every clean-status check passed.
 - [x] (2026-08-07) Checked in and gated the 21-row structured mutation receipt, including exact tests, exit codes, decisive failures, restoration status, and clean-status confirmations.
-- [x] (2026-08-07) Integrated the two task325 hardening commits onto official tip `66ef3419531d95089aa1b5f3e7ce7979a5a8a149`; the original histogram candidate was already present in that history.
+- [x] (2026-08-07) Integrated the two task325 hardening commits onto official tip `66ef3419531d95089aa1b5f3e7ce7979a5a8a149`; after a concurrent A-D audit advanced the remote, rebased the five-patch candidate onto `cbac0dc9f2efa7606d2d588769982fcdd1321834`. `git range-diff` reports all five patches identical.
 - [x] (2026-08-07) Fixed an owner-external `tidb-datatype` test-isolation defect exposed by the Ready gate: every test that changes the global collation mode now restores the prior mode while holding the shared registry test lock.
 - [x] (2026-08-07) Completed the Rust and exact Go portions of the clean Ready gate with exclusive target `/tmp/tidb-task325-histogram-integration.xtQFEm/target`: exact failpoint-wrapped Go tests, `tidb-stats --all-targets`, `tidb-datatype --all-targets`, full Rust workspace tests, workspace clippy, literal workspace formatting, ratchet hashes/counts, mutation-result gate, and `git diff --check` passed.
-- [ ] Finish the repository Ready gate with `make -j12 lint`, then recheck the final committed candidate.
+- [x] (2026-08-07) Finished the repository Ready gate: `make -j12 lint` returned zero and all dashboard-linter invocations completed. The command also printed the existing macOS/internal-import diagnostics recorded below.
 - [ ] Publish the complete result through the user-authorized official remote route and verify the exact ref with `git ls-remote`.
 
 ## Surprises & Discoveries
@@ -59,10 +59,13 @@ The unit branch is `codex/task325-tidb-stats-histogram-lockdown`. The collaborat
   Evidence: the ownership push created the `origin` branch at `163559e780...`; the identical `ngaut` push returned `permission denied`.
 
 - Observation: the first full workspace run exposed a persistent test-state leak outside the histogram owner.
-  Evidence: three `tidb-datatype::collation_tests` ended with the global new-collation mode set to `false`, so `the_registry_and_the_const_path_give_one_default_collation_per_charset` observed `gbk_bin` or `gb18030_bin` even with `--test-threads=1`. Commit `19074e6b2b` replaces the hard-coded cleanup with a test-only RAII guard; the focused tests, complete crate, and workspace now pass.
+  Evidence: three `tidb-datatype::collation_tests` ended with the global new-collation mode set to `false`, so `the_registry_and_the_const_path_give_one_default_collation_per_charset` observed `gbk_bin` or `gb18030_bin` even with `--test-threads=1`. Rebased commit `cd0f05f1f2` replaces the hard-coded cleanup with a test-only RAII guard; the focused tests, complete crate, and workspace now pass.
 
 - Observation: literal workspace clippy with `-D warnings` has three owner-external warnings already present at `origin/hparser-integration`.
   Evidence: an unfiltered workspace clippy run reports only `assertions_on_constants` in `tidb-vardef`, `needless_update` in `tidb-util`, and `type_complexity` in `tidb-executor`. Re-running with exactly those three existing lint classes allowed and all other warnings denied passes. No unrelated source was changed to rewrite other lockdown owners.
+
+- Observation: `make -j12 lint` exits zero on macOS while printing two baseline diagnostics before the dashboard checks.
+  Evidence: Go reports that `rust/difftests/gobinaryrow` cannot import `pkg/server/internal/column`, and BSD `find` reports that `-n` is unsupported. The Makefile does not treat either diagnostic as a failing command; every dashboard-linter command then runs and the target returns zero. This candidate changes no Go file, so the unrelated lint plumbing was not modified.
 
 ## Decision Log
 
@@ -96,7 +99,7 @@ The unit branch is `codex/task325-tidb-stats-histogram-lockdown`. The collaborat
 
 ## Outcomes & Retrospective
 
-Work is in final integration. The 668-row source boundary, 11 decline proofs, 81 compile-anchored symbols, `rust-test:` evidence gate, and 21-family mutation plan are present. All 21 mutations were killed at immutable provisional SHA `4576fa8aea3a0d713d66b403aaad381331fc1c83`, restored, and checked into the structured results receipt. Exact Go tests and the complete Rust Ready surface now pass on the integration candidate, including the repaired collation-mode isolation. Repository lint, final publication verification, and cleanup remain incomplete; no final completion claim is made yet.
+The 668-row source boundary, 11 decline proofs, 81 compile-anchored symbols, `rust-test:` evidence gate, and 21-family mutation plan are present. All 21 mutations were killed at immutable provisional SHA `4576fa8aea3a0d713d66b403aaad381331fc1c83`, restored, and checked into the structured results receipt. Exact Go tests, the complete Rust Ready surface, and repository lint now pass on the integration candidate, including the repaired collation-mode isolation. Final publication verification and cleanup remain incomplete; no final completion claim is made until the official ref matches the committed candidate.
 
 ## Context and Orientation
 
@@ -157,11 +160,12 @@ Current local candidate commit:
 
     7125a0cde4 (cherry-pick of 3d4e74200)
 
-Official integration candidate before this ExecPlan update:
+Official integration candidate before the final ExecPlan close update:
 
-    98c9980ad1 rust: harden histogram source lockdown evidence
-    aa30e74704 statistics: record histogram lockdown mutations
-    19074e6b2b rust: isolate collation mode tests
+    64962d1197 rust: harden histogram source lockdown evidence
+    57ec0d151a statistics: record histogram lockdown mutations
+    cd0f05f1f2 rust: isolate collation mode tests
+    49163aef2b docs: record histogram integration gates
 
 Immutable mutation provisional commit:
 
@@ -229,6 +233,8 @@ Integration Ready receipt before repository lint:
       passed
     LC_ALL=C shasum -a 256 rust/crates/tidb-stats/src/histogram.mutation-results.tsv
       9a8c7f4305192a665c2ef856a5542423e4ca48556525cf9d3851ad71e827add5
+    PATH=/Users/chenhuansheng/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.0.darwin-arm64/bin:$PATH GOPATH=/Users/chenhuansheng/go make -j12 lint
+      exit 0; baseline macOS/internal-import diagnostics are recorded in Surprises & Discoveries
 
 The literal `cargo fmt --all -- --check` passes on the integration candidate; no formatting command changed the worktree.
 
