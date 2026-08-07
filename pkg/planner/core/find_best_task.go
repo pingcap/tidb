@@ -474,7 +474,9 @@ func iterateChildPlan4LogicalSequence(
 	return childTasks, nil
 }
 
-// compareTaskCost compares cost of curTask and bestTask and returns whether curTask's cost is smaller than bestTask's.
+// compareTaskCost compares tasks with the default task-cost model. DataSource
+// local candidate comparison uses compareDataSourceTaskCost for double-read
+// candidates that need IndexLookUpReader-equivalent costing.
 func compareTaskCost(curTask, bestTask base.Task) (curIsBetter bool, err error) {
 	return compareTaskCostWith(curTask, bestTask, getTaskPlanCost)
 }
