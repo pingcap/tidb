@@ -51,13 +51,14 @@ and lists every Rust landing symbol explicitly.
   mismatches at shared parsing, validation, or representation layers.
 - [x] (2026-08-06) Ported every source-owned Go test/support artifact or recorded a concrete
   DECLINED/UNREACHABLE verdict in the inventory.
-- [x] (2026-08-06) Killed 19 independent mutations spanning duration rounding,
+- [x] (2026-08-06) Killed 20 independent mutations spanning duration rounding,
   SQL microsecond bounds, zero-date diagnostics, YEAR width, raw-byte spaces,
   DST value/diagnostic handling, interval overflow, signed formatting,
   exhausted STR_TO_DATE tokens, Unicode categories, receiver mutation,
   calendar-vs-instant duration conversion, source drift, branch deletion,
   PORTED-symbol disappearance, Go-test receipt disappearance, DST diagnostic
-  conversion, write-path event preservation, and temporal error identity.
+  conversion, parser-warning separation, write-path event preservation, and
+  temporal error identity.
 - [x] (2026-08-06) Ran repository Ready lint and the three touched-crate test
   suites. A first clean-workspace gate exposed and fixed the dropped DST
   diagnostic at the datatype-to-write boundary.
@@ -131,6 +132,16 @@ and lists every Rust landing symbol explicitly.
   independent mutations respectively restored silent acceptance, dropped the
   write event, and changed 1292 into 1366; all were killed.
 
+- Observation: `ParsedTime::truncated` and `ParsedTime::dst_adjusted` represent
+  different Go channels and cannot share one conversion event.
+  Evidence: ordinary trailing input is appended to Go's parser context as a
+  warning while `parseTime` still returns nil error; DST transition returns
+  `ErrTimestampInDSTTransition` beside the adjusted value. Combining them
+  changed the catalog fingerprint from `6068344160096210003` to
+  `17951428125835141995` inside `ddl/column` by dropping a default instead of
+  preserving the existing result. Propagating only `dst_adjusted` restores the
+  exact catalog ratchet while retaining DDL 1067 and INSERT 1292 for the gap.
+
 - Observation: a literal one-process workspace run is order-sensitive because
   the existing charset tests mutate process-global collation mode.
   Evidence: `charset::tests::source_registry_vectors` observed `gbk_bin` after
@@ -189,7 +200,7 @@ remote SHAs, and reclaimed disk space.
 The production and original-test completeness boundary is now closed: 151
 functions, 561 exact control-flow loci, and 75 test/support declarations have
 one nonempty verdict. The touched-crate suites pass with 294 `tidb-datatype`,
-507 `tidb-executor`, and 989 `tidb-session` tests; all 19 deliberate mutations
+507 `tidb-executor`, and 989 `tidb-session` tests; all 20 deliberate mutations
 were observable. No oracle ratchet moved; lockdown completeness is the
 deliverable and is a successful result. This is not yet a final completion
 claim because the exact final SHA still needs the clean-worktree partition,

@@ -453,7 +453,8 @@ impl Datum {
                     zone,
                 )
                 .map_err(wrong_value)?;
-                event = (parsed.truncated || parsed.dst_adjusted)
+                event = parsed
+                    .dst_adjusted
                     .then_some(ScalarConversionEvent::Truncated);
                 parsed.time
             }
@@ -468,7 +469,8 @@ impl Datum {
                     zone,
                 )
                 .map_err(wrong_value)?;
-                event = (parsed.truncated || parsed.dst_adjusted)
+                event = parsed
+                    .dst_adjusted
                     .then_some(ScalarConversionEvent::Truncated);
                 parsed.time
             }
@@ -517,7 +519,8 @@ impl Datum {
                     zone,
                 )
                 .map_err(wrong_value)?;
-                event = (parsed.truncated || parsed.dst_adjusted)
+                event = parsed
+                    .dst_adjusted
                     .then_some(ScalarConversionEvent::Truncated);
                 parsed.time
             }
@@ -1285,6 +1288,19 @@ mod tests {
 
         assert_eq!(converted.value.sql_string().unwrap(), "2024-03-10 03:00:00");
         assert_eq!(converted.event, Some(ScalarConversionEvent::Truncated));
+
+        // `parseDatetime` appends an ordinary trailing-input warning to its
+        // Go context but returns the parsed value with no error. That channel
+        // is distinct from `ErrTimestampInDSTTransition`, which `parseTime`
+        // returns beside the adjusted value and which conversion must retain.
+        let ordinary = Datum::new_string("2020-03-27 20:20:20 123456")
+            .convert_to_in(
+                &FieldType::new(FieldTypeCode::Date),
+                crate::STRICT_FLAGS,
+                &SessionTimeZone::utc(),
+            )
+            .expect("ordinary parser warnings do not turn conversion into an error");
+        assert_eq!(ordinary.event, None);
     }
 
     /// Casting a `TIME` to `YEAR` reads BOTH statement inputs Go reads:
