@@ -17,14 +17,51 @@
 use tidb_datatype::{Decimal, PackedTime};
 use tidb_protocol::{
     decode_prepared_statement_close, decode_prepared_statement_execute,
-    decode_prepared_statement_execute_with_bound_params, decode_prepared_statement_send_long_data,
-    encode_binary_datetime,
-    encode_binary_result_row, encode_binary_signed_longlong_row, encode_binary_time,
+    decode_prepared_statement_execute_with_bound_params, decode_prepared_statement_fetch,
+    decode_prepared_statement_send_long_data, encode_binary_datetime, encode_binary_result_row,
+    encode_binary_signed_longlong_row, encode_binary_time,
     encode_prepared_statement_prepare_response, BinaryDateTimeType, BinaryResultCell,
     BinaryResultSetStream, ColumnInfo, PreparedParameterType, PreparedParameterTypes,
     PreparedStatementError, PreparedStatementSendLongData, PreparedValue, ResultSetOptions,
     TYPE_LONGLONG,
 };
+
+/// pkg/server/internal/parse/parse.go:35-48 `StmtFetchCmd`.
+///
+/// The wire field is a u32, but TiDB caps every valid request at 1024 rows.
+/// Pin both sides of the boundary and the largest encodable request so this
+/// test observes the cap rather than one recorded packet.
+#[test]
+fn stmt_fetch_caps_the_requested_row_count_at_the_go_boundary() {
+    for (requested, expected) in [
+        (1023_u32, 1023_u32),
+        (1024, 1024),
+        (1025, 1024),
+        (u32::MAX, 1024),
+    ] {
+        let mut payload = 7_u32.to_le_bytes().to_vec();
+        payload.extend_from_slice(&requested.to_le_bytes());
+        assert_eq!(
+            decode_prepared_statement_fetch(&payload),
+            Ok((7, expected)),
+            "requested={requested}"
+        );
+    }
+}
+
+#[test]
+fn stmt_fetch_rejects_every_non_eight_byte_packet() {
+    for length in [0_usize, 3, 7, 9, 11] {
+        assert!(
+            decode_prepared_statement_fetch(&vec![0; length]).is_err(),
+            "length={length}"
+        );
+    }
+    assert_eq!(
+        decode_prepared_statement_fetch(&[3, 0, 0, 0, 50, 0, 0, 0]),
+        Ok((3, 50))
+    );
+}
 
 fn longlong_column(name: &str) -> ColumnInfo {
     ColumnInfo {
@@ -812,7 +849,9 @@ fn binary_rows_match_go_dump_binary_row_bytes() {
         "every Go fixture row must be exercised"
     );
     for (name, cells) in cases {
-        let want = expected.get(name).unwrap_or_else(|| panic!("fixture {name}"));
+        let want = expected
+            .get(name)
+            .unwrap_or_else(|| panic!("fixture {name}"));
         assert_eq!(
             &encode_binary_result_row(&cells),
             want,
@@ -1141,11 +1180,15 @@ fn a_bound_parameter_consumes_no_bytes_from_the_execute_value_section() {
     // pkg/server/conn_stmt_params.go:74-77).
     let mut null_marked = payload.clone();
     null_marked[9] = 0b01;
-    let decoded =
-        decode_prepared_statement_execute_with_bound_params(&null_marked, 2, None, &[
-            Some(b"long data".to_vec()),
-            None,
-        ])
-        .unwrap();
-    assert_eq!(decoded.values[0], PreparedValue::String(b"long data".to_vec()));
+    let decoded = decode_prepared_statement_execute_with_bound_params(
+        &null_marked,
+        2,
+        None,
+        &[Some(b"long data".to_vec()), None],
+    )
+    .unwrap();
+    assert_eq!(
+        decoded.values[0],
+        PreparedValue::String(b"long data".to_vec())
+    );
 }

@@ -26,13 +26,15 @@ fn handshake_request(capability: u32, zstd_level: i32) -> AuthHandshakeRequest {
     AuthHandshakeRequest {
         response: HandshakeResponse41 {
             attrs: HashMap::new(),
-            user: "root".to_owned(),
-            db_name: String::new(),
-            auth_plugin: "mysql_native_password".to_owned(),
+            raw_attrs: HashMap::new(),
+            user: "root".into(),
+            db_name: "".into(),
+            auth_plugin: "mysql_native_password".into(),
             auth: Vec::new(),
             zstd_level,
             capability,
             collation: 45,
+            attr_warnings: Vec::new(),
         },
         negotiated_capability: capability,
         raw_packet: Vec::new(),
@@ -60,4 +62,3 @@ fn handshake_compression_state_preserves_source_selection_and_level() {
     assert_eq!(both.algorithm(), CompressionAlgorithm::Zlib);
     assert_eq!(both.zstd_level(), 11);
 }
-

@@ -57,13 +57,15 @@ fn response41_default_matches_go_zero_value_semantics() {
 fn response41_owns_every_field_and_clones_without_aliasing() {
     let response = HandshakeResponse41 {
         attrs: HashMap::from([("program_name".to_owned(), "mysql".to_owned())]),
-        user: "root".to_owned(),
-        db_name: "test".to_owned(),
-        auth_plugin: "mysql_native_password".to_owned(),
+        raw_attrs: HashMap::from([(b"program_name".to_vec(), b"mysql".to_vec())]),
+        user: "root".into(),
+        db_name: "test".into(),
+        auth_plugin: "mysql_native_password".into(),
         auth: vec![1, 2, 3],
         zstd_level: 17_i32,
         capability: 0x1234_5678,
         collation: 45,
+        attr_warnings: Vec::new(),
     };
     let mut clone = response.clone();
     clone
@@ -106,13 +108,15 @@ fn parser_populates_the_complete_response41_contract() {
         parse_response(&packet).expect("complete HandshakeResponse41"),
         HandshakeResponse41 {
             attrs: HashMap::from([("program_name".to_owned(), "mysql".to_owned())]),
-            user: "root".to_owned(),
-            db_name: "test".to_owned(),
-            auth_plugin: "mysql_native_password".to_owned(),
+            raw_attrs: HashMap::from([(b"program_name".to_vec(), b"mysql".to_vec())]),
+            user: "root".into(),
+            db_name: "test".into(),
+            auth_plugin: "mysql_native_password".into(),
             auth: vec![1, 2, 3],
             zstd_level: i32::from(u8::MAX),
             capability,
             collation: 45,
+            attr_warnings: Vec::new(),
         }
     );
 }
