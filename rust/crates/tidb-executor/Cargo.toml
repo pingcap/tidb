@@ -27,5 +27,8 @@ tidb-util = { path = "../tidb-util" }
 tidb-vardef = { path = "../tidb-vardef" }
 tracing = "0.1"
 
+[dev-dependencies]
+sha2 = { workspace = true }
+
 [lints]
 workspace = true

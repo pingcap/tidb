@@ -1642,6 +1642,7 @@ version = "0.0.0"
 dependencies = [
  "chrono",
  "chrono-tz",
+ "sha2",
  "tidb-ast",
  "tidb-chunk",
  "tidb-codec",

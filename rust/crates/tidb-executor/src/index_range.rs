@@ -1756,9 +1756,9 @@ mod tests {
     /// Every row here turns on `convertPointInPlace`: Go converts each range
     /// endpoint to the indexed column's type before building, so `a >= -2147483648`
     /// on an UNSIGNED column collapses to `[0,+inf]` rather than keeping the
-    /// negative bound. This crate's derivation does not convert endpoints at
-    /// all yet, so the rows that need it are `#[ignore]`d below with Go's
-    /// answer asserted -- they are the spec for the conversion step.
+    /// negative bound. Rust now reproduces 13 rows; the six remaining rows
+    /// stay `#[ignore]`d below with Go's answer asserted as the next unit's
+    /// specification.
     /// One index column of a corpus row: name, type code, and whether the
     /// column is UNSIGNED.
     type IndexColumnSpec = (&'static str, tidb_datatype::FieldTypeCode, bool);
@@ -1899,7 +1899,7 @@ mod tests {
         // This assertion is a ratchet, not a pass: it records how many of Go's
         // 19 rows this derivation reproduces today. It must never fall.
         assert!(
-            matched >= 7,
+            matched >= 13,
             "only {matched} of {} Go rows match; diverging rows:\n{}",
             GO_UNSIGNED_AND_OVERFLOW.len(),
             diverged.join("\n")
@@ -1910,7 +1910,7 @@ mod tests {
     /// conversion (`convertPointInPlace`) lands, and the failure message names
     /// every row that is still wrong -- that list is the work item.
     #[test]
-    #[ignore = "12 of 19 rows still need Go's handleUnsignedCol signedness clamping and expression-level RefineCompareArgs for out-of-domain constants"]
+    #[ignore = "6 of 19 rows still need Go's handleUnsignedCol signedness clamping and expression-level RefineCompareArgs for out-of-domain constants"]
     fn unsigned_and_overflow_ranges_match_go() {
         let mut mismatches = Vec::new();
         for (index, where_sql, expected) in GO_UNSIGNED_AND_OVERFLOW {
@@ -1926,6 +1926,29 @@ mod tests {
             GO_UNSIGNED_AND_OVERFLOW.len(),
             mismatches.join("\n")
         );
+    }
+
+    /// Go `TestPrefixIndexRangeScan`
+    /// (`pkg/util/ranger/ranger_test.go:1037`), both range rows verbatim.
+    ///
+    /// The original test also executes the queries against a mock store. The
+    /// executor's prefix-index read tests cover that residual-filter half;
+    /// this test owns the ranger boundary itself. In both rows every value
+    /// that reaches a declared two-character prefix loses start exclusivity,
+    /// so the scan remains a superset that the unchanged `WHERE` can filter.
+    #[test]
+    fn prefix_index_range_scan_matches_go() {
+        let string_type = || ft(tidb_datatype::FieldTypeCode::VarString);
+        for (index, where_sql, expected) in [
+            (vec![("a", string_type(), 2)], "a > 'aa'", "[\"aa\",+inf]"),
+            (
+                vec![("a", string_type(), 2), ("b", string_type(), 2)],
+                "a = 'aaa' and b > 'bb' and b < 'cc'",
+                "[\"aa\" \"bb\",\"aa\" \"cc\")",
+            ),
+        ] {
+            assert_eq!(derive_prefixed(&index, where_sql), expected, "{where_sql}");
+        }
     }
 
     /// Go `TestPrefixIndexRange` (`pkg/util/ranger/ranger_test.go:2342`), all

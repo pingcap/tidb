@@ -1,0 +1,201 @@
+# lockdown-inventory-v1
+# owning-go-source	pkg/util/ranger/ranger.go
+# source-sha256	7d9203f1e676fd5cb0bd753fff760360661d5370202b29ed590c96d7229261e0
+# owning-go-test	pkg/util/ranger/ranger_test.go
+# test-sha256	5be676a3ef5191a419c3a5288bcc20fd5db34637e259ac7ab7537c74e481c9ed
+# package-claim	File-level LOCKDOWN for pkg/util/ranger/ranger.go; points.go/detacher.go, memory quota, and renderer seams remain explicit.
+id	category	go_item	status	rust_symbol	evidence
+F001	function	validInterval:43	DECLINED	-	go_errctx_and_best_effort_cast_error_identity_not_exposed_by_rust_range_api
+B001	branch	if err != nil:46	DECLINED	-	go_errctx_and_best_effort_cast_error_identity_not_exposed_by_rust_range_api
+B002	branch	if low.excl:49	PORTED	valid_interval	rust_source_and_source_backed_boundary_tests
+B003	branch	if err != nil:54	DECLINED	-	go_errctx_and_best_effort_cast_error_identity_not_exposed_by_rust_range_api
+B004	branch	if !high.excl:57	PORTED	valid_interval	rust_source_and_source_backed_boundary_tests
+F002	function	convertPointsInPlace:65	DECLINED	-	go_errctx_and_best_effort_cast_error_identity_not_exposed_by_rust_range_api
+B005	branch	if tableRange:69	PORTED	build_handle_ranges	rust_source_and_source_backed_boundary_tests
+B006	branch	if isUnsigned:72	DECLINED	-	rust_handle_range_refuses_unsigned_handle_domain
+L001	loop	for j < numPoints:80	PORTED	convert_points_in_place	rust_source_and_source_backed_boundary_tests
+B007	branch	if err != nil:82	DECLINED	-	go_errctx_and_best_effort_cast_error_identity_not_exposed_by_rust_range_api
+B008	branch	if tableRange:85	PORTED	build_handle_ranges	rust_source_and_source_backed_boundary_tests
+B009	branch	if startPoint.value.Kind() == types.KindNull:86	PORTED	build_handle_ranges	rust_source_and_source_backed_boundary_tests
+B010	branch	if startPoint.value.Kind() == types.KindMinNotNull:89	PORTED	build_handle_ranges	rust_source_and_source_backed_boundary_tests
+B011	branch	if err != nil:94	DECLINED	-	go_errctx_and_best_effort_cast_error_identity_not_exposed_by_rust_range_api
+B012	branch	if tableRange:97	PORTED	build_handle_ranges	rust_source_and_source_backed_boundary_tests
+B013	branch	if endPoint.value.Kind() == types.KindMaxValue:98	PORTED	build_handle_ranges	rust_source_and_source_backed_boundary_tests
+B014	branch	if skipNull && endPoint.value.Kind() == types.KindNull:102	PORTED	build_handle_ranges	rust_source_and_source_backed_boundary_tests
+B015	branch	if err != nil:106	DECLINED	-	go_errctx_and_best_effort_cast_error_identity_not_exposed_by_rust_range_api
+B016	branch	if !less:109	PORTED	points_to_ranges	rust_source_and_source_backed_boundary_tests
+F003	function	estimateMemUsageForPoints2Ranges:120	DECLINED	-	rust_range_api_has_no_go_range_max_size_byte_budget
+F004	function	points2Ranges:129	DECLINED	-	go_errctx_and_best_effort_cast_error_identity_not_exposed_by_rust_range_api
+B017	branch	if err != nil:131	DECLINED	-	go_errctx_and_best_effort_cast_error_identity_not_exposed_by_rust_range_api
+B018	branch	if rangeMaxSize > 0 && estimateMemUsageForPoints2Ranges(rangePoints) > rangeMaxSize:135	DECLINED	-	rust_range_api_has_no_go_range_max_size_byte_budget
+B019	branch	if mysql.HasNotNullFlag(newTp.GetFlag()):137	DECLINED	-	rust_range_api_has_no_go_range_max_size_byte_budget
+L002	loop	range rangeCount:153	PORTED	points_to_ranges	rust_source_and_source_backed_boundary_tests
+F005	function	convertPointInPlace:177	DECLINED	-	go_errctx_and_best_effort_cast_error_identity_not_exposed_by_rust_range_api
+B020	branch	case types.KindMaxValue, types.KindMinNotNull:179	PORTED	convert_point_in_place	rust_source_and_source_backed_boundary_tests
+B021	branch	if err != nil:183	DECLINED	-	go_errctx_and_best_effort_cast_error_identity_not_exposed_by_rust_range_api
+B022	branch	if newTp.GetType() == mysql.TypeYear && terror.ErrorEqual(err, types.ErrWarnDataOutOfRange):188	DECLINED	-	go_errctx_and_best_effort_cast_error_identity_not_exposed_by_rust_range_api
+B023	branch	if newTp.GetType() == mysql.TypeBit && terror.ErrorEqual(err, types.ErrDataTooLong):190	DECLINED	-	go_errctx_and_best_effort_cast_error_identity_not_exposed_by_rust_range_api
+B024	branch	if (newTp.GetType() == mysql.TypeNewDecimal || mysql.IsIntegerType(newTp.GetType()) || newTp.GetType() == mysql.TypeFloat) && terror.ErrorEqual(err, types.ErrOverflow):192	DECLINED	-	go_errctx_and_best_effort_cast_error_identity_not_exposed_by_rust_range_api
+B025	branch	if p.value.Kind() == types.KindMysqlTime && newTp.GetType() == mysql.TypeTimestamp && terror.ErrorEqual(err, types.ErrWrongValue):197	DECLINED	-	go_errctx_and_best_effort_cast_error_identity_not_exposed_by_rust_range_api
+B026	branch	if newTp.GetType() == mysql.TypeEnum && terror.ErrorEqual(err, types.ErrTruncated):200	DECLINED	-	go_errctx_and_best_effort_cast_error_identity_not_exposed_by_rust_range_api
+B027	branch	if p.value.GetInt64() > 0:203	DECLINED	-	go_errctx_and_best_effort_cast_error_identity_not_exposed_by_rust_range_api
+B028	branch	if err != nil:205	DECLINED	-	go_errctx_and_best_effort_cast_error_identity_not_exposed_by_rust_range_api
+B029	branch	if terror.ErrorEqual(err, charset.ErrInvalidCharacterString):210	DECLINED	-	go_errctx_and_best_effort_cast_error_identity_not_exposed_by_rust_range_api
+B030	branch	if err != nil:221	DECLINED	-	go_errctx_and_best_effort_cast_error_identity_not_exposed_by_rust_range_api
+B031	branch	if valCmpCasted == 0:225	PORTED	convert_point_in_place	rust_source_and_source_backed_boundary_tests
+B032	branch	if p.start:228	PORTED	convert_point_in_place	rust_source_and_source_backed_boundary_tests
+B033	branch	if p.excl:229	PORTED	convert_point_in_place	rust_source_and_source_backed_boundary_tests
+B034	branch	if valCmpCasted < 0:230	PORTED	convert_point_in_place	rust_source_and_source_backed_boundary_tests
+B035	branch	if valCmpCasted > 0:235	PORTED	convert_point_in_place	rust_source_and_source_backed_boundary_tests
+B036	branch	if p.excl:241	PORTED	convert_point_in_place	rust_source_and_source_backed_boundary_tests
+B037	branch	if valCmpCasted > 0:242	PORTED	convert_point_in_place	rust_source_and_source_backed_boundary_tests
+B038	branch	if valCmpCasted < 0:247	PORTED	convert_point_in_place	rust_source_and_source_backed_boundary_tests
+F006	function	getRangesTotalDatumSize:256	DECLINED	-	rust_range_api_has_no_go_range_max_size_byte_budget
+L003	loop	range ranges:257	DECLINED	-	rust_range_api_has_no_go_range_max_size_byte_budget
+L004	loop	range ran.LowVal:258	DECLINED	-	rust_range_api_has_no_go_range_max_size_byte_budget
+L005	loop	range ran.HighVal:261	DECLINED	-	rust_range_api_has_no_go_range_max_size_byte_budget
+F007	function	getPointsTotalDatumSize:268	DECLINED	-	rust_range_api_has_no_go_range_max_size_byte_budget
+L006	loop	range points:269	DECLINED	-	rust_range_api_has_no_go_range_max_size_byte_budget
+F008	function	estimateMemUsageForAppendPoints2Ranges:276	DECLINED	-	rust_range_api_has_no_go_range_max_size_byte_budget
+B039	branch	if len(origin) == 0 || len(rangePoints) == 0:277	DECLINED	-	rust_range_api_has_no_go_range_max_size_byte_budget
+F009	function	appendPoints2Ranges:293	DECLINED	-	go_errctx_and_best_effort_cast_error_identity_not_exposed_by_rust_range_api
+B040	branch	if err != nil:296	DECLINED	-	go_errctx_and_best_effort_cast_error_identity_not_exposed_by_rust_range_api
+B041	branch	if rangeMaxSize > 0 && estimateMemUsageForAppendPoints2Ranges(origin, rangePoints) > rangeMaxSize:300	DECLINED	-	rust_range_api_has_no_go_range_max_size_byte_budget
+L007	loop	range origin:304	PORTED	append_points_to_ranges	rust_source_and_source_backed_boundary_tests
+B042	branch	if !oRange.IsPoint(sctx):306	PORTED	append_points_to_ranges	rust_source_and_source_backed_boundary_tests
+B043	branch	if err != nil:310	UNREACHABLE	-	go_append_points_2_index_range_returns_nil_error_unconditionally
+F010	function	appendPoints2IndexRange:319	PORTED	append_points_to_ranges	rust_source_and_source_backed_boundary_tests
+L008	loop	for i < len(rangePoints):333	PORTED	append_points_to_ranges	rust_source_and_source_backed_boundary_tests
+F011	function	estimateMemUsageForAppendRanges2PointRanges:368	DECLINED	-	rust_range_api_has_no_go_range_max_size_byte_budget
+B044	branch	if len1 == 0 || len2 == 0:370	DECLINED	-	rust_range_api_has_no_go_range_max_size_byte_budget
+F012	function	AppendRanges2PointRanges:381	DECLINED	-	go_detacher_tail_range_cartesian_fanout_has_no_rust_runtime_consumer
+B045	branch	if len(ranges) == 0:382	DECLINED	-	go_detacher_tail_range_cartesian_fanout_has_no_rust_runtime_consumer
+B046	branch	if rangeMaxSize > 0 && estimateMemUsageForAppendRanges2PointRanges(pointRanges, ranges) > rangeMaxSize:386	DECLINED	-	go_detacher_tail_range_cartesian_fanout_has_no_rust_runtime_consumer
+L009	loop	range pointRanges:393	DECLINED	-	go_detacher_tail_range_cartesian_fanout_has_no_rust_runtime_consumer
+L010	loop	range ranges:401	DECLINED	-	go_detacher_tail_range_cartesian_fanout_has_no_rust_runtime_consumer
+L011	loop	range pointRanges:421	DECLINED	-	go_detacher_tail_range_cartesian_fanout_has_no_rust_runtime_consumer
+L012	loop	range ranges:425	DECLINED	-	go_detacher_tail_range_cartesian_fanout_has_no_rust_runtime_consumer
+F013	function	points2TableRanges:465	DECLINED	-	go_errctx_and_best_effort_cast_error_identity_not_exposed_by_rust_range_api
+B047	branch	if err != nil:467	DECLINED	-	go_errctx_and_best_effort_cast_error_identity_not_exposed_by_rust_range_api
+B048	branch	if rangeMaxSize > 0 && estimateMemUsageForPoints2Ranges(rangePoints) > rangeMaxSize:470	DECLINED	-	rust_range_api_has_no_go_range_max_size_byte_budget
+L013	loop	for i < len(rangePoints):474	PORTED	to_table_range	rust_source_and_source_backed_boundary_tests
+F014	function	buildColumnRange:491	DECLINED	-	go_errctx_and_best_effort_cast_error_identity_not_exposed_by_rust_range_api
+L014	loop	range accessConditions:496	PORTED	detach_conds_for_column	rust_source_and_source_backed_boundary_tests
+B049	branch	if rb.err != nil:499	DECLINED	-	go_errctx_and_best_effort_cast_error_identity_not_exposed_by_rust_range_api
+B050	branch	if tableRange:507	PORTED	detach_conds_for_column	rust_source_and_source_backed_boundary_tests
+B051	branch	if err != nil:512	DECLINED	-	go_errctx_and_best_effort_cast_error_identity_not_exposed_by_rust_range_api
+B052	branch	if rangeFallback:515	DECLINED	-	rust_range_api_has_no_go_range_max_size_byte_budget
+B053	branch	if colLen != types.UnspecifiedLength:519	PORTED	detach_conds_for_column	rust_source_and_source_backed_boundary_tests
+B054	branch	if err != nil:521	DECLINED	-	go_errctx_and_best_effort_cast_error_identity_not_exposed_by_rust_range_api
+F015	function	BuildTableRange:534	DECLINED	-	rust_handle_range_refuses_unsigned_handle_domain
+F016	function	BuildColumnRange:545	PORTED	detach_conds_for_column	rust_source_and_source_backed_boundary_tests
+B055	branch	if len(conds) == 0:547	PORTED	detach_conds_for_column	rust_source_and_source_backed_boundary_tests
+F017	function	rangeDetacher.buildRangeOnColsByCNFCond:553	DECLINED	-	go_errctx_and_best_effort_cast_error_identity_not_exposed_by_rust_range_api
+L015	loop	range eqAndInCount:558	PORTED	build_cnf_ranges	rust_source_and_source_backed_boundary_tests
+B056	branch	if rb.err != nil:561	DECLINED	-	go_errctx_and_best_effort_cast_error_identity_not_exposed_by_rust_range_api
+B057	branch	if d.convertToSortKey:565	PORTED	build_cnf_ranges	rust_source_and_source_backed_boundary_tests
+B058	branch	if i == 0:568	PORTED	build_cnf_ranges	rust_source_and_source_backed_boundary_tests
+B059	branch	if err != nil:573	DECLINED	-	go_errctx_and_best_effort_cast_error_identity_not_exposed_by_rust_range_api
+B060	branch	if rangeFallback:576	DECLINED	-	rust_range_api_has_no_go_range_max_size_byte_budget
+L016	loop	for i < len(accessConds):583	PORTED	build_cnf_ranges	rust_source_and_source_backed_boundary_tests
+B061	branch	if d.convertToSortKey:585	PORTED	build_cnf_ranges	rust_source_and_source_backed_boundary_tests
+B062	branch	if rb.err != nil:589	DECLINED	-	go_errctx_and_best_effort_cast_error_identity_not_exposed_by_rust_range_api
+B063	branch	if eqAndInCount == 0 || eqAndInCount < len(accessConds):594	PORTED	build_cnf_ranges	rust_source_and_source_backed_boundary_tests
+B064	branch	if d.convertToSortKey:595	PORTED	build_cnf_ranges	rust_source_and_source_backed_boundary_tests
+B065	branch	if eqAndInCount == 0:601	PORTED	build_cnf_ranges	rust_source_and_source_backed_boundary_tests
+B066	branch	if eqAndInCount < len(accessConds):603	PORTED	build_cnf_ranges	rust_source_and_source_backed_boundary_tests
+B067	branch	if err != nil:606	DECLINED	-	go_errctx_and_best_effort_cast_error_identity_not_exposed_by_rust_range_api
+B068	branch	if rangeFallback:609	DECLINED	-	rust_range_api_has_no_go_range_max_size_byte_budget
+F018	function	convertStringFTToBinaryCollate:616	PORTED	binary_collate_field_type	rust_source_and_source_backed_boundary_tests
+B069	branch	if ft.EvalType() != types.ETString || ft.GetType() == mysql.TypeEnum || ft.GetType() == mysql.TypeSet:617	PORTED	binary_collate_field_type	rust_source_and_source_backed_boundary_tests
+F019	function	rangeDetacher.buildCNFIndexRange:629	DECLINED	-	go_errctx_and_best_effort_cast_error_identity_not_exposed_by_rust_range_api
+B070	branch	if err != nil:631	DECLINED	-	go_errctx_and_best_effort_cast_error_identity_not_exposed_by_rust_range_api
+B071	branch	if hasPrefix(d.lengths):636	PORTED	build_cnf_ranges	rust_source_and_source_backed_boundary_tests
+B072	branch	if err != nil:638	DECLINED	-	go_errctx_and_best_effort_cast_error_identity_not_exposed_by_rust_range_api
+D001	declaration	sortRange type:646	PORTED	union_ranges	rust_source_and_source_backed_boundary_tests
+F020	function	UnionRanges:656	DECLINED	-	go_errctx_and_best_effort_cast_error_identity_not_exposed_by_rust_range_api
+B073	branch	if len(ranges) == 0:657	PORTED	union_ranges	rust_source_and_source_backed_boundary_tests
+L017	loop	range ranges:661	PORTED	union_ranges	rust_source_and_source_backed_boundary_tests
+B074	branch	if err != nil:664	DECLINED	-	go_errctx_and_best_effort_cast_error_identity_not_exposed_by_rust_range_api
+B075	branch	if ran.LowExclude:667	PORTED	union_ranges	rust_source_and_source_backed_boundary_tests
+B076	branch	if err != nil:672	DECLINED	-	go_errctx_and_best_effort_cast_error_identity_not_exposed_by_rust_range_api
+B077	branch	if !ran.HighExclude:675	PORTED	union_ranges	rust_source_and_source_backed_boundary_tests
+L018	loop	for i < len(objects):685	PORTED	union_ranges	rust_source_and_source_backed_boundary_tests
+B078	branch	if (mergeConsecutive && bytes.Compare(lastRange.encodedEnd, objects[i].encodedStart) >= 0) || (!mergeConsecutive && bytes.Compare(lastRange.encodedEnd, objects[i].encodedStart) > 0):686	PORTED	union_ranges	rust_source_and_source_backed_boundary_tests
+B079	branch	if bytes.Compare(lastRange.encodedEnd, objects[i].encodedEnd) < 0:688	PORTED	union_ranges	rust_source_and_source_backed_boundary_tests
+F021	function	hasPrefix:702	PORTED	build_cnf_ranges	rust_source_and_source_backed_boundary_tests
+L019	loop	range lengths:703	PORTED	build_cnf_ranges	rust_source_and_source_backed_boundary_tests
+B080	branch	if l != types.UnspecifiedLength:704	PORTED	build_cnf_ranges	rust_source_and_source_backed_boundary_tests
+F022	function	cutPrefixForPoints:714	PORTED	cut_prefix_for_points	rust_source_and_source_backed_boundary_tests
+B081	branch	if length == types.UnspecifiedLength:715	PORTED	cut_prefix_for_points	rust_source_and_source_backed_boundary_tests
+L020	loop	range points:718	PORTED	cut_prefix_for_points	rust_source_and_source_backed_boundary_tests
+B082	branch	if p == nil:719	PORTED	cut_prefix_for_points	rust_source_and_source_backed_boundary_tests
+B083	branch	if cut || (p.start && ReachPrefixLen(&p.value, length, tp)):725	PORTED	cut_prefix_for_points	rust_source_and_source_backed_boundary_tests
+F023	function	CutDatumByPrefixLen:737	PORTED	cut_datum_by_prefix_len	rust_source_and_source_backed_boundary_tests
+B084	branch	if (v.Kind() == types.KindString || v.Kind() == types.KindBytes) && length != types.UnspecifiedLength:738	PORTED	cut_datum_by_prefix_len	rust_source_and_source_backed_boundary_tests
+B085	branch	if colCharset == charset.CharsetBin || colCharset == charset.CharsetASCII:741	PORTED	cut_datum_by_prefix_len	rust_source_and_source_backed_boundary_tests
+B086	branch	if len(colValue) > length:742	PORTED	cut_datum_by_prefix_len	rust_source_and_source_backed_boundary_tests
+B087	branch	if v.Kind() == types.KindBytes:744	PORTED	cut_datum_by_prefix_len	rust_source_and_source_backed_boundary_tests
+B088	branch	if utf8.RuneCount(colValue) > length:751	PORTED	cut_datum_by_prefix_len	rust_source_and_source_backed_boundary_tests
+F024	function	ReachPrefixLen:763	PORTED	reaches_prefix_len	rust_source_and_source_backed_boundary_tests
+B089	branch	if (v.Kind() == types.KindString || v.Kind() == types.KindBytes) && length != types.UnspecifiedLength:764	PORTED	reaches_prefix_len	rust_source_and_source_backed_boundary_tests
+B090	branch	if colCharset == charset.CharsetBin || colCharset == charset.CharsetASCII:767	PORTED	reaches_prefix_len	rust_source_and_source_backed_boundary_tests
+F025	function	newFieldType:779	DECLINED	-	go_new_field_type_float_string_best_effort_conversion_is_partial_in_rust
+B091	branch	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:782	PORTED	convert_point_in_place	rust_source_and_source_backed_boundary_tests
+B092	branch	case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString:788	DECLINED	-	go_new_field_type_float_string_best_effort_conversion_is_partial_in_rust
+B093	branch	default:793	PORTED	convert_point_in_place	rust_source_and_source_backed_boundary_tests
+F026	function	points2EqOrInCond:802	DECLINED	-	rust_owner_retains_original_where_instead_of_rebuilding_eq_or_in_conditions
+L021	loop	for i < len(points):809	DECLINED	-	rust_owner_retains_original_where_instead_of_rebuilding_eq_or_in_conditions
+B094	branch	if points[i].value.IsNull():810	DECLINED	-	rust_owner_retains_original_where_instead_of_rebuilding_eq_or_in_conditions
+B095	branch	if len(args) > 1:821	DECLINED	-	rust_owner_retains_original_where_instead_of_rebuilding_eq_or_in_conditions
+B096	branch	if len(args) > 2:823	DECLINED	-	rust_owner_retains_original_where_instead_of_rebuilding_eq_or_in_conditions
+B097	branch	if len(orArgs) == 0:828	DECLINED	-	rust_owner_retains_original_where_instead_of_rebuilding_eq_or_in_conditions
+B098	branch	if result != nil:831	DECLINED	-	rust_owner_retains_original_where_instead_of_rebuilding_eq_or_in_conditions
+B099	branch	if len(orArgs) == 1:834	DECLINED	-	rust_owner_retains_original_where_instead_of_rebuilding_eq_or_in_conditions
+F027	function	RangesToString:841	DECLINED	-	go_range_to_sql_renderer_has_no_rust_runtime_consumer
+L022	loop	range rans:842	DECLINED	-	go_range_to_sql_renderer_has_no_rust_runtime_consumer
+B100	branch	if len(ran.LowVal) != len(ran.HighVal):843	DECLINED	-	go_range_to_sql_renderer_has_no_rust_runtime_consumer
+L023	loop	range rans:848	DECLINED	-	go_range_to_sql_renderer_has_no_rust_runtime_consumer
+L024	loop	range ran.LowVal:850	DECLINED	-	go_range_to_sql_renderer_has_no_rust_runtime_consumer
+B101	branch	if ran.LowExclude && j == len(ran.LowVal)-1:856	DECLINED	-	go_range_to_sql_renderer_has_no_rust_runtime_consumer
+B102	branch	if ran.HighExclude && j == len(ran.LowVal)-1:860	DECLINED	-	go_range_to_sql_renderer_has_no_rust_runtime_consumer
+B103	branch	if j < len(ran.LowVal)-1:865	DECLINED	-	go_range_to_sql_renderer_has_no_rust_runtime_consumer
+B104	branch	if err != nil:867	DECLINED	-	go_range_to_sql_renderer_has_no_rust_runtime_consumer
+B105	branch	if cmp != 0:870	DECLINED	-	go_range_to_sql_renderer_has_no_rust_runtime_consumer
+B106	branch	if err != nil:875	DECLINED	-	go_range_to_sql_renderer_has_no_rust_runtime_consumer
+B107	branch	if j < len(ran.LowVal)-1:880	DECLINED	-	go_range_to_sql_renderer_has_no_rust_runtime_consumer
+B108	branch	if i < len(rans)-1:886	DECLINED	-	go_range_to_sql_renderer_has_no_rust_runtime_consumer
+B109	branch	if matched || (err != nil):894	DECLINED	-	go_range_to_sql_renderer_has_no_rust_runtime_consumer
+F028	function	RangeSingleColToString:901	DECLINED	-	go_range_to_sql_renderer_has_no_rust_runtime_consumer
+B110	branch	if (lowKind == types.KindNull || lowKind == types.KindMinNotNull || lowKind == types.KindMaxValue) && (highKind == types.KindNull || highKind == types.KindMinNotNull || highKind == types.KindMaxValue):905	DECLINED	-	go_range_to_sql_renderer_has_no_rust_runtime_consumer
+B111	branch	if lowKind == types.KindNull && highKind == types.KindNull && !lowExclude && !highExclude:907	DECLINED	-	go_range_to_sql_renderer_has_no_rust_runtime_consumer
+B112	branch	if lowKind == types.KindNull && highKind == types.KindMaxValue && !lowExclude:910	DECLINED	-	go_range_to_sql_renderer_has_no_rust_runtime_consumer
+B113	branch	if lowKind == types.KindMinNotNull && highKind == types.KindMaxValue:913	DECLINED	-	go_range_to_sql_renderer_has_no_rust_runtime_consumer
+B114	branch	if err != nil:924	DECLINED	-	go_range_to_sql_renderer_has_no_rust_runtime_consumer
+B115	branch	if cmp == 0 && !lowExclude && !highExclude && !lowVal.IsNull():927	DECLINED	-	go_range_to_sql_renderer_has_no_rust_runtime_consumer
+B116	branch	if err != nil:932	DECLINED	-	go_range_to_sql_renderer_has_no_rust_runtime_consumer
+B117	branch	if lowKind == types.KindNull:943	DECLINED	-	go_range_to_sql_renderer_has_no_rust_runtime_consumer
+B118	branch	if lowKind == types.KindMinNotNull:946	DECLINED	-	go_range_to_sql_renderer_has_no_rust_runtime_consumer
+B119	branch	if lowExclude:950	DECLINED	-	go_range_to_sql_renderer_has_no_rust_runtime_consumer
+B120	branch	if err != nil:957	DECLINED	-	go_range_to_sql_renderer_has_no_rust_runtime_consumer
+B121	branch	if !noLowerPart:962	DECLINED	-	go_range_to_sql_renderer_has_no_rust_runtime_consumer
+B122	branch	if useOR:963	DECLINED	-	go_range_to_sql_renderer_has_no_rust_runtime_consumer
+B123	branch	if highKind == types.KindMaxValue:971	DECLINED	-	go_range_to_sql_renderer_has_no_rust_runtime_consumer
+B124	branch	if highExclude:975	DECLINED	-	go_range_to_sql_renderer_has_no_rust_runtime_consumer
+B125	branch	if err != nil:982	DECLINED	-	go_range_to_sql_renderer_has_no_rust_runtime_consumer
+T001	test	TestTableRange:45	DECLINED	-	go_test_mixes_points_go_or_detacher_go_rules_outside_ranger_go_file_owner
+T002	test	TestIndexRangeForUnsignedAndOverflow:314	DECLINED	-	measured_ignored_go_oracle_6_of_19_diverge_in_points_go_domain_fixups
+T003	test	TestColumnRange:512	PORTED	derived_ranges_match_gos_explain_range_cell	rust_source_and_source_backed_boundary_tests
+T004	test	TestIndexRangeForYear:876	DECLINED	-	go_errctx_and_best_effort_cast_error_identity_not_exposed_by_rust_range_api
+T005	test	TestPrefixIndexRangeScan:1037	PORTED	prefix_index_range_scan_matches_go	rust_source_and_source_backed_boundary_tests
+T006	test	TestIndexRange:1107	DECLINED	-	go_test_mixes_points_go_or_detacher_go_rules_outside_ranger_go_file_owner
+T007	test	TestTableShardIndex:1472	DECLINED	-	go_test_mixes_points_go_or_detacher_go_rules_outside_ranger_go_file_owner
+T008	test	TestShardIndexFuncSuites:1752	DECLINED	-	go_test_mixes_points_go_or_detacher_go_rules_outside_ranger_go_file_owner
+T009	test	TestRangeFallbackForDetachCondAndBuildRangeForIndex:1917	DECLINED	-	rust_range_api_has_no_go_range_max_size_byte_budget
+T010	test	TestRangeFallbackForBuildTableRange:2246	DECLINED	-	rust_range_api_has_no_go_range_max_size_byte_budget
+T011	test	TestRangeFallbackForBuildColumnRange:2282	DECLINED	-	rust_range_api_has_no_go_range_max_size_byte_budget
+T012	test	TestPrefixIndexRange:2342	DECLINED	-	measured_ignored_go_oracle_6_of_10_diverge_in_points_go_is_not_null_rules
+T013	test	TestIssue40997:2473	DECLINED	-	go_test_mixes_points_go_or_detacher_go_rules_outside_ranger_go_file_owner
+T014	test	TestIssue50051:2513	DECLINED	-	go_test_mixes_points_go_or_detacher_go_rules_outside_ranger_go_file_owner
+T015	test	TestMinAccessCondsForDNFCond:2532	DECLINED	-	go_test_mixes_points_go_or_detacher_go_rules_outside_ranger_go_file_owner
+T016	test	TestBinCollationRangeForIndex:2636	DECLINED	-	go_test_mixes_points_go_or_detacher_go_rules_outside_ranger_go_file_owner
