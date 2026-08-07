@@ -37,14 +37,28 @@ pub enum MaskingPolicyState {
 ///
 /// A bit set matches Go's AST contract: duplicate names collapse and restore
 /// always follows the declaration order, independent of source order.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct MaskingPolicyRestrictOps(u8);
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub struct MaskingPolicyRestrictOps(u64);
 
 impl MaskingPolicyRestrictOps {
-    const INSERT_INTO_SELECT: u8 = 1 << 0;
-    const UPDATE_SELECT: u8 = 1 << 1;
-    const DELETE_SELECT: u8 = 1 << 2;
-    const CTAS: u8 = 1 << 3;
+    const INSERT_INTO_SELECT: u64 = 1 << 0;
+    const UPDATE_SELECT: u64 = 1 << 1;
+    const DELETE_SELECT: u64 = 1 << 2;
+    const CTAS: u64 = 1 << 3;
+
+    /// Constructs the exact Go `uint64` bit pattern, including unknown bits
+    /// that a newer writer may persist.
+    #[must_use]
+    pub const fn from_bits(bits: u64) -> Self {
+        Self(bits)
+    }
+
+    /// Returns the exact Go `uint64` bit pattern.
+    #[must_use]
+    pub const fn bits(self) -> u64 {
+        self.0
+    }
 
     /// Whether no operations are restricted.
     pub fn is_empty(self) -> bool {
@@ -354,3 +368,29 @@ impl crate::Visitable for AlterMaskingPolicyAction {
     }
 }
 // END GENERATED AST VISITOR IMPLEMENTATIONS
+
+#[cfg(test)]
+mod source_width_tests {
+    use super::MaskingPolicyRestrictOps;
+
+    #[test]
+    fn restrict_ops_preserve_the_full_go_uint64_domain() {
+        for bits in [0, 1, 1 << 7, 1 << 8, 1 << 31, 1 << 63, u64::MAX] {
+            let operations = MaskingPolicyRestrictOps::from_bits(bits);
+            assert_eq!(operations.bits(), bits);
+            let encoded = serde_json::to_string(&operations).unwrap();
+            assert_eq!(encoded, bits.to_string());
+            assert_eq!(
+                serde_json::from_str::<MaskingPolicyRestrictOps>(&encoded).unwrap(),
+                operations
+            );
+        }
+
+        // Go treats an unknown nonzero bit as nonempty but has no known names
+        // to place between the parentheses.
+        let unknown = MaskingPolicyRestrictOps::from_bits(1 << 63);
+        let mut restored = String::new();
+        unknown.restore_into(&mut restored, false);
+        assert_eq!(restored, "RESTRICT ON ()");
+    }
+}
