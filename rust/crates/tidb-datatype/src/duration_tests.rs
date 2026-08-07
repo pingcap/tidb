@@ -17,7 +17,8 @@ use super::{truncate_overflow_mysql_time, DurationOverflow, MAX_TIME_NANOS, MIN_
 use super::{
     can_fallback_to_datetime, classify_duration_datetime_fallback, parse_duration,
     parse_mysql_duration, round_duration_fsp, DurationDateTimeFallbackKind, DurationParseError,
-    DurationParseEvent, DurationRoundError, MySqlDuration, TimeType,
+    DurationParseEvent, DurationRoundError, FieldTypeCode, MySqlDuration, ScalarConversionError,
+    ScalarConversionEvent, TimeType,
 };
 
 #[test]
@@ -103,8 +104,56 @@ fn duration_methods_match_source_rows() {
     );
 }
 
+/// Exact source rows from `pkg/types/time_test.go::TestDurationAdd`.
 #[test]
-fn duration_time_and_year_conversion_match_source_rows() {
+fn test_duration_add() {
+    for (left, left_fsp, right, right_fsp, output) in [
+        ("00:00:00.1", 1, "00:00:00.1", 1, "00:00:00.2"),
+        ("00:00:00", 0, "00:00:00.1", 1, "00:00:00.1"),
+        ("00:00:00.09", 2, "00:00:00.01", 2, "00:00:00.10"),
+        ("00:00:00.099", 3, "00:00:00.001", 3, "00:00:00.100"),
+    ] {
+        let left = parse_mysql_duration(left, left_fsp, &chrono_tz::UTC, true, false).unwrap();
+        let right = parse_mysql_duration(right, right_fsp, &chrono_tz::UTC, true, false).unwrap();
+        let left = MySqlDuration::from_nanoseconds(left.nanoseconds(), left.fsp()).unwrap();
+        let right = MySqlDuration::from_nanoseconds(right.nanoseconds(), right.fsp()).unwrap();
+        assert_eq!(left.checked_add(right).unwrap().to_string(), output);
+    }
+
+    assert_eq!(
+        MySqlDuration::from_nanoseconds(0, 0)
+            .unwrap()
+            .checked_add(MySqlDuration::default())
+            .unwrap()
+            .to_string(),
+        "00:00:00"
+    );
+
+    let maximum = MySqlDuration::from_nanoseconds(i64::MAX, 0).unwrap();
+    let minute = MySqlDuration::from_nanoseconds(60_000_000_000, 0).unwrap();
+    assert_eq!(
+        maximum.checked_add(minute),
+        Err(DurationRoundError::Overflow)
+    );
+}
+
+/// Exact source rows from `pkg/types/time_test.go::TestDurationSub`.
+#[test]
+fn test_duration_sub() {
+    for (left, left_fsp, right, right_fsp, output) in [
+        ("00:00:00.1", 1, "00:00:00.1", 1, "00:00:00.0"),
+        ("00:00:00", 0, "00:00:00.1", 1, "-00:00:00.1"),
+    ] {
+        let left = parse_mysql_duration(left, left_fsp, &chrono_tz::UTC, true, false).unwrap();
+        let right = parse_mysql_duration(right, right_fsp, &chrono_tz::UTC, true, false).unwrap();
+        let left = MySqlDuration::from_nanoseconds(left.nanoseconds(), left.fsp()).unwrap();
+        let right = MySqlDuration::from_nanoseconds(right.nanoseconds(), right.fsp()).unwrap();
+        assert_eq!(left.checked_sub(right).unwrap().to_string(), output);
+    }
+}
+
+#[test]
+fn duration_convert_to_time_matches_source_row() {
     use chrono::{TimeZone, Utc};
 
     let now = Utc.with_ymd_and_hms(2023, 11, 13, 3, 9, 0).unwrap();
@@ -113,44 +162,90 @@ fn duration_time_and_year_conversion_match_source_rows() {
         .convert_to_time(now, TimeType::DateTime, false, false)
         .unwrap();
     assert_eq!(converted.to_string(), "2023-11-13 01:00:00");
+}
 
-    for (duration, now, through_concat, expected) in [
+/// Exact source rows from `pkg/types/time_test.go::TestDurationConvertToYearFromNow`.
+#[test]
+fn test_duration_convert_to_year_from_now() {
+    use chrono::{DateTime, Utc};
+
+    for (duration, now_lit, through_concat, expected) in [
         (
             MySqlDuration::new(1, 0, 0, 0, 0).unwrap(),
-            Utc.with_ymd_and_hms(2023, 11, 13, 3, 9, 0).unwrap(),
+            "2023-11-13T03:09:00Z",
             false,
             2023,
         ),
         (
             MySqlDuration::new(40, 0, 0, 0, 0).unwrap(),
-            Utc.with_ymd_and_hms(2023, 12, 31, 11, 0, 0).unwrap(),
+            "2023-12-31T11:00:00Z",
             false,
             2024,
         ),
         (
-            MySqlDuration::new(-20, 0, 0, 0, 0).unwrap(),
-            Utc.with_ymd_and_hms(2024, 1, 1, 13, 0, 0).unwrap(),
+            MySqlDuration::new(40, 0, 0, 0, 0).unwrap(),
+            "2023-12-31T11:00:00+12:00",
             false,
             2023,
         ),
         (
+            MySqlDuration::new(-20, 0, 0, 0, 0).unwrap(),
+            "2024-01-01T13:00:00Z",
+            false,
+            2023,
+        ),
+        (
+            MySqlDuration::new(-20, 0, 0, 0, 0).unwrap(),
+            "2024-01-01T13:00:00-12:00",
+            false,
+            2024,
+        ),
+        (
             MySqlDuration::new(0, 20, 12, 0, 0).unwrap(),
-            Utc.with_ymd_and_hms(2023, 11, 13, 3, 9, 0).unwrap(),
+            "2023-11-13T03:09:00Z",
+            true,
+            2012,
+        ),
+        (
+            MySqlDuration::new(0, 0, 12, 0, 0).unwrap(),
+            "2023-11-13T03:09:00Z",
             true,
             2012,
         ),
         (
             MySqlDuration::new(0, 0, 0, 0, 0).unwrap(),
-            Utc.with_ymd_and_hms(2023, 11, 13, 3, 9, 0).unwrap(),
+            "2023-11-13T03:09:00Z",
             true,
             0,
         ),
     ] {
+        let now = DateTime::parse_from_rfc3339(now_lit)
+            .unwrap()
+            .with_timezone(&Utc);
         assert_eq!(
             duration.convert_to_year(now, through_concat).unwrap(),
-            expected
+            expected,
+            "duration={duration}, now={now_lit}"
         );
     }
+
+    let now = DateTime::parse_from_rfc3339("2023-11-13T03:09:00Z")
+        .unwrap()
+        .with_timezone(&Utc);
+    let duration = MySqlDuration::new(200, 0, 0, 0, 0).unwrap();
+    // Go returns the clamped value beside ErrWarnDataOutOfRange. Keep both
+    // halves so the statement layer can choose error, warning, or ignore.
+    let converted = duration.convert_to_year_with_event(now, true).unwrap();
+    assert_eq!(converted.value, 2155);
+    assert_eq!(
+        converted.event,
+        Some(ScalarConversionEvent::Overflow(
+            ScalarConversionError::Overflow {
+                value: "2000000".to_owned(),
+                target: FieldTypeCode::Year,
+            }
+        ))
+    );
 }
 
 #[test]

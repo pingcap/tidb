@@ -18,9 +18,10 @@ use std::{cmp::Ordering, error::Error, fmt};
 
 use chrono::{DateTime, Datelike, Duration as ChronoDuration, TimeZone};
 
+use crate::time_parse::adjust_year_with_event;
 use crate::{
-    adjust_year, check_fsp, core_time_from_datetime, parse_frac, Decimal, FspError, Time,
-    TimeError, TimeType,
+    check_fsp, core_time_from_datetime, parse_frac, Converted, Decimal, FspError, Time, TimeError,
+    TimeType,
 };
 
 /// The maximum SQL `TIME` hour component accepted by TiDB.
@@ -277,6 +278,18 @@ impl MySqlDuration {
         now: DateTime<TZ>,
         through_concat: bool,
     ) -> Result<i64, TimeError> {
+        let converted = self.convert_to_year_with_event(now, through_concat)?;
+        if converted.event.is_some() {
+            return Err(TimeError::OutOfRange("year"));
+        }
+        Ok(converted.value)
+    }
+
+    pub(crate) fn convert_to_year_with_event<TZ: TimeZone>(
+        self,
+        now: DateTime<TZ>,
+        through_concat: bool,
+    ) -> Result<Converted<i64>, TimeError> {
         if through_concat {
             let rounded = self
                 .round_frac(0)
@@ -287,10 +300,13 @@ impl MySqlDuration {
             } else {
                 numeric
             };
-            return adjust_year(numeric, false);
+            return Ok(adjust_year_with_event(numeric, false));
         }
         let value = self.convert_to_time(now, TimeType::DateTime, false, false)?;
-        adjust_year(i64::from(value.core_time().year()), false)
+        Ok(adjust_year_with_event(
+            i64::from(value.core_time().year()),
+            false,
+        ))
     }
 }
 

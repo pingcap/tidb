@@ -17,8 +17,9 @@
 use chrono::{FixedOffset, TimeZone};
 
 use crate::{
-    check_fsp, core_time_from_datetime, get_frac_index, get_timezone, parse_frac, CoreTime, Time,
-    TimeError, TimeType, TimestampInterval,
+    check_fsp, core_time_from_datetime, get_frac_index, get_timezone, parse_frac, Converted,
+    CoreTime, FieldTypeCode, ScalarConversionError, ScalarConversionEvent, Time, TimeError,
+    TimeType, TimestampInterval,
 };
 
 /// Result metadata emitted while parsing a temporal literal.
@@ -45,6 +46,32 @@ pub struct ParsedInterval {
     pub fsp: u8,
     /// Whether TiDB returns the value together with a truncation diagnostic.
     pub truncated: bool,
+}
+
+/// A source return value paired with the error Go returns beside it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct TemporalOutcome<T> {
+    pub(crate) value: T,
+    pub(crate) error: Option<TimeError>,
+}
+
+impl<T> TemporalOutcome<T> {
+    fn from_result(result: Result<T, TimeError>, fallback: T) -> Self {
+        match result {
+            Ok(value) => Self { value, error: None },
+            Err(error) => Self {
+                value: fallback,
+                error: Some(error),
+            },
+        }
+    }
+
+    fn into_result(self) -> Result<T, TimeError> {
+        match self.error {
+            Some(error) => Err(error),
+            None => Ok(self.value),
+        }
+    }
 }
 
 /// Go `isDigit`.
@@ -196,18 +223,39 @@ pub fn parse_year(input: &str) -> Result<i16, TimeError> {
 
 /// Applies MySQL's two-digit YEAR window and validates the YEAR domain.
 pub fn adjust_year(year: i64, adjust_zero: bool) -> Result<i64, TimeError> {
+    let converted = adjust_year_with_event(year, adjust_zero);
+    if converted.event.is_some() {
+        return Err(TimeError::OutOfRange("year"));
+    }
+    Ok(converted.value)
+}
+
+pub(crate) fn adjust_year_with_event(year: i64, adjust_zero: bool) -> Converted<i64> {
     if year == 0 && !adjust_zero {
-        return Ok(0);
+        return Converted {
+            value: 0,
+            event: None,
+        };
     }
     let adjusted = match year {
         0..=69 => 2000 + year,
         70..=99 => 1900 + year,
         _ => year,
     };
-    if !(1901..=2155).contains(&adjusted) {
-        return Err(TimeError::OutOfRange("year"));
+    let value = if adjusted < 0 {
+        0
+    } else {
+        adjusted.clamp(1901, 2155)
+    };
+    Converted {
+        value,
+        event: (value != adjusted).then(|| {
+            ScalarConversionEvent::Overflow(ScalarConversionError::Overflow {
+                value: year.to_string(),
+                target: FieldTypeCode::Year,
+            })
+        }),
     }
-    Ok(adjusted)
 }
 
 /// Converts a MySQL day number to a DATE.
@@ -266,12 +314,16 @@ pub fn timestamp_diff(unit: &str, start: Time, end: Time) -> Result<i64, TimeErr
 
 /// Extracts the integer representation for a datetime interval unit.
 pub fn extract_datetime_num(time: Time, unit: &str) -> Result<i64, TimeError> {
+    extract_datetime_num_with_error(time, unit).into_result()
+}
+
+pub(crate) fn extract_datetime_num_with_error(time: Time, unit: &str) -> TemporalOutcome<i64> {
     let core = time.core_time();
     let hour = i64::from(core.hour());
     let minute = i64::from(core.minute());
     let second = i64::from(core.second());
     let day = i64::from(core.day());
-    Ok(match unit.to_ascii_uppercase().as_str() {
+    let value = match unit.to_ascii_uppercase().as_str() {
         "DAY" => day,
         "WEEK" => i64::from(core.week(0)),
         "MONTH" => i64::from(core.month()),
@@ -285,12 +337,25 @@ pub fn extract_datetime_num(time: Time, unit: &str) -> Result<i64, TimeError> {
         "DAY_MINUTE" => day * 10_000 + hour * 100 + minute,
         "DAY_HOUR" => day * 100 + hour,
         "YEAR_MONTH" => i64::from(core.year()) * 100 + i64::from(core.month()),
-        _ => return Err(TimeError::InvalidUnit(unit.to_owned())),
-    })
+        _ => {
+            return TemporalOutcome {
+                value: 0,
+                error: Some(TimeError::InvalidUnit(unit.to_owned())),
+            };
+        }
+    };
+    TemporalOutcome { value, error: None }
 }
 
 /// Extracts the integer representation for a duration interval unit.
 pub fn extract_duration_num(duration: crate::MySqlDuration, unit: &str) -> Result<i64, TimeError> {
+    extract_duration_num_with_error(duration, unit).into_result()
+}
+
+pub(crate) fn extract_duration_num_with_error(
+    duration: crate::MySqlDuration,
+    unit: &str,
+) -> TemporalOutcome<i64> {
     let hour = duration.hour();
     let minute = duration.minute();
     let second = duration.second();
@@ -310,12 +375,17 @@ pub fn extract_duration_num(duration: crate::MySqlDuration, unit: &str) -> Resul
         "HOUR_MINUTE" | "DAY_MINUTE" => hour * 100 + minute,
         "DAY_MICROSECOND" => (hour * 10_000 + minute * 100 + second) * 1_000_000 + microsecond,
         "DAY_HOUR" => hour,
-        _ => return Err(TimeError::InvalidUnit(unit.to_owned())),
+        _ => {
+            return TemporalOutcome {
+                value: 0,
+                error: Some(TimeError::InvalidUnit(unit.to_owned())),
+            };
+        }
     };
     if duration.nanoseconds() < 0 {
         value = -value;
     }
-    Ok(value)
+    TemporalOutcome { value, error: None }
 }
 
 /// Parses a MySQL interval literal into calendar and sub-day components.
@@ -819,23 +889,36 @@ pub fn parse_time_from_float64<TZ: TimeZone>(
     allow_invalid_date: bool,
     timezone: &TZ,
 ) -> Result<Time, TimeError> {
-    let integer = value as i64;
-    let mut time =
-        parse_time_from_int64(integer, allow_zero_in_date, allow_invalid_date, timezone)?;
-    if time.kind() == TimeType::DateTime {
-        let microsecond = ((value - integer as f64) * 1_000_000.0).round() as u32;
-        let core = time.core_time();
-        time.set_core_time(CoreTime::from_date(
-            core.year() as u16,
-            core.month(),
-            core.day(),
-            core.hour(),
-            core.minute(),
-            core.second(),
-            microsecond,
-        ));
-    }
-    Ok(time)
+    parse_time_from_float64_with_error(value, allow_zero_in_date, allow_invalid_date, timezone)
+        .into_result()
+}
+
+pub(crate) fn parse_time_from_float64_with_error<TZ: TimeZone>(
+    value: f64,
+    allow_zero_in_date: bool,
+    allow_invalid_date: bool,
+    timezone: &TZ,
+) -> TemporalOutcome<Time> {
+    let result = (|| {
+        let integer = value as i64;
+        let mut time =
+            parse_time_from_int64(integer, allow_zero_in_date, allow_invalid_date, timezone)?;
+        if time.kind() == TimeType::DateTime {
+            let microsecond = ((value - integer as f64) * 1_000_000.0).round() as u32;
+            let core = time.core_time();
+            time.set_core_time(CoreTime::from_date(
+                core.year() as u16,
+                core.month(),
+                core.day(),
+                core.hour(),
+                core.minute(),
+                core.second(),
+                microsecond,
+            ));
+        }
+        Ok(time)
+    })();
+    TemporalOutcome::from_result(result, zero_datetime())
 }
 
 /// Parses an exact decimal temporal number without floating-point rounding.
@@ -845,35 +928,53 @@ pub fn parse_time_from_decimal<TZ: TimeZone>(
     allow_invalid_date: bool,
     timezone: &TZ,
 ) -> Result<Time, TimeError> {
-    let text = value.to_string();
-    let (integer_text, fraction) = text.split_once('.').unwrap_or((&text, ""));
-    let integer = integer_text
-        .parse::<i64>()
-        .map_err(|_| TimeError::InvalidDate)?;
-    let mut time =
-        parse_time_from_int64(integer, allow_zero_in_date, allow_invalid_date, timezone)?;
-    let fsp = fraction.len().min(6) as i64;
-    time.set_fsp(fsp)?;
-    if fsp > 0 && time.kind() == TimeType::DateTime {
-        let mut microsecond_text = fraction[..fsp as usize].to_owned();
-        while microsecond_text.len() < 6 {
-            microsecond_text.push('0');
-        }
-        let microsecond = microsecond_text
-            .parse::<u32>()
+    parse_time_from_decimal_with_error(value, allow_zero_in_date, allow_invalid_date, timezone)
+        .into_result()
+}
+
+pub(crate) fn parse_time_from_decimal_with_error<TZ: TimeZone>(
+    value: &crate::Decimal,
+    allow_zero_in_date: bool,
+    allow_invalid_date: bool,
+    timezone: &TZ,
+) -> TemporalOutcome<Time> {
+    let result = (|| {
+        let text = value.to_string();
+        let (integer_text, fraction) = text.split_once('.').unwrap_or((&text, ""));
+        let integer = integer_text
+            .parse::<i64>()
             .map_err(|_| TimeError::InvalidDate)?;
-        let core = time.core_time();
-        time.set_core_time(CoreTime::from_date(
-            core.year() as u16,
-            core.month(),
-            core.day(),
-            core.hour(),
-            core.minute(),
-            core.second(),
-            microsecond,
-        ));
-    }
-    Ok(time)
+        let mut time =
+            parse_time_from_int64(integer, allow_zero_in_date, allow_invalid_date, timezone)?;
+        let fsp = fraction.len().min(6) as i64;
+        time.set_fsp(fsp)?;
+        if fsp > 0 && time.kind() == TimeType::DateTime {
+            let mut microsecond_text = fraction[..fsp as usize].to_owned();
+            while microsecond_text.len() < 6 {
+                microsecond_text.push('0');
+            }
+            let microsecond = microsecond_text
+                .parse::<u32>()
+                .map_err(|_| TimeError::InvalidDate)?;
+            let core = time.core_time();
+            time.set_core_time(CoreTime::from_date(
+                core.year() as u16,
+                core.month(),
+                core.day(),
+                core.hour(),
+                core.minute(),
+                core.second(),
+                microsecond,
+            ));
+        }
+        Ok(time)
+    })();
+    TemporalOutcome::from_result(result, zero_datetime())
+}
+
+fn zero_datetime() -> Time {
+    Time::new(CoreTime::default(), TimeType::DateTime, 0)
+        .expect("zero DATETIME is a valid MySQL error-side value")
 }
 
 fn normalize_numeric_datetime(mut number: i64) -> Result<(i64, TimeType), TimeError> {
@@ -1047,78 +1148,81 @@ mod tests {
     }
 
     #[test]
-    fn test_interval_and_date_format_classifiers_source_rows() {
-        for unit in [
-            "MICROSECOND",
-            "SECOND",
-            "MINUTE",
-            "HOUR",
-            "SECOND_MICROSECOND",
-            "MINUTE_MICROSECOND",
-            "MINUTE_SECOND",
-            "HOUR_MICROSECOND",
-            "HOUR_SECOND",
-            "HOUR_MINUTE",
-            "DAY_MICROSECOND",
-            "DAY_SECOND",
-            "DAY_MINUTE",
-            "DAY_HOUR",
+    fn test_is_clock_unit() {
+        for (unit, expected) in [
+            ("MICROSECOND", true),
+            ("SECOND", true),
+            ("MINUTE", true),
+            ("HOUR", true),
+            ("SECOND_MICROSECOND", true),
+            ("MINUTE_MICROSECOND", true),
+            ("MINUTE_SECOND", true),
+            ("HOUR_MICROSECOND", true),
+            ("HOUR_SECOND", true),
+            ("HOUR_MINUTE", true),
+            ("DAY_MICROSECOND", true),
+            ("DAY_SECOND", true),
+            ("DAY_MINUTE", true),
+            ("DAY_HOUR", true),
+            ("TEST", false),
+            ("SOME_MICROSECOND", false),
         ] {
-            assert!(is_clock_unit(unit), "{unit}");
+            assert_eq!(is_clock_unit(unit), expected, "{unit}");
         }
-        for unit in ["TEST", "SOME_MICROSECOND"] {
-            assert!(!is_clock_unit(unit), "{unit}");
-        }
-        for unit in [
-            "Day",
-            "Week",
-            "month",
-            "quarter",
-            "YEAR",
-            "DAY_MICROSECOND",
-            "DAY_SECOND",
-            "DAY_MINUTE",
-            "DAY_HOUR",
-            "YEAR_MONTH",
+    }
+
+    #[test]
+    fn test_is_date_unit() {
+        for (unit, expected) in [
+            ("Day", true),
+            ("Week", true),
+            ("month", true),
+            ("quarter", true),
+            ("YEAR", true),
+            ("DAY_MICROSECOND", true),
+            ("DAY_SECOND", true),
+            ("DAY_MINUTE", true),
+            ("DAY_HOUR", true),
+            ("YEAR_MONTH", true),
+            ("MICROSECOND", false),
+            ("SECOND", false),
+            ("MINUTE", false),
+            ("HOUR", false),
+            ("TEST", false),
+            ("SOME_DAY", false),
         ] {
-            assert!(is_date_unit(unit), "{unit}");
+            assert_eq!(is_date_unit(unit), expected, "{unit}");
         }
-        for unit in [
-            "MICROSECOND",
-            "SECOND",
-            "MINUTE",
-            "HOUR",
-            "TEST",
-            "SOME_DAY",
+    }
+
+    #[test]
+    fn test_is_microsecond_unit() {
+        for (unit, expected) in [
+            ("Microsecond", true),
+            ("Second_microsecond", true),
+            ("minute_microsecond", true),
+            ("hour_microsecond", true),
+            ("DAY_MICROSECOND", true),
+            ("SECOND", false),
+            ("MINUTE", false),
+            ("HOUR", false),
+            ("DAY_SECOND", false),
+            ("DAY_MINUTE", false),
+            ("DAY_HOUR", false),
+            ("DAY", false),
+            ("WEEK", false),
+            ("MONTH", false),
+            ("QUARTER", false),
+            ("YEAR", false),
+            ("TEST", false),
+            ("SOME_MICROSECOND", false),
         ] {
-            assert!(!is_date_unit(unit), "{unit}");
+            assert_eq!(is_microsecond_unit(unit), expected, "{unit}");
         }
-        for unit in [
-            "Microsecond",
-            "Second_microsecond",
-            "minute_microsecond",
-            "hour_microsecond",
-            "DAY_MICROSECOND",
-        ] {
-            assert!(is_microsecond_unit(unit), "{unit}");
-        }
-        for unit in [
-            "SECOND",
-            "MINUTE",
-            "HOUR",
-            "DAY_SECOND",
-            "DAY_MINUTE",
-            "DAY_HOUR",
-            "DAY",
-            "WEEK",
-            "MONTH",
-            "QUARTER",
-            "YEAR",
-            "TEST",
-            "SOME_MICROSECOND",
-        ] {
-            assert!(!is_microsecond_unit(unit), "{unit}");
-        }
+    }
+
+    #[test]
+    fn test_is_date_format_source_rows() {
         assert!(!is_date_format("1234:321"));
         assert!(is_date_format("2019-04-01"));
         assert!(is_date_format("2019-4-1"));
@@ -1139,7 +1243,7 @@ mod tests {
     }
 
     #[test]
-    fn test_timestamp_diff_and_extract_source_rows() {
+    fn test_timestamp_diff_source_rows() {
         for (unit, start, end, expected) in [
             (
                 "MONTH",
@@ -1188,7 +1292,10 @@ mod tests {
             let end = Time::new(end, TimeType::DateTime, 6).unwrap();
             assert_eq!(timestamp_diff(unit, start, end).unwrap(), expected);
         }
+    }
 
+    #[test]
+    fn test_extract_datetime_num() {
         let value = Time::new(
             CoreTime::from_date(2019, 4, 12, 14, 0, 0, 0),
             TimeType::Timestamp,
@@ -1213,8 +1320,22 @@ mod tests {
                 "{unit}"
             );
         }
-        assert!(extract_datetime_num(value, "TEST_ERROR").is_err());
+        // Go returns 0 together with the invalid-unit error. Result cannot preserve both.
+        let invalid = extract_datetime_num_with_error(value, "TEST_ERROR");
+        assert_eq!(invalid.value, 0);
+        assert_eq!(
+            invalid.error,
+            Some(TimeError::InvalidUnit("TEST_ERROR".to_owned()))
+        );
 
+        let zero = Time::new(CoreTime::default(), TimeType::Timestamp, 0).unwrap();
+        for unit in ["day", "week", "MONTH", "QUARTER", "YEAR"] {
+            assert_eq!(extract_datetime_num(zero, unit).unwrap(), 0, "{unit}");
+        }
+    }
+
+    #[test]
+    fn test_extract_duration_num() {
         let positive = crate::MySqlDuration::from_nanoseconds(3_600 * 24 * 365, 0).unwrap();
         for (unit, expected) in [
             ("MICROSECOND", 31_536),
@@ -1238,6 +1359,14 @@ mod tests {
                 "{unit}"
             );
         }
+        // Go returns 0 together with the invalid-unit error. Result cannot preserve both.
+        let invalid = extract_duration_num_with_error(positive, "TEST_ERROR");
+        assert_eq!(invalid.value, 0);
+        assert_eq!(
+            invalid.error,
+            Some(TimeError::InvalidUnit("TEST_ERROR".to_owned()))
+        );
+
         let negative = crate::MySqlDuration::from_nanoseconds(-39_541_000_000_000, 0).unwrap();
         for (unit, expected) in [
             ("MICROSECOND", 0),
@@ -1261,7 +1390,13 @@ mod tests {
                 "{unit}"
             );
         }
-        assert!(extract_duration_num(negative, "TEST_ERROR").is_err());
+        // Go returns 0 together with the invalid-unit error. Result cannot preserve both.
+        let invalid = extract_duration_num_with_error(negative, "TEST_ERROR");
+        assert_eq!(invalid.value, 0);
+        assert_eq!(
+            invalid.error,
+            Some(TimeError::InvalidUnit("TEST_ERROR".to_owned()))
+        );
     }
 
     #[test]
@@ -1626,54 +1761,71 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_time_from_int_float_decimal_source_rows() {
+    fn test_parse_time_from_int64() {
         let integer =
             parse_time_from_int64(20_190_412_140_000, true, false, &chrono_tz::UTC).unwrap();
         assert_eq!(integer.kind(), TimeType::DateTime);
-        assert_eq!(integer.to_string(), "2019-04-12 14:00:00");
+        assert_eq!(integer.fsp(), 0);
+        assert_eq!(
+            integer.core_time(),
+            CoreTime::from_date(2019, 4, 12, 14, 0, 0, 0)
+        );
+    }
 
-        for (input, kind, expected, microsecond) in [
-            (20_000_102.0, TimeType::Date, "2000-01-02", 0),
-            (20_000_102.9, TimeType::Date, "2000-01-02", 0),
-            (0.0, TimeType::Date, "0000-00-00", 0),
+    #[test]
+    fn test_parse_time_from_float64() {
+        for (input, kind, core) in [
+            (
+                20_000_102.0,
+                TimeType::Date,
+                CoreTime::from_date(2000, 1, 2, 0, 0, 0, 0),
+            ),
+            (
+                20_000_102.9,
+                TimeType::Date,
+                CoreTime::from_date(2000, 1, 2, 0, 0, 0, 0),
+            ),
+            (0.0, TimeType::Date, CoreTime::default()),
             (
                 20_000_102_030_405.0,
                 TimeType::DateTime,
-                "2000-01-02 03:04:05",
-                0,
+                CoreTime::from_date(2000, 1, 2, 3, 4, 5, 0),
             ),
             (
                 20_000_102_030_405.016,
                 TimeType::DateTime,
-                "2000-01-02 03:04:05",
-                15_625,
+                CoreTime::from_date(2000, 1, 2, 3, 4, 5, 15_625),
             ),
             (
                 20_000_102_030_405.008,
                 TimeType::DateTime,
-                "2000-01-02 03:04:05",
-                7_813,
+                CoreTime::from_date(2000, 1, 2, 3, 4, 5, 7_813),
             ),
             (
                 121_212_131_313.999_98,
                 TimeType::DateTime,
-                "2012-12-12 13:13:13",
-                999_985,
+                CoreTime::from_date(2012, 12, 12, 13, 13, 13, 999_985),
             ),
             (
                 20_000_000_000_000.0,
                 TimeType::DateTime,
-                "2000-00-00 00:00:00",
-                0,
+                CoreTime::from_date(2000, 0, 0, 0, 0, 0, 0),
             ),
         ] {
             let parsed = parse_time_from_float64(input, true, false, &chrono_tz::UTC).unwrap();
             assert_eq!(parsed.kind(), kind, "{input}");
-            assert_eq!(parsed.to_string(), expected, "{input}");
-            assert_eq!(parsed.core_time().microsecond(), microsecond, "{input}");
+            assert_eq!(parsed.fsp(), 0, "{input}");
+            assert_eq!(parsed.core_time(), core, "{input}");
         }
-        assert!(parse_time_from_float64(2_000.0, true, false, &chrono_tz::UTC).is_err());
+        // Go returns a zero DATETIME beside ErrTruncatedWrongVal.
+        let invalid = parse_time_from_float64_with_error(2_000.0, true, false, &chrono_tz::UTC);
+        assert_eq!(invalid.value.kind(), TimeType::DateTime);
+        assert_eq!(invalid.value.core_time(), CoreTime::default());
+        assert_eq!(invalid.error, Some(TimeError::OutOfRange("month")));
+    }
 
+    #[test]
+    fn test_parse_time_from_decimal_source_rows() {
         for (input, kind, expected, microsecond, fsp) in [
             ("20000102", TimeType::Date, "2000-01-02", 0, 0),
             ("20000102.9", TimeType::Date, "2000-01-02", 0, 0),
@@ -1714,13 +1866,16 @@ mod tests {
             assert_eq!(parsed.core_time().microsecond(), microsecond, "{input}");
             assert_eq!(parsed.fsp(), fsp, "{input}");
         }
-        assert!(parse_time_from_decimal(
+        // Go returns a zero DATETIME beside ErrTruncatedWrongVal.
+        let invalid = parse_time_from_decimal_with_error(
             &crate::Decimal::from_literal("2000"),
             true,
             false,
-            &chrono_tz::UTC
-        )
-        .is_err());
+            &chrono_tz::UTC,
+        );
+        assert_eq!(invalid.value.kind(), TimeType::DateTime);
+        assert_eq!(invalid.value.core_time(), CoreTime::default());
+        assert_eq!(invalid.error, Some(TimeError::OutOfRange("month")));
     }
 
     #[test]

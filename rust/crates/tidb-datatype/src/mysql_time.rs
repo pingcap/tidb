@@ -979,7 +979,7 @@ mod tests {
     }
 
     #[test]
-    fn test_go_json_round_trip_source_row() {
+    fn test_marshal_time() {
         let original = Time::new(
             CoreTime::from_date(2017, 1, 18, 1, 1, 1, 123_456),
             TimeType::DateTime,
@@ -1384,7 +1384,7 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_month_day_source_rows() {
+    fn test_check_month_day() {
         for (core, valid) in [
             (CoreTime::from_date(1900, 2, 29, 0, 0, 0, 0), false),
             (CoreTime::from_date(1900, 2, 28, 0, 0, 0, 0), true),
@@ -1407,7 +1407,10 @@ mod tests {
                 "{core}"
             );
         }
+    }
 
+    #[test]
+    fn test_validate_date_mode_boundaries() {
         let invalid_leap = Time::new(
             CoreTime::from_date(1900, 2, 29, 0, 0, 0, 0),
             TimeType::Date,

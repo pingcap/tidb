@@ -1441,6 +1441,57 @@ mod tests {
         }
     }
 
+    /// Exact source rows from `pkg/types/mydecimal_test.go::TestRemoveTrailingZeros`.
+    #[test]
+    fn test_remove_trailing_zeros() {
+        for (input, expected_fraction_digits) in [
+            ("0", 0),
+            ("0.0", 0),
+            (".0", 0),
+            (".00000000", 0),
+            ("0.0000", 0),
+            ("0000", 0),
+            ("0000.0", 0),
+            ("0000.000", 0),
+            ("-0", 0),
+            ("-0.0", 0),
+            ("-.0", 0),
+            ("-.00000000", 0),
+            ("-0.0000", 0),
+            ("-0000", 0),
+            ("-0000.0", 0),
+            ("-0000.000", 0),
+            ("123123123", 0),
+            ("213123.", 0),
+            ("21312.000", 0),
+            ("21321.123", 3),
+            ("213.1230000", 3),
+            ("213123.000123000", 6),
+            ("-123123123", 0),
+            ("-213123.", 0),
+            ("-21312.000", 0),
+            ("-21321.123", 3),
+            ("-213.1230000", 3),
+            ("-213123.000123000", 6),
+            ("123E5", 0),
+            ("12300E-5", 3),
+            ("0.00100E1", 2),
+            ("0.001230E-3", 8),
+            ("123987654321.123456789000", 9),
+            ("000000000123", 0),
+            ("123456789.987654321", 9),
+            ("999.999000", 3),
+        ] {
+            let (decimal, error) = MyDecimal::from_string(input.as_bytes());
+            assert_eq!(error, None, "FromString({input})");
+
+            let (_, end) = decimal.digit_bounds();
+            let fraction_start = digits_to_words(i32::from(decimal.digits_int)) * DIGITS_PER_WORD;
+            let fraction_digits = (end - fraction_start).max(0);
+            assert_eq!(fraction_digits, expected_fraction_digits, "{input}");
+        }
+    }
+
     /// `from_string` and `from_int` must agree on integral text, and the
     /// parsed value must survive the raw 40-byte chunk round-trip.
     #[test]
@@ -1674,6 +1725,36 @@ mod tests {
         ] {
             assert_eq!(
                 decimal(left).compare(&decimal(right)),
+                expected,
+                "{left} vs {right}"
+            );
+        }
+    }
+
+    /// Exact source rows from `pkg/types/mydecimal_test.go::TestCompareMyDecimal`.
+    #[test]
+    fn test_compare_my_decimal() {
+        use std::cmp::Ordering;
+
+        for (left, right, expected) in [
+            ("12", "13", Ordering::Less),
+            ("13", "12", Ordering::Greater),
+            ("-10", "10", Ordering::Less),
+            ("10", "-10", Ordering::Greater),
+            ("-12", "-13", Ordering::Greater),
+            ("0", "12", Ordering::Less),
+            ("-10", "0", Ordering::Less),
+            ("4", "4", Ordering::Equal),
+            ("-1.1", "-1.2", Ordering::Greater),
+            ("1.2", "1.1", Ordering::Greater),
+            ("1.1", "1.2", Ordering::Less),
+        ] {
+            let (left_decimal, left_error) = MyDecimal::from_string(left.as_bytes());
+            let (right_decimal, right_error) = MyDecimal::from_string(right.as_bytes());
+            assert_eq!(left_error, None, "FromString({left})");
+            assert_eq!(right_error, None, "FromString({right})");
+            assert_eq!(
+                left_decimal.compare(&right_decimal),
                 expected,
                 "{left} vs {right}"
             );

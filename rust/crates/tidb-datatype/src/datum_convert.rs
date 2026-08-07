@@ -22,13 +22,13 @@
 use chrono::Utc;
 
 use crate::{
-    adjust_year, convert_decimal_to_uint, convert_float_to_int, convert_float_to_uint,
-    convert_int_to_int, convert_int_to_uint, convert_uint_to_int, convert_uint_to_uint,
-    integer_signed_lower_bound, integer_signed_upper_bound, integer_unsigned_upper_bound,
-    json_to_int, parse_enum, parse_enum_value, parse_set, parse_set_value, parse_time,
-    parse_time_from_decimal, parse_time_from_num, str_to_duration, truncate_float, BinaryJSON,
-    BinaryLiteral, BinaryLiteralWidth, Charset, Collation, ConversionFlags, Converted, CoreTime,
-    Datum, DatumValueError, Decimal, DurationOrTime, FieldType, FieldTypeCode, MySqlDuration,
+    convert_decimal_to_uint, convert_float_to_int, convert_float_to_uint, convert_int_to_int,
+    convert_int_to_uint, convert_uint_to_int, convert_uint_to_uint, integer_signed_lower_bound,
+    integer_signed_upper_bound, integer_unsigned_upper_bound, json_to_int, parse_enum,
+    parse_enum_value, parse_set, parse_set_value, parse_time, parse_time_from_decimal,
+    parse_time_from_num, str_to_duration, truncate_float, BinaryJSON, BinaryLiteral,
+    BinaryLiteralWidth, Charset, Collation, ConversionFlags, Converted, CoreTime, Datum,
+    DatumValueError, Decimal, DurationOrTime, FieldType, FieldTypeCode, MySqlDuration,
     ScalarConversionError, ScalarConversionEvent, SessionTimeZone, Time, TimeType, VectorFloat32,
     UNSPECIFIED_LENGTH,
 };
@@ -564,13 +564,15 @@ impl Datum {
             // selects Go's OTHER source entirely (the time fields read as a
             // number, `00:20:12` -> 2012), so pinning it to `false` made that
             // whole branch unreachable.
-            Self::Duration(value) => (
-                value
-                    .convert_to_year(session_now(zone), flags.cast_time_to_year_through_concat())
-                    .map_err(conversion_error)?,
-                false,
-                None,
-            ),
+            Self::Duration(value) => {
+                let converted = value
+                    .convert_to_year_with_event(
+                        session_now(zone),
+                        flags.cast_time_to_year_through_concat(),
+                    )
+                    .map_err(conversion_error)?;
+                return Ok(map_converted(Self::Int)(converted));
+            }
             Self::Json(value) => {
                 let converted = crate::json_to_int64(value, false, crate::DEFAULT_STATEMENT_FLAGS);
                 (converted.value, false, converted.event)
@@ -580,10 +582,10 @@ impl Datum {
                 (converted.value, false, converted.event)
             }
         };
-        let year = adjust_year(year, adjust_zero).map_err(conversion_error)?;
+        let adjusted = crate::time_parse::adjust_year_with_event(year, adjust_zero);
         Ok(Converted {
-            value: Self::Int(year),
-            event,
+            value: Self::Int(adjusted.value),
+            event: prefer_event(event, adjusted.event),
         })
     }
 

@@ -135,6 +135,34 @@ fn source_max_decimal_tables() {
     }
 }
 
+/// Exact source rows from `pkg/types/mydecimal_test.go::TestNegMyDecimal`.
+///
+/// The source-compatible parser has nine base-1e9 words (81 digits). The
+/// longest integer row has 77 digits (nine words), while the fractional row
+/// has 67 fractional digits (eight words) plus one integer word, so all three
+/// values fit exactly.
+#[test]
+fn test_neg_my_decimal() {
+    for (input, output) in [
+        (
+            "-0.0000000000000000000000000000000000000000000000000017382578996420603",
+            "0.0000000000000000000000000000000000000000000000000017382578996420603",
+        ),
+        (
+            "-13890436710184412000000000000000000000000000000000000000000000000000000000000",
+            "13890436710184412000000000000000000000000000000000000000000000000000000000000",
+        ),
+        ("0", "0"),
+    ] {
+        let (decimal, warning) = Decimal::parse_mysql(input);
+        assert_eq!(
+            warning, None,
+            "FromString({input}) exceeded decimal capacity"
+        );
+        assert_eq!(decimal.negate().to_string(), output, "DecimalNeg({input})");
+    }
+}
+
 /// Exact source `TestMarshalMyDecimal` cases using Go's word-buffer JSON
 /// persistence shape rather than a rendered decimal string.
 #[test]
