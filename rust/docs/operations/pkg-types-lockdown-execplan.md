@@ -24,7 +24,7 @@ After this package unit is complete, reviewers can verify that the Rust datatype
 - [x] (2026-08-07) Classified every AST obligation exactly once: 19,935 `PORTED` and 205 `DECLINED`. The declines are limited to `TestMain` lifecycle and three source-recorded divergences (`ConvertFloatToUint` NaN, strict `getValidIntPrefix`, and `SubInt64` MinInt wrap); none is silently classified as ported.
 - [x] (2026-08-07) Checked in artifact/AST drift gates, a compile-time Rust owner registry, 150 named Rust test evidence checks, seven mutation suites with killed results, and a content-addressed receipt.
 - [x] (2026-08-07) Mutation-probed every rule landed in this package batch and restored affected Rust sources from explicit saved copies; the receipt pins current source hashes for the seven suites.
-- [ ] Run the package WIP gates, then integrate the complete package into a clean coordinator worktree.
+- [x] (2026-08-07) Ran the final package WIP gates from `07b86c268`: all 348 `tidb-datatype` tests and all 99 `difftest-result-tests` tests passed (five configured skips); package fmt, package clippy, Bazel build, Go/Python inventory checks, and deliberate drift probes passed.
 - [ ] Run the Ready/full-workspace gate, verify direct ratchets, non-force push `origin:hparser-integration`, and verify the remote SHA.
 
 ## Surprises & Discoveries
@@ -75,7 +75,7 @@ After this package unit is complete, reviewers can verify that the Rust datatype
 
 ## Outcomes & Retrospective
 
-The package implementation and receipt are complete in the package worktree, but no integration or push is permitted until the remaining WIP commands and the clean coordinator Ready/full-workspace gate pass.
+The package implementation, receipt, deliberate drift probes, and WIP gates are complete in the package worktree. Integration and push remain blocked only on the clean coordinator Ready/full-workspace gate.
 
 ## Context and Orientation
 
@@ -142,6 +142,8 @@ Current local implementation commit chain before the receipt commit:
     cd20b41c9 rust: preserve duplicate Go test obligations
     72be0aa0d rust: complete Go decimal and time source tables
     8e51a1bba rust: pin duration year overflow events
+    8d0828a68 rust: lock down complete pkg types package
+    07b86c268 rust: keep pkg types lockdown clippy clean
 
 The `TestTimeOverflow` mutations changed an overflow expectation and collapsed all parser inputs to one valid datetime; both failed the named source-row test. The `convert_test.go` mutations removed ASCII and UTF8MB4 skip behavior, changed binary type rendering, accepted a negative tiny integer, and changed JSON-true decimal conversion; each failed its intended named test after the missing source rows were added. Saved copies were restored and the committed versions passed.
 
@@ -166,6 +168,19 @@ The `etc_test.go` predicate batch reused the same save directory for `field_type
 The final decimal/time probes are saved under `/tmp/tidb-types-final-probes.1qur8b`. Disabling trailing-zero trimming failed `test_remove_trailing_zeros`; clamping high YEAR to 2154 failed `test_duration_convert_to_year_from_now`; returning one for an invalid extraction unit failed `test_extract_datetime_num`; returning zero DATE instead of zero DATETIME failed the float and decimal source-row tests; and dropping the duration-year overflow event failed `duration_year_cast_preserves_clamped_value_and_overflow_event`. Explicit saved copies restored byte-for-byte and the six-test filter passed.
 
 The checked receipt is under `rust/crates/tidb-datatype/tests/pkg_types_lockdown/`. `artifacts.tsv` locks all 56 files and zero-count classes, `obligations.tsv` locks the 20,140 content-addressed AST nodes and their classifications, `mutation-probes.tsv` and `mutation-results.tsv` preserve the seven landed mutation suites, and `receipt.json` binds every gate input by SHA-256. `rust/scripts/pkg-types-lockdown.py` regenerates the Go side and rejects missing, extra, duplicate, or changed obligations.
+
+The deliberate drift gate used saved copies under `/tmp/tidb-pkg-types-drift.Jhm4OD`. Adding a comment to `pkg/types/convert.go` made `pkg-types-lockdown.py` fail with `artifact manifest drifted`. Removing `BinaryLiteral` from the compiled owner registry made the named `pkg_types_every_obligation_is_classified_once` test fail on the first `BinaryLiteral.Compare` obligation. Both files were restored with `cp` from the saved copies, verified with `cmp` and SHA-256, and the restored Python and named Rust gates passed.
+
+Final package WIP commands after the clippy cleanup:
+
+    CARGO_TARGET_DIR=/Users/chenhuansheng/Documents/GitHub/tidb-lockdown-343-wave7/tgt cargo nextest run -p tidb-datatype -j12 --no-fail-fast
+    CARGO_TARGET_DIR=/Users/chenhuansheng/Documents/GitHub/tidb-lockdown-343-wave7/tgt cargo nextest run -p difftest-result-tests -j12 --no-fail-fast
+    CARGO_TARGET_DIR=/Users/chenhuansheng/Documents/GitHub/tidb-lockdown-343-wave7/tgt cargo clippy -p tidb-datatype --all-targets -j12
+    cargo fmt -p tidb-datatype -- --check
+    PATH=/tmp/tidb-lockdown-341-go.8LuDjg/go/bin:$PATH GOTOOLCHAIN=go1.26.0 python3 rust/scripts/pkg-types-lockdown.py
+    PATH=/tmp/tidb-lockdown-bazel-bin:/tmp/tidb-lockdown-341-go.8LuDjg/go/bin:$PATH GOTOOLCHAIN=go1.26.0 bazel build //rust/difftests/tools/go_package_lockdown_inventory:go_package_lockdown_inventory
+
+`cargo fmt --all --check` also exposed formatter drift in executor, expression, session, and transaction files. Running the same check in the untouched `5dae9fdc3` coordinator produced the identical diff, proving it predates this package chain. The Ready gate still requires the coordinator to apply and commit the current stable Rustfmt output before completion.
 
 ## Interfaces and Dependencies
 
