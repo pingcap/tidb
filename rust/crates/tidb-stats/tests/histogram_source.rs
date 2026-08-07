@@ -44,6 +44,8 @@ const EPS: f64 = 1e-9;
 const INVENTORY: &str = include_str!("../src/histogram.inventory.tsv");
 const DECLINE_EVIDENCE: &str = include_str!("../src/histogram.evidence.tsv");
 const MUTATION_PLAN: &str = include_str!("../src/histogram.mutation-plan.tsv");
+const MUTATION_RESULTS: &str = include_str!("../src/histogram.mutation-results.tsv");
+const MUTATION_PROVISIONAL_SHA: &str = "4576fa8aea3a0d713d66b403aaad381331fc1c83";
 const GO_HISTOGRAM_SHA256: &str =
     "1233e0a3430067400eaee5d562772cc83541fce8ae8b3e4579895a574c8c1024";
 const GO_HISTOGRAM_TEST_SHA256: &str =
@@ -59,6 +61,8 @@ const DECLINE_EVIDENCE_SHA256: &str =
     "6a741b83456edbeaba33893451c26c006171d608f99b28a894140586132d6a21";
 const MUTATION_PLAN_SHA256: &str =
     "b5a1f4e0120c3014ec80c0a0e01bef887f78978c6dc11cb618263db8aab67c2b";
+const MUTATION_RESULTS_SHA256: &str =
+    "9a8c7f4305192a665c2ef856a5542423e4ca48556525cf9d3851ad71e827add5";
 
 const COMPILE_ANCHORED_SYMBOLS: &[&str] = &[
     "ALL_EVICTED",
@@ -513,6 +517,16 @@ fn decline_evidence_rows() -> Vec<Vec<&'static str>> {
 
 fn mutation_plan_rows() -> Vec<Vec<&'static str>> {
     MUTATION_PLAN
+        .lines()
+        .filter(|line| {
+            !line.is_empty() && !line.starts_with('#') && !line.starts_with("mutation_id\t")
+        })
+        .map(|line| line.split('\t').collect())
+        .collect()
+}
+
+fn mutation_result_rows() -> Vec<Vec<&'static str>> {
+    MUTATION_RESULTS
         .lines()
         .filter(|line| {
             !line.is_empty() && !line.starts_with('#') && !line.starts_with("mutation_id\t")
@@ -1449,6 +1463,10 @@ fn lockdown_histogram_sources_match_pinned_sha256() {
             "rust/crates/tidb-stats/src/histogram.mutation-plan.tsv",
             MUTATION_PLAN_SHA256,
         ),
+        (
+            "rust/crates/tidb-stats/src/histogram.mutation-results.tsv",
+            MUTATION_RESULTS_SHA256,
+        ),
     ];
     for (path, expected) in locked_sources {
         assert_eq!(sha256_file(&root.join(path)), expected, "SHA drift: {path}");
@@ -1663,6 +1681,39 @@ fn lockdown_histogram_mutation_plan_covers_independent_rule_families() {
     }
     assert_eq!(ids.len(), 21);
     assert_eq!(families.len(), 21);
+}
+
+#[test]
+fn lockdown_histogram_mutation_results_kill_every_planned_family() {
+    let plan = mutation_plan_rows();
+    let results = mutation_result_rows();
+    assert_eq!(results.len(), 21);
+    assert!(MUTATION_RESULTS.contains(&format!(
+        "# provisional-sha\t{MUTATION_PROVISIONAL_SHA}"
+    )));
+
+    for (planned, result) in plan.iter().zip(&results) {
+        assert_eq!(result.len(), 9, "malformed mutation result row: {result:?}");
+        assert_eq!(result[0], planned[0], "mutation plan/result ID drift");
+        assert_eq!(result[1], MUTATION_PROVISIONAL_SHA);
+        assert_eq!(result[2], planned[5], "mutation test identity drift");
+        assert!(
+            result[3].contains("cargo test --offline --locked -p tidb-stats")
+                && result[3].contains(result[2])
+                && result[3].ends_with("-- --exact"),
+            "mutation result lacks its exact test command: {result:?}"
+        );
+        assert_eq!(result[4], "101", "mutation did not fail: {result:?}");
+        assert!(!result[5].is_empty(), "mutation lacks decisive failure: {result:?}");
+        assert_eq!(result[6], "KILLED", "mutation survived: {result:?}");
+        assert_eq!(result[7], "RESTORED", "mutation was not restored: {result:?}");
+        assert_eq!(result[8], "CLEAN", "mutation left a dirty worktree: {result:?}");
+    }
+
+    assert!(results[..20]
+        .iter()
+        .all(|result| result[5].contains("assertion") || result[5].contains("expected")));
+    assert!(results[20][5].contains("error[E0599]"));
 }
 
 #[test]

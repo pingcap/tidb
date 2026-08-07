@@ -24,8 +24,9 @@ The unit branch is `codex/task325-tidb-stats-histogram-lockdown`. The collaborat
 - [x] (2026-08-07) Added Go-derived TopN-removal and out-of-range boundary tests from disposable failpoint-wrapped oracle probes.
 - [x] (2026-08-07) Checked in and gated a 21-family structured mutation plan.
 - [x] (2026-08-07) Completed WIP validation: three exact failpoint-wrapped Go tests passed with refcount restored to zero; Rust library tests passed 6/6 and aggregate tests 377/377; crate clippy with warnings denied, package formatting, and `git diff --check` passed.
-- [ ] Execute all 21 mutations at an immutable provisional SHA and check in the structured results receipt.
-- [ ] Commit an immutable provisional SHA and run the full Ready gate in a clean detached worktree with an exclusive target directory.
+- [x] (2026-08-07) Executed all 21 mutations at immutable provisional SHA `4576fa8aea3a0d713d66b403aaad381331fc1c83`; every intended test or compile gate failed, every target was restored, and every clean-status check passed.
+- [x] (2026-08-07) Checked in and gated the 21-row structured mutation receipt, including exact tests, exit codes, decisive failures, restoration status, and clean-status confirmations.
+- [ ] Run the full Ready gate in a clean detached worktree with an exclusive target directory.
 - [ ] Publish the complete result through the user-authorized official remote route and verify the exact ref with `git ls-remote`.
 
 ## Surprises & Discoveries
@@ -86,7 +87,7 @@ The unit branch is `codex/task325-tidb-stats-histogram-lockdown`. The collaborat
 
 ## Outcomes & Retrospective
 
-Work is in progress. No completion or Ready claim is made. The 668-row source boundary, 11 decline proofs, 81 compile-anchored symbols, `rust-test:` evidence gate, and 21-family mutation plan are now present and their focused gates pass. The complete WIP run, executed mutation receipt, immutable provisional commit, clean Ready gate, final publication, and cleanup remain incomplete.
+Work is in progress. No completion or Ready claim is made. The 668-row source boundary, 11 decline proofs, 81 compile-anchored symbols, `rust-test:` evidence gate, and 21-family mutation plan are present. All 21 mutations were killed at immutable provisional SHA `4576fa8aea3a0d713d66b403aaad381331fc1c83`, restored, and checked into the structured results receipt. The clean Ready gate, final publication, and cleanup remain incomplete.
 
 ## Context and Orientation
 
@@ -140,6 +141,10 @@ Current local candidate commit:
 
     7125a0cde4 (cherry-pick of 3d4e74200)
 
+Immutable mutation provisional commit:
+
+    4576fa8aea3a0d713d66b403aaad381331fc1c83
+
 Current remote ownership state:
 
     origin codex/task325-tidb-stats-histogram-lockdown = 163559e78020c57547e437089be1f28c3552f7a9
@@ -158,6 +163,9 @@ Current AST inventory receipt:
     PORTED / DECLINED / UNREACHABLE 498 / 169 / 1
     unique compile-anchored symbols       81
     mutation rule families                21
+    killed mutations                      21
+    restored mutations                    21
+    clean-status confirmations            21
 
 Disposable failpoint-wrapped Go oracle values added to Rust boundary tests:
 
