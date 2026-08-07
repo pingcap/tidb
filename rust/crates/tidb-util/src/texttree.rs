@@ -363,6 +363,16 @@ mod tests {
         assert!(go_test.contains("func TestIndent4Child"));
         assert!(go_test.contains("func TestPrettyIdentifier"));
 
+        assert_eq!(
+            (
+                TREE_BODY,
+                TREE_MIDDLE_NODE,
+                TREE_LAST_NODE,
+                TREE_GAP,
+                TREE_NODE_IDENTIFIER,
+            ),
+            ('│', '├', '└', ' ', '─')
+        );
         let _: [char; 5] = [
             TREE_BODY,
             TREE_MIDDLE_NODE,
