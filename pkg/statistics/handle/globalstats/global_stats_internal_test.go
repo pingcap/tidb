@@ -359,10 +359,49 @@ func testIssues24349(t *testing.T, testKit *testkit.TestKit, store kv.Storage) {
 	require.NoError(t, statsHandle.DumpColStatsUsageToKV())
 	testKit.MustExec("analyze table t with 1 topn, 3 buckets")
 	testKit.MustExec("explain select * from t where a > 0 and b > 0")
+<<<<<<< HEAD
 	testKit.MustQuery("show stats_buckets where partition_name='global'").Check(testkit.Rows(
 		"test t global a 0 0 2 2 0 2 0",
 		"test t global b 0 0 3 1 1 2 0",
 		"test t global b 0 1 10 1 4 4 0",
+=======
+	testKit.MustQuery("show stats_topn where table_name = 't'").Sort().Check(testkit.Rows(
+		"test t global a 0 1 6",
+		"test t global b 0 2 4",
+		"test t p0 a 0 0 4",
+		"test t p0 b 0 3 3",
+		"test t p1 a 0 1 6",
+		"test t p1 b 0 2 3",
+		"test t p2 a 0 2 2",
+		"test t p2 b 0 1 2",
+	))
+	// Global TopN merge picks b=2 (p1 TopN=3 + p0 hist upper-bound
+	// repeat=1 = 4). The leftover TopN entries (b=3 count 3, b=1
+	// count 2) become virtual single-value buckets in the merge, so
+	// column b's 8 histogram rows land in three global buckets:
+	// [1,1] mass 2 (p2's two b=1 rows, Repeat 2 at the bucket upper),
+	// [1,3] mass 2 (p1's interior b=1 row plus its b=3 row at the
+	// upper, Repeat 1) and [3,4] mass 4 (the three virtual b=3 rows
+	// plus the b=4 row, Repeat 1 for b=4).
+	//
+	// Neither b=1 nor b=3 ends up exactly estimable, and this layout
+	// does not improve on the previous one: b=1 is truly 3 rows but
+	// estimates 2, because its third row is an unidentifiable interior
+	// row of p1's [1,3]; b=3 is truly 4 rows but estimates 1, because
+	// the three virtual b=3 rows land in [3,4], where 3 is the lower
+	// rather than the upper, so they stay as plain bucket mass. Both
+	// are cases of one value's rows spread over several refs, which
+	// the merge does not currently reunite.
+	testKit.MustQuery("show stats_buckets where table_name='t'").Sort().Check(testkit.Rows(
+		"test t global a 0 0 4 4 0 0 0",
+		"test t global a 0 1 6 2 2 2 0",
+		"test t global b 0 0 2 2 1 1 0",
+		"test t global b 0 1 4 1 1 3 0",
+		"test t global b 0 2 8 1 3 4 0",
+		"test t p0 b 0 0 1 1 2 2 0",
+		"test t p1 b 0 0 2 1 1 3 0",
+		"test t p1 b 0 1 3 1 4 4 0",
+>>>>>>> a17d9ca1220 (statistics: replace separate TopN merge with combined TopN+histogram merge for global stats (#68147))
 	))
 }
 
