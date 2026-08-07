@@ -16,8 +16,9 @@ The package has no Go tests. Its observable contract is the five binary unit con
 - [x] (2026-08-08) Read both Go artifacts, the existing Rust landing and inventory, direct consumer list, and generic Go AST census; measured `go test` as no test files and existing Rust tests as 2/2.
 - [x] (2026-08-08) Measured all 20 Go constants from a disposable exact consumer on `darwin/arm64`; every current Rust value matches.
 - [x] (2026-08-08) Replaced the legacy inventory with a two-artifact manifest and exact 20-row standard AST classification; the compiled owner/evidence gate, deterministic checker, targeted tests, package Clippy, and fmt pass.
-- [ ] Kill all 24 planned mutations from an immutable provisional commit and restore every source from saved bytes.
-- [ ] Add the mutation receipt, pass WIP and clean Ready/full-workspace gates, publish ordinary fast-forwards, and verify GitHub attribution to `dbsid`.
+- [x] (2026-08-08) Killed all 24 planned mutations from immutable provisional commit `88f3d872a42208925072af4d8936eec0ee67473d`; every mutated source was restored to its saved SHA-256 and passed the same restored check.
+- [x] (2026-08-08) Added the compiled mutation receipt gate and content-addressed JSON receipt; the complete checker, no-failpoint Go oracle, 288/288 `tidb-util`, package Clippy, workspace fmt, direct ratchets, and `git diff --check` pass.
+- [ ] Pass the clean Ready/full-workspace gate, publish ordinary fast-forwards, and verify GitHub attribution to `dbsid`.
 
 ## Surprises & Discoveries
 
@@ -37,7 +38,7 @@ The package has no Go tests. Its observable contract is the five binary unit con
 
 ## Outcomes & Retrospective
 
-No completion outcome is claimed yet. Package selection, artifact census, Go/Rust baselines, direct Go ABI measurement, package-level manifest/inventory, compiled owner gate, checker, and mutation plan are complete; mutation evidence, receipt, Ready validation, and publication remain unfinished.
+No completion outcome is claimed yet. Package selection, artifact census, Go/Rust baselines, direct Go ABI measurement, package-level manifest/inventory, compiled owner gate, checker, mutation proof, receipt, and WIP validation are complete; clean Ready validation and publication remain unfinished.
 
 ## Context and Orientation
 

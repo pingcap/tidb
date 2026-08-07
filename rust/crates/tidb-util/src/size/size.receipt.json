@@ -1,0 +1,31 @@
+{
+  "artifact_count": 2,
+  "category_counts": {
+    "const": 20
+  },
+  "go_package": "pkg/util/size",
+  "mutation_suites": 5,
+  "obligation_count": 20,
+  "owned_file_sha256": {
+    "rust/crates/tidb-util/src/size/mod.rs": "d1f00eccdb0dd324f4c3433342a5f9ad82df0199175110ed1668f14155fdce70",
+    "rust/crates/tidb-util/src/size/size.artifacts.tsv": "0307d66a5110fa3726d696ec88a3dfe94facc89bb67dddf85ae29d61d82c434c",
+    "rust/crates/tidb-util/src/size/size.inventory.tsv": "bd6dbff11f1cc3379de320a12ed34d0759442ad140563bea1aee4f02d4304aa9",
+    "rust/crates/tidb-util/src/size/size.mutation-plan.tsv": "ac8795a17b8c82eb60e93a453fb5d584293e2419baa12202280df2c4c9a650f4",
+    "rust/crates/tidb-util/src/size/size.mutation-results.tsv": "338f218bf640f197be5e7986ab2e016ba3fe2ab7beee505e3341cc7f16d1af59",
+    "rust/crates/tidb-util/tests/size_lockdown.rs": "3b6aa2a708b2e23858a0f4957750f98bf08a24ef6589cce9df77e0bc3ba05271",
+    "rust/scripts/pkg-size-lockdown.py": "148aa84093abab4b38014d2105fa7c6f2937e5201d225e9e0b8cd1e0f999c891"
+  },
+  "schema": "pkg-size-lockdown-v1",
+  "source_seed_commit": "a9d37829e286e73d13b130711d959e10dbd6e9fc",
+  "status_counts": {
+    "PORTED": 20
+  },
+  "zero_artifact_classes": {
+    "build_tags": 0,
+    "code_generated": 0,
+    "go_embed": 0,
+    "go_generate": 0,
+    "platform_variants": 0,
+    "tracked_testdata": 0
+  }
+}
