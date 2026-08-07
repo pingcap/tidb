@@ -20,8 +20,6 @@
 //! single `", "` writer, so here the separator is an `Option<&str>` (`None`
 //! meaning the default `" "`).
 
-use crate::go_duration::format_go_duration_ms;
-
 /// Go `writeSettingItemToBuilder`: append `item`, preceded by the separator
 /// when the builder is non-empty (`sep` defaults to a single space).
 pub(crate) fn write_setting_item(sb: &mut String, item: &str, sep: Option<&str>) {
@@ -43,10 +41,4 @@ pub(crate) fn write_setting_string(sb: &mut String, item: &str, value: &str, sep
 /// Go `writeSettingIntegerToBuilder`: `ITEM=value`.
 pub(crate) fn write_setting_integer(sb: &mut String, item: &str, value: u64, sep: Option<&str>) {
     write_setting_item(sb, &format!("{item}={value}"), sep);
-}
-
-/// Go `writeSettingDurationToBuilder`: `ITEM="<go-duration>"` for a duration
-/// given in milliseconds (Go: `writeSettingStringToBuilder(item, dur.String())`).
-pub(crate) fn write_setting_duration_ms(sb: &mut String, item: &str, ms: i64, sep: Option<&str>) {
-    write_setting_string(sb, item, &format_go_duration_ms(ms), sep);
 }

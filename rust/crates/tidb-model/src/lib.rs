@@ -37,6 +37,8 @@ pub mod partition;
 pub mod placement;
 pub mod reorg;
 pub mod resource_group;
+#[cfg(test)]
+mod resource_group_go_inventory;
 pub mod schema_diff;
 pub mod schema_state;
 pub mod serde_helpers;
@@ -67,8 +69,9 @@ pub use partition::{PartitionDefinition, PartitionInfo, PartitionState, UpdateIn
 pub use placement::{PlacementSettings, PolicyInfo, PolicyRefInfo};
 pub use reorg::{BackfillState, ReorgStage, ReorgType};
 pub use resource_group::{
-    ResourceGroupBackgroundSettings, ResourceGroupInfo, ResourceGroupRunawaySettings,
-    ResourceGroupSettings,
+    ResourceGroupBackgroundSettings, ResourceGroupInfo, ResourceGroupRunawayAction,
+    ResourceGroupRunawaySettings, ResourceGroupRunawayWatch, ResourceGroupSettings,
+    ResourceGroupShared,
 };
 pub use schema_diff::{AffectedOption, SchemaDiff};
 pub use schema_state::SchemaState;
