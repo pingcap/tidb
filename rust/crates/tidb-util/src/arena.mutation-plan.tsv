@@ -1,0 +1,8 @@
+# pkg-arena-mutation-plan-v1
+suite_id	source_owners	mutation_count	source_file	named_tests	rules
+P001-simple-fit-offset	SimpleAllocator,NewAllocator,SimpleAllocator.Alloc,SimpleAllocator.Reset	5	rust/crates/tidb-util/src/arena.rs	source_strict_exact_fit_and_reset_contracts|simple_arena_allocator	constructor capacity, strict fit, offset advance, fallback state, reset
+P002-invalid-length	SimpleAllocator.AllocWithLen	3	rust/crates/tidb-util/src/arena.rs	source_simple_length_over_capacity_panics_after_allocating_capacity|simple_arena_allocator	invalid length panic, allocate-before-panic side effect, valid requested length
+P003-standard	stdAllocator.Alloc,stdAllocator.AllocWithLen,stdAllocator.Reset	3	rust/crates/tidb-util/src/arena.rs	std_allocator|source_std_length_over_capacity_panics	zero length and capacity, invalid length panic, stateless reset contract
+P004-decline-gate	shared-backing-and-Go-test-harness	1	rust/crates/tidb-util/src/arena.inventory.tsv	arena_lockdown_inventory_and_symbols	exact eight-row source-measured decline set
+P005-source-drift	package-artifact-and-AST-set	1	pkg/util/arena/arena.go	pkg-arena-lockdown.py	Go artifact hash and content-addressed AST drift
+P006-symbol-gate	Allocator,SimpleAllocator,StdAllocator	2	rust/crates/tidb-util/src/arena.rs	arena_lockdown_inventory_and_symbols	compiled SimpleAllocator and StdAllocator owner disappearance
