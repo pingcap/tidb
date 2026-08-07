@@ -52,8 +52,10 @@ completeness lockdown with no production or shared-ratchet movement.
 - [x] (2026-08-08) Passed the WIP gate: exact Go tests, checker, 6 texttree
   tests, 293/293 `tidb-util` tests, package Clippy with warnings denied,
   workspace fmt, source-size ratchet, and `git diff --check`.
-- [ ] Commit mutation results and receipt, then pass the clean-detached Ready
-  gate.
+- [x] (2026-08-08) Committed mutation results and receipt as
+  `d59780ce1b`, then passed the clean-detached Ready replay: 7136/7136
+  workspace tests, workspace Clippy with warnings denied, fmt, source-size,
+  diff/status cleanliness, and `make -j12 lint`.
 - [ ] Publish by ordinary fast-forward to official `hparser-integration` and
   verify GitHub `dbsid` author and committer attribution.
 
@@ -76,6 +78,11 @@ completeness lockdown with no production or shared-ratchet movement.
   Evidence: the first `TREE_BODY` mutation survived the initial named inventory
   test; adding an exact five-constant tuple assertion killed all five constant
   mutations in the corrected sweep.
+- Observation: `make -j12 lint` exits successfully on macOS while printing the
+  repository's existing non-fatal `internal`-package and BSD `find -n`
+  diagnostics.
+  Evidence: the command continued through every dashboard linter and returned
+  exit status zero without changing the clean validation worktree.
 
 ## Decision Log
 
@@ -104,11 +111,11 @@ completeness lockdown with no production or shared-ratchet movement.
 
 ## Outcomes & Retrospective
 
-The complete package inventory and mutation proof are locally complete: all
-four direct artifacts, 36 generated obligations, five Go-only declines, three
-semantic divergences, and 32 killed/restored mutations are represented. WIP
-tests and package checks pass. The clean workspace Ready replay, final lint,
-and official publication remain open.
+The complete `pkg/util/texttree` package is locally locked down at the four-file
+boundary. All 36 generated obligations, five Go-only declines, three semantic
+divergences, and 32 killed/restored mutations are represented. WIP and clean
+Ready gates pass without changing production formatting behavior or a shared
+ratchet. Only ordinary publication and remote attribution checks remain.
 
 ## Context and Orientation
 
@@ -170,6 +177,21 @@ Ready additionally runs full workspace nextest, workspace Clippy with only the
 existing allowed lint classes, source-size and direct-count checks,
 `git diff --check`, and `make -j12 lint`. Do not run
 `make bazel_lint_changed`; the user did not request it.
+
+The clean Ready replay used detached worktree
+`/tmp/tidb-texttree-ready.rXKa3Z/repo` and exclusive target
+`/tmp/tidb-texttree-ready.rXKa3Z/target`:
+
+    PATH=/tmp/tidb-task325-go126.gEaI15/go/bin:$PATH GOTOOLCHAIN=local CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS=12 CARGO_TARGET_DIR=/tmp/tidb-texttree-ready.rXKa3Z/target cargo +1.97 nextest run --manifest-path rust/Cargo.toml --offline --locked --workspace -j12 --no-fail-fast
+    PATH=/tmp/tidb-task325-go126.gEaI15/go/bin:$PATH GOTOOLCHAIN=local CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS=12 CARGO_TARGET_DIR=/tmp/tidb-texttree-ready.rXKa3Z/target cargo +1.97 clippy --manifest-path rust/Cargo.toml --offline --locked -j12 --workspace --all-targets -- -D warnings -A clippy::assertions_on_constants -A clippy::needless_update -A clippy::type_complexity
+    cargo +1.97 fmt --manifest-path rust/Cargo.toml --all -- --check
+    bash rust/scripts/check-source-size.sh
+    git diff --check
+    git status --porcelain=v1
+    PATH=/tmp/tidb-task325-go126.gEaI15/go/bin:$PATH GOTOOLCHAIN=local make -j12 lint
+
+Results: 7136/7136 workspace tests passed with 41 configured skips; workspace
+Clippy, fmt, source-size, diff/status cleanliness, and lint all returned zero.
 
 ## Validation and Acceptance
 
