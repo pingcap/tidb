@@ -1027,6 +1027,13 @@ mod tests {
             small.difference(&FastIntSet::new(&[2])).sorted_array(),
             vec![1]
         );
+
+        let lhs_large = FastIntSet::new(&[1, 64, 65]);
+        let rhs_large = FastIntSet::new(&[1, 65, 66]);
+        assert_eq!(
+            lhs_large.intersection(&rhs_large).sorted_array(),
+            vec![1, 65]
+        );
     }
 
     #[test]

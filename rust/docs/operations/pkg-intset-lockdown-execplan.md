@@ -38,6 +38,8 @@ The observable behavior is exact parity for construction, the `[0, 64)` bitmap-t
   Evidence: `/tmp/tidb_intset_probe.go` printed `max-int len=1 has=true next=(9223372036854775807,false) sorted=[9223372036854775807] each=[] string=()`.
 - Observation: Go `Shift` uses machine-int wraparound. `1 + MaxInt` and `(MaxInt-1) + 2` both become `MinInt`; the small-only `Shift(MinInt)` fast path returns the input unchanged because the source negation and `uint32` conversion also wrap.
   Evidence: the same probe printed all three exact shifted arrays before any Rust production edit.
+- Observation: the first intersection mutation survived because the new source test covered only `large` intersected with `small`; that path clears the large representation before the mutated retain predicate executes.
+  Evidence: mutation M008 survived while M001-M007 were killed. Adding an explicit `large {1,64,65}` intersect `large {1,65,66}` assertion makes the retain predicate observable; the complete mutation set must be rerun from the new provisional SHA.
 
 ## Decision Log
 
