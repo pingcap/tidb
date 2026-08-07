@@ -62,9 +62,11 @@ and lists every Rust landing symbol explicitly.
 - [x] (2026-08-06) Ran repository Ready lint and the three touched-crate test
   suites. A first clean-workspace gate exposed and fixed the dropped DST
   diagnostic at the datatype-to-write boundary.
-- [ ] Re-gate the exact final SHA in a clean worktree, verify ratchet constants
-  by direct grep, return the SHA for the campaign gate, then dual-push and
-  reclaim after approval.
+- [x] (2026-08-06) Re-gated the exact receipt SHA in a clean worktree, verified
+  source and ratchet constants by direct grep, and restored the catalog
+  fingerprint after separating ordinary parser warnings from DST errors.
+- [ ] Return the receipt SHA for the campaign gate, then dual-push and reclaim
+  after approval.
 
 ## Surprises & Discoveries
 
@@ -192,19 +194,15 @@ and lists every Rust landing symbol explicitly.
 
 ## Outcomes & Retrospective
 
-No completion claim yet. The final receipt will record the complete source and
-test counts, source hash, every classification, direct Go-probe output,
-fail-before evidence, mutation results, Ready and clean-worktree commands,
-remote SHAs, and reclaimed disk space.
-
 The production and original-test completeness boundary is now closed: 151
 functions, 561 exact control-flow loci, and 75 test/support declarations have
 one nonempty verdict. The touched-crate suites pass with 294 `tidb-datatype`,
 507 `tidb-executor`, and 989 `tidb-session` tests; all 20 deliberate mutations
 were observable. No oracle ratchet moved; lockdown completeness is the
-deliverable and is a successful result. This is not yet a final completion
-claim because the exact final SHA still needs the clean-worktree partition,
-direct ratchet grep, and returned receipt.
+deliverable and is a successful result. The exact receipt SHA passed the clean
+workspace partition, all four isolated charset tests, Ready lint, direct source
+hash/count checks, and the unchanged catalog fingerprint. Remote publication
+and worktree reclamation intentionally wait for the campaign gate.
 
 ## Context and Orientation
 
@@ -298,11 +296,30 @@ Pinned evidence: `pkg/types/time.go` is 3,554 lines and 109,954 bytes at this
 tip. The final attributed test/support surface is 75 declarations across
 `time_test.go`, `core_time_test.go`, and `format_test.go`.
 
+Source receipts:
+
+    pkg/types/time.go             e4f3da22a90a6271f86e11f073c7afb6b6fc25ee32bb95e59904ccb861e0c425
+    pkg/types/time_test.go        b0871c17e7aac503dbcbfa27f7bda57b528ac897a8c0d5fb7333d3b49433f3f8
+    pkg/types/core_time_test.go   da68a780cba365a0995052db91cfe61f33330ca24fc49b38cec49a57d236fbd4
+    pkg/types/format_test.go      1cf0aaa612bd51f03c341e0cbc591b2667d28ce399946835dc27a13e46645310
+
+The clean workspace aggregate passed with the four process-global charset
+tests excluded from that one process. Each excluded test then passed alone in
+a fresh process. `make -j12 lint` exited zero; its existing macOS output still
+includes the nonfatal `gobinaryrow` internal-package diagnostic and BSD
+`find: illegal option -- n`. The unchanged catalog ratchet is 100 divergences,
+120 matches, and fingerprint `6068344160096210003`.
+
+Twenty independent mutations were killed. Besides value rules, the campaign
+mutated the source hash, a PORTED symbol, a test receipt, and a branch row, so
+the inventory gates prove both semantic boundaries and claim drift.
+
 ## Interfaces and Dependencies
 
-No new production dependency is expected. The inventory will use the existing
-test-only SHA-256 dependency and `include_str!` to read the Go owner. It will
-compile-anchor the actual public and test-only Rust interfaces used by the
+`tidb-datatype` now uses the workspace `regex` dependency for Go-exact Unicode
+Number/Punctuation/Letter classification in STR_TO_DATE. The inventory uses
+the existing SHA-256 dependency and `include_str!` to read the Go owner and
+compile-anchors the actual public and test-only Rust interfaces used by the
 claim, including `Time`, `Duration`, `parse_time`, `parse_duration`, date/time
 validation, timestamp conversion, and `str_to_date` helpers.
 
@@ -326,23 +343,21 @@ when `FlagIgnoreZeroDateErr` is clear. The retained solution keeps the old
 default-statement parser entry point stable, adds a flags-aware datatype entry
 point that carries the returned zero plus `ParsedTime::truncated`, and makes
 `Datum::convert_to` emit `ScalarConversionEvent::Truncated` from that signal.
-This captures `time.go`'s value-plus-diagnostic boundary without touching the
-concurrently owned expression or executor crates. Its final statement-level
-error naming still belongs to those owner units and must be verified only
-after their worktrees are released.
+The final clean-workspace gate then proved the statement-level boundary too:
+datatype conversion retains only the returned DST error channel, executor
+write casting consumes the temporal event after zero-date handling, and the
+session reports Go's 1067/1292 identities without disturbing the catalog
+ratchet.
 
 Mutation evidence: replacing the flags-aware numeric-zero `truncated` signal
 with `false` made `numeric_zero_time_conversion_keeps_go_value_and_diagnostic`
 fail with `left: None`, `right: Some(Truncated)`. The signal was restored
 before further validation.
 
-Inventory progress: `tidb-datatype/src/time_go_inventory.rs` now gates the
-exact source SHA-256, 3,554-line count, and ordered receiver-qualified list of
-all 151 `time.go` declarations. The audited prefix through Go line 2247 contains
-102 exact declaration rows and 286 control/representation rows. Its module-level
-WIP marker deliberately prevents mistaking that partial verdict inventory for
-the final claim: the remaining 49 declarations, starting with `ExtractDatetimeNum`,
-and their branches still require classification.
+Inventory completion: `tidb-datatype/src/time_go_inventory.rs` gates the exact
+source SHA-256, 3,554-line count, ordered receiver-qualified list of all 151
+`time.go` declarations, all 561 control-flow loci, and all 75 attributed
+test/support declarations. There is no WIP marker or unclassified row.
 
 The invalid-FSP probe used a temporary `pkg/types` test only after the package
 failpoint scans returned no matches. The exact command was
@@ -352,11 +367,11 @@ Rust gates currently pass seven `time_owner_slice_*` boundary tests and three
 `time_go_inventory::*` drift/classification/symbol tests in the exclusive
 target directory.
 
-Four later fail-before/pass-after loops closed YEAR `"0000"`, DST calendar
-mixing, Latin-1 parser spacing, and adjusted TIMESTAMP value preservation. The
-exact full scoped command
+Later fail-before/pass-after loops closed YEAR `"0000"`, DST calendar mixing,
+Latin-1 parser spacing, adjusted TIMESTAMP value preservation, and downstream
+diagnostic propagation. The exact full scoped command
 `CARGO_BUILD_JOBS=12 CARGO_TARGET_DIR=/private/tmp/cargo-target-task325-time-go-lockdown cargo test -p tidb-datatype --lib -- --nocapture`
-passes all 285 library tests at this checkpoint.
+passes all 294 library tests.
 
 The full source `TestParseTimeFromNum` three-type matrix was added as a direct
 Rust test and passes with no production change. It proves that the existing
@@ -364,8 +379,10 @@ numeric parser preserves the source's independent DATETIME values, TIMESTAMP
 UTC-range errors, and DATE clock-discarding behavior; this is completeness
 evidence, not a ratchet movement.
 
-Test-support attribution baseline: `time_test.go` contains 57 Test/Benchmark/
-Fuzz declarations and adjacent `core_time_test.go` contains 13. The final
-inventory must classify all 70 explicitly; a declaration owned by
-`core_time.go` is a DECLINED adjacent-support row, never a silently omitted
-test.
+Test-support attribution is complete: 60 source-owned declarations in
+`time_test.go`, 13 in `core_time_test.go`, and two direct consumers in
+`format_test.go` have explicit live receipts or concrete verdicts.
+
+Final revision 2026-08-06: source, mutation, Ready, workspace, catalog, and
+direct-grep receipts are complete. Publication and cleanup remain deliberately
+outside this receipt until the returned SHA passes the campaign-level gate.
