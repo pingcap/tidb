@@ -190,7 +190,7 @@ fn auth_handshake_preserves_raw_response_and_defers_identity_plugin_selection() 
     assert_eq!(request.negotiated_capability, capability);
     assert_eq!(
         handshake.phase(),
-        &AuthHandshakePhase::AuthenticationPending(Box::new(request.clone()))
+        &AuthHandshakePhase::AuthenticationPending(request.clone())
     );
     assert_eq!(
         handshake

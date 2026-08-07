@@ -340,7 +340,7 @@ impl AuthHandshake {
             server_auth_plugin: self.server_auth_plugin.clone(),
         };
         self.phase = AuthHandshakePhase::AuthenticationPending(Box::new(request.clone()));
-        Ok(AuthHandshakePacket::Authentication(request))
+        Ok(AuthHandshakePacket::Authentication(Box::new(request)))
     }
 
     /// Completes the transport-owned TLS transition after an SSLRequest.
@@ -411,7 +411,7 @@ pub enum AuthHandshakePacket {
         raw_packet: Vec<u8>,
     },
     /// A complete HandshakeResponse41 ready for identity/auth plugin policy.
-    Authentication(AuthHandshakeRequest),
+    Authentication(Box<AuthHandshakeRequest>),
 }
 
 /// Parses the 32-byte common HandshakeResponse41/SSLRequest header.
