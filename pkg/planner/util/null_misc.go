@@ -62,7 +62,9 @@ import (
 // classify that exact value. This recovers cases such as COALESCE/IF/IFNULL
 // that may hide NULL but still collapse after nullification. The bridge stays
 // conservative for plan-cache-sensitive expressions by refusing to treat
-// ParamMarker/DeferredExpr values as static fold results.
+// ParamMarker/DeferredExpr values as static fold results. DeferredExpr can
+// still be inspected symbolically, but its runtime value must not be folded or
+// classified as a compile-time constant.
 
 // nullRejectProof holds the two proof results for a sub-expression.
 // See the file-level comment above for the full model.
@@ -71,7 +73,8 @@ type nullRejectProof struct {
 	mustNull bool
 }
 
-// allConstants checks whether the expression tree consists entirely of constants.
+// allConstants checks whether the expression tree can be attempted as a static
+// constant tree without lazy constants.
 func allConstants(ctx expression.BuildContext, expr expression.Expression) bool {
 	if expression.MaybeOverOptimized4PlanCache(ctx, []expression.Expression{expr}) {
 		return false // expression contains non-deterministic parameter
@@ -92,9 +95,7 @@ func allConstants(ctx expression.BuildContext, expr expression.Expression) bool 
 
 // IsNullRejected proves whether `predicate` can be TRUE after every column in
 // `innerSchema` is replaced with SQL NULL.
-func IsNullRejected(ctx base.PlanContext, innerSchema *expression.Schema, predicate expression.Expression,
-	skipPlanCacheCheck bool) bool {
-	_ = skipPlanCacheCheck // kept for API compatibility; the new proof does not use EvaluateExprWithNull
+func IsNullRejected(ctx base.PlanContext, innerSchema *expression.Schema, predicate expression.Expression) bool {
 	predicate = expression.PushDownNot(ctx.GetNullRejectCheckExprCtx(), predicate)
 	return proveNullRejected(ctx, innerSchema, predicate, true).nonTrue
 }
