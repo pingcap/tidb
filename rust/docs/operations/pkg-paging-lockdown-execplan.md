@@ -48,10 +48,12 @@ completeness lockdown with no production or shared-ratchet movement.
   complete WIP gate: exact Go tests, checker, 290/290 `tidb-util` tests,
   package Clippy with warnings denied, workspace fmt, direct counts, and
   `git diff --check`.
-- [ ] Commit the compiled mutation proof, then run the clean-detached Ready
-  replay.
-- [ ] Pass WIP and clean-detached Ready gates, publish by ordinary fast-forward
-  to official `hparser-integration`, and verify GitHub `dbsid` attribution.
+- [x] (2026-08-08) Committed the compiled mutation proof as
+  `b934a5160287dc31e48614b7ef72c5fe18c5f3fa`, then passed the clean-detached
+  Ready replay: 7133/7133 workspace tests, workspace Clippy with warnings
+  denied, fmt, source-size, diff/status cleanliness, and `make -j12 lint`.
+- [ ] Publish by ordinary fast-forward to official `hparser-integration` and
+  verify GitHub `dbsid` author and committer attribution.
 
 ## Surprises & Discoveries
 
@@ -69,6 +71,16 @@ completeness lockdown with no production or shared-ratchet movement.
 - Observation: the package is widely consumed despite its small implementation.
   Evidence: `CalculateSeekCnt` affects planner cost, `GrowPagingSize` affects
   coprocessor request growth, and constants feed distsql and sysvar defaults.
+- Observation: two generated-oracle tests require `go` on `PATH` even when the
+  workspace is otherwise a Rust gate.
+  Evidence: the first clean workspace replay passed 7131 tests but those two
+  tests stopped with `FileNotFoundError: go`; a complete replay with the pinned
+  Go 1.26.0 bin directory on `PATH` passed all 7133 tests.
+- Observation: `make -j12 lint` exits successfully on macOS while printing the
+  repository's existing non-fatal `internal`-package and BSD `find -n`
+  diagnostics.
+  Evidence: the command continued through every dashboard linter and returned
+  exit status zero without changing the clean validation worktree.
 
 ## Decision Log
 
@@ -92,9 +104,12 @@ completeness lockdown with no production or shared-ratchet movement.
 
 ## Outcomes & Retrospective
 
-No completion outcome is claimed yet. Baseline Go and Rust tests pass, but the
-complete package inventory, mutation receipt, clean Ready replay, and official
-publication remain open.
+The complete `pkg/util/paging` package is locally locked down at the four-file
+boundary. Its 28 generated obligations classify as 23 `PORTED` and five
+source-backed `DECLINED`; all 28 planned mutations were killed and restored;
+and the clean Ready gate passed without changing production arithmetic or any
+shared ratchet. The only remaining package step is ordinary publication to the
+current official branch followed by remote SHA and GitHub attribution checks.
 
 ## Context and Orientation
 
@@ -154,6 +169,21 @@ Ready additionally runs full workspace nextest, workspace Clippy with only the
 existing allowed lint classes, source-size and direct-count checks,
 `git diff --check`, and `make -j12 lint`. Do not run
 `make bazel_lint_changed`; the user did not request it.
+
+The clean Ready replay used detached worktree
+`/tmp/tidb-paging-ready.bnV1pL/repo` and exclusive target
+`/tmp/tidb-paging-ready.bnV1pL/target`:
+
+    PATH=/tmp/tidb-task325-go126.gEaI15/go/bin:$PATH GOTOOLCHAIN=local CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS=12 CARGO_TARGET_DIR=/tmp/tidb-paging-ready.bnV1pL/target cargo +1.97 nextest run --manifest-path rust/Cargo.toml --offline --locked --workspace -j12 --no-fail-fast
+    PATH=/tmp/tidb-task325-go126.gEaI15/go/bin:$PATH GOTOOLCHAIN=local CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS=12 CARGO_TARGET_DIR=/tmp/tidb-paging-ready.bnV1pL/target cargo +1.97 clippy --manifest-path rust/Cargo.toml --offline --locked -j12 --workspace --all-targets -- -D warnings -A clippy::assertions_on_constants -A clippy::needless_update -A clippy::type_complexity
+    cargo +1.97 fmt --manifest-path rust/Cargo.toml --all -- --check
+    bash rust/scripts/check-source-size.sh
+    git diff --check
+    git status --porcelain=v1
+    PATH=/tmp/tidb-task325-go126.gEaI15/go/bin:$PATH GOTOOLCHAIN=local make -j12 lint
+
+Results: 7133/7133 workspace tests passed with 41 configured skips; workspace
+Clippy, fmt, source-size, diff/status cleanliness, and lint all returned zero.
 
 ## Validation and Acceptance
 
