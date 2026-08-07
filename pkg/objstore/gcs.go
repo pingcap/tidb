@@ -262,7 +262,7 @@ func (s *GCSStorage) FileExists(ctx context.Context, name string) (bool, error) 
 	object := s.objectName(name)
 	_, err := s.GetBucketHandle().Object(object).Attrs(ctx)
 	if err != nil {
-		if errors.Cause(err) == storage.ErrObjectNotExist { // nolint:errorlint
+		if goerrors.Is(err, storage.ErrObjectNotExist) {
 			return false, nil
 		}
 		return false, errors.Trace(err)
