@@ -3038,8 +3038,14 @@ func (b *PlanBuilder) extractCorrelatedAggFuncs(ctx context.Context, p base.Logi
 			cols = append(cols, expression.ExtractColumns(expr)...)
 		}
 		// If decorrelation is disabled, don't extract correlated aggregates
+		// that reference both inner and outer columns. Aggregates that reference
+		// only outer columns (corCols > 0, cols == 0) are not decorrelation
+		// candidates and should still be hoisted to the outer aggregation.
 		if b.noDecorrelate && len(corCols) > 0 {
-			continue
+			if len(cols) > 0 {
+				corCols, cols = corCols[:0], cols[:0]
+				continue
+			}
 		}
 		if len(corCols) > 0 && len(cols) == 0 {
 			outer = append(outer, agg)
