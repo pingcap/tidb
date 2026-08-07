@@ -559,8 +559,7 @@ Sort	root		index_merge.t1.c1
       └─HashAgg	root		group by:Column, funcs:avg(Column)->Column, funcs:firstrow(Column)->index_merge.t2.c1
         └─Projection	root		cast(index_merge.t2.c1, decimal(10,0) BINARY)->Column, index_merge.t2.c1->Column
           └─IndexMerge	root		type: union
-            ├─Selection(Build)	cop[tikv]		eq(index_merge.t1.c1, index_merge.t2.c1)
-            │ └─IndexRangeScan	cop[tikv]	table:t2, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+            ├─IndexRangeScan(Build)	cop[tikv]	table:t2, index:c1(c1)	range: decided by [lt(index_merge.t2.c1, 10) eq(index_merge.t1.c1, index_merge.t2.c1)], keep order:false, stats:pseudo
             ├─IndexRangeScan(Build)	cop[tikv]	table:t2, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
             └─TableRowIDScan(Probe)	cop[tikv]	table:t2	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where t1.c1 = (select /*+ use_index_merge(t2) */ avg(t2.c1) from t2 where t1.c1 = t2.c1 and t2.c1 < 10 or t2.c2 < 10 group by t2.c1 order by c1 limit 1 offset 2) and (c1 < 10 or c2 < -1) and c3 < 10 order by 1;

@@ -195,6 +195,21 @@ func explainContains(rows [][]any, substr string) bool {
 	return false
 }
 
+// explainInfoContains reports whether any operator's info column contains substr.
+// explainContains only looks at the operator id column, so access conditions,
+// ranges and filters have to be matched here instead.
+func explainInfoContains(rows [][]any, substr string) bool {
+	for _, row := range rows {
+		if len(row) < 5 {
+			continue
+		}
+		if strings.Contains(fmt.Sprintf("%v", row[4]), substr) {
+			return true
+		}
+	}
+	return false
+}
+
 // joinExplainRows formats explain rows into a single string for debug output.
 func joinExplainRows(rows [][]any) string {
 	var sb strings.Builder
@@ -317,4 +332,106 @@ func TestCorrelateWithCostFactors(tt *testing.T) {
 			tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
 		}
 	})
+}
+
+// TestCorrelateAggMinMaxChoosesApply verifies that the correlate round rewrites a
+// join against a MIN/MAX aggregation on the join key into an Apply, and that the
+// Apply wins on cost when the outer side is selective enough that one probe per
+// outer row beats a full pass over the aggregated table.
+func TestCorrelateAggMinMaxChoosesApply(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists summary, journal")
+	tk.MustExec("create table summary (ns_id int not null, tag int not null, primary key(ns_id) clustered, key(tag))")
+	tk.MustExec("create table journal (ns_id int not null, id int not null, primary key(ns_id, id) clustered)")
+	for i := range 60 {
+		tk.MustExec(fmt.Sprintf("insert into summary values (%d, %d)", i, i%30))
+		for j := range 20 {
+			tk.MustExec(fmt.Sprintf("insert into journal values (%d, %d)", i, i*100+j))
+		}
+	}
+	tk.MustExec("analyze table summary, journal")
+
+	// The outer predicate keeps two rows, so the aggregation is needed for two
+	// groups out of sixty.
+	sql := "select s.ns_id, d.min_id from summary s " +
+		"left join (select ns_id, min(id) as min_id from journal group by ns_id) d on d.ns_id = s.ns_id " +
+		"where s.tag = 7"
+
+	tk.MustExec("set tidb_opt_enable_alternative_logical_plans = OFF")
+	rows := tk.MustQuery("explain format = 'brief' " + sql).Rows()
+	require.False(t, explainContains(rows, "Apply"),
+		"without alternative plans, expected no Apply in plan:\n%s", joinExplainRows(rows))
+	want := testdata.ConvertRowsToStrings(tk.MustQuery(sql + " order by 1").Rows())
+
+	tk.MustExec("set tidb_opt_enable_alternative_logical_plans = ON")
+	rows = tk.MustQuery("explain format = 'brief' " + sql).Rows()
+	require.True(t, explainContains(rows, "Apply"),
+		"with alternative plans, expected Apply in plan:\n%s", joinExplainRows(rows))
+	// The pinned group turns MIN into a one-row read rather than an aggregation.
+	require.False(t, explainContains(rows, "StreamAgg"),
+		"expected the correlated inner side to drop the aggregation:\n%s", joinExplainRows(rows))
+	tk.MustQuery(sql + " order by 1").Check(testkit.Rows(want...))
+
+	// A range predicate on the grouping column must not cost the inner side its
+	// correlated index access: both predicates have to end up in the access
+	// conditions so each probe reads one point range rather than the whole range.
+	rangeSQL := "select s.ns_id, d.min_id from summary s " +
+		"left join (select ns_id, min(id) as min_id from journal where ns_id > 0 group by ns_id) d " +
+		"on d.ns_id = s.ns_id where s.tag = 7 and s.ns_id > 0"
+	tk.MustExec("set tidb_opt_enable_alternative_logical_plans = OFF")
+	rangeWant := testdata.ConvertRowsToStrings(tk.MustQuery(rangeSQL + " order by 1").Rows())
+	tk.MustExec("set tidb_opt_enable_alternative_logical_plans = ON")
+	rows = tk.MustQuery("explain format = 'brief' " + rangeSQL).Rows()
+	require.True(t, explainContains(rows, "Apply"),
+		"expected Apply for the range-predicate shape:\n%s", joinExplainRows(rows))
+	require.True(t, explainInfoContains(rows, "decided by [gt(test.journal.ns_id, 0) eq(test.journal.ns_id, test.summary.ns_id)]"),
+		"expected both predicates in the correlated access conditions:\n%s", joinExplainRows(rows))
+	tk.MustQuery(rangeSQL + " order by 1").Check(testkit.Rows(rangeWant...))
+}
+
+// TestCorrelateAggMinMaxParity checks that the correlate round never changes
+// results, across the shapes it accepts and the shapes it must reject.
+func TestCorrelateAggMinMaxParity(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists o, i2")
+	tk.MustExec("create table o (k int not null, k2 int not null, v int)")
+	tk.MustExec("create table i2 (k int not null, k2 int not null, id int not null, nid int, key ki(k, id))")
+	tk.MustExec("insert into o values (1,1,10),(2,1,20),(3,1,30),(4,2,40)")
+	// ns 3 has no inner rows at all, so the left join must NULL-extend it.
+	tk.MustExec("insert into i2 values (1,1,100,null),(1,1,50,5),(2,1,7,null),(2,2,900,9),(4,2,3,3)")
+
+	sqls := []string{
+		// Accepted: MIN over a NOT NULL column, group key covered by the join.
+		"select o.k, d.m from o left join (select k, min(id) m from i2 group by k) d on d.k = o.k",
+		// Accepted: MAX, and as an inner join.
+		"select o.k, d.m from o join (select k, max(id) m from i2 group by k) d on d.k = o.k",
+		// Accepted: composite group key, fully covered.
+		"select o.k, d.m from o left join (select k, k2, min(id) m from i2 group by k, k2) d on d.k = o.k and d.k2 = o.k2",
+		// Rejected: COUNT must keep the aggregation so an empty group stays NULL.
+		"select o.k, d.c from o left join (select k, count(*) c from i2 group by k) d on d.k = o.k",
+		// Rejected: MIN over a nullable column skips NULLs, an ordered read would not.
+		"select o.k, d.m from o left join (select k, min(nid) m from i2 group by k) d on d.k = o.k",
+		// Rejected: k2 is not pinned by the join, so one outer row spans groups.
+		"select o.k, d.m from o left join (select k, k2, min(id) m from i2 group by k, k2) d on d.k = o.k",
+		// Rejected: a limited derived table depends on which groups exist globally.
+		"select o.k, d.m from o left join (select k, min(id) m from i2 group by k order by k limit 2) d on d.k = o.k",
+		// Rejected: HAVING filters aggregated output, which has no correlated form.
+		"select o.k, d.m from o left join (select k, min(id) m from i2 group by k having min(id) > 10) d on d.k = o.k",
+		// Accepted, and the range predicate on the group key must survive being
+		// promoted alongside the correlated equality: outer k=1 matches no group.
+		"select o.k, d.m from o left join (select k, min(id) m from i2 where k > 1 group by k) d on d.k = o.k",
+		// Same, with the range predicate reaching the derived table only by being
+		// pushed through the join key from the outer query.
+		"select o.k, d.m from o left join (select k, min(id) m from i2 group by k) d on d.k = o.k where o.k > 1",
+	}
+	for _, sql := range sqls {
+		tk.MustExec("set tidb_opt_enable_alternative_logical_plans = OFF")
+		want := testdata.ConvertRowsToStrings(tk.MustQuery(sql + " order by 1, 2").Sort().Rows())
+		tk.MustExec("set tidb_opt_enable_alternative_logical_plans = ON")
+		tk.MustQuery(sql + " order by 1, 2").Sort().Check(testkit.Rows(want...))
+	}
 }
