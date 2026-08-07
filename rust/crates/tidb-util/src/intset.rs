@@ -117,8 +117,9 @@ impl FastIntSet {
         }
         if let Some(l) = &self.large {
             match l.range(start_val..).next() {
-                Some(&res) => return (res, true),
+                Some(&res) if res != MAX_INT => return (res, true),
                 None => return (MAX_INT, false),
+                Some(_) => return (MAX_INT, false),
             }
         }
         (MAX_INT, false)
@@ -170,6 +171,9 @@ impl FastIntSet {
     pub fn for_each(&self, mut f: impl FnMut(i64)) {
         if let Some(l) = &self.large {
             for &x in l {
+                if x == MAX_INT {
+                    break;
+                }
                 f(x);
             }
             return;
@@ -357,6 +361,10 @@ impl FastIntSet {
                         large: None,
                     };
                 }
+            } else if delta == MIN_INT {
+                // Go's `-MinInt` and subsequent `uint32` conversion both
+                // wrap, leaving a small-only set unchanged.
+                return self.copy();
             } else if (self.small.trailing_zeros() as i64) >= -delta {
                 return FastIntSet {
                     small: self.small >> ((-delta) as u64),
@@ -365,7 +373,7 @@ impl FastIntSet {
             }
         }
         let mut result = FastIntSet::default();
-        self.for_each(|i| result.insert(i + delta));
+        self.for_each(|i| result.insert(i.wrapping_add(delta)));
         result
     }
 
@@ -439,7 +447,177 @@ impl fmt::Display for FastIntSet {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    use sha2::{Digest, Sha256};
+    use std::{
+        collections::{BTreeMap, BTreeSet, HashMap},
+        fs,
+        path::PathBuf,
+    };
+
+    const ARTIFACTS: &str = include_str!("intset.artifacts.tsv");
+    const INVENTORY: &str = include_str!("intset.inventory.tsv");
+
+    fn data_rows(contents: &'static str) -> Vec<Vec<&'static str>> {
+        contents
+            .lines()
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .skip(1)
+            .map(|line| line.split('\t').collect())
+            .collect()
+    }
+
+    fn repository_root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..")
+    }
+
+    fn sha256(bytes: impl AsRef<[u8]>) -> String {
+        format!("{:x}", Sha256::digest(bytes.as_ref()))
+    }
+
+    #[test]
+    fn intset_lockdown_inventory_and_symbols() {
+        let artifact_rows = data_rows(ARTIFACTS);
+        assert_eq!(artifact_rows.len(), 4);
+        assert!(artifact_rows.iter().all(|row| row.len() == 3));
+        let root = repository_root();
+        for row in artifact_rows {
+            assert_eq!(
+                sha256(fs::read(root.join(row[0])).expect("read intset artifact")),
+                row[2],
+                "owned artifact drifted: {}",
+                row[0]
+            );
+        }
+
+        let rows = data_rows(INVENTORY);
+        assert_eq!(rows.len(), 534);
+        assert!(rows.iter().all(|row| row.len() == 10));
+        let allowed_symbols = [
+            "FastIntSet",
+            "FastIntSet::Display",
+            "FastIntSet::add_range",
+            "FastIntSet::clear",
+            "FastIntSet::copy",
+            "FastIntSet::copy_from",
+            "FastIntSet::difference",
+            "FastIntSet::difference_with",
+            "FastIntSet::equals",
+            "FastIntSet::for_each",
+            "FastIntSet::get_small_uint64",
+            "FastIntSet::has",
+            "FastIntSet::insert",
+            "FastIntSet::intersection",
+            "FastIntSet::intersection_with",
+            "FastIntSet::intersects",
+            "FastIntSet::is_empty",
+            "FastIntSet::large_to_small",
+            "FastIntSet::len",
+            "FastIntSet::new",
+            "FastIntSet::next",
+            "FastIntSet::only1_zero",
+            "FastIntSet::remove",
+            "FastIntSet::shift",
+            "FastIntSet::sorted_array",
+            "FastIntSet::subset_of",
+            "FastIntSet::to_large",
+            "FastIntSet::union",
+            "FastIntSet::union_with",
+            "SMALL_CUT_OFF",
+        ]
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+        let mut ids = BTreeSet::new();
+        let mut categories = BTreeMap::new();
+        let mut statuses = BTreeMap::new();
+        for row in rows {
+            assert!(ids.insert(row[0]), "duplicate obligation id: {}", row[0]);
+            assert!(matches!(row[6], "PORTED" | "DECLINED" | "UNREACHABLE"));
+            assert!(!row[8].is_empty() && !row[9].is_empty());
+            if row[6] == "PORTED" {
+                assert!(
+                    allowed_symbols.contains(row[7]),
+                    "unanchored owner: {row:?}"
+                );
+            } else {
+                assert_eq!(row[7], "-");
+            }
+            *categories.entry(row[1]).or_insert(0usize) += 1;
+            *statuses.entry(row[6]).or_insert(0usize) += 1;
+        }
+        assert_eq!(statuses.get("PORTED"), Some(&446));
+        assert_eq!(statuses.get("DECLINED"), Some(&88));
+        assert_eq!(statuses.get("UNREACHABLE"), None);
+        let expected_categories = [
+            ("benchmark", 6),
+            ("branch", 100),
+            ("closure", 4),
+            ("const", 1),
+            ("declaration", 1),
+            ("field", 2),
+            ("function", 28),
+            ("loop", 12),
+            ("short_circuit", 34),
+            ("test", 6),
+            ("test_assertion", 49),
+            ("test_branch", 72),
+            ("test_helper", 12),
+            ("test_helper_closure", 11),
+            ("test_loop", 100),
+            ("test_row", 65),
+            ("test_short_circuit", 28),
+            ("test_support_declaration", 1),
+            ("test_support_var", 2),
+        ]
+        .into_iter()
+        .collect::<BTreeMap<_, _>>();
+        assert_eq!(categories, expected_categories);
+
+        let _: fn(&[i64]) -> FastIntSet = FastIntSet::new;
+        let _: fn(&FastIntSet) -> usize = FastIntSet::len;
+        let _: fn(&FastIntSet) -> bool = FastIntSet::only1_zero;
+        let _: fn(&mut FastIntSet, i64) = FastIntSet::insert;
+        let _: fn(&FastIntSet) -> BTreeSet<i64> = FastIntSet::to_large;
+        let _: fn(&FastIntSet, i64) -> (i64, bool) = FastIntSet::next;
+        let _: fn(&mut FastIntSet, i64) = FastIntSet::remove;
+        let _: fn(&mut FastIntSet) = FastIntSet::clear;
+        let _: fn(&FastIntSet, i64) -> bool = FastIntSet::has;
+        let _: fn(&FastIntSet) -> bool = FastIntSet::is_empty;
+        let _: fn(&FastIntSet) -> Vec<i64> = FastIntSet::sorted_array;
+        FastIntSet::default().for_each(|_| {});
+        let _: fn(&FastIntSet) -> FastIntSet = FastIntSet::copy;
+        let _: fn(&mut FastIntSet, &FastIntSet) = FastIntSet::copy_from;
+        let _: fn(&FastIntSet, &FastIntSet) -> bool = FastIntSet::equals;
+        let _: fn(&FastIntSet) -> (u64, bool) = FastIntSet::large_to_small;
+        let _: fn(&FastIntSet) -> Result<u64, String> = FastIntSet::get_small_uint64;
+        let _: fn(&FastIntSet, &FastIntSet) -> FastIntSet = FastIntSet::difference;
+        let _: fn(&mut FastIntSet, &FastIntSet) = FastIntSet::difference_with;
+        let _: fn(&FastIntSet, &FastIntSet) -> FastIntSet = FastIntSet::union;
+        let _: fn(&mut FastIntSet, &FastIntSet) = FastIntSet::union_with;
+        let _: fn(&FastIntSet, &FastIntSet) -> FastIntSet = FastIntSet::intersection;
+        let _: fn(&mut FastIntSet, &FastIntSet) = FastIntSet::intersection_with;
+        let _: fn(&FastIntSet, &FastIntSet) -> bool = FastIntSet::intersects;
+        let _: fn(&FastIntSet, &FastIntSet) -> bool = FastIntSet::subset_of;
+        let _: fn(&FastIntSet, i64) -> FastIntSet = FastIntSet::shift;
+        let _: fn(&mut FastIntSet, i64, i64) = FastIntSet::add_range;
+        let _ = SMALL_CUT_OFF;
+        fn assert_display<T: fmt::Display>() {}
+        assert_display::<FastIntSet>();
+
+        let _: fn() = basic;
+        let _: fn() = randomized;
+        let _: fn() = two_set_ops;
+        let _: fn() = add_range;
+        let _: fn() = get_small_uint64;
+        let _: fn() = string_format;
+        let _: fn() = source_bitmap_transition_contracts;
+        let _: fn() = source_shift_wraps_like_go_int;
+        let _: fn() = source_max_int_sentinel_contract;
+        let _: fn() = source_copy_from_preserves_go_representation;
+        let _: fn() = source_mixed_representation_set_algebra;
+        let _: fn() = source_range_and_error_contracts;
+        let _: fn() = source_invalid_range_panic_text;
+        let _: fn() = source_string_pair_and_sentinel_contracts;
+    }
 
     // Deterministic PRNG standing in for Go's math/rand (the Go tests only
     // need internal consistency, not a fixed sequence).
@@ -757,5 +935,122 @@ mod tests {
             "(-5,-3,-2,-1,0-5)"
         );
         assert_eq!(FastIntSet::new(&[0, 1, 3, 4, 5]).to_string(), "(0,1,3-5)");
+    }
+
+    #[test]
+    fn source_shift_wraps_like_go_int() {
+        assert_eq!(
+            FastIntSet::new(&[1]).shift(MAX_INT).sorted_array(),
+            vec![MIN_INT]
+        );
+        assert_eq!(FastIntSet::new(&[1]).shift(MIN_INT).sorted_array(), vec![1]);
+        assert_eq!(
+            FastIntSet::new(&[MAX_INT - 1]).shift(2).sorted_array(),
+            vec![MIN_INT]
+        );
+    }
+
+    #[test]
+    fn source_bitmap_transition_contracts() {
+        let mut set = FastIntSet::default();
+        assert!(set.is_empty());
+        assert!(!set.only1_zero());
+
+        set.insert(0);
+        assert!(set.only1_zero());
+        set.insert(63);
+        assert_eq!(set.len(), 2);
+        assert_eq!(set.get_small_uint64().unwrap(), 1 | (1 << 63));
+
+        let independent = set.copy();
+        set.insert(64);
+        assert_eq!(set.sorted_array(), vec![0, 63, 64]);
+        set.remove(64);
+        assert_eq!(set.sorted_array(), vec![0, 63]);
+        assert!(set.get_small_uint64().is_err());
+        assert_eq!(independent.get_small_uint64().unwrap(), 1 | (1 << 63));
+
+        set.clear();
+        assert!(set.is_empty());
+        assert!(set.get_small_uint64().is_err());
+        set.insert(1);
+        assert_eq!(set.sorted_array(), vec![1]);
+    }
+
+    #[test]
+    fn source_max_int_sentinel_contract() {
+        let set = FastIntSet::new(&[MAX_INT]);
+        assert_eq!(set.len(), 1);
+        assert!(set.has(MAX_INT));
+        assert_eq!(set.next(MAX_INT), (MAX_INT, false));
+        assert_eq!(set.sorted_array(), vec![MAX_INT]);
+
+        let mut visited = Vec::new();
+        set.for_each(|value| visited.push(value));
+        assert!(visited.is_empty());
+        assert_eq!(set.to_string(), "()");
+    }
+
+    #[test]
+    fn source_copy_from_preserves_go_representation() {
+        let target = FastIntSet::new(&[1]);
+        let mut receiver = FastIntSet::new(&[64]);
+        receiver.copy_from(&target);
+
+        assert_eq!(receiver.len(), 0);
+        assert!(receiver.has(1));
+        assert!(receiver.sorted_array().is_empty());
+        assert!(receiver.equals(&target));
+        assert_eq!(
+            receiver.get_small_uint64().unwrap_err(),
+            "set contains large values, cannot get small uint64"
+        );
+    }
+
+    #[test]
+    fn source_mixed_representation_set_algebra() {
+        let small = FastIntSet::new(&[1, 2]);
+        let mut large = FastIntSet::new(&[1, 2, 64]);
+        large.remove(64);
+
+        assert!(small.equals(&large));
+        assert!(large.equals(&small));
+        assert!(small.subset_of(&large));
+        assert!(large.subset_of(&small));
+        assert_eq!(small.union(&large).sorted_array(), vec![1, 2]);
+        assert_eq!(large.intersection(&small).sorted_array(), vec![1, 2]);
+        assert!(large.difference(&small).is_empty());
+        assert!(large.intersects(&FastIntSet::new(&[2])));
+        assert!(!small.subset_of(&FastIntSet::new(&[2])));
+        assert!(!small.intersects(&FastIntSet::new(&[3])));
+        assert_eq!(
+            small.difference(&FastIntSet::new(&[2])).sorted_array(),
+            vec![1]
+        );
+    }
+
+    #[test]
+    fn source_range_and_error_contracts() {
+        let mut full_small = FastIntSet::default();
+        full_small.add_range(0, 63);
+        assert_eq!(full_small.get_small_uint64().unwrap(), u64::MAX);
+        assert_eq!(
+            FastIntSet::new(&[64]).get_small_uint64().unwrap_err(),
+            "set contains large values, cannot get small uint64"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid range when adding range to FastIntSet")]
+    fn source_invalid_range_panic_text() {
+        FastIntSet::default().add_range(1, 0);
+    }
+
+    #[test]
+    fn source_string_pair_and_sentinel_contracts() {
+        assert_eq!(FastIntSet::new(&[-2, -1]).to_string(), "(-2,-1)");
+        assert_eq!(FastIntSet::new(&[7, 8]).to_string(), "(7,8)");
+        assert_eq!(FastIntSet::new(&[7, 8, 9]).to_string(), "(7-9)");
+        assert_eq!(FastIntSet::new(&[MAX_INT]).to_string(), "()");
     }
 }
