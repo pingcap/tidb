@@ -1442,13 +1442,17 @@ mod tests {
             let rebuilt = BinaryJSON::from_value(&decoded).unwrap();
             assert_eq!(binary, rebuilt, "{text}");
         }
+    }
+
+    #[test]
+    fn test_parse_binary_from_string() {
         assert_eq!(
-            BinaryJSON::parse("").unwrap_err(),
-            BinaryJSONError::EmptyDocument
+            BinaryJSON::parse("").unwrap_err().to_string(),
+            "The document is empty"
         );
         assert_eq!(
-            BinaryJSON::parse(r#""a"""#).unwrap_err(),
-            BinaryJSONError::TrailingValues
+            BinaryJSON::parse(r#""a"""#).unwrap_err().to_string(),
+            "The document root must not be followed by other values."
         );
     }
 
@@ -1502,6 +1506,32 @@ mod tests {
             assert_eq!(array.to_string(), format!("[{expected}]"));
         }
 
+        let opaque = Opaque {
+            type_code: 233,
+            bytes: vec![1, 2, 3],
+        };
+        let input = BinaryJSONValue::Object(BTreeMap::from([(
+            "values".to_owned(),
+            BinaryJSONValue::Array(vec![
+                BinaryJSONValue::Bool(true),
+                BinaryJSONValue::Opaque(opaque.clone()),
+            ]),
+        )]));
+        let value = BinaryJSON::from_typed_value(&input).unwrap();
+        assert_eq!(
+            value.to_node().unwrap(),
+            JSONNode::Object(vec![(
+                "values".to_owned(),
+                JSONNode::Array(vec![
+                    JSONNode::Scalar(literal(JSON_LITERAL_TRUE)),
+                    JSONNode::Scalar(BinaryJSON::from_opaque(opaque)),
+                ]),
+            )])
+        );
+    }
+
+    #[test]
+    fn test_create_binary() {
         for (input, expected_type) in [
             (BinaryJSONValue::Int64(1_i64 << 62), JSON_TYPE_CODE_INT64),
             (
@@ -1525,28 +1555,15 @@ mod tests {
             );
         }
 
-        let opaque = Opaque {
-            type_code: 233,
-            bytes: vec![1, 2, 3],
-        };
-        let input = BinaryJSONValue::Object(BTreeMap::from([(
-            "values".to_owned(),
-            BinaryJSONValue::Array(vec![
-                BinaryJSONValue::Bool(true),
-                BinaryJSONValue::Opaque(opaque.clone()),
-            ]),
-        )]));
-        let value = BinaryJSON::from_typed_value(&input).unwrap();
-        assert_eq!(
-            value.to_node().unwrap(),
-            JSONNode::Object(vec![(
-                "values".to_owned(),
-                JSONNode::Array(vec![
-                    JSONNode::Scalar(literal(JSON_LITERAL_TRUE)),
-                    JSONNode::Scalar(BinaryJSON::from_opaque(opaque)),
-                ]),
-            )])
-        );
+        let original = BinaryJSON::from_typed_value(&BinaryJSONValue::Float64(1e-20)).unwrap();
+        let copied =
+            BinaryJSON::from_typed_value(&BinaryJSONValue::Binary(original.clone())).unwrap();
+        assert_eq!(copied.type_code(), original.type_code());
+        assert_eq!(copied.value(), original.value());
+
+        // Go accepts `any`, so its source test can pass int8 and assert the
+        // dynamic unknown-type panic. Rust accepts the closed BinaryJSONValue
+        // enum instead; an unlisted dynamic input cannot reach this function.
     }
 
     #[test]
@@ -1639,20 +1656,6 @@ mod tests {
         assert_eq!(long.type_name().unwrap(), "OPAQUE");
         assert_eq!(long.opaque().unwrap().bytes, vec![0, 1, 2, 3]);
 
-        let display = BinaryJSON::from_opaque(Opaque {
-            type_code: 233,
-            bytes: vec![b'9'],
-        });
-        assert_eq!(display.to_string(), "\"base64:type233:OQ==\"");
-        let long_display = BinaryJSON::from_opaque(Opaque {
-            type_code: 233,
-            bytes: vec![0; 128],
-        });
-        assert_eq!(long_display.opaque().unwrap().bytes, vec![0; 128]);
-        assert_eq!(
-            long_display.to_string(),
-            "\"base64:type233:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\""
-        );
         assert_eq!(
             compare_binary_json(
                 &BinaryJSON::from_opaque(Opaque {
@@ -1761,6 +1764,10 @@ mod tests {
         assert_eq!(encoded_duration.as_duration().unwrap(), duration);
         assert_eq!(encoded_duration.to_string(), r#""12:34:56.123456""#);
 
+        let display = BinaryJSON::from_opaque(Opaque {
+            type_code: 233,
+            bytes: vec![b'9'],
+        });
         let container = BinaryJSON::from_node(&JSONNode::Array(vec![
             JSONNode::Scalar(encoded_time),
             JSONNode::Scalar(encoded_duration),
@@ -1775,5 +1782,24 @@ mod tests {
             BinaryJSON::from_raw(container.type_code(), container.value().to_vec()).unwrap(),
             container
         );
+    }
+
+    #[test]
+    fn test_binary_json_opaque() {
+        for (bytes, expected) in [
+            (vec![b'9'], "\"base64:type233:OQ==\""),
+            (
+                vec![0; 128],
+                "\"base64:type233:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\"",
+            ),
+        ] {
+            let value = BinaryJSON::from_opaque(Opaque {
+                type_code: 233,
+                bytes: bytes.clone(),
+            });
+            assert_eq!(value.opaque().unwrap().type_code, 233);
+            assert_eq!(value.opaque().unwrap().bytes, bytes);
+            assert_eq!(value.to_string(), expected);
+        }
     }
 }

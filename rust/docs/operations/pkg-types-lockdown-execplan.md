@@ -16,6 +16,7 @@ After this package unit is complete, reviewers can verify that the Rust datatype
 - [x] (2026-08-07) Preserved mutation and targeted validation evidence for commit `9648e257c09f8bcda4732bf6b460dccf47f15788`, which completes the audited `convert_test.go` source tables.
 - [x] (2026-08-07) Completed, committed, and mutation-probed the first `datum_test.go`/`core_time_test.go` source-row batch: 12 independently named Rust tests pass and reduce the census from 44 to 32 `NONE` without production-code changes.
 - [x] (2026-08-07) Audited the six uncovered `etc_test.go` type-predicate tests against the existing all-type-code table; six independently named tests pass and reduce the census from 32 to 26 `NONE` without production-code changes.
+- [x] (2026-08-07) Audited all eleven mechanically uncovered `json_binary_test.go` tests row by row; eleven exact-name Rust tests pass and reduce the census from 26 to 15 `NONE` without production-code changes.
 - [ ] Audit and account for every `pkg/types` production, test, support, benchmark, generated, fixture, and build file.
 - [ ] Port or prove every remaining Go test table, starting with the 44 mechanically uncovered tests and then auditing all weak name matches row by row.
 - [ ] Check in the complete function/branch inventory and its Go-source and Rust-symbol gates.
@@ -37,6 +38,8 @@ After this package unit is complete, reviewers can verify that the Rust datatype
   Evidence: the Go probe prints `go-layout: Datum=72 MyDecimal=40 Time=8` and `go-estimated: rows=10 bytes=5530`; the Rust probe prints `rust-layout: Datum=64 Decimal=64 Time=16`. The Rust test pins its own measured layout/formula and explicitly rejects a false 5,530-byte parity claim.
 - Observation: the expected ceiling for the Go reverse-bound `DOUBLE(23,-1)` row is `GetMaxValue(target)`, not `math.MaxFloat64`.
   Evidence: the first WIP run failed with Rust `Real(1e24)` versus the mistaken `Real(1.7976931348623157e308)` expectation; changing only the expected value to the Rust mapping of `GetMaxValue` made all 12 tests pass.
+- Observation: the eleven JSON gaps were traceability gaps in already ported behavior, plus four missing `GetKeys` assertions and one missing typed BinaryJSON-copy assertion; no production behavior change was required.
+  Evidence: exact tests for unquote, remove, contains, copy, keys, depth, parse errors, typed creation, callback extraction, opaque values, and hashes pass 11/11. `TestCreateBinary`'s Go-only `int8` panic is unreachable because Rust accepts the closed `BinaryJSONValue` enum instead of `any`.
 
 ## Decision Log
 
@@ -130,10 +133,12 @@ The first datum batch was saved under `/tmp/tidb-types-datum-probes.P0fYAW`. Its
 
 After restoring all saved copies, `git status --short` showed only `?? tgt/` and the same 12-test filter reported `12 passed, 299 skipped`.
 
+The JSON source-row batch split previously combined tests into exact Go-name evidence. Its WIP filter reported `11 passed, 317 skipped`, and the post-batch census reported `46 NAME-EXACT`, `95 NAME-FUZZY`, `19 NAME-TOKENS`, `27 REFERENCED`, and `15 NONE`. `GetKeys` now includes non-object empty results, one and two sorted keys, element count, and the 65,536-byte key error; the parse test pins both Go error texts; and the typed creation test copies an existing BinaryJSON value while recording the dynamic `int8` input as unreachable in Rust.
+
 The `etc_test.go` predicate batch reused the same save directory for `field_type_mod.rs`. Removing `NewDate` from `is_type_temporal` failed `test_is_type_temporal_source_rows` on the `NewDate` row. Adding `Unspecified` to `is_type_numeric` failed `test_is_type_numeric_source_rows` on the explicit false row. The first restore attempt was issued from `rust/` with an erroneous extra `rust/` path prefix and therefore changed nothing; rerunning the copy from repository root restored the saved bytes, after which the six-test filter reported `6 passed, 311 skipped`.
 
 ## Interfaces and Dependencies
 
 No new third-party dependency is expected. Inventory tooling should use repository Python or Rust standard-library facilities and stable source identifiers. Runtime ports should continue using existing `tidb-datatype` public types such as `Datum`, `Decimal`, `BinaryJSON`, `Time`, `Duration`, `FieldType`, `Enum`, `Set`, and `ConversionContext`; introducing a parallel datatype layer would increase semantic risk and violate the minimal-diff requirement.
 
-Revision note: created on 2026-08-07 to preserve the complete-package LOCKDOWN contract and the post-seed census before continuing `datum_test.go` coverage.
+Revision note: created on 2026-08-07 to preserve the complete-package LOCKDOWN contract and the post-seed census before continuing `datum_test.go` coverage; updated the same day with datum, type-predicate, and JSON source-row evidence.

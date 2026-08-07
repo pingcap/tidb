@@ -1195,7 +1195,7 @@ mod tests {
     }
 
     #[test]
-    fn test_binary_json_type_unquote_keys_and_depth() {
+    fn test_binary_json_type() {
         for (input, expected) in [
             (r#"{"a":"b"}"#, "OBJECT"),
             (r#"["a","b"]"#, "ARRAY"),
@@ -1206,6 +1206,18 @@ mod tests {
         ] {
             assert_eq!(json(input).type_name().unwrap(), expected);
         }
+
+        assert_eq!(
+            BinaryJSON::from_typed_value(&crate::BinaryJSONValue::Uint64(1_u64 << 63))
+                .unwrap()
+                .type_name()
+                .unwrap(),
+            "UNSIGNED INTEGER"
+        );
+    }
+
+    #[test]
+    fn test_binary_json_unquote() {
         for (input, expected) in [
             ("3", "3"),
             (r#""3""#, "3"),
@@ -1227,18 +1239,39 @@ mod tests {
         ] {
             assert_eq!(json(input).unquote().unwrap(), expected, "{input}");
         }
+    }
+
+    #[test]
+    fn test_get_keys() {
+        for (input, expected) in [
+            ("[]", "[]"),
+            ("{}", "[]"),
+            (r#"{"comment":"1234"}"#, r#"["comment"]"#),
+            (r#"{"name":"Tom","age":19}"#, r#"["age","name"]"#),
+        ] {
+            assert_eq!(
+                json(input).keys().unwrap().to_string(),
+                json(expected).to_string(),
+                "{input}"
+            );
+        }
         assert_eq!(
             json(r#"{"name":"Tom","age":19}"#)
                 .keys()
                 .unwrap()
-                .to_string(),
-            r#"["age", "name"]"#
+                .element_count()
+                .unwrap(),
+            2
         );
         let long_key = format!("{{\"{}\":1}}", "a".repeat(65_536));
         assert_eq!(
             BinaryJSON::parse(&long_key).unwrap_err().to_string(),
             "[types:8129]TiDB does not yet support JSON objects with the key length >= 65536"
         );
+    }
+
+    #[test]
+    fn test_binary_json_depth() {
         for (input, expected) in [
             ("{}", 1),
             ("[]", 1),
@@ -1253,15 +1286,10 @@ mod tests {
         ] {
             assert_eq!(json(input).element_depth().unwrap(), expected, "{input}");
         }
-        assert_eq!(json(r#"{"a":1,"b":2}"#).element_count().unwrap(), 2);
-        assert_eq!(
-            BinaryJSON::from_typed_value(&crate::BinaryJSONValue::Uint64(1_u64 << 63))
-                .unwrap()
-                .type_name()
-                .unwrap(),
-            "UNSIGNED INTEGER"
-        );
+    }
 
+    #[test]
+    fn test_binary_json_copy() {
         for source in [
             r#"{"a":[1,"2",{"aa":"bb"},4,null],"b":true,"c":null}"#,
             r#"{"aaaaaaaaaaa":[1,"2",{"aa":"bb"},4.1],"bbbbbbbbbb":true,"ccccccccc":"d"}"#,
@@ -1352,6 +1380,34 @@ mod tests {
 
         assert!(overlaps_binary_json(&json("[1,2]"), &json("[2,3]")).unwrap());
         assert!(!overlaps_binary_json(&json("[1,2]"), &json("[3,4]")).unwrap());
+    }
+
+    #[test]
+    fn test_binary_json_contains() {
+        for (object, target, expected) in [
+            ("{}", "{}", true),
+            (r#"{"a":1}"#, "{}", true),
+            (r#"{"a":1}"#, "1", false),
+            (r#"{"a":[1]}"#, "[1]", false),
+            (r#"{"b":2,"c":3}"#, r#"{"c":3}"#, true),
+            ("1", "1", true),
+            ("[1]", "1", true),
+            ("[1,2]", "[1]", true),
+            ("[1,2]", "[1,3]", false),
+            ("[1,2]", r#"["1"]"#, false),
+            (r#"[1,2,[1,3]]"#, "[1,3]", true),
+            (r#"[1,2,[1,[5,[3]]]]"#, "[1,3]", true),
+            (r#"[1,2,[1,[5,{"a":[2,3]}]]]"#, r#"[1,{"a":[3]}]"#, true),
+            (r#"[{"a":1}]"#, r#"{"a":1}"#, true),
+            (r#"[{"a":1,"b":2}]"#, r#"{"a":1}"#, true),
+            (r#"[{"a":{"a":1},"b":2}]"#, r#"{"a":1}"#, false),
+        ] {
+            assert_eq!(
+                contains_binary_json(&json(object), &json(target)).unwrap(),
+                expected,
+                "{object} contains {target}"
+            );
+        }
     }
 
     #[test]
@@ -1555,7 +1611,41 @@ mod tests {
     }
 
     #[test]
-    fn test_binary_json_peek_and_hash_source_contract() {
+    fn test_binary_json_remove() {
+        for (base, path, expected) in [
+            ("{}", "$.a", "{}"),
+            (r#"{"a":3}"#, "$.a", "{}"),
+            (r#"{"a":1,"b":2,"c":3}"#, "$.b", r#"{"a":1,"c":3}"#),
+            (r#"{"a":1,"b":2,"c":3}"#, "$.d", r#"{"a":1,"b":2,"c":3}"#),
+            (r#"{"a":3}"#, "$[0]", r#"{"a":3}"#),
+            (r#"{"a":[3,4,5]}"#, "$.a[0]", r#"{"a":[4,5]}"#),
+            (r#"{"a":[3,4,5]}"#, "$.a[1]", r#"{"a":[3,5]}"#),
+            (r#"{"a":[3,4,5]}"#, "$.a[4]", r#"{"a":[3,4,5]}"#),
+            (
+                r#"{"a":[1,2,{"aa":"xx"}]}"#,
+                "$.a[2].aa",
+                r#"{"a":[1,2,{}]}"#,
+            ),
+        ] {
+            let actual = json(base)
+                .remove(&[parse_json_path_expr(path).unwrap()])
+                .unwrap();
+            assert_eq!(
+                actual.to_string(),
+                json(expected).to_string(),
+                "{base} {path}"
+            );
+        }
+        assert!(json("null")
+            .remove(&[parse_json_path_expr("$").unwrap()])
+            .is_err());
+        assert!(json(r#"{"a":[3]}"#)
+            .remove(&[parse_json_path_expr("$.a[*]").unwrap()])
+            .is_err());
+    }
+
+    #[test]
+    fn test_binary_json_peek_and_numeric_hash_contract() {
         for document in [
             "null",
             "true",
@@ -1575,21 +1665,6 @@ mod tests {
         assert!(peek_binary_json_len(&[]).is_err());
         assert!(peek_binary_json_len(b"\\bfnrtuz0").is_err());
 
-        let values = [
-            json("[]"),
-            json("[[]]"),
-            json("[[[]]]"),
-            json("{}"),
-            json("[false]"),
-            json("[true]"),
-            json("[null]"),
-        ];
-        let hashes = values
-            .iter()
-            .map(BinaryJSON::hash_value)
-            .collect::<Result<HashSet<_>, _>>()
-            .unwrap();
-        assert_eq!(hashes.len(), values.len());
         assert_eq!(
             json("3").hash_value().unwrap(),
             json("3.0").hash_value().unwrap()
@@ -1621,7 +1696,26 @@ mod tests {
     }
 
     #[test]
-    fn test_binary_json_walk_and_search_source_rows() {
+    fn test_hash_value() {
+        let values = [
+            json("[]"),
+            json("[[]]"),
+            json("[[[]]]"),
+            json("{}"),
+            json("[false]"),
+            json("[true]"),
+            json("[null]"),
+        ];
+        let hashes = values
+            .iter()
+            .map(BinaryJSON::hash_value)
+            .collect::<Result<HashSet<_>, _>>()
+            .unwrap();
+        assert_eq!(hashes.len(), values.len());
+    }
+
+    #[test]
+    fn test_binary_json_extract_callback() {
         let callback_document = json(
             r#"{"\"hello\"":"world","a":[1,"2",{"aa":"bb"},4.0,{"aa":"cc"}],"b":true,"c":["d"]}"#,
         );
@@ -1681,7 +1775,10 @@ mod tests {
                 );
             }
         }
+    }
 
+    #[test]
+    fn test_binary_json_walk_and_search_source_rows() {
         let document = json(r#"["abc",[{"k":"10"},"def"],{"x":"abc"},{"y":"bcd"}]"#);
         let expected = [
             ("$", r#"["abc",[{"k":"10"},"def"],{"x":"abc"},{"y":"bcd"}]"#),
