@@ -186,13 +186,13 @@ func TestHandler(t *testing.T) {
 
 		expectedKVs := make(map[string]string, len(fixturePairs.Pairs))
 		var (
-			recordKV        *simplesst.KVPair
+			recordKV        *external.KVPair
 			expectedTailKey string
 		)
 		for _, pair := range fixturePairs.Pairs {
 			expectedKVs[string(pair.Key)] = string(pair.Val)
 			if tablecodec.IsRecordKey(pair.Key) {
-				recordKV = &simplesst.KVPair{
+				recordKV = &external.KVPair{
 					Key:   store.GetCodec().EncodeKey(append(tidbkv.Key(nil), pair.Key...)),
 					Value: append([]byte(nil), pair.Val...),
 				}
@@ -226,11 +226,10 @@ func TestHandler(t *testing.T) {
 		})
 		dataKVHandler := conflictedkv.NewDataKVHandler(conflictedkv.NewBaseHandler(
 			tbl,
-			globalsort.DataKVGroup,
+			external.DataKVGroup,
 			store.GetCodec(),
 			getEncoder(t, tbl),
 			encodedRowHandler,
-			nil,
 			logger,
 		))
 		t.Cleanup(func() {
