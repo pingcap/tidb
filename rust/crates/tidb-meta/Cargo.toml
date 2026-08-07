@@ -7,11 +7,25 @@ license.workspace = true
 repository.workspace = true
 description = "TiDB meta: the KV key/value codec for the catalog stored under the `m` namespace."
 
+[features]
+default = []
+nextgen = ["tidb-config/nextgen"]
+
 [lints]
 workspace = true
 
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+regex.workspace = true
+chrono.workspace = true
+tidb-ast = { path = "../tidb-ast" }
 tidb-codec = { path = "../tidb-codec" }
+tidb-config = { path = "../tidb-config" }
+tidb-metadef = { path = "../tidb-metadef" }
 tidb-model = { path = "../tidb-model" }
+tidb-mysql = { path = "../tidb-mysql" }
+tidb-util = { path = "../tidb-util" }
+
+[dev-dependencies]
+sha2.workspace = true

@@ -28,6 +28,7 @@ use tidb_meta::structure::{
     encode_hash_data_key_prefix, encode_hash_meta_key, encode_string_data_key,
 };
 use tidb_meta::value;
+use tidb_meta::MetaError;
 
 /// Decodes one captured hex vector.
 fn hex(input: &str) -> Vec<u8> {
@@ -302,9 +303,25 @@ fn int_values_match_go() {
 fn magic_byte_matches_go() {
     assert_eq!(value::attach_magic_byte(b"{}"), b"\x00{}");
     assert_eq!(value::detach_magic_byte(b"\x00{}").unwrap(), b"{}");
-    // 0x40 and above select a handler module that does not exist.
-    assert!(value::detach_magic_byte(b"\x40{}").is_err());
-    assert!(value::detach_magic_byte(b"").is_err());
+    for version in [0x00, 0x01, 0x3f] {
+        assert_eq!(value::which_magic_type(version), value::MagicType::Json);
+    }
+    for version in [0x40, 0xff] {
+        assert_eq!(value::which_magic_type(version), value::MagicType::Unknown);
+    }
+    for version in [0x01, 0x3f] {
+        assert_eq!(
+            value::detach_magic_byte(&[version, b'{', b'}']),
+            Err(MetaError::IncompatibleMagicType)
+        );
+    }
+    for version in [0x40, 0xff] {
+        assert_eq!(
+            value::detach_magic_byte(&[version, b'{', b'}']),
+            Err(MetaError::UnknownMagicType)
+        );
+    }
+    assert!(std::panic::catch_unwind(|| value::detach_magic_byte(b"")).is_err());
 }
 
 // --- Catalog JSON ----------------------------------------------------------
