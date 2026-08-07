@@ -1,0 +1,50 @@
+{
+  "artifact_count": 4,
+  "category_counts": {
+    "benchmark": 6,
+    "branch": 100,
+    "closure": 4,
+    "const": 1,
+    "declaration": 1,
+    "field": 2,
+    "function": 28,
+    "loop": 12,
+    "short_circuit": 34,
+    "test": 6,
+    "test_assertion": 49,
+    "test_branch": 72,
+    "test_helper": 12,
+    "test_helper_closure": 11,
+    "test_loop": 100,
+    "test_row": 65,
+    "test_short_circuit": 28,
+    "test_support_declaration": 1,
+    "test_support_var": 2
+  },
+  "go_package": "pkg/util/intset",
+  "mutation_suites": 7,
+  "obligation_count": 534,
+  "owned_file_sha256": {
+    "rust/crates/tidb-util/src/intset.artifacts.tsv": "2305aaeb4d0c7e26840a7f77f5dd94486995e67b41940b9ba95c82cfd77fe179",
+    "rust/crates/tidb-util/src/intset.inventory.tsv": "ab46dbcf0011a68120561f6340a79e9e48babad416ee023ebf68b11cbd030fe0",
+    "rust/crates/tidb-util/src/intset.mutation-plan.tsv": "787e4cc3b77daa0b9d6ad2ef16d2cce347f1bd7d0739a4587291f43b6ba5d2bc",
+    "rust/crates/tidb-util/src/intset.mutation-results.tsv": "357ee0c88d193f0b6283cdf6cf443f135a944642a9d2319f0b32e0afe09e6e4c",
+    "rust/crates/tidb-util/src/intset.rs": "7a29edcf517f9a309a98d52c61b10a5bc28b629d2e3757fab8d6a8c8f26c59ed",
+    "rust/crates/tidb-util/tests/intset_lockdown.rs": "d8b66d89be48507ed1f3a9044a2f35ef365c33804ecdfe0400d0af7ae636c9b0",
+    "rust/scripts/pkg-intset-lockdown.py": "82a39ef02b189377012ba0814a7a84e6e00a1f7107d13ad5bf05bef21af1e500"
+  },
+  "schema": "pkg-intset-lockdown-v1",
+  "source_seed_commit": "56d06365eae71a692e538986d84003565f880103",
+  "status_counts": {
+    "DECLINED": 88,
+    "PORTED": 446
+  },
+  "zero_artifact_classes": {
+    "build_tags": 0,
+    "code_generated": 0,
+    "go_embed": 0,
+    "go_generate": 0,
+    "platform_variants": 0,
+    "tracked_testdata": 0
+  }
+}

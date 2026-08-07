@@ -21,7 +21,7 @@ The observable behavior is exact parity for construction, the `[0, 64)` bitmap-t
 - [x] (2026-08-07) Built the four-artifact manifest, zero-class ratchets, deterministic 534-row classification, Python drift gate, and compiled Rust owner/evidence gate.
 - [x] (2026-08-07) Audited every production owner and original test/support/benchmark subtree; 446 obligations are `PORTED`, while 88 Go benchmark/reference-model/runtime-harness obligations are explicitly `DECLINED`.
 - [x] (2026-08-07) Added eight named source-boundary tests and fixed the two measured divergences: wrapping `Shift` arithmetic and the `MaxInt` `Next`/`ForEach` sentinel contract.
-- [ ] Commit the restored implementation, run boundary mutation probes for every behavior cluster, and record killed/surviving probes with exact named tests.
+- [x] (2026-08-07) Committed the restored implementation, strengthened the one initially surviving large/large intersection test, and replayed all seven suites from provisional commit `8e67f298381c390b12d8642761351cfd6f1a72f6`; all 18 mutations were killed and restored.
 - [ ] Run WIP then coordinator Ready/full-workspace gates, verify direct ratchets, and publish according to the current official-branch delivery policy.
 
 ## Surprises & Discoveries

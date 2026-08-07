@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import json
 from pathlib import Path
@@ -274,6 +275,7 @@ def validate_classifications(lines: list[str]) -> None:
 
 
 def receipt_contents(root: Path, obligations: list[str]) -> dict[str, object]:
+    validate_mutations(root)
     rows = parse_obligations(obligations)
     category_counts: dict[str, int] = {}
     status_counts: dict[str, int] = {}
@@ -282,7 +284,8 @@ def receipt_contents(root: Path, obligations: list[str]) -> dict[str, object]:
         status_counts[row[6]] = status_counts.get(row[6], 0) + 1
     owned = [
         ARTIFACTS, INVENTORY, MUTATION_PLAN, MUTATION_RESULTS,
-        RUST_DIR / "intset.rs", Path("rust/scripts/pkg-intset-lockdown.py"),
+        RUST_DIR / "intset.rs", Path("rust/crates/tidb-util/tests/intset_lockdown.rs"),
+        Path("rust/scripts/pkg-intset-lockdown.py"),
     ]
     plan_rows = [
         line for line in (root / MUTATION_PLAN).read_text(encoding="utf-8").splitlines()
@@ -302,6 +305,40 @@ def receipt_contents(root: Path, obligations: list[str]) -> dict[str, object]:
     }
 
 
+def tsv_rows(path: Path) -> list[dict[str, str]]:
+    lines = [
+        line for line in path.read_text(encoding="utf-8").splitlines()
+        if line and not line.startswith("#")
+    ]
+    return list(csv.DictReader(lines, delimiter="\t"))
+
+
+def validate_mutations(root: Path) -> None:
+    plan = tsv_rows(root / MUTATION_PLAN)
+    results = tsv_rows(root / MUTATION_RESULTS)
+    if len(plan) != 7 or len(results) != 18:
+        raise RuntimeError(f"mutation census drift: plan={len(plan)} results={len(results)}")
+    expected = {row["suite_id"]: int(row["mutation_count"]) for row in plan}
+    actual = {suite: 0 for suite in expected}
+    ids: set[str] = set()
+    for row in results:
+        mutation_id = row["mutation_id"]
+        if mutation_id in ids:
+            raise RuntimeError(f"duplicate mutation id: {mutation_id}")
+        ids.add(mutation_id)
+        if row["suite_id"] not in actual:
+            raise RuntimeError(f"unplanned mutation suite: {row['suite_id']}")
+        actual[row["suite_id"]] += 1
+        if row["status"] != "KILLED" or row["restore_status"] != "PASS":
+            raise RuntimeError(f"mutation not killed and restored: {row}")
+        if int(row["exit_code"]) == 0 or not row["named_test"]:
+            raise RuntimeError(f"mutation lacks a named failing command: {row}")
+        if sha256(root / row["source_file"]) != row["source_sha256"]:
+            raise RuntimeError(f"mutation source drifted: {row['source_file']}")
+    if actual != expected:
+        raise RuntimeError(f"mutation suite counts drift: expected={expected} actual={actual}")
+
+
 def check(root: Path) -> None:
     expected_artifacts = artifact_lines(root)
     stored_artifacts = (root / ARTIFACTS).read_text(encoding="utf-8").rstrip("\n").splitlines()
@@ -316,10 +353,11 @@ def check(root: Path) -> None:
     stored_raw = ["\t".join(row[:6]) for row in parse_obligations(stored)]
     if raw[1:] != stored_raw:
         raise RuntimeError("pkg/util/intset AST obligation set drifted")
-    if (root / RECEIPT).is_file():
-        actual = json.loads((root / RECEIPT).read_text(encoding="utf-8"))
-        if actual != receipt_contents(root, stored):
-            raise RuntimeError("pkg/util/intset content-addressed receipt drifted")
+    if not (root / RECEIPT).is_file():
+        raise RuntimeError("pkg/util/intset content-addressed receipt is missing")
+    actual = json.loads((root / RECEIPT).read_text(encoding="utf-8"))
+    if actual != receipt_contents(root, stored):
+        raise RuntimeError("pkg/util/intset content-addressed receipt drifted")
     print(f"pkg/util/intset lockdown: 4 artifacts, {len(stored_raw)} AST obligations, classifications exact")
 
 
