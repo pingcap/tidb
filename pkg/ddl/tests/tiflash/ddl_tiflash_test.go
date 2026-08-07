@@ -949,14 +949,14 @@ func TestTiFlashBatchRateLimiter(t *testing.T) {
 	}()
 	// We will force trigger its DDL to update schema cache.
 	tk.MustExec(fmt.Sprintf("create table tiflash_ddl_limit.t%v(z int)", threshold+1))
-	timeOut, err = execWithTimeout(t, tk, time.Millisecond*time.Duration(200*(loop+1)), "alter database tiflash_ddl_limit set tiflash replica 1")
+	timeOut, err = execWithTimeout(t, tk, time.Second*time.Duration(loop+1), "alter database tiflash_ddl_limit set tiflash replica 1")
 	require.NoError(t, err)
 	require.False(t, timeOut)
 	check(4, 4)
 
 	// However, forceCheck is true, so we will still enter try loop.
 	tk.MustExec(fmt.Sprintf("create table tiflash_ddl_limit.t%v(z int)", threshold+2))
-	timeOut, err = execWithTimeout(t, tk, time.Millisecond*200, "alter database tiflash_ddl_limit set tiflash replica 1")
+	timeOut, err = execWithTimeout(t, tk, time.Millisecond*50, "alter database tiflash_ddl_limit set tiflash replica 1")
 	require.NoError(t, err)
 	require.True(t, timeOut)
 	check(4, 5)
@@ -972,7 +972,7 @@ func TestTiFlashBatchRateLimiter(t *testing.T) {
 		logutil.DDLLogger().Info("session closed")
 	})
 	mu.Lock()
-	timeOut, err = execWithTimeout(t, tk, time.Second*2, "alter database tiflash_ddl_limit set tiflash replica 1")
+	timeOut, err = execWithTimeout(t, tk, time.Second*time.Duration(loop+1), "alter database tiflash_ddl_limit set tiflash replica 1")
 	mu.Unlock()
 	require.NoError(t, err)
 	require.False(t, timeOut)
