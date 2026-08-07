@@ -34,6 +34,8 @@ The observable behavioral fix is that `alloc_with_len(length, capacity)` panics 
   Evidence: source order is `slice := s.Alloc(capacity)` followed by `slice[:length:capacity]`; the Rust fix must validate after calling `alloc` so this side effect remains.
 - Observation: negative Go `int` inputs and signed-addition overflow are runtime panic boundaries outside Rust's `usize` input domain.
   Evidence: the probe printed distinct `makeslice`, negative full-slice, and `::-9223372036854775808` panic values; these are type-boundary evidence rather than synthetic Rust branches.
+- Observation: the initial Rust `std_allocator` evidence test never called `reset`, so a mutation that made the stateless reset panic would survive despite the inventory mapping `stdAllocator.Reset` to that test.
+  Evidence: mutation design review found no `allocator.reset()` call; the existing test was extended before any mutation run to reset and allocate again.
 
 ## Decision Log
 

@@ -313,6 +313,11 @@ mod tests {
         let slice = allocator.alloc_with_len(ALLOC_CAP_SMALL, ALLOC_CAP_MEDIUM);
         assert_eq!(slice.len(), ALLOC_CAP_SMALL);
         assert_eq!(slice.capacity(), ALLOC_CAP_MEDIUM);
+
+        allocator.reset();
+        let slice = allocator.alloc(ALLOC_CAP_SMALL);
+        assert_eq!(slice.len(), 0);
+        assert_eq!(slice.capacity(), ALLOC_CAP_SMALL);
     }
 
     #[test]
