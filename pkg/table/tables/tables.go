@@ -1520,6 +1520,8 @@ func (t *TableCommon) UseNewCollate() bool {
 	return t.encoder.UseNewCollate()
 }
 
+// canSkip reports whether a column can be omitted from the encoded row: it is
+// represented by the handle, has an absent NULL default, or is virtual generated.
 func (t *TableCommon) canSkip(col *table.Column, value *types.Datum) bool {
 	info := t.Meta()
 	if col.IsPKHandleColumn(info) {

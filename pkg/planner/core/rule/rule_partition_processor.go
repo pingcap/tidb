@@ -278,6 +278,7 @@ func (s *PartitionProcessor) getUsedKeyPartitions(ctx base.PlanContext,
 	pi := tbl.Meta().Partition
 	partExpr := tbl.(base.PartitionTable).PartitionExpr()
 	partCols, colLen := partExpr.GetPartColumnsForKeyPartition(columns)
+	// Copy the existing pruning state to preserve its captured collation mode.
 	pe := *partExpr.ForKeyPruning
 	pe.KeyPartCols = partCols
 	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(ctx.GetRangerCtx(), conds, partCols, colLen, ctx.GetSessionVars().RangeMaxSize)

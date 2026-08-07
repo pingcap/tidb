@@ -59,7 +59,8 @@ type index struct {
 	idxInfo  *model.IndexInfo
 	tblInfo  *model.TableInfo
 	phyTblID int64
-	// initNeedRestoreData lazily initializes `needRestoredData` from the index encoder.
+	// needRestoredData is initialized on first use. sync.Once makes the cached value
+	// safe for index instances shared by concurrent writers.
 	initNeedRestoreData sync.Once
 	needRestoredData    bool
 	encoder             codec.Encoder
