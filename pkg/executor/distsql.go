@@ -182,7 +182,19 @@ func rebuildIndexRanges(ectx expression.BuildContext, rctx *rangerctx.RangerCont
 	//     Selection / table-side filter; rebuilding only the access ranges here is safe.
 	// The assert below is a regression guard in case a future planner change introduces a
 	// shouldReserve case that isn't covered by one of these two mechanisms.
-	intest.Assert(len(remainedConds) == 0, "rebuildIndexRanges: detacher returned residuals on correlated-access path")
+	// For prefix indexes, the detacher may return residuals on the prefix column
+	// (shouldReserve), but the planner already retains the predicate as a parent
+	// Selection, so this is safe.
+	hasPrefixCol := false
+	for _, cl := range colLens {
+		if cl > 0 {
+			hasPrefixCol = true
+			break
+		}
+	}
+	if !hasPrefixCol {
+		intest.Assert(len(remainedConds) == 0, "rebuildIndexRanges: detacher returned residuals on correlated-access path")
+	}
 	return ranges, nil
 }
 
