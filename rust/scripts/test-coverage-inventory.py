@@ -243,6 +243,18 @@ class GoTest:
     kind: str  # top | suite | subtest
     file: str
     line: int
+    receiver: str
+
+    @property
+    def identity(self) -> str:
+        """Stable declaration identity within the owning Go package.
+
+        Test names are not package-unique: build-tagged or independently
+        owned source files can declare the same TestXxx name.  Keep the
+        source file and receiver in the key so none of those obligations is
+        silently overwritten in the coverage map.
+        """
+        return f"{self.pkg}/{self.file}\t{self.receiver}\t{self.name}"
 
 
 @dataclass
@@ -296,7 +308,7 @@ def load_go_declarations(cache: Path | None) -> dict[str, list[GoTest]]:
         pkg = os.path.dirname(path)
         label = name if receiver == "function" else f"{receiver}.{name}"
         by_pkg.setdefault(pkg, []).append(
-            GoTest(pkg, label, category, os.path.basename(path), int(lineno)))
+            GoTest(pkg, label, category, os.path.basename(path), int(lineno), receiver))
     return by_pkg
 
 
@@ -377,26 +389,26 @@ def match(go: list[GoTest], rust: list[str], refblob: str) -> dict:
     for g in go:
         gn = norm(g.name.split(".")[-1])
         if gn in by_norm:
-            res[g.name] = ("NAME-EXACT", by_norm[gn])
+            res[g.identity] = ("NAME-EXACT", by_norm[gn])
             continue
         cand = [r for k, r in by_norm.items()
                 if len(gn) >= 6 and (gn in k or (len(k) >= 6 and k in gn))]
         if cand:
-            res[g.name] = ("NAME-FUZZY", cand[0])
+            res[g.identity] = ("NAME-FUZZY", cand[0])
             continue
         gt = tokens(g.name.split(".")[-1])
         tok = [r for r in rust
                if len(gt) >= 2 and all(t in "_".join(tokens(r)) for t in gt)]
         if tok:
-            res[g.name] = ("NAME-TOKENS", tok[0])
+            res[g.identity] = ("NAME-TOKENS", tok[0])
         elif g.name.split(".")[-1] in refblob:
-            res[g.name] = ("REFERENCED", "(cited in Rust comment/doc only)")
+            res[g.identity] = ("REFERENCED", "(cited in Rust comment/doc only)")
         else:
-            res[g.name] = ("NONE", "")
+            res[g.identity] = ("NONE", "")
     return res
 
 
-def near_misses(matches: dict, rust: list[str]) -> dict:
+def near_misses(go: list[GoTest], matches: dict, rust: list[str]) -> dict:
     """For each `NONE`, the nearest Rust test: every Go word but one.
 
     This is a REVIEW QUEUE, not an evidence tier, and it is not counted
@@ -411,15 +423,16 @@ def near_misses(matches: dict, rust: list[str]) -> dict:
     """
     rust_tokens = {r: "_".join(tokens(r)) for r in rust}
     out = {}
-    for go_name, (evidence, _) in matches.items():
+    by_identity = {test.identity: test for test in go}
+    for identity, (evidence, _) in matches.items():
         if evidence != "NONE":
             continue
-        want = tokens(go_name.split(".")[-1])
+        want = tokens(by_identity[identity].name.split(".")[-1])
         if len(want) < 2:
             continue
         for r in rust:
             if sum(1 for t in want if t not in rust_tokens[r]) == 1:
-                out[go_name] = r
+                out[identity] = r
                 break
     return out
 
@@ -435,7 +448,7 @@ def run(cache: Path | None = None) -> list[PkgReport]:
         r.rust_tests, r.missing_rust = collect_rust(m)
         r.matches = match(r.go_tests, r.rust_tests, refblob)
         r.cited_files = cited.get(m.go_pkg, set())
-        r.near = near_misses(r.matches, r.rust_tests)
+        r.near = near_misses(r.go_tests, r.matches, r.rust_tests)
         reports.append(r)
     return reports
 
@@ -543,7 +556,7 @@ def render(reports: list[PkgReport]) -> str:
     A("tree. This is the work list.")
     A("")
     for r in sorted(reports, key=lambda x: (-x.m.risk, x.m.go_pkg)):
-        none = [g for g in r.go_tests if r.matches[g.name][0] == "NONE"]
+        none = [g for g in r.go_tests if r.matches[g.identity][0] == "NONE"]
         if not none:
             continue
         A(f"### `{r.m.go_pkg}` (risk {r.m.risk}) -- {len(none)} uncovered")
@@ -572,8 +585,10 @@ def render(reports: list[PkgReport]) -> str:
             continue
         A(f"### `{r.m.go_pkg}` (risk {r.m.risk}) -- {len(r.near)} to read")
         A("")
-        for go_name, rust_name in sorted(r.near.items()):
-            A(f"- `{go_name}` ~ `{rust_name}`")
+        by_identity = {test.identity: test for test in r.go_tests}
+        for identity, rust_name in sorted(r.near.items()):
+            go_test = by_identity[identity]
+            A(f"- `{go_test.name}` -- `{go_test.file}:{go_test.line}` ~ `{rust_name}`")
         A("")
     return "\n".join(L) + "\n"
 
