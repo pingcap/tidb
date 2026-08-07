@@ -30,12 +30,24 @@ import (
 type LeadingMatchKind uint8
 
 const (
+	// LeadingNoMatch indicates the operand does not match any hint.
 	LeadingNoMatch LeadingMatchKind = iota
+	// LeadingCanonicalOwner indicates the hint exactly matches the owner's
+	// canonical identity.
 	LeadingCanonicalOwner
+	// LeadingLegacyRaw indicates an unqualified table name matched under
+	// legacy compatibility rules.
 	LeadingLegacyRaw
+	// LeadingLegacyQualifiedConcrete indicates a qualified table reference
+	// matched under legacy compatibility rules.
 	LeadingLegacyQualifiedConcrete
+	// LeadingQualifiedOwnerVisible indicates a qualified hint matches a
+	// table visible in the owner query block.
 	LeadingQualifiedOwnerVisible
+	// LeadingLegacyPositionalOwnerVisible indicates the hint matches a
+	// table by its positional index in the join tree.
 	LeadingLegacyPositionalOwnerVisible
+	// LeadingAmbiguous indicates multiple candidates match the hint.
 	LeadingAmbiguous
 )
 
@@ -115,15 +127,19 @@ func ownerVisibleQualifiedIdentity(
 	facts plannerutil.OperandIdentityFacts,
 	aliases []h.SelectBlockAlias,
 	expectedQB int,
-) (*h.HintedTable, bool, bool) {
+) (
+	table *h.HintedTable,
+	found bool,
+	ambiguous bool,
+) {
 	identities := make(map[string]h.HintedTable)
 	for _, occurrence := range facts.Occurrences {
 		if occurrence.Kind != plannerutil.AliasCandidateOccurrence {
 			continue
 		}
 		identity := occurrence.Identity
-		switch {
-		case occurrence.StartQB == expectedQB:
+		switch occurrence.StartQB {
+		case expectedQB:
 			if identity.TblName.L == "" {
 				continue
 			}
@@ -150,8 +166,8 @@ func ownerVisibleQualifiedIdentity(
 		return nil, false, true
 	}
 	for _, identity := range identities {
-		copy := identity
-		return &copy, true, false
+		copiedIdentity := identity
+		return &copiedIdentity, true, false
 	}
 	return nil, false, false
 }
