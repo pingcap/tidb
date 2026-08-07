@@ -247,6 +247,12 @@ func TestFinishStmtError(t *testing.T) {
 	_, ok, err := drs.TryDetach()
 	require.True(t, ok)
 	require.Error(t, err)
+
+	// The cursor created for the detached record set should also be cleaned up on the error path.
+	tk.Session().GetCursorTracker().RangeCursor(func(_ cursor.Handle) bool {
+		require.Fail(t, "cursor should be closed when TryDetach fails after creating it")
+		return false
+	})
 }
 
 func TestDDLInsideTXNNotBlockMinStartTS(t *testing.T) {
