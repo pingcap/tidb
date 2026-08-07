@@ -396,6 +396,98 @@ func TestPartialIndexWithPlanCache(t *testing.T) {
 	})
 }
 
+func TestPartialUniqueIndexDoesNotImplyGlobalUniqueness(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, _, _ string) {
+		tk.MustExec("use test")
+		tk.MustExec(`create table partial_unique (
+			id bigint primary key,
+			domain varchar(253) not null,
+			deleted_at datetime null,
+			unique index uk_domain_active(domain) where deleted_at is null
+		)`)
+		tk.MustExec(`insert into partial_unique values
+			(1, 'example.com', null),
+			(2, 'example.com', '2026-01-01'),
+			(3, 'example.com', '2026-01-02'),
+			(4, 'example.com', '2026-01-03')`)
+
+		tk.MustQuery("select count(distinct domain) from partial_unique").Check(testkit.Rows("1"))
+		tk.MustQuery("explain format = 'plan_tree' select count(distinct domain) from partial_unique").
+			CheckContain("Agg")
+		tk.MustQuery("select distinct domain from partial_unique").Check(testkit.Rows("example.com"))
+		tk.MustQuery("explain format = 'plan_tree' select distinct domain from partial_unique").
+			CheckContain("Agg")
+		tk.MustQuery("select domain, count(*) from partial_unique group by domain").
+			Check(testkit.Rows("example.com 4"))
+		tk.MustQuery("explain format = 'plan_tree' select domain, count(*) from partial_unique group by domain").
+			CheckContain("Agg")
+
+		tk.MustExec("create table partial_outer (id bigint primary key, domain varchar(253) not null)")
+		tk.MustExec("insert into partial_outer values (1, 'example.com')")
+		tk.MustQuery(`select o.id
+			from partial_outer o
+			left join partial_unique i
+				on o.domain = i.domain and i.deleted_at is not null`).
+			Check(testkit.Rows("1", "1", "1"))
+		err := tk.QueryToErr(`select (
+				select i.id
+				from partial_unique i
+				where i.domain = o.domain and i.deleted_at is not null
+			)
+			from partial_outer o`)
+		require.EqualError(t, err, "[executor:1242]Subquery returns more than 1 row")
+		tk.MustQuery(`select o.id
+			from partial_outer o
+			left join partial_unique i on o.domain = i.domain
+			order by o.id
+			limit 2 offset 1`).
+			Check(testkit.Rows("1", "1"))
+
+		tk.MustExec("set @@session.sql_mode = 'ONLY_FULL_GROUP_BY'")
+		for _, enabled := range []string{"off", "on"} {
+			tk.MustExec("set @@session.tidb_enable_new_only_full_group_by_check = " + enabled)
+			tk.MustGetErrCode("select domain, id from partial_unique group by domain", 1055)
+		}
+
+		tk.MustQuery(`explain format = 'plan_tree'
+			select * from partial_unique use index(uk_domain_active)
+			where domain = 'example.com' and deleted_at is null`).
+			CheckContain("uk_domain_active")
+		tk.MustQuery(`select id from partial_unique use index(uk_domain_active)
+			where domain = 'example.com' and deleted_at is null`).
+			Check(testkit.Rows("1"))
+		tk.MustQuery(`explain format = 'plan_tree'
+			select * from partial_unique use index(uk_domain_active)
+			where domain = 'example.com'`).
+			CheckNotContain("uk_domain_active")
+		tk.MustQuery(`select id from partial_unique use index(uk_domain_active)
+			where domain = 'example.com' order by id`).
+			Check(testkit.Rows("1", "2", "3", "4"))
+
+		tk.MustExec(`create table partial_composite (
+			a int null,
+			b int not null,
+			c int,
+			unique index uk_ab_active(a, b) where c = 1
+		)`)
+		tk.MustExec("insert into partial_composite values (1, 1, 1), (1, 1, 2), (1, 1, 3), (null, 1, 1), (null, 1, 2)")
+		tk.MustQuery("select a, b, count(*) from partial_composite group by a, b order by a").
+			Check(testkit.Rows("<nil> 1 2", "1 1 3"))
+		tk.MustQuery("select a, b, count(*) from partial_composite where a is not null group by a, b").
+			Check(testkit.Rows("1 1 3"))
+
+		tk.MustExec("create table regular_keys (id int primary key, a int not null unique, payload int)")
+		tk.MustExec("insert into regular_keys values (1, 10, 100), (2, 20, 200)")
+		for _, enabled := range []string{"off", "on"} {
+			tk.MustExec("set @@session.tidb_enable_new_only_full_group_by_check = " + enabled)
+			tk.MustQuery("select a, payload from regular_keys group by a order by a").
+				Check(testkit.Rows("10 100", "20 200"))
+			tk.MustQuery("select id, payload from regular_keys group by id order by id").
+				Check(testkit.Rows("1 100", "2 200"))
+		}
+	})
+}
+
 func TestPartialIndexWithIndexPrune(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		tk.MustExec("use test")

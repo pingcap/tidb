@@ -1066,7 +1066,7 @@ func TableInfo2SchemaAndNames(ctx BuildContext, dbName ast.CIStr, tbl *model.Tab
 	}
 	keys := make([]KeyInfo, 0, len(tbl.Indices)+1)
 	for _, idx := range tbl.Indices {
-		if !idx.Unique || idx.State != model.StatePublic {
+		if !idx.Unique || idx.State != model.StatePublic || idx.HasCondition() {
 			continue
 		}
 		ok := true

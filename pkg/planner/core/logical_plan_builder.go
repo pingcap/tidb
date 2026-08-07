@@ -3585,7 +3585,7 @@ func checkColFuncDepend(
 	whereDependNames, joinDependNames map[*types.FieldName]*types.FieldName,
 ) bool {
 	for _, index := range tblInfo.Indices {
-		if !index.Unique {
+		if !index.Unique || index.HasCondition() {
 			continue
 		}
 		funcDepend := true
