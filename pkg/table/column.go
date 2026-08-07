@@ -343,7 +343,21 @@ func CastColumnValueWithStrictMode(val types.Datum, tp *types.FieldType) (casted
 // CastColumnValue casts a value based on column type with expression BuildContext
 func CastColumnValue(ctx expression.BuildContext, val types.Datum, col *model.ColumnInfo, returnErr, forceIgnoreTruncate bool) (casted types.Datum, err error) {
 	evalCtx := ctx.GetEvalCtx()
-	return castColumnValue(evalCtx.TypeCtx(), evalCtx.ErrCtx(), evalCtx.SQLMode(), val, &col.FieldType, col.Name.O, ctx.ConnectionID(), returnErr, forceIgnoreTruncate)
+	ft := &col.FieldType
+	useLegacyCollation := (ft.GetType() == mysql.TypeEnum || ft.GetType() == mysql.TypeSet) && !ctx.NewCollationEnabled()
+	if useLegacyCollation {
+		// Legacy ENUM/SET name matching is binary even when the field metadata has a non-binary collation.
+		ft = ft.Clone()
+		ft.SetCollate(charset.CollationBin)
+	}
+	casted, err = castColumnValue(
+		evalCtx.TypeCtx(), evalCtx.ErrCtx(), evalCtx.SQLMode(), val, ft,
+		col.Name.O, ctx.ConnectionID(), returnErr, forceIgnoreTruncate,
+	)
+	if useLegacyCollation {
+		casted.SetCollation(col.GetCollate())
+	}
+	return casted, err
 }
 
 // castColumnValue casts a value based on column type.

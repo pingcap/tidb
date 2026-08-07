@@ -1078,6 +1078,24 @@ func TestLocate(t *testing.T) {
 		require.NotNil(t, f)
 		require.Equalf(t, c["Want"][0], got, "[%d]: args: %v", i, c["Args"])
 	}
+
+	args := primitiveValsToConstants(ctx, []any{"A", "a", 1})
+	for _, arg := range args[:2] {
+		arg.GetType(ctx).SetCharset(charset.CharsetUTF8MB4)
+		arg.GetType(ctx).SetCollate("utf8mb4_general_ci")
+	}
+	f, err := instr.getFunction(ctx, args)
+	require.NoError(t, err)
+	require.IsType(t, &builtinLocate3ArgsUTF8Sig{}, f)
+	f.SetCharsetAndCollation(charset.CharsetUTF8MB4, "utf8mb4_general_ci")
+	got, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), got.GetInt64())
+	f.setPinnedCollator(getCollator(ctx, charset.CollationBin))
+	got, err = evalBuiltinFunc(f, ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, int64(0), got.GetInt64())
+
 	// 2. Test LOCATE with binary input
 	tbl2 := []struct {
 		Args []any

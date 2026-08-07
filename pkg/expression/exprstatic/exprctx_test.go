@@ -182,6 +182,7 @@ func TestMakeExprContextStatic(t *testing.T) {
 
 	ignorePath := []string{
 		"$.exprCtxState.evalCtx**",
+		"$.exprCtxState.newCollationEnabled",
 	}
 	deeptest.AssertRecursivelyNotEqual(t, obj, NewExprContext(),
 		deeptest.WithIgnorePath(ignorePath),
@@ -296,6 +297,7 @@ func TestExprCtxLoadSystemVars(t *testing.T) {
 		"$.planCacheTracker",
 		"$.columnIDAllocator",
 		"$.connectionID",
+		"$.newCollationEnabled",
 	}
 
 	// varsRelatedFields means the fields related to

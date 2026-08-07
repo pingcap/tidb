@@ -58,6 +58,7 @@ go_test(
         "//pkg/errctx",
         "//pkg/errno",
         "//pkg/expression",
+        "//pkg/expression/exprstatic",
         "//pkg/meta/model",
         "//pkg/parser/ast",
         "//pkg/parser/charset",

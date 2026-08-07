@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -331,6 +332,26 @@ func TestCastValue(t *testing.T) {
 	val, err = CastValue(ctx, types.NewDatum([]byte{0xE5, 0xA5, 0xBD, 0x81}), &colInfoS, false, false)
 	require.ErrorContains(t, err, "[table:1366]Incorrect string value '\\x81' for column ''")
 	require.Equal(t, "utf8mb4_general_ci", val.Collation())
+
+	t.Run("fixed legacy collation for enum and set", func(t *testing.T) {
+		original := collate.NewCollationEnabled()
+		collate.SetNewCollationEnabledForTest(true)
+		t.Cleanup(func() { collate.SetNewCollationEnabledForTest(original) })
+
+		exprCtx := exprstatic.NewExprContext(exprstatic.WithNewCollationEnabled(false))
+		for _, tp := range []byte{mysql.TypeEnum, mysql.TypeSet} {
+			colInfo := &model.ColumnInfo{FieldType: *types.NewFieldType(tp)}
+			colInfo.SetCharset(charset.CharsetUTF8MB4)
+			colInfo.SetCollate("utf8mb4_general_ci")
+			colInfo.SetElems([]string{"A", "a", "B"})
+
+			casted, err := CastColumnValue(exprCtx, types.NewStringDatum("a"), colInfo, false, false)
+			require.NoError(t, err)
+			require.Equal(t, "a", casted.GetString())
+			require.Equal(t, uint64(2), casted.GetUint64())
+			require.Equal(t, "utf8mb4_general_ci", casted.Collation())
+		}
+	})
 }
 
 func TestGetDefaultValue(t *testing.T) {
