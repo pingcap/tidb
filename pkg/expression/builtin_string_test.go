@@ -1091,7 +1091,7 @@ func TestLocate(t *testing.T) {
 	got, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, int64(1), got.GetInt64())
-	f.setCollator(getCollator(ctx, charset.CollationBin))
+	f.setPinnedCollator(getCollator(ctx, charset.CollationBin))
 	got, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, int64(0), got.GetInt64())

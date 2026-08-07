@@ -332,6 +332,8 @@ func (enc Encoder) EncodeKey(loc *time.Location, b []byte, v ...types.Datum) ([]
 // EncodeValue appends the encoded values to byte slice b, returning the appended
 // slice. It does not guarantee the order for comparison.
 func EncodeValue(loc *time.Location, b []byte, v ...types.Datum) ([]byte, error) {
+	// New collation only changes comparable string encoding through collation
+	// keys. Value encoding stores the original bytes, so the mode is irrelevant.
 	return encode(loc, b, v, false, false)
 }
 

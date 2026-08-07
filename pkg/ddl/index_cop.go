@@ -189,6 +189,8 @@ func buildDAGPB(ctx context.Context, exprCtx exprctx.BuildContext, distSQLCtx *d
 	}
 
 	var selectionPB *tipb.Executor
+	// TODO: Remove this fallback after expression-to-PB conversion can use the
+	// collation mode captured by the reorg task.
 	// Pushdown cannot preserve the reorg task's captured collation mode when it
 	// differs from the executor's global mode. Evaluate the condition in TiDB instead.
 	if selectExpr != nil && useNewCollate == collate.NewCollationEnabled() {

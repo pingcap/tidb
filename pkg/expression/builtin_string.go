@@ -1666,7 +1666,7 @@ func (b *builtinLocate3ArgsUTF8Sig) evalInt(ctx EvalContext, row chunk.Row) (int
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	if !b.collatorOverridden && collate.IsCICollation(b.collation) {
+	if !b.collatorPinned && collate.IsCICollation(b.collation) {
 		subStr = strings.ToLower(subStr)
 		str = strings.ToLower(str)
 	}
@@ -4254,7 +4254,7 @@ func (c *weightStringFunctionClass) getFunction(ctx BuildContext, args []Express
 	if err != nil {
 		return nil, err
 	}
-	bf.setCollator(getCollator(ctx, bf.args[0].GetType(ctx.GetEvalCtx()).GetCollate()))
+	bf.setPinnedCollator(getCollator(ctx, bf.args[0].GetType(ctx.GetEvalCtx()).GetCollate()))
 	types.SetBinChsClnFlag(bf.tp)
 	var sig builtinFunc
 	if padding == weightStringPaddingNull {

@@ -44,7 +44,7 @@ func (c *ilikeFunctionClass) getFunction(ctx BuildContext, args []Expression) (b
 	if err != nil {
 		return nil, err
 	}
-	bf.setCollator(getCollator(ctx, collate.ConvertAndGetBinCollation(bf.collation)))
+	bf.setPinnedCollator(getCollator(ctx, collate.ConvertAndGetBinCollation(bf.collation)))
 	bf.tp.SetFlen(1)
 	sig := &builtinIlikeSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_IlikeSig)
