@@ -8,6 +8,7 @@ go_library(
         "read.go",
         "save.go",
         "stats_read_writer.go",
+        "stats_table_sizes.go",
         "update.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/statistics/handle/storage",
