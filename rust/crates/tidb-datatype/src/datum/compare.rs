@@ -421,4 +421,40 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn test_null_not_equal_with_others_source_rows() {
+        let zero_time = Datum::new_time(
+            parse_datetime("0000-00-00 00:00:00", &chrono_tz::UTC, true, false)
+                .unwrap()
+                .time,
+        );
+        let zero_duration = Datum::new_duration(MySqlDuration::from_nanoseconds(0, 0).unwrap());
+        let datums = vec![
+            Datum::Int(0),
+            Datum::UInt(0),
+            Datum::Float32(0.0),
+            Datum::Real(0.0),
+            Datum::Real(f64::INFINITY),
+            Datum::new_decimal(Decimal::from_int(0)),
+            Datum::new_string(""),
+            Datum::new_collation_string("", Collation::Binary),
+            zero_duration,
+            zero_time,
+            Datum::new_bytes([]),
+            Datum::new_binary_literal(BinaryLiteral::from(Vec::<u8>::new())),
+            Datum::new_mysql_bit(BinaryLiteral::from(vec![0, 0, 0, 0])),
+            Datum::new_json(BinaryJSON::parse("null").unwrap()),
+            Datum::MinNotNull,
+            Datum::MaxValue,
+        ];
+
+        for datum in datums {
+            assert_ne!(
+                datum.compare(&Datum::Null, Collation::Binary).unwrap(),
+                std::cmp::Ordering::Equal,
+                "{datum:?}"
+            );
+        }
+    }
 }

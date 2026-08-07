@@ -651,7 +651,7 @@ mod tests {
         datums_to_string_no_error_smart, estimated_mem_usage, is_printable, sort_datums, Datum,
         DatumKind,
     };
-    use crate::{Charset, Collation, ConversionFlags, Decimal};
+    use crate::{parse_enum_value, Charset, Collation, ConversionFlags, Decimal, Time};
 
     /// Source: `pkg/types/datum.go` (`NewStringDatum`,
     /// `NewCollationStringDatum`, `GetString`, `GetBytes`, and `SetBytes`).
@@ -835,7 +835,7 @@ mod tests {
     }
 
     #[test]
-    fn source_clone_memory_string_and_null_rows() {
+    fn test_clone_datum_source_rows() {
         let row = vec![
             Datum::Int(72),
             Datum::UInt(72),
@@ -849,11 +849,51 @@ mod tests {
             cloned[2].as_raw_bytes().unwrap().as_ptr(),
             row[2].as_raw_bytes().unwrap().as_ptr()
         );
-        assert_eq!(estimated_mem_usage(&row, 0), 0);
+        assert_ne!(
+            cloned[3].as_raw_bytes().unwrap().as_ptr(),
+            row[3].as_raw_bytes().unwrap().as_ptr()
+        );
+        assert_ne!(
+            cloned[4].as_raw_bytes().unwrap().as_ptr(),
+            row[4].as_raw_bytes().unwrap().as_ptr()
+        );
+    }
+
+    #[test]
+    fn test_estimated_mem_usage_representation_rows() {
+        // The Go source row measures a 72-byte Datum, 40-byte MyDecimal,
+        // 8-byte Time, and 5,530 bytes for ten copies. Rust deliberately owns
+        // a different enum/heap representation, so exact byte parity is not a
+        // meaningful contract; pin both measured layouts and the Rust formula.
+        assert_eq!(
+            (
+                std::mem::size_of::<Datum>(),
+                std::mem::size_of::<Decimal>(),
+                std::mem::size_of::<Time>()
+            ),
+            (64, 64, 16)
+        );
+
+        let bytes = b"abcd";
+        let row = vec![
+            Datum::Int(1),
+            Datum::Real(1.0),
+            Datum::Float32(1.0),
+            Datum::new_string(bytes),
+            Datum::new_bytes(bytes),
+            Datum::new_decimal(Decimal::from_signed_literal("1234.1234")),
+            Datum::new_enum(parse_enum_value(&["a"], 1).unwrap(), Collation::Binary),
+        ];
         assert_eq!(
             estimated_mem_usage(&row, 10),
             row.iter().map(Datum::estimated_mem_usage).sum::<usize>() * 10
         );
+        assert_eq!(estimated_mem_usage(&row, 0), 0);
+        assert_ne!(estimated_mem_usage(&row, 10), 5_530);
+    }
+
+    #[test]
+    fn source_datums_to_string_and_null_rows() {
         assert!(datums_contain_null(&[Datum::Int(1), Datum::Null]));
         assert!(!datums_contain_null(&[Datum::Int(1), Datum::UInt(2)]));
 
@@ -871,11 +911,6 @@ mod tests {
             datums_to_string(&datums, true, false).unwrap(),
             "(1, 2, -3.1111112, 4.123, 6.6, \"abc\", -inf, +inf)"
         );
-        assert!(is_printable(b"abc"));
-        assert!(!is_printable(b"a\0bc"));
-        assert!(is_printable("abcé".as_bytes()));
-        assert!(!is_printable(&[b'a', b'b', b'c', 0xc3]));
-
         let mut sortable = vec![Datum::Int(3), Datum::Int(-1), Datum::Int(2)];
         sort_datums(&mut sortable).unwrap();
         assert_eq!(sortable, vec![Datum::Int(-1), Datum::Int(2), Datum::Int(3)]);
@@ -887,5 +922,17 @@ mod tests {
             datums_to_string_no_error_smart(&[Datum::new_string("a\0b")]),
             "0x610062"
         );
+    }
+
+    #[test]
+    fn test_is_printable_source_rows() {
+        for (input, expected) in [
+            (b"abc".as_slice(), true),
+            (b"a\0bc".as_slice(), false),
+            ("abcé".as_bytes(), true),
+            (&[b'a', b'b', b'c', 0xc3], false),
+        ] {
+            assert_eq!(is_printable(input), expected, "{input:?}");
+        }
     }
 }

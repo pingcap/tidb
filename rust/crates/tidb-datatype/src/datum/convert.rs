@@ -441,7 +441,7 @@ mod tests {
     }
 
     #[test]
-    fn source_to_int_float_decimal_and_bytes_rows() {
+    fn source_to_int_float_and_decimal_rows() {
         for (datum, expected) in [
             (Datum::new_string("0"), 0),
             (Datum::Int(0), 0),
@@ -476,6 +476,18 @@ mod tests {
             assert_eq!(datum.to_f64().unwrap().value, expected, "{datum:?}");
         }
 
+        // `MyDecimal.FromString` keeps the accepted `1.1` prefix and reports
+        // ErrTruncated for the trailing `.1`; it does not fall back to zero.
+        let malformed = Datum::new_string("1.1.1").to_decimal().unwrap();
+        assert_eq!(malformed.value, Decimal::from_signed_literal("1.1"));
+        assert_eq!(
+            malformed.event,
+            Some(crate::ScalarConversionEvent::Truncated)
+        );
+    }
+
+    #[test]
+    fn test_to_bytes_source_rows() {
         for (datum, expected) in [
             (Datum::Int(1), b"1".as_slice()),
             (Datum::new_decimal(Decimal::from_int(1)), b"1".as_slice()),
@@ -485,15 +497,6 @@ mod tests {
         ] {
             assert_eq!(datum.to_bytes().unwrap(), expected, "{datum:?}");
         }
-
-        // `MyDecimal.FromString` keeps the accepted `1.1` prefix and reports
-        // ErrTruncated for the trailing `.1`; it does not fall back to zero.
-        let malformed = Datum::new_string("1.1.1").to_decimal().unwrap();
-        assert_eq!(malformed.value, Decimal::from_signed_literal("1.1"));
-        assert_eq!(
-            malformed.event,
-            Some(crate::ScalarConversionEvent::Truncated)
-        );
     }
 
     /// `Datum::to_mysql_json_with_source_type`: a BINARY-charset argument

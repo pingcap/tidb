@@ -1100,7 +1100,7 @@ mod tests {
     }
 
     #[test]
-    fn test_fix_days_source_rows() {
+    fn test_get_fix_days_source_rows() {
         for (years, months, days, original, expected) in [
             (
                 2_000,

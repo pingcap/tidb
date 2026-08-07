@@ -1512,15 +1512,25 @@ mod tests {
     }
 
     #[test]
-    fn source_integer_uint32_and_bit_tables() {
+    fn test_to_uint32_source_rows() {
         let uint32 = FieldType::new(FieldTypeCode::Long).with_unsigned(true);
-        for (input, expected, overflow) in [
+        for (input, expected, overflow) in vec![
             (Datum::Int(5_000_000_000), u32::MAX as u64, true),
             (Datum::Int(-1), u32::MAX as u64, true),
             (Datum::new_string("5000000000"), u32::MAX as u64, true),
             (Datum::Int(12_345), 12_345, false),
             (Datum::Int(0), 0, false),
             (Datum::Int(2_147_483_648), 2_147_483_648, false),
+            (
+                Datum::new_enum(parse_enum_value(&["a"], 1).unwrap(), Collation::Binary),
+                1,
+                false,
+            ),
+            (
+                Datum::new_set(parse_set_value(&["a"], 1).unwrap(), Collation::Binary),
+                1,
+                false,
+            ),
         ] {
             let converted = input
                 .convert_to(&uint32, crate::DEFAULT_STATEMENT_FLAGS)
@@ -1528,7 +1538,69 @@ mod tests {
             assert_eq!(converted.value, Datum::UInt(expected));
             assert_eq!(converted.event.is_some(), overflow);
         }
+    }
 
+    #[test]
+    fn test_to_json_source_rows() {
+        let target = FieldType::new(FieldTypeCode::Json);
+        let timestamp = crate::parse_time(
+            "2011-11-10 11:11:11.111111",
+            TimeType::Timestamp,
+            6,
+            false,
+            true,
+            false,
+            &chrono_tz::UTC,
+        )
+        .unwrap()
+        .time;
+
+        for (input, expected) in vec![
+            (
+                Datum::Int(1),
+                BinaryJSON::from_typed_value(&crate::BinaryJSONValue::Int64(1)).unwrap(),
+            ),
+            (
+                Datum::Real(2.0),
+                BinaryJSON::from_typed_value(&crate::BinaryJSONValue::Float64(2.0)).unwrap(),
+            ),
+            (
+                Datum::new_string("\"hello, 世界\""),
+                BinaryJSON::parse("\"hello, 世界\"").unwrap(),
+            ),
+            (
+                Datum::new_string("[1, 2, 3]"),
+                BinaryJSON::parse("[1, 2, 3]").unwrap(),
+            ),
+            (Datum::new_string("{}"), BinaryJSON::parse("{}").unwrap()),
+            (Datum::new_time(timestamp), BinaryJSON::from_time(timestamp)),
+            (
+                Datum::new_string(r#"{"a": "9223372036854775809"}"#),
+                BinaryJSON::parse(r#"{"a": "9223372036854775809"}"#).unwrap(),
+            ),
+        ] {
+            let converted = input
+                .convert_to(&target, crate::DEFAULT_STATEMENT_FLAGS)
+                .unwrap();
+            assert_eq!(converted.value, Datum::new_json(expected), "{input:?}");
+            assert_eq!(converted.event, None, "{input:?}");
+        }
+
+        for input in [
+            Datum::new_binary_literal(BinaryLiteral::from(vec![0x81])),
+            Datum::new_string("hello, 世界"),
+        ] {
+            assert!(
+                input
+                    .convert_to(&target, crate::DEFAULT_STATEMENT_FLAGS)
+                    .is_err(),
+                "{input:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_string_to_mysql_bit_source_rows() {
         for (text, flen, expected, truncated) in [
             ("true", 1, vec![1], true),
             ("true", 32, b"true".to_vec(), false),
@@ -1554,12 +1626,63 @@ mod tests {
     }
 
     #[test]
-    fn source_max_min_and_reverse_bound_rows() {
+    fn test_produce_dec_with_specified_tp_source_rows() {
+        for (input, flen, scale, expected, overflow, rounded) in [
+            ("0.0000", 4, 3, "0.000", false, false),
+            ("0.0001", 4, 3, "0.000", false, true),
+            ("123", 8, 5, "123.00000", false, false),
+            ("-123", 8, 5, "-123.00000", false, false),
+            ("123.899", 5, 2, "123.90", false, true),
+            ("-123.899", 5, 2, "-123.90", false, true),
+            ("123.899", 6, 2, "123.90", false, true),
+            ("-123.899", 6, 2, "-123.90", false, true),
+            ("123.99", 4, 1, "124.0", false, true),
+            ("123.99", 3, 0, "124", false, true),
+            ("-123.99", 3, 0, "-124", false, true),
+            ("123.99", 3, 1, "99.9", true, false),
+            ("-123.99", 3, 1, "-99.9", true, false),
+            ("99.9999", 5, 3, "99.999", true, false),
+            ("-99.9999", 5, 3, "-99.999", true, false),
+            ("99.9999", 6, 3, "100.000", false, true),
+            ("-99.9999", 6, 3, "-100.000", false, true),
+        ] {
+            let target = FieldType::new(FieldTypeCode::NewDecimal)
+                .with_flen(flen)
+                .with_decimal(scale);
+            let converted = Datum::new_decimal(Decimal::from_signed_literal(input))
+                .convert_to(&target, crate::DEFAULT_STATEMENT_FLAGS)
+                .unwrap();
+            assert_eq!(
+                converted.value.as_decimal().unwrap().to_string(),
+                expected,
+                "{input} DECIMAL({flen},{scale})"
+            );
+            assert_eq!(
+                matches!(converted.event, Some(ScalarConversionEvent::Overflow(_))),
+                overflow,
+                "overflow: {input} DECIMAL({flen},{scale})"
+            );
+            assert_eq!(
+                converted.event == Some(ScalarConversionEvent::RoundedToScale),
+                rounded,
+                "rounded: {input} DECIMAL({flen},{scale})"
+            );
+        }
+    }
+
+    #[test]
+    fn test_change_reverse_result_by_upper_lower_bound_source_rows() {
         let unsigned = FieldType::new(FieldTypeCode::LongLong).with_unsigned(true);
         assert_eq!(get_min_value(&unsigned), Datum::UInt(0));
         assert_eq!(get_max_value(&unsigned), Datum::UInt(u64::MAX));
 
-        for (input, target, rounding, expected) in [
+        let double = FieldType::new(FieldTypeCode::Double)
+            .with_flen(23)
+            .with_decimal(UNSPECIFIED_LENGTH);
+        let decimal = FieldType::new(FieldTypeCode::NewDecimal)
+            .with_flen(30)
+            .with_decimal(3);
+        for (input, target, rounding, expected) in vec![
             (
                 Datum::Int(1),
                 unsigned.clone(),
@@ -1586,31 +1709,69 @@ mod tests {
             ),
             (
                 Datum::Int(1),
-                FieldType::new(FieldTypeCode::Double)
-                    .with_flen(22)
-                    .with_decimal(UNSPECIFIED_LENGTH),
+                double.clone(),
                 RoundingType::Ceiling,
                 Datum::Real(2.0),
             ),
             (
                 Datum::Int(1),
-                FieldType::new(FieldTypeCode::Double)
-                    .with_flen(22)
-                    .with_decimal(UNSPECIFIED_LENGTH),
+                double.clone(),
                 RoundingType::Floor,
                 Datum::Real(1.0),
             ),
+            (
+                Datum::Int(i64::MAX),
+                double.clone(),
+                RoundingType::Ceiling,
+                get_max_value(&double),
+            ),
+            (
+                Datum::Int(i64::MAX),
+                double,
+                RoundingType::Floor,
+                Datum::Real(i64::MAX as f64),
+            ),
+            (
+                Datum::Int(1),
+                decimal.clone(),
+                RoundingType::Ceiling,
+                Datum::new_decimal(Decimal::from_int(2)),
+            ),
+            (
+                Datum::Int(1),
+                decimal.clone(),
+                RoundingType::Floor,
+                Datum::new_decimal(Decimal::from_int(1)),
+            ),
+            (
+                Datum::Int(i64::MAX),
+                decimal.clone(),
+                RoundingType::Ceiling,
+                get_max_value(&decimal),
+            ),
+            (
+                Datum::Int(i64::MAX),
+                decimal,
+                RoundingType::Floor,
+                Datum::new_decimal(Decimal::from_int(i64::MAX)),
+            ),
         ] {
+            let converted = change_reverse_result_by_bound(
+                &target,
+                &input,
+                rounding,
+                crate::DEFAULT_STATEMENT_FLAGS,
+            )
+            .unwrap();
+            assert_eq!(converted.event, None, "{input:?} -> {target:?}");
             assert_eq!(
-                change_reverse_result_by_bound(
-                    &target,
-                    &input,
-                    rounding,
-                    crate::DEFAULT_STATEMENT_FLAGS
-                )
-                .unwrap()
-                .value,
-                expected
+                converted
+                    .value
+                    .compare(&expected, Collation::Binary)
+                    .unwrap(),
+                std::cmp::Ordering::Equal,
+                "{input:?} -> {target:?}: {:?} versus {expected:?}",
+                converted.value
             );
         }
     }
