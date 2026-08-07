@@ -89,6 +89,8 @@
       // cte hint
       "explain format = 'plan_tree' select /*+ qb_name(qb_v7, v7), merge(@qb_v7) */ * from v7;",
       "explain format = 'plan_tree' select /*+ qb_name(qb_v8, v8), merge(@qb_v8) */ * from v8;",
+      "explain format = 'plan_tree' with tt as (select * from t1 where a=2 limit 100) select /*+ qb_name(my_select, tt@sel_1), ignore_index(t1@my_select, idx_a) */ * from tt;",
+      "explain format = 'plan_tree' with tt as (select * from t1 where a=2 limit 100) select /*+ qb_name(my_select_i_am_unused, tt@sel_1), ignore_index(t1@my_select, idx_a) */ * from tt;",
 
       // agg to cop hint
       "explain format = 'plan_tree' select /*+ qb_name(qb_v9, v9), AGG_TO_COP(@qb_v9) */ * from v9;",
