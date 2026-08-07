@@ -31,6 +31,8 @@ pub mod index;
 pub mod job;
 pub mod job_enums;
 pub mod masking_policy;
+#[cfg(test)]
+mod masking_policy_go_inventory;
 pub mod partition;
 pub mod placement;
 pub mod reorg;
@@ -58,7 +60,9 @@ pub use job::{
 pub use job_enums::{
     get_job_ver_in_use, modify_type_to_string, set_job_ver_in_use, JobState, JobVersion,
 };
-pub use masking_policy::{MaskingPolicyInfo, MaskingPolicyStatus};
+pub use masking_policy::{
+    clone_masking_policy_info, MaskingPolicyInfo, MaskingPolicyStatus, MaskingPolicyType,
+};
 pub use partition::{PartitionDefinition, PartitionInfo, PartitionState, UpdateIndexInfo};
 pub use placement::{PlacementSettings, PolicyInfo, PolicyRefInfo};
 pub use reorg::{BackfillState, ReorgStage, ReorgType};
