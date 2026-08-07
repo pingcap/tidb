@@ -798,7 +798,12 @@ func (a *ExecStmt) handleStmtForeignKeyTrigger(ctx context.Context, e exec.Execu
 		// then the fk cascade executor can't read the mem-buffer changed by the ExecStmt.
 		a.Ctx.StmtCommit(ctx)
 	}
-	err := a.handleForeignKeyTrigger(ctx, e, 1)
+	// ExplainExec owns result rendering, while its analyze DML owns the FK trigger state.
+	fkExecutor := e
+	if explain, ok := e.(*ExplainExec); ok && explain.getAnalyzeExecWithForeignKeyTrigger() != nil {
+		fkExecutor = explain.analyzeExec
+	}
+	err := a.handleForeignKeyTrigger(ctx, fkExecutor, 1)
 	if err != nil {
 		err1 := a.handleFKTriggerError(stmtCtx)
 		if err1 != nil {
@@ -1466,6 +1471,8 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 	if err = a.openExecutor(ctx, e); err != nil {
 		return nil, err
 	}
+	// Prepare a fresh FK cascade savepoint for the retried statement attempt.
+	a.prepareFKCascadeContext(e)
 	return e, nil
 }
 
