@@ -77,6 +77,66 @@ func TestEmbedTextBuiltinNullAndErrors(t *testing.T) {
 	ctx := mock.NewContext()
 	withMockDefaultEmbedFn(t)
 	enableNonStarterDeployModeForEmbedTest(t)
+	evalCtx := ctx.GetExprCtx().GetEvalCtx()
+
+	_, _, err := EvalEmbedTextArgs(evalCtx, chunk.Row{}, nil)
+	require.ErrorContains(t, err, "invalid EMBED_TEXT() usage")
+	_, _, err = EvalEmbedTextArgs(evalCtx, chunk.Row{}, []Expression{
+		stringConst("mock/json"), stringConst("[1,2,3]"), stringConst("{}"), stringConst("extra"),
+	})
+	require.ErrorContains(t, err, "invalid EMBED_TEXT() usage")
+
+	embedArgs, isNull, err := EvalEmbedTextArgs(evalCtx, chunk.Row{}, []Expression{
+		stringConst("mock/json"),
+		stringConst("[1,2,3]"),
+		stringConst(`{"plus":1,"plus@search":10}`),
+	})
+	require.NoError(t, err)
+	require.False(t, isNull)
+	require.Equal(t, &EmbedTextArgs{
+		Model: "mock/json",
+		Text:  "[1,2,3]",
+		Opts:  map[string]any{"plus": float64(1)},
+	}, embedArgs)
+
+	embedArgs, isNull, err = EvalEmbedTextArgs(evalCtx, chunk.Row{}, []Expression{
+		stringConst("mock/json"), stringConst("[1,2,3]"), nullStringConst(),
+	})
+	require.NoError(t, err)
+	require.False(t, isNull)
+	require.Nil(t, embedArgs.Opts)
+
+	_, isNull, err = EvalEmbedTextArgs(evalCtx, chunk.Row{}, []Expression{
+		nullStringConst(), stringConst("[1,2,3]"),
+	})
+	require.NoError(t, err)
+	require.True(t, isNull)
+	_, isNull, err = EvalEmbedTextArgs(evalCtx, chunk.Row{}, []Expression{
+		stringConst("mock/json"), nullStringConst(),
+	})
+	require.NoError(t, err)
+	require.True(t, isNull)
+
+	_, _, err = EvalEmbedTextArgs(evalCtx, chunk.Row{}, []Expression{
+		&MockExpr{i: "mock/json", err: types.ErrOverflow}, stringConst("[1,2,3]"),
+	})
+	require.ErrorIs(t, err, types.ErrOverflow)
+	_, _, err = EvalEmbedTextArgs(evalCtx, chunk.Row{}, []Expression{
+		stringConst("mock/json"), &MockExpr{i: "[1,2,3]", err: types.ErrOverflow},
+	})
+	require.ErrorIs(t, err, types.ErrOverflow)
+	_, _, err = EvalEmbedTextArgs(evalCtx, chunk.Row{}, []Expression{
+		stringConst("mock/json"), stringConst("[1,2,3]"), &MockExpr{i: "{}", err: types.ErrOverflow},
+	})
+	require.ErrorIs(t, err, types.ErrOverflow)
+
+	_, _, err = EvalEmbedTextArgsFromExpr(evalCtx, chunk.Row{}, stringConst("not a function"))
+	require.ErrorContains(t, err, "expects EMBED_TEXT()")
+	_, _, err = EvalEmbedTextArgsFromExpr(evalCtx, chunk.Row{}, &ScalarFunction{})
+	require.ErrorContains(t, err, "expects EMBED_TEXT()")
+
+	_, err = EvalEmbedTextArgsToDatum(nil, nil, &EmbedTextArgs{})
+	require.ErrorContains(t, err, "requires session context")
 
 	fn, err := NewFunction(
 		ctx,
@@ -86,12 +146,22 @@ func TestEmbedTextBuiltinNullAndErrors(t *testing.T) {
 		stringConst("[1,2,3]"),
 	)
 	require.NoError(t, err)
-	_, _, err = fn.EvalVectorFloat32(ctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
+	parsedArgs, isNull, err := EvalEmbedTextArgsFromExpr(evalCtx, chunk.Row{}, fn)
+	require.NoError(t, err)
+	require.False(t, isNull)
+	require.Equal(t, "mock/json", parsedArgs.Model)
+	require.Equal(t, "[1,2,3]", parsedArgs.Text)
+
+	_, _, err = fn.EvalVectorFloat32(evalCtx, chunk.Row{})
+	require.ErrorContains(t, err, "EMBED_TEXT is only supported in starter deployment mode")
+	_, err = EvalEmbedTextArgsToDatum(nil, ctx, parsedArgs)
 	require.ErrorContains(t, err, "EMBED_TEXT is only supported in starter deployment mode")
 
 	if !enableStarterDeployModeForEmbedTest(t) {
 		return
 	}
+	_, err = EvalEmbedTextArgsToDatum(nil, ctx, nil)
+	require.ErrorContains(t, err, "invalid EMBED_TEXT() usage")
 	fn, err = NewFunction(
 		ctx,
 		ast.EmbedText,
@@ -100,7 +170,7 @@ func TestEmbedTextBuiltinNullAndErrors(t *testing.T) {
 		stringConst("[1,2,3]"),
 	)
 	require.NoError(t, err)
-	_, isNull, err := fn.EvalVectorFloat32(ctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
+	_, isNull, err = fn.EvalVectorFloat32(ctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, isNull)
 

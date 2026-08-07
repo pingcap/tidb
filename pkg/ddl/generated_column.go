@@ -257,6 +257,9 @@ func checkModifyGeneratedColumn(sctx sessionctx.Context, schemaName ast.CIStr, t
 		if err := checkIllegalFn4Generated(newCol.Name.L, typeColumn, newCol.GeneratedExpr.Internal()); err != nil {
 			return errors.Trace(err)
 		}
+		if err := checkEmbedTextGeneratedColumn(newCol.Name.L, newCol.GeneratedExpr.Internal(), newCol.GeneratedStored); err != nil {
+			return errors.Trace(err)
+		}
 
 		// rule 4.
 		_, dependColNames, err := findDependedColumnNames(schemaName, tbl.Meta().Name, newColDef)
@@ -268,6 +271,9 @@ func checkModifyGeneratedColumn(sctx sessionctx.Context, schemaName ast.CIStr, t
 			if err := checkAutoIncrementRef(newColDef.Name.Name.L, dependColNames, tbl.Meta()); err != nil {
 				return errors.Trace(err)
 			}
+		}
+		if depCol, ok := findEmbedTextDependency(dependColNames, tbl.Cols()); ok {
+			return embedTextDependencyErr(newCol.Name.L, depCol)
 		}
 
 		// rule 5.
@@ -287,6 +293,7 @@ type illegalFunctionChecker struct {
 	hasCastArrayFunc      bool
 	disallowCastArrayFunc bool
 	otherErr              error
+	allowEmbedText        bool
 }
 
 func (c *illegalFunctionChecker) Enter(inNode ast.Node) (outNode ast.Node, skipChildren bool) {
@@ -299,7 +306,7 @@ func (c *illegalFunctionChecker) Enter(inNode ast.Node) (outNode ast.Node, skipC
 		}
 		// Blocked functions & non-builtin functions is not allowed
 		_, isFunctionBlocked := expression.IllegalFunctions4GeneratedColumns[node.FnName.L]
-		if isFunctionBlocked || !expression.IsFunctionSupported(node.FnName.L) {
+		if (isFunctionBlocked && !(c.allowEmbedText && node.FnName.L == ast.EmbedText)) || !expression.IsFunctionSupported(node.FnName.L) {
 			c.hasIllegalFunc = true
 			return inNode, true
 		}
@@ -352,7 +359,10 @@ func checkIllegalFn4Generated(name string, genType int, expr ast.ExprNode) error
 	if expr == nil {
 		return nil
 	}
-	var c illegalFunctionChecker
+	// All generated-column call sites apply checkEmbedTextGeneratedColumn next,
+	// which admits only the dedicated STORED EMBED_TEXT form. Functional
+	// indexes keep EMBED_TEXT blocked by the general illegal-function list.
+	c := illegalFunctionChecker{allowEmbedText: genType == typeColumn}
 	expr.Accept(&c)
 	if c.hasIllegalFunc {
 		switch genType {
@@ -440,4 +450,39 @@ func checkExpressionIndexAutoIncrement(name string, dependencies map[string]stru
 		}
 	}
 	return nil
+}
+
+func checkEmbedTextGeneratedColumn(name string, expr ast.ExprNode, isStored bool) error {
+	if !expression.ContainsEmbedTextFunc(expr) {
+		return nil
+	}
+	if err := expression.CheckEmbedTextAllowed(); err != nil {
+		return dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStack(err.Error())
+	}
+	if !expression.IsEmbedTextFuncCall(expr) {
+		return dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStack("using EMBED_TEXT() as a nested expression inside other functions or expressions")
+	}
+	if !isStored {
+		return dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStack("using EMBED_TEXT() in a virtual generated column")
+	}
+	if _, err := expression.ExtractEmbedTextInfo(expr); err != nil {
+		return dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStack("EMBED_TEXT() usage in generated column '%s': %v", name, err)
+	}
+	return nil
+}
+
+func findEmbedTextDependency(dependColNames map[string]struct{}, cols []*table.Column) (string, bool) {
+	for _, col := range cols {
+		if _, ok := dependColNames[col.Name.L]; !ok {
+			continue
+		}
+		if col.IsGenerated() && expression.IsEmbedTextFuncCall(col.GeneratedExpr.Internal()) {
+			return col.Name.L, true
+		}
+	}
+	return "", false
+}
+
+func embedTextDependencyErr(colName, depCol string) error {
+	return dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStack("generated column '%s' depends on generated column '%s' that uses EMBED_TEXT()", colName, depCol)
 }

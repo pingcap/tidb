@@ -426,6 +426,7 @@ go_test(
     shard_count = 50,
     deps = [
         "//pkg/config",
+        "//pkg/config/deploymode",
         "//pkg/config/kerneltype",
         "//pkg/ddl",
         "//pkg/ddl/label",
@@ -455,6 +456,7 @@ go_test(
         "//pkg/expression/exprstatic",
         "//pkg/extension",
         "//pkg/extworkload",
+        "//pkg/inference",
         "//pkg/infoschema",
         "//pkg/keyspace",
         "//pkg/kv",

@@ -107,6 +107,7 @@ var IllegalFunctions4GeneratedColumns = map[string]struct{}{
 	ast.IsFreeLock:           {},
 	ast.IsUsedLock:           {},
 	ast.JSONMerge:            {},
+	// DDL selectively allows EMBED_TEXT only for validated STORED generated columns.
 	ast.EmbedText:            {},
 	ast.LastInsertId:         {},
 	ast.LoadFile:             {},
