@@ -843,10 +843,11 @@ func TestGlobalIndexStatistics(t *testing.T) {
 	h := dom.StatsHandle()
 	originLease := h.Lease()
 	defer h.SetLease(originLease)
-	h.SetLease(time.Millisecond)
+	h.SetLease(time.Duration(0))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
+	tk.MustExec("set @@session.tidb_stats_load_sync_wait = 1")
 
 	// analyze table t
 	tk.MustExec("drop table if exists t")
