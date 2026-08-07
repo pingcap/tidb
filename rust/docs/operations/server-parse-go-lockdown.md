@@ -46,8 +46,12 @@ Rust symbol. This is a source-file lockdown only; it does not claim the whole
 - [x] (2026-08-07) Ported all reachable rules and checked in an inventory for
   eight functions, 82 outcomes, 11 attributed declarations, and both owning
   Bazel support artifacts, with drift, receipt, and compile-symbol gates.
-- [ ] Mutation-probe every independent rule family in a disposable worktree at
-  an immutable provisional SHA; strengthen any surviving test.
+- [x] (2026-08-07) Killed 33 independent mutations spanning fetch framing,
+  endian and cap; header boundary and offsets; auth modes and every lenenc
+  width; optional database/plugin/attrs/zstd fields; raw bytes; policy,
+  warning, duplicate, reserved-key, metric, and concurrency rules; source
+  drift; and PORTED-symbol disappearance. One initial reserved-key mutation
+  survived and the test was strengthened before the rerun killed it.
 - [ ] Run Ready validation, commit the complete unit, independently gate that
   exact SHA in a clean worktree, verify ratchets directly, dual-push, and
   reclaim only this unit's artifacts.
@@ -89,6 +93,13 @@ Rust symbol. This is a source-file lockdown only; it does not claim the whole
   `continue`; accumulated size is monotonic, so every later iteration also
   takes the earlier overflow branch and continues before line 265.
 
+- Observation: the first reserved `_truncated` mutation survived because the
+  test's limit rejected the client marker itself before a later overflow.
+  Evidence: replacing `insert` with `or_insert` still passed at limit 20. At
+  limit 25 the client marker is admitted, the second pair triggers truncation,
+  and the same mutation fails because Go requires the server's value `18` to
+  overwrite `client-value`.
+
 ## Decision Log
 
 - Decision: use one atomic source-file lockdown even though the Go file lands
@@ -119,10 +130,13 @@ Rust symbol. This is a source-file lockdown only; it does not claim the whole
 
 ## Outcomes & Retrospective
 
-The lockdown is in progress. The fetch cap is the first measured oracle
-correction. No source-completeness, ratchet, Ready, or final-SHA claim is made
-until all eight functions, 82 control outcomes, source-owned tests, and
-mutations are closed.
+The source-completeness and mutation phases are closed: all eight functions,
+82 control outcomes, 11 attributed test/support declarations, and two build
+artifacts have verdicts, and all 33 final mutations die. Rust corrected the
+fetch cap, default attribute policy/metrics, malformed optional-attribute
+recovery, unterminated plugin handling, NULL semantics, and byte-string
+authority. Final Ready, clean-worktree, ratchet, and dual-push gates remain;
+no final-SHA claim is made yet.
 
 ## Context and Orientation
 
@@ -253,9 +267,15 @@ agent's crate, or delete another unit's artifacts.
 
 ## Artifacts and Notes
 
-Baseline Go source tests passed. Baseline Rust response tests passed. The fetch
-cap regression initially failed at request 1025 and passed after the decoder
-fix. One accidental zero-test filter is recorded as discarded evidence.
+Baseline Go source tests passed. A disposable Go overlay independently pinned
+invalid user bytes, unterminated plugin behavior, NULL and one-byte auth
+markers, malformed decoded attributes, and truncation metrics. The fetch-cap
+regression initially failed at request 1025 and passed after the decoder fix.
+Four parser divergences failed together before the response/parser correction
+and passed afterward. One accidental zero-test filter is recorded as discarded
+evidence. The first affected-crate all-target run was sandbox-blocked at four
+loopback socket binds; the identical permission-enabled rerun passed 448 tests
+with one pre-existing ignored protocol test.
 
 ## Interfaces and Dependencies
 
