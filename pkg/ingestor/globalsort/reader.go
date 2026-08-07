@@ -16,10 +16,12 @@ package globalsort
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/hex"
 	goerrors "errors"
 	"io"
+	"slices"
 	"time"
 
 	"github.com/docker/go-units"
@@ -33,11 +35,58 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
+	"golang.org/x/sync/semaphore"
 )
 
-// in readAllData, expected concurrency less than this value will not use
-// concurrent reader.
-var readAllDataConcThreshold = uint64(4)
+const maxReadersPerCore = 16
+
+var maxConcurrency = 32
+
+// assignReaderMemory charges each file whole buffers of its own byte range. The
+// budget is shared among the files that can fill at least one buffer, because
+// having more of them decoding at once is worth more than reading any one of them
+// deeper, and whatever that flooring leaves over is handed back out a buffer at a
+// time. A range too small for one buffer is read as a plain stream and costs
+// nothing.
+func assignReaderMemory(rangeSizes []uint64, memoryLimit int64) []int64 {
+	bufSize := int64(simplesst.ConcurrentReaderBufferSizePerConc)
+	contenders := int64(0)
+	for _, size := range rangeSizes {
+		if size >= uint64(bufSize) {
+			contenders++
+		}
+	}
+	hardLimit := min(int64(maxConcurrency)*bufSize, memoryLimit)
+	perFileLimit := hardLimit
+	if contenders > 1 {
+		perFileLimit = min(perFileLimit, max(memoryLimit/contenders, bufSize))
+	}
+
+	sizes := make([]int64, len(rangeSizes))
+	spare := memoryLimit
+	for i, size := range rangeSizes {
+		sizes[i] = int64(min(size, uint64(perFileLimit))) / bufSize * bufSize
+		spare -= sizes[i]
+	}
+	for spare >= bufSize {
+		handedOut := false
+		for i, size := range rangeSizes {
+			if spare < bufSize {
+				break
+			}
+			if sizes[i]+bufSize > int64(min(size, uint64(hardLimit))) {
+				continue
+			}
+			sizes[i] += bufSize
+			spare -= bufSize
+			handedOut = true
+		}
+		if !handedOut {
+			break
+		}
+	}
+	return sizes
+}
 
 func readAllData(
 	ctx context.Context,
@@ -47,6 +96,7 @@ func readAllData(
 	startOffsets, estimatedEndOffsets []uint64,
 	smallBlockBufPool *membuf.Pool,
 	largeBlockBufPool *membuf.Pool,
+	concurrency int,
 	output *memKVsAndBuffers,
 ) (err error) {
 	task := log.BeginTask(logutil.Logger(ctx), "read all data")
@@ -76,29 +126,25 @@ func readAllData(
 		task.End(zap.ErrorLevel, err)
 	}()
 
-	concurrences := make([]uint64, len(statsFiles))
-	totalFileSize := uint64(0)
-	bufSize := uint64(simplesst.ConcurrentReaderBufferSizePerConc)
-	for i := range statsFiles {
-		size := estimatedEndOffsets[i] - startOffsets[i]
-		totalFileSize += size
-		expectedConc := size / bufSize
-		// let the stat internals cover the [startKey, endKey) since the offsets
-		// always point to a position that is less than or equal to the key.
-		expectedConc += 1
+	concurrency = max(concurrency, 1)
+	memoryLimit := readerMemoryQuotaPerCore * int64(concurrency)
+	maxReaders := maxReadersPerCore * concurrency
 
-		if expectedConc >= readAllDataConcThreshold {
-			concurrences[i] = expectedConc
-		} else {
-			concurrences[i] = 1
-		}
-		if expectedConc > 1 {
+	readerMemory := semaphore.NewWeighted(memoryLimit)
+	rangeSizes := make([]uint64, len(dataFiles))
+	totalFileSize := uint64(0)
+	for i := range dataFiles {
+		rangeSizes[i] = estimatedEndOffsets[i] - startOffsets[i]
+		totalFileSize += rangeSizes[i]
+	}
+	readerMemorySizes := assignReaderMemory(rangeSizes, memoryLimit)
+	for i := range dataFiles {
+		if readerMemorySizes[i] > 0 {
 			logutil.Logger(ctx).Info("found hotspot file in readAllData",
-				zap.String("filename", statsFiles[i]),
+				zap.String("filename", dataFiles[i]),
 				zap.Uint64("startOffset", startOffsets[i]),
 				zap.Uint64("endOffset", estimatedEndOffsets[i]),
-				zap.Uint64("expectedConc", expectedConc),
-				zap.Uint64("concurrency", concurrences[i]),
+				zap.Int64("readerMemory", readerMemorySizes[i]),
 			)
 		}
 	}
@@ -106,8 +152,7 @@ func readAllData(
 		zap.String("totalSize", units.BytesSize(float64(totalFileSize))))
 
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
-	readConn := 1000
-	readConn = min(readConn, len(dataFiles))
+	readConn := min(maxReaders, len(dataFiles))
 	taskCh := make(chan int)
 	output.memKVBuffers = make([]*membuf.Buffer, readConn*2)
 	for readIdx := range readConn {
@@ -125,18 +170,25 @@ func readAllData(
 					if !ok {
 						return nil
 					}
-					err2 := readOneFile(
-						egCtx,
-						store,
-						dataFiles[fileIdx],
-						startKey,
-						endKey,
-						startOffsets[fileIdx],
-						concurrences[fileIdx],
-						smallBlockBuf,
-						largeBlockBuf,
-						output,
-					)
+					readerMemorySize := readerMemorySizes[fileIdx]
+					if err := readerMemory.Acquire(egCtx, readerMemorySize); err != nil {
+						return errors.Trace(err)
+					}
+					err2 := func() error {
+						defer readerMemory.Release(readerMemorySize)
+						return readOneFile(
+							egCtx,
+							store,
+							dataFiles[fileIdx],
+							startKey,
+							endKey,
+							startOffsets[fileIdx],
+							int(readerMemorySize)/simplesst.ConcurrentReaderBufferSizePerConc,
+							smallBlockBuf,
+							largeBlockBuf,
+							output,
+						)
+					}()
 					if err2 != nil {
 						return errors.Annotatef(err2, "failed to read file %s", dataFiles[fileIdx])
 					}
@@ -145,7 +197,14 @@ func readAllData(
 		})
 	}
 
-	for fileIdx := range dataFiles {
+	dispatchOrder := make([]int, len(dataFiles))
+	for i := range dispatchOrder {
+		dispatchOrder[i] = i
+	}
+	slices.SortStableFunc(dispatchOrder, func(a, b int) int {
+		return cmp.Compare(readerMemorySizes[a], readerMemorySizes[b])
+	})
+	for _, fileIdx := range dispatchOrder {
 		select {
 		case <-egCtx.Done():
 			return eg.Wait()
@@ -162,7 +221,7 @@ func readOneFile(
 	dataFile string,
 	startKey, endKey []byte,
 	startOffset uint64,
-	concurrency uint64,
+	concurrency int,
 	smallBlockBuf *membuf.Buffer,
 	largeBlockBuf *membuf.Buffer,
 	output *memKVsAndBuffers,
@@ -178,11 +237,11 @@ func readOneFile(
 	defer func() {
 		_ = rd.Close()
 	}()
-	if concurrency > 1 {
+	if concurrency > 0 {
 		rd.EnableConcurrentRead(
 			storage,
 			dataFile,
-			int(concurrency),
+			concurrency,
 			simplesst.ConcurrentReaderBufferSizePerConc,
 			largeBlockBuf,
 		)

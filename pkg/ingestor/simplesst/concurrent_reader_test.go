@@ -51,35 +51,43 @@ func TestConcurrentRead(t *testing.T) {
 	concurrency := rand.Intn(4) + 1
 	readBufferSize := rand.Intn(100) + 1
 
-	bufs := make([][]byte, concurrency)
-	for i := range bufs {
-		bufs[i] = make([]byte, readBufferSize)
-	}
-	rd, err := newConcurrentFileReader(
-		ctx,
-		memStore,
-		filename,
-		int64(offset),
-		int64(fileSize),
-		concurrency,
-		readBufferSize,
-	)
-	require.NoError(t, err)
+	// Both window layouts must return the same bytes in the same order.
+	for _, singleWindow := range []bool{false, true} {
+		bufNum := 2 * concurrency
+		if singleWindow {
+			bufNum = concurrency
+		}
+		bufs := make([][]byte, bufNum)
+		for i := range bufs {
+			bufs[i] = make([]byte, readBufferSize)
+		}
+		rd, err := newConcurrentFileReader(
+			ctx,
+			memStore,
+			filename,
+			int64(offset),
+			int64(fileSize),
+			concurrency,
+			readBufferSize,
+			singleWindow,
+		)
+		require.NoError(t, err)
 
-	got := make([]byte, 0, 256)
-
-	for {
-		bs, err := rd.read(bufs)
-		if err != nil {
-			if goerrors.Is(err, io.EOF) {
-				break
+		got := make([]byte, 0, 256)
+		for {
+			bs, err := rd.read(bufs)
+			if err != nil {
+				if goerrors.Is(err, io.EOF) {
+					break
+				}
+				require.NoError(t, err)
 			}
-			require.NoError(t, err)
+			for _, b := range bs {
+				got = append(got, b...)
+			}
 		}
-		for _, b := range bs {
-			got = append(got, b...)
-		}
-	}
+		rd.close()
 
-	require.Equal(t, data[offset:], got)
+		require.Equal(t, data[offset:], got, "singleWindow=%v", singleWindow)
+	}
 }
