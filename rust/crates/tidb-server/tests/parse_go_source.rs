@@ -73,10 +73,11 @@ fn default_attribute_limit_truncates_at_the_first_overflowing_pair() {
 /// handshake remains valid and no partial attribute map is installed.
 #[test]
 fn malformed_attribute_rows_are_ignored_after_the_frame_is_valid() {
-    let malformed = [2, b'a'];
-    let response = parse_response(&response_with_attrs(&malformed))
-        .expect("Go swallows parseAttrs errors after validating the outer frame");
-    assert!(response.attrs.is_empty());
+    for malformed in [&[2, b'a'][..], &[1, b'a', 2, b'b'][..]] {
+        let response = parse_response(&response_with_attrs(malformed))
+            .expect("Go swallows parseAttrs errors after validating the outer frame");
+        assert!(response.attrs.is_empty());
+    }
 }
 
 /// Go strings preserve arbitrary wire bytes. A parser may reject them later,
@@ -291,6 +292,17 @@ fn every_auth_encoding_width_and_mode_matches_go() {
     let mut legacy = header(CLIENT_PROTOCOL_41);
     legacy.extend_from_slice(b"root\0abc\0");
     assert_eq!(parse_response(&legacy).expect("legacy auth").auth, b"abc");
+
+    let mut malformed_legacy = header(CLIENT_PROTOCOL_41);
+    malformed_legacy.extend_from_slice(b"root\0abc");
+    assert!(parse_response(&malformed_legacy).is_err());
+
+    for malformed in [&[0xfc, 3][..], &[0xfd, 3, 0][..], &[0xfe, 3, 0, 0, 0][..]] {
+        let mut packet = header(CLIENT_PROTOCOL_41 | CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA);
+        packet.extend_from_slice(b"root\0");
+        packet.extend_from_slice(malformed);
+        assert!(parse_response(&packet).is_err());
+    }
 }
 
 #[test]
@@ -391,6 +403,28 @@ fn warning_combination_duplicate_keys_and_longest_seen_cas_match_go() {
     assert_eq!(response.attr_warnings.len(), 2);
     assert!(response.attr_warnings[0].starts_with("custom connection attributes"));
     assert!(response.attr_warnings[1].starts_with("session connection attributes truncated"));
+}
+
+#[test]
+fn server_overwrites_a_client_reserved_truncation_marker() {
+    let mut attrs = Vec::new();
+    for (key, value) in [("_truncated", "client-value"), ("app_name", "my_service")] {
+        attrs.extend_from_slice(&lenenc(key.len()));
+        attrs.extend_from_slice(key.as_bytes());
+        attrs.extend_from_slice(&lenenc(value.len()));
+        attrs.extend_from_slice(value.as_bytes());
+    }
+    let state = ConnectionAttrsState::new(20);
+    let response = parse_response_with_attrs_state(&response_with_attrs(&attrs), &state).unwrap();
+    assert_ne!(
+        response.attrs.get("_truncated").map(String::as_str),
+        Some("client-value")
+    );
+    assert_eq!(
+        response.attrs.get("_truncated").map(String::as_str),
+        Some("40")
+    );
+    assert_eq!(state.lost(), 1);
 }
 
 #[test]
