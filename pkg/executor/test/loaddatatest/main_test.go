@@ -33,11 +33,11 @@ func TestMain(m *testing.M) {
 		conf.Experimental.AllowsExpressionIndex = true
 	})
 	tikv.EnableFailpoints()
-	cleanupFix56408Store := prepareFix56408Store()
+	cleanupLoadDataStore := prepareLoadDataStore()
 
 	opts := []goleak.Option{
 		goleak.Cleanup(func(_ int) {
-			cleanupFix56408Store()
+			cleanupLoadDataStore()
 			view.Stop()
 		}),
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
