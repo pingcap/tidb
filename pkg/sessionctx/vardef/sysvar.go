@@ -50,6 +50,8 @@ const (
 	CharacterSetFilesystem = "character_set_filesystem"
 	// CharacterSetClient is the name for character_set_client system variable.
 	CharacterSetClient = "character_set_client"
+	// ResultsetMetadata is the name for resultset_metadata system variable.
+	ResultsetMetadata = "resultset_metadata"
 	// CharacterSetSystem is the name for character_set_system system variable.
 	CharacterSetSystem = "character_set_system"
 	// GeneralLog is the name for 'general_log' system variable.
@@ -349,4 +351,10 @@ const (
 	ValidatePasswordSpecialCharCount = "validate_password.special_char_count"
 	// ValidatePasswordDictionary specified the dictionary that validate_password uses for checking passwords. Each word is separated by semicolon (;).
 	ValidatePasswordDictionary = "validate_password.dictionary"
+)
+
+// Resultset metadata modes.
+const (
+	ResultsetMetadataNone = "NONE"
+	ResultsetMetadataFull = "FULL"
 )
