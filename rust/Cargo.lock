@@ -1738,6 +1738,7 @@ dependencies = [
  "chrono",
  "serde",
  "serde_json",
+ "sha2",
  "tidb-ast",
  "tidb-datatype",
  "tidb-parser",
