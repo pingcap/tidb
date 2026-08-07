@@ -102,6 +102,7 @@ func InitMetrics() {
 	InitServerMetrics()
 	InitSessionMetrics()
 	InitRUV2Metrics()
+	InitRUV3Metrics()
 	InitSliMetrics()
 	InitStatsMetrics()
 	InitTelemetryMetrics()
@@ -364,6 +365,9 @@ func RegisterMetrics() {
 	prometheus.MustRegister(RUV2TiKVStorageProcessedKeysBatchGet)
 	prometheus.MustRegister(RUV2TiKVStorageProcessedKeysGet)
 	prometheus.MustRegister(RUV2TiKVCoprocessorWorkTotal)
+	prometheus.MustRegister(RUV3ResourceUnitTotal)
+	prometheus.MustRegister(RUV3ResourceUnitBySQLType)
+	prometheus.MustRegister(RUV3ResourceUnitByEngine)
 
 	prometheus.MustRegister(NetworkTransmissionStats)
 
