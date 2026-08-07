@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/regionsplit"
 	tikverr "github.com/tikv/client-go/v2/error"
@@ -146,7 +147,19 @@ func preSplitPhysicalTableByShardRowID(ctx context.Context, store kv.SplittableS
 	for p := step; p < maxv; p += step {
 		recordID := p << shardFmt.IncrementalBits
 		recordPrefix := tablecodec.GenTableRecordPrefix(physicalID)
-		key := tablecodec.EncodeRecordKey(recordPrefix, kv.IntHandle(recordID))
+		var key kv.Key
+		if tbInfo.IsCommonHandle {
+			encoded := codec.EncodeKey(nil, types.NewIntDatum(recordID))
+			ch, err := kv.NewCommonHandle(encoded)
+			if err != nil {
+				logutil.DDLLogger().Warn("pre split some table regions failed to create common handle",
+					zap.Stringer("table", tbInfo.Name), zap.Error(err))
+				continue
+			}
+			key = tablecodec.EncodeRecordKey(recordPrefix, ch)
+		} else {
+			key = tablecodec.EncodeRecordKey(recordPrefix, kv.IntHandle(recordID))
+		}
 		splitTableKeys = append(splitTableKeys, key)
 	}
 	scatter, tableID := getScatterConfig(scatterScope, tbInfo.ID)
