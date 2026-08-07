@@ -17,8 +17,8 @@ Go accepts `-ldflags -X` initialization for all five variables and permits runti
 - [x] (2026-08-08) Replaced the legacy inventory with a two-artifact manifest and exact six-row generated AST classification; checker, two named Rust tests, 288/288 `tidb-util`, 99/99 `difftest-result-tests` with five skips, package Clippy, and fmt pass.
 - [x] (2026-08-08) Committed immutable baseline `cb71e788efeaa993714c44f1ab81fbc0db48bb5f` and killed all nine planned mutations in a detached worktree; every source was restored to its saved SHA-256 and passed the same check.
 - [x] (2026-08-08) Added the compiled mutation receipt and content-addressed JSON receipt; the complete checker, three versioninfo tests, 289/289 `tidb-util`, package Clippy, fmt, and `git diff --check` pass.
-- [ ] Pass the clean Ready workspace gate and record its exact receipt.
-- [ ] Publish each completed commit by ordinary fast-forward to official `pingcap/tidb:hparser-integration` and verify GitHub attribution as `dbsid`.
+- [x] (2026-08-08) Passed the clean code-bearing Ready gate at `8b203dd71b7599a2a5850d8d5d5600f34981660c`: exact Go oracle, checker, 289/289 `tidb-util`, 7132/7132 workspace tests with 41 skips, workspace Clippy with warnings denied, fmt, source-size ratchet, `git diff --check`, and `make -j12 lint`.
+- [x] (2026-08-08) Published both code-bearing commits by ordinary fast-forward to official `pingcap/tidb:hparser-integration`; `git ls-remote` returned `8b203dd71b7599a2a5850d8d5d5600f34981660c`, and GitHub API mapped author and committer to `dbsid <huanshengchen@gmail.com>` for both commits.
 
 ## Surprises & Discoveries
 
@@ -26,6 +26,8 @@ Go accepts `-ldflags -X` initialization for all five variables and permits runti
   Evidence: the default Go probe printed `initial=community:"Community" build:"None" hash:"None" branch:"None" edition:"Community" enterprise:""` and then printed runtime replacements for all five variables. With `-ldflags -X`, it printed all five link values before the same successful runtime replacements.
 - Observation: the old six-column inventory double-counted six declarations and six behavioral rules as `PORTED`, then represented mutability as one synthetic decline.
   Evidence: the generic AST census emits exactly one `const` and five `var` obligations, so the five source variables themselves must carry the declined classification.
+- Observation: `make -j12 lint` exits zero on macOS while printing two pre-existing diagnostics.
+  Evidence: it reports the `rust/difftests/gobinaryrow` internal-package import and BSD `find` rejecting `-n`, then runs every dashboard-linter target and returns zero; versioninfo changes neither affected path.
 
 ## Decision Log
 
@@ -38,7 +40,7 @@ Go accepts `-ldflags -X` initialization for all five variables and permits runti
 
 ## Outcomes & Retrospective
 
-Pending mutation and Ready gates.
+The complete `pkg/util/versioninfo` package lockdown is published. Both direct artifacts and all six generated Go AST obligations are content-addressed; `CommunityEdition` is the single `PORTED` obligation, while the five mutable Go variables are individually `DECLINED` with measured link-time and runtime mutability evidence. All nine mutations are killed and receipt-gated, the clean Ready workspace passes, and GitHub attributes both code commits to `dbsid`.
 
 ## Context and Orientation
 
@@ -91,6 +93,27 @@ Baseline artifact hashes at official `6d99186063e6cda053d510ec59493e5956ffa04c` 
 
 The generic census contains exactly one `const` and five `var` obligations. No Go test or shared ratchet is expected to move.
 
+The clean Ready receipt at code-bearing commit `8b203dd71b7599a2a5850d8d5d5600f34981660c` is:
+
+    go test -tags=intest,deadlock ./pkg/util/versioninfo
+      PASS; no test files
+    python3 rust/scripts/pkg-versioninfo-lockdown.py
+      pkg/util/versioninfo lockdown: 2 artifacts, 6 AST obligations, 1 PORTED, 5 DECLINED
+    cargo nextest run --offline --locked -p tidb-util --no-fail-fast
+      289 passed
+    cargo nextest run --offline --locked --workspace -j12 --no-fail-fast
+      7132 passed, 41 skipped
+    cargo clippy --offline --locked -j12 --workspace --all-targets -- -D warnings -A clippy::assertions_on_constants -A clippy::needless_update -A clippy::type_complexity
+      passed
+    cargo fmt --all -- --check
+      passed
+    bash rust/scripts/check-source-size.sh
+      source-size ratchet: OK
+    make -j12 lint
+      exit 0; all dashboard linters ran
+
 ## Interfaces and Dependencies
 
 All six existing public Rust constants remain available. No Go production source, Bazel file, Cargo dependency, workspace membership, or public function signature changes. The checker uses only Python's standard library and the existing generic Go inventory tool.
+
+Revision note: closed on 2026-08-08 after the nine mutation kills, compiled receipt gate, clean Ready replay, ordinary official fast-forward, and GitHub `dbsid` attribution checks all passed.
