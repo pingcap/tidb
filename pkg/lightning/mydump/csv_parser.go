@@ -103,7 +103,7 @@ type field struct {
 func NewCSVParser(
 	ctx context.Context,
 	cfg *config.CSVConfig,
-	reader ReadSeekCloser,
+	reader io.ReadSeekCloser,
 	blockBufSize int64,
 	ioWorkers *worker.Pool,
 	shouldParseHeader bool,

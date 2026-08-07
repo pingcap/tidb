@@ -132,8 +132,6 @@ func (p *LogicalLock) PushDownTopN(topNLogicalPlan base.LogicalPlan) base.Logica
 
 // GetBaseLogicalPlan inherits BaseLogicalPlan.LogicalPlan.<23rd> implementation.
 
-// ConvertOuterToInnerJoin inherits BaseLogicalPlan.LogicalPlan.<24th> implementation.
-
 // *************************** end implementation of logicalPlan interface ***************************
 // isSelectForUpdateLockType checks if the select lock type is the supported for update type.
 func isSelectForUpdateLockType(lockType ast.SelectLockType) bool {

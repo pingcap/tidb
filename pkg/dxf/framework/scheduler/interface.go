@@ -246,6 +246,24 @@ type CleanUpRoutine interface {
 	// task.Meta can be updated here, such as redacting some sensitive info.
 	CleanUp(ctx context.Context, task *proto.Task) error
 }
+
+// BatchCleanUpRoutine optionally extends CleanUpRoutine with batched cleanup.
+// For these routines, the scheduler calls CleanUpBatch instead of CleanUp. In
+// each cleanup pass, it calls one routine instance with a non-empty group of
+// tasks that all have the same task type. When CleanUpBatch returns nil, the
+// scheduler submits every task in the group together in the subsequent
+// history-table transfer. When it returns an error, no task in the group is
+// transferred in that pass.
+//
+// The scheduler provides no atomicity or rollback across cleanup side effects
+// and the history-table transfer. Implementations must be idempotent and safe
+// to retry after a partial cleanup failure or after cleanup succeeds but the
+// history-table transfer fails.
+type BatchCleanUpRoutine interface {
+	CleanUpRoutine
+	CleanUpBatch(ctx context.Context, tasks []*proto.Task) error
+}
+
 type cleanUpFactoryFn func() CleanUpRoutine
 
 var cleanUpFactoryMap = struct {

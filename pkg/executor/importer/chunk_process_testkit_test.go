@@ -46,6 +46,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func getCSVParser(ctx context.Context, t *testing.T, fileName string) mydump.Parser {
@@ -102,6 +103,8 @@ func TestFileChunkProcess(t *testing.T) {
 
 	t.Run("process success", func(t *testing.T) {
 		collector := &execute.TestCollector{}
+		core, observedLogs := observer.New(zap.InfoLevel)
+		chunkLogger := zap.New(core)
 
 		var dataKVCnt, indexKVCnt int
 		fileName := path.Join(tempDir, "test.csv")
@@ -148,10 +151,13 @@ func TestFileChunkProcess(t *testing.T) {
 		checksum := verify.NewKVGroupChecksumWithKeyspace(nil)
 		processor := importer.NewFileChunkProcessor(
 			csvParser, encoder, nil,
-			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, checksum, collector,
+			chunkInfo, chunkLogger, diskQuotaLock, dataWriter, indexWriter, checksum, collector,
 		)
 		require.NoError(t, processor.Process(ctx))
 		require.True(t, ctrl.Satisfied())
+		processLogs := observedLogs.FilterMessage("process chunk start").All()
+		require.Len(t, processLogs, 1)
+		require.Equal(t, int64(len(sourceData)), processLogs[0].ContextMap()["chunkSize"])
 		checksumDataKVCnt, checksumIndexKVCnt := checksum.DataAndIndexSumKVS()
 		require.Equal(t, uint64(3), checksumDataKVCnt)
 		require.Equal(t, uint64(6), checksumIndexKVCnt)

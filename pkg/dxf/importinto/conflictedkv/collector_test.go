@@ -16,6 +16,7 @@ package conflictedkv
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path"
 	"strings"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -91,6 +93,7 @@ func TestCollectResultMerge(t *testing.T) {
 
 type mockKVStore struct {
 	tidbkv.Storage
+	codec tikv.Codec
 }
 
 type mockWriter struct {
@@ -108,6 +111,9 @@ func (w *mockWriter) Close(context.Context) error {
 }
 
 func (s *mockKVStore) GetCodec() tikv.Codec {
+	if s.codec != nil {
+		return s.codec
+	}
 	if kerneltype.IsClassic() {
 		return tikv.NewCodecV1(tikv.ModeTxn)
 	}
@@ -115,9 +121,40 @@ func (s *mockKVStore) GetCodec() tikv.Codec {
 	return codec
 }
 
+type decodeErrorCodec struct {
+	tikv.Codec
+	err error
+}
+
+func (c *decodeErrorCodec) DecodeKey([]byte) ([]byte, error) {
+	return nil, c.err
+}
+
 func TestCollectorHandleEncodedRow(t *testing.T) {
 	logger := zap.Must(zap.NewDevelopment())
 	ctx := context.Background()
+
+	t.Run("uses storage codec to decode conflict keys", func(t *testing.T) {
+		objStore := objstore.NewMemStorage()
+		t.Cleanup(func() {
+			objStore.Close()
+		})
+		decodeErr := errors.New("decode key")
+		store := &mockKVStore{codec: &decodeErrorCodec{
+			Codec: tikv.NewCodecV1(tikv.ModeTxn),
+			err:   decodeErr,
+		}}
+		coll := NewCollector(
+			nil, logger, objStore, store, "test",
+			globalsort.DataKVGroup, nil, nil, nil, nil, nil, nil,
+		)
+		ch := make(chan *simplesst.KVPair, 1)
+		ch <- &simplesst.KVPair{Key: []byte("encoded-key")}
+		close(ch)
+
+		require.ErrorIs(t, coll.Run(ctx, ch), decodeErr)
+		require.NoError(t, coll.Close(ctx))
+	})
 
 	doTestFn := func(t *testing.T, kvGroup string, maxSize int64, outFileCnt int) {
 		objStore := objstore.NewMemStorage()
@@ -132,23 +169,22 @@ func TestCollectorHandleEncodedRow(t *testing.T) {
 		store := &mockKVStore{}
 		var sharedSize atomic.Int64
 		var sharedTotalFileSize atomic.Int64
+		localSet := NewBoundedKeySet(logger, &sharedSize, units.MiB)
 		coll := NewCollector(
 			nil, logger, objStore, store, "test",
-			kvGroup, nil, nil, NewBoundedHandleSet(logger, &sharedSize, units.MiB), &sharedTotalFileSize, nil, nil,
+			kvGroup, nil, nil, localSet, &sharedTotalFileSize, nil, nil,
 		)
 		rowCount := 48
 		for i := range rowCount {
 			// when write to the conflicted row file, it will be formated as `("id", "value")`
 			row := []types.Datum{types.NewStringDatum("id"), types.NewStringDatum("value")}
 			pairs := &kv.Pairs{Pairs: []common.KvPair{{Key: []byte(fmt.Sprint(123 * (i + 1)))}}}
-			require.NoError(t, coll.HandleEncodedRow(ctx, tidbkv.IntHandle(i), row, pairs))
+			require.NoError(t, coll.HandleEncodedRow(ctx, tidbkv.Key{byte(i)}, row, pairs))
 		}
 		require.NoError(t, coll.Close(ctx))
-		if kvGroup == globalsort.DataKVGroup {
-			require.Empty(t, coll.hdlSet.handles)
-		} else {
-			require.Equal(t, rowCount, len(coll.hdlSet.handles))
-		}
+		// Local row-key tracking is owned by IndexKVHandler after it loads and
+		// handles a row, not by Collector.HandleEncodedRow.
+		require.Empty(t, localSet.rowKeys)
 		kvBytes := 184 + rowCount*len(store.GetCodec().GetKeyspace())
 		// for nextgen, the crc sum of keyspace is 0 since the row number is even.
 		crcSum := uint64(14672641476652606594)
@@ -212,7 +248,7 @@ func TestCollectorHandleEncodedRowMaxTotalFileSize(t *testing.T) {
 	var sharedTotalFileSize atomic.Int64
 	coll := NewCollector(
 		nil, logger, objStore, store, "test",
-		globalsort.DataKVGroup, nil, nil, NewBoundedHandleSet(logger, &sharedSize, units.MiB), &sharedTotalFileSize, nil, nil,
+		globalsort.DataKVGroup, nil, nil, NewBoundedKeySet(logger, &sharedSize, units.MiB), &sharedTotalFileSize, nil, nil,
 	)
 
 	rowCount := 5
@@ -220,7 +256,7 @@ func TestCollectorHandleEncodedRowMaxTotalFileSize(t *testing.T) {
 	for i := range rowCount {
 		row := []types.Datum{types.NewStringDatum("id"), types.NewStringDatum("value")}
 		pairs := &kv.Pairs{Pairs: []common.KvPair{{Key: []byte(fmt.Sprint(123 * (i + 1)))}}}
-		require.NoError(t, coll.HandleEncodedRow(ctx, tidbkv.IntHandle(i), row, pairs))
+		require.NoError(t, coll.HandleEncodedRow(ctx, tidbkv.Key{byte(i)}, row, pairs))
 		expectedSum.Update(pairs.Pairs)
 	}
 	require.NoError(t, coll.Close(ctx))
@@ -306,21 +342,21 @@ func TestCollectorHandleEncodedRowMaxTotalFileSizeSharedByCollectors(t *testing.
 	var sharedTotalFileSize atomic.Int64
 	coll1 := NewCollector(
 		nil, logger, objStore, store, "test1",
-		globalsort.DataKVGroup, nil, nil, NewBoundedHandleSet(logger, &sharedSize, units.MiB), &sharedTotalFileSize, nil, nil,
+		globalsort.DataKVGroup, nil, nil, NewBoundedKeySet(logger, &sharedSize, units.MiB), &sharedTotalFileSize, nil, nil,
 	)
 	coll2 := NewCollector(
 		nil, logger, objStore, store, "test2",
-		globalsort.DataKVGroup, nil, nil, NewBoundedHandleSet(logger, &sharedSize, units.MiB), &sharedTotalFileSize, nil, nil,
+		globalsort.DataKVGroup, nil, nil, NewBoundedKeySet(logger, &sharedSize, units.MiB), &sharedTotalFileSize, nil, nil,
 	)
 
 	row := []types.Datum{types.NewStringDatum("id"), types.NewStringDatum("value")}
 	for i := range 3 {
 		pairs := &kv.Pairs{Pairs: []common.KvPair{{Key: []byte(fmt.Sprintf("a-%d", i))}}}
-		require.NoError(t, coll1.HandleEncodedRow(ctx, tidbkv.IntHandle(i), row, pairs))
+		require.NoError(t, coll1.HandleEncodedRow(ctx, tidbkv.Key{byte(i)}, row, pairs))
 	}
 	for i := range 3 {
 		pairs := &kv.Pairs{Pairs: []common.KvPair{{Key: []byte(fmt.Sprintf("b-%d", i))}}}
-		require.NoError(t, coll2.HandleEncodedRow(ctx, tidbkv.IntHandle(i), row, pairs))
+		require.NoError(t, coll2.HandleEncodedRow(ctx, tidbkv.Key{byte(i)}, row, pairs))
 	}
 	require.NoError(t, coll1.Close(ctx))
 	require.NoError(t, coll2.Close(ctx))

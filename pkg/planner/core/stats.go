@@ -175,80 +175,38 @@ func fillIndexPath(ds *logicalop.DataSource, path *util.AccessPath, conds []expr
 	path.MaxCountAfterAccess = 0
 	path.IdxCols, path.IdxColLens, path.FullIdxCols, path.FullIdxColLens =
 		util.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
-	if !path.Index.Unique && !path.Index.Primary && len(path.Index.Columns) == len(path.IdxCols) {
-		handleCol := ds.GetPKIsHandleCol()
-		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.GetFlag()) {
-			alreadyHandle := false
-			for _, col := range path.IdxCols {
-				if col.ID == model.ExtraHandleID || col.EqualColumn(handleCol) {
-					alreadyHandle = true
-				}
-			}
-			// Don't add one column twice to the index. May cause unexpected errors.
-			if !alreadyHandle {
-				path.FullIdxCols = append(path.FullIdxCols, handleCol)
-				path.FullIdxColLens = append(path.FullIdxColLens, types.UnspecifiedLength)
-				path.IdxCols = append(path.IdxCols, handleCol)
-				path.IdxColLens = append(path.IdxColLens, types.UnspecifiedLength)
-				// Also updates the map that maps the index id to its prefix column ids.
-				if len(ds.TableStats.HistColl.Idx2ColUniqueIDs[path.Index.ID]) == len(path.Index.Columns) {
-					ds.TableStats.HistColl.Idx2ColUniqueIDs[path.Index.ID] = append(ds.TableStats.HistColl.Idx2ColUniqueIDs[path.Index.ID], handleCol.UniqueID)
-				}
+	// Append the clustered-handle columns TiKV stores in a non-unique secondary index's
+	// key so ranger can turn predicates on them into scan ranges. The same layout is used
+	// by index pruning via ds.HandleColsToAppend (see rule_prune_indexes.go).
+	if appendCols, appendLens := ds.HandleColsToAppend(path, path.IdxCols); len(appendCols) > 0 {
+		path.FullIdxCols = append(path.FullIdxCols, appendCols...)
+		path.FullIdxColLens = append(path.FullIdxColLens, appendLens...)
+		path.IdxCols = append(path.IdxCols, appendCols...)
+		path.IdxColLens = append(path.IdxColLens, appendLens...)
+		// Also updates the map that maps the index id to its prefix column ids.
+		if len(ds.TableStats.HistColl.Idx2ColUniqueIDs[path.Index.ID]) == len(path.Index.Columns) {
+			for _, col := range appendCols {
+				ds.TableStats.HistColl.Idx2ColUniqueIDs[path.Index.ID] =
+					append(ds.TableStats.HistColl.Idx2ColUniqueIDs[path.Index.ID], col.UniqueID)
 			}
 		}
-		tryAppendCommonHandleColsToIndexPath(ds, path)
 	}
 	err := detachCondAndBuildRangeForPath(ds.SCtx(), path, conds, ds.TableStats.HistColl)
 	return err
 }
 
-// tryAppendCommonHandleColsToIndexPath is the common-handle counterpart of the int-handle
-// append in fillIndexPath. The key of a non-unique secondary index on a clustered table
-// physically ends with the full common handle, so appending the primary key columns to the
-// path lets ranger turn predicates on them into tighter scan ranges instead of filters.
-// The caller must have checked that the index is non-unique, non-primary, and that all
-// declared index columns are resolved (len(path.Index.Columns) == len(path.IdxCols)).
-func tryAppendCommonHandleColsToIndexPath(ds *logicalop.DataSource, path *util.AccessPath) {
-	if !ds.TableInfo.IsCommonHandle || len(ds.CommonHandleCols) == 0 ||
-		len(ds.CommonHandleLens) != len(ds.CommonHandleCols) {
-		return
+// pathRangesIncludeAppendedHandle reports whether the ranges of a non-unique index path
+// extend past the declared index columns into the appended handle columns.
+func pathRangesIncludeAppendedHandle(path *util.AccessPath) bool {
+	if path.Index == nil || len(path.IdxCols) <= len(path.Index.Columns) {
+		return false
 	}
-	// Global indexes (V1+) encode the partition ID between the index columns and the handle,
-	// and MV/columnar indexes build their ranges specially, so appended columns would not
-	// align with the physical key layout.
-	if path.Index.Global || path.Index.MVIndex || path.Index.IsColumnarIndex() {
-		return
-	}
-	// In CommonHandleVersion 0 with new collation, string handle columns are stored as
-	// collation sortKey bytes without restored data. Skip them to stay consistent with the
-	// coverage check (indexCoveringColumn) and the ordering check (matchProperty).
-	if hasV0NewCollationStringHandle(ds) {
-		return
-	}
-	for _, handleCol := range ds.CommonHandleCols {
-		if handleCol == nil {
-			return
-		}
-		// If a primary key column is already among the declared index columns, the physical
-		// key contains it twice: once in the index columns and once in the handle suffix.
-		// Appending only the missing columns would misalign the ranges with the key layout,
-		// and repeating a column breaks range building, so skip the append entirely.
-		for _, col := range path.IdxCols {
-			if col.EqualColumn(handleCol) {
-				return
-			}
+	for _, ran := range path.Ranges {
+		if len(ran.LowVal) > len(path.Index.Columns) || len(ran.HighVal) > len(path.Index.Columns) {
+			return true
 		}
 	}
-	path.FullIdxCols = append(path.FullIdxCols, ds.CommonHandleCols...)
-	path.FullIdxColLens = append(path.FullIdxColLens, ds.CommonHandleLens...)
-	path.IdxCols = append(path.IdxCols, ds.CommonHandleCols...)
-	path.IdxColLens = append(path.IdxColLens, ds.CommonHandleLens...)
-	// Also updates the map that maps the index id to its prefix column ids.
-	if len(ds.TableStats.HistColl.Idx2ColUniqueIDs[path.Index.ID]) == len(path.Index.Columns) {
-		for _, handleCol := range ds.CommonHandleCols {
-			ds.TableStats.HistColl.Idx2ColUniqueIDs[path.Index.ID] = append(ds.TableStats.HistColl.Idx2ColUniqueIDs[path.Index.ID], handleCol.UniqueID)
-		}
-	}
+	return false
 }
 
 // adjustCountAfterAccess adjusts the CountAfterAccess when it's less than the estimated table row count.
@@ -258,6 +216,21 @@ func adjustCountAfterAccess(ds *logicalop.DataSource, path *util.AccessPath) {
 	// We prefer the `stats.RowCount` to provide consistency in estimation across all paths.
 	// Add an arbitrary tolerance factor to account for comparison with floating point
 	if (path.CountAfterAccess + cost.ToleranceFactor) < ds.StatsInfo().RowCount {
+		// When the ranges include the appended handle columns, the handle predicates were
+		// credited with deliberately damped exponential backoff, so falling below the
+		// independence-leaning stats.RowCount is expected rather than a sign of
+		// inconsistent assumptions. Align to stats.RowCount without the SelectionFactor
+		// penalty so the credited path is not made more expensive than an uncredited one.
+		if pathRangesIncludeAppendedHandle(path) {
+			if path.MinCountAfterAccess > 0 {
+				path.MinCountAfterAccess = min(path.MinCountAfterAccess, path.CountAfterAccess)
+			} else {
+				path.MinCountAfterAccess = path.CountAfterAccess
+			}
+			path.CountAfterAccess = ds.StatsInfo().RowCount
+			path.MaxCountAfterAccess = max(path.CountAfterAccess, path.MaxCountAfterAccess)
+			return
+		}
 		// Store the MinCountAfterAccess "before" adjusting the "CountAfterAccess". This can be used to differentiate
 		// the "Min" estimate for each index/inthandle path when CountAfterAccess has been equalized.
 		if path.MinCountAfterAccess > 0 {
@@ -496,8 +469,16 @@ func detachCondAndBuildRangeForPath(
 		}
 	}
 	count, err := cardinality.GetRowCountByIndexRanges(sctx, histColl, path.Index.ID, estimateRanges, indexCols)
+	if err != nil {
+		return err
+	}
+	if needPruneEstimateRange {
+		// The pruned estimate gives the appended handle predicates no credit; damp it
+		// with the handle columns' selectivities.
+		count = cardinality.AdjustRowCountForAppendedHandleColumns(sctx, histColl, path.Ranges, path.IdxCols, len(indexCols), count)
+	}
 	path.CountAfterAccess, path.MinCountAfterAccess, path.MaxCountAfterAccess = count.Est, count.MinEst, count.MaxEst
-	return err
+	return nil
 }
 
 // pruneEstimateRange truncates ranges built over the index columns plus the appended handle
