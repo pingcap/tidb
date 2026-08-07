@@ -22,7 +22,9 @@ The observable result is a queue whose representable Rust inputs follow the Go s
 - [x] (2026-08-08) Checked in 21 killed mutation results, the content-addressed receipt, and its compiled Rust gate after replay from immutable provisional commit `834e7966fec7446cbc75486367988c4d8b04669b`.
 - [x] (2026-08-08) Killed all 21 planned mutations in disposable worktree `/tmp/tidb-queue-mutations.ZVIOOH`; every source was restored byte-for-byte from `/tmp/tidb-queue-saved.zFjb3v` and the same named test passed after restoration.
 - [x] (2026-08-08) Passed the complete package checker and all 280 `tidb-util` tests with the mutation receipt enabled.
-- [ ] Run WIP and Ready/full-workspace gates, publish by non-force fast-forward, and verify GitHub attributes every commit to `dbsid`.
+- [x] (2026-08-08) Passed the code-bearing Ready gate at `61cdf64bd17990cbfe9f52cdf6e79d8c39ebfb41`: exact Go test, package checker, 280 `tidb-util` tests, 7,123 workspace tests with 41 skips, package/workspace Clippy with warnings denied, workspace fmt, `git diff --check`, and `make -j12 lint`.
+- [x] (2026-08-08) Re-read the supplied task325 collaboration contract and fetched both remotes. Its accepted `163559e78020` chain is carried by independent `codex/task325-*` refs and is not an ancestor of either hparser branch; official `origin/hparser-integration` remains the queue base `b931f16351`.
+- [ ] Run the final clean-detached Ready replay, publish by non-force fast-forward to user-authorized official `hparser-integration`, and verify GitHub attributes every commit to `dbsid`.
 
 ## Surprises & Discoveries
 
@@ -34,6 +36,10 @@ The observable result is a queue whose representable Rust inputs follow the Go s
   Evidence: `pkg/executor/join/base_semi_join.go` creates `queue.NewQueue[int](b.chunkRows)`, queues row indexes, and pushes unfinished indexes back after popping them.
 - Observation: `Clear` deliberately retains values in the backing slots, while a larger `ClearAndExpandIfNeed` replaces the slice and releases them.
   Evidence: `source_clear_retains_slots_until_overwrite_or_expand` uses drop counters; clear drops zero values, the first overwrite drops one, and expansion drops the two remaining stored values.
+- Observation: the supplied task325 contract's accepted chain is independent of the official hparser integration history.
+  Evidence: both remotes expose `163559e78020` through `codex/task325-*` refs, both `git merge-base --is-ancestor 163559e78020 <remote>/hparser-integration` checks return 1, and `git ls-remote origin refs/heads/hparser-integration` still reports `b931f16351`.
+- Observation: repository lint exits zero on macOS while printing pre-existing diagnostics for the Go-only `rust/difftests/gobinaryrow` internal import and BSD `find` lacking GNU `-name` placement support.
+  Evidence: `make -j12 lint` completed with exit 0 and ran every dashboard linter after those messages; this queue diff changes neither path.
 
 ## Decision Log
 
@@ -46,10 +52,13 @@ The observable result is a queue whose representable Rust inputs follow the Go s
 - Decision: reuse the generic Go AST generator and add a queue-specific deterministic checker rather than refactor the already content-addressed intset checker.
   Rationale: changing shared intset proof code would invalidate an already published receipt. A narrowly scoped queue checker preserves existing evidence while still rejecting missing, duplicate, unknown, or stale classifications.
   Date/Author: 2026-08-08 / Codex
+- Decision: publish only through the official `pingcap/tidb:hparser-integration` route after the complete Ready gate.
+  Rationale: the user's explicit direct-publication instruction supersedes the task325 contract's generic dual-remote contributor-branch route. The official branch is the integration source of truth for this campaign and the authenticated `dbsid` identity has write access.
+  Date/Author: 2026-08-08 / Codex
 
 ## Outcomes & Retrospective
 
-No completion outcome is claimed yet. The measured zero-capacity divergence is fixed, the complete inventory gate passes, and all 21 mutations are killed and receipt-gated. The independent clean-worktree Ready gate and publication remain unfinished.
+No completion outcome is claimed yet. The measured zero-capacity divergence is fixed, the complete inventory gate passes, all 21 mutations are killed and receipt-gated, and the code-bearing Ready gate passes. The final clean-detached replay and official publication remain unfinished.
 
 ## Context and Orientation
 
