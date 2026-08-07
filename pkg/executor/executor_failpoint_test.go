@@ -970,6 +970,7 @@ func (t *IndexLookUpPushDownRunVerifier) RunSelectWithCheck(where string, skip, 
 		hitRate, ok = t.hitRate.(int)
 		require.True(t, ok)
 	}
+	effectiveHitRate := hitRate
 
 	message := fmt.Sprintf("%s, hitRate: %d, where: %s, limit: %d", t.msg, hitRate, where, limit)
 	injectHandleFilter := func(h kv.Handle) bool {
@@ -989,6 +990,13 @@ func (t *IndexLookUpPushDownRunVerifier) RunSelectWithCheck(where string, skip, 
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/cophandler/inject-index-lookup-handle-filter"))
 	}()
+	var copSendHookCalled atomic.Bool
+	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/store/copr/onBeforeSendReqCtx", func(any) {
+		copSendHookCalled.Store(true)
+	}))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/onBeforeSendReqCtx"))
+	}()
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("select /*+ index_lookup_pushdown(%s, %s)*/ * from %s where ", t.tableName, t.indexName, t.tableName))
 	sb.WriteString(where)
@@ -1000,16 +1008,24 @@ func (t *IndexLookUpPushDownRunVerifier) RunSelectWithCheck(where string, skip, 
 
 	// make sure the query uses index lookup
 	analyzeSQL := "explain analyze " + sb.String()
+	copSendHookCalled.Store(false)
 	injectCalled.Store(false)
 	analyzeResult := t.tk.MustQuery(analyzeSQL)
-	require.True(t, injectCalled.Load(), message)
+	failpointHookActive := injectCalled.Load()
 	require.Contains(t, analyzeResult.String(), "LocalIndexLookUp", analyzeSQL+"\n"+analyzeResult.String())
+	if copSendHookCalled.Load() {
+		require.True(t, failpointHookActive, message)
+	}
+	if !failpointHookActive {
+		// Raw go test compiles InjectCall as a no-op, so the local filter accepts every handle.
+		effectiveHitRate = 10
+	}
 
 	// get actual result
 	injectCalled.Store(false)
 	rs := t.tk.MustQuery(sb.String())
 	actual := rs.Rows()
-	require.True(t, injectCalled.Load(), message)
+	require.Equal(t, failpointHookActive, injectCalled.Load(), message)
 	idSets := make(map[string]struct{}, len(actual))
 	for _, row := range actual {
 		var primaryKey strings.Builder
@@ -1062,7 +1078,7 @@ func (t *IndexLookUpPushDownRunVerifier) RunSelectWithCheck(where string, skip, 
 				localIndexLookUpRowCnt, err = strconv.Atoi(row[2].(string))
 				require.NoError(t, err, message)
 				require.GreaterOrEqual(t, localIndexLookUpRowCnt, 0)
-				if hitRate == 0 {
+				if effectiveHitRate == 0 {
 					require.Zero(t, localIndexLookUpRowCnt, message)
 				}
 				// check actRows for LocalIndexLookUp
@@ -1071,7 +1087,7 @@ func (t *IndexLookUpPushDownRunVerifier) RunSelectWithCheck(where string, skip, 
 				totalIndexScanCnt, err = strconv.Atoi(analyzeRows[localIndexLookUpIndex+1][2].(string))
 				require.NoError(t, err, message)
 				require.GreaterOrEqual(t, totalIndexScanCnt, localIndexLookUpRowCnt)
-				if hitRate >= 10 {
+				if effectiveHitRate >= 10 {
 					require.Equal(t, localIndexLookUpRowCnt, totalIndexScanCnt)
 				}
 				metTableRowIDScan = true
