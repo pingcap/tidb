@@ -424,6 +424,14 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, gr
 
 						join := &apply.LogicalJoin
 						defaultValueMap := s.aggDefaultValueMap(agg)
+						// The default values only describe a *scalar* aggregation, which yields one row
+						// over an empty input. An aggregation carrying an explicit GROUP BY yields no row
+						// at all for an outer row with no matching group, and the outer join's NULL
+						// extension is then the correct answer. This is reachable from LEFT JOIN LATERAL,
+						// where the inner subquery is not wrapped in a MaxOneRow.
+						if len(agg.GroupByItems) > 0 {
+							defaultValueMap = nil
+						}
 						// `defaultValueMap` means this scalar aggregation subquery should return a non-NULL
 						// default value (e.g. COUNT -> 0) when the subquery's input is empty.
 						//

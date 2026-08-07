@@ -981,12 +981,15 @@ func (b *PlanBuilder) buildLateralJoin(ctx context.Context, leftPlan, rightPlan 
 	corCols := coreusage.ExtractCorColumnsBySchema4LogicalPlan(rightPlan, outerSchema)
 
 	// Determine join type based on AST.
-	// Currently supports INNER JOIN and comma syntax (which the parser represents as CrossJoin).
-	// LEFT/RIGHT JOIN will be added in a follow-up PR.
+	// Supports INNER JOIN, comma syntax (which the parser represents as CrossJoin) and LEFT JOIN.
+	// RIGHT JOIN will be added in a follow-up PR.
 	var joinType base.JoinType
 	switch joinNode.Tp {
 	case ast.LeftJoin:
-		return nil, plannererrors.ErrInvalidLateralJoin.GenWithStackByArgs("LEFT JOIN is not supported with LATERAL")
+		joinType = base.LeftOuterJoin
+		// Once the Apply is decorrelated into a plain LogicalJoin it becomes a candidate
+		// for the outer-join simplification rules, same as a non-LATERAL LEFT JOIN.
+		b.optFlag = b.optFlag | rule.FlagEliminateOuterJoin | rule.FlagOuterJoinToSemiJoin
 	case ast.RightJoin:
 		return nil, plannererrors.ErrInvalidLateralJoin.GenWithStackByArgs("RIGHT JOIN is not supported with LATERAL")
 	default:
@@ -1012,8 +1015,11 @@ func (b *PlanBuilder) buildLateralJoin(ctx context.Context, leftPlan, rightPlan 
 	ap.SetChildren(leftPlan, rightPlan)
 	ap.SetSchema(expression.MergeSchema(leftPlan.Schema(), rightPlan.Schema()))
 
-	// Note: nullability adjustment is not needed for InnerJoin (the only type supported currently).
-	// When LEFT/RIGHT JOIN support is added, ResetNotNullFlag must be called here.
+	// A LEFT JOIN null-extends the inner (right) side when the LATERAL subquery
+	// produces no row for an outer row, so its columns lose any NOT NULL flag.
+	if joinType == base.LeftOuterJoin {
+		util.ResetNotNullFlag(ap.Schema(), leftPlan.Schema().Len(), ap.Schema().Len())
+	}
 
 	// Clone output names to avoid sharing FieldName structs that might be mutated later.
 	// Do NOT override DBName here: derived-table outputs already carry DBName="" from
@@ -1055,8 +1061,11 @@ func (b *PlanBuilder) buildLateralJoin(ctx context.Context, leftPlan, rightPlan 
 
 	ap.FullSchema = expression.MergeSchema(lFullSchema, rFullSchema)
 
-	// Note: FullSchema nullability adjustment is not needed for InnerJoin.
-	// When LEFT/RIGHT JOIN support is added, ResetNotNullFlag must be called here.
+	// Mirror the schema adjustment above on FullSchema, which additionally carries the
+	// redundant USING/NATURAL columns of the two sides.
+	if joinType == base.LeftOuterJoin {
+		util.ResetNotNullFlag(ap.FullSchema, lFullSchema.Len(), ap.FullSchema.Len())
+	}
 
 	ap.FullNames = make([]*types.FieldName, 0, len(lFullNames)+len(rFullNames))
 	for _, lName := range lFullNames {
@@ -1085,8 +1094,6 @@ func (b *PlanBuilder) buildLateralJoin(ctx context.Context, leftPlan, rightPlan 
 		onCondition := expression.SplitCNFItems(onExpr)
 		ap.AttachOnConds(onCondition)
 	}
-
-	// Note: nullability reset for outer joins not needed for InnerJoin.
 
 	// Merge handle maps (copied from buildJoin)
 	handleMap1 := b.handleHelper.popMap()
