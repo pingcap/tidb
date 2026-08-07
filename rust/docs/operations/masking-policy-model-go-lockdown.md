@@ -55,10 +55,29 @@ Scoped validation uses a worktree-exclusive target directory:
 
 ## Mutation proof
 
-Mutation probes run only in a disposable detached worktree made from the
-provisional commit. The authoritative worktree is never mutated. Before the
-lockdown is returned, mutations must be killed for source drift, PORTED-symbol
-disappearance, each status switch outcome, typed constants and unknown values,
-zero/full/omitted JSON fields, full-width restrict operations, ordered
-case-insensitive duplicate decoding, zero and offset times, and nil/non-nil
-clone behavior.
+Mutation probes ran only in a disposable detached worktree made from
+provisional commit `3061590a07`; the authoritative worktree was never mutated.
+All 19 independent mutants were killed:
+
+1. owner source byte/line drift;
+2. disappearance of the PORTED clone symbol;
+3. `DISABLED` status branch;
+4. `ENABLED` status branch;
+5. unknown-status default branch;
+6. nil clone branch;
+7. non-nil clone branch and copied value;
+8. one-byte status representation widened to two bytes;
+9. known typed masking constant spelling;
+10. unknown masking-type string preservation;
+11. empty masking-type omission;
+12. zero restrict-operation omission;
+13. full-width restrict-operation decode truncated to eight bits;
+14. Go year-1 zero time;
+15. non-UTC offset retention;
+16. case-insensitive JSON tag matching;
+17. last duplicate value wins;
+18. later JSON `null` is a no-op;
+19. exact JSON field tag/name.
+
+Each mutant failed the boundary assertion for that rule. None merely failed a
+recorded aggregate answer, and no mutant survived.
