@@ -17,6 +17,7 @@ After this work, encrypted spill files no longer fall back to plaintext, the dif
 - [x] (2026-08-06) Diagnose and align all fourteen Task C topics, enroll the one eligible topic, and complete five mutation probes.
 - [x] (2026-08-06) Re-derive, document, commit, and complete four mutation probes for Task B's three measurements on the post-Task-C tip.
 - [x] (2026-08-06) Run the handoff gates and repository Ready profile, self-review the 27-path diff, and prepare the parent-ordered SHA handoff.
+- [x] (2026-08-07) Confirm the four candidate trees are identical to the four commits already integrated on official `hparser-integration`, rerun Task A's five core mutation probes, and pass the current official tip's scoped and full-workspace Ready gates.
 
 ## Surprises & Discoveries
 
@@ -32,6 +33,10 @@ After this work, encrypted spill files no longer fall back to plaintext, the dif
   Evidence: it accepted only `KNOWN_DIVERGENCES`, while the current ratchets also use `COMPARED`, `BOTH_AGREE`, `RECORDED_MERGE_PAIRS`, `AGREED_MERGE_PAIRS`, and `EXTRA_MERGE_PAIRS`; the replacement's `test_restores_the_conflict_when_formatting_fails` detects removal of the rollback write.
 - Observation: the old re-census report's `40/16/892` and `732` writable-unread counts are stale on this branch.
   Evidence: `env LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 ruby -EUTF-8:UTF-8 rust/difftests/tools/sysvar-census.rb` prints `census: declared=948 runtime_behavior=42 set_or_validation_only=16 behaviorally_unread=890 sum=948` and `writability: writable_declared=785 writable_behaviorally_unread=730 read_only_or_scope_none_unread=160`; the two additional runtime readers are `txn.rs`'s `autocommit` and `stmt_ctx.rs`'s `version`.
+- Observation: the candidate A-D commits were already integrated on the official branch under different commit IDs before the completion audit.
+  Evidence: each staged-tree pair has an empty `git diff`: `82e0e9add`/`9e5e4a27a`, `f1e3fabb4`/`1cd8c59e1`, `460ad1b3d`/`4730aca4e`, and `08e0e2b41`/`ddcc5fa75`; the final candidate and official A-D trees are identical.
+- Observation: the earlier workspace-formatting failure is no longer present at the official tip.
+  Evidence: coordinator commit `0be631adf` recorded the stable Rustfmt output, and the completion audit's `cargo fmt --all -- --check` exits zero.
 
 ## Decision Log
 
@@ -44,10 +49,13 @@ After this work, encrypted spill files no longer fall back to plaintext, the dif
 - Decision: commit each task before its mutation probe, restoring mutations from explicit saved copies rather than Git checkout.
   Rationale: this is a non-negotiable handoff rule and gives each probe a stable committed baseline.
   Date/Author: 2026-08-06 / Codex
+- Decision: do not cherry-pick or push the stale candidate chain again; audit and deliver from the official coordinator lineage.
+  Rationale: the official lineage already contains tree-identical A-D commits and 36 later commits. Replaying the candidate chain would duplicate changes and discard the already-gated integration history. The user explicitly superseded the brief's old `DO NOT PUSH` rule and authorized direct non-force delivery to `pingcap/tidb:hparser-integration`.
+  Date/Author: 2026-08-07 / Codex
 
 ## Outcomes & Retrospective
 
-All four requested tasks are implemented, committed, restored after their mutation probes, and covered by the combined Ready validation. The only red command is the required `cargo fmt --all --check`, which reports seven pre-existing formatting drifts outside the A-D diff; the touched `difftest-result-tests` package passes its scoped fmt check.
+All four requested tasks are implemented, committed, integrated on official `hparser-integration`, restored after their mutation probes, and covered by a current-tip Ready validation. The original candidate run found seven pre-existing Rustfmt drifts outside A-D; coordinator commit `0be631adf` isolated that formatting update, after which workspace fmt and all other Ready gates passed.
 
 Task D now uses the standard-library-only Ruby resolver at `rust/difftests/resolve-ratchet-conflict.rb`. Its four synthetic tests cover both-side narrative preservation, exact constant de-duplication without touching same-named constants outside the conflict, caller-owned values for all six integration and join-shape ratchets, formatter invocation, and byte-for-byte restoration of the original conflict when formatting fails.
 
@@ -103,6 +111,22 @@ Resumed branch evidence:
 
     d93e689e89b67fc940f0cfacee9e96ac513c9a58 rust: prove the reader lock sets accumulate, and pin the commit-at-my-own-ts boundary
     82e0e9add2ed9f0a810f87c4a3220396628f7de3 rust: add encrypted spill file stack
+
+Official parent-ordered A-D commits, whose trees match the candidate commits exactly:
+
+    9e5e4a27a d93e689e8 rust: add encrypted spill file stack
+    1cd8c59e1 9e5e4a27a rust: add ratchet conflict resolver
+    4730aca4e 1cd8c59e1 rust: align all integration-test recording variants
+    ddcc5fa75 4730aca4e rust: recensus sysvar behavior and oracle gaps
+
+Task A completion-audit mutation evidence, after saving the three spill files under `/tmp/tidb-task-a-probes.MT1Mgb`:
+
+    Change the process default from plaintext to AES -> mixed_columns_spill_to_gos_bytes FAILED on exact Go plaintext file bytes
+    Make the AES selector choose the plaintext writer -> process_wide_aes_mode_selects_the_encrypted_stack FAILED at is_encrypted
+    Encrypt with a different cipher than the reader retains -> encrypted_chunk_file_matches_go_and_reads_through_both_live_caches FAILED on exact Go encrypted bytes
+    Remove the encrypt-writer live-cache overlay -> encrypted_row_files_match_go_and_read_through_both_live_caches FAILED while reading the unflushed tail
+    Remove the checksum-writer live-cache overlay -> encrypted_row_files_match_go_and_read_through_both_live_caches FAILED with a missing data offset
+    Restore all three saved files -> cmp reported identical; cargo nextest run -p tidb-chunk -j12 reported 83 passed
 
 Task D replacement mutation evidence, run with `ruby rust/difftests/tools/resolve-ratchet-conflict-test.rb` after saving the script and test in `/tmp/tidb-task-d-probes.IkiwQi`:
 
@@ -161,7 +185,7 @@ Task B mutation evidence, after saving the three mutated files in `/tmp/tidb-tas
     Restore singular tidb_capture_plan_baseline allow-empty name -> allow_empty_tables_name_live_registry_entries FAILED
     Restore all three saved files -> cmp reported identical; 2 runs, 12 assertions, 0 failures, 0 errors, 0 skips
 
-Final Ready evidence:
+Original candidate Ready evidence:
 
     cargo nextest run -p tidb-chunk -p tidb-util -p tidb-session -j12 -> 1310 passed, 9 skipped
     cargo nextest run -p difftest-result-tests -j12 -> 99 passed, 5 skipped
@@ -174,7 +198,24 @@ Final Ready evidence:
     git diff --check d93e689e89b67fc940f0cfacee9e96ac513c9a58..HEAD -> PASS
     self-review -> 27 expected paths, no integration result oracle changes, no probe files, and tgt/ remains untracked
 
-The handoff forbids pushing. The final artifact is a local branch name plus `git log --format="%h %p %s"` in parent order.
+Current official-tip completion audit:
+
+    make bazel_prepare -> PASS and generated no tracked diff
+    go run rust/difftests/chunk-tests/fixtures/generate_encrypted_spill_vectors.go + diff -> byte-identical fixture
+    cargo nextest run -p tidb-chunk -p tidb-util -p tidb-session -j12 -> 1341 passed, 9 skipped
+    cargo nextest run -p difftest-result-tests -j12 -> 99 passed, 5 skipped
+    survey_unaligned_topics -> 257 topics align, 0 do not
+    integrationtest_replay_matches_recorded_tidb_output -> 8234 of 11465 statements compared across 110 topics
+    warning_comparison_covers_only_enable_warnings_statements -> 62 of 11465 statements across 110 topics
+    ruby rust/difftests/tools/resolve-ratchet-conflict-test.rb -> 4 runs, 41 assertions, 0 failures
+    ruby rust/difftests/tools/sysvar-census-test.rb -> 2 runs, 12 assertions, 0 failures
+    cargo fmt --all -- --check -> PASS
+    cargo clippy --all-targets -j12 -> PASS with the three recorded baseline warning classes
+    make lint -> exit 0 with the two recorded non-fatal macOS diagnostics
+    cargo nextest run --workspace -j12 --no-fail-fast -> 7099 passed, 41 skipped
+    self-review -> no integration result oracle changes, no probe files, and only tgt/ remains untracked
+
+The source brief's `DO NOT PUSH` rule has been superseded by the user's direct-delivery instruction. The A-D chain and its subsequent coordinator work are already on official `pingcap/tidb:hparser-integration`; any further delivery must remain a non-force fast-forward followed by an exact `git ls-remote` check.
 
 ## Interfaces and Dependencies
 
