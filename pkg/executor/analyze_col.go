@@ -15,9 +15,11 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/failpoint"
@@ -28,10 +30,15 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
+	"github.com/tikv/client-go/v2/tikv"
+	"go.uber.org/zap"
 )
+
+const analyzeRegionResolveMaxBackoff = 5000
 
 // AnalyzeColumnsExec represents Analyze columns push down executor.
 type AnalyzeColumnsExec struct {
@@ -119,10 +126,14 @@ func (e *AnalyzeColumnsExec) buildResp(ctx context.Context, ranges []*ranger.Ran
 	}
 	// Full-sampling analyze sorts collected samples by handle before computing
 	// correlation, so this request does not need KeepOrder.
+	regionCount := countAnalyzeRequestRegions(ctx, e.ctx.GetStore(), reqBuilder.KeyRanges, e.ctx.GetSessionVars().KVVars)
+	concurrency, storeBatchSize := analyzeBatchScanBudget(regionCount, e.concurrency)
 	kvReq, err := reqBuilder.
 		SetAnalyzeRequest(e.analyzePB, isoLevel).
 		SetStartTS(startTS).
-		SetConcurrency(e.concurrency).
+		SetConcurrency(concurrency).
+		SetStoreBatchSize(storeBatchSize).
+		SetAllowBatchTaskDataMerge(true).
 		SetMemTracker(e.memTracker).
 		SetResourceGroupName(e.ctx.GetSessionVars().StmtCtx.ResourceGroupName).
 		SetExplicitRequestSourceType(e.ctx.GetSessionVars().ExplicitRequestSourceType).
@@ -136,6 +147,70 @@ func (e *AnalyzeColumnsExec) buildResp(ctx context.Context, ranges []*ranger.Ran
 		return nil, err
 	}
 	return result, nil
+}
+
+// countAnalyzeRequestRegions counts distinct Regions, returning zero if they cannot be resolved.
+func countAnalyzeRequestRegions(ctx context.Context, store kv.Storage, keyRanges *kv.KeyRanges, vars *tikv.Variables) int {
+	tikvStore, ok := store.(tikv.Storage)
+	if !ok || keyRanges == nil {
+		return 0
+	}
+	ranges := keyRanges.AppendSelfTo(nil)
+	if len(ranges) == 0 {
+		return 0
+	}
+	slices.SortFunc(ranges, func(a, b kv.KeyRange) int {
+		if cmp := bytes.Compare(a.StartKey, b.StartKey); cmp != 0 {
+			return cmp
+		}
+		return bytes.Compare(a.EndKey, b.EndKey)
+	})
+	locateRanges := make([]tikv.KeyRange, len(ranges))
+	for i, keyRange := range ranges {
+		locateRanges[i] = tikv.KeyRange{StartKey: keyRange.StartKey, EndKey: keyRange.EndKey}
+	}
+	// Load bucket metadata while populating the shared Region cache because task building reuses cached entries.
+	bo := tikv.NewBackofferWithVars(ctx, analyzeRegionResolveMaxBackoff, vars)
+	locations, err := tikvStore.GetRegionCache().BatchLocateKeyRanges(bo, locateRanges, tikv.WithNeedBuckets())
+	if err != nil {
+		statslogutil.StatsLogger().Warn(
+			"failed to count regions for analyze batching, falling back to an unbatched request",
+			zap.Error(err),
+		)
+		return 0
+	}
+	regionIDs := make(map[uint64]struct{}, len(locations))
+	for _, location := range locations {
+		regionIDs[location.Region.GetID()] = struct{}{}
+	}
+	return len(regionIDs)
+}
+
+const (
+	// analyzeBatchMinOuterConcurrency keeps at least four client requests in
+	// flight while batching. This limits a transport-level failure or
+	// cancellation of one request to at most a quarter of the scan budget.
+	analyzeBatchMinOuterConcurrency = 4
+	// analyzeBatchMaxRegionsPerRequest limits the deadline and retry exposure
+	// of each unary RPC. Sixteen Regions capture most RPC amortization without
+	// allowing an unbounded number of Analyze tasks to queue under deadlines
+	// that start when TiKV receives the RPC.
+	analyzeBatchMaxRegionsPerRequest = 16
+)
+
+// analyzeBatchScanBudget disables batching when N <= 2C. Otherwise, it chooses
+// B = min(ceil(N/C), C/analyzeBatchMinOuterConcurrency,
+// analyzeBatchMaxRegionsPerRequest) and returns concurrency C/B and batch size
+// B-1, where N is regionCount and C is scanBudget.
+func analyzeBatchScanBudget(regionCount, scanBudget int) (outerConcurrency, storeBatchSize int) {
+	scanBudget = max(scanBudget, 1)
+	if regionCount-scanBudget <= scanBudget {
+		return scanBudget, 0
+	}
+	batchWidth := (regionCount-1)/scanBudget + 1
+	batchWidth = min(batchWidth, scanBudget/analyzeBatchMinOuterConcurrency, analyzeBatchMaxRegionsPerRequest)
+	batchWidth = max(batchWidth, 1)
+	return scanBudget / batchWidth, batchWidth - 1
 }
 
 func hasPkHist(handleCols plannerutil.HandleCols) bool {

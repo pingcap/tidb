@@ -20,9 +20,12 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/testutils"
 )
 
 func TestIsUnsupportedBroadcastQueryErr(t *testing.T) {
@@ -72,6 +75,80 @@ func TestCanBroadcastToTiDBRPCForTestRejectsInvalidEndpoints(t *testing.T) {
 	// multiple server infos with an empty IP/default :10080 but no TiDB RPC
 	// listener. Such targets must not take the broadcast path.
 	require.False(t, canBroadcastToTiDBRPCForTest(context.Background(), []string{"", ""}))
+}
+
+func TestAnalyzeBatchScanBudget(t *testing.T) {
+	// Match a simple reference over the complete small-input rectangle.
+	for regionCount := 0; regionCount <= 512; regionCount++ {
+		for inputBudget := 0; inputBudget <= 128; inputBudget++ {
+			budget := max(inputBudget, 1)
+			wantWidth := 1
+			if regionCount > 2*budget {
+				pressure := (regionCount + budget - 1) / budget
+				for width := 1; width <= pressure &&
+					width*analyzeBatchMinOuterConcurrency <= budget &&
+					width <= analyzeBatchMaxRegionsPerRequest; width++ {
+					wantWidth = width
+				}
+			}
+			outer, batchSize := analyzeBatchScanBudget(regionCount, inputBudget)
+			require.Equalf(t,
+				[2]int{budget / wantWidth, wantWidth - 1},
+				[2]int{outer, batchSize},
+				"N=%d C=%d", regionCount, inputBudget)
+			require.LessOrEqualf(t, outer*(batchSize+1), budget, "N=%d C=%d", regionCount, inputBudget)
+		}
+	}
+
+	// The rectangle cannot make analyzeBatchMaxRegionsPerRequest the sole
+	// binding term; probe it with both other terms above the cap.
+	outer, batchSize := analyzeBatchScanBudget(8192, 256)
+	require.Equal(t, analyzeBatchMaxRegionsPerRequest, batchSize+1)
+	require.Equal(t, 16, outer)
+
+	// Both threshold and ceiling calculations remain safe at the integer limit.
+	maxInt := int(^uint(0) >> 1)
+	outer, batchSize = analyzeBatchScanBudget(maxInt, 64)
+	width := batchSize + 1
+	require.Equal(t, 16, width)
+	require.Equal(t, 64/width, outer)
+	outer, batchSize = analyzeBatchScanBudget(maxInt, maxInt)
+	require.Equal(t, maxInt, outer)
+	require.Zero(t, batchSize)
+}
+
+func TestCountAnalyzeRequestRegions(t *testing.T) {
+	var cluster testutils.Cluster
+	var tailRegionID uint64
+	store, err := mockstore.NewMockStore(
+		mockstore.WithStoreType(mockstore.EmbedUnistore),
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
+			_, _, tailRegionID = mockstore.BootstrapWithSingleStore(c)
+			cluster = c
+		}),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+
+	// Lookup errors and empty range sets safely disable batching.
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	ranges := kv.NewNonPartitionedKeyRanges([]kv.KeyRange{{StartKey: []byte("a"), EndKey: []byte("z")}})
+	require.Zero(t, countAnalyzeRequestRegions(canceledCtx, store, ranges, nil))
+	emptyRanges := kv.NewPartitionedKeyRanges(nil)
+	require.Zero(t, countAnalyzeRequestRegions(context.Background(), store, emptyRanges, nil))
+
+	// Unsorted overlapping partitions count each Region only once.
+	for _, key := range []string{"g", "n", "t"} {
+		newRegionID, newPeerID := cluster.AllocID(), cluster.AllocID()
+		cluster.Split(tailRegionID, newRegionID, store.GetCodec().EncodeKey([]byte(key)), []uint64{newPeerID}, newPeerID)
+		tailRegionID = newRegionID
+	}
+	ranges = kv.NewPartitionedKeyRanges([][]kv.KeyRange{
+		{{StartKey: []byte("h"), EndKey: []byte("z")}},
+		{{StartKey: []byte("a"), EndKey: []byte("m")}},
+	})
+	require.Equal(t, 4, countAnalyzeRequestRegions(context.Background(), store, ranges, nil))
 }
 
 // BuildExecutorForTest builds stmt's executor tree. It is exported only for

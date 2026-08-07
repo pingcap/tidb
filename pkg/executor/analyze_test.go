@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
@@ -40,6 +42,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/testutils"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 func checkHistogram(sc *stmtctx.StatementContext, hg *statistics.Histogram) (bool, error) {
@@ -61,25 +65,37 @@ func checkHistogram(sc *stmtctx.StatementContext, hg *statistics.Histogram) (boo
 	return true, nil
 }
 
-func TestAnalyzeBuildsSingleBatchableRequest(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+func TestAnalyzeBuildsBatchableRequests(t *testing.T) {
+	var cluster testutils.Cluster
+	store := testkit.CreateMockStore(t, mockstore.WithClusterInspector(func(c testutils.Cluster) {
+		mockstore.BootstrapWithSingleStore(c)
+		cluster = c
+	}))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
 	var requestCount atomic.Int64
 	var lastRequest atomic.Pointer[kv.Request]
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/analyzeColumnsRequestBuilt", func(req *kv.Request) {
-		lastRequest.Store(req)
+		snapshot := *req // BuildCopIterator clears StoreBatchSize after building the initial tasks.
+		lastRequest.Store(&snapshot)
 		requestCount.Add(1)
 	})
 
 	// Values at MaxInt64 and MaxInt64+1 exercise the unsigned-handle boundary.
-	// Full-sampling Analyze should cover them with one unordered request.
+	// Full-sampling Analyze should cover them with one unordered request. This
+	// one-Region request stays below the two-wave batching threshold at C=6.
+	tk.MustExec("set @@tidb_analyze_distsql_scan_concurrency = 6")
 	tk.MustExec("create table tu(a bigint unsigned primary key)")
 	tk.MustExec("insert into tu values (9223372036854775807), (9223372036854775808)")
 	tk.MustExec("analyze table tu with 1 samplerate, 0 topn, 2 buckets")
 	require.Equal(t, int64(1), requestCount.Load())
-	require.False(t, lastRequest.Load().KeepOrder)
+	request := lastRequest.Load()
+	require.False(t, request.KeepOrder)
+	// Full-sampling Analyze opts in to merged child responses.
+	require.True(t, request.AllowBatchTaskDataMerge)
+	require.Equal(t, 6, request.Concurrency)
+	require.Zero(t, request.StoreBatchSize)
 
 	bucketRows := tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 'tu' and column_name = 'a' and is_index = 0").Rows()
 	bounds := make(map[string]struct{}, 2*len(bucketRows))
@@ -90,14 +106,52 @@ func TestAnalyzeBuildsSingleBatchableRequest(t *testing.T) {
 	require.Contains(t, bounds, "9223372036854775807")
 	require.Contains(t, bounds, "9223372036854775808")
 
-	// An empty unsigned half must not stop the request before its signed range.
-	tk.MustExec("truncate table tu")
-	tk.MustExec("insert into tu values (1)")
-	tk.MustExec("analyze table tu with 1 samplerate, 0 topn, 2 buckets")
-	require.Equal(t, int64(2), requestCount.Load())
+	tikvStore, ok := store.(tikv.Storage)
+	require.True(t, ok)
+	const locateRegionMaxBackoff = 1000
+	assertAnalyzeRequest := func(regionCount, scanConcurrency, wantConcurrency, wantBatchSize int) {
+		t.Helper()
+		tk.MustExec("truncate table tu")
+		tk.MustExec(fmt.Sprintf("insert into tu with recursive seq(n) as (select 1 union all select n+1 from seq where n < %d) select n from seq", regionCount))
+		ctx := context.Background()
+		table, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("tu"))
+		require.NoError(t, err)
+		tableStart := tablecodec.GenTableRecordPrefix(table.Meta().ID)
+		if kerneltype.IsNextGen() {
+			tableStart = store.GetCodec().EncodeKey(tableStart)
+		}
+		location, err := tikvStore.GetRegionCache().LocateKey(tikv.NewBackoffer(ctx, locateRegionMaxBackoff), tableStart)
+		require.NoError(t, err)
+		cluster.SplitKeys(tableStart, tableStart.PrefixNext(), regionCount)
+		// SplitKeys bypasses RegionCache, so invalidate its pre-split entry.
+		tikvStore.GetRegionCache().InvalidateCachedRegion(location.Region)
+
+		tk.MustExec(fmt.Sprintf("set @@tidb_analyze_distsql_scan_concurrency = %d", scanConcurrency))
+		before := requestCount.Load()
+		tk.MustExec("analyze table tu with 1 samplerate, 0 topn, 2 buckets")
+		require.Equalf(t, before+1, requestCount.Load(), "N=%d C=%d", regionCount, scanConcurrency)
+		request := lastRequest.Load()
+		require.Equalf(t, wantConcurrency, request.Concurrency, "N=%d C=%d", regionCount, scanConcurrency)
+		require.Equalf(t, wantBatchSize, request.StoreBatchSize, "N=%d C=%d", regionCount, scanConcurrency)
+	}
+
+	// N=12 is the exact no-batch gate. N=13 crosses it, but C=6 cannot batch
+	// and still keep analyzeBatchMinOuterConcurrency workers; C=8 is the
+	// smallest batching budget and N=17 its first batched neighbor.
+	assertAnalyzeRequest(12, 6, 6, 0)
+	assertAnalyzeRequest(13, 6, 6, 0)
+	assertAnalyzeRequest(17, 8, 4, 1)
+	// The larger case checks one 100-Region lookup and request wiring; it stays
+	// below client-go's 128-Region pagination boundary.
+	assertAnalyzeRequest(100, 32, 8, 3)
+	// With abundant Regions the outer-concurrency floor binds the batch, and
+	// the 300-Region lookup also crosses the pagination boundary.
+	assertAnalyzeRequest(300, 32, 4, 7)
+	// Positive-only values leave the upper unsigned half empty; all rows must
+	// still be analyzed.
 	metaRows := tk.MustQuery("show stats_meta where db_name = 'test' and table_name = 'tu'").Rows()
 	require.Len(t, metaRows, 1)
-	require.Equal(t, "1", metaRows[0][5])
+	require.Equal(t, "300", metaRows[0][5])
 }
 
 func TestAnalyzeIndexExtractTopN(t *testing.T) {
