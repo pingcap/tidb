@@ -51,14 +51,19 @@ and lists every Rust landing symbol explicitly.
   mismatches at shared parsing, validation, or representation layers.
 - [x] (2026-08-06) Ported every source-owned Go test/support artifact or recorded a concrete
   DECLINED/UNREACHABLE verdict in the inventory.
-- [x] (2026-08-06) Killed 16 independent mutations spanning duration rounding,
+- [x] (2026-08-06) Killed 19 independent mutations spanning duration rounding,
   SQL microsecond bounds, zero-date diagnostics, YEAR width, raw-byte spaces,
   DST value/diagnostic handling, interval overflow, signed formatting,
   exhausted STR_TO_DATE tokens, Unicode categories, receiver mutation,
   calendar-vs-instant duration conversion, source drift, branch deletion,
-  PORTED-symbol disappearance, and Go-test receipt disappearance.
-- [ ] Run repository Ready lint, clean
-  worktree gates, direct ratchet greps, dual push, and cleanup.
+  PORTED-symbol disappearance, Go-test receipt disappearance, DST diagnostic
+  conversion, write-path event preservation, and temporal error identity.
+- [x] (2026-08-06) Ran repository Ready lint and the three touched-crate test
+  suites. A first clean-workspace gate exposed and fixed the dropped DST
+  diagnostic at the datatype-to-write boundary.
+- [ ] Re-gate the exact final SHA in a clean worktree, verify ratchet constants
+  by direct grep, return the SHA for the campaign gate, then dual-push and
+  reclaim after approval.
 
 ## Surprises & Discoveries
 
@@ -116,6 +121,24 @@ and lists every Rust landing symbol explicitly.
   `NonexistentLocalTime`; it now returns `2018-03-11 03:00:00` with
   `ParsedTime::dst_adjusted == true`.
 
+- Observation: preserving the diagnostic in `ParsedTime` was necessary but not
+  sufficient; two downstream conversion seams discarded it.
+  Evidence: the first clean-workspace run failed the existing DDL and INSERT
+  Los Angeles spring-gap cases. `Datum::convert_to_in` discarded
+  `dst_adjusted`, and `cast_value_shaped` returned a temporal value before
+  consuming its conversion event. After both repairs, DDL reports 1067 and
+  INSERT reports 1292 while the adjacent valid timestamps still pass. Three
+  independent mutations respectively restored silent acceptance, dropped the
+  write event, and changed 1292 into 1366; all were killed.
+
+- Observation: a literal one-process workspace run is order-sensitive because
+  the existing charset tests mutate process-global collation mode.
+  Evidence: `charset::tests::source_registry_vectors` observed `gbk_bin` after
+  another test installed `gbk_chinese_ci`; the resulting poisoned lock caused
+  two additional collation failures. The final clean gate therefore runs the
+  four interacting tests in isolated processes and all remaining workspace
+  tests together. This partition changes process isolation, not test coverage.
+
 - Observation: Go's general integer-width formatter pads the already-stringified
   signed value rather than formatting sign-aware digits.
   Evidence: the new regression failed with Rust `-001` versus Go `00-1` for
@@ -165,10 +188,12 @@ remote SHAs, and reclaimed disk space.
 
 The production and original-test completeness boundary is now closed: 151
 functions, 561 exact control-flow loci, and 75 test/support declarations have
-one nonempty verdict, and 293 `tidb-datatype` library tests plus all-target
-clippy pass. All 16 deliberate mutations were observable. This is not yet a
-final completion claim because repository Ready lint, the clean-worktree
-workspace gate, and the returned receipt SHA remain outstanding.
+one nonempty verdict. The touched-crate suites pass with 294 `tidb-datatype`,
+507 `tidb-executor`, and 989 `tidb-session` tests; all 19 deliberate mutations
+were observable. No oracle ratchet moved; lockdown completeness is the
+deliverable and is a successful result. This is not yet a final completion
+claim because the exact final SHA still needs the clean-worktree partition,
+direct ratchet grep, and returned receipt.
 
 ## Context and Orientation
 
