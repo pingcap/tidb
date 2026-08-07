@@ -56,7 +56,7 @@ go_test(
     ],
     embed = [":txn"],
     flaky = True,
-    shard_count = 5,
+    shard_count = 7,
     deps = [
         "//pkg/kv",
         "//pkg/parser/terror",

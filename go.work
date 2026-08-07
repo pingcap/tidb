@@ -1,7 +1,0 @@
-go 1.25.10
-
-use (
-	.
-	/home/wenxuan/dev/pingcap/kvproto/.wt/feat/shared-lock-upgrade-next-gen
-	/home/wenxuan/dev/tikv/client-go/.wt/feat/shared-lock-upgrade-next-gen
-)
