@@ -43,7 +43,8 @@ another agent:
 | --- | --- |
 | `tidb-expr` | existing `L1cast` expression/cast owner |
 | `tidb-executor` | existing `L6driver` executor owner |
-| `tidb-server` | `pkg/server/internal/parse/parse.go` lockdown |
+| `tidb-server` | `pkg/server/internal/parse/parse.go` handshake and attribute-policy landing |
+| `tidb-protocol` | same `parse.go` lockdown; `StmtFetchCmd` lands in prepared-statement decoding |
 
 The highest-ranked currently eligible independent surfaces are therefore
 rank 18 (`pkg/meta/meta_test.go::TestMeta`, landing in `tidb-meta`) and rank 19
@@ -216,4 +217,3 @@ Write-disjoint crate branches may be integrated in completion order. After an
 integration changes the accepted tip, later agents must base new units on that
 new dual-remote tip; already active units report their older base explicitly
 and are rebased or integrated only by the coordinator after conflict review.
-
