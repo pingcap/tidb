@@ -21,6 +21,7 @@ The source's important behavioral contract is its `sync.Locker` marker: Go's `go
 - [x] (2026-08-08) Passed the WIP gate: no-failpoint Go package oracle, complete checker, all 287 `tidb-util` tests, rustdoc compile-fail test, package Clippy with warnings denied, workspace fmt, and `git diff --check`.
 - [x] (2026-08-08) Passed the clean code-bearing Ready gate at `1c6f8e2bb06913fea670288a780323ed09ad880d`: exact Go oracle, checker, rustdoc 1/1, 287/287 `tidb-util`, 7130/7130 workspace tests with 41 skips, workspace Clippy with warnings denied, fmt, direct ratchets, `git diff --check`, and `make -j12 lint`.
 - [x] (2026-08-08) Published the code-bearing nocopy chain by ordinary fast-forward to official `pingcap/tidb:hparser-integration`; `git ls-remote` returned `1c6f8e2bb06913fea670288a780323ed09ad880d`, and GitHub API mapped author and committer to `dbsid <huanshengchen@gmail.com>` for both nocopy commits.
+- [x] (2026-08-08) Published the Ready validation receipt at official SHA `42ecd7034e2d702a521ce67316c528c57ed5f499`; immediate remote-ref and GitHub attribution checks returned that SHA and `dbsid` for both author and committer.
 
 ## Surprises & Discoveries
 
@@ -132,3 +133,5 @@ Security extension review: this marker adds no network, authentication, persiste
 Revision note: created on 2026-08-08 after selecting the complete package, measuring the Go `go test` and `go vet` boundaries, and confirming the existing Rust unit and rustdoc baselines.
 
 Revision note: updated on 2026-08-08 after the eight mutation kills, compiled receipt gate, clean Ready replay, ordinary official fast-forward, and GitHub `dbsid` attribution checks all passed.
+
+Revision note: closed on 2026-08-08 after the validation receipt reached official `hparser-integration` at `42ecd7034e2d702a521ce67316c528c57ed5f499` and the remote/API checks matched.
