@@ -350,6 +350,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	ascii                      "ASCII"
 	attribute                  "ATTRIBUTE"
 	attributes                 "ATTRIBUTES"
+	auto                       "AUTO"
 	autoextendSize             "AUTOEXTEND_SIZE"
 	autoIdCache                "AUTO_ID_CACHE"
 	autoIncrement              "AUTO_INCREMENT"
@@ -7213,12 +7214,8 @@ IndexOption:
 			},
 		}
 	}
-|	"PRE_SPLIT_REGIONS" EqOpt Identifier
+|	"PRE_SPLIT_REGIONS" EqOpt "AUTO"
 	{
-		if !strings.EqualFold($3, "AUTO") {
-			yylex.AppendError(yylex.Errorf("The value of PRE_SPLIT_REGIONS must be AUTO, an integer, or a split option"))
-			return 1
-		}
 		$$ = &ast.IndexOption{
 			AutoPreSplit: true,
 		}
@@ -7341,6 +7338,7 @@ UnReservedKeyword:
 |	"STATS_COL_LIST"
 |	"AUTO_ID_CACHE"
 |	"AUTO_INCREMENT"
+|	"AUTO"
 |	"AFFINITY"
 |	"AFTER"
 |	"ALWAYS"

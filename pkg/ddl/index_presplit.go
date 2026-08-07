@@ -74,6 +74,7 @@ func preSplitIndexRegions(
 			splitResult, skipReason, err = autoPreSplitIndexRegion(
 				ctx, sctx, store, tblInfo, idxInfo, statsProvider,
 				autoPreSplitBoundaryCache, splitOnTempIdx)
+			// Propagate DDL pause or cancellation before AUTO's best-effort handling swallows ordinary failures.
 			if ctxErr := context.Cause(ctx); ctxErr != nil {
 				return ctxErr
 			}
@@ -100,7 +101,7 @@ func preSplitIndexRegions(
 			if err != nil {
 				return errors.Trace(err)
 			}
-			convertIndexSplitKeysForReorg(splitKeys, splitOnTempIdx)
+			convertIndexSplitKeysForReorgInPlace(splitKeys, splitOnTempIdx)
 			failpoint.InjectCall("beforePresplitIndex", splitKeys)
 			splitResult, err = splitIndexRegionAndWait(ctx, sctx, store, tblInfo, idxInfo, splitKeys)
 			if err != nil {
@@ -137,7 +138,7 @@ func autoPreSplitIndexRegion(
 		return splitIndexRegionResult{}, reason, nil
 	}
 
-	convertIndexSplitKeysForReorg(splitKeys, splitOnTempIdx)
+	convertIndexSplitKeysForReorgInPlace(splitKeys, splitOnTempIdx)
 	failpoint.InjectCall("beforePresplitIndex", splitKeys)
 	splitResult, err = splitIndexRegionAndWait(ctx, sctx, store, tblInfo, idxInfo, splitKeys)
 	if splitResult.unsupported {
@@ -149,7 +150,7 @@ func autoPreSplitIndexRegion(
 	return splitResult, "", nil
 }
 
-func convertIndexSplitKeysForReorg(splitKeys [][]byte, splitOnTempIdx bool) {
+func convertIndexSplitKeysForReorgInPlace(splitKeys [][]byte, splitOnTempIdx bool) {
 	if !splitOnTempIdx {
 		return
 	}

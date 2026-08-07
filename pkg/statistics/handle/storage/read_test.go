@@ -59,15 +59,83 @@ func TestLoadStats(t *testing.T) {
 	loaded, err := storage.LoadColumnDistributionStats(
 		context.Background(), testKit.Session(), tableInfo.ID, tableInfo.Columns[1], 1)
 	require.NoError(t, err)
-	require.Len(t, loaded.Column.TopN.TopN, 1)
-	require.Equal(t, uint64(1), loaded.Column.TopN.TopN[0].Count)
-	require.NoError(t, loaded.HistogramError)
-	require.Len(t, loaded.Column.Histogram.Buckets, 2)
+	require.Len(t, loaded.TopN.TopN, 1)
+	require.Equal(t, uint64(1), loaded.TopN.TopN[0].Count)
+	require.Len(t, loaded.Histogram.Buckets, 2)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	_, err = storage.LoadColumnDistributionStats(
 		ctx, testKit.Session(), tableInfo.ID, tableInfo.Columns[1], 1)
 	require.ErrorIs(t, err, context.Canceled)
+
+	t.Run("negative NullCount aborts the whole load", func(t *testing.T) {
+		testKit.MustExec(
+			"update mysql.stats_histograms set null_count = -1 where table_id = ? and is_index = 0 and hist_id = ?",
+			tableInfo.ID, tableInfo.Columns[1].ID)
+		t.Cleanup(func() {
+			testKit.MustExec(
+				"update mysql.stats_histograms set null_count = 0 where table_id = ? and is_index = 0 and hist_id = ?",
+				tableInfo.ID, tableInfo.Columns[1].ID)
+		})
+
+		loaded, loadErr := storage.LoadColumnDistributionStats(
+			context.Background(), testKit.Session(), tableInfo.ID, tableInfo.Columns[1], 1)
+		require.ErrorContains(t, loadErr, "negative null count")
+		require.Nil(t, loaded)
+	})
+
+	t.Run("TopN error aborts the whole load", func(t *testing.T) {
+		loadCtx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		const topNFailpointName = "github.com/pingcap/tidb/pkg/statistics/handle/storage/beforeTopNFromStorageWithPriority"
+		require.NoError(t, failpoint.EnableCall(topNFailpointName,
+			func(tableID int64, _ int, _ int64, _ int) {
+				if tableID == tableInfo.ID {
+					cancel()
+				}
+			}))
+		t.Cleanup(func() {
+			require.NoError(t, failpoint.Disable(topNFailpointName))
+		})
+
+		histogramQueried := false
+		const histogramFailpointName = "github.com/pingcap/tidb/pkg/statistics/handle/storage/beforeHistogramFromStorageWithParams"
+		require.NoError(t, failpoint.EnableCall(histogramFailpointName,
+			func(tableID int64, _ int, _ int64) {
+				if tableID == tableInfo.ID {
+					histogramQueried = true
+				}
+			}))
+		t.Cleanup(func() {
+			require.NoError(t, failpoint.Disable(histogramFailpointName))
+		})
+
+		loaded, loadErr := storage.LoadColumnDistributionStats(
+			loadCtx, testKit.Session(), tableInfo.ID, tableInfo.Columns[1], 1)
+		require.ErrorIs(t, loadErr, context.Canceled)
+		require.Nil(t, loaded)
+		require.False(t, histogramQueried)
+	})
+
+	t.Run("Histogram error aborts the whole load", func(t *testing.T) {
+		loadCtx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		const failpointName = "github.com/pingcap/tidb/pkg/statistics/handle/storage/beforeHistogramFromStorageWithParams"
+		require.NoError(t, failpoint.EnableCall(failpointName,
+			func(tableID int64, _ int, _ int64) {
+				if tableID == tableInfo.ID {
+					cancel()
+				}
+			}))
+		t.Cleanup(func() {
+			require.NoError(t, failpoint.Disable(failpointName))
+		})
+
+		loaded, loadErr := storage.LoadColumnDistributionStats(
+			loadCtx, testKit.Session(), tableInfo.ID, tableInfo.Columns[1], 0)
+		require.ErrorIs(t, loadErr, context.Canceled)
+		require.Nil(t, loaded)
+	})
 
 	// Index/column stats are not loaded after analyze.
 	stat := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
@@ -158,7 +226,7 @@ func TestLoadColumnDistributionStatsUsesOneSnapshot(t *testing.T) {
 	})
 
 	type loadResult struct {
-		stats *storage.ColumnDistributionStats
+		stats *statistics.Column
 		err   error
 	}
 	resultCh := make(chan loadResult, 1)
@@ -179,15 +247,15 @@ func TestLoadColumnDistributionStatsUsesOneSnapshot(t *testing.T) {
 	resume <- struct{}{}
 	result := <-resultCh
 	require.NoError(t, result.err)
-	require.Equal(t, before.Column.LastUpdateVersion, result.stats.Column.LastUpdateVersion)
-	require.Equal(t, before.Column.TopN, result.stats.Column.TopN)
-	require.Equal(t, before.Column.Histogram, result.stats.Column.Histogram)
+	require.Equal(t, before.LastUpdateVersion, result.stats.LastUpdateVersion)
+	require.Equal(t, before.TopN, result.stats.TopN)
+	require.Equal(t, before.Histogram, result.stats.Histogram)
 
 	after, err := storage.LoadColumnDistributionStats(
 		context.Background(), tk.Session(), tblInfo.ID, colInfo, 2)
 	require.NoError(t, err)
-	require.NotEqual(t, before.Column.LastUpdateVersion, after.Column.LastUpdateVersion)
-	require.Equal(t, uint64(20), after.Column.TopN.TopN[0].Count)
+	require.NotEqual(t, before.LastUpdateVersion, after.LastUpdateVersion)
+	require.Equal(t, uint64(20), after.TopN.TopN[0].Count)
 }
 
 func TestLoadNonExistentIndexStats(t *testing.T) {

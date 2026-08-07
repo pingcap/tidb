@@ -37,7 +37,7 @@ func TestNormalize(t *testing.T) {
 		{"select null", "select ?"},
 		{"select \\N", "select ?"},
 		{"SELECT `null`", "select `null`"},
-		{"SELECT auto FROM auto", "select `auto` from `auto`"},
+		{"SELECT auto FROM auto", "select auto from auto"},
 		{"select * from b where id = 1", "select * from `b` where `id` = ?"},
 		{"select 1 from b where id in (1, 3, '3', 1, 2, 3, 4)", "select ? from `b` where `id` in ( ... )"},
 		{"select 1 from b where id in (1, a, 4)", "select ? from `b` where `id` in ( ? , `a` , ? )"},
@@ -197,7 +197,6 @@ func TestNormalizeDigest(t *testing.T) {
 func TestDigestHashEqForSimpleSQL(t *testing.T) {
 	sqlGroups := [][]string{
 		{"select * from b where id = 1", "select * from b where id = '1'", "select * from b where id =2"},
-		{"select auto from auto", "select `auto` from `auto`"},
 		{"select 2 from b, c where c.id > 1", "select 4 from b, c where c.id > 23"},
 		{"Select 3", "select 1"},
 		{"Select * from t where (i, j) in ((1,1), (2,2))", "select * from t where (i, j) in ((1,1), (2,2), (3,3))"},
@@ -219,6 +218,7 @@ func TestDigestHashEqForSimpleSQL(t *testing.T) {
 func TestDigestHashNotEqForSimpleSQL(t *testing.T) {
 	sqlGroups := [][]string{
 		{"select * from b where id = 1", "select a from b where id = 1", "select * from d where bid =1"},
+		{"select auto from auto", "select `auto` from `auto`"},
 	}
 	for _, sqlGroup := range sqlGroups {
 		var d string

@@ -88,35 +88,18 @@ func HistMetaFromStorageWithHighPriority(sctx sessionctx.Context, item *model.Ta
 	return histMetaFromStorage(util.StatsCtx, sctx, item, possibleColInfo, 0, kv.PriorityHigh)
 }
 
-// ColumnDistributionStats is a partial result of loading column distribution statistics from storage.
-// Column is nil when histogram metadata does not exist. A non-nil Column always
-// contains metadata, but TopN and Histogram are loaded only for Analyze V2.
-// Component errors do not invalidate the other components or become the outer
-// loader error. A negative metadata null count is replaced with zero and reported
-// through NullCountError.
-type ColumnDistributionStats struct {
-	Column *statistics.Column
-	// TopNError reports only the TopN load failure; Histogram and NullCount may remain usable.
-	TopNError error
-	// HistogramError reports only the Histogram load failure; TopN and NullCount may remain usable.
-	HistogramError error
-	// NullCountError reports invalid metadata after Column.NullCount has been replaced with zero.
-	NullCountError error
-}
-
 // LoadColumnDistributionStats loads one column's metadata, TopN, and Histogram
-// from one MVCC snapshot with normal priority. Snapshot/metadata failures are
-// returned as the outer error because the statistics identity and version cannot
-// be established. TopN and Histogram failures are stored independently in the
-// partial result. maxTopNKeys limits the loaded TopN entries, while Histogram
-// always loads all buckets.
+// from one MVCC snapshot with normal priority. Any loading or decoding failure
+// aborts the whole load so callers never plan with a partial distribution.
+// maxTopNKeys limits the loaded TopN entries, while Histogram always loads all
+// buckets.
 func LoadColumnDistributionStats(
 	ctx context.Context,
 	sctx sessionctx.Context,
 	physicalTableID int64,
 	colInfo *model.ColumnInfo,
 	maxTopNKeys int,
-) (*ColumnDistributionStats, error) {
+) (*statistics.Column, error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStatsForegroundPriority)
 	snapshot, err := sctx.GetStore().GetOracle().GetTimestamp(
 		ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
@@ -130,11 +113,10 @@ func LoadColumnDistributionStats(
 	if err != nil {
 		return nil, err
 	}
-	result := &ColumnDistributionStats{}
 	if histMeta == nil {
-		return result, nil
+		return nil, nil
 	}
-	result.Column = &statistics.Column{
+	column := &statistics.Column{
 		PhysicalID:        physicalTableID,
 		Info:              colInfo,
 		Histogram:         *histMeta,
@@ -142,11 +124,10 @@ func LoadColumnDistributionStats(
 		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
 	}
 	if histMeta.NullCount < 0 {
-		result.NullCountError = errors.Errorf("negative null count %d", histMeta.NullCount)
-		result.Column.NullCount = 0
+		return nil, errors.Errorf("negative null count %d", histMeta.NullCount)
 	}
 	if statsVer != statistics.Version2 {
-		return result, nil
+		return column, nil
 	}
 
 	histogramParams := histogramLoadParams{
@@ -156,14 +137,14 @@ func LoadColumnDistributionStats(
 		distinct:    histMeta.NDV,
 		isIndex:     0,
 		version:     histMeta.LastUpdateVersion,
-		nullCount:   result.Column.NullCount,
+		nullCount:   column.NullCount,
 		totColSize:  histMeta.TotColSize,
 		correlation: histMeta.Correlation,
 		priority:    kv.PriorityNormal,
 		snapshot:    snapshot,
 	}
 	if maxTopNKeys > 0 {
-		result.Column.TopN, result.TopNError = topNFromStorageWithParams(
+		topN, err := topNFromStorageWithParams(
 			ctx, sctx, topNLoadParams{
 				tableID:  physicalTableID,
 				isIndex:  0,
@@ -172,14 +153,20 @@ func LoadColumnDistributionStats(
 				limit:    maxTopNKeys,
 				snapshot: snapshot,
 			})
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		column.TopN = topN
 	}
 
-	histogram, histogramErr := histogramFromStorageWithParams(ctx, sctx, histogramParams)
-	result.HistogramError = histogramErr
-	if histogramErr == nil && histogram != nil {
-		result.Column.Histogram = *histogram
+	histogram, err := histogramFromStorageWithParams(ctx, sctx, histogramParams)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
-	return result, nil
+	if histogram != nil {
+		column.Histogram = *histogram
+	}
+	return column, nil
 }
 
 func histMetaFromStorage(
@@ -260,6 +247,9 @@ func histogramFromStorageWithParams(
 	sctx sessionctx.Context,
 	params histogramLoadParams,
 ) (*statistics.Histogram, error) {
+	failpoint.InjectCall(
+		"beforeHistogramFromStorageWithParams",
+		params.tableID, params.isIndex, params.histID)
 	sql := statsSelectPrefix(params.priority) + "count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets where table_id = %? and is_index = %? and hist_id = %? order by bucket_id"
 	rows, fields, err := execRowsAtSnapshot(
 		ctx, sctx, params.snapshot, sql, params.tableID, params.isIndex, params.histID)
