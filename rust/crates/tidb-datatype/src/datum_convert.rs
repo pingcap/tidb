@@ -26,11 +26,11 @@ use crate::{
     convert_int_to_int, convert_int_to_uint, convert_uint_to_int, convert_uint_to_uint,
     integer_signed_lower_bound, integer_signed_upper_bound, integer_unsigned_upper_bound,
     json_to_int, parse_enum, parse_enum_value, parse_set, parse_set_value, parse_time,
-    parse_time_from_decimal, parse_time_from_num, str_to_duration, truncate_float, BinaryJSON,
-    BinaryLiteral, BinaryLiteralWidth, Charset, Collation, ConversionFlags, Converted, CoreTime,
-    Datum, DatumValueError, Decimal, DurationOrTime, FieldType, FieldTypeCode, MySqlDuration,
-    ScalarConversionError, ScalarConversionEvent, SessionTimeZone, Time, TimeType, VectorFloat32,
-    UNSPECIFIED_LENGTH,
+    parse_time_from_decimal, parse_time_from_num_with_zero_date_error, str_to_duration,
+    truncate_float, BinaryJSON, BinaryLiteral, BinaryLiteralWidth, Charset, Collation,
+    ConversionFlags, Converted, CoreTime, Datum, DatumValueError, Decimal, DurationOrTime,
+    FieldType, FieldTypeCode, MySqlDuration, ScalarConversionError, ScalarConversionEvent,
+    SessionTimeZone, Time, TimeType, VectorFloat32, UNSPECIFIED_LENGTH,
 };
 
 /// Direction used by reverse expression evaluation.
@@ -420,6 +420,7 @@ impl Datum {
             target.decimal()
         };
         let zero_in_date = flags.ignore_zero_in_date_err();
+        let zero_date = flags.ignore_zero_date_err();
         let invalid_date = flags.ignore_invalid_date_err();
         // Go's fallback datum: `NewTime(ZeroCoreTime, tp, DefaultFsp)`.
         let zero = Time::new(CoreTime::default(), kind, 0).map_err(conversion_error)?;
@@ -468,14 +469,32 @@ impl Datum {
                 .time
             }
             Self::Int(value) => {
-                parse_time_from_num(*value, kind, fsp, zero_in_date, invalid_date, zone)
-                    .map_err(wrong_value)?
-                    .time
+                let parsed = parse_time_from_num_with_zero_date_error(
+                    *value,
+                    kind,
+                    fsp,
+                    zero_date,
+                    zero_in_date,
+                    invalid_date,
+                    zone,
+                )
+                .map_err(wrong_value)?;
+                event = parsed.truncated.then_some(ScalarConversionEvent::Truncated);
+                parsed.time
             }
             Self::UInt(value) if *value <= i64::MAX as u64 => {
-                parse_time_from_num(*value as i64, kind, fsp, zero_in_date, invalid_date, zone)
-                    .map_err(wrong_value)?
-                    .time
+                let parsed = parse_time_from_num_with_zero_date_error(
+                    *value as i64,
+                    kind,
+                    fsp,
+                    zero_date,
+                    zero_in_date,
+                    invalid_date,
+                    zone,
+                )
+                .map_err(wrong_value)?;
+                event = parsed.truncated.then_some(ScalarConversionEvent::Truncated);
+                parsed.time
             }
             Self::Decimal(value) => {
                 let mut time = parse_time_from_decimal(value, zero_in_date, invalid_date, zone)
@@ -1229,6 +1248,26 @@ mod go_tests;
 mod tests {
     use super::*;
     use crate::{parse_enum_value, parse_set_value, FieldTypeFlags};
+
+    #[test]
+    fn numeric_zero_time_conversion_keeps_go_value_and_diagnostic() {
+        // Go `ParseTimeFromNum` returns the target's zero value in both
+        // modes. With `StrictFlags`, it returns that value beside
+        // ErrTruncatedWrongVal; with FlagIgnoreZeroDateErr it has no event.
+        // `Converted` is the Rust value/event form of that contract.
+        let target = FieldType::new(FieldTypeCode::Timestamp).with_decimal(6);
+        let strict = Datum::Int(0)
+            .convert_to(&target, crate::STRICT_FLAGS)
+            .unwrap();
+        assert_eq!(strict.value.sql_string().unwrap(), "0000-00-00 00:00:00");
+        assert_eq!(strict.event, Some(ScalarConversionEvent::Truncated));
+
+        let ignored = Datum::Int(0)
+            .convert_to(&target, crate::DEFAULT_STATEMENT_FLAGS)
+            .unwrap();
+        assert_eq!(ignored.value, strict.value);
+        assert_eq!(ignored.event, None);
+    }
 
     /// Casting a `TIME` to `YEAR` reads BOTH statement inputs Go reads:
     /// `ctx.Flags().CastTimeToYearThroughConcat()` and `ctx.Location()`.

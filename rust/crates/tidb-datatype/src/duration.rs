@@ -16,11 +16,10 @@
 
 use std::{cmp::Ordering, error::Error, fmt};
 
-use chrono::{DateTime, Datelike, Duration as ChronoDuration, TimeZone};
+use chrono::{DateTime, Datelike, TimeZone};
 
 use crate::{
-    adjust_year, check_fsp, core_time_from_datetime, parse_frac, Decimal, FspError, Time,
-    TimeError, TimeType,
+    adjust_year, check_fsp, parse_frac, CoreTime, Decimal, FspError, Time, TimeError, TimeType,
 };
 
 /// The maximum SQL `TIME` hour component accepted by TiDB.
@@ -247,25 +246,17 @@ impl MySqlDuration {
         allow_invalid_date: bool,
     ) -> Result<Time, TimeError> {
         let timezone = timestamp.timezone();
-        let midnight = timezone
-            .with_ymd_and_hms(
-                timestamp.year(),
-                timestamp.month(),
-                timestamp.day(),
-                0,
-                0,
-                0,
-            )
-            .single()
-            .ok_or(TimeError::InvalidDate)?;
-        let value = midnight
-            .checked_add_signed(ChronoDuration::nanoseconds(self.nanoseconds))
-            .ok_or(TimeError::OutOfRange("time"))?;
-        let datetime = Time::new(
-            core_time_from_datetime(value),
-            TimeType::DateTime,
-            i64::from(self.fsp),
-        )?;
+        let mut core = CoreTime::from_date(
+            timestamp.year() as u16,
+            timestamp.month() as u8,
+            timestamp.day() as u8,
+            0,
+            0,
+            0,
+            0,
+        );
+        core.mix_duration(self.nanoseconds);
+        let datetime = Time::new(core, TimeType::DateTime, i64::from(self.fsp))?;
         datetime
             .convert_kind(kind, allow_zero_in_date, allow_invalid_date, &timezone)
             .map(|result| result.0)
@@ -573,7 +564,7 @@ pub const fn truncate_overflow_mysql_time(value: i64) -> DurationRangeResult {
 /// [`ParsedDuration::event`] without importing SQL warning policy.
 pub fn parse_duration(input: &[u8], target_fsp: i64) -> Result<ParsedDuration, DurationParseError> {
     let fsp = check_fsp(target_fsp).map_err(DurationParseError::InvalidFsp)?;
-    let input = trim_ascii_space(input);
+    let input = trim_source_space(input);
     if input.is_empty() {
         return Err(DurationParseError::InvalidFormat);
     }
@@ -584,7 +575,7 @@ pub fn parse_duration(input: &[u8], target_fsp: i64) -> Result<ParsedDuration, D
     let negative = input.first() == Some(&b'-');
     if negative {
         index += 1;
-        skip_ascii_space(input, &mut index);
+        skip_source_space(input, &mut index);
     }
 
     // Source `matchDuration` measures `charsLen` after the sign and its
@@ -594,7 +585,7 @@ pub fn parse_duration(input: &[u8], target_fsp: i64) -> Result<ParsedDuration, D
 
     let first = parse_duration_number(input, &mut index)?;
     let before_space = index;
-    skip_ascii_space(input, &mut index);
+    skip_source_space(input, &mut index);
     let day_form =
         index != before_space && input.get(index).is_some_and(|byte| byte.is_ascii_digit());
     let (mut hours, mut minutes, mut seconds) = if day_form {
@@ -624,7 +615,7 @@ pub fn parse_duration(input: &[u8], target_fsp: i64) -> Result<ParsedDuration, D
 
     // Source `matchDuration` applies `parser.Space0` before the fraction and
     // never again afterwards, so trailing padding is part of the leftover.
-    skip_ascii_space(input, &mut index);
+    skip_source_space(input, &mut index);
     let mut microseconds = 0_i64;
     if input.get(index) == Some(&b'.') {
         index += 1;
@@ -865,22 +856,29 @@ fn parse_duration_number(input: &[u8], index: &mut usize) -> Result<u64, Duratio
 }
 
 fn consume_duration_colon(input: &[u8], index: &mut usize) -> bool {
-    skip_ascii_space(input, index);
+    skip_source_space(input, index);
     if input.get(*index) != Some(&b':') {
         return false;
     }
     *index += 1;
-    skip_ascii_space(input, index);
+    skip_source_space(input, index);
     true
 }
 
-fn skip_ascii_space(input: &[u8], index: &mut usize) {
-    while input.get(*index).is_some_and(u8::is_ascii_whitespace) {
+fn is_source_space(byte: u8) -> bool {
+    byte.is_ascii_whitespace() || matches!(byte, 0x85 | 0xa0)
+}
+
+fn skip_source_space(input: &[u8], index: &mut usize) {
+    while input.get(*index).is_some_and(|byte| is_source_space(*byte)) {
         *index += 1;
     }
 }
 
-fn trim_ascii_space(input: &[u8]) -> &[u8] {
+fn trim_source_space(input: &[u8]) -> &[u8] {
+    if let Ok(text) = std::str::from_utf8(input) {
+        return text.trim().as_bytes();
+    }
     let mut start = 0;
     let mut end = input.len();
     while input.get(start).is_some_and(u8::is_ascii_whitespace) {
@@ -892,8 +890,9 @@ fn trim_ascii_space(input: &[u8]) -> &[u8] {
     &input[start..end]
 }
 
-/// Rounds duration nanoseconds using Go `Duration.RoundFrac`'s half-away-from
-/// zero rule and returns normalized FSP metadata.
+/// Rounds duration nanoseconds using Go `Duration.RoundFrac`'s nearest rule,
+/// whose exact negative half resolves toward positive infinity, and returns
+/// normalized FSP metadata.
 ///
 /// The target FSP is normalized first, then compared with `current_fsp`,
 /// matching Go's early return. A target FSP above six is clamped by
@@ -911,11 +910,11 @@ pub fn round_duration_fsp(
     let unit = 10_i128.pow((9 - fsp) as u32);
     let half = unit / 2;
     let value = i128::from(nanoseconds);
-    let rounded = if value >= 0 {
-        (value + half) / unit * unit
-    } else {
-        (value - half) / unit * unit
-    };
+    // `time.Time.Round` rounds a negative exact half toward positive infinity:
+    // -1.5ms at millisecond precision becomes -1ms. Euclidean division keeps
+    // ordinary negative values on the lower (more negative) side while
+    // retaining that source tie rule.
+    let rounded = (value + half).div_euclid(unit) * unit;
     let nanoseconds = i64::try_from(rounded).map_err(|_| DurationRoundError::Overflow)?;
     Ok(RoundedDuration { nanoseconds, fsp })
 }

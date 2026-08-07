@@ -66,6 +66,8 @@ mod vector;
 
 #[cfg(test)]
 mod json_binary_functions_inventory;
+#[cfg(test)]
+mod time_go_inventory;
 
 #[cfg(test)]
 mod vector_inventory;
@@ -248,8 +250,8 @@ pub use time_parse::{
     adjust_year, extract_datetime_num, extract_duration_num, extract_duration_value, is_clock_unit,
     is_date_format, is_date_unit, is_microsecond_unit, parse_date_format, parse_datetime,
     parse_duration_value, parse_time, parse_time_from_decimal, parse_time_from_float64,
-    parse_time_from_int64, parse_time_from_num, parse_time_from_year, parse_year, time_from_days,
-    timestamp_diff, ParsedInterval, ParsedTime,
+    parse_time_from_int64, parse_time_from_num, parse_time_from_num_with_zero_date_error,
+    parse_time_from_year, parse_year, time_from_days, timestamp_diff, ParsedInterval, ParsedTime,
 };
 pub use truncate::{is_truncation_error_code, TruncationPolicy};
 pub use utf8_encoding::{

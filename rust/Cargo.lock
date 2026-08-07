@@ -1580,6 +1580,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "encoding_rs",
+ "regex",
  "serde",
  "serde_json",
  "sha2",

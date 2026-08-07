@@ -14,6 +14,8 @@
 
 use super::{truncate_overflow_mysql_time, DurationOverflow, MAX_TIME_NANOS, MIN_TIME_NANOS};
 
+use chrono::TimeZone;
+
 use super::{
     can_fallback_to_datetime, classify_duration_datetime_fallback, parse_duration,
     parse_mysql_duration, round_duration_fsp, DurationDateTimeFallbackKind, DurationParseError,
@@ -306,7 +308,7 @@ fn duration_parse_events_classify_source_warning_branches() {
 }
 
 #[test]
-fn round_duration_fsp_matches_source_half_away_from_zero_rows() {
+fn round_duration_fsp_matches_source_rows() {
     // Source: pkg/types/time.go::Duration.RoundFrac and
     // pkg/types/time_test.go::TestRoundFrac duration rows.
     let second = 1_000_000_000_i64;
@@ -344,6 +346,35 @@ fn round_duration_fsp_matches_source_half_away_from_zero_rows() {
             -2
         )))
     );
+}
+
+#[test]
+fn round_duration_fsp_negative_half_matches_go_time_round() {
+    // Go's time.Time.Round at 1ms: -1_499_999ns and the exact negative half
+    // -1_500_000ns become -1ms; -1_500_001ns becomes -2ms.
+    for (input, expected) in [
+        (-1_499_999, -1_000_000),
+        (-1_500_000, -1_000_000),
+        (-1_500_001, -2_000_000),
+    ] {
+        let rounded = round_duration_fsp(input, 6, 3).unwrap();
+        assert_eq!(rounded.nanoseconds(), expected, "{input}");
+        assert_eq!(rounded.fsp(), 3, "{input}");
+    }
+}
+
+#[test]
+fn convert_to_time_uses_calendar_clock_fields_across_dst_gap() {
+    let los_angeles: chrono_tz::Tz = "America/Los_Angeles".parse().unwrap();
+    let statement_time = los_angeles
+        .with_ymd_and_hms(2011, 3, 13, 12, 0, 0)
+        .single()
+        .unwrap();
+    let duration = MySqlDuration::new(3, 0, 0, 0, 0).unwrap();
+    let converted = duration
+        .convert_to_time(statement_time, TimeType::DateTime, false, false)
+        .unwrap();
+    assert_eq!(converted.to_string(), "2011-03-13 03:00:00");
 }
 
 #[test]
@@ -481,6 +512,23 @@ fn parse_duration_matches_source_colon_and_day_forms() {
     let trailing = parse_duration(b"0x", 0).unwrap();
     assert_eq!(trailing.nanoseconds(), 0);
     assert_eq!(trailing.event(), Some(DurationParseEvent::Truncated));
+}
+
+#[test]
+fn duration_parser_accepts_go_latin1_space_bytes() {
+    for input in [b"1\x85:\x852".as_slice(), b"1\xa0:\xa02".as_slice()] {
+        assert_eq!(
+            parse_duration(input, 0).unwrap().nanoseconds(),
+            MySqlDuration::new(1, 2, 0, 0, 0).unwrap().nanoseconds(),
+            "{input:?}"
+        );
+    }
+    assert_eq!(
+        parse_duration("\u{a0}1:02\u{a0}".as_bytes(), 0)
+            .unwrap()
+            .nanoseconds(),
+        MySqlDuration::new(1, 2, 0, 0, 0).unwrap().nanoseconds()
+    );
 }
 
 /// Go oracle (`types.ParseDuration(DefaultStmtNoWarningContext, s, 6)`), run

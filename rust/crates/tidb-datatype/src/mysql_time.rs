@@ -633,6 +633,12 @@ impl Time {
         allow_invalid_date: bool,
         timezone: &TZ,
     ) -> Result<(), TimeError> {
+        // Go's `checkDateRange` compares the entire CoreTime with
+        // `MaxDatetime`; its packed microsecond field is wider than the SQL
+        // range, so the representation alone cannot establish validity.
+        if self.core.microsecond() > 999_999 {
+            return Err(TimeError::InvalidDate);
+        }
         if self.kind == TimeType::Timestamp {
             if self.is_zero() {
                 return Ok(());
@@ -832,7 +838,12 @@ pub fn date_fsp(value: &str) -> usize {
 
 /// Formats an integer with at least `width` decimal digits.
 pub fn format_int_width(value: i32, width: usize) -> String {
-    format!("{value:0width$}")
+    let value = value.to_string();
+    if value.len() >= width {
+        value
+    } else {
+        "0".repeat(width - value.len()) + &value
+    }
 }
 
 #[cfg(test)]
@@ -960,6 +971,92 @@ mod tests {
     }
 
     #[test]
+    fn datetime_overflow_matches_time_go_source_boundaries() {
+        // Exact `pkg/types/time_test.go::TestTimeOverflow` inputs. These are
+        // intentionally parsed before the bound check: probing only a
+        // hand-built CoreTime would miss Go's two-digit year, separator, and
+        // zero-year parsing rules that feed `DateTimeIsOverflow`.
+        for (input, expected) in [
+            ("2012-12-31 11:30:45", false),
+            ("12-12-31 11:30:45", false),
+            ("2012-12-31", false),
+            ("20121231", false),
+            ("2012-02-29", false),
+            ("2018-01-01 18", false),
+            ("18-01-01 18", false),
+            ("2018.01.01", false),
+            ("2018.01.01 00:00:00", false),
+            ("2018/01/01-00:00:00", false),
+            ("0999-12-31 22:00:00", false),
+            ("9999-12-31 23:59:59", false),
+            ("0001-01-01 00:00:00", false),
+            ("0001-01-01 23:59:59", false),
+            ("0000-01-01 00:00:00", true),
+        ] {
+            let parsed = crate::parse_time(
+                input,
+                TimeType::DateTime,
+                0,
+                false,
+                true,
+                false,
+                &chrono_tz::UTC,
+            )
+            .unwrap();
+            assert_eq!(
+                parsed.time.is_overflow(&chrono_tz::UTC).unwrap(),
+                expected,
+                "{input}"
+            );
+        }
+
+        for (core, kind, expected) in [
+            (
+                CoreTime::from_date(1, 1, 1, 0, 0, 0, 0),
+                TimeType::Date,
+                false,
+            ),
+            (
+                CoreTime::from_date(0, 1, 1, 0, 0, 0, 0),
+                TimeType::Date,
+                true,
+            ),
+            (
+                CoreTime::from_date(1970, 1, 1, 0, 0, 1, 0),
+                TimeType::Timestamp,
+                false,
+            ),
+            (
+                CoreTime::from_date(1970, 1, 1, 0, 0, 0, 0),
+                TimeType::Timestamp,
+                true,
+            ),
+            (
+                CoreTime::from_date(2038, 1, 19, 3, 14, 7, 999_999),
+                TimeType::Timestamp,
+                false,
+            ),
+            (
+                CoreTime::from_date(2038, 1, 19, 3, 14, 8, 0),
+                TimeType::Timestamp,
+                true,
+            ),
+        ] {
+            let value = Time::new(core, kind, 6).unwrap();
+            assert_eq!(value.is_overflow(&chrono_tz::UTC).unwrap(), expected);
+        }
+
+        let shanghai: chrono_tz::Tz = "Asia/Shanghai".parse().unwrap();
+        for (core, expected) in [
+            (CoreTime::from_date(1970, 1, 1, 8, 0, 1, 0), false),
+            (CoreTime::from_date(1970, 1, 1, 8, 0, 0, 0), true),
+        ] {
+            let value = Time::new(core, TimeType::Timestamp, 0).unwrap();
+            assert_eq!(value.is_overflow(&shanghai).unwrap(), expected);
+        }
+    }
+
+    #[test]
     fn test_go_json_round_trip_source_row() {
         let original = Time::new(
             CoreTime::from_date(2017, 1, 18, 1, 1, 1, 123_456),
@@ -984,6 +1081,135 @@ mod tests {
         assert_eq!(datetime.fsp(), 0);
         datetime.set_fsp(6).unwrap();
         assert_eq!(datetime.fsp(), 0);
+    }
+
+    #[test]
+    fn time_owner_slice_construction_and_metadata_boundaries() {
+        let maximum = Time::from_date_checked(
+            (1 << 14) - 1,
+            (1 << 4) - 1,
+            (1 << 5) - 1,
+            (1 << 5) - 1,
+            (1 << 6) - 1,
+            (1 << 6) - 1,
+            (1 << 20) - 1,
+            TimeType::DateTime,
+            6,
+        )
+        .unwrap();
+        assert_eq!(maximum.clock(), (31, 63, 63));
+        for fields in [
+            [1 << 14, 1, 1, 0, 0, 0, 0],
+            [2020, 1 << 4, 1, 0, 0, 0, 0],
+            [2020, 1, 1 << 5, 0, 0, 0, 0],
+            [2020, 1, 1, 1 << 5, 0, 0, 0],
+            [2020, 1, 1, 0, 1 << 6, 0, 0],
+            [2020, 1, 1, 0, 0, 1 << 6, 0],
+            [2020, 1, 1, 0, 0, 0, 1 << 20],
+            [-1, 1, 1, 0, 0, 0, 0],
+        ] {
+            assert!(Time::from_date_checked(
+                fields[0],
+                fields[1],
+                fields[2],
+                fields[3],
+                fields[4],
+                fields[5],
+                fields[6],
+                TimeType::DateTime,
+                6,
+            )
+            .is_err());
+        }
+
+        let core = CoreTime::from_date(2020, 2, 3, 4, 5, 6, 123_456);
+        let date = Time::new(core, TimeType::Date, 6).unwrap();
+        assert_eq!(date.kind(), TimeType::Date);
+        assert_eq!(date.fsp(), 0);
+        assert_eq!(date.to_string(), "2020-02-03");
+
+        let mut value = Time::new(core, TimeType::DateTime, crate::UNSPECIFIED_FSP).unwrap();
+        assert_eq!(value.fsp(), crate::DEFAULT_FSP as u8);
+        value.set_kind(TimeType::Timestamp);
+        value.set_fsp(6).unwrap();
+        assert_eq!(value.kind(), TimeType::Timestamp);
+        assert_eq!(value.fsp(), 6);
+        assert_eq!(value.to_string(), "2020-02-03 04:05:06.123456");
+        value.set_kind(TimeType::Date);
+        value.set_fsp(5).unwrap();
+        assert_eq!(value.fsp(), 0);
+        value.set_kind(TimeType::DateTime);
+        value.set_fsp(crate::UNSPECIFIED_FSP).unwrap();
+        assert_eq!(value.fsp(), crate::DEFAULT_FSP as u8);
+
+        let replacement = CoreTime::from_date(2019, 12, 31, 23, 59, 58, 999_999);
+        value.set_core_time(replacement);
+        assert_eq!(value.core_time(), replacement);
+        assert_eq!(value.clock(), (23, 59, 58));
+    }
+
+    #[test]
+    fn time_owner_slice_conversion_error_boundaries() {
+        let timezone = chrono_tz::UTC;
+        let zero = Time::new(CoreTime::default(), TimeType::DateTime, 0).unwrap();
+        let (zero_timestamp, adjusted) = zero
+            .convert_kind(TimeType::Timestamp, false, false, &timezone)
+            .unwrap();
+        assert_eq!(zero_timestamp.kind(), TimeType::Timestamp);
+        assert!(!adjusted);
+
+        let value = Time::new(
+            CoreTime::from_date(2020, 1, 2, 3, 4, 5, 0),
+            TimeType::DateTime,
+            0,
+        )
+        .unwrap();
+        assert_eq!(
+            value
+                .convert_kind(TimeType::DateTime, false, false, &timezone)
+                .unwrap(),
+            (value, false)
+        );
+
+        let mut invalid = Time::new(
+            CoreTime::from_date(2020, 0, 2, 3, 4, 5, 0),
+            TimeType::DateTime,
+            0,
+        )
+        .unwrap();
+        assert!(invalid.convert_time_zone(&timezone, &timezone).is_err());
+    }
+
+    #[test]
+    fn time_owner_slice_rounding_error_boundaries() {
+        let timezone = chrono_tz::UTC;
+        let date = Time::new(
+            CoreTime::from_date(2020, 1, 2, 23, 59, 59, 999_999),
+            TimeType::Date,
+            0,
+        )
+        .unwrap();
+        assert_eq!(date.round_frac(-2, &timezone).unwrap(), date);
+
+        let zero = Time::new(CoreTime::default(), TimeType::DateTime, 6).unwrap();
+        assert_eq!(zero.round_frac(-2, &timezone).unwrap(), zero);
+
+        let same = Time::new(
+            CoreTime::from_date(2020, 1, 2, 3, 4, 5, 123_456),
+            TimeType::DateTime,
+            6,
+        )
+        .unwrap();
+        assert_eq!(same.round_frac(6, &timezone).unwrap(), same);
+        assert!(same.round_frac(-2, &timezone).is_err());
+
+        let incomplete_carry = Time::new(
+            CoreTime::from_date(2020, 0, 0, 23, 59, 59, 999_999),
+            TimeType::DateTime,
+            6,
+        )
+        .unwrap();
+        assert!(incomplete_carry.round_frac(0, &timezone).is_err());
     }
 
     #[test]
@@ -1034,7 +1260,49 @@ mod tests {
         .unwrap();
         assert_eq!(invalid_month.date_format("%b"), Err(TimeError::InvalidDate));
         assert_eq!(invalid_month.date_format("%M"), Err(TimeError::InvalidDate));
+        let oversized_month = Time::new(
+            CoreTime::from_date(2010, 13, 1, 0, 0, 0, 0),
+            TimeType::DateTime,
+            0,
+        )
+        .unwrap();
+        assert_eq!(
+            oversized_month.date_format("%b"),
+            Err(TimeError::InvalidDate)
+        );
+        assert_eq!(
+            oversized_month.date_format("%M"),
+            Err(TimeError::InvalidDate)
+        );
         assert_eq!(invalid_month.date_format("trailing%").unwrap(), "trailing");
+
+        for (hour, expected) in [
+            (0, "12 12 AM 12:02:03 AM"),
+            (11, "11 11 AM 11:02:03 AM"),
+            (12, "12 12 PM 12:02:03 PM"),
+            (23, "11 11 PM 11:02:03 PM"),
+        ] {
+            let time = Time::new(
+                CoreTime::from_date(2010, 1, 1, hour, 2, 3, 0),
+                TimeType::DateTime,
+                0,
+            )
+            .unwrap();
+            assert_eq!(time.date_format("%h %l %p %r").unwrap(), expected);
+        }
+
+        for (day, expected) in [
+            (1, "st"),
+            (2, "nd"),
+            (3, "rd"),
+            (4, "th"),
+            (21, "st"),
+            (22, "nd"),
+            (23, "rd"),
+            (31, "st"),
+        ] {
+            assert_eq!(day_suffix(day), expected);
+        }
     }
 
     #[test]
@@ -1114,6 +1382,7 @@ mod tests {
         .invalid_zero());
         assert_eq!(format_int_width(12, 4), "0012");
         assert_eq!(format_int_width(12345, 4), "12345");
+        assert_eq!(format_int_width(-1, 4), "00-1");
     }
 
     #[test]
@@ -1226,6 +1495,47 @@ mod tests {
     }
 
     #[test]
+    fn convert_to_duration_matches_time_go_source_rows() {
+        // `pkg/types/time_test.go::TestConvert`: conversion uses the already
+        // rounded source time, including the midnight rollover, and a zero
+        // datetime becomes a zero duration.
+        for (core, fsp, expected) in [
+            (
+                CoreTime::from_date(2012, 12, 31, 11, 30, 45, 123_456),
+                4,
+                "11:30:45.1235",
+            ),
+            (
+                CoreTime::from_date(2012, 12, 31, 11, 30, 45, 123_456),
+                0,
+                "11:30:45",
+            ),
+            (
+                CoreTime::from_date(2012, 12, 31, 11, 30, 45, 999_999),
+                0,
+                "11:30:46",
+            ),
+            (
+                CoreTime::from_date(2017, 1, 5, 8, 40, 59, 575_601),
+                0,
+                "08:41:00",
+            ),
+            (
+                CoreTime::from_date(2017, 1, 5, 23, 59, 59, 575_601),
+                0,
+                "00:00:00",
+            ),
+            (CoreTime::default(), 6, "00:00:00"),
+        ] {
+            let time = Time::new(core, TimeType::DateTime, 6)
+                .unwrap()
+                .round_frac(fsp, &chrono_tz::UTC)
+                .unwrap();
+            assert_eq!(time.to_duration().unwrap().to_string(), expected);
+        }
+    }
+
+    #[test]
     fn test_round_frac_source_rows() {
         let timezone = chrono_tz::UTC;
         for (core, fsp, expected) in [
@@ -1281,6 +1591,31 @@ mod tests {
                 expected
             );
         }
+
+        let los_angeles: chrono_tz::Tz = "America/Los_Angeles".parse().unwrap();
+        for (core, fsp, expected) in [
+            (
+                CoreTime::from_date(2019, 11, 25, 7, 25, 45, 123_456),
+                4,
+                "2019-11-25 07:25:45.1235",
+            ),
+            (
+                CoreTime::from_date(2019, 11, 25, 7, 25, 45, 123_456),
+                5,
+                "2019-11-25 07:25:45.12346",
+            ),
+            (
+                CoreTime::from_date(2019, 11, 26, 11, 30, 45, 999_999),
+                3,
+                "2019-11-26 11:30:46.000",
+            ),
+        ] {
+            let time = Time::new(core, TimeType::DateTime, 6).unwrap();
+            assert_eq!(
+                time.round_frac(fsp, &los_angeles).unwrap().to_string(),
+                expected
+            );
+        }
     }
 
     #[test]
@@ -1300,6 +1635,127 @@ mod tests {
         assert_eq!(truncate_datetime_fraction(first, 0).unwrap().second(), 10);
         assert_eq!(truncate_datetime_fraction(second, 0).unwrap().second(), 10);
         assert_eq!(date_fsp("2004-01-01 12:00:00.1111111"), 7);
+    }
+
+    #[test]
+    fn time_owner_slice_standalone_rounding_boundaries() {
+        let value = Utc
+            .with_ymd_and_hms(2011, 11, 11, 10, 10, 10)
+            .unwrap()
+            .with_nanosecond(999_999_999)
+            .unwrap();
+        assert!(round_datetime_fraction(value, -2).is_err());
+        assert!(truncate_datetime_fraction(value, -2).is_err());
+        assert_eq!(
+            round_datetime_fraction(value, 7).unwrap(),
+            round_datetime_fraction(value, 6).unwrap()
+        );
+        assert_eq!(
+            truncate_datetime_fraction(value, 7).unwrap(),
+            truncate_datetime_fraction(value, 6).unwrap()
+        );
+    }
+
+    #[test]
+    fn time_owner_slice_packed_and_validation_boundaries() {
+        let zero = Time::new(CoreTime::default(), TimeType::DateTime, 0).unwrap();
+        assert_eq!(zero.to_packed_uint().unwrap(), 0);
+        assert_eq!(
+            Time::from_packed_uint(0, TimeType::Timestamp, 3)
+                .unwrap()
+                .core_time(),
+            CoreTime::default()
+        );
+
+        let valid = Time::new(
+            CoreTime::from_date(2020, 2, 29, 23, 59, 59, 999_999),
+            TimeType::DateTime,
+            6,
+        )
+        .unwrap();
+        let packed = valid.to_packed_uint().unwrap();
+        assert_eq!(
+            Time::from_packed_uint(packed, TimeType::DateTime, 6).unwrap(),
+            valid
+        );
+
+        let nonsql = Time::new(
+            CoreTime::from_date(2020, 13, 31, 31, 63, 63, 1_000_000),
+            TimeType::DateTime,
+            6,
+        )
+        .unwrap();
+        assert!(nonsql.to_packed_uint().is_err());
+        assert!(Time::from_packed_uint(1 << 20, TimeType::DateTime, 6).is_err());
+
+        assert!(valid.validate(false, false, &chrono_tz::UTC).is_ok());
+        assert!(Time::new(valid.core_time(), TimeType::Date, 0)
+            .unwrap()
+            .validate(false, false, &chrono_tz::UTC)
+            .is_ok());
+        assert!(Time::new(valid.core_time(), TimeType::Timestamp, 6)
+            .unwrap()
+            .validate(false, false, &chrono_tz::UTC)
+            .is_ok());
+    }
+
+    #[test]
+    fn time_owner_slice_subtract_boundaries() {
+        let timezone = chrono_tz::UTC;
+        let early = Time::new(
+            CoreTime::from_date(2020, 1, 1, 0, 0, 0, 100_000),
+            TimeType::Timestamp,
+            1,
+        )
+        .unwrap();
+        let late = Time::new(
+            CoreTime::from_date(2020, 1, 1, 0, 0, 1, 123_456),
+            TimeType::Timestamp,
+            6,
+        )
+        .unwrap();
+        assert_eq!(
+            late.sub(early, &timezone).unwrap().to_string(),
+            "00:00:01.023456"
+        );
+        assert_eq!(
+            early.sub(late, &timezone).unwrap().to_string(),
+            "-00:00:01.023456"
+        );
+        assert_eq!(late.sub(early, &timezone).unwrap().fsp(), 6);
+
+        let calendar_late = Time::new(late.core_time(), TimeType::DateTime, 6).unwrap();
+        let calendar_early = Time::new(early.core_time(), TimeType::DateTime, 1).unwrap();
+        assert_eq!(
+            calendar_early
+                .sub(calendar_late, &timezone)
+                .unwrap()
+                .to_string(),
+            "-00:00:01.023456"
+        );
+
+        let invalid = Time::new(
+            CoreTime::from_date(2020, 0, 1, 0, 0, 0, 0),
+            TimeType::Timestamp,
+            0,
+        )
+        .unwrap();
+        assert!(invalid.sub(early, &timezone).is_err());
+    }
+
+    #[test]
+    fn time_owner_slice_add_date_boundary() {
+        let date = Time::new(
+            CoreTime::from_date(2020, 1, 31, 0, 0, 0, 0),
+            TimeType::Date,
+            0,
+        )
+        .unwrap();
+        let duration = MySqlDuration::new(25, 2, 3, 456_000, 3).unwrap();
+        let added = date.add_duration(duration).unwrap();
+        assert_eq!(added.to_string(), "2020-02-01");
+        assert_eq!(added.clock(), (0, 0, 0));
+        assert_eq!(added.fsp(), 0);
     }
 
     #[test]
@@ -1407,6 +1863,20 @@ mod tests {
             Err(TimeError::ZeroInDate)
         );
         assert!(zero_in_date.validate(true, false, &chrono_tz::UTC).is_ok());
+    }
+
+    #[test]
+    fn validation_rejects_microseconds_past_go_max_datetime() {
+        // Go `checkDateRange` compares the complete CoreTime with MaxDatetime.
+        // It rejects 9999-12-31 23:59:59.1000000 even though the packed field
+        // has room for the integer 1_000_000.
+        let value =
+            Time::from_date_checked(9999, 12, 31, 23, 59, 59, 1_000_000, TimeType::DateTime, 6)
+                .unwrap();
+        assert_eq!(
+            value.validate(false, false, &chrono_tz::UTC),
+            Err(TimeError::InvalidDate)
+        );
     }
 
     #[test]

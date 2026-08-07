@@ -18,7 +18,7 @@ use chrono::{FixedOffset, TimeZone};
 
 use crate::{
     check_fsp, core_time_from_datetime, get_frac_index, get_timezone, parse_frac, CoreTime, Time,
-    TimeError, TimeType, TimestampInterval,
+    TimeConversionError, TimeError, TimeType, TimestampInterval,
 };
 
 /// Result metadata emitted while parsing a temporal literal.
@@ -28,6 +28,8 @@ pub struct ParsedTime {
     pub time: Time,
     /// Whether TiDB would append a truncation warning.
     pub truncated: bool,
+    /// Whether Go returns this adjusted value beside ErrTimestampInDSTTransition.
+    pub dst_adjusted: bool,
 }
 
 /// Parsed `INTERVAL` value before it is applied to a date or duration.
@@ -187,11 +189,13 @@ pub fn is_date_format(format: &str) -> bool {
 
 /// Parses MySQL's one-, two-, or four-digit YEAR representation.
 pub fn parse_year(input: &str) -> Result<i16, TimeError> {
-    let year = input.parse::<i64>().map_err(|_| TimeError::InvalidDate)?;
-    if !matches!(input.len(), 1 | 2 | 4) {
-        return Err(TimeError::InvalidDate);
-    }
-    i16::try_from(adjust_year(year, true)?).map_err(|_| TimeError::OutOfRange("year"))
+    let year = input.parse::<i16>().map_err(|_| TimeError::InvalidDate)?;
+    let year = match input.len() {
+        1 | 2 => adjust_year(i64::from(year), true)?,
+        4 if (1901..=2155).contains(&year) => i64::from(year),
+        _ => return Err(TimeError::InvalidDate),
+    };
+    Ok(year as i16)
 }
 
 /// Applies MySQL's two-digit YEAR window and validates the YEAR domain.
@@ -346,6 +350,9 @@ pub fn extract_duration_value(unit: &str, format: &str) -> Result<crate::MySqlDu
     if parsed.truncated {
         return Err(TimeError::InvalidDate);
     }
+    if matches!(unit.as_str(), "QUARTER" | "YEAR") {
+        return Err(TimeError::OutOfRange("time"));
+    }
     if parsed.years != 0 {
         return Err(TimeError::OutOfRange("time"));
     }
@@ -495,13 +502,28 @@ pub fn parse_time<TZ: TimeZone>(
         return Ok(ParsedTime {
             time: Time::new(CoreTime::default(), kind, 0)?,
             truncated: false,
+            dst_adjusted: false,
         });
     }
     let fsp = check_fsp(fsp).map_err(TimeError::InvalidFsp)?;
     let (core, truncated) = parse_datetime_core(input, fsp, is_float, timezone)?;
-    let time = Time::new(core, kind, fsp)?;
-    time.validate(allow_zero_in_date, allow_invalid_date, timezone)?;
-    Ok(ParsedTime { time, truncated })
+    let mut time = Time::new(core, kind, fsp)?;
+    let dst_adjusted = match time.validate(allow_zero_in_date, allow_invalid_date, timezone) {
+        Ok(()) => false,
+        Err(TimeError::Conversion(TimeConversionError::NonexistentLocalTime))
+            if kind == TimeType::Timestamp && !time.is_zero() =>
+        {
+            time.set_core_time(core_time_from_datetime(core.adjusted_datetime(timezone)?));
+            time.validate(allow_zero_in_date, allow_invalid_date, timezone)?;
+            true
+        }
+        Err(error) => return Err(error),
+    };
+    Ok(ParsedTime {
+        time,
+        truncated,
+        dst_adjusted,
+    })
 }
 
 /// Parses a DATETIME using the fractional precision present in the literal.
@@ -775,10 +797,42 @@ pub fn parse_time_from_num<TZ: TimeZone>(
     allow_invalid_date: bool,
     timezone: &TZ,
 ) -> Result<ParsedTime, TimeError> {
+    parse_time_from_num_with_zero_date_error(
+        number,
+        kind,
+        fsp,
+        true,
+        allow_zero_in_date,
+        allow_invalid_date,
+        timezone,
+    )
+}
+
+/// Parses TiDB's numeric datetime representation with the complete
+/// `pkg/types/time.go::ParseTimeFromNum` zero-date diagnostic contract.
+///
+/// The existing [`parse_time_from_num`] entry point models Go's default
+/// statement flags, which include `FlagIgnoreZeroDateErr`. Callers that own a
+/// conversion context use this variant to preserve Go's returned zero value
+/// alongside its `ErrTruncatedWrongVal` diagnostic.
+pub fn parse_time_from_num_with_zero_date_error<TZ: TimeZone>(
+    number: i64,
+    kind: TimeType,
+    fsp: i64,
+    ignore_zero_date_error: bool,
+    allow_zero_in_date: bool,
+    allow_invalid_date: bool,
+    timezone: &TZ,
+) -> Result<ParsedTime, TimeError> {
     if number == 0 {
         return Ok(ParsedTime {
             time: Time::new(CoreTime::default(), kind, 0)?,
-            truncated: false,
+            // Go returns the zero value beside ErrTruncatedWrongVal when
+            // FlagIgnoreZeroDateErr is clear. `ParsedTime` is Rust's
+            // value/diagnostic result, so `truncated` transports that event
+            // without discarding the returned zero value.
+            truncated: !ignore_zero_date_error,
+            dst_adjusted: false,
         });
     }
     let (normalized, _) = normalize_numeric_datetime(number)?;
@@ -790,6 +844,7 @@ pub fn parse_time_from_num<TZ: TimeZone>(
     Ok(ParsedTime {
         time,
         truncated: false,
+        dst_adjusted: false,
     })
 }
 
@@ -1136,6 +1191,22 @@ mod tests {
         assert!(adjust_year(-1, false).is_err());
         assert_eq!(adjust_year(0, true).unwrap(), 2000);
         assert!(parse_year("100").is_err());
+        assert!(parse_year("0000").is_err());
+    }
+
+    #[test]
+    fn time_from_year_and_days_source_boundaries() {
+        assert_eq!(parse_time_from_year(0).unwrap().to_string(), "0000-00-00");
+        assert_eq!(
+            parse_time_from_year(1901).unwrap().to_string(),
+            "1901-00-00 00:00:00"
+        );
+        assert!(parse_time_from_year(-1).is_err());
+
+        for day_number in [-1, 0, 365, 3_652_500] {
+            assert_eq!(time_from_days(day_number).to_string(), "0000-00-00");
+        }
+        assert_eq!(time_from_days(366).to_string(), "0001-01-01");
     }
 
     #[test]
@@ -1405,6 +1476,8 @@ mod tests {
             ("MONTH", "-2"),
             ("DAY_second", "34 23:59:59"),
             ("DAY_hOUR", "-34 23"),
+            ("QUARTER", "0"),
+            ("YEAR", "0"),
         ] {
             assert!(
                 extract_duration_value(unit, format).is_err(),
@@ -1583,6 +1656,147 @@ mod tests {
     }
 
     #[test]
+    fn parse_time_from_num_preserves_go_type_matrix() {
+        // `pkg/types/time_test.go::TestParseTimeFromNum` has three distinct
+        // contracts for each number: DATETIME, TIMESTAMP (with UTC bounds),
+        // and DATE (which discards a valid clock). A DATETIME-only table
+        // cannot prove either of the latter two.
+        for (input, datetime, timestamp, date) in [
+            (
+                20_101_010_111_111,
+                Some("2010-10-10 11:11:11"),
+                Some("2010-10-10 11:11:11"),
+                Some("2010-10-10"),
+            ),
+            (
+                2_010_101_011_111,
+                Some("0201-01-01 01:11:11"),
+                None,
+                Some("0201-01-01"),
+            ),
+            (
+                201_010_101_111,
+                Some("2020-10-10 10:11:11"),
+                Some("2020-10-10 10:11:11"),
+                Some("2020-10-10"),
+            ),
+            (
+                20_101_010_111,
+                Some("2002-01-01 01:01:11"),
+                Some("2002-01-01 01:01:11"),
+                Some("2002-01-01"),
+            ),
+            (2_010_101_011, None, None, None),
+            (
+                201_010_101,
+                Some("2000-02-01 01:01:01"),
+                Some("2000-02-01 01:01:01"),
+                Some("2000-02-01"),
+            ),
+            (
+                20_101_010,
+                Some("2010-10-10 00:00:00"),
+                Some("2010-10-10 00:00:00"),
+                Some("2010-10-10"),
+            ),
+            (
+                2_010_101,
+                Some("0201-01-01 00:00:00"),
+                None,
+                Some("0201-01-01"),
+            ),
+            (
+                201_010,
+                Some("2020-10-10 00:00:00"),
+                Some("2020-10-10 00:00:00"),
+                Some("2020-10-10"),
+            ),
+            (
+                20_101,
+                Some("2002-01-01 00:00:00"),
+                Some("2002-01-01 00:00:00"),
+                Some("2002-01-01"),
+            ),
+            (2_010, None, None, None),
+            (
+                201,
+                Some("2000-02-01 00:00:00"),
+                Some("2000-02-01 00:00:00"),
+                Some("2000-02-01"),
+            ),
+            (20, None, None, None),
+            (2, None, None, None),
+            (
+                0,
+                Some("0000-00-00 00:00:00"),
+                Some("0000-00-00 00:00:00"),
+                Some("0000-00-00"),
+            ),
+            (-1, None, None, None),
+            (99_999_999_999_999, None, None, None),
+            (100_000_000_000_000, None, None, None),
+            (
+                10_000_102_000_000,
+                Some("1000-01-02 00:00:00"),
+                None,
+                Some("1000-01-02"),
+            ),
+            (
+                19_690_101_000_000,
+                Some("1969-01-01 00:00:00"),
+                None,
+                Some("1969-01-01"),
+            ),
+            (
+                991_231_235_959,
+                Some("1999-12-31 23:59:59"),
+                Some("1999-12-31 23:59:59"),
+                Some("1999-12-31"),
+            ),
+            (
+                691_231_235_959,
+                Some("2069-12-31 23:59:59"),
+                None,
+                Some("2069-12-31"),
+            ),
+            (
+                370_119_031_407,
+                Some("2037-01-19 03:14:07"),
+                Some("2037-01-19 03:14:07"),
+                Some("2037-01-19"),
+            ),
+            (
+                380_120_031_407,
+                Some("2038-01-20 03:14:07"),
+                None,
+                Some("2038-01-20"),
+            ),
+            (
+                11_111_111_111,
+                Some("2001-11-11 11:11:11"),
+                Some("2001-11-11 11:11:11"),
+                Some("2001-11-11"),
+            ),
+        ] {
+            for (kind, expected) in [
+                (TimeType::DateTime, datetime),
+                (TimeType::Timestamp, timestamp),
+                (TimeType::Date, date),
+            ] {
+                let actual = parse_time_from_num(input, kind, 0, true, false, &chrono_tz::UTC);
+                match expected {
+                    Some(expected) => assert_eq!(
+                        actual.unwrap().time.to_string(),
+                        expected,
+                        "{input} {kind:?}"
+                    ),
+                    None => assert!(actual.is_err(), "{input} {kind:?}"),
+                }
+            }
+        }
+    }
+
+    #[test]
     fn test_parse_time_from_float_string_source_rows() {
         for (input, fsp, expected) in [
             ("20170118.123", 3, "2017-01-18 00:00:00.000"),
@@ -1753,6 +1967,23 @@ mod tests {
     }
 
     #[test]
+    fn parse_timestamp_preserves_go_dst_adjusted_value_and_diagnostic() {
+        let los_angeles: chrono_tz::Tz = "America/Los_Angeles".parse().unwrap();
+        let parsed = parse_time(
+            "2018-03-11 02:00:16",
+            TimeType::Timestamp,
+            0,
+            false,
+            false,
+            false,
+            &los_angeles,
+        )
+        .unwrap();
+        assert_eq!(parsed.time.to_string(), "2018-03-11 03:00:00");
+        assert!(parsed.dst_adjusted);
+    }
+
+    #[test]
     fn test_parse_date_source_rows() {
         for (input, expected) in [
             ("0001-12-13", "0001-12-13"),
@@ -1878,5 +2109,45 @@ mod tests {
             let instant = parsed.time.core_time().to_datetime(&system).unwrap();
             assert_eq!(instant.timestamp(), expected_timestamp, "{literal}");
         }
+
+        for literal in [
+            "2020-10-21T16:05:10+14:01",
+            "2020-10-21T16:05:10+15",
+            "2020-10-21T16:05:10+08:60",
+            "2020-10-21T16:05:10-00:00",
+            "2020-10-21Z",
+        ] {
+            assert!(
+                parse_time(
+                    literal,
+                    TimeType::Timestamp,
+                    0,
+                    false,
+                    false,
+                    false,
+                    &chrono_tz::UTC,
+                )
+                .is_err(),
+                "{literal}"
+            );
+        }
+
+        // Without a clock, a signed colon offset is absorbed back into the
+        // separated fields and becomes HH:MM rather than timezone metadata.
+        assert_eq!(
+            parse_time(
+                "2020-01-01+08:30",
+                TimeType::DateTime,
+                0,
+                false,
+                false,
+                false,
+                &chrono_tz::UTC,
+            )
+            .unwrap()
+            .time
+            .to_string(),
+            "2020-01-01 08:30:00"
+        );
     }
 }

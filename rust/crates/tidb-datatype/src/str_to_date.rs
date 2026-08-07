@@ -13,6 +13,8 @@
 // limitations under the License.
 
 use chrono::TimeZone;
+use regex::Regex;
+use std::sync::LazyLock;
 
 use crate::{CoreTime, Time, TimeError, TimeType};
 
@@ -32,7 +34,7 @@ const MONTH_NAMES: [&str; 12] = [
 ];
 
 #[derive(Default)]
-struct ParsedTime {
+pub(crate) struct ParsedTime {
     year: i32,
     month: u8,
     day: u8,
@@ -42,6 +44,7 @@ struct ParsedTime {
     microsecond: u32,
     hour12: bool,
     hour24: bool,
+    meridiem_token: bool,
     meridiem: Option<bool>,
 }
 
@@ -56,24 +59,47 @@ impl Time {
         allow_invalid_date: bool,
         timezone: &TZ,
     ) -> Result<(Self, bool), TimeError> {
-        let mut parsed = ParsedTime::default();
-        let warning = parse_format(&mut parsed, date, format)?;
-        fix_meridiem(&mut parsed)?;
-        let result = Self::new(
-            CoreTime::from_date(
-                parsed.year as u16,
-                parsed.month,
-                parsed.day,
-                parsed.hour,
-                parsed.minute,
-                parsed.second,
-                parsed.microsecond,
-            ),
-            TimeType::DateTime,
-            0,
-        )?;
-        result.validate(true, allow_invalid_date, timezone)?;
+        let mut result = Self::new(CoreTime::default(), TimeType::DateTime, 0)?;
+        let warning = result.str_to_date_into(date, format, allow_invalid_date, timezone)?;
         Ok((result, warning))
+    }
+
+    /// Applies Go `(*Time).StrToDate` receiver mutation semantics exactly.
+    ///
+    /// A tokenization/match failure resets the receiver to zero DATETIME/FSP
+    /// zero. A meridiem-fix failure leaves it untouched. A final validation
+    /// failure keeps the parsed DATETIME installed. Successful parsing keeps
+    /// the receiver's pre-existing FSP, as Go does.
+    pub fn str_to_date_into<TZ: TimeZone>(
+        &mut self,
+        date: &str,
+        format: &str,
+        allow_invalid_date: bool,
+        timezone: &TZ,
+    ) -> Result<bool, TimeError> {
+        let mut parsed = ParsedTime::default();
+        let warning = match parse_format(&mut parsed, date, format) {
+            Ok(warning) => warning,
+            Err(error) => {
+                self.set_core_time(CoreTime::default());
+                self.set_kind(TimeType::DateTime);
+                self.set_fsp(0)?;
+                return Err(error);
+            }
+        };
+        fix_meridiem(&mut parsed)?;
+        self.set_core_time(CoreTime::from_date(
+            parsed.year as u16,
+            parsed.month,
+            parsed.day,
+            parsed.hour,
+            parsed.minute,
+            parsed.second,
+            parsed.microsecond,
+        ));
+        self.set_kind(TimeType::DateTime);
+        self.validate(true, allow_invalid_date, timezone)?;
+        Ok(warning)
     }
 }
 
@@ -83,7 +109,7 @@ pub fn get_format_type(mut format: &str) -> (bool, bool) {
     let mut is_duration = false;
     let mut is_date = false;
     loop {
-        format = format.trim_start_matches(char::is_whitespace);
+        format = skip_whitespace(format);
         if format.is_empty() {
             break;
         }
@@ -110,28 +136,33 @@ pub fn get_format_type(mut format: &str) -> (bool, bool) {
     (is_duration, is_date)
 }
 
-fn parse_format(
+pub(crate) fn parse_format(
     parsed: &mut ParsedTime,
     mut date: &str,
     mut format: &str,
 ) -> Result<bool, TimeError> {
     loop {
-        date = date.trim_start_matches(char::is_whitespace);
-        format = format.trim_start_matches(char::is_whitespace);
+        date = skip_whitespace(date);
+        format = skip_whitespace(format);
         if format.is_empty() {
             return Ok(!date.is_empty());
         }
-        if date.is_empty() {
-            return Ok(false);
-        }
-
         let (token, remaining_format) = next_token(format)?;
         format = remaining_format;
+        if date.is_empty() {
+            match token {
+                "%p" => parsed.meridiem_token = true,
+                "%h" => parsed.hour12 = true,
+                "%H" => parsed.hour24 = true,
+                _ => {}
+            }
+            return Ok(false);
+        }
         date = parse_token(parsed, date, token)?;
     }
 }
 
-fn next_token(format: &str) -> Result<(&str, &str), TimeError> {
+pub(crate) fn next_token(format: &str) -> Result<(&str, &str), TimeError> {
     if let Some(remaining) = format.strip_prefix('%') {
         let Some(character) = remaining.chars().next() else {
             return Err(TimeError::InvalidDate);
@@ -145,7 +176,7 @@ fn next_token(format: &str) -> Result<(&str, &str), TimeError> {
     }
 }
 
-fn parse_token<'a>(
+pub(crate) fn parse_token<'a>(
     parsed: &mut ParsedTime,
     input: &'a str,
     token: &str,
@@ -209,6 +240,7 @@ fn parse_token<'a>(
             Ok(remaining)
         }
         "%p" => {
+            parsed.meridiem_token = true;
             if has_prefix(input, "AM") {
                 parsed.meridiem = Some(false);
                 Ok(&input[2..])
@@ -231,17 +263,15 @@ fn parse_token<'a>(
                 Ok(remaining)
             }
         }
-        "%#" => Ok(skip_while(input, char::is_numeric)),
-        "%." => Ok(skip_while(input, |character| {
-            character.is_ascii_punctuation()
-        })),
-        "%@" => Ok(skip_while(input, char::is_alphabetic)),
+        "%#" => Ok(skip_while(input, is_go_number)),
+        "%." => Ok(skip_while(input, is_go_punctuation)),
+        "%@" => Ok(skip_while(input, is_go_letter)),
         _ if input.starts_with(token) => Ok(&input[token.len()..]),
         _ => Err(TimeError::InvalidDate),
     }
 }
 
-fn parse_month_name<'a>(
+pub(crate) fn parse_month_name<'a>(
     parsed: &mut ParsedTime,
     input: &'a str,
     abbreviated: bool,
@@ -256,7 +286,7 @@ fn parse_month_name<'a>(
     Err(TimeError::InvalidDate)
 }
 
-fn parse_year<'a>(
+pub(crate) fn parse_year<'a>(
     parsed: &mut ParsedTime,
     input: &'a str,
     limit: usize,
@@ -266,7 +296,7 @@ fn parse_year<'a>(
     Ok(remaining)
 }
 
-fn adjust_year(year: u32) -> u32 {
+pub(crate) fn adjust_year(year: u32) -> u32 {
     match year {
         0..=69 => 2000 + year,
         70..=99 => 1900 + year,
@@ -274,7 +304,7 @@ fn adjust_year(year: u32) -> u32 {
     }
 }
 
-fn parse_compound_time<'a>(
+pub(crate) fn parse_compound_time<'a>(
     parsed: &mut ParsedTime,
     input: &'a str,
     twelve_hour: bool,
@@ -313,7 +343,7 @@ fn parse_compound_time<'a>(
         return Err(TimeError::InvalidClock);
     }
     parsed.second = second as u8;
-    remaining = next.trim_start_matches(char::is_whitespace);
+    remaining = skip_whitespace(next);
     if !twelve_hour || remaining.is_empty() {
         return Ok(remaining);
     }
@@ -327,24 +357,27 @@ fn parse_compound_time<'a>(
     }
 }
 
-fn parse_separator(input: &str) -> Result<&str, TimeError> {
-    let input = input.trim_start_matches(char::is_whitespace);
+pub(crate) fn parse_separator(input: &str) -> Result<&str, TimeError> {
+    let input = skip_whitespace(input);
     let Some(input) = input.strip_prefix(':') else {
         return Err(TimeError::InvalidClock);
     };
-    Ok(input.trim_start_matches(char::is_whitespace))
+    Ok(skip_whitespace(input))
 }
 
-fn fix_meridiem(parsed: &mut ParsedTime) -> Result<(), TimeError> {
-    let Some(pm) = parsed.meridiem else {
+pub(crate) fn fix_meridiem(parsed: &mut ParsedTime) -> Result<(), TimeError> {
+    if !parsed.meridiem_token {
         if parsed.hour12 && parsed.hour == 12 {
             parsed.hour = 0;
         }
         return Ok(());
-    };
+    }
     if parsed.hour24 || parsed.hour == 0 {
         return Err(TimeError::InvalidClock);
     }
+    let Some(pm) = parsed.meridiem else {
+        return Ok(());
+    };
     if parsed.hour == 12 {
         parsed.hour = if pm { 12 } else { 0 };
     } else if pm {
@@ -353,12 +386,15 @@ fn fix_meridiem(parsed: &mut ParsedTime) -> Result<(), TimeError> {
     Ok(())
 }
 
-fn parse_digits(input: &str, limit: usize) -> Result<(u32, &str), TimeError> {
+pub(crate) fn parse_digits(input: &str, limit: usize) -> Result<(u32, &str), TimeError> {
     let (value, _, remaining) = parse_digits_with_len(input, limit)?;
     Ok((value, remaining))
 }
 
-fn parse_digits_with_len(input: &str, limit: usize) -> Result<(u32, usize, &str), TimeError> {
+pub(crate) fn parse_digits_with_len(
+    input: &str,
+    limit: usize,
+) -> Result<(u32, usize, &str), TimeError> {
     let (value, digits, remaining) = parse_optional_digits(input, limit);
     if digits == 0 {
         Err(TimeError::InvalidDate)
@@ -367,7 +403,7 @@ fn parse_digits_with_len(input: &str, limit: usize) -> Result<(u32, usize, &str)
     }
 }
 
-fn parse_optional_digits(input: &str, limit: usize) -> (u32, usize, &str) {
+pub(crate) fn parse_optional_digits(input: &str, limit: usize) -> (u32, usize, &str) {
     let digits = input
         .as_bytes()
         .iter()
@@ -378,13 +414,37 @@ fn parse_optional_digits(input: &str, limit: usize) -> (u32, usize, &str) {
     (value, digits, &input[digits..])
 }
 
-fn has_prefix(input: &str, prefix: &str) -> bool {
+pub(crate) fn has_prefix(input: &str, prefix: &str) -> bool {
     input
         .get(..prefix.len())
         .is_some_and(|candidate| candidate.eq_ignore_ascii_case(prefix))
 }
 
-fn skip_while(input: &str, predicate: impl Fn(char) -> bool) -> &str {
+static GO_NUMBER: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\p{N}$").expect("valid Unicode Number regex"));
+static GO_PUNCTUATION: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\p{P}$").expect("valid Unicode Punctuation regex"));
+static GO_LETTER: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\p{L}$").expect("valid Unicode Letter regex"));
+
+fn matches_unicode_category(character: char, category: &Regex) -> bool {
+    let mut buffer = [0; 4];
+    category.is_match(character.encode_utf8(&mut buffer))
+}
+
+pub(crate) fn is_go_number(character: char) -> bool {
+    matches_unicode_category(character, &GO_NUMBER)
+}
+
+pub(crate) fn is_go_punctuation(character: char) -> bool {
+    matches_unicode_category(character, &GO_PUNCTUATION)
+}
+
+pub(crate) fn is_go_letter(character: char) -> bool {
+    matches_unicode_category(character, &GO_LETTER)
+}
+
+pub(crate) fn skip_while(input: &str, predicate: impl Fn(char) -> bool) -> &str {
     let consumed = input
         .char_indices()
         .take_while(|(_, character)| predicate(*character))
@@ -392,6 +452,10 @@ fn skip_while(input: &str, predicate: impl Fn(char) -> bool) -> &str {
         .last()
         .unwrap_or(0);
     &input[consumed..]
+}
+
+pub(crate) fn skip_whitespace(input: &str) -> &str {
+    input.trim_start_matches(char::is_whitespace)
 }
 
 #[cfg(test)]
@@ -708,5 +772,118 @@ mod tests {
         assert_eq!(get_format_type("%h 30"), (true, false));
         assert_eq!(get_format_type("%Y-%m-%d %H:%i:%s"), (true, true));
         assert_eq!(get_format_type("%"), (false, false));
+    }
+
+    #[test]
+    fn exhausted_input_still_tokenizes_and_records_fix_context() {
+        assert!(parse("", "%", true).is_err());
+        assert!(parse("", "%p", true).is_err());
+        assert!(parse("PM", "%p%H", true).is_err());
+        assert_eq!(parse("12", "%H%h", true).unwrap(), CoreTime::default());
+        assert_eq!(
+            parse("11", "%h%p", true).unwrap(),
+            CoreTime::from_date(0, 0, 0, 11, 0, 0, 0)
+        );
+    }
+
+    #[test]
+    fn unicode_skip_tokens_use_go_number_punctuation_and_letter_categories() {
+        assert_eq!(
+            parse("—2010", "%.%Y", true).unwrap(),
+            CoreTime::from_date(2010, 0, 0, 0, 0, 0, 0)
+        );
+        assert_eq!(
+            parse("Ⅷ-2010", "%#-%Y", true).unwrap(),
+            CoreTime::from_date(2010, 0, 0, 0, 0, 0, 0)
+        );
+        assert_eq!(
+            parse("\u{345}2010", "%@\u{345}%Y", true).unwrap(),
+            CoreTime::from_date(2010, 0, 0, 0, 0, 0, 0)
+        );
+    }
+
+    #[test]
+    fn str_to_date_receiver_mutation_matches_each_go_exit_path() {
+        let original = Time::new(
+            CoreTime::from_date(2001, 2, 3, 4, 5, 6, 123_456),
+            TimeType::Timestamp,
+            6,
+        )
+        .unwrap();
+
+        let mut success = original;
+        assert!(success
+            .str_to_date_into("2010-05-06tail", "%Y-%m-%d", false, &chrono_tz::UTC)
+            .unwrap());
+        assert_eq!(success.kind(), TimeType::DateTime);
+        assert_eq!(success.fsp(), 6);
+        assert_eq!(
+            success.core_time(),
+            CoreTime::from_date(2010, 5, 6, 0, 0, 0, 0)
+        );
+
+        let mut parse_failure = original;
+        assert!(parse_failure
+            .str_to_date_into("x", "%Y", false, &chrono_tz::UTC)
+            .is_err());
+        assert_eq!(parse_failure.core_time(), CoreTime::default());
+        assert_eq!(parse_failure.kind(), TimeType::DateTime);
+        assert_eq!(parse_failure.fsp(), 0);
+
+        let mut fix_failure = original;
+        assert!(fix_failure
+            .str_to_date_into("11 AM", "%H %p", false, &chrono_tz::UTC)
+            .is_err());
+        assert_eq!(fix_failure, original);
+
+        let mut validation_failure = original;
+        assert!(validation_failure
+            .str_to_date_into("2021-02-29", "%Y-%m-%d", false, &chrono_tz::UTC)
+            .is_err());
+        assert_eq!(validation_failure.kind(), TimeType::DateTime);
+        assert_eq!(validation_failure.fsp(), 6);
+        assert_eq!(
+            validation_failure.core_time(),
+            CoreTime::from_date(2021, 2, 29, 0, 0, 0, 0)
+        );
+    }
+
+    #[test]
+    fn str_to_date_private_helper_boundaries_match_go() {
+        assert_eq!(parse_optional_digits("123", 0), (0, 0, "123"));
+        assert_eq!(parse_optional_digits("123", 2), (12, 2, "3"));
+
+        for (input, format, expected) in [
+            ("999", "%j", CoreTime::default()),
+            ("x", "%fx", CoreTime::default()),
+            ("1", "%f", CoreTime::from_date(0, 0, 0, 0, 0, 0, 100_000)),
+            (
+                "1234567",
+                "%f7",
+                CoreTime::from_date(0, 0, 0, 0, 0, 0, 123_456),
+            ),
+            ("12", "%m", CoreTime::from_date(0, 12, 0, 0, 0, 0, 0)),
+            ("31", "%d", CoreTime::from_date(0, 0, 31, 0, 0, 0, 0)),
+        ] {
+            assert_eq!(
+                parse(input, format, true).unwrap(),
+                expected,
+                "{input} {format}"
+            );
+        }
+        for (input, format) in [
+            ("0", "%j"),
+            ("13", "%m"),
+            ("32", "%d"),
+            ("24", "%H"),
+            ("13", "%h"),
+            ("60", "%i"),
+            ("60", "%s"),
+            ("11-12", "%r"),
+            ("Ja", "%b"),
+            ("Nonesuch", "%M"),
+        ] {
+            assert!(parse(input, format, true).is_err(), "{input} {format}");
+        }
     }
 }
