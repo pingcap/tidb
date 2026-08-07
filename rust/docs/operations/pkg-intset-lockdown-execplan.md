@@ -22,7 +22,8 @@ The observable behavior is exact parity for construction, the `[0, 64)` bitmap-t
 - [x] (2026-08-07) Audited every production owner and original test/support/benchmark subtree; 446 obligations are `PORTED`, while 88 Go benchmark/reference-model/runtime-harness obligations are explicitly `DECLINED`.
 - [x] (2026-08-07) Added eight named source-boundary tests and fixed the two measured divergences: wrapping `Shift` arithmetic and the `MaxInt` `Next`/`ForEach` sentinel contract.
 - [x] (2026-08-07) Committed the restored implementation, strengthened the one initially surviving large/large intersection test, and replayed all seven suites from provisional commit `8e67f298381c390b12d8642761351cfd6f1a72f6`; all 18 mutations were killed and restored.
-- [ ] Run WIP then coordinator Ready/full-workspace gates, verify direct ratchets, and publish according to the current official-branch delivery policy.
+- [x] (2026-08-07) Ran the package WIP and coordinator Ready gates at code-bearing tip `b5a758907491e2ff0b0d510f3fb0efdb1a58cb17`: all six Go tests, the 4-artifact/534-obligation gate, 274 `tidb-util` tests, 7117 workspace tests, fmt, workspace clippy, and `make -j12 lint` passed.
+- [ ] Reproduce the full workspace gate in a clean detached worktree at the final documentation SHA, verify direct ratchets, and publish by non-force fast-forward to the official integration branch.
 
 ## Surprises & Discoveries
 
@@ -40,6 +41,8 @@ The observable behavior is exact parity for construction, the `[0, 64)` bitmap-t
   Evidence: the same probe printed all three exact shifted arrays before any Rust production edit.
 - Observation: the first intersection mutation survived because the new source test covered only `large` intersected with `small`; that path clears the large representation before the mutated retain predicate executes.
   Evidence: mutation M008 survived while M001-M007 were killed. Adding an explicit `large {1,64,65}` intersect `large {1,65,66}` assertion makes the retain predicate observable; the complete mutation set must be rerun from the new provisional SHA.
+- Observation: the first workspace run reported two existing Go-oracle authority failures when it inherited the host Go binary instead of the campaign toolchain.
+  Evidence: both exact tests passed when rerun with `PATH=/tmp/tidb-lockdown-341-go.8LuDjg/go/bin:$PATH GOTOOLCHAIN=go1.26.0`; the complete workspace then passed 7117/7117 under that same environment.
 
 ## Decision Log
 
@@ -55,7 +58,11 @@ The observable behavior is exact parity for construction, the `[0, 64)` bitmap-t
 
 ## Outcomes & Retrospective
 
-No completion outcome is claimed yet. Baseline execution is green, but completeness remains unproven until the inventory regenerates exactly, every `PORTED` owner compiles, missing boundaries are tested, and mutations demonstrate that the tests observe the rules they name.
+The complete direct package is now content-addressed: four artifacts generate 534 stable AST obligations, with 446 `PORTED`, 88 `DECLINED`, and zero `UNREACHABLE`. The declined rows are limited to Go benchmark execution, the Go-only reference model, random seeding, and test-harness mechanics; every production obligation is owned by compiled Rust evidence.
+
+Two source-measured divergences were fixed without changing the public API: `Shift` now preserves Go machine-`int` wraparound, including the `MinInt` fast path, and the stored `MaxInt` value follows Go's `Next`/`ForEach` sentinel behavior. Seven mutation suites produced 18 independent mutations; every mutation was killed by its named test or gate and byte-for-byte restoration passed. The initially surviving large/large intersection mutation led to stronger evidence before the complete replay.
+
+The package and current-worktree Ready gates pass. No oracle or coverage ratchet moved, no dependency changed, and `make bazel_prepare` was not triggered because the complete diff contains no Go, Bazel, module, or generated-file change. The remaining delivery action is an independent clean-detached workspace replay at the final documentation SHA followed by non-force publication and remote-ref verification.
 
 ## Context and Orientation
 
