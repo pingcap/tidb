@@ -25,7 +25,9 @@ After this package unit is complete, reviewers can verify that the Rust datatype
 - [x] (2026-08-07) Checked in artifact/AST drift gates, a compile-time Rust owner registry, 150 named Rust test evidence checks, seven mutation suites with killed results, and a content-addressed receipt.
 - [x] (2026-08-07) Mutation-probed every rule landed in this package batch and restored affected Rust sources from explicit saved copies; the receipt pins current source hashes for the seven suites.
 - [x] (2026-08-07) Ran the final package WIP gates from `07b86c268`: all 348 `tidb-datatype` tests and all 99 `difftest-result-tests` tests passed (five configured skips); package fmt, package clippy, Bazel build, Go/Python inventory checks, and deliberate drift probes passed.
-- [ ] Run the Ready/full-workspace gate, verify direct ratchets, non-force push `origin:hparser-integration`, and verify the remote SHA.
+- [x] (2026-08-07) Cherry-picked the complete 12-commit package chain into the coordinator and committed the pre-existing stable-Rustfmt workspace drift as `0be631adf`.
+- [x] (2026-08-07) Ran the coordinator Ready/full-workspace gate from code tip `0be631adf`: all 7,099 workspace tests passed with 41 configured skips; direct inventory ratchets, Bazel preparation/build, workspace fmt/clippy, `git diff --check`, and repository `make lint` completed successfully.
+- [ ] Non-force push the final coordinator commit to `origin:hparser-integration` and verify the exact remote SHA.
 
 ## Surprises & Discoveries
 
@@ -51,6 +53,10 @@ After this package unit is complete, reviewers can verify that the Rust datatype
   Evidence: `adjust_year_with_event`, `MySqlDuration::convert_to_year_with_event`, `extract_*_with_error`, and `parse_time_from_*_with_error` preserve both halves while public callers retain their prior `Result` contracts.
 - Observation: a package receipt must not treat the existence of a Rust owner as exact parity.
   Evidence: current Rust source records stricter behavior for `ConvertFloatToUint(NaN)` and `SubInt64(1, MinInt64)`, plus two strict `getValidIntPrefix` rows; their complete AST owner subtrees are `DECLINED`.
+- Observation: workspace clippy reports three warnings that predate this package unit, so they are retained as baseline diagnostics rather than mixed into the `pkg/types` diff.
+  Evidence: the warnings are `needless_update` in `tidb-util`, `assertions_on_constants` in `tidb-vardef`, and `type_complexity` in `tidb-executor`; the executor signature is byte-identical at official base `5dae9fdc3`, and workspace clippy exits zero.
+- Observation: the repository lint wrapper emits two non-fatal macOS/package-enumeration diagnostics while still completing every lint recipe and exiting zero.
+  Evidence: `make lint` printed the existing `rust/difftests/gobinaryrow` internal-package scan diagnostic and BSD `find: illegal option -- n`, then ran all dashboard linters and returned exit status zero.
 
 ## Decision Log
 
@@ -75,7 +81,7 @@ After this package unit is complete, reviewers can verify that the Rust datatype
 
 ## Outcomes & Retrospective
 
-The package implementation, receipt, deliberate drift probes, and WIP gates are complete in the package worktree. Integration and push remain blocked only on the clean coordinator Ready/full-workspace gate.
+The package implementation, receipt, deliberate drift probes, package WIP gates, coordinator integration, and Ready/full-workspace gates are complete. The coordinator contains the atomic package chain plus one separately identified workspace-formatting commit; the only remaining delivery action is a non-force push to the official integration branch followed by exact SHA verification.
 
 ## Context and Orientation
 
@@ -83,7 +89,7 @@ The authoritative Go package is the root directory `pkg/types`; `pkg/types/parse
 
 The generated negative coverage queue lives in `rust/docs/operations/test-coverage-inventory.md` and is produced by `rust/scripts/test-coverage-inventory.py`. It is not a completeness receipt. The stronger deliverable will inventory every Go source item and name its Rust evidence or a measured reason why it is declined or unreachable.
 
-All Cargo commands use the exclusive target directory `/Users/chenhuansheng/Documents/GitHub/tidb-lockdown-343-wave7/tgt` and run serially with 12 jobs. The coordinator worktree is `/Users/chenhuansheng/Documents/GitHub/tidb-hparser-coordinator-341` and must remain untouched until this package unit is complete.
+Package Cargo commands use the exclusive target directory `/Users/chenhuansheng/Documents/GitHub/tidb-lockdown-343-wave7/tgt`; coordinator Cargo commands use `/Users/chenhuansheng/Documents/GitHub/tidb-hparser-coordinator-341/tgt`. Both run with 12 jobs. The complete package chain is now integrated in coordinator worktree `/Users/chenhuansheng/Documents/GitHub/tidb-hparser-coordinator-341`.
 
 ## Plan of Work
 
@@ -180,10 +186,27 @@ Final package WIP commands after the clippy cleanup:
     PATH=/tmp/tidb-lockdown-341-go.8LuDjg/go/bin:$PATH GOTOOLCHAIN=go1.26.0 python3 rust/scripts/pkg-types-lockdown.py
     PATH=/tmp/tidb-lockdown-bazel-bin:/tmp/tidb-lockdown-341-go.8LuDjg/go/bin:$PATH GOTOOLCHAIN=go1.26.0 bazel build //rust/difftests/tools/go_package_lockdown_inventory:go_package_lockdown_inventory
 
-`cargo fmt --all --check` also exposed formatter drift in executor, expression, session, and transaction files. Running the same check in the untouched `5dae9fdc3` coordinator produced the identical diff, proving it predates this package chain. The Ready gate still requires the coordinator to apply and commit the current stable Rustfmt output before completion.
+`cargo fmt --all --check` also exposed formatter drift in executor, expression, session, and transaction files. Running the same check in the untouched `5dae9fdc3` coordinator produced the identical diff, proving it predates this package chain. The coordinator therefore applied and committed the current stable Rustfmt output separately before the Ready gate.
+
+The formatter drift was committed separately as coordinator commit `0be631adf`. From the coordinator repository root, the direct Ready ratchets passed with:
+
+    PATH=/tmp/tidb-lockdown-bazel-bin:/tmp/tidb-lockdown-341-go.8LuDjg/go/bin:$PATH GOTOOLCHAIN=go1.26.0 make bazel_prepare
+    PATH=/tmp/tidb-lockdown-341-go.8LuDjg/go/bin:$PATH GOTOOLCHAIN=go1.26.0 python3 rust/scripts/pkg-types-lockdown.py
+    PATH=/tmp/tidb-lockdown-341-go.8LuDjg/go/bin:$PATH GOTOOLCHAIN=go1.26.0 go test ./rust/difftests/tools/go_package_lockdown_inventory
+    PATH=/tmp/tidb-lockdown-bazel-bin:/tmp/tidb-lockdown-341-go.8LuDjg/go/bin:$PATH GOTOOLCHAIN=go1.26.0 bazel build //rust/difftests/tools/go_package_lockdown_inventory:go_package_lockdown_inventory
+    git diff --check
+    PATH=/tmp/tidb-lockdown-bazel-bin:/tmp/tidb-lockdown-341-go.8LuDjg/go/bin:$PATH GOTOOLCHAIN=go1.26.0 make lint
+
+From `rust/`, the workspace Ready commands passed with:
+
+    CARGO_TARGET_DIR=/Users/chenhuansheng/Documents/GitHub/tidb-hparser-coordinator-341/tgt cargo fmt --all -- --check
+    PATH=/tmp/tidb-lockdown-341-go.8LuDjg/go/bin:$PATH GOTOOLCHAIN=go1.26.0 CARGO_TARGET_DIR=/Users/chenhuansheng/Documents/GitHub/tidb-hparser-coordinator-341/tgt cargo nextest run --workspace -j12 --no-fail-fast
+    PATH=/tmp/tidb-lockdown-341-go.8LuDjg/go/bin:$PATH GOTOOLCHAIN=go1.26.0 CARGO_TARGET_DIR=/Users/chenhuansheng/Documents/GitHub/tidb-hparser-coordinator-341/tgt cargo clippy --all-targets -j12
+
+The workspace test summary was `7099 tests run: 7099 passed (2 slow), 41 skipped`. Workspace clippy exited zero with the three baseline warnings recorded under `Surprises & Discoveries`.
 
 ## Interfaces and Dependencies
 
 No new third-party dependency is expected. Inventory tooling should use repository Python or Rust standard-library facilities and stable source identifiers. Runtime ports should continue using existing `tidb-datatype` public types such as `Datum`, `Decimal`, `BinaryJSON`, `Time`, `Duration`, `FieldType`, `Enum`, `Set`, and `ConversionContext`; introducing a parallel datatype layer would increase semantic risk and violate the minimal-diff requirement.
 
-Revision note: created on 2026-08-07 to preserve the complete-package LOCKDOWN contract and the post-seed census before continuing `datum_test.go` coverage; updated the same day with the corrected 205-test census, temporal outcomes, complete AST receipt, and mutation evidence.
+Revision note: created on 2026-08-07 to preserve the complete-package LOCKDOWN contract and the post-seed census before continuing `datum_test.go` coverage; updated the same day with the corrected 205-test census, temporal outcomes, complete AST receipt, mutation evidence, coordinator integration, and Ready/full-workspace results.
