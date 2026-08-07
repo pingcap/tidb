@@ -32,6 +32,8 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/errgroup"
 )
@@ -311,4 +313,33 @@ func TestHandleLockTable(t *testing.T) {
 		require.Len(t, se.GetAllTableLocks(), 1)
 		checkTableLocked(1, ast.TableLockRead)
 	})
+}
+
+func TestDDLJobCancelOnKillSignal(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int)")
+
+	// Use a failpoint to pause after the DDL job is submitted, giving us
+	// a window to send the kill signal before the job completes.
+	submitted := make(chan struct{})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/waitJobSubmitted", func() {
+		close(submitted)
+	})
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := tk.Exec("alter table t add column b int")
+		errCh <- err
+	}()
+
+	// Wait for the DDL job to be submitted, then send a kill signal.
+	<-submitted
+	tk.Session().GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+
+	err := <-errCh
+	// The DDL should be cancelled with ErrQueryInterrupted.
+	require.Error(t, err)
+	require.True(t, exeerrors.ErrQueryInterrupted.Equal(err), "expected ErrQueryInterrupted, got: %v", err)
 }
