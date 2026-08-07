@@ -58,8 +58,8 @@ claim the whole `pkg/meta` Go package is transcreated.
   `ResourceGroupInfo`. The meta receipt pins implicit-default pointer identity,
   default settings, exact magic-byte JSON, `RURate` 100 to 200, mixed-case
   `CIStr`, update, reread, list, and drop behavior.
-- [x] (2026-08-07) Mutation-probed 16 independent rule families in disposable
-  worktree `/private/tmp/codex-task325-tidb-meta-mutation`. One first-pass
+- [x] (2026-08-07) Mutation-probed 19 independent rule families in disposable
+  worktrees. One first-pass
   survivor exposed duplicated reverse-iterator boundary logic; the two paths
   were consolidated and the same inclusive-boundary mutation then failed.
 - [ ] Run Ready and independent clean-worktree gates at the exact returned
@@ -261,6 +261,9 @@ was killed by the same source-semantic test.
 | scalar float | fixed two decimals to three | `scalar_settings_preserve_absence_formatting_and_non_boolean_lock_bytes` | KILLED |
 | snapshot timestamp | `start_ts` to `start_ts + 1` | `iter_all_tables_clamps_workers_streams_ranges_and_serializes_callbacks` | KILLED |
 | inventory verdict | production `PORTED` to `DECLINED` | `inventory_is_complete_unique_and_classified` | KILLED |
+| concrete resource add | suppress persisted model JSON | `policies_masking_policies_and_resource_groups_preserve_source_lifecycle` | KILLED |
+| concrete resource update | suppress `RURate` 100 to 200 write | `policies_masking_policies_and_resource_groups_preserve_source_lifecycle` | KILLED |
+| implicit default identity | allocate a fresh `Arc` per read | `policies_masking_policies_and_resource_groups_preserve_source_lifecycle` | KILLED |
 
 The consumed `resource_group.go` lockdown independently executed 66 mutation
 attempts across all model-owned rules. One first-pass nested-`CIStr` survivor
