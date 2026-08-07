@@ -1,17 +1,8 @@
-# lockdown-inventory-v1
-# owning-go-source	pkg/util/versioninfo/versioninfo.go
-# source-sha256	daa224cf8308f7b9de126919839ed95de7028e67b989d3d1d772d60309603003
-id	category	go_item	status	rust_symbol	evidence
-D01	declaration	CommunityEdition constant	PORTED	COMMUNITY_EDITION	source_storage_class_and_override_boundaries_are_exact
-D02	declaration	TiDBBuildTS variable	PORTED	TIDB_BUILD_TS	lockdown_inventory_matches_go_source_and_rust_symbols
-D03	declaration	TiDBGitHash variable	PORTED	TIDB_GIT_HASH	lockdown_inventory_matches_go_source_and_rust_symbols
-D04	declaration	TiDBGitBranch variable	PORTED	TIDB_GIT_BRANCH	lockdown_inventory_matches_go_source_and_rust_symbols
-D05	declaration	TiDBEdition variable	PORTED	TIDB_EDITION	lockdown_inventory_matches_go_source_and_rust_symbols
-D06	declaration	TiDBEnterpriseExtensionGitHash variable	PORTED	TIDB_ENTERPRISE_EXTENSION_GIT_HASH	lockdown_inventory_matches_go_source_and_rust_symbols
-R01	rule	CommunityEdition is the literal Community	PORTED	COMMUNITY_EDITION	source_storage_class_and_override_boundaries_are_exact
-R02	rule	TiDBBuildTS defaults to None and accepts a verbatim build stamp	PORTED	TIDB_BUILD_TS	source_storage_class_and_override_boundaries_are_exact
-R03	rule	TiDBGitHash defaults to None and accepts a verbatim build stamp	PORTED	TIDB_GIT_HASH	source_storage_class_and_override_boundaries_are_exact
-R04	rule	TiDBGitBranch defaults to None and accepts a verbatim build stamp	PORTED	TIDB_GIT_BRANCH	source_storage_class_and_override_boundaries_are_exact
-R05	rule	TiDBEdition defaults to CommunityEdition and accepts a verbatim build stamp	PORTED	TIDB_EDITION	source_storage_class_and_override_boundaries_are_exact
-R06	rule	TiDBEnterpriseExtensionGitHash defaults to the empty string and accepts a verbatim build stamp	PORTED	TIDB_ENTERPRISE_EXTENSION_GIT_HASH	source_storage_class_and_override_boundaries_are_exact
-R07	rule	The five version fields are mutable process globals after initialization	DECLINED	-	Go declares the fields in a var block and a probe reassigned all five; Rust has no production consumers and intentionally exposes build metadata as immutable compile-time constants
+# pkg-versioninfo-obligations-v1
+obligation_id	category	source_path	ast_anchor	node_sha256	owner	status	rust_symbol	evidence	mutation_policy
+O72ae7d3cb8401213	const	pkg/util/versioninfo/versioninfo.go	const:CommunityEdition:0	39aa15a3a74828923c815bc86676bc55167308040b6ed3d663366602dd383c73	const:CommunityEdition:0	PORTED	COMMUNITY_EDITION	rust-test:source_storage_class_and_override_boundaries_are_exact	compile-owner-gate
+O6e9d01b0a1a907ff	var	pkg/util/versioninfo/versioninfo.go	var:TiDBBuildTS:0	048fcb69078d1c5ea8ead186f311f9fd4f10e4af1b1865b38eb98415977d1b33	var:TiDBBuildTS:0	DECLINED	-	go-probe:linktime_and_runtime_mutability	classification-evidence-gate
+Ob730708301f7e433	var	pkg/util/versioninfo/versioninfo.go	var:TiDBEdition:0	28b1d8a2b6ec6c1a0529e832c738d9c81d001dc99b0247fb5b4c987615401ab8	var:TiDBEdition:0	DECLINED	-	go-probe:linktime_and_runtime_mutability	classification-evidence-gate
+Odbbbeae4eedf3892	var	pkg/util/versioninfo/versioninfo.go	var:TiDBEnterpriseExtensionGitHash:0	61d8229889e63c4661ee5ab5d23196a103021ad22aec92e0585454661fbbf7b1	var:TiDBEnterpriseExtensionGitHash:0	DECLINED	-	go-probe:linktime_and_runtime_mutability	classification-evidence-gate
+O5f4efcb155130de9	var	pkg/util/versioninfo/versioninfo.go	var:TiDBGitBranch:0	4722e04379c84ecf813ca5d2d4eb4d19b1a8d1d85a51d63b08d8e5d9dc1255e9	var:TiDBGitBranch:0	DECLINED	-	go-probe:linktime_and_runtime_mutability	classification-evidence-gate
+O98ad0725177d02e1	var	pkg/util/versioninfo/versioninfo.go	var:TiDBGitHash:0	3c47c2f1afc7269dcb0dd7b69029c2526879c9b3cf5ed9af012a72b9c3c06526	var:TiDBGitHash:0	DECLINED	-	go-probe:linktime_and_runtime_mutability	classification-evidence-gate

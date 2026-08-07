@@ -12,36 +12,38 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Transcreation of Go `pkg/util/versioninfo`: build-time version stamps.
+//! Lockdown owner for the complete Go `pkg/util/versioninfo` package.
 //!
-//! Go injects these via `-ldflags -X`; the Rust build injects them via
-//! `TIDB_*` environment variables at compile time (`option_env!`), with the
-//! same defaults when unset.
+//! `versioninfo.artifacts.tsv` hashes both direct package artifacts and
+//! `versioninfo.inventory.tsv` classifies every generated Go AST obligation.
+//! Go injects five version variables with `-ldflags -X` and may reassign them
+//! at runtime. Rust's `option_env!` values are immutable compile-time
+//! approximations, so only `CommunityEdition` is classified as fully ported.
 
 /// The default edition for building (Go `CommunityEdition`).
 pub const COMMUNITY_EDITION: &str = "Community";
 
-/// Build timestamp (Go `TiDBBuildTS`).
+/// Immutable compile-time approximation of Go `TiDBBuildTS`.
 pub const TIDB_BUILD_TS: &str = match option_env!("TIDB_BUILD_TS") {
     Some(v) => v,
     None => "None",
 };
-/// Git commit hash (Go `TiDBGitHash`).
+/// Immutable compile-time approximation of Go `TiDBGitHash`.
 pub const TIDB_GIT_HASH: &str = match option_env!("TIDB_GIT_HASH") {
     Some(v) => v,
     None => "None",
 };
-/// Git branch (Go `TiDBGitBranch`).
+/// Immutable compile-time approximation of Go `TiDBGitBranch`.
 pub const TIDB_GIT_BRANCH: &str = match option_env!("TIDB_GIT_BRANCH") {
     Some(v) => v,
     None => "None",
 };
-/// Edition (Go `TiDBEdition`).
+/// Immutable compile-time approximation of Go `TiDBEdition`.
 pub const TIDB_EDITION: &str = match option_env!("TIDB_EDITION") {
     Some(v) => v,
     None => COMMUNITY_EDITION,
 };
-/// Enterprise extension commit hash (Go `TiDBEnterpriseExtensionGitHash`).
+/// Immutable compile-time approximation of Go `TiDBEnterpriseExtensionGitHash`.
 pub const TIDB_ENTERPRISE_EXTENSION_GIT_HASH: &str =
     match option_env!("TIDB_ENTERPRISE_EXTENSION_GIT_HASH") {
         Some(v) => v,
@@ -54,13 +56,12 @@ mod tests {
     use sha2::{Digest, Sha256};
     use std::{collections::BTreeMap, fs, path::PathBuf};
 
-    const GO_SOURCE_SHA256: &str =
-        "daa224cf8308f7b9de126919839ed95de7028e67b989d3d1d772d60309603003";
-    const INVENTORY_SHA256: &str =
-        "850ff36642994f9441579df9389438b672136a549d60a0595e403e5307d3445b";
-    const PRODUCTION_PREFIX_SHA256: &str =
-        "992c27c08ef48fed1cc0250feb127f33ddf259e2597c32572209f55e14f77a7b";
+    const GO_SOURCE: &[u8] = include_bytes!("../../../../pkg/util/versioninfo/versioninfo.go");
+    const BUILD_SOURCE: &[u8] = include_bytes!("../../../../pkg/util/versioninfo/BUILD.bazel");
+    const ARTIFACTS: &str = include_str!("versioninfo.artifacts.tsv");
     const INVENTORY: &str = include_str!("versioninfo.inventory.tsv");
+    const PRODUCTION_PREFIX_SHA256: &str =
+        "e363d4160e7ddbf26f3d1fdf492634e4be024ae120433724863e5ae38c8db65c";
 
     fn repo_root() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..")
@@ -85,144 +86,102 @@ mod tests {
 
     #[test]
     fn lockdown_inventory_matches_go_source_and_rust_symbols() {
-        let go_source = fs::read(repo_root().join("pkg/util/versioninfo/versioninfo.go")).unwrap();
-        assert_eq!(
-            sha256(go_source),
-            GO_SOURCE_SHA256,
-            "owning Go source drifted"
-        );
-        assert_eq!(
-            sha256(INVENTORY),
-            INVENTORY_SHA256,
-            "versioninfo inventory drifted"
-        );
-
-        let rows: Vec<Vec<&str>> = INVENTORY
-            .lines()
-            .filter(|line| !line.starts_with('#') && !line.starts_with("id\t"))
-            .map(|line| line.split('\t').collect())
-            .collect();
-        assert!(rows.iter().all(|row| row.len() == 6));
-        let actual: Vec<[&str; 5]> = rows
-            .iter()
-            .map(|row| [row[0], row[1], row[2], row[3], row[4]])
-            .collect();
-        let expected = [
-            [
-                "D01",
-                "declaration",
-                "CommunityEdition constant",
-                "PORTED",
-                "COMMUNITY_EDITION",
-            ],
-            [
-                "D02",
-                "declaration",
-                "TiDBBuildTS variable",
-                "PORTED",
-                "TIDB_BUILD_TS",
-            ],
-            [
-                "D03",
-                "declaration",
-                "TiDBGitHash variable",
-                "PORTED",
-                "TIDB_GIT_HASH",
-            ],
-            [
-                "D04",
-                "declaration",
-                "TiDBGitBranch variable",
-                "PORTED",
-                "TIDB_GIT_BRANCH",
-            ],
-            [
-                "D05",
-                "declaration",
-                "TiDBEdition variable",
-                "PORTED",
-                "TIDB_EDITION",
-            ],
-            [
-                "D06",
-                "declaration",
-                "TiDBEnterpriseExtensionGitHash variable",
-                "PORTED",
-                "TIDB_ENTERPRISE_EXTENSION_GIT_HASH",
-            ],
-            [
-                "R01",
-                "rule",
-                "CommunityEdition is the literal Community",
-                "PORTED",
-                "COMMUNITY_EDITION",
-            ],
-            [
-                "R02",
-                "rule",
-                "TiDBBuildTS defaults to None and accepts a verbatim build stamp",
-                "PORTED",
-                "TIDB_BUILD_TS",
-            ],
-            [
-                "R03",
-                "rule",
-                "TiDBGitHash defaults to None and accepts a verbatim build stamp",
-                "PORTED",
-                "TIDB_GIT_HASH",
-            ],
-            [
-                "R04",
-                "rule",
-                "TiDBGitBranch defaults to None and accepts a verbatim build stamp",
-                "PORTED",
-                "TIDB_GIT_BRANCH",
-            ],
-            [
-                "R05",
-                "rule",
-                "TiDBEdition defaults to CommunityEdition and accepts a verbatim build stamp",
-                "PORTED",
-                "TIDB_EDITION",
-            ],
-            [
-                "R06",
-                "rule",
-                "TiDBEnterpriseExtensionGitHash defaults to the empty string and accepts a verbatim build stamp",
-                "PORTED",
-                "TIDB_ENTERPRISE_EXTENSION_GIT_HASH",
-            ],
-            [
-                "R07",
-                "rule",
-                "The five version fields are mutable process globals after initialization",
-                "DECLINED",
-                "-",
-            ],
-        ];
-        assert_eq!(actual, expected, "the exact inventory mapping drifted");
-
-        let mut statuses = BTreeMap::new();
-        for row in &rows {
-            *statuses.entry(row[3]).or_insert(0usize) += 1;
-        }
-        assert_eq!(statuses.get("PORTED"), Some(&12));
-        assert_eq!(statuses.get("DECLINED"), Some(&1));
-        assert_eq!(statuses.get("UNREACHABLE"), None);
-
-        let production = production_source();
-        for row in rows.iter().filter(|row| row[3] == "PORTED") {
-            let declaration = format!("pub const {}: &str", row[4]);
-            assert!(
-                production.contains(&declaration),
-                "{} names missing Rust symbol {}",
-                row[0],
-                row[4]
+        let artifact_rows = data_rows(ARTIFACTS);
+        assert_eq!(artifact_rows.len(), 2);
+        assert!(artifact_rows.iter().all(|row| row.len() == 3));
+        let root = repo_root();
+        for row in artifact_rows {
+            assert_eq!(
+                sha256(fs::read(root.join(row[0])).expect("read versioninfo artifact")),
+                row[2],
+                "owned artifact drifted: {}",
+                row[0]
             );
         }
-        assert_eq!(rows.last().unwrap()[0], "R07");
-        assert_eq!(rows.last().unwrap()[3], "DECLINED");
-        assert_eq!(rows.last().unwrap()[4], "-");
+        assert_eq!(
+            sha256(GO_SOURCE),
+            artifact_hash(ARTIFACTS, "pkg/util/versioninfo/versioninfo.go")
+        );
+        assert_eq!(
+            sha256(BUILD_SOURCE),
+            artifact_hash(ARTIFACTS, "pkg/util/versioninfo/BUILD.bazel")
+        );
+
+        let mut lines = INVENTORY
+            .lines()
+            .filter(|line| !line.is_empty() && !line.starts_with('#'));
+        assert_eq!(
+            lines.next(),
+            Some("obligation_id\tcategory\tsource_path\tast_anchor\tnode_sha256\towner\tstatus\trust_symbol\tevidence\tmutation_policy")
+        );
+        let expected = BTreeMap::from([
+            (
+                "const:CommunityEdition:0",
+                (
+                    "PORTED",
+                    "COMMUNITY_EDITION",
+                    "rust-test:source_storage_class_and_override_boundaries_are_exact",
+                ),
+            ),
+            (
+                "var:TiDBBuildTS:0",
+                ("DECLINED", "-", "go-probe:linktime_and_runtime_mutability"),
+            ),
+            (
+                "var:TiDBEdition:0",
+                ("DECLINED", "-", "go-probe:linktime_and_runtime_mutability"),
+            ),
+            (
+                "var:TiDBEnterpriseExtensionGitHash:0",
+                ("DECLINED", "-", "go-probe:linktime_and_runtime_mutability"),
+            ),
+            (
+                "var:TiDBGitBranch:0",
+                ("DECLINED", "-", "go-probe:linktime_and_runtime_mutability"),
+            ),
+            (
+                "var:TiDBGitHash:0",
+                ("DECLINED", "-", "go-probe:linktime_and_runtime_mutability"),
+            ),
+        ]);
+
+        let mut statuses = BTreeMap::new();
+        let mut actual = BTreeMap::new();
+        for line in lines {
+            let columns: Vec<_> = line.split('\t').collect();
+            assert_eq!(columns.len(), 10, "invalid inventory row: {line}");
+            assert_eq!(columns[2], "pkg/util/versioninfo/versioninfo.go");
+            *statuses.entry(columns[6]).or_insert(0usize) += 1;
+            assert!(
+                actual
+                    .insert(columns[3], (columns[6], columns[7], columns[8]))
+                    .is_none(),
+                "duplicate inventory anchor: {}",
+                columns[3]
+            );
+        }
+        assert_eq!(actual, expected, "the exact inventory mapping drifted");
+        assert_eq!(statuses.get("PORTED"), Some(&1));
+        assert_eq!(statuses.get("DECLINED"), Some(&5));
+        assert_eq!(statuses.get("UNREACHABLE"), None);
+        let _: &str = COMMUNITY_EDITION;
+    }
+
+    fn data_rows(contents: &str) -> Vec<Vec<&str>> {
+        contents
+            .lines()
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .skip(1)
+            .map(|line| line.split('\t').collect())
+            .collect()
+    }
+
+    fn artifact_hash(contents: &str, path: &str) -> String {
+        data_rows(contents)
+            .into_iter()
+            .find(|row| row[0] == path)
+            .map(|row| row[2].to_owned())
+            .expect("artifact hash row")
     }
 
     #[test]

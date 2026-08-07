@@ -1,0 +1,10 @@
+# pkg-versioninfo-artifacts-v1
+# zero	build_tags	0
+# zero	platform_variants	0
+# zero	code_generated	0
+# zero	go_generate	0
+# zero	go_embed	0
+# zero	tracked_testdata	0
+path	role	sha256
+pkg/util/versioninfo/BUILD.bazel	build	faa7c407b40308a834bfafc8cceef8e03b09467222d04b5ef2e49fda107ca988
+pkg/util/versioninfo/versioninfo.go	production	daa224cf8308f7b9de126919839ed95de7028e67b989d3d1d772d60309603003
