@@ -30,7 +30,7 @@ The unit branch is `codex/task325-tidb-stats-histogram-lockdown`. The collaborat
 - [x] (2026-08-07) Fixed an owner-external `tidb-datatype` test-isolation defect exposed by the Ready gate: every test that changes the global collation mode now restores the prior mode while holding the shared registry test lock.
 - [x] (2026-08-07) Completed the Rust and exact Go portions of the clean Ready gate with exclusive target `/tmp/tidb-task325-histogram-integration.xtQFEm/target`: exact failpoint-wrapped Go tests, `tidb-stats --all-targets`, `tidb-datatype --all-targets`, full Rust workspace tests, workspace clippy, literal workspace formatting, ratchet hashes/counts, mutation-result gate, and `git diff --check` passed.
 - [x] (2026-08-07) Finished the repository Ready gate: `make -j12 lint` returned zero and all dashboard-linter invocations completed. The command also printed the existing macOS/internal-import diagnostics recorded below.
-- [ ] Publish the complete result through the user-authorized official remote route and verify the exact ref with `git ls-remote`.
+- [x] (2026-08-07) Published the gated candidate through the user-authorized official remote route and verified `refs/heads/hparser-integration` and local `HEAD` both resolved to `db79b79246f2af3828c1d3e8d6eefd8998204505`. This publication-status update is a documentation-only fast-forward follow-up.
 
 ## Surprises & Discoveries
 
@@ -99,7 +99,7 @@ The unit branch is `codex/task325-tidb-stats-histogram-lockdown`. The collaborat
 
 ## Outcomes & Retrospective
 
-The 668-row source boundary, 11 decline proofs, 81 compile-anchored symbols, `rust-test:` evidence gate, and 21-family mutation plan are present. All 21 mutations were killed at immutable provisional SHA `4576fa8aea3a0d713d66b403aaad381331fc1c83`, restored, and checked into the structured results receipt. Exact Go tests, the complete Rust Ready surface, and repository lint now pass on the integration candidate, including the repaired collation-mode isolation. Final publication verification and cleanup remain incomplete; no final completion claim is made until the official ref matches the committed candidate.
+The histogram lockdown is complete. The 668-row source boundary, 11 decline proofs, 81 compile-anchored symbols, `rust-test:` evidence gate, and 21-family mutation plan are present. All 21 mutations were killed at immutable provisional SHA `4576fa8aea3a0d713d66b403aaad381331fc1c83`, restored, and checked into the structured results receipt. Exact Go tests, the complete Rust Ready surface, and repository lint pass on the integration candidate, including the repaired collation-mode isolation. The gated candidate was published at `db79b79246f2af3828c1d3e8d6eefd8998204505` and verified byte-for-byte through `git ls-remote`; this final documentation-only closure does not change any executable input.
 
 ## Context and Orientation
 
