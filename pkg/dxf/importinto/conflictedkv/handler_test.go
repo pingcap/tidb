@@ -153,6 +153,92 @@ func TestHandler(t *testing.T) {
 		})
 	})
 
+	t.Run("data kv handler re-encodes visible columns after functional index", func(t *testing.T) {
+		tk.MustExec("drop table if exists tf")
+		tk.MustExec(`create table tf(
+			id bigint primary key clustered,
+			a int,
+			unique key uk_expr ((a + 1))
+		)`)
+		tk.MustExec("alter table tf add column tail int")
+		tk.MustExec("alter table tf add unique key uk_tail (tail)")
+		tbl, err := do.InfoSchema().TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("tf"))
+		require.NoError(t, err)
+
+		fixtureEncoder := getEncoder(t, tbl)
+		t.Cleanup(func() {
+			require.NoError(t, fixtureEncoder.Close())
+		})
+		fixturePairs, err := fixtureEncoder.Encode(
+			[]types.Datum{types.NewIntDatum(1), types.NewIntDatum(10), types.NewIntDatum(100)},
+			1,
+		)
+		require.NoError(t, err)
+
+		var tailIndexID int64
+		for _, idx := range tbl.Meta().Indices {
+			if idx.Name.L == "uk_tail" {
+				tailIndexID = idx.ID
+				break
+			}
+		}
+		require.NotZero(t, tailIndexID)
+
+		expectedKVs := make(map[string]string, len(fixturePairs.Pairs))
+		var (
+			recordKV        *external.KVPair
+			expectedTailKey string
+		)
+		for _, pair := range fixturePairs.Pairs {
+			expectedKVs[string(pair.Key)] = string(pair.Val)
+			if tablecodec.IsRecordKey(pair.Key) {
+				recordKV = &external.KVPair{
+					Key:   store.GetCodec().EncodeKey(append(tidbkv.Key(nil), pair.Key...)),
+					Value: append([]byte(nil), pair.Val...),
+				}
+				continue
+			}
+			indexID, err := tablecodec.DecodeIndexID(pair.Key)
+			require.NoError(t, err)
+			if indexID == tailIndexID {
+				expectedTailKey = string(pair.Key)
+			}
+		}
+		require.NotNil(t, recordKV)
+		require.NotEmpty(t, expectedTailKey)
+		fixturePairs.Clear()
+
+		handled := false
+		encodedRowHandler := mockHandleEncodedRowFn(func(
+			_ context.Context, _ tidbkv.Key, row []types.Datum, kvPairs *kv.Pairs,
+		) error {
+			handled = true
+			actualKVs := make(map[string]string, len(kvPairs.Pairs))
+			for _, pair := range kvPairs.Pairs {
+				actualKVs[string(pair.Key)] = string(pair.Val)
+			}
+			_, ok := actualKVs[expectedTailKey]
+			require.True(t, ok, "re-encoded KVs must contain uk_tail=100")
+			require.Equal(t, expectedKVs, actualKVs)
+			require.Len(t, row, 3)
+			require.Equal(t, int64(100), row[2].GetInt64())
+			return nil
+		})
+		dataKVHandler := conflictedkv.NewDataKVHandler(conflictedkv.NewBaseHandler(
+			tbl,
+			external.DataKVGroup,
+			store.GetCodec(),
+			getEncoder(t, tbl),
+			encodedRowHandler,
+			logger,
+		))
+		t.Cleanup(func() {
+			require.NoError(t, dataKVHandler.Close(ctx))
+		})
+		require.NoError(t, dataKVHandler.Handle(ctx, recordKV))
+		require.True(t, handled)
+	})
+
 	t.Run("test index kv handler", func(t *testing.T) {
 		doTestFn := func(t *testing.T, tableName string, expectedKVs int) {
 			tbl := cleanupEnvFn(t, tableName)
