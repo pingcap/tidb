@@ -103,23 +103,23 @@ func TestRUV3MetricDefinitions(t *testing.T) {
 	require.Equal(t, []string{"tikv", "tiflash"}, []string{LblEngineTiKV, LblEngineTiFlash})
 
 	InitRUV3Metrics()
-	RUV3ResourceUnitTotal.Add(1)
-	RUV3ResourceUnitBySQLType.WithLabelValues(LblSQLTypeRead).Add(2)
-	RUV3ResourceUnitByEngine.WithLabelValues(LblEngineTiKV).Add(3)
+	RUV3Total.Add(1)
+	RUV3BySQLType.WithLabelValues(LblSQLTypeRead).Add(2)
+	RUV3ByEngine.WithLabelValues(LblEngineTiKV).Add(3)
 
 	registry := prometheus.NewRegistry()
-	require.NoError(t, registry.Register(RUV3ResourceUnitTotal))
-	require.NoError(t, registry.Register(RUV3ResourceUnitBySQLType))
-	require.NoError(t, registry.Register(RUV3ResourceUnitByEngine))
+	require.NoError(t, registry.Register(RUV3Total))
+	require.NoError(t, registry.Register(RUV3BySQLType))
+	require.NoError(t, registry.Register(RUV3ByEngine))
 	families, err := registry.Gather()
 	require.NoError(t, err)
 
-	require.NotNil(t, findMetricFamily(families, "tidb_ruv3_resource_unit_total"))
+	require.NotNil(t, findMetricFamily(families, "tidb_ruv3_ru_total"))
 	requireMetricFamilyHasLabel(
-		t, families, "tidb_ruv3_resource_unit_by_sql_type_total", LblSQLType, LblSQLTypeRead,
+		t, families, "tidb_ruv3_ru_by_sql_type_total", LblSQLType, LblSQLTypeRead,
 	)
 	requireMetricFamilyHasLabel(
-		t, families, "tidb_ruv3_resource_unit_by_engine_total", LblEngine, LblEngineTiKV,
+		t, families, "tidb_ruv3_ru_by_engine_total", LblEngine, LblEngineTiKV,
 	)
 }
 

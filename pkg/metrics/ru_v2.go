@@ -46,9 +46,9 @@ var (
 
 // RUv3 metrics.
 var (
-	RUV3ResourceUnitTotal     prometheus.Counter
-	RUV3ResourceUnitBySQLType *prometheus.CounterVec
-	RUV3ResourceUnitByEngine  *prometheus.CounterVec
+	RUV3Total     prometheus.Counter
+	RUV3BySQLType *prometheus.CounterVec
+	RUV3ByEngine  *prometheus.CounterVec
 )
 
 var (
@@ -276,29 +276,29 @@ func InitRUV2Metrics() {
 
 // InitRUV3Metrics initializes RUv3 metrics.
 func InitRUV3Metrics() {
-	RUV3ResourceUnitTotal = metricscommon.NewCounter(
+	RUV3Total = metricscommon.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "ruv3",
-			Name:      "resource_unit_total",
+			Name:      "ru_total",
 			Help:      "Counter of resource unit consumption for RU v3.",
 		},
 	)
 
-	RUV3ResourceUnitBySQLType = metricscommon.NewCounterVec(
+	RUV3BySQLType = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "ruv3",
-			Name:      "resource_unit_by_sql_type_total",
+			Name:      "ru_by_sql_type_total",
 			Help:      "Counter of resource unit consumption by SQL type for RU v3.",
 		}, []string{LblSQLType},
 	)
 
-	RUV3ResourceUnitByEngine = metricscommon.NewCounterVec(
+	RUV3ByEngine = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "ruv3",
-			Name:      "resource_unit_by_engine_total",
+			Name:      "ru_by_engine_total",
 			Help:      "Counter of resource unit consumption by engine for RU v3.",
 		}, []string{LblEngine},
 	)

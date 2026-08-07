@@ -365,9 +365,9 @@ func RegisterMetrics() {
 	prometheus.MustRegister(RUV2TiKVStorageProcessedKeysBatchGet)
 	prometheus.MustRegister(RUV2TiKVStorageProcessedKeysGet)
 	prometheus.MustRegister(RUV2TiKVCoprocessorWorkTotal)
-	prometheus.MustRegister(RUV3ResourceUnitTotal)
-	prometheus.MustRegister(RUV3ResourceUnitBySQLType)
-	prometheus.MustRegister(RUV3ResourceUnitByEngine)
+	prometheus.MustRegister(RUV3Total)
+	prometheus.MustRegister(RUV3BySQLType)
+	prometheus.MustRegister(RUV3ByEngine)
 
 	prometheus.MustRegister(NetworkTransmissionStats)
 
