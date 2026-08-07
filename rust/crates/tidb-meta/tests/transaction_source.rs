@@ -23,15 +23,17 @@ use chrono::{TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use tidb_ast::CiString;
 use tidb_meta::transaction::{
-    extract_schema_and_table_name_from_job, fast_unmarshal_table_name_info, iter_all_tables,
-    job_matches, oldest_schema_version, split_range_int64_max, table_info_must_load, unescape_name,
-    unescape_name_bytes, AutoIdGroup, DailyRuStats, DdlJobCodec, DdlTableVersion, GroupRuStats,
-    MemoryTransaction, MetaSnapshotStore, MustLoadFilterAttr, Mutator, MutatorOption, MvccInfo,
-    MvccReader, MvccWrite, NextGenBootTableVersion, RawTransaction, ResourceGroupCodec,
-    RuConsumption, RuStats, TtlTuneFactors, NAME_EXTRACT_REGEXP,
+    default_resource_group_for_test, extract_schema_and_table_name_from_job,
+    fast_unmarshal_table_name_info, iter_all_tables, job_matches, oldest_schema_version,
+    split_range_int64_max, table_info_must_load, unescape_name, unescape_name_bytes, AutoIdGroup,
+    DailyRuStats, DdlJobCodec, DdlTableVersion, GroupRuStats, MemoryTransaction, MetaSnapshotStore,
+    MustLoadFilterAttr, Mutator, MutatorOption, MvccInfo, MvccReader, MvccWrite,
+    NextGenBootTableVersion, RawTransaction, RuConsumption, RuStats, TtlTuneFactors,
+    NAME_EXTRACT_REGEXP,
 };
 use tidb_meta::{key, structure, value, MetaError, Result};
 use tidb_model::placement::PlacementSettings;
+use tidb_model::resource_group::{ResourceGroupInfo, ResourceGroupSettings};
 use tidb_model::{
     ActionType, DBInfo, MaskingPolicyInfo, MaskingPolicyStatus, MaskingPolicyType, PolicyInfo,
     SchemaDiff, TableInfo,
@@ -612,35 +614,15 @@ fn system_database_creation_and_iteration_cover_classic_and_nextgen_rules() {
     assert_eq!(fresh.system_database_id().unwrap(), id);
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-struct RecordedResourceGroup {
-    id: i64,
-    name: String,
-}
-
-impl ResourceGroupCodec for RecordedResourceGroup {
-    fn id(&self) -> i64 {
-        self.id
-    }
-
-    fn lower_name(&self) -> &str {
-        &self.name
-    }
-
-    fn default_group() -> Self {
-        Self {
-            id: 1,
-            name: "default".to_owned(),
-        }
-    }
-
-    fn encode_json(&self) -> Result<Vec<u8>> {
-        tidb_model::serde_helpers::to_go_json(self)
-            .map_err(|error| MetaError::InvalidJson(error.to_string()))
-    }
-
-    fn decode_json(encoded: &[u8]) -> Result<Self> {
-        serde_json::from_slice(encoded).map_err(|error| MetaError::InvalidJson(error.to_string()))
+fn resource_group(id: i64, name: &str, ru_rate: u64) -> ResourceGroupInfo {
+    ResourceGroupInfo {
+        settings: Some(Box::new(ResourceGroupSettings {
+            ru_rate,
+            ..ResourceGroupSettings::default()
+        })),
+        id,
+        name: CiString::new(name),
+        state: tidb_model::SchemaState::PUBLIC,
     }
 }
 
@@ -782,57 +764,86 @@ fn policies_masking_policies_and_resource_groups_preserve_source_lifecycle() {
     meta.drop_masking_policy(9).unwrap();
     meta.drop_masking_policy(9).unwrap();
 
+    let default = default_resource_group_for_test();
+    let default_read = meta.resource_group(1).unwrap();
+    assert!(Arc::ptr_eq(&default, &default_read));
+    assert_eq!(default.settings.as_ref().unwrap().ru_rate, i32::MAX as u64);
+    assert_eq!(default.settings.as_ref().unwrap().burst_limit, -1);
+    assert_eq!(default.settings.as_ref().unwrap().priority, 8);
+    let defaults = meta.resource_groups().unwrap();
+    assert_eq!(defaults.len(), 1);
+    assert!(Arc::ptr_eq(&default, &defaults[0]));
     assert_eq!(
-        meta.resource_group::<RecordedResourceGroup>(1).unwrap(),
-        RecordedResourceGroup::default_group()
-    );
-    assert_eq!(
-        meta.resource_groups::<RecordedResourceGroup>().unwrap(),
-        [RecordedResourceGroup::default_group()]
-    );
-    assert_eq!(
-        meta.add_resource_group(&RecordedResourceGroup {
-            id: 0,
-            name: "zero".to_owned(),
-        }),
+        meta.add_resource_group(&resource_group(0, "zero", 0)),
         Err(MetaError::InvalidObjectId("group"))
     );
-    let group = RecordedResourceGroup {
-        id: 2,
-        name: "analytics".to_owned(),
-    };
+    let mut group = resource_group(2, "Aa", 100);
     meta.add_resource_group(&group).unwrap();
     assert_eq!(
         meta.add_resource_group(&group),
         Err(MetaError::ResourceGroupExists)
     );
     assert_eq!(
-        meta.resource_group::<RecordedResourceGroup>(2).unwrap(),
-        group
+        meta.resource_group(2)
+            .unwrap()
+            .settings
+            .as_ref()
+            .unwrap()
+            .ru_rate,
+        100
+    );
+    let group_field =
+        structure::encode_hash_data_key(key::RESOURCE_GROUPS, &key::resource_group_key(2));
+    let raw_group = meta
+        .inspect(|transaction| transaction.entries()[&group_field].clone())
+        .unwrap();
+    assert_eq!(raw_group[0], value::CURRENT_MAGIC_BYTE_VER);
+    assert_eq!(
+        std::str::from_utf8(&raw_group[1..]).unwrap(),
+        r#"{"ru_per_sec":100,"priority":0,"cpu_limit":"","io_read_bandwidth":"","io_write_bandwidth":"","burst_limit":0,"runaway":null,"background":null,"id":2,"name":{"O":"Aa","L":"aa"},"state":5}"#
     );
     assert_eq!(
-        meta.update_resource_group(&RecordedResourceGroup {
-            id: 3,
-            name: "missing".to_owned(),
-        }),
+        meta.update_resource_group(&resource_group(3, "missing", 1)),
         Err(MetaError::ResourceGroupNotExists)
     );
-    // Go allows the implicit default group to be updated before persistence.
-    meta.update_resource_group(&RecordedResourceGroup {
-        id: 1,
-        name: "default".to_owned(),
-    })
-    .unwrap();
+    group.settings.as_mut().unwrap().ru_rate = 200;
+    meta.update_resource_group(&group).unwrap();
     assert_eq!(
-        meta.resource_groups::<RecordedResourceGroup>()
+        meta.resource_group(2)
             .unwrap()
-            .len(),
-        2
+            .settings
+            .as_ref()
+            .unwrap()
+            .ru_rate,
+        200
+    );
+    let reopened = Mutator::new(meta.inspect(Clone::clone).unwrap());
+    assert_eq!(
+        reopened
+            .resource_group(2)
+            .unwrap()
+            .settings
+            .as_ref()
+            .unwrap()
+            .ru_rate,
+        200
+    );
+    // Go allows the implicit default group to be updated before persistence.
+    meta.update_resource_group(&resource_group(1, "DeFaUlT", 9))
+        .unwrap();
+    let groups = meta.resource_groups().unwrap();
+    assert_eq!(groups.len(), 2);
+    assert_eq!(
+        groups
+            .iter()
+            .filter(|group| group.name.lowercase() == "default")
+            .count(),
+        1
     );
     meta.drop_resource_group(2).unwrap();
     meta.drop_resource_group(2).unwrap();
     assert_eq!(
-        meta.resource_group::<RecordedResourceGroup>(2),
+        meta.resource_group(2),
         Err(MetaError::ResourceGroupIdNotExists(2))
     );
 }
@@ -880,12 +891,12 @@ fn policy_masking_and_resource_reads_preserve_magic_json_and_empty_panics() {
 
     assert_eq!(
         with_hash_value(key::RESOURCE_GROUPS, &key::resource_group_key(9), b"\x3f{}")
-            .resource_group::<RecordedResourceGroup>(9),
+            .resource_group(9),
         Err(MetaError::IncompatibleMagicType)
     );
     assert!(matches!(
         with_hash_value(key::RESOURCE_GROUPS, &key::resource_group_key(9), b"\x00{")
-            .resource_groups::<RecordedResourceGroup>(),
+            .resource_groups(),
         Err(MetaError::InvalidJson(_))
     ));
 }
