@@ -1860,6 +1860,93 @@ mod tests {
         assert!(!FieldTypeCode::String.is_type_unspecified());
     }
 
+    #[test]
+    fn test_is_type_source_rows() {
+        for (code, expected) in [
+            (FieldTypeCode::TinyBlob, true),
+            (FieldTypeCode::MediumBlob, true),
+            (FieldTypeCode::Blob, true),
+            (FieldTypeCode::LongBlob, true),
+            (FieldTypeCode::Int24, false),
+        ] {
+            assert_eq!(code.is_type_blob(), expected, "blob: {code:?}");
+        }
+        for (code, expected) in [
+            (FieldTypeCode::String, true),
+            (FieldTypeCode::Varchar, true),
+            (FieldTypeCode::Long, false),
+        ] {
+            assert_eq!(code.is_type_char(), expected, "char: {code:?}");
+        }
+    }
+
+    #[test]
+    fn test_is_type_temporal_source_rows() {
+        for (code, expected) in [
+            (FieldTypeCode::Duration, true),
+            (FieldTypeCode::Datetime, true),
+            (FieldTypeCode::Timestamp, true),
+            (FieldTypeCode::Date, true),
+            (FieldTypeCode::NewDate, true),
+            (FieldTypeCode::Unknown(b't'), false),
+        ] {
+            assert_eq!(code.is_type_temporal(), expected, "{code:?}");
+        }
+    }
+
+    #[test]
+    fn test_is_temporal_with_date_source_rows() {
+        for (code, expected) in [
+            (FieldTypeCode::Datetime, true),
+            (FieldTypeCode::Date, true),
+            (FieldTypeCode::Timestamp, true),
+            (FieldTypeCode::Unknown(b't'), false),
+        ] {
+            assert_eq!(code.is_temporal_with_date(), expected, "{code:?}");
+        }
+    }
+
+    #[test]
+    fn test_is_type_prefixable_source_rows() {
+        for (code, expected) in [
+            (FieldTypeCode::Unknown(b't'), false),
+            (FieldTypeCode::Blob, true),
+        ] {
+            assert_eq!(code.is_type_prefixable(), expected, "{code:?}");
+        }
+    }
+
+    #[test]
+    fn test_is_type_fractionable_source_rows() {
+        for (code, expected) in [
+            (FieldTypeCode::Datetime, true),
+            (FieldTypeCode::Duration, true),
+            (FieldTypeCode::Timestamp, true),
+            (FieldTypeCode::Unknown(b't'), false),
+        ] {
+            assert_eq!(code.is_type_fractionable(), expected, "{code:?}");
+        }
+    }
+
+    #[test]
+    fn test_is_type_numeric_source_rows() {
+        for (code, expected) in [
+            (FieldTypeCode::Bit, true),
+            (FieldTypeCode::Tiny, true),
+            (FieldTypeCode::Int24, true),
+            (FieldTypeCode::Long, true),
+            (FieldTypeCode::LongLong, true),
+            (FieldTypeCode::NewDecimal, true),
+            (FieldTypeCode::Unspecified, false),
+            (FieldTypeCode::Float, true),
+            (FieldTypeCode::Double, true),
+            (FieldTypeCode::Short, true),
+            (FieldTypeCode::Unknown(b't'), false),
+        ] {
+            assert_eq!(code.is_type_numeric(), expected, "{code:?}");
+        }
+    }
+
     /// Source: `pkg/types/etc_test.go::TestIsBinaryStr` and
     /// `pkg/types/etc_test.go::TestIsNonBinaryStr`.
     #[test]

@@ -15,6 +15,7 @@ After this package unit is complete, reviewers can verify that the Rust datatype
 - [x] (2026-08-07) Preserved mutation and crate validation evidence for commit `38a4122dc2cea40b6326d12f4f773feb77c68c92`, which ports the exact `TestTimeOverflow` source rows.
 - [x] (2026-08-07) Preserved mutation and targeted validation evidence for commit `9648e257c09f8bcda4732bf6b460dccf47f15788`, which completes the audited `convert_test.go` source tables.
 - [x] (2026-08-07) Completed, committed, and mutation-probed the first `datum_test.go`/`core_time_test.go` source-row batch: 12 independently named Rust tests pass and reduce the census from 44 to 32 `NONE` without production-code changes.
+- [x] (2026-08-07) Audited the six uncovered `etc_test.go` type-predicate tests against the existing all-type-code table; six independently named tests pass and reduce the census from 32 to 26 `NONE` without production-code changes.
 - [ ] Audit and account for every `pkg/types` production, test, support, benchmark, generated, fixture, and build file.
 - [ ] Port or prove every remaining Go test table, starting with the 44 mechanically uncovered tests and then auditing all weak name matches row by row.
 - [ ] Check in the complete function/branch inventory and its Go-source and Rust-symbol gates.
@@ -128,6 +129,8 @@ The first datum batch was saved under `/tmp/tidb-types-datum-probes.P0fYAW`. Its
     Invalid UTF-8 accepted through lossy conversion -> test_is_printable_source_rows FAILED for [97, 98, 99, 195]
 
 After restoring all saved copies, `git status --short` showed only `?? tgt/` and the same 12-test filter reported `12 passed, 299 skipped`.
+
+The `etc_test.go` predicate batch reused the same save directory for `field_type_mod.rs`. Removing `NewDate` from `is_type_temporal` failed `test_is_type_temporal_source_rows` on the `NewDate` row. Adding `Unspecified` to `is_type_numeric` failed `test_is_type_numeric_source_rows` on the explicit false row. The first restore attempt was issued from `rust/` with an erroneous extra `rust/` path prefix and therefore changed nothing; rerunning the copy from repository root restored the saved bytes, after which the six-test filter reported `6 passed, 311 skipped`.
 
 ## Interfaces and Dependencies
 
