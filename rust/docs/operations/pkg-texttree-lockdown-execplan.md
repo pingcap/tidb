@@ -35,13 +35,25 @@ completeness lockdown with no production or shared-ratchet movement.
 - [x] (2026-08-08) Ran the no-failpoint baseline: both exact Go tests and all
   four existing Rust texttree tests passed; the generic Go AST tool generated
   36 obligations.
-- [ ] Replace the legacy one-file inventory with an exact four-artifact
-  manifest and generated package classification while preserving the three
-  known string-domain divergences.
-- [ ] Add deterministic checker, compiled owner/evidence gate, mutation plan,
-  results, and content-addressed receipt.
-- [ ] Commit an immutable restored baseline, kill and restore every planned
-  mutation, then pass WIP and clean-detached Ready gates.
+- [x] (2026-08-08) Replaced the legacy one-file inventory with an exact
+  four-artifact manifest and generated package classification: 31 `PORTED`,
+  five Go-only `DECLINED`, and three separately hashed semantic divergences.
+- [x] (2026-08-08) Added the deterministic checker, compiled owner/evidence
+  gate, eight-suite/32-mutation plan, and content-addressed receipt inputs.
+- [x] (2026-08-08) Committed the restored implementation baseline as
+  `5a72db90c97c40d39ecb7d491ac5df66642ef51e`; after the first constant probe
+  survived, tightened the named inventory gate with exact five-constant
+  assertions and committed the corrected baseline as
+  `a818661ca8eec4f3225946ebad2aefbe613248ac`.
+- [x] (2026-08-08) Killed all 32 planned mutations in disposable worktree
+  `/tmp/tidb-texttree-mutations.y6GPN5/worktree`; every mutation returned a
+  nonzero named check, restored from a saved byte copy, and passed again with
+  its exact baseline hash.
+- [x] (2026-08-08) Passed the WIP gate: exact Go tests, checker, 6 texttree
+  tests, 293/293 `tidb-util` tests, package Clippy with warnings denied,
+  workspace fmt, source-size ratchet, and `git diff --check`.
+- [ ] Commit mutation results and receipt, then pass the clean-detached Ready
+  gate.
 - [ ] Publish by ordinary fast-forward to official `hparser-integration` and
   verify GitHub `dbsid` author and committer attribution.
 
@@ -60,6 +72,10 @@ completeness lockdown with no production or shared-ratchet movement.
   provides parity evidence rather than an integrated replacement path.
   Evidence: no Rust source outside `texttree.rs` references either public
   function or any of the five constants.
+- Observation: a compile anchor alone did not prove constant values.
+  Evidence: the first `TREE_BODY` mutation survived the initial named inventory
+  test; adding an exact five-constant tuple assertion killed all five constant
+  mutations in the corrected sweep.
 
 ## Decision Log
 
@@ -88,9 +104,11 @@ completeness lockdown with no production or shared-ratchet movement.
 
 ## Outcomes & Retrospective
 
-No completion outcome is claimed yet. Baseline Go and Rust tests pass, but the
-complete package inventory, mutation receipt, clean Ready replay, and official
-publication remain open.
+The complete package inventory and mutation proof are locally complete: all
+four direct artifacts, 36 generated obligations, five Go-only declines, three
+semantic divergences, and 32 killed/restored mutations are represented. WIP
+tests and package checks pass. The clean workspace Ready replay, final lint,
+and official publication remain open.
 
 ## Context and Orientation
 
