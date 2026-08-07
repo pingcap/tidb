@@ -1313,6 +1313,29 @@ mod tests {
     }
 
     #[test]
+    fn duration_year_cast_preserves_clamped_value_and_overflow_event() {
+        let year = FieldType::new(FieldTypeCode::Year);
+        let duration = Datum::new_duration(MySqlDuration::new(200, 0, 0, 0, 0).unwrap());
+        let converted = duration
+            .convert_to(
+                &year,
+                crate::DEFAULT_STATEMENT_FLAGS.with_cast_time_to_year_through_concat(true),
+            )
+            .unwrap();
+
+        assert_eq!(converted.value, Datum::Int(2155));
+        assert_eq!(
+            converted.event,
+            Some(ScalarConversionEvent::Overflow(
+                ScalarConversionError::Overflow {
+                    value: "2000000".to_owned(),
+                    target: FieldTypeCode::Year,
+                }
+            ))
+        );
+    }
+
+    #[test]
     fn source_convert_to_integer_float_string_decimal_rows() {
         let signed_tiny = FieldType::new(FieldTypeCode::Tiny);
         let unsigned_tiny =
