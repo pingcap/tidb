@@ -38,10 +38,18 @@ completeness lockdown with no production or shared-ratchet movement.
   four-artifact manifest and 28-row generated classification: 23 `PORTED`, 5
   `DECLINED`; the deterministic checker, compiled owner/evidence gate, and
   seven-suite/28-mutation plan pass their WIP checks.
-- [ ] Commit the restored implementation and proof artifacts as the immutable
-  provisional mutation baseline.
-- [ ] Kill every planned mutation in a disposable worktree, restore every
-  source byte-for-byte, and commit the compiled receipt.
+- [x] (2026-08-08) Committed restored implementation and proof artifacts as
+  immutable provisional mutation baseline
+  `4e5f29b58742c9304564a11da0271f415147c39a`.
+- [x] (2026-08-08) Killed all 28 planned mutations in disposable worktree
+  `/tmp/tidb-paging-mutations.WVjTOt/worktree`; every source was restored to
+  its saved SHA-256 and the same named check passed after restoration.
+- [x] (2026-08-08) Generated the content-addressed receipt and passed the
+  complete WIP gate: exact Go tests, checker, 290/290 `tidb-util` tests,
+  package Clippy with warnings denied, workspace fmt, direct counts, and
+  `git diff --check`.
+- [ ] Commit the compiled mutation proof, then run the clean-detached Ready
+  replay.
 - [ ] Pass WIP and clean-detached Ready gates, publish by ordinary fast-forward
   to official `hparser-integration`, and verify GitHub `dbsid` attribution.
 
