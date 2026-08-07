@@ -934,6 +934,9 @@ func adaptiveLimitInitialWindow(demandRows uint64, ceiling int) uint64 {
 	return min(demandRows, uint64(ceiling))
 }
 
+// adaptiveLimitInitialLookupBatchSize keeps paging tasks aligned with the
+// initial logical window. Without paging, it preserves at least one chunk of
+// execution granularity while respecting the configured lookup batch limit.
 func adaptiveLimitInitialLookupBatchSize(initialWindow uint64, indexPaging bool, maxChunkSize, maxBatchSize int) uint64 {
 	if indexPaging {
 		return initialWindow

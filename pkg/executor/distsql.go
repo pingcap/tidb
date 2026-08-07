@@ -88,8 +88,8 @@ type lookupTableTask struct {
 	idxRows *chunk.Chunk
 	cursor  int
 
-	// The reservation remains owned by this task until all result rows are
-	// consumed, or until an error or cancellation aborts the task.
+	// adaptiveLimitReservation is the number of admitted handles owned by this
+	// task. It must be completed or aborted, then cleared, on every exit path.
 	adaptiveLimitReservation int
 
 	// after the cop task is built, buildDone will be set to the current instant, for Next wait duration statistic.
@@ -517,7 +517,8 @@ type IndexLookUpExecutor struct {
 	resultCh   chan *lookupTableTask
 	resultCurr *lookupTableTask
 
-	// Non-nil only for an eligible reader under a statement-local LIMIT.
+	// adaptiveLimitController is shared with the owning LimitExec and is non-nil
+	// only for an eligible reader. The LimitExec controls its lifecycle.
 	adaptiveLimitController *exec.AdaptiveLimitController
 	// Only direct IndexLookUp reports the adaptive snapshot here. IndexJoin
 	// reports the shared snapshot through its own runtime stats.
@@ -1385,6 +1386,8 @@ type indexWorker struct {
 	resultCh  chan<- *lookupTableTask
 	keepOrder bool
 
+	// adaptiveLimitController gates handle extraction into lookup tasks. The
+	// owning LimitExec controls its lifecycle; nil preserves legacy admission.
 	adaptiveLimitController *exec.AdaptiveLimitController
 
 	// batchSize is for lightweight startup. It will be increased exponentially until reaches the max batch size value.
@@ -1401,9 +1404,13 @@ type indexWorker struct {
 
 	// pendingHandles keeps handles returned beyond the current adaptive
 	// reservation. DistSQL may return more rows than Chunk.RequiredRows.
-	pendingHandles         []kv.Handle
+	pendingHandles []kv.Handle
+	// pendingHandlesMemUsage is the number of pending-handle bytes currently
+	// charged to memTracker.
 	pendingHandlesMemUsage int64
-	memTracker             *memory.Tracker
+	// memTracker is borrowed from the executor. Pending-handle charges must be
+	// released as handles are consumed or when this worker exits.
+	memTracker *memory.Tracker
 }
 
 func (w *indexWorker) syncErr(err error) {
@@ -1485,10 +1492,13 @@ type extractedLookupTaskData struct {
 	retChunk      *chunk.Chunk
 	exhausted     bool
 
-	// Reservation ownership moves to lookupTableTask when the task is
-	// dispatched. Every earlier exit must abort it here.
+	// adaptiveLimitReservation is the number of admitted handles owned by this
+	// extraction. Ownership moves to lookupTableTask when the task is dispatched;
+	// every earlier exit must abort it here.
 	adaptiveLimitReservation int
-	adaptiveLimitStopped     bool
+	// adaptiveLimitStopped reports that admission stopped without an extraction
+	// error, so the fetch loop should finish normally.
+	adaptiveLimitStopped bool
 }
 
 // fetchHandles fetches a batch of handles from index data and builds the index lookup tasks.
@@ -2133,7 +2143,9 @@ type IndexLookUpRunTimeStats struct {
 	NextWaitIndexScan        time.Duration
 	NextWaitTableLookUpBuild time.Duration
 	NextWaitTableLookUpResp  time.Duration
-	adaptiveLimitSnapshot    *exec.AdaptiveLimitSnapshot
+	// adaptiveLimitSnapshot is the close-time diagnostic snapshot rendered by
+	// EXPLAIN ANALYZE. Runtime-stat merges retain one copy instead of adding it.
+	adaptiveLimitSnapshot *exec.AdaptiveLimitSnapshot
 }
 
 func (e *IndexLookUpRunTimeStats) String() string {

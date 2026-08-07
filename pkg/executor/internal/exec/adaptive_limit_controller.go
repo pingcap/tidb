@@ -33,15 +33,25 @@ const (
 // cumulative counters. The recent sample lets an ordered scan react when the
 // selectivity near its current position differs from earlier input.
 type adaptiveYieldWindow struct {
-	inputs  [adaptiveYieldWindowSize]uint64
+	// inputs stores recent input counts: outer rows for join feedback or
+	// index handles for lookup feedback.
+	inputs [adaptiveYieldWindowSize]uint64
+	// outputs stores the output count paired with each inputs sample.
 	outputs [adaptiveYieldWindowSize]uint64
-	next    uint8
+	// next is the ring-buffer slot replaced by the next sample.
+	next uint8
 }
 
+// admissionBlockStats measures the union of admission-blocked intervals for
+// one stage. Concurrent waiters overlap in wall-clock time and are counted once.
 type admissionBlockStats struct {
+	// blockedSince is the start of the current blocked interval, or zero when
+	// no reserver is waiting.
 	blockedSince time.Time
-	waiters      int
-	blockedTime  time.Duration
+	// waiters is the number of reservers currently blocked by admission.
+	waiters int
+	// blockedTime accumulates completed blocked intervals.
+	blockedTime time.Duration
 }
 
 func (w *adaptiveYieldWindow) add(input, output uint64) {
@@ -67,36 +77,65 @@ func (w *adaptiveYieldWindow) totals() (input, output uint64) {
 // AdmissionBlocked fields are wall-clock durations with overlapping waits in
 // the same stage counted once.
 type AdaptiveLimitSnapshot struct {
-	DemandRows              uint64
-	OutputRows              uint64
-	OuterFetched            uint64
-	OuterConsumed           uint64
-	OuterReserved           uint64
-	OuterWindow             uint64
-	OuterOutstandingAtStop  uint64
-	LookupReserved          uint64
-	LookupHandles           uint64
-	LookupRows              uint64
-	LookupWindow            uint64
-	LookupBatchSize         uint64
-	LookupPhysicalWindow    uint64
+	// DemandRows is the final-row demand derived from LIMIT offset plus count.
+	DemandRows uint64
+	// OutputRows is the cumulative number of final rows observed by the controller.
+	OutputRows uint64
+	// OuterFetched is the cumulative number of committed IndexJoin outer rows.
+	OuterFetched uint64
+	// OuterConsumed is the cumulative number of outer rows fully consumed by the join.
+	OuterConsumed uint64
+	// OuterReserved is the number of admitted outer rows not yet committed or aborted.
+	OuterReserved uint64
+	// OuterWindow is the current logical outer-row admission limit.
+	OuterWindow uint64
+	// OuterOutstandingAtStop captures fetched-but-unconsumed and reserved outer
+	// rows when the controller stops.
+	OuterOutstandingAtStop uint64
+	// LookupReserved is the number of admitted handles not yet completed or aborted.
+	LookupReserved uint64
+	// LookupHandles is the cumulative number of handles in fully consumed lookup tasks.
+	LookupHandles uint64
+	// LookupRows is the cumulative number of table rows returned by those lookup tasks.
+	LookupRows uint64
+	// LookupWindow is the current logical lookup-handle admission limit.
+	LookupWindow uint64
+	// LookupBatchSize is the current execution-task size in index handles.
+	LookupBatchSize uint64
+	// LookupPhysicalWindow is LookupWindow rounded to executable whole batches
+	// without exceeding the configured maximum window.
+	LookupPhysicalWindow uint64
+	// LookupOutstandingAtStop captures reserved lookup handles when the controller stops.
 	LookupOutstandingAtStop uint64
-	OuterAdmissionBlocked   time.Duration
-	LookupAdmissionBlocked  time.Duration
-	Stopped                 bool
+	// OuterAdmissionBlocked is the wall-clock time with at least one blocked
+	// outer reserver.
+	OuterAdmissionBlocked time.Duration
+	// LookupAdmissionBlocked is the wall-clock time with at least one blocked
+	// lookup reserver.
+	LookupAdmissionBlocked time.Duration
+	// Stopped reports whether the controller rejects future admission.
+	Stopped bool
 }
 
 // AdaptiveLimitConfig defines the immutable bounds of one statement-local
 // adaptive LIMIT controller. Outer windows are measured in outer rows; lookup
 // windows and batches are measured in index handles.
 type AdaptiveLimitConfig struct {
-	DemandRows             uint64
-	InitialOuterWindow     uint64
-	MaxOuterWindow         uint64
-	InitialLookupWindow    uint64
-	MaxLookupWindow        uint64
+	// DemandRows is the final-row demand derived from LIMIT offset plus count.
+	DemandRows uint64
+	// InitialOuterWindow is the starting outer-row admission window.
+	InitialOuterWindow uint64
+	// MaxOuterWindow is the upper bound of the outer-row admission window.
+	MaxOuterWindow uint64
+	// InitialLookupWindow is the starting lookup-handle admission window.
+	InitialLookupWindow uint64
+	// MaxLookupWindow is the upper bound of the lookup-handle admission window.
+	MaxLookupWindow uint64
+	// InitialLookupBatchSize is the starting number of handles assigned to one
+	// lookup task.
 	InitialLookupBatchSize uint64
-	MaxLookupBatchSize     uint64
+	// MaxLookupBatchSize is the upper bound on handles assigned to one lookup task.
+	MaxLookupBatchSize uint64
 }
 
 // AdaptiveLimitController bounds speculative work for an early-stop LIMIT.
@@ -113,41 +152,85 @@ type AdaptiveLimitConfig struct {
 // reservation must eventually be committed, completed, aborted, or cleared by
 // Stop. All mutable state below is protected by mu.
 type AdaptiveLimitController struct {
-	outerChanged            chan struct{}
-	stopCh                  chan struct{}
-	lookupChanged           chan struct{}
-	lookupAdmissionBlocked  admissionBlockStats
-	outerAdmissionBlocked   admissionBlockStats
-	recentLookupYield       adaptiveYieldWindow
-	recentOuterYield        adaptiveYieldWindow
-	outerGrowthBarrier      uint64
-	maxOuterWindow          uint64
-	pendingOuterOutput      uint64
-	outerReserved           uint64
-	outerWindow             uint64
-	lookupHandles           uint64
-	lookupRows              uint64
-	outerConsumed           uint64
+	// outerChanged wakes outer reservers after capacity or lifecycle changes.
+	// Its single buffered signal coalesces duplicate notifications.
+	outerChanged chan struct{}
+	// stopCh is closed when the controller stops so all blocked producers wake up.
+	stopCh chan struct{}
+	// lookupChanged wakes lookup reservers after capacity or lifecycle changes.
+	// Its single buffered signal coalesces duplicate notifications.
+	lookupChanged chan struct{}
+	// lookupAdmissionBlocked tracks lookup admission waiters and union wait time.
+	lookupAdmissionBlocked admissionBlockStats
+	// outerAdmissionBlocked tracks outer admission waiters and union wait time.
+	outerAdmissionBlocked admissionBlockStats
+	// recentLookupYield tracks recent handle-to-table-row yield near the current
+	// ordered scan position.
+	recentLookupYield adaptiveYieldWindow
+	// recentOuterYield tracks recent consumed-outer-to-final-row yield.
+	recentOuterYield adaptiveYieldWindow
+	// outerGrowthBarrier records outerFetched at the latest productive growth,
+	// preventing another growth decision until consumption passes that frontier.
+	outerGrowthBarrier uint64
+	// maxOuterWindow is the immutable upper bound of outer admission.
+	maxOuterWindow uint64
+	// pendingOuterOutput holds final rows observed before their corresponding
+	// outer rows are reported as consumed.
+	pendingOuterOutput uint64
+	// outerReserved counts admitted outer rows not yet committed or aborted.
+	outerReserved uint64
+	// outerWindow is the current logical outer-row admission limit.
+	outerWindow uint64
+	// lookupHandles is the cumulative handle count from fully consumed lookup tasks.
+	lookupHandles uint64
+	// lookupRows is the cumulative table-row count from fully consumed lookup tasks.
+	lookupRows uint64
+	// outerConsumed is the cumulative number of outer rows fully consumed by the join.
+	outerConsumed uint64
+	// lookupOutstandingAtStop captures lookupReserved when the controller stops.
 	lookupOutstandingAtStop uint64
-	demandRows              uint64
-	outerFetched            uint64
-	initialOuterWindow      uint64
-	lookupReserved          uint64
-	outerOutstandingAtStop  uint64
-	outerNoOutputRows       uint64
-	initialLookupWindow     uint64
-	maxLookupWindow         uint64
-	lookupWindow            uint64
-	initialLookupBatchSize  uint64
-	maxLookupBatchSize      uint64
-	lookupBatchSize         uint64
-	lookupGrowthProgress    uint64
-	lookupNoOutputRows      uint64
-	outputRows              uint64
-	mu                      sync.Mutex
-	stopped                 bool
-	lookupInNoOutputPhase   bool
-	mode                    adaptiveLimitMode
+	// demandRows is the immutable final-row demand derived from LIMIT offset plus count.
+	demandRows uint64
+	// outerFetched is the cumulative number of committed IndexJoin outer rows.
+	outerFetched uint64
+	// initialOuterWindow is the outer-row window restored by Reset.
+	initialOuterWindow uint64
+	// lookupReserved counts admitted handles not yet completed or aborted.
+	lookupReserved uint64
+	// outerOutstandingAtStop captures fetched-but-unconsumed and reserved outer
+	// rows when the controller stops.
+	outerOutstandingAtStop uint64
+	// outerNoOutputRows counts outer rows consumed in the current zero-output phase.
+	outerNoOutputRows uint64
+	// initialLookupWindow is the logical lookup-handle window restored by Reset.
+	initialLookupWindow uint64
+	// maxLookupWindow is the immutable upper bound of lookup-handle admission.
+	maxLookupWindow uint64
+	// lookupWindow is the current logical lookup-handle admission limit.
+	lookupWindow uint64
+	// initialLookupBatchSize is the lookup task size restored by Reset.
+	initialLookupBatchSize uint64
+	// maxLookupBatchSize is the immutable upper bound on lookup task size.
+	maxLookupBatchSize uint64
+	// lookupBatchSize is the current execution-task size in index handles,
+	// independent of the logical lookup window.
+	lookupBatchSize uint64
+	// lookupGrowthProgress records lookupHandles at the latest growth decision,
+	// preventing repeated growth without newly completed lookup work.
+	lookupGrowthProgress uint64
+	// lookupNoOutputRows counts handles consumed in the current zero-output phase.
+	lookupNoOutputRows uint64
+	// outputRows is the cumulative number of final rows observed by the controller.
+	outputRows uint64
+	// mu protects lifecycle state, counters, feedback windows, and wait statistics.
+	mu sync.Mutex
+	// stopped indicates that future admission must fail and stopCh has been closed.
+	stopped bool
+	// lookupInNoOutputPhase suppresses productive lookup-yield adjustment until
+	// a subsequent lookup task returns rows.
+	lookupInNoOutputPhase bool
+	// mode selects IndexJoin accounting or direct IndexLookUp accounting.
+	mode adaptiveLimitMode
 }
 
 // NewAdaptiveLimitController creates a statement-local admission controller.

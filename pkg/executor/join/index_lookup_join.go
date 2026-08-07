@@ -89,9 +89,11 @@ type IndexLookUpJoin struct {
 	Finished *atomic.Value
 	prepared bool
 
-	// AdaptiveLimitEligible is set when the outer physical property must keep order.
+	// AdaptiveLimitEligible indicates that the outer physical property must keep
+	// order. The executor builder uses it only as an adaptive LIMIT eligibility gate.
 	AdaptiveLimitEligible bool
-	// AdaptiveLimitController is shared with the eligible outer IndexLookUp.
+	// AdaptiveLimitController is shared with the eligible outer IndexLookUp. The
+	// owning LimitExec controls its lifecycle; this join only reports progress.
 	AdaptiveLimitController *exec.AdaptiveLimitController
 }
 
@@ -928,9 +930,11 @@ func (e *IndexLookUpJoin) Close() error {
 }
 
 type indexLookUpJoinRuntimeStats struct {
-	concurrency           int
-	probe                 int64
-	innerWorker           innerWorkerRuntimeStats
+	concurrency int
+	probe       int64
+	innerWorker innerWorkerRuntimeStats
+	// adaptiveLimitSnapshot is the close-time diagnostic snapshot rendered by
+	// EXPLAIN ANALYZE. Runtime-stat merges retain one copy instead of adding it.
 	adaptiveLimitSnapshot *exec.AdaptiveLimitSnapshot
 }
 
