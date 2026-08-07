@@ -416,8 +416,8 @@ FIELDS TERMINATED BY ',' ENCLOSED BY '"' LINES TERMINATED BY '\n';`
 }
 
 func TestLoadDataReplace(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+	require.NotNil(t, fix56408Store)
+	tk := testkit.NewTestKit(t, fix56408Store)
 	tk.MustExec("USE test; DROP TABLE IF EXISTS load_data_replace;")
 	tk.MustExec("CREATE TABLE load_data_replace (id INT NOT NULL PRIMARY KEY, value TEXT NOT NULL)")
 	tk.MustExec("INSERT INTO load_data_replace VALUES(1,'val 1'),(2,'val 2')")
