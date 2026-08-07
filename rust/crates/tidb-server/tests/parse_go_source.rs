@@ -139,6 +139,23 @@ fn header_and_body_mutation_order_matches_go_on_failure() {
 }
 
 #[test]
+fn header_boundary_reads_exactly_the_source_fields() {
+    let capability = 0x7856_3412;
+    let mut exact = header(capability);
+    exact[4..8].copy_from_slice(&[0xff; 4]);
+    exact[8] = 45;
+    exact[9] = 99;
+    let mut response = HandshakeResponse41::default();
+    assert!(parse_response_header_into(&mut response, &exact[..31]).is_err());
+    assert_eq!(
+        parse_response_header_into(&mut response, &exact).unwrap(),
+        32
+    );
+    assert_eq!(response.capability, capability);
+    assert_eq!(response.collation, 45);
+}
+
+#[test]
 fn null_auth_and_single_byte_no_auth_marker_preserve_go_semantics() {
     let state = ConnectionAttrsState::new(4096);
     let mut response = HandshakeResponse41 {
@@ -160,6 +177,16 @@ fn null_auth_and_single_byte_no_auth_marker_preserve_go_semantics() {
     parse_response_body_into_with_attrs_state(&mut response, &marker_only, 32, &state)
         .expect("Go advances two bytes without reading the absent filler");
     assert_eq!(response.auth, [7, 8]);
+
+    let capability = response.capability | CLIENT_PLUGIN_AUTH;
+    response.capability = capability;
+    let mut marker_with_filler = header(capability);
+    marker_with_filler.extend_from_slice(b"root\0");
+    marker_with_filler.extend_from_slice(&[1, 0xff]);
+    marker_with_filler.extend_from_slice(b"plugin\0");
+    parse_response_body_into_with_attrs_state(&mut response, &marker_with_filler, 32, &state)
+        .expect("the byte after marker 1 is skipped without inspection");
+    assert_eq!(response.auth_plugin.as_bytes(), b"plugin");
 }
 
 #[test]
@@ -187,6 +214,16 @@ fn attribute_policy_warnings_and_metrics_match_go_boundaries() {
     assert!(response.attrs.is_empty());
     assert_eq!(disabled.lost(), 0);
     assert_eq!(disabled.longest_seen(), 0);
+
+    let exact = ConnectionAttrsState::new(4);
+    let response = parse_response_with_attrs_state(
+        &response_with_attrs(&[2, b'a', b'b', 2, b'c', b'd']),
+        &exact,
+    )
+    .expect("aggregate exactly at the configured limit");
+    assert_eq!(response.attrs.get("ab").map(String::as_str), Some("cd"));
+    assert!(!response.attrs.contains_key("_truncated"));
+    assert_eq!(exact.lost(), 0);
 }
 
 #[test]
@@ -316,6 +353,13 @@ fn null_attribute_frame_preserves_existing_map_and_outer_errors_remain_errors() 
     over_hard_limit.extend_from_slice(b"root\0\0");
     over_hard_limit.extend_from_slice(&[0xfd, 1, 0, 16]);
     assert!(parse_response(&over_hard_limit).is_err());
+
+    let mut exact_hard_limit = vec![0];
+    exact_hard_limit.extend_from_slice(&lenenc((1 << 20) - 5));
+    exact_hard_limit.extend(std::iter::repeat_n(0, (1 << 20) - 5));
+    let state = ConnectionAttrsState::new(0);
+    parse_response_with_attrs_state(&response_with_attrs(&exact_hard_limit), &state)
+        .expect("the 1 MiB outer frame is admitted before policy decoding");
 }
 
 #[test]
