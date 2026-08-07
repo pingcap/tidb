@@ -1467,26 +1467,36 @@ func TestStaleTSO(t *testing.T) {
 	ts1, err := strconv.ParseUint(tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.commit_ts')").Rows()[0][0].(string), 10, 64)
 	require.NoError(t, err)
 
-	// Wait until the physical advances for 1s
+	const staleTSOOffset = 10 * time.Second
+	sameSessionDayAfterOffset := func(ts uint64) bool {
+		currentTime := oracle.GetTimeFromTS(ts).In(tk.Session().GetSessionVars().Location())
+		nextTime := currentTime.Add(staleTSOOffset)
+		return currentTime.Year() == nextTime.Year() && currentTime.YearDay() == nextTime.YearDay()
+	}
+
+	// Wait until the physical advances for 1s and the mocked TSO won't cross midnight.
+	// current_time()/curtime() carry only time-of-day, so crossing midnight would make
+	// the expression parse back with the statement date instead of the mocked TSO date.
 	var currentTS uint64
 	for {
 		tk.MustExec("begin")
 		currentTS, err = strconv.ParseUint(tk.MustQuery("select @@tidb_current_ts").Rows()[0][0].(string), 10, 64)
 		require.NoError(t, err)
 		tk.MustExec("rollback")
-		if oracle.GetTimeFromTS(currentTS).After(oracle.GetTimeFromTS(ts1).Add(time.Second)) {
+		if oracle.GetTimeFromTS(currentTS).After(oracle.GetTimeFromTS(ts1).Add(time.Second)) &&
+			sameSessionDayAfterOffset(currentTS) {
 			break
 		}
 		time.Sleep(time.Millisecond * 100)
 	}
 
 	asOfExprs := []string{
-		"now(3) - interval 10 second",
-		"current_time() - interval 10 second",
-		"curtime() - interval 10 second",
+		fmt.Sprintf("now(3) - interval %d second", staleTSOOffset/time.Second),
+		fmt.Sprintf("current_time() - interval %d second", staleTSOOffset/time.Second),
+		fmt.Sprintf("curtime() - interval %d second", staleTSOOffset/time.Second),
 	}
 
-	nextPhysical := oracle.GetPhysical(oracle.GetTimeFromTS(currentTS).Add(10 * time.Second))
+	nextPhysical := oracle.GetPhysical(oracle.GetTimeFromTS(currentTS).Add(staleTSOOffset))
 	nextTSO := oracle.ComposeTS(nextPhysical, oracle.ExtractLogical(currentTS))
 	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/pkg/sessiontxn/staleread/mockStaleReadTSO", fmt.Sprintf("return(%d)", nextTSO)))
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/sessiontxn/staleread/mockStaleReadTSO")
