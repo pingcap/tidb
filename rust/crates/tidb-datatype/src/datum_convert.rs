@@ -1539,7 +1539,7 @@ mod tests {
     #[test]
     fn test_to_uint32_source_rows() {
         let uint32 = FieldType::new(FieldTypeCode::Long).with_unsigned(true);
-        for (input, expected, overflow) in vec![
+        for (input, expected, overflow) in [
             (Datum::Int(5_000_000_000), u32::MAX as u64, true),
             (Datum::Int(-1), u32::MAX as u64, true),
             (Datum::new_string("5000000000"), u32::MAX as u64, true),
@@ -1580,7 +1580,7 @@ mod tests {
         .unwrap()
         .time;
 
-        for (input, expected) in vec![
+        for (input, expected) in [
             (
                 Datum::Int(1),
                 BinaryJSON::from_typed_value(&crate::BinaryJSONValue::Int64(1)).unwrap(),

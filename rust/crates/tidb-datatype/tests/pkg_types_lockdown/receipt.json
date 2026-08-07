@@ -37,7 +37,7 @@
     "rust/crates/tidb-datatype/tests/pkg_types_lockdown.rs": "4a8bb0b55adc9f5573871a6cdc6d25724e98989038cac62ef433ae4922055c8e",
     "rust/crates/tidb-datatype/tests/pkg_types_lockdown/artifacts.tsv": "03d59ec85c8f6ddfcc93feb5b2d05ce1aa902f58c03ed9c36ac71e9c560811fd",
     "rust/crates/tidb-datatype/tests/pkg_types_lockdown/mutation-probes.tsv": "c8657e9a2abba9a6f9b97907a27ea0cef4afbdd19aa05c70142a0756e447ba59",
-    "rust/crates/tidb-datatype/tests/pkg_types_lockdown/mutation-results.tsv": "8f2904e9a46c257dd183117eb50a16cc78cc017416cc51267f2fe4e084a6827c",
+    "rust/crates/tidb-datatype/tests/pkg_types_lockdown/mutation-results.tsv": "a277d83d68af40668b6c31f6303512a9a43fa1d2012e9d7432952b3500f66015",
     "rust/crates/tidb-datatype/tests/pkg_types_lockdown/obligations.tsv": "b41756ae5a8c626553b596f1f088cb9db441d8285b6b3299e90e8d983265dfba",
     "rust/difftests/tools/go_package_lockdown_inventory/BUILD.bazel": "716ba8c1469156696c239e9f244c0ed1a33b3abee104dbb7140740c84b293a27",
     "rust/difftests/tools/go_package_lockdown_inventory/main.go": "51d97e83fb3b2ebced8b088a2a9234e7dc46a5bcae6f54246f7402ba20493f65",
