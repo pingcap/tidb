@@ -49,6 +49,8 @@ func TestPlanStatsLoad(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		p := parser.New()
 		testKit.MustExec("use test")
+		clearAsyncLoadHistogramNeededItems()
+		t.Cleanup(clearAsyncLoadHistogramNeededItems)
 		ctx := testKit.Session().(sessionctx.Context)
 		testKit.MustExec("drop table if exists t")
 		testKit.MustExec("set @@session.tidb_analyze_version=2")
@@ -212,6 +214,7 @@ func TestPlanStatsLoad(t *testing.T) {
 		}
 
 		// issue:48257
+		clearAsyncLoadHistogramNeededItems()
 		checkTableFullScanPlan := func(rows [][]any, tableName string, expectPseudo bool) {
 			t.Helper()
 			require.Len(t, rows, 2)
@@ -258,6 +261,7 @@ func TestPlanStatsLoad(t *testing.T) {
 		testKit.MustExec("set tidb_opt_objective='moderate'")
 
 		// async load
+		clearAsyncLoadHistogramNeededItems()
 		testKit.MustExec("set tidb_stats_load_sync_wait = 0")
 		testKit.MustExec("create table t1_issue48257(a int)")
 		testutil.HandleNextDDLEventWithTxn(h)
@@ -726,4 +730,10 @@ func TestPartialStatsInExplain(t *testing.T) {
 			require.NoError(t, dom.StatsHandle().LoadNeededHistograms(dom.InfoSchema()))
 		}
 	})
+}
+
+func clearAsyncLoadHistogramNeededItems() {
+	for _, item := range asyncload.AsyncLoadHistogramNeededItems.AllItems() {
+		asyncload.AsyncLoadHistogramNeededItems.Delete(item.TableItemID)
+	}
 }
