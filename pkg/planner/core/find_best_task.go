@@ -508,7 +508,11 @@ func compareTaskCostWith(curTask, bestTask base.Task, getCost taskCostGetter) (c
 }
 
 // compareDataSourceTaskCost compares local DataSource candidates. Double-read
-// candidates are costed as the IndexLookUpReader they will become.
+// candidates are costed as the IndexLookUpReader they will become. A real
+// PhysicalIndexLookUpReader retains its plan cost, but do not materialize one
+// only to cache this speculative cost: the reader is not attached to the
+// candidate. Cache the resulting scalar locally for later comparisons against
+// the same incumbent instead.
 func compareDataSourceTaskCost(curTask, bestTask base.Task, costCache map[base.Task]taskCostResult) (curIsBetter bool, err error) {
 	return compareTaskCostWith(curTask, bestTask, func(t base.Task) (float64, bool, error) {
 		if result, ok := costCache[t]; ok {
