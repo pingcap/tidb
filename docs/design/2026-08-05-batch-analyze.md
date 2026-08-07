@@ -159,6 +159,12 @@ Both [TiUP](https://github.com/pingcap/tiup/blob/9f6ebb7edc26ca0ba53b9f4a70de223
 | Old | New | While TiKV is being upgraded, after TiKV finishes but before TiDB starts, or from an old TiDB instance while TiDB is rolling | `allow_batch_task_data_merge` is absent and defaults to `false`. New TiKV therefore returns every child result separately and does not set `data_merged_into_response`. | Old TiDB receives the response shape it already understands. |
 | New | Old | Not produced by the default TiUP or TiDB Operator upgrade order, but possible under the current TiDB Cloud release model, with pinned component versions, or during a manual upgrade | Old TiKV ignores the unknown `allow_batch_task_data_merge` field and returns every child result separately. `data_merged_into_response` is absent and reads as `false`. | New TiDB treats every child response as unmerged and processes it through the existing path. |
 
+#### Concurrency Control
+
+
+
+
+
 ## Test Design
 
 ### Functional Tests
