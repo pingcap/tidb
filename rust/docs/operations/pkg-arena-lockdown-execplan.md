@@ -20,7 +20,8 @@ The observable behavioral fix is that `alloc_with_len(length, capacity)` panics 
 - [x] (2026-08-08) Added the two invalid-length regressions, fixed both allocators while preserving SimpleAllocator's allocate-before-panic order, and kept the public Vec-returning API stable; the arena WIP set passes 7/7.
 - [x] (2026-08-08) Checked in the four-artifact manifest, exact 48-row inventory, compiled owner/evidence gate, six-suite mutation plan/results, content-addressed receipt, and compiled mutation receipt gate; the checker reports `4 artifacts, 48 AST obligations, 40 PORTED, 8 DECLINED`.
 - [x] (2026-08-08) Killed all 15 planned mutations from immutable baseline `4f47cc1b194b5438ae9f1d6950aa84a628b2ad3e` in disposable worktree `/tmp/tidb-arena-mutations.OSDAQY/worktree`; every source was restored byte-for-byte from `/tmp/tidb-arena-saved.EcnBkl` and the same named test passed after restoration.
-- [ ] Run WIP and Ready/full-workspace gates, publish by ordinary fast-forward, and verify every GitHub commit belongs to `dbsid` (WIP complete: exact Go tests, checker, 286/286 `tidb-util`, package Clippy with warnings denied, fmt, and diff check).
+- [x] (2026-08-08) Passed the code-bearing Ready gate at `4b84057276ba11a13420f13ad9b5eb10524c48dd`: exact Go tests, checker, 286/286 `tidb-util`, clean-detached 7129/7129 workspace tests with 41 skips, package/workspace Clippy with warnings denied, workspace fmt, direct ratchets, `git diff --check`, and `make -j12 lint`.
+- [ ] Publish by ordinary fast-forward and verify the official ref plus every GitHub commit's `dbsid` attribution.
 
 ## Surprises & Discoveries
 
@@ -36,6 +37,10 @@ The observable behavioral fix is that `alloc_with_len(length, capacity)` panics 
   Evidence: the probe printed distinct `makeslice`, negative full-slice, and `::-9223372036854775808` panic values; these are type-boundary evidence rather than synthetic Rust branches.
 - Observation: the initial Rust `std_allocator` evidence test never called `reset`, so a mutation that made the stateless reset panic would survive despite the inventory mapping `stdAllocator.Reset` to that test.
   Evidence: mutation design review found no `allocator.reset()` call; the existing test was extended before any mutation run to reset and allocate again.
+- Observation: the first clean workspace run failed only the two generated-source authority tests because the Ready command omitted the pinned Go toolchain from `PATH`.
+  Evidence: both failures printed Python `FileNotFoundError: [Errno 2] No such file or directory: 'go'`; both targeted tests and both generators passed with `/tmp/tidb-lockdown-341-go.8LuDjg/go/bin` prepended, and the corrected full run passed 7129/7129.
+- Observation: `make -j12 lint` exits zero on macOS while printing two pre-existing diagnostics.
+  Evidence: the command reports the `rust/difftests/gobinaryrow` internal-package import and BSD `find` rejecting `-n`, then runs every dashboard-linter target and returns zero. This package changes neither affected path.
 
 ## Decision Log
 
@@ -51,7 +56,7 @@ The observable behavioral fix is that `alloc_with_len(length, capacity)` panics 
 
 ## Outcomes & Retrospective
 
-No completion outcome is claimed yet. Baselines, direct Go measurements, the production fix, exact inventory, compiled gates, 15 killed mutation results, and the generated receipt are complete. The Ready/full-workspace gate and publication remain unfinished.
+No completion outcome is claimed yet. Baselines, direct Go measurements, the production fix, exact inventory, compiled gates, 15 killed mutation results, generated receipt, and clean Ready/full-workspace gate are complete. Only official publication and remote/GitHub attribution verification remain.
 
 ## Context and Orientation
 
@@ -112,6 +117,23 @@ Baseline source hashes at `fb8490526c` are:
 
 The AST census contains 48 obligations: seven functions, two branch outcomes, three declarations, five fields, two vars, two tests, 18 assertions, four test constants, one TestMain, and four TestMain rows. The planned status census is 40 PORTED and eight DECLINED: three shared-backing production obligations plus five Go-only TestMain/goleak obligations.
 
+The clean Ready receipt at code-bearing commit `4b84057276ba11a13420f13ad9b5eb10524c48dd` is:
+
+    go test -run '^(TestSimpleArenaAllocator|TestStdAllocator)$' -tags=intest,deadlock
+      PASS
+    python3 rust/scripts/pkg-arena-lockdown.py
+      pkg/util/arena lockdown: 4 artifacts, 48 AST obligations, 40 PORTED, 8 DECLINED
+    cargo nextest run --offline --locked -p tidb-util --no-fail-fast
+      286 passed
+    cargo nextest run --offline --locked --workspace -j12 --no-fail-fast
+      7129 passed, 41 skipped
+    cargo clippy --offline --locked -j12 --workspace --all-targets -- -D warnings -A clippy::assertions_on_constants -A clippy::needless_update -A clippy::type_complexity
+      passed
+    cargo fmt --all -- --check
+      passed
+    make -j12 lint
+      exit 0; all dashboard linters ran
+
 ## Interfaces and Dependencies
 
 The public Rust interfaces remain `Allocator`, `SimpleAllocator::new`, and the unit struct `StdAllocator`; `alloc` and `alloc_with_len` continue returning `Vec<u8>`. No dependency or Cargo manifest change is planned. The checker uses the existing generic Go AST tool, Python standard library, and `sha2` already present as a `tidb-util` dev dependency.
@@ -123,3 +145,5 @@ Revision note: created on 2026-08-08 after selecting the complete package, readi
 Revision note: updated on 2026-08-08 after the invalid-length fix, deterministic inventory generation, compiled owner/evidence gate, and WIP validation (`pkg/util/arena` Go tests, arena 7/7, package Clippy with warnings denied, and workspace fmt) all passed.
 
 Revision note: updated on 2026-08-08 after the stdAllocator reset coverage correction, 15/15 mutation kills with byte-for-byte restoration, the compiled mutation receipt gate, and all 286 `tidb-util` tests passed.
+
+Revision note: updated on 2026-08-08 after the clean Ready gate passed at `4b84057276`, including the corrected Go toolchain environment and 7129/7129 workspace result.
