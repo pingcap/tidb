@@ -100,6 +100,22 @@ struct OwnedRawKvIterator {
     fail_next_at: Option<(usize, String)>,
 }
 
+fn owned_reverse_iterator(
+    mut entries: Vec<(Vec<u8>, Vec<u8>)>,
+    upper_inclusive: Option<&[u8]>,
+    fail_next_at: Option<(usize, String)>,
+) -> Box<dyn RawKvIterator> {
+    if let Some(upper) = upper_inclusive {
+        entries.retain(|(key, _)| key.as_slice() <= upper);
+    }
+    entries.reverse();
+    Box::new(OwnedRawKvIterator {
+        entries,
+        position: 0,
+        fail_next_at,
+    })
+}
+
 impl RawKvIterator for OwnedRawKvIterator {
     fn valid(&self) -> bool {
         self.position < self.entries.len()
@@ -151,16 +167,11 @@ pub trait RawTransaction {
         prefix: &[u8],
         upper_inclusive: Option<&[u8]>,
     ) -> Result<Box<dyn RawKvIterator>> {
-        let mut entries = self.scan_prefix(prefix)?;
-        if let Some(upper) = upper_inclusive {
-            entries.retain(|(key, _)| key.as_slice() <= upper);
-        }
-        entries.reverse();
-        Ok(Box::new(OwnedRawKvIterator {
-            entries,
-            position: 0,
-            fail_next_at: None,
-        }))
+        Ok(owned_reverse_iterator(
+            self.scan_prefix(prefix)?,
+            upper_inclusive,
+            None,
+        ))
     }
 
     /// Iterates the half-open encoded key range `[start, end)` in byte order.
@@ -356,16 +367,11 @@ impl RawTransaction for MemoryTransaction {
         if let Some(message) = &self.iteration_error {
             return Err(MetaError::Storage(message.clone()));
         }
-        let mut entries = self.scan_prefix(prefix)?;
-        if let Some(upper) = upper_inclusive {
-            entries.retain(|(key, _)| key.as_slice() <= upper);
-        }
-        entries.reverse();
-        Ok(Box::new(OwnedRawKvIterator {
-            entries,
-            position: 0,
-            fail_next_at: self.reverse_next_error.clone(),
-        }))
+        Ok(owned_reverse_iterator(
+            self.scan_prefix(prefix)?,
+            upper_inclusive,
+            self.reverse_next_error.clone(),
+        ))
     }
 
     fn iterate_range(
