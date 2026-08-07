@@ -255,7 +255,15 @@ fn build_multi_node(
             alias,
             lateral,
             column_names,
-        } => scan_derived_table(subquery, alias.as_deref(), *lateral, column_names, catalog, current_db, ctx),
+        } => scan_derived_table(
+            subquery,
+            alias.as_deref(),
+            *lateral,
+            column_names,
+            catalog,
+            current_db,
+            ctx,
+        ),
     }
 }
 

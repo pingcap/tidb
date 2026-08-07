@@ -673,7 +673,9 @@ fn a_derived_table_source_neither_over_applies_nor_repeats() {
     session
         .run("CREATE TABLE u (a INT PRIMARY KEY, b INT)")
         .unwrap();
-    session.run("INSERT INTO u VALUES (1,1),(2,2),(3,3)").unwrap();
+    session
+        .run("INSERT INTO u VALUES (1,1),(2,2),(3,3)")
+        .unwrap();
     assert_eq!(
         affected(
             &mut session,
@@ -768,7 +770,9 @@ fn an_outer_join_against_a_derived_table_writes_only_the_rows_that_matched() {
     session
         .run("CREATE TABLE u (a INT PRIMARY KEY, b INT)")
         .unwrap();
-    session.run("INSERT INTO u VALUES (1,1),(2,2),(3,3)").unwrap();
+    session
+        .run("INSERT INTO u VALUES (1,1),(2,2),(3,3)")
+        .unwrap();
     assert_eq!(
         affected(
             &mut session,
@@ -785,7 +789,9 @@ fn an_outer_join_against_a_derived_table_writes_only_the_rows_that_matched() {
     session
         .run("CREATE TABLE v (a INT PRIMARY KEY, b INT)")
         .unwrap();
-    session.run("INSERT INTO v VALUES (1,1),(2,2),(3,3)").unwrap();
+    session
+        .run("INSERT INTO v VALUES (1,1),(2,2),(3,3)")
+        .unwrap();
     assert_eq!(
         affected(
             &mut session,
@@ -826,7 +832,9 @@ fn a_derived_table_is_not_a_write_target() {
     session
         .run("CREATE TABLE t (a INT PRIMARY KEY, b INT)")
         .unwrap();
-    session.run("INSERT INTO t VALUES (1,1),(2,2),(3,3)").unwrap();
+    session
+        .run("INSERT INTO t VALUES (1,1),(2,2),(3,3)")
+        .unwrap();
 
     for (sql, code, message) in [
         (
@@ -861,7 +869,11 @@ fn a_derived_table_is_not_a_write_target() {
         ),
     ] {
         let error = session.run(sql).unwrap_err().to_mysql_error();
-        assert_eq!((error.code, error.message.as_str()), (code, message), "{sql}");
+        assert_eq!(
+            (error.code, error.message.as_str()),
+            (code, message),
+            "{sql}"
+        );
     }
     // Not one of the six refusals wrote anything.
     assert_eq!(
@@ -899,7 +911,9 @@ fn an_aggregate_derived_table_joins_as_one_row_and_counts_only_changes() {
     session
         .run("CREATE TABLE x (a INT PRIMARY KEY, b INT)")
         .unwrap();
-    session.run("INSERT INTO x VALUES (1,1),(2,2),(3,3)").unwrap();
+    session
+        .run("INSERT INTO x VALUES (1,1),(2,2),(3,3)")
+        .unwrap();
 
     assert_eq!(
         affected(

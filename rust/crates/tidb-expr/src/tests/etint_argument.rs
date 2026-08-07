@@ -50,10 +50,7 @@ fn a_non_integer_etint_argument_is_cast_before_the_signature_runs() {
         ("truncate(1.2345,'2')", "DEC:1.23"),
         // Before this rung the whole call was NULL: `str_insert` matched
         // `Datum::Int` only, so an UNSIGNED position fell off the pattern.
-        (
-            "insert('abcdef', cast(2 as unsigned), 2, 'X')",
-            "STR:aXdef",
-        ),
+        ("insert('abcdef', cast(2 as unsigned), 2, 'X')", "STR:aXdef"),
         ("locate('b','abcdef','2')", "INT:2"),
         ("make_set('3','a','b','c')", "STR:a,b"),
     ] {
@@ -129,8 +126,14 @@ fn a_negative_string_scale_still_shifts_left() {
 #[test]
 fn every_hybrid_etint_argument_reads_as_its_ordinal() {
     let cases = [
-        (Datum::Enum(MysqlEnum::new("y", 2), Collation::Utf8Mb4Bin), 2),
-        (Datum::Set(MysqlSet::new("a,c", 5), Collation::Utf8Mb4Bin), 5),
+        (
+            Datum::Enum(MysqlEnum::new("y", 2), Collation::Utf8Mb4Bin),
+            2,
+        ),
+        (
+            Datum::Set(MysqlSet::new("a,c", 5), Collation::Utf8Mb4Bin),
+            5,
+        ),
         (Datum::Bit(BinaryLiteral::from_uint(3, None)), 3),
         (Datum::BinaryLiteral(BinaryLiteral::from_uint(3, None)), 3),
     ];
@@ -253,4 +256,3 @@ fn oct_is_signature_selected_and_not_a_member_of_the_layer() {
         "STR:1777777777777777777777"
     );
 }
-

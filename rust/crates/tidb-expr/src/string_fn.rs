@@ -549,10 +549,9 @@ pub(crate) fn oct(vals: &[Datum]) -> Result<Datum, EvalError> {
         Datum::Null => Ok(Datum::Null),
         Datum::Int(value) => Ok(Datum::new_string(format!("{:o}", *value as u64))),
         Datum::UInt(value) => Ok(Datum::new_string(format!("{value:o}"))),
-        Datum::Bit(bits) | Datum::BinaryLiteral(bits) => Ok(Datum::new_string(format!(
-            "{:o}",
-            bits.to_int().value()
-        ))),
+        Datum::Bit(bits) | Datum::BinaryLiteral(bits) => {
+            Ok(Datum::new_string(format!("{:o}", bits.to_int().value())))
+        }
         value => Ok(oct_string_bits(value)?
             .map_or(Datum::Null, |bits| Datum::new_string(format!("{bits:o}")))),
     }

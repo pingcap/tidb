@@ -197,10 +197,7 @@ pub(super) fn wrap_cast_rewrites_a_temporal_result(
     result: &mut FieldType,
     arg_types: &[Option<FieldType>],
 ) {
-    if !matches!(
-        result.eval_type(),
-        EvalType::Datetime | EvalType::Timestamp
-    ) {
+    if !matches!(result.eval_type(), EvalType::Datetime | EvalType::Timestamp) {
         return;
     }
     for arg in arg_types.iter().flatten() {

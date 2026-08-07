@@ -1497,8 +1497,8 @@ fn a_readers_lock_sets_accumulate_across_resolves_and_reach_every_request() {
 /// added later would reintroduce Go's hazard without reintroducing Go's reset.
 #[test]
 fn a_readers_lock_sets_cannot_outlive_the_timestamp_they_were_classified_against() {
-    let coordinator_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("src/transaction/coordinator");
+    let coordinator_dir =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/transaction/coordinator");
     let mut sources = Vec::new();
     for entry in std::fs::read_dir(&coordinator_dir).unwrap() {
         let path = entry.unwrap().path();

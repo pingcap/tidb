@@ -533,12 +533,22 @@ mod tests {
                 .with_unsigned(true),
         );
         let value = Datum::Decimal(tidb_datatype::Decimal::from_literal("2"));
-        let out = wrap_int_args("ROUND", vec![Datum::Int(1), value.clone()], &[None, unsigned], &NoColumns)
-            .unwrap();
+        let out = wrap_int_args(
+            "ROUND",
+            vec![Datum::Int(1), value.clone()],
+            &[None, unsigned],
+            &NoColumns,
+        )
+        .unwrap();
         assert_eq!(out[1], Datum::UInt(2));
 
-        let out =
-            wrap_int_args("ROUND", vec![Datum::Int(1), value], &[None, None], &NoColumns).unwrap();
+        let out = wrap_int_args(
+            "ROUND",
+            vec![Datum::Int(1), value],
+            &[None, None],
+            &NoColumns,
+        )
+        .unwrap();
         assert_eq!(out[1], Datum::Int(2));
     }
 
