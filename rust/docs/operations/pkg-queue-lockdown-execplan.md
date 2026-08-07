@@ -19,8 +19,9 @@ The observable result is a queue whose representable Rust inputs follow the Go s
 - [x] (2026-08-08) Added `source_default_and_zero_capacity_constructor_are_distinct`; it failed before the fix because `Queue::new(0).push(7)` returned, then passed after the production change.
 - [x] (2026-08-08) Preserved nil-versus-empty construction state in Rust and added independent wrap-growth, clear/expand, and retained-slot tests; all eight queue tests pass.
 - [x] (2026-08-08) Prepared the three-artifact manifest, exact 50-row inventory, compiled owner/evidence gate, deterministic checker, and six-suite/21-mutation plan.
-- [ ] Check in mutation results and the receipt gate after replay from an immutable provisional commit.
-- [ ] Kill every planned mutation from an immutable provisional commit and restore each source byte-for-byte.
+- [x] (2026-08-08) Checked in 21 killed mutation results, the content-addressed receipt, and its compiled Rust gate after replay from immutable provisional commit `834e7966fec7446cbc75486367988c4d8b04669b`.
+- [x] (2026-08-08) Killed all 21 planned mutations in disposable worktree `/tmp/tidb-queue-mutations.ZVIOOH`; every source was restored byte-for-byte from `/tmp/tidb-queue-saved.zFjb3v` and the same named test passed after restoration.
+- [x] (2026-08-08) Passed the complete package checker and all 280 `tidb-util` tests with the mutation receipt enabled.
 - [ ] Run WIP and Ready/full-workspace gates, publish by non-force fast-forward, and verify GitHub attributes every commit to `dbsid`.
 
 ## Surprises & Discoveries
@@ -48,7 +49,7 @@ The observable result is a queue whose representable Rust inputs follow the Go s
 
 ## Outcomes & Retrospective
 
-No completion outcome is claimed yet. The measured zero-capacity divergence is fixed and the complete inventory gate passes, but mutation replay, its checked receipt, the independent clean-worktree gate, and publication remain unfinished.
+No completion outcome is claimed yet. The measured zero-capacity divergence is fixed, the complete inventory gate passes, and all 21 mutations are killed and receipt-gated. The independent clean-worktree Ready gate and publication remain unfinished.
 
 ## Context and Orientation
 

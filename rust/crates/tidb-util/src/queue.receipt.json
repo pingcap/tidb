@@ -1,0 +1,38 @@
+{
+  "artifact_count": 3,
+  "category_counts": {
+    "branch": 8,
+    "declaration": 1,
+    "field": 4,
+    "function": 8,
+    "loop": 2,
+    "test": 1,
+    "test_assertion": 21,
+    "test_helper_closure": 5
+  },
+  "go_package": "pkg/util/queue",
+  "mutation_suites": 6,
+  "obligation_count": 50,
+  "owned_file_sha256": {
+    "rust/crates/tidb-util/src/queue.artifacts.tsv": "ae931283790a98ca4367abfa22a8f4dcc2b04fc4f137ba0a99bc72e3e7d2d5e4",
+    "rust/crates/tidb-util/src/queue.inventory.tsv": "d981cf315699b0e47e81e0c99bad1a066b67d877ad5972a23b3dfed557973f72",
+    "rust/crates/tidb-util/src/queue.mutation-plan.tsv": "8ebf2859f7aaa83ed6994e99996ff596c483176574039ab69fcec42d03dbab92",
+    "rust/crates/tidb-util/src/queue.mutation-results.tsv": "454176080b50e8e5eb9d93da03077aa5445056ff3d6a0102f3a72fdfd1fa3901",
+    "rust/crates/tidb-util/src/queue.rs": "c3653c9a5a51354e3234dd88deb87ee44e4286ff1c647e34a5eab30d8fa76ca7",
+    "rust/crates/tidb-util/tests/queue_lockdown.rs": "108cdfdd9c81bdbe08c2ac6c2429758ea3b57ddafb60b52b6a2981a51c3005c4",
+    "rust/scripts/pkg-queue-lockdown.py": "a280b23497783dba85df32ec92aca7d420b7ea1101ca0d669e875c95ad951997"
+  },
+  "schema": "pkg-queue-lockdown-v1",
+  "source_seed_commit": "b931f16351cbd7b76bceff8477b7afc7e1ba6632",
+  "status_counts": {
+    "PORTED": 50
+  },
+  "zero_artifact_classes": {
+    "build_tags": 0,
+    "code_generated": 0,
+    "go_embed": 0,
+    "go_generate": 0,
+    "platform_variants": 0,
+    "tracked_testdata": 0
+  }
+}
