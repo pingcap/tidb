@@ -40,6 +40,8 @@ After this package unit is complete, reviewers can verify that the Rust datatype
   Evidence: the first WIP run failed with Rust `Real(1e24)` versus the mistaken `Real(1.7976931348623157e308)` expectation; changing only the expected value to the Rust mapping of `GetMaxValue` made all 12 tests pass.
 - Observation: the eleven JSON gaps were traceability gaps in already ported behavior, plus four missing `GetKeys` assertions and one missing typed BinaryJSON-copy assertion; no production behavior change was required.
   Evidence: exact tests for unquote, remove, contains, copy, keys, depth, parse errors, typed creation, callback extraction, opaque values, and hashes pass 11/11. `TestCreateBinary`'s Go-only `int8` panic is unreachable because Rust accepts the closed `BinaryJSONValue` enum instead of `any`.
+- Observation: the JSON key-length rejection exists in both the small-object encoder and its large-object fallback; mutating only the first guard does not remove the behavior.
+  Evidence: `test_get_keys` survived the first-guard mutation, then failed when both guards were disabled because parsing the 65,536-byte key unexpectedly succeeded.
 
 ## Decision Log
 
@@ -134,6 +136,8 @@ The first datum batch was saved under `/tmp/tidb-types-datum-probes.P0fYAW`. Its
 After restoring all saved copies, `git status --short` showed only `?? tgt/` and the same 12-test filter reported `12 passed, 299 skipped`.
 
 The JSON source-row batch split previously combined tests into exact Go-name evidence. Its WIP filter reported `11 passed, 317 skipped`, and the post-batch census reported `46 NAME-EXACT`, `95 NAME-FUZZY`, `19 NAME-TOKENS`, `27 REFERENCED`, and `15 NONE`. `GetKeys` now includes non-object empty results, one and two sorted keys, element count, and the 65,536-byte key error; the parse test pins both Go error texts; and the typed creation test copies an existing BinaryJSON value while recording the dynamic `int8` input as unreachable in Rust.
+
+The JSON batch was saved under `/tmp/tidb-types-json-probes.eqw1rx`. Reversing key sort order, changing array containment from `all` to `any`, deleting array index zero instead of the selected index, adding callback scalar autowrap, removing array hash structure bytes, collapsing the trailing-value error, changing the opaque type-code rendering, replacing typed BinaryJSON copies with JSON null, emptying non-string unquote results, and incrementing array depth each failed its intended exact test. Disabling both object key-length guards also failed `test_get_keys`; disabling only the small-object guard survived because the large-object fallback retained the contract. After restoring both saved files byte-for-byte, the exact eleven-test filter again reported `11 passed, 317 skipped` and `git status --short` showed only `?? tgt/`.
 
 The `etc_test.go` predicate batch reused the same save directory for `field_type_mod.rs`. Removing `NewDate` from `is_type_temporal` failed `test_is_type_temporal_source_rows` on the `NewDate` row. Adding `Unspecified` to `is_type_numeric` failed `test_is_type_numeric_source_rows` on the explicit false row. The first restore attempt was issued from `rust/` with an erroneous extra `rust/` path prefix and therefore changed nothing; rerunning the copy from repository root restored the saved bytes, after which the six-test filter reported `6 passed, 311 skipped`.
 
