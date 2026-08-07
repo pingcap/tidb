@@ -443,7 +443,7 @@ impl Datum {
                 .and_then(|time| time.round_frac(fsp, zone))
                 .map_err(wrong_value)?,
             Self::String(value) => {
-                parse_time(
+                let parsed = parse_time(
                     value.as_utf8()?,
                     kind,
                     fsp,
@@ -452,11 +452,13 @@ impl Datum {
                     invalid_date,
                     zone,
                 )
-                .map_err(wrong_value)?
-                .time
+                .map_err(wrong_value)?;
+                event = (parsed.truncated || parsed.dst_adjusted)
+                    .then_some(ScalarConversionEvent::Truncated);
+                parsed.time
             }
             Self::Bytes(value) => {
-                parse_time(
+                let parsed = parse_time(
                     std::str::from_utf8(value)?,
                     kind,
                     fsp,
@@ -465,8 +467,10 @@ impl Datum {
                     invalid_date,
                     zone,
                 )
-                .map_err(wrong_value)?
-                .time
+                .map_err(wrong_value)?;
+                event = (parsed.truncated || parsed.dst_adjusted)
+                    .then_some(ScalarConversionEvent::Truncated);
+                parsed.time
             }
             Self::Int(value) => {
                 let parsed = parse_time_from_num_with_zero_date_error(
@@ -503,7 +507,7 @@ impl Datum {
                 time.round_frac(fsp, zone).map_err(wrong_value)?
             }
             Self::Json(value) => {
-                parse_time(
+                let parsed = parse_time(
                     &value.unquote()?,
                     kind,
                     fsp,
@@ -512,8 +516,10 @@ impl Datum {
                     invalid_date,
                     zone,
                 )
-                .map_err(wrong_value)?
-                .time
+                .map_err(wrong_value)?;
+                event = (parsed.truncated || parsed.dst_adjusted)
+                    .then_some(ScalarConversionEvent::Truncated);
+                parsed.time
             }
             _ => return Err(DatumValueError::Unsupported(self.kind(), "time")),
         };
@@ -1267,6 +1273,18 @@ mod tests {
             .unwrap();
         assert_eq!(ignored.value, strict.value);
         assert_eq!(ignored.event, None);
+    }
+
+    #[test]
+    fn timestamp_dst_gap_conversion_keeps_go_adjusted_value_and_diagnostic() {
+        let target = FieldType::new(FieldTypeCode::Timestamp);
+        let zone = SessionTimeZone::Named(chrono_tz::America::Los_Angeles);
+        let converted = Datum::new_string("2024-03-10 02:30:00")
+            .convert_to_in(&target, crate::STRICT_FLAGS, &zone)
+            .expect("Go returns the adjusted timestamp beside its DST diagnostic");
+
+        assert_eq!(converted.value.sql_string().unwrap(), "2024-03-10 03:00:00");
+        assert_eq!(converted.event, Some(ScalarConversionEvent::Truncated));
     }
 
     /// Casting a `TIME` to `YEAR` reads BOTH statement inputs Go reads:

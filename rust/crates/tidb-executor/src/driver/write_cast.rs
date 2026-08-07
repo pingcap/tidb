@@ -138,11 +138,16 @@ fn cast_value_shaped(
             return Err(shape.name(named, &value, field_type));
         }
     };
-    if let tidb_datatype::Datum::Time(time) = converted.value {
-        return apply_zero_date(
-            time, false, field_type, &value, column, row_index, ctx, shape,
-        );
-    }
+    let converted = if let tidb_datatype::Datum::Time(time) = converted.value {
+        tidb_datatype::Converted {
+            value: apply_zero_date(
+                time, false, field_type, &value, column, row_index, ctx, shape,
+            )?,
+            event: converted.event,
+        }
+    } else {
+        converted
+    };
     let Some(event) = converted.event else {
         return Ok(converted.value);
     };
@@ -158,6 +163,21 @@ fn cast_value_shaped(
             column: column.to_owned(),
             row: row_index + 1,
         },
+        tidb_datatype::ScalarConversionEvent::Truncated
+            if matches!(
+                field_type.code(),
+                tidb_datatype::FieldTypeCode::Date
+                    | tidb_datatype::FieldTypeCode::Datetime
+                    | tidb_datatype::FieldTypeCode::Timestamp
+            ) =>
+        {
+            DriverError::IncorrectTemporalValue {
+                type_name: tidb_datatype::type_str(field_type.code()).to_owned(),
+                value: datum_error_text(&value),
+                column: column.to_owned(),
+                row: row_index + 1,
+            }
+        }
         // Go `castColumnValue` (`pkg/table/column.go:356`) re-titles a bare
         // `ErrTruncated` as `ErrTruncatedWrongVal` for EVERY column type
         // EXCEPT SET and ENUM, whose conversion is the one that stores the
