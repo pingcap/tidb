@@ -59,10 +59,10 @@ count(*)	max(id)	min(id)
 7	8	1
 explain format='plan_tree' select avg(id), max(id), min(id) from p use index(idx1) group by c;
 id	task	access object	operator info
-HashAgg	root		group by:Column, funcs:avg(Column)->Column, funcs:max(Column)->Column, funcs:min(Column)->Column
-└─Projection	root		cast(globalindex__aggregate.p.id, decimal(10,0) BINARY)->Column, globalindex__aggregate.p.id->Column, globalindex__aggregate.p.id->Column, globalindex__aggregate.p.c->Column
-  └─IndexReader	root	partition:all	index:IndexFullScan
-    └─IndexFullScan	cop[tikv]	table:p, index:idx1(c, id)	keep order:false, stats:pseudo
+StreamAgg	root		group by:globalindex__aggregate.p.c, funcs:avg(Column, Column)->Column, funcs:max(Column)->Column, funcs:min(Column)->Column
+└─IndexReader	root	partition:all	index:StreamAgg
+  └─StreamAgg	cop[tikv]		group by:globalindex__aggregate.p.c, funcs:count(globalindex__aggregate.p.id)->Column, funcs:sum(globalindex__aggregate.p.id)->Column, funcs:max(globalindex__aggregate.p.id)->Column, funcs:min(globalindex__aggregate.p.id)->Column
+    └─IndexFullScan	cop[tikv]	table:p, index:idx1(c, id)	keep order:true, stats:pseudo
 select avg(id), max(id), min(id) from p use index(idx1) group by c;
 avg(id)	max(id)	min(id)
 1.5000	2	1

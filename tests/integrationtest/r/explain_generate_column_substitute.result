@@ -433,14 +433,14 @@ StreamAgg	root		group by:upper(explain_generate_column_substitute.t.b), funcs:ma
 explain format = 'plan_tree' select count(upper(b)) from t use index() group by upper(b);
 id	task	access object	operator info
 HashAgg	root		group by:Column, funcs:count(Column)->Column
-└─Projection	root		upper(explain_generate_column_substitute.t.b)->Column
-  └─TableReader	root		data:TableFullScan
+└─TableReader	root		data:HashAgg
+  └─HashAgg	cop[tikv]		group by:upper(explain_generate_column_substitute.t.b), funcs:count(upper(explain_generate_column_substitute.t.b))->Column
     └─TableFullScan	cop[tikv]	table:t	keep order:false
 explain format = 'plan_tree' select max(upper(b)) from t use index() group by upper(b);
 id	task	access object	operator info
 HashAgg	root		group by:Column, funcs:max(Column)->Column
-└─Projection	root		upper(explain_generate_column_substitute.t.b)->Column
-  └─TableReader	root		data:TableFullScan
+└─TableReader	root		data:HashAgg
+  └─HashAgg	cop[tikv]		group by:upper(explain_generate_column_substitute.t.b), funcs:max(upper(explain_generate_column_substitute.t.b))->Column
     └─TableFullScan	cop[tikv]	table:t	keep order:false
 drop table if exists t;
 CREATE TABLE t (
