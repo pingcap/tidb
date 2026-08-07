@@ -27,7 +27,7 @@ After this package unit is complete, reviewers can verify that the Rust datatype
 - [x] (2026-08-07) Ran the final package WIP gates from `07b86c268`: all 348 `tidb-datatype` tests and all 99 `difftest-result-tests` tests passed (five configured skips); package fmt, package clippy, Bazel build, Go/Python inventory checks, and deliberate drift probes passed.
 - [x] (2026-08-07) Cherry-picked the complete 12-commit package chain into the coordinator and committed the pre-existing stable-Rustfmt workspace drift as `0be631adf`.
 - [x] (2026-08-07) Ran the coordinator Ready/full-workspace gate from code tip `0be631adf`: all 7,099 workspace tests passed with 41 configured skips; direct inventory ratchets, Bazel preparation/build, workspace fmt/clippy, `git diff --check`, and repository `make lint` completed successfully.
-- [ ] Non-force push the final coordinator commit to `origin:hparser-integration` and verify the exact remote SHA.
+- [x] (2026-08-07) Non-force pushed the integrated code and Ready receipt to `origin:hparser-integration`; `git ls-remote` verified exact remote commit `713ae6f9f0dd0b8980c33034622c2f27bf002edc` before this final documentation-only completion record.
 
 ## Surprises & Discoveries
 
@@ -81,7 +81,7 @@ After this package unit is complete, reviewers can verify that the Rust datatype
 
 ## Outcomes & Retrospective
 
-The package implementation, receipt, deliberate drift probes, package WIP gates, coordinator integration, and Ready/full-workspace gates are complete. The coordinator contains the atomic package chain plus one separately identified workspace-formatting commit; the only remaining delivery action is a non-force push to the official integration branch followed by exact SHA verification.
+The package implementation, receipt, deliberate drift probes, package WIP gates, coordinator integration, Ready/full-workspace gates, and official delivery are complete. The coordinator contains the atomic package chain plus one separately identified workspace-formatting commit, and the official integration branch was verified at the delivered Ready receipt before this final documentation-only update. No implementation or validation gap remains for this package unit.
 
 ## Context and Orientation
 
@@ -205,8 +205,10 @@ From `rust/`, the workspace Ready commands passed with:
 
 The workspace test summary was `7099 tests run: 7099 passed (2 slow), 41 skipped`. Workspace clippy exited zero with the three baseline warnings recorded under `Surprises & Discoveries`.
 
+The first non-force delivery advanced official `origin:hparser-integration` from `5dae9fdc30c031e9d86568c053223a144a847cfa` to Ready receipt commit `713ae6f9f0dd0b8980c33034622c2f27bf002edc`. An immediate `git ls-remote origin refs/heads/hparser-integration` returned that exact SHA. This final documentation-only update records that completed delivery and is itself safe to fast-forward after the same lightweight fmt/inventory checks.
+
 ## Interfaces and Dependencies
 
 No new third-party dependency is expected. Inventory tooling should use repository Python or Rust standard-library facilities and stable source identifiers. Runtime ports should continue using existing `tidb-datatype` public types such as `Datum`, `Decimal`, `BinaryJSON`, `Time`, `Duration`, `FieldType`, `Enum`, `Set`, and `ConversionContext`; introducing a parallel datatype layer would increase semantic risk and violate the minimal-diff requirement.
 
-Revision note: created on 2026-08-07 to preserve the complete-package LOCKDOWN contract and the post-seed census before continuing `datum_test.go` coverage; updated the same day with the corrected 205-test census, temporal outcomes, complete AST receipt, mutation evidence, coordinator integration, and Ready/full-workspace results.
+Revision note: created on 2026-08-07 to preserve the complete-package LOCKDOWN contract and the post-seed census before continuing `datum_test.go` coverage; updated the same day with the corrected 205-test census, temporal outcomes, complete AST receipt, mutation evidence, coordinator integration, Ready/full-workspace results, and verified official delivery.
