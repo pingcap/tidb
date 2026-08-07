@@ -100,6 +100,22 @@ Rust symbol. This is a source-file lockdown only; it does not claim the whole
   and the same mutation fails because Go requires the server's value `18` to
   overwrite `client-value`.
 
+- Observation: Ready clippy exposed a layout regression from the complete
+  byte-authoritative response: `AuthHandshakePacket` grew to 288 bytes.
+  Evidence: `clippy::large-enum-variant` failed on the inline authentication
+  arm. The handshake phase already boxed the identical request, so boxing the
+  packet arm removed the duplicate large shape; 350 server tests and scoped
+  warnings-denied clippy then passed.
+
+- Observation: two repository-wide Rust hygiene checks are currently blocked
+  outside this unit's crate ownership.
+  Evidence: dependency-inclusive clippy fails in
+  `tidb-executor/src/driver/from.rs:800` on `type_complexity`; `cargo fmt --all
+  -- --check` reports only committed files in `tidb-executor`, `tidb-expr`, and
+  `tidb-session`. Scoped rustfmt for every file owned here and `clippy
+  --no-deps` for `tidb-protocol`/`tidb-server` pass. Those external files were
+  not changed because the collaboration contract reserves their crates.
+
 ## Decision Log
 
 - Decision: use one atomic source-file lockdown even though the Go file lands
