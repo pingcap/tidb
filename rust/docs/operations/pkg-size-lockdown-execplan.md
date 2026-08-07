@@ -20,6 +20,7 @@ The package has no Go tests. Its observable contract is the five binary unit con
 - [x] (2026-08-08) Added the compiled mutation receipt gate and content-addressed JSON receipt; the complete checker, no-failpoint Go oracle, 288/288 `tidb-util`, package Clippy, workspace fmt, direct ratchets, and `git diff --check` pass.
 - [x] (2026-08-08) Passed the clean code-bearing Ready gate at `5ad9031947e618a270bd616b3f31a8e1448af7f4`: exact Go oracle, checker, 288/288 `tidb-util`, 7131/7131 workspace tests with 41 skips, workspace Clippy with warnings denied, fmt, direct ratchets, `git diff --check`, and `make -j12 lint`.
 - [x] (2026-08-08) Published the code-bearing size chain by ordinary fast-forward to official `pingcap/tidb:hparser-integration`; `git ls-remote` returned `5ad9031947e618a270bd616b3f31a8e1448af7f4`, and GitHub API mapped author and committer to `dbsid <huanshengchen@gmail.com>` for both size commits.
+- [x] (2026-08-08) Published the Ready validation receipt at official SHA `d105ea466cc55b4f3112095b92d79ec497bb93aa`; immediate remote-ref and GitHub attribution checks returned that SHA and `dbsid` for both author and committer.
 
 ## Surprises & Discoveries
 
@@ -120,3 +121,5 @@ Security extension review: this compile-time constant package adds no network, a
 Revision note: created on 2026-08-08 after selecting the complete package, reading both direct artifacts and Rust landing, generating the 20-obligation census, and measuring every Go constant on the current target.
 
 Revision note: updated on 2026-08-08 after the 24 mutation kills, compiled receipt gate, clean Ready replay, ordinary official fast-forward, and GitHub `dbsid` attribution checks all passed.
+
+Revision note: closed on 2026-08-08 after the validation receipt reached official `hparser-integration` at `d105ea466cc55b4f3112095b92d79ec497bb93aa` and the remote/API checks matched.
