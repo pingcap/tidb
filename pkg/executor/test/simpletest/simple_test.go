@@ -886,9 +886,10 @@ func TestSelectWhereInvalidDSTTime(t *testing.T) {
 
 	// Compares as TIMESTAMP; the range is converted to TIMESTAMP by current TIME_ZONE,
 	// and then compared with the row which is TIMESTAMP.
-	tk.MustExec("alter table t add index idx_ts(ts)")
-	tk.MustQuery(`select *, unix_timestamp(ts) from t where ts between '2025-03-30 02:30:00' AND '2025-03-30 03:00:00'`).Check(testkit.Rows("3 2025-03-30 03:00:00 1743296400", "4 2025-03-30 03:00:00 1743296400"))
-	explain = tk.MustQuery(`explain select *, unix_timestamp(ts) from t where ts between '2025-03-30 02:30:00' AND '2025-03-30 03:00:00'`)
+	tk.MustExec("create table t_idx (id int, ts timestamp, index idx_ts(ts))")
+	tk.MustExec("insert into t_idx select * from t")
+	tk.MustQuery(`select *, unix_timestamp(ts) from t_idx where ts between '2025-03-30 02:30:00' AND '2025-03-30 03:00:00'`).Check(testkit.Rows("3 2025-03-30 03:00:00 1743296400", "4 2025-03-30 03:00:00 1743296400"))
+	explain = tk.MustQuery(`explain select *, unix_timestamp(ts) from t_idx where ts between '2025-03-30 02:30:00' AND '2025-03-30 03:00:00'`)
 	explain.MultiCheckContain([]string{"IndexLookUp", "range:[2025-03-30 03:00:00,2025-03-30 03:00:00]"})
 	explain.CheckNotContain("02:30:00")
 	// Why 3 warnings?!?
