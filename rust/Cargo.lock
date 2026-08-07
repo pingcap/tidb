@@ -1819,6 +1819,7 @@ dependencies = [
  "rustls-pemfile",
  "serde_json",
  "sha1",
+ "sha2",
  "subtle",
  "tidb-ast",
  "tidb-datatype",

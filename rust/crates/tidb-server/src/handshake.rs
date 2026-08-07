@@ -19,11 +19,15 @@
 //! connection state machine.  Keeping those boundaries explicit is important:
 //! a parsed auth response is not an authenticated session.
 
-use std::{collections::HashMap, fmt};
+use std::{
+    collections::HashMap,
+    fmt,
+    sync::atomic::{AtomicI64, Ordering},
+};
 
 use tidb_protocol::{PacketError, PacketWriter};
 
-use crate::handshake_response::HandshakeResponse41;
+use crate::handshake_response::{HandshakeResponse41, WireString};
 
 /// MySQL `CLIENT_CONNECT_WITH_DB`.
 pub const CLIENT_CONNECT_WITH_DB: u32 = 1 << 3;
@@ -57,6 +61,60 @@ pub const SERVER_STATUS_AUTOCOMMIT: u16 = 0x0002;
 pub const PROTOCOL_VERSION_10: u8 = 10;
 /// The maximum connection-attribute payload accepted by TiDB's parser.
 pub const MAX_CONNECT_ATTRS_SIZE: usize = 1 << 20;
+/// Go's default aggregate connection-attribute byte limit.
+pub const DEFAULT_CONNECT_ATTRS_SIZE: i64 = 4096;
+const AUTO_CONNECT_ATTRS_SIZE: i64 = 65_536;
+
+/// Process-wide connection-attribute policy and status counters.
+///
+/// Go stores these values in `vardef.ConnectAttrsSize`,
+/// `ConnectAttrsLongestSeen`, and `ConnectAttrsLost`. Keeping the three
+/// atomics together also permits isolated state in boundary tests without
+/// mutating process-global values.
+#[derive(Debug)]
+pub struct ConnectionAttrsState {
+    limit: AtomicI64,
+    longest_seen: AtomicI64,
+    lost: AtomicI64,
+}
+
+impl ConnectionAttrsState {
+    /// Creates an isolated state with the supplied Go policy value.
+    #[must_use]
+    pub const fn new(limit: i64) -> Self {
+        Self {
+            limit: AtomicI64::new(limit),
+            longest_seen: AtomicI64::new(0),
+            lost: AtomicI64::new(0),
+        }
+    }
+
+    /// Changes the aggregate-byte limit for subsequent responses.
+    pub fn set_limit(&self, limit: i64) {
+        self.limit.store(limit, Ordering::Relaxed);
+    }
+
+    /// Returns the configured policy value before `-1` normalization.
+    #[must_use]
+    pub fn limit(&self) -> i64 {
+        self.limit.load(Ordering::Relaxed)
+    }
+
+    /// Returns the largest aggregate below 64 KiB observed so far.
+    #[must_use]
+    pub fn longest_seen(&self) -> i64 {
+        self.longest_seen.load(Ordering::Relaxed)
+    }
+
+    /// Returns the number of responses whose attributes were truncated.
+    #[must_use]
+    pub fn lost(&self) -> i64 {
+        self.lost.load(Ordering::Relaxed)
+    }
+}
+
+static CONNECTION_ATTRS_STATE: ConnectionAttrsState =
+    ConnectionAttrsState::new(DEFAULT_CONNECT_ATTRS_SIZE);
 
 /// The fields written by Go's `clientConn.writeInitialHandshake`.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -320,7 +378,7 @@ impl AuthHandshake {
             });
         }
 
-        let client_plugin = request.response.auth_plugin.as_str();
+        let client_plugin = request.response.auth_plugin.as_utf8().unwrap_or("");
         let server_plugin = request.server_auth_plugin.as_str();
         let Some(expected_plugin) = expected_plugin.filter(|plugin| !plugin.is_empty()) else {
             return if !client_plugin.is_empty() && client_plugin == server_plugin {
@@ -360,61 +418,100 @@ pub enum AuthHandshakePacket {
 pub fn parse_response_header(
     data: &[u8],
 ) -> Result<(HandshakeResponseHeader, usize), HandshakeError> {
+    let mut response = HandshakeResponse41::default();
+    let offset = parse_response_header_into(&mut response, data)?;
+    Ok((
+        HandshakeResponseHeader {
+            capability: response.capability,
+            collation: response.collation,
+        },
+        offset,
+    ))
+}
+
+/// Mutates the common fields exactly as Go's `HandshakeResponseHeader` does.
+pub fn parse_response_header_into(
+    response: &mut HandshakeResponse41,
+    data: &[u8],
+) -> Result<usize, HandshakeError> {
     if data.len() < 4 + 4 + 1 + 23 {
         return Err(HandshakeError::Malformed(
             "handshake response header is truncated".to_owned(),
         ));
     }
-    let capability = u32::from_le_bytes(data[..4].try_into().expect("checked length"));
-    Ok((
-        HandshakeResponseHeader {
-            capability,
-            // Bytes 4..8 are max packet size and are intentionally ignored,
-            // matching Go's HandshakeResponseHeader.
-            collation: data[8],
-        },
-        32,
-    ))
+    response.capability = u32::from_le_bytes(data[..4].try_into().expect("checked length"));
+    // Bytes 4..8 are max packet size and are intentionally ignored, matching
+    // Go's HandshakeResponseHeader.
+    response.collation = data[8];
+    Ok(32)
 }
 
 /// Parses a complete HandshakeResponse41 packet.
 pub fn parse_response(data: &[u8]) -> Result<HandshakeResponse41, HandshakeError> {
+    parse_response_with_attrs_state(data, &CONNECTION_ATTRS_STATE)
+}
+
+/// Parses a response with an explicit connection-attribute policy/metrics
+/// owner. This is the source-shaped seam for Go's three `vardef` atomics.
+pub fn parse_response_with_attrs_state(
+    data: &[u8],
+    attrs_state: &ConnectionAttrsState,
+) -> Result<HandshakeResponse41, HandshakeError> {
     let (header, offset) = parse_response_header(data)?;
-    parse_response_body(header, data, offset)
+    parse_response_body_with_attrs_state(header, data, offset, attrs_state)
 }
 
 /// Parses the variable body after [`parse_response_header`].
 pub fn parse_response_body(
     header: HandshakeResponseHeader,
     data: &[u8],
-    mut offset: usize,
+    offset: usize,
+) -> Result<HandshakeResponse41, HandshakeError> {
+    parse_response_body_with_attrs_state(header, data, offset, &CONNECTION_ATTRS_STATE)
+}
+
+/// Parses a variable response body with an explicit source policy owner.
+pub fn parse_response_body_with_attrs_state(
+    header: HandshakeResponseHeader,
+    data: &[u8],
+    offset: usize,
+    attrs_state: &ConnectionAttrsState,
 ) -> Result<HandshakeResponse41, HandshakeError> {
     let mut response = HandshakeResponse41 {
         capability: header.capability,
         collation: header.collation,
         ..HandshakeResponse41::default()
     };
+    parse_response_body_into_with_attrs_state(&mut response, data, offset, attrs_state)?;
+    Ok(response)
+}
 
-    let (user, next) = read_nul_string(data, offset, "user")?;
-    response.user = user;
+/// Mutates an existing response in Go field order and preserves mutations
+/// made before a later malformed field.
+pub fn parse_response_body_into_with_attrs_state(
+    response: &mut HandshakeResponse41,
+    data: &[u8],
+    mut offset: usize,
+    attrs_state: &ConnectionAttrsState,
+) -> Result<(), HandshakeError> {
+    let (user, next) = read_nul_bytes(data, offset, "user")?;
+    response.user = WireString::from_bytes(user);
     offset = next;
 
-    if header.capability & CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA != 0 {
-        let (encoded, consumed) = read_lenenc(data, offset)?;
-        offset += consumed;
-        match encoded {
-            None => response.auth.clear(),
-            Some(_) if data[offset - consumed] == 1 => {
-                // Go accepts a client that sets this capability but sends the
-                // one-byte "no auth data" marker followed by a filler byte.
-                if offset >= data.len() {
-                    return Err(HandshakeError::Malformed(
-                        "length-encoded auth marker is truncated".to_owned(),
-                    ));
-                }
-                offset += 1;
-            }
-            Some(auth_len) => {
+    if response.capability & CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA != 0 {
+        let marker = *data.get(offset).ok_or_else(|| {
+            HandshakeError::Malformed("length-encoded auth marker is truncated".to_owned())
+        })?;
+        if marker == 1 {
+            // MySQL 5.7 can set the capability but send this two-byte no-auth
+            // shape. Go advances by two without inspecting the filler byte.
+            offset = offset.checked_add(2).ok_or_else(|| {
+                HandshakeError::Malformed("auth marker offset overflows".to_owned())
+            })?;
+        } else {
+            let (encoded, consumed) = read_lenenc(data, offset)?;
+            offset += consumed;
+            if let Some(auth_len) = encoded {
                 let auth_len = usize::try_from(auth_len).map_err(|_| {
                     HandshakeError::Malformed("auth data length overflows usize".to_owned())
                 })?;
@@ -423,7 +520,7 @@ pub fn parse_response_body(
                 offset = end;
             }
         }
-    } else if header.capability & CLIENT_SECURE_CONNECTION != 0 {
+    } else if response.capability & CLIENT_SECURE_CONNECTION != 0 {
         let auth_len = *data.get(offset).ok_or_else(|| {
             HandshakeError::Malformed("secure auth length is truncated".to_owned())
         })? as usize;
@@ -437,45 +534,72 @@ pub fn parse_response_body(
         offset = next;
     }
 
-    if header.capability & CLIENT_CONNECT_WITH_DB != 0 && offset < data.len() {
-        let (db_name, next) = read_nul_string(data, offset, "database")?;
-        response.db_name = db_name;
-        offset = next;
+    if response.capability & CLIENT_CONNECT_WITH_DB != 0 {
+        let tail = data
+            .get(offset..)
+            .ok_or_else(|| HandshakeError::Malformed("database is truncated".to_owned()))?;
+        if !tail.is_empty() {
+            let (db_name, next) = read_nul_bytes(data, offset, "database")?;
+            response.db_name = WireString::from_bytes(db_name);
+            offset = next;
+        }
     }
 
-    if header.capability & CLIENT_PLUGIN_AUTH != 0 {
-        let (plugin, next) = read_nul_string(data, offset, "auth plugin")?;
-        response.auth_plugin = plugin;
-        offset = next;
+    if response.capability & CLIENT_PLUGIN_AUTH != 0 {
+        let tail = data
+            .get(offset..)
+            .ok_or_else(|| HandshakeError::Malformed("auth plugin is truncated".to_owned()))?;
+        if let Some(plugin_len) = tail.iter().position(|byte| *byte == 0) {
+            if plugin_len > 0 {
+                response.auth_plugin = WireString::from_bytes(&tail[..plugin_len]);
+            }
+            offset += plugin_len + 1;
+        }
     }
 
-    if header.capability & CLIENT_CONNECT_ATTRS != 0 {
-        if offset == data.len() {
+    if response.capability & CLIENT_CONNECT_ATTRS != 0 {
+        let tail = data.get(offset..).ok_or_else(|| {
+            HandshakeError::Malformed("connection attributes are truncated".to_owned())
+        })?;
+        if tail.is_empty() {
             // Go deliberately treats absent optional attributes as harmless.
-            return Ok(response);
+            return Ok(());
         }
         let (attrs_len, consumed) = read_lenenc(data, offset)?;
         offset += consumed;
-        let attrs_len = attrs_len.unwrap_or(0).try_into().map_err(|_| {
-            HandshakeError::Malformed("connection attributes length overflows usize".to_owned())
-        })?;
-        if attrs_len > MAX_CONNECT_ATTRS_SIZE {
-            return Err(HandshakeError::Malformed(
-                "connection attributes exceed the 1 MiB hard limit".to_owned(),
-            ));
+        if let Some(attrs_len) = attrs_len {
+            let attrs_len = attrs_len.try_into().map_err(|_| {
+                HandshakeError::Malformed("connection attributes length overflows usize".to_owned())
+            })?;
+            if attrs_len > MAX_CONNECT_ATTRS_SIZE {
+                return Err(HandshakeError::Malformed(
+                    "connection attributes exceed the 1 MiB hard limit".to_owned(),
+                ));
+            }
+            let end = checked_end(offset, attrs_len, data.len(), "connection attributes")?;
+            match parse_attrs(&data[offset..end], attrs_state) {
+                Ok((attrs, raw_attrs, warnings)) => {
+                    response.attrs = attrs;
+                    response.raw_attrs = raw_attrs;
+                    response.attr_warnings = warnings;
+                }
+                Err(_) => {
+                    // Go logs this decode failure and accepts the handshake.
+                    // It also returns immediately, so zstd parsing is skipped.
+                    return Ok(());
+                }
+            }
+            offset = end;
         }
-        let end = checked_end(offset, attrs_len, data.len(), "connection attributes")?;
-        response.attrs = parse_attrs(&data[offset..end])?;
-        offset = end;
     }
 
-    if header.capability & CLIENT_ZSTD_COMPRESSION_ALGORITHM != 0 {
+    if response.capability & CLIENT_ZSTD_COMPRESSION_ALGORITHM != 0 {
         response.zstd_level = i32::from(*data.get(offset).ok_or_else(|| {
             HandshakeError::Malformed("zstd compression level is truncated".to_owned())
         })?);
     }
 
-    Ok(response)
+    Ok(())
 }
 
 /// Intersects client capabilities with the server's advertised capabilities.
@@ -489,17 +613,132 @@ pub fn negotiate_capabilities(client: u32, server: u32) -> Result<u32, Handshake
     Ok(client & server)
 }
 
-fn parse_attrs(data: &[u8]) -> Result<HashMap<String, String>, HandshakeError> {
-    let mut attrs = HashMap::new();
+#[derive(Debug)]
+pub(crate) struct DecodedConnAttrs {
+    items: Vec<(Vec<u8>, Vec<u8>)>,
+    total_size: i64,
+    has_deprecated_underscore_attr: bool,
+}
+
+type ParsedConnAttrs = (
+    HashMap<String, String>,
+    HashMap<Vec<u8>, Vec<u8>>,
+    Vec<String>,
+);
+
+pub(crate) fn parse_attrs(
+    data: &[u8],
+    state: &ConnectionAttrsState,
+) -> Result<ParsedConnAttrs, HandshakeError> {
+    if state.limit() == 0 {
+        return Ok((HashMap::new(), HashMap::new(), Vec::new()));
+    }
+    let decoded = decode_conn_attrs(data)?;
+    Ok(apply_conn_attrs_policy_and_metrics(decoded, state))
+}
+
+pub(crate) fn decode_conn_attrs(data: &[u8]) -> Result<DecodedConnAttrs, HandshakeError> {
+    let mut decoded = DecodedConnAttrs {
+        items: Vec::new(),
+        total_size: 0,
+        has_deprecated_underscore_attr: false,
+    };
     let mut offset = 0;
     while offset < data.len() {
         let (key, key_len) = read_lenenc_bytes(data, offset, "attribute key")?;
         offset += key_len;
         let (value, value_len) = read_lenenc_bytes(data, offset, "attribute value")?;
         offset += value_len;
-        attrs.insert(lossy(key), lossy(value));
+        decoded.total_size += i64::try_from(key.len() + value.len()).unwrap_or(i64::MAX);
+        if !decoded.has_deprecated_underscore_attr
+            && key.starts_with(b"_")
+            && !matches!(
+                key,
+                b"_client_name" | b"_client_version" | b"_os" | b"_pid" | b"_platform"
+            )
+        {
+            decoded.has_deprecated_underscore_attr = true;
+        }
+        decoded.items.push((key.to_vec(), value.to_vec()));
     }
-    Ok(attrs)
+    Ok(decoded)
+}
+
+pub(crate) fn apply_conn_attrs_policy_and_metrics(
+    decoded: DecodedConnAttrs,
+    state: &ConnectionAttrsState,
+) -> ParsedConnAttrs {
+    let effective_limit = normalize_connect_attrs_limit(state.limit());
+    let mut attrs = HashMap::new();
+    let mut raw_attrs = HashMap::new();
+    let mut total_size = 0_i64;
+    let mut accepted_size = 0_i64;
+    let mut truncated = false;
+
+    for (key, value) in decoded.items {
+        let pair_size = i64::try_from(key.len() + value.len()).unwrap_or(i64::MAX);
+        total_size = total_size.saturating_add(pair_size);
+        if total_size > effective_limit {
+            if !truncated {
+                truncated = true;
+                state.lost.fetch_add(1, Ordering::Relaxed);
+            }
+            continue;
+        }
+        if !truncated {
+            attrs.insert(lossy(&key), lossy(&value));
+            raw_attrs.insert(key, value);
+            accepted_size = accepted_size.saturating_add(pair_size);
+        }
+    }
+
+    update_connect_attrs_longest_seen(decoded.total_size, state);
+
+    let mut warnings = Vec::with_capacity(2);
+    if decoded.has_deprecated_underscore_attr {
+        warnings.push(
+            "custom connection attributes with leading underscore are deprecated and will be rejected in a future release"
+                .to_owned(),
+        );
+    }
+    if truncated {
+        let truncated_bytes = decoded.total_size.saturating_sub(accepted_size);
+        let value = truncated_bytes.to_string();
+        attrs.insert("_truncated".to_owned(), value.clone());
+        raw_attrs.insert(b"_truncated".to_vec(), value.into_bytes());
+        warnings.push(format!(
+            "session connection attributes truncated: total size {} bytes exceeds performance_schema_session_connect_attrs_size ({}), {} bytes were discarded",
+            decoded.total_size, effective_limit, truncated_bytes
+        ));
+    }
+    (attrs, raw_attrs, warnings)
+}
+
+pub(crate) fn normalize_connect_attrs_limit(limit: i64) -> i64 {
+    if limit < 0 {
+        AUTO_CONNECT_ATTRS_SIZE
+    } else {
+        limit
+    }
+}
+
+pub(crate) fn update_connect_attrs_longest_seen(total_size: i64, state: &ConnectionAttrsState) {
+    if total_size >= AUTO_CONNECT_ATTRS_SIZE {
+        return;
+    }
+    loop {
+        let old = state.longest_seen.load(Ordering::Relaxed);
+        if total_size <= old {
+            break;
+        }
+        if state
+            .longest_seen
+            .compare_exchange_weak(old, total_size, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+        {
+            break;
+        }
+    }
 }
 
 fn read_lenenc_bytes<'a>(
@@ -508,7 +747,7 @@ fn read_lenenc_bytes<'a>(
     field: &'static str,
 ) -> Result<(&'a [u8], usize), HandshakeError> {
     let (length, consumed) = read_lenenc(data, offset)?;
-    let length = length.ok_or_else(|| HandshakeError::Malformed(format!("{field} is NULL")))?;
+    let length = length.unwrap_or(0);
     let start = offset + consumed;
     let length = usize::try_from(length)
         .map_err(|_| HandshakeError::Malformed(format!("{field} length overflows usize")))?;
@@ -559,20 +798,8 @@ fn read_lenenc(data: &[u8], offset: usize) -> Result<(Option<u64>, usize), Hands
                 9,
             ))
         }
-        0xff => Err(HandshakeError::Malformed(
-            "invalid length-encoded integer marker".to_owned(),
-        )),
         value => Ok((Some(u64::from(value)), 1)),
     }
-}
-
-fn read_nul_string(
-    data: &[u8],
-    offset: usize,
-    field: &'static str,
-) -> Result<(String, usize), HandshakeError> {
-    let (bytes, next) = read_nul_bytes(data, offset, field)?;
-    Ok((lossy(bytes), next))
 }
 
 fn read_nul_bytes<'a>(

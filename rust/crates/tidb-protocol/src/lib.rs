@@ -76,7 +76,7 @@ pub use prepared_statement::{
     is_binary_integer_result_type, is_binary_string_result_type, BinaryDateTimeType,
     BinaryResultCell, BinaryResultSetStream, PreparedParameterType, PreparedParameterTypes,
     PreparedStatementError, PreparedStatementExecute, PreparedStatementSendLongData, PreparedValue,
-    CURSOR_TYPE_READ_ONLY, MYSQL_TYPE_LONGLONG, MYSQL_UNSIGNED_FLAG,
+    CURSOR_TYPE_READ_ONLY, MAX_STMT_FETCH_SIZE, MYSQL_TYPE_LONGLONG, MYSQL_UNSIGNED_FLAG,
 };
 pub use result::{
     append_length_encoded_bytes, append_length_encoded_int, encode_text_row, is_string_column_type,

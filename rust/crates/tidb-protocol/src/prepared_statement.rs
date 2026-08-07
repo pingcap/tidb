@@ -537,6 +537,11 @@ pub fn decode_prepared_statement_execute_with_bound_params(
 /// `CURSOR_TYPE_READ_ONLY`: the one cursor kind Go supports.
 pub const CURSOR_TYPE_READ_ONLY: u8 = 0x01;
 
+/// Maximum row count accepted from one `COM_STMT_FETCH` request.
+///
+/// Source: `pkg/server/internal/parse/parse.go::maxFetchSize`.
+pub const MAX_STMT_FETCH_SIZE: u32 = 1024;
+
 /// Decodes the eight-byte `COM_STMT_FETCH` payload: the statement id and the
 /// requested row count. Go's `parse.StmtFetchCmd` rejects any other length as
 /// a malformed packet.
@@ -551,7 +556,8 @@ pub fn decode_prepared_statement_fetch(
         });
     }
     let statement_id = u32::from_le_bytes(payload[0..4].try_into().expect("four bytes"));
-    let fetch_size = u32::from_le_bytes(payload[4..8].try_into().expect("four bytes"));
+    let fetch_size =
+        u32::from_le_bytes(payload[4..8].try_into().expect("four bytes")).min(MAX_STMT_FETCH_SIZE);
     Ok((statement_id, fetch_size))
 }
 

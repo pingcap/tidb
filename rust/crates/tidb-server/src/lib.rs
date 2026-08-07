@@ -74,6 +74,8 @@ mod mysql_connection;
 mod mysql_tls;
 mod native_password;
 mod node_config;
+#[cfg(test)]
+mod parse_go_inventory;
 mod pipeline_session;
 mod real_tikv_multi_node;
 mod real_tikv_node;
@@ -124,11 +126,14 @@ pub use configured_user_store::{
 };
 pub use distinct_result_set::DistinctResultSetSource;
 pub use handshake::{
-    negotiate_capabilities, parse_response, parse_response_body, parse_response_header,
+    negotiate_capabilities, parse_response, parse_response_body,
+    parse_response_body_into_with_attrs_state, parse_response_body_with_attrs_state,
+    parse_response_header, parse_response_header_into, parse_response_with_attrs_state,
     AuthHandshake, AuthHandshakePacket, AuthHandshakePhase, AuthHandshakeRequest, AuthPluginAction,
-    HandshakeError, HandshakeResponseHeader, InitialHandshake,
+    ConnectionAttrsState, HandshakeError, HandshakeResponseHeader, InitialHandshake,
+    DEFAULT_CONNECT_ATTRS_SIZE,
 };
-pub use handshake_response::HandshakeResponse41;
+pub use handshake_response::{HandshakeResponse41, WireString};
 pub use listener::{ListenerConfig, ListenerError, ListenerLifecycle, ListenerState};
 pub use mysql_connection::{
     serve_mysql_connection, serve_mysql_connection_with_tls, ConnectionCommandCounts,

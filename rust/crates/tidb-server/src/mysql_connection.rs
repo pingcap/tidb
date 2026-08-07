@@ -650,6 +650,12 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             });
         }
     };
+    // Handshake parsing is byte-authoritative, matching Go strings. The
+    // configured account/session owners are UTF-8-native today, so conversion
+    // is explicit at that boundary rather than silently replacing bytes in
+    // the protocol parser.
+    let response_user = response.user.to_string_lossy().into_owned();
+    let response_db_name = response.db_name.to_string_lossy().into_owned();
     let capabilities = match negotiate_capabilities(response.capability, server_capabilities) {
         Ok(capabilities) => capabilities,
         Err(_error) => {
@@ -658,7 +664,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 reply_sequence,
                 ER_ACCESS_DENIED_ERROR,
                 *b"28000",
-                access_denied_message(&response.user, &peer_addr.ip().to_string(), &response.auth),
+                access_denied_message(&response_user, &peer_addr.ip().to_string(), &response.auth),
                 response.capability & CLIENT_PROTOCOL_41 != 0,
             )?;
             return Ok(ConnectionReport {
@@ -676,7 +682,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             reply_sequence,
             ER_ACCESS_DENIED_ERROR,
             *b"28000",
-            access_denied_message(&response.user, &peer_addr.ip().to_string(), &response.auth),
+            access_denied_message(&response_user, &peer_addr.ip().to_string(), &response.auth),
             protocol_41,
         )?;
         return Ok(ConnectionReport {
@@ -691,14 +697,15 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     // what this connection speaks. An account with no plugin (or none at
     // all) is Go's "assuming MySQL Native Password".
     let account_plugin = users
-        .auth_plugin_for(&response.user, &peer_addr.ip().to_string())
+        .auth_plugin_for(&response_user, &peer_addr.ip().to_string())
         .unwrap_or_else(|| AUTH_NATIVE_PASSWORD.to_owned());
     // Go switches when the server's advertised plugin differs from EITHER
     // the account's or the client's. This server always advertises
     // `mysql_native_password`, so that reduces to these two disjuncts.
     let (auth_response, response_sequence) = if capabilities & CLIENT_PLUGIN_AUTH != 0
         && (account_plugin != AUTH_NATIVE_PASSWORD
-            || (!response.auth_plugin.is_empty() && response.auth_plugin != AUTH_NATIVE_PASSWORD))
+            || (!response.auth_plugin.is_empty()
+                && response.auth_plugin.as_bytes() != AUTH_NATIVE_PASSWORD.as_bytes()))
     {
         let request = AuthSwitchRequest::new(&account_plugin, salt.to_vec())
             .map_err(|error| MysqlConnectionError::Handshake(error.to_string()))?;
@@ -744,7 +751,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     // upgraded. Every port here is TCP -- this server opens no Unix-domain
     // listener -- so the transport is exactly "TLS or not".
     let auth_result = users.authenticate(
-        &response.user,
+        &response_user,
         &peer_addr.ip().to_string(),
         &salt,
         &auth_response,
@@ -780,7 +787,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 response_sequence,
                 ER_ACCOUNT_HAS_BEEN_LOCKED,
                 *b"HY000",
-                account_locked_message(&response.user, &peer_addr.ip().to_string()),
+                account_locked_message(&response_user, &peer_addr.ip().to_string()),
                 protocol_41,
             )?;
             return Ok(ConnectionReport {
@@ -833,7 +840,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 response_sequence,
                 ER_ACCESS_DENIED_ERROR,
                 *b"28000",
-                access_denied_message(&response.user, &peer_addr.ip().to_string(), &auth_response),
+                access_denied_message(&response_user, &peer_addr.ip().to_string(), &auth_response),
                 protocol_41,
             )?;
             return Ok(ConnectionReport {
@@ -870,8 +877,8 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     // Go's `openSessionAndDoAuth`: the handshake's initial database is applied
     // before the connection is reported ready, and a schema that does not
     // exist ends the connection with its own errno rather than the OK packet.
-    if !response.db_name.is_empty() {
-        if let Err(error) = engine.select_database(&response.db_name) {
+    if !response_db_name.is_empty() {
+        if let Err(error) = engine.select_database(&response_db_name) {
             write_query_error_at(&mut output, response_sequence, &error, protocol_41)?;
             return Ok(ConnectionReport {
                 connection_id,
