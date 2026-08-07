@@ -54,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -1405,6 +1406,13 @@ type SessionVars struct {
 	mppExchangeCompressionMode vardef.ExchangeCompressionMode
 
 	PlannerSelectBlockAsName atomic.Pointer[[]ast.HintTable]
+
+	// PlannerSelectBlockAliasInfo records the visibility chain for derived-table
+	// aliases. It is indexed by QueryBlockOffset and stores the enclosing query
+	// block (VisibleOffset) in which the alias is visible. This allows hint
+	// resolution to walk the chain and find the correct alias visible at a given
+	// target query block, rather than always using the innermost alias.
+	PlannerSelectBlockAliasInfo atomic.Pointer[[]hint.SelectBlockAlias]
 
 	// LockWaitTimeout is the duration waiting for pessimistic lock in milliseconds
 	LockWaitTimeout int64

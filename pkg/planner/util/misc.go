@@ -291,6 +291,59 @@ func ExtractTableAlias(p base.Plan, parentOffset int) *h.HintedTable {
 	return &h.HintedTable{DBName: dbName, TblName: firstName.TblName, SelectOffset: qbOffset}
 }
 
+// ResolveVisibleHintTableStrict resolves the derived-table alias that is visible
+// for startOffset in targetOffset. It succeeds only when the recorded alias
+// chain reaches targetOffset; callers must not substitute a direct inner alias
+// when this proof fails.
+func ResolveVisibleHintTableStrict(sctx base.PlanContext, startOffset, targetOffset int) (*ast.HintTable, bool) {
+	if sctx == nil || startOffset <= 0 || targetOffset < 0 {
+		return nil, false
+	}
+	if aliasInfo := sctx.GetSessionVars().PlannerSelectBlockAliasInfo.Load(); aliasInfo != nil {
+		if resolved, ok := h.ResolveSelectBlockAlias(*aliasInfo, startOffset, targetOffset); ok {
+			return &ast.HintTable{DBName: resolved.DBName, TableName: resolved.TableName}, true
+		}
+	}
+	return nil, false
+}
+
+// LookupDirectSelectBlockAlias returns the alias recorded directly for offset.
+// Unlike ResolveVisibleHintTableStrict, it does not prove visibility in an
+// outer query block and therefore must not be used by LEADING replay paths.
+func LookupDirectSelectBlockAlias(sctx base.PlanContext, offset int) (*ast.HintTable, bool) {
+	if sctx == nil || offset <= 0 {
+		return nil, false
+	}
+	var queryBlockNames []ast.HintTable
+	if names := sctx.GetSessionVars().PlannerSelectBlockAsName.Load(); names != nil {
+		queryBlockNames = *names
+	}
+	if offset >= len(queryBlockNames) {
+		return nil, false
+	}
+	hintTable := queryBlockNames[offset]
+	if hintTable.TableName.L == "" {
+		return nil, false
+	}
+	copied := hintTable
+	return &copied, true
+}
+
+// ExtractJoinHintTableAlias resolves aliases for join-method hints. LEADING
+// generation and replay use ResolveJoinOperandHintIdentity directly and remain
+// strict about target visibility. Join-method hints additionally support an
+// ordinary base table explicitly qualified by its own inner QB name (for
+// example t2@subq in a correlated subquery).
+func ExtractJoinHintTableAlias(p base.LogicalPlan, targetOffset int) *h.HintedTable {
+	if table, ok := ResolveJoinOperandHintIdentity(p, targetOffset); ok {
+		return table
+	}
+	if JoinOperandHasDerivedAliasCandidate(p, targetOffset) {
+		return nil
+	}
+	return ExtractTableAlias(p, p.QueryBlockOffset())
+}
+
 // GetPushDownCtx creates a PushDownContext from PlanContext
 func GetPushDownCtx(pctx base.PlanContext) expression.PushDownContext {
 	return GetPushDownCtxFromBuildPBContext(pctx.GetBuildPBCtx())

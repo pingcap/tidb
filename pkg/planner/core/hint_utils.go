@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 )
 
@@ -55,6 +56,9 @@ func GenHintsFromFlatPlan(flat *FlatPhysicalPlan) []*ast.TableOptimizerHint {
 		}
 	}
 	for _, cte := range flat.CTEs {
+		// TODO(#68977): Recover CTE-visible operand identities before emitting
+		// LEADING hints for CTE plans. The derived-table resolver below proves
+		// visibility only through SELECT-block alias chains.
 		for i, fop := range cte {
 			if i == 0 || !fop.IsRoot {
 				continue
@@ -367,6 +371,7 @@ func genJoinMethodHintForSinglePhysicalJoin(
 	if hintQBName != nil {
 		newHint.QBName = *hintQBName
 	}
+	// TODO: QBName missed out in CTE, see https://github.com/pingcap/tidb/issues/68925, should fix it in the future.
 
 	return newHint
 }
@@ -390,25 +395,12 @@ func genHintTblForJoinNodes(
 	// and qbOffsets[x] >=0 if and only if hintTbls[x] is not nil.
 	hintTbls = make([]*ast.HintTable, 0, len(joinedNodes))
 	qbOffsets := make([]int, 0, len(joinedNodes))
-	guessQBOffsets := make(map[int]struct{})
 	for _, plan := range joinedNodes {
-		qbOffset, guessOffset, ht := genHintTblForSingleJoinNode(sctx, plan, parentQBOffset)
+		qbOffset, _, ht := genHintTblForSingleJoinNode(sctx, plan, parentQBOffset)
 		if qbOffset < 0 || ht == nil {
 			qbOffsets = append(qbOffsets, -1)
 			hintTbls = append(hintTbls, nil)
 			continue
-		}
-		// If we guessed the same QB offset for two different nodes, that's likely incorrect, and we stop use that.
-		// This may happen for queries like ... FROM t1 join (select * from t2 join t3) derived ... . We will guess
-		// derived@sel_1 for both t2 and t3, and that's incorrect. Besides, current leading hint also can't handle this
-		// kind of hints.
-		if guessOffset {
-			if _, ok := guessQBOffsets[qbOffset]; ok {
-				qbOffsets = append(qbOffsets, -1)
-				hintTbls = append(hintTbls, nil)
-				continue
-			}
-			guessQBOffsets[qbOffset] = struct{}{}
 		}
 		qbOffsets = append(qbOffsets, qbOffset)
 		hintTbls = append(hintTbls, ht)
@@ -437,21 +429,16 @@ func genHintTblForJoinNodes(
 
 	// 3. Generate QB name for the hint itself based on the QB name of each join node from step 1.
 
-	// Current join reorder will break QB offset of the join operator, e.g. setting them to -1.
-	// So we are unable to get the correct QB offset for the hint from the join operator, now we use the minimum QB
-	// offset among the tables.
-	// Besides, genHintTblForSingleJoinNode() is not powerful enough to handle all cases, it may fail in some cases.
-	// If we failed to get QB offset information from one join node, we don't generate QB name for the hint. Because
-	// that may cause a wrong QB offset, leaving it blank is probably better.
+	// The hint belongs to the frozen join-group owner. Never infer it from
+	// operand origins; mixed origins are expected after derived-table flattening.
 	if slices.Contains(qbOffsets, -1) {
 		return hintTbls, nil
 	}
-	minQBOffset := slices.Min(qbOffsets)
 
-	// ditto. We don't generate unnecessary QB name for the hint itself.
-	if (minQBOffset > 1 && nodeType == h.TypeSelect) ||
-		(minQBOffset > 0 && (nodeType == h.TypeUpdate || nodeType == h.TypeDelete)) {
-		hintQBName, err := h.GenerateQBName(nodeType, minQBOffset)
+	// We don't generate an unnecessary QB name for the outermost block.
+	if (parentQBOffset > 1 && nodeType == h.TypeSelect) ||
+		(parentQBOffset > 0 && (nodeType == h.TypeUpdate || nodeType == h.TypeDelete)) {
+		hintQBName, err := h.GenerateQBName(nodeType, parentQBOffset)
 		if err != nil {
 			return nil, nil
 		}
@@ -460,8 +447,9 @@ func genHintTblForJoinNodes(
 	return hintTbls, hintQBNamePtr
 }
 
-// genHintTblForSingleJoinNode tries to generate ast.HintTable and QB offset for a single join node.
-// See the comments inside about the meaning of guessQBOffset.
+// genHintTblForSingleJoinNode resolves one physical join operand in the frozen
+// join-group owner query block. guessQBOffset is retained in the return shape
+// for callers shared with older hint code, but is always false.
 func genHintTblForSingleJoinNode(
 	sctx base.PlanContext,
 	joinNode base.PhysicalPlan,
@@ -471,43 +459,26 @@ func genHintTblForSingleJoinNode(
 	guessQBOffset bool,
 	ht *ast.HintTable,
 ) {
-	selfOffset := joinNode.QueryBlockOffset()
-	qbOffset = selfOffset
-	if qbOffset == -1 {
+	if sctx == nil || parentOffset < 0 {
 		return -1, false, nil
 	}
-	guessQBOffset = false
-	var dbName, tableName *ast.CIStr
-	// For sub-queries like `(select * from t) t1`, t1 should belong to its surrounding select block.
-	if qbOffset != parentOffset {
-		var blockAsNames []ast.HintTable
-		if p := sctx.GetSessionVars().PlannerSelectBlockAsName.Load(); p != nil {
-			blockAsNames = *p
-		}
-		if qbOffset >= len(blockAsNames) {
+	table, ok := plannerutil.ResolveJoinOperandHintIdentity(joinNode, parentOffset)
+	if !ok {
+		if joinNode.QueryBlockOffset() != parentOffset ||
+			plannerutil.JoinOperandHasDerivedAliasCandidate(joinNode, parentOffset) {
 			return -1, false, nil
 		}
-		hintTable := blockAsNames[qbOffset]
-		dbName, tableName, qbOffset = &hintTable.DBName, &hintTable.TableName, parentOffset
-		// Current join reorder will break QB offset of the join operator by setting them to -1. In this case, we will
-		// get qbOffset == parentOffset == -1 when it comes here.
-		// For this case, we add a temporary fix to guess the QB offset based on the parent offset. The idea is simple,
-		// for the example above, we can easily notice that the QBOffset(t1) = QBOffset(t) - 1. This is not always true,
-		// but it works in simple cases.
-		if selfOffset > 1 && qbOffset == -1 {
-			guessQBOffset = true
-			qbOffset = selfOffset - 1
+		dbName, tableName := extractTableAsName(joinNode)
+		if tableName == nil || tableName.L == "" {
+			return -1, false, nil
 		}
+		if dbName == nil {
+			emptyDB := ast.CIStr{}
+			dbName = &emptyDB
+		}
+		return parentOffset, false, &ast.HintTable{DBName: *dbName, TableName: *tableName}
 	}
-	if tableName == nil || tableName.L == "" {
-		guessQBOffset = false
-		qbOffset = joinNode.QueryBlockOffset()
-		dbName, tableName = extractTableAsName(joinNode)
-	}
-	if tableName == nil || tableName.L == "" {
-		return -1, false, nil
-	}
-	return qbOffset, guessQBOffset, &ast.HintTable{DBName: *dbName, TableName: *tableName}
+	return table.SelectOffset, false, &ast.HintTable{DBName: table.DBName, TableName: table.TblName}
 }
 
 func extractTableAsName(p base.PhysicalPlan) (db *ast.CIStr, table *ast.CIStr) {
@@ -551,7 +522,10 @@ func genJoinOrderHintFromRootPhysicalJoin(
 	}
 
 	// 1. Get the joined operators in this join group with correct order in the slice.
-	orderedJoinGroup := extractOrderedPhysicalJoinGroup(p, visitedIDs, 1)
+	// Only mark a join group as visited after we successfully emit a LEADING hint for it.
+	// Otherwise a larger unsupported/partially-unmappable group would suppress smaller valid sub-groups.
+	localVisitedIDs := make(map[int]struct{})
+	orderedJoinGroup := extractOrderedPhysicalJoinGroup(p, localVisitedIDs, 1)
 	// If it only involves two tables, we don't need to generate the join order hint.
 	if len(orderedJoinGroup) <= 2 {
 		return nil
@@ -564,14 +538,26 @@ func genJoinOrderHintFromRootPhysicalJoin(
 	if slices.Contains(hintTbls, nil) {
 		return nil
 	}
+	if len(hintTbls) <= 2 {
+		return nil
+	}
+	for id := range localVisitedIDs {
+		visitedIDs[id] = struct{}{}
+	}
 
 	hintTblVals := make([]ast.HintTable, 0, len(hintTbls))
+	leadingItems := make([]any, 0, len(hintTbls))
 	for _, ht := range hintTbls {
 		hintTblVals = append(hintTblVals, *ht)
+		leadingItems = append(leadingItems, ht)
 	}
 	res := &ast.TableOptimizerHint{
 		HintName: ast.NewCIStr(h.HintLeading),
 		Tables:   hintTblVals,
+		// LEADING has special restore logic in parser/ast: HintData preserves the
+		// structured LeadingList form so Restore() can emit the hint-level QBName
+		// in the correct position and keep table-level QB annotations stable.
+		HintData: &ast.LeadingList{Items: leadingItems},
 	}
 	if hintQBName != nil {
 		res.QBName = *hintQBName
@@ -581,6 +567,10 @@ func genJoinOrderHintFromRootPhysicalJoin(
 
 func extractOrderedPhysicalJoinGroup(p base.PhysicalJoin, visitedIDs map[int]struct{}, depth uint) []base.PhysicalPlan {
 	visitedIDs[p.ID()] = struct{}{}
+
+	// TODO(#70351): Traverse join-group-preserving PhysicalSelection and PhysicalProjection wrappers.
+	// Until then, extraction may stop at these wrappers and does not guarantee reproduction of the complete
+	// physical join order.
 
 	// 1. sanity checks
 
