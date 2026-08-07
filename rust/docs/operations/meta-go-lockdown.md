@@ -58,6 +58,12 @@ claim the whole `pkg/meta` Go package is transcreated.
   `ResourceGroupInfo`. The meta receipt pins implicit-default pointer identity,
   default settings, exact magic-byte JSON, `RURate` 100 to 200, mixed-case
   `CIStr`, update, reread, list, and drop behavior.
+- [x] (2026-08-07) The first clean-workspace run falsified the final candidate
+  on the source-size ratchet: `transaction.rs` had 2,494 lines against the
+  2,200-line unlisted-file ceiling. Moved a contiguous rule block into
+  `transaction_rules.rs` through `include!`, preserving the public module and
+  all inventory symbols; the files are now 2,123 and 372 lines, and the
+  source-size ratchet passes without adding an exception.
 - [x] (2026-08-07) Mutation-probed 19 independent rule families in disposable
   worktrees. One first-pass
   survivor exposed duplicated reverse-iterator boundary logic; the two paths
