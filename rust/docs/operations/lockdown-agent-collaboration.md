@@ -23,9 +23,10 @@ transcreated. Repository-wide package completion remains governed by
 ## Current campaign state
 
 Use the newest accepted commit that is present on both `origin` and `ngaut`.
-At this revision the accepted chain ends at:
+At this revision the accepted implementation chain includes the completed
+`parse.go` lockdown through:
 
-    163559e78020c57547e437089be1f28c3552f7a9
+    4d038ca95be7c9a6a8c1f184871d37475c50afdb
 
 The following source files are already locked and must not be reopened:
 
@@ -35,6 +36,7 @@ The following source files are already locked and must not be reopened:
 | `tidb-datatype` | `pkg/types/vector_functions.go` | `e5c619d62a21f26372bf11e7a717d873405db3d2` |
 | `tidb-datatype` | `pkg/types/json_binary_functions.go` | `32d0096e93a1b530ad34b093045c2febe83220c5` |
 | `tidb-datatype` | `pkg/types/time.go` | `163559e78020c57547e437089be1f28c3552f7a9` |
+| `tidb-server` and `tidb-protocol` | `pkg/server/internal/parse/parse.go` | `4d038ca95be7c9a6a8c1f184871d37475c50afdb` |
 
 The following crates are reserved by active owners and must not be claimed by
 another agent:
@@ -43,8 +45,6 @@ another agent:
 | --- | --- |
 | `tidb-expr` | existing `L1cast` expression/cast owner |
 | `tidb-executor` | existing `L6driver` executor owner |
-| `tidb-server` | `pkg/server/internal/parse/parse.go` handshake and attribute-policy landing |
-| `tidb-protocol` | same `parse.go` lockdown; `StmtFetchCmd` lands in prepared-statement decoding |
 
 The highest-ranked currently eligible independent surfaces are therefore
 rank 18 (`pkg/meta/meta_test.go::TestMeta`, landing in `tidb-meta`) and rank 19
