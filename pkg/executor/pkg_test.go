@@ -18,19 +18,55 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
+	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/executor/join"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/ranger"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
+
+type oversizedChunkSelectResult struct {
+	rows     []int64
+	returned bool
+}
+
+func (*oversizedChunkSelectResult) NextRaw(context.Context) ([]byte, error) { return nil, nil }
+func (*oversizedChunkSelectResult) Close() error                            { return nil }
+
+func (r *oversizedChunkSelectResult) Next(_ context.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	if r.returned {
+		return nil
+	}
+	for _, value := range r.rows {
+		row := chunk.MutRowFromTypes([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)})
+		row.SetValue(0, value)
+		chk.AppendRow(row.ToRow())
+	}
+	r.returned = true
+	return nil
+}
+
+func (*oversizedChunkSelectResult) IntoIter([][]*types.FieldType) (distsql.SelectResultIter, error) {
+	return nil, nil
+}
 
 // CancelAndWaitImportJobForTest exposes cancelAndWaitImportJob to external package tests.
 func CancelAndWaitImportJobForTest(ctx context.Context, jobID int64) error {
@@ -100,6 +136,252 @@ func TestNestedLoopApply(t *testing.T) {
 			rowIdx++
 		}
 	}
+}
+
+func TestAdaptiveLimitEligibility(t *testing.T) {
+	require.Equal(t, uint64(7), adaptiveLimitInitialWindow(7, 1024))
+	require.Equal(t, uint64(1024), adaptiveLimitInitialWindow(100001, 1024))
+	require.Equal(t, uint64(1), adaptiveLimitInitialLookupBatchSize(1, true, 32, 20000))
+	require.Equal(t, uint64(32), adaptiveLimitInitialLookupBatchSize(1, false, 32, 20000))
+	require.Equal(t, uint64(1000), adaptiveLimitInitialLookupBatchSize(1000, false, 32, 20000))
+	require.Equal(t, uint64(128), adaptiveLimitInitialLookupBatchSize(1000, false, 32, 128))
+
+	sctx := mock.NewContext()
+	indexJoin := &join.IndexLookUpJoin{
+		BaseExecutor: exec.NewBaseExecutor(sctx, nil, 1),
+	}
+	projection := &ProjectionExec{
+		BaseExecutorV2: exec.NewBaseExecutorV2(sctx.GetSessionVars(), nil, 2, indexJoin),
+	}
+	selection := &SelectionExec{
+		BaseExecutorV2: exec.NewBaseExecutorV2(sctx.GetSessionVars(), nil, 3, indexJoin),
+	}
+
+	require.Same(t, indexJoin, findAdaptiveLimitIndexJoin(indexJoin))
+	require.Same(t, indexJoin, findAdaptiveLimitIndexJoin(projection))
+	require.Nil(t, findAdaptiveLimitIndexJoin(selection))
+
+	directLookup := &IndexLookUpExecutor{
+		BaseExecutorV2: exec.NewBaseExecutorV2(sctx.GetSessionVars(), nil, 5),
+		indexLookUpExecutorContext: indexLookUpExecutorContext{
+			indexLookupConcurrency: 2,
+		},
+		keepOrder: true,
+	}
+	directProjection := &ProjectionExec{
+		BaseExecutorV2: exec.NewBaseExecutorV2(sctx.GetSessionVars(), nil, 6, directLookup),
+	}
+	directProjection = &ProjectionExec{
+		BaseExecutorV2: exec.NewBaseExecutorV2(sctx.GetSessionVars(), nil, 7, directProjection),
+	}
+	require.Same(t, directLookup, findAdaptiveLimitIndexLookupCandidate(directProjection))
+	directSelection := &SelectionExec{
+		BaseExecutorV2: exec.NewBaseExecutorV2(sctx.GetSessionVars(), nil, 8, directLookup),
+	}
+	require.Nil(t, findAdaptiveLimitIndexLookupCandidate(directSelection))
+	directLookup.PushedLimit = &physicalop.PushedDownLimit{Count: 10}
+	require.Nil(t, findAdaptiveLimitIndexLookupCandidate(directLookup))
+	directLookup.PushedLimit = nil
+	directController := exec.NewAdaptiveLimitLookupController(100, 32, 128, 32, 128)
+	directLookup.adaptiveLimitController = directController
+	directLookup.reportAdaptiveLimitStats = true
+	require.Same(t, directController, directLookup.adaptiveLimitController)
+	require.True(t, directLookup.reportAdaptiveLimitStats)
+	require.Nil(t, findAdaptiveLimitIndexLookupCandidate(directLookup))
+
+	controller := exec.NewAdaptiveLimitController(exec.AdaptiveLimitConfig{
+		DemandRows: 100, InitialOuterWindow: 32, MaxOuterWindow: 128,
+		InitialLookupWindow: 32, MaxLookupWindow: 128,
+		InitialLookupBatchSize: 32, MaxLookupBatchSize: 128,
+	})
+	indexLookup := &IndexLookUpExecutor{
+		BaseExecutorV2: exec.NewBaseExecutorV2(sctx.GetSessionVars(), nil, 4),
+		indexLookUpExecutorContext: indexLookUpExecutorContext{
+			indexLookupConcurrency: 2,
+		},
+		keepOrder: true,
+	}
+	require.Same(t, indexLookup, findAdaptiveLimitIndexLookupCandidate(indexLookup))
+	indexLookup.adaptiveLimitController = controller
+	require.Same(t, controller, indexLookup.adaptiveLimitController)
+	reserved, ok, err := controller.ReserveLookup(context.Background(), 32)
+	require.NoError(t, err)
+	require.True(t, ok)
+	task := &lookupTableTask{
+		handles:                  make([]kv.Handle, reserved),
+		rows:                     make([]chunk.Row, 1),
+		cursor:                   1,
+		adaptiveLimitReservation: reserved,
+	}
+	indexLookup.completeAdaptiveLookupTask(task)
+	require.Zero(t, task.adaptiveLimitReservation)
+	require.Equal(t, uint64(32), controller.Snapshot().LookupHandles)
+	require.Equal(t, uint64(1), controller.Snapshot().LookupRows)
+
+	pendingTracker := memory.NewTracker(-1, -1)
+	worker := &indexWorker{adaptiveLimitController: controller, batchSize: 2, memTracker: pendingTracker}
+	handles := make([]kv.Handle, 0, 2)
+	var pendingHandlesMemUsage int64
+	for i := range 5 {
+		var pendingHandleMemUsage int64
+		handles, pendingHandleMemUsage = worker.appendExtractedHandle(handles, kv.IntHandle(i))
+		pendingHandlesMemUsage += pendingHandleMemUsage
+	}
+	worker.consumePendingHandlesMemory(pendingHandlesMemUsage)
+	require.Len(t, handles, 2)
+	require.Len(t, worker.pendingHandles, 3)
+	require.Positive(t, pendingTracker.BytesConsumed())
+	handles = handles[:0]
+	handles = worker.takePendingHandles(handles)
+	require.Len(t, handles, 2)
+	require.Len(t, worker.pendingHandles, 1)
+	require.Positive(t, pendingTracker.BytesConsumed())
+	handles = handles[:0]
+	handles = worker.takePendingHandles(handles)
+	require.Len(t, handles, 1)
+	require.Empty(t, worker.pendingHandles)
+	require.Zero(t, pendingTracker.BytesConsumed())
+	handles = handles[:0]
+	pendingHandlesMemUsage = 0
+	for i := range 4 {
+		var pendingHandleMemUsage int64
+		handles, pendingHandleMemUsage = worker.appendExtractedHandle(handles, kv.IntHandle(i))
+		pendingHandlesMemUsage += pendingHandleMemUsage
+	}
+	worker.consumePendingHandlesMemory(pendingHandlesMemUsage)
+	require.Len(t, worker.pendingHandles, 2)
+	require.Positive(t, pendingTracker.BytesConsumed())
+	worker.releasePendingHandles()
+	require.Empty(t, worker.pendingHandles)
+	require.Zero(t, worker.pendingHandlesMemUsage)
+	require.Zero(t, pendingTracker.BytesConsumed())
+	worker.PushedLimit = &physicalop.PushedDownLimit{Count: 5}
+	worker.scannedKeys = 5
+	worker.pendingHandles = []kv.Handle{kv.IntHandle(5)}
+	require.False(t, worker.reachedPushedLimit())
+	worker.pendingHandles = nil
+	require.True(t, worker.reachedPushedLimit())
+
+	indexLookup.table = tables.MockTableFromMeta(&model.TableInfo{})
+	indexLookup.index = &model.IndexInfo{}
+	handleColumn := &expression.Column{ID: model.ExtraHandleID, Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)}
+	indexScan := physicalop.PhysicalIndexScan{}.Init(sctx, 0)
+	indexScan.SetSchema(expression.NewSchema(handleColumn))
+	indexLookup.idxPlans = []base.PhysicalPlan{indexScan}
+	indexLookup.dagPB = &tipb.DAGRequest{OutputOffsets: []uint32{0}}
+	indexLookup.handleCols = []*expression.Column{handleColumn}
+	extractController := exec.NewAdaptiveLimitController(exec.AdaptiveLimitConfig{
+		DemandRows: 100, InitialOuterWindow: 2, MaxOuterWindow: 128,
+		InitialLookupWindow: 2, MaxLookupWindow: 128,
+		InitialLookupBatchSize: 2, MaxLookupBatchSize: 128,
+	})
+	worker = &indexWorker{
+		idxLookup:               indexLookup,
+		adaptiveLimitController: extractController,
+		batchSize:               2,
+		maxBatchSize:            2,
+		maxChunkSize:            32,
+		PushedLimit:             &physicalop.PushedDownLimit{Count: 5},
+		memTracker:              pendingTracker,
+	}
+	result := &oversizedChunkSelectResult{rows: []int64{1, 2, 3, 4, 5}}
+	chk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 32)
+	for round, expected := range [][]int64{{1, 2}, {3, 4}, {5}} {
+		handles, _, err := worker.extractTaskHandles(context.Background(), chk, result, []int{0})
+		require.NoError(t, err)
+		extracted := make([]int64, 0, len(handles))
+		for _, handle := range handles {
+			extracted = append(extracted, handle.IntValue())
+		}
+		require.Equal(t, expected, extracted)
+		require.Len(t, worker.pendingHandles, []int{3, 1, 0}[round])
+		if round < 2 {
+			require.Positive(t, pendingTracker.BytesConsumed())
+		} else {
+			require.Zero(t, pendingTracker.BytesConsumed())
+		}
+	}
+	require.True(t, worker.reachedPushedLimit())
+	require.Empty(t, worker.pendingHandles)
+	require.Equal(t, uint64(5), worker.scannedKeys)
+
+	canceledController := exec.NewAdaptiveLimitController(exec.AdaptiveLimitConfig{
+		DemandRows: 100, InitialOuterWindow: 2, MaxOuterWindow: 128,
+		InitialLookupWindow: 2, MaxLookupWindow: 128,
+		InitialLookupBatchSize: 2, MaxLookupBatchSize: 128,
+	})
+	canceledWorker := &indexWorker{
+		idxLookup:               indexLookup,
+		adaptiveLimitController: canceledController,
+		batchSize:               2,
+		maxBatchSize:            2,
+		maxChunkSize:            32,
+	}
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = canceledWorker.extractLookupTaskData(
+		canceledCtx,
+		&oversizedChunkSelectResult{rows: []int64{1}},
+		nil,
+		chk,
+		[]int{0},
+	)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Zero(t, canceledController.Snapshot().LookupReserved)
+
+	assertIneligible := func() {
+		indexLookup.adaptiveLimitController = nil
+		require.Nil(t, findAdaptiveLimitIndexLookupCandidate(indexLookup))
+		require.Nil(t, indexLookup.adaptiveLimitController)
+	}
+
+	indexLookup.indexLookupConcurrency = 1
+	assertIneligible()
+	indexLookup.indexLookupConcurrency = 2
+	indexLookup.keepOrder = false
+	assertIneligible()
+	indexLookup.keepOrder = true
+	indexLookup.partitionTableMode = true
+	assertIneligible()
+	indexLookup.partitionTableMode = false
+	indexLookup.groupedRanges = [][]*ranger.Range{{}}
+	assertIneligible()
+	indexLookup.groupedRanges = nil
+	indexLookup.idxPlans = nil
+	indexLookup.byItems = []*plannerutil.ByItems{{}}
+	assertIneligible()
+	indexLookup.idxPlans = []base.PhysicalPlan{indexScan}
+	indexLookup.adaptiveLimitController = nil
+	require.Same(t, indexLookup, findAdaptiveLimitIndexLookupCandidate(indexLookup))
+	indexLookup.adaptiveLimitController = controller
+	require.Same(t, controller, indexLookup.adaptiveLimitController)
+	indexLookup.idxPlans = []base.PhysicalPlan{
+		&physicalop.PhysicalIndexScan{GroupByColIdxs: []int{0}},
+	}
+	assertIneligible()
+	indexLookup.byItems = nil
+	indexLookup.idxPlans = []base.PhysicalPlan{indexScan}
+	indexLookup.indexLookUpPushDown = true
+	assertIneligible()
+	indexLookup.indexLookUpPushDown = false
+	indexLookup.PushedLimit = &physicalop.PushedDownLimit{Count: 10}
+	assertIneligible()
+}
+
+func TestIndexLookUpAdaptiveLimitRuntimeStats(t *testing.T) {
+	stats := &IndexLookUpRunTimeStats{
+		adaptiveLimitSnapshot: &exec.AdaptiveLimitSnapshot{
+			LookupHandles:           32,
+			LookupRows:              4,
+			LookupOutstandingAtStop: 8,
+			LookupAdmissionBlocked:  time.Second,
+		},
+	}
+	require.Contains(t, stats.String(), "adaptive:{lookup:32/4, outstanding:8, blocked:1s}")
+	clone := stats.Clone().(*IndexLookUpRunTimeStats)
+	require.Equal(t, stats.String(), clone.String())
+	stats.Merge(clone)
+	require.Equal(t, "adaptive:{lookup:32/4, outstanding:8, blocked:1s}", stats.String())
 }
 
 func TestMoveInfoSchemaToFront(t *testing.T) {
