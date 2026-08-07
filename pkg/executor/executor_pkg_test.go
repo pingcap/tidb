@@ -102,11 +102,6 @@ func TestFillEmbedTextValues(t *testing.T) {
 	require.True(t, insertValues.embedTextGeneratedColsInitialized)
 	require.Equal(t, generatedCols, insertValues.getEmbedTextGeneratedCols())
 
-	got, err := insertValues.fillEmbedTextValuesWithRowCount(context.Background(), rows, 1)
-	require.NoError(t, err)
-	require.Len(t, got, 1)
-	require.Nil(t, got[0])
-
 	emptyRows, err := insertValues.fillEmbedTextValues(context.Background(), nil)
 	require.NoError(t, err)
 	require.Nil(t, emptyRows)
@@ -115,7 +110,7 @@ func TestFillEmbedTextValues(t *testing.T) {
 		BaseExecutor: exec.NewBaseExecutor(sctx, nil, 0),
 	}
 	plainRows := [][]types.Datum{types.MakeDatums(1, "plain")}
-	got, err = withoutGeneratedCols.fillEmbedTextValuesWithRowCount(context.Background(), plainRows, 1)
+	got, err := withoutGeneratedCols.fillEmbedTextValuesWithRowCount(context.Background(), plainRows, 1)
 	require.NoError(t, err)
 	require.Equal(t, plainRows, got)
 	require.True(t, withoutGeneratedCols.embedTextGeneratedColsInitialized)
@@ -154,11 +149,12 @@ func TestFillEmbedTextValues(t *testing.T) {
 		BaseExecutor: exec.NewBaseExecutor(sctx, nil, 0),
 		Table:        tbl,
 		GenExprs:     []expression.Expression{embedExpr},
-		rowCount:     3,
+		rowCount:     4,
 	}
 	validRows := [][]types.Datum{
 		types.MakeDatums(1, "[1,2,3]", nil),
-		types.MakeDatums(2, nil, nil),
+		types.MakeDatums(2, "[4,5,6]", nil),
+		types.MakeDatums(3, nil, nil),
 		nil,
 	}
 	_, err = insertValues.fillEmbedTextValues(context.Background(), validRows)
@@ -167,12 +163,17 @@ func TestFillEmbedTextValues(t *testing.T) {
 	require.NoError(t, deploymode.Set(deploymode.Starter))
 	embedFn := inference.NewEmbedFn()
 	t.Cleanup(inference.SetDefaultEmbedFnForTest(embedFn))
+	got, err = insertValues.fillEmbedTextValuesWithRowCount(context.Background(), rows, 1)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.Nil(t, got[0])
 
 	got, err = insertValues.fillEmbedTextValues(context.Background(), validRows)
 	require.NoError(t, err)
 	require.Equal(t, "[2,3,4]", got[0][2].GetVectorFloat32().String())
-	require.True(t, got[1][2].IsNull())
-	require.Nil(t, got[2])
+	require.Equal(t, "[5,6,7]", got[1][2].GetVectorFloat32().String())
+	require.True(t, got[2][2].IsNull())
+	require.Nil(t, got[3])
 
 	invalidRows := [][]types.Datum{types.MakeDatums(3, "not-json", nil)}
 	_, err = insertValues.fillEmbedTextValuesWithRowCount(context.Background(), invalidRows, 3)

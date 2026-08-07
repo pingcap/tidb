@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -228,6 +229,9 @@ func (e *InsertValues) initEvalBuffer() {
 }
 
 func (e *InsertValues) initEmbedTextGeneratedCols() {
+	if e.embedTextGeneratedColsInitialized {
+		return
+	}
 	e.embedTextGeneratedColsInitialized = true
 	if len(e.GenExprs) == 0 || e.Table == nil {
 		e.embedTextGeneratedCols = nil
@@ -236,17 +240,17 @@ func (e *InsertValues) initEmbedTextGeneratedCols() {
 
 	embedTextCols := make([]embedTextGeneratedColumn, 0)
 	generatedExprIdx := -1
-	for colIdx, generatedCol := range e.Table.Cols() {
-		if !generatedCol.IsGenerated() {
+	for colIdx, col := range e.Table.Cols() {
+		if !col.IsGenerated() {
 			continue
 		}
 		generatedExprIdx++
-		if !expression.IsEmbedTextFuncCall(generatedCol.GeneratedExpr.Internal()) {
+		if !expression.IsEmbedTextFuncCall(col.GeneratedExpr.Internal()) {
 			continue
 		}
 		embedTextCols = append(embedTextCols, embedTextGeneratedColumn{
 			offset: colIdx,
-			column: generatedCol,
+			column: col,
 			expr:   e.GenExprs[generatedExprIdx],
 		})
 	}
@@ -715,6 +719,9 @@ func (e *InsertValues) fillEmbedTextValuesWithRowCount(ctx context.Context, rows
 	if len(embedTextGeneratedCols) == 0 {
 		return rows, nil
 	}
+	if err := expression.CheckEmbedTextAllowed(); err != nil {
+		return nil, err
+	}
 
 	inLoadData := e.Ctx().GetSessionVars().StmtCtx.InLoadDataStmt
 	firstBatchRowIdx := uint64(0)
@@ -725,7 +732,6 @@ func (e *InsertValues) fillEmbedTextValuesWithRowCount(ctx context.Context, rows
 	type embedTextEvalTask struct {
 		rowIdx       int
 		generatedCol embedTextGeneratedColumn
-		row          chunk.Row
 	}
 	type embedTextEvalResult struct {
 		val types.Datum
@@ -736,38 +742,59 @@ func (e *InsertValues) fillEmbedTextValuesWithRowCount(ctx context.Context, rows
 		isNull bool
 	}
 
-	tasks := make([]embedTextEvalTask, 0, len(rows)*len(embedTextGeneratedCols))
+	inputColOffsets := make([]int, 0)
+	seenInputCols := make(map[int]struct{})
+	for _, generatedCol := range embedTextGeneratedCols {
+		for _, col := range expression.ExtractColumns(generatedCol.expr) {
+			if _, ok := seenInputCols[col.Index]; ok {
+				continue
+			}
+			seenInputCols[col.Index] = struct{}{}
+			inputColOffsets = append(inputColOffsets, col.Index)
+		}
+	}
+
+	taskCapacity := len(rows) * len(embedTextGeneratedCols)
+	tasks := make([]embedTextEvalTask, 0, taskCapacity)
+	results := make([]embedTextEvalResult, 0, taskCapacity)
+	inputs := make([]embedTextEvalInput, 0, taskCapacity)
+	var evalRow chunk.MutRow
+	evalRowInitialized := false
 	for rowIdx, row := range rows {
 		if row == nil {
+			// LOAD DATA can leave a nil row after a non-restrictive row
+			// conversion error. Do not evaluate generated expressions for it.
 			continue
 		}
-		evalRow := chunk.MutRowFromDatums(row).ToRow()
+		if !evalRowInitialized {
+			evalRow = chunk.MutRowFromDatums(row)
+			evalRowInitialized = true
+		} else {
+			for _, colIdx := range inputColOffsets {
+				evalRow.SetDatum(colIdx, row[colIdx])
+			}
+		}
 		for _, generatedCol := range embedTextGeneratedCols {
-			tasks = append(tasks, embedTextEvalTask{
+			task := embedTextEvalTask{
 				rowIdx:       rowIdx,
 				generatedCol: generatedCol,
-				row:          evalRow,
-			})
+			}
+			embedArgs, isNull, err := expression.EvalEmbedTextArgsFromExpr(e.Ctx().GetExprCtx().GetEvalCtx(), evalRow.ToRow(), generatedCol.expr)
+			result := embedTextEvalResult{err: err}
+			input := embedTextEvalInput{isNull: isNull}
+			if err == nil && !isNull {
+				// EvalString may return a zero-copy string backed by evalRow.
+				// Clone it before reusing the row buffer for the next input row.
+				embedArgs.Text = strings.Clone(embedArgs.Text)
+				input.args = embedArgs
+			}
+			tasks = append(tasks, task)
+			results = append(results, result)
+			inputs = append(inputs, input)
 		}
 	}
 	if len(tasks) == 0 {
 		return rows, nil
-	}
-
-	if err := expression.CheckEmbedTextAllowed(); err != nil {
-		return nil, err
-	}
-
-	results := make([]embedTextEvalResult, len(tasks))
-	inputs := make([]embedTextEvalInput, len(tasks))
-	for i, task := range tasks {
-		embedArgs, isNull, err := expression.EvalEmbedTextArgsFromExpr(e.Ctx().GetExprCtx().GetEvalCtx(), task.row, task.generatedCol.expr)
-		if err != nil || isNull {
-			results[i].err = err
-			inputs[i].isNull = isNull
-			continue
-		}
-		inputs[i].args = embedArgs
 	}
 
 	group, groupCtx := errgroup.WithContext(ctx)
