@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
-	statshandle "github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
@@ -46,7 +45,7 @@ const autoPreSplitTestTableSQL = "create table t(a bigint, b bigint, index idx(b
 type fakeAutoPreSplitStatsProvider struct {
 	stats                 *statistics.Table
 	getPhysicalTableStats func()
-	loadColumnStats       func(context.Context, sessionctx.Context, int64, *model.ColumnInfo, int) (*statshandle.ColumnDistributionStats, error)
+	loadColumnStats       func(context.Context, sessionctx.Context, int64, *model.ColumnInfo, int) (*statistics.Column, error)
 }
 
 func (p *fakeAutoPreSplitStatsProvider) GetPhysicalTableStats(int64, *model.TableInfo) *statistics.Table {
@@ -62,7 +61,7 @@ func (p *fakeAutoPreSplitStatsProvider) LoadColumnDistributionStats(
 	physicalTableID int64,
 	colInfo *model.ColumnInfo,
 	maxTopNKeys int,
-) (*statshandle.ColumnDistributionStats, error) {
+) (*statistics.Column, error) {
 	if p.loadColumnStats == nil {
 		return nil, errors.New("unexpected column stats load")
 	}
@@ -157,16 +156,14 @@ func TestPlanAutoPreSplitIndexRegionsTopN(t *testing.T) {
 			physicalTableID int64,
 			colInfo *model.ColumnInfo,
 			maxTopNKeys int,
-		) (*statshandle.ColumnDistributionStats, error) {
+		) (*statistics.Column, error) {
 			deadline, ok := loadCtx.Deadline()
 			require.True(t, ok)
 			require.WithinDuration(t, time.Now().Add(cfg.statsLoadTimeout), deadline, time.Second)
 			require.Equal(t, tblInfo.ID, physicalTableID)
 			require.Equal(t, cfg.maxTopNKeysPerPhysical, maxTopNKeys)
 			require.Same(t, tblInfo.Columns[1], colInfo)
-			return &statshandle.ColumnDistributionStats{
-				Column: loadedStats.GetCol(tblInfo.Columns[1].ID),
-			}, nil
+			return loadedStats.GetCol(tblInfo.Columns[1].ID), nil
 		}
 
 		keys, _, err := planAutoPreSplitIndexRegions(
@@ -188,16 +185,16 @@ func TestPlanAutoPreSplitIndexRegionsTopN(t *testing.T) {
 			_ int64,
 			_ *model.ColumnInfo,
 			_ int,
-		) (*statshandle.ColumnDistributionStats, error) {
+		) (*statistics.Column, error) {
 			<-loadCtx.Done()
 			return nil, loadCtx.Err()
 		}
 
 		keys, reason, err := planAutoPreSplitIndexRegions(
 			context.Background(), sctx, provider, tblInfo, idxInfo, timeoutCfg)
-		require.NoError(t, err)
+		require.ErrorIs(t, err, context.DeadlineExceeded)
 		require.Empty(t, keys)
-		require.Equal(t, "statistics loading timed out", reason)
+		require.Empty(t, reason)
 	})
 
 	defaultCfg := getAutoPreSplitConfig()
@@ -243,7 +240,6 @@ func TestPlanAutoPreSplitIndexRegionsTopN(t *testing.T) {
 		boundaryRatioStep float64
 		expected          int
 	}{
-		{name: "0.01", boundaryRatioStep: 0.01, expected: 99},
 		{name: "0.02", boundaryRatioStep: 0.02, expected: 49},
 		{name: "0.05", boundaryRatioStep: 0.05, expected: 19},
 		{name: "1", boundaryRatioStep: 1, expected: 0},
@@ -261,69 +257,28 @@ func TestPlanAutoPreSplitIndexRegionsTopN(t *testing.T) {
 		})
 	}
 
-	t.Run("component failures are independent", func(t *testing.T) {
-		componentCfg := cfg
-		componentCfg.boundaryRatioStep = 0.5
-		for _, tc := range []struct {
-			name               string
-			topNError          error
-			histogramError     error
-			nullCountError     error
-			expectedBoundaries []string
-		}{
-			{
-				name:               "TopN unavailable",
-				topNError:          errors.New("TopN unavailable"),
-				expectedBoundaries: []string{"20"},
-			},
-			{
-				name:               "Histogram unavailable",
-				histogramError:     errors.New("Histogram unavailable"),
-				expectedBoundaries: []string{"10"},
-			},
-			{
-				name:               "NullCount unavailable",
-				nullCountError:     errors.New("NullCount unavailable"),
-				expectedBoundaries: []string{"20"},
-			},
-		} {
-			t.Run(tc.name, func(t *testing.T) {
-				topN := buildAutoPreSplitTopN(
-					t, sctx.GetSessionVars().StmtCtx.TimeZone(),
-					[]int64{10, 30}, []uint64{50, 50})
-				loadedStats := buildAutoPreSplitTestStats(
-					tblInfo.ID, 250, 0, tblInfo.Columns[1], topN)
-				setAutoPreSplitTestHistogram(
-					t, loadedStats.GetCol(tblInfo.Columns[1].ID), tblInfo.Columns[1], 50,
-					types.MakeDatums(20, 40), []int64{50, 50})
-				cachedStats := buildAutoPreSplitTestStats(
-					tblInfo.ID, 250, 0, tblInfo.Columns[1], nil)
-				cachedStats.GetCol(tblInfo.Columns[1].ID).StatsLoadedStatus =
-					statistics.NewStatsAllEvictedStatus()
-				provider := &fakeAutoPreSplitStatsProvider{stats: cachedStats}
-				provider.loadColumnStats = func(
-					context.Context,
-					sessionctx.Context,
-					int64,
-					*model.ColumnInfo,
-					int,
-				) (*statshandle.ColumnDistributionStats, error) {
-					return &statshandle.ColumnDistributionStats{
-						Column:         loadedStats.GetCol(tblInfo.Columns[1].ID),
-						TopNError:      tc.topNError,
-						HistogramError: tc.histogramError,
-						NullCountError: tc.nullCountError,
-					}, nil
-				}
-
-				keys, _, err := planAutoPreSplitIndexRegions(
-					context.Background(), sctx, provider, tblInfo, idxInfo, componentCfg)
-				require.NoError(t, err)
-				require.Equal(
-					t, tc.expectedBoundaries,
-					splitKeyFirstValuesForIndex(t, keys, idxInfo.ID))
-			})
+	t.Run("statistics load failure stops planning", func(t *testing.T) {
+		loadErr := errors.New("TopN unavailable")
+		cachedStats := buildAutoPreSplitTestStats(
+			tblInfo.ID, 250, 0, tblInfo.Columns[1], nil)
+		cachedStats.GetCol(tblInfo.Columns[1].ID).StatsLoadedStatus =
+			statistics.NewStatsAllEvictedStatus()
+		provider := &fakeAutoPreSplitStatsProvider{stats: cachedStats}
+		provider.loadColumnStats = func(
+			context.Context,
+			sessionctx.Context,
+			int64,
+			*model.ColumnInfo,
+			int,
+		) (*statistics.Column, error) {
+			return nil, loadErr
 		}
+
+		keys, reason, err := planAutoPreSplitIndexRegions(
+			context.Background(), sctx, provider, tblInfo, idxInfo, cfg)
+		require.ErrorIs(t, err, loadErr)
+		require.Empty(t, keys)
+		require.Empty(t, reason)
 	})
 
 	for _, collation := range []string{"utf8mb4_general_ci", "utf8mb4_bin"} {
@@ -463,6 +418,26 @@ func TestAutoPreSplitIndexRegionsGateAndManualOverride(t *testing.T) {
 	err = runAutoPreSplit(nil, nil, &fakeAutoPreSplitStatsProvider{stats: badStatsTbl})
 	require.NoError(t, err)
 	require.Empty(t, capturedKeys)
+	t.Run("statistics load failure skips AUTO", func(t *testing.T) {
+		cachedStats := buildAutoPreSplitTestStats(tblInfo.ID, 100, 0, tblInfo.Columns[1], nil)
+		cachedStats.GetCol(tblInfo.Columns[1].ID).StatsLoadedStatus =
+			statistics.NewStatsAllEvictedStatus()
+		loadErr := errors.New("statistics unavailable")
+		provider := &fakeAutoPreSplitStatsProvider{stats: cachedStats}
+		provider.loadColumnStats = func(
+			context.Context,
+			sessionctx.Context,
+			int64,
+			*model.ColumnInfo,
+			int,
+		) (*statistics.Column, error) {
+			return nil, loadErr
+		}
+
+		err := runAutoPreSplit(context.Background(), nil, provider)
+		require.NoError(t, err)
+		require.Empty(t, capturedKeys)
+	})
 
 	hotTopN := buildAutoPreSplitTopN(t, sctx.GetSessionVars().StmtCtx.TimeZone(), []int64{20, 30}, []uint64{50, 40})
 	hotStatsTbl := buildAutoPreSplitTestStats(tblInfo.ID, 100, 0, tblInfo.Columns[1], hotTopN)
@@ -490,11 +465,9 @@ func TestAutoPreSplitIndexRegionsGateAndManualOverride(t *testing.T) {
 			int64,
 			*model.ColumnInfo,
 			int,
-		) (*statshandle.ColumnDistributionStats, error) {
+		) (*statistics.Column, error) {
 			loadCount++
-			return &statshandle.ColumnDistributionStats{
-				Column: loadedStats.GetCol(tblInfo.Columns[1].ID),
-			}, nil
+			return loadedStats.GetCol(tblInfo.Columns[1].ID), nil
 		}
 		args := &model.ModifyIndexArgs{IndexArgs: []*model.IndexArg{
 			{AutoPreSplit: true},
@@ -584,7 +557,7 @@ func TestAutoPreSplitIndexRegionsGateAndManualOverride(t *testing.T) {
 			_ int64,
 			_ *model.ColumnInfo,
 			_ int,
-		) (*statshandle.ColumnDistributionStats, error) {
+		) (*statistics.Column, error) {
 			cancel(pauseErr)
 			<-loadCtx.Done()
 			return nil, loadCtx.Err()

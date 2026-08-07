@@ -23,15 +23,12 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
-	"go.uber.org/zap"
 )
 
 type autoPreSplitStatsProvider interface {
@@ -42,7 +39,7 @@ type autoPreSplitStatsProvider interface {
 		physicalTableID int64,
 		colInfo *model.ColumnInfo,
 		maxTopNKeys int,
-	) (*handle.ColumnDistributionStats, error)
+	) (*statistics.Column, error)
 }
 
 type autoPreSplitConfig struct {
@@ -55,11 +52,20 @@ type autoPreSplitConfig struct {
 
 func getAutoPreSplitConfig() autoPreSplitConfig {
 	cfg := autoPreSplitConfig{
-		minTableRows:           1_000_000,
+		// AUTO is intended for large tables, where distributing add-index writes
+		// outweighs the statistics loading and Region operation overhead.
+		minTableRows: 1_000_000,
+		// Use Analyze's supported maximum so all stored TopN entries can
+		// participate while the storage query remains bounded.
 		maxTopNKeysPerPhysical: int(vardef.MaxTiDBAnalyzeDefaultNumTopN),
-		statsLoadTimeout:       30 * time.Second,
-		minStatsHealthy:        80,
-		boundaryRatioStep:      0.02,
+		// Bound the delay this optional optimization can add before add-index starts.
+		statsLoadTimeout: 30 * time.Second,
+		// Require statistics with no more than about 20% modified rows so stale
+		// distributions do not produce poor split boundaries.
+		minStatsHealthy: 80,
+		// A 2% step produces at most 49 internal boundaries. Performance tests
+		// showed that it had the smallest impact on online workload TPS during add-index.
+		boundaryRatioStep: 0.02,
 	}
 	failpoint.Inject("mockAutoPresplitConfig", func(val failpoint.Value) {
 		if minRows, ok := val.(int); ok && minRows > 0 {
@@ -95,56 +101,12 @@ func planAutoPreSplitWithCache(
 	cfg autoPreSplitConfig,
 	boundaryCache map[int64][][]types.Datum,
 ) ([][]byte, string, error) {
-	if tblInfo.GetPartitionInfo() != nil {
-		return nil, "partitioned table", nil
-	}
-	// Ordinary column statistics describe the full table rather than the
-	// predicate-filtered row set represented by a partial index.
-	if idxInfo.HasCondition() {
-		return nil, "partial index", nil
-	}
-	if statsProvider == nil {
-		return nil, "stats handle is nil", nil
-	}
-	if len(idxInfo.Columns) == 0 {
-		return nil, "index has no columns", nil
+	statsTbl, leadingCol, reason := checkAutoPreSplitEligibility(
+		statsProvider, tblInfo, idxInfo, cfg)
+	if reason != "" {
+		return nil, reason, nil
 	}
 
-	statsTbl := statsProvider.GetPhysicalTableStats(tblInfo.ID, tblInfo)
-	if statsTbl == nil {
-		return nil, "stats missing", nil
-	}
-	if statsTbl.Pseudo {
-		return nil, "stats pseudo", nil
-	}
-	if statsTbl.IsOutdated() {
-		return nil, "stats outdated", nil
-	}
-	healthy, ok := statsTbl.GetStatsHealthy()
-	if !ok {
-		return nil, "stats health unavailable", nil
-	}
-	if healthy < cfg.minStatsHealthy {
-		return nil, fmt.Sprintf("stats health %d below threshold %d", healthy, cfg.minStatsHealthy), nil
-	}
-	if statsTbl.RealtimeCount < cfg.minTableRows {
-		return nil, fmt.Sprintf("row count %d below threshold %d", statsTbl.RealtimeCount, cfg.minTableRows), nil
-	}
-
-	// Auto presplit intentionally uses only the leading index column. The available
-	// per-column statistics cannot describe later-column distributions under a hot
-	// leading-column value, and deriving such split keys would require reading table data.
-	leadingIdxCol := idxInfo.Columns[0]
-	offset := leadingIdxCol.Offset
-	if offset < 0 || offset >= len(tblInfo.Columns) {
-		return nil, "leading column not found", nil
-	}
-	leadingCol := tblInfo.Columns[offset]
-	// A column TopN only keeps the full value's collation key, which cannot be
-	// truncated by characters for a prefix index.
-	if types.IsString(leadingCol.GetType()) && leadingIdxCol.Length != types.UnspecifiedLength {
-		return nil, "leading string column uses prefix index", nil
-	}
 	// Reuse sampled boundaries for indexes sharing a leading column, avoiding duplicate
 	// statistics loads within one add-index statement.
 	if boundaryRows, ok := boundaryCache[leadingCol.ID]; ok {
@@ -156,66 +118,53 @@ func planAutoPreSplitWithCache(
 		return nil, "leading column stats missing or not analyzed", nil
 	}
 
-	loaded := &handle.ColumnDistributionStats{Column: colStats}
+	loaded := colStats
 	if loadNeeded {
 		loadCtx, cancel := context.WithTimeout(ctx, cfg.statsLoadTimeout)
 		var err error
 		loaded, err = statsProvider.LoadColumnDistributionStats(
 			loadCtx, sctx, tblInfo.ID, leadingCol, cfg.maxTopNKeysPerPhysical)
-		loadCause := context.Cause(loadCtx)
 		cancel()
-		if loadCause == context.DeadlineExceeded && context.Cause(ctx) == nil {
-			return nil, "statistics loading timed out", nil
-		}
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to load leading column statistics from storage: %w", err)
 		}
 	}
-	if loaded == nil || loaded.Column == nil {
+	if loaded == nil {
 		return nil, "leading column stats metadata missing", nil
 	}
-	if loaded.Column.StatsVer != statistics.Version2 {
-		return nil, fmt.Sprintf("leading column stats version %d is not Analyze V2", loaded.Column.StatsVer), nil
+	if loaded.StatsVer != statistics.Version2 {
+		return nil, fmt.Sprintf("leading column stats version %d is not Analyze V2", loaded.StatsVer), nil
+	}
+	if loaded.NullCount < 0 {
+		return nil, "", fmt.Errorf("leading column statistics have negative null count %d", loaded.NullCount)
 	}
 
 	// The configured TopN maximum equals Analyze's supported maximum, so all valid
 	// TopN entries and Histogram buckets participate in boundary planning.
-	events := make([]autoPreSplitEvent, 0, cfg.maxTopNKeysPerPhysical+loaded.Column.Histogram.Len()+1)
-	if loaded.NullCountError != nil {
-		logAutoPreSplitComponentFailure(tblInfo, idxInfo, "NullCount", loaded.NullCountError)
-	} else if loaded.Column.NullCount > 0 {
+	events := make([]autoPreSplitEvent, 0, cfg.maxTopNKeysPerPhysical+loaded.Histogram.Len()+1)
+	if loaded.NullCount > 0 {
 		nullEvent, err := newAutoPreSplitEvent(
-			sctx, types.NewDatum(nil), uint64(loaded.Column.NullCount), leadingCol)
+			sctx, types.NewDatum(nil), uint64(loaded.NullCount), leadingCol)
 		if err != nil {
-			logAutoPreSplitComponentFailure(tblInfo, idxInfo, "NullCount", err)
-		} else {
-			events = append(events, nullEvent)
+			return nil, "", fmt.Errorf("failed to build NullCount auto pre-split event: %w", err)
 		}
+		events = append(events, nullEvent)
 	}
 
-	if loaded.TopNError != nil {
-		logAutoPreSplitComponentFailure(tblInfo, idxInfo, "TopN", loaded.TopNError)
-	} else {
-		topNEvents, err := buildAutoPreSplitTopNEvents(
-			sctx, loaded.Column.TopN, leadingCol, cfg.maxTopNKeysPerPhysical)
-		if err != nil {
-			logAutoPreSplitComponentFailure(tblInfo, idxInfo, "TopN", err)
-		} else {
-			events = append(events, topNEvents...)
-		}
+	topNEvents, err := buildAutoPreSplitTopNEvents(
+		sctx, loaded.TopN, leadingCol, cfg.maxTopNKeysPerPhysical)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to build TopN auto pre-split events: %w", err)
 	}
+	events = append(events, topNEvents...)
 
-	if loaded.HistogramError != nil {
-		logAutoPreSplitComponentFailure(tblInfo, idxInfo, "Histogram", loaded.HistogramError)
-	} else {
-		histogramEvents, err := buildAutoPreSplitHistogramEvents(
-			sctx, &loaded.Column.Histogram, leadingCol)
-		if err != nil {
-			logAutoPreSplitComponentFailure(tblInfo, idxInfo, "Histogram", err)
-		} else {
-			events = append(events, histogramEvents...)
-		}
+	histogramEvents, err := buildAutoPreSplitHistogramEvents(
+		sctx, &loaded.Histogram, leadingCol)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to build Histogram auto pre-split events: %w", err)
 	}
+	events = append(events, histogramEvents...)
+
 	events, totalCount, err := mergeAutoPreSplitEvents(events)
 	if err != nil {
 		return nil, "", err
@@ -232,6 +181,67 @@ func planAutoPreSplitWithCache(
 		boundaryCache[leadingCol.ID] = boundaryRows
 	}
 	return splitKeys, "", err
+}
+
+func checkAutoPreSplitEligibility(
+	statsProvider autoPreSplitStatsProvider,
+	tblInfo *model.TableInfo,
+	idxInfo *model.IndexInfo,
+	cfg autoPreSplitConfig,
+) (*statistics.Table, *model.ColumnInfo, string) {
+	if tblInfo.GetPartitionInfo() != nil {
+		return nil, nil, "partitioned table"
+	}
+	// Ordinary column statistics describe the full table rather than the
+	// predicate-filtered row set represented by a partial index.
+	if idxInfo.HasCondition() {
+		return nil, nil, "partial index"
+	}
+	if len(idxInfo.Columns) == 0 {
+		return nil, nil, "index has no columns"
+	}
+
+	statsTbl := statsProvider.GetPhysicalTableStats(tblInfo.ID, tblInfo)
+	// Provider implementations may report an uninitialized cache entry as nil
+	// or pseudo statistics. Neither has a reliable distribution for AUTO.
+	if statsTbl == nil {
+		return nil, nil, "stats missing"
+	}
+	if statsTbl.Pseudo {
+		return nil, nil, "stats pseudo"
+	}
+	// Cached statistics can remain usable for query planning after substantial
+	// table changes, but AUTO skips them because its split boundaries cannot be
+	// corrected after add-index starts.
+	if statsTbl.IsOutdated() {
+		return nil, nil, "stats outdated"
+	}
+	healthy, ok := statsTbl.GetStatsHealthy()
+	if !ok {
+		return nil, nil, "stats health unavailable"
+	}
+	if healthy < cfg.minStatsHealthy {
+		return nil, nil, fmt.Sprintf("stats health %d below threshold %d", healthy, cfg.minStatsHealthy)
+	}
+	if statsTbl.RealtimeCount < cfg.minTableRows {
+		return nil, nil, fmt.Sprintf("row count %d below threshold %d", statsTbl.RealtimeCount, cfg.minTableRows)
+	}
+
+	// Auto presplit intentionally uses only the leading index column. The available
+	// per-column statistics cannot describe later-column distributions under a hot
+	// leading-column value, and deriving such split keys would require reading table data.
+	leadingIdxCol := idxInfo.Columns[0]
+	offset := leadingIdxCol.Offset
+	if offset < 0 || offset >= len(tblInfo.Columns) {
+		return nil, nil, "leading column not found"
+	}
+	leadingCol := tblInfo.Columns[offset]
+	// A column TopN only keeps the full value's collation key, which cannot be
+	// truncated by characters for a prefix index.
+	if types.IsString(leadingCol.GetType()) && leadingIdxCol.Length != types.UnspecifiedLength {
+		return nil, nil, "leading string column uses prefix index"
+	}
+	return statsTbl, leadingCol, ""
 }
 
 func buildAutoPreSplitIndexKeys(
@@ -392,8 +402,7 @@ func sampleAutoPreSplitEvents(
 	totalCount uint64,
 	boundaryRatioStep float64,
 ) [][]types.Datum {
-	if totalCount == 0 || math.IsNaN(boundaryRatioStep) || math.IsInf(boundaryRatioStep, 0) ||
-		boundaryRatioStep <= 0 || boundaryRatioStep > 1 {
+	if totalCount == 0 {
 		return nil
 	}
 	nextThresholdIndex := float64(1)
@@ -401,39 +410,22 @@ func sampleAutoPreSplitEvents(
 	rows := make([][]types.Datum, 0)
 	// Emit only internal cumulative-distribution quantiles. One value is emitted
 	// even if it crosses multiple thresholds, the terminal 100% boundary is
-	// excluded, and Nextafter tolerates floating-point rounding at thresholds.
+	// excluded.
 	for _, event := range events {
 		cumulative += event.count
 		nextThreshold := nextThresholdIndex * boundaryRatioStep
-		if autoPreSplitThresholdReached(nextThreshold, 1) {
+		if nextThreshold >= 1 {
 			break
 		}
 		cumulativeRatio := float64(cumulative) / float64(totalCount)
-		if !autoPreSplitThresholdReached(cumulativeRatio, nextThreshold) {
+		if cumulativeRatio < nextThreshold {
 			continue
 		}
 		rows = append(rows, []types.Datum{event.value})
-		crossedThresholds := math.Floor(math.Nextafter(cumulativeRatio/boundaryRatioStep, math.Inf(1)))
+		crossedThresholds := math.Floor(cumulativeRatio / boundaryRatioStep)
 		nextThresholdIndex = max(nextThresholdIndex+1, crossedThresholds+1)
 	}
 	return rows
-}
-
-func autoPreSplitThresholdReached(value, threshold float64) bool {
-	return value >= threshold || math.Nextafter(value, math.Inf(1)) >= threshold
-}
-
-func logAutoPreSplitComponentFailure(
-	tblInfo *model.TableInfo,
-	idxInfo *model.IndexInfo,
-	component string,
-	err error,
-) {
-	logutil.DDLLogger().Warn("ignore unavailable auto presplit statistics component",
-		zap.String("table", tblInfo.Name.L),
-		zap.String("index", idxInfo.Name.L),
-		zap.String("component", component),
-		zap.Error(err))
 }
 
 func sortAndDedupeAutoPreSplitKeys(keys [][]byte) [][]byte {
