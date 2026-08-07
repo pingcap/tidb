@@ -34,6 +34,13 @@ The boundary test is:
     masking::source_width_tests::restrict_ops_preserve_the_full_go_uint64_domain
 
 It covers the same six direct-Go values, JSON round trips, and the unknown-bit
-restore boundary. The mutation probe must narrow or truncate the backing value
-and must be killed by this test before this unit is returned.
+restore boundary. The mutation probe replaced `Self(bits)` with
+`Self(bits & u8::MAX as u64)` in a disposable worktree and ran:
 
+    CARGO_BUILD_JOBS=12 \
+      CARGO_TARGET_DIR=/private/tmp/cargo-target-task325-tidb-ast-masking-ops-mutation \
+      cargo test --offline --locked -j12 -p tidb-ast --lib \
+      restrict_ops_preserve_the_full_go_uint64_domain
+
+The test was killed at the first value outside the old representation:
+`left: 0`, `right: 256`. The authoritative worktree was never mutated.
