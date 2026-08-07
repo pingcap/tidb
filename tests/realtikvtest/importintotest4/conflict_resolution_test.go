@@ -28,6 +28,8 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/fsouza/fake-gcs-server/fakestorage"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
@@ -36,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 	"github.com/tikv/client-go/v2/util"
 	"google.golang.org/grpc/codes"
@@ -538,6 +541,50 @@ func (s *mockGCSSuite) TestGlobalSortDistinguishesCommonHandlesWithSameString() 
 		[]string{},
 		"checksum_table = 'required'",
 	)
+}
+
+func (s *mockGCSSuite) TestGlobalSortFunctionalIndexConflictAfterAddingVisibleColumn() {
+	if kerneltype.IsClassic() {
+		s.T().Skip("requires the NextGen MinIO object store")
+	}
+
+	sourceStore, err := handle.NewObjStore(s.ctx, realtikvtest.GetNextGenObjStoreURI("issue-70372"))
+	s.NoError(err)
+	s.T().Cleanup(func() {
+		s.NoError(sourceStore.DeleteFile(s.ctx, "issue-70372.csv"))
+		sourceStore.Close()
+	})
+	s.NoError(sourceStore.WriteFile(s.ctx, "issue-70372.csv", []byte("1,10,100\n2,10,200\n")))
+
+	s.prepareAndUseDB("issue_70372")
+	s.tk.MustExec(`create table t (
+		id bigint primary key clustered,
+		a int,
+		unique key uk_expr ((a + 1))
+	)`)
+	s.tk.MustExec("alter table t add column tail int")
+	s.tk.MustExec("alter table t add unique key uk_tail (tail)")
+
+	result := s.tk.MustQuery(fmt.Sprintf(`import into t from '%s'
+		with on_duplicate_key='capture', cloud_storage_uri='%s'`,
+		realtikvtest.GetNextGenObjStoreURI("issue-70372/*.csv"),
+		realtikvtest.GetNextGenObjStoreURI("issue-70372-sort"))).Rows()
+	s.Len(result, 1)
+	jobID, err := strconv.Atoi(result[0][0].(string))
+	s.NoError(err)
+
+	rows := s.tk.MustQuery("select summary from mysql.tidb_import_jobs where id = ?", jobID).Rows()
+	s.Len(rows, 1)
+	var summary importer.Summary
+	s.NoError(json.Unmarshal([]byte(rows[0][0].(string)), &summary))
+	s.Zero(summary.ImportedRows)
+	s.EqualValues(2, summary.ConflictRowCnt)
+
+	s.tk.MustQuery("select * from t").Check(testkit.Rows())
+	s.tk.MustExec("admin check table t")
+	s.tk.MustExec("insert into t values (3, 30, 100)")
+	s.tk.MustQuery("select * from t").Check(testkit.Rows("3 30 100"))
+	s.tk.MustExec("admin check table t")
 }
 
 func (s *mockGCSSuite) TestGlobalSortConflictResolutionMultipleSubtasks() {
