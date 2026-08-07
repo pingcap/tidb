@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/crossks"
 	"github.com/pingcap/tidb/pkg/domain/globalconfigsync"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/dxf/framework/metering"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
@@ -160,6 +161,8 @@ type Domain struct {
 	isSyncer        *issyncer.Syncer
 	globalCfgSyncer *globalconfigsync.GlobalConfigSyncer
 	schemaLease     time.Duration
+
+	serverInfoSyncerOptions []serverinfo.SyncerOption
 	// advancedSysSessionPool is a more powerful session pool that returns a wrapped session which can detect
 	// some misuse of the session to avoid potential bugs.
 	// It is recommended to use this pool instead of `sysSessionPool`.
@@ -570,6 +573,7 @@ func NewDomainWithEtcdClient(
 	crossKSSessFactoryGetter func(targetKS string, validator validatorapi.Validator) pools.Factory,
 	etcdClient *clientv3.Client,
 	schemaFilter issyncer.Filter,
+	serverInfoSyncerOptions ...serverinfo.SyncerOption,
 ) *Domain {
 	intest.Assert(schemaLease > 0, "schema lease should be a positive duration")
 	do := &Domain{
@@ -583,6 +587,7 @@ func NewDomainWithEtcdClient(
 		dumpFileGcChecker: &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{replayer.GetPlanReplayerDirName(), GetOptimizerTraceDirName(), GetExtractTaskDirName()}},
 
 		crossKSSessFactoryGetter: crossKSSessFactoryGetter,
+		serverInfoSyncerOptions:  serverInfoSyncerOptions,
 	}
 
 	do.advancedSysSessionPool = syssession.NewAdvancedSessionPool(systemSessionPoolSize, func() (syssession.SessionContext, error) {
@@ -724,7 +729,7 @@ func (do *Domain) Init(
 	skipRegisterToDashboard := config.GetGlobalConfig().SkipRegisterToDashboard
 	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID,
 		do.etcdClient, do.unprefixedEtcdCli, pdCli, pdHTTPCli,
-		do.Store().GetCodec(), skipRegisterToDashboard, do.infoCache)
+		do.Store().GetCodec(), skipRegisterToDashboard, do.infoCache, do.serverInfoSyncerOptions...)
 	if err != nil {
 		return err
 	}
