@@ -35,7 +35,7 @@ import (
 
 func TestCancelWhileScan(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
+	tk := testkit.NewTestKitWithSession(t, store, testkit.NewSession(t, store))
 
 	tk.MustExec("create table test.t (id int, created_at datetime) TTL= created_at + interval 1 hour")
 	testTable, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -111,6 +111,11 @@ func TestCancelWhileScan(t *testing.T) {
 
 func TestCancelWhileScanAtStatementBoundary(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
+	// Keep the background TTL scheduler from consuming rows before this test
+	// drives the scan through the SQLKiller reset failpoint.
+	dom.TTLJobManager().Stop()
+	require.NoError(t, dom.TTLJobManager().WaitStopped(context.Background(), time.Minute))
+
 	tk := testkit.NewTestKit(t, store)
 
 	origBatchSize := vardef.TTLScanBatchSize.Load()
