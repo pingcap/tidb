@@ -2,9 +2,9 @@
 
 This document is the complete handoff for an agent contributing a source-file
 lockdown. It deliberately does not depend on a Codex task, conversation,
-memory, machine-specific path, existing checkout, or another agent's local
-state. The Git remotes and checked-in repository files are the coordination
-surface.
+memory, machine-specific path, existing checkout, Cargo or Go cache, or another
+agent's local state. A fresh clone plus the dispatch envelope below is enough.
+The Git remotes and checked-in repository files are the coordination surface.
 
 ## Outcome
 
@@ -20,40 +20,52 @@ A source-file lockdown is not a claim that the enclosing Go package is fully
 transcreated. Repository-wide package completion remains governed by
 `AGENTS.md` non-negotiable 6.
 
-## Current campaign state
+## Required dispatch envelope
 
-Use the newest accepted commit that is present on both `origin` and `ngaut`.
-At this revision the accepted implementation chain includes the completed
-`parse.go` lockdown through:
+Mutable campaign state does not belong in this document because it becomes
+stale. The coordinator supplies exactly one dispatch envelope for each unit:
 
-    4d038ca95be7c9a6a8c1f184871d37475c50afdb
+```text
+accepted_sha: <full commit present on both origin and ngaut>
+accepted_ref: <same full branch ref on both remotes, naming accepted_sha>
+rust_crate: <exactly one crate owned by this unit>
+owning_go_source: <one complete production Go source file>
+branch: codex/task325-<rust-crate>-<go-basename>-lockdown
+already_locked_sources: <complete list at accepted_sha>
+reserved_crates: <all currently active crate owners>
+ranked_evidence: <optional queue row; never parity proof>
+```
 
-The following source files are already locked and must not be reopened:
+The agent verifies the envelope from both remotes before editing. Blank,
+ambiguous, stale, or conflicting ownership data means stop and return a
+falsification receipt; do not choose a substitute target. A ranked test row is
+only dispatch evidence. Re-read the Go test, follow its production calls to
+the defining Go file, and falsify the row if the behavior is already owned or
+the premise is wrong.
 
-| Rust crate | Owning Go source | Final commit |
-| --- | --- | --- |
-| `tidb-datatype` | `pkg/types/vector.go` | `ff766675780d0d2089245b0b5ac02ebdc1bd3fe6` |
-| `tidb-datatype` | `pkg/types/vector_functions.go` | `e5c619d62a21f26372bf11e7a717d873405db3d2` |
-| `tidb-datatype` | `pkg/types/json_binary_functions.go` | `32d0096e93a1b530ad34b093045c2febe83220c5` |
-| `tidb-datatype` | `pkg/types/time.go` | `163559e78020c57547e437089be1f28c3552f7a9` |
-| `tidb-server` and `tidb-protocol` | `pkg/server/internal/parse/parse.go` | `4d038ca95be7c9a6a8c1f184871d37475c50afdb` |
+## Fresh-host bootstrap
 
-The following crates are reserved by active owners and must not be claimed by
-another agent:
+Do not depend on a pre-existing checkout, unpushed commit, local patch, cache,
+probe output, absolute path, or another agent's worktree. Starting from an
+empty host, only Git credentials for both remotes and the repository's normal
+Go/Rust build toolchains are required:
 
-| Rust crate | Active boundary |
-| --- | --- |
-| `tidb-expr` | existing `L1cast` expression/cast owner |
-| `tidb-executor` | existing `L6driver` executor owner |
+```sh
+git clone git@github.com:pingcap/tidb.git <repository>
+git -C <repository> remote add ngaut git@github.com:ngaut/tidb.git
+git -C <repository> fetch origin --prune
+git -C <repository> fetch ngaut --prune
+git -C <repository> ls-remote origin <accepted-ref>
+git -C <repository> ls-remote ngaut <accepted-ref>
+git -C <repository> cat-file -e <accepted-sha>^{commit}
+```
 
-The highest-ranked currently eligible independent surfaces are therefore
-rank 18 (`pkg/meta/meta_test.go::TestMeta`, landing in `tidb-meta`) and rank 19
-(`pkg/statistics/histogram_test.go` merge tests, landing in `tidb-stats`). The
-ranking source is `rust/docs/operations/test-coverage-gaps.md`. Its rows are a
-dispatch queue, not proof of missing behavior: re-read the Go test and resolve
-the exact owning production source before claiming a crate. Falsifying a stale
-ranked row is a successful finding; continue with the complete source-file
-lockdown only when that source is not already locked.
+If the clone already defines `ngaut`, verify its URL instead of adding it.
+Both `ls-remote` checks must print the full `accepted_sha` for the dispatched
+`accepted_ref`, and `cat-file` must resolve it as a commit. Never recover inputs
+from a coordinator's machine. Generate probes and inventories from the
+checked-in Go source in the unit's own worktree, and check every durable input
+or generator into the branch.
 
 ## One-owner-per-crate protocol
 
@@ -62,8 +74,9 @@ same crate concurrently, even when their Rust files appear disjoint. Before
 editing:
 
 1. Fetch both remotes and list campaign branches.
-2. Read this document at the newest accepted common tip.
-3. Reject any target whose crate is listed as active or already locked.
+2. Check out the exact dispatched `accepted_sha` and read this document there.
+3. Reject any target whose crate is reserved or whose source is already locked
+   in the dispatch envelope or checked-in inventories.
 4. Choose exactly one eligible crate and resolve exactly one owning Go source
    file.
 5. Create a dedicated branch named
@@ -71,7 +84,9 @@ editing:
 6. Push that branch, still pointing at the accepted base if necessary, to both
    remotes as the ownership announcement before changing Rust code.
 
-Use these repository-independent commands, replacing angle-bracket values:
+Use these repository-independent commands, replacing angle-bracket values.
+The worktree and Cargo target paths must be newly allocated and exclusive to
+this unit:
 
     git fetch origin --prune
     git fetch ngaut --prune
@@ -83,12 +98,15 @@ Use these repository-independent commands, replacing angle-bracket values:
 
 Every worktree uses a target directory that no other worktree uses:
 
+    cd <worktree>/rust
     CARGO_BUILD_JOBS=12 CARGO_TARGET_DIR=<exclusive-target> \
-      cargo test --offline --locked -j12 -p <crate> --all-targets
+      cargo test --locked -j12 -p <crate> --all-targets
 
-Never inspect or build from an older shared checkout. If another agent has
-claimed every eligible crate, dispatch nothing and wait. Do not manufacture
-parallelism by taking a second file in an owned crate.
+Do not add `--offline`: a fresh agent is not assumed to have a dependency
+cache. `Cargo.lock` remains authoritative through `--locked`. Never inspect or
+build from an older shared checkout. If another agent has claimed every
+eligible crate, dispatch nothing and wait. Do not manufacture parallelism by
+taking a second file in an owned crate.
 
 ## Source ownership and inventory
 
@@ -192,6 +210,34 @@ The handoff must state:
 - exact validation commands and results;
 - correctness, compatibility, and performance risks;
 - what was not verified and why.
+
+Return this receipt with every branch, including falsifications and no-code
+lockdowns:
+
+```text
+outcome: COMPLETE | FALSIFIED | BLOCKED
+branch: <branch>
+sha: <full final SHA, or accepted_sha when no commit was required>
+accepted_base: <full accepted_sha>
+rust_crate: <crate>
+owning_go_source: <path>
+inventory: <production declarations>/<branches>/<test-support declarations>
+classifications: <PORTED>/<DECLINED>/<UNREACHABLE>
+divergences: <measured list, or NONE>
+mutations: <killed>/<attempted, with every test identity>
+ratchets_before_after: <directly grepped values; say UNCHANGED plainly>
+validation: <exact commands and results>
+risks: <correctness/compatibility/performance>
+not_verified: <items and reasons, or NOTHING>
+origin_ref: <ls-remote output>
+ngaut_ref: <ls-remote output>
+cleanup: <exact worktree and exclusive target reclaimed>
+```
+
+`COMPLETE` means the whole dispatched Go source is classified and gated. It
+does not mean the enclosing Go package is fully transcreated. `FALSIFIED` is a
+successful result when measurement disproves the brief. `BLOCKED` is reserved
+for an external condition the unit cannot resolve without broadening scope.
 
 Only after both remote refs match may the unit remove its worktrees and exact
 exclusive target/cache paths. Build artifacts are regenerable; source and the
