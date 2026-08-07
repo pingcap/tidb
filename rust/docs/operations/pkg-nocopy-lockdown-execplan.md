@@ -19,7 +19,8 @@ The source's important behavioral contract is its `sync.Locker` marker: Go's `go
 - [x] (2026-08-08) Added the compiled owner/evidence gate, five-suite mutation plan, eight killed results, deterministic checker, compiled mutation receipt gate, and content-addressed receipt.
 - [x] (2026-08-08) Killed all eight planned mutations from immutable provisional commit `0474a0242a5396e40bb43b8691c29bf4ce919694`; every mutated file was restored to its saved SHA-256 and passed its restored check.
 - [x] (2026-08-08) Passed the WIP gate: no-failpoint Go package oracle, complete checker, all 287 `tidb-util` tests, rustdoc compile-fail test, package Clippy with warnings denied, workspace fmt, and `git diff --check`.
-- [ ] Run WIP and Ready/full-workspace gates, publish by ordinary fast-forward, and verify GitHub attribution to `dbsid`.
+- [x] (2026-08-08) Passed the clean code-bearing Ready gate at `1c6f8e2bb06913fea670288a780323ed09ad880d`: exact Go oracle, checker, rustdoc 1/1, 287/287 `tidb-util`, 7130/7130 workspace tests with 41 skips, workspace Clippy with warnings denied, fmt, direct ratchets, `git diff --check`, and `make -j12 lint`.
+- [x] (2026-08-08) Published the code-bearing nocopy chain by ordinary fast-forward to official `pingcap/tidb:hparser-integration`; `git ls-remote` returned `1c6f8e2bb06913fea670288a780323ed09ad880d`, and GitHub API mapped author and committer to `dbsid <huanshengchen@gmail.com>` for both nocopy commits.
 
 ## Surprises & Discoveries
 
@@ -29,6 +30,10 @@ The source's important behavioral contract is its `sync.Locker` marker: Go's `go
   Evidence: a temporary copied package plus `copyMarker` and `copyHolder` produced four `copylocks` diagnostics: parameter and return copies for both the marker and a holder containing it.
 - Observation: the existing Rust landing had a seven-row manual inventory and did not hash `pkg/util/nocopy/BUILD.bazel`.
   Evidence: the generic Go AST tool reports exactly three obligations (two functions and one declaration), while the package boundary contains two tracked artifacts.
+- Observation: the repository requires Rust 1.97 while this machine's default `stable` toolchain is 1.95.
+  Evidence: the first resumed probe rejected `tidb-util`'s `rust-version = "1.97"`; every accepted WIP and Ready command explicitly used the installed `+1.97` toolchain.
+- Observation: `make -j12 lint` exits zero on macOS while printing two pre-existing diagnostics.
+  Evidence: it reports the `rust/difftests/gobinaryrow` internal-package import and BSD `find` rejecting `-n`, then runs every dashboard-linter target and returns zero; nocopy changes neither affected path.
 
 ## Decision Log
 
@@ -44,7 +49,7 @@ The source's important behavioral contract is its `sync.Locker` marker: Go's `go
 
 ## Outcomes & Retrospective
 
-No completion outcome is claimed yet. Source reading, Go/Rust boundary measurements, artifact manifest, generic inventory, compiled owner/evidence gate, mutation proof, receipt, and WIP gate are complete; the clean Ready gate and publication remain unfinished.
+The complete `pkg/util/nocopy` package lockdown is published. Both direct package artifacts and all three generated Go AST obligations are content-addressed and classified `PORTED`; the zero-sized no-op marker behavior and Rust non-`Copy` ownership contract are executable. All eight mutations are killed and receipt-gated, the clean Ready workspace passes, and GitHub attributes the official commits to `dbsid`.
 
 ## Context and Orientation
 
@@ -99,6 +104,25 @@ The Go vet probe output was:
     copyHolder passes lock by value: probe.local/nocopy.holder contains probe.local/nocopy.NoCopy
     return copies lock value: probe.local/nocopy.holder contains probe.local/nocopy.NoCopy
 
+The clean Ready receipt at code-bearing commit `1c6f8e2bb06913fea670288a780323ed09ad880d` is:
+
+    go test -tags=intest,deadlock ./pkg/util/nocopy
+      PASS; no test files
+    python3 rust/scripts/pkg-nocopy-lockdown.py
+      pkg/util/nocopy lockdown: 2 artifacts, 3 AST obligations, 3 PORTED
+    cargo test --offline --locked -p tidb-util --doc nocopy
+      1 passed
+    cargo nextest run --offline --locked -p tidb-util --no-fail-fast
+      287 passed
+    cargo nextest run --offline --locked --workspace -j12 --no-fail-fast
+      7130 passed, 41 skipped
+    cargo clippy --offline --locked -j12 --workspace --all-targets -- -D warnings -A clippy::assertions_on_constants -A clippy::needless_update -A clippy::type_complexity
+      passed
+    cargo fmt --all -- --check
+      passed
+    make -j12 lint
+      exit 0; all dashboard linters ran
+
 ## Interfaces and Dependencies
 
 The public Rust interface remains `tidb_util::nocopy::{NoCopy::new, NoCopy::lock, NoCopy::unlock}`. The marker is zero-sized, has no mutable state, and intentionally implements neither `Copy` nor `Clone`. The checker uses the existing generic Go AST tool and Python standard library; the Rust gate uses `sha2`, already available as a `tidb-util` dev dependency.
@@ -106,3 +130,5 @@ The public Rust interface remains `tidb_util::nocopy::{NoCopy::new, NoCopy::lock
 Security extension review: this marker adds no network, authentication, persistence, deployment, IAM, secret, or dependency surface.
 
 Revision note: created on 2026-08-08 after selecting the complete package, measuring the Go `go test` and `go vet` boundaries, and confirming the existing Rust unit and rustdoc baselines.
+
+Revision note: updated on 2026-08-08 after the eight mutation kills, compiled receipt gate, clean Ready replay, ordinary official fast-forward, and GitHub `dbsid` attribution checks all passed.
