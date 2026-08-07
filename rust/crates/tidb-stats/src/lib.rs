@@ -15,13 +15,14 @@
 //! Dependency-closed statistics primitives.
 //!
 //! The leaves port Count-Min Sketch/TopN, raw-hash
-//! Flajolet-Martin geometry, and statistics loading metadata from
+//! Flajolet-Martin geometry, statistics loading metadata, and histogram
+//! estimation/merge behavior from
 //! `pkg/statistics/{cmsketch,fmsketch,histogram}.go`.
 //! They own only source-shaped arithmetic and metadata at encoded-byte or
 //! already-hashed boundaries. The CMSketch family also owns sampled TopN
-//! construction and the tipb message boundary. Datum encoding, histograms,
-//! storage persistence, session tracing, and a statistics handle remain
-//! explicit future owners.
+//! construction and the tipb message boundary. Datum encoding, histogram
+//! loading, storage persistence, session tracing, and a statistics handle
+//! remain explicit future owners.
 
 #![allow(missing_docs)]
 

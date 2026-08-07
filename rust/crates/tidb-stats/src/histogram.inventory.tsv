@@ -1,0 +1,338 @@
+# lockdown-inventory-v1
+# owning-go-source	pkg/statistics/histogram.go
+# source-sha256	1233e0a3430067400eaee5d562772cc83541fce8ae8b3e4579895a574c8c1024
+# owning-go-test	pkg/statistics/histogram_test.go
+# test-sha256	8adb0d249a37ffa08c859ea1709426cfc0e98c4fc5a7ff689726fce0a1904a7a
+# adjacent-go-test	pkg/statistics/statistics_test.go
+# adjacent-test-sha256	2252313be49f161986afe7a94c379ca875bf79930b4f6c52a0b5e3cd9ffafe35
+# package-claim	File-level LOCKDOWN for pkg/statistics/histogram.go; split leaf modules are named by PORTED symbols and unowned integrations remain explicit.
+id	category	go_item	status	rust_symbol	evidence
+D01	declaration	outOfRangeBetweenRate:53 const	PORTED	OUT_OF_RANGE_BETWEEN_RATE	histogram_source_tests_and_ported_symbol_gate
+D02	declaration	globalPseudoChunkOnce:58 var	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+D03	declaration	globalPseudoChunk:59 var	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+D04	declaration	Histogram:63 type	PORTED	Histogram	histogram_source_tests_and_ported_symbol_gate
+D05	declaration	EmptyHistogramSize:98 const	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+D06	declaration	Bucket:101 type	PORTED	Bucket	histogram_source_tests_and_ported_symbol_gate
+D07	declaration	EmptyBucketSize:113 const	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+D08	declaration	scalar:115 type	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+D09	declaration	EmptyScalarSize:122 const	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+F01	function	initGlobalPseudoChunk:125 	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+F02	function	getGlobalPseudoChunk:134 	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+F03	function	prepareFieldTypeForHistogram:142 	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+B01	branch	prepareFieldTypeForHistogram:143 if tp.EvalType() == types.ETString	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+F04	function	NewPseudoHistogram:155 	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+F05	function	NewHistogram:171 	PORTED	Histogram::new	histogram_source_tests_and_ported_symbol_gate
+F06	function	Histogram.GetLower:186 	PORTED	Histogram::get_lower	histogram_source_tests_and_ported_symbol_gate
+F07	function	Histogram.LowerToDatum:192 	PORTED	Histogram::lower_to_datum	histogram_source_tests_and_ported_symbol_gate
+F08	function	Histogram.GetUpper:197 	PORTED	Histogram::get_upper	histogram_source_tests_and_ported_symbol_gate
+F09	function	Histogram.UpperToDatum:203 	PORTED	Histogram::upper_to_datum	histogram_source_tests_and_ported_symbol_gate
+F10	function	Histogram.MemoryUsage:208 	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+B02	branch	Histogram.MemoryUsage:209 if hg == nil	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+B03	branch	Histogram.MemoryUsage:212 if len(hg.Buckets) == 0 && len(hg.Scalars) == 0 && hg.Bounds.Capacity() == 0	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+F11	function	Histogram.AppendBucket:220 	PORTED	Histogram::append_bucket	histogram_source_tests_and_ported_symbol_gate
+F12	function	Histogram.AppendBucketWithNDV:225 	PORTED	Histogram::append_bucket_with_ndv	histogram_source_tests_and_ported_symbol_gate
+F13	function	Histogram.updateLastBucket:231 	PORTED	Histogram::update_last_bucket	histogram_source_tests_and_ported_symbol_gate
+B04	branch	Histogram.updateLastBucket:237 if needBucketNDV && bucket.NDV > 0	PORTED	Histogram::update_last_bucket	histogram_source_tests_and_ported_symbol_gate
+F14	function	Histogram.DecodeTo:245 	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+L01	loop	Histogram.DecodeTo:249 for row != oldIter.End()	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+B05	branch	Histogram.DecodeTo:251 if err != nil	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+F15	function	Histogram.ConvertTo:260 	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+L02	loop	Histogram.ConvertTo:264 for row != iter.End()	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+B06	branch	Histogram.ConvertTo:267 if err != nil	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+F16	function	Histogram.Len:277 	PORTED	Histogram::len	histogram_source_tests_and_ported_symbol_gate
+F17	function	Histogram.DestroyAndPutToPool:282 	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+B07	branch	Histogram.DestroyAndPutToPool:283 if hg == nil	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+F18	function	HistogramEqual:290 	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+B08	branch	HistogramEqual:291 if ignoreID	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+D10	declaration	Version0:302 const	PORTED	VERSION_0	histogram_source_tests_and_ported_symbol_gate
+D11	declaration	Version1:310 const	PORTED	VERSION_1	histogram_source_tests_and_ported_symbol_gate
+D12	declaration	Version2:315 const	PORTED	VERSION_2	histogram_source_tests_and_ported_symbol_gate
+F19	function	IsAnalyzed:319 	PORTED	is_analyzed	histogram_source_tests_and_ported_symbol_gate
+F20	function	IsColumnAnalyzedOrSynthesized:329 	PORTED	is_column_analyzed_or_synthesized	histogram_source_tests_and_ported_symbol_gate
+F21	function	ValueToString:335 	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+B09	branch	ValueToString:336 if idxCols == 0	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+B10	branch	ValueToString:340 if vars != nil	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+B11	branch	ValueToString:347 if len(remained) > 0	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+F22	function	Histogram.BucketToString:355 	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+F23	function	Histogram.BinarySearchRemoveVal:364 	PORTED	Histogram::binary_search_remove_value	histogram_source_tests_and_ported_symbol_gate
+B12	branch	Histogram.BinarySearchRemoveVal:367 if hg.Len() > 4	PORTED	Histogram::binary_search_remove_value	histogram_source_tests_and_ported_symbol_gate
+B13	branch	Histogram.BinarySearchRemoveVal:368 if cmpResult < 0	PORTED	Histogram::binary_search_remove_value	histogram_source_tests_and_ported_symbol_gate
+B14	branch	Histogram.BinarySearchRemoveVal:371 if cmpResult > 0	PORTED	Histogram::binary_search_remove_value	histogram_source_tests_and_ported_symbol_gate
+L03	loop	Histogram.BinarySearchRemoveVal:377 for lowIdx <= highIdx	PORTED	Histogram::binary_search_remove_value	histogram_source_tests_and_ported_symbol_gate
+B15	branch	Histogram.BinarySearchRemoveVal:380 if cmpResult > 0	PORTED	Histogram::binary_search_remove_value	histogram_source_tests_and_ported_symbol_gate
+B16	branch	Histogram.BinarySearchRemoveVal:385 if cmpResult < 0	PORTED	Histogram::binary_search_remove_value	histogram_source_tests_and_ported_symbol_gate
+B17	branch	Histogram.BinarySearchRemoveVal:391 if midbucket.NDV > 0	PORTED	Histogram::binary_search_remove_value	histogram_source_tests_and_ported_symbol_gate
+B18	branch	Histogram.BinarySearchRemoveVal:394 if cmpResult == 0	PORTED	Histogram::binary_search_remove_value	histogram_source_tests_and_ported_symbol_gate
+B19	branch	Histogram.BinarySearchRemoveVal:398 if midbucket.Count < 0	PORTED	Histogram::binary_search_remove_value	histogram_source_tests_and_ported_symbol_gate
+B20	branch	Histogram.BinarySearchRemoveVal:404 if found	PORTED	Histogram::binary_search_remove_value	histogram_source_tests_and_ported_symbol_gate
+L04	loop	Histogram.BinarySearchRemoveVal:405 for midIdx <= hg.Len()-1	PORTED	Histogram::binary_search_remove_value	histogram_source_tests_and_ported_symbol_gate
+B21	branch	Histogram.BinarySearchRemoveVal:407 if hg.Buckets[midIdx].Count < 0	PORTED	Histogram::binary_search_remove_value	histogram_source_tests_and_ported_symbol_gate
+F24	function	Histogram.RemoveVals:416 	PORTED	Histogram::remove_values	histogram_source_tests_and_ported_symbol_gate
+L05	loop	Histogram.RemoveVals:419 for bktIdx < hg.Len()	PORTED	Histogram::remove_values	histogram_source_tests_and_ported_symbol_gate
+L06	loop	Histogram.RemoveVals:420 for pairIdx < len(valCntPairs)	PORTED	Histogram::remove_values	histogram_source_tests_and_ported_symbol_gate
+B22	branch	Histogram.RemoveVals:423 if cmpResult > 0	PORTED	Histogram::remove_values	histogram_source_tests_and_ported_symbol_gate
+B23	branch	Histogram.RemoveVals:429 if cmpResult < 0	PORTED	Histogram::remove_values	histogram_source_tests_and_ported_symbol_gate
+B24	branch	Histogram.RemoveVals:433 if hg.Buckets[bktIdx].NDV > 0	PORTED	Histogram::remove_values	histogram_source_tests_and_ported_symbol_gate
+B25	branch	Histogram.RemoveVals:437 if cmpResult == 0	PORTED	Histogram::remove_values	histogram_source_tests_and_ported_symbol_gate
+B26	branch	Histogram.RemoveVals:443 if hg.Buckets[bktIdx].Count < 0	PORTED	Histogram::remove_values	histogram_source_tests_and_ported_symbol_gate
+F25	function	Histogram.StandardizeForV2AnalyzeIndex:452 	PORTED	Histogram::standardize_for_v2_analyze_index	histogram_source_tests_and_ported_symbol_gate
+B27	branch	Histogram.StandardizeForV2AnalyzeIndex:453 if hg == nil || len(hg.Buckets) == 0	PORTED	Histogram::standardize_for_v2_analyze_index	histogram_source_tests_and_ported_symbol_gate
+L07	loop	Histogram.StandardizeForV2AnalyzeIndex:466 range hg.Buckets	PORTED	Histogram::standardize_for_v2_analyze_index	histogram_source_tests_and_ported_symbol_gate
+B28	branch	Histogram.StandardizeForV2AnalyzeIndex:467 if hg.BucketCount(checkingIdx) <= 0 && hg.Buckets[checkingIdx].Repeat <= 0	PORTED	Histogram::standardize_for_v2_analyze_index	histogram_source_tests_and_ported_symbol_gate
+B29	branch	Histogram.StandardizeForV2AnalyzeIndex:471 if nextRemainedBktIdx != checkingIdx	PORTED	Histogram::standardize_for_v2_analyze_index	histogram_source_tests_and_ported_symbol_gate
+L08	loop	Histogram.StandardizeForV2AnalyzeIndex:481 range remainedBktIdxs	PORTED	Histogram::standardize_for_v2_analyze_index	histogram_source_tests_and_ported_symbol_gate
+F26	function	Histogram.ToString:489 	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+B30	branch	Histogram.ToString:491 if idxCols > 0	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+L09	loop	Histogram.ToString:496 range hg.Len()	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+F27	function	Histogram.EqualRowCount:505 	PORTED	Histogram::equal_row_count	histogram_source_tests_and_ported_symbol_gate
+B31	branch	Histogram.EqualRowCount:507 if !inBucket	PORTED	Histogram::equal_row_count	histogram_source_tests_and_ported_symbol_gate
+B32	branch	Histogram.EqualRowCount:510 if match	PORTED	Histogram::equal_row_count	histogram_source_tests_and_ported_symbol_gate
+B33	branch	Histogram.EqualRowCount:513 if hasBucketNDV && hg.Buckets[bucketIdx].NDV > 1	PORTED	Histogram::equal_row_count	histogram_source_tests_and_ported_symbol_gate
+F28	function	Histogram.GreaterRowCount:521 	PORTED	Histogram::greater_row_count	histogram_source_tests_and_ported_symbol_gate
+F29	function	Histogram.LocateBucket:545 	PORTED	Histogram::locate_bucket	histogram_source_tests_and_ported_symbol_gate
+B34	branch	Histogram.LocateBucket:547 if hg == nil || hg.Bounds.NumRows() == 0	PORTED	Histogram::locate_bucket	histogram_source_tests_and_ported_symbol_gate
+B35	branch	Histogram.LocateBucket:552 if index >= hg.Bounds.NumRows()	PORTED	Histogram::locate_bucket	histogram_source_tests_and_ported_symbol_gate
+B36	branch	Histogram.LocateBucket:557 if index%2 == 0 && !match	PORTED	Histogram::locate_bucket	histogram_source_tests_and_ported_symbol_gate
+B37	branch	Histogram.LocateBucket:564 if (index%2 == 1 && match) || chunk.Compare(hg.Bounds.GetRow(bucketIdx*2+1), 0, &value) == 0	PORTED	Histogram::locate_bucket	histogram_source_tests_and_ported_symbol_gate
+F30	function	Histogram.LessRowCountWithBktIdx:573 	PORTED	Histogram::less_row_count_with_bkt_idx	histogram_source_tests_and_ported_symbol_gate
+B38	branch	Histogram.LessRowCountWithBktIdx:575 if hg.Bounds.NumRows() == 0	PORTED	Histogram::less_row_count_with_bkt_idx	histogram_source_tests_and_ported_symbol_gate
+B39	branch	Histogram.LessRowCountWithBktIdx:579 if exceed	PORTED	Histogram::less_row_count_with_bkt_idx	histogram_source_tests_and_ported_symbol_gate
+B40	branch	Histogram.LessRowCountWithBktIdx:583 if bucketIdx > 0	PORTED	Histogram::less_row_count_with_bkt_idx	histogram_source_tests_and_ported_symbol_gate
+B41	branch	Histogram.LessRowCountWithBktIdx:586 if !inBucket	PORTED	Histogram::less_row_count_with_bkt_idx	histogram_source_tests_and_ported_symbol_gate
+B42	branch	Histogram.LessRowCountWithBktIdx:590 if match	PORTED	Histogram::less_row_count_with_bkt_idx	histogram_source_tests_and_ported_symbol_gate
+F31	function	Histogram.LessRowCount:598 	PORTED	Histogram::less_row_count	histogram_source_tests_and_ported_symbol_gate
+F32	function	Histogram.BetweenRowCount:605 	PORTED	Histogram::between_row_count	histogram_source_tests_and_ported_symbol_gate
+B43	branch	Histogram.BetweenRowCount:614 if rangeEst.Est < max(lowEqual, ndvAvg) && hg.NDV > 0	PORTED	Histogram::between_row_count	histogram_source_tests_and_ported_symbol_gate
+B44	branch	Histogram.BetweenRowCount:621 if isInValidBucket && bktIndexA == bktIndexB	PORTED	Histogram::between_row_count	histogram_source_tests_and_ported_symbol_gate
+B45	branch	Histogram.BetweenRowCount:623 if sctx != nil	PORTED	Histogram::between_row_count	histogram_source_tests_and_ported_symbol_gate
+B46	branch	Histogram.BetweenRowCount:628 if bktIndexA > 0	PORTED	Histogram::between_row_count	histogram_source_tests_and_ported_symbol_gate
+B47	branch	Histogram.BetweenRowCount:632 if lessCountB <= float64(hg.Buckets[bktIndexA].Count-hg.Buckets[bktIndexA].Repeat)	PORTED	Histogram::between_row_count	histogram_source_tests_and_ported_symbol_gate
+B48	branch	Histogram.BetweenRowCount:635 if skewRatio > 0	PORTED	Histogram::between_row_count	histogram_source_tests_and_ported_symbol_gate
+F33	function	CalculateSkewRatioCounts:650 	PORTED	calculate_skew_ratio_counts	histogram_source_tests_and_ported_symbol_gate
+D13	declaration	RowEstimate:659 type	PORTED	RowEstimate	histogram_source_tests_and_ported_symbol_gate
+F34	function	DefaultRowEst:666 	PORTED	default_row_est	histogram_source_tests_and_ported_symbol_gate
+F35	function	RowEstimate.Add:671 	PORTED	RowEstimate::add	histogram_source_tests_and_ported_symbol_gate
+F36	function	RowEstimate.AddAll:678 	PORTED	RowEstimate::add_all	histogram_source_tests_and_ported_symbol_gate
+F37	function	RowEstimate.Subtract:685 	PORTED	RowEstimate::subtract	histogram_source_tests_and_ported_symbol_gate
+F38	function	RowEstimate.MultiplyAll:692 	PORTED	RowEstimate::multiply_all	histogram_source_tests_and_ported_symbol_gate
+F39	function	RowEstimate.DivideAll:699 	PORTED	RowEstimate::divide_all	histogram_source_tests_and_ported_symbol_gate
+F40	function	RowEstimate.Clamp:707 	PORTED	RowEstimate::clamp	histogram_source_tests_and_ported_symbol_gate
+F41	function	Histogram.TotalRowCount:716 	PORTED	Histogram::total_row_count	histogram_source_tests_and_ported_symbol_gate
+F42	function	Histogram.AbsRowCountDifference:722 	PORTED	Histogram::abs_row_count_difference	histogram_source_tests_and_ported_symbol_gate
+F43	function	Histogram.NotNullCount:729 	PORTED	Histogram::not_null_count	histogram_source_tests_and_ported_symbol_gate
+B49	branch	Histogram.NotNullCount:730 if hg.Len() == 0	PORTED	Histogram::not_null_count	histogram_source_tests_and_ported_symbol_gate
+F44	function	Histogram.mergeBuckets:737 	PORTED	Histogram::merge_neighbor_buckets	histogram_source_tests_and_ported_symbol_gate
+L10	loop	Histogram.mergeBuckets:740 for i+1 <= bucketIdx	PORTED	Histogram::merge_neighbor_buckets	histogram_source_tests_and_ported_symbol_gate
+B50	branch	Histogram.mergeBuckets:748 if bucketIdx%2 == 0	PORTED	Histogram::merge_neighbor_buckets	histogram_source_tests_and_ported_symbol_gate
+F45	function	Histogram.GetIncreaseFactor:759 	PORTED	Histogram::get_increase_factor	histogram_source_tests_and_ported_symbol_gate
+B51	branch	Histogram.GetIncreaseFactor:761 if columnCount == 0	PORTED	Histogram::get_increase_factor	histogram_source_tests_and_ported_symbol_gate
+F46	function	validRange:770 	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+B52	branch	validRange:772 if encoded	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+B53	branch	validRange:778 if err != nil	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+B54	branch	validRange:783 if err != nil	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+B55	branch	validRange:787 if ran.LowExclude	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+B56	branch	validRange:790 if !ran.HighExclude	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+F47	function	checkKind:796 	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+B57	branch	checkKind:797 if kind == types.KindString	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+L11	loop	checkKind:800 range vals	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+B58	branch	checkKind:802 if valKind == types.KindNull || valKind == types.KindMinNotNull || valKind == types.KindMaxValue	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+B59	branch	checkKind:805 if valKind == types.KindString	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+B60	branch	checkKind:808 if valKind != kind	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+F48	function	Histogram.typeMatch:817 	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+L12	loop	Histogram.typeMatch:819 range ranges	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+B61	branch	Histogram.typeMatch:820 if !checkKind(ran.LowVal, kind) || !checkKind(ran.HighVal, kind)	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+F49	function	Histogram.SplitRange:830 	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+B62	branch	Histogram.SplitRange:831 if !hg.typeMatch(oldRanges)	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+B63	branch	Histogram.SplitRange:835 if hg.Len() == 1	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+L13	loop	Histogram.SplitRange:839 range oldRanges	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+L14	loop	Histogram.SplitRange:843 for len(ranges) > 0	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+B64	branch	Histogram.SplitRange:847 if idx >= hg.Bounds.NumRows()-1	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+B65	branch	Histogram.SplitRange:852 if idx == 0	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+B66	branch	Histogram.SplitRange:856 if idx%2 == 1	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+L15	loop	Histogram.SplitRange:862 for i < len(ranges)	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+B67	branch	Histogram.SplitRange:863 if chunk.Compare(lowerBound, 0, &ranges[i].HighVal[0]) <= 0	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+B68	branch	Histogram.SplitRange:869 if len(ranges) == 0	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+B69	branch	Histogram.SplitRange:874 if cmp > 0	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+B70	branch	Histogram.SplitRange:883 if validRange(sc, newRange, encoded)	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+B71	branch	Histogram.SplitRange:888 if !validRange(sc, ranges[0], encoded)	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+F50	function	Histogram.BucketCount:897 	PORTED	Histogram::bucket_count	histogram_source_tests_and_ported_symbol_gate
+B72	branch	Histogram.BucketCount:898 if idx == 0	PORTED	Histogram::bucket_count	histogram_source_tests_and_ported_symbol_gate
+F51	function	HistogramToProto:906 	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+L16	loop	HistogramToProto:910 range hg.Len()	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+F52	function	DeepSlice:924 	PORTED	deep_slice	histogram_source_tests_and_ported_symbol_gate
+F53	function	HistogramFromProto:933 	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+L17	loop	HistogramFromProto:936 range protoHg.Buckets	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+B73	branch	HistogramFromProto:938 if bucket.Ndv != nil	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+F54	function	Histogram.popFirstBucket:947 	PORTED	Histogram::pop_first_bucket	histogram_source_tests_and_ported_symbol_gate
+F55	function	Histogram.IsIndexHist:955 	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+F56	function	MergeHistograms:960 	PORTED	merge_histograms	histogram_source_tests_and_ported_symbol_gate
+B74	branch	MergeHistograms:961 if lh.Len() == 0	PORTED	merge_histograms	histogram_source_tests_and_ported_symbol_gate
+B75	branch	MergeHistograms:964 if rh.Len() == 0	PORTED	merge_histograms	histogram_source_tests_and_ported_symbol_gate
+B76	branch	MergeHistograms:970 if err != nil	PORTED	merge_histograms	histogram_source_tests_and_ported_symbol_gate
+B77	branch	MergeHistograms:974 if cmp == 0	PORTED	merge_histograms	histogram_source_tests_and_ported_symbol_gate
+B78	branch	MergeHistograms:978 if rh.Buckets[0].NDV > 0 && lh.Buckets[lLen-1].Repeat > 0	PORTED	merge_histograms	histogram_source_tests_and_ported_symbol_gate
+L18	loop	MergeHistograms:985 for lh.Len() > bucketSize	PORTED	merge_histograms	histogram_source_tests_and_ported_symbol_gate
+B79	branch	MergeHistograms:988 if rh.Len() == 0	PORTED	merge_histograms	histogram_source_tests_and_ported_symbol_gate
+L19	loop	MergeHistograms:991 for rh.Len() > bucketSize	PORTED	merge_histograms	histogram_source_tests_and_ported_symbol_gate
+L20	loop	MergeHistograms:998 for lh.Len() > 1 && lAvg*2 <= rAvg	PORTED	merge_histograms	histogram_source_tests_and_ported_symbol_gate
+L21	loop	MergeHistograms:1002 for rh.Len() > 1 && rAvg*2 <= lAvg	PORTED	merge_histograms	histogram_source_tests_and_ported_symbol_gate
+L22	loop	MergeHistograms:1006 range rh.Len()	PORTED	merge_histograms	histogram_source_tests_and_ported_symbol_gate
+B80	branch	MergeHistograms:1007 if statsVer >= Version2	PORTED	merge_histograms	histogram_source_tests_and_ported_symbol_gate
+L23	loop	MergeHistograms:1013 for lh.Len() > bucketSize	PORTED	merge_histograms	histogram_source_tests_and_ported_symbol_gate
+F57	function	Histogram.AvgCountPerNotNullValue:1020 	PORTED	avg_count_per_not_null_value	histogram_source_tests_and_ported_symbol_gate
+F58	function	Histogram.OutOfRange:1029 	PORTED	Histogram::out_of_range	histogram_source_tests_and_ported_symbol_gate
+B81	branch	Histogram.OutOfRange:1030 if hg.Len() == 0	PORTED	Histogram::out_of_range	histogram_source_tests_and_ported_symbol_gate
+F59	function	calculateLeftOverlapPercent:1040 	PORTED	left_overlap_percent	histogram_source_tests_and_ported_symbol_gate
+B82	branch	calculateLeftOverlapPercent:1041 if histWidth <= 0	PORTED	left_overlap_percent	histogram_source_tests_and_ported_symbol_gate
+B83	branch	calculateLeftOverlapPercent:1048 if l >= r	PORTED	left_overlap_percent	histogram_source_tests_and_ported_symbol_gate
+F60	function	calculateRightOverlapPercent:1064 	PORTED	right_overlap_percent	histogram_source_tests_and_ported_symbol_gate
+B84	branch	calculateRightOverlapPercent:1065 if histWidth <= 0	PORTED	right_overlap_percent	histogram_source_tests_and_ported_symbol_gate
+B85	branch	calculateRightOverlapPercent:1072 if l >= r	PORTED	right_overlap_percent	histogram_source_tests_and_ported_symbol_gate
+F61	function	Histogram.OutOfRangeRowCount:1107 	PORTED	Histogram::out_of_range_row_count	histogram_source_tests_and_ported_symbol_gate
+B86	branch	Histogram.OutOfRangeRowCount:1112 if hg.Len() == 0	PORTED	Histogram::out_of_range_row_count	histogram_source_tests_and_ported_symbol_gate
+B87	branch	Histogram.OutOfRangeRowCount:1125 if !allowUseModifyCount	PORTED	Histogram::out_of_range_row_count	histogram_source_tests_and_ported_symbol_gate
+B88	branch	Histogram.OutOfRangeRowCount:1133 if float64(histNDV) < outOfRangeBetweenRate	PORTED	Histogram::out_of_range_row_count	histogram_source_tests_and_ported_symbol_gate
+B89	branch	Histogram.OutOfRangeRowCount:1142 if hg.GetLower(0).Kind() == types.KindBytes || hg.GetLower(0).Kind() == types.KindString	PORTED	Histogram::out_of_range_row_count	histogram_source_tests_and_ported_symbol_gate
+B90	branch	Histogram.OutOfRangeRowCount:1159 if unsigned	PORTED	Histogram::out_of_range_row_count	histogram_source_tests_and_ported_symbol_gate
+B91	branch	Histogram.OutOfRangeRowCount:1160 if l < 0	PORTED	Histogram::out_of_range_row_count	histogram_source_tests_and_ported_symbol_gate
+B92	branch	Histogram.OutOfRangeRowCount:1164 if r < 0	PORTED	Histogram::out_of_range_row_count	histogram_source_tests_and_ported_symbol_gate
+B93	branch	Histogram.OutOfRangeRowCount:1170 if l == 0 && r == 0 && (leftClamped || rightClamped)	PORTED	Histogram::out_of_range_row_count	histogram_source_tests_and_ported_symbol_gate
+B94	branch	Histogram.OutOfRangeRowCount:1181 if histWidth < 0	PORTED	Histogram::out_of_range_row_count	histogram_source_tests_and_ported_symbol_gate
+B95	branch	Histogram.OutOfRangeRowCount:1184 if math.IsInf(histWidth, 1)	PORTED	Histogram::out_of_range_row_count	histogram_source_tests_and_ported_symbol_gate
+B96	branch	Histogram.OutOfRangeRowCount:1195 if predWidth < 0	PORTED	Histogram::out_of_range_row_count	histogram_source_tests_and_ported_symbol_gate
+B97	branch	Histogram.OutOfRangeRowCount:1200 if predWidth == 0	PORTED	Histogram::out_of_range_row_count	histogram_source_tests_and_ported_symbol_gate
+B98	branch	Histogram.OutOfRangeRowCount:1226 if totalPercent > 0	PORTED	Histogram::out_of_range_row_count	histogram_source_tests_and_ported_symbol_gate
+B99	branch	Histogram.OutOfRangeRowCount:1235 if skewRatio > 0	PORTED	Histogram::out_of_range_row_count	histogram_source_tests_and_ported_symbol_gate
+B100	branch	Histogram.OutOfRangeRowCount:1246 if modifyCount == 0 || addedRows == 0	PORTED	Histogram::out_of_range_row_count	histogram_source_tests_and_ported_symbol_gate
+B101	branch	Histogram.OutOfRangeRowCount:1247 if realtimeRowCount <= 0	PORTED	Histogram::out_of_range_row_count	histogram_source_tests_and_ported_symbol_gate
+B102	branch	Histogram.OutOfRangeRowCount:1254 if maxTotalPercent > 0	PORTED	Histogram::out_of_range_row_count	histogram_source_tests_and_ported_symbol_gate
+B103	branch	Histogram.OutOfRangeRowCount:1263 if skewRatio > 0	PORTED	Histogram::out_of_range_row_count	histogram_source_tests_and_ported_symbol_gate
+F62	function	Histogram.Copy:1276 	PORTED	Histogram::copy	histogram_source_tests_and_ported_symbol_gate
+B104	branch	Histogram.Copy:1277 if hg == nil	PORTED	Histogram::copy	histogram_source_tests_and_ported_symbol_gate
+B105	branch	Histogram.Copy:1281 if hg.Bounds != nil	PORTED	Histogram::copy	histogram_source_tests_and_ported_symbol_gate
+F63	function	Histogram.TruncateHistogram:1290 	PORTED	Histogram::truncate	histogram_source_tests_and_ported_symbol_gate
+D14	declaration	dataCnt:1297 type	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+F64	function	GetIndexPrefixLens:1303 	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+L24	loop	GetIndexPrefixLens:1307 for len(data) > 0	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+B106	branch	GetIndexPrefixLens:1309 if err != nil	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+F65	function	Histogram.ExtractTopN:1319 	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+B107	branch	Histogram.ExtractTopN:1320 if hg.Len() == 0 || cms == nil || numTopN == 0	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+L25	loop	Histogram.ExtractTopN:1329 range hg.Bounds.NumRows()	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+B108	branch	Histogram.ExtractTopN:1332 if err != nil	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+L26	loop	Histogram.ExtractTopN:1335 range prefixLens	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+B109	branch	Histogram.ExtractTopN:1338 if ok	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+B110	branch	Histogram.ExtractTopN:1343 if res >= limit	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+B111	branch	Histogram.ExtractTopN:1349 if len(dataCnts) > int(numTopN)	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+L27	loop	Histogram.ExtractTopN:1353 range dataCnts	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+D15	declaration	bucket4MergingPool:1363 var	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+F66	function	newbucket4MergingForRecycle:1369 	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+F67	function	releasebucket4MergingForRecycle:1373 	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+D16	declaration	bucket4Merging:1382 type	PORTED	BucketForMerging	histogram_source_tests_and_ported_symbol_gate
+F68	function	newBucket4Meging:1392 	PORTED	BucketForMerging	histogram_source_tests_and_ported_symbol_gate
+F69	function	Histogram.buildBucket4Merging:1407 	PORTED	BucketForMerging::from_histogram	histogram_source_tests_and_ported_symbol_gate
+L28	loop	Histogram.buildBucket4Merging:1409 range hg.Len()	PORTED	BucketForMerging::from_histogram	histogram_source_tests_and_ported_symbol_gate
+B112	branch	Histogram.buildBucket4Merging:1416 if i != 0	PORTED	BucketForMerging::from_histogram	histogram_source_tests_and_ported_symbol_gate
+F70	function	bucket4Merging.Clone:1424 	PORTED	BucketForMerging::clone	histogram_source_tests_and_ported_symbol_gate
+F71	function	mergeBucketNDV:1437 	PORTED	merge_bucket_ndv	histogram_source_tests_and_ported_symbol_gate
+B113	branch	mergeBucketNDV:1439 if left.Count == 0	PORTED	merge_bucket_ndv	histogram_source_tests_and_ported_symbol_gate
+B114	branch	mergeBucketNDV:1442 if right.Count == 0	PORTED	merge_bucket_ndv	histogram_source_tests_and_ported_symbol_gate
+B115	branch	mergeBucketNDV:1449 if err != nil	PORTED	merge_bucket_ndv	histogram_source_tests_and_ported_symbol_gate
+B116	branch	mergeBucketNDV:1455 if upperCompare < 0	PORTED	merge_bucket_ndv	histogram_source_tests_and_ported_symbol_gate
+B117	branch	mergeBucketNDV:1463 if upperCompare == 0	PORTED	merge_bucket_ndv	histogram_source_tests_and_ported_symbol_gate
+B118	branch	mergeBucketNDV:1465 if err != nil	PORTED	merge_bucket_ndv	histogram_source_tests_and_ported_symbol_gate
+B119	branch	mergeBucketNDV:1471 if lowerCompare < 0	PORTED	merge_bucket_ndv	histogram_source_tests_and_ported_symbol_gate
+B120	branch	mergeBucketNDV:1479 if lowerCompare == 0	PORTED	merge_bucket_ndv	histogram_source_tests_and_ported_symbol_gate
+B121	branch	mergeBucketNDV:1480 if left.NDV > right.NDV	PORTED	merge_bucket_ndv	histogram_source_tests_and_ported_symbol_gate
+B122	branch	mergeBucketNDV:1498 if err != nil	PORTED	merge_bucket_ndv	histogram_source_tests_and_ported_symbol_gate
+B123	branch	mergeBucketNDV:1506 if lowerCompareUpper >= 0	PORTED	merge_bucket_ndv	histogram_source_tests_and_ported_symbol_gate
+B124	branch	mergeBucketNDV:1515 if err != nil	PORTED	merge_bucket_ndv	histogram_source_tests_and_ported_symbol_gate
+B125	branch	mergeBucketNDV:1525 if lowerCompare >= 0	PORTED	merge_bucket_ndv	histogram_source_tests_and_ported_symbol_gate
+F72	function	mergePartitionBuckets:1556 	PORTED	merge_partition_buckets	histogram_source_tests_and_ported_symbol_gate
+B126	branch	mergePartitionBuckets:1557 if len(buckets) == 0	PORTED	merge_partition_buckets	histogram_source_tests_and_ported_symbol_gate
+L29	loop	mergePartitionBuckets:1568 for i >= 0	PORTED	merge_partition_buckets	histogram_source_tests_and_ported_symbol_gate
+B127	branch	mergePartitionBuckets:1572 if err != nil	PORTED	merge_partition_buckets	histogram_source_tests_and_ported_symbol_gate
+B128	branch	mergePartitionBuckets:1575 if compare == 0	PORTED	merge_partition_buckets	histogram_source_tests_and_ported_symbol_gate
+B129	branch	mergePartitionBuckets:1578 if i != len(buckets)-1	PORTED	merge_partition_buckets	histogram_source_tests_and_ported_symbol_gate
+B130	branch	mergePartitionBuckets:1580 if err != nil	PORTED	merge_partition_buckets	histogram_source_tests_and_ported_symbol_gate
+F73	function	TopNMeta.buildBucket4Merging:1595 	PORTED	BucketForMerging::from_topn	histogram_source_tests_and_ported_symbol_gate
+B131	branch	TopNMeta.buildBucket4Merging:1601 if analyzeVer <= Version2	PORTED	BucketForMerging::from_topn	histogram_source_tests_and_ported_symbol_gate
+F74	function	MergePartitionHist2GlobalHist:1612 	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+B132	branch	MergePartitionHist2GlobalHist:1615 if expBucketNumber == 0	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+B133	branch	MergePartitionHist2GlobalHist:1621 if len(hists) == 0	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+L30	loop	MergePartitionHist2GlobalHist:1624 range hists	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+B134	branch	MergePartitionHist2GlobalHist:1628 if histLen > 0	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+B135	branch	MergePartitionHist2GlobalHist:1634 if bucketNumber+len(popedTopN) == 0	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+L31	loop	MergePartitionHist2GlobalHist:1643 range hists	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+L32	loop	MergePartitionHist2GlobalHist:1647 range popedTopN	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+B136	branch	MergePartitionHist2GlobalHist:1650 if err != nil	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+L33	loop	MergePartitionHist2GlobalHist:1658 range buckets	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+B137	branch	MergePartitionHist2GlobalHist:1659 if buckets[i].Count != 0	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+L34	loop	MergePartitionHist2GlobalHist:1666 for n < len(buckets)	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+B138	branch	MergePartitionHist2GlobalHist:1672 if err != nil	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+L35	loop	MergePartitionHist2GlobalHist:1683 for i >= 0	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+B139	branch	MergePartitionHist2GlobalHist:1684 if currentLeftMost == nil	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+B140	branch	MergePartitionHist2GlobalHist:1688 if err != nil	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+B141	branch	MergePartitionHist2GlobalHist:1691 if res > 0	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+B142	branch	MergePartitionHist2GlobalHist:1696 if sum >= totCount*bucketCount/expBucketNumber && sum-prevSum >= gBucketCountThreshold	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+L36	loop	MergePartitionHist2GlobalHist:1701 for i > 0	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+B143	branch	MergePartitionHist2GlobalHist:1703 if err != nil	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+B144	branch	MergePartitionHist2GlobalHist:1706 if res != 0	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+B145	branch	MergePartitionHist2GlobalHist:1712 if err != nil	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+B146	branch	MergePartitionHist2GlobalHist:1715 if res > 0	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+L37	loop	MergePartitionHist2GlobalHist:1724 for i > 0	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+B147	branch	MergePartitionHist2GlobalHist:1726 if err != nil	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+B148	branch	MergePartitionHist2GlobalHist:1730 if res < 0	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+B149	branch	MergePartitionHist2GlobalHist:1735 if err != nil	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+B150	branch	MergePartitionHist2GlobalHist:1739 if res >= 0	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+B151	branch	MergePartitionHist2GlobalHist:1753 if buckets[i-1].NDV < 0	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+B152	branch	MergePartitionHist2GlobalHist:1756 if buckets[i-1].Count < 0	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+B153	branch	MergePartitionHist2GlobalHist:1771 if len(cutAndFixBuffer) == 0	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+B154	branch	MergePartitionHist2GlobalHist:1773 if err != nil	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+B155	branch	MergePartitionHist2GlobalHist:1783 if err != nil	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+L38	loop	MergePartitionHist2GlobalHist:1786 range cutAndFixBuffer	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+B156	branch	MergePartitionHist2GlobalHist:1791 if err != nil	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+L39	loop	MergePartitionHist2GlobalHist:1802 for leftMostInvalidPosForNextRound > i	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+B157	branch	MergePartitionHist2GlobalHist:1804 if err != nil	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+B158	branch	MergePartitionHist2GlobalHist:1809 if res < 0	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+B159	branch	MergePartitionHist2GlobalHist:1824 if r > 0	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+L40	loop	MergePartitionHist2GlobalHist:1826 range buckets[:r]	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+B160	branch	MergePartitionHist2GlobalHist:1827 if i == 0	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+B161	branch	MergePartitionHist2GlobalHist:1831 if err != nil	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+B162	branch	MergePartitionHist2GlobalHist:1834 if res > 0	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+B163	branch	MergePartitionHist2GlobalHist:1840 if err != nil	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+L41	loop	MergePartitionHist2GlobalHist:1846 range buckets	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+L42	loop	MergePartitionHist2GlobalHist:1852 for i < len(globalBuckets)	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+L43	loop	MergePartitionHist2GlobalHist:1858 range globalBuckets	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+L44	loop	MergePartitionHist2GlobalHist:1860 range hists	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+B164	branch	MergePartitionHist2GlobalHist:1864 if int64(repeat) > bucket.Repeat	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+L45	loop	MergePartitionHist2GlobalHist:1870 range globalBuckets	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+B165	branch	MergePartitionHist2GlobalHist:1871 if !isIndex	PORTED	merge_partition_histograms	histogram_source_tests_and_ported_symbol_gate
+F75	function	sortBucketsByUpperBound:1881 	PORTED	sort_buckets_by_upper_bound	histogram_source_tests_and_ported_symbol_gate
+B166	branch	sortBucketsByUpperBound:1885 if err != nil	PORTED	sort_buckets_by_upper_bound	histogram_source_tests_and_ported_symbol_gate
+B167	branch	sortBucketsByUpperBound:1888 if res != 0	PORTED	sort_buckets_by_upper_bound	histogram_source_tests_and_ported_symbol_gate
+B168	branch	sortBucketsByUpperBound:1892 if err != nil	PORTED	sort_buckets_by_upper_bound	histogram_source_tests_and_ported_symbol_gate
+F76	function	checkBucket4MergingIsSorted:1902 	PORTED	buckets_are_sorted	histogram_source_tests_and_ported_symbol_gate
+B169	branch	checkBucket4MergingIsSorted:1907 if err != nil	PORTED	buckets_are_sorted	histogram_source_tests_and_ported_symbol_gate
+B170	branch	checkBucket4MergingIsSorted:1910 if res != 0	PORTED	buckets_are_sorted	histogram_source_tests_and_ported_symbol_gate
+B171	branch	checkBucket4MergingIsSorted:1914 if err != nil	PORTED	buckets_are_sorted	histogram_source_tests_and_ported_symbol_gate
+D17	declaration	AllLoaded:1925 const	PORTED	ALL_LOADED	histogram_source_tests_and_ported_symbol_gate
+D18	declaration	AllEvicted:1927 const	PORTED	ALL_EVICTED	histogram_source_tests_and_ported_symbol_gate
+D19	declaration	StatsLoadedStatus:1931 type	PORTED	StatsLoadedStatus	histogram_source_tests_and_ported_symbol_gate
+F77	function	NewStatsFullLoadStatus:1937 	PORTED	StatsLoadedStatus::full_load	histogram_source_tests_and_ported_symbol_gate
+F78	function	NewStatsAllEvictedStatus:1947 	PORTED	StatsLoadedStatus::all_evicted	histogram_source_tests_and_ported_symbol_gate
+F79	function	StatsLoadedStatus.Copy:1955 	PORTED	StatsLoadedStatus::copy	histogram_source_tests_and_ported_symbol_gate
+F80	function	StatsLoadedStatus.IsStatsInitialized:1964 	PORTED	StatsLoadedStatus::stats_initialized	histogram_source_tests_and_ported_symbol_gate
+F81	function	StatsLoadedStatus.IsLoadNeeded:1970 	PORTED	StatsLoadedStatus::is_load_needed	histogram_source_tests_and_ported_symbol_gate
+B172	branch	StatsLoadedStatus.IsLoadNeeded:1971 if s.statsInitialized	PORTED	StatsLoadedStatus::is_load_needed	histogram_source_tests_and_ported_symbol_gate
+F82	function	StatsLoadedStatus.IsEssentialStatsLoaded:1981 	PORTED	StatsLoadedStatus::is_essential_stats_loaded	histogram_source_tests_and_ported_symbol_gate
+F83	function	StatsLoadedStatus.IsAllEvicted:1986 	PORTED	StatsLoadedStatus::is_all_evicted	histogram_source_tests_and_ported_symbol_gate
+F84	function	StatsLoadedStatus.IsFullLoad:1991 	PORTED	StatsLoadedStatus::is_full_load	histogram_source_tests_and_ported_symbol_gate
+B173	branch	TopNMeta.buildBucket4Merging:1604 failpoint closure enableTopNNDV	UNREACHABLE	-	measured_go_oracle_topn_bucket_ndv=0_after_enable
+T01	test	TestTruncateHistogram:32 	PORTED	source_truncate_histogram_keeps_metadata_and_prefix	histogram_source_tests_and_ported_symbol_gate
+T02	test	TestValueToString4InvalidKey:42 	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+T03	test	TestMergePartitionLevelHist:79 	PORTED	source_merge_partition_level_hist_matches_all_go_cases	histogram_source_tests_and_ported_symbol_gate
+T04	test	TestMergeBucketNDV:493 	PORTED	source_merge_bucket_ndv_matches_all_go_cases	histogram_source_tests_and_ported_symbol_gate
+T05	test	TestIndexQueryBytes:537 	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+T06	test	TestStandardizeForV2AnalyzeIndex:563 	PORTED	source_standardize_v2_index_matches_all_go_tables	histogram_source_tests_and_ported_symbol_gate
+T07	test	TestNewPseudoHistogramReuseChunk:700 	DECLINED	-	dependency_or_runtime_contract_outside_dependency_closed_tidb_stats_owner
+T08	test	TestMergeHistogram:136 	PORTED	source_merge_histograms_matches_go_cases	histogram_source_tests_and_ported_symbol_gate

@@ -18,12 +18,14 @@
 //! Go stores bucket bounds as two rows (lower at `2*i`, upper at `2*i+1`) in
 //! a shared `chunk.Chunk`. This port replaces that chunk machinery with a
 //! per-bucket `(lower, upper)` [`Datum`] pair held directly on [`Bucket`] --
-//! functionally equivalent for every estimation method ported here, without
-//! needing the chunk/column-codec dependency. Loading histograms from KV
-//! storage, merging, sampling, and protobuf wire conversion are explicit
-//! future-unit owners (see the crate module docs).
+//! functionally equivalent for every estimation and merge method ported here,
+//! without needing the chunk/column-codec dependency. Loading histograms from
+//! KV storage, sampling, and protobuf wire conversion remain explicit future
+//! owners (see the crate module docs).
 
-use tidb_datatype::{Collation, Datum, Time};
+use std::{cmp::Ordering, fmt};
+
+use tidb_datatype::{Collation, Datum, DatumValueError, Time};
 
 use crate::row_estimate::{default_row_est, RowEstimate};
 
@@ -31,7 +33,7 @@ use crate::row_estimate::{default_row_est, RowEstimate};
 ///
 /// `count` is the *cumulative* row count through this bucket (matches Go's
 /// `Bucket.Count`, which counts every prior bucket plus this one).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Bucket {
     /// Cumulative row count through this bucket (Go `Bucket.Count`).
     pub count: i64,
@@ -53,7 +55,7 @@ pub struct Bucket {
 /// `tot_col_size` is the total encoded column size, and `correlation` is the
 /// Pearson-style physical/logical ordering correlation (only meaningful for
 /// column histograms).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Histogram {
     /// Column or index ID.
     pub id: i64,
@@ -69,6 +71,62 @@ pub struct Histogram {
     pub correlation: f64,
     /// Buckets in ascending order.
     pub buckets: Vec<Bucket>,
+}
+
+/// A TopN value reintroduced while partition histograms are merged.
+///
+/// This is the output boundary of Go `topNMetaToDatum`: column values are
+/// decoded, while index values remain encoded key bytes inside a `Datum`.
+/// Tablecodec framing itself remains outside this crate.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TopNMergeEntry {
+    /// Value compared with histogram bounds.
+    pub value: Datum,
+    /// Number of rows represented by this value.
+    pub count: u64,
+}
+
+/// Source options for [`merge_partition_histograms`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PartitionMergeOptions {
+    /// Requested maximum number of output buckets.
+    pub expected_buckets: usize,
+    /// Whether bucket-level NDV is retained in the output.
+    pub is_index: bool,
+    /// Go analyze version, retained for the TopN construction contract.
+    pub analyze_version: i64,
+}
+
+/// Failure from source-shaped histogram merging.
+#[derive(Debug, Clone, PartialEq)]
+pub enum HistogramMergeError {
+    /// Go: `expBucketNumber can not be zero`.
+    ZeroExpectedBuckets,
+    /// Go: `not enough buckets to merge`.
+    NotEnoughBuckets,
+    /// Go: `illegal bucket order`.
+    IllegalBucketOrder,
+    /// A datum comparison failed.
+    Datum(DatumValueError),
+}
+
+impl fmt::Display for HistogramMergeError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ZeroExpectedBuckets => formatter.write_str("expBucketNumber can not be zero"),
+            Self::NotEnoughBuckets => formatter.write_str("not enough buckets to merge"),
+            Self::IllegalBucketOrder => formatter.write_str("illegal bucket order"),
+            Self::Datum(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl std::error::Error for HistogramMergeError {}
+
+impl From<DatumValueError> for HistogramMergeError {
+    fn from(error: DatumValueError) -> Self {
+        Self::Datum(error)
+    }
 }
 
 /// `pkg/statistics/scalar.go`'s `calcFraction`: fraction of `[lower, upper]`
@@ -235,6 +293,251 @@ pub struct BucketLocation {
 }
 
 impl Histogram {
+    /// Creates an empty histogram with the source metadata and allocation
+    /// hint from Go `NewHistogram`.
+    #[must_use]
+    pub fn new(
+        id: i64,
+        ndv: i64,
+        null_count: i64,
+        last_update_version: u64,
+        bucket_capacity: usize,
+        tot_col_size: i64,
+    ) -> Self {
+        Self {
+            id,
+            ndv,
+            null_count,
+            last_update_version,
+            tot_col_size,
+            correlation: 0.0,
+            buckets: Vec::with_capacity(bucket_capacity),
+        }
+    }
+
+    /// Returns the lower bound of `bucket_index`, Go `GetLower`.
+    #[must_use]
+    pub fn get_lower(&self, bucket_index: usize) -> &Datum {
+        &self.buckets[bucket_index].lower_bound
+    }
+
+    /// Copies the lower bound of `bucket_index`, Go `LowerToDatum`.
+    #[must_use]
+    pub fn lower_to_datum(&self, bucket_index: usize) -> Datum {
+        self.get_lower(bucket_index).clone()
+    }
+
+    /// Returns the upper bound of `bucket_index`, Go `GetUpper`.
+    #[must_use]
+    pub fn get_upper(&self, bucket_index: usize) -> &Datum {
+        &self.buckets[bucket_index].upper_bound
+    }
+
+    /// Copies the upper bound of `bucket_index`, Go `UpperToDatum`.
+    #[must_use]
+    pub fn upper_to_datum(&self, bucket_index: usize) -> Datum {
+        self.get_upper(bucket_index).clone()
+    }
+
+    /// Appends a bucket without a bucket-level NDV, Go `AppendBucket`.
+    pub fn append_bucket(
+        &mut self,
+        lower_bound: Datum,
+        upper_bound: Datum,
+        count: i64,
+        repeat: i64,
+    ) {
+        self.append_bucket_with_ndv(lower_bound, upper_bound, count, repeat, 0);
+    }
+
+    /// Appends a bucket with its bucket-level NDV, Go `AppendBucketWithNDV`.
+    pub fn append_bucket_with_ndv(
+        &mut self,
+        lower_bound: Datum,
+        upper_bound: Datum,
+        count: i64,
+        repeat: i64,
+        ndv: i64,
+    ) {
+        self.buckets.push(Bucket {
+            count,
+            repeat,
+            ndv,
+            lower_bound,
+            upper_bound,
+        });
+    }
+
+    fn update_last_bucket(
+        &mut self,
+        upper_bound: Datum,
+        count: i64,
+        repeat: i64,
+        need_bucket_ndv: bool,
+    ) {
+        let bucket = self
+            .buckets
+            .last_mut()
+            .expect("Go updateLastBucket requires a non-empty histogram");
+        bucket.upper_bound = upper_bound;
+        if need_bucket_ndv && bucket.ndv > 0 {
+            bucket.ndv = bucket.ndv.wrapping_add(1);
+        }
+        bucket.count = count;
+        bucket.repeat = repeat;
+    }
+
+    /// Removes one decoded TopN value from its containing bucket, Go
+    /// `BinarySearchRemoveVal`.
+    pub fn binary_search_remove_value(
+        &mut self,
+        value: &Datum,
+        count: i64,
+        collation: Collation,
+    ) -> Result<(), DatumValueError> {
+        let mut low = 0_usize;
+        let Some(mut high) = self.len().checked_sub(1) else {
+            return Ok(());
+        };
+        if self.len() > 4 {
+            if self.buckets[high].upper_bound.compare(value, collation)? == Ordering::Less {
+                return Ok(());
+            }
+            if self.buckets[low].lower_bound.compare(value, collation)? == Ordering::Greater {
+                return Ok(());
+            }
+        }
+
+        let mut found_at = None;
+        while low <= high {
+            let mid = low + (high - low) / 2;
+            if self.buckets[mid].lower_bound.compare(value, collation)? == Ordering::Greater {
+                let Some(next_high) = mid.checked_sub(1) else {
+                    break;
+                };
+                high = next_high;
+                continue;
+            }
+            let upper_order = self.buckets[mid].upper_bound.compare(value, collation)?;
+            if upper_order == Ordering::Less {
+                low = mid + 1;
+                continue;
+            }
+
+            let bucket = &mut self.buckets[mid];
+            if bucket.ndv > 0 {
+                bucket.ndv -= 1;
+            }
+            if upper_order == Ordering::Equal {
+                bucket.repeat = 0;
+            }
+            bucket.count = bucket.count.wrapping_sub(count).max(0);
+            found_at = Some(mid);
+            break;
+        }
+        if let Some(mid) = found_at {
+            for bucket in &mut self.buckets[mid + 1..] {
+                bucket.count = bucket.count.wrapping_sub(count).max(0);
+            }
+        }
+        Ok(())
+    }
+
+    /// Removes sorted decoded TopN values from the histogram, Go
+    /// `RemoveVals` at the post-tablecodec boundary.
+    pub fn remove_values(
+        &mut self,
+        values: &[TopNMergeEntry],
+        collation: Collation,
+    ) -> Result<(), DatumValueError> {
+        let mut total_sub_count = 0_i64;
+        let mut value_index = 0_usize;
+        for bucket in &mut self.buckets {
+            while value_index < values.len() {
+                if bucket
+                    .lower_bound
+                    .compare(&values[value_index].value, collation)?
+                    == Ordering::Greater
+                {
+                    value_index += 1;
+                    continue;
+                }
+                let upper_order = bucket
+                    .upper_bound
+                    .compare(&values[value_index].value, collation)?;
+                if upper_order == Ordering::Less {
+                    break;
+                }
+                total_sub_count = total_sub_count.wrapping_add(values[value_index].count as i64);
+                if bucket.ndv > 0 {
+                    bucket.ndv -= 1;
+                }
+                value_index += 1;
+                if upper_order == Ordering::Equal {
+                    bucket.repeat = 0;
+                    break;
+                }
+            }
+            bucket.count = bucket.count.wrapping_sub(total_sub_count).max(0);
+        }
+        Ok(())
+    }
+
+    /// Removes empty analyze-v2 index buckets and clears bucket NDV, Go
+    /// `StandardizeForV2AnalyzeIndex`.
+    pub fn standardize_for_v2_analyze_index(&mut self) {
+        let mut previous_count = 0_i64;
+        self.buckets.retain_mut(|bucket| {
+            let count = bucket.count.wrapping_sub(previous_count);
+            previous_count = bucket.count;
+            let keep = count > 0 || bucket.repeat > 0;
+            if keep {
+                bucket.ndv = 0;
+            }
+            keep
+        });
+    }
+
+    /// Returns a deep copy truncated to `bucket_count` buckets, Go
+    /// `TruncateHistogram`.
+    #[must_use]
+    pub fn truncate(&self, bucket_count: usize) -> Self {
+        let mut histogram = self.copy();
+        histogram.buckets.truncate(bucket_count);
+        histogram
+    }
+
+    /// Deep-copies this histogram, Go `Copy`.
+    #[must_use]
+    pub fn copy(&self) -> Self {
+        self.clone()
+    }
+
+    fn merge_neighbor_buckets(&mut self, bucket_index: usize) {
+        let mut merged = Vec::with_capacity(bucket_index / 2 + 1);
+        let mut index = 0_usize;
+        while index < bucket_index {
+            let left = &self.buckets[index];
+            let right = &self.buckets[index + 1];
+            merged.push(Bucket {
+                count: right.count,
+                repeat: right.repeat,
+                ndv: right.ndv.wrapping_add(left.ndv),
+                lower_bound: left.lower_bound.clone(),
+                upper_bound: right.upper_bound.clone(),
+            });
+            index += 2;
+        }
+        if bucket_index.is_multiple_of(2) {
+            merged.push(self.buckets[bucket_index].clone());
+        }
+        self.buckets = merged;
+    }
+
+    fn pop_first_bucket(&mut self) {
+        self.buckets.remove(0);
+    }
+
     /// Number of buckets, Go `Histogram.Len`.
     #[must_use]
     pub fn len(&self) -> usize {
@@ -653,6 +956,570 @@ impl Histogram {
     }
 }
 
+/// Clones a slice's elements, Go `DeepSlice`.
+#[must_use]
+pub fn deep_slice<T: Clone>(slice: &[T]) -> Vec<T> {
+    slice.to_vec()
+}
+
+/// Merges adjacent histogram fragments, Go `MergeHistograms`.
+///
+/// The source mutates both input histograms. Rust takes ownership and returns
+/// the mutated left-hand value, making the same data changes observable
+/// without caller aliasing.
+pub fn merge_histograms(
+    mut left: Histogram,
+    mut right: Histogram,
+    bucket_size: usize,
+    stats_version: i64,
+    collation: Collation,
+) -> Result<Histogram, DatumValueError> {
+    assert!(
+        bucket_size > 0,
+        "Go MergeHistograms requires a positive bucket size"
+    );
+    if left.is_empty() {
+        return Ok(right);
+    }
+    if right.is_empty() {
+        return Ok(left);
+    }
+    left.ndv = left.ndv.wrapping_add(right.ndv);
+    let left_len = left.len();
+    let comparison = left.buckets[left_len - 1]
+        .upper_bound
+        .compare(&right.buckets[0].lower_bound, collation)?;
+    let mut offset = 0_i64;
+    if comparison == Ordering::Equal {
+        left.ndv = left.ndv.wrapping_sub(1);
+        left.buckets[left_len - 1].ndv = left.buckets[left_len - 1]
+            .ndv
+            .wrapping_add(right.buckets[0].ndv);
+        if right.buckets[0].ndv > 0 && left.buckets[left_len - 1].repeat > 0 {
+            left.buckets[left_len - 1].ndv -= 1;
+        }
+        let count = left.buckets[left_len - 1]
+            .count
+            .wrapping_add(right.buckets[0].count);
+        let repeat = right.buckets[0].repeat;
+        let upper = right.buckets[0].upper_bound.clone();
+        left.update_last_bucket(upper, count, repeat, false);
+        offset = right.buckets[0].count;
+        right.pop_first_bucket();
+    }
+
+    while left.len() > bucket_size {
+        let last = left.len() - 1;
+        left.merge_neighbor_buckets(last);
+    }
+    if right.is_empty() {
+        return Ok(left);
+    }
+    while right.len() > bucket_size {
+        let last = right.len() - 1;
+        right.merge_neighbor_buckets(last);
+    }
+
+    let left_count = left.buckets[left.len() - 1].count;
+    let right_count = right.buckets[right.len() - 1].count.wrapping_sub(offset);
+    let mut left_average = left_count as f64 / left.len() as f64;
+    let mut right_average = right_count as f64 / right.len() as f64;
+    while left.len() > 1 && left_average * 2.0 <= right_average {
+        let last = left.len() - 1;
+        left.merge_neighbor_buckets(last);
+        left_average *= 2.0;
+    }
+    while right.len() > 1 && right_average * 2.0 <= left_average {
+        let last = right.len() - 1;
+        right.merge_neighbor_buckets(last);
+        right_average *= 2.0;
+    }
+    for bucket in right.buckets {
+        let count = bucket.count.wrapping_add(left_count).wrapping_sub(offset);
+        if stats_version >= crate::stats_version::VERSION_2 {
+            left.append_bucket_with_ndv(
+                bucket.lower_bound,
+                bucket.upper_bound,
+                count,
+                bucket.repeat,
+                bucket.ndv,
+            );
+        } else {
+            left.append_bucket(bucket.lower_bound, bucket.upper_bound, count, bucket.repeat);
+        }
+    }
+    while left.len() > bucket_size {
+        let last = left.len() - 1;
+        left.merge_neighbor_buckets(last);
+    }
+    Ok(left)
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct BucketForMerging {
+    lower_bound: Datum,
+    upper_bound: Datum,
+    count: i64,
+    repeat: i64,
+    ndv: i64,
+    disjoint_ndv: i64,
+}
+
+impl BucketForMerging {
+    fn from_histogram(histogram: &Histogram) -> Vec<Self> {
+        histogram
+            .buckets
+            .iter()
+            .enumerate()
+            .map(|(index, bucket)| Self {
+                lower_bound: bucket.lower_bound.clone(),
+                upper_bound: bucket.upper_bound.clone(),
+                count: if index == 0 {
+                    bucket.count
+                } else {
+                    bucket
+                        .count
+                        .wrapping_sub(histogram.buckets[index - 1].count)
+                },
+                repeat: bucket.repeat,
+                ndv: bucket.ndv,
+                disjoint_ndv: 0,
+            })
+            .collect()
+    }
+
+    fn from_topn(entry: &TopNMergeEntry, options: PartitionMergeOptions) -> Self {
+        debug_assert!(options.analyze_version <= crate::stats_version::VERSION_2);
+        Self {
+            lower_bound: entry.value.clone(),
+            upper_bound: entry.value.clone(),
+            count: entry.count as i64,
+            repeat: entry.count as i64,
+            ndv: 0,
+            disjoint_ndv: 0,
+        }
+    }
+}
+
+fn source_max_float(left: f64, right: f64) -> f64 {
+    if left.is_nan() || right.is_nan() {
+        f64::NAN
+    } else if left == 0.0 && right == 0.0 {
+        if left.is_sign_positive() || right.is_sign_positive() {
+            0.0
+        } else {
+            -0.0
+        }
+    } else if left > right {
+        left
+    } else {
+        right
+    }
+}
+
+fn merge_bucket_ndv(
+    left: &BucketForMerging,
+    right: &BucketForMerging,
+    collation: Collation,
+) -> Result<BucketForMerging, HistogramMergeError> {
+    let mut result = right.clone();
+    if left.count == 0 {
+        return Ok(result);
+    }
+    if right.count == 0 {
+        result.lower_bound = left.lower_bound.clone();
+        result.upper_bound = left.upper_bound.clone();
+        result.ndv = left.ndv;
+        return Ok(result);
+    }
+
+    let upper_order = right.upper_bound.compare(&left.upper_bound, collation)?;
+    if upper_order == Ordering::Less {
+        return Err(HistogramMergeError::IllegalBucketOrder);
+    }
+    if upper_order == Ordering::Equal {
+        let lower_order = right.lower_bound.compare(&left.lower_bound, collation)?;
+        if lower_order == Ordering::Less {
+            return Err(HistogramMergeError::IllegalBucketOrder);
+        }
+        if lower_order == Ordering::Equal {
+            if left.ndv > right.ndv {
+                result.ndv = left.ndv;
+            }
+            return Ok(result);
+        }
+        let ratio =
+            calc_fraction_from_datums(&left.lower_bound, &left.upper_bound, &right.lower_bound);
+        result.ndv = (ratio * left.ndv as f64
+            + source_max_float((1.0 - ratio) * left.ndv as f64, right.ndv as f64))
+            as i64;
+        result.lower_bound = left.lower_bound.clone();
+        return Ok(result);
+    }
+
+    let right_lower_to_left_upper = right.lower_bound.compare(&left.upper_bound, collation)?;
+    if right_lower_to_left_upper != Ordering::Less {
+        result.upper_bound = left.upper_bound.clone();
+        result.lower_bound = left.lower_bound.clone();
+        result.disjoint_ndv = result.disjoint_ndv.wrapping_add(right.ndv);
+        result.ndv = left.ndv;
+        return Ok(result);
+    }
+
+    let upper_ratio =
+        calc_fraction_from_datums(&right.lower_bound, &right.upper_bound, &left.upper_bound);
+    let lower_order = right.lower_bound.compare(&left.lower_bound, collation)?;
+    if lower_order != Ordering::Less {
+        let lower_ratio =
+            calc_fraction_from_datums(&left.lower_bound, &left.upper_bound, &right.lower_bound);
+        result.ndv = (lower_ratio * left.ndv as f64
+            + source_max_float(
+                (1.0 - lower_ratio) * left.ndv as f64,
+                upper_ratio * right.ndv as f64,
+            )
+            + (1.0 - upper_ratio) * right.ndv as f64) as i64;
+        result.lower_bound = left.lower_bound.clone();
+        return Ok(result);
+    }
+
+    let lower_ratio =
+        calc_fraction_from_datums(&right.lower_bound, &right.upper_bound, &left.lower_bound);
+    result.ndv = (lower_ratio * right.ndv as f64
+        + source_max_float(
+            left.ndv as f64,
+            (upper_ratio - lower_ratio) * right.ndv as f64,
+        )
+        + (1.0 - upper_ratio) * right.ndv as f64) as i64;
+    Ok(result)
+}
+
+fn merge_partition_buckets(
+    buckets: &[BucketForMerging],
+    collation: Collation,
+) -> Result<BucketForMerging, HistogramMergeError> {
+    let Some(last) = buckets.last() else {
+        return Err(HistogramMergeError::NotEnoughBuckets);
+    };
+    let mut result = BucketForMerging {
+        lower_bound: Datum::Null,
+        upper_bound: last.upper_bound.clone(),
+        count: 0,
+        repeat: 0,
+        ndv: 0,
+        disjoint_ndv: 0,
+    };
+    let mut right = last.clone();
+    let mut total_ndv = 0_i64;
+    for (index, bucket) in buckets.iter().enumerate().rev() {
+        total_ndv = total_ndv.wrapping_add(bucket.ndv);
+        result.count = result.count.wrapping_add(bucket.count);
+        if bucket.upper_bound.compare(&result.upper_bound, collation)? == Ordering::Equal {
+            result.repeat = result.repeat.wrapping_add(bucket.repeat);
+        }
+        if index != buckets.len() - 1 {
+            right = merge_bucket_ndv(bucket, &right, collation)?;
+        }
+    }
+    result.ndv = right.ndv.wrapping_add(right.disjoint_ndv);
+    let damped = (result.ndv as f64 * 1.15_f64.powf((buckets.len() - 1) as f64)) as i64;
+    result.ndv = damped.min(total_ndv);
+    Ok(result)
+}
+
+fn sort_buckets_by_upper_bound(
+    buckets: &mut [BucketForMerging],
+    collation: Collation,
+) -> Result<(), HistogramMergeError> {
+    let mut comparison_error = None;
+    buckets.sort_unstable_by(|left, right| {
+        let upper = match left.upper_bound.compare(&right.upper_bound, collation) {
+            Ok(ordering) => ordering,
+            Err(error) => {
+                comparison_error = Some(error);
+                Ordering::Equal
+            }
+        };
+        if upper != Ordering::Equal {
+            return upper;
+        }
+        match left.lower_bound.compare(&right.lower_bound, collation) {
+            Ok(ordering) => ordering,
+            Err(error) => {
+                comparison_error = Some(error);
+                Ordering::Equal
+            }
+        }
+    });
+    comparison_error.map_or(Ok(()), |error| Err(HistogramMergeError::Datum(error)))
+}
+
+fn buckets_are_sorted(
+    buckets: &[BucketForMerging],
+    collation: Collation,
+) -> Result<bool, DatumValueError> {
+    for pair in buckets.windows(2) {
+        let upper = pair[0]
+            .upper_bound
+            .compare(&pair[1].upper_bound, collation)?;
+        if upper == Ordering::Greater {
+            return Ok(false);
+        }
+        if upper == Ordering::Equal
+            && pair[0]
+                .lower_bound
+                .compare(&pair[1].lower_bound, collation)?
+                == Ordering::Greater
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// Merges partition-level histograms into one global histogram, Go
+/// `MergePartitionHist2GlobalHist` at the decoded-Datum boundary.
+pub fn merge_partition_histograms(
+    histograms: &[Histogram],
+    popped_topn: &[TopNMergeEntry],
+    options: PartitionMergeOptions,
+    collation: Collation,
+) -> Result<Option<Histogram>, HistogramMergeError> {
+    if options.expected_buckets == 0 {
+        return Err(HistogramMergeError::ZeroExpectedBuckets);
+    }
+    let Some(first_histogram) = histograms.first() else {
+        return Ok(None);
+    };
+
+    let mut total_count = 0_i64;
+    let mut total_null = 0_i64;
+    let mut total_column_size = 0_i64;
+    let mut bucket_number = 0_usize;
+    for histogram in histograms {
+        total_column_size = total_column_size.wrapping_add(histogram.tot_col_size);
+        total_null = total_null.wrapping_add(histogram.null_count);
+        if let Some(last) = histogram.buckets.last() {
+            bucket_number = bucket_number.wrapping_add(histogram.len());
+            total_count = total_count.wrapping_add(last.count);
+        }
+    }
+    if bucket_number.wrapping_add(popped_topn.len()) == 0 {
+        return Ok(Some(Histogram::new(
+            first_histogram.id,
+            0,
+            total_null,
+            first_histogram.last_update_version,
+            0,
+            total_column_size,
+        )));
+    }
+
+    let mut buckets = Vec::with_capacity(bucket_number.wrapping_add(popped_topn.len()));
+    for histogram in histograms {
+        buckets.extend(BucketForMerging::from_histogram(histogram));
+    }
+    for entry in popped_topn {
+        total_count = total_count.wrapping_add(entry.count as i64);
+        buckets.push(BucketForMerging::from_topn(entry, options));
+    }
+    buckets.retain(|bucket| bucket.count != 0);
+    sort_buckets_by_upper_bound(&mut buckets, collation)?;
+
+    let expected_buckets = options.expected_buckets as i64;
+    let mut global_buckets = Vec::with_capacity(options.expected_buckets);
+    let mut sum = 0_i64;
+    let mut previous_sum = 0_i64;
+    let mut right_end = buckets.len();
+    let mut output_bucket_count = 1_i64;
+    let bucket_count_threshold = total_count
+        .wrapping_div(expected_buckets)
+        .wrapping_mul(80)
+        .wrapping_div(100);
+    let mut current_leftmost: Option<Datum> = None;
+    let mut index = buckets.len() as isize - 1;
+
+    while index >= 0 {
+        let current_index = index as usize;
+        match current_leftmost.as_mut() {
+            None => current_leftmost = Some(buckets[current_index].lower_bound.clone()),
+            Some(leftmost) => {
+                if leftmost.compare(&buckets[current_index].lower_bound, collation)?
+                    == Ordering::Greater
+                {
+                    *leftmost = buckets[current_index].lower_bound.clone();
+                }
+            }
+        }
+        sum = sum.wrapping_add(buckets[current_index].count);
+        let expected_sum = total_count
+            .wrapping_mul(output_bucket_count)
+            .wrapping_div(expected_buckets);
+        if sum >= expected_sum && sum.wrapping_sub(previous_sum) >= bucket_count_threshold {
+            while index > 0 {
+                let previous = index as usize - 1;
+                if buckets[previous]
+                    .upper_bound
+                    .compare(&buckets[index as usize].upper_bound, collation)?
+                    != Ordering::Equal
+                {
+                    break;
+                }
+                sum = sum.wrapping_add(buckets[previous].count);
+                index -= 1;
+            }
+
+            let mut leftmost = current_leftmost
+                .take()
+                .expect("the reverse scan always establishes a left bound");
+            if leftmost.compare(&buckets[index as usize].lower_bound, collation)?
+                == Ordering::Greater
+            {
+                leftmost = buckets[index as usize].lower_bound.clone();
+            }
+
+            let mut merge_buffer = Vec::new();
+            let mut cut_buffer = Vec::new();
+            let leftmost_valid_nonoverlap = index as usize;
+            while index > 0 {
+                let previous = index as usize - 1;
+                if buckets[previous]
+                    .upper_bound
+                    .compare(&leftmost, collation)?
+                    == Ordering::Less
+                {
+                    break;
+                }
+                if buckets[previous]
+                    .lower_bound
+                    .compare(&leftmost, collation)?
+                    != Ordering::Less
+                {
+                    sum = sum.wrapping_add(buckets[previous].count);
+                    merge_buffer.push(buckets[previous].clone());
+                    index -= 1;
+                    continue;
+                }
+
+                let overlap = 1.0
+                    - calc_fraction_from_datums(
+                        &buckets[previous].lower_bound,
+                        &buckets[previous].upper_bound,
+                        &leftmost,
+                    );
+                let overlapped_count = (buckets[previous].count as f64 * overlap) as i64;
+                let overlapped_ndv = (buckets[previous].ndv as f64 * overlap) as i64;
+                sum = sum.wrapping_add(overlapped_count);
+                buckets[previous].count = buckets[previous]
+                    .count
+                    .wrapping_sub(overlapped_count)
+                    .max(0);
+                buckets[previous].ndv = buckets[previous].ndv.wrapping_sub(overlapped_ndv).max(0);
+                buckets[previous].repeat = 0;
+
+                let cut = BucketForMerging {
+                    lower_bound: leftmost.clone(),
+                    upper_bound: buckets[previous].upper_bound.clone(),
+                    count: overlapped_count,
+                    repeat: 0,
+                    ndv: overlapped_ndv,
+                    disjoint_ndv: 0,
+                };
+                buckets[previous].upper_bound = leftmost.clone();
+                merge_buffer.push(cut.clone());
+                cut_buffer.push(cut);
+                index -= 1;
+            }
+
+            let start = index as usize;
+            let mut merged = if cut_buffer.is_empty() {
+                merge_partition_buckets(&buckets[start..right_end], collation)?
+            } else {
+                merge_buffer.reverse();
+                merge_buffer.extend_from_slice(&buckets[leftmost_valid_nonoverlap..right_end]);
+                debug_assert_eq!(buckets_are_sorted(&merge_buffer, collation), Ok(true));
+                let merged = merge_partition_buckets(&merge_buffer, collation)?;
+
+                sort_buckets_by_upper_bound(
+                    &mut buckets[start..leftmost_valid_nonoverlap],
+                    collation,
+                )?;
+                let mut leftmost_invalid = leftmost_valid_nonoverlap;
+                while leftmost_invalid > start {
+                    if buckets[leftmost_invalid - 1]
+                        .lower_bound
+                        .compare(&leftmost, collation)?
+                        == Ordering::Less
+                    {
+                        break;
+                    }
+                    leftmost_invalid -= 1;
+                }
+                debug_assert_eq!(
+                    buckets_are_sorted(&buckets[start..leftmost_invalid], collation),
+                    Ok(true)
+                );
+                index = leftmost_invalid as isize;
+                merged
+            };
+            merged.lower_bound = leftmost;
+            global_buckets.push(merged);
+            right_end = index as usize;
+            output_bucket_count = output_bucket_count.wrapping_add(1);
+            previous_sum = sum;
+        }
+        index -= 1;
+    }
+
+    if right_end > 0 {
+        let mut leftmost = buckets[0].lower_bound.clone();
+        for bucket in &buckets[1..right_end] {
+            if leftmost.compare(&bucket.lower_bound, collation)? == Ordering::Greater {
+                leftmost = bucket.lower_bound.clone();
+            }
+        }
+        let mut merged = merge_partition_buckets(&buckets[..right_end], collation)?;
+        merged.lower_bound = leftmost;
+        global_buckets.push(merged);
+    }
+    global_buckets.reverse();
+    for index in 1..global_buckets.len() {
+        global_buckets[index].count = global_buckets[index]
+            .count
+            .wrapping_add(global_buckets[index - 1].count);
+    }
+
+    for bucket in &mut global_buckets {
+        let mut repeat = 0.0;
+        for histogram in histograms {
+            repeat += histogram
+                .equal_row_count(&bucket.upper_bound, options.is_index, collation)
+                .0;
+        }
+        if (repeat as i64) > bucket.repeat {
+            bucket.repeat = repeat as i64;
+        }
+    }
+
+    let mut global = Histogram::new(
+        first_histogram.id,
+        0,
+        total_null,
+        first_histogram.last_update_version,
+        global_buckets.len(),
+        total_column_size,
+    );
+    for bucket in global_buckets {
+        global.append_bucket_with_ndv(
+            bucket.lower_bound,
+            bucket.upper_bound,
+            bucket.count,
+            bucket.repeat,
+            if options.is_index { bucket.ndv } else { 0 },
+        );
+    }
+    Ok(Some(global))
+}
+
 /// Go `outOfRangeBetweenRate`, the smoothing divisor for out-of-range work.
 pub const OUT_OF_RANGE_BETWEEN_RATE: f64 = 100.0;
 
@@ -677,6 +1544,17 @@ pub struct OutOfRangeContext {
 mod tests {
     use super::*;
 
+    fn merge_bucket(lower: i64, upper: i64, ndv: i64, disjoint_ndv: i64) -> BucketForMerging {
+        BucketForMerging {
+            lower_bound: Datum::new_int(lower),
+            upper_bound: Datum::new_int(upper),
+            count: ndv,
+            repeat: 0,
+            ndv,
+            disjoint_ndv,
+        }
+    }
+
     #[test]
     fn calc_fraction_matches_edge_cases() {
         assert_eq!(calc_fraction(0.0, 0.0, 5.0), 0.5);
@@ -696,5 +1574,84 @@ mod tests {
     fn convert_bytes_to_scalar_matches_go_byte_widths() {
         assert_eq!(convert_bytes_to_scalar(&[]), 0.0);
         assert_eq!(convert_bytes_to_scalar(&[0x80]), (0x80_u64 << 56) as f64);
+    }
+
+    #[test]
+    fn source_merge_bucket_ndv_matches_all_go_cases() {
+        let cases = [
+            (
+                merge_bucket(1, 2, 2, 0),
+                merge_bucket(1, 2, 3, 0),
+                merge_bucket(1, 2, 3, 0),
+            ),
+            (
+                merge_bucket(1, 3, 2, 0),
+                merge_bucket(2, 3, 2, 0),
+                merge_bucket(1, 3, 3, 0),
+            ),
+            (
+                merge_bucket(1, 3, 2, 0),
+                merge_bucket(4, 6, 2, 2),
+                merge_bucket(1, 3, 2, 4),
+            ),
+            (
+                merge_bucket(1, 5, 5, 0),
+                merge_bucket(2, 6, 5, 0),
+                merge_bucket(1, 6, 6, 0),
+            ),
+            (
+                merge_bucket(3, 5, 3, 0),
+                merge_bucket(2, 6, 4, 0),
+                merge_bucket(2, 6, 5, 0),
+            ),
+        ];
+        for (left, right, expected) in cases {
+            let actual = merge_bucket_ndv(&left, &right, Collation::Binary).unwrap();
+            assert_eq!(actual.lower_bound, expected.lower_bound);
+            assert_eq!(actual.upper_bound, expected.upper_bound);
+            assert_eq!(actual.ndv, expected.ndv);
+            assert_eq!(actual.disjoint_ndv, expected.disjoint_ndv);
+        }
+    }
+
+    #[test]
+    fn source_merge_bucket_ndv_empty_and_illegal_order_oracle() {
+        let mut left_empty = merge_bucket(1, 2, 2, 0);
+        left_empty.count = 0;
+        let right = merge_bucket(1, 2, 3, 0);
+        assert_eq!(
+            merge_bucket_ndv(&left_empty, &right, Collation::Binary).unwrap(),
+            right
+        );
+
+        let left = merge_bucket(1, 2, 2, 0);
+        let mut right_empty = merge_bucket(1, 2, 3, 0);
+        right_empty.count = 0;
+        let merged = merge_bucket_ndv(&left, &right_empty, Collation::Binary).unwrap();
+        assert_eq!(merged.lower_bound, Datum::new_int(1));
+        assert_eq!(merged.upper_bound, Datum::new_int(2));
+        assert_eq!(merged.count, 0);
+        assert_eq!(merged.ndv, 2);
+
+        assert_eq!(
+            merge_bucket_ndv(
+                &merge_bucket(1, 5, 2, 0),
+                &merge_bucket(1, 4, 2, 0),
+                Collation::Binary,
+            ),
+            Err(HistogramMergeError::IllegalBucketOrder)
+        );
+        assert_eq!(
+            merge_bucket_ndv(
+                &merge_bucket(2, 5, 2, 0),
+                &merge_bucket(1, 5, 2, 0),
+                Collation::Binary,
+            ),
+            Err(HistogramMergeError::IllegalBucketOrder)
+        );
+        assert_eq!(
+            merge_partition_buckets(&[], Collation::Binary),
+            Err(HistogramMergeError::NotEnoughBuckets)
+        );
     }
 }

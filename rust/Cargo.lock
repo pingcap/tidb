@@ -1861,6 +1861,7 @@ name = "tidb-stats"
 version = "0.0.0"
 dependencies = [
  "chrono-tz",
+ "sha2",
  "tidb-datatype",
  "tidb-util",
 ]

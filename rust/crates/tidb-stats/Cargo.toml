@@ -17,6 +17,9 @@ chrono-tz.workspace = true
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-util = { path = "../tidb-util" }
 
+[dev-dependencies]
+sha2 = { workspace = true }
+
 [[test]]
 name = "all"
 path = "tests/all.rs"
