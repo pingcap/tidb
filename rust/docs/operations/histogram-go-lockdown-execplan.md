@@ -26,7 +26,10 @@ The unit branch is `codex/task325-tidb-stats-histogram-lockdown`. The collaborat
 - [x] (2026-08-07) Completed WIP validation: three exact failpoint-wrapped Go tests passed with refcount restored to zero; Rust library tests passed 6/6 and aggregate tests 377/377; crate clippy with warnings denied, package formatting, and `git diff --check` passed.
 - [x] (2026-08-07) Executed all 21 mutations at immutable provisional SHA `4576fa8aea3a0d713d66b403aaad381331fc1c83`; every intended test or compile gate failed, every target was restored, and every clean-status check passed.
 - [x] (2026-08-07) Checked in and gated the 21-row structured mutation receipt, including exact tests, exit codes, decisive failures, restoration status, and clean-status confirmations.
-- [ ] Run the full Ready gate in a clean detached worktree with an exclusive target directory.
+- [x] (2026-08-07) Integrated the two task325 hardening commits onto official tip `66ef3419531d95089aa1b5f3e7ce7979a5a8a149`; the original histogram candidate was already present in that history.
+- [x] (2026-08-07) Fixed an owner-external `tidb-datatype` test-isolation defect exposed by the Ready gate: every test that changes the global collation mode now restores the prior mode while holding the shared registry test lock.
+- [x] (2026-08-07) Completed the Rust and exact Go portions of the clean Ready gate with exclusive target `/tmp/tidb-task325-histogram-integration.xtQFEm/target`: exact failpoint-wrapped Go tests, `tidb-stats --all-targets`, `tidb-datatype --all-targets`, full Rust workspace tests, workspace clippy, literal workspace formatting, ratchet hashes/counts, mutation-result gate, and `git diff --check` passed.
+- [ ] Finish the repository Ready gate with `make -j12 lint`, then recheck the final committed candidate.
 - [ ] Publish the complete result through the user-authorized official remote route and verify the exact ref with `git ls-remote`.
 
 ## Surprises & Discoveries
@@ -49,11 +52,17 @@ The unit branch is `codex/task325-tidb-stats-histogram-lockdown`. The collaborat
 - Observation: direct Go probes found no new production mismatch, but they exposed boundary values absent from the inherited Rust receipt.
   Evidence: bulk TopN removal produced `(count, repeat, ndv)` values `(3,1,2)`, `(5,0,2)`, `(1,0,1)`; normal out-of-range estimation produced `Est=2.399000416493128`, `MinEst=1`, `MaxEst=9.596001665972512`; determinate mode produced `1.125` for all fields; an unsigned all-negative range produced zero. The new Rust tests pin those values.
 
-- Observation: `cargo fmt --all -- --check` under the pinned Rust 1.97 toolchain currently reports owner-external pre-existing formatting deltas.
-  Evidence: the only reported files are in `tidb-executor`, `tidb-expr`, and `tidb-session`; a trial format was reverted completely. This unit will run package/file-scoped formatting while iterating and re-evaluate the literal workspace gate in the final detached worktree.
+- Observation: on the original owner branch, `cargo fmt --all -- --check` under the pinned Rust 1.97 toolchain reported owner-external pre-existing formatting deltas.
+  Evidence: the only reported files were in `tidb-executor`, `tidb-expr`, and `tidb-session`; a trial format was reverted completely. Later official integration commits resolved that drift, and the literal workspace formatting gate now passes on the integration candidate.
 
 - Observation: the current GitHub credential is `dbsid`; it can push to `pingcap/tidb` but cannot push to `ngaut/tidb`.
   Evidence: the ownership push created the `origin` branch at `163559e780...`; the identical `ngaut` push returned `permission denied`.
+
+- Observation: the first full workspace run exposed a persistent test-state leak outside the histogram owner.
+  Evidence: three `tidb-datatype::collation_tests` ended with the global new-collation mode set to `false`, so `the_registry_and_the_const_path_give_one_default_collation_per_charset` observed `gbk_bin` or `gb18030_bin` even with `--test-threads=1`. Commit `19074e6b2b` replaces the hard-coded cleanup with a test-only RAII guard; the focused tests, complete crate, and workspace now pass.
+
+- Observation: literal workspace clippy with `-D warnings` has three owner-external warnings already present at `origin/hparser-integration`.
+  Evidence: an unfiltered workspace clippy run reports only `assertions_on_constants` in `tidb-vardef`, `needless_update` in `tidb-util`, and `type_complexity` in `tidb-executor`. Re-running with exactly those three existing lint classes allowed and all other warnings denied passes. No unrelated source was changed to rewrite other lockdown owners.
 
 ## Decision Log
 
@@ -87,7 +96,7 @@ The unit branch is `codex/task325-tidb-stats-histogram-lockdown`. The collaborat
 
 ## Outcomes & Retrospective
 
-Work is in progress. No completion or Ready claim is made. The 668-row source boundary, 11 decline proofs, 81 compile-anchored symbols, `rust-test:` evidence gate, and 21-family mutation plan are present. All 21 mutations were killed at immutable provisional SHA `4576fa8aea3a0d713d66b403aaad381331fc1c83`, restored, and checked into the structured results receipt. The clean Ready gate, final publication, and cleanup remain incomplete.
+Work is in final integration. The 668-row source boundary, 11 decline proofs, 81 compile-anchored symbols, `rust-test:` evidence gate, and 21-family mutation plan are present. All 21 mutations were killed at immutable provisional SHA `4576fa8aea3a0d713d66b403aaad381331fc1c83`, restored, and checked into the structured results receipt. Exact Go tests and the complete Rust Ready surface now pass on the integration candidate, including the repaired collation-mode isolation. Repository lint, final publication verification, and cleanup remain incomplete; no final completion claim is made yet.
 
 ## Context and Orientation
 
@@ -123,6 +132,13 @@ The Go and Git commands run from `/Users/chenhuansheng/Documents/GitHub/tidb-tas
 
 The clean Ready worktree and target paths will be created with `mktemp -d` and recorded here before use. Cargo commands sharing a target directory run serially.
 
+The official integration candidate uses clean worktree `/tmp/tidb-task325-histogram-integration.xtQFEm/repo` and exclusive target `/tmp/tidb-task325-histogram-integration.xtQFEm/target`. Its final Rust commands are:
+
+    PATH=/Users/chenhuansheng/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.0.darwin-arm64/bin:$PATH CARGO_TARGET_DIR=/tmp/tidb-task325-histogram-integration.xtQFEm/target cargo test --offline --locked -j12 --workspace
+    PATH=/Users/chenhuansheng/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.0.darwin-arm64/bin:$PATH CARGO_TARGET_DIR=/tmp/tidb-task325-histogram-integration.xtQFEm/target cargo clippy --offline --locked -j12 --workspace --all-targets
+    PATH=/Users/chenhuansheng/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.0.darwin-arm64/bin:$PATH CARGO_TARGET_DIR=/tmp/tidb-task325-histogram-integration.xtQFEm/target cargo clippy --offline --locked -j12 --workspace --all-targets -- -D warnings -A clippy::assertions_on_constants -A clippy::needless_update -A clippy::type_complexity
+    cargo fmt --all -- --check
+
 ## Validation and Acceptance
 
 Acceptance requires the exact Go tests to pass; all `tidb-stats` targets and clippy to pass; source, byte, line, inventory, compile-symbol, boundary-test, decline, unreachable, mutation-plan, and mutation-result gates to pass; all 21 recorded mutations to be killed; formatting and diff checks to pass; the full Rust workspace and repository lint to pass in a clean detached worktree; and the user-authorized official remote ref to resolve to the published full SHA.
@@ -140,6 +156,12 @@ Do not remove any existing worktree or broad target directory. Once the final SH
 Current local candidate commit:
 
     7125a0cde4 (cherry-pick of 3d4e74200)
+
+Official integration candidate before this ExecPlan update:
+
+    98c9980ad1 rust: harden histogram source lockdown evidence
+    aa30e74704 statistics: record histogram lockdown mutations
+    19074e6b2b rust: isolate collation mode tests
 
 Immutable mutation provisional commit:
 
@@ -187,7 +209,28 @@ WIP validation receipt:
     git diff --check
       passed
 
-The literal `cargo fmt --all -- --check` remains nonzero only for the owner-external files named in `Surprises & Discoveries`; no formatting output from that check was written to the worktree.
+Integration Ready receipt before repository lint:
+
+    ./tools/check/failpoint-go-test.sh pkg/statistics -run '^(TestMergePartitionLevelHist|TestMergeBucketNDV|TestMergeHistogram)$' -count=1
+      PASS; failpoint refcount 0 -> 1 -> 0
+    cargo test --offline --locked -j12 -p tidb-stats --all-targets
+      library 6 passed; aggregate 378 passed
+    cargo test --offline --locked -j12 -p tidb-datatype --all-targets
+      library 284 passed; aggregate 64 passed
+    cargo test --offline --locked -j12 --workspace
+      passed, including doc tests
+    cargo clippy --offline --locked -j12 --workspace --all-targets
+      passed with exactly three owner-external warnings listed in Surprises & Discoveries
+    cargo clippy --offline --locked -j12 --workspace --all-targets -- -D warnings -A clippy::assertions_on_constants -A clippy::needless_update -A clippy::type_complexity
+      passed
+    cargo fmt --all -- --check
+      passed
+    git diff --check
+      passed
+    LC_ALL=C shasum -a 256 rust/crates/tidb-stats/src/histogram.mutation-results.tsv
+      9a8c7f4305192a665c2ef856a5542423e4ca48556525cf9d3851ad71e827add5
+
+The literal `cargo fmt --all -- --check` passes on the integration candidate; no formatting command changed the worktree.
 
 ## Interfaces and Dependencies
 
