@@ -429,16 +429,18 @@ func TestStalenessAndHistoryRead(t *testing.T) {
 			time.Sleep(10 * time.Millisecond)
 		}
 	}
-	time1 := oracle.GetTimeFromTS(getCurrentTS())
+	waitTSAfterTS := func(afterTS uint64) time.Time {
+		// SQL timestamp literals keep only the physical TSO part. Wait for the next
+		// physical tick so the parsed literal is still after the observed TSO.
+		return waitTSAfter(oracle.GetTimeFromTS(afterTS))
+	}
+	time1 := waitTSAfterTS(getCurrentTS())
 	time1TS := oracle.GoTimeToTS(time1)
 	schemaVer1 := tk.Session().GetInfoSchema().SchemaMetaVersion()
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int primary key);")
 	tk.MustExec(`drop table if exists t`)
-	lastCommitTSStr := tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.commit_ts')").Rows()[0][0].(string)
-	lastCommitTS, err := strconv.ParseUint(lastCommitTSStr, 10, 64)
-	require.NoError(t, err)
-	time2 := waitTSAfter(oracle.GetTimeFromTS(lastCommitTS))
+	time2 := waitTSAfterTS(getCurrentTS())
 	time2TS := oracle.GoTimeToTS(time2)
 	schemaVer2 := tk.Session().GetInfoSchema().SchemaMetaVersion()
 
@@ -486,7 +488,7 @@ func TestStalenessAndHistoryRead(t *testing.T) {
 	require.Equal(t, time2TS, tk.Session().GetSessionVars().TxnCtx.StartTS)
 	require.Nil(t, tk.Session().GetSessionVars().SnapshotInfoschema)
 	require.Equal(t, schemaVer2, tk.Session().GetInfoSchema().SchemaMetaVersion())
-	err = tk.ExecToErr(`set @@tidb_snapshot="2020-10-08 16:45:26";`)
+	err := tk.ExecToErr(`set @@tidb_snapshot="2020-10-08 16:45:26";`)
 	require.Regexp(t, ".*Transaction characteristics can't be changed while a transaction is in progress", err.Error())
 	require.Equal(t, uint64(0), tk.Session().GetSessionVars().SnapshotTS)
 	require.Nil(t, tk.Session().GetSessionVars().SnapshotInfoschema)
