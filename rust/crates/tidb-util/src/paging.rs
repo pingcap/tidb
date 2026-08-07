@@ -91,30 +91,21 @@ mod tests {
         MIN_PAGING_SIZE, PAGING_GROWING_SUM, PAGING_SIZE_GROW, THRESHOLD,
     };
 
+    const GO_BUILD: &[u8] = include_bytes!("../../../../pkg/util/paging/BUILD.bazel");
+    const GO_MAIN_TEST: &[u8] = include_bytes!("../../../../pkg/util/paging/main_test.go");
     const GO_SOURCE: &[u8] = include_bytes!("../../../../pkg/util/paging/paging.go");
+    const GO_TEST: &[u8] = include_bytes!("../../../../pkg/util/paging/paging_test.go");
+    const ARTIFACT_MANIFEST: &str = include_str!("paging.artifacts.tsv");
     const LOCKDOWN_INVENTORY: &str = include_str!("paging.inventory.tsv");
-    const EXPECTED_ITEMS: [(&str, (&str, &str)); 21] = [
-        ("D01", ("PORTED", "MIN_PAGING_SIZE")),
-        ("D02", ("PORTED", "MAX_PAGING_SIZE_SHIFT")),
-        ("D03", ("PORTED", "PAGING_SIZE_GROW")),
-        ("D04", ("PORTED", "MIN_ALLOWED_MAX_PAGING_SIZE")),
-        ("D05", ("PORTED", "PAGING_GROWING_SUM")),
-        ("D06", ("PORTED", "THRESHOLD")),
-        ("F01", ("PORTED", "grow_paging_size")),
-        ("B01", ("PORTED", "grow_paging_size")),
-        ("B02", ("PORTED", "grow_paging_size")),
-        ("R01", ("PORTED", "grow_paging_size")),
-        ("B03", ("PORTED", "grow_paging_size")),
-        ("B04", ("PORTED", "grow_paging_size")),
-        ("F02", ("PORTED", "calculate_seek_cnt")),
-        ("B05", ("PORTED", "calculate_seek_cnt")),
-        ("B06", ("PORTED", "calculate_seek_cnt")),
-        ("R02", ("PORTED", "calculate_seek_cnt")),
-        ("R03", ("PORTED", "calculate_seek_cnt")),
-        ("B07", ("PORTED", "calculate_seek_cnt")),
-        ("R04", ("PORTED", "calculate_seek_cnt")),
-        ("R05", ("PORTED", "calculate_seek_cnt")),
-        ("B08", ("PORTED", "calculate_seek_cnt")),
+    const DECLINED_EVIDENCE: &str = "source-quote:go_testsetup_and_goleak_only";
+    const SYMBOL_EVIDENCE: &str =
+        "rust-test:paging_lockdown_inventory_is_complete_and_symbols_compile";
+
+    const ARTIFACTS: [(&str, &str, &[u8]); 4] = [
+        ("pkg/util/paging/BUILD.bazel", "build", GO_BUILD),
+        ("pkg/util/paging/main_test.go", "test-support", GO_MAIN_TEST),
+        ("pkg/util/paging/paging.go", "production", GO_SOURCE),
+        ("pkg/util/paging/paging_test.go", "test", GO_TEST),
     ];
 
     fn assert_in_delta(actual: f64, expected: f64, delta: f64) {
@@ -125,43 +116,265 @@ mod tests {
     }
 
     #[test]
-    fn lockdown_inventory_matches_go_source_and_rust_symbols() {
-        let recorded_hash = LOCKDOWN_INVENTORY
-            .lines()
-            .find_map(|line| line.strip_prefix("# source-sha256\t"))
-            .expect("inventory records the owning Go source SHA-256");
-        assert_eq!(recorded_hash, sha256_hex(GO_SOURCE), "Go source drifted");
+    fn paging_lockdown_inventory_is_complete_and_symbols_compile() {
+        let expected_manifest_prefix = [
+            "# pkg-paging-artifacts-v1",
+            "# zero\tbuild_tags\t0",
+            "# zero\tplatform_variants\t0",
+            "# zero\tcode_generated\t0",
+            "# zero\tgo_generate\t0",
+            "# zero\tgo_embed\t0",
+            "# zero\ttracked_testdata\t0",
+            "path\trole\tsha256",
+        ];
+        let mut manifest_lines = ARTIFACT_MANIFEST.lines();
+        for expected in expected_manifest_prefix {
+            assert_eq!(manifest_lines.next(), Some(expected));
+        }
+        let mut manifest = BTreeMap::new();
+        for line in manifest_lines {
+            let columns: Vec<_> = line.split('\t').collect();
+            assert_eq!(columns.len(), 3, "invalid artifact row: {line}");
+            assert!(
+                manifest
+                    .insert(columns[0], (columns[1], columns[2]))
+                    .is_none(),
+                "duplicate artifact row: {line}"
+            );
+        }
+        assert_eq!(manifest.len(), ARTIFACTS.len());
+        for (path, role, bytes) in ARTIFACTS {
+            let expected_hash = sha256_hex(bytes);
+            assert!(
+                manifest
+                    .get(path)
+                    .is_some_and(|(actual_role, actual_hash)| {
+                        *actual_role == role && *actual_hash == expected_hash
+                    }),
+                "artifact manifest drifted: {path}"
+            );
+        }
 
         let mut lines = LOCKDOWN_INVENTORY
             .lines()
             .filter(|line| !line.is_empty() && !line.starts_with('#'));
         assert_eq!(
             lines.next(),
-            Some("id\tcategory\tgo_item\tstatus\trust_symbol\tevidence")
+            Some(
+                "obligation_id\tcategory\tsource_path\tast_anchor\tnode_sha256\towner\tstatus\trust_symbol\tevidence\tmutation_policy"
+            )
         );
 
         let allowed_statuses = BTreeSet::from(["PORTED", "DECLINED", "UNREACHABLE"]);
-        let mut actual = BTreeMap::new();
+        let mut ids = BTreeSet::new();
+        let mut source_anchors = BTreeSet::new();
+        let mut categories = BTreeMap::new();
+        let mut statuses = BTreeMap::new();
+        let mut declined_support = BTreeSet::new();
         for line in lines {
             let columns: Vec<_> = line.split('\t').collect();
-            assert_eq!(columns.len(), 6, "invalid inventory row: {line}");
+            assert_eq!(columns.len(), 10, "invalid inventory row: {line}");
             assert!(
-                allowed_statuses.contains(columns[3]),
+                allowed_statuses.contains(columns[6]),
                 "unclassified inventory row: {line}"
             );
             assert!(
-                !columns[5].is_empty(),
+                !columns[8].is_empty(),
                 "inventory evidence is required: {line}"
             );
             assert!(
-                actual
-                    .insert(columns[0], (columns[3], columns[4]))
-                    .is_none(),
+                ids.insert(columns[0]),
                 "duplicate inventory id: {}",
                 columns[0]
             );
+            assert!(
+                source_anchors.insert((columns[2], columns[3])),
+                "duplicate source anchor: {line}"
+            );
+            *categories.entry(columns[1]).or_insert(0usize) += 1;
+            *statuses.entry(columns[6]).or_insert(0usize) += 1;
+
+            match (columns[2], columns[1], columns[5], columns[3]) {
+                ("pkg/util/paging/paging.go", "const", owner, anchor) => {
+                    let symbol = match (owner, anchor) {
+                        ("const:MinPagingSize:0", "const:MinPagingSize:0") => "MIN_PAGING_SIZE",
+                        ("const:maxPagingSizeShift:0", "const:maxPagingSizeShift:0") => {
+                            "MAX_PAGING_SIZE_SHIFT"
+                        }
+                        ("const:pagingSizeGrow:0", "const:pagingSizeGrow:0") => "PAGING_SIZE_GROW",
+                        ("const:MinAllowedMaxPagingSize:0", "const:MinAllowedMaxPagingSize:0") => {
+                            "MIN_ALLOWED_MAX_PAGING_SIZE"
+                        }
+                        ("const:pagingGrowingSum:0", "const:pagingGrowingSum:0") => {
+                            "PAGING_GROWING_SUM"
+                        }
+                        ("const:Threshold:0", "const:Threshold:0") => "THRESHOLD",
+                        _ => panic!("unexpected source constant row: {line}"),
+                    };
+                    assert_eq!(
+                        columns[6..10],
+                        ["PORTED", symbol, SYMBOL_EVIDENCE, "compile-owner-gate"]
+                    );
+                }
+                ("pkg/util/paging/paging.go", "function", "GrowPagingSize", "GrowPagingSize") => {
+                    assert_eq!(
+                        columns[6..10],
+                        [
+                            "PORTED",
+                            "grow_paging_size",
+                            SYMBOL_EVIDENCE,
+                            "compile-owner-gate"
+                        ]
+                    );
+                }
+                (
+                    "pkg/util/paging/paging.go",
+                    "function",
+                    "CalculateSeekCnt",
+                    "CalculateSeekCnt",
+                ) => {
+                    assert_eq!(
+                        columns[6..10],
+                        [
+                            "PORTED",
+                            "calculate_seek_cnt",
+                            SYMBOL_EVIDENCE,
+                            "compile-owner-gate"
+                        ]
+                    );
+                }
+                ("pkg/util/paging/paging.go", "branch", "GrowPagingSize", anchor)
+                    if anchor.starts_with("GrowPagingSize/if:") =>
+                {
+                    assert_eq!(
+                        columns[6..10],
+                        [
+                            "PORTED",
+                            "grow_paging_size",
+                            "rust-test:grow_paging_size_preserves_source_wrapping_and_cap_order",
+                            "behavior-mutation"
+                        ]
+                    );
+                }
+                ("pkg/util/paging/paging.go", "branch", "CalculateSeekCnt", anchor)
+                    if anchor.starts_with("CalculateSeekCnt/if:") =>
+                {
+                    assert_eq!(
+                        columns[6..10],
+                        [
+                            "PORTED",
+                            "calculate_seek_cnt",
+                            "rust-test:calculate_seek_cnt_preserves_source_piecewise_boundaries",
+                            "behavior-mutation"
+                        ]
+                    );
+                }
+                (
+                    "pkg/util/paging/paging_test.go",
+                    "test",
+                    "TestGrowPagingSize",
+                    "TestGrowPagingSize",
+                ) => {
+                    assert_eq!(
+                        columns[6..10],
+                        [
+                            "PORTED",
+                            "grow_paging_size_test",
+                            "rust-test:grow_paging_size_test",
+                            "test-evidence-gate"
+                        ]
+                    );
+                }
+                (
+                    "pkg/util/paging/paging_test.go",
+                    "test",
+                    "TestCalculateSeekCnt",
+                    "TestCalculateSeekCnt",
+                ) => {
+                    assert_eq!(
+                        columns[6..10],
+                        [
+                            "PORTED",
+                            "calculate_seek_cnt_test",
+                            "rust-test:calculate_seek_cnt_test",
+                            "test-evidence-gate"
+                        ]
+                    );
+                }
+                (
+                    "pkg/util/paging/paging_test.go",
+                    "test_assertion",
+                    "TestGrowPagingSize",
+                    anchor,
+                ) if anchor.starts_with("TestGrowPagingSize/assertion:") => {
+                    assert_eq!(
+                        columns[6..10],
+                        [
+                            "PORTED",
+                            "grow_paging_size_test",
+                            "rust-test:grow_paging_size_test",
+                            "test-evidence-gate"
+                        ]
+                    );
+                }
+                ("pkg/util/paging/main_test.go", "test_main" | "test_row", "TestMain", anchor) => {
+                    assert!(
+                        matches!(
+                            anchor,
+                            "TestMain"
+                                | "TestMain/composite:1/element:0"
+                                | "TestMain/composite:1/element:1"
+                                | "TestMain/composite:1/element:2"
+                                | "TestMain/composite:1/element:3"
+                        ),
+                        "unexpected declined support row: {line}"
+                    );
+                    assert_eq!(
+                        columns[6..10],
+                        [
+                            "DECLINED",
+                            "-",
+                            DECLINED_EVIDENCE,
+                            "classification-evidence-gate"
+                        ]
+                    );
+                    declined_support.insert(anchor);
+                }
+                _ => panic!("unexpected paging inventory row: {line}"),
+            }
         }
-        assert_eq!(actual, BTreeMap::from(EXPECTED_ITEMS));
+        assert_eq!(ids.len(), 28);
+        assert_eq!(
+            categories,
+            BTreeMap::from([
+                ("branch", 10),
+                ("const", 6),
+                ("function", 2),
+                ("test", 2),
+                ("test_assertion", 3),
+                ("test_main", 1),
+                ("test_row", 4),
+            ])
+        );
+        assert_eq!(statuses, BTreeMap::from([("DECLINED", 5), ("PORTED", 23)]));
+        assert_eq!(
+            declined_support,
+            BTreeSet::from([
+                "TestMain",
+                "TestMain/composite:1/element:0",
+                "TestMain/composite:1/element:1",
+                "TestMain/composite:1/element:2",
+                "TestMain/composite:1/element:3",
+            ])
+        );
+
+        let go_main_test = std::str::from_utf8(GO_MAIN_TEST).expect("Go test support is UTF-8");
+        assert!(go_main_test.contains("testsetup.SetupForCommonTest()"));
+        assert!(go_main_test.contains("goleak.VerifyTestMain"));
+        assert_eq!(go_main_test.matches("goleak.IgnoreTopFunction").count(), 4);
+        let go_test = std::str::from_utf8(GO_TEST).expect("Go test source is UTF-8");
+        assert!(go_test.contains("func TestGrowPagingSize"));
+        assert!(go_test.contains("func TestCalculateSeekCnt"));
 
         assert_eq!(MIN_PAGING_SIZE, 128);
         assert_eq!(MAX_PAGING_SIZE_SHIFT, 7);
@@ -171,6 +384,10 @@ mod tests {
         assert_eq!(THRESHOLD, 960);
         let _: fn(u64, u64) -> u64 = grow_paging_size;
         let _: fn(u64) -> f64 = calculate_seek_cnt;
+        let _: fn() = grow_paging_size_test;
+        let _: fn() = calculate_seek_cnt_test;
+        let _: fn() = grow_paging_size_preserves_source_wrapping_and_cap_order;
+        let _: fn() = calculate_seek_cnt_preserves_source_piecewise_boundaries;
     }
 
     // Go `TestGrowPagingSize`.
