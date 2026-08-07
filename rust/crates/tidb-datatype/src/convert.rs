@@ -1165,7 +1165,7 @@ mod tests {
     }
 
     #[test]
-    fn source_scientific_notation_rows() {
+    fn test_convert_scientific_notation_source_rows() {
         for (input, expected) in [
             ("123.456e0", "123.456"),
             ("123.456e1", "1234.56"),
@@ -1196,7 +1196,7 @@ mod tests {
     }
 
     #[test]
-    fn source_decimal_string_to_uint_rows() {
+    fn test_convert_decimal_str_to_uint_source_rows() {
         for (input, expected) in [
             ("0.", 0),
             ("72.40", 72),
@@ -1224,6 +1224,15 @@ mod tests {
         ] {
             assert!(
                 convert_decimal_str_to_uint(input, u64::MAX, FieldTypeCode::LongLong).is_err(),
+                "{input}"
+            );
+        }
+        for input in ["-99.0", "-100.0"] {
+            assert_eq!(
+                convert_decimal_str_to_uint(input, u64::from(u8::MAX), FieldTypeCode::Tiny)
+                    .unwrap_err()
+                    .0,
+                0,
                 "{input}"
             );
         }
@@ -1589,7 +1598,7 @@ mod tests {
     }
 
     #[test]
-    fn source_json_conversion_rows() {
+    fn test_convert_json_to_int_source_rows() {
         for (input, expected, truncated) in [
             ("{}", 0, true),
             ("[]", 0, true),
@@ -1608,7 +1617,10 @@ mod tests {
             assert_eq!(actual.value, expected, "{input}");
             assert_eq!(actual.event.is_some(), truncated, "{input}");
         }
+    }
 
+    #[test]
+    fn test_convert_json_to_float_source_rows() {
         for (input, expected, truncated) in [
             ("{}", 0.0, true),
             ("[]", 0.0, true),
@@ -1627,7 +1639,10 @@ mod tests {
             assert_eq!(actual.value, expected, "{input}");
             assert_eq!(actual.event.is_some(), truncated, "{input}");
         }
+    }
 
+    #[test]
+    fn test_convert_json_to_decimal_source_rows() {
         for (input, expected, truncated) in [
             ("3", "3", false),
             ("-3", "-3", false),

@@ -733,6 +733,68 @@ mod tests {
             .is_none());
     }
 
+    #[test]
+    fn test_convert_to_string_with_check_source_rows() {
+        let utf8 = "你好".as_bytes();
+        let utf8mb4 = "你好👋".as_bytes();
+        let invalid_utf8 = [utf8, &[0x81]].concat();
+        for (input, charset, flags, valid) in [
+            (utf8, "utf8mb4", ConversionFlags::default(), true),
+            (utf8mb4, "utf8mb4", ConversionFlags::default(), true),
+            (
+                utf8,
+                "utf8mb4",
+                ConversionFlags::default().with_skip_utf8_check(true),
+                true,
+            ),
+            (
+                utf8mb4,
+                "utf8mb4",
+                ConversionFlags::default().with_skip_utf8_check(true),
+                true,
+            ),
+            (
+                invalid_utf8.as_slice(),
+                "utf8mb4",
+                ConversionFlags::default().with_skip_utf8_check(true),
+                true,
+            ),
+            (
+                invalid_utf8.as_slice(),
+                "utf8mb4",
+                ConversionFlags::default(),
+                false,
+            ),
+            (
+                invalid_utf8.as_slice(),
+                "ascii",
+                ConversionFlags::default(),
+                false,
+            ),
+            (
+                invalid_utf8.as_slice(),
+                "ascii",
+                ConversionFlags::default().with_skip_ascii_check(true),
+                true,
+            ),
+            (utf8mb4, "utf8", ConversionFlags::default(), false),
+            (
+                utf8mb4,
+                "utf8",
+                ConversionFlags::default().with_skip_utf8mb4_check(true),
+                true,
+            ),
+        ] {
+            let checked = Datum::new_string(input)
+                .string_with_check(flags, charset)
+                .unwrap();
+            assert_eq!(checked.error().is_none(), valid, "{charset} {input:?}");
+            if valid {
+                assert_eq!(checked.bytes(), input, "{charset} {input:?}");
+            }
+        }
+    }
+
     /// Source: `pkg/types/datum_test.go::TestDatum` and the constructor block
     /// in `pkg/types/datum.go`.
     #[test]

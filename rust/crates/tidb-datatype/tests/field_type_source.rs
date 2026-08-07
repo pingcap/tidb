@@ -241,6 +241,13 @@ fn parser_remaining_field_type_surface_is_source_complete() {
     assert!(json_field.memory_usage() >= std::mem::size_of::<FieldType>());
 }
 
+#[test]
+fn test_field_type_to_str_source_rows() {
+    assert_eq!(type_to_str(C::Unspecified, "not binary"), type_str(C::Unspecified));
+    assert_eq!(type_to_str(C::Blob, "binary"), "blob");
+    assert_eq!(type_to_str(C::String, "binary"), "binary");
+}
+
 /// Go: pkg/parser/types/field_type_test.go:30 TestFieldType.
 #[test]
 fn parser_field_type() {
