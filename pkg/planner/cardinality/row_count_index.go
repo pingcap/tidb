@@ -196,6 +196,12 @@ func isSingleColIdxNullRange(idx *statistics.Index, ran *ranger.Range) bool {
 
 // It uses the modifyCount to validate, and realtimeRowCount to adjust the influence of modifications on the table.
 func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index, coll *statistics.HistColl, indexRanges []*ranger.Range, idxCols []*expression.Column, realtimeRowCount, modifyCount int64) (totalCount statistics.RowEstimate, err error) {
+	// For single-column ranges, prefer column stats over index stats when available.
+	// Column histograms retain original data types and avoid the lossy string encoding
+	// that index histograms use, producing more accurate estimates.
+	if result, ok := tryColumnEstimateForSingleColRanges(sctx, coll, idx, indexRanges); ok {
+		return result, nil
+	}
 	sc := sctx.GetSessionVars().StmtCtx
 	isSingleColIdx := len(idx.Info.Columns) == 1
 	for _, indexRange := range indexRanges {
@@ -298,31 +304,16 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 		// Use a tolerance factor to avoid precision issues.
 		atFullRange := count.Est >= float64(realtimeRowCount)*(1-cost.ToleranceFactor)
 		// handling the out-of-range part if the estimate does not cover the full range.
+		// Single-column ranges with valid column stats are handled by
+		// tryColumnEstimateForSingleColRanges above (which includes out-of-range).
+		// This out-of-range section only fires for multi-column ranges or when
+		// column stats are unavailable.
 		if !atFullRange && ((outOfRangeOnIndex(idx, l) && !(isSingleColIdx && lowIsNull)) || outOfRangeOnIndex(idx, r)) {
 			histNDV := idx.NDV
-			// Exclude the TopN in Stats Version 2
 			if idx.StatsVer == statistics.Version2 {
-				colIDs := coll.Idx2ColUniqueIDs[idx.Histogram.ID]
-				// Retrieve column statistics for the 1st index column.
-				// colIDs may be empty if the index-to-column mapping is not populated, so guard the access.
-				var c *statistics.Column
-				if len(colIDs) > 0 {
-					c = coll.GetCol(colIDs[0])
-				}
-				// If this is single column predicate - use the column's information rather than index.
-				// Index histograms are converted to string. Column uses original type - which can be more accurate for out of range
-				isSingleColRange := len(indexRange.LowVal) == len(indexRange.HighVal) && len(indexRange.LowVal) == 1
-				if isSingleColRange && c != nil && c.Histogram.NDV > 0 && c.Histogram.Len() > 0 {
-					histNDV = c.Histogram.NDV - int64(c.TopN.Num())
-					count.Add(c.Histogram.OutOfRangeRowCount(sctx, &indexRange.LowVal[0], &indexRange.HighVal[0], realtimeRowCount, modifyCount, histNDV))
-				} else {
-					// TODO: Extend original datatype out-of-range estimation to multi-column
-					histNDV -= int64(idx.TopN.Num())
-					count.Add(idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, realtimeRowCount, modifyCount, histNDV))
-				}
-			} else {
-				count.Add(idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, realtimeRowCount, modifyCount, histNDV))
+				histNDV -= int64(idx.TopN.Num())
 			}
+			count.Add(idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, realtimeRowCount, modifyCount, histNDV))
 		}
 
 		totalCount.Add(count)

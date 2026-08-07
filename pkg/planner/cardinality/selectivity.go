@@ -586,7 +586,33 @@ const valueAwareRowAddedThreshold = 0.5
 
 // IsLastBucketEndValueUnderrepresented detects when the last value (upper bound) of the last bucket
 // has a suspiciously low count that may be stale due to concentrated writes after ANALYZE.
+// It is the composition of lastBucketEndValueUnderrepresented (the count-dependent
+// heuristic) and isLastBucketEndValue (the count-independent bucket probe); the
+// column estimate cache evaluates the two halves at different times.
 func IsLastBucketEndValueUnderrepresented(sctx planctx.PlanContext, hg *statistics.Histogram, val types.Datum,
+	histCnt float64, histNDV float64, realtimeRowCount, modifyCount int64) bool {
+	// Evaluate the cheap count-dependent checks first so the LocateBucket probe
+	// only runs when the heuristic could actually fire.
+	return lastBucketEndValueUnderrepresented(hg, histCnt, histNDV, realtimeRowCount, modifyCount) &&
+		isLastBucketEndValue(sctx, hg, val)
+}
+
+// isLastBucketEndValue reports whether val is the end (upper bound) value of
+// hg's last bucket. It depends only on the histogram and the value, not on the
+// realtime counts.
+func isLastBucketEndValue(sctx planctx.PlanContext, hg *statistics.Histogram, val types.Datum) bool {
+	if len(hg.Buckets) == 0 {
+		return false
+	}
+	// Use LocateBucket to check if this value is at the last bucket's upper bound
+	_, bucketIdx, inBucket, matchLastValue := hg.LocateBucket(sctx, val)
+	return (bucketIdx == len(hg.Buckets)-1) && inBucket && matchLastValue
+}
+
+// lastBucketEndValueUnderrepresented applies the realtimeRowCount/modifyCount-dependent
+// part of the underrepresentation heuristic: whether enough rows changed since
+// ANALYZE for the last bucket's end value count to be considered stale.
+func lastBucketEndValueUnderrepresented(hg *statistics.Histogram,
 	histCnt float64, histNDV float64, realtimeRowCount, modifyCount int64) bool {
 	if modifyCount <= 0 || len(hg.Buckets) == 0 || histNDV <= 0 {
 		return false
@@ -601,15 +627,6 @@ func IsLastBucketEndValueUnderrepresented(sctx planctx.PlanContext, hg *statisti
 
 	// Only apply heuristic when new rows are significant relative to average value count
 	if newRowsAdded < avgValueCount*valueAwareRowAddedThreshold {
-		return false
-	}
-
-	// Use LocateBucket to check if this value is at the last bucket's upper bound
-	_, bucketIdx, inBucket, matchLastValue := hg.LocateBucket(sctx, val)
-
-	// Check if this is the last bucket's upper bound value (end value)
-	isLastBucketEndValue := (bucketIdx == len(hg.Buckets)-1) && inBucket && matchLastValue
-	if !isLastBucketEndValue {
 		return false
 	}
 
@@ -1210,10 +1227,11 @@ func crossValidationSelectivity(
 			Collators:   []collate.Collator{idxPointRange.Collators[i]},
 		}
 
-		rowCountEst, err := getColumnRowCount(sctx, col, []*ranger.Range{&rang}, coll.RealtimeCount, coll.ModifyCount, col.IsHandle)
+		shapes, err := getColumnRangesShape(sctx, col, []*ranger.Range{&rang}, col.IsHandle)
 		if err != nil {
 			return 0, 0, err
 		}
+		rowCountEst := scaleColumnRangesShape(sctx, col, shapes, coll.RealtimeCount, coll.ModifyCount)
 		rowCount := rowCountEst.Est
 		crossValidationSelectivity = crossValidationSelectivity * (rowCount / totalRowCount)
 

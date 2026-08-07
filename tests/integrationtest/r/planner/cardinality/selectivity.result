@@ -393,8 +393,8 @@ TableReader	1.00	root		data:Selection
   └─TableFullScan	4.00	cop[tikv]	table:tdatetime	keep order:false
 explain format = 'brief' select * from tint where b=1;
 id	estRows	task	access object	operator info
-TableReader	2.00	root		data:Selection
-└─Selection	2.00	cop[tikv]		eq(planner__cardinality__selectivity.tint.b, 1)
+TableReader	1.00	root		data:Selection
+└─Selection	1.00	cop[tikv]		eq(planner__cardinality__selectivity.tint.b, 1)
   └─TableFullScan	8.00	cop[tikv]	table:tint	keep order:false
 explain format = 'brief' select * from tint where b=4;
 id	estRows	task	access object	operator info
@@ -403,13 +403,13 @@ TableReader	1.00	root		data:Selection
   └─TableFullScan	8.00	cop[tikv]	table:tint	keep order:false
 explain format = 'brief' select * from tint where b=8;
 id	estRows	task	access object	operator info
-TableReader	2.00	root		data:Selection
-└─Selection	2.00	cop[tikv]		eq(planner__cardinality__selectivity.tint.b, 8)
+TableReader	1.00	root		data:Selection
+└─Selection	1.00	cop[tikv]		eq(planner__cardinality__selectivity.tint.b, 8)
   └─TableFullScan	8.00	cop[tikv]	table:tint	keep order:false
 explain format = 'brief' select * from tdouble where b=1;
 id	estRows	task	access object	operator info
-TableReader	2.00	root		data:Selection
-└─Selection	2.00	cop[tikv]		eq(planner__cardinality__selectivity.tdouble.b, 1)
+TableReader	1.00	root		data:Selection
+└─Selection	1.00	cop[tikv]		eq(planner__cardinality__selectivity.tdouble.b, 1)
   └─TableFullScan	8.00	cop[tikv]	table:tdouble	keep order:false
 explain format = 'brief' select * from tdouble where b=4;
 id	estRows	task	access object	operator info
@@ -418,13 +418,13 @@ TableReader	1.00	root		data:Selection
   └─TableFullScan	8.00	cop[tikv]	table:tdouble	keep order:false
 explain format = 'brief' select * from tdouble where b=8;
 id	estRows	task	access object	operator info
-TableReader	2.00	root		data:Selection
-└─Selection	2.00	cop[tikv]		eq(planner__cardinality__selectivity.tdouble.b, 8)
+TableReader	1.00	root		data:Selection
+└─Selection	1.00	cop[tikv]		eq(planner__cardinality__selectivity.tdouble.b, 8)
   └─TableFullScan	8.00	cop[tikv]	table:tdouble	keep order:false
 explain format = 'brief' select * from tdecimal where b=1;
 id	estRows	task	access object	operator info
-TableReader	2.00	root		data:Selection
-└─Selection	2.00	cop[tikv]		eq(planner__cardinality__selectivity.tdecimal.b, 1)
+TableReader	1.00	root		data:Selection
+└─Selection	1.00	cop[tikv]		eq(planner__cardinality__selectivity.tdecimal.b, 1)
   └─TableFullScan	8.00	cop[tikv]	table:tdecimal	keep order:false
 explain format = 'brief' select * from tdecimal where b=4;
 id	estRows	task	access object	operator info
@@ -433,13 +433,13 @@ TableReader	1.00	root		data:Selection
   └─TableFullScan	8.00	cop[tikv]	table:tdecimal	keep order:false
 explain format = 'brief' select * from tdecimal where b=8;
 id	estRows	task	access object	operator info
-TableReader	2.00	root		data:Selection
-└─Selection	2.00	cop[tikv]		eq(planner__cardinality__selectivity.tdecimal.b, 8)
+TableReader	1.00	root		data:Selection
+└─Selection	1.00	cop[tikv]		eq(planner__cardinality__selectivity.tdecimal.b, 8)
   └─TableFullScan	8.00	cop[tikv]	table:tdecimal	keep order:false
 explain format = 'brief' select * from tstring where b='1';
 id	estRows	task	access object	operator info
-TableReader	2.00	root		data:Selection
-└─Selection	2.00	cop[tikv]		eq(planner__cardinality__selectivity.tstring.b, "1")
+TableReader	1.00	root		data:Selection
+└─Selection	1.00	cop[tikv]		eq(planner__cardinality__selectivity.tstring.b, "1")
   └─TableFullScan	8.00	cop[tikv]	table:tstring	keep order:false
 explain format = 'brief' select * from tstring where b='4';
 id	estRows	task	access object	operator info
@@ -448,36 +448,36 @@ TableReader	1.00	root		data:Selection
   └─TableFullScan	8.00	cop[tikv]	table:tstring	keep order:false
 explain format = 'brief' select * from tstring where b='8';
 id	estRows	task	access object	operator info
-TableReader	2.00	root		data:Selection
-└─Selection	2.00	cop[tikv]		eq(planner__cardinality__selectivity.tstring.b, "8")
+TableReader	1.00	root		data:Selection
+└─Selection	1.00	cop[tikv]		eq(planner__cardinality__selectivity.tstring.b, "8")
   └─TableFullScan	8.00	cop[tikv]	table:tstring	keep order:false
 explain format = 'brief' select * from tdatetime where b='2001-01-01';
 id	estRows	task	access object	operator info
-TableReader	2.00	root		data:Selection
-└─Selection	2.00	cop[tikv]		eq(planner__cardinality__selectivity.tdatetime.b, 2001-01-01 00:00:00.000000)
+TableReader	1.00	root		data:Selection
+└─Selection	1.00	cop[tikv]		eq(planner__cardinality__selectivity.tdatetime.b, 2001-01-01 00:00:00.000000)
   └─TableFullScan	4.00	cop[tikv]	table:tdatetime	keep order:false
 explain format = 'brief' select * from tdatetime where b='2001-01-02';
 id	estRows	task	access object	operator info
-TableReader	2.00	root		data:Selection
-└─Selection	2.00	cop[tikv]		eq(planner__cardinality__selectivity.tdatetime.b, 2001-01-02 00:00:00.000000)
+TableReader	1.00	root		data:Selection
+└─Selection	1.00	cop[tikv]		eq(planner__cardinality__selectivity.tdatetime.b, 2001-01-02 00:00:00.000000)
   └─TableFullScan	4.00	cop[tikv]	table:tdatetime	keep order:false
 explain format = 'brief' select * from tdatetime where b='2001-01-04';
 id	estRows	task	access object	operator info
-TableReader	2.00	root		data:Selection
-└─Selection	2.00	cop[tikv]		eq(planner__cardinality__selectivity.tdatetime.b, 2001-01-04 00:00:00.000000)
+TableReader	1.00	root		data:Selection
+└─Selection	1.00	cop[tikv]		eq(planner__cardinality__selectivity.tdatetime.b, 2001-01-04 00:00:00.000000)
   └─TableFullScan	4.00	cop[tikv]	table:tdatetime	keep order:false
 explain format = 'brief' select * from ct1 where pk>='1' and pk <='4';
 id	estRows	task	access object	operator info
-TableReader	5.00	root		data:TableRangeScan
-└─TableRangeScan	5.00	cop[tikv]	table:ct1	range:["1","4"], keep order:false
+TableReader	4.00	root		data:TableRangeScan
+└─TableRangeScan	4.00	cop[tikv]	table:ct1	range:["1","4"], keep order:false
 explain format = 'brief' select * from ct1 where pk>='4' and pk <='6';
 id	estRows	task	access object	operator info
 TableReader	3.00	root		data:TableRangeScan
 └─TableRangeScan	3.00	cop[tikv]	table:ct1	range:["4","6"], keep order:false
 explain format = 'brief' select * from ct1 where pk>='6' and pk <='8';
 id	estRows	task	access object	operator info
-TableReader	4.00	root		data:TableRangeScan
-└─TableRangeScan	4.00	cop[tikv]	table:ct1	range:["6","8"], keep order:false
+TableReader	3.00	root		data:TableRangeScan
+└─TableRangeScan	3.00	cop[tikv]	table:ct1	range:["6","8"], keep order:false
 explain format = 'brief' select * from ct2 where a=1 and b>=1 and b<=8;
 id	estRows	task	access object	operator info
 TableReader	2.00	root		data:TableRangeScan
