@@ -929,8 +929,8 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 		}
 		p.Handles = handles
 	} else {
-		usedValues := make([]bool, len(p.IndexValues))
-		for i, value := range p.IndexValues {
+		filteredValues := p.IndexValues[:0]
+		for _, value := range p.IndexValues {
 			if types.DatumsContainNull(value) {
 				continue
 			}
@@ -952,19 +952,13 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 			}
 			dedup.Set(handle, true)
 			handles = append(handles, handle)
-			usedValues[i] = true
+			filteredValues = append(filteredValues, value)
 		}
-		skipped := 0
-		for i, use := range usedValues {
-			if !use {
-				curr := i - skipped
-				p.IndexValues = slices.Delete(p.IndexValues, curr, curr+1)
-				skipped++
-			}
-		}
+		clear(p.IndexValues[len(filteredValues):])
+		p.IndexValues = filteredValues
 		if pi != nil {
 			partIdxs := p.getPartitionIdxs(sctx)
-			skipped = 0
+			skipped := 0
 			partitionsFound := 0
 			for i, idx := range partIdxs {
 				if partIdxs[i] < 0 ||
