@@ -21,7 +21,7 @@ The observable behavioral fix is that `alloc_with_len(length, capacity)` panics 
 - [x] (2026-08-08) Checked in the four-artifact manifest, exact 48-row inventory, compiled owner/evidence gate, six-suite mutation plan/results, content-addressed receipt, and compiled mutation receipt gate; the checker reports `4 artifacts, 48 AST obligations, 40 PORTED, 8 DECLINED`.
 - [x] (2026-08-08) Killed all 15 planned mutations from immutable baseline `4f47cc1b194b5438ae9f1d6950aa84a628b2ad3e` in disposable worktree `/tmp/tidb-arena-mutations.OSDAQY/worktree`; every source was restored byte-for-byte from `/tmp/tidb-arena-saved.EcnBkl` and the same named test passed after restoration.
 - [x] (2026-08-08) Passed the code-bearing Ready gate at `4b84057276ba11a13420f13ad9b5eb10524c48dd`: exact Go tests, checker, 286/286 `tidb-util`, clean-detached 7129/7129 workspace tests with 41 skips, package/workspace Clippy with warnings denied, workspace fmt, direct ratchets, `git diff --check`, and `make -j12 lint`.
-- [ ] Publish by ordinary fast-forward and verify the official ref plus every GitHub commit's `dbsid` attribution.
+- [x] (2026-08-08) Published the validated arena chain by ordinary fast-forward to official `pingcap/tidb:hparser-integration`; `git ls-remote` returned `437cc3559ceb0c3def387066f8a509af0e8221f3`, and GitHub API returned author/committer login `dbsid` with verified email `huanshengchen@gmail.com` for all four arena commits.
 
 ## Surprises & Discoveries
 
@@ -56,7 +56,7 @@ The observable behavioral fix is that `alloc_with_len(length, capacity)` panics 
 
 ## Outcomes & Retrospective
 
-No completion outcome is claimed yet. Baselines, direct Go measurements, the production fix, exact inventory, compiled gates, 15 killed mutation results, generated receipt, and clean Ready/full-workspace gate are complete. Only official publication and remote/GitHub attribution verification remain.
+The `pkg/util/arena` lockdown is complete. The representable invalid-length mismatch is fixed without changing the public Vec API or SimpleAllocator's allocate-before-panic order. All four Go artifacts and 48 AST obligations are content-addressed, with 40 PORTED and eight source-measured DECLINED rows. All 15 mutations are killed and receipt-gated, the clean Ready workspace passes, and the validated chain is published on the official integration branch with `dbsid` attribution. The shared-backing and stale-byte-reuse behavior remains an explicit safety-driven decline rather than a false transcreation claim.
 
 ## Context and Orientation
 
@@ -147,3 +147,5 @@ Revision note: updated on 2026-08-08 after the invalid-length fix, deterministic
 Revision note: updated on 2026-08-08 after the stdAllocator reset coverage correction, 15/15 mutation kills with byte-for-byte restoration, the compiled mutation receipt gate, and all 286 `tidb-util` tests passed.
 
 Revision note: updated on 2026-08-08 after the clean Ready gate passed at `4b84057276`, including the corrected Go toolchain environment and 7129/7129 workspace result.
+
+Revision note: closed on 2026-08-08 after ordinary fast-forward publication to official `hparser-integration` and GitHub API verification of the complete `dbsid` author/committer attribution.
