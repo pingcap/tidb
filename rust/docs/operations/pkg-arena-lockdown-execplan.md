@@ -18,9 +18,9 @@ The observable behavioral fix is that `alloc_with_len(length, capacity)` panics 
 - [x] (2026-08-08) Generated 48 content-addressed obligations and ran clean Go/Rust baselines: two Go tests and two Rust tests passed.
 - [x] (2026-08-08) Measured exact-fit, disjoint allocation, Reset reuse, append reuse, invalid length/capacity, negative input, and signed-overflow boundaries from an exact scratch copy of `arena.go`.
 - [x] (2026-08-08) Added the two invalid-length regressions, fixed both allocators while preserving SimpleAllocator's allocate-before-panic order, and kept the public Vec-returning API stable; the arena WIP set passes 7/7.
-- [ ] Check in the four-artifact manifest, exact 48-row inventory, compiled owner/evidence gate, mutation plan/results, and content-addressed receipt (completed: manifest, inventory, compiled gate, and mutation plan; remaining: results and receipt).
-- [ ] Kill every planned mutation from an immutable provisional commit and restore each source byte-for-byte.
-- [ ] Run WIP and Ready/full-workspace gates, publish by ordinary fast-forward, and verify every GitHub commit belongs to `dbsid`.
+- [x] (2026-08-08) Checked in the four-artifact manifest, exact 48-row inventory, compiled owner/evidence gate, six-suite mutation plan/results, content-addressed receipt, and compiled mutation receipt gate; the checker reports `4 artifacts, 48 AST obligations, 40 PORTED, 8 DECLINED`.
+- [x] (2026-08-08) Killed all 15 planned mutations from immutable baseline `4f47cc1b194b5438ae9f1d6950aa84a628b2ad3e` in disposable worktree `/tmp/tidb-arena-mutations.OSDAQY/worktree`; every source was restored byte-for-byte from `/tmp/tidb-arena-saved.EcnBkl` and the same named test passed after restoration.
+- [ ] Run WIP and Ready/full-workspace gates, publish by ordinary fast-forward, and verify every GitHub commit belongs to `dbsid` (WIP complete: exact Go tests, checker, 286/286 `tidb-util`, package Clippy with warnings denied, fmt, and diff check).
 
 ## Surprises & Discoveries
 
@@ -51,7 +51,7 @@ The observable behavioral fix is that `alloc_with_len(length, capacity)` panics 
 
 ## Outcomes & Retrospective
 
-No completion outcome is claimed yet. Baselines, direct Go measurements, the production fix, exact inventory, and compiled owner/evidence gate are complete. The mutation receipt, Ready gate, and publication remain unfinished.
+No completion outcome is claimed yet. Baselines, direct Go measurements, the production fix, exact inventory, compiled gates, 15 killed mutation results, and the generated receipt are complete. The Ready/full-workspace gate and publication remain unfinished.
 
 ## Context and Orientation
 
@@ -121,3 +121,5 @@ Security extension review: this in-memory utility adds no network, authenticatio
 Revision note: created on 2026-08-08 after selecting the complete package, reading all direct artifacts and consumers, generating the 48-obligation census, running Go/Rust baselines, and measuring boundary behavior from an exact scratch source copy.
 
 Revision note: updated on 2026-08-08 after the invalid-length fix, deterministic inventory generation, compiled owner/evidence gate, and WIP validation (`pkg/util/arena` Go tests, arena 7/7, package Clippy with warnings denied, and workspace fmt) all passed.
+
+Revision note: updated on 2026-08-08 after the stdAllocator reset coverage correction, 15/15 mutation kills with byte-for-byte restoration, the compiled mutation receipt gate, and all 286 `tidb-util` tests passed.
