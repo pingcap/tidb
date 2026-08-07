@@ -7,6 +7,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/apipb",
         "@com_github_pingcap_kvproto//pkg/externalworkloadpb",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//credentials",
@@ -20,8 +21,9 @@ go_test(
     srcs = ["client_test.go"],
     embed = [":client"],
     flaky = True,
-    shard_count = 6,
+    shard_count = 7,
     deps = [
+        "@com_github_pingcap_kvproto//pkg/apipb",
         "@com_github_pingcap_kvproto//pkg/externalworkloadpb",
         "@com_github_stretchr_testify//require",
         "@org_golang_google_grpc//:grpc",

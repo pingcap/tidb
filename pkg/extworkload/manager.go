@@ -85,12 +85,13 @@ func dialClient(ctx context.Context, keyspaceMeta *keyspacepb.KeyspaceMeta, cfg 
 	dialCtx, cancel := context.WithTimeout(ctx, dialTimeout)
 	defer cancel()
 	cli, err := client.New(&client.Option{
-		KeyspaceID:     keyspaceMeta.GetId(),
-		KeyspaceName:   keyspaceMeta.GetName(),
-		TiDBPool:       cfg.TidbPool,
-		ControllerAddr: cfg.ControllerAddr,
-		TLSConfig:      tlsCfg,
-		Interceptors:   []grpc.UnaryClientInterceptor{metricsInterceptor()},
+		KeyspaceID:       keyspaceMeta.GetId(),
+		KeyspaceIdentity: keyspaceMeta.GetKeyspaceIdentity(),
+		KeyspaceName:     keyspaceMeta.GetName(),
+		TiDBPool:         cfg.TidbPool,
+		ControllerAddr:   cfg.ControllerAddr,
+		TLSConfig:        tlsCfg,
+		Interceptors:     []grpc.UnaryClientInterceptor{metricsInterceptor()},
 	})
 	if err != nil {
 		return nil, err

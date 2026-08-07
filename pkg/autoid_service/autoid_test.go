@@ -99,7 +99,7 @@ func TestConcurrent(t *testing.T) {
 	}
 
 	// Rebase to some value
-	rebaseRequest(t, cli, to, true, 666).check("")
+	rebaseRequest(t, cli, to, true, 666, keyspaceID).check("")
 	checkCurrValue(t, cli, to, 666, 666, keyspaceID)
 	// And +1 concurrently for 30 times
 	close(notify)
@@ -114,7 +114,7 @@ type dest struct {
 }
 
 func checkCurrValue(t *testing.T, cli autoid.AutoIDAllocClient, to dest, minv, maxv int64, keyspaceID uint32) {
-	req := &autoid.AutoIDRequest{DbID: to.dbID, TblID: to.tblID, N: 0, KeyspaceID: keyspaceID}
+	req := &autoid.AutoIDRequest{DbID: to.dbID, TblID: to.tblID, N: 0, Keyspace: &autoid.AutoIDRequest_KeyspaceID{KeyspaceID: keyspaceID}}
 	ctx := context.Background()
 	resp, err := cli.AllocAutoID(ctx, req)
 	require.NoError(t, err)
@@ -130,18 +130,19 @@ func autoIDRequest(t *testing.T, cli autoid.AutoIDAllocClient, to dest, unsigned
 	if len(more) >= 2 {
 		offset = more[1]
 	}
-	req := &autoid.AutoIDRequest{DbID: to.dbID, TblID: to.tblID, IsUnsigned: unsigned, N: n, Increment: increment, Offset: offset, KeyspaceID: keyspaceID}
+	req := &autoid.AutoIDRequest{DbID: to.dbID, TblID: to.tblID, IsUnsigned: unsigned, N: n, Increment: increment, Offset: offset, Keyspace: &autoid.AutoIDRequest_KeyspaceID{KeyspaceID: keyspaceID}}
 	resp, err := cli.AllocAutoID(context.Background(), req)
 	return autoIDResp{resp, err, t}
 }
 
-func rebaseRequest(t *testing.T, cli autoid.AutoIDAllocClient, to dest, unsigned bool, n int64, force ...struct{}) rebaseResp {
+func rebaseRequest(t *testing.T, cli autoid.AutoIDAllocClient, to dest, unsigned bool, n int64, keyspaceID uint32, force ...struct{}) rebaseResp {
 	req := &autoid.RebaseRequest{
 		DbID:       to.dbID,
 		TblID:      to.tblID,
 		Base:       n,
 		IsUnsigned: unsigned,
 		Force:      len(force) > 0,
+		Keyspace:   &autoid.RebaseRequest_KeyspaceID{KeyspaceID: keyspaceID},
 	}
 	resp, err := cli.Rebase(context.Background(), req)
 	return rebaseResp{resp, err, t}
@@ -156,8 +157,8 @@ func TestAPI(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		// Testing scenarios with keyspace.
 		keyspaceMeta := keyspacepb.KeyspaceMeta{
-			Id:   uint32(0xFFFFFF) - 1,
-			Name: keyspace.System,
+			Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: uint32(0xFFFFFF) - 1},
+			Name:     keyspace.System,
 		}
 		testAPIWithKeyspace(t, &keyspaceMeta)
 	}
@@ -168,7 +169,7 @@ func testAPIWithKeyspace(t *testing.T, keyspaceMeta *keyspacepb.KeyspaceMeta) {
 	if keyspaceMeta == nil {
 		reqKeyspaceID = uint32(tikv.NullspaceID)
 	} else {
-		reqKeyspaceID = keyspaceMeta.Id
+		reqKeyspaceID = keyspaceMeta.GetId()
 	}
 
 	opts := mockstore.WithCurrentKeyspaceMeta(keyspaceMeta)
@@ -196,24 +197,24 @@ func testAPIWithKeyspace(t *testing.T, keyspaceMeta *keyspacepb.KeyspaceMeta) {
 	autoIDRequest(t, cli, to, false, 1, reqKeyspaceID, 10, 5).check(139, 145)
 
 	// basic rebase operation
-	rebaseRequest(t, cli, to, false, 666).check("")
+	rebaseRequest(t, cli, to, false, 666, reqKeyspaceID).check("")
 	autoIDRequest(t, cli, to, false, 1, reqKeyspaceID).check(666, 667)
 
-	rebaseRequest(t, cli, to, false, 6666).check("")
+	rebaseRequest(t, cli, to, false, 6666, reqKeyspaceID).check("")
 	autoIDRequest(t, cli, to, false, 1, reqKeyspaceID).check(6666, 6667)
 
 	// rebase will not decrease the value without 'force'
-	rebaseRequest(t, cli, to, false, 44).check("")
+	rebaseRequest(t, cli, to, false, 44, reqKeyspaceID).check("")
 	checkCurrValue(t, cli, to, 6667, 6667, reqKeyspaceID)
-	rebaseRequest(t, cli, to, false, 44, force).check("")
+	rebaseRequest(t, cli, to, false, 44, reqKeyspaceID, force).check("")
 	checkCurrValue(t, cli, to, 44, 44, reqKeyspaceID)
 
 	// max increase 1
-	rebaseRequest(t, cli, to, false, math.MaxInt64, force).check("")
+	rebaseRequest(t, cli, to, false, math.MaxInt64, reqKeyspaceID, force).check("")
 	checkCurrValue(t, cli, to, math.MaxInt64, math.MaxInt64, reqKeyspaceID)
 	autoIDRequest(t, cli, to, false, 1, reqKeyspaceID).checkErrmsg()
 
-	rebaseRequest(t, cli, to, true, 0, force).check("")
+	rebaseRequest(t, cli, to, true, 0, reqKeyspaceID, force).check("")
 	checkCurrValue(t, cli, to, 0, 0, reqKeyspaceID)
 	autoIDRequest(t, cli, to, true, 1, reqKeyspaceID).check(0, 1)
 	autoIDRequest(t, cli, to, true, 10, reqKeyspaceID).check(1, 11)
@@ -221,12 +222,12 @@ func testAPIWithKeyspace(t *testing.T, keyspaceMeta *keyspacepb.KeyspaceMeta) {
 	autoIDRequest(t, cli, to, true, 1, reqKeyspaceID, 10, 5).check(139, 145)
 
 	// max increase 1
-	rebaseRequest(t, cli, to, true, math.MaxInt64).check("")
+	rebaseRequest(t, cli, to, true, math.MaxInt64, reqKeyspaceID).check("")
 	checkCurrValue(t, cli, to, math.MaxInt64, math.MaxInt64, reqKeyspaceID)
 	autoIDRequest(t, cli, to, true, 1, reqKeyspaceID).check(math.MaxInt64, math.MinInt64)
 	autoIDRequest(t, cli, to, true, 1, reqKeyspaceID).check(math.MinInt64, math.MinInt64+1)
 
-	rebaseRequest(t, cli, to, true, -1).check("")
+	rebaseRequest(t, cli, to, true, -1, reqKeyspaceID).check("")
 	checkCurrValue(t, cli, to, -1, -1, reqKeyspaceID)
 	// rebase to max value, the next request should fail
 	autoIDRequest(t, cli, to, true, 1, reqKeyspaceID).checkErrmsg()
@@ -281,7 +282,7 @@ func TestGRPC(t *testing.T) {
 		Increment:  1,
 		Offset:     1,
 		IsUnsigned: false,
-		KeyspaceID: keyspaceID,
+		Keyspace:   &autoid.AutoIDRequest_KeyspaceID{KeyspaceID: keyspaceID},
 	})
 	require.NoError(t, err)
 }
