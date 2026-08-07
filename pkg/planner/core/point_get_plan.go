@@ -666,6 +666,9 @@ func checkTblIndexForPointPlan(ctx base.PlanContext, tblName *resolve.TableNameW
 		p.IndexConstants = idxConstant
 		p.ColsFieldType = colsFieldType
 		p.PartitionNames = tblName.PartitionNames
+
+		// Check if the index covers all required columns
+		p.CoveredByIndex = checkIndexCoveringColumns(ctx, p, schema.Columns, idxInfo)
 		return p
 	}
 	return nil
@@ -1465,4 +1468,48 @@ func getHashOrKeyPartitionColumnName(ctx base.PlanContext, tbl *model.TableInfo)
 		return nil
 	}
 	return &col.Name.Name
+}
+
+// checkIndexCoveringColumns reports whether idxInfo covers every projected column of a
+// point get. It reuses logicalop.IsIndexColsCoveringCol (the same primitive that drives
+// LogicalDataSource.indexCoveringColumn) so prefix indexes and generated-column equality
+// are handled consistently with the rest of the optimizer.
+func checkIndexCoveringColumns(ctx base.PlanContext, p *physicalop.PointGetPlan, columns []*expression.Column, idxInfo *model.IndexInfo) bool {
+	indexColumns := make([]*expression.Column, 0, len(idxInfo.Columns))
+	idxColLens := make([]int, 0, len(idxInfo.Columns))
+	for _, idxCol := range idxInfo.Columns {
+		colInfo := p.TblInfo.Columns[idxCol.Offset]
+		for _, col := range columns {
+			if col.ID == colInfo.ID {
+				indexColumns = append(indexColumns, col)
+				idxColLens = append(idxColLens, idxCol.Length)
+				break
+			}
+		}
+	}
+
+	evalCtx := ctx.GetExprCtx().GetEvalCtx()
+	for _, col := range columns {
+		// Integer primary key: the value is already encoded in the handle, so the executor
+		// synthesizes it without reading row data.
+		if p.TblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.GetFlag()) {
+			continue
+		}
+		// ExtraHandleID is synthesized from the handle value and does not need to be read
+		// from row data.
+		if col.ID == model.ExtraHandleID {
+			continue
+		}
+		// ExtraPhysTblID is only filled by the legacy row-fetch path; if it's projected,
+		// reporting "covered" here would be misleading since buildResultFromIndex would
+		// immediately fall back. Treat it as non-covering so the planner and executor
+		// agree that the fast path cannot run.
+		if col.ID == model.ExtraPhysTblID {
+			return false
+		}
+		if !logicalop.IsIndexColsCoveringCol(evalCtx, col, indexColumns, idxColLens, false) {
+			return false
+		}
+	}
+	return true
 }
