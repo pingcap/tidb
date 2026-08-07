@@ -52,9 +52,13 @@ Rust symbol. This is a source-file lockdown only; it does not claim the whole
   warning, duplicate, reserved-key, metric, and concurrency rules; source
   drift; and PORTED-symbol disappearance. One initial reserved-key mutation
   survived and the test was strengthened before the rerun killed it.
-- [ ] Run Ready validation, commit the complete unit, independently gate that
-  exact SHA in a clean worktree, verify ratchets directly, dual-push, and
-  reclaim only this unit's artifacts.
+- [x] (2026-08-07) Completed Ready validation and an independent clean-worktree
+  gate: the workspace excluding locked `tidb-datatype`, the datatype all-target
+  suite excluding its two polluted observers, and each observer in its own
+  fresh process all passed. Direct inventory greps and
+  `rust/scripts/check-source-size.sh` passed.
+- [ ] Dual-push the exact receipt SHA, verify both refs, and reclaim only this
+  unit's worktrees and exclusive targets.
 
 ## Surprises & Discoveries
 
@@ -116,6 +120,17 @@ Rust symbol. This is a source-file lockdown only; it does not claim the whole
   --no-deps` for `tidb-protocol`/`tidb-server` pass. Those external files were
   not changed because the collaboration contract reserves their crates.
 
+- Observation: the literal clean-worktree `cargo test --workspace` does not
+  pass at the accepted campaign tip because an already locked datatype test
+  mutates the global collation registry and restores the wrong default.
+  Evidence: `charset::tests::source_registry_vectors` observed `gbk_bin`
+  instead of `gbk_chinese_ci`; the next wildcard test then saw its poisoned
+  lock. The complete test set passes when partitioned into a workspace run
+  excluding `tidb-datatype`, a datatype all-target run excluding those two
+  observers, and one fresh process for each observer. This is explicitly not
+  represented as a literal aggregate-command pass, and the locked datatype
+  owner was not reopened.
+
 ## Decision Log
 
 - Decision: use one atomic source-file lockdown even though the Go file lands
@@ -146,13 +161,14 @@ Rust symbol. This is a source-file lockdown only; it does not claim the whole
 
 ## Outcomes & Retrospective
 
-The source-completeness and mutation phases are closed: all eight functions,
+The source-completeness, mutation, and scoped Ready phases are closed: all eight functions,
 82 control outcomes, 11 attributed test/support declarations, and two build
 artifacts have verdicts, and all 33 final mutations die. Rust corrected the
 fetch cap, default attribute policy/metrics, malformed optional-attribute
 recovery, unterminated plugin handling, NULL semantics, and byte-string
-authority. Final Ready, clean-worktree, ratchet, and dual-push gates remain;
-no final-SHA claim is made yet.
+authority. The complete workspace test set and ratchet pass in the documented
+fresh-process partition. Dual-push verification and reclamation remain; no
+remote receipt claim is made yet.
 
 ## Context and Orientation
 
