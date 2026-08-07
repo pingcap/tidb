@@ -52,6 +52,12 @@ claim the whole `pkg/meta` Go package is transcreated.
 - [x] (2026-08-07) Added source drift, one-verdict, receipt, and compile-symbol
   gates beside the Rust implementation; the gate pins 211 unique production
   Rust symbol families and the ordered inventory identity digest.
+- [x] (2026-08-07) Integrated the exact dual-pushed `tidb-model`
+  `resource_group.go` lockdown SHA `aac19a3359d973e6ccff0f428d74782af2814703`
+  and replaced the provisional generic codec with concrete
+  `ResourceGroupInfo`. The meta receipt pins implicit-default pointer identity,
+  default settings, exact magic-byte JSON, `RURate` 100 to 200, mixed-case
+  `CIStr`, update, reread, list, and drop behavior.
 - [x] (2026-08-07) Mutation-probed 16 independent rule families in disposable
   worktree `/private/tmp/codex-task325-tidb-meta-mutation`. One first-pass
   survivor exposed duplicated reverse-iterator boundary logic; the two paths
@@ -255,6 +261,12 @@ was killed by the same source-semantic test.
 | scalar float | fixed two decimals to three | `scalar_settings_preserve_absence_formatting_and_non_boolean_lock_bytes` | KILLED |
 | snapshot timestamp | `start_ts` to `start_ts + 1` | `iter_all_tables_clamps_workers_streams_ranges_and_serializes_callbacks` | KILLED |
 | inventory verdict | production `PORTED` to `DECLINED` | `inventory_is_complete_unique_and_classified` | KILLED |
+
+The consumed `resource_group.go` lockdown independently executed 66 mutation
+attempts across all model-owned rules. One first-pass nested-`CIStr` survivor
+caused a lowercase-only vector to be added; all 65 final mutants were killed.
+Its query, catalog, table, and integration ratchets remained exactly
+`0`, `100`, `1`, and `75`.
 
 ## Idempotence and Recovery
 

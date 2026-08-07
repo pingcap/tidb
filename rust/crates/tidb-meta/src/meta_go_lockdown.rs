@@ -428,13 +428,7 @@ impl MvccReader for AnchorMvccReader {
 }
 
 #[allow(dead_code, clippy::type_complexity)]
-fn compile_anchor_every_production_symbol<
-    T: RawTransaction,
-    J: DdlJobCodec,
-    G: ResourceGroupCodec,
->(
-    meta: &Mutator<T>,
-) {
+fn compile_anchor_every_production_symbol<T: RawTransaction, J: DdlJobCodec>(meta: &Mutator<T>) {
     let _: Option<crate::element::ElementKeyType> = None;
     let _: Option<crate::element::Element> = None;
     let _: Option<DailyRuStats> = None;
@@ -533,7 +527,7 @@ fn compile_anchor_every_production_symbol<
     let _ = super::JOB_EXTRACT_FIELDS;
     let _ = &super::MASKING_POLICY_ID_MUTEX;
     let _ = Mutator::<T>::add_history_ddl_job::<J>;
-    let _ = Mutator::<T>::add_resource_group::<G>;
+    let _ = Mutator::<T>::add_resource_group;
     let _ = Mutator::<T>::advance_global_ids;
     let _ = Mutator::<T>::all_name_to_id_and_must_loaded_table_info;
     let _ = Mutator::<T>::auto_ids;
@@ -593,8 +587,8 @@ fn compile_anchor_every_production_symbol<
     let _ = Mutator::<T>::policies;
     let _ = Mutator::<T>::policy;
     let _ = Mutator::<T>::policy_id;
-    let _ = Mutator::<T>::resource_group::<G>;
-    let _ = Mutator::<T>::resource_groups::<G>;
+    let _ = Mutator::<T>::resource_group;
+    let _ = Mutator::<T>::resource_groups;
     let _ = Mutator::<T>::restart_sequence_value;
     let _ = Mutator::<T>::ru_stats;
     let _ = Mutator::<T>::schema_cache_size;
@@ -622,7 +616,7 @@ fn compile_anchor_every_production_symbol<
     let _ = Mutator::<T>::update_database;
     let _ = Mutator::<T>::update_masking_policy;
     let _ = Mutator::<T>::update_policy;
-    let _ = Mutator::<T>::update_resource_group::<G>;
+    let _ = Mutator::<T>::update_resource_group;
     let _ = Mutator::<T>::update_table;
     let _ = super::NAME_EXTRACT_REGEXP;
     let _ = super::NextGenBootTableVersion::BASE;
@@ -631,7 +625,7 @@ fn compile_anchor_every_production_symbol<
     let _ = &super::POLICY_ID_MUTEX;
     let _ = super::TABLE_INFO_MUST_LOAD_FILTERS;
     let _ = super::TABLE_NAME_INFO_FIELDS;
-    let _ = super::default_resource_group_for_test::<G>;
+    let _ = super::default_resource_group_for_test;
     let _ = super::extract_schema_and_table_name_from_job;
     let _ = super::fast_unmarshal_table_name_info;
     let _ = super::iter_all_tables::<AnchorStore, fn() -> bool, fn(&TableInfo) -> Result<()>>;

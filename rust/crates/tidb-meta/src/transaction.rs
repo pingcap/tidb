@@ -23,15 +23,16 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use chrono::{DateTime, NaiveDate, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
-use tidb_ast::CiString;
+use tidb_ast::{CiString, MEDIUM_PRIORITY_VALUE};
 use tidb_metadef::system::MAX_USER_GLOBAL_ID;
 use tidb_model::db::DBInfo;
 use tidb_model::masking_policy::MaskingPolicyInfo;
 use tidb_model::placement::PolicyInfo;
+use tidb_model::resource_group::{ResourceGroupInfo, ResourceGroupSettings};
 use tidb_model::schema_diff::SchemaDiff;
 use tidb_model::schema_state::SchemaState;
 use tidb_model::table_info::TableInfo;
@@ -48,6 +49,8 @@ static MASKING_POLICY_ID_MUTEX: Mutex<()> = Mutex::new(());
 
 /// Go `defaultGroupID`.
 pub const DEFAULT_RESOURCE_GROUP_ID: i64 = 1;
+
+static DEFAULT_RESOURCE_GROUP: OnceLock<Arc<ResourceGroupInfo>> = OnceLock::new();
 
 /// Go `NextGenBootTableVersion`.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -433,21 +436,6 @@ pub trait DdlJobCodec: Sized {
 pub trait LastJobIterator<J> {
     /// Go `GetLastJobs`.
     fn get_last_jobs(&mut self, count: i32, jobs: &mut Vec<J>) -> Result<()>;
-}
-
-/// The concrete resource-group JSON boundary owned by
-/// `pkg/meta/model/resource_group.go` and consumed by `meta.go`.
-pub trait ResourceGroupCodec: Sized + Clone {
-    /// Group ID.
-    fn id(&self) -> i64;
-    /// Lower-case group name used to detect the implicit default group.
-    fn lower_name(&self) -> &str;
-    /// Go's non-persisted default resource group.
-    fn default_group() -> Self;
-    /// Exact Go `encoding/json` bytes, without the metadata magic byte.
-    fn encode_json(&self) -> Result<Vec<u8>>;
-    /// Decodes exact Go `encoding/json` bytes.
-    fn decode_json(encoded: &[u8]) -> Result<Self>;
 }
 
 /// Reverse DDL-history iterator returned by Go's three iterator constructors.
@@ -1243,36 +1231,38 @@ impl<T: RawTransaction> Mutator<T> {
     }
 
     /// Go `Mutator.AddResourceGroup`.
-    pub fn add_resource_group<G: ResourceGroupCodec>(&self, group: &G) -> Result<()> {
-        if group.id() == 0 {
+    pub fn add_resource_group(&self, group: &ResourceGroupInfo) -> Result<()> {
+        if group.id == 0 {
             return Err(MetaError::InvalidObjectId("group"));
         }
         let mut transaction = self.lock()?;
         let mut structure = MetaStructure::new(&mut *transaction);
-        let field = key::resource_group_key(group.id());
+        let field = key::resource_group_key(group.id);
         if structure.hget(key::RESOURCE_GROUPS, &field)?.is_some() {
             return Err(MetaError::ResourceGroupExists);
         }
         structure.hset(
             key::RESOURCE_GROUPS,
             &field,
-            &value::attach_magic_byte(&group.encode_json()?),
+            &value::attach_magic_byte(&encode_resource_group(group)?),
         )
     }
 
     /// Go `Mutator.UpdateResourceGroup`; ID 1 bypasses the existence check
     /// because Go's default group may not be persisted yet.
-    pub fn update_resource_group<G: ResourceGroupCodec>(&self, group: &G) -> Result<()> {
+    pub fn update_resource_group(&self, group: &ResourceGroupInfo) -> Result<()> {
         let mut transaction = self.lock()?;
         let mut structure = MetaStructure::new(&mut *transaction);
-        let field = key::resource_group_key(group.id());
-        if group.id() != 1 && structure.hget(key::RESOURCE_GROUPS, &field)?.is_none() {
+        let field = key::resource_group_key(group.id);
+        if group.id != DEFAULT_RESOURCE_GROUP_ID
+            && structure.hget(key::RESOURCE_GROUPS, &field)?.is_none()
+        {
             return Err(MetaError::ResourceGroupNotExists);
         }
         structure.hset(
             key::RESOURCE_GROUPS,
             &field,
-            &value::attach_magic_byte(&group.encode_json()?),
+            &value::attach_magic_byte(&encode_resource_group(group)?),
         )
     }
 
@@ -1284,28 +1274,31 @@ impl<T: RawTransaction> Mutator<T> {
     }
 
     /// Go `Mutator.GetResourceGroup`.
-    pub fn resource_group<G: ResourceGroupCodec>(&self, group_id: i64) -> Result<G> {
+    pub fn resource_group(&self, group_id: i64) -> Result<Arc<ResourceGroupInfo>> {
         let mut transaction = self.lock()?;
         let stored = MetaStructure::new(&mut *transaction)
             .hget(key::RESOURCE_GROUPS, &key::resource_group_key(group_id))?;
         match stored {
-            Some(stored) => G::decode_json(value::detach_magic_byte(&stored)?),
-            None if group_id == 1 => Ok(G::default_group()),
+            Some(stored) => decode_resource_group(value::detach_magic_byte(&stored)?).map(Arc::new),
+            None if group_id == DEFAULT_RESOURCE_GROUP_ID => Ok(default_resource_group_for_test()),
             None => Err(MetaError::ResourceGroupIdNotExists(group_id)),
         }
     }
 
     /// Go `Mutator.ListResourceGroups`, adding the implicit default exactly
     /// when no stored group has lower-case name `default`.
-    pub fn resource_groups<G: ResourceGroupCodec>(&self) -> Result<Vec<G>> {
+    pub fn resource_groups(&self) -> Result<Vec<Arc<ResourceGroupInfo>>> {
         let mut transaction = self.lock()?;
         let mut groups = MetaStructure::new(&mut *transaction)
             .hget_all(key::RESOURCE_GROUPS)?
             .into_iter()
-            .map(|pair| G::decode_json(value::detach_magic_byte(&pair.value)?))
+            .map(|pair| decode_resource_group(value::detach_magic_byte(&pair.value)?).map(Arc::new))
             .collect::<Result<Vec<_>>>()?;
-        if !groups.iter().any(|group| group.lower_name() == "default") {
-            groups.push(G::default_group());
+        if !groups
+            .iter()
+            .any(|group| group.name.lowercase() == "default")
+        {
+            groups.push(default_resource_group_for_test());
         }
         Ok(groups)
     }
@@ -2406,8 +2399,29 @@ pub fn job_matches(
 
 /// Go `DefaultGroupMeta4Test`.
 #[must_use]
-pub fn default_resource_group_for_test<G: ResourceGroupCodec>() -> G {
-    G::default_group()
+pub fn default_resource_group_for_test() -> Arc<ResourceGroupInfo> {
+    Arc::clone(DEFAULT_RESOURCE_GROUP.get_or_init(|| {
+        Arc::new(ResourceGroupInfo {
+            settings: Some(Box::new(ResourceGroupSettings {
+                ru_rate: i32::MAX as u64,
+                priority: MEDIUM_PRIORITY_VALUE,
+                burst_limit: -1,
+                ..ResourceGroupSettings::default()
+            })),
+            id: DEFAULT_RESOURCE_GROUP_ID,
+            name: CiString::new("default"),
+            state: SchemaState::PUBLIC,
+        })
+    }))
+}
+
+fn encode_resource_group(group: &ResourceGroupInfo) -> Result<Vec<u8>> {
+    tidb_model::serde_helpers::to_go_json(group)
+        .map_err(|error| MetaError::InvalidJson(error.to_string()))
+}
+
+fn decode_resource_group(encoded: &[u8]) -> Result<ResourceGroupInfo> {
+    serde_json::from_slice(encoded).map_err(|error| MetaError::InvalidJson(error.to_string()))
 }
 
 /// Go `GetOldestSchemaVersion`.
