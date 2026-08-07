@@ -1,0 +1,7 @@
+# pkg-nocopy-mutation-plan-v1
+suite_id	source_owners	mutation_count	source_file	named_tests	rules
+P001-marker-contract	NoCopy,NoCopy::new	2	rust/crates/tidb-util/src/nocopy/mod.rs	nocopy::NoCopy (line 31)|nocopy::tests::source_zero_value_and_no_op_methods_are_preserved	Copy prohibition, zero-sized marker
+P002-no-op-methods	NoCopy::lock,NoCopy::unlock	2	rust/crates/tidb-util/src/nocopy/mod.rs	nocopy::tests::source_zero_value_and_no_op_methods_are_preserved	Lock no-op, Unlock no-op
+P003-inventory-drift	inventory	1	rust/crates/tidb-util/src/nocopy/nocopy.inventory.tsv	nocopy::tests::lockdown_inventory_matches_go_source_and_rust_symbols	ported status and owner map
+P004-source-drift	package-artifacts	1	pkg/util/nocopy/nocopy.go	pkg-nocopy-lockdown.py	Go artifact hash and AST set
+P005-symbol-gate	NoCopy,NoCopy::lock	2	rust/crates/tidb-util/src/nocopy/mod.rs	nocopy::tests::lockdown_inventory_matches_go_source_and_rust_symbols	compiled marker and method owners
