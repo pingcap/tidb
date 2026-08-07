@@ -830,6 +830,7 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 				filteredVals = append(filteredVals, idxVals)
 			}
 		}
+		clear(p.IndexValues[len(filteredVals):])
 		p.IndexValues = filteredVals
 		if pi != nil {
 			partIdxs := p.getPartitionIdxs(sctx)
@@ -859,6 +860,7 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 					p.PartitionIdxs = append(p.PartitionIdxs, idx)
 				}
 			}
+			clear(p.IndexValues[len(filteredVals):])
 			p.IndexValues = filteredVals
 			intest.Assert(p.SinglePartition || partitionsFound == len(p.PartitionIdxs))
 			intest.Assert(partitionsFound == len(p.IndexValues))
@@ -923,6 +925,7 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 					p.PartitionIdxs = append(p.PartitionIdxs, idx)
 				}
 			}
+			clear(handles[len(filteredHandles):])
 			handles = filteredHandles
 			intest.Assert(p.SinglePartition || partitionsFound == len(p.PartitionIdxs))
 			intest.Assert(p.SinglePartition || partitionsFound == len(handles))
