@@ -15,8 +15,9 @@ Go accepts `-ldflags -X` initialization for all five variables and permits runti
 - [x] (2026-08-08) Selected complete direct package `pkg/util/versioninfo`; confirmed two artifacts, no `doc.go`, tests, failpoints, build tags, platform variants, generated files, or testdata.
 - [x] (2026-08-08) Measured default, link-time override, and runtime reassignment behavior with a disposable Go probe; all five `var` fields are both link-time initialized and runtime mutable.
 - [x] (2026-08-08) Replaced the legacy inventory with a two-artifact manifest and exact six-row generated AST classification; checker, two named Rust tests, 288/288 `tidb-util`, 99/99 `difftest-result-tests` with five skips, package Clippy, and fmt pass.
-- [ ] Commit an immutable baseline and kill all nine planned mutations from a detached worktree.
-- [ ] Add the compiled mutation receipt and content-addressed JSON receipt, then pass WIP and clean Ready validation.
+- [x] (2026-08-08) Committed immutable baseline `cb71e788efeaa993714c44f1ab81fbc0db48bb5f` and killed all nine planned mutations in a detached worktree; every source was restored to its saved SHA-256 and passed the same check.
+- [x] (2026-08-08) Added the compiled mutation receipt and content-addressed JSON receipt; the complete checker, three versioninfo tests, 289/289 `tidb-util`, package Clippy, fmt, and `git diff --check` pass.
+- [ ] Pass the clean Ready workspace gate and record its exact receipt.
 - [ ] Publish each completed commit by ordinary fast-forward to official `pingcap/tidb:hparser-integration` and verify GitHub attribution as `dbsid`.
 
 ## Surprises & Discoveries
