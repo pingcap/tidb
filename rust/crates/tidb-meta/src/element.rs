@@ -23,7 +23,7 @@
 use std::fmt;
 
 /// Go `elementKeyLen`.
-const ELEMENT_KEY_LEN: usize = 5;
+pub const ELEMENT_KEY_LEN: usize = 5;
 /// Go `EncodeElement`'s buffer: the 5-byte prefix plus a big-endian `int64`.
 const ELEMENT_LEN: usize = ELEMENT_KEY_LEN + 8;
 
@@ -31,11 +31,15 @@ const ELEMENT_LEN: usize = ELEMENT_KEY_LEN + 8;
 pub const COLUMN_ELEMENT_KEY: &[u8] = b"_col_";
 /// Go `IndexElementKey`.
 pub const INDEX_ELEMENT_KEY: &[u8] = b"_idx_";
+/// Go `ElementKeyType`; kept as owned bytes because Go's defined slice type
+/// accepts arbitrary mutable byte sequences.
+pub type ElementKeyType = Vec<u8>;
 
-/// Which kind of object a backfill element names. Go carries the prefix bytes
-/// themselves in `Element.TypeKey`; naming the two legal values makes the
-/// decode total, since those are the only two prefixes `DecodeElement`
-/// accepts.
+/// Which valid kind of object a backfill element names.
+///
+/// Go's stored `Element.TypeKey` remains raw bytes and can carry invalid
+/// values until decode. This enum is therefore only a convenience for the two
+/// canonical values; [`Element`] itself preserves the full Go byte domain.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ElementKind {
     /// Go `ColumnElementKey`, `_col_`.
@@ -53,25 +57,48 @@ impl ElementKind {
             Self::Index => INDEX_ELEMENT_KEY,
         }
     }
+
+    /// Builds an element with this canonical Go type key.
+    #[must_use]
+    pub fn element(self, id: i64) -> Element {
+        Element {
+            id,
+            type_key: self.type_key().to_vec(),
+        }
+    }
 }
 
 /// Go `meta.Element`: a backfill job's object kind and id.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Element {
     /// Go `Element.ID`.
     pub id: i64,
-    /// Go `Element.TypeKey`, narrowed to its two legal values.
-    pub kind: ElementKind,
+    /// Go `Element.TypeKey`, including invalid short, long, or non-UTF-8 keys.
+    pub type_key: ElementKeyType,
 }
 
 impl Element {
     /// Go `Element.EncodeElement`: the 5-byte type key then the id big-endian.
     #[must_use]
     pub fn encode(&self) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity(ELEMENT_LEN);
-        bytes.extend_from_slice(self.kind.type_key());
-        bytes.extend_from_slice(&(self.id as u64).to_be_bytes());
+        let mut bytes = vec![0; ELEMENT_LEN];
+        let copied = self.type_key.len().min(ELEMENT_KEY_LEN);
+        bytes[..copied].copy_from_slice(&self.type_key[..copied]);
+        bytes[ELEMENT_KEY_LEN..].copy_from_slice(&(self.id as u64).to_be_bytes());
         bytes
+    }
+
+    /// The exact bytes returned by Go `Element.String`.
+    ///
+    /// Go strings may contain invalid UTF-8, so the byte-returning form is the
+    /// lossless source contract. [`fmt::Display`] is exact for valid UTF-8 and
+    /// uses Rust's replacement character only when a formatter cannot carry
+    /// Go's invalid string bytes.
+    #[must_use]
+    pub fn string_bytes(&self) -> Vec<u8> {
+        let mut value = format!("ID:{},TypeKey:", self.id).into_bytes();
+        value.extend_from_slice(&self.type_key);
+        value
     }
 
     /// Go `meta.DecodeElement`.
@@ -82,15 +109,20 @@ impl Element {
             return Err(ElementError::Length(bytes.to_vec()));
         }
         let (prefix, rest) = bytes.split_at(ELEMENT_KEY_LEN);
-        let kind = if prefix == INDEX_ELEMENT_KEY {
-            ElementKind::Index
-        } else if prefix == COLUMN_ELEMENT_KEY {
-            ElementKind::Column
-        } else {
+        if prefix != INDEX_ELEMENT_KEY && prefix != COLUMN_ELEMENT_KEY {
             return Err(ElementError::Prefix(prefix.to_vec()));
-        };
+        }
         let id = u64::from_be_bytes(rest[..8].try_into().expect("eight bytes remain")) as i64;
-        Ok(Element { id, kind })
+        Ok(Element {
+            id,
+            type_key: prefix.to_vec(),
+        })
+    }
+}
+
+impl fmt::Display for Element {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&String::from_utf8_lossy(&self.string_bytes()))
     }
 }
 

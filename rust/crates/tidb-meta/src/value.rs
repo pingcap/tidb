@@ -25,6 +25,25 @@ use crate::error::{MetaError, Result};
 /// Go `meta.CurrentMagicByteVer`: policy values are JSON behind a version byte.
 pub const CURRENT_MAGIC_BYTE_VER: u8 = 0x00;
 
+/// Go's private `typeUnknown` / `typeJSON` dispatch result.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MagicType {
+    /// No handler owns this magic-byte range.
+    Unknown,
+    /// The JSON handler range, bytes `0x00..=0x3f`.
+    Json,
+}
+
+/// Go `whichMagicType`.
+#[must_use]
+pub const fn which_magic_type(byte: u8) -> MagicType {
+    if byte <= 0x3f {
+        MagicType::Json
+    } else {
+        MagicType::Unknown
+    }
+}
+
 /// Go writes every structure scalar as `strconv.FormatInt`.
 #[must_use]
 pub fn encode_int_value(value: i64) -> Vec<u8> {
@@ -55,11 +74,18 @@ pub fn attach_magic_byte(data: &[u8]) -> Vec<u8> {
 /// not exist yet, and any other JSON-range byte is a version this build cannot
 /// read.
 pub fn detach_magic_byte(value: &[u8]) -> Result<&[u8]> {
-    let (&magic, data) = value.split_first().ok_or(MetaError::MalformedKey)?;
-    if magic > 0x3F || magic != CURRENT_MAGIC_BYTE_VER {
-        return Err(MetaError::InvalidJson(format!(
-            "incompatible magic type handling module: {magic:#04x}"
-        )));
+    // Go slices `value[:1]` before checking anything and therefore panics for
+    // an empty stored value. Preserve that corruption boundary.
+    let magic = value[0];
+    let data = &value[1..];
+    match which_magic_type(magic) {
+        MagicType::Json if magic != CURRENT_MAGIC_BYTE_VER => {
+            return Err(MetaError::IncompatibleMagicType);
+        }
+        MagicType::Unknown => {
+            return Err(MetaError::UnknownMagicType);
+        }
+        MagicType::Json => {}
     }
     Ok(data)
 }
@@ -120,7 +146,29 @@ pub fn serialize_schema_diff(diff: &SchemaDiff) -> Result<Vec<u8>> {
 
 /// Go `ListPolicies`: JSON behind the magic byte.
 pub fn parse_policy_info(value: &[u8]) -> Result<PolicyInfo> {
-    from_json(detach_magic_byte(value)?)
+    let data = detach_magic_byte(value)?;
+    let mut policy: PolicyInfo = from_json(data)?;
+    // Go leaves the embedded *PlacementSettings nil if none of its promoted
+    // fields occur. serde's flattened Option otherwise manufactures Some(0).
+    let object: serde_json::Map<String, serde_json::Value> = from_json(data)?;
+    const SETTINGS: &[&str] = &[
+        "primary_region",
+        "regions",
+        "learners",
+        "followers",
+        "voters",
+        "schedule",
+        "constraints",
+        "leader_constraints",
+        "learner_constraints",
+        "follower_constraints",
+        "voter_constraints",
+        "survival_preferences",
+    ];
+    if !SETTINGS.iter().any(|name| object.contains_key(*name)) {
+        policy.placement_settings = None;
+    }
+    Ok(policy)
 }
 
 /// The write side of [`parse_policy_info`]. Go `Mutator.CreatePolicy`.

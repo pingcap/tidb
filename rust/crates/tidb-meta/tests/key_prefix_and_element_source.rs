@@ -106,6 +106,78 @@ fn every_prefixed_field_round_trips_and_rejects_its_neighbours() {
     }
 }
 
+#[test]
+fn key_parse_failures_preserve_go_error_class_message_and_partial_value() {
+    use tidb_meta::error::IntegerParseFailure;
+    use tidb_meta::MetaError;
+
+    assert_eq!(
+        key::parse_db_key(b"DB").unwrap_err().to_string(),
+        "[meta:1300]fail to parse dbKey"
+    );
+    assert_eq!(
+        key::parse_auto_table_id_key(b"DB:1")
+            .unwrap_err()
+            .to_string(),
+        "[meta:1300]fail to parse autoTableKey"
+    );
+
+    let db_syntax = key::parse_db_key(b"DB:\xff").unwrap_err();
+    assert_eq!(
+        db_syntax.to_string(),
+        "strconv.Atoi: parsing \"\\xff\": invalid syntax"
+    );
+    assert_eq!(
+        db_syntax,
+        MetaError::InvalidFieldInteger {
+            value: b"\xff".to_vec(),
+            partial: 0,
+            failure: IntegerParseFailure::Syntax,
+            traced: true,
+        }
+    );
+
+    // ParseTableKey's source check is deliberately only `Table`, not
+    // `Table:`. `Tablex` therefore reaches Atoi and returns a numeric syntax
+    // error even though IsTableKey rejects it.
+    assert!(!key::is_table_key(b"Tablex"));
+    assert_eq!(
+        key::parse_table_key(b"Tablex").unwrap_err().to_string(),
+        "strconv.Atoi: parsing \"Tablex\": invalid syntax"
+    );
+
+    let range = key::parse_db_key(b"DB:9223372036854775808").unwrap_err();
+    assert_eq!(
+        range,
+        MetaError::InvalidFieldInteger {
+            value: b"9223372036854775808".to_vec(),
+            partial: i64::MAX,
+            failure: IntegerParseFailure::Range,
+            traced: true,
+        }
+    );
+    assert_eq!(
+        range.to_string(),
+        "strconv.Atoi: parsing \"9223372036854775808\": value out of range"
+    );
+    let negative_range = key::parse_sequence_key(b"SID:-9223372036854775809").unwrap_err();
+    assert_eq!(
+        negative_range,
+        MetaError::InvalidFieldInteger {
+            value: b"-9223372036854775809".to_vec(),
+            partial: i64::MIN,
+            failure: IntegerParseFailure::Range,
+            traced: true,
+        }
+    );
+
+    // AutoTableID returns the bare NumError in Go rather than tracing it.
+    assert!(matches!(
+        key::parse_auto_table_id_key(b"TID:x"),
+        Err(MetaError::InvalidFieldInteger { traced: false, .. })
+    ));
+}
+
 // --- `TestElement` -- `pkg/meta/meta_test.go:558`, every row ----------------
 
 #[test]
@@ -115,25 +187,33 @@ fn element_round_trips_and_reports_gos_two_failures() {
     // Go's two passing rows: `meta.IndexElementKey` and
     // `meta.ColumnElementKey`, each with `ID: 123`.
     for kind in [ElementKind::Index, ElementKind::Column] {
-        let element = Element { id: 123, kind };
+        let element = kind.element(123);
         let encoded = element.encode();
         assert_eq!(encoded.len(), 13);
         assert_eq!(&encoded[..5], kind.type_key());
         assert_eq!(&encoded[5..], &123_u64.to_be_bytes());
         assert_eq!(Element::decode(&encoded).unwrap(), element);
+        assert_eq!(
+            element.to_string(),
+            format!(
+                "ID:123,TypeKey:{}",
+                String::from_utf8_lossy(kind.type_key())
+            )
+        );
     }
     // Go reads the id as a `uint64` and casts, so a negative id survives.
-    let negative = Element {
-        id: -1,
-        kind: ElementKind::Column,
-    };
+    let negative = ElementKind::Column.element(-1);
     assert_eq!(Element::decode(&negative.encode()).unwrap(), negative);
 
     // Go's first failing row: `TypeKey: []byte("_col")`. Go's `EncodeElement`
     // copies it into a ZEROED 13-byte buffer, so the stored prefix is
     // `_col` plus a NUL -- which is why the message quotes the NUL.
-    let mut truncated = b"_col\x00".to_vec();
-    truncated.extend_from_slice(&123_u64.to_be_bytes());
+    let invalid_short = Element {
+        id: 123,
+        type_key: b"_col".to_vec(),
+    };
+    assert_eq!(invalid_short.string_bytes(), b"ID:123,TypeKey:_col");
+    let truncated = invalid_short.encode();
     let error = Element::decode(&truncated).unwrap_err();
     assert_eq!(error, ElementError::Prefix(b"_col\x00".to_vec()));
     assert_eq!(
@@ -143,11 +223,25 @@ fn element_round_trips_and_reports_gos_two_failures() {
 
     // Go's second failing row: `TypeKey: []byte("inexistent")`, whose copy
     // truncates to five bytes, and whose message quotes `key[:5]`.
-    let mut foreign = b"inexi".to_vec();
-    foreign.extend_from_slice(&123_u64.to_be_bytes());
+    let foreign = Element {
+        id: 123,
+        type_key: b"inexistent".to_vec(),
+    }
+    .encode();
     assert_eq!(
         Element::decode(&foreign).unwrap_err().to_string(),
         "invalid encoded element key prefix \"inexi\""
+    );
+
+    // Go String preserves arbitrary string bytes even though Rust's Display
+    // cannot. The byte receipt is the lossless equivalent.
+    assert_eq!(
+        Element {
+            id: i64::MIN,
+            type_key: b"x\xff".to_vec(),
+        }
+        .string_bytes(),
+        b"ID:-9223372036854775808,TypeKey:x\xff"
     );
 
     // Go's two short-buffer rows.

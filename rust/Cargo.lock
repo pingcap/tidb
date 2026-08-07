@@ -1718,10 +1718,18 @@ dependencies = [
 name = "tidb-meta"
 version = "0.0.0"
 dependencies = [
+ "chrono",
+ "regex",
  "serde",
  "serde_json",
+ "sha2",
+ "tidb-ast",
  "tidb-codec",
+ "tidb-config",
+ "tidb-metadef",
  "tidb-model",
+ "tidb-mysql",
+ "tidb-util",
 ]
 
 [[package]]

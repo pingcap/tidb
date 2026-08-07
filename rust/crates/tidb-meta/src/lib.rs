@@ -15,9 +15,12 @@
 //! `pkg/meta`: the codec for TiDB's catalog, which lives in TiKV under the
 //! single-byte `m` namespace.
 //!
-//! This crate is pure encode/decode — it holds no transaction and talks to no
-//! cluster. A caller that owns a KV snapshot combines [`key`] to build the raw
-//! keys it reads and [`value`] to interpret what comes back:
+//! The crate owns the deterministic codecs plus [`transaction::Mutator`], a
+//! transaction-neutral implementation of Go's metadata rules. It talks to no
+//! cluster directly: callers supply [`transaction::RawTransaction`], while
+//! [`transaction::MemoryTransaction`] provides the exact in-memory boundary
+//! used by source-parity tests. Snapshot-only callers can still combine [`key`]
+//! and [`value`] directly:
 //!
 //! ```
 //! use tidb_meta::{key, value};
@@ -38,6 +41,7 @@ pub mod element;
 pub mod error;
 pub mod key;
 pub mod structure;
+pub mod transaction;
 pub mod value;
 
 pub use error::{MetaError, Result};

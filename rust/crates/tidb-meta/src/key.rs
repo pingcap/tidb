@@ -26,7 +26,7 @@
 //!                       SequenceCycle:<seqID> -> int64 }
 //! ```
 
-use crate::error::{MetaError, Result};
+use crate::error::{IntegerParseFailure, MetaError, Result};
 use crate::structure::{encode_hash_data_key, encode_hash_data_key_prefix, encode_string_data_key};
 
 /// Go `mNextGlobalIDKey`. Holds the max *used* ID, not the next one.
@@ -59,6 +59,18 @@ pub const METADATA_LOCK: &[u8] = b"metadataLock";
 pub const SCHEMA_CACHE_SIZE: &[u8] = b"SchemaCacheSize";
 /// Go `mRequestUnitStats`.
 pub const REQUEST_UNIT_STATS: &[u8] = b"RequestUnitStats";
+/// Go `mIngestMaxBatchSplitRangesKey`.
+pub const INGEST_MAX_BATCH_SPLIT_RANGES: &[u8] = b"IngestMaxBatchSplitRanges";
+/// Go `mIngestMaxSplitRangesPerSecKey`.
+pub const INGEST_MAX_SPLIT_RANGES_PER_SEC: &[u8] = b"IngestMaxSplitRangesPerSec";
+/// Go `mIngestMaxInflightKey`.
+pub const INGEST_MAX_INFLIGHT: &[u8] = b"IngestMaxInflight";
+/// Go `mIngestMaxPerSecKey`.
+pub const INGEST_MAX_PER_SEC: &[u8] = b"IngestMaxReqPerSec";
+/// Go `mDXFScheduleTuneKey`.
+pub const DXF_SCHEDULE_TUNE: &[u8] = b"DXFScheduleTune";
+/// Go `mDDLJobHistoryKey`.
+pub const DDL_JOB_HISTORY: &[u8] = b"DDLJobHistory";
 
 /// Go `mDBPrefix`.
 pub const DB_PREFIX: &str = "DB";
@@ -90,14 +102,75 @@ pub fn prefixed_id(prefix: &str, id: i64) -> Vec<u8> {
     format!("{prefix}:{id}").into_bytes()
 }
 
-/// Inverse of [`prefixed_id`]. Go's `Parse*Key` family.
+fn parse_go_atoi(value: &[u8], traced: bool) -> Result<i64> {
+    let (negative, digits) = match value.first() {
+        Some(b'-') => (true, &value[1..]),
+        Some(b'+') => (false, &value[1..]),
+        _ => (false, value),
+    };
+    if digits.is_empty() || !digits.iter().all(u8::is_ascii_digit) {
+        return Err(MetaError::InvalidFieldInteger {
+            value: value.to_vec(),
+            partial: 0,
+            failure: IntegerParseFailure::Syntax,
+            traced,
+        });
+    }
+    let limit = if negative {
+        (i64::MAX as u128) + 1
+    } else {
+        i64::MAX as u128
+    };
+    let mut magnitude = 0_u128;
+    let mut out_of_range = false;
+    for digit in digits {
+        magnitude = magnitude
+            .saturating_mul(10)
+            .saturating_add(u128::from(digit - b'0'));
+        out_of_range |= magnitude > limit;
+    }
+    if out_of_range {
+        return Err(MetaError::InvalidFieldInteger {
+            value: value.to_vec(),
+            partial: if negative { i64::MIN } else { i64::MAX },
+            failure: IntegerParseFailure::Range,
+            traced,
+        });
+    }
+    if negative {
+        if magnitude == limit {
+            Ok(i64::MIN)
+        } else {
+            Ok(-(magnitude as i64))
+        }
+    } else {
+        Ok(magnitude as i64)
+    }
+}
+
+fn parse_source_key(
+    prefix: &str,
+    field: &[u8],
+    prefix_message: &'static str,
+    table_uses_loose_prefix: bool,
+    traced: bool,
+) -> Result<i64> {
+    let prefix_matches = if table_uses_loose_prefix {
+        field.starts_with(prefix.as_bytes())
+    } else {
+        has_prefix(prefix, field)
+    };
+    if !prefix_matches {
+        return Err(MetaError::InvalidFieldPrefix(prefix_message));
+    }
+    let full_prefix = format!("{prefix}:");
+    let suffix = field.strip_prefix(full_prefix.as_bytes()).unwrap_or(field);
+    parse_go_atoi(suffix, traced)
+}
+
+/// Inverse of [`prefixed_id`] for callers without a source-specific parser.
 pub fn parse_prefixed_id(prefix: &str, field: &[u8]) -> Result<i64> {
-    let text = std::str::from_utf8(field).map_err(|_| MetaError::InvalidFieldKey)?;
-    text.strip_prefix(prefix)
-        .and_then(|rest| rest.strip_prefix(':'))
-        .ok_or(MetaError::InvalidFieldKey)?
-        .parse()
-        .map_err(|_| MetaError::InvalidFieldKey)
+    parse_source_key(prefix, field, "fail to parse meta field key", false, false)
 }
 
 /// Go `IsDBkey` and friends: whether `field` carries this prefix.
@@ -114,7 +187,13 @@ pub fn db_key(db_id: i64) -> Vec<u8> {
 
 /// Go `ParseDBKey`.
 pub fn parse_db_key(field: &[u8]) -> Result<i64> {
-    parse_prefixed_id(DB_PREFIX, field)
+    parse_source_key(DB_PREFIX, field, "fail to parse dbKey", false, true)
+}
+
+/// Go `IsDBkey`.
+#[must_use]
+pub fn is_db_key(field: &[u8]) -> bool {
+    has_prefix(DB_PREFIX, field)
 }
 
 /// Go `TableKey`.
@@ -125,7 +204,13 @@ pub fn table_key(table_id: i64) -> Vec<u8> {
 
 /// Go `ParseTableKey`.
 pub fn parse_table_key(field: &[u8]) -> Result<i64> {
-    parse_prefixed_id(TABLE_PREFIX, field)
+    parse_source_key(TABLE_PREFIX, field, "fail to parse tableKey", true, true)
+}
+
+/// Go `IsTableKey`.
+#[must_use]
+pub fn is_table_key(field: &[u8]) -> bool {
+    has_prefix(TABLE_PREFIX, field)
 }
 
 /// Go `AutoTableIDKey`.
@@ -136,7 +221,19 @@ pub fn auto_table_id_key(table_id: i64) -> Vec<u8> {
 
 /// Go `ParseAutoTableIDKey`.
 pub fn parse_auto_table_id_key(field: &[u8]) -> Result<i64> {
-    parse_prefixed_id(AUTO_TABLE_ID_PREFIX, field)
+    parse_source_key(
+        AUTO_TABLE_ID_PREFIX,
+        field,
+        "fail to parse autoTableKey",
+        false,
+        false,
+    )
+}
+
+/// Go `IsAutoTableIDKey`.
+#[must_use]
+pub fn is_auto_table_id_key(field: &[u8]) -> bool {
+    has_prefix(AUTO_TABLE_ID_PREFIX, field)
 }
 
 /// Go `AutoIncrementIDKey`.
@@ -147,7 +244,19 @@ pub fn auto_increment_id_key(table_id: i64) -> Vec<u8> {
 
 /// Go `ParseAutoIncrementIDKey`.
 pub fn parse_auto_increment_id_key(field: &[u8]) -> Result<i64> {
-    parse_prefixed_id(AUTO_INCREMENT_ID_PREFIX, field)
+    parse_source_key(
+        AUTO_INCREMENT_ID_PREFIX,
+        field,
+        "fail to parse autoIncrementKey",
+        false,
+        false,
+    )
+}
+
+/// Go `IsAutoIncrementIDKey`.
+#[must_use]
+pub fn is_auto_increment_id_key(field: &[u8]) -> bool {
+    has_prefix(AUTO_INCREMENT_ID_PREFIX, field)
 }
 
 /// Go `AutoRandomTableIDKey`.
@@ -158,7 +267,19 @@ pub fn auto_random_table_id_key(table_id: i64) -> Vec<u8> {
 
 /// Go `ParseAutoRandomTableIDKey`.
 pub fn parse_auto_random_table_id_key(field: &[u8]) -> Result<i64> {
-    parse_prefixed_id(AUTO_RANDOM_ID_PREFIX, field)
+    parse_source_key(
+        AUTO_RANDOM_ID_PREFIX,
+        field,
+        "fail to parse AutoRandomTableIDKey",
+        false,
+        false,
+    )
+}
+
+/// Go `IsAutoRandomTableIDKey`.
+#[must_use]
+pub fn is_auto_random_table_id_key(field: &[u8]) -> bool {
+    has_prefix(AUTO_RANDOM_ID_PREFIX, field)
 }
 
 /// Go `SequenceKey`.
@@ -169,7 +290,19 @@ pub fn sequence_key(sequence_id: i64) -> Vec<u8> {
 
 /// Go `ParseSequenceKey`.
 pub fn parse_sequence_key(field: &[u8]) -> Result<i64> {
-    parse_prefixed_id(SEQUENCE_PREFIX, field)
+    parse_source_key(
+        SEQUENCE_PREFIX,
+        field,
+        "fail to parse sequence key",
+        false,
+        true,
+    )
+}
+
+/// Go `IsSequenceKey`.
+#[must_use]
+pub fn is_sequence_key(field: &[u8]) -> bool {
+    has_prefix(SEQUENCE_PREFIX, field)
 }
 
 /// Go `Mutator.sequenceCycleKey`.
@@ -200,6 +333,18 @@ pub fn masking_policy_key(policy_id: i64) -> Vec<u8> {
 #[must_use]
 pub fn resource_group_key(group_id: i64) -> Vec<u8> {
     prefixed_id(RESOURCE_GROUP_PREFIX, group_id)
+}
+
+/// Go `Mutator.jobIDKey`: signed ID reinterpreted as big-endian uint64.
+#[must_use]
+pub fn ddl_job_id_key(job_id: i64) -> [u8; 8] {
+    (job_id as u64).to_be_bytes()
+}
+
+/// Go test-only `DDLJobHistoryKey`.
+#[must_use]
+pub fn ddl_job_history_kv_key(job_id: i64) -> Vec<u8> {
+    encode_hash_data_key(DDL_JOB_HISTORY, &ddl_job_id_key(job_id))
 }
 
 /// The raw KV key holding `NextGlobalID`. Go `Mutator.GlobalIDKey`.
