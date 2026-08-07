@@ -51,7 +51,13 @@ and lists every Rust landing symbol explicitly.
   mismatches at shared parsing, validation, or representation layers.
 - [x] (2026-08-06) Ported every source-owned Go test/support artifact or recorded a concrete
   DECLINED/UNREACHABLE verdict in the inventory.
-- [ ] Kill mutations for each rule family; run scoped Ready checks, clean
+- [x] (2026-08-06) Killed 16 independent mutations spanning duration rounding,
+  SQL microsecond bounds, zero-date diagnostics, YEAR width, raw-byte spaces,
+  DST value/diagnostic handling, interval overflow, signed formatting,
+  exhausted STR_TO_DATE tokens, Unicode categories, receiver mutation,
+  calendar-vs-instant duration conversion, source drift, branch deletion,
+  PORTED-symbol disappearance, and Go-test receipt disappearance.
+- [ ] Run repository Ready lint, clean
   worktree gates, direct ratchet greps, dual push, and cleanup.
 
 ## Surprises & Discoveries
@@ -160,9 +166,9 @@ remote SHAs, and reclaimed disk space.
 The production and original-test completeness boundary is now closed: 151
 functions, 561 exact control-flow loci, and 75 test/support declarations have
 one nonempty verdict, and 293 `tidb-datatype` library tests plus all-target
-clippy pass. This is not yet a final completion claim because independent
-mutation probes, repository Ready lint, the clean-worktree workspace gate, and
-the returned receipt SHA remain outstanding.
+clippy pass. All 16 deliberate mutations were observable. This is not yet a
+final completion claim because repository Ready lint, the clean-worktree
+workspace gate, and the returned receipt SHA remain outstanding.
 
 ## Context and Orientation
 
