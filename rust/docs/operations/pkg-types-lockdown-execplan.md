@@ -11,16 +11,19 @@ After this package unit is complete, reviewers can verify that the Rust datatype
 ## Progress
 
 - [x] (2026-08-07) Confirmed package atomicity from root `AGENTS.md` non-negotiable 6 and preserved both local seed commits outside the coordinator.
-- [x] (2026-08-07) Re-ran the Go-test coverage census after the seed commits: 202 mapped tests comprise 34 `NAME-EXACT`, 77 `NAME-FUZZY`, 20 `NAME-TOKENS`, 27 `REFERENCED`, and 44 `NONE`.
+- [x] (2026-08-07) Corrected the test identity from name-only to `(source path, receiver, name)`: the root package has 205 tests, including the distinct `TestCompare`, `TestConvert`, and `TestParseFrac` declarations that the old census collapsed.
 - [x] (2026-08-07) Preserved mutation and crate validation evidence for commit `38a4122dc2cea40b6326d12f4f773feb77c68c92`, which ports the exact `TestTimeOverflow` source rows.
 - [x] (2026-08-07) Preserved mutation and targeted validation evidence for commit `9648e257c09f8bcda4732bf6b460dccf47f15788`, which completes the audited `convert_test.go` source tables.
 - [x] (2026-08-07) Completed, committed, and mutation-probed the first `datum_test.go`/`core_time_test.go` source-row batch: 12 independently named Rust tests pass and reduce the census from 44 to 32 `NONE` without production-code changes.
 - [x] (2026-08-07) Audited the six uncovered `etc_test.go` type-predicate tests against the existing all-type-code table; six independently named tests pass and reduce the census from 32 to 26 `NONE` without production-code changes.
 - [x] (2026-08-07) Audited all eleven mechanically uncovered `json_binary_test.go` tests row by row; eleven exact-name Rust tests pass and reduce the census from 26 to 15 `NONE` without production-code changes.
-- [ ] Audit and account for every `pkg/types` production, test, support, benchmark, generated, fixture, and build file.
-- [ ] Port or prove every remaining Go test table, starting with the 44 mechanically uncovered tests and then auditing all weak name matches row by row.
-- [ ] Check in the complete function/branch inventory and its Go-source and Rust-symbol gates.
-- [ ] Mutation-probe every landed rule with boundary cases and restore from explicit saved copies.
+- [x] (2026-08-07) Completed the remaining decimal/time source tables and preserved Go's error-side temporal values through crate-internal `TemporalOutcome<T>` paths without weakening the existing public `Result` APIs.
+- [x] (2026-08-07) Re-ran the corrected negative census: 205 tests comprise 61 `NAME-EXACT`, 99 `NAME-FUZZY`, 18 `NAME-TOKENS`, 27 `REFERENCED`, and zero `NONE`.
+- [x] (2026-08-07) Accounted for all 56 root-package artifacts: 29 production Go files, 26 test files, and one `BUILD.bazel`; build tags, platform variants, generated markers, `go:generate`, `go:embed`, and tracked testdata are explicit zero-count ratchets.
+- [x] (2026-08-07) Added a deterministic Go AST inventory for 20,140 obligations, including 761 production functions/methods, 205 tests, 23 benchmarks, one fuzz target, one `TestMain`, 39 test helpers, 11,271 test table elements, and 1,127 assertion calls.
+- [x] (2026-08-07) Classified every AST obligation exactly once: 19,935 `PORTED` and 205 `DECLINED`. The declines are limited to `TestMain` lifecycle and three source-recorded divergences (`ConvertFloatToUint` NaN, strict `getValidIntPrefix`, and `SubInt64` MinInt wrap); none is silently classified as ported.
+- [x] (2026-08-07) Checked in artifact/AST drift gates, a compile-time Rust owner registry, 150 named Rust test evidence checks, seven mutation suites with killed results, and a content-addressed receipt.
+- [x] (2026-08-07) Mutation-probed every rule landed in this package batch and restored affected Rust sources from explicit saved copies; the receipt pins current source hashes for the seven suites.
 - [ ] Run the package WIP gates, then integrate the complete package into a clean coordinator worktree.
 - [ ] Run the Ready/full-workspace gate, verify direct ratchets, non-force push `origin:hparser-integration`, and verify the remote SHA.
 
@@ -42,6 +45,12 @@ After this package unit is complete, reviewers can verify that the Rust datatype
   Evidence: exact tests for unquote, remove, contains, copy, keys, depth, parse errors, typed creation, callback extraction, opaque values, and hashes pass 11/11. `TestCreateBinary`'s Go-only `int8` panic is unreachable because Rust accepts the closed `BinaryJSONValue` enum instead of `any`.
 - Observation: the JSON key-length rejection exists in both the small-object encoder and its large-object fallback; mutating only the first guard does not remove the behavior.
   Evidence: `test_get_keys` survived the first-guard mutation, then failed when both guards were disabled because parsing the 65,536-byte key unexpectedly succeeded.
+- Observation: the old 202-test denominator was structurally lossy, not merely stale, because three declarations share names across files.
+  Evidence: the corrected identity produces 205 `Test` declarations and the independent AST receipt reports the same count.
+- Observation: Go temporal conversion can return a useful value and an error simultaneously: duration-to-year returns clamped `2155` plus `ErrWarnDataOutOfRange`, invalid extraction returns zero plus an error, and invalid numeric datetime conversion returns zero DATETIME plus an error.
+  Evidence: `adjust_year_with_event`, `MySqlDuration::convert_to_year_with_event`, `extract_*_with_error`, and `parse_time_from_*_with_error` preserve both halves while public callers retain their prior `Result` contracts.
+- Observation: a package receipt must not treat the existence of a Rust owner as exact parity.
+  Evidence: current Rust source records stricter behavior for `ConvertFloatToUint(NaN)` and `SubInt64(1, MinInt64)`, plus two strict `getValidIntPrefix` rows; their complete AST owner subtrees are `DECLINED`.
 
 ## Decision Log
 
@@ -57,10 +66,16 @@ After this package unit is complete, reviewers can verify that the Rust datatype
 - Decision: after the complete clean-workspace Ready gate, push non-force directly to `origin` branch `hparser-integration`; do not push unit branches or the incomplete package.
   Rationale: the user confirmed that `dbsid` now has write permission to `pingcap/tidb` and explicitly superseded the handoff's old no-push/two-remote delivery rule.
   Date/Author: 2026-08-07 / Codex
+- Decision: use content-addressed AST anchors instead of source line numbers and enumerate test table elements/assertion calls in addition to top-level test declarations.
+  Rationale: line-number and test-name receipts can both remain green after source rows disappear or duplicate names collapse.
+  Date/Author: 2026-08-07 / Codex
+- Decision: preserve error-side temporal values in crate-internal outcome APIs and leave public `Result` behavior intact.
+  Rationale: broad public API changes were unnecessary; the internal outcome is sufficient for `Datum` conversion to retain Go's value-plus-event contract.
+  Date/Author: 2026-08-07 / Codex
 
 ## Outcomes & Retrospective
 
-The package is not complete. Two local seed commits improve exact source-row coverage, but no integration or push is permitted until the full census, classification inventory, drift gates, mutation evidence, and Ready gate are complete.
+The package implementation and receipt are complete in the package worktree, but no integration or push is permitted until the remaining WIP commands and the clean coordinator Ready/full-workspace gate pass.
 
 ## Context and Orientation
 
@@ -116,10 +131,17 @@ The coordinator is not modified until the unit is complete. If a final gate fail
 
 ## Artifacts and Notes
 
-Current local commit chain:
+Current local implementation commit chain before the receipt commit:
 
-    9648e257c09f8bcda4732bf6b460dccf47f15788 38a4122dc2cea40b6326d12f4f773feb77c68c92 rust: complete Go convert source tables
     38a4122dc2cea40b6326d12f4f773feb77c68c92 5dae9fdc30c031e9d86568c053223a144a847cfa rust: cover Go time overflow source rows
+    9648e257c09f8bcda4732bf6b460dccf47f15788 38a4122dc2cea40b6326d12f4f773feb77c68c92 rust: complete Go convert source tables
+    e35ac906267410bd4d566d3de093f797d4e1ccbc 9648e257c09f8bcda4732bf6b460dccf47f15788 rust: complete Go datum source tables
+    6c290f83ba00988cb2cb1e0b4e88a77c111bcf2c e35ac906267410bd4d566d3de093f797d4e1ccbc rust: trace Go type predicate rows
+    630933b2a rust: trace Go binary JSON source rows
+    7175a9d01 rust: record binary JSON mutation evidence
+    cd20b41c9 rust: preserve duplicate Go test obligations
+    72be0aa0d rust: complete Go decimal and time source tables
+    8e51a1bba rust: pin duration year overflow events
 
 The `TestTimeOverflow` mutations changed an overflow expectation and collapsed all parser inputs to one valid datetime; both failed the named source-row test. The `convert_test.go` mutations removed ASCII and UTF8MB4 skip behavior, changed binary type rendering, accepted a negative tiny integer, and changed JSON-true decimal conversion; each failed its intended named test after the missing source rows were added. Saved copies were restored and the committed versions passed.
 
@@ -141,8 +163,12 @@ The JSON batch was saved under `/tmp/tidb-types-json-probes.eqw1rx`. Reversing k
 
 The `etc_test.go` predicate batch reused the same save directory for `field_type_mod.rs`. Removing `NewDate` from `is_type_temporal` failed `test_is_type_temporal_source_rows` on the `NewDate` row. Adding `Unspecified` to `is_type_numeric` failed `test_is_type_numeric_source_rows` on the explicit false row. The first restore attempt was issued from `rust/` with an erroneous extra `rust/` path prefix and therefore changed nothing; rerunning the copy from repository root restored the saved bytes, after which the six-test filter reported `6 passed, 311 skipped`.
 
+The final decimal/time probes are saved under `/tmp/tidb-types-final-probes.1qur8b`. Disabling trailing-zero trimming failed `test_remove_trailing_zeros`; clamping high YEAR to 2154 failed `test_duration_convert_to_year_from_now`; returning one for an invalid extraction unit failed `test_extract_datetime_num`; returning zero DATE instead of zero DATETIME failed the float and decimal source-row tests; and dropping the duration-year overflow event failed `duration_year_cast_preserves_clamped_value_and_overflow_event`. Explicit saved copies restored byte-for-byte and the six-test filter passed.
+
+The checked receipt is under `rust/crates/tidb-datatype/tests/pkg_types_lockdown/`. `artifacts.tsv` locks all 56 files and zero-count classes, `obligations.tsv` locks the 20,140 content-addressed AST nodes and their classifications, `mutation-probes.tsv` and `mutation-results.tsv` preserve the seven landed mutation suites, and `receipt.json` binds every gate input by SHA-256. `rust/scripts/pkg-types-lockdown.py` regenerates the Go side and rejects missing, extra, duplicate, or changed obligations.
+
 ## Interfaces and Dependencies
 
 No new third-party dependency is expected. Inventory tooling should use repository Python or Rust standard-library facilities and stable source identifiers. Runtime ports should continue using existing `tidb-datatype` public types such as `Datum`, `Decimal`, `BinaryJSON`, `Time`, `Duration`, `FieldType`, `Enum`, `Set`, and `ConversionContext`; introducing a parallel datatype layer would increase semantic risk and violate the minimal-diff requirement.
 
-Revision note: created on 2026-08-07 to preserve the complete-package LOCKDOWN contract and the post-seed census before continuing `datum_test.go` coverage; updated the same day with datum, type-predicate, and JSON source-row evidence.
+Revision note: created on 2026-08-07 to preserve the complete-package LOCKDOWN contract and the post-seed census before continuing `datum_test.go` coverage; updated the same day with the corrected 205-test census, temporal outcomes, complete AST receipt, and mutation evidence.
