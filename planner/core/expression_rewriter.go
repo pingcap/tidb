@@ -2004,6 +2004,7 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 			er.err = ErrUnknownColumn.GenWithStackByArgs(v.Name, clauseMsg[er.b.curClause])
 			return
 		}
+		er.b.appendPartitionRowIDWarningByFieldName(er.names[idx])
 		er.ctxStackAppend(column, er.names[idx])
 		return
 	}
@@ -2012,6 +2013,7 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 		idx, err = expression.FindFieldName(outerName, v)
 		if idx >= 0 {
 			column := outerSchema.Columns[idx]
+			er.b.appendPartitionRowIDWarningByFieldName(outerName[idx])
 			er.ctxStackAppend(&expression.CorrelatedColumn{Column: *column, Data: new(types.Datum)}, outerName[idx])
 			return
 		}
@@ -2029,6 +2031,7 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 		er.err = err
 		return
 	} else if col != nil {
+		er.b.appendPartitionRowIDWarningByFieldName(name)
 		er.ctxStackAppend(col, name)
 		return
 	}

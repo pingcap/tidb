@@ -214,6 +214,9 @@ func (a *maxMinEliminator) eliminateMaxMin(p LogicalPlan, opt *logicalOptimizeOp
 		if len(agg.GroupByItems) != 0 {
 			return agg
 		}
+		if len(agg.AggFuncs) == 0 {
+			return agg
+		}
 		// Make sure that all of the aggFuncs are Max or Min.
 		for _, aggFunc := range agg.AggFuncs {
 			if aggFunc.Name != ast.AggFuncMax && aggFunc.Name != ast.AggFuncMin {

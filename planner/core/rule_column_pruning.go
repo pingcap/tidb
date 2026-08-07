@@ -69,6 +69,32 @@ func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column, op
 	child := p.children[0]
 	used := expression.GetUsedList(parentUsedCols, p.schema)
 	prunedColumns := make([]*expression.Column, 0)
+	allPruned := true
+
+	for i, usedByParent := range used {
+		if usedByParent || exprHasSetVarOrSleep(p.Exprs[i]) {
+			used[i] = true
+			allPruned = false
+			break
+		}
+	}
+	if allPruned && len(p.Exprs) > 0 {
+		if _, ok := child.(*LogicalTableDual); ok {
+			// TableDual may legitimately have zero columns, so keep a safe dummy output here.
+			zero := expression.NewZero()
+			p.Exprs = p.Exprs[:1]
+			p.schema.Columns = p.schema.Columns[:1]
+			p.Exprs[0] = zero
+			p.schema.Columns[0] = &expression.Column{
+				UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
+				RetType:  zero.GetType(),
+			}
+			used = []bool{true}
+		} else {
+			// Keep one output so the projection does not expose a zero-column layout.
+			used[smallestColumnIndex(p.schema.Columns)] = true
+		}
+	}
 
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] && !exprHasSetVarOrSleep(p.Exprs[i]) {
@@ -167,16 +193,6 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, 
 	err := child.PruneColumns(selfUsedCols, opt)
 	if err != nil {
 		return err
-	}
-	// Do an extra Projection Elimination here. This is specially for empty Projection below Aggregation.
-	// This kind of Projection would cause some bugs for MPP plan and is safe to be removed.
-	// This kind of Projection should be removed in Projection Elimination, but currently PrunColumnsAgain is
-	// the last rule. So we specially handle this case here.
-	if childProjection, isProjection := child.(*LogicalProjection); isProjection {
-		if len(childProjection.Exprs) == 0 && childProjection.Schema().Len() == 0 {
-			childOfChild := childProjection.children[0]
-			la.SetChildren(childOfChild)
-		}
 	}
 	return nil
 }
@@ -441,13 +457,11 @@ func (p *LogicalJoin) PruneColumns(parentUsedCols []*expression.Column, opt *log
 	if err != nil {
 		return err
 	}
-	addConstOneForEmptyProjection(p.children[0])
 
 	err = p.children[1].PruneColumns(rightCols, opt)
 	if err != nil {
 		return err
 	}
-	addConstOneForEmptyProjection(p.children[1])
 
 	p.mergeSchema()
 	if p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
@@ -466,7 +480,6 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column, opt *l
 	if err != nil {
 		return err
 	}
-	addConstOneForEmptyProjection(la.children[1])
 
 	la.CorCols = extractCorColumnsBySchema4LogicalPlan(la.children[1], la.children[0].Schema())
 	for _, col := range la.CorCols {
@@ -477,7 +490,6 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column, opt *l
 	if err != nil {
 		return err
 	}
-	addConstOneForEmptyProjection(la.children[0])
 
 	la.mergeSchema()
 	return nil
@@ -549,10 +561,6 @@ func (p *LogicalWindow) extractUsedCols(parentUsedCols []*expression.Column) []*
 
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalLimit) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) error {
-	if len(parentUsedCols) == 0 { // happens when LIMIT appears in UPDATE.
-		return nil
-	}
-
 	savedUsedCols := make([]*expression.Column, len(parentUsedCols))
 	copy(savedUsedCols, parentUsedCols)
 	if err := p.children[0].PruneColumns(parentUsedCols, opt); err != nil {
@@ -569,26 +577,6 @@ func (*columnPruner) name() string {
 
 // By add const one, we can avoid empty Projection is eliminated.
 // Because in some cases, Projectoin cannot be eliminated even its output is empty.
-func addConstOneForEmptyProjection(p LogicalPlan) {
-	proj, ok := p.(*LogicalProjection)
-	if !ok {
-		return
-	}
-	if proj.Schema().Len() != 0 {
-		return
-	}
-
-	constOne := expression.NewOne()
-	proj.schema.Append(&expression.Column{
-		UniqueID: proj.ctx.GetSessionVars().AllocPlanColumnID(),
-		RetType:  constOne.GetType(),
-	})
-	proj.Exprs = append(proj.Exprs, &expression.Constant{
-		Value:   constOne.Value,
-		RetType: constOne.GetType(),
-	})
-}
-
 func appendColumnPruneTraceStep(p LogicalPlan, prunedColumns []*expression.Column, opt *logicalOptimizeOp) {
 	if len(prunedColumns) < 1 {
 		return

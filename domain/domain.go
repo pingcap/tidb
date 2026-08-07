@@ -143,6 +143,8 @@ type Domain struct {
 
 	mdlCheckTableInfo *mdlCheckTableInfo
 
+	statsOwner owner.Manager
+
 	analyzeMu struct {
 		sync.Mutex
 		sctxs map[sessionctx.Context]bool
@@ -1089,10 +1091,11 @@ func (do *Domain) Init(
 		go do.loadSchemaInLoop(ctx, ddlLease)
 	}
 	do.wg.Run(do.mdlCheckLoop)
-	do.wg.Add(3)
+	do.wg.Add(4)
 	go do.topNSlowQueryLoop()
 	go do.infoSyncerKeeper()
 	go do.globalConfigSyncerKeeper()
+	go do.mergeEmptyRegionsLoop(ctx)
 	if !skipRegisterToDashboard {
 		do.wg.Add(1)
 		go do.topologySyncerKeeper()
@@ -1886,18 +1889,40 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 	if do.statsLease >= 0 {
 		do.wg.Run(do.loadStatsWorker)
 	}
-	owner := do.newOwnerManager(handle.StatsPrompt, handle.StatsOwnerKey)
+	variable.EnableStatsOwner = do.enableStatsOwner
+	variable.DisableStatsOwner = do.disableStatsOwner
+	do.statsOwner = do.newOwnerManager(handle.StatsPrompt, handle.StatsOwnerKey)
 	if do.indexUsageSyncLease > 0 {
 		do.wg.Add(1)
-		go do.syncIndexUsageWorker(owner)
+		go do.syncIndexUsageWorker(do.statsOwner)
 	}
 	if do.statsLease <= 0 {
 		return nil
 	}
 	do.SetStatsUpdating(true)
-	do.wg.Run(func() { do.updateStatsWorker(ctx, owner) })
-	do.wg.Run(func() { do.autoAnalyzeWorker(owner) })
-	do.wg.Run(func() { do.gcAnalyzeHistory(owner) })
+	do.wg.Run(func() { do.updateStatsWorker(ctx) })
+	do.wg.Run(func() { do.autoAnalyzeWorker() })
+	do.wg.Run(func() { do.gcAnalyzeHistory() })
+	do.wg.Run(do.handleDDLEvent)
+	return nil
+}
+
+// enableStatsOwner enables this node to execute stats owner jobs.
+// Since ownerManager.CampaignOwner will start a new goroutine to run ownerManager.campaignLoop,
+// we should make sure that before invoking enableStatsOwner(), stats owner is DISABLE.
+func (do *Domain) enableStatsOwner() error {
+	if !do.statsOwner.IsOwner() {
+		err := do.statsOwner.CampaignOwner()
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+// disableStatsOwner disable this node to execute stats owner.
+// We should make sure that before invoking disableStatsOwner(), stats owner is ENABLE.
+func (do *Domain) disableStatsOwner() error {
+	// disable campaign by interrupting campaignLoop
+	do.statsOwner.CampaignCancel()
 	return nil
 }
 
@@ -1920,9 +1945,13 @@ func (do *Domain) newOwnerManager(prompt, ownerKey string) owner.Manager {
 		statsOwner = owner.NewOwnerManager(context.Background(), do.etcdClient, prompt, id, ownerKey)
 	}
 	// TODO: Need to do something when err is not nil.
-	err := statsOwner.CampaignOwner()
-	if err != nil {
-		logutil.BgLogger().Warn("campaign owner failed", zap.Error(err))
+	if ownerKey == handle.StatsOwnerKey && config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Load() {
+		if ownerKey == handle.StatsOwnerKey && config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Load() {
+			err := statsOwner.CampaignOwner()
+			if err != nil {
+				logutil.BgLogger().Warn("campaign owner failed", zap.Error(err))
+			}
+		}
 	}
 	return statsOwner
 }
@@ -1997,7 +2026,25 @@ func (do *Domain) syncIndexUsageWorker(owner owner.Manager) {
 	}
 }
 
-func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager) {
+func (do *Domain) handleDDLEvent() {
+	logutil.BgLogger().Info("handleDDLEvent started.")
+	defer util.Recover(metrics.LabelDomain, "handleDDLEvent", nil, false)
+	statsHandle := do.StatsHandle()
+	for {
+		select {
+		case <-do.exit:
+			return
+			// This channel is sent only by ddl owner.
+		case t := <-statsHandle.DDLEventCh():
+			err := statsHandle.HandleDDLEvent(t)
+			if err != nil {
+				logutil.BgLogger().Error("handle ddl event failed", zap.String("event", t.String()), zap.Error(err))
+			}
+		}
+	}
+}
+
+func (do *Domain) updateStatsWorker(ctx sessionctx.Context) {
 	defer util.Recover(metrics.LabelDomain, "updateStatsWorker", nil, false)
 	lease := do.statsLease
 	// We need to have different nodes trigger tasks at different times to avoid the herd effect.
@@ -2024,7 +2071,6 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 		select {
 		case <-do.exit:
 			statsHandle.FlushStats()
-			owner.Cancel()
 			return
 			// This channel is sent only by ddl owner.
 		case t := <-statsHandle.DDLEventCh():
@@ -2040,7 +2086,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 			statsHandle.UpdateErrorRate(do.InfoSchema())
 		case <-loadFeedbackTicker.C:
 			statsHandle.UpdateStatsByLocalFeedback(do.InfoSchema())
-			if !owner.IsOwner() {
+			if !do.statsOwner.IsOwner() {
 				continue
 			}
 			err := statsHandle.HandleUpdateStats(do.InfoSchema())
@@ -2058,7 +2104,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 				logutil.BgLogger().Debug("dump stats feedback failed", zap.Error(err))
 			}
 		case <-gcStatsTicker.C:
-			if !owner.IsOwner() {
+			if !do.statsOwner.IsOwner() {
 				continue
 			}
 			err := statsHandle.GCStats(do.InfoSchema(), do.DDL().GetLease())
@@ -2077,7 +2123,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	}
 }
 
-func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
+func (do *Domain) autoAnalyzeWorker() {
 	defer util.Recover(metrics.LabelDomain, "autoAnalyzeWorker", nil, false)
 	statsHandle := do.StatsHandle()
 	analyzeTicker := time.NewTicker(do.statsLease)
@@ -2088,7 +2134,7 @@ func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 	for {
 		select {
 		case <-analyzeTicker.C:
-			if variable.RunAutoAnalyze.Load() && !do.stopAutoAnalyze.Load() && owner.IsOwner() {
+			if variable.RunAutoAnalyze.Load() && !do.stopAutoAnalyze.Load() && do.statsOwner.IsOwner() {
 				statsHandle.HandleAutoAnalyze(do.InfoSchema())
 			}
 		case <-do.exit:
@@ -2097,7 +2143,7 @@ func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 	}
 }
 
-func (do *Domain) gcAnalyzeHistory(owner owner.Manager) {
+func (do *Domain) gcAnalyzeHistory() {
 	defer util.Recover(metrics.LabelDomain, "gcAnalyzeHistory", nil, false)
 	const gcInterval = time.Hour
 	statsHandle := do.StatsHandle()
@@ -2109,7 +2155,7 @@ func (do *Domain) gcAnalyzeHistory(owner owner.Manager) {
 	for {
 		select {
 		case <-gcTicker.C:
-			if owner.IsOwner() {
+			if do.statsOwner.IsOwner() {
 				const DaysToKeep = 7
 				updateTime := time.Now().AddDate(0, 0, -DaysToKeep)
 				err := statsHandle.DeleteAnalyzeJobs(updateTime)
