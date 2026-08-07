@@ -389,6 +389,7 @@ mod tests {
         assert_eq!(MaskingPolicyStatus::default(), MaskingPolicyStatus::DISABLE);
         assert_eq!(MaskingPolicyStatus::DISABLED, MaskingPolicyStatus::DISABLE);
         assert_eq!(MaskingPolicyStatus::ENABLED, MaskingPolicyStatus::ENABLE);
+        assert!(serde_json::from_str::<MaskingPolicyStatus>("256").is_err());
     }
 
     #[test]
