@@ -14,6 +14,7 @@
 package types_test
 
 import (
+	"encoding/json"
 	"fmt"
 	"testing"
 
@@ -192,6 +193,19 @@ func TestFieldType(t *testing.T) {
 	ft.SetDecimal(0)
 	require.Equal(t, "char(0)", ft.String())
 	require.True(t, HasCharset(ft))
+
+	t.Run("json_omitempty", func(t *testing.T) {
+		ft := NewFieldType(mysql.TypeLong)
+		ft.SetCharset(charset.CharsetBin)
+		ft.SetCollate(charset.CollationBin)
+		data, err := json.Marshal(ft)
+		require.NoError(t, err)
+		require.Equal(t, `{"Tp":3,"Flen":-1,"Decimal":-1,"Charset":"binary","Collate":"binary"}`, string(data))
+
+		var roundTrip FieldType
+		require.NoError(t, json.Unmarshal(data, &roundTrip))
+		require.Equal(t, ft, &roundTrip)
+	})
 }
 
 func TestHasCharsetFromStmt(t *testing.T) {
