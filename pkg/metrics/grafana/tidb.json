@@ -3093,7 +3093,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "TiDB connection disconnected counts per result (left axis, cumulative); right axis adds an ok/error disconnect rate view and a dedicated cumulative counter for result=undetermined, since any occurrence needs investigation",
+          "description": "TiDB connection disconnected counts per result (cumulative); right axis adds an ok/error disconnect rate view, and routes the undetermined cumulative counter to its own scale since any occurrence needs investigation",
           "editable": true,
           "error": false,
           "fieldConfig": {
@@ -3141,7 +3141,7 @@
               "lines": false
             },
             {
-              "alias": "/-undetermined-total$/",
+              "alias": "/-undetermined$/",
               "stack": false,
               "yaxis": 2
             },
@@ -3169,14 +3169,6 @@
               "intervalFactor": 2,
               "legendFormat": "{{instance}}-{{result}}-rate",
               "refId": "B",
-              "step": 40
-            },
-            {
-              "expr": "sum(tidb_server_disconnection_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", result=\"undetermined\"}) by (instance)",
-              "format": "time_series",
-              "intervalFactor": 2,
-              "legendFormat": "{{instance}}-undetermined-total",
-              "refId": "C",
               "step": 40
             }
           ],
