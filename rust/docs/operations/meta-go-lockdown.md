@@ -52,7 +52,10 @@ claim the whole `pkg/meta` Go package is transcreated.
 - [x] (2026-08-07) Added source drift, one-verdict, receipt, and compile-symbol
   gates beside the Rust implementation; the gate pins 211 unique production
   Rust symbol families and the ordered inventory identity digest.
-- [ ] Kill every independent boundary mutation in a disposable worktree.
+- [x] (2026-08-07) Mutation-probed 16 independent rule families in disposable
+  worktree `/private/tmp/codex-task325-tidb-meta-mutation`. One first-pass
+  survivor exposed duplicated reverse-iterator boundary logic; the two paths
+  were consolidated and the same inclusive-boundary mutation then failed.
 - [ ] Run Ready and independent clean-worktree gates at the exact returned
   SHA, verify ratchets directly, dual-push, and reclaim only unit-owned paths.
 
@@ -224,6 +227,34 @@ proof. Every deliberate boundary mutation must make its intended test fail.
 The final clean-worktree gate must exercise the full workspace at the returned
 SHA. Any pre-existing aggregate failure is recorded literally and isolated by
 fresh-process partitions; it is never reported as a passing aggregate command.
+
+## Mutation Receipt
+
+Each row changed the implementation rule, not an expected answer. `KILLED`
+means the named boundary test or lockdown gate returned nonzero. The inclusive
+history mutation initially survived because identical predicates existed in
+the trait default and `MemoryTransaction`; consolidating them into
+`owned_reverse_iterator` removed that blind path, and the repeated mutation
+was killed by the same source-semantic test.
+
+| Rule family | Boundary mutation | Intended receipt | Result |
+| --- | --- | --- | --- |
+| magic-byte version | `0x00` to `0x01` | `magic_byte_matches_go` | KILLED |
+| table revision | increment by 1 to increment by 0 | `database_and_table_lifecycle_preserves_go_order_and_partial_mutation` | KILLED |
+| global-ID limit | `>` to `>=` | `global_id_zero_limit_error_and_signed_wrap_match_go_mutation_order` | KILLED |
+| partial write order | allocator write before table create | `raw_storage_failures_propagate_and_keep_go_partial_mutation_order` | KILLED |
+| must-load fallback | missing foreign-key marker true to false | `source_range_partial_json_and_filter_boundaries` | KILLED |
+| job-filter precedence | Go mixed precedence to symmetric conjunction | `job_name_filter_keeps_go_operator_precedence` | KILLED |
+| metadata lock | exact `"1"` to any non-`"0"` | `malformed_scalar_storage_returns_the_source_parse_error_class` | KILLED |
+| history start boundary | inclusive `<=` to exclusive `<` | `ddl_history_is_big_endian_reverse_inclusive_and_filtered_before_decode` | SURVIVED, CONSOLIDATED, KILLED |
+| source drift | owner line count 2,219 to 2,218 | `source_inputs_match` | KILLED |
+| symbol drift | rename `schema_cache_size` | `every_ported_production_symbol_is_compile_anchored` | KILLED |
+| kernel branch | invert `is_next_gen` | next-gen `system_database_creation_and_iteration_cover_classic_and_nextgen_rules` | KILLED |
+| element length | exact length accepted to rejected | `element_round_trips_and_reports_gos_two_failures` | KILLED |
+| empty magic value | source panic to returned error | `policy_masking_and_resource_reads_preserve_magic_json_and_empty_panics` | KILLED |
+| scalar float | fixed two decimals to three | `scalar_settings_preserve_absence_formatting_and_non_boolean_lock_bytes` | KILLED |
+| snapshot timestamp | `start_ts` to `start_ts + 1` | `iter_all_tables_clamps_workers_streams_ranges_and_serializes_callbacks` | KILLED |
+| inventory verdict | production `PORTED` to `DECLINED` | `inventory_is_complete_unique_and_classified` | KILLED |
 
 ## Idempotence and Recovery
 

@@ -1746,6 +1746,13 @@ fn ddl_history_is_big_endian_reverse_inclusive_and_filtered_before_decode() {
     meta.add_history_ddl_job(&mut two, false).unwrap();
     assert!(one.update_raw_args_seen);
     assert_eq!(meta.history_ddl_count().unwrap(), 3);
+    let job_two_key =
+        structure::encode_hash_data_key(key::DDL_JOB_HISTORY, &key::ddl_job_id_key(2));
+    assert!(
+        meta.inspect(|transaction| transaction.entries().contains_key(&job_two_key))
+            .unwrap(),
+        "the inclusive start boundary must be the exact stored key"
+    );
     assert_eq!(
         meta.ddl_job_history_key(888),
         vec![
