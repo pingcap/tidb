@@ -26,9 +26,9 @@ use tidb_meta::transaction::{
     extract_schema_and_table_name_from_job, fast_unmarshal_table_name_info, iter_all_tables,
     job_matches, oldest_schema_version, split_range_int64_max, table_info_must_load, unescape_name,
     unescape_name_bytes, AutoIdGroup, DailyRuStats, DdlJobCodec, DdlTableVersion, GroupRuStats,
-    MemoryTransaction, MetaSnapshotStore, MustLoadFilterAttr, Mutator, MvccInfo, MvccReader,
-    MvccWrite, NextGenBootTableVersion, RawTransaction, ResourceGroupCodec, RuConsumption, RuStats,
-    TtlTuneFactors, NAME_EXTRACT_REGEXP,
+    MemoryTransaction, MetaSnapshotStore, MustLoadFilterAttr, Mutator, MutatorOption, MvccInfo,
+    MvccReader, MvccWrite, NextGenBootTableVersion, RawTransaction, ResourceGroupCodec,
+    RuConsumption, RuStats, TtlTuneFactors, NAME_EXTRACT_REGEXP,
 };
 use tidb_meta::{key, structure, value, MetaError, Result};
 use tidb_model::placement::PlacementSettings;
@@ -65,7 +65,7 @@ fn new_mutator_configures_transaction_and_runs_options_in_source_order() {
     let order = Arc::new(Mutex::new(Vec::new()));
     let first = Arc::clone(&order);
     let second = Arc::clone(&order);
-    let mut options: Vec<Box<dyn FnMut(&mut Mutator<MemoryTransaction>)>> = vec![
+    let mut options: Vec<MutatorOption<MemoryTransaction>> = vec![
         Box::new(move |meta| {
             assert_eq!(meta.start_ts(), 55);
             first.lock().unwrap().push(1);
@@ -502,7 +502,6 @@ fn catalog_fast_paths_cover_metas_names_attributes_cancellation_and_corruption()
             name: CiString::new("Special"),
             affinity: Some(Box::new(tidb_model::table::TableAffinityInfo {
                 level: "s".to_owned(),
-                ..Default::default()
             })),
             ..Default::default()
         },
@@ -1352,7 +1351,6 @@ fn source_range_partial_json_and_filter_boundaries() {
     let ordered = value::serialize_table_info(&TableInfo {
         affinity: Some(Box::new(tidb_model::table::TableAffinityInfo {
             level: "s".to_owned(),
-            ..Default::default()
         })),
         ..Default::default()
     })
@@ -1519,7 +1517,7 @@ fn iter_all_tables_clamps_workers_streams_ranges_and_serializes_callbacks() {
     for (database_id, table_id) in [(1, 11), (6_000_000_000_000_000_000, 22)] {
         meta.create_database(&DBInfo {
             id: database_id,
-            name: CiString::new(&format!("db{database_id}")),
+            name: CiString::new(format!("db{database_id}")),
             ..Default::default()
         })
         .unwrap();
@@ -1527,7 +1525,7 @@ fn iter_all_tables_clamps_workers_streams_ranges_and_serializes_callbacks() {
             database_id,
             &TableInfo {
                 id: table_id,
-                name: CiString::new(&format!("t{table_id}")),
+                name: CiString::new(format!("t{table_id}")),
                 ..Default::default()
             },
         )

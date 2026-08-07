@@ -94,6 +94,12 @@ pub trait RawKvIterator {
     fn next(&mut self) -> Result<()>;
 }
 
+/// Callback shape for one raw half-open range entry.
+pub type RawRangeVisitor<'a> = dyn FnMut(&[u8], &[u8]) -> Result<()> + 'a;
+
+/// Go `GetAllNameToIDAndTheMustLoadedTableInfo`'s paired result.
+pub type NameToIdAndMustLoadedTableInfo = (BTreeMap<Vec<u8>, i64>, Vec<TableInfo>);
+
 struct OwnedRawKvIterator {
     entries: Vec<(Vec<u8>, Vec<u8>)>,
     position: usize,
@@ -182,7 +188,7 @@ pub trait RawTransaction {
         &mut self,
         start: &[u8],
         end: &[u8],
-        visit: &mut dyn FnMut(&[u8], &[u8]) -> Result<()>,
+        visit: &mut RawRangeVisitor<'_>,
     ) -> Result<()>;
 }
 
@@ -378,7 +384,7 @@ impl RawTransaction for MemoryTransaction {
         &mut self,
         start: &[u8],
         end: &[u8],
-        visit: &mut dyn FnMut(&[u8], &[u8]) -> Result<()>,
+        visit: &mut RawRangeVisitor<'_>,
     ) -> Result<()> {
         if let Some(message) = &self.iteration_error {
             return Err(MetaError::Storage(message.clone()));
@@ -847,7 +853,7 @@ impl<T: RawTransaction> Mutator<T> {
     /// Go `NewMutator` without options.
     #[must_use]
     pub fn new(transaction: T) -> Self {
-        let mut options: [Box<dyn FnMut(&mut Self)>; 0] = [];
+        let mut options: [MutatorOption<T>; 0] = [];
         Self::new_with_options(transaction, &mut options)
     }
 
@@ -1537,7 +1543,7 @@ impl<T: RawTransaction> Mutator<T> {
     pub fn all_name_to_id_and_must_loaded_table_info(
         &self,
         database_id: i64,
-    ) -> Result<(BTreeMap<Vec<u8>, i64>, Vec<TableInfo>)> {
+    ) -> Result<NameToIdAndMustLoadedTableInfo> {
         let id_regex = regex::bytes::Regex::new(r#""id":(\d+)"#)
             .map_err(|error| MetaError::InvalidJson(error.to_string()))?;
         let name_regex = regex::bytes::Regex::new(NAME_EXTRACT_REGEXP)
