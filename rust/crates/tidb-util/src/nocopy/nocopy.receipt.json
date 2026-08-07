@@ -1,0 +1,32 @@
+{
+  "artifact_count": 2,
+  "category_counts": {
+    "declaration": 1,
+    "function": 2
+  },
+  "go_package": "pkg/util/nocopy",
+  "mutation_suites": 5,
+  "obligation_count": 3,
+  "owned_file_sha256": {
+    "rust/crates/tidb-util/src/nocopy/mod.rs": "69d863516d8ff85a3e8f4654f34386c7405847ba62455bd4e3269f523b5c998b",
+    "rust/crates/tidb-util/src/nocopy/nocopy.artifacts.tsv": "e22478323658205147305f4bb00f561f364200d6c592f1b1165019f3bcadcfe1",
+    "rust/crates/tidb-util/src/nocopy/nocopy.inventory.tsv": "80087672d5b682c27ebfdcf902a9141d55a4db91d4d389b73066991f0d6f1570",
+    "rust/crates/tidb-util/src/nocopy/nocopy.mutation-plan.tsv": "210f899d7149c42d1a470842a3621c765965f0851ac5f4329bcd3bfeca3dff4e",
+    "rust/crates/tidb-util/src/nocopy/nocopy.mutation-results.tsv": "1afb44af1f6e76eae561d6befb6cddb52515f7fcb9912e265633897338908cfc",
+    "rust/crates/tidb-util/tests/nocopy_lockdown.rs": "502131bc217905968b18f255caf3082edff0f56e53d89d201976b9884233b5bf",
+    "rust/scripts/pkg-nocopy-lockdown.py": "6c52b86bc2f7f3cea4126a96d716ea69b6187e323c172bb1872074e1ff8d5418"
+  },
+  "schema": "pkg-nocopy-lockdown-v1",
+  "source_seed_commit": "04cbb8663ce71b4bec4a1d01f657be157dea871b",
+  "status_counts": {
+    "PORTED": 3
+  },
+  "zero_artifact_classes": {
+    "build_tags": 0,
+    "code_generated": 0,
+    "go_embed": 0,
+    "go_generate": 0,
+    "platform_variants": 0,
+    "tracked_testdata": 0
+  }
+}

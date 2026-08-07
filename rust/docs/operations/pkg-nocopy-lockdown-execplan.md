@@ -16,8 +16,9 @@ The source's important behavioral contract is its `sync.Locker` marker: Go's `go
 - [x] (2026-08-08) Read the Go source, Bazel rule, existing Rust landing, direct `stmtctx` embedding consumer, and generic Go AST census; measured `go test` as no test files.
 - [x] (2026-08-08) Measured the Go copylocks oracle in a disposable probe: `go vet` reports four diagnostics for copying `NoCopy` and a holder containing it; rustdoc's existing compile-fail test passes.
 - [x] (2026-08-08) Replaced the legacy seven-row hand-written inventory with a content-addressed two-artifact manifest and exact three-row AST classification; inventory checker reports `2 artifacts, 3 AST obligations, 3 PORTED`.
-- [ ] Add the compiled owner/evidence gate, five-suite mutation plan/results, checker, and content-addressed receipt (completed: compiled owner/evidence gate, mutation plan, and checker; remaining: results and receipt).
-- [ ] Kill every planned mutation from an immutable provisional commit and restore all bytes from saved copies.
+- [x] (2026-08-08) Added the compiled owner/evidence gate, five-suite mutation plan, eight killed results, deterministic checker, compiled mutation receipt gate, and content-addressed receipt.
+- [x] (2026-08-08) Killed all eight planned mutations from immutable provisional commit `0474a0242a5396e40bb43b8691c29bf4ce919694`; every mutated file was restored to its saved SHA-256 and passed its restored check.
+- [x] (2026-08-08) Passed the WIP gate: no-failpoint Go package oracle, complete checker, all 287 `tidb-util` tests, rustdoc compile-fail test, package Clippy with warnings denied, workspace fmt, and `git diff --check`.
 - [ ] Run WIP and Ready/full-workspace gates, publish by ordinary fast-forward, and verify GitHub attribution to `dbsid`.
 
 ## Surprises & Discoveries
@@ -43,7 +44,7 @@ The source's important behavioral contract is its `sync.Locker` marker: Go's `go
 
 ## Outcomes & Retrospective
 
-No completion outcome is claimed yet. Source reading, Go/Rust boundary measurements, the artifact manifest, generic inventory, compiled owner/evidence gate, and mutation plan are complete; mutation results, the receipt, Ready gate, and publication remain unfinished.
+No completion outcome is claimed yet. Source reading, Go/Rust boundary measurements, artifact manifest, generic inventory, compiled owner/evidence gate, mutation proof, receipt, and WIP gate are complete; the clean Ready gate and publication remain unfinished.
 
 ## Context and Orientation
 
