@@ -19,7 +19,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -335,14 +334,11 @@ func (parser *blockParser) readBlock() error {
 	}
 }
 
-var chunkParserUnescapeRegexp = regexp.MustCompile(`(?s)\\.`)
-
 func unescape(
 	input string,
 	delim string,
 	escFlavor escapeFlavor,
 	escChar byte,
-	unescapeRegexp *regexp.Regexp,
 ) string {
 	if len(delim) > 0 {
 		delim2 := delim + delim
@@ -350,36 +346,66 @@ func unescape(
 			input = strings.ReplaceAll(input, delim2, delim)
 		}
 	}
-	if escFlavor != escapeFlavorNone && strings.IndexByte(input, escChar) != -1 {
-		input = unescapeRegexp.ReplaceAllStringFunc(input, func(substr string) string {
-			switch substr[1] {
-			case '0':
-				return "\x00"
-			case 'b':
-				return "\b"
-			case 'n':
-				return "\n"
-			case 'r':
-				return "\r"
-			case 't':
-				return "\t"
-			case 'Z':
-				return "\x1a"
-			default:
-				return substr[1:]
-			}
-		})
+	if escFlavor != escapeFlavorNone {
+		input = unescapeByChar(input, escChar)
 	}
 	return input
+}
+
+func unescapeByChar(input string, escChar byte) string {
+	first := strings.IndexByte(input, escChar)
+	if first < 0 || first+1 == len(input) {
+		return input
+	}
+
+	var result strings.Builder
+	result.Grow(len(input) - 1)
+	result.WriteString(input[:first])
+
+	remaining := input[first:]
+	for len(remaining) > 1 {
+		result.WriteByte(unescapedByte(remaining[1]))
+		remaining = remaining[2:]
+
+		next := strings.IndexByte(remaining, escChar)
+		if next < 0 {
+			result.WriteString(remaining)
+			return result.String()
+		}
+		result.WriteString(remaining[:next])
+		remaining = remaining[next:]
+	}
+
+	result.WriteString(remaining)
+	return result.String()
+}
+
+func unescapedByte(input byte) byte {
+	switch input {
+	case '0':
+		return 0
+	case 'b':
+		return '\b'
+	case 'n':
+		return '\n'
+	case 'r':
+		return '\r'
+	case 't':
+		return '\t'
+	case 'Z':
+		return '\x1a'
+	default:
+		return input
+	}
 }
 
 func (parser *ChunkParser) unescapeString(input string) string {
 	if len(input) >= 2 {
 		switch input[0] {
 		case '\'', '"':
-			return unescape(input[1:len(input)-1], input[:1], parser.escFlavor, '\\', chunkParserUnescapeRegexp)
+			return unescape(input[1:len(input)-1], input[:1], parser.escFlavor, '\\')
 		case '`':
-			return unescape(input[1:len(input)-1], "`", escapeFlavorNone, '\\', chunkParserUnescapeRegexp)
+			return unescape(input[1:len(input)-1], "`", escapeFlavorNone, '\\')
 		}
 	}
 	return input
