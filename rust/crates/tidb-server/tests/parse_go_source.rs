@@ -414,7 +414,7 @@ fn server_overwrites_a_client_reserved_truncation_marker() {
         attrs.extend_from_slice(&lenenc(value.len()));
         attrs.extend_from_slice(value.as_bytes());
     }
-    let state = ConnectionAttrsState::new(20);
+    let state = ConnectionAttrsState::new(25);
     let response = parse_response_with_attrs_state(&response_with_attrs(&attrs), &state).unwrap();
     assert_ne!(
         response.attrs.get("_truncated").map(String::as_str),
@@ -422,7 +422,7 @@ fn server_overwrites_a_client_reserved_truncation_marker() {
     );
     assert_eq!(
         response.attrs.get("_truncated").map(String::as_str),
-        Some("40")
+        Some("18")
     );
     assert_eq!(state.lost(), 1);
 }
