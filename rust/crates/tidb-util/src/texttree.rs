@@ -12,11 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Lockdown owner for `pkg/util/texttree/texttree.go`.
+//! Lockdown owner for the complete Go `pkg/util/texttree` package.
 //!
-//! `texttree.inventory.tsv` classifies every declaration, branch, and rule in
-//! that Go file. The source fingerprint, inventory fingerprint, and Rust symbol
-//! gate below make unreviewed source or inventory drift fail.
+//! `texttree.artifacts.tsv` fingerprints every direct package artifact and
+//! `texttree.inventory.tsv` classifies every generated Go AST obligation. The
+//! gate below also compile-anchors all Rust owners and preserves the explicit
+//! Go-only harness and arbitrary-byte string declines.
 //!
 //! For valid UTF-8, Go's `[]rune` and Rust's [`char`] preserve the same Unicode
 //! scalar values, so the source algorithms carry over directly on `Vec<char>`.
@@ -103,78 +104,264 @@ mod tests {
 
     use super::*;
 
+    const GO_BUILD: &[u8] = include_bytes!("../../../../pkg/util/texttree/BUILD.bazel");
+    const GO_MAIN_TEST: &[u8] = include_bytes!("../../../../pkg/util/texttree/main_test.go");
     const GO_SOURCE: &[u8] = include_bytes!("../../../../pkg/util/texttree/texttree.go");
+    const GO_TEST: &[u8] = include_bytes!("../../../../pkg/util/texttree/texttree_test.go");
+    const ARTIFACT_MANIFEST: &str = include_str!("texttree.artifacts.tsv");
     const LOCKDOWN_INVENTORY: &str = include_str!("texttree.inventory.tsv");
-    const EXPECTED_INVENTORY_SHA256: &str =
-        "f9da248738225c41915fc4e069046bd025a14468404f18dcf99085da6b51b1f9";
-    const EXPECTED_ITEMS: [(&str, (&str, &str)); 22] = [
-        ("D01", ("PORTED", "TREE_BODY")),
-        ("D02", ("PORTED", "TREE_MIDDLE_NODE")),
-        ("D03", ("PORTED", "TREE_LAST_NODE")),
-        ("D04", ("PORTED", "TREE_GAP")),
-        ("D05", ("PORTED", "TREE_NODE_IDENTIFIER")),
-        ("F01", ("PORTED", "indent_4_child")),
-        ("B01", ("PORTED", "indent_4_child")),
-        ("B02", ("PORTED", "indent_4_child")),
-        ("B03", ("PORTED", "indent_4_child")),
-        ("B04", ("PORTED", "indent_4_child")),
-        ("B05", ("PORTED", "indent_4_child")),
-        ("R01", ("DECLINED", "-")),
-        ("F02", ("PORTED", "pretty_identifier")),
-        ("B06", ("PORTED", "pretty_identifier")),
-        ("B07", ("PORTED", "pretty_identifier")),
-        ("B08", ("PORTED", "pretty_identifier")),
-        ("B09", ("PORTED", "pretty_identifier")),
-        ("B10", ("PORTED", "pretty_identifier")),
-        ("B11", ("PORTED", "pretty_identifier")),
-        ("B12", ("PORTED", "pretty_identifier")),
-        ("R02", ("DECLINED", "-")),
-        ("R03", ("DECLINED", "-")),
+    const SEMANTIC_DIVERGENCES: &str = include_str!("texttree.semantic-divergences.tsv");
+    const DECLINED_EVIDENCE: &str = "source-quote:go_testsetup_and_goleak_only";
+    const SYMBOL_EVIDENCE: &str =
+        "rust-test:texttree_lockdown_inventory_is_complete_and_symbols_compile";
+    const ARTIFACTS: [(&str, &str, &[u8]); 4] = [
+        ("pkg/util/texttree/BUILD.bazel", "build", GO_BUILD),
+        (
+            "pkg/util/texttree/main_test.go",
+            "test-support",
+            GO_MAIN_TEST,
+        ),
+        ("pkg/util/texttree/texttree.go", "production", GO_SOURCE),
+        ("pkg/util/texttree/texttree_test.go", "test", GO_TEST),
     ];
 
     #[test]
-    fn lockdown_inventory_matches_go_source_and_rust_symbols() {
-        let recorded_hash = LOCKDOWN_INVENTORY
-            .lines()
-            .find_map(|line| line.strip_prefix("# source-sha256\t"))
-            .expect("inventory records the owning Go source SHA-256");
-        assert_eq!(recorded_hash, sha256_hex(GO_SOURCE), "Go source drifted");
-        assert_eq!(
-            sha256_hex(LOCKDOWN_INVENTORY.as_bytes()),
-            EXPECTED_INVENTORY_SHA256,
-            "lockdown inventory drifted"
-        );
+    fn texttree_lockdown_inventory_is_complete_and_symbols_compile() {
+        let expected_manifest_prefix = [
+            "# pkg-texttree-artifacts-v1",
+            "# zero\tbuild_tags\t0",
+            "# zero\tplatform_variants\t0",
+            "# zero\tcode_generated\t0",
+            "# zero\tgo_generate\t0",
+            "# zero\tgo_embed\t0",
+            "# zero\ttracked_testdata\t0",
+            "path\trole\tsha256",
+        ];
+        let mut manifest_lines = ARTIFACT_MANIFEST.lines();
+        for expected in expected_manifest_prefix {
+            assert_eq!(manifest_lines.next(), Some(expected));
+        }
+        let mut manifest = BTreeMap::new();
+        for line in manifest_lines {
+            let columns: Vec<_> = line.split('\t').collect();
+            assert_eq!(columns.len(), 3, "invalid artifact row: {line}");
+            assert!(
+                manifest
+                    .insert(columns[0], (columns[1], columns[2]))
+                    .is_none(),
+                "duplicate artifact row: {line}"
+            );
+        }
+        assert_eq!(manifest.len(), ARTIFACTS.len());
+        for (path, role, bytes) in ARTIFACTS {
+            let expected_hash = sha256_hex(bytes);
+            assert!(
+                manifest
+                    .get(path)
+                    .is_some_and(|(actual_role, actual_hash)| {
+                        *actual_role == role && *actual_hash == expected_hash
+                    }),
+                "artifact manifest drifted: {path}"
+            );
+        }
 
         let mut lines = LOCKDOWN_INVENTORY
             .lines()
             .filter(|line| !line.is_empty() && !line.starts_with('#'));
         assert_eq!(
             lines.next(),
-            Some("id\tcategory\tgo_item\tstatus\trust_symbol\tevidence")
+            Some(
+                "obligation_id\tcategory\tsource_path\tast_anchor\tnode_sha256\towner\tstatus\trust_symbol\tevidence\tmutation_policy"
+            )
         );
 
         let allowed_statuses = BTreeSet::from(["PORTED", "DECLINED", "UNREACHABLE"]);
-        let mut actual = BTreeMap::new();
+        let mut ids = BTreeSet::new();
+        let mut source_anchors = BTreeSet::new();
+        let mut categories = BTreeMap::new();
+        let mut statuses = BTreeMap::new();
+        let mut declined_support = BTreeSet::new();
         for line in lines {
             let columns: Vec<_> = line.split('\t').collect();
-            assert_eq!(columns.len(), 6, "invalid inventory row: {line}");
+            assert_eq!(columns.len(), 10, "invalid inventory row: {line}");
             assert!(
-                allowed_statuses.contains(columns[3]),
+                allowed_statuses.contains(columns[6]),
                 "unclassified inventory row: {line}"
             );
             assert!(
-                !columns[5].is_empty(),
+                !columns[8].is_empty(),
                 "inventory evidence is required: {line}"
             );
             assert!(
-                actual
-                    .insert(columns[0], (columns[3], columns[4]))
-                    .is_none(),
+                ids.insert(columns[0]),
                 "duplicate inventory id: {}",
                 columns[0]
             );
+            assert!(
+                source_anchors.insert((columns[2], columns[3])),
+                "duplicate source anchor: {line}"
+            );
+            *categories.entry(columns[1]).or_insert(0usize) += 1;
+            *statuses.entry(columns[6]).or_insert(0usize) += 1;
+
+            match (columns[2], columns[1], columns[5], columns[3]) {
+                ("pkg/util/texttree/texttree.go", "const", owner, anchor) => {
+                    let symbol = match (owner, anchor) {
+                        ("const:TreeBody:0", "const:TreeBody:0") => "TREE_BODY",
+                        ("const:TreeGap:0", "const:TreeGap:0") => "TREE_GAP",
+                        ("const:TreeLastNode:0", "const:TreeLastNode:0") => "TREE_LAST_NODE",
+                        ("const:TreeMiddleNode:0", "const:TreeMiddleNode:0") => "TREE_MIDDLE_NODE",
+                        ("const:TreeNodeIdentifier:0", "const:TreeNodeIdentifier:0") => {
+                            "TREE_NODE_IDENTIFIER"
+                        }
+                        _ => panic!("unexpected source constant row: {line}"),
+                    };
+                    assert_eq!(
+                        columns[6..10],
+                        ["PORTED", symbol, SYMBOL_EVIDENCE, "compile-owner-gate"]
+                    );
+                }
+                ("pkg/util/texttree/texttree.go", "function", owner, anchor)
+                    if owner == anchor && matches!(owner, "Indent4Child" | "PrettyIdentifier") =>
+                {
+                    let symbol = if owner == "Indent4Child" {
+                        "indent_4_child"
+                    } else {
+                        "pretty_identifier"
+                    };
+                    assert_eq!(
+                        columns[6..10],
+                        ["PORTED", symbol, SYMBOL_EVIDENCE, "compile-owner-gate"]
+                    );
+                }
+                ("pkg/util/texttree/texttree.go", "branch" | "loop", owner, anchor)
+                    if anchor.starts_with(owner)
+                        && matches!(owner, "Indent4Child" | "PrettyIdentifier") =>
+                {
+                    let (symbol, evidence) = if owner == "Indent4Child" {
+                        (
+                            "indent_4_child",
+                            "rust-test:indent_4_child_preserves_source_rune_rules",
+                        )
+                    } else {
+                        (
+                            "pretty_identifier",
+                            "rust-test:pretty_identifier_preserves_source_rune_rules",
+                        )
+                    };
+                    assert_eq!(
+                        columns[6..10],
+                        ["PORTED", symbol, evidence, "behavior-mutation"]
+                    );
+                }
+                (
+                    "pkg/util/texttree/texttree_test.go",
+                    "test" | "test_assertion",
+                    owner,
+                    anchor,
+                ) if matches!(owner, "TestIndent4Child" | "TestPrettyIdentifier")
+                    && anchor.starts_with(owner) =>
+                {
+                    let (symbol, evidence) = if owner == "TestIndent4Child" {
+                        ("indent_4_child_go_test", "rust-test:indent_4_child_go_test")
+                    } else {
+                        (
+                            "pretty_identifier_go_test",
+                            "rust-test:pretty_identifier_go_test",
+                        )
+                    };
+                    assert_eq!(
+                        columns[6..10],
+                        ["PORTED", symbol, evidence, "test-evidence-gate"]
+                    );
+                }
+                (
+                    "pkg/util/texttree/main_test.go",
+                    "test_main" | "test_row",
+                    "TestMain",
+                    anchor,
+                ) => {
+                    assert!(
+                        matches!(
+                            anchor,
+                            "TestMain"
+                                | "TestMain/composite:1/element:0"
+                                | "TestMain/composite:1/element:1"
+                                | "TestMain/composite:1/element:2"
+                                | "TestMain/composite:1/element:3"
+                        ),
+                        "unexpected declined support row: {line}"
+                    );
+                    assert_eq!(
+                        columns[6..10],
+                        [
+                            "DECLINED",
+                            "-",
+                            DECLINED_EVIDENCE,
+                            "classification-evidence-gate"
+                        ]
+                    );
+                    declined_support.insert(anchor);
+                }
+                _ => panic!("unexpected texttree inventory row: {line}"),
+            }
         }
-        assert_eq!(actual, BTreeMap::from(EXPECTED_ITEMS));
+
+        assert_eq!(ids.len(), 36);
+        assert_eq!(
+            categories,
+            BTreeMap::from([
+                ("branch", 10),
+                ("const", 5),
+                ("function", 2),
+                ("loop", 4),
+                ("test", 2),
+                ("test_assertion", 8),
+                ("test_main", 1),
+                ("test_row", 4),
+            ])
+        );
+        assert_eq!(statuses, BTreeMap::from([("DECLINED", 5), ("PORTED", 31)]));
+        assert_eq!(
+            declined_support,
+            BTreeSet::from([
+                "TestMain",
+                "TestMain/composite:1/element:0",
+                "TestMain/composite:1/element:1",
+                "TestMain/composite:1/element:2",
+                "TestMain/composite:1/element:3",
+            ])
+        );
+
+        let semantic_rows: Vec<Vec<_>> = SEMANTIC_DIVERGENCES
+            .lines()
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .skip(1)
+            .map(|line| line.split('\t').collect())
+            .collect();
+        assert_eq!(semantic_rows.len(), 3);
+        assert!(semantic_rows.iter().all(|row| row.len() == 6));
+        assert_eq!(
+            semantic_rows
+                .iter()
+                .map(|row| row[0])
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from(["S01", "S02", "S03"])
+        );
+        assert!(semantic_rows.iter().all(|row| {
+            row[2] == "DECLINED"
+                && row[3] == "&str excludes invalid UTF-8"
+                && row[4].starts_with("go-oracle:")
+                && row[5] == "classification-evidence-gate"
+        }));
+
+        let go_main_test = std::str::from_utf8(GO_MAIN_TEST).expect("Go test support is UTF-8");
+        assert!(go_main_test.contains("testsetup.SetupForCommonTest()"));
+        assert!(go_main_test.contains("goleak.VerifyTestMain"));
+        assert_eq!(go_main_test.matches("goleak.IgnoreTopFunction").count(), 4);
+        let go_test = std::str::from_utf8(GO_TEST).expect("Go test source is UTF-8");
+        assert!(go_test.contains("func TestIndent4Child"));
+        assert!(go_test.contains("func TestPrettyIdentifier"));
 
         let _: [char; 5] = [
             TREE_BODY,
@@ -185,6 +372,10 @@ mod tests {
         ];
         let _: fn(&str, bool) -> String = indent_4_child;
         let _: fn(&str, &str, bool) -> String = pretty_identifier;
+        let _: fn() = indent_4_child_go_test;
+        let _: fn() = pretty_identifier_go_test;
+        let _: fn() = indent_4_child_preserves_source_rune_rules;
+        let _: fn() = pretty_identifier_preserves_source_rune_rules;
     }
 
     #[test]
@@ -199,6 +390,27 @@ mod tests {
             ),
             ('│', '├', '└', ' ', '─')
         );
+    }
+
+    // Go `TestIndent4Child`.
+    #[test]
+    fn indent_4_child_go_test() {
+        assert_eq!(indent_4_child("    ", false), "    │ ");
+        assert_eq!(indent_4_child("    ", true), "    │ ");
+        assert_eq!(indent_4_child("   │ ", true), "     │ ");
+    }
+
+    // Go `TestPrettyIdentifier`.
+    #[test]
+    fn pretty_identifier_go_test() {
+        assert_eq!(pretty_identifier("test", "", false), "test");
+        assert_eq!(pretty_identifier("test", "  │  ", false), "  ├ ─test");
+        assert_eq!(
+            pretty_identifier("test", "\t\t│\t\t", false),
+            "\t\t├\t─test"
+        );
+        assert_eq!(pretty_identifier("test", "  │  ", true), "  └ ─test");
+        assert_eq!(pretty_identifier("test", "\t\t│\t\t", true), "\t\t└\t─test");
     }
 
     #[test]
