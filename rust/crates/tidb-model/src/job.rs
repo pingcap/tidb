@@ -20,11 +20,17 @@
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
+use serde::de::{MapAccess, Visitor};
+
 use crate::action_type::ActionType;
 use crate::db::DBInfo;
 use crate::job_enums::{JobState, JobVersion};
 use crate::reorg::{DDLReorgMeta, ReorgStage, ReorgType};
 use crate::schema_state::SchemaState;
+use crate::serde_helpers::{
+    go_json_field_matches, ignore_unknown, GoJsonMerge, NullNoopSeed, OptionMergeSeed,
+    OptionStringMapMergeSeed,
+};
 use crate::table_info::TableInfo;
 
 /// Go `AdminCommandOperator` (an `int`): who issued an admin DDL command.
@@ -616,6 +622,195 @@ pub struct Job {
     pub last_schema_version: i64,
 }
 
+macro_rules! impl_go_merge_object {
+    ($type:ty, $destination:ident, $map:ident, $key:ident, { $($body:tt)* }) => {
+        impl GoJsonMerge for $type {
+            fn go_json_merge<'de, D>(&mut self, deserializer: D) -> Result<(), D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct MergeVisitor<'a>(&'a mut $type);
+
+                impl<'de> Visitor<'de> for MergeVisitor<'_> {
+                    type Value = ();
+
+                    fn expecting(
+                        &self,
+                        formatter: &mut std::fmt::Formatter<'_>,
+                    ) -> std::fmt::Result {
+                        formatter.write_str("a JSON object")
+                    }
+
+                    fn visit_map<A>(self, mut $map: A) -> Result<Self::Value, A::Error>
+                    where
+                        A: MapAccess<'de>,
+                    {
+                        let $destination = self.0;
+                        while let Some($key) = $map.next_key::<String>()? {
+                            $($body)*
+                        }
+                        Ok(())
+                    }
+                }
+
+                deserializer.deserialize_map(MergeVisitor(self))
+            }
+        }
+    };
+}
+
+impl_go_merge_object!(JobPauseReason, destination, map, key, {
+    if go_json_field_matches(&key, "type") {
+        map.next_value_seed(NullNoopSeed(&mut destination.type_))?;
+    } else if go_json_field_matches(&key, "message") {
+        map.next_value_seed(NullNoopSeed(&mut destination.message))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+
+impl_go_merge_object!(JobResumeReason, destination, map, key, {
+    if go_json_field_matches(&key, "type") {
+        map.next_value_seed(NullNoopSeed(&mut destination.type_))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+
+impl_go_merge_object!(JobMeta, destination, map, key, {
+    if go_json_field_matches(&key, "schema_id") {
+        map.next_value_seed(NullNoopSeed(&mut destination.schema_id))?;
+    } else if go_json_field_matches(&key, "table_id") {
+        map.next_value_seed(NullNoopSeed(&mut destination.table_id))?;
+    } else if go_json_field_matches(&key, "job_type") {
+        map.next_value_seed(NullNoopSeed(&mut destination.type_))?;
+    } else if go_json_field_matches(&key, "query") {
+        map.next_value_seed(NullNoopSeed(&mut destination.query))?;
+    } else if go_json_field_matches(&key, "priority") {
+        map.next_value_seed(NullNoopSeed(&mut destination.priority))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+
+impl_go_merge_object!(TimeZoneLocation, destination, map, key, {
+    if go_json_field_matches(&key, "name") {
+        map.next_value_seed(NullNoopSeed(&mut destination.name))?;
+    } else if go_json_field_matches(&key, "offset") {
+        map.next_value_seed(NullNoopSeed(&mut destination.offset))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+
+impl_go_merge_object!(MultiSchemaInfo, destination, map, key, {
+    if go_json_field_matches(&key, "sub_jobs") {
+        destination.sub_jobs = map.next_value()?;
+    } else if go_json_field_matches(&key, "revertible") {
+        map.next_value_seed(NullNoopSeed(&mut destination.revertible))?;
+    } else if go_json_field_matches(&key, "seq") {
+        map.next_value_seed(NullNoopSeed(&mut destination.seq))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+
+impl_go_merge_object!(HistoryInfo, destination, map, key, {
+    if go_json_field_matches(&key, "SchemaVersion") {
+        map.next_value_seed(NullNoopSeed(&mut destination.schema_version))?;
+    } else if go_json_field_matches(&key, "DBInfo") {
+        destination.db_info = map.next_value()?;
+    } else if go_json_field_matches(&key, "TableInfo") {
+        destination.table_info = map.next_value()?;
+    } else if go_json_field_matches(&key, "FinishedTS") {
+        map.next_value_seed(NullNoopSeed(&mut destination.finished_ts))?;
+    } else if go_json_field_matches(&key, "MultipleTableInfos") {
+        destination.multiple_table_infos = map.next_value()?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+
+impl_go_merge_object!(Job, destination, map, key, {
+    if go_json_field_matches(&key, "id") {
+        map.next_value_seed(NullNoopSeed(&mut destination.id))?;
+    } else if go_json_field_matches(&key, "type") {
+        map.next_value_seed(NullNoopSeed(&mut destination.type_))?;
+    } else if go_json_field_matches(&key, "schema_id") {
+        map.next_value_seed(NullNoopSeed(&mut destination.schema_id))?;
+    } else if go_json_field_matches(&key, "table_id") {
+        map.next_value_seed(NullNoopSeed(&mut destination.table_id))?;
+    } else if go_json_field_matches(&key, "schema_name") {
+        map.next_value_seed(NullNoopSeed(&mut destination.schema_name))?;
+    } else if go_json_field_matches(&key, "table_name") {
+        map.next_value_seed(NullNoopSeed(&mut destination.table_name))?;
+    } else if go_json_field_matches(&key, "state") {
+        map.next_value_seed(NullNoopSeed(&mut destination.state))?;
+    } else if go_json_field_matches(&key, "warning") {
+        destination.warning = map.next_value()?;
+    } else if go_json_field_matches(&key, "err") {
+        destination.error = map.next_value()?;
+    } else if go_json_field_matches(&key, "err_count") {
+        map.next_value_seed(NullNoopSeed(&mut destination.error_count))?;
+    } else if go_json_field_matches(&key, "row_count") {
+        map.next_value_seed(NullNoopSeed(&mut destination.row_count))?;
+    } else if go_json_field_matches(&key, "raw_args") {
+        destination.raw_args = Some(map.next_value()?);
+    } else if go_json_field_matches(&key, "schema_state") {
+        map.next_value_seed(NullNoopSeed(&mut destination.schema_state))?;
+    } else if go_json_field_matches(&key, "snapshot_ver") {
+        map.next_value_seed(NullNoopSeed(&mut destination.snapshot_version))?;
+    } else if go_json_field_matches(&key, "real_start_ts") {
+        map.next_value_seed(NullNoopSeed(&mut destination.real_start_ts))?;
+    } else if go_json_field_matches(&key, "start_ts") {
+        map.next_value_seed(NullNoopSeed(&mut destination.start_ts))?;
+    } else if go_json_field_matches(&key, "dependency_id") {
+        map.next_value_seed(NullNoopSeed(&mut destination.dependency_id))?;
+    } else if go_json_field_matches(&key, "query") {
+        map.next_value_seed(NullNoopSeed(&mut destination.query))?;
+    } else if go_json_field_matches(&key, "binlog") {
+        map.next_value_seed(OptionMergeSeed(&mut destination.binlog_info))?;
+    } else if go_json_field_matches(&key, "version") {
+        map.next_value_seed(NullNoopSeed(&mut destination.version))?;
+    } else if go_json_field_matches(&key, "reorg_meta") {
+        map.next_value_seed(OptionMergeSeed(&mut destination.reorg_meta))?;
+    } else if go_json_field_matches(&key, "multi_schema_info") {
+        map.next_value_seed(OptionMergeSeed(&mut destination.multi_schema_info))?;
+    } else if go_json_field_matches(&key, "priority") {
+        map.next_value_seed(NullNoopSeed(&mut destination.priority))?;
+    } else if go_json_field_matches(&key, "seq_num") {
+        map.next_value_seed(NullNoopSeed(&mut destination.sequence_number))?;
+    } else if go_json_field_matches(&key, "charset") {
+        map.next_value_seed(NullNoopSeed(&mut destination.charset))?;
+    } else if go_json_field_matches(&key, "collate") {
+        map.next_value_seed(NullNoopSeed(&mut destination.collate))?;
+    } else if go_json_field_matches(&key, "involving_schema_info") {
+        destination.involving_schema_info = map.next_value()?;
+    } else if go_json_field_matches(&key, "admin_operator") {
+        map.next_value_seed(NullNoopSeed(&mut destination.admin_operator))?;
+    } else if go_json_field_matches(&key, "pause_reason") {
+        map.next_value_seed(OptionMergeSeed(&mut destination.pause_reason))?;
+    } else if go_json_field_matches(&key, "resume_reason") {
+        map.next_value_seed(OptionMergeSeed(&mut destination.resume_reason))?;
+    } else if go_json_field_matches(&key, "trace_info") {
+        destination.trace_info = map.next_value()?;
+    } else if go_json_field_matches(&key, "bdr_role") {
+        map.next_value_seed(NullNoopSeed(&mut destination.bdr_role))?;
+    } else if go_json_field_matches(&key, "cdc_write_source") {
+        map.next_value_seed(NullNoopSeed(&mut destination.cdc_write_source))?;
+    } else if go_json_field_matches(&key, "local_mode") {
+        map.next_value_seed(NullNoopSeed(&mut destination.local_mode))?;
+    } else if go_json_field_matches(&key, "sql_mode") {
+        map.next_value_seed(NullNoopSeed(&mut destination.sql_mode))?;
+    } else if go_json_field_matches(&key, "session_vars") {
+        map.next_value_seed(OptionStringMapMergeSeed(&mut destination.session_vars))?;
+    } else if go_json_field_matches(&key, "last_schema_version") {
+        map.next_value_seed(NullNoopSeed(&mut destination.last_schema_version))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+
 /// Go `JobW`: a decoded job and the exact binary representation it came with.
 #[derive(Clone, Debug)]
 pub struct JobW {
@@ -799,12 +994,15 @@ impl Job {
 
     /// Decodes persisted JSON into this job; JSON `null` leaves it unchanged.
     pub fn decode(&mut self, bytes: &[u8]) -> Result<(), serde_json::Error> {
+        // Go's scanner rejects malformed JSON before it starts assigning
+        // fields. The second, streaming pass is still required: a Value would
+        // discard duplicate keys and make field assignment transactional.
         let value: serde_json::Value = serde_json::from_slice(bytes)?;
         if value.is_null() {
             return Ok(());
         }
         let mut deserializer = serde_json::Deserializer::from_slice(bytes);
-        <Self as serde::Deserialize>::deserialize_in_place(&mut deserializer, self)?;
+        self.go_json_merge(&mut deserializer)?;
         deserializer.end()
     }
 
@@ -1574,10 +1772,95 @@ mod tests {
         assert_eq!(unchanged.row_count, 9);
 
         let error = unchanged
-            .decode(br#"{"error_count":7,"priority":"bad"}"#)
+            .decode(br#"{"err_count":7,"priority":"bad"}"#)
             .unwrap_err();
         assert!(error.to_string().contains("invalid type"));
         assert_eq!(unchanged.error_count, 7);
+    }
+
+    #[test]
+    fn job_decode_matches_go_object_stream_boundaries() {
+        let mut job = Job {
+            id: 42,
+            row_count: 1,
+            raw_args: Some(serde_json::json!(["old"])),
+            involving_schema_info: Some(vec![InvolvingSchemaInfo {
+                database: "db".to_owned(),
+                table: "t".to_owned(),
+                ..Default::default()
+            }]),
+            pause_reason: Some(JobPauseReason {
+                type_: "old".to_owned(),
+                message: "old message".to_owned(),
+            }),
+            session_vars: Some(BTreeMap::from([("old".to_owned(), "1".to_owned())])),
+            reorg_meta: Some(DDLReorgMeta {
+                resource_group_name: "existing".to_owned(),
+                warnings: Some(BTreeMap::from([(
+                    "old".to_owned(),
+                    serde_json::json!({"message": "old"}),
+                )])),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        job.decode(
+            br#"{
+                "ROW_COUNT":2,
+                "row_count":3,
+                "ID":null,
+                "raw_args":null,
+                "SESSION_VARS":{"new":"2"},
+                "session_vars":{"new":"3"},
+                "reorg_meta":{
+                    "WARNINGS":{"new":{"message":"new"}},
+                    "MAX_NODE_COUNT":4,
+                    "max_node_count":5
+                },
+                "pause_reason":null,
+                "involving_schema_info":null,
+                "unknown":{"ignored":[1,true,null]}
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(job.id, 42);
+        assert_eq!(job.row_count, 3);
+        assert_eq!(job.raw_args, Some(serde_json::Value::Null));
+        assert!(job.pause_reason.is_none());
+        assert!(job.involving_schema_info.is_none());
+        assert_eq!(job.get_system_var("old"), Some("1"));
+        assert_eq!(job.get_system_var("new"), Some("3"));
+        let reorg = job.reorg_meta.as_ref().unwrap();
+        assert_eq!(reorg.resource_group_name, "existing");
+        assert_eq!(reorg.max_node_count, 5);
+        assert!(reorg.warnings.as_ref().unwrap().contains_key("old"));
+        assert!(reorg.warnings.as_ref().unwrap().contains_key("new"));
+
+        job.decode(br#"{"session_vars":null,"reorg_meta":{"warnings":null}}"#)
+            .unwrap();
+        assert!(job.session_vars.is_none());
+        assert!(job.reorg_meta.as_ref().unwrap().warnings.is_none());
+
+        let id_before_syntax_error = job.id;
+        assert!(job.decode(br#"{"id":99,"row_count":}"#).is_err());
+        assert_eq!(job.id, id_before_syntax_error);
+
+        let error = job
+            .decode(br#"{"err_count":7,"priority":1.5}"#)
+            .unwrap_err();
+        assert!(error.to_string().contains("invalid type"));
+        assert_eq!(job.error_count, 7);
+
+        job.decode(br#"{"dependency_id":8,"row_count":9223372036854775808}"#)
+            .unwrap_err();
+        assert_eq!(job.dependency_id, 8);
+
+        let error = job
+            .decode(br#"{"reorg_meta":{"version":9,"max_node_count":"bad"}}"#)
+            .unwrap_err();
+        assert!(error.to_string().contains("invalid type"));
+        assert_eq!(job.reorg_meta.as_ref().unwrap().version, 9);
     }
 
     #[test]

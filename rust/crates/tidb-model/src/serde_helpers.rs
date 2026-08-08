@@ -14,12 +14,218 @@
 
 //! Serde adapters that reproduce `encoding/json` semantics for the meta model.
 //!
-//! Go marshals a nil slice or nil map as `null` and unmarshals `null` into any
-//! field by leaving it at its zero value. Rust's owned `Vec`/`String`/`BTreeMap`
-//! have no nil state, so every such field decodes `null` through
-//! [`null_default`] instead of failing on a type mismatch.
+//! Go marshals a nil slice or nil map as `null`. Fresh derived Rust values use
+//! [`null_default`] where an owned field needs Go's zero value, while the
+//! receiver-mutating job/backfill codecs use the seeds here to preserve Go's
+//! distinct null rules for scalars, pointers, slices, and maps.
 
+use std::collections::BTreeMap;
+use std::marker::PhantomData;
+
+use serde::de::{DeserializeSeed, IgnoredAny, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+/// Reports whether an incoming JSON object key matches a Go struct-field tag.
+///
+/// `encoding/json` prefers exact matches and then accepts ASCII-folded field
+/// names. The model's persisted tags are all ASCII and unique under folding,
+/// so `eq_ignore_ascii_case` is the exact observable rule for these objects.
+pub(crate) fn go_json_field_matches(incoming: &str, tag: &str) -> bool {
+    incoming == tag || incoming.eq_ignore_ascii_case(tag)
+}
+
+/// Receiver-mutating object decoder used by Go `json.Unmarshal` ports.
+pub(crate) trait GoJsonMerge {
+    /// Decodes one non-null JSON object into the existing receiver.
+    fn go_json_merge<'de, D>(&mut self, deserializer: D) -> Result<(), D::Error>
+    where
+        D: Deserializer<'de>;
+}
+
+/// Deserializes a non-pointer field while treating JSON null as a no-op.
+pub(crate) struct NullNoopSeed<'a, T>(pub(crate) &'a mut T);
+
+impl<'de, T> DeserializeSeed<'de> for NullNoopSeed<'_, T>
+where
+    T: Deserialize<'de>,
+{
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct NullNoopVisitor<'a, T>(&'a mut T);
+
+        impl<'de, T> Visitor<'de> for NullNoopVisitor<'_, T>
+        where
+            T: Deserialize<'de>,
+        {
+            type Value = ();
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("null or a value of the destination field type")
+            }
+
+            fn visit_none<E>(self) -> Result<Self::Value, E> {
+                Ok(())
+            }
+
+            fn visit_unit<E>(self) -> Result<Self::Value, E> {
+                Ok(())
+            }
+
+            fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                *self.0 = T::deserialize(deserializer)?;
+                Ok(())
+            }
+        }
+
+        deserializer.deserialize_option(NullNoopVisitor(self.0))
+    }
+}
+
+/// Deserializes a pointer-like object field into its existing allocation.
+/// JSON null clears the pointer; a non-null object preserves omitted fields.
+pub(crate) struct OptionMergeSeed<'a, T>(pub(crate) &'a mut Option<T>);
+
+impl<'de, T> DeserializeSeed<'de> for OptionMergeSeed<'_, T>
+where
+    T: Default + GoJsonMerge,
+{
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct OptionMergeVisitor<'a, T>(&'a mut Option<T>);
+
+        impl<'de, T> Visitor<'de> for OptionMergeVisitor<'_, T>
+        where
+            T: Default + GoJsonMerge,
+        {
+            type Value = ();
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("null or a JSON object")
+            }
+
+            fn visit_none<E>(self) -> Result<Self::Value, E> {
+                *self.0 = None;
+                Ok(())
+            }
+
+            fn visit_unit<E>(self) -> Result<Self::Value, E> {
+                *self.0 = None;
+                Ok(())
+            }
+
+            fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                self.0
+                    .get_or_insert_with(T::default)
+                    .go_json_merge(deserializer)
+            }
+        }
+
+        deserializer.deserialize_option(OptionMergeVisitor(self.0))
+    }
+}
+
+/// Merges a JSON object into a Go map field and clears the map on JSON null.
+pub(crate) struct OptionStringMapMergeSeed<'a, V>(pub(crate) &'a mut Option<BTreeMap<String, V>>);
+
+impl<'de, V> DeserializeSeed<'de> for OptionStringMapMergeSeed<'_, V>
+where
+    V: Deserialize<'de>,
+{
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct OptionMapVisitor<'a, V> {
+            destination: &'a mut Option<BTreeMap<String, V>>,
+            marker: PhantomData<V>,
+        }
+
+        impl<'de, V> Visitor<'de> for OptionMapVisitor<'_, V>
+        where
+            V: Deserialize<'de>,
+        {
+            type Value = ();
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("null or a JSON object")
+            }
+
+            fn visit_none<E>(self) -> Result<Self::Value, E> {
+                *self.destination = None;
+                Ok(())
+            }
+
+            fn visit_unit<E>(self) -> Result<Self::Value, E> {
+                *self.destination = None;
+                Ok(())
+            }
+
+            fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                deserializer.deserialize_map(self)
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let destination = self.destination.get_or_insert_with(BTreeMap::new);
+                while let Some(key) = map.next_key::<String>()? {
+                    let value = map.next_value::<V>()?;
+                    destination.insert(key, value);
+                }
+                Ok(())
+            }
+        }
+
+        deserializer.deserialize_option(OptionMapVisitor {
+            destination: self.0,
+            marker: PhantomData,
+        })
+    }
+}
+
+/// Assigns a Go byte slice only after its base64 value decodes successfully.
+pub(crate) struct OptionBytesSeed<'a>(pub(crate) &'a mut Option<Vec<u8>>);
+
+impl<'de> DeserializeSeed<'de> for OptionBytesSeed<'_> {
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        *self.0 = go_bytes::deserialize(deserializer)?;
+        Ok(())
+    }
+}
+
+/// Consumes one unknown JSON field, matching Go's default unknown-field rule.
+pub(crate) fn ignore_unknown<'de, A>(map: &mut A) -> Result<(), A::Error>
+where
+    A: MapAccess<'de>,
+{
+    map.next_value::<IgnoredAny>()?;
+    Ok(())
+}
 
 /// Go `[]byte` JSON encoding: padded standard base64, with `null` retaining a
 /// nil slice and `""` retaining an allocated empty slice.

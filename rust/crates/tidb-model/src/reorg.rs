@@ -18,9 +18,14 @@
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicI64, Ordering};
 
+use serde::de::{MapAccess, Visitor};
 use serde::{Deserialize, Serialize};
 
 use crate::job::{JobMeta, TimeZoneLocation};
+use crate::serde_helpers::{
+    go_json_field_matches, ignore_unknown, GoJsonMerge, NullNoopSeed, OptionBytesSeed,
+    OptionMergeSeed, OptionStringMapMergeSeed,
+};
 
 /// Go `BackfillState` (a `byte`): the state of the backfill-merge process.
 /// A newtype over `u8` so unknown values round-trip; [`Display`] falls
@@ -207,6 +212,76 @@ impl DDLReorgMeta {
     }
 }
 
+impl GoJsonMerge for DDLReorgMeta {
+    fn go_json_merge<'de, D>(&mut self, deserializer: D) -> Result<(), D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct MergeVisitor<'a>(&'a mut DDLReorgMeta);
+
+        impl<'de> Visitor<'de> for MergeVisitor<'_> {
+            type Value = ();
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a JSON object")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let destination = self.0;
+                while let Some(key) = map.next_key::<String>()? {
+                    if go_json_field_matches(&key, "sql_mode") {
+                        map.next_value_seed(NullNoopSeed(&mut destination.sql_mode))?;
+                    } else if go_json_field_matches(&key, "warnings") {
+                        map.next_value_seed(OptionStringMapMergeSeed(&mut destination.warnings))?;
+                    } else if go_json_field_matches(&key, "warnings_count") {
+                        map.next_value_seed(OptionStringMapMergeSeed(
+                            &mut destination.warnings_count,
+                        ))?;
+                    } else if go_json_field_matches(&key, "location") {
+                        map.next_value_seed(OptionMergeSeed(&mut destination.location))?;
+                    } else if go_json_field_matches(&key, "reorg_tp") {
+                        map.next_value_seed(NullNoopSeed(&mut destination.reorg_type))?;
+                    } else if go_json_field_matches(&key, "is_fast_reorg") {
+                        map.next_value_seed(NullNoopSeed(&mut destination.is_fast_reorg))?;
+                    } else if go_json_field_matches(&key, "is_dist_reorg") {
+                        map.next_value_seed(NullNoopSeed(&mut destination.is_dist_reorg))?;
+                    } else if go_json_field_matches(&key, "use_cloud_storage") {
+                        map.next_value_seed(NullNoopSeed(&mut destination.use_cloud_storage))?;
+                    } else if go_json_field_matches(&key, "resource_group_name") {
+                        map.next_value_seed(NullNoopSeed(&mut destination.resource_group_name))?;
+                    } else if go_json_field_matches(&key, "version") {
+                        map.next_value_seed(NullNoopSeed(&mut destination.version))?;
+                    } else if go_json_field_matches(&key, "target_scope") {
+                        map.next_value_seed(NullNoopSeed(&mut destination.target_scope))?;
+                    } else if go_json_field_matches(&key, "max_node_count") {
+                        map.next_value_seed(NullNoopSeed(&mut destination.max_node_count))?;
+                    } else if go_json_field_matches(&key, "analyze_state") {
+                        map.next_value_seed(NullNoopSeed(&mut destination.analyze_state))?;
+                    } else if go_json_field_matches(&key, "stage") {
+                        map.next_value_seed(NullNoopSeed(&mut destination.stage))?;
+                    } else if go_json_field_matches(&key, "use_new_collate") {
+                        destination.use_new_collate = map.next_value()?;
+                    } else if go_json_field_matches(&key, "concurrency") {
+                        map.next_value_seed(NullNoopSeed(&mut destination.concurrency))?;
+                    } else if go_json_field_matches(&key, "batch_size") {
+                        map.next_value_seed(NullNoopSeed(&mut destination.batch_size))?;
+                    } else if go_json_field_matches(&key, "max_write_speed") {
+                        map.next_value_seed(NullNoopSeed(&mut destination.max_write_speed))?;
+                    } else {
+                        ignore_unknown(&mut map)?;
+                    }
+                }
+                Ok(())
+            }
+        }
+
+        deserializer.deserialize_map(MergeVisitor(self))
+    }
+}
+
 impl ReorgStage {
     /// Not started (Go `ReorgStageNone`).
     pub const NONE: ReorgStage = ReorgStage(0);
@@ -333,13 +408,75 @@ impl BackfillMeta {
 
     /// Go `Decode`.
     pub fn decode(&mut self, bytes: &[u8]) -> Result<(), serde_json::Error> {
+        // Validate the whole document before mutating, as Go's scanner does;
+        // then stream the original bytes so duplicate keys remain observable.
         let value: serde_json::Value = serde_json::from_slice(bytes)?;
         if value.is_null() {
             return Ok(());
         }
         let mut deserializer = serde_json::Deserializer::from_slice(bytes);
-        <Self as serde::Deserialize>::deserialize_in_place(&mut deserializer, self)?;
+        self.go_json_merge(&mut deserializer)?;
         deserializer.end()
+    }
+}
+
+impl GoJsonMerge for BackfillMeta {
+    fn go_json_merge<'de, D>(&mut self, deserializer: D) -> Result<(), D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct MergeVisitor<'a>(&'a mut BackfillMeta);
+
+        impl<'de> Visitor<'de> for MergeVisitor<'_> {
+            type Value = ();
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a JSON object")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let destination = self.0;
+                while let Some(key) = map.next_key::<String>()? {
+                    if go_json_field_matches(&key, "is_unique") {
+                        map.next_value_seed(NullNoopSeed(&mut destination.is_unique))?;
+                    } else if go_json_field_matches(&key, "end_include") {
+                        map.next_value_seed(NullNoopSeed(&mut destination.end_include))?;
+                    } else if go_json_field_matches(&key, "err") {
+                        destination.error = map.next_value()?;
+                    } else if go_json_field_matches(&key, "sql_mode") {
+                        map.next_value_seed(NullNoopSeed(&mut destination.sql_mode))?;
+                    } else if go_json_field_matches(&key, "warnings") {
+                        map.next_value_seed(OptionStringMapMergeSeed(&mut destination.warnings))?;
+                    } else if go_json_field_matches(&key, "warnings_count") {
+                        map.next_value_seed(OptionStringMapMergeSeed(
+                            &mut destination.warnings_count,
+                        ))?;
+                    } else if go_json_field_matches(&key, "location") {
+                        map.next_value_seed(OptionMergeSeed(&mut destination.location))?;
+                    } else if go_json_field_matches(&key, "reorg_tp") {
+                        map.next_value_seed(NullNoopSeed(&mut destination.reorg_type))?;
+                    } else if go_json_field_matches(&key, "row_count") {
+                        map.next_value_seed(NullNoopSeed(&mut destination.row_count))?;
+                    } else if go_json_field_matches(&key, "start_key") {
+                        map.next_value_seed(OptionBytesSeed(&mut destination.start_key))?;
+                    } else if go_json_field_matches(&key, "end_key") {
+                        map.next_value_seed(OptionBytesSeed(&mut destination.end_key))?;
+                    } else if go_json_field_matches(&key, "curr_key") {
+                        map.next_value_seed(OptionBytesSeed(&mut destination.current_key))?;
+                    } else if go_json_field_matches(&key, "job_meta") {
+                        map.next_value_seed(OptionMergeSeed(&mut destination.job_meta))?;
+                    } else {
+                        ignore_unknown(&mut map)?;
+                    }
+                }
+                Ok(())
+            }
+        }
+
+        deserializer.deserialize_map(MergeVisitor(self))
     }
 }
 
@@ -468,5 +605,103 @@ mod tests {
         let escaped = std::str::from_utf8(&escaped).unwrap();
         assert!(escaped.contains(r#"\u003c\u003e\u0026\u2028\u2029"#));
         assert!(escaped.contains(r#""ratio":1"#));
+    }
+
+    #[test]
+    fn backfill_decode_matches_go_object_stream_boundaries() {
+        let mut location = TimeZoneLocation::default();
+        location.name = "UTC".to_owned();
+        let mut meta = BackfillMeta {
+            row_count: 1,
+            start_key: Some(vec![0, 1, 255]),
+            end_key: Some(vec![2]),
+            warnings: Some(BTreeMap::from([(
+                "old".to_owned(),
+                serde_json::json!({"message": "old"}),
+            )])),
+            warnings_count: Some(BTreeMap::from([("old".to_owned(), 1)])),
+            location: Some(location),
+            job_meta: Some(JobMeta {
+                schema_id: 10,
+                table_id: 20,
+                query: "old query".to_owned(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        meta.decode(
+            br#"{
+                "ROW_COUNT":2,
+                "row_count":3,
+                "sql_mode":null,
+                "WARNINGS":{"new":{"message":"new"}},
+                "warnings_count":{"new":2},
+                "LOCATION":{"offset":3600},
+                "job_meta":{"TABLE_ID":21},
+                "unknown":{"ignored":true}
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(meta.row_count, 3);
+        assert_eq!(meta.sql_mode, 0);
+        assert_eq!(meta.start_key, Some(vec![0, 1, 255]));
+        assert_eq!(meta.end_key, Some(vec![2]));
+        assert!(meta.warnings.as_ref().unwrap().contains_key("old"));
+        assert!(meta.warnings.as_ref().unwrap().contains_key("new"));
+        assert_eq!(meta.warnings_count.as_ref().unwrap()["old"], 1);
+        assert_eq!(meta.warnings_count.as_ref().unwrap()["new"], 2);
+        let location = meta.location.as_ref().unwrap();
+        assert_eq!(location.name, "UTC");
+        assert_eq!(location.offset, 3600);
+        let job_meta = meta.job_meta.as_ref().unwrap();
+        assert_eq!(job_meta.schema_id, 10);
+        assert_eq!(job_meta.table_id, 21);
+        assert_eq!(job_meta.query, "old query");
+
+        let malformed_row_count = meta.row_count;
+        assert!(meta.decode(br#"{"row_count":99,"sql_mode":}"#).is_err());
+        assert_eq!(meta.row_count, malformed_row_count);
+
+        let error = meta
+            .decode(br#"{"row_count":4,"start_key":"AA$="}"#)
+            .unwrap_err();
+        assert!(error.to_string().contains("illegal base64 data"));
+        assert_eq!(meta.row_count, 4);
+        assert_eq!(meta.start_key, Some(vec![0, 1, 255]));
+
+        assert!(meta
+            .decode(br#"{"end_include":true,"row_count":1.5}"#)
+            .is_err());
+        assert!(meta.end_include);
+        assert_eq!(meta.row_count, 4);
+
+        assert!(meta
+            .decode(br#"{"is_unique":true,"row_count":9223372036854775808}"#)
+            .is_err());
+        assert!(meta.is_unique);
+        assert_eq!(meta.row_count, 4);
+
+        meta.decode(
+            br#"{
+                "row_count":null,
+                "warnings":null,
+                "warnings_count":null,
+                "location":null,
+                "start_key":null,
+                "end_key":null,
+                "curr_key":null,
+                "job_meta":null
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(meta.row_count, 4);
+        assert!(meta.warnings.is_none());
+        assert!(meta.warnings_count.is_none());
+        assert!(meta.location.is_none());
+        assert!(meta.start_key.is_none());
+        assert!(meta.end_key.is_none());
+        assert!(meta.current_key.is_none());
+        assert!(meta.job_meta.is_none());
     }
 }

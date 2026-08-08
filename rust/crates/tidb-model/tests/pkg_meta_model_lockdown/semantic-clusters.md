@@ -83,14 +83,13 @@ remaining package census is 2,509 obligations plus the build artifact.
   maximum-node counts, dynamic settings, job priority, and fixed-zone offsets.
 - Explicit representation boundaries: concrete `terror.Error` identity, Go
   atomic/mutex object identity, and the warning-map backing-store alias retained
-  by `DDLReorgMeta.ShallowCopy`. `BackfillMeta.Decode` uses Serde's generated
-  in-place visitor, so absent fields retain the receiver, JSON null is a no-op,
-  and fields decoded before a type error remain mutated as in Go. Error
-  payloads are retained as raw JSON and Rust borrowing makes field mutation
-  race-free. Go's merge of an existing nonnil map and its null-no-op behavior
-  for nonpointer scalar fields remain measured Serde representation boundaries:
-  the generic map/scalar visitors replace or reject those values without field
-  type information from the receiver.
+  by `DDLReorgMeta.ShallowCopy`. `BackfillMeta.Decode` uses the package's
+  receiver-mutating Go object-stream decoder: omitted fields survive; duplicate
+  and ASCII-case-folded tags apply in source order; null scalars are no-ops;
+  null pointers/slices/maps clear; existing maps merge; and mutations before
+  type, overflow, fractional-number, or base64 errors survive. Invalid syntax
+  is rejected before mutation and root JSON null is a no-op. Error payloads are
+  retained as raw JSON and Rust borrowing makes field mutation race-free.
 
 ## C06: DDL jobs
 
@@ -129,11 +128,16 @@ remaining package census is 2,509 obligations plus the build artifact.
   arbitrary typed `JobArgs` implementations. The same missing process-wide
   NextGen boundary means Rust initializes the new-job version to classic v1;
   explicit `set_job_ver_in_use` and both persisted versions are native. As for
-  backfill metadata, generated in-place deserialization preserves omitted
-  receiver fields and mutations that precede a type error; successful decode
-  and JSON-null no-op semantics are native. Existing-nonnil map merge and
-  present-null nonpointer scalar fields retain the measured generic Serde
-  boundary described in C05.
+  backfill metadata, a dedicated object-stream decoder preserves omitted
+  receiver fields, processes duplicate and ASCII-case-folded tags in source
+  order, ignores unknown fields, treats null nonpointer scalars as no-ops,
+  clears null pointer/slice/map fields, merges existing maps, and retains
+  mutations that precede a type/base64/numeric error. A syntax-validation pass
+  precedes receiver mutation, and root JSON null is a no-op, matching Go's
+  scanner and `json.Unmarshal` receiver behavior. Nested reorganization,
+  timezone, job-meta, pause/resume, multi-schema, and history envelopes use the
+  same receiver-mutating object path instead of Serde's default-resetting
+  generated `deserialize_in_place` implementation.
   Typed job arguments remain owned by the unchanged `job_args.go` lockdown;
   the job envelope stores their JSON value rather than pretending every Go
   interface implementation is a Rust type.

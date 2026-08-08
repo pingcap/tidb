@@ -15,7 +15,6 @@ tidb-parser = { path = "../tidb-parser" }
 chrono = { workspace = true }
 chrono-tz = { workspace = true }
 serde = { workspace = true }
-serde_derive = { version = "1", features = ["deserialize_in_place"] }
 serde_json = { workspace = true }
 
 [dev-dependencies]
