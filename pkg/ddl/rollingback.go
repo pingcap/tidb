@@ -55,6 +55,17 @@ func convertAddIdxJob2RollbackJob(
 		return 0, err
 	}
 
+	// For multi-schema changes, we can't directly run the following logic
+	// because the parent job serves only as an agent to reorg indexes involved
+	// in the sub-jobs. The rollback logic still need to be handled by each
+	// sub-job individually. Therefore, we update the state of all sub-jobs
+	// so they can rollback correctly in subsequent loops.
+	if job.Type == model.ActionMultiSchemaChange {
+		//nolint: errcheck
+		rollingBackMultiSchemaChange(job)
+		return 0, err
+	}
+
 	dropArgs := &model.ModifyIndexArgs{
 		PartitionIDs: getPartitionIDs(tblInfo),
 		OpType:       model.OpRollbackAddIndex,
