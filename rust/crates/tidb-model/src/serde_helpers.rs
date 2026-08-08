@@ -156,11 +156,86 @@ where
 
 /// Reports whether an incoming JSON object key matches a Go struct-field tag.
 ///
-/// `encoding/json` prefers exact matches and then accepts ASCII-folded field
-/// names. The model's persisted tags are all ASCII and unique under folding,
-/// so `eq_ignore_ascii_case` is the exact observable rule for these objects.
+/// `encoding/json` prefers exact matches and then accepts Unicode SimpleFold
+/// field names. The model's persisted tags are ASCII and unique under folding.
 pub(crate) fn go_json_field_matches(incoming: &str, tag: &str) -> bool {
-    incoming == tag || incoming.eq_ignore_ascii_case(tag)
+    if incoming == tag {
+        return true;
+    }
+    // Every persisted model tag is ASCII. In the Unicode SimpleFold classes
+    // used by bytes.EqualFold, the only non-ASCII runes equivalent to ASCII
+    // are long-s and Kelvin sign. Handling those classes plus ASCII folding
+    // is therefore the complete Go rule for this tag universe.
+    incoming.chars().zip(tag.bytes()).all(|(left, right)| {
+        let left = match left {
+            'a'..='z' => left.to_ascii_uppercase(),
+            '\u{017f}' => 'S',
+            '\u{212a}' => 'K',
+            other => other,
+        };
+        let right = (right as char).to_ascii_uppercase();
+        left == right
+    }) && incoming.chars().count() == tag.len()
+}
+
+const FATAL_JSON_ERROR_PREFIX: &str = "__go_custom_unmarshal_fatal__: ";
+
+/// Marks errors returned by a Go `UnmarshalJSON` equivalent as fatal.
+pub(crate) struct FatalSeed<S>(pub(crate) S);
+
+impl<'de, S> DeserializeSeed<'de> for FatalSeed<S>
+where
+    S: DeserializeSeed<'de>,
+{
+    type Value = S::Value;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        self.0
+            .deserialize(deserializer)
+            .map_err(|error| serde::de::Error::custom(format!("{FATAL_JSON_ERROR_PREFIX}{error}")))
+    }
+}
+
+/// Deserializes a value while marking its error as a fatal custom-unmarshal
+/// result.
+pub(crate) struct FatalValueSeed<T>(PhantomData<T>);
+
+impl<T> FatalValueSeed<T> {
+    pub(crate) fn new() -> Self {
+        Self(PhantomData)
+    }
+}
+
+impl<'de, T> DeserializeSeed<'de> for FatalValueSeed<T>
+where
+    T: Deserialize<'de>,
+{
+    type Value = T;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        FatalSeed(PhantomData::<T>).deserialize(deserializer)
+    }
+}
+
+/// Detects a fatal custom-unmarshal error after it crosses nested raw-member
+/// decoder boundaries.
+pub(crate) fn is_fatal_json_error(error: &impl std::fmt::Display) -> bool {
+    error.to_string().contains(FATAL_JSON_ERROR_PREFIX)
+}
+
+/// Removes the internal fatal-propagation marker at a public JSON boundary.
+pub(crate) fn normalize_fatal_json_error(error: serde_json::Error) -> serde_json::Error {
+    let message = error.to_string();
+    if !message.contains(FATAL_JSON_ERROR_PREFIX) {
+        return error;
+    }
+    <serde_json::Error as serde::de::Error>::custom(message.replace(FATAL_JSON_ERROR_PREFIX, ""))
 }
 
 /// Receiver-mutating object decoder used by Go `json.Unmarshal` ports.
@@ -364,6 +439,58 @@ where
     }
 }
 
+/// Deserializes a scalar pointer into its existing allocation. A non-null
+/// invalid value allocates a zero pointee before returning the recoverable
+/// type error, matching encoding/json's pointer walk.
+pub(crate) struct OptionScalarSeed<'a, T>(pub(crate) &'a mut Option<T>);
+
+impl<'de, T> DeserializeSeed<'de> for OptionScalarSeed<'_, T>
+where
+    T: Default + Deserialize<'de>,
+{
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct OptionScalarVisitor<'a, T>(&'a mut Option<T>);
+
+        impl<'de, T> Visitor<'de> for OptionScalarVisitor<'_, T>
+        where
+            T: Default + Deserialize<'de>,
+        {
+            type Value = ();
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("null or a scalar pointer value")
+            }
+
+            fn visit_none<E>(self) -> Result<Self::Value, E> {
+                *self.0 = None;
+                Ok(())
+            }
+
+            fn visit_unit<E>(self) -> Result<Self::Value, E> {
+                *self.0 = None;
+                Ok(())
+            }
+
+            fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                let destination = self.0.get_or_insert_with(T::default);
+                let decoded = T::deserialize(deserializer)?;
+                *destination = decoded;
+                Ok(())
+            }
+        }
+
+        deserializer.deserialize_option(OptionScalarVisitor(self.0))
+    }
+}
+
 /// Replaces a Go pointer slice while retaining null elements and continuing
 /// after recoverable element errors.
 pub(crate) struct OptionPointerSliceSeed<'a, T>(pub(crate) &'a mut Option<Vec<Option<T>>>);
@@ -405,19 +532,27 @@ where
                 D: Deserializer<'de>,
             {
                 let RawArrayMembers(elements) = RawArrayMembers::deserialize(deserializer)?;
+                let mut existing = self.0.take().unwrap_or_default().into_iter();
                 let mut decoded = Vec::with_capacity(elements.len());
                 let mut first_error = None;
                 for raw in elements {
+                    let previous = existing.next().flatten();
                     if raw.get() == "null" {
                         decoded.push(None);
                         continue;
                     }
-                    let mut value = T::default();
+                    let mut value = previous.unwrap_or_default();
                     let mut element = serde_json::Deserializer::from_str(raw.get());
                     if let Err(error) = value
                         .go_json_merge(&mut element)
                         .and_then(|()| element.end())
                     {
+                        if is_fatal_json_error(&error) {
+                            decoded.push(Some(value));
+                            decoded.extend(existing);
+                            *self.0 = Some(decoded);
+                            return Err(serde::de::Error::custom(error));
+                        }
                         first_error.get_or_insert_with(|| error.to_string());
                     }
                     decoded.push(Some(value));
@@ -486,12 +621,13 @@ where
                 let destination = self.destination.get_or_insert_with(BTreeMap::new);
                 let mut first_error = None;
                 while let Some(key) = map.next_key::<String>()? {
-                    match map.next_value::<V>() {
-                        Ok(value) => {
+                    let mut value = V::default();
+                    match map.next_value_seed(NullDefaultSeed(&mut value)) {
+                        Ok(()) => {
                             destination.insert(key, value);
                         }
                         Err(error) => {
-                            destination.insert(key, V::default());
+                            destination.insert(key, value);
                             first_error.get_or_insert(error);
                         }
                     }
@@ -504,6 +640,75 @@ where
         }
 
         deserializer.deserialize_option(OptionMapVisitor {
+            destination: self.0,
+            marker: PhantomData,
+        })
+    }
+}
+
+/// Merges a Go map whose value type implements custom `UnmarshalJSON`.
+/// Value errors abort immediately, before insertion or later members.
+pub(crate) struct OptionStringMapFatalMergeSeed<'a, V>(
+    pub(crate) &'a mut Option<BTreeMap<String, V>>,
+);
+
+impl<'de, V> DeserializeSeed<'de> for OptionStringMapFatalMergeSeed<'_, V>
+where
+    V: Default + Deserialize<'de>,
+{
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct FatalMapVisitor<'a, V> {
+            destination: &'a mut Option<BTreeMap<String, V>>,
+            marker: PhantomData<V>,
+        }
+
+        impl<'de, V> Visitor<'de> for FatalMapVisitor<'_, V>
+        where
+            V: Default + Deserialize<'de>,
+        {
+            type Value = ();
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("null or a JSON object")
+            }
+
+            fn visit_none<E>(self) -> Result<Self::Value, E> {
+                *self.destination = None;
+                Ok(())
+            }
+
+            fn visit_unit<E>(self) -> Result<Self::Value, E> {
+                *self.destination = None;
+                Ok(())
+            }
+
+            fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                deserialize_go_object(deserializer, self)
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let destination = self.destination.get_or_insert_with(BTreeMap::new);
+                while let Some(key) = map.next_key::<String>()? {
+                    let mut value = V::default();
+                    map.next_value_seed(FatalSeed(NullDefaultSeed(&mut value)))?;
+                    destination.insert(key, value);
+                }
+                Ok(())
+            }
+        }
+
+        deserializer.deserialize_option(FatalMapVisitor {
             destination: self.0,
             marker: PhantomData,
         })

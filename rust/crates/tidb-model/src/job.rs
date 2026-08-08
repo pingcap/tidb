@@ -31,9 +31,9 @@ use crate::placement::PolicyRefInfo;
 use crate::reorg::{DDLReorgMeta, ReorgStage, ReorgType};
 use crate::schema_state::SchemaState;
 use crate::serde_helpers::{
-    deserialize_go_object, go_json_field_matches, ignore_unknown, GoJsonMerge, NullDefaultSeed,
-    NullNoopSeed, OptionBoxMergeSeed, OptionBytesSeed, OptionMergeSeed, OptionPointerSliceSeed,
-    OptionStringMapMergeSeed,
+    deserialize_go_object, go_json_field_matches, ignore_unknown, is_fatal_json_error,
+    FatalValueSeed, GoJsonMerge, NullDefaultSeed, NullNoopSeed, OptionBoxMergeSeed,
+    OptionBytesSeed, OptionMergeSeed, OptionPointerSliceSeed, OptionStringMapMergeSeed,
 };
 use crate::table_info::TableInfo;
 
@@ -319,9 +319,10 @@ pub struct AddForeignKeyInfo {
 /// Go `MultiSchemaInfo`.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct MultiSchemaInfo {
-    /// Ordered sub-jobs, with `None` retaining Go's nil-slice state.
+    /// Ordered nullable sub-job pointers, with outer `None` retaining Go's
+    /// nil-slice state.
     #[serde(rename = "sub_jobs", default)]
-    pub sub_jobs: Option<Vec<SubJob>>,
+    pub sub_jobs: Option<Vec<Option<SubJob>>>,
     /// Whether every sub-job can still be reverted.
     #[serde(rename = "revertible", default)]
     pub revertible: bool,
@@ -722,6 +723,9 @@ macro_rules! impl_go_merge_object {
                                 Ok(())
                             })();
                             if let Err(error) = field_result {
+                                if is_fatal_json_error(&error) {
+                                    return Err(error);
+                                }
                                 first_error.get_or_insert(error);
                             }
                         }
@@ -794,9 +798,41 @@ impl_go_merge_object!(TraceInfo, destination, map, key, {
     }
 });
 
+impl_go_merge_object!(SubJob, destination, map, key, {
+    if go_json_field_matches(&key, "type") {
+        map.next_value_seed(NullNoopSeed(&mut destination.type_))?;
+    } else if go_json_field_matches(&key, "raw_args") {
+        destination.raw_args = Some(map.next_value()?);
+    } else if go_json_field_matches(&key, "schema_state") {
+        map.next_value_seed(NullNoopSeed(&mut destination.schema_state))?;
+    } else if go_json_field_matches(&key, "snapshot_ver") {
+        map.next_value_seed(NullNoopSeed(&mut destination.snapshot_version))?;
+    } else if go_json_field_matches(&key, "real_start_ts") {
+        map.next_value_seed(NullNoopSeed(&mut destination.real_start_ts))?;
+    } else if go_json_field_matches(&key, "revertible") {
+        map.next_value_seed(NullNoopSeed(&mut destination.revertible))?;
+    } else if go_json_field_matches(&key, "state") {
+        map.next_value_seed(NullNoopSeed(&mut destination.state))?;
+    } else if go_json_field_matches(&key, "row_count") {
+        map.next_value_seed(NullNoopSeed(&mut destination.row_count))?;
+    } else if go_json_field_matches(&key, "warning") {
+        destination.warning = map.next_value_seed(FatalValueSeed::new())?;
+    } else if go_json_field_matches(&key, "schema_version") {
+        map.next_value_seed(NullNoopSeed(&mut destination.schema_version))?;
+    } else if go_json_field_matches(&key, "reorg_tp") {
+        map.next_value_seed(NullNoopSeed(&mut destination.reorg_type))?;
+    } else if go_json_field_matches(&key, "reorg_stage") {
+        map.next_value_seed(NullNoopSeed(&mut destination.reorg_stage))?;
+    } else if go_json_field_matches(&key, "analyze_state") {
+        map.next_value_seed(NullNoopSeed(&mut destination.analyze_state))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+
 impl_go_merge_object!(MultiSchemaInfo, destination, map, key, {
     if go_json_field_matches(&key, "sub_jobs") {
-        destination.sub_jobs = map.next_value()?;
+        map.next_value_seed(OptionPointerSliceSeed(&mut destination.sub_jobs))?;
     } else if go_json_field_matches(&key, "revertible") {
         map.next_value_seed(NullNoopSeed(&mut destination.revertible))?;
     } else if go_json_field_matches(&key, "seq") {
@@ -983,9 +1019,9 @@ impl_go_merge_object!(Job, destination, map, key, {
     } else if go_json_field_matches(&key, "state") {
         map.next_value_seed(NullNoopSeed(&mut destination.state))?;
     } else if go_json_field_matches(&key, "warning") {
-        destination.warning = map.next_value()?;
+        destination.warning = map.next_value_seed(FatalValueSeed::new())?;
     } else if go_json_field_matches(&key, "err") {
-        destination.error = map.next_value()?;
+        destination.error = map.next_value_seed(FatalValueSeed::new())?;
     } else if go_json_field_matches(&key, "err_count") {
         map.next_value_seed(NullNoopSeed(&mut destination.error_count))?;
     } else if go_json_field_matches(&key, "row_count") {
@@ -1209,6 +1245,9 @@ impl Job {
             if let Some(info) = &mut self.multi_schema_info {
                 if let Some(sub_jobs) = &mut info.sub_jobs {
                     for sub_job in sub_jobs {
+                        let Some(sub_job) = sub_job else {
+                            continue;
+                        };
                         let Some(args) = &sub_job.args else {
                             continue;
                         };
@@ -1238,7 +1277,8 @@ impl Job {
             return Ok(());
         }
         let mut deserializer = serde_json::Deserializer::from_str(raw.get());
-        self.go_json_merge(&mut deserializer)?;
+        self.go_json_merge(&mut deserializer)
+            .map_err(crate::serde_helpers::normalize_fatal_json_error)?;
         deserializer.end()
     }
 
@@ -1446,6 +1486,9 @@ impl Job {
                 .as_ref()
                 .is_some_and(|sub_jobs| {
                     sub_jobs.iter().any(|sub_job| {
+                        let sub_job = sub_job
+                            .as_ref()
+                            .expect("nil SubJob in MultiSchemaInfo.SubJobs");
                         Job {
                             type_: sub_job.type_,
                             need_reorg: sub_job.need_reorg,
@@ -2219,6 +2262,16 @@ mod tests {
             "new"
         );
 
+        job.decode(
+            "{\"warning\":{\"claſs\":5,\"code\":3,\"message\":\"folded\",\"rfccode\":\"executor:3\"}}"
+                .as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(
+            job.warning.as_ref().unwrap().class(),
+            tidb_error::terror::TerrorClass::from_value(5)
+        );
+
         job.decode(br#"{"session_vars":null,"reorg_meta":{"warnings":null}}"#)
             .unwrap();
         assert!(job.session_vars.is_none());
@@ -2242,8 +2295,8 @@ mod tests {
             .decode(br#"{"warning":7,"id":51,"row_count":9223372036854775808,"table_id":52}"#)
             .unwrap_err();
         assert!(error.to_string().contains("invalid type"));
-        assert_eq!(job.id, 51);
-        assert_eq!(job.table_id, 52);
+        assert_eq!(job.id, 42);
+        assert_eq!(job.table_id, 0);
 
         let error = job
             .decode(br#"{"session_vars":{"bad":7,"later":"ok"},"id":53}"#)
@@ -2252,6 +2305,24 @@ mod tests {
         assert_eq!(job.get_system_var("bad"), Some(""));
         assert_eq!(job.get_system_var("later"), Some("ok"));
         assert_eq!(job.id, 53);
+
+        job.decode(br#"{"session_vars":{"null_value":null},"id":54}"#)
+            .unwrap();
+        assert_eq!(job.get_system_var("null_value"), Some(""));
+        assert_eq!(job.id, 54);
+
+        let reorg_max_nodes = job.reorg_meta.as_ref().unwrap().max_node_count;
+        let error = job
+            .decode(
+                br#"{"reorg_meta":{"warnings":{"bad":7,"later":null},"max_node_count":99},"id":55}"#,
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("invalid type"));
+        let reorg = job.reorg_meta.as_ref().unwrap();
+        assert!(!reorg.warnings.as_ref().unwrap().contains_key("bad"));
+        assert!(!reorg.warnings.as_ref().unwrap().contains_key("later"));
+        assert_eq!(reorg.max_node_count, reorg_max_nodes);
+        assert_eq!(job.id, 54);
 
         job.decode(br#"{"row_count":18446744073709551616,"table_id":54}"#)
             .unwrap_err();
@@ -2270,6 +2341,72 @@ mod tests {
             .unwrap_err();
         assert!(error.to_string().contains("invalid type"));
         assert_eq!(job.reorg_meta.as_ref().unwrap().version, 9);
+    }
+
+    #[test]
+    fn multi_schema_sub_jobs_reuse_nullable_pointers_and_propagate_fatal_errors() {
+        let mut job = Job {
+            id: 40,
+            multi_schema_info: Some(MultiSchemaInfo {
+                sub_jobs: Some(vec![Some(SubJob {
+                    row_count: 5,
+                    schema_version: 6,
+                    raw_args: Some(raw_json(r#"{"kept":true}"#)),
+                    ..Default::default()
+                })]),
+                seq: 1,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let error = job
+            .decode(
+                br#"{
+                    "multi_schema_info":{
+                        "sub_jobs":[
+                            {"row_count":"bad","schema_version":7},
+                            null,
+                            {"row_count":8}
+                        ],
+                        "seq":2
+                    },
+                    "id":41
+                }"#,
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("invalid type"));
+        let info = job.multi_schema_info.as_ref().unwrap();
+        assert_eq!(info.seq, 2);
+        let sub_jobs = info.sub_jobs.as_ref().unwrap();
+        assert_eq!(sub_jobs.len(), 3);
+        let first = sub_jobs[0].as_ref().unwrap();
+        assert_eq!(first.row_count, 5);
+        assert_eq!(first.schema_version, 7);
+        assert_eq!(first.raw_args, Some(raw_json(r#"{"kept":true}"#)));
+        assert!(sub_jobs[1].is_none());
+        assert_eq!(sub_jobs[2].as_ref().unwrap().row_count, 8);
+        assert_eq!(job.id, 41);
+
+        let error = job
+            .decode(
+                br#"{
+                    "multi_schema_info":{
+                        "sub_jobs":[{"warning":7,"schema_version":9},null],
+                        "seq":3
+                    },
+                    "id":42
+                }"#,
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("invalid type"));
+        let info = job.multi_schema_info.as_ref().unwrap();
+        assert_eq!(info.seq, 2);
+        let sub_jobs = info.sub_jobs.as_ref().unwrap();
+        assert_eq!(sub_jobs[0].as_ref().unwrap().schema_version, 7);
+        assert!(sub_jobs[1].is_none());
+        assert_eq!(sub_jobs[2].as_ref().unwrap().row_count, 8);
+        assert_eq!(job.id, 41);
     }
 
     #[test]
@@ -2311,7 +2448,7 @@ mod tests {
         let mut job = Job {
             version: JobVersion::V2,
             multi_schema_info: Some(MultiSchemaInfo {
-                sub_jobs: Some(vec![sub_job]),
+                sub_jobs: Some(vec![Some(sub_job)]),
                 ..Default::default()
             }),
             ..Default::default()

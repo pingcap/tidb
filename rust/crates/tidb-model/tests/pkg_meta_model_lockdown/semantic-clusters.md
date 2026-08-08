@@ -31,13 +31,15 @@ remaining package census is 2,509 obligations plus the build artifact.
 - Rules: changing/removing names, field-type delegation, generated columns,
   BIT defaults, lookup/extra-column constructors, engine JSON, storage-class
   scope, transition rendering, wrapping unsigned duration arithmetic, omitted
-  scalar zero values, Go `any` JSON numbers decoding to float64 (including
-  integer lexical forms and precision loss beyond 2^53), and nil elements in
+  scalar zero values, the recursive Go `any` JSON domain (null, booleans,
+  strings, arrays, and sorted-key objects), numbers decoding to nearest
+  float64 (including integer lexical forms and precision loss beyond 2^53),
+  non-finite float serialization errors, and nil elements in
   `StorageClassSettings.Defs`' owning Go pointer slice.
   Name normalization uses Go's Unicode simple-rune case tables; it never
   introduces Rust full-case multi-rune expansions.
-- Explicit representation boundaries: unrestricted Go `any`, nil versus
-  allocated-empty dependency maps, shallow clone pointer identity, Go
+- Explicit representation boundaries: nil versus allocated-empty dependency
+  maps, shallow clone pointer identity, Go
   `unsafe.Sizeof`, and byte-exact `json.RawMessage` lexical preservation.
   Parsed JSON meaning remains native; lexical whitespace/key-order/duplicate
   preservation is not falsely reported as ported.
@@ -86,14 +88,17 @@ remaining package census is 2,509 obligations plus the build artifact.
   atomic/mutex object identity, and the warning-map backing-store alias retained
   by `DDLReorgMeta.ShallowCopy`. `BackfillMeta.Decode` uses the package's
   receiver-mutating Go object-stream decoder: omitted fields survive; duplicate
-  and ASCII-case-folded tags apply in source order; null scalars are no-ops;
+  and Go Unicode-SimpleFold tags apply in source order; null scalars are no-ops;
   null pointers/slices/maps clear; existing maps merge; and mutations before
   and after recoverable type, overflow, fractional-number, or base64 errors
   survive while the first error is returned. Invalid syntax is rejected before
-  mutation and root JSON null is a no-op. Error values use the native
+  mutation and root JSON null is a no-op. Atomic metadata fields reset to
+  local zero on null and their custom-unmarshal failures abort immediately.
+  Primitive null map values insert their zero without error. Error values use the native
   `tidb-error` class/code/message/RFC JSON envelope (including nullable warning
-  map entries), so scalar/array impostors are rejected rather than retained as
-  arbitrary JSON. Rust borrowing makes field mutation race-free.
+  map entries), so scalar/array impostors are fatal custom-unmarshal failures:
+  they are neither inserted nor followed by later member mutation. Rust
+  borrowing makes field mutation race-free.
 
 ## C06: DDL jobs
 
@@ -124,7 +129,8 @@ remaining package census is 2,509 obligations plus the build artifact.
   versus `[]`, and a nil sub-job cache suppresses raw-argument replacement.
   The same distinction is retained for `MultiSchemaInfo.SubJobs`,
   and `HistoryInfo.MultipleTableInfos` because those cases alter JSON; the
-  latter also retains null elements from Go's `[]*TableInfo`. Runtime
+  pointer slices retain null elements and recursively reuse existing pointees.
+  Runtime
   scheduler involvement follows Go's `len > 0` rule: both nil and allocated
   empty select the schema/table fallback, while a nonempty slice is explicit.
   All non-serialized
@@ -135,18 +141,20 @@ remaining package census is 2,509 obligations plus the build artifact.
   `MultiSchemaInfo.Seq`; job and backfill priorities retain the full range.
 - Explicit representation boundaries: Go error pointer/stack identity, Go
   mutex identity, the Go-only `unsafe.Sizeof(Job/SubJob)` ABI guard,
-  nil elements inside Go pointer slices other than the history table list, and
+  nil elements inside Go pointer slices other than history tables/sub-jobs, and
   arbitrary typed `JobArgs` implementations. The same missing process-wide
   NextGen boundary means Rust initializes the new-job version to classic v1;
   explicit `set_job_ver_in_use` and both persisted versions are native. As for
   backfill metadata, a dedicated object-stream decoder preserves omitted
-  receiver fields, processes duplicate and ASCII-case-folded tags in source
+  receiver fields, processes duplicate and Unicode-SimpleFold tags in source
   order, ignores unknown fields, treats null nonpointer scalars as no-ops,
   clears null pointer/slice/map fields, merges existing maps, returns the first
   recoverable field error, and keeps consuming later keys so their mutations
   survive. A syntax-validation pass precedes receiver mutation, and root JSON
   null is a no-op, matching Go's scanner and `json.Unmarshal` receiver
   behavior. `terror.Error` fields use `tidb-error`'s compatible typed envelope;
+  an error from their custom JSON decoder is fatal at every nesting level,
+  while ordinary type/base64/overflow errors retain first-error continuation.
   `TraceInfo` natively validates its string, base64 byte slice, and `uint64`
   fields. Existing `HistoryInfo.DBInfo` and `TableInfo` allocations are merged
   recursively: omitted fields survive, null pointers clear, null scalars are

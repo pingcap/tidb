@@ -24,8 +24,9 @@ use tidb_error::terror::TerrorError;
 
 use crate::job::{JobMeta, TimeZoneLocation};
 use crate::serde_helpers::{
-    deserialize_go_object, go_json_field_matches, ignore_unknown, GoJsonMerge, NullNoopSeed,
-    OptionBytesSeed, OptionMergeSeed, OptionStringMapMergeSeed,
+    deserialize_go_object, go_json_field_matches, ignore_unknown, is_fatal_json_error, FatalSeed,
+    FatalValueSeed, GoJsonMerge, NullDefaultSeed, NullNoopSeed, OptionBytesSeed, OptionMergeSeed,
+    OptionScalarSeed, OptionStringMapFatalMergeSeed, OptionStringMapMergeSeed,
 };
 
 /// Go `BackfillState` (a `byte`): the state of the backfill-merge process.
@@ -237,7 +238,7 @@ impl GoJsonMerge for DDLReorgMeta {
                         if go_json_field_matches(&key, "sql_mode") {
                             map.next_value_seed(NullNoopSeed(&mut destination.sql_mode))?;
                         } else if go_json_field_matches(&key, "warnings") {
-                            map.next_value_seed(OptionStringMapMergeSeed(
+                            map.next_value_seed(OptionStringMapFatalMergeSeed(
                                 &mut destination.warnings,
                             ))?;
                         } else if go_json_field_matches(&key, "warnings_count") {
@@ -269,19 +270,30 @@ impl GoJsonMerge for DDLReorgMeta {
                         } else if go_json_field_matches(&key, "stage") {
                             map.next_value_seed(NullNoopSeed(&mut destination.stage))?;
                         } else if go_json_field_matches(&key, "use_new_collate") {
-                            destination.use_new_collate = map.next_value()?;
+                            map.next_value_seed(OptionScalarSeed(
+                                &mut destination.use_new_collate,
+                            ))?;
                         } else if go_json_field_matches(&key, "concurrency") {
-                            map.next_value_seed(NullNoopSeed(&mut destination.concurrency))?;
+                            map.next_value_seed(FatalSeed(NullDefaultSeed(
+                                &mut destination.concurrency,
+                            )))?;
                         } else if go_json_field_matches(&key, "batch_size") {
-                            map.next_value_seed(NullNoopSeed(&mut destination.batch_size))?;
+                            map.next_value_seed(FatalSeed(NullDefaultSeed(
+                                &mut destination.batch_size,
+                            )))?;
                         } else if go_json_field_matches(&key, "max_write_speed") {
-                            map.next_value_seed(NullNoopSeed(&mut destination.max_write_speed))?;
+                            map.next_value_seed(FatalSeed(NullDefaultSeed(
+                                &mut destination.max_write_speed,
+                            )))?;
                         } else {
                             ignore_unknown(&mut map)?;
                         }
                         Ok(())
                     })();
                     if let Err(error) = field_result {
+                        if is_fatal_json_error(&error) {
+                            return Err(error);
+                        }
                         first_error.get_or_insert(error);
                     }
                 }
@@ -430,7 +442,8 @@ impl BackfillMeta {
             return Ok(());
         }
         let mut deserializer = serde_json::Deserializer::from_str(raw.get());
-        self.go_json_merge(&mut deserializer)?;
+        self.go_json_merge(&mut deserializer)
+            .map_err(crate::serde_helpers::normalize_fatal_json_error)?;
         deserializer.end()
     }
 }
@@ -462,11 +475,11 @@ impl GoJsonMerge for BackfillMeta {
                         } else if go_json_field_matches(&key, "end_include") {
                             map.next_value_seed(NullNoopSeed(&mut destination.end_include))?;
                         } else if go_json_field_matches(&key, "err") {
-                            destination.error = map.next_value()?;
+                            destination.error = map.next_value_seed(FatalValueSeed::new())?;
                         } else if go_json_field_matches(&key, "sql_mode") {
                             map.next_value_seed(NullNoopSeed(&mut destination.sql_mode))?;
                         } else if go_json_field_matches(&key, "warnings") {
-                            map.next_value_seed(OptionStringMapMergeSeed(
+                            map.next_value_seed(OptionStringMapFatalMergeSeed(
                                 &mut destination.warnings,
                             ))?;
                         } else if go_json_field_matches(&key, "warnings_count") {
@@ -493,6 +506,9 @@ impl GoJsonMerge for BackfillMeta {
                         Ok(())
                     })();
                     if let Err(error) = field_result {
+                        if is_fatal_json_error(&error) {
+                            return Err(error);
+                        }
                         first_error.get_or_insert(error);
                     }
                 }
@@ -567,6 +583,29 @@ mod tests {
         assert!(!meta.get_use_new_collate_or_default(true));
         let json = serde_json::to_string(&meta).unwrap();
         assert!(json.contains(r#""use_new_collate":false"#));
+
+        let mut decoder = serde_json::Deserializer::from_str(
+            r#"{"concurrency":null,"batch_size":null,"max_write_speed":null}"#,
+        );
+        meta.go_json_merge(&mut decoder).unwrap();
+        assert_eq!(meta.concurrency, 0);
+        assert_eq!(meta.batch_size, 0);
+        assert_eq!(meta.max_write_speed, 0);
+
+        meta.set_batch_size(12);
+        let mut decoder =
+            serde_json::Deserializer::from_str(r#"{"concurrency":"bad","batch_size":13}"#);
+        let error = meta.go_json_merge(&mut decoder).unwrap_err();
+        assert!(error.to_string().contains("invalid type"));
+        assert_eq!(meta.batch_size, 12);
+
+        meta.use_new_collate = None;
+        let mut decoder =
+            serde_json::Deserializer::from_str(r#"{"use_new_collate":"bad","version":7}"#);
+        let error = meta.go_json_merge(&mut decoder).unwrap_err();
+        assert!(error.to_string().contains("invalid type"));
+        assert_eq!(meta.use_new_collate, Some(false));
+        assert_eq!(meta.version, 7);
     }
 
     #[test]
@@ -708,9 +747,10 @@ mod tests {
         assert!(meta.end_include);
         assert_eq!(meta.sql_mode, 9);
 
+        let was_unique = meta.is_unique;
         let error = meta.decode(br#"{"err":[],"is_unique":true}"#).unwrap_err();
         assert!(error.to_string().contains("invalid type"));
-        assert!(meta.is_unique);
+        assert_eq!(meta.is_unique, was_unique);
 
         assert!(meta
             .decode(br#"{"end_include":true,"row_count":1.5,"sql_mode":10}"#)
@@ -734,6 +774,24 @@ mod tests {
         assert_eq!(meta.warnings_count.as_ref().unwrap()["later"], 3);
         assert_eq!(meta.row_count, 5);
 
+        meta.decode(br#"{"warnings_count":{"null_value":null},"row_count":6}"#)
+            .unwrap();
+        assert_eq!(meta.warnings_count.as_ref().unwrap()["null_value"], 0);
+        assert_eq!(meta.row_count, 6);
+
+        let error = meta
+            .decode(br#"{"warnings":{"bad":7,"later":null},"row_count":7}"#)
+            .unwrap_err();
+        assert!(error.to_string().contains("invalid type"));
+        assert!(!meta.warnings.as_ref().unwrap().contains_key("bad"));
+        assert!(!meta.warnings.as_ref().unwrap().contains_key("later"));
+        assert_eq!(meta.row_count, 6);
+
+        meta.decode("{\"start_Key\":\"AAH/\",\"row_count\":8}".as_bytes())
+            .unwrap();
+        assert_eq!(meta.start_key, Some(vec![0, 1, 255]));
+        assert_eq!(meta.row_count, 8);
+
         assert!(meta
             .decode(br#"{"row_count":18446744073709551616,"sql_mode":12}"#)
             .is_err());
@@ -752,7 +810,7 @@ mod tests {
             }"#,
         )
         .unwrap();
-        assert_eq!(meta.row_count, 5);
+        assert_eq!(meta.row_count, 8);
         assert!(meta.warnings.is_none());
         assert!(meta.warnings_count.is_none());
         assert!(meta.location.is_none());

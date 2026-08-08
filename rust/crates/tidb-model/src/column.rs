@@ -26,12 +26,12 @@
 //!
 //! The `NewExtra*ColInfo` constructors and `GetTypeDesc` are ported too.
 //!
-//! Go's unrestricted `interface{}` domain remains wider than the typed Rust
-//! default-value representation; that boundary is recorded by the package
-//! lockdown receipt rather than silently treated as equivalent.
+//! The generic JSON domain of Go's `interface{}` is retained recursively,
+//! including arrays, objects, nulls, and float64-decoded JSON numbers.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
+use serde::de::{MapAccess, SeqAccess};
 use serde::{Deserialize, Serialize};
 use tidb_ast::CiString;
 use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags};
@@ -172,6 +172,8 @@ pub fn changing_origin_name(name: &str) -> String {
 /// than a special one. Go `nil` is represented by `Option::None` at the field.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ColumnDefaultValue {
+    /// A nested JSON null in an array or object.
+    Null,
     /// A signed integer default.
     Int(i64),
     /// An unsigned integer default.
@@ -182,6 +184,10 @@ pub enum ColumnDefaultValue {
     Bool(bool),
     /// A string default (Go string = arbitrary byte sequence).
     Str(Vec<u8>),
+    /// A Go `[]any` default.
+    Array(Vec<ColumnDefaultValue>),
+    /// A Go `map[string]any` default, whose JSON keys sort lexically.
+    Object(BTreeMap<String, ColumnDefaultValue>),
 }
 
 impl ColumnDefaultValue {
@@ -199,13 +205,19 @@ impl ColumnDefaultValue {
 impl Serialize for ColumnDefaultValue {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self {
+            ColumnDefaultValue::Null => serializer.serialize_none(),
             ColumnDefaultValue::Int(v) => serializer.serialize_i64(*v),
             ColumnDefaultValue::Uint(v) => serializer.serialize_u64(*v),
-            ColumnDefaultValue::Float(v) => serializer.serialize_f64(*v),
+            ColumnDefaultValue::Float(v) if v.is_finite() => serializer.serialize_f64(*v),
+            ColumnDefaultValue::Float(v) => {
+                Err(serde::ser::Error::custom(format!("unsupported value: {v}")))
+            }
             ColumnDefaultValue::Bool(v) => serializer.serialize_bool(*v),
             ColumnDefaultValue::Str(bytes) => {
                 serializer.serialize_str(&String::from_utf8_lossy(bytes))
             }
+            ColumnDefaultValue::Array(values) => values.serialize(serializer),
+            ColumnDefaultValue::Object(values) => values.serialize(serializer),
         }
     }
 }
@@ -214,11 +226,19 @@ impl<'de> Deserialize<'de> for ColumnDefaultValue {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         struct AnyVisitor;
 
-        impl serde::de::Visitor<'_> for AnyVisitor {
+        impl<'de> serde::de::Visitor<'de> for AnyVisitor {
             type Value = ColumnDefaultValue;
 
             fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                f.write_str("a JSON scalar (Go any)")
+                f.write_str("a JSON value (Go any)")
+            }
+
+            fn visit_none<E>(self) -> Result<Self::Value, E> {
+                Ok(ColumnDefaultValue::Null)
+            }
+
+            fn visit_unit<E>(self) -> Result<Self::Value, E> {
+                Ok(ColumnDefaultValue::Null)
             }
 
             fn visit_bool<E>(self, v: bool) -> Result<Self::Value, E> {
@@ -238,6 +258,28 @@ impl<'de> Deserialize<'de> for ColumnDefaultValue {
             }
             fn visit_str<E>(self, v: &str) -> Result<Self::Value, E> {
                 Ok(ColumnDefaultValue::str(v))
+            }
+
+            fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let mut values = Vec::with_capacity(sequence.size_hint().unwrap_or(0));
+                while let Some(value) = sequence.next_element()? {
+                    values.push(value);
+                }
+                Ok(ColumnDefaultValue::Array(values))
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut values = BTreeMap::new();
+                while let Some((key, value)) = map.next_entry()? {
+                    values.insert(key, value);
+                }
+                Ok(ColumnDefaultValue::Object(values))
             }
         }
 
@@ -936,6 +978,30 @@ mod tests {
             serde_json::from_str::<ColumnDefaultValue>("9007199254740993").unwrap(),
             ColumnDefaultValue::Float(9_007_199_254_740_992.0)
         );
+        assert_eq!(
+            serde_json::from_str::<ColumnDefaultValue>("2.2250738585072012e-308").unwrap(),
+            ColumnDefaultValue::Float(f64::from_bits(0x0010_0000_0000_0000))
+        );
+        assert_eq!(
+            serde_json::from_str::<ColumnDefaultValue>(r#"{"a":[1,null,{"z":true}]}"#).unwrap(),
+            ColumnDefaultValue::Object(BTreeMap::from([(
+                "a".to_owned(),
+                ColumnDefaultValue::Array(vec![
+                    ColumnDefaultValue::Float(1.0),
+                    ColumnDefaultValue::Null,
+                    ColumnDefaultValue::Object(BTreeMap::from([(
+                        "z".to_owned(),
+                        ColumnDefaultValue::Bool(true),
+                    )])),
+                ]),
+            )]))
+        );
+        for non_finite in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(
+                serde_json::to_string(&ColumnDefaultValue::Float(non_finite)).is_err(),
+                "Go rejects non-finite float64 value {non_finite}"
+            );
+        }
 
         for invalid in [
             r#"{"origin_default_bit":"A"}"#,
