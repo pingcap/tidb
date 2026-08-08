@@ -15,6 +15,7 @@
 //! Compile anchors for the complete `pkg/meta/model` package receipt.
 
 mod pkg_meta_model_observation_emitter;
+mod pkg_meta_model_package_anchors;
 
 use tidb_model::{
     BackfillMeta, ColumnInfo, DBInfo, DDLBDRType, DDLReorgMeta, EngineAttribute, HistoryInfo,
