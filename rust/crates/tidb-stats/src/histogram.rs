@@ -27,7 +27,11 @@ use std::{cmp::Ordering, fmt};
 
 use tidb_datatype::{Collation, Datum, DatumValueError, Time};
 
-use crate::row_estimate::{default_row_est, RowEstimate};
+pub use crate::scalar_geometry::{calc_fraction, convert_bytes_to_scalar};
+use crate::{
+    row_estimate::{default_row_est, RowEstimate},
+    scalar_geometry::common_prefix_length as common_prefix_length_all,
+};
 
 /// A single histogram bucket.
 ///
@@ -129,46 +133,11 @@ impl From<DatumValueError> for HistogramMergeError {
     }
 }
 
-/// `pkg/statistics/scalar.go`'s `calcFraction`: fraction of `[lower, upper]`
-/// covered by `[lower, value]` under the continuous-value assumption.
-#[must_use]
-pub fn calc_fraction(lower: f64, upper: f64, value: f64) -> f64 {
-    if upper <= lower {
-        return 0.5;
-    }
-    if value <= lower {
-        return 0.0;
-    }
-    if value >= upper {
-        return 1.0;
-    }
-    let frac = (value - lower) / (upper - lower);
-    if frac.is_nan() || frac.is_infinite() || !(0.0..=1.0).contains(&frac) {
-        return 0.5;
-    }
-    frac
-}
-
-/// `pkg/statistics/scalar.go`'s `commonPrefixLength`.
+/// Two-bound compatibility view of `pkg/statistics/scalar.go`'s variadic
+/// `commonPrefixLength` helper.
 #[must_use]
 pub fn common_prefix_length(a: &[u8], b: &[u8]) -> usize {
-    let min_len = a.len().min(b.len());
-    for i in 0..min_len {
-        if a[i] != b[i] {
-            return i;
-        }
-    }
-    min_len
-}
-
-/// `pkg/statistics/scalar.go`'s `convertBytesToScalar`: treats up to the
-/// first 8 bytes as a big-endian, left-padded base-256 value.
-#[must_use]
-pub fn convert_bytes_to_scalar(value: &[u8]) -> f64 {
-    let mut buf = [0_u8; 8];
-    let n = value.len().min(8);
-    buf[..n].copy_from_slice(&value[..n]);
-    u64::from_be_bytes(buf) as f64
+    common_prefix_length_all(&[a, b])
 }
 
 fn min_datetime_core() -> tidb_datatype::CoreTime {

@@ -33,28 +33,32 @@ fn source_fraction_matches_interval_boundaries_and_fallback() {
 #[test]
 fn source_common_prefix_length_handles_empty_and_multiple_strings() {
     assert_eq!(common_prefix_length(&[]), 0);
+    assert_eq!(common_prefix_length(&[b"abc"]), 3);
     assert_eq!(common_prefix_length(&[b"", b"abc"]), 0);
+    assert_eq!(common_prefix_length(&[b"abc", b"xyz"]), 0);
     assert_eq!(common_prefix_length(&[b"abc", b"abd", b"abz"]), 2);
-    assert_eq!(common_prefix_length(&[b"abc", b"abc"]), 3);
-    assert_eq!(common_prefix_length(&[b"abc", b"ab"]), 2);
+    assert_eq!(common_prefix_length(&[b"abc", b"abc", b"abc"]), 3);
+    assert_eq!(common_prefix_length(&[b"abcdef", b"ab", b"abcd"]), 2);
 }
 
 #[test]
-fn source_byte_scalar_is_left_aligned_big_endian() {
-    assert_eq!(convert_bytes_to_scalar(&[]), 0.0);
-    assert_eq!(convert_bytes_to_scalar(&[1]), (1_u64 << 56) as f64);
-    assert_eq!(
-        convert_bytes_to_scalar(&[1, 2]),
-        0x0102_0000_0000_0000_u64 as f64
-    );
-    assert_eq!(
-        convert_bytes_to_scalar(&[1, 2, 3, 4, 5, 6, 7, 8]),
-        0x0102_0304_0506_0708_u64 as f64
-    );
-    assert_eq!(
-        convert_bytes_to_scalar(&[1, 2, 3, 4, 5, 6, 7, 8, 9]),
-        0x0102_0304_0506_0708_u64 as f64
-    );
+fn source_byte_scalar_pins_every_switch_width_and_truncates_after_eight() {
+    let bytes = [1_u8, 2, 3, 4, 5, 6, 7, 8, 9];
+    let expected = [
+        0x0000_0000_0000_0000_u64,
+        0x0100_0000_0000_0000_u64,
+        0x0102_0000_0000_0000_u64,
+        0x0102_0300_0000_0000_u64,
+        0x0102_0304_0000_0000_u64,
+        0x0102_0304_0500_0000_u64,
+        0x0102_0304_0506_0000_u64,
+        0x0102_0304_0506_0700_u64,
+        0x0102_0304_0506_0708_u64,
+        0x0102_0304_0506_0708_u64,
+    ];
+    for (length, expected) in expected.into_iter().enumerate() {
+        assert_eq!(convert_bytes_to_scalar(&bytes[..length]), expected as f64);
+    }
 }
 
 #[test]
