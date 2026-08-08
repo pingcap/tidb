@@ -31,8 +31,9 @@ remaining package census is 2,509 obligations plus the build artifact.
 - Rules: changing/removing names, field-type delegation, generated columns,
   BIT defaults, lookup/extra-column constructors, engine JSON, storage-class
   scope, transition rendering, wrapping unsigned duration arithmetic, omitted
-  scalar zero values, and nil elements in `StorageClassSettings.Defs`' owning
-  Go pointer slice.
+  scalar zero values, Go `any` JSON numbers decoding to float64 (including
+  integer lexical forms and precision loss beyond 2^53), and nil elements in
+  `StorageClassSettings.Defs`' owning Go pointer slice.
   Name normalization uses Go's Unicode simple-rune case tables; it never
   introduces Rust full-case multi-rune expansions.
 - Explicit representation boundaries: unrestricted Go `any`, nil versus

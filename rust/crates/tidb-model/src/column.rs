@@ -225,10 +225,13 @@ impl<'de> Deserialize<'de> for ColumnDefaultValue {
                 Ok(ColumnDefaultValue::Bool(v))
             }
             fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E> {
-                Ok(ColumnDefaultValue::Int(v))
+                // `encoding/json` decodes every JSON number stored in an
+                // `any` field as float64, even when its lexical form is an
+                // integer.
+                Ok(ColumnDefaultValue::Float(v as f64))
             }
             fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E> {
-                Ok(ColumnDefaultValue::Uint(v))
+                Ok(ColumnDefaultValue::Float(v as f64))
             }
             fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E> {
                 Ok(ColumnDefaultValue::Float(v))
@@ -916,12 +919,23 @@ mod tests {
             Some(ColumnDefaultValue::str("abc"))
         );
         assert_eq!(col.origin_default_value_bit, Some(vec![25, 185, 0]));
-        assert_eq!(col.default_value, Some(ColumnDefaultValue::Uint(7)));
+        assert_eq!(col.default_value, Some(ColumnDefaultValue::Float(7.0)));
         assert_eq!(col.dependences.iter().collect::<Vec<_>>(), ["a", "b"]);
         assert_eq!(col.get_type(), FieldTypeCode::Varchar);
         assert_eq!(col.get_flen(), 20);
         assert_eq!(col.state, SchemaState::WRITE_ONLY);
         assert_eq!(col.change_state_info.unwrap().dependency_column_offset, 4);
+
+        // Both signs and integers beyond float64's exact-integer range follow
+        // the concrete type produced by Go's `any` decoder.
+        assert_eq!(
+            serde_json::from_str::<ColumnDefaultValue>("-7").unwrap(),
+            ColumnDefaultValue::Float(-7.0)
+        );
+        assert_eq!(
+            serde_json::from_str::<ColumnDefaultValue>("9007199254740993").unwrap(),
+            ColumnDefaultValue::Float(9_007_199_254_740_992.0)
+        );
 
         for invalid in [
             r#"{"origin_default_bit":"A"}"#,
