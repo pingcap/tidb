@@ -22,9 +22,9 @@ use chrono::Utc;
 use tidb_datatype::Datum;
 use tidb_stats::{
     copy_fm_sketch, decode_fm_sketch, encode_fm_sketch, fm_sketch_from_proto, fm_sketch_ndv,
-    fm_sketch_to_proto, hash_datum, hash_row, insert_encoded_row, insert_encoded_value,
-    insert_row_value, insert_value, merge_fm_sketch, FmSketch, FmSketchCodecError, FmSketchProto,
-    MAX_SKETCH_SIZE,
+    fm_sketch_to_proto, hash_datum, hash_datum_with_error_policy, hash_row,
+    hash_row_with_error_policy, insert_encoded_row, insert_encoded_value, insert_row_value,
+    insert_value, merge_fm_sketch, FmSketch, FmSketchCodecError, FmSketchProto, MAX_SKETCH_SIZE,
 };
 
 fn source_statistics_values(count: usize) -> Vec<Datum> {
@@ -259,6 +259,34 @@ fn source_typed_insert_value_and_row_own_the_datum_encoding() {
     let mut encoded_row_sketch = FmSketch::new(8);
     insert_encoded_value(&mut encoded_row_sketch, &encoded_row);
     assert_eq!(typed_row, encoded_row_sketch);
+}
+
+#[test]
+fn source_statement_error_policy_controls_partial_hashing_and_row_continuation() {
+    let raw = Datum::Raw(b"unsupported".to_vec());
+    assert!(hash_datum(&Utc, &raw).is_err());
+
+    let mut warnings = 0;
+    let warned_hash = hash_datum_with_error_policy(&Utc, &raw, |value, _| {
+        assert!(matches!(value, Datum::Raw(_)));
+        warnings += 1;
+        Ok::<_, std::convert::Infallible>(Vec::new())
+    })
+    .unwrap();
+    assert_eq!(warnings, 1);
+    assert_eq!(warned_hash, tidb_stats::hash_bytes(&[]).h1);
+
+    let values = [Datum::Int(1), raw, Datum::Int(2)];
+    let row_hash = hash_row_with_error_policy(&Utc, &values, |_, _| {
+        Ok::<_, std::convert::Infallible>(Vec::new())
+    })
+    .unwrap();
+    let mut expected = tidb_codec::encode_value(&values[..1]).unwrap();
+    expected.extend_from_slice(&tidb_codec::encode_value(&values[2..]).unwrap());
+    assert_eq!(row_hash, tidb_stats::hash_bytes(&expected).h1);
+
+    let strict: Result<u64, &str> = hash_row_with_error_policy(&Utc, &values, |_, _| Err("strict"));
+    assert_eq!(strict, Err("strict"));
 }
 
 #[test]

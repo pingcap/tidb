@@ -130,7 +130,26 @@ pub fn hash_datum<TZ: TimeZone>(
     timezone: &TZ,
     value: &Datum,
 ) -> Result<u64, tidb_codec::CodecError> {
-    let encoded = tidb_codec::encode_value_in_timezone(timezone, std::slice::from_ref(value))?;
+    hash_datum_with_error_policy(timezone, value, |_, error| Err(error))
+}
+
+/// Go `hashDatum` with the statement-context error policy made explicit.
+///
+/// `codec.EncodeValue` returns both partial bytes and an error. When Go's
+/// `StatementContext.HandleError` downgrades that error to a warning, those
+/// partial bytes are still hashed. Rust's codec returns only the error, so a
+/// policy that chooses to continue must supply the exact partial bytes at
+/// this boundary. A strict policy simply returns the error.
+pub fn hash_datum_with_error_policy<TZ: TimeZone, E>(
+    timezone: &TZ,
+    value: &Datum,
+    mut handle_error: impl FnMut(&Datum, tidb_codec::CodecError) -> Result<Vec<u8>, E>,
+) -> Result<u64, E> {
+    let encoded = match tidb_codec::encode_value_in_timezone(timezone, std::slice::from_ref(value))
+    {
+        Ok(encoded) => encoded,
+        Err(error) => handle_error(value, error)?,
+    };
     Ok(hash_bytes(&encoded).h1)
 }
 
@@ -139,8 +158,30 @@ pub fn hash_row<TZ: TimeZone>(
     timezone: &TZ,
     values: &[Datum],
 ) -> Result<u64, tidb_codec::CodecError> {
-    let encoded = tidb_codec::encode_value_in_timezone(timezone, values)?;
-    Ok(hash_bytes(&encoded).h1)
+    hash_row_with_error_policy(timezone, values, |_, error| Err(error))
+}
+
+/// Go `hashRow` with its per-datum error-context decision exposed.
+///
+/// Successful values are encoded independently and concatenated, matching
+/// the source's repeated reset/write sequence. A downgraded error contributes
+/// the partial bytes returned by the policy, after which later values are
+/// still encoded and hashed.
+pub fn hash_row_with_error_policy<TZ: TimeZone, E>(
+    timezone: &TZ,
+    values: &[Datum],
+    mut handle_error: impl FnMut(&Datum, tidb_codec::CodecError) -> Result<Vec<u8>, E>,
+) -> Result<u64, E> {
+    let mut encoded_row = Vec::new();
+    for value in values {
+        let encoded =
+            match tidb_codec::encode_value_in_timezone(timezone, std::slice::from_ref(value)) {
+                Ok(encoded) => encoded,
+                Err(error) => handle_error(value, error)?,
+            };
+        encoded_row.extend_from_slice(&encoded);
+    }
+    Ok(hash_bytes(&encoded_row).h1)
 }
 
 /// Go `FMSketch.InsertValue` over a typed datum.
@@ -153,6 +194,17 @@ pub fn insert_value<TZ: TimeZone>(
     Ok(())
 }
 
+/// Go `FMSketch.InsertValue` with an explicit statement error policy.
+pub fn insert_value_with_error_policy<TZ: TimeZone, E>(
+    sketch: &mut FmSketch,
+    timezone: &TZ,
+    value: &Datum,
+    handle_error: impl FnMut(&Datum, tidb_codec::CodecError) -> Result<Vec<u8>, E>,
+) -> Result<(), E> {
+    sketch.insert_hash(hash_datum_with_error_policy(timezone, value, handle_error)?);
+    Ok(())
+}
+
 /// Go `FMSketch.InsertRowValue` over typed row datums.
 pub fn insert_row_value<TZ: TimeZone>(
     sketch: &mut FmSketch,
@@ -160,6 +212,17 @@ pub fn insert_row_value<TZ: TimeZone>(
     values: &[Datum],
 ) -> Result<(), tidb_codec::CodecError> {
     sketch.insert_hash(hash_row(timezone, values)?);
+    Ok(())
+}
+
+/// Go `FMSketch.InsertRowValue` with an explicit per-datum error policy.
+pub fn insert_row_value_with_error_policy<TZ: TimeZone, E>(
+    sketch: &mut FmSketch,
+    timezone: &TZ,
+    values: &[Datum],
+    handle_error: impl FnMut(&Datum, tidb_codec::CodecError) -> Result<Vec<u8>, E>,
+) -> Result<(), E> {
+    sketch.insert_hash(hash_row_with_error_policy(timezone, values, handle_error)?);
     Ok(())
 }
 

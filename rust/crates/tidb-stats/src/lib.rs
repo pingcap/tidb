@@ -205,8 +205,9 @@ pub use existence_map::ColAndIdxExistenceMap;
 pub use fmsketch::{copy_fm_sketch, fm_sketch_ndv, merge_fm_sketch, FmSketch, MAX_SKETCH_SIZE};
 pub use fmsketch_codec::{
     decode_fm_sketch, encode_fm_sketch, fm_sketch_from_proto, fm_sketch_to_proto, hash_datum,
-    hash_row, insert_encoded_row, insert_encoded_value, insert_row_value, insert_value,
-    FmSketchCodecError, FmSketchProto,
+    hash_datum_with_error_policy, hash_row, hash_row_with_error_policy, insert_encoded_row,
+    insert_encoded_value, insert_row_value, insert_row_value_with_error_policy, insert_value,
+    insert_value_with_error_policy, FmSketchCodecError, FmSketchProto,
 };
 pub use gc_batch_count::gc_batch_count;
 pub use global_stats_layout::{new_global_stats_layout, GlobalStatsLayout};
