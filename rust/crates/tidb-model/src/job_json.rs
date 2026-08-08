@@ -193,15 +193,15 @@ impl_go_json_merge_object!(TableInfo, destination, map, key, {
     } else if go_json_field_matches(&key, "compression") {
         map.next_value_seed(NullNoopSeed(&mut destination.compression))?;
     } else if go_json_field_matches(&key, "view") {
-        destination.view = map.next_value()?;
+        map.next_value_seed(OptionSharedMergeSeed(&mut destination.view))?;
     } else if go_json_field_matches(&key, "sequence") {
-        destination.sequence = map.next_value()?;
+        map.next_value_seed(OptionSharedMergeSeed(&mut destination.sequence))?;
     } else if go_json_field_matches(&key, "Lock") {
-        destination.lock = map.next_value()?;
+        map.next_value_seed(OptionSharedMergeSeed(&mut destination.lock))?;
     } else if go_json_field_matches(&key, "version") {
         map.next_value_seed(NullNoopSeed(&mut destination.version))?;
     } else if go_json_field_matches(&key, "tiflash_replica") {
-        destination.tiflash_replica = map.next_value()?;
+        map.next_value_seed(OptionSharedMergeSeed(&mut destination.tiflash_replica))?;
     } else if go_json_field_matches(&key, "is_columnar") {
         map.next_value_seed(NullNoopSeed(&mut destination.is_columnar))?;
     } else if go_json_field_matches(&key, "temp_table_type") {
@@ -209,21 +209,23 @@ impl_go_json_merge_object!(TableInfo, destination, map, key, {
     } else if go_json_field_matches(&key, "cache_table_status") {
         map.next_value_seed(NullNoopSeed(&mut destination.table_cache_status_type))?;
     } else if go_json_field_matches(&key, "policy_ref_info") {
-        map.next_value_seed(OptionMergeSeed(&mut destination.placement_policy_ref))?;
+        map.next_value_seed(OptionSharedMergeSeed(&mut destination.placement_policy_ref))?;
     } else if go_json_field_matches(&key, "stats_options") {
-        destination.stats_options = map.next_value()?;
+        map.next_value_seed(OptionSharedMergeSeed(&mut destination.stats_options))?;
     } else if go_json_field_matches(&key, "exchange_partition_info") {
-        destination.exchange_partition_info = map.next_value()?;
+        map.next_value_seed(OptionSharedMergeSeed(
+            &mut destination.exchange_partition_info,
+        ))?;
     } else if go_json_field_matches(&key, "ttl_info") {
-        destination.ttl_info = map.next_value()?;
+        map.next_value_seed(OptionSharedMergeSeed(&mut destination.ttl_info))?;
     } else if go_json_field_matches(&key, "is_active_active") {
         map.next_value_seed(NullNoopSeed(&mut destination.is_active_active))?;
     } else if go_json_field_matches(&key, "softdelete_info") {
-        destination.softdelete_info = map.next_value()?;
+        map.next_value_seed(OptionSharedMergeSeed(&mut destination.softdelete_info))?;
     } else if go_json_field_matches(&key, "affinity") {
-        destination.affinity = map.next_value()?;
+        map.next_value_seed(OptionSharedMergeSeed(&mut destination.affinity))?;
     } else if go_json_field_matches(&key, "table_split_policy") {
-        destination.table_split_policy = map.next_value()?;
+        map.next_value_seed(OptionSharedMergeSeed(&mut destination.table_split_policy))?;
     } else if go_json_field_matches(&key, "revision") {
         map.next_value_seed(NullNoopSeed(&mut destination.revision))?;
     } else if go_json_field_matches(&key, "engine_attribute") {
@@ -238,6 +240,7 @@ impl_go_json_merge_object!(TableInfo, destination, map, key, {
         ignore_unknown(&mut map)?;
     }
 });
+impl_go_json_deserialize!(TableInfo);
 
 impl_go_json_merge_object!(HistoryInfo, destination, map, key, {
     if go_json_field_matches(&key, "SchemaVersion") {

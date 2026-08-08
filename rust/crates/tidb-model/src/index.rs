@@ -24,13 +24,13 @@ use tidb_datatype::{FieldType, FieldTypeCode};
 
 use crate::cascades_hash::HashInt64;
 use crate::column::{removing_origin_name, REMOVING_OBJ_PREFIX};
-use crate::go_runtime::{GoPointerAny, GoShared, GoSharedPointerSlice};
+use crate::go_runtime::{GoPointerAny, GoShared, GoSharedPointerSlice, GoSharedSlice};
 use crate::reorg::BackfillState;
 use crate::schema_state::SchemaState;
 use crate::serde_helpers::{
     go_json_field_matches, ignore_unknown, impl_go_json_deserialize, impl_go_json_merge_object,
-    FatalSeed, GoPointerSlice, GoValueSlice, NullNoopSeed, OptionMergeSeed, OptionPointerSliceSeed,
-    OptionValueSliceSeed, ValueMergeSeed,
+    FatalSeed, GoPointerSlice, NullNoopSeed, OptionMergeSeed, OptionPointerSliceSeed,
+    SharedStringSliceSeed, ValueMergeSeed,
 };
 use crate::table_info::TableInfo;
 
@@ -217,14 +217,14 @@ impl ColumnarIndexType {
 
 /// Go `RegionSplitPolicy`: a table's region-split policy (defined in
 /// `index.go`, referenced by `TableInfo.TableSplitPolicy`).
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Default, Serialize)]
 pub struct RegionSplitPolicy {
     /// The lower-bound split points.
     #[serde(rename = "lower", default)]
-    pub lower: GoValueSlice<String>,
+    pub lower: GoSharedSlice<String>,
     /// The upper-bound split points.
     #[serde(rename = "upper", default)]
-    pub upper: GoValueSlice<String>,
+    pub upper: GoSharedSlice<String>,
     /// The number of regions.
     #[serde(rename = "regions", default)]
     pub regions: i64,
@@ -232,9 +232,9 @@ pub struct RegionSplitPolicy {
 
 impl_go_json_merge_object!(RegionSplitPolicy, destination, map, key, {
     if go_json_field_matches(&key, "lower") {
-        map.next_value_seed(OptionValueSliceSeed(destination.lower.raw_mut()))?;
+        map.next_value_seed(SharedStringSliceSeed(&mut destination.lower))?;
     } else if go_json_field_matches(&key, "upper") {
-        map.next_value_seed(OptionValueSliceSeed(destination.upper.raw_mut()))?;
+        map.next_value_seed(SharedStringSliceSeed(&mut destination.upper))?;
     } else if go_json_field_matches(&key, "regions") {
         map.next_value_seed(NullNoopSeed(&mut destination.regions))?;
     } else {
@@ -243,6 +243,24 @@ impl_go_json_merge_object!(RegionSplitPolicy, destination, map, key, {
 });
 
 impl_go_json_deserialize!(RegionSplitPolicy);
+
+impl Clone for RegionSplitPolicy {
+    fn clone(&self) -> Self {
+        fn clone_bound(values: &GoSharedSlice<String>) -> GoSharedSlice<String> {
+            if values.is_empty() {
+                return values.clone();
+            }
+            // Go source uses make(len)+copy, so cap is exactly len.
+            GoSharedSlice::from_vec_with_capacity(values.snapshot(), values.len())
+        }
+
+        Self {
+            lower: clone_bound(&self.lower),
+            upper: clone_bound(&self.upper),
+            regions: self.regions,
+        }
+    }
+}
 
 /// Go `IndexColumn`: one column referenced by an index.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
@@ -688,11 +706,13 @@ pub fn is_index_prefix_covered(table: &TableInfo, index: &IndexInfo, columns: &[
         {
             return false;
         }
-        let table_column = table
-            .columns
-            .get(index_column.offset as usize)
-            .expect("nil *ColumnInfo in TableInfo.Columns");
-        index_column.length == -1 || index_column.length >= table_column.read().get_flen()
+        let table_column = table.columns.get(index_column.offset as usize);
+        index_column.length == -1
+            || index_column.length
+                >= table_column
+                    .expect("nil *ColumnInfo in TableInfo.Columns")
+                    .read()
+                    .get_flen()
     })
 }
 
@@ -866,6 +886,49 @@ mod tests {
             serde_json::from_str(r#"{"lower":null,"upper":[]}"#).unwrap();
         assert!(!region.lower.is_allocated());
         assert!(region.upper.is_allocated());
+
+        let allocated_empty = GoSharedSlice::<String>::from_vec_with_capacity(Vec::new(), 4);
+        let empty_region = RegionSplitPolicy {
+            lower: allocated_empty.clone(),
+            ..Default::default()
+        };
+        let empty_clone = empty_region.clone();
+        assert!(empty_clone.lower.backing_ptr_eq(&allocated_empty));
+        assert_eq!(empty_clone.lower.capacity(), 4);
+
+        let bound = GoSharedSlice::from_vec_with_capacity(vec!["a".to_owned()], 4);
+        let bounded_region = RegionSplitPolicy {
+            lower: bound.clone(),
+            ..Default::default()
+        };
+        let bounded_clone = bounded_region.clone();
+        assert!(!bounded_clone.lower.backing_ptr_eq(&bound));
+        assert_eq!(bounded_clone.lower.capacity(), 1);
+        bounded_clone.lower.set(0, "clone".to_owned());
+        assert_eq!(bound.get(0), "a");
+
+        let mut receiving = RegionSplitPolicy {
+            lower: GoSharedSlice::from_vec_with_capacity(
+                vec!["old".to_owned(), "tail".to_owned()],
+                3,
+            ),
+            ..Default::default()
+        };
+        let receiving_alias = receiving.lower.clone();
+        let mut decoder =
+            serde_json::Deserializer::from_str(r#"{"lower":[null,7,"later"],"regions":4}"#);
+        assert!(receiving.go_json_merge(&mut decoder).is_err());
+        assert!(receiving.lower.backing_ptr_eq(&receiving_alias));
+        assert_eq!(receiving.lower.len(), 3);
+        assert_eq!(receiving.lower.get(0), "old");
+        assert_eq!(receiving.lower.get(1), "tail");
+        assert_eq!(receiving.lower.get(2), "later");
+        assert_eq!(receiving.regions, 4);
+
+        let mut decoder = serde_json::Deserializer::from_str(r#"{"lower":null}"#);
+        receiving.go_json_merge(&mut decoder).unwrap();
+        assert!(!receiving.lower.is_allocated());
+        assert!(receiving_alias.is_allocated());
 
         index.name = CiString::new("OldIndex");
         index.table = CiString::new("OldTable");
@@ -1193,6 +1256,31 @@ mod tests {
         out_of_range.columns[0].offset = -1;
         assert!(std::panic::catch_unwind(|| {
             is_index_prefix_covered(&table, &out_of_range, &[CiString::new("a")])
+        })
+        .is_err());
+
+        let nil_column_table = TableInfo {
+            columns: GoSharedPointerSlice::from_nullable(vec![None]),
+            ..Default::default()
+        };
+        let mut nil_column_index = IndexInfo {
+            columns: vec![IndexColumn {
+                name: CiString::new("a"),
+                offset: 0,
+                length: -1,
+                ..Default::default()
+            }]
+            .into(),
+            ..Default::default()
+        };
+        assert!(is_index_prefix_covered(
+            &nil_column_table,
+            &nil_column_index,
+            &[CiString::new("a")]
+        ));
+        nil_column_index.columns[0].length = 0;
+        assert!(std::panic::catch_unwind(|| {
+            is_index_prefix_covered(&nil_column_table, &nil_column_index, &[CiString::new("a")])
         })
         .is_err());
     }

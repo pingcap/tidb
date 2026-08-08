@@ -54,7 +54,11 @@ fn go_64_round_pointer_allocation(bytes: usize) -> usize {
         & !(PAGE_SIZE - 1)
 }
 
-fn go_64_next_slice_capacity(new_len: usize, old_capacity: usize) -> usize {
+pub(crate) fn go_64_next_slice_capacity_for_element(
+    new_len: usize,
+    old_capacity: usize,
+    element_size: usize,
+) -> usize {
     let double_capacity = old_capacity
         .checked_mul(2)
         .expect("Go pointer slice capacity overflow");
@@ -77,14 +81,29 @@ fn go_64_next_slice_capacity(new_len: usize, old_capacity: usize) -> usize {
         candidate = new_len;
     }
     let bytes = candidate
-        .checked_mul(8)
-        .expect("Go pointer slice allocation overflow");
-    go_64_round_pointer_allocation(bytes) / 8
+        .checked_mul(element_size)
+        .expect("Go slice allocation overflow");
+    go_64_round_pointer_allocation(bytes) / element_size
+}
+
+fn go_64_next_slice_capacity(new_len: usize, old_capacity: usize) -> usize {
+    go_64_next_slice_capacity_for_element(new_len, old_capacity, 8)
 }
 
 fn go_64_pointer_slice_decode_capacity(mut capacity: usize, decoded_len: usize) -> usize {
     while capacity < decoded_len {
         capacity = go_64_next_slice_capacity(capacity + 1, capacity);
+    }
+    capacity
+}
+
+pub(crate) fn go_64_slice_decode_capacity(
+    mut capacity: usize,
+    decoded_len: usize,
+    element_size: usize,
+) -> usize {
+    while capacity < decoded_len {
+        capacity = go_64_next_slice_capacity_for_element(capacity + 1, capacity, element_size);
     }
     capacity
 }
@@ -481,6 +500,12 @@ impl<T> Clone for GoSharedSlice<T> {
             len: self.len,
             capacity: self.capacity,
         }
+    }
+}
+
+impl<T> From<Vec<T>> for GoSharedSlice<T> {
+    fn from(values: Vec<T>) -> Self {
+        Self::from_vec(values)
     }
 }
 
