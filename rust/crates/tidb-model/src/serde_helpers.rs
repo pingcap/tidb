@@ -28,6 +28,7 @@ use serde_json::value::RawValue;
 
 use crate::go_runtime::{
     go_64_slice_decode_capacity, GoShared, GoSharedPointerSlice, GoSharedSlice,
+    GoSliceElementLayout,
 };
 
 /// An owned Go slice of non-pointer values with nil/allocation identity.
@@ -1277,8 +1278,12 @@ impl<'de> DeserializeSeed<'de> for SharedStringSliceSeed<'_> {
                 for (index, raw) in elements.into_iter().enumerate() {
                     // A Go string header is 16 bytes on supported 64-bit TiDB
                     // targets and the slice is pointer-bearing.
-                    let grown_capacity =
-                        go_64_slice_decode_capacity(self.0.capacity(), index + 1, 16);
+                    let grown_capacity = go_64_slice_decode_capacity(
+                        self.0.capacity(),
+                        index + 1,
+                        16,
+                        GoSliceElementLayout::PointerBearing,
+                    );
                     self.0.prepare_decode_slot(index, grown_capacity);
                     let mut value = self.0.decode_slot(index);
                     let mut element = serde_json::Deserializer::from_str(raw.get());
@@ -1299,6 +1304,76 @@ impl<'de> DeserializeSeed<'de> for SharedStringSliceSeed<'_> {
         }
 
         deserializer.deserialize_option(SharedStringSliceVisitor(self.0))
+    }
+}
+
+/// Decodes a Go `[]ast.CIStr` while reusing the source backing and each value
+/// receiver. `CIStr.UnmarshalJSON` is a custom unmarshaler, so any non-null
+/// element error stops immediately after its partial receiver mutation.
+pub(crate) struct SharedCiStringSliceSeed<'a>(pub(crate) &'a mut GoSharedSlice<tidb_ast::CiString>);
+
+impl<'de> DeserializeSeed<'de> for SharedCiStringSliceSeed<'_> {
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct CiStringSliceVisitor<'a>(&'a mut GoSharedSlice<tidb_ast::CiString>);
+
+        impl<'de> Visitor<'de> for CiStringSliceVisitor<'_> {
+            type Value = ();
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("null or an array of ast.CIStr values")
+            }
+
+            fn visit_none<E>(self) -> Result<Self::Value, E> {
+                *self.0 = GoSharedSlice::default();
+                Ok(())
+            }
+
+            fn visit_unit<E>(self) -> Result<Self::Value, E> {
+                *self.0 = GoSharedSlice::default();
+                Ok(())
+            }
+
+            fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                let RawArrayMembers(elements) = RawArrayMembers::deserialize(deserializer)?;
+                let decoded_len = elements.len();
+                for (index, raw) in elements.into_iter().enumerate() {
+                    let capacity = go_64_slice_decode_capacity(
+                        self.0.capacity(),
+                        index + 1,
+                        32,
+                        GoSliceElementLayout::PointerBearing,
+                    );
+                    self.0.prepare_decode_slot(index, capacity);
+                    if raw.get() == "null" {
+                        continue;
+                    }
+                    let mut result = Ok(());
+                    self.0.update(index, |value| {
+                        let mut element = serde_json::Deserializer::from_str(raw.get());
+                        result = value
+                            .go_json_merge(&mut element)
+                            .and_then(|()| element.end());
+                    });
+                    if let Err(error) = result {
+                        return Err(serde::de::Error::custom(format!(
+                            "{FATAL_JSON_ERROR_PREFIX}{error}"
+                        )));
+                    }
+                }
+                self.0.finish_decode(decoded_len);
+                Ok(())
+            }
+        }
+
+        deserializer.deserialize_option(CiStringSliceVisitor(self.0))
     }
 }
 

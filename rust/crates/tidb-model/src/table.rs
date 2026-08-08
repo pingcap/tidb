@@ -29,13 +29,13 @@ use tidb_datatype::{ConfigDurationError, FieldType};
 use tidb_parser::auth::UserIdentity;
 
 use crate::column::ColumnInfo;
-use crate::go_runtime::{GoShared, GoSharedPointerSlice};
+use crate::go_runtime::{GoShared, GoSharedPointerSlice, GoSharedSlice, GoSliceElementLayout};
 use crate::index::IndexColumn;
 use crate::schema_state::SchemaState;
 use crate::serde_helpers::{
     go_json_field_matches, ignore_unknown, impl_go_json_deserialize, impl_go_json_merge_object,
     FatalSeed, GoValueSlice, NullNoopSeed, OptionObjectSliceSeed, OptionValueSliceSeed,
-    ValueMergeSeed,
+    SharedCiStringSliceSeed, ValueMergeSeed,
 };
 
 /// Serde adapters for the `ast` enums used by these structs.
@@ -544,10 +544,10 @@ pub struct FKInfo {
     pub ref_table: CiString,
     /// The referenced columns.
     #[serde(rename = "ref_cols")]
-    pub ref_cols: GoValueSlice<CiString>,
+    pub ref_cols: GoSharedSlice<CiString>,
     /// The referencing columns.
     #[serde(rename = "cols")]
-    pub cols: GoValueSlice<CiString>,
+    pub cols: GoSharedSlice<CiString>,
     /// The `ON DELETE` action (an `ast.ReferOptionType` value).
     #[serde(rename = "on_delete", default)]
     pub on_delete: i64,
@@ -566,15 +566,15 @@ impl_go_json_merge_object!(FKInfo, destination, map, key, {
     if go_json_field_matches(&key, "id") {
         map.next_value_seed(NullNoopSeed(&mut destination.id))?;
     } else if go_json_field_matches(&key, "fk_name") {
-        map.next_value_seed(ValueMergeSeed(&mut destination.name))?;
+        map.next_value_seed(FatalSeed(ValueMergeSeed(&mut destination.name)))?;
     } else if go_json_field_matches(&key, "ref_schema") {
-        map.next_value_seed(ValueMergeSeed(&mut destination.ref_schema))?;
+        map.next_value_seed(FatalSeed(ValueMergeSeed(&mut destination.ref_schema)))?;
     } else if go_json_field_matches(&key, "ref_table") {
-        map.next_value_seed(ValueMergeSeed(&mut destination.ref_table))?;
+        map.next_value_seed(FatalSeed(ValueMergeSeed(&mut destination.ref_table)))?;
     } else if go_json_field_matches(&key, "ref_cols") {
-        map.next_value_seed(OptionObjectSliceSeed(destination.ref_cols.raw_mut()))?;
+        map.next_value_seed(SharedCiStringSliceSeed(&mut destination.ref_cols))?;
     } else if go_json_field_matches(&key, "cols") {
-        map.next_value_seed(OptionObjectSliceSeed(destination.cols.raw_mut()))?;
+        map.next_value_seed(SharedCiStringSliceSeed(&mut destination.cols))?;
     } else if go_json_field_matches(&key, "on_delete") {
         map.next_value_seed(NullNoopSeed(&mut destination.on_delete))?;
     } else if go_json_field_matches(&key, "on_update") {
@@ -604,6 +604,34 @@ fn refer_option_string(opt: i64) -> &'static str {
 }
 
 impl FKInfo {
+    /// Go's named `(*FKInfo).Clone` method. Nil receivers panic; both column
+    /// slices use exact `slices.Clone` header/capacity semantics.
+    #[must_use]
+    pub fn clone_like_go(&self) -> Self {
+        Self {
+            id: self.id,
+            name: self.name.clone(),
+            ref_schema: self.ref_schema.clone(),
+            ref_table: self.ref_table.clone(),
+            ref_cols: self
+                .ref_cols
+                .slices_clone(32, GoSliceElementLayout::PointerBearing),
+            cols: self
+                .cols
+                .slices_clone(32, GoSliceElementLayout::PointerBearing),
+            on_delete: self.on_delete,
+            on_update: self.on_update,
+            state: self.state,
+            version: self.version,
+        }
+    }
+
+    /// Nil-receiver-capable Go clone boundary.
+    #[must_use]
+    pub fn clone_pointer(foreign_key: Option<&Self>) -> GoShared<Self> {
+        GoShared::new(foreign_key.expect("nil *FKInfo").clone_like_go())
+    }
+
     /// Go `FKInfo.String`: the `db`.`tb`, CONSTRAINT ... FOREIGN KEY clause.
     /// The referencing columns use their original case; the referenced
     /// schema/table use their lower-case form, and the schema is omitted when
@@ -618,7 +646,7 @@ impl FKInfo {
         buf.push_str("`, CONSTRAINT `");
         buf.push_str(self.name.original());
         buf.push_str("` FOREIGN KEY (");
-        for (i, col) in self.cols.iter().enumerate() {
+        for (i, col) in self.cols.snapshot().iter().enumerate() {
             if i > 0 {
                 buf.push_str(", ");
             }
@@ -633,7 +661,7 @@ impl FKInfo {
         }
         buf.push_str(self.ref_table.lowercase());
         buf.push_str("` (");
-        for (i, col) in self.ref_cols.iter().enumerate() {
+        for (i, col) in self.ref_cols.snapshot().iter().enumerate() {
             if i > 0 {
                 buf.push_str(", ");
             }
@@ -1379,6 +1407,40 @@ mod tests {
     }
 
     #[test]
+    fn fk_clone_uses_slices_clone_and_nil_receiver_panics() {
+        assert!(std::panic::catch_unwind(|| FKInfo::clone_pointer(None)).is_err());
+        let empty = GoSharedSlice::<CiString>::from_vec_with_capacity(Vec::new(), 4);
+        let values = GoSharedSlice::from_vec_with_capacity(
+            (0..18)
+                .map(|index| CiString::new(&format!("c{index}")))
+                .collect(),
+            24,
+        );
+        let source = FKInfo {
+            ref_cols: empty.clone(),
+            cols: values.clone(),
+            ..Default::default()
+        };
+        let structural = source.clone();
+        assert!(structural.ref_cols.backing_ptr_eq(&empty));
+        assert!(structural.cols.backing_ptr_eq(&values));
+
+        let cloned = source.clone_like_go();
+        assert!(!cloned.ref_cols.backing_ptr_eq(&empty));
+        assert_eq!(cloned.ref_cols.capacity(), 0);
+        assert!(!cloned.cols.backing_ptr_eq(&values));
+        assert_eq!(cloned.cols.capacity(), 19);
+        cloned
+            .cols
+            .update(0, |column| *column = CiString::new("clone"));
+        assert_eq!(values.get(0).original(), "c0");
+
+        let nil = FKInfo::default().clone_like_go();
+        assert!(!nil.ref_cols.is_allocated());
+        assert!(!nil.cols.is_allocated());
+    }
+
+    #[test]
     fn changing_field_type_boundary() {
         let mut column = ColumnInfo {
             field_type: tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Long),
@@ -1803,13 +1865,22 @@ mod tests {
             r#"{"ref_cols":[{"O":7,"L":"merged"},null,{"O":"new","L":"new"}],"on_delete":"bad","version":1}"#,
         );
         assert!(foreign_key.go_json_merge(&mut decoder).is_err());
-        assert_eq!(foreign_key.ref_cols.len(), 3);
-        assert_eq!(foreign_key.ref_cols[0].original(), "old");
-        assert_eq!(foreign_key.ref_cols[0].lowercase(), "merged");
-        assert_eq!(foreign_key.ref_cols[1].original(), "");
-        assert_eq!(foreign_key.ref_cols[2].original(), "new");
+        assert_eq!(foreign_key.ref_cols.len(), 1);
+        assert_eq!(foreign_key.ref_cols.get(0).original(), "old");
+        assert_eq!(foreign_key.ref_cols.get(0).lowercase(), "merged");
         assert_eq!(foreign_key.on_delete, 1);
-        assert_eq!(foreign_key.version, 1);
+        assert_eq!(foreign_key.version, 0);
+
+        let mut foreign_key = FKInfo {
+            name: serde_json::from_str(r#"{"O":"before","L":"before"}"#).unwrap(),
+            ..Default::default()
+        };
+        let mut decoder =
+            serde_json::Deserializer::from_str(r#"{"fk_name":{"L":"partial","O":7},"id":9}"#);
+        assert!(foreign_key.go_json_merge(&mut decoder).is_err());
+        assert_eq!(foreign_key.name.original(), "before");
+        assert_eq!(foreign_key.name.lowercase(), "partial");
+        assert_eq!(foreign_key.id, 0);
 
         let referred: ReferredFKInfo = serde_json::from_str(
             r#"{"cols":[null],"child_schema":{"O":"db","L":"db"},"child_table":{"O":"t","L":"t"},"child_fk_name":{"O":"fk","L":"fk"}}"#,
