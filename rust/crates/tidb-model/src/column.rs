@@ -699,11 +699,13 @@ mod tests {
 
     #[test]
     fn unique_changing_column_name_is_case_insensitive_and_fills_first_gap() {
-        let mut table = TableInfo::default();
-        table.columns = vec![
-            col("_col$_Old_0", FieldTypeCode::Long),
-            col("_COL$_OLD_2", FieldTypeCode::Long),
-        ];
+        let mut table = TableInfo {
+            columns: vec![
+                col("_col$_Old_0", FieldTypeCode::Long),
+                col("_COL$_OLD_2", FieldTypeCode::Long),
+            ],
+            ..Default::default()
+        };
         let old = col("Old", FieldTypeCode::Long);
         assert_eq!(gen_unique_changing_column_name(&table, &old), "_Col$_Old_1");
 
@@ -938,8 +940,10 @@ mod tests {
             Some(vec![25, 185, 0])
         );
 
-        let mut html = ColumnInfo::default();
-        html.generated_expr_string = "a < 1 && b > 0".to_owned();
+        let html = ColumnInfo {
+            generated_expr_string: "a < 1 && b > 0".to_owned(),
+            ..Default::default()
+        };
         let encoded = String::from_utf8(crate::serde_helpers::to_go_json(&html).unwrap()).unwrap();
         assert!(encoded.contains(r#""generated_expr_string":"a \u003c 1 \u0026\u0026 b \u003e 0""#));
     }

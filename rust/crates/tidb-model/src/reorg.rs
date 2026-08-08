@@ -642,6 +642,7 @@ mod tests {
         location.name = "UTC".to_owned();
         let mut meta = BackfillMeta {
             row_count: 1,
+            sql_mode: 9,
             start_key: Some(vec![0, 1, 255]),
             end_key: Some(vec![2]),
             warnings: Some(BTreeMap::from([("old".to_owned(), None)])),
@@ -671,7 +672,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(meta.row_count, 3);
-        assert_eq!(meta.sql_mode, 0);
+        assert_eq!(meta.sql_mode, 9);
         assert_eq!(meta.error.as_ref().unwrap().message(), "backfill failed");
         assert_eq!(meta.start_key, Some(vec![0, 1, 255]));
         assert_eq!(meta.end_key, Some(vec![2]));

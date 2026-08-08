@@ -880,6 +880,12 @@ impl std::ops::DerefMut for JobW {
     }
 }
 
+/// Borrowed warning and warning-count maps returned by [`Job::get_warnings`].
+pub type JobWarningsRef<'a> = (
+    Option<&'a BTreeMap<String, Option<TerrorError>>>,
+    Option<&'a BTreeMap<String, i64>>,
+);
+
 impl Job {
     /// Sets the processed row count.
     pub fn set_row_count(&mut self, count: i64) {
@@ -908,12 +914,7 @@ impl Job {
 
     /// Borrows the reorganization warning maps.
     #[must_use]
-    pub fn get_warnings(
-        &self,
-    ) -> (
-        Option<&BTreeMap<String, Option<TerrorError>>>,
-        Option<&BTreeMap<String, i64>>,
-    ) {
+    pub fn get_warnings(&self) -> JobWarningsRef<'_> {
         let metadata = self
             .reorg_meta
             .as_ref()
@@ -1771,9 +1772,11 @@ mod tests {
         assert_eq!(proxy.type_, ActionType::ACTION_ADD_INDEX);
         assert_eq!(proxy.multi_schema_info.unwrap().seq, -1);
 
-        let mut cached = SubJob::default();
-        cached.args = Some(vec![serde_json::json!({"decoded": true})]);
-        cached.raw_args = Some(serde_json::json!({"persisted": true}));
+        let cached = SubJob {
+            args: Some(vec![serde_json::json!({"decoded": true})]),
+            raw_args: Some(serde_json::json!({"persisted": true})),
+            ..Default::default()
+        };
         let clone = cached.clone_without_args();
         assert!(clone.args.is_none());
         assert_eq!(clone.raw_args, cached.raw_args);
@@ -1818,6 +1821,9 @@ mod tests {
 
     #[test]
     fn job_decode_matches_go_object_stream_boundaries() {
+        let mut reorg_meta = DDLReorgMeta::default();
+        reorg_meta.resource_group_name = "existing".to_owned();
+        reorg_meta.warnings = Some(BTreeMap::from([("old".to_owned(), None)]));
         let mut job = Job {
             id: 42,
             row_count: 1,
@@ -1832,11 +1838,7 @@ mod tests {
                 message: "old message".to_owned(),
             }),
             session_vars: Some(BTreeMap::from([("old".to_owned(), "1".to_owned())])),
-            reorg_meta: Some(DDLReorgMeta {
-                resource_group_name: "existing".to_owned(),
-                warnings: Some(BTreeMap::from([("old".to_owned(), None)])),
-                ..Default::default()
-            }),
+            reorg_meta: Some(reorg_meta),
             ..Default::default()
         };
 
@@ -1977,8 +1979,10 @@ mod tests {
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job.encode(true))).is_err()
         );
 
-        let mut sub_job = SubJob::default();
-        sub_job.args = Some(vec![serde_json::json!(1), serde_json::json!(2)]);
+        let sub_job = SubJob {
+            args: Some(vec![serde_json::json!(1), serde_json::json!(2)]),
+            ..Default::default()
+        };
         let mut job = Job {
             version: JobVersion::V2,
             multi_schema_info: Some(MultiSchemaInfo {

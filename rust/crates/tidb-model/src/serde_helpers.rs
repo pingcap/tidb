@@ -366,7 +366,7 @@ pub mod go_bytes {
             .bytes()
             .filter(|byte| !matches!(byte, b'\r' | b'\n'))
             .collect();
-        if compact.len() % 4 != 0 {
+        if !compact.len().is_multiple_of(4) {
             return Err(E::custom("illegal base64 data"));
         }
 

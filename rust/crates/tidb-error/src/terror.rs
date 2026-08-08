@@ -28,6 +28,7 @@ use std::sync::{Arc, LazyLock, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::mysql::{errcode, mysql_state, FormatArg, SqlError};
 use crate::ErrMessage;
+use serde::de::{IgnoredAny, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 const FIXED_CLASSES: [(isize, &str); 27] = [
@@ -592,16 +593,60 @@ struct CompatibleJsonRef<'a> {
     rfc_code: &'a str,
 }
 
-#[derive(Deserialize)]
+#[derive(Default)]
 struct CompatibleJsonOwned {
-    #[serde(default)]
     class: isize,
-    #[serde(default)]
     code: isize,
-    #[serde(default)]
     message: String,
-    #[serde(default, rename = "rfccode")]
     rfc_code: String,
+}
+
+impl<'de> Deserialize<'de> for CompatibleJsonOwned {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct CompatibleJsonVisitor;
+
+        impl<'de> Visitor<'de> for CompatibleJsonVisitor {
+            type Value = CompatibleJsonOwned;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("a TiDB error JSON object")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut value = CompatibleJsonOwned::default();
+                while let Some(key) = map.next_key::<String>()? {
+                    if key.eq_ignore_ascii_case("class") {
+                        if let Some(class) = map.next_value::<Option<isize>>()? {
+                            value.class = class;
+                        }
+                    } else if key.eq_ignore_ascii_case("code") {
+                        if let Some(code) = map.next_value::<Option<isize>>()? {
+                            value.code = code;
+                        }
+                    } else if key.eq_ignore_ascii_case("message") {
+                        if let Some(message) = map.next_value::<Option<String>>()? {
+                            value.message = message;
+                        }
+                    } else if key.eq_ignore_ascii_case("rfccode") {
+                        if let Some(rfc_code) = map.next_value::<Option<String>>()? {
+                            value.rfc_code = rfc_code;
+                        }
+                    } else {
+                        map.next_value::<IgnoredAny>()?;
+                    }
+                }
+                Ok(value)
+            }
+        }
+
+        deserializer.deserialize_map(CompatibleJsonVisitor)
+    }
 }
 
 impl Serialize for TerrorError {
@@ -626,9 +671,11 @@ impl<'de> Deserialize<'de> for TerrorError {
     {
         let compatible = CompatibleJsonOwned::deserialize(deserializer)?;
         let rfc_code = if compatible.rfc_code.is_empty() && compatible.class > 0 {
-            legacy_rfc_class(compatible.class)
-                .map(|class| format!("{class}:{}", compatible.code))
-                .unwrap_or_default()
+            format!(
+                "{}:{}",
+                legacy_rfc_class(compatible.class).unwrap_or_default(),
+                compatible.code
+            )
         } else {
             compatible.rfc_code
         };
@@ -789,5 +836,32 @@ mod registered_std_tests {
         // registered_from_catalog would panic on this, registered_std resolves it.
         let e = TerrorError::registered_std(TerrorClass::Optimizer, TerrorCode::new(8110));
         assert_eq!(e.code().value(), 8110);
+    }
+
+    #[test]
+    fn compatible_json_matches_go_object_boundaries() {
+        let decoded: TerrorError = serde_json::from_str(
+            r#"{
+                "CLASS":21,
+                "code":1,
+                "CODE":2,
+                "message":"kept",
+                "MESSAGE":null,
+                "rfccode":"",
+                "unknown":{"ignored":true}
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(decoded.class(), TerrorClass::Global);
+        assert_eq!(decoded.code().value(), 2);
+        assert_eq!(decoded.message(), "kept");
+        assert_eq!(decoded.rfc_code(), "global:2");
+
+        let unknown_legacy: TerrorError = serde_json::from_str(r#"{"class":99,"code":7}"#).unwrap();
+        assert_eq!(unknown_legacy.rfc_code(), ":7");
+
+        for non_object in ["[]", r#""text""#, "1", "true"] {
+            assert!(serde_json::from_str::<TerrorError>(non_object).is_err());
+        }
     }
 }

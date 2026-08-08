@@ -849,26 +849,28 @@ mod tests {
 
     #[test]
     fn unique_changing_name_and_prefix_coverage_boundaries() {
-        let mut table = TableInfo::default();
-        table.columns = vec![
-            crate::column::ColumnInfo {
-                id: 10,
-                name: CiString::new("a"),
-                offset: 0,
-                field_type: FieldType::new(FieldTypeCode::Varchar).with_flen(8),
+        let mut table = TableInfo {
+            columns: vec![
+                crate::column::ColumnInfo {
+                    id: 10,
+                    name: CiString::new("a"),
+                    offset: 0,
+                    field_type: FieldType::new(FieldTypeCode::Varchar).with_flen(8),
+                    ..Default::default()
+                },
+                crate::column::ColumnInfo {
+                    id: 11,
+                    name: CiString::new("b"),
+                    offset: 1,
+                    ..Default::default()
+                },
+            ],
+            indices: vec![IndexInfo {
+                name: CiString::new("_idx$_Key_0"),
                 ..Default::default()
-            },
-            crate::column::ColumnInfo {
-                id: 11,
-                name: CiString::new("b"),
-                offset: 1,
-                ..Default::default()
-            },
-        ];
-        table.indices = vec![IndexInfo {
-            name: CiString::new("_idx$_Key_0"),
+            }],
             ..Default::default()
-        }];
+        };
         let source = IndexInfo {
             name: CiString::new("Key"),
             columns: vec![IndexColumn {
