@@ -98,6 +98,7 @@ pub mod sample_bytes;
 pub mod sample_collector;
 pub mod scalar_enum;
 pub mod scalar_geometry;
+pub mod sorted_builder;
 pub mod special_global_index;
 pub mod static_partitioned_analysis;
 pub mod stats_cache_inner;
@@ -274,6 +275,7 @@ pub use sample_collector::{
 };
 pub use scalar_enum::{enum_range_values, MAX_NUM_STEP};
 pub use scalar_geometry::{calc_fraction, common_prefix_length, convert_bytes_to_scalar};
+pub use sorted_builder::SortedHistogramBuilder;
 pub use special_global_index::{is_special_global_index, IndexColumnInfo};
 pub use static_partitioned_analysis::{
     gen_sql_for_analyze_static_partition, gen_sql_for_analyze_static_partition_index,
