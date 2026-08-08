@@ -6,6 +6,7 @@ go_test(
     srcs = [
         "main_test.go",
         "point_get_plan_test.go",
+        "pointget_shortcut_bench_test.go",
     ],
     flaky = True,
     shard_count = 8,
