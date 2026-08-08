@@ -191,6 +191,12 @@ mod tests {
 
     #[test]
     fn ts_convert() {
+        assert_eq!(ts_convert_2_time(0), DateTime::<Utc>::UNIX_EPOCH);
+        assert_eq!(
+            ts_convert_2_time((1_u64 << 18) - 1),
+            DateTime::<Utc>::UNIX_EPOCH
+        );
+        assert_eq!(ts_convert_2_time(1_u64 << 18).timestamp_millis(), 1);
         // 1700000000000 ms shifted into the physical position.
         let ts = 1_700_000_000_000u64 << 18;
         assert_eq!(ts_convert_2_time(ts).timestamp_millis(), 1_700_000_000_000);
