@@ -1,0 +1,23 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+
+go_library(
+    name = "go_package_embed_inventory_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/pingcap/tidb/rust/difftests/tools/go_package_embed_inventory",
+    visibility = ["//visibility:private"],
+)
+
+go_binary(
+    name = "go_package_embed_inventory",
+    embed = [":go_package_embed_inventory_lib"],
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "go_package_embed_inventory_test",
+    timeout = "short",
+    srcs = ["main_test.go"],
+    embed = [":go_package_embed_inventory_lib"],
+    flaky = True,
+    shard_count = 3,
+)
