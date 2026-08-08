@@ -177,6 +177,87 @@ func TestInferCollation(t *testing.T) {
 			false,
 			&ExprCollation{CoercibilityImplicit, UNICODE, charset.CharsetBin, charset.CollationBin},
 		},
+		// latin1_bin mixed with latin1_swedish_ci. At equal coercibility the _bin
+		// collation wins regardless of argument order, so latin1_swedish_ci must be
+		// recognized as the non-bin side (see isBinCollation). The collation is not
+		// registered yet and so cannot reach these paths from SQL; these cases pin the
+		// classification so it is not changed by accident before it can be.
+		{
+			[]Expression{
+				newExpression(CoercibilityImplicit, UNICODE, charset.CharsetLatin1, charset.CollationLatin1),
+				newExpression(CoercibilityImplicit, UNICODE, charset.CharsetLatin1, "latin1_swedish_ci"),
+			},
+			false,
+			&ExprCollation{CoercibilityImplicit, UNICODE, charset.CharsetLatin1, charset.CollationLatin1},
+		},
+		{
+			[]Expression{
+				newExpression(CoercibilityImplicit, UNICODE, charset.CharsetLatin1, "latin1_swedish_ci"),
+				newExpression(CoercibilityImplicit, UNICODE, charset.CharsetLatin1, charset.CollationLatin1),
+			},
+			false,
+			&ExprCollation{CoercibilityImplicit, UNICODE, charset.CharsetLatin1, charset.CollationLatin1},
+		},
+		{
+			[]Expression{
+				newExpression(CoercibilityImplicit, UNICODE, charset.CharsetLatin1, "latin1_swedish_ci"),
+				newExpression(CoercibilityImplicit, UNICODE, charset.CharsetLatin1, "latin1_swedish_ci"),
+			},
+			false,
+			&ExprCollation{CoercibilityImplicit, UNICODE, charset.CharsetLatin1, "latin1_swedish_ci"},
+		},
+		// An explicit COLLATE still beats the _bin collation, either way round.
+		{
+			[]Expression{
+				newExpression(CoercibilityExplicit, UNICODE, charset.CharsetLatin1, "latin1_swedish_ci"),
+				newExpression(CoercibilityImplicit, UNICODE, charset.CharsetLatin1, charset.CollationLatin1),
+			},
+			false,
+			&ExprCollation{CoercibilityExplicit, UNICODE, charset.CharsetLatin1, "latin1_swedish_ci"},
+		},
+		{
+			[]Expression{
+				newExpression(CoercibilityImplicit, UNICODE, charset.CharsetLatin1, charset.CollationLatin1),
+				newExpression(CoercibilityExplicit, UNICODE, charset.CharsetLatin1, "latin1_swedish_ci"),
+			},
+			false,
+			&ExprCollation{CoercibilityExplicit, UNICODE, charset.CharsetLatin1, "latin1_swedish_ci"},
+		},
+		// Two conflicting explicit collations cannot be aggregated.
+		{
+			[]Expression{
+				newExpression(CoercibilityExplicit, UNICODE, charset.CharsetLatin1, charset.CollationLatin1),
+				newExpression(CoercibilityExplicit, UNICODE, charset.CharsetLatin1, "latin1_swedish_ci"),
+			},
+			true,
+			nil,
+		},
+		// latin1 is not a Unicode charset, so utf8mb4 wins at equal coercibility.
+		{
+			[]Expression{
+				newExpression(CoercibilityImplicit, UNICODE, charset.CharsetLatin1, "latin1_swedish_ci"),
+				newExpression(CoercibilityImplicit, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB4),
+			},
+			false,
+			&ExprCollation{CoercibilityImplicit, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB4},
+		},
+		{
+			[]Expression{
+				newExpression(CoercibilityImplicit, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB4),
+				newExpression(CoercibilityImplicit, UNICODE, charset.CharsetLatin1, "latin1_swedish_ci"),
+			},
+			false,
+			&ExprCollation{CoercibilityImplicit, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB4},
+		},
+		// binary takes precedence over latin1_swedish_ci at equal coercibility.
+		{
+			[]Expression{
+				newExpression(CoercibilityImplicit, UNICODE, charset.CharsetLatin1, "latin1_swedish_ci"),
+				newExpression(CoercibilityImplicit, UNICODE, charset.CharsetBin, charset.CollationBin),
+			},
+			false,
+			&ExprCollation{CoercibilityImplicit, UNICODE, charset.CharsetBin, charset.CollationBin},
+		},
 		// binary charset with non-binary charset.
 		{
 			[]Expression{
@@ -829,6 +910,15 @@ func TestCompareString(t *testing.T) {
 	require.Equal(t, 0, types.CompareString("ß", "ss", "utf8mb4_0900_ai_ci"))
 	require.NotEqual(t, 0, types.CompareString("\U000FFFFE", "\U000FFFFF", "utf8mb4_0900_ai_ci"))
 	require.Equal(t, 0, types.CompareString("æ", "ae", "utf8mb4_0900_ai_ci"))
+
+	// latin1 collations are byte-oriented, so the arguments are spelled as cp1252
+	// bytes rather than as Go literals, which the compiler would encode as UTF-8.
+	// latin1_swedish_ci is not covered here because it is not registered yet, so
+	// CompareString would silently fall back to another collator; its semantics are
+	// tested directly in pkg/util/collate.
+	require.NotEqual(t, 0, types.CompareString("a", "A", "latin1_bin"))
+	require.NotEqual(t, 0, types.CompareString("\xE9", "E", "latin1_bin"))
+	require.Equal(t, 0, types.CompareString("a ", "a  ", "latin1_bin"))
 
 	require.NotEqual(t, 0, types.CompareString("a", "A", "binary"))
 	require.NotEqual(t, 0, types.CompareString("À", "A", "binary"))
