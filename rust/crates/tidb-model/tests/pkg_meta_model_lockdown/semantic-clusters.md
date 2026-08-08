@@ -201,9 +201,12 @@ remaining package census is 2,509 obligations plus the build artifact.
 
 ## C08: absorbed source locks and package build contract
 
-- Go/Rust unchanged locks: `job_args.go` + `job_args_test.go` / `job_args.rs`,
-  `masking_policy.go` / `masking_policy.rs`, `resource_group.go` /
-  `resource_group.rs`.
+- Go/Rust inventory locks absorbed without rewriting their historical
+  receipts: `job_args.go` + `job_args_test.go` / `job_args.rs`,
+  `masking_policy.go` / `masking_policy.rs`, and `resource_group.go` /
+  `resource_group.rs`. The package decoder extension routes the latter two
+  modules' existing custom persisted-field comparisons through the shared Go
+  Unicode-SimpleFold matcher; long-s and Kelvin-sign boundaries pin the rule.
 - Build owner: `pkg/meta/model/BUILD.bazel`; the package receipt pins all 14
   library sources, all 8 tests, `embedsrcs = ["job.go"]`, `flaky = True`,
   `shard_count = 50`, timeout, and dependency lists.

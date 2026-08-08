@@ -18,6 +18,7 @@ use chrono::{DateTime, Datelike, FixedOffset, TimeZone, Timelike};
 use tidb_ast::{CiString, MaskingPolicyRestrictOps};
 
 use crate::schema_state::SchemaState;
+use crate::serde_helpers::go_json_field_matches;
 
 /// Go `MaskingPolicyStatus` (a `byte`): whether a masking policy is active.
 /// A newtype over `u8` so unknown stored values round-trip and `Display`
@@ -291,69 +292,69 @@ impl<'de> serde::Deserialize<'de> for MaskingPolicyInfo {
             ) -> Result<Self::Value, A::Error> {
                 let mut policy = MaskingPolicyInfo::default();
                 while let Some(key) = map.next_key::<String>()? {
-                    if key.eq_ignore_ascii_case("id") {
+                    if go_json_field_matches(&key, "id") {
                         if let Some(value) = map.next_value::<Option<i64>>()? {
                             policy.id = value;
                         }
-                    } else if key.eq_ignore_ascii_case("name") {
+                    } else if go_json_field_matches(&key, "name") {
                         if let Some(value) = map.next_value::<Option<CiString>>()? {
                             policy.name = value;
                         }
-                    } else if key.eq_ignore_ascii_case("db_name") {
+                    } else if go_json_field_matches(&key, "db_name") {
                         if let Some(value) = map.next_value::<Option<CiString>>()? {
                             policy.db_name = value;
                         }
-                    } else if key.eq_ignore_ascii_case("table_name") {
+                    } else if go_json_field_matches(&key, "table_name") {
                         if let Some(value) = map.next_value::<Option<CiString>>()? {
                             policy.table_name = value;
                         }
-                    } else if key.eq_ignore_ascii_case("table_id") {
+                    } else if go_json_field_matches(&key, "table_id") {
                         if let Some(value) = map.next_value::<Option<i64>>()? {
                             policy.table_id = value;
                         }
-                    } else if key.eq_ignore_ascii_case("column_name") {
+                    } else if go_json_field_matches(&key, "column_name") {
                         if let Some(value) = map.next_value::<Option<CiString>>()? {
                             policy.column_name = value;
                         }
-                    } else if key.eq_ignore_ascii_case("column_id") {
+                    } else if go_json_field_matches(&key, "column_id") {
                         if let Some(value) = map.next_value::<Option<i64>>()? {
                             policy.column_id = value;
                         }
-                    } else if key.eq_ignore_ascii_case("expression") {
+                    } else if go_json_field_matches(&key, "expression") {
                         if let Some(value) = map.next_value::<Option<String>>()? {
                             policy.expression = value;
                         }
-                    } else if key.eq_ignore_ascii_case("status") {
+                    } else if go_json_field_matches(&key, "status") {
                         if let Some(value) = map.next_value::<Option<MaskingPolicyStatus>>()? {
                             policy.status = value;
                         }
-                    } else if key.eq_ignore_ascii_case("masking_type") {
+                    } else if go_json_field_matches(&key, "masking_type") {
                         if let Some(value) = map.next_value::<Option<MaskingPolicyType>>()? {
                             policy.masking_type = value;
                         }
-                    } else if key.eq_ignore_ascii_case("restrict_ops") {
+                    } else if go_json_field_matches(&key, "restrict_ops") {
                         if let Some(value) = map.next_value::<Option<MaskingPolicyRestrictOps>>()? {
                             policy.restrict_ops = value;
                         }
-                    } else if key.eq_ignore_ascii_case("created_at") {
+                    } else if go_json_field_matches(&key, "created_at") {
                         if let Some(value) = map.next_value::<Option<String>>()? {
                             policy.created_at = DateTime::parse_from_rfc3339(&value)
                                 .map_err(serde::de::Error::custom)?;
                         }
-                    } else if key.eq_ignore_ascii_case("updated_at") {
+                    } else if go_json_field_matches(&key, "updated_at") {
                         if let Some(value) = map.next_value::<Option<String>>()? {
                             policy.updated_at = DateTime::parse_from_rfc3339(&value)
                                 .map_err(serde::de::Error::custom)?;
                         }
-                    } else if key.eq_ignore_ascii_case("created_by") {
+                    } else if go_json_field_matches(&key, "created_by") {
                         if let Some(value) = map.next_value::<Option<String>>()? {
                             policy.created_by = value;
                         }
-                    } else if key.eq_ignore_ascii_case("updated_by") {
+                    } else if go_json_field_matches(&key, "updated_by") {
                         if let Some(value) = map.next_value::<Option<String>>()? {
                             policy.updated_by = value;
                         }
-                    } else if key.eq_ignore_ascii_case("state") {
+                    } else if go_json_field_matches(&key, "state") {
                         if let Some(value) = map.next_value::<Option<SchemaState>>()? {
                             policy.state = value;
                         }
@@ -428,7 +429,7 @@ mod tests {
         assert_eq!(all_null, zero);
 
         let duplicate_case: MaskingPolicyInfo = serde_json::from_str(
-            r#"{"ID":1,"id":2,"STATUS":1,"status":null,"MASKING_TYPE":"CUSTOM","masking_type":"future","TABLE_ID":7,"TableID":8,"NAME":{"O":"A","L":"a"}}"#,
+            r#"{"ID":1,"id":2,"STATUS":1,"status":null,"MASKING_TYPE":"CUSTOM","masking_type":"future","TABLE_ID":7,"TableID":8,"NAME":{"O":"A","L":"a"},"expreſsion":"folded"}"#,
         )
         .unwrap();
         assert_eq!(duplicate_case.id, 2);
@@ -436,6 +437,7 @@ mod tests {
         assert_eq!(duplicate_case.masking_type.as_str(), "future");
         assert_eq!(duplicate_case.table_id, 7);
         assert_eq!(duplicate_case.name.original(), "A");
+        assert_eq!(duplicate_case.expression, "folded");
     }
 
     #[test]

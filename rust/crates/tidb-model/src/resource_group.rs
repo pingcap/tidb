@@ -26,6 +26,7 @@ use tidb_ast::{
 
 use crate::go_duration::format_go_duration;
 use crate::schema_state::SchemaState;
+use crate::serde_helpers::go_json_field_matches;
 use crate::setting_builder::{write_setting_integer, write_setting_item, write_setting_string};
 
 /// Go `unlimitedRURate`: the RU-rate sentinel meaning unlimited.
@@ -479,11 +480,11 @@ impl<'de> Deserialize<'de> for GoCiString {
                 let mut original = String::new();
                 let mut lowercase = String::new();
                 while let Some(key) = map.next_key::<String>()? {
-                    if key.eq_ignore_ascii_case("O") {
+                    if go_json_field_matches(&key, "O") {
                         if let Some(value) = map.next_value::<Option<String>>()? {
                             original = value;
                         }
-                    } else if key.eq_ignore_ascii_case("L") {
+                    } else if go_json_field_matches(&key, "L") {
                         if let Some(value) = map.next_value::<Option<String>>()? {
                             lowercase = value;
                         }
@@ -509,31 +510,31 @@ fn update_runaway_field<'de, A: MapAccess<'de>>(
     key: &str,
     map: &mut A,
 ) -> Result<bool, A::Error> {
-    if key.eq_ignore_ascii_case("exec_elapsed_time_ms") {
+    if go_json_field_matches(key, "exec_elapsed_time_ms") {
         if let Some(next) = map.next_value::<Option<u64>>()? {
             value.exec_elapsed_time_ms = next;
         }
-    } else if key.eq_ignore_ascii_case("processed_keys") {
+    } else if go_json_field_matches(key, "processed_keys") {
         if let Some(next) = map.next_value::<Option<i64>>()? {
             value.processed_keys = next;
         }
-    } else if key.eq_ignore_ascii_case("request_unit") {
+    } else if go_json_field_matches(key, "request_unit") {
         if let Some(next) = map.next_value::<Option<i64>>()? {
             value.request_unit = next;
         }
-    } else if key.eq_ignore_ascii_case("action") {
+    } else if go_json_field_matches(key, "action") {
         if let Some(next) = map.next_value::<Option<ResourceGroupRunawayAction>>()? {
             value.action = next;
         }
-    } else if key.eq_ignore_ascii_case("switch_group_name") {
+    } else if go_json_field_matches(key, "switch_group_name") {
         if let Some(next) = map.next_value::<Option<String>>()? {
             value.switch_group_name = next;
         }
-    } else if key.eq_ignore_ascii_case("watch_type") {
+    } else if go_json_field_matches(key, "watch_type") {
         if let Some(next) = map.next_value::<Option<ResourceGroupRunawayWatch>>()? {
             value.watch_type = next;
         }
-    } else if key.eq_ignore_ascii_case("watch_duration_ms") {
+    } else if go_json_field_matches(key, "watch_duration_ms") {
         if let Some(next) = map.next_value::<Option<i64>>()? {
             value.watch_duration_ms = next;
         }
@@ -572,9 +573,9 @@ fn update_background_field<'de, A: MapAccess<'de>>(
     key: &str,
     map: &mut A,
 ) -> Result<bool, A::Error> {
-    if key.eq_ignore_ascii_case("job_types") {
+    if go_json_field_matches(key, "job_types") {
         value.job_types = map.next_value::<Option<Vec<String>>>()?;
-    } else if key.eq_ignore_ascii_case("utilization_limit") {
+    } else if go_json_field_matches(key, "utilization_limit") {
         if let Some(next) = map.next_value::<Option<u64>>()? {
             value.resource_util_limit = next;
         }
@@ -620,7 +621,7 @@ fn is_settings_key(key: &str) -> bool {
         "background",
     ]
     .iter()
-    .any(|candidate| key.eq_ignore_ascii_case(candidate))
+    .any(|candidate| go_json_field_matches(key, candidate))
 }
 
 fn update_settings_field<'de, A: MapAccess<'de>>(
@@ -628,35 +629,35 @@ fn update_settings_field<'de, A: MapAccess<'de>>(
     key: &str,
     map: &mut A,
 ) -> Result<(), A::Error> {
-    if key.eq_ignore_ascii_case("ru_per_sec") {
+    if go_json_field_matches(key, "ru_per_sec") {
         if let Some(next) = map.next_value::<Option<u64>>()? {
             value.ru_rate = next;
         }
-    } else if key.eq_ignore_ascii_case("priority") {
+    } else if go_json_field_matches(key, "priority") {
         if let Some(next) = map.next_value::<Option<u64>>()? {
             value.priority = next;
         }
-    } else if key.eq_ignore_ascii_case("cpu_limit") {
+    } else if go_json_field_matches(key, "cpu_limit") {
         if let Some(next) = map.next_value::<Option<String>>()? {
             value.cpu_limiter = next;
         }
-    } else if key.eq_ignore_ascii_case("io_read_bandwidth") {
+    } else if go_json_field_matches(key, "io_read_bandwidth") {
         if let Some(next) = map.next_value::<Option<String>>()? {
             value.io_read_bandwidth = next;
         }
-    } else if key.eq_ignore_ascii_case("io_write_bandwidth") {
+    } else if go_json_field_matches(key, "io_write_bandwidth") {
         if let Some(next) = map.next_value::<Option<String>>()? {
             value.io_write_bandwidth = next;
         }
-    } else if key.eq_ignore_ascii_case("burst_limit") {
+    } else if go_json_field_matches(key, "burst_limit") {
         if let Some(next) = map.next_value::<Option<i64>>()? {
             value.burst_limit = next;
         }
-    } else if key.eq_ignore_ascii_case("runaway") {
+    } else if go_json_field_matches(key, "runaway") {
         value.runaway = map
             .next_value::<Option<ResourceGroupRunawaySettings>>()?
             .map(ResourceGroupShared::new);
-    } else if key.eq_ignore_ascii_case("background") {
+    } else if go_json_field_matches(key, "background") {
         value.background = map
             .next_value::<Option<ResourceGroupBackgroundSettings>>()?
             .map(ResourceGroupShared::new);
@@ -710,15 +711,15 @@ impl<'de> Deserialize<'de> for ResourceGroupInfo {
                             .settings
                             .get_or_insert_with(|| Box::new(ResourceGroupSettings::default()));
                         update_settings_field(settings, &key, &mut map)?;
-                    } else if key.eq_ignore_ascii_case("id") {
+                    } else if go_json_field_matches(&key, "id") {
                         if let Some(next) = map.next_value::<Option<i64>>()? {
                             value.id = next;
                         }
-                    } else if key.eq_ignore_ascii_case("name") {
+                    } else if go_json_field_matches(&key, "name") {
                         if let Some(next) = map.next_value::<Option<GoCiString>>()? {
                             value.name = next.0;
                         }
-                    } else if key.eq_ignore_ascii_case("state") {
+                    } else if go_json_field_matches(&key, "state") {
                         if let Some(next) = map.next_value::<Option<SchemaState>>()? {
                             value.state = next;
                         }
@@ -758,6 +759,18 @@ mod tests {
             settings.adjust();
             assert_eq!(settings.burst_limit, expected_stored);
         }
+    }
+
+    #[test]
+    fn persisted_json_field_tags_use_go_unicode_simple_fold() {
+        let info: ResourceGroupInfo = serde_json::from_str(
+            r#"{"ru_per_ſec":7,"runaway":{"processed_Keys":9},"name":{"O":"RG","L":"rg"}}"#,
+        )
+        .unwrap();
+        let settings = info.settings.as_ref().unwrap();
+        assert_eq!(settings.ru_rate, 7);
+        assert_eq!(settings.runaway.as_ref().unwrap().read().processed_keys, 9);
+        assert_eq!(info.name.original(), "RG");
     }
 
     #[test]
