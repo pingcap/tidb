@@ -30,7 +30,9 @@ remaining package census is 2,509 obligations plus the build artifact.
 - Rust: `column.rs`, `engine_attribute.rs`.
 - Rules: changing/removing names, field-type delegation, generated columns,
   BIT defaults, lookup/extra-column constructors, engine JSON, storage-class
-  scope, transition rendering, and wrapping unsigned duration arithmetic.
+  scope, transition rendering, wrapping unsigned duration arithmetic, omitted
+  scalar zero values, and nil elements in `StorageClassSettings.Defs`' owning
+  Go pointer slice.
 - Explicit representation boundaries: unrestricted Go `any`, nil versus
   allocated-empty dependency maps, shallow clone pointer identity, Go
   `unsafe.Sizeof`, and byte-exact `json.RawMessage` lexical preservation.
