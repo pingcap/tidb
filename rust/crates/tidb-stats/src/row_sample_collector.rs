@@ -330,6 +330,83 @@ impl RowSampleCollector {
         self.sample_row(row.columns, ordinal)
     }
 
+    /// Go `MergeCollector` for both reservoir and Bernoulli collectors.
+    /// Whole-scan facts merge independently of which rows survive sampling.
+    pub fn merge(&mut self, mut other: Self) -> Result<(), SampleMemoryExceeded> {
+        assert_eq!(
+            self.slots.len(),
+            other.slots.len(),
+            "collector slot count differs"
+        );
+        self.count = self.count.wrapping_add(other.count);
+        self.scanned_ordinal = self.scanned_ordinal.wrapping_add(other.scanned_ordinal);
+        for ((slot, sketch), (other_slot, other_sketch)) in self
+            .slots
+            .iter_mut()
+            .zip(&mut self.sketches)
+            .zip(other.slots.iter().zip(&other.sketches))
+        {
+            slot.null_count = slot.null_count.wrapping_add(other_slot.null_count);
+            slot.total_size = slot.total_size.wrapping_add(other_slot.total_size);
+            sketch.merge(other_sketch);
+        }
+
+        match (self.policy, other.policy) {
+            (
+                SamplePolicy::Reservoir { max_sample_size },
+                SamplePolicy::Reservoir {
+                    max_sample_size: other_size,
+                },
+            ) => {
+                assert_eq!(max_sample_size, other_size, "reservoir sizes differ");
+                for (weight, columns, ordinal) in other.samples.drain(..) {
+                    if max_sample_size == 0 {
+                        continue;
+                    }
+                    if self.samples.len() < max_sample_size {
+                        self.charge(&columns)?;
+                        self.samples.push((weight, columns, ordinal));
+                        if self.samples.len() == max_sample_size {
+                            self.heapify();
+                        }
+                    } else if self.samples[0].0 < weight {
+                        self.samples[0] = (weight, columns, ordinal);
+                        self.sift_down(0);
+                    }
+                }
+            }
+            (
+                SamplePolicy::Bernoulli { sample_rate },
+                SamplePolicy::Bernoulli {
+                    sample_rate: other_rate,
+                },
+            ) => {
+                assert_eq!(sample_rate, other_rate, "sample rates differ");
+                for (_, columns, ordinal) in other.samples.drain(..) {
+                    self.charge(&columns)?;
+                    self.samples.push((0, columns, ordinal));
+                }
+            }
+            _ => panic!("cannot merge different row-sampling policies"),
+        }
+        Ok(())
+    }
+
+    /// Go `DestroyAndPutToPool`: eagerly releases every retained row and
+    /// resets all whole-scan facts.
+    pub fn destroy(&mut self) {
+        self.count = 0;
+        self.scanned_ordinal = 0;
+        self.consumed_bytes = 0;
+        self.samples.clear();
+        for slot in &mut self.slots {
+            *slot = SlotStats::default();
+        }
+        for sketch in &mut self.sketches {
+            *sketch = FmSketch::new(MAX_SKETCH_SIZE);
+        }
+    }
+
     /// The bytes one kept row costs.
     ///
     /// Go's `SampleItem` accounting (`pkg/statistics/row_sampler.go:77`) is

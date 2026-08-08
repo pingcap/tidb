@@ -94,12 +94,39 @@ fn gos_default_quota_is_no_bound_at_all() {
     assert_eq!(SampleMemoryQuota::unlimited().bytes(), None);
     assert_eq!(SampleMemoryQuota::from_setting(4096).bytes(), Some(4096));
 
-    let mut collector =
-        RowSampleCollector::new(1, SamplePolicy::Bernoulli { sample_rate: 1.0 });
+    let mut collector = RowSampleCollector::new(1, SamplePolicy::Bernoulli { sample_rate: 1.0 });
     for value in 0..5_000 {
         offer(&mut collector, value).expect("the default quota bounds nothing");
     }
     let (scanned, _, sampled) = collector.into_parts();
     assert_eq!(scanned, 5_000);
     assert_eq!(sampled.len(), 5_000);
+}
+
+#[test]
+fn source_bernoulli_merge_combines_scan_facts_and_samples() {
+    let policy = SamplePolicy::Bernoulli { sample_rate: 1.0 };
+    let mut left = RowSampleCollector::new(1, policy);
+    let mut right = RowSampleCollector::new(1, policy);
+    offer(&mut left, 1).unwrap();
+    offer(&mut right, 2).unwrap();
+    left.merge(right).unwrap();
+    let (count, slots, samples) = left.into_parts();
+    assert_eq!(count, 2);
+    assert_eq!(slots[0].total_size, 16);
+    assert_eq!(slots[0].ndv, 2);
+    assert_eq!(samples.len(), 2);
+}
+
+#[test]
+fn source_destroy_resets_rows_slots_and_sketches() {
+    let mut collector = RowSampleCollector::new(1, SamplePolicy::Bernoulli { sample_rate: 1.0 });
+    offer(&mut collector, 1).unwrap();
+    collector.destroy();
+    let (count, slots, samples) = collector.into_parts();
+    assert_eq!(count, 0);
+    assert_eq!(slots[0].null_count, 0);
+    assert_eq!(slots[0].total_size, 0);
+    assert_eq!(slots[0].ndv, 0);
+    assert!(samples.is_empty());
 }
