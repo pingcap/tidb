@@ -44,6 +44,7 @@ use tidb_util::memory::Tracker;
 use crate::bounded_min_heap::BoundedMinHeap;
 use crate::cmsketch::TopN;
 use crate::correlation::calc_correlation;
+use crate::go_stable_sort::go_stable_sort_by;
 use crate::histogram::{Bucket, Histogram};
 
 /// Go `topNPruningThreshold`: a singleton value is dropped once the heap
@@ -838,8 +839,8 @@ fn build_hist(
 
 fn sort_builder_samples(samples: &mut [SampleItem]) -> Result<(), DatumValueError> {
     let mut error = None;
-    samples.sort_by(
-        |left, right| match left.value.compare(&right.value, Collation::Binary) {
+    go_stable_sort_by(samples, |left, right| {
+        match left.value.compare(&right.value, Collation::Binary) {
             Ok(ordering) => {
                 error = None;
                 ordering
@@ -848,7 +849,7 @@ fn sort_builder_samples(samples: &mut [SampleItem]) -> Result<(), DatumValueErro
                 error = Some(found);
                 std::cmp::Ordering::Less
             }
-        },
-    );
+        }
+    });
     error.map_or(Ok(()), Err)
 }

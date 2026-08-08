@@ -19,6 +19,8 @@ use std::cmp::Ordering;
 use tidb_datatype::{Collation, Datum, DatumValueError};
 use tidb_util::fastrand::{uint32_n, uint64_n};
 
+use crate::cmsketch::sampled_topn_candidates;
+use crate::go_stable_sort::go_stable_sort_by;
 use crate::{
     decode_cmsketch_and_embedded_topn, encode_cmsketch_without_topn, fm_sketch_from_proto,
     fm_sketch_to_proto, hash_bytes, CmsSketch, CodecError, FmSketch, FmSketchProto,
@@ -32,11 +34,12 @@ pub struct LegacySampleItem {
     pub ordinal: i64,
 }
 
-/// Stable Go `sortSampleItems`, including its first comparison error.
+/// Stable Go `sortSampleItems`, including its comparator-schedule-dependent
+/// final error.
 pub fn sort_legacy_sample_items(items: &mut [LegacySampleItem]) -> Result<(), DatumValueError> {
     let mut error = None;
-    items.sort_by(
-        |left, right| match left.value.compare(&right.value, Collation::Binary) {
+    go_stable_sort_by(items, |left, right| {
+        match left.value.compare(&right.value, Collation::Binary) {
             Ok(ordering) => {
                 error = None;
                 ordering
@@ -45,8 +48,8 @@ pub fn sort_legacy_sample_items(items: &mut [LegacySampleItem]) -> Result<(), Da
                 error = Some(found);
                 Ordering::Less
             }
-        },
-    );
+        }
+    });
     error.map_or(Ok(()), Err)
 }
 
@@ -148,32 +151,53 @@ impl LegacySampleCollector {
     pub fn extract_topn<E>(
         &mut self,
         number: u32,
+        normalize: impl FnMut(&[u8]) -> Result<Vec<u8>, E>,
+    ) -> Result<(), E> {
+        self.extract_topn_with_tie_stabilization(number, false, normalize)
+    }
+
+    /// Go `ExtractTopN` with explicit control of the source
+    /// `StabilizeV1AnalyzeTopN` failpoint.
+    pub fn extract_topn_with_tie_stabilization<E>(
+        &mut self,
+        number: u32,
+        stabilize_equal_counts: bool,
         mut normalize: impl FnMut(&[u8]) -> Result<Vec<u8>, E>,
     ) -> Result<(), E> {
         if number == 0 {
             return Ok(());
         }
-        let mut frequencies = std::collections::HashMap::<Vec<u8>, u64>::new();
-        for sample in &self.samples {
-            *frequencies.entry(sample.encoded.clone()).or_default() += 1;
+        let values: Vec<_> = self
+            .samples
+            .iter()
+            .map(|sample| sample.encoded.clone())
+            .collect();
+        let candidates = sampled_topn_candidates(&values, number, stabilize_equal_counts);
+        // Go replaces c.TopN before processing the first candidate. Each
+        // successful candidate then mutates CMS and TopN immediately, so a
+        // later codec error exposes that prefix rather than rolling it back.
+        self.top_n = Some(TopN::new(candidates.len()));
+        for candidate in candidates {
+            let hash = hash_bytes(&candidate.encoded);
+            let count = self
+                .cmsketch
+                .as_ref()
+                .expect("ExtractTopN requires CMSketch")
+                .query_hashed(hash);
+            let normalized = normalize(&candidate.encoded)?;
+            self.cmsketch
+                .as_mut()
+                .expect("ExtractTopN requires CMSketch")
+                .sub_hashed(hash, count);
+            self.top_n
+                .as_mut()
+                .expect("TopN was initialized above")
+                .append(&normalized, count);
         }
-        let mut candidates: Vec<_> = frequencies.into_iter().collect();
-        candidates.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
-        candidates.truncate(number as usize);
-        let cms = self
-            .cmsketch
+        self.top_n
             .as_mut()
-            .expect("ExtractTopN requires CMSketch");
-        let mut top_n = TopN::new(candidates.len());
-        for (encoded, _) in candidates {
-            let hash = hash_bytes(&encoded);
-            let count = cms.query_hashed(hash);
-            let normalized = normalize(&encoded)?;
-            cms.sub_hashed(hash, count);
-            top_n.append(&normalized, count);
-        }
-        top_n.sort();
-        self.top_n = Some(top_n);
+            .expect("TopN was initialized above")
+            .sort();
         Ok(())
     }
 }

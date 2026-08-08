@@ -64,6 +64,7 @@ pub mod gc_batch_count;
 pub mod global_stats_layout;
 pub mod global_stats_sql_index;
 pub mod global_topn;
+mod go_stable_sort;
 pub mod healthy_metrics;
 pub mod histogram;
 pub mod historical_stats;

@@ -490,6 +490,21 @@ fn new_topn_helper(
     }
 }
 
+/// Go `newTopNHelper`'s selected prefix for callers such as
+/// `SampleCollector.ExtractTopN` that own the later codec/CMS mutation step.
+pub(crate) fn sampled_topn_candidates(
+    sample: &[Vec<u8>],
+    num_top: u32,
+    stabilize_equal_counts: bool,
+) -> Vec<TopNEntry> {
+    let helper = new_topn_helper(sample, num_top, stabilize_equal_counts);
+    helper
+        .sorted
+        .into_iter()
+        .take(helper.actual_num_top as usize)
+        .collect()
+}
+
 fn calculate_default_value(
     helper: &TopNBuildHelper,
     estimate_ndv: u64,

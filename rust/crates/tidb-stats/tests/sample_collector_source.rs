@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use tidb_datatype::Datum;
+use tidb_datatype::{Datum, VectorFloat32};
 use tidb_stats::{
     legacy_row_to_datums, legacy_sample_collector_from_proto, legacy_sample_collector_to_proto,
     sort_legacy_sample_items, CmsSketch, FmSketch, LegacyRecordChunk, LegacySampleBuilder,
@@ -44,6 +44,54 @@ fn source_sort_is_stable_and_total_size_uses_full_encoded_length() {
     };
     collector.calculate_total_size();
     assert_eq!(collector.total_size, 3);
+}
+
+#[test]
+fn source_sort_returns_the_last_comparator_error_on_go_schedule() {
+    let vector = || Datum::new_vector_float32(VectorFloat32::must_create(vec![1.0]));
+    let mut three = vec![
+        LegacySampleItem {
+            value: vector(),
+            encoded: vec![0],
+            ordinal: 0,
+        },
+        item(1),
+        item(2),
+    ];
+    tidb_stats::sample_collector::sort_legacy_sample_items(&mut three).unwrap();
+    assert_eq!(
+        three
+            .iter()
+            .map(|sample| sample.ordinal)
+            .collect::<Vec<_>>(),
+        [1, 2, 0],
+        "later successful insertion comparison clears the earlier vector error"
+    );
+
+    let mut across_blocks = Vec::with_capacity(21);
+    across_blocks.push(LegacySampleItem {
+        value: vector(),
+        encoded: vec![0],
+        ordinal: 0,
+    });
+    across_blocks.extend((1..20).map(item));
+    across_blocks.push(LegacySampleItem {
+        value: Datum::Null,
+        encoded: Vec::new(),
+        ordinal: 20,
+    });
+    tidb_stats::sample_collector::sort_legacy_sample_items(&mut across_blocks).unwrap();
+    let mut expected = vec![20];
+    expected.extend(1..20);
+    expected.push(0);
+    assert_eq!(
+        across_blocks
+            .iter()
+            .map(|sample| sample.ordinal)
+            .collect::<Vec<_>>(),
+        expected,
+        "the 20-item insertion block and final SymMerge follow Go's permutation"
+    );
 }
 
 #[test]
@@ -146,6 +194,78 @@ fn source_extract_topn_zero_and_frequency_boundaries_match() {
     assert_eq!(top_n.num(), 2);
     assert_eq!(top_n.query_bytes(&[1]), Some(3));
     assert_eq!(top_n.query_bytes(&[2]), Some(2));
+}
+
+#[test]
+fn source_extract_topn_keeps_the_two_thirds_candidate_tail() {
+    let mut collector = LegacySampleCollector {
+        cmsketch: Some(CmsSketch::new(5, 2_048)),
+        ..LegacySampleCollector::default()
+    };
+    for value in [b'a', b'a', b'a', b'b', b'b', b'b', b'c', b'c', b'd', b'd'] {
+        collector.cmsketch.as_mut().unwrap().insert_bytes(&[value]);
+        collector.samples.push(LegacySampleItem {
+            value: Datum::Bytes(vec![value]),
+            encoded: vec![value],
+            ordinal: 0,
+        });
+    }
+    let mut normalized_in_order = Vec::new();
+    tidb_stats::sample_collector::LegacySampleCollector::extract_topn_with_tie_stabilization(
+        &mut collector,
+        2,
+        true,
+        |bytes| {
+            normalized_in_order.push(bytes.to_vec());
+            Ok::<_, ()>(bytes.to_vec())
+        },
+    )
+    .unwrap();
+    assert_eq!(normalized_in_order, [b"a", b"b", b"c", b"d"]);
+    assert_eq!(
+        collector.top_n.as_ref().unwrap().num(),
+        4,
+        "Go can retain up to twice the requested TopN at the two-thirds cutoff"
+    );
+}
+
+#[test]
+fn source_extract_topn_error_exposes_completed_prefix_mutation() {
+    let mut collector = LegacySampleCollector {
+        cmsketch: Some(CmsSketch::new(5, 2_048)),
+        ..LegacySampleCollector::default()
+    };
+    for value in [b'a', b'a', b'a', b'b', b'b'] {
+        collector.cmsketch.as_mut().unwrap().insert_bytes(&[value]);
+        collector.samples.push(LegacySampleItem {
+            value: Datum::Bytes(vec![value]),
+            encoded: vec![value],
+            ordinal: 0,
+        });
+    }
+    let result =
+        tidb_stats::sample_collector::LegacySampleCollector::extract_topn_with_tie_stabilization(
+            &mut collector,
+            2,
+            true,
+            |bytes| {
+                if bytes == b"b" {
+                    Err("second candidate failed")
+                } else {
+                    Ok(bytes.to_vec())
+                }
+            },
+        );
+    assert_eq!(result, Err("second candidate failed"));
+    let top_n = collector.top_n.as_ref().expect("Go initializes TopN first");
+    assert_eq!(top_n.num(), 1);
+    assert_eq!(top_n.entries()[0].encoded, b"a");
+    assert_eq!(top_n.entries()[0].count, 3);
+    assert_eq!(
+        collector.cmsketch.as_ref().unwrap().total_count(),
+        2,
+        "candidate one was subtracted before candidate two failed"
+    );
 }
 
 #[test]
