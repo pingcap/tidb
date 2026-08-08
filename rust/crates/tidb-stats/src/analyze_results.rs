@@ -62,7 +62,7 @@ impl<H: AnalyzeHistogramLifecycle, C, T, F> AnalyzeResult<H, C, T, F> {
 pub struct AnalyzeResults<H, C, T, F> {
     pub error: Option<String>,
     pub job: Option<AnalyzeJob>,
-    pub results: Vec<AnalyzeResult<H, C, T, F>>,
+    pub results: Vec<Option<AnalyzeResult<H, C, T, F>>>,
     pub table_id: AnalyzeTableId,
     pub count: i64,
     pub stats_version: i32,
@@ -77,7 +77,10 @@ impl<H: AnalyzeHistogramLifecycle, C, T, F> AnalyzeResults<H, C, T, F> {
     /// the outer result metadata intact.
     pub fn destroy_and_put_to_pool(&mut self) {
         for result in &mut self.results {
-            result.destroy_and_put_to_pool();
+            result
+                .as_mut()
+                .expect("analyze results contains a nil result")
+                .destroy_and_put_to_pool();
         }
     }
 }

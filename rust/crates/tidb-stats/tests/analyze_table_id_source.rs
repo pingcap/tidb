@@ -18,7 +18,7 @@ use tidb_stats::{AnalyzeTableId, NON_PARTITION_TABLE_ID};
 
 #[test]
 fn source_non_partition_identity_uses_table_id() {
-    let table = AnalyzeTableId::new(42, NON_PARTITION_TABLE_ID);
+    let table = tidb_stats::AnalyzeTableId::new(42, NON_PARTITION_TABLE_ID);
     assert_eq!(table.statistics_id(), 42);
     assert!(!table.is_partition_table());
     assert_eq!(table.display_string(), "-1 => 42");
@@ -27,7 +27,7 @@ fn source_non_partition_identity_uses_table_id() {
 #[test]
 fn source_partition_identity_uses_partition_id() {
     let partition = AnalyzeTableId::new(42, 1001);
-    assert_eq!(partition.statistics_id(), 1001);
+    assert_eq!(tidb_stats::AnalyzeTableId::statistics_id(&partition), 1001);
     assert!(partition.is_partition_table());
     assert_eq!(partition.display_string(), "1001 => 42");
 }
@@ -40,7 +40,7 @@ fn source_equals_compares_both_ids_and_nil_shape() {
     assert!(!first.equals(AnalyzeTableId::new(42, 1002)));
     assert!(!first.equals(AnalyzeTableId::new(43, 1001)));
 
-    assert!(AnalyzeTableId::equals_optional(None, None));
+    assert!(tidb_stats::AnalyzeTableId::equals_optional(None, None));
     assert!(!AnalyzeTableId::equals_optional(Some(&first), None));
     assert!(!AnalyzeTableId::equals_optional(None, Some(&first)));
     assert!(AnalyzeTableId::equals_optional(Some(&first), Some(&first)));

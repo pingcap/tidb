@@ -14,7 +14,9 @@
 
 //! Source-backed tests for analyze-job status and progress metadata.
 
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
+
+use chrono::{TimeZone, Utc};
 
 use tidb_stats::{
     AnalyzeJob, AnalyzeProgress, JobType, ANALYZE_FAILED, ANALYZE_FINISHED, ANALYZE_PENDING,
@@ -23,7 +25,7 @@ use tidb_stats::{
 
 #[test]
 fn source_status_labels_and_job_kinds_match_go() {
-    assert_eq!(ANALYZE_PENDING, "pending");
+    assert_eq!(tidb_stats::ANALYZE_PENDING, "pending");
     assert_eq!(ANALYZE_RUNNING, "running");
     assert_eq!(ANALYZE_FINISHED, "finished");
     assert_eq!(ANALYZE_FAILED, "failed");
@@ -36,20 +38,27 @@ fn source_status_labels_and_job_kinds_match_go() {
 #[test]
 fn source_progress_accumulates_until_the_dump_threshold() {
     let progress = AnalyzeProgress::default();
-    let now = SystemTime::UNIX_EPOCH + Duration::from_secs(100);
-    progress.set_last_dump_time(now - Duration::from_secs(10));
+    let now = Utc.timestamp_opt(100, 0).single().unwrap();
+    progress.set_last_dump_time(now - chrono::TimeDelta::seconds(10));
 
-    assert_eq!(progress.update_at(100, now), 0);
+    assert_eq!(
+        tidb_stats::AnalyzeProgress::update_at(&progress, 100, now),
+        0
+    );
     assert_eq!(progress.get_delta_count(), 100);
-    assert_eq!(progress.get_last_dump_time(), now - Duration::from_secs(10));
+    assert_eq!(
+        progress.get_last_dump_time(),
+        now - chrono::TimeDelta::seconds(10)
+    );
 }
 
 #[test]
 fn source_progress_dumps_and_resets_after_threshold_and_interval() {
     let progress = AnalyzeProgress::default();
-    let last_dump_time = SystemTime::UNIX_EPOCH + Duration::from_secs(100);
-    let first_update = last_dump_time + DUMP_TIME_INTERVAL + Duration::from_secs(1);
-    progress.set_last_dump_time(last_dump_time);
+    let last_dump_time = Utc.timestamp_opt(100, 0).single().unwrap();
+    let first_update = last_dump_time
+        + chrono::TimeDelta::from_std(DUMP_TIME_INTERVAL + Duration::from_secs(1)).unwrap();
+    tidb_stats::AnalyzeProgress::set_last_dump_time(&progress, last_dump_time);
 
     const SMALL_COUNT: i64 = 100;
     const LARGE_COUNT: i64 = 15_000_000;
@@ -61,7 +70,7 @@ fn source_progress_dumps_and_resets_after_threshold_and_interval() {
     assert_eq!(progress.get_delta_count(), 0);
     assert_eq!(progress.get_last_dump_time(), first_update);
 
-    let second_update = first_update + Duration::from_secs(1);
+    let second_update = first_update + chrono::TimeDelta::seconds(1);
     assert_eq!(progress.update_at(LARGE_COUNT, second_update), 0);
     assert_eq!(progress.get_delta_count(), LARGE_COUNT);
     assert_eq!(progress.get_last_dump_time(), first_update);
@@ -69,9 +78,9 @@ fn source_progress_dumps_and_resets_after_threshold_and_interval() {
 
 #[test]
 fn source_job_defaults_match_go_zero_values() {
-    let job = AnalyzeJob::default();
-    assert_eq!(job.start_time, SystemTime::UNIX_EPOCH);
-    assert_eq!(job.end_time, SystemTime::UNIX_EPOCH);
+    let job = tidb_stats::AnalyzeJob::default();
+    assert_eq!(job.start_time, tidb_stats::go_zero_time());
+    assert_eq!(job.end_time, tidb_stats::go_zero_time());
     assert_eq!(job.id, None);
     assert!(job.db_name.is_empty());
     assert!(job.table_name.is_empty());

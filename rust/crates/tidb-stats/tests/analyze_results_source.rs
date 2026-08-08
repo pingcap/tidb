@@ -42,7 +42,7 @@ fn source_result_releases_fm_and_destroys_every_histogram_only() {
         fm_sketches: vec![Some(3), None],
         is_index: 1,
     };
-    result.destroy_and_put_to_pool();
+    tidb_stats::AnalyzeResult::destroy_and_put_to_pool(&mut result);
     assert!(result.fm_sketches.is_empty());
     assert_eq!(result.histograms[0].as_ref().unwrap().destroyed, 1);
     assert_eq!(result.histograms[1].as_ref().unwrap().destroyed, 1);
@@ -61,7 +61,7 @@ fn source_outer_result_destroys_every_inner_result_and_keeps_metadata() {
     let mut results = AnalyzeResults {
         error: Some("measured".to_owned()),
         job: None,
-        results: vec![inner(), inner()],
+        results: vec![Some(inner()), Some(inner())],
         table_id: AnalyzeTableId::new(42, NON_PARTITION_TABLE_ID),
         count: 10,
         stats_version: 2,
@@ -70,15 +70,18 @@ fn source_outer_result_destroys_every_inner_result_and_keeps_metadata() {
         base_modify_count: 3,
         for_mv_index_or_global_index: true,
     };
-    results.destroy_and_put_to_pool();
+    tidb_stats::AnalyzeResults::destroy_and_put_to_pool(&mut results);
     assert!(results
         .results
         .iter()
-        .all(|result| result.fm_sketches.is_empty()));
-    assert!(results
-        .results
-        .iter()
-        .all(|result| { result.histograms[0].as_ref().unwrap().destroyed == 1 }));
+        .all(|result| result.as_ref().unwrap().fm_sketches.is_empty()));
+    assert!(results.results.iter().all(|result| {
+        result.as_ref().unwrap().histograms[0]
+            .as_ref()
+            .unwrap()
+            .destroyed
+            == 1
+    }));
     assert_eq!(results.count, 10);
     assert_eq!(results.snapshot, 99);
     assert!(results.for_mv_index_or_global_index);
@@ -93,4 +96,22 @@ fn source_nil_histogram_keeps_go_dereference_failure() {
         ..ResultProbe::default()
     };
     result.destroy_and_put_to_pool();
+}
+
+#[test]
+#[should_panic(expected = "analyze results contains a nil result")]
+fn source_nil_inner_result_keeps_go_dereference_failure() {
+    let mut results = AnalyzeResults::<HistogramProbe, u8, u16, u32> {
+        error: None,
+        job: None,
+        results: vec![None],
+        table_id: AnalyzeTableId::new(42, NON_PARTITION_TABLE_ID),
+        count: 0,
+        stats_version: 0,
+        snapshot: 0,
+        base_count: 0,
+        base_modify_count: 0,
+        for_mv_index_or_global_index: false,
+    };
+    results.destroy_and_put_to_pool();
 }

@@ -20,7 +20,9 @@
 
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Mutex;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
+
+use chrono::{DateTime, TimeDelta, TimeZone, Utc};
 
 /// Analyze job has been queued but has not started.
 pub const ANALYZE_PENDING: &str = "pending";
@@ -40,6 +42,14 @@ pub const MAX_DELTA: i64 = 10_000_000;
 /// Minimum interval between persisted processed-row updates.
 pub const DUMP_TIME_INTERVAL: Duration = Duration::from_secs(5);
 
+/// Go's `time.Time{}` value: midnight UTC on 0001-01-01.
+#[must_use]
+pub fn go_zero_time() -> DateTime<Utc> {
+    Utc.with_ymd_and_hms(1, 1, 1, 0, 0, 0)
+        .single()
+        .expect("year 1 is representable by chrono")
+}
+
 /// Source analyze-job kind values (`iota + 1`).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(i32)]
@@ -53,16 +63,14 @@ pub enum JobType {
 /// Thread-safe processed-row progress for one analyze job.
 #[derive(Debug)]
 pub struct AnalyzeProgress {
-    last_dump_time: Mutex<SystemTime>,
+    last_dump_time: Mutex<DateTime<Utc>>,
     delta_count: AtomicI64,
 }
 
 impl Default for AnalyzeProgress {
     fn default() -> Self {
         Self {
-            // Go's zero time is before every normal wall-clock timestamp;
-            // UNIX_EPOCH provides the same first-update behavior in Rust.
-            last_dump_time: Mutex::new(SystemTime::UNIX_EPOCH),
+            last_dump_time: Mutex::new(go_zero_time()),
             delta_count: AtomicI64::new(0),
         }
     }
@@ -71,14 +79,14 @@ impl Default for AnalyzeProgress {
 impl AnalyzeProgress {
     /// Adds rows using the current wall-clock time.
     pub fn update(&self, row_count: i64) -> i64 {
-        self.update_at(row_count, SystemTime::now())
+        self.update_at(row_count, Utc::now())
     }
 
     /// Adds rows at an explicit time, preserving the source update boundary.
     ///
     /// The explicit timestamp keeps source-backed tests deterministic while
     /// [`Self::update`] remains the production-shaped API.
-    pub fn update_at(&self, row_count: i64, now: SystemTime) -> i64 {
+    pub fn update_at(&self, row_count: i64, now: DateTime<Utc>) -> i64 {
         let new_count = self
             .delta_count
             .fetch_add(row_count, Ordering::SeqCst)
@@ -87,10 +95,10 @@ impl AnalyzeProgress {
             .last_dump_time
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let elapsed = now
-            .duration_since(*last_dump_time)
-            .unwrap_or(Duration::ZERO);
-        if new_count > MAX_DELTA && elapsed > DUMP_TIME_INTERVAL {
+        let elapsed = now.signed_duration_since(*last_dump_time);
+        if new_count > MAX_DELTA
+            && elapsed > TimeDelta::seconds(DUMP_TIME_INTERVAL.as_secs() as i64)
+        {
             self.delta_count.store(0, Ordering::SeqCst);
             *last_dump_time = now;
             return new_count;
@@ -105,7 +113,7 @@ impl AnalyzeProgress {
     }
 
     /// Sets the timestamp of the last persisted update.
-    pub fn set_last_dump_time(&self, time: SystemTime) {
+    pub fn set_last_dump_time(&self, time: DateTime<Utc>) {
         let mut last_dump_time = self
             .last_dump_time
             .lock()
@@ -115,7 +123,7 @@ impl AnalyzeProgress {
 
     /// Returns the timestamp of the last persisted update.
     #[must_use]
-    pub fn get_last_dump_time(&self) -> SystemTime {
+    pub fn get_last_dump_time(&self) -> DateTime<Utc> {
         *self
             .last_dump_time
             .lock()
@@ -127,9 +135,9 @@ impl AnalyzeProgress {
 #[derive(Debug)]
 pub struct AnalyzeJob {
     /// Wall-clock time at which the job started.
-    pub start_time: SystemTime,
+    pub start_time: DateTime<Utc>,
     /// Wall-clock time at which the job ended.
-    pub end_time: SystemTime,
+    pub end_time: DateTime<Utc>,
     /// Storage identifier assigned to this job, when persisted.
     pub id: Option<u64>,
     /// Database containing the analyzed table.
@@ -149,8 +157,8 @@ pub struct AnalyzeJob {
 impl Default for AnalyzeJob {
     fn default() -> Self {
         Self {
-            start_time: SystemTime::UNIX_EPOCH,
-            end_time: SystemTime::UNIX_EPOCH,
+            start_time: go_zero_time(),
+            end_time: go_zero_time(),
             id: None,
             db_name: String::new(),
             table_name: String::new(),

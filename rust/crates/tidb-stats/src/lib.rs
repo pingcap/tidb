@@ -137,8 +137,8 @@ pub use analysis_policy::{
     DEFAULT_AUTO_ANALYZE_MIN_COUNT,
 };
 pub use analyze_jobs::{
-    AnalyzeJob, AnalyzeProgress, JobType, ANALYZE_FAILED, ANALYZE_FINISHED, ANALYZE_PENDING,
-    ANALYZE_RUNNING, DUMP_TIME_INTERVAL, MAX_DELTA,
+    go_zero_time, AnalyzeJob, AnalyzeProgress, JobType, ANALYZE_FAILED, ANALYZE_FINISHED,
+    ANALYZE_PENDING, ANALYZE_RUNNING, DUMP_TIME_INTERVAL, MAX_DELTA,
 };
 pub use analyze_results::{AnalyzeHistogramLifecycle, AnalyzeResult, AnalyzeResults};
 pub use analyze_table_id::{AnalyzeTableId, NON_PARTITION_TABLE_ID};
