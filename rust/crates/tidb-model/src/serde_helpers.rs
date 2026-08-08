@@ -615,6 +615,106 @@ pub(crate) trait GoJsonMerge {
         D: Deserializer<'de>;
 }
 
+/// Reproduces `encoding/json`'s receiver-mutating decode for `ast.CIStr`.
+/// The owning AST type deliberately accepts an additional string shorthand;
+/// persisted model fields do not: Go's source type is the two-field `O`/`L`
+/// object, with ordinary struct duplicate, fold, null, and partial-error rules.
+impl GoJsonMerge for tidb_ast::CiString {
+    fn go_json_merge<'de, D>(&mut self, deserializer: D) -> Result<(), D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct CiStringVisitor<'a>(&'a mut tidb_ast::CiString);
+
+        impl<'de> Visitor<'de> for CiStringVisitor<'_> {
+            type Value = ();
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("an ast.CIStr JSON object")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<(), A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut original = self.0.original().to_owned();
+                let mut lowercase = self.0.lowercase().to_owned();
+                let mut first_error = None;
+                while let Some(key) = map.next_key::<String>()? {
+                    let result = if go_json_field_matches(&key, "O") {
+                        map.next_value_seed(NullNoopSeed(&mut original))
+                    } else if go_json_field_matches(&key, "L") {
+                        map.next_value_seed(NullNoopSeed(&mut lowercase))
+                    } else {
+                        ignore_unknown(&mut map)
+                    };
+                    if let Err(error) = result {
+                        first_error.get_or_insert(error);
+                    }
+                }
+
+                *self.0 = serde_json::from_value(serde_json::json!({
+                    "O": original,
+                    "L": lowercase,
+                }))
+                .expect("two strings always form a valid ast.CIStr");
+                if let Some(error) = first_error {
+                    return Err(error);
+                }
+                Ok(())
+            }
+        }
+
+        deserialize_go_object(deserializer, CiStringVisitor(self))
+    }
+}
+
+/// Merges a non-pointer Go struct field into its existing value. JSON null is
+/// a no-op; a non-null object preserves omitted subfields.
+pub(crate) struct ValueMergeSeed<'a, T>(pub(crate) &'a mut T);
+
+impl<'de, T> DeserializeSeed<'de> for ValueMergeSeed<'_, T>
+where
+    T: GoJsonMerge,
+{
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<(), D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct ValueMergeVisitor<'a, T>(&'a mut T);
+
+        impl<'de, T> Visitor<'de> for ValueMergeVisitor<'_, T>
+        where
+            T: GoJsonMerge,
+        {
+            type Value = ();
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("null or a JSON object")
+            }
+
+            fn visit_none<E>(self) -> Result<(), E> {
+                Ok(())
+            }
+
+            fn visit_unit<E>(self) -> Result<(), E> {
+                Ok(())
+            }
+
+            fn visit_some<D>(self, deserializer: D) -> Result<(), D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                self.0.go_json_merge(deserializer)
+            }
+        }
+
+        deserializer.deserialize_option(ValueMergeVisitor(self.0))
+    }
+}
+
 /// Deserializes a non-pointer field while treating JSON null as a no-op.
 pub(crate) struct NullNoopSeed<'a, T>(pub(crate) &'a mut T);
 
