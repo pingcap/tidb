@@ -371,6 +371,11 @@ fn pkg_meta_model_probe_vector_allocation_boundaries() {
 #[test]
 fn pkg_meta_model_probe_placement_callback_surface() {
     let empty = PlacementSettings::default().to_string();
+    let empty_mode = if empty.is_empty() {
+        "empty-render"
+    } else {
+        "unexpected-nonempty-render"
+    };
     let one = PlacementSettings {
         primary_region: "r1".to_owned(),
         ..Default::default()
@@ -383,7 +388,7 @@ fn pkg_meta_model_probe_placement_callback_surface() {
             (
                 "default-call-site",
                 "zero-settings-default-separator",
-                &empty,
+                empty_mode,
             ),
             (
                 "single-setting-call-site",
