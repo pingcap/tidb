@@ -34,6 +34,7 @@ owned_rust_files = [
   "rust/crates/tidb-stats/src/fmsketch.rs",
   "rust/crates/tidb-stats/src/fmsketch_codec.rs",
   "rust/crates/tidb-stats/src/global_topn.rs",
+  "rust/crates/tidb-stats/src/go_pdqsort.rs",
   "rust/crates/tidb-stats/src/go_stable_sort.rs",
   "rust/crates/tidb-stats/src/histogram.evidence.tsv",
   "rust/crates/tidb-stats/src/histogram.inventory.tsv",
