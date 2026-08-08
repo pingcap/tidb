@@ -6,6 +6,12 @@ This ExecPlan is a living document maintained under `PLANS.md` and the root
 official `hparser-integration` tip
 `e67e11b83b50a0a13ff59c80e6f524558585f48c`.
 
+Receipt-extension work on 2026-08-08 uses accepted dual-remote tip
+`5d4e8dccbe4e9b9a450f57b31db59f8e0447ffe4`. It changes only the existing
+inventory checker, plan, mutation evidence, receipt, Rust receipt gate, and
+this plan; `pkg/util/zeropool/pool.go` and the locked Rust implementation stay
+unchanged.
+
 ## Purpose / Big Picture
 
 Upgrade the existing one-file `pool.go` evidence into an atomic claim for all
@@ -45,6 +51,18 @@ missing represented rule.
 - [x] (2026-08-08) Published by ordinary fast-forward to official
   `hparser-integration`; GitHub API verification confirms the two code commits
   use `dbsid <huanshengchen@gmail.com>`.
+- [x] (2026-08-08) Falsified the publication gate: both the Python checker and
+  Rust receipt test passed while plan rows Z003-Z005 named nonexistent files.
+- [x] (2026-08-08) Upgraded the mutation plan to v2 with a baseline, source
+  path, and SHA-256 evidence for every suite; both independent gates now check
+  every `|`-separated path/hash pair before accepting results.
+- [x] (2026-08-08) Killed and restored six boundary mutations: missing plan
+  source, source/hash width mismatch, and stale source hash, once through the
+  Python gate and once through the Rust gate. The receipt now records 33/33
+  killed mutations across eight suites.
+- [x] (2026-08-08) Complete the branch and clean-worktree Ready gates, verify
+  unchanged ratchets, publish the exact SHA to both remotes, and reclaim only
+  this unit's worktrees and target directories.
 
 ## Surprises & Discoveries
 
@@ -64,6 +82,11 @@ missing represented rule.
   reachability, or GC eviction.
   Evidence: these contracts are language/runtime properties rather than
   distinct syntax nodes, so they require a separately hashed evidence table.
+- Observation: content-addressing the plan file in the outer receipt did not
+  make the paths inside the plan true.
+  Evidence: `python3 rust/scripts/pkg-zeropool-lockdown.py` and the Rust
+  `zeropool_lockdown` test both passed at accepted tip `5d4e8dccbe` although
+  rows Z003-Z005 referred to files that did not exist.
 
 ## Decision Log
 
@@ -83,6 +106,13 @@ missing represented rule.
   Rationale: this keeps the complete legacy contract visible without treating
   language/runtime differences as missing generated AST rows.
   Date/Author: 2026-08-08 / Codex
+- Decision: validate source evidence uniformly for plan and result rows rather
+  than special-casing the three bad paths.
+  Rationale: one shared path/hash validator closes missing-file, list-width,
+  and stale-hash variants for every current and future suite. The plan carries
+  each suite's baseline explicitly because the original 27 probes and the six
+  receipt-extension probes were measured at different accepted baselines.
+  Date/Author: 2026-08-08 / Codex
 
 ## Outcomes & Retrospective
 
@@ -95,6 +125,12 @@ checks, and `make -j12 lint`.
 
 The first Ready replay had one unrelated flaky spill-file cleanup failure in
 `tidb-executor`; its targeted rerun and the subsequent full replay passed.
+
+The receipt extension found no Go/Rust behavior divergence and deliberately
+moved no oracle. Its deliverable is that invalid mutation-plan evidence can no
+longer publish: the old false-positive baseline passed, while all six
+missing-path, width-drift, and hash-drift probes failed their named gate and
+restored the exact plan bytes.
 
 ## Context and Orientation
 
