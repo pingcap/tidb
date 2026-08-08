@@ -179,6 +179,11 @@ impl Column {
     }
 
     #[must_use]
+    pub const fn is_full_load(&self) -> bool {
+        self.stats_loaded_status.is_full_load()
+    }
+
+    #[must_use]
     pub const fn stats_version(&self) -> i64 {
         self.stats_version
     }

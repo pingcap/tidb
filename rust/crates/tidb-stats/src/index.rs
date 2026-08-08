@@ -26,6 +26,7 @@ pub struct IndexInfo {
     pub name: String,
     /// Lower-cased indexed-column names in index order.
     pub columns: Vec<String>,
+    pub mv_index: bool,
 }
 
 /// An index histogram and its optional sketches.
@@ -105,6 +106,11 @@ impl Index {
     #[must_use]
     pub const fn is_evicted(&self) -> bool {
         self.stats_loaded_status.evicted_status() != ALL_LOADED
+    }
+
+    #[must_use]
+    pub const fn is_full_load(&self) -> bool {
+        self.stats_loaded_status.is_full_load()
     }
 
     #[must_use]

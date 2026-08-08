@@ -116,6 +116,7 @@ pub mod stats_table_snapshot;
 pub mod stats_version;
 pub mod status;
 pub mod sync_load_concurrency;
+pub mod table;
 pub mod table_id_filter;
 pub mod topn_merge_task;
 pub mod usage_collector;
@@ -304,6 +305,9 @@ pub use stats_version::{
 };
 pub use status::{StatsLoadedStatus, ALL_EVICTED, ALL_LOADED};
 pub use sync_load_concurrency::sync_load_concurrency_for_cpu;
+pub use table::{
+    CopyIntent, HistColl, SharedColumn, SharedIndex, Table, PSEUDO_ROW_COUNT, PSEUDO_VERSION,
+};
 pub use table_id_filter::build_in_table_ids_string;
 pub use topn_merge_task::TopnStatsMergeTask;
 pub use usage_collector::{

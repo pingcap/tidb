@@ -1,0 +1,465 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! Aggregate `HistColl` and `Table` ownership from `pkg/statistics/table.go`.
+
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
+
+use crate::{ColAndIdxExistenceMap, Column, Index, StatsLoadedStatus};
+
+pub const PSEUDO_VERSION: u64 = 0;
+pub const PSEUDO_ROW_COUNT: i64 = 10_000;
+
+pub type SharedColumn = Arc<RwLock<Column>>;
+pub type SharedIndex = Arc<RwLock<Index>>;
+
+fn read<T>(lock: &RwLock<T>) -> RwLockReadGuard<'_, T> {
+    lock.read().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn write<T>(lock: &RwLock<T>) -> RwLockWriteGuard<'_, T> {
+    lock.write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CopyIntent {
+    MetaOnly,
+    ColumnMapWritable,
+    IndexMapWritable,
+    BothMapsWritable,
+    AllDataWritable,
+}
+
+#[derive(Clone, Debug)]
+pub struct HistColl {
+    columns: Arc<RwLock<HashMap<i64, SharedColumn>>>,
+    indices: Arc<RwLock<HashMap<i64, SharedIndex>>>,
+    pub physical_id: i64,
+    pub realtime_count: i64,
+    pub modify_count: i64,
+    pub stats_version: i32,
+    pub pseudo: bool,
+    pub cannot_trigger_load: bool,
+    pub idx_to_col_unique_ids: HashMap<i64, Vec<i64>>,
+    pub col_unique_id_to_idx_ids: HashMap<i64, Vec<i64>>,
+    pub unique_id_to_col_info_id: HashMap<i64, i64>,
+    pub mv_idx_to_columns: HashMap<i64, Vec<i64>>,
+}
+
+impl HistColl {
+    #[must_use]
+    pub fn new(
+        physical_id: i64,
+        realtime_count: i64,
+        modify_count: i64,
+        column_capacity: usize,
+        index_capacity: usize,
+    ) -> Self {
+        Self {
+            columns: Arc::new(RwLock::new(HashMap::with_capacity(column_capacity))),
+            indices: Arc::new(RwLock::new(HashMap::with_capacity(index_capacity))),
+            physical_id,
+            realtime_count,
+            modify_count,
+            stats_version: 0,
+            pseudo: false,
+            cannot_trigger_load: false,
+            idx_to_col_unique_ids: HashMap::new(),
+            col_unique_id_to_idx_ids: HashMap::new(),
+            unique_id_to_col_info_id: HashMap::new(),
+            mv_idx_to_columns: HashMap::new(),
+        }
+    }
+
+    pub fn set_column(&self, id: i64, column: Column) {
+        write(&self.columns).insert(id, Arc::new(RwLock::new(column)));
+    }
+
+    pub fn set_index(&self, id: i64, index: Index) {
+        write(&self.indices).insert(id, Arc::new(RwLock::new(index)));
+    }
+
+    #[must_use]
+    pub fn get_column(&self, id: i64) -> Option<SharedColumn> {
+        read(&self.columns).get(&id).cloned()
+    }
+
+    #[must_use]
+    pub fn get_index(&self, id: i64) -> Option<SharedIndex> {
+        read(&self.indices).get(&id).cloned()
+    }
+
+    #[must_use]
+    pub fn column_count(&self) -> usize {
+        read(&self.columns).len()
+    }
+
+    #[must_use]
+    pub fn index_count(&self) -> usize {
+        read(&self.indices).len()
+    }
+
+    pub fn for_each_column(&self, mut visit: impl FnMut(i64, &Column) -> bool) {
+        for (id, column) in read(&self.columns).iter() {
+            if visit(*id, &read(column)) {
+                return;
+            }
+        }
+    }
+
+    pub fn for_each_index(&self, mut visit: impl FnMut(i64, &Index) -> bool) {
+        for (id, index) in read(&self.indices).iter() {
+            if visit(*id, &read(index)) {
+                return;
+            }
+        }
+    }
+
+    #[must_use]
+    pub fn stable_columns(&self) -> Vec<SharedColumn> {
+        let mut columns: Vec<_> = read(&self.columns).values().cloned().collect();
+        columns.sort_by_key(|column| read(column).histogram.id);
+        columns
+    }
+
+    #[must_use]
+    pub fn stable_indices(&self) -> Vec<SharedIndex> {
+        let mut indices: Vec<_> = read(&self.indices).values().cloned().collect();
+        indices.sort_by_key(|index| read(index).histogram.id);
+        indices
+    }
+
+    pub fn set_all_indices_full_load_for_bootstrap(&self) {
+        for index in read(&self.indices).values() {
+            write(index).stats_loaded_status = StatsLoadedStatus::full_load();
+        }
+    }
+
+    pub fn calculate_pre_scalar_counts(&self) {
+        for index in read(&self.indices).values() {
+            let mut index = write(index);
+            for position in 1..index.histogram.buckets.len() {
+                let previous = index.histogram.buckets[position - 1].count;
+                index.histogram.buckets[position].count = index.histogram.buckets[position]
+                    .count
+                    .wrapping_add(previous);
+            }
+        }
+        for column in read(&self.columns).values() {
+            let mut column = write(column);
+            for position in 1..column.histogram.buckets.len() {
+                let previous = column.histogram.buckets[position - 1].count;
+                column.histogram.buckets[position].count = column.histogram.buckets[position]
+                    .count
+                    .wrapping_add(previous);
+            }
+        }
+    }
+
+    pub fn drop_evicted(&self) {
+        for column in read(&self.columns).values() {
+            let mut column = write(column);
+            if column.is_stats_initialized() && !column.is_all_evicted() {
+                column.drop_unnecessary_data();
+            }
+        }
+        for index in read(&self.indices).values() {
+            let mut index = write(index);
+            if index.stats_loaded_status.stats_initialized() && !index.is_all_evicted() {
+                index.drop_unnecessary_data();
+            }
+        }
+    }
+
+    /// Stable column-first, index-second source order.
+    #[must_use]
+    pub fn analyze_row_count(&self) -> f64 {
+        for column in self.stable_columns() {
+            let column = read(&column);
+            if column.is_full_load() {
+                return column.total_row_count();
+            }
+        }
+        for index in self.stable_indices() {
+            let index = read(&index);
+            if index.info.as_ref().is_some_and(|info| info.mv_index) {
+                continue;
+            }
+            if index.is_full_load() {
+                return index.total_row_count();
+            }
+        }
+        -1.0
+    }
+
+    #[must_use]
+    pub fn scaled_realtime_and_modify_count(&self, index: Option<&Index>) -> (i64, i64) {
+        let Some(index) = index else {
+            return (self.realtime_count, self.modify_count);
+        };
+        if !index.info.as_ref().is_some_and(|info| info.mv_index) || !index.is_full_load() {
+            return (self.realtime_count, self.modify_count);
+        }
+        let analyzed = self.analyze_row_count();
+        let index_total = index.total_row_count();
+        if analyzed <= 0.0 || index_total <= 0.0 {
+            return (self.realtime_count, self.modify_count);
+        }
+        let scale = index_total / analyzed;
+        (
+            (self.realtime_count as f64 * scale) as i64,
+            (self.modify_count as f64 * scale) as i64,
+        )
+    }
+
+    fn shallow_clone_columns(&self) -> Arc<RwLock<HashMap<i64, SharedColumn>>> {
+        Arc::new(RwLock::new(read(&self.columns).clone()))
+    }
+
+    fn shallow_clone_indices(&self) -> Arc<RwLock<HashMap<i64, SharedIndex>>> {
+        Arc::new(RwLock::new(read(&self.indices).clone()))
+    }
+
+    fn deep_clone_columns(&self) -> Arc<RwLock<HashMap<i64, SharedColumn>>> {
+        Arc::new(RwLock::new(
+            read(&self.columns)
+                .iter()
+                .map(|(id, column)| (*id, Arc::new(RwLock::new(read(column).copy()))))
+                .collect(),
+        ))
+    }
+
+    fn deep_clone_indices(&self) -> Arc<RwLock<HashMap<i64, SharedIndex>>> {
+        Arc::new(RwLock::new(
+            read(&self.indices)
+                .iter()
+                .map(|(id, index)| (*id, Arc::new(RwLock::new(read(index).copy()))))
+                .collect(),
+        ))
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Table {
+    pub existence_map: Option<Arc<RwLock<ColAndIdxExistenceMap>>>,
+    pub hist_coll: HistColl,
+    pub version: u64,
+    pub last_analyze_version: u64,
+    pub last_stats_hist_version: u64,
+    pub table_info_update_ts: u64,
+    pub is_pk_handle: bool,
+}
+
+impl Table {
+    pub fn delete_column(&self, id: i64) {
+        write(&self.hist_coll.columns).remove(&id);
+        if let Some(map) = &self.existence_map {
+            write(map).delete_column_not_found(id);
+        }
+    }
+
+    pub fn delete_index(&self, id: i64) {
+        write(&self.hist_coll.indices).remove(&id);
+        if let Some(map) = &self.existence_map {
+            write(map).delete_index_not_found(id);
+        }
+    }
+
+    #[must_use]
+    pub fn copy_as(&self, intent: CopyIntent) -> Self {
+        let (columns, indices) = match intent {
+            CopyIntent::MetaOnly => (
+                Arc::clone(&self.hist_coll.columns),
+                Arc::clone(&self.hist_coll.indices),
+            ),
+            CopyIntent::ColumnMapWritable => (
+                self.hist_coll.shallow_clone_columns(),
+                Arc::clone(&self.hist_coll.indices),
+            ),
+            CopyIntent::IndexMapWritable => (
+                Arc::clone(&self.hist_coll.columns),
+                self.hist_coll.shallow_clone_indices(),
+            ),
+            CopyIntent::BothMapsWritable => (
+                self.hist_coll.shallow_clone_columns(),
+                self.hist_coll.shallow_clone_indices(),
+            ),
+            CopyIntent::AllDataWritable => (
+                self.hist_coll.deep_clone_columns(),
+                self.hist_coll.deep_clone_indices(),
+            ),
+        };
+        let existence_map = match intent {
+            CopyIntent::MetaOnly => self.existence_map.clone(),
+            _ => self
+                .existence_map
+                .as_ref()
+                .map(|map| Arc::new(RwLock::new(read(map).deep_clone()))),
+        };
+        Self {
+            existence_map,
+            hist_coll: HistColl {
+                columns,
+                indices,
+                physical_id: self.hist_coll.physical_id,
+                realtime_count: self.hist_coll.realtime_count,
+                modify_count: self.hist_coll.modify_count,
+                stats_version: self.hist_coll.stats_version,
+                pseudo: self.hist_coll.pseudo,
+                cannot_trigger_load: false,
+                idx_to_col_unique_ids: HashMap::new(),
+                col_unique_id_to_idx_ids: HashMap::new(),
+                unique_id_to_col_info_id: HashMap::new(),
+                mv_idx_to_columns: HashMap::new(),
+            },
+            version: self.version,
+            last_analyze_version: self.last_analyze_version,
+            last_stats_hist_version: self.last_stats_hist_version,
+            table_info_update_ts: self.table_info_update_ts,
+            is_pk_handle: false,
+        }
+    }
+
+    #[must_use]
+    pub const fn is_analyzed(&self) -> bool {
+        self.last_analyze_version > 0
+    }
+
+    #[must_use]
+    pub fn meets_auto_analyze_min_count(&self, threshold: i64) -> bool {
+        self.hist_coll.realtime_count >= threshold
+    }
+
+    #[must_use]
+    pub fn is_eligible_for_analysis(&self, threshold: i64) -> bool {
+        self.meets_auto_analyze_min_count(threshold) && !self.hist_coll.pseudo
+    }
+
+    #[must_use]
+    pub fn stats_healthy(&self) -> (i64, bool) {
+        if self.hist_coll.pseudo {
+            return (0, false);
+        }
+        if !self.is_analyzed() {
+            return (0, true);
+        }
+        let analyzed = self.hist_coll.analyze_row_count();
+        let count = if analyzed > 0.0 {
+            analyzed
+        } else {
+            self.hist_coll.realtime_count as f64
+        };
+        let healthy = if (self.hist_coll.modify_count as f64) < count {
+            ((1.0 - self.hist_coll.modify_count as f64 / count) * 100.0) as i64
+        } else if self.hist_coll.modify_count == 0 {
+            100
+        } else {
+            0
+        };
+        (healthy, true)
+    }
+
+    #[must_use]
+    pub fn column_load_needed(
+        &self,
+        id: i64,
+        full_load: bool,
+    ) -> (Option<SharedColumn>, bool, bool) {
+        if self.hist_coll.pseudo {
+            return (None, false, false);
+        }
+        let map = self
+            .existence_map
+            .as_ref()
+            .expect("table has no existence map");
+        let map = read(map);
+        let analyzed = map.has_analyzed(id, false);
+        let column = self.hist_coll.get_column(id);
+        let Some(column) = column else {
+            return (None, map.has(id, false), analyzed);
+        };
+        if !analyzed {
+            return (None, false, false);
+        }
+        let needed = {
+            let value = read(&column);
+            (full_load && !value.is_full_load()) || (!full_load && !value.is_stats_initialized())
+        };
+        (Some(column), needed, true)
+    }
+
+    #[must_use]
+    pub fn index_load_needed(&self, id: i64) -> (Option<SharedIndex>, bool) {
+        let index = self.hist_coll.get_index(id);
+        let map = self
+            .existence_map
+            .as_ref()
+            .expect("table has no existence map");
+        if index.is_none() && read(map).has_analyzed(id, true) {
+            return (None, true);
+        }
+        let needed = index.as_ref().is_some_and(|index| {
+            let index = read(index);
+            index.is_analyzed() && !index.is_full_load()
+        });
+        (index, needed)
+    }
+
+    #[must_use]
+    pub fn is_initialized(&self) -> bool {
+        self.hist_coll
+            .stable_columns()
+            .iter()
+            .any(|column| read(column).is_stats_initialized())
+            || self
+                .hist_coll
+                .stable_indices()
+                .iter()
+                .any(|index| read(index).stats_loaded_status.stats_initialized())
+    }
+
+    #[must_use]
+    pub fn is_outdated(&self, ratio: f64) -> bool {
+        let analyzed = self.hist_coll.analyze_row_count();
+        let row_count = if analyzed < 0.0 {
+            self.hist_coll.realtime_count as f64
+        } else {
+            analyzed
+        };
+        row_count > 0.0 && self.hist_coll.modify_count as f64 / row_count > ratio
+    }
+
+    #[must_use]
+    pub fn index_starting_with_column(&self, name: &str) -> Option<SharedIndex> {
+        self.hist_coll.stable_indices().into_iter().find(|index| {
+            read(index)
+                .info
+                .as_ref()
+                .and_then(|info| info.columns.first())
+                .is_some_and(|column| column == name)
+        })
+    }
+
+    #[must_use]
+    pub fn column_by_name(&self, name: &str) -> Option<SharedColumn> {
+        self.hist_coll.stable_columns().into_iter().find(|column| {
+            read(column)
+                .info
+                .as_ref()
+                .is_some_and(|info| info.name == name)
+        })
+    }
+}

@@ -31,6 +31,7 @@ fn populated_index(version: i64) -> Index {
             id: 9,
             name: "idx_a".to_owned(),
             columns: vec!["a".to_owned()],
+            mv_index: false,
         }),
         histogram: Histogram {
             id: 9,
