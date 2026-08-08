@@ -1,0 +1,62 @@
+{
+  "artifact_count": 8,
+  "category_counts": {
+    "branch": 92,
+    "closure": 4,
+    "const": 178,
+    "declaration": 4,
+    "field": 16,
+    "function": 186,
+    "loop": 50,
+    "short_circuit": 20,
+    "test": 97,
+    "test_assertion": 1210,
+    "test_branch": 208,
+    "test_helper": 26,
+    "test_helper_closure": 143,
+    "test_loop": 86,
+    "test_row": 161,
+    "test_short_circuit": 14,
+    "test_support_declaration": 1,
+    "test_switch_case": 3,
+    "var": 2
+  },
+  "claim_boundary": "file-lockdown-seed-not-package-completion",
+  "direct_test_support_obligation_count": 1951,
+  "go_package": "pkg/session",
+  "mutation_count": 12,
+  "mutation_suites": 8,
+  "obligation_count": 2501,
+  "owned_file_sha256": {
+    "rust/crates/tidb-exec/src/upgrade_versions.artifacts.tsv": "1c3f0eabd8a2521b2d60c9ea85d17cfc3ec4d3fff76ecb3f3d0aa2f44db1ea05",
+    "rust/crates/tidb-exec/src/upgrade_versions.inventory.tsv": "31cc91a73dd830492f452ccae3d5611deaa82f680915b453d1966cde3aa360ad",
+    "rust/crates/tidb-exec/src/upgrade_versions.mutation-plan.tsv": "b639d988e6d7ee8cac462a93661f75763208a20acd56c95ffa6c8698082beb69",
+    "rust/crates/tidb-exec/src/upgrade_versions.mutation-results.tsv": "fa53dbe620e220d00e867de738e4008715f333a61f4cef1d914091bb66b12e23",
+    "rust/crates/tidb-exec/src/upgrade_versions.rs": "332ddf78856cdbaf9b422715236296b6021d29899bd285dd39d7b27748e52aab",
+    "rust/crates/tidb-exec/tests/upgrade_versions_source.rs": "6ae43caf8d25012f69a847636ecb7efc0d447306fa42757527f16a8f5959041d",
+    "rust/docs/operations/pkg-session-upgrade-def-go-lockdown-execplan.md": "0be88b60c177071750999b6523054ba0f63b1a77b8decb54102634ab69418880",
+    "rust/scripts/pkg-session-upgrade-def-lockdown.py": "69ab861a0e5bf67cb1e5dfb2a6849edc932318ac2557de3bf71949898c5242a4"
+  },
+  "owning_go_source": "pkg/session/upgrade_def.go",
+  "ported_obligation_count": 181,
+  "ported_symbol_count": 4,
+  "production_obligation_count": 550,
+  "reachable_ported_rule_count": 181,
+  "schema": "pkg-session-upgrade-def-file-lockdown-v1",
+  "source_obligation_counts": {
+    "pkg/session/bootstrap_test.go": 734,
+    "pkg/session/session_test.go": 27,
+    "pkg/session/test/bootstraptest/boot_test.go": 344,
+    "pkg/session/test/bootstraptest/bootstrap_upgrade_test.go": 581,
+    "pkg/session/test/bootstraptest2/boot_test.go": 92,
+    "pkg/session/upgrade_backfill_test.go": 156,
+    "pkg/session/upgrade_def.go": 550,
+    "pkg/session/upgrade_test.go": 17
+  },
+  "source_seed_commit": "c8dbb60fb5756fe782cae5442cb84fa33007b192",
+  "status_counts": {
+    "DECLINED": 2320,
+    "PORTED": 181
+  },
+  "whole_go_package_complete": false
+}
