@@ -2,9 +2,7 @@
 options:
   no_parent_owners: true
 filters:
-  "(OWNERS|upgrade_def\\.go)$":
+  "(OWNERS|(sysvar|tidb_vars)\\.go)$":
     approvers:
       - sig-critical-approvers-tidb-server
-  "(bootstrap\\.go|upgrade_run\\.go)$":
-    approvers:
-      - sig-approvers-ddl
+
