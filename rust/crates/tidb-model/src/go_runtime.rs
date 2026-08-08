@@ -593,10 +593,7 @@ impl<T> GoSharedPointerSlice<T> {
         &self,
         null_policy: GoNullClonePolicy,
         mut clone_pointee: impl FnMut(&T) -> U,
-    ) -> GoSharedPointerSlice<U>
-    where
-        T: Clone,
-    {
+    ) -> GoSharedPointerSlice<U> {
         GoSharedPointerSlice::from_handles(
             self.handles()
                 .into_iter()
