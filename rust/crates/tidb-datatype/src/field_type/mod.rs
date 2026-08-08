@@ -463,7 +463,10 @@ impl FieldTypeCode {
 #[derive(Debug, Clone)]
 pub struct FieldType {
     code: FieldTypeCode,
-    flags: u32,
+    // Go `pkg/parser/types.FieldType.flag` is a `uint`. Keep the complete
+    // 64-bit word even though every currently defined MySQL flag fits in the
+    // low 32 bits and the tipb wire field is only 32 bits wide.
+    flags: u64,
     flen: i64,
     decimal: i64,
     collation: Collation,
@@ -597,49 +600,89 @@ impl FieldType {
     /// Sets or clears MySQL's `UnsignedFlag` equivalent.
     pub const fn with_unsigned(mut self, unsigned: bool) -> Self {
         if unsigned {
-            self.flags |= FieldTypeFlags::UNSIGNED;
+            self.flags |= FieldTypeFlags::UNSIGNED as u64;
         } else {
-            self.flags &= !FieldTypeFlags::UNSIGNED;
+            self.flags &= !(FieldTypeFlags::UNSIGNED as u64);
         }
         self
     }
 
     /// Returns the raw source field flags.
     pub const fn flags(&self) -> u32 {
+        self.flags as u32
+    }
+
+    /// Returns the complete Go `uint` flag word.
+    ///
+    /// Existing execution consumers intentionally use [`Self::flags`] because
+    /// all defined MySQL flags and the tipb field are 32-bit. Metadata codecs
+    /// and `pkg/meta/model.ColumnInfo` use this method so unknown high bits are
+    /// not lost during JSON round trips or bitwise mutation.
+    pub const fn raw_flags(&self) -> u64 {
         self.flags
     }
 
     /// Returns whether a source flag mask is set.
     pub const fn has_flag(&self, flag: u32) -> bool {
-        self.flags & flag != 0
+        self.flags & flag as u64 != 0
     }
 
     /// Replaces all source field flags.
     pub const fn with_flags(mut self, flags: u32) -> Self {
+        self.flags = flags as u64;
+        self
+    }
+
+    /// Replaces the complete Go `uint` flag word.
+    pub const fn with_raw_flags(mut self, flags: u64) -> Self {
         self.flags = flags;
         self
     }
 
     /// Adds source flags with bitwise OR.
     pub const fn with_added_flags(mut self, flags: u32) -> Self {
+        self.flags |= flags as u64;
+        self
+    }
+
+    /// Adds flags across the complete Go `uint` word.
+    pub const fn with_added_raw_flags(mut self, flags: u64) -> Self {
         self.flags |= flags;
         self
     }
 
     /// Keeps only source flags selected by the mask with bitwise AND.
     pub const fn with_and_flags(mut self, flags: u32) -> Self {
+        self.flags &= flags as u64;
+        self
+    }
+
+    /// Keeps only flags selected by a complete Go `uint` mask.
+    pub const fn with_and_raw_flags(mut self, flags: u64) -> Self {
         self.flags &= flags;
         self
     }
 
     /// Toggles source flags with bitwise XOR.
     pub const fn with_toggled_flags(mut self, flags: u32) -> Self {
+        self.flags ^= flags as u64;
+        self
+    }
+
+    /// Toggles flags across the complete Go `uint` word.
+    pub const fn with_toggled_raw_flags(mut self, flags: u64) -> Self {
         self.flags ^= flags;
         self
     }
 
     /// Removes source flags with bitwise AND-NOT.
     pub const fn with_removed_flags(mut self, flags: u32) -> Self {
+        self.flags &= !(flags as u64);
+        self
+    }
+
+    /// Removes flags across the complete Go `uint` word.
+    pub const fn with_removed_raw_flags(mut self, flags: u64) -> Self {
         self.flags &= !flags;
         self
     }
@@ -824,7 +867,7 @@ impl FieldType {
             FieldTypeCode::Json => EvalType::Json,
             FieldTypeCode::VectorFloat32 => EvalType::VectorFloat32,
             FieldTypeCode::Enum | FieldTypeCode::Set
-                if self.flags & FieldTypeFlags::ENUM_SET_AS_INT != 0 =>
+                if self.flags & FieldTypeFlags::ENUM_SET_AS_INT as u64 != 0 =>
             {
                 EvalType::Int
             }
@@ -957,26 +1000,51 @@ impl FieldType {
 
     /// Mirrors Go `FieldType.SetFlag`: replaces the flag word.
     pub fn set_flags(&mut self, flags: u32) {
+        self.flags = flags as u64;
+    }
+
+    /// Mirrors Go `FieldType.SetFlag` across the complete `uint` word.
+    pub fn set_raw_flags(&mut self, flags: u64) {
         self.flags = flags;
     }
 
     /// Mirrors Go `FieldType.AddFlag`: `flags |= f`.
     pub fn add_flags(&mut self, flags: u32) {
+        self.flags |= flags as u64;
+    }
+
+    /// Mirrors Go `FieldType.AddFlag` across the complete `uint` word.
+    pub fn add_raw_flags(&mut self, flags: u64) {
         self.flags |= flags;
     }
 
     /// Mirrors Go `FieldType.AndFlag`: `flags &= f`.
     pub fn and_flags(&mut self, flags: u32) {
+        self.flags &= flags as u64;
+    }
+
+    /// Mirrors Go `FieldType.AndFlag` across the complete `uint` word.
+    pub fn and_raw_flags(&mut self, flags: u64) {
         self.flags &= flags;
     }
 
     /// Mirrors Go `FieldType.ToggleFlag`: `flags ^= f`.
     pub fn toggle_flags(&mut self, flags: u32) {
+        self.flags ^= flags as u64;
+    }
+
+    /// Mirrors Go `FieldType.ToggleFlag` across the complete `uint` word.
+    pub fn toggle_raw_flags(&mut self, flags: u64) {
         self.flags ^= flags;
     }
 
     /// Mirrors Go `FieldType.DelFlag`: `flags &= ^f`.
     pub fn del_flags(&mut self, flags: u32) {
+        self.flags &= !(flags as u64);
+    }
+
+    /// Mirrors Go `FieldType.DelFlag` across the complete `uint` word.
+    pub fn del_raw_flags(&mut self, flags: u64) {
         self.flags &= !flags;
     }
 
@@ -1373,7 +1441,7 @@ struct JsonFieldType {
     #[serde(default)]
     Tp: u8,
     #[serde(default)]
-    Flag: u32,
+    Flag: u64,
     #[serde(default)]
     Flen: i64,
     #[serde(default)]
@@ -2104,5 +2172,46 @@ mod tests {
         }
         assert!(!FieldTypeCode::String.is_var_length_type());
         assert!(!FieldTypeCode::LongLong.is_var_length_type());
+    }
+
+    #[test]
+    fn parser_field_type_preserves_the_complete_go_uint_flag_word() {
+        const HIGH: u64 = 1_u64 << 63;
+        let mut field_type = FieldType::parser(FieldTypeCode::Long)
+            .with_raw_flags(HIGH | FieldTypeFlags::UNSIGNED as u64);
+
+        assert_eq!(
+            field_type.raw_flags(),
+            HIGH | FieldTypeFlags::UNSIGNED as u64
+        );
+        assert_eq!(field_type.flags(), FieldTypeFlags::UNSIGNED);
+        assert!(field_type.has_flag(FieldTypeFlags::UNSIGNED));
+
+        field_type.toggle_raw_flags(HIGH | FieldTypeFlags::ZEROFILL as u64);
+        assert_eq!(
+            field_type.raw_flags(),
+            (FieldTypeFlags::UNSIGNED | FieldTypeFlags::ZEROFILL) as u64
+        );
+        field_type.add_raw_flags(HIGH);
+        field_type.del_raw_flags(FieldTypeFlags::UNSIGNED as u64);
+        assert_eq!(
+            field_type.raw_flags(),
+            HIGH | FieldTypeFlags::ZEROFILL as u64
+        );
+        field_type.and_raw_flags(HIGH);
+        assert_eq!(field_type.raw_flags(), HIGH);
+
+        let encoded = field_type.to_json().unwrap();
+        assert_eq!(
+            String::from_utf8(encoded.clone()).unwrap(),
+            r#"{"Tp":3,"Flag":9223372036854775808,"Flen":-1,"Decimal":-1,"Charset":"","Collate":"","Elems":null,"ElemsIsBinaryLit":null,"Array":false}"#
+        );
+        let decoded = FieldType::from_json(&encoded).unwrap();
+        assert_eq!(decoded.raw_flags(), HIGH);
+
+        // The legacy low-word setters intentionally replace the whole Go word,
+        // just as Go SetFlag does when called with a low-bit value.
+        field_type.set_flags(FieldTypeFlags::NOT_NULL);
+        assert_eq!(field_type.raw_flags(), FieldTypeFlags::NOT_NULL as u64);
     }
 }
