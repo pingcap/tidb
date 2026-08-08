@@ -1135,9 +1135,9 @@ mod tests {
     fn changing_field_type_boundary() {
         let mut column = ColumnInfo::default();
         column.field_type = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Long);
-        column.changing_field_type = Some(tidb_datatype::FieldType::new(
+        column.changing_field_type = Some(Box::new(tidb_datatype::FieldType::new(
             tidb_datatype::FieldTypeCode::Varchar,
-        ));
+        )));
         let mut index_column = IndexColumn::default();
         assert_eq!(
             get_idx_changing_field_type(&index_column, &column).code(),

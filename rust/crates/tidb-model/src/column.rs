@@ -348,6 +348,12 @@ pub struct ColumnInfo {
     pub version: u64,
 }
 
+impl Default for ColumnInfo {
+    fn default() -> Self {
+        serde_json::from_slice(b"{}").expect("empty JSON is the Go zero ColumnInfo")
+    }
+}
+
 impl ColumnInfo {
     // FieldType-delegating accessors (Go `ColumnInfo.Get*`/`Set*`, which just
     // forward to the embedded FieldType). get_type returns the typed

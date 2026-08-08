@@ -1744,6 +1744,7 @@ name = "tidb-model"
 version = "0.0.0"
 dependencies = [
  "chrono",
+ "chrono-tz",
  "serde",
  "serde_json",
  "sha2",
@@ -1871,8 +1872,10 @@ dependencies = [
 name = "tidb-stats"
 version = "0.0.0"
 dependencies = [
+ "chrono",
  "chrono-tz",
  "sha2",
+ "tidb-codec",
  "tidb-datatype",
  "tidb-util",
 ]
