@@ -95,10 +95,11 @@ pub struct StringDatum {
     collation: Collation,
 }
 
-/// Failure to render a datum through Go `Datum.ToString` semantics.
+/// Failure at a Rust textual projection of Go `Datum.ToString` bytes, or at
+/// one of Go's non-string range sentinel branches.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DatumStringError {
-    /// A byte-preserving string payload is not valid UTF-8.
+    /// Byte-authoritative source output is not valid Rust UTF-8.
     InvalidUtf8(std::str::Utf8Error),
     /// Range sentinels are bounds, not SQL scalar strings. Go stores no
     /// interface payload for either sentinel, so both produce the same exact

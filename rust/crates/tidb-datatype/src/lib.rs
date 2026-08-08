@@ -49,6 +49,7 @@ mod field_type;
 mod format;
 mod fsp;
 pub mod go_runtime;
+mod go_string;
 mod json_path;
 mod multibyte_encoding;
 mod mydecimal;
@@ -196,6 +197,7 @@ pub use format::{
 pub use fsp::{
     align_frac, check_fsp, parse_frac, FspError, DEFAULT_FSP, MAX_FSP, MIN_FSP, UNSPECIFIED_FSP,
 };
+pub use go_string::{GoString, GoStringSource};
 pub use json_path::{
     parse_json_path_expr, JSONPathArraySelection, JSONPathError, JSONPathExpression, JSONPathLeg,
 };

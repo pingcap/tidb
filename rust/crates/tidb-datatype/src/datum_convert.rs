@@ -594,37 +594,31 @@ impl Datum {
         target: &FieldType,
         flags: ConversionFlags,
     ) -> Result<Converted<Self>, DatumValueError> {
-        let parsed = match self {
+        let parsed = target.with_elems_visible(|elements| match self {
             Self::String(value) => {
-                parse_enum(target.elems(), value.as_utf8()?, target.collation()).map_err(|_| ())
+                parse_enum(elements, value.bytes(), target.runtime_collator()).map_err(|_| ())
             }
-            Self::Bytes(value) => parse_enum(
-                target.elems(),
-                std::str::from_utf8(value)?,
-                target.collation(),
-            )
-            .map_err(|_| ()),
-            Self::BinaryLiteral(value) => parse_enum(
-                target.elems(),
-                std::str::from_utf8(value.as_bytes())?,
-                target.collation(),
-            )
-            .map_err(|_| ()),
+            Self::Bytes(value) => {
+                parse_enum(elements, value.as_slice(), target.runtime_collator()).map_err(|_| ())
+            }
+            Self::BinaryLiteral(value) => {
+                parse_enum(elements, value.as_bytes(), target.runtime_collator()).map_err(|_| ())
+            }
             Self::Enum(value, _) if value.value() == 0 => Ok(crate::MysqlEnum::new("", 0)),
             Self::Enum(value, _) => {
-                parse_enum(target.elems(), value.name(), target.collation()).map_err(|_| ())
+                parse_enum(elements, value.name(), target.runtime_collator()).map_err(|_| ())
             }
             Self::Set(value, _) => {
-                parse_enum(target.elems(), value.name(), target.collation()).map_err(|_| ())
+                parse_enum(elements, value.name(), target.runtime_collator()).map_err(|_| ())
             }
             // Go wraps `convertToUint`'s own failure in `ErrTruncated` too
             // (`datum.go`'s "convert to MySQL enum failed: " arm), so it
             // reaches the caller as the same truncation event, not an error.
             _ => match self.convert_to_unsigned(FieldTypeCode::LongLong, flags) {
-                Ok(number) => parse_enum_value(target.elems(), number.value).map_err(|_| ()),
+                Ok(number) => parse_enum_value(elements, number.value).map_err(|_| ()),
                 Err(_) => Err(()),
             },
-        };
+        });
         // Go `convertToMysqlEnum` calls `SetMysqlEnum` UNCONDITIONALLY and
         // returns the value beside `ErrTruncated`: a failed parse stores the
         // zero enum (`Enum{Name: "", Value: 0}`) and only raises an event, so
@@ -643,36 +637,33 @@ impl Datum {
         target: &FieldType,
         flags: ConversionFlags,
     ) -> Result<Converted<Self>, DatumValueError> {
-        let parsed = match self {
+        // Go keeps this as a hard invalid conversion instead of wrapping it
+        // in the SET truncation event used by every other failed source.
+        if matches!(self, Self::VectorFloat32(_)) {
+            return Err(DatumValueError::Unsupported(self.kind(), "set"));
+        }
+        let parsed = target.with_elems_visible(|elements| match self {
             Self::String(value) => {
-                parse_set(target.elems(), value.as_utf8()?, target.collation()).map_err(|_| ())
+                parse_set(elements, value.bytes(), target.runtime_collator()).map_err(|_| ())
             }
-            Self::Bytes(value) => parse_set(
-                target.elems(),
-                std::str::from_utf8(value)?,
-                target.collation(),
-            )
-            .map_err(|_| ()),
-            Self::BinaryLiteral(value) => parse_set(
-                target.elems(),
-                std::str::from_utf8(value.as_bytes())?,
-                target.collation(),
-            )
-            .map_err(|_| ()),
+            Self::Bytes(value) => {
+                parse_set(elements, value.as_slice(), target.runtime_collator()).map_err(|_| ())
+            }
+            Self::BinaryLiteral(value) => {
+                parse_set(elements, value.as_bytes(), target.runtime_collator()).map_err(|_| ())
+            }
             Self::Enum(value, _) => {
-                parse_set(target.elems(), value.name(), target.collation()).map_err(|_| ())
+                parse_set(elements, value.name(), target.runtime_collator()).map_err(|_| ())
             }
             Self::Set(value, _) => {
-                parse_set(target.elems(), value.name(), target.collation()).map_err(|_| ())
+                parse_set(elements, value.name(), target.runtime_collator()).map_err(|_| ())
             }
-            // Go's `convertToMysqlSet` alone keeps a hard `invalidConv` for a
-            // vector source, ahead of the `ErrTruncated` wrap below.
-            Self::VectorFloat32(_) => return Err(DatumValueError::Unsupported(self.kind(), "set")),
+            Self::VectorFloat32(_) => unreachable!("vector returned before borrowing elements"),
             _ => match self.convert_to_unsigned(FieldTypeCode::LongLong, flags) {
-                Ok(number) => parse_set_value(target.elems(), number.value).map_err(|_| ()),
+                Ok(number) => parse_set_value(elements, number.value).map_err(|_| ()),
                 Err(_) => Err(()),
             },
-        };
+        });
         // Go `convertToMysqlSet` wraps EVERY failure in `ErrTruncated` and
         // still calls `SetMysqlSet`, so the zero set is stored and the caller
         // decides between a 1265 warning and a strict error.
@@ -726,8 +717,8 @@ impl Datum {
         let json = match self {
             Self::String(value) => BinaryJSON::parse(value.as_utf8()?)?,
             Self::Bytes(value) => BinaryJSON::parse(std::str::from_utf8(value)?)?,
-            Self::Enum(value, _) => BinaryJSON::parse(value.name())?,
-            Self::Set(value, _) => BinaryJSON::parse(value.name())?,
+            Self::Enum(value, _) => BinaryJSON::parse(value.name().as_utf8()?)?,
+            Self::Set(value, _) => BinaryJSON::parse(value.name().as_utf8()?)?,
             Self::BinaryLiteral(_) => {
                 return Err(DatumValueError::Comparison(
                     "Cannot create a JSON value from a string with CHARACTER SET 'binary'"

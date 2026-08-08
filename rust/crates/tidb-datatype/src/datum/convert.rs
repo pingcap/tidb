@@ -301,12 +301,7 @@ impl Datum {
     /// is not something Go ever does (`UNCOMPRESSED_LENGTH(0xAABBCCDDEEFF)`
     /// is 3721182122, not an error).
     pub fn to_bytes(&self) -> Result<Vec<u8>, DatumStringError> {
-        match self {
-            Self::String(value) => Ok(value.bytes().to_vec()),
-            Self::Bytes(value) => Ok(value.clone()),
-            Self::BinaryLiteral(value) | Self::Bit(value) => Ok(value.as_bytes().to_vec()),
-            _ => self.sql_string().map(String::into_bytes),
-        }
+        self.sql_bytes()
     }
 
     /// Source `Datum.ToHashKey`.

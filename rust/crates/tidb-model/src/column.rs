@@ -35,12 +35,13 @@ use serde::de::{DeserializeSeed, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
 use tidb_ast::CiString;
 use tidb_datatype::{
-    FieldType, FieldTypeCode, FieldTypeFlags, ERR_INVALID_DEFAULT, STRICT_INTEGER_DISPLAY_WIDTH,
+    FieldType, FieldTypeCode, FieldTypeFlags, GoString, ERR_INVALID_DEFAULT,
+    STRICT_INTEGER_DISPLAY_WIDTH,
 };
 use tidb_error::mysql::{errname, FormatArg};
 use tidb_error::terror::TerrorError;
 
-use crate::go_runtime::{GoShared, GoSharedPointerSlice};
+use crate::go_runtime::{GoShared, GoSharedPointerSlice, GoSharedSlice};
 use crate::schema_state::SchemaState;
 use crate::serde_helpers::{
     deserialize_go_object, go_json_field_matches, ignore_unknown, impl_go_json_deserialize,
@@ -649,13 +650,8 @@ impl ColumnInfo {
     }
     /// Go `GetElems`.
     #[must_use]
-    pub fn get_elems(&self) -> Option<&[String]> {
-        self.field_type.elems_option()
-    }
-    /// Mutable Go `GetElems` alias: mutations write through to the embedded
-    /// FieldType while retaining nil versus allocated-empty identity.
-    pub fn get_elems_mut(&mut self) -> Option<&mut [String]> {
-        self.field_type.elems_option_mut()
+    pub fn get_elems(&self) -> GoSharedSlice<GoString> {
+        self.field_type.elems()
     }
     /// Go `SetType`.
     pub fn set_type(&mut self, code: FieldTypeCode) {
@@ -698,8 +694,8 @@ impl ColumnInfo {
         self.field_type.set_collation_name(collate);
     }
     /// Go `SetElems`.
-    pub fn set_elems(&mut self, elems: Option<Vec<String>>) {
-        self.field_type.set_elems_option(elems);
+    pub fn set_elems(&mut self, elems: impl Into<GoSharedSlice<GoString>>) {
+        self.field_type.set_elems(elems);
     }
 
     /// Go `SetOriginDefaultValue`. The value is always stored; for a BIT
@@ -1047,18 +1043,16 @@ mod tests {
         c.set_type(FieldTypeCode::Bit);
         assert_eq!(c.get_type(), FieldTypeCode::Bit);
 
-        assert!(c.get_elems().is_none());
-        c.set_elems(Some(vec!["a".into(), "b".into()]));
-        assert_eq!(
-            c.get_elems(),
-            Some(["a".to_string(), "b".to_string()].as_slice())
-        );
-        c.get_elems_mut().unwrap()[0] = "mutated".to_owned();
-        assert_eq!(c.get_elems().unwrap()[0], "mutated");
-        c.set_elems(Some(Vec::new()));
-        assert_eq!(c.get_elems(), Some(&[] as &[String]));
-        c.set_elems(None);
-        assert!(c.get_elems().is_none());
+        assert!(!c.get_elems().is_allocated());
+        c.set_elems(Some(vec![GoString::from("a"), GoString::from("b")]));
+        assert_eq!(c.get_elems().snapshot(), ["a", "b"]);
+        c.get_elems().set(0, GoString::from("mutated"));
+        assert_eq!(c.get_elems().get(0), "mutated");
+        c.set_elems(Some(Vec::<GoString>::new()));
+        assert!(c.get_elems().is_allocated());
+        assert!(c.get_elems().is_empty());
+        c.set_elems(None::<Vec<GoString>>);
+        assert!(!c.get_elems().is_allocated());
     }
 
     #[test]

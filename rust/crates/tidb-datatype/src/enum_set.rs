@@ -16,18 +16,18 @@ use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;
 
-use crate::Collation;
+use crate::{Collator, GoString, GoStringSource};
 
 /// MySQL ENUM's canonical name and one-based numeric index.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MysqlEnum {
-    name: String,
+    name: GoString,
     value: u64,
 }
 
 impl MysqlEnum {
     /// Creates the exact source name/value pair.
-    pub fn new(name: impl Into<String>, value: u64) -> Self {
+    pub fn new(name: impl Into<GoString>, value: u64) -> Self {
         Self {
             name: name.into(),
             value,
@@ -35,8 +35,13 @@ impl MysqlEnum {
     }
 
     /// Returns the canonical element spelling.
-    pub fn name(&self) -> &str {
+    pub fn name(&self) -> &GoString {
         &self.name
+    }
+
+    /// Returns the canonical name bytes without UTF-8 normalization.
+    pub fn name_bytes(&self) -> &[u8] {
+        self.name.as_bytes()
     }
 
     /// Returns the one-based element index, or zero for the Go error sentinel.
@@ -51,20 +56,25 @@ impl MysqlEnum {
 
     /// Mirrors the explicit deep-copy method at the Go ownership boundary.
     pub fn copy(&self) -> Self {
-        self.clone()
+        Self {
+            name: self.name.deep_copy(),
+            value: self.value,
+        }
     }
 }
 
 impl fmt::Display for MysqlEnum {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.name)
+        // Rust formatting is necessarily UTF-8. Byte-sensitive source paths
+        // use `name_bytes` instead of this diagnostic projection.
+        self.name.fmt(formatter)
     }
 }
 
 /// Exact source context plus TiDB's typed truncation identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnumParseError {
-    context: String,
+    context: GoString,
 }
 
 impl EnumParseError {
@@ -79,8 +89,23 @@ impl EnumParseError {
     }
 
     /// The exact context passed to `errors.Wrap` by `enum.go`.
-    pub fn context(&self) -> &str {
+    pub fn context(&self) -> &GoString {
         &self.context
+    }
+
+    /// Returns the exact context bytes, including invalid UTF-8.
+    pub fn context_bytes(&self) -> &[u8] {
+        self.context.as_bytes()
+    }
+
+    /// Returns the exact wrapped Go error bytes. Rust [`fmt::Display`] can
+    /// represent only UTF-8 and is therefore a lossy convenience when the
+    /// source context contains invalid bytes.
+    pub fn message_bytes(&self) -> Vec<u8> {
+        let mut message = self.context.as_bytes().to_vec();
+        message.extend_from_slice(b": ");
+        message.extend_from_slice((&*crate::ERR_TRUNCATED).to_string().as_bytes());
+        message
     }
 
     /// Go returns `Enum{}` together with this error.
@@ -91,86 +116,106 @@ impl EnumParseError {
 
 impl fmt::Display for EnumParseError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.context)
+        write!(formatter, "{}: {}", self.context, &*crate::ERR_TRUNCATED)
     }
 }
 
-impl Error for EnumParseError {}
+impl Error for EnumParseError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(&*crate::ERR_TRUNCATED)
+    }
+}
 
 /// Parses an ENUM as a collation-aware name first, then as Go's base-0 u64.
-pub fn parse_enum(
-    elements: &[impl AsRef<str>],
-    name: &str,
-    collation: Collation,
-) -> Result<MysqlEnum, EnumParseError> {
+pub fn parse_enum<E, N, C>(
+    elements: &[E],
+    name: &N,
+    collation: C,
+) -> Result<MysqlEnum, EnumParseError>
+where
+    E: GoStringSource,
+    N: GoStringSource + ?Sized,
+    C: Into<Collator> + Copy,
+{
     if let Ok(value) = parse_enum_name(elements, name, collation) {
         return Ok(value);
     }
-    if let Some(number) = parse_go_uint64_base_zero(name) {
+    if let Some(number) = parse_go_uint64_base_zero(name.as_go_bytes()) {
         return parse_enum_value(elements, number);
     }
     Err(enum_item_error(elements, name))
 }
 
 /// Parses an ENUM name and returns the first collation-equal declaration.
-pub fn parse_enum_name(
-    elements: &[impl AsRef<str>],
-    name: &str,
-    collation: Collation,
-) -> Result<MysqlEnum, EnumParseError> {
+pub fn parse_enum_name<E, N, C>(
+    elements: &[E],
+    name: &N,
+    collation: C,
+) -> Result<MysqlEnum, EnumParseError>
+where
+    E: GoStringSource,
+    N: GoStringSource + ?Sized,
+    C: Into<Collator>,
+{
+    let collator = collation.into();
     elements
         .iter()
         .enumerate()
         .find(|(_, element)| {
-            collation
-                .compare(element.as_ref().as_bytes(), name.as_bytes())
+            collator
+                .compare(element.as_go_bytes(), name.as_go_bytes())
                 .is_eq()
         })
         .map(|(index, element)| MysqlEnum {
-            name: element.as_ref().to_owned(),
+            name: element.to_go_string(),
             value: index as u64 + 1,
         })
         .ok_or_else(|| enum_item_error(elements, name))
 }
 
 /// Parses an ENUM's one-based numeric index.
-pub fn parse_enum_value(
-    elements: &[impl AsRef<str>],
-    number: u64,
-) -> Result<MysqlEnum, EnumParseError> {
+pub fn parse_enum_value<E>(elements: &[E], number: u64) -> Result<MysqlEnum, EnumParseError>
+where
+    E: GoStringSource,
+{
     if number == 0 || number > elements.len() as u64 {
         return Err(EnumParseError {
-            context: format!(
+            context: GoString::from(format!(
                 "convert to MySQL enum failed: number {number} overflow enum boundary [1, {}]",
                 elements.len()
-            ),
+            )),
         });
     }
     Ok(MysqlEnum {
-        name: elements[number as usize - 1].as_ref().to_owned(),
+        name: elements[number as usize - 1].to_go_string(),
         value: number,
     })
 }
 
-fn enum_item_error(elements: &[impl AsRef<str>], name: &str) -> EnumParseError {
+fn enum_item_error<E, N>(elements: &[E], name: &N) -> EnumParseError
+where
+    E: GoStringSource,
+    N: GoStringSource + ?Sized,
+{
+    let mut context = b"convert to MySQL enum failed: item ".to_vec();
+    context.extend_from_slice(name.as_go_bytes());
+    context.extend_from_slice(b" is not in enum ");
+    context.extend_from_slice(&format_elements(elements));
     EnumParseError {
-        context: format!(
-            "convert to MySQL enum failed: item {name} is not in enum {}",
-            format_elements(elements)
-        ),
+        context: GoString::from(context),
     }
 }
 
 /// MySQL SET's canonical declaration-ordered name and bit mask.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MysqlSet {
-    name: String,
+    name: GoString,
     value: u64,
 }
 
 impl MysqlSet {
     /// Creates the exact source name/value pair.
-    pub fn new(name: impl Into<String>, value: u64) -> Self {
+    pub fn new(name: impl Into<GoString>, value: u64) -> Self {
         Self {
             name: name.into(),
             value,
@@ -178,8 +223,13 @@ impl MysqlSet {
     }
 
     /// Returns the canonical comma-separated name.
-    pub fn name(&self) -> &str {
+    pub fn name(&self) -> &GoString {
         &self.name
+    }
+
+    /// Returns the canonical comma-separated name bytes.
+    pub fn name_bytes(&self) -> &[u8] {
+        self.name.as_bytes()
     }
 
     /// Returns the source bit mask.
@@ -194,38 +244,44 @@ impl MysqlSet {
 
     /// Mirrors the explicit deep-copy method at the Go ownership boundary.
     pub fn copy(&self) -> Self {
-        self.clone()
+        Self {
+            name: self.name.deep_copy(),
+            value: self.value,
+        }
     }
 }
 
 impl fmt::Display for MysqlSet {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.name)
+        // Rust formatting is necessarily UTF-8. Byte-sensitive source paths
+        // use `name_bytes` instead of this diagnostic projection.
+        self.name.fmt(formatter)
     }
 }
 
-/// Exact SET parse failures, including a typed replacement for Go's
-/// out-of-bounds panic when `ParseSetValue` receives more than 64 elements.
+/// Exact SET parse failures returned before Go's native out-of-bounds panic
+/// when `ParseSetValue` traverses more than 64 elements.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SetParseError {
     /// One or more comma-separated names did not match an element.
-    UnknownItem(String),
+    UnknownItem(GoString),
     /// Bits remained after consuming every declared element.
-    InvalidNumber(String),
-    /// MySQL SET cannot represent more than 64 bit positions.
-    TooManyElements(usize),
+    InvalidNumber(GoString),
+}
+
+impl SetParseError {
+    /// Returns the exact Go error bytes, including invalid UTF-8.
+    pub fn message_bytes(&self) -> &[u8] {
+        match self {
+            Self::UnknownItem(message) | Self::InvalidNumber(message) => message.as_bytes(),
+        }
+    }
 }
 
 impl fmt::Display for SetParseError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::UnknownItem(message) | Self::InvalidNumber(message) => {
-                formatter.write_str(message)
-            }
-            Self::TooManyElements(count) => write!(
-                formatter,
-                "cannot parse Set value with {count} elements; MySQL Set supports at most 64"
-            ),
+            Self::UnknownItem(message) | Self::InvalidNumber(message) => message.fmt(formatter),
         }
     }
 }
@@ -233,112 +289,149 @@ impl fmt::Display for SetParseError {
 impl Error for SetParseError {}
 
 /// Parses a SET as names first, then as Go's base-0 u64.
-pub fn parse_set(
-    elements: &[impl AsRef<str>],
-    name: &str,
-    collation: Collation,
-) -> Result<MysqlSet, SetParseError> {
+pub fn parse_set<E, N, C>(elements: &[E], name: &N, collation: C) -> Result<MysqlSet, SetParseError>
+where
+    E: GoStringSource,
+    N: GoStringSource + ?Sized,
+    C: Into<Collator> + Copy,
+{
     if let Ok(value) = parse_set_name(elements, name, collation) {
         return Ok(value);
     }
-    if let Some(number) = parse_go_uint64_base_zero(name) {
+    if let Some(number) = parse_go_uint64_base_zero(name.as_go_bytes()) {
         return parse_set_value(elements, number);
     }
     Err(set_item_error(elements, name))
 }
 
 /// Parses, deduplicates, and canonicalizes SET names by collation key.
-pub fn parse_set_name(
-    elements: &[impl AsRef<str>],
-    name: &str,
-    collation: Collation,
-) -> Result<MysqlSet, SetParseError> {
-    if name.is_empty() {
+pub fn parse_set_name<E, N, C>(
+    elements: &[E],
+    name: &N,
+    collation: C,
+) -> Result<MysqlSet, SetParseError>
+where
+    E: GoStringSource,
+    N: GoStringSource + ?Sized,
+    C: Into<Collator>,
+{
+    if name.as_go_bytes().is_empty() {
         return Ok(MysqlSet::default());
     }
 
+    let collator = collation.into();
     let mut marked: HashSet<Vec<u8>> = name
-        .split(',')
-        .map(|part| collation.key(part.as_bytes()))
+        .as_go_bytes()
+        .split(|byte| *byte == b',')
+        .map(|part| collator.key(part))
         .collect();
-    let mut items = Vec::with_capacity(marked.len());
+    let mut items: Vec<&E> = Vec::with_capacity(marked.len());
     let mut value = 0_u64;
     for (index, element) in elements.iter().enumerate() {
-        if marked.remove(&collation.key(element.as_ref().as_bytes())) {
-            value |= 1_u64.checked_shl(index as u32).unwrap_or(0);
-            items.push(element.as_ref());
+        if marked.remove(&collator.key(element.as_go_bytes())) {
+            value |= u32::try_from(index)
+                .ok()
+                .and_then(|shift| 1_u64.checked_shl(shift))
+                .unwrap_or(0);
+            items.push(element);
         }
     }
     if !marked.is_empty() {
         return Err(set_item_error(elements, name));
     }
     Ok(MysqlSet {
-        name: items.join(","),
+        name: join_strings(&items, b','),
         value,
     })
 }
 
 /// Parses a SET bit mask and returns names in declaration order.
-pub fn parse_set_value(
-    elements: &[impl AsRef<str>],
-    number: u64,
-) -> Result<MysqlSet, SetParseError> {
+pub fn parse_set_value<E>(elements: &[E], number: u64) -> Result<MysqlSet, SetParseError>
+where
+    E: GoStringSource,
+{
     if number == 0 {
         return Ok(MysqlSet::default());
     }
-    if elements.len() > 64 {
-        return Err(SetParseError::TooManyElements(elements.len()));
-    }
-
     let value = number;
     let mut remaining = number;
-    let mut items = Vec::new();
+    let mut items: Vec<&E> = Vec::new();
     for (index, element) in elements.iter().enumerate() {
-        let bit = 1_u64 << index;
+        // Go indexes its fixed `[64]uint64` tables before testing the bit;
+        // every nonzero call with a 65th element therefore panics at index 64.
+        let bit = 1_u64
+            .checked_shl(u32::try_from(index).expect("SET index exceeds u32"))
+            .expect("ParseSetValue index out of range");
         if remaining & bit != 0 {
-            items.push(element.as_ref());
+            items.push(element);
             remaining &= !bit;
         }
     }
     if remaining != 0 {
-        return Err(SetParseError::InvalidNumber(format!(
-            "invalid number {remaining} for Set {}",
-            format_elements(elements)
-        )));
+        let mut message = format!("invalid number {remaining} for Set ").into_bytes();
+        message.extend_from_slice(&format_elements(elements));
+        return Err(SetParseError::InvalidNumber(GoString::from(message)));
     }
     Ok(MysqlSet {
-        name: items.join(","),
+        name: join_strings(&items, b','),
         value,
     })
 }
 
-fn set_item_error(elements: &[impl AsRef<str>], name: &str) -> SetParseError {
-    SetParseError::UnknownItem(format!(
-        "item {name} is not in Set {}",
-        format_elements(elements)
-    ))
+fn set_item_error<E, N>(elements: &[E], name: &N) -> SetParseError
+where
+    E: GoStringSource,
+    N: GoStringSource + ?Sized,
+{
+    let mut message = b"item ".to_vec();
+    message.extend_from_slice(name.as_go_bytes());
+    message.extend_from_slice(b" is not in Set ");
+    message.extend_from_slice(&format_elements(elements));
+    SetParseError::UnknownItem(GoString::from(message))
 }
 
-fn format_elements(elements: &[impl AsRef<str>]) -> String {
-    format!(
-        "[{}]",
-        elements
-            .iter()
-            .map(AsRef::as_ref)
-            .collect::<Vec<_>>()
-            .join(" ")
-    )
+fn format_elements<E: GoStringSource>(elements: &[E]) -> Vec<u8> {
+    let mut output = Vec::new();
+    output.push(b'[');
+    for (index, element) in elements.iter().enumerate() {
+        if index != 0 {
+            output.push(b' ');
+        }
+        output.extend_from_slice(element.as_go_bytes());
+    }
+    output.push(b']');
+    output
 }
 
-/// Exact unsigned subset of Go 1.26 `strconv.ParseUint(s, 0, 64)`.
-fn parse_go_uint64_base_zero(source: &str) -> Option<u64> {
-    if source.is_empty() || source.starts_with(['+', '-']) {
+fn join_strings<E: GoStringSource>(items: &[&E], separator: u8) -> GoString {
+    match items {
+        [] => return GoString::default(),
+        [item] => return item.to_go_string(),
+        _ => {}
+    }
+    let capacity = items
+        .iter()
+        .map(|item| item.as_go_bytes().len())
+        .sum::<usize>()
+        .saturating_add(items.len().saturating_sub(1));
+    let mut output = Vec::with_capacity(capacity);
+    for (index, item) in items.iter().enumerate() {
+        if index != 0 {
+            output.push(separator);
+        }
+        output.extend_from_slice(item.as_go_bytes());
+    }
+    GoString::from(output)
+}
+
+/// Exact unsigned subset of Go 1.25 `strconv.ParseUint(s, 0, 64)`.
+fn parse_go_uint64_base_zero(source: &[u8]) -> Option<u64> {
+    if source.is_empty() || matches!(source[0], b'+' | b'-') {
         return None;
     }
-    let bytes = source.as_bytes();
-    let (base, digits) = if bytes[0] == b'0' {
-        if bytes.len() >= 3 {
-            match bytes[1].to_ascii_lowercase() {
+    let (base, digits) = if source[0] == b'0' {
+        if source.len() >= 3 {
+            match source[1].to_ascii_lowercase() {
                 b'b' => (2_u64, &source[2..]),
                 b'o' => (8, &source[2..]),
                 b'x' => (16, &source[2..]),
@@ -353,7 +446,7 @@ fn parse_go_uint64_base_zero(source: &str) -> Option<u64> {
 
     let mut number = 0_u64;
     let mut saw_underscore = false;
-    for byte in digits.bytes() {
+    for byte in digits.iter().copied() {
         if byte == b'_' {
             saw_underscore = true;
             continue;
@@ -375,8 +468,8 @@ fn parse_go_uint64_base_zero(source: &str) -> Option<u64> {
     Some(number)
 }
 
-fn go_underscore_ok(source: &str) -> bool {
-    let bytes = source.as_bytes();
+fn go_underscore_ok(source: &[u8]) -> bool {
+    let bytes = source;
     let mut index = 0;
     let mut previous = b'^';
     let mut hexadecimal = false;
@@ -429,7 +522,7 @@ mod tests {
         ];
         for (source, expected) in valid {
             assert_eq!(
-                parse_go_uint64_base_zero(source),
+                parse_go_uint64_base_zero(source.as_bytes()),
                 Some(expected),
                 "{source}"
             );
@@ -445,7 +538,11 @@ mod tests {
             "1__0",
             "18446744073709551616",
         ] {
-            assert_eq!(parse_go_uint64_base_zero(source), None, "{source}");
+            assert_eq!(
+                parse_go_uint64_base_zero(source.as_bytes()),
+                None,
+                "{source}"
+            );
         }
     }
 }

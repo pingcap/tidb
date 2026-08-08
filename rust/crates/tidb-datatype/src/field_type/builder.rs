@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use super::{FieldType, FieldTypeCode};
+use crate::GoString;
 
 /// Fluent constructor corresponding to Go `FieldTypeBuilder`.
 #[derive(Clone, Debug)]
@@ -119,7 +120,7 @@ impl FieldTypeBuilder {
     }
 
     /// Replaces ENUM/SET elements.
-    pub fn elems(mut self, elems: impl IntoIterator<Item = impl Into<String>>) -> Self {
+    pub fn elems(mut self, elems: impl IntoIterator<Item = impl Into<GoString>>) -> Self {
         self.field_type = self.field_type.with_elems(elems);
         self
     }
@@ -162,6 +163,6 @@ mod tests {
         assert_eq!(builder.charset(), "utf8mb4");
         assert_eq!(builder.collation(), "utf8mb4_bin");
         let field_type = builder.build();
-        assert_eq!(field_type.elems(), ["a", "b"]);
+        assert_eq!(field_type.elems_snapshot(), ["a", "b"]);
     }
 }

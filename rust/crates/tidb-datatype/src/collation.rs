@@ -72,7 +72,21 @@ pub enum Collator {
     DerivedBinary,
 }
 
+impl From<Collation> for Collator {
+    fn from(collation: Collation) -> Self {
+        Self::New(collation)
+    }
+}
+
 impl Collator {
+    /// Returns the concrete new-collation implementation, if enabled.
+    pub const fn new_collation(self) -> Option<Collation> {
+        match self {
+            Self::New(collation) => Some(collation),
+            Self::DerivedBinary => None,
+        }
+    }
+
     /// Compares source Go-string bytes.
     pub fn compare(self, left: &[u8], right: &[u8]) -> Ordering {
         match self {
@@ -181,7 +195,29 @@ pub fn get_collator_with_mode(use_new_collation: bool, name: &str) -> Collator {
     if !use_new_collation {
         return Collator::DerivedBinary;
     }
-    Collator::New(Collation::from_name(name).unwrap_or(Collation::Utf8Mb4Bin))
+    Collator::New(exact_new_collation(name).unwrap_or(Collation::Utf8Mb4Bin))
+}
+
+fn exact_new_collation(name: &str) -> Option<Collation> {
+    Some(match name {
+        "binary" => Collation::Binary,
+        "ascii_bin" => Collation::AsciiBin,
+        "latin1_bin" => Collation::Latin1Bin,
+        "utf8_bin" => Collation::Utf8Bin,
+        "utf8_general_ci" => Collation::Utf8GeneralCi,
+        "utf8_unicode_ci" => Collation::Utf8UnicodeCi,
+        "utf8mb4_bin" => Collation::Utf8Mb4Bin,
+        "utf8mb4_general_ci" => Collation::Utf8Mb4GeneralCi,
+        "utf8mb4_unicode_ci" => Collation::Utf8Mb4UnicodeCi,
+        "utf8mb4_0900_ai_ci" => Collation::Utf8Mb40900AiCi,
+        "utf8mb4_0900_bin" => Collation::Utf8Mb40900Bin,
+        "utf8mb4_zh_pinyin_tidb_as_cs" => Collation::Utf8Mb4ZhPinyinTiDbAsCs,
+        "gbk_bin" => Collation::GbkBin,
+        "gbk_chinese_ci" => Collation::GbkChineseCi,
+        "gb18030_bin" => Collation::Gb18030Bin,
+        "gb18030_chinese_ci" => Collation::Gb18030ChineseCi,
+        _ => return None,
+    })
 }
 
 /// Returns the legacy binary collator.

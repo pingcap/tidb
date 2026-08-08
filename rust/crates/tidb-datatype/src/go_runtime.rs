@@ -278,6 +278,22 @@ impl<T> GoSharedSlice<T> {
             .collect()
     }
 
+    /// Borrows the visible elements without allocating or cloning them.
+    ///
+    /// The callback runs while the backing read lock is held and therefore
+    /// must not re-enter this same backing through another shallow header.
+    /// Nil and allocated-empty slices both pass an empty slice; callers that
+    /// need allocation identity inspect [`Self::is_allocated`] separately.
+    pub fn with_visible<R>(&self, read: impl FnOnce(&[T]) -> R) -> R {
+        let Some(backing) = &self.backing else {
+            return read(&[]);
+        };
+        let values = backing
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        read(&values[self.start..self.start + self.len])
+    }
+
     /// Mutates one visible element in place through every shared header. The
     /// callback must not re-enter this same backing.
     pub fn update(&self, index: usize, update: impl FnOnce(&mut T)) {
@@ -439,6 +455,12 @@ impl<T> Clone for GoSharedSlice<T> {
 impl<T> From<Vec<T>> for GoSharedSlice<T> {
     fn from(values: Vec<T>) -> Self {
         Self::from_vec(values)
+    }
+}
+
+impl<T> From<Option<Vec<T>>> for GoSharedSlice<T> {
+    fn from(values: Option<Vec<T>>) -> Self {
+        values.map_or_else(Self::default, Self::from_vec)
     }
 }
 

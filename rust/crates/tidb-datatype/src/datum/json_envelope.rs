@@ -141,15 +141,9 @@ impl Datum {
             )
             .map(Self::new_duration)
             .map_err(|error| DatumValueError::Comparison(error.to_string())),
-            10 => Ok(Self::new_enum(
-                MysqlEnum::new(std::str::from_utf8(&bytes)?.to_owned(), i as u64),
-                collation,
-            )),
+            10 => Ok(Self::new_enum(MysqlEnum::new(bytes, i as u64), collation)),
             11 => Ok(Self::new_mysql_bit(BinaryLiteral::from(bytes))),
-            12 => Ok(Self::new_set(
-                MysqlSet::new(std::str::from_utf8(&bytes)?.to_owned(), i as u64),
-                collation,
-            )),
+            12 => Ok(Self::new_set(MysqlSet::new(bytes, i as u64), collation)),
             13 => object
                 .get("time")
                 .and_then(serde_json::Value::as_u64)
