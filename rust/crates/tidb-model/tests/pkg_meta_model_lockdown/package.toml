@@ -3,13 +3,21 @@ claim = "whole-go-package"
 go_package = "pkg/meta/model"
 source_commit = "bdab0016365e8b1d79b5b11f52ee6fdde90f4c46"
 primary_rust_crate = "tidb-model"
-mapped_rust_crates = ["tidb-model", "tidb-error", "tidb-datatype"]
+mapped_rust_crates = ["tidb-model", "tidb-error", "tidb-datatype", "tidb-exec", "tidb-server"]
 extra_artifacts = []
 excluded_subpackages = []
 owned_rust_files = [
   "rust/crates/tidb-datatype/src/field_type/mod.rs",
   "rust/crates/tidb-error/src/terror.rs",
   "rust/crates/tidb-error/tests/pkg_meta_model_error_lockdown.rs",
+  "rust/crates/tidb-exec/src/catalog_reload.rs",
+  "rust/crates/tidb-exec/src/cluster_analyze.rs",
+  "rust/crates/tidb-exec/src/cluster_catalog.rs",
+  "rust/crates/tidb-exec/src/mysql_bootstrap.rs",
+  "rust/crates/tidb-exec/src/mysql_system_tables.rs",
+  "rust/crates/tidb-exec/src/table_info_build.rs",
+  "rust/crates/tidb-exec/tests/catalog_reload_source.rs",
+  "rust/crates/tidb-exec/tests/mysql_bootstrap_source.rs",
   "rust/crates/tidb-model/Cargo.toml",
   "rust/crates/tidb-model/src/action_type.rs",
   "rust/crates/tidb-model/src/bdr.rs",
@@ -46,6 +54,8 @@ owned_rust_files = [
   "rust/crates/tidb-model/tests/pkg_meta_model_observation_emitter.rs",
   "rust/crates/tidb-model/tests/pkg_meta_model_package_anchors.rs",
   "rust/crates/tidb-model/tests/resource_group_lockdown.rs",
+  "rust/crates/tidb-server/src/cluster_session.rs",
+  "rust/crates/tidb-server/src/cluster_session_node/tests/node_fixture.rs",
 ]
 
 [artifact_roles]
