@@ -18,11 +18,11 @@ use tidb_stats::{DEFAULT_HISTOGRAM_BUCKETS, DEFAULT_TOP_N_VALUE};
 
 #[test]
 fn source_defaults_match_statistics_constants() {
-    assert_eq!(tidb_stats::DEFAULT_TOP_N_VALUE, 100);
+    assert_eq!(tidb_stats::constants::DEFAULT_TOP_N_VALUE, 100);
     assert_eq!(DEFAULT_HISTOGRAM_BUCKETS, 256);
 }
 
 #[test]
 fn source_default_histogram_bucket_count_matches_statistics_constant() {
-    assert_eq!(tidb_stats::DEFAULT_HISTOGRAM_BUCKETS, 256);
+    assert_eq!(tidb_stats::constants::DEFAULT_HISTOGRAM_BUCKETS, 256);
 }

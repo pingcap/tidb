@@ -25,7 +25,7 @@ use tidb_stats::{
 
 #[test]
 fn source_status_labels_and_job_kinds_match_go() {
-    assert_eq!(tidb_stats::ANALYZE_PENDING, "pending");
+    assert_eq!(tidb_stats::analyze_jobs::ANALYZE_PENDING, "pending");
     assert_eq!(ANALYZE_RUNNING, "running");
     assert_eq!(ANALYZE_FINISHED, "finished");
     assert_eq!(ANALYZE_FAILED, "failed");
@@ -35,7 +35,7 @@ fn source_status_labels_and_job_kinds_match_go() {
 
 #[test]
 fn source_job_kinds_follow_go_iota_sequence() {
-    assert_eq!(tidb_stats::JobType::TableAnalysis as isize, 1);
+    assert_eq!(tidb_stats::analyze_jobs::JobType::TableAnalysis as isize, 1);
     assert_eq!(JobType::GlobalStatsMerge as isize, 2);
 }
 
@@ -46,7 +46,7 @@ fn source_progress_accumulates_until_the_dump_threshold() {
     progress.set_last_dump_time(now - chrono::TimeDelta::seconds(10));
 
     assert_eq!(
-        tidb_stats::AnalyzeProgress::update_at(&progress, 100, now),
+        tidb_stats::analyze_jobs::AnalyzeProgress::update_at(&progress, 100, now),
         0
     );
     assert_eq!(progress.get_delta_count(), 100);
@@ -60,7 +60,7 @@ fn source_progress_accumulates_until_the_dump_threshold() {
 fn source_progress_dumps_and_resets_after_threshold_and_interval() {
     let progress = AnalyzeProgress::default();
     let last_dump_time = Utc.timestamp_opt(100, 0).single().unwrap();
-    tidb_stats::AnalyzeProgress::set_last_dump_time(&progress, last_dump_time);
+    tidb_stats::analyze_jobs::AnalyzeProgress::set_last_dump_time(&progress, last_dump_time);
 
     let exact_interval = last_dump_time + chrono::TimeDelta::seconds(5);
     assert_eq!(progress.update_at(MAX_DELTA, exact_interval), 0);
@@ -83,7 +83,7 @@ fn source_progress_dumps_and_resets_after_threshold_and_interval() {
 
 #[test]
 fn source_job_defaults_match_go_zero_values() {
-    let job = tidb_stats::AnalyzeJob::default();
+    let job = tidb_stats::analyze_jobs::AnalyzeJob::default();
     assert_eq!(job.start_time, tidb_stats::go_zero_time());
     assert_eq!(job.end_time, tidb_stats::go_zero_time());
     assert_eq!(job.id, None);

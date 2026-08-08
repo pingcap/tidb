@@ -42,7 +42,7 @@ fn source_result_releases_fm_and_destroys_every_histogram_only() {
         fm_sketches: vec![Some(3), None],
         is_index: 1,
     };
-    tidb_stats::AnalyzeResult::destroy_and_put_to_pool(&mut result);
+    tidb_stats::analyze_results::AnalyzeResult::destroy_and_put_to_pool(&mut result);
     assert!(result.fm_sketches.is_empty());
     assert_eq!(result.histograms[0].as_ref().unwrap().destroyed, 1);
     assert_eq!(result.histograms[1].as_ref().unwrap().destroyed, 1);
@@ -70,7 +70,7 @@ fn source_outer_result_destroys_every_inner_result_and_keeps_metadata() {
         base_modify_count: 3,
         for_mv_index_or_global_index: true,
     };
-    tidb_stats::AnalyzeResults::destroy_and_put_to_pool(&mut results);
+    tidb_stats::analyze_results::AnalyzeResults::destroy_and_put_to_pool(&mut results);
     assert!(results
         .results
         .iter()
