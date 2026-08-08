@@ -22,7 +22,9 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use tidb_ast::{CiString, Expr, IndexType, IsTarget, QueryStmt, SelectField, Stmt};
 use tidb_datatype::{FieldType, FieldTypeCode};
 
+use crate::cascades_hash::HashInt64;
 use crate::column::{removing_origin_name, REMOVING_OBJ_PREFIX};
+use crate::go_runtime::GoPointerAny;
 use crate::reorg::BackfillState;
 use crate::schema_state::SchemaState;
 use crate::serde_helpers::{
@@ -517,9 +519,31 @@ impl IndexInfo {
         self.id == other.id
     }
 
-    /// Go `Hash64`: feed only the persisted index ID to the supplied hasher.
-    pub fn hash_id<H: std::hash::Hasher>(&self, state: &mut H) {
-        std::hash::Hash::hash(&self.id, state);
+    /// Exact Go `Equals(any)`, including wrong dynamic types and typed-nil
+    /// pointer interfaces. `receiver` represents Go's possibly nil method
+    /// receiver.
+    #[must_use]
+    pub fn equals(receiver: Option<&Self>, other: GoPointerAny<'_, Self>) -> bool {
+        let GoPointerAny::Typed(other) = other else {
+            return false;
+        };
+        match (receiver, other) {
+            (None, None) => true,
+            (Some(left), Some(right)) => left.id == right.id,
+            _ => false,
+        }
+    }
+
+    /// Go `Hash64`: hash the persisted index ID as one whole cascades
+    /// `HashInt64` step.
+    pub fn hash64<H: HashInt64>(&self, state: &mut H) {
+        state.hash_int64(self.id);
+    }
+
+    /// Nil-receiver-capable Go `Hash64` call boundary. A nil `*IndexInfo`
+    /// panics when Go evaluates `index.ID`.
+    pub fn hash64_pointer<H: HashInt64>(index: Option<&Self>, state: &mut H) {
+        index.expect("nil *IndexInfo").hash64(state);
     }
 
     /// Go `IsChanging`: whether this is a modify-index temporary index.
@@ -732,7 +756,6 @@ pub fn find_index_column_by_name<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::hash::Hasher;
 
     // Go's `ast.IndexType` is a plain `int`, and its declaration warns that a
     // value "may come from a previous version persisted in TableInfo. So you
@@ -973,12 +996,37 @@ mod tests {
         };
         assert!(left.equals_id(&right));
         assert!(!left.equals_id(&other));
+        assert!(IndexInfo::equals(
+            Some(&left),
+            GoPointerAny::typed(Some(&right))
+        ));
+        assert!(!IndexInfo::equals(Some(&left), GoPointerAny::Other));
+        assert!(!IndexInfo::equals(Some(&left), GoPointerAny::typed(None)));
+        assert!(IndexInfo::equals(None, GoPointerAny::typed(None)));
+        assert!(!IndexInfo::equals(None, GoPointerAny::typed(Some(&right))));
         let hash = |index: &IndexInfo| {
-            let mut state = std::collections::hash_map::DefaultHasher::new();
-            index.hash_id(&mut state);
-            state.finish()
+            let mut state = crate::cascades_hash::CascadesHasher::new();
+            index.hash64(&mut state);
+            state.sum64()
         };
         assert_eq!(hash(&left), hash(&right));
+        assert!(std::panic::catch_unwind(|| {
+            let mut state = crate::cascades_hash::CascadesHasher::new();
+            IndexInfo::hash64_pointer(None, &mut state);
+        })
+        .is_err());
+        for (id, expected) in [
+            (0, 12_638_153_115_695_167_455),
+            (-1, 5_808_589_858_502_755_950),
+            (i64::MIN, 3_414_781_078_840_391_647),
+            (i64::MAX, 15_031_961_895_357_531_758),
+        ] {
+            let index = IndexInfo {
+                id,
+                ..Default::default()
+            };
+            assert_eq!(hash(&index), expected);
+        }
     }
 
     #[test]

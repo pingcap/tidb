@@ -23,16 +23,16 @@
 //! callers expect (Rust's owned model has no pointer aliasing to reproduce).
 //!
 //! Go's `Equals`/`Hash64` identity rule is exposed explicitly by
-//! [`TableInfo::equals_id`] and [`TableInfo::hash_id`]; Rust structural equality
+//! [`TableInfo::equals_id`] and [`TableInfo::hash64`]; Rust structural equality
 //! is deliberately not overloaded with that narrower planner identity.
 
-use chrono::{DateTime, Utc};
 use tidb_ast::CiString;
 use tidb_datatype::FieldTypeFlags;
 
-use crate::bdr::ts_convert_2_time;
+use crate::cascades_hash::HashInt64;
 use crate::column::{find_column_info_by_id, ColumnInfo};
 use crate::engine_attribute::{build_storage_class_string, StorageClassTransitRule};
+use crate::go_runtime::{GoPointerAny, GoTime};
 use crate::index::{IndexInfo, RegionSplitPolicy};
 use crate::partition::PartitionInfo;
 use crate::placement::PolicyRefInfo;
@@ -311,9 +311,31 @@ impl TableInfo {
         self.id == other.id
     }
 
-    /// Go `Hash64`: feed only the persisted table ID to the supplied hasher.
-    pub fn hash_id<H: std::hash::Hasher>(&self, state: &mut H) {
-        std::hash::Hash::hash(&self.id, state);
+    /// Exact Go `Equals(any)`, including wrong dynamic types and typed-nil
+    /// pointer interfaces. `receiver` represents Go's possibly nil method
+    /// receiver.
+    #[must_use]
+    pub fn equals(receiver: Option<&Self>, other: GoPointerAny<'_, Self>) -> bool {
+        let GoPointerAny::Typed(other) = other else {
+            return false;
+        };
+        match (receiver, other) {
+            (None, None) => true,
+            (Some(left), Some(right)) => left.id == right.id,
+            _ => false,
+        }
+    }
+
+    /// Go `Hash64`: hash the persisted table ID as one whole cascades
+    /// `HashInt64` step.
+    pub fn hash64<H: HashInt64>(&self, state: &mut H) {
+        state.hash_int64(self.id);
+    }
+
+    /// Nil-receiver-capable Go `Hash64` call boundary. A nil `*TableInfo`
+    /// panics when Go evaluates `t.ID`.
+    pub fn hash64_pointer<H: HashInt64>(table: Option<&Self>, state: &mut H) {
+        table.expect("nil *TableInfo").hash64(state);
     }
 
     /// Go `GetPartitionInfo`: the partition info when partitioning is enabled.
@@ -335,8 +357,8 @@ impl TableInfo {
 
     /// Go `GetUpdateTime`: the last-update time (from the `update_ts` TSO).
     #[must_use]
-    pub fn get_update_time(&self) -> DateTime<Utc> {
-        ts_convert_2_time(self.update_ts)
+    pub fn get_update_time(&self) -> GoTime {
+        GoTime::from_tso(self.update_ts)
     }
 
     /// Go `GetPkColInfo`: the primary-key column (by the PRI-KEY flag).
@@ -791,7 +813,6 @@ impl TableInfo {
 mod tests {
     use super::*;
     use crate::table::ViewInfo;
-    use std::hash::Hasher;
     use tidb_datatype::{FieldType, FieldTypeCode};
 
     fn pk_col(name: &str, unsigned: bool) -> ColumnInfo {
@@ -861,12 +882,48 @@ mod tests {
         };
         assert!(left.equals_id(&right));
         assert!(!left.equals_id(&other));
+        assert!(TableInfo::equals(
+            Some(&left),
+            GoPointerAny::typed(Some(&right))
+        ));
+        assert!(!TableInfo::equals(Some(&left), GoPointerAny::Other));
+        assert!(!TableInfo::equals(Some(&left), GoPointerAny::typed(None)));
+        assert!(TableInfo::equals(None, GoPointerAny::typed(None)));
+        assert!(!TableInfo::equals(None, GoPointerAny::typed(Some(&right))));
         let hash = |table: &TableInfo| {
-            let mut state = std::collections::hash_map::DefaultHasher::new();
-            table.hash_id(&mut state);
-            state.finish()
+            let mut state = crate::cascades_hash::CascadesHasher::new();
+            table.hash64(&mut state);
+            state.sum64()
         };
         assert_eq!(hash(&left), hash(&right));
+        assert!(std::panic::catch_unwind(|| {
+            let mut state = crate::cascades_hash::CascadesHasher::new();
+            TableInfo::hash64_pointer(None, &mut state);
+        })
+        .is_err());
+        for (id, expected) in [
+            (0, 12_638_153_115_695_167_455),
+            (-1, 5_808_589_858_502_755_950),
+            (i64::MIN, 3_414_781_078_840_391_647),
+            (i64::MAX, 15_031_961_895_357_531_758),
+        ] {
+            let table = TableInfo {
+                id,
+                ..Default::default()
+            };
+            assert_eq!(hash(&table), expected);
+        }
+    }
+
+    #[test]
+    fn update_time_retains_go_unix_milli_domain() {
+        let table = TableInfo {
+            update_ts: u64::MAX,
+            ..Default::default()
+        };
+        let update_time = table.get_update_time();
+        assert_eq!(update_time.unix_millis(), (1_i64 << 46) - 1);
+        assert!(update_time.to_chrono_utc().is_none());
     }
 
     #[test]

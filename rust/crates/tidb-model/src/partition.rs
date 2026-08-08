@@ -454,14 +454,14 @@ impl PartitionInfo {
         match self.partition_type {
             PartitionType::RANGE => {
                 for candidate in index as usize..self.definitions.len() {
-                    if !self.is_dropping(candidate) {
+                    if !self.is_dropping(candidate as isize) {
                         return candidate as isize;
                     }
                 }
                 -1
             }
             PartitionType::LIST => {
-                if !self.is_dropping(index as usize) {
+                if !self.is_dropping(index) {
                     return index;
                 }
                 let default_index = self.get_default_list_partition();
@@ -478,8 +478,8 @@ impl PartitionInfo {
     /// Go `IsDropping`. As in Go, `index` must identify an existing
     /// definition; invalid metadata is an invariant violation and panics.
     #[must_use]
-    pub fn is_dropping(&self, index: usize) -> bool {
-        let id = self.definitions[index].id;
+    pub fn is_dropping(&self, index: isize) -> bool {
+        let id = self.definitions[index as usize].id;
         self.dropping_definitions
             .iter()
             .any(|definition| definition.id == id)
@@ -606,6 +606,8 @@ mod tests {
         };
         assert_eq!(range.get_default_list_partition(), -1);
         assert_eq!(range.get_overlapping_dropping_partition_idx(-1), -1);
+        assert!(std::panic::catch_unwind(|| range.is_dropping(-1)).is_err());
+        assert!(range.is_dropping(0));
         assert_eq!(range.get_overlapping_dropping_partition_idx(0), 2);
         assert_eq!(range.get_overlapping_dropping_partition_idx(2), 2);
         let (index, error) = range.replace_with_overlapping_partition_idx(0, Some("dropped"));
