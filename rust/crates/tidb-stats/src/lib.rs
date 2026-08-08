@@ -271,7 +271,8 @@ pub use sample_bytes::{
     calc_total_size, sample_value_is_usable, MAX_FIELD_VARCHAR_LENGTH, MAX_SAMPLE_VALUE_LENGTH,
 };
 pub use sample_collector::{
-    legacy_sample_collector_from_proto, legacy_sample_collector_to_proto, sort_legacy_sample_items,
+    legacy_row_to_datums, legacy_sample_collector_from_proto, legacy_sample_collector_to_proto,
+    sort_legacy_sample_items, LegacyRecordChunk, LegacySampleBuilder, LegacySampleBuilderError,
     LegacySampleCollector, LegacySampleCollectorProto, LegacySampleItem,
 };
 pub use scalar_enum::{enum_range_values, MAX_NUM_STEP};

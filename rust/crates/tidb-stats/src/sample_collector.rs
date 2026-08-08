@@ -21,8 +21,8 @@ use tidb_util::fastrand::{uint32_n, uint64_n};
 
 use crate::{
     decode_cmsketch_and_embedded_topn, encode_cmsketch_without_topn, fm_sketch_from_proto,
-    fm_sketch_to_proto, hash_bytes, CmsSketch, CodecError, FmSketch, FmSketchProto, TopN,
-    MAX_SAMPLE_VALUE_LENGTH,
+    fm_sketch_to_proto, hash_bytes, CmsSketch, CodecError, FmSketch, FmSketchProto,
+    SortedHistogramBuilder, TopN, MAX_SAMPLE_VALUE_LENGTH,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -254,4 +254,106 @@ pub fn legacy_sample_collector_from_proto(
         total_size: proto.total_size.unwrap_or(0),
         ..LegacySampleCollector::default()
     })
+}
+
+/// One `RecordSet.Next` result consumed by Go `SampleBuilder`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LegacyRecordChunk {
+    pub field_count: usize,
+    pub rows: Vec<Vec<Datum>>,
+}
+
+/// Go `RowToDatums`: return one datum per result field, ignoring any extra
+/// physical row values and panicking when a declared field is absent.
+#[must_use]
+pub fn legacy_row_to_datums(row: &[Datum], field_count: usize) -> Vec<Datum> {
+    (0..field_count).map(|index| row[index].clone()).collect()
+}
+
+#[derive(Clone, Debug)]
+pub struct LegacySampleBuilder {
+    pub column_count: usize,
+    pub max_sample_size: i64,
+    pub max_fm_sketch_size: usize,
+    pub cmsketch_depth: i32,
+    pub cmsketch_width: i32,
+    /// One entry per sampled column after an optional PK-handle column.
+    pub collated_columns: Vec<bool>,
+}
+
+#[derive(Debug)]
+pub enum LegacySampleBuilderError<E> {
+    ZeroFields,
+    PrimaryKey(DatumValueError),
+    Encode(E),
+}
+
+impl<E: std::fmt::Display> std::fmt::Display for LegacySampleBuilderError<E> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ZeroFields => {
+                formatter.write_str("collect column stats failed: record set has 0 field")
+            }
+            Self::PrimaryKey(error) => std::fmt::Display::fmt(error, formatter),
+            Self::Encode(error) => std::fmt::Display::fmt(error, formatter),
+        }
+    }
+}
+
+impl<E> std::error::Error for LegacySampleBuilderError<E> where E: std::error::Error + 'static {}
+
+impl LegacySampleBuilder {
+    /// Go `CollectColumnStats` over dependency-free record chunks.
+    /// `encode` owns the table-codec/collator boundary and returns the exact
+    /// bytes `SampleCollector.collect` hashes and retains.
+    pub fn collect_column_stats<I, E>(
+        &self,
+        chunks: I,
+        mut primary_key_builder: Option<&mut SortedHistogramBuilder>,
+        mut encode: impl FnMut(usize, Datum, bool) -> Result<(Datum, Vec<u8>), E>,
+    ) -> Result<Vec<LegacySampleCollector>, LegacySampleBuilderError<E>>
+    where
+        I: IntoIterator<Item = LegacyRecordChunk>,
+    {
+        let mut collectors: Vec<_> = (0..self.column_count)
+            .map(|_| LegacySampleCollector {
+                fm_sketch: Some(FmSketch::new(self.max_fm_sketch_size)),
+                max_sample_size: self.max_sample_size,
+                ..LegacySampleCollector::default()
+            })
+            .collect();
+        if self.cmsketch_depth > 0 && self.cmsketch_width > 0 {
+            for collector in &mut collectors {
+                collector.cmsketch = Some(CmsSketch::new(
+                    self.cmsketch_depth as u32,
+                    self.cmsketch_width as u32,
+                ));
+            }
+        }
+
+        for chunk in chunks {
+            if chunk.rows.is_empty() {
+                return Ok(collectors);
+            }
+            if chunk.field_count == 0 {
+                return Err(LegacySampleBuilderError::ZeroFields);
+            }
+            for row in chunk.rows {
+                let mut datums = legacy_row_to_datums(&row, chunk.field_count);
+                if let Some(builder) = primary_key_builder.as_deref_mut() {
+                    builder
+                        .iterate(datums[0].clone())
+                        .map_err(LegacySampleBuilderError::PrimaryKey)?;
+                    datums.remove(0);
+                }
+                for (index, datum) in datums.into_iter().enumerate() {
+                    let collated = self.collated_columns[index];
+                    let (datum, encoded) =
+                        encode(index, datum, collated).map_err(LegacySampleBuilderError::Encode)?;
+                    collectors[index].collect(datum, encoded);
+                }
+            }
+        }
+        Ok(collectors)
+    }
 }

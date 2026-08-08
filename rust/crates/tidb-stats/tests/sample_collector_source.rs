@@ -14,8 +14,10 @@
 
 use tidb_datatype::Datum;
 use tidb_stats::{
-    legacy_sample_collector_from_proto, legacy_sample_collector_to_proto, sort_legacy_sample_items,
-    CmsSketch, FmSketch, LegacySampleCollector, LegacySampleItem, MAX_SAMPLE_VALUE_LENGTH,
+    legacy_row_to_datums, legacy_sample_collector_from_proto, legacy_sample_collector_to_proto,
+    sort_legacy_sample_items, CmsSketch, FmSketch, LegacyRecordChunk, LegacySampleBuilder,
+    LegacySampleBuilderError, LegacySampleCollector, LegacySampleItem, SortedHistogramBuilder,
+    MAX_SAMPLE_VALUE_LENGTH,
 };
 
 fn item(value: i64) -> LegacySampleItem {
@@ -144,4 +146,117 @@ fn source_extract_topn_zero_and_frequency_boundaries_match() {
     assert_eq!(top_n.num(), 2);
     assert_eq!(top_n.query_bytes(&[1]), Some(3));
     assert_eq!(top_n.query_bytes(&[2]), Some(2));
+}
+
+#[test]
+fn source_sample_builder_collects_pk_columns_and_stops_on_empty_chunk() {
+    let builder = LegacySampleBuilder {
+        column_count: 2,
+        max_sample_size: 8,
+        max_fm_sketch_size: 16,
+        cmsketch_depth: 2,
+        cmsketch_width: 8,
+        collated_columns: vec![false, true],
+    };
+    let mut primary_key = SortedHistogramBuilder::new(4, 1, 2);
+    let chunks = vec![
+        LegacyRecordChunk {
+            field_count: 3,
+            rows: vec![
+                vec![Datum::Int(1), Datum::Null, Datum::Bytes(vec![9, 1])],
+                vec![
+                    Datum::Int(2),
+                    Datum::Bytes(vec![8, 2]),
+                    Datum::Bytes(vec![9, 3]),
+                ],
+            ],
+        },
+        LegacyRecordChunk {
+            field_count: 3,
+            rows: Vec::new(),
+        },
+        LegacyRecordChunk {
+            field_count: 3,
+            rows: vec![vec![
+                Datum::Int(99),
+                Datum::Bytes(vec![8, 99]),
+                Datum::Bytes(vec![9, 99]),
+            ]],
+        },
+    ];
+    let collectors = builder
+        .collect_column_stats(chunks, Some(&mut primary_key), |_, datum, collated| {
+            let encoded = match &datum {
+                Datum::Null => Vec::new(),
+                Datum::Bytes(bytes) => {
+                    if collated {
+                        vec![bytes[0], bytes[1].wrapping_add(10)]
+                    } else {
+                        bytes.clone()
+                    }
+                }
+                _ => unreachable!(),
+            };
+            Ok::<_, ()>((datum, encoded))
+        })
+        .unwrap();
+    assert_eq!(primary_key.count(), 2);
+    assert_eq!(collectors[0].null_count, 1);
+    assert_eq!(collectors[0].count, 1);
+    assert_eq!(collectors[1].count, 2);
+    assert_eq!(collectors[1].samples[0].encoded, [9, 11]);
+    assert_eq!(collectors[1].samples[1].encoded, [9, 13]);
+    assert!(collectors
+        .iter()
+        .all(|collector| collector.cmsketch.is_some()));
+}
+
+#[test]
+fn source_sample_builder_checks_zero_fields_only_after_nonempty_chunk() {
+    let builder = LegacySampleBuilder {
+        column_count: 0,
+        max_sample_size: 0,
+        max_fm_sketch_size: 1,
+        cmsketch_depth: 0,
+        cmsketch_width: 1,
+        collated_columns: Vec::new(),
+    };
+    let empty_first = builder
+        .collect_column_stats(
+            [LegacyRecordChunk {
+                field_count: 0,
+                rows: Vec::new(),
+            }],
+            None,
+            |_, datum, _| Ok::<_, ()>((datum, Vec::new())),
+        )
+        .unwrap();
+    assert!(empty_first.is_empty());
+
+    let nonempty = builder.collect_column_stats(
+        [LegacyRecordChunk {
+            field_count: 0,
+            rows: vec![Vec::new()],
+        }],
+        None,
+        |_, datum, _| Ok::<_, ()>((datum, Vec::new())),
+    );
+    assert!(matches!(
+        nonempty,
+        Err(LegacySampleBuilderError::ZeroFields)
+    ));
+}
+
+#[test]
+fn source_row_to_datums_uses_field_count_not_physical_width() {
+    assert_eq!(
+        legacy_row_to_datums(&[Datum::Int(1), Datum::Int(2)], 1),
+        [Datum::Int(1)]
+    );
+}
+
+#[test]
+#[should_panic]
+fn source_row_to_datums_panics_when_declared_field_is_absent() {
+    let _ = legacy_row_to_datums(&[Datum::Int(1)], 2);
 }
