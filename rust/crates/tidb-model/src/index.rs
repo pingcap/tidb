@@ -29,8 +29,8 @@ use crate::reorg::BackfillState;
 use crate::schema_state::SchemaState;
 use crate::serde_helpers::{
     go_json_field_matches, ignore_unknown, impl_go_json_deserialize, impl_go_json_merge_object,
-    GoPointerSlice, GoValueSlice, NullNoopSeed, OptionMergeSeed, OptionPointerSliceSeed,
-    OptionValueSliceSeed,
+    FatalSeed, GoPointerSlice, GoValueSlice, NullNoopSeed, OptionMergeSeed, OptionPointerSliceSeed,
+    OptionValueSliceSeed, ValueMergeSeed,
 };
 use crate::table_info::TableInfo;
 
@@ -267,7 +267,7 @@ pub struct IndexColumn {
 
 impl_go_json_merge_object!(IndexColumn, destination, map, key, {
     if go_json_field_matches(&key, "name") {
-        map.next_value_seed(NullNoopSeed(&mut destination.name))?;
+        map.next_value_seed(FatalSeed(ValueMergeSeed(&mut destination.name)))?;
     } else if go_json_field_matches(&key, "offset") {
         map.next_value_seed(NullNoopSeed(&mut destination.offset))?;
     } else if go_json_field_matches(&key, "length") {
@@ -467,9 +467,9 @@ impl_go_json_merge_object!(IndexInfo, destination, map, key, {
     if go_json_field_matches(&key, "id") {
         map.next_value_seed(NullNoopSeed(&mut destination.id))?;
     } else if go_json_field_matches(&key, "idx_name") {
-        map.next_value_seed(NullNoopSeed(&mut destination.name))?;
+        map.next_value_seed(FatalSeed(ValueMergeSeed(&mut destination.name)))?;
     } else if go_json_field_matches(&key, "tbl_name") {
-        map.next_value_seed(NullNoopSeed(&mut destination.table))?;
+        map.next_value_seed(FatalSeed(ValueMergeSeed(&mut destination.table)))?;
     } else if go_json_field_matches(&key, "idx_cols") {
         map.next_value_seed(OptionPointerSliceSeed(destination.columns.raw_mut()))?;
     } else if go_json_field_matches(&key, "state") {
@@ -854,6 +854,51 @@ mod tests {
             serde_json::from_str(r#"{"lower":null,"upper":[]}"#).unwrap();
         assert!(!region.lower.is_allocated());
         assert!(region.upper.is_allocated());
+
+        index.name = CiString::new("OldIndex");
+        index.table = CiString::new("OldTable");
+        let mut decoder = serde_json::Deserializer::from_str(
+            r#"{
+                "idx_name":{"O":"First"},
+                "IDX_NAME":{"L":"folded"},
+                "tbl_name":{"L":"table-lower"}
+            }"#,
+        );
+        index.go_json_merge(&mut decoder).unwrap();
+        assert_eq!(index.name.original(), "First");
+        assert_eq!(index.name.lowercase(), "folded");
+        assert_eq!(index.table.original(), "OldTable");
+        assert_eq!(index.table.lowercase(), "table-lower");
+
+        let mut decoder = serde_json::Deserializer::from_str(
+            r#"{"idx_name":"SingleIndex","tbl_name":"SingleTable","comment":"after"}"#,
+        );
+        index.go_json_merge(&mut decoder).unwrap();
+        assert_eq!(index.name.original(), "SingleIndex");
+        assert_eq!(index.name.lowercase(), "singleindex");
+        assert_eq!(index.table.original(), "SingleTable");
+        assert_eq!(index.table.lowercase(), "singletable");
+        assert_eq!(index.comment, "after");
+
+        index.name = serde_json::from_str(r#"{"O":"First","L":"folded"}"#).unwrap();
+        let mut decoder = serde_json::Deserializer::from_str(
+            r#"{"idx_name":{"O":1,"L":"partial"},"comment":"unreached"}"#,
+        );
+        assert!(index.go_json_merge(&mut decoder).is_err());
+        assert_eq!(index.name.original(), "First");
+        assert_eq!(index.name.lowercase(), "partial");
+        assert_eq!(index.comment, "after");
+
+        let mut index_column = IndexColumn {
+            name: CiString::new("OldColumn"),
+            ..Default::default()
+        };
+        let mut decoder = serde_json::Deserializer::from_str(
+            r#"{"name":{"O":"NewColumn"},"NAME":{"L":"new-column"}}"#,
+        );
+        index_column.go_json_merge(&mut decoder).unwrap();
+        assert_eq!(index_column.name.original(), "NewColumn");
+        assert_eq!(index_column.name.lowercase(), "new-column");
     }
 
     #[test]

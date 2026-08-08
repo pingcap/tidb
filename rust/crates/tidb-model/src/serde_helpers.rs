@@ -615,10 +615,10 @@ pub(crate) trait GoJsonMerge {
         D: Deserializer<'de>;
 }
 
-/// Reproduces `encoding/json`'s receiver-mutating decode for `ast.CIStr`.
-/// The owning AST type deliberately accepts an additional string shorthand;
-/// persisted model fields do not: Go's source type is the two-field `O`/`L`
-/// object, with ordinary struct duplicate, fold, null, and partial-error rules.
+/// Reproduces `ast.CIStr.UnmarshalJSON`: first merge the two-field `O`/`L`
+/// object into the existing receiver, then fall back to a single string and
+/// derive its lower-case form. A failed object attempt retains any members it
+/// already applied before the string fallback returns its error.
 impl GoJsonMerge for tidb_ast::CiString {
     fn go_json_merge<'de, D>(&mut self, deserializer: D) -> Result<(), D::Error>
     where
@@ -665,7 +665,25 @@ impl GoJsonMerge for tidb_ast::CiString {
             }
         }
 
-        deserialize_go_object(deserializer, CiStringVisitor(self))
+        let raw = <&RawValue>::deserialize(deserializer)?;
+        if raw.get() == "null" {
+            return Ok(());
+        }
+
+        let mut object_decoder = serde_json::Deserializer::from_str(raw.get());
+        let object_result = deserialize_go_object(&mut object_decoder, CiStringVisitor(self))
+            .and_then(|()| object_decoder.end());
+        if object_result.is_ok() {
+            return Ok(());
+        }
+
+        match serde_json::from_str::<String>(raw.get()) {
+            Ok(original) => {
+                *self = tidb_ast::CiString::new(original);
+                Ok(())
+            }
+            Err(error) => Err(serde::de::Error::custom(error)),
+        }
     }
 }
 
