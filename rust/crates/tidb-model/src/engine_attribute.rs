@@ -54,6 +54,7 @@ pub const STORAGE_CLASS_TIER_DEFAULT: &str = STORAGE_CLASS_TIER_STANDARD;
 
 /// Go `StorageClassDef`: the tier and scope definition of a storage class.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct StorageClassDef {
     /// The tier name.
     pub tier: String,
@@ -82,14 +83,16 @@ impl StorageClassDef {
 
 /// Go `StorageClassSettings`: a set of storage-class definitions.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct StorageClassSettings {
     /// The definitions.
     #[serde(default)]
-    pub defs: Option<Vec<StorageClassDef>>,
+    pub defs: Option<Vec<Option<StorageClassDef>>>,
 }
 
 /// Go `StorageClassTransitRule`: when a tier transition happens.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct StorageClassTransitRule {
     /// The tier to transition to.
     pub tier: String,
@@ -200,6 +203,19 @@ mod tests {
         let settings: StorageClassSettings =
             serde_json::from_value(serde_json::json!({"defs": []})).unwrap();
         assert!(settings.defs.as_ref().is_some_and(Vec::is_empty));
+
+        // Go fills omitted scalar fields with their zero values and preserves
+        // nil entries in []*StorageClassDef.
+        let settings: StorageClassSettings =
+            serde_json::from_value(serde_json::json!({"defs": [null, {}]})).unwrap();
+        let defs = settings.defs.unwrap();
+        assert!(defs[0].is_none());
+        assert_eq!(defs[1].as_ref().unwrap().tier, "");
+
+        let transition: StorageClassTransitRule =
+            serde_json::from_value(serde_json::json!({})).unwrap();
+        assert_eq!(transition.tier, "");
+        assert_eq!(transition.after_days, 0);
     }
 
     #[test]
