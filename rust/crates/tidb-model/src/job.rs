@@ -1416,38 +1416,40 @@ mod tests {
             .unwrap_err();
         assert!(error.to_string().contains("invalid type"));
 
-        let history = job.binlog_info.as_ref().unwrap();
-        assert_eq!(history.schema_version, 10);
-        assert!(history.db_info.as_ref().unwrap().ptr_eq(&database_alias));
-        assert!(history.table_info.as_ref().unwrap().ptr_eq(&table_alias));
-        assert!(history
-            .multiple_table_infos
-            .backing_ptr_eq(&table_slice_alias));
-        let database = history.db_info.as_ref().unwrap().read();
-        assert_eq!(database.id, 1);
-        assert_eq!(database.name.original(), "db-kept");
-        assert_eq!(database.charset, "old-db-charset");
-        assert_eq!(database.collate, "db-later");
-        let db_policy = database.placement_policy_ref.as_ref().unwrap();
-        assert_eq!(db_policy.id, 11);
-        assert_eq!(db_policy.name.original(), "db-policy-later");
-        let table = history.table_info.as_ref().unwrap().read();
-        assert_eq!(table.id, 2);
-        assert_eq!(table.name.original(), "table-kept");
-        assert_eq!(table.comment, "table-later");
-        let table_policy = table.placement_policy_ref.as_ref().unwrap();
-        assert_eq!(table_policy.read().id, 12);
-        assert_eq!(table_policy.read().name.original(), "table-policy-later");
-        assert_eq!(history.finished_ts, 30);
-        let tables = &history.multiple_table_infos;
-        assert!(tables.get(0).is_none());
-        let second = tables.get(1).unwrap();
-        assert_eq!(second.read().id, 0);
-        assert_eq!(second.read().comment, "element-later");
-        let third = tables.get(2).unwrap();
-        assert_eq!(third.read().id, 7);
-        assert_eq!(third.read().comment, "last-element");
-        assert_eq!(job.row_count, 40);
+        {
+            let history = job.binlog_info.as_ref().unwrap();
+            assert_eq!(history.schema_version, 10);
+            assert!(history.db_info.as_ref().unwrap().ptr_eq(&database_alias));
+            assert!(history.table_info.as_ref().unwrap().ptr_eq(&table_alias));
+            assert!(history
+                .multiple_table_infos
+                .backing_ptr_eq(&table_slice_alias));
+            let database = history.db_info.as_ref().unwrap().read();
+            assert_eq!(database.id, 1);
+            assert_eq!(database.name.original(), "db-kept");
+            assert_eq!(database.charset, "old-db-charset");
+            assert_eq!(database.collate, "db-later");
+            let db_policy = database.placement_policy_ref.as_ref().unwrap();
+            assert_eq!(db_policy.id, 11);
+            assert_eq!(db_policy.name.original(), "db-policy-later");
+            let table = history.table_info.as_ref().unwrap().read();
+            assert_eq!(table.id, 2);
+            assert_eq!(table.name.original(), "table-kept");
+            assert_eq!(table.comment, "table-later");
+            let table_policy = table.placement_policy_ref.as_ref().unwrap();
+            assert_eq!(table_policy.read().id, 12);
+            assert_eq!(table_policy.read().name.original(), "table-policy-later");
+            assert_eq!(history.finished_ts, 30);
+            let tables = &history.multiple_table_infos;
+            assert!(tables.get(0).is_none());
+            let second = tables.get(1).unwrap();
+            assert_eq!(second.read().id, 0);
+            assert_eq!(second.read().comment, "element-later");
+            let third = tables.get(2).unwrap();
+            assert_eq!(third.read().id, 7);
+            assert_eq!(third.read().comment, "last-element");
+            assert_eq!(job.row_count, 40);
+        }
 
         job.decode(br#"{"binlog":{"DBInfo":{"Deprecated":null,"collate":"after-null"}}}"#)
             .unwrap();

@@ -826,6 +826,80 @@ where
     }
 }
 
+/// Deserializes a boxed pointer through an atomic custom unmarshaller while
+/// preserving the existing allocation.
+///
+/// Go allocates a zero pointee before invoking `UnmarshalJSON` on a nil
+/// pointer. A failed custom decode therefore leaves that newly allocated zero
+/// pointee installed, while an existing pointee retains both its address and
+/// value. The explicit zero constructor avoids imposing Rust's `Default` on a
+/// Go type whose language-level zero differs from its ordinary constructor.
+pub(crate) struct OptionBoxAtomicReplaceSeed<'a, T> {
+    destination: &'a mut Option<Box<T>>,
+    zero: fn() -> T,
+}
+
+impl<'a, T> OptionBoxAtomicReplaceSeed<'a, T> {
+    pub(crate) fn new(destination: &'a mut Option<Box<T>>, zero: fn() -> T) -> Self {
+        Self { destination, zero }
+    }
+}
+
+impl<'de, T> DeserializeSeed<'de> for OptionBoxAtomicReplaceSeed<'_, T>
+where
+    T: Deserialize<'de>,
+{
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct AtomicPointerVisitor<'a, T> {
+            destination: &'a mut Option<Box<T>>,
+            zero: fn() -> T,
+        }
+
+        impl<'de, T> Visitor<'de> for AtomicPointerVisitor<'_, T>
+        where
+            T: Deserialize<'de>,
+        {
+            type Value = ();
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("null or a custom-unmarshal pointer value")
+            }
+
+            fn visit_none<E>(self) -> Result<Self::Value, E> {
+                *self.destination = None;
+                Ok(())
+            }
+
+            fn visit_unit<E>(self) -> Result<Self::Value, E> {
+                *self.destination = None;
+                Ok(())
+            }
+
+            fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                let destination = self
+                    .destination
+                    .get_or_insert_with(|| Box::new((self.zero)()));
+                let replacement = T::deserialize(deserializer)?;
+                **destination = replacement;
+                Ok(())
+            }
+        }
+
+        deserializer.deserialize_option(AtomicPointerVisitor {
+            destination: self.destination,
+            zero: self.zero,
+        })
+    }
+}
+
 /// Deserializes a slice-like field, clearing it on JSON null.
 pub(crate) struct NullDefaultSeed<'a, T>(pub(crate) &'a mut T);
 

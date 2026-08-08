@@ -1542,6 +1542,8 @@ pub fn str_to_type(label: &str) -> FieldTypeCode {
 
 #[cfg(test)]
 mod tests {
+    use crate::GoString;
+
     use super::{
         FieldType, FieldTypeCode, FieldTypeFlags, MAX_DECIMAL_SCALE, MAX_DECIMAL_WIDTH,
         UNSPECIFIED_LENGTH,
