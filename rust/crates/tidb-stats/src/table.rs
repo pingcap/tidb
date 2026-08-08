@@ -18,8 +18,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::{
-    ColAndIdxExistenceMap, Column, ColumnInfo, ColumnMemUsage, Histogram, Index, IndexInfo,
-    IndexMemUsage, StatsLoadedStatus,
+    CmsSketch, ColAndIdxExistenceMap, Column, ColumnInfo, ColumnMemUsage, FmSketch, Histogram,
+    Index, IndexInfo, IndexMemUsage, StatsLoadedStatus, TopN,
 };
 
 pub const PSEUDO_VERSION: u64 = 0;
@@ -56,6 +56,105 @@ impl TableMemoryUsage {
     pub fn total_tracking_mem_usage(&self) -> i64 {
         self.total_index_tracking_mem_usage()
             .wrapping_add(self.total_column_tracking_mem_usage())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct OwnedStatsInfo {
+    histogram: Histogram,
+    cmsketch: Option<CmsSketch>,
+    top_n: Option<TopN>,
+    fm_sketch: Option<FmSketch>,
+}
+
+/// The successful result of Go `GetStatsInfo`. Shared variants retain the
+/// source cache item; `Owned` is the independent `needCopy` result.
+#[derive(Clone, Debug)]
+pub enum StatsInfo {
+    SharedColumn(SharedColumn),
+    SharedIndex(SharedIndex),
+    Owned(Arc<RwLock<OwnedStatsInfo>>),
+}
+
+impl StatsInfo {
+    pub fn with_components<R>(
+        &self,
+        visit: impl FnOnce(&Histogram, Option<&CmsSketch>, Option<&TopN>, Option<&FmSketch>) -> R,
+    ) -> R {
+        match self {
+            Self::SharedColumn(column) => {
+                let column = read(column);
+                visit(
+                    &column.histogram,
+                    column.cmsketch.as_ref(),
+                    column.top_n.as_ref(),
+                    column.fm_sketch.as_ref(),
+                )
+            }
+            Self::SharedIndex(index) => {
+                let index = read(index);
+                visit(
+                    &index.histogram,
+                    index.cmsketch.as_ref(),
+                    index.top_n.as_ref(),
+                    index.fm_sketch.as_ref(),
+                )
+            }
+            Self::Owned(info) => {
+                let info = read(info);
+                visit(
+                    &info.histogram,
+                    info.cmsketch.as_ref(),
+                    info.top_n.as_ref(),
+                    info.fm_sketch.as_ref(),
+                )
+            }
+        }
+    }
+
+    pub fn with_components_mut<R>(
+        &self,
+        visit: impl FnOnce(
+            &mut Histogram,
+            &mut Option<CmsSketch>,
+            &mut Option<TopN>,
+            &mut Option<FmSketch>,
+        ) -> R,
+    ) -> R {
+        match self {
+            Self::SharedColumn(column) => {
+                let mut column = write(column);
+                let Column {
+                    histogram,
+                    cmsketch,
+                    top_n,
+                    fm_sketch,
+                    ..
+                } = &mut *column;
+                visit(histogram, cmsketch, top_n, fm_sketch)
+            }
+            Self::SharedIndex(index) => {
+                let mut index = write(index);
+                let Index {
+                    histogram,
+                    cmsketch,
+                    top_n,
+                    fm_sketch,
+                    ..
+                } = &mut *index;
+                visit(histogram, cmsketch, top_n, fm_sketch)
+            }
+            Self::Owned(info) => {
+                let mut info = write(info);
+                let OwnedStatsInfo {
+                    histogram,
+                    cmsketch,
+                    top_n,
+                    fm_sketch,
+                } = &mut *info;
+                visit(histogram, cmsketch, top_n, fm_sketch)
+            }
+        }
     }
 }
 
@@ -672,24 +771,50 @@ impl Table {
         row_count > 0.0 && self.hist_coll.modify_count as f64 / row_count > ratio
     }
 
+    /// Go `GetStatsInfo`. `need_copy == false` returns an alias to the cache
+    /// item; `true` deep-copies every returned component.
+    #[must_use]
+    pub fn stats_info(&self, id: i64, is_index: bool, need_copy: bool) -> Option<StatsInfo> {
+        if is_index {
+            let index = self.hist_coll.get_index(id)?;
+            if !need_copy {
+                return Some(StatsInfo::SharedIndex(index));
+            }
+            let index = read(&index);
+            return Some(StatsInfo::Owned(Arc::new(RwLock::new(OwnedStatsInfo {
+                histogram: index.histogram.clone(),
+                cmsketch: index.cmsketch.clone(),
+                top_n: index.top_n.clone(),
+                fm_sketch: index.fm_sketch.clone(),
+            }))));
+        }
+        let column = self.hist_coll.get_column(id)?;
+        if !need_copy {
+            return Some(StatsInfo::SharedColumn(column));
+        }
+        let column = read(&column);
+        Some(StatsInfo::Owned(Arc::new(RwLock::new(OwnedStatsInfo {
+            histogram: column.histogram.clone(),
+            cmsketch: column.cmsketch.clone(),
+            top_n: column.top_n.clone(),
+            fm_sketch: column.fm_sketch.clone(),
+        }))))
+    }
+
     #[must_use]
     pub fn index_starting_with_column(&self, name: &str) -> Option<SharedIndex> {
         self.hist_coll.stable_indices().into_iter().find(|index| {
-            read(index)
-                .info
-                .as_ref()
-                .and_then(|info| info.columns.first())
-                .is_some_and(|column| column == name)
+            let index = read(index);
+            let info = index.info.as_ref().expect("index has no metadata");
+            info.columns[0] == name
         })
     }
 
     #[must_use]
     pub fn column_by_name(&self, name: &str) -> Option<SharedColumn> {
         self.hist_coll.stable_columns().into_iter().find(|column| {
-            read(column)
-                .info
-                .as_ref()
-                .is_some_and(|info| info.name == name)
+            let column = read(column);
+            column.info.as_ref().expect("column has no metadata").name == name
         })
     }
 }

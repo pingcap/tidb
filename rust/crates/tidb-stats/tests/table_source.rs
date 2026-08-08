@@ -410,6 +410,75 @@ fn source_generate_query_maps_keeps_partial_prefix_and_sorts_index_ids() {
 }
 
 #[test]
+fn source_get_stats_info_preserves_alias_or_deep_copy_contract() {
+    let table = table();
+    assert!(table.stats_info(999, false, false).is_none());
+    assert!(table.stats_info(999, true, true).is_none());
+
+    let shared = table.stats_info(2, false, false).unwrap();
+    shared.with_components_mut(|histogram, cmsketch, top_n, fm_sketch| {
+        histogram.ndv = 55;
+        *cmsketch = None;
+        *top_n = None;
+        *fm_sketch = None;
+    });
+    assert_eq!(
+        table
+            .hist_coll
+            .get_column(2)
+            .unwrap()
+            .read()
+            .unwrap()
+            .histogram
+            .ndv,
+        55
+    );
+
+    let copied = table.stats_info(3, true, true).unwrap();
+    copied.with_components_mut(|histogram, _, _, _| histogram.ndv = 77);
+    copied.with_components(|histogram, _, _, _| assert_eq!(histogram.ndv, 77));
+    assert_ne!(
+        table
+            .hist_coll
+            .get_index(3)
+            .unwrap()
+            .read()
+            .unwrap()
+            .histogram
+            .ndv,
+        77
+    );
+}
+
+#[test]
+#[should_panic]
+fn source_index_start_lookup_panics_for_empty_column_metadata() {
+    let coll = HistColl::new(1, 1, 0, 0, 1);
+    coll.set_index(
+        1,
+        Index {
+            info: Some(IndexInfo {
+                id: 1,
+                name: "broken".to_owned(),
+                columns: Vec::new(),
+                mv_index: false,
+            }),
+            ..Index::default()
+        },
+    );
+    let table = Table {
+        existence_map: None,
+        hist_coll: coll,
+        version: 0,
+        last_analyze_version: 0,
+        last_stats_hist_version: 0,
+        table_info_update_ts: 0,
+        is_pk_handle: false,
+    };
+    let _ = table.index_starting_with_column("x");
+}
+
+#[test]
 fn source_bootstrap_pre_scalar_and_drop_evicted_match() {
     let coll = HistColl::new(1, 10, 0, 1, 1);
     let mut col = column(1, 2, StatsLoadedStatus::full_load());
