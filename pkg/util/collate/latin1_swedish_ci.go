@@ -22,6 +22,19 @@ import (
 
 // latin1SwedishCICollator is the collator for latin1_swedish_ci.
 //
+// It is deliberately NOT registered in newCollatorMap/newCollatorIDMap yet, so
+// GetCollationByName still rejects the collation and no column can be created with
+// it. Enabling it needs three things that are not in place:
+//   - TiKV and TiFlash collators, so pushed-down expression evaluation agrees with
+//     the sort key TiDB writes, plus a guard that keeps expressions in TiDB until
+//     the storage layer understands the collation.
+//   - A byte-safe case fold for the collate.IsCICollation fast paths in
+//     pkg/expression. Those apply strings.ToLower, which assumes UTF-8 and maps
+//     every latin1 byte >= 0x80 to U+FFFD, making distinct characters compare equal.
+//   - The documentation updates tracked in the feature request.
+//
+// Until then this type stands alone and is exercised directly by its unit tests.
+//
 // Unlike the utf8mb4 collators this one is byte-oriented rather than rune-oriented.
 // MySQL defines latin1_swedish_ci as a 256-entry weight table indexed by the cp1252
 // byte value (strings/ctype-latin1.c, sort_order_latin1), and TiDB's latin1 charset

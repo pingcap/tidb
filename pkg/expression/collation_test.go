@@ -179,7 +179,9 @@ func TestInferCollation(t *testing.T) {
 		},
 		// latin1_bin mixed with latin1_swedish_ci. At equal coercibility the _bin
 		// collation wins regardless of argument order, so latin1_swedish_ci must be
-		// recognized as the non-bin side (see isBinCollation).
+		// recognized as the non-bin side (see isBinCollation). The collation is not
+		// registered yet and so cannot reach these paths from SQL; these cases pin the
+		// classification so it is not changed by accident before it can be.
 		{
 			[]Expression{
 				newExpression(CoercibilityImplicit, UNICODE, charset.CharsetLatin1, charset.CollationLatin1),
@@ -911,19 +913,11 @@ func TestCompareString(t *testing.T) {
 
 	// latin1 collations are byte-oriented, so the arguments are spelled as cp1252
 	// bytes rather than as Go literals, which the compiler would encode as UTF-8.
-	require.Equal(t, 0, types.CompareString("a", "A", "latin1_swedish_ci"))
-	require.Equal(t, 0, types.CompareString("\xE9", "E", "latin1_swedish_ci"))
-	require.Equal(t, 0, types.CompareString("a ", "a  ", "latin1_swedish_ci"))
-	require.Equal(t, 0, types.CompareString("\xDC", "Y", "latin1_swedish_ci"))
-	// Å, Ä and Ö sort after Z rather than folding onto A and O.
-	require.NotEqual(t, 0, types.CompareString("\xC5", "A", "latin1_swedish_ci"))
-	require.NotEqual(t, 0, types.CompareString("\xD6", "O", "latin1_swedish_ci"))
-	require.Equal(t, 1, types.CompareString("\xC5", "Z", "latin1_swedish_ci"))
-	// ß folds to nothing here, unlike in the utf8 collations above.
-	require.NotEqual(t, 0, types.CompareString("\xDF", "s", "latin1_swedish_ci"))
-	require.NotEqual(t, 0, types.CompareString("\xDF", "ss", "latin1_swedish_ci"))
-
+	// latin1_swedish_ci is not covered here because it is not registered yet, so
+	// CompareString would silently fall back to another collator; its semantics are
+	// tested directly in pkg/util/collate.
 	require.NotEqual(t, 0, types.CompareString("a", "A", "latin1_bin"))
+	require.NotEqual(t, 0, types.CompareString("\xE9", "E", "latin1_bin"))
 	require.Equal(t, 0, types.CompareString("a ", "a  ", "latin1_bin"))
 
 	require.NotEqual(t, 0, types.CompareString("a", "A", "binary"))

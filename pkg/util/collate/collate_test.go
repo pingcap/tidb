@@ -145,13 +145,21 @@ func TestUTF8CollatorKey(t *testing.T) {
 	testKeyTable(t, collations, tests)
 }
 
+// latin1_swedish_ci is deliberately not registered in newCollatorMap yet, so the
+// latin1 tests below construct it directly instead of going through GetCollator.
+// See the doc comment on latin1SwedishCICollator.
+func latin1TestCollators() (collators []Collator, names []string) {
+	return []Collator{GetCollator("latin1_bin"), &latin1SwedishCICollator{}},
+		[]string{"latin1_bin", "latin1_swedish_ci"}
+}
+
 // The latin1 collators are byte-oriented, so the test data below spells the
 // interesting characters as explicit cp1252 bytes ("\xC4" for Ä) rather than as Go
 // source literals, which the compiler would encode as UTF-8.
 func TestLatin1CollatorCompare(t *testing.T) {
 	SetNewCollationEnabledForTest(true)
 	defer SetNewCollationEnabledForTest(false)
-	collations := []string{"latin1_bin", "latin1_swedish_ci"}
+	collators, names := latin1TestCollators()
 	tests := []compareTable{
 		{"a", "b", []int{-1, -1}},
 		{"a", "A", []int{1, 0}},
@@ -187,13 +195,18 @@ func TestLatin1CollatorCompare(t *testing.T) {
 		// limitation rather than endorsing it.
 		{"\xC3\x84", "a\x84", []int{1, 0}},
 	}
-	testCompareTable(t, collations, tests)
+	for i, collator := range collators {
+		for _, table := range tests {
+			comment := fmt.Sprintf("Compare Left: %q Right: %q, Using %v", table.Left, table.Right, names[i])
+			require.Equal(t, table.Expect[i], collator.Compare(table.Left, table.Right), comment)
+		}
+	}
 }
 
 func TestLatin1CollatorKey(t *testing.T) {
 	SetNewCollationEnabledForTest(true)
 	defer SetNewCollationEnabledForTest(false)
-	collations := []string{"latin1_bin", "latin1_swedish_ci"}
+	collators, names := latin1TestCollators()
 	tests := []keyTable{
 		{"a", [][]byte{{0x61}, {0x41}}},
 		{"A", [][]byte{{0x41}, {0x41}}},
@@ -204,12 +217,14 @@ func TestLatin1CollatorKey(t *testing.T) {
 		{"\xFF\xDD", [][]byte{{0xFF, 0xDD}, {0xFF, 0x59}}},
 		{"", [][]byte{{}, {}}},
 	}
-	testKeyTable(t, collations, tests)
-
-	// One weight byte per input byte, so the sort key never outgrows the raw data.
-	collator := GetCollator("latin1_swedish_ci")
-	for _, test := range tests {
-		require.LessOrEqual(t, len(collator.Key(test.Str)), collator.MaxKeyLen(test.Str), test.Str)
+	for i, collator := range collators {
+		for _, test := range tests {
+			comment := fmt.Sprintf("key %q, using %v", test.Str, names[i])
+			require.Equal(t, test.Expect[i], collator.Key(test.Str), comment)
+			require.Equal(t, test.Expect[i], collator.ImmutableKey(test.Str), comment)
+			// One weight byte per input byte, so the sort key never outgrows the raw data.
+			require.LessOrEqual(t, len(collator.Key(test.Str)), collator.MaxKeyLen(test.Str), comment)
+		}
 	}
 }
 
@@ -232,7 +247,7 @@ func TestLatin1SwedishCIPattern(t *testing.T) {
 		{"a\\%b", '\\', "AxB", false},
 	}
 	for _, test := range tests {
-		pattern := GetCollator("latin1_swedish_ci").Pattern()
+		pattern := (&latin1SwedishCICollator{}).Pattern()
 		pattern.Compile(test.pattern, test.escape)
 		require.Equal(t, test.match, pattern.DoMatch(test.str),
 			fmt.Sprintf("pattern %q, str %q", test.pattern, test.str))
@@ -283,8 +298,6 @@ func TestGetCollator(t *testing.T) {
 	require.IsType(t, &unicodeCICollator{}, GetCollatorByID(192))
 	require.IsType(t, &unicode0900AICICollator{}, GetCollatorByID(255))
 	require.IsType(t, &zhPinyinTiDBASCSCollator{}, GetCollatorByID(2048))
-	require.IsType(t, &latin1SwedishCICollator{}, GetCollator("latin1_swedish_ci"))
-	require.IsType(t, &latin1SwedishCICollator{}, GetCollatorByID(8))
 	require.IsType(t, &binPaddingCollator{}, GetCollatorByID(9999))
 
 	SetNewCollationEnabledForTest(false)
