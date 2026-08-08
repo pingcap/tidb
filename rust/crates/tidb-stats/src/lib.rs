@@ -29,6 +29,7 @@
 pub mod analysis_interval;
 pub mod analysis_policy;
 pub mod analyze_jobs;
+pub mod analyze_results;
 pub mod analyze_table_id;
 pub mod analyze_version_policy;
 pub mod async_load;
@@ -132,6 +133,7 @@ pub use analyze_jobs::{
     AnalyzeJob, AnalyzeProgress, JobType, ANALYZE_FAILED, ANALYZE_FINISHED, ANALYZE_PENDING,
     ANALYZE_RUNNING, DUMP_TIME_INTERVAL, MAX_DELTA,
 };
+pub use analyze_results::{AnalyzeHistogramLifecycle, AnalyzeResult, AnalyzeResults};
 pub use analyze_table_id::{AnalyzeTableId, NON_PARTITION_TABLE_ID};
 pub use analyze_version_policy::analyze_version_matches;
 pub use async_load::{NeededStatsMap, StatsLoadItem, TableItemId, SHARD_COUNT};
