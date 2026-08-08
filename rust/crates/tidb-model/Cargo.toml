@@ -16,7 +16,9 @@ tidb-parser = { path = "../tidb-parser" }
 chrono = { workspace = true }
 chrono-tz = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true, features = ["raw_value"] }
+# Go's interface{} decoder requires correctly rounded binary64 values for every
+# JSON number, including hard decimals. Keep that behavior local to model JSON.
+serde_json = { workspace = true, features = ["float_roundtrip", "raw_value"] }
 
 [dev-dependencies]
 sha2 = { workspace = true }

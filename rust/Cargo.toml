@@ -97,9 +97,8 @@ aes = "0.9"
 # JSON builtins (`pkg/expression/builtin_json.go` over TiDB's BinaryJSON):
 # serde_json for PARSING/validation only; output formatting is hand-written
 # to match TiDB's own text form exactly (spacing differs from serde_json's
-# defaults), verified via gorun. Go's interface{} decoder requires correctly
-# rounded binary64 values for every JSON number, including hard decimals.
-serde_json = { version = "1", features = ["float_roundtrip"] }
+# defaults), verified via gorun.
+serde_json = "1"
 serde = { version = "1", features = ["derive"] }
 # MySQL temporal values require proleptic calendar arithmetic and IANA timezone
 # transitions. These replace Go's time.Time and time.Location without embedding
