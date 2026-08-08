@@ -33,13 +33,16 @@ missing represented rule.
 - [x] (2026-08-08) Passed no-failpoint baselines: exact Go `TestPool`, all six
   existing Rust zeropool tests, and compilation of the Rust zeropool bench;
   generated 55 Go AST obligations.
-- [ ] Replace the one-file inventory with the three-artifact, 55-obligation
-  package classification, nine-row semantic evidence table, and deterministic
-  checker.
-- [ ] Add a mutation plan, kill and restore every mutation from a committed
-  baseline, and generate the content-addressed receipt.
-- [ ] Pass WIP and clean-detached Ready gates, publish by ordinary
-  fast-forward, and verify GitHub `dbsid` attribution.
+- [x] (2026-08-08) Replaced the one-file inventory with the three-artifact,
+  55-obligation package classification, nine-row semantic evidence table, and
+  deterministic checker. Baseline commit: `0e633eeff8`.
+- [x] (2026-08-08) Added the mutation plan, killed and restored all 27
+  mutations from baseline `0e633eeff8`, and generated the content-addressed
+  receipt in mutation-proof commit `937a34fda1`.
+- [x] (2026-08-08) Passed WIP and clean-detached Ready gates: Go `TestPool`,
+  7138/7138 workspace tests with 41 skips, workspace Clippy, fmt, source-size,
+  diff/status cleanliness, and `make -j12 lint`. Publication is the final
+  ordinary fast-forward step after this document update.
 
 ## Surprises & Discoveries
 
@@ -81,9 +84,15 @@ missing represented rule.
 
 ## Outcomes & Retrospective
 
-No completion outcome is claimed yet. Baseline behavior and the package census
-pass, but package evidence, mutation proof, Ready validation, and publication
-remain open.
+The complete three-artifact package claim is restored. The gate records 55 AST
+obligations (52 `PORTED`, 3 explicit production `DECLINED`), nine semantic
+rows (8 `DECLINED`, 1 `UNREACHABLE`), four benchmark owners, and 27/27 killed
+and restored mutations. The clean Ready replay passed all 7138 workspace tests
+with 41 configured skips, workspace Clippy, fmt, source-size, diff/status
+checks, and `make -j12 lint`.
+
+The first Ready replay had one unrelated flaky spill-file cleanup failure in
+`tidb-executor`; its targeted rerun and the subsequent full replay passed.
 
 ## Context and Orientation
 
@@ -125,6 +134,7 @@ required unless scope moves.
     PATH=/tmp/tidb-task325-go126.gEaI15/go/bin:$PATH GOTOOLCHAIN=local python3 rust/scripts/pkg-zeropool-lockdown.py --inventory-only
     CARGO_BUILD_JOBS=12 CARGO_TARGET_DIR=/Users/chenhuansheng/Documents/GitHub/tidb-lockdown-353-wave17/tgt cargo +1.97 nextest run --manifest-path rust/Cargo.toml --offline --locked -p tidb-util -E 'test(/zeropool::tests/)' --no-fail-fast
     CARGO_BUILD_JOBS=12 CARGO_TARGET_DIR=/Users/chenhuansheng/Documents/GitHub/tidb-lockdown-353-wave17/tgt cargo +1.97 check --manifest-path rust/Cargo.toml --offline --locked -p tidb-util --bench zeropool
+    CARGO_BUILD_JOBS=12 CARGO_TARGET_DIR=/Users/chenhuansheng/Documents/GitHub/tidb-lockdown-353-wave17/tgt cargo +1.97 nextest run --manifest-path rust/Cargo.toml --offline --locked -p tidb-util -E 'test(/zeropool_mutation_receipt/)' --no-fail-fast
     CARGO_BUILD_JOBS=12 CARGO_TARGET_DIR=/Users/chenhuansheng/Documents/GitHub/tidb-lockdown-353-wave17/tgt cargo +1.97 clippy --manifest-path rust/Cargo.toml --offline --locked -p tidb-util --all-targets -- -D warnings -A clippy::needless_update
     cargo +1.97 fmt --manifest-path rust/Cargo.toml --all -- --check
 
@@ -134,11 +144,11 @@ existing allowed lint classes, source-size, diff/status cleanliness, and
 
 ## Validation and Acceptance
 
-All three direct artifacts and all 55 AST obligations must regenerate exactly.
-Every `PORTED` owner/evidence name must compile; all three generated declines
-and all nine semantic rows must retain exact evidence. Every planned mutation
-must be killed and restored. WIP and Ready gates, remote ref, and GitHub
-attribution must pass before completion is reported.
+All three direct artifacts and all 55 AST obligations regenerate exactly.
+Every `PORTED` owner/evidence name compiles; all three generated declines and
+all nine semantic rows retain exact evidence. Every planned mutation is killed
+and restored. WIP and Ready gates pass; the official remote ref and GitHub
+attribution remain to be verified after the final fast-forward push.
 
 ## Idempotence and Recovery
 
@@ -155,3 +165,4 @@ network, authentication, persistence, deployment, IAM, secret, logging, or
 dependency surface.
 
 Revision note: created on 2026-08-08 after package census and baseline tests.
+Updated after the 27-mutation proof and clean Ready replay completed.
