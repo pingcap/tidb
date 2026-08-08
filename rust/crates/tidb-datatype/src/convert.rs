@@ -1111,8 +1111,8 @@ pub fn scalar_to_string(value: ScalarStringValue<'_>) -> Result<String, std::str
         ScalarStringValue::BinaryLiteral(value) => {
             std::str::from_utf8(value.as_bytes()).map(str::to_owned)
         }
-        ScalarStringValue::Enum(value) => Ok(value.name().to_owned()),
-        ScalarStringValue::Set(value) => Ok(value.name().to_owned()),
+        ScalarStringValue::Enum(value) => value.name().as_utf8().map(str::to_owned),
+        ScalarStringValue::Set(value) => value.name().as_utf8().map(str::to_owned),
         ScalarStringValue::Json(value) => Ok(value.to_string()),
     }
 }

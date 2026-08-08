@@ -12,7 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{parse_enum, parse_enum_value, parse_set, parse_set_value, Collation, SetParseError};
+use crate::{parse_enum, parse_enum_value, parse_set, parse_set_value, Collation, GoString};
+use std::error::Error;
 
 /// Every row and assertion in `pkg/types/enum_test.go::TestEnum`: ten
 /// source-defined rows, thirteen executions across the original collations.
@@ -121,12 +122,21 @@ fn set_executes_every_original_test_set_row_and_assertion() {
 fn enum_and_set_preserve_exact_error_contexts_and_remaining_bits() {
     let enum_item = parse_enum(&["a"], "bad", Collation::Utf8Mb4Bin).unwrap_err();
     assert_eq!(
-        enum_item.context(),
+        enum_item.context().as_utf8().unwrap(),
         "convert to MySQL enum failed: item bad is not in enum [a]"
     );
+    assert_eq!(
+        enum_item.to_string(),
+        "convert to MySQL enum failed: item bad is not in enum [a]: [types:1265]Data truncated for column '%s' at row %d"
+    );
+    assert_eq!(
+        enum_item.source().unwrap().to_string(),
+        "[types:1265]Data truncated for column '%s' at row %d"
+    );
+    assert_eq!(enum_item.message_bytes(), enum_item.to_string().as_bytes());
     let enum_boundary = parse_enum_value(&["a"], 2).unwrap_err();
     assert_eq!(
-        enum_boundary.context(),
+        enum_boundary.context().as_utf8().unwrap(),
         "convert to MySQL enum failed: number 2 overflow enum boundary [1, 1]"
     );
 
@@ -136,8 +146,35 @@ fn enum_and_set_preserve_exact_error_contexts_and_remaining_bits() {
     assert_eq!(remaining.to_string(), "invalid number 96 for Set [a b c d]");
 
     let too_many = vec!["a"; 65];
-    assert!(matches!(
-        parse_set_value(&too_many, 1),
-        Err(SetParseError::TooManyElements(65))
-    ));
+    assert!(std::panic::catch_unwind(|| parse_set_value(&too_many, 1)).is_err());
+    assert_eq!(parse_set_value(&too_many, 0).unwrap().name_bytes(), b"");
+}
+
+#[test]
+fn enum_set_preserve_raw_bytes_header_identity_and_explicit_copy() {
+    let raw = GoString::from_bytes(vec![0xff]);
+    let elements = [raw.clone(), GoString::from("tail")];
+
+    let enum_value = parse_enum(&elements, raw.as_bytes(), Collation::Binary).unwrap();
+    assert_eq!(enum_value.name_bytes(), [0xff]);
+    assert!(enum_value.name().backing_ptr_eq(&raw));
+    let enum_clone = enum_value.clone();
+    assert!(enum_clone.name().backing_ptr_eq(enum_value.name()));
+    let enum_copy = enum_value.copy();
+    assert!(!enum_copy.name().backing_ptr_eq(enum_value.name()));
+    assert_eq!(enum_copy.name_bytes(), enum_value.name_bytes());
+
+    let enum_error = parse_enum(&elements, &[0xfe], Collation::Binary).unwrap_err();
+    assert!(enum_error
+        .message_bytes()
+        .starts_with(b"convert to MySQL enum failed: item \xfe is not in enum [\xff tail]: "));
+
+    let one = parse_set_value(&elements, 1).unwrap();
+    assert!(one.name().backing_ptr_eq(&raw));
+    let two = parse_set_value(&elements, 3).unwrap();
+    assert_eq!(two.name_bytes(), [0xff, b',', b't', b'a', b'i', b'l']);
+    assert!(!two.name().backing_ptr_eq(&raw));
+    let set_copy = one.copy();
+    assert!(!set_copy.name().backing_ptr_eq(one.name()));
+    assert_eq!(set_copy.name_bytes(), one.name_bytes());
 }

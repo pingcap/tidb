@@ -40,8 +40,8 @@ impl Datum {
             Self::Bytes(value) => label_bytes("STR", value),
             Self::BinaryLiteral(value) | Self::Bit(value) => label_bytes("STR", value.as_bytes()),
             Self::Duration(value) => format!("DUR:{value}"),
-            Self::Enum(value, _) => format!("ENUM:{value}"),
-            Self::Set(value, _) => format!("SET:{value}"),
+            Self::Enum(value, _) => label_bytes("ENUM", value.name_bytes()),
+            Self::Set(value, _) => label_bytes("SET", value.name_bytes()),
             Self::Time(value) => format!("TIME:{value}"),
             Self::Json(value) => format!("JSON:{value}"),
             Self::Raw(value) => label_bytes("RAW", value),
@@ -52,32 +52,44 @@ impl Datum {
         }
     }
 
-    /// Renders TiDB's result-set string form without lossy UTF-8 decoding.
-    ///
-    /// Existing valid UTF-8 behavior is unchanged. Invalid UTF-8 is returned
-    /// to the caller as an error so a semantic coercion cannot silently turn
-    /// raw bytes into replacement text or a hexadecimal diagnostic label.
+    /// Byte-authoritative Go `Datum.ToString`. Go strings, ENUMs, SETs, and
+    /// binary literals may contain arbitrary bytes and remain unchanged.
+    pub fn sql_bytes(&self) -> Result<Vec<u8>, DatumStringError> {
+        let value = match self {
+            Self::Int(value) => value.to_string().into_bytes(),
+            Self::UInt(value) => value.to_string().into_bytes(),
+            Self::Decimal(value) => value.to_string().into_bytes(),
+            Self::Real(value) => value.to_string().into_bytes(),
+            Self::Float32(value) => (*value as f32).to_string().into_bytes(),
+            Self::String(value) => value.bytes().to_vec(),
+            Self::Bytes(value) => value.clone(),
+            Self::BinaryLiteral(value) | Self::Bit(value) => value.as_bytes().to_vec(),
+            Self::Duration(value) => value.to_string().into_bytes(),
+            Self::Enum(value, _) => value.name_bytes().to_vec(),
+            Self::Set(value, _) => value.name_bytes().to_vec(),
+            Self::Time(value) => value.to_string().into_bytes(),
+            Self::Json(value) => value.to_string().into_bytes(),
+            Self::Raw(value) => {
+                decode_bytes(value)?;
+                value.clone()
+            }
+            Self::VectorFloat32(value) => value.to_string().into_bytes(),
+            Self::Null => Vec::new(),
+            Self::MinNotNull => {
+                return Err(DatumStringError::RangeSentinel(DatumKind::MinNotNull));
+            }
+            Self::MaxValue => {
+                return Err(DatumStringError::RangeSentinel(DatumKind::MaxValue));
+            }
+        };
+        Ok(value)
+    }
+
+    /// UTF-8 convenience projection of [`Self::sql_bytes`]. Invalid source
+    /// bytes return an error rather than being silently replaced.
     pub fn sql_string(&self) -> Result<String, DatumStringError> {
-        match self {
-            Self::Int(value) => Ok(value.to_string()),
-            Self::UInt(value) => Ok(value.to_string()),
-            Self::Decimal(value) => Ok(value.to_string()),
-            Self::Real(value) => Ok(value.to_string()),
-            Self::Float32(value) => Ok((*value as f32).to_string()),
-            Self::String(value) => decode_bytes(value.bytes()),
-            Self::Bytes(value) => decode_bytes(value),
-            Self::BinaryLiteral(value) | Self::Bit(value) => decode_bytes(value.as_bytes()),
-            Self::Duration(value) => Ok(value.to_string()),
-            Self::Enum(value, _) => Ok(value.to_string()),
-            Self::Set(value, _) => Ok(value.to_string()),
-            Self::Time(value) => Ok(value.to_string()),
-            Self::Json(value) => Ok(value.to_string()),
-            Self::Raw(value) => decode_bytes(value),
-            Self::VectorFloat32(value) => Ok(value.to_string()),
-            Self::Null => Ok(String::new()),
-            Self::MinNotNull => Err(DatumStringError::RangeSentinel(DatumKind::MinNotNull)),
-            Self::MaxValue => Err(DatumStringError::RangeSentinel(DatumKind::MaxValue)),
-        }
+        let bytes = self.sql_bytes()?;
+        decode_bytes(&bytes)
     }
 
     /// Source `Datum.TruncatedStringify` used by EXPLAIN and diagnostics.
@@ -89,7 +101,7 @@ impl Datum {
             Self::VectorFloat32(value) => return Ok(value.truncated_string().into_bytes()),
             Self::Int(value) => return Ok(value.to_string().into_bytes()),
             Self::UInt(value) => return Ok(value.to_string().into_bytes()),
-            other => other.sql_string()?.into_bytes(),
+            other => other.sql_bytes()?,
         };
         Ok(truncate_diagnostic_bytes(bytes))
     }
@@ -222,6 +234,18 @@ mod tests {
         let embedded_nul = Datum::new_string(vec![b'a', 0, b'b']);
         assert_eq!(embedded_nul.label().as_bytes(), b"STR:a\0b");
         assert_eq!(embedded_nul.sql_string().unwrap().as_bytes(), b"a\0b");
+
+        let raw_enum = Datum::new_enum(crate::MysqlEnum::new([0xff], 1), crate::Collation::Binary);
+        assert_eq!(raw_enum.sql_bytes().unwrap(), [0xff]);
+        assert_eq!(raw_enum.to_bytes().unwrap(), [0xff]);
+        assert!(raw_enum.sql_string().is_err());
+        assert_eq!(raw_enum.label(), "ENUM_HEX:FF");
+
+        let raw_set = Datum::new_set(crate::MysqlSet::new([0xfe], 1), crate::Collation::Binary);
+        assert_eq!(raw_set.sql_bytes().unwrap(), [0xfe]);
+        assert_eq!(raw_set.to_bytes().unwrap(), [0xfe]);
+        assert!(raw_set.sql_string().is_err());
+        assert_eq!(raw_set.label(), "SET_HEX:FE");
     }
 
     /// Source `BenchmarkDatumTruncatedStringify` inputs plus the byte-boundary

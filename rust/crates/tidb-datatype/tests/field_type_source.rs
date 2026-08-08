@@ -195,6 +195,17 @@ fn parser_remaining_field_type_surface_is_source_complete() {
             .restore_as_cast_type(true),
         "CHAR(8) CHARSET LATIN1"
     );
+    let unicode_charset = FieldType::parser(C::Varchar)
+        .with_flen(1)
+        .with_charset_name("é");
+    assert_eq!(
+        unicode_charset.restore_bytes(),
+        "VARCHAR(1) CHARACTER SET É".as_bytes()
+    );
+    assert_eq!(
+        unicode_charset.restore_as_cast_type(true),
+        "CHAR(1) CHARSET É"
+    );
     assert_eq!(
         FieldType::parser(C::NewDecimal)
             .with_flen(10)
@@ -238,12 +249,15 @@ fn parser_remaining_field_type_surface_is_source_complete() {
     )
     .unwrap()
     .contains(r#""Elems":[]"#));
-    assert!(json_field.memory_usage() >= std::mem::size_of::<FieldType>());
+    assert_eq!(json_field.memory_usage(), 173);
 }
 
 #[test]
 fn test_field_type_to_str_source_rows() {
-    assert_eq!(type_to_str(C::Unspecified, "not binary"), type_str(C::Unspecified));
+    assert_eq!(
+        type_to_str(C::Unspecified, "not binary"),
+        type_str(C::Unspecified)
+    );
     assert_eq!(type_to_str(C::Blob, "binary"), "blob");
     assert_eq!(type_to_str(C::String, "binary"), "binary");
 }

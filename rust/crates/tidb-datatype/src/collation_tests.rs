@@ -270,6 +270,11 @@ fn registry_and_mode_execute_all_original_get_collator_rows() {
         get_collator("default_test"),
         Collator::New(Collation::Utf8Mb4Bin)
     );
+    assert_eq!(
+        get_collator("BINARY"),
+        Collator::New(Collation::Utf8Mb4Bin),
+        "Go's runtime map lookup is exact and case-sensitive"
+    );
     for (id, expected) in [
         (63, Collation::Binary),
         (46, Collation::Utf8Mb4Bin),

@@ -72,13 +72,13 @@ impl Datum {
             Self::Decimal(value) => self.compare_decimal(value),
             Self::Duration(value) => self.compare_duration(*value),
             Self::Enum(value, _) => {
-                self.compare_named_number(value.name(), value.to_number(), comparer)
+                self.compare_named_number(value.name_bytes(), value.to_number(), comparer)
             }
             Self::BinaryLiteral(value) | Self::Bit(value) => {
                 self.compare_binary_literal(value, comparer)
             }
             Self::Set(value, _) => {
-                self.compare_named_number(value.name(), value.to_number(), comparer)
+                self.compare_named_number(value.name_bytes(), value.to_number(), comparer)
             }
             Self::Json(_) => unreachable!("JSON comparison returned above"),
             Self::Time(value) => self.compare_time(*value),
@@ -186,7 +186,7 @@ impl Datum {
     /// against every other kind.
     fn compare_named_number(
         &self,
-        name: &str,
+        name: &[u8],
         number: f64,
         comparer: Collation,
     ) -> Result<Ordering, DatumValueError> {
@@ -197,7 +197,7 @@ impl Datum {
             Self::Set(left, _) => left.name().as_bytes(),
             _ => return self.compare_f64(number),
         };
-        Ok(comparer.compare(left, name.as_bytes()))
+        Ok(comparer.compare(left, name))
     }
 
     fn compare_binary_literal(
