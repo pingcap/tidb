@@ -54,11 +54,10 @@ func TestInsertRowsColMultiplyRUV2Metrics(t *testing.T) {
 
 	insertValues := &InsertValues{
 		BaseExecutor:              exec.NewBaseExecutor(ctx, nil, 0),
-		rowCount:                  4,
 		recordRUV2RowsColMultiply: true,
 		insertColumns:             make([]*table.Column, 3),
 	}
-	require.Equal(t, int64(12), insertValues.rowsColMultiply())
+	insertValues.addWrittenRowsColMultiply(4)
 
 	insertValues.recordRowsColMultiply2RUV2Metrics()
 	require.Equal(t, int64(12), ctx.GetSessionVars().RUV2Metrics.ExecutorL5InsertRows())
@@ -66,7 +65,7 @@ func TestInsertRowsColMultiplyRUV2Metrics(t *testing.T) {
 	insertValues.recordRowsColMultiply2RUV2Metrics()
 	require.Equal(t, int64(12), ctx.GetSessionVars().RUV2Metrics.ExecutorL5InsertRows())
 
-	insertValues.rowCount = 5
+	insertValues.addWrittenRowsColMultiply(1)
 	insertValues.recordRowsColMultiply2RUV2Metrics()
 	require.Equal(t, int64(15), ctx.GetSessionVars().RUV2Metrics.ExecutorL5InsertRows())
 }
