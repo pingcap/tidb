@@ -186,21 +186,41 @@ func (seElement *stmtSummaryByDigestEvictedElement) matchAndAdd(digestKey *StmtD
 
 // ToEvictedCountDatum converts history evicted record to `evicted count` record's datum
 func (ssbde *stmtSummaryByDigestEvicted) ToEvictedCountDatum() [][]types.Datum {
-	records := make([][]types.Datum, 0, ssbde.history.Len())
+	type evictedCount struct {
+		beginTime int64
+		endTime   int64
+		count     int64
+	}
+
+	ssbde.Lock()
+	evictedCounts := make([]evictedCount, 0, ssbde.history.Len())
 	for e := ssbde.history.Back(); e != nil; e = e.Prev() {
-		if record := e.Value.(*stmtSummaryByDigestEvictedElement).toEvictedCountDatum(); record != nil {
-			records = append(records, record)
-		}
+		element := e.Value.(*stmtSummaryByDigestEvictedElement)
+		evictedCounts = append(evictedCounts, evictedCount{
+			beginTime: element.beginTime,
+			endTime:   element.endTime,
+			count:     element.count,
+		})
+	}
+	ssbde.Unlock()
+
+	records := make([][]types.Datum, 0, len(evictedCounts))
+	for _, evicted := range evictedCounts {
+		records = append(records, evictedCountToDatum(evicted.beginTime, evicted.endTime, evicted.count))
 	}
 	return records
 }
 
 // toEvictedCountDatum converts evicted record to `EvictedCount` record's datum
 func (seElement *stmtSummaryByDigestEvictedElement) toEvictedCountDatum() []types.Datum {
+	return evictedCountToDatum(seElement.beginTime, seElement.endTime, seElement.count)
+}
+
+func evictedCountToDatum(beginTime, endTime, count int64) []types.Datum {
 	datum := types.MakeDatums(
-		types.NewTime(types.FromGoTime(time.Unix(seElement.beginTime, 0)), mysql.TypeTimestamp, 0),
-		types.NewTime(types.FromGoTime(time.Unix(seElement.endTime, 0)), mysql.TypeTimestamp, 0),
-		seElement.count,
+		types.NewTime(types.FromGoTime(time.Unix(beginTime, 0)), mysql.TypeTimestamp, 0),
+		types.NewTime(types.FromGoTime(time.Unix(endTime, 0)), mysql.TypeTimestamp, 0),
+		count,
 	)
 	return datum
 }
