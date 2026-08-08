@@ -16,18 +16,28 @@ package core
 
 import (
 	"context"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/types"
+	parserutil "github.com/pingcap/tidb/pkg/util/parser"
 )
 
 type subqueryExprExtractor struct {
 	exprs []ast.ExprNode
+}
+
+func (e *subqueryExprExtractor) collect(node ast.Node) {
+	if node == nil {
+		return
+	}
+	node.Accept(e)
 }
 
 // Enter implements Visitor interface.
@@ -40,12 +50,14 @@ func (e *subqueryExprExtractor) Enter(n ast.Node) (ast.Node, bool) {
 		e.exprs = append(e.exprs, subq)
 		return n, true
 	case *ast.CompareSubqueryExpr:
+		e.collect(subq.L)
 		e.exprs = append(e.exprs, subq)
 		return n, true
 	case *ast.PatternInExpr:
 		if subq.Sel == nil {
 			return n, false
 		}
+		e.collect(subq.Expr)
 		e.exprs = append(e.exprs, subq)
 		return n, true
 	}
@@ -70,8 +82,8 @@ func findColumnNameByUniqueID(p base.LogicalPlan, uniqueID int64) *ast.ColumnNam
 		}
 	}
 	// USING/NATURAL JOIN can keep table-qualified outer references only in FullSchema/FullNames.
-	// LogicalApply embeds LogicalJoin and may carry the same FullSchema/FullNames when a
-	// LATERAL join sits on top of a USING/NATURAL join on the left side.
+	// LogicalApply embeds LogicalJoin and can carry the same redundant columns when a
+	// LATERAL join sits above a USING/NATURAL join.
 	var fullSchema *expression.Schema
 	var fullNames types.NameSlice
 	switch x := p.(type) {
@@ -101,6 +113,100 @@ func findColumnNameByUniqueID(p base.LogicalPlan, uniqueID int64) *ast.ColumnNam
 	return nil
 }
 
+// cloneResultSetNodeForAuxiliaryFields creates a syntactic copy by restoring the
+// query to SQL text and reparsing it. The auxiliary-field path only needs a
+// fresh AST for correlated outer-column discovery, so dropping resolver state is
+// acceptable here and keeps the implementation simpler than a deep AST clone.
+func cloneResultSetNodeForAuxiliaryFields(ctx base.PlanContext, node ast.ResultSetNode) (ast.ResultSetNode, error) {
+	var sb strings.Builder
+	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+	if err := node.Restore(restoreCtx); err != nil {
+		return nil, err
+	}
+	charset, collation := ctx.GetSessionVars().GetCharsetInfo()
+	p := parserutil.GetParser()
+	defer parserutil.DestroyParser(p)
+	stmt, err := p.ParseOneStmt(sb.String(), charset, collation)
+	if err != nil {
+		return nil, err
+	}
+	resultNode, ok := stmt.(ast.ResultSetNode)
+	if !ok {
+		return nil, errors.Errorf("unexpected auxiliary subquery type %T", stmt)
+	}
+	return resultNode, nil
+}
+
+// buildSubqueryPlanForAuxiliaryFields builds only the inner subquery plan for correlated outer-column discovery.
+// This avoids rewriting deferred window-expression wrappers before the window outputs are materialized.
+func (b *PlanBuilder) buildSubqueryPlanForAuxiliaryFields(ctx context.Context, p base.LogicalPlan, expr ast.ExprNode) (base.LogicalPlan, error) {
+	var (
+		subq *ast.SubqueryExpr
+		sCtx subQueryCtx
+	)
+	switch v := expr.(type) {
+	case *ast.SubqueryExpr:
+		subq = v
+		sCtx = handlingScalarSubquery
+	case *ast.ExistsSubqueryExpr:
+		q, ok := v.Sel.(*ast.SubqueryExpr)
+		if !ok {
+			return nil, errors.Errorf("unexpected EXISTS subquery type %T", v.Sel)
+		}
+		subq = q
+		sCtx = handlingExistsSubquery
+	case *ast.CompareSubqueryExpr:
+		q, ok := v.R.(*ast.SubqueryExpr)
+		if !ok {
+			return nil, errors.Errorf("unexpected compare-subquery type %T", v.R)
+		}
+		subq = q
+		sCtx = handlingCompareSubquery
+	case *ast.PatternInExpr:
+		q, ok := v.Sel.(*ast.SubqueryExpr)
+		if !ok {
+			return nil, errors.Errorf("unexpected IN-subquery type %T", v.Sel)
+		}
+		subq = q
+		sCtx = handlingInSubquery
+	default:
+		return nil, errors.Errorf("unexpected auxiliary subquery expr %T", expr)
+	}
+	clonedQuery, err := cloneResultSetNodeForAuxiliaryFields(b.ctx, subq.Query)
+	if err != nil {
+		return nil, err
+	}
+
+	outerSchema, outerNames := p.Schema(), p.OutputNames()
+	if join, ok := p.(*logicalop.LogicalJoin); ok && join.FullSchema != nil {
+		outerSchema = join.FullSchema
+		outerNames = join.FullNames
+	}
+
+	oldCurClause := b.curClause
+	oldCorrelatedAggMapper := b.correlatedAggMapper
+	b.correlatedAggMapper = make(map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn)
+	defer func() {
+		b.curClause = oldCurClause
+		b.correlatedAggMapper = oldCorrelatedAggMapper
+	}()
+
+	rewriter := &expressionRewriter{
+		schema: outerSchema,
+		names:  outerNames,
+	}
+	np, _, err := rewriter.buildSubquery(
+		ctx,
+		&exprRewriterPlanCtx{builder: b},
+		&ast.SubqueryExpr{Query: clonedQuery},
+		sCtx,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return np, nil
+}
+
 func (b *PlanBuilder) appendAuxiliaryFieldsForSubqueries(ctx context.Context, p base.LogicalPlan, selectFields []*ast.SelectField, nodes ...ast.Node) ([]*ast.SelectField, error) {
 	for _, node := range nodes {
 		if node == nil {
@@ -113,7 +219,7 @@ func (b *PlanBuilder) appendAuxiliaryFieldsForSubqueries(ctx context.Context, p 
 			// so subqueries inside deferred window expressions can still resolve against this query block.
 			// TODO: Reuse the rewritten expression/plan from the pre-build phase instead of rebuilding it
 			// only for correlated outer-column discovery.
-			_, np, err := b.rewrite(ctx, expr, p, nil, true)
+			np, err := b.buildSubqueryPlanForAuxiliaryFields(ctx, p, expr)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -126,6 +232,7 @@ func (b *PlanBuilder) appendAuxiliaryFieldsForSubqueries(ctx context.Context, p 
 				columnNameExpr := &ast.ColumnNameExpr{Name: colName}
 				for _, field := range selectFields {
 					if c, ok := field.Expr.(*ast.ColumnNameExpr); ok && c.Name.Match(columnNameExpr.Name) && field.AsName.L == "" {
+						// Keep the old behavior: aliased select fields still count as distinct output columns here.
 						columnNameExpr = nil
 						break
 					}
