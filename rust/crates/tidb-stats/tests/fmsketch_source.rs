@@ -26,6 +26,37 @@ use tidb_stats::{
     FmSketchCodecError, FmSketchProto, MAX_SKETCH_SIZE,
 };
 
+fn source_statistics_values(count: usize) -> Vec<Datum> {
+    let start = 1_000;
+    let mut values = vec![Datum::Int(0); count];
+    for value in values.iter_mut().take(start).skip(1) {
+        *value = Datum::Int(2);
+    }
+    for (position, value) in values.iter_mut().enumerate().skip(start) {
+        let mut integer = position as i64;
+        if position % 3 == 0 {
+            integer += 1;
+        }
+        if position % 5 == 0 {
+            integer += 2;
+        }
+        *value = Datum::Int(integer);
+    }
+    values.sort_by_key(|value| match value {
+        Datum::Int(integer) => *integer,
+        other => panic!("source fixture contains only integers, not {other:?}"),
+    });
+    values
+}
+
+fn build_source_sketch(values: &[Datum]) -> FmSketch {
+    let mut sketch = FmSketch::new(1_000);
+    for value in values {
+        insert_value(&mut sketch, &Utc, value).unwrap();
+    }
+    sketch
+}
+
 #[test]
 fn source_threshold_advances_mask_and_retains_zero_suffixes() {
     let mut sketch = FmSketch::new(2);
@@ -205,4 +236,41 @@ fn source_typed_insert_value_and_row_own_the_datum_encoding() {
     let mut encoded_row_sketch = FmSketch::new(8);
     insert_encoded_value(&mut encoded_row_sketch, &encoded_row);
     assert_eq!(typed_row, encoded_row_sketch);
+}
+
+#[test]
+fn source_original_statistics_fixture_pins_typed_ndv_merge_and_coding() {
+    // `createTestStatisticsSamples` is shared support owned by main_test.go.
+    // Its 10,000-row sample, 100,000-row record column, and monotone primary
+    // key are the original high-volume FM-sketch oracles. Keeping the
+    // generator here (rather than recording its answers as raw hashes) makes
+    // any Datum codec or FM admission mutation cross the same boundary as Go.
+    let sample = source_statistics_values(10_000);
+    let record_column = source_statistics_values(100_000);
+    let primary_key = (0..100_000)
+        .map(|value| Datum::Int(value as i64))
+        .collect::<Vec<_>>();
+
+    let sample_sketch = build_source_sketch(&sample);
+    let record_sketch = build_source_sketch(&record_column);
+    let primary_sketch = build_source_sketch(&primary_key);
+    assert_eq!(sample_sketch.ndv(), 6_232);
+    assert_eq!(record_sketch.ndv(), 73_344);
+    assert_eq!(primary_sketch.ndv(), 100_480);
+
+    let mut merged = sample_sketch.clone();
+    merged.merge(&primary_sketch);
+    merged.merge(&record_sketch);
+    assert_eq!(merged.ndv(), 100_480);
+
+    for expected in [&sample_sketch, &record_sketch, &primary_sketch] {
+        let proto = fm_sketch_to_proto(Some(expected));
+        let from_proto = fm_sketch_from_proto(Some(&proto)).unwrap();
+        assert_eq!(from_proto.mask(), expected.mask());
+        assert_eq!(from_proto.sorted_hashes(), expected.sorted_hashes());
+
+        let wire = encode_fm_sketch(Some(expected)).unwrap();
+        let decoded = decode_fm_sketch(Some(&wire)).unwrap().unwrap();
+        assert_eq!(decoded.ndv(), expected.ndv());
+    }
 }
