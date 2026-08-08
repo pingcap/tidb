@@ -76,6 +76,14 @@ impl<T> GoValueSlice<T> {
     }
 }
 
+impl<T: PartialEq> GoValueSlice<T> {
+    /// Reports whether the source slice contains `needle`.
+    #[must_use]
+    pub fn contains(&self, needle: &T) -> bool {
+        self.iter().any(|value| value == needle)
+    }
+}
+
 impl<T> From<Vec<T>> for GoValueSlice<T> {
     fn from(values: Vec<T>) -> Self {
         Self::allocated(values)

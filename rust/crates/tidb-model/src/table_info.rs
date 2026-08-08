@@ -1042,7 +1042,7 @@ mod tests {
         assert!(!t.is_locked());
         t.lock = Some(Box::new(TableLockInfo {
             tp: tidb_ast::TableLockType::default(),
-            sessions: vec![SessionInfo::default()],
+            sessions: vec![SessionInfo::default()].into(),
             state: TableLockState::PUBLIC,
             ts: 0,
         }));
