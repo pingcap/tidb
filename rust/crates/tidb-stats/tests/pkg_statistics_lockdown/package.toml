@@ -1,11 +1,11 @@
-# Drafted against the v2 package-lockdown schema at the combined 93886faf
-# checkpoint. Reconcile only the schema contract before running its successor.
+# Drafted against the v2 package-lockdown schema. Reconcile only the schema
+# contract before running its repaired successor.
 schema = "go-package-lockdown-spec-v2"
 claim = "whole-go-package"
 go_package = "pkg/statistics"
-source_commit = "bdab0016365e8b1d79b5b11f52ee6fdde90f4c46"
+source_commit = "665fc02e2be48a7199d5ffeb5d3d6bec1dfed04f"
 primary_rust_crate = "tidb-stats"
-mapped_rust_crates = ["tidb-stats"]
+mapped_rust_crates = ["tidb-stats", "tidb-executor"]
 extra_artifacts = []
 excluded_subpackages = [
   { path = "pkg/statistics/asyncload", proof = "go-package-dir:pkg/statistics/asyncload#package:asyncload" },
@@ -13,6 +13,8 @@ excluded_subpackages = [
   { path = "pkg/statistics/util", proof = "go-package-dir:pkg/statistics/util#package:util" },
 ]
 owned_rust_files = [
+  "rust/crates/tidb-executor/src/analyze.rs",
+  "rust/crates/tidb-executor/src/ddl.rs",
   "rust/crates/tidb-stats/Cargo.toml",
   "rust/crates/tidb-stats/src/analysis_policy.rs",
   "rust/crates/tidb-stats/src/analyze_jobs.rs",
@@ -31,6 +33,7 @@ owned_rust_files = [
   "rust/crates/tidb-stats/src/existence_map.rs",
   "rust/crates/tidb-stats/src/fmsketch.rs",
   "rust/crates/tidb-stats/src/fmsketch_codec.rs",
+  "rust/crates/tidb-stats/src/go_stable_sort.rs",
   "rust/crates/tidb-stats/src/histogram.evidence.tsv",
   "rust/crates/tidb-stats/src/histogram.inventory.tsv",
   "rust/crates/tidb-stats/src/histogram.mutation-plan.tsv",

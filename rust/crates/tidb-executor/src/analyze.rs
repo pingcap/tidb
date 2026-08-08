@@ -109,17 +109,17 @@ impl std::error::Error for AnalyzeError {}
 #[derive(Clone, Copy, Debug)]
 pub struct AnalyzeOptions {
     /// `WITH n BUCKETS`.
-    pub num_buckets: usize,
+    pub num_buckets: isize,
     /// `WITH m TOPN`.
-    pub num_topn: usize,
+    pub num_topn: isize,
     /// `WITH k SAMPLES`; `0` leaves the rate in charge.
     pub num_samples: usize,
     /// `WITH r SAMPLERATE`; `None` derives it from the table's row count.
     pub sample_rate: Option<f64>,
     /// `tidb_analyze_default_num_buckets`.
-    pub default_num_buckets: usize,
+    pub default_num_buckets: u64,
     /// `tidb_analyze_default_num_topn`.
-    pub default_num_topn: usize,
+    pub default_num_topn: u64,
     /// `tidb_mem_quota_analyze`: the bound on what the kept sample may
     /// occupy. Go's default is `-1`, no bound.
     pub memory_quota: SampleMemoryQuota,
@@ -128,12 +128,12 @@ pub struct AnalyzeOptions {
 impl Default for AnalyzeOptions {
     fn default() -> Self {
         Self {
-            num_buckets: tidb_stats::constants::DEFAULT_HISTOGRAM_BUCKETS,
-            num_topn: tidb_stats::constants::DEFAULT_TOP_N_VALUE,
+            num_buckets: tidb_stats::constants::DEFAULT_HISTOGRAM_BUCKETS as isize,
+            num_topn: tidb_stats::constants::DEFAULT_TOP_N_VALUE as isize,
             num_samples: 0,
             sample_rate: None,
-            default_num_buckets: tidb_stats::constants::DEFAULT_HISTOGRAM_BUCKETS,
-            default_num_topn: tidb_stats::constants::DEFAULT_TOP_N_VALUE,
+            default_num_buckets: tidb_stats::constants::DEFAULT_HISTOGRAM_BUCKETS as u64,
+            default_num_topn: tidb_stats::constants::DEFAULT_TOP_N_VALUE as u64,
             memory_quota: SampleMemoryQuota::unlimited(),
         }
     }
@@ -233,15 +233,36 @@ pub fn lower_analyze_admin(
 
     let mut options = AnalyzeOptions::default();
     for option in &analyze.options {
-        let number = |value: &str| -> Result<usize, AnalyzeError> {
+        let number = |value: &str| -> Result<u64, AnalyzeError> {
             value
-                .parse::<usize>()
+                .parse::<u64>()
                 .map_err(|_| AnalyzeError::Unsupported(format!("`{value}` is not a whole number")))
         };
         match option.kind {
-            tidb_ast::AnalyzeOptionKind::Buckets => options.num_buckets = number(&option.value)?,
-            tidb_ast::AnalyzeOptionKind::TopN => options.num_topn = number(&option.value)?,
-            tidb_ast::AnalyzeOptionKind::Samples => options.num_samples = number(&option.value)?,
+            tidb_ast::AnalyzeOptionKind::Buckets => {
+                options.num_buckets = isize::try_from(number(&option.value)?).map_err(|_| {
+                    AnalyzeError::Unsupported(format!(
+                        "`{}` exceeds the native ANALYZE integer domain",
+                        option.value
+                    ))
+                })?;
+            }
+            tidb_ast::AnalyzeOptionKind::TopN => {
+                options.num_topn = isize::try_from(number(&option.value)?).map_err(|_| {
+                    AnalyzeError::Unsupported(format!(
+                        "`{}` exceeds the native ANALYZE integer domain",
+                        option.value
+                    ))
+                })?;
+            }
+            tidb_ast::AnalyzeOptionKind::Samples => {
+                options.num_samples = usize::try_from(number(&option.value)?).map_err(|_| {
+                    AnalyzeError::Unsupported(format!(
+                        "`{}` exceeds the native sample-size domain",
+                        option.value
+                    ))
+                })?;
+            }
             tidb_ast::AnalyzeOptionKind::SampleRate => {
                 let rate = option.value.parse::<f64>().map_err(|_| {
                     AnalyzeError::Unsupported(format!("`{}` is not a rate", option.value))
@@ -596,6 +617,10 @@ pub struct AnalyzeRun<'a> {
     options: AnalyzeOptions,
     collector: RowSampleCollector,
     sample_rate: f64,
+    /// Both native callers scan one record-key range in ascending KV-handle
+    /// order. Carry that order through the sampler so its heap layout cannot
+    /// replace Go's post-merge `Handle.Compare` order.
+    next_handle_order: i64,
 }
 
 impl<'a> AnalyzeRun<'a> {
@@ -626,12 +651,22 @@ impl<'a> AnalyzeRun<'a> {
                 options.memory_quota,
             ),
             sample_rate,
+            next_handle_order: 0,
         })
     }
 
     /// Feeds one scanned row, its values in [`AnalyzePlan::columns`] order.
+    /// Rows must arrive in ascending record-key/handle order; both native
+    /// production scanners satisfy that contract.
     pub fn push(&mut self, columns: &[Datum]) -> Result<(), AnalyzeError> {
-        let row = self.plan.row_of(columns)?;
+        let mut row = self.plan.row_of(columns)?;
+        // Go's sample row contains the handle columns and rebuilds a Handle
+        // after collectors merge. This engine has one ordered record-range
+        // scan rather than region collectors, so the scan position is an
+        // exact monotone handle-order key even for an implicit `_tidb_rowid`.
+        // It travels as an internal final Datum and is never a stats slot.
+        row.stored.push(Datum::Int(self.next_handle_order));
+        self.next_handle_order = self.next_handle_order.wrapping_add(1);
         let slots: Vec<SlotValue<'_>> = row
             .slots
             .iter()
@@ -652,7 +687,15 @@ impl<'a> AnalyzeRun<'a> {
     /// Builds every histogram from the rows pushed so far.
     pub fn finish(self) -> Result<AnalyzedTable, AnalyzeError> {
         let plan = self.plan;
-        let (scanned_rows, slot_stats, sampled) = self.collector.into_parts();
+        let (scanned_rows, slot_stats, sampled) =
+            self.collector.into_parts(|columns| match columns.last() {
+                Some(Datum::Int(order)) => {
+                    Ok::<_, AnalyzeError>(tidb_txnkv::IntHandle::new(*order).into())
+                }
+                _ => Err(AnalyzeError::Unsupported(
+                    "an internal sampled row lost its handle-order key".to_owned(),
+                )),
+            })?;
 
         let mut columns = Vec::with_capacity(plan.columns.len());
         for (position, column) in plan.columns.iter().enumerate() {
@@ -757,4 +800,60 @@ pub(crate) fn value_length(value: &Datum) -> usize {
 
 fn encode_key_of(value: &Datum) -> Result<Vec<u8>, AnalyzeError> {
     encode_key(std::slice::from_ref(value)).map_err(|error| AnalyzeError::Encode(error.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn one_int_column_plan() -> AnalyzePlan {
+        AnalyzePlan::new(
+            vec![AnalyzedColumn {
+                id: 1,
+                name: "a".to_owned(),
+                absent_value: Datum::Null,
+                collation: None,
+            }],
+            Vec::new(),
+            "t",
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn stats_builder_options_preserve_the_signed_go_integer_domain() {
+        let options = AnalyzeOptions {
+            num_buckets: -1,
+            num_topn: -2,
+            default_num_buckets: u64::MAX,
+            default_num_topn: u64::MAX - 1,
+            ..AnalyzeOptions::default()
+        };
+        let built = options.build_options();
+        assert_eq!(built.num_buckets, -1);
+        assert_eq!(built.num_topn, -2);
+        assert_eq!(built.default_num_buckets, u64::MAX);
+        assert_eq!(built.default_num_topn, u64::MAX - 1);
+    }
+
+    #[test]
+    fn reservoir_heap_order_does_not_replace_physical_handle_order() {
+        let plan = one_int_column_plan();
+        let options = AnalyzeOptions {
+            num_buckets: 3,
+            num_topn: 0,
+            num_samples: 3,
+            ..AnalyzeOptions::default()
+        };
+        let mut run = AnalyzeRun::start(&plan, &options, None).unwrap();
+        // Both production row sources call `push` in record-key/handle order.
+        // The value order is intentionally different, making correlation pin
+        // the sample ordinals rather than merely the chosen row set.
+        run.push(&[Datum::Int(3)]).unwrap();
+        run.push(&[Datum::Int(1)]).unwrap();
+        run.push(&[Datum::Int(2)]).unwrap();
+        let analyzed = run.finish().unwrap();
+        assert_eq!(analyzed.sampled_rows, 3);
+        assert_eq!(analyzed.columns[0].histogram.correlation, -0.5);
+    }
 }
