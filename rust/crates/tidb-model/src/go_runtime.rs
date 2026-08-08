@@ -400,6 +400,77 @@ impl<T> GoSharedSlice<T> {
         }
         *self = Self::from_vec_with_capacity(values, grown_capacity);
     }
+
+    /// Makes the sequential decoder slot at `index` visible, growing this
+    /// header exactly when Go's `encoding/json` would detach it from the old
+    /// backing array. Earlier slot writes therefore remain observable through
+    /// sibling headers when a later element triggers growth.
+    pub(crate) fn prepare_decode_slot(&mut self, index: usize, grown_capacity: usize)
+    where
+        T: Clone + Default,
+    {
+        if index >= self.capacity {
+            assert!(
+                grown_capacity > self.capacity && grown_capacity > index,
+                "Go slice decoder did not grow enough for its next slot"
+            );
+            let mut values = if let Some(backing) = &self.backing {
+                let values = backing
+                    .read()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                values[self.start..self.start + self.len].to_vec()
+            } else {
+                Vec::new()
+            };
+            values.resize_with(grown_capacity, T::default);
+            self.backing = Some(Arc::new(RwLock::new(values)));
+            self.start = 0;
+            self.capacity = grown_capacity;
+        }
+        if index >= self.len {
+            self.len = index + 1;
+        }
+    }
+
+    /// Clones an initialized slot anywhere through the header's capacity.
+    /// Go's array decoder can reuse stale pointers beyond the old visible len.
+    pub(crate) fn decode_slot(&self, index: usize) -> T
+    where
+        T: Clone,
+    {
+        assert!(index < self.capacity, "decode slot exceeds Go slice cap");
+        let values = self
+            .backing
+            .as_ref()
+            .expect("decode slot of nil Go slice")
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        values[self.start + index].clone()
+    }
+
+    /// Replaces a decoder-visible slot without imposing the old header len as
+    /// a bound. `prepare_decode_slot` has already made the slot visible.
+    pub(crate) fn set_decode_slot(&self, index: usize, value: T) {
+        assert!(index < self.len, "decode slot is not visible");
+        let mut values = self
+            .backing
+            .as_ref()
+            .expect("decode slot of nil Go slice")
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        values[self.start + index] = value;
+    }
+
+    /// Applies the successful end-of-array truncation. The empty-array case
+    /// is special in Go and replaces even a reusable backing with `[]` cap 0.
+    pub(crate) fn finish_decode(&mut self, decoded_len: usize) {
+        if decoded_len == 0 {
+            *self = Self::from_vec(Vec::new());
+        } else {
+            assert!(decoded_len <= self.len, "decoder length was not exposed");
+            self.len = decoded_len;
+        }
+    }
 }
 
 impl<T> Clone for GoSharedSlice<T> {
@@ -620,6 +691,23 @@ impl<T> GoSharedPointerSlice<T> {
     pub(crate) fn replace_decoded(&mut self, values: Vec<Option<GoShared<T>>>) {
         let grown_capacity = go_64_pointer_slice_decode_capacity(self.0.capacity(), values.len());
         self.0.replace_decoded(values, grown_capacity);
+    }
+
+    pub(crate) fn prepare_decode_slot(&mut self, index: usize) {
+        let grown_capacity = go_64_pointer_slice_decode_capacity(self.0.capacity(), index + 1);
+        self.0.prepare_decode_slot(index, grown_capacity);
+    }
+
+    pub(crate) fn decode_slot(&self, index: usize) -> Option<GoShared<T>> {
+        self.0.decode_slot(index)
+    }
+
+    pub(crate) fn set_decode_slot(&self, index: usize, value: Option<GoShared<T>>) {
+        self.0.set_decode_slot(index, value);
+    }
+
+    pub(crate) fn finish_decode(&mut self, decoded_len: usize) {
+        self.0.finish_decode(decoded_len);
     }
 }
 
