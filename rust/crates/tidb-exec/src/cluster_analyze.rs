@@ -275,7 +275,7 @@ fn cluster_analyze_plan(table: &TableInfo) -> Result<AnalyzePlan, AnalyzeError> 
         )));
     }
     let mut columns = Vec::new();
-    let mut by_offset: BTreeMap<i32, usize> = BTreeMap::new();
+    let mut by_offset: BTreeMap<i64, usize> = BTreeMap::new();
     for column in table.cols() {
         if column.state != SchemaState::PUBLIC || column.hidden {
             continue;

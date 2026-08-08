@@ -594,7 +594,7 @@ mod tests {
         }
     }
 
-    fn column(id: i64, offset: i32, name: &str, primary: bool) -> ColumnInfo {
+    fn column(id: i64, offset: i64, name: &str, primary: bool) -> ColumnInfo {
         let mut field_type = FieldType::new(FieldTypeCode::LongLong);
         if primary {
             field_type.add_flags(PRI_KEY_FLAG);
@@ -948,7 +948,7 @@ mod tests {
     /// An index on a column, as the cluster stores it. `prefix` is Go's
     /// `IndexColumn.Length`, which is `UnspecifiedLength` (-1) for a whole
     /// column and a byte count for a prefix index.
-    fn index(id: i64, name: &str, column: &str, offset: i32, prefix: i32) -> IndexInfo {
+    fn index(id: i64, name: &str, column: &str, offset: i64, prefix: i64) -> IndexInfo {
         IndexInfo {
             id,
             name: CiString::new(name),

@@ -701,7 +701,7 @@ mod tests {
 
     /// `TableInfo::cols` places columns by their declared offset, so a
     /// fixture table must give each one its own.
-    fn column(offset: i32, id: i64, name: &str, mut field_type: FieldType) -> ColumnInfo {
+    fn column(offset: i64, id: i64, name: &str, mut field_type: FieldType) -> ColumnInfo {
         if field_type.code() == FieldTypeCode::Enum {
             field_type.set_elems(vec!["N".to_owned(), "Y".to_owned()]);
         }
@@ -899,7 +899,7 @@ mod clustered_handle_tests {
         0x93, 0x80, 0xF0, 0xEB, 0x9D, 0xDF, 0xAB, 0xBF, 0x06,
     ];
 
-    fn stats_column(offset: i32, id: i64, name: &str, code: FieldTypeCode) -> ColumnInfo {
+    fn stats_column(offset: i64, id: i64, name: &str, code: FieldTypeCode) -> ColumnInfo {
         let mut column = ColumnInfo::new(id, name, FieldType::new(code));
         column.offset = offset;
         column
@@ -914,7 +914,7 @@ mod clustered_handle_tests {
                 .enumerate()
                 .map(|(offset, name)| IndexColumn {
                     name: CiString::new(*name),
-                    offset: offset as i32,
+                    offset: i64::try_from(offset).expect("an index-column offset fits in i64"),
                     ..IndexColumn::default()
                 })
                 .collect(),

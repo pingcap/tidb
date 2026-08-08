@@ -542,7 +542,7 @@ fn build_column(
     let mut info = ColumnInfo {
         id: 0,
         name: CiString::new(name.clone()),
-        offset: i32::try_from(offset).expect("a column offset fits in i32"),
+        offset: i64::try_from(offset).expect("a column offset fits in i64"),
         origin_default_value: None,
         origin_default_value_bit: None,
         default_value: None,
@@ -905,7 +905,7 @@ fn build_table(
             index_columns.push(IndexColumn {
                 name: column.name.clone(),
                 offset: column.offset,
-                length: i32::try_from(length).unwrap_or(-1),
+                length,
                 ..IndexColumn::default()
             });
         }

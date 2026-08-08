@@ -33,7 +33,7 @@ pub(super) const AUTO_INCREMENT_FLAG: u32 = 1 << 9;
 
 /// A `BIGINT AUTO_INCREMENT PRIMARY KEY` column: the one shape whose written
 /// value the server, not the client, decides.
-pub(super) fn auto_increment_column(id: i64, offset: i32, name: &str) -> ModelColumnInfo {
+pub(super) fn auto_increment_column(id: i64, offset: i64, name: &str) -> ModelColumnInfo {
     let mut field_type = FieldType::new(FieldTypeCode::LongLong);
     field_type.add_flags(PRI_KEY_FLAG | AUTO_INCREMENT_FLAG);
     let mut column = ModelColumnInfo::new(id, name, field_type);
@@ -41,7 +41,7 @@ pub(super) fn auto_increment_column(id: i64, offset: i32, name: &str) -> ModelCo
     column
 }
 
-pub(super) fn column(id: i64, offset: i32, name: &str, primary: bool) -> ModelColumnInfo {
+pub(super) fn column(id: i64, offset: i64, name: &str, primary: bool) -> ModelColumnInfo {
     let mut field_type = FieldType::new(FieldTypeCode::LongLong);
     if primary {
         field_type.add_flags(PRI_KEY_FLAG);
@@ -55,7 +55,7 @@ pub(super) fn column(id: i64, offset: i32, name: &str, primary: bool) -> ModelCo
 /// an `ENUM`/`SET` with its declared element list.
 pub(super) fn named_value_column(
     id: i64,
-    offset: i32,
+    offset: i64,
     name: &str,
     code: FieldTypeCode,
     elems: &[&str],
