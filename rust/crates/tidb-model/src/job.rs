@@ -27,6 +27,7 @@ use tidb_error::terror::TerrorError;
 use crate::action_type::ActionType;
 use crate::db::DBInfo;
 use crate::job_enums::{JobState, JobVersion};
+use crate::placement::PolicyRefInfo;
 use crate::reorg::{DDLReorgMeta, ReorgStage, ReorgType};
 use crate::schema_state::SchemaState;
 use crate::serde_helpers::{
@@ -824,7 +825,17 @@ impl_go_merge_object!(DBInfo, destination, map, key, {
     } else if go_json_field_matches(&key, "state") {
         map.next_value_seed(NullNoopSeed(&mut destination.state))?;
     } else if go_json_field_matches(&key, "policy_ref_info") {
-        destination.placement_policy_ref = map.next_value()?;
+        map.next_value_seed(OptionMergeSeed(&mut destination.placement_policy_ref))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+
+impl_go_merge_object!(PolicyRefInfo, destination, map, key, {
+    if go_json_field_matches(&key, "id") {
+        map.next_value_seed(NullNoopSeed(&mut destination.id))?;
+    } else if go_json_field_matches(&key, "name") {
+        map.next_value_seed(NullNoopSeed(&mut destination.name))?;
     } else {
         ignore_unknown(&mut map)?;
     }
@@ -908,7 +919,7 @@ impl_go_merge_object!(TableInfo, destination, map, key, {
     } else if go_json_field_matches(&key, "cache_table_status") {
         map.next_value_seed(NullNoopSeed(&mut destination.table_cache_status_type))?;
     } else if go_json_field_matches(&key, "policy_ref_info") {
-        destination.placement_policy_ref = map.next_value()?;
+        map.next_value_seed(OptionMergeSeed(&mut destination.placement_policy_ref))?;
     } else if go_json_field_matches(&key, "stats_options") {
         destination.stats_options = map.next_value()?;
     } else if go_json_field_matches(&key, "exchange_partition_info") {
@@ -1716,12 +1727,20 @@ mod tests {
                     id: 1,
                     name: CiString::new("db-kept"),
                     charset: "old-db-charset".to_owned(),
+                    placement_policy_ref: Some(PolicyRefInfo {
+                        id: 11,
+                        name: CiString::new("db-policy-kept"),
+                    }),
                     ..Default::default()
                 })),
                 table_info: Some(Box::new(TableInfo {
                     id: 2,
                     name: CiString::new("table-kept"),
                     comment: "old-comment".to_owned(),
+                    placement_policy_ref: Some(PolicyRefInfo {
+                        id: 12,
+                        name: CiString::new("table-policy-kept"),
+                    }),
                     ..Default::default()
                 })),
                 finished_ts: 20,
@@ -1737,8 +1756,17 @@ mod tests {
             .decode(
                 br#"{
                     "binlog": {
-                        "DBInfo":{"id":"bad","charset":null,"collate":"db-later"},
-                        "TableInfo":{"id":"bad","comment":"table-later"},
+                        "DBInfo":{
+                            "id":"bad",
+                            "charset":null,
+                            "policy_ref_info":{"id":"bad","name":{"O":"db-policy-later","L":"db-policy-later"}},
+                            "collate":"db-later"
+                        },
+                        "TableInfo":{
+                            "id":"bad",
+                            "policy_ref_info":{"id":"bad","name":{"O":"table-policy-later","L":"table-policy-later"}},
+                            "comment":"table-later"
+                        },
                         "MultipleTableInfos":[
                             null,
                             {"id":"bad","comment":"element-later"},
@@ -1759,10 +1787,16 @@ mod tests {
         assert_eq!(database.name.original(), "db-kept");
         assert_eq!(database.charset, "old-db-charset");
         assert_eq!(database.collate, "db-later");
+        let db_policy = database.placement_policy_ref.as_ref().unwrap();
+        assert_eq!(db_policy.id, 11);
+        assert_eq!(db_policy.name.original(), "db-policy-later");
         let table = history.table_info.as_ref().unwrap();
         assert_eq!(table.id, 2);
         assert_eq!(table.name.original(), "table-kept");
         assert_eq!(table.comment, "table-later");
+        let table_policy = table.placement_policy_ref.as_ref().unwrap();
+        assert_eq!(table_policy.id, 12);
+        assert_eq!(table_policy.name.original(), "table-policy-later");
         assert_eq!(history.finished_ts, 30);
         let tables = history.multiple_table_infos.as_ref().unwrap();
         assert!(tables[0].is_none());
