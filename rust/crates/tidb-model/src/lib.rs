@@ -14,11 +14,9 @@
 
 //! `pkg/meta/model`: TiDB schema/table metadata types.
 //!
-//! PACKAGE IN PROGRESS: the Go `meta/model` package is large (~9k lines
-//! across many interdependent files: `job.go`, `index.go`, `column.go`,
-//! `table.go`, ...). This crate is being grown bottom-up from its
-//! self-contained leaf types; only the modules declared below are ported so
-//! far. It is seed evidence, not yet the complete package.
+//! The atomic Go-package claim is tracked by the generated receipt under
+//! `tests/pkg_meta_model_lockdown/`. Individual modules and older file-level
+//! receipts are not independent whole-package completion claims.
 
 pub mod action_type;
 pub mod bdr;
@@ -52,28 +50,37 @@ pub mod table_mode;
 
 pub use action_type::{ActionType, ACTION_MAP};
 pub use bdr::{ts_convert_2_time, DDLBDRType, ACTION_BDR_MAP, BDR_ACTION_MAP};
-pub use column::{gen_removing_obj_name, ChangeStateInfo};
+pub use column::{gen_removing_obj_name, gen_unique_changing_column_name, ChangeStateInfo};
 pub use db::{less_db_info, DBInfo};
 pub use index::{
-    ColumnarIndexType, FullTextIndexInfo, IndexColumn, IndexInfo, InvertedIndexInfo,
-    RegionSplitPolicy, VectorIndexInfo,
+    field_type_to_inverted_index_info, find_index_by_columns,
+    find_index_by_columns_for_foreign_key, find_index_info_by_id, gen_unique_changing_index_name,
+    indexable_distance_metric_to_fn_name, indexable_fn_name_to_distance_metric,
+    is_index_prefix_covered, is_index_prefix_covered_for_foreign_key, ColumnarIndexType,
+    FullTextIndexInfo, IndexColumn, IndexInfo, InvertedIndexInfo, RegionSplitPolicy,
+    VectorIndexInfo, VEC_COSINE_DISTANCE_FN, VEC_L2_DISTANCE_FN,
 };
 pub use job::{
-    AdminCommandOperator, HistoryInfo, InvolvingSchemaInfo, InvolvingSchemaInfoMode,
-    JobPauseReason, JobResumeReason,
+    AddForeignKeyInfo, AdminCommandOperator, HistoryInfo, InvolvingSchemaInfo,
+    InvolvingSchemaInfoMode, Job, JobMeta, JobPauseReason, JobResumeReason, JobW, MultiSchemaInfo,
+    ResolvedTimeZone, SubJob, TimeZoneLocation,
 };
 pub use job_args::{
     index_arg_columnar_index_type, rename_tables_args_from_v1, IndexOp, RenameTableArgs,
 };
 pub use job_enums::{
-    get_job_ver_in_use, modify_type_to_string, set_job_ver_in_use, JobState, JobVersion,
+    get_job_ver_in_use, modify_type_to_string, set_job_ver_in_use, str_to_job_state, JobState,
+    JobVersion,
 };
 pub use masking_policy::{
     clone_masking_policy_info, MaskingPolicyInfo, MaskingPolicyStatus, MaskingPolicyType,
 };
 pub use partition::{PartitionDefinition, PartitionInfo, PartitionState, UpdateIndexInfo};
 pub use placement::{PlacementSettings, PolicyInfo, PolicyRefInfo};
-pub use reorg::{BackfillState, ReorgStage, ReorgType};
+pub use reorg::{
+    set_ddl_reorg_process_defaults, BackfillMeta, BackfillState, DDLReorgMeta, ReorgStage,
+    ReorgType,
+};
 pub use resource_group::{
     ResourceGroupBackgroundSettings, ResourceGroupInfo, ResourceGroupRunawayAction,
     ResourceGroupRunawaySettings, ResourceGroupRunawayWatch, ResourceGroupSettings,
@@ -82,7 +89,10 @@ pub use resource_group::{
 pub use schema_diff::{AffectedOption, SchemaDiff};
 pub use schema_state::SchemaState;
 pub use table::{
-    SessionInfo, TableCacheStatusType, TableLockState, TempTableType, TiFlashReplicaInfo,
+    find_fk_info_by_name, get_idx_changing_field_type, new_table_affinity_info_with_level,
+    SessionInfo, StatsLoadItem, TableAffinityInfo, TableCacheStatusType, TableItemID,
+    TableLockState, TableNameInfo, TempTableType, TiFlashReplicaInfo, DEFAULT_TTL_JOB_INTERVAL,
+    OLD_DEFAULT_TTL_JOB_INTERVAL,
 };
 pub use table_info::{TableInfo, TABLE_INFO_VERSION5};
 pub use table_mode::{AlterTableModeTarget, TableMode};
