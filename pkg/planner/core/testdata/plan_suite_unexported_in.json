@@ -151,7 +151,23 @@
       // `Sort` will not be eliminated, if it is not the top level operator.
       "select t1.b from t t1 where t1.b = (select t2.b from t t2 where t2.a = t1.a order by t2.a limit 1)",
       "select (select 1 from t t1 where t1.a = t2.a) from t t2",
-      "select count(1) from (select (select count(t1.a) as a  from t t1 where t1.c = t2.c) as a from t t2) as t3"
+      "select count(1) from (select (select count(t1.a) as a  from t t1 where t1.c = t2.c) as a from t t2) as t3",
+      // issue 69926: an even number of NOTs directly wrapping an IN-subquery filter is polarity-equivalent
+      // to the bare IN, so it should produce the same InnerJoin/SemiJoin plan shape, not fall back to the
+      // LeftOuterSemiJoin-with-marker-column shape used for negated/scalar-context IN.
+      "select a from t where not not a in (select b from t s where s.a = t.a)",
+      "select a from t where not not not not a in (select b from t s where s.a = t.a)",
+      "select a from t where not (not (a in (select b from t s where s.a = t.a)))",
+      "select a from t where not not (a not in (select b from t s where s.a = t.a))",
+      "select a from t where not not a in (select b from t s where s.a = t.a) and a is not null",
+      "select a, count(*) from t group by a having not not a in (select b from t s where s.a = t.a)",
+      // Odd NOT counts stay genuinely negated and must not take the even-NOT shortcut.
+      "select a from t where not a in (select b from t s where s.a = t.a)",
+      "select a from t where not not not a in (select b from t s where s.a = t.a)",
+      // OR is not a transparent ancestor for the even-NOT shortcut, so this keeps the scalar-marker shape.
+      "select a from t where not not a in (select b from t s where s.a = t.a) or a = -1",
+      // NOT wrapping an IN used as a scalar sub-expression (not the whole filter) must not take the shortcut.
+      "select a from t where not ((a in (select b from t s where s.a = t.a)) = 1)"
     ]
   },
   {
