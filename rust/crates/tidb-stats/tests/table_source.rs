@@ -17,8 +17,8 @@ use std::sync::{Arc, RwLock};
 use tidb_datatype::Datum;
 use tidb_stats::{
     Bucket, ColAndIdxExistenceMap, Column, ColumnInfo, CopyIntent, HistColl, Histogram, Index,
-    IndexInfo, PseudoColumnInfo, PseudoIndexInfo, PseudoTableInfo, StatsLoadedStatus, Table, TopN,
-    ALL_EVICTED, PSEUDO_ROW_COUNT, PSEUDO_VERSION,
+    IndexInfo, PseudoColumnInfo, PseudoIndexInfo, PseudoTableInfo, QueryColumn, QueryIndexInfo,
+    QueryTableInfo, StatsLoadedStatus, Table, TopN, ALL_EVICTED, PSEUDO_ROW_COUNT, PSEUDO_VERSION,
 };
 
 fn column(id: i64, count: i64, status: StatsLoadedStatus) -> Column {
@@ -335,6 +335,78 @@ fn source_pseudo_table_filters_schema_and_optionally_fills_histograms() {
             .physical_id,
         42
     );
+}
+
+#[test]
+fn source_id_to_unique_id_rekeys_only_requested_columns_and_shares_payloads() {
+    let mut coll = HistColl::new(8, 90, 4, 2, 1);
+    coll.set_column(1, column(1, 10, StatsLoadedStatus::full_load()));
+    coll.set_column(2, column(2, 20, StatsLoadedStatus::full_load()));
+    coll.set_index(3, index(3, 30, false, StatsLoadedStatus::full_load()));
+    coll.pseudo = true;
+    let mapped = coll.id_to_unique_id(&[
+        QueryColumn {
+            id: 2,
+            unique_id: 102,
+        },
+        QueryColumn {
+            id: 99,
+            unique_id: 199,
+        },
+    ]);
+    assert_eq!(mapped.physical_id, 8);
+    assert_eq!(mapped.realtime_count, 90);
+    assert_eq!(mapped.modify_count, 4);
+    assert!(mapped.pseudo);
+    assert_eq!(mapped.column_count(), 1);
+    assert_eq!(mapped.index_count(), 0);
+    let shared = mapped.get_column(102).unwrap();
+    assert!(Arc::ptr_eq(&shared, &coll.get_column(2).unwrap()));
+}
+
+#[test]
+fn source_generate_query_maps_keeps_partial_prefix_and_sorts_index_ids() {
+    let coll = HistColl::new(8, 90, 4, 2, 4);
+    coll.set_column(10, column(10, 10, StatsLoadedStatus::full_load()));
+    for id in [9, 3, 7] {
+        coll.set_index(id, index(id, 30, id == 7, StatsLoadedStatus::full_load()));
+    }
+    let table_info = QueryTableInfo {
+        column_ids: vec![10, 20],
+        indices: vec![
+            QueryIndexInfo {
+                id: 9,
+                column_offsets: vec![0],
+                mv_index: false,
+            },
+            QueryIndexInfo {
+                id: 3,
+                // The missing second planner column stops the loop but Go
+                // retains the non-empty prefix and therefore the index.
+                column_offsets: vec![0, 1],
+                mv_index: false,
+            },
+            QueryIndexInfo {
+                id: 7,
+                column_offsets: vec![0],
+                mv_index: true,
+            },
+        ],
+    };
+    let mapped = coll.generate_from_column_info(
+        &table_info,
+        &[QueryColumn {
+            id: 10,
+            unique_id: 100,
+        }],
+        |index, _| index.mv_index.then_some(vec![100]),
+    );
+    assert_eq!(mapped.column_count(), 1);
+    assert_eq!(mapped.index_count(), 3);
+    assert_eq!(mapped.idx_to_col_unique_ids[&3], [100]);
+    assert_eq!(mapped.col_unique_id_to_idx_ids[&100], [3, 7, 9]);
+    assert_eq!(mapped.unique_id_to_col_info_id[&100], 10);
+    assert_eq!(mapped.mv_idx_to_columns[&7], [100]);
 }
 
 #[test]
