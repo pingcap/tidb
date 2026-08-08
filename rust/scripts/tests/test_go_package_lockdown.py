@@ -877,6 +877,11 @@ class GoPackageLockdownTest(unittest.TestCase):
         second = run(self.root, command)
         self.assertIn("generated pkg/sample", first.stdout)
         self.assertIn("generated pkg/sample", second.stdout)
+        for ledger in (target / "ledgers").glob("*.tsv"):
+            self.assertFalse(
+                any(line.endswith("\t") for line in ledger.read_text(encoding="utf-8").splitlines()),
+                f"generated ledger has trailing empty fields: {ledger}",
+            )
 
     def test_generate_rejects_unknown_spec_field(self) -> None:
         spec = self.root / SPEC
@@ -1788,7 +1793,7 @@ class GoPackageLockdownTest(unittest.TestCase):
             })
         for identity, verdict in before.items():
             if verdict[0] == "pkg/sample/sample.go":
-                self.assertEqual(after[identity][1:], ("UNCLASSIFIED", "", "", ""))
+                self.assertEqual(after[identity][1:], ("UNCLASSIFIED", "-", "-", "-"))
             else:
                 self.assertEqual(after[identity], verdict)
         self.assertTrue(any(verdict[1] == "UNCLASSIFIED" for verdict in after.values()))

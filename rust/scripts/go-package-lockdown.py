@@ -2083,11 +2083,14 @@ class PackageLockdown:
                     if prior[:6] != raw[:6]:
                         raise LockdownError(f"existing raw obligation fields drifted for {raw[0]}")
                     if prior[6] == raw[6]:
-                        classified.append(raw + prior[7:])
+                        prior_verdict = prior[7:]
+                        if prior_verdict[0] == "UNCLASSIFIED":
+                            prior_verdict = ["UNCLASSIFIED", "-", "-", "-"]
+                        classified.append(raw + prior_verdict)
                     else:
-                        classified.append(raw + ["UNCLASSIFIED", "", "", ""])
+                        classified.append(raw + ["UNCLASSIFIED", "-", "-", "-"])
                 else:
-                    classified.append(raw + ["UNCLASSIFIED", "", "", ""])
+                    classified.append(raw + ["UNCLASSIFIED", "-", "-", "-"])
             writes.append(
                 (self._ledger_path(source), tsv_text(LEDGER_SCHEMA, LEDGER_HEADER, classified))
             )
