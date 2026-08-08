@@ -684,13 +684,13 @@ func buildDataSource2IndexScanByIndexJoinProp(
 		if path.IsTablePath() {
 			return false
 		}
-		// if path is index path. index path currently include two kind of, one is normal, and the other is mv index.
-		// for mv index like mvi(a, json, b), if driving condition is a=1, and we build a prefix scan with range [1,1]
-		// on mvi, it will return many index rows which breaks handle-unique attribute here.
+		// If path is an MV index path like mvi(a, json, b), a prefix scan with range [1,1] on mvi can
+		// return many index rows and break the handle-unique attribute here.
 		//
-		// the basic rule is that: mv index can be and can only be accessed by indexMerge operator. (embedded handle duplication)
+		// The basic rule is that MV index can be and can only be accessed by indexMerge operator.
+		// Partial index paths that remain here have already passed predicate checking.
 		if !path.IsIndexJoinUnapplicable() {
-			return true // not a MVIndex path, it can successfully be index join probe side.
+			return true
 		}
 		return false
 	}

@@ -58,44 +58,67 @@ id	estRows	task	access object	operator info
 TableReader	1.00	root		data:Selection
 └─Selection	1.00	cop[tikv]		eq(planner__core__casetest__index__partialindex.t.c, 1)
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-explain format='brief' select /*+ inl_join(t2) */ * from t t1, t t2 where t1.a=t2.b;
-id	estRows	task	access object	operator info
-HashJoin	12487.50	root		inner join, equal:[eq(planner__core__casetest__index__partialindex.t.a, planner__core__casetest__index__partialindex.t.b)]
-├─TableReader(Build)	9990.00	root		data:Selection
-│ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__index__partialindex.t.b))
-│   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-└─TableReader(Probe)	9990.00	root		data:Selection
-  └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__index__partialindex.t.a))
-    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-explain format='brief' select /*+ inl_join(t2) */ * from tt t1, tt t2 where t1.a=t2.b;
-id	estRows	task	access object	operator info
-IndexJoin	12487.50	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__index__partialindex.tt.a, inner key:planner__core__casetest__index__partialindex.tt.b, equal cond:eq(planner__core__casetest__index__partialindex.tt.a, planner__core__casetest__index__partialindex.tt.b)
-├─TableReader(Build)	9990.00	root		data:Selection
-│ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__index__partialindex.tt.a))
-│   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─IndexLookUp(Probe)	12487.50	root		
-  ├─Selection(Build)	12487.50	cop[tikv]		not(isnull(planner__core__casetest__index__partialindex.tt.b))
-  │ └─IndexRangeScan	12500.00	cop[tikv]	table:t2, index:idx2(b)	range: decided by [eq(planner__core__casetest__index__partialindex.tt.b, planner__core__casetest__index__partialindex.tt.a)], keep order:false, stats:pseudo
-  └─TableRowIDScan(Probe)	12487.50	cop[tikv]	table:t2	keep order:false, stats:pseudo
-explain format='brief' select /*+ inl_join(t2) */ * from t t1, t t2 where t1.b=t2.a;
-id	estRows	task	access object	operator info
-HashJoin	12487.50	root		inner join, equal:[eq(planner__core__casetest__index__partialindex.t.b, planner__core__casetest__index__partialindex.t.a)]
-├─TableReader(Build)	9990.00	root		data:Selection
-│ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__index__partialindex.t.a))
-│   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-└─TableReader(Probe)	9990.00	root		data:Selection
-  └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__index__partialindex.t.b))
-    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-explain format='brief' select /*+ inl_join(t2) */ * from tt t1, tt t2 where t1.b=t2.a;
-id	estRows	task	access object	operator info
-IndexJoin	12487.50	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__index__partialindex.tt.b, inner key:planner__core__casetest__index__partialindex.tt.a, equal cond:eq(planner__core__casetest__index__partialindex.tt.b, planner__core__casetest__index__partialindex.tt.a)
-├─TableReader(Build)	9990.00	root		data:Selection
-│ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__index__partialindex.tt.b))
-│   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─IndexLookUp(Probe)	12487.50	root		
-  ├─Selection(Build)	12487.50	cop[tikv]		not(isnull(planner__core__casetest__index__partialindex.tt.a))
-  │ └─IndexRangeScan	12500.00	cop[tikv]	table:t2, index:idx1(a)	range: decided by [eq(planner__core__casetest__index__partialindex.tt.a, planner__core__casetest__index__partialindex.tt.b)], keep order:false, stats:pseudo
-  └─TableRowIDScan(Probe)	12487.50	cop[tikv]	table:t2	keep order:false, stats:pseudo
+explain format='plan_tree' select /*+ inl_join(t2) */ t1.a, t2.b from t t1, t t2 where t1.a=t2.b;
+id	task	access object	operator info
+HashJoin	root		inner join, equal:[eq(planner__core__casetest__index__partialindex.t.a, planner__core__casetest__index__partialindex.t.b)]
+├─TableReader(Build)	root		data:Selection
+│ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__index__partialindex.t.b))
+│   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─IndexReader(Probe)	root		index:IndexFullScan
+  └─IndexFullScan	cop[tikv]	table:t1, index:idx1(a)	keep order:false, stats:pseudo
+explain format='plan_tree' select /*+ inl_join(t2) */ t1.a, t2.b from tt t1, tt t2 where t1.a=t2.b;
+id	task	access object	operator info
+IndexJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest__index__partialindex.tt.a, inner key:planner__core__casetest__index__partialindex.tt.b, equal cond:eq(planner__core__casetest__index__partialindex.tt.a, planner__core__casetest__index__partialindex.tt.b)
+├─IndexReader(Build)	root		index:IndexFullScan
+│ └─IndexFullScan	cop[tikv]	table:t1, index:idx1(a)	keep order:false, stats:pseudo
+└─IndexReader(Probe)	root		index:Selection
+  └─Selection	cop[tikv]		not(isnull(planner__core__casetest__index__partialindex.tt.b))
+    └─IndexRangeScan	cop[tikv]	table:t2, index:idx2(b)	range: decided by [eq(planner__core__casetest__index__partialindex.tt.b, planner__core__casetest__index__partialindex.tt.a)], keep order:false, stats:pseudo
+insert into t values (1, 100, 10), (2, 200, 20), (null, 999, 30);
+explain format='plan_tree' select /* issue:69524 */ /*+ inl_join(t2) */ t1.a, t1.b, t2.a from t t1 join t t2 on t1.a = t2.a order by t1.c;
+id	task	access object	operator info
+Projection	root		planner__core__casetest__index__partialindex.t.a, planner__core__casetest__index__partialindex.t.b, planner__core__casetest__index__partialindex.t.a
+└─Sort	root		planner__core__casetest__index__partialindex.t.c
+  └─IndexJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest__index__partialindex.t.a, inner key:planner__core__casetest__index__partialindex.t.a, equal cond:eq(planner__core__casetest__index__partialindex.t.a, planner__core__casetest__index__partialindex.t.a)
+    ├─TableReader(Build)	root		data:Selection
+    │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__index__partialindex.t.a))
+    │   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    └─IndexReader(Probe)	root		index:Selection
+      └─Selection	cop[tikv]		not(isnull(planner__core__casetest__index__partialindex.t.a))
+        └─IndexRangeScan	cop[tikv]	table:t2, index:idx1(a)	range: decided by [eq(planner__core__casetest__index__partialindex.t.a, planner__core__casetest__index__partialindex.t.a)], keep order:false, stats:pseudo
+select /* issue:69524 */ /*+ inl_join(t2) */ t1.a, t1.b, t2.a from t t1 join t t2 on t1.a = t2.a order by t1.c;
+a	b	a
+1	100	1
+2	200	2
+explain format='plan_tree' select /* issue:69524 */ /*+ inl_join(t2) */ t1.a, t1.b, t2.a from t t1 left join t t2 on t1.a = t2.a order by t1.c;
+id	task	access object	operator info
+Projection	root		planner__core__casetest__index__partialindex.t.a, planner__core__casetest__index__partialindex.t.b, planner__core__casetest__index__partialindex.t.a
+└─Sort	root		planner__core__casetest__index__partialindex.t.c
+  └─IndexJoin	root		left outer join, inner:IndexReader, left side:TableReader, outer key:planner__core__casetest__index__partialindex.t.a, inner key:planner__core__casetest__index__partialindex.t.a, equal cond:eq(planner__core__casetest__index__partialindex.t.a, planner__core__casetest__index__partialindex.t.a)
+    ├─TableReader(Build)	root		data:TableFullScan
+    │ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    └─IndexReader(Probe)	root		index:Selection
+      └─Selection	cop[tikv]		not(isnull(planner__core__casetest__index__partialindex.t.a))
+        └─IndexRangeScan	cop[tikv]	table:t2, index:idx1(a)	range: decided by [eq(planner__core__casetest__index__partialindex.t.a, planner__core__casetest__index__partialindex.t.a)], keep order:false, stats:pseudo
+select /* issue:69524 */ /*+ inl_join(t2) */ t1.a, t1.b, t2.a from t t1 left join t t2 on t1.a = t2.a order by t1.c;
+a	b	a
+1	100	1
+2	200	2
+NULL	999	NULL
+explain format='plan_tree' select /* issue:69524 */ /*+ inl_join(t2) */ t1.a, t1.b, t2.a from t t1 join t t2 on t1.a <=> t2.a order by t1.c, t2.a;
+id	task	access object	operator info
+Projection	root		planner__core__casetest__index__partialindex.t.a, planner__core__casetest__index__partialindex.t.b, planner__core__casetest__index__partialindex.t.a
+└─Sort	root		planner__core__casetest__index__partialindex.t.c, planner__core__casetest__index__partialindex.t.a
+  └─HashJoin	root		inner join, equal:[nulleq(planner__core__casetest__index__partialindex.t.a, planner__core__casetest__index__partialindex.t.a)]
+    ├─TableReader(Build)	root		data:TableFullScan
+    │ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+    └─TableReader(Probe)	root		data:TableFullScan
+      └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+select /* issue:69524 */ /*+ inl_join(t2) */ t1.a, t1.b, t2.a from t t1 join t t2 on t1.a <=> t2.a order by t1.c, t2.a;
+a	b	a
+1	100	1
+2	200	2
+NULL	999	NULL
 explain format='brief' select /*+ use_index_merge(t, idx1, idx2) */ * from t where (a > 10) or (b > 10);
 id	estRows	task	access object	operator info
 TableReader	5555.56	root		data:Selection
