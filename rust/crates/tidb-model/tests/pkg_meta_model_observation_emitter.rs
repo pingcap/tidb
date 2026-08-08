@@ -20,7 +20,7 @@
 
 use std::collections::BTreeMap;
 
-const SOURCE_COMMIT: &str = "bdab0016365e8b1d79b5b11f52ee6fdde90f4c46";
+const SOURCE_COMMIT: &str = "665fc02e2be48a7199d5ffeb5d3d6bec1dfed04f";
 
 pub(crate) fn emit(probe_id: &str, conclusion: &str, cases: &[(&str, &str, &str)]) {
     let boundary_observations = cases

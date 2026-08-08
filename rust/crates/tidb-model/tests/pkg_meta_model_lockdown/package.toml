@@ -1,7 +1,7 @@
 schema = "go-package-lockdown-spec-v2"
 claim = "whole-go-package"
 go_package = "pkg/meta/model"
-source_commit = "bdab0016365e8b1d79b5b11f52ee6fdde90f4c46"
+source_commit = "665fc02e2be48a7199d5ffeb5d3d6bec1dfed04f"
 primary_rust_crate = "tidb-model"
 mapped_rust_crates = ["tidb-model", "tidb-error", "tidb-datatype", "tidb-exec", "tidb-server"]
 extra_artifacts = []
@@ -13,6 +13,7 @@ owned_rust_files = [
   "rust/crates/tidb-exec/src/catalog_reload.rs",
   "rust/crates/tidb-exec/src/cluster_analyze.rs",
   "rust/crates/tidb-exec/src/cluster_catalog.rs",
+  "rust/crates/tidb-exec/src/cluster_ddl.rs",
   "rust/crates/tidb-exec/src/mysql_bootstrap.rs",
   "rust/crates/tidb-exec/src/mysql_system_tables.rs",
   "rust/crates/tidb-exec/src/table_info_build.rs",
