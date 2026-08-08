@@ -59,22 +59,24 @@ pub struct StorageClassDef {
     pub tier: String,
     /// Scope: the partition/table names this applies to.
     #[serde(default)]
-    pub names_in: Vec<String>,
+    pub names_in: Option<Vec<String>>,
     /// Scope: an upper bound.
     pub less_than: Option<String>,
     /// Scope: an explicit value set.
     #[serde(default)]
-    pub values_in: Vec<String>,
+    pub values_in: Option<Vec<String>>,
     /// The transition rules.
     #[serde(default)]
-    pub transitions: Vec<StorageClassTransitRule>,
+    pub transitions: Option<Vec<StorageClassTransitRule>>,
 }
 
 impl StorageClassDef {
     /// Go `HasNoScopeDef`: whether no scope (names/less-than/values) is set.
     #[must_use]
     pub fn has_no_scope_def(&self) -> bool {
-        self.names_in.is_empty() && self.less_than.is_none() && self.values_in.is_empty()
+        self.names_in.as_ref().is_none_or(Vec::is_empty)
+            && self.less_than.is_none()
+            && self.values_in.as_ref().is_none_or(Vec::is_empty)
     }
 }
 
@@ -83,7 +85,7 @@ impl StorageClassDef {
 pub struct StorageClassSettings {
     /// The definitions.
     #[serde(default)]
-    pub defs: Vec<StorageClassDef>,
+    pub defs: Option<Vec<StorageClassDef>>,
 }
 
 /// Go `StorageClassTransitRule`: when a tier transition happens.
@@ -170,7 +172,7 @@ mod tests {
     fn has_no_scope_def() {
         let mut d = StorageClassDef::default();
         assert!(d.has_no_scope_def());
-        d.names_in.push("p0".to_owned());
+        d.names_in = Some(vec!["p0".to_owned()]);
         assert!(!d.has_no_scope_def());
 
         let d = StorageClassDef {
@@ -178,6 +180,26 @@ mod tests {
             ..Default::default()
         };
         assert!(!d.has_no_scope_def());
+
+        let zero = serde_json::to_value(StorageClassDef::default()).unwrap();
+        assert_eq!(zero["names_in"], serde_json::Value::Null);
+        assert_eq!(zero["values_in"], serde_json::Value::Null);
+        assert_eq!(zero["transitions"], serde_json::Value::Null);
+        let allocated: StorageClassDef = serde_json::from_value(serde_json::json!({
+            "names_in": [],
+            "values_in": [],
+            "transitions": []
+        }))
+        .unwrap();
+        assert_eq!(allocated.names_in, Some(Vec::new()));
+        assert_eq!(allocated.values_in, Some(Vec::new()));
+        assert!(allocated.transitions.as_ref().is_some_and(Vec::is_empty));
+
+        let settings = serde_json::to_value(StorageClassSettings::default()).unwrap();
+        assert_eq!(settings["defs"], serde_json::Value::Null);
+        let settings: StorageClassSettings =
+            serde_json::from_value(serde_json::json!({"defs": []})).unwrap();
+        assert!(settings.defs.as_ref().is_some_and(Vec::is_empty));
     }
 
     #[test]
