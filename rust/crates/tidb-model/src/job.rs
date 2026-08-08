@@ -30,7 +30,10 @@ use crate::table_info::TableInfo;
 /// Go `AdminCommandOperator` (an `int`): who issued an admin DDL command.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
-pub struct AdminCommandOperator(pub i64);
+pub struct AdminCommandOperator(
+    /// Persisted source ordinal.
+    pub i64,
+);
 
 impl AdminCommandOperator {
     /// Unknown issuer (Go `AdminCommandByNotKnown`, the zero value).
@@ -55,7 +58,10 @@ impl std::fmt::Display for AdminCommandOperator {
 /// schema object.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
-pub struct InvolvingSchemaInfoMode(pub i64);
+pub struct InvolvingSchemaInfoMode(
+    /// Persisted lock-mode ordinal.
+    pub i64,
+);
 
 impl InvolvingSchemaInfoMode {
     /// Exclusive involvement (Go `ExclusiveInvolving`, the zero value).
@@ -168,14 +174,19 @@ impl HistoryInfo {
 /// Go `JobMeta`: the subset of job metadata embedded by a backfill task.
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct JobMeta {
+    /// Schema identifier of the DDL job.
     #[serde(rename = "schema_id", default)]
     pub schema_id: i64,
+    /// Table identifier of the DDL job.
     #[serde(rename = "table_id", default)]
     pub table_id: i64,
+    /// DDL action type.
     #[serde(rename = "job_type", default)]
     pub type_: ActionType,
+    /// Original DDL query text.
     #[serde(rename = "query", default)]
     pub query: String,
+    /// Operation priority used by index creation.
     #[serde(rename = "priority", default)]
     pub priority: i32,
 }
@@ -184,11 +195,19 @@ pub struct JobMeta {
 /// offsets remain distinct because the latter retains the caller's name.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ResolvedTimeZone {
+    /// A named IANA time zone loaded from the time-zone database.
     Named(chrono_tz::Tz),
-    Fixed { name: String, offset_seconds: i32 },
+    /// A fixed offset retaining the source-provided zone name.
+    Fixed {
+        /// Caller-provided fixed-zone name.
+        name: String,
+        /// Offset in seconds east of UTC.
+        offset_seconds: i32,
+    },
 }
 
 impl ResolvedTimeZone {
+    /// Returns the stable source-visible location name.
     #[must_use]
     pub fn name(&self) -> &str {
         match self {
@@ -203,8 +222,10 @@ impl ResolvedTimeZone {
 /// the public name/offset fields are modified after the first lookup.
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TimeZoneLocation {
+    /// IANA or fixed-zone name persisted by the DDL job.
     #[serde(rename = "name", default)]
     pub name: String,
+    /// Fixed offset in seconds east of UTC; zero selects named-zone loading.
     #[serde(rename = "offset", default)]
     pub offset: i32,
     #[serde(skip)]
@@ -214,37 +235,52 @@ pub struct TimeZoneLocation {
 /// Go `AddForeignKeyInfo` (runtime-only; no JSON fields in its owner).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AddForeignKeyInfo {
+    /// Foreign-key constraint name.
     pub name: tidb_ast::CiString,
+    /// Referencing column names.
     pub columns: Vec<tidb_ast::CiString>,
 }
 
 /// Go `MultiSchemaInfo`.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct MultiSchemaInfo {
+    /// Ordered sub-jobs, with `None` retaining Go's nil-slice state.
     #[serde(rename = "sub_jobs", default)]
     pub sub_jobs: Option<Vec<SubJob>>,
+    /// Whether every sub-job can still be reverted.
     #[serde(rename = "revertible", default)]
     pub revertible: bool,
+    /// Sequence of the currently executing sub-job.
     #[serde(rename = "seq", default)]
     pub seq: i32,
+    /// Runtime flag suppressing schema-version generation for a sub-job.
     #[serde(skip)]
     pub skip_version: bool,
+    /// Runtime set of columns being added.
     #[serde(skip)]
     pub add_columns: Vec<tidb_ast::CiString>,
+    /// Runtime set of columns being dropped.
     #[serde(skip)]
     pub drop_columns: Vec<tidb_ast::CiString>,
+    /// Runtime set of columns being modified.
     #[serde(skip)]
     pub modify_columns: Vec<tidb_ast::CiString>,
+    /// Runtime set of indexes being added.
     #[serde(skip)]
     pub add_indexes: Vec<tidb_ast::CiString>,
+    /// Runtime set of indexes being dropped.
     #[serde(skip)]
     pub drop_indexes: Vec<tidb_ast::CiString>,
+    /// Runtime set of indexes being altered.
     #[serde(skip)]
     pub alter_indexes: Vec<tidb_ast::CiString>,
+    /// Runtime foreign keys being added.
     #[serde(skip)]
     pub add_foreign_keys: Vec<AddForeignKeyInfo>,
+    /// Runtime columns referenced by positional clauses.
     #[serde(skip)]
     pub relative_columns: Vec<tidb_ast::CiString>,
+    /// Runtime target columns for positional clauses.
     #[serde(skip)]
     pub position_columns: Vec<tidb_ast::CiString>,
 }
@@ -272,32 +308,46 @@ impl Default for MultiSchemaInfo {
 /// Go `SubJob` persisted fields.
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct SubJob {
+    /// DDL action performed by this sub-job.
     #[serde(rename = "type", default)]
     pub type_: ActionType,
+    /// Persisted delayed-decode argument envelope.
     #[serde(rename = "raw_args", default)]
     pub raw_args: Option<serde_json::Value>,
+    /// Current schema state reached by the sub-job.
     #[serde(rename = "schema_state", default)]
     pub schema_state: SchemaState,
+    /// Snapshot timestamp used by reorganization work.
     #[serde(rename = "snapshot_ver", default)]
     pub snapshot_version: u64,
+    /// TSO at which execution actually began.
     #[serde(rename = "real_start_ts", default)]
     pub real_start_ts: u64,
+    /// Whether the sub-job can still be reverted.
     #[serde(rename = "revertible", default)]
     pub revertible: bool,
+    /// Current sub-job lifecycle state.
     #[serde(rename = "state", default)]
     pub state: JobState,
+    /// Rows processed by this sub-job.
     #[serde(rename = "row_count", default)]
     pub row_count: i64,
+    /// Persisted warning payload from the sub-job.
     #[serde(rename = "warning", default)]
     pub warning: Option<serde_json::Value>,
+    /// Runtime hint used by modify-column reorganization.
     #[serde(skip)]
     pub need_reorg: bool,
+    /// Schema version produced by this sub-job.
     #[serde(rename = "schema_version", default)]
     pub schema_version: i64,
+    /// Reorganization strategy selected for the sub-job.
     #[serde(rename = "reorg_tp", default)]
     pub reorg_type: ReorgType,
+    /// Reorganization stage reached by the sub-job.
     #[serde(rename = "reorg_stage", default)]
     pub reorg_stage: ReorgStage,
+    /// Analyze phase state stored with modify-column work.
     #[serde(rename = "analyze_state", default)]
     pub analyze_state: i8,
     #[serde(skip)]
@@ -305,6 +355,7 @@ pub struct SubJob {
 }
 
 impl SubJob {
+    /// Reports whether the sub-job is outside cancellation and rollback states.
     #[must_use]
     pub fn is_normal(&self) -> bool {
         !matches!(
@@ -316,11 +367,13 @@ impl SubJob {
         )
     }
 
+    /// Reports whether the sub-job reached a terminal state.
     #[must_use]
     pub fn is_finished(&self) -> bool {
         self.state.is_finished()
     }
 
+    /// Builds the parent-shaped proxy job used to execute this sub-job.
     #[must_use]
     pub fn to_proxy_job(&self, parent: &Job, sequence: i32) -> Job {
         let mut reorg_meta = parent.reorg_meta.clone();
@@ -368,6 +421,7 @@ impl SubJob {
         }
     }
 
+    /// Copies execution results from a proxy job back into this sub-job.
     pub fn from_proxy_job(&mut self, proxy: &Job, schema_version: i64) {
         self.revertible = proxy
             .multi_schema_info
@@ -428,60 +482,87 @@ impl TimeZoneLocation {
 /// Go `Job`: the persisted DDL operation envelope.
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct Job {
+    /// Persistent job identifier.
     #[serde(rename = "id", default)]
     pub id: i64,
+    /// DDL action performed by the job.
     #[serde(rename = "type", default)]
     pub type_: ActionType,
+    /// Schema identifier, whose exact role depends on the action type.
     #[serde(rename = "schema_id", default)]
     pub schema_id: i64,
+    /// Table identifier, whose exact role depends on the action type.
     #[serde(rename = "table_id", default)]
     pub table_id: i64,
+    /// Source schema name used by scheduling involvement fallback.
     #[serde(rename = "schema_name", default)]
     pub schema_name: String,
+    /// Source table name used by scheduling involvement fallback.
     #[serde(rename = "table_name", default)]
     pub table_name: String,
+    /// Current lifecycle state.
     #[serde(rename = "state", default)]
     pub state: JobState,
+    /// Persisted warning payload.
     #[serde(rename = "warning", default)]
     pub warning: Option<serde_json::Value>,
+    /// Persisted execution error payload.
     #[serde(rename = "err", default)]
     pub error: Option<serde_json::Value>,
+    /// Number of execution errors observed.
     #[serde(rename = "err_count", default)]
     pub error_count: i64,
+    /// Number of rows processed.
     #[serde(rename = "row_count", default)]
     pub row_count: i64,
+    /// Runtime modify-column hint; not a precise persisted reorg decision.
     #[serde(skip)]
     pub need_reorg: bool,
     #[serde(skip)]
     args: Option<Vec<serde_json::Value>>,
+    /// Persisted delayed-decode argument envelope.
     #[serde(rename = "raw_args", default)]
     pub raw_args: Option<serde_json::Value>,
+    /// Schema state reached by this job.
     #[serde(rename = "schema_state", default)]
     pub schema_state: SchemaState,
+    /// Snapshot timestamp used by reorganization work.
     #[serde(rename = "snapshot_ver", default)]
     pub snapshot_version: u64,
+    /// TSO at which execution actually began.
     #[serde(rename = "real_start_ts", default)]
     pub real_start_ts: u64,
+    /// TSO allocated when the job entered the job table.
     #[serde(rename = "start_ts", default)]
     pub start_ts: u64,
+    /// Largest earlier job identifier this job depends on.
     #[serde(rename = "dependency_id", default)]
     pub dependency_id: i64,
+    /// Original DDL query text.
     #[serde(rename = "query", default)]
     pub query: String,
+    /// Schema-history snapshot written when the job finishes.
     #[serde(rename = "binlog", default)]
     pub binlog_info: Option<HistoryInfo>,
+    /// Persisted job argument encoding version.
     #[serde(rename = "version", default)]
     pub version: JobVersion,
+    /// Reorganization execution metadata.
     #[serde(rename = "reorg_meta", default)]
     pub reorg_meta: Option<DDLReorgMeta>,
+    /// Multi-schema sub-job state, when present.
     #[serde(rename = "multi_schema_info", default)]
     pub multi_schema_info: Option<MultiSchemaInfo>,
+    /// Operation priority used by index creation.
     #[serde(rename = "priority", default)]
     pub priority: i32,
+    /// Ordering key used when moving jobs into DDL history.
     #[serde(rename = "seq_num", default)]
     pub sequence_number: u64,
+    /// Character set captured when the job was created.
     #[serde(rename = "charset", default)]
     pub charset: String,
+    /// Collation captured when the job was created.
     #[serde(rename = "collate", default)]
     pub collate: String,
     #[serde(
@@ -489,7 +570,9 @@ pub struct Job {
         default,
         skip_serializing_if = "option_vec_is_none_or_empty"
     )]
+    /// Explicit scheduling-lock objects; `None` activates name fallback.
     pub involving_schema_info: Option<Vec<InvolvingSchemaInfo>>,
+    /// Origin of an administrative command.
     #[serde(rename = "admin_operator", default)]
     pub admin_operator: AdminCommandOperator,
     #[serde(
@@ -497,21 +580,28 @@ pub struct Job {
         default,
         skip_serializing_if = "Option::is_none"
     )]
+    /// Durable reason for a system-initiated pause.
     pub pause_reason: Option<JobPauseReason>,
     #[serde(
         rename = "resume_reason",
         default,
         skip_serializing_if = "Option::is_none"
     )]
+    /// Durable reason for explicit resume.
     pub resume_reason: Option<JobResumeReason>,
+    /// SQL tracing metadata retained as its persisted JSON payload.
     #[serde(rename = "trace_info", default)]
     pub trace_info: Option<serde_json::Value>,
+    /// BDR cluster role captured for this DDL.
     #[serde(rename = "bdr_role", default)]
     pub bdr_role: String,
+    /// CDC write-source identifier.
     #[serde(rename = "cdc_write_source", default)]
     pub cdc_write_source: u64,
+    /// Deprecated flag for execution on the client-connected TiDB.
     #[serde(rename = "local_mode", default)]
     pub local_mode: bool,
+    /// SQL mode used to execute the DDL statement.
     #[serde(rename = "sql_mode", default)]
     pub sql_mode: u64,
     #[serde(
@@ -519,7 +609,9 @@ pub struct Job {
         default,
         skip_serializing_if = "option_map_is_none_or_empty"
     )]
+    /// Session system variables captured for DDL execution.
     pub session_vars: Option<BTreeMap<String, String>>,
+    /// Latest schema version returned by the last execution step.
     #[serde(rename = "last_schema_version", default)]
     pub last_schema_version: i64,
 }
@@ -527,7 +619,9 @@ pub struct Job {
 /// Go `JobW`: a decoded job and the exact binary representation it came with.
 #[derive(Clone, Debug)]
 pub struct JobW {
+    /// Decoded job value.
     pub job: Job,
+    /// Exact original binary representation.
     pub bytes: Vec<u8>,
 }
 
@@ -555,15 +649,18 @@ impl std::ops::DerefMut for JobW {
 }
 
 impl Job {
+    /// Sets the processed row count.
     pub fn set_row_count(&mut self, count: i64) {
         self.row_count = count;
     }
 
+    /// Returns the processed row count.
     #[must_use]
     pub fn get_row_count(&self) -> i64 {
         self.row_count
     }
 
+    /// Replaces the reorganization warning maps.
     pub fn set_warnings(
         &mut self,
         warnings: Option<BTreeMap<String, serde_json::Value>>,
@@ -577,6 +674,7 @@ impl Job {
         metadata.warnings_count = warning_counts;
     }
 
+    /// Borrows the reorganization warning maps.
     #[must_use]
     pub fn get_warnings(
         &self,
@@ -591,6 +689,7 @@ impl Job {
         (metadata.warnings.as_ref(), metadata.warnings_count.as_ref())
     }
 
+    /// Marks a table job finished and records its schema-history snapshot.
     pub fn finish_table_job(
         &mut self,
         state: JobState,
@@ -606,6 +705,7 @@ impl Job {
             .add_table_info(version, table);
     }
 
+    /// Marks a multi-table job finished and records all affected tables.
     pub fn finish_multiple_table_job(
         &mut self,
         state: JobState,
@@ -629,6 +729,7 @@ impl Job {
         binlog.multiple_table_infos = Some(tables);
     }
 
+    /// Marks a database job finished and records its database snapshot.
     pub fn finish_db_job(
         &mut self,
         state: JobState,
@@ -644,16 +745,19 @@ impl Job {
             .add_db_info(version, database);
     }
 
+    /// Makes a multi-schema job permanently non-revertible.
     pub fn mark_non_revertible(&mut self) {
         if let Some(info) = &mut self.multi_schema_info {
             info.revertible = false;
         }
     }
 
+    /// Replaces the decoded generic argument cache used by [`Self::encode`].
     pub fn fill_raw_args(&mut self, args: Vec<serde_json::Value>) {
         self.args = Some(args);
     }
 
+    /// Encodes the job with Go-compatible JSON, optionally refreshing raw arguments.
     pub fn encode(&mut self, update_raw_args: bool) -> Result<Vec<u8>, serde_json::Error> {
         if update_raw_args {
             self.raw_args = if self.version.0 <= JobVersion::V1.0 {
@@ -691,6 +795,7 @@ impl Job {
         crate::serde_helpers::to_go_json(self)
     }
 
+    /// Decodes persisted JSON into this job; JSON `null` leaves it unchanged.
     pub fn decode(&mut self, bytes: &[u8]) -> Result<(), serde_json::Error> {
         let value: serde_json::Value = serde_json::from_slice(bytes)?;
         if value.is_null() {
@@ -700,6 +805,7 @@ impl Job {
         Ok(())
     }
 
+    /// Clones through the persisted codec and clears private decoded arguments.
     #[must_use]
     pub fn deep_clone(&self) -> Option<Self> {
         let mut source = self.clone();
@@ -707,68 +813,84 @@ impl Job {
         serde_json::from_slice(&bytes).ok()
     }
 
+    /// Reports whether the job reached any terminal finished state.
     #[must_use]
     pub fn is_finished(&self) -> bool {
         self.state.is_finished()
     }
+    /// Reports whether the job was cancelled.
     #[must_use]
     pub fn is_cancelled(&self) -> bool {
         self.state.is_cancelled()
     }
+    /// Reports whether rollback completed.
     #[must_use]
     pub fn is_rollback_done(&self) -> bool {
         self.state.is_rollback_done()
     }
+    /// Reports whether rollback is in progress.
     #[must_use]
     pub fn is_rollingback(&self) -> bool {
         self.state.is_rollingback()
     }
+    /// Reports whether cancellation is in progress.
     #[must_use]
     pub fn is_cancelling(&self) -> bool {
         self.state.is_cancelling()
     }
+    /// Reports whether the job is paused.
     #[must_use]
     pub fn is_paused(&self) -> bool {
         self.state.is_paused()
     }
+    /// Reports whether the job is transitioning to paused.
     #[must_use]
     pub fn is_pausing(&self) -> bool {
         self.state.is_pausing()
     }
+    /// Reports whether schema synchronization completed.
     #[must_use]
     pub fn is_synced(&self) -> bool {
         self.state.is_synced()
     }
+    /// Reports whether normal execution completed.
     #[must_use]
     pub fn is_done(&self) -> bool {
         self.state.is_done()
     }
+    /// Reports whether the job is running.
     #[must_use]
     pub fn is_running(&self) -> bool {
         self.state.is_running()
     }
+    /// Reports whether the job is queued.
     #[must_use]
     pub fn is_queueing(&self) -> bool {
         self.state.is_queueing()
     }
+    /// Reports whether execution has not started.
     #[must_use]
     pub fn not_started(&self) -> bool {
         self.state.not_started()
     }
+    /// Reports whether execution has started.
     #[must_use]
     pub fn started(&self) -> bool {
         !self.not_started()
     }
+    /// Reports whether no further lifecycle transition is expected.
     #[must_use]
     pub fn in_final_state(&self) -> bool {
         self.state.in_final_state()
     }
 
+    /// Reports whether TiDB itself placed this job in the paused state.
     #[must_use]
     pub fn is_paused_by_system(&self) -> bool {
         self.is_paused() && self.admin_operator == AdminCommandOperator::BY_SYSTEM
     }
 
+    /// Reports whether the durable pause reason matches `reason`.
     #[must_use]
     pub fn has_pause_reason(&self, reason: &str) -> bool {
         self.pause_reason
@@ -776,6 +898,7 @@ impl Job {
             .is_some_and(|value| value.type_ == reason)
     }
 
+    /// Records a durable pause reason and message.
     pub fn set_pause_reason(&mut self, type_: impl Into<String>, message: impl Into<String>) {
         self.pause_reason = Some(JobPauseReason {
             type_: type_.into(),
@@ -783,10 +906,12 @@ impl Job {
         });
     }
 
+    /// Clears the durable pause reason.
     pub fn clear_pause_reason(&mut self) {
         self.pause_reason = None;
     }
 
+    /// Reports whether the durable resume reason matches `reason`.
     #[must_use]
     pub fn has_resume_reason(&self, reason: &str) -> bool {
         self.resume_reason
@@ -794,21 +919,25 @@ impl Job {
             .is_some_and(|value| value.type_ == reason)
     }
 
+    /// Records a durable resume reason.
     pub fn set_resume_reason(&mut self, type_: impl Into<String>) {
         self.resume_reason = Some(JobResumeReason {
             type_: type_.into(),
         });
     }
 
+    /// Clears the durable resume reason.
     pub fn clear_resume_reason(&mut self) {
         self.resume_reason = None;
     }
 
+    /// Reports a system pause caused by full TiKV disks.
     #[must_use]
     pub fn is_paused_by_system_for_kv_disk_full(&self) -> bool {
         self.is_paused_by_system() && self.has_pause_reason(JOB_PAUSE_REASON_KV_DISK_FULL)
     }
 
+    /// Reports a pending or completed system pause caused by full TiKV disks.
     #[must_use]
     pub fn is_pausing_or_paused_by_system_for_kv_disk_full(&self) -> bool {
         (self.is_pausing() || self.is_paused())
@@ -816,6 +945,7 @@ impl Job {
             && self.has_pause_reason(JOB_PAUSE_REASON_KV_DISK_FULL)
     }
 
+    /// Reports whether this action and state allow a pause request.
     #[must_use]
     pub fn is_pausable(&self) -> bool {
         if self.type_ == ActionType::ACTION_ADD_COLUMNAR_INDEX
@@ -826,6 +956,7 @@ impl Job {
         self.not_started() || (self.is_running() && self.is_rollbackable())
     }
 
+    /// Reports whether this action supports runtime alteration.
     #[must_use]
     pub fn is_alterable(&self) -> bool {
         matches!(
@@ -836,11 +967,13 @@ impl Job {
         )
     }
 
+    /// Reports whether the paused job can be resumed.
     #[must_use]
     pub fn is_resumable(&self) -> bool {
         self.is_paused()
     }
 
+    /// Inserts one captured session system variable.
     pub fn add_system_var(&mut self, name: impl Into<String>, value: impl Into<String>) {
         self.session_vars
             .as_mut()
@@ -848,6 +981,7 @@ impl Job {
             .insert(name.into(), value.into());
     }
 
+    /// Returns one captured session system variable.
     #[must_use]
     pub fn get_system_var(&self, name: &str) -> Option<&str> {
         self.session_vars
@@ -856,6 +990,7 @@ impl Job {
             .map(String::as_str)
     }
 
+    /// Reports whether this action may require data reorganization.
     #[must_use]
     pub fn may_need_reorg(&self) -> bool {
         match self.type_ {
@@ -885,6 +1020,7 @@ impl Job {
         }
     }
 
+    /// Reports whether the current action and schema state can be rolled back.
     #[must_use]
     pub fn is_rollbackable(&self) -> bool {
         match self.type_ {
@@ -940,6 +1076,7 @@ impl Job {
         }
     }
 
+    /// Returns explicit scheduling involvement or the schema/table fallback.
     #[must_use]
     pub fn get_involving_schema_info(&self) -> Vec<InvolvingSchemaInfo> {
         if let Some(info) = &self.involving_schema_info {
@@ -957,6 +1094,7 @@ impl Job {
         }]
     }
 
+    /// Lowercases scheduling names while preserving `*` and empty sentinels.
     pub fn normalize_involving_schema_info(&mut self) {
         self.schema_name = normalize_involving_name(&self.schema_name);
         self.table_name = normalize_involving_name(&self.table_name);
@@ -970,6 +1108,7 @@ impl Job {
         }
     }
 
+    /// Validates that each scheduling entry identifies exactly one object kind.
     pub fn check_involving_schema_info(&self) -> Result<(), &'static str> {
         for info in self.get_involving_schema_info() {
             let object_types = usize::from(!info.policy.is_empty())
@@ -990,6 +1129,7 @@ impl Job {
         Ok(())
     }
 
+    /// Clears the private decoded-argument cache without changing raw JSON.
     pub fn clear_decoded_args(&mut self) {
         self.args = None;
     }
