@@ -20,11 +20,13 @@
 
 pub mod action_type;
 pub mod bdr;
+pub mod cascades_hash;
 pub mod column;
 pub mod db;
 pub mod engine_attribute;
 pub mod flags;
 pub mod go_duration;
+pub mod go_runtime;
 pub mod index;
 pub mod job;
 pub mod job_args;
@@ -51,6 +53,7 @@ pub mod table_mode;
 
 pub use action_type::{ActionType, ACTION_MAP};
 pub use bdr::{ts_convert_2_time, DDLBDRType, ACTION_BDR_MAP, BDR_ACTION_MAP};
+pub use cascades_hash::{CascadesHasher, HashInt64};
 pub use column::{
     gen_removing_obj_name, gen_unique_changing_column_name, ChangeStateInfo, ColumnInfo,
 };
@@ -59,6 +62,7 @@ pub use engine_attribute::{
     parse_engine_attribute_from_string, EngineAttribute, StorageClassDef, StorageClassSettings,
     StorageClassTransitRule,
 };
+pub use go_runtime::{GoPointerAny, GoTime};
 pub use index::{
     field_type_to_inverted_index_info, find_index_by_columns,
     find_index_by_columns_for_foreign_key, find_index_info_by_id, gen_unique_changing_index_name,
