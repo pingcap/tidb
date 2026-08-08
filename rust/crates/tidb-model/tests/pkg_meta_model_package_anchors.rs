@@ -339,6 +339,27 @@ fn pkg_meta_model_raw_json_boundary() {
         .storage_class
         .unwrap();
     assert_eq!(whitespace.get(), r#"{ "a" : 1 }"#);
+
+    let outer_duplicate = tidb_model::parse_engine_attribute_from_string(
+        r#"{"storage_class":{"earlier":1},"STORAGE_CLASS":{"later":2}}"#,
+    )
+    .unwrap()
+    .storage_class
+    .unwrap();
+    assert_eq!(outer_duplicate.get(), r#"{"later":2}"#);
+
+    let simple_fold = tidb_model::parse_engine_attribute_from_string(
+        r#"{"\u017ftorage_cla\u017fs":{"folded":true}}"#,
+    )
+    .unwrap()
+    .storage_class
+    .unwrap();
+    assert_eq!(simple_fold.get(), r#"{"folded":true}"#);
+
+    assert!(tidb_model::parse_engine_attribute_from_string(r#"[1]"#).is_err());
+    assert!(
+        tidb_model::parse_engine_attribute_from_string(r#"{"storage_class":1,"later":}"#).is_err()
+    );
 }
 
 #[test]

@@ -18,18 +18,33 @@
 use serde::{Deserialize, Serialize};
 
 use crate::job::PersistedRawJson;
+use crate::serde_helpers::{
+    go_json_field_matches, ignore_unknown, impl_go_json_deserialize, impl_go_json_merge_object,
+};
 
 /// Go `EngineAttribute`: the JSON form of a table's `ENGINE_ATTRIBUTE`.
 ///
 /// Go stores `StorageClass` as a `json.RawMessage`. `None` is the nil byte
 /// slice; `Some` retains the exact validated JSON text, including duplicate
 /// object members, member order, number lexemes, and insignificant whitespace.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize)]
 pub struct EngineAttribute {
     /// The raw `storage_class` sub-document, if present.
     #[serde(rename = "storage_class", default)]
     pub storage_class: Option<PersistedRawJson>,
 }
+
+impl_go_json_merge_object!(EngineAttribute, destination, map, key, {
+    if go_json_field_matches(&key, "storage_class") {
+        // `json.RawMessage.UnmarshalJSON` copies every valid JSON value,
+        // including the exact bytes `null`; only an absent member stays nil.
+        destination.storage_class = Some(map.next_value()?);
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+
+impl_go_json_deserialize!(EngineAttribute);
 
 /// Go `ParseEngineAttributeFromString`: parses an `EngineAttribute` from a
 /// JSON string. An empty string yields the default (no storage class);
@@ -38,13 +53,6 @@ pub fn parse_engine_attribute_from_string(
     input: &str,
 ) -> Result<EngineAttribute, serde_json::Error> {
     if input.is_empty() {
-        return Ok(EngineAttribute::default());
-    }
-    // A JSON null into a non-pointer Go struct is a no-op. Validate it through
-    // RawValue first so leading/trailing JSON whitespace is accepted without
-    // sacrificing exact nested RawMessage bytes on the object path.
-    let raw: &serde_json::value::RawValue = serde_json::from_str(input)?;
-    if raw.get().trim() == "null" {
         return Ok(EngineAttribute::default());
     }
     serde_json::from_str(input)
@@ -202,6 +210,41 @@ mod tests {
             .unwrap()
             .storage_class
             .is_none());
+    }
+
+    #[test]
+    fn engine_attribute_uses_go_object_member_matching_and_overwrite_order() {
+        let missing = parse_engine_attribute_from_string(r#"{"unknown":{"x":1}}"#).unwrap();
+        assert!(missing.storage_class.is_none());
+
+        let explicit_null =
+            parse_engine_attribute_from_string(r#"{"storage_class":null}"#).unwrap();
+        assert_eq!(explicit_null.storage_class.unwrap().get(), "null");
+
+        let duplicate = parse_engine_attribute_from_string(
+            r#"{"storage_class":{"first":1},"storage_class":{"last":2}}"#,
+        )
+        .unwrap();
+        assert_eq!(duplicate.storage_class.unwrap().get(), r#"{"last":2}"#);
+
+        // `encoding/json` falls back to Unicode SimpleFold after checking for
+        // an exact tag. Both the ordinary case fold and long-s equivalence
+        // reach the same unique field, and later members still win.
+        let folded = parse_engine_attribute_from_string(
+            r#"{"STORAGE_CLASS":1,"\u017ftorage_cla\u017fs":2}"#,
+        )
+        .unwrap();
+        assert_eq!(folded.storage_class.unwrap().get(), "2");
+
+        // A key with a different punctuation pattern is unknown, not folded.
+        let punctuation = parse_engine_attribute_from_string(r#"{"storage-class":1}"#).unwrap();
+        assert!(punctuation.storage_class.is_none());
+
+        // ParseEngineAttributeFromString returns no partially decoded value on
+        // either a top-level type mismatch or a syntax error, exactly like its
+        // Go `return nil, err` path.
+        assert!(parse_engine_attribute_from_string(r#"[1,2]"#).is_err());
+        assert!(parse_engine_attribute_from_string(r#"{"storage_class":1,"later":}"#).is_err());
     }
 
     #[test]

@@ -154,6 +154,113 @@ where
     })
 }
 
+/// Implements the receiver-mutating object loop shared by persisted model
+/// structs. Values are buffered as raw members first, so duplicate keys retain
+/// source order and a recoverable value error does not prevent later fields
+/// from being applied, matching `encoding/json`.
+macro_rules! impl_go_json_merge_object {
+    ($type:ty, $destination:ident, $map:ident, $key:ident, { $($body:tt)* }) => {
+        impl $crate::serde_helpers::GoJsonMerge for $type {
+            fn go_json_merge<'de, D>(&mut self, deserializer: D) -> Result<(), D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct MergeVisitor<'a>(&'a mut $type);
+
+                impl<'de> serde::de::Visitor<'de> for MergeVisitor<'_> {
+                    type Value = ();
+
+                    fn expecting(
+                        &self,
+                        formatter: &mut std::fmt::Formatter<'_>,
+                    ) -> std::fmt::Result {
+                        formatter.write_str("a JSON object")
+                    }
+
+                    fn visit_map<A>(self, mut $map: A) -> Result<Self::Value, A::Error>
+                    where
+                        A: serde::de::MapAccess<'de>,
+                    {
+                        let $destination = self.0;
+                        let mut first_error = None;
+                        while let Some($key) = serde::de::MapAccess::next_key::<String>(&mut $map)? {
+                            let field_result = (|| -> Result<(), A::Error> {
+                                $($body)*
+                                Ok(())
+                            })();
+                            if let Err(error) = field_result {
+                                if $crate::serde_helpers::is_fatal_json_error(&error) {
+                                    return Err(error);
+                                }
+                                first_error.get_or_insert(error);
+                            }
+                        }
+                        if let Some(error) = first_error {
+                            return Err(error);
+                        }
+                        Ok(())
+                    }
+                }
+
+                $crate::serde_helpers::deserialize_go_object(deserializer, MergeVisitor(self))
+            }
+        }
+    };
+}
+
+pub(crate) use impl_go_json_merge_object;
+
+/// Implements fresh-value `Deserialize` through [`GoJsonMerge`]. A JSON null
+/// leaves the Go zero value unchanged; every non-null value is delegated to
+/// the ordered object decoder.
+macro_rules! impl_go_json_deserialize {
+    ($type:ty) => {
+        impl<'de> serde::Deserialize<'de> for $type {
+            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct ObjectOrNullVisitor;
+
+                impl<'de> serde::de::Visitor<'de> for ObjectOrNullVisitor {
+                    type Value = $type;
+
+                    fn expecting(
+                        &self,
+                        formatter: &mut std::fmt::Formatter<'_>,
+                    ) -> std::fmt::Result {
+                        formatter.write_str("null or a JSON object")
+                    }
+
+                    fn visit_none<E>(self) -> Result<Self::Value, E> {
+                        Ok(<$type>::default())
+                    }
+
+                    fn visit_unit<E>(self) -> Result<Self::Value, E> {
+                        Ok(<$type>::default())
+                    }
+
+                    fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+                    where
+                        D: serde::Deserializer<'de>,
+                    {
+                        let mut destination = <$type>::default();
+                        $crate::serde_helpers::GoJsonMerge::go_json_merge(
+                            &mut destination,
+                            deserializer,
+                        )?;
+                        Ok(destination)
+                    }
+                }
+
+                deserializer.deserialize_option(ObjectOrNullVisitor)
+            }
+        }
+    };
+}
+
+pub(crate) use impl_go_json_deserialize;
+
 /// Reports whether an incoming JSON object key matches a Go struct-field tag.
 ///
 /// `encoding/json` prefers exact matches and then accepts Unicode SimpleFold
