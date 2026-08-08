@@ -87,6 +87,38 @@ func TestFixControl(t *testing.T) {
 		require.Equal(t, output[i].Warnings, warning)
 		require.Equal(t, output[i].Variable, rows)
 	}
+
+	require.Equal(t, int64(12345), fixcontrol.GetIntWithDefault(map[uint64]string{1: "on"}, 1, 12345))
+	require.Equal(t, int64(12345), fixcontrol.GetIntWithDefault(map[uint64]string{1: "off"}, 1, 12345))
+	require.Equal(t, int64(12345), fixcontrol.GetIntWithDefault(map[uint64]string{1: "false"}, 1, 12345))
+	require.Equal(t, int64(12345), fixcontrol.GetIntWithDefault(map[uint64]string{1: " 26 "}, 1, 12345))
+}
+
+func TestGetPositiveUintWithDefault(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		input map[uint64]string
+		value uint64
+		ok    bool
+	}{
+		{name: "missing", value: 12345, ok: true},
+		{name: "on", input: map[uint64]string{1: "on"}, ok: false},
+		{name: "true", input: map[uint64]string{1: "true"}, ok: false},
+		{name: "off", input: map[uint64]string{1: "off"}, ok: false},
+		{name: "false", input: map[uint64]string{1: "false"}, ok: false},
+		{name: "zero", input: map[uint64]string{1: "0"}, ok: false},
+		{name: "negative", input: map[uint64]string{1: "-1"}, ok: false},
+		{name: "bad", input: map[uint64]string{1: "bad"}, ok: false},
+		{name: "float", input: map[uint64]string{1: "1.5"}, ok: false},
+		{name: "overflow", input: map[uint64]string{1: "9223372036854775808"}, ok: false},
+		{name: "trimmed positive", input: map[uint64]string{1: " 26 "}, value: 26, ok: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			value, ok := fixcontrol.GetPositiveUintWithDefault(tt.input, 1, 12345)
+			require.Equal(t, tt.value, value)
+			require.Equal(t, tt.ok, ok)
+		})
+	}
 }
 
 func TestParseToMapEmptyValue(t *testing.T) {
