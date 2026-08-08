@@ -92,7 +92,7 @@ remaining package census is 2,509 obligations plus the build artifact.
 - Go: `job.go`, `job_test.go`.
 - Rust: `action_type.rs`, `job_enums.rs`, `job.rs`, `schema_diff.rs`,
   `schema_state.rs`, with `job_args.rs` absorbed unchanged.
-- Rules: all enums/names, classic v1 initialization, lifecycle predicates,
+- Rules: all enums/names, the reserved 200..256 action-ID range, classic v1 initialization, lifecycle predicates,
   finish/history updates, row/warning access, v1/v2 raw-argument envelope,
   pause/resume causes, pausable/alterable/resumable rules, reorg detection,
   rollback matrix, system variables, scheduler involvement normalization and
@@ -115,7 +115,8 @@ remaining package census is 2,509 obligations plus the build artifact.
   `int` range and performs the same narrowing conversion into persisted
   `MultiSchemaInfo.Seq`; job and backfill priorities retain the full range.
 - Explicit representation boundaries: concrete `terror.Error` and tracing
-  values, Go mutex identity, nil elements inside Go pointer slices, and
+  values, Go mutex identity, the Go-only `unsafe.Sizeof(Job/SubJob)` ABI guard,
+  nil elements inside Go pointer slices, and
   arbitrary typed `JobArgs` implementations. The same missing process-wide
   NextGen boundary means Rust initializes the new-job version to classic v1;
   explicit `set_job_ver_in_use` and both persisted versions are native. As for
@@ -138,8 +139,10 @@ remaining package census is 2,509 obligations plus the build artifact.
   default LIST partition, overlapping DROP replacement, DDL-hidden IDs,
   foreign-key rendering, statistics keys/defaults, TTL duration compatibility,
   affinity normalization, and statistics-window RFC3339 values including Go's
-  year-1 zero time and non-UTC fixed offsets.
-- Explicit representation boundaries: Go `unsafe.Sizeof`, pointer/slice alias
+  year-1 zero time and non-UTC fixed offsets. A non-nil partition definition's
+  memory estimate uses the owning Go 64-bit object/header sizes and byte-length
+  payload accounting, independent of Rust's object layout.
+- Explicit representation boundaries: pointer/slice alias
   identity and nil elements in pointer slices, allocation identity for the
   existing Rust `Vec`-backed partition metadata fields (including the direct
   `DDLColumns == nil` support assertion), map iteration order (semantically
@@ -148,6 +151,9 @@ remaining package census is 2,509 obligations plus the build artifact.
   explicit `Option` representation is ported and mutation-pinned. Rust's typed
   equality cannot receive Go's arbitrary `any` or typed nil pointer; non-nil
   `TableInfo` identity and hashing are exactly ID-only.
+  The nil-receiver branch of `PartitionDefinition.MemoryUsage` remains a
+  pointer-representation boundary: safe Rust cannot invoke an `&self` method on
+  a null reference; an optional caller obtains the same zero with `map_or`.
   Persisted column/index offsets and index prefix lengths use the pre-existing
   Rust `i32` representation rather than Go's 64-bit `int`. Values outside
   `i32` are not representable; all schema-valid offsets/lengths, including

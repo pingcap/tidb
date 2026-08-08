@@ -153,6 +153,34 @@ pub struct PartitionDefinition {
 }
 
 impl PartitionDefinition {
+    /// Go `MemoryUsage` on a non-nil partition definition.
+    ///
+    /// The constants are the owning Go source's 64-bit `unsafe.Sizeof`
+    /// results: `PartitionState` is 16 bytes, a string header is 16 bytes,
+    /// and `PolicyRefInfo.ID` is 8 bytes. String payloads use byte length.
+    #[must_use]
+    pub fn memory_usage(&self) -> i64 {
+        const GO_PARTITION_STATE_SIZE: i64 = 16;
+        const GO_CI_STRING_HEADERS_SIZE: i64 = 32;
+        const GO_POLICY_ID_SIZE: i64 = 8;
+
+        let ci_string_usage = |value: &CiString| {
+            GO_CI_STRING_HEADERS_SIZE
+                + i64::try_from(value.original().len() + value.lowercase().len())
+                    .expect("CiString byte length exceeds Go int64")
+        };
+        let mut sum = GO_PARTITION_STATE_SIZE + ci_string_usage(&self.name);
+        if let Some(policy) = &self.placement_policy_ref {
+            sum += GO_POLICY_ID_SIZE + ci_string_usage(&policy.name);
+        }
+        sum + self
+            .less_than
+            .iter()
+            .chain(self.in_values.iter().flatten())
+            .map(|value| i64::try_from(value.len()).expect("partition value exceeds Go int64"))
+            .sum::<i64>()
+    }
+
     /// Go `StorageClassString`: the JSON string describing the storage class.
     #[must_use]
     pub fn storage_class_string(&self) -> String {
@@ -505,6 +533,22 @@ mod tests {
             name: CiString::new(name),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn partition_definition_go_memory_usage() {
+        assert_eq!(PartitionDefinition::default().memory_usage(), 48);
+        let definition = PartitionDefinition {
+            name: CiString::new("Part"),
+            less_than: vec!["abc".to_owned()],
+            in_values: vec![vec!["x".to_owned(), "yz".to_owned()]],
+            placement_policy_ref: Some(PolicyRefInfo {
+                id: 1,
+                name: CiString::new("Policy"),
+            }),
+            ..Default::default()
+        };
+        assert_eq!(definition.memory_usage(), 114);
     }
 
     #[test]
