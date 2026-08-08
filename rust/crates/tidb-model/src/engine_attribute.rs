@@ -17,16 +17,18 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::job::PersistedRawJson;
+
 /// Go `EngineAttribute`: the JSON form of a table's `ENGINE_ATTRIBUTE`.
 ///
-/// Go stores `StorageClass` as a `json.RawMessage`; here it is a
-/// [`serde_json::Value`] (absent -> `None`), which preserves the parsed
-/// storage-class document that downstream code re-decodes.
+/// Go stores `StorageClass` as a `json.RawMessage`. `None` is the nil byte
+/// slice; `Some` retains the exact validated JSON text, including duplicate
+/// object members, member order, number lexemes, and insignificant whitespace.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct EngineAttribute {
     /// The raw `storage_class` sub-document, if present.
     #[serde(rename = "storage_class", default)]
-    pub storage_class: Option<serde_json::Value>,
+    pub storage_class: Option<PersistedRawJson>,
 }
 
 /// Go `ParseEngineAttributeFromString`: parses an `EngineAttribute` from a
@@ -38,11 +40,14 @@ pub fn parse_engine_attribute_from_string(
     if input.is_empty() {
         return Ok(EngineAttribute::default());
     }
-    let value: serde_json::Value = serde_json::from_str(input)?;
-    if value.is_null() {
+    // A JSON null into a non-pointer Go struct is a no-op. Validate it through
+    // RawValue first so leading/trailing JSON whitespace is accepted without
+    // sacrificing exact nested RawMessage bytes on the object path.
+    let raw: &serde_json::value::RawValue = serde_json::from_str(input)?;
+    if raw.get().trim() == "null" {
         return Ok(EngineAttribute::default());
     }
-    serde_json::from_value(value)
+    serde_json::from_str(input)
 }
 
 /// The `STANDARD` storage-class tier name.
@@ -169,6 +174,34 @@ mod tests {
 
         // Invalid JSON is an error.
         assert!(parse_engine_attribute_from_string("not json").is_err());
+    }
+
+    #[test]
+    fn storage_class_retains_raw_message_text_until_go_marshal() {
+        let attr = parse_engine_attribute_from_string(
+            r#" {"storage_class": { "n":1.00, "dup":1, "dup":2, "text":"<x>" }} "#,
+        )
+        .unwrap();
+        let raw = attr.storage_class.as_ref().unwrap();
+        assert_eq!(raw.get(), r#"{ "n":1.00, "dup":1, "dup":2, "text":"<x>" }"#);
+
+        // Go's parent encoder compacts RawMessage whitespace and applies its
+        // HTML-safe string escaping while retaining member order, duplicates,
+        // and the numeric lexical form.
+        assert_eq!(
+            String::from_utf8(crate::serde_helpers::to_go_json(&attr).unwrap()).unwrap(),
+            r#"{"storage_class":{"n":1.00,"dup":1,"dup":2,"text":"\u003cx\u003e"}}"#
+        );
+
+        let explicit_null = parse_engine_attribute_from_string(r#"{"storage_class":null}"#)
+            .unwrap()
+            .storage_class
+            .unwrap();
+        assert_eq!(explicit_null.get(), "null");
+        assert!(parse_engine_attribute_from_string(" \n null\t ")
+            .unwrap()
+            .storage_class
+            .is_none());
     }
 
     #[test]

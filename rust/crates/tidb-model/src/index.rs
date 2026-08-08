@@ -240,10 +240,10 @@ pub struct IndexColumn {
     pub name: CiString,
     /// The column's offset in `TableInfo.Columns`.
     #[serde(rename = "offset", default)]
-    pub offset: i32,
+    pub offset: i64,
     /// The prefix length (`UnspecifiedLength` when not a prefix index).
     #[serde(rename = "length", default)]
-    pub length: i32,
+    pub length: i64,
     /// Whether the column uses the changing type.
     #[serde(
         rename = "using_changing_type",
@@ -566,12 +566,12 @@ pub fn is_index_prefix_covered(table: &TableInfo, index: &IndexInfo, columns: &[
     columns.iter().enumerate().all(|(position, column)| {
         let index_column = &index.columns[position];
         if column.lowercase() != index_column.name.lowercase()
-            || index_column.offset >= table.columns.len() as i32
+            || index_column.offset >= table.columns.len() as i64
         {
             return false;
         }
         let table_column = &table.columns[index_column.offset as usize];
-        index_column.length == -1 || i64::from(index_column.length) >= table_column.get_flen()
+        index_column.length == -1 || index_column.length >= table_column.get_flen()
     })
 }
 
@@ -913,7 +913,7 @@ mod tests {
         assert!(!source.has_column_in_index_columns(&table, 11));
 
         let mut out_of_range = source.clone();
-        out_of_range.columns[0].offset = table.columns.len() as i32;
+        out_of_range.columns[0].offset = table.columns.len() as i64;
         assert!(!is_index_prefix_covered(
             &table,
             &out_of_range,

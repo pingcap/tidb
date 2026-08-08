@@ -121,7 +121,7 @@ pub struct ChangeStateInfo {
     /// The offset of the changing column this column depends on during a
     /// modify/change column.
     #[serde(rename = "relative_col_offset", default)]
-    pub dependency_column_offset: i32,
+    pub dependency_column_offset: i64,
 }
 
 /// Go `GenRemovingObjName`: the tombstone name for `name` (idempotent).
@@ -323,7 +323,7 @@ pub struct ColumnInfo {
     pub name: CiString,
     /// The column's position in the table.
     #[serde(rename = "offset", default)]
-    pub offset: i32,
+    pub offset: i64,
     /// The original default value (`any`); `None` = Go `nil`.
     #[serde(rename = "origin_default", default)]
     pub origin_default_value: Option<ColumnDefaultValue>,

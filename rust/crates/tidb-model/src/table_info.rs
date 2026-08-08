@@ -380,8 +380,8 @@ impl TableInfo {
             // metadata is an invariant violation and panics rather than being
             // silently dropped.
             slots[off] = Some(col);
-            if i64::from(col.offset) > max_offset {
-                max_offset = i64::from(col.offset);
+            if col.offset > max_offset {
+                max_offset = col.offset;
             }
         }
         slots.truncate((max_offset + 1) as usize);
@@ -594,25 +594,25 @@ impl TableInfo {
             return;
         }
         // old-offset -> new-offset for every moved element.
-        let mut updated: BTreeMap<i32, i32> = BTreeMap::new();
+        let mut updated: BTreeMap<i64, i64> = BTreeMap::new();
         if from < to {
             for i in from..to {
-                updated.insert((i + 1) as i32, i as i32);
+                updated.insert((i + 1) as i64, i as i64);
             }
         } else {
             let mut i = from;
             while i > to {
-                updated.insert((i - 1) as i32, i as i32);
+                updated.insert((i - 1) as i64, i as i64);
                 i -= 1;
             }
         }
-        updated.insert(from as i32, to as i32);
+        updated.insert(from as i64, to as i64);
 
         let src = self.columns.remove(from);
         self.columns.insert(to, src);
         let (lo, hi) = (from.min(to), from.max(to));
         for (i, col) in self.columns.iter_mut().enumerate().take(hi + 1).skip(lo) {
-            col.offset = i as i32;
+            col.offset = i as i64;
         }
 
         for idx in &mut self.indices {
@@ -791,7 +791,7 @@ mod tests {
         assert!(std::panic::catch_unwind(|| t.is_auto_random_bit_col_unsigned()).is_err());
     }
 
-    fn column(name: &str, offset: i32, public: bool, not_null: bool) -> ColumnInfo {
+    fn column(name: &str, offset: i64, public: bool, not_null: bool) -> ColumnInfo {
         let mut c = ColumnInfo::new_extra_handle_col_info();
         c.name = CiString::new(name);
         c.offset = offset;

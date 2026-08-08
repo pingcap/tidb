@@ -36,6 +36,19 @@ fn pkg_meta_model_column_boundary() {
         tidb_model::column::removing_origin_name("_Tombstone$_c"),
         "c"
     );
+    let wide = ColumnInfo {
+        offset: i64::MAX,
+        change_state_info: Some(tidb_model::ChangeStateInfo {
+            dependency_column_offset: i64::MIN,
+        }),
+        ..Default::default()
+    };
+    let encoded = serde_json::to_value(&wide).unwrap();
+    assert_eq!(encoded["offset"], i64::MAX);
+    assert_eq!(
+        encoded["change_state_info"]["relative_col_offset"],
+        i64::MIN
+    );
 }
 
 #[test]
@@ -54,6 +67,12 @@ fn pkg_meta_model_engine_boundary() {
         transition.total_seconds(),
         u64::MAX.wrapping_mul(86_400).wrapping_add(86_399)
     );
+    let raw =
+        tidb_model::parse_engine_attribute_from_string(r#"{"storage_class": {"n":1.00,"n":2}}"#)
+            .unwrap()
+            .storage_class
+            .unwrap();
+    assert_eq!(raw.get(), r#"{"n":1.00,"n":2}"#);
 }
 
 #[test]
@@ -72,6 +91,13 @@ fn pkg_meta_model_index_boundary() {
         tidb_model::indexable_distance_metric_to_fn_name(tidb_model::index::distance_metric::L2),
         Some(tidb_model::VEC_L2_DISTANCE_FN)
     );
+    let wide = tidb_model::IndexColumn {
+        offset: i64::MAX,
+        length: i64::MIN,
+        ..Default::default()
+    };
+    assert_eq!(serde_json::to_value(&wide).unwrap()["offset"], i64::MAX);
+    assert_eq!(serde_json::to_value(&wide).unwrap()["length"], i64::MIN);
 }
 
 #[test]
@@ -241,11 +267,6 @@ fn pkg_meta_model_probe_column_representation_boundaries() {
     } else {
         "unexpected-nonempty-set"
     };
-    let offset_width = if std::mem::size_of_val(&ColumnInfo::default().offset) == 4 {
-        "i32"
-    } else {
-        "non-i32"
-    };
     let flag_width = if std::mem::size_of_val(&ColumnInfo::default().get_flag()) == 4 {
         "u32"
     } else {
@@ -260,11 +281,10 @@ fn pkg_meta_model_probe_column_representation_boundaries() {
     };
     observation_emitter::emit(
         "MODEL-COLUMN-REPRESENTATION",
-        "Rust column ownership and widths cannot expose Go shallow map identity, nil maps, or 64-bit int and uint domains",
+        "Rust column ownership cannot expose Go shallow map identity, nil maps, arbitrary interface values, or the pending cross-crate uint flag width",
         &[
             ("clone-map-alias", "mutate-source-dependences", clone_mode),
             ("dependency-allocation", "nil-versus-empty-map", empty_mode),
-            ("offset-width", "Go-int-offset", offset_width),
             ("flag-width", "Go-uint-flags", flag_width),
             (
                 "arbitrary-default-value",
@@ -276,39 +296,31 @@ fn pkg_meta_model_probe_column_representation_boundaries() {
 }
 
 #[test]
-fn pkg_meta_model_probe_raw_json_boundaries() {
+fn pkg_meta_model_flag_width_integration_dependency() {
+    // Go's accepted 64-bit target admits this `uint` bit through every
+    // ColumnInfo flag accessor. The model wrapper is ready to consume the
+    // eventual u64 FieldType API, but the currently mapped tidb-datatype
+    // dependency still owns a u32 field. This test is the root-integration
+    // reclassification anchor; it intentionally records the exact boundary.
+    let go_high_bit = 1_u64 << 63;
+    assert_eq!(go_high_bit, 0x8000_0000_0000_0000);
+    assert_eq!(std::mem::size_of_val(&ColumnInfo::default().get_flag()), 4);
+}
+
+#[test]
+fn pkg_meta_model_raw_json_boundary() {
     let duplicate_input = r#"{"storage_class":{"a":1,"a":2}}"#;
     let duplicate = tidb_model::parse_engine_attribute_from_string(duplicate_input)
         .unwrap()
         .storage_class
         .unwrap();
-    let duplicate_mode = if serde_json::to_string(&duplicate).unwrap() == r#"{"a":2}"# {
-        "duplicate-collapsed"
-    } else {
-        "lexical-form-retained"
-    };
+    assert_eq!(duplicate.get(), r#"{"a":1,"a":2}"#);
     let whitespace_input = r#"{"storage_class": { "a" : 1 }}"#;
     let whitespace = tidb_model::parse_engine_attribute_from_string(whitespace_input)
         .unwrap()
         .storage_class
         .unwrap();
-    let whitespace_mode = if serde_json::to_string(&whitespace).unwrap() == r#"{"a":1}"# {
-        "whitespace-normalized"
-    } else {
-        "lexical-form-retained"
-    };
-    observation_emitter::emit(
-        "MODEL-ENGINE-RAW-JSON",
-        "serde_json Value preserves parsed meaning but not Go json.RawMessage lexical bytes",
-        &[
-            ("duplicate-members", duplicate_input, duplicate_mode),
-            (
-                "insignificant-whitespace",
-                whitespace_input,
-                whitespace_mode,
-            ),
-        ],
-    );
+    assert_eq!(whitespace.get(), r#"{ "a" : 1 }"#);
 }
 
 #[test]
@@ -357,11 +369,6 @@ fn pkg_meta_model_probe_vector_allocation_boundaries() {
     } else {
         "unexpected-id-inequality"
     };
-    let index_width = if std::mem::size_of_val(&tidb_model::IndexColumn::default().offset) == 4 {
-        "i32"
-    } else {
-        "non-i32"
-    };
     let partition_state = if PartitionInfo::default().ddl_columns.is_empty() {
         "one-empty-ddl-columns-state"
     } else {
@@ -383,7 +390,6 @@ fn pkg_meta_model_probe_vector_allocation_boundaries() {
                 "Go-any-and-typed-nil",
                 equality_mode,
             ),
-            ("index-offset-width", "Go-int-index-offset", index_width),
             (
                 "partition-runtime-list",
                 "nil-versus-empty-DDLColumns",
