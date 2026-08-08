@@ -81,15 +81,18 @@ remaining package census is 2,509 obligations plus the build artifact.
   JSON, byte-slice base64, job metadata, and first-resolution-stable cached
   fixed/named timezones. Go's 64-bit `int` range is retained for persisted
   maximum-node counts, dynamic settings, job priority, and fixed-zone offsets.
-- Explicit representation boundaries: concrete `terror.Error` identity, Go
+- Explicit representation boundaries: Go error pointer/stack identity,
   atomic/mutex object identity, and the warning-map backing-store alias retained
   by `DDLReorgMeta.ShallowCopy`. `BackfillMeta.Decode` uses the package's
   receiver-mutating Go object-stream decoder: omitted fields survive; duplicate
   and ASCII-case-folded tags apply in source order; null scalars are no-ops;
   null pointers/slices/maps clear; existing maps merge; and mutations before
-  type, overflow, fractional-number, or base64 errors survive. Invalid syntax
-  is rejected before mutation and root JSON null is a no-op. Error payloads are
-  retained as raw JSON and Rust borrowing makes field mutation race-free.
+  and after recoverable type, overflow, fractional-number, or base64 errors
+  survive while the first error is returned. Invalid syntax is rejected before
+  mutation and root JSON null is a no-op. Error values use the native
+  `tidb-error` class/code/message/RFC JSON envelope (including nullable warning
+  map entries), so scalar/array impostors are rejected rather than retained as
+  arbitrary JSON. Rust borrowing makes field mutation race-free.
 
 ## C06: DDL jobs
 
@@ -122,8 +125,8 @@ remaining package census is 2,509 obligations plus the build artifact.
   parent job and executing sub-jobs. `ToProxyJob` accepts the source 64-bit
   `int` range and performs the same narrowing conversion into persisted
   `MultiSchemaInfo.Seq`; job and backfill priorities retain the full range.
-- Explicit representation boundaries: concrete `terror.Error` and tracing
-  values, Go mutex identity, the Go-only `unsafe.Sizeof(Job/SubJob)` ABI guard,
+- Explicit representation boundaries: Go error pointer/stack identity, Go
+  mutex identity, the Go-only `unsafe.Sizeof(Job/SubJob)` ABI guard,
   nil elements inside Go pointer slices, and
   arbitrary typed `JobArgs` implementations. The same missing process-wide
   NextGen boundary means Rust initializes the new-job version to classic v1;
@@ -131,10 +134,13 @@ remaining package census is 2,509 obligations plus the build artifact.
   backfill metadata, a dedicated object-stream decoder preserves omitted
   receiver fields, processes duplicate and ASCII-case-folded tags in source
   order, ignores unknown fields, treats null nonpointer scalars as no-ops,
-  clears null pointer/slice/map fields, merges existing maps, and retains
-  mutations that precede a type/base64/numeric error. A syntax-validation pass
-  precedes receiver mutation, and root JSON null is a no-op, matching Go's
-  scanner and `json.Unmarshal` receiver behavior. Nested reorganization,
+  clears null pointer/slice/map fields, merges existing maps, returns the first
+  recoverable field error, and keeps consuming later keys so their mutations
+  survive. A syntax-validation pass precedes receiver mutation, and root JSON
+  null is a no-op, matching Go's scanner and `json.Unmarshal` receiver
+  behavior. `terror.Error` fields use `tidb-error`'s compatible typed envelope;
+  `TraceInfo` natively validates its string, base64 byte slice, and `uint64`
+  fields. Nested reorganization,
   timezone, job-meta, pause/resume, multi-schema, and history envelopes use the
   same receiver-mutating object path instead of Serde's default-resetting
   generated `deserialize_in_place` implementation.

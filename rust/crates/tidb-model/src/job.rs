@@ -14,13 +14,14 @@
 
 //! `pkg/meta/model/job.go`: DDL job state, lifecycle rules, multi-schema proxy
 //! jobs, scheduling involvement, and the persisted JSON envelope. TiDB error
-//! and tracing payloads remain raw JSON so their source representation can
-//! cross the model boundary without inventing a Rust-only hierarchy.
+//! payloads use the shared `tidb-error` compatible envelope, while tracing
+//! metadata retains its typed string/base64/uint64 source contract.
 
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
 use serde::de::{MapAccess, Visitor};
+use tidb_error::terror::TerrorError;
 
 use crate::action_type::ActionType;
 use crate::db::DBInfo;
@@ -28,8 +29,8 @@ use crate::job_enums::{JobState, JobVersion};
 use crate::reorg::{DDLReorgMeta, ReorgStage, ReorgType};
 use crate::schema_state::SchemaState;
 use crate::serde_helpers::{
-    go_json_field_matches, ignore_unknown, GoJsonMerge, NullNoopSeed, OptionMergeSeed,
-    OptionStringMapMergeSeed,
+    deserialize_go_object, go_json_field_matches, ignore_unknown, GoJsonMerge, NullNoopSeed,
+    OptionBytesSeed, OptionMergeSeed, OptionStringMapMergeSeed,
 };
 use crate::table_info::TableInfo;
 
@@ -238,6 +239,20 @@ pub struct TimeZoneLocation {
     location: OnceLock<ResolvedTimeZone>,
 }
 
+/// Go `tracing.TraceInfo`: persisted SQL tracing identity carried by a DDL job.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct TraceInfo {
+    /// Alias of the SQL session that created the job.
+    #[serde(rename = "session_alias", default)]
+    pub session_alias: String,
+    /// Statement trace identifier, preserving nil versus allocated-empty bytes.
+    #[serde(rename = "trace_id", default, with = "crate::serde_helpers::go_bytes")]
+    pub trace_id: Option<Vec<u8>>,
+    /// Connection identifier of the creating SQL session.
+    #[serde(rename = "connection_id", default)]
+    pub connection_id: u64,
+}
+
 /// Go `AddForeignKeyInfo` (runtime-only; no JSON fields in its owner).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AddForeignKeyInfo {
@@ -340,7 +355,7 @@ pub struct SubJob {
     pub row_count: i64,
     /// Persisted warning payload from the sub-job.
     #[serde(rename = "warning", default)]
-    pub warning: Option<serde_json::Value>,
+    pub warning: Option<TerrorError>,
     /// Runtime hint used by modify-column reorganization.
     #[serde(skip)]
     pub need_reorg: bool,
@@ -511,10 +526,10 @@ pub struct Job {
     pub state: JobState,
     /// Persisted warning payload.
     #[serde(rename = "warning", default)]
-    pub warning: Option<serde_json::Value>,
+    pub warning: Option<TerrorError>,
     /// Persisted execution error payload.
     #[serde(rename = "err", default)]
-    pub error: Option<serde_json::Value>,
+    pub error: Option<TerrorError>,
     /// Number of execution errors observed.
     #[serde(rename = "err_count", default)]
     pub error_count: i64,
@@ -595,9 +610,9 @@ pub struct Job {
     )]
     /// Durable reason for explicit resume.
     pub resume_reason: Option<JobResumeReason>,
-    /// SQL tracing metadata retained as its persisted JSON payload.
+    /// SQL tracing metadata retained with Go's typed/base64 field contract.
     #[serde(rename = "trace_info", default)]
-    pub trace_info: Option<serde_json::Value>,
+    pub trace_info: Option<TraceInfo>,
     /// BDR cluster role captured for this DDL.
     #[serde(rename = "bdr_role", default)]
     pub bdr_role: String,
@@ -646,14 +661,24 @@ macro_rules! impl_go_merge_object {
                         A: MapAccess<'de>,
                     {
                         let $destination = self.0;
+                        let mut first_error = None;
                         while let Some($key) = $map.next_key::<String>()? {
-                            $($body)*
+                            let field_result = (|| -> Result<(), A::Error> {
+                                $($body)*
+                                Ok(())
+                            })();
+                            if let Err(error) = field_result {
+                                first_error.get_or_insert(error);
+                            }
+                        }
+                        if let Some(error) = first_error {
+                            return Err(error);
                         }
                         Ok(())
                     }
                 }
 
-                deserializer.deserialize_map(MergeVisitor(self))
+                deserialize_go_object(deserializer, MergeVisitor(self))
             }
         }
     };
@@ -698,6 +723,18 @@ impl_go_merge_object!(TimeZoneLocation, destination, map, key, {
         map.next_value_seed(NullNoopSeed(&mut destination.name))?;
     } else if go_json_field_matches(&key, "offset") {
         map.next_value_seed(NullNoopSeed(&mut destination.offset))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+
+impl_go_merge_object!(TraceInfo, destination, map, key, {
+    if go_json_field_matches(&key, "session_alias") {
+        map.next_value_seed(NullNoopSeed(&mut destination.session_alias))?;
+    } else if go_json_field_matches(&key, "trace_id") {
+        map.next_value_seed(OptionBytesSeed(&mut destination.trace_id))?;
+    } else if go_json_field_matches(&key, "connection_id") {
+        map.next_value_seed(NullNoopSeed(&mut destination.connection_id))?;
     } else {
         ignore_unknown(&mut map)?;
     }
@@ -793,7 +830,7 @@ impl_go_merge_object!(Job, destination, map, key, {
     } else if go_json_field_matches(&key, "resume_reason") {
         map.next_value_seed(OptionMergeSeed(&mut destination.resume_reason))?;
     } else if go_json_field_matches(&key, "trace_info") {
-        destination.trace_info = map.next_value()?;
+        map.next_value_seed(OptionMergeSeed(&mut destination.trace_info))?;
     } else if go_json_field_matches(&key, "bdr_role") {
         map.next_value_seed(NullNoopSeed(&mut destination.bdr_role))?;
     } else if go_json_field_matches(&key, "cdc_write_source") {
@@ -858,7 +895,7 @@ impl Job {
     /// Replaces the reorganization warning maps.
     pub fn set_warnings(
         &mut self,
-        warnings: Option<BTreeMap<String, serde_json::Value>>,
+        warnings: Option<BTreeMap<String, Option<TerrorError>>>,
         warning_counts: Option<BTreeMap<String, i64>>,
     ) {
         let metadata = self
@@ -874,7 +911,7 @@ impl Job {
     pub fn get_warnings(
         &self,
     ) -> (
-        Option<&BTreeMap<String, serde_json::Value>>,
+        Option<&BTreeMap<String, Option<TerrorError>>>,
         Option<&BTreeMap<String, i64>>,
     ) {
         let metadata = self
@@ -995,13 +1032,14 @@ impl Job {
     /// Decodes persisted JSON into this job; JSON `null` leaves it unchanged.
     pub fn decode(&mut self, bytes: &[u8]) -> Result<(), serde_json::Error> {
         // Go's scanner rejects malformed JSON before it starts assigning
-        // fields. The second, streaming pass is still required: a Value would
-        // discard duplicate keys and make field assignment transactional.
-        let value: serde_json::Value = serde_json::from_slice(bytes)?;
-        if value.is_null() {
+        // fields. The raw-member pass is still required: a Value would discard
+        // duplicate keys, reject >u64 before field dispatch, and make member
+        // errors transactional instead of allowing later fields to mutate.
+        let raw: &serde_json::value::RawValue = serde_json::from_slice(bytes)?;
+        if raw.get() == "null" {
             return Ok(());
         }
-        let mut deserializer = serde_json::Deserializer::from_slice(bytes);
+        let mut deserializer = serde_json::Deserializer::from_str(raw.get());
         self.go_json_merge(&mut deserializer)?;
         deserializer.end()
     }
@@ -1363,7 +1401,7 @@ impl std::fmt::Display for Job {
         let error = self
             .error
             .as_ref()
-            .map_or_else(|| "<nil>".to_owned(), serde_json::Value::to_string);
+            .map_or_else(|| "<nil>".to_owned(), ToString::to_string);
         write!(
             formatter,
             "ID:{}, Type:{}, State:{}, SchemaState:{}, SchemaID:{}, TableID:{}, RowCount:{}, ArgLen:{}, start time: {}, Err:{}, ErrCount:{}, SnapshotVersion:{}, Version: {}",
@@ -1796,10 +1834,7 @@ mod tests {
             session_vars: Some(BTreeMap::from([("old".to_owned(), "1".to_owned())])),
             reorg_meta: Some(DDLReorgMeta {
                 resource_group_name: "existing".to_owned(),
-                warnings: Some(BTreeMap::from([(
-                    "old".to_owned(),
-                    serde_json::json!({"message": "old"}),
-                )])),
+                warnings: Some(BTreeMap::from([("old".to_owned(), None)])),
                 ..Default::default()
             }),
             ..Default::default()
@@ -1811,10 +1846,13 @@ mod tests {
                 "row_count":3,
                 "ID":null,
                 "raw_args":null,
+                "warning":{"class":21,"code":2,"message":"warn","rfccode":"global:2"},
+                "err":{"class":5,"code":3,"message":"failed","rfccode":"executor:3"},
+                "trace_info":{"session_alias":"alias","trace_id":"AAH/","connection_id":9},
                 "SESSION_VARS":{"new":"2"},
                 "session_vars":{"new":"3"},
                 "reorg_meta":{
-                    "WARNINGS":{"new":{"message":"new"}},
+                    "WARNINGS":{"new":{"class":21,"code":2,"message":"new","rfccode":"global:2"}},
                     "MAX_NODE_COUNT":4,
                     "max_node_count":5
                 },
@@ -1827,6 +1865,16 @@ mod tests {
         assert_eq!(job.id, 42);
         assert_eq!(job.row_count, 3);
         assert_eq!(job.raw_args, Some(serde_json::Value::Null));
+        assert_eq!(job.warning.as_ref().unwrap().message(), "warn");
+        assert_eq!(job.error.as_ref().unwrap().message(), "failed");
+        assert_eq!(
+            job.trace_info,
+            Some(TraceInfo {
+                session_alias: "alias".to_owned(),
+                trace_id: Some(vec![0, 1, 255]),
+                connection_id: 9,
+            })
+        );
         assert!(job.pause_reason.is_none());
         assert!(job.involving_schema_info.is_none());
         assert_eq!(job.get_system_var("old"), Some("1"));
@@ -1836,6 +1884,13 @@ mod tests {
         assert_eq!(reorg.max_node_count, 5);
         assert!(reorg.warnings.as_ref().unwrap().contains_key("old"));
         assert!(reorg.warnings.as_ref().unwrap().contains_key("new"));
+        assert_eq!(
+            reorg.warnings.as_ref().unwrap()["new"]
+                .as_ref()
+                .unwrap()
+                .message(),
+            "new"
+        );
 
         job.decode(br#"{"session_vars":null,"reorg_meta":{"warnings":null}}"#)
             .unwrap();
@@ -1855,6 +1910,33 @@ mod tests {
         job.decode(br#"{"dependency_id":8,"row_count":9223372036854775808}"#)
             .unwrap_err();
         assert_eq!(job.dependency_id, 8);
+
+        let error = job
+            .decode(br#"{"warning":7,"id":51,"row_count":9223372036854775808,"table_id":52}"#)
+            .unwrap_err();
+        assert!(error.to_string().contains("invalid type"));
+        assert_eq!(job.id, 51);
+        assert_eq!(job.table_id, 52);
+
+        let error = job
+            .decode(br#"{"session_vars":{"bad":7,"later":"ok"},"id":53}"#)
+            .unwrap_err();
+        assert!(error.to_string().contains("invalid type"));
+        assert_eq!(job.get_system_var("bad"), Some(""));
+        assert_eq!(job.get_system_var("later"), Some("ok"));
+        assert_eq!(job.id, 53);
+
+        job.decode(br#"{"row_count":18446744073709551616,"table_id":54}"#)
+            .unwrap_err();
+        assert_eq!(job.table_id, 54);
+
+        let error = job
+            .decode(br#"{"trace_info":{"session_alias":"changed","trace_id":"AA$=","connection_id":10},"schema_id":53}"#)
+            .unwrap_err();
+        assert!(error.to_string().contains("illegal base64 data"));
+        assert_eq!(job.trace_info.as_ref().unwrap().session_alias, "changed");
+        assert_eq!(job.trace_info.as_ref().unwrap().connection_id, 10);
+        assert_eq!(job.schema_id, 53);
 
         let error = job
             .decode(br#"{"reorg_meta":{"version":9,"max_node_count":"bad"}}"#)

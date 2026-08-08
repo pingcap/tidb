@@ -24,6 +24,103 @@ use std::marker::PhantomData;
 
 use serde::de::{DeserializeSeed, IgnoredAny, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_json::value::RawValue;
+
+struct RawObjectMembers<'de>(Vec<(String, &'de RawValue)>);
+
+impl<'de> Deserialize<'de> for RawObjectMembers<'de> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct RawObjectVisitor;
+
+        impl<'de> Visitor<'de> for RawObjectVisitor {
+            type Value = RawObjectMembers<'de>;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a JSON object")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut members = Vec::with_capacity(map.size_hint().unwrap_or(0));
+                while let Some(key) = map.next_key::<String>()? {
+                    let value = map.next_value::<&'de RawValue>()?;
+                    members.push((key, value));
+                }
+                Ok(RawObjectMembers(members))
+            }
+        }
+
+        deserializer.deserialize_map(RawObjectVisitor)
+    }
+}
+
+struct IndependentRawMapAccess<'de, E> {
+    members: std::vec::IntoIter<(String, &'de RawValue)>,
+    pending_value: Option<&'de RawValue>,
+    marker: PhantomData<E>,
+}
+
+impl<'de, E> MapAccess<'de> for IndependentRawMapAccess<'de, E>
+where
+    E: serde::de::Error,
+{
+    type Error = E;
+
+    fn next_key_seed<K>(&mut self, seed: K) -> Result<Option<K::Value>, Self::Error>
+    where
+        K: DeserializeSeed<'de>,
+    {
+        let Some((key, value)) = self.members.next() else {
+            return Ok(None);
+        };
+        self.pending_value = Some(value);
+        seed.deserialize(serde::de::value::StringDeserializer::<E>::new(key))
+            .map(Some)
+    }
+
+    fn next_value_seed<V>(&mut self, seed: V) -> Result<V::Value, Self::Error>
+    where
+        V: DeserializeSeed<'de>,
+    {
+        let raw = self
+            .pending_value
+            .take()
+            .ok_or_else(|| E::custom("JSON object value requested before its key"))?;
+        let mut deserializer = serde_json::Deserializer::from_str(raw.get());
+        seed.deserialize(&mut deserializer)
+            .map_err(|error| E::custom(error.to_string()))
+    }
+
+    fn size_hint(&self) -> Option<usize> {
+        Some(self.members.len())
+    }
+}
+
+/// Buffers one syntactically valid object's members as borrowed raw JSON.
+///
+/// Each value is then decoded through an independent deserializer. A semantic
+/// error in one member therefore cannot poison the parent stream, allowing the
+/// caller to retain Go's first error and still process every later member.
+pub(crate) fn deserialize_go_object<'de, D, V>(
+    deserializer: D,
+    visitor: V,
+) -> Result<V::Value, D::Error>
+where
+    D: Deserializer<'de>,
+    V: Visitor<'de>,
+{
+    let members = RawObjectMembers::deserialize(deserializer)?;
+    visitor.visit_map(IndependentRawMapAccess {
+        members: members.0.into_iter(),
+        pending_value: None,
+        marker: PhantomData,
+    })
+}
 
 /// Reports whether an incoming JSON object key matches a Go struct-field tag.
 ///
@@ -143,7 +240,7 @@ pub(crate) struct OptionStringMapMergeSeed<'a, V>(pub(crate) &'a mut Option<BTre
 
 impl<'de, V> DeserializeSeed<'de> for OptionStringMapMergeSeed<'_, V>
 where
-    V: Deserialize<'de>,
+    V: Default + Deserialize<'de>,
 {
     type Value = ();
 
@@ -158,7 +255,7 @@ where
 
         impl<'de, V> Visitor<'de> for OptionMapVisitor<'_, V>
         where
-            V: Deserialize<'de>,
+            V: Default + Deserialize<'de>,
         {
             type Value = ();
 
@@ -180,7 +277,7 @@ where
             where
                 D: Deserializer<'de>,
             {
-                deserializer.deserialize_map(self)
+                deserialize_go_object(deserializer, self)
             }
 
             fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
@@ -188,9 +285,20 @@ where
                 A: MapAccess<'de>,
             {
                 let destination = self.destination.get_or_insert_with(BTreeMap::new);
+                let mut first_error = None;
                 while let Some(key) = map.next_key::<String>()? {
-                    let value = map.next_value::<V>()?;
-                    destination.insert(key, value);
+                    match map.next_value::<V>() {
+                        Ok(value) => {
+                            destination.insert(key, value);
+                        }
+                        Err(error) => {
+                            destination.insert(key, V::default());
+                            first_error.get_or_insert(error);
+                        }
+                    }
+                }
+                if let Some(error) = first_error {
+                    return Err(error);
                 }
                 Ok(())
             }
