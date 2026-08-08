@@ -26,7 +26,6 @@ use tidb_error::terror::TerrorError;
 use crate::action_type::ActionType;
 use crate::db::DBInfo;
 use crate::job_enums::{JobState, JobVersion};
-use crate::placement::PolicyRefInfo;
 use crate::reorg::{DDLReorgMeta, ReorgStage, ReorgType};
 use crate::schema_state::SchemaState;
 use crate::serde_helpers::GoJsonMerge;
@@ -1294,6 +1293,7 @@ impl std::fmt::Display for Job {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::placement::PolicyRefInfo;
     use tidb_ast::CiString;
 
     fn raw_json(json: &str) -> PersistedRawJson {
