@@ -889,7 +889,10 @@ mod tests {
     fn json_round_trips_byte_identically_with_go() {
         for fixture in [GO_POPULATED, GO_ZERO] {
             let col: ColumnInfo = serde_json::from_str(fixture).unwrap();
-            assert_eq!(serde_json::to_string(&col).unwrap(), fixture);
+            assert_eq!(
+                String::from_utf8(crate::serde_helpers::to_go_json(&col).unwrap()).unwrap(),
+                fixture
+            );
         }
 
         // Spot-check the decoded values, so a symmetric encode/decode bug
@@ -921,7 +924,15 @@ mod tests {
         }
         let with_newline: ColumnInfo =
             serde_json::from_str(r#"{"origin_default_bit":"Gbk\nA"}"#).unwrap();
-        assert_eq!(with_newline.origin_default_value_bit, Some(vec![25, 185, 0]));
+        assert_eq!(
+            with_newline.origin_default_value_bit,
+            Some(vec![25, 185, 0])
+        );
+
+        let mut html = ColumnInfo::default();
+        html.generated_expr_string = "a < 1 && b > 0".to_owned();
+        let encoded = String::from_utf8(crate::serde_helpers::to_go_json(&html).unwrap()).unwrap();
+        assert!(encoded.contains(r#""generated_expr_string":"a \u003c 1 \u0026\u0026 b \u003e 0""#));
     }
 
     #[test]

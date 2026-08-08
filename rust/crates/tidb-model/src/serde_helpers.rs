@@ -26,8 +26,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 pub mod go_bytes {
     use serde::{Deserialize, Deserializer, Serializer};
 
-    const ALPHABET: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
     fn encode(bytes: &[u8]) -> String {
         let mut output = String::with_capacity(bytes.len().div_ceil(3) * 4);
@@ -37,9 +36,7 @@ pub mod go_bytes {
             let value = (u32::from(chunk[0]) << 16) | (u32::from(second) << 8) | u32::from(third);
             for position in 0..4 {
                 if position <= chunk.len() {
-                    output.push(
-                        ALPHABET[((value >> (18 - 6 * position)) & 0x3f) as usize] as char,
-                    );
+                    output.push(ALPHABET[((value >> (18 - 6 * position)) & 0x3f) as usize] as char);
                 } else {
                     output.push('=');
                 }
@@ -95,6 +92,7 @@ pub mod go_bytes {
         Ok(output)
     }
 
+    /// Serializes nil as `null` and bytes as padded standard base64.
     pub fn serialize<S: Serializer>(
         value: &Option<Vec<u8>>,
         serializer: S,
@@ -105,6 +103,7 @@ pub mod go_bytes {
         }
     }
 
+    /// Deserializes Go's nil/empty/base64 byte-slice JSON forms.
     pub fn deserialize<'de, D: Deserializer<'de>>(
         deserializer: D,
     ) -> Result<Option<Vec<u8>>, D::Error> {
