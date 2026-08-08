@@ -25,7 +25,10 @@ use tidb_model::{
 
 #[test]
 fn pkg_meta_model_bdr_boundary() {
-    assert_eq!(DDLBDRType::SAFE_DDL.to_string(), "safe DDL");
+    assert_eq!(
+        tidb_model::bdr::DDLBDRType::SAFE_DDL.to_string(),
+        "safe DDL"
+    );
     assert_eq!(
         tidb_model::ACTION_BDR_MAP.get(&tidb_model::ActionType::ACTION_CREATE_TABLE),
         Some(&DDLBDRType::SAFE_DDL)
@@ -39,7 +42,7 @@ fn pkg_meta_model_bdr_boundary() {
 
 #[test]
 fn pkg_meta_model_db_boundary() {
-    let left = DBInfo {
+    let left = tidb_model::db::DBInfo {
         id: 7,
         name: tidb_ast::CiString::new("Alpha"),
         ..Default::default()
@@ -63,7 +66,7 @@ fn pkg_meta_model_flags_boundary() {
 
 #[test]
 fn pkg_meta_model_table_mode_boundary() {
-    assert!(TableMode::NORMAL.can_transition_to(TableMode::IMPORT));
+    assert!(tidb_model::table_mode::TableMode::NORMAL.can_transition_to(TableMode::IMPORT));
     assert!(!TableMode::IMPORT.can_transition_to(TableMode::RESTORE));
     assert!(!TableMode::RESTORE.can_transition_to(TableMode::IMPORT));
     assert_eq!(TableMode(255).to_string(), "");

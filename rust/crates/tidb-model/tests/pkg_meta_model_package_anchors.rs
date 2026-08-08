@@ -27,6 +27,7 @@ use tidb_model::{
 
 #[test]
 fn pkg_meta_model_column_boundary() {
+    assert!(std::mem::size_of::<tidb_model::column::ColumnInfo>() > 0);
     let column = ColumnInfo::default();
     assert_eq!(column.id, 0);
     assert_eq!(tidb_model::gen_removing_obj_name("c"), "_Tombstone$_c");
@@ -39,6 +40,7 @@ fn pkg_meta_model_column_boundary() {
 
 #[test]
 fn pkg_meta_model_engine_boundary() {
+    assert!(std::mem::size_of::<tidb_model::engine_attribute::EngineAttribute>() > 0);
     let empty: EngineAttribute =
         tidb_model::parse_engine_attribute_from_string("").expect("empty is the zero value");
     assert!(empty.storage_class.is_none());
@@ -56,6 +58,7 @@ fn pkg_meta_model_engine_boundary() {
 
 #[test]
 fn pkg_meta_model_index_boundary() {
+    assert!(std::mem::size_of::<tidb_model::index::IndexInfo>() > 0);
     let index = IndexInfo {
         id: 7,
         ..Default::default()
@@ -73,6 +76,7 @@ fn pkg_meta_model_index_boundary() {
 
 #[test]
 fn pkg_meta_model_placement_boundary() {
+    assert!(std::mem::size_of::<tidb_model::placement::PlacementSettings>() > 0);
     let settings = PlacementSettings {
         primary_region: "r1".to_owned(),
         voters: 3,
@@ -83,6 +87,7 @@ fn pkg_meta_model_placement_boundary() {
 
 #[test]
 fn pkg_meta_model_reorg_boundary() {
+    assert!(std::mem::size_of::<tidb_model::reorg::DDLReorgMeta>() > 0);
     let metadata = DDLReorgMeta::default();
     assert!(metadata.warnings.is_none());
     assert_eq!(
@@ -95,6 +100,7 @@ fn pkg_meta_model_reorg_boundary() {
 
 #[test]
 fn pkg_meta_model_action_boundary() {
+    assert!(std::mem::size_of::<tidb_model::action_type::ActionType>() > 0);
     let action = tidb_model::ActionType::ACTION_CREATE_TABLE;
     assert_eq!(action.to_string(), "create table");
     assert_eq!(tidb_model::ActionType(255).to_string(), "none");
@@ -102,6 +108,7 @@ fn pkg_meta_model_action_boundary() {
 
 #[test]
 fn pkg_meta_model_job_enums_boundary() {
+    assert!(std::mem::size_of::<tidb_model::job_enums::JobState>() > 0);
     let state = JobState::ROLLBACK_DONE;
     assert_eq!(state.to_string(), "rollback done");
     assert!(state.is_finished());
@@ -110,6 +117,7 @@ fn pkg_meta_model_job_enums_boundary() {
 
 #[test]
 fn pkg_meta_model_schema_state_boundary() {
+    assert!(std::mem::size_of::<tidb_model::schema_state::SchemaState>() > 0);
     let state = SchemaState::PUBLIC;
     assert_eq!(state.to_string(), "public");
     assert_eq!(serde_json::to_string(&state).unwrap(), "5");
@@ -118,6 +126,7 @@ fn pkg_meta_model_schema_state_boundary() {
 
 #[test]
 fn pkg_meta_model_schema_diff_boundary() {
+    assert!(std::mem::size_of::<tidb_model::schema_diff::SchemaDiff>() > 0);
     let diff = SchemaDiff::default();
     let encoded = serde_json::to_value(&diff).expect("SchemaDiff must encode");
     assert_eq!(encoded["affected_options"], serde_json::Value::Null);
@@ -126,6 +135,7 @@ fn pkg_meta_model_schema_diff_boundary() {
 
 #[test]
 fn pkg_meta_model_job_boundary() {
+    assert!(std::mem::size_of::<tidb_model::job::Job>() > 0);
     let mut job = Job {
         state: JobState::RUNNING,
         ..Default::default()
@@ -138,6 +148,7 @@ fn pkg_meta_model_job_boundary() {
 
 #[test]
 fn pkg_meta_model_job_args_boundary() {
+    assert!(std::mem::size_of::<tidb_model::job_args::RenameTableArgs>() > 0);
     let rename = RenameTableArgs {
         old_schema_id: 1,
         new_schema_id: 2,
@@ -153,6 +164,7 @@ fn pkg_meta_model_job_args_boundary() {
 
 #[test]
 fn pkg_meta_model_table_boundary() {
+    assert!(std::mem::size_of::<tidb_model::table::StatsOptions>() > 0);
     let options = tidb_model::table::StatsOptions::default();
     let encoded = serde_json::to_value(&options).expect("StatsOptions must encode");
     assert_eq!(encoded["column_list"], serde_json::Value::Null);
@@ -161,6 +173,7 @@ fn pkg_meta_model_table_boundary() {
 
 #[test]
 fn pkg_meta_model_table_info_boundary() {
+    assert!(std::mem::size_of::<tidb_model::table_info::TableInfo>() > 0);
     let first = TableInfo {
         id: 9,
         ..Default::default()
@@ -176,6 +189,7 @@ fn pkg_meta_model_table_info_boundary() {
 
 #[test]
 fn pkg_meta_model_partition_boundary() {
+    assert!(std::mem::size_of::<tidb_model::partition::PartitionInfo>() > 0);
     let partition = PartitionInfo {
         definitions: vec![PartitionDefinition {
             id: 7,
@@ -191,6 +205,7 @@ fn pkg_meta_model_partition_boundary() {
 
 #[test]
 fn pkg_meta_model_masking_boundary() {
+    assert!(std::mem::size_of::<tidb_model::masking_policy::MaskingPolicyInfo>() > 0);
     let policy = MaskingPolicyInfo::default();
     assert_eq!(policy.id, 0);
     assert_eq!(
@@ -198,6 +213,16 @@ fn pkg_meta_model_masking_boundary() {
         "DISABLED"
     );
     assert!(tidb_model::clone_masking_policy_info(None).is_none());
+}
+
+#[test]
+fn pkg_meta_model_resource_boundary() {
+    assert!(std::mem::size_of::<tidb_model::resource_group::ResourceGroupSettings>() > 0);
+    let settings = tidb_model::resource_group::ResourceGroupSettings {
+        ru_rate: 1,
+        ..Default::default()
+    };
+    assert!(settings.to_string().starts_with("RU_PER_SEC=1"));
 }
 
 #[test]
