@@ -14,13 +14,12 @@
 
 //! `PartitionInfo` and friends from `pkg/meta/model/table.go`.
 //!
-//! Go runtime-specific `unsafe.Sizeof` memory accounting is recorded as an
-//! explicit package-lockdown decline; the persisted and DDL transition rules
-//! are implemented here.
+//! Go's 64-bit layout constants are carried explicitly for memory accounting;
+//! persisted receiver semantics and DDL transition rules are implemented here.
 
 use std::collections::BTreeMap;
 
-use serde::{Deserialize, Serialize, Serializer};
+use serde::{Serialize, Serializer};
 use tidb_ast::{CiString, PartitionType};
 
 use crate::action_type::ActionType;
@@ -28,12 +27,20 @@ use crate::engine_attribute::{build_storage_class_string, StorageClassTransitRul
 use crate::go_runtime::{GoShared, GoSharedSlice, GoSliceElementLayout};
 use crate::placement::PolicyRefInfo;
 use crate::schema_state::SchemaState;
+use crate::serde_helpers::{
+    go_json_field_matches, ignore_unknown, impl_go_json_deserialize, impl_go_json_merge_object,
+    FatalSeed, NullNoopSeed, OptionSharedMergeSeed, SharedCiStringSliceSeed, SharedStringSliceSeed,
+    ValueMergeSeed,
+};
+use crate::serde_shared_slices::{
+    SharedIntBoolMapSeed, SharedNestedStringSliceSeed, SharedObjectSliceSeed, SharedScalarSliceSeed,
+};
 
 /// Go marshals `ast.PartitionType` (an `int`) and `ActionType` (a `byte`) as
 /// plain JSON numbers: neither has a `MarshalJSON`. These adapters reproduce
 /// that, since neither Rust type carries serde impls of its own here.
 mod partition_type_json {
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use serde::{Serialize, Serializer};
     use tidb_ast::PartitionType;
 
     /// The raw integer is carried through unchanged. Collapsing an unnamed
@@ -41,10 +48,6 @@ mod partition_type_json {
     /// while its `definitions` and `num` stay populated.
     pub fn serialize<S: Serializer>(t: &PartitionType, s: S) -> Result<S::Ok, S::Error> {
         t.0.serialize(s)
-    }
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<PartitionType, D::Error> {
-        Ok(PartitionType(Option::<i64>::deserialize(d)?.unwrap_or(0)))
     }
 
     /// Go `omitempty` on a `PartitionType`: the zero value is `PartitionTypeNone`.
@@ -55,16 +58,12 @@ mod partition_type_json {
 
 /// `ActionType` as the JSON number Go writes for its underlying `byte`.
 mod action_type_json {
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use serde::{Serialize, Serializer};
 
     use crate::action_type::ActionType;
 
     pub fn serialize<S: Serializer>(a: &ActionType, s: S) -> Result<S::Ok, S::Error> {
         a.0.serialize(s)
-    }
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<ActionType, D::Error> {
-        Ok(ActionType(Option::<u8>::deserialize(d)?.unwrap_or(0)))
     }
 
     /// Go `omitempty` on an `ActionType`: the zero value is `ActionNone`.
@@ -74,7 +73,7 @@ mod action_type_json {
 }
 
 /// Go `PartitionState`: the online-DDL state of one partition.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct PartitionState {
     /// The partition ID.
     #[serde(rename = "id", default)]
@@ -84,23 +83,41 @@ pub struct PartitionState {
     pub state: SchemaState,
 }
 
+impl_go_json_merge_object!(PartitionState, destination, map, key, {
+    if go_json_field_matches(&key, "id") {
+        map.next_value_seed(NullNoopSeed(&mut destination.id))?;
+    } else if go_json_field_matches(&key, "state") {
+        map.next_value_seed(NullNoopSeed(&mut destination.state))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+impl_go_json_deserialize!(PartitionState);
+
 /// Go `UpdateIndexInfo`: an index touched by a partition DDL.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct UpdateIndexInfo {
     /// The index name.
-    #[serde(
-        rename = "index_name",
-        default,
-        deserialize_with = "crate::serde_helpers::null_default"
-    )]
+    #[serde(rename = "index_name", default)]
     pub index_name: String,
     /// Whether it is a global index.
     #[serde(rename = "global", default)]
     pub global: bool,
 }
 
+impl_go_json_merge_object!(UpdateIndexInfo, destination, map, key, {
+    if go_json_field_matches(&key, "index_name") {
+        map.next_value_seed(NullNoopSeed(&mut destination.index_name))?;
+    } else if go_json_field_matches(&key, "global") {
+        map.next_value_seed(NullNoopSeed(&mut destination.global))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+impl_go_json_deserialize!(UpdateIndexInfo);
+
 /// Go `PartitionDefinition`: one partition's definition.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize)]
 pub struct PartitionDefinition {
     /// The partition ID.
     #[serde(rename = "id", default)]
@@ -121,16 +138,14 @@ pub struct PartitionDefinition {
     #[serde(
         rename = "comment",
         default,
-        skip_serializing_if = "crate::serde_helpers::is_empty_str",
-        deserialize_with = "crate::serde_helpers::null_default"
+        skip_serializing_if = "crate::serde_helpers::is_empty_str"
     )]
     pub comment: String,
     /// The storage-class tier.
     #[serde(
         rename = "storage_class_tier",
         default,
-        skip_serializing_if = "crate::serde_helpers::is_empty_str",
-        deserialize_with = "crate::serde_helpers::null_default"
+        skip_serializing_if = "crate::serde_helpers::is_empty_str"
     )]
     pub storage_class_tier: String,
     /// The storage-class transitions.
@@ -142,7 +157,49 @@ pub struct PartitionDefinition {
     pub storage_class_transitions: GoSharedSlice<StorageClassTransitRule>,
 }
 
+impl_go_json_merge_object!(PartitionDefinition, destination, map, key, {
+    if go_json_field_matches(&key, "id") {
+        map.next_value_seed(NullNoopSeed(&mut destination.id))?;
+    } else if go_json_field_matches(&key, "name") {
+        map.next_value_seed(FatalSeed(ValueMergeSeed(&mut destination.name)))?;
+    } else if go_json_field_matches(&key, "less_than") {
+        map.next_value_seed(SharedStringSliceSeed(&mut destination.less_than))?;
+    } else if go_json_field_matches(&key, "in_values") {
+        map.next_value_seed(SharedNestedStringSliceSeed(&mut destination.in_values))?;
+    } else if go_json_field_matches(&key, "policy_ref_info") {
+        map.next_value_seed(OptionSharedMergeSeed(&mut destination.placement_policy_ref))?;
+    } else if go_json_field_matches(&key, "comment") {
+        map.next_value_seed(NullNoopSeed(&mut destination.comment))?;
+    } else if go_json_field_matches(&key, "storage_class_tier") {
+        map.next_value_seed(NullNoopSeed(&mut destination.storage_class_tier))?;
+    } else if go_json_field_matches(&key, "storage_class_transitions") {
+        map.next_value_seed(SharedObjectSliceSeed::new(
+            &mut destination.storage_class_transitions,
+            32,
+            GoSliceElementLayout::PointerBearing,
+        ))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+impl_go_json_deserialize!(PartitionDefinition);
+
 impl PartitionDefinition {
+    /// Go `json.Unmarshal` into an existing `*PartitionDefinition`, including
+    /// whole-input syntax preflight and ordered partial receiver mutation.
+    pub fn decode(&mut self, bytes: &[u8]) -> Result<(), serde_json::Error> {
+        use crate::serde_helpers::GoJsonMerge;
+
+        let raw: &serde_json::value::RawValue = serde_json::from_slice(bytes)?;
+        if raw.get() == "null" {
+            return Ok(());
+        }
+        let mut deserializer = serde_json::Deserializer::from_str(raw.get());
+        self.go_json_merge(&mut deserializer)
+            .map_err(crate::serde_helpers::normalize_fatal_json_error)?;
+        deserializer.end()
+    }
+
     /// Go `PartitionDefinition.Clone`: `LessThan` and storage transitions use
     /// `slices.Clone`; `InValues` and the policy pointer remain shallow.
     #[must_use]
@@ -242,17 +299,17 @@ where
 }
 
 /// Go `PartitionInfo`: a table's partitioning metadata.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize)]
 pub struct PartitionInfo {
     /// The partition method.
-    #[serde(rename = "type", default, with = "partition_type_json")]
+    #[serde(
+        rename = "type",
+        default,
+        serialize_with = "partition_type_json::serialize"
+    )]
     pub partition_type: PartitionType,
     /// The partition expression.
-    #[serde(
-        rename = "expr",
-        default,
-        deserialize_with = "crate::serde_helpers::null_default"
-    )]
+    #[serde(rename = "expr", default)]
     pub expr: String,
     /// The partition columns.
     #[serde(rename = "columns", default)]
@@ -296,7 +353,7 @@ pub struct PartitionInfo {
     #[serde(
         rename = "ddl_action",
         default,
-        with = "action_type_json",
+        serialize_with = "action_type_json::serialize",
         skip_serializing_if = "action_type_json::is_none"
     )]
     pub ddl_action: ActionType,
@@ -314,7 +371,7 @@ pub struct PartitionInfo {
     #[serde(
         rename = "ddl_type",
         default,
-        with = "partition_type_json",
+        serialize_with = "partition_type_json::serialize",
         skip_serializing_if = "partition_type_json::is_none"
     )]
     pub ddl_type: PartitionType,
@@ -322,8 +379,7 @@ pub struct PartitionInfo {
     #[serde(
         rename = "ddl_expr",
         default,
-        skip_serializing_if = "crate::serde_helpers::is_empty_str",
-        deserialize_with = "crate::serde_helpers::null_default"
+        skip_serializing_if = "crate::serde_helpers::is_empty_str"
     )]
     pub ddl_expr: String,
     /// The in-progress DDL columns.
@@ -353,7 +409,97 @@ pub struct PartitionInfo {
     pub ddl_changed_index: Option<GoShared<BTreeMap<i64, bool>>>,
 }
 
+impl_go_json_merge_object!(PartitionInfo, destination, map, key, {
+    if go_json_field_matches(&key, "type") {
+        map.next_value_seed(NullNoopSeed(&mut destination.partition_type.0))?;
+    } else if go_json_field_matches(&key, "expr") {
+        map.next_value_seed(NullNoopSeed(&mut destination.expr))?;
+    } else if go_json_field_matches(&key, "columns") {
+        map.next_value_seed(SharedCiStringSliceSeed(&mut destination.columns))?;
+    } else if go_json_field_matches(&key, "enable") {
+        map.next_value_seed(NullNoopSeed(&mut destination.enable))?;
+    } else if go_json_field_matches(&key, "is_empty_columns") {
+        map.next_value_seed(NullNoopSeed(&mut destination.is_empty_columns))?;
+    } else if go_json_field_matches(&key, "definitions") {
+        map.next_value_seed(SharedObjectSliceSeed::new(
+            &mut destination.definitions,
+            152,
+            GoSliceElementLayout::PointerBearing,
+        ))?;
+    } else if go_json_field_matches(&key, "adding_definitions") {
+        map.next_value_seed(SharedObjectSliceSeed::new(
+            &mut destination.adding_definitions,
+            152,
+            GoSliceElementLayout::PointerBearing,
+        ))?;
+    } else if go_json_field_matches(&key, "dropping_definitions") {
+        map.next_value_seed(SharedObjectSliceSeed::new(
+            &mut destination.dropping_definitions,
+            152,
+            GoSliceElementLayout::PointerBearing,
+        ))?;
+    } else if go_json_field_matches(&key, "new_partition_ids") {
+        map.next_value_seed(SharedScalarSliceSeed::new(
+            &mut destination.new_partition_ids,
+            8,
+            GoSliceElementLayout::NoPointers,
+        ))?;
+    } else if go_json_field_matches(&key, "original_partition_ids_order") {
+        map.next_value_seed(SharedScalarSliceSeed::new(
+            &mut destination.original_partition_ids_order,
+            8,
+            GoSliceElementLayout::NoPointers,
+        ))?;
+    } else if go_json_field_matches(&key, "states") {
+        map.next_value_seed(SharedObjectSliceSeed::new(
+            &mut destination.states,
+            16,
+            GoSliceElementLayout::NoPointers,
+        ))?;
+    } else if go_json_field_matches(&key, "num") {
+        map.next_value_seed(NullNoopSeed(&mut destination.num))?;
+    } else if go_json_field_matches(&key, "ddl_action") {
+        map.next_value_seed(NullNoopSeed(&mut destination.ddl_action.0))?;
+    } else if go_json_field_matches(&key, "ddl_state") {
+        map.next_value_seed(NullNoopSeed(&mut destination.ddl_state))?;
+    } else if go_json_field_matches(&key, "new_table_id") {
+        map.next_value_seed(NullNoopSeed(&mut destination.new_table_id))?;
+    } else if go_json_field_matches(&key, "ddl_type") {
+        map.next_value_seed(NullNoopSeed(&mut destination.ddl_type.0))?;
+    } else if go_json_field_matches(&key, "ddl_expr") {
+        map.next_value_seed(NullNoopSeed(&mut destination.ddl_expr))?;
+    } else if go_json_field_matches(&key, "ddl_columns") {
+        map.next_value_seed(SharedCiStringSliceSeed(&mut destination.ddl_columns))?;
+    } else if go_json_field_matches(&key, "ddl_update_indexes") {
+        map.next_value_seed(SharedObjectSliceSeed::new(
+            &mut destination.ddl_update_indexes,
+            24,
+            GoSliceElementLayout::PointerBearing,
+        ))?;
+    } else if go_json_field_matches(&key, "ddl_changed_index") {
+        map.next_value_seed(SharedIntBoolMapSeed(&mut destination.ddl_changed_index))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+impl_go_json_deserialize!(PartitionInfo);
+
 impl PartitionInfo {
+    /// Go `json.Unmarshal` into an existing `*PartitionInfo`, retaining shared
+    /// slice/map aliases and applying later fields after recoverable errors.
+    pub fn decode(&mut self, bytes: &[u8]) -> Result<(), serde_json::Error> {
+        use crate::serde_helpers::GoJsonMerge;
+
+        let raw: &serde_json::value::RawValue = serde_json::from_slice(bytes)?;
+        if raw.get() == "null" {
+            return Ok(());
+        }
+        let mut deserializer = serde_json::Deserializer::from_str(raw.get());
+        self.go_json_merge(&mut deserializer)
+            .map_err(crate::serde_helpers::normalize_fatal_json_error)?;
+        deserializer.end()
+    }
+
     /// Go `PartitionInfo.Clone`: Columns uses `slices.Clone`; definition
     /// containers are always freshly `make`d and element-cloned; all other
     /// slice/map headers deliberately remain shallow aliases.
@@ -983,6 +1129,190 @@ mod tests {
         assert!(!none.is_allocated());
     }
 
+    #[test]
+    fn receiver_reuses_nested_and_scalar_slice_backing_through_errors_and_growth() {
+        let inner0 = GoSharedSlice::from_vec_with_capacity(
+            vec!["old0".to_owned(), "old1".to_owned(), "old2".to_owned()],
+            3,
+        );
+        let inner1 = GoSharedSlice::from_vec(vec!["one".to_owned()]);
+        let inner2 = GoSharedSlice::from_vec(vec!["two".to_owned()]);
+        let outer = GoSharedSlice::from_vec_with_capacity(
+            vec![inner0.clone(), inner1.clone(), inner2.clone()],
+            3,
+        );
+        let outer_alias = outer.clone();
+        let mut definition = PartitionDefinition {
+            in_values: outer,
+            ..Default::default()
+        };
+
+        assert!(definition
+            .decode(br#"{"in_values":[["new",7,"tail"],null,5,["z"]],"comment":"after"}"#,)
+            .is_err());
+        assert_eq!(definition.comment, "after");
+        assert_eq!(definition.in_values.len(), 4);
+        assert_eq!(definition.in_values.capacity(), 6);
+        assert!(!definition.in_values.backing_ptr_eq(&outer_alias));
+        assert_eq!(outer_alias.len(), 3);
+        assert_eq!(outer_alias.capacity(), 3);
+        assert_eq!(outer_alias.get(0).snapshot(), ["new", "old1", "tail"]);
+        assert!(outer_alias.get(0).backing_ptr_eq(&inner0));
+        assert!(!outer_alias.get(1).is_allocated());
+        assert!(outer_alias.get(2).backing_ptr_eq(&inner2));
+        assert_eq!(definition.in_values.get(3).snapshot(), ["z"]);
+
+        let ids = GoSharedSlice::from_vec_with_capacity(vec![1_i64, 2, 3], 3);
+        let ids_alias = ids.clone();
+        let mut partition = PartitionInfo {
+            new_partition_ids: ids,
+            num: 1,
+            ..Default::default()
+        };
+        assert!(partition
+            .decode(br#"{"new_partition_ids":[9,null,"bad",4],"num":8}"#)
+            .is_err());
+        assert_eq!(partition.num, 8);
+        assert_eq!(partition.new_partition_ids.snapshot(), [9, 2, 3, 4]);
+        assert_eq!(partition.new_partition_ids.capacity(), 6);
+        assert!(!partition.new_partition_ids.backing_ptr_eq(&ids_alias));
+        assert_eq!(ids_alias.snapshot(), [9, 2, 3]);
+    }
+
+    #[test]
+    fn fatal_cistr_in_definition_stops_after_installing_partial_current_slot() {
+        let definitions = GoSharedSlice::from_vec_with_capacity(Vec::new(), 3);
+        let backing_alias = definitions.clone();
+        let mut partition = PartitionInfo {
+            definitions,
+            num: 7,
+            ..Default::default()
+        };
+
+        assert!(partition
+            .decode(
+                br#"{"definitions":[{"id":2,"name":{"O":"new","L":7},"comment":"must-not-run"},{"id":3}],"num":8}"#,
+            )
+            .is_err());
+        assert_eq!(partition.definitions.len(), 1);
+        assert_eq!(partition.definitions.capacity(), 3);
+        assert!(partition.definitions.backing_ptr_eq(&backing_alias));
+        let partial = partition.definitions.get(0);
+        assert_eq!(partial.id, 2);
+        assert_eq!(partial.name.original(), "new");
+        assert_eq!(partial.name.lowercase(), "");
+        assert_eq!(partial.comment, "");
+        assert_eq!(partition.num, 7);
+    }
+
+    #[test]
+    fn shared_int_bool_map_retains_identity_old_keys_and_recoverable_updates() {
+        let map = GoShared::new(BTreeMap::from([(9_i64, true), (1, true)]));
+        let alias = map.clone();
+        let mut partition = PartitionInfo {
+            ddl_changed_index: Some(map),
+            num: 1,
+            ..Default::default()
+        };
+
+        assert!(partition
+            .decode(
+                br#"{"ddl_changed_index":{"01":false,"1":true,"bad":true,"2":"x","3":null},"num":8}"#,
+            )
+            .is_err());
+        assert!(partition.ddl_changed_index.as_ref().unwrap().ptr_eq(&alias));
+        assert_eq!(partition.num, 8);
+        assert_eq!(
+            *alias.read(),
+            BTreeMap::from([(1_i64, true), (2, false), (3, false), (9, true)])
+        );
+
+        partition.decode(br#"{"ddl_changed_index":null}"#).unwrap();
+        assert!(partition.ddl_changed_index.is_none());
+        assert_eq!(alias.read().len(), 4);
+
+        let mut allocated_empty = PartitionInfo::default();
+        allocated_empty
+            .decode(br#"{"ddl_changed_index":{}}"#)
+            .unwrap();
+        assert!(allocated_empty.ddl_changed_index.is_some());
+        assert!(allocated_empty
+            .ddl_changed_index
+            .as_ref()
+            .unwrap()
+            .read()
+            .is_empty());
+    }
+
+    #[test]
+    fn table_receiver_reuses_partition_pointer_and_transition_backing() {
+        use crate::engine_attribute::StorageClassTransitRule;
+        use crate::table_info::TableInfo;
+
+        let old_partition = GoShared::new(PartitionInfo {
+            num: 1,
+            ..Default::default()
+        });
+        let mut table = TableInfo {
+            partition: Some(old_partition.clone()),
+            comment: "old".to_owned(),
+            ..Default::default()
+        };
+        table
+            .decode(
+                br#"{"partition":{"num":2},"PARTITION":null,"partition":{"num":3},"comment":"after"}"#,
+            )
+            .unwrap();
+        assert_eq!(old_partition.read().num, 2);
+        let new_partition = table.partition.as_ref().unwrap();
+        assert!(!new_partition.ptr_eq(&old_partition));
+        assert_eq!(new_partition.read().num, 3);
+        assert_eq!(table.comment, "after");
+
+        let transitions = GoSharedSlice::from_vec_with_capacity(
+            vec![
+                StorageClassTransitRule {
+                    tier: "old".to_owned(),
+                    after_days: 7,
+                    after_seconds: 0,
+                },
+                StorageClassTransitRule::default(),
+                StorageClassTransitRule::default(),
+            ],
+            3,
+        );
+        let transitions_alias = transitions.clone();
+        let mut table = TableInfo {
+            storage_class_transitions: transitions,
+            ..Default::default()
+        };
+        assert!(table
+            .decode(
+                br#"{"storage_class_transitions":[{"after_days":"x","tier":"changed"},{"tier":"two"},{"tier":"three"},{"tier":"four"}],"revision":9}"#,
+            )
+            .is_err());
+        assert_eq!(table.revision, 9);
+        assert_eq!(table.storage_class_transitions.len(), 4);
+        assert_eq!(table.storage_class_transitions.capacity(), 6);
+        assert!(!table
+            .storage_class_transitions
+            .backing_ptr_eq(&transitions_alias));
+        assert_eq!(transitions_alias.get(0).tier, "changed");
+        assert_eq!(transitions_alias.get(0).after_days, 7);
+        assert_eq!(transitions_alias.get(1).tier, "two");
+        assert_eq!(transitions_alias.get(2).tier, "three");
+        assert_eq!(table.storage_class_transitions.get(3).tier, "four");
+
+        let mut syntax = TableInfo {
+            partition: Some(old_partition.clone()),
+            comment: "sentinel".to_owned(),
+            ..Default::default()
+        };
+        assert!(syntax.decode(br#"{"partition":{"num":99},"#).is_err());
+        assert_eq!(old_partition.read().num, 2);
+        assert_eq!(syntax.comment, "sentinel");
+    }
+
     // Field order, tag names, and nil/allocated slice bytes compared against
     // Go's json.Marshal.
     #[test]
@@ -1002,6 +1332,17 @@ mod tests {
         );
 
         assert_eq!(serde_json::to_string(&pi).unwrap(), go);
+
+        let folded: PartitionInfo =
+            serde_json::from_str(r#"{"TyPe":1,"type":2,"ſtates":[{"ID":4,"STATE":5}]}"#).unwrap();
+        assert_eq!(folded.partition_type, PartitionType::HASH);
+        assert_eq!(
+            folded.states.snapshot(),
+            [PartitionState {
+                id: 4,
+                state: SchemaState::PUBLIC,
+            }]
+        );
 
         // Every omitempty field is absent from the zero value, as in Go.
         let empty = serde_json::to_string(&PartitionInfo::default()).unwrap();

@@ -47,6 +47,7 @@ mod resource_group_go_inventory;
 pub mod schema_diff;
 pub mod schema_state;
 pub mod serde_helpers;
+mod serde_shared_slices;
 mod setting_builder;
 pub mod table;
 pub mod table_info;

@@ -15,16 +15,18 @@
 //! Go-compatible persisted JSON stream decoders for DDL jobs and their nested
 //! metadata. Domain types and lifecycle rules remain in [`crate::job`].
 
+use crate::go_runtime::GoSliceElementLayout;
 use crate::job::{
     HistoryInfo, Job, JobMeta, JobPauseReason, JobResumeReason, MultiSchemaInfo, SubJob,
     TimeZoneLocation, TraceInfo,
 };
 use crate::serde_helpers::{
     go_json_field_matches, ignore_unknown, impl_go_json_deserialize, impl_go_json_merge_object,
-    FatalSeed, FatalValueSeed, NullDefaultSeed, NullNoopSeed, OptionBytesSeed, OptionMergeSeed,
+    FatalSeed, FatalValueSeed, NullNoopSeed, OptionBytesSeed, OptionMergeSeed,
     OptionPointerSliceSeed, OptionSharedMergeSeed, OptionStringMapMergeSeed,
     SharedPointerSliceSeed, ValueMergeSeed,
 };
+use crate::serde_shared_slices::SharedObjectSliceSeed;
 use crate::table_info::TableInfo;
 
 impl_go_json_merge_object!(JobPauseReason, destination, map, key, {
@@ -189,7 +191,7 @@ impl_go_json_merge_object!(TableInfo, destination, map, key, {
     } else if go_json_field_matches(&key, "pre_split_regions") {
         map.next_value_seed(NullNoopSeed(&mut destination.pre_split_regions))?;
     } else if go_json_field_matches(&key, "partition") {
-        destination.partition = map.next_value()?;
+        map.next_value_seed(OptionSharedMergeSeed(&mut destination.partition))?;
     } else if go_json_field_matches(&key, "compression") {
         map.next_value_seed(NullNoopSeed(&mut destination.compression))?;
     } else if go_json_field_matches(&key, "view") {
@@ -233,7 +235,11 @@ impl_go_json_merge_object!(TableInfo, destination, map, key, {
     } else if go_json_field_matches(&key, "storage_class_tier") {
         map.next_value_seed(NullNoopSeed(&mut destination.storage_class_tier))?;
     } else if go_json_field_matches(&key, "storage_class_transitions") {
-        map.next_value_seed(NullDefaultSeed(&mut destination.storage_class_transitions))?;
+        map.next_value_seed(SharedObjectSliceSeed::new(
+            &mut destination.storage_class_transitions,
+            32,
+            GoSliceElementLayout::PointerBearing,
+        ))?;
     } else if go_json_field_matches(&key, "mode") {
         map.next_value_seed(NullNoopSeed(&mut destination.mode))?;
     } else {

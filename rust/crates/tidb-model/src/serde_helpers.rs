@@ -293,9 +293,9 @@ impl<T: Serialize> Serialize for GoPointerSlice<T> {
     }
 }
 
-struct RawObjectMembers<'de>(Vec<(String, &'de RawValue)>);
+pub(crate) struct RawObjectMembers<'de>(pub(crate) Vec<(String, &'de RawValue)>);
 
-struct RawArrayMembers<'de>(Vec<&'de RawValue>);
+pub(crate) struct RawArrayMembers<'de>(pub(crate) Vec<&'de RawValue>);
 
 impl<'de> Deserialize<'de> for RawObjectMembers<'de> {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
