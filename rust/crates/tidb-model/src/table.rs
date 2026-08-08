@@ -34,6 +34,7 @@ use crate::schema_state::SchemaState;
 use crate::serde_helpers::{
     go_json_field_matches, ignore_unknown, impl_go_json_deserialize, impl_go_json_merge_object,
     FatalSeed, GoValueSlice, NullNoopSeed, OptionObjectSliceSeed, OptionValueSliceSeed,
+    ValueMergeSeed,
 };
 
 /// Serde adapters for the `ast` enums used by these structs.
@@ -524,7 +525,7 @@ pub struct ViewInfo {
 }
 
 /// Go `ConstraintInfo`: a table CHECK constraint.
-#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, serde::Serialize)]
 pub struct ConstraintInfo {
     /// The constraint ID.
     #[serde(rename = "id", default)]
@@ -536,13 +537,8 @@ pub struct ConstraintInfo {
     #[serde(rename = "tbl_name", default)]
     pub table: CiString,
     /// The columns the constraint depends on.
-    #[serde(
-        rename = "constraint_cols",
-        default,
-        deserialize_with = "crate::serde_helpers::null_default",
-        serialize_with = "crate::serde_helpers::null_if_empty"
-    )]
-    pub constraint_cols: Vec<CiString>,
+    #[serde(rename = "constraint_cols")]
+    pub constraint_cols: GoValueSlice<CiString>,
     /// Whether the constraint is enforced.
     #[serde(rename = "enforced", default)]
     pub enforced: bool,
@@ -561,13 +557,37 @@ pub struct ConstraintInfo {
     pub state: SchemaState,
 }
 
+impl_go_json_merge_object!(ConstraintInfo, destination, map, key, {
+    if go_json_field_matches(&key, "id") {
+        map.next_value_seed(NullNoopSeed(&mut destination.id))?;
+    } else if go_json_field_matches(&key, "constraint_name") {
+        map.next_value_seed(ValueMergeSeed(&mut destination.name))?;
+    } else if go_json_field_matches(&key, "tbl_name") {
+        map.next_value_seed(ValueMergeSeed(&mut destination.table))?;
+    } else if go_json_field_matches(&key, "constraint_cols") {
+        map.next_value_seed(OptionObjectSliceSeed(destination.constraint_cols.raw_mut()))?;
+    } else if go_json_field_matches(&key, "enforced") {
+        map.next_value_seed(NullNoopSeed(&mut destination.enforced))?;
+    } else if go_json_field_matches(&key, "in_column") {
+        map.next_value_seed(NullNoopSeed(&mut destination.in_column))?;
+    } else if go_json_field_matches(&key, "expr_string") {
+        map.next_value_seed(NullNoopSeed(&mut destination.expr_string))?;
+    } else if go_json_field_matches(&key, "state") {
+        map.next_value_seed(NullNoopSeed(&mut destination.state))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+
+impl_go_json_deserialize!(ConstraintInfo);
+
 /// Go `FKVersion0`: foreign-key syntax accepted but not enforced.
 pub const FK_VERSION0: i64 = 0;
 /// Go `FKVersion1`: foreign-key constraint enforced.
 pub const FK_VERSION1: i64 = 1;
 
 /// Go `FKInfo`: a foreign-key constraint.
-#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, serde::Serialize)]
 pub struct FKInfo {
     /// The foreign-key ID.
     #[serde(rename = "id", default)]
@@ -582,21 +602,11 @@ pub struct FKInfo {
     #[serde(rename = "ref_table", default)]
     pub ref_table: CiString,
     /// The referenced columns.
-    #[serde(
-        rename = "ref_cols",
-        default,
-        deserialize_with = "crate::serde_helpers::null_default",
-        serialize_with = "crate::serde_helpers::null_if_empty"
-    )]
-    pub ref_cols: Vec<CiString>,
+    #[serde(rename = "ref_cols")]
+    pub ref_cols: GoValueSlice<CiString>,
     /// The referencing columns.
-    #[serde(
-        rename = "cols",
-        default,
-        deserialize_with = "crate::serde_helpers::null_default",
-        serialize_with = "crate::serde_helpers::null_if_empty"
-    )]
-    pub cols: Vec<CiString>,
+    #[serde(rename = "cols")]
+    pub cols: GoValueSlice<CiString>,
     /// The `ON DELETE` action (an `ast.ReferOptionType` value).
     #[serde(rename = "on_delete", default)]
     pub on_delete: i64,
@@ -610,6 +620,34 @@ pub struct FKInfo {
     #[serde(rename = "version", default)]
     pub version: i64,
 }
+
+impl_go_json_merge_object!(FKInfo, destination, map, key, {
+    if go_json_field_matches(&key, "id") {
+        map.next_value_seed(NullNoopSeed(&mut destination.id))?;
+    } else if go_json_field_matches(&key, "fk_name") {
+        map.next_value_seed(ValueMergeSeed(&mut destination.name))?;
+    } else if go_json_field_matches(&key, "ref_schema") {
+        map.next_value_seed(ValueMergeSeed(&mut destination.ref_schema))?;
+    } else if go_json_field_matches(&key, "ref_table") {
+        map.next_value_seed(ValueMergeSeed(&mut destination.ref_table))?;
+    } else if go_json_field_matches(&key, "ref_cols") {
+        map.next_value_seed(OptionObjectSliceSeed(destination.ref_cols.raw_mut()))?;
+    } else if go_json_field_matches(&key, "cols") {
+        map.next_value_seed(OptionObjectSliceSeed(destination.cols.raw_mut()))?;
+    } else if go_json_field_matches(&key, "on_delete") {
+        map.next_value_seed(NullNoopSeed(&mut destination.on_delete))?;
+    } else if go_json_field_matches(&key, "on_update") {
+        map.next_value_seed(NullNoopSeed(&mut destination.on_update))?;
+    } else if go_json_field_matches(&key, "state") {
+        map.next_value_seed(NullNoopSeed(&mut destination.state))?;
+    } else if go_json_field_matches(&key, "version") {
+        map.next_value_seed(NullNoopSeed(&mut destination.version))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+
+impl_go_json_deserialize!(FKInfo);
 
 // Mirrors `ast.ReferOptionType.String` for the int-valued FKInfo.On{Delete,
 // Update} (ReferOptionType is not yet in tidb-ast). NoOption(0)/unknown -> "".
@@ -700,7 +738,7 @@ pub fn get_idx_changing_field_type<'a>(
 }
 
 /// Go `TableNameInfo`.
-#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
 pub struct TableNameInfo {
     /// Table identifier.
     #[serde(rename = "id", default)]
@@ -710,17 +748,24 @@ pub struct TableNameInfo {
     pub name: CiString,
 }
 
+impl_go_json_merge_object!(TableNameInfo, destination, map, key, {
+    if go_json_field_matches(&key, "id") {
+        map.next_value_seed(NullNoopSeed(&mut destination.id))?;
+    } else if go_json_field_matches(&key, "name") {
+        map.next_value_seed(ValueMergeSeed(&mut destination.name))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+
+impl_go_json_deserialize!(TableNameInfo);
+
 /// Go `ReferredFKInfo`: a foreign key in a child table that cites this table.
-#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
 pub struct ReferredFKInfo {
     /// The referenced columns.
-    #[serde(
-        rename = "cols",
-        default,
-        deserialize_with = "crate::serde_helpers::null_default",
-        serialize_with = "crate::serde_helpers::null_if_empty"
-    )]
-    pub cols: Vec<CiString>,
+    #[serde(rename = "cols")]
+    pub cols: GoValueSlice<CiString>,
     /// The child schema.
     #[serde(rename = "child_schema", default)]
     pub child_schema: CiString,
@@ -731,6 +776,22 @@ pub struct ReferredFKInfo {
     #[serde(rename = "child_fk_name", default)]
     pub child_fk_name: CiString,
 }
+
+impl_go_json_merge_object!(ReferredFKInfo, destination, map, key, {
+    if go_json_field_matches(&key, "cols") {
+        map.next_value_seed(OptionObjectSliceSeed(destination.cols.raw_mut()))?;
+    } else if go_json_field_matches(&key, "child_schema") {
+        map.next_value_seed(ValueMergeSeed(&mut destination.child_schema))?;
+    } else if go_json_field_matches(&key, "child_table") {
+        map.next_value_seed(ValueMergeSeed(&mut destination.child_table))?;
+    } else if go_json_field_matches(&key, "child_fk_name") {
+        map.next_value_seed(ValueMergeSeed(&mut destination.child_fk_name))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+
+impl_go_json_deserialize!(ReferredFKInfo);
 
 /// Go `TableItemID`: one statistics load key.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -777,7 +838,7 @@ pub const DEFAULT_TTL_JOB_INTERVAL: &str = "24h";
 pub const OLD_DEFAULT_TTL_JOB_INTERVAL: &str = "1h";
 
 /// Go `TTLInfo`: a table's TTL (time-to-live) configuration.
-#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
 pub struct TTLInfo {
     /// The TTL column name.
     #[serde(rename = "column", default)]
@@ -803,6 +864,24 @@ pub struct TTLInfo {
     )]
     pub job_interval: String,
 }
+
+impl_go_json_merge_object!(TTLInfo, destination, map, key, {
+    if go_json_field_matches(&key, "column") {
+        map.next_value_seed(ValueMergeSeed(&mut destination.column_name))?;
+    } else if go_json_field_matches(&key, "interval_expr") {
+        map.next_value_seed(NullNoopSeed(&mut destination.interval_expr_str))?;
+    } else if go_json_field_matches(&key, "interval_time_unit") {
+        map.next_value_seed(NullNoopSeed(&mut destination.interval_time_unit))?;
+    } else if go_json_field_matches(&key, "enable") {
+        map.next_value_seed(NullNoopSeed(&mut destination.enable))?;
+    } else if go_json_field_matches(&key, "job_interval") {
+        map.next_value_seed(NullNoopSeed(&mut destination.job_interval))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+
+impl_go_json_deserialize!(TTLInfo);
 
 impl TTLInfo {
     /// Go `GetJobInterval`, in nanoseconds. Empty persisted values retain the
@@ -1287,8 +1366,8 @@ mod tests {
             name: CiString::new("fk1"),
             ref_schema: CiString::new("db2"),
             ref_table: CiString::new("parent"),
-            ref_cols: vec![CiString::new("id"), CiString::new("x")],
-            cols: vec![CiString::new("a"), CiString::new("b")],
+            ref_cols: vec![CiString::new("id"), CiString::new("x")].into(),
+            cols: vec![CiString::new("a"), CiString::new("b")].into(),
             on_delete: 2, // CASCADE
             on_update: 0, // NoOption
             ..Default::default()
@@ -1304,8 +1383,8 @@ mod tests {
             name: CiString::new("fk2"),
             ref_schema: CiString::new("db1"),
             ref_table: CiString::new("parent"),
-            ref_cols: vec![CiString::new("id")],
-            cols: vec![CiString::new("pid")],
+            ref_cols: vec![CiString::new("id")].into(),
+            cols: vec![CiString::new("pid")].into(),
             on_delete: 0,
             on_update: 1, // RESTRICT
             ..Default::default()
@@ -1518,7 +1597,7 @@ mod tests {
             id: 1,
             name: CiString::new("c1"),
             table: CiString::new("t"),
-            constraint_cols: vec![CiString::new("a")],
+            constraint_cols: vec![CiString::new("a")].into(),
             enforced: true,
             in_column: false,
             expr_string: "a < 1 && b > 0".to_owned(),
@@ -1618,6 +1697,8 @@ mod tests {
         assert_eq!(decoded.id, 1);
         assert!(decoded.ref_cols.is_empty());
         assert!(decoded.cols.is_empty());
+        assert!(!decoded.ref_cols.is_allocated());
+        assert!(!decoded.cols.is_allocated());
         assert_eq!(decoded.state, SchemaState::NONE);
         assert_eq!(decoded.version, FK_VERSION0);
 
@@ -1629,6 +1710,81 @@ mod tests {
         assert!(decoded.location_labels.is_empty());
         assert!(!decoded.location_labels.is_allocated());
         assert!(!decoded.available_partition_ids.is_allocated());
+    }
+
+    #[test]
+    fn cistr_fields_use_persisted_go_object_semantics() {
+        use crate::serde_helpers::GoJsonMerge;
+
+        let table_name: TableNameInfo = serde_json::from_str(
+            r#"{"ID":5,"name":{"o":"Table","L":"table","O":null},"unknown":1}"#,
+        )
+        .unwrap();
+        assert_eq!(table_name.id, 5);
+        assert_eq!(table_name.name.original(), "Table");
+        assert_eq!(table_name.name.lowercase(), "table");
+        // `ast.CIStr` is a Go struct on this persisted boundary; the parser
+        // crate's convenient string shorthand must not leak into model JSON.
+        assert!(serde_json::from_str::<TableNameInfo>(r#"{"name":"Table"}"#).is_err());
+
+        let mut table_name = TableNameInfo {
+            id: 1,
+            name: serde_json::from_str(r#"{"O":"before","L":"before"}"#).unwrap(),
+        };
+        let mut decoder =
+            serde_json::Deserializer::from_str(r#"{"name":{"O":7,"L":"after"},"id":9}"#);
+        assert!(table_name.go_json_merge(&mut decoder).is_err());
+        assert_eq!(table_name.name.original(), "before");
+        assert_eq!(table_name.name.lowercase(), "after");
+        assert_eq!(table_name.id, 9);
+
+        let ttl: TTLInfo = serde_json::from_str(
+            r#"{"COLUMN":{"O":"ts","L":"ts"},"column":null,"interval_expr":"1","job_interval":null}"#,
+        )
+        .unwrap();
+        assert_eq!(ttl.column_name.original(), "ts");
+        assert_eq!(ttl.interval_expr_str, "1");
+        assert_eq!(ttl.job_interval, "");
+    }
+
+    #[test]
+    fn cistr_slices_preserve_nil_empty_zero_elements_and_partial_state() {
+        use crate::serde_helpers::GoJsonMerge;
+
+        let nil = FKInfo::default();
+        let empty: FKInfo = serde_json::from_str(r#"{"ref_cols":[],"cols":[]}"#).unwrap();
+        assert!(!nil.ref_cols.is_allocated());
+        assert!(empty.ref_cols.is_allocated());
+        assert!(empty.cols.is_allocated());
+        assert!(go_json(&nil).contains(r#""ref_cols":null,"cols":null"#));
+        assert!(go_json(&empty).contains(r#""ref_cols":[],"cols":[]"#));
+
+        let old_ref: CiString = serde_json::from_str(r#"{"O":"old","L":"old"}"#).unwrap();
+        let old_col: CiString = serde_json::from_str(r#"{"O":"col","L":"col"}"#).unwrap();
+        let mut foreign_key = FKInfo {
+            ref_cols: vec![old_ref].into(),
+            cols: vec![old_col].into(),
+            on_delete: 1,
+            ..Default::default()
+        };
+        let mut decoder = serde_json::Deserializer::from_str(
+            r#"{"ref_cols":[{"O":7,"L":"merged"},null,{"O":"new","L":"new"}],"on_delete":"bad","version":1}"#,
+        );
+        assert!(foreign_key.go_json_merge(&mut decoder).is_err());
+        assert_eq!(foreign_key.ref_cols.len(), 3);
+        assert_eq!(foreign_key.ref_cols[0].original(), "old");
+        assert_eq!(foreign_key.ref_cols[0].lowercase(), "merged");
+        assert_eq!(foreign_key.ref_cols[1].original(), "");
+        assert_eq!(foreign_key.ref_cols[2].original(), "new");
+        assert_eq!(foreign_key.on_delete, 1);
+        assert_eq!(foreign_key.version, 1);
+
+        let referred: ReferredFKInfo = serde_json::from_str(
+            r#"{"cols":[null],"child_schema":{"O":"db","L":"db"},"child_table":{"O":"t","L":"t"},"child_fk_name":{"O":"fk","L":"fk"}}"#,
+        )
+        .unwrap();
+        assert!(referred.cols.is_allocated());
+        assert_eq!(referred.cols[0].original(), "");
     }
 
     #[test]
