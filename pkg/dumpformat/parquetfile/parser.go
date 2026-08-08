@@ -52,8 +52,6 @@ const (
 
 var (
 	unsupportedParquetTypes = map[schema.ConvertedType]struct{}{
-		// TODO(joechenrh): support read list type as vector
-		schema.ConvertedTypes.List: {},
 		// The below types are not used for data exported from aurora/snowflake,
 		// so we don't support them for now.
 		schema.ConvertedTypes.Map:         {},
@@ -65,7 +63,13 @@ var (
 	// readBatchSize is the number of rows to read in a single batch
 	// from parquet column reader. Modified in test.
 	readBatchSize = 128
+
+	errParquetListNullElement = errors.New("parquet list contains null element, which is not supported")
 )
+
+func errMalformedParquetListDefLevel(def, maxDef int16) error {
+	return errors.Errorf("malformed parquet definition level %d for list (maxDef=%d)", def, maxDef)
+}
 
 // FileMeta contains some analyzed metadata for a parquet file.
 type FileMeta struct {
@@ -114,6 +118,7 @@ type columnIterator[T parquet.ColumnTypes, R innerReader[T]] struct {
 	defLevels      []int16
 	repLevels      []int16
 	values         []T
+	maxDef         int16
 
 	setter setter[T]
 }
@@ -137,6 +142,9 @@ func newColumnIterator[T parquet.ColumnTypes, R innerReader[T]](
 func (it *columnIterator[T, R]) SetReader(colReader file.ColumnChunkReader) {
 	it.baseReader = colReader
 	it.reader, _ = colReader.(R)
+	if desc := colReader.Descriptor(); desc != nil {
+		it.maxDef = desc.MaxDefinitionLevel()
+	}
 }
 
 func (it *columnIterator[T, R]) Close() error {
@@ -149,9 +157,10 @@ func (it *columnIterator[T, R]) Close() error {
 	return err
 }
 
+// readNextBatch refills the level and value buffers and resets their offsets.
+// Callers should use ensureBatch to avoid discarding buffered levels. Values
+// may be shallow copies of the underlying page buffer.
 func (it *columnIterator[T, R]) readNextBatch() error {
-	// ReadBatchInPage reads a batch of values from the current page.
-	// And the values returned may be shallow copies from the internal page buffer.
 	var err error
 	it.levelsBuffered, it.valuesBuffered, err = it.reader.ReadBatchInPage(
 		it.batchSize,
@@ -165,23 +174,30 @@ func (it *columnIterator[T, R]) readNextBatch() error {
 	return err
 }
 
+func (it *columnIterator[T, R]) ensureBatch() error {
+	if it.levelOffset < it.levelsBuffered {
+		return nil
+	}
+	if err := it.readNextBatch(); err != nil {
+		return errors.Trace(err)
+	}
+	if it.levelsBuffered == 0 {
+		return io.EOF
+	}
+	return nil
+}
+
 // Next reads the next value with proper level handling.
 func (it *columnIterator[T, R]) Next(d *types.Datum) error {
-	if it.levelOffset == it.levelsBuffered {
-		err := it.readNextBatch()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if it.levelsBuffered == 0 {
-			return io.EOF
-		}
+	if err := it.ensureBatch(); err != nil {
+		return err
 	}
 
 	// Check definition level for NULL handling
 	defLevel := it.defLevels[it.levelOffset]
 	it.levelOffset++
 
-	if defLevel < it.baseReader.Descriptor().MaxDefinitionLevel() {
+	if defLevel < it.maxDef {
 		d.SetNull()
 		return nil
 	}
@@ -189,6 +205,97 @@ func (it *columnIterator[T, R]) Next(d *types.Datum) error {
 	value := it.values[it.valueOffset]
 	it.valueOffset++
 	return it.setter(value, d)
+}
+
+type vectorFloat32Iterator struct {
+	*columnIterator[float32, *file.Float32ColumnChunkReader]
+
+	vecBuf []float32
+}
+
+func newVectorFloat32Iterator(batchSize int) *vectorFloat32Iterator {
+	return &vectorFloat32Iterator{
+		columnIterator: newColumnIterator[float32, *file.Float32ColumnChunkReader](batchSize, nil),
+	}
+}
+
+// Next reads one LIST value and stores it as VectorFloat32 in d. Repetition
+// level 0 starts a list and repetition level 1 continues the current list.
+func (it *vectorFloat32Iterator) Next(d *types.Datum) error {
+	const (
+		nullListDef  int16 = 0
+		emptyListDef int16 = 1
+	)
+
+	if err := it.ensureBatch(); err != nil {
+		return err
+	}
+
+	it.vecBuf = it.vecBuf[:0]
+	def := it.defLevels[it.levelOffset]
+	rep := it.repLevels[it.levelOffset]
+	it.levelOffset++
+	if rep != 0 {
+		return errors.Errorf("invalid repetition level %d at start of list", rep)
+	}
+
+	switch {
+	case def == nullListDef:
+		d.SetNull()
+		return nil
+	case def == emptyListDef:
+		vec, err := types.CreateVectorFloat32(nil)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		d.SetVectorFloat32(vec)
+		return nil
+	case def == it.maxDef:
+		// Collect the first element below.
+	case def < nullListDef || def > it.maxDef:
+		return errMalformedParquetListDefLevel(def, it.maxDef)
+	default:
+		return errParquetListNullElement
+	}
+
+	it.vecBuf = append(it.vecBuf, it.values[it.valueOffset])
+	it.valueOffset++
+
+	for {
+		if err := it.ensureBatch(); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return err
+		}
+
+		def = it.defLevels[it.levelOffset]
+		rep = it.repLevels[it.levelOffset]
+		if rep == 0 {
+			break
+		}
+		if rep != 1 {
+			return errors.Errorf("invalid repetition level %d within list", rep)
+		}
+		it.levelOffset++
+
+		switch {
+		case def == it.maxDef:
+			it.vecBuf = append(it.vecBuf, it.values[it.valueOffset])
+			it.valueOffset++
+		case def < nullListDef || def > it.maxDef:
+			return errMalformedParquetListDefLevel(def, it.maxDef)
+		default:
+			return errParquetListNullElement
+		}
+	}
+
+	vec, err := types.CreateVectorFloat32(it.vecBuf)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	d.SetVectorFloat32(vec)
+	return nil
 }
 
 func createColumnIterator(tp parquet.Type, converted *convertedType, loc *time.Location, batchSize int) iterator {
@@ -235,6 +342,65 @@ type convertedType struct {
 	sparkRebaseMicros sparkRebaseMicrosLookup
 }
 
+// validateFloat32ListRoot validates the 3-level LIST encoding recommended by
+// the Parquet specification and the legacy 2-level encoding. The element must
+// be FLOAT so the parser can represent the result as VectorFloat32.
+func validateFloat32ListRoot(root schema.Node, leaf *schema.Column) error {
+	wrap := func(err error) error {
+		return errors.Annotate(err, "unsupported parquet list encoding")
+	}
+
+	rootGroup, ok := root.(*schema.GroupNode)
+	if !ok {
+		return wrap(errors.New("root is not group"))
+	}
+	if rootGroup.RepetitionType() != parquet.Repetitions.Optional {
+		return wrap(errors.Errorf("root repetition=%s", rootGroup.RepetitionType().String()))
+	}
+	if rootGroup.NumFields() != 1 {
+		return wrap(errors.Errorf("expect 1 child, got %d", rootGroup.NumFields()))
+	}
+
+	child := rootGroup.Field(0)
+	if child.RepetitionType() != parquet.Repetitions.Repeated {
+		return wrap(errors.Errorf("list child repetition=%s", child.RepetitionType().String()))
+	}
+
+	var element *schema.PrimitiveNode
+	switch node := child.(type) {
+	case *schema.PrimitiveNode:
+		// Legacy 2-level encoding has a repeated primitive directly under LIST.
+		element = node
+	case *schema.GroupNode:
+		if node.NumFields() != 1 {
+			return wrap(errors.Errorf("repeated group expects 1 field, got %d", node.NumFields()))
+		}
+		primitive, ok := node.Field(0).(*schema.PrimitiveNode)
+		if !ok {
+			return wrap(errors.New("element is not primitive"))
+		}
+		element = primitive
+	default:
+		return wrap(errors.Errorf("unsupported list child kind %T", child))
+	}
+
+	if element.PhysicalType() != parquet.Types.Float {
+		return wrap(errors.Errorf("element physical type=%s", element.PhysicalType().String()))
+	}
+	if leaf.PhysicalType() != parquet.Types.Float {
+		return wrap(errors.Errorf("leaf physical type=%s", leaf.PhysicalType().String()))
+	}
+	if leaf.MaxRepetitionLevel() != 1 {
+		return wrap(errors.Errorf("leaf maxRep=%d", leaf.MaxRepetitionLevel()))
+	}
+	// maxDef is 2 for the 2-level encoding and 3-level encoding with a
+	// required element; it is 3 for a 3-level optional element.
+	if maxDef := leaf.MaxDefinitionLevel(); maxDef != 2 && maxDef != 3 {
+		return wrap(errors.Errorf("leaf maxDef=%d", maxDef))
+	}
+	return nil
+}
+
 // rowGroupParser parses rows from one parquet row group.
 type rowGroupParser struct {
 	rowGroup  int
@@ -263,7 +429,12 @@ func (rgp *rowGroupParser) init(colTypes []convertedType, loc *time.Location) (e
 
 	for idx := range numCols {
 		tp := meta.Schema.Column(idx).PhysicalType()
-		iter := createColumnIterator(tp, &colTypes[idx], loc, readBatchSize)
+		var iter iterator
+		if colTypes[idx].converted == schema.ConvertedTypes.List {
+			iter = newVectorFloat32Iterator(readBatchSize)
+		} else {
+			iter = createColumnIterator(tp, &colTypes[idx], loc, readBatchSize)
+		}
 		if iter == nil {
 			return errors.Errorf("unsupported parquet type %s", tp.String())
 		}
@@ -685,6 +856,15 @@ func NewParser(
 	for i := range colTypes {
 		desc := fileSchema.Column(i)
 		colNames = append(colNames, strings.ToLower(desc.Name()))
+
+		root := fileSchema.ColumnRoot(i)
+		if root != nil && root.ConvertedType() == schema.ConvertedTypes.List {
+			if err := validateFloat32ListRoot(root, desc); err != nil {
+				return nil, errors.Trace(err)
+			}
+			colTypes[i].converted = schema.ConvertedTypes.List
+			continue
+		}
 
 		logicalType := desc.LogicalType()
 		if logicalType.IsValid() {
