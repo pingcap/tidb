@@ -15,24 +15,52 @@ reaching for *before* a full build, because they answer in a second what
 
 ### `go-package-lockdown.py` — one package-scale receipt
 
-New Go-to-Rust package lockdowns use one declarative `package.toml`, not a
-copied package-specific Python checker. From the repository root, generate the
-artifact manifest and per-Go-file AST ledgers, classify every generated
-`UNCLASSIFIED` row and complete the symbol/rule/mutation TSVs, then write and
-check the content-addressed receipt:
+New Task #325 dispatches use one complete Go package and one declarative
+`package.toml`, not a copied file-specific checker. Historical file receipts are
+absorbed seed evidence, not package-completion claims. The coordinator seeds the
+artifact manifest and per-Go-file AST ledgers from the accepted integration SHA:
 
 ```bash
 python3 rust/scripts/go-package-lockdown.py generate --spec <receipt-dir>/package.toml
+```
+
+The package owner compares and edits Rust, tests, and ledgers only. It runs no
+Cargo/Go package test, Clippy, `make`, full gate, executable evidence, or remote
+push. After the owner returns a clean local SHA, the coordinator runs each fixed
+declarative probe/mutation and an independent replay:
+
+```bash
+python3 rust/scripts/go-package-lockdown.py run-evidence \
+  --spec <receipt-dir>/package.toml --kind probe --id <probe-id>
+python3 rust/scripts/go-package-lockdown.py verify-evidence \
+  --spec <receipt-dir>/package.toml --kind probe --id <probe-id>
+python3 rust/scripts/go-package-lockdown.py run-evidence \
+  --spec <receipt-dir>/package.toml --kind mutation --id <mutation-id> --attempt <attempt-id>
+python3 rust/scripts/go-package-lockdown.py verify-evidence \
+  --spec <receipt-dir>/package.toml --kind mutation --id <mutation-id> --attempt <attempt-id>
 python3 rust/scripts/go-package-lockdown.py write-receipt --spec <receipt-dir>/package.toml
 python3 rust/scripts/go-package-lockdown.py check --spec <receipt-dir>/package.toml
 ```
 
-`generate` preserves every existing verdict by obligation ID and refuses to
-discard a removed obligation. `check` is read-only and requires exact artifact,
-AST, verdict, PORTED-symbol, semantic-rule, mutation, restoration, and receipt
-closure. The receipt records the generic checker schema rather than hashing the
-shared checker, so improving infrastructure does not reopen completed package
-claims. The complete TOML and TSV contract is documented in
+Evidence plans choose only `cargo-test` or `go-test`; the checker constructs the
+entire argv. Cargo runs from `rust/` with offline/locked `-j12`, and Go runs from
+the repository root against the pinned package. Run and replay logs are each
+content-addressed. The gate compares normalized exact named-test observations,
+so harmless elapsed-time drift is allowed while compilation-only kills fail.
+Measured probes must emit their exact content-addressed boundary observation;
+mutations prove baseline PASS, mutated FAIL/SURVIVED, and restored PASS before
+recording. Mutated production bytes are restored in `finally`.
+
+`generate` preserves a verdict only while both its AST identity and full owning
+Go blob hash remain exact; body drift clears it, and removed obligations abort.
+It also inventories every direct-test call and requires an exact helper
+fixture/no-fixture contract, closing helper-mediated testdata access.
+`check` requires exact source blobs, generated inputs, dynamic-fixture evidence,
+full-identity production Rust declarations, named test-body references,
+semantic rules, append-only hash-chained historical mutation attempts,
+current-source kills, mapped-crate change ownership, and receipt hashes. A mixed PORTED/DECLINED receipt is
+`classified-gaps`, never implementation completion. The receipt records the
+checker schema rather than the checker file hash. The full schema is in
 `rust/docs/operations/go-package-lockdown-infrastructure-execplan.md`.
 
 ### `check-source-size.sh` — the source-size ratchet

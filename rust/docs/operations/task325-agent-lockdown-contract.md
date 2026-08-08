@@ -1,173 +1,191 @@
-# Task 325 Agent Lockdown Contract
+# Task 325 package-lockdown contract
 
-This document is the self-contained handoff for agents working on the Go-to-Rust
-lockdown campaign. It intentionally contains no developer-specific paths,
-preinstalled cache locations, or assumptions about a main checkout. Go source at
-the accepted integration commit is the authority.
+This is the self-contained dispatch and integration contract for the Go-to-Rust
+campaign. Go at the coordinator-named accepted `hparser-integration` commit is
+the source of truth. No developer-specific checkout, cache, credential, or
+environment path is part of a unit brief.
 
-## Completion boundary
+## Atomic claim
 
-A package-completion claim must cover one complete upstream Go package, including
-production sources, generated and platform variants, tests, support files,
-fixtures, build metadata, integration decisions, and validation receipts. A
-single-source lockdown may be accepted as seed evidence, but it must say plainly
-that it is not whole-package completion.
+The minimum new dispatch and completion unit is one complete Go package. It
+includes every direct production, test, build-tag, platform, generated, build,
+fixture, support, and generator-input artifact. Its raw AST inventory is split
+into exhaustive per-Go-file ledgers, but those ledgers are one atomic package
+claim. A package may map to multiple write-disjoint Rust crates; one package
+owner owns the whole mapping, and no mapped crate may have another concurrent
+owner.
 
-A lockdown owns one named Go source and one Rust crate/module. It accounts for
-every declaration, field, function, branch outcome, loop, short-circuit outcome,
-closure, and directly owning test/support obligation. Every obligation has
-exactly one verdict:
+Historical single-file lockdowns remain useful, content-addressed seed
+evidence. A package unit absorbs or extends them without rewriting their
+historical receipts. A file receipt is never promoted to a package-completion
+claim, and new work is not dispatched as another partial file lockdown.
 
-- `PORTED`: names a real Rust symbol and a compiled behavioral boundary test.
-- `DECLINED`: quotes the relevant Go rule and records a measured architectural,
-  safety, or dependency boundary. A decline is not a parity claim.
-- `UNREACHABLE`: includes structural proof that the Rust entry surface cannot
-  construct or reach the state.
+Every Go AST obligation has exactly one verdict:
 
-An unclassified, duplicated, silently omitted, or placeholder obligation fails
-the lockdown. `TODO` is not a verdict. If every obligation is declined, the
-receipt is useful falsification evidence, not an implementation-completeness
-claim.
+- `PORTED` names a declared production Rust symbol and an exact behavioral test
+  body that calls its qualified identity.
+- `DECLINED` binds an exact Go quote and a checker-executed, content-addressed
+  measured probe. It is an explicit implementation gap, never parity.
+- `UNREACHABLE` binds an exact Go quote and a content-addressed structural proof
+  with at least two distinct boundary cases and proof steps.
 
-Completeness is the deliverable. Moving a differential oracle is not required.
-An unchanged ratchet is a successful result when the source boundary is fully
-closed.
+No TODO, placeholder, duplicate, omitted, or `UNCLASSIFIED` obligation closes
+an inventory. `inventory_complete` means the census is exact.
+`implementation_complete` is true only when at least one production Rust symbol
+is ported and there are zero `DECLINED` obligations. A zero-PORTED package is
+`falsification`; a mixed PORTED/DECLINED package is `classified-gaps`, not a
+transcreated package. Falsification and an unchanged oracle are successful,
+honest outcomes.
 
-## Ownership and dispatch
+## Ownership and isolation
 
-Only one active unit may own a Rust crate at a time. If all crates with eligible
-work are owned, dispatch nothing. Waiting is correct; a second concurrent owner
-is not.
+The coordinator dispatches from an exact SHA verified identical on `origin` and
+`ngaut`. The owner creates a fresh isolated worktree at that SHA and a local
+`codex/...` branch. Never use the divergent main checkout as evidence. The
+owner does not publish a task branch. The only remote code branch in this
+campaign is `hparser-integration`, and only the coordinator may update it.
 
-Do not reopen an already locked Go source or Rust file. Extend its checked-in
-inventory or receipt when evidence is incomplete. Use a divergence-driven unit
-only for a genuinely new surface not owned by a lockdown.
+One owner per crate is absolute. If any crate required by a package is already
+reserved, do not dispatch overlapping work. Waiting is correct. A package that
+maps to several crates is dispatched only when the coordinator can reserve all
+of them for the one package owner.
 
-Before editing, publish a reservation branch from the accepted integration tip.
-The branch name must identify the task, crate, and source. The reservation does
-not authorize advancing the integration branch.
+All changed, staged, or untracked paths below a mapped Rust crate since the
+accepted source commit are part of the receipt-owned file set, including
+`Cargo.toml`, helpers, production files, and tests. There is no
+"integration-only" bypass. `rust/Cargo.lock`, outside individual crate roots,
+is coordinator batch state.
 
-## Checkout isolation
+## Owner lane: compare and edit only
 
-Never use a pre-existing main checkout as source evidence. Resolve the accepted
-tip from the remote integration branch, create a fresh worktree at that exact
-commit, and use a worktree-exclusive Cargo target directory.
+The coordinator seeds `package.toml`, the artifact manifest, and per-file raw
+ledgers before handoff. The package owner then:
 
-Example, with repository-neutral placeholders:
+1. compares every Go artifact and obligation against the mapped Rust
+   production code and tests;
+2. implements every reachable Go rule in native production Rust;
+3. edits only mapped Rust files, tests, ledgers, symbol/rule matrices, evidence
+   plans, and content-addressed proof inputs in scope;
+4. returns a clean local descendant SHA plus the artifact/obligation census,
+   implementation changes, explicit gaps, structural proofs, and risks.
 
-```bash
-git fetch origin hparser-integration
-accepted_tip=$(git rev-parse origin/hparser-integration)
-unit_worktree=$(mktemp -d "${TMPDIR:-/tmp}/task325-unit.XXXXXX")
-unit_target=$(mktemp -d "${TMPDIR:-/tmp}/task325-target.XXXXXX")
-git worktree add -b codex/task325-<crate>-<source>-lockdown \
-  "$unit_worktree" "$accepted_tip"
-export CARGO_TARGET_DIR="$unit_target"
-export CARGO_BUILD_JOBS=12
+The owner runs no Cargo command, Go package test, Clippy, `make`, full-workspace
+gate, executable probe, or mutation. The owner does not push any remote ref.
+This keeps compilation and shared dependency state in one warmed lane and makes
+the owner brief independent of coordinator-local state.
+
+## Coordinator lane: execute, fix, integrate, push
+
+The coordinator is the sole executable-evidence and integration owner. It:
+
+1. generates/seeds package inventories from the accepted source commit;
+2. reviews the returned local SHA and feeds every integration or compile fix
+   under a mapped crate back into the same package-owned receipt;
+3. executes measured probes and every semantic mutation through the fixed
+   declarative runner in `rust/scripts/go-package-lockdown.py`;
+4. runs scoped Go/Cargo compilation, formatting, Clippy, lint, and the clean
+   full-workspace gate once in a warmed integration lane rather than once per
+   file or owner;
+5. batches only write-disjoint crate packages, resolves shared `Cargo.lock`
+   from the current integration tip, and creates the combined candidate;
+6. pushes the exact gated candidate only to `hparser-integration` on both
+   remotes, verifies both refs, and reclaims worktrees and targets.
+
+The fixed evidence runner constructs commands; evidence never supplies an
+executable or shell fragment. Cargo evidence runs from `rust/` as:
+
+```text
+cargo test --offline --locked -j12 --quiet -p <mapped-crate> \
+  --test <target> <exact-test> -- --exact
 ```
 
-The agent must verify that both configured remotes expose the same accepted
-integration SHA before beginning. If they differ, stop and report the divergence.
-Do not guess which remote is authoritative.
+Go evidence runs from the repository root as:
 
-## Inventory and gates
+```text
+go test ./<pinned-package> -run ^<ExactTest>$ -count=1 -v
+```
 
-Keep the inventory and machine-readable receipt beside the owning Rust module or
-its integration test. Pin every owning Go artifact by repository-relative path,
-byte length, line count, and SHA-256. The generator must use syntax-aware Go AST
-obligations; prose function lists are insufficient.
+Raw logs are independently content-addressed. Run and verification may contain
+nondeterministic timing/build lines, so the checker compares normalized exact
+named-test PASS/FAIL observations and exit/outcome, not raw-log equality. A
+compile-only failure is not a killed mutation because it proves the named test
+did not execute. Measured probes must also emit the exact content-addressed
+boundary-observation and conclusion marker; named-test success alone is not
+evidence of what the test observed. Each mutation proves baseline PASS,
+mutated FAIL or records SURVIVED, and restored PASS. Source bytes are restored
+in `finally` after survivors, failures, and runner errors.
 
-The checked-in gate must fail when any of the following changes:
+## Required evidence
 
-- an owning Go artifact path, hash, size, line count, or zero-count class;
-- an AST obligation ID, source location, kind, owner, or source quote;
-- the exact one-verdict census;
-- a `PORTED` Rust symbol or compiled anchor;
-- decline or unreachability evidence;
-- a mutation plan path, target hash, result, or receipt hash;
-- a directly owning Go test/support artifact.
+`package.toml` pins the Go package, accepted source commit, complete mapped
+crate set, extra artifacts, and receipt-owned Rust paths. The package manifest
+must match both the current tracked census and exact blobs at `source_commit`.
+Nested exclusions require direct tracked `.go` files and an exact distinct
+directory proof; `testdata` and arbitrary subtrees cannot be excluded. Every
+repository input referenced by `go:generate` is manifested, or generation fails
+closed when static resolution is impossible.
 
-Test ownership is semantic, not filename-only. Include a test or support artifact
-when it directly owns the source type, exported symbol, failpoint, exact type
-label, or source-specific behavior. Generic consumer tests are not direct owners,
-but the receipt must state the ownership rule so omissions are reviewable.
+Every ledger row binds the full owning Go source blob hash as well as its AST
+node hash. Straight-line declaration/body drift invalidates preserved verdicts.
+`DECLINED`, `UNREACHABLE`, and dynamic-fixture evidence use exact
+content-addressed JSON artifacts bound to `source_commit` and at least two
+distinct boundary cases. Dynamic fixture evidence binds the exact
+source/line/access expression and either an exact manifested resolved set or an
+explicit no-artifact conclusion; arbitrary `measured:` prose fails.
+The generated helper-call manifest inventories every `go/ast.CallExpr` in each
+direct `*_test.go`. Every exact helper call set must be joined to either a
+mechanically detected direct fixture access, a content-addressed structural
+no-fixture proof, or a measured fixture-resolution plan. Helper wrappers such
+as `LoadTestSuiteData` and `GenerateOutputIfNeeded` cannot be omitted merely
+because the direct file API sits in another function.
 
-## Parity and mutation proof
+The symbol registry names a tracked receipt-owned definition under
+`rust/crates/<crate>/src/**`. The final Rust identifier must be an actual
+`fn`, `struct`, `enum`, `trait`, `type`, `const`, `static`, or `mod`
+declaration at the full claimed module/type/impl identity, not an unrelated
+same-leaf declaration. The separate compile anchor contains an actual
+`#[test]` function whose body references the full qualified `crate::...` or
+`mapped_crate_name::...` identity. Comments, strings, local uses, and unrelated
+test bodies do not satisfy the gate. Mutation sources are likewise
+receipt-owned production `src/**/*.rs` files, never tests or support files.
 
-Port Go semantics, not recorded answers. Preserve nil versus empty values,
-integer widths and overflow, error identity and ordering, JSON field/default
-rules, string and case-folding behavior, clone/aliasing behavior, concurrency,
-and side-effect order wherever the Go source makes them observable.
+Each PORTED semantic rule has at least two distinct boundary cases and a
+one-rule mutation. Every execution has an immutable content-addressed attempt
+plan binding its baseline commit, production source, operator, constructed
+command, and exact test. Historical survivors remain owned and countable after
+a production fix. The current rule plan must have a current-source verified
+KILLED attempt; retired historical plans may end `SURVIVED` without being
+rewritten. Attempt rows form a contiguous content-addressed sequence/hash
+chain. Each append binds the prior history head plus the committed receipt or
+history-checkpoint content hash; the committed sequence is an exact prefix, so
+history cannot be deleted, reordered, or rewritten during the survivor-to-fix
+transition.
 
-Mutation-probe every reachable rule with boundary cases. Each mutation must alter
-one semantic rule, make the named boundary test fail, then be restored and make
-the test pass. A surviving mutation is a finding that the test is too weak; fix
-the test and rerun it. Record every attempt, including initially surviving probes,
-in the receipt.
+## Coordinator validation and handoff
 
-Falsification is success. If a stale brief, partial branch, assumed port, or test
-owner census is wrong, record the measured contradiction and correct the receipt.
-Do not manufacture implementation work to satisfy the brief.
-
-## Validation
-
-Use the repository Ready profile. Commands may be adapted to the owning crate and
-source, but the final unit must include:
+The coordinator selects the repository Ready profile and runs the smallest
+scoped Go/Cargo gates that prove the package, then:
 
 ```bash
-# Source-owned Go oracle tests, with repository failpoint handling when required.
-go test -run '^<OwningTest>$' ./<owning/go/package>
-
-# Rust source, inventory, mutation, and crate gates.
 cd rust
-cargo test --offline --locked -j12 -p <crate> <scoped-test-filter>
-cargo clippy --offline --locked -j12 -p <crate> --all-targets -- -D warnings
 cargo fmt --all -- --check
+cargo clippy --offline --locked -j12 -p <crate> --all-targets -- -D warnings
 cd ..
-git diff --check <accepted-tip>..HEAD
 make -j12 lint
+git diff --check <accepted-tip>..HEAD
 ```
 
-Then create a second clean detached worktree at the exact final unit SHA, with a
-different exclusive target directory, and run:
+From a second clean detached worktree at the exact combined SHA and a distinct
+target directory:
 
 ```bash
 cd rust
 cargo test --offline --locked -j12 --workspace
 ```
 
-Do not add `--all-targets` to the full workspace completion gate: it executes
-existing benchmark binaries and can turn the gate into an unrelated hours-long
-benchmark sweep. Crate-level `--all-targets` remains appropriate when required by
-the owning surface.
-
-Directly inspect the four checked-in ratchet constants before handoff. A unit must
-not weaken them to make tests pass. At the time this contract was written, the
-accepted values were query `0`, catalog `100`, table `1`, and integration `78`;
-the integration tip itself remains the current authority.
-
-## Handoff and integration
-
-The unit pushes its exact final SHA to the same task branch on both remotes and
-verifies both refs with `git ls-remote`. It returns:
-
-1. exact SHA, branch, crate, owning Go source, and accepted parent SHA;
-2. artifact and obligation census by verdict;
-3. production semantics added or corrected;
-4. every mutation result, including strengthened surviving probes;
-5. exact validation commands and results;
-6. ratchet constants and whether any oracle moved;
-7. explicit declines, unreachability proofs, and unverified external behavior;
-8. cleanup confirmation for its worktrees, targets, caches, and temporary probes.
-
-Only the coordinator advances `hparser-integration`. The coordinator independently
-gates the returned SHA in a clean worktree, applies it onto the current accepted
-tip without force-pushing, gates the combined SHA again, pushes that exact SHA to
-`hparser-integration` on both remotes, verifies both refs, and reclaims the
-integration artifacts.
-
-Never merge or rebase an entire stale task branch when its base contains unrelated
-history. Transplant only the audited source-specific commits. Resolve shared
-`Cargo.lock` changes by regenerating the lockfile from the current accepted tip;
-never choose an old whole-file side.
-
+Do not add `--all-targets` to the full workspace gate. Inspect current ratchet
+constants directly at the candidate; never weaken them to pass. The final
+coordinator report names the exact accepted and final SHAs, package and mapped
+crates, artifact/obligation verdict counts, implementation-completeness truth,
+every historical/current mutation outcome, exact commands, oracle movement (or
+plainly none), dual-remote ref verification, and cleanup.
