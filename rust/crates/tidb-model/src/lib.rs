@@ -29,6 +29,9 @@ pub mod flags;
 pub mod go_duration;
 pub mod index;
 pub mod job;
+pub mod job_args;
+#[cfg(test)]
+mod job_args_go_inventory;
 pub mod job_enums;
 pub mod masking_policy;
 #[cfg(test)]
@@ -58,6 +61,9 @@ pub use index::{
 pub use job::{
     AdminCommandOperator, HistoryInfo, InvolvingSchemaInfo, InvolvingSchemaInfoMode,
     JobPauseReason, JobResumeReason,
+};
+pub use job_args::{
+    index_arg_columnar_index_type, rename_tables_args_from_v1, IndexOp, RenameTableArgs,
 };
 pub use job_enums::{
     get_job_ver_in_use, modify_type_to_string, set_job_ver_in_use, JobState, JobVersion,
