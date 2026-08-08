@@ -837,3 +837,107 @@ func TestGCOldFKVersion(t *testing.T) {
 		ChildFKName: ast.NewCIStr("fk"),
 	}, got[0])
 }
+
+func TestGCOldPID2TIDVersion(t *testing.T) {
+	data := NewData()
+	// helper to make partitionItem
+	mk := func(partID, tblID, ver int64, tomb bool) partitionItem {
+		return partitionItem{
+			partitionID:   partID,
+			tableID:       tblID,
+			schemaVersion: ver,
+			tomb:          tomb,
+		}
+	}
+
+	// Simulate: partition 100 belongs to table 1, had 5 schema versions (3..7)
+	// partition 200 belongs to table 2, only 1 version
+	items := []partitionItem{
+		mk(100, 1, 7, false),
+		mk(100, 1, 6, false),
+		mk(100, 1, 5, true), // tomb (dropped)
+		mk(100, 1, 4, false),
+		mk(100, 1, 3, false),
+		mk(200, 2, 1, false), // unaffected - single version
+	}
+	for _, it := range items {
+		btreeSet(&data.pid2tid, it)
+	}
+	before := data.pid2tid.Load().Len()
+	require.Equal(t, 6, before)
+
+	// GC entries older than version 6
+	// For partitionID=100: keep pivot v5, delete v4 and v3
+	// For partitionID=200: keep pivot v1 (only one version)
+	deleted := data.gcOldPID2TIDVersion(6)
+	require.Equal(t, 2, deleted)
+	after := data.pid2tid.Load().Len()
+	require.Equal(t, 4, after) // v7,v6,v5 for partition 100, and v1 for partition 200
+
+	// verify surviving versions
+	type survivor struct {
+		partID int64
+		ver    int64
+		tomb   bool
+	}
+	var survivors []survivor
+	data.pid2tid.Load().Ascend(func(item partitionItem) bool {
+		survivors = append(survivors, survivor{item.partitionID, item.schemaVersion, item.tomb})
+		return true
+	})
+	require.Equal(t, []survivor{
+		{100, 5, true}, // pivot for partition 100 (tomb)
+		{100, 6, false},
+		{100, 7, false},
+		{200, 1, false}, // pivot for partition 200
+	}, survivors)
+}
+
+// TestGetPartitionedTableIDs verifies that GetPartitionedTableIDs uses the
+// "latest entry <= schemaVersion" semantics. A partition table's records may sit
+// at an older schemaVersion when the current version advanced due to an unrelated
+// DDL (or after a partition-only delta). Exact version matching would silently
+// miss such unchanged partition tables.
+func TestGetPartitionedTableIDs(t *testing.T) {
+	data := NewData()
+	mk := func(partID, tblID, ver int64, tomb bool) partitionItem {
+		return partitionItem{
+			partitionID:   partID,
+			tableID:       tblID,
+			schemaVersion: ver,
+			tomb:          tomb,
+		}
+	}
+	// table 1: partitions 100, 101, alive at v3 (e.g. from a full load / create).
+	// table 2: partition 200, alive at v3 then dropped (tomb) at v5.
+	items := []partitionItem{
+		mk(100, 1, 3, false),
+		mk(101, 1, 3, false),
+		mk(200, 2, 3, false),
+		mk(200, 2, 5, true), // table 2 dropped at v5
+	}
+	for _, it := range items {
+		btreeSet(&data.pid2tid, it)
+	}
+
+	// Current version advanced to 10 by unrelated DDLs; table 1 was never touched
+	// again, so its records remain at v3. Exact == matching would miss table 1.
+	toSet := func(ids []int64) map[int64]struct{} {
+		m := make(map[int64]struct{}, len(ids))
+		for _, id := range ids {
+			m[id] = struct{}{}
+		}
+		return m
+	}
+	require.Equal(t, toSet([]int64{1}), toSet(data.GetPartitionedTableIDs(10)),
+		"unchanged partition table (records at older version) must still be found")
+
+	// Before table 2 is dropped, both tables are visible at v4.
+	require.Equal(t, toSet([]int64{1, 2}), toSet(data.GetPartitionedTableIDs(4)))
+
+	// At v5 table 2 is dropped (tomb), only table 1 remains.
+	require.Equal(t, toSet([]int64{1}), toSet(data.GetPartitionedTableIDs(5)))
+
+	// Querying a version older than any record yields nothing.
+	require.Empty(t, data.GetPartitionedTableIDs(2))
+}
