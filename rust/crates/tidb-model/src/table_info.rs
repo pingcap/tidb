@@ -22,7 +22,9 @@
 //! full deep copy here is the stricter, independent-copy semantics clone
 //! callers expect (Rust's owned model has no pointer aliasing to reproduce).
 //!
-//! DEFERRED: `Equals`/`Hash`, which use the planner's `base.Hasher` framework.
+//! Go's `Equals`/`Hash64` identity rule is exposed explicitly by
+//! [`TableInfo::equals_id`] and [`TableInfo::hash_id`]; Rust structural equality
+//! is deliberately not overloaded with that narrower planner identity.
 
 use chrono::{DateTime, Utc};
 use tidb_ast::CiString;

@@ -16,12 +16,12 @@
 //! temp-table / table-lock enums, `SessionInfo`, `TiFlashReplicaInfo`, the
 //! table-lock info structs, and the sequence-default constants.
 //!
-//! DEFERRED (the keystone): the `TableInfo` struct itself and its ~50 methods,
-//! `PartitionInfo`, `ViewInfo`, `SequenceInfo`, and the other sub-structs.
-//! `TableInfo` gates DBInfo and much of meta/model; it is being approached
-//! bottom-up from these leaves.
+//! [`crate::TableInfo`] and [`crate::PartitionInfo`] own the enclosing table
+//! and partition rules; this module owns their persisted sub-structures and
+//! independent helpers. The package receipt records representation boundaries
+//! that cannot be expressed by the existing owned Rust model.
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, FixedOffset};
 use tidb_ast::{
     CiString, ColumnChoice, TableLockType, ViewAlgorithm, ViewCheckOption, ViewSecurity,
 };
@@ -141,7 +141,7 @@ mod user_identity_serde {
 /// zeros in the fractional second removed. `chrono`'s own serde impls are
 /// behind a feature this crate does not enable, and would not match this
 /// trimming anyway.
-fn format_go_time(time: &DateTime<Utc>) -> String {
+fn format_go_time(time: &DateTime<FixedOffset>) -> String {
     let mut formatted = time.format("%Y-%m-%dT%H:%M:%S%.9f").to_string();
     if formatted.contains('.') {
         while formatted.ends_with('0') {
@@ -151,28 +151,27 @@ fn format_go_time(time: &DateTime<Utc>) -> String {
             formatted.pop();
         }
     }
-    formatted.push('Z');
+    if time.offset().local_minus_utc() == 0 {
+        formatted.push('Z');
+    } else {
+        formatted.push_str(&time.format("%:z").to_string());
+    }
     formatted
 }
 
-fn parse_go_time<E: serde::de::Error>(text: &str) -> Result<DateTime<Utc>, E> {
-    DateTime::parse_from_rfc3339(text)
-        .map(|time| time.with_timezone(&Utc))
-        .map_err(serde::de::Error::custom)
+fn parse_go_time<E: serde::de::Error>(text: &str) -> Result<DateTime<FixedOffset>, E> {
+    DateTime::parse_from_rfc3339(text).map_err(serde::de::Error::custom)
 }
 
-/// Go's `time.Time` zero value is year 1, but a missing key here only ever
-/// arises from a truncated encoding; the struct's own `Default` uses the epoch
-/// and this keeps the two consistent.
-fn unix_epoch() -> DateTime<Utc> {
-    DateTime::<Utc>::UNIX_EPOCH
+fn go_zero_time() -> DateTime<FixedOffset> {
+    DateTime::parse_from_rfc3339("0001-01-01T00:00:00Z").expect("Go's zero time is valid RFC3339")
 }
 
 mod go_time_serde {
-    use super::{format_go_time, parse_go_time, DateTime, Utc};
+    use super::{format_go_time, parse_go_time, DateTime, FixedOffset};
 
     pub fn serialize<S: serde::Serializer>(
-        value: &DateTime<Utc>,
+        value: &DateTime<FixedOffset>,
         serializer: S,
     ) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(&format_go_time(value))
@@ -180,7 +179,7 @@ mod go_time_serde {
 
     pub fn deserialize<'de, D: serde::Deserializer<'de>>(
         deserializer: D,
-    ) -> Result<DateTime<Utc>, D::Error> {
+    ) -> Result<DateTime<FixedOffset>, D::Error> {
         let text = <String as serde::Deserialize>::deserialize(deserializer)?;
         parse_go_time(&text)
     }
@@ -241,13 +240,17 @@ pub struct StatsWindowSettings {
     /// The window start time.
     #[serde(
         rename = "window_start",
-        default = "unix_epoch",
+        default = "go_zero_time",
         with = "go_time_serde"
     )]
-    pub window_start: DateTime<Utc>,
+    pub window_start: DateTime<FixedOffset>,
     /// The window end time.
-    #[serde(rename = "window_end", default = "unix_epoch", with = "go_time_serde")]
-    pub window_end: DateTime<Utc>,
+    #[serde(
+        rename = "window_end",
+        default = "go_zero_time",
+        with = "go_time_serde"
+    )]
+    pub window_end: DateTime<FixedOffset>,
     /// How the window repeats.
     #[serde(rename = "repeat_type", default)]
     pub repeat_type: WindowRepeatType,
@@ -259,8 +262,8 @@ pub struct StatsWindowSettings {
 impl Default for StatsWindowSettings {
     fn default() -> Self {
         StatsWindowSettings {
-            window_start: DateTime::<Utc>::UNIX_EPOCH,
-            window_end: DateTime::<Utc>::UNIX_EPOCH,
+            window_start: go_zero_time(),
+            window_end: go_zero_time(),
             repeat_type: WindowRepeatType::NEVER,
             repeat_interval: 0,
         }
@@ -373,7 +376,7 @@ impl<'de> serde::Deserialize<'de> for StatsOptions {
         let stats_window_settings = if has_window {
             let parse = |text: Option<String>| match text {
                 Some(text) => parse_go_time(&text),
-                None => Ok(unix_epoch()),
+                None => Ok(go_zero_time()),
             };
             Some(Box::new(StatsWindowSettings {
                 window_start: parse(wire.window_start)?,
@@ -1460,8 +1463,8 @@ mod tests {
 
         let with = StatsOptions {
             stats_window_settings: Some(Box::new(StatsWindowSettings {
-                window_start: DateTime::<Utc>::UNIX_EPOCH,
-                window_end: DateTime::<Utc>::UNIX_EPOCH,
+                window_start: DateTime::parse_from_rfc3339("1970-01-01T00:00:00Z").unwrap(),
+                window_end: DateTime::parse_from_rfc3339("1970-01-01T00:00:00Z").unwrap(),
                 repeat_type: WindowRepeatType::DAY,
                 repeat_interval: 2,
             })),
@@ -1481,12 +1484,25 @@ mod tests {
     // Go's time.Time marshals as RFC 3339 with trailing fractional zeros cut.
     #[test]
     fn go_time_format() {
-        let base = DateTime::<Utc>::UNIX_EPOCH;
+        let base = DateTime::parse_from_rfc3339("1970-01-01T00:00:00Z").unwrap();
         assert_eq!(format_go_time(&base), "1970-01-01T00:00:00Z");
         let fractional = base + chrono::Duration::nanoseconds(500_000_000);
         assert_eq!(format_go_time(&fractional), "1970-01-01T00:00:00.5Z");
         let nanos = base + chrono::Duration::nanoseconds(123_456_789);
         assert_eq!(format_go_time(&nanos), "1970-01-01T00:00:00.123456789Z");
+        assert_eq!(format_go_time(&go_zero_time()), "0001-01-01T00:00:00Z");
+
+        let offset = DateTime::parse_from_rfc3339("2026-08-08T12:00:00+05:30").unwrap();
+        assert_eq!(format_go_time(&offset), "2026-08-08T12:00:00+05:30");
+        let decoded: StatsWindowSettings = serde_json::from_str(
+            r#"{"window_start":"2026-08-08T12:00:00+05:30","window_end":"0001-01-01T00:00:00Z","repeat_type":0,"repeat_interval":0}"#,
+        )
+        .unwrap();
+        assert_eq!(decoded.window_start.offset().local_minus_utc(), 19_800);
+        assert_eq!(
+            go_json(&decoded),
+            r#"{"window_start":"2026-08-08T12:00:00+05:30","window_end":"0001-01-01T00:00:00Z","repeat_type":0,"repeat_interval":0}"#
+        );
     }
 
     #[test]
