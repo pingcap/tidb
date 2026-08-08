@@ -46,6 +46,7 @@ pub mod bounded_min_heap;
 pub mod builder;
 pub mod cache_metrics_labels;
 pub mod cmsketch;
+pub mod column;
 pub mod constants;
 pub mod correlation;
 pub mod count_metrics;
@@ -170,6 +171,10 @@ pub use cmsketch::{
     new_cmsketch_and_topn_with_tie_stabilization, sort_topn_meta, topn_meta_compare, CodecError,
 };
 pub use cmsketch::{hash_bytes, CmsSketch, Hash128, MergeError, TopN, TopNEntry};
+pub use column::{
+    column_is_all_evicted, column_stats_validity, copy_column, empty_column, Column, ColumnInfo,
+    ColumnValidity, ColumnValidityContext,
+};
 pub use constants::{DEFAULT_HISTOGRAM_BUCKETS, DEFAULT_TOP_N_VALUE};
 pub use correlation::calc_correlation;
 pub use count_metrics::HistogramCountSummary;
