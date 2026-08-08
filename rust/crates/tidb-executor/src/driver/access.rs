@@ -394,12 +394,10 @@ fn commit_index_range_source(
         .iter()
         .find(|index| index.id == index_id)
         .expect("the chosen path names an index of this table");
-    *index_order = Some(IndexAccessOrder {
-        // Only the key parts that store a WHOLE column carry the column's own
-        // order; see `KvIndex::ordered_column_offsets`.
-        column_offsets: index.ordered_column_offsets().to_vec(),
-        single_range: ranges.len() == 1,
-    });
+    *index_order = Some(IndexAccessOrder::from_ranges(
+        index.ordered_column_offsets(),
+        &ranges,
+    ));
     if let Some(trace) = trace {
         let index_columns: Vec<String> = index
             .column_offsets
@@ -580,9 +578,7 @@ pub(crate) fn offer_keep_order(
     let Some(order) = index_order else {
         return;
     };
-    if select.order_by.is_empty()
-        || !order_is_index_order(select, &order.column_offsets, order.single_range, resolver)
-    {
+    if select.order_by.is_empty() || !order_is_index_order(select, order, resolver) {
         return;
     }
     if let Some(access) = source.table_access() {
@@ -667,8 +663,13 @@ pub(crate) fn choose_index_range_path(
     // conjuncts the source accepts is settled after the path is chosen. Go
     // has the same ordering and resolves it through the physical property.
     let cap = costing_limit_cap(select);
-    let satisfied_by = |offsets: &[usize], single_range: bool| {
-        select.order_by.is_empty() || order_is_index_order(select, offsets, single_range, &resolver)
+    let satisfied_by = |offsets: &[usize], ranges: &[IndexRange]| {
+        select.order_by.is_empty()
+            || order_is_index_order(
+                select,
+                &IndexAccessOrder::from_ranges(offsets, ranges),
+                &resolver,
+            )
     };
     let limit = cap.map(|cap| crate::access_cost::PushedLimit {
         cap,
@@ -1788,6 +1789,40 @@ pub(crate) struct IndexAccessOrder {
     /// concatenation is not index order, so only a single range establishes
     /// the total order an `ORDER BY` can be discharged against.
     single_range: bool,
+    /// Key positions fixed to one value by the single range. Go carries the
+    /// equivalent fact in `AccessPath.ConstCols` and skips those positions in
+    /// `matchProperty` Case 2.
+    constant_positions: Vec<bool>,
+}
+
+impl IndexAccessOrder {
+    fn from_ranges(column_offsets: &[usize], ranges: &[IndexRange]) -> Self {
+        // Go `matchProperty` Case 2: a key part fixed to one value does not
+        // participate in the varying row order, so ORDER BY may start after
+        // it. Case 3 (different point values in several ranges) requires a
+        // merge-sort operator this tier does not have and remains excluded by
+        // `single_range`.
+        let constant_positions = if let [range] = ranges {
+            column_offsets
+                .iter()
+                .enumerate()
+                .map(|(position, _)| {
+                    range
+                        .low
+                        .get(position)
+                        .zip(range.high.get(position))
+                        .is_some_and(|(low, high)| low == high)
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        Self {
+            column_offsets: column_offsets.to_vec(),
+            single_range: ranges.len() == 1,
+            constant_positions,
+        }
+    }
 }
 
 /// The row cap a `LIMIT` may push into the source, or `None` to leave all the
@@ -1873,7 +1908,7 @@ fn scan_limit_cap(
     }
     // An ORDER BY the access path already produces.
     let order = index_order?;
-    order_is_index_order(select, &order.column_offsets, order.single_range, resolver).then_some(cap)
+    order_is_index_order(select, order, resolver).then_some(cap)
 }
 
 /// Whether an index access path over `column_offsets` already produces the
@@ -1886,24 +1921,136 @@ fn scan_limit_cap(
 /// would have used.
 fn order_is_index_order(
     select: &tidb_ast::SelectStmt,
-    column_offsets: &[usize],
-    single_range: bool,
+    order: &IndexAccessOrder,
     resolver: &ScopeResolver<'_>,
 ) -> bool {
-    if !single_range || select.order_by.len() > column_offsets.len() {
+    if !order.single_range || select.order_by.len() > order.column_offsets.len() {
         return false;
     }
-    select
-        .order_by
-        .iter()
-        .zip(column_offsets)
-        .all(|(item, offset)| {
-            // The cursor is forward-only, so a descending key is not this order.
-            !item.desc
-                && matches!(
-                    rewrite_expr_resolved(&item.expr, resolver),
-                    Ok(Expression::Column(column))
-                        if usize::try_from(column.index).ok() == Some(*offset)
-                )
-        })
+    let mut key_position = 0;
+    for item in &select.order_by {
+        // The cursor is forward-only, so a descending key is not this order.
+        if item.desc {
+            return false;
+        }
+        let Ok(Expression::Column(column)) = rewrite_expr_resolved(&item.expr, resolver) else {
+            return false;
+        };
+        let Some(wanted_offset) = usize::try_from(column.index).ok() else {
+            return false;
+        };
+        loop {
+            let Some(offset) = order.column_offsets.get(key_position) else {
+                return false;
+            };
+            // Case 1 precedes Case 2 in Go: ORDER BY the fixed column itself
+            // still matches that key part. Only a different requested column
+            // causes the fixed key part to be skipped.
+            if *offset == wanted_offset {
+                key_position += 1;
+                break;
+            }
+            if order
+                .constant_positions
+                .get(key_position)
+                .copied()
+                .unwrap_or(false)
+            {
+                key_position += 1;
+                continue;
+            }
+            return false;
+        }
+    }
+    true
+}
+
+#[cfg(test)]
+pub(crate) fn find_best_task_compile_anchors() -> &'static [&'static str] {
+    let _ = commit_index_range_source;
+    let _ = install_contradiction_dual;
+    let _ = negotiate_scan_filter;
+    let _ = try_batch_point_get;
+    let _ = try_point_get;
+    &[
+        "driver::access::commit_index_range_source",
+        "driver::access::install_contradiction_dual",
+        "driver::access::negotiate_scan_filter",
+        "driver::access::try_batch_point_get",
+        "driver::access::try_point_get",
+    ]
+}
+
+#[cfg(test)]
+mod find_best_task_property_tests {
+    use super::*;
+
+    fn select(sql: &str) -> tidb_ast::SelectStmt {
+        let statement = tidb_parser::parse(sql).expect("query parses");
+        let Stmt::Query(query) = statement else {
+            panic!("expected query")
+        };
+        let QueryStmt::Select(select) = &*query else {
+            panic!("expected select")
+        };
+        (**select).clone()
+    }
+
+    #[test]
+    fn match_property_skips_a_single_constant_index_prefix_only() {
+        let columns = vec![
+            ("a".to_owned(), FieldType::new(FieldTypeCode::LongLong)),
+            ("b".to_owned(), FieldType::new(FieldTypeCode::LongLong)),
+        ];
+        let scope = PlanTrace::single_table_scope("t", None, columns);
+        let resolver = ScopeResolver { scope: &scope };
+        let query = select("SELECT b FROM t WHERE a = 1 ORDER BY b");
+        let order_by_fixed = select("SELECT a FROM t WHERE a = 1 ORDER BY a");
+        let fixed_prefix = IndexAccessOrder {
+            column_offsets: vec![0, 1],
+            single_range: true,
+            constant_positions: vec![true, false],
+        };
+        assert!(order_is_index_order(&query, &fixed_prefix, &resolver));
+        assert!(order_is_index_order(
+            &order_by_fixed,
+            &fixed_prefix,
+            &resolver
+        ));
+
+        let varying_prefix = IndexAccessOrder {
+            constant_positions: vec![false, false],
+            ..fixed_prefix
+        };
+        assert!(!order_is_index_order(&query, &varying_prefix, &resolver));
+
+        let several_ranges = IndexAccessOrder {
+            single_range: false,
+            constant_positions: vec![true, false],
+            ..varying_prefix
+        };
+        assert!(!order_is_index_order(&query, &several_ranges, &resolver));
+    }
+
+    #[test]
+    fn point_get_rejects_either_open_endpoint() {
+        let closed = IndexRange {
+            low: vec![Datum::Int(7)],
+            high: vec![Datum::Int(7)],
+            low_exclusive: false,
+            high_exclusive: false,
+        };
+        assert_eq!(
+            single_point_handle(std::slice::from_ref(&closed)),
+            Some(TableHandle::Int(7))
+        );
+
+        let mut low_open = closed.clone();
+        low_open.low_exclusive = true;
+        assert_eq!(single_point_handle(&[low_open]), None);
+
+        let mut high_open = closed;
+        high_open.high_exclusive = true;
+        assert_eq!(single_point_handle(&[high_open]), None);
+    }
 }

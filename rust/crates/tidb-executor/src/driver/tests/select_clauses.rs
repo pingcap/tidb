@@ -379,3 +379,39 @@ fn an_empty_correlated_having_subquery_is_null_and_drops_its_row() {
         }
     }
 }
+
+/// Go's `findBestTask4LogicalDataSource` routes `ds.SampleInfo != nil` to
+/// `convertToSampleTable`; it never treats the clause as an ordinary scan.
+/// Rust parses the same syntax but has no TiKV region-sampling model, so the
+/// honest boundary is a refusal. The control query proves the table remains a
+/// normal readable table and that the error belongs to `TABLESAMPLE` itself.
+#[test]
+fn a_table_sample_clause_is_refused_rather_than_answered_in_full() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on("CREATE TABLE smp (a BIGINT PRIMARY KEY)", &mut catalog).unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on("INSERT INTO smp VALUES (1), (2), (3)", &mut catalog, &ctx).unwrap();
+
+    for sql in [
+        "SELECT a FROM smp TABLESAMPLE REGIONS()",
+        "SELECT a FROM smp TABLESAMPLE BERNOULLI (10 PERCENT)",
+        "SELECT a FROM smp TABLESAMPLE SYSTEM (2 ROWS) REPEATABLE(7)",
+    ] {
+        assert!(
+            matches!(
+                run_select_on(sql, &catalog, &ctx),
+                Err(DriverError::Unsupported(_))
+            ),
+            "{sql} must refuse rather than answer the whole table",
+        );
+    }
+
+    assert_eq!(
+        run_select_on("SELECT a FROM smp", &catalog, &ctx).unwrap(),
+        vec![
+            vec![Datum::Int(1)],
+            vec![Datum::Int(2)],
+            vec![Datum::Int(3)]
+        ],
+    );
+}
