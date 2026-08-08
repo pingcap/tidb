@@ -945,6 +945,9 @@ func makeJoinWithDetector(detector *ConflictDetector, left, right *Node, vertexH
 	if !checkResult.Connected() {
 		checkResult = detector.TryCreateCartesianCheckResult(left, right)
 		if checkResult == nil {
+			// Dead end: no edge connects these fragments and cartesian
+			// fallback is unavailable (see #69986 for the nil-deref panic
+			// this would cause if we returned an error instead).
 			return nil, nil
 		}
 	}
@@ -989,6 +992,9 @@ func makeBushyTree(ctx base.PlanContext, detector *ConflictDetector, cartesianNo
 				return nil, err
 			}
 			if newJoin == nil {
+				// Dead end: no real edge spans these fragments and cartesian
+				// fallback is unavailable. Propagate nil to let the caller
+				// fall through to the partial plan already built.
 				return nil, nil
 			}
 			iterNodes = append(iterNodes, newJoin)

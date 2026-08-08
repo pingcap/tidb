@@ -127,18 +127,18 @@ func TestMakeBushyTreeDeadEnd(t *testing.T) {
 	detector := &ConflictDetector{
 		allInnerJoin: false,
 		innerEdges: []*edge{
-			{tes: intset.NewFastIntSet(0, 1), idx: 0, joinType: base.InnerJoin, skipRules: true},
+			{tes: intset.NewFastIntSet(0, 1), idx: 0, joinType: base.InnerJoin, skipRules: false},
 			{
 				tes:           intset.NewFastIntSet(0, 1, 2, 3),
 				idx:           2,
 				joinType:      base.InnerJoin,
-				skipRules:     true,
+				skipRules:     false,
 				leftVertexes:  intset.NewFastIntSet(0, 1),
 				rightVertexes: intset.NewFastIntSet(2, 3),
 			},
 		},
 		nonInnerEdges: []*edge{
-			{tes: intset.NewFastIntSet(2, 3), idx: 1, joinType: base.LeftOuterJoin, skipRules: true,
+			{tes: intset.NewFastIntSet(2, 3), idx: 1, joinType: base.LeftOuterJoin, skipRules: false,
 				leftVertexes: intset.NewFastIntSet(2), rightVertexes: intset.NewFastIntSet(3)},
 		},
 	}
