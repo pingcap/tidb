@@ -140,7 +140,7 @@ pub use analyze_jobs::{
     go_zero_time, AnalyzeJob, AnalyzeProgress, JobType, ANALYZE_FAILED, ANALYZE_FINISHED,
     ANALYZE_PENDING, ANALYZE_RUNNING, DUMP_TIME_INTERVAL, MAX_DELTA,
 };
-pub use analyze_results::{AnalyzeHistogramLifecycle, AnalyzeResult, AnalyzeResults};
+pub use analyze_results::{AnalyzeError, AnalyzeHistogramLifecycle, AnalyzeResult, AnalyzeResults};
 pub use analyze_table_id::{AnalyzeTableId, NON_PARTITION_TABLE_ID};
 pub use analyze_version_policy::analyze_version_matches;
 pub use async_load::{NeededStatsMap, StatsLoadItem, TableItemId, SHARD_COUNT};

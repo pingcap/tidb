@@ -59,7 +59,7 @@ fn source_outer_result_destroys_every_inner_result_and_keeps_metadata() {
         ..ResultProbe::default()
     };
     let mut results = AnalyzeResults {
-        error: Some("measured".to_owned()),
+        error: Some(std::io::Error::other("measured").into()),
         job: None,
         results: vec![Some(inner()), Some(inner())],
         table_id: AnalyzeTableId::new(42, NON_PARTITION_TABLE_ID),

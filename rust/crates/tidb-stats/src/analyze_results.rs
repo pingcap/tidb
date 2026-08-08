@@ -16,6 +16,9 @@
 
 use crate::{AnalyzeJob, AnalyzeTableId};
 
+/// The dynamic error slot carried by Go `AnalyzeResults.Err`.
+pub type AnalyzeError = Box<dyn std::error::Error + Send + Sync + 'static>;
+
 /// Histogram-side lifecycle invoked by Go `DestroyAndPutToPool`.
 pub trait AnalyzeHistogramLifecycle {
     fn destroy_and_put_to_pool(&mut self);
@@ -60,7 +63,7 @@ impl<H: AnalyzeHistogramLifecycle, C, T, F> AnalyzeResult<H, C, T, F> {
 /// Complete results returned by one analyze task.
 #[derive(Debug)]
 pub struct AnalyzeResults<H, C, T, F> {
-    pub error: Option<String>,
+    pub error: Option<AnalyzeError>,
     pub job: Option<AnalyzeJob>,
     pub results: Vec<Option<AnalyzeResult<H, C, T, F>>>,
     pub table_id: AnalyzeTableId,
