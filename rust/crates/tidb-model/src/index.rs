@@ -423,26 +423,17 @@ pub struct IndexInfo {
     pub region_split_policy: Option<RegionSplitPolicy>,
 }
 
-impl PartialEq for IndexInfo {
-    fn eq(&self, other: &Self) -> bool {
-        self.id == other.id
-    }
-}
-
-impl Eq for IndexInfo {}
-
-impl std::hash::Hash for IndexInfo {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        std::hash::Hash::hash(&self.id, state);
-    }
-}
-
 impl IndexInfo {
     /// Go `Hash64`/`Equals` use only the persisted index ID. Rust's standard
     /// equality follows that exact identity contract.
     #[must_use]
     pub fn equals_id(&self, other: &Self) -> bool {
         self.id == other.id
+    }
+
+    /// Go `Hash64`: feed only the persisted index ID to the supplied hasher.
+    pub fn hash_id<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::hash::Hash::hash(&self.id, state);
     }
 
     /// Go `IsChanging`: whether this is a modify-index temporary index.
@@ -653,7 +644,7 @@ pub fn find_index_column_by_name<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::hash::{Hash, Hasher};
+    use std::hash::Hasher;
 
     // Go's `ast.IndexType` is a plain `int`, and its declaration warns that a
     // value "may come from a previous version persisted in TableInfo. So you
@@ -814,11 +805,11 @@ mod tests {
             name: CiString::new("left"),
             ..Default::default()
         };
-        assert_eq!(left, right);
-        assert_ne!(left, other);
+        assert!(left.equals_id(&right));
+        assert!(!left.equals_id(&other));
         let hash = |index: &IndexInfo| {
             let mut state = std::collections::hash_map::DefaultHasher::new();
-            index.hash(&mut state);
+            index.hash_id(&mut state);
             state.finish()
         };
         assert_eq!(hash(&left), hash(&right));
