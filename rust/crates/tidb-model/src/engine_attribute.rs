@@ -15,11 +15,13 @@
 //! `pkg/meta/model/engine_attribute.go`: the JSON `ENGINE_ATTRIBUTE` table
 //! property and its storage-class definitions.
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::job::PersistedRawJson;
 use crate::serde_helpers::{
     go_json_field_matches, ignore_unknown, impl_go_json_deserialize, impl_go_json_merge_object,
+    NullNoopSeed, OptionObjectSliceSeed, OptionPointerSliceSeed, OptionScalarSeed,
+    OptionValueSliceSeed,
 };
 
 /// Go `EngineAttribute`: the JSON form of a table's `ENGINE_ATTRIBUTE`.
@@ -66,7 +68,7 @@ pub const STORAGE_CLASS_TIER_IA: &str = "IA";
 pub const STORAGE_CLASS_TIER_DEFAULT: &str = STORAGE_CLASS_TIER_STANDARD;
 
 /// Go `StorageClassDef`: the tier and scope definition of a storage class.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize)]
 #[serde(default)]
 pub struct StorageClassDef {
     /// The tier name.
@@ -84,6 +86,24 @@ pub struct StorageClassDef {
     pub transitions: Option<Vec<StorageClassTransitRule>>,
 }
 
+impl_go_json_merge_object!(StorageClassDef, destination, map, key, {
+    if go_json_field_matches(&key, "tier") {
+        map.next_value_seed(NullNoopSeed(&mut destination.tier))?;
+    } else if go_json_field_matches(&key, "names_in") {
+        map.next_value_seed(OptionValueSliceSeed(&mut destination.names_in))?;
+    } else if go_json_field_matches(&key, "less_than") {
+        map.next_value_seed(OptionScalarSeed(&mut destination.less_than))?;
+    } else if go_json_field_matches(&key, "values_in") {
+        map.next_value_seed(OptionValueSliceSeed(&mut destination.values_in))?;
+    } else if go_json_field_matches(&key, "transitions") {
+        map.next_value_seed(OptionObjectSliceSeed(&mut destination.transitions))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+
+impl_go_json_deserialize!(StorageClassDef);
+
 impl StorageClassDef {
     /// Go `HasNoScopeDef`: whether no scope (names/less-than/values) is set.
     #[must_use]
@@ -95,7 +115,7 @@ impl StorageClassDef {
 }
 
 /// Go `StorageClassSettings`: a set of storage-class definitions.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize)]
 #[serde(default)]
 pub struct StorageClassSettings {
     /// The definitions.
@@ -103,8 +123,18 @@ pub struct StorageClassSettings {
     pub defs: Option<Vec<Option<StorageClassDef>>>,
 }
 
+impl_go_json_merge_object!(StorageClassSettings, destination, map, key, {
+    if go_json_field_matches(&key, "defs") {
+        map.next_value_seed(OptionPointerSliceSeed(&mut destination.defs))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+
+impl_go_json_deserialize!(StorageClassSettings);
+
 /// Go `StorageClassTransitRule`: when a tier transition happens.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize)]
 #[serde(default)]
 pub struct StorageClassTransitRule {
     /// The tier to transition to.
@@ -115,6 +145,20 @@ pub struct StorageClassTransitRule {
     #[serde(default, skip_serializing_if = "is_zero")]
     pub after_seconds: u64,
 }
+
+impl_go_json_merge_object!(StorageClassTransitRule, destination, map, key, {
+    if go_json_field_matches(&key, "tier") {
+        map.next_value_seed(NullNoopSeed(&mut destination.tier))?;
+    } else if go_json_field_matches(&key, "after_days") {
+        map.next_value_seed(NullNoopSeed(&mut destination.after_days))?;
+    } else if go_json_field_matches(&key, "after_seconds") {
+        map.next_value_seed(NullNoopSeed(&mut destination.after_seconds))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+
+impl_go_json_deserialize!(StorageClassTransitRule);
 
 fn is_zero(v: &u64) -> bool {
     *v == 0
@@ -292,6 +336,45 @@ mod tests {
             serde_json::from_value(serde_json::json!({})).unwrap();
         assert_eq!(transition.tier, "");
         assert_eq!(transition.after_days, 0);
+    }
+
+    #[test]
+    fn storage_class_objects_continue_after_recoverable_field_errors() {
+        use crate::serde_helpers::GoJsonMerge;
+
+        let mut definition = StorageClassDef {
+            tier: "before".to_owned(),
+            ..Default::default()
+        };
+        let mut decoder = serde_json::Deserializer::from_str(
+            r#"{"tier":1,"names_in":[null,"ok"],"less_than":"later","TIER":"final"}"#,
+        );
+        assert!(definition.go_json_merge(&mut decoder).is_err());
+        assert_eq!(definition.tier, "final");
+        assert_eq!(
+            definition.names_in,
+            Some(vec![String::new(), "ok".to_owned()])
+        );
+        assert_eq!(definition.less_than.as_deref(), Some("later"));
+
+        let definition: StorageClassDef = serde_json::from_str(
+            r#"{"transitions":[null,{"TIER":"IA","after_days":null,"after_seconds":2}]}"#,
+        )
+        .unwrap();
+        let transitions = definition.transitions.unwrap();
+        assert_eq!(transitions.len(), 2);
+        assert_eq!(transitions[0].tier, "");
+        assert_eq!(transitions[0].after_days, 0);
+        assert_eq!(transitions[1].tier, "IA");
+        assert_eq!(transitions[1].after_days, 0);
+        assert_eq!(transitions[1].after_seconds, 2);
+
+        let settings: StorageClassSettings =
+            serde_json::from_str(r#"{"defs":[{"tier":"first"}],"DEFS":[null,{"tier":"last"}]}"#)
+                .unwrap();
+        let defs = settings.defs.unwrap();
+        assert!(defs[0].is_none());
+        assert_eq!(defs[1].as_ref().unwrap().tier, "last");
     }
 
     #[test]

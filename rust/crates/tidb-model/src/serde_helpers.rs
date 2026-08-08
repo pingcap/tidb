@@ -676,6 +676,151 @@ where
     }
 }
 
+/// Replaces an optional Go slice of non-pointer values. JSON null retains a
+/// nil slice, a null array element leaves that element at its zero value, and
+/// recoverable element errors do not suppress later elements.
+pub(crate) struct OptionValueSliceSeed<'a, T>(pub(crate) &'a mut Option<Vec<T>>);
+
+impl<'de, T> DeserializeSeed<'de> for OptionValueSliceSeed<'_, T>
+where
+    T: Default + Deserialize<'de>,
+{
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct ValueSliceVisitor<'a, T>(&'a mut Option<Vec<T>>);
+
+        impl<'de, T> Visitor<'de> for ValueSliceVisitor<'_, T>
+        where
+            T: Default + Deserialize<'de>,
+        {
+            type Value = ();
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("null or an array of JSON values")
+            }
+
+            fn visit_none<E>(self) -> Result<Self::Value, E> {
+                *self.0 = None;
+                Ok(())
+            }
+
+            fn visit_unit<E>(self) -> Result<Self::Value, E> {
+                *self.0 = None;
+                Ok(())
+            }
+
+            fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                let RawArrayMembers(elements) = RawArrayMembers::deserialize(deserializer)?;
+                let mut decoded = Vec::with_capacity(elements.len());
+                let mut first_error = None;
+                for raw in elements {
+                    let mut value = T::default();
+                    if raw.get() != "null" {
+                        let mut element = serde_json::Deserializer::from_str(raw.get());
+                        match T::deserialize(&mut element).and_then(|value| {
+                            element.end()?;
+                            Ok(value)
+                        }) {
+                            Ok(element_value) => value = element_value,
+                            Err(error) => {
+                                first_error.get_or_insert_with(|| error.to_string());
+                            }
+                        }
+                    }
+                    decoded.push(value);
+                }
+                *self.0 = Some(decoded);
+                if let Some(error) = first_error {
+                    return Err(serde::de::Error::custom(error));
+                }
+                Ok(())
+            }
+        }
+
+        deserializer.deserialize_option(ValueSliceVisitor(self.0))
+    }
+}
+
+/// Replaces an optional Go slice of non-pointer structs while decoding each
+/// object through [`GoJsonMerge`]. JSON null produces the struct zero value.
+pub(crate) struct OptionObjectSliceSeed<'a, T>(pub(crate) &'a mut Option<Vec<T>>);
+
+impl<'de, T> DeserializeSeed<'de> for OptionObjectSliceSeed<'_, T>
+where
+    T: Default + GoJsonMerge,
+{
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct ObjectSliceVisitor<'a, T>(&'a mut Option<Vec<T>>);
+
+        impl<'de, T> Visitor<'de> for ObjectSliceVisitor<'_, T>
+        where
+            T: Default + GoJsonMerge,
+        {
+            type Value = ();
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("null or an array of JSON objects")
+            }
+
+            fn visit_none<E>(self) -> Result<Self::Value, E> {
+                *self.0 = None;
+                Ok(())
+            }
+
+            fn visit_unit<E>(self) -> Result<Self::Value, E> {
+                *self.0 = None;
+                Ok(())
+            }
+
+            fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                let RawArrayMembers(elements) = RawArrayMembers::deserialize(deserializer)?;
+                let mut decoded = Vec::with_capacity(elements.len());
+                let mut first_error = None;
+                for raw in elements {
+                    let mut value = T::default();
+                    if raw.get() != "null" {
+                        let mut element = serde_json::Deserializer::from_str(raw.get());
+                        if let Err(error) = value
+                            .go_json_merge(&mut element)
+                            .and_then(|()| element.end())
+                        {
+                            if is_fatal_json_error(&error) {
+                                decoded.push(value);
+                                *self.0 = Some(decoded);
+                                return Err(serde::de::Error::custom(error));
+                            }
+                            first_error.get_or_insert_with(|| error.to_string());
+                        }
+                    }
+                    decoded.push(value);
+                }
+                *self.0 = Some(decoded);
+                if let Some(error) = first_error {
+                    return Err(serde::de::Error::custom(error));
+                }
+                Ok(())
+            }
+        }
+
+        deserializer.deserialize_option(ObjectSliceVisitor(self.0))
+    }
+}
+
 /// Merges a JSON object into a Go map field and clears the map on JSON null.
 pub(crate) struct OptionStringMapMergeSeed<'a, V>(pub(crate) &'a mut Option<BTreeMap<String, V>>);
 
