@@ -345,22 +345,23 @@ func findKthNetworkBytes(data stmtstats.StatementStatsMap, k int, u64Slice []uin
 // TopRU extraction runs on the same report tick path.
 // Each call emits at most one aligned closed 60s RU window.
 func (tsr *RemoteTopSQLReporter) takeDataAndSendToReportChan(timestamp uint64) {
+	// collectWorker is the only sender, so the channel cannot become full
+	// between this check and the send below.
+	if len(tsr.reportCollectedDataChan) == cap(tsr.reportCollectedDataChan) {
+		reporter_metrics.IgnoreReportChannelFullCounter.Inc()
+		return
+	}
+
 	ruRecords := tsr.ruAggregator.takeReportRecords(
 		timestamp,
 		uint64(topsqlstate.GetTopRUItemInterval()),
 		tsr.keyspaceName,
 	)
-	// Send to report channel. When channel is full, data will be dropped.
-	select {
-	case tsr.reportCollectedDataChan <- collectedData{
+	tsr.reportCollectedDataChan <- collectedData{
 		collected:         tsr.collecting.take(),
 		ruRecords:         ruRecords,
 		normalizedSQLMap:  tsr.normalizedSQLMap.take(),
 		normalizedPlanMap: tsr.normalizedPlanMap.take(),
-	}:
-	default:
-		// ignore if chan blocked
-		reporter_metrics.IgnoreReportChannelFullCounter.Inc()
 	}
 }
 

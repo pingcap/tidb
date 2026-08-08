@@ -851,6 +851,15 @@ func TestReporterChannelsFullDropsAndMetrics(t *testing.T) {
 		topsqlstate.SetTopRUItemInterval(tipb.ItemInterval(origInterval))
 	})
 
+	sqlDigest := []byte("full-channel-sql")
+	planDigest := []byte("full-channel-plan")
+	tsr.RegisterSQL(sqlDigest, "select * from full_channel", false)
+	tsr.RegisterPlan(planDigest, "table_scan", false)
+	tsr.processCPUTimeData(1, cpuRecords{{
+		SQLDigest:  sqlDigest,
+		PlanDigest: planDigest,
+		CPUTimeMs:  1,
+	}})
 	tsr.reportCollectedDataChan <- collectedData{} // fill reportCollectedDataChan (buffer=1)
 	doneReport := make(chan struct{})
 	go func() {
@@ -864,6 +873,18 @@ func TestReporterChannelsFullDropsAndMetrics(t *testing.T) {
 	}
 	require.Equal(t, 1, len(tsr.reportCollectedDataChan))
 	require.InDelta(t, 1.0, readCounter(t, reporter_metrics.IgnoreReportChannelFullCounter)-beforeReportDrop, 1e-9)
+	<-tsr.reportCollectedDataChan
+
+	tsr.processCPUTimeData(61, cpuRecords{{
+		SQLDigest:  sqlDigest,
+		PlanDigest: planDigest,
+		CPUTimeMs:  1,
+	}})
+	tsr.takeDataAndSendToReportChan(120)
+	recovered := <-tsr.reportCollectedDataChan
+	require.NotEmpty(t, recovered.collected.getReportRecords())
+	require.Len(t, recovered.normalizedSQLMap.toProto(keyspaceName), 1)
+	require.Len(t, recovered.normalizedPlanMap.toProto(keyspaceName, tsr.decodePlan, tsr.compressPlan), 1)
 }
 
 // TestReporterBackpressureAndDropScenario covers the reporter backpressure
