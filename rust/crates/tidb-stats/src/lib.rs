@@ -94,6 +94,7 @@ pub mod refresher_state;
 pub mod row_estimate;
 pub mod row_sample_collector;
 pub mod sample_bytes;
+pub mod scalar_enum;
 pub mod scalar_geometry;
 pub mod special_global_index;
 pub mod static_partitioned_analysis;
@@ -260,6 +261,7 @@ pub use row_sample_collector::{
 pub use sample_bytes::{
     calc_total_size, sample_value_is_usable, MAX_FIELD_VARCHAR_LENGTH, MAX_SAMPLE_VALUE_LENGTH,
 };
+pub use scalar_enum::{enum_range_values, MAX_NUM_STEP};
 pub use scalar_geometry::{calc_fraction, common_prefix_length, convert_bytes_to_scalar};
 pub use special_global_index::{is_special_global_index, IndexColumnInfo};
 pub use static_partitioned_analysis::{
