@@ -125,7 +125,8 @@ pub(super) fn loaded_catalog() -> ClusterCatalog {
                 offset: 0,
                 length: -1,
                 ..IndexColumn::default()
-            }],
+            }]
+            .into(),
             unique: true,
             state: SchemaState::PUBLIC,
             ..IndexInfo::default()

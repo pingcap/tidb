@@ -922,7 +922,7 @@ fn build_table(
             id: table.max_index_id,
             name: CiString::new(name),
             table: CiString::default(),
-            columns: index_columns,
+            columns: index_columns.into(),
             state: SchemaState::PUBLIC,
             comment: constraint.comment.clone(),
             tp: constraint.index_type.unwrap_or(IndexType::BTREE),

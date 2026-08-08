@@ -957,7 +957,8 @@ mod tests {
                 offset,
                 length: prefix,
                 ..IndexColumn::default()
-            }],
+            }]
+            .into(),
             state: SchemaState::PUBLIC,
             ..IndexInfo::default()
         }

@@ -332,7 +332,7 @@ fn lower_create_index(
             // space, which is `TableInfo.MaxIndexID` and not the global one.
             id: 0,
             name: CiString::new(create.name.clone()),
-            columns,
+            columns: columns.into(),
             state: SchemaState::PUBLIC,
             comment: create.options.comment.clone().unwrap_or_default(),
             tp: create

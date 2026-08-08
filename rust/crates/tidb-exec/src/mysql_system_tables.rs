@@ -917,7 +917,8 @@ mod clustered_handle_tests {
                     offset: i64::try_from(offset).expect("an index-column offset fits in i64"),
                     ..IndexColumn::default()
                 })
-                .collect(),
+                .collect::<Vec<_>>()
+                .into(),
             ..IndexInfo::default()
         }
     }
