@@ -267,10 +267,10 @@ fn pkg_meta_model_probe_column_representation_boundaries() {
     } else {
         "unexpected-nonempty-set"
     };
-    let flag_width = if std::mem::size_of_val(&ColumnInfo::default().get_flag()) == 4 {
-        "u32"
+    let flag_width = if std::mem::size_of_val(&ColumnInfo::default().get_flag()) == 8 {
+        "u64"
     } else {
-        "non-u32"
+        "non-u64"
     };
     let default_domain = if std::any::type_name::<tidb_model::column::ColumnDefaultValue>()
         .contains("ColumnDefaultValue")
@@ -281,7 +281,7 @@ fn pkg_meta_model_probe_column_representation_boundaries() {
     };
     observation_emitter::emit(
         "MODEL-COLUMN-REPRESENTATION",
-        "Rust column ownership cannot expose Go shallow map identity, nil maps, arbitrary interface values, or the pending cross-crate uint flag width",
+        "Rust column ownership preserves the complete Go uint flag word but cannot expose Go shallow map identity, nil maps, or arbitrary pre-JSON interface values",
         &[
             ("clone-map-alias", "mutate-source-dependences", clone_mode),
             ("dependency-allocation", "nil-versus-empty-map", empty_mode),
@@ -297,14 +297,32 @@ fn pkg_meta_model_probe_column_representation_boundaries() {
 
 #[test]
 fn pkg_meta_model_flag_width_integration_dependency() {
-    // Go's accepted 64-bit target admits this `uint` bit through every
-    // ColumnInfo flag accessor. The model wrapper is ready to consume the
-    // eventual u64 FieldType API, but the currently mapped tidb-datatype
-    // dependency still owns a u32 field. This test is the root-integration
-    // reclassification anchor; it intentionally records the exact boundary.
-    let go_high_bit = 1_u64 << 63;
-    assert_eq!(go_high_bit, 0x8000_0000_0000_0000);
-    assert_eq!(std::mem::size_of_val(&ColumnInfo::default().get_flag()), 4);
+    const HIGH: u64 = 1_u64 << 63;
+    const LOW: u64 = tidb_datatype::FieldTypeFlags::UNSIGNED as u64;
+    let mut column = ColumnInfo::default();
+
+    column.set_flag(HIGH);
+    assert_eq!(column.get_flag(), HIGH);
+    column.add_flag(LOW);
+    assert_eq!(column.get_flag(), HIGH | LOW);
+    column.toggle_flag(HIGH | tidb_datatype::FieldTypeFlags::ZEROFILL as u64);
+    assert_eq!(
+        column.get_flag(),
+        LOW | tidb_datatype::FieldTypeFlags::ZEROFILL as u64
+    );
+    column.add_flag(HIGH);
+    column.del_flag(LOW);
+    assert_eq!(
+        column.get_flag(),
+        HIGH | tidb_datatype::FieldTypeFlags::ZEROFILL as u64
+    );
+    column.and_flag(HIGH);
+    assert_eq!(column.get_flag(), HIGH);
+
+    let encoded = serde_json::to_value(&column).unwrap();
+    assert_eq!(encoded["type"]["Flag"].as_u64(), Some(HIGH));
+    let decoded: ColumnInfo = serde_json::from_value(encoded).unwrap();
+    assert_eq!(decoded.get_flag(), HIGH);
 }
 
 #[test]

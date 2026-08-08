@@ -334,7 +334,7 @@ impl TableInfo {
     pub fn get_pk_col_info(&self) -> Option<&ColumnInfo> {
         self.columns
             .iter()
-            .find(|c| c.get_flag() & FieldTypeFlags::PRI_KEY != 0)
+            .find(|c| c.get_flag() & u64::from(FieldTypeFlags::PRI_KEY) != 0)
     }
 
     /// Go `GetPkName`: the primary-key column name (empty when none).
@@ -360,7 +360,7 @@ impl TableInfo {
         self.get_pk_col_info()
             .expect("PKIsHandle with AutoRandomBits requires a primary-key column")
             .get_flag()
-            & FieldTypeFlags::UNSIGNED
+            & u64::from(FieldTypeFlags::UNSIGNED)
             != 0
     }
 
@@ -436,7 +436,7 @@ impl TableInfo {
                             break;
                         }
                         Some(c) => {
-                            if c.get_flag() & FieldTypeFlags::NOT_NULL == 0 {
+                            if c.get_flag() & u64::from(FieldTypeFlags::NOT_NULL) == 0 {
                                 all_col_not_null = false;
                                 break;
                             }
@@ -493,7 +493,7 @@ impl TableInfo {
     pub fn get_auto_increment_col_info(&self) -> Option<&ColumnInfo> {
         self.columns
             .iter()
-            .find(|c| c.get_flag() & FieldTypeFlags::AUTO_INCREMENT != 0)
+            .find(|c| c.get_flag() & u64::from(FieldTypeFlags::AUTO_INCREMENT) != 0)
     }
 
     /// Go `ColumnIsInIndex`: whether column `c` participates in any index.
@@ -517,7 +517,7 @@ impl TableInfo {
     #[must_use]
     pub fn is_auto_inc_col_unsigned(&self) -> bool {
         self.get_auto_increment_col_info()
-            .is_some_and(|c| c.get_flag() & FieldTypeFlags::UNSIGNED != 0)
+            .is_some_and(|c| c.get_flag() & u64::from(FieldTypeFlags::UNSIGNED) != 0)
     }
 
     /// Go `FindColumnNameByID`: the (lower-cased) name of column `id`, or "".
@@ -672,9 +672,9 @@ mod tests {
         let mut c = ColumnInfo::new_extra_handle_col_info();
         c.name = CiString::new(name);
         c.field_type = FieldType::new(FieldTypeCode::LongLong);
-        c.set_flag(FieldTypeFlags::PRI_KEY);
+        c.set_flag(u64::from(FieldTypeFlags::PRI_KEY));
         if unsigned {
-            c.add_flag(FieldTypeFlags::UNSIGNED);
+            c.add_flag(u64::from(FieldTypeFlags::UNSIGNED));
         }
         c
     }
@@ -797,7 +797,7 @@ mod tests {
         c.offset = offset;
         c.field_type = FieldType::new(FieldTypeCode::LongLong);
         c.set_flag(if not_null {
-            FieldTypeFlags::NOT_NULL
+            u64::from(FieldTypeFlags::NOT_NULL)
         } else {
             0
         });
@@ -868,7 +868,7 @@ mod tests {
         c_pub.id = 100;
         let mut c_hidden = column("b", 1, false, false);
         c_hidden.id = 101;
-        c_hidden.set_flag(FieldTypeFlags::AUTO_INCREMENT);
+        c_hidden.set_flag(u64::from(FieldTypeFlags::AUTO_INCREMENT));
 
         let mut t = TableInfo {
             columns: vec![c_pub, c_hidden],

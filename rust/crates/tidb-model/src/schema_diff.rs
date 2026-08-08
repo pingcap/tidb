@@ -160,7 +160,7 @@ mod tests {
     }
 
     #[test]
-    fn a_null_slice_decodes_as_empty_rather_than_failing() {
+    fn null_affected_options_decode_as_nil_none() {
         let diff: SchemaDiff = serde_json::from_str(
             r#"{"version":1,"sub_action_types":null,"affected_options":null}"#,
         )

@@ -3,10 +3,11 @@ claim = "whole-go-package"
 go_package = "pkg/meta/model"
 source_commit = "bdab0016365e8b1d79b5b11f52ee6fdde90f4c46"
 primary_rust_crate = "tidb-model"
-mapped_rust_crates = ["tidb-model", "tidb-error"]
+mapped_rust_crates = ["tidb-model", "tidb-error", "tidb-datatype"]
 extra_artifacts = []
 excluded_subpackages = []
 owned_rust_files = [
+  "rust/crates/tidb-datatype/src/field_type/mod.rs",
   "rust/crates/tidb-error/src/terror.rs",
   "rust/crates/tidb-error/tests/pkg_meta_model_error_lockdown.rs",
   "rust/crates/tidb-model/Cargo.toml",
@@ -43,6 +44,7 @@ owned_rust_files = [
   "rust/crates/tidb-model/tests/pkg_meta_model_lockdown/semantic-clusters.md",
   "rust/crates/tidb-model/tests/pkg_meta_model_lockdown.rs",
   "rust/crates/tidb-model/tests/pkg_meta_model_observation_emitter.rs",
+  "rust/crates/tidb-model/tests/pkg_meta_model_package_anchors.rs",
   "rust/crates/tidb-model/tests/resource_group_lockdown.rs",
 ]
 

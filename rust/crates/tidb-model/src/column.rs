@@ -410,10 +410,10 @@ impl ColumnInfo {
     pub fn get_type(&self) -> FieldTypeCode {
         self.field_type.code()
     }
-    /// Go `GetFlag`.
+    /// Go `GetFlag`, including every bit in the target's `uint` word.
     #[must_use]
-    pub fn get_flag(&self) -> u32 {
-        self.field_type.flags()
+    pub fn get_flag(&self) -> u64 {
+        self.field_type.raw_flags()
     }
     /// Go `GetFlen`.
     #[must_use]
@@ -445,24 +445,24 @@ impl ColumnInfo {
         self.field_type.set_code(code);
     }
     /// Go `SetFlag`.
-    pub fn set_flag(&mut self, flag: u32) {
-        self.field_type.set_flags(flag);
+    pub fn set_flag(&mut self, flag: u64) {
+        self.field_type.set_raw_flags(flag);
     }
     /// Go `AddFlag`.
-    pub fn add_flag(&mut self, flag: u32) {
-        self.field_type.add_flags(flag);
+    pub fn add_flag(&mut self, flag: u64) {
+        self.field_type.add_raw_flags(flag);
     }
     /// Go `AndFlag`.
-    pub fn and_flag(&mut self, flag: u32) {
-        self.field_type.and_flags(flag);
+    pub fn and_flag(&mut self, flag: u64) {
+        self.field_type.and_raw_flags(flag);
     }
     /// Go `ToggleFlag`.
-    pub fn toggle_flag(&mut self, flag: u32) {
-        self.field_type.toggle_flags(flag);
+    pub fn toggle_flag(&mut self, flag: u64) {
+        self.field_type.toggle_raw_flags(flag);
     }
     /// Go `DelFlag`.
-    pub fn del_flag(&mut self, flag: u32) {
-        self.field_type.del_flags(flag);
+    pub fn del_flag(&mut self, flag: u64) {
+        self.field_type.del_raw_flags(flag);
     }
     /// Go `SetFlen`.
     pub fn set_flen(&mut self, flen: i64) {
@@ -687,7 +687,9 @@ impl ColumnInfo {
     #[must_use]
     pub fn new_extra_handle_col_info() -> ColumnInfo {
         let mut c = Self::extra_long_long_bin(EXTRA_HANDLE_ID, EXTRA_HANDLE_NAME);
-        c.set_flag(FieldTypeFlags::PRI_KEY | FieldTypeFlags::NOT_NULL);
+        c.set_flag(u64::from(
+            FieldTypeFlags::PRI_KEY | FieldTypeFlags::NOT_NULL,
+        ));
         c
     }
 
@@ -695,7 +697,7 @@ impl ColumnInfo {
     #[must_use]
     pub fn new_extra_phys_tbl_id_col_info() -> ColumnInfo {
         let mut c = Self::extra_long_long_bin(EXTRA_PHYS_TBL_ID, EXTRA_PHYS_TBL_ID_NAME);
-        c.set_flag(FieldTypeFlags::NOT_NULL);
+        c.set_flag(u64::from(FieldTypeFlags::NOT_NULL));
         c
     }
 
@@ -703,7 +705,7 @@ impl ColumnInfo {
     #[must_use]
     pub fn new_extra_commit_ts_col_info() -> ColumnInfo {
         let mut c = Self::extra_long_long_bin(EXTRA_COMMIT_TS_ID, EXTRA_COMMIT_TS_NAME);
-        c.set_flag(c.get_flag() | FieldTypeFlags::UNSIGNED);
+        c.set_flag(c.get_flag() | u64::from(FieldTypeFlags::UNSIGNED));
         c
     }
 }
@@ -792,12 +794,12 @@ mod tests {
         let mut c = col("c1", FieldTypeCode::Long);
         assert_eq!(c.get_type(), FieldTypeCode::Long);
 
-        c.set_flag(FieldTypeFlags::NOT_NULL);
-        assert_eq!(c.get_flag(), FieldTypeFlags::NOT_NULL);
-        c.add_flag(FieldTypeFlags::UNSIGNED);
-        assert!(c.get_flag() & FieldTypeFlags::UNSIGNED != 0);
-        c.del_flag(FieldTypeFlags::NOT_NULL);
-        assert_eq!(c.get_flag() & FieldTypeFlags::NOT_NULL, 0);
+        c.set_flag(u64::from(FieldTypeFlags::NOT_NULL));
+        assert_eq!(c.get_flag(), u64::from(FieldTypeFlags::NOT_NULL));
+        c.add_flag(u64::from(FieldTypeFlags::UNSIGNED));
+        assert!(c.get_flag() & u64::from(FieldTypeFlags::UNSIGNED) != 0);
+        c.del_flag(u64::from(FieldTypeFlags::NOT_NULL));
+        assert_eq!(c.get_flag() & u64::from(FieldTypeFlags::NOT_NULL), 0);
 
         c.set_flen(20);
         assert_eq!(c.get_flen(), 20);
@@ -883,19 +885,21 @@ mod tests {
     fn type_desc_suffixes() {
         // Unsigned int -> " unsigned"; zerofill adds " zerofill".
         let mut c = col("n", FieldTypeCode::Long);
-        c.set_flag(FieldTypeFlags::UNSIGNED);
+        c.set_flag(u64::from(FieldTypeFlags::UNSIGNED));
         assert!(c.get_type_desc(true).ends_with(" unsigned"));
-        c.add_flag(FieldTypeFlags::ZEROFILL);
+        c.add_flag(u64::from(FieldTypeFlags::ZEROFILL));
         let d = c.get_type_desc(true);
         assert!(d.contains(" unsigned"));
         assert!(d.ends_with(" zerofill"));
 
         // BIT excludes the unsigned suffix; YEAR excludes both.
         let mut bit = col("b", FieldTypeCode::Bit);
-        bit.set_flag(FieldTypeFlags::UNSIGNED);
+        bit.set_flag(u64::from(FieldTypeFlags::UNSIGNED));
         assert!(!bit.get_type_desc(true).contains("unsigned"));
         let mut year = col("y", FieldTypeCode::Year);
-        year.set_flag(FieldTypeFlags::UNSIGNED | FieldTypeFlags::ZEROFILL);
+        year.set_flag(u64::from(
+            FieldTypeFlags::UNSIGNED | FieldTypeFlags::ZEROFILL,
+        ));
         let d = year.get_type_desc(true);
         assert!(!d.contains("unsigned"));
         assert!(!d.contains("zerofill"));
@@ -904,7 +908,7 @@ mod tests {
     #[test]
     fn extra_column_constructors() {
         let phys = ColumnInfo::new_extra_phys_tbl_id_col_info();
-        assert_eq!(phys.get_flag(), FieldTypeFlags::NOT_NULL);
+        assert_eq!(phys.get_flag(), u64::from(FieldTypeFlags::NOT_NULL));
         assert_eq!(phys.get_type(), FieldTypeCode::LongLong);
         assert_eq!(phys.id, EXTRA_PHYS_TBL_ID);
         assert_eq!(phys.name.original(), "_tidb_tid");
@@ -913,12 +917,12 @@ mod tests {
         let handle = ColumnInfo::new_extra_handle_col_info();
         assert_eq!(
             handle.get_flag(),
-            FieldTypeFlags::PRI_KEY | FieldTypeFlags::NOT_NULL
+            u64::from(FieldTypeFlags::PRI_KEY | FieldTypeFlags::NOT_NULL)
         );
         assert_eq!(handle.id, EXTRA_HANDLE_ID);
 
         let commit_ts = ColumnInfo::new_extra_commit_ts_col_info();
-        assert_eq!(commit_ts.get_flag(), FieldTypeFlags::UNSIGNED);
+        assert_eq!(commit_ts.get_flag(), u64::from(FieldTypeFlags::UNSIGNED));
         assert_eq!(commit_ts.name.original(), "_tidb_commit_ts");
     }
 
