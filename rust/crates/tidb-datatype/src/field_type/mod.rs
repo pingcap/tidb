@@ -17,7 +17,8 @@ mod builder;
 mod value;
 
 use crate::{output_format, Charset, Collation, EvalType};
-use serde::{Deserialize, Serialize};
+use serde::de::{IgnoredAny, MapAccess, Visitor};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::fmt;
 use std::hash::{Hash, Hasher};
 
@@ -1425,17 +1426,7 @@ impl FieldType {
     }
 }
 
-/// Deserializes a JSON `null` (and, with `#[serde(default)]`, a missing field)
-/// into `T::default()`, matching how Go leaves a field at its zero value.
-fn null_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
-where
-    D: serde::Deserializer<'de>,
-    T: Default + Deserialize<'de>,
-{
-    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
-}
-
-#[derive(Serialize, Deserialize)]
+#[derive(Default, Serialize)]
 #[allow(non_snake_case)]
 struct JsonFieldType {
     #[serde(default)]
@@ -1446,9 +1437,9 @@ struct JsonFieldType {
     Flen: i64,
     #[serde(default)]
     Decimal: i64,
-    #[serde(default, deserialize_with = "null_default")]
+    #[serde(default)]
     Charset: String,
-    #[serde(default, deserialize_with = "null_default")]
+    #[serde(default)]
     Collate: String,
     #[serde(default)]
     Elems: Option<Vec<String>>,
@@ -1456,6 +1447,90 @@ struct JsonFieldType {
     ElemsIsBinaryLit: Option<Vec<bool>>,
     #[serde(default)]
     Array: bool,
+}
+
+fn go_json_ascii_tag_matches(incoming: &str, tag: &str) -> bool {
+    if incoming == tag {
+        return true;
+    }
+    // Every jsonFieldType member name is ASCII. Go bytes.EqualFold has only
+    // two non-ASCII SimpleFold classes that can equal an ASCII rune: long-s
+    // with S/s and Kelvin sign with K/k.
+    incoming.chars().zip(tag.bytes()).all(|(left, right)| {
+        let left = match left {
+            'a'..='z' => left.to_ascii_uppercase(),
+            '\u{017f}' => 'S',
+            '\u{212a}' => 'K',
+            other => other,
+        };
+        left == (right as char).to_ascii_uppercase()
+    }) && incoming.chars().count() == tag.len()
+}
+
+impl<'de> Deserialize<'de> for JsonFieldType {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct JsonFieldTypeVisitor;
+
+        impl<'de> Visitor<'de> for JsonFieldTypeVisitor {
+            type Value = JsonFieldType;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("a Go jsonFieldType object or null")
+            }
+
+            fn visit_none<E: serde::de::Error>(self) -> Result<Self::Value, E> {
+                Ok(JsonFieldType::default())
+            }
+
+            fn visit_unit<E: serde::de::Error>(self) -> Result<Self::Value, E> {
+                Ok(JsonFieldType::default())
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+                let mut value = JsonFieldType::default();
+                while let Some(key) = map.next_key::<String>()? {
+                    if go_json_ascii_tag_matches(&key, "Tp") {
+                        if let Some(next) = map.next_value::<Option<u8>>()? {
+                            value.Tp = next;
+                        }
+                    } else if go_json_ascii_tag_matches(&key, "Flag") {
+                        if let Some(next) = map.next_value::<Option<u64>>()? {
+                            value.Flag = next;
+                        }
+                    } else if go_json_ascii_tag_matches(&key, "Flen") {
+                        if let Some(next) = map.next_value::<Option<i64>>()? {
+                            value.Flen = next;
+                        }
+                    } else if go_json_ascii_tag_matches(&key, "Decimal") {
+                        if let Some(next) = map.next_value::<Option<i64>>()? {
+                            value.Decimal = next;
+                        }
+                    } else if go_json_ascii_tag_matches(&key, "Charset") {
+                        if let Some(next) = map.next_value::<Option<String>>()? {
+                            value.Charset = next;
+                        }
+                    } else if go_json_ascii_tag_matches(&key, "Collate") {
+                        if let Some(next) = map.next_value::<Option<String>>()? {
+                            value.Collate = next;
+                        }
+                    } else if go_json_ascii_tag_matches(&key, "Elems") {
+                        value.Elems = map.next_value()?;
+                    } else if go_json_ascii_tag_matches(&key, "ElemsIsBinaryLit") {
+                        value.ElemsIsBinaryLit = map.next_value()?;
+                    } else if go_json_ascii_tag_matches(&key, "Array") {
+                        if let Some(next) = map.next_value::<Option<bool>>()? {
+                            value.Array = next;
+                        }
+                    } else {
+                        map.next_value::<IgnoredAny>()?;
+                    }
+                }
+                Ok(value)
+            }
+        }
+
+        deserializer.deserialize_any(JsonFieldTypeVisitor)
+    }
 }
 
 // Go marshals `types.FieldType` through its own MarshalJSON/UnmarshalJSON,
@@ -2213,5 +2288,49 @@ mod tests {
         // just as Go SetFlag does when called with a low-bit value.
         field_type.set_flags(FieldTypeFlags::NOT_NULL);
         assert_eq!(field_type.raw_flags(), FieldTypeFlags::NOT_NULL as u64);
+    }
+
+    #[test]
+    fn parser_field_type_json_matches_go_member_dispatch() {
+        const HIGH: u64 = 1_u64 << 63;
+
+        let zero = FieldType::from_json(b"null").unwrap();
+        assert_eq!(zero.raw_flags(), 0);
+        assert_eq!(zero.flen(), 0);
+        assert_eq!(zero.decimal(), 0);
+        assert_eq!(zero.charset_name(), "");
+        assert_eq!(zero.collation_name(), "");
+        assert_eq!(zero.elems(), &[]);
+        assert!(!zero.elem_is_binary_literal(0));
+        assert!(!zero.is_array());
+
+        let decoded = FieldType::from_json(
+            r#"{
+                "Flag": 1,
+                "fLaG": 9223372036854775808,
+                "Flen": 7,
+                "flen": null,
+                "Charſet": "utf8",
+                "CHARSET": null,
+                "Array": true,
+                "array": null,
+                "Elems": ["a"],
+                "elems": null,
+                "ElemsIsBinaryLit": [true],
+                "elemsisbinarylit": [],
+                "Unknown": {"ignored": true}
+            }"#
+            .as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(decoded.raw_flags(), HIGH);
+        assert_eq!(decoded.flen(), 7);
+        assert_eq!(decoded.charset_name(), "utf8");
+        assert!(decoded.is_array());
+        assert!(!decoded.elems_present);
+        assert!(decoded.elems_is_binary_literal_present);
+        assert!(decoded.elems_is_binary_literal.is_empty());
+
+        assert!(FieldType::from_json(br#"{"Flag":"not-a-number"}"#).is_err());
     }
 }
