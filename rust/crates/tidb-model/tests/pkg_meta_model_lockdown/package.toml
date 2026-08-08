@@ -8,6 +8,7 @@ extra_artifacts = []
 excluded_subpackages = []
 owned_rust_files = [
   "rust/crates/tidb-datatype/src/field_type/mod.rs",
+  "rust/crates/tidb-datatype/src/field_type/json.rs",
   "rust/crates/tidb-error/src/terror.rs",
   "rust/crates/tidb-error/tests/pkg_meta_model_error_lockdown.rs",
   "rust/crates/tidb-exec/src/catalog_reload.rs",
