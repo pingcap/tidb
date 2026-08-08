@@ -1641,13 +1641,19 @@ func onAlterTablePlacement(jobCtx *jobContext, job *model.Job) (ver int64, err e
 	}
 
 	// Send the placement bundle to PD.
+	bundles := []*placement.Bundle{bundle}
 	if bundle != nil {
-		err = infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), []*placement.Bundle{bundle})
+		err = infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles)
 	}
 
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return ver, errors.Trace(placementRuleErrorWithContext(err, placementRuleErrorContext{
+			SchemaName: job.SchemaName,
+			TableName:  tblInfo.Name.O,
+			PolicyName: placementPolicyRefName(policyRefInfo),
+			Bundles:    bundles,
+		}))
 	}
 
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
