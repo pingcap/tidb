@@ -219,7 +219,7 @@ impl ColumnarIndexType {
 
 /// Go `RegionSplitPolicy`: a table's region-split policy (defined in
 /// `index.go`, referenced by `TableInfo.TableSplitPolicy`).
-#[derive(Debug, Default, Serialize)]
+#[derive(Clone, Debug, Default, Serialize)]
 pub struct RegionSplitPolicy {
     /// The lower-bound split points.
     #[serde(rename = "lower", default)]
@@ -246,8 +246,11 @@ impl_go_json_merge_object!(RegionSplitPolicy, destination, map, key, {
 
 impl_go_json_deserialize!(RegionSplitPolicy);
 
-impl Clone for RegionSplitPolicy {
-    fn clone(&self) -> Self {
+impl RegionSplitPolicy {
+    /// Go's named `(*RegionSplitPolicy).Clone` method. Ordinary Rust `Clone`
+    /// above is the shallow Go struct/header copy used by containers/codecs.
+    #[must_use]
+    pub fn clone_like_go(&self) -> Self {
         fn clone_bound(values: &GoSharedSlice<String>) -> GoSharedSlice<String> {
             if values.is_empty() {
                 return values.clone();
@@ -261,6 +264,14 @@ impl Clone for RegionSplitPolicy {
             upper: clone_bound(&self.upper),
             regions: self.regions,
         }
+    }
+
+    /// Nil-receiver-capable Go `(*RegionSplitPolicy).Clone` boundary. Unlike
+    /// the table and partition clone methods, this source method returns nil
+    /// when its receiver is nil.
+    #[must_use]
+    pub fn clone_pointer(policy: Option<&Self>) -> Option<GoShared<Self>> {
+        policy.map(|value| GoShared::new(value.clone_like_go()))
     }
 }
 
@@ -399,7 +410,7 @@ impl_go_json_merge_object!(FullTextIndexInfo, destination, map, key, {
 impl_go_json_deserialize!(FullTextIndexInfo);
 
 /// Go `IndexInfo`: metadata describing a table index.
-#[derive(Debug, Default, Serialize)]
+#[derive(Clone, Debug, Default, Serialize)]
 pub struct IndexInfo {
     /// The index ID.
     #[serde(rename = "id", default)]
@@ -483,13 +494,14 @@ pub struct IndexInfo {
     pub region_split_policy: Option<GoShared<RegionSplitPolicy>>,
 }
 
-impl Clone for IndexInfo {
+impl IndexInfo {
     /// Go `IndexInfo.Clone`: the column pointer slices and region policy are
     /// copied deeply, while vector/inverted/full-text pointers remain shared.
     /// A nil Columns header becomes an allocated-empty slice; AffectColumn
     /// remains nil when the source header is nil. Nil elements panic when the
     /// source invokes `IndexColumn.Clone`.
-    fn clone(&self) -> Self {
+    #[must_use]
+    pub fn clone_like_go(&self) -> Self {
         let columns = self
             .columns
             .map_clone_with(GoNullClonePolicy::Panic, Clone::clone);
@@ -519,10 +531,11 @@ impl Clone for IndexInfo {
             condition_expr_string: self.condition_expr_string.clone(),
             affect_column,
             global_index_version: self.global_index_version,
-            region_split_policy: self
-                .region_split_policy
-                .as_ref()
-                .map(|policy| GoShared::new(policy.read().clone())),
+            region_split_policy: self.region_split_policy.as_ref().map(|policy| {
+                let policy = policy.read();
+                RegionSplitPolicy::clone_pointer(Some(&policy))
+                    .expect("nonnull region split policy clone")
+            }),
         }
     }
 }
@@ -579,7 +592,7 @@ impl IndexInfo {
     /// Nil-receiver-capable Go `IndexInfo.Clone` boundary.
     #[must_use]
     pub fn clone_pointer(index: Option<&Self>) -> Option<GoShared<Self>> {
-        index.map(|value| GoShared::new(value.clone()))
+        index.map(|value| GoShared::new(value.clone_like_go()))
     }
 
     /// Go `Hash64`/`Equals` use only the persisted index ID. Rust's standard
@@ -876,6 +889,7 @@ mod tests {
 
     #[test]
     fn index_json_preserves_pointer_slice_and_merge_states() {
+        assert!(RegionSplitPolicy::clone_pointer(None).is_none());
         use crate::serde_helpers::GoJsonMerge;
 
         let nil: IndexInfo = serde_json::from_str(r#"{"idx_cols":null}"#).unwrap();
@@ -948,7 +962,7 @@ mod tests {
             lower: allocated_empty.clone(),
             ..Default::default()
         };
-        let empty_clone = empty_region.clone();
+        let empty_clone = empty_region.clone_like_go();
         assert!(empty_clone.lower.backing_ptr_eq(&allocated_empty));
         assert_eq!(empty_clone.lower.capacity(), 4);
 
@@ -957,7 +971,7 @@ mod tests {
             lower: bound.clone(),
             ..Default::default()
         };
-        let bounded_clone = bounded_region.clone();
+        let bounded_clone = bounded_region.clone_like_go();
         assert!(!bounded_clone.lower.backing_ptr_eq(&bound));
         assert_eq!(bounded_clone.lower.capacity(), 1);
         bounded_clone.lower.set(0, "clone".to_owned());
@@ -1035,6 +1049,8 @@ mod tests {
     #[test]
     fn index_clone_preserves_source_pointer_policies() {
         assert!(IndexInfo::clone_pointer(None).is_none());
+        let serialized_pointer = serde_json::to_value(GoShared::new(IndexInfo::default())).unwrap();
+        assert_eq!(serialized_pointer["idx_cols"], serde_json::Value::Null);
 
         let vector = GoShared::new(VectorIndexInfo {
             dimension: 3,
@@ -1072,7 +1088,18 @@ mod tests {
             region_split_policy: Some(region.clone()),
             ..Default::default()
         };
-        let cloned = source.clone();
+        let structural = source.clone();
+        assert!(structural.columns.backing_ptr_eq(&source.columns));
+        assert!(structural
+            .affect_column
+            .backing_ptr_eq(&source.affect_column));
+        assert!(structural.vector_info.as_ref().unwrap().ptr_eq(&vector));
+        assert!(structural
+            .region_split_policy
+            .as_ref()
+            .unwrap()
+            .ptr_eq(&region));
+        let cloned = source.clone_like_go();
 
         assert!(cloned.columns.is_allocated());
         assert_eq!(cloned.columns.capacity(), source.columns.len());
@@ -1094,7 +1121,7 @@ mod tests {
         cloned_region.write().regions = 8;
         assert_eq!(region.read().regions, 2);
 
-        let nil_columns = IndexInfo::default().clone();
+        let nil_columns = IndexInfo::default().clone_like_go();
         assert!(nil_columns.columns.is_allocated());
         assert!(!nil_columns.affect_column.is_allocated());
 
@@ -1102,7 +1129,7 @@ mod tests {
             affect_column: GoSharedPointerSlice::from_nullable(Vec::new()),
             ..Default::default()
         };
-        let empty_affect_clone = empty_affect.clone();
+        let empty_affect_clone = empty_affect.clone_like_go();
         assert!(empty_affect_clone.affect_column.is_allocated());
         assert!(!empty_affect_clone
             .affect_column
@@ -1112,12 +1139,12 @@ mod tests {
             columns: GoSharedPointerSlice::from_nullable(vec![None]),
             ..Default::default()
         };
-        assert!(std::panic::catch_unwind(|| null_column.clone()).is_err());
+        assert!(std::panic::catch_unwind(|| null_column.clone_like_go()).is_err());
         let null_affect = IndexInfo {
             affect_column: GoSharedPointerSlice::from_nullable(vec![None]),
             ..Default::default()
         };
-        assert!(std::panic::catch_unwind(|| null_affect.clone()).is_err());
+        assert!(std::panic::catch_unwind(|| null_affect.clone_like_go()).is_err());
     }
 
     #[test]
@@ -1380,7 +1407,7 @@ mod tests {
             &source,
             &[CiString::new("A")]
         ));
-        let mut short = source.clone();
+        let mut short = source.clone_like_go();
         short.columns.get(0).unwrap().write().length = 7;
         assert!(!is_index_prefix_covered(
             &table,
@@ -1390,7 +1417,7 @@ mod tests {
         assert!(source.has_column_in_index_columns(&table, 10));
         assert!(!source.has_column_in_index_columns(&table, 11));
 
-        let mut out_of_range = source.clone();
+        let mut out_of_range = source.clone_like_go();
         out_of_range.columns.get(0).unwrap().write().offset = table.columns.len() as i64;
         assert!(!is_index_prefix_covered(
             &table,

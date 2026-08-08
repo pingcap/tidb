@@ -70,7 +70,7 @@ pub const CURR_LATEST_TABLE_INFO_VERSION: u16 = TABLE_INFO_VERSION5;
 /// handles so ordinary pointer/header copies and selective Clone rules retain
 /// observable identity. Its two embedded fields (`TempTableType`,
 /// `TableCacheStatusType`) become named fields.
-#[derive(Debug, Default, serde::Serialize)]
+#[derive(Clone, Debug, Default, serde::Serialize)]
 pub struct TableInfo {
     /// The table ID.
     #[serde(rename = "id", default)]
@@ -285,22 +285,23 @@ pub struct TableInfo {
     pub mode: TableMode,
 }
 
-impl Clone for TableInfo {
+impl TableInfo {
     /// Go `TableInfo.Clone`: copy the scalar struct, then selectively allocate
     /// the pointer/slice fields named by the source method. Fields not named by
     /// that method deliberately retain shared pointer or backing identity.
-    fn clone(&self) -> Self {
+    #[must_use]
+    pub fn clone_like_go(&self) -> Self {
         let columns = self
             .columns
             .map_clone_with(GoNullClonePolicy::Preserve, Clone::clone);
         let indices = self
             .indices
-            .map_clone_with(GoNullClonePolicy::Preserve, Clone::clone);
+            .map_clone_with(GoNullClonePolicy::Preserve, IndexInfo::clone_like_go);
         let foreign_keys = if self.foreign_keys.is_empty() {
             GoSharedPointerSlice::default()
         } else {
             self.foreign_keys
-                .map_clone_with(GoNullClonePolicy::Panic, Clone::clone)
+                .map_clone_with(GoNullClonePolicy::Panic, FKInfo::clone_like_go)
         };
 
         Self {
@@ -335,7 +336,7 @@ impl Clone for TableInfo {
             partition: self
                 .partition
                 .as_ref()
-                .map(|pointer| GoShared::new(pointer.read().clone())),
+                .map(|pointer| GoShared::new(pointer.read().clone_like_go())),
             compression: self.compression.clone(),
             view: self.view.clone(),
             sequence: self.sequence.clone(),
@@ -358,10 +359,11 @@ impl Clone for TableInfo {
                 .affinity
                 .as_ref()
                 .map(|pointer| GoShared::new(pointer.read().clone())),
-            table_split_policy: self
-                .table_split_policy
-                .as_ref()
-                .map(|pointer| GoShared::new(pointer.read().clone())),
+            table_split_policy: self.table_split_policy.as_ref().map(|pointer| {
+                let policy = pointer.read();
+                RegionSplitPolicy::clone_pointer(Some(&policy))
+                    .expect("nonnull table split policy clone")
+            }),
             revision: self.revision,
             db_id: self.db_id,
             engine_attribute: self.engine_attribute.clone(),
@@ -393,7 +395,7 @@ impl TableInfo {
     /// the returned `*TableInfo`; a nil receiver panics at `nt := *t`.
     #[must_use]
     pub fn clone_pointer(table: Option<&Self>) -> GoShared<Self> {
-        GoShared::new(table.expect("nil *TableInfo").clone())
+        GoShared::new(table.expect("nil *TableInfo").clone_like_go())
     }
 
     /// Go `TableInfo.Equals` compares only persisted table identity.
@@ -783,9 +785,11 @@ impl TableInfo {
     pub fn clear_placement(&mut self) {
         self.placement_policy_ref = None;
         if let Some(partition) = &self.partition {
-            let mut partition = partition.write();
-            for def in &mut partition.definitions {
-                def.placement_policy_ref = None;
+            let partition = partition.write();
+            for index in 0..partition.definitions.len() {
+                partition
+                    .definitions
+                    .update(index, |definition| definition.placement_policy_ref = None);
             }
         }
     }
@@ -1160,7 +1164,11 @@ mod tests {
             storage_class_transitions: transitions.clone(),
             ..Default::default()
         };
-        let cloned = source.clone();
+        let structural = source.clone();
+        assert!(structural.columns.backing_ptr_eq(&source.columns));
+        assert!(structural.indices.backing_ptr_eq(&source.indices));
+        assert!(structural.partition.as_ref().unwrap().ptr_eq(&partition));
+        let cloned = source.clone_like_go();
 
         assert!(cloned.columns.is_allocated());
         assert!(!cloned.columns.backing_ptr_eq(&source.columns));
@@ -1204,7 +1212,7 @@ mod tests {
         cloned.view.as_ref().unwrap().write().select_stmt = "shared".to_owned();
         assert_eq!(view.read().select_stmt, "shared");
 
-        let nil_columns = TableInfo::default().clone();
+        let nil_columns = TableInfo::default().clone_like_go();
         assert!(nil_columns.columns.is_allocated());
         assert!(nil_columns.indices.is_allocated());
         assert!(!nil_columns.foreign_keys.is_allocated());
@@ -1212,15 +1220,24 @@ mod tests {
             foreign_keys: GoSharedPointerSlice::from_nullable(Vec::new()),
             ..Default::default()
         }
-        .clone();
+        .clone_like_go();
         assert!(!allocated_empty_foreign_keys.foreign_keys.is_allocated());
+        let serialized_structural_pointer = serde_json::to_value(GoShared::new(TableInfo {
+            foreign_keys: GoSharedPointerSlice::from_nullable(Vec::new()),
+            ..Default::default()
+        }))
+        .unwrap();
+        assert_eq!(
+            serialized_structural_pointer["fk_info"],
+            serde_json::json!([])
+        );
         assert!(std::panic::catch_unwind(|| TableInfo::clone_pointer(None)).is_err());
 
         let nil_foreign_key = TableInfo {
             foreign_keys: GoSharedPointerSlice::from_nullable(vec![Some(FKInfo::default()), None]),
             ..Default::default()
         };
-        assert!(std::panic::catch_unwind(|| nil_foreign_key.clone()).is_err());
+        assert!(std::panic::catch_unwind(|| nil_foreign_key.clone_like_go()).is_err());
     }
 
     #[test]
@@ -1454,16 +1471,22 @@ mod tests {
             placement_policy_ref: Some(GoShared::new(PolicyRefInfo::default())),
             partition: Some(GoShared::new(PartitionInfo {
                 definitions: vec![PartitionDefinition {
-                    placement_policy_ref: Some(PolicyRefInfo::default()),
+                    placement_policy_ref: Some(GoShared::new(PolicyRefInfo::default())),
                     ..Default::default()
-                }],
+                }]
+                .into(),
                 ..Default::default()
             })),
             ..Default::default()
         };
         t2.clear_placement();
         assert!(t2.placement_policy_ref.is_none());
-        assert!(t2.partition.unwrap().read().definitions[0]
+        assert!(t2
+            .partition
+            .unwrap()
+            .read()
+            .definitions
+            .get(0)
             .placement_policy_ref
             .is_none());
     }
