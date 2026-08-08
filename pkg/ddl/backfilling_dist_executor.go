@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
@@ -168,7 +169,15 @@ func (s *backfillDistExecutor) newBackfillStepExecutor(
 		jc := ddlObj.jobContext(jobMeta.ID, jobMeta.ReorgMeta)
 		ddlObj.attachTopProfilingInfo(jobMeta.ID, jobMeta.Query)
 		ddlObj.setDDLSourceForDiagnosis(jobMeta.ID, jobMeta.Type)
-		return newReadIndexExecutor(store, sessPool, ddlObj.etcdCli, jobMeta, indexInfos, tbl, jc, cloudStorageURI, estRowSize)
+		executor, err := newReadIndexExecutor(
+			store, sessPool, ddlObj.etcdCli, jobMeta, indexInfos, tbl, jc, cloudStorageURI, estRowSize)
+		if err != nil {
+			return nil, err
+		}
+		if len(cloudStorageURI) == 0 {
+			executor.localDiskPrecheck = s.checkLocalSortFreeDisk
+		}
+		return executor, nil
 	case proto.BackfillStepMergeSort:
 		return newMergeSortExecutor(&s.task.TaskBase, store, jobMeta.ID, indexInfos, tbl, cloudStorageURI)
 	case proto.BackfillStepWriteAndIngest:
@@ -219,6 +228,70 @@ func (s *backfillDistExecutor) Init(ctx context.Context) error {
 
 	s.taskMeta = bgm
 	return nil
+}
+
+func (s *backfillDistExecutor) checkLocalSortFreeDisk(ctx context.Context) error {
+	// TODO: Recheck local disk when users increase concurrency with ADMIN ALTER DDL JOB.
+	// This precheck reserves future growth only for local-sort DXF backfills. Local-sort
+	// IMPORT INTO FROM FILE is excluded because its quota-based import/reset mechanism
+	// manages temporary-disk growth. IMPORT INTO FROM SELECT is excluded because its final
+	// size cannot be reliably estimated. Their current disk usage is reflected in the
+	// filesystem's available space.
+	runningJobCount, runningJobRuntimeSlots, runningJobUsedBytes, err :=
+		s.getRunningLocalSortJobDiskUsage(ctx)
+	if err != nil {
+		return err
+	}
+	if err := ingest.CheckLocalSortFreeDisk(
+		s.GetExecutorID(),
+		runningJobCount,
+		runningJobRuntimeSlots,
+		runningJobUsedBytes,
+		s.task.GetRuntimeSlots(),
+	); err != nil {
+		// The growth reservation is capped by tidb_ddl_disk_quota (100 GiB by default).
+		// Available space also reflects untracked usage such as logs. Reject the task because
+		// insufficient local disk space can degrade SST ingestion. Operators should inspect
+		// the TiDB node for large files that can be safely removed.
+		return err
+	}
+	return nil
+}
+
+func (s *backfillDistExecutor) getRunningLocalSortJobDiskUsage(
+	ctx context.Context,
+) (jobCount int, runtimeSlots int, usedBytes uint64, err error) {
+	taskRuntimeSlotsByID := s.TaskRuntimeSlotsSnapshot()
+	for taskID, taskRuntimeSlots := range taskRuntimeSlotsByID {
+		if taskID == s.task.ID {
+			// Resume does not guarantee cleanup of this task's previous local files. Any
+			// remaining files reduce available space, while its full growth budget is reserved again.
+			continue
+		}
+
+		task, err := s.GetTaskTable().GetTaskByID(ctx, taskID)
+		if err != nil {
+			return 0, 0, 0, err
+		}
+		if task.Type != proto.Backfill || task.Step != proto.BackfillStepReadIndex {
+			continue
+		}
+
+		taskMeta := &BackfillTaskMeta{}
+		if err := json.Unmarshal(task.Meta, taskMeta); err != nil {
+			return 0, 0, 0, errors.Trace(err)
+		}
+		if len(taskMeta.CloudStorageURI) > 0 {
+			continue
+		}
+
+		jobCount++
+		runtimeSlots += taskRuntimeSlots
+		if ingest.LitDiskRoot != nil {
+			usedBytes += ingest.LitDiskRoot.GetJobDiskUsage(taskMeta.Job.ID)
+		}
+	}
+	return jobCount, runtimeSlots, usedBytes, nil
 }
 
 func (s *backfillDistExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor, error) {

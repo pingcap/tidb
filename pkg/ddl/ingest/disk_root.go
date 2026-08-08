@@ -27,10 +27,11 @@ import (
 	lcom "github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
 )
 
-// ResourceTracker has the method of GetUsage.
+// ResourceTracker reports the current local disk usage in bytes.
 type ResourceTracker interface {
 	GetDiskUsage() uint64
 }
@@ -46,9 +47,17 @@ type DiskRoot interface {
 	UsageInfo() string
 	PreCheckUsage() error
 	StartupCheck() error
+	// GetJobDiskUsage returns the tracked local disk usage for jobID, or zero if unregistered.
+	GetJobDiskUsage(jobID int64) uint64
 }
 
-const capacityThreshold = 0.9
+const (
+	capacityThreshold = 0.9
+	// TiDB nodes typically have 2 GiB memory per CPU slot, and local sort flushes
+	// a similar-sized batch. Reserve 2 GiB per slot for efficient flush/import
+	// cycles, capped by tidb_ddl_disk_quota.
+	localSortBytesPerSlot = 2 * size.GB
+)
 
 // diskRootImpl implements DiskRoot interface.
 type diskRootImpl struct {
@@ -93,6 +102,17 @@ func (d *diskRootImpl) Count() int {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return len(d.items)
+}
+
+// GetJobDiskUsage returns the tracked local disk usage for jobID, or zero if unregistered.
+func (d *diskRootImpl) GetJobDiskUsage(jobID int64) uint64 {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	tracker, ok := d.items[jobID]
+	if !ok {
+		return 0
+	}
+	return tracker.GetDiskUsage()
 }
 
 // UpdateUsage implements DiskRoot interface.
@@ -197,4 +217,76 @@ func (d *diskRootImpl) StartupCheck() error {
 // RiskOfDiskFull checks if the disk has less than 10% space.
 func RiskOfDiskFull(available, capacity uint64) bool {
 	return float64(available) < (1-capacityThreshold)*float64(capacity)
+}
+
+// CheckLocalSortFreeDisk ensures the local ingest temp directory has enough free
+// disk space for the incoming local-sort job.
+func CheckLocalSortFreeDisk(
+	execID string,
+	runningJobCount int,
+	runningJobRuntimeSlots int,
+	runningJobUsedBytes uint64,
+	newJobRuntimeSlots int,
+) error {
+	sortPath, err := GenIngestTempDataDir()
+	if err != nil {
+		return dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(err.Error())
+	}
+	sz, err := lcom.GetStorageSize(sortPath)
+	if err != nil {
+		return dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(err.Error())
+	}
+
+	return checkLocalSortFreeDisk(
+		execID,
+		sortPath,
+		sz.Available,
+		sz.Capacity,
+		runningJobCount,
+		runningJobRuntimeSlots,
+		runningJobUsedBytes,
+		newJobRuntimeSlots,
+	)
+}
+
+func checkLocalSortFreeDisk(
+	execID string,
+	sortPath string,
+	availableBytes uint64,
+	totalCapacityBytes uint64,
+	runningJobCount int,
+	runningJobRuntimeSlots int,
+	runningJobUsedBytes uint64,
+	newJobRuntimeSlots int,
+) error {
+	allJobsRequiredBytes := uint64(runningJobRuntimeSlots+newJobRuntimeSlots) * localSortBytesPerSlot
+	// Slot-based reservations and the ingest quota are shared soft budgets.
+	// Exceeding the quota triggers an import that releases disk, so check the
+	// aggregate growth until the smaller target is reached.
+	allJobsTargetBytes := min(allJobsRequiredBytes, vardef.DDLDiskQuota.Load())
+	allJobsGapBytes := uint64(0)
+	if allJobsTargetBytes > runningJobUsedBytes {
+		allJobsGapBytes = allJobsTargetBytes - runningJobUsedBytes
+	}
+	totalRequiredBytes := totalCapacityBytes/10 + allJobsGapBytes
+	if availableBytes > totalRequiredBytes {
+		logutil.DDLIngestLogger().Info("local sort free disk check passed",
+			zap.Uint64("totalRequiredBytes", totalRequiredBytes),
+			zap.Uint64("availableBytes", availableBytes),
+			zap.String("sortPath", sortPath),
+			zap.Uint64("totalCapacityBytes", totalCapacityBytes),
+			zap.Int("runningLocalSortJobCount", runningJobCount),
+			zap.Int("newJobRuntimeSlots", newJobRuntimeSlots),
+			zap.Uint64("localSortBytesPerSlot", localSortBytesPerSlot))
+		return nil
+	}
+
+	return dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(
+		fmt.Sprintf(
+			"insufficient free disk space on TiDB node %s at %s: %d bytes available; the add-index job cannot start because low disk space would degrade SST ingestion. Free disk space on this TiDB node by removing unnecessary logs or files",
+			execID,
+			sortPath,
+			availableBytes,
+		),
+	)
 }
