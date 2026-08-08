@@ -688,7 +688,7 @@ impl Job {
                 }
             }
         }
-        serde_json::to_vec(self)
+        crate::serde_helpers::to_go_json(self)
     }
 
     pub fn decode(&mut self, bytes: &[u8]) -> Result<(), serde_json::Error> {
@@ -1147,6 +1147,7 @@ mod tests {
         let fixed = TimeZoneLocation {
             name: "UTC".to_owned(),
             offset: 18_000,
+            ..Default::default()
         }
         .get_location()
         .unwrap();
@@ -1154,6 +1155,7 @@ mod tests {
         assert!(TimeZoneLocation {
             name: "Not/AZone".to_owned(),
             offset: 0,
+            ..Default::default()
         }
         .get_location()
         .is_err());
@@ -1335,6 +1337,15 @@ mod tests {
         assert!(std::str::from_utf8(&encoded)
             .unwrap()
             .contains(r#""raw_args":{"a":1}"#));
+
+        v2.fill_raw_args(vec![serde_json::json!({
+            "text": "<>&\u{2028}\u{2029}",
+            "ratio": 1.0
+        })]);
+        let encoded = v2.encode(true).unwrap();
+        let encoded = std::str::from_utf8(&encoded).unwrap();
+        assert!(encoded.contains(r#"\u003c\u003e\u0026\u2028\u2029"#));
+        assert!(encoded.contains(r#""ratio":1"#));
 
         let sub_job = SubJob {
             type_: ActionType::ACTION_ADD_INDEX,
