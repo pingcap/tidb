@@ -803,18 +803,19 @@ impl Table {
 
     #[must_use]
     pub fn index_starting_with_column(&self, name: &str) -> Option<SharedIndex> {
-        self.hist_coll.stable_indices().into_iter().find(|index| {
-            let index = read(index);
+        read(&self.hist_coll.indices).values().find_map(|shared| {
+            let index = read(shared);
             let info = index.info.as_ref().expect("index has no metadata");
-            info.columns[0] == name
+            (info.columns[0] == name).then(|| Arc::clone(shared))
         })
     }
 
     #[must_use]
     pub fn column_by_name(&self, name: &str) -> Option<SharedColumn> {
-        self.hist_coll.stable_columns().into_iter().find(|column| {
-            let column = read(column);
-            column.info.as_ref().expect("column has no metadata").name == name
+        read(&self.hist_coll.columns).values().find_map(|shared| {
+            let column = read(shared);
+            let info = column.info.as_ref().expect("column has no metadata");
+            (info.name == name).then(|| Arc::clone(shared))
         })
     }
 }
