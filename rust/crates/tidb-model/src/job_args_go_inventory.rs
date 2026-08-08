@@ -166,17 +166,40 @@ fn every_ported_symbol_remains_compile_anchored() {
 }
 
 #[test]
-fn deferred_rows_pin_the_measured_job_boundary() {
+fn declined_rows_pin_the_current_typed_job_args_boundary() {
     let rust_job = include_str!("job.rs");
-    for phrase in [
-        "DEFERRED (a larger tranche): the `Job` struct itself",
-        "version-dependent JSON args (`RawArgs`/`Encode`/`Decode`/`FillArgs`)",
+    for native_generic_symbol in [
+        "pub struct Job {",
+        "pub raw_args: Option<serde_json::Value>",
+        "pub fn fill_raw_args(",
+        "pub fn encode(",
+        "pub fn decode(",
     ] {
         assert!(
-            rust_job.contains(phrase),
-            "deferred boundary drifted: {phrase}"
+            rust_job.contains(native_generic_symbol),
+            "generic Job envelope disappeared: {native_generic_symbol}"
         );
     }
+    assert!(!rust_job.contains("pub fn fill_args("));
+    assert!(!rust_job.contains("pub fn fill_finished_args("));
+
+    let rust_job_args = include_str!("job_args.rs");
+    for absent_typed_symbol in [
+        "pub trait JobArgs",
+        "pub trait FinishedJobArgs",
+        "pub struct CreateSchemaArgs",
+        "pub fn get_create_schema_args",
+    ] {
+        assert!(
+            !rust_job_args.contains(absent_typed_symbol),
+            "typed job-argument boundary changed: {absent_typed_symbol}"
+        );
+    }
+
+    const CURRENT_BOUNDARY: &str = "Measured boundary: generic Job and raw JSON envelope encode/decode are native in job.rs, but typed JobArgs and FinishedJobArgs structures plus their source-specific getArgsV1, decodeV1, Get, FillArgs, and FillFinishedArgs rules remain absent; no source-equivalent typed entry point exists.";
+    assert_eq!(INVENTORY.matches(CURRENT_BOUNDARY).count(), 1_588);
+    assert!(!INVENTORY.contains("explicitly defers Job RawArgs Encode Decode and FillArgs"));
+
     let go_tests = std::str::from_utf8(GO_TEST_SUPPORT).expect("Go test source is UTF-8");
     assert!(go_tests.contains("func getJobBytes("));
     assert!(go_tests.contains("func getFinishedJobBytes("));

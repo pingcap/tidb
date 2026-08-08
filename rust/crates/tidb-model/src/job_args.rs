@@ -14,10 +14,10 @@
 
 //! The independently reachable pieces of `pkg/meta/model/job_args.go`.
 //!
-//! The accepted Rust architecture deliberately does not yet expose Go's
-//! `Job`, `RawArgs`, `Encode`, `Decode`, or `FillArgs` boundary.  The adjacent
-//! lockdown ledger therefore ports the source rules that do not cross that
-//! boundary and classifies every boundary-dependent obligation explicitly.
+//! [`crate::Job`] now owns Go's generic raw-JSON envelope and codec. The many
+//! source-specific `JobArgs`/`FinishedJobArgs` structures and their typed v1
+//! conversion and decode rules remain outside this file's measured native
+//! surface. The adjacent lockdown ledger distinguishes those two boundaries.
 
 use serde::{Deserialize, Serialize};
 use tidb_ast::CiString;
