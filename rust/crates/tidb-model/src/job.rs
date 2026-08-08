@@ -819,7 +819,8 @@ impl_go_merge_object!(DBInfo, destination, map, key, {
     } else if go_json_field_matches(&key, "collate") {
         map.next_value_seed(NullNoopSeed(&mut destination.collate))?;
     } else if go_json_field_matches(&key, "Deprecated") {
-        map.next_value::<BTreeMap<String, serde::de::IgnoredAny>>()?;
+        let mut deprecated = BTreeMap::<String, serde::de::IgnoredAny>::new();
+        map.next_value_seed(NullNoopSeed(&mut deprecated))?;
     } else if go_json_field_matches(&key, "state") {
         map.next_value_seed(NullNoopSeed(&mut destination.state))?;
     } else if go_json_field_matches(&key, "policy_ref_info") {
@@ -1770,6 +1771,19 @@ mod tests {
         assert_eq!(tables[2].as_ref().unwrap().id, 7);
         assert_eq!(tables[2].as_ref().unwrap().comment, "last-element");
         assert_eq!(job.row_count, 40);
+
+        job.decode(br#"{"binlog":{"DBInfo":{"Deprecated":null,"collate":"after-null"}}}"#)
+            .unwrap();
+        assert_eq!(
+            job.binlog_info
+                .as_ref()
+                .unwrap()
+                .db_info
+                .as_ref()
+                .unwrap()
+                .collate,
+            "after-null"
+        );
 
         job.decode(br#"{"binlog":{"DBInfo":null,"TableInfo":null,"MultipleTableInfos":null}}"#)
             .unwrap();
