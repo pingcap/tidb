@@ -336,16 +336,41 @@ impl serde::Serialize for StatsOptions {
 
 impl<'de> serde::Deserialize<'de> for StatsOptions {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Present<T> {
+            present: bool,
+            value: Option<T>,
+        }
+
+        impl<T> Default for Present<T> {
+            fn default() -> Self {
+                Self {
+                    present: false,
+                    value: None,
+                }
+            }
+        }
+
+        fn present<'de, D, T>(deserializer: D) -> Result<Present<T>, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+            T: serde::Deserialize<'de>,
+        {
+            Ok(Present {
+                present: true,
+                value: <Option<T> as serde::Deserialize>::deserialize(deserializer)?,
+            })
+        }
+
         #[derive(serde::Deserialize)]
         struct Wire {
-            #[serde(default)]
-            window_start: Option<String>,
-            #[serde(default)]
-            window_end: Option<String>,
-            #[serde(default)]
-            repeat_type: Option<WindowRepeatType>,
-            #[serde(default)]
-            repeat_interval: Option<u64>,
+            #[serde(default, deserialize_with = "present")]
+            window_start: Present<String>,
+            #[serde(default, deserialize_with = "present")]
+            window_end: Present<String>,
+            #[serde(default, deserialize_with = "present")]
+            repeat_type: Present<WindowRepeatType>,
+            #[serde(default, deserialize_with = "present")]
+            repeat_interval: Present<u64>,
             #[serde(default)]
             auto_recalc: bool,
             #[serde(
@@ -369,20 +394,20 @@ impl<'de> serde::Deserialize<'de> for StatsOptions {
 
         let wire = Wire::deserialize(deserializer)?;
         // The embedded pointer was non-nil exactly when its keys were written.
-        let has_window = wire.window_start.is_some()
-            || wire.window_end.is_some()
-            || wire.repeat_type.is_some()
-            || wire.repeat_interval.is_some();
+        let has_window = wire.window_start.present
+            || wire.window_end.present
+            || wire.repeat_type.present
+            || wire.repeat_interval.present;
         let stats_window_settings = if has_window {
             let parse = |text: Option<String>| match text {
                 Some(text) => parse_go_time(&text),
                 None => Ok(go_zero_time()),
             };
             Some(Box::new(StatsWindowSettings {
-                window_start: parse(wire.window_start)?,
-                window_end: parse(wire.window_end)?,
-                repeat_type: wire.repeat_type.unwrap_or_default(),
-                repeat_interval: wire.repeat_interval.unwrap_or_default(),
+                window_start: parse(wire.window_start.value)?,
+                window_end: parse(wire.window_end.value)?,
+                repeat_type: wire.repeat_type.value.unwrap_or_default(),
+                repeat_interval: wire.repeat_interval.value.unwrap_or_default(),
             }))
         } else {
             None
@@ -1479,6 +1504,18 @@ mod tests {
         );
         let back: StatsOptions = serde_json::from_str(&encoded).unwrap();
         assert_eq!(back, with);
+
+        let present_null: StatsOptions = serde_json::from_str(
+            r#"{"window_start":null,"auto_recalc":false,"column_choice":0,"column_list":null,"sample_num":0,"sample_rate":0,"buckets":0,"topn":0,"concurrency":0}"#,
+        )
+        .unwrap();
+        let window = present_null.stats_window_settings.as_ref().unwrap();
+        assert_eq!(window.window_start, go_zero_time());
+        assert_eq!(window.window_end, go_zero_time());
+        assert_eq!(
+            go_json(&present_null),
+            r#"{"window_start":"0001-01-01T00:00:00Z","window_end":"0001-01-01T00:00:00Z","repeat_type":0,"repeat_interval":0,"auto_recalc":false,"column_choice":0,"column_list":[],"sample_num":0,"sample_rate":0,"buckets":0,"topn":0,"concurrency":0}"#
+        );
     }
 
     // Go's time.Time marshals as RFC 3339 with trailing fractional zeros cut.
