@@ -184,6 +184,64 @@ fn source_delete_updates_data_and_existence_maps() {
 }
 
 #[test]
+fn source_table_memory_aggregates_components_and_tracking() {
+    let table = table();
+    {
+        let column = table.hist_coll.get_column(2).unwrap();
+        let mut column = column.write().unwrap();
+        column.histogram_memory_usage = 11;
+        let mut top_n = TopN::new(1);
+        top_n.append(&[1], 1);
+        column.top_n = Some(top_n);
+    }
+    {
+        let index = table.hist_coll.get_index(3).unwrap();
+        let mut index = index.write().unwrap();
+        index.histogram_memory_usage = 13;
+        let mut top_n = TopN::new(1);
+        top_n.append(&[2], 1);
+        index.top_n = Some(top_n);
+    }
+
+    let usage = table.memory_usage();
+    assert_eq!(usage.table_id, 1);
+    assert_eq!(usage.columns_mem_usage.len(), 1);
+    assert_eq!(usage.indices_mem_usage.len(), 1);
+    assert_eq!(
+        usage.total_mem_usage,
+        usage.columns_mem_usage[&2]
+            .total_memory_usage()
+            .wrapping_add(usage.indices_mem_usage[&3].total_memory_usage())
+    );
+    assert_eq!(
+        usage.total_tracking_mem_usage(),
+        usage.columns_mem_usage[&2]
+            .tracking_mem_usage()
+            .wrapping_add(usage.indices_mem_usage[&3].tracking_mem_usage())
+    );
+}
+
+#[test]
+fn source_table_memory_uses_go_int64_wrapping_boundaries() {
+    let mut usage = tidb_stats::TableMemoryUsage::default();
+    usage.columns_mem_usage.insert(
+        1,
+        tidb_stats::ColumnMemUsage {
+            histogram_mem_usage: i64::MAX,
+            ..tidb_stats::ColumnMemUsage::default()
+        },
+    );
+    usage.indices_mem_usage.insert(
+        2,
+        tidb_stats::IndexMemUsage {
+            histogram_mem_usage: 1,
+            ..tidb_stats::IndexMemUsage::default()
+        },
+    );
+    assert_eq!(usage.total_tracking_mem_usage(), i64::MIN);
+}
+
+#[test]
 fn source_bootstrap_pre_scalar_and_drop_evicted_match() {
     let coll = HistColl::new(1, 10, 0, 1, 1);
     let mut col = column(1, 2, StatsLoadedStatus::full_load());

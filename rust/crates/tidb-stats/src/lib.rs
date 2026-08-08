@@ -314,7 +314,8 @@ pub use stats_version::{
 pub use status::{StatsLoadedStatus, ALL_EVICTED, ALL_LOADED};
 pub use sync_load_concurrency::sync_load_concurrency_for_cpu;
 pub use table::{
-    CopyIntent, HistColl, SharedColumn, SharedIndex, Table, PSEUDO_ROW_COUNT, PSEUDO_VERSION,
+    CopyIntent, HistColl, SharedColumn, SharedIndex, Table, TableMemoryUsage, PSEUDO_ROW_COUNT,
+    PSEUDO_VERSION,
 };
 pub use table_id_filter::build_in_table_ids_string;
 pub use topn_merge_task::TopnStatsMergeTask;

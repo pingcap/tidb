@@ -17,13 +17,46 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-use crate::{ColAndIdxExistenceMap, Column, Index, StatsLoadedStatus};
+use crate::{
+    ColAndIdxExistenceMap, Column, ColumnMemUsage, Index, IndexMemUsage, StatsLoadedStatus,
+};
 
 pub const PSEUDO_VERSION: u64 = 0;
 pub const PSEUDO_ROW_COUNT: i64 = 10_000;
 
 pub type SharedColumn = Arc<RwLock<Column>>;
 pub type SharedIndex = Arc<RwLock<Index>>;
+
+/// Per-table component memory accounting from `table.go`.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct TableMemoryUsage {
+    pub columns_mem_usage: HashMap<i64, ColumnMemUsage>,
+    pub indices_mem_usage: HashMap<i64, IndexMemUsage>,
+    pub table_id: i64,
+    pub total_mem_usage: i64,
+}
+
+impl TableMemoryUsage {
+    #[must_use]
+    pub fn total_index_tracking_mem_usage(&self) -> i64 {
+        self.indices_mem_usage.values().fold(0_i64, |sum, usage| {
+            sum.wrapping_add(usage.tracking_mem_usage())
+        })
+    }
+
+    #[must_use]
+    pub fn total_column_tracking_mem_usage(&self) -> i64 {
+        self.columns_mem_usage.values().fold(0_i64, |sum, usage| {
+            sum.wrapping_add(usage.tracking_mem_usage())
+        })
+    }
+
+    #[must_use]
+    pub fn total_tracking_mem_usage(&self) -> i64 {
+        self.total_index_tracking_mem_usage()
+            .wrapping_add(self.total_column_tracking_mem_usage())
+    }
+}
 
 fn read<T>(lock: &RwLock<T>) -> RwLockReadGuard<'_, T> {
     lock.read().unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -264,6 +297,31 @@ pub struct Table {
 }
 
 impl Table {
+    /// Go `(*Table).MemoryUsage`; only column and index statistics payloads
+    /// contribute, while table metadata is intentionally excluded.
+    #[must_use]
+    pub fn memory_usage(&self) -> TableMemoryUsage {
+        let mut result = TableMemoryUsage {
+            table_id: self.hist_coll.physical_id,
+            ..TableMemoryUsage::default()
+        };
+        for column in read(&self.hist_coll.columns).values() {
+            let usage = read(column).memory_usage();
+            result.total_mem_usage = result
+                .total_mem_usage
+                .wrapping_add(usage.total_memory_usage());
+            result.columns_mem_usage.insert(usage.item_id(), usage);
+        }
+        for index in read(&self.hist_coll.indices).values() {
+            let usage = read(index).memory_usage();
+            result.total_mem_usage = result
+                .total_mem_usage
+                .wrapping_add(usage.total_memory_usage());
+            result.indices_mem_usage.insert(usage.item_id(), usage);
+        }
+        result
+    }
+
     pub fn delete_column(&self, id: i64) {
         write(&self.hist_coll.columns).remove(&id);
         if let Some(map) = &self.existence_map {
