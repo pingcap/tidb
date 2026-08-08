@@ -3815,6 +3815,15 @@ func doPartitionReorgWork(w *worker, jobCtx *jobContext, job *model.Job, tbl tab
 		return false, ver, errors.Trace(err)
 	}
 	reorgInfo, err := getReorgInfoFromPartitions(jobCtx.oldDDLCtx.jobContext(job.ID, job.ReorgMeta), jobCtx, rh, job, dbInfo, partTbl, physTblIDs, elements)
+	failpoint.Inject("CheckReorgInfoEmptyErr", func(val failpoint.Value) {
+		if val.(bool) {
+			reorgInfo, err = nil, errors.Trace(meta.ErrDDLReorgElementNotExist)
+		}
+	})
+	if err != nil {
+		return false, ver, errors.Trace(err)
+	}
+
 	err = w.runReorgJob(jobCtx, reorgInfo, reorgTbl.Meta(), func() (reorgErr error) {
 		defer tidbutil.Recover(metrics.LabelDDL, "doPartitionReorgWork",
 			func() {
