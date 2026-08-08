@@ -170,7 +170,7 @@ fn declined_rows_pin_the_current_typed_job_args_boundary() {
     let rust_job = include_str!("job.rs");
     for native_generic_symbol in [
         "pub struct Job {",
-        "pub raw_args: Option<serde_json::Value>",
+        "pub raw_args: Option<PersistedRawJson>",
         "pub fn fill_raw_args(",
         "pub fn encode(",
         "pub fn decode(",

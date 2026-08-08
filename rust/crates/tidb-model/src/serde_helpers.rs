@@ -462,6 +462,36 @@ impl serde_json::ser::Formatter for GoFloatFormatter {
             write!(writer, "{value}")
         }
     }
+
+    fn write_raw_fragment<W: std::io::Write + ?Sized>(
+        &mut self,
+        writer: &mut W,
+        fragment: &str,
+    ) -> std::io::Result<()> {
+        // Go validates and compacts a Marshaler/RawMessage result before it is
+        // appended to the parent document. Preserve keys, duplicates, and
+        // number lexemes while removing JSON whitespace outside strings.
+        let mut in_string = false;
+        let mut escaped = false;
+        for byte in fragment.bytes() {
+            if in_string {
+                writer.write_all(&[byte])?;
+                if escaped {
+                    escaped = false;
+                } else if byte == b'\\' {
+                    escaped = true;
+                } else if byte == b'"' {
+                    in_string = false;
+                }
+            } else if byte == b'"' {
+                in_string = true;
+                writer.write_all(&[byte])?;
+            } else if !matches!(byte, b' ' | b'\t' | b'\r' | b'\n') {
+                writer.write_all(&[byte])?;
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Serializes to the exact bytes Go's `json.Marshal` produces.

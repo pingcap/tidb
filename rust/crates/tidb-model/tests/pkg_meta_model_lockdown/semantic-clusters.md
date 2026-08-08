@@ -110,7 +110,13 @@ remaining package census is 2,509 obligations plus the build artifact.
   `SubJob.Clone` clears its private decoded-argument cache while retaining the
   raw persisted envelope; `Job.Clone` refreshes the source job's raw argument
   envelope before decoding its copy, preserving the source-visible side
-  effect; `JobW` retains arbitrary original bytes without
+  effect. Persisted `json.RawMessage` arguments retain their validated owned
+  JSON text exactly on decode, including duplicate members, member order,
+  numeric lexical forms, and insignificant whitespace. Re-encoding follows
+  Go `json.Marshal`: it compacts only insignificant whitespace and applies the
+  parent encoder's HTML escaping without parsing the raw envelope through a
+  lossy generic value. The decoded `Args` cache remains separate. `JobW`
+  retains arbitrary original bytes without
   decoding or normalizing them and dereferences to its embedded job. Rust's
   owned wrapper cannot represent Go's nil embedded `*Job` or byte-slice alias
   identity. The decoded-argument cache preserves Go's nil

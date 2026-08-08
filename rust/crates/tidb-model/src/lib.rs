@@ -69,7 +69,7 @@ pub use index::{
 pub use job::{
     AddForeignKeyInfo, AdminCommandOperator, HistoryInfo, InvolvingSchemaInfo,
     InvolvingSchemaInfoMode, Job, JobMeta, JobPauseReason, JobResumeReason, JobW, MultiSchemaInfo,
-    ResolvedTimeZone, SubJob, TimeZoneLocation, TraceInfo,
+    PersistedRawJson, ResolvedTimeZone, SubJob, TimeZoneLocation, TraceInfo,
 };
 pub use job_args::{
     index_arg_columnar_index_type, rename_tables_args_from_v1, IndexOp, RenameTableArgs,

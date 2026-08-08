@@ -21,6 +21,7 @@ use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
 use serde::de::{MapAccess, Visitor};
+use serde_json::value::RawValue;
 use tidb_error::terror::TerrorError;
 
 use crate::action_type::ActionType;
@@ -85,6 +86,57 @@ pub const INVOLVING_NONE: &str = "";
 pub const JOB_PAUSE_REASON_KV_DISK_FULL: &str = "tikv_disk_full";
 /// Go `JobResumeReasonKVDiskFull`.
 pub const JOB_RESUME_REASON_KV_DISK_FULL: &str = "tikv_disk_full";
+
+/// Owned Go `json.RawMessage` content used by persisted job arguments.
+///
+/// The exact valid JSON text is retained on decode. Encoding through the
+/// package's Go formatter compacts only insignificant whitespace, preserving
+/// duplicate keys, member order, and numeric lexical forms like Go Marshal.
+#[derive(Clone, Debug)]
+pub struct PersistedRawJson(Box<RawValue>);
+
+impl PersistedRawJson {
+    /// Validates and owns exact JSON text.
+    pub fn from_string(json: String) -> Result<Self, serde_json::Error> {
+        RawValue::from_string(json).map(Self)
+    }
+
+    /// Returns the exact decoded JSON text before outer-marshaler compaction.
+    #[must_use]
+    pub fn get(&self) -> &str {
+        self.0.get()
+    }
+
+    fn from_value(value: &serde_json::Value) -> Result<Self, serde_json::Error> {
+        serde_json::value::to_raw_value(value).map(Self)
+    }
+}
+
+impl PartialEq for PersistedRawJson {
+    fn eq(&self, other: &Self) -> bool {
+        self.get() == other.get()
+    }
+}
+
+impl Eq for PersistedRawJson {}
+
+impl serde::Serialize for PersistedRawJson {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serde::Serialize::serialize(&self.0, serializer)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for PersistedRawJson {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        serde::Deserialize::deserialize(deserializer).map(Self)
+    }
+}
 
 /// Go `InvolvingSchemaInfo`: a schema object a DDL job involves (for locking).
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -334,7 +386,7 @@ pub struct SubJob {
     pub type_: ActionType,
     /// Persisted delayed-decode argument envelope.
     #[serde(rename = "raw_args", default)]
-    pub raw_args: Option<serde_json::Value>,
+    pub raw_args: Option<PersistedRawJson>,
     /// Current schema state reached by the sub-job.
     #[serde(rename = "schema_state", default)]
     pub schema_state: SchemaState,
@@ -543,7 +595,7 @@ pub struct Job {
     args: Option<Vec<serde_json::Value>>,
     /// Persisted delayed-decode argument envelope.
     #[serde(rename = "raw_args", default)]
-    pub raw_args: Option<serde_json::Value>,
+    pub raw_args: Option<PersistedRawJson>,
     /// Schema state reached by this job.
     #[serde(rename = "schema_state", default)]
     pub schema_state: SchemaState,
@@ -993,36 +1045,34 @@ impl Job {
     /// Encodes the job with Go-compatible JSON, optionally refreshing raw arguments.
     pub fn encode(&mut self, update_raw_args: bool) -> Result<Vec<u8>, serde_json::Error> {
         if update_raw_args {
-            self.raw_args = if self.version.0 <= JobVersion::V1.0 {
-                Some(
-                    self.args
-                        .clone()
-                        .map_or(serde_json::Value::Null, serde_json::Value::Array),
-                )
+            let raw_args = if self.version.0 <= JobVersion::V1.0 {
+                self.args
+                    .clone()
+                    .map_or(serde_json::Value::Null, serde_json::Value::Array)
             } else {
                 debug_assert_eq!(self.version, JobVersion::V2);
                 debug_assert!(self.args.as_ref().map_or(0, Vec::len) <= 1);
-                Some(
-                    self.args
-                        .as_ref()
-                        .and_then(|args| args.first())
-                        .cloned()
-                        .unwrap_or(serde_json::Value::Null),
-                )
+                self.args
+                    .as_ref()
+                    .and_then(|args| args.first())
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null)
             };
+            self.raw_args = Some(PersistedRawJson::from_value(&raw_args)?);
             if let Some(info) = &mut self.multi_schema_info {
                 if let Some(sub_jobs) = &mut info.sub_jobs {
                     for sub_job in sub_jobs {
                         let Some(args) = &sub_job.args else {
                             continue;
                         };
-                        sub_job.raw_args = if self.version.0 <= JobVersion::V1.0 {
-                            Some(serde_json::Value::Array(args.clone()))
+                        let raw_args = if self.version.0 <= JobVersion::V1.0 {
+                            serde_json::Value::Array(args.clone())
                         } else {
                             debug_assert_eq!(self.version, JobVersion::V2);
                             debug_assert!(args.len() <= 1);
-                            Some(args.first().cloned().unwrap_or(serde_json::Value::Null))
+                            args.first().cloned().unwrap_or(serde_json::Value::Null)
                         };
+                        sub_job.raw_args = Some(PersistedRawJson::from_value(&raw_args)?);
                     }
                 }
             }
@@ -1452,6 +1502,10 @@ mod tests {
     use super::*;
     use tidb_ast::CiString;
 
+    fn raw_json(json: &str) -> PersistedRawJson {
+        PersistedRawJson::from_string(json.to_owned()).unwrap()
+    }
+
     #[test]
     fn enums_and_reasons() {
         assert_eq!(
@@ -1774,7 +1828,7 @@ mod tests {
 
         let cached = SubJob {
             args: Some(vec![serde_json::json!({"decoded": true})]),
-            raw_args: Some(serde_json::json!({"persisted": true})),
+            raw_args: Some(raw_json(r#"{"persisted":true}"#)),
             ..Default::default()
         };
         let clone = cached.clone_without_args();
@@ -1790,7 +1844,7 @@ mod tests {
         let clone = clone_source.deep_clone().unwrap();
         assert_eq!(
             clone_source.raw_args,
-            Some(serde_json::json!(["persisted by clone"]))
+            Some(raw_json(r#"["persisted by clone"]"#))
         );
         assert_eq!(clone.raw_args, clone_source.raw_args);
 
@@ -1800,6 +1854,19 @@ mod tests {
         assert!(wrapped.has_resume_reason(JOB_RESUME_REASON_KV_DISK_FULL));
         wrapped.id = 88;
         assert_eq!(wrapped.job.id, 88);
+
+        let mut lexical = Job::default();
+        lexical
+            .decode(br#"{"raw_args":{ "n":18446744073709551616, "n":1.0, "s":"<>&" }}"#)
+            .unwrap();
+        assert_eq!(
+            lexical.raw_args.as_ref().unwrap().get(),
+            r#"{ "n":18446744073709551616, "n":1.0, "s":"<>&" }"#
+        );
+        let encoded = String::from_utf8(lexical.encode(false).unwrap()).unwrap();
+        assert!(encoded
+            .contains(r#""raw_args":{"n":18446744073709551616,"n":1.0,"s":"\u003c\u003e\u0026"}"#));
+        assert!(PersistedRawJson::from_string("{".to_owned()).is_err());
 
         let mut unchanged = Job {
             id: 42,
@@ -1827,7 +1894,7 @@ mod tests {
         let mut job = Job {
             id: 42,
             row_count: 1,
-            raw_args: Some(serde_json::json!(["old"])),
+            raw_args: Some(raw_json(r#"["old"]"#)),
             involving_schema_info: Some(vec![InvolvingSchemaInfo {
                 database: "db".to_owned(),
                 table: "t".to_owned(),
@@ -1866,7 +1933,7 @@ mod tests {
         .unwrap();
         assert_eq!(job.id, 42);
         assert_eq!(job.row_count, 3);
-        assert_eq!(job.raw_args, Some(serde_json::Value::Null));
+        assert_eq!(job.raw_args, Some(raw_json("null")));
         assert_eq!(job.warning.as_ref().unwrap().message(), "warn");
         assert_eq!(job.error.as_ref().unwrap().message(), "failed");
         assert_eq!(
