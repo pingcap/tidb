@@ -1,0 +1,8 @@
+# executor-point-get-file-lockdown-artifacts-v1
+path	role	sha256	bytes	lines
+pkg/executor/point_get.go	production-owner	8bde7bb7507d17129b8fd829a2078878d5303bf4b86aad939b6be576f775be93	25114	873
+pkg/executor/point_get_test.go	dedicated-test-support	0cb3d43f29ea7c34ff8fdeb00d6f9c50f96b61175c6df0139c9f2b6a033519f2	13456	379
+pkg/executor/executor_failpoint_test.go	direct-repeatable-read-failpoint-support	3fd8f04d92d8739c3542aa8c6234d8a9578b5156f14fc421de66c01aa9b7e8f5	45437	1238
+pkg/executor/internal/exec/executor_test.go	direct-concrete-executor-label-support	2f4a53092efd2df468011d2deffaa155808d224b3a9f431d1d49213386cf2b08	4873	118
+pkg/executor/internal/exec/indexusage_test.go	direct-point-get-index-usage-support	213c354485efb0dbec3066526977f2f48a1fc8a5c9011a95deb0b9a09e579851	17754	548
+tests/realtikvtest/txntest/stale_read_test.go	direct-replica-option-failpoint-support	965a9a3c47f75bb8d70e4bf23ad593bf1cbdaf2be419487e871531bf73fcdb47	69915	1820

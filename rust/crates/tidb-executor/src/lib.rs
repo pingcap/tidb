@@ -82,6 +82,7 @@ pub mod partition_pruning;
 pub mod partition_routing;
 pub use partition_routing::{PartitionDef, PartitionKind, PartitionSpec, RangeBound};
 mod plan_trace;
+pub mod point_get;
 pub mod predicate_pushdown;
 pub mod projection;
 pub mod remote_scan;

@@ -1,0 +1,49 @@
+{
+  "artifact_count": 6,
+  "category_counts": {
+    "branch": 248,
+    "closure": 7,
+    "declaration": 2,
+    "field": 24,
+    "function": 27,
+    "loop": 26,
+    "short_circuit": 24,
+    "test": 12,
+    "test_assertion": 62,
+    "test_branch": 18,
+    "test_helper": 1,
+    "test_helper_closure": 13,
+    "test_loop": 26,
+    "test_row": 271,
+    "test_short_circuit": 2
+  },
+  "claim_boundary": "file-lockdown-seed-not-package-completion",
+  "direct_test_support_obligation_count": 405,
+  "go_package": "pkg/executor",
+  "mutation_count": 22,
+  "mutation_suites": 12,
+  "obligation_count": 763,
+  "owned_file_sha256": {
+    "rust/crates/tidb-executor/src/lib.rs": "d3861196083ddf66b09a43b3077b7ac9b404ac19e9fe5d5e75ea6826c9a1019e",
+    "rust/crates/tidb-executor/src/point_get.artifacts.tsv": "eebacdb9bd85d0d132326a8bc5767b6509b69a916bc93339529034b872dfc765",
+    "rust/crates/tidb-executor/src/point_get.inventory.tsv": "f45e0546ebbbff30eb417f1f4a094bdd1420f6720620976a21f588a9912a81ac",
+    "rust/crates/tidb-executor/src/point_get.mutation-plan.tsv": "dcec5c7b5712d62c308db0096e248794e538ee8e5f20362852ea7f9a26c13fa4",
+    "rust/crates/tidb-executor/src/point_get.mutation-results.tsv": "f78f68396db78c64b0c1152d82b8ba5c865180c6db9a912ce878d71e1bd397b6",
+    "rust/crates/tidb-executor/src/point_get.rs": "62bf005745295f5f51bebee168cf22ce8fd7d41bd8e76364a9dd88333b8205c9",
+    "rust/docs/operations/executor-point-get-go-lockdown-execplan.md": "dad9172eb261f37b96db6e7b31660c2f9962778d937966ade6f15616ab4719a8",
+    "rust/scripts/pkg-executor-point-get-lockdown.py": "bdc2139d8882bd55e3dbe0fdc4cf8c83596d435742d4b304e96dea3859880511"
+  },
+  "owning_go_source": "pkg/executor/point_get.go",
+  "ported_obligation_count": 28,
+  "ported_symbol_count": 5,
+  "production_obligation_count": 358,
+  "reachable_ported_rule_count": 28,
+  "schema": "executor-point-get-file-lockdown-v1",
+  "source_seed_commit": "566c460c26d5019fd32ce157531bcf431a8ce447",
+  "status_counts": {
+    "DECLINED": 734,
+    "PORTED": 28,
+    "UNREACHABLE": 1
+  },
+  "whole_go_package_complete": false
+}
