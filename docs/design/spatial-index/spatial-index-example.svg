@@ -1,0 +1,127 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="792" height="618" font-family="Helvetica,Arial,sans-serif">
+<rect width="792" height="618" fill="#ffffff"/>
+<text x="50" y="34" font-size="20" font-weight="700" fill="#424D57">Spatial index: covering cells for three geometries (domain [0,8)²)</text>
+<line x1="50" y1="572" x2="50" y2="60" stroke="#E5E8EB" stroke-width="1"/>
+<line x1="50" y1="572" x2="562" y2="572" stroke="#E5E8EB" stroke-width="1"/>
+<line x1="114" y1="572" x2="114" y2="60" stroke="#E5E8EB" stroke-width="1"/>
+<line x1="50" y1="508" x2="562" y2="508" stroke="#E5E8EB" stroke-width="1"/>
+<line x1="178" y1="572" x2="178" y2="60" stroke="#E5E8EB" stroke-width="1"/>
+<line x1="50" y1="444" x2="562" y2="444" stroke="#E5E8EB" stroke-width="1"/>
+<line x1="242" y1="572" x2="242" y2="60" stroke="#E5E8EB" stroke-width="1"/>
+<line x1="50" y1="380" x2="562" y2="380" stroke="#E5E8EB" stroke-width="1"/>
+<line x1="306" y1="572" x2="306" y2="60" stroke="#E5E8EB" stroke-width="1"/>
+<line x1="50" y1="316" x2="562" y2="316" stroke="#E5E8EB" stroke-width="1"/>
+<line x1="370" y1="572" x2="370" y2="60" stroke="#E5E8EB" stroke-width="1"/>
+<line x1="50" y1="252" x2="562" y2="252" stroke="#E5E8EB" stroke-width="1"/>
+<line x1="434" y1="572" x2="434" y2="60" stroke="#E5E8EB" stroke-width="1"/>
+<line x1="50" y1="188" x2="562" y2="188" stroke="#E5E8EB" stroke-width="1"/>
+<line x1="498" y1="572" x2="498" y2="60" stroke="#E5E8EB" stroke-width="1"/>
+<line x1="50" y1="124" x2="562" y2="124" stroke="#E5E8EB" stroke-width="1"/>
+<line x1="562" y1="572" x2="562" y2="60" stroke="#E5E8EB" stroke-width="1"/>
+<line x1="50" y1="60" x2="562" y2="60" stroke="#E5E8EB" stroke-width="1"/>
+<line x1="50" y1="572" x2="50" y2="60" stroke="#B9C2CA" stroke-width="1.5"/>
+<line x1="50" y1="572" x2="562" y2="572" stroke="#B9C2CA" stroke-width="1.5"/>
+<line x1="178" y1="572" x2="178" y2="60" stroke="#B9C2CA" stroke-width="1.5"/>
+<line x1="50" y1="444" x2="562" y2="444" stroke="#B9C2CA" stroke-width="1.5"/>
+<line x1="306" y1="572" x2="306" y2="60" stroke="#B9C2CA" stroke-width="1.5"/>
+<line x1="50" y1="316" x2="562" y2="316" stroke="#B9C2CA" stroke-width="1.5"/>
+<line x1="434" y1="572" x2="434" y2="60" stroke="#B9C2CA" stroke-width="1.5"/>
+<line x1="50" y1="188" x2="562" y2="188" stroke="#B9C2CA" stroke-width="1.5"/>
+<line x1="562" y1="572" x2="562" y2="60" stroke="#B9C2CA" stroke-width="1.5"/>
+<line x1="50" y1="60" x2="562" y2="60" stroke="#B9C2CA" stroke-width="1.5"/>
+<line x1="50" y1="572" x2="50" y2="60" stroke="#8B96A2" stroke-width="2.5"/>
+<line x1="50" y1="572" x2="562" y2="572" stroke="#8B96A2" stroke-width="2.5"/>
+<line x1="306" y1="572" x2="306" y2="60" stroke="#8B96A2" stroke-width="2.5"/>
+<line x1="50" y1="316" x2="562" y2="316" stroke="#8B96A2" stroke-width="2.5"/>
+<line x1="562" y1="572" x2="562" y2="60" stroke="#8B96A2" stroke-width="2.5"/>
+<line x1="50" y1="60" x2="562" y2="60" stroke="#8B96A2" stroke-width="2.5"/>
+<rect x="50" y="60" width="512" height="512" fill="none" stroke="#424D57" stroke-width="3"/>
+<rect x="306" y="188" width="128" height="128" fill="none" stroke="#2C80CE" stroke-width="2" stroke-dasharray="5,3" opacity="0.85"/>
+<rect x="434" y="252" width="64" height="64" fill="none" stroke="#2C80CE" stroke-width="2" stroke-dasharray="5,3" opacity="0.85"/>
+<rect x="498" y="252" width="64" height="64" fill="none" stroke="#2C80CE" stroke-width="2" stroke-dasharray="5,3" opacity="0.85"/>
+<rect x="434" y="188" width="64" height="64" fill="none" stroke="#2C80CE" stroke-width="2" stroke-dasharray="5,3" opacity="0.85"/>
+<rect x="370" y="124" width="64" height="64" fill="none" stroke="#2C80CE" stroke-width="2" stroke-dasharray="5,3" opacity="0.85"/>
+<rect x="306" y="60" width="64" height="64" fill="none" stroke="#2C80CE" stroke-width="2" stroke-dasharray="5,3" opacity="0.85"/>
+<rect x="242" y="316" width="64" height="64" fill="none" stroke="#1AA8A8" stroke-width="2" stroke-dasharray="5,3" opacity="0.85"/>
+<rect x="306" y="316" width="64" height="64" fill="none" stroke="#1AA8A8" stroke-width="2" stroke-dasharray="5,3" opacity="0.85"/>
+<rect x="370" y="316" width="64" height="64" fill="none" stroke="#1AA8A8" stroke-width="2" stroke-dasharray="5,3" opacity="0.85"/>
+<rect x="242" y="252" width="64" height="64" fill="none" stroke="#1AA8A8" stroke-width="2" stroke-dasharray="5,3" opacity="0.85"/>
+<rect x="306" y="252" width="64" height="64" fill="none" stroke="#1AA8A8" stroke-width="2" stroke-dasharray="5,3" opacity="0.85"/>
+<rect x="370" y="252" width="64" height="64" fill="none" stroke="#1AA8A8" stroke-width="2" stroke-dasharray="5,3" opacity="0.85"/>
+<rect x="306" y="124" width="64" height="64" fill="#C76FF2" fill-opacity="0.40" stroke="#5D137D" stroke-width="3"/>
+<polygon points="306,316 562,316 306,60" fill="#2C80CE" fill-opacity="0.18" stroke="#2C80CE" stroke-width="2.5"/>
+<polygon points="242,380 434,380 434,252 242,252" fill="#1AA8A8" fill-opacity="0.22" stroke="#1AA8A8" stroke-width="2.5"/>
+<polygon points="306,188 370,188 306,124" fill="#DC150B" fill-opacity="0.55" stroke="#DC150B" stroke-width="2.5"/>
+<text x="469.2" y="149.60000000000002" font-size="13" fill="#2C80CE" font-weight="700">T (id 42)</text>
+<line x1="238.8" y1="156.0" x2="306" y2="156.0" stroke="#DC150B" stroke-width="1"/>
+<text x="178.0" y="159.2" font-size="12" fill="#DC150B" font-weight="700">id 1</text>
+<line x1="338.0" y1="399.2" x2="338.0" y2="380" stroke="#0F5353" stroke-width="1"/>
+<text x="338.0" y="418.4" font-size="13" fill="#0F5353" font-weight="700" text-anchor="middle">id 75</text>
+<text x="50" y="590" font-size="11" fill="#424D57" text-anchor="middle">0</text>
+<text x="36" y="576" font-size="11" fill="#424D57" text-anchor="middle">0</text>
+<text x="114" y="590" font-size="11" fill="#424D57" text-anchor="middle">1</text>
+<text x="36" y="512" font-size="11" fill="#424D57" text-anchor="middle">1</text>
+<text x="178" y="590" font-size="11" fill="#424D57" text-anchor="middle">2</text>
+<text x="36" y="448" font-size="11" fill="#424D57" text-anchor="middle">2</text>
+<text x="242" y="590" font-size="11" fill="#424D57" text-anchor="middle">3</text>
+<text x="36" y="384" font-size="11" fill="#424D57" text-anchor="middle">3</text>
+<text x="306" y="590" font-size="11" fill="#424D57" text-anchor="middle">4</text>
+<text x="36" y="320" font-size="11" fill="#424D57" text-anchor="middle">4</text>
+<text x="370" y="590" font-size="11" fill="#424D57" text-anchor="middle">5</text>
+<text x="36" y="256" font-size="11" fill="#424D57" text-anchor="middle">5</text>
+<text x="434" y="590" font-size="11" fill="#424D57" text-anchor="middle">6</text>
+<text x="36" y="192" font-size="11" fill="#424D57" text-anchor="middle">6</text>
+<text x="498" y="590" font-size="11" fill="#424D57" text-anchor="middle">7</text>
+<text x="36" y="128" font-size="11" fill="#424D57" text-anchor="middle">7</text>
+<text x="562" y="590" font-size="11" fill="#424D57" text-anchor="middle">8</text>
+<text x="36" y="64" font-size="11" fill="#424D57" text-anchor="middle">8</text>
+<text x="580" y="64" font-size="13" font-weight="700" fill="#424D57">Legend</text>
+<rect x="580" y="78" width="18" height="14" fill="#2C80CE" fill-opacity="0.25" stroke="#2C80CE" stroke-width="2"/>
+<text x="606" y="90" font-size="12" fill="#424D57">Triangle id 42 (T)</text>
+<rect x="580" y="104" width="18" height="14" fill="#1AA8A8" fill-opacity="0.25" stroke="#1AA8A8" stroke-width="2"/>
+<text x="606" y="116" font-size="12" fill="#424D57">Rectangle id 75</text>
+<rect x="580" y="130" width="18" height="14" fill="#DC150B" fill-opacity="0.25" stroke="#DC150B" stroke-width="2"/>
+<text x="606" y="142" font-size="12" fill="#424D57">Triangle id 1</text>
+<rect x="580" y="156" width="18" height="14" fill="#C76FF2" fill-opacity="0.55" stroke="#5D137D" stroke-width="2"/>
+<text x="606" y="168" font-size="12" fill="#424D57">Shared cell 0320 (id 1 + id 42)</text>
+<rect x="580" y="182" width="18" height="14" fill="#2C80CE" fill-opacity="0.25" stroke="#2C80CE" stroke-width="2" stroke-dasharray="5,3"/>
+<text x="606" y="194" font-size="12" fill="#424D57">covering cell (dashed)</text>
+<text x="580" y="220" font-size="11.5" fill="#424D57" font-weight="700">Quadtree levels (grid):</text>
+<line x1="580" y1="238" x2="604" y2="238" stroke="#424D57" stroke-width="3"/>
+<text x="610" y="242" font-size="11.5" fill="#424D57">L1 size 8 (cell 0)</text>
+<line x1="580" y1="258" x2="604" y2="258" stroke="#8B96A2" stroke-width="2.5"/>
+<text x="610" y="262" font-size="11.5" fill="#424D57">L2 size 4</text>
+<line x1="580" y1="278" x2="604" y2="278" stroke="#B9C2CA" stroke-width="1.5"/>
+<text x="610" y="282" font-size="11.5" fill="#424D57">L3 size 2</text>
+<line x1="580" y1="298" x2="604" y2="298" stroke="#E5E8EB" stroke-width="1"/>
+<text x="610" y="302" font-size="11.5" fill="#424D57">unit size 1</text>
+<text x="580" y="330" font-size="11" fill="#74808B">0300/0301 (id 75) sit inside</text>
+<text x="580" y="345" font-size="11" fill="#74808B">030 (id 42): descendants, not</text>
+<text x="580" y="360" font-size="11" fill="#74808B">a shared key.</text>
+<rect x="356.1" y="243.0" width="27.8" height="15" rx="2.5" fill="#ffffff" fill-opacity="0.92"/>
+<text x="370.0" y="256.0" font-size="11" fill="#2C80CE" text-anchor="middle" font-weight="600">030</text>
+<rect x="448.8" y="275.0" width="34.4" height="15" rx="2.5" fill="#ffffff" fill-opacity="0.92"/>
+<text x="466.0" y="288.0" font-size="11" fill="#2C80CE" text-anchor="middle" font-weight="600">0310</text>
+<rect x="512.8" y="275.0" width="34.4" height="15" rx="2.5" fill="#ffffff" fill-opacity="0.92"/>
+<text x="530.0" y="288.0" font-size="11" fill="#2C80CE" text-anchor="middle" font-weight="600">0311</text>
+<rect x="448.8" y="211.0" width="34.4" height="15" rx="2.5" fill="#ffffff" fill-opacity="0.92"/>
+<text x="466.0" y="224.0" font-size="11" fill="#2C80CE" text-anchor="middle" font-weight="600">0312</text>
+<rect x="384.8" y="147.0" width="34.4" height="15" rx="2.5" fill="#ffffff" fill-opacity="0.92"/>
+<text x="402.0" y="160.0" font-size="11" fill="#2C80CE" text-anchor="middle" font-weight="600">0321</text>
+<rect x="320.8" y="83.0" width="34.4" height="15" rx="2.5" fill="#ffffff" fill-opacity="0.92"/>
+<text x="338.0" y="96.0" font-size="11" fill="#2C80CE" text-anchor="middle" font-weight="600">0322</text>
+<rect x="256.8" y="339.0" width="34.4" height="15" rx="2.5" fill="#ffffff" fill-opacity="0.92"/>
+<text x="274.0" y="352.0" font-size="11" fill="#1AA8A8" text-anchor="middle" font-weight="600">0033</text>
+<rect x="320.8" y="339.0" width="34.4" height="15" rx="2.5" fill="#ffffff" fill-opacity="0.92"/>
+<text x="338.0" y="352.0" font-size="11" fill="#1AA8A8" text-anchor="middle" font-weight="600">0122</text>
+<rect x="384.8" y="339.0" width="34.4" height="15" rx="2.5" fill="#ffffff" fill-opacity="0.92"/>
+<text x="402.0" y="352.0" font-size="11" fill="#1AA8A8" text-anchor="middle" font-weight="600">0123</text>
+<rect x="256.8" y="275.0" width="34.4" height="15" rx="2.5" fill="#ffffff" fill-opacity="0.92"/>
+<text x="274.0" y="288.0" font-size="11" fill="#1AA8A8" text-anchor="middle" font-weight="600">0211</text>
+<rect x="320.8" y="275.0" width="34.4" height="15" rx="2.5" fill="#ffffff" fill-opacity="0.92"/>
+<text x="338.0" y="288.0" font-size="11" fill="#1AA8A8" text-anchor="middle" font-weight="600">0300</text>
+<rect x="384.8" y="275.0" width="34.4" height="15" rx="2.5" fill="#ffffff" fill-opacity="0.92"/>
+<text x="402.0" y="288.0" font-size="11" fill="#1AA8A8" text-anchor="middle" font-weight="600">0301</text>
+<rect x="314.2" y="147.0" width="47.6" height="15" rx="2.5" fill="#ffffff" fill-opacity="0.92"/>
+<text x="338.0" y="160.0" font-size="11" fill="#5D137D" text-anchor="middle" font-weight="700">0320 ★</text>
+</svg>
