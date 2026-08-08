@@ -2047,6 +2047,9 @@ func (s *session) resetPendingRUV2SessionParserTotal() {
 // we need to be able to ROLLBACK in any arbitrary order
 // in order to release the locks.
 func (s *session) GetAdvisoryLock(lockName string, timeout int64) error {
+	if s.advisoryLocks == nil {
+		s.advisoryLocks = make(map[string]*advisoryLock)
+	}
 	if lock, ok := s.advisoryLocks[lockName]; ok {
 		lock.IncrReferences()
 		return nil
@@ -2055,7 +2058,7 @@ func (s *session) GetAdvisoryLock(lockName string, timeout int64) error {
 	if err != nil {
 		return err
 	}
-	lock := &advisoryLock{session: se, ctx: context.TODO(), owner: s.ShowProcess().ID, clean: clean}
+	lock := &advisoryLock{session: se, ctx: context.TODO(), owner: s.advisoryLockOwner(), clean: clean}
 	err = lock.GetLock(lockName, timeout)
 	if err != nil {
 		return err
@@ -2076,7 +2079,7 @@ func (s *session) IsUsedAdvisoryLock(lockName string) uint64 {
 	if err != nil {
 		return 0
 	}
-	lock := &advisoryLock{session: se, ctx: context.TODO(), owner: s.ShowProcess().ID, clean: clean}
+	lock := &advisoryLock{session: se, ctx: context.TODO(), owner: s.advisoryLockOwner(), clean: clean}
 	err = lock.IsUsedLock(lockName)
 	if err != nil {
 		// TODO: Return actual owner pid
@@ -2116,6 +2119,13 @@ func (s *session) ReleaseAllAdvisoryLocks() int {
 		delete(s.advisoryLocks, lockName)
 	}
 	return count
+}
+
+func (s *session) advisoryLockOwner() uint64 {
+	if pi := s.ShowProcess(); pi != nil {
+		return pi.ID
+	}
+	return 0
 }
 
 // GetExtensions returns the `*extension.SessionExtensions` object
