@@ -803,8 +803,9 @@ impl Job {
         if value.is_null() {
             return Ok(());
         }
-        *self = serde_json::from_value(value)?;
-        Ok(())
+        let mut deserializer = serde_json::Deserializer::from_slice(bytes);
+        <Self as serde::Deserialize>::deserialize_in_place(&mut deserializer, self)?;
+        deserializer.end()
     }
 
     /// Clones through the persisted codec and clears private decoded arguments.
@@ -1536,6 +1537,16 @@ mod tests {
         };
         unchanged.decode(b"null").unwrap();
         assert_eq!(unchanged.id, 42);
+
+        unchanged.decode(br#"{"row_count":9}"#).unwrap();
+        assert_eq!(unchanged.id, 42);
+        assert_eq!(unchanged.row_count, 9);
+
+        let error = unchanged
+            .decode(br#"{"error_count":7,"priority":"bad"}"#)
+            .unwrap_err();
+        assert!(error.to_string().contains("invalid type"));
+        assert_eq!(unchanged.error_count, 7);
     }
 
     #[test]

@@ -334,8 +334,9 @@ impl BackfillMeta {
         if value.is_null() {
             return Ok(());
         }
-        *self = serde_json::from_value(value)?;
-        Ok(())
+        let mut deserializer = serde_json::Deserializer::from_slice(bytes);
+        <Self as serde::Deserialize>::deserialize_in_place(&mut deserializer, self)?;
+        deserializer.end()
     }
 }
 
@@ -428,6 +429,16 @@ mod tests {
         assert_eq!(decoded.job_meta, original.job_meta);
         decoded.decode(b"null").unwrap();
         assert_eq!(decoded.start_key, original.start_key);
+
+        decoded.decode(br#"{"row_count":9}"#).unwrap();
+        assert_eq!(decoded.row_count, 9);
+        assert_eq!(decoded.start_key, original.start_key);
+
+        let error = decoded
+            .decode(br#"{"row_count":10,"sql_mode":"bad"}"#)
+            .unwrap_err();
+        assert!(error.to_string().contains("invalid type"));
+        assert_eq!(decoded.row_count, 10);
         assert_eq!(decoded.end_key, original.end_key);
 
         // Go's padded StdEncoding rejects incomplete quanta and padding in a

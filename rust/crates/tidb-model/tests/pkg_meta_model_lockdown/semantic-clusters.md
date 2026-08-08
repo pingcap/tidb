@@ -78,10 +78,14 @@ remaining package census is 2,509 obligations plus the build artifact.
   fixed/named timezones. Go's 64-bit `int` range is retained for persisted
   maximum-node counts, dynamic settings, job priority, and fixed-zone offsets.
 - Explicit representation boundaries: concrete `terror.Error` identity and Go
-  atomic/mutex object identity, plus Go `encoding/json`'s partially-mutated
-  receiver after a mid-object type error (Rust decoding is transactional on
-  error). JSON null's successful no-op behavior is ported. Error payloads are
-  retained as raw JSON and Rust borrowing makes field mutation race-free.
+  atomic/mutex object identity. `BackfillMeta.Decode` uses Serde's generated
+  in-place visitor, so absent fields retain the receiver, JSON null is a no-op,
+  and fields decoded before a type error remain mutated as in Go. Error
+  payloads are retained as raw JSON and Rust borrowing makes field mutation
+  race-free. Go's merge of an existing nonnil map and its null-no-op behavior
+  for nonpointer scalar fields remain measured Serde representation boundaries:
+  the generic map/scalar visitors replace or reject those values without field
+  type information from the receiver.
 
 ## C06: DDL jobs
 
@@ -113,8 +117,11 @@ remaining package census is 2,509 obligations plus the build artifact.
   arbitrary typed `JobArgs` implementations. The same missing process-wide
   NextGen boundary means Rust initializes the new-job version to classic v1;
   explicit `set_job_ver_in_use` and both persisted versions are native. As for
-  backfill metadata, a mid-object JSON type error does not expose Go's partial
-  receiver mutation; successful decode and JSON-null no-op semantics are native.
+  backfill metadata, generated in-place deserialization preserves omitted
+  receiver fields and mutations that precede a type error; successful decode
+  and JSON-null no-op semantics are native. Existing-nonnil map merge and
+  present-null nonpointer scalar fields retain the measured generic Serde
+  boundary described in C05.
   Typed job arguments remain owned by the unchanged `job_args.go` lockdown;
   the job envelope stores their JSON value rather than pretending every Go
   interface implementation is a Rust type.
