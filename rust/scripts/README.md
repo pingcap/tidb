@@ -9,8 +9,31 @@ reaching for *before* a full build, because they answer in a second what
 | script | what it answers | cost |
 |---|---|---|
 | `check-source-size.sh` | has any source file grown past its recorded bound, or shrunk enough to retire its entry? | ~1s, no build |
+| `go-package-lockdown.py` | did a complete Go package, its verdicts, Rust symbols, semantic mutations, or receipt drift? | Go AST scan, no Rust build |
 | `test-coverage-inventory.py` | how many Go tests still have no Rust counterpart, per package? | seconds with `--cache` |
 | `run-doctests.sh` | do the examples in `///` comments still compile, still pass, and still exist? | ~4s warm, needs the libs built |
+
+### `go-package-lockdown.py` — one package-scale receipt
+
+New Go-to-Rust package lockdowns use one declarative `package.toml`, not a
+copied package-specific Python checker. From the repository root, generate the
+artifact manifest and per-Go-file AST ledgers, classify every generated
+`UNCLASSIFIED` row and complete the symbol/rule/mutation TSVs, then write and
+check the content-addressed receipt:
+
+```bash
+python3 rust/scripts/go-package-lockdown.py generate --spec <receipt-dir>/package.toml
+python3 rust/scripts/go-package-lockdown.py write-receipt --spec <receipt-dir>/package.toml
+python3 rust/scripts/go-package-lockdown.py check --spec <receipt-dir>/package.toml
+```
+
+`generate` preserves every existing verdict by obligation ID and refuses to
+discard a removed obligation. `check` is read-only and requires exact artifact,
+AST, verdict, PORTED-symbol, semantic-rule, mutation, restoration, and receipt
+closure. The receipt records the generic checker schema rather than hashing the
+shared checker, so improving infrastructure does not reopen completed package
+claims. The complete TOML and TSV contract is documented in
+`rust/docs/operations/go-package-lockdown-infrastructure-execplan.md`.
 
 ### `check-source-size.sh` — the source-size ratchet
 
