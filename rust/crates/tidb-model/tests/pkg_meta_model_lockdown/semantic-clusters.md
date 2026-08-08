@@ -123,7 +123,8 @@ remaining package census is 2,509 obligations plus the build artifact.
   versus allocated-empty distinction because v1 marshals those as `null`
   versus `[]`, and a nil sub-job cache suppresses raw-argument replacement.
   The same distinction is retained for `MultiSchemaInfo.SubJobs`,
-  and `HistoryInfo.MultipleTableInfos` because those cases alter JSON. Runtime
+  and `HistoryInfo.MultipleTableInfos` because those cases alter JSON; the
+  latter also retains null elements from Go's `[]*TableInfo`. Runtime
   scheduler involvement follows Go's `len > 0` rule: both nil and allocated
   empty select the schema/table fallback, while a nonempty slice is explicit.
   All non-serialized
@@ -134,7 +135,7 @@ remaining package census is 2,509 obligations plus the build artifact.
   `MultiSchemaInfo.Seq`; job and backfill priorities retain the full range.
 - Explicit representation boundaries: Go error pointer/stack identity, Go
   mutex identity, the Go-only `unsafe.Sizeof(Job/SubJob)` ABI guard,
-  nil elements inside Go pointer slices, and
+  nil elements inside Go pointer slices other than the history table list, and
   arbitrary typed `JobArgs` implementations. The same missing process-wide
   NextGen boundary means Rust initializes the new-job version to classic v1;
   explicit `set_job_ver_in_use` and both persisted versions are native. As for
@@ -147,7 +148,10 @@ remaining package census is 2,509 obligations plus the build artifact.
   null is a no-op, matching Go's scanner and `json.Unmarshal` receiver
   behavior. `terror.Error` fields use `tidb-error`'s compatible typed envelope;
   `TraceInfo` natively validates its string, base64 byte slice, and `uint64`
-  fields. Nested reorganization,
+  fields. Existing `HistoryInfo.DBInfo` and `TableInfo` allocations are merged
+  recursively: omitted fields survive, null pointers clear, null scalars are
+  no-ops, and a recoverable nested field or table-list element error does not
+  suppress later nested, sibling, or outer job mutations. Nested reorganization,
   timezone, job-meta, pause/resume, multi-schema, and history envelopes use the
   same receiver-mutating object path instead of Serde's default-resetting
   generated `deserialize_in_place` implementation.

@@ -30,8 +30,9 @@ use crate::job_enums::{JobState, JobVersion};
 use crate::reorg::{DDLReorgMeta, ReorgStage, ReorgType};
 use crate::schema_state::SchemaState;
 use crate::serde_helpers::{
-    deserialize_go_object, go_json_field_matches, ignore_unknown, GoJsonMerge, NullNoopSeed,
-    OptionBytesSeed, OptionMergeSeed, OptionStringMapMergeSeed,
+    deserialize_go_object, go_json_field_matches, ignore_unknown, GoJsonMerge, NullDefaultSeed,
+    NullNoopSeed, OptionBoxMergeSeed, OptionBytesSeed, OptionMergeSeed, OptionPointerSliceSeed,
+    OptionStringMapMergeSeed,
 };
 use crate::table_info::TableInfo;
 
@@ -198,7 +199,7 @@ pub struct HistoryInfo {
     pub finished_ts: u64,
     /// Multiple affected tables (for multi-table jobs).
     #[serde(rename = "MultipleTableInfos", default)]
-    pub multiple_table_infos: Option<Vec<TableInfo>>,
+    pub multiple_table_infos: Option<Vec<Option<TableInfo>>>,
 }
 
 impl HistoryInfo {
@@ -217,7 +218,7 @@ impl HistoryInfo {
     /// Go `HistoryInfo.SetTableInfos`.
     pub fn set_table_infos(&mut self, schema_version: i64, table_infos: Vec<TableInfo>) {
         self.schema_version = schema_version;
-        self.multiple_table_infos = Some(table_infos);
+        self.multiple_table_infos = Some(table_infos.into_iter().map(Some).collect());
     }
 
     /// Go `HistoryInfo.Clean`. `finished_ts` deliberately survives, as it does
@@ -804,17 +805,151 @@ impl_go_merge_object!(MultiSchemaInfo, destination, map, key, {
     }
 });
 
+// `HistoryInfo` owns pointers to these two model objects. Go's decoder reuses
+// an existing pointed-to allocation and mutates its fields in declaration
+// order, so replacing either object through derived `Deserialize` loses both
+// omitted fields and later-field continuation after an error.
+impl_go_merge_object!(DBInfo, destination, map, key, {
+    if go_json_field_matches(&key, "id") {
+        map.next_value_seed(NullNoopSeed(&mut destination.id))?;
+    } else if go_json_field_matches(&key, "db_name") {
+        map.next_value_seed(NullNoopSeed(&mut destination.name))?;
+    } else if go_json_field_matches(&key, "charset") {
+        map.next_value_seed(NullNoopSeed(&mut destination.charset))?;
+    } else if go_json_field_matches(&key, "collate") {
+        map.next_value_seed(NullNoopSeed(&mut destination.collate))?;
+    } else if go_json_field_matches(&key, "Deprecated") {
+        map.next_value::<BTreeMap<String, serde::de::IgnoredAny>>()?;
+    } else if go_json_field_matches(&key, "state") {
+        map.next_value_seed(NullNoopSeed(&mut destination.state))?;
+    } else if go_json_field_matches(&key, "policy_ref_info") {
+        destination.placement_policy_ref = map.next_value()?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+
+impl_go_merge_object!(TableInfo, destination, map, key, {
+    if go_json_field_matches(&key, "id") {
+        map.next_value_seed(NullNoopSeed(&mut destination.id))?;
+    } else if go_json_field_matches(&key, "name") {
+        map.next_value_seed(NullNoopSeed(&mut destination.name))?;
+    } else if go_json_field_matches(&key, "charset") {
+        map.next_value_seed(NullNoopSeed(&mut destination.charset))?;
+    } else if go_json_field_matches(&key, "collate") {
+        map.next_value_seed(NullNoopSeed(&mut destination.collate))?;
+    } else if go_json_field_matches(&key, "cols") {
+        map.next_value_seed(NullDefaultSeed(&mut destination.columns))?;
+    } else if go_json_field_matches(&key, "index_info") {
+        map.next_value_seed(NullDefaultSeed(&mut destination.indices))?;
+    } else if go_json_field_matches(&key, "constraint_info") {
+        map.next_value_seed(NullDefaultSeed(&mut destination.constraints))?;
+    } else if go_json_field_matches(&key, "fk_info") {
+        map.next_value_seed(NullDefaultSeed(&mut destination.foreign_keys))?;
+    } else if go_json_field_matches(&key, "state") {
+        map.next_value_seed(NullNoopSeed(&mut destination.state))?;
+    } else if go_json_field_matches(&key, "pk_is_handle") {
+        map.next_value_seed(NullNoopSeed(&mut destination.pk_is_handle))?;
+    } else if go_json_field_matches(&key, "is_common_handle") {
+        map.next_value_seed(NullNoopSeed(&mut destination.is_common_handle))?;
+    } else if go_json_field_matches(&key, "common_handle_version") {
+        map.next_value_seed(NullNoopSeed(&mut destination.common_handle_version))?;
+    } else if go_json_field_matches(&key, "comment") {
+        map.next_value_seed(NullNoopSeed(&mut destination.comment))?;
+    } else if go_json_field_matches(&key, "auto_inc_id") {
+        map.next_value_seed(NullNoopSeed(&mut destination.auto_inc_id))?;
+    } else if go_json_field_matches(&key, "auto_inc_id_extra") {
+        map.next_value_seed(NullNoopSeed(&mut destination.auto_inc_id_extra))?;
+    } else if go_json_field_matches(&key, "auto_id_cache") {
+        map.next_value_seed(NullNoopSeed(&mut destination.auto_id_cache))?;
+    } else if go_json_field_matches(&key, "auto_rand_id") {
+        map.next_value_seed(NullNoopSeed(&mut destination.auto_rand_id))?;
+    } else if go_json_field_matches(&key, "max_col_id") {
+        map.next_value_seed(NullNoopSeed(&mut destination.max_column_id))?;
+    } else if go_json_field_matches(&key, "max_idx_id") {
+        map.next_value_seed(NullNoopSeed(&mut destination.max_index_id))?;
+    } else if go_json_field_matches(&key, "max_fk_id") {
+        map.next_value_seed(NullNoopSeed(&mut destination.max_foreign_key_id))?;
+    } else if go_json_field_matches(&key, "max_cst_id") {
+        map.next_value_seed(NullNoopSeed(&mut destination.max_constraint_id))?;
+    } else if go_json_field_matches(&key, "update_timestamp") {
+        map.next_value_seed(NullNoopSeed(&mut destination.update_ts))?;
+    } else if go_json_field_matches(&key, "old_schema_id") {
+        map.next_value_seed(NullNoopSeed(&mut destination.auto_id_schema_id))?;
+    } else if go_json_field_matches(&key, "ShardRowIDBits") {
+        map.next_value_seed(NullNoopSeed(&mut destination.shard_row_id_bits))?;
+    } else if go_json_field_matches(&key, "max_shard_row_id_bits") {
+        map.next_value_seed(NullNoopSeed(&mut destination.max_shard_row_id_bits))?;
+    } else if go_json_field_matches(&key, "auto_random_bits") {
+        map.next_value_seed(NullNoopSeed(&mut destination.auto_random_bits))?;
+    } else if go_json_field_matches(&key, "auto_random_range_bits") {
+        map.next_value_seed(NullNoopSeed(&mut destination.auto_random_range_bits))?;
+    } else if go_json_field_matches(&key, "pre_split_regions") {
+        map.next_value_seed(NullNoopSeed(&mut destination.pre_split_regions))?;
+    } else if go_json_field_matches(&key, "partition") {
+        destination.partition = map.next_value()?;
+    } else if go_json_field_matches(&key, "compression") {
+        map.next_value_seed(NullNoopSeed(&mut destination.compression))?;
+    } else if go_json_field_matches(&key, "view") {
+        destination.view = map.next_value()?;
+    } else if go_json_field_matches(&key, "sequence") {
+        destination.sequence = map.next_value()?;
+    } else if go_json_field_matches(&key, "Lock") {
+        destination.lock = map.next_value()?;
+    } else if go_json_field_matches(&key, "version") {
+        map.next_value_seed(NullNoopSeed(&mut destination.version))?;
+    } else if go_json_field_matches(&key, "tiflash_replica") {
+        destination.tiflash_replica = map.next_value()?;
+    } else if go_json_field_matches(&key, "is_columnar") {
+        map.next_value_seed(NullNoopSeed(&mut destination.is_columnar))?;
+    } else if go_json_field_matches(&key, "temp_table_type") {
+        map.next_value_seed(NullNoopSeed(&mut destination.temp_table_type))?;
+    } else if go_json_field_matches(&key, "cache_table_status") {
+        map.next_value_seed(NullNoopSeed(&mut destination.table_cache_status_type))?;
+    } else if go_json_field_matches(&key, "policy_ref_info") {
+        destination.placement_policy_ref = map.next_value()?;
+    } else if go_json_field_matches(&key, "stats_options") {
+        destination.stats_options = map.next_value()?;
+    } else if go_json_field_matches(&key, "exchange_partition_info") {
+        destination.exchange_partition_info = map.next_value()?;
+    } else if go_json_field_matches(&key, "ttl_info") {
+        destination.ttl_info = map.next_value()?;
+    } else if go_json_field_matches(&key, "is_active_active") {
+        map.next_value_seed(NullNoopSeed(&mut destination.is_active_active))?;
+    } else if go_json_field_matches(&key, "softdelete_info") {
+        destination.softdelete_info = map.next_value()?;
+    } else if go_json_field_matches(&key, "affinity") {
+        destination.affinity = map.next_value()?;
+    } else if go_json_field_matches(&key, "table_split_policy") {
+        destination.table_split_policy = map.next_value()?;
+    } else if go_json_field_matches(&key, "revision") {
+        map.next_value_seed(NullNoopSeed(&mut destination.revision))?;
+    } else if go_json_field_matches(&key, "engine_attribute") {
+        map.next_value_seed(NullNoopSeed(&mut destination.engine_attribute))?;
+    } else if go_json_field_matches(&key, "storage_class_tier") {
+        map.next_value_seed(NullNoopSeed(&mut destination.storage_class_tier))?;
+    } else if go_json_field_matches(&key, "storage_class_transitions") {
+        map.next_value_seed(NullDefaultSeed(&mut destination.storage_class_transitions))?;
+    } else if go_json_field_matches(&key, "mode") {
+        map.next_value_seed(NullNoopSeed(&mut destination.mode))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+
 impl_go_merge_object!(HistoryInfo, destination, map, key, {
     if go_json_field_matches(&key, "SchemaVersion") {
         map.next_value_seed(NullNoopSeed(&mut destination.schema_version))?;
     } else if go_json_field_matches(&key, "DBInfo") {
-        destination.db_info = map.next_value()?;
+        map.next_value_seed(OptionBoxMergeSeed(&mut destination.db_info))?;
     } else if go_json_field_matches(&key, "TableInfo") {
-        destination.table_info = map.next_value()?;
+        map.next_value_seed(OptionBoxMergeSeed(&mut destination.table_info))?;
     } else if go_json_field_matches(&key, "FinishedTS") {
         map.next_value_seed(NullNoopSeed(&mut destination.finished_ts))?;
     } else if go_json_field_matches(&key, "MultipleTableInfos") {
-        destination.multiple_table_infos = map.next_value()?;
+        map.next_value_seed(OptionPointerSliceSeed(
+            &mut destination.multiple_table_infos,
+        ))?;
     } else {
         ignore_unknown(&mut map)?;
     }
@@ -1011,7 +1146,7 @@ impl Job {
                 .expect("FinishMultipleTableJob requires at least one table")
                 .clone(),
         ));
-        binlog.multiple_table_infos = Some(tables);
+        binlog.multiple_table_infos = Some(tables.into_iter().map(Some).collect());
     }
 
     /// Marks a database job finished and records its database snapshot.
@@ -1547,7 +1682,7 @@ mod tests {
                 name: CiString::new("t"),
                 ..Default::default()
             })),
-            multiple_table_infos: Some(vec![TableInfo::default()]),
+            multiple_table_infos: Some(vec![Some(TableInfo::default())]),
             ..Default::default()
         };
         // Deep clone.
@@ -1569,6 +1704,81 @@ mod tests {
         assert_eq!(h.schema_version, 0);
         assert!(h.table_info.is_none());
         assert_eq!(h.finished_ts, 99);
+    }
+
+    #[test]
+    fn history_decode_merges_existing_nested_objects_and_continues_after_errors() {
+        let mut job = Job {
+            binlog_info: Some(HistoryInfo {
+                schema_version: 10,
+                db_info: Some(Box::new(DBInfo {
+                    id: 1,
+                    name: CiString::new("db-kept"),
+                    charset: "old-db-charset".to_owned(),
+                    ..Default::default()
+                })),
+                table_info: Some(Box::new(TableInfo {
+                    id: 2,
+                    name: CiString::new("table-kept"),
+                    comment: "old-comment".to_owned(),
+                    ..Default::default()
+                })),
+                finished_ts: 20,
+                multiple_table_infos: Some(vec![Some(TableInfo {
+                    id: 3,
+                    ..Default::default()
+                })]),
+            }),
+            ..Default::default()
+        };
+
+        let error = job
+            .decode(
+                br#"{
+                    "binlog": {
+                        "DBInfo":{"id":"bad","charset":null,"collate":"db-later"},
+                        "TableInfo":{"id":"bad","comment":"table-later"},
+                        "MultipleTableInfos":[
+                            null,
+                            {"id":"bad","comment":"element-later"},
+                            {"id":7,"comment":"last-element"}
+                        ],
+                        "FinishedTS":30
+                    },
+                    "row_count":40
+                }"#,
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("invalid type"));
+
+        let history = job.binlog_info.as_ref().unwrap();
+        assert_eq!(history.schema_version, 10);
+        let database = history.db_info.as_ref().unwrap();
+        assert_eq!(database.id, 1);
+        assert_eq!(database.name.original(), "db-kept");
+        assert_eq!(database.charset, "old-db-charset");
+        assert_eq!(database.collate, "db-later");
+        let table = history.table_info.as_ref().unwrap();
+        assert_eq!(table.id, 2);
+        assert_eq!(table.name.original(), "table-kept");
+        assert_eq!(table.comment, "table-later");
+        assert_eq!(history.finished_ts, 30);
+        let tables = history.multiple_table_infos.as_ref().unwrap();
+        assert!(tables[0].is_none());
+        assert_eq!(tables[1].as_ref().unwrap().id, 0);
+        assert_eq!(tables[1].as_ref().unwrap().comment, "element-later");
+        assert_eq!(tables[2].as_ref().unwrap().id, 7);
+        assert_eq!(tables[2].as_ref().unwrap().comment, "last-element");
+        assert_eq!(job.row_count, 40);
+
+        job.decode(br#"{"binlog":{"DBInfo":null,"TableInfo":null,"MultipleTableInfos":null}}"#)
+            .unwrap();
+        let history = job.binlog_info.as_ref().unwrap();
+        assert_eq!(history.schema_version, 10);
+        assert!(history.db_info.is_none());
+        assert!(history.table_info.is_none());
+        assert!(history.multiple_table_infos.is_none());
+        assert_eq!(history.finished_ts, 30);
     }
 
     #[test]

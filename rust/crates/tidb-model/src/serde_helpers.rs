@@ -28,6 +28,8 @@ use serde_json::value::RawValue;
 
 struct RawObjectMembers<'de>(Vec<(String, &'de RawValue)>);
 
+struct RawArrayMembers<'de>(Vec<&'de RawValue>);
+
 impl<'de> Deserialize<'de> for RawObjectMembers<'de> {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -56,6 +58,36 @@ impl<'de> Deserialize<'de> for RawObjectMembers<'de> {
         }
 
         deserializer.deserialize_map(RawObjectVisitor)
+    }
+}
+
+impl<'de> Deserialize<'de> for RawArrayMembers<'de> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct RawArrayVisitor;
+
+        impl<'de> Visitor<'de> for RawArrayVisitor {
+            type Value = RawArrayMembers<'de>;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a JSON array")
+            }
+
+            fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::SeqAccess<'de>,
+            {
+                let mut elements = Vec::with_capacity(sequence.size_hint().unwrap_or(0));
+                while let Some(value) = sequence.next_element::<&'de RawValue>()? {
+                    elements.push(value);
+                }
+                Ok(RawArrayMembers(elements))
+            }
+        }
+
+        deserializer.deserialize_seq(RawArrayVisitor)
     }
 }
 
@@ -185,6 +217,54 @@ where
     }
 }
 
+/// Deserializes a slice-like field, clearing it on JSON null.
+pub(crate) struct NullDefaultSeed<'a, T>(pub(crate) &'a mut T);
+
+impl<'de, T> DeserializeSeed<'de> for NullDefaultSeed<'_, T>
+where
+    T: Default + Deserialize<'de>,
+{
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct NullDefaultVisitor<'a, T>(&'a mut T);
+
+        impl<'de, T> Visitor<'de> for NullDefaultVisitor<'_, T>
+        where
+            T: Default + Deserialize<'de>,
+        {
+            type Value = ();
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("null or a value of the destination field type")
+            }
+
+            fn visit_none<E>(self) -> Result<Self::Value, E> {
+                *self.0 = T::default();
+                Ok(())
+            }
+
+            fn visit_unit<E>(self) -> Result<Self::Value, E> {
+                *self.0 = T::default();
+                Ok(())
+            }
+
+            fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                *self.0 = T::deserialize(deserializer)?;
+                Ok(())
+            }
+        }
+
+        deserializer.deserialize_option(NullDefaultVisitor(self.0))
+    }
+}
+
 /// Deserializes a pointer-like object field into its existing allocation.
 /// JSON null clears the pointer; a non-null object preserves omitted fields.
 pub(crate) struct OptionMergeSeed<'a, T>(pub(crate) &'a mut Option<T>);
@@ -232,6 +312,125 @@ where
         }
 
         deserializer.deserialize_option(OptionMergeVisitor(self.0))
+    }
+}
+
+/// Deserializes a boxed pointer field into its existing allocation.
+pub(crate) struct OptionBoxMergeSeed<'a, T>(pub(crate) &'a mut Option<Box<T>>);
+
+impl<'de, T> DeserializeSeed<'de> for OptionBoxMergeSeed<'_, T>
+where
+    T: Default + GoJsonMerge,
+{
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct OptionBoxMergeVisitor<'a, T>(&'a mut Option<Box<T>>);
+
+        impl<'de, T> Visitor<'de> for OptionBoxMergeVisitor<'_, T>
+        where
+            T: Default + GoJsonMerge,
+        {
+            type Value = ();
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("null or a JSON object")
+            }
+
+            fn visit_none<E>(self) -> Result<Self::Value, E> {
+                *self.0 = None;
+                Ok(())
+            }
+
+            fn visit_unit<E>(self) -> Result<Self::Value, E> {
+                *self.0 = None;
+                Ok(())
+            }
+
+            fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                self.0
+                    .get_or_insert_with(|| Box::new(T::default()))
+                    .go_json_merge(deserializer)
+            }
+        }
+
+        deserializer.deserialize_option(OptionBoxMergeVisitor(self.0))
+    }
+}
+
+/// Replaces a Go pointer slice while retaining null elements and continuing
+/// after recoverable element errors.
+pub(crate) struct OptionPointerSliceSeed<'a, T>(pub(crate) &'a mut Option<Vec<Option<T>>>);
+
+impl<'de, T> DeserializeSeed<'de> for OptionPointerSliceSeed<'_, T>
+where
+    T: Default + GoJsonMerge,
+{
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct PointerSliceVisitor<'a, T>(&'a mut Option<Vec<Option<T>>>);
+
+        impl<'de, T> Visitor<'de> for PointerSliceVisitor<'_, T>
+        where
+            T: Default + GoJsonMerge,
+        {
+            type Value = ();
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("null or an array of nullable JSON objects")
+            }
+
+            fn visit_none<E>(self) -> Result<Self::Value, E> {
+                *self.0 = None;
+                Ok(())
+            }
+
+            fn visit_unit<E>(self) -> Result<Self::Value, E> {
+                *self.0 = None;
+                Ok(())
+            }
+
+            fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                let RawArrayMembers(elements) = RawArrayMembers::deserialize(deserializer)?;
+                let mut decoded = Vec::with_capacity(elements.len());
+                let mut first_error = None;
+                for raw in elements {
+                    if raw.get() == "null" {
+                        decoded.push(None);
+                        continue;
+                    }
+                    let mut value = T::default();
+                    let mut element = serde_json::Deserializer::from_str(raw.get());
+                    if let Err(error) = value
+                        .go_json_merge(&mut element)
+                        .and_then(|()| element.end())
+                    {
+                        first_error.get_or_insert_with(|| error.to_string());
+                    }
+                    decoded.push(Some(value));
+                }
+                *self.0 = Some(decoded);
+                if let Some(error) = first_error {
+                    return Err(serde::de::Error::custom(error));
+                }
+                Ok(())
+            }
+        }
+
+        deserializer.deserialize_option(PointerSliceVisitor(self.0))
     }
 }
 
