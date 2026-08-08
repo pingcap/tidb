@@ -26,6 +26,268 @@ use serde::de::{DeserializeSeed, IgnoredAny, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::value::RawValue;
 
+/// An owned Go slice of non-pointer values with nil/allocation identity.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GoValueSlice<T>(Option<Vec<T>>);
+
+impl<T> GoValueSlice<T> {
+    /// Constructs an allocated slice, including the allocated-empty state.
+    pub fn allocated(values: Vec<T>) -> Self {
+        Self(Some(values))
+    }
+
+    /// Returns whether the Go slice is non-nil.
+    #[must_use]
+    pub fn is_allocated(&self) -> bool {
+        self.0.is_some()
+    }
+
+    /// Returns the source `len`, for which nil and empty are both zero.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.0.as_ref().map_or(0, Vec::len)
+    }
+
+    /// Returns whether the source length is zero.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Clears elements without changing nil versus allocated-empty identity.
+    pub fn clear(&mut self) {
+        if let Some(values) = &mut self.0 {
+            values.clear();
+        }
+    }
+
+    /// Iterates the slice values.
+    pub fn iter(&self) -> std::slice::Iter<'_, T> {
+        self.0.as_deref().unwrap_or_default().iter()
+    }
+
+    /// Iterates mutable values, allocating an empty slice before mutation.
+    pub fn iter_mut(&mut self) -> std::slice::IterMut<'_, T> {
+        self.0.get_or_insert_with(Vec::new).iter_mut()
+    }
+
+    pub(crate) fn raw_mut(&mut self) -> &mut Option<Vec<T>> {
+        &mut self.0
+    }
+}
+
+impl<T: PartialEq> GoValueSlice<T> {
+    /// Reports whether the source slice contains `needle`.
+    #[must_use]
+    pub fn contains(&self, needle: &T) -> bool {
+        self.iter().any(|value| value == needle)
+    }
+}
+
+impl<T> From<Vec<T>> for GoValueSlice<T> {
+    fn from(values: Vec<T>) -> Self {
+        Self::allocated(values)
+    }
+}
+
+impl<'a, T> IntoIterator for &'a GoValueSlice<T> {
+    type Item = &'a T;
+    type IntoIter = std::slice::Iter<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+impl<'a, T> IntoIterator for &'a mut GoValueSlice<T> {
+    type Item = &'a mut T;
+    type IntoIter = std::slice::IterMut<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter_mut()
+    }
+}
+
+impl<T> std::ops::Index<usize> for GoValueSlice<T> {
+    type Output = T;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.0.as_ref().expect("index of nil Go slice")[index]
+    }
+}
+
+impl<T> std::ops::IndexMut<usize> for GoValueSlice<T> {
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        &mut self.0.as_mut().expect("index of nil Go slice")[index]
+    }
+}
+
+impl<T: Serialize> Serialize for GoValueSlice<T> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.0.serialize(serializer)
+    }
+}
+
+/// An owned Go slice of pointers with nil/allocation and null-element identity.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GoPointerSlice<T>(Option<Vec<Option<T>>>);
+
+impl<T> GoPointerSlice<T> {
+    /// Constructs an allocated slice of non-null pointers.
+    pub fn from_values(values: Vec<T>) -> Self {
+        Self(Some(values.into_iter().map(Some).collect()))
+    }
+
+    /// Constructs an allocated slice that may contain null pointers.
+    pub fn from_nullable(values: Vec<Option<T>>) -> Self {
+        Self(Some(values))
+    }
+
+    /// Returns whether the Go slice is non-nil.
+    #[must_use]
+    pub fn is_allocated(&self) -> bool {
+        self.0.is_some()
+    }
+
+    /// Returns the source `len`, for which nil and empty are both zero.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.0.as_ref().map_or(0, Vec::len)
+    }
+
+    /// Returns whether the source length is zero.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Clears elements without changing nil versus allocated-empty identity.
+    pub fn clear(&mut self) {
+        if let Some(values) = &mut self.0 {
+            values.clear();
+        }
+    }
+
+    /// Appends a non-null pointer, allocating the slice when nil.
+    pub fn push(&mut self, value: T) {
+        self.0.get_or_insert_with(Vec::new).push(Some(value));
+    }
+
+    /// Iterates non-null pointees. Encountering a null pointer panics at the
+    /// same dereference boundary as the corresponding Go algorithm.
+    pub fn iter(&self) -> impl Iterator<Item = &T> {
+        self.0
+            .iter()
+            .flatten()
+            .map(|value| value.as_ref().expect("nil pointer in Go slice"))
+    }
+
+    /// Iterates mutable non-null pointees, preserving pointer positions.
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut T> {
+        self.0
+            .get_or_insert_with(Vec::new)
+            .iter_mut()
+            .map(|value| value.as_mut().expect("nil pointer in Go slice"))
+    }
+
+    /// Exposes nullable elements to tests and codecs that own the pointer
+    /// boundary rather than dereferencing it.
+    pub fn nullable(&self) -> Option<&[Option<T>]> {
+        self.0.as_deref()
+    }
+
+    pub(crate) fn raw_mut(&mut self) -> &mut Option<Vec<Option<T>>> {
+        &mut self.0
+    }
+}
+
+impl<T> From<Vec<T>> for GoPointerSlice<T> {
+    fn from(values: Vec<T>) -> Self {
+        Self::from_values(values)
+    }
+}
+
+/// Iterator that dereferences Go pointer-slice elements at the use site.
+pub struct GoPointerIter<'a, T>(std::slice::Iter<'a, Option<T>>);
+
+impl<'a, T> Iterator for GoPointerIter<'a, T> {
+    type Item = &'a T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0
+            .next()
+            .map(|value| value.as_ref().expect("nil pointer in Go slice"))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.0.size_hint()
+    }
+}
+
+impl<T> ExactSizeIterator for GoPointerIter<'_, T> {}
+
+/// Mutable iterator that dereferences Go pointer-slice elements at the use
+/// site.
+pub struct GoPointerIterMut<'a, T>(std::slice::IterMut<'a, Option<T>>);
+
+impl<'a, T> Iterator for GoPointerIterMut<'a, T> {
+    type Item = &'a mut T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0
+            .next()
+            .map(|value| value.as_mut().expect("nil pointer in Go slice"))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.0.size_hint()
+    }
+}
+
+impl<T> ExactSizeIterator for GoPointerIterMut<'_, T> {}
+
+impl<'a, T> IntoIterator for &'a GoPointerSlice<T> {
+    type Item = &'a T;
+    type IntoIter = GoPointerIter<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        GoPointerIter(self.0.as_deref().unwrap_or_default().iter())
+    }
+}
+
+impl<'a, T> IntoIterator for &'a mut GoPointerSlice<T> {
+    type Item = &'a mut T;
+    type IntoIter = GoPointerIterMut<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        GoPointerIterMut(self.0.get_or_insert_with(Vec::new).iter_mut())
+    }
+}
+
+impl<T> std::ops::Index<usize> for GoPointerSlice<T> {
+    type Output = T;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        self.0.as_ref().expect("index of nil Go pointer slice")[index]
+            .as_ref()
+            .expect("nil pointer in Go slice")
+    }
+}
+
+impl<T> std::ops::IndexMut<usize> for GoPointerSlice<T> {
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        self.0.as_mut().expect("index of nil Go pointer slice")[index]
+            .as_mut()
+            .expect("nil pointer in Go slice")
+    }
+}
+
+impl<T: Serialize> Serialize for GoPointerSlice<T> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.0.serialize(serializer)
+    }
+}
+
 struct RawObjectMembers<'de>(Vec<(String, &'de RawValue)>);
 
 struct RawArrayMembers<'de>(Vec<&'de RawValue>);
@@ -153,6 +415,113 @@ where
         marker: PhantomData,
     })
 }
+
+/// Implements the receiver-mutating object loop shared by persisted model
+/// structs. Values are buffered as raw members first, so duplicate keys retain
+/// source order and a recoverable value error does not prevent later fields
+/// from being applied, matching `encoding/json`.
+macro_rules! impl_go_json_merge_object {
+    ($type:ty, $destination:ident, $map:ident, $key:ident, { $($body:tt)* }) => {
+        impl $crate::serde_helpers::GoJsonMerge for $type {
+            fn go_json_merge<'de, D>(&mut self, deserializer: D) -> Result<(), D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct MergeVisitor<'a>(&'a mut $type);
+
+                impl<'de> serde::de::Visitor<'de> for MergeVisitor<'_> {
+                    type Value = ();
+
+                    fn expecting(
+                        &self,
+                        formatter: &mut std::fmt::Formatter<'_>,
+                    ) -> std::fmt::Result {
+                        formatter.write_str("a JSON object")
+                    }
+
+                    fn visit_map<A>(self, mut $map: A) -> Result<Self::Value, A::Error>
+                    where
+                        A: serde::de::MapAccess<'de>,
+                    {
+                        let $destination = self.0;
+                        let mut first_error = None;
+                        while let Some($key) = serde::de::MapAccess::next_key::<String>(&mut $map)? {
+                            let field_result = (|| -> Result<(), A::Error> {
+                                $($body)*
+                                Ok(())
+                            })();
+                            if let Err(error) = field_result {
+                                if $crate::serde_helpers::is_fatal_json_error(&error) {
+                                    return Err(error);
+                                }
+                                first_error.get_or_insert(error);
+                            }
+                        }
+                        if let Some(error) = first_error {
+                            return Err(error);
+                        }
+                        Ok(())
+                    }
+                }
+
+                $crate::serde_helpers::deserialize_go_object(deserializer, MergeVisitor(self))
+            }
+        }
+    };
+}
+
+pub(crate) use impl_go_json_merge_object;
+
+/// Implements fresh-value `Deserialize` through [`GoJsonMerge`]. A JSON null
+/// leaves the Go zero value unchanged; every non-null value is delegated to
+/// the ordered object decoder.
+macro_rules! impl_go_json_deserialize {
+    ($type:ty) => {
+        impl<'de> serde::Deserialize<'de> for $type {
+            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct ObjectOrNullVisitor;
+
+                impl<'de> serde::de::Visitor<'de> for ObjectOrNullVisitor {
+                    type Value = $type;
+
+                    fn expecting(
+                        &self,
+                        formatter: &mut std::fmt::Formatter<'_>,
+                    ) -> std::fmt::Result {
+                        formatter.write_str("null or a JSON object")
+                    }
+
+                    fn visit_none<E>(self) -> Result<Self::Value, E> {
+                        Ok(<$type>::default())
+                    }
+
+                    fn visit_unit<E>(self) -> Result<Self::Value, E> {
+                        Ok(<$type>::default())
+                    }
+
+                    fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+                    where
+                        D: serde::Deserializer<'de>,
+                    {
+                        let mut destination = <$type>::default();
+                        $crate::serde_helpers::GoJsonMerge::go_json_merge(
+                            &mut destination,
+                            deserializer,
+                        )?;
+                        Ok(destination)
+                    }
+                }
+
+                deserializer.deserialize_option(ObjectOrNullVisitor)
+            }
+        }
+    };
+}
+
+pub(crate) use impl_go_json_deserialize;
 
 /// Reports whether an incoming JSON object key matches a Go struct-field tag.
 ///
@@ -566,6 +935,153 @@ where
         }
 
         deserializer.deserialize_option(PointerSliceVisitor(self.0))
+    }
+}
+
+/// Replaces an optional Go slice of non-pointer values. JSON null retains a
+/// nil slice, a null array element leaves that element at its zero value, and
+/// recoverable element errors do not suppress later elements.
+pub(crate) struct OptionValueSliceSeed<'a, T>(pub(crate) &'a mut Option<Vec<T>>);
+
+impl<'de, T> DeserializeSeed<'de> for OptionValueSliceSeed<'_, T>
+where
+    T: Default + Deserialize<'de>,
+{
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct ValueSliceVisitor<'a, T>(&'a mut Option<Vec<T>>);
+
+        impl<'de, T> Visitor<'de> for ValueSliceVisitor<'_, T>
+        where
+            T: Default + Deserialize<'de>,
+        {
+            type Value = ();
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("null or an array of JSON values")
+            }
+
+            fn visit_none<E>(self) -> Result<Self::Value, E> {
+                *self.0 = None;
+                Ok(())
+            }
+
+            fn visit_unit<E>(self) -> Result<Self::Value, E> {
+                *self.0 = None;
+                Ok(())
+            }
+
+            fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                let RawArrayMembers(elements) = RawArrayMembers::deserialize(deserializer)?;
+                let mut existing = self.0.take().unwrap_or_default().into_iter();
+                let mut decoded = Vec::with_capacity(elements.len());
+                let mut first_error = None;
+                for raw in elements {
+                    let mut value = existing.next().unwrap_or_default();
+                    if raw.get() != "null" {
+                        let mut element = serde_json::Deserializer::from_str(raw.get());
+                        match T::deserialize(&mut element).and_then(|value| {
+                            element.end()?;
+                            Ok(value)
+                        }) {
+                            Ok(element_value) => value = element_value,
+                            Err(error) => {
+                                first_error.get_or_insert_with(|| error.to_string());
+                            }
+                        }
+                    }
+                    decoded.push(value);
+                }
+                *self.0 = Some(decoded);
+                if let Some(error) = first_error {
+                    return Err(serde::de::Error::custom(error));
+                }
+                Ok(())
+            }
+        }
+
+        deserializer.deserialize_option(ValueSliceVisitor(self.0))
+    }
+}
+
+/// Replaces an optional Go slice of non-pointer structs while decoding each
+/// object through [`GoJsonMerge`]. JSON null produces the struct zero value.
+pub(crate) struct OptionObjectSliceSeed<'a, T>(pub(crate) &'a mut Option<Vec<T>>);
+
+impl<'de, T> DeserializeSeed<'de> for OptionObjectSliceSeed<'_, T>
+where
+    T: Default + GoJsonMerge,
+{
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct ObjectSliceVisitor<'a, T>(&'a mut Option<Vec<T>>);
+
+        impl<'de, T> Visitor<'de> for ObjectSliceVisitor<'_, T>
+        where
+            T: Default + GoJsonMerge,
+        {
+            type Value = ();
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("null or an array of JSON objects")
+            }
+
+            fn visit_none<E>(self) -> Result<Self::Value, E> {
+                *self.0 = None;
+                Ok(())
+            }
+
+            fn visit_unit<E>(self) -> Result<Self::Value, E> {
+                *self.0 = None;
+                Ok(())
+            }
+
+            fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                let RawArrayMembers(elements) = RawArrayMembers::deserialize(deserializer)?;
+                let mut existing = self.0.take().unwrap_or_default().into_iter();
+                let mut decoded = Vec::with_capacity(elements.len());
+                let mut first_error = None;
+                for raw in elements {
+                    let mut value = existing.next().unwrap_or_default();
+                    if raw.get() != "null" {
+                        let mut element = serde_json::Deserializer::from_str(raw.get());
+                        if let Err(error) = value
+                            .go_json_merge(&mut element)
+                            .and_then(|()| element.end())
+                        {
+                            if is_fatal_json_error(&error) {
+                                decoded.push(value);
+                                *self.0 = Some(decoded);
+                                return Err(serde::de::Error::custom(error));
+                            }
+                            first_error.get_or_insert_with(|| error.to_string());
+                        }
+                    }
+                    decoded.push(value);
+                }
+                *self.0 = Some(decoded);
+                if let Some(error) = first_error {
+                    return Err(serde::de::Error::custom(error));
+                }
+                Ok(())
+            }
+        }
+
+        deserializer.deserialize_option(ObjectSliceVisitor(self.0))
     }
 }
 

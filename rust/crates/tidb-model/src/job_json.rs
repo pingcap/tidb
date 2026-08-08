@@ -15,74 +15,18 @@
 //! Go-compatible persisted JSON stream decoders for DDL jobs and their nested
 //! metadata. Domain types and lifecycle rules remain in [`crate::job`].
 
-use std::collections::BTreeMap;
-
-use serde::de::{MapAccess, Visitor};
-
-use crate::db::DBInfo;
 use crate::job::{
     HistoryInfo, Job, JobMeta, JobPauseReason, JobResumeReason, MultiSchemaInfo, SubJob,
     TimeZoneLocation, TraceInfo,
 };
-use crate::placement::PolicyRefInfo;
 use crate::serde_helpers::{
-    deserialize_go_object, go_json_field_matches, ignore_unknown, is_fatal_json_error,
-    FatalValueSeed, GoJsonMerge, NullDefaultSeed, NullNoopSeed, OptionBoxMergeSeed,
-    OptionBytesSeed, OptionMergeSeed, OptionPointerSliceSeed, OptionStringMapMergeSeed,
+    go_json_field_matches, ignore_unknown, impl_go_json_merge_object, FatalValueSeed,
+    NullDefaultSeed, NullNoopSeed, OptionBoxMergeSeed, OptionBytesSeed, OptionMergeSeed,
+    OptionPointerSliceSeed, OptionStringMapMergeSeed,
 };
 use crate::table_info::TableInfo;
 
-macro_rules! impl_go_merge_object {
-    ($type:ty, $destination:ident, $map:ident, $key:ident, { $($body:tt)* }) => {
-        impl GoJsonMerge for $type {
-            fn go_json_merge<'de, D>(&mut self, deserializer: D) -> Result<(), D::Error>
-            where
-                D: serde::Deserializer<'de>,
-            {
-                struct MergeVisitor<'a>(&'a mut $type);
-
-                impl<'de> Visitor<'de> for MergeVisitor<'_> {
-                    type Value = ();
-
-                    fn expecting(
-                        &self,
-                        formatter: &mut std::fmt::Formatter<'_>,
-                    ) -> std::fmt::Result {
-                        formatter.write_str("a JSON object")
-                    }
-
-                    fn visit_map<A>(self, mut $map: A) -> Result<Self::Value, A::Error>
-                    where
-                        A: MapAccess<'de>,
-                    {
-                        let $destination = self.0;
-                        let mut first_error = None;
-                        while let Some($key) = $map.next_key::<String>()? {
-                            let field_result = (|| -> Result<(), A::Error> {
-                                $($body)*
-                                Ok(())
-                            })();
-                            if let Err(error) = field_result {
-                                if is_fatal_json_error(&error) {
-                                    return Err(error);
-                                }
-                                first_error.get_or_insert(error);
-                            }
-                        }
-                        if let Some(error) = first_error {
-                            return Err(error);
-                        }
-                        Ok(())
-                    }
-                }
-
-                deserialize_go_object(deserializer, MergeVisitor(self))
-            }
-        }
-    };
-}
-
-impl_go_merge_object!(JobPauseReason, destination, map, key, {
+impl_go_json_merge_object!(JobPauseReason, destination, map, key, {
     if go_json_field_matches(&key, "type") {
         map.next_value_seed(NullNoopSeed(&mut destination.type_))?;
     } else if go_json_field_matches(&key, "message") {
@@ -92,7 +36,7 @@ impl_go_merge_object!(JobPauseReason, destination, map, key, {
     }
 });
 
-impl_go_merge_object!(JobResumeReason, destination, map, key, {
+impl_go_json_merge_object!(JobResumeReason, destination, map, key, {
     if go_json_field_matches(&key, "type") {
         map.next_value_seed(NullNoopSeed(&mut destination.type_))?;
     } else {
@@ -100,7 +44,7 @@ impl_go_merge_object!(JobResumeReason, destination, map, key, {
     }
 });
 
-impl_go_merge_object!(JobMeta, destination, map, key, {
+impl_go_json_merge_object!(JobMeta, destination, map, key, {
     if go_json_field_matches(&key, "schema_id") {
         map.next_value_seed(NullNoopSeed(&mut destination.schema_id))?;
     } else if go_json_field_matches(&key, "table_id") {
@@ -116,7 +60,7 @@ impl_go_merge_object!(JobMeta, destination, map, key, {
     }
 });
 
-impl_go_merge_object!(TimeZoneLocation, destination, map, key, {
+impl_go_json_merge_object!(TimeZoneLocation, destination, map, key, {
     if go_json_field_matches(&key, "name") {
         map.next_value_seed(NullNoopSeed(&mut destination.name))?;
     } else if go_json_field_matches(&key, "offset") {
@@ -126,7 +70,7 @@ impl_go_merge_object!(TimeZoneLocation, destination, map, key, {
     }
 });
 
-impl_go_merge_object!(TraceInfo, destination, map, key, {
+impl_go_json_merge_object!(TraceInfo, destination, map, key, {
     if go_json_field_matches(&key, "session_alias") {
         map.next_value_seed(NullNoopSeed(&mut destination.session_alias))?;
     } else if go_json_field_matches(&key, "trace_id") {
@@ -138,7 +82,7 @@ impl_go_merge_object!(TraceInfo, destination, map, key, {
     }
 });
 
-impl_go_merge_object!(SubJob, destination, map, key, {
+impl_go_json_merge_object!(SubJob, destination, map, key, {
     if go_json_field_matches(&key, "type") {
         map.next_value_seed(NullNoopSeed(&mut destination.type_))?;
     } else if go_json_field_matches(&key, "raw_args") {
@@ -170,7 +114,7 @@ impl_go_merge_object!(SubJob, destination, map, key, {
     }
 });
 
-impl_go_merge_object!(MultiSchemaInfo, destination, map, key, {
+impl_go_json_merge_object!(MultiSchemaInfo, destination, map, key, {
     if go_json_field_matches(&key, "sub_jobs") {
         map.next_value_seed(OptionPointerSliceSeed(&mut destination.sub_jobs))?;
     } else if go_json_field_matches(&key, "revertible") {
@@ -186,38 +130,7 @@ impl_go_merge_object!(MultiSchemaInfo, destination, map, key, {
 // an existing pointed-to allocation and mutates its fields in declaration
 // order, so replacing either object through derived `Deserialize` loses both
 // omitted fields and later-field continuation after an error.
-impl_go_merge_object!(DBInfo, destination, map, key, {
-    if go_json_field_matches(&key, "id") {
-        map.next_value_seed(NullNoopSeed(&mut destination.id))?;
-    } else if go_json_field_matches(&key, "db_name") {
-        map.next_value_seed(NullNoopSeed(&mut destination.name))?;
-    } else if go_json_field_matches(&key, "charset") {
-        map.next_value_seed(NullNoopSeed(&mut destination.charset))?;
-    } else if go_json_field_matches(&key, "collate") {
-        map.next_value_seed(NullNoopSeed(&mut destination.collate))?;
-    } else if go_json_field_matches(&key, "Deprecated") {
-        let mut deprecated = BTreeMap::<String, serde::de::IgnoredAny>::new();
-        map.next_value_seed(NullNoopSeed(&mut deprecated))?;
-    } else if go_json_field_matches(&key, "state") {
-        map.next_value_seed(NullNoopSeed(&mut destination.state))?;
-    } else if go_json_field_matches(&key, "policy_ref_info") {
-        map.next_value_seed(OptionMergeSeed(&mut destination.placement_policy_ref))?;
-    } else {
-        ignore_unknown(&mut map)?;
-    }
-});
-
-impl_go_merge_object!(PolicyRefInfo, destination, map, key, {
-    if go_json_field_matches(&key, "id") {
-        map.next_value_seed(NullNoopSeed(&mut destination.id))?;
-    } else if go_json_field_matches(&key, "name") {
-        map.next_value_seed(NullNoopSeed(&mut destination.name))?;
-    } else {
-        ignore_unknown(&mut map)?;
-    }
-});
-
-impl_go_merge_object!(TableInfo, destination, map, key, {
+impl_go_json_merge_object!(TableInfo, destination, map, key, {
     if go_json_field_matches(&key, "id") {
         map.next_value_seed(NullNoopSeed(&mut destination.id))?;
     } else if go_json_field_matches(&key, "name") {
@@ -325,7 +238,7 @@ impl_go_merge_object!(TableInfo, destination, map, key, {
     }
 });
 
-impl_go_merge_object!(HistoryInfo, destination, map, key, {
+impl_go_json_merge_object!(HistoryInfo, destination, map, key, {
     if go_json_field_matches(&key, "SchemaVersion") {
         map.next_value_seed(NullNoopSeed(&mut destination.schema_version))?;
     } else if go_json_field_matches(&key, "DBInfo") {
@@ -343,7 +256,7 @@ impl_go_merge_object!(HistoryInfo, destination, map, key, {
     }
 });
 
-impl_go_merge_object!(Job, destination, map, key, {
+impl_go_json_merge_object!(Job, destination, map, key, {
     if go_json_field_matches(&key, "id") {
         map.next_value_seed(NullNoopSeed(&mut destination.id))?;
     } else if go_json_field_matches(&key, "type") {

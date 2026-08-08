@@ -82,12 +82,8 @@ pub struct SchemaDiff {
     #[serde(rename = "read_table_from_meta", default)]
     pub read_table_from_meta: bool,
     /// Extra tables the same DDL touched.
-    #[serde(
-        rename = "affected_options",
-        default,
-        deserialize_with = "crate::serde_helpers::null_default"
-    )]
-    pub affected_options: Vec<AffectedOption>,
+    #[serde(rename = "affected_options", default)]
+    pub affected_options: Option<Vec<Option<AffectedOption>>>,
     /// In-memory only (Go `json:"-"`): set by BR's `refreshMeta` DDL.
     #[serde(skip)]
     pub is_refresh_meta: bool,
@@ -117,12 +113,9 @@ impl Serialize for SchemaDiff {
         } else {
             value.skip_field("read_table_from_meta")?;
         }
-        // No `omitempty`: an empty Go slice is nil here and marshals as null.
-        if self.affected_options.is_empty() {
-            value.serialize_field("affected_options", &Option::<Vec<AffectedOption>>::None)?;
-        } else {
-            value.serialize_field("affected_options", &self.affected_options)?;
-        }
+        // No `omitempty`: preserve nil (`null`), allocated empty (`[]`), and
+        // nil elements in Go's []*AffectedOption independently.
+        value.serialize_field("affected_options", &self.affected_options)?;
         value.end()
     }
 }
@@ -142,7 +135,7 @@ mod tests {
         assert_eq!(diff.action_type, ActionType::ACTION_CREATE_TABLE);
         assert_eq!(diff.schema_id, 2);
         assert_eq!(diff.table_id, 104);
-        assert!(diff.affected_options.is_empty());
+        assert!(diff.affected_options.is_none());
         assert!(!diff.is_refresh_meta);
         assert_eq!(
             String::from_utf8(to_go_json(&diff).unwrap()).unwrap(),
@@ -157,8 +150,9 @@ mod tests {
         assert_eq!(diff.sub_action_types, vec![ActionType(3), ActionType(4)]);
         assert!(diff.regenerate_schema_map);
         assert!(diff.read_table_from_meta);
-        assert_eq!(diff.affected_options.len(), 1);
-        assert_eq!(diff.affected_options[0].table_id, 105);
+        let affected = diff.affected_options.as_ref().unwrap();
+        assert_eq!(affected.len(), 1);
+        assert_eq!(affected[0].as_ref().unwrap().table_id, 105);
         assert_eq!(
             String::from_utf8(to_go_json(&diff).unwrap()).unwrap(),
             stored
@@ -166,13 +160,46 @@ mod tests {
     }
 
     #[test]
-    fn a_null_slice_decodes_as_empty_rather_than_failing() {
+    fn null_affected_options_decode_as_nil_none() {
         let diff: SchemaDiff = serde_json::from_str(
             r#"{"version":1,"sub_action_types":null,"affected_options":null}"#,
         )
         .unwrap();
         assert!(diff.sub_action_types.is_empty());
-        assert!(diff.affected_options.is_empty());
+        assert!(diff.affected_options.is_none());
         assert_eq!(diff.action_type, ActionType::ACTION_NONE);
+    }
+
+    #[test]
+    fn affected_options_preserve_nil_empty_and_nil_elements() {
+        let nil = serde_json::to_value(SchemaDiff::default()).unwrap();
+        assert!(nil["affected_options"].is_null());
+
+        let empty = serde_json::to_value(SchemaDiff {
+            affected_options: Some(Vec::new()),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(empty["affected_options"], serde_json::json!([]));
+
+        let nullable = SchemaDiff {
+            affected_options: Some(vec![
+                None,
+                Some(AffectedOption {
+                    schema_id: i64::MIN,
+                    table_id: i64::MAX,
+                    ..Default::default()
+                }),
+            ]),
+            ..Default::default()
+        };
+        let encoded = serde_json::to_value(&nullable).unwrap();
+        assert_eq!(encoded["affected_options"][0], serde_json::Value::Null);
+        assert_eq!(encoded["affected_options"][1]["schema_id"], i64::MIN);
+        assert_eq!(encoded["affected_options"][1]["table_id"], i64::MAX);
+        assert_eq!(
+            serde_json::from_value::<SchemaDiff>(encoded).unwrap(),
+            nullable
+        );
     }
 }

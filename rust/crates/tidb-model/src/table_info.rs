@@ -334,7 +334,7 @@ impl TableInfo {
     pub fn get_pk_col_info(&self) -> Option<&ColumnInfo> {
         self.columns
             .iter()
-            .find(|c| c.get_flag() & FieldTypeFlags::PRI_KEY != 0)
+            .find(|c| c.get_flag() & u64::from(FieldTypeFlags::PRI_KEY) != 0)
     }
 
     /// Go `GetPkName`: the primary-key column name (empty when none).
@@ -360,7 +360,7 @@ impl TableInfo {
         self.get_pk_col_info()
             .expect("PKIsHandle with AutoRandomBits requires a primary-key column")
             .get_flag()
-            & FieldTypeFlags::UNSIGNED
+            & u64::from(FieldTypeFlags::UNSIGNED)
             != 0
     }
 
@@ -380,8 +380,8 @@ impl TableInfo {
             // metadata is an invariant violation and panics rather than being
             // silently dropped.
             slots[off] = Some(col);
-            if i64::from(col.offset) > max_offset {
-                max_offset = i64::from(col.offset);
+            if col.offset > max_offset {
+                max_offset = col.offset;
             }
         }
         slots.truncate((max_offset + 1) as usize);
@@ -436,7 +436,7 @@ impl TableInfo {
                             break;
                         }
                         Some(c) => {
-                            if c.get_flag() & FieldTypeFlags::NOT_NULL == 0 {
+                            if c.get_flag() & u64::from(FieldTypeFlags::NOT_NULL) == 0 {
                                 all_col_not_null = false;
                                 break;
                             }
@@ -493,7 +493,7 @@ impl TableInfo {
     pub fn get_auto_increment_col_info(&self) -> Option<&ColumnInfo> {
         self.columns
             .iter()
-            .find(|c| c.get_flag() & FieldTypeFlags::AUTO_INCREMENT != 0)
+            .find(|c| c.get_flag() & u64::from(FieldTypeFlags::AUTO_INCREMENT) != 0)
     }
 
     /// Go `ColumnIsInIndex`: whether column `c` participates in any index.
@@ -517,7 +517,7 @@ impl TableInfo {
     #[must_use]
     pub fn is_auto_inc_col_unsigned(&self) -> bool {
         self.get_auto_increment_col_info()
-            .is_some_and(|c| c.get_flag() & FieldTypeFlags::UNSIGNED != 0)
+            .is_some_and(|c| c.get_flag() & u64::from(FieldTypeFlags::UNSIGNED) != 0)
     }
 
     /// Go `FindColumnNameByID`: the (lower-cased) name of column `id`, or "".
@@ -594,25 +594,25 @@ impl TableInfo {
             return;
         }
         // old-offset -> new-offset for every moved element.
-        let mut updated: BTreeMap<i32, i32> = BTreeMap::new();
+        let mut updated: BTreeMap<i64, i64> = BTreeMap::new();
         if from < to {
             for i in from..to {
-                updated.insert((i + 1) as i32, i as i32);
+                updated.insert((i + 1) as i64, i as i64);
             }
         } else {
             let mut i = from;
             while i > to {
-                updated.insert((i - 1) as i32, i as i32);
+                updated.insert((i - 1) as i64, i as i64);
                 i -= 1;
             }
         }
-        updated.insert(from as i32, to as i32);
+        updated.insert(from as i64, to as i64);
 
         let src = self.columns.remove(from);
         self.columns.insert(to, src);
         let (lo, hi) = (from.min(to), from.max(to));
         for (i, col) in self.columns.iter_mut().enumerate().take(hi + 1).skip(lo) {
-            col.offset = i as i32;
+            col.offset = i as i64;
         }
 
         for idx in &mut self.indices {
@@ -672,9 +672,9 @@ mod tests {
         let mut c = ColumnInfo::new_extra_handle_col_info();
         c.name = CiString::new(name);
         c.field_type = FieldType::new(FieldTypeCode::LongLong);
-        c.set_flag(FieldTypeFlags::PRI_KEY);
+        c.set_flag(u64::from(FieldTypeFlags::PRI_KEY));
         if unsigned {
-            c.add_flag(FieldTypeFlags::UNSIGNED);
+            c.add_flag(u64::from(FieldTypeFlags::UNSIGNED));
         }
         c
     }
@@ -791,13 +791,13 @@ mod tests {
         assert!(std::panic::catch_unwind(|| t.is_auto_random_bit_col_unsigned()).is_err());
     }
 
-    fn column(name: &str, offset: i32, public: bool, not_null: bool) -> ColumnInfo {
+    fn column(name: &str, offset: i64, public: bool, not_null: bool) -> ColumnInfo {
         let mut c = ColumnInfo::new_extra_handle_col_info();
         c.name = CiString::new(name);
         c.offset = offset;
         c.field_type = FieldType::new(FieldTypeCode::LongLong);
         c.set_flag(if not_null {
-            FieldTypeFlags::NOT_NULL
+            u64::from(FieldTypeFlags::NOT_NULL)
         } else {
             0
         });
@@ -825,7 +825,8 @@ mod tests {
                 columns: vec![IndexColumn {
                     name: CiString::new("b"),
                     ..Default::default()
-                }],
+                }]
+                .into(),
                 ..Default::default()
             }],
             ..Default::default()
@@ -853,7 +854,8 @@ mod tests {
                 columns: vec![IndexColumn {
                     name: CiString::new("a"),
                     ..Default::default()
-                }],
+                }]
+                .into(),
                 ..Default::default()
             },
         );
@@ -868,7 +870,7 @@ mod tests {
         c_pub.id = 100;
         let mut c_hidden = column("b", 1, false, false);
         c_hidden.id = 101;
-        c_hidden.set_flag(FieldTypeFlags::AUTO_INCREMENT);
+        c_hidden.set_flag(u64::from(FieldTypeFlags::AUTO_INCREMENT));
 
         let mut t = TableInfo {
             columns: vec![c_pub, c_hidden],
@@ -878,7 +880,8 @@ mod tests {
                 columns: vec![IndexColumn {
                     name: CiString::new("a"),
                     ..Default::default()
-                }],
+                }]
+                .into(),
                 ..Default::default()
             }],
             constraints: vec![ConstraintInfo {
@@ -967,12 +970,14 @@ mod tests {
                     name: CiString::new("a"),
                     offset: 0,
                     ..Default::default()
-                }],
+                }]
+                .into(),
                 affect_column: vec![IndexColumn {
                     name: CiString::new("a"),
                     offset: 0,
                     ..Default::default()
-                }],
+                }]
+                .into(),
                 ..Default::default()
             }],
             ..Default::default()
@@ -1037,7 +1042,7 @@ mod tests {
         assert!(!t.is_locked());
         t.lock = Some(Box::new(TableLockInfo {
             tp: tidb_ast::TableLockType::default(),
-            sessions: vec![SessionInfo::default()],
+            sessions: vec![SessionInfo::default()].into(),
             state: TableLockState::PUBLIC,
             ts: 0,
         }));

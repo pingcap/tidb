@@ -3,7 +3,9 @@
 This is one atomic package claim over the fourteen production Go files, eight
 direct Go test files, and `BUILD.bazel`. It is not a collection of independent
 file-completion claims. Go at source seed
-`bdab0016365e8b1d79b5b11f52ee6fdde90f4c46` is the source of truth.
+`665fc02e2be48a7199d5ffeb5d3d6bec1dfed04f` is the accepted package seed;
+its `pkg/meta/model` tree is byte-identical to the upstream Go truth at
+`bdab0016365e8b1d79b5b11f52ee6fdde90f4c46`.
 
 The package AST census contains 4,236 obligations: 2,481 production and 1,755
 test/support obligations. The existing checked-in locks for `job_args.go` plus

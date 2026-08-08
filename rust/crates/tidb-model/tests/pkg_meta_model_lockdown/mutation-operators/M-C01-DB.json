@@ -1,0 +1,1 @@
+{"mutation_id":"M-C01-DB","replacements":[{"expected_count":1,"new":"value.serialize_field(\"deprecated\", &DeprecatedTables)?;","old":"value.serialize_field(\"Deprecated\", &DeprecatedTables)?;"}],"rust_path":"rust/crates/tidb-model/src/db.rs","schema":"go-package-lockdown-mutation-operator-v1","source_sha256":"203a87a7962a1bd73b41f2a0d26fead2940bd37f77d7ff8099033530c4fcaf33"}

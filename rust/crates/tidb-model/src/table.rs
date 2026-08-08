@@ -31,6 +31,10 @@ use tidb_parser::auth::UserIdentity;
 use crate::column::ColumnInfo;
 use crate::index::IndexColumn;
 use crate::schema_state::SchemaState;
+use crate::serde_helpers::{
+    go_json_field_matches, ignore_unknown, impl_go_json_deserialize, impl_go_json_merge_object,
+    FatalSeed, GoValueSlice, NullNoopSeed, OptionObjectSliceSeed, OptionValueSliceSeed,
+};
 
 /// Serde adapters for the `ast` enums used by these structs.
 ///
@@ -167,6 +171,24 @@ fn go_zero_time() -> DateTime<FixedOffset> {
     DateTime::parse_from_rfc3339("0001-01-01T00:00:00Z").expect("Go's zero time is valid RFC3339")
 }
 
+/// Decodes a Go `time.Time` field into its existing value. `time.Time` owns a
+/// custom `UnmarshalJSON`: null is a no-op, while a malformed non-null value
+/// aborts the enclosing object immediately rather than becoming a recoverable
+/// `encoding/json` type error.
+struct GoTimeSeed<'a>(&'a mut DateTime<FixedOffset>);
+
+impl<'de> serde::de::DeserializeSeed<'de> for GoTimeSeed<'_> {
+    type Value = ();
+
+    fn deserialize<D: serde::Deserializer<'de>>(self, deserializer: D) -> Result<(), D::Error> {
+        let Some(text) = <Option<String> as serde::Deserialize>::deserialize(deserializer)? else {
+            return Ok(());
+        };
+        *self.0 = parse_go_time(&text)?;
+        Ok(())
+    }
+}
+
 mod go_time_serde {
     use super::{format_go_time, parse_go_time, DateTime, FixedOffset};
 
@@ -235,7 +257,7 @@ impl std::fmt::Display for WindowRepeatType {
 }
 
 /// Go `StatsWindowSettings`: the analyze-window schedule.
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct StatsWindowSettings {
     /// The window start time.
     #[serde(
@@ -258,6 +280,22 @@ pub struct StatsWindowSettings {
     #[serde(rename = "repeat_interval", default)]
     pub repeat_interval: u64,
 }
+
+impl_go_json_merge_object!(StatsWindowSettings, destination, map, key, {
+    if go_json_field_matches(&key, "window_start") {
+        map.next_value_seed(FatalSeed(GoTimeSeed(&mut destination.window_start)))?;
+    } else if go_json_field_matches(&key, "window_end") {
+        map.next_value_seed(FatalSeed(GoTimeSeed(&mut destination.window_end)))?;
+    } else if go_json_field_matches(&key, "repeat_type") {
+        map.next_value_seed(NullNoopSeed(&mut destination.repeat_type))?;
+    } else if go_json_field_matches(&key, "repeat_interval") {
+        map.next_value_seed(NullNoopSeed(&mut destination.repeat_interval))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+
+impl_go_json_deserialize!(StatsWindowSettings);
 
 impl Default for StatsWindowSettings {
     fn default() -> Self {
@@ -780,7 +818,7 @@ impl TTLInfo {
 }
 
 /// Go `SequenceInfo`: a sequence object's configuration.
-#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
 pub struct SequenceInfo {
     /// The start value.
     #[serde(rename = "sequence_start", default)]
@@ -812,8 +850,32 @@ pub struct SequenceInfo {
     pub comment: String,
 }
 
+impl_go_json_merge_object!(SequenceInfo, destination, map, key, {
+    if go_json_field_matches(&key, "sequence_start") {
+        map.next_value_seed(NullNoopSeed(&mut destination.start))?;
+    } else if go_json_field_matches(&key, "sequence_cache") {
+        map.next_value_seed(NullNoopSeed(&mut destination.cache))?;
+    } else if go_json_field_matches(&key, "sequence_cycle") {
+        map.next_value_seed(NullNoopSeed(&mut destination.cycle))?;
+    } else if go_json_field_matches(&key, "sequence_min_value") {
+        map.next_value_seed(NullNoopSeed(&mut destination.min_value))?;
+    } else if go_json_field_matches(&key, "sequence_max_value") {
+        map.next_value_seed(NullNoopSeed(&mut destination.max_value))?;
+    } else if go_json_field_matches(&key, "sequence_increment") {
+        map.next_value_seed(NullNoopSeed(&mut destination.increment))?;
+    } else if go_json_field_matches(&key, "sequence_cache_value") {
+        map.next_value_seed(NullNoopSeed(&mut destination.cache_value))?;
+    } else if go_json_field_matches(&key, "sequence_comment") {
+        map.next_value_seed(NullNoopSeed(&mut destination.comment))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+
+impl_go_json_deserialize!(SequenceInfo);
+
 /// Go `ExchangePartitionInfo`: the partition-exchange metadata of a table.
-#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
 pub struct ExchangePartitionInfo {
     /// The other table's ID (the non-partitioned table's ID when this info is
     /// on a partitioned table, else the partitioned table's ID).
@@ -827,8 +889,22 @@ pub struct ExchangePartitionInfo {
     pub xxx_exchange_partition_flag: bool,
 }
 
+impl_go_json_merge_object!(ExchangePartitionInfo, destination, map, key, {
+    if go_json_field_matches(&key, "exchange_partition_id") {
+        map.next_value_seed(NullNoopSeed(&mut destination.exchange_partition_table_id))?;
+    } else if go_json_field_matches(&key, "exchange_partition_def_id") {
+        map.next_value_seed(NullNoopSeed(&mut destination.exchange_partition_def_id))?;
+    } else if go_json_field_matches(&key, "exchange_partition_flag") {
+        map.next_value_seed(NullNoopSeed(&mut destination.xxx_exchange_partition_flag))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+
+impl_go_json_deserialize!(ExchangePartitionInfo);
+
 /// Go `SoftdeleteInfo`: a table's soft-delete configuration.
-#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
 pub struct SoftdeleteInfo {
     /// The retention period.
     #[serde(
@@ -855,8 +931,22 @@ pub struct SoftdeleteInfo {
     pub job_interval: String,
 }
 
+impl_go_json_merge_object!(SoftdeleteInfo, destination, map, key, {
+    if go_json_field_matches(&key, "retention") {
+        map.next_value_seed(NullNoopSeed(&mut destination.retention))?;
+    } else if go_json_field_matches(&key, "job_enable") {
+        map.next_value_seed(NullNoopSeed(&mut destination.job_enable))?;
+    } else if go_json_field_matches(&key, "job_interval") {
+        map.next_value_seed(NullNoopSeed(&mut destination.job_interval))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+
+impl_go_json_deserialize!(SoftdeleteInfo);
+
 /// Go `TableAffinityInfo`: a table's affinity configuration.
-#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
 pub struct TableAffinityInfo {
     /// The affinity level.
     #[serde(
@@ -866,6 +956,16 @@ pub struct TableAffinityInfo {
     )]
     pub level: String,
 }
+
+impl_go_json_merge_object!(TableAffinityInfo, destination, map, key, {
+    if go_json_field_matches(&key, "level") {
+        map.next_value_seed(NullNoopSeed(&mut destination.level))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+
+impl_go_json_deserialize!(TableAffinityInfo);
 
 /// Go `NewTableAffinityInfoWithLevel`.
 pub fn new_table_affinity_info_with_level(
@@ -958,7 +1058,7 @@ impl std::fmt::Display for TableLockState {
 
 /// Go `SessionInfo`: a server/session identifier holding a table lock.
 /// Neither field carries a `json` tag in Go, so the Go field names are used.
-#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
 pub struct SessionInfo {
     /// The server ID.
     #[serde(
@@ -972,6 +1072,18 @@ pub struct SessionInfo {
     pub session_id: u64,
 }
 
+impl_go_json_merge_object!(SessionInfo, destination, map, key, {
+    if go_json_field_matches(&key, "ServerID") {
+        map.next_value_seed(NullNoopSeed(&mut destination.server_id))?;
+    } else if go_json_field_matches(&key, "SessionID") {
+        map.next_value_seed(NullNoopSeed(&mut destination.session_id))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+
+impl_go_json_deserialize!(SessionInfo);
+
 impl std::fmt::Display for SessionInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "server: {}_session: {}", self.server_id, self.session_id)
@@ -980,19 +1092,14 @@ impl std::fmt::Display for SessionInfo {
 
 /// Go `TableLockInfo`: the lock held on a table.
 /// No field carries a `json` tag in Go, so the Go field names are used.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, serde::Serialize)]
 pub struct TableLockInfo {
     /// The lock type.
     #[serde(rename = "Tp", default, with = "ast_enum_serde::table_lock_type")]
     pub tp: TableLockType,
     /// The sessions holding the lock.
-    #[serde(
-        rename = "Sessions",
-        default,
-        deserialize_with = "crate::serde_helpers::null_default",
-        serialize_with = "crate::serde_helpers::null_if_empty"
-    )]
-    pub sessions: Vec<SessionInfo>,
+    #[serde(rename = "Sessions")]
+    pub sessions: GoValueSlice<SessionInfo>,
     /// The lock state.
     #[serde(rename = "State", default)]
     pub state: TableLockState,
@@ -1001,9 +1108,27 @@ pub struct TableLockInfo {
     pub ts: u64,
 }
 
+impl_go_json_merge_object!(TableLockInfo, destination, map, key, {
+    if go_json_field_matches(&key, "Tp") {
+        let mut raw = destination.tp.0;
+        map.next_value_seed(NullNoopSeed(&mut raw))?;
+        destination.tp = TableLockType(raw);
+    } else if go_json_field_matches(&key, "Sessions") {
+        map.next_value_seed(OptionObjectSliceSeed(destination.sessions.raw_mut()))?;
+    } else if go_json_field_matches(&key, "State") {
+        map.next_value_seed(NullNoopSeed(&mut destination.state))?;
+    } else if go_json_field_matches(&key, "TS") {
+        map.next_value_seed(NullNoopSeed(&mut destination.ts))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+
+impl_go_json_deserialize!(TableLockInfo);
+
 /// Go `TableLockTpInfo`: a schema/table/lock-type triple.
 /// No field carries a `json` tag in Go, so the Go field names are used.
-#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, Default, serde::Serialize)]
 pub struct TableLockTpInfo {
     /// The schema ID.
     #[serde(rename = "SchemaID", default)]
@@ -1016,33 +1141,57 @@ pub struct TableLockTpInfo {
     pub tp: TableLockType,
 }
 
+impl_go_json_merge_object!(TableLockTpInfo, destination, map, key, {
+    if go_json_field_matches(&key, "SchemaID") {
+        map.next_value_seed(NullNoopSeed(&mut destination.schema_id))?;
+    } else if go_json_field_matches(&key, "TableID") {
+        map.next_value_seed(NullNoopSeed(&mut destination.table_id))?;
+    } else if go_json_field_matches(&key, "Tp") {
+        let mut raw = destination.tp.0;
+        map.next_value_seed(NullNoopSeed(&mut raw))?;
+        destination.tp = TableLockType(raw);
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+
+impl_go_json_deserialize!(TableLockTpInfo);
+
 /// Go `TiFlashReplicaInfo`: a table's TiFlash replica configuration.
 /// No field carries a `json` tag in Go, so the Go field names are used.
-#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
 pub struct TiFlashReplicaInfo {
     /// The replica count.
     #[serde(rename = "Count", default)]
     pub count: u64,
     /// The location labels.
-    #[serde(
-        rename = "LocationLabels",
-        default,
-        deserialize_with = "crate::serde_helpers::null_default",
-        serialize_with = "crate::serde_helpers::null_if_empty"
-    )]
-    pub location_labels: Vec<String>,
+    #[serde(rename = "LocationLabels")]
+    pub location_labels: GoValueSlice<String>,
     /// Whether the replica is available.
     #[serde(rename = "Available", default)]
     pub available: bool,
     /// The IDs of partitions whose replicas are available.
-    #[serde(
-        rename = "AvailablePartitionIDs",
-        default,
-        deserialize_with = "crate::serde_helpers::null_default",
-        serialize_with = "crate::serde_helpers::null_if_empty"
-    )]
-    pub available_partition_ids: Vec<i64>,
+    #[serde(rename = "AvailablePartitionIDs")]
+    pub available_partition_ids: GoValueSlice<i64>,
 }
+
+impl_go_json_merge_object!(TiFlashReplicaInfo, destination, map, key, {
+    if go_json_field_matches(&key, "Count") {
+        map.next_value_seed(NullNoopSeed(&mut destination.count))?;
+    } else if go_json_field_matches(&key, "LocationLabels") {
+        map.next_value_seed(OptionValueSliceSeed(destination.location_labels.raw_mut()))?;
+    } else if go_json_field_matches(&key, "Available") {
+        map.next_value_seed(NullNoopSeed(&mut destination.available))?;
+    } else if go_json_field_matches(&key, "AvailablePartitionIDs") {
+        map.next_value_seed(OptionValueSliceSeed(
+            destination.available_partition_ids.raw_mut(),
+        ))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+
+impl_go_json_deserialize!(TiFlashReplicaInfo);
 
 impl TiFlashReplicaInfo {
     /// Go `IsPartitionAvailable`: whether partition `pid`'s replica is ready.
@@ -1412,7 +1561,8 @@ mod tests {
             sessions: vec![SessionInfo {
                 server_id: "s".to_owned(),
                 session_id: 7,
-            }],
+            }]
+            .into(),
             state: TableLockState::PUBLIC,
             ts: 42,
         };
@@ -1423,9 +1573,9 @@ mod tests {
 
         let replica = TiFlashReplicaInfo {
             count: 2,
-            location_labels: vec!["z1".to_owned()],
+            location_labels: vec!["z1".to_owned()].into(),
             available: true,
-            available_partition_ids: vec![1],
+            available_partition_ids: vec![1].into(),
         };
         assert_eq!(
             go_json(&replica),
@@ -1457,10 +1607,10 @@ mod tests {
         );
     }
 
-    // Go marshals a nil slice as `null` and unmarshals `null` back to the zero
-    // value; a missing key likewise stays at the zero value.
+    // Go distinguishes nil from allocated-empty slices and clears a slice to
+    // nil when the field is explicitly null.
     #[test]
-    fn null_slices_decode_to_empty() {
+    fn null_slices_decode_to_nil() {
         let decoded: FKInfo = serde_json::from_str(
             r#"{"id":1,"ref_cols":null,"cols":null,"fk_name":{"O":"f","L":"f"}}"#,
         )
@@ -1477,6 +1627,142 @@ mod tests {
         .unwrap();
         assert_eq!(decoded.count, 1);
         assert!(decoded.location_labels.is_empty());
+        assert!(!decoded.location_labels.is_allocated());
+        assert!(!decoded.available_partition_ids.is_allocated());
+    }
+
+    #[test]
+    fn scalar_table_subobjects_follow_go_field_merge_rules() {
+        use crate::serde_helpers::GoJsonMerge;
+
+        let sequence: SequenceInfo = serde_json::from_str(
+            r#"{"ſequence_start":7,"sequence_start":null,"SEQUENCE_COMMENT":"kept","sequence_comment":null,"unknown":1}"#,
+        )
+        .unwrap();
+        assert_eq!(sequence.start, 7);
+        assert_eq!(sequence.comment, "kept");
+
+        let session: SessionInfo = serde_json::from_str(
+            r#"{"ſerverID":"first","ServerID":null,"SESSIONID":9,"SessionID":null}"#,
+        )
+        .unwrap();
+        assert_eq!(session.server_id, "first");
+        assert_eq!(session.session_id, 9);
+
+        let mut exchange = ExchangePartitionInfo {
+            exchange_partition_table_id: 4,
+            exchange_partition_def_id: 5,
+            ..Default::default()
+        };
+        let mut decoder = serde_json::Deserializer::from_str(
+            r#"{"exchange_partition_id":"bad","exchange_partition_def_id":8,"exchange_partition_flag":true}"#,
+        );
+        assert!(exchange.go_json_merge(&mut decoder).is_err());
+        assert_eq!(exchange.exchange_partition_table_id, 4);
+        assert_eq!(exchange.exchange_partition_def_id, 8);
+        assert!(exchange.xxx_exchange_partition_flag);
+
+        let affinity: TableAffinityInfo =
+            serde_json::from_str(r#"{"LEVEL":"table","level":null}"#).unwrap();
+        assert_eq!(affinity.level, "table");
+    }
+
+    #[test]
+    fn time_fields_stop_on_custom_unmarshal_errors() {
+        use crate::serde_helpers::GoJsonMerge;
+
+        let mut window = StatsWindowSettings::default();
+        let mut decoder = serde_json::Deserializer::from_str(
+            r#"{"repeat_interval":1,"window_start":"not-a-time","repeat_interval":2}"#,
+        );
+        assert!(window.go_json_merge(&mut decoder).is_err());
+        // time.Time.UnmarshalJSON returns directly: the later duplicate is not
+        // visited, unlike a recoverable scalar type error.
+        assert_eq!(window.repeat_interval, 1);
+        assert_eq!(window.window_start, go_zero_time());
+
+        let decoded: StatsWindowSettings = serde_json::from_str(
+            r#"{"WINDOW_START":"1970-01-01T00:00:00Z","window_start":null,"repeat_interval":3}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            decoded.window_start,
+            DateTime::parse_from_rfc3339("1970-01-01T00:00:00Z").unwrap()
+        );
+        assert_eq!(decoded.repeat_interval, 3);
+    }
+
+    #[test]
+    fn table_lock_slices_preserve_nil_empty_elements_and_receiver_reuse() {
+        use crate::serde_helpers::GoJsonMerge;
+
+        let nil: TableLockInfo = serde_json::from_str(r#"{"Sessions":null}"#).unwrap();
+        let empty: TableLockInfo = serde_json::from_str(r#"{"Sessions":[]}"#).unwrap();
+        assert!(!nil.sessions.is_allocated());
+        assert!(empty.sessions.is_allocated());
+        assert_eq!(
+            go_json(&nil),
+            r#"{"Tp":0,"Sessions":null,"State":0,"TS":0}"#
+        );
+        assert_eq!(
+            go_json(&empty),
+            r#"{"Tp":0,"Sessions":[],"State":0,"TS":0}"#
+        );
+
+        let mut lock = TableLockInfo {
+            sessions: vec![
+                SessionInfo {
+                    server_id: "kept".to_owned(),
+                    session_id: 1,
+                },
+                SessionInfo {
+                    server_id: "discarded".to_owned(),
+                    session_id: 2,
+                },
+            ]
+            .into(),
+            ts: 4,
+            ..Default::default()
+        };
+        let mut decoder = serde_json::Deserializer::from_str(
+            r#"{"Sessions":[{"SessionID":"bad"},{"ServerID":"later"},null],"TS":8}"#,
+        );
+        assert!(lock.go_json_merge(&mut decoder).is_err());
+        assert_eq!(lock.sessions.len(), 3);
+        assert_eq!(lock.sessions[0].server_id, "kept");
+        assert_eq!(lock.sessions[0].session_id, 1);
+        assert_eq!(lock.sessions[1].server_id, "later");
+        assert_eq!(lock.sessions[1].session_id, 2);
+        assert_eq!(lock.sessions[2], SessionInfo::default());
+        assert_eq!(lock.ts, 8);
+    }
+
+    #[test]
+    fn tiflash_slices_preserve_go_allocation_and_partial_error_state() {
+        use crate::serde_helpers::GoJsonMerge;
+
+        let labels: TiFlashReplicaInfo =
+            serde_json::from_str(r#"{"LocationLabels":["zone",null],"AvailablePartitionIDs":[]}"#)
+                .unwrap();
+        assert_eq!(labels.location_labels.len(), 2);
+        assert_eq!(labels.location_labels[0], "zone");
+        assert_eq!(labels.location_labels[1], "");
+        assert!(labels.available_partition_ids.is_allocated());
+
+        let mut replica = TiFlashReplicaInfo {
+            count: 1,
+            available_partition_ids: vec![10, 20].into(),
+            ..Default::default()
+        };
+        let mut decoder = serde_json::Deserializer::from_str(
+            r#"{"AvailablePartitionIDs":[11,"bad",null],"Count":3}"#,
+        );
+        assert!(replica.go_json_merge(&mut decoder).is_err());
+        assert_eq!(replica.available_partition_ids.len(), 3);
+        assert_eq!(replica.available_partition_ids[0], 11);
+        assert_eq!(replica.available_partition_ids[1], 20);
+        assert_eq!(replica.available_partition_ids[2], 0);
+        assert_eq!(replica.count, 3);
     }
 
     // Go's embedded *StatsWindowSettings is flattened when set and skipped
@@ -1553,7 +1839,7 @@ mod tests {
     fn tiflash_partition_available() {
         let tr = TiFlashReplicaInfo {
             count: 1,
-            available_partition_ids: vec![3, 7, 11],
+            available_partition_ids: vec![3, 7, 11].into(),
             ..Default::default()
         };
         assert!(tr.is_partition_available(7));

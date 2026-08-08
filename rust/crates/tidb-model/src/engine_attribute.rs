@@ -15,19 +15,38 @@
 //! `pkg/meta/model/engine_attribute.go`: the JSON `ENGINE_ATTRIBUTE` table
 //! property and its storage-class definitions.
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
+
+use crate::job::PersistedRawJson;
+use crate::serde_helpers::{
+    go_json_field_matches, ignore_unknown, impl_go_json_deserialize, impl_go_json_merge_object,
+    NullNoopSeed, OptionObjectSliceSeed, OptionPointerSliceSeed, OptionScalarSeed,
+    OptionValueSliceSeed,
+};
 
 /// Go `EngineAttribute`: the JSON form of a table's `ENGINE_ATTRIBUTE`.
 ///
-/// Go stores `StorageClass` as a `json.RawMessage`; here it is a
-/// [`serde_json::Value`] (absent -> `None`), which preserves the parsed
-/// storage-class document that downstream code re-decodes.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+/// Go stores `StorageClass` as a `json.RawMessage`. `None` is the nil byte
+/// slice; `Some` retains the exact validated JSON text, including duplicate
+/// object members, member order, number lexemes, and insignificant whitespace.
+#[derive(Clone, Debug, Default, Serialize)]
 pub struct EngineAttribute {
     /// The raw `storage_class` sub-document, if present.
     #[serde(rename = "storage_class", default)]
-    pub storage_class: Option<serde_json::Value>,
+    pub storage_class: Option<PersistedRawJson>,
 }
+
+impl_go_json_merge_object!(EngineAttribute, destination, map, key, {
+    if go_json_field_matches(&key, "storage_class") {
+        // `json.RawMessage.UnmarshalJSON` copies every valid JSON value,
+        // including the exact bytes `null`; only an absent member stays nil.
+        destination.storage_class = Some(map.next_value()?);
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+
+impl_go_json_deserialize!(EngineAttribute);
 
 /// Go `ParseEngineAttributeFromString`: parses an `EngineAttribute` from a
 /// JSON string. An empty string yields the default (no storage class);
@@ -38,11 +57,7 @@ pub fn parse_engine_attribute_from_string(
     if input.is_empty() {
         return Ok(EngineAttribute::default());
     }
-    let value: serde_json::Value = serde_json::from_str(input)?;
-    if value.is_null() {
-        return Ok(EngineAttribute::default());
-    }
-    serde_json::from_value(value)
+    serde_json::from_str(input)
 }
 
 /// The `STANDARD` storage-class tier name.
@@ -53,7 +68,7 @@ pub const STORAGE_CLASS_TIER_IA: &str = "IA";
 pub const STORAGE_CLASS_TIER_DEFAULT: &str = STORAGE_CLASS_TIER_STANDARD;
 
 /// Go `StorageClassDef`: the tier and scope definition of a storage class.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize)]
 #[serde(default)]
 pub struct StorageClassDef {
     /// The tier name.
@@ -71,6 +86,24 @@ pub struct StorageClassDef {
     pub transitions: Option<Vec<StorageClassTransitRule>>,
 }
 
+impl_go_json_merge_object!(StorageClassDef, destination, map, key, {
+    if go_json_field_matches(&key, "tier") {
+        map.next_value_seed(NullNoopSeed(&mut destination.tier))?;
+    } else if go_json_field_matches(&key, "names_in") {
+        map.next_value_seed(OptionValueSliceSeed(&mut destination.names_in))?;
+    } else if go_json_field_matches(&key, "less_than") {
+        map.next_value_seed(OptionScalarSeed(&mut destination.less_than))?;
+    } else if go_json_field_matches(&key, "values_in") {
+        map.next_value_seed(OptionValueSliceSeed(&mut destination.values_in))?;
+    } else if go_json_field_matches(&key, "transitions") {
+        map.next_value_seed(OptionObjectSliceSeed(&mut destination.transitions))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+
+impl_go_json_deserialize!(StorageClassDef);
+
 impl StorageClassDef {
     /// Go `HasNoScopeDef`: whether no scope (names/less-than/values) is set.
     #[must_use]
@@ -82,7 +115,7 @@ impl StorageClassDef {
 }
 
 /// Go `StorageClassSettings`: a set of storage-class definitions.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize)]
 #[serde(default)]
 pub struct StorageClassSettings {
     /// The definitions.
@@ -90,8 +123,18 @@ pub struct StorageClassSettings {
     pub defs: Option<Vec<Option<StorageClassDef>>>,
 }
 
+impl_go_json_merge_object!(StorageClassSettings, destination, map, key, {
+    if go_json_field_matches(&key, "defs") {
+        map.next_value_seed(OptionPointerSliceSeed(&mut destination.defs))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+
+impl_go_json_deserialize!(StorageClassSettings);
+
 /// Go `StorageClassTransitRule`: when a tier transition happens.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize)]
 #[serde(default)]
 pub struct StorageClassTransitRule {
     /// The tier to transition to.
@@ -102,6 +145,20 @@ pub struct StorageClassTransitRule {
     #[serde(default, skip_serializing_if = "is_zero")]
     pub after_seconds: u64,
 }
+
+impl_go_json_merge_object!(StorageClassTransitRule, destination, map, key, {
+    if go_json_field_matches(&key, "tier") {
+        map.next_value_seed(NullNoopSeed(&mut destination.tier))?;
+    } else if go_json_field_matches(&key, "after_days") {
+        map.next_value_seed(NullNoopSeed(&mut destination.after_days))?;
+    } else if go_json_field_matches(&key, "after_seconds") {
+        map.next_value_seed(NullNoopSeed(&mut destination.after_seconds))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+
+impl_go_json_deserialize!(StorageClassTransitRule);
 
 fn is_zero(v: &u64) -> bool {
     *v == 0
@@ -172,6 +229,69 @@ mod tests {
     }
 
     #[test]
+    fn storage_class_retains_raw_message_text_until_go_marshal() {
+        let attr = parse_engine_attribute_from_string(
+            r#" {"storage_class": { "n":1.00, "dup":1, "dup":2, "text":"<x>" }} "#,
+        )
+        .unwrap();
+        let raw = attr.storage_class.as_ref().unwrap();
+        assert_eq!(raw.get(), r#"{ "n":1.00, "dup":1, "dup":2, "text":"<x>" }"#);
+
+        // Go's parent encoder compacts RawMessage whitespace and applies its
+        // HTML-safe string escaping while retaining member order, duplicates,
+        // and the numeric lexical form.
+        assert_eq!(
+            String::from_utf8(crate::serde_helpers::to_go_json(&attr).unwrap()).unwrap(),
+            r#"{"storage_class":{"n":1.00,"dup":1,"dup":2,"text":"\u003cx\u003e"}}"#
+        );
+
+        let explicit_null = parse_engine_attribute_from_string(r#"{"storage_class":null}"#)
+            .unwrap()
+            .storage_class
+            .unwrap();
+        assert_eq!(explicit_null.get(), "null");
+        assert!(parse_engine_attribute_from_string(" \n null\t ")
+            .unwrap()
+            .storage_class
+            .is_none());
+    }
+
+    #[test]
+    fn engine_attribute_uses_go_object_member_matching_and_overwrite_order() {
+        let missing = parse_engine_attribute_from_string(r#"{"unknown":{"x":1}}"#).unwrap();
+        assert!(missing.storage_class.is_none());
+
+        let explicit_null =
+            parse_engine_attribute_from_string(r#"{"storage_class":null}"#).unwrap();
+        assert_eq!(explicit_null.storage_class.unwrap().get(), "null");
+
+        let duplicate = parse_engine_attribute_from_string(
+            r#"{"storage_class":{"first":1},"storage_class":{"last":2}}"#,
+        )
+        .unwrap();
+        assert_eq!(duplicate.storage_class.unwrap().get(), r#"{"last":2}"#);
+
+        // `encoding/json` falls back to Unicode SimpleFold after checking for
+        // an exact tag. Both the ordinary case fold and long-s equivalence
+        // reach the same unique field, and later members still win.
+        let folded = parse_engine_attribute_from_string(
+            r#"{"STORAGE_CLASS":1,"\u017ftorage_cla\u017fs":2}"#,
+        )
+        .unwrap();
+        assert_eq!(folded.storage_class.unwrap().get(), "2");
+
+        // A key with a different punctuation pattern is unknown, not folded.
+        let punctuation = parse_engine_attribute_from_string(r#"{"storage-class":1}"#).unwrap();
+        assert!(punctuation.storage_class.is_none());
+
+        // ParseEngineAttributeFromString returns no partially decoded value on
+        // either a top-level type mismatch or a syntax error, exactly like its
+        // Go `return nil, err` path.
+        assert!(parse_engine_attribute_from_string(r#"[1,2]"#).is_err());
+        assert!(parse_engine_attribute_from_string(r#"{"storage_class":1,"later":}"#).is_err());
+    }
+
+    #[test]
     fn has_no_scope_def() {
         let mut d = StorageClassDef::default();
         assert!(d.has_no_scope_def());
@@ -216,6 +336,45 @@ mod tests {
             serde_json::from_value(serde_json::json!({})).unwrap();
         assert_eq!(transition.tier, "");
         assert_eq!(transition.after_days, 0);
+    }
+
+    #[test]
+    fn storage_class_objects_continue_after_recoverable_field_errors() {
+        use crate::serde_helpers::GoJsonMerge;
+
+        let mut definition = StorageClassDef {
+            tier: "before".to_owned(),
+            ..Default::default()
+        };
+        let mut decoder = serde_json::Deserializer::from_str(
+            r#"{"tier":1,"names_in":[null,"ok"],"less_than":"later","TIER":"final"}"#,
+        );
+        assert!(definition.go_json_merge(&mut decoder).is_err());
+        assert_eq!(definition.tier, "final");
+        assert_eq!(
+            definition.names_in,
+            Some(vec![String::new(), "ok".to_owned()])
+        );
+        assert_eq!(definition.less_than.as_deref(), Some("later"));
+
+        let definition: StorageClassDef = serde_json::from_str(
+            r#"{"transitions":[null,{"TIER":"IA","after_days":null,"after_seconds":2}]}"#,
+        )
+        .unwrap();
+        let transitions = definition.transitions.unwrap();
+        assert_eq!(transitions.len(), 2);
+        assert_eq!(transitions[0].tier, "");
+        assert_eq!(transitions[0].after_days, 0);
+        assert_eq!(transitions[1].tier, "IA");
+        assert_eq!(transitions[1].after_days, 0);
+        assert_eq!(transitions[1].after_seconds, 2);
+
+        let settings: StorageClassSettings =
+            serde_json::from_str(r#"{"defs":[{"tier":"first"}],"DEFS":[null,{"tier":"last"}]}"#)
+                .unwrap();
+        let defs = settings.defs.unwrap();
+        assert!(defs[0].is_none());
+        assert_eq!(defs[1].as_ref().unwrap().tier, "last");
     }
 
     #[test]
