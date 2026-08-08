@@ -526,8 +526,13 @@ func (iw *innerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 			iw.lookup.Finished.Store(true)
 			logutil.Logger(ctx).Warn("innerWorker panicked", zap.Any("recover", r), zap.Stack("stack"))
 			err := util.GetRecoverError(r)
-			// "task != nil" is guaranteed when panic happened.
-			task.doneCh <- err
+			// task is normally non-nil when a panic happens (only handleTask
+			// panics today), but guard the send anyway: a panic raised before the
+			// first task is received would otherwise nil-deref here, escape this
+			// recover, and crash the whole tidb-server.
+			if task != nil {
+				task.doneCh <- err
+			}
 		}
 		wg.Done()
 	}()

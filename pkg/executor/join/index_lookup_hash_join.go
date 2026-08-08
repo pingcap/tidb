@@ -233,12 +233,19 @@ func (e *IndexNestedLoopHashJoin) finishJoinWorkers(r any) {
 }
 
 func (e *IndexNestedLoopHashJoin) wait4JoinWorkers() {
+	// Capture the channels before waiting. This goroutine is unrecovered, so a
+	// close(nil) here would crash the whole tidb-server. Close() nils these
+	// fields, and today that is ordered safely only because channel.Clear blocks
+	// until the close below happens; taking local references removes that
+	// implicit dependency so the close always targets a valid channel.
+	resultCh := e.resultCh
+	taskCh := e.taskCh
 	e.WorkerWg.Wait()
-	if e.resultCh != nil {
-		close(e.resultCh)
+	if resultCh != nil {
+		close(resultCh)
 	}
-	if e.taskCh != nil {
-		close(e.taskCh)
+	if taskCh != nil {
+		close(taskCh)
 	}
 }
 

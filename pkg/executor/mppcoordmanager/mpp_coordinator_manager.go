@@ -147,6 +147,13 @@ func (m *MPPCoordinatorManager) GetCoordCount() int {
 
 // ReportStatus reports mpp task execution status to specific coordinator
 func (m *MPPCoordinatorManager) ReportStatus(request *mpp.ReportTaskStatusRequest) *mpp.ReportTaskStatusResponse {
+	// request.Meta is dereferenced below, and this runs directly on the gRPC
+	// handler path (rpcServer.ReportMPPTaskStatus), which has no per-request
+	// panic recovery. Guard a malformed request with nil Meta so a bad peer
+	// cannot crash the whole tidb-server.
+	if request == nil || request.Meta == nil {
+		return &mpp.ReportTaskStatusResponse{Error: &mpp.Error{Msg: "invalid ReportTaskStatusRequest: nil meta"}}
+	}
 	mppQueryID := kv.MPPQueryID{
 		QueryTs:      request.Meta.QueryTs,
 		LocalQueryID: request.Meta.LocalQueryId,
