@@ -354,6 +354,9 @@ pub mod expression;
 mod field_name;
 mod func;
 mod grouping;
+pub mod infer_pushdown;
+#[cfg(test)]
+mod infer_pushdown_lockdown;
 mod like;
 mod math_fn;
 mod ops;

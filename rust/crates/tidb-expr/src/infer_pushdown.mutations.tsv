@@ -1,0 +1,24 @@
+probe_id	rule	mutation	boundary_test	result	observed
+M01	store masks preserve Go bit positions	shift every concrete mask one extra bit	infer_pushdown_store_masks_match_go_bit_positions	KILLED	TiKV expected 1 but became 2
+M02	blacklist mask disables only when all selected bits are set	invert the mask comparison	infer_pushdown_blacklist_checks_name_then_exact_signature	KILLED	TiKV-specific round blacklist was admitted
+M03	full function.signature blacklist is checked after function name	bypass the full-name lookup	infer_pushdown_blacklist_checks_name_then_exact_signature	KILLED	round.roundreal was admitted for TiKV
+M04	TiKV unconditional name whitelist is exact	rename the plus whitelist member	infer_pushdown_tikv_special_boundaries_match_go	KILLED	PlusReal was rejected
+M05	TiKV rejects only UnixTimestampCurrent in the UnixTimestamp branch	invert current-signature comparison	infer_pushdown_tikv_special_boundaries_match_go	KILLED	current and integer boundary verdicts inverted
+M06	TiKV CONV rejects a casted hybrid or binary literal	remove the CONV negation	infer_pushdown_tikv_special_boundaries_match_go	KILLED	ordinary and hybrid-literal boundaries inverted
+M07	TiKV ROUND admits no with-frac signature	admit RoundWithFracDec	infer_pushdown_tikv_special_boundaries_match_go	KILLED	with-frac decimal ROUND was admitted
+M08	TiKV RAND admits only RandWithSeedFirstGen	invert exact signature comparison	infer_pushdown_tikv_special_boundaries_match_go	KILLED	seed-first and ordinary RAND boundaries inverted
+M09	regexp is rejected only when charset and collation are both binary	require both dimensions to be nonbinary	infer_pushdown_tikv_special_boundaries_match_go	KILLED	binary charset plus utf8mb4_bin collation was rejected
+M10	TiFlash FLOOR and CEIL reject the IntToDec signatures	remove the rejection negation	infer_pushdown_flash_signature_boundaries_match_go	KILLED	FloorIntToDec and FloorReal boundaries inverted
+M11	TiFlash common whitelist excludes duration and JSON signatures	invert the excluded-signature set	infer_pushdown_flash_signature_boundaries_match_go	KILLED	InDuration was admitted and InInt rejected
+M12	TiFlash string functions admit only the named UTF8/signature set	admit Substring3Args	infer_pushdown_flash_signature_boundaries_match_go	KILLED	non-UTF8 three-argument substring was admitted
+M13	TiFlash simple-name whitelist and default refusal are exact	rename the grouping member	infer_pushdown_flash_signature_boundaries_match_go	KILLED	GROUPING was rejected
+M14	TiFlash integer casts require identical signedness or LongLong target	replace the alternative with conjunction	infer_pushdown_flash_cast_and_fts_boundaries_match_go	KILLED	valid LongLong target cast was rejected
+M15	TiFlash real casts require identical source/target type or Double target	replace the alternative with conjunction	infer_pushdown_flash_cast_and_fts_boundaries_match_go	KILLED	valid Double target cast was rejected
+M16	TiFlash decimal casts require valid decimal metadata	invert decimal validity	infer_pushdown_flash_cast_and_fts_boundaries_match_go	KILLED	valid and invalid decimal targets inverted
+M17	TiFlash string cast signature group is admitted	deny the string signature group	infer_pushdown_flash_cast_and_fts_boundaries_match_go	KILLED	CastIntAsString was rejected
+M18	TiFlash vector and JSON cast signature group is admitted	deny the vector and JSON signature group	infer_pushdown_flash_cast_and_fts_boundaries_match_go	KILLED	vector-to-string and JSON casts were rejected
+M19	TiFlash time casts reject Year sources	invert the Year comparison	infer_pushdown_flash_cast_and_fts_boundaries_match_go	KILLED	Year and LongLong source boundaries inverted
+M20	TiFlash CastTimeAsDuration requires Duration target	invert the target comparison	infer_pushdown_flash_cast_and_fts_boundaries_match_go	KILLED	Duration and Datetime target boundaries inverted
+M21	TiFlash MATCH AGAINST requires neither Boolean nor query-expansion modifier	replace conjunction with disjunction	infer_pushdown_flash_cast_and_fts_boundaries_match_go	KILLED	Boolean mode was admitted
+M22	TiDB support is the union of TiKV and TiFlash support	replace union with intersection	infer_pushdown_tidb_is_union_and_enum_is_numeric_cast_only	KILLED	TiFlash-only ILIKE was rejected
+M23	enum preliminary pushdown requires CAST and numeric result	invert the CAST name predicate	infer_pushdown_tidb_is_union_and_enum_is_numeric_cast_only	KILLED	CAST numeric and PLUS numeric boundaries inverted
