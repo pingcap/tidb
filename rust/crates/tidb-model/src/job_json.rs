@@ -15,14 +15,10 @@
 //! Go-compatible persisted JSON stream decoders for DDL jobs and their nested
 //! metadata. Domain types and lifecycle rules remain in [`crate::job`].
 
-use std::collections::BTreeMap;
-
-use crate::db::DBInfo;
 use crate::job::{
     HistoryInfo, Job, JobMeta, JobPauseReason, JobResumeReason, MultiSchemaInfo, SubJob,
     TimeZoneLocation, TraceInfo,
 };
-use crate::placement::PolicyRefInfo;
 use crate::serde_helpers::{
     go_json_field_matches, ignore_unknown, impl_go_json_merge_object, FatalValueSeed,
     NullDefaultSeed, NullNoopSeed, OptionBoxMergeSeed, OptionBytesSeed, OptionMergeSeed,
@@ -134,37 +130,6 @@ impl_go_json_merge_object!(MultiSchemaInfo, destination, map, key, {
 // an existing pointed-to allocation and mutates its fields in declaration
 // order, so replacing either object through derived `Deserialize` loses both
 // omitted fields and later-field continuation after an error.
-impl_go_json_merge_object!(DBInfo, destination, map, key, {
-    if go_json_field_matches(&key, "id") {
-        map.next_value_seed(NullNoopSeed(&mut destination.id))?;
-    } else if go_json_field_matches(&key, "db_name") {
-        map.next_value_seed(NullNoopSeed(&mut destination.name))?;
-    } else if go_json_field_matches(&key, "charset") {
-        map.next_value_seed(NullNoopSeed(&mut destination.charset))?;
-    } else if go_json_field_matches(&key, "collate") {
-        map.next_value_seed(NullNoopSeed(&mut destination.collate))?;
-    } else if go_json_field_matches(&key, "Deprecated") {
-        let mut deprecated = BTreeMap::<String, serde::de::IgnoredAny>::new();
-        map.next_value_seed(NullNoopSeed(&mut deprecated))?;
-    } else if go_json_field_matches(&key, "state") {
-        map.next_value_seed(NullNoopSeed(&mut destination.state))?;
-    } else if go_json_field_matches(&key, "policy_ref_info") {
-        map.next_value_seed(OptionMergeSeed(&mut destination.placement_policy_ref))?;
-    } else {
-        ignore_unknown(&mut map)?;
-    }
-});
-
-impl_go_json_merge_object!(PolicyRefInfo, destination, map, key, {
-    if go_json_field_matches(&key, "id") {
-        map.next_value_seed(NullNoopSeed(&mut destination.id))?;
-    } else if go_json_field_matches(&key, "name") {
-        map.next_value_seed(NullNoopSeed(&mut destination.name))?;
-    } else {
-        ignore_unknown(&mut map)?;
-    }
-});
-
 impl_go_json_merge_object!(TableInfo, destination, map, key, {
     if go_json_field_matches(&key, "id") {
         map.next_value_seed(NullNoopSeed(&mut destination.id))?;

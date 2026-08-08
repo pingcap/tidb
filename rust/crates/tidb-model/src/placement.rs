@@ -17,14 +17,18 @@
 //! The `writeSetting*ToBuilder` helpers live in [`crate::setting_builder`],
 //! shared with the resource-group renderer.
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tidb_ast::CiString;
 
 use crate::schema_state::SchemaState;
+use crate::serde_helpers::{
+    go_json_field_matches, ignore_unknown, impl_go_json_deserialize, impl_go_json_merge_object,
+    NullNoopSeed,
+};
 use crate::setting_builder::{write_setting_integer, write_setting_string};
 
 /// Go `PolicyRefInfo`: a reference to a placement policy by ID and name.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct PolicyRefInfo {
     /// The policy ID.
     #[serde(rename = "id", default)]
@@ -34,12 +38,24 @@ pub struct PolicyRefInfo {
     pub name: CiString,
 }
 
+impl_go_json_merge_object!(PolicyRefInfo, destination, map, key, {
+    if go_json_field_matches(&key, "id") {
+        map.next_value_seed(NullNoopSeed(&mut destination.id))?;
+    } else if go_json_field_matches(&key, "name") {
+        map.next_value_seed(NullNoopSeed(&mut destination.name))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+
+impl_go_json_deserialize!(PolicyRefInfo);
+
 /// Go `PlacementSettings`: the placement configuration of a schema object.
 ///
 /// No field carries `omitempty`, so every one is always written; the string
 /// settings are plain JSON strings, not the `SHOW`-style rendering produced by
 /// [`Display`](std::fmt::Display).
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct PlacementSettings {
     /// The primary region.
     #[serde(
@@ -114,6 +130,38 @@ pub struct PlacementSettings {
     )]
     pub survival_preferences: String,
 }
+
+impl_go_json_merge_object!(PlacementSettings, destination, map, key, {
+    if go_json_field_matches(&key, "primary_region") {
+        map.next_value_seed(NullNoopSeed(&mut destination.primary_region))?;
+    } else if go_json_field_matches(&key, "regions") {
+        map.next_value_seed(NullNoopSeed(&mut destination.regions))?;
+    } else if go_json_field_matches(&key, "learners") {
+        map.next_value_seed(NullNoopSeed(&mut destination.learners))?;
+    } else if go_json_field_matches(&key, "followers") {
+        map.next_value_seed(NullNoopSeed(&mut destination.followers))?;
+    } else if go_json_field_matches(&key, "voters") {
+        map.next_value_seed(NullNoopSeed(&mut destination.voters))?;
+    } else if go_json_field_matches(&key, "schedule") {
+        map.next_value_seed(NullNoopSeed(&mut destination.schedule))?;
+    } else if go_json_field_matches(&key, "constraints") {
+        map.next_value_seed(NullNoopSeed(&mut destination.constraints))?;
+    } else if go_json_field_matches(&key, "leader_constraints") {
+        map.next_value_seed(NullNoopSeed(&mut destination.leader_constraints))?;
+    } else if go_json_field_matches(&key, "learner_constraints") {
+        map.next_value_seed(NullNoopSeed(&mut destination.learner_constraints))?;
+    } else if go_json_field_matches(&key, "follower_constraints") {
+        map.next_value_seed(NullNoopSeed(&mut destination.follower_constraints))?;
+    } else if go_json_field_matches(&key, "voter_constraints") {
+        map.next_value_seed(NullNoopSeed(&mut destination.voter_constraints))?;
+    } else if go_json_field_matches(&key, "survival_preferences") {
+        map.next_value_seed(NullNoopSeed(&mut destination.survival_preferences))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+
+impl_go_json_deserialize!(PlacementSettings);
 
 impl std::fmt::Display for PlacementSettings {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -220,53 +268,79 @@ impl Serialize for PolicyInfo {
     }
 }
 
-impl<'de> Deserialize<'de> for PolicyInfo {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        use serde::de::Error;
-
-        let mut object = serde_json::Map::<String, serde_json::Value>::deserialize(deserializer)?;
-        let id = object
-            .remove("id")
-            .map_or(Ok(0), serde_json::from_value)
-            .map_err(D::Error::custom)?;
-        let name = object
-            .remove("name")
-            .map_or_else(|| Ok(CiString::default()), serde_json::from_value)
-            .map_err(D::Error::custom)?;
-        let state = object
-            .remove("state")
-            .map_or(Ok(SchemaState::default()), serde_json::from_value)
-            .map_err(D::Error::custom)?;
-        let settings_keys = [
-            "primary_region",
-            "regions",
-            "learners",
-            "followers",
-            "voters",
-            "schedule",
-            "constraints",
-            "leader_constraints",
-            "learner_constraints",
-            "follower_constraints",
-            "voter_constraints",
-            "survival_preferences",
-        ];
-        let has_settings = settings_keys.iter().any(|key| object.contains_key(*key));
-        let placement_settings = if has_settings {
-            let settings = serde_json::from_value(serde_json::Value::Object(object))
-                .map_err(D::Error::custom)?;
-            Some(Box::new(settings))
-        } else {
-            None
-        };
-        Ok(Self {
-            placement_settings,
-            id,
-            name,
-            state,
-        })
+impl_go_json_merge_object!(PolicyInfo, destination, map, key, {
+    if go_json_field_matches(&key, "primary_region") {
+        let settings = destination
+            .placement_settings
+            .get_or_insert_with(|| Box::new(PlacementSettings::default()));
+        map.next_value_seed(NullNoopSeed(&mut settings.primary_region))?;
+    } else if go_json_field_matches(&key, "regions") {
+        let settings = destination
+            .placement_settings
+            .get_or_insert_with(|| Box::new(PlacementSettings::default()));
+        map.next_value_seed(NullNoopSeed(&mut settings.regions))?;
+    } else if go_json_field_matches(&key, "learners") {
+        let settings = destination
+            .placement_settings
+            .get_or_insert_with(|| Box::new(PlacementSettings::default()));
+        map.next_value_seed(NullNoopSeed(&mut settings.learners))?;
+    } else if go_json_field_matches(&key, "followers") {
+        let settings = destination
+            .placement_settings
+            .get_or_insert_with(|| Box::new(PlacementSettings::default()));
+        map.next_value_seed(NullNoopSeed(&mut settings.followers))?;
+    } else if go_json_field_matches(&key, "voters") {
+        let settings = destination
+            .placement_settings
+            .get_or_insert_with(|| Box::new(PlacementSettings::default()));
+        map.next_value_seed(NullNoopSeed(&mut settings.voters))?;
+    } else if go_json_field_matches(&key, "schedule") {
+        let settings = destination
+            .placement_settings
+            .get_or_insert_with(|| Box::new(PlacementSettings::default()));
+        map.next_value_seed(NullNoopSeed(&mut settings.schedule))?;
+    } else if go_json_field_matches(&key, "constraints") {
+        let settings = destination
+            .placement_settings
+            .get_or_insert_with(|| Box::new(PlacementSettings::default()));
+        map.next_value_seed(NullNoopSeed(&mut settings.constraints))?;
+    } else if go_json_field_matches(&key, "leader_constraints") {
+        let settings = destination
+            .placement_settings
+            .get_or_insert_with(|| Box::new(PlacementSettings::default()));
+        map.next_value_seed(NullNoopSeed(&mut settings.leader_constraints))?;
+    } else if go_json_field_matches(&key, "learner_constraints") {
+        let settings = destination
+            .placement_settings
+            .get_or_insert_with(|| Box::new(PlacementSettings::default()));
+        map.next_value_seed(NullNoopSeed(&mut settings.learner_constraints))?;
+    } else if go_json_field_matches(&key, "follower_constraints") {
+        let settings = destination
+            .placement_settings
+            .get_or_insert_with(|| Box::new(PlacementSettings::default()));
+        map.next_value_seed(NullNoopSeed(&mut settings.follower_constraints))?;
+    } else if go_json_field_matches(&key, "voter_constraints") {
+        let settings = destination
+            .placement_settings
+            .get_or_insert_with(|| Box::new(PlacementSettings::default()));
+        map.next_value_seed(NullNoopSeed(&mut settings.voter_constraints))?;
+    } else if go_json_field_matches(&key, "survival_preferences") {
+        let settings = destination
+            .placement_settings
+            .get_or_insert_with(|| Box::new(PlacementSettings::default()));
+        map.next_value_seed(NullNoopSeed(&mut settings.survival_preferences))?;
+    } else if go_json_field_matches(&key, "id") {
+        map.next_value_seed(NullNoopSeed(&mut destination.id))?;
+    } else if go_json_field_matches(&key, "name") {
+        map.next_value_seed(NullNoopSeed(&mut destination.name))?;
+    } else if go_json_field_matches(&key, "state") {
+        map.next_value_seed(NullNoopSeed(&mut destination.state))?;
+    } else {
+        ignore_unknown(&mut map)?;
     }
-}
+});
+
+impl_go_json_deserialize!(PolicyInfo);
 
 impl PolicyInfo {
     /// Go `PolicyInfo.Clone`. The source dereferences the embedded settings
@@ -333,6 +407,54 @@ mod tests {
                 .primary_region,
             "r1"
         );
+
+        // Any matched promoted field walks and allocates the embedded pointer
+        // before decoding its value. A scalar null then leaves the zero field.
+        let null_promoted: PolicyInfo =
+            serde_json::from_str(r#"{"PRIMARY_REGION":null,"id":2}"#).unwrap();
+        assert!(null_promoted.placement_settings.is_some());
+        assert_eq!(
+            null_promoted
+                .placement_settings
+                .as_ref()
+                .unwrap()
+                .primary_region,
+            ""
+        );
+    }
+
+    #[test]
+    fn placement_decode_keeps_first_error_and_applies_later_members() {
+        use crate::serde_helpers::GoJsonMerge;
+
+        let mut settings = PlacementSettings {
+            voters: 7,
+            ..Default::default()
+        };
+        let mut decoder = serde_json::Deserializer::from_str(
+            r#"{"voters":null,"learners":"bad","LEARNERS":2,"REGIONS":"later"}"#,
+        );
+        assert!(settings.go_json_merge(&mut decoder).is_err());
+        assert_eq!(settings.voters, 7);
+        assert_eq!(settings.learners, 2);
+        assert_eq!(settings.regions, "later");
+
+        let mut policy = PolicyInfo {
+            id: 9,
+            ..Default::default()
+        };
+        let mut decoder = serde_json::Deserializer::from_str(
+            r#"{"id":"bad","PRIMARY_REGION":null,"VOTERS":3,"ID":null}"#,
+        );
+        assert!(policy.go_json_merge(&mut decoder).is_err());
+        assert_eq!(policy.id, 9);
+        let promoted = policy.placement_settings.unwrap();
+        assert_eq!(promoted.primary_region, "");
+        assert_eq!(promoted.voters, 3);
+
+        let reference: PolicyRefInfo =
+            serde_json::from_str(r#"{"id":7,"ID":null,"unknown":1}"#).unwrap();
+        assert_eq!(reference.id, 7);
     }
 
     #[test]
