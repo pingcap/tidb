@@ -272,17 +272,44 @@ def tsv_rows(path: Path) -> list[dict[str, str]]:
     return list(csv.DictReader(lines, delimiter="\t"))
 
 
+def validate_source_evidence(
+    root: Path,
+    row: dict[str, str],
+    source_field: str,
+    hash_field: str,
+    evidence_kind: str,
+) -> None:
+    sources = row[source_field].split("|")
+    hashes = row[hash_field].split("|")
+    if len(sources) != len(hashes):
+        raise RuntimeError(f"{evidence_kind} source/hash width drift: {row}")
+    for source, expected_hash in zip(sources, hashes):
+        path = root / source
+        if not source or not path.is_file():
+            raise RuntimeError(f"{evidence_kind} source is not a file: {source}")
+        if not expected_hash or sha256(path) != expected_hash:
+            raise RuntimeError(f"{evidence_kind} source drifted: {source}")
+
+
 def validate_mutations(root: Path) -> None:
     plan = tsv_rows(root / MUTATION_PLAN)
-    results = tsv_rows(root / MUTATION_RESULTS)
-    if len(plan) != 7 or len(results) != 27:
-        raise RuntimeError(f"mutation census drift: plan={len(plan)} results={len(results)}")
+    if len(plan) != 8:
+        raise RuntimeError(f"mutation plan census drift: {len(plan)}")
     expected = {row["suite_id"]: int(row["mutation_count"]) for row in plan}
-    if sum(expected.values()) != 27:
+    if len(expected) != len(plan):
+        raise RuntimeError(f"duplicate mutation suite: {expected}")
+    if sum(expected.values()) != 33:
         raise RuntimeError(f"mutation plan total drift: {expected}")
+    expected_baselines = {row["suite_id"]: row["baseline_commit"] for row in plan}
+    for row in plan:
+        validate_source_evidence(
+            root, row, "source_file", "source_sha256", "mutation plan"
+        )
+    results = tsv_rows(root / MUTATION_RESULTS)
+    if len(results) != 33:
+        raise RuntimeError(f"mutation result census drift: {len(results)}")
     actual = {suite: 0 for suite in expected}
     ids: set[str] = set()
-    baselines: set[str] = set()
     for row in results:
         if row["mutation_id"] in ids:
             raise RuntimeError(f"duplicate mutation id: {row['mutation_id']}")
@@ -291,20 +318,17 @@ def validate_mutations(root: Path) -> None:
         if suite not in actual:
             raise RuntimeError(f"unplanned mutation suite: {suite}")
         actual[suite] += 1
-        baselines.add(row["baseline_commit"])
+        if row["baseline_commit"] != expected_baselines[suite]:
+            raise RuntimeError(f"mutation baseline drift: {row}")
         if row["status"] != "KILLED" or row["restore_status"] != "PASS":
             raise RuntimeError(f"mutation not killed/restored: {row}")
         if int(row["exit_code"]) == 0 or not row["named_test"]:
             raise RuntimeError(f"mutation lacks named failure: {row}")
-        sources = row["source_file"].split("|")
-        hashes = row["source_sha256"].split("|")
-        if len(sources) != len(hashes):
-            raise RuntimeError(f"mutation source/hash width drift: {row}")
-        for source, expected_hash in zip(sources, hashes):
-            if sha256(root / source) != expected_hash:
-                raise RuntimeError(f"mutation source drifted: {source}")
-    if actual != expected or len(baselines) != 1:
-        raise RuntimeError(f"mutation receipt drift: {actual} {baselines}")
+        validate_source_evidence(
+            root, row, "source_file", "source_sha256", "mutation result"
+        )
+    if actual != expected:
+        raise RuntimeError(f"mutation receipt drift: {actual}")
 
 
 def receipt_contents(root: Path, obligations: list[str]) -> dict[str, object]:
@@ -313,7 +337,7 @@ def receipt_contents(root: Path, obligations: list[str]) -> dict[str, object]:
     owned = [ARTIFACTS, INVENTORY, SEMANTICS, MUTATION_PLAN, MUTATION_RESULTS,
              RUST_SOURCE, RUST_BENCH, RUST_GATE, SCRIPT]
     return {
-        "schema": "pkg-zeropool-lockdown-v1",
+        "schema": "pkg-zeropool-lockdown-v2",
         "go_package": str(PACKAGE),
         "source_seed_commit": "e67e11b83b50a0a13ff59c80e6f524558585f48c",
         "artifact_count": 3,
@@ -324,6 +348,9 @@ def receipt_contents(root: Path, obligations: list[str]) -> dict[str, object]:
         "status_counts": {"DECLINED": 3, "PORTED": 52},
         "semantic_status_counts": {"DECLINED": 8, "UNREACHABLE": 1},
         "mutation_suites": len(tsv_rows(root / MUTATION_PLAN)),
+        "mutation_count": sum(
+            int(row["mutation_count"]) for row in tsv_rows(root / MUTATION_PLAN)
+        ),
         "owned_file_sha256": {str(path): sha256(root / path) for path in owned},
     }
 
