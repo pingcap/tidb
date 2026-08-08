@@ -325,6 +325,14 @@ impl TableInfo {
         }
     }
 
+    /// Mutable form of Go `GetPartitionInfo`; mutations affect this table.
+    pub fn get_partition_info_mut(&mut self) -> Option<&mut PartitionInfo> {
+        match &mut self.partition {
+            Some(partition) if partition.enable => Some(partition),
+            _ => None,
+        }
+    }
+
     /// Go `GetUpdateTime`: the last-update time (from the `update_ts` TSO).
     #[must_use]
     pub fn get_update_time(&self) -> DateTime<Utc> {
@@ -337,6 +345,13 @@ impl TableInfo {
         self.columns
             .iter()
             .find(|c| c.get_flag() & u64::from(FieldTypeFlags::PRI_KEY) != 0)
+    }
+
+    /// Mutable form of Go `GetPkColInfo`.
+    pub fn get_pk_col_info_mut(&mut self) -> Option<&mut ColumnInfo> {
+        self.columns
+            .iter_mut()
+            .find(|column| column.get_flag() & u64::from(FieldTypeFlags::PRI_KEY) != 0)
     }
 
     /// Go `GetPkName`: the primary-key column name (empty when none).
@@ -390,11 +405,37 @@ impl TableInfo {
         slots
     }
 
+    /// Mutable offset-indexed Go `Cols` result, retaining nil gaps.
+    pub fn cols_with_gaps_mut(&mut self) -> Vec<Option<&mut ColumnInfo>> {
+        let mut slots: Vec<Option<&mut ColumnInfo>> = std::iter::repeat_with(|| None)
+            .take(self.columns.len())
+            .collect();
+        let mut max_offset: i64 = -1;
+        for column in &mut self.columns {
+            if column.state != SchemaState::PUBLIC {
+                continue;
+            }
+            let column_offset = column.offset;
+            let offset = column_offset as usize;
+            slots[offset] = Some(column);
+            if column_offset > max_offset {
+                max_offset = column_offset;
+            }
+        }
+        slots.truncate((max_offset + 1) as usize);
+        slots
+    }
+
     /// Present public columns, used by Rust callers that explicitly do not
     /// consume Go's nil-gap invariant.
     #[must_use]
     pub fn cols(&self) -> Vec<&ColumnInfo> {
         self.cols_with_gaps().into_iter().flatten().collect()
+    }
+
+    /// Present mutable public columns for Rust callers that reject nil gaps.
+    pub fn cols_mut(&mut self) -> Vec<&mut ColumnInfo> {
+        self.cols_with_gaps_mut().into_iter().flatten().collect()
     }
 
     /// Go `FindPublicColumnByName`: the public column named `col_name_l`
@@ -405,6 +446,14 @@ impl TableInfo {
             .into_iter()
             .map(|column| column.expect("nil public column slot in TableInfo.Cols"))
             .find(|c| c.name.lowercase() == col_name_l)
+    }
+
+    /// Mutable form of Go `FindPublicColumnByName`.
+    pub fn find_public_column_by_name_mut(&mut self, col_name_l: &str) -> Option<&mut ColumnInfo> {
+        self.cols_with_gaps_mut()
+            .into_iter()
+            .map(|column| column.expect("nil public column slot in TableInfo.Cols"))
+            .find(|column| column.name.lowercase() == col_name_l)
     }
 
     /// Go `GetPrimaryKey`: the explicit primary index, else an implicit one
@@ -456,10 +505,25 @@ impl TableInfo {
         implicit_pk
     }
 
+    /// Mutable form of Go `GetPrimaryKey`, returning the same selected index.
+    pub fn get_primary_key_mut(&mut self) -> Option<&mut IndexInfo> {
+        let position = self.get_primary_key().and_then(|selected| {
+            self.indices
+                .iter()
+                .position(|candidate| std::ptr::eq(candidate, selected))
+        });
+        position.map(|position| &mut self.indices[position])
+    }
+
     /// Go `FindColumnByID`: the column with `id` (any state).
     #[must_use]
     pub fn find_column_by_id(&self, id: i64) -> Option<&ColumnInfo> {
         self.columns.iter().find(|c| c.id == id)
+    }
+
+    /// Mutable form of Go `FindColumnByID`.
+    pub fn find_column_by_id_mut(&mut self, id: i64) -> Option<&mut ColumnInfo> {
+        self.columns.iter_mut().find(|column| column.id == id)
     }
 
     /// Go `GetColumnByID`: the public column with `id`.
@@ -470,16 +534,35 @@ impl TableInfo {
             .find(|c| c.state == SchemaState::PUBLIC && c.id == id)
     }
 
+    /// Mutable form of Go `GetColumnByID`.
+    pub fn get_column_by_id_mut(&mut self, id: i64) -> Option<&mut ColumnInfo> {
+        self.columns
+            .iter_mut()
+            .find(|column| column.state == SchemaState::PUBLIC && column.id == id)
+    }
+
     /// Go `FindIndexByName`: the index named `idx_name` (already lower-cased).
     #[must_use]
     pub fn find_index_by_name(&self, idx_name: &str) -> Option<&IndexInfo> {
         self.indices.iter().find(|i| i.name.lowercase() == idx_name)
     }
 
+    /// Mutable form of Go `FindIndexByName`.
+    pub fn find_index_by_name_mut(&mut self, idx_name: &str) -> Option<&mut IndexInfo> {
+        self.indices
+            .iter_mut()
+            .find(|index| index.name.lowercase() == idx_name)
+    }
+
     /// Go `FindIndexByID`: the index with `id`.
     #[must_use]
     pub fn find_index_by_id(&self, id: i64) -> Option<&IndexInfo> {
         self.indices.iter().find(|i| i.id == id)
+    }
+
+    /// Mutable form of Go `FindIndexByID`.
+    pub fn find_index_by_id_mut(&mut self, id: i64) -> Option<&mut IndexInfo> {
+        self.indices.iter_mut().find(|index| index.id == id)
     }
 
     /// Go `FindConstraintInfoByName`: the CHECK constraint named `constr_name`
@@ -490,12 +573,30 @@ impl TableInfo {
         self.constraints.iter().find(|c| c.name.lowercase() == low)
     }
 
+    /// Mutable form of Go `FindConstraintInfoByName`.
+    pub fn find_constraint_info_by_name_mut(
+        &mut self,
+        constr_name: &str,
+    ) -> Option<&mut ConstraintInfo> {
+        let lowercase = tidb_mysql::to_lowercase(constr_name);
+        self.constraints
+            .iter_mut()
+            .find(|constraint| constraint.name.lowercase() == lowercase)
+    }
+
     /// Go `GetAutoIncrementColInfo`: the auto-increment column, if any.
     #[must_use]
     pub fn get_auto_increment_col_info(&self) -> Option<&ColumnInfo> {
         self.columns
             .iter()
             .find(|c| c.get_flag() & u64::from(FieldTypeFlags::AUTO_INCREMENT) != 0)
+    }
+
+    /// Mutable form of Go `GetAutoIncrementColInfo`.
+    pub fn get_auto_increment_col_info_mut(&mut self) -> Option<&mut ColumnInfo> {
+        self.columns
+            .iter_mut()
+            .find(|column| column.get_flag() & u64::from(FieldTypeFlags::AUTO_INCREMENT) != 0)
     }
 
     /// Go `ColumnIsInIndex`: whether column `c` participates in any index.
@@ -561,6 +662,29 @@ impl TableInfo {
             }
         }
         col_map.into_values().collect()
+    }
+
+    /// Mutable form of Go `GetNonTempColumns`.
+    pub fn get_non_temp_columns_mut(&mut self) -> Vec<&mut ColumnInfo> {
+        use std::collections::{BTreeMap, BTreeSet};
+
+        let mut selected = BTreeMap::new();
+        for (index, column) in self.columns.iter().enumerate() {
+            if !column.is_removing() {
+                selected.insert(column.name.lowercase().to_owned(), index);
+            }
+        }
+        for column in &self.columns {
+            if !column.is_removing() && column.is_changing() {
+                selected.remove(&column.get_changing_origin_name());
+            }
+        }
+        let selected: BTreeSet<usize> = selected.into_values().collect();
+        self.columns
+            .iter_mut()
+            .enumerate()
+            .filter_map(|(index, column)| selected.contains(&index).then_some(column))
+            .collect()
     }
 
     /// Go `ClearPlacement`: drop the table's and partitions' placement refs.
@@ -952,6 +1076,76 @@ mod tests {
         assert!(t2.partition.unwrap().definitions[0]
             .placement_policy_ref
             .is_none());
+    }
+
+    #[test]
+    fn go_pointer_returning_helpers_have_write_through_surfaces() {
+        use crate::partition::PartitionInfo;
+
+        let mut primary_column = column("pk", 0, true, false);
+        primary_column.id = 1;
+        primary_column.set_flag(
+            u64::from(FieldTypeFlags::PRI_KEY) | u64::from(FieldTypeFlags::AUTO_INCREMENT),
+        );
+        let mut table = TableInfo {
+            columns: vec![primary_column],
+            indices: vec![IndexInfo {
+                id: 10,
+                name: CiString::new("primary"),
+                primary: true,
+                ..Default::default()
+            }],
+            constraints: vec![ConstraintInfo {
+                name: CiString::new("check_a"),
+                ..Default::default()
+            }],
+            partition: Some(Box::new(PartitionInfo {
+                enable: true,
+                ..Default::default()
+            })),
+            ..Default::default()
+        };
+
+        table.get_partition_info_mut().unwrap().expr = "p".to_owned();
+        assert_eq!(table.partition.as_ref().unwrap().expr, "p");
+        table.get_pk_col_info_mut().unwrap().comment = "pk".to_owned();
+        table
+            .get_auto_increment_col_info_mut()
+            .unwrap()
+            .generated_stored = true;
+        table.find_column_by_id_mut(1).unwrap().default_is_expr = true;
+        table.get_column_by_id_mut(1).unwrap().hidden = true;
+        table.find_public_column_by_name_mut("pk").unwrap().version = 7;
+        {
+            let mut columns = table.cols_with_gaps_mut();
+            columns[0].as_deref_mut().unwrap().id = 2;
+        }
+        {
+            let mut columns = table.cols_mut();
+            columns[0].id = 1;
+        }
+        {
+            let mut columns = table.get_non_temp_columns_mut();
+            columns[0].comment = "non-temp".to_owned();
+        }
+        assert_eq!(table.columns[0].comment, "non-temp");
+        assert!(table.columns[0].generated_stored);
+        assert!(table.columns[0].default_is_expr);
+        assert!(table.columns[0].hidden);
+        assert_eq!(table.columns[0].version, 7);
+
+        table.get_primary_key_mut().unwrap().comment = "primary".to_owned();
+        table.find_index_by_name_mut("primary").unwrap().invisible = true;
+        table.find_index_by_id_mut(10).unwrap().global = true;
+        assert_eq!(table.indices[0].comment, "primary");
+        assert!(table.indices[0].invisible);
+        assert!(table.indices[0].global);
+
+        table
+            .find_constraint_info_by_name_mut("CHECK_A")
+            .unwrap()
+            .expr_string = "a > 0".to_owned();
+        assert_eq!(table.constraints[0].expr_string, "a > 0");
     }
 
     #[test]

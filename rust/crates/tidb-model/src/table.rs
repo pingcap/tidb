@@ -662,6 +662,16 @@ pub fn find_fk_info_by_name<'a>(foreign_keys: &'a [FKInfo], name: &str) -> Optio
         .find(|foreign_key| foreign_key.name.lowercase() == name)
 }
 
+/// Mutable form of Go `FindFKInfoByName`.
+pub fn find_fk_info_by_name_mut<'a>(
+    foreign_keys: &'a mut [FKInfo],
+    name: &str,
+) -> Option<&'a mut FKInfo> {
+    foreign_keys
+        .iter_mut()
+        .find(|foreign_key| foreign_key.name.lowercase() == name)
+}
+
 /// Go `GetIdxChangingFieldType`: selects the online-DDL changing type only
 /// when both the index-column marker and changing type are present.
 #[must_use]
@@ -675,6 +685,20 @@ pub fn get_idx_changing_field_type<'a>(
         }
     }
     &column.field_type
+}
+
+/// Mutable form of Go `GetIdxChangingFieldType`.
+pub fn get_idx_changing_field_type_mut<'a>(
+    index_column: &IndexColumn,
+    column: &'a mut ColumnInfo,
+) -> &'a mut FieldType {
+    if index_column.use_changing_type && column.changing_field_type.is_some() {
+        return column
+            .changing_field_type
+            .as_deref_mut()
+            .expect("checked changing field type");
+    }
+    &mut column.field_type
 }
 
 /// Go `TableNameInfo`.
@@ -1339,6 +1363,12 @@ mod tests {
         assert!(find_fk_info_by_name(&foreign_keys, "fk2").is_some());
         // Source requires the caller to supply the lower-case lookup key.
         assert!(find_fk_info_by_name(&foreign_keys, "FK2").is_none());
+
+        let mut foreign_keys = foreign_keys;
+        find_fk_info_by_name_mut(&mut foreign_keys, "fk2")
+            .unwrap()
+            .version = FK_VERSION1;
+        assert_eq!(foreign_keys[0].version, FK_VERSION1);
     }
 
     #[test]
@@ -1364,6 +1394,23 @@ mod tests {
         assert_eq!(
             get_idx_changing_field_type(&index_column, &column).code(),
             tidb_datatype::FieldTypeCode::Long
+        );
+
+        column.changing_field_type = Some(Box::new(tidb_datatype::FieldType::new(
+            tidb_datatype::FieldTypeCode::Varchar,
+        )));
+        *get_idx_changing_field_type_mut(&index_column, &mut column) =
+            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Double);
+        assert_eq!(
+            column.changing_field_type.as_ref().unwrap().code(),
+            tidb_datatype::FieldTypeCode::Double
+        );
+        index_column.use_changing_type = false;
+        *get_idx_changing_field_type_mut(&index_column, &mut column) =
+            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Float);
+        assert_eq!(
+            column.field_type.code(),
+            tidb_datatype::FieldTypeCode::Float
         );
     }
 
