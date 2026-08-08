@@ -27,7 +27,7 @@ use tidb_stats::{
     encode_cmsketch_and_topn, encode_cmsketch_without_topn, get_merged_topn_from_sorted_slice,
     hash_bytes, merge_topn, merge_topn_and_update_cmsketch, new_cmsketch_and_topn,
     new_cmsketch_and_topn_with_tie_stabilization, sort_topn_meta, topn_meta_compare, CmsSketch,
-    Hash128, MergeError, TopN, TopNEntry,
+    CodecError, Hash128, MergeError, TopN, TopNEntry,
 };
 
 fn build_seeded_zipf_sketch(
@@ -1278,4 +1278,52 @@ fn source_decoder_accepts_packed_counter_wire_form() {
     assert_eq!(sketch.counter_at(0, 2), Some(300));
     assert_eq!(sketch.total_count(), 303);
     assert_eq!(sketch.default_value(), 7);
+}
+
+#[test]
+fn source_decoder_rejects_illegal_tags_overflow_and_known_wrong_wires() {
+    for malformed in [
+        &[0x00, 0x00][..],
+        &[0x1a, 0x00][..],
+        &[0x0a, 0x05, 0x0d, 0, 0, 0, 0][..],
+        &[0x12, 0x02, 0x08, 0x00][..],
+    ] {
+        assert!(matches!(
+            decode_cmsketch_and_embedded_topn(malformed),
+            Err(CodecError::InvalidWireType(_))
+        ));
+    }
+    assert_eq!(
+        decode_cmsketch_and_embedded_topn(&[
+            0x18, 0x82, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x02,
+        ])
+        .unwrap_err(),
+        CodecError::VarintOverflow
+    );
+
+    let balanced_unknown_group = [0x23, 0x28, 0x01, 0x24, 0x18, 0x00];
+    assert!(decode_cmsketch_and_embedded_topn(&balanced_unknown_group).is_ok());
+    assert!(matches!(
+        decode_cmsketch_and_embedded_topn(&[0x24]),
+        Err(CodecError::InvalidWireType(4))
+    ));
+}
+
+#[test]
+fn source_decoder_accepts_short_rows_and_panics_on_long_later_rows() {
+    // First row width two, second row width one: Go leaves the missing cell 0.
+    let shorter = [
+        0x0a, 0x04, 0x08, 0x01, 0x08, 0x02, 0x0a, 0x02, 0x08, 0x03, 0x18, 0x00,
+    ];
+    let sketch = decode_cmsketch(&shorter).unwrap().unwrap();
+    assert_eq!((sketch.depth(), sketch.width()), (2, 2));
+    assert_eq!(sketch.counter_at(1, 0), Some(3));
+    assert_eq!(sketch.counter_at(1, 1), Some(0));
+    assert_eq!(sketch.total_count(), 3);
+
+    let longer = [
+        0x0a, 0x02, 0x08, 0x01, 0x0a, 0x04, 0x08, 0x02, 0x08, 0x03, 0x18, 0x00,
+    ];
+    let panic = std::panic::catch_unwind(|| decode_cmsketch(&longer));
+    assert!(panic.is_err());
 }

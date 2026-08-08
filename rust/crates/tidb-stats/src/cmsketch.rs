@@ -948,10 +948,10 @@ fn read_varint(input: &[u8], cursor: &mut usize) -> Result<u64, CodecError> {
     for shift in (0..70).step_by(7) {
         let byte = *input.get(*cursor).ok_or(CodecError::UnexpectedEof)?;
         *cursor += 1;
-        if shift >= 64 && byte & 0x7f != 0 {
+        if shift == 63 && byte > 1 {
             return Err(CodecError::VarintOverflow);
         }
-        value |= u64::from(byte & 0x7f) << shift.min(63);
+        value |= u64::from(byte & 0x7f) << shift;
         if byte & 0x80 == 0 {
             return Ok(value);
         }
@@ -970,7 +970,17 @@ fn read_bytes<'a>(input: &'a [u8], cursor: &mut usize) -> Result<&'a [u8], Codec
     Ok(bytes)
 }
 
-fn skip_field(input: &[u8], cursor: &mut usize, wire: u8) -> Result<(), CodecError> {
+fn read_tag(input: &[u8], cursor: &mut usize) -> Result<(u64, u8), CodecError> {
+    let tag = read_varint(input, cursor)?;
+    let field = tag >> 3;
+    let wire = (tag & 7) as u8;
+    if field == 0 || i32::try_from(field).is_err() {
+        return Err(CodecError::InvalidWireType(wire));
+    }
+    Ok((field, wire))
+}
+
+fn skip_field(input: &[u8], cursor: &mut usize, field: u64, wire: u8) -> Result<(), CodecError> {
     match wire {
         0 => {
             read_varint(input, cursor)?;
@@ -988,6 +998,18 @@ fn skip_field(input: &[u8], cursor: &mut usize, wire: u8) -> Result<(), CodecErr
             read_bytes(input, cursor)?;
             Ok(())
         }
+        3 => loop {
+            let (nested_field, nested_wire) = read_tag(input, cursor)?;
+            if nested_wire == 4 {
+                return if nested_field == field {
+                    Ok(())
+                } else {
+                    Err(CodecError::InvalidWireType(nested_wire))
+                };
+            }
+            skip_field(input, cursor, nested_field, nested_wire)?;
+        },
+        4 => Err(CodecError::InvalidWireType(wire)),
         5 => {
             *cursor = cursor.checked_add(4).ok_or(CodecError::UnexpectedEof)?;
             if *cursor > input.len() {
@@ -1004,12 +1026,10 @@ fn decode_row(input: &[u8]) -> Result<Vec<u32>, CodecError> {
     let mut counters = Vec::new();
     let mut cursor = 0;
     while cursor < input.len() {
-        let tag = read_varint(input, &mut cursor)?;
-        let field = (tag >> 3) as u32;
-        let wire = (tag & 7) as u8;
-        match (field, wire) {
-            (1, 0) => counters.push(read_varint(input, &mut cursor)? as u32),
-            (1, 2) => {
+        let (field, wire) = read_tag(input, &mut cursor)?;
+        match field {
+            1 if wire == 0 => counters.push(read_varint(input, &mut cursor)? as u32),
+            1 if wire == 2 => {
                 // Although the generated tipb marshaler currently emits one
                 // unpacked varint per counter, protobuf permits packed
                 // repeated scalars and the authoritative Go unmarshaler
@@ -1020,7 +1040,8 @@ fn decode_row(input: &[u8]) -> Result<Vec<u32>, CodecError> {
                     counters.push(read_varint(packed, &mut packed_cursor)? as u32);
                 }
             }
-            _ => skip_field(input, &mut cursor, wire)?,
+            1 => return Err(CodecError::InvalidWireType(wire)),
+            _ => skip_field(input, &mut cursor, field, wire)?,
         }
     }
     Ok(counters)
@@ -1031,13 +1052,13 @@ fn decode_topn_entry(input: &[u8]) -> Result<TopNEntry, CodecError> {
     let mut count = 0_u64;
     let mut cursor = 0;
     while cursor < input.len() {
-        let tag = read_varint(input, &mut cursor)?;
-        let field = (tag >> 3) as u32;
-        let wire = (tag & 7) as u8;
-        match (field, wire) {
-            (1, 2) => encoded = read_bytes(input, &mut cursor)?.to_vec(),
-            (2, 0) => count = read_varint(input, &mut cursor)?,
-            _ => skip_field(input, &mut cursor, wire)?,
+        let (field, wire) = read_tag(input, &mut cursor)?;
+        match field {
+            1 if wire == 2 => encoded = read_bytes(input, &mut cursor)?.to_vec(),
+            1 => return Err(CodecError::InvalidWireType(wire)),
+            2 if wire == 0 => count = read_varint(input, &mut cursor)?,
+            2 => return Err(CodecError::InvalidWireType(wire)),
+            _ => skip_field(input, &mut cursor, field, wire)?,
         }
     }
     Ok(TopNEntry { encoded, count })
@@ -1051,14 +1072,15 @@ fn decode_proto(input: &[u8]) -> Result<DecodedSketch, CodecError> {
     let mut default_value = 0_u64;
     let mut cursor = 0;
     while cursor < input.len() {
-        let tag = read_varint(input, &mut cursor)?;
-        let field = (tag >> 3) as u32;
-        let wire = (tag & 7) as u8;
-        match (field, wire) {
-            (1, 2) => rows.push(decode_row(read_bytes(input, &mut cursor)?)?),
-            (2, 2) => topn.push(decode_topn_entry(read_bytes(input, &mut cursor)?)?),
-            (3, 0) => default_value = read_varint(input, &mut cursor)?,
-            _ => skip_field(input, &mut cursor, wire)?,
+        let (field, wire) = read_tag(input, &mut cursor)?;
+        match field {
+            1 if wire == 2 => rows.push(decode_row(read_bytes(input, &mut cursor)?)?),
+            1 => return Err(CodecError::InvalidWireType(wire)),
+            2 if wire == 2 => topn.push(decode_topn_entry(read_bytes(input, &mut cursor)?)?),
+            2 => return Err(CodecError::InvalidWireType(wire)),
+            3 if wire == 0 => default_value = read_varint(input, &mut cursor)?,
+            3 => return Err(CodecError::InvalidWireType(wire)),
+            _ => skip_field(input, &mut cursor, field, wire)?,
         }
     }
     Ok((rows, topn, default_value))
@@ -1075,14 +1097,14 @@ fn sketch_from_rows(
     let width = first.len() as u32;
     let mut sketch =
         CmsSketch::try_new(depth, width).map_err(|_| CodecError::InconsistentRowShape)?;
-    for row in &rows {
-        if row.len() > first.len() {
-            return Err(CodecError::InconsistentRowShape);
-        }
-    }
     for (row_index, row) in rows.iter().enumerate() {
         let start = row_index * first.len();
-        sketch.counters[start..start + row.len()].copy_from_slice(row);
+        for (column_index, counter) in row.iter().enumerate() {
+            // The generated Go converter allocates every row to the first
+            // row's width, then indexes it with every later counter. A longer
+            // later row therefore panics; a shorter one leaves zeroes.
+            sketch.counters[start + column_index] = *counter;
+        }
         // Go resets count once per row and leaves the sum of the final row.
         sketch.count = row
             .iter()
