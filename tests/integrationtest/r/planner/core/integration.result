@@ -2449,10 +2449,7 @@ SELECT m.i,
 (SELECT COUNT(n.j)
 FROM tab2 WHERE j=15) AS o
 FROM tab m, tab2 n GROUP BY 1 order by m.i;
-i	o
-1	4
-2	4
-3	4
+Error 1055 (42000): Expression #2 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'planner__core__integration.n.j' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by
 SELECT
 (SELECT COUNT(n.j)
 FROM tab2 WHERE j=15) AS o
