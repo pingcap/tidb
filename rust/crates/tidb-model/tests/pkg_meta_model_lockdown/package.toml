@@ -3,7 +3,7 @@ claim = "whole-go-package"
 go_package = "pkg/meta/model"
 source_commit = "665fc02e2be48a7199d5ffeb5d3d6bec1dfed04f"
 primary_rust_crate = "tidb-model"
-mapped_rust_crates = ["tidb-model", "tidb-error", "tidb-datatype", "tidb-exec", "tidb-server"]
+mapped_rust_crates = ["tidb-model", "tidb-error", "tidb-datatype", "tidb-exec", "tidb-server", "tidb-meta"]
 extra_artifacts = []
 excluded_subpackages = []
 owned_rust_files = [
@@ -55,6 +55,7 @@ owned_rust_files = [
   "rust/crates/tidb-model/tests/pkg_meta_model_observation_emitter.rs",
   "rust/crates/tidb-model/tests/pkg_meta_model_package_anchors.rs",
   "rust/crates/tidb-model/tests/resource_group_lockdown.rs",
+  "rust/crates/tidb-meta/tests/transaction_source.rs",
   "rust/crates/tidb-server/src/cluster_session.rs",
   "rust/crates/tidb-server/src/cluster_session_node/tests/node_fixture.rs",
 ]
