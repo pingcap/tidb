@@ -20,13 +20,17 @@
 //! them, instead of re-reading the whole catalog.
 
 use serde::ser::SerializeStruct;
-use serde::{Deserialize, Serialize, Serializer};
+use serde::{Serialize, Serializer};
 
 use crate::action_type::ActionType;
+use crate::serde_helpers::{
+    go_json_field_matches, ignore_unknown, impl_go_json_deserialize, impl_go_json_merge_object,
+    GoValueSlice, NullNoopSeed, OptionPointerSliceSeed, OptionValueSliceSeed,
+};
 
 /// Go `AffectedOption`: one extra (schema, table) pair a diff touches beyond
 /// its own `SchemaID`/`TableID`, used by DDLs that change several tables.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct AffectedOption {
     /// The affected database ID.
     #[serde(rename = "schema_id", default)]
@@ -42,51 +46,91 @@ pub struct AffectedOption {
     pub old_schema_id: i64,
 }
 
+impl_go_json_merge_object!(AffectedOption, destination, map, key, {
+    if go_json_field_matches(&key, "schema_id") {
+        map.next_value_seed(NullNoopSeed(&mut destination.schema_id))?;
+    } else if go_json_field_matches(&key, "table_id") {
+        map.next_value_seed(NullNoopSeed(&mut destination.table_id))?;
+    } else if go_json_field_matches(&key, "old_table_id") {
+        map.next_value_seed(NullNoopSeed(&mut destination.old_table_id))?;
+    } else if go_json_field_matches(&key, "old_schema_id") {
+        map.next_value_seed(NullNoopSeed(&mut destination.old_schema_id))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+
+impl_go_json_deserialize!(AffectedOption);
+
 /// Go `SchemaDiff`: the schema modification at one particular schema version.
 ///
 /// `is_refresh_meta` is Go's `json:"-"` field: it is set in memory by the
 /// BR-only `refreshMeta` path and is never stored, so it is skipped by serde
-/// and always decodes `false`.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+/// (fresh decodes are `false`, while receiver merges leave it unchanged).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SchemaDiff {
     /// The schema version this diff produces.
-    #[serde(rename = "version", default)]
     pub version: i64,
     /// The DDL action that produced it.
-    #[serde(rename = "type", default)]
     pub action_type: ActionType,
     /// The database the action targeted.
-    #[serde(rename = "schema_id", default)]
     pub schema_id: i64,
     /// The table the action targeted, `0` for a database-level action.
-    #[serde(rename = "table_id", default)]
     pub table_id: i64,
     /// The action list of a multi-schema-change step; empty otherwise.
-    #[serde(
-        rename = "sub_action_types",
-        default,
-        deserialize_with = "crate::serde_helpers::null_default"
-    )]
-    pub sub_action_types: Vec<ActionType>,
+    pub sub_action_types: GoValueSlice<ActionType>,
     /// The table ID before `TRUNCATE TABLE`.
-    #[serde(rename = "old_table_id", default)]
     pub old_table_id: i64,
     /// The database ID before `RENAME TABLE`.
-    #[serde(rename = "old_schema_id", default)]
     pub old_schema_id: i64,
     /// Whether applying this diff requires rebuilding the whole schema map.
-    #[serde(rename = "regenerate_schema_map", default)]
     pub regenerate_schema_map: bool,
     /// Whether the diff was too large to store and the reader must consult the
     /// meta store for the new table definition directly.
-    #[serde(rename = "read_table_from_meta", default)]
     pub read_table_from_meta: bool,
     /// Extra tables the same DDL touched.
-    #[serde(rename = "affected_options", default)]
     pub affected_options: Option<Vec<Option<AffectedOption>>>,
     /// In-memory only (Go `json:"-"`): set by BR's `refreshMeta` DDL.
-    #[serde(skip)]
     pub is_refresh_meta: bool,
+}
+
+impl_go_json_merge_object!(SchemaDiff, destination, map, key, {
+    if go_json_field_matches(&key, "version") {
+        map.next_value_seed(NullNoopSeed(&mut destination.version))?;
+    } else if go_json_field_matches(&key, "type") {
+        map.next_value_seed(NullNoopSeed(&mut destination.action_type))?;
+    } else if go_json_field_matches(&key, "schema_id") {
+        map.next_value_seed(NullNoopSeed(&mut destination.schema_id))?;
+    } else if go_json_field_matches(&key, "table_id") {
+        map.next_value_seed(NullNoopSeed(&mut destination.table_id))?;
+    } else if go_json_field_matches(&key, "sub_action_types") {
+        map.next_value_seed(OptionValueSliceSeed(destination.sub_action_types.raw_mut()))?;
+    } else if go_json_field_matches(&key, "old_table_id") {
+        map.next_value_seed(NullNoopSeed(&mut destination.old_table_id))?;
+    } else if go_json_field_matches(&key, "old_schema_id") {
+        map.next_value_seed(NullNoopSeed(&mut destination.old_schema_id))?;
+    } else if go_json_field_matches(&key, "regenerate_schema_map") {
+        map.next_value_seed(NullNoopSeed(&mut destination.regenerate_schema_map))?;
+    } else if go_json_field_matches(&key, "read_table_from_meta") {
+        map.next_value_seed(NullNoopSeed(&mut destination.read_table_from_meta))?;
+    } else if go_json_field_matches(&key, "affected_options") {
+        map.next_value_seed(OptionPointerSliceSeed(&mut destination.affected_options))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+
+impl_go_json_deserialize!(SchemaDiff);
+
+impl SchemaDiff {
+    /// Iterates affected options at the same dereference boundary as Go
+    /// consumers. A null element panics instead of being silently skipped.
+    pub fn affected_options_iter(&self) -> impl Iterator<Item = &AffectedOption> {
+        self.affected_options
+            .iter()
+            .flatten()
+            .map(|option| option.as_ref().expect("nil *AffectedOption"))
+    }
 }
 
 impl Serialize for SchemaDiff {
@@ -147,7 +191,10 @@ mod tests {
     fn omitempty_fields_appear_only_when_set() {
         let stored = r#"{"version":9,"type":61,"schema_id":2,"table_id":0,"sub_action_types":[3,4],"old_table_id":7,"old_schema_id":1,"regenerate_schema_map":true,"read_table_from_meta":true,"affected_options":[{"schema_id":2,"table_id":105,"old_table_id":0,"old_schema_id":0}]}"#;
         let diff: SchemaDiff = serde_json::from_str(stored).unwrap();
-        assert_eq!(diff.sub_action_types, vec![ActionType(3), ActionType(4)]);
+        assert_eq!(
+            diff.sub_action_types.iter().copied().collect::<Vec<_>>(),
+            vec![ActionType(3), ActionType(4)]
+        );
         assert!(diff.regenerate_schema_map);
         assert!(diff.read_table_from_meta);
         let affected = diff.affected_options.as_ref().unwrap();
@@ -166,8 +213,59 @@ mod tests {
         )
         .unwrap();
         assert!(diff.sub_action_types.is_empty());
+        assert!(!diff.sub_action_types.is_allocated());
         assert!(diff.affected_options.is_none());
         assert_eq!(diff.action_type, ActionType::ACTION_NONE);
+    }
+
+    #[test]
+    fn sub_actions_preserve_runtime_nil_empty_and_null_elements() {
+        let nil = SchemaDiff::default();
+        let empty: SchemaDiff = serde_json::from_str(r#"{"sub_action_types":[]}"#).unwrap();
+        let nullable: SchemaDiff =
+            serde_json::from_str(r#"{"sub_action_types":[3,null,4]}"#).unwrap();
+        assert!(!nil.sub_action_types.is_allocated());
+        assert!(empty.sub_action_types.is_allocated());
+        assert_eq!(nullable.sub_action_types[0], ActionType(3));
+        assert_eq!(nullable.sub_action_types[1], ActionType::ACTION_NONE);
+        assert_eq!(nullable.sub_action_types[2], ActionType(4));
+        // omitempty suppresses nil and allocated-empty equally on the wire.
+        assert_eq!(to_go_json(&nil).unwrap(), to_go_json(&empty).unwrap());
+    }
+
+    #[test]
+    fn schema_diff_uses_go_fold_duplicate_null_and_partial_merge_rules() {
+        use crate::serde_helpers::GoJsonMerge;
+
+        let decoded: SchemaDiff = serde_json::from_str(
+            r#"{"VERSION":7,"version":8,"version":null,"TYPE":3,"type":null,"unknown":1}"#,
+        )
+        .unwrap();
+        assert_eq!(decoded.version, 8);
+        assert_eq!(decoded.action_type, ActionType(3));
+
+        let mut diff = SchemaDiff {
+            version: 5,
+            is_refresh_meta: true,
+            affected_options: Some(vec![Some(AffectedOption {
+                schema_id: 1,
+                table_id: 2,
+                ..Default::default()
+            })]),
+            ..Default::default()
+        };
+        let mut decoder = serde_json::Deserializer::from_str(
+            r#"{"version":"bad","affected_options":[{"schema_id":"bad","table_id":9},null],"old_schema_id":4}"#,
+        );
+        assert!(diff.go_json_merge(&mut decoder).is_err());
+        assert_eq!(diff.version, 5);
+        assert!(diff.is_refresh_meta);
+        let affected = diff.affected_options.as_ref().unwrap();
+        assert_eq!(affected.len(), 2);
+        assert_eq!(affected[0].as_ref().unwrap().schema_id, 1);
+        assert_eq!(affected[0].as_ref().unwrap().table_id, 9);
+        assert!(affected[1].is_none());
+        assert_eq!(diff.old_schema_id, 4);
     }
 
     #[test]
@@ -201,5 +299,15 @@ mod tests {
             serde_json::from_value::<SchemaDiff>(encoded).unwrap(),
             nullable
         );
+    }
+
+    #[test]
+    #[should_panic(expected = "nil *AffectedOption")]
+    fn affected_options_iterator_panics_at_go_dereference_boundary() {
+        let diff = SchemaDiff {
+            affected_options: Some(vec![None]),
+            ..Default::default()
+        };
+        let _ = diff.affected_options_iter().next();
     }
 }
