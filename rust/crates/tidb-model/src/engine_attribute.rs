@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct EngineAttribute {
     /// The raw `storage_class` sub-document, if present.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "storage_class", default)]
     pub storage_class: Option<serde_json::Value>,
 }
 
@@ -38,7 +38,11 @@ pub fn parse_engine_attribute_from_string(
     if input.is_empty() {
         return Ok(EngineAttribute::default());
     }
-    serde_json::from_str(input)
+    let value: serde_json::Value = serde_json::from_str(input)?;
+    if value.is_null() {
+        return Ok(EngineAttribute::default());
+    }
+    serde_json::from_value(value)
 }
 
 /// The `STANDARD` storage-class tier name.
@@ -102,7 +106,12 @@ impl StorageClassTransitRule {
     /// Go `TotalSeconds`: total seconds until the transition.
     #[must_use]
     pub fn total_seconds(&self) -> u64 {
-        self.after_days * 86400 + self.after_seconds
+        // Go's unsigned arithmetic wraps modulo 2^N. Use explicit wrapping
+        // operations so debug and release builds have the same observable
+        // boundary behavior.
+        self.after_days
+            .wrapping_mul(86_400)
+            .wrapping_add(self.after_seconds)
     }
 }
 
@@ -136,6 +145,14 @@ mod tests {
         // Empty -> default (no storage class).
         let attr = parse_engine_attribute_from_string("").unwrap();
         assert!(attr.storage_class.is_none());
+        assert_eq!(
+            serde_json::to_string(&attr).unwrap(),
+            r#"{"storage_class":null}"#
+        );
+        assert!(parse_engine_attribute_from_string("null")
+            .unwrap()
+            .storage_class
+            .is_none());
 
         // Valid JSON with a storage_class sub-document.
         let attr = parse_engine_attribute_from_string(r#"{"storage_class":{"defs":[]}}"#).unwrap();
@@ -167,6 +184,18 @@ mod tests {
             after_seconds: 30,
         };
         assert_eq!(r.total_seconds(), 2 * 86400 + 30);
+
+        // Boundary mutation: ordinary `*`/`+` would panic in a debug build,
+        // while Go's uint arithmetic wraps.
+        let overflow = StorageClassTransitRule {
+            after_days: u64::MAX,
+            after_seconds: u64::MAX,
+            ..Default::default()
+        };
+        assert_eq!(
+            overflow.total_seconds(),
+            u64::MAX.wrapping_mul(86_400).wrapping_add(u64::MAX)
+        );
     }
 
     #[test]

@@ -26,9 +26,9 @@
 //!
 //! The `NewExtra*ColInfo` constructors and `GetTypeDesc` are ported too.
 //!
-//! DEFERRED to a focused follow-up: `GenUniqueChangingColumnName` (needs the
-//! unported `TableInfo`); and Go's `interface{}` JSON round-trip of a
-//! `ColumnInfo` (the marshal/unmarshal-consistency half of `TestDefaultValue`).
+//! Go's unrestricted `interface{}` domain remains wider than the typed Rust
+//! default-value representation; that boundary is recorded by the package
+//! lockdown receipt rather than silently treated as equivalent.
 
 use std::collections::BTreeSet;
 
@@ -37,6 +37,7 @@ use tidb_ast::CiString;
 use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags};
 
 use crate::schema_state::SchemaState;
+use crate::table_info::TableInfo;
 
 /// Go `ColumnInfoVersion0`.
 pub const COLUMN_INFO_VERSION0: u64 = 0;
@@ -53,6 +54,29 @@ pub const CHANGING_COLUMN_PREFIX: &str = "_Col$_";
 /// Go `removingObjPrefix`: prefixes the tombstone name of a column/index
 /// being removed during a modify-column.
 pub const REMOVING_OBJ_PREFIX: &str = "_Tombstone$_";
+
+/// Go `GenUniqueChangingColumnName`: generates the first unused temporary
+/// changing-column name, comparing candidates case-insensitively.
+#[must_use]
+pub fn gen_unique_changing_column_name(table: &TableInfo, old_column: &ColumnInfo) -> String {
+    let used: std::collections::HashSet<&str> = table
+        .columns
+        .iter()
+        .map(|column| column.name.lowercase())
+        .collect();
+    let mut suffix = 0_u64;
+    loop {
+        let candidate = format!(
+            "{CHANGING_COLUMN_PREFIX}{}_{}",
+            old_column.name.original(),
+            suffix
+        );
+        if !used.contains(candidate.to_lowercase().as_str()) {
+            return candidate;
+        }
+        suffix += 1;
+    }
+}
 
 /// Go `[]byte` JSON encoding: `encoding/json` writes a byte slice as a padded
 /// standard-alphabet base64 string, and a nil slice as `null`. serde would
@@ -723,6 +747,17 @@ mod tests {
         assert!(!is_removing_name("c1"));
         assert_eq!(removing_origin_name("_Tombstone$_c1"), "c1");
         assert_eq!(removing_origin_name("c1"), "c1");
+    }
+
+    #[test]
+    fn unique_changing_column_name_is_case_insensitive_and_fills_first_gap() {
+        let mut table = TableInfo::default();
+        table.columns = vec![
+            col("_col$_Old_0", FieldTypeCode::Long),
+            col("_COL$_OLD_2", FieldTypeCode::Long),
+        ];
+        let old = col("Old", FieldTypeCode::Long);
+        assert_eq!(gen_unique_changing_column_name(&table, &old), "_Col$_Old_1");
     }
 
     // A minimal ColumnInfo for accessor tests.
