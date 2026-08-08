@@ -29,8 +29,8 @@ fn source_status_labels_and_job_kinds_match_go() {
     assert_eq!(ANALYZE_RUNNING, "running");
     assert_eq!(ANALYZE_FINISHED, "finished");
     assert_eq!(ANALYZE_FAILED, "failed");
-    assert_eq!(JobType::TableAnalysis as i32, 1);
-    assert_eq!(JobType::GlobalStatsMerge as i32, 2);
+    assert_eq!(JobType::TableAnalysis as isize, 1);
+    assert_eq!(JobType::GlobalStatsMerge as isize, 2);
     assert_eq!(MAX_DELTA, 10_000_000);
     assert_eq!(DUMP_TIME_INTERVAL, Duration::from_secs(5));
 }

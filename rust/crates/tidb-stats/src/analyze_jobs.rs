@@ -52,7 +52,7 @@ pub fn go_zero_time() -> DateTime<Utc> {
 
 /// Source analyze-job kind values (`iota + 1`).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[repr(i32)]
+#[repr(isize)]
 pub enum JobType {
     /// Analyze one table or partition.
     TableAnalysis = 1,

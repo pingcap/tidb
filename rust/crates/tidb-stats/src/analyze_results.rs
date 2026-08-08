@@ -28,7 +28,7 @@ pub struct AnalyzeResult<H, C, T, F> {
     pub cmsketches: Vec<Option<C>>,
     pub top_ns: Vec<Option<T>>,
     pub fm_sketches: Vec<Option<F>>,
-    pub is_index: i32,
+    pub is_index: isize,
 }
 
 impl<H, C, T, F> Default for AnalyzeResult<H, C, T, F> {
@@ -65,7 +65,7 @@ pub struct AnalyzeResults<H, C, T, F> {
     pub results: Vec<Option<AnalyzeResult<H, C, T, F>>>,
     pub table_id: AnalyzeTableId,
     pub count: i64,
-    pub stats_version: i32,
+    pub stats_version: isize,
     pub snapshot: u64,
     pub base_count: i64,
     pub base_modify_count: i64,
