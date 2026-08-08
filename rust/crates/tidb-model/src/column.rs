@@ -31,12 +31,16 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde::de::{MapAccess, SeqAccess};
+use serde::de::{DeserializeSeed, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
 use tidb_ast::CiString;
 use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags};
 
 use crate::schema_state::SchemaState;
+use crate::serde_helpers::{
+    deserialize_go_object, go_json_field_matches, ignore_unknown, impl_go_json_deserialize,
+    impl_go_json_merge_object, NullNoopSeed, OptionBytesSeed, OptionMergeSeed, OptionScalarSeed,
+};
 use crate::table_info::TableInfo;
 
 /// Go `ColumnInfoVersion0`.
@@ -78,51 +82,170 @@ pub fn gen_unique_changing_column_name(table: &TableInfo, old_column: &ColumnInf
     }
 }
 
-/// Go `map[string]struct{}` JSON encoding: an object whose values are the
-/// empty object, with keys sorted by `encoding/json`; a nil map is `null`.
-/// The Rust side models the set as a `BTreeSet`, which serde would otherwise
-/// write as an array.
+/// Go `map[string]struct{}` with nil/allocation identity preserved.
 ///
-/// DIVERGENCE: a `BTreeSet` cannot distinguish Go's nil map from an allocated
-/// empty one, so an empty set is written as `null` — the nil case, which is
-/// what every non-generated column carries. A column whose `Dependences` Go
-/// allocated but left empty (`pkg/ddl/create_table.go` builds one for hidden
-/// expression-index columns) therefore re-marshals as `null` rather than `{}`.
-mod go_string_set {
-    use std::collections::{BTreeMap, BTreeSet};
+/// A nil map serializes as `null`, an allocated empty map as `{}`, and keys in
+/// an allocated map sort lexically through the underlying [`BTreeSet`].
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GoStringSet(Option<BTreeSet<String>>);
 
-    use serde::de::IgnoredAny;
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-    #[derive(Serialize)]
-    struct Empty {}
-
-    pub(super) fn serialize<S: Serializer>(
-        value: &BTreeSet<String>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        if value.is_empty() {
-            return serializer.serialize_none();
-        }
-        serializer.collect_map(value.iter().map(|key| (key, Empty {})))
+impl GoStringSet {
+    /// Returns whether the source map has an allocation, independently of its
+    /// length.
+    #[must_use]
+    pub fn is_allocated(&self) -> bool {
+        self.0.is_some()
     }
 
-    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<BTreeSet<String>, D::Error> {
-        let map = Option::<BTreeMap<String, IgnoredAny>>::deserialize(deserializer)?;
-        Ok(map.unwrap_or_default().into_keys().collect())
+    /// Returns whether the map has no keys (`len(nil)` is zero in Go).
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.as_ref().is_none_or(BTreeSet::is_empty)
+    }
+
+    /// Iterates keys in the same lexical order used by `encoding/json`.
+    pub fn iter(&self) -> impl Iterator<Item = &String> {
+        self.0.iter().flatten()
+    }
+
+    /// Reports whether a dependency is present.
+    #[must_use]
+    pub fn contains(&self, value: &str) -> bool {
+        self.0.as_ref().is_some_and(|values| values.contains(value))
+    }
+
+    /// Inserts a dependency, allocating the map just as a Go map assignment
+    /// requires.
+    pub fn insert(&mut self, value: String) -> bool {
+        self.0.get_or_insert_with(BTreeSet::new).insert(value)
+    }
+
+    /// Clears keys without changing nil versus allocated-empty identity.
+    pub fn clear(&mut self) {
+        if let Some(values) = &mut self.0 {
+            values.clear();
+        }
+    }
+
+    /// Constructs an allocated map, including the allocated-empty case.
+    pub fn allocated(values: impl IntoIterator<Item = String>) -> Self {
+        Self(Some(values.into_iter().collect()))
+    }
+}
+
+#[derive(Default, Deserialize, Serialize)]
+struct EmptyObject {}
+
+impl Serialize for GoStringSet {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match &self.0 {
+            None => serializer.serialize_none(),
+            Some(values) => serializer.collect_map(values.iter().map(|key| (key, EmptyObject {}))),
+        }
+    }
+}
+
+struct GoStringSetSeed<'a>(&'a mut GoStringSet);
+
+impl<'de> DeserializeSeed<'de> for GoStringSetSeed<'_> {
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct SetOrNullVisitor<'a>(&'a mut GoStringSet);
+
+        impl<'de> Visitor<'de> for SetOrNullVisitor<'_> {
+            type Value = ();
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("null or an object with empty-object values")
+            }
+
+            fn visit_none<E>(self) -> Result<Self::Value, E> {
+                self.0 .0 = None;
+                Ok(())
+            }
+
+            fn visit_unit<E>(self) -> Result<Self::Value, E> {
+                self.0 .0 = None;
+                Ok(())
+            }
+
+            fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct SetVisitor<'a>(&'a mut GoStringSet);
+
+                impl<'de> Visitor<'de> for SetVisitor<'_> {
+                    type Value = ();
+
+                    fn expecting(
+                        &self,
+                        formatter: &mut std::fmt::Formatter<'_>,
+                    ) -> std::fmt::Result {
+                        formatter.write_str("an object with empty-object values")
+                    }
+
+                    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+                    where
+                        A: MapAccess<'de>,
+                    {
+                        let values = self.0 .0.get_or_insert_with(BTreeSet::new);
+                        let mut first_error = None;
+                        while let Some(key) = map.next_key::<String>()? {
+                            let mut empty = EmptyObject::default();
+                            if let Err(error) = map.next_value_seed(NullNoopSeed(&mut empty)) {
+                                first_error.get_or_insert(error);
+                            }
+                            values.insert(key);
+                        }
+                        if let Some(error) = first_error {
+                            return Err(error);
+                        }
+                        Ok(())
+                    }
+                }
+
+                deserialize_go_object(deserializer, SetVisitor(self.0))
+            }
+        }
+
+        deserializer.deserialize_option(SetOrNullVisitor(self.0))
+    }
+}
+
+impl<'de> Deserialize<'de> for GoStringSet {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let mut value = Self::default();
+        GoStringSetSeed(&mut value).deserialize(deserializer)?;
+        Ok(value)
     }
 }
 
 /// Go `ChangeStateInfo`: records schema-change information for a column.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct ChangeStateInfo {
     /// The offset of the changing column this column depends on during a
     /// modify/change column.
     #[serde(rename = "relative_col_offset", default)]
     pub dependency_column_offset: i64,
 }
+
+impl_go_json_merge_object!(ChangeStateInfo, destination, map, key, {
+    if go_json_field_matches(&key, "relative_col_offset") {
+        map.next_value_seed(NullNoopSeed(&mut destination.dependency_column_offset))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+
+impl_go_json_deserialize!(ChangeStateInfo);
 
 /// Go `GenRemovingObjName`: the tombstone name for `name` (idempotent).
 #[must_use]
@@ -313,7 +436,7 @@ fn zero_field_type() -> FieldType {
 /// `Option<ColumnDefaultValue>` (`None` = Go `nil`); the accompanying `*_bit`
 /// byte fields (`Option<Vec<u8>>`, `None` = Go `nil` slice) hold the BIT-type
 /// default.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct ColumnInfo {
     /// The column ID.
     #[serde(rename = "id", default)]
@@ -358,8 +481,8 @@ pub struct ColumnInfo {
     #[serde(rename = "generated_stored", default)]
     pub generated_stored: bool,
     /// The columns a generated column depends on.
-    #[serde(rename = "dependences", default, with = "go_string_set")]
-    pub dependences: BTreeSet<String>,
+    #[serde(rename = "dependences", default)]
+    pub dependences: GoStringSet,
     /// The column type.
     #[serde(rename = "type", default = "zero_field_type")]
     pub field_type: FieldType,
@@ -393,9 +516,72 @@ pub struct ColumnInfo {
     pub version: u64,
 }
 
+impl_go_json_merge_object!(ColumnInfo, destination, map, key, {
+    if go_json_field_matches(&key, "id") {
+        map.next_value_seed(NullNoopSeed(&mut destination.id))?;
+    } else if go_json_field_matches(&key, "name") {
+        map.next_value_seed(NullNoopSeed(&mut destination.name))?;
+    } else if go_json_field_matches(&key, "offset") {
+        map.next_value_seed(NullNoopSeed(&mut destination.offset))?;
+    } else if go_json_field_matches(&key, "origin_default") {
+        destination.origin_default_value = map.next_value()?;
+    } else if go_json_field_matches(&key, "origin_default_bit") {
+        map.next_value_seed(OptionBytesSeed(&mut destination.origin_default_value_bit))?;
+    } else if go_json_field_matches(&key, "default") {
+        destination.default_value = map.next_value()?;
+    } else if go_json_field_matches(&key, "default_bit") {
+        map.next_value_seed(OptionBytesSeed(&mut destination.default_value_bit))?;
+    } else if go_json_field_matches(&key, "default_is_expr") {
+        map.next_value_seed(NullNoopSeed(&mut destination.default_is_expr))?;
+    } else if go_json_field_matches(&key, "generated_expr_string") {
+        map.next_value_seed(NullNoopSeed(&mut destination.generated_expr_string))?;
+    } else if go_json_field_matches(&key, "generated_stored") {
+        map.next_value_seed(NullNoopSeed(&mut destination.generated_stored))?;
+    } else if go_json_field_matches(&key, "dependences") {
+        map.next_value_seed(GoStringSetSeed(&mut destination.dependences))?;
+    } else if go_json_field_matches(&key, "type") {
+        map.next_value_seed(NullNoopSeed(&mut destination.field_type))?;
+    } else if go_json_field_matches(&key, "changing_type") {
+        map.next_value_seed(OptionScalarSeed(&mut destination.changing_field_type))?;
+    } else if go_json_field_matches(&key, "state") {
+        map.next_value_seed(NullNoopSeed(&mut destination.state))?;
+    } else if go_json_field_matches(&key, "comment") {
+        map.next_value_seed(NullNoopSeed(&mut destination.comment))?;
+    } else if go_json_field_matches(&key, "hidden") {
+        map.next_value_seed(NullNoopSeed(&mut destination.hidden))?;
+    } else if go_json_field_matches(&key, "change_state_info") {
+        map.next_value_seed(OptionMergeSeed(&mut destination.change_state_info))?;
+    } else if go_json_field_matches(&key, "version") {
+        map.next_value_seed(NullNoopSeed(&mut destination.version))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+
+impl_go_json_deserialize!(ColumnInfo);
+
 impl Default for ColumnInfo {
     fn default() -> Self {
-        serde_json::from_slice(b"{}").expect("empty JSON is the Go zero ColumnInfo")
+        Self {
+            id: 0,
+            name: CiString::default(),
+            offset: 0,
+            origin_default_value: None,
+            origin_default_value_bit: None,
+            default_value: None,
+            default_value_bit: None,
+            default_is_expr: false,
+            generated_expr_string: String::new(),
+            generated_stored: false,
+            dependences: GoStringSet::default(),
+            field_type: zero_field_type(),
+            changing_field_type: None,
+            state: SchemaState::NONE,
+            comment: String::new(),
+            hidden: false,
+            change_state_info: None,
+            version: 0,
+        }
     }
 }
 
@@ -641,7 +827,7 @@ impl ColumnInfo {
             default_is_expr: false,
             generated_expr_string: String::new(),
             generated_stored: false,
-            dependences: BTreeSet::new(),
+            dependences: GoStringSet::default(),
             field_type,
             changing_field_type: None,
             state: SchemaState::PUBLIC,
@@ -666,7 +852,7 @@ impl ColumnInfo {
             default_is_expr: false,
             generated_expr_string: String::new(),
             generated_stored: false,
-            dependences: BTreeSet::new(),
+            dependences: GoStringSet::default(),
             field_type: FieldType::new(FieldTypeCode::LongLong),
             changing_field_type: None,
             state: SchemaState::NONE,
@@ -777,7 +963,7 @@ mod tests {
             default_is_expr: false,
             generated_expr_string: String::new(),
             generated_stored: false,
-            dependences: BTreeSet::new(),
+            dependences: GoStringSet::default(),
             field_type: FieldType::new(code),
             changing_field_type: None,
             state: SchemaState::NONE,
@@ -972,6 +1158,14 @@ mod tests {
         assert_eq!(col.state, SchemaState::WRITE_ONLY);
         assert_eq!(col.change_state_info.unwrap().dependency_column_offset, 4);
 
+        let mut allocated_empty = ColumnInfo::default();
+        allocated_empty.dependences = GoStringSet::allocated(std::iter::empty());
+        let encoded = serde_json::to_value(&allocated_empty).unwrap();
+        assert_eq!(encoded["dependences"], serde_json::json!({}));
+        let decoded: ColumnInfo = serde_json::from_value(encoded).unwrap();
+        assert!(decoded.dependences.is_allocated());
+        assert!(decoded.dependences.is_empty());
+
         // Both signs and integers beyond float64's exact-integer range follow
         // the concrete type produced by Go's `any` decoder.
         assert_eq!(
@@ -1030,6 +1224,51 @@ mod tests {
         };
         let encoded = String::from_utf8(crate::serde_helpers::to_go_json(&html).unwrap()).unwrap();
         assert!(encoded.contains(r#""generated_expr_string":"a \u003c 1 \u0026\u0026 b \u003e 0""#));
+    }
+
+    #[test]
+    fn column_json_merges_maps_pointers_and_later_members_like_go() {
+        use crate::serde_helpers::GoJsonMerge;
+
+        let mut column = ColumnInfo {
+            id: 7,
+            default_value_bit: Some(vec![1]),
+            dependences: GoStringSet::allocated(["kept".to_owned()]),
+            change_state_info: Some(ChangeStateInfo {
+                dependency_column_offset: 5,
+            }),
+            ..Default::default()
+        };
+        let mut decoder = serde_json::Deserializer::from_str(
+            r#"{
+                "id":null,
+                "default_bit":"not base64",
+                "DEPENDENCES":{"added":{}},
+                "change_state_info":{},
+                "COMMENT":"later"
+            }"#,
+        );
+        assert!(column.go_json_merge(&mut decoder).is_err());
+        assert_eq!(column.id, 7);
+        assert_eq!(column.default_value_bit, Some(vec![1]));
+        assert!(column.dependences.contains("kept"));
+        assert!(column.dependences.contains("added"));
+        assert_eq!(
+            column
+                .change_state_info
+                .as_ref()
+                .unwrap()
+                .dependency_column_offset,
+            5
+        );
+        assert_eq!(column.comment, "later");
+
+        let mut decoder = serde_json::Deserializer::from_str(
+            r#"{"dependences":{"temporary":{}},"DEPENDENCES":null}"#,
+        );
+        column.go_json_merge(&mut decoder).unwrap();
+        assert!(!column.dependences.is_allocated());
+        assert!(column.dependences.is_empty());
     }
 
     #[test]

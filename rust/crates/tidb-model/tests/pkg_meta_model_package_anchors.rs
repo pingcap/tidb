@@ -262,8 +262,10 @@ fn pkg_meta_model_probe_column_representation_boundaries() {
     } else {
         "owned-deep-map"
     };
-    let empty_mode = if ColumnInfo::default().dependences.is_empty() {
-        "one-empty-set-state"
+    let empty_mode = if !ColumnInfo::default().dependences.is_allocated()
+        && tidb_model::column::GoStringSet::allocated(std::iter::empty()).is_allocated()
+    {
+        "nil-and-allocated-empty"
     } else {
         "unexpected-nonempty-set"
     };
@@ -281,7 +283,7 @@ fn pkg_meta_model_probe_column_representation_boundaries() {
     };
     observation_emitter::emit(
         "MODEL-COLUMN-REPRESENTATION",
-        "Rust column ownership preserves the complete Go uint flag word but cannot expose Go shallow map identity, nil maps, or arbitrary pre-JSON interface values",
+        "Rust column ownership preserves the complete Go uint flag word and nil/allocated map states but cannot expose Go shallow map identity or arbitrary pre-JSON interface values",
         &[
             ("clone-map-alias", "mutate-source-dependences", clone_mode),
             ("dependency-allocation", "nil-versus-empty-map", empty_mode),
