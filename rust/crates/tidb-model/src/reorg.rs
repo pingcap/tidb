@@ -29,7 +29,10 @@ use crate::job::{JobMeta, TimeZoneLocation};
     Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
 )]
 #[serde(transparent)]
-pub struct BackfillState(pub u8);
+pub struct BackfillState(
+    /// Persisted state ordinal.
+    pub u8,
+);
 
 impl BackfillState {
     /// The backfill-merge process is not used (Go `BackfillStateInapplicable`,
@@ -62,7 +65,10 @@ impl std::fmt::Display for BackfillState {
     Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
 )]
 #[serde(transparent)]
-pub struct ReorgStage(pub u8);
+pub struct ReorgStage(
+    /// Persisted stage ordinal.
+    pub u8,
+);
 
 static DDL_REORG_WORKER_COUNT: AtomicI64 = AtomicI64::new(4);
 static DDL_REORG_BATCH_SIZE: AtomicI64 = AtomicI64::new(256);
@@ -80,32 +86,46 @@ pub fn set_ddl_reorg_process_defaults(worker_count: i64, batch_size: i64) {
 /// hierarchy.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct DDLReorgMeta {
+    /// SQL mode captured for reorganization expression evaluation.
     #[serde(rename = "sql_mode", default)]
     pub sql_mode: u64,
+    /// Warning payloads keyed by TiDB error identifier.
     #[serde(rename = "warnings", default)]
     pub warnings: Option<BTreeMap<String, serde_json::Value>>,
+    /// Warning occurrence counts keyed by TiDB error identifier.
     #[serde(rename = "warnings_count", default)]
     pub warnings_count: Option<BTreeMap<String, i64>>,
+    /// Time zone captured for reorganization expression evaluation.
     #[serde(rename = "location", default)]
     pub location: Option<TimeZoneLocation>,
+    /// Reorganization strategy.
     #[serde(rename = "reorg_tp", default)]
     pub reorg_type: ReorgType,
+    /// Whether fast ingest reorganization is enabled.
     #[serde(rename = "is_fast_reorg", default)]
     pub is_fast_reorg: bool,
+    /// Whether distributed reorganization is enabled.
     #[serde(rename = "is_dist_reorg", default)]
     pub is_dist_reorg: bool,
+    /// Whether reorganization uses cloud storage.
     #[serde(rename = "use_cloud_storage", default)]
     pub use_cloud_storage: bool,
+    /// Resource group assigned to the reorganization.
     #[serde(rename = "resource_group_name", default)]
     pub resource_group_name: String,
+    /// Persisted reorganization metadata version.
     #[serde(rename = "version", default)]
     pub version: i64,
+    /// Store-label scope targeted by the job.
     #[serde(rename = "target_scope", default)]
     pub target_scope: String,
+    /// Maximum number of nodes used by distributed reorganization.
     #[serde(rename = "max_node_count", default)]
     pub max_node_count: i64,
+    /// Analyze phase state stored with modify-column work.
     #[serde(rename = "analyze_state", default)]
     pub analyze_state: i8,
+    /// Current reorganization stage.
     #[serde(rename = "stage", default)]
     pub stage: ReorgStage,
     #[serde(
@@ -113,6 +133,7 @@ pub struct DDLReorgMeta {
         default,
         skip_serializing_if = "Option::is_none"
     )]
+    /// Captured collation mode; `None` requests the caller-provided fallback.
     pub use_new_collate: Option<bool>,
     #[serde(rename = "concurrency", default)]
     concurrency: i64,
@@ -125,6 +146,7 @@ pub struct DDLReorgMeta {
 impl DDLReorgMeta {
     /// Go `ShallowCopy`. Rust's owned warning maps are copied rather than
     /// aliased; all persisted values and mutations remain independent.
+    /// Returns persisted concurrency, or the current process default when zero.
     #[must_use]
     pub fn shallow_copy(&self) -> Self {
         self.clone()
@@ -139,10 +161,12 @@ impl DDLReorgMeta {
         }
     }
 
+    /// Stores dynamic reorganization concurrency.
     pub fn set_concurrency(&mut self, concurrency: i64) {
         self.concurrency = concurrency;
     }
 
+    /// Returns persisted batch size, or the current process default when zero.
     #[must_use]
     pub fn get_batch_size(&self) -> i64 {
         if self.batch_size == 0 {
@@ -152,24 +176,29 @@ impl DDLReorgMeta {
         }
     }
 
+    /// Stores dynamic reorganization batch size.
     pub fn set_batch_size(&mut self, batch_size: i64) {
         self.batch_size = batch_size;
     }
 
+    /// Returns the maximum write speed, where zero means unlimited.
     #[must_use]
     pub fn get_max_write_speed(&self) -> i64 {
         self.max_write_speed
     }
 
+    /// Stores the maximum reorganization write speed.
     pub fn set_max_write_speed(&mut self, max_write_speed: i64) {
         self.max_write_speed = max_write_speed;
     }
 
+    /// Returns the captured collation mode or `default_value` for old metadata.
     #[must_use]
     pub fn get_use_new_collate_or_default(&self, default_value: bool) -> bool {
         self.use_new_collate.unwrap_or(default_value)
     }
 
+    /// Captures the collation mode for persisted reorganization work.
     pub fn set_use_new_collate(&mut self, use_new_collate: bool) {
         self.use_new_collate = Some(use_new_collate);
     }
@@ -192,7 +221,10 @@ impl ReorgStage {
     Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
 )]
 #[serde(transparent)]
-pub struct ReorgType(pub i8);
+pub struct ReorgType(
+    /// Persisted strategy ordinal.
+    pub i8,
+);
 
 impl ReorgType {
     /// No reorganization (Go `ReorgTypeNone`, the zero value).
@@ -249,42 +281,43 @@ pub mod analyze_state {
 /// Go `BackfillMeta` and its JSON codec.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct BackfillMeta {
+    /// Whether the backfilled index enforces uniqueness.
     #[serde(rename = "is_unique", default)]
     pub is_unique: bool,
+    /// Whether the end key belongs to the backfill range.
     #[serde(rename = "end_include", default)]
     pub end_include: bool,
+    /// Persisted backfill error payload.
     #[serde(rename = "err", default)]
     pub error: Option<serde_json::Value>,
+    /// SQL mode captured for backfill evaluation.
     #[serde(rename = "sql_mode", default)]
     pub sql_mode: u64,
+    /// Warning payloads keyed by TiDB error identifier.
     #[serde(rename = "warnings", default)]
     pub warnings: Option<BTreeMap<String, serde_json::Value>>,
+    /// Warning occurrence counts keyed by TiDB error identifier.
     #[serde(rename = "warnings_count", default)]
     pub warnings_count: Option<BTreeMap<String, i64>>,
+    /// Time zone captured for backfill evaluation.
     #[serde(rename = "location", default)]
     pub location: Option<TimeZoneLocation>,
+    /// Backfill reorganization strategy.
     #[serde(rename = "reorg_tp", default)]
     pub reorg_type: ReorgType,
+    /// Rows processed by the backfill task.
     #[serde(rename = "row_count", default)]
     pub row_count: i64,
-    #[serde(
-        rename = "start_key",
-        default,
-        with = "crate::serde_helpers::go_bytes"
-    )]
+    #[serde(rename = "start_key", default, with = "crate::serde_helpers::go_bytes")]
+    /// Inclusive start key, preserving nil versus allocated-empty bytes.
     pub start_key: Option<Vec<u8>>,
-    #[serde(
-        rename = "end_key",
-        default,
-        with = "crate::serde_helpers::go_bytes"
-    )]
+    #[serde(rename = "end_key", default, with = "crate::serde_helpers::go_bytes")]
+    /// End key, preserving nil versus allocated-empty bytes.
     pub end_key: Option<Vec<u8>>,
-    #[serde(
-        rename = "curr_key",
-        default,
-        with = "crate::serde_helpers::go_bytes"
-    )]
+    #[serde(rename = "curr_key", default, with = "crate::serde_helpers::go_bytes")]
+    /// Current progress key, preserving nil versus allocated-empty bytes.
     pub current_key: Option<Vec<u8>>,
+    /// Embedded subset of the owning DDL job metadata.
     #[serde(rename = "job_meta", default)]
     pub job_meta: Option<JobMeta>,
 }
@@ -409,8 +442,7 @@ mod tests {
         ] {
             assert!(serde_json::from_str::<BackfillMeta>(invalid).is_err());
         }
-        let with_newline: BackfillMeta =
-            serde_json::from_str(r#"{"start_key":"AA\nH/"}"#).unwrap();
+        let with_newline: BackfillMeta = serde_json::from_str(r#"{"start_key":"AA\nH/"}"#).unwrap();
         assert_eq!(with_newline.start_key, Some(vec![0, 1, 255]));
 
         let escaped = BackfillMeta {
