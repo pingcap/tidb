@@ -459,6 +459,11 @@ type stmtFile struct {
 	end   int64
 }
 
+// openStmtFileFn is the openable of statement files. It is a package-level
+// variable so that tests can observe file lifetimes (e.g., verify that files
+// excluded by time range are closed rather than leaked in V2-17).
+var openStmtFileFn = openStmtFile
+
 func openStmtFile(path string) (*stmtFile, error) {
 	file, err := os.OpenFile(path, os.O_RDONLY, os.ModePerm)
 	if err != nil {
@@ -509,15 +514,22 @@ func parseBeginTsAndReseek(file *os.File) (int64, error) {
 }
 
 func parseEndTs(file *os.File) (int64, error) {
-	// tidb-statements.log
-	filename := config.GetGlobalConfig().Instance.StmtSummaryFilename
-	// .log
-	ext := filepath.Ext(filename)
-	// tidb-statements
-	prefix := filename[:len(filename)-len(ext)]
+	// The configured filename may be an absolute path; only its basename is
+	// meaningful for the rotated-name prefix. Computing the prefix from the
+	// full configured path made HasPrefix compare against paths like
+	// "/tmp/x/tidb-statements" while the rotated base name is
+	// "tidb-statements-2022-...". The check never matched and parseEndTs
+	// silently returned 0, which downstream behaves like MaxInt64 in
+	// timeRangeOverlap and effectively disables file-level time-range pruning
+	// (V2-19). Compute everything against the basename so absolute-path and
+	// relative-path configurations behave identically.
+	configured := config.GetGlobalConfig().Instance.StmtSummaryFilename
+	base := filepath.Base(configured)
+	ext := filepath.Ext(base)
+	prefix := base[:len(base)-len(ext)]
 
 	// tidb-statements-2022-12-27T16-21-20.245.log
-	filename = filepath.Base(file.Name())
+	filename := filepath.Base(file.Name())
 	// .log
 	ext = filepath.Ext(file.Name())
 	// tidb-statements-2022-12-27T16-21-20.245
@@ -561,11 +573,18 @@ func newStmtFiles(ctx context.Context, timeRanges []*StmtTimeRange) (*stmtFiles,
 		if isCtxDone(ctx) {
 			return ctx.Err()
 		}
-		file, err := openStmtFile(path)
+		file, err := openStmtFileFn(path)
 		if err != nil {
 			logutil.BgLogger().Warn("failed to open or parse statements file", zap.Error(err), zap.String("path", path))
 			return nil
 		}
+		// Closing the file is the caller's responsibility in every non-keep
+		// branch below. Historically files that fell out of the time range (or
+		// were dropped on context cancellation) were opened and then silently
+		// forgotten, leaking OS FDs for the lifetime of the reader (V2-17). The
+		// outer err-handler on `dir` enumeration only knows about files already
+		// appended to `files`, so any FD opened here but not stored must be
+		// released by this closure before returning.
 		if len(timeRanges) == 0 {
 			files = append(files, file)
 			return nil
@@ -576,6 +595,9 @@ func newStmtFiles(ctx context.Context, timeRanges []*StmtTimeRange) (*stmtFiles,
 				return nil
 			}
 		}
+		// Time range excluded this file: it was opened just to read its begin/end
+		// metadata, close it now so we do not hold an FD until process exit.
+		_ = file.close()
 		return nil
 	}
 

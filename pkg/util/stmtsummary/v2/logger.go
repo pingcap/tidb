@@ -35,19 +35,28 @@ type stmtLogStorage struct {
 	logger *zap.Logger
 }
 
-func newStmtLogStorage(cfg *log.Config) *stmtLogStorage {
+// newStmtLogStorage builds the file-backed logger used to persist statement
+// summary window rotations. Backpressure-free behavior here is critical: when
+// logger initialization fails we MUST surface the error to the caller (the
+// static Setup path in main). A silent fallback to zap.NewNop() would make
+// persistent mode look enabled while silently dropping every rotated window,
+// so we fail closed instead and let Setup refuse to register the global
+// StmtSummary instance.
+func newStmtLogStorage(cfg *log.Config) (*stmtLogStorage, error) {
 	// Create the stmt logger
 	logger, prop, err := log.InitLogger(cfg)
 	if err != nil {
-		logutil.BgLogger().Error("failed to init logger", zap.Error(err))
-		return &stmtLogStorage{logger: zap.NewNop()}
+		// Keep the contextual log so operators can see why initialization failed
+		// even though the global state is being rejected.
+		logutil.BgLogger().Error("failed to init statement summary logger", zap.Error(err))
+		return nil, fmt.Errorf("stmtsummary: init statement summary logger: %w", err)
 	}
 	// Replace 2018-12-19-unified-log-format text encoder with statements encoder
 	newCore := log.NewTextCore(&stmtLogEncoder{}, prop.Syncer, prop.Level)
 	logger = logger.WithOptions(zap.WrapCore(func(zapcore.Core) zapcore.Core {
 		return newCore
 	}))
-	return &stmtLogStorage{logger}
+	return &stmtLogStorage{logger: logger}, nil
 }
 
 func (s *stmtLogStorage) persist(w *stmtWindow, end time.Time) {

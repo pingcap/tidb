@@ -19,9 +19,11 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -457,4 +459,165 @@ func readAllRows(t *testing.T, reader *HistoryReader) [][]types.Datum {
 		results = append(results, rows...)
 	}
 	return results
+}
+
+// TestStmtFilesClosesExcludedFDs closes V2-17 of the statement-summary audit:
+// the directory walk opened every candidate file to read its begin/end metadata
+// and, when a file was excluded by the requested time range, returned without
+// closing the OS FD. Over a long-running TiDB process with on-disk history
+// pruning this leaks one FD per excluded file until the process runs out of
+// file descriptors.
+//
+// The test axiomatically observes file lifetimes by wrapping openStmtFileFn:
+// every opened *os.File is recorded. After newStmtFiles returns, the test
+// double-closes each recorded FD. On a *os.File, calling Close a second time
+// returns os.ErrClosed iff the first Close already ran. Therefore:
+//   - excluded file FDs MUST report os.ErrClosed (closed by the fix);
+//   - kept file FDs MUST NOT report os.ErrClosed (still owned by the reader,
+//     closed later via stmtFiles.close()).
+//
+// On the buggy code the excluded FDs were never closed, so the rechsurClose
+// attempt returns nil and the test fails.
+func TestStmtFilesClosesExcludedFDs(t *testing.T) {
+	t1 := time.Date(2022, 12, 27, 16, 21, 20, 245000000, time.Local)
+	rotated := "tidb-statements-2022-12-27T16-21-20.245.log"
+	active := "tidb-statements.log"
+
+	require.NoError(t, writeStmtFile(rotated, t1.Unix()-10, t1.Unix()))
+	t.Cleanup(func() { _ = os.Remove(rotated) })
+	require.NoError(t, writeStmtFile(active, t1.Unix()+100, t1.Unix()+110))
+	t.Cleanup(func() { _ = os.Remove(active) })
+
+	var opened []*os.File
+	orig := openStmtFileFn
+	openStmtFileFn = func(path string) (*stmtFile, error) {
+		f, err := orig(path)
+		if f != nil {
+			opened = append(opened, f.file)
+		}
+		return f, err
+	}
+	t.Cleanup(func() { openStmtFileFn = orig })
+
+	// Time range excludes BOTH files: any FD opened during enumeration must be
+	// released before newStmtFiles returns.
+	files, err := newStmtFiles(context.Background(), []*StmtTimeRange{
+		{Begin: 0, End: 1},
+	})
+	require.NoError(t, err)
+	defer files.close()
+	require.Empty(t, files.files)
+
+	require.NotEmpty(t, opened, "test setup: openStmtFile was not invoked")
+	for _, f := range opened {
+		// Second close on an already-closed *os.File returns os.ErrClosed.
+		// Every FD we observed must already be closed, proving walkFn did not
+		// leak a descriptor for an excluded file.
+		err := f.Close()
+		require.ErrorIs(t, err, os.ErrClosed, "excluded statement file FD was not closed (V2-17 FD leak)")
+	}
+}
+
+// TestStmtFilesKeepsOpenFDsForSelectedFiles guards the inverse of V2-17: when a
+// file IS selected by the time range, its FD MUST remain open so the reader
+// can stream rows from it. A regression that over-eagerly closes selected FDs
+// along with excluded ones would surface here as a Stat failure.
+func TestStmtFilesKeepsOpenFDsForSelectedFiles(t *testing.T) {
+	t1 := time.Date(2022, 12, 27, 16, 21, 20, 245000000, time.Local)
+	rotated := "tidb-statements-2022-12-27T16-21-20.245.log"
+
+	require.NoError(t, writeStmtFile(rotated, t1.Unix()-10, t1.Unix()))
+	t.Cleanup(func() { _ = os.Remove(rotated) })
+
+	files, err := newStmtFiles(context.Background(), []*StmtTimeRange{
+		{Begin: t1.Unix() - 10, End: t1.Unix()},
+	})
+	require.NoError(t, err)
+	defer files.close()
+	require.Len(t, files.files, 1)
+
+	// The retained FD must still be usable: Stat on an already-closed *os.File
+	// returns os.ErrClosed, so a passing Stat proves it is open.
+	_, err = files.files[0].file.Stat()
+	require.NoError(t, err, "selected statement file FD must remain open for the reader")
+}
+
+func writeStmtFile(name string, begin, end int64) error {
+	f, err := os.Create(name)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if _, err := fmt.Fprintf(f, "{\"begin\":%d,\"end\":%d}\n", begin, end); err != nil {
+		return err
+	}
+	return nil
+}
+
+// TestStmtFileParseEndTsAbsoluteConfiguredFilename closes V2-19 of the
+// statement-summary audit: when tidb_stmt_summary_filename is configured as an
+// absolute path, parseEndTs built the rotated-name prefix from the *full*
+// configured path (e.g. "/tmp/x/tidb-statements") and then compared it against
+// the rotated file's basename (e.g. "tidb-statements-2022-12-27T16-21-20.245").
+// The HasPrefix check never matched, so parseEndTs silently returned 0, which
+// downstream treated as MaxInt64 in timeRangeOverlap - effectively disabling
+// time-range filtering for the absolute-path configuration.
+//
+// The regression test pinpoints the broken operation: with the configured
+// filename set to an absolute path, opening the rotated sibling file MUST yield
+// an `end` timestamp parsed from the filename suffix (not 0). The buggy code
+// leaves end == 0 and the test fails.
+func TestStmtFileParseEndTsAbsoluteConfiguredFilename(t *testing.T) {
+	dir := t.TempDir()
+	const shortName = "tidb-statements"
+	endTime := time.Date(2022, 12, 27, 16, 21, 20, 245000000, time.Local)
+
+	// Configure the *absolute* filename so the bug surface triggers.
+	restore := config.RestoreFunc()
+	t.Cleanup(restore)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Instance.StmtSummaryFilename = filepath.Join(dir, shortName+".log")
+	})
+
+	// Create a rotated sibling with the timestamp suffix; lumberjack format.
+	rotated := filepath.Join(dir, shortName+"-2022-12-27T16-21-20.245.log")
+	require.NoError(t, writeStmtFile(rotated, endTime.Unix()-10, endTime.Unix()))
+	t.Cleanup(func() { _ = os.Remove(rotated) })
+
+	f, err := openStmtFile(rotated)
+	require.NoError(t, err)
+	defer func() { _ = f.close() }()
+	require.Equal(t, endTime.Unix(), f.end, "V2-19: end timestamp from rotated filename must parse under absolute-path config")
+}
+
+// TestStmtFilesTimeRangeFiltersWithAbsoluteConfiguredFilename asserts that with
+// an absolute configured filename, newStmtFiles' time-range filtering actually
+// prunes rotated siblings outside the range. Under the V2-19 bug, every rotated
+// file's end was 0 (MaxInt64+) and the exclusion did not take effect.
+func TestStmtFilesTimeRangeFiltersWithAbsoluteConfiguredFilename(t *testing.T) {
+	dir := t.TempDir()
+	const shortName = "tidb-statements"
+	endTime := time.Date(2022, 12, 27, 16, 21, 20, 245000000, time.Local)
+
+	restore := config.RestoreFunc()
+	t.Cleanup(restore)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Instance.StmtSummaryFilename = filepath.Join(dir, shortName+".log")
+	})
+
+	rotated := filepath.Join(dir, shortName+"-2022-12-27T16-21-20.245.log")
+	require.NoError(t, writeStmtFile(rotated, endTime.Unix()-10, endTime.Unix()))
+	t.Cleanup(func() { _ = os.Remove(rotated) })
+
+	// Request a range that sits strictly AFTER the rotated file's real end.
+	// With the V2-19 bug the file's end parsed as 0, which timeRangeOverlap
+	// treats as MaxInt64, so the file's effective range becomes [begin, +inf)
+	// and it would be wrongly included by this query. After the fix, the file's
+	// real end is used and the file is excluded as expected.
+	files, err := newStmtFiles(context.Background(), []*StmtTimeRange{
+		{Begin: endTime.Unix() + 100, End: endTime.Unix() + 200},
+	})
+	require.NoError(t, err)
+	defer files.close()
+	require.Empty(t, files.files, "V2-19: rotated file fully after the requested range must be filtered when config is absolute")
 }
