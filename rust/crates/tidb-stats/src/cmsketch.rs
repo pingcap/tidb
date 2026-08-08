@@ -1189,12 +1189,12 @@ fn encode_cmsketch_proto_without_sketch(topn: Option<&TopN>) -> Vec<u8> {
 
 fn read_varint(input: &[u8], cursor: &mut usize) -> Result<u64, CodecError> {
     let mut value = 0_u64;
+    // Generated gogoprotobuf checks for shift >= 64 only before each byte.
+    // It therefore accepts any terminal tenth byte and lets the u64 shift
+    // discard high bits; a continued tenth byte overflows on the next loop.
     for shift in (0..70).step_by(7) {
         let byte = *input.get(*cursor).ok_or(CodecError::UnexpectedEof)?;
         *cursor += 1;
-        if shift == 63 && byte > 1 {
-            return Err(CodecError::VarintOverflow);
-        }
         value |= u64::from(byte & 0x7f) << shift;
         if byte & 0x80 == 0 {
             return Ok(value);
@@ -1214,55 +1214,57 @@ fn read_bytes<'a>(input: &'a [u8], cursor: &mut usize) -> Result<&'a [u8], Codec
     Ok(bytes)
 }
 
-fn read_tag(input: &[u8], cursor: &mut usize) -> Result<(u64, u8), CodecError> {
+fn read_tag(input: &[u8], cursor: &mut usize) -> Result<(i32, u8), CodecError> {
     let tag = read_varint(input, cursor)?;
-    let field = tag >> 3;
+    // The generated gogoprotobuf decoder converts the decoded field number to
+    // int32 before rejecting non-positive tags.
+    let field = (tag >> 3) as i32;
     let wire = (tag & 7) as u8;
-    if field == 0 || i32::try_from(field).is_err() {
+    if field <= 0 {
         return Err(CodecError::InvalidWireType(wire));
     }
     Ok((field, wire))
 }
 
-fn skip_field(input: &[u8], cursor: &mut usize, field: u64, wire: u8) -> Result<(), CodecError> {
-    match wire {
-        0 => {
-            read_varint(input, cursor)?;
-            Ok(())
-        }
-        1 => {
-            *cursor = cursor.checked_add(8).ok_or(CodecError::UnexpectedEof)?;
-            if *cursor > input.len() {
-                Err(CodecError::UnexpectedEof)
-            } else {
-                Ok(())
+fn skip_field(input: &[u8], cursor: &mut usize, mut wire: u8) -> Result<(), CodecError> {
+    // This intentionally mirrors generated skipAnalyze: groups are balanced
+    // only by depth. The generated code neither compares the closing field
+    // number with the opener nor validates nested field numbers while it is
+    // skipping an unknown group.
+    let mut depth = 0_u32;
+    loop {
+        match wire {
+            0 => {
+                read_varint(input, cursor)?;
             }
-        }
-        2 => {
-            read_bytes(input, cursor)?;
-            Ok(())
-        }
-        3 => loop {
-            let (nested_field, nested_wire) = read_tag(input, cursor)?;
-            if nested_wire == 4 {
-                return if nested_field == field {
-                    Ok(())
-                } else {
-                    Err(CodecError::InvalidWireType(nested_wire))
-                };
+            1 => {
+                *cursor = cursor.checked_add(8).ok_or(CodecError::UnexpectedEof)?;
+                if *cursor > input.len() {
+                    return Err(CodecError::UnexpectedEof);
+                }
             }
-            skip_field(input, cursor, nested_field, nested_wire)?;
-        },
-        4 => Err(CodecError::InvalidWireType(wire)),
-        5 => {
-            *cursor = cursor.checked_add(4).ok_or(CodecError::UnexpectedEof)?;
-            if *cursor > input.len() {
-                Err(CodecError::UnexpectedEof)
-            } else {
-                Ok(())
+            2 => {
+                read_bytes(input, cursor)?;
             }
+            3 => depth += 1,
+            4 => {
+                if depth == 0 {
+                    return Err(CodecError::InvalidWireType(wire));
+                }
+                depth -= 1;
+            }
+            5 => {
+                *cursor = cursor.checked_add(4).ok_or(CodecError::UnexpectedEof)?;
+                if *cursor > input.len() {
+                    return Err(CodecError::UnexpectedEof);
+                }
+            }
+            wire => return Err(CodecError::InvalidWireType(wire)),
         }
-        wire => Err(CodecError::InvalidWireType(wire)),
+        if depth == 0 {
+            return Ok(());
+        }
+        wire = (read_varint(input, cursor)? & 7) as u8;
     }
 }
 
@@ -1285,7 +1287,7 @@ fn decode_row(input: &[u8]) -> Result<Vec<u32>, CodecError> {
                 }
             }
             1 => return Err(CodecError::InvalidWireType(wire)),
-            _ => skip_field(input, &mut cursor, field, wire)?,
+            _ => skip_field(input, &mut cursor, wire)?,
         }
     }
     Ok(counters)
@@ -1302,7 +1304,7 @@ fn decode_topn_entry(input: &[u8]) -> Result<TopNEntry, CodecError> {
             1 => return Err(CodecError::InvalidWireType(wire)),
             2 if wire == 0 => count = read_varint(input, &mut cursor)?,
             2 => return Err(CodecError::InvalidWireType(wire)),
-            _ => skip_field(input, &mut cursor, field, wire)?,
+            _ => skip_field(input, &mut cursor, wire)?,
         }
     }
     Ok(TopNEntry { encoded, count })
@@ -1324,7 +1326,7 @@ fn decode_proto(input: &[u8]) -> Result<DecodedSketch, CodecError> {
             2 => return Err(CodecError::InvalidWireType(wire)),
             3 if wire == 0 => default_value = read_varint(input, &mut cursor)?,
             3 => return Err(CodecError::InvalidWireType(wire)),
-            _ => skip_field(input, &mut cursor, field, wire)?,
+            _ => skip_field(input, &mut cursor, wire)?,
         }
     }
     Ok((rows, topn, default_value))

@@ -1375,36 +1375,85 @@ fn source_decoder_accepts_packed_counter_wire_form() {
 }
 
 #[test]
-fn source_decoder_rejects_illegal_tags_overflow_and_known_wrong_wires() {
-    for malformed in [
-        &[0x00, 0x00][..],
-        &[0x1a, 0x00][..],
-        &[0x0a, 0x05, 0x0d, 0, 0, 0, 0][..],
-        &[0x12, 0x02, 0x08, 0x00][..],
+fn source_decoder_rejects_tag_zero_and_known_field_wrong_wires() {
+    for (malformed, expected_wire) in [
+        (&[0x00, 0x00][..], 0),
+        (&[0x08, 0x00][..], 0),
+        (&[0x10, 0x00][..], 0),
+        (&[0x1a, 0x00][..], 2),
+        (&[0x0a, 0x01, 0x0d][..], 5),
+        (&[0x12, 0x02, 0x08, 0x00][..], 0),
+        (&[0x12, 0x02, 0x12, 0x00][..], 2),
+        (&[0x0a, 0x01, 0x00][..], 0),
+        (&[0x12, 0x01, 0x00][..], 0),
     ] {
-        assert!(matches!(
-            decode_cmsketch_and_embedded_topn(malformed),
-            Err(CodecError::InvalidWireType(_))
-        ));
+        assert_eq!(
+            decode_cmsketch_and_embedded_topn(malformed).unwrap_err(),
+            CodecError::InvalidWireType(expected_wire)
+        );
     }
-    assert_eq!(
-        decode_cmsketch_and_embedded_topn(&[
-            0x18, 0x82, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x02,
-        ])
-        .unwrap_err(),
-        CodecError::VarintOverflow
-    );
-
-    let balanced_unknown_group = [0x23, 0x28, 0x01, 0x24, 0x18, 0x00];
-    assert!(decode_cmsketch_and_embedded_topn(&balanced_unknown_group).is_ok());
-    assert!(matches!(
-        decode_cmsketch_and_embedded_topn(&[0x24]),
-        Err(CodecError::InvalidWireType(4))
-    ));
 }
 
 #[test]
-fn source_decoder_accepts_short_rows_and_panics_on_long_later_rows() {
+fn source_decoder_matches_generated_go_tenth_byte_varint_rules() {
+    // Generated gogoprotobuf accepts a terminal tenth byte greater than one.
+    // Its uint64 shift truncates those high bits, leaving the low value two.
+    let terminal_tenth_byte = [
+        0x0a, 0x02, 0x08, 0x01, 0x18, 0x82, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x02,
+    ];
+    let sketch = decode_cmsketch(&terminal_tenth_byte)
+        .expect("terminal tenth byte is accepted")
+        .expect("one row");
+    assert_eq!(sketch.default_value(), 2);
+
+    // A continued tenth byte advances the generated loop to shift 70, where
+    // it reports integer overflow before attempting to read an eleventh byte.
+    let mut continued_tenth_byte = vec![0x18];
+    continued_tenth_byte.extend([0x80; 10]);
+    assert_eq!(
+        decode_cmsketch_and_embedded_topn(&continued_tenth_byte).unwrap_err(),
+        CodecError::VarintOverflow
+    );
+}
+
+#[test]
+fn source_decoder_balances_unknown_groups_by_depth_only() {
+    // skipAnalyze accepts mismatched end-group field numbers. Only depth is
+    // tracked: fields 6 and 7 close groups opened by fields 5 and 4.
+    let mismatched_but_balanced = [0x23, 0x2b, 0x34, 0x3c, 0x0a, 0x02, 0x08, 0x09, 0x18, 0x07];
+    let sketch = decode_cmsketch(&mismatched_but_balanced)
+        .expect("balanced unknown groups")
+        .expect("row after group");
+    assert_eq!(sketch.counter_at(0, 0), Some(9));
+    assert_eq!(sketch.default_value(), 7);
+
+    // Nested tag zero is not validated while generated skipAnalyze is inside
+    // an unknown group; it is treated as wire-zero plus its following value.
+    let nested_tag_zero = [0x23, 0x00, 0x00, 0x24, 0x18, 0x00];
+    assert!(decode_cmsketch_and_embedded_topn(&nested_tag_zero).is_ok());
+    assert_eq!(
+        decode_cmsketch_and_embedded_topn(&[0x23]).unwrap_err(),
+        CodecError::UnexpectedEof
+    );
+    assert_eq!(
+        decode_cmsketch_and_embedded_topn(&[0x24]).unwrap_err(),
+        CodecError::InvalidWireType(4)
+    );
+}
+
+#[test]
+fn source_decoder_finishes_wire_parse_before_converting_row_shapes() {
+    assert_eq!(decode_cmsketch(&[]), Ok(None));
+    assert_eq!(decode_cmsketch(&[0x18, 0x00]), Ok(None));
+
+    // A present row with no counters is distinct from a message with no rows.
+    let empty_row = decode_cmsketch(&[0x0a, 0x00, 0x18, 0x07])
+        .unwrap()
+        .expect("one empty row");
+    assert_eq!((empty_row.depth(), empty_row.width()), (1, 0));
+    assert_eq!(empty_row.total_count(), 0);
+    assert_eq!(empty_row.default_value(), 7);
+
     // First row width two, second row width one: Go leaves the missing cell 0.
     let shorter = [
         0x0a, 0x04, 0x08, 0x01, 0x08, 0x02, 0x0a, 0x02, 0x08, 0x03, 0x18, 0x00,
@@ -1420,4 +1469,22 @@ fn source_decoder_accepts_short_rows_and_panics_on_long_later_rows() {
     ];
     let panic = std::panic::catch_unwind(|| decode_cmsketch(&longer));
     assert!(panic.is_err());
+
+    // Unmarshal finishes before DecodeCMSketch copies row counters. A later
+    // wire error therefore wins over the longer-row index panic.
+    let wrong_wire_after_longer_row = [
+        0x0a, 0x02, 0x08, 0x01, 0x0a, 0x04, 0x08, 0x02, 0x08, 0x03, 0x1a, 0x00,
+    ];
+    assert!(matches!(
+        std::panic::catch_unwind(|| decode_cmsketch(&wrong_wire_after_longer_row)),
+        Ok(Err(CodecError::InvalidWireType(2)))
+    ));
+
+    let truncated_varint_after_longer_row = [
+        0x0a, 0x02, 0x08, 0x01, 0x0a, 0x04, 0x08, 0x02, 0x08, 0x03, 0x18, 0x80,
+    ];
+    assert!(matches!(
+        std::panic::catch_unwind(|| decode_cmsketch(&truncated_varint_after_longer_row)),
+        Ok(Err(CodecError::UnexpectedEof))
+    ));
 }
