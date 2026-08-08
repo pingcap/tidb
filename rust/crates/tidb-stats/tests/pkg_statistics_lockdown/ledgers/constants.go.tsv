@@ -1,0 +1,4 @@
+# go-package-lockdown-ledger-v2
+obligation_id	category	source_path	ast_anchor	node_sha256	owner	source_blob_sha256	status	symbol_id	evidence	rule_id
+Ofd12db8d8950e293	const	pkg/statistics/constants.go	const:DefaultHistogramBuckets:0	bb8b2e81d05297e70a0cf84f48ac190131e4a89b333e37b235bdfc937d238aed	const:DefaultHistogramBuckets:0	17f03a3802386c56871c7277882c10ef12dc67bf61441fc8cf7fa053561c077e	UNCLASSIFIED			
+Ode342b42784922c1	const	pkg/statistics/constants.go	const:DefaultTopNValue:0	7f0253336b0c395f821e5bda694097a0899c57142be1592e8fc086b1d48efb23	const:DefaultTopNValue:0	17f03a3802386c56871c7277882c10ef12dc67bf61441fc8cf7fa053561c077e	UNCLASSIFIED			

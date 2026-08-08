@@ -1,0 +1,2 @@
+# mutation-plan-v1
+mutation_id	cluster_id	rule_ids	baseline_commit	rust_path	source_sha256	runner	test_subject	test_target	named_test	operator_path	operator_sha256
