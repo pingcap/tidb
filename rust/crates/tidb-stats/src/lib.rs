@@ -264,8 +264,8 @@ pub use queue_gate::{
 pub use refresher_state::should_rebuild_queue;
 pub use row_estimate::{calculate_skew_ratio_counts, default_row_est, RowEstimate};
 pub use row_sample_collector::{
-    adjusted_sample_rate, RowSampleCollector, SamplePolicy, SampledRow, ScannedRow, SlotStats,
-    SlotValue, DEF_ROWS_FOR_SAMPLE_RATE,
+    adjusted_sample_rate, RowSampleCollector, RowSampleCollectorProto, RowSampleProto,
+    SamplePolicy, SampledRow, ScannedRow, SlotStats, SlotValue, DEF_ROWS_FOR_SAMPLE_RATE,
 };
 pub use sample_bytes::{
     calc_total_size, sample_value_is_usable, MAX_FIELD_VARCHAR_LENGTH, MAX_SAMPLE_VALUE_LENGTH,
