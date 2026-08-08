@@ -13,11 +13,10 @@
 // limitations under the License.
 
 use tidb_datatype::Datum;
-use tidb_stats::SortedHistogramBuilder;
 
 #[test]
 fn source_first_value_and_repeats_stay_in_one_bucket() {
-    let mut builder = SortedHistogramBuilder::new(2, 7, 2);
+    let mut builder = tidb_stats::sorted_builder::SortedHistogramBuilder::new(2, 7, 2);
     for value in [1, 1, 1] {
         builder.iterate(Datum::Int(value)).unwrap();
     }
@@ -32,7 +31,7 @@ fn source_first_value_and_repeats_stay_in_one_bucket() {
 
 #[test]
 fn source_full_buckets_merge_and_double_capacity() {
-    let mut builder = SortedHistogramBuilder::new(2, 7, 2);
+    let mut builder = tidb_stats::sorted_builder::SortedHistogramBuilder::new(2, 7, 2);
     for value in 1..=8 {
         builder.iterate(Datum::Int(value)).unwrap();
     }
@@ -52,7 +51,7 @@ fn source_full_buckets_merge_and_double_capacity() {
 
 #[test]
 fn source_v1_leaves_bucket_ndv_zero() {
-    let mut builder = SortedHistogramBuilder::new(3, 7, 1);
+    let mut builder = tidb_stats::sorted_builder::SortedHistogramBuilder::new(3, 7, 1);
     for value in 1..=6 {
         builder.iterate(Datum::Int(value)).unwrap();
     }
@@ -62,4 +61,12 @@ fn source_v1_leaves_bucket_ndv_zero() {
         .iter()
         .all(|bucket| bucket.ndv == 0));
     assert_eq!(builder.histogram().ndv, 6);
+}
+
+#[test]
+fn source_negative_bucket_capacity_panics_at_construction() {
+    assert!(std::panic::catch_unwind(|| {
+        tidb_stats::sorted_builder::SortedHistogramBuilder::new(-1, 7, 2)
+    })
+    .is_err());
 }

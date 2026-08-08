@@ -26,8 +26,8 @@ use std::panic::AssertUnwindSafe;
 
 use tidb_datatype::{Datum, VectorFloat32};
 use tidb_stats::builder::{
-    build_column, build_column_histogram, build_hist_and_topn, BuildOptions, ComparedBytesResult,
-    HistogramBuildError, SampleCollector, SampleItem, SequentialRangeChecker,
+    build_column, build_hist_and_topn, BuildOptions, ComparedBytesResult, HistogramBuildError,
+    SampleCollector, SampleItem, SequentialRangeChecker,
 };
 use tidb_util::memory::{Tracker, TRACK_MEM_WHEN_EXCEEDS};
 
@@ -68,14 +68,24 @@ fn collector(values: &[i64]) -> SampleCollector {
 
 #[test]
 fn build_column_hist_uses_explicit_counts_and_clamps_ndv() {
-    let collector = collector(&[3, 1, 2]);
-    let histogram = build_column_histogram(9, &collector, 2, 6, 10, 4);
+    let mut collector = collector(&[3, 1, 2]);
+    let histogram =
+        tidb_stats::builder::try_build_column_histogram_in_place(9, &mut collector, 2, 6, 10, 4)
+            .unwrap();
     assert_eq!(histogram.id, 9);
     assert_eq!(histogram.ndv, 6);
     assert_eq!(histogram.null_count, 4);
     assert_eq!(histogram.tot_col_size, 24);
     assert_eq!(histogram.buckets.last().unwrap().count, 6);
     assert_eq!(histogram.correlation, -0.5);
+    assert_eq!(
+        collector
+            .samples
+            .iter()
+            .map(|sample| int_of(&sample.value))
+            .collect::<Vec<_>>(),
+        [1, 2, 3]
+    );
 }
 
 #[test]
@@ -534,7 +544,7 @@ fn builder_memory_buffer_flushes_below_at_and_above_go_threshold() {
     fn observe(bytes: i64) -> (i64, i64, i64, i64) {
         let tracker = Tracker::new(1, -1);
         let mut buffer = tidb_stats::builder::BuilderMemoryBuffer::new(Some(tracker.clone()));
-        buffer.account_temporary(bytes);
+        tidb_stats::builder::BuilderMemoryBuffer::account_temporary(&mut buffer, bytes);
         let pending_consume = buffer.pending_consume();
         let pending_release = buffer.pending_release();
         let before_final_flush = tracker.max_consumed();
