@@ -212,6 +212,7 @@ pub use healthy_metrics::{
     STATS_HEALTHY_BUCKET_80_TO_100, STATS_HEALTHY_BUCKET_COUNT, STATS_HEALTHY_BUCKET_PSEUDO,
     STATS_HEALTHY_BUCKET_TOTAL, STATS_HEALTHY_BUCKET_UNNEEDED_ANALYZE,
 };
+pub use histogram::{Bucket, Histogram};
 pub use historical_stats::historical_stats_version;
 pub use index::{
     copy_index, index_is_all_evicted, index_stats_validity, Index, IndexInfo, IndexValidity,

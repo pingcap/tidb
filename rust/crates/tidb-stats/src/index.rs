@@ -14,9 +14,10 @@
 
 //! Aggregate index-statistics behavior from `pkg/statistics/index.go`.
 
+use crate::histogram::Histogram;
 use crate::{
-    query_index_bytes, CmsSketch, FmSketch, Histogram, IndexMemUsage, StatsLoadedStatus,
-    TableItemId, TopN, ALL_EVICTED, ALL_LOADED,
+    query_index_bytes, CmsSketch, FmSketch, IndexMemUsage, StatsLoadedStatus, TableItemId, TopN,
+    ALL_EVICTED, ALL_LOADED,
 };
 
 /// The index metadata used directly by `index.go` and `table.go`.

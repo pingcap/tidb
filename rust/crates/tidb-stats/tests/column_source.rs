@@ -43,8 +43,8 @@ fn populated_column(stats_version: i64) -> Column {
                 count: 5,
                 repeat: 1,
                 ndv: 2,
-                lower_bound: Datum::I64(1),
-                upper_bound: Datum::I64(2),
+                lower_bound: Datum::new_int(1),
+                upper_bound: Datum::new_int(2),
             }],
             ..Histogram::default()
         },

@@ -19,9 +19,9 @@
 //! as [`ColumnValidity::load_request`], so its caller can perform the same
 //! effect without hiding it behind global state.
 
+use crate::histogram::Histogram;
 use crate::{
-    CmsSketch, ColumnMemUsage, FmSketch, Histogram, StatsLoadedStatus, TableItemId, TopN,
-    ALL_EVICTED,
+    CmsSketch, ColumnMemUsage, FmSketch, StatsLoadedStatus, TableItemId, TopN, ALL_EVICTED,
 };
 
 /// The column metadata used directly by `column.go`.
