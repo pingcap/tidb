@@ -80,6 +80,7 @@ pub mod mem_table;
 pub(crate) mod merge_join_plan;
 pub mod partition_pruning;
 pub mod partition_routing;
+pub(crate) mod ranger_detacher_lockdown;
 pub use partition_routing::{PartitionDef, PartitionKind, PartitionSpec, RangeBound};
 mod plan_trace;
 pub mod point_get;

@@ -1,0 +1,51 @@
+{
+  "artifact_count": 3,
+  "category_counts": {
+    "benchmark": 2,
+    "branch": 394,
+    "closure": 4,
+    "declaration": 4,
+    "field": 23,
+    "function": 37,
+    "loop": 72,
+    "short_circuit": 128,
+    "switch_case": 14,
+    "test": 14,
+    "test_assertion": 233,
+    "test_branch": 10,
+    "test_helper": 8,
+    "test_helper_closure": 10,
+    "test_loop": 50,
+    "test_row": 1083,
+    "test_short_circuit": 2
+  },
+  "claim_boundary": "file-lockdown-seed-not-package-completion",
+  "direct_test_support_obligation_count": 1412,
+  "go_package": "pkg/util/ranger",
+  "mutation_count": 12,
+  "mutation_suites": 6,
+  "obligation_count": 2088,
+  "owned_file_sha256": {
+    "rust/crates/tidb-executor/src/lib.rs": "f07291427ead84f40a07c6ffa0ec8605a4a83582870c5dd5979c7044ace5395e",
+    "rust/crates/tidb-executor/src/ranger_detacher_lockdown.artifacts.tsv": "7e1dcbfb43ff24e6926ba6e3624f66e6e66285ded994c79b8423ed0e98814d8b",
+    "rust/crates/tidb-executor/src/ranger_detacher_lockdown.inventory.tsv": "bb26c8078b6c8ed2d1444c52258e54d5ba78fd5ac710315083c2a795fae11088",
+    "rust/crates/tidb-executor/src/ranger_detacher_lockdown.mutation-plan.tsv": "b709f6f7b357d0c7d4a37878dac72bace3ff07f262948287d02429567f13157b",
+    "rust/crates/tidb-executor/src/ranger_detacher_lockdown.mutation-results.tsv": "46f72ff8da4cd1339ec4b55e9fcdf39bf2a816d15c9d8f1f6c8c1f49acdf3fb9",
+    "rust/crates/tidb-executor/src/ranger_detacher_lockdown.rs": "1f85329bf536b804d0792d49a4803840f84437b27e25476ea355cc2b5c6f001d",
+    "rust/docs/operations/pkg-util-ranger-detacher-go-lockdown-execplan.md": "f94b0166eb154a6dba7cfe2e11250d8db13a2e2687bf630a36ea50d6c8cf30c3",
+    "rust/scripts/pkg-util-ranger-detacher-lockdown.py": "e50173d18e72e74bdcd832370b7a153f98487095c2c1b93006ca883efbdd5bd4"
+  },
+  "owning_go_source": "pkg/util/ranger/detacher.go",
+  "ported_obligation_count": 42,
+  "ported_symbol_count": 6,
+  "production_obligation_count": 676,
+  "reachable_ported_rule_count": 42,
+  "schema": "pkg-util-ranger-detacher-file-lockdown-v1",
+  "source_seed_commit": "6fa49fb9112c850ffd9861651792cd043b830a8d",
+  "status_counts": {
+    "DECLINED": 2046,
+    "PORTED": 42,
+    "UNREACHABLE": 0
+  },
+  "whole_go_package_complete": false
+}
