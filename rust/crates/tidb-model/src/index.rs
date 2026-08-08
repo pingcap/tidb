@@ -24,7 +24,7 @@ use tidb_datatype::{FieldType, FieldTypeCode};
 
 use crate::cascades_hash::HashInt64;
 use crate::column::{removing_origin_name, REMOVING_OBJ_PREFIX};
-use crate::go_runtime::GoPointerAny;
+use crate::go_runtime::{GoPointerAny, GoShared, GoSharedPointerSlice};
 use crate::reorg::BackfillState;
 use crate::schema_state::SchemaState;
 use crate::serde_helpers::{
@@ -99,10 +99,10 @@ pub fn get_global_index_v1_supported() -> bool {
 /// changing-index name, comparing the candidate case-insensitively.
 #[must_use]
 pub fn gen_unique_changing_index_name(table: &TableInfo, index: &IndexInfo) -> String {
-    let used: std::collections::HashSet<&str> = table
+    let used: std::collections::HashSet<String> = table
         .indices
-        .iter()
-        .map(|candidate| candidate.name.lowercase())
+        .iter_deref()
+        .map(|candidate| candidate.read().name.lowercase().to_owned())
         .collect();
     let mut suffix = 0_u64;
     loop {
@@ -591,9 +591,15 @@ impl IndexInfo {
     /// invariant violation and indexes the table slice directly.
     #[must_use]
     pub fn has_column_in_index_columns(&self, table: &TableInfo, column_id: i64) -> bool {
-        self.columns
-            .iter()
-            .any(|column| table.columns[column.offset as usize].id == column_id)
+        self.columns.iter().any(|column| {
+            table
+                .columns
+                .get(column.offset as usize)
+                .expect("nil *ColumnInfo in TableInfo.Columns")
+                .read()
+                .id
+                == column_id
+        })
     }
 
     /// Go `FindColumnByName`: the index column named `name_l` (lower-cased).
@@ -659,14 +665,14 @@ impl IndexInfo {
 
 /// Go `FindIndexByColumns`: first index whose leading columns cover `columns`.
 #[must_use]
-pub fn find_index_by_columns<'a>(
+pub fn find_index_by_columns(
     table: &TableInfo,
-    indices: &'a [IndexInfo],
+    indices: &GoSharedPointerSlice<IndexInfo>,
     columns: &[CiString],
-) -> Option<&'a IndexInfo> {
+) -> Option<GoShared<IndexInfo>> {
     indices
-        .iter()
-        .find(|index| is_index_prefix_covered(table, index, columns))
+        .iter_deref()
+        .find(|index| is_index_prefix_covered(table, &index.read(), columns))
 }
 
 /// Go `IsIndexPrefixCovered`.
@@ -682,21 +688,24 @@ pub fn is_index_prefix_covered(table: &TableInfo, index: &IndexInfo, columns: &[
         {
             return false;
         }
-        let table_column = &table.columns[index_column.offset as usize];
-        index_column.length == -1 || index_column.length >= table_column.get_flen()
+        let table_column = table
+            .columns
+            .get(index_column.offset as usize)
+            .expect("nil *ColumnInfo in TableInfo.Columns");
+        index_column.length == -1 || index_column.length >= table_column.read().get_flen()
     })
 }
 
 /// Go `FindIndexByColumnsForForeignKey`.
 #[must_use]
-pub fn find_index_by_columns_for_foreign_key<'a>(
+pub fn find_index_by_columns_for_foreign_key(
     table: &TableInfo,
-    indices: &'a [IndexInfo],
+    indices: &GoSharedPointerSlice<IndexInfo>,
     columns: &[CiString],
-) -> Option<&'a IndexInfo> {
+) -> Option<GoShared<IndexInfo>> {
     indices
-        .iter()
-        .find(|index| is_index_prefix_covered_for_foreign_key(table, index, columns))
+        .iter_deref()
+        .find(|index| is_index_prefix_covered_for_foreign_key(table, &index.read(), columns))
 }
 
 /// Go `IsIndexPrefixCoveredForForeignKey`.
@@ -736,8 +745,11 @@ fn is_index_condition_covered_by_foreign_key_columns(
 
 /// Go `FindIndexInfoByID`.
 #[must_use]
-pub fn find_index_info_by_id(indices: &[IndexInfo], id: i64) -> Option<&IndexInfo> {
-    indices.iter().find(|index| index.id == id)
+pub fn find_index_info_by_id(
+    indices: &GoSharedPointerSlice<IndexInfo>,
+    id: i64,
+) -> Option<GoShared<IndexInfo>> {
+    indices.iter_deref().find(|index| index.read().id == id)
 }
 
 /// Go `FindIndexColumnByName`: the position and column matching `name_l`
@@ -810,7 +822,7 @@ mod tests {
                 .offset,
             2
         );
-        assert!(std::panic::catch_unwind(|| nullable.columns.iter().next()).is_err());
+        assert!(std::panic::catch_unwind(|| nullable.columns.iter_deref().next()).is_err());
 
         let mut index = IndexInfo {
             id: 7,
@@ -1119,11 +1131,13 @@ mod tests {
                     offset: 1,
                     ..Default::default()
                 },
-            ],
+            ]
+            .into(),
             indices: vec![IndexInfo {
                 name: CiString::new("_idx$_Key_0"),
                 ..Default::default()
-            }],
+            }]
+            .into(),
             ..Default::default()
         };
         let source = IndexInfo {
@@ -1144,7 +1158,8 @@ mod tests {
         table.indices = vec![IndexInfo {
             name: CiString::new("_Idx$_i_0"),
             ..Default::default()
-        }];
+        }]
+        .into();
         let unicode_source = IndexInfo {
             name: CiString::new("\u{130}"),
             ..Default::default()
@@ -1189,7 +1204,8 @@ mod tests {
                 name: CiString::new("a"),
                 offset: 0,
                 ..Default::default()
-            }],
+            }]
+            .into(),
             ..Default::default()
         };
         let base = IndexInfo {
@@ -1238,6 +1254,51 @@ mod tests {
             &safe,
             &[CiString::new("a")]
         ));
+    }
+
+    #[test]
+    fn pointer_slice_index_finders_return_source_handles_and_panic_on_nil() {
+        let table = TableInfo {
+            columns: vec![crate::column::ColumnInfo {
+                id: 1,
+                name: CiString::new("a"),
+                offset: 0,
+                field_type: FieldType::new(FieldTypeCode::Varchar).with_flen(8),
+                ..Default::default()
+            }]
+            .into(),
+            ..Default::default()
+        };
+        let indices: GoSharedPointerSlice<IndexInfo> = vec![IndexInfo {
+            id: 9,
+            columns: vec![IndexColumn {
+                name: CiString::new("a"),
+                offset: 0,
+                length: -1,
+                ..Default::default()
+            }]
+            .into(),
+            ..Default::default()
+        }]
+        .into();
+
+        let by_columns = find_index_by_columns(&table, &indices, &[CiString::new("a")]).unwrap();
+        let by_id = find_index_info_by_id(&indices, 9).unwrap();
+        assert!(by_columns.ptr_eq(&indices.get(0).unwrap()));
+        assert!(by_id.ptr_eq(&indices.get(0).unwrap()));
+
+        let nullable = GoSharedPointerSlice::from_nullable(vec![
+            None,
+            Some(IndexInfo {
+                id: 9,
+                ..Default::default()
+            }),
+        ]);
+        assert!(std::panic::catch_unwind(|| {
+            find_index_by_columns(&table, &nullable, &[CiString::new("a")])
+        })
+        .is_err());
+        assert!(std::panic::catch_unwind(|| find_index_info_by_id(&nullable, 9)).is_err());
     }
 
     #[test]

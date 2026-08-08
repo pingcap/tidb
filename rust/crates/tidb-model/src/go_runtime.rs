@@ -558,6 +558,12 @@ impl<T> Default for GoSharedPointerSlice<T> {
     }
 }
 
+impl<T> From<Vec<T>> for GoSharedPointerSlice<T> {
+    fn from(values: Vec<T>) -> Self {
+        Self::from_nullable(values.into_iter().map(Some).collect())
+    }
+}
+
 /// Source policy when a clone loop encounters a nil pointer element.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GoNullClonePolicy {
@@ -598,7 +604,10 @@ impl<T> GoSharedPointerSlice<T> {
         Self(GoSharedSlice::from_vec(values))
     }
 
-    fn from_handles_with_capacity(values: Vec<Option<GoShared<T>>>, capacity: usize) -> Self {
+    /// Constructs an allocated source header with explicit visible handles and
+    /// fully initialized zero pointer slots through `capacity`.
+    #[must_use]
+    pub fn from_handles_with_capacity(values: Vec<Option<GoShared<T>>>, capacity: usize) -> Self {
         Self(GoSharedSlice::from_vec_with_capacity(values, capacity))
     }
 
@@ -656,6 +665,23 @@ impl<T> GoSharedPointerSlice<T> {
         self.0.snapshot()
     }
 
+    /// Iterates nullable pointer slots through a copied Go slice header. Each
+    /// slot is loaded when the iterator advances, so writes through a sibling
+    /// header between iterations remain observable just as in Go `range`.
+    pub fn iter_handles(&self) -> impl Iterator<Item = Option<GoShared<T>>> {
+        let header = self.clone();
+        let len = header.len();
+        (0..len).map(move |index| header.get(index))
+    }
+
+    /// Iterates non-null source pointers as cloneable shared handles. The
+    /// panic occurs at the same dereference boundary as `for _, v := range`
+    /// followed by a field or method access on a nil `*T`.
+    pub fn iter_deref(&self) -> impl Iterator<Item = GoShared<T>> {
+        self.iter_handles()
+            .map(|pointer| pointer.expect("nil pointer in Go slice"))
+    }
+
     /// Allocates a fresh outer slice and maps non-null pointees through the
     /// source type's clone operation. Go clone methods choose different nil
     /// policies, so callers must name it rather than inheriting Rust `Clone`.
@@ -666,8 +692,7 @@ impl<T> GoSharedPointerSlice<T> {
         mut clone_pointee: impl FnMut(&T) -> U,
     ) -> GoSharedPointerSlice<U> {
         GoSharedPointerSlice::from_handles(
-            self.handles()
-                .into_iter()
+            self.iter_handles()
                 .map(|pointer| match pointer {
                     Some(pointer) => {
                         let cloned = {
@@ -845,6 +870,12 @@ mod tests {
         copied_outer.set(0, Some(first.clone()));
         assert!(assigned.get(0).unwrap().ptr_eq(&replacement));
         assert!(copied_outer.get(0).unwrap().ptr_eq(&first));
+
+        let mut range = assigned.iter_handles();
+        assert!(range.next().unwrap().unwrap().ptr_eq(&replacement));
+        assigned.set(1, Some(first.clone()));
+        assert!(range.next().unwrap().unwrap().ptr_eq(&first));
+        assigned.set(1, None);
 
         let copied_deep = assigned.map_clone_with(GoNullClonePolicy::Preserve, Clone::clone);
         assert!(!assigned

@@ -29,6 +29,7 @@ use tidb_datatype::{ConfigDurationError, FieldType};
 use tidb_parser::auth::UserIdentity;
 
 use crate::column::ColumnInfo;
+use crate::go_runtime::{GoShared, GoSharedPointerSlice};
 use crate::index::IndexColumn;
 use crate::schema_state::SchemaState;
 use crate::serde_helpers::{
@@ -656,20 +657,23 @@ impl FKInfo {
 
 /// Go `FindFKInfoByName`: finds a foreign key by an already lower-cased name.
 #[must_use]
-pub fn find_fk_info_by_name<'a>(foreign_keys: &'a [FKInfo], name: &str) -> Option<&'a FKInfo> {
+pub fn find_fk_info_by_name(
+    foreign_keys: &GoSharedPointerSlice<FKInfo>,
+    name: &str,
+) -> Option<GoShared<FKInfo>> {
     foreign_keys
-        .iter()
-        .find(|foreign_key| foreign_key.name.lowercase() == name)
+        .iter_deref()
+        .find(|foreign_key| foreign_key.read().name.lowercase() == name)
 }
 
-/// Mutable form of Go `FindFKInfoByName`.
-pub fn find_fk_info_by_name_mut<'a>(
-    foreign_keys: &'a mut [FKInfo],
+/// Compatibility spelling for callers that previously requested a mutable
+/// Rust reference. The returned Go pointer handle is already mutable and
+/// preserves write-through identity.
+pub fn find_fk_info_by_name_mut(
+    foreign_keys: &GoSharedPointerSlice<FKInfo>,
     name: &str,
-) -> Option<&'a mut FKInfo> {
-    foreign_keys
-        .iter_mut()
-        .find(|foreign_key| foreign_key.name.lowercase() == name)
+) -> Option<GoShared<FKInfo>> {
+    find_fk_info_by_name(foreign_keys, name)
 }
 
 /// Go `GetIdxChangingFieldType`: selects the online-DDL changing type only
@@ -1359,16 +1363,19 @@ mod tests {
              `parent` (`id`) ON UPDATE RESTRICT"
         );
 
-        let foreign_keys = vec![fk];
+        let foreign_keys: GoSharedPointerSlice<FKInfo> = vec![fk].into();
         assert!(find_fk_info_by_name(&foreign_keys, "fk2").is_some());
         // Source requires the caller to supply the lower-case lookup key.
         assert!(find_fk_info_by_name(&foreign_keys, "FK2").is_none());
 
-        let mut foreign_keys = foreign_keys;
-        find_fk_info_by_name_mut(&mut foreign_keys, "fk2")
+        find_fk_info_by_name_mut(&foreign_keys, "fk2")
             .unwrap()
+            .write()
             .version = FK_VERSION1;
-        assert_eq!(foreign_keys[0].version, FK_VERSION1);
+        assert_eq!(foreign_keys.get(0).unwrap().read().version, FK_VERSION1);
+
+        let nullable = GoSharedPointerSlice::from_nullable(vec![None, Some(FKInfo::default())]);
+        assert!(std::panic::catch_unwind(|| find_fk_info_by_name(&nullable, "fk2")).is_err());
     }
 
     #[test]

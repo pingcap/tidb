@@ -40,6 +40,7 @@ use tidb_datatype::{
 use tidb_error::mysql::{errname, FormatArg};
 use tidb_error::terror::TerrorError;
 
+use crate::go_runtime::{GoShared, GoSharedPointerSlice};
 use crate::schema_state::SchemaState;
 use crate::serde_helpers::{
     deserialize_go_object, go_json_field_matches, ignore_unknown, impl_go_json_deserialize,
@@ -68,10 +69,10 @@ pub const REMOVING_OBJ_PREFIX: &str = "_Tombstone$_";
 /// changing-column name, comparing candidates case-insensitively.
 #[must_use]
 pub fn gen_unique_changing_column_name(table: &TableInfo, old_column: &ColumnInfo) -> String {
-    let used: std::collections::HashSet<&str> = table
+    let used: std::collections::HashSet<String> = table
         .columns
-        .iter()
-        .map(|column| column.name.lowercase())
+        .iter_deref()
+        .map(|column| column.read().name.lowercase().to_owned())
         .collect();
     let mut suffix = 0_u64;
     loop {
@@ -935,15 +936,22 @@ impl ColumnInfo {
 
 /// Go `FindColumnInfo`: finds a column by (case-insensitive) name.
 #[must_use]
-pub fn find_column_info<'a>(cols: &'a [ColumnInfo], name: &str) -> Option<&'a ColumnInfo> {
+pub fn find_column_info(
+    cols: &GoSharedPointerSlice<ColumnInfo>,
+    name: &str,
+) -> Option<GoShared<ColumnInfo>> {
     let name = tidb_mysql::to_lowercase(name);
-    cols.iter().find(|col| col.name.lowercase() == name)
+    cols.iter_deref()
+        .find(|column| column.read().name.lowercase() == name)
 }
 
 /// Go `FindColumnInfoByID`: finds a column by ID.
 #[must_use]
-pub fn find_column_info_by_id(cols: &[ColumnInfo], id: i64) -> Option<&ColumnInfo> {
-    cols.iter().find(|col| col.id == id)
+pub fn find_column_info_by_id(
+    cols: &GoSharedPointerSlice<ColumnInfo>,
+    id: i64,
+) -> Option<GoShared<ColumnInfo>> {
+    cols.iter_deref().find(|column| column.read().id == id)
 }
 
 #[cfg(test)]
@@ -975,13 +983,14 @@ mod tests {
             columns: vec![
                 col("_col$_Old_0", FieldTypeCode::Long),
                 col("_COL$_OLD_2", FieldTypeCode::Long),
-            ],
+            ]
+            .into(),
             ..Default::default()
         };
         let old = col("Old", FieldTypeCode::Long);
         assert_eq!(gen_unique_changing_column_name(&table, &old), "_Col$_Old_1");
 
-        table.columns = vec![col("_Col$_i_0", FieldTypeCode::Long)];
+        table.columns = vec![col("_Col$_i_0", FieldTypeCode::Long)].into();
         let old = col("\u{130}", FieldTypeCode::Long);
         assert_eq!(
             gen_unique_changing_column_name(&table, &old),
@@ -1062,23 +1071,27 @@ mod tests {
         c.generated_stored = true;
         assert!(!c.is_virtual_generated());
 
-        let cols = vec![
+        let cols: GoSharedPointerSlice<_> = vec![
             col("Foo", FieldTypeCode::Long),
             col("bar", FieldTypeCode::Long),
-        ];
+        ]
+        .into();
         // Case-insensitive name lookup.
         assert!(find_column_info(&cols, "FOO").is_some());
         assert!(find_column_info(&cols, "baz").is_none());
-        let simple_case = vec![col("i", FieldTypeCode::Long)];
+        let simple_case: GoSharedPointerSlice<_> = vec![col("i", FieldTypeCode::Long)].into();
         assert!(find_column_info(&simple_case, "\u{130}").is_some());
 
-        let mut cols = cols;
-        cols[1].id = 7;
-        assert_eq!(
-            find_column_info_by_id(&cols, 7).unwrap().name.original(),
-            "bar"
-        );
+        cols.get(1).unwrap().write().id = 7;
+        let found = find_column_info_by_id(&cols, 7).unwrap();
+        assert!(found.ptr_eq(&cols.get(1).unwrap()));
+        assert_eq!(found.read().name.original(), "bar");
         assert!(find_column_info_by_id(&cols, 99).is_none());
+
+        let nullable =
+            GoSharedPointerSlice::from_nullable(vec![None, Some(col("bar", FieldTypeCode::Long))]);
+        assert!(std::panic::catch_unwind(|| find_column_info(&nullable, "bar")).is_err());
+        assert!(std::panic::catch_unwind(|| find_column_info_by_id(&nullable, 0)).is_err());
     }
 
     // Go TestDefaultValue (the non-JSON assertions): plain and BIT columns,
