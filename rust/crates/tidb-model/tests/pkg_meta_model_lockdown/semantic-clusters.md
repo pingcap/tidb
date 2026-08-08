@@ -73,7 +73,8 @@ remaining package census is 2,509 obligations plus the build artifact.
 - Rules: states/stages/types, process-default fallback for old zero metadata,
   mutable concurrency/batch/max-speed, captured collation fallback, backfill
   JSON, byte-slice base64, job metadata, and first-resolution-stable cached
-  fixed/named timezones.
+  fixed/named timezones. Go's 64-bit `int` range is retained for persisted
+  maximum-node counts, dynamic settings, job priority, and fixed-zone offsets.
 - Explicit representation boundaries: concrete `terror.Error` identity and Go
   atomic/mutex object identity, plus Go `encoding/json`'s partially-mutated
   receiver after a mid-object type error (Rust decoding is transactional on
@@ -100,7 +101,11 @@ remaining package census is 2,509 obligations plus the build artifact.
   The same distinction is retained for `MultiSchemaInfo.SubJobs`,
   `HistoryInfo.MultipleTableInfos`, and runtime scheduler involvement because
   those cases alter JSON or fallback behavior. All non-serialized
-  `MultiSchemaInfo` bookkeeping fields remain native Rust fields.
+  `MultiSchemaInfo` bookkeeping fields remain native Rust fields. V2 argument
+  encoding enforces the source's test-build one-value invariant for both the
+  parent job and executing sub-jobs. `ToProxyJob` accepts the source 64-bit
+  `int` range and performs the same narrowing conversion into persisted
+  `MultiSchemaInfo.Seq`; job and backfill priorities retain the full range.
 - Explicit representation boundaries: concrete `terror.Error` and tracing
   values, Go mutex identity, nil elements inside Go pointer slices, and
   arbitrary typed `JobArgs` implementations. The same missing process-wide
@@ -132,6 +137,12 @@ remaining package census is 2,509 obligations plus the build artifact.
   explicit `Option` representation is ported and mutation-pinned. Rust's typed
   equality cannot receive Go's arbitrary `any` or typed nil pointer; non-nil
   `TableInfo` identity and hashing are exactly ID-only.
+  Persisted column/index offsets and index prefix lengths use the pre-existing
+  Rust `i32` representation rather than Go's 64-bit `int`. Values outside
+  `i32` are not representable; all schema-valid offsets/lengths, including
+  negative and upper-bound panic behavior exercised by the owning source, stay
+  native. This measured width boundary must be classified explicitly in the
+  generated ledgers rather than hidden behind a whole-struct verdict.
 
 ## C08: absorbed source locks and package build contract
 
@@ -154,12 +165,21 @@ The owning Go structs use slices, so a nil slice and an allocated empty slice
 can encode as `null` and `[]` when the field lacks `omitempty`. The pre-existing
 Rust model uses `Vec` for the following fields and its `null_if_empty` wire
 adapter intentionally maps both empty states to `null`: `IndexInfo.Columns`,
-`RegionSplitPolicy.Lower/Upper`, `TableInfo.Columns/Indices/Constraints/ForeignKeys`,
+`IndexInfo.AffectColumn`, `RegionSplitPolicy.Lower/Upper`,
+`TableInfo.Columns/Indices/Constraints/ForeignKeys`,
+`TableInfo.StorageClassTransitions`,
 `PartitionDefinition.LessThan/InValues`, `PartitionInfo.Columns/Definitions/
-AddingDefinitions/DroppingDefinitions/States`, `ViewInfo.Cols`,
+AddingDefinitions/DroppingDefinitions/NewPartitionIDs/
+OriginalPartitionIDsOrder/States/DDLColumns/DDLUpdateIndexes`,
+`PartitionDefinition.StorageClassTransitions`, `ViewInfo.Cols`,
 `ConstraintInfo.ConstraintCols`, `FKInfo.RefCols/Cols`, `ReferredFKInfo.Cols`,
 `TableLockInfo.Sessions`, and `TiFlashReplicaInfo.LocationLabels/
-AvailablePartitionIDs`. These exact allocation-identity/wire branches must be
+AvailablePartitionIDs`. The same allocation-identity limitation applies to
+the runtime-only `DBInfo.Deprecated.Tables`, `MultiSchemaInfo.AddColumns/
+DropColumns/ModifyColumns/AddIndexes/DropIndexes/AlterIndexes/AddForeignKeys/
+RelativeColumns/PositionColumns`, and `AddForeignKeyInfo.Cols`, plus the
+pre-existing `DBInfo.TableName2ID` and `PartitionInfo.DDLChangedIndex` map
+representations. These exact allocation-identity/wire branches must be
 DECLINED individually in the generated ledgers with this measured Rust boundary;
 ordinary element values, ordering, empty-length behavior, and all methods that
 do not observe allocation identity remain eligible for PORTED verdicts. Fields

@@ -188,7 +188,7 @@ pub struct JobMeta {
     pub query: String,
     /// Operation priority used by index creation.
     #[serde(rename = "priority", default)]
-    pub priority: i32,
+    pub priority: i64,
 }
 
 /// A resolved Go `time.Location` shape. Named IANA zones and explicit fixed
@@ -202,7 +202,7 @@ pub enum ResolvedTimeZone {
         /// Caller-provided fixed-zone name.
         name: String,
         /// Offset in seconds east of UTC.
-        offset_seconds: i32,
+        offset_seconds: i64,
     },
 }
 
@@ -227,7 +227,7 @@ pub struct TimeZoneLocation {
     pub name: String,
     /// Fixed offset in seconds east of UTC; zero selects named-zone loading.
     #[serde(rename = "offset", default)]
-    pub offset: i32,
+    pub offset: i64,
     #[serde(skip)]
     location: OnceLock<ResolvedTimeZone>,
 }
@@ -375,7 +375,7 @@ impl SubJob {
 
     /// Builds the parent-shaped proxy job used to execute this sub-job.
     #[must_use]
-    pub fn to_proxy_job(&self, parent: &Job, sequence: i32) -> Job {
+    pub fn to_proxy_job(&self, parent: &Job, sequence: i64) -> Job {
         let mut reorg_meta = parent.reorg_meta.clone();
         if let Some(meta) = &mut reorg_meta {
             meta.reorg_type = self.reorg_type;
@@ -405,7 +405,7 @@ impl SubJob {
             reorg_meta,
             multi_schema_info: Some(MultiSchemaInfo {
                 revertible: self.revertible,
-                seq: sequence,
+                seq: sequence as i32,
                 ..Default::default()
             }),
             priority: parent.priority,
@@ -555,7 +555,7 @@ pub struct Job {
     pub multi_schema_info: Option<MultiSchemaInfo>,
     /// Operation priority used by index creation.
     #[serde(rename = "priority", default)]
-    pub priority: i32,
+    pub priority: i64,
     /// Ordering key used when moving jobs into DDL history.
     #[serde(rename = "seq_num", default)]
     pub sequence_number: u64,
@@ -786,6 +786,8 @@ impl Job {
                         sub_job.raw_args = if self.version.0 <= JobVersion::V1.0 {
                             Some(serde_json::Value::Array(args.clone()))
                         } else {
+                            debug_assert_eq!(self.version, JobVersion::V2);
+                            debug_assert!(args.len() <= 1);
                             Some(args.first().cloned().unwrap_or(serde_json::Value::Null))
                         };
                     }
@@ -1299,6 +1301,23 @@ mod tests {
         }
         .get_location()
         .is_err());
+
+        let widest_go_int = TimeZoneLocation {
+            name: "wide".to_owned(),
+            offset: i64::MAX,
+            ..Default::default()
+        };
+        assert_eq!(
+            serde_json::to_value(&widest_go_int).unwrap()["offset"],
+            serde_json::json!(i64::MAX)
+        );
+        assert!(matches!(
+            widest_go_int.get_location().unwrap(),
+            ResolvedTimeZone::Fixed {
+                offset_seconds: i64::MAX,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -1492,9 +1511,10 @@ mod tests {
             state: JobState::QUEUEING,
             ..Default::default()
         };
-        let proxy = sub_job.to_proxy_job(&v2, 0);
+        let proxy = sub_job.to_proxy_job(&v2, i64::MAX);
         assert!(proxy.has_resume_reason(JOB_RESUME_REASON_KV_DISK_FULL));
         assert_eq!(proxy.type_, ActionType::ACTION_ADD_INDEX);
+        assert_eq!(proxy.multi_schema_info.unwrap().seq, -1);
 
         let mut cached = SubJob::default();
         cached.args = Some(vec![serde_json::json!({"decoded": true})]);
@@ -1516,5 +1536,52 @@ mod tests {
         };
         unchanged.decode(b"null").unwrap();
         assert_eq!(unchanged.id, 42);
+    }
+
+    #[test]
+    fn job_go_int_width_boundaries() {
+        let maximum = Job {
+            priority: i64::MAX,
+            ..Default::default()
+        };
+        let minimum = JobMeta {
+            priority: i64::MIN,
+            ..Default::default()
+        };
+        assert_eq!(
+            serde_json::to_value(maximum).unwrap()["priority"],
+            serde_json::json!(i64::MAX)
+        );
+        assert_eq!(
+            serde_json::to_value(minimum).unwrap()["priority"],
+            serde_json::json!(i64::MIN)
+        );
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    fn v2_argument_cardinality_matches_intest_assertions() {
+        let mut job = Job {
+            version: JobVersion::V2,
+            ..Default::default()
+        };
+        job.fill_raw_args(vec![serde_json::json!(1), serde_json::json!(2)]);
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job.encode(true))).is_err()
+        );
+
+        let mut sub_job = SubJob::default();
+        sub_job.args = Some(vec![serde_json::json!(1), serde_json::json!(2)]);
+        let mut job = Job {
+            version: JobVersion::V2,
+            multi_schema_info: Some(MultiSchemaInfo {
+                sub_jobs: Some(vec![sub_job]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job.encode(true))).is_err()
+        );
     }
 }
