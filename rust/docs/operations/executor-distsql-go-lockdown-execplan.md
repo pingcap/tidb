@@ -15,8 +15,8 @@ The accepted Rust tree does not contain an implementation equivalent to Go's dis
 - [x] (2026-08-08) Chose a fresh file-lockdown seed rather than importing unrelated access-path work or asserting false parity.
 - [x] (2026-08-08) Checked in the six-artifact manifest, 1,461-row AST ledger, mutation receipt, independent Rust gate, and checker.
 - [x] (2026-08-08) Killed and restored all nine boundary mutations: path, hash, AST, test-support, row census, blank verdict, false symbol, and receipt drift.
-- [ ] Complete scoped Go/Rust Ready gates and the clean detached workspace replay (completed: failpoint Go oracles, crate all-target tests, strict scoped Clippy, `make -j12 lint`; remaining: clean detached workspace).
-- [ ] Commit, publish the exact SHA to both task refs, verify, and reclaim only this unit's worktree and caches.
+- [x] (2026-08-08) Completed failpoint Go oracles, crate all-target tests, strict scoped Clippy, `make -j12 lint`, and the clean detached workspace replay at candidate `af69d58a0670712705ebe7adb4dc21e4576d0dcf`.
+- [ ] Commit this final evidence note, replay the clean workspace at that final SHA, publish it to both task refs, verify, and reclaim only this unit's worktree and caches.
 
 ## Surprises & Discoveries
 
@@ -44,7 +44,7 @@ The accepted Rust tree does not contain an implementation equivalent to Go's dis
 
 ## Outcomes & Retrospective
 
-The checked-in seed classifies all 1,461 obligations without claiming a production port: 904 production obligations and 557 direct test/support obligations are DECLINED with exact Go AST quote anchors. Nine gate mutations are killed and restored. Scoped failpoint-enabled Go oracles, the `tidb-executor` all-target Rust suite, strict scoped Clippy, and `make -j12 lint` pass. The clean workspace replay, ratchet verification, and publication remain.
+The checked-in seed classifies all 1,461 obligations without claiming a production port: 904 production obligations and 557 direct test/support obligations are DECLINED with exact Go AST quote anchors. Nine gate mutations are killed and restored. Scoped failpoint-enabled Go oracles, the `tidb-executor` all-target Rust suite, strict scoped Clippy, `make -j12 lint`, and the clean locked workspace test pass. Direct ratchets remain `0/100/1/78`. Only the final documentation-SHA replay, publication, and exact artifact reclamation remain.
 
 ## Context and Orientation
 
@@ -98,8 +98,12 @@ Accepted parent and both base task refs: `842867801eaddcffc25e4de15aabb391f02b19
 
 Stale evidence-only branch: `L6driver` at `91b00c81f53baff28f068826e287c2c077143e55`; no changes are transplanted.
 
+Candidate clean-gate evidence: `CARGO_BUILD_JOBS=12 CARGO_TARGET_DIR=/private/tmp/cargo-target-gate-task325-tidb-executor-distsql.w2eHt7 cargo test --offline --locked -j12 --workspace` passed at `af69d58a0670712705ebe7adb4dc21e4576d0dcf`; the detached worktree was clean, the checker reported six artifacts and 1,461 DECLINED obligations, and direct greps found ratchets `0/100/1/78`.
+
 ## Interfaces and Dependencies
 
 The Python checker uses only the Python standard library, the repository's Go AST collector, Git, and checked-in files. The Rust gate uses the crate's existing `sha2` dev dependency and the standard library. It intentionally exposes no production API and adds no dependency.
 
 Revision note (2026-08-08): initial plan records the falsified L6 assumption, exact claim boundary, isolated AST strategy, zero-PORTED decision, and required gates.
+
+Revision note (2026-08-08): self-review added three omitted direct test/support owners, increasing the exact census from 1,143 to 1,461; all affected mutations and tests were rerun before the clean candidate gate was recorded.
