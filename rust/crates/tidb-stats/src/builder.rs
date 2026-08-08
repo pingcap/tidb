@@ -147,19 +147,33 @@ struct TopNWithRange {
 /// The histogram pass walks sample indices in order, so the ranges it must
 /// skip can be walked in order too; this is that one shared cursor rather
 /// than a per-index search.
-struct SequentialRangeChecker {
+pub struct SequentialRangeChecker {
     ranges: Vec<(i64, i64)>,
     current: usize,
 }
 
 impl SequentialRangeChecker {
+    /// Creates the source checker from inclusive `(start, end)` ranges and
+    /// sorts an unsorted input by its start index.
+    #[must_use]
+    pub fn from_ranges(ranges: &[(i64, i64)]) -> Self {
+        let mut ranges = ranges.to_vec();
+        ranges.sort_by_key(|(start, _)| *start);
+        Self { ranges, current: 0 }
+    }
+
     fn new(ranges: &[TopNWithRange]) -> Self {
-        let mut ranges: Vec<(i64, i64)> = ranges
+        let ranges: Vec<(i64, i64)> = ranges
             .iter()
             .map(|item| (item.start_idx, item.end_idx))
             .collect();
-        ranges.sort_by_key(|(start, _)| *start);
-        Self { ranges, current: 0 }
+        Self::from_ranges(&ranges)
+    }
+
+    /// Go `IsIndexInTopNRange`. Calls are intentionally stateful and assume
+    /// sequential indices, so querying an earlier completed range stays false.
+    pub fn is_index_in_topn_range(&mut self, idx: i64) -> bool {
+        self.contains(idx)
     }
 
     fn contains(&mut self, idx: i64) -> bool {

@@ -159,6 +159,7 @@ pub use bootstrap_sql::{gen_init_stats_histograms_sql, gen_init_stats_meta_sql, 
 pub use bounded_min_heap::BoundedMinHeap;
 pub use builder::{
     build_hist_and_topn, BuildOptions, HistogramAndTopN, SampleCollector, SampleItem,
+    SequentialRangeChecker,
 };
 pub use cache_metrics_labels::{
     stats_cache_counter_labels, stats_cache_gauge_labels, STATS_CACHE_COUNTER_LABELS,

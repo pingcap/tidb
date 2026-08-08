@@ -23,7 +23,9 @@
 //! a TopN count is what it says.
 
 use tidb_datatype::Datum;
-use tidb_stats::builder::{build_hist_and_topn, BuildOptions, SampleCollector, SampleItem};
+use tidb_stats::builder::{
+    build_hist_and_topn, BuildOptions, SampleCollector, SampleItem, SequentialRangeChecker,
+};
 
 /// An integer sample, encoded the way an order-preserving key encoder would:
 /// sign-flipped big-endian, so byte order is numeric order.
@@ -222,9 +224,7 @@ fn a_repeated_value_stays_inside_one_bucket() {
         .histogram
         .buckets
         .iter()
-        .filter(|bucket| {
-            int_of(&bucket.lower_bound) <= 5 && 5 <= int_of(&bucket.upper_bound)
-        })
+        .filter(|bucket| int_of(&bucket.lower_bound) <= 5 && 5 <= int_of(&bucket.upper_bound))
         .collect();
     assert_eq!(holding.len(), 1, "`5` lives in exactly one bucket");
     assert_eq!(
@@ -326,4 +326,31 @@ fn a_user_chosen_topn_size_is_honoured() {
         "an explicitly requested TopN entry survives, though every value \
          occurs exactly once"
     );
+}
+
+#[test]
+fn test_sequential_range_checker_matches_go_boundaries() {
+    let ranges = [(5, 8), (12, 15), (20, 22)];
+    let mut checker = SequentialRangeChecker::from_ranges(&ranges);
+    assert!(!checker.is_index_in_topn_range(4));
+    assert!(checker.is_index_in_topn_range(5));
+    assert!(checker.is_index_in_topn_range(8));
+    assert!(!checker.is_index_in_topn_range(10));
+    assert!(checker.is_index_in_topn_range(12));
+    assert!(checker.is_index_in_topn_range(15));
+    assert!(checker.is_index_in_topn_range(20));
+    assert!(checker.is_index_in_topn_range(22));
+    assert!(!checker.is_index_in_topn_range(25));
+
+    let mut empty = SequentialRangeChecker::from_ranges(&[]);
+    assert!(!empty.is_index_in_topn_range(0));
+
+    let mut unsorted = SequentialRangeChecker::from_ranges(&[(20, 22), (5, 8), (12, 15)]);
+    assert!(unsorted.is_index_in_topn_range(6));
+    assert!(unsorted.is_index_in_topn_range(13));
+    assert!(unsorted.is_index_in_topn_range(21));
+
+    // The source is deliberately sequential: after advancing past one range,
+    // a backwards probe does not rewind the cursor.
+    assert!(!unsorted.is_index_in_topn_range(6));
 }
