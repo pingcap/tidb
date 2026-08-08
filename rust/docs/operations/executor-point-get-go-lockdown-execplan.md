@@ -16,7 +16,7 @@ After this unit, a reviewer can regenerate an exact abstract-syntax-tree census 
 - [x] (2026-08-08) Added five source-shaped metadata helpers and six boundary tests in the new Rust owner module.
 - [x] (2026-08-08) Checked in the exact inventory, artifact manifest, reconstructible receipt, symbol/drift gate, and 22 killed mutation results.
 - [x] (2026-08-08) Passed the scoped Go owners, required RealTiKV owner, Rust all-target suite, strict clippy, formatting, receipt checker, and `make -j12 lint`.
-- [ ] Replay the full locked Rust workspace in a clean detached worktree at the exact final SHA, verify ratchets, return the local SHA without publishing, and reclaim only this unit's artifacts.
+- [x] (2026-08-08) Replayed the full locked Rust workspace in a clean detached worktree at code-bearing candidate `a88e7f5211ac7f8e88e373914f0f20b91dcb1452`; checker, formatting, clean status, and direct ratchets `0/100/1/78` passed. The post-plan receipt commit receives the same clean replay before local delivery.
 
 ## Surprises & Discoveries
 
@@ -54,7 +54,7 @@ After this unit, a reviewer can regenerate an exact abstract-syntax-tree census 
 
 The lockdown closes all 763 obligations: 28 are `PORTED`, 734 are explicitly `DECLINED` at measured missing native boundaries, and one is structurally `UNREACHABLE`. Five pure helpers are compiled in Rust, six behavior tests pin their boundaries, three receipt tests pin the ledger, and all 22 mutation variants are killed. This completeness result moves no differential oracle and is still a successful lockdown.
 
-Scoped Go validation passed for seven direct `pkg/executor` owners, four direct `pkg/executor/internal/exec` owners, and RealTiKV `TestStaleReadKVRequest`; each failpoint wrapper restored refcount zero. TiUP services were stopped, PD became unreachable, and the exact `task325-point-get` data directory was reclaimed. Rust `tidb-executor --all-targets` passed 528 library tests (524 passed, four ignored) and all integration targets; strict clippy passed with `-D warnings`. `make -j12 lint` exited zero while printing the repository's existing Darwin `find -name` and Go internal-package diagnostics. The remaining delivery step is a clean detached full-workspace replay at the exact local commit.
+Scoped Go validation passed for seven direct `pkg/executor` owners, four direct `pkg/executor/internal/exec` owners, and RealTiKV `TestStaleReadKVRequest`; each failpoint wrapper restored refcount zero. TiUP services were stopped, PD became unreachable, and the exact `task325-point-get` data directory was reclaimed. Rust `tidb-executor --all-targets` passed 528 library tests (524 passed, four ignored) and all integration targets; strict clippy passed with `-D warnings`. `make -j12 lint` exited zero while printing the repository's existing Darwin `find -name` and Go internal-package diagnostics. A clean detached locked workspace replay passed at code-bearing candidate `a88e7f5211ac7f8e88e373914f0f20b91dcb1452`; the final documentation/receipt commit is replayed after this plan closes and reported in the delivery handoff.
 
 ## Context and Orientation
 
