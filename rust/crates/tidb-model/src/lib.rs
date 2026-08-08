@@ -62,7 +62,10 @@ pub use engine_attribute::{
     parse_engine_attribute_from_string, EngineAttribute, StorageClassDef, StorageClassSettings,
     StorageClassTransitRule,
 };
-pub use go_runtime::{GoPointerAny, GoShared, GoSharedPointerSlice, GoSharedSlice, GoTime};
+pub use go_runtime::{
+    GoNullClonePolicy, GoPointerAny, GoShared, GoSharedPointerSlice, GoSharedSlice, GoTime,
+    GoTimeLocation,
+};
 pub use index::{
     field_type_to_inverted_index_info, find_index_by_columns,
     find_index_by_columns_for_foreign_key, find_index_info_by_id, gen_unique_changing_index_name,

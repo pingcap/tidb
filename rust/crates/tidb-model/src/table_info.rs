@@ -923,7 +923,7 @@ mod tests {
         };
         let update_time = table.get_update_time();
         assert_eq!(update_time.unix_millis(), (1_i64 << 46) - 1);
-        assert!(update_time.to_chrono_utc().is_none());
+        assert!(update_time.to_chrono_utc().is_some());
     }
 
     #[test]
