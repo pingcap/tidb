@@ -107,6 +107,24 @@ func (s *Syncer) NewSessionAndStoreServerInfo(ctx context.Context) error {
 	if s.etcdCli == nil {
 		return nil
 	}
+
+	// Validate that the advertise address is still bound to a local interface
+	// before creating/renewing the session. This prevents stale server info entries
+	// when the host IP changes.
+	cfg := config.GetGlobalConfig()
+	advertiseAddr := cfg.AdvertiseAddress
+	if len(advertiseAddr) > 0 && advertiseAddr != "0.0.0.0" && advertiseAddr != "::" {
+		if !tidbutil.IsIPBoundLocally(advertiseAddr) {
+			logutil.BgLogger().Warn("advertise-address is no longer bound to any local interface, refusing to renew session",
+				zap.String("advertise-address", advertiseAddr),
+				zap.String("server-info-path", s.serverInfoPath))
+			return errors.Errorf(
+				"advertise-address %s is not bound to any local network interface. "+
+					"The host IP may have changed. Refusing to renew etcd session to prevent stale entries.",
+				advertiseAddr)
+		}
+	}
+
 	s.cleanupStaleServerAndOwnerInfo(ctx)
 	logPrefix := fmt.Sprintf("[Info-syncer] %s", s.serverInfoPath)
 	session, err := tidbutil.NewSession(ctx, logPrefix, s.etcdCli, tidbutil.NewSessionDefaultRetryCnt, util.SessionTTL)
