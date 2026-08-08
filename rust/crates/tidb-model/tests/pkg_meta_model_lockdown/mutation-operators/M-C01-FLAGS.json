@@ -1,0 +1,1 @@
+{"mutation_id":"M-C01-FLAGS","replacements":[{"expected_count":1,"new":"pub const FLAG_IN_RESTRICTED_SQL: u64 = 1 << 12;","old":"pub const FLAG_IN_RESTRICTED_SQL: u64 = 1 << 11;"}],"rust_path":"rust/crates/tidb-model/src/flags.rs","schema":"go-package-lockdown-mutation-operator-v1","source_sha256":"e5e396a9885d50da6cf1d01b21509fd2837b21795f1946c9998c3f515d879c8f"}

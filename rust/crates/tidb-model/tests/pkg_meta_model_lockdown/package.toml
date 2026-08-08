@@ -42,6 +42,7 @@ owned_rust_files = [
   "rust/crates/tidb-model/tests/pkg_meta_model_lockdown/mutation-probes.tsv",
   "rust/crates/tidb-model/tests/pkg_meta_model_lockdown/semantic-clusters.md",
   "rust/crates/tidb-model/tests/pkg_meta_model_lockdown.rs",
+  "rust/crates/tidb-model/tests/pkg_meta_model_observation_emitter.rs",
   "rust/crates/tidb-model/tests/resource_group_lockdown.rs",
 ]
 

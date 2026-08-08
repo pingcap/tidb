@@ -1,2 +1,6 @@
 # symbols-v1
 symbol_id	rust_crate	rust_symbol	definition_path	anchor_path	anchor_target	anchor_name
+S-C01-BDR	tidb-model	tidb_model::bdr::DDLBDRType	rust/crates/tidb-model/src/bdr.rs	rust/crates/tidb-model/tests/pkg_meta_model_lockdown.rs	pkg_meta_model_lockdown	pkg_meta_model_bdr_boundary
+S-C01-DB	tidb-model	tidb_model::db::DBInfo	rust/crates/tidb-model/src/db.rs	rust/crates/tidb-model/tests/pkg_meta_model_lockdown.rs	pkg_meta_model_lockdown	pkg_meta_model_db_boundary
+S-C01-FLAGS	tidb-model	tidb_model::flags::FLAG_IGNORE_TRUNCATE	rust/crates/tidb-model/src/flags.rs	rust/crates/tidb-model/tests/pkg_meta_model_lockdown.rs	pkg_meta_model_lockdown	pkg_meta_model_flags_boundary
+S-C01-MODE	tidb-model	tidb_model::table_mode::TableMode	rust/crates/tidb-model/src/table_mode.rs	rust/crates/tidb-model/tests/pkg_meta_model_lockdown.rs	pkg_meta_model_lockdown	pkg_meta_model_table_mode_boundary

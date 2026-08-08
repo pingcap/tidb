@@ -1,0 +1,1 @@
+{"mutation_id":"M-C01-BDR","replacements":[{"expected_count":1,"new":"let ms = (ts >> 17) as i64;","old":"let ms = (ts >> 18) as i64;"}],"rust_path":"rust/crates/tidb-model/src/bdr.rs","schema":"go-package-lockdown-mutation-operator-v1","source_sha256":"a541b71e129a0c45e44f720d7286dd4b2414b094141c13a74b288dece413f8db"}
