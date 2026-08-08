@@ -24,6 +24,7 @@ CHECKER = REPOSITORY / "rust/scripts/go-package-lockdown.py"
 GO_TOOL = REPOSITORY / "rust/difftests/tools/go_package_lockdown_inventory/main.go"
 GO_FIXTURE_TOOL = REPOSITORY / "rust/difftests/tools/go_test_fixture_inventory/main.go"
 GO_HELPER_CALL_TOOL = REPOSITORY / "rust/difftests/tools/go_test_helper_call_inventory/main.go"
+GO_EMBED_TOOL = REPOSITORY / "rust/difftests/tools/go_package_embed_inventory/main.go"
 SPEC = Path("evidence/package.toml")
 LEDGER_HEADER = [
     "obligation_id", "category", "source_path", "ast_anchor", "node_sha256", "owner",
@@ -81,11 +82,26 @@ def write_tsv(path: Path, schema: str, header: list[str], rows: list[dict[str, s
 
 def write_json(path: Path, payload: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(LOCKDOWN.canonical_json_text(payload), encoding="utf-8")
 
 
 def command_log(stdout: bytes, stderr: bytes = b"") -> bytes:
     return b"--- stdout ---\n" + stdout + b"\n--- stderr ---\n" + stderr
+
+
+def runtime_observation_line(path: Path) -> bytes:
+    expected = json.loads(path.read_text(encoding="utf-8"))
+    runtime = {
+        "schema": "go-package-lockdown-runtime-observation-v1",
+        "probe_id": expected["probe_id"],
+        "source_commit": expected["source_commit"],
+        "conclusion": expected["conclusion"],
+        "boundary_observations": [
+            {"name": case["name"], "input": case["input"], "observed": case["expected"]}
+            for case in expected["boundary_observations"]
+        ],
+    }
+    return b"LOCKDOWN_OBSERVATION " + LOCKDOWN.canonical_json_bytes(runtime)
 
 
 class GoPackageLockdownTest(unittest.TestCase):
@@ -113,10 +129,35 @@ class GoPackageLockdownTest(unittest.TestCase):
         self._test_temp.cleanup()
 
     @classmethod
-    def _checker(cls, root: Path, command: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    def _spec_source_commit_for_path(cls, root: Path, spec_path: Path) -> str:
+        match = re.search(
+            r'^source_commit = "([0-9a-f]{40})"$',
+            (root / spec_path).read_text(encoding="utf-8"),
+            flags=re.MULTILINE,
+        )
+        if match is None:
+            raise AssertionError("synthetic spec has no source_commit")
+        return match.group(1)
+
+    @classmethod
+    def _spec_source_commit(cls, root: Path) -> str:
+        return cls._spec_source_commit_for_path(root, SPEC)
+
+    @classmethod
+    def _checker(
+        cls,
+        root: Path,
+        command: str,
+        check: bool = True,
+        accepted_source_commit: str | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        accepted = accepted_source_commit or cls._spec_source_commit(root)
         return run(
             root,
-            [sys.executable, str(CHECKER), "--root", str(root), command, "--spec", SPEC.as_posix()],
+            [
+                sys.executable, str(CHECKER), "--root", str(root), command,
+                "--spec", SPEC.as_posix(), "--accepted-source-commit", accepted,
+            ],
             check=check,
         )
 
@@ -126,6 +167,7 @@ class GoPackageLockdownTest(unittest.TestCase):
         (root / "rust/difftests/tools/go_package_lockdown_inventory").mkdir(parents=True)
         (root / "rust/difftests/tools/go_test_fixture_inventory").mkdir(parents=True)
         (root / "rust/difftests/tools/go_test_helper_call_inventory").mkdir(parents=True)
+        (root / "rust/difftests/tools/go_package_embed_inventory").mkdir(parents=True)
         (root / "rust/crates/tidb-sample/src").mkdir(parents=True)
         (root / "rust/crates/tidb-sample/tests").mkdir(parents=True)
         (root / "evidence").mkdir(parents=True)
@@ -134,6 +176,10 @@ class GoPackageLockdownTest(unittest.TestCase):
         shutil.copy2(
             GO_HELPER_CALL_TOOL,
             root / "rust/difftests/tools/go_test_helper_call_inventory/main.go",
+        )
+        shutil.copy2(
+            GO_EMBED_TOOL,
+            root / "rust/difftests/tools/go_package_embed_inventory/main.go",
         )
         (root / "go.mod").write_text("module example.com/lockdown\n\ngo 1.26\n", encoding="utf-8")
         (root / "pkg/sample/sample.go").write_text(
@@ -173,6 +219,12 @@ class GoPackageLockdownTest(unittest.TestCase):
         anchor.write_text(
             "#[test]\nfn test_sample_boundary() { "
             "assert_eq!(tidb_sample::sample_symbol(3), 3); }\n",
+            encoding="utf-8",
+        )
+        (root / "rust/crates/tidb-sample/Cargo.toml").write_text(
+            "[package]\nname = \"tidb-sample\"\nversion = \"0.0.0\"\n"
+            "edition = \"2021\"\n\n"
+            "[[test]]\nname = \"sample_lockdown\"\npath = \"tests/sample_lockdown.rs\"\n",
             encoding="utf-8",
         )
         run(root, ["git", "init", "-q"])
@@ -264,8 +316,8 @@ class GoPackageLockdownTest(unittest.TestCase):
             "source_commit": source_commit,
             "conclusion": probe_conclusion,
             "boundary_observations": [
-                {"name": "limit-minus-one", "input": "2", "observed": "2"},
-                {"name": "limit-plus-one", "input": "4", "observed": "3"},
+                {"name": "limit-minus-one", "input": "2", "expected": "2"},
+                {"name": "limit-plus-one", "input": "4", "expected": "3"},
             ],
         })
         probe_plan_path = root / "evidence/probes/PROBE-DECLINED.json"
@@ -341,7 +393,7 @@ class GoPackageLockdownTest(unittest.TestCase):
             "# symbols-v1",
             [
                 "symbol_id", "rust_crate", "rust_symbol", "definition_path", "anchor_path",
-                "anchor_name",
+                "anchor_target", "anchor_name",
             ],
             [{
                 "symbol_id": "SAMPLE-SYMBOL",
@@ -349,6 +401,7 @@ class GoPackageLockdownTest(unittest.TestCase):
                 "rust_symbol": "tidb_sample::sample_symbol",
                 "definition_path": "rust/crates/tidb-sample/src/lib.rs",
                 "anchor_path": "rust/crates/tidb-sample/tests/sample_lockdown.rs",
+                "anchor_target": "sample_lockdown",
                 "anchor_name": "test_sample_boundary",
             }],
         )
@@ -406,7 +459,8 @@ class GoPackageLockdownTest(unittest.TestCase):
         mutation_verify_stdout = mutation_stdout.replace(b"0.01s", b"0.02s")
         mutation_argv = [
             "cargo", "test", "--offline", "--locked", "-j12", "--quiet", "-p",
-            "tidb-sample", "--test", "sample_lockdown", "test_sample_boundary", "--", "--exact",
+            "tidb-sample", "--test", "sample_lockdown", "test_sample_boundary", "--",
+            "--exact", "--nocapture",
         ]
         mutation_observation = LOCKDOWN.normalized_test_observation(
             "cargo-test", "test_sample_boundary", 101, mutation_stdout, b""
@@ -540,10 +594,7 @@ class GoPackageLockdownTest(unittest.TestCase):
             [mutation_result],
         )
 
-        observation_marker = (
-            f"LOCKDOWN_OBSERVATION PROBE-DECLINED sha256:{sha256(observation_path)} "
-            f"conclusion-sha256:{hashlib.sha256(probe_conclusion.encode()).hexdigest()}\n"
-        ).encode()
+        observation_marker = runtime_observation_line(observation_path) + b"\n"
         probe_stdout = (
             b"=== RUN   TestClamp\n"
             + observation_marker
@@ -651,6 +702,42 @@ class GoPackageLockdownTest(unittest.TestCase):
         schema, header, _rows = read_tsv(results)
         write_tsv(results, schema, header, [])
 
+    def rewrite_recorded_probe_observation(self, mutate: object) -> None:
+        results_path = self.root / "evidence/probe-results.tsv"
+        schema, header, rows = read_tsv(results_path)
+        for phase in ["run", "verification"]:
+            artifact_path = self.root / rows[0][f"{phase}_artifact_path"]
+            payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+            log_path = self.root / str(payload["output_path"])
+            stdout, stderr = LOCKDOWN.parse_command_output(
+                log_path.read_bytes(), f"{phase} observation rewrite"
+            )
+            output_lines = stdout.splitlines()
+            marker_index = next(
+                index for index, line in enumerate(output_lines)
+                if line.startswith(b"LOCKDOWN_OBSERVATION ")
+            )
+            runtime = json.loads(
+                output_lines[marker_index].removeprefix(b"LOCKDOWN_OBSERVATION ")
+            )
+            mutate(runtime)
+            output_lines[marker_index] = (
+                b"LOCKDOWN_OBSERVATION " + LOCKDOWN.canonical_json_bytes(runtime)
+            )
+            new_stdout = b"\n".join(output_lines) + b"\n"
+            log_path.write_bytes(command_log(new_stdout, stderr))
+            payload["output_sha256"] = sha256(log_path)
+            payload["normalized_observation_sha256"] = LOCKDOWN.normalized_test_observation(
+                "go-test", "TestClamp", 0, new_stdout, stderr
+            )
+            if phase == "verification":
+                payload["prior_artifact_sha256"] = sha256(
+                    self.root / rows[0]["run_artifact_path"]
+                )
+            write_json(artifact_path, payload)
+            rows[0][f"{phase}_artifact_sha256"] = sha256(artifact_path)
+        write_tsv(results_path, schema, header, rows)
+
     def rehash_mutation_history(self, rows: list[dict[str, str]]) -> None:
         prior = hashlib.sha256(LOCKDOWN.canonical_json_bytes({
             "schema": "go-package-lockdown-mutation-history-v1",
@@ -664,6 +751,21 @@ class GoPackageLockdownTest(unittest.TestCase):
                 **{key: value for key, value in row.items() if key != "history_sha256"},
             })).hexdigest()
             prior = row["history_sha256"]
+
+    def commit_accepted_history_baseline(self) -> str:
+        run(self.root, ["git", "add", "evidence"])
+        run(self.root, ["git", "commit", "-qm", "commit accepted package receipt history"])
+        accepted = run(self.root, ["git", "rev-parse", "HEAD"]).stdout.strip()
+        spec = self.root / SPEC
+        spec.write_text(
+            re.sub(
+                r'source_commit = "[0-9a-f]{40}"',
+                f'source_commit = "{accepted}"',
+                spec.read_text(encoding="utf-8"),
+            ),
+            encoding="utf-8",
+        )
+        return accepted
 
     def test_complete_lifecycle_is_content_addressed_and_per_file(self) -> None:
         result = self.checker("check")
@@ -724,6 +826,11 @@ class GoPackageLockdownTest(unittest.TestCase):
             path = self.root / "evidence" / relative
             schema, header, _rows = read_tsv(path)
             write_tsv(path, schema, header, [])
+        (self.root / "evidence/proofs/UNREACHABLE.json").unlink()
+        for path in (self.root / "evidence/mutation-operators").iterdir():
+            path.unlink()
+        for path in (self.root / "evidence/execution/mutation").iterdir():
+            path.unlink()
         self.checker("write-receipt")
         self.checker("check")
         receipt = json.loads((self.root / "evidence/receipt.json").read_text(encoding="utf-8"))
@@ -738,6 +845,28 @@ class GoPackageLockdownTest(unittest.TestCase):
         (self.root / "pkg/sample/untracked.go").write_text("package sample\n", encoding="utf-8")
         self.assert_checker_fails("generate", "untracked package artifacts")
 
+    def test_generate_twice_with_spec_inside_mapped_crate_owns_exact_proof_tree(self) -> None:
+        target = self.root / "rust/crates/tidb-sample/lockdown"
+        shutil.move(self.root / "evidence", target)
+        for path in target.rglob("*"):
+            if path.is_file() and path.suffix in {".toml", ".tsv", ".json"}:
+                path.write_text(
+                    path.read_text(encoding="utf-8").replace(
+                        "evidence/", "rust/crates/tidb-sample/lockdown/"
+                    ),
+                    encoding="utf-8",
+                )
+        spec_path = Path("rust/crates/tidb-sample/lockdown/package.toml")
+        accepted = self._spec_source_commit_for_path(self.root, spec_path)
+        command = [
+            sys.executable, str(CHECKER), "--root", str(self.root), "generate",
+            "--spec", spec_path.as_posix(), "--accepted-source-commit", accepted,
+        ]
+        first = run(self.root, command)
+        second = run(self.root, command)
+        self.assertIn("generated pkg/sample", first.stdout)
+        self.assertIn("generated pkg/sample", second.stdout)
+
     def test_generate_rejects_unknown_spec_field(self) -> None:
         spec = self.root / SPEC
         spec.write_text(
@@ -747,6 +876,34 @@ class GoPackageLockdownTest(unittest.TestCase):
             encoding="utf-8",
         )
         self.assert_checker_fails("generate", "unknown fields")
+
+    def test_cli_requires_coordinator_accepted_commit_and_rejects_candidate_self_sha(self) -> None:
+        accepted = self._spec_source_commit(self.root)
+        result = run(
+            self.root,
+            [
+                sys.executable, str(CHECKER), "--root", str(self.root), "check",
+                "--spec", SPEC.as_posix(),
+            ],
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("--accepted-source-commit", result.stderr)
+
+        (self.root / "candidate.txt").write_text("candidate\n", encoding="utf-8")
+        run(self.root, ["git", "add", "candidate.txt"])
+        run(self.root, ["git", "commit", "-qm", "candidate self commit"])
+        candidate = run(self.root, ["git", "rev-parse", "HEAD"]).stdout.strip()
+        spec = self.root / SPEC
+        spec.write_text(
+            spec.read_text(encoding="utf-8").replace(accepted, candidate),
+            encoding="utf-8",
+        )
+        result = self._checker(
+            self.root, "check", check=False, accepted_source_commit=accepted
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("differs from coordinator-supplied", result.stderr)
 
     def test_generate_rejects_fixture_disguised_as_excluded_subpackage(self) -> None:
         spec = self.root / SPEC
@@ -776,6 +933,31 @@ class GoPackageLockdownTest(unittest.TestCase):
         )
         result = self.checker("generate")
         self.assertIn("generated pkg/sample", result.stdout)
+
+    def test_generate_fails_closed_on_embed_in_excluded_nested_package(self) -> None:
+        nested = self.root / "pkg/sample/child/child.go"
+        nested.parent.mkdir(parents=True)
+        nested.write_text(
+            "package child\n\nimport _ \"embed\"\n\n"
+            "//go:embed data/value.txt\nvar value string\n",
+            encoding="utf-8",
+        )
+        asset = self.root / "pkg/sample/child/data/value.txt"
+        asset.parent.mkdir(parents=True)
+        asset.write_text("value\n", encoding="utf-8")
+        self.commit_source_update(
+            "pkg/sample/child/child.go", "pkg/sample/child/data/value.txt"
+        )
+        spec = self.root / SPEC
+        spec.write_text(
+            spec.read_text(encoding="utf-8").replace(
+                "excluded_subpackages = []",
+                "excluded_subpackages = [{ path = \"pkg/sample/child\", "
+                "proof = \"go-package-dir:pkg/sample/child#package:child\" }]",
+            ),
+            encoding="utf-8",
+        )
+        self.assert_checker_fails("generate", "//go:embed is unsupported")
 
     def test_generate_rejects_unmanifested_go_generate_inputs(self) -> None:
         source = self.root / "pkg/sample/sample.go"
@@ -884,6 +1066,77 @@ class GoPackageLockdownTest(unittest.TestCase):
         )
         self.assert_checker_fails("check", "disappeared from compile anchor")
 
+    def test_check_rejects_test_local_crate_symbol_and_bare_path_anchor(self) -> None:
+        symbols = self.root / "evidence/symbols.tsv"
+        schema, header, rows = read_tsv(symbols)
+        rows[0]["rust_symbol"] = "crate::sample_symbol"
+        write_tsv(symbols, schema, header, rows)
+        self.assert_checker_fails("check", "test-local crate:: paths")
+
+        rows[0]["rust_symbol"] = "tidb_sample::sample_symbol"
+        write_tsv(symbols, schema, header, rows)
+        anchor = self.root / "rust/crates/tidb-sample/tests/sample_lockdown.rs"
+        anchor.write_text(
+            "#[test]\nfn test_sample_boundary() { "
+            "let _ = tidb_sample::sample_symbol; }\n",
+            encoding="utf-8",
+        )
+        self.assert_checker_fails("check", "disappeared from compile anchor")
+
+    def test_check_allows_assigned_executable_symbol_call(self) -> None:
+        anchor = self.root / "rust/crates/tidb-sample/tests/sample_lockdown.rs"
+        anchor.write_text(
+            "#[test]\nfn test_sample_boundary() { "
+            "let actual = tidb_sample::sample_symbol(3); assert_eq!(actual, 3); }\n",
+            encoding="utf-8",
+        )
+        self.checker("write-receipt")
+        self.checker("check")
+
+    def test_check_rejects_mutation_of_unrelated_production_path_or_test(self) -> None:
+        unrelated = self.root / "rust/crates/tidb-sample/src/unrelated.rs"
+        unrelated.write_text("pub fn unrelated() -> i32 { 7 }\n", encoding="utf-8")
+        run(self.root, ["git", "add", unrelated.relative_to(self.root).as_posix()])
+        run(self.root, ["git", "commit", "-qm", "add unrelated candidate source"])
+        baseline = run(self.root, ["git", "rev-parse", "HEAD"]).stdout.strip()
+        spec = self.root / SPEC
+        spec.write_text(
+            spec.read_text(encoding="utf-8").replace(
+                '"rust/crates/tidb-sample/tests/sample_lockdown.rs"]',
+                '"rust/crates/tidb-sample/tests/sample_lockdown.rs", '
+                '"rust/crates/tidb-sample/src/unrelated.rs"]',
+            ),
+            encoding="utf-8",
+        )
+        operator = self.root / "evidence/mutation-operators/MUT-UNRELATED.json"
+        write_json(operator, {
+            "schema": "go-package-lockdown-mutation-operator-v1",
+            "mutation_id": "MUT-CLAMP",
+            "rust_path": "rust/crates/tidb-sample/src/unrelated.rs",
+            "source_sha256": sha256(unrelated),
+            "replacements": [{"old": "{ 7 }", "new": "{ 8 }", "expected_count": 1}],
+        })
+        plan = self.root / "evidence/mutation-plan.tsv"
+        plan_schema, plan_header, plans = read_tsv(plan)
+        original_plan = plans[0].copy()
+        plans[0].update(
+            baseline_commit=baseline,
+            rust_path="rust/crates/tidb-sample/src/unrelated.rs",
+            source_sha256=sha256(unrelated),
+            operator_path=operator.relative_to(self.root).as_posix(),
+            operator_sha256=sha256(operator),
+        )
+        write_tsv(plan, plan_schema, plan_header, plans)
+        self.assert_checker_fails("check", "not bound to the semantic rule")
+
+        plans[0] = {
+            **original_plan,
+            "test_target": "unrelated_target",
+            "named_test": "unrelated_test",
+        }
+        write_tsv(plan, plan_schema, plan_header, plans)
+        self.assert_checker_fails("check", "not bound to the semantic rule")
+
     def test_check_rejects_conditional_test_attribute_decoy(self) -> None:
         anchor = self.root / "rust/crates/tidb-sample/tests/sample_lockdown.rs"
         anchor.write_text(
@@ -901,7 +1154,9 @@ class GoPackageLockdownTest(unittest.TestCase):
         self.assert_checker_fails("check", "mapped Rust change census is not exact")
 
     def test_fixed_runner_uses_rust_cwd_and_run_verify_restore_source(self) -> None:
-        lockdown = LOCKDOWN.PackageLockdown(self.root, SPEC)
+        lockdown = LOCKDOWN.PackageLockdown(
+            self.root, SPEC, self._spec_source_commit(self.root)
+        )
         completed = subprocess.CompletedProcess(
             args=[], returncode=0,
             stdout=b"running 1 test\ntest test_sample_boundary ... ok\n", stderr=b"",
@@ -941,7 +1196,9 @@ class GoPackageLockdownTest(unittest.TestCase):
 
     def test_run_evidence_rejects_compilation_only_kill_and_restores_source(self) -> None:
         self.clear_mutation_execution()
-        lockdown = LOCKDOWN.PackageLockdown(self.root, SPEC)
+        lockdown = LOCKDOWN.PackageLockdown(
+            self.root, SPEC, self._spec_source_commit(self.root)
+        )
         definition = self.root / "rust/crates/tidb-sample/src/lib.rs"
         original = definition.read_bytes()
         compile_failure = subprocess.CompletedProcess(
@@ -977,7 +1234,9 @@ class GoPackageLockdownTest(unittest.TestCase):
 
     def test_run_evidence_rejects_preexisting_baseline_failure(self) -> None:
         self.clear_mutation_execution()
-        lockdown = LOCKDOWN.PackageLockdown(self.root, SPEC)
+        lockdown = LOCKDOWN.PackageLockdown(
+            self.root, SPEC, self._spec_source_commit(self.root)
+        )
         definition = self.root / "rust/crates/tidb-sample/src/lib.rs"
         original = definition.read_bytes()
         argv = lockdown._runner_argv(
@@ -997,7 +1256,9 @@ class GoPackageLockdownTest(unittest.TestCase):
 
     def test_historical_survivor_and_current_source_kill_are_both_preserved(self) -> None:
         self.clear_mutation_execution()
-        lockdown = LOCKDOWN.PackageLockdown(self.root, SPEC)
+        lockdown = LOCKDOWN.PackageLockdown(
+            self.root, SPEC, self._spec_source_commit(self.root)
+        )
         argv = lockdown._runner_argv(
             "cargo-test", "tidb-sample", "sample_lockdown", "test_sample_boundary",
             "history regression",
@@ -1052,7 +1313,9 @@ class GoPackageLockdownTest(unittest.TestCase):
         )
         write_tsv(plan_path, schema, header, plans)
 
-        lockdown = LOCKDOWN.PackageLockdown(self.root, SPEC)
+        lockdown = LOCKDOWN.PackageLockdown(
+            self.root, SPEC, self._spec_source_commit(self.root)
+        )
         killed = subprocess.CompletedProcess(
             args=[], returncode=101,
             stdout=b"running 1 test\ntest test_sample_boundary ... FAILED\n", stderr=b"",
@@ -1164,52 +1427,86 @@ class GoPackageLockdownTest(unittest.TestCase):
         receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
         receipt["obligation_count"] += 1
         receipt_path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        self.assert_checker_fails("check", "package receipt drifted")
+        self.assert_checker_fails("check", "not exact canonical JSON")
+
+    def test_check_rejects_noncanonical_reordered_and_duplicate_receipt_json(self) -> None:
+        receipt_path = self.root / "evidence/receipt.json"
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        receipt_path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        self.assert_checker_fails("check", "not exact canonical JSON")
+
+        reversed_receipt = dict(reversed(list(receipt.items())))
+        receipt_path.write_text(
+            json.dumps(reversed_receipt, separators=(",", ":")) + "\n", encoding="utf-8"
+        )
+        self.assert_checker_fails("check", "not exact canonical JSON")
+
+        raw = LOCKDOWN.canonical_json_text(receipt)
+        receipt_path.write_text(
+            raw.replace("{", '{"schema":"duplicate","schema":"duplicate",', 1),
+            encoding="utf-8",
+        )
+        self.assert_checker_fails("check", "duplicate JSON key")
+
+    def test_content_addressed_artifacts_reject_duplicate_json_keys(self) -> None:
+        operator = self.root / "evidence/mutation-operators/MUT-CLAMP.json"
+        raw = operator.read_text(encoding="utf-8")
+        operator.write_text(raw.replace("{", '{"schema":"duplicate",', 1), encoding="utf-8")
+        plan = self.root / "evidence/mutation-plan.tsv"
+        schema, header, rows = read_tsv(plan)
+        rows[0]["operator_sha256"] = sha256(operator)
+        write_tsv(plan, schema, header, rows)
+        self.assert_checker_fails("check", "duplicate JSON key")
 
     def test_check_rejects_deleting_committed_mutation_history(self) -> None:
-        run(self.root, ["git", "add", "evidence"])
-        run(self.root, ["git", "commit", "-qm", "commit package receipt history"])
+        accepted = self.commit_accepted_history_baseline()
         results = self.root / "evidence/mutation-results.tsv"
         schema, header, _rows = read_tsv(results)
         write_tsv(results, schema, header, [])
-        self.assert_checker_fails("check", "deleted, reordered, or rewrote")
+        run(self.root, ["git", "add", "evidence"])
+        run(self.root, ["git", "commit", "-qm", "candidate deletes history"])
+        lockdown = LOCKDOWN.PackageLockdown(self.root, SPEC, accepted)
+        with self.assertRaisesRegex(
+            LOCKDOWN.LockdownError, "deleted, reordered, or rewrote"
+        ):
+            lockdown._validate_mutation_history([])
 
     def test_check_rejects_reordered_committed_mutation_history(self) -> None:
-        run(self.root, ["git", "add", "evidence"])
-        run(self.root, ["git", "commit", "-qm", "commit package receipt history"])
-        lockdown = LOCKDOWN.PackageLockdown(self.root, SPEC)
-        argv = lockdown._runner_argv(
-            "cargo-test", "tidb-sample", "sample_lockdown", "test_sample_boundary",
-            "append-only history regression",
-        )
-        passing = subprocess.CompletedProcess(
-            args=[], returncode=0,
-            stdout=b"running 1 test\ntest test_sample_boundary ... ok\n", stderr=b"",
-        )
-        killed = subprocess.CompletedProcess(
-            args=[], returncode=101,
-            stdout=b"running 1 test\ntest test_sample_boundary ... FAILED\n", stderr=b"",
-        )
-        with mock.patch.object(
-            lockdown, "_run_fixed_test",
-            side_effect=[
-                (argv, passing), (argv, killed), (argv, passing),
-                (argv, passing), (argv, killed), (argv, passing),
-            ],
-        ):
-            self.assertEqual(
-                lockdown.run_evidence("mutation", "MUT-CLAMP", "ATTEMPT-CLAMP-2"), "KILLED"
-            )
-            self.assertEqual(
-                lockdown.verify_evidence("mutation", "MUT-CLAMP", "ATTEMPT-CLAMP-2"), "KILLED"
-            )
+        accepted = self.commit_accepted_history_baseline()
         results = self.root / "evidence/mutation-results.tsv"
         schema, header, rows = read_tsv(results)
-        self.assertEqual(len(rows), 2)
+        second = rows[0].copy()
+        second["attempt_id"] = "ATTEMPT-CLAMP-2"
+        second["prior_checkpoint_sha256"] = hashlib.sha256(
+            run(self.root, ["git", "show", f"{accepted}:evidence/mutation-results.tsv"]).stdout.encode()
+        ).hexdigest()
+        rows.append(second)
+        self.rehash_mutation_history(rows)
         rows.reverse()
         self.rehash_mutation_history(rows)
         write_tsv(results, schema, header, rows)
-        self.assert_checker_fails("check", "deleted, reordered, or rewrote")
+        run(self.root, ["git", "add", "evidence"])
+        run(self.root, ["git", "commit", "-qm", "candidate reorders history"])
+        lockdown = LOCKDOWN.PackageLockdown(self.root, SPEC, accepted)
+        with self.assertRaisesRegex(
+            LOCKDOWN.LockdownError, "deleted, reordered, or rewrote"
+        ):
+            lockdown._validate_mutation_history(rows)
+
+    def test_check_rejects_rewriting_committed_mutation_history(self) -> None:
+        accepted = self.commit_accepted_history_baseline()
+        results = self.root / "evidence/mutation-results.tsv"
+        schema, header, rows = read_tsv(results)
+        rows[0]["attempt_id"] = "ATTEMPT-REWRITTEN"
+        self.rehash_mutation_history(rows)
+        write_tsv(results, schema, header, rows)
+        run(self.root, ["git", "add", "evidence"])
+        run(self.root, ["git", "commit", "-qm", "candidate rewrites history"])
+        lockdown = LOCKDOWN.PackageLockdown(self.root, SPEC, accepted)
+        with self.assertRaisesRegex(
+            LOCKDOWN.LockdownError, "deleted, reordered, or rewrote"
+        ):
+            lockdown._validate_mutation_history(rows)
 
     def test_generate_rejects_unmanifested_external_fixture(self) -> None:
         source = self.root / "pkg/sample/sample_test.go"
@@ -1286,14 +1583,12 @@ class GoPackageLockdownTest(unittest.TestCase):
         source = self.root / "pkg/sample/sample_test.go"
         source.write_text(
             source.read_text(encoding="utf-8")
-            .replace(
-                "func TestClamp(t *testing.T) {\n",
-                "type localReader struct{}\n\n"
-                "func (localReader) ReadFile(string) {}\n\n"
-                "func TestClamp(t *testing.T) {\n"
-                "\tvar local localReader\n"
-                "\tlocal.ReadFile(\"testdata/cases.txt\")\n",
-            ),
+            + "\ntype localReader struct{}\n\n"
+            + "func (localReader) ReadFile(string) {}\n\n"
+            + "func localReadFileProbe() {\n"
+            + "\tvar local localReader\n"
+            + "\tlocal.ReadFile(\"testdata/cases.txt\")\n"
+            + "}\n",
             encoding="utf-8",
         )
         self.commit_source_update("pkg/sample/sample_test.go")
@@ -1347,11 +1642,48 @@ class GoPackageLockdownTest(unittest.TestCase):
         write_tsv(result_path, schema, header, rows)
         self.assert_checker_fails("check", "did not emit its exact machine-readable observation")
 
+    def test_check_rejects_missing_or_wrong_runtime_boundary_observations(self) -> None:
+        self.rewrite_recorded_probe_observation(
+            lambda runtime: runtime["boundary_observations"].pop()
+        )
+        self.assert_checker_fails("check", "differ from evidence")
+
+    def test_check_rejects_wrong_runtime_observed_value(self) -> None:
+        self.rewrite_recorded_probe_observation(
+            lambda runtime: runtime["boundary_observations"][0].update(observed="wrong")
+        )
+        self.assert_checker_fails("check", "differ from evidence")
+
+    def test_probe_rejects_named_test_hardcoded_expected_json_literal(self) -> None:
+        source = self.root / "pkg/sample/sample_test.go"
+        source.write_text(
+            source.read_text(encoding="utf-8").replace(
+                "func TestClamp(t *testing.T) {",
+                "func TestClamp(t *testing.T) {\n"
+                "\tt.Log(`LOCKDOWN_OBSERVATION {\"boundary_observations\":[]}`)",
+            ),
+            encoding="utf-8",
+        )
+        self.commit_source_update("pkg/sample/sample_test.go")
+        lockdown = LOCKDOWN.PackageLockdown(
+            self.root, SPEC, self._spec_source_commit(self.root)
+        )
+        lockdown.artifact_rows()
+        plan = json.loads(
+            (self.root / "evidence/probes/PROBE-DECLINED.json").read_text(encoding="utf-8")
+        )
+        with self.assertRaisesRegex(LOCKDOWN.LockdownError, "hardcodes a machine observation"):
+            lockdown._validate_observation_test_source(plan, "hardcoded observation regression")
+
     def test_probe_run_and_verify_execute_exact_machine_observation(self) -> None:
         self.clear_probe_execution()
-        lockdown = LOCKDOWN.PackageLockdown(self.root, SPEC)
+        lockdown = LOCKDOWN.PackageLockdown(
+            self.root, SPEC, self._spec_source_commit(self.root)
+        )
         _plan_path, plan = lockdown._probe_plans_for_execution()["PROBE-DECLINED"]
-        marker = lockdown._observation_marker(plan).encode("utf-8")
+        marker = runtime_observation_line(
+            self.root / str(plan["observation_path"])
+        )
         run_result = subprocess.CompletedProcess(
             args=[], returncode=0,
             stdout=(
@@ -1380,7 +1712,9 @@ class GoPackageLockdownTest(unittest.TestCase):
 
     def test_probe_run_rejects_passing_test_without_observation_marker(self) -> None:
         self.clear_probe_execution()
-        lockdown = LOCKDOWN.PackageLockdown(self.root, SPEC)
+        lockdown = LOCKDOWN.PackageLockdown(
+            self.root, SPEC, self._spec_source_commit(self.root)
+        )
         passing = subprocess.CompletedProcess(
             args=[], returncode=0,
             stdout=(

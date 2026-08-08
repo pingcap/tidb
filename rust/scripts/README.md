@@ -21,7 +21,8 @@ absorbed seed evidence, not package-completion claims. The coordinator seeds the
 artifact manifest and per-Go-file AST ledgers from the accepted integration SHA:
 
 ```bash
-python3 rust/scripts/go-package-lockdown.py generate --spec <receipt-dir>/package.toml
+python3 rust/scripts/go-package-lockdown.py generate \
+  --spec <receipt-dir>/package.toml --accepted-source-commit <full-accepted-sha>
 ```
 
 The package owner compares and edits Rust, tests, and ledgers only. It runs no
@@ -31,15 +32,17 @@ declarative probe/mutation and an independent replay:
 
 ```bash
 python3 rust/scripts/go-package-lockdown.py run-evidence \
-  --spec <receipt-dir>/package.toml --kind probe --id <probe-id>
+  --spec <receipt-dir>/package.toml --accepted-source-commit <full-accepted-sha> --kind probe --id <probe-id>
 python3 rust/scripts/go-package-lockdown.py verify-evidence \
-  --spec <receipt-dir>/package.toml --kind probe --id <probe-id>
+  --spec <receipt-dir>/package.toml --accepted-source-commit <full-accepted-sha> --kind probe --id <probe-id>
 python3 rust/scripts/go-package-lockdown.py run-evidence \
-  --spec <receipt-dir>/package.toml --kind mutation --id <mutation-id> --attempt <attempt-id>
+  --spec <receipt-dir>/package.toml --accepted-source-commit <full-accepted-sha> --kind mutation --id <mutation-id> --attempt <attempt-id>
 python3 rust/scripts/go-package-lockdown.py verify-evidence \
-  --spec <receipt-dir>/package.toml --kind mutation --id <mutation-id> --attempt <attempt-id>
-python3 rust/scripts/go-package-lockdown.py write-receipt --spec <receipt-dir>/package.toml
-python3 rust/scripts/go-package-lockdown.py check --spec <receipt-dir>/package.toml
+  --spec <receipt-dir>/package.toml --accepted-source-commit <full-accepted-sha> --kind mutation --id <mutation-id> --attempt <attempt-id>
+python3 rust/scripts/go-package-lockdown.py write-receipt \
+  --spec <receipt-dir>/package.toml --accepted-source-commit <full-accepted-sha>
+python3 rust/scripts/go-package-lockdown.py check \
+  --spec <receipt-dir>/package.toml --accepted-source-commit <full-accepted-sha>
 ```
 
 Evidence plans choose only `cargo-test` or `go-test`; the checker constructs the
@@ -47,7 +50,11 @@ entire argv. Cargo runs from `rust/` with offline/locked `-j12`, and Go runs fro
 the repository root against the pinned package. Run and replay logs are each
 content-addressed. The gate compares normalized exact named-test observations,
 so harmless elapsed-time drift is allowed while compilation-only kills fail.
-Measured probes must emit their exact content-addressed boundary observation;
+Measured probes emit canonical per-case runtime observations which are compared
+to separately content-addressed expected values; missing/wrong cases and
+hardcoded expected JSON are rejected. Schema v2 fails closed on `//go:embed`
+instead of approximating cmd/go resolution. All JSON proof inputs reject
+duplicate keys and frontend-authored JSON is canonical.
 mutations prove baseline PASS, mutated FAIL/SURVIVED, and restored PASS before
 recording. Mutated production bytes are restored in `finally`.
 

@@ -54,7 +54,10 @@ All changed, staged, or untracked paths below a mapped Rust crate since the
 accepted source commit are part of the receipt-owned file set, including
 `Cargo.toml`, helpers, production files, and tests. There is no
 "integration-only" bypass. `rust/Cargo.lock`, outside individual crate roots,
-is coordinator batch state.
+is coordinator batch state. A dedicated receipt directory may live below a
+mapped crate: only its exact spec and checker-declared proof graph are exempt
+from production ownership, and extra Rust/Go source or unreferenced proof
+artifacts fail the census.
 
 ## Owner lane: compare and edit only
 
@@ -96,7 +99,7 @@ executable or shell fragment. Cargo evidence runs from `rust/` as:
 
 ```text
 cargo test --offline --locked -j12 --quiet -p <mapped-crate> \
-  --test <target> <exact-test> -- --exact
+  --test <target> <exact-test> -- --exact --nocapture
 ```
 
 Go evidence runs from the repository root as:
@@ -109,9 +112,10 @@ Raw logs are independently content-addressed. Run and verification may contain
 nondeterministic timing/build lines, so the checker compares normalized exact
 named-test PASS/FAIL observations and exit/outcome, not raw-log equality. A
 compile-only failure is not a killed mutation because it proves the named test
-did not execute. Measured probes must also emit the exact content-addressed
-boundary-observation and conclusion marker; named-test success alone is not
-evidence of what the test observed. Each mutation proves baseline PASS,
+did not execute. Measured probes emit one canonical runtime JSON record with
+every case ID, input, observed value, and conclusion. The checker compares it
+to separately content-addressed expected values; a hash marker, missing case,
+or hardcoded expected JSON literal in the named test is rejected. Each mutation proves baseline PASS,
 mutated FAIL or records SURVIVED, and restored PASS. Source bytes are restored
 in `finally` after survivors, failures, and runner errors.
 
@@ -119,11 +123,16 @@ in `finally` after survivors, failures, and runner errors.
 
 `package.toml` pins the Go package, accepted source commit, complete mapped
 crate set, extra artifacts, and receipt-owned Rust paths. The package manifest
+`source_commit` must equal the coordinator-supplied full SHA passed as required
+`--accepted-source-commit` on every frontend invocation; HEAD cannot silently
+authorize itself. The package manifest
 must match both the current tracked census and exact blobs at `source_commit`.
 Nested exclusions require direct tracked `.go` files and an exact distinct
 directory proof; `testdata` and arbitrary subtrees cannot be excluded. Every
 repository input referenced by `go:generate` is manifested, or generation fails
-closed when static resolution is impossible.
+closed when static resolution is impossible. Checker schema v2 also fails
+closed on every production/test/build-tagged `//go:embed`, including excluded
+nested packages; it does not approximate cmd/go embed resolution.
 
 Every ledger row binds the full owning Go source blob hash as well as its AST
 node hash. Straight-line declaration/body drift invalidates preserved verdicts.
@@ -143,10 +152,12 @@ The symbol registry names a tracked receipt-owned definition under
 `rust/crates/<crate>/src/**`. The final Rust identifier must be an actual
 `fn`, `struct`, `enum`, `trait`, `type`, `const`, `static`, or `mod`
 declaration at the full claimed module/type/impl identity, not an unrelated
-same-leaf declaration. The separate compile anchor contains an actual
-`#[test]` function whose body references the full qualified `crate::...` or
-`mapped_crate_name::...` identity. Comments, strings, local uses, and unrelated
-test bodies do not satisfy the gate. Mutation sources are likewise
+same-leaf declaration. The separate compile anchor names an exact Cargo target
+and fully module-qualified `#[test]` identity whose body executably uses the
+`mapped_crate_name::...` identity. Test-local `crate::` decoys, bare path
+bindings, comments, strings, and unrelated test bodies do not satisfy the
+gate. Each rule mutation binds that production definition path and registered
+target/test tuple. Mutation sources are likewise
 receipt-owned production `src/**/*.rs` files, never tests or support files.
 
 Each PORTED semantic rule has at least two distinct boundary cases and a

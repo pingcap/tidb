@@ -29,6 +29,7 @@ ARTIFACT_SCHEMA = "go-package-lockdown-artifacts-v1"
 RECEIPT_SCHEMA = "go-package-lockdown-receipt-v2"
 EVIDENCE_SCHEMA = "go-package-lockdown-evidence-v1"
 OBSERVATION_SCHEMA = "go-package-lockdown-observation-v1"
+RUNTIME_OBSERVATION_SCHEMA = "go-package-lockdown-runtime-observation-v1"
 MUTATION_OPERATOR_SCHEMA = "go-package-lockdown-mutation-operator-v1"
 MUTATION_ATTEMPT_PLAN_SCHEMA = "go-package-lockdown-mutation-attempt-plan-v1"
 MUTATION_RUN_SCHEMA = "go-package-lockdown-mutation-run-v1"
@@ -37,6 +38,7 @@ MUTATION_HISTORY_SCHEMA = "go-package-lockdown-mutation-history-v1"
 GO_INVENTORY_TOOL = Path("rust/difftests/tools/go_package_lockdown_inventory")
 GO_FIXTURE_TOOL = Path("rust/difftests/tools/go_test_fixture_inventory")
 GO_HELPER_CALL_TOOL = Path("rust/difftests/tools/go_test_helper_call_inventory")
+GO_EMBED_TOOL = Path("rust/difftests/tools/go_package_embed_inventory")
 
 ARTIFACT_HEADER = [
     "path", "role", "traits", "sha256", "bytes", "lines", "source_blob_oid",
@@ -55,7 +57,8 @@ LEDGER_HEADER = [
     "rule_id",
 ]
 SYMBOL_HEADER = [
-    "symbol_id", "rust_crate", "rust_symbol", "definition_path", "anchor_path", "anchor_name",
+    "symbol_id", "rust_crate", "rust_symbol", "definition_path", "anchor_path",
+    "anchor_target", "anchor_name",
 ]
 RULE_HEADER = [
     "rule_id",
@@ -106,6 +109,9 @@ HELPER_CALL_HEADER = [
 ]
 HELPER_CONTRACT_HEADER = [
     "helper_id", "callee", "call_ids", "call_set_sha256", "status", "evidence",
+]
+EMBED_HEADER = [
+    "source_path", "source_line", "source_column", "patterns",
 ]
 ALLOWED_HELPER_STATUSES = {"DIRECT-FIXTURE", "NO-FIXTURE", "FIXTURE"}
 
@@ -185,6 +191,36 @@ def sha256(path: Path) -> str:
 
 def canonical_json_bytes(value: object) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def canonical_json_text(value: object) -> str:
+    return canonical_json_bytes(value).decode("utf-8") + "\n"
+
+
+def strict_json_loads(data: str, context: str) -> object:
+    def unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        result: dict[str, object] = {}
+        for key, value in pairs:
+            if key in result:
+                raise LockdownError(f"{context} contains duplicate JSON key {key!r}")
+            result[key] = value
+        return result
+
+    try:
+        return json.loads(data, object_pairs_hook=unique_object)
+    except json.JSONDecodeError as error:
+        raise LockdownError(f"cannot parse {context}: {error}") from error
+
+
+def read_strict_json(path: Path, context: str, *, canonical: bool = True) -> object:
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise LockdownError(f"cannot read {context} {path}: {error}") from error
+    payload = strict_json_loads(raw, f"{context} {path}")
+    if canonical and raw != canonical_json_text(payload):
+        raise LockdownError(f"{context} is not exact canonical JSON: {path}")
+    return payload
 
 
 def source_lines(path: Path) -> int:
@@ -365,6 +401,23 @@ def contains_token_sequence(tokens: list[str], expected: list[str]) -> bool:
     return any(tokens[index:index + len(expected)] == expected for index in range(len(tokens)))
 
 
+def rust_executable_symbol_use(tokens: list[str], expected: list[str]) -> bool:
+    """Require a qualified symbol to participate in an executable expression.
+
+    Merely binding or naming a path (`let _ = crate::symbol;` or
+    `crate::symbol;`) does not exercise production behavior and cannot be a
+    boundary-test anchor.
+    """
+    for index in range(len(tokens) - len(expected) + 1):
+        if tokens[index:index + len(expected)] != expected:
+            continue
+        after = index + len(expected)
+        if after >= len(tokens) or tokens[after] == ";":
+            continue
+        return True
+    return False
+
+
 def rust_matching_brace(tokens: list[str], opening: int) -> int:
     depth = 1
     cursor = opening + 1
@@ -493,48 +546,173 @@ def rust_declared_identities(
 def rust_test_function_bodies(tokens: list[str]) -> dict[str, list[str]]:
     functions: dict[str, list[str]] = {}
     qualifiers = {"pub", "crate", "super", "self", "async", "unsafe", "extern", "const", "(", ")"}
-    for index, token in enumerate(tokens[:-1]):
-        if token != "fn" or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", tokens[index + 1]):
-            continue
-        cursor = index - 1
-        while cursor >= 0 and tokens[cursor] in qualifiers:
-            cursor -= 1
-        found_test = False
-        while cursor >= 0 and tokens[cursor] == "]":
-            depth = 1
-            start = cursor - 1
-            while start >= 0 and depth:
-                if tokens[start] == "]":
-                    depth += 1
-                elif tokens[start] == "[":
-                    depth -= 1
-                start -= 1
-            if depth or start < 0 or tokens[start] != "#":
-                break
-            attribute = tokens[start + 2:cursor]
-            if attribute == ["test"]:
-                found_test = True
-            cursor = start - 1
-            while cursor >= 0 and tokens[cursor] in qualifiers:
-                cursor -= 1
-        if found_test:
-            body_start = index + 2
-            while body_start < len(tokens) and tokens[body_start] not in {"{", ";"}:
-                body_start += 1
-            if body_start >= len(tokens) or tokens[body_start] != "{":
+
+    def scan(start: int, end: int, scope: tuple[str, ...]) -> None:
+        index = start
+        while index < end - 1:
+            if tokens[index] == "mod" and re.fullmatch(
+                r"[A-Za-z_][A-Za-z0-9_]*", tokens[index + 1]
+            ):
+                opening = index + 2
+                while opening < end and tokens[opening] not in {"{", ";"}:
+                    opening += 1
+                if opening < end and tokens[opening] == "{":
+                    closing = rust_matching_brace(tokens, opening)
+                    scan(opening + 1, closing, scope + (tokens[index + 1],))
+                    index = closing + 1
+                    continue
+            if tokens[index] != "fn" or not re.fullmatch(
+                r"[A-Za-z_][A-Za-z0-9_]*", tokens[index + 1]
+            ):
+                index += 1
                 continue
-            depth = 1
-            body_end = body_start + 1
-            while body_end < len(tokens) and depth:
-                if tokens[body_end] == "{":
-                    depth += 1
-                elif tokens[body_end] == "}":
-                    depth -= 1
-                body_end += 1
-            if depth:
-                raise LockdownError(f"unterminated Rust test body: {tokens[index + 1]}")
-            functions[tokens[index + 1]] = tokens[body_start + 1:body_end - 1]
+            cursor = index - 1
+            while cursor >= start and tokens[cursor] in qualifiers:
+                cursor -= 1
+            found_test = False
+            while cursor >= start and tokens[cursor] == "]":
+                depth = 1
+                attribute_start = cursor - 1
+                while attribute_start >= start and depth:
+                    if tokens[attribute_start] == "]":
+                        depth += 1
+                    elif tokens[attribute_start] == "[":
+                        depth -= 1
+                    attribute_start -= 1
+                if depth or attribute_start < start or tokens[attribute_start] != "#":
+                    break
+                if tokens[attribute_start + 2:cursor] == ["test"]:
+                    found_test = True
+                cursor = attribute_start - 1
+                while cursor >= start and tokens[cursor] in qualifiers:
+                    cursor -= 1
+            body_start = index + 2
+            while body_start < end and tokens[body_start] not in {"{", ";"}:
+                body_start += 1
+            if body_start >= end or tokens[body_start] != "{":
+                index = body_start + 1
+                continue
+            body_end = rust_matching_brace(tokens, body_start)
+            if found_test:
+                identity = "::".join((*scope, tokens[index + 1]))
+                if identity in functions:
+                    raise LockdownError(f"duplicate Rust test identity: {identity}")
+                functions[identity] = tokens[body_start + 1:body_end]
+            index = body_end + 1
+
+    scan(0, len(tokens), ())
     return functions
+
+
+def code_mask(text: str) -> str:
+    """Mask C-style comments and literals while preserving character offsets."""
+    output = list(text)
+    index = 0
+    while index < len(text):
+        if text.startswith("//", index):
+            end = text.find("\n", index + 2)
+            end = len(text) if end < 0 else end
+            output[index:end] = " " * (end - index)
+            index = end
+            continue
+        if text.startswith("/*", index):
+            end = text.find("*/", index + 2)
+            if end < 0:
+                raise LockdownError("unterminated block comment in test anchor")
+            end += 2
+            output[index:end] = " " * (end - index)
+            index = end
+            continue
+        raw = re.match(r"(?:br|rb|r)?(?P<hashes>#{0,255})\"", text[index:])
+        if raw is not None:
+            delimiter = '"' + raw.group("hashes")
+            end = text.find(delimiter, index + raw.end())
+            if end < 0:
+                raise LockdownError("unterminated raw string in test anchor")
+            end += len(delimiter)
+            output[index:end] = " " * (end - index)
+            index = end
+            continue
+        if text[index] in {'"', '`'} or text.startswith('b"', index):
+            quote = text[index] if text[index] in {'"', '`'} else '"'
+            cursor = index + (2 if text.startswith('b"', index) else 1)
+            escaped = False
+            while cursor < len(text):
+                char = text[cursor]
+                cursor += 1
+                if quote == '`':
+                    if char == '`':
+                        break
+                elif escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == quote:
+                    break
+            else:
+                raise LockdownError("unterminated string in test anchor")
+            output[index:cursor] = " " * (cursor - index)
+            index = cursor
+            continue
+        index += 1
+    return "".join(output)
+
+
+def has_static_observation_literal(text: str) -> bool:
+    """Reject observation payloads embedded in source string literals."""
+    forbidden = (
+        "LOCKDOWN_OBSERVATION", "boundary_observations",
+        "go-package-lockdown-runtime-observation",
+    )
+    index = 0
+    while index < len(text):
+        if text.startswith("//", index):
+            newline = text.find("\n", index + 2)
+            index = len(text) if newline < 0 else newline + 1
+            continue
+        if text.startswith("/*", index):
+            end = text.find("*/", index + 2)
+            if end < 0:
+                raise LockdownError("unterminated block comment in test anchor")
+            index = end + 2
+            continue
+        raw = re.match(r"(?:br|rb|r)?(?P<hashes>#{0,255})\"", text[index:])
+        if raw is not None:
+            delimiter = '"' + raw.group("hashes")
+            end = text.find(delimiter, index + raw.end())
+            if end < 0:
+                raise LockdownError("unterminated raw string in test anchor")
+            literal = text[index:end + len(delimiter)]
+            if any(value in literal for value in forbidden):
+                return True
+            index = end + len(delimiter)
+            continue
+        prefix = 2 if text.startswith('b"', index) else 1 if text[index:index + 1] in {'"', '`'} else 0
+        if prefix:
+            quote = text[index + prefix - 1]
+            cursor = index + prefix
+            escaped = False
+            while cursor < len(text):
+                char = text[cursor]
+                cursor += 1
+                if quote == '`':
+                    if char == '`':
+                        break
+                elif escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == quote:
+                    break
+            else:
+                raise LockdownError("unterminated string in test anchor")
+            literal = text[index:cursor]
+            if any(value in literal for value in forbidden):
+                return True
+            index = cursor
+            continue
+        index += 1
+    return False
 
 
 def tsv_text(schema: str, header: list[str], rows: Iterable[Iterable[str]]) -> str:
@@ -568,7 +746,7 @@ def read_tsv(path: Path, header: list[str]) -> list[dict[str, str]]:
 
 
 class PackageLockdown:
-    def __init__(self, root: Path, spec_path: Path):
+    def __init__(self, root: Path, spec_path: Path, accepted_source_commit: str):
         self.root = root.resolve()
         if not self.root.is_dir():
             raise LockdownError(f"repository root is not a directory: {self.root}")
@@ -580,6 +758,11 @@ class PackageLockdown:
             self.spec = tomllib.loads(self.spec_path.read_text(encoding="utf-8"))
         except (OSError, tomllib.TOMLDecodeError) as error:
             raise LockdownError(f"cannot read {self.spec_relative}: {error}") from error
+        if not re.fullmatch(r"[0-9a-f]{40}", accepted_source_commit):
+            raise LockdownError(
+                "--accepted-source-commit must be a full lowercase 40-character Git SHA"
+            )
+        self.accepted_source_commit = accepted_source_commit
         self._load_spec()
 
     def _required_string(self, name: str) -> str:
@@ -608,21 +791,34 @@ class PackageLockdown:
         self.source_commit = self._required_string("source_commit")
         if not re.fullmatch(r"[0-9a-f]{40}", self.source_commit):
             raise LockdownError("source_commit must be a full lowercase 40-character Git SHA")
+        if self.source_commit != self.accepted_source_commit:
+            raise LockdownError(
+                "package.toml source_commit differs from coordinator-supplied "
+                "--accepted-source-commit"
+            )
         try:
-            run(self.root, ["git", "cat-file", "-e", f"{self.source_commit}^{{commit}}"])
+            run(self.root, [
+                "git", "cat-file", "-e", f"{self.accepted_source_commit}^{{commit}}",
+            ])
         except LockdownError as error:
-            raise LockdownError(f"source_commit is not available: {self.source_commit}") from error
+            raise LockdownError(
+                f"accepted source commit is not available: {self.accepted_source_commit}"
+            ) from error
         try:
-            run(self.root, ["git", "merge-base", "--is-ancestor", self.source_commit, "HEAD"])
+            run(self.root, [
+                "git", "merge-base", "--is-ancestor", self.accepted_source_commit, "HEAD",
+            ])
         except LockdownError as error:
-            raise LockdownError("source_commit must be an ancestor of the current checkout") from error
+            raise LockdownError(
+                "accepted source commit must be an ancestor of the current checkout"
+            ) from error
         self.git_object_format = run(
             self.root, ["git", "rev-parse", "--show-object-format"]
         ).strip()
         if self.git_object_format not in hashlib.algorithms_available:
             raise LockdownError(f"unsupported Git object format: {self.git_object_format}")
         self.source_tree = run(
-            self.root, ["git", "rev-parse", f"{self.source_commit}^{{tree}}"]
+            self.root, ["git", "rev-parse", f"{self.accepted_source_commit}^{{tree}}"]
         ).strip()
 
         self.primary_rust_crate = self._required_string("primary_rust_crate")
@@ -692,6 +888,7 @@ class PackageLockdown:
         self.helper_calls_path = self.receipt_dir / "helper-calls.tsv"
         self.helper_contracts_path = self.receipt_dir / "helper-contracts.tsv"
         self.receipt_path = self.receipt_dir / "receipt.json"
+        self.symbol_support_paths: set[Path] = set()
 
     def _mutation_history_genesis(self) -> str:
         return hashlib.sha256(canonical_json_bytes({
@@ -710,10 +907,11 @@ class PackageLockdown:
         }
         return hashlib.sha256(canonical_json_bytes(payload)).hexdigest()
 
-    def _committed_blob(self, path: Path) -> bytes | None:
+    def _accepted_blob(self, path: Path) -> bytes | None:
         relative = path.relative_to(self.root).as_posix()
         completed = subprocess.run(
-            ["git", "show", f"HEAD:{relative}"], cwd=self.root, check=False,
+            ["git", "show", f"{self.accepted_source_commit}:{relative}"],
+            cwd=self.root, check=False,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         )
         return completed.stdout if completed.returncode == 0 else None
@@ -743,14 +941,17 @@ class PackageLockdown:
             prior = expected
         return prior
 
-    def _committed_history_checkpoint(self) -> tuple[str, list[dict[str, str]]] | None:
-        receipt_blob = self._committed_blob(self.receipt_path)
+    def _accepted_history_checkpoint(self) -> tuple[str, list[dict[str, str]]] | None:
+        receipt_blob = self._accepted_blob(self.receipt_path)
         receipt_rows: list[dict[str, str]] | None = None
         if receipt_blob is not None:
             try:
-                payload = json.loads(receipt_blob.decode("utf-8"))
-            except (UnicodeDecodeError, json.JSONDecodeError) as error:
+                raw_receipt = receipt_blob.decode("utf-8")
+                payload = strict_json_loads(raw_receipt, "accepted package receipt")
+            except UnicodeDecodeError as error:
                 raise LockdownError(f"committed package receipt is unreadable: {error}") from error
+            if raw_receipt != canonical_json_text(payload):
+                raise LockdownError("accepted package receipt is not exact canonical JSON")
             if not isinstance(payload, dict) or payload.get("schema") != RECEIPT_SCHEMA:
                 raise LockdownError("committed package receipt has an incompatible schema")
             previous = payload.get("mutation_history")
@@ -764,7 +965,7 @@ class PackageLockdown:
             if payload.get("mutation_history_head_sha256") != head:
                 raise LockdownError("committed package receipt mutation-history head drifted")
 
-        results_blob = self._committed_blob(self.mutation_results_path)
+        results_blob = self._accepted_blob(self.mutation_results_path)
         if results_blob is None:
             if receipt_blob is None or receipt_rows is None:
                 return None
@@ -786,36 +987,76 @@ class PackageLockdown:
         if receipt_rows is not None and (
             len(receipt_rows) > len(rows) or rows[:len(receipt_rows)] != receipt_rows
         ):
-            raise LockdownError("committed receipt and mutation history disagree")
+            raise LockdownError("accepted receipt and mutation history disagree")
         return hashlib.sha256(results_blob).hexdigest(), rows
 
     def _validate_mutation_history(
         self, results: list[dict[str, str]], *, allow_unverified_tail: bool = False
     ) -> tuple[str, list[dict[str, str]]]:
         prior = self._history_chain_only(results, allow_unverified_tail=allow_unverified_tail)
-        committed = self._committed_history_checkpoint()
-        if committed is None:
+        accepted = self._accepted_history_checkpoint()
+        if accepted is None:
             if any(row["prior_checkpoint_sha256"] != "-" for row in results):
                 raise LockdownError("initial mutation history claims a nonexistent prior receipt")
             return prior, []
 
-        committed_digest, previous_rows = committed
+        accepted_digest, previous_rows = accepted
         if len(previous_rows) > len(results) or results[:len(previous_rows)] != previous_rows:
             raise LockdownError("mutation history deleted, reordered, or rewrote a committed attempt")
         for row in results[len(previous_rows):]:
-            if row["prior_checkpoint_sha256"] != committed_digest:
-                raise LockdownError("new mutation attempt is not bound to the committed history checkpoint")
+            if row["prior_checkpoint_sha256"] != accepted_digest:
+                raise LockdownError("new mutation attempt is not bound to the accepted history checkpoint")
         return prior, previous_rows
 
     def _is_excluded(self, path: Path) -> bool:
         return any(path == excluded or path.is_relative_to(excluded) for excluded in self.excluded_subpackages)
+
+    def _go_embed_inventory(
+        self, source_entries: dict[Path, str]
+    ) -> tuple[list[dict[str, str]], set[Path]]:
+        package_dirs = [self.go_package, *sorted(self.excluded_subpackages)]
+        command = ["go", "run", f"./{GO_EMBED_TOOL}", "-root", "."]
+        for package_dir in package_dirs:
+            command.extend(["-package", package_dir.as_posix()])
+        output = run(self.root, command)
+        lines = [line for line in output.splitlines() if line and not line.startswith("#")]
+        if not lines or lines[0].split("\t") != EMBED_HEADER:
+            raise LockdownError("Go embed inventory returned no valid header")
+        rows: list[dict[str, str]] = []
+        allowed_source_dirs = set(package_dirs)
+        for fields in csv.DictReader(lines, delimiter="\t"):
+            row = {key: str(value) for key, value in fields.items()}
+            if set(row) != set(EMBED_HEADER):
+                raise LockdownError(f"invalid Go embed inventory row: {row}")
+            source = repository_path(row["source_path"], "go:embed source_path")
+            if (
+                not row["source_line"].isdigit()
+                or not row["source_column"].isdigit()
+                or int(row["source_line"]) < 1
+                or int(row["source_column"]) < 1
+                or not row["patterns"]
+                or source.parent not in allowed_source_dirs
+                or source.suffix != ".go"
+                or source not in source_entries
+            ):
+                raise LockdownError(f"Go embed inventory escaped its pinned package: {row}")
+            rows.append(row)
+        if rows:
+            locations = ", ".join(
+                f"{row['source_path']}:{row['source_line']}" for row in rows
+            )
+            raise LockdownError(
+                "//go:embed is unsupported by checker schema v2 and fails closed; "
+                f"exact cmd/go-compatible resolution is required before lockdown: {locations}"
+            )
+        return [], set()
 
     def _git_paths(self, arguments: list[str]) -> list[Path]:
         output = run(self.root, ["git", *arguments])
         return [repository_path(value, "Git path") for value in output.split("\0") if value]
 
     def _source_tree_entries(self, path: Path | None = None) -> dict[Path, str]:
-        command = ["git", "ls-tree", "-r", "-z", self.source_commit]
+        command = ["git", "ls-tree", "-r", "-z", self.accepted_source_commit]
         if path is not None:
             command.extend(["--", path.as_posix()])
         output = run_bytes(
@@ -839,7 +1080,10 @@ class PackageLockdown:
 
     def _source_blob(self, path: Path) -> bytes:
         return run_bytes(
-            self.root, ["git", "cat-file", "blob", f"{self.source_commit}:{path.as_posix()}"]
+            self.root, [
+                "git", "cat-file", "blob",
+                f"{self.accepted_source_commit}:{path.as_posix()}",
+            ]
         )
 
     def _git_blob_oid(self, data: bytes) -> str:
@@ -903,8 +1147,9 @@ class PackageLockdown:
         tracked = self._git_paths(["ls-files", "-z", "--", self.go_package.as_posix()])
         source_entries = self._source_tree_entries(self.go_package)
         self._validate_excluded_subpackages(set(tracked), source_entries)
+        self.go_embed_rows, self.embed_dependency_paths = self._go_embed_inventory(source_entries)
         package_paths = [path for path in tracked if not self._is_excluded(path)]
-        paths = set(package_paths)
+        paths = set(package_paths) | self.embed_dependency_paths
         for extra in self.extra_artifacts:
             if extra in paths:
                 raise LockdownError(f"extra_artifact is already package-owned: {extra}")
@@ -914,7 +1159,7 @@ class PackageLockdown:
             source_entries.update(self._source_tree_entries(extra))
         pinned_paths = {
             path for path in source_entries
-            if not self._is_excluded(path) and (
+            if (not self._is_excluded(path) or path in self.embed_dependency_paths) and (
                 path.is_relative_to(self.go_package) or path in self.extra_artifacts
             )
         }
@@ -941,22 +1186,125 @@ class PackageLockdown:
     def _validate_mapped_rust_change_census(self) -> None:
         crate_roots = [f"rust/crates/{crate}" for crate in self.mapped_rust_crates]
         changed = set(self._git_paths([
-            "diff", "--name-only", "-z", self.source_commit, "--", *crate_roots,
+            "diff", "--name-only", "-z", self.accepted_source_commit, "--", *crate_roots,
         ]))
         for crate_root in crate_roots:
             changed.update(self._git_paths([
                 "ls-files", "-z", "--others", "--exclude-standard", "--", crate_root,
             ]))
-        unowned = changed - set(self.owned_rust_files)
+        proof_outputs = getattr(self, "receipt_owned_paths", set()) | {
+            self.receipt_path.relative_to(self.root)
+        }
+        unowned = changed - set(self.owned_rust_files) - proof_outputs
         if unowned:
             raise LockdownError(
                 "mapped Rust change census is not exact: "
                 f"unowned={sorted(path.as_posix() for path in unowned)}"
             )
 
+    def _initialize_receipt_artifact_census(self) -> None:
+        """Resolve only concrete proof paths declared by the receipt graph."""
+        receipt_relative = self.receipt_dir.relative_to(self.root)
+        actual = set(self._git_paths([
+            "ls-files", "-z", "--", receipt_relative.as_posix(),
+        ]))
+        actual.update(self._git_paths([
+            "ls-files", "-z", "--others", "--exclude-standard", "--",
+            receipt_relative.as_posix(),
+        ]))
+        core = {
+            self.spec_relative,
+            self.artifacts_path.relative_to(self.root),
+            self.symbols_path.relative_to(self.root),
+            self.rules_path.relative_to(self.root),
+            self.mutation_plan_path.relative_to(self.root),
+            self.mutation_results_path.relative_to(self.root),
+            self.probe_results_path.relative_to(self.root),
+            self.helper_calls_path.relative_to(self.root),
+            self.helper_contracts_path.relative_to(self.root),
+            self.receipt_path.relative_to(self.root),
+        }
+        declared = {path for path in core if path in actual}
+        declared.update(
+            path.relative_to(self.root) for path in self.ledgers_dir.glob("*.tsv")
+            if path.is_file()
+        )
+
+        artifact_reference = re.compile(
+            r"(?:evidence-artifact:)?([^;@]+)@sha256:[0-9a-f]{64}"
+        )
+
+        def add_reference(raw: object) -> None:
+            if not isinstance(raw, str):
+                return
+            values = [match.group(1) for match in artifact_reference.finditer(raw)]
+            if not values and raw and "\n" not in raw and "\t" not in raw:
+                values = [raw]
+            for value in values:
+                try:
+                    path = repository_path(value, "receipt-declared artifact path")
+                except LockdownError:
+                    continue
+                if path.is_relative_to(receipt_relative) and path in actual:
+                    declared.add(path)
+
+        for value in self.unresolved_fixture_evidence.values():
+            add_reference(value)
+        scanned: set[Path] = set()
+        while True:
+            pending = sorted(declared - scanned, key=lambda item: item.as_posix())
+            if not pending:
+                break
+            for path in pending:
+                scanned.add(path)
+                full_path = self.root / path
+                if path == self.receipt_path.relative_to(self.root) or not full_path.is_file():
+                    continue
+                if path.suffix == ".tsv":
+                    lines = [
+                        line for line in full_path.read_text(encoding="utf-8").splitlines()
+                        if line and not line.startswith("#")
+                    ]
+                    if not lines:
+                        continue
+                    for row in csv.DictReader(lines, delimiter="\t"):
+                        for key, value in row.items():
+                            if key.endswith("_path") or key == "evidence":
+                                add_reference(value)
+                elif path.suffix == ".json":
+                    payload = read_strict_json(full_path, "receipt-declared proof artifact")
+
+                    def walk(value: object, key: str = "") -> None:
+                        if isinstance(value, dict):
+                            for child_key, child in value.items():
+                                walk(child, str(child_key))
+                        elif isinstance(value, list):
+                            for child in value:
+                                walk(child, key)
+                        elif key.endswith("_path") or key == "evidence":
+                            add_reference(value)
+
+                    walk(payload)
+        extra = actual - declared
+        if extra:
+            raise LockdownError(
+                "receipt proof directory contains an undeclared artifact: "
+                + ", ".join(path.as_posix() for path in sorted(
+                    extra, key=lambda item: item.as_posix()
+                ))
+            )
+        for path in declared:
+            if path.suffix in {".rs", ".go"}:
+                raise LockdownError(
+                    f"receipt proof directory cannot hide production/test source: {path}"
+                )
+        self.receipt_owned_paths = declared
+
     def _automatic_role(self, path: Path, data: bytes) -> str | None:
         if path in self.artifact_roles:
             return self.artifact_roles[path]
+        if path in self.embed_dependency_paths and self._is_excluded(path):
+            return "generated-input"
         if path.name in {"BUILD", "BUILD.bazel"} or path.suffix == ".bzl":
             return "build"
         if "testdata" in path.parts:
@@ -983,6 +1331,8 @@ class PackageLockdown:
             traits.append("go-generate")
         if b"//go:embed" in data:
             traits.append("go-embed")
+        if path in self.embed_dependency_paths:
+            traits.append("go-embed-input")
         if "testdata" in path.parts:
             traits.append("testdata")
         return ",".join(traits) if traits else "-"
@@ -1023,6 +1373,7 @@ class PackageLockdown:
                 path.suffix == ".go"
                 and not go_role
                 and "testdata" not in path.parts
+                and path not in self.embed_dependency_paths
                 and not (path in self.extra_artifacts and role in {"generated-input", "generated-output"})
             ):
                 raise LockdownError(f"Go suffix and artifact role disagree for {path}: {role}")
@@ -1050,9 +1401,52 @@ class PackageLockdown:
             raise LockdownError(f"Go package has no direct Go sources: {self.go_package}")
         return rows
 
-    def _validate_observation_artifact(
+    def _validate_observation_test_source(
         self, plan: dict[str, object], context: str
-    ) -> Path:
+    ) -> None:
+        named_test = str(plan.get("named_test", ""))
+        leaf = named_test.split("::")[-1]
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", leaf):
+            raise LockdownError(f"{context} has an invalid named test")
+        candidates: list[Path]
+        if plan.get("runner") == "go-test":
+            candidates = sorted(
+                path for path in self.source_entry_oids
+                if path.parent == self.go_package and path.name.endswith("_test.go")
+            )
+            definitions: list[tuple[Path, str]] = []
+            declaration = re.compile(rf"\bfunc\s+{re.escape(named_test)}\s*\(")
+            for path in candidates:
+                text = (self.root / path).read_text(encoding="utf-8")
+                if declaration.search(code_mask(text)):
+                    definitions.append((path, text))
+        else:
+            modules = self._cargo_test_modules(
+                str(plan.get("test_subject", "")), str(plan.get("test_target", ""))
+            )
+            definitions = []
+            for path, prefix in modules.items():
+                text = (self.root / path).read_text(encoding="utf-8")
+                bodies = rust_test_function_bodies(rust_tokens(text))
+                identities = {
+                    "::".join((*prefix, *local.split("::"))) for local in bodies
+                }
+                if named_test in identities:
+                    definitions.append((path, text))
+        if len(definitions) != 1:
+            raise LockdownError(
+                f"{context} named test source is not uniquely syntax-bound: {named_test}"
+            )
+        path, text = definitions[0]
+        if has_static_observation_literal(text):
+            raise LockdownError(
+                f"{context} named test hardcodes a machine observation in {path}; "
+                "serialize caller-supplied observed values through a separate emitter helper"
+            )
+
+    def _load_observation_artifact(
+        self, plan: dict[str, object], context: str
+    ) -> tuple[Path, dict[str, object]]:
         path = repository_path(str(plan.get("observation_path", "")), f"{context} observation_path")
         if not (self.root / path).is_relative_to(self.receipt_dir):
             raise LockdownError(f"{context} observation is outside the package receipt")
@@ -1061,10 +1455,7 @@ class PackageLockdown:
             "observation_sha256"
         ):
             raise LockdownError(f"{context} observation disappeared or drifted: {path}")
-        try:
-            observation = json.loads(full_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as error:
-            raise LockdownError(f"cannot read {context} observation {path}: {error}") from error
+        observation = read_strict_json(full_path, f"{context} observation")
         expected_keys = {
             "schema", "probe_id", "source_commit", "conclusion", "boundary_observations",
         }
@@ -1085,7 +1476,7 @@ class PackageLockdown:
         for case in cases:
             if (
                 not isinstance(case, dict)
-                or set(case) != {"name", "input", "observed"}
+                or set(case) != {"name", "input", "expected"}
                 or not all(isinstance(case[key], str) and case[key] for key in case)
             ):
                 raise LockdownError(f"{context} observation has an invalid boundary case: {path}")
@@ -1097,25 +1488,41 @@ class PackageLockdown:
             or len(set(inputs)) < 2
         ):
             raise LockdownError(f"{context} observation boundary set differs from its plan: {path}")
-        return path
+        self._validate_observation_test_source(plan, context)
+        return path, observation
 
-    def _observation_marker(self, plan: dict[str, object]) -> str:
-        conclusion = str(plan["conclusion"])
-        return (
-            f"LOCKDOWN_OBSERVATION {plan['probe_id']} "
-            f"sha256:{plan['observation_sha256']} "
-            f"conclusion-sha256:{hashlib.sha256(conclusion.encode('utf-8')).hexdigest()}"
-        )
+    def _validate_observation_artifact(
+        self, plan: dict[str, object], context: str
+    ) -> Path:
+        return self._load_observation_artifact(plan, context)[0]
 
     def _validate_observation_output(
         self, plan: dict[str, object], stdout: bytes, stderr: bytes, context: str
     ) -> None:
-        marker = self._observation_marker(plan)
+        _path, expected_plan = self._load_observation_artifact(plan, context)
         del stderr  # an observation must be emitted by the named test on stdout
         lines = stdout.decode("utf-8", errors="replace").splitlines()
-        if lines.count(marker) != 1:
+        observations = [line for line in lines if line.startswith("LOCKDOWN_OBSERVATION ")]
+        if len(observations) != 1:
             raise LockdownError(f"{context} did not emit its exact machine-readable observation")
-        marker_index = lines.index(marker)
+        emitted = observations[0]
+        payload_text = emitted.removeprefix("LOCKDOWN_OBSERVATION ")
+        payload = strict_json_loads(payload_text, f"{context} runtime observation")
+        expected_runtime = {
+            **{key: expected_plan[key] for key in [
+                "probe_id", "source_commit", "conclusion",
+            ]},
+            "schema": RUNTIME_OBSERVATION_SCHEMA,
+            "boundary_observations": [
+                {"name": case["name"], "input": case["input"], "observed": case["expected"]}
+                for case in expected_plan["boundary_observations"]
+            ],
+        }
+        if payload_text != canonical_json_bytes(payload).decode("utf-8") or payload != expected_runtime:
+            raise LockdownError(
+                f"{context} emitted boundary observations or conclusion that differ from evidence"
+            )
+        marker_index = lines.index(emitted)
         runner = str(plan["runner"])
         named_test = str(plan["named_test"])
         if runner == "go-test":
@@ -1220,10 +1627,7 @@ class PackageLockdown:
             raise LockdownError(f"helper proof is outside the package receipt: {path}")
         if full_path.is_symlink() or not full_path.is_file() or sha256(full_path) != match.group(2):
             raise LockdownError(f"helper proof disappeared or drifted: {path}")
-        try:
-            payload = json.loads(full_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as error:
-            raise LockdownError(f"cannot read helper proof {path}: {error}") from error
+        payload = read_strict_json(full_path, "helper proof")
         expected = {
             "schema", "kind", "source_commit", "helper_id", "callee", "call_ids",
             "call_set_sha256", "conclusion", "boundary_cases", "proof_steps",
@@ -1327,6 +1731,11 @@ class PackageLockdown:
             source = repository_path(row[0], "fixture source_path")
             if source.parent != self.go_package:
                 continue
+            if row[2] == "go:embed":
+                # Exact production/test pattern expansion is owned by the
+                # dedicated Go embed inventory, including hidden files and
+                # excluded nested-package dependencies.
+                continue
             accesses.append(row)
             if row[4]:
                 resolved = repository_path(row[4], "resolved fixture path")
@@ -1369,10 +1778,7 @@ class PackageLockdown:
         full_path = self.root / path
         if not full_path.is_file() or full_path.is_symlink() or sha256(full_path) != match.group(2):
             raise LockdownError(f"fixture evidence disappeared or drifted: {path}")
-        try:
-            payload = json.loads(full_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as error:
-            raise LockdownError(f"cannot read fixture evidence {path}: {error}") from error
+        payload = read_strict_json(full_path, "fixture evidence")
         expected_keys = {
             "schema", "kind", "probe_id", "source_commit", "fixture_access", "conclusion",
             "boundary_cases", "resolved_artifacts", "no_artifact_conclusion", "runner",
@@ -1582,6 +1988,7 @@ class PackageLockdown:
         return rows, files
 
     def generate(self) -> tuple[int, int]:
+        self._initialize_receipt_artifact_census()
         self._validate_mapped_rust_change_census()
         artifact_rows = self.artifact_rows()
         self.fixture_accesses(artifact_rows)
@@ -1660,6 +2067,8 @@ class PackageLockdown:
                 writes.append((path, tsv_text(path.stem + "-v1", header, [])))
         for path, text in writes:
             atomic_write(path, text)
+        self._initialize_receipt_artifact_census()
+        self._validate_mapped_rust_change_census()
         return len(artifact_rows), len(raw_by_id)
 
     def _stored_ledger_rows(self, grouped: dict[Path, list[list[str]]]) -> list[dict[str, str]]:
@@ -1710,10 +2119,7 @@ class PackageLockdown:
         full_path = self.root / artifact_path
         if full_path.is_symlink() or not full_path.is_file() or sha256(full_path) != match.group(2):
             raise LockdownError(f"evidence artifact disappeared or drifted: {artifact_path}")
-        try:
-            payload = json.loads(full_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as error:
-            raise LockdownError(f"cannot read evidence artifact {artifact_path}: {error}") from error
+        payload = read_strict_json(full_path, "verdict evidence artifact")
         common = {
             "schema", "kind", "obligation_ids", "conclusion", "source_commit",
             "boundary_cases",
@@ -1779,6 +2185,87 @@ class PackageLockdown:
                 raise LockdownError(f"structural proof artifact is incomplete: {artifact_path}")
         return artifact_path, owned, set(obligation_ids), payload
 
+    def _cargo_test_modules(
+        self, crate: str, target: str
+    ) -> dict[Path, tuple[str, ...]]:
+        crate_root = Path("rust/crates") / crate
+        manifest_path = crate_root / "Cargo.toml"
+        full_manifest = self.root / manifest_path
+        if not full_manifest.is_file() or full_manifest.is_symlink():
+            raise LockdownError(f"mapped crate {crate} has no regular Cargo.toml")
+        try:
+            manifest = tomllib.loads(full_manifest.read_text(encoding="utf-8"))
+        except (OSError, tomllib.TOMLDecodeError) as error:
+            raise LockdownError(f"cannot read {manifest_path}: {error}") from error
+        explicit = [
+            item for item in manifest.get("test", [])
+            if isinstance(item, dict) and item.get("name") == target
+        ]
+        if len(explicit) > 1:
+            raise LockdownError(f"Cargo test target {crate}/{target} is duplicated")
+        if explicit:
+            raw_path = explicit[0].get("path", f"tests/{target}.rs")
+            if not isinstance(raw_path, str):
+                raise LockdownError(f"Cargo test target {crate}/{target} has no exact path")
+            relative_target = repository_path(raw_path, f"Cargo test target {crate}/{target} path")
+            target_path = crate_root / relative_target
+        else:
+            if manifest.get("package", {}).get("autotests", True) is False:
+                raise LockdownError(
+                    f"Cargo test target {crate}/{target} is not declared with autotests=false"
+                )
+            candidates = [
+                crate_root / "tests" / f"{target}.rs",
+                crate_root / "tests" / target / "main.rs",
+            ]
+            existing = [path for path in candidates if (self.root / path).is_file()]
+            if len(existing) != 1:
+                raise LockdownError(
+                    f"Cargo test target {crate}/{target} has no unique default source"
+                )
+            target_path = existing[0]
+        if (
+            not (self.root / target_path).is_file()
+            or target_path not in self._git_paths(
+                ["ls-files", "-z", "--", target_path.as_posix()]
+            )
+        ):
+            raise LockdownError(f"Cargo test target source is not tracked: {target_path}")
+
+        modules: dict[Path, tuple[str, ...]] = {}
+
+        def visit(path_value: Path, prefix: tuple[str, ...], target_root: bool = False) -> None:
+            prior = modules.get(path_value)
+            if prior is not None:
+                if prior != prefix:
+                    raise LockdownError(
+                        f"Cargo test module {path_value} has ambiguous identities"
+                    )
+                return
+            full_path = self.root / path_value
+            if not full_path.is_file() or full_path.is_symlink():
+                raise LockdownError(f"Cargo test module disappeared: {path_value}")
+            modules[path_value] = prefix
+            text = full_path.read_text(encoding="utf-8")
+            masked = code_mask(text)
+            for match in re.finditer(r"\bmod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;", masked):
+                name = match.group(1)
+                if target_root or path_value.name in {"mod.rs", "main.rs", "lib.rs"}:
+                    base = path_value.parent
+                else:
+                    base = path_value.parent / path_value.stem
+                candidates = [base / f"{name}.rs", base / name / "mod.rs"]
+                existing = [candidate for candidate in candidates if (self.root / candidate).is_file()]
+                if len(existing) != 1:
+                    raise LockdownError(
+                        f"Cargo test module {path_value} does not resolve mod {name} exactly"
+                    )
+                visit(existing[0], (*prefix, name))
+
+        visit(target_path, (), True)
+        self.symbol_support_paths.update({manifest_path, *modules})
+        return modules
+
     def _validate_verdicts(
         self, ledger_rows: list[dict[str, str]], symbols: list[dict[str, str]]
     ) -> tuple[
@@ -1821,10 +2308,11 @@ class PackageLockdown:
             if (
                 len(symbol_tokens) < 3
                 or symbol_tokens[-2] != "::"
-                or symbol_tokens[0] not in {"crate", crate_identity}
+                or symbol_tokens[0] != crate_identity
             ):
                 raise LockdownError(
-                    f"symbol {symbol_id} must use a qualified mapped-crate Rust identity"
+                    f"symbol {symbol_id} must use its qualified mapped-crate Rust identity; "
+                    "test-local crate:: paths are not production anchors"
                 )
             relative_definition = definition_path.relative_to(production_root)
             module_parts = list(relative_definition.parts[:-1])
@@ -1833,11 +2321,7 @@ class PackageLockdown:
             qualified_parts = tuple(
                 token for token in symbol_tokens if token != "::"
             )
-            canonical_identity = (
-                ("crate",) + qualified_parts[1:]
-                if qualified_parts[0] == crate_identity
-                else qualified_parts
-            )
+            canonical_identity = ("crate",) + qualified_parts[1:]
             if (
                 not definition.is_file()
                 or definition.is_symlink()
@@ -1850,26 +2334,48 @@ class PackageLockdown:
             anchor_path = repository_path(row["anchor_path"], f"symbol {symbol_id} anchor_path")
             expected_crate_root = Path("rust/crates") / row["rust_crate"]
             if (
-                not anchor_path.is_relative_to(expected_crate_root)
+                not anchor_path.is_relative_to(expected_crate_root / "tests")
+                or anchor_path.suffix != ".rs"
                 or anchor_path == definition_path
                 or anchor_path not in self.owned_rust_files
+                or anchor_path not in self._git_paths(
+                    ["ls-files", "-z", "--", anchor_path.as_posix()]
+                )
             ):
-                raise LockdownError(f"symbol {symbol_id} anchor is outside its mapped Rust crate")
+                raise LockdownError(
+                    f"symbol {symbol_id} anchor is not a tracked owned integration test"
+                )
             anchor = self.root / anchor_path
             if not anchor.is_file():
                 raise LockdownError(f"symbol {symbol_id} anchor file disappeared: {anchor_path}")
-            anchor_identity = (anchor_path.as_posix(), row["anchor_name"])
+            if not re.fullmatch(r"[A-Za-z0-9_-]+", row["anchor_target"]):
+                raise LockdownError(f"symbol {symbol_id} has an invalid Cargo test target")
+            modules = self._cargo_test_modules(row["rust_crate"], row["anchor_target"])
+            if anchor_path not in modules:
+                raise LockdownError(
+                    f"symbol {symbol_id} anchor is not reachable from Cargo test target "
+                    f"{row['anchor_target']}"
+                )
+            anchor_identity = (
+                anchor_path.as_posix(), row["anchor_target"], row["anchor_name"]
+            )
             if anchor_identity in anchors:
                 raise LockdownError(f"duplicate compile anchor: {anchor_identity}")
             anchors.add(anchor_identity)
             text = anchor.read_text(encoding="utf-8")
             tokens = rust_tokens(text)
-            test_bodies = rust_test_function_bodies(tokens)
+            local_test_bodies = rust_test_function_bodies(tokens)
+            prefix = modules[anchor_path]
+            test_bodies = {
+                "::".join((*prefix, *local_name.split("::"))): body
+                for local_name, body in local_test_bodies.items()
+            }
             if (
                 not symbol_tokens
-                or not contains_token_sequence(tokens, symbol_tokens)
                 or row["anchor_name"] not in test_bodies
-                or not contains_token_sequence(test_bodies[row["anchor_name"]], symbol_tokens)
+                or not rust_executable_symbol_use(
+                    test_bodies[row["anchor_name"]], symbol_tokens
+                )
             ):
                 raise LockdownError(f"symbol {symbol_id} disappeared from compile anchor {anchor_path}")
             symbol_by_id[symbol_id] = row
@@ -1943,6 +2449,7 @@ class PackageLockdown:
     def _validate_rules_and_mutations(
         self,
         ledger_rows: list[dict[str, str]],
+        symbol_by_id: dict[str, dict[str, str]],
         ported_ids: set[str],
         rules: list[dict[str, str]],
         plans: list[dict[str, str]],
@@ -1955,6 +2462,10 @@ class PackageLockdown:
     ]:
         ledger_rule = {
             row["obligation_id"]: row["rule_id"] for row in ledger_rows if row["status"] == "PORTED"
+        }
+        ledger_symbol = {
+            row["obligation_id"]: row["symbol_id"]
+            for row in ledger_rows if row["status"] == "PORTED"
         }
         rule_by_id: dict[str, dict[str, str]] = {}
         obligation_rule: dict[str, str] = {}
@@ -1993,6 +2504,24 @@ class PackageLockdown:
 
         plan_by_id: dict[str, dict[str, object]] = {}
         plan_rule_mutations = {rule_id: set() for rule_id in rule_by_id}
+        expected_rule_bindings: dict[str, set[tuple[str, str, str, str]]] = {}
+        observed_rule_bindings: dict[str, set[tuple[str, str, str, str]]] = {
+            rule_id: set() for rule_id in rule_by_id
+        }
+        for rule_id, rule in rule_by_id.items():
+            bindings: set[tuple[str, str, str, str]] = set()
+            for obligation_id in split_list(rule["obligation_ids"]):
+                symbol = symbol_by_id[ledger_symbol[obligation_id]]
+                anchor_path = repository_path(
+                    symbol["anchor_path"], f"rule {rule_id} anchor_path"
+                )
+                bindings.add((
+                    symbol["definition_path"],
+                    symbol["rust_crate"],
+                    symbol["anchor_target"],
+                    symbol["anchor_name"],
+                ))
+            expected_rule_bindings[rule_id] = bindings
         owned_paths: set[Path] = set()
         for row in plans:
             mutation_id = row["mutation_id"]
@@ -2045,6 +2574,15 @@ class PackageLockdown:
                 row["runner"], row["test_subject"], row["test_target"], row["named_test"],
                 f"mutation {mutation_id}",
             )
+            binding = (
+                rust_path.as_posix(), row["test_subject"], row["test_target"], row["named_test"]
+            )
+            if binding not in expected_rule_bindings[rule_ids[0]]:
+                raise LockdownError(
+                    f"mutation {mutation_id} is not bound to the semantic rule's "
+                    "registered production definition and boundary test"
+                )
+            observed_rule_bindings[rule_ids[0]].add(binding)
             operator_path, operator, mutated_source = self._mutation_operator(row, rust_path)
             mutated_hash = hashlib.sha256(mutated_source).hexdigest()
             if operator_path in owned_paths:
@@ -2064,6 +2602,11 @@ class PackageLockdown:
         for rule_id in rule_by_id:
             if plan_rule_mutations[rule_id] != rule_mutations[rule_id]:
                 raise LockdownError(f"rule/mutation plan mapping drifted for {rule_id}")
+            if observed_rule_bindings[rule_id] != expected_rule_bindings[rule_id]:
+                raise LockdownError(
+                    f"semantic rule {rule_id} does not mutation-cover every registered "
+                    "production definition and boundary test"
+                )
 
         attempts_by_mutation: dict[str, list[dict[str, str]]] = {
             mutation_id: [] for mutation_id in plan_by_id
@@ -2223,7 +2766,8 @@ class PackageLockdown:
                 raise LockdownError(f"{context} has an invalid Cargo test target")
             return [
                 "cargo", "test", "--offline", "--locked", "-j12", "--quiet",
-                "-p", test_subject, "--test", test_target, named_test, "--", "--exact",
+                "-p", test_subject, "--test", test_target, named_test, "--",
+                "--exact", "--nocapture",
             ]
         if runner == "go-test":
             if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", named_test):
@@ -2267,10 +2811,7 @@ class PackageLockdown:
         full_path = self.root / path
         if not full_path.is_file() or full_path.is_symlink() or sha256(full_path) != digest:
             raise LockdownError(f"{context} artifact disappeared or drifted: {path}")
-        try:
-            payload = json.loads(full_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as error:
-            raise LockdownError(f"cannot read {context} artifact {path}: {error}") from error
+        payload = read_strict_json(full_path, f"{context} artifact")
         if not isinstance(payload, dict) or payload.get("schema") != schema:
             raise LockdownError(f"{context} artifact has the wrong schema: {path}")
         output_path = repository_path(str(payload.get("output_path", "")), f"{context} output_path")
@@ -2459,10 +3000,7 @@ class PackageLockdown:
             operator_file
         ) != row["operator_sha256"]:
             raise LockdownError(f"mutation operator disappeared or drifted: {operator_path}")
-        try:
-            operator = json.loads(operator_file.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as error:
-            raise LockdownError(f"cannot read mutation operator {operator_path}: {error}") from error
+        operator = read_strict_json(operator_file, "mutation operator")
         expected_keys = {"schema", "mutation_id", "rust_path", "source_sha256", "replacements"}
         replacements = operator.get("replacements") if isinstance(operator, dict) else None
         if (
@@ -2562,10 +3100,7 @@ class PackageLockdown:
             "attempt_plan_sha256"
         ]:
             raise LockdownError(f"mutation attempt plan disappeared or drifted: {path}")
-        try:
-            payload = json.loads(full_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as error:
-            raise LockdownError(f"cannot read mutation attempt plan {path}: {error}") from error
+        payload = read_strict_json(full_path, "mutation attempt plan")
         binding_keys = {
             "mutation_id", "cluster_id", "rule_ids", "baseline_commit", "rust_path",
             "source_sha256", "runner", "test_subject", "test_target", "named_test",
@@ -2712,7 +3247,7 @@ class PackageLockdown:
             "output_path": output_path.relative_to(self.root).as_posix(),
             "output_sha256": sha256(output_path),
         }
-        atomic_write(artifact_path, json.dumps(complete_payload, indent=2, sort_keys=True) + "\n")
+        atomic_write(artifact_path, canonical_json_text(complete_payload))
         return artifact_path.relative_to(self.root), sha256(artifact_path)
 
     def _write_support_log(
@@ -2748,7 +3283,7 @@ class PackageLockdown:
                 row, rust_path, hashlib.sha256(mutated).hexdigest(), argv
             ),
         }
-        atomic_write(path, json.dumps(payload, indent=2, sort_keys=True) + "\n")
+        atomic_write(path, canonical_json_text(payload))
         return path.relative_to(self.root), sha256(path)
 
     def _execute_mutated_source(
@@ -2814,8 +3349,8 @@ class PackageLockdown:
             history_head, _previous = self._validate_mutation_history(results)
             if any(result["attempt_id"] == attempt_id for result in results):
                 raise LockdownError(f"mutation attempt already exists: {attempt_id}")
-            committed = self._committed_history_checkpoint()
-            prior_checkpoint = committed[0] if committed is not None else "-"
+            accepted = self._accepted_history_checkpoint()
+            prior_checkpoint = accepted[0] if accepted is not None else "-"
             argv, baseline, completed, restored, original = self._execute_mutated_source(
                 row, rust_path, mutated
             )
@@ -3158,8 +3693,44 @@ class PackageLockdown:
             *[self._ledger_path(source).relative_to(self.root) for source in grouped],
             *self.owned_rust_files,
             *[repository_path(row["anchor_path"], "symbol anchor_path") for row in symbols],
+            *self.symbol_support_paths,
             *evidence_paths,
         }
+        receipt_relative = self.receipt_dir.relative_to(self.root)
+        receipt_paths = {
+            path for path in paths
+            if path == receipt_relative or path.is_relative_to(receipt_relative)
+        }
+        for path in receipt_paths:
+            if path.suffix in {".rs", ".go"}:
+                raise LockdownError(
+                    f"receipt proof directory cannot own production/test source: {path}"
+                )
+        actual_receipt_paths = set(self._git_paths([
+            "ls-files", "-z", "--", receipt_relative.as_posix(),
+        ]))
+        actual_receipt_paths.update(self._git_paths([
+            "ls-files", "-z", "--others", "--exclude-standard", "--",
+            receipt_relative.as_posix(),
+        ]))
+        receipt_path = self.receipt_path.relative_to(self.root)
+        extra = actual_receipt_paths - receipt_paths - {receipt_path}
+        if extra:
+            raise LockdownError(
+                "receipt proof directory contains an unowned artifact: "
+                + ", ".join(path.as_posix() for path in sorted(
+                    extra, key=lambda item: item.as_posix()
+                ))
+            )
+        missing = receipt_paths - actual_receipt_paths
+        if missing:
+            raise LockdownError(
+                "receipt-owned artifact is absent from the exact receipt directory census: "
+                + ", ".join(path.as_posix() for path in sorted(
+                    missing, key=lambda item: item.as_posix()
+                ))
+            )
+        self.receipt_owned_paths = receipt_paths
         hashes: dict[str, str] = {}
         for path in sorted(paths, key=lambda item: item.as_posix()):
             full_path = self.root / path
@@ -3169,7 +3740,6 @@ class PackageLockdown:
         return hashes
 
     def _validate(self) -> tuple[dict[str, object], int, int]:
-        self._validate_mapped_rust_change_census()
         artifact_rows = self.artifact_rows()
         fixture_accesses = self.fixture_accesses(artifact_rows)
         helper_calls = self.helper_call_rows()
@@ -3194,7 +3764,7 @@ class PackageLockdown:
         results = read_tsv(self.mutation_results_path, MUTATION_RESULT_HEADER)
         probe_results = read_tsv(self.probe_results_path, PROBE_RESULT_HEADER)
         (
-            _symbol_by_id, ported_ids, _used_symbols, verdict_evidence_paths, probe_plans,
+            symbol_by_id, ported_ids, _used_symbols, verdict_evidence_paths, probe_plans,
         ) = self._validate_verdicts(ledger_rows, symbols)
         overlap = set(probe_plans) & set(self.fixture_probe_plans)
         if overlap:
@@ -3202,7 +3772,7 @@ class PackageLockdown:
         probe_plans = {**probe_plans, **self.fixture_probe_plans}
         rule_by_id, plan_by_id, outcome_counts, mutation_evidence_paths = (
             self._validate_rules_and_mutations(
-                ledger_rows, ported_ids, rules, plans, results
+                ledger_rows, symbol_by_id, ported_ids, rules, plans, results
             )
         )
         probe_run_count, probe_evidence_paths = self._validate_probe_results(
@@ -3216,7 +3786,7 @@ class PackageLockdown:
         trait_counts: dict[str, int] = {
             trait: 0 for trait in [
                 "build-tag", "platform-variant", "generated", "go-generate", "go-embed",
-                "testdata",
+                "go-embed-input", "testdata",
             ]
         }
         for row in artifact_rows:
@@ -3259,6 +3829,10 @@ class PackageLockdown:
             "unresolved_fixture_count": len(self.unresolved_fixture_evidence),
             "go_generate_directive_count": len(generate_dependencies),
             "go_generate_dependencies": generate_dependencies,
+            "go_embed_match_count": len(self.go_embed_rows),
+            "go_embed_directive_count": len(self.go_embed_rows),
+            "go_embed_dependency_count": len(self.embed_dependency_paths),
+            "go_embed_inventory": self.go_embed_rows,
             "go_file_count": len(grouped),
             "obligation_count": len(ledger_rows),
             "category_counts": dict(sorted(category_counts.items())),
@@ -3287,11 +3861,12 @@ class PackageLockdown:
                 | probe_evidence_paths,
             ),
         }
+        self._validate_mapped_rust_change_census()
         return receipt, len(artifact_rows), len(ledger_rows)
 
     def write_receipt(self) -> tuple[int, int]:
         receipt, artifacts, obligations = self._validate()
-        atomic_write(self.receipt_path, json.dumps(receipt, indent=2, sort_keys=True) + "\n")
+        atomic_write(self.receipt_path, canonical_json_text(receipt))
         return artifacts, obligations
 
     def check(self) -> tuple[int, int]:
@@ -3299,11 +3874,15 @@ class PackageLockdown:
         if not self.receipt_path.is_file():
             raise LockdownError("content-addressed receipt is missing; run write-receipt")
         try:
-            stored = json.loads(self.receipt_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as error:
+            raw = self.receipt_path.read_text(encoding="utf-8")
+        except OSError as error:
             raise LockdownError(f"cannot read receipt {self.receipt_path}: {error}") from error
-        if stored != receipt:
-            raise LockdownError("content-addressed package receipt drifted; run write-receipt after review")
+        strict_json_loads(raw, f"package receipt {self.receipt_path}")
+        if raw != canonical_json_text(receipt):
+            raise LockdownError(
+                "content-addressed package receipt is not exact canonical JSON; "
+                "run write-receipt after review"
+            )
         return artifacts, obligations
 
 
@@ -3314,9 +3893,11 @@ def parse_arguments() -> argparse.Namespace:
     for command in ["generate", "check", "write-receipt"]:
         child = subparsers.add_parser(command)
         child.add_argument("--spec", required=True, type=Path)
+        child.add_argument("--accepted-source-commit", required=True)
     for command in ["run-evidence", "verify-evidence"]:
         child = subparsers.add_parser(command)
         child.add_argument("--spec", required=True, type=Path)
+        child.add_argument("--accepted-source-commit", required=True)
         child.add_argument("--kind", required=True, choices=["mutation", "probe"])
         child.add_argument("--id", required=True)
         child.add_argument("--attempt")
@@ -3326,7 +3907,7 @@ def parse_arguments() -> argparse.Namespace:
 def main() -> int:
     args = parse_arguments()
     try:
-        lockdown = PackageLockdown(args.root, args.spec)
+        lockdown = PackageLockdown(args.root, args.spec, args.accepted_source_commit)
         if args.command == "generate":
             artifacts, obligations = lockdown.generate()
             action = "generated"

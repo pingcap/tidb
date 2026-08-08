@@ -54,7 +54,9 @@ hashes. The frontend reuses it and binds every ledger row to the full owning Go
 blob hash too. A straight-line body edit therefore invalidates preserved
 verdicts even when an AST obligation ID remains stable.
 
-`source_commit` is not descriptive metadata. The manifest requires the exact
+`source_commit` is not descriptive metadata. Every command requires the
+coordinator-supplied `--accepted-source-commit <full-sha>` and rejects a spec
+whose value differs, so a candidate/HEAD SHA cannot self-authorize. The manifest requires the exact
 tracked artifact set and Git blob IDs at that commit, which must be an ancestor
 of the checkout. Nested exclusions are valid only for a direct tracked Go
 package directory with proof
@@ -64,7 +66,10 @@ package. `testdata` and arbitrary fixture subtrees cannot be excluded.
 
 Every repository input statically referenced by `go:generate` must be in the
 manifest. Shell directives, unresolved variables, globs, or repository paths
-that cannot be pinned fail closed. Literal fixture accesses must resolve to a
+that cannot be pinned fail closed. Schema v2 detects directives with Go's
+authoritative AST parser and fails closed on every `//go:embed`, including
+build-tagged tests and excluded nested packages, until exact cmd/go resolution
+is implemented. Literal fixture accesses must resolve to a
 manifested artifact. Dynamic accesses use content-addressed
 `fixture-resolution` JSON bound to the exact source/line/access expression,
 source commit, exact resolved set (or explicit no-artifact conclusion), two
@@ -77,10 +82,11 @@ proof, or measured `FIXTURE` resolution. Thus helpers such as
 `measured:` is not evidence.
 
 The Rust registry separates production definition from test proof. A symbol is
-qualified as `crate::...` or `<mapped_crate_name>::...`; its complete
+qualified as `<mapped_crate_name>::...` (never test-local `crate::...`); its complete
 module/type/impl identity must resolve to an actual declaration in a tracked receipt-owned
-`rust/crates/<crate>/src/**/*.rs`. The separate anchor must contain an actual
-`#[test]` whose exact body references the full token sequence. The lexer drops
+`rust/crates/<crate>/src/**/*.rs`. The separate anchor names an exact Cargo
+target and fully qualified `#[test]` whose exact body executably uses the full
+token sequence. Each rule mutation binds that definition and target/test tuple. The lexer drops
 nested comments and all Rust string/character forms, so comments, strings,
 usage-only tokens, test-only definitions, and unrelated test bodies cannot make
 the gate green. Mutation targets obey the same owned production-`src` rule.
@@ -88,22 +94,26 @@ the gate green. Mutation targets obey the same owned production-`src` rule.
 Every changed, staged, or untracked path below every mapped crate since
 `source_commit` must appear in `owned_rust_files`, including helpers and
 `Cargo.toml`. There is no integration-only escape hatch. This closes the common
-false green where an owner edits a helper but omits it from the receipt.
+false green where an owner edits a helper but omits it from the receipt. A
+dedicated receipt directory inside a mapped crate is handled separately: only
+the exact checker-declared proof graph is exempt, and extra artifacts or any
+Rust/Go source there fail closed. All content-addressed JSON rejects duplicate
+keys; frontend-authored JSON and the final receipt require exact canonical bytes.
 
 Evidence never supplies an executable command. A plan selects:
 
 - `cargo-test`: a mapped crate, integration-test target, and exact (optionally
   module-qualified) test name. The checker runs from `rust/`:
-  `cargo test --offline --locked -j12 --quiet -p <crate> --test <target> <name> -- --exact`.
+  `cargo test --offline --locked -j12 --quiet -p <crate> --test <target> <name> -- --exact --nocapture`.
 - `go-test`: the exact pinned Go package and exact test name. The checker runs
   from the repository root:
   `go test ./<package> -run ^<name>$ -count=1 -v`.
 
 `run-evidence` and `verify-evidence` each content-address their raw logs. A
-measured probe also owns a content-addressed observation JSON whose boundary
-cases and conclusion are exact. Its named test must emit the checker-defined
-observation-hash and conclusion-hash marker; a passing test without the marker
-cannot attest the observation. Raw Cargo/Go logs can differ in elapsed times
+measured probe owns separately content-addressed expected boundary values. Its
+named test emits one canonical runtime JSON record of caller-supplied observed
+values and the conclusion; missing/wrong cases and hardcoded expected JSON are
+rejected. Raw Cargo/Go logs can differ in elapsed times
 and build chatter, so validation
 derives and compares a deterministic hash of the exact named-test PASS/FAIL
 marker plus exit/outcome. A compilation-only failure has no test marker and is
@@ -138,17 +148,20 @@ Receipt truth is split deliberately:
 From the repository root:
 
 ```bash
-python3 rust/scripts/go-package-lockdown.py generate --spec <dir>/package.toml
+python3 rust/scripts/go-package-lockdown.py generate --spec <dir>/package.toml \
+  --accepted-source-commit <full-accepted-sha>
 python3 rust/scripts/go-package-lockdown.py run-evidence \
-  --spec <dir>/package.toml --kind probe --id <probe-id>
+  --spec <dir>/package.toml --accepted-source-commit <full-accepted-sha> --kind probe --id <probe-id>
 python3 rust/scripts/go-package-lockdown.py verify-evidence \
-  --spec <dir>/package.toml --kind probe --id <probe-id>
+  --spec <dir>/package.toml --accepted-source-commit <full-accepted-sha> --kind probe --id <probe-id>
 python3 rust/scripts/go-package-lockdown.py run-evidence \
-  --spec <dir>/package.toml --kind mutation --id <mutation-id> --attempt <attempt-id>
+  --spec <dir>/package.toml --accepted-source-commit <full-accepted-sha> --kind mutation --id <mutation-id> --attempt <attempt-id>
 python3 rust/scripts/go-package-lockdown.py verify-evidence \
-  --spec <dir>/package.toml --kind mutation --id <mutation-id> --attempt <attempt-id>
-python3 rust/scripts/go-package-lockdown.py write-receipt --spec <dir>/package.toml
-python3 rust/scripts/go-package-lockdown.py check --spec <dir>/package.toml
+  --spec <dir>/package.toml --accepted-source-commit <full-accepted-sha> --kind mutation --id <mutation-id> --attempt <attempt-id>
+python3 rust/scripts/go-package-lockdown.py write-receipt --spec <dir>/package.toml \
+  --accepted-source-commit <full-accepted-sha>
+python3 rust/scripts/go-package-lockdown.py check --spec <dir>/package.toml \
+  --accepted-source-commit <full-accepted-sha>
 ```
 
 The v2 package specification is repository-relative:
