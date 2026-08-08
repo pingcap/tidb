@@ -18,15 +18,16 @@
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicI64, Ordering};
 
-use serde::de::{MapAccess, Visitor};
-use serde::{Deserialize, Serialize};
+use serde::de::{DeserializeSeed, MapAccess, Visitor};
+use serde::ser::SerializeStruct;
+use serde::{Deserialize, Serialize, Serializer};
 use tidb_error::terror::TerrorError;
 
 use crate::job::{JobMeta, TimeZoneLocation};
 use crate::serde_helpers::{
-    deserialize_go_object, go_json_field_matches, ignore_unknown, is_fatal_json_error, FatalSeed,
-    FatalValueSeed, GoJsonMerge, NullDefaultSeed, NullNoopSeed, OptionBytesSeed, OptionMergeSeed,
-    OptionScalarSeed, OptionStringMapFatalMergeSeed, OptionStringMapMergeSeed,
+    deserialize_go_object, go_json_field_matches, ignore_unknown, impl_go_json_deserialize,
+    is_fatal_json_error, FatalSeed, FatalValueSeed, GoJsonMerge, NullNoopSeed, OptionBytesSeed,
+    OptionMergeSeed, OptionScalarSeed, OptionStringMapFatalMergeSeed, OptionStringMapMergeSeed,
 };
 
 /// Go `BackfillState` (a `byte`): the state of the backfill-merge process.
@@ -90,63 +91,124 @@ pub fn set_ddl_reorg_process_defaults(worker_count: i64, batch_size: i64) {
 
 /// Go `DDLReorgMeta`. Warning values use the shared `tidb-error` envelope so
 /// class/code/message/RFC JSON stays compatible without a Rust-only hierarchy.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default)]
 pub struct DDLReorgMeta {
     /// SQL mode captured for reorganization expression evaluation.
-    #[serde(rename = "sql_mode", default)]
     pub sql_mode: u64,
     /// Warning payloads keyed by TiDB error identifier.
-    #[serde(rename = "warnings", default)]
     pub warnings: Option<BTreeMap<String, Option<TerrorError>>>,
     /// Warning occurrence counts keyed by TiDB error identifier.
-    #[serde(rename = "warnings_count", default)]
     pub warnings_count: Option<BTreeMap<String, i64>>,
     /// Time zone captured for reorganization expression evaluation.
-    #[serde(rename = "location", default)]
     pub location: Option<TimeZoneLocation>,
     /// Reorganization strategy.
-    #[serde(rename = "reorg_tp", default)]
     pub reorg_type: ReorgType,
     /// Whether fast ingest reorganization is enabled.
-    #[serde(rename = "is_fast_reorg", default)]
     pub is_fast_reorg: bool,
     /// Whether distributed reorganization is enabled.
-    #[serde(rename = "is_dist_reorg", default)]
     pub is_dist_reorg: bool,
     /// Whether reorganization uses cloud storage.
-    #[serde(rename = "use_cloud_storage", default)]
     pub use_cloud_storage: bool,
     /// Resource group assigned to the reorganization.
-    #[serde(rename = "resource_group_name", default)]
     pub resource_group_name: String,
     /// Persisted reorganization metadata version.
-    #[serde(rename = "version", default)]
     pub version: i64,
     /// Store-label scope targeted by the job.
-    #[serde(rename = "target_scope", default)]
     pub target_scope: String,
     /// Maximum number of nodes used by distributed reorganization.
-    #[serde(rename = "max_node_count", default)]
     pub max_node_count: i64,
     /// Analyze phase state stored with modify-column work.
-    #[serde(rename = "analyze_state", default)]
     pub analyze_state: i8,
     /// Current reorganization stage.
-    #[serde(rename = "stage", default)]
     pub stage: ReorgStage,
-    #[serde(
-        rename = "use_new_collate",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
     /// Captured collation mode; `None` requests the caller-provided fallback.
     pub use_new_collate: Option<bool>,
-    #[serde(rename = "concurrency", default)]
-    concurrency: i64,
-    #[serde(rename = "batch_size", default)]
-    batch_size: i64,
-    #[serde(rename = "max_write_speed", default)]
-    max_write_speed: i64,
+    /// Dynamically adjustable worker count. Go stores this in `atomic.Int64`.
+    concurrency: AtomicI64,
+    /// Dynamically adjustable batch size. Go stores this in `atomic.Int64`.
+    batch_size: AtomicI64,
+    /// Dynamically adjustable write-rate limit. Go stores this in
+    /// `atomic.Int64`.
+    max_write_speed: AtomicI64,
+}
+
+impl Clone for DDLReorgMeta {
+    fn clone(&self) -> Self {
+        Self {
+            sql_mode: self.sql_mode,
+            warnings: self.warnings.clone(),
+            warnings_count: self.warnings_count.clone(),
+            location: self.location.clone(),
+            reorg_type: self.reorg_type,
+            is_fast_reorg: self.is_fast_reorg,
+            is_dist_reorg: self.is_dist_reorg,
+            use_cloud_storage: self.use_cloud_storage,
+            resource_group_name: self.resource_group_name.clone(),
+            version: self.version,
+            target_scope: self.target_scope.clone(),
+            max_node_count: self.max_node_count,
+            analyze_state: self.analyze_state,
+            stage: self.stage,
+            use_new_collate: self.use_new_collate,
+            concurrency: AtomicI64::new(self.concurrency.load(Ordering::SeqCst)),
+            batch_size: AtomicI64::new(self.batch_size.load(Ordering::SeqCst)),
+            max_write_speed: AtomicI64::new(self.max_write_speed.load(Ordering::SeqCst)),
+        }
+    }
+}
+
+impl Serialize for DDLReorgMeta {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        // Go `encoding/json` preserves declaration order. `UseNewCollate` is
+        // the only `omitempty` field; atomic integers are always present.
+        let field_count = if self.use_new_collate.is_some() {
+            18
+        } else {
+            17
+        };
+        let mut value = serializer.serialize_struct("DDLReorgMeta", field_count)?;
+        value.serialize_field("sql_mode", &self.sql_mode)?;
+        value.serialize_field("warnings", &self.warnings)?;
+        value.serialize_field("warnings_count", &self.warnings_count)?;
+        value.serialize_field("location", &self.location)?;
+        value.serialize_field("reorg_tp", &self.reorg_type)?;
+        value.serialize_field("is_fast_reorg", &self.is_fast_reorg)?;
+        value.serialize_field("is_dist_reorg", &self.is_dist_reorg)?;
+        value.serialize_field("use_cloud_storage", &self.use_cloud_storage)?;
+        value.serialize_field("resource_group_name", &self.resource_group_name)?;
+        value.serialize_field("version", &self.version)?;
+        value.serialize_field("target_scope", &self.target_scope)?;
+        value.serialize_field("max_node_count", &self.max_node_count)?;
+        value.serialize_field("analyze_state", &self.analyze_state)?;
+        value.serialize_field("stage", &self.stage)?;
+        if let Some(use_new_collate) = self.use_new_collate {
+            value.serialize_field("use_new_collate", &use_new_collate)?;
+        }
+        value.serialize_field("concurrency", &self.concurrency.load(Ordering::SeqCst))?;
+        value.serialize_field("batch_size", &self.batch_size.load(Ordering::SeqCst))?;
+        value.serialize_field(
+            "max_write_speed",
+            &self.max_write_speed.load(Ordering::SeqCst),
+        )?;
+        value.end()
+    }
+}
+
+/// Go `atomic.Int64.UnmarshalJSON`: decode into a temporary integer and store
+/// only after successful decoding. JSON null decodes as the integer zero.
+struct AtomicI64Seed<'a>(&'a AtomicI64);
+
+impl<'de> DeserializeSeed<'de> for AtomicI64Seed<'_> {
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = Option::<i64>::deserialize(deserializer)?.unwrap_or_default();
+        self.0.store(value, Ordering::SeqCst);
+        Ok(())
+    }
 }
 
 impl DDLReorgMeta {
@@ -163,42 +225,45 @@ impl DDLReorgMeta {
     /// Returns persisted concurrency, or the current process default when zero.
     #[must_use]
     pub fn get_concurrency(&self) -> i64 {
-        if self.concurrency == 0 {
+        let concurrency = self.concurrency.load(Ordering::SeqCst);
+        if concurrency == 0 {
             DDL_REORG_WORKER_COUNT.load(Ordering::SeqCst)
         } else {
-            self.concurrency
+            concurrency
         }
     }
 
     /// Stores dynamic reorganization concurrency.
-    pub fn set_concurrency(&mut self, concurrency: i64) {
-        self.concurrency = concurrency;
+    pub fn set_concurrency(&self, concurrency: i64) {
+        self.concurrency.store(concurrency, Ordering::SeqCst);
     }
 
     /// Returns persisted batch size, or the current process default when zero.
     #[must_use]
     pub fn get_batch_size(&self) -> i64 {
-        if self.batch_size == 0 {
+        let batch_size = self.batch_size.load(Ordering::SeqCst);
+        if batch_size == 0 {
             DDL_REORG_BATCH_SIZE.load(Ordering::SeqCst)
         } else {
-            self.batch_size
+            batch_size
         }
     }
 
     /// Stores dynamic reorganization batch size.
-    pub fn set_batch_size(&mut self, batch_size: i64) {
-        self.batch_size = batch_size;
+    pub fn set_batch_size(&self, batch_size: i64) {
+        self.batch_size.store(batch_size, Ordering::SeqCst);
     }
 
     /// Returns the maximum write speed, where zero means unlimited.
     #[must_use]
     pub fn get_max_write_speed(&self) -> i64 {
-        self.max_write_speed
+        self.max_write_speed.load(Ordering::SeqCst)
     }
 
     /// Stores the maximum reorganization write speed.
-    pub fn set_max_write_speed(&mut self, max_write_speed: i64) {
-        self.max_write_speed = max_write_speed;
+    pub fn set_max_write_speed(&self, max_write_speed: i64) {
+        self.max_write_speed
+            .store(max_write_speed, Ordering::SeqCst);
     }
 
     /// Returns the captured collation mode or `default_value` for old metadata.
@@ -274,16 +339,14 @@ impl GoJsonMerge for DDLReorgMeta {
                                 &mut destination.use_new_collate,
                             ))?;
                         } else if go_json_field_matches(&key, "concurrency") {
-                            map.next_value_seed(FatalSeed(NullDefaultSeed(
-                                &mut destination.concurrency,
+                            map.next_value_seed(FatalSeed(AtomicI64Seed(
+                                &destination.concurrency,
                             )))?;
                         } else if go_json_field_matches(&key, "batch_size") {
-                            map.next_value_seed(FatalSeed(NullDefaultSeed(
-                                &mut destination.batch_size,
-                            )))?;
+                            map.next_value_seed(FatalSeed(AtomicI64Seed(&destination.batch_size)))?;
                         } else if go_json_field_matches(&key, "max_write_speed") {
-                            map.next_value_seed(FatalSeed(NullDefaultSeed(
-                                &mut destination.max_write_speed,
+                            map.next_value_seed(FatalSeed(AtomicI64Seed(
+                                &destination.max_write_speed,
                             )))?;
                         } else {
                             ignore_unknown(&mut map)?;
@@ -307,6 +370,8 @@ impl GoJsonMerge for DDLReorgMeta {
         deserialize_go_object(deserializer, MergeVisitor(self))
     }
 }
+
+impl_go_json_deserialize!(DDLReorgMeta);
 
 impl ReorgStage {
     /// Not started (Go `ReorgStageNone`).
@@ -588,16 +653,16 @@ mod tests {
             r#"{"concurrency":null,"batch_size":null,"max_write_speed":null}"#,
         );
         meta.go_json_merge(&mut decoder).unwrap();
-        assert_eq!(meta.concurrency, 0);
-        assert_eq!(meta.batch_size, 0);
-        assert_eq!(meta.max_write_speed, 0);
+        assert_eq!(meta.concurrency.load(Ordering::SeqCst), 0);
+        assert_eq!(meta.batch_size.load(Ordering::SeqCst), 0);
+        assert_eq!(meta.max_write_speed.load(Ordering::SeqCst), 0);
 
         meta.set_batch_size(12);
         let mut decoder =
             serde_json::Deserializer::from_str(r#"{"concurrency":"bad","batch_size":13}"#);
         let error = meta.go_json_merge(&mut decoder).unwrap_err();
         assert!(error.to_string().contains("invalid type"));
-        assert_eq!(meta.batch_size, 12);
+        assert_eq!(meta.batch_size.load(Ordering::SeqCst), 12);
 
         meta.use_new_collate = None;
         let mut decoder =
@@ -606,6 +671,63 @@ mod tests {
         assert!(error.to_string().contains("invalid type"));
         assert_eq!(meta.use_new_collate, Some(false));
         assert_eq!(meta.version, 7);
+    }
+
+    #[test]
+    fn ddl_reorg_meta_atomic_fields_are_shared_for_concurrent_get_and_set() {
+        fn assert_sync<T: Sync>() {}
+        assert_sync::<DDLReorgMeta>();
+
+        let meta = std::sync::Arc::new(DDLReorgMeta::default());
+        let mut writers = Vec::new();
+        for value in 1..=8 {
+            let meta = std::sync::Arc::clone(&meta);
+            writers.push(std::thread::spawn(move || {
+                meta.set_concurrency(value);
+                meta.set_batch_size(value * 10);
+                meta.set_max_write_speed(value * 100);
+            }));
+        }
+        for writer in writers {
+            writer.join().unwrap();
+        }
+
+        assert!((1..=8).contains(&meta.get_concurrency()));
+        assert!((10..=80)
+            .step_by(10)
+            .any(|value| value == meta.get_batch_size()));
+        assert!((100..=800)
+            .step_by(100)
+            .any(|value| value == meta.get_max_write_speed()));
+    }
+
+    #[test]
+    fn ddl_reorg_meta_atomic_json_is_numeric_ordered_and_last_member_wins() {
+        let meta = DDLReorgMeta::default();
+        meta.set_concurrency(i64::MIN);
+        meta.set_batch_size(i64::MAX);
+        meta.set_max_write_speed(-1);
+        let json = serde_json::to_string(&meta).unwrap();
+        assert!(json.ends_with(&format!(
+            r#","concurrency":{},"batch_size":{},"max_write_speed":-1}}"#,
+            i64::MIN,
+            i64::MAX
+        )));
+
+        let mut decoder = serde_json::Deserializer::from_str(
+            r#"{"CONCURRENCY":1,"concurrency":2,"batch_size":3,"batch_size":null}"#,
+        );
+        let mut decoded = DDLReorgMeta::default();
+        decoded.go_json_merge(&mut decoder).unwrap();
+        assert_eq!(decoded.concurrency.load(Ordering::SeqCst), 2);
+        assert_eq!(decoded.batch_size.load(Ordering::SeqCst), 0);
+
+        decoded.set_max_write_speed(9);
+        let mut decoder =
+            serde_json::Deserializer::from_str(r#"{"max_write_speed":"bad","concurrency":4}"#);
+        assert!(decoded.go_json_merge(&mut decoder).is_err());
+        assert_eq!(decoded.max_write_speed.load(Ordering::SeqCst), 9);
+        assert_eq!(decoded.concurrency.load(Ordering::SeqCst), 2);
     }
 
     #[test]
