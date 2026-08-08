@@ -340,3 +340,18 @@ UNIX_TIMESTAMP('2025-03-30 02:30:00')
 SELECT FROM_UNIXTIME(UNIX_TIMESTAMP('2025-03-30 02:30:00'));
 FROM_UNIXTIME(UNIX_TIMESTAMP('2025-03-30 02:30:00'))
 2025-03-30 03:00:00
+DROP TABLE IF EXISTS t_empty_time;
+Level	Code	Message
+Note	1051	Unknown table 'types__time.t_empty_time'
+CREATE TABLE t_empty_time(t TIME, t3 TIME(3));
+INSERT INTO t_empty_time VALUES ('', '');
+SELECT t, t3 FROM t_empty_time;
+t	t3
+00:00:00	00:00:00.000
+INSERT INTO t_empty_time VALUES ('01:02:03', '01:02:03.456');
+UPDATE t_empty_time SET t = '', t3 = '' WHERE t = '01:02:03';
+SELECT t, t3 FROM t_empty_time;
+t	t3
+00:00:00	00:00:00.000
+00:00:00	00:00:00.000
+DROP TABLE t_empty_time;

@@ -336,6 +336,7 @@ func TestTime(t *testing.T) {
 		{"2011-11-11 00:00:01", "00:00:01"},
 		{"20111111121212.123", "12:12:12"},
 		{"2011-11-11T12:12:12", "12:12:12"},
+		{"", "00:00:00"},
 	}
 
 	for _, test := range table {
@@ -352,11 +353,13 @@ func TestTime(t *testing.T) {
 		{"101112.123456", "10:11:12.123456"},
 		{"1 10:11:12.123456", "34:11:12.123456"},
 		{"10:11:12.123456", "10:11:12.123456"},
+		{"", "00:00:00.000000"},
 	}
 
 	for _, test := range table {
-		duration, _, err := types.ParseDuration(typeCtx, test.Input, types.MaxFsp)
+		duration, isNull, err := types.ParseDuration(typeCtx, test.Input, types.MaxFsp)
 		require.NoError(t, err)
+		require.False(t, isNull)
 		require.Equal(t, test.Expect, duration.String())
 	}
 
