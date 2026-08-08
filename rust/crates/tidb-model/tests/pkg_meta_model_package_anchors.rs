@@ -431,41 +431,23 @@ fn pkg_meta_model_probe_placement_callback_surface() {
 }
 
 #[test]
-fn pkg_meta_model_probe_schema_diff_affected_options() {
+fn pkg_meta_model_schema_diff_affected_options_boundary() {
     let nil_encoded = serde_json::to_value(SchemaDiff::default()).unwrap();
     let empty_encoded = serde_json::to_value(SchemaDiff {
-        affected_options: Vec::new(),
+        affected_options: Some(Vec::new()),
         ..Default::default()
     })
     .unwrap();
-    let nil_mode = if nil_encoded["affected_options"].is_null() {
-        "rust-empty-serializes-null"
-    } else {
-        "unexpected-nonnull"
-    };
-    let empty_mode = if empty_encoded["affected_options"].is_null() {
-        "rust-empty-serializes-null"
-    } else {
-        "unexpected-nonnull"
-    };
-    let element_mode =
-        if std::any::type_name::<Vec<tidb_model::AffectedOption>>().contains("AffectedOption") {
-            "rust-element-type-nonnullable"
-        } else {
-            "unexpected-element-type"
-        };
-    observation_emitter::emit(
-        "MODEL-SCHEMA-DIFF-AFFECTED",
-        "SchemaDiff affected_options cannot distinguish Go nil from allocated empty or retain null pointer elements",
-        &[
-            ("nil-slice", "Go-AffectedOpts=nil", nil_mode),
-            (
-                "allocated-empty-slice",
-                "Go-AffectedOpts=allocated-empty",
-                empty_mode,
-            ),
-            ("null-element", "Go-AffectedOpts=[nil]", element_mode),
-        ],
+    let nullable_encoded = serde_json::to_value(SchemaDiff {
+        affected_options: Some(vec![None]),
+        ..Default::default()
+    })
+    .unwrap();
+    assert!(nil_encoded["affected_options"].is_null());
+    assert_eq!(empty_encoded["affected_options"], serde_json::json!([]));
+    assert_eq!(
+        nullable_encoded["affected_options"],
+        serde_json::json!([null])
     );
 }
 
