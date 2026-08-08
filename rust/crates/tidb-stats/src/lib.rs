@@ -66,6 +66,7 @@ pub mod global_topn;
 pub mod healthy_metrics;
 pub mod histogram;
 pub mod historical_stats;
+pub mod index;
 pub mod index_query;
 pub mod index_usage;
 pub mod index_usage_key;
@@ -202,6 +203,10 @@ pub use healthy_metrics::{
     STATS_HEALTHY_BUCKET_TOTAL, STATS_HEALTHY_BUCKET_UNNEEDED_ANALYZE,
 };
 pub use historical_stats::historical_stats_version;
+pub use index::{
+    copy_index, index_is_all_evicted, index_stats_validity, Index, IndexInfo, IndexValidity,
+    IndexValidityContext,
+};
 pub use index_query::query_index_bytes;
 pub use index_usage::{
     index_usage_access_bucket, new_index_usage_sample, IndexUsageSample, INDEX_USAGE_BUCKET_BOUNDS,
