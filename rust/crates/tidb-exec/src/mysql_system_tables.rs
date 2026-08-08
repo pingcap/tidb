@@ -947,11 +947,11 @@ mod clustered_handle_tests {
         // The column IDs are the cluster's own: `version` is 1 and `table_id`
         // is 2, and the stored value below carries no column 2 at all.
         let mut table_id = stats_column(1, 2, "table_id", FieldTypeCode::LongLong);
-        table_id.set_flag(table_id.get_flag() | FieldTypeFlags::PRI_KEY);
+        table_id.set_flag(table_id.get_flag() | u64::from(FieldTypeFlags::PRI_KEY));
         let mut version = stats_column(0, 1, "version", FieldTypeCode::LongLong);
-        version.set_flag(version.get_flag() | FieldTypeFlags::UNSIGNED);
+        version.set_flag(version.get_flag() | u64::from(FieldTypeFlags::UNSIGNED));
         let mut count = stats_column(3, 4, "count", FieldTypeCode::LongLong);
-        count.set_flag(count.get_flag() | FieldTypeFlags::UNSIGNED);
+        count.set_flag(count.get_flag() | u64::from(FieldTypeFlags::UNSIGNED));
         TableInfo {
             id: 22,
             name: CiString::new("stats_meta"),

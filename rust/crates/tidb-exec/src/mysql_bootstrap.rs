@@ -208,7 +208,7 @@ pub fn plan_mysql_bootstrap<S: MetaSnapshot>(
         version: schema_version,
         action_type: ActionType::ACTION_CREATE_TABLES,
         schema_id: SYSTEM_DATABASE_ID,
-        affected_options: affected,
+        affected_options: Some(affected.into_iter().map(Some).collect()),
         ..SchemaDiff::default()
     };
     mutations.push(OptimisticMutation::meta_put(

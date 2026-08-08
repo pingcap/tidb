@@ -294,9 +294,9 @@ fn configured_string_is_binary(
 fn configure_loaded_column(column: &ColumnInfo) -> Result<ConfiguredColumn, String> {
     let name = column.name.original();
     let flags = column.get_flag();
-    let unsigned = flags & FieldTypeFlags::UNSIGNED != 0;
-    let handle = flags & FieldTypeFlags::PRI_KEY != 0;
-    let nullable = flags & FieldTypeFlags::NOT_NULL == 0;
+    let unsigned = flags & u64::from(FieldTypeFlags::UNSIGNED) != 0;
+    let handle = flags & u64::from(FieldTypeFlags::PRI_KEY) != 0;
+    let nullable = flags & u64::from(FieldTypeFlags::NOT_NULL) == 0;
     if handle && nullable {
         // The clustered handle *is* the record key, so Go always stamps it
         // NOT NULL; a stored descriptor that says otherwise is malformed.
@@ -304,7 +304,7 @@ fn configure_loaded_column(column: &ColumnInfo) -> Result<ConfiguredColumn, Stri
             "column `{name}` is the row handle but is not NOT NULL"
         ));
     }
-    if flags & FieldTypeFlags::GENERATED_COLUMN != 0 {
+    if flags & u64::from(FieldTypeFlags::GENERATED_COLUMN) != 0 {
         return Err(format!("column `{name}` is a generated column"));
     }
     let code = column.get_type();
@@ -400,7 +400,7 @@ fn configure_loaded_column(column: &ColumnInfo) -> Result<ConfiguredColumn, Stri
 /// Names a column's stored type the way an operator wrote it, so a refusal can
 /// be acted on without reading TiDB internals.
 fn describe_type(column: &ColumnInfo) -> String {
-    let unsigned = if column.get_flag() & FieldTypeFlags::UNSIGNED != 0 {
+    let unsigned = if column.get_flag() & u64::from(FieldTypeFlags::UNSIGNED) != 0 {
         " UNSIGNED"
     } else {
         ""

@@ -189,7 +189,13 @@ fn a_bootstrap_spends_exactly_one_schema_version_and_describes_it() {
     );
     // Every created table is named in the diff, which is what makes a real
     // TiDB's own reloader pick them all up at this one version.
-    assert_eq!(write.diff.affected_options.len(), BOOTSTRAP_TABLES.len());
+    let affected = write
+        .diff
+        .affected_options
+        .as_ref()
+        .expect("bootstrap allocates its affected-options list");
+    assert_eq!(affected.len(), BOOTSTRAP_TABLES.len());
+    assert!(affected.iter().all(Option::is_some));
     apply(&mut store, &write);
     assert_eq!(store.pairs[&key::schema_version_kv_key()], b"61");
 }

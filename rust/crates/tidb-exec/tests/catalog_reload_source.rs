@@ -210,6 +210,21 @@ fn a_create_tables_diff_adds_every_affected_table() {
 }
 
 #[test]
+#[should_panic(expected = "nil affected option in create-tables schema diff")]
+fn a_create_tables_diff_panics_on_a_nil_affected_option() {
+    let (mut snapshot, catalog) = started_cluster();
+    snapshot.commit_diff(
+        101,
+        &format!(
+            r#"{{"version":101,"type":{},"schema_id":3,"table_id":0,"old_table_id":0,"old_schema_id":0,"regenerate_schema_map":false,"affected_options":[null]}}"#,
+            ActionType::ACTION_CREATE_TABLES.0
+        ),
+    );
+
+    let _ = reload_cluster_catalog(&mut snapshot, &catalog);
+}
+
+#[test]
 fn an_unsupported_diff_type_forces_a_full_reload_rather_than_a_partial_guess() {
     let (mut snapshot, catalog) = started_cluster();
     // A second table exists in the store but no diff this tier can apply says

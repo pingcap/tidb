@@ -307,15 +307,23 @@ fn apply_schema_diff<S: MetaSnapshot>(
         ActionType::ACTION_CREATE_TABLES => {
             // Go `applyCreateTables`: the diff's own table ID is unset and
             // every created table is listed as an affected option.
-            for affected in &diff.affected_options {
-                if let Err(reason) = create_table(
-                    snapshot,
-                    catalog,
-                    version,
-                    affected.schema_id,
-                    affected.table_id,
-                )? {
-                    return Ok(Err(reason));
+            if let Some(affected_options) = &diff.affected_options {
+                for affected in affected_options {
+                    // Go dereferences each `*AffectedOption`; a stored null
+                    // element is corrupt metadata and panics rather than
+                    // being silently skipped.
+                    let affected = affected
+                        .as_ref()
+                        .expect("nil affected option in create-tables schema diff");
+                    if let Err(reason) = create_table(
+                        snapshot,
+                        catalog,
+                        version,
+                        affected.schema_id,
+                        affected.table_id,
+                    )? {
+                        return Ok(Err(reason));
+                    }
                 }
             }
         }
