@@ -31,7 +31,11 @@ pub struct SortedHistogramBuilder {
 
 impl SortedHistogramBuilder {
     #[must_use]
-    pub fn new(num_buckets: i64, id: i64, stats_version: i32) -> Self {
+    pub fn new(num_buckets: i64, id: i64, stats_version: isize) -> Self {
+        assert!(
+            num_buckets >= 0,
+            "histogram bucket count cannot be negative"
+        );
         Self {
             histogram: Histogram {
                 id,

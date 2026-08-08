@@ -163,8 +163,10 @@ pub use batch_update::BatchUpdate;
 pub use bootstrap_sql::{gen_init_stats_histograms_sql, gen_init_stats_meta_sql, HistSqlOptions};
 pub use bounded_min_heap::BoundedMinHeap;
 pub use builder::{
-    build_column, build_column_histogram, build_hist_and_topn, BuildOptions, HistogramAndTopN,
-    SampleCollector, SampleItem, SequentialRangeChecker,
+    build_column, build_column_histogram, build_hist_and_topn, try_build_column_histogram,
+    try_build_column_histogram_in_place, try_build_hist_and_topn, try_build_hist_and_topn_in_place,
+    try_build_hist_and_topn_tracked, BuildOptions, BuilderMemoryBuffer, ComparedBytesResult,
+    HistogramAndTopN, HistogramBuildError, SampleCollector, SampleItem, SequentialRangeChecker,
 };
 pub use cache_metrics_labels::{
     stats_cache_counter_labels, stats_cache_gauge_labels, STATS_CACHE_COUNTER_LABELS,

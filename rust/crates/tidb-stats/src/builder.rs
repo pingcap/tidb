@@ -20,20 +20,13 @@
 //! histogram somebody else built and estimates row counts from it, this one
 //! builds the histogram `ANALYZE TABLE` stores.
 //!
-//! # Why the caller hands over encoded bytes
+//! # Why the exact entrypoint owns a codec callback
 //!
 //! Go's builder holds a `getComparedBytes` closure that is `codec.EncodeKey`
 //! for a column and the identity for an index, because an index sample's
-//! value already *is* an index key. Both branches need the datum codec, which
-//! this crate deliberately does not depend on, so [`SampleItem`] carries the
-//! encoded form next to the value and the builder never encodes anything.
-//!
-//! That also removes Go's one remaining comparison subtlety: the builder
-//! compares bucket bounds with `Datum.Compare` under the binary collator and
-//! sorts the samples with the same comparison. `codec.EncodeKey` is
-//! order-preserving, so comparing the encoded bytes is that same order --
-//! one comparison rule for sorting, TopN grouping and bucket extension alike,
-//! rather than three chances to disagree.
+//! value already *is* an index key. [`try_build_hist_and_topn_in_place`] keeps
+//! that boundary caller-owned and fallible; [`build_hist_and_topn`] is only a
+//! convenience adapter for samples that already carry their encoding.
 //!
 //! # What this owns, and what it does not
 //!
@@ -43,7 +36,10 @@
 //! table, not of the histogram. [`crate::histogram::Bucket::count`] below is
 //! cumulative, exactly as Go's in-memory `Bucket.Count` is.
 
-use tidb_datatype::Datum;
+use std::sync::Arc;
+
+use tidb_datatype::{Collation, Datum, DatumValueError};
+use tidb_util::memory::Tracker;
 
 use crate::bounded_min_heap::BoundedMinHeap;
 use crate::cmsketch::TopN;
@@ -70,7 +66,7 @@ pub struct SampleItem {
     /// The value a bucket bound is stored from.
     pub value: Datum,
     /// The sample's position in physical scan order.
-    pub ordinal: i64,
+    pub ordinal: isize,
 }
 
 /// One column's or one index's samples, plus the whole-table facts the
@@ -101,6 +97,117 @@ pub struct HistogramAndTopN {
     pub topn: Option<TopN>,
 }
 
+/// Errors returned by Go-shaped fallible histogram entrypoints.
+#[derive(Debug)]
+pub enum HistogramBuildError<E> {
+    /// `Datum.Compare` failed while sorting samples or extending a bucket.
+    Compare(DatumValueError),
+    /// The caller-owned column key encoder failed.
+    Encode(E),
+}
+
+impl<E: std::fmt::Display> std::fmt::Display for HistogramBuildError<E> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Compare(error) => std::fmt::Display::fmt(error, formatter),
+            Self::Encode(error) => std::fmt::Display::fmt(error, formatter),
+        }
+    }
+}
+
+impl<E> std::error::Error for HistogramBuildError<E> where E: std::error::Error + 'static {}
+
+/// Go's two-result `getComparedBytes`: an encoder can return allocated bytes
+/// together with an error, and the builder accounts that allocation before
+/// returning the error.
+#[derive(Debug)]
+pub struct ComparedBytesResult<E> {
+    /// The encoded comparison key, including any partial result on failure.
+    pub encoded: Vec<u8>,
+    /// The codec or statement-context error, if one survived `HandleError`.
+    pub error: Option<E>,
+}
+
+impl<E> ComparedBytesResult<E> {
+    /// A successful encoding.
+    #[must_use]
+    pub fn success(encoded: Vec<u8>) -> Self {
+        Self {
+            encoded,
+            error: None,
+        }
+    }
+
+    /// A failed encoding that preserves Go's simultaneously returned bytes.
+    #[must_use]
+    pub fn failure(encoded: Vec<u8>, error: E) -> Self {
+        Self {
+            encoded,
+            error: Some(error),
+        }
+    }
+}
+
+/// The two independent buffers used by `BuildHistAndTopN` and `buildHist`.
+///
+/// Keeping this as a public native primitive makes the Go threshold contract
+/// testable without allocating a 100 MiB vector just to manufacture a
+/// capacity. Dropping or explicitly flushing it performs Go's deferred final
+/// `Consume(bufferedMemSize)` followed by `Release(bufferedReleaseSize)`.
+pub struct BuilderMemoryBuffer {
+    tracker: Option<Arc<Tracker>>,
+    buffered_mem_size: i64,
+    buffered_release_size: i64,
+}
+
+impl BuilderMemoryBuffer {
+    /// Starts one Go-shaped pair of temporary-memory buffers.
+    #[must_use]
+    pub fn new(tracker: Option<Arc<Tracker>>) -> Self {
+        Self {
+            tracker,
+            buffered_mem_size: 0,
+            buffered_release_size: 0,
+        }
+    }
+
+    /// Accounts one temporary allocation in both buffers.
+    pub fn account_temporary(&mut self, bytes: i64) {
+        if let Some(tracker) = &self.tracker {
+            tracker.buffered_consume(&mut self.buffered_mem_size, bytes);
+            tracker.buffered_release(&mut self.buffered_release_size, bytes);
+        }
+    }
+
+    /// Bytes waiting for the next consume flush.
+    #[must_use]
+    pub const fn pending_consume(&self) -> i64 {
+        self.buffered_mem_size
+    }
+
+    /// Bytes waiting for the next release flush.
+    #[must_use]
+    pub const fn pending_release(&self) -> i64 {
+        self.buffered_release_size
+    }
+
+    /// Runs the deferred final flush now.
+    pub fn flush(&mut self) {
+        if let Some(tracker) = &self.tracker {
+            tracker.consume(self.buffered_mem_size);
+            self.buffered_mem_size = 0;
+            tracker.release(self.buffered_release_size);
+            self.buffered_release_size = 0;
+        }
+    }
+}
+
+impl Drop for BuilderMemoryBuffer {
+    fn drop(&mut self) {
+        self.flush();
+    }
+}
+
 /// The knobs `ANALYZE ... WITH n BUCKETS, m TOPN` sets, plus the session
 /// defaults they are compared against.
 ///
@@ -111,22 +218,22 @@ pub struct HistogramAndTopN {
 #[derive(Clone, Copy, Debug)]
 pub struct BuildOptions {
     /// `WITH n BUCKETS`, or the session default.
-    pub num_buckets: usize,
+    pub num_buckets: isize,
     /// `WITH m TOPN`, or the session default.
-    pub num_topn: usize,
+    pub num_topn: isize,
     /// `tidb_analyze_default_num_buckets`.
-    pub default_num_buckets: usize,
+    pub default_num_buckets: u64,
     /// `tidb_analyze_default_num_topn`.
-    pub default_num_topn: usize,
+    pub default_num_topn: u64,
 }
 
 impl Default for BuildOptions {
     fn default() -> Self {
         Self {
-            num_buckets: crate::constants::DEFAULT_HISTOGRAM_BUCKETS,
-            num_topn: crate::constants::DEFAULT_TOP_N_VALUE,
-            default_num_buckets: crate::constants::DEFAULT_HISTOGRAM_BUCKETS,
-            default_num_topn: crate::constants::DEFAULT_TOP_N_VALUE,
+            num_buckets: crate::constants::DEFAULT_HISTOGRAM_BUCKETS as isize,
+            num_topn: crate::constants::DEFAULT_TOP_N_VALUE as isize,
+            default_num_buckets: crate::constants::DEFAULT_HISTOGRAM_BUCKETS as u64,
+            default_num_topn: crate::constants::DEFAULT_TOP_N_VALUE as u64,
         }
     }
 }
@@ -158,8 +265,17 @@ impl SequentialRangeChecker {
     #[must_use]
     pub fn from_ranges(ranges: &[(i64, i64)]) -> Self {
         let mut ranges = ranges.to_vec();
+        Self::from_ranges_in_place(&mut ranges)
+    }
+
+    /// Go `NewSequentialRangeChecker` sorts the caller's slice in place.
+    #[must_use]
+    pub fn from_ranges_in_place(ranges: &mut [(i64, i64)]) -> Self {
         ranges.sort_by_key(|(start, _)| *start);
-        Self { ranges, current: 0 }
+        Self {
+            ranges: ranges.to_vec(),
+            current: 0,
+        }
     }
 
     fn new(ranges: &[TopNWithRange]) -> Self {
@@ -188,15 +304,15 @@ impl SequentialRangeChecker {
 }
 
 /// Go `isAnalyzeDefaultValue`.
-const fn is_analyze_default_value(value: usize, default_value: usize) -> bool {
-    value == default_value
+const fn is_analyze_default_value(value: isize, default_value: u64) -> bool {
+    value >= 0 && value as u64 == default_value
 }
 
 /// What `processTopNValue` weighs a candidate against: the size asked for,
 /// whether the user asking for it switched the heuristics off, and how much
 /// of the table one sampled row stands for.
 struct TopNPolicy {
-    num_topn: usize,
+    num_topn: isize,
     allow_pruning: bool,
     sample_factor: f64,
 }
@@ -215,7 +331,8 @@ fn process_topn_value(
     if !last_value
         && candidate.count == 1
         && policy.allow_pruning
-        && (heap.len() >= policy.num_topn / TOPN_PRUNING_THRESHOLD || policy.sample_factor > 1.0)
+        && (heap.len() as isize >= policy.num_topn / TOPN_PRUNING_THRESHOLD as isize
+            || policy.sample_factor > 1.0)
     {
         return;
     }
@@ -275,13 +392,66 @@ fn prune_topn_item(
 /// `is_column` is Go's `isColumn`: here it decides only whether the
 /// physical/logical correlation is computed, because the value encoding the
 /// caller already performed is the other half of that flag.
-#[must_use]
 pub fn build_hist_and_topn(
     id: i64,
     collector: &SampleCollector,
     options: BuildOptions,
     is_column: bool,
 ) -> HistogramAndTopN {
+    try_build_hist_and_topn(id, collector, options, is_column, |sample, _| {
+        Ok::<_, std::convert::Infallible>(sample.encoded.clone())
+    })
+    .expect("pre-encoded samples must remain comparable")
+}
+
+/// Value-oriented convenience around [`try_build_hist_and_topn_in_place`].
+///
+/// Go sorts `collector.Samples` itself. This adapter deliberately clones for
+/// callers that only need the value; use the in-place entrypoint when the Go
+/// receiver mutation is observable.
+pub fn try_build_hist_and_topn<E>(
+    id: i64,
+    collector: &SampleCollector,
+    options: BuildOptions,
+    is_column: bool,
+    mut compared_bytes: impl FnMut(&SampleItem, bool) -> Result<Vec<u8>, E>,
+) -> Result<HistogramAndTopN, HistogramBuildError<E>> {
+    let mut collector = collector.clone();
+    try_build_hist_and_topn_in_place(
+        id,
+        &mut collector,
+        options,
+        is_column,
+        move |sample, is_column| match compared_bytes(sample, is_column) {
+            Ok(encoded) => ComparedBytesResult::success(encoded),
+            Err(error) => ComparedBytesResult::failure(Vec::new(), error),
+        },
+    )
+}
+
+/// Go `BuildHistAndTopN`, including its in-place stable sort, fallible datum
+/// comparisons, fallible codec boundary, and optional temporary-memory
+/// tracker.
+pub fn try_build_hist_and_topn_in_place<E>(
+    id: i64,
+    collector: &mut SampleCollector,
+    options: BuildOptions,
+    is_column: bool,
+    compared_bytes: impl FnMut(&SampleItem, bool) -> ComparedBytesResult<E>,
+) -> Result<HistogramAndTopN, HistogramBuildError<E>> {
+    try_build_hist_and_topn_tracked(id, collector, options, is_column, None, compared_bytes)
+}
+
+/// Tracker-bearing form of [`try_build_hist_and_topn_in_place`].
+pub fn try_build_hist_and_topn_tracked<E>(
+    id: i64,
+    collector: &mut SampleCollector,
+    options: BuildOptions,
+    is_column: bool,
+    tracker: Option<Arc<Tracker>>,
+    mut compared_bytes: impl FnMut(&SampleItem, bool) -> ComparedBytesResult<E>,
+) -> Result<HistogramAndTopN, HistogramBuildError<E>> {
+    let mut outer_memory = BuilderMemoryBuffer::new(tracker.clone());
     let count = collector.count;
     let null_count = collector.null_count;
     let ndv = collector.ndv.min(count);
@@ -293,16 +463,20 @@ pub fn build_hist_and_topn(
         ..Histogram::default()
     };
     if count == 0 || collector.samples.is_empty() || ndv == 0 {
-        return HistogramAndTopN {
+        return Ok(HistogramAndTopN {
             histogram,
             topn: None,
-        };
+        });
     }
 
-    let mut samples = collector.samples.clone();
-    // Go sorts by `Datum.Compare`; the encoding is order-preserving, so this
-    // is the same order without a second comparison rule.
-    samples.sort_by(|left, right| left.encoded.cmp(&right.encoded));
+    // Go sorts before `NewHistogram`; a comparison error therefore wins over
+    // the negative-capacity panic and the caller sees the mutation.
+    sort_builder_samples(&mut collector.samples).map_err(HistogramBuildError::Compare)?;
+    assert!(
+        options.num_buckets >= 0,
+        "histogram bucket count cannot be negative"
+    );
+    let samples = &collector.samples;
 
     let sample_num = samples.len() as i64;
     let sample_factor = count as f64 / sample_num as f64;
@@ -316,7 +490,7 @@ pub fn build_hist_and_topn(
 
     // Step 1: the TopN candidates, and the sorted-sample run each occupies.
     let mut heap: BoundedMinHeap<TopNWithRange> = BoundedMinHeap::new(
-        isize::try_from(num_topn).unwrap_or(isize::MAX),
+        num_topn,
         Some(
             |left: &TopNWithRange, right: &TopNWithRange| match left.count.cmp(&right.count) {
                 std::cmp::Ordering::Less => -1,
@@ -325,7 +499,16 @@ pub fn build_hist_and_topn(
             },
         ),
     );
-    let mut cur = samples[0].encoded.clone();
+    let first_encoding = compared_bytes(&samples[0], is_column);
+    if is_column {
+        outer_memory.account_temporary(
+            i64::try_from(first_encoding.encoded.capacity()).unwrap_or(i64::MAX),
+        );
+    }
+    if let Some(error) = first_encoding.error {
+        return Err(HistogramBuildError::Encode(error));
+    }
+    let mut cur = first_encoding.encoded;
     let mut cur_cnt = 0_f64;
     let mut cur_start_idx = 0_i64;
     let mut sample_ndv = 1_i64;
@@ -339,7 +522,17 @@ pub fn build_hist_and_topn(
         if num_topn == 0 {
             continue;
         }
-        if cur == sample.encoded {
+        let sample_encoding = compared_bytes(sample, is_column);
+        if is_column {
+            outer_memory.account_temporary(
+                i64::try_from(sample_encoding.encoded.capacity()).unwrap_or(i64::MAX),
+            );
+        }
+        if let Some(error) = sample_encoding.error {
+            return Err(HistogramBuildError::Encode(error));
+        }
+        let sample_bytes = sample_encoding.encoded;
+        if cur == sample_bytes {
             cur_cnt += 1.0;
             continue;
         }
@@ -355,7 +548,7 @@ pub fn build_hist_and_topn(
             &policy,
             false,
         );
-        cur.clone_from(&sample.encoded);
+        cur = sample_bytes;
         cur_cnt = 1.0;
         cur_start_idx = i;
     }
@@ -411,10 +604,10 @@ pub fn build_hist_and_topn(
     }
 
     if have_all_ndv || options.num_buckets == 0 {
-        return HistogramAndTopN {
+        return Ok(HistogramAndTopN {
             histogram,
             topn: Some(topn),
-        };
+        });
     }
 
     // Step 3: the histogram over what the TopN left behind.
@@ -433,32 +626,61 @@ pub fn build_hist_and_topn(
         let mut checker = SequentialRangeChecker::new(&pruned);
         build_hist(
             &mut histogram,
-            &samples,
+            samples,
             count - topn_total_count as i64,
             remaining_ndv,
             num_buckets,
             samples_excluding_topn,
             &mut checker,
-        );
+            tracker,
+        )
+        .map_err(HistogramBuildError::Compare)?;
     }
 
-    HistogramAndTopN {
+    Ok(HistogramAndTopN {
         histogram,
         topn: Some(topn),
-    }
+    })
 }
 
 /// Go `BuildColumnHist`, using the caller-supplied whole-table count, NDV,
 /// and NULL count rather than the collector's FM-sketch summary.
-#[must_use]
 pub fn build_column_histogram(
     id: i64,
     collector: &SampleCollector,
-    num_buckets: usize,
+    num_buckets: i64,
     count: i64,
     ndv: i64,
     null_count: i64,
 ) -> Histogram {
+    try_build_column_histogram(id, collector, num_buckets, count, ndv, null_count)
+        .expect("pre-encoded samples must remain comparable")
+}
+
+/// Fallible Go `BuildColumnHist`, preserving both stable-sort and bucket
+/// comparison errors.
+pub fn try_build_column_histogram(
+    id: i64,
+    collector: &SampleCollector,
+    num_buckets: i64,
+    count: i64,
+    ndv: i64,
+    null_count: i64,
+) -> Result<Histogram, DatumValueError> {
+    let mut collector = collector.clone();
+    try_build_column_histogram_in_place(id, &mut collector, num_buckets, count, ndv, null_count)
+}
+
+/// Exact Go `BuildColumnHist` receiver-mutation form: the collector's sample
+/// slice is stably sorted in place before histogram allocation.
+pub fn try_build_column_histogram_in_place(
+    id: i64,
+    collector: &mut SampleCollector,
+    num_buckets: i64,
+    count: i64,
+    ndv: i64,
+    null_count: i64,
+) -> Result<Histogram, DatumValueError> {
     let ndv = ndv.min(count);
     let mut histogram = Histogram {
         id,
@@ -468,33 +690,38 @@ pub fn build_column_histogram(
         ..Histogram::default()
     };
     if count == 0 || collector.samples.is_empty() {
-        return histogram;
+        return Ok(histogram);
     }
 
-    let mut samples = collector.samples.clone();
-    samples.sort_by(|left, right| left.encoded.cmp(&right.encoded));
+    sort_builder_samples(&mut collector.samples)?;
+    assert!(
+        num_buckets >= 0,
+        "histogram bucket count cannot be negative"
+    );
+    let samples = &collector.samples;
     let mut checker = SequentialRangeChecker::from_ranges(&[]);
     build_hist(
         &mut histogram,
-        &samples,
+        samples,
         count,
         ndv,
-        num_buckets as i64,
+        num_buckets,
         samples.len() as i64,
         &mut checker,
-    );
+        None,
+    )?;
     let corr_xy_sum = samples
         .iter()
         .enumerate()
         .map(|(position, sample)| position as f64 * sample.ordinal as f64)
         .sum();
     histogram.correlation = calc_correlation(samples.len() as i64, corr_xy_sum);
-    histogram
+    Ok(histogram)
 }
 
 /// Go `BuildColumn`, forwarding the collector's whole-scan summary.
 #[must_use]
-pub fn build_column(id: i64, collector: &SampleCollector, num_buckets: usize) -> Histogram {
+pub fn build_column(id: i64, collector: &SampleCollector, num_buckets: i64) -> Histogram {
     build_column_histogram(
         id,
         collector,
@@ -518,7 +745,8 @@ fn build_hist(
     num_buckets: i64,
     sample_count_exclude_topn: i64,
     checker: &mut SequentialRangeChecker,
-) {
+    tracker: Option<Arc<Tracker>>,
+) -> Result<(), DatumValueError> {
     let sample_num = samples.len() as i64;
     let sample_factor = count as f64 / sample_count_exclude_topn as f64;
     // A value sampled once may well appear only once in the table, so the
@@ -538,7 +766,7 @@ fn build_hist(
         }
     }
     if first_sample_idx == -1 {
-        return;
+        return Ok(());
     }
 
     let first = &samples[first_sample_idx as usize];
@@ -552,11 +780,7 @@ fn build_hist(
         lower_bound: first.value.clone(),
         upper_bound: first.value.clone(),
     });
-    // The bucket's upper bound in the comparison domain, kept alongside the
-    // stored `Datum` so the "same value" test below is the same byte
-    // comparison the sort and the TopN grouping used.
-    let mut upper_encoded = first.encoded.clone();
-
+    let mut memory = BuilderMemoryBuffer::new(tracker);
     let mut bucket_idx = 0_usize;
     let mut last_count = 0_i64;
     let mut processed_count = 1_i64;
@@ -567,8 +791,20 @@ fn build_hist(
         }
         processed_count += 1;
         let sample = &samples[i as usize];
+        memory.account_temporary(
+            i64::try_from(
+                histogram.buckets[bucket_idx]
+                    .upper_bound
+                    .estimated_mem_usage(),
+            )
+            .unwrap_or(i64::MAX),
+        );
         let total_count = processed_count as f64 * sample_factor;
-        if upper_encoded == sample.encoded {
+        if histogram.buckets[bucket_idx]
+            .upper_bound
+            .compare(&sample.value, Collation::Binary)?
+            == std::cmp::Ordering::Equal
+        {
             // One value never spans two buckets, whatever that does to the
             // bucket's size: an estimator that found half a value's rows in
             // one bucket and half in the next would double-count the
@@ -585,7 +821,6 @@ fn build_hist(
             bucket.upper_bound = sample.value.clone();
             bucket.count = total_count as i64;
             bucket.repeat = ndv_factor as i64;
-            upper_encoded.clone_from(&sample.encoded);
         } else {
             last_count = histogram.buckets[bucket_idx].count;
             bucket_idx += 1;
@@ -596,7 +831,24 @@ fn build_hist(
                 lower_bound: sample.value.clone(),
                 upper_bound: sample.value.clone(),
             });
-            upper_encoded.clone_from(&sample.encoded);
         }
     }
+    Ok(())
+}
+
+fn sort_builder_samples(samples: &mut [SampleItem]) -> Result<(), DatumValueError> {
+    let mut error = None;
+    samples.sort_by(
+        |left, right| match left.value.compare(&right.value, Collation::Binary) {
+            Ok(ordering) => {
+                error = None;
+                ordering
+            }
+            Err(found) => {
+                error = Some(found);
+                std::cmp::Ordering::Less
+            }
+        },
+    );
+    error.map_or(Ok(()), Err)
 }
