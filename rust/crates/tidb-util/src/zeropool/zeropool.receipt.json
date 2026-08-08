@@ -1,0 +1,50 @@
+{
+  "artifact_count": 3,
+  "category_counts": {
+    "benchmark": 4,
+    "branch": 4,
+    "closure": 1,
+    "declaration": 1,
+    "field": 2,
+    "function": 3,
+    "test": 1,
+    "test_assertion": 6,
+    "test_branch": 2,
+    "test_helper_closure": 14,
+    "test_loop": 14,
+    "test_row": 3
+  },
+  "go_package": "pkg/util/zeropool",
+  "mutation_suites": 7,
+  "obligation_count": 55,
+  "owned_file_sha256": {
+    "rust/crates/tidb-util/../tidb-util/benches/zeropool.rs": "72d2abf0f8b7f0d8ca2abfe5f2a538c762b5cec85fe7287cf5992a5cb99a16e6",
+    "rust/crates/tidb-util/src/zeropool/mod.rs": "0c2837a895a24561b9bd29a1dda02aabf8d00dde43c5b9ebb609fec240dbd712",
+    "rust/crates/tidb-util/src/zeropool/zeropool.artifacts.tsv": "2064c9e47d3c461b63cbf7b57b18fece44eb952e60bf1ec68b35aeece5b519a7",
+    "rust/crates/tidb-util/src/zeropool/zeropool.inventory.tsv": "8594a10c478378fd77fe81ab40f2bf3c26f149aee741dc062d500aca4945cf74",
+    "rust/crates/tidb-util/src/zeropool/zeropool.mutation-plan.tsv": "4e3bbbcc5fc8d2296b3169349cd858b3454cd6b34d74e157ba98ca75e9fe3bf3",
+    "rust/crates/tidb-util/src/zeropool/zeropool.mutation-results.tsv": "8b2bb35120f879f736cbef25c6b46650e63aa6cf39a6bc5c938e25e151cbab92",
+    "rust/crates/tidb-util/src/zeropool/zeropool.semantic-divergences.tsv": "0d2d87c91709340a7ac4c31517fa1c6faf3b3f0a1b87af6269f9dab2f9bbc180",
+    "rust/crates/tidb-util/tests/zeropool_lockdown.rs": "2719838a21b9bff353b277baa931bd711fef6e8a6aea753920d44c3064880ea7",
+    "rust/scripts/pkg-zeropool-lockdown.py": "979a5d50616af226dead165ebf57274dbbd6ec5698f21b38e54d7aa60ddcd707"
+  },
+  "schema": "pkg-zeropool-lockdown-v1",
+  "semantic_divergence_count": 9,
+  "semantic_status_counts": {
+    "DECLINED": 8,
+    "UNREACHABLE": 1
+  },
+  "source_seed_commit": "e67e11b83b50a0a13ff59c80e6f524558585f48c",
+  "status_counts": {
+    "DECLINED": 3,
+    "PORTED": 52
+  },
+  "zero_artifact_classes": {
+    "build_tags": 0,
+    "code_generated": 0,
+    "go_embed": 0,
+    "go_generate": 0,
+    "platform_variants": 0,
+    "tracked_testdata": 0
+  }
+}

@@ -223,9 +223,7 @@ mod tests {
                         ["PORTED", "Pool", SYMBOL_EVIDENCE, "compile-owner-gate"]
                     );
                 }
-                ("pkg/util/zeropool/pool.go", "field", "type:Pool", anchor)
-                    if anchor == "type:Pool/field:0:items" =>
-                {
+                ("pkg/util/zeropool/pool.go", "field", "type:Pool", "type:Pool/field:0:items") => {
                     assert_eq!(
                         columns[6..10],
                         [
@@ -236,9 +234,12 @@ mod tests {
                         ]
                     );
                 }
-                ("pkg/util/zeropool/pool.go", "field", "type:Pool", anchor)
-                    if anchor == "type:Pool/field:1:pointers" =>
-                {
+                (
+                    "pkg/util/zeropool/pool.go",
+                    "field",
+                    "type:Pool",
+                    "type:Pool/field:1:pointers",
+                ) => {
                     assert_eq!(
                         columns[6..10],
                         [
