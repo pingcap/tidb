@@ -1,0 +1,1 @@
+{"mutation_id":"M_STATS_BUILDER_COLUMN","replacements":[{"expected_count":1,"new":"let ndv = ndv.max(count);","old":"let ndv = ndv.min(count);"}],"rust_path":"rust/crates/tidb-stats/src/builder.rs","schema":"go-package-lockdown-mutation-operator-v1","source_sha256":"48a7ac08fdab18560fad85dbfae73e17c2418786ae807c740a1a570210a1a981"}

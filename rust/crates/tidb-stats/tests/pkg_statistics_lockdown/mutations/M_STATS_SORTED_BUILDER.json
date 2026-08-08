@@ -1,0 +1,1 @@
+{"mutation_id":"M_STATS_SORTED_BUILDER","replacements":[{"expected_count":1,"new":"if comparison == std::cmp::Ordering::Greater {","old":"if comparison == std::cmp::Ordering::Equal {"}],"rust_path":"rust/crates/tidb-stats/src/sorted_builder.rs","schema":"go-package-lockdown-mutation-operator-v1","source_sha256":"0108be62437e392c362c3ba046799fe961a1cf97edad255a3f64c5c9cc25dde4"}
