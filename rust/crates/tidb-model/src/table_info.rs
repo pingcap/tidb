@@ -1387,7 +1387,7 @@ mod tests {
         c_hidden.id = 101;
         c_hidden.set_flag(u64::from(FieldTypeFlags::AUTO_INCREMENT));
 
-        let mut t = TableInfo {
+        let t = TableInfo {
             columns: vec![c_pub, c_hidden].into(),
             indices: vec![IndexInfo {
                 id: 5,
@@ -1707,6 +1707,8 @@ mod tests {
 
     #[test]
     fn move_column_ports_the_exact_upstream_sequence_and_signed_panics() {
+        use crate::index::IndexColumn;
+
         fn make_column(id: i64) -> ColumnInfo {
             ColumnInfo {
                 id,

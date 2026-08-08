@@ -45,8 +45,8 @@ use crate::go_runtime::{GoShared, GoSharedPointerSlice, GoSharedSlice};
 use crate::schema_state::SchemaState;
 use crate::serde_helpers::{
     deserialize_go_object, go_json_field_matches, ignore_unknown, impl_go_json_deserialize,
-    impl_go_json_merge_object, AtomicReplaceSeed, FatalSeed, NullNoopSeed, OptionBytesSeed,
-    OptionMergeSeed, OptionScalarSeed, ValueMergeSeed,
+    impl_go_json_merge_object, AtomicReplaceSeed, FatalSeed, NullNoopSeed,
+    OptionBoxAtomicReplaceSeed, OptionBytesSeed, OptionMergeSeed, ValueMergeSeed,
 };
 use crate::table_info::TableInfo;
 
@@ -334,31 +334,7 @@ impl ColumnDefaultValue {
 // can consume a whole malformed subsequence for one replacement, while Go's
 // `utf8.DecodeRuneInString` consumes exactly one invalid byte at a time.
 fn go_json_string_fragment(bytes: &[u8]) -> String {
-    let mut output = String::with_capacity(bytes.len() + 2);
-    output.push('"');
-    let mut remaining = bytes;
-    loop {
-        match std::str::from_utf8(remaining) {
-            Ok(valid) => {
-                let encoded = crate::serde_helpers::to_go_json(&valid)
-                    .expect("a Rust string is valid Go JSON");
-                output.push_str(&encoded[1..encoded.len() - 1]);
-                output.push('"');
-                return output;
-            }
-            Err(error) => {
-                let valid_length = error.valid_up_to();
-                // SAFETY is avoided deliberately: `valid_up_to` identifies a
-                // prefix that `from_utf8` has already validated.
-                let valid = std::str::from_utf8(&remaining[..valid_length]).unwrap();
-                let encoded = crate::serde_helpers::to_go_json(&valid)
-                    .expect("a Rust string is valid Go JSON");
-                output.push_str(&encoded[1..encoded.len() - 1]);
-                output.push_str(r"\ufffd");
-                remaining = &remaining[valid_length + 1..];
-            }
-        }
-    }
+    GoString::from(bytes).to_go_json_literal()
 }
 
 impl Serialize for ColumnDefaultValue {
@@ -567,8 +543,9 @@ impl_go_json_merge_object!(ColumnInfo, destination, map, key, {
     } else if go_json_field_matches(&key, "type") {
         map.next_value_seed(FatalSeed(AtomicReplaceSeed(&mut destination.field_type)))?;
     } else if go_json_field_matches(&key, "changing_type") {
-        map.next_value_seed(FatalSeed(OptionScalarSeed(
+        map.next_value_seed(FatalSeed(OptionBoxAtomicReplaceSeed::new(
             &mut destination.changing_field_type,
+            zero_field_type,
         )))?;
     } else if go_json_field_matches(&key, "state") {
         map.next_value_seed(NullNoopSeed(&mut destination.state))?;
@@ -1381,6 +1358,37 @@ mod tests {
         let mut decoder = serde_json::Deserializer::from_str(r#"{"type":{"Tp":"bad"}}"#);
         assert!(column.go_json_merge(&mut decoder).is_err());
         assert_eq!(column.field_type, previous);
+
+        column.changing_field_type = None;
+        column.comment = "before-changing-type".to_owned();
+        let mut decoder = serde_json::Deserializer::from_str(
+            r#"{"changing_type":{"Tp":"bad"},"comment":"unreached"}"#,
+        );
+        assert!(column.go_json_merge(&mut decoder).is_err());
+        assert_eq!(
+            column.changing_field_type.as_deref(),
+            Some(&zero_field_type())
+        );
+        assert_eq!(column.comment, "before-changing-type");
+
+        let changing = column.changing_field_type.as_ref().unwrap();
+        let pointer = &**changing as *const FieldType;
+        let previous = (**changing).clone();
+        let mut decoder = serde_json::Deserializer::from_str(r#"{"changing_type":{"Tp":"bad"}}"#);
+        assert!(column.go_json_merge(&mut decoder).is_err());
+        let changing = column.changing_field_type.as_ref().unwrap();
+        assert_eq!(&**changing as *const FieldType, pointer);
+        assert_eq!(**changing, previous);
+
+        let mut decoder = serde_json::Deserializer::from_str(r#"{"changing_type":{"Tp":3}}"#);
+        column.go_json_merge(&mut decoder).unwrap();
+        let changing = column.changing_field_type.as_ref().unwrap();
+        assert_eq!(&**changing as *const FieldType, pointer);
+        assert_eq!(**changing, FieldType::from_json(br#"{"Tp":3}"#).unwrap());
+
+        let mut decoder = serde_json::Deserializer::from_str(r#"{"changing_type":null}"#);
+        column.go_json_merge(&mut decoder).unwrap();
+        assert!(column.changing_field_type.is_none());
     }
 
     #[test]

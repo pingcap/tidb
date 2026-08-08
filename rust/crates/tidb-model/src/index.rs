@@ -1407,7 +1407,7 @@ mod tests {
             &source,
             &[CiString::new("A")]
         ));
-        let mut short = source.clone_like_go();
+        let short = source.clone_like_go();
         short.columns.get(0).unwrap().write().length = 7;
         assert!(!is_index_prefix_covered(
             &table,
@@ -1417,7 +1417,7 @@ mod tests {
         assert!(source.has_column_in_index_columns(&table, 10));
         assert!(!source.has_column_in_index_columns(&table, 11));
 
-        let mut out_of_range = source.clone_like_go();
+        let out_of_range = source.clone_like_go();
         out_of_range.columns.get(0).unwrap().write().offset = table.columns.len() as i64;
         assert!(!is_index_prefix_covered(
             &table,
@@ -1434,7 +1434,7 @@ mod tests {
             columns: GoSharedPointerSlice::from_nullable(vec![None]),
             ..Default::default()
         };
-        let mut nil_column_index = IndexInfo {
+        let nil_column_index = IndexInfo {
             columns: vec![IndexColumn {
                 name: CiString::new("a"),
                 offset: 0,
