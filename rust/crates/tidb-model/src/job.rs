@@ -810,10 +810,11 @@ impl Job {
 
     /// Clones through the persisted codec and clears private decoded arguments.
     #[must_use]
-    pub fn deep_clone(&self) -> Option<Self> {
-        let mut source = self.clone();
-        let bytes = source.encode(true).ok()?;
-        serde_json::from_slice(&bytes).ok()
+    pub fn deep_clone(&mut self) -> Option<Self> {
+        let bytes = self.encode(true).ok()?;
+        let mut cloned = Self::default();
+        cloned.decode(&bytes).ok()?;
+        Some(cloned)
     }
 
     /// Reports whether the job reached any terminal finished state.
@@ -1523,6 +1524,19 @@ mod tests {
         let clone = cached.clone_without_args();
         assert!(clone.args.is_none());
         assert_eq!(clone.raw_args, cached.raw_args);
+
+        let mut clone_source = Job {
+            version: JobVersion::V1,
+            ..Default::default()
+        };
+        clone_source.fill_raw_args(vec![serde_json::json!("persisted by clone")]);
+        assert!(clone_source.raw_args.is_none());
+        let clone = clone_source.deep_clone().unwrap();
+        assert_eq!(
+            clone_source.raw_args,
+            Some(serde_json::json!(["persisted by clone"]))
+        );
+        assert_eq!(clone.raw_args, clone_source.raw_args);
 
         let raw = vec![0, 1, 255];
         let mut wrapped = JobW::new(v2, raw.clone());

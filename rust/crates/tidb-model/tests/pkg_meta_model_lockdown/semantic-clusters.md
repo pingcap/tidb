@@ -98,7 +98,9 @@ remaining package census is 2,509 obligations plus the build artifact.
   rollback matrix, system variables, scheduler involvement normalization and
   validation, sub-job proxy state, and multi-schema revertibility.
   `SubJob.Clone` clears its private decoded-argument cache while retaining the
-  raw persisted envelope; `JobW` retains arbitrary original bytes without
+  raw persisted envelope; `Job.Clone` refreshes the source job's raw argument
+  envelope before decoding its copy, preserving the source-visible side
+  effect; `JobW` retains arbitrary original bytes without
   decoding or normalizing them and dereferences to its embedded job. Rust's
   owned wrapper cannot represent Go's nil embedded `*Job` or byte-slice alias
   identity. The decoded-argument cache preserves Go's nil
