@@ -22,9 +22,9 @@ use chrono::Utc;
 use tidb_datatype::Datum;
 use tidb_stats::{
     copy_fm_sketch, decode_fm_sketch, encode_fm_sketch, fm_sketch_from_proto, fm_sketch_ndv,
-    fm_sketch_to_proto, hash_datum, hash_datum_with_error_policy, hash_row,
-    hash_row_with_error_policy, insert_encoded_row, insert_encoded_value, insert_row_value,
-    insert_value, merge_fm_sketch, FmSketch, FmSketchCodecError, FmSketchProto, MAX_SKETCH_SIZE,
+    fm_sketch_to_proto, hash_datum, hash_row, hash_row_with_error_policy, insert_encoded_row,
+    insert_encoded_value, insert_row_value, insert_value, merge_fm_sketch, FmSketch,
+    FmSketchCodecError, FmSketchProto, MAX_SKETCH_SIZE,
 };
 
 fn source_statistics_values(count: usize) -> Vec<Datum> {
@@ -129,7 +129,7 @@ fn source_copy_and_memory_shape_are_independent() {
 
 #[test]
 fn source_signed_constructor_and_nil_receiver_boundaries_match() {
-    let negative = std::panic::catch_unwind(|| FmSketch::new_signed(-1));
+    let negative = std::panic::catch_unwind(|| tidb_stats::fmsketch::FmSketch::new_signed(-1));
     assert!(negative.is_err(), "Go make(map, negative) panics");
     assert!(FmSketch::new_signed(0).is_empty());
 
@@ -194,7 +194,7 @@ fn source_wire_round_trip_and_packed_repeated_values_match() {
 #[test]
 fn source_wire_rejects_malformed_inputs() {
     assert_eq!(
-        decode_fm_sketch(Some(&[0x08])).unwrap_err(),
+        tidb_stats::fmsketch_codec::decode_fm_sketch(Some(&[0x08])).unwrap_err(),
         FmSketchCodecError::Truncated
     );
     assert_eq!(
@@ -267,12 +267,13 @@ fn source_statement_error_policy_controls_partial_hashing_and_row_continuation()
     assert!(hash_datum(&Utc, &raw).is_err());
 
     let mut warnings = 0;
-    let warned_hash = hash_datum_with_error_policy(&Utc, &raw, |value, _| {
-        assert!(matches!(value, Datum::Raw(_)));
-        warnings += 1;
-        Ok::<_, std::convert::Infallible>(Vec::new())
-    })
-    .unwrap();
+    let warned_hash =
+        tidb_stats::fmsketch_codec::hash_datum_with_error_policy(&Utc, &raw, |value, _| {
+            assert!(matches!(value, Datum::Raw(_)));
+            warnings += 1;
+            Ok::<_, std::convert::Infallible>(Vec::new())
+        })
+        .unwrap();
     assert_eq!(warnings, 1);
     assert_eq!(warned_hash, tidb_stats::hash_bytes(&[]).h1);
 
@@ -320,7 +321,7 @@ fn source_original_statistics_fixture_pins_typed_ndv_merge_and_coding() {
         assert_eq!(from_proto.mask(), expected.mask());
         assert_eq!(from_proto.sorted_hashes(), expected.sorted_hashes());
 
-        let wire = encode_fm_sketch(Some(expected)).unwrap();
+        let wire = tidb_stats::fmsketch_codec::encode_fm_sketch(Some(expected)).unwrap();
         let decoded = decode_fm_sketch(Some(&wire)).unwrap().unwrap();
         assert_eq!(decoded.ndv(), expected.ndv());
     }
