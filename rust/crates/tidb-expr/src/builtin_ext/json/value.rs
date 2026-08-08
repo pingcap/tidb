@@ -26,7 +26,7 @@ use serde_json::{Number, Value as Json};
 
 use super::text::format_json;
 use crate::{Datum, EvalError, JsonError};
-use tidb_datatype::{FieldType, FieldTypeFlags};
+use tidb_datatype::{BinaryJSON, FieldType, FieldTypeFlags};
 
 /// The integer an argument carries when it is a boolean-flagged INT, so
 /// [`json_argument`] and [`cast_as_json`] can render it as a JSON `true`/`false`
@@ -140,8 +140,8 @@ pub(super) fn json_document_string(
 /// Only the string signature carries `ParseToJSONFlag`, so a string argument
 /// is PARSED as a JSON document (`CAST('abc' AS JSON)` is error 3140, not the
 /// JSON string `"abc"`), while every other SQL value becomes its matching
-/// JSON scalar. The result is this tier's canonical JSON text — see
-/// [`format_json`] for why that is a string rather than a BinaryJSON value.
+/// JSON scalar. The result remains a native binary-JSON datum, as in Go;
+/// rendering is a consumer concern rather than part of CAST.
 pub(crate) fn cast_as_json(value: &Datum) -> Result<Datum, EvalError> {
     if value.is_null() {
         return Ok(Datum::Null);
@@ -150,7 +150,13 @@ pub(crate) fn cast_as_json(value: &Datum) -> Result<Datum, EvalError> {
         Some(text) => parse_json(text)?,
         None => datum_json_scalar(value)?,
     };
-    Ok(Datum::new_string(format_json(&json)))
+    binary_json_datum(json)
+}
+
+fn binary_json_datum(json: Json) -> Result<Datum, EvalError> {
+    BinaryJSON::parse(&format_json(&json))
+        .map(Datum::Json)
+        .map_err(|_| EvalError::Json(JsonError::InvalidText))
 }
 
 /// [`cast_as_json`] with the source argument's static `FieldType`, when the
@@ -168,16 +174,17 @@ pub(crate) fn cast_as_json_typed(
     }
     if let Some(field_type) = field_type {
         if is_binary_datum(value, Some(field_type)) {
-            return Ok(Datum::new_string(format_json(&binary_opaque_json(
-                value, field_type,
-            )?)));
+            let binary = value
+                .to_mysql_json_with_source_type(field_type)
+                .map_err(|_| EvalError::Unsupported("datum JSON conversion"))?;
+            return Ok(Datum::Json(binary));
         }
     }
     // `CAST(<boolean expr> AS JSON)` is `builtinCastIntAsJSONSig.evalJSON`'s
     // boolean arm: a value from a `booleanFunctions` name becomes JSON
     // `true`/`false`, exactly as it does as a `JSON_ARRAY`/`JSON_OBJECT` element.
     if let Some(int) = boolean_flagged_int(value, field_type) {
-        return Ok(Datum::new_string(format_json(&Json::Bool(int != 0))));
+        return binary_json_datum(Json::Bool(int != 0));
     }
     cast_as_json(value)
 }

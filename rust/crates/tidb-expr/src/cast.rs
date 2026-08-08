@@ -17,16 +17,17 @@
 //! handled directly in `crate::eval_in`'s own `Expr::ConvertUsing` arm —
 //! this crate has no charset domain at all).
 //!
-//! `TIME`/`JSON` targets are deliberately `Unsupported` — see
-//! `tidb_ast::CastType`'s own doc for why (no `TIME`/`JSON` value domain
-//! exists in this crate). Every other rule here (string-to-number prefix
+//! JSON targets retain their native datum domain. DATE/DATETIME keep the
+//! evaluator's established string result boundary; the lockdown receipt
+//! records the native temporal integration gap explicitly. Every rule here
+//! (string-to-number prefix
 //! parsing width, rounding tie-breaking per source type, `UNSIGNED`'s
 //! negative-float-clamps-to-zero rule, `DECIMAL`'s precision clamp,
 //! `BINARY`'s NUL-padding) was confirmed via `goeval`, not assumed — see
 //! each function's own doc for the specific probe.
 
 use crate::coerce::coerce_str;
-use crate::time_fn::calendar::{format_ymd_result, format_ymdhms_result, parse_date_ymd};
+use crate::time_fn::calendar::{format_ymd_result, parse_date_ymd};
 use crate::Decimal;
 use crate::{Datum, EvalError};
 use tidb_ast::CastType;
@@ -49,6 +50,13 @@ pub(crate) fn eval_cast(
 ) -> Result<Datum, EvalError> {
     if v.is_range_sentinel() {
         return Err(EvalError::Unsupported("range sentinel cast operand"));
+    }
+    if matches!(v, Datum::VectorFloat32(_))
+        && !matches!(cast_type, CastType::Char { .. } | CastType::Binary { .. })
+    {
+        return Err(EvalError::Unsupported(
+            "a vector can only be cast to string or vector",
+        ));
     }
     match cast_type {
         CastType::Signed => {
@@ -114,10 +122,14 @@ pub(crate) fn eval_cast(
             report_decimal_production(ctx, &source, &produced, *flen, *scale);
             Ok(Datum::Decimal(produced))
         }
-        CastType::Date => cast_to_time(&v, source, ctx, tidb_datatype::TimeType::Date),
-        CastType::DateTime { .. } => {
-            cast_to_time(&v, source, ctx, tidb_datatype::TimeType::DateTime)
-        }
+        CastType::Date => cast_to_time(&v, source, ctx, tidb_datatype::TimeType::Date, 0),
+        CastType::DateTime { fsp } => cast_to_time(
+            &v,
+            source,
+            ctx,
+            tidb_datatype::TimeType::DateTime,
+            i64::from(fsp.unwrap_or(0)),
+        ),
         CastType::Year => cast_to_year(&v),
         CastType::Double | CastType::Float => Ok(Datum::Real(to_f64_for_cast(&v))),
         CastType::Time { .. } => Err(EvalError::Unsupported("CAST AS TIME")),
@@ -712,38 +724,50 @@ fn cast_to_time(
     source: Option<&tidb_datatype::FieldType>,
     ctx: &dyn crate::Columns,
     kind: tidb_datatype::TimeType,
+    fsp: i64,
 ) -> Result<Datum, EvalError> {
-    let Some(time) = cast_to_time_value(v, source, ctx, kind)? else {
+    let Some(time) = cast_to_time_value(v, source, ctx, kind, Some(fsp))? else {
         return Ok(Datum::Null);
     };
-    // A `YEAR` source is the one arm whose result carries a ZERO month and
-    // day (`ParseTimeFromYear(2019)` is `2019-00-00`), and the rendering
-    // below cannot carry those through the comparison rules, which read the
-    // datum's KIND -- `tests_datetime_year_compare` in `tidb-session` pins
-    // `2019` as strictly less than `2019-11-11 11:11:11`. Keep the
-    // `types.Time` `builtinCastIntAsTimeSig` produced.
+    // The evaluator's public differential protocol still represents DATE and
+    // DATETIME CAST results as strings. Keep the one YEAR-source exception
+    // whose zero month/day fields need the typed value for later comparisons.
     if year_source_value(v, source).is_some() {
         return Ok(Datum::Time(time));
     }
     let core = time.core_time();
-    let (y, m, d) = (
-        i64::from(core.year()),
-        u32::from(core.month()),
-        u32::from(core.day()),
-    );
     Ok(if kind == tidb_datatype::TimeType::Date {
-        // Go: "Truncate hh:mm:ss part if the type is Date."
-        format_ymd_result(y, m, d, None)
-    } else {
-        format_ymdhms_result(
-            y,
-            m,
-            d,
-            u32::from(core.hour()),
-            u32::from(core.minute()),
-            u32::from(core.second()),
+        format_ymd_result(
+            i64::from(core.year()),
+            u32::from(core.month()),
+            u32::from(core.day()),
+            None,
         )
+    } else {
+        Datum::new_string(time.to_string())
     })
+}
+
+/// Go's repeated DATE-target rule: preserve the calendar fields and clear the
+/// clock before the typed value leaves the cast signature.
+fn truncate_clock_for_date(
+    mut time: tidb_datatype::Time,
+    kind: tidb_datatype::TimeType,
+) -> tidb_datatype::Time {
+    if kind != tidb_datatype::TimeType::Date {
+        return time;
+    }
+    let core = time.core_time();
+    time.set_core_time(tidb_datatype::CoreTime::from_date(
+        core.year() as u16,
+        core.month(),
+        core.day(),
+        0,
+        0,
+        0,
+        0,
+    ));
+    time
 }
 
 /// The `types.Time` Go's chosen `builtinCast*AsTimeSig` produces, BEFORE this
@@ -761,6 +785,7 @@ fn cast_to_time_value(
     source: Option<&tidb_datatype::FieldType>,
     ctx: &dyn crate::Columns,
     kind: tidb_datatype::TimeType,
+    fsp: Option<i64>,
 ) -> Result<Option<tidb_datatype::Time>, EvalError> {
     // A `YEAR` source is the one case the datum kind cannot speak for. Go
     // `builtinCastIntAsTimeSig.evalTime` (`builtin_cast.go:1127-1131`) asks the
@@ -779,13 +804,8 @@ fn cast_to_time_value(
     // which reads an int as a packed `YYYYMMDD`, FAILS and yields NULL. Every
     // other INT source keeps `ParseTimeFromNum` below.
     if let Some(year) = year_source_value(v, source) {
-        let mut time = tidb_datatype::parse_time_from_year(year)
+        let time = tidb_datatype::parse_time_from_year(year)
             .map_err(|_| EvalError::Unsupported("a YEAR value outside the year range"))?;
-        // Go: "Truncate hh:mm:ss part if the type is Date." `ParseTimeFromYear`
-        // already yields midnight, so this only re-imposes the target's kind.
-        if kind == tidb_datatype::TimeType::Date {
-            time.set_kind(kind);
-        }
         return Ok(Some(time));
     }
     // A DURATION source is the second kind whose text cannot speak for it. Go
@@ -829,6 +849,10 @@ fn cast_to_time_value(
                 !modes.no_zero_in_date,
                 modes.allow_invalid_dates,
             )
+            .and_then(|time| match fsp {
+                Some(fsp) => time.round_frac(fsp, &ctx.time_zone()),
+                None => Ok(time),
+            })
             .ok());
     }
     let Some(s) = coerce_str(v)? else {
@@ -846,7 +870,14 @@ fn cast_to_time_value(
     // where TiDB answers `2012-12-12 00:00:00` and `2000-01-11 00:00:00`
     // (`expression/cast`). The parser choice mirrors `Datum::convert_to_time`,
     // the faithful write-path port.
-    let parsed = parse_time_by_source(v, &s, kind, modes.allow_invalid_dates, &ctx.time_zone());
+    let parsed = parse_time_by_source(
+        v,
+        &s,
+        kind,
+        fsp,
+        modes.allow_invalid_dates,
+        &ctx.time_zone(),
+    );
     let Ok(time) = parsed else {
         invalid_time_warning(ctx, &s);
         return Ok(None);
@@ -862,7 +893,7 @@ fn cast_to_time_value(
         invalid_time_warning(ctx, &s);
         return Ok(None);
     }
-    Ok(Some(time))
+    Ok(Some(truncate_clock_for_date(time, kind)))
 }
 
 /// Go's `WrapWithCastAsTime(ctx, expr, types.NewFieldType(mysql.TypeDatetime))`
@@ -895,7 +926,7 @@ pub(crate) fn cast_arg_as_datetime(
         return Ok(v.clone());
     }
     Ok(
-        cast_to_time_value(v, source, ctx, tidb_datatype::TimeType::DateTime)?
+        cast_to_time_value(v, source, ctx, tidb_datatype::TimeType::DateTime, None)?
             .map_or(Datum::Null, Datum::Time),
     )
 }
@@ -1086,29 +1117,53 @@ fn parse_time_by_source(
     v: &Datum,
     text: &str,
     kind: tidb_datatype::TimeType,
+    fsp: Option<i64>,
     allow_invalid: bool,
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<tidb_datatype::Time, ()> {
     match v {
-        Datum::Int(value) => {
-            tidb_datatype::parse_time_from_num(*value, kind, 0, true, allow_invalid, zone)
-                .map(|parsed| parsed.time)
-                .map_err(|_| ())
-        }
+        Datum::Int(value) => tidb_datatype::parse_time_from_num(
+            *value,
+            kind,
+            fsp.unwrap_or(0),
+            true,
+            allow_invalid,
+            zone,
+        )
+        .map(|parsed| parsed.time)
+        .map_err(|_| ()),
         Datum::UInt(value) => {
             let signed = i64::try_from(*value).map_err(|_| ())?;
-            tidb_datatype::parse_time_from_num(signed, kind, 0, true, allow_invalid, zone)
-                .map(|parsed| parsed.time)
-                .map_err(|_| ())
+            tidb_datatype::parse_time_from_num(
+                signed,
+                kind,
+                fsp.unwrap_or(0),
+                true,
+                allow_invalid,
+                zone,
+            )
+            .map(|parsed| parsed.time)
+            .map_err(|_| ())
         }
         Datum::Decimal(value) => {
             let mut time = tidb_datatype::parse_time_from_decimal(value, true, allow_invalid, zone)
                 .map_err(|_| ())?;
             time.set_kind(kind);
-            Ok(time)
+            match fsp {
+                Some(fsp) => time.round_frac(fsp, zone).map_err(|_| ()),
+                None => Ok(time),
+            }
         }
-        Datum::Real(value) => real_to_time(*value, kind, allow_invalid, zone),
-        Datum::Float32(value) => real_to_time(*value, kind, allow_invalid, zone),
+        Datum::Real(value) => real_to_time(*value, kind, fsp.unwrap_or(0), allow_invalid, zone),
+        Datum::Float32(value) => real_to_time(*value, kind, fsp.unwrap_or(0), allow_invalid, zone),
+        Datum::Time(value) => {
+            let mut time = *value;
+            time.set_kind(kind);
+            match fsp {
+                Some(fsp) => time.round_frac(fsp, zone).map_err(|_| ()),
+                None => Ok(time),
+            }
+        }
         // STRING/BYTES and every other coercible source keep Go's
         // `builtinCastStringAsTimeSig` path: parse the wall-clock TEXT.
         //
@@ -1126,7 +1181,7 @@ fn parse_time_by_source(
         _ => tidb_datatype::parse_time(
             text,
             kind,
-            i64::from(tidb_datatype::get_fsp(text)),
+            fsp.unwrap_or_else(|| i64::from(tidb_datatype::get_fsp(text))),
             false,
             true,
             allow_invalid,
@@ -1145,13 +1200,14 @@ fn parse_time_by_source(
 fn real_to_time(
     value: f64,
     kind: tidb_datatype::TimeType,
+    fsp: i64,
     allow_invalid: bool,
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<tidb_datatype::Time, ()> {
     let mut time =
         tidb_datatype::parse_time_from_float64(value, true, allow_invalid, zone).map_err(|_| ())?;
     time.set_kind(kind);
-    Ok(time)
+    time.round_frac(fsp, zone).map_err(|_| ())
 }
 
 /// Go `handleInvalidTimeError` on the read path: `ErrWrongValue` (1292)
@@ -1328,11 +1384,12 @@ mod tests {
                     None,
                     ctx,
                     tidb_datatype::TimeType::DateTime,
+                    0,
                 )
                 .unwrap_or_else(|error| panic!("{input}: {error:?}"));
                 assert_eq!(
-                    got,
-                    Datum::new_string(expected.to_string()),
+                    render_time(&got),
+                    expected,
                     "{input} in {:?}",
                     ctx.time_zone()
                 );
@@ -1340,8 +1397,26 @@ mod tests {
         }
     }
 
-    fn datetime(v: Datum) -> Datum {
-        cast_to_time(&v, None, &NoColumns, tidb_datatype::TimeType::DateTime).expect("cast")
+    fn render_time(v: &Datum) -> String {
+        match v {
+            Datum::Time(time) => time.to_string(),
+            Datum::String(text) => crate::coerce::string_text(text)
+                .expect("temporal CAST text is valid UTF-8")
+                .to_owned(),
+            Datum::Null => "NULL".to_owned(),
+            other => panic!("a temporal cast produced an unexpected {other:?}"),
+        }
+    }
+
+    fn datetime_fsp(v: Datum, fsp: i64) -> String {
+        render_time(
+            &cast_to_time(&v, None, &NoColumns, tidb_datatype::TimeType::DateTime, fsp)
+                .expect("cast"),
+        )
+    }
+
+    fn datetime(v: Datum) -> String {
+        datetime_fsp(v, 0)
     }
 
     /// A DECIMAL source is read as TiDB's packed `YYYYMMDD[HHMMSS]` NUMBER
@@ -1354,18 +1429,18 @@ mod tests {
     fn a_decimal_source_reads_the_packed_number_not_the_wall_clock_text() {
         assert_eq!(
             datetime(Datum::Decimal(Decimal::from_literal("121212.1111"))),
-            Datum::new_string("2012-12-12 00:00:00".to_string()),
+            "2012-12-12 00:00:00",
         );
         // A number shorter than a full date is zero-padded YYMMDD, so `111`
         // is `00-01-11` -> `2000-01-11`; the string parser rejected it as NULL.
         assert_eq!(
             datetime(Datum::Decimal(Decimal::from_literal("111.1"))),
-            Datum::new_string("2000-01-11 00:00:00".to_string()),
+            "2000-01-11 00:00:00",
         );
         // A month of 13 is still an invalid date -> NULL, unchanged.
         assert_eq!(
             datetime(Datum::Decimal(Decimal::from_literal("1311.1"))),
-            Datum::Null,
+            "NULL",
         );
     }
 
@@ -1373,24 +1448,15 @@ mod tests {
     /// (Go `builtinCastRealAsTimeSig`), so `1122.1` is `00-11-22`.
     #[test]
     fn a_real_source_reads_the_packed_number() {
-        assert_eq!(
-            datetime(Datum::Real(1122.1)),
-            Datum::new_string("2000-11-22 00:00:00".to_string()),
-        );
-        assert_eq!(
-            datetime(Datum::Float32(1122.1)),
-            Datum::new_string("2000-11-22 00:00:00".to_string()),
-        );
+        assert_eq!(datetime(Datum::Real(1122.1)), "2000-11-22 00:00:00",);
+        assert_eq!(datetime(Datum::Float32(1122.1)), "2000-11-22 00:00:00",);
     }
 
     /// An INTEGER source is `ParseTimeFromNum` (Go `builtinCastIntAsTimeSig`):
     /// `20170118` is the packed date, no fractional text to misread.
     #[test]
     fn an_integer_source_reads_the_packed_number() {
-        assert_eq!(
-            datetime(Datum::Int(20_170_118)),
-            Datum::new_string("2017-01-18 00:00:00".to_string()),
-        );
+        assert_eq!(datetime(Datum::Int(20_170_118)), "2017-01-18 00:00:00",);
     }
 
     /// Go's numeric cast signatures have NO `NO_ZERO_DATE` rejection (the
@@ -1402,7 +1468,7 @@ mod tests {
     /// rejected to NULL.
     #[test]
     fn a_numeric_zero_is_the_zero_time_not_null() {
-        let zero = Datum::new_string("0000-00-00 00:00:00".to_string());
+        let zero = "0000-00-00 00:00:00";
         assert_eq!(datetime(Datum::Int(0)), zero, "int 0");
         assert_eq!(datetime(Datum::UInt(0)), zero, "uint 0");
         assert_eq!(datetime(Datum::Real(0.0)), zero, "real 0");
@@ -1414,7 +1480,7 @@ mod tests {
         // The STRING signature keeps Go's zero-date rejection under NO_ZERO_DATE.
         assert_eq!(
             datetime(Datum::new_string("0000-00-00 00:00:00".to_string())),
-            Datum::Null,
+            "NULL",
             "a zero-date STRING is still rejected"
         );
     }
@@ -1424,7 +1490,81 @@ mod tests {
     fn a_string_source_is_unchanged() {
         assert_eq!(
             datetime(Datum::new_string("2017-01-18 12:34:56".to_string())),
-            Datum::new_string("2017-01-18 12:34:56".to_string()),
+            "2017-01-18 12:34:56",
         );
+    }
+
+    #[test]
+    fn temporal_target_fsp_rounds_at_boundaries() {
+        let text = |s: &str| Datum::new_string(s.to_owned());
+        assert_eq!(
+            datetime_fsp(text("2020-02-03 11:22:33.987654"), 3),
+            "2020-02-03 11:22:33.988"
+        );
+        assert_eq!(
+            datetime_fsp(text("2020-01-01 23:59:59.5"), 0),
+            "2020-01-02 00:00:00"
+        );
+        assert_eq!(
+            datetime_fsp(text("2020-01-01 23:59:59.5"), 1),
+            "2020-01-01 23:59:59.5"
+        );
+        let through_dispatch = eval_cast(
+            &CastType::DateTime { fsp: Some(3) },
+            text("2020-02-03 11:22:33.987654"),
+            None,
+            &NoColumns,
+        )
+        .expect("CAST dispatch");
+        assert_eq!(render_time(&through_dispatch), "2020-02-03 11:22:33.988");
+    }
+
+    #[test]
+    fn temporal_cast_preserves_value_and_zero_date_fields() {
+        let got = cast_to_time(
+            &Datum::new_string("0000-01-02 03:04:05".to_owned()),
+            None,
+            &NoColumns,
+            tidb_datatype::TimeType::DateTime,
+            0,
+        )
+        .expect("cast");
+        assert!(matches!(got, Datum::String(_)));
+        assert_eq!(render_time(&got), "0000-01-02 03:04:05");
+
+        let date = cast_to_time(
+            &Datum::new_string("2020-01-01 10:30:00".to_owned()),
+            None,
+            &NoColumns,
+            tidb_datatype::TimeType::Date,
+            0,
+        )
+        .expect("cast");
+        assert_eq!(render_time(&date), "2020-01-01");
+    }
+
+    #[test]
+    fn duration_to_date_keeps_go_visible_date() {
+        struct AtMidnight;
+        impl crate::Columns for AtMidnight {
+            fn get(&self, _: &[String]) -> Option<Datum> {
+                None
+            }
+            fn now(&self) -> Option<(i64, u32, i32)> {
+                Some((1_785_974_400, 0, 0))
+            }
+        }
+        let duration = Datum::Duration(
+            tidb_datatype::MySqlDuration::new(12, 34, 56, 789_000, 3).expect("duration"),
+        );
+        let date = cast_to_time(
+            &duration,
+            None,
+            &AtMidnight,
+            tidb_datatype::TimeType::Date,
+            0,
+        )
+        .expect("cast");
+        assert_eq!(render_time(&date), "2026-08-06");
     }
 }

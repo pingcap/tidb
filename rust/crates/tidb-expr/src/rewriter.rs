@@ -113,12 +113,12 @@ impl ColumnResolver for NoResolver {
 ///
 /// Go picks one `builtinCast*As*Sig` per target type; the name here carries
 /// that choice, so evaluation never has to re-derive the target from a result
-/// type that may not describe it (the temporal targets produce a string
-/// value in this crate -- see below -- so their type genuinely cannot).
+/// type that may not describe it. JSON retains its native domain; public
+/// DATE/DATETIME results remain strings until the differential protocol owns
+/// native temporal cells.
 ///
-/// The `TIME` target and the `ARRAY` modifier are refused here for the same
-/// reason `cast::eval_cast` refuses them -- there is no value domain for them
-/// in this crate yet.
+/// The `ARRAY` modifier is outside this AST's cast surface. `TIME` remains
+/// refused; JSON retains its native result domain.
 /// The literal text a typed temporal literal wraps.
 ///
 /// Go's `getFunction` asserts the argument is a `*Constant` and PANICS
@@ -182,23 +182,27 @@ fn cast_target(cast_type: &tidb_ast::CastType) -> Option<(&'static str, FieldTyp
             ft.set_decimal(i64::from(*scale));
             ft
         }
-        // DOCUMENTED DIVERGENCE: `cast::eval_cast` produces a FORMATTED
-        // STRING for a temporal target (see its own doc -- this crate has no
-        // `Time` value in the cast path), so the chunk column that holds the
-        // result has to be a string column. The VALUE matches TiDB exactly;
-        // the reported column TYPE is `VarString` where TiDB says `DATE` or
-        // `DATETIME`. Typing it as Go does would put a string into a
-        // fixed-width temporal cell, which panics rather than mistyping.
-        CastType::Date | CastType::DateTime { .. } => FieldType::new(FieldTypeCode::VarString),
+        CastType::Date => FieldType::new(FieldTypeCode::VarString),
+        CastType::DateTime { fsp } => {
+            let decimal = i64::from(fsp.unwrap_or(0));
+            let mut ft = FieldType::new(FieldTypeCode::VarString);
+            ft.set_flen(if decimal > 0 { 20 + decimal } else { 19 });
+            ft.set_decimal(decimal);
+            ft
+        }
         // Likewise, the year cast yields an integer value here.
         CastType::Year => FieldType::new(FieldTypeCode::LongLong),
         CastType::Double | CastType::Float => FieldType::new(FieldTypeCode::Double),
-        // Same divergence as the JSON builtins above: the value is TiDB's
-        // canonical JSON text, so the chunk cell holding it is a string.
-        CastType::Json => FieldType::new(FieldTypeCode::VarString),
+        CastType::Json => FieldType::new(FieldTypeCode::Json),
         CastType::Time { .. } => return None,
     };
     Some((name, ft))
+}
+
+pub(crate) fn builtin_cast_lockdown_result_type_anchor(
+    cast_type: &tidb_ast::CastType,
+) -> Option<(&'static str, FieldType)> {
+    cast_target(cast_type)
 }
 
 /// A string literal constant, used where Go's builder supplies a default

@@ -114,18 +114,15 @@ fn case_when_source_vectors_preserve_lazy_truthiness() {
         ),
         ("case when 0.1 then 1 else 2 end", "INT:1"),
         ("case when 0.0 then 1 when 0.1 then 2 else 3 end", "INT:2"),
-        // The Go row is `{0, jsonInt, nil}`.  Its JSON result is unreachable,
-        // so a JSON cast may remain syntactically present without entering
-        // this seed's unsupported JSON value domain.
         ("case when 0 then cast(3 as json) else null end", "NULL"),
     ] {
         assert_eq!(e(expr), want, "{expr}");
     }
 
-    // The first Go JSON row (`{1, jsonInt, nil}`) selects its JSON result,
-    // which this tier renders as the canonical JSON text a BinaryJSON value
-    // would print (see `builtin_ext::json`'s `format_json`).
-    assert_eq!(e("case when 1 then cast(3 as json) else null end"), "STR:3");
+    assert_eq!(
+        e("case when 1 then cast(3 as json) else null end"),
+        "JSON:3"
+    );
 
     // Only the taken branch is evaluated: an unreachable error-producing
     // expression must not affect the scalar result.

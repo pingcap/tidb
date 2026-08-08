@@ -921,15 +921,14 @@ fn cast_and_convert() {
         ("cast('3.5e1abc' as double)", "FLOAT:35"),
         ("cast('1e2' as decimal)", "DEC:100"),
         ("cast('10:30:00' as time)", "Unsupported(\"CAST AS TIME\")"),
-        // `CAST(x AS JSON)` produces this tier's canonical JSON TEXT (the
-        // documented BinaryJSON-as-string divergence); only the STRING
-        // signature parses, so a malformed document is TiDB's 3140.
-        ("cast('{}' as json)", "STR:{}"),
+        // Only the STRING signature parses, so a malformed document is
+        // TiDB's 3140; successful casts retain the native JSON domain.
+        ("cast('{}' as json)", "JSON:{}"),
         (
             "cast('{\"b\":1,\"aa\":2}' as json)",
-            r#"STR:{"aa": 2, "b": 1}"#,
+            r#"JSON:{"aa": 2, "b": 1}"#,
         ),
-        ("cast(3 as json)", "STR:3"),
+        ("cast(3 as json)", "JSON:3"),
     ];
     for (expr, want) in cases {
         assert_eq!(&e(expr), want, "expr: {expr}");

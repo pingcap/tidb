@@ -1,0 +1,13 @@
+probe_id	rule	mutation	boundary_test	result	observed
+M01a	datetime target fsp reaches public dispatch	force eval_cast DateTime fsp to zero	temporal_target_fsp_rounds_at_boundaries	SURVIVED	helper-only test bypassed eval_cast; this was a test gap
+M01b	datetime target fsp reaches public dispatch	force eval_cast DateTime fsp to zero	temporal_target_fsp_rounds_at_boundaries	KILLED	11:22:33.987654 @ fsp3 became 11:22:34 instead of 11:22:33.988
+M02	temporal targets retain native datum	return formatted String from cast_to_time	cargo test --offline --locked -j12 --workspace	REVERTED_DECLINED	differential Go oracle requires public DATE/DATETIME results to remain STR rather than TIME
+M03	duration-to-DATE keeps hidden clock	truncate duration clock for DATE	cargo test --offline --locked -j12 --workspace	REVERTED_DECLINED	public string result cannot preserve the hidden clock without native temporal-domain integration
+M04	TIME target integration boundary	expose native duration target	cargo test --offline --locked -j12 --workspace	REVERTED_DECLINED	difftest-result-tests requires CAST AS TIME to remain unevaluated until its corpus row is moved and golden regenerated outside this crate
+M05	JSON target retains native datum	return canonical String instead of BinaryJSON	cast_as_json_typed_renders_binary_charset_argument_as_opaque	KILLED	Datum::String differed from Datum::Json
+M06	JSON result metadata is native	change JSON FieldType to VarString	cast_result_types_keep_native_domains_and_fsp	KILLED	VarString differed from Json
+M07	vector source rejects non-string targets	disable vector source guard	vector_source_only_reaches_the_go_string_signature	KILLED	SIGNED vector wrongly returned a value
+M08	ordinary DATE target clears stored clock	return parsed clock unchanged	cargo test --offline --locked -j12 --workspace	REVERTED_DECLINED	visible DATE text truncates correctly, but stored-clock mutation is unobservable behind the required string boundary
+M09	real-to-unsigned retains upper u64 half	route real through signed i64	cast_real_as_unsigned_keeps_the_upper_half_of_unsigned_bigint	KILLED	1e19 saturated at i64::MAX
+M10	decimal-to-unsigned retains upper u64 half	route decimal through signed i64	cast_decimal_as_unsigned_keeps_the_upper_half_of_unsigned_bigint	KILLED	1e19 saturated at i64::MAX
+M11	binary charset JSON becomes opaque	bypass binary source branch	cast_as_json_typed_renders_binary_charset_argument_as_opaque	KILLED	binary bytes attempted document parse and returned InvalidText

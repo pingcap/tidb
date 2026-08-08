@@ -337,6 +337,7 @@ mod arg_eval_type;
 mod binary_literal;
 mod build;
 pub mod builtin_arithmetic;
+mod builtin_cast_lockdown;
 pub mod builtin_compare;
 mod builtin_ext;
 pub mod builtin_op;

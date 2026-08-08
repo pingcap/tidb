@@ -1737,10 +1737,12 @@ fn cast_as_json_typed_renders_binary_charset_argument_as_opaque() {
     let varbinary = FieldType::new(FieldTypeCode::Varchar).with_collation(Collation::Binary);
     let got =
         cast_as_json_typed(&Datum::Bytes(b"ab".to_vec()), Some(&varbinary)).expect("valid vector");
-    // `CAST(... AS JSON)`'s result is the document TEXT: a scalar JSON
-    // string is quoted, matching `SELECT CAST(vb AS JSON) FROM t` =>
-    // `"base64:type15:YWI="` (captured, quotes included).
-    assert_eq!(got, s(r#""base64:type15:YWI=""#));
+    let Datum::Json(got) = got else {
+        panic!("CAST AS JSON did not retain the JSON domain")
+    };
+    let opaque = got.opaque().expect("opaque binary JSON");
+    assert_eq!(opaque.type_code, 15);
+    assert_eq!(opaque.bytes, b"ab");
 
     // `field_type: None` is exactly the untyped `cast_as_json`: a bare
     // (non-JSON) string is PARSED as a JSON document and `ab` is not

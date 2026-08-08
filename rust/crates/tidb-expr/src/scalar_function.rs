@@ -982,7 +982,9 @@ fn cast_type_of(target: &str, ret_type: &FieldType) -> Result<tidb_ast::CastType
             scale: u32::try_from(ret_type.decimal()).unwrap_or(0),
         },
         "date" => CastType::Date,
-        "datetime" => CastType::DateTime { fsp: None },
+        "datetime" => CastType::DateTime {
+            fsp: u32::try_from(ret_type.decimal()).ok(),
+        },
         "year" => CastType::Year,
         "double" => CastType::Double,
         "json" => CastType::Json,
@@ -1162,7 +1164,7 @@ mod tests {
 
         let varbinary_type =
             FieldType::new(FieldTypeCode::Varchar).with_collation(Collation::Binary);
-        let json_type = text_ft();
+        let json_text_type = text_ft();
         let mut chk = Chunk::new_with_capacity(std::slice::from_ref(&varbinary_type), 1);
         chk.append_bytes(0, b"ab");
         let row = chk.get_row(0);
@@ -1172,7 +1174,7 @@ mod tests {
 
         let json_array = ScalarFunction::new(
             CiString::new("json_array"),
-            json_type.clone(),
+            json_text_type,
             vec![Expression::Column(col.clone())],
         );
         assert_eq!(
@@ -1182,13 +1184,15 @@ mod tests {
 
         let cast_json = ScalarFunction::new(
             CiString::new("cast_json"),
-            json_type,
+            FieldType::new(FieldTypeCode::Json),
             vec![Expression::Column(col)],
         );
-        assert_eq!(
-            cast_json.eval(&NoColumns, row).unwrap(),
-            Datum::new_string(r#""base64:type15:YWI=""#.to_string())
-        );
+        let Datum::Json(got) = cast_json.eval(&NoColumns, row).unwrap() else {
+            panic!("CAST AS JSON did not retain the JSON domain")
+        };
+        let opaque = got.opaque().expect("opaque binary JSON");
+        assert_eq!(opaque.type_code, 15);
+        assert_eq!(opaque.bytes, b"ab");
     }
 
     #[test]
