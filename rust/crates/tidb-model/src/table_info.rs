@@ -300,25 +300,16 @@ pub struct TableInfo {
     pub mode: TableMode,
 }
 
-impl PartialEq for TableInfo {
-    fn eq(&self, other: &Self) -> bool {
-        self.id == other.id
-    }
-}
-
-impl Eq for TableInfo {}
-
-impl std::hash::Hash for TableInfo {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        std::hash::Hash::hash(&self.id, state);
-    }
-}
-
 impl TableInfo {
     /// Go `TableInfo.Equals` compares only persisted table identity.
     #[must_use]
     pub fn equals_id(&self, other: &Self) -> bool {
         self.id == other.id
+    }
+
+    /// Go `Hash64`: feed only the persisted table ID to the supplied hasher.
+    pub fn hash_id<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::hash::Hash::hash(&self.id, state);
     }
 
     /// Go `GetPartitionInfo`: the partition info when partitioning is enabled.
@@ -672,7 +663,7 @@ impl TableInfo {
 mod tests {
     use super::*;
     use crate::table::ViewInfo;
-    use std::hash::{Hash, Hasher};
+    use std::hash::Hasher;
     use tidb_datatype::{FieldType, FieldTypeCode};
 
     fn pk_col(name: &str, unsigned: bool) -> ColumnInfo {
@@ -740,11 +731,11 @@ mod tests {
             name: CiString::new("left"),
             ..Default::default()
         };
-        assert_eq!(left, right);
-        assert_ne!(left, other);
+        assert!(left.equals_id(&right));
+        assert!(!left.equals_id(&other));
         let hash = |table: &TableInfo| {
             let mut state = std::collections::hash_map::DefaultHasher::new();
-            table.hash(&mut state);
+            table.hash_id(&mut state);
             state.finish()
         };
         assert_eq!(hash(&left), hash(&right));
