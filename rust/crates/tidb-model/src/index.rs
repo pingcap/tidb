@@ -134,7 +134,7 @@ pub fn full_text_parser_sql_name(parser_type: &str) -> &'static str {
 /// (case-insensitive; unknown -> `INVALID`).
 #[must_use]
 pub fn get_full_text_parser_type_by_sql_name(name: &str) -> &'static str {
-    match name.to_uppercase().as_str() {
+    match tidb_mysql::to_uppercase(name).as_str() {
         "STANDARD" => full_text_parser_type::STANDARD_V1,
         "MULTILINGUAL" => full_text_parser_type::MULTILINGUAL_V1,
         _ => full_text_parser_type::INVALID,
@@ -705,6 +705,10 @@ mod tests {
         );
         assert_eq!(
             get_full_text_parser_type_by_sql_name("x"),
+            full_text_parser_type::INVALID
+        );
+        assert_eq!(
+            get_full_text_parser_type_by_sql_name("\u{fb06}andard"),
             full_text_parser_type::INVALID
         );
     }

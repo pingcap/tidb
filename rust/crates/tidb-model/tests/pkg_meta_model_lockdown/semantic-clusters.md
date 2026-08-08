@@ -49,8 +49,9 @@ remaining package census is 2,509 obligations plus the build artifact.
   exact bidirectional indexable-function/distance-metric maps, full-text names,
   prefix detection, table-column ID resolution, columnar type,
   partial-condition parsing, ordinary and foreign-key prefix coverage, ID/name
-  lookup, Go simple-rune case normalization, and unknown persisted enum round
-  trips.
+  lookup, Go simple-rune lower/upper case normalization (including parser
+  keyword lookup without full-case ligature expansion), and unknown persisted
+  enum round trips.
 - Explicit representation boundaries: Go's mixed shallow/deep clone pointer
   aliases, nil elements in pointer slices, nil versus allocated-empty index
   column/region-split slices in the existing `Vec` representation, and the TiDB
