@@ -141,13 +141,13 @@ impl_go_json_merge_object!(TableInfo, destination, map, key, {
     } else if go_json_field_matches(&key, "collate") {
         map.next_value_seed(NullNoopSeed(&mut destination.collate))?;
     } else if go_json_field_matches(&key, "cols") {
-        map.next_value_seed(NullDefaultSeed(&mut destination.columns))?;
+        map.next_value_seed(SharedPointerSliceSeed(&mut destination.columns))?;
     } else if go_json_field_matches(&key, "index_info") {
-        map.next_value_seed(NullDefaultSeed(&mut destination.indices))?;
+        map.next_value_seed(SharedPointerSliceSeed(&mut destination.indices))?;
     } else if go_json_field_matches(&key, "constraint_info") {
-        map.next_value_seed(NullDefaultSeed(&mut destination.constraints))?;
+        map.next_value_seed(SharedPointerSliceSeed(&mut destination.constraints))?;
     } else if go_json_field_matches(&key, "fk_info") {
-        map.next_value_seed(NullDefaultSeed(&mut destination.foreign_keys))?;
+        map.next_value_seed(SharedPointerSliceSeed(&mut destination.foreign_keys))?;
     } else if go_json_field_matches(&key, "state") {
         map.next_value_seed(NullNoopSeed(&mut destination.state))?;
     } else if go_json_field_matches(&key, "pk_is_handle") {

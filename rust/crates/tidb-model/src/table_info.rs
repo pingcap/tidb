@@ -15,12 +15,11 @@
 //! `TableInfo` from `pkg/meta/model/table.go`: the central table-metadata
 //! struct. All of its field types and nearly all of its methods are ported.
 //!
-//! Clone: the derived `Clone` is a full deep copy. Go's `TableInfo.Clone`
-//! deep-copies only Columns/Indices/ForeignKeys/Partition/TTLInfo/
-//! TableSplitPolicy/Affinity and shares the other pointer fields (View,
-//! Sequence, Constraints, Lock, StatsOptions, ...) with the original; the
-//! full deep copy here is the stricter, independent-copy semantics clone
-//! callers expect (Rust's owned model has no pointer aliasing to reproduce).
+//! The pointer-slice representation and source-shaped table APIs are ported in
+//! this layer. The still-derived Rust `Clone` is deliberately not claimed as
+//! Go `TableInfo.Clone`: the owning follow-on semantic cluster must migrate
+//! the remaining pointer fields to shared handles and then replace the derive
+//! with Go's selective deep/shallow copy policy.
 //!
 //! Go's `Equals`/`Hash64` identity rule is exposed explicitly by
 //! [`TableInfo::equals_id`] and [`TableInfo::hash64`]; Rust structural equality
@@ -30,9 +29,9 @@ use tidb_ast::CiString;
 use tidb_datatype::FieldTypeFlags;
 
 use crate::cascades_hash::HashInt64;
-use crate::column::{find_column_info_by_id, ColumnInfo};
+use crate::column::ColumnInfo;
 use crate::engine_attribute::{build_storage_class_string, StorageClassTransitRule};
-use crate::go_runtime::{GoPointerAny, GoTime};
+use crate::go_runtime::{GoPointerAny, GoShared, GoSharedPointerSlice, GoTime};
 use crate::index::{IndexInfo, RegionSplitPolicy};
 use crate::partition::PartitionInfo;
 use crate::placement::PolicyRefInfo;
@@ -92,37 +91,17 @@ pub struct TableInfo {
     )]
     pub collate: String,
     /// The columns.
-    #[serde(
-        rename = "cols",
-        default,
-        deserialize_with = "crate::serde_helpers::null_default",
-        serialize_with = "crate::serde_helpers::null_if_empty"
-    )]
-    pub columns: Vec<ColumnInfo>,
+    #[serde(rename = "cols", default)]
+    pub columns: GoSharedPointerSlice<ColumnInfo>,
     /// The indexes.
-    #[serde(
-        rename = "index_info",
-        default,
-        deserialize_with = "crate::serde_helpers::null_default",
-        serialize_with = "crate::serde_helpers::null_if_empty"
-    )]
-    pub indices: Vec<IndexInfo>,
+    #[serde(rename = "index_info", default)]
+    pub indices: GoSharedPointerSlice<IndexInfo>,
     /// The CHECK constraints.
-    #[serde(
-        rename = "constraint_info",
-        default,
-        deserialize_with = "crate::serde_helpers::null_default",
-        serialize_with = "crate::serde_helpers::null_if_empty"
-    )]
-    pub constraints: Vec<ConstraintInfo>,
+    #[serde(rename = "constraint_info", default)]
+    pub constraints: GoSharedPointerSlice<ConstraintInfo>,
     /// The foreign keys.
-    #[serde(
-        rename = "fk_info",
-        default,
-        deserialize_with = "crate::serde_helpers::null_default",
-        serialize_with = "crate::serde_helpers::null_if_empty"
-    )]
-    pub foreign_keys: Vec<FKInfo>,
+    #[serde(rename = "fk_info", default)]
+    pub foreign_keys: GoSharedPointerSlice<FKInfo>,
     /// The online-DDL state.
     #[serde(rename = "state", default)]
     pub state: SchemaState,
@@ -363,24 +342,22 @@ impl TableInfo {
 
     /// Go `GetPkColInfo`: the primary-key column (by the PRI-KEY flag).
     #[must_use]
-    pub fn get_pk_col_info(&self) -> Option<&ColumnInfo> {
+    pub fn get_pk_col_info(&self) -> Option<GoShared<ColumnInfo>> {
         self.columns
-            .iter()
-            .find(|c| c.get_flag() & u64::from(FieldTypeFlags::PRI_KEY) != 0)
+            .iter_deref()
+            .find(|column| column.read().get_flag() & u64::from(FieldTypeFlags::PRI_KEY) != 0)
     }
 
-    /// Mutable form of Go `GetPkColInfo`.
-    pub fn get_pk_col_info_mut(&mut self) -> Option<&mut ColumnInfo> {
-        self.columns
-            .iter_mut()
-            .find(|column| column.get_flag() & u64::from(FieldTypeFlags::PRI_KEY) != 0)
+    /// Mutable handle form of Go `GetPkColInfo`.
+    pub fn get_pk_col_info_mut(&mut self) -> Option<GoShared<ColumnInfo>> {
+        self.get_pk_col_info()
     }
 
     /// Go `GetPkName`: the primary-key column name (empty when none).
     #[must_use]
     pub fn get_pk_name(&self) -> CiString {
         self.get_pk_col_info()
-            .map_or_else(CiString::default, |c| c.name.clone())
+            .map_or_else(CiString::default, |column| column.read().name.clone())
     }
 
     /// Go `ContainsAutoRandomBits`: whether `AUTO_RANDOM` is configured.
@@ -398,6 +375,7 @@ impl TableInfo {
         }
         self.get_pk_col_info()
             .expect("PKIsHandle with AutoRandomBits requires a primary-key column")
+            .read()
             .get_flag()
             & u64::from(FieldTypeFlags::UNSIGNED)
             != 0
@@ -407,10 +385,11 @@ impl TableInfo {
     /// gap is retained as `None`, exactly matching the nil element Go leaves
     /// in its returned slice.
     #[must_use]
-    pub fn cols_with_gaps(&self) -> Vec<Option<&ColumnInfo>> {
-        let mut slots: Vec<Option<&ColumnInfo>> = vec![None; self.columns.len()];
+    pub fn cols(&self) -> GoSharedPointerSlice<ColumnInfo> {
+        let mut slots = vec![None; self.columns.len()];
         let mut max_offset: i64 = -1;
-        for col in &self.columns {
+        for column in self.columns.iter_deref() {
+            let col = column.read();
             if col.state != SchemaState::PUBLIC {
                 continue;
             }
@@ -418,98 +397,85 @@ impl TableInfo {
             // Go indexes `publicColumns[col.Offset]` directly. Invalid
             // metadata is an invariant violation and panics rather than being
             // silently dropped.
-            slots[off] = Some(col);
+            slots[off] = Some(column.clone());
             if col.offset > max_offset {
                 max_offset = col.offset;
             }
         }
-        slots.truncate((max_offset + 1) as usize);
-        slots
+        let visible_len = (max_offset + 1) as usize;
+        slots.truncate(visible_len);
+        GoSharedPointerSlice::from_handles_with_capacity(slots, self.columns.len())
     }
 
-    /// Mutable offset-indexed Go `Cols` result, retaining nil gaps.
-    pub fn cols_with_gaps_mut(&mut self) -> Vec<Option<&mut ColumnInfo>> {
-        let mut slots: Vec<Option<&mut ColumnInfo>> = std::iter::repeat_with(|| None)
-            .take(self.columns.len())
-            .collect();
-        let mut max_offset: i64 = -1;
-        for column in &mut self.columns {
-            if column.state != SchemaState::PUBLIC {
-                continue;
-            }
-            let column_offset = column.offset;
-            let offset = column_offset as usize;
-            slots[offset] = Some(column);
-            if column_offset > max_offset {
-                max_offset = column_offset;
-            }
-        }
-        slots.truncate((max_offset + 1) as usize);
-        slots
+    /// Compatibility spelling for callers that already named the Go gap.
+    #[must_use]
+    pub fn cols_with_gaps(&self) -> GoSharedPointerSlice<ColumnInfo> {
+        self.cols()
     }
 
     /// Present public columns, used by Rust callers that explicitly do not
     /// consume Go's nil-gap invariant.
     #[must_use]
-    pub fn cols(&self) -> Vec<&ColumnInfo> {
-        self.cols_with_gaps().into_iter().flatten().collect()
+    pub fn present_cols(&self) -> Vec<GoShared<ColumnInfo>> {
+        self.cols().handles().into_iter().flatten().collect()
     }
 
-    /// Present mutable public columns for Rust callers that reject nil gaps.
-    pub fn cols_mut(&mut self) -> Vec<&mut ColumnInfo> {
-        self.cols_with_gaps_mut().into_iter().flatten().collect()
+    /// Mutable handles for the exact Go `Cols` result.
+    pub fn cols_mut(&mut self) -> GoSharedPointerSlice<ColumnInfo> {
+        self.cols()
     }
 
     /// Go `FindPublicColumnByName`: the public column named `col_name_l`
     /// (already lower-cased).
     #[must_use]
-    pub fn find_public_column_by_name(&self, col_name_l: &str) -> Option<&ColumnInfo> {
-        self.cols_with_gaps()
-            .into_iter()
-            .map(|column| column.expect("nil public column slot in TableInfo.Cols"))
-            .find(|c| c.name.lowercase() == col_name_l)
+    pub fn find_public_column_by_name(&self, col_name_l: &str) -> Option<GoShared<ColumnInfo>> {
+        self.cols()
+            .iter_deref()
+            .find(|column| column.read().name.lowercase() == col_name_l)
     }
 
-    /// Mutable form of Go `FindPublicColumnByName`.
-    pub fn find_public_column_by_name_mut(&mut self, col_name_l: &str) -> Option<&mut ColumnInfo> {
-        self.cols_with_gaps_mut()
-            .into_iter()
-            .map(|column| column.expect("nil public column slot in TableInfo.Cols"))
-            .find(|column| column.name.lowercase() == col_name_l)
+    /// Mutable handle form of Go `FindPublicColumnByName`.
+    pub fn find_public_column_by_name_mut(
+        &mut self,
+        col_name_l: &str,
+    ) -> Option<GoShared<ColumnInfo>> {
+        self.find_public_column_by_name(col_name_l)
     }
 
     /// Go `GetPrimaryKey`: the explicit primary index, else an implicit one
     /// (a unique index over only non-null, non-hidden public columns).
     #[must_use]
-    pub fn get_primary_key(&self) -> Option<&IndexInfo> {
-        let cols = self.cols_with_gaps();
-        let mut implicit_pk: Option<&IndexInfo> = None;
-        for key in &self.indices {
-            if key.primary {
+    pub fn get_primary_key(&self) -> Option<GoShared<IndexInfo>> {
+        let cols = self.cols();
+        let mut implicit_pk = None;
+        for key in self.indices.iter_deref() {
+            let index = key.read();
+            if index.primary {
+                drop(index);
                 return Some(key);
             }
-            if key.columns.is_empty() {
+            if index.columns.is_empty() {
                 continue;
             }
-            if implicit_pk.is_none() && key.unique {
+            if implicit_pk.is_none() && index.unique {
                 let mut all_col_not_null = true;
                 let mut skip = false;
-                for idx_col in &key.columns {
+                for idx_col in &index.columns {
                     let col = cols
-                        .iter()
-                        .map(|column| column.expect("nil public column slot in TableInfo.Cols"))
-                        .find(|c| c.name.lowercase() == idx_col.name.lowercase());
+                        .iter_deref()
+                        .find(|column| column.read().name.lowercase() == idx_col.name.lowercase());
                     match col {
                         None => {
                             skip = true;
                             break;
                         }
-                        Some(c) if c.hidden => {
-                            skip = true;
-                            break;
-                        }
-                        Some(c) => {
-                            if c.get_flag() & u64::from(FieldTypeFlags::NOT_NULL) == 0 {
+                        Some(column) => {
+                            let column = column.read();
+                            if column.hidden {
+                                skip = true;
+                                break;
+                            }
+                            if column.get_flag() & u64::from(FieldTypeFlags::NOT_NULL) == 0 {
                                 all_col_not_null = false;
                                 break;
                             }
@@ -520,111 +486,110 @@ impl TableInfo {
                     continue;
                 }
                 if all_col_not_null {
-                    implicit_pk = Some(key);
+                    implicit_pk = Some(key.clone());
                 }
             }
         }
         implicit_pk
     }
 
-    /// Mutable form of Go `GetPrimaryKey`, returning the same selected index.
-    pub fn get_primary_key_mut(&mut self) -> Option<&mut IndexInfo> {
-        let position = self.get_primary_key().and_then(|selected| {
-            self.indices
-                .iter()
-                .position(|candidate| std::ptr::eq(candidate, selected))
-        });
-        position.map(|position| &mut self.indices[position])
+    /// Mutable handle form of Go `GetPrimaryKey`.
+    pub fn get_primary_key_mut(&mut self) -> Option<GoShared<IndexInfo>> {
+        self.get_primary_key()
     }
 
     /// Go `FindColumnByID`: the column with `id` (any state).
     #[must_use]
-    pub fn find_column_by_id(&self, id: i64) -> Option<&ColumnInfo> {
-        self.columns.iter().find(|c| c.id == id)
+    pub fn find_column_by_id(&self, id: i64) -> Option<GoShared<ColumnInfo>> {
+        self.columns
+            .iter_deref()
+            .find(|column| column.read().id == id)
     }
 
-    /// Mutable form of Go `FindColumnByID`.
-    pub fn find_column_by_id_mut(&mut self, id: i64) -> Option<&mut ColumnInfo> {
-        self.columns.iter_mut().find(|column| column.id == id)
+    /// Mutable handle form of Go `FindColumnByID`.
+    pub fn find_column_by_id_mut(&mut self, id: i64) -> Option<GoShared<ColumnInfo>> {
+        self.find_column_by_id(id)
     }
 
     /// Go `GetColumnByID`: the public column with `id`.
     #[must_use]
-    pub fn get_column_by_id(&self, id: i64) -> Option<&ColumnInfo> {
-        self.columns
-            .iter()
-            .find(|c| c.state == SchemaState::PUBLIC && c.id == id)
+    pub fn get_column_by_id(&self, id: i64) -> Option<GoShared<ColumnInfo>> {
+        self.columns.iter_deref().find(|column| {
+            let column = column.read();
+            column.state == SchemaState::PUBLIC && column.id == id
+        })
     }
 
-    /// Mutable form of Go `GetColumnByID`.
-    pub fn get_column_by_id_mut(&mut self, id: i64) -> Option<&mut ColumnInfo> {
-        self.columns
-            .iter_mut()
-            .find(|column| column.state == SchemaState::PUBLIC && column.id == id)
+    /// Mutable handle form of Go `GetColumnByID`.
+    pub fn get_column_by_id_mut(&mut self, id: i64) -> Option<GoShared<ColumnInfo>> {
+        self.get_column_by_id(id)
     }
 
     /// Go `FindIndexByName`: the index named `idx_name` (already lower-cased).
     #[must_use]
-    pub fn find_index_by_name(&self, idx_name: &str) -> Option<&IndexInfo> {
-        self.indices.iter().find(|i| i.name.lowercase() == idx_name)
+    pub fn find_index_by_name(&self, idx_name: &str) -> Option<GoShared<IndexInfo>> {
+        self.indices
+            .iter_deref()
+            .find(|index| index.read().name.lowercase() == idx_name)
     }
 
-    /// Mutable form of Go `FindIndexByName`.
-    pub fn find_index_by_name_mut(&mut self, idx_name: &str) -> Option<&mut IndexInfo> {
-        self.indices
-            .iter_mut()
-            .find(|index| index.name.lowercase() == idx_name)
+    /// Mutable handle form of Go `FindIndexByName`.
+    pub fn find_index_by_name_mut(&mut self, idx_name: &str) -> Option<GoShared<IndexInfo>> {
+        self.find_index_by_name(idx_name)
     }
 
     /// Go `FindIndexByID`: the index with `id`.
     #[must_use]
-    pub fn find_index_by_id(&self, id: i64) -> Option<&IndexInfo> {
-        self.indices.iter().find(|i| i.id == id)
+    pub fn find_index_by_id(&self, id: i64) -> Option<GoShared<IndexInfo>> {
+        self.indices
+            .iter_deref()
+            .find(|index| index.read().id == id)
     }
 
-    /// Mutable form of Go `FindIndexByID`.
-    pub fn find_index_by_id_mut(&mut self, id: i64) -> Option<&mut IndexInfo> {
-        self.indices.iter_mut().find(|index| index.id == id)
+    /// Mutable handle form of Go `FindIndexByID`.
+    pub fn find_index_by_id_mut(&mut self, id: i64) -> Option<GoShared<IndexInfo>> {
+        self.find_index_by_id(id)
     }
 
     /// Go `FindConstraintInfoByName`: the CHECK constraint named `constr_name`
     /// (case-insensitive).
     #[must_use]
-    pub fn find_constraint_info_by_name(&self, constr_name: &str) -> Option<&ConstraintInfo> {
+    pub fn find_constraint_info_by_name(
+        &self,
+        constr_name: &str,
+    ) -> Option<GoShared<ConstraintInfo>> {
         let low = tidb_mysql::to_lowercase(constr_name);
-        self.constraints.iter().find(|c| c.name.lowercase() == low)
+        self.constraints
+            .iter_deref()
+            .find(|constraint| constraint.read().name.lowercase() == low)
     }
 
-    /// Mutable form of Go `FindConstraintInfoByName`.
+    /// Mutable handle form of Go `FindConstraintInfoByName`.
     pub fn find_constraint_info_by_name_mut(
         &mut self,
         constr_name: &str,
-    ) -> Option<&mut ConstraintInfo> {
-        let lowercase = tidb_mysql::to_lowercase(constr_name);
-        self.constraints
-            .iter_mut()
-            .find(|constraint| constraint.name.lowercase() == lowercase)
+    ) -> Option<GoShared<ConstraintInfo>> {
+        self.find_constraint_info_by_name(constr_name)
     }
 
     /// Go `GetAutoIncrementColInfo`: the auto-increment column, if any.
     #[must_use]
-    pub fn get_auto_increment_col_info(&self) -> Option<&ColumnInfo> {
-        self.columns
-            .iter()
-            .find(|c| c.get_flag() & u64::from(FieldTypeFlags::AUTO_INCREMENT) != 0)
+    pub fn get_auto_increment_col_info(&self) -> Option<GoShared<ColumnInfo>> {
+        self.columns.iter_deref().find(|column| {
+            column.read().get_flag() & u64::from(FieldTypeFlags::AUTO_INCREMENT) != 0
+        })
     }
 
-    /// Mutable form of Go `GetAutoIncrementColInfo`.
-    pub fn get_auto_increment_col_info_mut(&mut self) -> Option<&mut ColumnInfo> {
-        self.columns
-            .iter_mut()
-            .find(|column| column.get_flag() & u64::from(FieldTypeFlags::AUTO_INCREMENT) != 0)
+    /// Mutable handle form of Go `GetAutoIncrementColInfo`.
+    pub fn get_auto_increment_col_info_mut(&mut self) -> Option<GoShared<ColumnInfo>> {
+        self.get_auto_increment_col_info()
     }
 
     /// Go `ColumnIsInIndex`: whether column `c` participates in any index.
     #[must_use]
     pub fn column_is_in_index(&self, c: &ColumnInfo) -> bool {
-        self.indices.iter().any(|index| {
+        self.indices.iter_deref().any(|index| {
+            let index = index.read();
             index
                 .columns
                 .iter()
@@ -641,24 +606,29 @@ impl TableInfo {
     /// Go `IsAutoIncColUnsigned`: whether the auto-increment column is unsigned.
     #[must_use]
     pub fn is_auto_inc_col_unsigned(&self) -> bool {
-        self.get_auto_increment_col_info()
-            .is_some_and(|c| c.get_flag() & u64::from(FieldTypeFlags::UNSIGNED) != 0)
+        self.get_auto_increment_col_info().is_some_and(|column| {
+            column.read().get_flag() & u64::from(FieldTypeFlags::UNSIGNED) != 0
+        })
     }
 
     /// Go `FindColumnNameByID`: the (lower-cased) name of column `id`, or "".
     #[must_use]
     pub fn find_column_name_by_id(&self, id: i64) -> String {
-        find_column_info_by_id(&self.columns, id)
-            .map_or_else(String::new, |c| c.name.lowercase().to_owned())
+        self.find_column_by_id(id)
+            .map_or_else(String::new, |column| {
+                column.read().name.lowercase().to_owned()
+            })
     }
 
     /// Go `FindIndexNameByID`: the (lower-cased) name of index `id`, or "".
     #[must_use]
     pub fn find_index_name_by_id(&self, id: i64) -> String {
         self.indices
-            .iter()
-            .find(|i| i.id == id)
-            .map_or_else(String::new, |i| i.name.lowercase().to_owned())
+            .iter_deref()
+            .find(|index| index.read().id == id)
+            .map_or_else(String::new, |index| {
+                index.read().name.lowercase().to_owned()
+            })
     }
 
     /// Go `GetNonTempColumns`: the non-removing columns, with a changing
@@ -666,16 +636,18 @@ impl TableInfo {
     /// key is the changing column's origin name (Go's original-case
     /// `GetChangingOriginName`), matching Go's map behavior.
     #[must_use]
-    pub fn get_non_temp_columns(&self) -> Vec<&ColumnInfo> {
+    pub fn get_non_temp_columns(&self) -> Vec<GoShared<ColumnInfo>> {
         use std::collections::BTreeMap;
-        let mut col_map: BTreeMap<String, &ColumnInfo> = BTreeMap::new();
-        for col in &self.columns {
+        let mut col_map = BTreeMap::new();
+        for column in self.columns.iter_deref() {
+            let col = column.read();
             if col.is_removing() {
                 continue;
             }
-            col_map.insert(col.name.lowercase().to_owned(), col);
+            col_map.insert(col.name.lowercase().to_owned(), column.clone());
         }
-        for col in &self.columns {
+        for column in self.columns.iter_deref() {
+            let col = column.read();
             if col.is_removing() {
                 continue;
             }
@@ -686,27 +658,9 @@ impl TableInfo {
         col_map.into_values().collect()
     }
 
-    /// Mutable form of Go `GetNonTempColumns`.
-    pub fn get_non_temp_columns_mut(&mut self) -> Vec<&mut ColumnInfo> {
-        use std::collections::{BTreeMap, BTreeSet};
-
-        let mut selected = BTreeMap::new();
-        for (index, column) in self.columns.iter().enumerate() {
-            if !column.is_removing() {
-                selected.insert(column.name.lowercase().to_owned(), index);
-            }
-        }
-        for column in &self.columns {
-            if !column.is_removing() && column.is_changing() {
-                selected.remove(&column.get_changing_origin_name());
-            }
-        }
-        let selected: BTreeSet<usize> = selected.into_values().collect();
-        self.columns
-            .iter_mut()
-            .enumerate()
-            .filter_map(|(index, column)| selected.contains(&index).then_some(column))
-            .collect()
+    /// Mutable handles for Go `GetNonTempColumns`.
+    pub fn get_non_temp_columns_mut(&mut self) -> Vec<GoShared<ColumnInfo>> {
+        self.get_non_temp_columns()
     }
 
     /// Go `ClearPlacement`: drop the table's and partitions' placement refs.
@@ -736,49 +690,70 @@ impl TableInfo {
     /// column offsets and fixing up the offsets referenced by index columns,
     /// affected columns, and change-state dependencies. Go assumes each
     /// column's offset equals its position.
-    pub fn move_column_info(&mut self, from: usize, to: usize) {
+    pub fn move_column_info(&mut self, from: isize, to: isize) {
         use std::collections::BTreeMap;
         if from == to {
             return;
         }
-        // old-offset -> new-offset for every moved element.
-        let mut updated: BTreeMap<i64, i64> = BTreeMap::new();
+
+        // Go reads the source slot before validating the destination. Keep
+        // that ordering so invalid signed indexes and recovered panics expose
+        // the same partially shifted receiver.
+        let src = self.columns.get(from as usize);
+        let mut updated = BTreeMap::new();
         if from < to {
-            for i in from..to {
-                updated.insert((i + 1) as i64, i as i64);
+            let mut i = from;
+            while i < to {
+                let next = self.columns.get((i + 1) as usize);
+                self.columns.set(i as usize, next);
+                self.columns
+                    .get(i as usize)
+                    .expect("nil *ColumnInfo in MoveColumnInfo")
+                    .write()
+                    .offset = i as i64;
+                updated.insert(i + 1, i);
+                i += 1;
             }
         } else {
             let mut i = from;
             while i > to {
-                updated.insert((i - 1) as i64, i as i64);
+                let previous = self.columns.get((i - 1) as usize);
+                self.columns.set(i as usize, previous);
+                self.columns
+                    .get(i as usize)
+                    .expect("nil *ColumnInfo in MoveColumnInfo")
+                    .write()
+                    .offset = i as i64;
+                updated.insert(i - 1, i);
                 i -= 1;
             }
         }
-        updated.insert(from as i64, to as i64);
+        self.columns.set(to as usize, src);
+        self.columns
+            .get(to as usize)
+            .expect("nil *ColumnInfo in MoveColumnInfo")
+            .write()
+            .offset = to as i64;
+        updated.insert(from, to);
 
-        let src = self.columns.remove(from);
-        self.columns.insert(to, src);
-        let (lo, hi) = (from.min(to), from.max(to));
-        for (i, col) in self.columns.iter_mut().enumerate().take(hi + 1).skip(lo) {
-            col.offset = i as i64;
-        }
-
-        for idx in &mut self.indices {
+        for index in self.indices.iter_deref() {
+            let mut idx = index.write();
             for ic in &mut idx.columns {
-                if let Some(&n) = updated.get(&ic.offset) {
-                    ic.offset = n;
+                if let Some(&new_offset) = updated.get(&(ic.offset as isize)) {
+                    ic.offset = new_offset as i64;
                 }
             }
             for ac in &mut idx.affect_column {
-                if let Some(&n) = updated.get(&ac.offset) {
-                    ac.offset = n;
+                if let Some(&new_offset) = updated.get(&(ac.offset as isize)) {
+                    ac.offset = new_offset as i64;
                 }
             }
         }
-        for col in &mut self.columns {
+        for column in self.columns.iter_deref() {
+            let mut col = column.write();
             if let Some(cs) = &mut col.change_state_info {
-                if let Some(&n) = updated.get(&cs.dependency_column_offset) {
-                    cs.dependency_column_offset = n;
+                if let Some(&new_offset) = updated.get(&(cs.dependency_column_offset as isize)) {
+                    cs.dependency_column_offset = new_offset as i64;
                 }
             }
         }
@@ -842,13 +817,31 @@ mod tests {
                     state: SchemaState::PUBLIC,
                     ..Default::default()
                 },
-            ],
+            ]
+            .into(),
             ..Default::default()
         };
         let slots = table.cols_with_gaps();
+        assert!(slots.is_allocated());
         assert_eq!(slots.len(), 2);
-        assert!(slots[0].is_none());
-        assert_eq!(slots[1].unwrap().name.original(), "public");
+        assert_eq!(slots.capacity(), table.columns.len());
+        assert!(!slots.backing_ptr_eq(&table.columns));
+        assert!(slots.get(0).is_none());
+        assert_eq!(slots.get(1).unwrap().read().name.original(), "public");
+        assert!(slots.get(1).unwrap().ptr_eq(&table.columns.get(1).unwrap()));
+
+        let no_public = TableInfo {
+            columns: vec![ColumnInfo {
+                state: SchemaState::WRITE_ONLY,
+                ..Default::default()
+            }]
+            .into(),
+            ..Default::default()
+        };
+        let no_public_cols = no_public.cols();
+        assert!(no_public_cols.is_allocated());
+        assert_eq!(no_public_cols.len(), 0);
+        assert_eq!(no_public_cols.capacity(), 1);
 
         assert!(std::panic::catch_unwind(|| table.find_public_column_by_name("public")).is_err());
 
@@ -857,7 +850,8 @@ mod tests {
                 offset: 1,
                 state: SchemaState::PUBLIC,
                 ..Default::default()
-            }],
+            }]
+            .into(),
             ..Default::default()
         };
         assert!(std::panic::catch_unwind(|| invalid_offset.cols_with_gaps()).is_err());
@@ -956,7 +950,8 @@ mod tests {
                     c
                 },
                 pk_col("id", true),
-            ],
+            ]
+            .into(),
             ..Default::default()
         };
         assert_eq!(t.get_pk_name().original(), "id");
@@ -1001,7 +996,8 @@ mod tests {
                 column("a", 0, true, false),
                 column("b", 1, true, true),
                 column("c", 2, false, false), // non-public -> excluded
-            ],
+            ]
+            .into(),
             indices: vec![IndexInfo {
                 name: CiString::new("uk_b"),
                 unique: true,
@@ -1011,27 +1007,28 @@ mod tests {
                 }]
                 .into(),
                 ..Default::default()
-            }],
+            }]
+            .into(),
             ..Default::default()
         };
 
         // Public columns only, in offset order.
         let cols = t.cols();
         assert_eq!(cols.len(), 2);
-        assert_eq!(cols[0].name.original(), "a");
-        assert_eq!(cols[1].name.original(), "b");
+        assert_eq!(cols.get(0).unwrap().read().name.original(), "a");
+        assert_eq!(cols.get(1).unwrap().read().name.original(), "b");
         assert!(t.find_public_column_by_name("b").is_some());
         assert!(t.find_public_column_by_name("c").is_none()); // not public
 
         // Implicit PK: the unique index over non-null public column b.
         let pk = t.get_primary_key().unwrap();
-        assert_eq!(pk.name.original(), "uk_b");
+        assert_eq!(pk.read().name.original(), "uk_b");
 
         // An explicit primary index wins.
         let mut t2 = t.clone();
-        t2.indices.insert(
-            0,
-            IndexInfo {
+        let implicit = t2.indices.get(0).unwrap();
+        t2.indices = GoSharedPointerSlice::from_handles(vec![
+            Some(GoShared::new(IndexInfo {
                 name: CiString::new("pk"),
                 primary: true,
                 columns: vec![IndexColumn {
@@ -1040,9 +1037,10 @@ mod tests {
                 }]
                 .into(),
                 ..Default::default()
-            },
-        );
-        assert_eq!(t2.get_primary_key().unwrap().name.original(), "pk");
+            })),
+            Some(implicit),
+        ]);
+        assert_eq!(t2.get_primary_key().unwrap().read().name.original(), "pk");
     }
 
     #[test]
@@ -1056,7 +1054,7 @@ mod tests {
         c_hidden.set_flag(u64::from(FieldTypeFlags::AUTO_INCREMENT));
 
         let mut t = TableInfo {
-            columns: vec![c_pub, c_hidden],
+            columns: vec![c_pub, c_hidden].into(),
             indices: vec![IndexInfo {
                 id: 5,
                 name: CiString::new("idx_a"),
@@ -1066,30 +1064,39 @@ mod tests {
                 }]
                 .into(),
                 ..Default::default()
-            }],
+            }]
+            .into(),
             constraints: vec![ConstraintInfo {
                 name: CiString::new("chk1"),
                 ..Default::default()
-            }],
+            }]
+            .into(),
             pk_is_handle: true,
             ..Default::default()
         };
 
-        assert_eq!(t.find_column_by_id(101).unwrap().name.original(), "b");
+        assert_eq!(
+            t.find_column_by_id(101).unwrap().read().name.original(),
+            "b"
+        );
         // get_column_by_id only returns public columns.
         assert!(t.get_column_by_id(101).is_none());
-        assert_eq!(t.get_column_by_id(100).unwrap().name.original(), "a");
+        assert_eq!(t.get_column_by_id(100).unwrap().read().name.original(), "a");
         assert!(t.find_index_by_name("idx_a").is_some());
         assert!(t.find_index_by_id(5).is_some());
         assert!(t.find_constraint_info_by_name("CHK1").is_some()); // case-insensitive
-        t.constraints[0].name = CiString::new("i");
+        t.constraints.get(0).unwrap().write().name = CiString::new("i");
         assert!(t.find_constraint_info_by_name("\u{130}").is_some());
         assert_eq!(
-            t.get_auto_increment_col_info().unwrap().name.original(),
+            t.get_auto_increment_col_info()
+                .unwrap()
+                .read()
+                .name
+                .original(),
             "b"
         );
-        assert!(t.column_is_in_index(&t.columns[0])); // "a" is in idx_a
-        assert!(!t.column_is_in_index(&t.columns[1])); // "b" is not
+        assert!(t.column_is_in_index(&t.columns.get(0).unwrap().read())); // "a" is in idx_a
+        assert!(!t.column_is_in_index(&t.columns.get(1).unwrap().read())); // "b" is not
         assert!(t.has_clustered_index()); // pk_is_handle
     }
 
@@ -1103,7 +1110,7 @@ mod tests {
         let mut c = column("a", 0, true, false);
         c.id = 100;
         let t = TableInfo {
-            columns: vec![c],
+            columns: vec![c].into(),
             version: TABLE_INFO_VERSION5,
             auto_id_cache: 1,
             storage_class_tier: "STANDARD".into(),
@@ -1145,17 +1152,19 @@ mod tests {
             u64::from(FieldTypeFlags::PRI_KEY) | u64::from(FieldTypeFlags::AUTO_INCREMENT),
         );
         let mut table = TableInfo {
-            columns: vec![primary_column],
+            columns: vec![primary_column].into(),
             indices: vec![IndexInfo {
                 id: 10,
                 name: CiString::new("primary"),
                 primary: true,
                 ..Default::default()
-            }],
+            }]
+            .into(),
             constraints: vec![ConstraintInfo {
                 name: CiString::new("check_a"),
                 ..Default::default()
-            }],
+            }]
+            .into(),
             partition: Some(Box::new(PartitionInfo {
                 enable: true,
                 ..Default::default()
@@ -1165,44 +1174,61 @@ mod tests {
 
         table.get_partition_info_mut().unwrap().expr = "p".to_owned();
         assert_eq!(table.partition.as_ref().unwrap().expr, "p");
-        table.get_pk_col_info_mut().unwrap().comment = "pk".to_owned();
+        table.get_pk_col_info_mut().unwrap().write().comment = "pk".to_owned();
         table
             .get_auto_increment_col_info_mut()
             .unwrap()
+            .write()
             .generated_stored = true;
-        table.find_column_by_id_mut(1).unwrap().default_is_expr = true;
-        table.get_column_by_id_mut(1).unwrap().hidden = true;
-        table.find_public_column_by_name_mut("pk").unwrap().version = 7;
+        table
+            .find_column_by_id_mut(1)
+            .unwrap()
+            .write()
+            .default_is_expr = true;
+        table.get_column_by_id_mut(1).unwrap().write().hidden = true;
+        table
+            .find_public_column_by_name_mut("pk")
+            .unwrap()
+            .write()
+            .version = 7;
         {
-            let mut columns = table.cols_with_gaps_mut();
-            columns[0].as_deref_mut().unwrap().id = 2;
+            let columns = table.cols_mut();
+            columns.get(0).unwrap().write().id = 2;
         }
         {
-            let mut columns = table.cols_mut();
-            columns[0].id = 1;
+            let columns = table.present_cols();
+            columns[0].write().id = 1;
         }
         {
-            let mut columns = table.get_non_temp_columns_mut();
-            columns[0].comment = "non-temp".to_owned();
+            let columns = table.get_non_temp_columns_mut();
+            columns[0].write().comment = "non-temp".to_owned();
         }
-        assert_eq!(table.columns[0].comment, "non-temp");
-        assert!(table.columns[0].generated_stored);
-        assert!(table.columns[0].default_is_expr);
-        assert!(table.columns[0].hidden);
-        assert_eq!(table.columns[0].version, 7);
+        assert_eq!(table.columns.get(0).unwrap().read().comment, "non-temp");
+        assert!(table.columns.get(0).unwrap().read().generated_stored);
+        assert!(table.columns.get(0).unwrap().read().default_is_expr);
+        assert!(table.columns.get(0).unwrap().read().hidden);
+        assert_eq!(table.columns.get(0).unwrap().read().version, 7);
 
-        table.get_primary_key_mut().unwrap().comment = "primary".to_owned();
-        table.find_index_by_name_mut("primary").unwrap().invisible = true;
-        table.find_index_by_id_mut(10).unwrap().global = true;
-        assert_eq!(table.indices[0].comment, "primary");
-        assert!(table.indices[0].invisible);
-        assert!(table.indices[0].global);
+        table.get_primary_key_mut().unwrap().write().comment = "primary".to_owned();
+        table
+            .find_index_by_name_mut("primary")
+            .unwrap()
+            .write()
+            .invisible = true;
+        table.find_index_by_id_mut(10).unwrap().write().global = true;
+        assert_eq!(table.indices.get(0).unwrap().read().comment, "primary");
+        assert!(table.indices.get(0).unwrap().read().invisible);
+        assert!(table.indices.get(0).unwrap().read().global);
 
         table
             .find_constraint_info_by_name_mut("CHECK_A")
             .unwrap()
+            .write()
             .expr_string = "a > 0".to_owned();
-        assert_eq!(table.constraints[0].expr_string, "a > 0");
+        assert_eq!(
+            table.constraints.get(0).unwrap().read().expr_string,
+            "a > 0"
+        );
     }
 
     #[test]
@@ -1218,7 +1244,7 @@ mod tests {
             dependency_column_offset: 0,
         });
         let mut t = TableInfo {
-            columns,
+            columns: columns.into(),
             indices: vec![IndexInfo {
                 // an index referencing column "a" at offset 0
                 columns: vec![IndexColumn {
@@ -1234,26 +1260,31 @@ mod tests {
                 }]
                 .into(),
                 ..Default::default()
-            }],
+            }]
+            .into(),
             ..Default::default()
         };
         // Move "a" (offset 0) to the end (position 2).
         t.move_column_info(0, 2);
         assert_eq!(
             t.columns
-                .iter()
-                .map(|c| c.name.original())
+                .iter_deref()
+                .map(|column| column.read().name.original().to_owned())
                 .collect::<Vec<_>>(),
-            vec!["b", "c", "a"]
+            vec!["b".to_owned(), "c".to_owned(), "a".to_owned()]
         );
-        assert_eq!(t.columns[0].offset, 0); // b
-        assert_eq!(t.columns[2].offset, 2); // a
-                                            // The index column's offset was remapped 0 -> 2.
-        assert_eq!(t.indices[0].columns[0].offset, 2);
-        assert_eq!(t.indices[0].affect_column[0].offset, 2);
+        assert_eq!(t.columns.get(0).unwrap().read().offset, 0); // b
+        assert_eq!(t.columns.get(2).unwrap().read().offset, 2); // a
+                                                                // The index column's offset was remapped 0 -> 2.
+        assert_eq!(t.indices.get(0).unwrap().read().columns[0].offset, 2);
+        assert_eq!(t.indices.get(0).unwrap().read().affect_column[0].offset, 2);
         assert_eq!(
-            t.columns[1]
+            t.columns
+                .get(1)
+                .unwrap()
+                .read()
                 .change_state_info
+                .as_ref()
                 .unwrap()
                 .dependency_column_offset,
             2
@@ -1261,20 +1292,150 @@ mod tests {
 
         // Moving in the opposite direction remaps every dependent offset too.
         t.move_column_info(2, 0);
-        assert_eq!(t.indices[0].columns[0].offset, 0);
-        assert_eq!(t.indices[0].affect_column[0].offset, 0);
+        assert_eq!(t.indices.get(0).unwrap().read().columns[0].offset, 0);
+        assert_eq!(t.indices.get(0).unwrap().read().affect_column[0].offset, 0);
         assert_eq!(
-            t.columns[2]
+            t.columns
+                .get(2)
+                .unwrap()
+                .read()
                 .change_state_info
+                .as_ref()
                 .unwrap()
                 .dependency_column_offset,
             0
         );
 
         // A no-op move leaves everything unchanged.
-        let before = t.columns[0].name.original().to_owned();
+        let before = t.columns.get(0).unwrap().read().name.original().to_owned();
         t.move_column_info(1, 1);
-        assert_eq!(t.columns[0].name.original(), before);
+        assert_eq!(t.columns.get(0).unwrap().read().name.original(), before);
+    }
+
+    #[test]
+    fn move_column_ports_the_exact_upstream_sequence_and_signed_panics() {
+        fn make_column(id: i64) -> ColumnInfo {
+            ColumnInfo {
+                id,
+                name: CiString::new(&format!("c_{id}")),
+                offset: id,
+                state: SchemaState::PUBLIC,
+                ..Default::default()
+            }
+        }
+
+        fn make_index(id: i64, ids: &[i64]) -> IndexInfo {
+            IndexInfo {
+                id,
+                name: CiString::new(&format!("i_{id}")),
+                columns: ids
+                    .iter()
+                    .map(|id| IndexColumn {
+                        name: CiString::new(&format!("c_{id}")),
+                        offset: *id,
+                        ..Default::default()
+                    })
+                    .collect::<Vec<_>>()
+                    .into(),
+                ..Default::default()
+            }
+        }
+
+        fn check_offsets(table: &TableInfo, ids: &[i64]) {
+            assert_eq!(table.columns.len(), ids.len());
+            for (offset, id) in ids.iter().copied().enumerate() {
+                let column = table.columns.get(offset).expect("source column is non-nil");
+                let column = column.read();
+                assert_eq!(column.name.lowercase(), format!("c_{id}"));
+                assert_eq!(column.offset, offset as i64);
+            }
+            for column in table.columns.iter_deref() {
+                let column = column.read();
+                for index in table.indices.iter_deref() {
+                    let index = index.read();
+                    for index_column in &index.columns {
+                        if column.name.lowercase() == index_column.name.lowercase() {
+                            assert_eq!(column.offset, index_column.offset);
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut table = TableInfo {
+            id: 1,
+            name: CiString::new("t"),
+            columns: (0..5).map(make_column).collect::<Vec<_>>().into(),
+            indices: vec![
+                make_index(0, &[0, 1, 2, 3, 4]),
+                make_index(1, &[4, 2]),
+                make_index(2, &[0, 4]),
+                make_index(3, &[1, 2, 3]),
+                make_index(4, &[3, 2, 1]),
+            ]
+            .into(),
+            ..Default::default()
+        };
+
+        for (from, to, expected) in [
+            (4, 0, vec![4, 0, 1, 2, 3]),
+            (2, 3, vec![4, 0, 2, 1, 3]),
+            (3, 2, vec![4, 0, 1, 2, 3]),
+            (0, 4, vec![0, 1, 2, 3, 4]),
+            (2, 2, vec![0, 1, 2, 3, 4]),
+            (0, 0, vec![0, 1, 2, 3, 4]),
+            (1, 4, vec![0, 2, 3, 4, 1]),
+            (3, 0, vec![4, 0, 2, 3, 1]),
+        ] {
+            table.move_column_info(from, to);
+            check_offsets(&table, &expected);
+        }
+
+        let before = table.columns.handles();
+        table.move_column_info(-1, -1);
+        for (before, after) in before.into_iter().zip(table.columns.handles()) {
+            assert!(before.unwrap().ptr_eq(&after.unwrap()));
+        }
+
+        let mut invalid = TableInfo {
+            columns: (0..3).map(make_column).collect::<Vec<_>>().into(),
+            ..Default::default()
+        };
+        let invalid_alias = invalid.columns.clone();
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            invalid.move_column_info(0, 3);
+        }))
+        .is_err());
+        assert_eq!(
+            invalid
+                .columns
+                .iter_deref()
+                .map(|column| column.read().name.lowercase().to_owned())
+                .collect::<Vec<_>>(),
+            vec!["c_1", "c_2", "c_2"]
+        );
+        assert_eq!(invalid.columns.get(2).unwrap().read().offset, 1);
+        assert!(invalid.columns.backing_ptr_eq(&invalid_alias));
+        assert_eq!(
+            invalid_alias
+                .iter_deref()
+                .map(|column| column.read().name.lowercase().to_owned())
+                .collect::<Vec<_>>(),
+            vec!["c_1", "c_2", "c_2"]
+        );
+
+        let mut negative = TableInfo {
+            columns: (0..2).map(make_column).collect::<Vec<_>>().into(),
+            ..Default::default()
+        };
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            negative.move_column_info(-1, 0);
+        }))
+        .is_err());
+        assert_eq!(
+            negative.columns.get(0).unwrap().read().name.lowercase(),
+            "c_0"
+        );
     }
 
     #[test]
