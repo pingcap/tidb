@@ -21,6 +21,100 @@
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+/// Go `[]byte` JSON encoding: padded standard base64, with `null` retaining a
+/// nil slice and `""` retaining an allocated empty slice.
+pub mod go_bytes {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    const ALPHABET: &[u8; 64] =
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+    fn encode(bytes: &[u8]) -> String {
+        let mut output = String::with_capacity(bytes.len().div_ceil(3) * 4);
+        for chunk in bytes.chunks(3) {
+            let second = *chunk.get(1).unwrap_or(&0);
+            let third = *chunk.get(2).unwrap_or(&0);
+            let value = (u32::from(chunk[0]) << 16) | (u32::from(second) << 8) | u32::from(third);
+            for position in 0..4 {
+                if position <= chunk.len() {
+                    output.push(
+                        ALPHABET[((value >> (18 - 6 * position)) & 0x3f) as usize] as char,
+                    );
+                } else {
+                    output.push('=');
+                }
+            }
+        }
+        output
+    }
+
+    fn decode<E: serde::de::Error>(text: &str) -> Result<Vec<u8>, E> {
+        // `encoding/base64.StdEncoding`, used by `encoding/json`, requires
+        // padded four-byte quanta and ignores CR/LF only.
+        let compact: Vec<u8> = text
+            .bytes()
+            .filter(|byte| !matches!(byte, b'\r' | b'\n'))
+            .collect();
+        if compact.len() % 4 != 0 {
+            return Err(E::custom("illegal base64 data"));
+        }
+
+        let mut output = Vec::with_capacity(compact.len() / 4 * 3);
+        let quartet_count = compact.len() / 4;
+        for (quartet_index, quartet) in compact.chunks_exact(4).enumerate() {
+            let is_last = quartet_index + 1 == quartet_count;
+            let value = |byte| {
+                ALPHABET
+                    .iter()
+                    .position(|candidate| *candidate == byte)
+                    .map(|position| position as u32)
+                    .ok_or_else(|| E::custom("illegal base64 data"))
+            };
+            let first = value(quartet[0])?;
+            let second = value(quartet[1])?;
+            output.push(((first << 2) | (second >> 4)) as u8);
+
+            if quartet[2] == b'=' {
+                if !is_last || quartet[3] != b'=' {
+                    return Err(E::custom("illegal base64 data"));
+                }
+                continue;
+            }
+            let third = value(quartet[2])?;
+            output.push((((second & 0x0f) << 4) | (third >> 2)) as u8);
+
+            if quartet[3] == b'=' {
+                if !is_last {
+                    return Err(E::custom("illegal base64 data"));
+                }
+                continue;
+            }
+            let fourth = value(quartet[3])?;
+            output.push((((third & 0x03) << 6) | fourth) as u8);
+        }
+        Ok(output)
+    }
+
+    pub fn serialize<S: Serializer>(
+        value: &Option<Vec<u8>>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        match value {
+            None => serializer.serialize_none(),
+            Some(bytes) => serializer.serialize_str(&encode(bytes)),
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<Vec<u8>>, D::Error> {
+        match Option::<String>::deserialize(deserializer)? {
+            None => Ok(None),
+            Some(text) => decode(&text).map(Some),
+        }
+    }
+}
+
 /// Reproduces `encoding/json`'s float formatting, which `serde_json` does not:
 /// Go prints an integral float as `0`/`1`, not `0.0`/`1.0`, and switches to
 /// exponent form only outside `[1e-6, 1e21)`.

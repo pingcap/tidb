@@ -50,8 +50,14 @@ pub mod table_mode;
 
 pub use action_type::{ActionType, ACTION_MAP};
 pub use bdr::{ts_convert_2_time, DDLBDRType, ACTION_BDR_MAP, BDR_ACTION_MAP};
-pub use column::{gen_removing_obj_name, gen_unique_changing_column_name, ChangeStateInfo};
+pub use column::{
+    gen_removing_obj_name, gen_unique_changing_column_name, ChangeStateInfo, ColumnInfo,
+};
 pub use db::{less_db_info, DBInfo};
+pub use engine_attribute::{
+    parse_engine_attribute_from_string, EngineAttribute, StorageClassDef, StorageClassSettings,
+    StorageClassTransitRule,
+};
 pub use index::{
     field_type_to_inverted_index_info, find_index_by_columns,
     find_index_by_columns_for_foreign_key, find_index_info_by_id, gen_unique_changing_index_name,

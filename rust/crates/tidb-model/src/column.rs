@@ -78,72 +78,6 @@ pub fn gen_unique_changing_column_name(table: &TableInfo, old_column: &ColumnInf
     }
 }
 
-/// Go `[]byte` JSON encoding: `encoding/json` writes a byte slice as a padded
-/// standard-alphabet base64 string, and a nil slice as `null`. serde would
-/// otherwise write a `Vec<u8>` as an array of numbers.
-mod go_bytes {
-    use serde::{Deserialize, Deserializer, Serializer};
-
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-    fn encode(bytes: &[u8]) -> String {
-        let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
-        for chunk in bytes.chunks(3) {
-            let b = [
-                chunk[0],
-                *chunk.get(1).unwrap_or(&0),
-                *chunk.get(2).unwrap_or(&0),
-            ];
-            let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
-            for i in 0..4 {
-                if i <= chunk.len() {
-                    out.push(ALPHABET[((n >> (18 - 6 * i)) & 0x3f) as usize] as char);
-                } else {
-                    out.push('=');
-                }
-            }
-        }
-        out
-    }
-
-    fn decode<E: serde::de::Error>(text: &str) -> Result<Vec<u8>, E> {
-        let mut out = Vec::with_capacity(text.len() / 4 * 3);
-        let mut acc: u32 = 0;
-        let mut bits = 0u32;
-        for byte in text.bytes().take_while(|b| *b != b'=') {
-            let Some(index) = ALPHABET.iter().position(|c| *c == byte) else {
-                return Err(E::custom("illegal base64 data"));
-            };
-            acc = (acc << 6) | index as u32;
-            bits += 6;
-            if bits >= 8 {
-                bits -= 8;
-                out.push(((acc >> bits) & 0xff) as u8);
-            }
-        }
-        Ok(out)
-    }
-
-    pub(super) fn serialize<S: Serializer>(
-        value: &Option<Vec<u8>>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        match value {
-            None => serializer.serialize_none(),
-            Some(bytes) => serializer.serialize_str(&encode(bytes)),
-        }
-    }
-
-    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<Option<Vec<u8>>, D::Error> {
-        match Option::<String>::deserialize(deserializer)? {
-            None => Ok(None),
-            Some(text) => decode(&text).map(Some),
-        }
-    }
-}
-
 /// Go `map[string]struct{}` JSON encoding: an object whose values are the
 /// empty object, with keys sorted by `encoding/json`; a nil map is `null`.
 /// The Rust side models the set as a `BTreeSet`, which serde would otherwise
@@ -349,13 +283,21 @@ pub struct ColumnInfo {
     #[serde(rename = "origin_default", default)]
     pub origin_default_value: Option<ColumnDefaultValue>,
     /// The BIT-type original default value bytes; `None` = Go `nil` slice.
-    #[serde(rename = "origin_default_bit", default, with = "go_bytes")]
+    #[serde(
+        rename = "origin_default_bit",
+        default,
+        with = "crate::serde_helpers::go_bytes"
+    )]
     pub origin_default_value_bit: Option<Vec<u8>>,
     /// The default value (`any`); `None` = Go `nil`.
     #[serde(rename = "default", default)]
     pub default_value: Option<ColumnDefaultValue>,
     /// The BIT-type default value bytes; `None` = Go `nil` slice.
-    #[serde(rename = "default_bit", default, with = "go_bytes")]
+    #[serde(
+        rename = "default_bit",
+        default,
+        with = "crate::serde_helpers::go_bytes"
+    )]
     pub default_value_bit: Option<Vec<u8>>,
     /// Whether the default value string is an expression.
     #[serde(rename = "default_is_expr", default)]
@@ -960,6 +902,20 @@ mod tests {
         assert_eq!(col.get_flen(), 20);
         assert_eq!(col.state, SchemaState::WRITE_ONLY);
         assert_eq!(col.change_state_info.unwrap().dependency_column_offset, 4);
+
+        for invalid in [
+            r#"{"origin_default_bit":"A"}"#,
+            r#"{"origin_default_bit":"AA"}"#,
+            r#"{"origin_default_bit":"AAA"}"#,
+            r#"{"origin_default_bit":"AA=A"}"#,
+            r#"{"origin_default_bit":"AA==AAAA"}"#,
+            r#"{"origin_default_bit":"AA$="}"#,
+        ] {
+            assert!(serde_json::from_str::<ColumnInfo>(invalid).is_err());
+        }
+        let with_newline: ColumnInfo =
+            serde_json::from_str(r#"{"origin_default_bit":"Gbk\nA"}"#).unwrap();
+        assert_eq!(with_newline.origin_default_value_bit, Some(vec![25, 185, 0]));
     }
 
     #[test]

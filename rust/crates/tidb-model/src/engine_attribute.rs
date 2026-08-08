@@ -133,7 +133,11 @@ pub(crate) fn build_storage_class_string(
         transitions: &'a [StorageClassTransitRule],
     }
     // Go ignores the marshal error (it cannot fail for these types).
-    serde_json::to_string(&StorageClassInfo { tier, transitions }).unwrap_or_default()
+    String::from_utf8(
+        crate::serde_helpers::to_go_json(&StorageClassInfo { tier, transitions })
+            .unwrap_or_default(),
+    )
+    .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -216,5 +220,10 @@ mod tests {
         assert!(s.contains("\"tier\":\"IA\""));
         // after_seconds == 0 is omitted (omitempty).
         assert!(!s.contains("after_seconds"));
+
+        assert_eq!(
+            build_storage_class_string("<&>", &[StorageClassTransitRule::default()]),
+            r#"{"tier":"\u003c\u0026\u003e","transitions":[{"tier":"","after_days":0}]}"#
+        );
     }
 }
