@@ -448,6 +448,63 @@ pub fn build_hist_and_topn(
     }
 }
 
+/// Go `BuildColumnHist`, using the caller-supplied whole-table count, NDV,
+/// and NULL count rather than the collector's FM-sketch summary.
+#[must_use]
+pub fn build_column_histogram(
+    id: i64,
+    collector: &SampleCollector,
+    num_buckets: usize,
+    count: i64,
+    ndv: i64,
+    null_count: i64,
+) -> Histogram {
+    let ndv = ndv.min(count);
+    let mut histogram = Histogram {
+        id,
+        ndv,
+        null_count,
+        tot_col_size: collector.total_size,
+        ..Histogram::default()
+    };
+    if count == 0 || collector.samples.is_empty() {
+        return histogram;
+    }
+
+    let mut samples = collector.samples.clone();
+    samples.sort_by(|left, right| left.encoded.cmp(&right.encoded));
+    let mut checker = SequentialRangeChecker::from_ranges(&[]);
+    build_hist(
+        &mut histogram,
+        &samples,
+        count,
+        ndv,
+        num_buckets as i64,
+        samples.len() as i64,
+        &mut checker,
+    );
+    let corr_xy_sum = samples
+        .iter()
+        .enumerate()
+        .map(|(position, sample)| position as f64 * sample.ordinal as f64)
+        .sum();
+    histogram.correlation = calc_correlation(samples.len() as i64, corr_xy_sum);
+    histogram
+}
+
+/// Go `BuildColumn`, forwarding the collector's whole-scan summary.
+#[must_use]
+pub fn build_column(id: i64, collector: &SampleCollector, num_buckets: usize) -> Histogram {
+    build_column_histogram(
+        id,
+        collector,
+        num_buckets,
+        collector.count,
+        collector.ndv,
+        collector.null_count,
+    )
+}
+
 /// Go `buildHist`.
 ///
 /// Every count written here is cumulative, and every one is a sample count

@@ -24,7 +24,8 @@
 
 use tidb_datatype::Datum;
 use tidb_stats::builder::{
-    build_hist_and_topn, BuildOptions, SampleCollector, SampleItem, SequentialRangeChecker,
+    build_column, build_column_histogram, build_hist_and_topn, BuildOptions, SampleCollector,
+    SampleItem, SequentialRangeChecker,
 };
 
 /// An integer sample, encoded the way an order-preserving key encoder would:
@@ -60,6 +61,34 @@ fn collector(values: &[i64]) -> SampleCollector {
         ndv: distinct.len() as i64,
         total_size: values.len() as i64 * 8,
     }
+}
+
+#[test]
+fn build_column_hist_uses_explicit_counts_and_clamps_ndv() {
+    let collector = collector(&[3, 1, 2]);
+    let histogram = build_column_histogram(9, &collector, 2, 6, 10, 4);
+    assert_eq!(histogram.id, 9);
+    assert_eq!(histogram.ndv, 6);
+    assert_eq!(histogram.null_count, 4);
+    assert_eq!(histogram.tot_col_size, 24);
+    assert_eq!(histogram.buckets.last().unwrap().count, 6);
+    assert_eq!(histogram.correlation, -0.5);
+}
+
+#[test]
+fn build_column_empty_paths_preserve_source_metadata() {
+    let empty = SampleCollector {
+        samples: Vec::new(),
+        count: 7,
+        ndv: 9,
+        null_count: 2,
+        total_size: 11,
+    };
+    let histogram = build_column(5, &empty, 3);
+    assert_eq!(histogram.ndv, 7);
+    assert_eq!(histogram.null_count, 2);
+    assert_eq!(histogram.tot_col_size, 11);
+    assert!(histogram.buckets.is_empty());
 }
 
 /// The plainest statement the builder makes: over a fully sampled column with
