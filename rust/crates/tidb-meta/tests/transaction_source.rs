@@ -1412,7 +1412,7 @@ fn source_range_partial_json_and_filter_boundaries() {
         TableInfo {
             lock: Some(Box::new(tidb_model::table::TableLockInfo {
                 tp: tidb_ast::TableLockType::NONE,
-                sessions: Vec::new(),
+                sessions: Vec::new().into(),
                 state: tidb_model::table::TableLockState::PRE_LOCK,
                 ts: 0,
             })),
