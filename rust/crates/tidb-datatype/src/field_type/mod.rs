@@ -788,6 +788,30 @@ impl FieldType {
         &self.elems
     }
 
+    /// Returns the source slice state for ENUM/SET elements.
+    ///
+    /// Go distinguishes a nil `[]string` from an allocated empty slice even
+    /// though both have length zero. The ordinary [`Self::elems`] accessor is
+    /// convenient for value-only consumers; this accessor preserves that
+    /// allocation boundary for metadata-model code.
+    pub fn elems_option(&self) -> Option<&[String]> {
+        self.elems_present.then_some(self.elems.as_slice())
+    }
+
+    /// Returns a mutable alias of the source ENUM/SET slice when allocated.
+    ///
+    /// Mutating an element through this slice updates the owning field type,
+    /// matching mutation through the slice returned by Go `GetElems`.
+    pub fn elems_option_mut(&mut self) -> Option<&mut [String]> {
+        self.elems_present.then_some(self.elems.as_mut_slice())
+    }
+
+    /// Replaces the source ENUM/SET slice while preserving nil versus empty.
+    pub fn set_elems_option(&mut self, elems: Option<Vec<String>>) {
+        self.elems_present = elems.is_some();
+        self.elems = elems.unwrap_or_default();
+    }
+
     /// Updates one ENUM/SET element without changing binary-literal markers.
     pub fn set_elem(&mut self, index: usize, element: impl Into<String>) {
         self.elems[index] = element.into();

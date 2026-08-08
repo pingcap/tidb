@@ -192,3 +192,28 @@ impl From<JsonFieldType> for FieldType {
         result
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn elems_preserve_source_slice_state_and_aliasing() {
+        let mut field_type = FieldType::parser(FieldTypeCode::Enum);
+        assert!(field_type.elems_option().is_none());
+
+        field_type.set_elems_option(Some(Vec::new()));
+        assert!(matches!(
+            field_type.elems_option(),
+            Some(elements) if elements.is_empty()
+        ));
+
+        field_type.set_elems_option(Some(vec!["a".to_owned()]));
+        field_type.elems_option_mut().unwrap()[0] = "b".to_owned();
+        assert_eq!(field_type.elems(), &["b".to_owned()]);
+
+        field_type.set_elems_option(None);
+        assert!(field_type.elems_option().is_none());
+        assert!(field_type.elems().is_empty());
+    }
+}
