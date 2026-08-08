@@ -1,0 +1,51 @@
+{
+  "artifact_count": 6,
+  "category_counts": {
+    "branch": 464,
+    "closure": 21,
+    "const": 2,
+    "declaration": 16,
+    "field": 153,
+    "function": 67,
+    "loop": 94,
+    "select_case": 11,
+    "short_circuit": 74,
+    "switch_case": 3,
+    "test": 18,
+    "test_assertion": 102,
+    "test_branch": 34,
+    "test_helper": 14,
+    "test_helper_closure": 20,
+    "test_loop": 64,
+    "test_row": 285,
+    "test_short_circuit": 4,
+    "test_support_declaration": 3,
+    "test_support_var": 2,
+    "test_switch_case": 6,
+    "var": 4
+  },
+  "claim_boundary": "file-lockdown-seed-not-package-completion",
+  "direct_test_support_obligation_count": 557,
+  "go_package": "pkg/executor",
+  "mutation_count": 9,
+  "mutation_suites": 8,
+  "obligation_count": 1461,
+  "owned_file_sha256": {
+    "rust/crates/tidb-executor/tests/distsql_lockdown.rs": "75b65fe097f57786d17c73f6259124918c579344935f697379544025ef2ab5fa",
+    "rust/crates/tidb-executor/tests/distsql_lockdown/artifacts.tsv": "385a6ec1bcb99cd7c2aa7d2122abbad327a36ff3d4848d7e1ff3e03e8faf1f6f",
+    "rust/crates/tidb-executor/tests/distsql_lockdown/inventory.tsv": "d6bd940a390c3f8980a6e649c531cf3c32a6c603164305ee97ffd50cbda15f9e",
+    "rust/crates/tidb-executor/tests/distsql_lockdown/mutation-plan.tsv": "ee24eaa82ee1777549f8960d07b4274bfb560e7045cf18a3471e99dfdf3945cd",
+    "rust/crates/tidb-executor/tests/distsql_lockdown/mutation-results.tsv": "2c5aefd4c2061d21790d26810ae8899dae4471b050c334265549a055bf23deac",
+    "rust/scripts/pkg-executor-distsql-lockdown.py": "4b21165cb4e70bea669dbcf2dc8121d6f5940f3e6a17b7ed8e398be537fb4c8c"
+  },
+  "owning_go_source": "pkg/executor/distsql.go",
+  "ported_symbol_count": 0,
+  "production_obligation_count": 904,
+  "reachable_ported_rule_count": 0,
+  "schema": "executor-distsql-file-lockdown-v1",
+  "source_seed_commit": "842867801eaddcffc25e4de15aabb391f02b1968",
+  "status_counts": {
+    "DECLINED": 1461
+  },
+  "whole_go_package_complete": false
+}
