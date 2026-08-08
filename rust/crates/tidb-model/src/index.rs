@@ -17,6 +17,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use serde::de::DeserializeSeed;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use tidb_ast::{CiString, Expr, IndexType, IsTarget, QueryStmt, SelectField, Stmt};
 use tidb_datatype::{FieldType, FieldTypeCode};
@@ -24,6 +25,11 @@ use tidb_datatype::{FieldType, FieldTypeCode};
 use crate::column::{removing_origin_name, REMOVING_OBJ_PREFIX};
 use crate::reorg::BackfillState;
 use crate::schema_state::SchemaState;
+use crate::serde_helpers::{
+    go_json_field_matches, ignore_unknown, impl_go_json_deserialize, impl_go_json_merge_object,
+    GoPointerSlice, GoValueSlice, NullNoopSeed, OptionMergeSeed, OptionPointerSliceSeed,
+    OptionValueSliceSeed,
+};
 use crate::table_info::TableInfo;
 
 /// Distance-metric values for a vector index (Go `DistanceMetric`, a string).
@@ -156,12 +162,20 @@ fn serialize_index_type<S: Serializer>(tp: &IndexType, serializer: S) -> Result<
     serializer.serialize_i64(tp.0)
 }
 
-fn deserialize_index_type<'de, D: Deserializer<'de>>(
-    deserializer: D,
-) -> Result<IndexType, D::Error> {
-    Ok(IndexType(
-        Option::<i64>::deserialize(deserializer)?.unwrap_or_default(),
-    ))
+struct IndexTypeSeed<'a>(&'a mut IndexType);
+
+impl<'de> DeserializeSeed<'de> for IndexTypeSeed<'_> {
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        if let Some(value) = Option::<i64>::deserialize(deserializer)? {
+            *self.0 = IndexType(value);
+        }
+        Ok(())
+    }
 }
 
 /// Go `BackfillState` is a `byte`, so `encoding/json` writes it as a number.
@@ -170,14 +184,6 @@ fn serialize_backfill_state<S: Serializer>(
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
     serializer.serialize_u8(state.0)
-}
-
-fn deserialize_backfill_state<'de, D: Deserializer<'de>>(
-    deserializer: D,
-) -> Result<BackfillState, D::Error> {
-    Ok(BackfillState(
-        Option::<u8>::deserialize(deserializer)?.unwrap_or_default(),
-    ))
 }
 
 /// Go `ColumnarIndexType` (a `uint8`): the kind of columnar index.
@@ -209,31 +215,35 @@ impl ColumnarIndexType {
 
 /// Go `RegionSplitPolicy`: a table's region-split policy (defined in
 /// `index.go`, referenced by `TableInfo.TableSplitPolicy`).
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct RegionSplitPolicy {
     /// The lower-bound split points.
-    #[serde(
-        rename = "lower",
-        default,
-        deserialize_with = "crate::serde_helpers::null_default",
-        serialize_with = "crate::serde_helpers::null_if_empty"
-    )]
-    pub lower: Vec<String>,
+    #[serde(rename = "lower", default)]
+    pub lower: GoValueSlice<String>,
     /// The upper-bound split points.
-    #[serde(
-        rename = "upper",
-        default,
-        deserialize_with = "crate::serde_helpers::null_default",
-        serialize_with = "crate::serde_helpers::null_if_empty"
-    )]
-    pub upper: Vec<String>,
+    #[serde(rename = "upper", default)]
+    pub upper: GoValueSlice<String>,
     /// The number of regions.
     #[serde(rename = "regions", default)]
     pub regions: i64,
 }
 
+impl_go_json_merge_object!(RegionSplitPolicy, destination, map, key, {
+    if go_json_field_matches(&key, "lower") {
+        map.next_value_seed(OptionValueSliceSeed(destination.lower.raw_mut()))?;
+    } else if go_json_field_matches(&key, "upper") {
+        map.next_value_seed(OptionValueSliceSeed(destination.upper.raw_mut()))?;
+    } else if go_json_field_matches(&key, "regions") {
+        map.next_value_seed(NullNoopSeed(&mut destination.regions))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+
+impl_go_json_deserialize!(RegionSplitPolicy);
+
 /// Go `IndexColumn`: one column referenced by an index.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct IndexColumn {
     /// The index column name.
     #[serde(rename = "name", default)]
@@ -253,23 +263,47 @@ pub struct IndexColumn {
     pub use_changing_type: bool,
 }
 
+impl_go_json_merge_object!(IndexColumn, destination, map, key, {
+    if go_json_field_matches(&key, "name") {
+        map.next_value_seed(NullNoopSeed(&mut destination.name))?;
+    } else if go_json_field_matches(&key, "offset") {
+        map.next_value_seed(NullNoopSeed(&mut destination.offset))?;
+    } else if go_json_field_matches(&key, "length") {
+        map.next_value_seed(NullNoopSeed(&mut destination.length))?;
+    } else if go_json_field_matches(&key, "using_changing_type") {
+        map.next_value_seed(NullNoopSeed(&mut destination.use_changing_type))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+
+impl_go_json_deserialize!(IndexColumn);
+
 /// Go `VectorIndexInfo`: a vector index's parameters.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct VectorIndexInfo {
     /// The vector dimension.
     #[serde(rename = "dimension", default)]
     pub dimension: u64,
     /// The distance metric (see [`distance_metric`]).
-    #[serde(
-        rename = "distance_metric",
-        default,
-        deserialize_with = "crate::serde_helpers::null_default"
-    )]
+    #[serde(rename = "distance_metric", default)]
     pub distance_metric: String,
 }
 
+impl_go_json_merge_object!(VectorIndexInfo, destination, map, key, {
+    if go_json_field_matches(&key, "dimension") {
+        map.next_value_seed(NullNoopSeed(&mut destination.dimension))?;
+    } else if go_json_field_matches(&key, "distance_metric") {
+        map.next_value_seed(NullNoopSeed(&mut destination.distance_metric))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+
+impl_go_json_deserialize!(VectorIndexInfo);
+
 /// Go `InvertedIndexInfo`: an inverted index's parameters.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct InvertedIndexInfo {
     /// The indexed column ID.
     #[serde(rename = "column_id", default)]
@@ -281,6 +315,20 @@ pub struct InvertedIndexInfo {
     #[serde(rename = "type_size", default)]
     pub type_size: u8,
 }
+
+impl_go_json_merge_object!(InvertedIndexInfo, destination, map, key, {
+    if go_json_field_matches(&key, "column_id") {
+        map.next_value_seed(NullNoopSeed(&mut destination.column_id))?;
+    } else if go_json_field_matches(&key, "is_signed") {
+        map.next_value_seed(NullNoopSeed(&mut destination.is_signed))?;
+    } else if go_json_field_matches(&key, "type_size") {
+        map.next_value_seed(NullNoopSeed(&mut destination.type_size))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+
+impl_go_json_deserialize!(InvertedIndexInfo);
 
 /// Go `FieldTypeToInvertedIndexInfo`: returns the fixed-width physical
 /// representation used by an inverted index, or `None` for unsupported
@@ -311,19 +359,25 @@ pub fn field_type_to_inverted_index_info(
 }
 
 /// Go `FullTextIndexInfo`: a full-text index's parameters.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct FullTextIndexInfo {
     /// The parser type (see [`full_text_parser_type`]).
-    #[serde(
-        rename = "parser_type",
-        default,
-        deserialize_with = "crate::serde_helpers::null_default"
-    )]
+    #[serde(rename = "parser_type", default)]
     pub parser_type: String,
 }
 
+impl_go_json_merge_object!(FullTextIndexInfo, destination, map, key, {
+    if go_json_field_matches(&key, "parser_type") {
+        map.next_value_seed(NullNoopSeed(&mut destination.parser_type))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+
+impl_go_json_deserialize!(FullTextIndexInfo);
+
 /// Go `IndexInfo`: metadata describing a table index.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize)]
 pub struct IndexInfo {
     /// The index ID.
     #[serde(rename = "id", default)]
@@ -335,13 +389,8 @@ pub struct IndexInfo {
     #[serde(rename = "tbl_name", default)]
     pub table: CiString,
     /// The index columns.
-    #[serde(
-        rename = "idx_cols",
-        default,
-        deserialize_with = "crate::serde_helpers::null_default",
-        serialize_with = "crate::serde_helpers::null_if_empty"
-    )]
-    pub columns: Vec<IndexColumn>,
+    #[serde(rename = "idx_cols", default)]
+    pub columns: GoPointerSlice<IndexColumn>,
     /// The online-DDL state.
     #[serde(rename = "state", default)]
     pub state: SchemaState,
@@ -349,23 +398,17 @@ pub struct IndexInfo {
     #[serde(
         rename = "backfill_state",
         default,
-        serialize_with = "serialize_backfill_state",
-        deserialize_with = "deserialize_backfill_state"
+        serialize_with = "serialize_backfill_state"
     )]
     pub backfill_state: BackfillState,
     /// The index comment.
-    #[serde(
-        rename = "comment",
-        default,
-        deserialize_with = "crate::serde_helpers::null_default"
-    )]
+    #[serde(rename = "comment", default)]
     pub comment: String,
     /// The index type (Btree/Hash/...).
     #[serde(
         rename = "index_type",
         default,
-        serialize_with = "serialize_index_type",
-        deserialize_with = "deserialize_index_type"
+        serialize_with = "serialize_index_type"
     )]
     pub tp: IndexType,
     /// Whether the index is unique.
@@ -393,20 +436,15 @@ pub struct IndexInfo {
     #[serde(rename = "full_text_index", default)]
     pub full_text_info: Option<FullTextIndexInfo>,
     /// The partial-index condition expression string.
-    #[serde(
-        rename = "condition_expr_string",
-        default,
-        deserialize_with = "crate::serde_helpers::null_default"
-    )]
+    #[serde(rename = "condition_expr_string", default)]
     pub condition_expr_string: String,
     /// The columns the index affects.
     #[serde(
         rename = "affect_column",
         default,
-        skip_serializing_if = "crate::serde_helpers::is_empty_vec",
-        deserialize_with = "crate::serde_helpers::null_default"
+        skip_serializing_if = "GoPointerSlice::is_empty"
     )]
-    pub affect_column: Vec<IndexColumn>,
+    pub affect_column: GoPointerSlice<IndexColumn>,
     /// The global-index version.
     #[serde(
         rename = "global_index_version",
@@ -422,6 +460,54 @@ pub struct IndexInfo {
     )]
     pub region_split_policy: Option<RegionSplitPolicy>,
 }
+
+impl_go_json_merge_object!(IndexInfo, destination, map, key, {
+    if go_json_field_matches(&key, "id") {
+        map.next_value_seed(NullNoopSeed(&mut destination.id))?;
+    } else if go_json_field_matches(&key, "idx_name") {
+        map.next_value_seed(NullNoopSeed(&mut destination.name))?;
+    } else if go_json_field_matches(&key, "tbl_name") {
+        map.next_value_seed(NullNoopSeed(&mut destination.table))?;
+    } else if go_json_field_matches(&key, "idx_cols") {
+        map.next_value_seed(OptionPointerSliceSeed(destination.columns.raw_mut()))?;
+    } else if go_json_field_matches(&key, "state") {
+        map.next_value_seed(NullNoopSeed(&mut destination.state))?;
+    } else if go_json_field_matches(&key, "backfill_state") {
+        map.next_value_seed(NullNoopSeed(&mut destination.backfill_state))?;
+    } else if go_json_field_matches(&key, "comment") {
+        map.next_value_seed(NullNoopSeed(&mut destination.comment))?;
+    } else if go_json_field_matches(&key, "index_type") {
+        map.next_value_seed(IndexTypeSeed(&mut destination.tp))?;
+    } else if go_json_field_matches(&key, "is_unique") {
+        map.next_value_seed(NullNoopSeed(&mut destination.unique))?;
+    } else if go_json_field_matches(&key, "is_primary") {
+        map.next_value_seed(NullNoopSeed(&mut destination.primary))?;
+    } else if go_json_field_matches(&key, "is_invisible") {
+        map.next_value_seed(NullNoopSeed(&mut destination.invisible))?;
+    } else if go_json_field_matches(&key, "is_global") {
+        map.next_value_seed(NullNoopSeed(&mut destination.global))?;
+    } else if go_json_field_matches(&key, "mv_index") {
+        map.next_value_seed(NullNoopSeed(&mut destination.mv_index))?;
+    } else if go_json_field_matches(&key, "vector_index") {
+        map.next_value_seed(OptionMergeSeed(&mut destination.vector_info))?;
+    } else if go_json_field_matches(&key, "inverted_index") {
+        map.next_value_seed(OptionMergeSeed(&mut destination.inverted_info))?;
+    } else if go_json_field_matches(&key, "full_text_index") {
+        map.next_value_seed(OptionMergeSeed(&mut destination.full_text_info))?;
+    } else if go_json_field_matches(&key, "condition_expr_string") {
+        map.next_value_seed(NullNoopSeed(&mut destination.condition_expr_string))?;
+    } else if go_json_field_matches(&key, "affect_column") {
+        map.next_value_seed(OptionPointerSliceSeed(destination.affect_column.raw_mut()))?;
+    } else if go_json_field_matches(&key, "global_index_version") {
+        map.next_value_seed(NullNoopSeed(&mut destination.global_index_version))?;
+    } else if go_json_field_matches(&key, "region_split_policy") {
+        map.next_value_seed(OptionMergeSeed(&mut destination.region_split_policy))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+
+impl_go_json_deserialize!(IndexInfo);
 
 impl IndexInfo {
     /// Go `Hash64`/`Equals` use only the persisted index ID. Rust's standard
@@ -489,7 +575,9 @@ impl IndexInfo {
     /// Go `FindColumnByName`: the index column named `name_l` (lower-cased).
     #[must_use]
     pub fn find_column_by_name(&self, name_l: &str) -> Option<&IndexColumn> {
-        find_index_column_by_name(&self.columns, name_l).map(|(_, ic)| ic)
+        self.columns
+            .iter()
+            .find(|column| column.name.lowercase() == name_l)
     }
 
     /// Go `IsPublic`: whether the index is in the public state.
@@ -673,6 +761,79 @@ mod tests {
     }
 
     #[test]
+    fn index_json_preserves_pointer_slice_and_merge_states() {
+        use crate::serde_helpers::GoJsonMerge;
+
+        let nil: IndexInfo = serde_json::from_str(r#"{"idx_cols":null}"#).unwrap();
+        let empty: IndexInfo = serde_json::from_str(r#"{"idx_cols":[]}"#).unwrap();
+        assert!(!nil.columns.is_allocated());
+        assert!(empty.columns.is_allocated());
+        assert_eq!(
+            serde_json::to_value(nil).unwrap()["idx_cols"],
+            serde_json::Value::Null
+        );
+        assert_eq!(
+            serde_json::to_value(empty).unwrap()["idx_cols"],
+            serde_json::json!([])
+        );
+
+        let nullable: IndexInfo =
+            serde_json::from_str(r#"{"idx_cols":[null,{"offset":2}]}"#).unwrap();
+        assert!(nullable.columns.nullable().unwrap()[0].is_none());
+        assert_eq!(
+            nullable.columns.nullable().unwrap()[1]
+                .as_ref()
+                .unwrap()
+                .offset,
+            2
+        );
+        assert!(std::panic::catch_unwind(|| nullable.columns.iter().next()).is_err());
+
+        let mut index = IndexInfo {
+            id: 7,
+            tp: IndexType(9),
+            vector_info: Some(VectorIndexInfo {
+                dimension: 3,
+                distance_metric: "old".to_owned(),
+            }),
+            ..Default::default()
+        };
+        let mut decoder = serde_json::Deserializer::from_str(
+            r#"{
+                "id":null,
+                "index_type":"bad",
+                "VECTOR_INDEX":{"distance_metric":"later"},
+                "COMMENT":"after-error",
+                "idx_cols":[null]
+            }"#,
+        );
+        assert!(index.go_json_merge(&mut decoder).is_err());
+        assert_eq!(index.id, 7);
+        assert_eq!(index.tp, IndexType(9));
+        assert_eq!(index.vector_info.as_ref().unwrap().dimension, 3);
+        assert_eq!(index.vector_info.as_ref().unwrap().distance_metric, "later");
+        assert_eq!(index.comment, "after-error");
+        assert!(index.columns.nullable().unwrap()[0].is_none());
+
+        let mut decoder = serde_json::Deserializer::from_str(
+            r#"{"idx_cols":[],"IDX_COLS":null,"affect_column":[]}"#,
+        );
+        index.go_json_merge(&mut decoder).unwrap();
+        assert!(!index.columns.is_allocated());
+        assert!(index.affect_column.is_allocated());
+        // `omitempty` suppresses both nil and allocated-empty pointer slices.
+        assert!(serde_json::to_value(&index)
+            .unwrap()
+            .get("affect_column")
+            .is_none());
+
+        let region: RegionSplitPolicy =
+            serde_json::from_str(r#"{"lower":null,"upper":[]}"#).unwrap();
+        assert!(!region.lower.is_allocated());
+        assert!(region.upper.is_allocated());
+    }
+
+    #[test]
     fn global_index_v1_flag() {
         let prev = get_global_index_v1_supported();
         set_global_index_v1_supported(true);
@@ -737,7 +898,8 @@ mod tests {
                     length: 10,
                     ..Default::default()
                 },
-            ],
+            ]
+            .into(),
             state: SchemaState::PUBLIC,
             ..Default::default()
         };
@@ -878,7 +1040,8 @@ mod tests {
                 offset: 0,
                 length: 8,
                 ..Default::default()
-            }],
+            }]
+            .into(),
             ..Default::default()
         };
         assert_eq!(
@@ -942,7 +1105,8 @@ mod tests {
                 offset: 0,
                 length: -1,
                 ..Default::default()
-            }],
+            }]
+            .into(),
             ..Default::default()
         };
         assert!(is_index_prefix_covered_for_foreign_key(

@@ -388,7 +388,8 @@ fn pkg_meta_model_probe_vector_allocation_boundaries() {
         columns: vec![tidb_model::IndexColumn {
             name: tidb_ast::CiString::new("before"),
             ..Default::default()
-        }],
+        }]
+        .into(),
         ..Default::default()
     };
     let clone = clone_source.clone();
@@ -417,7 +418,7 @@ fn pkg_meta_model_probe_vector_allocation_boundaries() {
     };
     observation_emitter::emit(
         "MODEL-VECTOR-ALLOCATION",
-        "pre-existing Vec fields cannot preserve Go nil versus allocated-empty slice identity",
+        "Index pointer slices preserve Go nil, allocated-empty, and null elements; remaining table and partition slices are measured separately",
         &[
             ("index-columns", "null-versus-empty-idx_cols", index_mode),
             ("table-columns", "null-versus-empty-cols", table_mode),

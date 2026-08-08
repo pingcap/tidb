@@ -825,7 +825,8 @@ mod tests {
                 columns: vec![IndexColumn {
                     name: CiString::new("b"),
                     ..Default::default()
-                }],
+                }]
+                .into(),
                 ..Default::default()
             }],
             ..Default::default()
@@ -853,7 +854,8 @@ mod tests {
                 columns: vec![IndexColumn {
                     name: CiString::new("a"),
                     ..Default::default()
-                }],
+                }]
+                .into(),
                 ..Default::default()
             },
         );
@@ -878,7 +880,8 @@ mod tests {
                 columns: vec![IndexColumn {
                     name: CiString::new("a"),
                     ..Default::default()
-                }],
+                }]
+                .into(),
                 ..Default::default()
             }],
             constraints: vec![ConstraintInfo {
@@ -967,12 +970,14 @@ mod tests {
                     name: CiString::new("a"),
                     offset: 0,
                     ..Default::default()
-                }],
+                }]
+                .into(),
                 affect_column: vec![IndexColumn {
                     name: CiString::new("a"),
                     offset: 0,
                     ..Default::default()
-                }],
+                }]
+                .into(),
                 ..Default::default()
             }],
             ..Default::default()
