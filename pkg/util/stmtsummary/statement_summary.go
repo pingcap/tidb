@@ -482,9 +482,11 @@ func (ssMap *stmtSummaryByDigestMap) clearHistory() {
 	for _, value := range values {
 		ssbd := value.(*stmtSummaryByDigest)
 		ssbd.Lock()
-		newHistory := list.New()
-		newHistory.PushFront(ssbd.history.Front().Value)
-		ssbd.history = newHistory
+		if ssbd.history.Len() > 0 {
+			newHistory := list.New()
+			newHistory.PushBack(ssbd.history.Back().Value)
+			ssbd.history = newHistory
+		}
 		ssbd.Unlock()
 	}
 }
@@ -617,20 +619,14 @@ func (ssMap *stmtSummaryByDigestMap) maxSQLLength() int {
 // newStmtSummaryByDigest creates a stmtSummaryByDigest from StmtExecInfo.
 func (ssbd *stmtSummaryByDigest) init(sei *StmtExecInfo, _ int64, _ int64, _ int) {
 	// Use "," to separate table names to support FIND_IN_SET.
-	var buffer bytes.Buffer
-	for i, value := range sei.StmtCtx.Tables {
+	tableNames := make([]string, 0, len(sei.StmtCtx.Tables))
+	for _, value := range sei.StmtCtx.Tables {
 		// In `create database` statement, DB name is not empty but table name is empty.
 		if len(value.Table) == 0 {
 			continue
 		}
-		buffer.WriteString(strings.ToLower(value.DB))
-		buffer.WriteString(".")
-		buffer.WriteString(strings.ToLower(value.Table))
-		if i < len(sei.StmtCtx.Tables)-1 {
-			buffer.WriteString(",")
-		}
+		tableNames = append(tableNames, strings.ToLower(value.DB)+"."+strings.ToLower(value.Table))
 	}
-	tableNames := buffer.String()
 
 	ssbd.cumulative = *newStmtSummaryStats(sei)
 
@@ -644,7 +640,7 @@ func (ssbd *stmtSummaryByDigest) init(sei *StmtExecInfo, _ int64, _ int64, _ int
 	ssbd.planDigest = planDigest
 	ssbd.stmtType = sei.StmtCtx.StmtType
 	ssbd.normalizedSQL = formatSQL(sei.NormalizedSQL)
-	ssbd.tableNames = tableNames
+	ssbd.tableNames = strings.Join(tableNames, ",")
 	ssbd.history = list.New()
 	ssbd.initialized = true
 	ssbd.bindingSQL, ssbd.bindingDigest = sei.LazyInfo.GetBindingSQLAndDigest()
@@ -711,11 +707,12 @@ func (ssbd *stmtSummaryByDigest) collectHistorySummaries(checker *stmtSummaryChe
 		return nil
 	}
 
-	ssElements := make([]*stmtSummaryByDigestElement, 0, ssbd.history.Len())
-	for listElement := ssbd.history.Front(); listElement != nil && len(ssElements) < historySize; listElement = listElement.Next() {
+	ssElements := make([]*stmtSummaryByDigestElement, 0, min(ssbd.history.Len(), historySize))
+	for listElement := ssbd.history.Back(); listElement != nil && len(ssElements) < historySize; listElement = listElement.Prev() {
 		ssElement := listElement.Value.(*stmtSummaryByDigestElement)
 		ssElements = append(ssElements, ssElement)
 	}
+	slices.Reverse(ssElements)
 	return ssElements
 }
 

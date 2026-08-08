@@ -157,6 +157,31 @@ func TestColumn(t *testing.T) {
 	}
 }
 
+func TestExecutionAverageColumnsUseExecCount(t *testing.T) {
+	record := &StmtRecord{
+		ExecCount:            2,
+		CommitCount:          0,
+		SumKVTotal:           10,
+		SumPDTotal:           20,
+		SumBackoffTotal:      30,
+		SumWriteSQLRespTotal: 40,
+	}
+	cases := []struct {
+		name     string
+		expected int64
+	}{
+		{name: AvgKvTimeStr, expected: 5},
+		{name: AvgPdTimeStr, expected: 10},
+		{name: AvgBackoffTotalTimeStr, expected: 15},
+		{name: AvgWriteSQLRespTimeStr, expected: 20},
+	}
+	for _, tc := range cases {
+		factory, ok := columnFactoryMap[tc.name]
+		require.Truef(t, ok, "missing column factory: %s", tc.name)
+		require.Equal(t, tc.expected, factory(mockColumnInfo{}, record), tc.name)
+	}
+}
+
 func TestIAAvgColumns(t *testing.T) {
 	columns := []*model.ColumnInfo{
 		{Name: ast.NewCIStr(AvgIARemoteReadSegmentCountStr)},

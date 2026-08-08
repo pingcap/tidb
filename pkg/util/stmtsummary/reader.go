@@ -819,25 +819,25 @@ var columnValueFactoryMap = map[string]columnValueFactory{
 		return int64(ssStats.sumKVTotal)
 	},
 	AvgKvTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
-		return avgInt(int64(ssStats.sumKVTotal), ssStats.commitCount)
+		return avgInt(int64(ssStats.sumKVTotal), ssStats.execCount)
 	},
 	PdTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
 		return int64(ssStats.sumPDTotal)
 	},
 	AvgPdTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
-		return avgInt(int64(ssStats.sumPDTotal), ssStats.commitCount)
+		return avgInt(int64(ssStats.sumPDTotal), ssStats.execCount)
 	},
 	BackoffTotalTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
 		return int64(ssStats.sumBackoffTotal)
 	},
 	AvgBackoffTotalTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
-		return avgInt(int64(ssStats.sumBackoffTotal), ssStats.commitCount)
+		return avgInt(int64(ssStats.sumBackoffTotal), ssStats.execCount)
 	},
 	WriteSQLRespTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
 		return int64(ssStats.sumWriteSQLRespTotal)
 	},
 	AvgWriteSQLRespTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
-		return avgInt(int64(ssStats.sumWriteSQLRespTotal), ssStats.commitCount)
+		return avgInt(int64(ssStats.sumWriteSQLRespTotal), ssStats.execCount)
 	},
 	AvgTidbCPUTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
 		return avgInt(int64(ssStats.sumTidbCPU), ssStats.execCount)

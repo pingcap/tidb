@@ -15,7 +15,6 @@
 package stmtsummary
 
 import (
-	"bytes"
 	"fmt"
 	"math"
 	"strings"
@@ -180,20 +179,14 @@ type StmtRecord struct {
 // statistics of the StmtExecInfo into the StmtRecord.
 func NewStmtRecord(info *stmtsummary.StmtExecInfo) *StmtRecord {
 	// Use "," to separate table names to support FIND_IN_SET.
-	var buffer bytes.Buffer
-	for i, value := range info.StmtCtx.Tables {
+	tableNames := make([]string, 0, len(info.StmtCtx.Tables))
+	for _, value := range info.StmtCtx.Tables {
 		// In `create database` statement, DB name is not empty but table name is empty.
 		if len(value.Table) == 0 {
 			continue
 		}
-		buffer.WriteString(strings.ToLower(value.DB))
-		buffer.WriteString(".")
-		buffer.WriteString(strings.ToLower(value.Table))
-		if i < len(info.StmtCtx.Tables)-1 {
-			buffer.WriteString(",")
-		}
+		tableNames = append(tableNames, strings.ToLower(value.DB)+"."+strings.ToLower(value.Table))
 	}
-	tableNames := buffer.String()
 	planDigest := info.PlanDigest
 	if len(planDigest) == 0 {
 		// It comes here only when the plan is 'Point_Get'.
@@ -215,8 +208,8 @@ func NewStmtRecord(info *stmtsummary.StmtExecInfo) *StmtRecord {
 		Digest:        info.Digest,
 		PlanDigest:    planDigest,
 		StmtType:      info.StmtCtx.StmtType,
-		NormalizedSQL: info.NormalizedSQL,
-		TableNames:    tableNames,
+		NormalizedSQL: formatSQL(info.NormalizedSQL),
+		TableNames:    strings.Join(tableNames, ","),
 		IsInternal:    info.IsInternal,
 		BindingSQL:    bindingSQL,
 		BindingDigest: bindingDigest,
