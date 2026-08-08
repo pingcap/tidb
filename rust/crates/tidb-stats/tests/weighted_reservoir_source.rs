@@ -57,8 +57,22 @@ fn weighted_sampling_does_not_replace_equal_minimum() {
 }
 
 #[test]
-fn zero_sized_weighted_sampling_is_empty() {
+#[should_panic]
+fn zero_sized_weighted_sampling_indexes_the_empty_root() {
     let mut reservoir = WeightedReservoir::new(0);
-    reservoir.consider(1, "ignored");
-    assert!(reservoir.is_empty());
+    reservoir.consider(1, "panics");
+}
+
+#[test]
+fn heapify_keeps_the_left_child_when_weights_are_equal() {
+    let mut reservoir = WeightedReservoir::new(3);
+    reservoir.consider(2, "parent");
+    reservoir.consider(1, "left");
+    reservoir.consider(1, "right");
+    let payloads: Vec<_> = reservoir
+        .samples()
+        .iter()
+        .map(|sample| *sample.payload())
+        .collect();
+    assert_eq!(payloads, ["left", "parent", "right"]);
 }
