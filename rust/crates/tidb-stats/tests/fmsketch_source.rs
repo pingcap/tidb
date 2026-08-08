@@ -15,10 +15,14 @@
 //! Source-backed tests for the raw-hash FM sketch boundary.
 //!
 //! These tests use the original Go tests' direct `insertHashValue` and merge
-//! scenarios.  Datum/tablecodec hashing and tipb protobuf round trips are
-//! intentionally left to their future owners rather than being approximated.
+//! scenarios, then pin the encoded-datum and tipb protobuf boundaries owned
+//! by the adjacent codec layer.
 
-use tidb_stats::{FmSketch, MAX_SKETCH_SIZE};
+use tidb_stats::{
+    decode_fm_sketch, encode_fm_sketch, fm_sketch_from_proto, fm_sketch_to_proto,
+    insert_encoded_row, insert_encoded_value, FmSketch, FmSketchCodecError, FmSketchProto,
+    MAX_SKETCH_SIZE,
+};
 
 #[test]
 fn source_threshold_advances_mask_and_retains_zero_suffixes() {
@@ -87,4 +91,68 @@ fn source_copy_and_memory_shape_are_independent() {
     sketch.insert_hash(11);
     assert_eq!(clone.len(), 2);
     assert!(!clone.contains(11));
+}
+
+#[test]
+fn source_proto_nil_empty_and_raw_state_boundaries_match() {
+    assert_eq!(fm_sketch_to_proto(None), FmSketchProto::default());
+    assert!(fm_sketch_from_proto(None).is_none());
+    let proto = FmSketchProto {
+        mask: 3,
+        hashset: vec![8, 8, 12],
+    };
+    let restored = fm_sketch_from_proto(Some(&proto)).unwrap();
+    assert_eq!(restored.mask(), 3);
+    assert_eq!(restored.max_size(), 0);
+    assert_eq!(restored.sorted_hashes(), [8, 12]);
+}
+
+#[test]
+fn source_wire_round_trip_and_packed_repeated_values_match() {
+    assert_eq!(encode_fm_sketch(None), None);
+    assert_eq!(decode_fm_sketch(None).unwrap(), None);
+    let sketch = FmSketch::from_raw_parts(1, 5, [2, 4, 6]);
+    let bytes = encode_fm_sketch(Some(&sketch)).unwrap();
+    let decoded = decode_fm_sketch(Some(&bytes)).unwrap().unwrap();
+    assert_eq!(decoded.mask(), 1);
+    assert_eq!(decoded.max_size(), MAX_SKETCH_SIZE);
+    assert_eq!(decoded.sorted_hashes(), [2, 4, 6]);
+
+    let packed = [0x08, 0x01, 0x12, 0x03, 0x02, 0x04, 0x06, 0x18, 0x09];
+    assert_eq!(
+        decode_fm_sketch(Some(&packed))
+            .unwrap()
+            .unwrap()
+            .sorted_hashes(),
+        [2, 4, 6]
+    );
+}
+
+#[test]
+fn source_wire_rejects_malformed_inputs() {
+    assert_eq!(
+        decode_fm_sketch(Some(&[0x08])).unwrap_err(),
+        FmSketchCodecError::Truncated
+    );
+    assert_eq!(
+        decode_fm_sketch(Some(&[0x0b])).unwrap_err(),
+        FmSketchCodecError::InvalidWireType
+    );
+    assert_eq!(
+        decode_fm_sketch(Some(&[
+            0x08, 0x82, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x02,
+        ]))
+        .unwrap_err(),
+        FmSketchCodecError::VarintOverflow
+    );
+}
+
+#[test]
+fn source_encoded_value_and_row_hash_the_same_stream() {
+    let mut value = FmSketch::new(8);
+    insert_encoded_value(&mut value, b"abc");
+    let mut row = FmSketch::new(8);
+    insert_encoded_row(&mut row, [b"a".as_slice(), b"bc".as_slice()]);
+    assert_eq!(value, row);
+    assert_eq!(value.len(), 1);
 }

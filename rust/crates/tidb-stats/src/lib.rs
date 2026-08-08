@@ -29,6 +29,7 @@
 pub mod analysis_interval;
 pub mod analysis_policy;
 pub mod analyze_jobs;
+pub mod analyze_results;
 pub mod analyze_table_id;
 pub mod analyze_version_policy;
 pub mod async_load;
@@ -45,6 +46,7 @@ pub mod bounded_min_heap;
 pub mod builder;
 pub mod cache_metrics_labels;
 pub mod cmsketch;
+pub mod column;
 pub mod constants;
 pub mod correlation;
 pub mod count_metrics;
@@ -57,6 +59,7 @@ pub mod dynamic_partition_helpers;
 pub mod estimate;
 pub mod existence_map;
 pub mod fmsketch;
+pub mod fmsketch_codec;
 pub mod gc_batch_count;
 pub mod global_stats_layout;
 pub mod global_stats_sql_index;
@@ -64,6 +67,7 @@ pub mod global_topn;
 pub mod healthy_metrics;
 pub mod histogram;
 pub mod historical_stats;
+pub mod index;
 pub mod index_query;
 pub mod index_usage;
 pub mod index_usage_key;
@@ -91,7 +95,10 @@ pub mod refresher_state;
 pub mod row_estimate;
 pub mod row_sample_collector;
 pub mod sample_bytes;
+pub mod sample_collector;
+pub mod scalar_enum;
 pub mod scalar_geometry;
+pub mod sorted_builder;
 pub mod special_global_index;
 pub mod static_partitioned_analysis;
 pub mod stats_cache_inner;
@@ -111,6 +118,7 @@ pub mod stats_table_snapshot;
 pub mod stats_version;
 pub mod status;
 pub mod sync_load_concurrency;
+pub mod table;
 pub mod table_id_filter;
 pub mod topn_merge_task;
 pub mod usage_collector;
@@ -132,6 +140,7 @@ pub use analyze_jobs::{
     AnalyzeJob, AnalyzeProgress, JobType, ANALYZE_FAILED, ANALYZE_FINISHED, ANALYZE_PENDING,
     ANALYZE_RUNNING, DUMP_TIME_INTERVAL, MAX_DELTA,
 };
+pub use analyze_results::{AnalyzeHistogramLifecycle, AnalyzeResult, AnalyzeResults};
 pub use analyze_table_id::{AnalyzeTableId, NON_PARTITION_TABLE_ID};
 pub use analyze_version_policy::analyze_version_matches;
 pub use async_load::{NeededStatsMap, StatsLoadItem, TableItemId, SHARD_COUNT};
@@ -154,7 +163,8 @@ pub use batch_update::BatchUpdate;
 pub use bootstrap_sql::{gen_init_stats_histograms_sql, gen_init_stats_meta_sql, HistSqlOptions};
 pub use bounded_min_heap::BoundedMinHeap;
 pub use builder::{
-    build_hist_and_topn, BuildOptions, HistogramAndTopN, SampleCollector, SampleItem,
+    build_column, build_column_histogram, build_hist_and_topn, BuildOptions, HistogramAndTopN,
+    SampleCollector, SampleItem, SequentialRangeChecker,
 };
 pub use cache_metrics_labels::{
     stats_cache_counter_labels, stats_cache_gauge_labels, STATS_CACHE_COUNTER_LABELS,
@@ -168,6 +178,10 @@ pub use cmsketch::{
     new_cmsketch_and_topn_with_tie_stabilization, sort_topn_meta, topn_meta_compare, CodecError,
 };
 pub use cmsketch::{hash_bytes, CmsSketch, Hash128, MergeError, TopN, TopNEntry};
+pub use column::{
+    column_is_all_evicted, column_stats_validity, copy_column, empty_column, Column, ColumnInfo,
+    ColumnValidity, ColumnValidityContext,
+};
 pub use constants::{DEFAULT_HISTOGRAM_BUCKETS, DEFAULT_TOP_N_VALUE};
 pub use correlation::calc_correlation;
 pub use count_metrics::HistogramCountSummary;
@@ -183,6 +197,10 @@ pub use dynamic_partition_helpers::{flatten_partition_names, get_partition_sql};
 pub use estimate::{estimate_global_singleton_by_sketches, estimate_ndv_by_gee};
 pub use existence_map::ColAndIdxExistenceMap;
 pub use fmsketch::{FmSketch, MAX_SKETCH_SIZE};
+pub use fmsketch_codec::{
+    decode_fm_sketch, encode_fm_sketch, fm_sketch_from_proto, fm_sketch_to_proto,
+    insert_encoded_row, insert_encoded_value, FmSketchCodecError, FmSketchProto,
+};
 pub use gc_batch_count::gc_batch_count;
 pub use global_stats_layout::{new_global_stats_layout, GlobalStatsLayout};
 pub use global_stats_sql_index::to_sql_index;
@@ -194,7 +212,12 @@ pub use healthy_metrics::{
     STATS_HEALTHY_BUCKET_80_TO_100, STATS_HEALTHY_BUCKET_COUNT, STATS_HEALTHY_BUCKET_PSEUDO,
     STATS_HEALTHY_BUCKET_TOTAL, STATS_HEALTHY_BUCKET_UNNEEDED_ANALYZE,
 };
+pub use histogram::{Bucket, Histogram};
 pub use historical_stats::historical_stats_version;
+pub use index::{
+    copy_index, index_is_all_evicted, index_stats_validity, Index, IndexInfo, IndexValidity,
+    IndexValidityContext,
+};
 pub use index_query::query_index_bytes;
 pub use index_usage::{
     index_usage_access_bucket, new_index_usage_sample, IndexUsageSample, INDEX_USAGE_BUCKET_BOUNDS,
@@ -241,13 +264,20 @@ pub use queue_gate::{
 pub use refresher_state::should_rebuild_queue;
 pub use row_estimate::{calculate_skew_ratio_counts, default_row_est, RowEstimate};
 pub use row_sample_collector::{
-    adjusted_sample_rate, RowSampleCollector, SamplePolicy, SampledRow, ScannedRow, SlotStats,
-    SlotValue, DEF_ROWS_FOR_SAMPLE_RATE,
+    adjusted_sample_rate, RowSampleCollector, RowSampleCollectorProto, RowSampleProto,
+    SamplePolicy, SampledRow, ScannedRow, SlotStats, SlotValue, DEF_ROWS_FOR_SAMPLE_RATE,
 };
 pub use sample_bytes::{
     calc_total_size, sample_value_is_usable, MAX_FIELD_VARCHAR_LENGTH, MAX_SAMPLE_VALUE_LENGTH,
 };
+pub use sample_collector::{
+    legacy_row_to_datums, legacy_sample_collector_from_proto, legacy_sample_collector_to_proto,
+    sort_legacy_sample_items, LegacyRecordChunk, LegacySampleBuilder, LegacySampleBuilderError,
+    LegacySampleCollector, LegacySampleCollectorProto, LegacySampleItem,
+};
+pub use scalar_enum::{enum_range_values, MAX_NUM_STEP};
 pub use scalar_geometry::{calc_fraction, common_prefix_length, convert_bytes_to_scalar};
+pub use sorted_builder::SortedHistogramBuilder;
 pub use special_global_index::{is_special_global_index, IndexColumnInfo};
 pub use static_partitioned_analysis::{
     gen_sql_for_analyze_static_partition, gen_sql_for_analyze_static_partition_index,
@@ -284,6 +314,11 @@ pub use stats_version::{
 };
 pub use status::{StatsLoadedStatus, ALL_EVICTED, ALL_LOADED};
 pub use sync_load_concurrency::sync_load_concurrency_for_cpu;
+pub use table::{
+    pseudo_hist_coll, pseudo_table, CopyIntent, HistColl, PseudoColumnInfo, PseudoIndexInfo,
+    PseudoTableInfo, QueryColumn, QueryIndexInfo, QueryTableInfo, SharedColumn, SharedIndex,
+    StatsInfo, Table, TableMemoryUsage, PSEUDO_ROW_COUNT, PSEUDO_VERSION,
+};
 pub use table_id_filter::build_in_table_ids_string;
 pub use topn_merge_task::TopnStatsMergeTask;
 pub use usage_collector::{

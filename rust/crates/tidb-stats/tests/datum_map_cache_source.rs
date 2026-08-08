@@ -14,6 +14,8 @@
 
 //! Source-backed tests for encoded TopN Datum cache metadata.
 
+use chrono_tz::UTC;
+use tidb_codec::encode_key;
 use tidb_datatype::Datum;
 use tidb_stats::DatumMapCache;
 
@@ -47,4 +49,37 @@ fn source_cache_keys_are_owned_bytes_and_values_are_overwritable() {
     cache.put(b"mutable", Datum::new_uint(7));
     assert_eq!(cache.get(b"mutable"), Some(Datum::new_uint(7)));
     assert_eq!(cache.len(), 1);
+}
+
+#[test]
+fn source_encoded_put_preserves_index_and_general_column_boundaries() {
+    let mut cache = DatumMapCache::new();
+    let encoded = encode_key(&[Datum::Int(42)]).unwrap();
+    let decoded = cache
+        .put_encoded(b"column", &encoded, 3, false, Some(&UTC))
+        .unwrap();
+    assert_eq!(decoded, Datum::Int(42));
+    assert_eq!(cache.get(b"column"), Some(Datum::Int(42)));
+
+    let index = cache
+        .put_encoded(b"index", &encoded, 3, true, Some(&UTC))
+        .unwrap();
+    assert_eq!(index, Datum::Bytes(encoded.clone()));
+    assert_eq!(cache.get(b"index"), Some(Datum::Bytes(encoded)));
+}
+
+#[test]
+fn source_encoded_put_uses_float32_typed_decode_and_propagates_errors() {
+    let mut cache = DatumMapCache::new();
+    let encoded = encode_key(&[Datum::Real(1.25)]).unwrap();
+    assert_eq!(
+        cache
+            .put_encoded(b"float", &encoded, 4, false, Some(&UTC))
+            .unwrap(),
+        Datum::Float32(1.25)
+    );
+    assert!(cache
+        .put_encoded(b"bad", &[0xff], 3, false, Some(&UTC))
+        .is_err());
+    assert!(cache.get(b"bad").is_none());
 }

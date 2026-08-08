@@ -69,6 +69,7 @@ use tidb_util::fastrand;
 
 use crate::cmsketch::hash_bytes;
 use crate::fmsketch::{FmSketch, MAX_SKETCH_SIZE};
+use crate::{fm_sketch_from_proto, fm_sketch_to_proto, FmSketchProto};
 
 /// Go `config.DefRowsForSampleRate`: roughly how many rows an `ANALYZE` aims
 /// to look at.
@@ -236,6 +237,21 @@ pub struct SampledRow {
     pub ordinal: i64,
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct RowSampleProto {
+    pub row: Vec<Vec<u8>>,
+    pub weight: i64,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct RowSampleCollectorProto {
+    pub samples: Vec<RowSampleProto>,
+    pub null_counts: Vec<i64>,
+    pub count: i64,
+    pub fm_sketches: Vec<FmSketchProto>,
+    pub total_sizes: Vec<i64>,
+}
+
 /// Go's `baseCollector` plus whichever of its two sampling policies is in
 /// force.
 ///
@@ -313,21 +329,197 @@ impl RowSampleCollector {
             self.slots.len(),
             "a scanned row must carry one value per collector slot"
         );
-        self.count += 1;
+        self.count = self.count.wrapping_add(1);
         for (position, value) in row.slots.iter().enumerate() {
             if value.is_null {
-                self.slots[position].null_count += 1;
+                self.slots[position].null_count = self.slots[position].null_count.wrapping_add(1);
                 continue;
             }
-            self.slots[position].total_size += value.size;
+            self.slots[position].total_size =
+                self.slots[position].total_size.wrapping_add(value.size);
             // Go's `FMSketch.InsertValue` hashes `codec.EncodeValue` with
             // murmur3's 64-bit sum, which is the first lane of its 128-bit
             // one.
             self.sketches[position].insert_hash(hash_bytes(value.encoded_value).h1);
         }
         let ordinal = self.scanned_ordinal;
-        self.scanned_ordinal += 1;
+        self.scanned_ordinal = self.scanned_ordinal.wrapping_add(1);
         self.sample_row(row.columns, ordinal)
+    }
+
+    /// Go `MergeCollector` for both reservoir and Bernoulli collectors.
+    /// Whole-scan facts merge independently of which rows survive sampling.
+    pub fn merge(&mut self, mut other: Self) -> Result<(), SampleMemoryExceeded> {
+        assert_eq!(
+            self.slots.len(),
+            other.slots.len(),
+            "collector slot count differs"
+        );
+        self.count = self.count.wrapping_add(other.count);
+        self.scanned_ordinal = self.scanned_ordinal.wrapping_add(other.scanned_ordinal);
+        for ((slot, sketch), (other_slot, other_sketch)) in self
+            .slots
+            .iter_mut()
+            .zip(&mut self.sketches)
+            .zip(other.slots.iter().zip(&other.sketches))
+        {
+            slot.null_count = slot.null_count.wrapping_add(other_slot.null_count);
+            slot.total_size = slot.total_size.wrapping_add(other_slot.total_size);
+            sketch.merge(other_sketch);
+        }
+
+        match (self.policy, other.policy) {
+            (
+                SamplePolicy::Reservoir { max_sample_size },
+                SamplePolicy::Reservoir {
+                    max_sample_size: other_size,
+                },
+            ) => {
+                assert_eq!(max_sample_size, other_size, "reservoir sizes differ");
+                for (weight, columns, ordinal) in other.samples.drain(..) {
+                    if max_sample_size == 0 {
+                        continue;
+                    }
+                    if self.samples.len() < max_sample_size {
+                        self.charge(&columns)?;
+                        self.samples.push((weight, columns, ordinal));
+                        if self.samples.len() == max_sample_size {
+                            self.heapify();
+                        }
+                    } else if self.samples[0].0 < weight {
+                        self.samples[0] = (weight, columns, ordinal);
+                        self.sift_down(0);
+                    }
+                }
+            }
+            (
+                SamplePolicy::Bernoulli { sample_rate },
+                SamplePolicy::Bernoulli {
+                    sample_rate: other_rate,
+                },
+            ) => {
+                assert_eq!(sample_rate, other_rate, "sample rates differ");
+                for (_, columns, ordinal) in other.samples.drain(..) {
+                    self.charge(&columns)?;
+                    self.samples.push((0, columns, ordinal));
+                }
+            }
+            _ => panic!("cannot merge different row-sampling policies"),
+        }
+        Ok(())
+    }
+
+    /// Go `DestroyAndPutToPool`: eagerly releases every retained row and
+    /// resets all whole-scan facts.
+    pub fn destroy(&mut self) {
+        self.count = 0;
+        self.scanned_ordinal = 0;
+        self.consumed_bytes = 0;
+        self.samples.clear();
+        for slot in &mut self.slots {
+            *slot = SlotStats::default();
+        }
+        for sketch in &mut self.sketches {
+            *sketch = FmSketch::new(MAX_SKETCH_SIZE);
+        }
+    }
+
+    /// Go `baseCollector.ToProto` and `RowSamplesToProto`.
+    #[must_use]
+    pub fn to_proto(&self) -> RowSampleCollectorProto {
+        RowSampleCollectorProto {
+            samples: self
+                .samples
+                .iter()
+                .map(|(weight, columns, _)| RowSampleProto {
+                    row: columns.iter().map(sample_column_bytes).collect(),
+                    weight: *weight,
+                })
+                .collect(),
+            null_counts: self.slots.iter().map(|slot| slot.null_count).collect(),
+            count: self.count,
+            fm_sketches: self
+                .sketches
+                .iter()
+                .map(|sketch| fm_sketch_to_proto(Some(sketch)))
+                .collect(),
+            total_sizes: self.slots.iter().map(|slot| slot.total_size).collect(),
+        }
+    }
+
+    /// Go `baseCollector.FromProto`. Valid TiDB protobufs carry matching
+    /// null-count, total-size, and FM-sketch slot counts.
+    pub fn from_proto(
+        proto: &RowSampleCollectorProto,
+        policy: SamplePolicy,
+        quota: SampleMemoryQuota,
+    ) -> Result<Self, SampleMemoryExceeded> {
+        assert_eq!(
+            proto.null_counts.len(),
+            proto.total_sizes.len(),
+            "row-sample protobuf slot counts differ"
+        );
+        assert_eq!(
+            proto.null_counts.len(),
+            proto.fm_sketches.len(),
+            "row-sample protobuf sketch counts differ"
+        );
+        let sketches: Vec<_> = proto
+            .fm_sketches
+            .iter()
+            .map(|sketch| {
+                fm_sketch_from_proto(Some(sketch)).expect("present FM protobuf returned nil")
+            })
+            .collect();
+        let slots = proto
+            .null_counts
+            .iter()
+            .zip(&proto.total_sizes)
+            .zip(&sketches)
+            .map(|((null_count, total_size), sketch)| SlotStats {
+                null_count: *null_count,
+                total_size: *total_size,
+                ndv: sketch.ndv(),
+            })
+            .collect();
+        let samples = proto
+            .samples
+            .iter()
+            .enumerate()
+            .map(|(ordinal, sample)| {
+                (
+                    sample.weight,
+                    sample
+                        .row
+                        .iter()
+                        .map(|column| Datum::Bytes(column.clone()))
+                        .collect(),
+                    ordinal as i64,
+                )
+            })
+            .collect();
+        let memory_size = proto_memory_usage(proto);
+        if quota
+            .bytes()
+            .is_some_and(|limit| memory_size as u64 > limit)
+        {
+            return Err(SampleMemoryExceeded);
+        }
+        Ok(Self {
+            policy,
+            count: proto.count,
+            slots,
+            sketches,
+            samples,
+            scanned_ordinal: proto.samples.len() as i64,
+            quota,
+            consumed_bytes: memory_size as u64,
+        })
+    }
+
+    #[must_use]
+    pub const fn consumed_memory_bytes(&self) -> u64 {
+        self.consumed_bytes
     }
 
     /// The bytes one kept row costs.
@@ -455,4 +647,34 @@ fn random_float64() -> f64 {
 /// Go `rand.Int63()`.
 fn random_int63() -> i64 {
     fastrand::uint64_n(1 << 63) as i64
+}
+
+fn sample_column_bytes(column: &Datum) -> Vec<u8> {
+    match column {
+        Datum::Null => vec![tidb_codec::NIL_FLAG],
+        Datum::Bytes(bytes) => bytes.clone(),
+        Datum::String(string) => string.bytes().to_vec(),
+        _ => panic!("row sample column is not an encoded byte datum"),
+    }
+}
+
+fn proto_memory_usage(proto: &RowSampleCollectorProto) -> i64 {
+    const EMPTY_DATUM_SIZE: i64 = 72;
+    const EMPTY_RESERVOIR_SAMPLE_ITEM_SIZE: i64 = 48;
+    const REFERENCE_SIZE: i64 = 8;
+    if proto.samples.is_empty() {
+        return 0;
+    }
+    let row_len = proto.samples[0].row.len() as i64;
+    let mandatory = (proto.samples.len() as i64).wrapping_mul(
+        row_len
+            .wrapping_mul(EMPTY_DATUM_SIZE)
+            .wrapping_add(EMPTY_RESERVOIR_SAMPLE_ITEM_SIZE)
+            .wrapping_add(REFERENCE_SIZE),
+    );
+    proto.samples.iter().fold(mandatory, |total, sample| {
+        sample.row.iter().fold(total, |total, column| {
+            total.wrapping_add(column.len() as i64)
+        })
+    })
 }

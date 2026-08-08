@@ -147,19 +147,33 @@ struct TopNWithRange {
 /// The histogram pass walks sample indices in order, so the ranges it must
 /// skip can be walked in order too; this is that one shared cursor rather
 /// than a per-index search.
-struct SequentialRangeChecker {
+pub struct SequentialRangeChecker {
     ranges: Vec<(i64, i64)>,
     current: usize,
 }
 
 impl SequentialRangeChecker {
+    /// Creates the source checker from inclusive `(start, end)` ranges and
+    /// sorts an unsorted input by its start index.
+    #[must_use]
+    pub fn from_ranges(ranges: &[(i64, i64)]) -> Self {
+        let mut ranges = ranges.to_vec();
+        ranges.sort_by_key(|(start, _)| *start);
+        Self { ranges, current: 0 }
+    }
+
     fn new(ranges: &[TopNWithRange]) -> Self {
-        let mut ranges: Vec<(i64, i64)> = ranges
+        let ranges: Vec<(i64, i64)> = ranges
             .iter()
             .map(|item| (item.start_idx, item.end_idx))
             .collect();
-        ranges.sort_by_key(|(start, _)| *start);
-        Self { ranges, current: 0 }
+        Self::from_ranges(&ranges)
+    }
+
+    /// Go `IsIndexInTopNRange`. Calls are intentionally stateful and assume
+    /// sequential indices, so querying an earlier completed range stays false.
+    pub fn is_index_in_topn_range(&mut self, idx: i64) -> bool {
+        self.contains(idx)
     }
 
     fn contains(&mut self, idx: i64) -> bool {
@@ -432,6 +446,63 @@ pub fn build_hist_and_topn(
         histogram,
         topn: Some(topn),
     }
+}
+
+/// Go `BuildColumnHist`, using the caller-supplied whole-table count, NDV,
+/// and NULL count rather than the collector's FM-sketch summary.
+#[must_use]
+pub fn build_column_histogram(
+    id: i64,
+    collector: &SampleCollector,
+    num_buckets: usize,
+    count: i64,
+    ndv: i64,
+    null_count: i64,
+) -> Histogram {
+    let ndv = ndv.min(count);
+    let mut histogram = Histogram {
+        id,
+        ndv,
+        null_count,
+        tot_col_size: collector.total_size,
+        ..Histogram::default()
+    };
+    if count == 0 || collector.samples.is_empty() {
+        return histogram;
+    }
+
+    let mut samples = collector.samples.clone();
+    samples.sort_by(|left, right| left.encoded.cmp(&right.encoded));
+    let mut checker = SequentialRangeChecker::from_ranges(&[]);
+    build_hist(
+        &mut histogram,
+        &samples,
+        count,
+        ndv,
+        num_buckets as i64,
+        samples.len() as i64,
+        &mut checker,
+    );
+    let corr_xy_sum = samples
+        .iter()
+        .enumerate()
+        .map(|(position, sample)| position as f64 * sample.ordinal as f64)
+        .sum();
+    histogram.correlation = calc_correlation(samples.len() as i64, corr_xy_sum);
+    histogram
+}
+
+/// Go `BuildColumn`, forwarding the collector's whole-scan summary.
+#[must_use]
+pub fn build_column(id: i64, collector: &SampleCollector, num_buckets: usize) -> Histogram {
+    build_column_histogram(
+        id,
+        collector,
+        num_buckets,
+        collector.count,
+        collector.ndv,
+        collector.null_count,
+    )
 }
 
 /// Go `buildHist`.

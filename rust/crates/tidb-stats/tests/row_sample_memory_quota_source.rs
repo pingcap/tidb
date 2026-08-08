@@ -33,8 +33,10 @@
 
 use tidb_datatype::Datum;
 use tidb_stats::row_sample_collector::{
-    RowSampleCollector, SampleMemoryQuota, SamplePolicy, ScannedRow, SlotValue,
+    RowSampleCollector, RowSampleCollectorProto, RowSampleProto, SampleMemoryQuota, SamplePolicy,
+    ScannedRow, SlotValue,
 };
+use tidb_stats::FmSketchProto;
 
 fn offer(collector: &mut RowSampleCollector, value: i64) -> Result<(), String> {
     let encoded = value.to_be_bytes().to_vec();
@@ -94,12 +96,149 @@ fn gos_default_quota_is_no_bound_at_all() {
     assert_eq!(SampleMemoryQuota::unlimited().bytes(), None);
     assert_eq!(SampleMemoryQuota::from_setting(4096).bytes(), Some(4096));
 
-    let mut collector =
-        RowSampleCollector::new(1, SamplePolicy::Bernoulli { sample_rate: 1.0 });
+    let mut collector = RowSampleCollector::new(1, SamplePolicy::Bernoulli { sample_rate: 1.0 });
     for value in 0..5_000 {
         offer(&mut collector, value).expect("the default quota bounds nothing");
     }
     let (scanned, _, sampled) = collector.into_parts();
     assert_eq!(scanned, 5_000);
     assert_eq!(sampled.len(), 5_000);
+}
+
+#[test]
+fn source_bernoulli_merge_combines_scan_facts_and_samples() {
+    let policy = SamplePolicy::Bernoulli { sample_rate: 1.0 };
+    let mut left = RowSampleCollector::new(1, policy);
+    let mut right = RowSampleCollector::new(1, policy);
+    offer(&mut left, 1).unwrap();
+    offer(&mut right, 2).unwrap();
+    left.merge(right).unwrap();
+    let (count, slots, samples) = left.into_parts();
+    assert_eq!(count, 2);
+    assert_eq!(slots[0].total_size, 16);
+    assert_eq!(slots[0].ndv, 2);
+    assert_eq!(samples.len(), 2);
+}
+
+#[test]
+fn source_destroy_resets_rows_slots_and_sketches() {
+    let mut collector = RowSampleCollector::new(1, SamplePolicy::Bernoulli { sample_rate: 1.0 });
+    offer(&mut collector, 1).unwrap();
+    collector.destroy();
+    let (count, slots, samples) = collector.into_parts();
+    assert_eq!(count, 0);
+    assert_eq!(slots[0].null_count, 0);
+    assert_eq!(slots[0].total_size, 0);
+    assert_eq!(slots[0].ndv, 0);
+    assert!(samples.is_empty());
+}
+
+#[test]
+fn source_row_sample_proto_restores_weights_bytes_and_memory_accounting() {
+    let proto = RowSampleCollectorProto {
+        samples: vec![
+            RowSampleProto {
+                row: vec![vec![0], vec![1, 2]],
+                weight: 9,
+            },
+            RowSampleProto {
+                row: vec![vec![3, 4, 5], vec![0]],
+                weight: 7,
+            },
+        ],
+        null_counts: vec![1, 0],
+        count: 8,
+        fm_sketches: vec![FmSketchProto::default(), FmSketchProto::default()],
+        total_sizes: vec![10, 20],
+    };
+    let collector = RowSampleCollector::from_proto(
+        &proto,
+        SamplePolicy::Reservoir { max_sample_size: 2 },
+        SampleMemoryQuota::unlimited(),
+    )
+    .unwrap();
+    // 2 * (2 Datum structs * 72 + empty item 48 + reference 8) + 7 payload bytes.
+    assert_eq!(collector.consumed_memory_bytes(), 407);
+    assert_eq!(collector.to_proto(), proto);
+
+    assert!(RowSampleCollector::from_proto(
+        &proto,
+        SamplePolicy::Reservoir { max_sample_size: 2 },
+        SampleMemoryQuota::from_setting(406),
+    )
+    .is_err());
+}
+
+#[test]
+fn source_row_samples_to_proto_encodes_null_as_the_nil_flag() {
+    let mut collector = RowSampleCollector::new(1, SamplePolicy::Bernoulli { sample_rate: 1.0 });
+    let columns = [Datum::Null];
+    let slots = [SlotValue {
+        encoded_value: &[0],
+        size: 1,
+        is_null: true,
+    }];
+    collector
+        .collect(&ScannedRow {
+            columns: &columns,
+            slots: &slots,
+        })
+        .unwrap();
+    assert_eq!(
+        collector.to_proto().samples[0].row[0],
+        [tidb_codec::NIL_FLAG]
+    );
+}
+
+#[test]
+#[should_panic(expected = "row-sample protobuf slot counts differ")]
+fn source_malformed_row_sample_proto_slot_lengths_are_rejected() {
+    let _ = RowSampleCollector::from_proto(
+        &RowSampleCollectorProto {
+            null_counts: vec![0],
+            ..RowSampleCollectorProto::default()
+        },
+        SamplePolicy::Bernoulli { sample_rate: 1.0 },
+        SampleMemoryQuota::unlimited(),
+    );
+}
+
+#[test]
+fn source_row_scan_int64_counters_wrap_at_boundaries() {
+    let proto = RowSampleCollectorProto {
+        samples: Vec::new(),
+        null_counts: vec![0, i64::MAX],
+        count: i64::MAX,
+        fm_sketches: vec![FmSketchProto::default(), FmSketchProto::default()],
+        total_sizes: vec![i64::MAX, 0],
+    };
+    let mut collector = RowSampleCollector::from_proto(
+        &proto,
+        SamplePolicy::Reservoir { max_sample_size: 0 },
+        SampleMemoryQuota::unlimited(),
+    )
+    .unwrap();
+    let columns = [Datum::Bytes(vec![1]), Datum::Null];
+    let slots = [
+        SlotValue {
+            encoded_value: &[1],
+            size: 1,
+            is_null: false,
+        },
+        SlotValue {
+            encoded_value: &[0],
+            size: 0,
+            is_null: true,
+        },
+    ];
+    collector
+        .collect(&ScannedRow {
+            columns: &columns,
+            slots: &slots,
+        })
+        .unwrap();
+    let wrapped = collector.to_proto();
+    assert_eq!(wrapped.count, i64::MIN);
+    assert_eq!(wrapped.total_sizes[0], i64::MIN);
+    assert_eq!(wrapped.null_counts[1], i64::MIN);
 }

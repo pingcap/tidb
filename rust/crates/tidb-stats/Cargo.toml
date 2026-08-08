@@ -13,7 +13,9 @@ build = "../../scripts/aggregate-tests.rs"
 workspace = true
 
 [dependencies]
+chrono.workspace = true
 chrono-tz.workspace = true
+tidb-codec = { path = "../tidb-codec" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-util = { path = "../tidb-util" }
 
