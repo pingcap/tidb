@@ -18,10 +18,12 @@
 //! scenarios, then pin the encoded-datum and tipb protobuf boundaries owned
 //! by the adjacent codec layer.
 
+use chrono::Utc;
+use tidb_datatype::Datum;
 use tidb_stats::{
-    decode_fm_sketch, encode_fm_sketch, fm_sketch_from_proto, fm_sketch_to_proto,
-    insert_encoded_row, insert_encoded_value, FmSketch, FmSketchCodecError, FmSketchProto,
-    MAX_SKETCH_SIZE,
+    decode_fm_sketch, encode_fm_sketch, fm_sketch_from_proto, fm_sketch_to_proto, hash_datum,
+    hash_row, insert_encoded_row, insert_encoded_value, insert_row_value, insert_value, FmSketch,
+    FmSketchCodecError, FmSketchProto, MAX_SKETCH_SIZE,
 };
 
 #[test]
@@ -111,6 +113,13 @@ fn source_proto_nil_empty_and_raw_state_boundaries_match() {
 fn source_wire_round_trip_and_packed_repeated_values_match() {
     assert_eq!(encode_fm_sketch(None), None);
     assert_eq!(decode_fm_sketch(None).unwrap(), None);
+    assert_eq!(
+        encode_fm_sketch(Some(&FmSketch::new(8))),
+        Some(vec![0x08, 0x00])
+    );
+    let decoded_empty = decode_fm_sketch(Some(&[])).unwrap().unwrap();
+    assert!(decoded_empty.is_empty());
+    assert_eq!(decoded_empty.max_size(), MAX_SKETCH_SIZE);
     let sketch = FmSketch::from_raw_parts(1, 5, [2, 4, 6]);
     let bytes = encode_fm_sketch(Some(&sketch)).unwrap();
     let decoded = decode_fm_sketch(Some(&bytes)).unwrap().unwrap();
@@ -145,6 +154,19 @@ fn source_wire_rejects_malformed_inputs() {
         .unwrap_err(),
         FmSketchCodecError::VarintOverflow
     );
+    for wrong_known_wire in [
+        &[0x0a, 0x00][..],
+        &[0x15, 0x00, 0x00, 0x00, 0x00][..],
+        &[0x00, 0x00][..],
+        &[0x1c][..],
+    ] {
+        assert_eq!(
+            decode_fm_sketch(Some(wrong_known_wire)).unwrap_err(),
+            FmSketchCodecError::InvalidWireType
+        );
+    }
+    let balanced_unknown_group = [0x1b, 0x20, 0x01, 0x1c];
+    assert!(decode_fm_sketch(Some(&balanced_unknown_group)).is_ok());
 }
 
 #[test]
@@ -155,4 +177,32 @@ fn source_encoded_value_and_row_hash_the_same_stream() {
     insert_encoded_row(&mut row, [b"a".as_slice(), b"bc".as_slice()]);
     assert_eq!(value, row);
     assert_eq!(value.len(), 1);
+}
+
+#[test]
+fn source_typed_insert_value_and_row_own_the_datum_encoding() {
+    let values = [Datum::Int(1), Datum::Bytes(b"abc".to_vec())];
+    let encoded_first = tidb_codec::encode_value(&values[..1]).unwrap();
+    assert_eq!(
+        hash_datum(&Utc, &values[0]).unwrap(),
+        tidb_stats::hash_bytes(&encoded_first).h1
+    );
+
+    let encoded_row = tidb_codec::encode_value(&values).unwrap();
+    assert_eq!(
+        hash_row(&Utc, &values).unwrap(),
+        tidb_stats::hash_bytes(&encoded_row).h1
+    );
+
+    let mut typed_value = FmSketch::new(8);
+    insert_value(&mut typed_value, &Utc, &values[0]).unwrap();
+    let mut encoded_value = FmSketch::new(8);
+    insert_encoded_value(&mut encoded_value, &encoded_first);
+    assert_eq!(typed_value, encoded_value);
+
+    let mut typed_row = FmSketch::new(8);
+    insert_row_value(&mut typed_row, &Utc, &values).unwrap();
+    let mut encoded_row_sketch = FmSketch::new(8);
+    insert_encoded_value(&mut encoded_row_sketch, &encoded_row);
+    assert_eq!(typed_row, encoded_row_sketch);
 }
