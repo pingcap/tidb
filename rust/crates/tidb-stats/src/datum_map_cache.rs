@@ -14,13 +14,15 @@
 
 //! Encoded-TopN to Datum cache metadata from `pkg/statistics/cmsketch_util.go`.
 //!
-//! The Go owner combines this cache with schema-aware codec conversion.  This
-//! leaf owns the byte-keyed cache and accepts an already-decoded Datum so that
-//! conversion remains an explicit `tidb-codec`/field-type boundary.
+//! The cache owns the same schema-aware conversion boundary as Go: index TopN
+//! values remain bytes, time and float fields use typed decoding, and every
+//! other column uses the ordinary one-datum decoder.
 
 use std::collections::HashMap;
 
-use tidb_datatype::Datum;
+use chrono::TimeZone;
+use tidb_codec::{decode_one, decode_one_typed_in_timezone, CodecError};
+use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 
 /// Caches decoded Datum values by their immutable encoded TopN bytes.
 #[derive(Clone, Debug, Default)]
@@ -47,6 +49,28 @@ impl DatumMapCache {
     pub fn put(&mut self, key: &[u8], datum: Datum) -> Datum {
         self.datum_map.insert(key.to_vec(), datum.clone());
         datum
+    }
+
+    /// Go `DatumMapCache.Put` and `topNMetaToDatum`.
+    pub fn put_encoded<TZ: TimeZone>(
+        &mut self,
+        cache_key: &[u8],
+        encoded_value: &[u8],
+        mysql_type: u8,
+        is_index: bool,
+        timezone: Option<&TZ>,
+    ) -> Result<Datum, CodecError> {
+        let datum = if is_index {
+            Datum::Bytes(encoded_value.to_vec())
+        } else {
+            let code = FieldTypeCode::from_mysql_type(mysql_type);
+            if code.is_type_time() || code.is_type_float() {
+                decode_one_typed_in_timezone(encoded_value, &FieldType::new(code), timezone)?.1
+            } else {
+                decode_one(encoded_value)?.1
+            }
+        };
+        Ok(self.put(cache_key, datum))
     }
 
     /// Returns the number of cached encoded keys.
