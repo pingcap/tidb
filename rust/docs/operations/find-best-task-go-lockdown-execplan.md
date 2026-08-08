@@ -21,7 +21,8 @@ No oracle ratchet is required to move. The deliverable is classification and beh
 - [x] (2026-08-08) Completed the source-order reachability audit. Ported the forced-path `preferRange` bypass and `matchProperty` Case 2 fixed-prefix rule; made parsed TABLESAMPLE fail closed rather than execute an ordinary scan.
 - [x] (2026-08-08) Added source, AST, direct-test, verdict, compile-anchor, evidence, and mutation-receipt gates; all three central gate tests pass.
 - [x] (2026-08-08) Killed eight independent boundary mutations and restored every production site. One initial point-get mutation survived the old test, causing a new closed/low-open/high-open receipt to be added before the rerun killed it.
-- [ ] Run Ready validation, clean-worktree locked-workspace validation, ratchet checks, dual-push, ref verification, and reclaim this unit's worktree and target directory.
+- [x] (2026-08-08) Completed the Ready and independent clean-worktree gates at candidate `295f75dacadd83820cf8d8e0043dad739a4d5dd7`: exact Go oracle tests, all `tidb-executor` targets, strict crate Clippy, full locked workspace tests, workspace Clippy, formatting, checker, diff, repository lint, and direct ratchets 0/100/1/78 passed.
+- [ ] Dual-push the final documentation SHA, verify both remote refs, and reclaim this unit's exact worktrees and target directories.
 
 ## Surprises & Discoveries
 
@@ -146,7 +147,7 @@ The existing Go AST inventory tool at `rust/difftests/tools/go_package_lockdown_
 
 ## Outcomes & Retrospective
 
-The lockdown closed 1,728 obligations with no unclassified row: 854 PORTED, 126 DECLINED, and 748 UNREACHABLE. Three accepted-tip defects or silent gaps were resolved: forced paths now survive the `preferRange` post-filter, a single constant index prefix is skipped only after Case 1 has had the chance to match the requested fixed column, and TABLESAMPLE refuses rather than returning the ordinary table scan. The direct Go `TestFindBestTaskSuite` passed through the failpoint wrapper. Eight boundary mutations were killed and restored.
+The lockdown closed 1,728 obligations with no unclassified row: 854 PORTED, 126 DECLINED, and 748 UNREACHABLE. Three accepted-tip defects or silent gaps were resolved: forced paths now survive the `preferRange` post-filter, a single constant index prefix is skipped only after Case 1 has had the chance to match the requested fixed column, and TABLESAMPLE refuses rather than returning the ordinary table scan. The direct Go `TestFindBestTaskSuite` and executor `TestTableSampleBasic` oracle passed through the failpoint wrapper. Eight boundary mutations were killed and restored. The crate and independent full-workspace Ready gates passed without moving any oracle ratchet; zero ratchet movement is a successful completeness result for this unit.
 
 No result-oracle ratchet moved; direct grep still reads query 0, catalog 100, table 1, integration 78. This is explicitly a successful completeness increment rather than ratchet movement.
 
