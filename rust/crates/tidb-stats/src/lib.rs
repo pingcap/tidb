@@ -288,7 +288,10 @@ pub use sample_collector::{
     LegacySampleCollector, LegacySampleCollectorProto, LegacySampleItem, LegacySampleRng,
 };
 pub use scalar_enum::{enum_range_values, MAX_NUM_STEP};
-pub use scalar_geometry::{calc_fraction, common_prefix_length, convert_bytes_to_scalar};
+pub use scalar_geometry::{
+    calc_fraction, calc_fraction_from_datums, common_prefix_length, convert_bytes_to_scalar,
+    convert_datum_to_scalar,
+};
 pub use sorted_builder::SortedHistogramBuilder;
 pub use special_global_index::{is_special_global_index, IndexColumnInfo};
 pub use static_partitioned_analysis::{
