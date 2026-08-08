@@ -78,7 +78,9 @@ use tidb_executor::ddl::column_field_type::{
     build_field_type as build_shared_field_type, column_type_code as shared_column_type_code,
     process_column_flags, ColumnTypeError,
 };
-use tidb_model::column::{ColumnDefaultValue, ColumnInfo, CURR_LATEST_COLUMN_INFO_VERSION};
+use tidb_model::column::{
+    ColumnDefaultValue, ColumnInfo, GoStringSet, CURR_LATEST_COLUMN_INFO_VERSION,
+};
 use tidb_model::index::{IndexColumn, IndexInfo};
 use tidb_model::schema_state::SchemaState;
 use tidb_model::table_info::{TableInfo, TABLE_INFO_VERSION5};
@@ -548,7 +550,10 @@ fn build_column(
         default_is_expr: false,
         generated_expr_string: String::new(),
         generated_stored: false,
-        dependences: std::collections::BTreeSet::new(),
+        // Go `columnDefToCol` leaves this map nil for every supported normal
+        // column. It allocates only for generated columns, which this tier
+        // refuses before metadata construction.
+        dependences: GoStringSet::default(),
         field_type: FieldType::new(FieldTypeCode::LongLong),
         changing_field_type: None,
         state: SchemaState::PUBLIC,
