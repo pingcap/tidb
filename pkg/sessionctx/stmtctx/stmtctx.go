@@ -510,6 +510,21 @@ type StatementContext struct {
 	// uses this to enable the fts-like-fallback round for cost competition even
 	// when round 1's native plan is executable.
 	AlternativeLogicalPlanHasPredicateContextMatch bool
+	// AlternativeLogicalPlanMixedStorageEngines indicates that round 1's chosen
+	// physical plan reads from both TiKV and TiFlash. The round driver uses this
+	// to enable the tikv-only / tiflash-only rounds, which rebuild the plan with
+	// a single storage engine so a fully homogeneous plan competes on cost.
+	AlternativeLogicalPlanMixedStorageEngines bool
+	// AlternativeLogicalPlanMissingTiFlashPath indicates that some DataSource in
+	// round 1's build ended up without any TiFlash access path (no replica, a
+	// system table, or a FOR UPDATE read). A fully-TiFlash plan is impossible,
+	// so the tiflash-only round is skipped.
+	AlternativeLogicalPlanMissingTiFlashPath bool
+	// AlternativeLogicalPlanHasStoreTypeHint indicates that some DataSource in
+	// round 1's build carries an explicit engine preference from a
+	// READ_FROM_STORAGE hint. The engine-restricted rounds are skipped so the
+	// cost comparison cannot override the user's explicit engine choice.
+	AlternativeLogicalPlanHasStoreTypeHint bool
 	// FTSFunctionIsUsed indicates that FTS_MATCH_WORD() appears in the current
 	// statement, allowing the optimizer to run FTS-specific validation and
 	// rewrite rules only when needed.
@@ -691,6 +706,9 @@ func (sc *StatementContext) ResetAlternativeLogicalPlanSignals() {
 	sc.AlternativeLogicalPlanHasPredicateContextMatch = false
 	sc.AlternativeLogicalPlanPreferCorrelate = false
 	sc.AlternativeLogicalPlanSemiJoinRewrite = false
+	sc.AlternativeLogicalPlanMixedStorageEngines = false
+	sc.AlternativeLogicalPlanMissingTiFlashPath = false
+	sc.AlternativeLogicalPlanHasStoreTypeHint = false
 	sc.FTSFunctionIsUsed = false
 }
 
@@ -723,6 +741,24 @@ func (sc *StatementContext) MarkAlternativeLogicalPlanPreferCorrelate() {
 // found a semi join that can try an extra SEMI_JOIN_REWRITE-based logical round.
 func (sc *StatementContext) MarkAlternativeLogicalPlanSemiJoinRewrite() {
 	sc.AlternativeLogicalPlanSemiJoinRewrite = true
+}
+
+// MarkAlternativeLogicalPlanMixedStorageEngines records that round 1's chosen
+// physical plan reads from both TiKV and TiFlash.
+func (sc *StatementContext) MarkAlternativeLogicalPlanMixedStorageEngines() {
+	sc.AlternativeLogicalPlanMixedStorageEngines = true
+}
+
+// MarkAlternativeLogicalPlanMissingTiFlashPath records that a DataSource in the
+// current build has no TiFlash access path, making a fully-TiFlash plan impossible.
+func (sc *StatementContext) MarkAlternativeLogicalPlanMissingTiFlashPath() {
+	sc.AlternativeLogicalPlanMissingTiFlashPath = true
+}
+
+// MarkAlternativeLogicalPlanHasStoreTypeHint records that a DataSource in the
+// current build carries an explicit READ_FROM_STORAGE engine preference.
+func (sc *StatementContext) MarkAlternativeLogicalPlanHasStoreTypeHint() {
+	sc.AlternativeLogicalPlanHasStoreTypeHint = true
 }
 
 // CtxID returns the context id of the statement
