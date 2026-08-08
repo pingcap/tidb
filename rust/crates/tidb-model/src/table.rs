@@ -56,15 +56,6 @@ mod ast_enum_serde {
                 ) -> Result<S::Ok, S::Error> {
                     serde::Serialize::serialize(&value.0, serializer)
                 }
-
-                pub fn deserialize<'de, D: serde::Deserializer<'de>>(
-                    deserializer: D,
-                ) -> Result<$ty, D::Error> {
-                    Ok(<$ty>::from(
-                        <Option<$repr> as serde::Deserialize>::deserialize(deserializer)?
-                            .unwrap_or_default(),
-                    ))
-                }
             }
         };
     }
@@ -81,7 +72,7 @@ mod ast_enum_serde {
 mod user_identity_serde {
     use super::UserIdentity;
 
-    #[derive(serde::Serialize, serde::Deserialize)]
+    #[derive(serde::Serialize)]
     struct Wire {
         #[serde(rename = "Username", default)]
         username: String,
@@ -110,19 +101,6 @@ mod user_identity_serde {
         }
     }
 
-    impl From<Wire> for UserIdentity {
-        fn from(wire: Wire) -> Self {
-            UserIdentity {
-                username: wire.username,
-                hostname: wire.hostname,
-                current_user: wire.current_user,
-                auth_username: wire.auth_username,
-                auth_hostname: wire.auth_hostname,
-                auth_plugin: wire.auth_plugin,
-            }
-        }
-    }
-
     /// A Go nil `*auth.UserIdentity` marshals as `null`.
     pub fn serialize<S: serde::Serializer>(
         value: &Option<Box<UserIdentity>>,
@@ -132,13 +110,6 @@ mod user_identity_serde {
             Some(user) => serde::Serialize::serialize(&Wire::from(&**user), serializer),
             None => serializer.serialize_none(),
         }
-    }
-
-    pub fn deserialize<'de, D: serde::Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<Option<Box<UserIdentity>>, D::Error> {
-        let wire = <Option<Wire> as serde::Deserialize>::deserialize(deserializer)?;
-        Ok(wire.map(|wire| Box::new(UserIdentity::from(wire))))
     }
 }
 
@@ -191,20 +162,13 @@ impl<'de> serde::de::DeserializeSeed<'de> for GoTimeSeed<'_> {
 }
 
 mod go_time_serde {
-    use super::{format_go_time, parse_go_time, DateTime, FixedOffset};
+    use super::{format_go_time, DateTime, FixedOffset};
 
     pub fn serialize<S: serde::Serializer>(
         value: &DateTime<FixedOffset>,
         serializer: S,
     ) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(&format_go_time(value))
-    }
-
-    pub fn deserialize<'de, D: serde::Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<DateTime<FixedOffset>, D::Error> {
-        let text = <String as serde::Deserialize>::deserialize(deserializer)?;
-        parse_go_time(&text)
     }
 }
 
@@ -373,98 +337,51 @@ impl serde::Serialize for StatsOptions {
     }
 }
 
-impl<'de> serde::Deserialize<'de> for StatsOptions {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        struct Present<T> {
-            present: bool,
-            value: Option<T>,
-        }
-
-        impl<T> Default for Present<T> {
-            fn default() -> Self {
-                Self {
-                    present: false,
-                    value: None,
-                }
-            }
-        }
-
-        fn present<'de, D, T>(deserializer: D) -> Result<Present<T>, D::Error>
-        where
-            D: serde::Deserializer<'de>,
-            T: serde::Deserialize<'de>,
-        {
-            Ok(Present {
-                present: true,
-                value: <Option<T> as serde::Deserialize>::deserialize(deserializer)?,
-            })
-        }
-
-        #[derive(serde::Deserialize)]
-        struct Wire {
-            #[serde(default, deserialize_with = "present")]
-            window_start: Present<String>,
-            #[serde(default, deserialize_with = "present")]
-            window_end: Present<String>,
-            #[serde(default, deserialize_with = "present")]
-            repeat_type: Present<WindowRepeatType>,
-            #[serde(default, deserialize_with = "present")]
-            repeat_interval: Present<u64>,
-            #[serde(default)]
-            auto_recalc: bool,
-            #[serde(
-                default,
-                deserialize_with = "ast_enum_serde::column_choice::deserialize"
-            )]
-            column_choice: ColumnChoice,
-            #[serde(default)]
-            column_list: Option<Vec<CiString>>,
-            #[serde(default)]
-            sample_num: u64,
-            #[serde(default)]
-            sample_rate: f64,
-            #[serde(default)]
-            buckets: u64,
-            #[serde(default, rename = "topn")]
-            top_n: u64,
-            #[serde(default)]
-            concurrency: u64,
-        }
-
-        let wire = Wire::deserialize(deserializer)?;
-        // The embedded pointer was non-nil exactly when its keys were written.
-        let has_window = wire.window_start.present
-            || wire.window_end.present
-            || wire.repeat_type.present
-            || wire.repeat_interval.present;
-        let stats_window_settings = if has_window {
-            let parse = |text: Option<String>| match text {
-                Some(text) => parse_go_time(&text),
-                None => Ok(go_zero_time()),
-            };
-            Some(Box::new(StatsWindowSettings {
-                window_start: parse(wire.window_start.value)?,
-                window_end: parse(wire.window_end.value)?,
-                repeat_type: wire.repeat_type.value.unwrap_or_default(),
-                repeat_interval: wire.repeat_interval.value.unwrap_or_default(),
-            }))
-        } else {
-            None
-        };
-
-        Ok(StatsOptions {
-            stats_window_settings,
-            auto_recalc: wire.auto_recalc,
-            column_choice: wire.column_choice,
-            column_list: wire.column_list,
-            sample_num: wire.sample_num,
-            sample_rate: wire.sample_rate,
-            buckets: wire.buckets,
-            top_n: wire.top_n,
-            concurrency: wire.concurrency,
-        })
+impl_go_json_merge_object!(StatsOptions, destination, map, key, {
+    if go_json_field_matches(&key, "window_start") {
+        let window = destination
+            .stats_window_settings
+            .get_or_insert_with(|| Box::new(StatsWindowSettings::default()));
+        map.next_value_seed(FatalSeed(GoTimeSeed(&mut window.window_start)))?;
+    } else if go_json_field_matches(&key, "window_end") {
+        let window = destination
+            .stats_window_settings
+            .get_or_insert_with(|| Box::new(StatsWindowSettings::default()));
+        map.next_value_seed(FatalSeed(GoTimeSeed(&mut window.window_end)))?;
+    } else if go_json_field_matches(&key, "repeat_type") {
+        let window = destination
+            .stats_window_settings
+            .get_or_insert_with(|| Box::new(StatsWindowSettings::default()));
+        map.next_value_seed(NullNoopSeed(&mut window.repeat_type))?;
+    } else if go_json_field_matches(&key, "repeat_interval") {
+        let window = destination
+            .stats_window_settings
+            .get_or_insert_with(|| Box::new(StatsWindowSettings::default()));
+        map.next_value_seed(NullNoopSeed(&mut window.repeat_interval))?;
+    } else if go_json_field_matches(&key, "auto_recalc") {
+        map.next_value_seed(NullNoopSeed(&mut destination.auto_recalc))?;
+    } else if go_json_field_matches(&key, "column_choice") {
+        let mut raw = destination.column_choice.0;
+        map.next_value_seed(NullNoopSeed(&mut raw))?;
+        destination.column_choice = ColumnChoice(raw);
+    } else if go_json_field_matches(&key, "column_list") {
+        map.next_value_seed(OptionObjectSliceSeed(&mut destination.column_list))?;
+    } else if go_json_field_matches(&key, "sample_num") {
+        map.next_value_seed(NullNoopSeed(&mut destination.sample_num))?;
+    } else if go_json_field_matches(&key, "sample_rate") {
+        map.next_value_seed(NullNoopSeed(&mut destination.sample_rate))?;
+    } else if go_json_field_matches(&key, "buckets") {
+        map.next_value_seed(NullNoopSeed(&mut destination.buckets))?;
+    } else if go_json_field_matches(&key, "topn") {
+        map.next_value_seed(NullNoopSeed(&mut destination.top_n))?;
+    } else if go_json_field_matches(&key, "concurrency") {
+        map.next_value_seed(NullNoopSeed(&mut destination.concurrency))?;
+    } else {
+        ignore_unknown(&mut map)?;
     }
-}
+});
+
+impl_go_json_deserialize!(StatsOptions);
 
 impl StatsOptions {
     /// Go `NewStatsOptions`: the defaults (`auto_recalc = true`, default
@@ -481,7 +398,7 @@ impl StatsOptions {
 }
 
 /// Go `ViewInfo`: metadata describing a view.
-#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, serde::Serialize)]
 pub struct ViewInfo {
     /// The view algorithm.
     #[serde(
@@ -515,14 +432,37 @@ pub struct ViewInfo {
     )]
     pub check_option: ViewCheckOption,
     /// The view column names.
-    #[serde(
-        rename = "view_cols",
-        default,
-        deserialize_with = "crate::serde_helpers::null_default",
-        serialize_with = "crate::serde_helpers::null_if_empty"
-    )]
-    pub cols: Vec<CiString>,
+    #[serde(rename = "view_cols")]
+    pub cols: GoValueSlice<CiString>,
 }
+
+impl_go_json_merge_object!(ViewInfo, destination, map, key, {
+    if go_json_field_matches(&key, "view_algorithm") {
+        let mut raw = destination.algorithm.0;
+        map.next_value_seed(NullNoopSeed(&mut raw))?;
+        destination.algorithm = ViewAlgorithm(raw);
+    } else if go_json_field_matches(&key, "view_definer") {
+        map.next_value_seed(crate::serde_helpers::OptionBoxMergeSeed(
+            &mut destination.definer,
+        ))?;
+    } else if go_json_field_matches(&key, "view_security") {
+        let mut raw = destination.security.0;
+        map.next_value_seed(NullNoopSeed(&mut raw))?;
+        destination.security = ViewSecurity(raw);
+    } else if go_json_field_matches(&key, "view_select") {
+        map.next_value_seed(NullNoopSeed(&mut destination.select_stmt))?;
+    } else if go_json_field_matches(&key, "view_checkoption") {
+        let mut raw = destination.check_option.0;
+        map.next_value_seed(NullNoopSeed(&mut raw))?;
+        destination.check_option = ViewCheckOption(raw);
+    } else if go_json_field_matches(&key, "view_cols") {
+        map.next_value_seed(OptionObjectSliceSeed(destination.cols.raw_mut()))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+
+impl_go_json_deserialize!(ViewInfo);
 
 /// Go `ConstraintInfo`: a table CHECK constraint.
 #[derive(Clone, Debug, Default, serde::Serialize)]
@@ -1517,7 +1457,7 @@ mod tests {
     fn view_info_basic() {
         let v = ViewInfo {
             select_stmt: "SELECT 1".to_owned(),
-            cols: vec![CiString::new("a")],
+            cols: vec![CiString::new("a")].into(),
             definer: Some(Box::new(UserIdentity {
                 username: "root".to_owned(),
                 ..Default::default()
@@ -1529,6 +1469,44 @@ mod tests {
         // Clone is a deep copy.
         let c = v.clone();
         assert_eq!(c.cols[0].original(), "a");
+    }
+
+    #[test]
+    fn view_info_merges_pointer_fields_and_slices_like_go() {
+        use crate::serde_helpers::GoJsonMerge;
+
+        let nil_cols: ViewInfo = serde_json::from_str(r#"{"view_cols":null}"#).unwrap();
+        let empty_cols: ViewInfo = serde_json::from_str(r#"{"view_cols":[]}"#).unwrap();
+        assert!(!nil_cols.cols.is_allocated());
+        assert!(empty_cols.cols.is_allocated());
+
+        let mut view = ViewInfo {
+            definer: Some(Box::new(UserIdentity {
+                username: "before".to_owned(),
+                ..Default::default()
+            })),
+            select_stmt: "before".to_owned(),
+            cols: vec![CiString::new("old")].into(),
+            ..Default::default()
+        };
+        let mut decoder = serde_json::Deserializer::from_str(
+            r#"{"VIEW_DEFINER":{"Username":"root"},"view_definer":{"Hostname":"%","Username":7},"view_ſelect":"after","view_cols":[{"L":"merged"},null]}"#,
+        );
+        assert!(view.go_json_merge(&mut decoder).is_err());
+        let definer = view.definer.as_ref().unwrap();
+        assert_eq!(definer.username, "root");
+        assert_eq!(definer.hostname, "%");
+        assert_eq!(view.select_stmt, "after");
+        assert_eq!(view.cols[0].original(), "old");
+        assert_eq!(view.cols[0].lowercase(), "merged");
+        assert_eq!(view.cols[1].original(), "");
+
+        let mut decoder = serde_json::Deserializer::from_str(
+            r#"{"view_definer":null,"view_algorithm":7,"view_algorithm":null}"#,
+        );
+        view.go_json_merge(&mut decoder).unwrap();
+        assert!(view.definer.is_none());
+        assert_eq!(view.algorithm, ViewAlgorithm(7));
     }
 
     #[test]
@@ -1586,7 +1564,7 @@ mod tests {
             security: ViewSecurity::INVOKER,
             select_stmt: "SELECT 1".to_owned(),
             check_option: ViewCheckOption::CASCADED,
-            cols: vec![CiString::new("A")],
+            cols: vec![CiString::new("A")].into(),
         };
         assert_eq!(
             go_json(&view),
@@ -1965,6 +1943,41 @@ mod tests {
             go_json(&present_null),
             r#"{"window_start":"0001-01-01T00:00:00Z","window_end":"0001-01-01T00:00:00Z","repeat_type":0,"repeat_interval":0,"auto_recalc":false,"column_choice":0,"column_list":null,"sample_num":0,"sample_rate":0,"buckets":0,"topn":0,"concurrency":0}"#
         );
+    }
+
+    #[test]
+    fn stats_options_uses_embedded_pointer_and_receiver_merge_rules() {
+        use crate::serde_helpers::GoJsonMerge;
+
+        let mut options = StatsOptions {
+            auto_recalc: true,
+            column_list: Some(vec![CiString::new("old")]),
+            ..Default::default()
+        };
+        let mut decoder = serde_json::Deserializer::from_str(
+            r#"{"WINDOW_START":null,"column_list":[{"L":"merged"},null],"auto_recalc":"bad","sample_num":4,"sample_num":null}"#,
+        );
+        assert!(options.go_json_merge(&mut decoder).is_err());
+        assert!(options.stats_window_settings.is_some());
+        let columns = options.column_list.as_ref().unwrap();
+        assert_eq!(columns.len(), 2);
+        assert_eq!(columns[0].original(), "old");
+        assert_eq!(columns[0].lowercase(), "merged");
+        assert_eq!(columns[1].original(), "");
+        assert!(options.auto_recalc);
+        assert_eq!(options.sample_num, 4);
+
+        let mut fatal = StatsOptions::default();
+        let mut decoder =
+            serde_json::Deserializer::from_str(r#"{"window_start":"bad-time","sample_num":9}"#);
+        assert!(fatal.go_json_merge(&mut decoder).is_err());
+        assert!(fatal.stats_window_settings.is_some());
+        assert_eq!(fatal.sample_num, 0);
+
+        let nil: StatsOptions = serde_json::from_str(r#"{"column_list":null}"#).unwrap();
+        let empty: StatsOptions = serde_json::from_str(r#"{"column_list":[]}"#).unwrap();
+        assert!(nil.column_list.is_none());
+        assert_eq!(empty.column_list, Some(Vec::new()));
     }
 
     // Go's time.Time marshals as RFC 3339 with trailing fractional zeros cut.

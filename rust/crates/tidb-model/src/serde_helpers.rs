@@ -669,6 +669,24 @@ impl GoJsonMerge for tidb_ast::CiString {
     }
 }
 
+impl_go_json_merge_object!(tidb_parser::auth::UserIdentity, destination, map, key, {
+    if go_json_field_matches(&key, "Username") {
+        map.next_value_seed(NullNoopSeed(&mut destination.username))?;
+    } else if go_json_field_matches(&key, "Hostname") {
+        map.next_value_seed(NullNoopSeed(&mut destination.hostname))?;
+    } else if go_json_field_matches(&key, "CurrentUser") {
+        map.next_value_seed(NullNoopSeed(&mut destination.current_user))?;
+    } else if go_json_field_matches(&key, "AuthUsername") {
+        map.next_value_seed(NullNoopSeed(&mut destination.auth_username))?;
+    } else if go_json_field_matches(&key, "AuthHostname") {
+        map.next_value_seed(NullNoopSeed(&mut destination.auth_hostname))?;
+    } else if go_json_field_matches(&key, "AuthPlugin") {
+        map.next_value_seed(NullNoopSeed(&mut destination.auth_plugin))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+
 /// Merges a non-pointer Go struct field into its existing value. JSON null is
 /// a no-op; a non-null object preserves omitted subfields.
 pub(crate) struct ValueMergeSeed<'a, T>(pub(crate) &'a mut T);
