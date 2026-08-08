@@ -144,8 +144,11 @@ pub struct DDLReorgMeta {
 }
 
 impl DDLReorgMeta {
-    /// Go `ShallowCopy`. Rust's owned warning maps are copied rather than
-    /// aliased; all persisted values and mutations remain independent.
+    /// Go `ShallowCopy`'s scalar value result.
+    ///
+    /// Rust's owned warning maps are copied rather than aliased. The source
+    /// map-backing-store identity is recorded as a measured representation
+    /// boundary in the package ledger instead of being hidden by this method.
     #[must_use]
     pub fn shallow_copy(&self) -> Self {
         self.clone()

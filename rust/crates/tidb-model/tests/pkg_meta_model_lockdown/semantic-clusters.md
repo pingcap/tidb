@@ -81,8 +81,9 @@ remaining package census is 2,509 obligations plus the build artifact.
   JSON, byte-slice base64, job metadata, and first-resolution-stable cached
   fixed/named timezones. Go's 64-bit `int` range is retained for persisted
   maximum-node counts, dynamic settings, job priority, and fixed-zone offsets.
-- Explicit representation boundaries: concrete `terror.Error` identity and Go
-  atomic/mutex object identity. `BackfillMeta.Decode` uses Serde's generated
+- Explicit representation boundaries: concrete `terror.Error` identity, Go
+  atomic/mutex object identity, and the warning-map backing-store alias retained
+  by `DDLReorgMeta.ShallowCopy`. `BackfillMeta.Decode` uses Serde's generated
   in-place visitor, so absent fields retain the receiver, JSON null is a no-op,
   and fields decoded before a type error remain mutated as in Go. Error
   payloads are retained as raw JSON and Rust borrowing makes field mutation
