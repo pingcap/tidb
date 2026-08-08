@@ -121,7 +121,8 @@ remaining package census is 2,509 obligations plus the build artifact.
   placement clearing, storage class, table kinds/locks, partition state/GC,
   default LIST partition, overlapping DROP replacement, DDL-hidden IDs,
   foreign-key rendering, statistics keys/defaults, TTL duration compatibility,
-  and affinity normalization.
+  affinity normalization, and statistics-window RFC3339 values including Go's
+  year-1 zero time and non-UTC fixed offsets.
 - Explicit representation boundaries: Go `unsafe.Sizeof`, pointer/slice alias
   identity and nil elements in pointer slices, allocation identity for the
   existing Rust `Vec`-backed partition metadata fields (including the direct
