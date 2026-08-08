@@ -380,3 +380,9 @@ pub(crate) fn leaf_index_source(
     }
     Box::new(exec)
 }
+
+#[cfg(test)]
+pub(crate) fn find_best_task_compile_anchors() -> &'static [&'static str] {
+    let _ = leaf_index_path;
+    &["driver::leaf_access::leaf_index_path"]
+}

@@ -299,6 +299,8 @@ mod clause_resolve;
 mod derived_agg_pruning;
 mod dml;
 mod errors;
+#[cfg(test)]
+mod find_best_task_lockdown;
 mod from;
 pub(crate) mod funcdep;
 mod grouping;

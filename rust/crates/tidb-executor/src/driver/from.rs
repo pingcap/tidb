@@ -90,6 +90,12 @@ pub(crate) struct FromScope {
     pub(crate) qualified_star_is_output_only: bool,
 }
 
+#[cfg(test)]
+pub(crate) fn find_best_task_compile_anchors() -> &'static [&'static str] {
+    let _ = build_from;
+    &["driver::from::build_from"]
+}
+
 impl Default for FromScope {
     /// An empty scope in UTC -- the same zone a fresh session's
     /// `StmtContext` answers before any `SET time_zone`. Statement build
@@ -481,6 +487,15 @@ pub(crate) fn build_from(
                     "AS OF TIMESTAMP is not supported yet",
                 ));
             }
+            // Go reaches `convertToSampleTable` whenever `ds.SampleInfo` is
+            // present. This tier has no TiKV region model and therefore
+            // cannot reproduce that operator. The clause is parsed, so
+            // ignoring it would execute an ordinary scan and silently return
+            // the whole table under a sampling contract. Refuse at the
+            // construction boundary instead.
+            if table_ref.sample.is_some() {
+                return Err(DriverError::unsupported("TABLESAMPLE is not supported yet"));
+            }
             let entry = catalog
                 .get_in(database, name)
                 .ok_or(DriverError::unsupported("table not found in catalog"))?;
@@ -789,6 +804,8 @@ pub(crate) fn build_derived_source(
 /// derived table's NAME and SHAPE must satisfy -- Go's
 /// `ErrDerivedMustHaveAlias` (1248) and `ErrDupFieldName` (1060) -- instead of
 /// two that can drift.
+type DerivedSourceRelation<'a> = (&'a str, Vec<(String, FieldType)>, Vec<Vec<Datum>>);
+
 pub(crate) fn derived_source_relation<'a>(
     subquery: &QueryStmt,
     alias: Option<&'a str>,
@@ -797,7 +814,7 @@ pub(crate) fn derived_source_relation<'a>(
     ctx: &crate::StmtContext,
     trace: Option<&mut PlanTrace>,
     required: &tidb_planner::physical_property::PhysicalProperty,
-) -> Result<(&'a str, Vec<(String, FieldType)>, Vec<Vec<Datum>>), DriverError> {
+) -> Result<DerivedSourceRelation<'a>, DriverError> {
     // Captured from Go: an alias-less derived table is ErrDerivedMustHaveAlias
     // in a plain SELECT and in a view body alike.
     let alias = alias.filter(|alias| !alias.is_empty());

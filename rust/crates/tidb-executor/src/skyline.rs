@@ -154,9 +154,13 @@
 //!   -- `access_cost::enumerate_paths` excludes them by name -- so
 //!   `isMVIndexPath`, `convergeIndexMergeCandidate` and the
 //!   `StoreType == kv.TiFlash` guards have nothing to act on.
-//! * `path.Forced` (`USE`/`FORCE INDEX`) and `ShouldPreferIndexMerge` are
-//!   held at false: this tier parses no index hint, so no path is forced.
-//!   Direction: a hinted query would be planned as if unhinted.
+//! * `ShouldPreferIndexMerge` is held at false: there is no index-merge path
+//!   here to prefer.
+//! * `path.Forced` (`USE`/`FORCE INDEX`) is LIVE. It enters the candidate in
+//!   `access_cost::enumerate_paths`, survives here as [`Candidate::forced`],
+//!   and bypasses the `preferRange` post-filter exactly as it does in Go. A
+//!   forced full-index scan must not disappear merely because another path is
+//!   a range scan: the hint, not this heuristic, owns that decision.
 //! * the empty-range `TableDual` short-circuit
 //!   (`if len(path.Ranges) == 0 { return []*candidatePath{{path}} }`) is
 //!   ported in [`skyline_pruning`], because a contradictory `WHERE` must not
@@ -263,6 +267,10 @@ pub(crate) struct Candidate<T> {
     pub(crate) index_filter_count: usize,
     /// See [`Candidate::index_filter_count`].
     pub(crate) table_filter_count: usize,
+    /// Go `AccessPath.Forced`. The `preferRange` post-filter keeps these
+    /// candidates unconditionally; otherwise a forced whole-index scan could
+    /// disappear after hint filtering had already removed the table path.
+    pub(crate) forced: bool,
 }
 
 /// Go `compareIndexBack`.
@@ -556,9 +564,13 @@ pub(crate) fn skyline_pruning<T>(
     let prefer_range = context.prefer_range
         && (index_missing_stats || context.table_pseudo || context.row_count < 1.0);
     if prefer_range && survivors.len() > 1 {
-        // Go also keeps forced / TiFlash / global / MV paths unconditionally
-        // here; none of those exist in this tier (module doc).
+        // Go keeps forced / TiFlash / global / MV paths unconditionally here.
+        // TiFlash, global and MV paths do not exist in this tier; forced paths
+        // do, and the bypass is semantically significant after hint filtering.
         let preferred = |candidate: &Candidate<T>| {
+            if candidate.forced {
+                return true;
+            }
             let index_filters = candidate.eq_or_in_count > 0
                 || candidate.table_filter_count < candidate.index_filter_count;
             // `prop.IsSortItemEmpty()` is true for this tier's only
@@ -570,6 +582,33 @@ pub(crate) fn skyline_pruning<T>(
         }
     }
     survivors
+}
+
+/// Test-only compile anchors for the source-owned `find_best_task.go` ledger.
+/// Taking each function item here proves that private symbols still exist; the
+/// central gate compares these names with the PORTED set exactly.
+#[cfg(test)]
+pub(crate) fn find_best_task_compile_anchors() -> &'static [&'static str] {
+    let _ = std::mem::size_of::<Candidate<()>>();
+    let _ = compare_bool as fn(bool, bool) -> i32;
+    let _ = compare_candidates::<()>;
+    let _ = compare_eq_or_in::<()>;
+    let _ = compare_index_back::<()>;
+    let _ = compare_pseudo;
+    let _ = compare_risk_ratio::<()>;
+    let _ = is_full_index_match::<()>;
+    let _ = skyline_pruning::<()>;
+    &[
+        "skyline::Candidate",
+        "skyline::compare_bool",
+        "skyline::compare_candidates",
+        "skyline::compare_eq_or_in",
+        "skyline::compare_index_back",
+        "skyline::compare_pseudo",
+        "skyline::compare_risk_ratio",
+        "skyline::is_full_index_match",
+        "skyline::skyline_pruning",
+    ]
 }
 
 #[cfg(test)]
@@ -601,6 +640,7 @@ mod tests {
             empty_range: false,
             index_filter_count: 0,
             table_filter_count: 0,
+            forced: false,
         }
     }
 
@@ -730,6 +770,28 @@ mod tests {
         let survivors = skyline_pruning(vec![table, rare], &pseudo);
         assert_eq!(survivors.len(), 1);
         assert!(!survivors[0].full_range);
+    }
+
+    #[test]
+    fn prefer_range_never_drops_a_forced_full_index_scan() {
+        // Keep the pair skyline-incomparable before the post-filter: the
+        // forced index covers while the range index needs a row lookup, so
+        // Go's scan and access dimensions cancel. The post-filter is the only
+        // rule under test.
+        let mut forced_full_index = candidate(&[], &[], true, 0, 1);
+        forced_full_index.full_range = true;
+        forced_full_index.forced = true;
+        let ranged_index = candidate(&[1], &[1], false, 1, 1);
+        let pseudo = PruningContext {
+            table_pseudo: true,
+            ..context()
+        };
+
+        let survivors = skyline_pruning(vec![forced_full_index, ranged_index], &pseudo);
+
+        assert_eq!(survivors.len(), 2);
+        assert!(survivors.iter().any(|candidate| candidate.forced));
+        assert!(survivors.iter().any(|candidate| !candidate.full_range));
     }
 
     /// A path whose estimate could be ten times larger than it says is

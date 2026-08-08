@@ -1,0 +1,10 @@
+# find-best-task-mutation-results-v1
+mutation_id	suite_id	mutated_boundary	observed_failure	status	exit_code	restore_status	restored_test
+FIND-M01-ACCESS-WIN	M01	compare_col_sets Greater returned zero	strict-superset comparison returned 0 instead of 1	KILLED	101	PASS	PASS
+FIND-M02-RISK-WIN	M02	compare_risk_ratio lhs win returned zero	certain lookup risk verdict returned 0 instead of 1	KILLED	101	PASS	PASS
+FIND-M03-PSEUDO-GATE	M03	preferRange ignored pseudo and row-count narrowing	analyzed candidates narrowed to one survivor instead of two	KILLED	101	PASS	PASS
+FIND-M04-FORCED-BYPASS	M04	forced candidate bypass disabled	forced full-index candidate was deleted by preferRange	KILLED	101	PASS	PASS
+FIND-M05-CONSTANT-PREFIX	M05	constant-prefix skip loop disabled	ORDER BY b no longer matched index a,b under a equals constant	KILLED	101	PASS	PASS
+FIND-M06-TABLE-SAMPLE	M06	TABLESAMPLE refusal guard disabled	REGIONS clause fell through and answered ordinary table rows	KILLED	101	PASS	PASS
+FIND-M07-OPEN-POINT	M07	open-endpoint point-get guard disabled	low-open range became a point handle	KILLED	101	PASS	PASS
+FIND-M08-EMPTY-RANGE	M08	empty-range skyline short-circuit disabled	table and contradiction both survived instead of the empty candidate alone	KILLED	101	PASS	PASS

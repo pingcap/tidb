@@ -328,10 +328,10 @@ impl ScanEstimate {
 pub(crate) struct PushedLimit<'a> {
     /// `offset + count`: the rows the reader must still produce.
     pub(crate) cap: f64,
-    /// Whether an index over these column offsets, with this many ranges,
+    /// Whether an index over these column offsets and exact ranges
     /// establishes the order the `LIMIT` selects from -- Go's physical
     /// `SortItems` property on the index task.
-    pub(crate) satisfied_by: &'a dyn Fn(&[usize], bool) -> bool,
+    pub(crate) satisfied_by: &'a dyn Fn(&[usize], &[IndexRange]) -> bool,
 }
 
 /// One way of reading the table, with the rows and the cost it was chosen by.
@@ -685,6 +685,7 @@ pub(crate) fn enumerate_paths(
             empty_range: handle_ranges.as_ref().is_some_and(Vec::is_empty),
             index_filter_count: 0,
             table_filter_count: 0,
+            forced: false,
             path: table_scan,
         });
     }
@@ -819,6 +820,7 @@ pub(crate) fn enumerate_paths(
             empty_range,
             index_filter_count,
             table_filter_count,
+            forced,
             path,
         });
     }
@@ -912,6 +914,7 @@ fn full_scan_candidate(
         empty_range: false,
         index_filter_count,
         table_filter_count,
+        forced,
         path,
     })
 }
@@ -1120,7 +1123,7 @@ fn index_path(
     // reader stops at the cap; `estimated` is still what EXPLAIN prints for
     // the scan, because the cop-side `Limit` is its own operator there.
     let rows = match limit {
-        Some(limit) if (limit.satisfied_by)(index.ordered_column_offsets(), ranges.len() == 1) => {
+        Some(limit) if (limit.satisfied_by)(index.ordered_column_offsets(), &ranges) => {
             estimated.min(limit.cap)
         }
         _ => estimated,
@@ -1805,6 +1808,18 @@ pub(crate) fn choose_access_path(
         }
     }
     best
+}
+
+#[cfg(test)]
+pub(crate) fn find_best_task_compile_anchors() -> &'static [&'static str] {
+    let _ = choose_access_path;
+    let _ = enumerate_paths;
+    let _ = split_index_filter_conditions;
+    &[
+        "access_cost::choose_access_path",
+        "access_cost::enumerate_paths",
+        "access_cost::split_index_filter_conditions",
+    ]
 }
 
 #[cfg(test)]
