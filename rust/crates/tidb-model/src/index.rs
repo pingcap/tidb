@@ -24,13 +24,15 @@ use tidb_datatype::{FieldType, FieldTypeCode};
 
 use crate::cascades_hash::HashInt64;
 use crate::column::{removing_origin_name, REMOVING_OBJ_PREFIX};
-use crate::go_runtime::{GoPointerAny, GoShared, GoSharedPointerSlice, GoSharedSlice};
+use crate::go_runtime::{
+    GoNullClonePolicy, GoPointerAny, GoShared, GoSharedPointerSlice, GoSharedSlice,
+};
 use crate::reorg::BackfillState;
 use crate::schema_state::SchemaState;
 use crate::serde_helpers::{
     go_json_field_matches, ignore_unknown, impl_go_json_deserialize, impl_go_json_merge_object,
-    FatalSeed, GoPointerSlice, NullNoopSeed, OptionMergeSeed, OptionPointerSliceSeed,
-    SharedStringSliceSeed, ValueMergeSeed,
+    FatalSeed, NullNoopSeed, OptionSharedMergeSeed, SharedPointerSliceSeed, SharedStringSliceSeed,
+    ValueMergeSeed,
 };
 use crate::table_info::TableInfo;
 
@@ -397,7 +399,7 @@ impl_go_json_merge_object!(FullTextIndexInfo, destination, map, key, {
 impl_go_json_deserialize!(FullTextIndexInfo);
 
 /// Go `IndexInfo`: metadata describing a table index.
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Debug, Default, Serialize)]
 pub struct IndexInfo {
     /// The index ID.
     #[serde(rename = "id", default)]
@@ -410,7 +412,7 @@ pub struct IndexInfo {
     pub table: CiString,
     /// The index columns.
     #[serde(rename = "idx_cols", default)]
-    pub columns: GoPointerSlice<IndexColumn>,
+    pub columns: GoSharedPointerSlice<IndexColumn>,
     /// The online-DDL state.
     #[serde(rename = "state", default)]
     pub state: SchemaState,
@@ -448,13 +450,13 @@ pub struct IndexInfo {
     pub mv_index: bool,
     /// Vector-index parameters, if any.
     #[serde(rename = "vector_index", default)]
-    pub vector_info: Option<VectorIndexInfo>,
+    pub vector_info: Option<GoShared<VectorIndexInfo>>,
     /// Inverted-index parameters, if any.
     #[serde(rename = "inverted_index", default)]
-    pub inverted_info: Option<InvertedIndexInfo>,
+    pub inverted_info: Option<GoShared<InvertedIndexInfo>>,
     /// Full-text-index parameters, if any.
     #[serde(rename = "full_text_index", default)]
-    pub full_text_info: Option<FullTextIndexInfo>,
+    pub full_text_info: Option<GoShared<FullTextIndexInfo>>,
     /// The partial-index condition expression string.
     #[serde(rename = "condition_expr_string", default)]
     pub condition_expr_string: String,
@@ -462,9 +464,9 @@ pub struct IndexInfo {
     #[serde(
         rename = "affect_column",
         default,
-        skip_serializing_if = "GoPointerSlice::is_empty"
+        skip_serializing_if = "GoSharedPointerSlice::is_empty"
     )]
-    pub affect_column: GoPointerSlice<IndexColumn>,
+    pub affect_column: GoSharedPointerSlice<IndexColumn>,
     /// The global-index version.
     #[serde(
         rename = "global_index_version",
@@ -478,7 +480,51 @@ pub struct IndexInfo {
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub region_split_policy: Option<RegionSplitPolicy>,
+    pub region_split_policy: Option<GoShared<RegionSplitPolicy>>,
+}
+
+impl Clone for IndexInfo {
+    /// Go `IndexInfo.Clone`: the column pointer slices and region policy are
+    /// copied deeply, while vector/inverted/full-text pointers remain shared.
+    /// A nil Columns header becomes an allocated-empty slice; AffectColumn
+    /// remains nil when the source header is nil. Nil elements panic when the
+    /// source invokes `IndexColumn.Clone`.
+    fn clone(&self) -> Self {
+        let columns = self
+            .columns
+            .map_clone_with(GoNullClonePolicy::Panic, Clone::clone);
+        let affect_column = if self.affect_column.is_allocated() {
+            self.affect_column
+                .map_clone_with(GoNullClonePolicy::Panic, Clone::clone)
+        } else {
+            GoSharedPointerSlice::default()
+        };
+        Self {
+            id: self.id,
+            name: self.name.clone(),
+            table: self.table.clone(),
+            columns,
+            state: self.state,
+            backfill_state: self.backfill_state,
+            comment: self.comment.clone(),
+            tp: self.tp,
+            unique: self.unique,
+            primary: self.primary,
+            invisible: self.invisible,
+            global: self.global,
+            mv_index: self.mv_index,
+            vector_info: self.vector_info.clone(),
+            inverted_info: self.inverted_info.clone(),
+            full_text_info: self.full_text_info.clone(),
+            condition_expr_string: self.condition_expr_string.clone(),
+            affect_column,
+            global_index_version: self.global_index_version,
+            region_split_policy: self
+                .region_split_policy
+                .as_ref()
+                .map(|policy| GoShared::new(policy.read().clone())),
+        }
+    }
 }
 
 impl_go_json_merge_object!(IndexInfo, destination, map, key, {
@@ -489,7 +535,7 @@ impl_go_json_merge_object!(IndexInfo, destination, map, key, {
     } else if go_json_field_matches(&key, "tbl_name") {
         map.next_value_seed(FatalSeed(ValueMergeSeed(&mut destination.table)))?;
     } else if go_json_field_matches(&key, "idx_cols") {
-        map.next_value_seed(OptionPointerSliceSeed(destination.columns.raw_mut()))?;
+        map.next_value_seed(SharedPointerSliceSeed(&mut destination.columns))?;
     } else if go_json_field_matches(&key, "state") {
         map.next_value_seed(NullNoopSeed(&mut destination.state))?;
     } else if go_json_field_matches(&key, "backfill_state") {
@@ -509,19 +555,19 @@ impl_go_json_merge_object!(IndexInfo, destination, map, key, {
     } else if go_json_field_matches(&key, "mv_index") {
         map.next_value_seed(NullNoopSeed(&mut destination.mv_index))?;
     } else if go_json_field_matches(&key, "vector_index") {
-        map.next_value_seed(OptionMergeSeed(&mut destination.vector_info))?;
+        map.next_value_seed(OptionSharedMergeSeed(&mut destination.vector_info))?;
     } else if go_json_field_matches(&key, "inverted_index") {
-        map.next_value_seed(OptionMergeSeed(&mut destination.inverted_info))?;
+        map.next_value_seed(OptionSharedMergeSeed(&mut destination.inverted_info))?;
     } else if go_json_field_matches(&key, "full_text_index") {
-        map.next_value_seed(OptionMergeSeed(&mut destination.full_text_info))?;
+        map.next_value_seed(OptionSharedMergeSeed(&mut destination.full_text_info))?;
     } else if go_json_field_matches(&key, "condition_expr_string") {
         map.next_value_seed(NullNoopSeed(&mut destination.condition_expr_string))?;
     } else if go_json_field_matches(&key, "affect_column") {
-        map.next_value_seed(OptionPointerSliceSeed(destination.affect_column.raw_mut()))?;
+        map.next_value_seed(SharedPointerSliceSeed(&mut destination.affect_column))?;
     } else if go_json_field_matches(&key, "global_index_version") {
         map.next_value_seed(NullNoopSeed(&mut destination.global_index_version))?;
     } else if go_json_field_matches(&key, "region_split_policy") {
-        map.next_value_seed(OptionMergeSeed(&mut destination.region_split_policy))?;
+        map.next_value_seed(OptionSharedMergeSeed(&mut destination.region_split_policy))?;
     } else {
         ignore_unknown(&mut map)?;
     }
@@ -530,6 +576,12 @@ impl_go_json_merge_object!(IndexInfo, destination, map, key, {
 impl_go_json_deserialize!(IndexInfo);
 
 impl IndexInfo {
+    /// Nil-receiver-capable Go `IndexInfo.Clone` boundary.
+    #[must_use]
+    pub fn clone_pointer(index: Option<&Self>) -> Option<GoShared<Self>> {
+        index.map(|value| GoShared::new(value.clone()))
+    }
+
     /// Go `Hash64`/`Equals` use only the persisted index ID. Rust's standard
     /// equality follows that exact identity contract.
     #[must_use]
@@ -601,7 +653,9 @@ impl IndexInfo {
     #[must_use]
     pub fn has_prefix_index(&self) -> bool {
         // Go compares against types.UnspecifiedLength (-1).
-        self.columns.iter().any(|ic| ic.length != -1)
+        self.columns
+            .iter_deref()
+            .any(|column| column.read().length != -1)
     }
 
     /// Go `HasColumnInIndexColumns`: whether an index column resolves to the
@@ -609,10 +663,11 @@ impl IndexInfo {
     /// invariant violation and indexes the table slice directly.
     #[must_use]
     pub fn has_column_in_index_columns(&self, table: &TableInfo, column_id: i64) -> bool {
-        self.columns.iter().any(|column| {
+        self.columns.iter_deref().any(|column| {
+            let offset = column.read().offset;
             table
                 .columns
-                .get(column.offset as usize)
+                .get(offset as usize)
                 .expect("nil *ColumnInfo in TableInfo.Columns")
                 .read()
                 .id
@@ -622,10 +677,10 @@ impl IndexInfo {
 
     /// Go `FindColumnByName`: the index column named `name_l` (lower-cased).
     #[must_use]
-    pub fn find_column_by_name(&self, name_l: &str) -> Option<&IndexColumn> {
+    pub fn find_column_by_name(&self, name_l: &str) -> Option<GoShared<IndexColumn>> {
         self.columns
-            .iter()
-            .find(|column| column.name.lowercase() == name_l)
+            .iter_deref()
+            .find(|column| column.read().name.lowercase() == name_l)
     }
 
     /// Go `IsPublic`: whether the index is in the public state.
@@ -700,7 +755,11 @@ pub fn is_index_prefix_covered(table: &TableInfo, index: &IndexInfo, columns: &[
         return false;
     }
     columns.iter().enumerate().all(|(position, column)| {
-        let index_column = &index.columns[position];
+        let index_column = index
+            .columns
+            .get(position)
+            .expect("nil *IndexColumn in IndexInfo.Columns");
+        let index_column = index_column.read();
         if column.lowercase() != index_column.name.lowercase()
             || index_column.offset >= table.columns.len() as i64
         {
@@ -775,14 +834,14 @@ pub fn find_index_info_by_id(
 /// Go `FindIndexColumnByName`: the position and column matching `name_l`
 /// (already lower-cased), or `None`.
 #[must_use]
-pub fn find_index_column_by_name<'a>(
-    index_cols: &'a [IndexColumn],
+pub fn find_index_column_by_name(
+    index_cols: &GoSharedPointerSlice<IndexColumn>,
     name_l: &str,
-) -> Option<(usize, &'a IndexColumn)> {
+) -> Option<(usize, GoShared<IndexColumn>)> {
     index_cols
-        .iter()
+        .iter_deref()
         .enumerate()
-        .find(|(_, ic)| ic.name.lowercase() == name_l)
+        .find(|(_, column)| column.read().name.lowercase() == name_l)
 }
 
 #[cfg(test)]
@@ -834,23 +893,17 @@ mod tests {
 
         let nullable: IndexInfo =
             serde_json::from_str(r#"{"idx_cols":[null,{"offset":2}]}"#).unwrap();
-        assert!(nullable.columns.nullable().unwrap()[0].is_none());
-        assert_eq!(
-            nullable.columns.nullable().unwrap()[1]
-                .as_ref()
-                .unwrap()
-                .offset,
-            2
-        );
+        assert!(nullable.columns.get(0).is_none());
+        assert_eq!(nullable.columns.get(1).unwrap().read().offset, 2);
         assert!(std::panic::catch_unwind(|| nullable.columns.iter_deref().next()).is_err());
 
         let mut index = IndexInfo {
             id: 7,
             tp: IndexType(9),
-            vector_info: Some(VectorIndexInfo {
+            vector_info: Some(GoShared::new(VectorIndexInfo {
                 dimension: 3,
                 distance_metric: "old".to_owned(),
-            }),
+            })),
             ..Default::default()
         };
         let mut decoder = serde_json::Deserializer::from_str(
@@ -865,10 +918,13 @@ mod tests {
         assert!(index.go_json_merge(&mut decoder).is_err());
         assert_eq!(index.id, 7);
         assert_eq!(index.tp, IndexType(9));
-        assert_eq!(index.vector_info.as_ref().unwrap().dimension, 3);
-        assert_eq!(index.vector_info.as_ref().unwrap().distance_metric, "later");
+        assert_eq!(index.vector_info.as_ref().unwrap().read().dimension, 3);
+        assert_eq!(
+            index.vector_info.as_ref().unwrap().read().distance_metric,
+            "later"
+        );
         assert_eq!(index.comment, "after-error");
-        assert!(index.columns.nullable().unwrap()[0].is_none());
+        assert!(index.columns.get(0).is_none());
 
         let mut decoder = serde_json::Deserializer::from_str(
             r#"{"idx_cols":[],"IDX_COLS":null,"affect_column":[]}"#,
@@ -977,6 +1033,94 @@ mod tests {
     }
 
     #[test]
+    fn index_clone_preserves_source_pointer_policies() {
+        assert!(IndexInfo::clone_pointer(None).is_none());
+
+        let vector = GoShared::new(VectorIndexInfo {
+            dimension: 3,
+            distance_metric: distance_metric::L2.to_owned(),
+        });
+        let inverted = GoShared::new(InvertedIndexInfo {
+            column_id: 7,
+            is_signed: true,
+            type_size: 8,
+        });
+        let full_text = GoShared::new(FullTextIndexInfo {
+            parser_type: "standard".to_owned(),
+        });
+        let region = GoShared::new(RegionSplitPolicy {
+            lower: GoSharedSlice::from_vec(vec!["a".to_owned()]),
+            upper: GoSharedSlice::from_vec(Vec::new()),
+            regions: 2,
+        });
+        let column = GoShared::new(IndexColumn {
+            name: CiString::new("a"),
+            offset: 1,
+            length: -1,
+            ..Default::default()
+        });
+        let affected = GoShared::new(IndexColumn {
+            name: CiString::new("b"),
+            ..Default::default()
+        });
+        let source = IndexInfo {
+            columns: GoSharedPointerSlice::from_handles(vec![Some(column.clone())]),
+            affect_column: GoSharedPointerSlice::from_handles(vec![Some(affected.clone())]),
+            vector_info: Some(vector.clone()),
+            inverted_info: Some(inverted.clone()),
+            full_text_info: Some(full_text.clone()),
+            region_split_policy: Some(region.clone()),
+            ..Default::default()
+        };
+        let cloned = source.clone();
+
+        assert!(cloned.columns.is_allocated());
+        assert_eq!(cloned.columns.capacity(), source.columns.len());
+        assert!(!cloned.columns.backing_ptr_eq(&source.columns));
+        assert!(!cloned.columns.get(0).unwrap().ptr_eq(&column));
+        cloned.columns.get(0).unwrap().write().offset = 9;
+        assert_eq!(column.read().offset, 1);
+
+        assert!(cloned.affect_column.is_allocated());
+        assert_eq!(cloned.affect_column.capacity(), source.affect_column.len());
+        assert!(!cloned.affect_column.backing_ptr_eq(&source.affect_column));
+        assert!(!cloned.affect_column.get(0).unwrap().ptr_eq(&affected));
+
+        assert!(cloned.vector_info.as_ref().unwrap().ptr_eq(&vector));
+        assert!(cloned.inverted_info.as_ref().unwrap().ptr_eq(&inverted));
+        assert!(cloned.full_text_info.as_ref().unwrap().ptr_eq(&full_text));
+        let cloned_region = cloned.region_split_policy.as_ref().unwrap();
+        assert!(!cloned_region.ptr_eq(&region));
+        cloned_region.write().regions = 8;
+        assert_eq!(region.read().regions, 2);
+
+        let nil_columns = IndexInfo::default().clone();
+        assert!(nil_columns.columns.is_allocated());
+        assert!(!nil_columns.affect_column.is_allocated());
+
+        let empty_affect = IndexInfo {
+            affect_column: GoSharedPointerSlice::from_nullable(Vec::new()),
+            ..Default::default()
+        };
+        let empty_affect_clone = empty_affect.clone();
+        assert!(empty_affect_clone.affect_column.is_allocated());
+        assert!(!empty_affect_clone
+            .affect_column
+            .backing_ptr_eq(&empty_affect.affect_column));
+
+        let null_column = IndexInfo {
+            columns: GoSharedPointerSlice::from_nullable(vec![None]),
+            ..Default::default()
+        };
+        assert!(std::panic::catch_unwind(|| null_column.clone()).is_err());
+        let null_affect = IndexInfo {
+            affect_column: GoSharedPointerSlice::from_nullable(vec![None]),
+            ..Default::default()
+        };
+        assert!(std::panic::catch_unwind(|| null_affect.clone()).is_err());
+    }
+
+    #[test]
     fn global_index_v1_flag() {
         let prev = get_global_index_v1_supported();
         set_global_index_v1_supported(true);
@@ -1061,10 +1205,10 @@ mod tests {
         // Columnar-index type detection.
         assert!(!idx.is_columnar_index());
         assert_eq!(idx.get_columnar_index_type(), ColumnarIndexType::NA);
-        idx.vector_info = Some(VectorIndexInfo {
+        idx.vector_info = Some(GoShared::new(VectorIndexInfo {
             dimension: 128,
             distance_metric: distance_metric::COSINE.to_owned(),
-        });
+        }));
         assert!(idx.is_columnar_index());
         assert_eq!(idx.get_columnar_index_type(), ColumnarIndexType::VECTOR);
     }
@@ -1237,7 +1381,7 @@ mod tests {
             &[CiString::new("A")]
         ));
         let mut short = source.clone();
-        short.columns[0].length = 7;
+        short.columns.get(0).unwrap().write().length = 7;
         assert!(!is_index_prefix_covered(
             &table,
             &short,
@@ -1247,13 +1391,13 @@ mod tests {
         assert!(!source.has_column_in_index_columns(&table, 11));
 
         let mut out_of_range = source.clone();
-        out_of_range.columns[0].offset = table.columns.len() as i64;
+        out_of_range.columns.get(0).unwrap().write().offset = table.columns.len() as i64;
         assert!(!is_index_prefix_covered(
             &table,
             &out_of_range,
             &[CiString::new("a")]
         ));
-        out_of_range.columns[0].offset = -1;
+        out_of_range.columns.get(0).unwrap().write().offset = -1;
         assert!(std::panic::catch_unwind(|| {
             is_index_prefix_covered(&table, &out_of_range, &[CiString::new("a")])
         })
@@ -1278,7 +1422,7 @@ mod tests {
             &nil_column_index,
             &[CiString::new("a")]
         ));
-        nil_column_index.columns[0].length = 0;
+        nil_column_index.columns.get(0).unwrap().write().length = 0;
         assert!(std::panic::catch_unwind(|| {
             is_index_prefix_covered(&nil_column_table, &nil_column_index, &[CiString::new("a")])
         })
@@ -1391,7 +1535,7 @@ mod tests {
 
     #[test]
     fn find_index_column() {
-        let cols = vec![
+        let cols: GoSharedPointerSlice<_> = vec![
             IndexColumn {
                 name: CiString::new("Foo"),
                 ..Default::default()
@@ -1400,10 +1544,11 @@ mod tests {
                 name: CiString::new("Bar"),
                 ..Default::default()
             },
-        ];
+        ]
+        .into();
         let (i, ic) = find_index_column_by_name(&cols, "bar").unwrap();
         assert_eq!(i, 1);
-        assert_eq!(ic.name.original(), "Bar");
+        assert_eq!(ic.read().name.original(), "Bar");
         assert!(find_index_column_by_name(&cols, "baz").is_none());
     }
 

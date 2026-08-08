@@ -569,7 +569,8 @@ impl TableInfo {
             if implicit_pk.is_none() && index.unique {
                 let mut all_col_not_null = true;
                 let mut skip = false;
-                for idx_col in &index.columns {
+                for idx_col in index.columns.iter_deref() {
+                    let idx_col = idx_col.read();
                     let col = self
                         .cols()
                         .iter_deref()
@@ -700,8 +701,8 @@ impl TableInfo {
     pub fn column_is_in_index(&self, column: Option<&ColumnInfo>) -> bool {
         self.indices.iter_deref().any(|index| {
             let index = index.read();
-            index.columns.iter().any(|index_column| {
-                index_column.name.lowercase()
+            index.columns.iter_deref().any(|index_column| {
+                index_column.read().name.lowercase()
                     == column
                         .expect("nil *ColumnInfo in ColumnIsInIndex")
                         .name
@@ -856,13 +857,15 @@ impl TableInfo {
         updated.insert(from, to);
 
         for index in self.indices.iter_deref() {
-            let mut idx = index.write();
-            for ic in &mut idx.columns {
+            let idx = index.write();
+            for ic in idx.columns.iter_deref() {
+                let mut ic = ic.write();
                 if let Some(&new_offset) = updated.get(&(ic.offset as isize)) {
                     ic.offset = new_offset as i64;
                 }
             }
-            for ac in &mut idx.affect_column {
+            for ac in idx.affect_column.iter_deref() {
+                let mut ac = ac.write();
                 if let Some(&new_offset) = updated.get(&(ac.offset as isize)) {
                     ac.offset = new_offset as i64;
                 }
@@ -1599,8 +1602,30 @@ mod tests {
         assert_eq!(t.columns.get(0).unwrap().read().offset, 0); // b
         assert_eq!(t.columns.get(2).unwrap().read().offset, 2); // a
                                                                 // The index column's offset was remapped 0 -> 2.
-        assert_eq!(t.indices.get(0).unwrap().read().columns[0].offset, 2);
-        assert_eq!(t.indices.get(0).unwrap().read().affect_column[0].offset, 2);
+        assert_eq!(
+            t.indices
+                .get(0)
+                .unwrap()
+                .read()
+                .columns
+                .get(0)
+                .unwrap()
+                .read()
+                .offset,
+            2
+        );
+        assert_eq!(
+            t.indices
+                .get(0)
+                .unwrap()
+                .read()
+                .affect_column
+                .get(0)
+                .unwrap()
+                .read()
+                .offset,
+            2
+        );
         assert_eq!(
             t.columns
                 .get(1)
@@ -1615,8 +1640,30 @@ mod tests {
 
         // Moving in the opposite direction remaps every dependent offset too.
         t.move_column_info(2, 0);
-        assert_eq!(t.indices.get(0).unwrap().read().columns[0].offset, 0);
-        assert_eq!(t.indices.get(0).unwrap().read().affect_column[0].offset, 0);
+        assert_eq!(
+            t.indices
+                .get(0)
+                .unwrap()
+                .read()
+                .columns
+                .get(0)
+                .unwrap()
+                .read()
+                .offset,
+            0
+        );
+        assert_eq!(
+            t.indices
+                .get(0)
+                .unwrap()
+                .read()
+                .affect_column
+                .get(0)
+                .unwrap()
+                .read()
+                .offset,
+            0
+        );
         assert_eq!(
             t.columns
                 .get(2)
@@ -1676,7 +1723,8 @@ mod tests {
                 let column = column.read();
                 for index in table.indices.iter_deref() {
                     let index = index.read();
-                    for index_column in &index.columns {
+                    for index_column in index.columns.iter_deref() {
+                        let index_column = index_column.read();
                         if column.name.lowercase() == index_column.name.lowercase() {
                             assert_eq!(column.offset, index_column.offset);
                         }
