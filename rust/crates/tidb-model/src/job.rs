@@ -1348,10 +1348,10 @@ mod tests {
                     id: 2,
                     name: CiString::new("table-kept"),
                     comment: "old-comment".to_owned(),
-                    placement_policy_ref: Some(PolicyRefInfo {
+                    placement_policy_ref: Some(GoShared::new(PolicyRefInfo {
                         id: 12,
                         name: CiString::new("table-policy-kept"),
-                    }),
+                    })),
                     ..Default::default()
                 })),
                 finished_ts: 20,
@@ -1436,8 +1436,8 @@ mod tests {
         assert_eq!(table.name.original(), "table-kept");
         assert_eq!(table.comment, "table-later");
         let table_policy = table.placement_policy_ref.as_ref().unwrap();
-        assert_eq!(table_policy.id, 12);
-        assert_eq!(table_policy.name.original(), "table-policy-later");
+        assert_eq!(table_policy.read().id, 12);
+        assert_eq!(table_policy.read().name.original(), "table-policy-later");
         assert_eq!(history.finished_ts, 30);
         let tables = &history.multiple_table_infos;
         assert!(tables.get(0).is_none());

@@ -23,7 +23,7 @@ use tidb_ast::CiString;
 use crate::schema_state::SchemaState;
 use crate::serde_helpers::{
     go_json_field_matches, ignore_unknown, impl_go_json_deserialize, impl_go_json_merge_object,
-    NullNoopSeed,
+    FatalSeed, NullNoopSeed, ValueMergeSeed,
 };
 use crate::setting_builder::{write_setting_integer, write_setting_string};
 
@@ -42,7 +42,7 @@ impl_go_json_merge_object!(PolicyRefInfo, destination, map, key, {
     if go_json_field_matches(&key, "id") {
         map.next_value_seed(NullNoopSeed(&mut destination.id))?;
     } else if go_json_field_matches(&key, "name") {
-        map.next_value_seed(NullNoopSeed(&mut destination.name))?;
+        map.next_value_seed(FatalSeed(ValueMergeSeed(&mut destination.name)))?;
     } else {
         ignore_unknown(&mut map)?;
     }
@@ -332,7 +332,7 @@ impl_go_json_merge_object!(PolicyInfo, destination, map, key, {
     } else if go_json_field_matches(&key, "id") {
         map.next_value_seed(NullNoopSeed(&mut destination.id))?;
     } else if go_json_field_matches(&key, "name") {
-        map.next_value_seed(NullNoopSeed(&mut destination.name))?;
+        map.next_value_seed(FatalSeed(ValueMergeSeed(&mut destination.name)))?;
     } else if go_json_field_matches(&key, "state") {
         map.next_value_seed(NullNoopSeed(&mut destination.state))?;
     } else {

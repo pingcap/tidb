@@ -15,11 +15,10 @@
 //! `TableInfo` from `pkg/meta/model/table.go`: the central table-metadata
 //! struct. All of its field types and nearly all of its methods are ported.
 //!
-//! The pointer-slice representation and source-shaped table APIs are ported in
-//! this layer. The still-derived Rust `Clone` is deliberately not claimed as
-//! Go `TableInfo.Clone`: the owning follow-on semantic cluster must migrate
-//! the remaining pointer fields to shared handles and then replace the derive
-//! with Go's selective deep/shallow copy policy.
+//! Pointer slices and pointer subobjects retain Go identity through shared
+//! handles. `Clone` implements the source method's top-level selective
+//! deep/shallow policy; each deep-cloned pointee delegates its own inner clone
+//! policy to that pointee's owning module.
 //!
 //! Go's `Equals`/`Hash64` identity rule is exposed explicitly by
 //! [`TableInfo::equals_id`] and [`TableInfo::hash64`]; Rust structural equality
@@ -31,7 +30,9 @@ use tidb_datatype::FieldTypeFlags;
 use crate::cascades_hash::HashInt64;
 use crate::column::ColumnInfo;
 use crate::engine_attribute::{build_storage_class_string, StorageClassTransitRule};
-use crate::go_runtime::{GoPointerAny, GoShared, GoSharedPointerSlice, GoTime};
+use crate::go_runtime::{
+    GoNullClonePolicy, GoPointerAny, GoShared, GoSharedPointerSlice, GoSharedSlice, GoTime,
+};
 use crate::index::{IndexInfo, RegionSplitPolicy};
 use crate::partition::PartitionInfo;
 use crate::placement::PolicyRefInfo;
@@ -65,10 +66,11 @@ pub const CURR_LATEST_TABLE_INFO_VERSION: u16 = TABLE_INFO_VERSION5;
 
 /// Go `TableInfo`: metadata describing a table.
 ///
-/// Go's pointer sub-structs (`*PartitionInfo`, `*ViewInfo`, ...) become
-/// `Option<Box<..>>`; its two embedded fields (`TempTableType`,
+/// Go's pointer sub-structs (`*PartitionInfo`, `*ViewInfo`, ...) use shared
+/// handles so ordinary pointer/header copies and selective Clone rules retain
+/// observable identity. Its two embedded fields (`TempTableType`,
 /// `TableCacheStatusType`) become named fields.
-#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Default, serde::Serialize)]
 pub struct TableInfo {
     /// The table ID.
     #[serde(rename = "id", default)]
@@ -176,7 +178,7 @@ pub struct TableInfo {
     pub pre_split_regions: u64,
     /// The partitioning metadata.
     #[serde(rename = "partition", default)]
-    pub partition: Option<Box<PartitionInfo>>,
+    pub partition: Option<GoShared<PartitionInfo>>,
     /// The compression setting.
     #[serde(
         rename = "compression",
@@ -186,19 +188,19 @@ pub struct TableInfo {
     pub compression: String,
     /// The view metadata, if this is a view.
     #[serde(rename = "view", default)]
-    pub view: Option<Box<ViewInfo>>,
+    pub view: Option<GoShared<ViewInfo>>,
     /// The sequence metadata, if this is a sequence.
     #[serde(rename = "sequence", default)]
-    pub sequence: Option<Box<SequenceInfo>>,
+    pub sequence: Option<GoShared<SequenceInfo>>,
     /// The table lock, if held.
     #[serde(rename = "Lock", default)]
-    pub lock: Option<Box<TableLockInfo>>,
+    pub lock: Option<GoShared<TableLockInfo>>,
     /// The table-info version.
     #[serde(rename = "version", default)]
     pub version: u16,
     /// The TiFlash replica configuration.
     #[serde(rename = "tiflash_replica", default)]
-    pub tiflash_replica: Option<Box<TiFlashReplicaInfo>>,
+    pub tiflash_replica: Option<GoShared<TiFlashReplicaInfo>>,
     /// Whether the table is columnar.
     #[serde(rename = "is_columnar", default)]
     pub is_columnar: bool,
@@ -210,16 +212,16 @@ pub struct TableInfo {
     pub table_cache_status_type: TableCacheStatusType,
     /// The placement-policy reference.
     #[serde(rename = "policy_ref_info", default)]
-    pub placement_policy_ref: Option<PolicyRefInfo>,
+    pub placement_policy_ref: Option<GoShared<PolicyRefInfo>>,
     /// The persisted ANALYZE options.
     #[serde(rename = "stats_options", default)]
-    pub stats_options: Option<Box<StatsOptions>>,
+    pub stats_options: Option<GoShared<StatsOptions>>,
     /// In-progress partition-exchange metadata.
     #[serde(rename = "exchange_partition_info", default)]
-    pub exchange_partition_info: Option<Box<ExchangePartitionInfo>>,
+    pub exchange_partition_info: Option<GoShared<ExchangePartitionInfo>>,
     /// The TTL configuration.
     #[serde(rename = "ttl_info", default)]
-    pub ttl_info: Option<Box<TTLInfo>>,
+    pub ttl_info: Option<GoShared<TTLInfo>>,
     /// Whether the table is active-active.
     #[serde(
         rename = "is_active_active",
@@ -233,17 +235,17 @@ pub struct TableInfo {
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub softdelete_info: Option<Box<SoftdeleteInfo>>,
+    pub softdelete_info: Option<GoShared<SoftdeleteInfo>>,
     /// The affinity configuration.
     #[serde(rename = "affinity", default, skip_serializing_if = "Option::is_none")]
-    pub affinity: Option<Box<TableAffinityInfo>>,
+    pub affinity: Option<GoShared<TableAffinityInfo>>,
     /// The persistent region-split policy.
     #[serde(
         rename = "table_split_policy",
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub table_split_policy: Option<Box<RegionSplitPolicy>>,
+    pub table_split_policy: Option<GoShared<RegionSplitPolicy>>,
     /// The schema revision.
     #[serde(rename = "revision", default)]
     pub revision: u64,
@@ -271,9 +273,9 @@ pub struct TableInfo {
         rename = "storage_class_transitions",
         default,
         deserialize_with = "crate::serde_helpers::null_default",
-        skip_serializing_if = "crate::serde_helpers::is_empty_vec"
+        skip_serializing_if = "GoSharedSlice::is_empty"
     )]
-    pub storage_class_transitions: Vec<StorageClassTransitRule>,
+    pub storage_class_transitions: GoSharedSlice<StorageClassTransitRule>,
     /// The table mode (normal/import/restore).
     #[serde(
         rename = "mode",
@@ -283,7 +285,117 @@ pub struct TableInfo {
     pub mode: TableMode,
 }
 
+impl Clone for TableInfo {
+    /// Go `TableInfo.Clone`: copy the scalar struct, then selectively allocate
+    /// the pointer/slice fields named by the source method. Fields not named by
+    /// that method deliberately retain shared pointer or backing identity.
+    fn clone(&self) -> Self {
+        let columns = self
+            .columns
+            .map_clone_with(GoNullClonePolicy::Preserve, Clone::clone);
+        let indices = self
+            .indices
+            .map_clone_with(GoNullClonePolicy::Preserve, Clone::clone);
+        let foreign_keys = if self.foreign_keys.is_empty() {
+            GoSharedPointerSlice::default()
+        } else {
+            self.foreign_keys
+                .map_clone_with(GoNullClonePolicy::Panic, Clone::clone)
+        };
+
+        Self {
+            id: self.id,
+            name: self.name.clone(),
+            charset: self.charset.clone(),
+            collate: self.collate.clone(),
+            columns,
+            indices,
+            constraints: self.constraints.clone(),
+            foreign_keys,
+            state: self.state,
+            pk_is_handle: self.pk_is_handle,
+            is_common_handle: self.is_common_handle,
+            common_handle_version: self.common_handle_version,
+            comment: self.comment.clone(),
+            auto_inc_id: self.auto_inc_id,
+            auto_inc_id_extra: self.auto_inc_id_extra,
+            auto_id_cache: self.auto_id_cache,
+            auto_rand_id: self.auto_rand_id,
+            max_column_id: self.max_column_id,
+            max_index_id: self.max_index_id,
+            max_foreign_key_id: self.max_foreign_key_id,
+            max_constraint_id: self.max_constraint_id,
+            update_ts: self.update_ts,
+            auto_id_schema_id: self.auto_id_schema_id,
+            shard_row_id_bits: self.shard_row_id_bits,
+            max_shard_row_id_bits: self.max_shard_row_id_bits,
+            auto_random_bits: self.auto_random_bits,
+            auto_random_range_bits: self.auto_random_range_bits,
+            pre_split_regions: self.pre_split_regions,
+            partition: self
+                .partition
+                .as_ref()
+                .map(|pointer| GoShared::new(pointer.read().clone())),
+            compression: self.compression.clone(),
+            view: self.view.clone(),
+            sequence: self.sequence.clone(),
+            lock: self.lock.clone(),
+            version: self.version,
+            tiflash_replica: self.tiflash_replica.clone(),
+            is_columnar: self.is_columnar,
+            temp_table_type: self.temp_table_type,
+            table_cache_status_type: self.table_cache_status_type,
+            placement_policy_ref: self.placement_policy_ref.clone(),
+            stats_options: self.stats_options.clone(),
+            exchange_partition_info: self.exchange_partition_info.clone(),
+            ttl_info: self
+                .ttl_info
+                .as_ref()
+                .map(|pointer| GoShared::new(pointer.read().clone())),
+            is_active_active: self.is_active_active,
+            softdelete_info: self.softdelete_info.clone(),
+            affinity: self
+                .affinity
+                .as_ref()
+                .map(|pointer| GoShared::new(pointer.read().clone())),
+            table_split_policy: self
+                .table_split_policy
+                .as_ref()
+                .map(|pointer| GoShared::new(pointer.read().clone())),
+            revision: self.revision,
+            db_id: self.db_id,
+            engine_attribute: self.engine_attribute.clone(),
+            storage_class_tier: self.storage_class_tier.clone(),
+            storage_class_transitions: self.storage_class_transitions.clone(),
+            mode: self.mode,
+        }
+    }
+}
+
 impl TableInfo {
+    /// Go `json.Unmarshal` into an existing `*TableInfo`, including syntax
+    /// preflight, top-level-null no-op, ordered partial mutation and reuse of
+    /// shared pointer/slice receivers.
+    pub fn decode(&mut self, bytes: &[u8]) -> Result<(), serde_json::Error> {
+        use crate::serde_helpers::GoJsonMerge;
+
+        let raw: &serde_json::value::RawValue = serde_json::from_slice(bytes)?;
+        if raw.get() == "null" {
+            return Ok(());
+        }
+        let mut deserializer = serde_json::Deserializer::from_str(raw.get());
+        self.go_json_merge(&mut deserializer)
+            .map_err(crate::serde_helpers::normalize_fatal_json_error)?;
+        deserializer.end()
+    }
+
+    /// Nil-receiver-capable Go `Clone` boundary. A non-nil receiver allocates
+    /// the returned `*TableInfo`; a nil receiver panics at `nt := *t`.
+    #[must_use]
+    pub fn clone_pointer(table: Option<&Self>) -> GoShared<Self> {
+        GoShared::new(table.expect("nil *TableInfo").clone())
+    }
+
     /// Go `TableInfo.Equals` compares only persisted table identity.
     #[must_use]
     pub fn equals_id(&self, other: &Self) -> bool {
@@ -319,19 +431,17 @@ impl TableInfo {
 
     /// Go `GetPartitionInfo`: the partition info when partitioning is enabled.
     #[must_use]
-    pub fn get_partition_info(&self) -> Option<&PartitionInfo> {
-        match &self.partition {
-            Some(p) if p.enable => Some(p),
-            _ => None,
-        }
+    pub fn get_partition_info(&self) -> Option<GoShared<PartitionInfo>> {
+        self.partition
+            .as_ref()
+            .filter(|partition| partition.read().enable)
+            .cloned()
     }
 
-    /// Mutable form of Go `GetPartitionInfo`; mutations affect this table.
-    pub fn get_partition_info_mut(&mut self) -> Option<&mut PartitionInfo> {
-        match &mut self.partition {
-            Some(partition) if partition.enable => Some(partition),
-            _ => None,
-        }
+    /// Compatibility spelling: the shared Go pointer returned by the source
+    /// method already provides write-through mutation.
+    pub fn get_partition_info_mut(&mut self) -> Option<GoShared<PartitionInfo>> {
+        self.get_partition_info()
     }
 
     /// Go `GetUpdateTime`: the last-update time (from the `update_ts` TSO).
@@ -446,7 +556,6 @@ impl TableInfo {
     /// (a unique index over only non-null, non-hidden public columns).
     #[must_use]
     pub fn get_primary_key(&self) -> Option<GoShared<IndexInfo>> {
-        let cols = self.cols();
         let mut implicit_pk = None;
         for key in self.indices.iter_deref() {
             let index = key.read();
@@ -461,7 +570,8 @@ impl TableInfo {
                 let mut all_col_not_null = true;
                 let mut skip = false;
                 for idx_col in &index.columns {
-                    let col = cols
+                    let col = self
+                        .cols()
                         .iter_deref()
                         .find(|column| column.read().name.lowercase() == idx_col.name.lowercase());
                     match col {
@@ -587,13 +697,16 @@ impl TableInfo {
 
     /// Go `ColumnIsInIndex`: whether column `c` participates in any index.
     #[must_use]
-    pub fn column_is_in_index(&self, c: &ColumnInfo) -> bool {
+    pub fn column_is_in_index(&self, column: Option<&ColumnInfo>) -> bool {
         self.indices.iter_deref().any(|index| {
             let index = index.read();
-            index
-                .columns
-                .iter()
-                .any(|ic| ic.name.lowercase() == c.name.lowercase())
+            index.columns.iter().any(|index_column| {
+                index_column.name.lowercase()
+                    == column
+                        .expect("nil *ColumnInfo in ColumnIsInIndex")
+                        .name
+                        .lowercase()
+            })
         })
     }
 
@@ -636,7 +749,7 @@ impl TableInfo {
     /// key is the changing column's origin name (Go's original-case
     /// `GetChangingOriginName`), matching Go's map behavior.
     #[must_use]
-    pub fn get_non_temp_columns(&self) -> Vec<GoShared<ColumnInfo>> {
+    pub fn get_non_temp_columns(&self) -> GoSharedPointerSlice<ColumnInfo> {
         use std::collections::BTreeMap;
         let mut col_map = BTreeMap::new();
         for column in self.columns.iter_deref() {
@@ -655,19 +768,22 @@ impl TableInfo {
                 col_map.remove(&col.get_changing_origin_name());
             }
         }
-        col_map.into_values().collect()
+        let handles = col_map.into_values().map(Some).collect::<Vec<_>>();
+        let capacity = handles.len();
+        GoSharedPointerSlice::from_handles_with_capacity(handles, capacity)
     }
 
     /// Mutable handles for Go `GetNonTempColumns`.
-    pub fn get_non_temp_columns_mut(&mut self) -> Vec<GoShared<ColumnInfo>> {
+    pub fn get_non_temp_columns_mut(&mut self) -> GoSharedPointerSlice<ColumnInfo> {
         self.get_non_temp_columns()
     }
 
     /// Go `ClearPlacement`: drop the table's and partitions' placement refs.
     pub fn clear_placement(&mut self) {
         self.placement_policy_ref = None;
-        if let Some(p) = &mut self.partition {
-            for def in &mut p.definitions {
+        if let Some(partition) = &self.partition {
+            let mut partition = partition.write();
+            for def in &mut partition.definitions {
                 def.placement_policy_ref = None;
             }
         }
@@ -683,7 +799,10 @@ impl TableInfo {
     /// Go `StorageClassString`: the JSON string describing the storage class.
     #[must_use]
     pub fn storage_class_string(&self) -> String {
-        build_storage_class_string(&self.storage_class_tier, &self.storage_class_transitions)
+        build_storage_class_string(
+            &self.storage_class_tier,
+            &self.storage_class_transitions.snapshot(),
+        )
     }
 
     /// Go `MoveColumnInfo`: move the column at `from` to `to`, re-numbering
@@ -780,7 +899,9 @@ impl TableInfo {
     /// Go `IsLocked`: whether the table lock is held by a session.
     #[must_use]
     pub fn is_locked(&self) -> bool {
-        self.lock.as_ref().is_some_and(|l| !l.sessions.is_empty())
+        self.lock
+            .as_ref()
+            .is_some_and(|lock| !lock.read().sessions.is_empty())
     }
 }
 
@@ -858,6 +979,51 @@ mod tests {
     }
 
     #[test]
+    fn table_decode_uses_go_object_and_top_level_null_rules() {
+        let fresh: TableInfo = serde_json::from_str("null").unwrap();
+        assert_eq!(fresh.id, 0);
+        assert!(!fresh.columns.is_allocated());
+
+        let column = GoShared::new(ColumnInfo {
+            id: 1,
+            ..Default::default()
+        });
+        let policy = GoShared::new(PolicyRefInfo {
+            id: 4,
+            name: CiString::new("before"),
+        });
+        let mut table = TableInfo {
+            id: 7,
+            columns: GoSharedPointerSlice::from_handles(vec![Some(column.clone())]),
+            placement_policy_ref: Some(policy.clone()),
+            ..Default::default()
+        };
+        let sibling = table.columns.clone();
+        table
+            .decode(
+                br#"{"ID":8,"id":null,"cols":[{"comment":"later"}],"policy_ref_info":{"name":{"O":"after"}}}"#,
+            )
+            .unwrap();
+        assert_eq!(table.id, 8);
+        assert!(table.columns.backing_ptr_eq(&sibling));
+        assert!(table.columns.get(0).unwrap().ptr_eq(&column));
+        assert_eq!(column.read().comment, "later");
+        assert!(table.placement_policy_ref.as_ref().unwrap().ptr_eq(&policy));
+        assert_eq!(policy.read().id, 4);
+        assert_eq!(policy.read().name.original(), "after");
+
+        table.decode(br#"{"policy_ref_info":null}"#).unwrap();
+        assert!(table.placement_policy_ref.is_none());
+        assert_eq!(policy.read().name.original(), "after");
+
+        table.decode(b"null").unwrap();
+        assert_eq!(table.id, 8);
+        assert!(table.columns.get(0).unwrap().ptr_eq(&column));
+        assert!(table.decode(br#"{"id":9"#).is_err());
+        assert_eq!(table.id, 8);
+    }
+
+    #[test]
     fn table_identity_hash_and_equality_use_only_id() {
         let left = TableInfo {
             id: 9,
@@ -930,13 +1096,128 @@ mod tests {
         assert!(!t.is_view());
         assert!(!t.is_sequence());
 
-        t.view = Some(Box::new(ViewInfo::default()));
+        t.view = Some(GoShared::new(ViewInfo::default()));
         assert!(t.is_view());
         assert!(!t.is_base_table());
 
         t.view = None;
-        t.sequence = Some(Box::new(SequenceInfo::default()));
+        t.sequence = Some(GoShared::new(SequenceInfo::default()));
         assert!(t.is_sequence());
+    }
+
+    #[test]
+    fn clone_uses_the_source_top_level_deep_and_shallow_pointer_policy() {
+        let column = GoShared::new(column("c", 0, true, false));
+        let index = GoShared::new(IndexInfo::default());
+        let constraint = GoShared::new(ConstraintInfo::default());
+        let foreign_key = GoShared::new(FKInfo::default());
+        let partition = GoShared::new(PartitionInfo {
+            enable: true,
+            expr: "source".to_owned(),
+            ..Default::default()
+        });
+        let ttl = GoShared::new(TTLInfo {
+            interval_expr_str: "1".to_owned(),
+            ..Default::default()
+        });
+        let split = GoShared::new(RegionSplitPolicy {
+            regions: 2,
+            ..Default::default()
+        });
+        let affinity = GoShared::new(TableAffinityInfo {
+            level: "table".to_owned(),
+        });
+        let view = GoShared::new(ViewInfo::default());
+        let sequence = GoShared::new(SequenceInfo::default());
+        let lock = GoShared::new(TableLockInfo::default());
+        let tiflash = GoShared::new(TiFlashReplicaInfo::default());
+        let policy = GoShared::new(PolicyRefInfo::default());
+        let stats = GoShared::new(StatsOptions::default());
+        let exchange = GoShared::new(ExchangePartitionInfo::default());
+        let softdelete = GoShared::new(SoftdeleteInfo::default());
+        let transitions = GoSharedSlice::from_vec(vec![StorageClassTransitRule::default()]);
+
+        let source = TableInfo {
+            columns: GoSharedPointerSlice::from_handles(vec![Some(column.clone()), None]),
+            indices: GoSharedPointerSlice::from_handles(vec![Some(index.clone()), None]),
+            constraints: GoSharedPointerSlice::from_handles(vec![Some(constraint.clone())]),
+            foreign_keys: GoSharedPointerSlice::from_handles(vec![Some(foreign_key.clone())]),
+            partition: Some(partition.clone()),
+            view: Some(view.clone()),
+            sequence: Some(sequence.clone()),
+            lock: Some(lock.clone()),
+            tiflash_replica: Some(tiflash.clone()),
+            placement_policy_ref: Some(policy.clone()),
+            stats_options: Some(stats.clone()),
+            exchange_partition_info: Some(exchange.clone()),
+            ttl_info: Some(ttl.clone()),
+            softdelete_info: Some(softdelete.clone()),
+            affinity: Some(affinity.clone()),
+            table_split_policy: Some(split.clone()),
+            storage_class_transitions: transitions.clone(),
+            ..Default::default()
+        };
+        let cloned = source.clone();
+
+        assert!(cloned.columns.is_allocated());
+        assert!(!cloned.columns.backing_ptr_eq(&source.columns));
+        assert!(!cloned.columns.get(0).unwrap().ptr_eq(&column));
+        assert!(cloned.columns.get(1).is_none());
+        assert!(!cloned.indices.backing_ptr_eq(&source.indices));
+        assert!(!cloned.indices.get(0).unwrap().ptr_eq(&index));
+        assert!(cloned.indices.get(1).is_none());
+        assert!(cloned.constraints.backing_ptr_eq(&source.constraints));
+        assert!(cloned.constraints.get(0).unwrap().ptr_eq(&constraint));
+        assert!(!cloned.foreign_keys.backing_ptr_eq(&source.foreign_keys));
+        assert!(!cloned.foreign_keys.get(0).unwrap().ptr_eq(&foreign_key));
+
+        assert!(!cloned.partition.as_ref().unwrap().ptr_eq(&partition));
+        assert!(!cloned.ttl_info.as_ref().unwrap().ptr_eq(&ttl));
+        assert!(!cloned.table_split_policy.as_ref().unwrap().ptr_eq(&split));
+        assert!(!cloned.affinity.as_ref().unwrap().ptr_eq(&affinity));
+
+        assert!(cloned.view.as_ref().unwrap().ptr_eq(&view));
+        assert!(cloned.sequence.as_ref().unwrap().ptr_eq(&sequence));
+        assert!(cloned.lock.as_ref().unwrap().ptr_eq(&lock));
+        assert!(cloned.tiflash_replica.as_ref().unwrap().ptr_eq(&tiflash));
+        assert!(cloned
+            .placement_policy_ref
+            .as_ref()
+            .unwrap()
+            .ptr_eq(&policy));
+        assert!(cloned.stats_options.as_ref().unwrap().ptr_eq(&stats));
+        assert!(cloned
+            .exchange_partition_info
+            .as_ref()
+            .unwrap()
+            .ptr_eq(&exchange));
+        assert!(cloned.softdelete_info.as_ref().unwrap().ptr_eq(&softdelete));
+        assert!(cloned
+            .storage_class_transitions
+            .backing_ptr_eq(&transitions));
+
+        cloned.partition.as_ref().unwrap().write().expr = "clone".to_owned();
+        assert_eq!(partition.read().expr, "source");
+        cloned.view.as_ref().unwrap().write().select_stmt = "shared".to_owned();
+        assert_eq!(view.read().select_stmt, "shared");
+
+        let nil_columns = TableInfo::default().clone();
+        assert!(nil_columns.columns.is_allocated());
+        assert!(nil_columns.indices.is_allocated());
+        assert!(!nil_columns.foreign_keys.is_allocated());
+        let allocated_empty_foreign_keys = TableInfo {
+            foreign_keys: GoSharedPointerSlice::from_nullable(Vec::new()),
+            ..Default::default()
+        }
+        .clone();
+        assert!(!allocated_empty_foreign_keys.foreign_keys.is_allocated());
+        assert!(std::panic::catch_unwind(|| TableInfo::clone_pointer(None)).is_err());
+
+        let nil_foreign_key = TableInfo {
+            foreign_keys: GoSharedPointerSlice::from_nullable(vec![Some(FKInfo::default()), None]),
+            ..Default::default()
+        };
+        assert!(std::panic::catch_unwind(|| nil_foreign_key.clone()).is_err());
     }
 
     #[test]
@@ -1041,6 +1322,39 @@ mod tests {
             Some(implicit),
         ]);
         assert_eq!(t2.get_primary_key().unwrap().read().name.original(), "pk");
+
+        let nil_column_table = TableInfo {
+            columns: GoSharedPointerSlice::from_nullable(vec![None]),
+            ..Default::default()
+        };
+        assert!(nil_column_table.get_primary_key().is_none());
+
+        let explicit_primary = TableInfo {
+            columns: GoSharedPointerSlice::from_nullable(vec![None]),
+            indices: vec![IndexInfo {
+                primary: true,
+                ..Default::default()
+            }]
+            .into(),
+            ..Default::default()
+        };
+        assert!(explicit_primary.get_primary_key().is_some());
+
+        let implicit_candidate = TableInfo {
+            columns: GoSharedPointerSlice::from_nullable(vec![None]),
+            indices: vec![IndexInfo {
+                unique: true,
+                columns: vec![IndexColumn {
+                    name: CiString::new("a"),
+                    ..Default::default()
+                }]
+                .into(),
+                ..Default::default()
+            }]
+            .into(),
+            ..Default::default()
+        };
+        assert!(std::panic::catch_unwind(|| implicit_candidate.get_primary_key()).is_err());
     }
 
     #[test]
@@ -1095,9 +1409,18 @@ mod tests {
                 .original(),
             "b"
         );
-        assert!(t.column_is_in_index(&t.columns.get(0).unwrap().read())); // "a" is in idx_a
-        assert!(!t.column_is_in_index(&t.columns.get(1).unwrap().read())); // "b" is not
+        assert!(t.column_is_in_index(Some(&t.columns.get(0).unwrap().read()))); // "a" is in idx_a
+        assert!(!t.column_is_in_index(Some(&t.columns.get(1).unwrap().read()))); // "b" is not
         assert!(t.has_clustered_index()); // pk_is_handle
+
+        let no_indices = TableInfo::default();
+        assert!(!no_indices.column_is_in_index(None));
+        let empty_index = TableInfo {
+            indices: vec![IndexInfo::default()].into(),
+            ..Default::default()
+        };
+        assert!(!empty_index.column_is_in_index(None));
+        assert!(std::panic::catch_unwind(|| t.column_is_in_index(None)).is_err());
     }
 
     #[test]
@@ -1125,8 +1448,8 @@ mod tests {
 
         // clear_placement drops table + partition refs.
         let mut t2 = TableInfo {
-            placement_policy_ref: Some(PolicyRefInfo::default()),
-            partition: Some(Box::new(PartitionInfo {
+            placement_policy_ref: Some(GoShared::new(PolicyRefInfo::default())),
+            partition: Some(GoShared::new(PartitionInfo {
                 definitions: vec![PartitionDefinition {
                     placement_policy_ref: Some(PolicyRefInfo::default()),
                     ..Default::default()
@@ -1137,7 +1460,7 @@ mod tests {
         };
         t2.clear_placement();
         assert!(t2.placement_policy_ref.is_none());
-        assert!(t2.partition.unwrap().definitions[0]
+        assert!(t2.partition.unwrap().read().definitions[0]
             .placement_policy_ref
             .is_none());
     }
@@ -1165,15 +1488,15 @@ mod tests {
                 ..Default::default()
             }]
             .into(),
-            partition: Some(Box::new(PartitionInfo {
+            partition: Some(GoShared::new(PartitionInfo {
                 enable: true,
                 ..Default::default()
             })),
             ..Default::default()
         };
 
-        table.get_partition_info_mut().unwrap().expr = "p".to_owned();
-        assert_eq!(table.partition.as_ref().unwrap().expr, "p");
+        table.get_partition_info_mut().unwrap().write().expr = "p".to_owned();
+        assert_eq!(table.partition.as_ref().unwrap().read().expr, "p");
         table.get_pk_col_info_mut().unwrap().write().comment = "pk".to_owned();
         table
             .get_auto_increment_col_info_mut()
@@ -1201,7 +1524,7 @@ mod tests {
         }
         {
             let columns = table.get_non_temp_columns_mut();
-            columns[0].write().comment = "non-temp".to_owned();
+            columns.get(0).unwrap().write().comment = "non-temp".to_owned();
         }
         assert_eq!(table.columns.get(0).unwrap().read().comment, "non-temp");
         assert!(table.columns.get(0).unwrap().read().generated_stored);
@@ -1449,14 +1772,14 @@ mod tests {
             enable: false,
             ..Default::default()
         };
-        t.partition = Some(Box::new(pi));
+        t.partition = Some(GoShared::new(pi));
         // Disabled partitioning still returns None.
         assert!(t.get_partition_info().is_none());
-        t.partition.as_mut().unwrap().enable = true;
+        t.partition.as_ref().unwrap().write().enable = true;
         assert!(t.get_partition_info().is_some());
 
         assert!(!t.is_locked());
-        t.lock = Some(Box::new(TableLockInfo {
+        t.lock = Some(GoShared::new(TableLockInfo {
             tp: tidb_ast::TableLockType::default(),
             sessions: vec![SessionInfo::default()].into(),
             state: TableLockState::PUBLIC,

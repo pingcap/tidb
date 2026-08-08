@@ -26,7 +26,9 @@ use serde::de::{DeserializeSeed, IgnoredAny, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::value::RawValue;
 
-use crate::go_runtime::{GoShared, GoSharedPointerSlice};
+use crate::go_runtime::{
+    go_64_slice_decode_capacity, GoShared, GoSharedPointerSlice, GoSharedSlice,
+};
 
 /// An owned Go slice of non-pointer values with nil/allocation identity.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -1231,6 +1233,72 @@ where
         }
 
         deserializer.deserialize_option(SharedPointerSliceVisitor(self.0))
+    }
+}
+
+/// Decodes a Go `[]string` into a shared slice header, reusing initialized
+/// slots/backing through capacity and continuing after recoverable element
+/// type errors. JSON null into a string element is a no-op.
+pub(crate) struct SharedStringSliceSeed<'a>(pub(crate) &'a mut GoSharedSlice<String>);
+
+impl<'de> DeserializeSeed<'de> for SharedStringSliceSeed<'_> {
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct SharedStringSliceVisitor<'a>(&'a mut GoSharedSlice<String>);
+
+        impl<'de> Visitor<'de> for SharedStringSliceVisitor<'_> {
+            type Value = ();
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("null or an array of strings")
+            }
+
+            fn visit_none<E>(self) -> Result<Self::Value, E> {
+                *self.0 = GoSharedSlice::default();
+                Ok(())
+            }
+
+            fn visit_unit<E>(self) -> Result<Self::Value, E> {
+                *self.0 = GoSharedSlice::default();
+                Ok(())
+            }
+
+            fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                let RawArrayMembers(elements) = RawArrayMembers::deserialize(deserializer)?;
+                let decoded_len = elements.len();
+                let mut first_error = None;
+                for (index, raw) in elements.into_iter().enumerate() {
+                    // A Go string header is 16 bytes on supported 64-bit TiDB
+                    // targets and the slice is pointer-bearing.
+                    let grown_capacity =
+                        go_64_slice_decode_capacity(self.0.capacity(), index + 1, 16);
+                    self.0.prepare_decode_slot(index, grown_capacity);
+                    let mut value = self.0.decode_slot(index);
+                    let mut element = serde_json::Deserializer::from_str(raw.get());
+                    if let Err(error) = NullNoopSeed(&mut value)
+                        .deserialize(&mut element)
+                        .and_then(|()| element.end())
+                    {
+                        first_error.get_or_insert_with(|| error.to_string());
+                    }
+                    self.0.set_decode_slot(index, value);
+                }
+                self.0.finish_decode(decoded_len);
+                if let Some(error) = first_error {
+                    return Err(serde::de::Error::custom(error));
+                }
+                Ok(())
+            }
+        }
+
+        deserializer.deserialize_option(SharedStringSliceVisitor(self.0))
     }
 }
 
