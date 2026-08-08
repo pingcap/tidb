@@ -103,7 +103,7 @@ pub fn gen_unique_changing_index_name(table: &TableInfo, index: &IndexInfo) -> S
             index.name.original(),
             suffix
         );
-        if !used.contains(candidate.to_lowercase().as_str()) {
+        if !used.contains(tidb_mysql::to_lowercase(&candidate).as_str()) {
             return candidate;
         }
         suffix += 1;
@@ -619,7 +619,7 @@ fn is_index_condition_covered_by_foreign_key_columns(
     };
     columns
         .iter()
-        .any(|column| name.to_lowercase() == column.lowercase())
+        .any(|column| tidb_mysql::to_lowercase(name) == column.lowercase())
 }
 
 /// Go `FindIndexInfoByID`.
@@ -878,6 +878,18 @@ mod tests {
         assert_eq!(
             gen_unique_changing_index_name(&table, &source),
             "_Idx$_Key_1"
+        );
+        table.indices = vec![IndexInfo {
+            name: CiString::new("_Idx$_i_0"),
+            ..Default::default()
+        }];
+        let unicode_source = IndexInfo {
+            name: CiString::new("\u{130}"),
+            ..Default::default()
+        };
+        assert_eq!(
+            gen_unique_changing_index_name(&table, &unicode_source),
+            "_Idx$_\u{130}_1"
         );
         assert!(is_index_prefix_covered(
             &table,

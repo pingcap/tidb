@@ -871,7 +871,7 @@ pub struct TableAffinityInfo {
 pub fn new_table_affinity_info_with_level(
     level: &str,
 ) -> Result<Option<TableAffinityInfo>, String> {
-    let normalized = level.to_lowercase();
+    let normalized = tidb_mysql::to_lowercase(level);
     match normalized.as_str() {
         "" | "none" => Ok(None),
         "table" | "partition" => Ok(Some(TableAffinityInfo { level: normalized })),

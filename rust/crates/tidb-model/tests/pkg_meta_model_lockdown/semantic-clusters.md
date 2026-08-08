@@ -33,6 +33,8 @@ remaining package census is 2,509 obligations plus the build artifact.
   scope, transition rendering, wrapping unsigned duration arithmetic, omitted
   scalar zero values, and nil elements in `StorageClassSettings.Defs`' owning
   Go pointer slice.
+  Name normalization uses Go's Unicode simple-rune case tables; it never
+  introduces Rust full-case multi-rune expansions.
 - Explicit representation boundaries: unrestricted Go `any`, nil versus
   allocated-empty dependency maps, shallow clone pointer identity, Go
   `unsafe.Sizeof`, and byte-exact `json.RawMessage` lexical preservation.
@@ -47,7 +49,8 @@ remaining package census is 2,509 obligations plus the build artifact.
   exact bidirectional indexable-function/distance-metric maps, full-text names,
   prefix detection, table-column ID resolution, columnar type,
   partial-condition parsing, ordinary and foreign-key prefix coverage, ID/name
-  lookup, and unknown persisted enum round trips.
+  lookup, Go simple-rune case normalization, and unknown persisted enum round
+  trips.
 - Explicit representation boundaries: Go's mixed shallow/deep clone pointer
   aliases, nil elements in pointer slices, nil versus allocated-empty index
   column/region-split slices in the existing `Vec` representation, and the TiDB
@@ -96,7 +99,9 @@ remaining package census is 2,509 obligations plus the build artifact.
   finish/history updates, row/warning access, v1/v2 raw-argument envelope,
   pause/resume causes, pausable/alterable/resumable rules, reorg detection,
   rollback matrix, system variables, scheduler involvement normalization and
-  validation, sub-job proxy state, and multi-schema revertibility.
+  validation, sub-job proxy state, and multi-schema revertibility. Scheduler
+  involvement names use Go's Unicode simple-rune lowercasing rather than
+  Rust's full-case expansion, while preserving the `*` and empty sentinels.
   `SubJob.Clone` clears its private decoded-argument cache while retaining the
   raw persisted envelope; `Job.Clone` refreshes the source job's raw argument
   envelope before decoding its copy, preserving the source-visible side
@@ -137,7 +142,7 @@ remaining package census is 2,509 obligations plus the build artifact.
   gaps, index/constraint/FK lookup, column movement and dependent offsets,
   placement clearing, storage class, table kinds/locks, partition state/GC,
   default LIST partition, overlapping DROP replacement, DDL-hidden IDs,
-  foreign-key rendering, statistics keys/defaults, TTL duration compatibility,
+  Go simple-rune name lookup, foreign-key rendering, statistics keys/defaults, TTL duration compatibility,
   affinity normalization, and statistics-window RFC3339 values including Go's
   year-1 zero time and non-UTC fixed offsets. A non-nil partition definition's
   memory estimate uses the owning Go 64-bit object/header sizes and byte-length

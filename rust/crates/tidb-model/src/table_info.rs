@@ -484,7 +484,7 @@ impl TableInfo {
     /// (case-insensitive).
     #[must_use]
     pub fn find_constraint_info_by_name(&self, constr_name: &str) -> Option<&ConstraintInfo> {
-        let low = constr_name.to_lowercase();
+        let low = tidb_mysql::to_lowercase(constr_name);
         self.constraints.iter().find(|c| c.name.lowercase() == low)
     }
 
@@ -870,7 +870,7 @@ mod tests {
         c_hidden.id = 101;
         c_hidden.set_flag(FieldTypeFlags::AUTO_INCREMENT);
 
-        let t = TableInfo {
+        let mut t = TableInfo {
             columns: vec![c_pub, c_hidden],
             indices: vec![IndexInfo {
                 id: 5,
@@ -896,6 +896,8 @@ mod tests {
         assert!(t.find_index_by_name("idx_a").is_some());
         assert!(t.find_index_by_id(5).is_some());
         assert!(t.find_constraint_info_by_name("CHK1").is_some()); // case-insensitive
+        t.constraints[0].name = CiString::new("i");
+        assert!(t.find_constraint_info_by_name("\u{130}").is_some());
         assert_eq!(
             t.get_auto_increment_col_info().unwrap().name.original(),
             "b"

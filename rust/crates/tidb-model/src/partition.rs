@@ -382,7 +382,7 @@ impl PartitionInfo {
     /// `name` (case-insensitive), or `-1`.
     #[must_use]
     pub fn find_partition_definition_by_name(&self, name: &str) -> i64 {
-        let low = name.to_lowercase();
+        let low = tidb_mysql::to_lowercase(name);
         self.definitions
             .iter()
             .position(|d| d.name.lowercase() == low)
@@ -393,7 +393,7 @@ impl PartitionInfo {
     /// (case-insensitive), or `-1`.
     #[must_use]
     pub fn get_partition_id_by_name(&self, name: &str) -> i64 {
-        let low = name.to_lowercase();
+        let low = tidb_mysql::to_lowercase(name);
         self.definitions
             .iter()
             .find(|d| d.name.lowercase() == low)
@@ -564,6 +564,13 @@ mod tests {
         assert_eq!(pi.find_partition_definition_by_name("nope"), -1);
         assert_eq!(pi.get_partition_id_by_name("P0"), 10);
         assert_eq!(pi.get_partition_id_by_name("x"), -1);
+
+        let simple_case = PartitionInfo {
+            definitions: vec![def(30, "i")],
+            ..Default::default()
+        };
+        assert_eq!(simple_case.find_partition_definition_by_name("\u{130}"), 0);
+        assert_eq!(simple_case.get_partition_id_by_name("\u{130}"), 30);
     }
 
     #[test]

@@ -71,7 +71,7 @@ pub fn gen_unique_changing_column_name(table: &TableInfo, old_column: &ColumnInf
             old_column.name.original(),
             suffix
         );
-        if !used.contains(candidate.to_lowercase().as_str()) {
+        if !used.contains(tidb_mysql::to_lowercase(&candidate).as_str()) {
             return candidate;
         }
         suffix += 1;
@@ -666,7 +666,7 @@ impl ColumnInfo {
 /// Go `FindColumnInfo`: finds a column by (case-insensitive) name.
 #[must_use]
 pub fn find_column_info<'a>(cols: &'a [ColumnInfo], name: &str) -> Option<&'a ColumnInfo> {
-    let name = name.to_lowercase();
+    let name = tidb_mysql::to_lowercase(name);
     cols.iter().find(|col| col.name.lowercase() == name)
 }
 
@@ -706,6 +706,13 @@ mod tests {
         ];
         let old = col("Old", FieldTypeCode::Long);
         assert_eq!(gen_unique_changing_column_name(&table, &old), "_Col$_Old_1");
+
+        table.columns = vec![col("_Col$_i_0", FieldTypeCode::Long)];
+        let old = col("\u{130}", FieldTypeCode::Long);
+        assert_eq!(
+            gen_unique_changing_column_name(&table, &old),
+            "_Col$_\u{130}_1"
+        );
     }
 
     // A minimal ColumnInfo for accessor tests.
@@ -778,6 +785,8 @@ mod tests {
         // Case-insensitive name lookup.
         assert!(find_column_info(&cols, "FOO").is_some());
         assert!(find_column_info(&cols, "baz").is_none());
+        let simple_case = vec![col("i", FieldTypeCode::Long)];
+        assert!(find_column_info(&simple_case, "\u{130}").is_some());
 
         let mut cols = cols;
         cols[1].id = 7;

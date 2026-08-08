@@ -1143,7 +1143,7 @@ fn normalize_involving_name(name: &str) -> String {
     if matches!(name, INVOLVING_ALL | INVOLVING_NONE) {
         name.to_owned()
     } else {
-        name.to_lowercase()
+        tidb_mysql::to_lowercase(name)
     }
 }
 
@@ -1405,6 +1405,12 @@ mod tests {
         assert_eq!(job.schema_name, "test");
         assert_eq!(job.table_name, "table");
         assert!(job.check_involving_schema_info().is_ok());
+
+        job.schema_name = "\u{130}".to_owned();
+        job.table_name = "\u{130}".to_owned();
+        job.normalize_involving_schema_info();
+        assert_eq!(job.schema_name, "i");
+        assert_eq!(job.table_name, "i");
 
         let mut allocated_empty = job.clone();
         allocated_empty.involving_schema_info = Some(Vec::new());
