@@ -471,7 +471,10 @@ pub fn try_build_hist_and_topn_tracked<E>(
     }
 
     // Go sorts before `NewHistogram`; a comparison error therefore wins over
-    // the negative-capacity panic and the caller sees the mutation.
+    // the negative-capacity panic and the caller sees the mutation. The
+    // constructor allocates both the bounds chunk and `Buckets` with
+    // `numBuckets`, so a negative value cannot reach Go's later `<= 0`
+    // return. Only zero reaches that branch.
     sort_builder_samples(&mut collector.samples).map_err(HistogramBuildError::Compare)?;
     assert!(
         options.num_buckets >= 0,
@@ -694,6 +697,9 @@ pub fn try_build_column_histogram_in_place(
         return Ok(histogram);
     }
 
+    // This is the source allocation point: `NewHistogram` follows the stable
+    // sort and panics for a negative bucket capacity, while zero remains a
+    // valid capacity and lets `buildHist` form one unbounded bucket.
     sort_builder_samples(&mut collector.samples)?;
     assert!(
         num_buckets >= 0,

@@ -481,6 +481,76 @@ fn negative_sizes_keep_go_empty_and_nonempty_boundaries() {
 }
 
 #[test]
+fn negative_histogram_capacity_panics_after_sort_before_topn_or_codec() {
+    let mut nonempty = collector(&[3, 1, 2]);
+    let mut codec_calls = 0;
+    let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        tidb_stats::builder::try_build_hist_and_topn_in_place(
+            1,
+            &mut nonempty,
+            BuildOptions {
+                num_buckets: -1,
+                num_topn: 1,
+                ..BuildOptions::default()
+            },
+            true,
+            |sample, _| {
+                codec_calls += 1;
+                ComparedBytesResult::<std::convert::Infallible>::success(sample.encoded.clone())
+            },
+        )
+    }));
+    assert!(
+        outcome.is_err(),
+        "Go NewHistogram panics while allocating a negative bucket capacity"
+    );
+    assert_eq!(
+        codec_calls, 0,
+        "NewHistogram runs before heap construction and the first codec call"
+    );
+    assert_eq!(
+        nonempty
+            .samples
+            .iter()
+            .map(|item| int_of(&item.value))
+            .collect::<Vec<_>>(),
+        [1, 2, 3],
+        "the caller-visible stable sort precedes NewHistogram"
+    );
+}
+
+#[test]
+fn build_column_distinguishes_zero_from_negative_bucket_capacity() {
+    let mut zero = collector(&[3, 1, 2]);
+    let histogram =
+        tidb_stats::builder::try_build_column_histogram_in_place(1, &mut zero, 0, 3, 3, 0).unwrap();
+    assert_eq!(histogram.buckets.len(), 1);
+    assert_eq!(histogram.buckets[0].count, 3);
+    assert_eq!(
+        zero.samples
+            .iter()
+            .map(|item| int_of(&item.value))
+            .collect::<Vec<_>>(),
+        [1, 2, 3]
+    );
+
+    let mut negative = collector(&[3, 1, 2]);
+    let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        tidb_stats::builder::try_build_column_histogram_in_place(1, &mut negative, -1, 3, 3, 0)
+    }));
+    assert!(outcome.is_err());
+    assert_eq!(
+        negative
+            .samples
+            .iter()
+            .map(|item| int_of(&item.value))
+            .collect::<Vec<_>>(),
+        [1, 2, 3],
+        "negative allocation panics only after the caller's samples are sorted"
+    );
+}
+
+#[test]
 fn sort_error_wins_before_negative_bucket_panic() {
     let vector = Datum::new_vector_float32(VectorFloat32::must_create(vec![1.0]));
     let mut collected = SampleCollector {
