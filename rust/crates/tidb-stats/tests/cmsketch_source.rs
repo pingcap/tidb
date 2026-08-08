@@ -18,16 +18,21 @@
 //! Datum/tablecodec encoding, sampled TopN construction, protobuf snapshots,
 //! and the statistics handle are not silently replaced by test fixtures.
 
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    sync::{Arc, RwLock},
+};
 
+use chrono::Utc;
 use tidb_datatype::Datum;
 use tidb_stats::cmsketch::encode_integer_datum_value;
 use tidb_stats::{
     decode_cmsketch, decode_cmsketch_and_embedded_topn, decode_cmsketch_and_topn,
     encode_cmsketch_and_topn, encode_cmsketch_without_topn, get_merged_topn_from_sorted_slice,
     hash_bytes, merge_topn, merge_topn_and_update_cmsketch, new_cmsketch_and_topn,
-    new_cmsketch_and_topn_with_tie_stabilization, sort_topn_meta, topn_meta_compare, CmsSketch,
-    CodecError, Hash128, MergeError, TopN, TopNEntry,
+    new_cmsketch_and_topn_with_tie_stabilization, query_value, sort_topn_meta, topn_decoded_string,
+    topn_display_string, topn_meta_compare, CmsSketch, CodecError, Hash128, MergeError,
+    SharedTopNBytes, TopN, TopNEntry,
 };
 
 fn build_seeded_zipf_sketch(
@@ -917,8 +922,97 @@ fn source_topn_sort_lookup_range_and_clone_shape() {
 
     let clone = topn.clone();
     topn.append(b"d", 16);
+    assert_eq!(
+        topn.total_count(),
+        14,
+        "sync.Once cache stays stale in production"
+    );
+    assert!(std::panic::catch_unwind(|| topn.assert_cached_counts_current()).is_err());
     assert_eq!(clone.total_count(), 14);
     assert_eq!(clone.query_bytes(b"a"), Some(4));
+}
+
+#[test]
+fn source_topn_duplicate_lower_bound_wrap_and_strings_match() {
+    let mut duplicates = TopN::new(4);
+    duplicates.append(b"a", 1);
+    duplicates.append(b"a", 2);
+    duplicates.append(b"a", 3);
+    duplicates.append(b"b", 4);
+    assert_eq!(duplicates.lower_bound(b"a"), 0);
+    assert_eq!(duplicates.find(b"a"), Some(0));
+    assert_eq!(duplicates.query_bytes(b"a"), Some(1));
+
+    let mut wrapping = TopN::new(2);
+    wrapping.append(b"a", u64::MAX);
+    wrapping.append(b"b", 1);
+    assert_eq!(wrapping.between_count(b"a", b"c"), 0);
+
+    let mut display = TopN::new(1);
+    display.append(b"ab", 3);
+    assert_eq!(display.display_string(), "TopN{length: 1, [([97 98], 3)]}");
+    assert_eq!(topn_display_string(None), "EmptyTopN");
+    assert_eq!(
+        topn_decoded_string(Some(&display), |bytes| {
+            Ok::<_, ()>(String::from_utf8(bytes.to_vec()).unwrap())
+        })
+        .unwrap(),
+        "TopN{length: 1, [(ab, 3)]}"
+    );
+    assert_eq!(
+        topn_decoded_string(None, |_| Ok::<_, ()>(String::new())).unwrap(),
+        ""
+    );
+}
+
+#[test]
+fn source_append_topn_aliases_the_callers_bytes() {
+    let encoded: SharedTopNBytes = Arc::new(RwLock::new(b"a".to_vec()));
+    let mut topn = TopN::new(1);
+    topn.append_shared(Arc::clone(&encoded), 5);
+    topn.sort();
+    assert_eq!(topn.query_bytes(b"a"), Some(5));
+
+    *encoded.write().unwrap() = b"b".to_vec();
+    assert_eq!(topn.query_bytes(b"a"), None);
+    assert_eq!(topn.query_bytes(b"b"), Some(5));
+    assert_eq!(topn.entry_bytes(0).unwrap(), b"b");
+    assert_eq!(topn.display_string(), "TopN{length: 1, [([98], 5)]}");
+
+    let wire = encode_cmsketch_and_topn(None, Some(&topn)).unwrap();
+    assert!(wire.windows(3).any(|window| window == [0x0a, 0x01, b'b']));
+
+    let copied = topn.clone();
+    *encoded.write().unwrap() = b"c".to_vec();
+    assert_eq!(topn.query_bytes(b"c"), Some(5));
+    assert_eq!(copied.query_bytes(b"b"), Some(5));
+}
+
+#[test]
+fn source_query_value_supports_all_typed_datums_and_nil_cms_topn_hits() {
+    let value = Datum::new_string("typed");
+    let encoded = tidb_codec::encode_value_in_timezone(&Utc, std::slice::from_ref(&value)).unwrap();
+    let mut topn = TopN::new(1);
+    topn.append(&encoded, 77);
+    topn.sort();
+    assert_eq!(query_value(None, Some(&topn), &value, &Utc).unwrap(), 77);
+
+    let mut cms = CmsSketch::new(5, 2_048);
+    cms.insert_bytes(&encoded);
+    assert_eq!(query_value(Some(&cms), None, &value, &Utc).unwrap(), 1);
+    assert!(
+        std::panic::catch_unwind(|| { query_value(None, None, &value, &Utc).unwrap() }).is_err()
+    );
+}
+
+#[test]
+fn source_query_bytes_failpoint_returns_the_scripted_go_int_conversion() {
+    let cms = CmsSketch::new(5, 2_048);
+    assert_eq!(
+        cms.query_bytes_with_failpoint(b"ignored", Some(-1)),
+        u64::MAX
+    );
+    assert_eq!(cms.query_bytes_with_failpoint(b"ignored", Some(7)), 7);
 }
 
 #[test]

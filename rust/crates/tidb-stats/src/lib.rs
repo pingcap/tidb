@@ -180,7 +180,10 @@ pub use cmsketch::{
     merge_topn_and_update_cmsketch, new_cmsketch_and_topn,
     new_cmsketch_and_topn_with_tie_stabilization, sort_topn_meta, topn_meta_compare, CodecError,
 };
-pub use cmsketch::{hash_bytes, CmsSketch, Hash128, MergeError, TopN, TopNEntry};
+pub use cmsketch::{
+    hash_bytes, query_value, query_value_with_encoder, topn_decoded_string, topn_display_string,
+    CmsSketch, Hash128, MergeError, SharedTopNBytes, TopN, TopNEntry,
+};
 pub use column::{
     column_is_all_evicted, column_stats_validity, copy_column, empty_column, Column, ColumnInfo,
     ColumnValidity, ColumnValidityContext,

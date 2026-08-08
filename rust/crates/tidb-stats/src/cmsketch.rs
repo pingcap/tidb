@@ -19,7 +19,12 @@
 //! session tracing remain explicit caller seams; this module owns all of the
 //! arithmetic, ranking, merge, and protobuf-wire behavior below those seams.
 
-use std::{cmp::Ordering, collections::HashMap, fmt};
+use std::{
+    cmp::Ordering,
+    collections::HashMap,
+    fmt,
+    sync::{Arc, OnceLock, RwLock},
+};
 
 use crate::estimate::calculate_estimate_ndv;
 use tidb_datatype::Datum;
@@ -346,6 +351,17 @@ impl CmsSketch {
     /// Queries an encoded value through the source count/noise boundary.
     #[must_use]
     pub fn query_bytes(&self, bytes: &[u8]) -> u64 {
+        self.query_bytes_with_failpoint(bytes, None)
+    }
+
+    /// Exact seam for Go's `mockQueryBytesMaxUint64` failpoint. The Go
+    /// injection asserts an `int` value and converts it to `uint64`, so a
+    /// negative scripted value wraps instead of being rejected.
+    #[must_use]
+    pub fn query_bytes_with_failpoint(&self, bytes: &[u8], mock_value: Option<i64>) -> u64 {
+        if let Some(mock_value) = mock_value {
+            return mock_value as u64;
+        }
         self.query_hashed(hash_bytes(bytes))
     }
 
@@ -615,10 +631,43 @@ pub struct TopNEntry {
 /// Call [`TopN::sort`] after appending entries before using binary-search
 /// lookup.  Sample extraction, TopN selection thresholds, persistence, and
 /// histogram ownership remain outside this type.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Debug)]
 pub struct TopN {
     entries: Vec<TopNEntry>,
+    shared_encoded: Vec<Option<SharedTopNBytes>>,
+    cached_counts: OnceLock<(u64, u64)>,
 }
+
+/// Safe native representation of Go's aliased `[]byte` passed to
+/// `AppendTopN`. Mutating this value changes subsequent TopN lookup,
+/// formatting, copying, and persistence just as mutating the source slice
+/// does.
+pub type SharedTopNBytes = Arc<RwLock<Vec<u8>>>;
+
+impl Clone for TopN {
+    fn clone(&self) -> Self {
+        // Go `Copy` deep-copies entries and returns a fresh sync.Once.
+        Self {
+            entries: self.resolved_entries(),
+            shared_encoded: vec![None; self.entries.len()],
+            cached_counts: OnceLock::new(),
+        }
+    }
+}
+
+impl Default for TopN {
+    fn default() -> Self {
+        Self::new(0)
+    }
+}
+
+impl PartialEq for TopN {
+    fn eq(&self, other: &Self) -> bool {
+        self.resolved_entries() == other.resolved_entries()
+    }
+}
+
+impl Eq for TopN {}
 
 impl TopN {
     /// Creates an empty TopN with the requested allocation hint.
@@ -626,6 +675,8 @@ impl TopN {
     pub fn new(capacity: usize) -> Self {
         Self {
             entries: Vec::with_capacity(capacity),
+            shared_encoded: Vec::with_capacity(capacity),
+            cached_counts: OnceLock::new(),
         }
     }
 
@@ -635,6 +686,20 @@ impl TopN {
             encoded: encoded.to_vec(),
             count,
         });
+        self.shared_encoded.push(None);
+    }
+
+    /// Go `AppendTopN` without an implicit byte copy.
+    pub fn append_shared(&mut self, encoded: SharedTopNBytes, count: u64) {
+        let snapshot = encoded
+            .read()
+            .expect("shared TopN bytes lock poisoned")
+            .clone();
+        self.entries.push(TopNEntry {
+            encoded: snapshot,
+            count,
+        });
+        self.shared_encoded.push(Some(encoded));
     }
 
     /// Number of entries (the source calls this `Num` because Histogram owns
@@ -649,9 +714,17 @@ impl TopN {
     #[must_use]
     pub fn display_string(&self) -> String {
         let entries = self
-            .entries
-            .iter()
-            .map(|entry| format!("({:?}, {})", entry.encoded, entry.count))
+            .resolved_entries()
+            .into_iter()
+            .map(|entry| {
+                let bytes = entry
+                    .encoded
+                    .iter()
+                    .map(u8::to_string)
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                format!("([{bytes}], {})", entry.count)
+            })
             .collect::<Vec<_>>()
             .join(", ");
         format!("TopN{{length: {}, [{}]}}", self.entries.len(), entries)
@@ -659,8 +732,17 @@ impl TopN {
 
     /// Sorts entries using the source bytewise ordering.
     pub fn sort(&mut self) {
-        self.entries
-            .sort_unstable_by(|left, right| left.encoded.cmp(&right.encoded));
+        self.refresh_shared_bytes();
+        let mut paired: Vec<_> = self
+            .entries
+            .drain(..)
+            .zip(self.shared_encoded.drain(..))
+            .collect();
+        paired.sort_unstable_by(|left, right| left.0.encoded.cmp(&right.0.encoded));
+        for (entry, shared) in paired {
+            self.entries.push(entry);
+            self.shared_encoded.push(shared);
+        }
     }
 
     /// Returns the sorted entries for metadata inspection.
@@ -669,12 +751,17 @@ impl TopN {
         &self.entries
     }
 
+    /// Returns the currently aliased bytes for one entry.
+    #[must_use]
+    pub fn entry_bytes(&self, index: usize) -> Option<Vec<u8>> {
+        self.entries.get(index).map(|_| self.resolved_bytes(index))
+    }
+
     /// Returns the index of an exact entry, or `None` if absent.
     #[must_use]
     pub fn find(&self, encoded: &[u8]) -> Option<usize> {
-        self.entries
-            .binary_search_by(|entry| entry.encoded.as_slice().cmp(encoded))
-            .ok()
+        let index = self.lower_bound(encoded);
+        (index < self.entries.len() && self.resolved_bytes(index) == encoded).then_some(index)
     }
 
     /// Returns the exact TopN count, or `None` when the encoded value is not
@@ -694,43 +781,96 @@ impl TopN {
         }
         self.entries[left_index..right_index]
             .iter()
-            .map(|entry| entry.count)
-            .sum()
+            .fold(0_u64, |total, entry| total.wrapping_add(entry.count))
     }
 
     /// Returns the first index whose encoded value is not less than `encoded`.
     #[must_use]
     pub fn lower_bound(&self, encoded: &[u8]) -> usize {
-        self.entries
-            .binary_search_by(|entry| entry.encoded.as_slice().cmp(encoded))
-            .unwrap_or_else(|index| index)
+        let mut left = 0;
+        let mut right = self.entries.len();
+        while left < right {
+            let middle = left + (right - left) / 2;
+            if self.resolved_bytes(middle).as_slice() < encoded {
+                left = middle + 1;
+            } else {
+                right = middle;
+            }
+        }
+        left
     }
 
     /// Returns the sum of all TopN counts.
     #[must_use]
     pub fn total_count(&self) -> u64 {
-        self.entries
-            .iter()
-            .fold(0_u64, |total, entry| total.wrapping_add(entry.count))
+        if self.entries.is_empty() {
+            return 0;
+        }
+        self.cached_min_and_total().1
     }
 
     /// Returns the smallest TopN count, or zero for an empty list.
     #[must_use]
     pub fn min_count(&self) -> u64 {
+        if self.entries.is_empty() {
+            return 0;
+        }
+        self.cached_min_and_total().0
+    }
+
+    /// `intest.InTest` validation: mutation after the once-cache initialized
+    /// is a source assertion failure rather than a silently refreshed value.
+    pub fn assert_cached_counts_current(&self) {
+        let current = self.calculate_min_and_total();
+        let cached = self.cached_min_and_total();
+        assert_eq!(
+            current.0, cached.0,
+            "minCount should be equal to the calculated minCount"
+        );
+        assert_eq!(
+            current.1, cached.1,
+            "totalCount should be equal to the calculated totalCount"
+        );
+    }
+
+    fn cached_min_and_total(&self) -> (u64, u64) {
+        *self
+            .cached_counts
+            .get_or_init(|| self.calculate_min_and_total())
+    }
+
+    fn calculate_min_and_total(&self) -> (u64, u64) {
+        let Some(first) = self.entries.first() else {
+            return (0, 0);
+        };
         self.entries
             .iter()
-            .map(|entry| entry.count)
-            .min()
-            .unwrap_or(0)
+            .fold((first.count, 0_u64), |(min, total), entry| {
+                (min.min(entry.count), total.wrapping_add(entry.count))
+            })
     }
 
     /// Returns the source's approximate TopN memory footprint.
     #[must_use]
     pub fn memory_usage(&self) -> u64 {
-        32_u64.saturating_add(self.entries.iter().fold(0_u64, |sum, entry| {
-            sum.saturating_add(32)
-                .saturating_add(entry.encoded.capacity() as u64)
-        }))
+        32_u64.saturating_add(
+            self.entries
+                .iter()
+                .enumerate()
+                .fold(0_u64, |sum, (index, entry)| {
+                    let encoded_capacity = self.shared_encoded[index].as_ref().map_or_else(
+                        || entry.encoded.capacity(),
+                        |shared| {
+                            shared
+                                .read()
+                                .expect("shared TopN bytes lock poisoned")
+                                .capacity()
+                        },
+                    );
+                    sum.saturating_add(32)
+                        .saturating_add(encoded_capacity as u64)
+                }),
+        )
     }
 
     /// Equality follows Go's TopN contract: two empty lists compare equal,
@@ -740,8 +880,112 @@ impl TopN {
         let Some(other) = other else {
             return self.entries.is_empty();
         };
-        self.total_count() == other.total_count() && self.entries == other.entries
+        self.total_count() == other.total_count()
+            && self.resolved_entries() == other.resolved_entries()
     }
+
+    /// Go `DecodedString` with the schema/session-aware `ValueToString`
+    /// dependency supplied by the caller.
+    pub fn decoded_string<E>(
+        &self,
+        mut value_to_string: impl FnMut(&[u8]) -> Result<String, E>,
+    ) -> Result<String, E> {
+        let mut rendered = Vec::with_capacity(self.entries.len());
+        for (index, entry) in self.entries.iter().enumerate() {
+            rendered.push(format!(
+                "({}, {})",
+                value_to_string(&self.resolved_bytes(index))?,
+                entry.count
+            ));
+        }
+        Ok(format!(
+            "TopN{{length: {}, [{}]}}",
+            self.entries.len(),
+            rendered.join(", ")
+        ))
+    }
+
+    fn resolved_bytes(&self, index: usize) -> Vec<u8> {
+        self.shared_encoded[index].as_ref().map_or_else(
+            || self.entries[index].encoded.clone(),
+            |shared| {
+                shared
+                    .read()
+                    .expect("shared TopN bytes lock poisoned")
+                    .clone()
+            },
+        )
+    }
+
+    /// Returns entries after reading every shared `AppendTopN` byte source.
+    #[must_use]
+    pub fn resolved_entries(&self) -> Vec<TopNEntry> {
+        self.entries
+            .iter()
+            .enumerate()
+            .map(|(index, entry)| TopNEntry {
+                encoded: self.resolved_bytes(index),
+                count: entry.count,
+            })
+            .collect()
+    }
+
+    fn refresh_shared_bytes(&mut self) {
+        for (entry, shared) in self.entries.iter_mut().zip(&self.shared_encoded) {
+            if let Some(shared) = shared {
+                entry.encoded = shared
+                    .read()
+                    .expect("shared TopN bytes lock poisoned")
+                    .clone();
+            }
+        }
+    }
+}
+
+/// Go `(*TopN).String`, including the nil receiver result.
+#[must_use]
+pub fn topn_display_string(topn: Option<&TopN>) -> String {
+    topn.map_or_else(|| "EmptyTopN".to_owned(), TopN::display_string)
+}
+
+/// Go `(*TopN).DecodedString`, including its nil receiver result.
+pub fn topn_decoded_string<E>(
+    topn: Option<&TopN>,
+    value_to_string: impl FnMut(&[u8]) -> Result<String, E>,
+) -> Result<String, E> {
+    match topn {
+        Some(topn) => topn.decoded_string(value_to_string),
+        None => Ok(String::new()),
+    }
+}
+
+/// Go `QueryValue` with statement-context encoding/error policy supplied by
+/// the caller. TopN is queried before the CMS pointer is dereferenced.
+pub fn query_value_with_encoder<E>(
+    cms: Option<&CmsSketch>,
+    topn: Option<&TopN>,
+    value: &Datum,
+    encode_value: impl FnOnce(&Datum) -> Result<Vec<u8>, E>,
+) -> Result<u64, E> {
+    let encoded = encode_value(value)?;
+    if let Some(count) = topn.and_then(|topn| topn.query_bytes(&encoded)) {
+        return Ok(count);
+    }
+    Ok(cms
+        .expect("QueryValue CMSketch is nil after a TopN miss")
+        .query_bytes(&encoded))
+}
+
+/// Native typed Go `QueryValue` using the requested session time zone.
+pub fn query_value<TZ: chrono::TimeZone>(
+    cms: Option<&CmsSketch>,
+    topn: Option<&TopN>,
+    value: &Datum,
+    timezone: &TZ,
+) -> Result<u64, tidb_codec::CodecError> {
+    query_value_with_encoder(cms, topn, value, |value| {
+        tidb_codec::encode_value_in_timezone(timezone, std::slice::from_ref(value))
+    })
 }
 
 /// Orders TopN metadata by count descending and encoded bytes ascending.
@@ -797,7 +1041,7 @@ pub fn merge_topn(topns: &[Option<&TopN>], n: u32) -> (Option<TopN>, Vec<TopNEnt
         if topn.total_count() == 0 {
             continue;
         }
-        for entry in topn.entries() {
+        for entry in topn.resolved_entries() {
             let count = counts.entry(entry.encoded.clone()).or_default();
             *count = count.wrapping_add(entry.count);
         }
@@ -910,7 +1154,7 @@ fn encode_cmsketch_proto(sketch: &CmsSketch, topn: Option<&TopN>) -> Vec<u8> {
         encode_message_field(1, &encoded_row, &mut output);
     }
     if let Some(topn) = topn {
-        for entry in topn.entries() {
+        for entry in topn.resolved_entries() {
             let mut encoded_entry = Vec::new();
             encoded_entry.push(0x0a); // CMSketchTopN.data = 1, bytes.
             encode_varint(entry.encoded.len() as u64, &mut encoded_entry);
@@ -928,7 +1172,7 @@ fn encode_cmsketch_proto(sketch: &CmsSketch, topn: Option<&TopN>) -> Vec<u8> {
 fn encode_cmsketch_proto_without_sketch(topn: Option<&TopN>) -> Vec<u8> {
     let mut output = Vec::new();
     if let Some(topn) = topn {
-        for entry in topn.entries() {
+        for entry in topn.resolved_entries() {
             let mut encoded_entry = Vec::new();
             encoded_entry.push(0x0a);
             encode_varint(entry.encoded.len() as u64, &mut encoded_entry);
