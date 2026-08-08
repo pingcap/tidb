@@ -89,42 +89,39 @@ mod tests {
     use std::sync::{Arc, Barrier};
     use std::thread;
 
+    const GO_BUILD: &[u8] = include_bytes!("../../../../../pkg/util/zeropool/BUILD.bazel");
     const GO_SOURCE: &[u8] = include_bytes!("../../../../../pkg/util/zeropool/pool.go");
+    const GO_TEST: &[u8] = include_bytes!("../../../../../pkg/util/zeropool/pool_test.go");
+    const ARTIFACT_MANIFEST: &str = include_str!("zeropool.artifacts.tsv");
     const LOCKDOWN_INVENTORY: &str = include_str!("zeropool.inventory.tsv");
+    const SEMANTIC_DIVERGENCES: &str = include_str!("zeropool.semantic-divergences.tsv");
+    const RUST_BENCH: &str = include_str!("../../benches/zeropool.rs");
     const EXPECTED_INVENTORY_SHA256: &str =
-        "86d36b5d6a27a1b37459fd1386f5dfeb7b1590eacda2e67ad949d6f32d246adb";
-    const EXPECTED_ITEMS: [(&str, (&str, &str)); 30] = [
-        ("D01", ("PORTED", "Pool")),
-        ("D02", ("PORTED", "Pool::items")),
-        ("D03", ("DECLINED", "-")),
-        ("R01", ("PORTED", "Pool::default")),
-        ("R02", ("DECLINED", "-")),
-        ("R03", ("PORTED", "Pool")),
-        ("F01", ("PORTED", "Pool::new")),
-        ("R04", ("PORTED", "Pool::new")),
-        ("R05", ("PORTED", "Pool::factory")),
-        ("R06", ("PORTED", "Pool::get")),
-        ("R07", ("DECLINED", "-")),
-        ("R08", ("DECLINED", "-")),
-        ("F02", ("PORTED", "Pool::get")),
-        ("R09", ("PORTED", "Pool::get")),
-        ("B01", ("PORTED", "Pool::get")),
-        ("R10", ("PORTED", "Pool::get")),
-        ("B02", ("UNREACHABLE", "-")),
-        ("R11", ("PORTED", "Pool::get")),
-        ("R12", ("PORTED", "Pool::get")),
-        ("R13", ("DECLINED", "-")),
-        ("R14", ("PORTED", "Pool::get")),
-        ("F03", ("PORTED", "Pool::put")),
-        ("B03", ("DECLINED", "-")),
-        ("B04", ("DECLINED", "-")),
-        ("R15", ("PORTED", "Pool::put")),
-        ("R16", ("PORTED", "Pool::put")),
-        ("R17", ("PORTED", "Pool")),
-        ("R18", ("DECLINED", "-")),
-        ("R19", ("PORTED", "Pool")),
-        ("R20", ("PORTED", "Pool::items")),
+        "8594a10c478378fd77fe81ab40f2bf3c26f149aee741dc062d500aca4945cf74";
+    const EXPECTED_SEMANTIC_SHA256: &str =
+        "0d2d87c91709340a7ac4c31517fa1c6faf3b3f0a1b87af6269f9dab2f9bbc180";
+    const ARTIFACTS: [(&str, &str, &[u8]); 3] = [
+        ("pkg/util/zeropool/BUILD.bazel", "build", GO_BUILD),
+        ("pkg/util/zeropool/pool.go", "production", GO_SOURCE),
+        ("pkg/util/zeropool/pool_test.go", "test-benchmark", GO_TEST),
     ];
+    const SYMBOL_EVIDENCE: &str =
+        "rust-test:zeropool_lockdown_inventory_is_complete_and_symbols_compile";
+    const EXPECTED_CATEGORIES: [(&str, usize); 12] = [
+        ("benchmark", 4),
+        ("branch", 4),
+        ("closure", 1),
+        ("declaration", 1),
+        ("field", 2),
+        ("function", 3),
+        ("test", 1),
+        ("test_assertion", 6),
+        ("test_branch", 2),
+        ("test_helper_closure", 14),
+        ("test_loop", 14),
+        ("test_row", 3),
+    ];
+    const EXPECTED_STATUSES: [(&str, usize); 2] = [("DECLINED", 3), ("PORTED", 52)];
 
     trait AmbiguousIfClone<A> {
         fn marker() {}
@@ -137,16 +134,46 @@ mod tests {
     const CONCURRENCY: usize = u8::MAX as usize;
 
     #[test]
-    fn lockdown_inventory_matches_go_source_and_rust_symbols() {
-        let recorded_hash = LOCKDOWN_INVENTORY
-            .lines()
-            .find_map(|line| line.strip_prefix("# source-sha256\t"))
-            .expect("inventory records the owning Go source SHA-256");
-        assert_eq!(recorded_hash, sha256_hex(GO_SOURCE), "Go source drifted");
+    fn zeropool_lockdown_inventory_is_complete_and_symbols_compile() {
+        let expected_manifest_prefix = [
+            "# pkg-zeropool-artifacts-v1",
+            "# zero\tbuild_tags\t0",
+            "# zero\tplatform_variants\t0",
+            "# zero\tcode_generated\t0",
+            "# zero\tgo_generate\t0",
+            "# zero\tgo_embed\t0",
+            "# zero\ttracked_testdata\t0",
+            "path\trole\tsha256",
+        ];
+        let mut manifest_lines = ARTIFACT_MANIFEST.lines();
+        for expected in expected_manifest_prefix {
+            assert_eq!(manifest_lines.next(), Some(expected));
+        }
+        let mut manifest = BTreeMap::new();
+        for line in manifest_lines {
+            let columns: Vec<_> = line.split('\t').collect();
+            assert_eq!(columns.len(), 3, "invalid artifact row: {line}");
+            assert!(manifest
+                .insert(columns[0], (columns[1], columns[2]))
+                .is_none());
+        }
+        assert_eq!(manifest.len(), ARTIFACTS.len());
+        for (path, role, bytes) in ARTIFACTS {
+            assert_eq!(
+                manifest.get(path),
+                Some(&(role, sha256_hex(bytes).as_str()))
+            );
+        }
+
         assert_eq!(
             sha256_hex(LOCKDOWN_INVENTORY.as_bytes()),
             EXPECTED_INVENTORY_SHA256,
             "lockdown inventory drifted"
+        );
+        assert_eq!(
+            sha256_hex(SEMANTIC_DIVERGENCES.as_bytes()),
+            EXPECTED_SEMANTIC_SHA256,
+            "semantic divergence evidence drifted"
         );
 
         let mut lines = LOCKDOWN_INVENTORY
@@ -154,31 +181,230 @@ mod tests {
             .filter(|line| !line.is_empty() && !line.starts_with('#'));
         assert_eq!(
             lines.next(),
-            Some("id\tcategory\tgo_item\tstatus\trust_symbol\tevidence")
+            Some(
+                "obligation_id\tcategory\tsource_path\tast_anchor\tnode_sha256\towner\tstatus\trust_symbol\tevidence\tmutation_policy"
+            )
         );
 
         let allowed_statuses = BTreeSet::from(["PORTED", "DECLINED", "UNREACHABLE"]);
-        let mut actual = BTreeMap::new();
+        let mut ids = BTreeSet::new();
+        let mut anchors = BTreeSet::new();
+        let mut categories = BTreeMap::new();
+        let mut statuses = BTreeMap::new();
+        let benchmark_names = BTreeSet::from([
+            "BenchmarkZeropoolPool",
+            "BenchmarkSyncPoolValue",
+            "BenchmarkSyncPoolNewPointer",
+            "BenchmarkSyncPoolPointer",
+        ]);
         for line in lines {
             let columns: Vec<_> = line.split('\t').collect();
-            assert_eq!(columns.len(), 6, "invalid inventory row: {line}");
+            assert_eq!(columns.len(), 10, "invalid inventory row: {line}");
             assert!(
-                allowed_statuses.contains(columns[3]),
+                allowed_statuses.contains(columns[6]),
                 "unclassified inventory row: {line}"
             );
             assert!(
-                !columns[5].is_empty(),
+                !columns[8].is_empty(),
                 "inventory evidence is required: {line}"
             );
+            assert!(ids.insert(columns[0]), "duplicate inventory id: {line}");
             assert!(
-                actual
-                    .insert(columns[0], (columns[3], columns[4]))
-                    .is_none(),
-                "duplicate inventory id: {}",
-                columns[0]
+                anchors.insert((columns[2], columns[3])),
+                "duplicate source anchor: {line}"
             );
+            *categories.entry(columns[1]).or_insert(0usize) += 1;
+            *statuses.entry(columns[6]).or_insert(0usize) += 1;
+
+            match (columns[2], columns[1], columns[5], columns[3]) {
+                ("pkg/util/zeropool/pool.go", "declaration", "type:Pool", "type:Pool") => {
+                    assert_eq!(
+                        columns[6..10],
+                        ["PORTED", "Pool", SYMBOL_EVIDENCE, "compile-owner-gate"]
+                    );
+                }
+                ("pkg/util/zeropool/pool.go", "field", "type:Pool", anchor)
+                    if anchor == "type:Pool/field:0:items" =>
+                {
+                    assert_eq!(
+                        columns[6..10],
+                        [
+                            "PORTED",
+                            "Pool::items",
+                            SYMBOL_EVIDENCE,
+                            "compile-owner-gate"
+                        ]
+                    );
+                }
+                ("pkg/util/zeropool/pool.go", "field", "type:Pool", anchor)
+                    if anchor == "type:Pool/field:1:pointers" =>
+                {
+                    assert_eq!(
+                        columns[6..10],
+                        [
+                            "DECLINED",
+                            "-",
+                            "semantic:zeropool:type:Pool/field:1:pointers",
+                            "classification-evidence-gate",
+                        ]
+                    );
+                }
+                ("pkg/util/zeropool/pool.go", "function", owner, anchor)
+                    if owner == anchor
+                        && matches!(owner, "New" | "Pool[T].Get" | "Pool[T].Put") =>
+                {
+                    let symbol = match owner {
+                        "New" => "Pool::new",
+                        "Pool[T].Get" => "Pool::get",
+                        _ => "Pool::put",
+                    };
+                    assert_eq!(
+                        columns[6..10],
+                        ["PORTED", symbol, SYMBOL_EVIDENCE, "compile-owner-gate"]
+                    );
+                }
+                ("pkg/util/zeropool/pool.go", "closure", "New", anchor)
+                    if anchor.starts_with("New/") =>
+                {
+                    assert_eq!(
+                        columns[6..10],
+                        [
+                            "PORTED",
+                            "Pool::new",
+                            "rust-test:source_factory_and_zero_value_boundaries_are_exact",
+                            "behavior-mutation",
+                        ]
+                    );
+                }
+                ("pkg/util/zeropool/pool.go", "branch", "Pool[T].Get", anchor)
+                    if anchor.starts_with("Pool[T].Get/") =>
+                {
+                    assert_eq!(
+                        columns[6..10],
+                        [
+                            "PORTED",
+                            "Pool::get",
+                            "rust-test:source_factory_and_zero_value_boundaries_are_exact",
+                            "behavior-mutation",
+                        ]
+                    );
+                }
+                ("pkg/util/zeropool/pool.go", "branch", "Pool[T].Put", anchor)
+                    if anchor == "Pool[T].Put/if:1/false" || anchor == "Pool[T].Put/if:1/true" =>
+                {
+                    assert_eq!(
+                        columns[6..10],
+                        [
+                            "DECLINED",
+                            "-",
+                            &format!("semantic:zeropool:{anchor}"),
+                            "classification-evidence-gate",
+                        ]
+                    );
+                }
+                ("pkg/util/zeropool/pool_test.go", "test", "TestPool", "TestPool") => {
+                    assert_eq!(
+                        columns[6..10],
+                        [
+                            "PORTED",
+                            "TestPool",
+                            "rust-test:TestPool",
+                            "test-evidence-gate"
+                        ]
+                    );
+                }
+                ("pkg/util/zeropool/pool_test.go", category, "TestPool", anchor)
+                    if matches!(
+                        category,
+                        "test_assertion" | "test_branch" | "test_helper_closure" | "test_loop"
+                    ) && anchor.starts_with("TestPool") =>
+                {
+                    assert_eq!(
+                        columns[6..10],
+                        [
+                            "PORTED",
+                            "TestPool",
+                            "rust-test:TestPool",
+                            "test-evidence-gate"
+                        ]
+                    );
+                }
+                ("pkg/util/zeropool/pool_test.go", "benchmark", owner, anchor)
+                    if owner == anchor && benchmark_names.contains(owner) =>
+                {
+                    assert_eq!(
+                        columns[6..10],
+                        [
+                            "PORTED",
+                            owner,
+                            &format!("rust-bench:zeropool:{owner}"),
+                            "benchmark-evidence-gate",
+                        ]
+                    );
+                }
+                ("pkg/util/zeropool/pool_test.go", category, owner, anchor)
+                    if matches!(category, "test_helper_closure" | "test_loop" | "test_row")
+                        && benchmark_names.contains(owner)
+                        && anchor.starts_with(owner) =>
+                {
+                    assert_eq!(
+                        columns[6..10],
+                        [
+                            "PORTED",
+                            owner,
+                            &format!("rust-bench:zeropool:{owner}"),
+                            "benchmark-evidence-gate",
+                        ]
+                    );
+                }
+                _ => panic!("unexpected zeropool inventory row: {line}"),
+            }
         }
-        assert_eq!(actual, BTreeMap::from(EXPECTED_ITEMS));
+        assert_eq!(ids.len(), 55);
+        assert_eq!(categories, BTreeMap::from(EXPECTED_CATEGORIES));
+        assert_eq!(statuses, BTreeMap::from(EXPECTED_STATUSES));
+
+        let semantic_rows: Vec<Vec<_>> = SEMANTIC_DIVERGENCES
+            .lines()
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .skip(1)
+            .map(|line| line.split('\t').collect())
+            .collect();
+        assert_eq!(semantic_rows.len(), 9);
+        assert!(semantic_rows.iter().all(|row| row.len() == 6));
+        assert_eq!(
+            semantic_rows
+                .iter()
+                .map(|row| row[0])
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from(["S01", "S02", "S03", "S04", "S05", "S06", "S07", "S08", "S09"])
+        );
+        assert_eq!(
+            semantic_rows
+                .iter()
+                .filter(|row| row[2] == "DECLINED")
+                .count(),
+            8
+        );
+        assert_eq!(
+            semantic_rows
+                .iter()
+                .filter(|row| row[2] == "UNREACHABLE")
+                .count(),
+            1
+        );
+
+        let go_test = std::str::from_utf8(GO_TEST).expect("Go test source is UTF-8");
+        assert!(go_test.contains("func TestPool"));
+        for benchmark in [
+            "BenchmarkZeropoolPool",
+            "BenchmarkSyncPoolValue",
+            "BenchmarkSyncPoolNewPointer",
+            "BenchmarkSyncPoolPointer",
+        ] {
+            assert!(go_test.contains(&format!("func {benchmark}")));
+            assert!(RUST_BENCH.contains(&format!("fn {benchmark}")));
+        }
 
         let _: Pool<Vec<u8>> = Pool::default();
         let _: fn() -> Pool<Vec<u8>> = Pool::default;

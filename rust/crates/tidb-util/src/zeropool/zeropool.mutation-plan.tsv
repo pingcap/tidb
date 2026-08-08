@@ -1,0 +1,9 @@
+# pkg-zeropool-mutation-plan-v1
+suite_id	source_owners	mutation_count	source_file	named_tests	rules
+Z001-pool-behavior	Pool::default,Pool::new,Pool::get,Pool::put	4	rust/crates/tidb-util/src/zeropool/mod.rs	zeropool::tests::source_factory_and_zero_value_boundaries_are_exact; zeropool::tests::get_moves_value_without_retaining_a_duplicate	zero-value fallback, factory invocation, pooled value retrieval, Put availability
+Z002-safety-and-ownership	Pool::items,Pool::get,Pool::put	2	rust/crates/tidb-util/src/zeropool/mod.rs	zeropool::tests::poisoned_mutex_does_not_add_a_failure_mode; zeropool::tests::pool_cannot_be_copied_after_use	mutex poisoning recovery and copy prohibition
+Z003-go-test-mapping	TestPool	1	rust/crates/tidb-util/src/zeropool.inventory.tsv	pkg-zeropool-lockdown.py --inventory-only	original TestPool row and all subtest assertions remain mapped
+Z004-benchmark-mapping	BenchmarkZeropoolPool,BenchmarkSyncPoolValue,BenchmarkSyncPoolNewPointer,BenchmarkSyncPoolPointer	4	rust/crates/tidb-util/src/zeropool.inventory.tsv	pkg-zeropool-lockdown.py --inventory-only	all four original benchmark owners remain mapped to the Rust bench source
+Z005-semantic-evidence	S01,S02,S03,S04,S05,S06,S07,S08,S09	9	rust/crates/tidb-util/src/zeropool.semantic-divergences.tsv	pkg-zeropool-lockdown.py --inventory-only	each language/runtime divergence retains its individual evidence row
+Z006-artifact-drift	BUILD.bazel,pool.go,pool_test.go	3	pkg/util/zeropool/BUILD.bazel|pkg/util/zeropool/pool.go|pkg/util/zeropool/pool_test.go	pkg-zeropool-lockdown.py --inventory-only	every direct package artifact hash and AST boundary
+Z007-symbol-gate	Pool::default,Pool::new,Pool::get,Pool::put	4	rust/crates/tidb-util/src/zeropool/mod.rs	zeropool::tests::zeropool_lockdown_inventory_is_complete_and_symbols_compile	all Rust production owners remain compiled and callable

@@ -1,0 +1,11 @@
+# pkg-zeropool-semantic-divergences-v1
+id	source_contract	status	rust_boundary	evidence	mutation_policy
+S01	Pool.pointers stores reusable empty *T containers	DECLINED	Rust stores typed T values directly and has no secondary pointer pool	source-quote:pool.go:Pool/field:1:pointers	classification-evidence-gate
+S02	Pool[T any] zero value returns a zero T for every possible T	DECLINED	Rust requires T: Default for the zero-value path	source-quote:pool.go:var-zero-T	classification-evidence-gate
+S03	New accepts a nil item function and empty Get panics	DECLINED	Rust closure values are non-null and cannot represent this Go panic boundary	go-oracle:nil_factory_panic:runtime.errorString:runtime error: invalid memory address or nil pointer dereference	classification-evidence-gate
+S04	New accepts item functions without Send Sync or static lifetime constraints	DECLINED	Rust requires Fn() -> T + Send + Sync + 'static for a shared pool	source-quote:pool.go:New-item-func-type	classification-evidence-gate
+S05	Get's pooled any value can fail a private *T assertion	UNREACHABLE	Rust's Vec<T> storage makes the mismatched private assertion unrepresentable	source-analysis:only-Put-writes-items-as-*T	classification-evidence-gate
+S06	Get clears the extracted *T and returns that pointer to pointers	DECLINED	Rust moves T out and drops no reusable pointer container	source-quote:pool.go:Get-clear-and-pointers-Put	classification-evidence-gate
+S07	Put reuses a non-nil *T from the secondary pointers pool	DECLINED	Rust Vec<T> capacity is the only reuse mechanism	source-quote:pool.go:Put-pointers-Get	classification-evidence-gate
+S08	Put allocates new(T) when the secondary pointers pool is empty	DECLINED	Rust Vec<T> growth replaces pointer allocation without a pointer object	source-quote:pool.go:Put-new-T	classification-evidence-gate
+S09	sync.Pool may evict a stored value across garbage collection	DECLINED	Rust retains entries until Get or Pool drop; it has no GC eviction boundary	go-oracle:two_gc_get:-1-from-factory	classification-evidence-gate
