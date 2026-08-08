@@ -17,7 +17,8 @@ use std::sync::{Arc, RwLock};
 use tidb_datatype::Datum;
 use tidb_stats::{
     Bucket, ColAndIdxExistenceMap, Column, ColumnInfo, CopyIntent, HistColl, Histogram, Index,
-    IndexInfo, StatsLoadedStatus, Table, TopN, ALL_EVICTED,
+    IndexInfo, PseudoColumnInfo, PseudoIndexInfo, PseudoTableInfo, StatsLoadedStatus, Table, TopN,
+    ALL_EVICTED, PSEUDO_ROW_COUNT, PSEUDO_VERSION,
 };
 
 fn column(id: i64, count: i64, status: StatsLoadedStatus) -> Column {
@@ -239,6 +240,101 @@ fn source_table_memory_uses_go_int64_wrapping_boundaries() {
         },
     );
     assert_eq!(usage.total_tracking_mem_usage(), i64::MIN);
+}
+
+#[test]
+fn source_pseudo_table_filters_schema_and_optionally_fills_histograms() {
+    let info = PseudoTableInfo {
+        id: 42,
+        pk_is_handle: true,
+        columns: vec![
+            PseudoColumnInfo {
+                info: ColumnInfo {
+                    id: 1,
+                    name: "pk".to_owned(),
+                    primary_key: true,
+                },
+                public: true,
+                hidden: false,
+            },
+            PseudoColumnInfo {
+                info: ColumnInfo {
+                    id: 2,
+                    name: "hidden".to_owned(),
+                    primary_key: false,
+                },
+                public: true,
+                hidden: true,
+            },
+            PseudoColumnInfo {
+                info: ColumnInfo {
+                    id: 3,
+                    name: "nonpublic".to_owned(),
+                    primary_key: false,
+                },
+                public: false,
+                hidden: false,
+            },
+        ],
+        indices: vec![
+            PseudoIndexInfo {
+                info: IndexInfo {
+                    id: 4,
+                    name: "public".to_owned(),
+                    ..IndexInfo::default()
+                },
+                public: true,
+            },
+            PseudoIndexInfo {
+                info: IndexInfo {
+                    id: 5,
+                    name: "nonpublic".to_owned(),
+                    ..IndexInfo::default()
+                },
+                public: false,
+            },
+        ],
+    };
+
+    let metadata_only = tidb_stats::pseudo_table(&info, false, false);
+    assert!(metadata_only.hist_coll.pseudo);
+    assert!(metadata_only.hist_coll.cannot_trigger_load);
+    assert_eq!(metadata_only.hist_coll.realtime_count, PSEUDO_ROW_COUNT);
+    assert_eq!(metadata_only.version, PSEUDO_VERSION);
+    assert_eq!(metadata_only.hist_coll.column_count(), 0);
+    assert_eq!(metadata_only.hist_coll.index_count(), 0);
+    let existence = metadata_only
+        .existence_map
+        .as_ref()
+        .unwrap()
+        .read()
+        .unwrap();
+    assert!(existence.has(1, false));
+    assert!(!existence.has(2, false));
+    assert!(!existence.has(3, false));
+    assert!(existence.has(4, true));
+    assert!(!existence.has(5, true));
+    drop(existence);
+
+    let filled = tidb_stats::pseudo_table(&info, true, true);
+    assert!(!filled.hist_coll.cannot_trigger_load);
+    assert_eq!(filled.hist_coll.column_count(), 1);
+    assert_eq!(filled.hist_coll.index_count(), 1);
+    let pk = filled.hist_coll.get_column(1).unwrap();
+    let pk = pk.read().unwrap();
+    assert!(pk.is_handle);
+    assert_eq!(pk.physical_id, 42);
+    assert_eq!(pk.histogram.id, 1);
+    assert_eq!(
+        filled
+            .hist_coll
+            .get_index(4)
+            .unwrap()
+            .read()
+            .unwrap()
+            .physical_id,
+        42
+    );
 }
 
 #[test]

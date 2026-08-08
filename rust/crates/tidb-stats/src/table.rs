@@ -18,7 +18,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::{
-    ColAndIdxExistenceMap, Column, ColumnMemUsage, Index, IndexMemUsage, StatsLoadedStatus,
+    ColAndIdxExistenceMap, Column, ColumnInfo, ColumnMemUsage, Histogram, Index, IndexInfo,
+    IndexMemUsage, StatsLoadedStatus,
 };
 
 pub const PSEUDO_VERSION: u64 = 0;
@@ -74,6 +75,28 @@ pub enum CopyIntent {
     IndexMapWritable,
     BothMapsWritable,
     AllDataWritable,
+}
+
+/// Schema inputs consumed by Go `PseudoTable`.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct PseudoColumnInfo {
+    pub info: ColumnInfo,
+    pub public: bool,
+    pub hidden: bool,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct PseudoIndexInfo {
+    pub info: IndexInfo,
+    pub public: bool,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct PseudoTableInfo {
+    pub id: i64,
+    pub pk_is_handle: bool,
+    pub columns: Vec<PseudoColumnInfo>,
+    pub indices: Vec<PseudoIndexInfo>,
 }
 
 #[derive(Clone, Debug)]
@@ -283,6 +306,15 @@ impl HistColl {
                 .collect(),
         ))
     }
+}
+
+/// Go `PseudoHistColl`.
+#[must_use]
+pub fn pseudo_hist_coll(physical_id: i64, allow_trigger_loading: bool) -> HistColl {
+    let mut coll = HistColl::new(physical_id, PSEUDO_ROW_COUNT, 0, 0, 0);
+    coll.pseudo = true;
+    coll.cannot_trigger_load = !allow_trigger_loading;
+    coll
 }
 
 #[derive(Clone, Debug)]
@@ -519,5 +551,68 @@ impl Table {
                 .as_ref()
                 .is_some_and(|info| info.name == name)
         })
+    }
+}
+
+/// Go `PseudoTable`, including public/hidden schema filtering and the option
+/// to omit histogram metadata while retaining the existence map.
+#[must_use]
+pub fn pseudo_table(
+    table_info: &PseudoTableInfo,
+    allow_trigger_loading: bool,
+    allow_fill_hist_meta: bool,
+) -> Table {
+    let coll = pseudo_hist_coll(table_info.id, allow_trigger_loading);
+    let mut existence =
+        ColAndIdxExistenceMap::new(table_info.columns.len(), table_info.indices.len());
+    for column in &table_info.columns {
+        if !column.public || column.hidden {
+            continue;
+        }
+        existence.insert_column(column.info.id, false);
+        if allow_fill_hist_meta {
+            coll.set_column(
+                column.info.id,
+                Column {
+                    physical_id: table_info.id,
+                    info: Some(column.info.clone()),
+                    is_handle: table_info.pk_is_handle && column.info.primary_key,
+                    histogram: Histogram {
+                        id: column.info.id,
+                        ..Histogram::default()
+                    },
+                    ..Column::default()
+                },
+            );
+        }
+    }
+    for index in &table_info.indices {
+        if !index.public {
+            continue;
+        }
+        existence.insert_index(index.info.id, false);
+        if allow_fill_hist_meta {
+            coll.set_index(
+                index.info.id,
+                Index {
+                    physical_id: table_info.id,
+                    info: Some(index.info.clone()),
+                    histogram: Histogram {
+                        id: index.info.id,
+                        ..Histogram::default()
+                    },
+                    ..Index::default()
+                },
+            );
+        }
+    }
+    Table {
+        existence_map: Some(Arc::new(RwLock::new(existence))),
+        hist_coll: coll,
+        version: PSEUDO_VERSION,
+        last_analyze_version: 0,
+        last_stats_hist_version: 0,
+        table_info_update_ts: 0,
+        is_pk_handle: false,
     }
 }
