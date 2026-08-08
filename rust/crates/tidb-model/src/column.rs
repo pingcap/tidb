@@ -799,6 +799,10 @@ pub const EXTRA_PHYS_TBL_ID: i64 = -3;
 pub const EXTRA_ROW_CHECKSUM_ID: i64 = -4;
 /// Go `ExtraCommitTSID` (the `_tidb_commit_ts` column).
 pub const EXTRA_COMMIT_TS_ID: i64 = -5;
+/// Go `VirtualColVecSearchDistanceID`.
+pub const VIRTUAL_COL_VEC_SEARCH_DISTANCE_ID: i64 = -2000;
+/// Go `VirtualColFTSScoreID`.
+pub const VIRTUAL_COL_FTS_SCORE_ID: i64 = -2050;
 /// Go `ExtraHandleName`.
 pub const EXTRA_HANDLE_NAME: &str = "_tidb_rowid";
 /// Go `ExtraPhysTblIDName`.
@@ -916,6 +920,8 @@ mod tests {
     #[test]
     fn versions_and_change_state() {
         assert_eq!(CURR_LATEST_COLUMN_INFO_VERSION, COLUMN_INFO_VERSION2);
+        assert_eq!(VIRTUAL_COL_VEC_SEARCH_DISTANCE_ID, -2000);
+        assert_eq!(VIRTUAL_COL_FTS_SCORE_ID, -2050);
         assert_eq!(ChangeStateInfo::default().dependency_column_offset, 0);
     }
 
