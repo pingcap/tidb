@@ -1,12 +1,14 @@
-schema = "go-package-lockdown-spec-v1"
+schema = "go-package-lockdown-spec-v2"
 claim = "whole-go-package"
 go_package = "pkg/meta/model"
 source_commit = "bdab0016365e8b1d79b5b11f52ee6fdde90f4c46"
 primary_rust_crate = "tidb-model"
-mapped_rust_crates = ["tidb-model"]
+mapped_rust_crates = ["tidb-model", "tidb-error"]
 extra_artifacts = []
 excluded_subpackages = []
 owned_rust_files = [
+  "rust/crates/tidb-error/src/terror.rs",
+  "rust/crates/tidb-error/tests/pkg_meta_model_error_lockdown.rs",
   "rust/crates/tidb-model/Cargo.toml",
   "rust/crates/tidb-model/src/action_type.rs",
   "rust/crates/tidb-model/src/bdr.rs",
