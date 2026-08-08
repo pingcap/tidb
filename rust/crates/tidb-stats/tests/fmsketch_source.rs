@@ -21,9 +21,10 @@
 use chrono::Utc;
 use tidb_datatype::Datum;
 use tidb_stats::{
-    decode_fm_sketch, encode_fm_sketch, fm_sketch_from_proto, fm_sketch_to_proto, hash_datum,
-    hash_row, insert_encoded_row, insert_encoded_value, insert_row_value, insert_value, FmSketch,
-    FmSketchCodecError, FmSketchProto, MAX_SKETCH_SIZE,
+    copy_fm_sketch, decode_fm_sketch, encode_fm_sketch, fm_sketch_from_proto, fm_sketch_ndv,
+    fm_sketch_to_proto, hash_datum, hash_row, insert_encoded_row, insert_encoded_value,
+    insert_row_value, insert_value, merge_fm_sketch, FmSketch, FmSketchCodecError, FmSketchProto,
+    MAX_SKETCH_SIZE,
 };
 
 fn source_statistics_values(count: usize) -> Vec<Datum> {
@@ -124,6 +125,28 @@ fn source_copy_and_memory_shape_are_independent() {
     sketch.insert_hash(11);
     assert_eq!(clone.len(), 2);
     assert!(!clone.contains(11));
+}
+
+#[test]
+fn source_signed_constructor_and_nil_receiver_boundaries_match() {
+    let negative = std::panic::catch_unwind(|| FmSketch::new_signed(-1));
+    assert!(negative.is_err(), "Go make(map, negative) panics");
+    assert!(FmSketch::new_signed(0).is_empty());
+
+    assert_eq!(copy_fm_sketch(None), None);
+    assert_eq!(fm_sketch_ndv(None), 0);
+    merge_fm_sketch(None, None);
+
+    let mut destination = FmSketch::new_signed(2);
+    destination.insert_hash(2);
+    let before = destination.clone();
+    merge_fm_sketch(Some(&mut destination), None);
+    assert_eq!(destination, before);
+
+    let copied = copy_fm_sketch(Some(&destination)).unwrap();
+    destination.insert_hash(4);
+    assert_eq!(copied.sorted_hashes(), [2]);
+    assert_eq!(fm_sketch_ndv(Some(&copied)), copied.ndv());
 }
 
 #[test]

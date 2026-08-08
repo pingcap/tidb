@@ -40,6 +40,15 @@ pub struct FmSketch {
 }
 
 impl FmSketch {
+    /// Go `NewFMSketch`, retaining its signed `int` allocation boundary.
+    ///
+    /// A negative map capacity panics in Go before a sketch is returned.
+    #[must_use]
+    pub fn new_signed(max_size: isize) -> Self {
+        assert!(max_size >= 0, "FM sketch capacity cannot be negative");
+        Self::new(max_size as usize)
+    }
+
     /// Creates an empty sketch with the source hash-set threshold.
     #[must_use]
     pub fn new(max_size: usize) -> Self {
@@ -158,5 +167,25 @@ impl FmSketch {
         for &hash in &source.hashes {
             self.insert_hash(hash);
         }
+    }
+}
+
+/// Go `(*FMSketch).Copy`, including its nil receiver result.
+#[must_use]
+pub fn copy_fm_sketch(sketch: Option<&FmSketch>) -> Option<FmSketch> {
+    sketch.cloned()
+}
+
+/// Go `(*FMSketch).NDV`, including the nil receiver's zero estimate.
+#[must_use]
+pub fn fm_sketch_ndv(sketch: Option<&FmSketch>) -> i64 {
+    sketch.map_or(0, FmSketch::ndv)
+}
+
+/// Go `(*FMSketch).MergeFMSketch`, whose nil destination or source is a
+/// no-op. The destination threshold continues to govern level transitions.
+pub fn merge_fm_sketch(destination: Option<&mut FmSketch>, source: Option<&FmSketch>) {
+    if let (Some(destination), Some(source)) = (destination, source) {
+        destination.merge(source);
     }
 }

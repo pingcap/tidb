@@ -202,7 +202,7 @@ pub use ddl_stats_delta::{
 pub use dynamic_partition_helpers::{flatten_partition_names, get_partition_sql};
 pub use estimate::{estimate_global_singleton_by_sketches, estimate_ndv_by_gee};
 pub use existence_map::ColAndIdxExistenceMap;
-pub use fmsketch::{FmSketch, MAX_SKETCH_SIZE};
+pub use fmsketch::{copy_fm_sketch, fm_sketch_ndv, merge_fm_sketch, FmSketch, MAX_SKETCH_SIZE};
 pub use fmsketch_codec::{
     decode_fm_sketch, encode_fm_sketch, fm_sketch_from_proto, fm_sketch_to_proto, hash_datum,
     hash_row, insert_encoded_row, insert_encoded_value, insert_row_value, insert_value,
