@@ -14,6 +14,8 @@
 
 //! Compile anchors for the complete `pkg/meta/model` package receipt.
 
+mod pkg_meta_model_observation_emitter;
+
 use tidb_model::{
     BackfillMeta, ColumnInfo, DBInfo, DDLBDRType, DDLReorgMeta, EngineAttribute, HistoryInfo,
     IndexInfo, Job, JobState, JobW, MaskingPolicyInfo, PartitionInfo, PlacementSettings,
@@ -64,6 +66,46 @@ fn pkg_meta_model_table_mode_boundary() {
     assert!(!TableMode::IMPORT.can_transition_to(TableMode::RESTORE));
     assert!(!TableMode::RESTORE.can_transition_to(TableMode::IMPORT));
     assert_eq!(TableMode(255).to_string(), "");
+}
+
+#[test]
+fn pkg_meta_model_probe_owned_clone_boundaries() {
+    let mut original = DBInfo {
+        deprecated_tables: vec![TableInfo {
+            name: tidb_ast::CiString::new("before"),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let cloned = original.clone();
+    original.deprecated_tables[0].name = tidb_ast::CiString::new("after");
+
+    let clone_observation = if cloned.deprecated_tables[0].name.original() == "before" {
+        "owned-deep-copy"
+    } else {
+        "shared-table-identity"
+    };
+    let map_observation = if DBInfo::default().table_name2id.is_empty() {
+        "one-empty-map-state"
+    } else {
+        "unexpected-nonempty-map"
+    };
+    pkg_meta_model_observation_emitter::emit(
+        "MODEL-DB-OWNERSHIP",
+        "Rust ownership cannot preserve Go DBInfo shallow pointer aliases or nil map identity",
+        &[
+            (
+                "copy-table-alias",
+                "mutate-source-table-after-copy",
+                clone_observation,
+            ),
+            (
+                "table-name-map-allocation",
+                "nil-map-versus-allocated-empty-map",
+                map_observation,
+            ),
+        ],
+    );
 }
 
 #[test]
