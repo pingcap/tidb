@@ -1083,7 +1083,11 @@ impl Job {
     /// Returns explicit scheduling involvement or the schema/table fallback.
     #[must_use]
     pub fn get_involving_schema_info(&self) -> Vec<InvolvingSchemaInfo> {
-        if let Some(info) = &self.involving_schema_info {
+        if let Some(info) = self
+            .involving_schema_info
+            .as_ref()
+            .filter(|info| !info.is_empty())
+        {
             return info.clone();
         }
         let table = if !self.schema_name.is_empty() && self.table_name.is_empty() {
@@ -1414,7 +1418,14 @@ mod tests {
 
         let mut allocated_empty = job.clone();
         allocated_empty.involving_schema_info = Some(Vec::new());
-        assert!(allocated_empty.get_involving_schema_info().is_empty());
+        assert_eq!(
+            allocated_empty.get_involving_schema_info(),
+            vec![InvolvingSchemaInfo {
+                database: "i".to_owned(),
+                table: "i".to_owned(),
+                ..Default::default()
+            }]
+        );
         assert!(serde_json::to_value(&allocated_empty)
             .unwrap()
             .get("involving_schema_info")

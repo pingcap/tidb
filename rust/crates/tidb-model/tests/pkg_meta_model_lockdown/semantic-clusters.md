@@ -114,8 +114,10 @@ remaining package census is 2,509 obligations plus the build artifact.
   versus allocated-empty distinction because v1 marshals those as `null`
   versus `[]`, and a nil sub-job cache suppresses raw-argument replacement.
   The same distinction is retained for `MultiSchemaInfo.SubJobs`,
-  `HistoryInfo.MultipleTableInfos`, and runtime scheduler involvement because
-  those cases alter JSON or fallback behavior. All non-serialized
+  and `HistoryInfo.MultipleTableInfos` because those cases alter JSON. Runtime
+  scheduler involvement follows Go's `len > 0` rule: both nil and allocated
+  empty select the schema/table fallback, while a nonempty slice is explicit.
+  All non-serialized
   `MultiSchemaInfo` bookkeeping fields remain native Rust fields. V2 argument
   encoding enforces the source's test-build one-value invariant for both the
   parent job and executing sub-jobs. `ToProxyJob` accepts the source 64-bit
