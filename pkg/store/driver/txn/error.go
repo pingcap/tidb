@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"go.uber.org/zap"
 )
@@ -156,8 +157,20 @@ func extractKeyErr(err error) error {
 	if err == nil {
 		return nil
 	}
+	if e, ok := errors.Cause(err).(*tikverr.ErrSharedLockLost); ok {
+		return kv.ErrSharedLockLost.GenWithStackByArgs(e.GetStartTs(), redact.Key(e.GetKey()))
+	}
 	if e, ok := errors.Cause(err).(*tikverr.ErrWriteConflict); ok {
 		return newWriteConflictError(e.WriteConflict)
+	}
+	if e, ok := errors.Cause(err).(*tikverr.ErrLockUpgradeConflict); ok {
+		return errors.WithStack(&tikverr.ErrDeadlock{
+			Deadlock: &kvrpcpb.Deadlock{
+				LockTs:  e.OwnerStartTs,
+				LockKey: e.Key,
+			},
+			IsRetryable: false,
+		})
 	}
 	if e, ok := errors.Cause(err).(*tikverr.ErrRetryable); ok {
 		notFoundDetail := prettyLockNotFoundKey(e.Retryable)

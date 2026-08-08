@@ -19,6 +19,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/session/txninfo"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
@@ -30,6 +33,31 @@ func prepareForeignKeyTables(tk *testkit.TestKit) {
 	tk.MustExec("create table parent (id int primary key)")
 	tk.MustExec("create table child (id int primary key, pid int, foreign key (pid) references parent(id))")
 	tk.MustExec("insert into parent values (1), (2)")
+}
+
+func prepareSharedLockUpgradeTables(tk *testkit.TestKit, fkOptions string) {
+	tk.MustExec("drop table if exists child, parent")
+	tk.MustExec("create table parent (id int primary key, v int)")
+	childTableSQL := "create table child (id int primary key, pid int, foreign key (pid) references parent(id)"
+	if fkOptions != "" {
+		childTableSQL += " " + fkOptions
+	}
+	childTableSQL += ")"
+	tk.MustExec(childTableSQL)
+	tk.MustExec("insert into parent values (1, 0), (2, 0)")
+}
+
+func enableSharedLockUpgrade(tks ...*testkit.TestKit) {
+	for _, tk := range tks {
+		tk.MustExec("set @@tidb_enable_shared_lock_upgrade = ON")
+	}
+}
+
+func requireTxnLockAcquiring(t *testing.T, waitingTk *testkit.TestKit) {
+	require.Eventuallyf(t, func() bool {
+		info := waitingTk.Session().TxnInfo()
+		return info != nil && info.State == txninfo.TxnLockAcquiring && info.BlockStartTime.Valid
+	}, 10*time.Second, 100*time.Millisecond, "expected session %d to be waiting on lock acquisition", waitingTk.Session().GetSessionVars().ConnectionID)
 }
 
 func TestForeignKeySharedLockOptimisticReverseReferenceOrder(t *testing.T) {
@@ -213,6 +241,80 @@ func TestSharedLockBlockExclusiveLock(t *testing.T) {
 	tk1.MustExec("commit")
 	tk1.MustExec("admin check table parent")
 	tk1.MustExec("admin check table child")
+
+	t.Run("shared_lock_upgrade_waits_for_last_holder", func(t *testing.T) {
+		if !kerneltype.IsNextGen() {
+			t.Skip("shared lock upgrade rollout acceptance is only required on next-gen")
+		}
+
+		tk1 := testkit.NewTestKit(t, store)
+		tk2 := testkit.NewTestKit(t, store)
+		tk1.MustExec("use test")
+		tk2.MustExec("use test")
+		tk1.MustExec("set @@tidb_foreign_key_check_in_shared_lock = ON")
+		tk2.MustExec("set @@tidb_foreign_key_check_in_shared_lock = ON")
+		enableSharedLockUpgrade(tk1, tk2)
+		prepareSharedLockUpgradeTables(tk1, "")
+
+		tk1.MustExec("begin pessimistic")
+		tk2.MustExec("begin pessimistic")
+		tk1.MustExec("insert into child values(1, 1)")
+		tk2.MustExec("insert into child values(2, 1)")
+
+		upgraderDone := make(chan error, 1)
+		go func() {
+			upgraderDone <- tk1.ExecToErr("update parent set v = v + 1 where id = 1")
+		}()
+
+		requireTxnLockAcquiring(t, tk1)
+
+		tk2.MustExec("commit")
+		require.NoError(t, <-upgraderDone)
+		tk1.MustExec("commit")
+
+		tk1.MustQuery("select * from parent order by id").Check(testkit.Rows("1 1", "2 0"))
+		tk1.MustQuery("select * from child order by id").Check(testkit.Rows("1 1", "2 1"))
+		tk1.MustExec("admin check table parent")
+		tk1.MustExec("admin check table child")
+	})
+
+	t.Run("second_upgrader_returns_deadlock", func(t *testing.T) {
+		if !kerneltype.IsNextGen() {
+			t.Skip("shared lock upgrade rollout acceptance is only required on next-gen")
+		}
+
+		tk1 := testkit.NewTestKit(t, store)
+		tk2 := testkit.NewTestKit(t, store)
+		tk1.MustExec("use test")
+		tk2.MustExec("use test")
+		tk1.MustExec("set @@tidb_foreign_key_check_in_shared_lock = ON")
+		tk2.MustExec("set @@tidb_foreign_key_check_in_shared_lock = ON")
+		enableSharedLockUpgrade(tk1, tk2)
+		prepareSharedLockUpgradeTables(tk1, "")
+
+		tk1.MustExec("begin pessimistic")
+		tk2.MustExec("begin pessimistic")
+		tk1.MustExec("insert into child values(1, 1)")
+		tk2.MustExec("insert into child values(2, 1)")
+
+		upgraderDone := make(chan error, 1)
+		go func() {
+			upgraderDone <- tk1.ExecToErr("update parent set v = v + 1 where id = 1")
+		}()
+
+		requireTxnLockAcquiring(t, tk1)
+
+		tk2.MustGetErrCode("update parent set v = v + 2 where id = 1", errno.ErrLockDeadlock)
+		require.False(t, tk2.Session().GetSessionVars().InTxn())
+		require.Nil(t, tk2.Session().TxnInfo())
+		require.NoError(t, <-upgraderDone)
+		tk1.MustExec("commit")
+
+		tk1.MustQuery("select * from parent order by id").Check(testkit.Rows("1 1", "2 0"))
+		tk1.MustQuery("select * from child order by id").Check(testkit.Rows("1 1"))
+		tk1.MustExec("admin check table parent")
+		tk1.MustExec("admin check table child")
+	})
 }
 
 func TestSharedLockChildTableConflict(t *testing.T) {
@@ -354,6 +456,81 @@ func TestSharedLockCascadeUpdateExplicitPessimisticTxn(t *testing.T) {
 			tk.MustExec("admin check table c")
 		})
 	}
+
+	t.Run("insert_child_then_update_parent", func(t *testing.T) {
+		if !kerneltype.IsNextGen() {
+			t.Skip("shared lock upgrade rollout acceptance is only required on next-gen")
+		}
+
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+		defer tk.MustExec("set @@global.tidb_enable_foreign_key=default")
+		tk.MustExec("set @@foreign_key_checks=1")
+		tk.MustExec("set @@tidb_foreign_key_check_in_shared_lock=ON")
+		enableSharedLockUpgrade(tk)
+		prepareSharedLockUpgradeTables(tk, "")
+
+		tk.MustExec("begin pessimistic")
+		tk.MustExec("insert into child values (1, 1)")
+		tk.MustExec("update parent set v = v + 1 where id = 1")
+		tk.MustExec("commit")
+
+		tk.MustQuery("select * from parent order by id").Check(testkit.Rows("1 1", "2 0"))
+		tk.MustQuery("select * from child order by id").Check(testkit.Rows("1 1"))
+		tk.MustExec("admin check table parent")
+		tk.MustExec("admin check table child")
+	})
+
+	t.Run("insert_child_then_delete_parent_restrict", func(t *testing.T) {
+		if !kerneltype.IsNextGen() {
+			t.Skip("shared lock upgrade rollout acceptance is only required on next-gen")
+		}
+
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+		defer tk.MustExec("set @@global.tidb_enable_foreign_key=default")
+		tk.MustExec("set @@foreign_key_checks=1")
+		tk.MustExec("set @@tidb_foreign_key_check_in_shared_lock=ON")
+		enableSharedLockUpgrade(tk)
+		prepareSharedLockUpgradeTables(tk, "")
+
+		tk.MustExec("begin pessimistic")
+		tk.MustExec("insert into child values (1, 1)")
+		tk.MustGetErrCode("delete from parent where id = 1", errno.ErrRowIsReferenced2)
+		tk.MustExec("commit")
+
+		tk.MustQuery("select * from parent order by id").Check(testkit.Rows("1 0", "2 0"))
+		tk.MustQuery("select * from child order by id").Check(testkit.Rows("1 1"))
+		tk.MustExec("admin check table parent")
+		tk.MustExec("admin check table child")
+	})
+
+	t.Run("insert_child_then_delete_parent_cascade", func(t *testing.T) {
+		if !kerneltype.IsNextGen() {
+			t.Skip("shared lock upgrade rollout acceptance is only required on next-gen")
+		}
+
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+		defer tk.MustExec("set @@global.tidb_enable_foreign_key=default")
+		tk.MustExec("set @@foreign_key_checks=1")
+		tk.MustExec("set @@tidb_foreign_key_check_in_shared_lock=ON")
+		enableSharedLockUpgrade(tk)
+		prepareSharedLockUpgradeTables(tk, "on delete cascade")
+
+		tk.MustExec("begin pessimistic")
+		tk.MustExec("insert into child values (1, 1)")
+		tk.MustExec("delete from parent where id = 1")
+		tk.MustExec("commit")
+
+		tk.MustQuery("select * from parent order by id").Check(testkit.Rows("2 0"))
+		tk.MustQuery("select * from child").Check(testkit.Rows())
+		tk.MustExec("admin check table parent")
+		tk.MustExec("admin check table child")
+	})
 }
 
 func TestSharedLockLockView(t *testing.T) {
