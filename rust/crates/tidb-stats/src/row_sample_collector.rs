@@ -65,6 +65,7 @@
 //! caller's, exactly as it is `analyze_col_sampling.go`'s.
 
 use tidb_datatype::Datum;
+use tidb_txnkv::Handle;
 use tidb_util::fastrand;
 
 use crate::cmsketch::hash_bytes;
@@ -258,6 +259,8 @@ pub struct SlotStats {
 pub struct SampledRow {
     /// The analyzed columns' values, in the caller's column order.
     pub columns: Vec<Datum>,
+    /// The executor-built row handle used to restore physical row order.
+    pub handle: Handle,
     /// The row's position after the executor sorts samples by KV handle.
     pub ordinal: isize,
 }
@@ -630,10 +633,9 @@ impl RowSampleCollector {
     /// Handle construction can fail and belongs to the schema-aware caller;
     /// keeping it as a supplied typed key avoids pretending scan/heap order is
     /// handle order after distributed collectors merge.
-    pub fn into_parts<H, E>(
+    pub fn into_parts<E>(
         mut self,
-        mut build_handle: impl FnMut(&[Datum]) -> Result<H, E>,
-        mut compare_handle: impl FnMut(&H, &H) -> std::cmp::Ordering,
+        mut build_handle: impl FnMut(&[Datum]) -> Result<Handle, E>,
     ) -> Result<(i64, Vec<SlotStats>, Vec<SampledRow>), E> {
         assert_eq!(
             self.null_counts.len(),
@@ -661,12 +663,17 @@ impl RowSampleCollector {
             let handle = build_handle(&columns)?;
             rows_with_handles.push((columns, handle));
         }
-        rows_with_handles.sort_unstable_by(|left, right| compare_handle(&left.1, &right.1));
+        rows_with_handles.sort_unstable_by(|left, right| {
+            left.1.compare(&right.1).unwrap_or_else(|error| {
+                panic!("Go Handle.Compare rejected mixed handle domains: {error}")
+            })
+        });
         let rows = rows_with_handles
             .into_iter()
             .enumerate()
-            .map(|(position, (columns, _))| SampledRow {
+            .map(|(position, (columns, handle))| SampledRow {
                 columns,
+                handle,
                 ordinal: position as isize,
             })
             .collect();

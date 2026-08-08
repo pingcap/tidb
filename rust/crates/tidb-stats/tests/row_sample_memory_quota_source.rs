@@ -37,6 +37,7 @@ use tidb_stats::row_sample_collector::{
     SamplePolicy, SampledRow, ScannedRow, SlotStats, SlotValue,
 };
 use tidb_stats::FmSketchProto;
+use tidb_txnkv::{Handle, IntHandle};
 
 #[derive(Default)]
 struct WordRng {
@@ -60,17 +61,18 @@ impl RowSampleRng for WordRng {
     }
 }
 
-fn source_handle(columns: &[Datum]) -> Result<i64, ()> {
-    Ok(match columns.first() {
+fn source_handle(columns: &[Datum]) -> Result<Handle, ()> {
+    Ok(IntHandle::new(match columns.first() {
         Some(Datum::Int(value)) => *value,
         Some(value) => value.go_bytes().first().copied().unwrap_or_default() as i64,
         None => 0,
     })
+    .into())
 }
 
 fn finish(collector: RowSampleCollector) -> (i64, Vec<SlotStats>, Vec<SampledRow>) {
     collector
-        .into_parts(source_handle, i64::cmp)
+        .into_parts(source_handle)
         .expect("test handle construction is infallible")
 }
 
