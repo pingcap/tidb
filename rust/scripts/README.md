@@ -46,8 +46,10 @@ python3 rust/scripts/go-package-lockdown.py check \
 ```
 
 Evidence plans choose only `cargo-test` or `go-test`; the checker constructs the
-entire argv. Cargo runs from `rust/` with offline/locked `-j12`, and Go runs from
-the repository root against the pinned package. Run and replay logs are each
+entire argv. Cargo runs from `rust/` with offline/locked `-j12`. Go runs from
+the repository root against the pinned package and automatically uses the
+cleanup-owning failpoint wrapper when the accepted package tree requires it.
+Run and replay logs are each
 content-addressed. The gate compares normalized exact named-test observations,
 so harmless elapsed-time drift is allowed while compilation-only kills fail.
 Measured probes emit canonical per-case runtime observations which are compared

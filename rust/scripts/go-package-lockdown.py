@@ -820,6 +820,7 @@ class PackageLockdown:
         self.source_tree = run(
             self.root, ["git", "rev-parse", f"{self.accepted_source_commit}^{{tree}}"]
         ).strip()
+        self._go_test_uses_failpoint_wrapper_cache: bool | None = None
 
         self.primary_rust_crate = self._required_string("primary_rust_crate")
         self.mapped_rust_crates = self._string_list("mapped_rust_crates")
@@ -2812,11 +2813,43 @@ class PackageLockdown:
                 raise LockdownError(f"{context} has an invalid exact Go test name")
             if test_subject != self.go_package.as_posix() or test_target != "-":
                 raise LockdownError(f"{context} must use the exact pinned Go package")
+            if self._go_test_uses_failpoint_wrapper():
+                return [
+                    "./tools/check/failpoint-go-test.sh", test_subject,
+                    "-run", f"^{named_test}$", "-count=1", "-v",
+                ]
             return [
                 "go", "test", f"./{test_subject}", "-run", f"^{named_test}$", "-count=1",
                 "-v",
             ]
         raise LockdownError(f"{context} has unknown runner enum {runner!r}")
+
+    def _go_test_uses_failpoint_wrapper(self) -> bool:
+        cached = self._go_test_uses_failpoint_wrapper_cache
+        if cached is not None:
+            return cached
+        command = [
+            "git", "grep", "-q",
+            "-e", r"failpoint\.",
+            "-e", r"testfailpoint\.",
+            "-e", "@com_github_pingcap_failpoint//:failpoint",
+            self.accepted_source_commit, "--", self.go_package.as_posix(),
+        ]
+        completed = subprocess.run(
+            command,
+            cwd=self.root,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        if completed.returncode not in {0, 1}:
+            detail = completed.stderr.decode("utf-8", errors="replace").strip()
+            raise LockdownError(
+                f"cannot decide failpoint lifecycle for {self.go_package}: "
+                f"{detail or f'exit {completed.returncode}'}"
+            )
+        self._go_test_uses_failpoint_wrapper_cache = completed.returncode == 0
+        return self._go_test_uses_failpoint_wrapper_cache
 
     def _run_fixed_test(
         self,

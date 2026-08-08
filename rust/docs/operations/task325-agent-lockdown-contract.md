@@ -102,7 +102,16 @@ cargo test --offline --locked -j12 --quiet -p <mapped-crate> \
   --test <target> <exact-test> -- --exact --nocapture
 ```
 
-Go evidence runs from the repository root as:
+Go evidence applies the repository failpoint decision to the accepted source
+tree. A package using failpoints runs from the repository root as one
+cleanup-owning fixed command:
+
+```text
+./tools/check/failpoint-go-test.sh <pinned-package> \
+  -run ^<ExactTest>$ -count=1 -v
+```
+
+A package without failpoints runs directly as:
 
 ```text
 go test ./<pinned-package> -run ^<ExactTest>$ -count=1 -v

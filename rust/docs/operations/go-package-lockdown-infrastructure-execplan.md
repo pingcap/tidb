@@ -106,9 +106,13 @@ Evidence never supplies an executable command. A plan selects:
 - `cargo-test`: a mapped crate, integration-test target, and exact (optionally
   module-qualified) test name. The checker runs from `rust/`:
   `cargo test --offline --locked -j12 --quiet -p <crate> --test <target> <name> -- --exact --nocapture`.
-- `go-test`: the exact pinned Go package and exact test name. The checker runs
-  from the repository root:
-  `go test ./<package> -run ^<name>$ -count=1 -v`.
+- `go-test`: the exact pinned Go package and exact test name. The checker first
+  applies the repository failpoint decision to the accepted source tree. A
+  package containing `failpoint.`, `testfailpoint.`, or the Bazel failpoint
+  dependency runs from the repository root through
+  `./tools/check/failpoint-go-test.sh <package> -run ^<name>$ -count=1 -v`, so
+  enablement and cleanup are one fixed command. Other packages run
+  `go test ./<package> -run ^<name>$ -count=1 -v` directly.
 
 `run-evidence` and `verify-evidence` each content-address their raw logs. A
 measured probe owns separately content-addressed expected boundary values. Its

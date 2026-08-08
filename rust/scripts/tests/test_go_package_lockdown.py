@@ -1225,6 +1225,43 @@ class GoPackageLockdownTest(unittest.TestCase):
         _schema, _header, rows = read_tsv(self.root / "evidence/mutation-results.tsv")
         self.assertNotEqual(rows[0]["verification_artifact_path"], "-")
 
+    def test_fixed_go_runner_uses_failpoint_wrapper_from_accepted_tree(self) -> None:
+        accepted = self._spec_source_commit(self.root)
+        lockdown = LOCKDOWN.PackageLockdown(self.root, SPEC, accepted)
+        direct = lockdown._runner_argv(
+            "go-test", "pkg/sample", "-", "TestClamp", "direct Go runner regression"
+        )
+        self.assertEqual(direct[:2], ["go", "test"])
+
+        source = self.root / "pkg/sample/sample.go"
+        original = source.read_text(encoding="utf-8")
+        source.write_text(
+            original + "\n// failpoint.Inject is enough for the repository policy check.\n",
+            encoding="utf-8",
+        )
+        accepted = self.commit_source_update("pkg/sample/sample.go")
+        lockdown = LOCKDOWN.PackageLockdown(self.root, SPEC, accepted)
+        wrapped = lockdown._runner_argv(
+            "go-test", "pkg/sample", "-", "TestClamp", "failpoint Go runner regression"
+        )
+        self.assertEqual(
+            wrapped,
+            [
+                "./tools/check/failpoint-go-test.sh", "pkg/sample",
+                "-run", "^TestClamp$", "-count=1", "-v",
+            ],
+        )
+
+        source.write_text(original, encoding="utf-8")
+        same_accepted_tree = LOCKDOWN.PackageLockdown(self.root, SPEC, accepted)
+        self.assertEqual(
+            same_accepted_tree._runner_argv(
+                "go-test", "pkg/sample", "-", "TestClamp",
+                "accepted-tree failpoint runner regression",
+            )[0],
+            "./tools/check/failpoint-go-test.sh",
+        )
+
     def test_run_evidence_rejects_compilation_only_kill_and_restores_source(self) -> None:
         self.clear_mutation_execution()
         lockdown = LOCKDOWN.PackageLockdown(
