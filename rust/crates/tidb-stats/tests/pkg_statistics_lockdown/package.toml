@@ -1,0 +1,97 @@
+# Drafted against the v2 package-lockdown schema at the combined 93886faf
+# checkpoint. Reconcile only the schema contract before running its successor.
+schema = "go-package-lockdown-spec-v2"
+claim = "whole-go-package"
+go_package = "pkg/statistics"
+source_commit = "bdab0016365e8b1d79b5b11f52ee6fdde90f4c46"
+primary_rust_crate = "tidb-stats"
+mapped_rust_crates = ["tidb-stats"]
+extra_artifacts = []
+excluded_subpackages = [
+  { path = "pkg/statistics/asyncload", proof = "go-package-dir:pkg/statistics/asyncload#package:asyncload" },
+  { path = "pkg/statistics/handle", proof = "go-package-dir:pkg/statistics/handle#package:handle" },
+  { path = "pkg/statistics/util", proof = "go-package-dir:pkg/statistics/util#package:util" },
+]
+owned_rust_files = [
+  "rust/crates/tidb-stats/Cargo.toml",
+  "rust/crates/tidb-stats/src/analysis_policy.rs",
+  "rust/crates/tidb-stats/src/analyze_jobs.rs",
+  "rust/crates/tidb-stats/src/analyze_results.rs",
+  "rust/crates/tidb-stats/src/analyze_table_id.rs",
+  "rust/crates/tidb-stats/src/analyze_version_policy.rs",
+  "rust/crates/tidb-stats/src/average_count.rs",
+  "rust/crates/tidb-stats/src/builder.rs",
+  "rust/crates/tidb-stats/src/cmsketch.rs",
+  "rust/crates/tidb-stats/src/column.rs",
+  "rust/crates/tidb-stats/src/constants.rs",
+  "rust/crates/tidb-stats/src/correlation.rs",
+  "rust/crates/tidb-stats/src/count_metrics.rs",
+  "rust/crates/tidb-stats/src/datum_map_cache.rs",
+  "rust/crates/tidb-stats/src/estimate.rs",
+  "rust/crates/tidb-stats/src/existence_map.rs",
+  "rust/crates/tidb-stats/src/fmsketch.rs",
+  "rust/crates/tidb-stats/src/fmsketch_codec.rs",
+  "rust/crates/tidb-stats/src/histogram.evidence.tsv",
+  "rust/crates/tidb-stats/src/histogram.inventory.tsv",
+  "rust/crates/tidb-stats/src/histogram.mutation-plan.tsv",
+  "rust/crates/tidb-stats/src/histogram.mutation-results.tsv",
+  "rust/crates/tidb-stats/src/histogram.rs",
+  "rust/crates/tidb-stats/src/index.rs",
+  "rust/crates/tidb-stats/src/index_query.rs",
+  "rust/crates/tidb-stats/src/lib.rs",
+  "rust/crates/tidb-stats/src/memory_usage.rs",
+  "rust/crates/tidb-stats/src/overlap_geometry.rs",
+  "rust/crates/tidb-stats/src/row_estimate.rs",
+  "rust/crates/tidb-stats/src/row_sample_collector.rs",
+  "rust/crates/tidb-stats/src/sample_bytes.rs",
+  "rust/crates/tidb-stats/src/sample_collector.rs",
+  "rust/crates/tidb-stats/src/scalar_enum.rs",
+  "rust/crates/tidb-stats/src/scalar_geometry.rs",
+  "rust/crates/tidb-stats/src/sorted_builder.rs",
+  "rust/crates/tidb-stats/src/stats_version.rs",
+  "rust/crates/tidb-stats/src/status.rs",
+  "rust/crates/tidb-stats/src/table.rs",
+  "rust/crates/tidb-stats/src/weighted_reservoir.rs",
+  "rust/crates/tidb-stats/tests/all.rs",
+  "rust/crates/tidb-stats/tests/analysis_policy_source.rs",
+  "rust/crates/tidb-stats/tests/analyze_jobs_source.rs",
+  "rust/crates/tidb-stats/tests/analyze_results_source.rs",
+  "rust/crates/tidb-stats/tests/analyze_table_id_source.rs",
+  "rust/crates/tidb-stats/tests/analyze_version_policy_source.rs",
+  "rust/crates/tidb-stats/tests/average_count_source.rs",
+  "rust/crates/tidb-stats/tests/builder_source.rs",
+  "rust/crates/tidb-stats/tests/cmsketch_source.rs",
+  "rust/crates/tidb-stats/tests/column_source.rs",
+  "rust/crates/tidb-stats/tests/constants_source.rs",
+  "rust/crates/tidb-stats/tests/correlation_source.rs",
+  "rust/crates/tidb-stats/tests/count_metrics_source.rs",
+  "rust/crates/tidb-stats/tests/datum_map_cache_source.rs",
+  "rust/crates/tidb-stats/tests/estimate_source.rs",
+  "rust/crates/tidb-stats/tests/existence_map_source.rs",
+  "rust/crates/tidb-stats/tests/fmsketch_source.rs",
+  "rust/crates/tidb-stats/tests/histogram_source.rs",
+  "rust/crates/tidb-stats/tests/index_query_source.rs",
+  "rust/crates/tidb-stats/tests/index_source.rs",
+  "rust/crates/tidb-stats/tests/memory_usage_source.rs",
+  "rust/crates/tidb-stats/tests/overlap_geometry_source.rs",
+  "rust/crates/tidb-stats/tests/row_estimate_source.rs",
+  "rust/crates/tidb-stats/tests/row_sample_memory_quota_source.rs",
+  "rust/crates/tidb-stats/tests/sample_bytes_source.rs",
+  "rust/crates/tidb-stats/tests/sample_collector_source.rs",
+  "rust/crates/tidb-stats/tests/scalar_enum_source.rs",
+  "rust/crates/tidb-stats/tests/scalar_geometry_source.rs",
+  "rust/crates/tidb-stats/tests/sorted_builder_source.rs",
+  "rust/crates/tidb-stats/tests/stats_version_source.rs",
+  "rust/crates/tidb-stats/tests/status_source.rs",
+  "rust/crates/tidb-stats/tests/table_source.rs",
+  "rust/crates/tidb-stats/tests/weighted_reservoir_source.rs",
+]
+
+[artifact_roles]
+# The 32 direct artifacts are 15 production Go, 13 test Go, one BUILD.bazel,
+# one OWNERS file, and both integration-suite JSON fixtures.
+"pkg/statistics/OWNERS" = "support"
+
+[unresolved_fixture_evidence]
+# The static scanner has no unresolved keys. main_test.go helper-loads both
+# package-owned testdata/integration_suite_{in,out}.json fixtures.
