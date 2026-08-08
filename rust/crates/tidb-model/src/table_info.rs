@@ -61,6 +61,8 @@ pub const TABLE_INFO_VERSION3: u16 = 3;
 pub const TABLE_INFO_VERSION4: u16 = 4;
 /// Go `TableInfoVersion5`: separate auto-increment allocator support.
 pub const TABLE_INFO_VERSION5: u16 = 5;
+/// Go `CurrLatestTableInfoVersion`.
+pub const CURR_LATEST_TABLE_INFO_VERSION: u16 = TABLE_INFO_VERSION5;
 
 /// Go `TableInfo`: metadata describing a table.
 ///
@@ -914,6 +916,8 @@ mod tests {
     fn misc_methods() {
         use crate::partition::{PartitionDefinition, PartitionInfo};
         use crate::placement::PolicyRefInfo;
+
+        assert_eq!(CURR_LATEST_TABLE_INFO_VERSION, TABLE_INFO_VERSION5);
 
         let mut c = column("a", 0, true, false);
         c.id = 100;
