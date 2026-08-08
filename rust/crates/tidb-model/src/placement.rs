@@ -180,34 +180,166 @@ impl std::fmt::Display for PlacementSettings {
 }
 
 /// Go `PolicyInfo`: a placement policy (its settings plus identity/state).
-///
-/// Go embeds `*PlacementSettings`; here it is a named `Option<Box<..>>`
-/// field to keep the nil-able pointer, deep-cloned by the derived `Clone`.
-///
-/// The embedded field has no JSON tag, so Go promotes the settings into this
-/// object; `flatten` reproduces that. One divergence: Go decodes an object with
-/// no settings keys into a nil pointer, while a flattened `Option` yields
-/// `Some(PlacementSettings::default())`, which then re-serializes the twelve
-/// zero-valued settings. Policies stored by TiDB always carry settings.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+/// The embedded settings pointer is encoded as promoted fields and remains
+/// nil when none of those fields occur during decode.
+#[derive(Clone, Debug, Default)]
 pub struct PolicyInfo {
     /// The placement settings (Go's embedded `*PlacementSettings`).
-    #[serde(flatten)]
     pub placement_settings: Option<Box<PlacementSettings>>,
     /// The policy ID.
-    #[serde(rename = "id", default)]
     pub id: i64,
     /// The policy name.
-    #[serde(rename = "name", default)]
     pub name: CiString,
     /// The online-DDL state of the policy object.
-    #[serde(rename = "state", default)]
     pub state: SchemaState,
+}
+
+impl Serialize for PolicyInfo {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+
+        let mut map = serializer.serialize_map(None)?;
+        if let Some(settings) = &self.placement_settings {
+            map.serialize_entry("primary_region", &settings.primary_region)?;
+            map.serialize_entry("regions", &settings.regions)?;
+            map.serialize_entry("learners", &settings.learners)?;
+            map.serialize_entry("followers", &settings.followers)?;
+            map.serialize_entry("voters", &settings.voters)?;
+            map.serialize_entry("schedule", &settings.schedule)?;
+            map.serialize_entry("constraints", &settings.constraints)?;
+            map.serialize_entry("leader_constraints", &settings.leader_constraints)?;
+            map.serialize_entry("learner_constraints", &settings.learner_constraints)?;
+            map.serialize_entry("follower_constraints", &settings.follower_constraints)?;
+            map.serialize_entry("voter_constraints", &settings.voter_constraints)?;
+            map.serialize_entry("survival_preferences", &settings.survival_preferences)?;
+        }
+        map.serialize_entry("id", &self.id)?;
+        map.serialize_entry("name", &self.name)?;
+        map.serialize_entry("state", &self.state)?;
+        map.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for PolicyInfo {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::Error;
+
+        let mut object = serde_json::Map::<String, serde_json::Value>::deserialize(deserializer)?;
+        let id = object
+            .remove("id")
+            .map_or(Ok(0), serde_json::from_value)
+            .map_err(D::Error::custom)?;
+        let name = object
+            .remove("name")
+            .map_or_else(|| Ok(CiString::default()), serde_json::from_value)
+            .map_err(D::Error::custom)?;
+        let state = object
+            .remove("state")
+            .map_or(Ok(SchemaState::default()), serde_json::from_value)
+            .map_err(D::Error::custom)?;
+        let settings_keys = [
+            "primary_region",
+            "regions",
+            "learners",
+            "followers",
+            "voters",
+            "schedule",
+            "constraints",
+            "leader_constraints",
+            "learner_constraints",
+            "follower_constraints",
+            "voter_constraints",
+            "survival_preferences",
+        ];
+        let has_settings = settings_keys.iter().any(|key| object.contains_key(*key));
+        let placement_settings = if has_settings {
+            let settings = serde_json::from_value(serde_json::Value::Object(object))
+                .map_err(D::Error::custom)?;
+            Some(Box::new(settings))
+        } else {
+            None
+        };
+        Ok(Self {
+            placement_settings,
+            id,
+            name,
+            state,
+        })
+    }
+}
+
+impl PolicyInfo {
+    /// Go `PolicyInfo.Clone`. The source dereferences the embedded settings
+    /// pointer unconditionally, so a nil settings pointer is an invariant
+    /// violation and panics rather than silently producing another nil.
+    #[must_use]
+    pub fn clone_like_go(&self) -> Self {
+        Self {
+            placement_settings: Some(Box::new(
+                (**self
+                    .placement_settings
+                    .as_ref()
+                    .expect("nil PlacementSettings in PolicyInfo.Clone"))
+                .clone(),
+            )),
+            id: self.id,
+            name: self.name.clone(),
+            state: self.state,
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn policy_clone_deep_copies_settings() {
+        let policy = PolicyInfo {
+            placement_settings: Some(Box::new(PlacementSettings {
+                primary_region: "r1".to_owned(),
+                ..Default::default()
+            })),
+            id: 1,
+            ..Default::default()
+        };
+        let mut clone = policy.clone_like_go();
+        clone.placement_settings.as_mut().unwrap().primary_region = "r2".to_owned();
+        assert_eq!(
+            policy.placement_settings.as_ref().unwrap().primary_region,
+            "r1"
+        );
+    }
+
+    #[test]
+    fn policy_json_preserves_nil_embedded_settings() {
+        let empty: PolicyInfo =
+            serde_json::from_str(r#"{"id":1,"name":{"O":"p","L":"p"},"state":5}"#).unwrap();
+        assert!(empty.placement_settings.is_none());
+        assert_eq!(
+            serde_json::to_string(&empty).unwrap(),
+            r#"{"id":1,"name":{"O":"p","L":"p"},"state":5}"#
+        );
+
+        let with_settings: PolicyInfo = serde_json::from_str(
+            r#"{"primary_region":"r1","id":1,"name":{"O":"p","L":"p"},"state":5}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            with_settings
+                .placement_settings
+                .as_ref()
+                .unwrap()
+                .primary_region,
+            "r1"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "nil PlacementSettings")]
+    fn policy_clone_nil_settings_matches_source_invariant() {
+        let _ = PolicyInfo::default().clone_like_go();
+    }
 
     // Go TestPlacementSettingsString.
     #[test]
