@@ -34,7 +34,7 @@
     "rust/crates/tidb-exec/src/upgrade_versions.mutation-results.tsv": "fa53dbe620e220d00e867de738e4008715f333a61f4cef1d914091bb66b12e23",
     "rust/crates/tidb-exec/src/upgrade_versions.rs": "332ddf78856cdbaf9b422715236296b6021d29899bd285dd39d7b27748e52aab",
     "rust/crates/tidb-exec/tests/upgrade_versions_source.rs": "6ae43caf8d25012f69a847636ecb7efc0d447306fa42757527f16a8f5959041d",
-    "rust/docs/operations/pkg-session-upgrade-def-go-lockdown-execplan.md": "0be88b60c177071750999b6523054ba0f63b1a77b8decb54102634ab69418880",
+    "rust/docs/operations/pkg-session-upgrade-def-go-lockdown-execplan.md": "eb1e6264ff1b59ce475c4c9eb2e37fe4fb78ac800b2f73b8d8758f80d4c573ca",
     "rust/scripts/pkg-session-upgrade-def-lockdown.py": "69ab861a0e5bf67cb1e5dfb2a6849edc932318ac2557de3bf71949898c5242a4"
   },
   "owning_go_source": "pkg/session/upgrade_def.go",

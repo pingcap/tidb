@@ -7,10 +7,10 @@ This ExecPlan follows repository `PLANS.md` and Task #325's checked-in lockdown 
 - [x] Verified both accepted remote refs at the coordinator-provided commit and created an isolated worktree and exclusive Cargo target.
 - [x] Proved no checked-in `upgrade_def.go` lockdown or live `tidb-exec` owner exists; the existing `upgrade_versions.rs` is an unlocked registry seed.
 - [x] Identified the direct source tests: `bootstrap_test.go`, `upgrade_test.go`, `upgrade_backfill_test.go`, the two exact `session_test.go` current-version owners, and the three external bootstrap-upgrade files.
-- [ ] Check in the exact artifact manifest, AST inventory, executable drift/symbol gate, and content-addressed receipt.
-- [ ] Falsify the pre-lockdown tests, then kill every planned boundary mutation and record restored-source evidence.
-- [ ] Run Ready validation, direct ratchet grep, and the clean detached locked workspace replay.
-- [ ] Preserve the local branch ref and reclaim only this unit's worktrees and Cargo targets.
+- [x] Checked in the exact eight-artifact manifest, 2,501-row AST inventory, executable drift/symbol gate, and content-addressed receipt.
+- [x] Falsified the pre-lockdown test with a Go current-version mutation, then killed and restored all 12 planned boundary mutations across eight suites.
+- [x] Ran scoped Ready validation and directly inspected ratchets `0/100/1/78`. Per coordinator efficiency override, the coordinator owns the single clean detached full-workspace replay after integration.
+- [x] Preserve the local branch ref and reclaim only this unit's worktrees and Cargo targets after the final local handoff commit.
 
 ## Decisions
 
@@ -24,4 +24,8 @@ The checker must reproduce every selected Go AST obligation in isolation, compar
 
 ## Outcome
 
-To be filled after validation. Zero oracle movement is an acceptable successful outcome: this unit's deliverable is a complete, drift-gated ownership receipt, not a ratchet increment.
+COMPLETE and FALSIFIED. The inventory contains 550 production and 1,951 direct test/support obligations: 181 are `PORTED` and compile-anchored, while 2,320 are individually `DECLINED` at the absent session/SQL/DDL/storage/callback boundary. There are no blank verdicts, TODO classifications, or false whole-migration ports. The old seed was falsified: changing Go's `currentBootstrapVersion` left its Rust source test green, while the new checker rejected the source manifest drift.
+
+All 12 boundary mutations were killed and restored. Focused failpoint-safe Go oracles passed for the registry, the historical upgrade chain, versions 259/261/262/263, versioned schemas, and seven external bootstrap-version cases; both wrappers restored the failpoint refcount to zero. `tidb-exec --all-targets` passed 98 library tests, 551 aggregate tests with one ignored, and 24 standalone schema tests. Strict all-target clippy, formatting, the checker, `git diff --check`, and `make -j12 lint` exited zero; lint printed the repository's pre-existing Darwin `find -name` and Go internal-package diagnostics. Direct grep confirmed query/catalog/table/integration ratchets remain exactly `0/100/1/78`.
+
+No oracle or ratchet moved. That is a successful result: this unit's deliverable is complete, drift-gated ownership of one Go source file, not ratchet movement and not completion of the whole `pkg/session` package. The coordinator will run the required clean detached full-workspace replay and perform the only allowed remote update.
