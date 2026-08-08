@@ -1,0 +1,10 @@
+# pkg-session-upgrade-def-file-lockdown-artifacts-v1
+path	role	sha256	bytes	lines
+pkg/session/upgrade_def.go	production-owner	4ddb36207bd851d6cbee45f81e32396241065af4f7249ce0b2c0d2781a59d8b5	104376	2272
+pkg/session/bootstrap_test.go	ranked-direct-upgrade-support	3ff1498e156e4b7b5c16d913c78f55e06f177942076a068c3ab76a518c8c9241	68818	1969
+pkg/session/upgrade_test.go	direct-registry-support	706b47791d6d8402f1fb3765c57477815b73f30fe5c76f5282c2f59c3a82b3f1	2030	63
+pkg/session/upgrade_backfill_test.go	direct-latest-upgrade-support	f0565931fc7a5bad14b005b890d8bed3ddda1d52673a2abaa72756008519a70b	19170	500
+pkg/session/session_test.go	selected-current-version-support	6922fd014f378a025dc415fddcb10a438b9d234301e20680608ce30abf9fa40d	6951	172
+pkg/session/test/bootstraptest/bootstrap_upgrade_test.go	external-upgrade-support	9efa0bceded5ecae4865ee1a9933db9103991694d6b4eabc63bb49d28ee18b6d	56035	1523
+pkg/session/test/bootstraptest/boot_test.go	external-upgrade-support	1485c8af58beb0c099a2620036723bb825e9bbf335be3e3d8213efcc788f4e09	35074	943
+pkg/session/test/bootstraptest2/boot_test.go	external-upgrade-support	fe868719a759cd6db33e54afd4f92b52a1eaa55d35341e87b662e64e3892e462	9902	284

@@ -15,7 +15,9 @@
 //! Source-backed tests for the ordered bootstrap upgrade registry.
 
 use tidb_exec::upgrade_versions::{
-    is_valid_upgrade_registry, upgrade_function_name, upgrade_versions, CURRENT_BOOTSTRAP_VERSION,
+    is_valid_upgrade_registry, registered_upgrade_function_name, upgrade_function_name,
+    upgrade_versions, CURRENT_BOOTSTRAP_VERSION, DECLARED_BOOTSTRAP_VERSIONS,
+    REGISTERED_UPGRADE_VERSIONS,
 };
 
 #[test]
@@ -24,6 +26,7 @@ fn upgrade_registry_preserves_order_gaps_and_function_names() {
     // pkg/session/upgrade_test.go:52-66 (TestUpgradeToVerFunctionsCheck).
     let versions = upgrade_versions();
     assert_eq!(versions.len(), 173);
+    assert_eq!(versions, REGISTERED_UPGRADE_VERSIONS);
     assert!(is_valid_upgrade_registry(&versions));
     assert_eq!(versions.first(), Some(&2));
     assert_eq!(versions.last(), Some(&CURRENT_BOOTSTRAP_VERSION));
@@ -42,9 +45,33 @@ fn upgrade_registry_preserves_order_gaps_and_function_names() {
             upgrade_function_name(version),
             format!("upgradeToVer{version}")
         );
+        assert_eq!(
+            registered_upgrade_function_name(version),
+            Some(format!("upgradeToVer{version}"))
+        );
     }
 
     let mut out_of_order = versions.clone();
     out_of_order.swap(0, 1);
     assert!(!is_valid_upgrade_registry(&out_of_order));
+
+    let mut duplicate = versions.clone();
+    duplicate[1] = duplicate[0];
+    assert!(!is_valid_upgrade_registry(&duplicate));
+
+    let mut missing = versions.clone();
+    missing.remove(80);
+    assert!(!is_valid_upgrade_registry(&missing));
+    assert!(!is_valid_upgrade_registry(&[]));
+
+    assert_eq!(DECLARED_BOOTSTRAP_VERSIONS.len(), 176);
+    let declared_only = DECLARED_BOOTSTRAP_VERSIONS
+        .iter()
+        .copied()
+        .filter(|version| REGISTERED_UPGRADE_VERSIONS.binary_search(version).is_err())
+        .collect::<Vec<_>>();
+    assert_eq!(declared_only, [92, 99, 145]);
+    for version in [39, 92, 96, 99, 145, 264] {
+        assert_eq!(registered_upgrade_function_name(version), None);
+    }
 }
