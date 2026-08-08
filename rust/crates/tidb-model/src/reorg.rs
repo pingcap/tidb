@@ -146,12 +146,12 @@ pub struct DDLReorgMeta {
 impl DDLReorgMeta {
     /// Go `ShallowCopy`. Rust's owned warning maps are copied rather than
     /// aliased; all persisted values and mutations remain independent.
-    /// Returns persisted concurrency, or the current process default when zero.
     #[must_use]
     pub fn shallow_copy(&self) -> Self {
         self.clone()
     }
 
+    /// Returns persisted concurrency, or the current process default when zero.
     #[must_use]
     pub fn get_concurrency(&self) -> i64 {
         if self.concurrency == 0 {
