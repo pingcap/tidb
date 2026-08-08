@@ -246,66 +246,6 @@ pub mod analyze_state {
     pub const FAILED: i8 = 5;
 }
 
-mod go_bytes {
-    use serde::{Deserialize, Deserializer, Serializer};
-
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-    fn encode(bytes: &[u8]) -> String {
-        let mut output = String::with_capacity(bytes.len().div_ceil(3) * 4);
-        for chunk in bytes.chunks(3) {
-            let second = *chunk.get(1).unwrap_or(&0);
-            let third = *chunk.get(2).unwrap_or(&0);
-            let value = (u32::from(chunk[0]) << 16) | (u32::from(second) << 8) | u32::from(third);
-            for position in 0..4 {
-                if position <= chunk.len() {
-                    output.push(ALPHABET[((value >> (18 - 6 * position)) & 0x3f) as usize] as char);
-                } else {
-                    output.push('=');
-                }
-            }
-        }
-        output
-    }
-
-    fn decode<E: serde::de::Error>(text: &str) -> Result<Vec<u8>, E> {
-        let mut output = Vec::with_capacity(text.len() / 4 * 3);
-        let mut accumulator = 0_u32;
-        let mut bits = 0_u32;
-        for byte in text.bytes().take_while(|byte| *byte != b'=') {
-            let Some(index) = ALPHABET.iter().position(|candidate| *candidate == byte) else {
-                return Err(E::custom("illegal base64 data"));
-            };
-            accumulator = (accumulator << 6) | index as u32;
-            bits += 6;
-            if bits >= 8 {
-                bits -= 8;
-                output.push(((accumulator >> bits) & 0xff) as u8);
-            }
-        }
-        Ok(output)
-    }
-
-    pub fn serialize<S: Serializer>(
-        value: &Option<Vec<u8>>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        match value {
-            None => serializer.serialize_none(),
-            Some(bytes) => serializer.serialize_str(&encode(bytes)),
-        }
-    }
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<Option<Vec<u8>>, D::Error> {
-        match Option::<String>::deserialize(deserializer)? {
-            None => Ok(None),
-            Some(text) => decode(&text).map(Some),
-        }
-    }
-}
-
 /// Go `BackfillMeta` and its JSON codec.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct BackfillMeta {
@@ -327,11 +267,23 @@ pub struct BackfillMeta {
     pub reorg_type: ReorgType,
     #[serde(rename = "row_count", default)]
     pub row_count: i64,
-    #[serde(rename = "start_key", default, with = "go_bytes")]
+    #[serde(
+        rename = "start_key",
+        default,
+        with = "crate::serde_helpers::go_bytes"
+    )]
     pub start_key: Option<Vec<u8>>,
-    #[serde(rename = "end_key", default, with = "go_bytes")]
+    #[serde(
+        rename = "end_key",
+        default,
+        with = "crate::serde_helpers::go_bytes"
+    )]
     pub end_key: Option<Vec<u8>>,
-    #[serde(rename = "curr_key", default, with = "go_bytes")]
+    #[serde(
+        rename = "curr_key",
+        default,
+        with = "crate::serde_helpers::go_bytes"
+    )]
     pub current_key: Option<Vec<u8>>,
     #[serde(rename = "job_meta", default)]
     pub job_meta: Option<JobMeta>,
@@ -340,7 +292,7 @@ pub struct BackfillMeta {
 impl BackfillMeta {
     /// Go `Encode`.
     pub fn encode(&self) -> Result<Vec<u8>, serde_json::Error> {
-        serde_json::to_vec(self)
+        crate::serde_helpers::to_go_json(self)
     }
 
     /// Go `Decode`.
@@ -444,5 +396,31 @@ mod tests {
         decoded.decode(b"null").unwrap();
         assert_eq!(decoded.start_key, original.start_key);
         assert_eq!(decoded.end_key, original.end_key);
+
+        // Go's padded StdEncoding rejects incomplete quanta and padding in a
+        // non-final quartet, while accepting CR/LF inside valid input.
+        for invalid in [
+            r#"{"start_key":"A"}"#,
+            r#"{"start_key":"AA"}"#,
+            r#"{"start_key":"AAA"}"#,
+            r#"{"start_key":"AA=A"}"#,
+            r#"{"start_key":"AA==AAAA"}"#,
+            r#"{"start_key":"AA$="}"#,
+        ] {
+            assert!(serde_json::from_str::<BackfillMeta>(invalid).is_err());
+        }
+        let with_newline: BackfillMeta =
+            serde_json::from_str(r#"{"start_key":"AA\nH/"}"#).unwrap();
+        assert_eq!(with_newline.start_key, Some(vec![0, 1, 255]));
+
+        let escaped = BackfillMeta {
+            error: Some(serde_json::json!({"message": "<>&\u{2028}\u{2029}", "ratio": 1.0})),
+            ..Default::default()
+        }
+        .encode()
+        .unwrap();
+        let escaped = std::str::from_utf8(&escaped).unwrap();
+        assert!(escaped.contains(r#"\u003c\u003e\u0026\u2028\u2029"#));
+        assert!(escaped.contains(r#""ratio":1"#));
     }
 }
