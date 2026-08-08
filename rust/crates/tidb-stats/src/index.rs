@@ -31,7 +31,7 @@ pub struct IndexInfo {
 }
 
 /// An index histogram and its optional sketches.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Index {
     pub cmsketch: Option<CmsSketch>,
     pub top_n: Option<TopN>,
@@ -43,22 +43,6 @@ pub struct Index {
     pub physical_id: i64,
     /// Memory already measured by the source-owned histogram representation.
     pub histogram_memory_usage: i64,
-}
-
-impl Default for Index {
-    fn default() -> Self {
-        Self {
-            cmsketch: None,
-            top_n: None,
-            fm_sketch: None,
-            info: None,
-            histogram: Histogram::default(),
-            stats_loaded_status: StatsLoadedStatus::default(),
-            stats_version: 0,
-            physical_id: 0,
-            histogram_memory_usage: 0,
-        }
-    }
 }
 
 impl Index {

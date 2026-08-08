@@ -50,7 +50,7 @@ pub fn sort_legacy_sample_items(items: &mut [LegacySampleItem]) -> Result<(), Da
     error.map_or(Ok(()), Err)
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct LegacySampleCollector {
     pub fm_sketch: Option<FmSketch>,
     pub cmsketch: Option<CmsSketch>,
@@ -63,24 +63,6 @@ pub struct LegacySampleCollector {
     pub total_size: i64,
     pub memory_size: i64,
     pub is_merger: bool,
-}
-
-impl Default for LegacySampleCollector {
-    fn default() -> Self {
-        Self {
-            fm_sketch: None,
-            cmsketch: None,
-            top_n: None,
-            samples: Vec::new(),
-            seen_values: 0,
-            null_count: 0,
-            count: 0,
-            max_sample_size: 0,
-            total_size: 0,
-            memory_size: 0,
-            is_merger: false,
-        }
-    }
 }
 
 impl LegacySampleCollector {

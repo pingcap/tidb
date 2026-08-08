@@ -46,11 +46,11 @@ pub fn enum_range_values(
                 return None;
             }
             let difference = high.wrapping_sub(*low);
-            if difference >= MAX_NUM_STEP + 1 {
+            if difference > MAX_NUM_STEP {
                 return None;
             }
             let remaining = difference.wrapping_add(1).wrapping_sub(exclude);
-            if remaining >= MAX_NUM_STEP || remaining < 0 {
+            if !(0..MAX_NUM_STEP).contains(&remaining) {
                 return None;
             }
             let start = low.wrapping_add(i64::from(low_exclude));

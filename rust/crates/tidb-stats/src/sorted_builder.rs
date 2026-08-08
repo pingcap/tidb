@@ -134,7 +134,7 @@ impl SortedHistogramBuilder {
         let old = self.histogram.buckets.clone();
         let mut merged = Vec::with_capacity((bucket_index + 2) / 2);
         let mut position = 0;
-        while position + 1 <= bucket_index {
+        while position < bucket_index {
             merged.push(Bucket {
                 count: old[position + 1].count,
                 repeat: old[position + 1].repeat,
@@ -144,7 +144,7 @@ impl SortedHistogramBuilder {
             });
             position += 2;
         }
-        if bucket_index % 2 == 0 {
+        if bucket_index.is_multiple_of(2) {
             merged.push(old[bucket_index].clone());
         }
         self.histogram.buckets = merged;

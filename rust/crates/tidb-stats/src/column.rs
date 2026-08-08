@@ -36,7 +36,7 @@ pub struct ColumnInfo {
 }
 
 /// A column histogram and its optional sketches.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Column {
     pub cmsketch: Option<CmsSketch>,
     pub top_n: Option<TopN>,
@@ -49,23 +49,6 @@ pub struct Column {
     pub is_handle: bool,
     /// Memory already measured by the source-owned histogram representation.
     pub histogram_memory_usage: i64,
-}
-
-impl Default for Column {
-    fn default() -> Self {
-        Self {
-            cmsketch: None,
-            top_n: None,
-            fm_sketch: None,
-            info: None,
-            histogram: Histogram::default(),
-            stats_loaded_status: StatsLoadedStatus::default(),
-            physical_id: 0,
-            stats_version: 0,
-            is_handle: false,
-            histogram_memory_usage: 0,
-        }
-    }
 }
 
 impl Column {
