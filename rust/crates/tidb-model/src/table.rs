@@ -286,7 +286,7 @@ pub struct StatsOptions {
     /// Which columns to analyze.
     pub column_choice: ColumnChoice,
     /// The explicit column list.
-    pub column_list: Vec<CiString>,
+    pub column_list: Option<Vec<CiString>>,
     /// The sample count.
     pub sample_num: u64,
     /// The sample rate.
@@ -378,8 +378,8 @@ impl<'de> serde::Deserialize<'de> for StatsOptions {
                 deserialize_with = "ast_enum_serde::column_choice::deserialize"
             )]
             column_choice: ColumnChoice,
-            #[serde(default, deserialize_with = "crate::serde_helpers::null_default")]
-            column_list: Vec<CiString>,
+            #[serde(default)]
+            column_list: Option<Vec<CiString>>,
             #[serde(default)]
             sample_num: u64,
             #[serde(default)]
@@ -435,6 +435,7 @@ impl StatsOptions {
         StatsOptions {
             auto_recalc: true,
             column_choice: ColumnChoice::DEFAULT,
+            column_list: Some(Vec::new()),
             ..Default::default()
         }
     }
@@ -1273,9 +1274,13 @@ mod tests {
         let opts = StatsOptions::new();
         assert!(opts.auto_recalc);
         assert_eq!(opts.column_choice, ColumnChoice::DEFAULT);
+        assert_eq!(opts.column_list, Some(Vec::new()));
         assert!(opts.stats_window_settings.is_none());
         // Default (not the constructor) has auto_recalc false.
-        assert!(!StatsOptions::default().auto_recalc);
+        let zero = StatsOptions::default();
+        assert!(!zero.auto_recalc);
+        assert!(zero.column_list.is_none());
+        assert!(go_json(&zero).contains(r#""column_list":null"#));
     }
 
     #[test]
@@ -1494,7 +1499,7 @@ mod tests {
                 repeat_interval: 2,
             })),
             column_choice: ColumnChoice::LIST,
-            column_list: vec![CiString::new("a")],
+            column_list: Some(vec![CiString::new("a")]),
             ..StatsOptions::new()
         };
         let encoded = go_json(&with);
@@ -1514,7 +1519,7 @@ mod tests {
         assert_eq!(window.window_end, go_zero_time());
         assert_eq!(
             go_json(&present_null),
-            r#"{"window_start":"0001-01-01T00:00:00Z","window_end":"0001-01-01T00:00:00Z","repeat_type":0,"repeat_interval":0,"auto_recalc":false,"column_choice":0,"column_list":[],"sample_num":0,"sample_rate":0,"buckets":0,"topn":0,"concurrency":0}"#
+            r#"{"window_start":"0001-01-01T00:00:00Z","window_end":"0001-01-01T00:00:00Z","repeat_type":0,"repeat_interval":0,"auto_recalc":false,"column_choice":0,"column_list":null,"sample_num":0,"sample_rate":0,"buckets":0,"topn":0,"concurrency":0}"#
         );
     }
 
