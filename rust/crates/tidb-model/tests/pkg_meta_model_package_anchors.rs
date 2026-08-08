@@ -226,6 +226,13 @@ fn pkg_meta_model_probe_column_representation_boundaries() {
     } else {
         "non-u32"
     };
+    let default_domain = if std::any::type_name::<tidb_model::column::ColumnDefaultValue>()
+        .contains("ColumnDefaultValue")
+    {
+        "closed-json-value-domain"
+    } else {
+        "unexpected-default-domain"
+    };
     observation_emitter::emit(
         "MODEL-COLUMN-REPRESENTATION",
         "Rust column ownership and widths cannot expose Go shallow map identity, nil maps, or 64-bit int and uint domains",
@@ -234,6 +241,11 @@ fn pkg_meta_model_probe_column_representation_boundaries() {
             ("dependency-allocation", "nil-versus-empty-map", empty_mode),
             ("offset-width", "Go-int-offset", offset_width),
             ("flag-width", "Go-uint-flags", flag_width),
+            (
+                "arbitrary-default-value",
+                "pre-JSON-Go-interface-value",
+                default_domain,
+            ),
         ],
     );
 }
@@ -294,12 +306,90 @@ fn pkg_meta_model_probe_vector_allocation_boundaries() {
     } else {
         "allocation-distinguished"
     };
+    let mut clone_source = IndexInfo {
+        columns: vec![tidb_model::IndexColumn {
+            name: tidb_ast::CiString::new("before"),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let clone = clone_source.clone();
+    clone_source.columns[0].name = tidb_ast::CiString::new("after");
+    let clone_mode = if clone.columns[0].name.original() == "before" {
+        "owned-deep-elements"
+    } else {
+        "shared-pointer-elements"
+    };
+    let equality_mode = if (IndexInfo {
+        id: 1,
+        ..Default::default()
+    })
+    .equals_id(&IndexInfo {
+        id: 1,
+        ..Default::default()
+    }) {
+        "typed-IndexInfo-only"
+    } else {
+        "unexpected-id-inequality"
+    };
+    let index_width = if std::mem::size_of_val(&tidb_model::IndexColumn::default().offset) == 4 {
+        "i32"
+    } else {
+        "non-i32"
+    };
+    let partition_state = if PartitionInfo::default().ddl_columns.is_empty() {
+        "one-empty-ddl-columns-state"
+    } else {
+        "unexpected-nonempty-ddl-columns"
+    };
     observation_emitter::emit(
         "MODEL-VECTOR-ALLOCATION",
         "pre-existing Vec fields cannot preserve Go nil versus allocated-empty slice identity",
         &[
             ("index-columns", "null-versus-empty-idx_cols", index_mode),
             ("table-columns", "null-versus-empty-cols", table_mode),
+            (
+                "pointer-element-clone",
+                "mutate-source-index-column",
+                clone_mode,
+            ),
+            (
+                "arbitrary-equality-operand",
+                "Go-any-and-typed-nil",
+                equality_mode,
+            ),
+            ("index-offset-width", "Go-int-index-offset", index_width),
+            (
+                "partition-runtime-list",
+                "nil-versus-empty-DDLColumns",
+                partition_state,
+            ),
+        ],
+    );
+}
+
+#[test]
+fn pkg_meta_model_probe_placement_callback_surface() {
+    let empty = PlacementSettings::default().to_string();
+    let one = PlacementSettings {
+        primary_region: "r1".to_owned(),
+        ..Default::default()
+    }
+    .to_string();
+    observation_emitter::emit(
+        "MODEL-PLACEMENT-CALLBACK-SURFACE",
+        "Rust ports every owning call-site rendering but has no arbitrary variadic side-effecting separator callback API",
+        &[
+            (
+                "default-call-site",
+                "zero-settings-default-separator",
+                &empty,
+            ),
+            (
+                "single-setting-call-site",
+                "primary-region-default-separator",
+                &one,
+            ),
         ],
     );
 }
