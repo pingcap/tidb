@@ -64,6 +64,7 @@ owned_rust_files = [
   "rust/crates/tidb-model/src/schema_diff.rs",
   "rust/crates/tidb-model/src/schema_state.rs",
   "rust/crates/tidb-model/src/serde_helpers.rs",
+  "rust/crates/tidb-model/src/serde_shared_slices.rs",
   "rust/crates/tidb-model/src/setting_builder.rs",
   "rust/crates/tidb-model/src/table.rs",
   "rust/crates/tidb-model/src/table_info.rs",
