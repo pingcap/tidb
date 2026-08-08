@@ -22,8 +22,10 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
+	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
@@ -35,7 +37,48 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
+	"google.golang.org/grpc"
 )
+
+type recordedIngestedSST struct {
+	identity string
+	size     uint64
+}
+
+type recordingIngestedSSTCollector struct {
+	execute.NoopCollector
+	mu      sync.Mutex
+	records []recordedIngestedSST
+}
+
+type partialMultiIngestClient struct {
+	sst.ImportSSTClient
+	callCount int
+}
+
+func (c *partialMultiIngestClient) MultiIngest(
+	context.Context,
+	*sst.MultiIngestRequest,
+	...grpc.CallOption,
+) (*sst.IngestResponse, error) {
+	c.callCount++
+	if c.callCount == 1 {
+		return &sst.IngestResponse{}, nil
+	}
+	return nil, errors.New("injected second-batch ingest error")
+}
+
+func (c *recordingIngestedSSTCollector) RecordIngestedSST(identity string, size uint64) {
+	c.mu.Lock()
+	c.records = append(c.records, recordedIngestedSST{identity: identity, size: size})
+	c.mu.Unlock()
+}
+
+func (c *recordingIngestedSSTCollector) snapshot() []recordedIngestedSST {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]recordedIngestedSST(nil), c.records...)
+}
 
 func newRegionJobWorkerPoolForTest(
 	workerCtx context.Context,
@@ -258,6 +301,77 @@ func TestRegionJobBaseWorker(t *testing.T) {
 		require.Error(t, err)
 		require.Regexp(t, "the remaining storage capacity of TiKV.*", err.Error())
 	})
+
+	t.Run("record classic successful ingests", func(t *testing.T) {
+		store := &metapb.Store{Id: 1}
+		client := newMockImportClient()
+		client.store = store
+		collector := &recordingIngestedSSTCollector{}
+		local := &Backend{
+			collector:          collector,
+			supportMultiIngest: true,
+			importClientFactory: &mockImportClientFactory{
+				stores: []*metapb.Store{store},
+				createClientFn: func(*metapb.Store) sst.ImportSSTClient {
+					return client
+				},
+			},
+		}
+		job := &regionJob{
+			region: &split.RegionInfo{
+				Region: &metapb.Region{Id: 1},
+				Leader: &metapb.Peer{StoreId: 1},
+			},
+			writeResult: &tikvWriteResult{
+				sstMeta: []*sst.SSTMeta{
+					{Uuid: []byte{1}, CfName: "default", Length: 100, RegionId: 1},
+					{Uuid: []byte{1}, CfName: "write", Length: 40, RegionId: 1},
+				},
+			},
+		}
+		_, err := local.doIngest(context.Background(), job)
+		require.NoError(t, err)
+		require.Equal(t, []recordedIngestedSST{
+			{identity: "classic/01/default", size: 100},
+			{identity: "classic/01/write", size: 40},
+		}, collector.snapshot())
+	})
+
+	t.Run("record successful batches before a later ingest failure", func(t *testing.T) {
+		store := &metapb.Store{Id: 1}
+		client := &partialMultiIngestClient{}
+		collector := &recordingIngestedSSTCollector{}
+		local := &Backend{
+			collector:          collector,
+			supportMultiIngest: true,
+			importClientFactory: &mockImportClientFactory{
+				stores: []*metapb.Store{store},
+				createClientFn: func(*metapb.Store) sst.ImportSSTClient {
+					return client
+				},
+			},
+		}
+		local.ingestLimiter.Store(newIngestLimiter(context.Background(), 1, 0))
+		job := &regionJob{
+			region: &split.RegionInfo{
+				Region: &metapb.Region{Id: 1},
+				Leader: &metapb.Peer{StoreId: 1},
+			},
+			writeResult: &tikvWriteResult{
+				sstMeta: []*sst.SSTMeta{
+					{Uuid: []byte{1}, CfName: "default", Length: 100},
+					{Uuid: []byte{2}, CfName: "default", Length: 200},
+				},
+			},
+		}
+		_, err := local.doIngest(context.Background(), job)
+		require.ErrorContains(t, err, "injected second-batch ingest error")
+		require.Equal(t, []recordedIngestedSST{
+			{identity: "classic/01/default", size: 100},
+		}, collector.snapshot())
+		require.Len(t, job.writeResult.sstMeta, 1)
+		require.Equal(t, []byte{2}, job.writeResult.sstMeta[0].GetUuid())
+	})
 }
 
 func TestIsRetryableTiKVWriteError(t *testing.T) {
@@ -395,6 +509,8 @@ func TestCloudRegionJobWorker(t *testing.T) {
 	})
 
 	t.Run("ingest success", func(t *testing.T) {
+		collector := &recordingIngestedSSTCollector{}
+		cloudW.collector = collector
 		job := &regionJob{
 			keyRange:    engineapi.Range{Start: []byte("a"), End: []byte("z")},
 			stage:       wrote,
@@ -404,6 +520,27 @@ func TestCloudRegionJobWorker(t *testing.T) {
 		mockIngestCli.EXPECT().Ingest(gomock.Any(), gomock.Any()).Return(nil)
 		err := cloudW.ingest(context.Background(), job)
 		require.NoError(t, err)
+		require.Equal(t, []recordedIngestedSST{{}}, collector.snapshot())
+		require.True(t, ctrl.Satisfied())
+	})
+
+	t.Run("ingest success records next-gen SST metadata", func(t *testing.T) {
+		collector := &recordingIngestedSSTCollector{}
+		cloudW.collector = collector
+		job := &regionJob{
+			keyRange:   engineapi.Range{Start: []byte("a"), End: []byte("z")},
+			stage:      wrote,
+			ingestData: mockIngestData{},
+			writeResult: &tikvWriteResult{
+				nextGenWriteResp: ingestcli.NewWriteResponseWithSSTMeta(42, 2048),
+			},
+		}
+		mockIngestCli.EXPECT().Ingest(gomock.Any(), gomock.Any()).Return(nil)
+		err := cloudW.ingest(context.Background(), job)
+		require.NoError(t, err)
+		require.Equal(t, []recordedIngestedSST{
+			{identity: "next-gen/42", size: 2048},
+		}, collector.snapshot())
 		require.True(t, ctrl.Satisfied())
 	})
 }

@@ -65,7 +65,8 @@ type readIndexStepExecutor struct {
 	avgRowSize      int
 	cloudStorageURI string
 
-	summary *execute.SubtaskSummary
+	summary      *execute.SubtaskSummary
+	ingestedSSTs *ingestedSSTRecorder
 
 	summaryMap sync.Map // subtaskID => readIndexSummary
 	backendCfg *ingestctrl.BackendConfig
@@ -92,7 +93,8 @@ func newReadIndexExecutor(
 	cloudStorageURI string,
 	avgRowSize int,
 ) (*readIndexStepExecutor, error) {
-	return &readIndexStepExecutor{
+	summary := &execute.SubtaskSummary{}
+	executor := &readIndexStepExecutor{
 		store:           store,
 		etcdCli:         etcdCli,
 		sessPool:        sessPool,
@@ -102,8 +104,10 @@ func newReadIndexExecutor(
 		jc:              jc,
 		cloudStorageURI: cloudStorageURI,
 		avgRowSize:      avgRowSize,
-		summary:         &execute.SubtaskSummary{},
-	}, nil
+		summary:         summary,
+		ingestedSSTs:    newIngestedSSTRecorder(),
+	}
+	return executor, nil
 }
 
 func (r *readIndexStepExecutor) Init(ctx context.Context) error {
@@ -161,6 +165,10 @@ func (r *readIndexStepExecutor) runLocalPipeline(
 	sm *BackfillSubTaskMeta,
 	concurrency int,
 ) error {
+	if r.ingestedSSTs != nil && r.backend != nil {
+		r.ingestedSSTs.Reset()
+		r.backend.SetCollector(r.ingestedSSTs)
+	}
 	bCtx, err := ingest.NewBackendCtxBuilder(ctx, r.store, r.job).
 		WithImportDistributedLock(r.etcdCli, sm.TS).
 		WithDistTaskCheckpointManagerParam(
@@ -196,6 +204,7 @@ func (r *readIndexStepExecutor) runLocalPipeline(
 	if err = bCtx.FinishAndUnregisterEngines(ingest.OptCleanData | ingest.OptCheckDup); err != nil {
 		return errors.Trace(err)
 	}
+	logIngestedSSTObservation(ctx, r.job.ID, subtask.TaskID, subtask.ID, subtask.Step, r.ingestedSSTs.Snapshot())
 	return r.onFinished(ctx, subtask, sm, nil)
 }
 
@@ -207,6 +216,7 @@ func (r *readIndexStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		metaGroups: make([]*globalsort.SortedKVMeta, len(r.indexes)),
 	})
 	r.summary.Reset()
+	r.ingestedSSTs.Reset()
 	var err error
 	failpoint.InjectCall("beforeReadIndexStepExecRunSubtask", &err)
 	if err != nil {
@@ -248,6 +258,7 @@ func (r *readIndexStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
 }
 
 func (r *readIndexStepExecutor) ResetSummary() {
+	r.ingestedSSTs.Reset()
 	r.summary.Reset()
 }
 

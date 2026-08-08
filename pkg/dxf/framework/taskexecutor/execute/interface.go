@@ -111,7 +111,6 @@ type SubtaskSummary struct {
 	GetReqCnt atomic.Uint64 `json:"get_request_count,omitempty"`
 	// PutReqCnt is the number of put requests to the external storage.
 	PutReqCnt atomic.Uint64 `json:"put_request_count,omitempty"`
-
 	// Progresses are the history of data processed, which is used to get a
 	// smoother speed for each subtask.
 	// It's updated each time we store the latest summary into subtask table.
