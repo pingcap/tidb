@@ -26,7 +26,7 @@ use std::{
     sync::{Arc, OnceLock, RwLock},
 };
 
-use crate::estimate::calculate_estimate_ndv;
+use crate::{estimate::calculate_estimate_ndv, go_pdqsort::go_sort_func_by};
 use tidb_datatype::Datum;
 
 const MURMUR_C1: u64 = 0x87c3_7b91_1142_53d5;
@@ -644,6 +644,37 @@ pub struct TopN {
 /// does.
 pub type SharedTopNBytes = Arc<RwLock<Vec<u8>>>;
 
+/// Native counterpart of tipb's nullable `CMSketchRow` message.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct CmsSketchProtoRow {
+    /// Nullable unpacked counter slice.
+    pub counters: Option<Vec<u32>>,
+}
+
+/// Native counterpart of tipb's nullable `CMSketchTopN` message.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct CmsSketchProtoTopN {
+    /// Nullable encoded-value slice.
+    pub data: Option<Vec<u8>>,
+    /// Estimated count for the value.
+    pub count: u64,
+}
+
+/// Mutable source-shaped input graph for `CMSketchAndTopNFromProto`.
+///
+/// Both repeated-message fields and their pointer elements retain Go's
+/// nil-versus-allocated representation. Counter and data byte slices do the
+/// same, including a distinct present-empty state.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct CmsSketchProto {
+    /// Nullable row-pointer slice.
+    pub rows: Option<Vec<Option<CmsSketchProtoRow>>>,
+    /// Nullable TopN-pointer slice.
+    pub top_n: Option<Vec<Option<CmsSketchProtoTopN>>>,
+    /// Sketch default value.
+    pub default_value: u64,
+}
+
 impl Clone for TopN {
     fn clone(&self) -> Self {
         // Go `Copy` deep-copies entries and returns a fresh sync.Once.
@@ -738,7 +769,9 @@ impl TopN {
             .drain(..)
             .zip(self.shared_encoded.drain(..))
             .collect();
-        paired.sort_unstable_by(|left, right| left.0.encoded.cmp(&right.0.encoded));
+        go_sort_func_by(&mut paired, |left, right| {
+            left.0.encoded.cmp(&right.0.encoded)
+        });
         for (entry, shared) in paired {
             self.entries.push(entry);
             self.shared_encoded.push(shared);
@@ -999,7 +1032,7 @@ pub fn topn_meta_compare(left: &TopNEntry, right: &TopNEntry) -> Ordering {
 
 /// Sorts ranking metadata in the source order.
 pub fn sort_topn_meta(entries: &mut [TopNEntry]) {
-    entries.sort_unstable_by(topn_meta_compare);
+    go_sort_func_by(entries, topn_meta_compare);
 }
 
 /// Splits ranked metadata into a byte-sorted TopN and ranked remainder.
@@ -1123,10 +1156,13 @@ pub fn encode_cmsketch_without_topn(
     Ok(Some(encode_cmsketch_proto(sketch, None)))
 }
 
-/// Encodes a CMSketch and its embedded TopN entries using the full tipb
-/// message layout.  This is the in-memory counterpart of Go's
-/// `CMSketchToProto`; callers that persist TopN in a separate column should
-/// continue using [`encode_cmsketch_without_topn`].
+/// Encodes a CMSketch and its embedded TopN entries using the full tipb wire
+/// layout.
+///
+/// This wire-only convenience does not replace Go `CMSketchToProto`'s mutable
+/// returned graph or its independently mutable, aliased TopN slice headers.
+/// Callers that persist TopN in a separate column should continue using
+/// [`encode_cmsketch_without_topn`].
 pub fn encode_cmsketch_and_topn(
     sketch: Option<&CmsSketch>,
     topn: Option<&TopN>,
@@ -1360,6 +1396,60 @@ fn sketch_from_rows(
     Ok(Some(sketch))
 }
 
+/// Go `CMSketchAndTopNFromProto` at its nullable in-memory message boundary.
+///
+/// TopN conversion deliberately precedes the empty-row check and row pointer
+/// dereferences. It deep-copies every data slice, normalizes nil data to an
+/// allocated empty value, and uses Go 1.25.10 `slices.SortFunc` ordering.
+/// The first row fixes width; shorter rows zero-fill, a longer row panics, and
+/// total count is reset to the sum of each row in turn.
+#[must_use]
+pub fn cmsketch_and_topn_from_proto(
+    proto: Option<&CmsSketchProto>,
+) -> (Option<CmsSketch>, Option<TopN>) {
+    let Some(proto) = proto else {
+        return (None, None);
+    };
+
+    let proto_topn = proto.top_n.as_deref().unwrap_or_default();
+    let topn = if proto_topn.is_empty() {
+        None
+    } else {
+        let mut topn = TopN::new(proto_topn.len());
+        for entry in proto_topn {
+            let entry = entry.as_ref().expect("nil CMSketchTopN message");
+            topn.append(entry.data.as_deref().unwrap_or_default(), entry.count);
+        }
+        topn.sort();
+        Some(topn)
+    };
+
+    let proto_rows = proto.rows.as_deref().unwrap_or_default();
+    if proto_rows.is_empty() {
+        return (None, topn);
+    }
+    let first = proto_rows[0].as_ref().expect("nil CMSketchRow message");
+    let width = first.counters.as_deref().unwrap_or_default().len() as u32;
+    let mut sketch = CmsSketch::try_new(proto_rows.len() as u32, width)
+        .expect("CMSketch protobuf dimensions exceed addressable memory");
+    for (row_index, row) in proto_rows.iter().enumerate() {
+        sketch.count = 0;
+        let row = row.as_ref().expect("nil CMSketchRow message");
+        for (column_index, &counter) in row
+            .counters
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .enumerate()
+        {
+            sketch.counters[row_index * width as usize + column_index] = counter;
+            sketch.count = sketch.count.wrapping_add(u64::from(counter));
+        }
+    }
+    sketch.default_value = proto.default_value;
+    (Some(sketch), topn)
+}
+
 /// Decodes a CMSketch snapshot. Empty input is the Go `nil` result.
 pub fn decode_cmsketch(data: &[u8]) -> Result<Option<CmsSketch>, CodecError> {
     if data.is_empty() {
@@ -1371,9 +1461,10 @@ pub fn decode_cmsketch(data: &[u8]) -> Result<Option<CmsSketch>, CodecError> {
 
 /// Decodes the complete tipb CMSketch message, including embedded TopN.
 ///
-/// This mirrors Go's `CMSketchAndTopNFromProto`; the persistence-oriented
-/// [`decode_cmsketch_and_topn`] below continues loading TopN from separate
-/// storage rows.
+/// This wire adapter validates the entire message before reconstructing its
+/// objects. Use [`cmsketch_and_topn_from_proto`] for the exact nullable native
+/// conversion boundary. The persistence-oriented [`decode_cmsketch_and_topn`]
+/// below continues loading TopN from separate storage rows.
 pub fn decode_cmsketch_and_embedded_topn(
     data: &[u8],
 ) -> Result<(Option<CmsSketch>, Option<TopN>), CodecError> {

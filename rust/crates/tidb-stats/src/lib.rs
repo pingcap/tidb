@@ -64,6 +64,7 @@ pub mod gc_batch_count;
 pub mod global_stats_layout;
 pub mod global_stats_sql_index;
 pub mod global_topn;
+mod go_pdqsort;
 mod go_stable_sort;
 pub mod healthy_metrics;
 pub mod histogram;
@@ -174,15 +175,16 @@ pub use cache_metrics_labels::{
     STATS_CACHE_GAUGE_LABELS,
 };
 pub use cmsketch::{
-    check_empty_topns, decode_cmsketch, decode_cmsketch_and_embedded_topn,
-    decode_cmsketch_and_topn, decode_topn_rows, encode_cmsketch_and_topn,
-    encode_cmsketch_without_topn, get_merged_topn_from_sorted_slice, merge_topn,
-    merge_topn_and_update_cmsketch, new_cmsketch_and_topn,
+    check_empty_topns, cmsketch_and_topn_from_proto, decode_cmsketch,
+    decode_cmsketch_and_embedded_topn, decode_cmsketch_and_topn, decode_topn_rows,
+    encode_cmsketch_and_topn, encode_cmsketch_without_topn, get_merged_topn_from_sorted_slice,
+    merge_topn, merge_topn_and_update_cmsketch, new_cmsketch_and_topn,
     new_cmsketch_and_topn_with_tie_stabilization, sort_topn_meta, topn_meta_compare, CodecError,
 };
 pub use cmsketch::{
     hash_bytes, query_value, query_value_with_encoder, topn_decoded_string, topn_display_string,
-    CmsSketch, Hash128, MergeError, SharedTopNBytes, TopN, TopNEntry,
+    CmsSketch, CmsSketchProto, CmsSketchProtoRow, CmsSketchProtoTopN, Hash128, MergeError,
+    SharedTopNBytes, TopN, TopNEntry,
 };
 pub use column::{
     column_is_all_evicted, column_stats_validity, copy_column, empty_column, Column, ColumnInfo,

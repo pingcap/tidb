@@ -27,11 +27,12 @@ use chrono::Utc;
 use tidb_datatype::Datum;
 use tidb_stats::cmsketch::encode_integer_datum_value;
 use tidb_stats::{
-    decode_cmsketch, decode_cmsketch_and_embedded_topn, decode_cmsketch_and_topn,
-    encode_cmsketch_and_topn, encode_cmsketch_without_topn, get_merged_topn_from_sorted_slice,
-    hash_bytes, merge_topn, merge_topn_and_update_cmsketch, new_cmsketch_and_topn,
-    new_cmsketch_and_topn_with_tie_stabilization, query_value, sort_topn_meta, topn_decoded_string,
-    topn_display_string, topn_meta_compare, CmsSketch, CodecError, Hash128, MergeError,
+    cmsketch_and_topn_from_proto, decode_cmsketch, decode_cmsketch_and_embedded_topn,
+    decode_cmsketch_and_topn, encode_cmsketch_and_topn, encode_cmsketch_without_topn,
+    get_merged_topn_from_sorted_slice, hash_bytes, merge_topn, merge_topn_and_update_cmsketch,
+    new_cmsketch_and_topn, new_cmsketch_and_topn_with_tie_stabilization, query_value,
+    sort_topn_meta, topn_decoded_string, topn_display_string, topn_meta_compare, CmsSketch,
+    CmsSketchProto, CmsSketchProtoRow, CmsSketchProtoTopN, CodecError, Hash128, MergeError,
     SharedTopNBytes, TopN, TopNEntry,
 };
 
@@ -966,6 +967,72 @@ fn source_topn_duplicate_lower_bound_wrap_and_strings_match() {
 }
 
 #[test]
+fn source_topn_sort_matches_go_1_25_10_pdqsort_duplicate_permutations() {
+    fn b_values_then_a(length: u64) -> TopN {
+        let mut topn = TopN::new(length as usize);
+        for count in 0..length - 1 {
+            topn.append(b"b", count);
+        }
+        topn.append(b"a", length - 1);
+        topn.sort();
+        topn
+    }
+
+    fn counts(topn: &TopN) -> Vec<u64> {
+        topn.entries().iter().map(|entry| entry.count).collect()
+    }
+
+    for (length, expected) in [
+        (2, vec![1, 0]),
+        (3, vec![2, 0, 1]),
+        (12, vec![11, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]),
+        (13, vec![12, 6, 2, 3, 4, 5, 0, 7, 8, 9, 10, 11, 1]),
+        (
+            25,
+            vec![
+                24, 12, 7, 3, 4, 5, 6, 0, 8, 9, 10, 2, 11, 17, 14, 15, 16, 13, 18, 19, 20, 21, 22,
+                23, 1,
+            ],
+        ),
+    ] {
+        let topn = b_values_then_a(length);
+        assert_eq!(counts(&topn), expected, "length {length}");
+        assert_eq!(topn.entries()[0].encoded, b"a", "length {length}");
+        assert!(topn.entries()[1..]
+            .iter()
+            .all(|entry| entry.encoded == b"b"));
+        assert_eq!(topn.find(b"b"), Some(1), "length {length}");
+        assert_eq!(
+            topn.query_bytes(b"b"),
+            Some(match length {
+                13 => 6,
+                25 => 12,
+                _ => 0,
+            }),
+            "length {length}"
+        );
+    }
+
+    // The sampled Tukey-ninther positions remain strictly decreasing, so Go
+    // records all twelve pivot swaps, reverses the range, and recognizes the
+    // result as ordered. The equal key at source positions 4 and 5 proves the
+    // reverse operation's observable duplicate order.
+    let mut large = TopN::new(64);
+    for count in 0_u64..64 {
+        let encoded = if count == 5 {
+            60
+        } else {
+            u8::try_from(64 - count).unwrap()
+        };
+        large.append(&[encoded], count);
+    }
+    large.sort();
+    assert_eq!(counts(&large), (0_u64..64).rev().collect::<Vec<_>>());
+    assert_eq!(large.find(&[60]), Some(58));
+    assert_eq!(large.query_bytes(&[60]), Some(5));
+}
+
+#[test]
 fn source_append_topn_aliases_the_callers_bytes() {
     let encoded: SharedTopNBytes = Arc::new(RwLock::new(b"a".to_vec()));
     let mut topn = TopN::new(1);
@@ -1147,6 +1214,183 @@ fn cmsketch_proto_small_vectors_and_nil_message_match_generated_go_wire() {
         decode_cmsketch_and_embedded_topn(&[0x18, 0x00]).unwrap(),
         (None, None)
     );
+}
+
+#[test]
+fn source_cmsketch_and_topn_from_proto_preserves_graph_and_ordering_semantics() {
+    assert_eq!(cmsketch_and_topn_from_proto(None), (None, None));
+    assert_eq!(
+        cmsketch_and_topn_from_proto(Some(&CmsSketchProto {
+            rows: Some(Vec::new()),
+            top_n: Some(Vec::new()),
+            default_value: 9,
+        })),
+        (None, None)
+    );
+
+    let mut proto_topn = (0_u64..12)
+        .map(|count| {
+            Some(CmsSketchProtoTopN {
+                data: Some(b"b".to_vec()),
+                count,
+            })
+        })
+        .collect::<Vec<_>>();
+    proto_topn.push(Some(CmsSketchProtoTopN {
+        data: Some(b"a".to_vec()),
+        count: 12,
+    }));
+    let mut no_rows = CmsSketchProto {
+        rows: None,
+        top_n: Some(proto_topn),
+        default_value: 7,
+    };
+    let (sketch, topn) = cmsketch_and_topn_from_proto(Some(&no_rows));
+    assert!(sketch.is_none());
+    let topn = topn.expect("TopN is converted before the empty-row return");
+    assert_eq!(
+        topn.entries()
+            .iter()
+            .map(|entry| entry.count)
+            .collect::<Vec<_>>(),
+        vec![12, 6, 2, 3, 4, 5, 0, 7, 8, 9, 10, 11, 1]
+    );
+    assert_eq!(topn.find(b"b"), Some(1));
+    assert_eq!(topn.query_bytes(b"b"), Some(6));
+    no_rows.top_n.as_mut().unwrap()[0]
+        .as_mut()
+        .unwrap()
+        .data
+        .as_mut()
+        .unwrap()[0] = b'c';
+    assert_eq!(topn.entry_bytes(6).unwrap(), b"b");
+
+    let nil_and_empty_data = CmsSketchProto {
+        rows: None,
+        top_n: Some(vec![
+            Some(CmsSketchProtoTopN {
+                data: None,
+                count: 4,
+            }),
+            Some(CmsSketchProtoTopN {
+                data: Some(Vec::new()),
+                count: 5,
+            }),
+        ]),
+        default_value: 0,
+    };
+    let (_, normalized) = cmsketch_and_topn_from_proto(Some(&nil_and_empty_data));
+    let normalized = normalized.expect("two TopN entries");
+    assert_eq!(
+        normalized
+            .entries()
+            .iter()
+            .map(|entry| (entry.encoded.clone(), entry.count))
+            .collect::<Vec<_>>(),
+        vec![(Vec::new(), 4), (Vec::new(), 5)]
+    );
+    let wire = encode_cmsketch_and_topn(None, Some(&normalized)).unwrap();
+    assert!(wire
+        .windows(4)
+        .any(|bytes| bytes == [0x0a, 0x00, 0x10, 0x04]));
+    assert!(wire
+        .windows(4)
+        .any(|bytes| bytes == [0x0a, 0x00, 0x10, 0x05]));
+
+    let rows = CmsSketchProto {
+        rows: Some(vec![
+            Some(CmsSketchProtoRow {
+                counters: Some(vec![1, 2]),
+            }),
+            Some(CmsSketchProtoRow {
+                counters: Some(vec![3]),
+            }),
+        ]),
+        top_n: None,
+        default_value: 9,
+    };
+    let (sketch, topn) = cmsketch_and_topn_from_proto(Some(&rows));
+    assert!(topn.is_none());
+    let sketch = sketch.expect("rows reconstruct a sketch");
+    assert_eq!((sketch.depth(), sketch.width()), (2, 2));
+    assert_eq!(sketch.counter_at(0, 0), Some(1));
+    assert_eq!(sketch.counter_at(0, 1), Some(2));
+    assert_eq!(sketch.counter_at(1, 0), Some(3));
+    assert_eq!(sketch.counter_at(1, 1), Some(0));
+    assert_eq!(sketch.total_count(), 3);
+    assert_eq!(sketch.default_value(), 9);
+
+    let empty_row = cmsketch_and_topn_from_proto(Some(&CmsSketchProto {
+        rows: Some(vec![Some(CmsSketchProtoRow { counters: None })]),
+        top_n: None,
+        default_value: 7,
+    }))
+    .0
+    .expect("one nil-counter row");
+    assert_eq!((empty_row.depth(), empty_row.width()), (1, 0));
+    assert_eq!(empty_row.default_value(), 7);
+
+    let longer = CmsSketchProto {
+        rows: Some(vec![
+            Some(CmsSketchProtoRow {
+                counters: Some(vec![1]),
+            }),
+            Some(CmsSketchProtoRow {
+                counters: Some(vec![2, 3]),
+            }),
+        ]),
+        top_n: None,
+        default_value: 0,
+    };
+    assert!(std::panic::catch_unwind(|| cmsketch_and_topn_from_proto(Some(&longer))).is_err());
+
+    let nil_elements = CmsSketchProto {
+        rows: Some(vec![None]),
+        top_n: Some(vec![None]),
+        default_value: 0,
+    };
+    let panic = std::panic::catch_unwind(|| cmsketch_and_topn_from_proto(Some(&nil_elements)))
+        .expect_err("TopN nil element panics before the row nil element");
+    let message = panic
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| panic.downcast_ref::<String>().map(String::as_str));
+    assert_eq!(message, Some("nil CMSketchTopN message"));
+
+    let nil_row_after_topn = CmsSketchProto {
+        rows: Some(vec![None]),
+        top_n: Some(vec![Some(CmsSketchProtoTopN {
+            data: Some(b"built-first".to_vec()),
+            count: 1,
+        })]),
+        default_value: 0,
+    };
+    let panic =
+        std::panic::catch_unwind(|| cmsketch_and_topn_from_proto(Some(&nil_row_after_topn)))
+            .expect_err("row nil element panics after TopN construction");
+    let message = panic
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| panic.downcast_ref::<String>().map(String::as_str));
+    assert_eq!(message, Some("nil CMSketchRow message"));
+
+    let nil_second_row = CmsSketchProto {
+        rows: Some(vec![
+            Some(CmsSketchProtoRow {
+                counters: Some(vec![7]),
+            }),
+            None,
+        ]),
+        top_n: None,
+        default_value: 0,
+    };
+    let panic = std::panic::catch_unwind(|| cmsketch_and_topn_from_proto(Some(&nil_second_row)))
+        .expect_err("later nil row panics after allocating and filling earlier rows");
+    let message = panic
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| panic.downcast_ref::<String>().map(String::as_str));
+    assert_eq!(message, Some("nil CMSketchRow message"));
 }
 
 #[test]
@@ -1487,4 +1731,22 @@ fn source_decoder_finishes_wire_parse_before_converting_row_shapes() {
         std::panic::catch_unwind(|| decode_cmsketch(&truncated_varint_after_longer_row)),
         Ok(Err(CodecError::UnexpectedEof))
     ));
+
+    let wrong_topn_wire_after_longer_row = [
+        0x0a, 0x02, 0x08, 0x01, 0x0a, 0x04, 0x08, 0x02, 0x08, 0x03, 0x12, 0x02, 0x08, 0x00,
+    ];
+    assert!(matches!(
+        std::panic::catch_unwind(|| {
+            decode_cmsketch_and_embedded_topn(&wrong_topn_wire_after_longer_row)
+        }),
+        Ok(Err(CodecError::InvalidWireType(0)))
+    ));
+
+    let valid_topn_after_longer_row = [
+        0x0a, 0x02, 0x08, 0x01, 0x0a, 0x04, 0x08, 0x02, 0x08, 0x03, 0x12, 0x02, 0x10, 0x01,
+    ];
+    assert!(std::panic::catch_unwind(|| {
+        decode_cmsketch_and_embedded_topn(&valid_topn_after_longer_row)
+    })
+    .is_err());
 }
