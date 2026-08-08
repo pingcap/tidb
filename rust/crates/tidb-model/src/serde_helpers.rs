@@ -797,6 +797,30 @@ where
     }
 }
 
+/// Replaces a field only after its complete custom deserializer succeeds.
+///
+/// Unlike [`NullNoopSeed`], JSON null is passed through to `T`. This is needed
+/// for Go types such as `types.FieldType` whose `UnmarshalJSON(null)` succeeds
+/// and installs the type's custom zero value. A failed decode retains the
+/// entire prior receiver.
+pub(crate) struct AtomicReplaceSeed<'a, T>(pub(crate) &'a mut T);
+
+impl<'de, T> DeserializeSeed<'de> for AtomicReplaceSeed<'_, T>
+where
+    T: Deserialize<'de>,
+{
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let replacement = T::deserialize(deserializer)?;
+        *self.0 = replacement;
+        Ok(())
+    }
+}
+
 /// Deserializes a slice-like field, clearing it on JSON null.
 pub(crate) struct NullDefaultSeed<'a, T>(pub(crate) &'a mut T);
 

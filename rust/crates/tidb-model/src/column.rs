@@ -43,8 +43,8 @@ use tidb_error::terror::TerrorError;
 use crate::schema_state::SchemaState;
 use crate::serde_helpers::{
     deserialize_go_object, go_json_field_matches, ignore_unknown, impl_go_json_deserialize,
-    impl_go_json_merge_object, FatalSeed, NullNoopSeed, OptionBytesSeed, OptionMergeSeed,
-    OptionScalarSeed, ValueMergeSeed,
+    impl_go_json_merge_object, AtomicReplaceSeed, FatalSeed, NullNoopSeed, OptionBytesSeed,
+    OptionMergeSeed, OptionScalarSeed, ValueMergeSeed,
 };
 use crate::table_info::TableInfo;
 
@@ -563,7 +563,7 @@ impl_go_json_merge_object!(ColumnInfo, destination, map, key, {
     } else if go_json_field_matches(&key, "dependences") {
         map.next_value_seed(GoStringSetSeed(&mut destination.dependences))?;
     } else if go_json_field_matches(&key, "type") {
-        map.next_value_seed(FatalSeed(NullNoopSeed(&mut destination.field_type)))?;
+        map.next_value_seed(FatalSeed(AtomicReplaceSeed(&mut destination.field_type)))?;
     } else if go_json_field_matches(&key, "changing_type") {
         map.next_value_seed(FatalSeed(OptionScalarSeed(
             &mut destination.changing_field_type,
@@ -1361,6 +1361,19 @@ mod tests {
         assert_eq!(column.name.original(), "First");
         assert_eq!(column.name.lowercase(), "partial");
         assert_eq!(column.comment, "after");
+
+        column.field_type = FieldType::new(FieldTypeCode::LongLong);
+        column.set_flen(99);
+        let mut decoder = serde_json::Deserializer::from_str(r#"{"type":null}"#);
+        column.go_json_merge(&mut decoder).unwrap();
+        assert_eq!(column.field_type, zero_field_type());
+
+        column.field_type = FieldType::new(FieldTypeCode::LongLong);
+        column.set_flen(99);
+        let previous = column.field_type.clone();
+        let mut decoder = serde_json::Deserializer::from_str(r#"{"type":{"Tp":"bad"}}"#);
+        assert!(column.go_json_merge(&mut decoder).is_err());
+        assert_eq!(column.field_type, previous);
     }
 
     #[test]
