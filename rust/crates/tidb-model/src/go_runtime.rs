@@ -21,6 +21,74 @@
 
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
+// Go 1.25's 64-bit allocator size classes. TiDB's supported server targets
+// are 64-bit; a pointer slice's `growslice` rounding is therefore defined by
+// these byte classes plus the runtime's 8-byte malloc header threshold.
+const GO_64_SIZE_CLASSES: &[usize] = &[
+    8, 16, 24, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176, 192, 208, 224, 240, 256, 288, 320, 352,
+    384, 416, 448, 480, 512, 576, 640, 704, 768, 896, 1024, 1152, 1280, 1408, 1536, 1792, 2048,
+    2304, 2688, 3072, 3200, 3456, 4096, 4864, 5376, 6144, 6528, 6784, 6912, 8192, 9472, 9728,
+    10240, 10880, 12288, 13568, 14336, 16384, 18432, 19072, 20480, 21760, 24576, 27264, 28672,
+    32768,
+];
+
+fn go_64_round_pointer_allocation(bytes: usize) -> usize {
+    const MALLOC_HEADER: usize = 8;
+    const MIN_HEADER_SIZE: usize = 8 * 64;
+    const MAX_SMALL_SIZE: usize = 32_768;
+    const PAGE_SIZE: usize = 8_192;
+
+    if bytes <= MAX_SMALL_SIZE - MALLOC_HEADER {
+        let header = usize::from(bytes > MIN_HEADER_SIZE) * MALLOC_HEADER;
+        let requested = bytes + header;
+        return GO_64_SIZE_CLASSES
+            .iter()
+            .copied()
+            .find(|class| *class >= requested)
+            .expect("small Go allocation has a size class")
+            - header;
+    }
+    bytes
+        .checked_add(PAGE_SIZE - 1)
+        .expect("Go pointer slice allocation overflow")
+        & !(PAGE_SIZE - 1)
+}
+
+fn go_64_next_slice_capacity(new_len: usize, old_capacity: usize) -> usize {
+    let double_capacity = old_capacity
+        .checked_mul(2)
+        .expect("Go pointer slice capacity overflow");
+    let mut candidate = if new_len > double_capacity {
+        new_len
+    } else if old_capacity < 256 {
+        double_capacity
+    } else {
+        let mut grown = old_capacity;
+        loop {
+            grown = grown
+                .checked_add((grown + 3 * 256) >> 2)
+                .expect("Go pointer slice capacity overflow");
+            if grown >= new_len {
+                break grown;
+            }
+        }
+    };
+    if candidate < new_len {
+        candidate = new_len;
+    }
+    let bytes = candidate
+        .checked_mul(8)
+        .expect("Go pointer slice allocation overflow");
+    go_64_round_pointer_allocation(bytes) / 8
+}
+
+fn go_64_pointer_slice_decode_capacity(mut capacity: usize, decoded_len: usize) -> usize {
+    while capacity < decoded_len {
+        capacity = go_64_next_slice_capacity(capacity + 1, capacity);
+    }
+    capacity
+}
+
 /// A Go `any` value at a `*T` type-assertion boundary.
 ///
 /// `Typed(None)` is an interface containing a typed nil `*T`; `Other` covers
@@ -40,9 +108,29 @@ pub enum GoPointerAny<'a, T> {
 /// Model rules that only compare or carry a timestamp must not silently turn
 /// an out-of-range Go time into the Unix epoch. Callers that specifically need
 /// Chrono opt into the fallible conversion.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct GoTime {
     unix_millis: i64,
+    location: GoTimeLocation,
+}
+
+/// Location identity carried by model times created by Go source.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum GoTimeLocation {
+    /// Go's zero `time.Time` uses UTC.
+    Utc,
+    /// `time.UnixMilli` uses the mutable process-local location.
+    Local,
+}
+
+impl Default for GoTime {
+    fn default() -> Self {
+        Self {
+            // 0001-01-01T00:00:00Z relative to Unix epoch.
+            unix_millis: -62_135_596_800_000,
+            location: GoTimeLocation::Utc,
+        }
+    }
 }
 
 /// A concurrency-safe Go pointer whose clones retain pointee identity.
@@ -51,6 +139,11 @@ pub struct GoTime {
 /// pointers. Rust owned values cannot express the latter. This handle makes
 /// the sharing explicit and exposes guards instead of an unsafe `Deref` that
 /// could outlive synchronization.
+///
+/// Snapshot-based formatting/serialization requires the model value's `Clone`
+/// implementation to copy fields without re-entering this same handle. Model
+/// clone implementations that need other shared values snapshot them in a
+/// fixed source-field order.
 pub struct GoShared<T>(Arc<RwLock<T>>);
 
 impl<T> GoShared<T> {
@@ -81,9 +174,12 @@ impl<T> GoShared<T> {
         Arc::ptr_eq(&self.0, &other.0)
     }
 
-    /// Allocates an independent pointer holding a deep value clone.
+    /// Allocates an independent pointer using Rust value `Clone`.
+    ///
+    /// This is a representation primitive, not a model source-clone claim;
+    /// selective Go clone methods use explicit field policies instead.
     #[must_use]
-    pub fn deep_clone(&self) -> Self
+    pub fn clone_rust_value(&self) -> Self
     where
         T: Clone,
     {
@@ -97,32 +193,34 @@ impl<T> Clone for GoShared<T> {
     }
 }
 
-impl<T: Default> Default for GoShared<T> {
-    fn default() -> Self {
-        Self::new(T::default())
-    }
-}
-
-impl<T: std::fmt::Debug> std::fmt::Debug for GoShared<T> {
+impl<T: Clone + std::fmt::Debug> std::fmt::Debug for GoShared<T> {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_tuple("GoShared")
-            .field(&*self.read())
-            .finish()
+        let snapshot = self.read().clone();
+        formatter.debug_tuple("GoShared").field(&snapshot).finish()
     }
 }
 
-impl<T: Clone + PartialEq> PartialEq for GoShared<T> {
-    fn eq(&self, other: &Self) -> bool {
-        self.ptr_eq(other) || self.read().clone() == other.read().clone()
+impl<T: Clone + PartialEq> GoShared<T> {
+    /// Explicit deep-value comparison. Source pointer equality remains
+    /// [`Self::ptr_eq`]; named operations prevent Rust derives from silently
+    /// selecting one of two different Go rules.
+    #[must_use]
+    pub fn deep_value_eq(&self, other: &Self) -> bool {
+        if self.ptr_eq(other) {
+            return true;
+        }
+        // Snapshot in separate scopes: acquiring both locks in caller-defined
+        // order would let concurrent reversed comparisons deadlock.
+        let left = self.read().clone();
+        let right = other.read().clone();
+        left == right
     }
 }
 
-impl<T: Clone + Eq> Eq for GoShared<T> {}
-
-impl<T: serde::Serialize> serde::Serialize for GoShared<T> {
+impl<T: Clone + serde::Serialize> serde::Serialize for GoShared<T> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serde::Serialize::serialize(&*self.read(), serializer)
+        let snapshot = self.read().clone();
+        serde::Serialize::serialize(&snapshot, serializer)
     }
 }
 
@@ -150,7 +248,28 @@ impl<T> GoSharedSlice<T> {
     #[must_use]
     pub fn from_vec(values: Vec<T>) -> Self {
         let len = values.len();
-        let capacity = values.capacity();
+        Self {
+            backing: Some(Arc::new(RwLock::new(values))),
+            start: 0,
+            len,
+            // A Rust Vec's spare capacity is uninitialized, whereas every Go
+            // slice slot through cap is zero-initialized and resliceable. The
+            // ordinary conversion therefore exposes only the initialized
+            // range. Source call sites that own a larger cap use the explicit
+            // initialized-capacity constructor below.
+            capacity: len,
+        }
+    }
+
+    /// Constructs a source slice with a larger, fully initialized capacity.
+    #[must_use]
+    pub fn from_vec_with_capacity(mut values: Vec<T>, capacity: usize) -> Self
+    where
+        T: Default,
+    {
+        assert!(capacity >= values.len(), "Go slice cap is smaller than len");
+        let len = values.len();
+        values.resize_with(capacity, T::default);
         Self {
             backing: Some(Arc::new(RwLock::new(values))),
             start: 0,
@@ -251,6 +370,36 @@ impl<T> GoSharedSlice<T> {
     pub fn clear(&mut self) {
         self.len = 0;
     }
+
+    /// Replaces this header as `encoding/json` replaces a decoded Go slice.
+    /// A non-empty array reuses the backing array when capacity permits; the
+    /// documented empty-array special case installs a new allocated-empty
+    /// slice. Sibling headers observe reused element writes but retain their
+    /// own lengths.
+    pub(crate) fn replace_decoded(&mut self, values: Vec<T>, grown_capacity: usize)
+    where
+        T: Default,
+    {
+        if values.is_empty() {
+            *self = Self::from_vec(Vec::new());
+            return;
+        }
+        let new_len = values.len();
+        if let Some(backing) = &self.backing {
+            if new_len <= self.capacity {
+                let mut destination = backing
+                    .write()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                for (offset, value) in values.into_iter().enumerate() {
+                    let index = self.start + offset;
+                    destination[index] = value;
+                }
+                self.len = new_len;
+                return;
+            }
+        }
+        *self = Self::from_vec_with_capacity(values, grown_capacity);
+    }
 }
 
 impl<T> Clone for GoSharedSlice<T> {
@@ -289,23 +438,18 @@ impl<T: Clone + std::fmt::Debug> std::fmt::Debug for GoSharedSlice<T> {
     }
 }
 
-impl<T: Clone + PartialEq> PartialEq for GoSharedSlice<T> {
-    fn eq(&self, other: &Self) -> bool {
-        self.is_allocated() == other.is_allocated() && self.snapshot() == other.snapshot()
-    }
-}
-
-impl<T: Clone + Eq> Eq for GoSharedSlice<T> {}
-
-impl<T: serde::Serialize> serde::Serialize for GoSharedSlice<T> {
+impl<T: Clone + serde::Serialize> serde::Serialize for GoSharedSlice<T> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let Some(backing) = &self.backing else {
             return serializer.serialize_none();
         };
-        let values = backing
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        serde::Serialize::serialize(&values[self.start..self.start + self.len], serializer)
+        let snapshot = {
+            let values = backing
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            values[self.start..self.start + self.len].to_vec()
+        };
+        serde::Serialize::serialize(&snapshot, serializer)
     }
 }
 
@@ -317,9 +461,40 @@ impl<'de, T: serde::Deserialize<'de>> serde::Deserialize<'de> for GoSharedSlice<
 }
 
 /// A Go slice of nullable shared pointers.
-#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(transparent)]
 pub struct GoSharedPointerSlice<T>(GoSharedSlice<Option<GoShared<T>>>);
+
+impl<T> Clone for GoSharedPointerSlice<T> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl<T: Clone + std::fmt::Debug> std::fmt::Debug for GoSharedPointerSlice<T> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+impl<T: Clone + serde::Serialize> serde::Serialize for GoSharedPointerSlice<T> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serde::Serialize::serialize(&self.0, serializer)
+    }
+}
+
+impl<T> Default for GoSharedPointerSlice<T> {
+    fn default() -> Self {
+        Self(GoSharedSlice::default())
+    }
+}
+
+/// Source policy when a clone loop encounters a nil pointer element.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GoNullClonePolicy {
+    /// Retain the nil element.
+    Preserve,
+    /// Panic at the source dereference boundary.
+    Panic,
+}
 
 impl<T> GoSharedPointerSlice<T> {
     /// Constructs an allocated slice from nullable owned pointees.
@@ -333,10 +508,27 @@ impl<T> GoSharedPointerSlice<T> {
         ))
     }
 
+    /// Constructs an allocated pointer slice with a larger initialized cap;
+    /// the non-visible capacity slots are nil Go pointers.
+    #[must_use]
+    pub fn from_nullable_with_capacity(values: Vec<Option<T>>, capacity: usize) -> Self {
+        Self(GoSharedSlice::from_vec_with_capacity(
+            values
+                .into_iter()
+                .map(|value| value.map(GoShared::new))
+                .collect(),
+            capacity,
+        ))
+    }
+
     /// Constructs an allocated slice from nullable pointer handles.
     #[must_use]
     pub fn from_handles(values: Vec<Option<GoShared<T>>>) -> Self {
         Self(GoSharedSlice::from_vec(values))
+    }
+
+    fn from_handles_with_capacity(values: Vec<Option<GoShared<T>>>, capacity: usize) -> Self {
+        Self(GoSharedSlice::from_vec_with_capacity(values, capacity))
     }
 
     /// Returns whether the Go slice is non-nil.
@@ -355,6 +547,12 @@ impl<T> GoSharedPointerSlice<T> {
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.0.is_empty()
+    }
+
+    /// Returns the exact Go 1.25 64-bit pointer-slice capacity.
+    #[must_use]
+    pub const fn capacity(&self) -> usize {
+        self.0.capacity()
     }
 
     /// Returns one nullable pointer handle. A non-null handle retains pointee
@@ -387,16 +585,32 @@ impl<T> GoSharedPointerSlice<T> {
         self.0.snapshot()
     }
 
-    /// Allocates a fresh outer slice and fresh pointees, retaining null slots.
+    /// Allocates a fresh outer slice and maps non-null pointees through the
+    /// source type's clone operation. Go clone methods choose different nil
+    /// policies, so callers must name it rather than inheriting Rust `Clone`.
     #[must_use]
-    pub fn deep_clone(&self) -> Self
+    pub fn map_clone_with<U>(
+        &self,
+        null_policy: GoNullClonePolicy,
+        mut clone_pointee: impl FnMut(&T) -> U,
+    ) -> GoSharedPointerSlice<U>
     where
         T: Clone,
     {
-        Self::from_handles(
+        GoSharedPointerSlice::from_handles(
             self.handles()
                 .into_iter()
-                .map(|pointer| pointer.map(|pointer| pointer.deep_clone()))
+                .map(|pointer| match pointer {
+                    Some(pointer) => {
+                        let cloned = {
+                            let value = pointer.read();
+                            clone_pointee(&value)
+                        };
+                        Some(GoShared::new(cloned))
+                    }
+                    None if null_policy == GoNullClonePolicy::Preserve => None,
+                    None => panic!("nil pointer in Go clone slice"),
+                })
                 .collect(),
         )
     }
@@ -405,13 +619,36 @@ impl<T> GoSharedPointerSlice<T> {
     pub fn clear(&mut self) {
         self.0.clear();
     }
+
+    pub(crate) fn replace_decoded(&mut self, values: Vec<Option<GoShared<T>>>) {
+        let grown_capacity = go_64_pointer_slice_decode_capacity(self.0.capacity(), values.len());
+        self.0.replace_decoded(values, grown_capacity);
+    }
+}
+
+impl<'de, T> serde::Deserialize<'de> for GoSharedPointerSlice<T>
+where
+    T: serde::Deserialize<'de>,
+{
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let Some(values) =
+            <Option<Vec<Option<GoShared<T>>>> as serde::Deserialize>::deserialize(deserializer)?
+        else {
+            return Ok(Self::default());
+        };
+        let capacity = go_64_pointer_slice_decode_capacity(0, values.len());
+        Ok(Self::from_handles_with_capacity(values, capacity))
+    }
 }
 
 impl GoTime {
     /// Go `time.UnixMilli`'s numeric instant constructor.
     #[must_use]
     pub const fn from_unix_millis(unix_millis: i64) -> Self {
-        Self { unix_millis }
+        Self {
+            unix_millis,
+            location: GoTimeLocation::Local,
+        }
     }
 
     /// Go model `TSConvert2Time`: discard the low 18 logical TSO bits, then
@@ -425,6 +662,12 @@ impl GoTime {
     #[must_use]
     pub const fn unix_millis(self) -> i64 {
         self.unix_millis
+    }
+
+    /// Returns the Go location identity used by formatting and DST lookup.
+    #[must_use]
+    pub const fn location(self) -> GoTimeLocation {
+        self.location
     }
 
     /// Converts to Chrono UTC only when Chrono supports the source year.
@@ -453,24 +696,43 @@ mod tests {
 
     #[test]
     fn go_time_retains_full_tso_physical_domain() {
+        assert_eq!(GoTime::default().unix_millis(), -62_135_596_800_000);
+        assert_eq!(GoTime::default().location(), GoTimeLocation::Utc);
         assert_eq!(GoTime::from_tso(0).unix_millis(), 0);
+        assert_eq!(GoTime::from_tso(0).location(), GoTimeLocation::Local);
         assert_eq!(GoTime::from_tso((1_u64 << 18) - 1).unix_millis(), 0);
         assert_eq!(GoTime::from_tso(1_u64 << 18).unix_millis(), 1);
         assert_eq!(GoTime::from_tso(u64::MAX).unix_millis(), (1_i64 << 46) - 1);
-        assert!(GoTime::from_tso(u64::MAX).to_chrono_utc().is_none());
+        assert!(GoTime::from_tso(u64::MAX).to_chrono_utc().is_some());
+        assert!(GoTime::from_unix_millis(i64::MAX).to_chrono_utc().is_none());
     }
 
     #[test]
     fn go_shared_distinguishes_shallow_and_deep_pointer_clones() {
         let pointer = GoShared::new(Item { id: 1 });
         let shallow = pointer.clone();
-        let deep = pointer.deep_clone();
+        let deep = pointer.clone_rust_value();
         assert!(pointer.ptr_eq(&shallow));
         assert!(!pointer.ptr_eq(&deep));
 
         shallow.write().id = 2;
         assert_eq!(pointer.read().id, 2);
         assert_eq!(deep.read().id, 1);
+    }
+
+    #[test]
+    fn go_shared_recovers_partial_state_after_a_panicking_writer() {
+        let pointer = GoShared::new(Item { id: 1 });
+        let alias = pointer.clone();
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut value = alias.write();
+            value.id = 7;
+            panic!("source callback panic after mutation");
+        }))
+        .is_err());
+        assert_eq!(pointer.read().id, 7);
+        pointer.write().id = 8;
+        assert_eq!(alias.read().id, 8);
     }
 
     #[test]
@@ -499,13 +761,18 @@ mod tests {
         assert!(assigned.get(0).unwrap().ptr_eq(&replacement));
         assert!(copied_outer.get(0).unwrap().ptr_eq(&first));
 
-        let copied_deep = assigned.deep_clone();
+        let copied_deep = assigned.map_clone_with(GoNullClonePolicy::Preserve, Clone::clone);
         assert!(!assigned
             .get(0)
             .unwrap()
             .ptr_eq(&copied_deep.get(0).unwrap()));
         assigned.get(0).unwrap().write().id = 3;
         assert_eq!(copied_deep.get(0).unwrap().read().id, 2);
+
+        assert!(std::panic::catch_unwind(|| {
+            assigned.map_clone_with(GoNullClonePolicy::Panic, Clone::clone)
+        })
+        .is_err());
     }
 
     #[test]
@@ -525,5 +792,36 @@ mod tests {
         assert!(decoded.is_allocated());
         assert_eq!(decoded.get(0).unwrap().read().id, 8);
         assert!(decoded.get(1).is_none());
+    }
+
+    #[test]
+    fn go_pointer_slice_decode_uses_go_125_64_bit_growth() {
+        assert_eq!(go_64_pointer_slice_decode_capacity(0, 0), 0);
+        assert_eq!(go_64_pointer_slice_decode_capacity(0, 1), 1);
+        assert_eq!(go_64_pointer_slice_decode_capacity(0, 3), 4);
+        assert_eq!(go_64_pointer_slice_decode_capacity(4, 5), 8);
+        // Pointer-bearing allocations above 512 bytes include Go's malloc
+        // header before size-class rounding; 256 -> 257 therefore yields 607.
+        assert_eq!(go_64_pointer_slice_decode_capacity(256, 257), 607);
+
+        let mut decoded = GoSharedPointerSlice::<Item>::default();
+        decoded.replace_decoded(vec![
+            Some(GoShared::new(Item { id: 1 })),
+            None,
+            Some(GoShared::new(Item { id: 3 })),
+        ]);
+        assert_eq!(decoded.len(), 3);
+        assert_eq!(decoded.capacity(), 4);
+        let alias = decoded.clone();
+        decoded.replace_decoded(vec![
+            Some(GoShared::new(Item { id: 4 })),
+            None,
+            None,
+            Some(GoShared::new(Item { id: 7 })),
+        ]);
+        assert!(decoded.backing_ptr_eq(&alias));
+        assert_eq!(decoded.capacity(), 4);
+        assert_eq!(alias.len(), 3);
+        assert_eq!(alias.get(0).unwrap().read().id, 4);
     }
 }
