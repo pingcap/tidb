@@ -202,3 +202,43 @@ fn source_malformed_row_sample_proto_slot_lengths_are_rejected() {
         SampleMemoryQuota::unlimited(),
     );
 }
+
+#[test]
+fn source_row_scan_int64_counters_wrap_at_boundaries() {
+    let proto = RowSampleCollectorProto {
+        samples: Vec::new(),
+        null_counts: vec![0, i64::MAX],
+        count: i64::MAX,
+        fm_sketches: vec![FmSketchProto::default(), FmSketchProto::default()],
+        total_sizes: vec![i64::MAX, 0],
+    };
+    let mut collector = RowSampleCollector::from_proto(
+        &proto,
+        SamplePolicy::Reservoir { max_sample_size: 0 },
+        SampleMemoryQuota::unlimited(),
+    )
+    .unwrap();
+    let columns = [Datum::Bytes(vec![1]), Datum::Null];
+    let slots = [
+        SlotValue {
+            encoded_value: &[1],
+            size: 1,
+            is_null: false,
+        },
+        SlotValue {
+            encoded_value: &[0],
+            size: 0,
+            is_null: true,
+        },
+    ];
+    collector
+        .collect(&ScannedRow {
+            columns: &columns,
+            slots: &slots,
+        })
+        .unwrap();
+    let wrapped = collector.to_proto();
+    assert_eq!(wrapped.count, i64::MIN);
+    assert_eq!(wrapped.total_sizes[0], i64::MIN);
+    assert_eq!(wrapped.null_counts[1], i64::MIN);
+}

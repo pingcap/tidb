@@ -329,20 +329,21 @@ impl RowSampleCollector {
             self.slots.len(),
             "a scanned row must carry one value per collector slot"
         );
-        self.count += 1;
+        self.count = self.count.wrapping_add(1);
         for (position, value) in row.slots.iter().enumerate() {
             if value.is_null {
-                self.slots[position].null_count += 1;
+                self.slots[position].null_count = self.slots[position].null_count.wrapping_add(1);
                 continue;
             }
-            self.slots[position].total_size += value.size;
+            self.slots[position].total_size =
+                self.slots[position].total_size.wrapping_add(value.size);
             // Go's `FMSketch.InsertValue` hashes `codec.EncodeValue` with
             // murmur3's 64-bit sum, which is the first lane of its 128-bit
             // one.
             self.sketches[position].insert_hash(hash_bytes(value.encoded_value).h1);
         }
         let ordinal = self.scanned_ordinal;
-        self.scanned_ordinal += 1;
+        self.scanned_ordinal = self.scanned_ordinal.wrapping_add(1);
         self.sample_row(row.columns, ordinal)
     }
 
