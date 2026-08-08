@@ -52,8 +52,9 @@ content-addressed. The gate compares normalized exact named-test observations,
 so harmless elapsed-time drift is allowed while compilation-only kills fail.
 Measured probes emit canonical per-case runtime observations which are compared
 to separately content-addressed expected values; missing/wrong cases and
-hardcoded expected JSON are rejected. Schema v2 fails closed on `//go:embed`
-instead of approximating cmd/go resolution. All JSON proof inputs reject
+hardcoded expected JSON are rejected. Schema v2 accepts only direct literal
+`//go:embed` files and fails closed on broader patterns instead of approximating
+cmd/go resolution. All JSON proof inputs reject
 duplicate keys and frontend-authored JSON is canonical.
 mutations prove baseline PASS, mutated FAIL/SURVIVED, and restored PASS before
 recording. Mutated production bytes are restored in `finally`.

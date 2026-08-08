@@ -13,10 +13,10 @@
 // limitations under the License.
 
 // Command go_package_embed_inventory detects every //go:embed directive in
-// the direct source files of explicitly named Go packages. The package-scale
-// checker currently fails closed when any row is returned: this detector uses
-// go/ast's authoritative directive parser and intentionally does not attempt a
-// partial reimplementation of cmd/go's embed resolver.
+// the direct source files of explicitly named Go packages. This detector uses
+// go/ast's authoritative directive parser; the package-scale checker resolves
+// only its exact direct-file subset and fails closed before broader patterns
+// would require a partial reimplementation of cmd/go's embed resolver.
 package main
 
 import (

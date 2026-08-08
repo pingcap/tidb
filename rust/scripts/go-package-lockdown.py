@@ -1023,6 +1023,8 @@ class PackageLockdown:
         if not lines or lines[0].split("\t") != EMBED_HEADER:
             raise LockdownError("Go embed inventory returned no valid header")
         rows: list[dict[str, str]] = []
+        dependencies: set[Path] = set()
+        unsupported: list[str] = []
         allowed_source_dirs = set(package_dirs)
         for fields in csv.DictReader(lines, delimiter="\t"):
             row = {key: str(value) for key, value in fields.items()}
@@ -1041,15 +1043,36 @@ class PackageLockdown:
             ):
                 raise LockdownError(f"Go embed inventory escaped its pinned package: {row}")
             rows.append(row)
-        if rows:
-            locations = ", ".join(
-                f"{row['source_path']}:{row['source_line']}" for row in rows
-            )
+            patterns = row["patterns"].split("\x1f")
+            for pattern in patterns:
+                # This deliberately supports only the cmd/go subset whose
+                # resolution is unambiguous without duplicating its glob and
+                # directory-walk implementation: one safe basename in the
+                # claimed package, resolving to an already pinned regular
+                # artifact. Every broader form fails closed below.
+                if (
+                    source.parent != self.go_package
+                    or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", pattern)
+                    or pattern.startswith((".", "_"))
+                ):
+                    unsupported.append(
+                        f"{row['source_path']}:{row['source_line']}:{pattern}"
+                    )
+                    continue
+                resolved = source.parent / pattern
+                if resolved not in source_entries:
+                    unsupported.append(
+                        f"{row['source_path']}:{row['source_line']}:{pattern}"
+                    )
+                    continue
+                dependencies.add(resolved)
+        if unsupported:
             raise LockdownError(
-                "//go:embed is unsupported by checker schema v2 and fails closed; "
-                f"exact cmd/go-compatible resolution is required before lockdown: {locations}"
+                "//go:embed pattern is outside schema v2's exact direct-file subset and "
+                "fails closed; cmd/go-compatible glob/directory resolution is required: "
+                + ", ".join(unsupported)
             )
-        return [], set()
+        return rows, dependencies
 
     def _git_paths(self, arguments: list[str]) -> list[Path]:
         output = run(self.root, ["git", *arguments])
@@ -1225,6 +1248,18 @@ class PackageLockdown:
             self.receipt_path.relative_to(self.root),
         }
         declared = {path for path in core if path in actual}
+        explicit_receipt_artifacts = {
+            path for path in self.owned_rust_files if path.is_relative_to(receipt_relative)
+        }
+        missing_explicit = explicit_receipt_artifacts - actual
+        if missing_explicit:
+            raise LockdownError(
+                "explicit receipt proof artifact disappeared: "
+                + ", ".join(path.as_posix() for path in sorted(
+                    missing_explicit, key=lambda item: item.as_posix()
+                ))
+            )
+        declared.update(explicit_receipt_artifacts)
         declared.update(
             path.relative_to(self.root) for path in self.ledgers_dir.glob("*.tsv")
             if path.is_file()

@@ -67,9 +67,10 @@ package. `testdata` and arbitrary fixture subtrees cannot be excluded.
 Every repository input statically referenced by `go:generate` must be in the
 manifest. Shell directives, unresolved variables, globs, or repository paths
 that cannot be pinned fail closed. Schema v2 detects directives with Go's
-authoritative AST parser and fails closed on every `//go:embed`, including
-build-tagged tests and excluded nested packages, until exact cmd/go resolution
-is implemented. Literal fixture accesses must resolve to a
+authoritative AST parser and accepts only a literal basename resolving to a
+pinned regular file in the claimed package. Broader `//go:embed` patterns,
+including globs, directories, paths, and excluded-package directives, fail
+closed until exact cmd/go resolution is implemented. Literal fixture accesses must resolve to a
 manifested artifact. Dynamic accesses use content-addressed
 `fixture-resolution` JSON bound to the exact source/line/access expression,
 source commit, exact resolved set (or explicit no-artifact conclusion), two

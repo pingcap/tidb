@@ -848,6 +848,8 @@ class GoPackageLockdownTest(unittest.TestCase):
     def test_generate_twice_with_spec_inside_mapped_crate_owns_exact_proof_tree(self) -> None:
         target = self.root / "rust/crates/tidb-sample/lockdown"
         shutil.move(self.root / "evidence", target)
+        scaffold = target / "semantic-clusters.md"
+        scaffold.write_text("# Reviewed semantic clusters\n", encoding="utf-8")
         for path in target.rglob("*"):
             if path.is_file() and path.suffix in {".toml", ".tsv", ".json"}:
                 path.write_text(
@@ -856,6 +858,15 @@ class GoPackageLockdownTest(unittest.TestCase):
                     ),
                     encoding="utf-8",
                 )
+        spec = target / "package.toml"
+        spec.write_text(
+            spec.read_text(encoding="utf-8").replace(
+                '"rust/crates/tidb-sample/tests/sample_lockdown.rs"]',
+                '"rust/crates/tidb-sample/tests/sample_lockdown.rs", '
+                '"rust/crates/tidb-sample/lockdown/semantic-clusters.md"]',
+            ),
+            encoding="utf-8",
+        )
         spec_path = Path("rust/crates/tidb-sample/lockdown/package.toml")
         accepted = self._spec_source_commit_for_path(self.root, spec_path)
         command = [
@@ -957,7 +968,22 @@ class GoPackageLockdownTest(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        self.assert_checker_fails("generate", "//go:embed is unsupported")
+        self.assert_checker_fails("generate", "outside schema v2's exact direct-file subset")
+
+    def test_generate_accepts_direct_literal_embed_and_manifests_input(self) -> None:
+        source = self.root / "pkg/sample/embed_test.go"
+        source.write_text(
+            "//go:build never\n\npackage sample\n\nimport _ \"embed\"\n\n"
+            "//go:embed sample.go\nvar sampleSource string\n",
+            encoding="utf-8",
+        )
+        self.commit_source_update("pkg/sample/embed_test.go")
+        self.checker("generate")
+        _schema, _header, rows = read_tsv(self.root / "evidence/artifacts.tsv")
+        production = next(row for row in rows if row["path"] == "pkg/sample/sample.go")
+        directive = next(row for row in rows if row["path"] == "pkg/sample/embed_test.go")
+        self.assertIn("go-embed-input", production["traits"])
+        self.assertIn("go-embed", directive["traits"])
 
     def test_generate_rejects_unmanifested_go_generate_inputs(self) -> None:
         source = self.root / "pkg/sample/sample.go"

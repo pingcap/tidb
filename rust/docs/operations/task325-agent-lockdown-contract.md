@@ -130,9 +130,10 @@ must match both the current tracked census and exact blobs at `source_commit`.
 Nested exclusions require direct tracked `.go` files and an exact distinct
 directory proof; `testdata` and arbitrary subtrees cannot be excluded. Every
 repository input referenced by `go:generate` is manifested, or generation fails
-closed when static resolution is impossible. Checker schema v2 also fails
-closed on every production/test/build-tagged `//go:embed`, including excluded
-nested packages; it does not approximate cmd/go embed resolution.
+closed when static resolution is impossible. Checker schema v2 accepts only an
+exact literal basename that resolves to a pinned regular file in the claimed
+package. Globs, directories, `all:`, paths, and directives in excluded nested
+packages fail closed rather than approximating cmd/go embed resolution.
 
 Every ledger row binds the full owning Go source blob hash as well as its AST
 node hash. Straight-line declaration/body drift invalidates preserved verdicts.
