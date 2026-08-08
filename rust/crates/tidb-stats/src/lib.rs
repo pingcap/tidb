@@ -59,6 +59,7 @@ pub mod dynamic_partition_helpers;
 pub mod estimate;
 pub mod existence_map;
 pub mod fmsketch;
+pub mod fmsketch_codec;
 pub mod gc_batch_count;
 pub mod global_stats_layout;
 pub mod global_stats_sql_index;
@@ -193,6 +194,10 @@ pub use dynamic_partition_helpers::{flatten_partition_names, get_partition_sql};
 pub use estimate::{estimate_global_singleton_by_sketches, estimate_ndv_by_gee};
 pub use existence_map::ColAndIdxExistenceMap;
 pub use fmsketch::{FmSketch, MAX_SKETCH_SIZE};
+pub use fmsketch_codec::{
+    decode_fm_sketch, encode_fm_sketch, fm_sketch_from_proto, fm_sketch_to_proto,
+    insert_encoded_row, insert_encoded_value, FmSketchCodecError, FmSketchProto,
+};
 pub use gc_batch_count::gc_batch_count;
 pub use global_stats_layout::{new_global_stats_layout, GlobalStatsLayout};
 pub use global_stats_sql_index::to_sql_index;

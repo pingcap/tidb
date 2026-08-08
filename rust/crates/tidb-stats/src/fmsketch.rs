@@ -17,8 +17,9 @@
 //!
 //! The Go owner also hashes `types.Datum` values through tablecodec, feeds
 //! sketches from the row sampler, and persists them through tipb protobufs.
-//! This leaf starts at an already-owned `u64` hash and therefore keeps those
-//! datatype, sampler, protobuf, and statistics-handle seams explicit.
+//! This leaf owns the raw-hash state machine. Datum encoding and protobuf
+//! framing are layered in `fmsketch_codec`; sampler and handle integration
+//! remain separate owners.
 
 use std::collections::HashSet;
 
@@ -45,6 +46,20 @@ impl FmSketch {
         Self {
             hashes: HashSet::with_capacity(max_size),
             mask: 0,
+            max_size,
+        }
+    }
+
+    /// Reconstructs protobuf-owned state without reapplying admission.
+    #[must_use]
+    pub fn from_raw_parts(
+        mask: u64,
+        max_size: usize,
+        hashes: impl IntoIterator<Item = u64>,
+    ) -> Self {
+        Self {
+            hashes: hashes.into_iter().collect(),
+            mask,
             max_size,
         }
     }
@@ -81,6 +96,14 @@ impl FmSketch {
     #[must_use]
     pub fn contains(&self, hash: u64) -> bool {
         self.hashes.contains(&hash)
+    }
+
+    /// Returns deterministic hash-set contents for persistence and evidence.
+    #[must_use]
+    pub fn sorted_hashes(&self) -> Vec<u64> {
+        let mut hashes: Vec<u64> = self.hashes.iter().copied().collect();
+        hashes.sort_unstable();
+        hashes
     }
 
     /// Returns the source's estimated distinct-value count.
