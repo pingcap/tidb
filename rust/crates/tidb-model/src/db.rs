@@ -25,49 +25,30 @@ use crate::placement::PolicyRefInfo;
 use crate::schema_state::SchemaState;
 use crate::serde_helpers::{
     go_json_field_matches, ignore_unknown, impl_go_json_deserialize, impl_go_json_merge_object,
-    NullNoopSeed, OptionMergeSeed,
+    FatalSeed, NullNoopSeed, OptionMergeSeed, ValueMergeSeed,
 };
 use crate::table_info::TableInfo;
 
 /// Go `DBInfo`: metadata describing a database (schema).
 ///
-/// Go's `Clone` deep-copies `Deprecated.Tables` while `Copy` shares the
-/// `*TableInfo` pointers; with Rust's owned `Vec<TableInfo>` there is no
-/// pointer sharing, so both converge on the derived deep `Clone`.
 #[derive(Clone, Debug, Default)]
 pub struct DBInfo {
     /// The database ID.
-    #[serde(rename = "id", default)]
     pub id: i64,
     /// The database name.
-    #[serde(rename = "db_name", default)]
     pub name: CiString,
     /// The database charset.
-    #[serde(
-        rename = "charset",
-        default,
-        deserialize_with = "crate::serde_helpers::null_default"
-    )]
     pub charset: String,
     /// The database collation.
-    #[serde(
-        rename = "collate",
-        default,
-        deserialize_with = "crate::serde_helpers::null_default"
-    )]
     pub collate: String,
     /// Go's `Deprecated.Tables` (not set in infoschema v2). Go tags the inner
     /// field `json:"-"`, so only the empty wrapper object is ever stored.
-    #[serde(skip)]
     pub deprecated_tables: Vec<TableInfo>,
     /// The online-DDL state.
-    #[serde(rename = "state", default)]
     pub state: SchemaState,
     /// The placement-policy reference.
-    #[serde(rename = "policy_ref_info", default)]
     pub placement_policy_ref: Option<PolicyRefInfo>,
     /// A table-name -> table-ID index (Go `json:"-"`).
-    #[serde(skip)]
     pub table_name2id: BTreeMap<String, i64>,
 }
 
@@ -75,7 +56,7 @@ impl_go_json_merge_object!(DBInfo, destination, map, key, {
     if go_json_field_matches(&key, "id") {
         map.next_value_seed(NullNoopSeed(&mut destination.id))?;
     } else if go_json_field_matches(&key, "db_name") {
-        map.next_value_seed(NullNoopSeed(&mut destination.name))?;
+        map.next_value_seed(FatalSeed(ValueMergeSeed(&mut destination.name)))?;
     } else if go_json_field_matches(&key, "charset") {
         map.next_value_seed(NullNoopSeed(&mut destination.charset))?;
     } else if go_json_field_matches(&key, "collate") {
@@ -183,5 +164,23 @@ mod tests {
         let policy = database.placement_policy_ref.unwrap();
         assert_eq!(policy.id, 11);
         assert_eq!(policy.name.original(), "later");
+
+        let mut named = DBInfo {
+            name: CiString::new("Before"),
+            collate: "kept".to_owned(),
+            ..Default::default()
+        };
+        let mut decoder = serde_json::Deserializer::from_str(r#"{"db_name":{"O":"Later"}}"#);
+        named.go_json_merge(&mut decoder).unwrap();
+        assert_eq!(named.name.original(), "Later");
+        assert_eq!(named.name.lowercase(), "before");
+
+        let mut decoder = serde_json::Deserializer::from_str(
+            r#"{"db_name":{"L":"later","O":1},"collate":"must-not-run"}"#,
+        );
+        assert!(named.go_json_merge(&mut decoder).is_err());
+        assert_eq!(named.name.original(), "Later");
+        assert_eq!(named.name.lowercase(), "later");
+        assert_eq!(named.collate, "kept");
     }
 }

@@ -25,6 +25,8 @@ use tidb_error::terror::TerrorError;
 
 use crate::action_type::ActionType;
 use crate::db::DBInfo;
+use crate::go_runtime::{GoShared, GoSharedPointerSlice};
+pub use crate::history::HistoryInfo;
 use crate::job_enums::{JobState, JobVersion};
 use crate::reorg::{DDLReorgMeta, ReorgStage, ReorgType};
 use crate::schema_state::SchemaState;
@@ -175,55 +177,6 @@ pub struct JobResumeReason {
     /// The reason type.
     #[serde(rename = "type", default)]
     pub type_: String,
-}
-
-/// Go `HistoryInfo`: the schema snapshot recorded when a DDL job finishes.
-#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
-pub struct HistoryInfo {
-    /// The schema version after the job.
-    #[serde(rename = "SchemaVersion", default)]
-    pub schema_version: i64,
-    /// The affected database, if any.
-    #[serde(rename = "DBInfo", default)]
-    pub db_info: Option<Box<DBInfo>>,
-    /// The affected table, if any.
-    #[serde(rename = "TableInfo", default)]
-    pub table_info: Option<Box<TableInfo>>,
-    /// The finish timestamp (a TSO).
-    #[serde(rename = "FinishedTS", default)]
-    pub finished_ts: u64,
-    /// Multiple affected tables (for multi-table jobs).
-    #[serde(rename = "MultipleTableInfos", default)]
-    pub multiple_table_infos: Option<Vec<Option<TableInfo>>>,
-}
-
-impl HistoryInfo {
-    /// Go `HistoryInfo.AddDBInfo`.
-    pub fn add_db_info(&mut self, schema_version: i64, db_info: DBInfo) {
-        self.schema_version = schema_version;
-        self.db_info = Some(Box::new(db_info));
-    }
-
-    /// Go `HistoryInfo.AddTableInfo`.
-    pub fn add_table_info(&mut self, schema_version: i64, table_info: TableInfo) {
-        self.schema_version = schema_version;
-        self.table_info = Some(Box::new(table_info));
-    }
-
-    /// Go `HistoryInfo.SetTableInfos`.
-    pub fn set_table_infos(&mut self, schema_version: i64, table_infos: Vec<TableInfo>) {
-        self.schema_version = schema_version;
-        self.multiple_table_infos = Some(table_infos.into_iter().map(Some).collect());
-    }
-
-    /// Go `HistoryInfo.Clean`. `finished_ts` deliberately survives, as it does
-    /// in Go.
-    pub fn clean(&mut self) {
-        self.schema_version = 0;
-        self.db_info = None;
-        self.table_info = None;
-        self.multiple_table_infos = None;
-    }
 }
 
 /// Go `JobMeta`: the subset of job metadata embedded by a backfill task.
@@ -766,7 +719,7 @@ impl Job {
         state: JobState,
         schema_state: SchemaState,
         version: i64,
-        table: TableInfo,
+        table: Option<GoShared<TableInfo>>,
     ) {
         self.state = state;
         self.schema_state = schema_state;
@@ -782,7 +735,7 @@ impl Job {
         state: JobState,
         schema_state: SchemaState,
         version: i64,
-        tables: Vec<TableInfo>,
+        tables: &GoSharedPointerSlice<TableInfo>,
     ) {
         self.state = state;
         self.schema_state = schema_state;
@@ -791,13 +744,16 @@ impl Job {
             .as_mut()
             .expect("Job.BinlogInfo is required by FinishMultipleTableJob");
         binlog.schema_version = version;
-        binlog.table_info = Some(Box::new(
+        // Go assigns the outer slice header before indexing its final element;
+        // the empty-input panic therefore leaves the caller's nil or
+        // allocated-empty header installed in history.
+        binlog.multiple_table_infos = tables.clone();
+        binlog.table_info = tables.get(
             tables
-                .last()
-                .expect("FinishMultipleTableJob requires at least one table")
-                .clone(),
-        ));
-        binlog.multiple_table_infos = Some(tables.into_iter().map(Some).collect());
+                .len()
+                .checked_sub(1)
+                .expect("FinishMultipleTableJob requires at least one table"),
+        );
     }
 
     /// Marks a database job finished and records its database snapshot.
@@ -806,7 +762,7 @@ impl Job {
         state: JobState,
         schema_state: SchemaState,
         version: i64,
-        database: DBInfo,
+        database: Option<GoShared<DBInfo>>,
     ) {
         self.state = state;
         self.schema_state = schema_state;
@@ -1335,27 +1291,35 @@ mod tests {
 
     #[test]
     fn history_info() {
+        let table_pointer = GoShared::new(TableInfo {
+            name: CiString::new("t"),
+            ..Default::default()
+        });
         let h = HistoryInfo {
             schema_version: 42,
-            table_info: Some(Box::new(TableInfo {
-                name: CiString::new("t"),
-                ..Default::default()
-            })),
-            multiple_table_infos: Some(vec![Some(TableInfo::default())]),
+            table_info: Some(table_pointer.clone()),
+            multiple_table_infos: GoSharedPointerSlice::from_nullable(vec![Some(
+                TableInfo::default(),
+            )]),
             ..Default::default()
         };
-        // Deep clone.
+        // An ordinary HistoryInfo copy is shallow in Go.
         let c = h.clone();
         assert_eq!(c.schema_version, 42);
-        assert_eq!(c.table_info.unwrap().name.original(), "t");
-        assert_eq!(c.multiple_table_infos.as_ref().unwrap().len(), 1);
+        assert!(c.table_info.as_ref().unwrap().ptr_eq(&table_pointer));
+        assert_eq!(c.table_info.as_ref().unwrap().read().name.original(), "t");
+        assert_eq!(c.multiple_table_infos.len(), 1);
 
         let nil_json = serde_json::to_value(HistoryInfo::default()).unwrap();
         assert_eq!(nil_json["MultipleTableInfos"], serde_json::Value::Null);
         let mut allocated_empty = HistoryInfo::default();
-        allocated_empty.set_table_infos(1, Vec::new());
+        allocated_empty.set_table_infos(1, &GoSharedPointerSlice::from_nullable(Vec::new()));
         let empty_json = serde_json::to_value(&allocated_empty).unwrap();
         assert_eq!(empty_json["MultipleTableInfos"], serde_json::json!([]));
+        let mut copied_from_nil = HistoryInfo::default();
+        copied_from_nil.set_table_infos(2, &GoSharedPointerSlice::default());
+        assert!(copied_from_nil.multiple_table_infos.is_allocated());
+        assert!(copied_from_nil.multiple_table_infos.is_empty());
 
         let mut h = h;
         h.finished_ts = 99;
@@ -1370,7 +1334,7 @@ mod tests {
         let mut job = Job {
             binlog_info: Some(HistoryInfo {
                 schema_version: 10,
-                db_info: Some(Box::new(DBInfo {
+                db_info: Some(GoShared::new(DBInfo {
                     id: 1,
                     name: CiString::new("db-kept"),
                     charset: "old-db-charset".to_owned(),
@@ -1380,7 +1344,7 @@ mod tests {
                     }),
                     ..Default::default()
                 })),
-                table_info: Some(Box::new(TableInfo {
+                table_info: Some(GoShared::new(TableInfo {
                     id: 2,
                     name: CiString::new("table-kept"),
                     comment: "old-comment".to_owned(),
@@ -1391,13 +1355,38 @@ mod tests {
                     ..Default::default()
                 })),
                 finished_ts: 20,
-                multiple_table_infos: Some(vec![Some(TableInfo {
-                    id: 3,
-                    ..Default::default()
-                })]),
+                multiple_table_infos: GoSharedPointerSlice::from_nullable_with_capacity(
+                    vec![Some(TableInfo {
+                        id: 3,
+                        ..Default::default()
+                    })],
+                    3,
+                ),
             }),
             ..Default::default()
         };
+        let database_alias = job
+            .binlog_info
+            .as_ref()
+            .unwrap()
+            .db_info
+            .as_ref()
+            .unwrap()
+            .clone();
+        let table_alias = job
+            .binlog_info
+            .as_ref()
+            .unwrap()
+            .table_info
+            .as_ref()
+            .unwrap()
+            .clone();
+        let table_slice_alias = job
+            .binlog_info
+            .as_ref()
+            .unwrap()
+            .multiple_table_infos
+            .clone();
 
         let error = job
             .decode(
@@ -1429,7 +1418,12 @@ mod tests {
 
         let history = job.binlog_info.as_ref().unwrap();
         assert_eq!(history.schema_version, 10);
-        let database = history.db_info.as_ref().unwrap();
+        assert!(history.db_info.as_ref().unwrap().ptr_eq(&database_alias));
+        assert!(history.table_info.as_ref().unwrap().ptr_eq(&table_alias));
+        assert!(history
+            .multiple_table_infos
+            .backing_ptr_eq(&table_slice_alias));
+        let database = history.db_info.as_ref().unwrap().read();
         assert_eq!(database.id, 1);
         assert_eq!(database.name.original(), "db-kept");
         assert_eq!(database.charset, "old-db-charset");
@@ -1437,7 +1431,7 @@ mod tests {
         let db_policy = database.placement_policy_ref.as_ref().unwrap();
         assert_eq!(db_policy.id, 11);
         assert_eq!(db_policy.name.original(), "db-policy-later");
-        let table = history.table_info.as_ref().unwrap();
+        let table = history.table_info.as_ref().unwrap().read();
         assert_eq!(table.id, 2);
         assert_eq!(table.name.original(), "table-kept");
         assert_eq!(table.comment, "table-later");
@@ -1445,12 +1439,14 @@ mod tests {
         assert_eq!(table_policy.id, 12);
         assert_eq!(table_policy.name.original(), "table-policy-later");
         assert_eq!(history.finished_ts, 30);
-        let tables = history.multiple_table_infos.as_ref().unwrap();
-        assert!(tables[0].is_none());
-        assert_eq!(tables[1].as_ref().unwrap().id, 0);
-        assert_eq!(tables[1].as_ref().unwrap().comment, "element-later");
-        assert_eq!(tables[2].as_ref().unwrap().id, 7);
-        assert_eq!(tables[2].as_ref().unwrap().comment, "last-element");
+        let tables = &history.multiple_table_infos;
+        assert!(tables.get(0).is_none());
+        let second = tables.get(1).unwrap();
+        assert_eq!(second.read().id, 0);
+        assert_eq!(second.read().comment, "element-later");
+        let third = tables.get(2).unwrap();
+        assert_eq!(third.read().id, 7);
+        assert_eq!(third.read().comment, "last-element");
         assert_eq!(job.row_count, 40);
 
         job.decode(br#"{"binlog":{"DBInfo":{"Deprecated":null,"collate":"after-null"}}}"#)
@@ -1462,6 +1458,7 @@ mod tests {
                 .db_info
                 .as_ref()
                 .unwrap()
+                .read()
                 .collate,
             "after-null"
         );
@@ -1472,8 +1469,130 @@ mod tests {
         assert_eq!(history.schema_version, 10);
         assert!(history.db_info.is_none());
         assert!(history.table_info.is_none());
-        assert!(history.multiple_table_infos.is_none());
+        assert!(!history.multiple_table_infos.is_allocated());
         assert_eq!(history.finished_ts, 30);
+    }
+
+    #[test]
+    fn history_finish_methods_preserve_go_pointer_and_outer_slice_identity() {
+        let first = GoShared::new(TableInfo {
+            id: 1,
+            ..Default::default()
+        });
+        let last = GoShared::new(TableInfo {
+            id: 2,
+            ..Default::default()
+        });
+        let caller =
+            GoSharedPointerSlice::from_handles(vec![Some(first.clone()), None, Some(last.clone())]);
+        let mut argument_header = caller.clone();
+        let mut job = Job {
+            binlog_info: Some(HistoryInfo::default()),
+            ..Default::default()
+        };
+        job.finish_multiple_table_job(JobState::DONE, SchemaState::PUBLIC, 10, &argument_header);
+        let history = job.binlog_info.as_ref().unwrap();
+        assert!(history.multiple_table_infos.backing_ptr_eq(&caller));
+        argument_header.clear();
+        assert_eq!(argument_header.len(), 0);
+        assert_eq!(history.multiple_table_infos.len(), 3);
+        assert!(history.table_info.as_ref().unwrap().ptr_eq(&last));
+        last.write().id = 9;
+        assert_eq!(history.table_info.as_ref().unwrap().read().id, 9);
+        assert_eq!(history.multiple_table_infos.get(2).unwrap().read().id, 9);
+
+        let replacement = GoShared::new(TableInfo {
+            id: 11,
+            ..Default::default()
+        });
+        caller.set(0, Some(replacement.clone()));
+        assert!(history
+            .multiple_table_infos
+            .get(0)
+            .unwrap()
+            .ptr_eq(&replacement));
+
+        let mut copied = HistoryInfo::default();
+        copied.set_table_infos(11, &caller);
+        assert!(!copied.multiple_table_infos.backing_ptr_eq(&caller));
+        assert!(copied.multiple_table_infos.get(2).unwrap().ptr_eq(&last));
+        caller.set(2, None);
+        assert!(copied.multiple_table_infos.get(2).is_some());
+
+        let mut nullable = Job {
+            binlog_info: Some(HistoryInfo::default()),
+            ..Default::default()
+        };
+        let single = GoShared::new(TableInfo {
+            id: 12,
+            ..Default::default()
+        });
+        nullable.finish_table_job(
+            JobState::DONE,
+            SchemaState::PUBLIC,
+            12,
+            Some(single.clone()),
+        );
+        assert!(nullable
+            .binlog_info
+            .as_ref()
+            .unwrap()
+            .table_info
+            .as_ref()
+            .unwrap()
+            .ptr_eq(&single));
+        nullable.finish_table_job(JobState::DONE, SchemaState::PUBLIC, 12, None);
+        assert!(nullable.binlog_info.as_ref().unwrap().table_info.is_none());
+
+        let database = GoShared::new(DBInfo {
+            id: 14,
+            ..Default::default()
+        });
+        nullable.finish_db_job(
+            JobState::DONE,
+            SchemaState::PUBLIC,
+            14,
+            Some(database.clone()),
+        );
+        assert!(nullable
+            .binlog_info
+            .as_ref()
+            .unwrap()
+            .db_info
+            .as_ref()
+            .unwrap()
+            .ptr_eq(&database));
+
+        let nil_last = GoSharedPointerSlice::from_nullable(vec![None]);
+        nullable.finish_multiple_table_job(JobState::DONE, SchemaState::PUBLIC, 15, &nil_last);
+        assert!(nullable.binlog_info.as_ref().unwrap().table_info.is_none());
+
+        let empty = GoSharedPointerSlice::from_nullable(Vec::new());
+        let stale = GoShared::new(TableInfo {
+            id: 99,
+            ..Default::default()
+        });
+        let mut empty_job = Job {
+            binlog_info: Some(HistoryInfo {
+                table_info: Some(stale.clone()),
+                multiple_table_infos: GoSharedPointerSlice::from_nullable(vec![Some(
+                    TableInfo::default(),
+                )]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            empty_job.finish_multiple_table_job(JobState::DONE, SchemaState::PUBLIC, 13, &empty);
+        }))
+        .is_err());
+        assert_eq!(empty_job.state, JobState::DONE);
+        assert_eq!(empty_job.schema_state, SchemaState::PUBLIC);
+        let history = empty_job.binlog_info.as_ref().unwrap();
+        assert_eq!(history.schema_version, 13);
+        assert!(history.multiple_table_infos.is_allocated());
+        assert!(history.multiple_table_infos.is_empty());
+        assert!(history.table_info.as_ref().unwrap().ptr_eq(&stale));
     }
 
     #[test]

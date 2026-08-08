@@ -20,9 +20,10 @@ use crate::job::{
     TimeZoneLocation, TraceInfo,
 };
 use crate::serde_helpers::{
-    go_json_field_matches, ignore_unknown, impl_go_json_merge_object, FatalValueSeed,
-    NullDefaultSeed, NullNoopSeed, OptionBoxMergeSeed, OptionBytesSeed, OptionMergeSeed,
-    OptionPointerSliceSeed, OptionStringMapMergeSeed,
+    go_json_field_matches, ignore_unknown, impl_go_json_deserialize, impl_go_json_merge_object,
+    FatalSeed, FatalValueSeed, NullDefaultSeed, NullNoopSeed, OptionBytesSeed, OptionMergeSeed,
+    OptionPointerSliceSeed, OptionSharedMergeSeed, OptionStringMapMergeSeed,
+    SharedPointerSliceSeed, ValueMergeSeed,
 };
 use crate::table_info::TableInfo;
 
@@ -134,7 +135,7 @@ impl_go_json_merge_object!(TableInfo, destination, map, key, {
     if go_json_field_matches(&key, "id") {
         map.next_value_seed(NullNoopSeed(&mut destination.id))?;
     } else if go_json_field_matches(&key, "name") {
-        map.next_value_seed(NullNoopSeed(&mut destination.name))?;
+        map.next_value_seed(FatalSeed(ValueMergeSeed(&mut destination.name)))?;
     } else if go_json_field_matches(&key, "charset") {
         map.next_value_seed(NullNoopSeed(&mut destination.charset))?;
     } else if go_json_field_matches(&key, "collate") {
@@ -242,19 +243,20 @@ impl_go_json_merge_object!(HistoryInfo, destination, map, key, {
     if go_json_field_matches(&key, "SchemaVersion") {
         map.next_value_seed(NullNoopSeed(&mut destination.schema_version))?;
     } else if go_json_field_matches(&key, "DBInfo") {
-        map.next_value_seed(OptionBoxMergeSeed(&mut destination.db_info))?;
+        map.next_value_seed(OptionSharedMergeSeed(&mut destination.db_info))?;
     } else if go_json_field_matches(&key, "TableInfo") {
-        map.next_value_seed(OptionBoxMergeSeed(&mut destination.table_info))?;
+        map.next_value_seed(OptionSharedMergeSeed(&mut destination.table_info))?;
     } else if go_json_field_matches(&key, "FinishedTS") {
         map.next_value_seed(NullNoopSeed(&mut destination.finished_ts))?;
     } else if go_json_field_matches(&key, "MultipleTableInfos") {
-        map.next_value_seed(OptionPointerSliceSeed(
+        map.next_value_seed(SharedPointerSliceSeed(
             &mut destination.multiple_table_infos,
         ))?;
     } else {
         ignore_unknown(&mut map)?;
     }
 });
+impl_go_json_deserialize!(HistoryInfo);
 
 impl_go_json_merge_object!(Job, destination, map, key, {
     if go_json_field_matches(&key, "id") {

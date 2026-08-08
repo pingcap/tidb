@@ -26,6 +26,8 @@ use serde::de::{DeserializeSeed, IgnoredAny, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::value::RawValue;
 
+use crate::go_runtime::{GoShared, GoSharedPointerSlice};
+
 /// An owned Go slice of non-pointer values with nil/allocation identity.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct GoValueSlice<T>(Option<Vec<T>>);
@@ -968,6 +970,56 @@ where
     }
 }
 
+/// Deserializes a shared Go pointer into its existing allocation. Null clears
+/// the pointer; a non-null object mutates the shared pointee so every alias
+/// observes the same partial-state and successful updates.
+pub(crate) struct OptionSharedMergeSeed<'a, T>(pub(crate) &'a mut Option<GoShared<T>>);
+
+impl<'de, T> DeserializeSeed<'de> for OptionSharedMergeSeed<'_, T>
+where
+    T: Default + GoJsonMerge,
+{
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct SharedMergeVisitor<'a, T>(&'a mut Option<GoShared<T>>);
+
+        impl<'de, T> Visitor<'de> for SharedMergeVisitor<'_, T>
+        where
+            T: Default + GoJsonMerge,
+        {
+            type Value = ();
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("null or a shared JSON object")
+            }
+
+            fn visit_none<E>(self) -> Result<Self::Value, E> {
+                *self.0 = None;
+                Ok(())
+            }
+
+            fn visit_unit<E>(self) -> Result<Self::Value, E> {
+                *self.0 = None;
+                Ok(())
+            }
+
+            fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                let pointer = self.0.get_or_insert_with(|| GoShared::new(T::default()));
+                pointer.write().go_json_merge(deserializer)
+            }
+        }
+
+        deserializer.deserialize_option(SharedMergeVisitor(self.0))
+    }
+}
+
 /// Deserializes a scalar pointer into its existing allocation. A non-null
 /// invalid value allocates a zero pointee before returning the recoverable
 /// type error, matching encoding/json's pointer walk.
@@ -1095,6 +1147,90 @@ where
         }
 
         deserializer.deserialize_option(PointerSliceVisitor(self.0))
+    }
+}
+
+/// Replaces a Go slice of shared nullable pointers while retaining existing
+/// pointee identity for reused slots and preserving shared outer backing-array
+/// writes when the existing capacity is sufficient.
+pub(crate) struct SharedPointerSliceSeed<'a, T>(pub(crate) &'a mut GoSharedPointerSlice<T>);
+
+impl<'de, T> DeserializeSeed<'de> for SharedPointerSliceSeed<'_, T>
+where
+    T: Default + GoJsonMerge,
+{
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct SharedPointerSliceVisitor<'a, T>(&'a mut GoSharedPointerSlice<T>);
+
+        impl<'de, T> Visitor<'de> for SharedPointerSliceVisitor<'_, T>
+        where
+            T: Default + GoJsonMerge,
+        {
+            type Value = ();
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("null or an array of shared nullable JSON objects")
+            }
+
+            fn visit_none<E>(self) -> Result<Self::Value, E> {
+                *self.0 = GoSharedPointerSlice::default();
+                Ok(())
+            }
+
+            fn visit_unit<E>(self) -> Result<Self::Value, E> {
+                *self.0 = GoSharedPointerSlice::default();
+                Ok(())
+            }
+
+            fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                let RawArrayMembers(elements) = RawArrayMembers::deserialize(deserializer)?;
+                let mut first_error = None;
+                let decoded_len = elements.len();
+                for (index, raw) in elements.into_iter().enumerate() {
+                    // Go exposes/reuses the slot before decoding the element.
+                    // That preserves the old len on a fatal return, reaches
+                    // initialized pointers hidden between len and cap, and
+                    // writes the old backing prefix before a later grow.
+                    self.0.prepare_decode_slot(index);
+                    if raw.get() == "null" {
+                        self.0.set_decode_slot(index, None);
+                        continue;
+                    }
+                    let pointer = self.0.decode_slot(index).unwrap_or_else(|| {
+                        let pointer = GoShared::new(T::default());
+                        self.0.set_decode_slot(index, Some(pointer.clone()));
+                        pointer
+                    });
+                    let mut element = serde_json::Deserializer::from_str(raw.get());
+                    let result = pointer
+                        .write()
+                        .go_json_merge(&mut element)
+                        .and_then(|()| element.end());
+                    if let Err(error) = result {
+                        if is_fatal_json_error(&error) {
+                            return Err(serde::de::Error::custom(error));
+                        }
+                        first_error.get_or_insert_with(|| error.to_string());
+                        continue;
+                    }
+                }
+                self.0.finish_decode(decoded_len);
+                if let Some(error) = first_error {
+                    return Err(serde::de::Error::custom(error));
+                }
+                Ok(())
+            }
+        }
+
+        deserializer.deserialize_option(SharedPointerSliceVisitor(self.0))
     }
 }
 

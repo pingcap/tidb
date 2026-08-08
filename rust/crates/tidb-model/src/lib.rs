@@ -27,6 +27,7 @@ pub mod engine_attribute;
 pub mod flags;
 pub mod go_duration;
 pub mod go_runtime;
+pub mod history;
 pub mod index;
 pub mod job;
 pub mod job_args;
