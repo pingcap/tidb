@@ -63,28 +63,31 @@ type DistSQLContext struct {
 	TiFlashQuerySpillRatio               float64
 	TiFlashHashJoinVersion               string
 
-	DistSQLConcurrency            int
-	ReplicaReadType               kv.ReplicaReadType
-	WeakConsistency               bool
-	RCCheckTS                     bool
-	NotFillCache                  bool
-	TaskID                        uint64
-	Priority                      mysql.PriorityEnum
-	ResourceGroupTagger           *kv.ResourceGroupTagBuilder
-	EnablePaging                  bool
-	MinPagingSize                 int
-	MaxPagingSize                 int
-	PagingSizeBytes               int
-	RequestSourceType             string
-	ExplicitRequestSourceType     string
-	StoreBatchSize                int
-	ResourceGroupName             string
-	LoadBasedReplicaReadThreshold time.Duration
-	RunawayChecker                resourcegroup.RunawayChecker
-	RUConsumptionReporter         resourcegroup.ConsumptionReporter
-	TiKVClientReadTimeout         uint64
-	MaxExecutionTime              uint64
-	MaxKeysRead                   uint64
+	DistSQLConcurrency int
+	// SkipKeepOrderScanConcurrencyDowngrade, when true, keeps a keep-order simple-scan
+	// request at DistSQLConcurrency instead of downgrading it to 2 in RequestBuilder.Build.
+	SkipKeepOrderScanConcurrencyDowngrade bool
+	ReplicaReadType                       kv.ReplicaReadType
+	WeakConsistency                       bool
+	RCCheckTS                             bool
+	NotFillCache                          bool
+	TaskID                                uint64
+	Priority                              mysql.PriorityEnum
+	ResourceGroupTagger                   *kv.ResourceGroupTagBuilder
+	EnablePaging                          bool
+	MinPagingSize                         int
+	MaxPagingSize                         int
+	PagingSizeBytes                       int
+	RequestSourceType                     string
+	ExplicitRequestSourceType             string
+	StoreBatchSize                        int
+	ResourceGroupName                     string
+	LoadBasedReplicaReadThreshold         time.Duration
+	RunawayChecker                        resourcegroup.RunawayChecker
+	RUConsumptionReporter                 resourcegroup.ConsumptionReporter
+	TiKVClientReadTimeout                 uint64
+	MaxExecutionTime                      uint64
+	MaxKeysRead                           uint64
 	// MaxKeysReadCounter, when non-nil, is the shared atomic accumulator used by
 	// copIterator to enforce a statement-wide max_keys_read budget across all
 	// coprocessor iterators belonging to the same statement. nil when MaxKeysRead == 0.
