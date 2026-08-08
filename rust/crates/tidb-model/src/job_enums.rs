@@ -21,7 +21,20 @@ use std::sync::atomic::{AtomicI64, Ordering};
 /// Go `JobState` (an `int32`): the state of a DDL job. A newtype over `i32`
 /// so any stored value round-trips; [`Display`](std::fmt::Display) yields
 /// `"none"` for the zero/unknown value, matching Go's `switch` default.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+#[serde(transparent)]
 pub struct JobState(pub i32);
 
 impl JobState {
@@ -140,8 +153,39 @@ impl std::fmt::Display for JobState {
     }
 }
 
+/// Go `StrToJobState`. Matching is deliberately case-sensitive.
+#[must_use]
+pub fn str_to_job_state(state: &str) -> JobState {
+    match state {
+        "running" => JobState::RUNNING,
+        "rollingback" => JobState::ROLLINGBACK,
+        "rollback done" => JobState::ROLLBACK_DONE,
+        "done" => JobState::DONE,
+        "cancelled" => JobState::CANCELLED,
+        "cancelling" => JobState::CANCELLING,
+        "synced" => JobState::SYNCED,
+        "queueing" => JobState::QUEUEING,
+        "paused" => JobState::PAUSED,
+        "pausing" => JobState::PAUSING,
+        _ => JobState::NONE,
+    }
+}
+
 /// Go `JobVersion` (an `int64`): the storage version of a DDL job.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+#[serde(transparent)]
 pub struct JobVersion(pub i64);
 
 impl JobVersion {
@@ -162,7 +206,8 @@ impl std::fmt::Display for JobVersion {
 }
 
 /// Go's `jobVerInUse`: the DDL-job version new jobs use on this node.
-static JOB_VER_IN_USE: AtomicI64 = AtomicI64::new(0);
+// Go initializes classic TiDB to v1 and only selects v2 in NextGen mode.
+static JOB_VER_IN_USE: AtomicI64 = AtomicI64::new(JobVersion::V1.0);
 
 /// Go `SetJobVerInUse`.
 pub fn set_job_ver_in_use(ver: JobVersion) {
@@ -237,6 +282,9 @@ mod tests {
         assert_eq!(JobState::QUEUEING.to_string(), "queueing");
         assert_eq!(JobState(123).to_string(), "none");
         assert_eq!(JobState::default(), JobState::NONE);
+        assert_eq!(str_to_job_state("rollback done"), JobState::ROLLBACK_DONE);
+        assert_eq!(str_to_job_state("Running"), JobState::NONE);
+        assert_eq!(str_to_job_state("unknown"), JobState::NONE);
     }
 
     #[test]
