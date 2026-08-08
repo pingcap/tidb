@@ -18,8 +18,10 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
+	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/stretchr/testify/require"
 )
 
@@ -82,4 +84,74 @@ func TestCloneNodesForGreedyStartIsolation(t *testing.T) {
 	cloned[0].p = logicalop.LogicalTableDual{RowCount: 1}.Init(ctx, 0)
 	require.Nil(t, original[0].p)
 	require.NotNil(t, cloned[0].p)
+}
+
+// TestMakeJoinWithDetectorDeadEnd verifies that makeJoinWithDetector
+// returns (nil, nil) when two nodes have no connecting edge — neither
+// a real join edge nor a valid cartesian fallback.
+// Returning an error in this case would incorrectly abort the caller's
+// plan construction, discarding partial results already computed by the
+// earlier optimization phase.
+func TestMakeJoinWithDetectorDeadEnd(t *testing.T) {
+	detector := &ConflictDetector{
+		allInnerJoin:  false,
+		innerEdges:    []*edge{},
+		nonInnerEdges: []*edge{},
+	}
+
+	left := &Node{
+		bitSet:    intset.NewFastIntSet(0),
+		usedEdges: map[uint64]struct{}{},
+	}
+	right := &Node{
+		bitSet:    intset.NewFastIntSet(1),
+		usedEdges: map[uint64]struct{}{},
+	}
+
+	result, err := makeJoinWithDetector(detector, left, right, nil)
+	require.NoError(t, err,
+		"makeJoinWithDetector must not return an error when fragments can't connect")
+	require.Nil(t, result,
+		"makeJoinWithDetector must return nil result when no connecting edge exists and allInnerJoin=false")
+}
+
+// TestMakeBushyTreeDeadEnd verifies that makeBushyTree returns (nil, nil)
+// when forest fragments cannot be pairwise stitched — real edges do not span
+// the current subset S and cartesian fallback is disabled by allInnerJoin=false.
+func TestMakeBushyTreeDeadEnd(t *testing.T) {
+	ctx := coretestsdk.MockContext()
+	t.Cleanup(func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	})
+
+	detector := &ConflictDetector{
+		allInnerJoin: false,
+		innerEdges: []*edge{
+			{tes: intset.NewFastIntSet(0, 1), idx: 0, joinType: base.InnerJoin, skipRules: true},
+			{
+				tes:           intset.NewFastIntSet(0, 1, 2, 3),
+				idx:           2,
+				joinType:      base.InnerJoin,
+				skipRules:     true,
+				leftVertexes:  intset.NewFastIntSet(0, 1),
+				rightVertexes: intset.NewFastIntSet(2, 3),
+			},
+		},
+		nonInnerEdges: []*edge{
+			{tes: intset.NewFastIntSet(2, 3), idx: 1, joinType: base.LeftOuterJoin, skipRules: true,
+				leftVertexes: intset.NewFastIntSet(2), rightVertexes: intset.NewFastIntSet(3)},
+		},
+	}
+
+	forest := []*Node{
+		{bitSet: intset.NewFastIntSet(2, 3), usedEdges: map[uint64]struct{}{1: {}}},
+		{bitSet: intset.NewFastIntSet(0), usedEdges: map[uint64]struct{}{}},
+		{bitSet: intset.NewFastIntSet(1), usedEdges: map[uint64]struct{}{}},
+	}
+
+	result, err := makeBushyTree(ctx, detector, forest, nil, false)
+	require.NoError(t, err,
+		"makeBushyTree must not return an error when forest fragments can't connect")
+	require.Nil(t, result,
+		"makeBushyTree must return nil when forest fragments have a dead end")
 }

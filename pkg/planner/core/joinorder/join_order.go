@@ -945,7 +945,7 @@ func makeJoinWithDetector(detector *ConflictDetector, left, right *Node, vertexH
 	if !checkResult.Connected() {
 		checkResult = detector.TryCreateCartesianCheckResult(left, right)
 		if checkResult == nil {
-			return nil, errors.New("failed to construct bushy tree: no valid join edge found")
+			return nil, nil
 		}
 	}
 
@@ -987,6 +987,9 @@ func makeBushyTree(ctx base.PlanContext, detector *ConflictDetector, cartesianNo
 			}
 			if err != nil {
 				return nil, err
+			}
+			if newJoin == nil {
+				return nil, nil
 			}
 			iterNodes = append(iterNodes, newJoin)
 		}
