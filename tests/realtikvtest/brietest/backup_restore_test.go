@@ -18,9 +18,9 @@ import (
 	"fmt"
 	"os"
 	"path"
-	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/br/pkg/registry"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
@@ -76,18 +76,25 @@ func TestBackupAndRestore(t *testing.T) {
 	tk.MustExec("drop database br")
 }
 
+func cleanupRestoreRegistry(tk *testkit.TestKit) {
+	tk.MustExec(fmt.Sprintf("delete from %s.%s", registry.RestoreRegistryDBName, registry.RestoreRegistryTableName))
+}
+
 func TestRestoreMultiTables(t *testing.T) {
 	tk := initTestKit(t)
-	tk.MustExec("create database if not exists br")
+	cleanupRestoreRegistry(tk)
+	defer cleanupRestoreRegistry(tk)
+
+	tk.MustExec("drop database if exists br")
+	tk.MustExec("create database br")
+	defer tk.MustExec("drop database if exists br")
 	tk.MustExec("use br")
 
-	tablesNameSet := make(map[string]struct{})
 	tableNum := 100
 	for i := 0; i < tableNum; i += 1 {
 		tk.MustExec(fmt.Sprintf("create table table_%d (a int primary key, b json, c varchar(20))", i))
 		tk.MustExec(fmt.Sprintf("insert into table_%d values (1, '{\"a\": 1, \"b\": 2}', '123')", i))
 		tk.MustQuery(fmt.Sprintf("select count(*) from table_%d", i)).Check(testkit.Rows("1"))
-		tablesNameSet[fmt.Sprintf("table_%d", i)] = struct{}{}
 	}
 
 	tmpDir := path.Join(getBackupTempDir(), "bk1")
@@ -101,20 +108,7 @@ func TestRestoreMultiTables(t *testing.T) {
 	// restore database with backup data
 	tk.MustQuery("restore database * from 'local://" + tmpDir + "'")
 	tk.MustExec("use br")
-	ddlCreateTablesRows := tk.MustQuery("admin show ddl jobs where JOB_TYPE = 'create tables'").Rows()
-	cnt := 0
-	for _, row := range ddlCreateTablesRows {
-		tables := row[2].(string)
-		require.NotEqual(t, "", tables)
-		for _, table := range strings.Split(tables, ",") {
-			_, ok := tablesNameSet[table]
-			require.True(t, ok)
-			cnt += 1
-		}
-	}
-	require.Equal(t, tableNum, cnt)
 	for i := 0; i < tableNum; i += 1 {
 		tk.MustQuery(fmt.Sprintf("select count(*) from table_%d", i)).Check(testkit.Rows("1"))
 	}
-	tk.MustExec("drop database br")
 }

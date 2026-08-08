@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/util/dbutil"
 	"go.uber.org/zap"
 )
 
@@ -189,6 +190,11 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 		for _, tblInfo := range tables {
 			rules := append(getPartitionRuleIDs(jobCtx.store.GetCodec(), job.SchemaName, tblInfo), label.NewRuleID(jobCtx.store.GetCodec(), job.SchemaName, tblInfo.Name.L, ""))
 			ruleIDs = append(ruleIDs, rules...)
+
+			if err := dbutil.CheckTableModeIsNormal(tblInfo.Name, tblInfo.Mode); err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
 		}
 		patch := label.NewRulePatch([]*label.Rule{}, ruleIDs)
 		err = infosync.UpdateLabelRules(context.TODO(), patch)
