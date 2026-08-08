@@ -34,12 +34,17 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::de::{DeserializeSeed, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
 use tidb_ast::CiString;
-use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags};
+use tidb_datatype::{
+    FieldType, FieldTypeCode, FieldTypeFlags, ERR_INVALID_DEFAULT, STRICT_INTEGER_DISPLAY_WIDTH,
+};
+use tidb_error::mysql::{errname, FormatArg};
+use tidb_error::terror::TerrorError;
 
 use crate::schema_state::SchemaState;
 use crate::serde_helpers::{
     deserialize_go_object, go_json_field_matches, ignore_unknown, impl_go_json_deserialize,
-    impl_go_json_merge_object, NullNoopSeed, OptionBytesSeed, OptionMergeSeed, OptionScalarSeed,
+    impl_go_json_merge_object, FatalSeed, NullNoopSeed, OptionBytesSeed, OptionMergeSeed,
+    OptionScalarSeed, ValueMergeSeed,
 };
 use crate::table_info::TableInfo;
 
@@ -323,8 +328,37 @@ impl ColumnDefaultValue {
 
 // Go's `any` marshals as the bare JSON value, so this enum is written
 // untagged. A Go string that is not valid UTF-8 is emitted by `encoding/json`
-// with each invalid byte replaced by U+FFFD, which is exactly what the lossy
-// conversion does here.
+// with each invalid byte replaced by U+FFFD. Rust's standard lossy conversion
+// can consume a whole malformed subsequence for one replacement, while Go's
+// `utf8.DecodeRuneInString` consumes exactly one invalid byte at a time.
+fn go_json_string_fragment(bytes: &[u8]) -> String {
+    let mut output = String::with_capacity(bytes.len() + 2);
+    output.push('"');
+    let mut remaining = bytes;
+    loop {
+        match std::str::from_utf8(remaining) {
+            Ok(valid) => {
+                let encoded = crate::serde_helpers::to_go_json(&valid)
+                    .expect("a Rust string is valid Go JSON");
+                output.push_str(&encoded[1..encoded.len() - 1]);
+                output.push('"');
+                return output;
+            }
+            Err(error) => {
+                let valid_length = error.valid_up_to();
+                // SAFETY is avoided deliberately: `valid_up_to` identifies a
+                // prefix that `from_utf8` has already validated.
+                let valid = std::str::from_utf8(&remaining[..valid_length]).unwrap();
+                let encoded = crate::serde_helpers::to_go_json(&valid)
+                    .expect("a Rust string is valid Go JSON");
+                output.push_str(&encoded[1..encoded.len() - 1]);
+                output.push_str(r"\ufffd");
+                remaining = &remaining[valid_length + 1..];
+            }
+        }
+    }
+}
+
 impl Serialize for ColumnDefaultValue {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self {
@@ -337,7 +371,9 @@ impl Serialize for ColumnDefaultValue {
             }
             ColumnDefaultValue::Bool(v) => serializer.serialize_bool(*v),
             ColumnDefaultValue::Str(bytes) => {
-                serializer.serialize_str(&String::from_utf8_lossy(bytes))
+                serde_json::value::RawValue::from_string(go_json_string_fragment(bytes))
+                    .map_err(serde::ser::Error::custom)?
+                    .serialize(serializer)
             }
             ColumnDefaultValue::Array(values) => values.serialize(serializer),
             ColumnDefaultValue::Object(values) => values.serialize(serializer),
@@ -409,19 +445,6 @@ impl<'de> Deserialize<'de> for ColumnDefaultValue {
         deserializer.deserialize_any(AnyVisitor)
     }
 }
-
-/// The error Go raises as `types.ErrInvalidDefault` from a BIT column's
-/// default-value setter.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct InvalidDefaultError(pub String);
-
-impl std::fmt::Display for InvalidDefaultError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Invalid default value for '{}'", self.0)
-    }
-}
-
-impl std::error::Error for InvalidDefaultError {}
 
 /// Go's zero-value `types.FieldType`, i.e. what Go produces for a missing
 /// `"type"` key. Spelled as the empty JSON object so it stays defined by the
@@ -520,7 +543,7 @@ impl_go_json_merge_object!(ColumnInfo, destination, map, key, {
     if go_json_field_matches(&key, "id") {
         map.next_value_seed(NullNoopSeed(&mut destination.id))?;
     } else if go_json_field_matches(&key, "name") {
-        map.next_value_seed(NullNoopSeed(&mut destination.name))?;
+        map.next_value_seed(FatalSeed(ValueMergeSeed(&mut destination.name)))?;
     } else if go_json_field_matches(&key, "offset") {
         map.next_value_seed(NullNoopSeed(&mut destination.offset))?;
     } else if go_json_field_matches(&key, "origin_default") {
@@ -540,9 +563,11 @@ impl_go_json_merge_object!(ColumnInfo, destination, map, key, {
     } else if go_json_field_matches(&key, "dependences") {
         map.next_value_seed(GoStringSetSeed(&mut destination.dependences))?;
     } else if go_json_field_matches(&key, "type") {
-        map.next_value_seed(NullNoopSeed(&mut destination.field_type))?;
+        map.next_value_seed(FatalSeed(NullNoopSeed(&mut destination.field_type)))?;
     } else if go_json_field_matches(&key, "changing_type") {
-        map.next_value_seed(OptionScalarSeed(&mut destination.changing_field_type))?;
+        map.next_value_seed(FatalSeed(OptionScalarSeed(
+            &mut destination.changing_field_type,
+        )))?;
     } else if go_json_field_matches(&key, "state") {
         map.next_value_seed(NullNoopSeed(&mut destination.state))?;
     } else if go_json_field_matches(&key, "comment") {
@@ -623,8 +648,13 @@ impl ColumnInfo {
     }
     /// Go `GetElems`.
     #[must_use]
-    pub fn get_elems(&self) -> &[String] {
-        self.field_type.elems()
+    pub fn get_elems(&self) -> Option<&[String]> {
+        self.field_type.elems_option()
+    }
+    /// Mutable Go `GetElems` alias: mutations write through to the embedded
+    /// FieldType while retaining nil versus allocated-empty identity.
+    pub fn get_elems_mut(&mut self) -> Option<&mut [String]> {
+        self.field_type.elems_option_mut()
     }
     /// Go `SetType`.
     pub fn set_type(&mut self, code: FieldTypeCode) {
@@ -667,8 +697,8 @@ impl ColumnInfo {
         self.field_type.set_collation_name(collate);
     }
     /// Go `SetElems`.
-    pub fn set_elems(&mut self, elems: Vec<String>) {
-        self.field_type.set_elems(elems);
+    pub fn set_elems(&mut self, elems: Option<Vec<String>>) {
+        self.field_type.set_elems_option(elems);
     }
 
     /// Go `SetOriginDefaultValue`. The value is always stored; for a BIT
@@ -677,7 +707,7 @@ impl ColumnInfo {
     pub fn set_origin_default_value(
         &mut self,
         value: Option<ColumnDefaultValue>,
-    ) -> Result<(), InvalidDefaultError> {
+    ) -> Result<(), TerrorError> {
         self.origin_default_value = value.clone();
         if self.get_type() == FieldTypeCode::Bit {
             return self.store_bit_default(value, /* origin */ true);
@@ -701,7 +731,7 @@ impl ColumnInfo {
     pub fn set_default_value(
         &mut self,
         value: Option<ColumnDefaultValue>,
-    ) -> Result<(), InvalidDefaultError> {
+    ) -> Result<(), TerrorError> {
         self.default_value = value.clone();
         if self.get_type() == FieldTypeCode::Bit {
             return self.store_bit_default(value, /* origin */ false);
@@ -727,7 +757,7 @@ impl ColumnInfo {
         &mut self,
         value: Option<ColumnDefaultValue>,
         origin: bool,
-    ) -> Result<(), InvalidDefaultError> {
+    ) -> Result<(), TerrorError> {
         match value {
             None => Ok(()),
             Some(ColumnDefaultValue::Str(bytes)) => {
@@ -738,22 +768,25 @@ impl ColumnInfo {
                 }
                 Ok(())
             }
-            Some(_) => Err(InvalidDefaultError(self.name.original().to_owned())),
+            Some(_) => {
+                let formatted = ERR_INVALID_DEFAULT.fast_generate(
+                    errname::ErrInvalidDefault.raw,
+                    &[FormatArg::from(self.name.original())],
+                );
+                Err(ERR_INVALID_DEFAULT.generate_with_stack(formatted.message().to_owned()))
+            }
         }
     }
 
     /// Go `GetTypeDesc`: the column type description.
     ///
     /// Go reads the process-wide `TiDBStrictIntegerDisplayWidth` inside
-    /// `FieldType.CompactStr()`; this port takes it as `strict_integer_
-    /// display_width` instead of threading that global.
-    ///
-    /// The text itself is `FieldType::type_desc`, because the `unsigned`/
-    /// `zerofill` rules read only the field type's own flags and the SHOW
-    /// surfaces reach them without a `Column` in hand.
+    /// `FieldType.CompactStr()`. The datatype crate owns the corresponding
+    /// process policy, so callers cannot accidentally format the same column
+    /// under a different node policy.
     #[must_use]
-    pub fn get_type_desc(&self, strict_integer_display_width: bool) -> String {
-        self.field_type.type_desc(strict_integer_display_width)
+    pub fn get_type_desc(&self) -> String {
+        self.field_type.type_desc(STRICT_INTEGER_DISPLAY_WIDTH)
     }
 
     /// Go `IsGenerated`: whether the column is a generated column.
@@ -1005,8 +1038,18 @@ mod tests {
         c.set_type(FieldTypeCode::Bit);
         assert_eq!(c.get_type(), FieldTypeCode::Bit);
 
-        c.set_elems(vec!["a".into(), "b".into()]);
-        assert_eq!(c.get_elems(), &["a".to_string(), "b".to_string()]);
+        assert!(c.get_elems().is_none());
+        c.set_elems(Some(vec!["a".into(), "b".into()]));
+        assert_eq!(
+            c.get_elems(),
+            Some(["a".to_string(), "b".to_string()].as_slice())
+        );
+        c.get_elems_mut().unwrap()[0] = "mutated".to_owned();
+        assert_eq!(c.get_elems().unwrap()[0], "mutated");
+        c.set_elems(Some(Vec::new()));
+        assert_eq!(c.get_elems(), Some(&[] as &[String]));
+        c.set_elems(None);
+        assert!(c.get_elems().is_none());
     }
 
     #[test]
@@ -1060,7 +1103,12 @@ mod tests {
         let err = bit
             .set_default_value(Some(ColumnDefaultValue::Int(1)))
             .unwrap_err();
-        assert!(err.to_string().contains("Invalid default value"));
+        assert_eq!(err.class(), tidb_error::terror::TerrorClass::Types);
+        assert_eq!(err.code().value(), 1067);
+        assert_eq!(err.to_sql_error().code, 1067);
+        assert_eq!(err.to_sql_error().state, "42000");
+        assert_eq!(err.message(), "Invalid default value for 'bit'");
+        assert!(err.stack().is_some());
         // The value was still stored before the error (as in Go).
         assert_eq!(bit.get_default_value(), Some(ColumnDefaultValue::Int(1)));
         bit.set_default_value(Some(rand_bit.clone())).unwrap();
@@ -1072,27 +1120,42 @@ mod tests {
         assert_eq!(null_bit.get_origin_default_value(), None);
     }
 
+    #[test]
+    fn default_string_json_replaces_each_invalid_go_byte() {
+        let truncated = ColumnDefaultValue::Str(vec![0xe2, 0x82]);
+        assert_eq!(
+            serde_json::to_string(&truncated).unwrap(),
+            r#""\ufffd\ufffd""#
+        );
+
+        let mixed = ColumnDefaultValue::Str(vec![b'a', 0xf0, 0x9f, b'b']);
+        assert_eq!(
+            serde_json::to_string(&mixed).unwrap(),
+            r#""a\ufffd\ufffdb""#
+        );
+    }
+
     // Go TestDefaultValue's constructor assertions + the other extra columns.
     #[test]
     fn type_desc_suffixes() {
         // Unsigned int -> " unsigned"; zerofill adds " zerofill".
         let mut c = col("n", FieldTypeCode::Long);
         c.set_flag(u64::from(FieldTypeFlags::UNSIGNED));
-        assert!(c.get_type_desc(true).ends_with(" unsigned"));
+        assert!(c.get_type_desc().ends_with(" unsigned"));
         c.add_flag(u64::from(FieldTypeFlags::ZEROFILL));
-        let d = c.get_type_desc(true);
+        let d = c.get_type_desc();
         assert!(d.contains(" unsigned"));
         assert!(d.ends_with(" zerofill"));
 
         // BIT excludes the unsigned suffix; YEAR excludes both.
         let mut bit = col("b", FieldTypeCode::Bit);
         bit.set_flag(u64::from(FieldTypeFlags::UNSIGNED));
-        assert!(!bit.get_type_desc(true).contains("unsigned"));
+        assert!(!bit.get_type_desc().contains("unsigned"));
         let mut year = col("y", FieldTypeCode::Year);
         year.set_flag(u64::from(
             FieldTypeFlags::UNSIGNED | FieldTypeFlags::ZEROFILL,
         ));
-        let d = year.get_type_desc(true);
+        let d = year.get_type_desc();
         assert!(!d.contains("unsigned"));
         assert!(!d.contains("zerofill"));
     }
@@ -1275,6 +1338,29 @@ mod tests {
         column.go_json_merge(&mut decoder).unwrap();
         assert!(!column.dependences.is_allocated());
         assert!(column.dependences.is_empty());
+
+        column.name = CiString::new("Old");
+        let mut decoder =
+            serde_json::Deserializer::from_str(r#"{"name":{"O":"First"},"NAME":{"L":"folded"}}"#);
+        column.go_json_merge(&mut decoder).unwrap();
+        assert_eq!(column.name.original(), "First");
+        assert_eq!(column.name.lowercase(), "folded");
+
+        let mut decoder =
+            serde_json::Deserializer::from_str(r#"{"name":"Single","comment":"after"}"#);
+        column.go_json_merge(&mut decoder).unwrap();
+        assert_eq!(column.name.original(), "Single");
+        assert_eq!(column.name.lowercase(), "single");
+        assert_eq!(column.comment, "after");
+
+        column.name = serde_json::from_str(r#"{"O":"First","L":"folded"}"#).unwrap();
+        let mut decoder = serde_json::Deserializer::from_str(
+            r#"{"name":{"O":1,"L":"partial"},"comment":"unreached"}"#,
+        );
+        assert!(column.go_json_merge(&mut decoder).is_err());
+        assert_eq!(column.name.original(), "First");
+        assert_eq!(column.name.lowercase(), "partial");
+        assert_eq!(column.comment, "after");
     }
 
     #[test]
