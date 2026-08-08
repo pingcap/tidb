@@ -78,7 +78,8 @@ remaining package census is 2,509 obligations plus the build artifact.
 ## C05: reorganization metadata
 
 - Go: `reorg.go`; direct support in `job_test.go`.
-- Rust: `reorg.rs` and `job.rs` timezone/job-meta leaves.
+- Rust: `reorg.rs`, with the job/timezone domain types in `job.rs` and their
+  persisted object-stream codec in private sibling `job_json.rs`.
 - Rules: states/stages/types, process-default fallback for old zero metadata,
   mutable concurrency/batch/max-speed, captured collation fallback, backfill
   JSON, byte-slice base64, job metadata, and first-resolution-stable cached
@@ -103,7 +104,8 @@ remaining package census is 2,509 obligations plus the build artifact.
 ## C06: DDL jobs
 
 - Go: `job.go`, `job_test.go`.
-- Rust: `action_type.rs`, `job_enums.rs`, `job.rs`, `schema_diff.rs`,
+- Rust: `action_type.rs`, `job_enums.rs`, `job.rs`, private persisted codec
+  sibling `job_json.rs`, `schema_diff.rs`,
   `schema_state.rs`, with `job_args.rs` absorbed unchanged.
 - Rules: all enums/names, the reserved 200..256 action-ID range, classic v1 initialization, lifecycle predicates,
   finish/history updates, row/warning access, v1/v2 raw-argument envelope,

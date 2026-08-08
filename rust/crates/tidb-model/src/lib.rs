@@ -31,6 +31,7 @@ pub mod job_args;
 #[cfg(test)]
 mod job_args_go_inventory;
 pub mod job_enums;
+mod job_json;
 pub mod masking_policy;
 #[cfg(test)]
 mod masking_policy_go_inventory;
