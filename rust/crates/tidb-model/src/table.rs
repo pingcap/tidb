@@ -635,8 +635,10 @@ pub fn get_idx_changing_field_type<'a>(
 /// Go `TableNameInfo`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TableNameInfo {
+    /// Table identifier.
     #[serde(rename = "id", default)]
     pub id: i64,
+    /// Case-preserving table name.
     #[serde(rename = "name", default)]
     pub name: CiString,
 }
@@ -666,9 +668,13 @@ pub struct ReferredFKInfo {
 /// Go `TableItemID`: one statistics load key.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct TableItemID {
+    /// Physical or logical table identifier.
     pub table_id: i64,
+    /// Column or index identifier.
     pub id: i64,
+    /// Whether `id` identifies an index rather than a column.
     pub is_index: bool,
+    /// Runtime load-failure marker excluded from [`Self::key`].
     pub is_sync_load_failed: bool,
 }
 
@@ -684,11 +690,14 @@ impl TableItemID {
 /// Go `StatsLoadItem`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct StatsLoadItem {
+    /// Table/column-or-index load identity.
     pub table_item_id: TableItemID,
+    /// Whether the loader must fetch complete statistics.
     pub full_load: bool,
 }
 
 impl StatsLoadItem {
+    /// Returns the stable load key including the full-load flag.
     #[must_use]
     pub fn key(self) -> String {
         format!("{}#{}", self.table_item_id.key(), self.full_load)
@@ -1042,6 +1051,10 @@ pub const DEFAULT_NEGATIVE_SEQUENCE_MIN_VALUE: i64 = -9_223_372_036_854_775_807;
 mod tests {
     use super::*;
 
+    fn go_json<T: serde::Serialize>(value: &T) -> String {
+        String::from_utf8(crate::serde_helpers::to_go_json(value).unwrap()).unwrap()
+    }
+
     // The five `TableInfo` sub-struct enums that used to reject an
     // unrecognised ordinal outright. Go declares all five as plain
     // `int`/`byte`, so a document written by a newer TiDB decodes there and
@@ -1058,19 +1071,19 @@ mod tests {
         assert_eq!(decoded.algorithm.sql(), "UNDEFINED");
         assert_eq!(decoded.security.sql(), "DEFINER");
         assert_eq!(decoded.check_option.sql(), "CASCADED");
-        assert_eq!(serde_json::to_string(&decoded).unwrap(), view);
+        assert_eq!(go_json(&decoded), view);
 
-        let stats = r#"{"auto_recalc":true,"column_choice":4,"column_list":[],"sample_num":0,"sample_rate":0.0,"buckets":0,"topn":0,"concurrency":0}"#;
+        let stats = r#"{"auto_recalc":true,"column_choice":4,"column_list":[],"sample_num":0,"sample_rate":0,"buckets":0,"topn":0,"concurrency":0}"#;
         let decoded: StatsOptions = serde_json::from_str(stats).unwrap();
         assert_eq!(decoded.column_choice, ColumnChoice(4));
         assert_eq!(decoded.column_choice.sql(), "DEFAULT");
-        assert_eq!(serde_json::to_string(&decoded).unwrap(), stats);
+        assert_eq!(go_json(&decoded), stats);
 
         let lock = r#"{"Tp":6,"Sessions":null,"State":0,"TS":0}"#;
         let decoded: TableLockInfo = serde_json::from_str(lock).unwrap();
         assert_eq!(decoded.tp, TableLockType(6));
         assert_eq!(decoded.tp.sql(), "");
-        assert_eq!(serde_json::to_string(&decoded).unwrap(), lock);
+        assert_eq!(go_json(&decoded), lock);
     }
 
     #[test]
@@ -1296,11 +1309,8 @@ mod tests {
     // Every json tag from pkg/meta/model/table.go, in Go's field order. The
     // expected bytes were captured from encoding/json on the same values.
     //
-    // Two encoder-level (not field-level) differences remain against Go, and
-    // both belong to whatever serializer writes the final bytes, not to these
-    // structs: encoding/json HTML-escapes `<`, `>` and `&` inside strings, and
-    // it prints an integral float as `0` where serde_json prints `0.0`.
-    // Values written by either side parse identically on the other.
+    // The assertions use the crate's Go-compatible formatter so HTML-sensitive
+    // strings and integral floats are pinned in addition to field order/tags.
     #[test]
     fn json_tags_match_go() {
         let view = ViewInfo {
@@ -1316,7 +1326,7 @@ mod tests {
             cols: vec![CiString::new("A")],
         };
         assert_eq!(
-            serde_json::to_string(&view).unwrap(),
+            go_json(&view),
             r#"{"view_algorithm":1,"view_definer":{"Username":"root","Hostname":"%","CurrentUser":false,"AuthUsername":"","AuthHostname":"","AuthPlugin":""},"view_security":1,"view_select":"SELECT 1","view_checkoption":1,"view_cols":[{"O":"A","L":"a"}]}"#
         );
 
@@ -1327,12 +1337,12 @@ mod tests {
             constraint_cols: vec![CiString::new("a")],
             enforced: true,
             in_column: false,
-            expr_string: "a = 1".to_owned(),
+            expr_string: "a < 1 && b > 0".to_owned(),
             state: SchemaState::PUBLIC,
         };
         assert_eq!(
-            serde_json::to_string(&constraint).unwrap(),
-            r#"{"id":1,"constraint_name":{"O":"c1","L":"c1"},"tbl_name":{"O":"t","L":"t"},"constraint_cols":[{"O":"a","L":"a"}],"enforced":true,"in_column":false,"expr_string":"a = 1","state":5}"#
+            go_json(&constraint),
+            r#"{"id":1,"constraint_name":{"O":"c1","L":"c1"},"tbl_name":{"O":"t","L":"t"},"constraint_cols":[{"O":"a","L":"a"}],"enforced":true,"in_column":false,"expr_string":"a \u003c 1 \u0026\u0026 b \u003e 0","state":5}"#
         );
 
         let sequence = SequenceInfo {
@@ -1346,7 +1356,7 @@ mod tests {
             comment: "c".to_owned(),
         };
         assert_eq!(
-            serde_json::to_string(&sequence).unwrap(),
+            go_json(&sequence),
             r#"{"sequence_start":1,"sequence_cache":true,"sequence_cycle":false,"sequence_min_value":1,"sequence_max_value":10,"sequence_increment":1,"sequence_cache_value":1000,"sequence_comment":"c"}"#
         );
 
@@ -1358,7 +1368,7 @@ mod tests {
             job_interval: "1h".to_owned(),
         };
         assert_eq!(
-            serde_json::to_string(&ttl).unwrap(),
+            go_json(&ttl),
             r#"{"column":{"O":"t","L":"t"},"interval_expr":"1","interval_time_unit":4,"enable":true,"job_interval":"1h"}"#
         );
 
@@ -1372,7 +1382,7 @@ mod tests {
             ts: 42,
         };
         assert_eq!(
-            serde_json::to_string(&lock).unwrap(),
+            go_json(&lock),
             r#"{"Tp":4,"Sessions":[{"ServerID":"s","SessionID":7}],"State":2,"TS":42}"#
         );
 
@@ -1383,7 +1393,7 @@ mod tests {
             available_partition_ids: vec![1],
         };
         assert_eq!(
-            serde_json::to_string(&replica).unwrap(),
+            go_json(&replica),
             r#"{"Count":2,"LocationLabels":["z1"],"Available":true,"AvailablePartitionIDs":[1]}"#
         );
 
@@ -1393,7 +1403,7 @@ mod tests {
             xxx_exchange_partition_flag: true,
         };
         assert_eq!(
-            serde_json::to_string(&exchange).unwrap(),
+            go_json(&exchange),
             r#"{"exchange_partition_id":3,"exchange_partition_def_id":4,"exchange_partition_flag":true}"#
         );
     }
@@ -1401,17 +1411,13 @@ mod tests {
     // Go's `omitempty` drops every zero-valued SoftdeleteInfo field.
     #[test]
     fn softdelete_omitempty() {
+        assert_eq!(go_json(&SoftdeleteInfo::default()), "{}");
         assert_eq!(
-            serde_json::to_string(&SoftdeleteInfo::default()).unwrap(),
-            "{}"
-        );
-        assert_eq!(
-            serde_json::to_string(&SoftdeleteInfo {
+            go_json(&SoftdeleteInfo {
                 retention: "1d".to_owned(),
                 job_enable: true,
                 job_interval: String::new(),
-            })
-            .unwrap(),
+            }),
             r#"{"retention":"1d","job_enable":true}"#
         );
     }
@@ -1443,10 +1449,10 @@ mod tests {
     #[test]
     fn stats_options_embedded_window() {
         let without = StatsOptions::new();
-        let encoded = serde_json::to_string(&without).unwrap();
+        let encoded = go_json(&without);
         assert_eq!(
             encoded,
-            r#"{"auto_recalc":true,"column_choice":0,"column_list":[],"sample_num":0,"sample_rate":0.0,"buckets":0,"topn":0,"concurrency":0}"#
+            r#"{"auto_recalc":true,"column_choice":0,"column_list":[],"sample_num":0,"sample_rate":0,"buckets":0,"topn":0,"concurrency":0}"#
         );
         let back: StatsOptions = serde_json::from_str(&encoded).unwrap();
         assert!(back.stats_window_settings.is_none());
@@ -1463,10 +1469,10 @@ mod tests {
             column_list: vec![CiString::new("a")],
             ..StatsOptions::new()
         };
-        let encoded = serde_json::to_string(&with).unwrap();
+        let encoded = go_json(&with);
         assert_eq!(
             encoded,
-            r#"{"window_start":"1970-01-01T00:00:00Z","window_end":"1970-01-01T00:00:00Z","repeat_type":1,"repeat_interval":2,"auto_recalc":true,"column_choice":3,"column_list":[{"O":"a","L":"a"}],"sample_num":0,"sample_rate":0.0,"buckets":0,"topn":0,"concurrency":0}"#
+            r#"{"window_start":"1970-01-01T00:00:00Z","window_end":"1970-01-01T00:00:00Z","repeat_type":1,"repeat_interval":2,"auto_recalc":true,"column_choice":3,"column_list":[{"O":"a","L":"a"}],"sample_num":0,"sample_rate":0,"buckets":0,"topn":0,"concurrency":0}"#
         );
         let back: StatsOptions = serde_json::from_str(&encoded).unwrap();
         assert_eq!(back, with);
