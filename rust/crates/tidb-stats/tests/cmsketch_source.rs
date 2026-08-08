@@ -28,12 +28,13 @@ use tidb_datatype::Datum;
 use tidb_stats::cmsketch::encode_integer_datum_value;
 use tidb_stats::{
     cmsketch_and_topn_from_proto, decode_cmsketch, decode_cmsketch_and_embedded_topn,
-    decode_cmsketch_and_topn, encode_cmsketch_and_topn, encode_cmsketch_without_topn,
+    decode_cmsketch_and_topn, encode_cmsketch_and_topn, encode_cmsketch_without_topn, find_topn,
     get_merged_topn_from_sorted_slice, hash_bytes, merge_topn, merge_topn_and_update_cmsketch,
-    new_cmsketch_and_topn, new_cmsketch_and_topn_with_tie_stabilization, query_value,
-    sort_topn_meta, topn_decoded_string, topn_display_string, topn_meta_compare, CmsSketch,
-    CmsSketchProto, CmsSketchProtoRow, CmsSketchProtoTopN, CodecError, Hash128, MergeError,
-    SharedTopNBytes, TopN, TopNEntry,
+    new_cmsketch_and_topn, new_cmsketch_and_topn_with_tie_stabilization, query_topn, query_value,
+    sort_topn_meta, topn_between_count, topn_decoded_string, topn_display_string, topn_lower_bound,
+    topn_meta_compare, topn_min_count, topn_total_count, CmsSketch, CmsSketchProto,
+    CmsSketchProtoRow, CmsSketchProtoTopN, CodecError, Hash128, MergeError, SharedTopNBytes, TopN,
+    TopNEntry,
 };
 
 fn build_seeded_zipf_sketch(
@@ -906,49 +907,142 @@ fn source_merge_requires_equal_dimensions_and_clone_is_deep() {
 }
 
 #[test]
-fn source_topn_sort_lookup_range_and_clone_shape() {
+fn source_topn_lookup_and_between_count_preserve_nil_and_lower_bound_contract() {
+    assert_eq!(query_topn(None, b"a"), None);
+    assert_eq!(find_topn(None, b"a"), None);
+    assert_eq!(topn_lower_bound(None, b"a"), (0, false));
+    assert_eq!(topn_between_count(None, b"a", b"z"), 0);
+
+    let empty = TopN::new(0);
+    assert_eq!(find_topn(Some(&empty), b"a"), None);
+    assert_eq!(topn_lower_bound(Some(&empty), b"a"), (0, false));
+    assert_eq!(topn_between_count(Some(&empty), b"a", b"z"), 0);
+
+    let mut singleton = TopN::new(1);
+    singleton.append(b"m", 11);
+    assert_eq!(find_topn(Some(&singleton), b"m"), Some(0));
+    assert_eq!(find_topn(Some(&singleton), b"l"), None);
+    assert_eq!(query_topn(Some(&singleton), b"m"), Some(11));
+
+    let mut zero_count = TopN::new(1);
+    zero_count.append(b"q", 0);
+    assert_eq!(query_topn(Some(&zero_count), b"q"), Some(0));
+
     let mut topn = TopN::new(3);
+    topn.append(b"d", 4);
     topn.append(b"b", 2);
-    topn.append(b"a", 4);
-    topn.append(b"c", 8);
+    topn.append(b"f", 8);
     topn.sort();
 
-    assert_eq!(topn.entries()[0].encoded, b"a");
-    assert_eq!(topn.query_bytes(b"b"), Some(2));
-    assert_eq!(topn.query_bytes(b"missing"), None);
-    assert_eq!(topn.lower_bound(b"bb"), 2);
-    assert_eq!(topn.between_count(b"a", b"c"), 6);
-    assert_eq!(topn.total_count(), 14);
-    assert_eq!(topn.min_count(), 2);
+    assert_eq!(find_topn(Some(&topn), b"a"), None);
+    assert_eq!(find_topn(Some(&topn), b"z"), None);
+    assert_eq!(find_topn(Some(&topn), b"c"), None);
+    assert_eq!(find_topn(Some(&topn), b"d"), Some(1));
+    assert_eq!(query_topn(Some(&topn), b"d"), Some(4));
+    assert_eq!(query_topn(Some(&topn), b"missing"), None);
+    assert_eq!(topn_lower_bound(Some(&topn), b"d"), (1, true));
+    assert_eq!(topn_lower_bound(Some(&topn), b"c"), (1, false));
 
-    let clone = topn.clone();
-    topn.append(b"d", 16);
-    assert_eq!(
-        topn.total_count(),
-        14,
-        "sync.Once cache stays stale in production"
-    );
-    assert!(std::panic::catch_unwind(|| topn.assert_cached_counts_current()).is_err());
-    assert_eq!(clone.total_count(), 14);
-    assert_eq!(clone.query_bytes(b"a"), Some(4));
-}
-
-#[test]
-fn source_topn_duplicate_lower_bound_wrap_and_strings_match() {
     let mut duplicates = TopN::new(4);
     duplicates.append(b"a", 1);
     duplicates.append(b"a", 2);
     duplicates.append(b"a", 3);
     duplicates.append(b"b", 4);
-    assert_eq!(duplicates.lower_bound(b"a"), 0);
-    assert_eq!(duplicates.find(b"a"), Some(0));
-    assert_eq!(duplicates.query_bytes(b"a"), Some(1));
+    assert_eq!(topn_lower_bound(Some(&duplicates), b"a"), (0, true));
+    assert_eq!(find_topn(Some(&duplicates), b"a"), Some(0));
+    assert_eq!(query_topn(Some(&duplicates), b"a"), Some(1));
+    assert_eq!(topn_between_count(Some(&duplicates), b"a", b"b"), 6);
+    assert_eq!(topn_between_count(Some(&duplicates), b"b", b"b"), 0);
+    assert_eq!(topn_between_count(Some(&duplicates), b"b", b"a"), 0);
 
     let mut wrapping = TopN::new(2);
     wrapping.append(b"a", u64::MAX);
     wrapping.append(b"b", 1);
-    assert_eq!(wrapping.between_count(b"a", b"c"), 0);
+    assert_eq!(topn_between_count(Some(&wrapping), b"a", b"c"), 0);
+}
 
+#[test]
+fn source_topn_count_cache_preserves_once_wrap_clone_and_intest_order() {
+    fn panic_text(panic: Box<dyn std::any::Any + Send>) -> String {
+        panic.downcast_ref::<&str>().map_or_else(
+            || panic.downcast_ref::<String>().cloned().unwrap_or_default(),
+            |message| (*message).to_owned(),
+        )
+    }
+
+    assert_eq!(topn_total_count(None), 0);
+    assert_eq!(topn_min_count(None), 0);
+    let empty = TopN::new(0);
+    assert_eq!(topn_total_count(Some(&empty)), 0);
+    assert_eq!(topn_min_count(Some(&empty)), 0);
+
+    let mut total_stale = TopN::new(3);
+    total_stale.append(b"a", 4);
+    total_stale.append(b"b", 2);
+    total_stale.append(b"c", 8);
+    assert_eq!(topn_total_count(Some(&total_stale)), 14);
+    assert_eq!(topn_min_count(Some(&total_stale)), 2);
+    total_stale.append(b"d", 16);
+    assert_eq!(topn_total_count(Some(&total_stale)), 14);
+    assert_eq!(topn_min_count(Some(&total_stale)), 2);
+    let total_panic = std::panic::catch_unwind(|| total_stale.assert_cached_counts_current())
+        .expect_err("stale total must fail intest validation");
+    assert!(panic_text(total_panic).contains("totalCount should be equal"));
+
+    let refreshed_clone = total_stale.clone();
+    assert_eq!(topn_total_count(Some(&refreshed_clone)), 30);
+    assert_eq!(topn_min_count(Some(&refreshed_clone)), 2);
+
+    let mut min_stale = TopN::new(2);
+    min_stale.append(b"a", 4);
+    min_stale.append(b"b", 8);
+    assert_eq!(topn_min_count(Some(&min_stale)), 4);
+    assert_eq!(topn_total_count(Some(&min_stale)), 12);
+    min_stale.append(b"c", 1);
+    let min_panic = std::panic::catch_unwind(|| min_stale.assert_cached_counts_current())
+        .expect_err("stale minimum must fail before the total assertion");
+    assert!(panic_text(min_panic).contains("minCount should be equal"));
+
+    let mut direct_empty = TopN::new(0);
+    assert!(std::panic::catch_unwind(|| direct_empty.assert_cached_counts_current()).is_err());
+    direct_empty.append(b"a", 7);
+    direct_empty.assert_cached_counts_current();
+    assert_eq!(topn_total_count(Some(&direct_empty)), 7);
+    assert_eq!(topn_min_count(Some(&direct_empty)), 7);
+
+    let mut wrapping = TopN::new(2);
+    wrapping.append(b"a", u64::MAX);
+    wrapping.append(b"b", 1);
+    assert_eq!(topn_total_count(Some(&wrapping)), 0);
+    assert_eq!(topn_min_count(Some(&wrapping)), 1);
+    wrapping.assert_cached_counts_current();
+}
+
+#[test]
+fn source_test_topn_scale_preserves_factors_truncation_and_rounding_bound() {
+    // The accepted test draws these twenty values from the unseeded package
+    // RNG. Pinning a spread of the same [0, 100000) domain makes the rounding
+    // assertion deterministic without pretending to reproduce that harness.
+    let counts = [
+        0_u64, 1, 2, 3, 7, 11, 31, 97, 255, 1_024, 4_095, 9_999, 12_345, 23_456, 34_567, 45_678,
+        56_789, 67_890, 78_901, 99_999,
+    ];
+    for scale_factor in [0.9999, 1.00001, 1.9999, 4.9999, 5.001, 9.99] {
+        let mut topn = TopN::new(counts.len());
+        let mut sum_count = 0_u64;
+        for count in counts {
+            sum_count = sum_count.wrapping_add(count);
+            topn.append(b"", (count as f64 * scale_factor) as u64);
+        }
+        let scale_count = sum_count as f64 * scale_factor;
+        let delta = (topn_total_count(Some(&topn)) as f64 - scale_count).abs();
+        assert!(delta / scale_count < 0.0001);
+        topn.assert_cached_counts_current();
+    }
+}
+
+#[test]
+fn source_topn_strings_match() {
     let mut display = TopN::new(1);
     display.append(b"ab", 3);
     assert_eq!(display.display_string(), "TopN{length: 1, [([97 98], 3)]}");

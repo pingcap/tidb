@@ -177,9 +177,11 @@ pub use cache_metrics_labels::{
 pub use cmsketch::{
     check_empty_topns, cmsketch_and_topn_from_proto, decode_cmsketch,
     decode_cmsketch_and_embedded_topn, decode_cmsketch_and_topn, decode_topn_rows,
-    encode_cmsketch_and_topn, encode_cmsketch_without_topn, get_merged_topn_from_sorted_slice,
-    merge_topn, merge_topn_and_update_cmsketch, new_cmsketch_and_topn,
-    new_cmsketch_and_topn_with_tie_stabilization, sort_topn_meta, topn_meta_compare, CodecError,
+    encode_cmsketch_and_topn, encode_cmsketch_without_topn, find_topn,
+    get_merged_topn_from_sorted_slice, merge_topn, merge_topn_and_update_cmsketch,
+    new_cmsketch_and_topn, new_cmsketch_and_topn_with_tie_stabilization, query_topn,
+    sort_topn_meta, topn_between_count, topn_lower_bound, topn_meta_compare, topn_min_count,
+    topn_total_count, CodecError,
 };
 pub use cmsketch::{
     hash_bytes, query_value, query_value_with_encoder, topn_decoded_string, topn_display_string,

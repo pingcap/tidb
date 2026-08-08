@@ -793,33 +793,29 @@ impl TopN {
     /// Returns the index of an exact entry, or `None` if absent.
     #[must_use]
     pub fn find(&self, encoded: &[u8]) -> Option<usize> {
-        let index = self.lower_bound(encoded);
-        (index < self.entries.len() && self.resolved_bytes(index) == encoded).then_some(index)
+        find_topn(Some(self), encoded)
     }
 
     /// Returns the exact TopN count, or `None` when the encoded value is not
     /// represented by TopN.
     #[must_use]
     pub fn query_bytes(&self, encoded: &[u8]) -> Option<u64> {
-        self.find(encoded).map(|index| self.entries[index].count)
+        query_topn(Some(self), encoded)
     }
 
     /// Returns the half-open interval count for encoded bytes `[left, right)`.
     #[must_use]
     pub fn between_count(&self, left: &[u8], right: &[u8]) -> u64 {
-        let left_index = self.lower_bound(left);
-        let right_index = self.lower_bound(right);
-        if left_index >= right_index {
-            return 0;
-        }
-        self.entries[left_index..right_index]
-            .iter()
-            .fold(0_u64, |total, entry| total.wrapping_add(entry.count))
+        topn_between_count(Some(self), left, right)
     }
 
     /// Returns the first index whose encoded value is not less than `encoded`.
     #[must_use]
     pub fn lower_bound(&self, encoded: &[u8]) -> usize {
+        self.lower_bound_with_match(encoded).0
+    }
+
+    fn lower_bound_with_match(&self, encoded: &[u8]) -> (usize, bool) {
         let mut left = 0;
         let mut right = self.entries.len();
         while left < right {
@@ -830,57 +826,66 @@ impl TopN {
                 right = middle;
             }
         }
-        left
+        (
+            left,
+            left < self.entries.len() && self.resolved_bytes(left) == encoded,
+        )
     }
 
     /// Returns the sum of all TopN counts.
     #[must_use]
     pub fn total_count(&self) -> u64 {
-        if self.entries.is_empty() {
-            return 0;
-        }
-        self.cached_min_and_total().1
+        topn_total_count(Some(self))
     }
 
     /// Returns the smallest TopN count, or zero for an empty list.
     #[must_use]
     pub fn min_count(&self) -> u64 {
-        if self.entries.is_empty() {
-            return 0;
-        }
-        self.cached_min_and_total().0
+        topn_min_count(Some(self))
     }
 
     /// `intest.InTest` validation: mutation after the once-cache initialized
     /// is a source assertion failure rather than a silently refreshed value.
     pub fn assert_cached_counts_current(&self) {
-        let current = self.calculate_min_and_total();
-        let cached = self.cached_min_and_total();
-        assert_eq!(
-            current.0, cached.0,
-            "minCount should be equal to the calculated minCount"
-        );
-        assert_eq!(
-            current.1, cached.1,
-            "totalCount should be equal to the calculated totalCount"
-        );
+        self.calculate_min_count_and_count(true);
     }
 
-    fn cached_min_and_total(&self) -> (u64, u64) {
+    fn calculate_min_count_and_count(&self, in_test: bool) -> (u64, u64) {
+        if in_test {
+            // Go calculates the current pair before touching sync.Once. An
+            // empty direct call therefore panics without consuming the once,
+            // and a stale cache reports the minimum mismatch before total.
+            let current = self.calculate_min_count_and_count_internal();
+            let cached = self.once_calculate_min_count_and_count();
+            assert_eq!(
+                current.0, cached.0,
+                "minCount should be equal to the calculated minCount"
+            );
+            assert_eq!(
+                current.1, cached.1,
+                "totalCount should be equal to the calculated totalCount"
+            );
+            return cached;
+        }
+        self.once_calculate_min_count_and_count()
+    }
+
+    fn once_calculate_min_count_and_count(&self) -> (u64, u64) {
         *self
             .cached_counts
-            .get_or_init(|| self.calculate_min_and_total())
+            .get_or_init(|| self.calculate_min_count_and_count_internal())
     }
 
-    fn calculate_min_and_total(&self) -> (u64, u64) {
-        let Some(first) = self.entries.first() else {
-            return (0, 0);
-        };
-        self.entries
-            .iter()
-            .fold((first.count, 0_u64), |(min, total), entry| {
-                (min.min(entry.count), total.wrapping_add(entry.count))
-            })
+    fn calculate_min_count_and_count_internal(&self) -> (u64, u64) {
+        // Deliberately index before the loop: the unexported Go helper does
+        // the same, so a direct empty call panics before sync.Once is touched.
+        let mut min_count = self.entries[0].count;
+        let mut total_count = 0_u64;
+        for entry in &self.entries {
+            min_count = min_count.min(entry.count);
+            total_count = total_count.wrapping_add(entry.count);
+        }
+        (min_count, total_count)
     }
 
     /// Returns the source's approximate TopN memory footprint.
@@ -973,6 +978,88 @@ impl TopN {
             }
         }
     }
+}
+
+/// Go `(*TopN).QueryTopN`, including the nil receiver and its `(0, false)`
+/// result represented as `None`.
+#[must_use]
+pub fn query_topn(topn: Option<&TopN>, encoded: &[u8]) -> Option<u64> {
+    let topn = topn?;
+    let index = find_topn(Some(topn), encoded)?;
+    Some(topn.entries[index].count)
+}
+
+/// Go `(*TopN).FindTopN`, including nil, empty, singleton, boundary, and
+/// lower-bound paths. `None` is the native counterpart of source index `-1`.
+#[must_use]
+pub fn find_topn(topn: Option<&TopN>, encoded: &[u8]) -> Option<usize> {
+    let topn = topn?;
+    if topn.entries.is_empty() {
+        return None;
+    }
+    if topn.entries.len() == 1 {
+        return (topn.resolved_bytes(0) == encoded).then_some(0);
+    }
+
+    let last_index = topn.entries.len() - 1;
+    if topn.resolved_bytes(last_index).as_slice() < encoded {
+        return None;
+    }
+    if topn.resolved_bytes(0).as_slice() > encoded {
+        return None;
+    }
+
+    let (index, matched) = topn.lower_bound_with_match(encoded);
+    matched.then_some(index)
+}
+
+/// Go `(*TopN).LowerBound`, retaining both the insertion index and match bit.
+/// A nil receiver returns `(0, false)`.
+#[must_use]
+pub fn topn_lower_bound(topn: Option<&TopN>, encoded: &[u8]) -> (usize, bool) {
+    topn.map_or((0, false), |topn| topn.lower_bound_with_match(encoded))
+}
+
+/// Go `(*TopN).BetweenCount` for the half-open interval `[left, right)`,
+/// including nil receivers and unsigned wrapping addition.
+#[must_use]
+pub fn topn_between_count(topn: Option<&TopN>, left: &[u8], right: &[u8]) -> u64 {
+    let Some(topn) = topn else {
+        return 0;
+    };
+    let (left_index, _) = topn.lower_bound_with_match(left);
+    let (right_index, _) = topn.lower_bound_with_match(right);
+    let mut total = 0_u64;
+    for index in left_index..right_index {
+        total = total.wrapping_add(topn.entries[index].count);
+    }
+    total
+}
+
+/// Go `(*TopN).TotalCount`, including nil and empty receivers. The first
+/// nonempty call initializes the source-compatible once-cache.
+#[must_use]
+pub fn topn_total_count(topn: Option<&TopN>) -> u64 {
+    let Some(topn) = topn else {
+        return 0;
+    };
+    if topn.entries.is_empty() {
+        return 0;
+    }
+    topn.calculate_min_count_and_count(false).1
+}
+
+/// Go `(*TopN).MinCount`, including nil and empty receivers. The first
+/// nonempty call shares the same once-cache as [`topn_total_count`].
+#[must_use]
+pub fn topn_min_count(topn: Option<&TopN>) -> u64 {
+    let Some(topn) = topn else {
+        return 0;
+    };
+    if topn.entries.is_empty() {
+        return 0;
+    }
+    topn.calculate_min_count_and_count(false).0
 }
 
 /// Go `(*TopN).String`, including the nil receiver result.
