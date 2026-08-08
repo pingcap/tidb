@@ -300,7 +300,27 @@ pub struct TableInfo {
     pub mode: TableMode,
 }
 
+impl PartialEq for TableInfo {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Eq for TableInfo {}
+
+impl std::hash::Hash for TableInfo {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::hash::Hash::hash(&self.id, state);
+    }
+}
+
 impl TableInfo {
+    /// Go `TableInfo.Equals` compares only persisted table identity.
+    #[must_use]
+    pub fn equals_id(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+
     /// Go `GetPartitionInfo`: the partition info when partitioning is enabled.
     #[must_use]
     pub fn get_partition_info(&self) -> Option<&PartitionInfo> {
@@ -345,18 +365,17 @@ impl TableInfo {
             return false;
         }
         self.get_pk_col_info()
-            .is_some_and(|c| c.get_flag() & FieldTypeFlags::UNSIGNED != 0)
+            .expect("PKIsHandle with AutoRandomBits requires a primary-key column")
+            .get_flag()
+            & FieldTypeFlags::UNSIGNED
+            != 0
     }
 
-    /// Go `Cols`: the public columns, in offset order.
-    ///
-    /// Go builds an offset-indexed slice of the public columns and returns it
-    /// up to the max offset; a gap (a non-public column at a lower offset than
-    /// a public one, a transient DDL state) would leave a `nil` in Go's result
-    /// and panic any consumer. Here the present columns are collected in
-    /// offset order, matching Go for the normal contiguous case.
+    /// Go `Cols`: the public columns in offset-indexed slots. A transient DDL
+    /// gap is retained as `None`, exactly matching the nil element Go leaves
+    /// in its returned slice.
     #[must_use]
-    pub fn cols(&self) -> Vec<&ColumnInfo> {
+    pub fn cols_with_gaps(&self) -> Vec<Option<&ColumnInfo>> {
         let mut slots: Vec<Option<&ColumnInfo>> = vec![None; self.columns.len()];
         let mut max_offset: i64 = -1;
         for col in &self.columns {
@@ -364,26 +383,32 @@ impl TableInfo {
                 continue;
             }
             let off = col.offset as usize;
-            if off < slots.len() {
-                slots[off] = Some(col);
-            }
+            // Go indexes `publicColumns[col.Offset]` directly. Invalid
+            // metadata is an invariant violation and panics rather than being
+            // silently dropped.
+            slots[off] = Some(col);
             if i64::from(col.offset) > max_offset {
                 max_offset = i64::from(col.offset);
             }
         }
+        slots.truncate((max_offset + 1) as usize);
         slots
-            .into_iter()
-            .take((max_offset + 1) as usize)
-            .flatten()
-            .collect()
+    }
+
+    /// Present public columns, used by Rust callers that explicitly do not
+    /// consume Go's nil-gap invariant.
+    #[must_use]
+    pub fn cols(&self) -> Vec<&ColumnInfo> {
+        self.cols_with_gaps().into_iter().flatten().collect()
     }
 
     /// Go `FindPublicColumnByName`: the public column named `col_name_l`
     /// (already lower-cased).
     #[must_use]
     pub fn find_public_column_by_name(&self, col_name_l: &str) -> Option<&ColumnInfo> {
-        self.cols()
+        self.cols_with_gaps()
             .into_iter()
+            .map(|column| column.expect("nil public column slot in TableInfo.Cols"))
             .find(|c| c.name.lowercase() == col_name_l)
     }
 
@@ -391,7 +416,7 @@ impl TableInfo {
     /// (a unique index over only non-null, non-hidden public columns).
     #[must_use]
     pub fn get_primary_key(&self) -> Option<&IndexInfo> {
-        let cols = self.cols();
+        let cols = self.cols_with_gaps();
         let mut implicit_pk: Option<&IndexInfo> = None;
         for key in &self.indices {
             if key.primary {
@@ -406,6 +431,7 @@ impl TableInfo {
                 for idx_col in &key.columns {
                     let col = cols
                         .iter()
+                        .map(|column| column.expect("nil public column slot in TableInfo.Cols"))
                         .find(|c| c.name.lowercase() == idx_col.name.lowercase());
                     match col {
                         None => {
@@ -646,6 +672,7 @@ impl TableInfo {
 mod tests {
     use super::*;
     use crate::table::ViewInfo;
+    use std::hash::{Hash, Hasher};
     use tidb_datatype::{FieldType, FieldTypeCode};
 
     fn pk_col(name: &str, unsigned: bool) -> ColumnInfo {
@@ -657,6 +684,70 @@ mod tests {
             c.add_flag(FieldTypeFlags::UNSIGNED);
         }
         c
+    }
+
+    #[test]
+    fn public_column_slots_preserve_transient_gaps() {
+        let table = TableInfo {
+            columns: vec![
+                ColumnInfo {
+                    name: CiString::new("hidden-state"),
+                    offset: 0,
+                    state: SchemaState::WRITE_ONLY,
+                    ..Default::default()
+                },
+                ColumnInfo {
+                    name: CiString::new("public"),
+                    offset: 1,
+                    state: SchemaState::PUBLIC,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let slots = table.cols_with_gaps();
+        assert_eq!(slots.len(), 2);
+        assert!(slots[0].is_none());
+        assert_eq!(slots[1].unwrap().name.original(), "public");
+
+        assert!(std::panic::catch_unwind(|| table.find_public_column_by_name("public")).is_err());
+
+        let invalid_offset = TableInfo {
+            columns: vec![ColumnInfo {
+                offset: 1,
+                state: SchemaState::PUBLIC,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        assert!(std::panic::catch_unwind(|| invalid_offset.cols_with_gaps()).is_err());
+    }
+
+    #[test]
+    fn table_identity_hash_and_equality_use_only_id() {
+        let left = TableInfo {
+            id: 9,
+            name: CiString::new("left"),
+            ..Default::default()
+        };
+        let right = TableInfo {
+            id: 9,
+            name: CiString::new("right"),
+            ..Default::default()
+        };
+        let other = TableInfo {
+            id: 10,
+            name: CiString::new("left"),
+            ..Default::default()
+        };
+        assert_eq!(left, right);
+        assert_ne!(left, other);
+        let hash = |table: &TableInfo| {
+            let mut state = std::collections::hash_map::DefaultHasher::new();
+            table.hash(&mut state);
+            state.finish()
+        };
+        assert_eq!(hash(&left), hash(&right));
     }
 
     #[test]
@@ -702,6 +793,9 @@ mod tests {
         assert!(!t.is_auto_random_bit_col_unsigned());
         t.pk_is_handle = true;
         assert!(t.is_auto_random_bit_col_unsigned()); // id is unsigned
+
+        t.columns.clear();
+        assert!(std::panic::catch_unwind(|| t.is_auto_random_bit_col_unsigned()).is_err());
     }
 
     fn column(name: &str, offset: i32, public: bool, not_null: bool) -> ColumnInfo {
@@ -862,15 +956,24 @@ mod tests {
     fn move_column() {
         use crate::index::{IndexColumn, IndexInfo};
 
+        let mut columns = vec![
+            column("a", 0, true, false),
+            column("b", 1, true, false),
+            column("c", 2, true, false),
+        ];
+        columns[2].change_state_info = Some(crate::column::ChangeStateInfo {
+            dependency_column_offset: 0,
+        });
         let mut t = TableInfo {
-            columns: vec![
-                column("a", 0, true, false),
-                column("b", 1, true, false),
-                column("c", 2, true, false),
-            ],
+            columns,
             indices: vec![IndexInfo {
                 // an index referencing column "a" at offset 0
                 columns: vec![IndexColumn {
+                    name: CiString::new("a"),
+                    offset: 0,
+                    ..Default::default()
+                }],
+                affect_column: vec![IndexColumn {
                     name: CiString::new("a"),
                     offset: 0,
                     ..Default::default()
@@ -892,6 +995,26 @@ mod tests {
         assert_eq!(t.columns[2].offset, 2); // a
                                             // The index column's offset was remapped 0 -> 2.
         assert_eq!(t.indices[0].columns[0].offset, 2);
+        assert_eq!(t.indices[0].affect_column[0].offset, 2);
+        assert_eq!(
+            t.columns[1]
+                .change_state_info
+                .unwrap()
+                .dependency_column_offset,
+            2
+        );
+
+        // Moving in the opposite direction remaps every dependent offset too.
+        t.move_column_info(2, 0);
+        assert_eq!(t.indices[0].columns[0].offset, 0);
+        assert_eq!(t.indices[0].affect_column[0].offset, 0);
+        assert_eq!(
+            t.columns[2]
+                .change_state_info
+                .unwrap()
+                .dependency_column_offset,
+            0
+        );
 
         // A no-op move leaves everything unchanged.
         let before = t.columns[0].name.original().to_owned();

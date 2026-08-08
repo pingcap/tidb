@@ -25,8 +25,11 @@ use chrono::{DateTime, Utc};
 use tidb_ast::{
     CiString, ColumnChoice, TableLockType, ViewAlgorithm, ViewCheckOption, ViewSecurity,
 };
+use tidb_datatype::{ConfigDurationError, FieldType};
 use tidb_parser::auth::UserIdentity;
 
+use crate::column::ColumnInfo;
+use crate::index::IndexColumn;
 use crate::schema_state::SchemaState;
 
 /// Serde adapters for the `ast` enums used by these structs.
@@ -606,6 +609,38 @@ impl FKInfo {
     }
 }
 
+/// Go `FindFKInfoByName`: finds a foreign key by an already lower-cased name.
+#[must_use]
+pub fn find_fk_info_by_name<'a>(foreign_keys: &'a [FKInfo], name: &str) -> Option<&'a FKInfo> {
+    foreign_keys
+        .iter()
+        .find(|foreign_key| foreign_key.name.lowercase() == name)
+}
+
+/// Go `GetIdxChangingFieldType`: selects the online-DDL changing type only
+/// when both the index-column marker and changing type are present.
+#[must_use]
+pub fn get_idx_changing_field_type<'a>(
+    index_column: &IndexColumn,
+    column: &'a ColumnInfo,
+) -> &'a FieldType {
+    if index_column.use_changing_type {
+        if let Some(changing) = &column.changing_field_type {
+            return changing;
+        }
+    }
+    &column.field_type
+}
+
+/// Go `TableNameInfo`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct TableNameInfo {
+    #[serde(rename = "id", default)]
+    pub id: i64,
+    #[serde(rename = "name", default)]
+    pub name: CiString,
+}
+
 /// Go `ReferredFKInfo`: a foreign key in a child table that cites this table.
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ReferredFKInfo {
@@ -628,11 +663,44 @@ pub struct ReferredFKInfo {
     pub child_fk_name: CiString,
 }
 
+/// Go `TableItemID`: one statistics load key.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct TableItemID {
+    pub table_id: i64,
+    pub id: i64,
+    pub is_index: bool,
+    pub is_sync_load_failed: bool,
+}
+
+impl TableItemID {
+    /// Go `TableItemID.Key`. The sync-load-failed bit is intentionally not
+    /// part of identity.
+    #[must_use]
+    pub fn key(self) -> String {
+        format!("{}#{}#{}", self.id, self.table_id, self.is_index)
+    }
+}
+
+/// Go `StatsLoadItem`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct StatsLoadItem {
+    pub table_item_id: TableItemID,
+    pub full_load: bool,
+}
+
+impl StatsLoadItem {
+    #[must_use]
+    pub fn key(self) -> String {
+        format!("{}#{}", self.table_item_id.key(), self.full_load)
+    }
+}
+
+/// Go `DefaultTTLJobInterval`.
+pub const DEFAULT_TTL_JOB_INTERVAL: &str = "24h";
+/// Go `OldDefaultTTLJobInterval`.
+pub const OLD_DEFAULT_TTL_JOB_INTERVAL: &str = "1h";
+
 /// Go `TTLInfo`: a table's TTL (time-to-live) configuration.
-///
-/// `get_job_interval` (Go, which parses `job_interval` via
-/// `time.ParseDuration`) is deferred until a Go duration parser is available
-/// at this layer.
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TTLInfo {
     /// The TTL column name.
@@ -658,6 +726,19 @@ pub struct TTLInfo {
         deserialize_with = "crate::serde_helpers::null_default"
     )]
     pub job_interval: String,
+}
+
+impl TTLInfo {
+    /// Go `GetJobInterval`, in nanoseconds. Empty persisted values retain the
+    /// v6.5-compatible one-hour default.
+    pub fn get_job_interval(&self) -> Result<i64, ConfigDurationError> {
+        let source = if self.job_interval.is_empty() {
+            OLD_DEFAULT_TTL_JOB_INTERVAL
+        } else {
+            &self.job_interval
+        };
+        tidb_datatype::parse_config_duration(source)
+    }
 }
 
 /// Go `SequenceInfo`: a sequence object's configuration.
@@ -746,6 +827,18 @@ pub struct TableAffinityInfo {
         deserialize_with = "crate::serde_helpers::null_default"
     )]
     pub level: String,
+}
+
+/// Go `NewTableAffinityInfoWithLevel`.
+pub fn new_table_affinity_info_with_level(
+    level: &str,
+) -> Result<Option<TableAffinityInfo>, String> {
+    let normalized = level.to_lowercase();
+    match normalized.as_str() {
+        "" | "none" => Ok(None),
+        "table" | "partition" => Ok(Some(TableAffinityInfo { level: normalized })),
+        _ => Err(format!("invalid table affinity level: '{level}'")),
+    }
 }
 
 /// Go `TableCacheStatusType` (an `int`): the caching state of a table.
@@ -1030,6 +1123,101 @@ mod tests {
             fk.string("db1", "child"),
             "`db1`.`child`, CONSTRAINT `fk2` FOREIGN KEY (`pid`) REFERENCES \
              `parent` (`id`) ON UPDATE RESTRICT"
+        );
+
+        let foreign_keys = vec![fk];
+        assert!(find_fk_info_by_name(&foreign_keys, "fk2").is_some());
+        // Source requires the caller to supply the lower-case lookup key.
+        assert!(find_fk_info_by_name(&foreign_keys, "FK2").is_none());
+    }
+
+    #[test]
+    fn changing_field_type_boundary() {
+        let mut column = ColumnInfo::default();
+        column.field_type = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Long);
+        column.changing_field_type = Some(tidb_datatype::FieldType::new(
+            tidb_datatype::FieldTypeCode::Varchar,
+        ));
+        let mut index_column = IndexColumn::default();
+        assert_eq!(
+            get_idx_changing_field_type(&index_column, &column).code(),
+            tidb_datatype::FieldTypeCode::Long
+        );
+        index_column.use_changing_type = true;
+        assert_eq!(
+            get_idx_changing_field_type(&index_column, &column).code(),
+            tidb_datatype::FieldTypeCode::Varchar
+        );
+        column.changing_field_type = None;
+        assert_eq!(
+            get_idx_changing_field_type(&index_column, &column).code(),
+            tidb_datatype::FieldTypeCode::Long
+        );
+    }
+
+    #[test]
+    fn statistics_keys_ignore_only_the_source_excluded_bit() {
+        let item = TableItemID {
+            table_id: 12,
+            id: 34,
+            is_index: true,
+            is_sync_load_failed: false,
+        };
+        assert_eq!(item.key(), "34#12#true");
+        assert_eq!(
+            TableItemID {
+                is_sync_load_failed: true,
+                ..item
+            }
+            .key(),
+            item.key()
+        );
+        assert_eq!(
+            StatsLoadItem {
+                table_item_id: item,
+                full_load: false,
+            }
+            .key(),
+            "34#12#true#false"
+        );
+    }
+
+    #[test]
+    fn ttl_interval_and_affinity_boundaries() {
+        assert_eq!(
+            TTLInfo::default().get_job_interval().unwrap(),
+            3_600_000_000_000
+        );
+        assert_eq!(
+            TTLInfo {
+                job_interval: "24h".to_owned(),
+                ..Default::default()
+            }
+            .get_job_interval()
+            .unwrap(),
+            86_400_000_000_000
+        );
+        assert!(TTLInfo {
+            job_interval: "bad".to_owned(),
+            ..Default::default()
+        }
+        .get_job_interval()
+        .is_err());
+
+        assert!(new_table_affinity_info_with_level("").unwrap().is_none());
+        assert!(new_table_affinity_info_with_level("NONE")
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            new_table_affinity_info_with_level("PaRtItIoN")
+                .unwrap()
+                .unwrap()
+                .level,
+            "partition"
+        );
+        assert_eq!(
+            new_table_affinity_info_with_level("bogus").unwrap_err(),
+            "invalid table affinity level: 'bogus'"
         );
     }
 

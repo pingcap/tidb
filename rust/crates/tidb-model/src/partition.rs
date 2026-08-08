@@ -14,9 +14,9 @@
 
 //! `PartitionInfo` and friends from `pkg/meta/model/table.go`.
 //!
-//! DEFERRED: `PartitionDefinition::MemoryUsage` (Go memory accounting) and
-//! `PartitionInfo`'s overlapping-dropping-partition / default-list-partition
-//! methods, which encode more of the DDL reorg machinery.
+//! Go runtime-specific `unsafe.Sizeof` memory accounting is recorded as an
+//! explicit package-lockdown decline; the persisted and DDL transition rules
+//! are implemented here.
 
 use std::collections::BTreeMap;
 
@@ -371,6 +371,128 @@ impl PartitionInfo {
             .find(|d| d.name.lowercase() == low)
             .map_or(-1, |d| d.id)
     }
+
+    /// Go `GetDefaultListPartition`: the first empty/default LIST partition.
+    #[must_use]
+    pub fn get_default_list_partition(&self) -> isize {
+        if self.partition_type != PartitionType::LIST {
+            return -1;
+        }
+        self.definitions
+            .iter()
+            .position(|definition| {
+                definition.in_values.is_empty()
+                    || definition
+                        .in_values
+                        .iter()
+                        .any(|values| values.len() == 1 && values[0] == "DEFAULT")
+            })
+            .map_or(-1, |index| index as isize)
+    }
+
+    /// Go `CanHaveOverlappingDroppingPartition`.
+    #[must_use]
+    pub fn can_have_overlapping_dropping_partition(&self) -> bool {
+        self.ddl_action == ActionType::ACTION_DROP_TABLE_PARTITION
+            && self.ddl_state == SchemaState::WRITE_ONLY
+    }
+
+    /// Go `ReplaceWithOverlappingPartitionIdx`. `Some(error)` is the Rust
+    /// equivalent of a non-nil Go error and is cleared only when a valid
+    /// replacement exists.
+    pub fn replace_with_overlapping_partition_idx<E>(
+        &self,
+        mut index: isize,
+        mut error: Option<E>,
+    ) -> (isize, Option<E>) {
+        if error.is_some() && index >= 0 {
+            index = self.get_overlapping_dropping_partition_idx(index);
+            if index >= 0 {
+                error = None;
+            }
+        }
+        (index, error)
+    }
+
+    /// Go `GetOverlappingDroppingPartitionIdx`.
+    #[must_use]
+    pub fn get_overlapping_dropping_partition_idx(&self, index: isize) -> isize {
+        if index < 0 || index as usize >= self.definitions.len() {
+            return -1;
+        }
+        if !self.can_have_overlapping_dropping_partition() {
+            return index;
+        }
+        match self.partition_type {
+            PartitionType::RANGE => {
+                for candidate in index as usize..self.definitions.len() {
+                    if !self.is_dropping(candidate) {
+                        return candidate as isize;
+                    }
+                }
+                -1
+            }
+            PartitionType::LIST => {
+                if !self.is_dropping(index as usize) {
+                    return index;
+                }
+                let default_index = self.get_default_list_partition();
+                if default_index == index {
+                    -1
+                } else {
+                    default_index
+                }
+            }
+            _ => index,
+        }
+    }
+
+    /// Go `IsDropping`. As in Go, `index` must identify an existing
+    /// definition; invalid metadata is an invariant violation and panics.
+    #[must_use]
+    pub fn is_dropping(&self, index: usize) -> bool {
+        let id = self.definitions[index].id;
+        self.dropping_definitions
+            .iter()
+            .any(|definition| definition.id == id)
+    }
+
+    /// Go `SetOriginalPartitionIDs`.
+    pub fn set_original_partition_ids(&mut self) {
+        self.original_partition_ids_order = self
+            .definitions
+            .iter()
+            .map(|definition| definition.id)
+            .collect();
+    }
+
+    /// Go `IDsInDDLToIgnore`. A zero-length result covers Go's nil slice;
+    /// callers consume the IDs, not allocation identity.
+    #[must_use]
+    pub fn ids_in_ddl_to_ignore(&self) -> Vec<i64> {
+        match self.ddl_action {
+            ActionType::ACTION_TRUNCATE_TABLE_PARTITION => match self.ddl_state {
+                SchemaState::WRITE_ONLY => self.new_partition_ids.clone(),
+                SchemaState::DELETE_ONLY | SchemaState::DELETE_REORGANIZATION => self
+                    .dropping_definitions
+                    .iter()
+                    .map(|definition| definition.id)
+                    .collect(),
+                _ => Vec::new(),
+            },
+            ActionType::ACTION_DROP_TABLE_PARTITION => self
+                .dropping_definitions
+                .iter()
+                .map(|definition| definition.id)
+                .collect(),
+            ActionType::ACTION_ADD_TABLE_PARTITION => self
+                .adding_definitions
+                .iter()
+                .map(|definition| definition.id)
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -419,6 +541,78 @@ mod tests {
         pi.gc_partition_states();
         assert_eq!(pi.states.len(), 1);
         assert_eq!(pi.get_state_by_id(10), SchemaState::WRITE_ONLY);
+    }
+
+    #[test]
+    fn default_and_overlapping_partition_boundaries() {
+        let mut range = PartitionInfo {
+            partition_type: PartitionType::RANGE,
+            definitions: vec![def(1, "p0"), def(2, "p1"), def(3, "p2")],
+            dropping_definitions: vec![def(1, "p0"), def(2, "p1")],
+            ddl_action: ActionType::ACTION_DROP_TABLE_PARTITION,
+            ddl_state: SchemaState::WRITE_ONLY,
+            ..Default::default()
+        };
+        assert_eq!(range.get_default_list_partition(), -1);
+        assert_eq!(range.get_overlapping_dropping_partition_idx(-1), -1);
+        assert_eq!(range.get_overlapping_dropping_partition_idx(0), 2);
+        assert_eq!(range.get_overlapping_dropping_partition_idx(2), 2);
+        let (index, error) = range.replace_with_overlapping_partition_idx(0, Some("dropped"));
+        assert_eq!(index, 2);
+        assert!(error.is_none());
+        range.dropping_definitions.push(def(3, "p2"));
+        let (index, error) = range.replace_with_overlapping_partition_idx(0, Some("dropped"));
+        assert_eq!(index, -1);
+        assert_eq!(error, Some("dropped"));
+
+        let list = PartitionInfo {
+            partition_type: PartitionType::LIST,
+            definitions: vec![
+                PartitionDefinition {
+                    id: 1,
+                    name: CiString::new("p0"),
+                    in_values: vec![vec!["1".to_owned()]],
+                    ..Default::default()
+                },
+                PartitionDefinition {
+                    id: 2,
+                    name: CiString::new("pd"),
+                    in_values: vec![vec!["DEFAULT".to_owned()]],
+                    ..Default::default()
+                },
+            ],
+            dropping_definitions: vec![def(1, "p0")],
+            ddl_action: ActionType::ACTION_DROP_TABLE_PARTITION,
+            ddl_state: SchemaState::WRITE_ONLY,
+            ..Default::default()
+        };
+        assert_eq!(list.get_default_list_partition(), 1);
+        assert_eq!(list.get_overlapping_dropping_partition_idx(0), 1);
+    }
+
+    #[test]
+    fn partition_id_visibility_boundaries() {
+        let mut partition = PartitionInfo {
+            definitions: vec![def(1, "p0"), def(2, "p1")],
+            adding_definitions: vec![def(3, "p2")],
+            dropping_definitions: vec![def(1, "p0")],
+            new_partition_ids: vec![10, 20],
+            ..Default::default()
+        };
+        partition.set_original_partition_ids();
+        assert_eq!(partition.original_partition_ids_order, vec![1, 2]);
+
+        partition.ddl_action = ActionType::ACTION_TRUNCATE_TABLE_PARTITION;
+        partition.ddl_state = SchemaState::WRITE_ONLY;
+        assert_eq!(partition.ids_in_ddl_to_ignore(), vec![10, 20]);
+        partition.ddl_state = SchemaState::DELETE_ONLY;
+        assert_eq!(partition.ids_in_ddl_to_ignore(), vec![1]);
+        partition.ddl_action = ActionType::ACTION_DROP_TABLE_PARTITION;
+        assert_eq!(partition.ids_in_ddl_to_ignore(), vec![1]);
+        partition.ddl_action = ActionType::ACTION_ADD_TABLE_PARTITION;
+        assert_eq!(partition.ids_in_ddl_to_ignore(), vec![3]);
+        partition.ddl_action = ActionType::ACTION_NONE;
+        assert!(partition.ids_in_ddl_to_ignore().is_empty());
     }
 
     // Field order, tag names and bytes compared against Go's json.Marshal.
