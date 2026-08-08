@@ -14,22 +14,23 @@
 
 use tidb_datatype::{Datum, VectorFloat32};
 use tidb_stats::{
-    legacy_row_to_datums, legacy_sample_collector_from_proto, legacy_sample_collector_to_proto,
-    sort_legacy_sample_items, CmsSketch, FmSketch, LegacyRecordChunk, LegacySampleBuilder,
-    LegacySampleBuilderError, LegacySampleCollector, LegacySampleItem, SortedHistogramBuilder,
+    hash_bytes, legacy_row_to_datums, legacy_sample_collector_from_proto,
+    legacy_sample_collector_to_proto, sort_legacy_sample_items, CmsSketch, FmSketch,
+    LegacyRecordChunk, LegacySampleBuilder, LegacySampleBuilderError, LegacySampleCollector,
+    LegacySampleCollectorProto, LegacySampleItem, LegacySampleRng, SortedHistogramBuilder,
     MAX_SAMPLE_VALUE_LENGTH,
 };
 
 fn item(value: i64) -> LegacySampleItem {
     LegacySampleItem {
         value: Datum::Int(value),
-        encoded: vec![value as u8],
-        ordinal: value,
+        handle: None,
+        ordinal: value as isize,
     }
 }
 
 #[test]
-fn source_sort_is_stable_and_total_size_uses_full_encoded_length() {
+fn source_sort_is_stable_and_total_size_reads_datum_get_bytes() {
     let mut last = item(2);
     last.ordinal = 20;
     let mut items = vec![item(2), item(1), last];
@@ -43,7 +44,7 @@ fn source_sort_is_stable_and_total_size_uses_full_encoded_length() {
         ..LegacySampleCollector::default()
     };
     collector.calculate_total_size();
-    assert_eq!(collector.total_size, 3);
+    assert_eq!(collector.total_size, 0, "integer Datum.GetBytes is empty");
 }
 
 #[test]
@@ -52,7 +53,7 @@ fn source_sort_returns_the_last_comparator_error_on_go_schedule() {
     let mut three = vec![
         LegacySampleItem {
             value: vector(),
-            encoded: vec![0],
+            handle: None,
             ordinal: 0,
         },
         item(1),
@@ -71,13 +72,13 @@ fn source_sort_returns_the_last_comparator_error_on_go_schedule() {
     let mut across_blocks = Vec::with_capacity(21);
     across_blocks.push(LegacySampleItem {
         value: vector(),
-        encoded: vec![0],
+        handle: None,
         ordinal: 0,
     });
     across_blocks.extend((1..20).map(item));
     across_blocks.push(LegacySampleItem {
         value: Datum::Null,
-        encoded: Vec::new(),
+        handle: None,
         ordinal: 20,
     });
     tidb_stats::sample_collector::sort_legacy_sample_items(&mut across_blocks).unwrap();
@@ -102,19 +103,109 @@ fn source_collect_null_nonnull_and_destroy_boundaries_match() {
         max_sample_size: 4,
         ..LegacySampleCollector::default()
     };
-    collector.collect(Datum::Null, vec![]);
-    collector.collect(Datum::Int(1), vec![8, 1]);
+    collector
+        .collect(Datum::Null, |_| Err::<Vec<u8>, _>("must not encode NULL"))
+        .unwrap();
+    collector
+        .collect(Datum::Int(1), |_| Ok::<_, ()>(vec![8, 2]))
+        .unwrap();
     assert_eq!(collector.null_count, 1);
     assert_eq!(collector.count, 1);
-    assert_eq!(collector.total_size, 1);
+    assert_eq!(collector.total_size, -1);
     assert_eq!(collector.seen_values, 1);
     assert_eq!(collector.samples.len(), 1);
+    assert_eq!(collector.samples[0].value.go_bytes(), []);
+    assert!(collector
+        .fm_sketch
+        .as_ref()
+        .unwrap()
+        .contains(hash_bytes(&[8, 2]).h1));
+    assert_eq!(collector.cmsketch.as_ref().unwrap().query_bytes(&[]), 1);
+    assert_eq!(
+        legacy_sample_collector_to_proto(&collector)
+            .unwrap()
+            .samples,
+        [Vec::<u8>::new()]
+    );
+    assert!(collector.samples.capacity() > 0);
     collector.destroy();
     assert!(collector.fm_sketch.is_none());
     assert!(collector.cmsketch.is_none());
     assert!(collector.samples.is_empty());
+    assert_eq!(collector.samples.capacity(), 0, "Go assigns Samples=nil");
     assert_eq!(collector.count, 0);
     assert!(!collector.is_merger);
+}
+
+#[test]
+fn source_collect_error_and_nil_fm_expose_go_partial_receiver_mutation() {
+    let mut encoder_error = LegacySampleCollector {
+        fm_sketch: Some(FmSketch::new(8)),
+        cmsketch: Some(CmsSketch::new(2, 4)),
+        max_sample_size: 1,
+        ..LegacySampleCollector::default()
+    };
+    let result = encoder_error.collect(Datum::Int(1), |_| Err("encode failed"));
+    assert_eq!(result, Err("encode failed"));
+    assert_eq!(encoder_error.count, 1);
+    assert_eq!(encoder_error.seen_values, 0);
+    assert_eq!(encoder_error.total_size, 0);
+    assert_eq!(encoder_error.cmsketch.as_ref().unwrap().total_count(), 0);
+    assert!(encoder_error.samples.is_empty());
+
+    let mut nil_fm = LegacySampleCollector {
+        max_sample_size: 1,
+        ..LegacySampleCollector::default()
+    };
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = nil_fm.collect(Datum::Int(1), |_| Ok::<_, ()>(vec![8, 2]));
+    }));
+    assert!(panic.is_err());
+    assert_eq!(
+        nil_fm.count, 1,
+        "Count increments before nil FM dereference"
+    );
+    assert_eq!(nil_fm.seen_values, 0);
+}
+
+#[derive(Default)]
+struct LegacyWords {
+    uint64_calls: usize,
+    uint32_calls: usize,
+}
+
+impl LegacySampleRng for LegacyWords {
+    fn uint64_n(&mut self, _upper: u64) -> u64 {
+        self.uint64_calls += 1;
+        0
+    }
+
+    fn uint32_n(&mut self, _upper: u32) -> u32 {
+        self.uint32_calls += 1;
+        0
+    }
+}
+
+#[test]
+fn source_nonpositive_legacy_reservoir_still_draws_uint64() {
+    for max_sample_size in [0, -1] {
+        let mut collector = LegacySampleCollector {
+            fm_sketch: Some(FmSketch::new(8)),
+            max_sample_size,
+            ..LegacySampleCollector::default()
+        };
+        let mut rng = LegacyWords::default();
+        collector
+            .collect_with_rng(
+                Datum::Bytes(vec![1]),
+                |_| Ok::<_, ()>(vec![tidb_codec::BYTES_FLAG, 1]),
+                &mut rng,
+            )
+            .unwrap();
+        assert_eq!(rng.uint64_calls, 1);
+        assert_eq!(rng.uint32_calls, 0);
+        assert!(collector.samples.is_empty());
+    }
 }
 
 #[test]
@@ -139,6 +230,11 @@ fn source_merge_combines_counts_sketches_and_reservoir_input() {
     assert_eq!(left.count, 3);
     assert_eq!(left.total_size, 3);
     assert_eq!(left.samples.len(), 2);
+
+    let mut nil_cms_destination = make(1);
+    nil_cms_destination.cmsketch = None;
+    nil_cms_destination.merge(&make(2));
+    assert!(nil_cms_destination.cmsketch.is_none());
 }
 
 #[test]
@@ -153,12 +249,12 @@ fn source_proto_round_trip_filters_only_oversized_samples() {
     };
     collector.samples.push(LegacySampleItem {
         value: Datum::Bytes(vec![1]),
-        encoded: vec![1],
+        handle: None,
         ordinal: 0,
     });
     collector.samples.push(LegacySampleItem {
         value: Datum::Bytes(vec![0; MAX_SAMPLE_VALUE_LENGTH + 1]),
-        encoded: vec![0; MAX_SAMPLE_VALUE_LENGTH + 1],
+        handle: None,
         ordinal: 1,
     });
     let proto = legacy_sample_collector_to_proto(&collector).unwrap();
@@ -167,6 +263,22 @@ fn source_proto_round_trip_filters_only_oversized_samples() {
     assert_eq!(decoded.count, 5);
     assert_eq!(decoded.total_size, 9);
     assert_eq!(decoded.samples.len(), 1);
+}
+
+#[test]
+fn source_proto_accepts_nil_fm_but_to_proto_normalizes_it_to_empty_message() {
+    let decoded = legacy_sample_collector_from_proto(&LegacySampleCollectorProto {
+        fm_sketch: None,
+        ..LegacySampleCollectorProto::default()
+    })
+    .unwrap();
+    assert!(decoded.fm_sketch.is_none());
+    assert_eq!(
+        legacy_sample_collector_to_proto(&decoded)
+            .unwrap()
+            .fm_sketch,
+        Some(Default::default())
+    );
 }
 
 #[test]
@@ -179,7 +291,7 @@ fn source_extract_topn_zero_and_frequency_boundaries_match() {
         collector.cmsketch.as_mut().unwrap().insert_bytes(&[value]);
         collector.samples.push(LegacySampleItem {
             value: Datum::Bytes(vec![value]),
-            encoded: vec![value],
+            handle: None,
             ordinal: 0,
         });
     }
@@ -206,7 +318,7 @@ fn source_extract_topn_keeps_the_two_thirds_candidate_tail() {
         collector.cmsketch.as_mut().unwrap().insert_bytes(&[value]);
         collector.samples.push(LegacySampleItem {
             value: Datum::Bytes(vec![value]),
-            encoded: vec![value],
+            handle: None,
             ordinal: 0,
         });
     }
@@ -239,7 +351,7 @@ fn source_extract_topn_error_exposes_completed_prefix_mutation() {
         collector.cmsketch.as_mut().unwrap().insert_bytes(&[value]);
         collector.samples.push(LegacySampleItem {
             value: Datum::Bytes(vec![value]),
-            encoded: vec![value],
+            handle: None,
             ordinal: 0,
         });
     }
@@ -305,27 +417,31 @@ fn source_sample_builder_collects_pk_columns_and_stops_on_empty_chunk() {
         },
     ];
     let collectors = builder
-        .collect_column_stats(chunks, Some(&mut primary_key), |_, datum, collated| {
-            let encoded = match &datum {
-                Datum::Null => Vec::new(),
-                Datum::Bytes(bytes) => {
-                    if collated {
-                        vec![bytes[0], bytes[1].wrapping_add(10)]
-                    } else {
-                        bytes.clone()
+        .collect_column_stats(
+            chunks,
+            Some(&mut primary_key),
+            |_, datum, collated| {
+                let value_bytes = match &datum {
+                    Datum::Bytes(bytes) => {
+                        if collated {
+                            vec![bytes[0], bytes[1].wrapping_add(10)]
+                        } else {
+                            bytes.clone()
+                        }
                     }
-                }
-                _ => unreachable!(),
-            };
-            Ok::<_, ()>((datum, encoded))
-        })
+                    _ => unreachable!(),
+                };
+                Ok::<_, ()>(Datum::Bytes(value_bytes))
+            },
+            |datum| Ok::<_, ()>(tidb_codec::encode_value(std::slice::from_ref(datum)).unwrap()),
+        )
         .unwrap();
     assert_eq!(primary_key.count(), 2);
     assert_eq!(collectors[0].null_count, 1);
     assert_eq!(collectors[0].count, 1);
     assert_eq!(collectors[1].count, 2);
-    assert_eq!(collectors[1].samples[0].encoded, [9, 11]);
-    assert_eq!(collectors[1].samples[1].encoded, [9, 13]);
+    assert_eq!(collectors[1].samples[0].value.go_bytes(), [9, 11]);
+    assert_eq!(collectors[1].samples[1].value.go_bytes(), [9, 13]);
     assert!(collectors
         .iter()
         .all(|collector| collector.cmsketch.is_some()));
@@ -348,7 +464,8 @@ fn source_sample_builder_checks_zero_fields_only_after_nonempty_chunk() {
                 rows: Vec::new(),
             }],
             None,
-            |_, datum, _| Ok::<_, ()>((datum, Vec::new())),
+            |_, datum, _| Ok::<_, ()>(datum),
+            |_| Ok::<_, ()>(Vec::new()),
         )
         .unwrap();
     assert!(empty_first.is_empty());
@@ -359,12 +476,45 @@ fn source_sample_builder_checks_zero_fields_only_after_nonempty_chunk() {
             rows: vec![Vec::new()],
         }],
         None,
-        |_, datum, _| Ok::<_, ()>((datum, Vec::new())),
+        |_, datum, _| Ok::<_, ()>(datum),
+        |_| Ok::<_, ()>(Vec::new()),
     );
     assert!(matches!(
         nonempty,
         Err(LegacySampleBuilderError::ZeroFields)
     ));
+}
+
+#[test]
+fn source_sample_builder_skips_prepare_and_fm_encoding_for_null() {
+    let builder = LegacySampleBuilder {
+        column_count: 1,
+        max_sample_size: 1,
+        max_fm_sketch_size: 8,
+        cmsketch_depth: 0,
+        cmsketch_width: 0,
+        collated_columns: vec![true],
+    };
+    let callbacks = std::cell::Cell::new(0);
+    let collectors = builder
+        .collect_column_stats(
+            [LegacyRecordChunk {
+                field_count: 1,
+                rows: vec![vec![Datum::Null]],
+            }],
+            None,
+            |_, _, _| {
+                callbacks.set(callbacks.get() + 1);
+                Err::<Datum, _>("prepare must not run")
+            },
+            |_| {
+                callbacks.set(callbacks.get() + 1);
+                Err::<Vec<u8>, _>("FM encode must not run")
+            },
+        )
+        .unwrap();
+    assert_eq!(callbacks.get(), 0);
+    assert_eq!(collectors[0].null_count, 1);
 }
 
 #[test]
