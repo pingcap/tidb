@@ -43,7 +43,7 @@ missing represented rule.
   7138/7138 workspace tests with 41 skips, workspace Clippy, fmt, source-size,
   diff/status cleanliness, and `make -j12 lint`.
 - [x] (2026-08-08) Published by ordinary fast-forward to official
-  `hparser-integration` at `2ba3f578d3`; GitHub API verification confirms the
+  `hparser-integration` at `7d7da9f299`; GitHub API verification confirms the
   two code commits use `dbsid <huanshengchen@gmail.com>`.
 
 ## Surprises & Discoveries
@@ -150,7 +150,7 @@ All three direct artifacts and all 55 AST obligations regenerate exactly.
 Every `PORTED` owner/evidence name compiles; all three generated declines and
 all nine semantic rows retain exact evidence. Every planned mutation is killed
 and restored. WIP and Ready gates pass; the official remote ref is at
-`2ba3f578d3` and the code commits are attributed to `dbsid` by GitHub.
+`7d7da9f299` and the code commits are attributed to `dbsid` by GitHub.
 
 ## Idempotence and Recovery
 
