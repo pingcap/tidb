@@ -1,0 +1,1 @@
+{"mutation_id":"M_STATS_FMS_CODEC","replacements":[{"expected_count":1,"new":"output.push(0x10);","old":"output.push(0x08);"}],"rust_path":"rust/crates/tidb-stats/src/fmsketch_codec.rs","schema":"go-package-lockdown-mutation-operator-v1","source_sha256":"7892148c6fe2b8b4fefad71cda49d6854facf3d11bc4d094a996ced64e706041"}
