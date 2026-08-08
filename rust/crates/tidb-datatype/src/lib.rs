@@ -48,6 +48,7 @@ mod field_name;
 mod field_type;
 mod format;
 mod fsp;
+pub mod go_runtime;
 mod json_path;
 mod multibyte_encoding;
 mod mydecimal;
