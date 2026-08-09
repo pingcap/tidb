@@ -595,6 +595,8 @@ impl AutoIdAllocator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
+    use std::sync::Barrier;
 
     fn allocator(unsigned: bool) -> (Arc<LocalAutoIdStore>, AutoIdAllocator) {
         let store = Arc::new(LocalAutoIdStore::new());
@@ -749,6 +751,113 @@ mod tests {
             3
         );
         assert_eq!(seek_to_first(u64::MAX - 101, 2, offset, true), offset);
+    }
+
+    /// Source: `pkg/meta/autoid/autoid_test.go::TestConcurrentAlloc`.
+    #[test]
+    fn test_concurrent_alloc() {
+        let store = Arc::new(LocalAutoIdStore::new());
+        let seen = Arc::new(Mutex::new(HashSet::new()));
+        let start = Arc::new(Barrier::new(11));
+        let mut workers = Vec::new();
+
+        for worker in 0_u64..10 {
+            let allocator = AutoIdAllocator::over(store.clone(), 100);
+            let seen = seen.clone();
+            let start = start.clone();
+            workers.push(std::thread::spawn(move || {
+                start.wait();
+                for iteration in 0_u64..105 {
+                    let id = allocator.alloc(1, 1).unwrap();
+                    assert!(seen.lock().unwrap().insert(id), "duplicate id {id}");
+
+                    // The Go test chooses 0..99 randomly. A deterministic
+                    // permutation keeps every batch size in play without
+                    // making a parity test probabilistic.
+                    let n = (worker * 37 + iteration * 17) % 100;
+                    let (minimum, maximum) = allocator.alloc_batch(n, 1, 1).unwrap();
+                    let mut seen = seen.lock().unwrap();
+                    for id in minimum + 1..=maximum {
+                        assert!(seen.insert(id), "duplicate id {id}");
+                    }
+                }
+            }));
+        }
+        start.wait();
+        for worker in workers {
+            worker.join().unwrap();
+        }
+    }
+
+    #[derive(Debug)]
+    struct FailingStore;
+
+    impl AutoIdStore for FailingStore {
+        fn reserve(&self, _step: u64, _unsigned: bool) -> Result<(u64, u64), AutoIdStoreError> {
+            Err(AutoIdStoreError("injected".to_owned()))
+        }
+
+        fn rebase(&self, _required: u64, _unsigned: bool) -> Result<(), AutoIdStoreError> {
+            Err(AutoIdStoreError("injected".to_owned()))
+        }
+
+        fn reset(&self) -> Result<(), AutoIdStoreError> {
+            Err(AutoIdStoreError("injected".to_owned()))
+        }
+    }
+
+    /// Source: `pkg/meta/autoid/autoid_test.go::TestRollbackAlloc`.
+    #[test]
+    fn test_rollback_alloc() {
+        let allocator = AutoIdAllocator::over(Arc::new(FailingStore), 1);
+        assert_eq!(
+            allocator.alloc(1, 1),
+            Err(AutoIdError::Store(AutoIdStoreError("injected".to_owned())))
+        );
+        {
+            let cache = allocator.cache.lock().unwrap();
+            assert_eq!((cache.base, cache.end), (0, 0));
+        }
+
+        assert_eq!(
+            allocator.rebase(100),
+            Err(AutoIdStoreError("injected".to_owned()))
+        );
+        let cache = allocator.cache.lock().unwrap();
+        assert_eq!((cache.base, cache.end), (0, 0));
+    }
+
+    /// Source: `pkg/meta/autoid/autoid_test.go::TestIssue40584`.
+    #[test]
+    fn test_issue40584() {
+        let allocator = Arc::new(AutoIdAllocator::new());
+        let start = Arc::new(Barrier::new(3));
+
+        let allocating = {
+            let allocator = allocator.clone();
+            let start = start.clone();
+            std::thread::spawn(move || {
+                start.wait();
+                for _ in 0..20_000 {
+                    allocator.alloc(1, 1).unwrap();
+                }
+            })
+        };
+        let reading = {
+            let allocator = allocator.clone();
+            let start = start.clone();
+            std::thread::spawn(move || {
+                start.wait();
+                for _ in 0..20_000 {
+                    let _ = allocator.next();
+                }
+            })
+        };
+
+        start.wait();
+        allocating.join().unwrap();
+        reading.join().unwrap();
+        assert_eq!(allocator.next(), 20_001);
     }
 
     /// Complete observable translation of
