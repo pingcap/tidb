@@ -212,6 +212,9 @@ fn both_ways(
         lookup_is_left: false,
         probe_keys,
         source: lookup_source(table, object, inner_width),
+        aggregation: None,
+        outer_not_null: Vec::new(),
+        inner_not_null: Vec::new(),
     });
     assert!(looked_up.is_index_join());
     let index_rows = drain(&mut looked_up, &types);
@@ -405,6 +408,9 @@ fn one_key_repeated_across_a_batch_is_probed_once() {
         lookup_is_left: false,
         probe_keys: vec![0],
         source,
+        aggregation: None,
+        outer_not_null: Vec::new(),
+        inner_not_null: Vec::new(),
     });
     let rows = drain(&mut exec, &types);
     assert_eq!(
@@ -449,6 +455,11 @@ mod decision {
             // The projected expression Go prints as a bare `Column`.
             names: vec!["Column".to_owned(), "Column".to_owned()],
             origin: None,
+            source_visible: String::new(),
+            output_to_source: vec![None, None],
+            source_filters: Vec::new(),
+            aggregation: None,
+            aggregation_info: None,
         }
     }
 
@@ -472,6 +483,11 @@ mod decision {
                 .collect(),
             names: vec![format!("db.{visible}.a"), format!("db.{visible}.b")],
             origin: Some("db.t".to_owned()),
+            source_visible: visible.to_owned(),
+            output_to_source: vec![Some(0), Some(1)],
+            source_filters: Vec::new(),
+            aggregation: None,
+            aggregation_info: None,
         }
     }
 

@@ -454,6 +454,15 @@ pub(crate) struct IndexJoinDecision {
     /// Selectivity of the filter residue not already represented by a static
     /// object-key part.
     pub(crate) filter_selectivity: f64,
+    /// A grouped derived table retained above the re-seeded base-table
+    /// reader. Bare table lookup sides leave this absent.
+    pub(crate) aggregation: Option<crate::join::IndexLookupAggregation>,
+    /// Go's physical HashAgg payload for that retained aggregation.
+    pub(crate) aggregation_info: Option<String>,
+    /// Whether a local equality constrains a dynamically probed object-key
+    /// column. For a grouped lookup this means at most one distinct outer key
+    /// can produce base rows; every other probe is empty.
+    pub(crate) constant_constrained_probe: bool,
     /// Whether those leaf filters plus the join equalities cover the complete
     /// written WHERE.
     pub(crate) consumes_where: bool,
@@ -480,6 +489,18 @@ pub(crate) struct JoinSide<'a> {
     /// `<db>.t1.b` in the same row's `range: decided by [...]`. Qualifying the
     /// range's inner column off the scope would print the alias in both.
     pub(crate) origin: Option<String>,
+    /// The base table name printed by the lookup reader.  This differs from
+    /// `visible` when the join side is a derived table alias.
+    pub(crate) source_visible: String,
+    /// For each side output, the base-table column it carries. Computed
+    /// aggregate outputs have no source offset.
+    pub(crate) output_to_source: Vec<Option<usize>>,
+    /// Predicates written inside a grouped derived table, evaluated by the
+    /// re-seeded base-table reader before aggregation.
+    pub(crate) source_filters: Vec<tidb_ast::Expr>,
+    /// The executable grouped derived-table transformation, if any.
+    pub(crate) aggregation: Option<crate::join::IndexLookupAggregation>,
+    pub(crate) aggregation_info: Option<String>,
 }
 
 /// The looked-up side of `join`, or `None` when neither side qualifies.
@@ -567,9 +588,12 @@ fn decide_over(
         .iter()
         .map(|column| (column.name.clone(), column.field_type.clone()))
         .collect();
-    // A side column pruning narrowed no longer has the table's own offsets,
-    // and the probe would read the wrong column.
-    if inner.types.len() != columns.len() {
+    // Every output must have a declared mapping.  A bare side maps the whole
+    // table identity; a grouped derived side maps carried group columns and
+    // leaves its computed SUM unmapped.
+    if inner.output_to_source.len() != inner.types.len()
+        || (inner.aggregation.is_none() && inner.types.len() != columns.len())
+    {
         return None;
     }
     let inner_at = |key: &EquiKey| if lookup_is_left { key.left } else { key.right };
@@ -577,14 +601,35 @@ fn decide_over(
     // Which of this side's columns a key probes, and with which key.
     let key_of_column = |column: usize| -> Option<usize> {
         keys.iter().position(|key| {
-            inner_at(key) == column
+            inner
+                .output_to_source
+                .get(inner_at(key))
+                .is_some_and(|offset| *offset == Some(column))
                 && probe_compatible(&inner.types[inner_at(key)], &outer.types[outer_at(key)])
         })
     };
-    let filters = rows
+    let outer_filters = rows
         .and_then(|rows| rows.filters_for(&inner.visible))
         .unwrap_or_default()
         .to_vec();
+    let outer_filters = if inner.aggregation.is_some() {
+        outer_filters
+            .iter()
+            .map(|filter| rewrite_derived_filter_to_source(filter, inner, &columns))
+            .collect::<Option<Vec<_>>>()?
+    } else {
+        outer_filters
+    };
+    let mut filters = inner
+        .source_filters
+        .iter()
+        .cloned()
+        .chain(outer_filters)
+        .collect::<Vec<_>>();
+    for filter in &mut filters {
+        normalize_source_filter(filter, &inner.source_visible, &columns)?;
+    }
+    filters.dedup();
     let filter_exprs = rewrite_inner_filters(inner, &columns, &filters, ctx)?;
     let constants = static_equalities(&columns, &filters, ctx);
     let consumes_where = rows
@@ -648,8 +693,11 @@ fn decide_over(
                     &columns,
                     &ctx.session_zone(),
                 ),
+                aggregation: inner.aggregation.clone(),
+                aggregation_info: inner.aggregation_info.clone(),
+                constant_constrained_probe: constants[pk].is_some(),
                 columns,
-                visible: inner.visible.clone(),
+                visible: inner.source_visible.clone(),
                 // Go `indexJoinIntPKRangeInfo`: the OUTER keys, bare.
                 range_info: format!("[{}]", outer.names[outer_at(&keys[key])]),
                 filters,
@@ -675,6 +723,14 @@ fn decide_over(
                         .collect::<Vec<_>>()
                         .join(" ")
                 );
+                let constant_constrained_probe = table
+                    .common_handle_offsets()
+                    .iter()
+                    .zip(&probe_parts)
+                    .any(|(offset, part)| {
+                        matches!(part, crate::access_path::LookupProbePart::Dynamic(_))
+                            && constants[*offset].is_some()
+                    });
                 return Some(IndexJoinDecision {
                     lookup_is_left,
                     probe_keys,
@@ -687,8 +743,11 @@ fn decide_over(
                         &columns,
                         &ctx.session_zone(),
                     ),
+                    aggregation: inner.aggregation.clone(),
+                    aggregation_info: inner.aggregation_info.clone(),
+                    constant_constrained_probe,
                     columns,
-                    visible: inner.visible.clone(),
+                    visible: inner.source_visible.clone(),
                     range_info,
                     filters,
                     filter_exprs,
@@ -734,6 +793,17 @@ fn decide_over(
         }
     }
     let (index_id, probe_keys, probe_parts, dynamic, static_parts, static_columns) = best?;
+    let constant_constrained_probe = table
+        .indexes()
+        .iter()
+        .find(|index| index.id == index_id)?
+        .column_offsets
+        .iter()
+        .zip(&probe_parts)
+        .any(|(offset, part)| {
+            matches!(part, crate::access_path::LookupProbePart::Dynamic(_))
+                && constants[*offset].is_some()
+        });
     // Go `indexJoinPathRangeInfo`: `eq(<index column>, <outer key>)` per
     // covered index column, in index order. The index column is Go's
     // `OrigName`, which an alias does not rename -- see [`JoinSide::origin`].
@@ -757,13 +827,126 @@ fn decide_over(
             &columns,
             &ctx.session_zone(),
         ),
+        aggregation: inner.aggregation.clone(),
+        aggregation_info: inner.aggregation_info.clone(),
+        constant_constrained_probe,
         columns,
-        visible: inner.visible.clone(),
+        visible: inner.source_visible.clone(),
         range_info,
         filters,
         filter_exprs,
         consumes_where,
     })
+}
+
+/// Pushes a predicate on carried derived outputs down to the base row the
+/// lookup source returns. A reference to a computed aggregate output refuses
+/// the index strategy; applying it before aggregation would be wrong.
+fn rewrite_derived_filter_to_source(
+    filter: &tidb_ast::Expr,
+    inner: &JoinSide<'_>,
+    columns: &[(String, FieldType)],
+) -> Option<tidb_ast::Expr> {
+    struct Rewriter<'a, 'b> {
+        inner: &'a JoinSide<'b>,
+        columns: &'a [(String, FieldType)],
+        failed: bool,
+    }
+    impl tidb_ast::Visitor for Rewriter<'_, '_> {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            let Some(expr) = node.downcast_mut::<tidb_ast::Expr>() else {
+                return false;
+            };
+            match expr {
+                tidb_ast::Expr::Subquery(_) | tidb_ast::Expr::Exists { .. } => {
+                    self.failed = true;
+                    true
+                }
+                tidb_ast::Expr::Column(path) => {
+                    let Some(name) = path.last() else {
+                        self.failed = true;
+                        return true;
+                    };
+                    let output = self.inner.names.iter().position(|candidate| {
+                        candidate
+                            .rsplit('.')
+                            .next()
+                            .is_some_and(|candidate| candidate.eq_ignore_ascii_case(name))
+                    });
+                    let Some(source) = output
+                        .and_then(|output| self.inner.output_to_source.get(output))
+                        .copied()
+                        .flatten()
+                    else {
+                        self.failed = true;
+                        return true;
+                    };
+                    *path = vec![
+                        self.inner.source_visible.clone(),
+                        self.columns[source].0.clone(),
+                    ];
+                    true
+                }
+                _ => false,
+            }
+        }
+
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            true
+        }
+    }
+
+    let mut rewritten = filter.clone();
+    let mut rewriter = Rewriter {
+        inner,
+        columns,
+        failed: false,
+    };
+    tidb_ast::Visitable::accept(&mut rewritten, &mut rewriter);
+    (!rewriter.failed).then_some(rewritten)
+}
+
+/// Gives every base-column reference one spelling so a predicate copied out
+/// of a derived table and the same predicate inferred above it deduplicate.
+fn normalize_source_filter(
+    filter: &mut tidb_ast::Expr,
+    visible: &str,
+    columns: &[(String, FieldType)],
+) -> Option<()> {
+    struct Rewriter<'a> {
+        visible: &'a str,
+        columns: &'a [(String, FieldType)],
+        failed: bool,
+    }
+    impl tidb_ast::Visitor for Rewriter<'_> {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            let Some(tidb_ast::Expr::Column(path)) = node.downcast_mut::<tidb_ast::Expr>() else {
+                return false;
+            };
+            let Some(column) = path.last().and_then(|name| {
+                self.columns
+                    .iter()
+                    .find(|(candidate, _)| candidate.eq_ignore_ascii_case(name))
+            }) else {
+                self.failed = true;
+                return true;
+            };
+            *path = vec![self.visible.to_owned(), column.0.clone()];
+            true
+        }
+
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            true
+        }
+    }
+
+    let mut rewriter = Rewriter {
+        visible,
+        columns,
+        failed: false,
+    };
+    tidb_ast::Visitable::accept(filter, &mut rewriter);
+    (!rewriter.failed).then_some(())
 }
 
 /// Rewrites leaf-local predicates against the full table row the lookup
@@ -782,7 +965,7 @@ fn rewrite_inner_filters(
         .and_then(|origin| origin.rsplit_once('.'))
         .map(|(database, _)| database.to_owned());
     let mut scope = crate::plan_trace::PlanTrace::single_table_scope(
-        &inner.visible,
+        &inner.source_visible,
         database,
         columns.to_vec(),
     );
@@ -936,6 +1119,11 @@ pub(crate) fn join_sides<'a>(
             types: Vec::new(),
             names: Vec::new(),
             origin: None,
+            source_visible: String::new(),
+            output_to_source: Vec::new(),
+            source_filters: Vec::new(),
+            aggregation: None,
+            aggregation_info: None,
         },
     };
     (left, right)
@@ -951,7 +1139,7 @@ fn side_of<'a>(
     to: usize,
 ) -> JoinSide<'a> {
     let computed = computed_columns(node, to - from);
-    let names: Vec<String> = (from..to)
+    let mut names: Vec<String> = (from..to)
         .map(|offset| {
             if computed.get(offset - from).copied().unwrap_or(false) {
                 UNNAMED_COLUMN.to_owned()
@@ -960,17 +1148,242 @@ fn side_of<'a>(
             }
         })
         .collect();
-    let read = single_table_of(node, catalog, current_db);
-    let visible = read
+    let relation_visible = relation_visible_name(node);
+    let derived = grouped_decimal_sum_of(node, catalog, current_db);
+    let read = derived
+        .as_ref()
+        .map(|derived| {
+            (
+                derived.table,
+                derived.source_visible.clone(),
+                derived.origin.clone(),
+            )
+        })
+        .or_else(|| single_table_of(node, catalog, current_db));
+    let visible = relation_visible.or_else(|| {
+        read.as_ref()
+            .map(|(_, source_visible, _)| source_visible.clone())
+    });
+    let origin = read.as_ref().map(|(_, _, origin)| origin.clone());
+    let source_visible = read
         .as_ref()
         .map_or_else(String::new, |(_, visible, _)| visible.clone());
-    let origin = read.as_ref().map(|(_, _, origin)| origin.clone());
+    let output_to_source = derived.as_ref().map_or_else(
+        || (0..types.len()).map(Some).collect(),
+        |derived| derived.output_to_source.clone(),
+    );
+    if let Some(derived) = &derived {
+        for (output, source) in output_to_source.iter().copied().enumerate() {
+            if let Some(source) = source {
+                names[output] = format!(
+                    "{}.{}",
+                    derived.origin,
+                    derived.table.visible_columns()[source].name
+                );
+            }
+        }
+    }
     JoinSide {
         table: read.map(|(kv, ..)| kv),
-        visible,
+        visible: visible.unwrap_or_default(),
         types: types.to_vec(),
         names,
         origin,
+        source_visible,
+        output_to_source,
+        source_filters: derived
+            .as_ref()
+            .map_or_else(Vec::new, |derived| derived.filters.clone()),
+        aggregation: derived.as_ref().map(|derived| derived.aggregation.clone()),
+        aggregation_info: derived
+            .as_ref()
+            .map(|derived| derived.aggregation_info.clone()),
+    }
+}
+
+fn relation_visible_name(node: &tidb_ast::JoinNode) -> Option<String> {
+    match node {
+        tidb_ast::JoinNode::Table(table) => {
+            table.alias.clone().or_else(|| table.name.last().cloned())
+        }
+        tidb_ast::JoinNode::Derived { alias, .. } => alias.clone(),
+        tidb_ast::JoinNode::Join(join)
+            if join.right.is_none()
+                && join.on.is_none()
+                && join.using.is_empty()
+                && !join.natural =>
+        {
+            relation_visible_name(&join.left)
+        }
+        tidb_ast::JoinNode::Join(_) => None,
+    }
+}
+
+struct GroupedDecimalSumLookup<'a> {
+    table: &'a KvTable,
+    source_visible: String,
+    origin: String,
+    output_to_source: Vec<Option<usize>>,
+    filters: Vec<tidb_ast::Expr>,
+    aggregation: crate::join::IndexLookupAggregation,
+    aggregation_info: String,
+}
+
+/// A grouped derived side Go can rebuild over a re-seeded index reader.
+///
+/// This is intentionally the smallest truthful rule: one base table, plain
+/// non-null integer group keys, carried group columns, and exactly one
+/// decimal `SUM`.  Unsupported clauses or expressions keep the ordinary
+/// materialized hash join.
+fn grouped_decimal_sum_of<'a>(
+    node: &tidb_ast::JoinNode,
+    catalog: &'a Catalog,
+    current_db: &str,
+) -> Option<GroupedDecimalSumLookup<'a>> {
+    let tidb_ast::JoinNode::Derived {
+        subquery,
+        lateral: false,
+        column_names,
+        ..
+    } = node
+    else {
+        return None;
+    };
+    if !column_names.is_empty() {
+        return None;
+    }
+    let tidb_ast::QueryStmt::Select(select) = &**subquery else {
+        return None;
+    };
+    if select.with.is_some()
+        || !select.values.is_empty()
+        || select.distinct
+        || select.rollup
+        || select.group_by.is_empty()
+        || select.having.is_some()
+        || !select.order_by.is_empty()
+        || select.limit.is_some()
+        || !select.windows.is_empty()
+    {
+        return None;
+    }
+    let from = select.from.as_ref()?;
+    if from.right.is_some() || from.on.is_some() || !from.using.is_empty() || from.natural {
+        return None;
+    }
+    let (table, source_visible, origin) = single_table_of(&from.left, catalog, current_db)?;
+    let column_offset = |path: &[String]| {
+        let name = path.last()?;
+        table
+            .visible_columns()
+            .iter()
+            .position(|column| column.name.eq_ignore_ascii_case(name))
+    };
+    let group_offsets = select
+        .group_by
+        .iter()
+        .map(|item| match &item.expr {
+            tidb_ast::Expr::Column(path) => column_offset(path),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()?;
+    if group_offsets.iter().any(|offset| {
+        let field_type = &table.visible_columns()[*offset].field_type;
+        !field_type.code().is_type_integer()
+            || !field_type.has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL)
+    }) {
+        return None;
+    }
+    let group_set = group_offsets
+        .iter()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut sum_offset = None;
+    let mut output_to_source = Vec::with_capacity(select.fields.fields().len());
+    let mut outputs = Vec::with_capacity(select.fields.fields().len());
+    for field in select.fields.fields() {
+        match field {
+            tidb_ast::SelectField::Expr {
+                expr: tidb_ast::Expr::Column(path),
+                ..
+            } => {
+                let offset = column_offset(path)?;
+                if !group_set.contains(&offset) {
+                    return None;
+                }
+                output_to_source.push(Some(offset));
+                outputs.push(crate::join::IndexLookupAggregateOutput::Column(offset));
+            }
+            tidb_ast::SelectField::Expr {
+                expr:
+                    tidb_ast::Expr::Aggregate {
+                        name,
+                        distinct: false,
+                        args,
+                    },
+                ..
+            } if name.eq_ignore_ascii_case("SUM") => {
+                let [tidb_ast::Expr::Column(path)] = args.as_slice() else {
+                    return None;
+                };
+                let offset = column_offset(path)?;
+                if table.visible_columns()[offset].field_type.code()
+                    != tidb_datatype::FieldTypeCode::NewDecimal
+                    || sum_offset.replace(offset).is_some()
+                {
+                    return None;
+                }
+                output_to_source.push(None);
+                outputs.push(crate::join::IndexLookupAggregateOutput::DecimalSum);
+            }
+            _ => return None,
+        }
+    }
+    let sum_offset = sum_offset?;
+    let physical_name =
+        |offset: usize| format!("{origin}.{}", table.visible_columns()[offset].name);
+    let groups = group_offsets
+        .iter()
+        .map(|offset| physical_name(*offset))
+        .collect::<Vec<_>>();
+    let mut functions = vec![format!(
+        "funcs:sum({})->Column#0",
+        physical_name(sum_offset)
+    )];
+    functions.extend(outputs.iter().filter_map(|output| match output {
+        crate::join::IndexLookupAggregateOutput::Column(offset) => {
+            let name = physical_name(*offset);
+            Some(format!("funcs:firstrow({name})->{name}"))
+        }
+        crate::join::IndexLookupAggregateOutput::DecimalSum => None,
+    }));
+    let aggregation_info = format!("group by:{}, {}", groups.join(", "), functions.join(", "));
+    let mut filters = Vec::new();
+    if let Some(predicate) = &select.where_clause {
+        ast_conjuncts(predicate, &mut filters);
+    }
+    Some(GroupedDecimalSumLookup {
+        table,
+        source_visible,
+        origin,
+        output_to_source,
+        filters,
+        aggregation: crate::join::IndexLookupAggregation {
+            group_offsets,
+            sum_offset,
+            outputs,
+        },
+        aggregation_info,
+    })
+}
+
+fn ast_conjuncts(expr: &tidb_ast::Expr, out: &mut Vec<tidb_ast::Expr>) {
+    match expr {
+        tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicAnd, left, right) => {
+            ast_conjuncts(left, out);
+            ast_conjuncts(right, out);
+        }
+        expr => out.push(expr.clone()),
     }
 }
 

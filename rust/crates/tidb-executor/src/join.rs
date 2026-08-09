@@ -357,6 +357,110 @@ impl MergeInnerGroup {
 /// pins -- so reading the default is a smaller claim, not a wrong answer.
 pub(crate) const INDEX_JOIN_BATCH_SIZE: usize = 25000;
 
+/// One output of an aggregation rebuilt below an index join's lookup side.
+///
+/// Go rebuilds the complete inner physical task for every outer batch.  Most
+/// inner tasks in this port are a bare table reader, but a grouped derived
+/// table can retain its aggregation above that reader.  These are the two
+/// output shapes needed by the first such port: a carried grouping column and
+/// one exact decimal `SUM`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum IndexLookupAggregateOutput {
+    Column(usize),
+    DecimalSum,
+}
+
+/// The executable aggregation retained above an index join's re-seeded table
+/// reader.
+///
+/// This deliberately accepts only non-null integer group columns and one
+/// decimal input.  The planner proves those type requirements before it can
+/// construct the value, so execution can use the same datum hash code and
+/// exact `Decimal::add` fold as the ordinary hash aggregation without
+/// inventing coercions at this lower boundary.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct IndexLookupAggregation {
+    pub(crate) group_offsets: Vec<usize>,
+    pub(crate) sum_offset: usize,
+    pub(crate) outputs: Vec<IndexLookupAggregateOutput>,
+}
+
+impl IndexLookupAggregation {
+    fn apply(&self, rows: Vec<Vec<Datum>>) -> Result<Vec<Vec<Datum>>, ExecError> {
+        struct Group {
+            first: Vec<Datum>,
+            sum: Option<Decimal>,
+        }
+
+        let mut positions = std::collections::HashMap::<Vec<u8>, usize>::new();
+        let mut groups = Vec::<Group>::new();
+        for row in rows {
+            let mut key = Vec::new();
+            for offset in &self.group_offsets {
+                let value = row.get(*offset).ok_or_else(|| {
+                    ExecError::unsupported("an index lookup aggregation group offset is absent")
+                })?;
+                key.extend_from_slice(&tidb_codec::hash_code(value));
+                key.push(0xff);
+            }
+            let position = match positions.get(&key).copied() {
+                Some(position) => position,
+                None => {
+                    let position = groups.len();
+                    positions.insert(key, position);
+                    groups.push(Group {
+                        first: row.clone(),
+                        sum: None,
+                    });
+                    position
+                }
+            };
+            match row.get(self.sum_offset) {
+                Some(Datum::Null) => {}
+                Some(Datum::Decimal(value)) => {
+                    let group = &mut groups[position];
+                    group.sum = Some(match group.sum.take() {
+                        Some(sum) => sum.add(value),
+                        None => value.clone(),
+                    });
+                }
+                Some(_) => {
+                    return Err(ExecError::unsupported(
+                        "an index lookup decimal SUM received a non-decimal value",
+                    ))
+                }
+                None => {
+                    return Err(ExecError::unsupported(
+                        "an index lookup aggregation SUM offset is absent",
+                    ))
+                }
+            }
+        }
+
+        groups
+            .into_iter()
+            .map(|group| {
+                self.outputs
+                    .iter()
+                    .map(|output| match output {
+                        IndexLookupAggregateOutput::Column(offset) => {
+                            group.first.get(*offset).cloned().ok_or_else(|| {
+                                ExecError::unsupported(
+                                    "an index lookup aggregation output offset is absent",
+                                )
+                            })
+                        }
+                        IndexLookupAggregateOutput::DecimalSum => Ok(group
+                            .sum
+                            .as_ref()
+                            .map_or(Datum::Null, |sum| Datum::Decimal(sum.clone()))),
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+}
+
 /// The index-join strategy: which child is LOOKED UP once per distinct outer
 /// key, and over which object.
 ///
@@ -382,6 +486,14 @@ pub(crate) struct IndexLookupPlan {
     pub(crate) probe_keys: Vec<usize>,
     /// The re-seedable inner source.
     pub(crate) source: crate::access_path::IndexJoinLookupExec,
+    /// An aggregation retained by a grouped derived lookup side.  A bare
+    /// table lookup has no transformation.
+    pub(crate) aggregation: Option<IndexLookupAggregation>,
+    /// Outer-child columns a null-rejecting join predicate proves non-NULL.
+    pub(crate) outer_not_null: Vec<usize>,
+    /// Lookup-result columns the same predicate proves non-NULL, evaluated
+    /// after a retained derived aggregation.
+    pub(crate) inner_not_null: Vec<usize>,
 }
 
 /// The index strategy's live state: one outer batch and the inner rows its
@@ -838,7 +950,16 @@ impl<C: Columns> JoinExec<C> {
         let state = index_state.as_mut().expect("fill_index_batch installed it");
 
         // 1. The outer batch, up to `batch_size` rows.
+        let retained = state
+            .outer
+            .iter()
+            .chain(&state.inner)
+            .map(|row| row_bytes(row))
+            .sum::<i64>();
+        tracker.consume(-retained);
         state.outer.clear();
+        state.inner.clear();
+        state.matched.clear();
         state.cursor = 0;
         let mut bytes = 0i64;
         while state.outer.len() < state.batch_size {
@@ -855,6 +976,9 @@ impl<C: Columns> JoinExec<C> {
             }
             let row = datum_row(&state.outer_chunk, state.outer_row, &outer_types);
             state.outer_row += 1;
+            if !row_non_null_at(&row, &plan.outer_not_null)? {
+                continue;
+            }
             bytes += row_bytes(&row);
             state.outer.push(row);
         }
@@ -916,8 +1040,6 @@ impl<C: Columns> JoinExec<C> {
         // 3. The inner rows those probes reach.
         plan.source.set_probes(probes);
         let inner_types: Vec<FieldType> = plan.source.ret_field_types().to_vec();
-        state.inner.clear();
-        state.matched.clear();
         let mut chunk = plan.source.new_chunk();
         loop {
             plan.source.next(&mut chunk)?;
@@ -932,6 +1054,27 @@ impl<C: Columns> JoinExec<C> {
                 state.inner.push(row);
             }
             tracker.consume(bytes);
+            memory.check()?;
+        }
+        if let Some(aggregation) = &plan.aggregation {
+            let raw_bytes = state.inner.iter().map(|row| row_bytes(row)).sum::<i64>();
+            let aggregated = aggregation.apply(std::mem::take(&mut state.inner))?;
+            let aggregated_bytes = aggregated.iter().map(|row| row_bytes(row)).sum::<i64>();
+            tracker.consume(aggregated_bytes - raw_bytes);
+            state.inner = aggregated;
+            memory.check()?;
+        }
+        if !plan.inner_not_null.is_empty() {
+            let before = state.inner.iter().map(|row| row_bytes(row)).sum::<i64>();
+            let mut retained = Vec::with_capacity(state.inner.len());
+            for row in std::mem::take(&mut state.inner) {
+                if row_non_null_at(&row, &plan.inner_not_null)? {
+                    retained.push(row);
+                }
+            }
+            let after = retained.iter().map(|row| row_bytes(row)).sum::<i64>();
+            tracker.consume(after - before);
+            state.inner = retained;
             memory.check()?;
         }
 
@@ -1640,6 +1783,18 @@ impl<C: Columns> JoinExec<C> {
 
 /// What one materialized row costs: the `Vec` header plus each datum's own
 /// estimate, which is Go `Datum.MemUsage` summed the same way.
+fn row_non_null_at(row: &[Datum], offsets: &[usize]) -> Result<bool, ExecError> {
+    for offset in offsets {
+        let value = row.get(*offset).ok_or_else(|| {
+            ExecError::unsupported("an index join null-rejection offset is absent")
+        })?;
+        if matches!(value, Datum::Null) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 pub(crate) fn row_bytes(row: &[Datum]) -> i64 {
     let mut bytes = i64::try_from(size_of::<Vec<Datum>>()).unwrap_or(i64::MAX);
     for datum in row {

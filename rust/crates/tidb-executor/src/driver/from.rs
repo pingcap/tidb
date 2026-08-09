@@ -2015,6 +2015,19 @@ pub(crate) fn build_join(
     // executors know.
     let left_types = left_exec.ret_field_types().to_vec();
     let right_types = right_exec.ret_field_types().to_vec();
+    let mut comparison_not_null = Vec::new();
+    for condition in &conditions {
+        collect_comparison_not_null_columns(condition, &mut comparison_not_null);
+    }
+    comparison_not_null.sort_unstable();
+    comparison_not_null.dedup();
+    comparison_not_null.retain(|offset| {
+        left_types
+            .iter()
+            .chain(&right_types)
+            .nth(*offset)
+            .is_some_and(|field_type| !field_type.has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL))
+    });
     let mut join_exec = JoinExec::new(
         meta,
         kind,
@@ -2116,7 +2129,20 @@ pub(crate) fn build_join(
     );
     let single_outer_row_choice =
         chosen == crate::driver::join_search::Chosen::IndexForSingleOuterRow;
-    let index_join = (!coalescing && index_chosen)
+    // Go's empty-property search also picks an index join on cost when a
+    // grouped derived inner has a constant on the dynamically probed key:
+    // at most one distinct outer key can return rows.  This is a strict
+    // dominance-sized subset of the unresolved full candidate-tree costing
+    // problem: admit it only when the outer and joined estimates are no
+    // larger than the materialized inner aggregate.  Every other
+    // HashAlsoEnumerated site remains fail-closed.
+    let grouped_cost_candidate = matches!(
+        chosen,
+        crate::driver::join_search::Chosen::Refused(
+            crate::driver::join_search::Refusal::HashAlsoEnumerated
+        )
+    );
+    let index_join = (!coalescing && (index_chosen || grouped_cost_candidate))
         .then(|| {
             let (left_side, right_side) = crate::driver::index_join_decision::join_sides(
                 join,
@@ -2137,6 +2163,25 @@ pub(crate) fn build_join(
                 ctx,
             )
         })
+        .flatten();
+    let grouped_cost_choice = index_join.as_ref().is_some_and(|decision| {
+        if !grouped_cost_candidate
+            || decision.aggregation.is_none()
+            || !decision.constant_constrained_probe
+        {
+            return false;
+        }
+        estimated_join_rows.is_some_and(|rows| {
+            let (outer, inner) = if decision.lookup_is_left {
+                (rows.right, rows.left)
+            } else {
+                (rows.left, rows.right)
+            };
+            outer <= inner && rows.joined <= inner
+        })
+    });
+    let index_join = (index_chosen || grouped_cost_choice)
+        .then_some(index_join)
         .flatten();
     let index_join = index_join.filter(|decision| {
         if !single_outer_row_choice {
@@ -2184,6 +2229,30 @@ pub(crate) fn build_join(
         );
         source.set_probe_parts(decision.probe_parts.clone());
         source.set_filters(decision.filter_exprs.clone(), ctx.clone());
+        let physical_name = |offset: usize| {
+            let fallback = qualified_scope_column(&scope, current_db, offset);
+            let Some(path) = scope.qualified_path(offset) else {
+                return fallback;
+            };
+            let [.., relation, column] = path.as_slice() else {
+                return fallback;
+            };
+            let column = crate::driver::merge_decision::RelColumn {
+                relation: relation.clone(),
+                column: column.clone(),
+            };
+            crate::driver::merge_decision::physical_column_trace_name(
+                if offset < left_width {
+                    &join.left
+                } else {
+                    right_node
+                },
+                &column,
+                catalog,
+                current_db,
+            )
+            .unwrap_or(fallback)
+        };
         let keys: Vec<(String, String)> = decision
             .probe_keys
             .iter()
@@ -2194,21 +2263,35 @@ pub(crate) fn build_join(
                 } else {
                     (key.left, left_width + key.right)
                 };
-                (
-                    qualified_scope_column(&scope, current_db, outer),
-                    qualified_scope_column(&scope, current_db, inner),
-                )
+                (physical_name(outer), physical_name(inner))
             })
             .collect();
+        let equal_conditions = split
+            .keys
+            .iter()
+            .map(|key| {
+                format!(
+                    "eq({}, {})",
+                    physical_name(key.left),
+                    physical_name(left_width + key.right)
+                )
+            })
+            .collect::<Vec<_>>();
         let index = match &decision.object {
             crate::access_path::LookupObject::Index(_) => true,
             crate::access_path::LookupObject::Handle
             | crate::access_path::LookupObject::CommonHandle => false,
         };
-        let needed_columns = demand.columns.map_or_else(
+        let mut needed_columns = demand.columns.map_or_else(
             || (0..decision.columns.len()).collect::<Vec<_>>(),
             |columns| columns.needed(&decision.visible, &decision.columns),
         );
+        if let Some(aggregation) = &decision.aggregation {
+            needed_columns.extend(aggregation.group_offsets.iter().copied());
+            needed_columns.push(aggregation.sum_offset);
+            needed_columns.sort_unstable();
+            needed_columns.dedup();
+        }
         let index_lookup = match &decision.object {
             crate::access_path::LookupObject::Index(id) => {
                 !crate::access_cost::index_is_covering(&decision.table, *id, &needed_columns)
@@ -2258,17 +2341,58 @@ pub(crate) fn build_join(
                 } else {
                     rows.left
                 };
-                (Some(outer), (outer > 0.0).then_some(rows.joined / outer))
+                let inner = if decision.lookup_is_left {
+                    rows.left
+                } else {
+                    rows.right
+                };
+                // A rebuilt grouped inner is costed for the complete group
+                // result of ONE dynamic range.  Its join output may be much
+                // smaller after equality matching, so dividing joined rows
+                // by outer rows underprices the IndexJoin hash table and can
+                // select `IndexJoin` where Go selects `IndexHashJoin`.
+                let probe_rows_one = if decision.aggregation.is_some() {
+                    inner
+                } else if outer > 0.0 {
+                    rows.joined / outer
+                } else {
+                    0.0
+                };
+                (Some(outer), Some(probe_rows_one))
             });
+        let (outer_not_null, inner_not_null) = comparison_not_null.iter().copied().fold(
+            (Vec::new(), Vec::new()),
+            |mut offsets, offset| {
+                if decision.lookup_is_left {
+                    if offset < left_width {
+                        offsets.1.push(offset);
+                    } else {
+                        offsets.0.push(offset - left_width);
+                    }
+                } else if offset < left_width {
+                    offsets.0.push(offset);
+                } else {
+                    offsets.1.push(offset - left_width);
+                }
+                offsets
+            },
+        );
         join_exec.set_index_lookup_plan(crate::join::IndexLookupPlan {
             lookup_is_left: decision.lookup_is_left,
             probe_keys: decision.probe_keys.clone(),
             source,
+            aggregation: decision.aggregation.clone(),
+            outer_not_null: outer_not_null.clone(),
+            inner_not_null: inner_not_null.clone(),
         });
         join_exec.set_consumes_where(decision.consumes_where);
         (
             crate::plan_trace::IndexJoinText {
-                reader: if index_lookup {
+                reader: if decision.aggregation.is_some() && !inner_not_null.is_empty() {
+                    "Selection"
+                } else if decision.aggregation.is_some() {
+                    "HashAgg"
+                } else if index_lookup {
                     "IndexLookUp"
                 } else if index {
                     "IndexReader"
@@ -2276,6 +2400,7 @@ pub(crate) fn build_join(
                     "TableReader"
                 },
                 keys,
+                equal_conditions,
                 lookup_is_left: decision.lookup_is_left,
                 unique,
                 forced_name: forced_index_name,
@@ -2307,6 +2432,8 @@ pub(crate) fn build_join(
             decision.range_info.clone(),
             index,
             index_lookup,
+            outer_not_null,
+            inner_not_null,
         )
     });
     // The plan row and the executor are one decision: if the recorder cannot
@@ -2314,7 +2441,19 @@ pub(crate) fn build_join(
     // refused rather than printed with a whole-table read under an index
     // join. The EXECUTOR is unaffected -- it still answers correctly.
     let index_text = match (index_text, trace.as_deref_mut()) {
-        (Some((text, lookup_is_left, access, range_info, index, index_lookup)), Some(trace)) => {
+        (
+            Some((
+                text,
+                lookup_is_left,
+                access,
+                range_info,
+                index,
+                index_lookup,
+                outer_not_null,
+                inner_not_null,
+            )),
+            Some(trace),
+        ) => {
             let decision = index_join
                 .as_ref()
                 .expect("printable index text has an index decision");
@@ -2337,6 +2476,10 @@ pub(crate) fn build_join(
                         index_lookup,
                         visible: &decision.visible,
                         estimated_rows: estimated_join_rows.map(|rows| rows.joined),
+                        grouped_derived: decision.aggregation.is_some(),
+                        aggregation_info: decision.aggregation_info.as_deref(),
+                        outer_not_null: &outer_not_null,
+                        inner_not_null: &inner_not_null,
                     },
                     &filters,
                     decision.filter_selectivity,
@@ -2483,6 +2626,30 @@ fn collect_physical_join_conjuncts(expression: &Expression, out: &mut Vec<Expres
         }
     }
     out.push(expression.clone());
+}
+
+/// Direct column arguments a NULL-propagating comparison proves non-NULL.
+/// `NullEQ` is deliberately absent: it is true for two NULL operands.
+fn collect_comparison_not_null_columns(expression: &Expression, out: &mut Vec<usize>) {
+    let Expression::ScalarFunction(function) = expression else {
+        return;
+    };
+    let name = function.func_name.lowercase();
+    if name == "and" {
+        for argument in &function.args {
+            collect_comparison_not_null_columns(argument, out);
+        }
+        return;
+    }
+    if !matches!(name, "eq" | "ne" | "lt" | "le" | "gt" | "ge") {
+        return;
+    }
+    out.extend(function.args.iter().filter_map(|argument| {
+        let Expression::Column(column) = argument else {
+            return None;
+        };
+        usize::try_from(column.index).ok()
+    }));
 }
 
 /// `kv` with any `PARTITION (p, ...)` restriction on the reference applied,

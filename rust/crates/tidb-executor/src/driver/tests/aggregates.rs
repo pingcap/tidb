@@ -665,6 +665,117 @@ fn tpcc_condition_nine_eliminates_the_unique_district_aggregation() {
     assert!(cell(2, 4).contains("keep order:false"), "{}", cell(2, 4));
 }
 
+/// The other half of TPCC condition 09 is a grouped `history` derived table.
+/// Go retains that aggregation while rebuilding its indexed base-table read
+/// for each district probe.  The lookup path must therefore aggregate the
+/// fetched base rows before matching the derived outputs, including NULL SUM
+/// behavior, rather than joining raw history rows.
+#[test]
+fn tpcc_condition_nine_rebuilds_grouped_history_over_index_lookup() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE district (d_id INT NOT NULL, d_w_id INT NOT NULL, \
+            d_ytd DECIMAL(12,2), PRIMARY KEY (d_w_id,d_id))",
+        &mut catalog,
+    )
+    .unwrap();
+    let TableEntry::Kv(district) = catalog.get_mut_in("test", "district").unwrap() else {
+        panic!("district is not a KV table");
+    };
+    district.add_index(crate::kv_table::KvIndex {
+        id: 1,
+        name: "PRIMARY".to_owned(),
+        unique: true,
+        prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 2],
+        column_offsets: vec![1, 0],
+        visible: true,
+        global: false,
+    });
+    crate::run_create_table_on(
+        "CREATE TABLE history (h_d_id INT NOT NULL, h_w_id INT NOT NULL, \
+            h_amount DECIMAL(6,2), KEY idx_h_w_id(h_w_id))",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO district VALUES (1,1,10.00),(2,1,20.00),(1,2,30.00)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO history VALUES \
+            (1,1,4.00),(1,1,6.00),(1,1,NULL),(2,1,8.00),(1,2,30.00)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    let sql = "SELECT COUNT(*) FROM \
+        (SELECT d_id,d_w_id,SUM(d_ytd) s1 FROM district \
+         GROUP BY d_id,d_w_id) d, \
+        (SELECT h_d_id,h_w_id,SUM(h_amount) s2 FROM history \
+         WHERE h_w_id=1 GROUP BY h_d_id,h_w_id) h \
+        WHERE h_d_id=d_id AND d_w_id=h_w_id AND d_w_id=1 AND s1<>s2";
+    assert_eq!(
+        run_select_on(sql, &catalog, &ctx).unwrap(),
+        vec![vec![Datum::Int(1)]],
+    );
+
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, plan) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let cell = |row: usize, column: usize| match &plan[row][column] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+    let operators = plan
+        .iter()
+        .map(|row| match &row[0] {
+            Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+            other => format!("{other:?}"),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        operators,
+        vec![
+            "StreamAgg",
+            "└─IndexHashJoin",
+            "  ├─Projection(Build)",
+            "  │ └─TableReader",
+            "  │   └─Selection",
+            "  │     └─TableRangeScan",
+            "  └─Selection(Probe)",
+            "    └─HashAgg",
+            "      └─IndexLookUp",
+            "        ├─Selection(Build)",
+            "        │ └─IndexRangeScan",
+            "        └─TableRowIDScan(Probe)",
+        ],
+        "{plan:#?}",
+    );
+    assert_eq!(
+        cell(4, 4),
+        "not(isnull(cast(test.district.d_ytd, decimal(34,2) BINARY)))"
+    );
+    let answers = crate::driver::join_search::ANSWERS.with(|answers| answers.borrow().clone());
+    assert!(
+        operators
+            .iter()
+            .any(|operator| operator.contains("IndexHashJoin")),
+        "{plan:#?}\n{answers:#?}",
+    );
+}
+
 #[test]
 fn tpcc_condition_two_orders_group_uses_the_covering_index_range() {
     use crate::explain::{explain_select_stmt, ExplainFormat};

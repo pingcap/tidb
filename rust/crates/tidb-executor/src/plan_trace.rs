@@ -91,6 +91,11 @@ pub(crate) struct PlanNode {
     /// The `operator info` cell, up to the point a join splices its
     /// `, left side:<child>` in.
     pub(crate) info: String,
+    /// Physical expressions produced by a projection, in output order. Most
+    /// nodes leave this empty; join null-rejection pushdown uses it to place
+    /// the derived predicate below the projection without parsing EXPLAIN
+    /// text back into expressions.
+    pub(crate) projection_outputs: Vec<String>,
     /// The execution boundary Go reports for this operator.
     pub(crate) task: &'static str,
     /// A join's `, left side:` insertion point: the index in `children` of
@@ -141,6 +146,7 @@ impl PlanNode {
             est_rows,
             access,
             info,
+            projection_outputs: Vec::new(),
             task: "root",
             left_side_child: None,
             info_tail: String::new(),
@@ -1196,6 +1202,10 @@ impl PlanTrace {
             index_lookup,
             visible,
             estimated_rows,
+            grouped_derived,
+            aggregation_info,
+            outer_not_null,
+            inner_not_null,
         } = path;
         let depth = self.stack.len();
         if depth < 2 {
@@ -1209,6 +1219,144 @@ impl PlanTrace {
                 node.name,
                 "TableFullScan" | "IndexFullScan" | "TableRangeScan" | "IndexRangeScan"
             ) && node.children.is_empty()
+        }
+
+        if grouped_derived {
+            if !outer_not_null.is_empty() {
+                let outer = &mut self.stack[outer_at];
+                if outer.name != "Projection"
+                    || outer.children.len() != 1
+                    || outer_not_null
+                        .iter()
+                        .any(|offset| *offset >= outer.projection_outputs.len())
+                {
+                    return Err(());
+                }
+                let predicates = outer_not_null
+                    .iter()
+                    .map(|offset| format!("not(isnull({}))", outer.projection_outputs[*offset]))
+                    .collect::<Vec<_>>();
+                outer.est_rows = estimated_rows.or(outer.est_rows);
+                let reader = &mut outer.children[0];
+                if reader.name != "TableReader" || reader.children.len() != 1 {
+                    return Err(());
+                }
+                reader.est_rows = estimated_rows.or(reader.est_rows);
+                reader.info = "data:Selection".to_owned();
+                let scan = &mut reader.children[0];
+                if !is_scan(scan) {
+                    return Err(());
+                }
+                let mut selection = PlanNode::new(
+                    "Selection",
+                    estimated_rows,
+                    String::new(),
+                    predicates.join(", "),
+                );
+                selection.task = "cop[tikv]";
+                selection.act_rows = scan.act_rows.clone();
+                selection.key_ndv_ratio = scan.key_ndv_ratio;
+                scan.task = "cop[tikv]";
+                selection.children.push(std::mem::replace(
+                    scan,
+                    PlanNode::new("TableDual", Some(0.0), String::new(), String::new()),
+                ));
+                *scan = selection;
+            }
+            let node = &mut self.stack[at];
+            // Go rebuilds this complete inner task for every outer batch:
+            // HashAgg -> IndexLookUp -> (cop Selection -> dynamic range,
+            // table row read).  The executable decision carries the same
+            // aggregation, so retaining this tree is plan reporting of the
+            // operator that actually runs rather than a trace-only rewrite.
+            if node.name != "HashAgg" || node.children.len() != 1 {
+                return Err(());
+            }
+            node.info = aggregation_info.ok_or(())?.to_owned();
+            node.est_rows = estimated_rows.or(node.est_rows);
+            let lookup = &mut node.children[0];
+            if lookup.name != "IndexLookUp" || lookup.children.len() != 2 || !index_lookup {
+                return Err(());
+            }
+            lookup.est_rows = estimated_rows.or(lookup.est_rows);
+            let scan_holder = &mut lookup.children[0];
+            let (scan, had_selection) = if is_scan(scan_holder) {
+                (&mut *scan_holder, false)
+            } else if scan_holder.name == "Selection"
+                && scan_holder.children.len() == 1
+                && is_scan(&scan_holder.children[0])
+            {
+                (&mut scan_holder.children[0], true)
+            } else {
+                return Err(());
+            };
+            let pseudo = if scan.info.contains("stats:pseudo") {
+                ", stats:pseudo"
+            } else {
+                ""
+            };
+            scan.name = if index {
+                "IndexRangeScan"
+            } else {
+                "TableRangeScan"
+            };
+            scan.access = access;
+            scan.info = format!("range: decided by {range_info}, keep order:false{pseudo}");
+            scan.est_rows = estimated_rows
+                .map(|rows| {
+                    if filter_selectivity > 0.0 {
+                        rows / filter_selectivity.clamp(0.0, 1.0)
+                    } else {
+                        rows
+                    }
+                })
+                .or(outer_rows)
+                .or(scan.est_rows);
+            if had_selection {
+                scan_holder.est_rows = estimated_rows.or(scan_holder.est_rows);
+                if !filters.is_empty() {
+                    scan_holder.info = filters.join(", ");
+                }
+            } else if !filters.is_empty() {
+                let mut selection = PlanNode::new(
+                    "Selection",
+                    estimated_rows,
+                    String::new(),
+                    filters.join(", "),
+                );
+                selection.task = "cop[tikv]";
+                selection.act_rows = scan_holder.act_rows.clone();
+                selection.key_ndv_ratio = scan_holder.key_ndv_ratio;
+                selection.label = scan_holder.label;
+                scan_holder.label = "";
+                scan_holder.task = "cop[tikv]";
+                selection.children.push(std::mem::replace(
+                    scan_holder,
+                    PlanNode::new("TableDual", Some(0.0), String::new(), String::new()),
+                ));
+                *scan_holder = selection;
+            }
+            lookup.children[1].est_rows = estimated_rows.or(lookup.children[1].est_rows);
+            if !inner_not_null.is_empty() {
+                let mut selection = PlanNode::new(
+                    "Selection",
+                    estimated_rows,
+                    String::new(),
+                    inner_not_null
+                        .iter()
+                        .map(|offset| format!("not(isnull(Column#{offset}))"))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                );
+                selection.act_rows = node.act_rows.clone();
+                selection.key_ndv_ratio = node.key_ndv_ratio;
+                selection.children.push(std::mem::replace(
+                    node,
+                    PlanNode::new("TableDual", Some(0.0), String::new(), String::new()),
+                ));
+                *node = selection;
+            }
+            return Ok(());
         }
 
         let node = &mut self.stack[at];
@@ -1954,23 +2102,28 @@ impl PlanTrace {
         expressions: &[Expression],
         column_names: &[Option<String>],
     ) -> bool {
-        let Some(info) = expressions
+        let Some(projected) = expressions
             .iter()
-            .enumerate()
-            .map(|(index, expression)| {
-                let text = physical_expression_text_with_columns(expression, column_names)?;
-                Some(if matches!(expression, Expression::Column(_)) {
-                    text
-                } else {
-                    format!("{text}->Column#{index}")
-                })
-            })
+            .map(|expression| physical_expression_text_with_columns(expression, column_names))
             .collect::<Option<Vec<_>>>()
-            .map(|parts| parts.join(", "))
         else {
             return false;
         };
-        self.wrap("Projection", Est::Inherit, info);
+        let outputs = projected
+            .iter()
+            .enumerate()
+            .map(|(index, text)| {
+                if matches!(expressions[index], Expression::Column(_)) {
+                    text.clone()
+                } else {
+                    format!("{text}->Column#{index}")
+                }
+            })
+            .collect::<Vec<_>>();
+        self.wrap("Projection", Est::Inherit, outputs.join(", "));
+        if let Some(projection) = self.stack.last_mut() {
+            projection.projection_outputs = projected;
+        }
         true
     }
 
@@ -2244,16 +2397,9 @@ impl PlanTrace {
                     .collect::<Vec<_>>()
                     .join(", "),
             );
-            if !text.keys.is_empty() {
+            if !text.equal_conditions.is_empty() {
                 tail.push_str(", equal cond:");
-                tail.push_str(
-                    &text
-                        .keys
-                        .iter()
-                        .map(|(outer, inner)| format!("eq({outer}, {inner})"))
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                );
+                tail.push_str(&text.equal_conditions.join(", "));
             }
         } else {
             if !equal.is_empty() {
@@ -2343,6 +2489,7 @@ impl PlanTrace {
             est_rows,
             access: String::new(),
             info,
+            projection_outputs: Vec::new(),
             task: "root",
             // `explainJoinLeftSide` names the LEFT child's operator, and only
             // for an OUTER join. The name carries its own id in `format='row'`,
@@ -3013,6 +3160,10 @@ pub(crate) struct IndexJoinText {
     /// The outer and inner key column names, already qualified, in probe
     /// order.
     pub(crate) keys: Vec<(String, String)>,
+    /// Every equality retained by the join, in written order and under the
+    /// base columns Go's `OrigName` prints. The dynamic access key above is a
+    /// subset; Go still repeats it in `equal cond:`.
+    pub(crate) equal_conditions: Vec<String>,
     /// Whether the LOOKED-UP (inner) side is the join's left child. The two
     /// sides are not interchangeable in the cost below: the hash table is
     /// built over the outer side for `IndexHashJoin` and over the inner one
@@ -3051,6 +3202,16 @@ pub(crate) struct IndexJoinInnerPathText<'a> {
     pub(crate) visible: &'a str,
     /// The statement-owned post-filter inner estimate for a one-row driver.
     pub(crate) estimated_rows: Option<f64>,
+    /// Whether the lookup reader remains below a grouped derived table.
+    pub(crate) grouped_derived: bool,
+    /// Go's physical HashAgg payload for a retained grouped derived table.
+    pub(crate) aggregation_info: Option<&'a str>,
+    /// Outer output columns rejected when NULL by a comparison above the
+    /// logical join. The physical plan pushes these predicates below the
+    /// eliminated outer aggregation projection.
+    pub(crate) outer_not_null: &'a [usize],
+    /// Grouped inner output columns rejected when NULL after aggregation.
+    pub(crate) inner_not_null: &'a [usize],
 }
 
 /// Unsays `keep order:true` on every leaf under `node` that a join above it
@@ -3299,6 +3460,7 @@ mod tests {
         IndexJoinText {
             reader: "IndexReader",
             keys: vec![("a".to_owned(), "b".to_owned())],
+            equal_conditions: vec!["eq(a, b)".to_owned()],
             lookup_is_left: false,
             unique: false,
             forced_name: None,
