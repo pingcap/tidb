@@ -19,12 +19,63 @@
 //! generic Rust candidate cannot silently become an index scan.
 
 use crate::{
-    cardinality::live_index_optimizer::{estimate_proven_point_rows, LiveIndexCandidate},
+    cardinality::{
+        live_index_optimizer::{estimate_proven_point_rows, LiveIndexCandidate},
+        row_count_estimator::IndexRangeDatums,
+    },
     tikv_scan_spec::{
         IndexPushdownMetadataError, ResolvedIndexDescriptor, TiKvIndexScanSpec, TiKvTableScanSpec,
         ValidatedIndexPushdown,
     },
 };
+
+use tidb_datatype::Collation;
+
+/// The access-path identity needed by Go `AccessPath.OnlyPointRange`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PointRangePath {
+    /// A signed integer table-handle path, whose point may be SQL `NULL`.
+    IntHandle,
+    /// An ordinary index path, which must fully match every index column.
+    Index {
+        /// Number of columns in the source index definition.
+        column_count: usize,
+    },
+}
+
+fn is_point_range(range: &IndexRangeDatums, nullable: bool) -> bool {
+    if range.low_exclude || range.high_exclude || range.low.len() != range.high.len() {
+        return false;
+    }
+    if range.low.iter().any(tidb_datatype::Datum::is_min_not_null)
+        || range.high.iter().any(tidb_datatype::Datum::is_max_value)
+    {
+        return false;
+    }
+    if !nullable && range.low.iter().any(tidb_datatype::Datum::is_null) {
+        return false;
+    }
+    range.low.iter().zip(&range.high).all(|(low, high)| {
+        low.compare(high, Collation::Binary)
+            .is_ok_and(|order| order.is_eq())
+    })
+}
+
+/// Reports whether every source range is a point accepted by this path.
+///
+/// This is Go `AccessPath.OnlyPointRange`: integer handles use
+/// `Range.IsPointNullable`, while ordinary indexes use
+/// `Range.IsPointNonNullable` and additionally require every range to cover
+/// all index columns.
+#[must_use]
+pub fn only_point_ranges(path: PointRangePath, ranges: &[IndexRangeDatums]) -> bool {
+    ranges.iter().all(|range| match path {
+        PointRangePath::IntHandle => is_point_range(range, true),
+        PointRangePath::Index { column_count } => {
+            is_point_range(range, false) && range.high.len() == column_count
+        }
+    })
+}
 
 /// Storage engine selected by an access path.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -562,4 +613,57 @@ pub enum DataSourceAccessPath {
     Table(TableAccessPath),
     /// An index-merge path.
     IndexMerge,
+}
+
+#[cfg(test)]
+mod tests {
+    use tidb_datatype::Datum;
+
+    use super::{only_point_ranges, IndexRangeDatums, PointRangePath};
+
+    fn range(low: Datum, high: Datum) -> IndexRangeDatums {
+        IndexRangeDatums {
+            low: vec![low],
+            high: vec![high],
+            low_exclude: false,
+            high_exclude: false,
+        }
+    }
+
+    #[test]
+    fn test_only_point_range() {
+        // pkg/planner/util/path_test.go::TestOnlyPointRange is the source of
+        // truth for this table, including its asymmetric NULL treatment.
+        let null_point_range = range(Datum::Null, Datum::Null);
+        let one_point_range = range(Datum::new_int(1), Datum::new_int(1));
+        let one_to_two_range = range(Datum::new_int(1), Datum::new_int(2));
+
+        assert!(only_point_ranges(
+            PointRangePath::IntHandle,
+            &[null_point_range.clone(), one_point_range.clone()],
+        ));
+        assert!(!only_point_ranges(
+            PointRangePath::IntHandle,
+            &[one_point_range.clone(), one_to_two_range.clone()],
+        ));
+
+        let one_column_index = PointRangePath::Index { column_count: 1 };
+        assert!(only_point_ranges(
+            one_column_index,
+            std::slice::from_ref(&one_point_range),
+        ));
+        assert!(!only_point_ranges(
+            one_column_index,
+            &[null_point_range, one_point_range.clone()],
+        ));
+        assert!(!only_point_ranges(
+            one_column_index,
+            &[one_point_range.clone(), one_to_two_range],
+        ));
+
+        assert!(!only_point_ranges(
+            PointRangePath::Index { column_count: 2 },
+            &[one_point_range],
+        ));
+    }
 }
