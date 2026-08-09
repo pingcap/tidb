@@ -79,6 +79,75 @@ fn valid_keyspace_name(name: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
 }
 
+/// Azure credentials parsed from a metering storage URI.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct AzureMeteringConfig {
+    /// Azure storage account name.
+    pub account_name: String,
+    /// Azure storage account key.
+    pub account_key: String,
+}
+
+/// Storage target parsed from Go metering SDK's `NewFromURI` contract.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct MeteringConfig {
+    /// Storage type (`s3` or `azure`).
+    pub storage_type: String,
+    /// Bucket or Azure container.
+    pub bucket: String,
+    /// Object prefix without the leading slash.
+    pub prefix: String,
+    /// S3 region from `region-id`.
+    pub region: String,
+    /// Azure-specific settings.
+    pub azure: Option<AzureMeteringConfig>,
+}
+
+impl MeteringConfig {
+    /// Go metering SDK `config.NewFromURI`, for the storage schemes consumed
+    /// by TiDB's metering configuration.
+    pub fn from_uri(uri: &str) -> Result<MeteringConfig, String> {
+        let (storage_type, rest) = uri
+            .split_once("://")
+            .ok_or_else(|| "metering storage URI must contain a scheme".to_owned())?;
+        if !matches!(storage_type, "s3" | "azure") {
+            return Err(format!(
+                "unsupported metering storage URI scheme {storage_type:?}"
+            ));
+        }
+        let (location, query) = rest.split_once('?').unwrap_or((rest, ""));
+        let (bucket, prefix) = location.split_once('/').unwrap_or((location, ""));
+        if bucket.is_empty() {
+            return Err("metering storage URI bucket must not be empty".to_owned());
+        }
+
+        let mut region = String::new();
+        let mut account_name = String::new();
+        let mut account_key = String::new();
+        for pair in query.split('&').filter(|pair| !pair.is_empty()) {
+            let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+            match key {
+                "region-id" => region = value.to_owned(),
+                "account-name" => account_name = value.to_owned(),
+                "account-key" => account_key = value.to_owned(),
+                _ => {}
+            }
+        }
+
+        let azure = (storage_type == "azure").then_some(AzureMeteringConfig {
+            account_name,
+            account_key,
+        });
+        Ok(MeteringConfig {
+            storage_type: storage_type.to_owned(),
+            bucket: bucket.to_owned(),
+            prefix: prefix.to_owned(),
+            region,
+            azure,
+        })
+    }
+}
+
 /// Configuration options (Go `Config`). Deprecated/upgrade-only fields are
 /// carried for TOML round-trip fidelity, as in the source.
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
@@ -812,6 +881,34 @@ mod tests {
 
         CHECK_TABLE_BEFORE_DROP.store(original_check_table_before_drop, Ordering::Relaxed);
         store_global_config(original_global_config);
+    }
+
+    // Go TestMetering (the source test runs under the `nextgen` build tag).
+    #[cfg(feature = "nextgen")]
+    #[test]
+    fn test_metering() {
+        let mut config = new_config();
+        config.metering_storage_uri =
+            "s3://test-bucket/test-prefix?region-id=test-region".to_owned();
+        config.valid().unwrap();
+        let metering = MeteringConfig::from_uri(&config.metering_storage_uri).unwrap();
+        assert_eq!(metering.storage_type, "s3");
+        assert_eq!(metering.bucket, "test-bucket");
+        assert_eq!(metering.prefix, "test-prefix");
+        assert_eq!(metering.region, "test-region");
+
+        let mut config = new_config();
+        config.metering_storage_uri =
+            "azure://metering-data/test-prefix?account-name=test-account&account-key=test-key"
+                .to_owned();
+        config.valid().unwrap();
+        let metering = MeteringConfig::from_uri(&config.metering_storage_uri).unwrap();
+        assert_eq!(metering.storage_type, "azure");
+        assert_eq!(metering.bucket, "metering-data");
+        assert_eq!(metering.prefix, "test-prefix");
+        let azure = metering.azure.unwrap();
+        assert_eq!(azure.account_name, "test-account");
+        assert_eq!(azure.account_key, "test-key");
     }
 
     // Go TestExternalWorkloadValid.
