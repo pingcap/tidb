@@ -193,7 +193,9 @@ fn zero_time(kind: TimeType, fsp: i64) -> Datum {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tidb_datatype::FieldTypeBuilder;
+    use tidb_datatype::{FieldTypeBuilder, FieldTypeFlags};
+    use tidb_model::column::check_column_infos_once;
+    use tidb_model::{ColumnInfo, GoShared, GoSharedPointerSlice};
 
     fn field(code: FieldTypeCode, flen: i64, charset: &str, collation: &str) -> FieldType {
         FieldTypeBuilder::new()
@@ -238,6 +240,37 @@ mod tests {
         assert!(handle_bad_null(&mut warned, &not_null, "a", NullLevel::Warn, &context,).unwrap());
         assert_eq!(warned, Datum::Int(0));
         assert_eq!(context.take_warnings().len(), 1);
+    }
+
+    #[test]
+    fn test_check() {
+        // Direct port of pkg/table/column_test.go::TestCheck.  The source
+        // combines table.CheckOnce with its local checkNotNull loop, so this
+        // test deliberately crosses the model/executor ownership boundary.
+        let mut column = ColumnInfo::new(1, "a", FieldType::new(FieldTypeCode::Long));
+        column.add_flag(u64::from(FieldTypeFlags::AUTO_INCREMENT));
+        let column = GoShared::new(column);
+        let duplicate =
+            GoSharedPointerSlice::from_handles(vec![Some(column.clone()), Some(column.clone())]);
+        assert!(check_column_infos_once(&duplicate).is_err());
+
+        let columns = GoSharedPointerSlice::from_handles(vec![Some(column.clone())]);
+        let context = crate::StmtContext::default();
+        let mut value = Datum::Null;
+        let nullable = columns.get(0).unwrap().read().field_type.clone();
+        assert!(!handle_bad_null(&mut value, &nullable, "a", NullLevel::Error, &context,).unwrap());
+
+        columns
+            .get(0)
+            .unwrap()
+            .write()
+            .add_flag(u64::from(FieldTypeFlags::NOT_NULL));
+        let not_null = columns.get(0).unwrap().read().field_type.clone();
+        assert!(
+            handle_bad_null(&mut Datum::Null, &not_null, "a", NullLevel::Error, &context,).is_err()
+        );
+
+        assert!(check_column_infos_once(&GoSharedPointerSlice::default()).is_ok());
     }
 
     #[test]
