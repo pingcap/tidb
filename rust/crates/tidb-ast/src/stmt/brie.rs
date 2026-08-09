@@ -105,6 +105,9 @@ pub enum BrieOptionLevel {
     Required,
     /// Optional.
     Optional,
+    /// Numeric level outside the three named values. Go accepts it and
+    /// restores an empty level name after the equals sign.
+    Other(u64),
 }
 
 impl BrieOption {
@@ -122,6 +125,7 @@ impl BrieOption {
                 BrieOptionLevel::Off => "OFF",
                 BrieOptionLevel::Required => "REQUIRED",
                 BrieOptionLevel::Optional => "OPTIONAL",
+                BrieOptionLevel::Other(_) => "",
             }),
             BrieOptionValue::RateLimitBytes(value) => {
                 out.push_str(&(value / 1_048_576).to_string());
@@ -303,6 +307,9 @@ impl crate::Visitable for BrieOptionLevel {
             Self::Off => {}
             Self::Required => {}
             Self::Optional => {}
+            Self::Other(field_0) => {
+                let _ = field_0;
+            }
         }
         visitor.leave(self)
     }

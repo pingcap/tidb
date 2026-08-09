@@ -582,6 +582,151 @@ fn test_table_optimizer_hint_restore() {
     }
 }
 
+/// `pkg/parser/parser_test.go::TestBRIE`.
+#[test]
+fn test_brie() {
+    let cases = [
+        (
+            "BACKUP DATABASE a TO 'local:///tmp/archive01/'",
+            Some("BACKUP DATABASE `a` TO 'local:///tmp/archive01/'"),
+        ),
+        (
+            "BACKUP SCHEMA a TO 'local:///tmp/archive01/'",
+            Some("BACKUP DATABASE `a` TO 'local:///tmp/archive01/'"),
+        ),
+        (
+            "BACKUP DATABASE a,b,c TO 'noop://'",
+            Some("BACKUP DATABASE `a`, `b`, `c` TO 'noop://'"),
+        ),
+        ("BACKUP DATABASE a.b TO 'noop://'", None),
+        (
+            "BACKUP DATABASE * TO 'noop://'",
+            Some("BACKUP DATABASE * TO 'noop://'"),
+        ),
+        ("BACKUP DATABASE *, a TO 'noop://'", None),
+        ("BACKUP DATABASE a, * TO 'noop://'", None),
+        ("BACKUP DATABASE TO 'noop://'", None),
+        (
+            "BACKUP TABLE a TO 'noop://' checksum_concurrency 4 compression_level 4 ignore_stats 1 compression_type 'lz4'",
+            Some("BACKUP TABLE `a` TO 'noop://' CHECKSUM_CONCURRENCY = 4 COMPRESSION_LEVEL = 4 IGNORE_STATS = 1 COMPRESSION_TYPE = 'lz4'"),
+        ),
+        (
+            "RESTORE TABLE a FROM 'noop://' checksum_concurrency 4 wait_tiflash_ready 1 with_sys_table 1",
+            Some("RESTORE TABLE `a` FROM 'noop://' CHECKSUM_CONCURRENCY = 4 WAIT_TIFLASH_READY = 1 WITH_SYS_TABLE = 1"),
+        ),
+        (
+            "BACKUP TABLE a.b TO 'noop://'",
+            Some("BACKUP TABLE `a`.`b` TO 'noop://'"),
+        ),
+        (
+            "BACKUP TABLE a.b,c.d,e TO 'noop://'",
+            Some("BACKUP TABLE `a`.`b`, `c`.`d`, `e` TO 'noop://'"),
+        ),
+        ("BACKUP TABLE a.* TO 'noop://'", None),
+        ("BACKUP TABLE * TO 'noop://'", None),
+        ("BACKUP TABLE TO 'noop://'", None),
+        (
+            "RESTORE DATABASE * FROM 's3://bucket/path/'",
+            Some("RESTORE DATABASE * FROM 's3://bucket/path/'"),
+        ),
+        (
+            "BACKUP DATABASE * TO 'noop://' LAST_BACKUP = '2020-02-02 14:14:14'",
+            Some("BACKUP DATABASE * TO 'noop://' LAST_BACKUP = '2020-02-02 14:14:14'"),
+        ),
+        (
+            "BACKUP DATABASE * TO 'noop://' LAST_BACKUP = 1234567890",
+            Some("BACKUP DATABASE * TO 'noop://' LAST_BACKUP = 1234567890"),
+        ),
+        (
+            "backup database * to 'noop://' rate_limit 500 MB/second snapshot 5 minute ago",
+            Some("BACKUP DATABASE * TO 'noop://' RATE_LIMIT = 500 MB/SECOND SNAPSHOT = 300000000 MICROSECOND AGO"),
+        ),
+        (
+            "backup database * to 'noop://' snapshot = '2020-03-18 18:13:54'",
+            Some("BACKUP DATABASE * TO 'noop://' SNAPSHOT = '2020-03-18 18:13:54'"),
+        ),
+        (
+            "backup database * to 'noop://' snapshot = 1234567890",
+            Some("BACKUP DATABASE * TO 'noop://' SNAPSHOT = 1234567890"),
+        ),
+        (
+            "restore table g from 'noop://' concurrency 40 checksum 0 online 1",
+            Some("RESTORE TABLE `g` FROM 'noop://' CONCURRENCY = 40 CHECKSUM = OFF ONLINE = 1"),
+        ),
+        (
+            "backup table x to 's3://bucket/path/?endpoint=https://test-cluster-s3.local&access-key=aaaaaaaaa&secret-access-key=bbbbbbbb&force-path-style=1'",
+            Some("BACKUP TABLE `x` TO 's3://bucket/path/?endpoint=https://test-cluster-s3.local&access-key=aaaaaaaaa&secret-access-key=bbbbbbbb&force-path-style=1'"),
+        ),
+        (
+            "backup database * to 's3://bucket/path/?provider=alibaba&region=us-west-9&storage-class=glacier&sse=AES256&acl=authenticated-read&use-accelerate-endpoint=1' send_credentials_to_tikv = 1",
+            Some("BACKUP DATABASE * TO 's3://bucket/path/?provider=alibaba&region=us-west-9&storage-class=glacier&sse=AES256&acl=authenticated-read&use-accelerate-endpoint=1' SEND_CREDENTIALS_TO_TIKV = 1"),
+        ),
+        (
+            "restore database * from 'gcs://bucket/path/?endpoint=https://test-cluster.gcs.local&storage-class=coldline&predefined-acl=OWNER&credentials-file=/data/private/creds.json'",
+            Some("RESTORE DATABASE * FROM 'gcs://bucket/path/?endpoint=https://test-cluster.gcs.local&storage-class=coldline&predefined-acl=OWNER&credentials-file=/data/private/creds.json'"),
+        ),
+        (
+            "restore table g from 'noop://' checksum off",
+            Some("RESTORE TABLE `g` FROM 'noop://' CHECKSUM = OFF"),
+        ),
+        (
+            "restore table g from 'noop://' checksum optional",
+            Some("RESTORE TABLE `g` FROM 'noop://' CHECKSUM = OPTIONAL"),
+        ),
+        ("backup logs to 'noop://'", Some("BACKUP LOGS TO 'noop://'")),
+        (
+            "backup logs to 'noop://' start_ts='20220304'",
+            Some("BACKUP LOGS TO 'noop://' START_TS = '20220304'"),
+        ),
+        ("pause backup logs", Some("PAUSE BACKUP LOGS")),
+        (
+            "pause backup logs gc_ttl='20220304'",
+            Some("PAUSE BACKUP LOGS GC_TTL = '20220304'"),
+        ),
+        ("resume backup logs", Some("RESUME BACKUP LOGS")),
+        ("show backup logs status", Some("SHOW BACKUP LOGS STATUS")),
+        (
+            "show backup logs metadata from 'noop://'",
+            Some("SHOW BACKUP LOGS METADATA FROM 'noop://'"),
+        ),
+        ("show br job 1234", Some("SHOW BR JOB 1234")),
+        ("show br job query 1234", Some("SHOW BR JOB QUERY 1234")),
+        ("cancel br job 1234", Some("CANCEL BR JOB 1234")),
+        (
+            "purge backup logs from 'noop://'",
+            Some("PURGE BACKUP LOGS FROM 'noop://'"),
+        ),
+        (
+            "purge backup logs from 'noop://' until_ts='2012122304'",
+            Some("PURGE BACKUP LOGS FROM 'noop://' UNTIL_TS = '2012122304'"),
+        ),
+        (
+            "restore point from 'noop://log_backup'",
+            Some("RESTORE POINT FROM 'noop://log_backup'"),
+        ),
+        (
+            "restore point from 'noop://log_backup' full_backup_storage='noop://full_log'",
+            Some("RESTORE POINT FROM 'noop://log_backup' FULL_BACKUP_STORAGE = 'noop://full_log'"),
+        ),
+        (
+            "restore point from 'noop://log_backup' full_backup_storage='noop://full_log' restored_ts='20230123'",
+            Some("RESTORE POINT FROM 'noop://log_backup' FULL_BACKUP_STORAGE = 'noop://full_log' RESTORED_TS = '20230123'"),
+        ),
+        (
+            "restore point from 'noop://log_backup' full_backup_storage='noop://full_log' start_ts='20230101' restored_ts='20230123'",
+            Some("RESTORE POINT FROM 'noop://log_backup' FULL_BACKUP_STORAGE = 'noop://full_log' START_TS = '20230101' RESTORED_TS = '20230123'"),
+        ),
+    ];
+
+    assert_eq!(cases.len(), 43, "Go source row count drifted");
+    for (sql, expected) in cases {
+        match expected {
+            Some(expected) => assert_eq!(r(sql), expected, "{sql}"),
+            None => assert!(parse(sql).is_err(), "{sql}"),
+        }
+    }
+}
+
 #[test]
 fn test_brie_secure_text() {
     for (sql, expected) in [

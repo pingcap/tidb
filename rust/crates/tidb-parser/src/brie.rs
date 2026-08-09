@@ -267,6 +267,13 @@ impl Parser {
                         self.bump();
                     }
                     BrieOptionValue::MicrosecondsAgo(value * multiplier * 1_000)
+                } else if name == "CHECKSUM" || name == "ANALYZE" {
+                    BrieOptionValue::Level(match value {
+                        0 => BrieOptionLevel::Off,
+                        1 => BrieOptionLevel::Required,
+                        2 => BrieOptionLevel::Optional,
+                        value => BrieOptionLevel::Other(value),
+                    })
                 } else {
                     BrieOptionValue::Unsigned(value)
                 }
@@ -285,6 +292,7 @@ fn brie_level_value(name: &str, level: BrieOptionLevel) -> BrieOptionValue {
             BrieOptionLevel::Off => 0,
             BrieOptionLevel::Required => 1,
             BrieOptionLevel::Optional => 2,
+            BrieOptionLevel::Other(value) => value,
         })
     }
 }
