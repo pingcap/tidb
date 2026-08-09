@@ -2503,13 +2503,55 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_iter_records() {
+        // Direct port of pkg/table/tables/tables_test.go::TestIterRecords.
+        // Record iteration crosses the signed-handle ordering boundary and
+        // preserves NULL in a non-handle column.
+        let mut table = KvTable::new(
+            42,
+            ["a", "b"]
+                .into_iter()
+                .enumerate()
+                .map(|(offset, name)| KvColumn {
+                    name: name.to_owned(),
+                    id: offset as i64 + 1,
+                    field_type: long(),
+                    column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                    default_value: None,
+                    origin_default: None,
+                    generated: None,
+                })
+                .collect(),
+        );
+        table.set_pk_handle_offset(0);
+        table
+            .insert_row(&[Datum::Int(-1), Datum::Int(2)], &tidb_expr::NoColumns)
+            .unwrap();
+        table
+            .insert_row(&[Datum::Int(2), Datum::Null], &tidb_expr::NoColumns)
+            .unwrap();
+
+        let rows = table
+            .scan_rows_with_handles_with_context(&RowDecodeContext::for_test_query_utc())
+            .unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(
+            rows[0],
+            (TableHandle::Int(-1), vec![Datum::Int(-1), Datum::Int(2)])
+        );
+        assert_eq!(
+            rows[1],
+            (TableHandle::Int(2), vec![Datum::Int(2), Datum::Null])
+        );
+    }
+
     /// The scan bound must cover the whole table and nothing beyond it: the
     /// codec's handle range is inclusive at the top while the iterator's upper
     /// bound is exclusive, so the largest handle must still be returned and a
     /// neighbouring table's rows must not be.
     /// The handle a scan reports must be the handle the codec wrote, so an
-    /// UPDATE/DELETE addresses the row it read. Covers the sign flip the key
-    /// codec applies (negative handles sort below positive ones).
+    /// UPDATE/DELETE addresses the row it read.
     #[test]
     fn scan_reports_the_handles_the_key_codec_wrote() {
         let mut t = test_table();
