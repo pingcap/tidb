@@ -1411,20 +1411,29 @@ impl QuerySession for ClusterServerSession {
         let params = crate::pipeline_session::prepared_parameters(values);
         let sql = statement.sql().to_owned();
         let shape = self.session.statement_read_shape(&sql, &params);
-        let output = self.with_statement(shape, move |session| {
-            session.run_with_params(&sql, &params).map_err(map_error)
+        let (output, result_authority) = self.with_statement(shape, move |session| {
+            session
+                .run_with_params_and_result_authority(&sql, &params)
+                .map_err(map_error)
         })?;
         Ok(match output {
-            StmtOutput::Rows { columns, rows } => GeneralExecuteOutcome::Rows(
-                QueryResult::new(Box::new(MaterializedResultSetSource::new(
-                    crate::pipeline_session::select_columns(&columns),
-                    rows,
-                )))
-                .with_statement_status(
-                    self.session.wire_warning_count(),
-                    WireStatus::of_session(&self.session),
-                ),
-            ),
+            StmtOutput::Rows { columns, rows } => {
+                let field_types = columns.iter().map(|(_, field)| field.clone()).collect();
+                GeneralExecuteOutcome::Rows(
+                    QueryResult::new(Box::new(MaterializedResultSetSource::new(
+                        crate::pipeline_session::select_columns(&columns),
+                        rows,
+                    )))
+                    .with_cursor_materialization(
+                        field_types,
+                        result_authority.expect("a row result carries materialization authority"),
+                    )
+                    .with_statement_status(
+                        self.session.wire_warning_count(),
+                        WireStatus::of_session(&self.session),
+                    ),
+                )
+            }
             StmtOutput::Affected(count) => GeneralExecuteOutcome::Write(WriteOutcome {
                 affected_rows: count,
                 last_insert_id: self.session.statement_insert_id(),

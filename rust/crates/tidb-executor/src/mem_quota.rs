@@ -323,6 +323,14 @@ impl StatementMemory {
         &self.stmt
     }
 
+    /// The session disk root, which Go exposes as `SessionVars.DiskTracker`.
+    /// Long-lived cursor storage attaches directly here and retains this
+    /// [`StatementMemory`] for the cursor's lifetime.
+    #[must_use]
+    pub fn session_disk_tracker(&self) -> &Arc<Tracker> {
+        &self.disk_session
+    }
+
     /// A fresh operator tracker with no limit of its own, already attached to
     /// the statement tracker -- Go's `memory.NewTracker(e.ID(), -1)` +
     /// `AttachTo(StmtCtx.MemTracker)`.

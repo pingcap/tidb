@@ -66,6 +66,7 @@ mod compressed_command_io;
 mod configured_user_store;
 pub mod connection_resultset;
 mod connection_writers;
+mod cursor_state;
 mod distinct_result_set;
 pub mod handshake;
 mod handshake_response;
@@ -174,9 +175,10 @@ pub use session_transaction::SessionTransaction;
 pub use sorting_result_set::SortingResultSetSource;
 pub use sql_node::{
     ActiveQueryCancellation, BoxedResultSetSource, ConcurrentSqlNode, ConnectionCancellation,
-    ConnectionTracker, PreparedPointRead, PreparedStatement, PreparedWrite, QueryCancellationLease,
-    QueryResult, QuerySession, QuerySessionFactory, SessionContext, ShutdownHandle, SqlNodeError,
-    SqlQueryError, WriteOutcome, RESULT_UNDETERMINED_MESSAGE,
+    ConnectionTracker, GeneralExecuteOutcome, PreparedGeneral, PreparedPointRead,
+    PreparedStatement, PreparedWrite, QueryCancellationLease, QueryResult, QuerySession,
+    QuerySessionFactory, SessionContext, ShutdownHandle, SqlNodeError, SqlQueryError, WriteOutcome,
+    RESULT_UNDETERMINED_MESSAGE,
 };
 pub use wire_status::{
     WireStatus, SERVER_MORE_RESULTS_EXISTS, SERVER_STATUS_AUTOCOMMIT, SERVER_STATUS_CURSOR_EXISTS,

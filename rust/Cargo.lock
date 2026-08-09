@@ -1836,6 +1836,7 @@ dependencies = [
  "sha2",
  "subtle",
  "tidb-ast",
+ "tidb-chunk",
  "tidb-config",
  "tidb-datatype",
  "tidb-distsql",

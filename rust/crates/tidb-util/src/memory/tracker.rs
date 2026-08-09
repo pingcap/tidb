@@ -38,6 +38,8 @@ pub const LABEL_FOR_SQL_TEXT: i64 = -1;
 pub const LABEL_FOR_SESSION: i64 = -27;
 /// `LabelForMemDB`.
 pub const LABEL_FOR_MEM_DB: i64 = -28;
+/// `LabelForCursorFetch`: rows retained by an eager prepared cursor.
+pub const LABEL_FOR_CURSOR_FETCH: i64 = -29;
 /// `LabelForGlobalAnalyzeMemory`.
 pub const LABEL_FOR_GLOBAL_ANALYZE_MEMORY: i64 = -25;
 /// `LabelForChunkList`: an in-memory `chunk.List`.
@@ -694,7 +696,10 @@ fn byte_unit(b: i64) -> (i64, &'static str) {
 
 #[cfg(test)]
 mod tests {
-    use super::super::action::{ActionOnExceed, ArcAction, BaseOomAction};
+    use super::super::action::{
+        ActionOnExceed, ActionWithPriority, ArcAction, BaseOomAction,
+        DEF_CURSOR_FETCH_SPILL_PRIORITY, DEF_PANIC_PRIORITY, DEF_SPILL_PRIORITY,
+    };
     use super::*;
 
     /// Go's test `mockAction`: first call marks it, later calls delegate to
@@ -1129,5 +1134,41 @@ mod tests {
                 assert_eq!(action.called(), j >= i, "i={i} j={j}");
             }
         }
+    }
+
+    #[test]
+    fn priority_wrapper_delegates_state_and_unbinds_by_wrapper_identity() {
+        let tracker = Tracker::new(1, 1);
+        let inner = MockAction::with_priority(DEF_SPILL_PRIORITY);
+        let fallback = MockAction::with_priority(DEF_PANIC_PRIORITY);
+        let inner_action: ArcAction = inner.clone();
+        let wrapped: ArcAction = Arc::new(ActionWithPriority::new(
+            inner_action,
+            DEF_CURSOR_FETCH_SPILL_PRIORITY,
+        ));
+        assert_eq!(wrapped.get_priority(), DEF_CURSOR_FETCH_SPILL_PRIORITY);
+
+        wrapped.set_fallback(Some(fallback.clone()));
+        assert!(Arc::ptr_eq(
+            &wrapped.get_fallback().expect("delegated fallback"),
+            &(fallback.clone() as ArcAction)
+        ));
+        wrapped.set_fallback(None);
+        tracker.set_action_on_exceed(Some(fallback.clone()));
+        tracker.fallback_old_and_set_new_action(wrapped.clone());
+        assert!(Arc::ptr_eq(
+            &tracker
+                .get_fallback_for_test(false)
+                .expect("wrapper registered"),
+            &wrapped
+        ));
+        tracker.unbind_action_from_hard_limit(&wrapped);
+        let remaining = tracker
+            .get_fallback_for_test(false)
+            .expect("fallback remains after exact wrapper unbind");
+        assert!(Arc::ptr_eq(&remaining, &(fallback.clone() as ArcAction)));
+
+        wrapped.set_finished();
+        assert!(inner.is_finished());
     }
 }

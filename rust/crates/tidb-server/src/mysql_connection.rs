@@ -35,11 +35,12 @@ use crate::connection_resultset::{
     write_connection_binary_result_set_to_sink, write_connection_result_set_to_sink,
 };
 use crate::connection_writers::{
-    access_denied_message, account_locked_message, drain_result_rows, prepared_parameter_column,
-    prepared_statement_id, write_affected_rows_ok, write_cursor_fetch_batch, write_eof_or_ok,
-    write_error, write_ok, write_packet_to, write_payload, write_query_error, write_query_error_at,
+    access_denied_message, account_locked_message, prepared_parameter_column,
+    prepared_statement_id, write_affected_rows_ok, write_eof_or_ok, write_error, write_ok,
+    write_packet_to, write_payload, write_query_error, write_query_error_at,
     write_unknown_statement, TcpResultSetSink, WireFraming,
 };
+use crate::cursor_state::{CursorFetchError, CursorState};
 use crate::handshake::{
     negotiate_capabilities, parse_response, parse_response_header, InitialHandshake,
     AUTH_NATIVE_PASSWORD, CLIENT_CONNECT_ATTRS, CLIENT_CONNECT_WITH_DB, CLIENT_PLUGIN_AUTH,
@@ -147,7 +148,6 @@ const ER_WRONG_ARGUMENTS: u16 = 1210;
 pub(crate) const ER_UNKNOWN_STMT_HANDLER: u16 = 1243;
 pub(crate) const RESULT_BATCH_SIZE: usize = 128;
 
-#[derive(Clone, Debug)]
 struct ConnectionPreparedStatement {
     statement: PreparedStatement,
     parameter_types: Option<Vec<PreparedParameterType>>,
@@ -186,14 +186,6 @@ enum AppendParamError {
     TooLarge,
 }
 
-#[derive(Clone, Debug)]
-struct CursorState {
-    columns: Vec<tidb_protocol::ColumnInfo>,
-    rows: Vec<Vec<tidb_datatype::Datum>>,
-    next_row: usize,
-}
-
-#[derive(Debug)]
 struct PreparedStatementRegistry {
     next_id: Option<u32>,
     statements: HashMap<u32, ConnectionPreparedStatement>,
@@ -240,8 +232,8 @@ impl PreparedStatementRegistry {
         }
     }
 
-    fn remove(&mut self, statement_id: u32) {
-        self.statements.remove(&statement_id);
+    fn remove(&mut self, statement_id: u32) -> Option<ConnectionPreparedStatement> {
+        self.statements.remove(&statement_id)
     }
 
     /// Go `stmt.Reset` (`pkg/server/driver_tidb.go:151-160`): returns the
@@ -250,18 +242,16 @@ impl PreparedStatementRegistry {
     /// itself installed -- and `handleStmtReset` names exactly those two
     /// things it must clear, the open cursor and "the argument sent through
     /// `SEND_LONG_DATA`" (`pkg/server/conn_stmt.go:627-631`). The remembered
-    /// parameter-type vector is dropped for the same reason: it is the other
-    /// piece of state an execute leaves behind.
-    fn reset(&mut self, statement_id: u32) -> bool {
+    /// parameter-type vector deliberately survives: Go's `TiDBStatement.Reset`
+    /// leaves `paramsType` untouched, so a later execute may keep its
+    /// new-parameter-bound flag clear.
+    fn reset(&mut self, statement_id: u32) -> Result<Option<CursorState>, ()> {
         match self.statements.get_mut(&statement_id) {
             Some(statement) => {
-                statement.parameter_types = None;
-                // Go's stmt.Reset closes the open cursor too.
-                statement.cursor = None;
                 statement.clear_bound_params();
-                true
+                Ok(statement.cursor.take())
             }
-            None => false,
+            None => Err(()),
         }
     }
 
@@ -314,22 +304,16 @@ impl PreparedStatementRegistry {
         }
     }
 
-    fn open_cursor(&mut self, statement_id: u32, state: CursorState) {
-        if let Some(statement) = self.statements.get_mut(&statement_id) {
-            statement.cursor = Some(state);
-        }
-    }
-
-    fn cursor_mut(&mut self, statement_id: u32) -> Option<&mut CursorState> {
+    fn open_cursor(&mut self, statement_id: u32, state: CursorState) -> Option<CursorState> {
         self.statements
             .get_mut(&statement_id)
-            .and_then(|statement| statement.cursor.as_mut())
+            .and_then(|statement| statement.cursor.replace(state))
     }
 
-    fn close_cursor(&mut self, statement_id: u32) {
-        if let Some(statement) = self.statements.get_mut(&statement_id) {
-            statement.cursor = None;
-        }
+    fn take_cursor(&mut self, statement_id: u32) -> Option<CursorState> {
+        self.statements
+            .get_mut(&statement_id)
+            .and_then(|statement| statement.cursor.take())
     }
 }
 
@@ -1173,7 +1157,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 ) {
                     Ok(packets) => packets,
                     Err(error) => {
-                        prepared.remove(statement_id);
+                        drop(prepared.remove(statement_id));
                         write_error(
                             &mut output,
                             1,
@@ -1228,6 +1212,11 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 // rejected execute still consumes the long data.
                 let bound_params = prepared.bound_params(statement_id).to_vec();
                 prepared.clear_bound_params(statement_id);
+                // Go calls `stmt.Reset()` after parsing every execute packet,
+                // successful or not. The retained cursor therefore closes
+                // before a replacement execution starts, and a malformed
+                // replacement cannot leave the old cursor fetchable.
+                drop(prepared.take_cursor(statement_id));
                 let execute = match decode_prepared_statement_execute_with_bound_params(
                     &bytes,
                     parameter_count,
@@ -1363,36 +1352,38 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                             let mut write_outcome = None;
                             match engine.execute_general(&general, &values) {
                                 Ok(GeneralExecuteOutcome::Rows(mut result)) => {
-                                    let columns = match result.source().columns() {
-                                        Ok(columns) => columns,
-                                        Err(message) => {
-                                            write_error(
-                                                &mut output,
-                                                1,
-                                                ER_UNKNOWN_ERROR,
-                                                *b"HY000",
-                                                message,
-                                                protocol_41,
-                                            )?;
-                                            continue;
-                                        }
-                                    };
-                                    let rows = match drain_result_rows(&mut result) {
-                                        Ok(rows) => rows,
-                                        Err(message) => {
-                                            write_error(
-                                                &mut output,
-                                                1,
-                                                ER_UNKNOWN_ERROR,
-                                                *b"HY000",
-                                                message,
-                                                protocol_41,
-                                            )?;
-                                            continue;
-                                        }
-                                    };
                                     let warnings = result.warning_count();
                                     let status = result.wire_status();
+                                    let authority = match result.take_cursor_materialization() {
+                                        Some(authority) => authority,
+                                        None => {
+                                            let _ = result.source().close();
+                                            drop(result);
+                                            write_error(
+                                                &mut output,
+                                                1,
+                                                ER_UNKNOWN_ERROR,
+                                                *b"HY000",
+                                                "prepared cursor result is missing its materialization authority",
+                                                protocol_41,
+                                            )?;
+                                            continue;
+                                        }
+                                    };
+                                    let cursor =
+                                        match CursorState::materialize(&mut result, authority) {
+                                            Ok(cursor) => cursor,
+                                            Err(error) => {
+                                                drop(result);
+                                                write_query_error(
+                                                    &mut output,
+                                                    &error,
+                                                    protocol_41,
+                                                )?;
+                                                continue;
+                                            }
+                                        };
+                                    let columns = cursor.columns().to_vec();
                                     drop(result);
                                     let cursor_options = framing.result_set(
                                         status.with(SERVER_STATUS_CURSOR_EXISTS),
@@ -1439,14 +1430,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                     // the metadata with an OK-as-EOF here,
                                     // because no row packets follow.
                                     write_eof_or_ok(&mut output, sequence, cursor_options)?;
-                                    prepared.open_cursor(
-                                        statement_id,
-                                        CursorState {
-                                            columns,
-                                            rows,
-                                            next_row: 0,
-                                        },
-                                    );
+                                    drop(prepared.open_cursor(statement_id, cursor));
                                     queries += 1;
                                     commands.stmt_execute_successes += 1;
                                 }
@@ -1629,7 +1613,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             Command::StmtClose(bytes) => {
                 commands.stmt_close_commands += 1;
                 if let Ok(statement_id) = decode_prepared_statement_close(&bytes) {
-                    prepared.remove(statement_id);
+                    drop(prepared.remove(statement_id));
                 }
             }
             Command::StmtReset(bytes) => {
@@ -1637,27 +1621,28 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 match decode_prepared_statement_close(&bytes) {
                     // The payload is the same four-byte statement id the
                     // close command carries.
-                    Ok(statement_id) if prepared.reset(statement_id) => {
-                        // COM_STMT_RESET runs no statement, so like Go's
-                        // `writeOK` here it reports the buffer as it stands.
-                        write_affected_rows_ok(
-                            &mut output,
-                            1,
-                            0,
-                            0,
-                            engine.wire_status(),
-                            engine.warning_count(),
-                            protocol_41,
-                        )?;
-                    }
-                    Ok(statement_id) => {
-                        write_unknown_statement(
+                    Ok(statement_id) => match prepared.reset(statement_id) {
+                        Ok(cursor) => {
+                            drop(cursor);
+                            // COM_STMT_RESET runs no statement, so like Go's
+                            // `writeOK` here it reports the buffer as it stands.
+                            write_affected_rows_ok(
+                                &mut output,
+                                1,
+                                0,
+                                0,
+                                engine.wire_status(),
+                                engine.warning_count(),
+                                protocol_41,
+                            )?;
+                        }
+                        Err(()) => write_unknown_statement(
                             &mut output,
                             statement_id,
                             "stmt_reset",
                             protocol_41,
-                        )?;
-                    }
+                        )?,
+                    },
                     Err(error) => {
                         write_error(
                             &mut output,
@@ -1690,7 +1675,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     write_unknown_statement(&mut output, statement_id, "stmt_fetch", protocol_41)?;
                     continue;
                 }
-                let Some(cursor) = prepared.cursor_mut(statement_id) else {
+                let Some(mut cursor) = prepared.take_cursor(statement_id) else {
                     // Go `ErrSpCursorNotOpen` (1326).
                     write_error(
                         &mut output,
@@ -1705,15 +1690,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 // Go sends up to fetch_size binary rows and an EOF; when the
                 // iterator is exhausted the EOF drops the cursor bit, sets
                 // ServerStatusLastRowSend, and the statement resets.
-                let end = cursor
-                    .next_row
-                    .saturating_add(fetch_size as usize)
-                    .min(cursor.rows.len());
-                let batch: Vec<Vec<tidb_datatype::Datum>> =
-                    cursor.rows[cursor.next_row..end].to_vec();
-                cursor.next_row = end;
-                let exhausted = end >= cursor.rows.len();
-                let columns = cursor.columns.clone();
+                let (row_count, exhausted) = cursor.fetch_plan(fetch_size);
                 let status = if exhausted {
                     engine
                         .wire_status()
@@ -1722,31 +1699,30 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 } else {
                     engine.wire_status().with(SERVER_STATUS_CURSOR_EXISTS)
                 };
-                match write_cursor_fetch_batch(
+                match cursor.write_fetch(
                     &mut output,
-                    &columns,
-                    &batch,
-                    // COM_STMT_FETCH runs no statement of its own, so this is
-                    // still the execute's count -- which is what Go's
-                    // `writeEOF` reads here too.
-                    framing.result_set(status, engine.warning_count(), result_encoder),
+                    row_count,
+                    // Go clears the statement warning buffer before FETCH,
+                    // then writes the live transaction status.
+                    framing.result_set(status, 0, result_encoder),
                 ) {
                     Ok(()) => {
-                        if exhausted {
-                            prepared.close_cursor(statement_id);
+                        if !exhausted {
+                            drop(prepared.open_cursor(statement_id, cursor));
                         }
                         commands.stmt_fetch_successes += 1;
                     }
-                    Err(message) => {
+                    Err(CursorFetchError::Protocol { message, sequence }) => {
                         write_error(
                             &mut output,
-                            1,
+                            sequence,
                             ER_UNKNOWN_ERROR,
                             *b"HY000",
                             message,
                             protocol_41,
                         )?;
                     }
+                    Err(CursorFetchError::Transport(error)) => return Err(error),
                 }
             }
             // The `mysql` client implements `USE db` as COM_INIT_DB, not as a

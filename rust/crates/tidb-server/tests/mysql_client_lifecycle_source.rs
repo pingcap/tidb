@@ -10,7 +10,8 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 
 use sha1::{Digest, Sha1};
-use tidb_datatype::Datum;
+use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+use tidb_executor::{OomAction, StatementMemory};
 use tidb_exec::real_tikv_dml::prepare_configured_write;
 use tidb_exec::real_tikv_read::prepare_configured_point_read;
 use tidb_planner::prepared_dml::{ConfiguredPreparedWrite, PreparedBindValue};
@@ -20,15 +21,16 @@ use tidb_planner::read_only_scan::{
 use tidb_planner::transaction_control::{classify_transaction_control, TransactionControl};
 use tidb_protocol::{
     ColumnInfo, PacketReader, PacketWriter, COM_INIT_DB, COM_PING, COM_QUERY, COM_QUIT,
-    COM_STMT_CLOSE, COM_STMT_EXECUTE, COM_STMT_PREPARE, COM_STMT_RESET, COM_STMT_SEND_LONG_DATA,
-    DEFAULT_MAX_ALLOWED_PACKET, TYPE_BLOB, TYPE_LONGLONG,
+    COM_STMT_CLOSE, COM_STMT_EXECUTE, COM_STMT_FETCH, COM_STMT_PREPARE, COM_STMT_RESET,
+    COM_STMT_SEND_LONG_DATA, DEFAULT_MAX_ALLOWED_PACKET, TYPE_BLOB, TYPE_LONGLONG,
 };
 use tidb_server::{
     serve_mysql_connection, ConfiguredUserStore, ConnectionCancellation, ConnectionExit,
-    ConnectionTracker, PreparedPointRead, PreparedWrite, QueryResult, QuerySession,
-    QuerySessionFactory, ResultSetSource, SessionContext, SessionTransaction, SqlQueryError,
-    WireStatus, WriteOutcome,
+    ConnectionTracker, GeneralExecuteOutcome, PreparedGeneral, PreparedPointRead, PreparedWrite,
+    QueryResult, QuerySession, QuerySessionFactory, ResultSetSource, SessionContext,
+    SessionTransaction, SqlQueryError, WireStatus, WriteOutcome,
 };
+use tidb_session::ResultMaterializationAuthority;
 
 const CLIENT_PROTOCOL_41: u32 = 1 << 9;
 const CLIENT_SECURE_CONNECTION: u32 = 1 << 15;
@@ -230,6 +232,13 @@ fn assert_column_packet(packet: &[u8], name: &[u8], org_name: &[u8], flags: u16)
     assert_eq!(u16::from_le_bytes([remaining[8], remaining[9]]), flags);
 }
 
+fn assert_mysql_error(packet: &[u8], code: u16, state: &[u8; 5]) {
+    assert_eq!(packet.first(), Some(&0xff), "ERR packet: {packet:?}");
+    assert_eq!(u16::from_le_bytes([packet[1], packet[2]]), code);
+    assert_eq!(&packet[3..4], b"#");
+    assert_eq!(&packet[4..9], state);
+}
+
 fn prepared_catalog() -> ConfiguredCatalog {
     ConfiguredCatalog::new([ConfiguredTable::new(
         "campaign27",
@@ -376,6 +385,161 @@ impl QuerySessionFactory for PreparedFactory {
             lifecycle: Arc::clone(&self.lifecycle),
         })
     }
+}
+
+struct CursorEncodingRows {
+    emitted: bool,
+    lifecycle: Arc<Mutex<Lifecycle>>,
+}
+
+impl ResultSetSource for CursorEncodingRows {
+    fn next_batch(&mut self, _max_rows: usize) -> Result<Vec<Vec<Datum>>, String> {
+        if std::mem::replace(&mut self.emitted, true) {
+            return Ok(Vec::new());
+        }
+        Ok(vec![vec![Datum::Bytes(b"not-an-integer".to_vec())]])
+    }
+
+    fn columns(&mut self) -> Result<Vec<ColumnInfo>, String> {
+        // Deliberately inconsistent with the exact Varchar FieldType below:
+        // materialization remains valid, while binary FETCH must reject this
+        // datum/metadata pair before advancing the cursor.
+        Ok(vec![prepared_balance_column()])
+    }
+
+    fn finish(&mut self) -> Result<(), String> {
+        self.lifecycle.lock().unwrap().finished += 1;
+        Ok(())
+    }
+
+    fn close(&mut self) -> Result<(), String> {
+        self.lifecycle.lock().unwrap().closed += 1;
+        Ok(())
+    }
+}
+
+struct CursorEncodingSession {
+    lifecycle: Arc<Mutex<Lifecycle>>,
+}
+
+impl QuerySession for CursorEncodingSession {
+    fn execute<'a>(&'a mut self, _sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+        Err(SqlQueryError::unknown(
+            "text execution is not part of this test",
+        ))
+    }
+
+    fn prepare_general(&mut self, sql: &str) -> Result<PreparedGeneral, SqlQueryError> {
+        Ok(PreparedGeneral::new(
+            sql.to_owned(),
+            0,
+            vec![prepared_balance_column()],
+        ))
+    }
+
+    fn execute_general<'a>(
+        &'a mut self,
+        _statement: &PreparedGeneral,
+        _values: &[tidb_protocol::PreparedValue],
+    ) -> Result<GeneralExecuteOutcome<'a>, SqlQueryError> {
+        let field = FieldType::new(FieldTypeCode::Varchar);
+        let authority = ResultMaterializationAuthority::new(
+            StatementMemory::new(-1, OomAction::Cancel, 1).with_tmp_storage_on_oom(false),
+            8,
+            8,
+        );
+        Ok(GeneralExecuteOutcome::Rows(
+            QueryResult::new(Box::new(CursorEncodingRows {
+                emitted: false,
+                lifecycle: Arc::clone(&self.lifecycle),
+            }))
+            .with_cursor_materialization(vec![field], authority),
+        ))
+    }
+}
+
+struct CursorEncodingFactory {
+    lifecycle: Arc<Mutex<Lifecycle>>,
+}
+
+impl QuerySessionFactory for CursorEncodingFactory {
+    type Session = CursorEncodingSession;
+
+    fn open_session(&self, _context: SessionContext) -> Result<Self::Session, SqlQueryError> {
+        Ok(CursorEncodingSession {
+            lifecycle: Arc::clone(&self.lifecycle),
+        })
+    }
+}
+
+#[test]
+fn cursor_fetch_encoding_error_resets_cursor_atomically() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let lifecycle = Arc::new(Mutex::new(Lifecycle::default()));
+    let worker_lifecycle = Arc::clone(&lifecycle);
+    let tracker = Arc::new(ConnectionTracker::default());
+    let worker_tracker = Arc::clone(&tracker);
+    let worker = std::thread::spawn(move || {
+        let (stream, peer_addr) = listener.accept().unwrap();
+        serve_mysql_connection(
+            stream,
+            peer_addr,
+            ConnectionCancellation::default(),
+            &CursorEncodingFactory {
+                lifecycle: worker_lifecycle,
+            },
+            &users(),
+            &worker_tracker,
+            DEFAULT_MAX_ALLOWED_PACKET,
+        )
+        .unwrap()
+    });
+
+    let mut client = TcpStream::connect(address).unwrap();
+    let read_side = client.try_clone().unwrap();
+    let mut reader = PacketReader::new(read_side);
+    authenticate(&mut client, &mut reader, "alice", b"secret");
+    reader.set_sequence(2);
+    assert_eq!(reader.read_packet().unwrap()[0], 0);
+
+    let mut prepare = vec![COM_STMT_PREPARE];
+    prepare.extend_from_slice(b"SELECT broken_cursor_value");
+    write_packet(&mut client, 0, &prepare);
+    reader.set_sequence(1);
+    let prepared = reader.read_packet().unwrap();
+    assert_eq!(prepared[0], 0);
+    assert_eq!(u16::from_le_bytes([prepared[5], prepared[6]]), 1);
+    assert_eq!(u16::from_le_bytes([prepared[7], prepared[8]]), 0);
+    let statement_id = u32::from_le_bytes(prepared[1..5].try_into().unwrap());
+    assert_ne!(reader.read_packet().unwrap()[0], 0xff);
+
+    let mut execute = vec![COM_STMT_EXECUTE];
+    execute.extend_from_slice(&statement_id.to_le_bytes());
+    execute.push(1); // CURSOR_TYPE_READ_ONLY
+    execute.extend_from_slice(&1_u32.to_le_bytes());
+    write_packet(&mut client, 0, &execute);
+    reader.set_sequence(1);
+    assert_eq!(reader.read_packet().unwrap(), [1]);
+    assert_ne!(reader.read_packet().unwrap()[0], 0xff);
+    assert_eq!(reader.read_packet().unwrap()[0], 0xfe);
+
+    let mut fetch = vec![COM_STMT_FETCH];
+    fetch.extend_from_slice(&statement_id.to_le_bytes());
+    fetch.extend_from_slice(&1_u32.to_le_bytes());
+    write_packet(&mut client, 0, &fetch);
+    reader.set_sequence(1);
+    assert_mysql_error(&reader.read_packet().unwrap(), 1105, b"HY000");
+
+    write_packet(&mut client, 0, &fetch);
+    reader.set_sequence(1);
+    assert_mysql_error(&reader.read_packet().unwrap(), 1326, b"24000");
+    assert_eq!(lifecycle.lock().unwrap().finished, 1);
+    assert_eq!(lifecycle.lock().unwrap().closed, 1);
+
+    write_packet(&mut client, 0, &[COM_QUIT]);
+    drop(client);
+    assert_eq!(worker.join().unwrap().exit, ConnectionExit::Quit);
 }
 
 fn prepare_statement(client: &mut TcpStream, reader: &mut PacketReader<TcpStream>) -> u32 {
@@ -635,6 +799,16 @@ fn real_tcp_prepared_lifecycle_reports_exact_eight_binary_executes_and_type_reus
             &prepared_execute_command(statement_id, value == 1, value),
         );
         assert_prepared_binary_result(&mut reader, value + 100);
+        if value == 4 {
+            // TiDBStatement.Reset clears the cursor and long-data buffers but
+            // deliberately retains paramsType. The fifth execute keeps its
+            // new-parameter-bound flag clear and must still decode as BIGINT.
+            let mut reset = vec![COM_STMT_RESET];
+            reset.extend_from_slice(&statement_id.to_le_bytes());
+            write_packet(&mut client, 0, &reset);
+            reader.set_sequence(1);
+            assert_eq!(reader.read_packet().unwrap()[0], 0);
+        }
     }
     let mut close = vec![COM_STMT_CLOSE];
     close.extend_from_slice(&statement_id.to_le_bytes());

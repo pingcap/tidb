@@ -57,6 +57,43 @@ fn the_shipped_quota_and_action_defaults_match_go() {
 }
 
 #[test]
+fn cursor_authority_is_captured_before_set_var_restoration() {
+    let mut session = Session::new();
+    session.run("SET @@tidb_mem_quota_query = 4096").unwrap();
+    session.run("SET @@tidb_init_chunk_size = 16").unwrap();
+    session.run("SET @@tidb_max_chunk_size = 128").unwrap();
+
+    let (output, authority) = session
+        .run_with_params_and_result_authority(
+            "SELECT /*+ SET_VAR(tidb_mem_quota_query=97) \
+             SET_VAR(tidb_init_chunk_size=8) \
+             SET_VAR(tidb_max_chunk_size=64) */ 1",
+            &[],
+        )
+        .unwrap();
+    assert!(matches!(output, StmtOutput::Rows { .. }));
+    let (memory, init_chunk_size, max_chunk_size) = authority
+        .expect("a row result carries cursor authority")
+        .into_parts();
+    assert_eq!(memory.quota(), 97);
+    assert_eq!(init_chunk_size, 8);
+    assert_eq!(max_chunk_size, 64);
+
+    assert_eq!(
+        crate::tests_support::scalar_text(&mut session, "SELECT @@tidb_mem_quota_query").as_deref(),
+        Some("4096")
+    );
+    assert_eq!(
+        crate::tests_support::scalar_text(&mut session, "SELECT @@tidb_init_chunk_size").as_deref(),
+        Some("16")
+    );
+    assert_eq!(
+        crate::tests_support::scalar_text(&mut session, "SELECT @@tidb_max_chunk_size").as_deref(),
+        Some("128")
+    );
+}
+
+#[test]
 fn an_ordinary_statement_is_nowhere_near_the_default_quota() {
     let mut session = ordered_session();
     let rows = crate::tests_support::row_text(session.run("SELECT a FROM t ORDER BY b"));
