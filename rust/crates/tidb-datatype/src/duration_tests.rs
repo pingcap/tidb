@@ -360,8 +360,31 @@ fn test_duration_clock() {
     }
 }
 
+/// Complete translation of `pkg/types/time_test.go::TestTimeFsp`.
 #[test]
-fn truncate_overflow_mysql_time_matches_source_endpoints() {
+fn test_time_fsp() {
+    for (input, fsp, expected) in [
+        ("00:00:00.1", 0, "00:00:00"),
+        ("00:00:00.1", 1, "00:00:00.1"),
+        ("00:00:00.777777", 2, "00:00:00.78"),
+        ("00:00:00.777777", 6, "00:00:00.777777"),
+        ("00:00:00.777777", -1, "00:00:01"),
+        ("00:00:00.001", 3, "00:00:00.001"),
+        ("08:29:59.537368", 0, "08:30:00"),
+        ("08:59:59.537368", 0, "09:00:00"),
+    ] {
+        let parsed = parse_mysql_duration(input, fsp, &chrono_tz::UTC, true, false).unwrap();
+        let duration = MySqlDuration::from_nanoseconds(parsed.nanoseconds(), parsed.fsp()).unwrap();
+        assert_eq!(duration.to_string(), expected, "{input} fsp={fsp}");
+    }
+
+    assert!(parse_mysql_duration("00:00:00.1", -2, &chrono_tz::UTC, true, false).is_err());
+}
+
+/// Complete translation of
+/// `pkg/types/time_test.go::TestTruncateOverflowMySQLTime`.
+#[test]
+fn test_truncate_overflow_mysql_time() {
     // Source: pkg/types/time.go::TruncateOverflowMySQLTime and
     // pkg/types/time_test.go::TestTruncateOverflowMySQLTime.
     let positive = truncate_overflow_mysql_time(MAX_TIME_NANOS + 1);
