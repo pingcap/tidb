@@ -35,6 +35,11 @@ import (
 	"go.uber.org/zap/zaptest/observer"
 )
 
+const ttlTableSQL = `create table t(
+	id int primary key,
+	created_at datetime
+) TTL = created_at + interval 1 day`
+
 type recordingExternalWorkloadManager struct {
 	role config.ExternalWorkloadRole
 
@@ -156,10 +161,7 @@ func TestExternalWorkloadTTLDDLIntegration(t *testing.T) {
 		}
 		tk, _ := createTTLExternalWorkloadTestKit(t, mgr)
 
-		err := tk.ExecToErr(`create table t(
-			id int primary key,
-			created_at datetime
-		) TTL = created_at + interval 1 day`)
+		err := tk.ExecToErr(ttlTableSQL)
 		require.ErrorContains(t, err, context.DeadlineExceeded.Error())
 		tk.MustQuery("show tables like 't'").Check(testkit.Rows())
 		require.Empty(t, mgr.registeredTTLTables())
@@ -187,10 +189,7 @@ func TestExternalWorkloadTTLDDLIntegration(t *testing.T) {
 		mgr := &recordingExternalWorkloadManager{role: config.RoleMaster}
 		tk, _ := createTTLExternalWorkloadTestKit(t, mgr)
 
-		tk.MustExec(`create table t(
-			id int primary key,
-			created_at datetime
-		) TTL = created_at + interval 1 day`)
+		tk.MustExec(ttlTableSQL)
 
 		tbl := external.GetTableByName(t, tk, "test", "t")
 		tk.MustExec("drop table t")
@@ -202,10 +201,7 @@ func TestExternalWorkloadTTLDDLIntegration(t *testing.T) {
 		mgr := &recordingExternalWorkloadManager{role: config.RoleMaster}
 		tk, _ := createTTLExternalWorkloadTestKit(t, mgr)
 
-		tk.MustExec(`create table t(
-			id int primary key,
-			created_at datetime
-		) TTL = created_at + interval 1 day`)
+		tk.MustExec(ttlTableSQL)
 
 		tbl := external.GetTableByName(t, tk, "test", "t")
 		mgr.deleteErrFn = func(tableID int64) error {
@@ -227,10 +223,7 @@ func TestExternalWorkloadTTLDDLIntegration(t *testing.T) {
 		mgr := &recordingExternalWorkloadManager{role: config.RoleMaster}
 		tk, _ := createTTLExternalWorkloadTestKit(t, mgr)
 
-		tk.MustExec(`create table t(
-			id int primary key,
-			created_at datetime
-		) TTL = created_at + interval 1 day`)
+		tk.MustExec(ttlTableSQL)
 
 		oldTbl := external.GetTableByName(t, tk, "test", "t")
 		tk.MustExec("truncate table t")
@@ -245,10 +238,7 @@ func TestExternalWorkloadTTLDDLIntegration(t *testing.T) {
 		mgr := &recordingExternalWorkloadManager{role: config.RoleMaster}
 		tk, _ := createTTLExternalWorkloadTestKit(t, mgr)
 
-		tk.MustExec(`create table t(
-			id int primary key,
-			created_at datetime
-		) TTL = created_at + interval 1 day`)
+		tk.MustExec(ttlTableSQL)
 
 		oldTbl := external.GetTableByName(t, tk, "test", "t")
 		mgr.registerErrFn = func(tableID int64) error {
@@ -275,10 +265,7 @@ func TestExternalWorkloadTTLDDLIntegration(t *testing.T) {
 		mgr := &recordingExternalWorkloadManager{role: config.RoleMaster}
 		tk, _ := createTTLExternalWorkloadTestKit(t, mgr)
 
-		tk.MustExec(`create table t(
-			id int primary key,
-			created_at datetime
-		) TTL = created_at + interval 1 day`)
+		tk.MustExec(ttlTableSQL)
 
 		oldTbl := external.GetTableByName(t, tk, "test", "t")
 		mgr.registerErrFn = func(int64) error { return context.DeadlineExceeded }
@@ -304,10 +291,7 @@ func TestExternalWorkloadTTLDDLIntegration(t *testing.T) {
 		mgr := &recordingExternalWorkloadManager{role: config.RoleTTLTaskWorker}
 		tk, _ := createTTLExternalWorkloadTestKit(t, mgr)
 
-		tk.MustExec(`create table t(
-			id int primary key,
-			created_at datetime
-		) TTL = created_at + interval 1 day`)
+		tk.MustExec(ttlTableSQL)
 
 		tbl := external.GetTableByName(t, tk, "test", "t")
 		require.Equal(t, []int64{tbl.Meta().ID}, mgr.registeredTTLTables())
