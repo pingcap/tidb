@@ -338,6 +338,72 @@ fn explain_wrapper_restore_and_scope() {
     assert_eq!(r("explain explore 'digest'"), "EXPLAIN EXPLORE 'digest'");
 }
 
+/// Exact restore table from `pkg/parser/parser_test.go::TestExplain`.
+#[test]
+fn test_explain_source_rows() {
+    let cases = [
+        ("explain select c1 from t1", "EXPLAIN FORMAT = 'row' SELECT `c1` FROM `t1`"),
+        ("explain delete t1, t2 from t1 inner join t2 inner join t3 where t1.id=t2.id and t2.id=t3.id;", "EXPLAIN FORMAT = 'row' DELETE `t1`,`t2` FROM (`t1` JOIN `t2`) JOIN `t3` WHERE `t1`.`id`=`t2`.`id` AND `t2`.`id`=`t3`.`id`"),
+        ("explain insert into t values (1), (2), (3)", "EXPLAIN FORMAT = 'row' INSERT INTO `t` VALUES (1),(2),(3)"),
+        ("explain replace into foo values (1 || 2)", "EXPLAIN FORMAT = 'row' REPLACE INTO `foo` VALUES (1 OR 2)"),
+        ("explain update t set id = id + 1 order by id desc;", "EXPLAIN FORMAT = 'row' UPDATE `t` SET `id`=`id`+1 ORDER BY `id` DESC"),
+        ("explain select c1 from t1 union (select c2 from t2) limit 1, 1", "EXPLAIN FORMAT = 'row' SELECT `c1` FROM `t1` UNION (SELECT `c2` FROM `t2`) LIMIT 1,1"),
+        ("explain format = \"row\" select c1 from t1 union (select c2 from t2) limit 1, 1", "EXPLAIN FORMAT = 'row' SELECT `c1` FROM `t1` UNION (SELECT `c2` FROM `t2`) LIMIT 1,1"),
+        ("explain format = 'brief' select * from t", "EXPLAIN FORMAT = 'brief' SELECT * FROM `t`"),
+        ("DESC SCHE.TABL", "DESC `SCHE`.`TABL`"),
+        ("DESC SCHE.TABL COLUM", "DESC `SCHE`.`TABL` `COLUM`"),
+        ("DESCRIBE SCHE.TABL COLUM", "DESC `SCHE`.`TABL` `COLUM`"),
+        ("EXPLAIN ANALYZE SELECT 1", "EXPLAIN ANALYZE SELECT 1"),
+        ("EXPLAIN ANALYZE format=VERBOSE SELECT 1", "EXPLAIN ANALYZE FORMAT = 'VERBOSE' SELECT 1"),
+        ("EXPLAIN ANALYZE format=TRUE_CARD_COST SELECT 1", "EXPLAIN ANALYZE FORMAT = 'TRUE_CARD_COST' SELECT 1"),
+        ("EXPLAIN ANALYZE format='VERBOSE' SELECT 1", "EXPLAIN ANALYZE FORMAT = 'VERBOSE' SELECT 1"),
+        ("EXPLAIN ANALYZE format='TRUE_CARD_COST' SELECT 1", "EXPLAIN ANALYZE FORMAT = 'TRUE_CARD_COST' SELECT 1"),
+        ("EXPLAIN FORMAT = 'dot' SELECT 1", "EXPLAIN FORMAT = 'dot' SELECT 1"),
+        ("EXPLAIN FORMAT = DOT SELECT 1", "EXPLAIN FORMAT = 'DOT' SELECT 1"),
+        ("EXPLAIN FORMAT = 'row' SELECT 1", "EXPLAIN FORMAT = 'row' SELECT 1"),
+        ("EXPLAIN FORMAT = 'ROW' SELECT 1", "EXPLAIN FORMAT = 'ROW' SELECT 1"),
+        ("EXPLAIN FORMAT = 'BRIEF' SELECT 1", "EXPLAIN FORMAT = 'BRIEF' SELECT 1"),
+        ("EXPLAIN FORMAT = BRIEF SELECT 1", "EXPLAIN FORMAT = 'BRIEF' SELECT 1"),
+        ("EXPLAIN FORMAT = 'verbose' SELECT 1", "EXPLAIN FORMAT = 'verbose' SELECT 1"),
+        ("EXPLAIN FORMAT = 'VERBOSE' SELECT 1", "EXPLAIN FORMAT = 'VERBOSE' SELECT 1"),
+        ("EXPLAIN FORMAT = VERBOSE SELECT 1", "EXPLAIN FORMAT = 'VERBOSE' SELECT 1"),
+        ("EXPLAIN SELECT 1", "EXPLAIN FORMAT = 'row' SELECT 1"),
+        ("EXPLAIN FOR CONNECTION 1", "EXPLAIN FORMAT = 'row' FOR CONNECTION 1"),
+        ("EXPLAIN FOR connection 42", "EXPLAIN FORMAT = 'row' FOR CONNECTION 42"),
+        ("EXPLAIN FORMAT = 'dot' FOR CONNECTION 1", "EXPLAIN FORMAT = 'dot' FOR CONNECTION 1"),
+        ("EXPLAIN FORMAT = DOT FOR CONNECTION 1", "EXPLAIN FORMAT = 'DOT' FOR CONNECTION 1"),
+        ("EXPLAIN FORMAT = 'row' FOR connection 1", "EXPLAIN FORMAT = 'row' FOR CONNECTION 1"),
+        ("EXPLAIN FORMAT = ROW FOR connection 1", "EXPLAIN FORMAT = 'ROW' FOR CONNECTION 1"),
+        ("EXPLAIN FORMAT = TRADITIONAL FOR CONNECTION 1", "EXPLAIN FORMAT = 'TRADITIONAL' FOR CONNECTION 1"),
+        ("EXPLAIN FORMAT = TRADITIONAL SELECT 1", "EXPLAIN FORMAT = 'TRADITIONAL' SELECT 1"),
+        ("EXPLAIN FORMAT = BRIEF SELECT 1", "EXPLAIN FORMAT = 'BRIEF' SELECT 1"),
+        ("EXPLAIN FORMAT = 'brief' SELECT 1", "EXPLAIN FORMAT = 'brief' SELECT 1"),
+        ("EXPLAIN FORMAT = DOT SELECT 1", "EXPLAIN FORMAT = 'DOT' SELECT 1"),
+        ("EXPLAIN FORMAT = 'dot' SELECT 1", "EXPLAIN FORMAT = 'dot' SELECT 1"),
+        ("EXPLAIN FORMAT = VERBOSE SELECT 1", "EXPLAIN FORMAT = 'VERBOSE' SELECT 1"),
+        ("EXPLAIN FORMAT = 'verbose' SELECT 1", "EXPLAIN FORMAT = 'verbose' SELECT 1"),
+        ("EXPLAIN FORMAT = JSON FOR CONNECTION 1", "EXPLAIN FORMAT = 'JSON' FOR CONNECTION 1"),
+        ("EXPLAIN FORMAT = JSON SELECT 1", "EXPLAIN FORMAT = 'JSON' SELECT 1"),
+        ("EXPLAIN FORMAT = 'hint' SELECT 1", "EXPLAIN FORMAT = 'hint' SELECT 1"),
+        ("EXPLAIN ANALYZE FORMAT = 'verbose' SELECT 1", "EXPLAIN ANALYZE FORMAT = 'verbose' SELECT 1"),
+        ("EXPLAIN ANALYZE FORMAT = 'binary' SELECT 1", "EXPLAIN ANALYZE FORMAT = 'binary' SELECT 1"),
+        ("EXPLAIN ALTER TABLE t1 ADD INDEX (a)", "EXPLAIN FORMAT = 'row' ALTER TABLE `t1` ADD INDEX(`a`)"),
+        ("EXPLAIN ALTER TABLE t1 ADD a varchar(255)", "EXPLAIN FORMAT = 'row' ALTER TABLE `t1` ADD COLUMN `a` VARCHAR(255)"),
+        ("EXPLAIN FORMAT = TIDB_JSON FOR CONNECTION 1", "EXPLAIN FORMAT = 'TIDB_JSON' FOR CONNECTION 1"),
+        ("EXPLAIN FORMAT = tidb_json SELECT 1", "EXPLAIN FORMAT = 'tidb_json' SELECT 1"),
+        ("EXPLAIN ANALYZE FORMAT = tidb_json SELECT 1", "EXPLAIN ANALYZE FORMAT = 'tidb_json' SELECT 1"),
+        ("EXPLAIN 'sqldigest'", "EXPLAIN FORMAT = 'row' 'sqldigest'"),
+        ("EXPLAIN ANALYZE 'sqldigest'", "EXPLAIN ANALYZE 'sqldigest'"),
+        ("EXPLAIN format='json' 'sqldigest'", "EXPLAIN FORMAT = 'json' 'sqldigest'"),
+        ("EXPLAIN ANALYZE format='json' 'sqldigest'", "EXPLAIN ANALYZE FORMAT = 'json' 'sqldigest'"),
+    ];
+
+    assert_eq!(cases.len(), 54, "Go source row count drifted");
+    for (sql, expected) in cases {
+        assert_eq!(r(sql), expected, "source SQL: {sql}");
+    }
+}
+
 #[test]
 fn explain_digest_and_explore_source_rows() {
     for (sql, expected) in [
