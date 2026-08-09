@@ -1639,8 +1639,10 @@ mod tests {
         }
     }
 
+    /// Complete translation of
+    /// `pkg/types/json_binary_functions_test.go::TestBinaryCompare`.
     #[test]
-    fn test_binary_compare_and_opaque() {
+    fn test_binary_compare() {
         assert_eq!(
             compare_binary_json(
                 &BinaryJSON::from_value(&Value::String("a".to_owned())).unwrap(),
@@ -1684,7 +1686,11 @@ mod tests {
             ),
             Ordering::Less
         );
+    }
 
+    /// Complete translation of `pkg/types/json_binary_test.go::TestCompareBinary`.
+    #[test]
+    fn test_compare_binary() {
         let int = |value| BinaryJSON::from_value(&Value::Number(Number::from(value))).unwrap();
         let uint = |value| BinaryJSON::from_value(&Value::Number(Number::from(value))).unwrap();
         let real = |value| {
@@ -1738,6 +1744,12 @@ mod tests {
             assert_eq!(compare_binary_json(&left, &right), expected);
         }
 
+        assert_eq!(
+            compare_binary_json(&int(3), &uint(1_u64 << 63)),
+            Ordering::Less,
+            "3 < uint64(1<<63)"
+        );
+
         for (left, right) in [
             ("null", "3"),
             ("3", r#""hello""#),
@@ -1757,7 +1769,10 @@ mod tests {
                 "{left} < {right}"
             );
         }
+    }
 
+    #[test]
+    fn binary_json_special_scalar_container_supplemental() {
         let time =
             Time::from_date_checked(2020, 2, 3, 4, 5, 6, 123_456, TimeType::DateTime, 3).unwrap();
         let encoded_time = BinaryJSON::from_time(time);
