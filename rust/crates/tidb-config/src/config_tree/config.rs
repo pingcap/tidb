@@ -706,6 +706,18 @@ mod tests {
         update_global(|config| config.keyspace_name.clear());
     }
 
+    // Go TestGetGlobalTiKVWorkerURL.
+    #[test]
+    fn test_get_global_tikv_worker_url() {
+        let config = new_config();
+        assert!(config.tikv_worker_url.is_empty());
+
+        update_global(|config| config.tikv_worker_url = "tikv-worker-0:10080".to_owned());
+        assert_eq!(get_global_config().tikv_worker_url, "tikv-worker-0:10080");
+
+        update_global(|config| config.tikv_worker_url.clear());
+    }
+
     // Go TestKeyspaceActivateModeConfig (the source test runs under the
     // `nextgen` build tag).
     #[cfg(feature = "nextgen")]
