@@ -159,6 +159,29 @@ impl RegionBackoffBudget {
         &mut self,
         kind: RegionBackoffKind,
     ) -> Result<Duration, RegionBackoffExhausted> {
+        self.reserve_delay(kind, u64::MAX)
+    }
+
+    /// Reserves the next source-shaped delay, capped by the server-reported
+    /// time until the condition can change.
+    ///
+    /// client-go's `BackoffWithCfgAndMaxSleep` computes the normal jittered
+    /// delay first, then limits that one sleep to `max_delay`. Accounting must
+    /// use the limited delay too, or a short lock TTL would incorrectly spend
+    /// the uncapped retry budget.
+    pub fn next_delay_capped(
+        &mut self,
+        kind: RegionBackoffKind,
+        max_delay: Duration,
+    ) -> Result<Duration, RegionBackoffExhausted> {
+        self.reserve_delay(kind, duration_ms(max_delay))
+    }
+
+    fn reserve_delay(
+        &mut self,
+        kind: RegionBackoffKind,
+        max_delay_ms: u64,
+    ) -> Result<Duration, RegionBackoffExhausted> {
         let effective_exhausted = self.effective_sleep_ms() >= self.max_sleep_ms;
         let excluded_exhausted = kind.is_sleep_excluded()
             && self.excluded_sleep_ms >= 600_000
@@ -185,7 +208,7 @@ impl RegionBackoffBudget {
         } else {
             exponential
         };
-        let delay_ms = computed;
+        let delay_ms = computed.min(max_delay_ms);
 
         self.attempts[index] = attempt.saturating_add(1);
         self.total_sleep_ms = self.total_sleep_ms.saturating_add(delay_ms);

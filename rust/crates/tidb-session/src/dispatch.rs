@@ -25,6 +25,7 @@ use tidb_ast::{DdlStmt, DmlStmt, SessionStmt, Stmt};
 use tidb_executor::{Catalog, DriverError, SchemaErrorKind};
 
 use crate::warnings::UNSUPPORTED_CREATE_PARTITION_CODE;
+use crate::StatementMode;
 use crate::{infoschema, statement_kind_of, Session, StatementKind, StmtOutput, WarningLevel};
 use crate::{CHECK_CONSTRAINT_IS_OFF_CODE, CHECK_CONSTRAINT_IS_OFF_MESSAGE};
 
@@ -273,6 +274,14 @@ impl Session {
     }
 
     pub(crate) fn execute_statement(&mut self, sql: &str) -> Result<StmtOutput, DriverError> {
+        self.execute_statement_with_mode(sql, StatementMode::Execute)
+    }
+
+    pub(crate) fn execute_statement_with_mode(
+        &mut self,
+        sql: &str,
+        mode: StatementMode,
+    ) -> Result<StmtOutput, DriverError> {
         // Go hands every statement that is not continuing an open transaction
         // a FRESH membuffer, so `session.HasDirtyContent` answers false for
         // every table at this point -- and `BEGIN` therefore starts from an
@@ -420,8 +429,14 @@ impl Session {
                 };
                 let current_db = self.current_db.clone();
                 let ctx = self.statement_context(false);
-                let (columns, rows) = self.with_catalog_mut(|catalog| {
-                    tidb_executor::run_select_meta_stmt(select, catalog, &current_db, &ctx)
+                let (columns, rows) = self.with_catalog_mut(|catalog| match mode {
+                    StatementMode::Execute => {
+                        tidb_executor::run_select_meta_stmt(select, catalog, &current_db, &ctx)
+                    }
+                    StatementMode::PlanOnly => {
+                        tidb_executor::plan_select_meta_stmt(select, catalog, &current_db, &ctx)
+                            .map(|columns| (columns, Vec::new()))
+                    }
                 })?;
                 self.drain_eval_warnings(&ctx);
                 Ok(StmtOutput::Rows { columns, rows })

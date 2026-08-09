@@ -800,39 +800,33 @@ fn derive_not_null_conds_returns_tidbs_rows() {
     assert_eq!(rows(&mut session, sql), anti_semi_expected(pairs), "{sql}");
 }
 
-/// RUNNING GUARD for the push-down gap: in all 30 cases of the three tables
-/// nothing below the join carries a predicate. Every condition is either a
-/// join `equal:`/`other cond:` or a `Selection` above the join.
-///
-/// When a predicate does start reaching a scan, this fails and the three
-/// `#[ignore]`d tests below become the live ones.
+/// The bounded push-down implemented today: a single-leaf predicate below an
+/// inner join can narrow that leaf, while an outer join remains conservative.
+/// The complete Go condition-placement cases below stay ignored because OR
+/// extraction, derived not-null conditions, and outer-to-inner conversion are
+/// still separate missing rules.
 #[test]
-fn no_predicate_reaches_either_side_of_a_join_today() {
+fn single_leaf_predicates_narrow_inner_joins_but_not_outer_joins() {
     let mut session = signed_table_session();
-    let all = OUTER_WHERE_PREDICATE_PUSH_DOWN
+    let outer = OUTER_WHERE_PREDICATE_PUSH_DOWN
         .iter()
         .chain(JOIN_PREDICATE_PUSH_DOWN)
-        .chain(DERIVE_NOT_NULL_CONDS);
-    let mut cases = 0;
-    for (sql, _, _, _) in all {
-        assert_eq!(
-            conditions_below_join(&mut session, sql),
-            Vec::new(),
-            "conditions below the join of `{sql}`"
+        .chain(DERIVE_NOT_NULL_CONDS)
+        .filter(|(sql, ..)| sql.contains(" left join ") || sql.contains(" right join "));
+    for (sql, _, _, _) in outer {
+        assert!(
+            conditions_below_join(&mut session, sql).is_empty(),
+            "outer-join predicates remain above `{sql}`"
         );
-        cases += 1;
     }
-    assert_eq!(cases, 30);
-    // Go pushes something to at least one side in 19 of the 30 -- the size of
-    // the gap the ignored tests carry.
-    assert_eq!(
-        OUTER_WHERE_PREDICATE_PUSH_DOWN
+
+    let sql = "select * from t t1 join t t2 on t1.a > 1 and t1.a > 1";
+    assert!(
+        conditions_below_join(&mut session, sql)
             .iter()
-            .chain(JOIN_PREDICATE_PUSH_DOWN)
-            .chain(DERIVE_NOT_NULL_CONDS)
-            .filter(|(_, left, right, _)| *left != "[]" || *right != "[]")
-            .count(),
-        19
+            .any(|(operator, info)| operator.contains("TableRangeScan")
+                && info.contains("range:(1,+inf]")),
+        "the t1 predicate should narrow its inner-join leaf"
     );
 }
 

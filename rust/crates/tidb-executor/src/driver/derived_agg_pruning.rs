@@ -13,8 +13,10 @@
 // limitations under the License.
 
 //! Go's `LogicalAggregation.PruneColumns` (`logical_aggregation.go:113`)
-//! reaching a derived table: an UNGROUPED aggregation nobody reads a column
-//! of computes nothing at all -- only the fact that it produced its one row.
+//! reaching a derived table. An UNGROUPED aggregation nobody reads a column
+//! of computes only the fact that it produced its one row. A GROUPED
+//! aggregation also drops an unread selected group carrier while retaining
+//! the `GROUP BY` expression that determines its rows.
 //!
 //! # The Go rule, and why the answer is `count(1)`
 //!
@@ -111,8 +113,25 @@ use tidb_datatype::{FieldType, FieldTypeCode};
 
 use super::leaf_demand::LeafDemand;
 
-/// The statement with its derived table's field list reduced to `count(1)`,
-/// or `None` when no reduction is provable.
+/// Whether this statement's sole relation is a grouped derived SELECT. Used
+/// by the caller to render the post-pruning physical expressions that no
+/// longer have source-column names.
+pub(crate) fn is_single_grouped_derived(select: &SelectStmt) -> bool {
+    let Some(from) = &select.from else {
+        return false;
+    };
+    if from.right.is_some() {
+        return false;
+    }
+    matches!(
+        &from.left,
+        JoinNode::Derived { subquery, .. }
+            if matches!(&**subquery, QueryStmt::Select(inner) if !inner.group_by.is_empty())
+    )
+}
+
+/// The statement with unread derived-aggregation outputs removed, or `None`
+/// when no reduction is provable.
 pub(crate) fn prune(select: &SelectStmt) -> Option<SelectStmt> {
     let from = select.from.as_ref()?;
     if from.right.is_some() {
@@ -133,29 +152,36 @@ pub(crate) fn prune(select: &SelectStmt) -> Option<SelectStmt> {
     let QueryStmt::Select(inner) = &**subquery else {
         return None;
     };
-    if !is_prunable_ungrouped_aggregation(inner) {
-        return None;
-    }
-    // The outer statement must read no column of the derived table. Only the
-    // NAMES matter to `LeafDemand::needed`, so the type is a placeholder.
+    // Only the clauses ABOVE the derived relation decide which of its output
+    // columns survive. Walking into the subquery would charge its own source
+    // references to identically named output columns (condition 04's
+    // `o_d_id`) and incorrectly keep the FIRST_ROW carrier Go prunes.
+    let mut outer = select.clone();
+    outer.from = None;
+
+    // Only the output NAMES matter to `LeafDemand::needed`, so the type is a
+    // placeholder.
     let names = super::from::derived_field_names(inner)?;
     let columns: Vec<(String, FieldType)> = names
         .into_iter()
         .map(|name| (name, FieldType::new(FieldTypeCode::LongLong)))
         .collect();
-    if !LeafDemand::of_select(select)
-        .needed(alias, &columns)
-        .is_empty()
-    {
-        return None;
-    }
+    let needed = LeafDemand::of_select(&outer).needed(alias, &columns);
 
-    let mut pruned_inner = inner.clone();
-    pruned_inner.fields = vec![SelectField::Expr {
-        expr: count_one(),
-        alias: None,
-    }]
-    .into();
+    let pruned_inner = if is_prunable_ungrouped_aggregation(inner) {
+        if !needed.is_empty() {
+            return None;
+        }
+        let mut inner = inner.clone();
+        inner.fields = vec![SelectField::Expr {
+            expr: count_one(),
+            alias: None,
+        }]
+        .into();
+        inner
+    } else {
+        Box::new(prune_unread_group_carriers(inner, &needed)?)
+    };
     let mut rewritten = select.clone();
     rewritten.from = Some(tidb_ast::Join {
         left: JoinNode::Derived {
@@ -167,6 +193,49 @@ pub(crate) fn prune(select: &SelectStmt) -> Option<SelectStmt> {
         ..from.clone()
     });
     Some(rewritten)
+}
+
+/// Drops selected group-key columns the outer query does not read. The group
+/// item itself remains, so row cardinality and ordering are unchanged; only
+/// the `FIRST_ROW` aggregate Go synthesized to expose that key disappears.
+///
+/// This is deliberately narrower than Go's general column-pruning rule. It
+/// refuses DISTINCT and output-order-sensitive clauses and keeps every
+/// aggregate output, even an unread one. The TPCC condition-04 shape needs
+/// only the safe plain-column group carrier case.
+fn prune_unread_group_carriers(select: &SelectStmt, needed: &[usize]) -> Option<SelectStmt> {
+    if select.group_by.is_empty()
+        || select.distinct
+        || select.rollup
+        || !select.order_by.is_empty()
+        || !select.windows.is_empty()
+    {
+        return None;
+    }
+
+    let mut changed = false;
+    let mut fields = Vec::with_capacity(select.fields.fields().len());
+    for (index, field) in select.fields.fields().iter().enumerate() {
+        let is_group_carrier = match field {
+            SelectField::Expr {
+                expr: expr @ Expr::Column(_),
+                alias: _,
+            } => select.group_by.iter().any(|item| &item.expr == expr),
+            _ => false,
+        };
+        if is_group_carrier && !needed.contains(&index) {
+            changed = true;
+        } else {
+            fields.push(field.clone());
+        }
+    }
+    if !changed || fields.is_empty() {
+        return None;
+    }
+
+    let mut pruned = select.clone();
+    pruned.fields = fields.into();
+    Some(pruned)
 }
 
 /// `COUNT(1)`, the aggregate Go appends when it prunes the last one -- the

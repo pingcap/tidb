@@ -11,11 +11,16 @@
 //! publication, a snapshot taken twice.
 
 use super::super::*;
-use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use tidb_exec::pessimistic_lock_error::commit_outcome_to_sql_error;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use tidb_exec::multi_statement_transaction::{LockKeysOutcome, TransactionStatementError};
+use tidb_exec::pessimistic_lock_error::{
+    commit_outcome_to_sql_error, LockSqlError, ERR_WRITE_CONFLICT,
+};
 use tidb_executor::cluster_storage::SnapshotPairs;
 use tidb_executor::storage::StorageError;
+use tidb_planner::read_only_scan::ReadLockWait;
+use tidb_planner::txn_mode::SessionTxnMode;
 use tidb_txnkv::transaction::{
     CommittedTransaction, OptimisticCommitOutcome, OptimisticTransactionReceipt,
     RolledBackTransaction, TransactionCause,
@@ -44,6 +49,14 @@ pub(super) struct MockCluster {
     pub(super) opened_at_max_ts: AtomicUsize,
     /// Explicit transactions opened by `BEGIN`.
     pub(super) begun: AtomicUsize,
+    /// Modes requested by explicit transactions, in open order.
+    pub(super) begun_modes: Mutex<Vec<SessionTxnMode>>,
+    /// Raw-key lock batches requested by pessimistic statements.
+    pub(super) lock_batches: Mutex<Vec<Vec<Vec<u8>>>>,
+    /// Statement-scoped lock conflicts to return before acquisition succeeds.
+    ///
+    /// This makes the server's whole-statement replay budget testable.
+    pub(super) pessimistic_lock_retries_remaining: AtomicU32,
     /// Read handles still bound. A statement that leaks one leaves this
     /// above zero, which is the lock-left-behind failure in miniature.
     pub(super) live: AtomicUsize,
@@ -271,12 +284,14 @@ impl ClusterTransactions for MockTransactions {
         Ok(())
     }
 
-    fn begin(&self) -> Result<Box<dyn OpenClusterTransaction>, String> {
+    fn begin(&self, mode: SessionTxnMode) -> Result<Box<dyn OpenClusterTransaction>, String> {
         self.0.begun.fetch_add(1, Ordering::AcqRel);
+        self.0.begun_modes.lock().expect("begun modes").push(mode);
         Ok(Box::new(MockSessionTransaction {
             start_ts: self.0.timestamp(),
             data: self.0.snapshot(),
             cluster: Arc::clone(&self.0),
+            mode,
         }))
     }
 }
@@ -289,9 +304,14 @@ pub(super) struct MockSessionTransaction {
     pub(super) start_ts: u64,
     pub(super) data: BTreeMap<Vec<u8>, Vec<u8>>,
     pub(super) cluster: Arc<MockCluster>,
+    pub(super) mode: SessionTxnMode,
 }
 
 impl OpenClusterTransaction for MockSessionTransaction {
+    fn mode(&self) -> SessionTxnMode {
+        self.mode
+    }
+
     fn snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String> {
         self.cluster.live.fetch_add(1, Ordering::AcqRel);
         Ok(Box::new(MockSnapshot {
@@ -301,6 +321,34 @@ impl OpenClusterTransaction for MockSessionTransaction {
             // which is also what the eventual publication is checked against.
             start_ts: self.start_ts,
         }))
+    }
+
+    fn lock_keys_once(
+        &mut self,
+        keys: &[Vec<u8>],
+        _presume_not_exists: &BTreeSet<Vec<u8>>,
+        _wait: ReadLockWait,
+    ) -> Result<LockKeysOutcome, TransactionStatementError> {
+        self.cluster
+            .lock_batches
+            .lock()
+            .expect("lock batches")
+            .push(keys.to_vec());
+        if self
+            .cluster
+            .pessimistic_lock_retries_remaining
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |remaining| {
+                remaining.checked_sub(1)
+            })
+            .is_ok()
+        {
+            return Ok(LockKeysOutcome::Retry(LockSqlError {
+                code: ERR_WRITE_CONFLICT,
+                state: *b"HY000",
+                message: "injected pessimistic statement conflict".to_owned(),
+            }));
+        }
+        Ok(LockKeysOutcome::Acquired)
     }
 
     fn commit(self: Box<Self>, buffer: &MutationBuffer) -> Result<(), SqlQueryError> {

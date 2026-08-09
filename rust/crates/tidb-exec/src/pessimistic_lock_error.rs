@@ -39,6 +39,9 @@ pub const ERR_LOCK_ACQUIRE_FAIL_AND_NO_WAIT_SET: u16 = 3572;
 /// Go `errno.ErrWriteConflict`, the statement-scoped conflict a pessimistic
 /// retry resolves.
 pub const ERR_WRITE_CONFLICT: u16 = 9007;
+/// Go `errno.ErrRegionUnavailable`, a determinate routing failure an
+/// autocommit statement may replay at a fresh timestamp.
+pub const ERR_REGION_UNAVAILABLE: u16 = 9005;
 
 /// Go `mysql.DefaultMySQLState`, used by every code absent from `state.go`.
 const DEFAULT_SQL_STATE: [u8; 5] = *b"HY000";
@@ -130,10 +133,9 @@ pub fn commit_outcome_to_sql_error(outcome: &OptimisticCommitOutcome) -> Result<
 
 /// Renders a transaction-ending cause as the error TiDB reports for it.
 ///
-/// A write conflict is the one cause with a code of its own: Go's
-/// `kv.ErrWriteConflict` (9007) is what an optimistic transaction that lost the
-/// race reports at `COMMIT`. Everything else keeps its exact diagnostic under
-/// the generic 1105 rather than being disguised as a retryable conflict.
+/// Write conflicts and determinate region failures keep the codes Go uses to
+/// decide whether an autocommit statement can be replayed. Everything else
+/// keeps its exact diagnostic under the generic 1105.
 #[must_use]
 pub fn transaction_cause_to_sql_error(cause: &TransactionCause) -> LockSqlError {
     match cause {
@@ -141,6 +143,11 @@ pub fn transaction_cause_to_sql_error(cause: &TransactionCause) -> LockSqlError 
             code: ERR_WRITE_CONFLICT,
             state: DEFAULT_SQL_STATE,
             message: format!("[kv:9007]Write conflict, {detail} [try again later]"),
+        },
+        TransactionCause::Region { .. } => LockSqlError {
+            code: ERR_REGION_UNAVAILABLE,
+            state: DEFAULT_SQL_STATE,
+            message: "[tikv:9005]Region is unavailable".to_owned(),
         },
         other => LockSqlError {
             code: 1105,
@@ -197,7 +204,7 @@ mod tests {
     use super::{
         is_retryable_statement_failure, lock_failure_to_sql_error,
         ERR_LOCK_ACQUIRE_FAIL_AND_NO_WAIT_SET, ERR_LOCK_DEADLOCK, ERR_LOCK_WAIT_TIMEOUT,
-        ERR_WRITE_CONFLICT,
+        ERR_REGION_UNAVAILABLE, ERR_WRITE_CONFLICT,
     };
     use tidb_txnkv::transaction::{
         CommittedTransaction, DeadlockDetail, OptimisticCommitOutcome,
@@ -253,7 +260,7 @@ mod tests {
     }
 
     #[test]
-    fn a_write_conflict_is_the_only_cause_with_a_code_of_its_own() {
+    fn retryable_transaction_causes_keep_their_tidb_codes() {
         assert_eq!(
             transaction_cause_to_sql_error(&TransactionCause::WriteConflict {
                 detail: "d".to_owned()
@@ -261,11 +268,11 @@ mod tests {
             .code,
             ERR_WRITE_CONFLICT
         );
-        let other = transaction_cause_to_sql_error(&TransactionCause::Region {
+        let region = transaction_cause_to_sql_error(&TransactionCause::Region {
             detail: "epoch not match".to_owned(),
         });
-        assert_eq!(other.code, 1105);
-        assert!(other.message.contains("epoch not match"));
+        assert_eq!(region.code, ERR_REGION_UNAVAILABLE);
+        assert_eq!(region.message, "[tikv:9005]Region is unavailable");
     }
 
     #[test]

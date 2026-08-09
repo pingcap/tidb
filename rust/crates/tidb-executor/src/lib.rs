@@ -119,11 +119,11 @@ pub use ddl_sequence::{
 };
 pub use driver::infoschema_meta;
 pub use driver::{
-    bind_parameters, parameter_count, run_delete_in, run_delete_on, run_insert_in, run_insert_on,
-    run_insert_reporting, run_select, run_select_meta_in, run_select_meta_on, run_select_meta_stmt,
-    run_select_on, run_set_opr_stmt, run_update_in, run_update_on, Catalog, DriverError, MemTable,
-    MysqlError, SchemaErrorKind, SelectMeta, TableEntry, TxnErrorKind, VarErrorKind, ViewDef,
-    DEFAULT_DATABASE,
+    bind_parameters, parameter_count, plan_select_meta_stmt, run_delete_in, run_delete_on,
+    run_insert_in, run_insert_on, run_insert_reporting, run_select, run_select_meta_in,
+    run_select_meta_on, run_select_meta_stmt, run_select_on, run_set_opr_stmt, run_update_in,
+    run_update_on, Catalog, DriverError, MemTable, MysqlError, SchemaErrorKind, SelectMeta,
+    TableEntry, TxnErrorKind, VarErrorKind, ViewDef, DEFAULT_DATABASE,
 };
 pub use executor::{ExecError, Executor, ExecutorMeta};
 pub use explain::{
@@ -131,7 +131,7 @@ pub use explain::{
     explain_analyze_update_stmt, explain_delete_stmt, explain_insert_stmt, explain_select_stmt,
     explain_update_stmt, ExplainFormat,
 };
-pub use hash_agg::{AggFunc, AggKind, HashAggExec};
+pub use hash_agg::{AggFunc, AggKind, GroupedStreamAggExec, HashAggExec, StreamAggExec};
 pub use join::{JoinExec, JoinKind};
 pub use kv_table::{
     FkAction, IndexRange, KvColumn, KvForeignKey, KvIndex, KvTable, RowDecodeContext, TableCharset,

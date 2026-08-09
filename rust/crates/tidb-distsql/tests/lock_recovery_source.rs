@@ -36,17 +36,19 @@ fn delegate_has_one_shared_runtime_and_only_same_task_continuation() {
 }
 
 #[test]
-fn alive_ttl_uses_exact_cancellation_wait_without_polling() {
+fn alive_ttl_uses_txn_lock_fast_backoff_without_polling() {
     let recovery = source("src/cop_paging/lock_recovery.rs");
     let alive = recovery
         .split("if result.is_alive() {")
         .nth(1)
         .expect("alive branch");
-    assert!(alive.contains("let deadline_budget = observation.call.timeout()"));
-    assert!(alive.contains("let wait = ttl.min(deadline_budget)"));
+    assert!(alive.contains("RegionBackoffKind::TxnLockFast"));
+    assert!(alive.contains("next_delay_capped"));
+    assert!(alive.contains("result.ttl"));
+    assert!(alive.contains("observation.call.timeout()"));
     assert!(alive.contains("observation.call.cancellation().wait_timeout(wait)"));
-    assert!(alive.contains("wait < ttl"));
     assert!(alive.contains("cancelled by caller"));
+    assert!(!alive.contains("ttl.min(deadline_budget)"));
     assert!(!alive.contains("thread::sleep"));
     assert!(!alive.contains("is_cancelled"));
 }

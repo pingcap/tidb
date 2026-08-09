@@ -74,13 +74,17 @@ use tidb_distsql::{
 };
 use tidb_executor::predicate_pushdown::ScanPredicate;
 use tidb_executor::remote_scan::{
-    PushdownRowStream, PushdownScanColumn, PushdownScanRequest, PushdownScanner,
-    PushdownScannerError, EXTRA_HANDLE_COLUMN_ID,
+    PushdownAggregateKind, PushdownPartialAggregate, PushdownRowStream, PushdownScanColumn,
+    PushdownScanRequest, PushdownScanner, PushdownScannerError, PushdownTopN,
+    EXTRA_HANDLE_COLUMN_ID,
 };
 use tidb_executor::storage::StorageError;
 use tidb_planner::physical_table_scan::PhysicalTableScanPlan;
 use tidb_planner::tikv_scan_spec::{ScanColumnInfo, TiKvTableScanSpec};
-use tidb_proto::tipb::{ExecType, Expr};
+use tidb_proto::tipb::{
+    Aggregation, ByItem, ColumnInfo as PbColumnInfo, ExecType, Executor, Expr, ExprType,
+    FieldType as PbFieldType, IndexScan, TopN as PbTopN,
+};
 use tidb_txnkv::KeyRange;
 
 use crate::dag_request::{
@@ -218,12 +222,20 @@ where
             .map(scan_column)
             .collect::<Option<Vec<_>>>()
             .ok_or_else(|| refuse("a column has no bounded coprocessor descriptor"))?;
-        let field_types: Vec<FieldType> = request
+        let mut field_types: Vec<FieldType> = request
             .columns
             .iter()
             .map(|column| column.field_type.clone())
             .collect();
-        let output_offsets: Vec<u32> = (0..columns.len() as u32).collect();
+        let output_offsets: Vec<u32> = match request.output_offsets.as_ref() {
+            Some(offsets) => {
+                if offsets.iter().any(|offset| *offset >= columns.len()) {
+                    return Err(refuse("an output offset is outside the scan columns"));
+                }
+                offsets.iter().map(|offset| *offset as u32).collect()
+            }
+            None => (0..columns.len() as u32).collect(),
+        };
 
         // Every conjunct this lowering accepts travels; the rest simply stay
         // behind, because the scan source tests all of them locally anyway.
@@ -240,6 +252,31 @@ where
                 PushdownScannerError::Backend(StorageError::Backend(error.to_string()))
             })?
         };
+        if (request.aggregate.is_some()
+            || request.output_offsets.is_some()
+            || request.topn.is_some())
+            && lowered.len() != request.predicates.len()
+        {
+            return Err(refuse(
+                "partial aggregation, post-filter projection, and TopN require every predicate in the TiKV Selection",
+            ));
+        }
+        if request.aggregate.is_some()
+            && (request.output_offsets.is_some() || request.topn.is_some())
+        {
+            return Err(refuse(
+                "partial aggregation cannot be combined with post-filter projection or TopN",
+            ));
+        }
+        if request.topn.is_some() && request.limit.is_some() {
+            return Err(refuse("TopN cannot be combined with a scan Limit"));
+        }
+        if let Some(offsets) = request.output_offsets.as_ref() {
+            field_types = offsets
+                .iter()
+                .map(|offset| request.columns[*offset].field_type.clone())
+                .collect();
+        }
 
         // The cap may only travel with a predicate that travelled WHOLE. A
         // conjunct left behind means TiKV counts its `limit` rows against a
@@ -254,6 +291,8 @@ where
         };
 
         let mut spec = TiKvTableScanSpec::new(request.table_id, columns.clone());
+        spec.primary_column_ids = request.primary_column_ids.clone();
+        spec.primary_prefix_column_ids = request.primary_prefix_column_ids.clone();
         // The merge above reads the remote rows in record-key order, which is
         // the order it merges the staged buffer against.
         spec.keep_order = true;
@@ -261,7 +300,7 @@ where
         // Go `ConstructDAGReq`: the zone comes from the SESSION VARIABLES of
         // the statement that issued this request, read fresh every time.
         let (time_zone_name, time_zone_offset_secs) = request.statement.time_zone.dag_zone();
-        let dag = construct_capped_read_only_dag_req_with_conditions(
+        let mut dag = construct_capped_read_only_dag_req_with_conditions(
             &DagRequestContext::new(
                 time_zone_name,
                 time_zone_offset_secs,
@@ -278,6 +317,36 @@ where
             &output_offsets,
         )
         .map_err(|error| PushdownScannerError::Unsupported(error.to_string()))?;
+        if let Some(index) = request.index.as_ref() {
+            dag.executors[0] = index_scan_to_pb(request.table_id, index, &columns);
+        }
+        if let Some(topn) = request.topn.as_ref() {
+            if topn.order_by.is_empty()
+                || topn.limit == 0
+                || topn
+                    .order_by
+                    .iter()
+                    .any(|item| item.offset >= columns.len())
+            {
+                return Err(refuse("TopN has no key/limit or names a missing column"));
+            }
+            dag.executors.push(topn_to_pb(topn, &columns));
+        }
+        if let Some(aggregate) = request.aggregate.as_ref() {
+            if aggregate
+                .input_offsets()
+                .into_iter()
+                .any(|offset| offset >= columns.len())
+            {
+                return Err(refuse(
+                    "partial aggregation input is outside the scan output",
+                ));
+            }
+            dag.executors
+                .push(partial_aggregate_to_pb(aggregate, &columns));
+            field_types = aggregate.output_types();
+            dag.output_offsets = (0..field_types.len() as u32).collect();
+        }
 
         let summary = dag_summary(&dag);
         let key_ranges: Vec<KeyRange> = request
@@ -285,11 +354,21 @@ where
             .iter()
             .map(|(start, end)| KeyRange::new(start.clone(), end.clone()))
             .collect();
-        let mut shapes = vec![ExecutorShape::new(ExecutorKind::TableScan)];
+        let mut shapes = vec![ExecutorShape::new(if request.index.is_some() {
+            ExecutorKind::IndexScan
+        } else {
+            ExecutorKind::TableScan
+        })];
         if !conditions.is_empty() {
             shapes.push(ExecutorShape::new(ExecutorKind::Other));
         }
         if remote_limit.is_some() {
+            shapes.push(ExecutorShape::new(ExecutorKind::Other));
+        }
+        if request.topn.is_some() {
+            shapes.push(ExecutorShape::new(ExecutorKind::Other));
+        }
+        if request.aggregate.is_some() {
             shapes.push(ExecutorShape::new(ExecutorKind::Other));
         }
         let plan = RemoteScanPlan {
@@ -297,6 +376,11 @@ where
             envelope: RequestEnvelope::new(shapes),
             key_ranges,
             snapshot_ts: request.snapshot_ts,
+            // The current task runtime intentionally owns only ordered
+            // response publication. Aggregation itself has no ordering
+            // guarantee, but requesting ordered region responses is a valid
+            // transport choice and keeps this request inside that runtime.
+            keep_order: true,
             field_types,
             warnings: request.statement.warnings.clone(),
         };
@@ -343,6 +427,15 @@ fn dag_summary(dag: &tidb_proto::tipb::DagRequest) -> String {
                     .unwrap_or_default();
                 format!("TableScan(table {table}, {columns} columns)")
             }
+            Some(tp) if tp == ExecType::TypeIndexScan as i32 => {
+                let scan = executor.idx_scan.as_ref();
+                format!(
+                    "IndexScan(table {}, index {}, {} columns)",
+                    scan.and_then(|scan| scan.table_id).unwrap_or_default(),
+                    scan.and_then(|scan| scan.index_id).unwrap_or_default(),
+                    scan.map_or(0, |scan| scan.columns.len())
+                )
+            }
             Some(tp) if tp == ExecType::TypeSelection as i32 => format!(
                 "Selection({} conditions)",
                 executor
@@ -358,6 +451,34 @@ fn dag_summary(dag: &tidb_proto::tipb::DagRequest) -> String {
                     .and_then(|limit| limit.limit)
                     .unwrap_or_default()
             ),
+            Some(tp) if tp == ExecType::TypeTopN as i32 => format!(
+                "TopN({} keys, limit {})",
+                executor
+                    .top_n
+                    .as_ref()
+                    .map_or(0, |topn| topn.order_by.len()),
+                executor
+                    .top_n
+                    .as_ref()
+                    .and_then(|topn| topn.limit)
+                    .unwrap_or_default()
+            ),
+            Some(tp)
+                if tp == ExecType::TypeAggregation as i32
+                    || tp == ExecType::TypeStreamAgg as i32 =>
+            {
+                let aggregation = executor.aggregation.as_ref();
+                format!(
+                    "{}({} group keys, {} functions)",
+                    if tp == ExecType::TypeStreamAgg as i32 {
+                        "StreamAgg"
+                    } else {
+                        "HashAgg"
+                    },
+                    aggregation.map_or(0, |agg| agg.group_by.len()),
+                    aggregation.map_or(0, |agg| agg.agg_func.len())
+                )
+            }
             other => format!("executor {other:?}"),
         })
         .collect();
@@ -379,6 +500,9 @@ struct RemoteScanPlan {
     /// handle range, and the coprocessor request carries them all.
     key_ranges: Vec<KeyRange>,
     snapshot_ts: u64,
+    /// Aggregation destroys scan key order; ordinary row scans preserve it
+    /// for the staged-buffer merge.
+    keep_order: bool,
     field_types: Vec<FieldType>,
     /// The statement's warning sink, carried onto the scan thread. It is an
     /// `Arc` handler, so a warning appended here lands in the buffer
@@ -431,7 +555,7 @@ where
     let mut builder = RequestBuilder::from_context(&DistSqlContext::new());
     builder
         .set_start_ts(plan.snapshot_ts)
-        .set_keep_order(true)
+        .set_keep_order(plan.keep_order)
         .set_non_partitioned_key_ranges(plan.key_ranges)
         .set_dag_request(plan.envelope, plan.dag.encode_to_vec());
     let request = builder
@@ -479,6 +603,247 @@ where
     }
     iter.close();
     Ok(())
+}
+
+/// Builds the bounded partial aggregate immediately above a TiKV scan.
+fn partial_aggregate_to_pb(
+    aggregate: &PushdownPartialAggregate,
+    inputs: &[ScanColumnInfo],
+) -> Executor {
+    let input_expr = |offset: usize| scan_column_expr(offset, inputs);
+    let (tp, group_by, agg_func, streamed) = match aggregate {
+        PushdownPartialAggregate::Count {
+            input_offset,
+            output_type,
+        } => (
+            ExecType::TypeStreamAgg,
+            Vec::new(),
+            vec![aggregate_expr(
+                ExprType::Count,
+                input_expr(*input_offset),
+                output_type,
+            )],
+            true,
+        ),
+        PushdownPartialAggregate::Sum {
+            input_offset,
+            output_type,
+        } => (
+            ExecType::TypeStreamAgg,
+            Vec::new(),
+            vec![aggregate_expr(
+                ExprType::Sum,
+                input_expr(*input_offset),
+                output_type,
+            )],
+            true,
+        ),
+        PushdownPartialAggregate::GroupBy { input_offset, .. } => (
+            ExecType::TypeAggregation,
+            vec![input_expr(*input_offset)],
+            Vec::new(),
+            false,
+        ),
+        PushdownPartialAggregate::GroupBySum {
+            group_offset,
+            sum_offset,
+            sum_type,
+            ..
+        } => (
+            ExecType::TypeAggregation,
+            vec![input_expr(*group_offset)],
+            vec![aggregate_expr(
+                ExprType::Sum,
+                input_expr(*sum_offset),
+                sum_type,
+            )],
+            false,
+        ),
+        PushdownPartialAggregate::GroupedStream {
+            group_offsets,
+            functions,
+            ..
+        } => (
+            ExecType::TypeStreamAgg,
+            group_offsets
+                .iter()
+                .map(|offset| input_expr(*offset))
+                .collect(),
+            functions
+                .iter()
+                .map(|function| {
+                    let input = function.input_offset.map_or_else(
+                        || constant_one_expr(&function.output_type),
+                        |offset| input_expr(offset),
+                    );
+                    let tp = match function.kind {
+                        PushdownAggregateKind::Count => ExprType::Count,
+                        PushdownAggregateKind::Sum => ExprType::Sum,
+                        PushdownAggregateKind::Min => ExprType::Min,
+                        PushdownAggregateKind::Max => ExprType::Max,
+                    };
+                    aggregate_expr(tp, input, &function.output_type)
+                })
+                .collect(),
+            true,
+        ),
+    };
+    Executor {
+        tp: Some(tp as i32),
+        tbl_scan: None,
+        idx_scan: None,
+        selection: None,
+        aggregation: Some(Aggregation {
+            group_by,
+            agg_func,
+            streamed: Some(streamed),
+        }),
+        top_n: None,
+        limit: None,
+        executor_id: Some(String::new()),
+        parent_idx: None,
+    }
+}
+
+fn topn_to_pb(topn: &PushdownTopN, inputs: &[ScanColumnInfo]) -> Executor {
+    Executor {
+        tp: Some(ExecType::TypeTopN as i32),
+        tbl_scan: None,
+        idx_scan: None,
+        selection: None,
+        aggregation: None,
+        top_n: Some(PbTopN {
+            order_by: topn
+                .order_by
+                .iter()
+                .map(|item| ByItem {
+                    expr: Some(scan_column_expr(item.offset, inputs)),
+                    desc: Some(item.desc),
+                })
+                .collect(),
+            limit: Some(topn.limit),
+        }),
+        limit: None,
+        executor_id: Some(String::new()),
+        parent_idx: None,
+    }
+}
+
+fn scan_column_expr(offset: usize, inputs: &[ScanColumnInfo]) -> Expr {
+    Expr {
+        tp: Some(ExprType::ColumnRef as i32),
+        val: Some(encode_column_offset(offset)),
+        children: Vec::new(),
+        sig: Some(tidb_proto::tipb::ScalarFuncSig::Unspecified as i32),
+        field_type: Some(scan_field_type(&inputs[offset])),
+        has_distinct: Some(false),
+    }
+}
+
+fn aggregate_expr(tp: ExprType, input: Expr, output_type: &FieldType) -> Expr {
+    Expr {
+        tp: Some(tp as i32),
+        val: None,
+        children: vec![input],
+        sig: Some(tidb_proto::tipb::ScalarFuncSig::Unspecified as i32),
+        field_type: Some(field_type_to_pb(output_type)),
+        has_distinct: Some(false),
+    }
+}
+
+fn constant_one_expr(output_type: &FieldType) -> Expr {
+    let mut encoded = Vec::with_capacity(8);
+    tidb_codec::encode_int(&mut encoded, 1);
+    Expr {
+        tp: Some(ExprType::Int64 as i32),
+        val: Some(encoded),
+        children: Vec::new(),
+        sig: Some(tidb_proto::tipb::ScalarFuncSig::Unspecified as i32),
+        field_type: Some(field_type_to_pb(output_type)),
+        has_distinct: Some(false),
+    }
+}
+
+fn encode_column_offset(offset: usize) -> Vec<u8> {
+    let mut encoded = Vec::with_capacity(8);
+    tidb_codec::encode_int(
+        &mut encoded,
+        i64::try_from(offset).expect("scan column offset fits i64"),
+    );
+    encoded
+}
+
+fn scan_field_type(column: &ScanColumnInfo) -> PbFieldType {
+    let collation = tidb_datatype::proto_to_collation(column.collation);
+    let charset = tidb_datatype::get_collation_by_name(&collation)
+        .map_or_else(|_| "binary".to_owned(), |row| row.charset_name);
+    PbFieldType {
+        tp: Some(column.tp),
+        flag: Some(u32::try_from(column.flag).unwrap_or(0)),
+        flen: Some(column.column_len),
+        decimal: Some(column.decimal),
+        collate: Some(column.collation),
+        charset: Some(charset),
+        elems: column.elems.clone(),
+        array: Some(column.array),
+    }
+}
+
+fn field_type_to_pb(field_type: &FieldType) -> PbFieldType {
+    PbFieldType {
+        tp: Some(i32::from(field_type.code().mysql_type())),
+        flag: Some(field_type.flags()),
+        flen: Some(i32::try_from(field_type.flen()).unwrap_or(-1)),
+        decimal: Some(i32::try_from(field_type.decimal()).unwrap_or(-1)),
+        collate: Some(tidb_datatype::collation_to_proto(
+            field_type.collation_name(),
+        )),
+        charset: Some(field_type.charset_name().to_owned()),
+        elems: field_type.elems().map_visible(ToString::to_string),
+        array: Some(field_type.is_array()),
+    }
+}
+
+fn index_scan_to_pb(
+    table_id: i64,
+    index: &tidb_executor::remote_scan::PushdownIndexScan,
+    columns: &[ScanColumnInfo],
+) -> Executor {
+    Executor {
+        tp: Some(ExecType::TypeIndexScan as i32),
+        tbl_scan: None,
+        idx_scan: Some(IndexScan {
+            table_id: Some(table_id),
+            index_id: Some(index.index_id),
+            columns: columns.iter().map(scan_column_info_to_pb).collect(),
+            desc: Some(false),
+            // The current gate's Sysbench key is non-unique. A future unique
+            // path must carry the exact point-range proof before setting this.
+            unique: Some(false),
+            primary_column_ids: Vec::new(),
+        }),
+        selection: None,
+        aggregation: None,
+        top_n: None,
+        limit: None,
+        executor_id: None,
+        parent_idx: None,
+    }
+}
+
+fn scan_column_info_to_pb(column: &ScanColumnInfo) -> PbColumnInfo {
+    PbColumnInfo {
+        column_id: Some(column.column_id),
+        tp: Some(column.tp),
+        collation: Some(column.collation),
+        column_len: Some(column.column_len),
+        decimal: Some(column.decimal),
+        flag: Some(column.flag),
+        elems: column.elems.clone(),
+        default_val: column.default_val.clone(),
+        pk_handle: Some(column.pk_handle),
+        array: Some(column.array),
+    }
 }
 
 /// The caller's end of one coprocessor scan.
@@ -602,7 +967,165 @@ fn scan_column(column: &PushdownScanColumn) -> Option<ScanColumnInfo> {
 #[must_use]
 pub fn requests_extra_handle(request: &PushdownScanRequest) -> bool {
     request
-        .columns
-        .get(request.handle_index)
+        .handle_index
+        .and_then(|index| request.columns.get(index))
         .is_some_and(|column| column.id == EXTRA_HANDLE_COLUMN_ID)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn integer_column() -> ScanColumnInfo {
+        ScanColumnInfo {
+            column_id: 2,
+            tp: MYSQL_TYPE_LONG,
+            collation: BINARY_COLLATION_ID,
+            column_len: 11,
+            decimal: 0,
+            flag: NOT_NULL_FLAG,
+            ..ScanColumnInfo::default()
+        }
+    }
+
+    #[test]
+    fn partial_sum_uses_pinned_tipb_stream_aggregation_fields() {
+        let mut output = FieldType::new(FieldTypeCode::NewDecimal);
+        output.set_flen(20);
+        output.set_decimal(0);
+        let executor = partial_aggregate_to_pb(
+            &PushdownPartialAggregate::Sum {
+                input_offset: 0,
+                output_type: output,
+            },
+            &[integer_column()],
+        );
+        assert_eq!(ExecType::TypeAggregation as i32, 3);
+        assert_eq!(ExecType::TypeStreamAgg as i32, 6);
+        assert_eq!(ExprType::Sum as i32, 3002);
+        assert_eq!(executor.tp, Some(6));
+        let aggregate = executor.aggregation.expect("aggregation field 5");
+        assert_eq!(aggregate.streamed, Some(true));
+        assert!(aggregate.group_by.is_empty());
+        assert_eq!(aggregate.agg_func.len(), 1);
+        assert_eq!(aggregate.agg_func[0].tp, Some(3002));
+        assert_eq!(aggregate.agg_func[0].children[0].tp, Some(201));
+        assert_eq!(
+            aggregate.agg_func[0].children[0].val,
+            Some(encode_column_offset(0))
+        );
+    }
+
+    #[test]
+    fn partial_distinct_is_group_only_hash_aggregation() {
+        let output = FieldType::new(FieldTypeCode::Long);
+        let executor = partial_aggregate_to_pb(
+            &PushdownPartialAggregate::GroupBy {
+                input_offset: 0,
+                output_type: output,
+            },
+            &[integer_column()],
+        );
+        assert_eq!(executor.tp, Some(3));
+        let aggregate = executor.aggregation.expect("aggregation field 5");
+        assert_eq!(aggregate.streamed, Some(false));
+        assert_eq!(aggregate.group_by.len(), 1);
+        assert!(aggregate.agg_func.is_empty());
+    }
+
+    #[test]
+    fn partial_grouped_sum_uses_hash_aggregation_schema_order() {
+        let group_type = FieldType::new(FieldTypeCode::Long);
+        let mut sum_type = FieldType::new(FieldTypeCode::NewDecimal);
+        sum_type.set_flen(20);
+        sum_type.set_decimal(2);
+        let executor = partial_aggregate_to_pb(
+            &PushdownPartialAggregate::GroupBySum {
+                group_offset: 0,
+                sum_offset: 1,
+                sum_type,
+                group_type,
+            },
+            &[integer_column(), integer_column()],
+        );
+        assert_eq!(executor.tp, Some(ExecType::TypeAggregation as i32));
+        let aggregate = executor.aggregation.expect("aggregation field 5");
+        assert_eq!(aggregate.streamed, Some(false));
+        assert_eq!(aggregate.group_by.len(), 1);
+        assert_eq!(aggregate.agg_func.len(), 1);
+        assert_eq!(aggregate.agg_func[0].tp, Some(ExprType::Sum as i32));
+        assert_eq!(
+            aggregate.agg_func[0].children[0].val,
+            Some(encode_column_offset(1))
+        );
+    }
+
+    #[test]
+    fn grouped_stream_aggregate_lowers_max_min_and_count_one() {
+        let output = FieldType::new(FieldTypeCode::LongLong);
+        let group_type = FieldType::new(FieldTypeCode::Long);
+        let executor = partial_aggregate_to_pb(
+            &PushdownPartialAggregate::GroupedStream {
+                group_offsets: vec![1],
+                group_types: vec![group_type],
+                functions: vec![
+                    tidb_executor::remote_scan::PushdownAggregateFunction {
+                        kind: PushdownAggregateKind::Max,
+                        input_offset: Some(0),
+                        output_type: output.clone(),
+                    },
+                    tidb_executor::remote_scan::PushdownAggregateFunction {
+                        kind: PushdownAggregateKind::Min,
+                        input_offset: Some(0),
+                        output_type: output.clone(),
+                    },
+                    tidb_executor::remote_scan::PushdownAggregateFunction {
+                        kind: PushdownAggregateKind::Count,
+                        input_offset: None,
+                        output_type: output,
+                    },
+                ],
+            },
+            &[integer_column(), integer_column()],
+        );
+        assert_eq!(executor.tp, Some(ExecType::TypeStreamAgg as i32));
+        let aggregate = executor.aggregation.expect("aggregation field 5");
+        assert_eq!(aggregate.streamed, Some(true));
+        assert_eq!(aggregate.group_by.len(), 1);
+        assert_eq!(aggregate.agg_func.len(), 3);
+        assert_eq!(aggregate.agg_func[0].tp, Some(ExprType::Max as i32));
+        assert_eq!(aggregate.agg_func[1].tp, Some(ExprType::Min as i32));
+        assert_eq!(aggregate.agg_func[2].tp, Some(ExprType::Count as i32));
+        assert_eq!(
+            aggregate.agg_func[2].children[0].tp,
+            Some(ExprType::Int64 as i32)
+        );
+    }
+
+    #[test]
+    fn topn_uses_the_pinned_column_direction_and_limit_fields() {
+        let executor = topn_to_pb(
+            &PushdownTopN {
+                order_by: vec![tidb_executor::remote_scan::PushdownTopNOrder {
+                    offset: 0,
+                    desc: true,
+                }],
+                limit: 1,
+            },
+            &[integer_column()],
+        );
+        assert_eq!(executor.tp, Some(ExecType::TypeTopN as i32));
+        let topn = executor.top_n.expect("TopN field 6");
+        assert_eq!(topn.limit, Some(1));
+        assert_eq!(topn.order_by.len(), 1);
+        assert_eq!(topn.order_by[0].desc, Some(true));
+        let encoded_offset = encode_column_offset(0);
+        assert_eq!(
+            topn.order_by[0]
+                .expr
+                .as_ref()
+                .and_then(|expr| expr.val.as_ref()),
+            Some(&encoded_offset)
+        );
+    }
 }

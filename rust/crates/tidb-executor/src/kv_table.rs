@@ -979,6 +979,31 @@ impl KvTable {
         &self.common_handle_offsets
     }
 
+    /// Encodes one complete clustered composite primary-key tuple as its
+    /// record handle.
+    ///
+    /// Index-join probes use this path because part of the tuple may come
+    /// from constants and the remainder from an outer row; routing the tuple
+    /// through the table's collation mode and `CommonHandle` padding keeps it
+    /// byte-identical to the handle created by an INSERT.
+    pub(crate) fn common_handle_of_values(
+        &self,
+        values: &[Datum],
+        zone: &SessionTimeZone,
+    ) -> Result<TableHandle, KvTableError> {
+        if self.common_handle_offsets.len() != values.len() {
+            return Err(KvTableError::Encode(
+                "a common handle probe does not cover every key column".to_owned(),
+            ));
+        }
+        let encoded = tidb_codec::Encoder::new(self.use_new_collation)
+            .encode_key_in_timezone(zone, values)
+            .map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
+        let padded = tidb_txnkv::CommonHandle::new(encoded)
+            .map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
+        Ok(TableHandle::Common(padded.encoded().to_vec()))
+    }
+
     /// Go `TableInfo.PKIsHandle` for one column: whether this offset IS the
     /// integer primary key that serves as the row handle, and so is
     /// addressable without an index of its own.
@@ -1088,20 +1113,7 @@ impl KvTable {
                 .iter()
                 .map(|offset| row.get(*offset).cloned().unwrap_or(Datum::Null))
                 .collect();
-            let encoded = tidb_codec::Encoder::new(self.use_new_collation)
-                .encode_key_in_timezone(zone, &values)
-                .map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
-            // Go `kv.NewCommonHandle` pads a short encoding out to nine bytes,
-            // and so does the record-key codec this handle is about to be
-            // written through -- so a handle that skips the padding is one the
-            // READ side (which recovers it from the record key) never produces.
-            // Padding here, at the one place a row's handle is born, is what
-            // makes the write's index entries and the delete's index entries
-            // the same keys. A DECIMAL primary key is the short case: `5`
-            // encodes to four bytes.
-            let padded = tidb_txnkv::CommonHandle::new(encoded)
-                .map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
-            return Ok(TableHandle::Common(padded.encoded().to_vec()));
+            return self.common_handle_of_values(&values, zone);
         }
         match self.pk_handle_offset {
             Some(offset) => match row.get(offset) {

@@ -381,6 +381,26 @@ fn plaintext_native_password_boundary_cannot_bind_a_public_address() {
 }
 
 #[test]
+fn cluster_privilege_accounts_can_bind_a_non_loopback_listener() {
+    let config = NodeConfig::parse(vec![
+        "tidb-server",
+        "--path",
+        "172.31.36.41:2379",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "4000",
+        "--cluster-session",
+        "--load-privileges",
+    ])
+    .expect("cluster privilege mode must support a private-network listener");
+
+    assert_eq!(config.host, IpAddr::V4(Ipv4Addr::UNSPECIFIED));
+    assert!(config.cluster_session);
+    assert!(config.load_privileges);
+}
+
+#[test]
 fn authentication_file_is_required_before_startup() {
     let mut missing = required();
     let option = missing

@@ -116,7 +116,7 @@ pub struct LoadedTableName {
 /// Complete startup input consumed by the concurrent SQL node.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NodeConfig {
-    /// Loopback address on which MySQL protocol connections are accepted.
+    /// Address on which MySQL protocol connections are accepted.
     pub host: IpAddr,
     /// MySQL protocol port. Zero requests an ephemeral test port.
     pub port: u16,
@@ -233,7 +233,7 @@ pub enum NodeConfigError {
     },
     /// Only the real TiKV store is supported by this executable.
     UnsupportedStore(String),
-    /// Native password without TLS must never bind a non-loopback address.
+    /// Configured-account mode must never bind a non-loopback address.
     NonLoopbackHost(IpAddr),
 }
 
@@ -264,7 +264,7 @@ impl fmt::Display for NodeConfigError {
             }
             Self::NonLoopbackHost(host) => write!(
                 formatter,
-                "refusing non-loopback MySQL listener {host} while TLS is not implemented"
+                "refusing non-loopback MySQL listener {host} for --auth-file; use --load-privileges for cluster deployment"
             ),
         }
     }
@@ -624,7 +624,10 @@ impl NodeConfig {
         }
 
         let host = parse_ip("--host", host.as_deref().unwrap_or("127.0.0.1"))?;
-        if !host.is_loopback() {
+        // Cluster privilege mode is used behind TiProxy on a private network.
+        // The configured auth-file mode keeps the original loopback-only
+        // boundary because it has no cluster-backed account lifecycle.
+        if !host.is_loopback() && !load_privileges {
             return Err(NodeConfigError::NonLoopbackHost(host));
         }
         let port = parse_number("--port", port.as_deref().unwrap_or("4000"))?;
@@ -777,7 +780,7 @@ impl NodeConfig {
 [--max-connections <count>] [--connection-timeout-ms <milliseconds>] \
 [--max-topn-rows <rows>] [--lease-ms <milliseconds>] \
 [--auth-file <mode-0600-tsv> | --load-privileges] \
-[--host <loopback-ip>] [-P <port>|--port <port>] [--store tikv] \
+[--host <listen-ip>] [-P <port>|--port <port>] [--store tikv] \
 [--max-allowed-packet <bytes>] \
 [--ssl-cert <cert-pem> --ssl-key <key-pem>] [--no-auto-tls] \
 [--no-disconnect-on-expired-password] \

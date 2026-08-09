@@ -8,6 +8,54 @@
 
 use super::*;
 
+/// A secondary-index range that must return non-index columns is Go's
+/// two-child IndexLookUp, not an IndexReader with a root identity projection.
+#[test]
+fn non_covering_random_points_use_index_lookup_without_identity_projection() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE lookup_shape (id INT PRIMARY KEY, k INT NOT NULL, c CHAR(4), pad CHAR(4), KEY k_1(k))",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO lookup_shape VALUES (1, 1, 'a', 'x'), (2, 2, 'b', 'y')",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    let sql = "SELECT id, k, c, pad FROM lookup_shape WHERE k IN (1, 2)";
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let cell = |row: usize, column: usize| match &rows[row][column] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+    assert_eq!(
+        (0..rows.len()).map(|row| cell(row, 0)).collect::<Vec<_>>(),
+        vec![
+            "IndexLookUp",
+            "├─IndexRangeScan(Build)",
+            "└─TableRowIDScan(Probe)"
+        ]
+    );
+    assert_eq!(
+        (0..rows.len()).map(|row| cell(row, 2)).collect::<Vec<_>>(),
+        vec!["root", "cop[tikv]", "cop[tikv]"]
+    );
+    assert_eq!(run_select_on(sql, &catalog, &ctx).unwrap().len(), 2);
+}
+
 /// A composite-index range spans several datums per bound, an IN list
 /// produces several ranges, and an OR unions them. The answers must be
 /// the same rows a full scan would return -- a range that reads too few

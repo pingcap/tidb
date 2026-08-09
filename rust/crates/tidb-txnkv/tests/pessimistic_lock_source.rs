@@ -533,7 +533,6 @@ fn transaction(topology: SingleRegion) -> ScriptedTransaction {
     let two_pc = RealOptimisticTransaction::new_injected(
         runtime,
         MonotonicTimestamps::default(),
-        CALL_TIMEOUT,
         START_TS,
         Instant::now(),
         4,

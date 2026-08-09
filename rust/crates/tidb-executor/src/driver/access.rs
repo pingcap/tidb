@@ -23,8 +23,9 @@
 //!    otherwise the cheapest access path [`crate::access_cost`] enumerates
 //!    supplies ranges ([`choose_index_range_path`]), which may be the full
 //!    scan itself. Each fast path installs a *streaming*
-//!    source over the narrowed path, and the `WHERE` stays in the pipeline
-//!    above: these narrow the source, they never replace the filter.
+//!    source over the narrowed path. A complete Go-style point plan consumes
+//!    its exact key predicate and simple select list; a merely narrowed path
+//!    leaves the `WHERE` in the pipeline above.
 //! 2. [`prune_scan_columns`] -- the kept-column offer.
 //! 3. [`negotiate_scan_filter`] -- the pushed-conjunct offer, and the residual
 //!    `WHERE` left above.
@@ -48,20 +49,64 @@
 use super::point_get_key::point_get_value;
 use super::*;
 
+/// What the single-table access-path decision committed.
+#[derive(Default)]
+pub(crate) struct AccessPathCommit {
+    /// The order an index path establishes for the ordinary pipeline.
+    pub(crate) index_order: Option<IndexAccessOrder>,
+    /// Result metadata when a complete Go-style point plan absorbed the
+    /// simple select list and can be returned without root wrappers.
+    pub(crate) direct_output: Option<Vec<(String, FieldType)>>,
+    /// Source offsets for a range scan whose simple projection was pushed
+    /// into the coprocessor read. Point plans project in their own source and
+    /// therefore leave this `None`.
+    pub(crate) direct_output_offsets: Option<Vec<usize>>,
+    /// Source offsets for an exact range whose simple projection executes in
+    /// the cop task while a root operator (currently ORDER BY) remains above
+    /// the TableReader boundary.
+    pub(crate) cop_projection_offsets: Option<Vec<usize>>,
+    /// Source offsets for the same cop projection when a residual Selection
+    /// remains after the clustered-handle prefix. The driver installs the
+    /// Selection before it records this projection/reader boundary.
+    pub(crate) filtered_cop_projection_offsets: Option<Vec<usize>>,
+    /// Whether the chosen access ranges represent the complete WHERE rather
+    /// than a superset that still needs a residual Selection.
+    pub(crate) consumed_where: bool,
+    /// The conjuncts left after a clustered-handle range consumed its access
+    /// prefix, joined back in written order. This is the Selection Go places
+    /// above the range rather than the complete WHERE it started from.
+    pub(crate) handle_range_residual: Option<tidb_ast::Expr>,
+    /// The logical data source's estimated output rows after its complete
+    /// predicate, before physical access-path lower bounds are applied.
+    pub(crate) logical_rows: Option<f64>,
+    /// Whether a bare covering scan is ready to move below its root reader.
+    pub(crate) reader_ready: bool,
+    /// Whether the committed access order satisfies the written ORDER BY.
+    pub(crate) order_satisfied: bool,
+}
+
+#[derive(Clone)]
+struct FastPointOutput {
+    offsets: Vec<usize>,
+    columns: Vec<(String, FieldType)>,
+}
+
 /// Commits the narrowed access path a single-table `SELECT` qualifies for,
 /// replacing `from_source`, and reports the row order the committed path
-/// produces (`None` when it establishes none).
+/// produces plus any complete point plan that absorbed the select list.
 ///
 /// Go's `TryFastPlan` runs before the ordinary plan and this mirrors its
 /// order: the batch point get is tried first, then an index range when no
 /// point get applies, and finally the single point get -- which supersedes an
 /// index range already committed, and its ordering claim with it.
 ///
-/// The `WHERE` stays in the pipeline above, so an unsatisfied extra condition
-/// still filters the row out. Each fast path installs a streaming source over
-/// the narrowed path (see [`crate::access_path`]), not a `Vec` of rows it
-/// already read, so an index range over a huge table costs one chunk of
-/// memory and a pushed `LIMIT` never reads past its cap.
+/// A complete point plan consumes its exact key predicate and simple select
+/// list, as Go does. A path with work the point plan cannot own keeps that
+/// work in the ordinary pipeline, so an unsatisfied extra condition still
+/// filters the row out. Each path installs a streaming source over the
+/// narrowed path (see [`crate::access_path`]), not a `Vec` of rows it already
+/// read, so an index range over a huge table costs one chunk of memory and a
+/// pushed `LIMIT` never reads past its cap.
 pub(crate) fn commit_fast_path_source(
     select: &tidb_ast::SelectStmt,
     catalog: &Catalog,
@@ -70,15 +115,28 @@ pub(crate) fn commit_fast_path_source(
     from_source: &mut Option<Box<dyn Executor>>,
     mut trace: Option<&mut PlanTrace>,
     ctx: &crate::StmtContext,
-) -> Result<Option<IndexAccessOrder>, DriverError> {
+) -> Result<AccessPathCommit, DriverError> {
     // Go's `PlanBuilder` reads the zone off the same `sessionctx` every other
     // decision here reads; taking it from `ctx` keeps the two from being
     // separately supplied and separately wrong.
     let zone = &ctx.session_zone();
     let mut index_order: Option<IndexAccessOrder> = None;
+    let mut direct_output = None;
+    let mut direct_output_offsets = None;
+    let mut cop_projection_offsets = None;
+    let mut filtered_cop_projection_offsets = None;
+    let mut consumed_where = false;
+    let mut handle_range_residual = None;
+    let mut reader_ready = false;
     let Some(table) = single_kv_table(&select.from, catalog, current_db) else {
-        return Ok(None);
+        return Ok(AccessPathCommit::default());
     };
+    let statistics = catalog.table_statistics(table.table_id);
+    let logical_rows = Some(
+        crate::access_cost::realtime_row_count(statistics.map(AsRef::as_ref))
+            * stats_selectivity(catalog, &table, scope, select.where_clause.as_ref())
+                .unwrap_or(1.0),
+    );
     let columns = scope.column_list();
     // Go's `getPossibleAccessPaths`: the statement's own `USE`/`FORCE`/
     // `IGNORE INDEX` decide which paths exist before any of them is costed.
@@ -101,7 +159,7 @@ pub(crate) fn commit_fast_path_source(
     if let Some(where_clause) = select.where_clause.as_ref() {
         if crate::index_range::where_is_unsatisfiable(&columns, where_clause, zone) {
             install_contradiction_dual(&columns, from_source, trace.as_deref_mut());
-            return Ok(None);
+            return Ok(AccessPathCommit::default());
         }
     }
     // Go's `PartitionProcessor` prunes before any access path is costed, and
@@ -123,20 +181,12 @@ pub(crate) fn commit_fast_path_source(
     }
     // Go tries the batch point get before the single one.
     if let Some(handles) = try_batch_point_get(select, &table, &columns, zone)? {
-        let exec = HandleSourceExec::new_with_context(
-            ExecutorMeta::new(
-                Schema::new(source_schema_columns(&columns)),
-                0,
-                INIT_CAP,
-                MAX_CHUNK_SIZE,
-            ),
-            table.clone(),
-            handles.clone(),
-            crate::kv_table::RowDecodeContext::for_query(ctx),
-        );
+        let output = fast_point_output(select, scope);
+        let exec = handle_source_exec(&table, handles.clone(), &columns, output.as_ref(), ctx);
         if let Some(trace) = trace.as_deref_mut() {
             trace.batch_point_get(
                 source_table_name(scope, &table.name),
+                &table,
                 &handles,
                 &table.handle_partition_names(&handles, zone, ctx),
             );
@@ -144,6 +194,7 @@ pub(crate) fn commit_fast_path_source(
             // rather than a `Vec`'s length.
             trace.set_scan_act_rows(exec.produced_rows());
         }
+        direct_output = output.map(|output| output.columns);
         *from_source = Some(Box::new(exec));
     } else
     // An index range scan, when no point get applies: the ranges replace the
@@ -182,6 +233,19 @@ pub(crate) fn commit_fast_path_source(
                     .and_then(|source| source.table_access())
                     .is_some_and(|access| access.accept_handle_ranges(&ranges));
                 if accepted {
+                    if let Some(access) = from_source
+                        .as_mut()
+                        .and_then(|source| source.table_access())
+                    {
+                        access.accept_scan_estimate(estimate.rows);
+                    }
+                    consumed_where = handle_path_consumes_where(select, &table, zone);
+                    handle_range_residual = select.where_clause.as_ref().and_then(|predicate| {
+                        let built =
+                            crate::handle_range::build_handle_ranges(&table, predicate, zone)?;
+                        join_predicates(&built.residual)
+                    });
+                    index_order = handle_range_order(&table, &ranges);
                     if let Some(trace) = trace.as_deref_mut() {
                         // Go's `findBestTask` returns a `PhysicalTableDual`
                         // the moment a chosen path has NO ranges
@@ -192,7 +256,10 @@ pub(crate) fn commit_fast_path_source(
                         // the NULL-ended interval, leaving nothing to read.
                         if ranges.is_empty() {
                             trace.empty_range_table_dual();
-                        } else if let Some(handle) = single_point_handle(&ranges) {
+                        } else if let Some(handle) = table
+                            .pk_handle_offset()
+                            .and_then(|_| single_point_handle(&ranges))
+                        {
                             // Go's `isPointGetPath` converts a table path whose
                             // one range is a single non-null point on the
                             // integer handle to a `Point_Get`
@@ -200,7 +267,11 @@ pub(crate) fn commit_fast_path_source(
                             // when an extra conjunct stays a filter above --
                             // `c1 = 1 AND c2 > 1` reads `Point_Get`, not a
                             // `TableRangeScan` over `[1,1]`.
-                            trace.point_get(source_table_name(scope, &table.name), Some(&handle));
+                            trace.point_get(
+                                source_table_name(scope, &table.name),
+                                &table,
+                                Some(&handle),
+                            );
                         } else {
                             trace.table_range_scan(
                                 source_table_name(scope, &table.name),
@@ -209,9 +280,21 @@ pub(crate) fn commit_fast_path_source(
                             );
                         }
                     }
+                    if consumed_where && range_can_return_direct(select) {
+                        if let Some(output) = fast_point_output(select, scope) {
+                            direct_output_offsets = Some(output.offsets);
+                            direct_output = Some(output.columns);
+                        }
+                    } else if consumed_where {
+                        cop_projection_offsets = range_order_projection(select, scope);
+                    } else {
+                        filtered_cop_projection_offsets = range_order_projection(select, scope);
+                    }
                 }
             }
             Some(ChosenPath::Index(index_id, ranges, estimate, covering)) => {
+                consumed_where = index_path_consumes_where(select, &table, index_id, zone);
+                reader_ready = covering && consumed_where;
                 commit_index_range_source(
                     &table,
                     scope,
@@ -237,27 +320,347 @@ pub(crate) fn commit_fast_path_source(
     {
         // A `None` handle is a WHERE that pins a handle no row can have: the
         // plan is a point get over an empty handle list.
-        let exec = HandleSourceExec::new_with_context(
-            ExecutorMeta::new(
-                Schema::new(source_schema_columns(&columns)),
-                0,
-                INIT_CAP,
-                MAX_CHUNK_SIZE,
-            ),
-            table.clone(),
+        let output = point_get_consumes_where(select, &table, &columns, zone)
+            .then(|| fast_point_output(select, scope))
+            .flatten();
+        let exec = handle_source_exec(
+            &table,
             handle.clone().into_iter().collect(),
-            crate::kv_table::RowDecodeContext::for_query(ctx),
+            &columns,
+            output.as_ref(),
+            ctx,
         );
         if let Some(trace) = trace {
-            trace.point_get(source_table_name(scope, &table.name), handle.as_ref());
+            trace.point_get(
+                source_table_name(scope, &table.name),
+                &table,
+                handle.as_ref(),
+            );
             trace.set_scan_act_rows(exec.produced_rows());
         }
         // The index-range path above may have already committed a source; a
         // point get supersedes it, and so does its ordering claim.
         index_order = None;
+        reader_ready = false;
+        direct_output = output.map(|output| output.columns);
         *from_source = Some(Box::new(exec));
     }
-    Ok(index_order)
+    let order_satisfied = !select.order_by.is_empty()
+        && index_order
+            .as_ref()
+            .is_some_and(|order| order_is_index_order(select, order, &ScopeResolver { scope }));
+    Ok(AccessPathCommit {
+        index_order,
+        direct_output,
+        direct_output_offsets,
+        cop_projection_offsets,
+        filtered_cop_projection_offsets,
+        consumed_where,
+        handle_range_residual,
+        logical_rows,
+        reader_ready,
+        order_satisfied,
+    })
+}
+
+fn join_predicates(predicates: &[&tidb_ast::Expr]) -> Option<tidb_ast::Expr> {
+    predicates.iter().cloned().cloned().reduce(|left, right| {
+        tidb_ast::Expr::Binary(
+            tidb_ast::BinaryOp::LogicAnd,
+            Box::new(left),
+            Box::new(right),
+        )
+    })
+}
+
+/// Builds the narrowed handle source. A simple select list is part of Go's
+/// point plan itself; every other field shape keeps the ordinary all-column
+/// source so the driver can build its real Selection and Projection above it.
+fn handle_source_exec(
+    table: &KvTable,
+    handles: Vec<TableHandle>,
+    columns: &[(String, FieldType)],
+    output: Option<&FastPointOutput>,
+    ctx: &crate::StmtContext,
+) -> HandleSourceExec {
+    match output {
+        Some(output) => HandleSourceExec::new_projected_with_context(
+            ExecutorMeta::new(
+                Schema::new(source_schema_columns(&output.columns)),
+                0,
+                INIT_CAP,
+                MAX_CHUNK_SIZE,
+            ),
+            table.clone(),
+            handles,
+            output.offsets.clone(),
+            crate::kv_table::RowDecodeContext::for_query(ctx),
+        ),
+        None => HandleSourceExec::new_with_context(
+            ExecutorMeta::new(
+                Schema::new(source_schema_columns(columns)),
+                0,
+                INIT_CAP,
+                MAX_CHUNK_SIZE,
+            ),
+            table.clone(),
+            handles,
+            crate::kv_table::RowDecodeContext::for_query(ctx),
+        ),
+    }
+}
+
+/// Go `buildSchemaFromFields` for a point plan: only source columns and
+/// wildcards can be owned by the lookup. Expressions decline the complete
+/// fast plan and leave the normal projection pipeline intact.
+fn fast_point_output(select: &tidb_ast::SelectStmt, scope: &FromScope) -> Option<FastPointOutput> {
+    let resolver = ScopeResolver { scope };
+    let mut offsets = Vec::new();
+    let mut columns = Vec::new();
+    for (field_index, field) in select.fields.fields().iter().enumerate() {
+        match field {
+            SelectField::Expr {
+                expr: expr @ tidb_ast::Expr::Column(path),
+                alias,
+            } => {
+                let (offset, field_type, _) = resolver.resolve(path)?;
+                let name = alias.clone().unwrap_or_else(|| {
+                    default_field_display_name(&select.fields, field_index, expr)
+                });
+                offsets.push(offset);
+                columns.push((name, field_type));
+            }
+            SelectField::Expr { .. } => return None,
+            SelectField::Wildcard(qualifier) => {
+                if qualifier.last().is_none() {
+                    for (offset, name, field_type) in scope.star_columns() {
+                        offsets.push(offset);
+                        columns.push((name, field_type));
+                    }
+                    continue;
+                }
+                let table_name = qualifier.last()?;
+                let mut matched = false;
+                for table in scope
+                    .tables
+                    .iter()
+                    .filter(|table| table.name.eq_ignore_ascii_case(table_name))
+                {
+                    matched = true;
+                    for (local_offset, (name, field_type)) in table.columns.iter().enumerate() {
+                        offsets.push(table.offset + local_offset);
+                        columns.push((name.clone(), field_type.clone()));
+                    }
+                }
+                if !matched {
+                    return None;
+                }
+            }
+        }
+    }
+    Some(FastPointOutput { offsets, columns })
+}
+
+/// A plain column projection over an exact range can be returned directly by
+/// the coprocessor read. Every clause that needs another root operator keeps
+/// the ordinary pipeline for that operator to be built in the right place.
+fn range_can_return_direct(select: &tidb_ast::SelectStmt) -> bool {
+    !select.distinct
+        && select.group_by.is_empty()
+        && select.having.is_none()
+        && select.order_by.is_empty()
+        && select.limit.is_none()
+        && !crate::window::select_has_window(select)
+}
+
+/// The ordered-range shape whose only root work is sorting the same simple
+/// columns the statement returns. The source can therefore emit exactly the
+/// projected row from the cop task, while Sort remains above TableReader.
+fn range_order_projection(select: &tidb_ast::SelectStmt, scope: &FromScope) -> Option<Vec<usize>> {
+    if select.distinct
+        || !select.group_by.is_empty()
+        || select.having.is_some()
+        || select.order_by.is_empty()
+        || select.limit.is_some()
+        || crate::window::select_has_window(select)
+    {
+        return None;
+    }
+    let output = fast_point_output(select, scope)?;
+    let resolver = ScopeResolver { scope };
+    for item in &select.order_by {
+        let tidb_ast::Expr::Column(path) = &item.expr else {
+            return None;
+        };
+        let (offset, _, _) = resolver.resolve(path)?;
+        if !output.offsets.contains(&offset) {
+            return None;
+        }
+    }
+    Some(output.offsets)
+}
+
+fn handle_path_consumes_where(
+    select: &tidb_ast::SelectStmt,
+    table: &KvTable,
+    zone: &tidb_datatype::SessionTimeZone,
+) -> bool {
+    handle_predicate_is_consumed(select.where_clause.as_ref(), table, zone)
+}
+
+fn handle_predicate_is_consumed(
+    where_clause: Option<&tidb_ast::Expr>,
+    table: &KvTable,
+    zone: &tidb_datatype::SessionTimeZone,
+) -> bool {
+    where_clause.is_some_and(|where_clause| {
+        predicate_is_exact_range(where_clause)
+            && crate::handle_range::build_handle_ranges(table, where_clause, zone)
+                .is_some_and(|built| built.access_count > 0 && built.residual.is_empty())
+    })
+}
+
+fn index_path_consumes_where(
+    select: &tidb_ast::SelectStmt,
+    table: &KvTable,
+    index_id: i64,
+    zone: &tidb_datatype::SessionTimeZone,
+) -> bool {
+    let Some(where_clause) = select.where_clause.as_ref() else {
+        return false;
+    };
+    let Some(index) = table.indexes().iter().find(|index| index.id == index_id) else {
+        return false;
+    };
+    // A prefix range is a superset even when the detacher consumed the
+    // written condition; the whole value must still be checked above it.
+    if index.has_prefix() {
+        return false;
+    }
+    let range_columns: Vec<crate::index_range::RangeColumn> = index
+        .column_offsets
+        .iter()
+        .filter_map(|offset| {
+            let column = table.columns.get(*offset)?;
+            Some(crate::index_range::RangeColumn::whole(
+                column.name.clone(),
+                column.field_type.clone(),
+            ))
+        })
+        .collect();
+    if range_columns.len() != index.column_offsets.len() {
+        return false;
+    }
+    crate::index_range::detach_cond_and_build_range_for_index(&range_columns, where_clause, zone)
+        .is_some_and(|built| {
+            predicate_is_exact_range(where_clause)
+                && built.access_count > 0
+                && built.residual.is_empty()
+        })
+}
+
+/// Whether a ranger-owned predicate describes exactly the rows in its ranges.
+///
+/// The ranger may report no residual for a lossy bound such as `LIKE 'abc%'.`
+/// That means the expression helped construct the access range, not that the
+/// range alone proves the predicate. Keep this proof deliberately closed over
+/// exact comparison shapes so every approximation retains its Selection.
+fn predicate_is_exact_range(predicate: &tidb_ast::Expr) -> bool {
+    match predicate {
+        tidb_ast::Expr::Paren(inner) => predicate_is_exact_range(inner),
+        tidb_ast::Expr::Binary(
+            tidb_ast::BinaryOp::LogicAnd | tidb_ast::BinaryOp::LogicOr,
+            left,
+            right,
+        ) => predicate_is_exact_range(left) && predicate_is_exact_range(right),
+        tidb_ast::Expr::Binary(
+            tidb_ast::BinaryOp::Eq
+            | tidb_ast::BinaryOp::NullEq
+            | tidb_ast::BinaryOp::Ge
+            | tidb_ast::BinaryOp::Gt
+            | tidb_ast::BinaryOp::Le
+            | tidb_ast::BinaryOp::Lt,
+            ..,
+        )
+        | tidb_ast::Expr::In { .. }
+        | tidb_ast::Expr::Between { .. }
+        | tidb_ast::Expr::Is {
+            target: tidb_ast::IsTarget::Null,
+            ..
+        } => true,
+        _ => false,
+    }
+}
+
+/// Whether every equality in a single-point `WHERE` is one of the key parts
+/// that produced the handle. `try_point_get` may also be used as a narrowed
+/// source when a common/unique key is pinned alongside an extra predicate;
+/// that shape must retain its Selection above the source.
+fn point_get_consumes_where(
+    select: &tidb_ast::SelectStmt,
+    table: &KvTable,
+    columns: &[(String, FieldType)],
+    zone: &tidb_datatype::SessionTimeZone,
+) -> bool {
+    point_get_predicate_is_consumed(select.where_clause.as_ref(), table, columns, zone)
+}
+
+/// Whether a write's narrowed read path consumed its complete predicate.
+/// Go's update/delete fast plan has no Selection in this case; a range path
+/// or a point lookup with any extra equality must still evaluate the WHERE.
+pub(crate) fn write_read_path_consumes_predicate(
+    read_path: Option<&WriteReadPath>,
+    stmt: &PointPlanStmt<'_>,
+    table: &KvTable,
+    columns: &[(String, FieldType)],
+    zone: &tidb_datatype::SessionTimeZone,
+) -> bool {
+    match read_path {
+        Some(WriteReadPath::Batch(_)) => true,
+        Some(WriteReadPath::Point(_)) => {
+            point_get_predicate_is_consumed(stmt.where_clause, table, columns, zone)
+        }
+        Some(WriteReadPath::Ranges(..)) => {
+            handle_predicate_is_consumed(stmt.where_clause, table, zone)
+        }
+        Some(WriteReadPath::IndexRanges(..)) | None => false,
+    }
+}
+
+pub(crate) fn point_get_predicate_is_consumed(
+    where_clause: Option<&tidb_ast::Expr>,
+    table: &KvTable,
+    columns: &[(String, FieldType)],
+    zone: &tidb_datatype::SessionTimeZone,
+) -> bool {
+    let Some(where_clause) = where_clause else {
+        return false;
+    };
+    let mut pairs = Vec::new();
+    if !name_value_pairs(where_clause, &mut pairs, zone) || pairs.is_empty() {
+        return false;
+    }
+    let key_matches = |offsets: &[usize]| {
+        offsets.len() == pairs.len()
+            && offsets.iter().all(|offset| {
+                columns.get(*offset).is_some_and(|(name, _)| {
+                    pairs
+                        .iter()
+                        .any(|pair| pair.column.eq_ignore_ascii_case(name))
+                })
+            })
+    };
+    if table
+        .pk_handle_offset()
+        .is_some_and(|offset| key_matches(std::slice::from_ref(&offset)))
+        || key_matches(table.common_handle_offsets())
+    {
+        return true;
+    }
+    let matches_unique_index = table
+        .plan_indexes()
+        .any(|index| index.unique && !index.has_prefix() && key_matches(&index.column_offsets));
+    matches_unique_index
 }
 
 /// The partitions a single-table `SELECT` still reads, named as declared and
@@ -330,7 +733,7 @@ fn install_contradiction_dual(
 /// `None` for anything else: several ranges, an open bound, a NULL endpoint, or
 /// a non-integer bound. A common (multi-column) handle never reaches here,
 /// because this tier only builds handle ranges over the integer handle.
-fn single_point_handle(ranges: &[IndexRange]) -> Option<TableHandle> {
+pub(crate) fn single_point_handle(ranges: &[IndexRange]) -> Option<TableHandle> {
     let [range] = ranges else {
         return None;
     };
@@ -363,7 +766,7 @@ fn commit_index_range_source(
     index_order: &mut Option<IndexAccessOrder>,
     ctx: &crate::StmtContext,
 ) {
-    let mut exec = IndexRangeSourceExec::new_with_context(
+    let mut exec = IndexRangeSourceExec::new_with_statement(
         ExecutorMeta::new(
             Schema::new(source_schema_columns(columns)),
             0,
@@ -374,7 +777,9 @@ fn commit_index_range_source(
         index_id,
         ranges.clone(),
         crate::kv_table::RowDecodeContext::for_query(ctx),
+        crate::remote_scan::PushdownStatementContext::from_stmt(ctx),
     );
+    crate::table_access::TableAccess::accept_scan_estimate(&mut exec, estimate.rows);
     // A covering path is Go's `PhysicalIndexReader`: the index answers on its
     // own, no handle batch is ever built, and the rows leave in INDEX order.
     // This tier reads the row either way (it has no index-only reader), so the
@@ -437,6 +842,9 @@ fn commit_index_range_source(
             );
         }
         trace.set_scan_act_rows(exec.produced_rows());
+        if !covering && !trace.index_lookup(source_table_name(scope, &table.name), estimate) {
+            trace.refuse("a non-covering index path did not produce an index scan");
+        }
     }
     *from_source = Some(Box::new(exec));
 }
@@ -506,8 +914,12 @@ pub(crate) fn negotiate_scan_filter(
     scope: &FromScope,
     source: &mut Box<dyn Executor>,
     ctx: &crate::StmtContext,
+    access_consumed_where: bool,
     trace: Option<&mut PlanTrace>,
 ) -> Option<tidb_ast::Expr> {
+    if access_consumed_where {
+        return None;
+    }
     match (&select.where_clause, scope.tables.len()) {
         (Some(predicate), 1) => {
             let (pushed, residual) = split_scan_predicates(predicate, &scope_resolver(scope), ctx);
@@ -859,8 +1271,31 @@ pub(crate) fn select_stats_selectivity(
     current_db: &str,
     scope: &FromScope,
 ) -> Option<f64> {
+    select_predicate_stats_selectivity(
+        select,
+        select.where_clause.as_ref()?,
+        catalog,
+        current_db,
+        scope,
+    )
+    // A predicate spanning a join has no single DataSource statistics node.
+    // Go's `Selectivity` leaves it uncovered and charges the global
+    // `selectionFactor` once.
+    .or_else(|| (scope.tables.len() > 1).then_some(tidb_planner::cost_factors::SELECTION_FACTOR))
+}
+
+/// `cardinality.Selectivity` for one residual predicate of a single-table
+/// `SELECT`. Unlike [`select_stats_selectivity`], this deliberately does not
+/// re-price access conditions already represented by a range scan.
+pub(crate) fn select_predicate_stats_selectivity(
+    select: &tidb_ast::SelectStmt,
+    predicate: &tidb_ast::Expr,
+    catalog: &Catalog,
+    current_db: &str,
+    scope: &FromScope,
+) -> Option<f64> {
     let table = single_kv_table(&select.from, catalog, current_db)?;
-    stats_selectivity(catalog, &table, scope, select.where_clause.as_ref())
+    stats_selectivity(catalog, &table, scope, Some(predicate))
 }
 
 /// The full-scan estimate and stats-backed selectivity a single-table write's
@@ -900,6 +1335,9 @@ pub(crate) enum WriteReadPath {
     /// Go's `Point_Get`: one record, read by key. `None` is a key no row can
     /// carry, which Go also plans as a `Point_Get` that reads nothing.
     Point(Option<TableHandle>),
+    /// Go's `Batch_Point_Get`: several records read directly by their
+    /// clustered or unique handles.
+    Batch(Vec<TableHandle>),
     /// Go's `TableRangeScan`: the handle intervals the `WHERE` implies, and
     /// the estimate `EXPLAIN` prints for them.
     Ranges(Vec<IndexRange>, crate::access_cost::ScanEstimate),
@@ -955,6 +1393,9 @@ pub(crate) fn write_read_path(
         .iter()
         .map(|column| (column.name.clone(), column.field_type.clone()))
         .collect();
+    if let Some(handles) = try_batch_point_get_stmt(stmt, table, &columns, zone)? {
+        return Ok(Some(WriteReadPath::Batch(handles)));
+    }
     if let Some(handle) = try_point_get(stmt, table, &columns, zone)? {
         return Ok(Some(WriteReadPath::Point(handle)));
     }
@@ -1040,10 +1481,19 @@ fn write_handle_ranges(
         return None;
     };
     let ranges = crate::handle_range::build_handle_ranges(table, where_clause, zone)?.ranges;
-    let stats = catalog.table_statistics(table.table_id);
-    let stats = stats.as_ref().map(AsRef::as_ref);
+    let stats = catalog.table_statistics(table.table_id).map(AsRef::as_ref);
+    let realtime = crate::access_cost::realtime_row_count(stats);
+    let columns = table
+        .columns
+        .iter()
+        .map(|column| (column.name.clone(), column.field_type.clone()))
+        .collect::<Vec<_>>();
+    let scope = PlanTrace::single_table_scope(name, None, columns);
+    let source_rows =
+        realtime * stats_selectivity(catalog, table, &scope, Some(where_clause)).unwrap_or(1.0);
+    let raw_rows = crate::handle_range::handle_range_row_count(table, &ranges, stats);
     let estimate = crate::access_cost::ScanEstimate {
-        rows: crate::handle_range::handle_range_row_count(table, &ranges, stats),
+        rows: crate::access_cost::adjust_count_after_access(raw_rows, source_rows, realtime),
         pseudo: stats.is_none_or(|stats| stats.pseudo),
     };
     Some((ranges, estimate))
@@ -1414,10 +1864,21 @@ pub(crate) fn single_kv_table(
 /// the handle and the column names it; otherwise a unique index whose only
 /// column it is.
 ///
-/// DEFERRED (documented): Go's row form, `(a, b) IN ((1, 2), (3, 4))`, which
-/// needs multi-column key lookup.
+/// The row form, `(a, b) IN ((1, 2), (3, 4))`, is a composite-key
+/// `Batch_Point_Get` when the tuples pin every column of a unique index or a
+/// clustered common handle.
 pub(crate) fn try_batch_point_get(
     select: &tidb_ast::SelectStmt,
+    table: &KvTable,
+    columns: &[(String, FieldType)],
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Result<Option<Vec<TableHandle>>, DriverError> {
+    let stmt = PointPlanStmt::of_select(select);
+    try_batch_point_get_stmt(&stmt, table, columns, zone)
+}
+
+pub(crate) fn try_batch_point_get_stmt(
+    select: &PointPlanStmt<'_>,
     table: &KvTable,
     columns: &[(String, FieldType)],
     zone: &tidb_datatype::SessionTimeZone,
@@ -1430,7 +1891,7 @@ pub(crate) fn try_batch_point_get(
     {
         return Ok(None);
     }
-    let Some(where_clause) = &select.where_clause else {
+    let Some(where_clause) = select.where_clause else {
         return Ok(None);
     };
     // The WHERE must be exactly the IN, as Go requires a PatternInExpr.
@@ -1438,6 +1899,137 @@ pub(crate) fn try_batch_point_get(
         return Ok(None);
     };
     if *not || list.is_empty() {
+        return Ok(None);
+    }
+    // The row form is Go's composite-key Batch_Point_Get. Each tuple value
+    // is converted into the indexed column's domain before the key lookup;
+    // any value that cannot round-trip exactly declines the fast path and
+    // leaves the ordinary scan to preserve the written predicate's answer.
+    if let tidb_ast::Expr::Row(left) = &**expr {
+        let mut names = Vec::with_capacity(left.len());
+        for column in left {
+            let tidb_ast::Expr::Column(path) = column else {
+                return Ok(None);
+            };
+            let Some(name) = path.last() else {
+                return Ok(None);
+            };
+            names.push(name);
+        }
+        let mut table = table.clone();
+        // A clustered composite primary key is represented by the common
+        // handle offsets, not by a KvIndex. Its encoded datum key is the
+        // record handle itself, so it can use the same direct lookup source as
+        // a unique index without manufacturing a redundant index entry.
+        let common_offsets = table.common_handle_offsets().to_vec();
+        if common_offsets.len() == names.len() {
+            let mut positions = Vec::with_capacity(common_offsets.len());
+            for offset in &common_offsets {
+                let Some((column_name, _)) = columns.get(*offset) else {
+                    positions.clear();
+                    break;
+                };
+                let Some(position) = names
+                    .iter()
+                    .position(|name| column_name.eq_ignore_ascii_case(name))
+                else {
+                    positions.clear();
+                    break;
+                };
+                positions.push(position);
+            }
+            if positions.len() == common_offsets.len() {
+                let mut handles = Vec::with_capacity(list.len());
+                for candidate in list {
+                    let tidb_ast::Expr::Row(values) = candidate else {
+                        return Ok(None);
+                    };
+                    if values.len() != left.len() {
+                        return Ok(None);
+                    }
+                    let mut key_values = Vec::with_capacity(common_offsets.len());
+                    for (offset, position) in common_offsets.iter().zip(&positions) {
+                        let Ok(Expression::Constant(constant)) = rewrite_expr_resolved(
+                            &values[*position],
+                            &tidb_expr::rewriter::ZonedNoResolver(zone.clone()),
+                        ) else {
+                            return Ok(None);
+                        };
+                        let Ok(value) = constant.eval() else {
+                            return Ok(None);
+                        };
+                        let Some(value) = point_get_value(&columns[*offset].1, &value) else {
+                            return Ok(None);
+                        };
+                        key_values.push(value);
+                    }
+                    let encoded =
+                        tidb_codec::encode_key_in_timezone(zone, &key_values).map_err(|e| {
+                            DriverError::Parse(format!("common handle encode failed: {e:?}"))
+                        })?;
+                    let handle = tidb_txnkv::CommonHandle::new(encoded).map_err(|e| {
+                        DriverError::Parse(format!("common handle build failed: {e:?}"))
+                    })?;
+                    handles.push(TableHandle::Common(handle.encoded().to_vec()));
+                }
+                return Ok(Some(handles));
+            }
+        }
+        for index in table.plan_indexes().cloned().collect::<Vec<_>>() {
+            if !index.unique || index.has_prefix() || index.column_offsets.len() != names.len() {
+                continue;
+            }
+            let mut positions = Vec::with_capacity(index.column_offsets.len());
+            for offset in &index.column_offsets {
+                let Some((column_name, _)) = columns.get(*offset) else {
+                    positions.clear();
+                    break;
+                };
+                let Some(position) = names
+                    .iter()
+                    .position(|name| column_name.eq_ignore_ascii_case(name))
+                else {
+                    positions.clear();
+                    break;
+                };
+                positions.push(position);
+            }
+            if positions.len() != index.column_offsets.len() {
+                continue;
+            }
+            let mut handles = Vec::with_capacity(list.len());
+            for candidate in list {
+                let tidb_ast::Expr::Row(values) = candidate else {
+                    return Ok(None);
+                };
+                if values.len() != left.len() {
+                    return Ok(None);
+                }
+                let mut key_values = Vec::with_capacity(index.column_offsets.len());
+                for (offset, position) in index.column_offsets.iter().zip(&positions) {
+                    let Ok(Expression::Constant(constant)) = rewrite_expr_resolved(
+                        &values[*position],
+                        &tidb_expr::rewriter::ZonedNoResolver(zone.clone()),
+                    ) else {
+                        return Ok(None);
+                    };
+                    let Ok(value) = constant.eval() else {
+                        return Ok(None);
+                    };
+                    let Some(value) = point_get_value(&columns[*offset].1, &value) else {
+                        return Ok(None);
+                    };
+                    key_values.push(value);
+                }
+                if let Some(handle) = table
+                    .lookup_unique(index.id, &key_values, zone)
+                    .map_err(|e| DriverError::Parse(format!("index lookup failed: {e:?}")))?
+                {
+                    handles.push(handle);
+                }
+            }
+            return Ok(Some(handles));
+        }
         return Ok(None);
     }
     let tidb_ast::Expr::Column(path) = &**expr else {
@@ -1639,6 +2231,8 @@ pub(crate) struct PointPlanStmt<'a> {
     /// of these; only a real `SELECT` can.
     having: Option<&'a tidb_ast::Expr>,
     group_by: &'a [tidb_ast::GroupByItem],
+    /// `DISTINCT` is present only on a real `SELECT`; writes set this false.
+    distinct: bool,
 }
 
 impl<'a> PointPlanStmt<'a> {
@@ -1650,6 +2244,7 @@ impl<'a> PointPlanStmt<'a> {
             limit: select.limit.as_ref(),
             having: select.having.as_ref(),
             group_by: &select.group_by,
+            distinct: select.distinct,
         }
     }
 
@@ -1667,6 +2262,7 @@ impl<'a> PointPlanStmt<'a> {
             limit,
             having: None,
             group_by: &[],
+            distinct: false,
         }
     }
 }
@@ -1731,6 +2327,36 @@ pub(crate) fn try_point_get(
         }
     }
 
+    // A clustered composite primary key is encoded directly as a common
+    // handle rather than materialized as a secondary `KvIndex`. When every
+    // handle column is pinned, it is the same one-row lookup as an integer
+    // point get; extra equalities remain in the filter above the source.
+    let common_offsets = table.common_handle_offsets().to_vec();
+    if !common_offsets.is_empty() {
+        let mut values = Vec::with_capacity(common_offsets.len());
+        for offset in common_offsets {
+            let Some((name, _)) = columns.get(offset) else {
+                values.clear();
+                break;
+            };
+            let Some(pair) = pairs
+                .iter()
+                .find(|pair| pair.column.eq_ignore_ascii_case(name))
+            else {
+                values.clear();
+                break;
+            };
+            values.push(pair.value.clone());
+        }
+        if values.len() == table.common_handle_offsets().len() {
+            let encoded = tidb_codec::encode_key_in_timezone(zone, &values)
+                .map_err(|e| DriverError::Parse(format!("common handle encode failed: {e:?}")))?;
+            let handle = tidb_txnkv::CommonHandle::new(encoded)
+                .map_err(|e| DriverError::Parse(format!("common handle build failed: {e:?}")))?;
+            return Ok(Some(Some(TableHandle::Common(handle.encoded().to_vec()))));
+        }
+    }
+
     // The unique-index path: every column of some unique index is pinned.
     let mut table = table.clone();
     for index in table.plan_indexes().cloned().collect::<Vec<_>>() {
@@ -1779,10 +2405,10 @@ pub(crate) fn try_point_get(
     Ok(None)
 }
 
-/// The row order a committed index access path produces, for the `ORDER BY`
-/// half of the `LIMIT` push-down rule.
+/// The row order a committed access path produces, for the `ORDER BY` half of
+/// the `LIMIT` push-down rule.
 pub(crate) struct IndexAccessOrder {
-    /// The index's columns as offsets into the source row, in index order.
+    /// The unfixed key columns as offsets into the source row, in key order.
     column_offsets: Vec<usize>,
     /// Whether one range covers the access path. Several ranges are each
     /// internally in index order but are walked one after another, and their
@@ -1823,6 +2449,34 @@ impl IndexAccessOrder {
             constant_positions,
         }
     }
+}
+
+/// The order a single clustered-handle range still provides after its equal
+/// leading columns have been fixed by the range.
+///
+/// A common handle `(w_id, d_id, o_id)` is the record key itself. The range
+/// `[1 1, 1 1]` therefore walks in `o_id` order, which is the TPC-C Delivery
+/// `ORDER BY o_id LIMIT 1` property. More than one range is declined for the
+/// same conservative reason as an index path: each range is ordered, but this
+/// layer does not promise that their concatenation is one total order.
+fn handle_range_order(table: &KvTable, ranges: &[IndexRange]) -> Option<IndexAccessOrder> {
+    let [range] = ranges else {
+        return None;
+    };
+    let handle_columns: Vec<usize> = if table.common_handle_offsets().is_empty() {
+        table.pk_handle_offset().into_iter().collect()
+    } else {
+        table.common_handle_offsets().to_vec()
+    };
+    let fixed_prefix = range
+        .low
+        .iter()
+        .zip(&range.high)
+        .take_while(|(low, high)| low == high)
+        .count()
+        .min(handle_columns.len());
+    (fixed_prefix < handle_columns.len())
+        .then(|| IndexAccessOrder::from_ranges(&handle_columns, ranges))
 }
 
 /// The row cap a `LIMIT` may push into the source, or `None` to leave all the

@@ -48,6 +48,7 @@ use std::rc::Rc;
 
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType};
+use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 
 use crate::access_cost::ScanEstimate;
@@ -63,7 +64,7 @@ fn pseudo_suffix(estimate: ScanEstimate) -> &'static str {
     }
 }
 use crate::executor::{ExecError, Executor};
-use crate::kv_table::TableHandle;
+use crate::kv_table::{KvTable, TableHandle};
 
 /// Go `statistics.PseudoRowCount` (`pkg/statistics/table.go`): the row count
 /// assumed for a table with no analyzed statistics.
@@ -90,6 +91,8 @@ pub(crate) struct PlanNode {
     /// The `operator info` cell, up to the point a join splices its
     /// `, left side:<child>` in.
     pub(crate) info: String,
+    /// The execution boundary Go reports for this operator.
+    pub(crate) task: &'static str,
     /// A join's `, left side:` insertion point: the index in `children` of
     /// the operator that is this join's LEFT input. `None` for every node
     /// that does not print one (Go omits it for an inner join).
@@ -129,6 +132,7 @@ impl PlanNode {
             est_rows,
             access,
             info,
+            task: "root",
             left_side_child: None,
             info_tail: String::new(),
             label: "",
@@ -159,6 +163,9 @@ pub(crate) enum Est {
     Fixed(f64),
     /// The child's estimate times a selectivity/NDV factor.
     Scale(f64),
+    /// The child's estimate times a factor, with Go's one-row physical-plan
+    /// floor (`StatsInfo.ScaleByExpectCnt`).
+    ScaleFloorOne(f64),
     /// The child's estimate, capped (`LIMIT`).
     CapAt(f64),
 }
@@ -169,6 +176,7 @@ impl Est {
             Est::Inherit => child,
             Est::Fixed(value) => Some(value),
             Est::Scale(factor) => child.map(|rows| rows * factor),
+            Est::ScaleFloorOne(factor) => child.map(|rows| (rows * factor).max(1.0)),
             Est::CapAt(cap) => child.map(|rows| rows.min(cap)),
         }
     }
@@ -372,7 +380,9 @@ impl PlanTrace {
         // came from somewhere else entirely, and Go's `LogicalLimit` clamps
         // each NDV to the new row count rather than scaling it.
         node.key_ndv_ratio = match est {
-            Est::Inherit | Est::Scale(_) => child.as_ref().and_then(|c| c.key_ndv_ratio),
+            Est::Inherit | Est::Scale(_) | Est::ScaleFloorOne(_) => {
+                child.as_ref().and_then(|c| c.key_ndv_ratio)
+            }
             Est::Fixed(_) | Est::CapAt(_) => None,
         };
         node.children.extend(child);
@@ -587,35 +597,55 @@ impl PlanTrace {
     pub(crate) fn batch_point_get(
         &mut self,
         visible: &str,
+        table: &KvTable,
         handles: &[TableHandle],
         partitions: &[String],
     ) {
-        let printed: Vec<String> = handles.iter().map(handle_text).collect();
+        let (access, info) = if let Some(access) = common_handle_access(visible, table, partitions)
+        {
+            (access, "keep order:false, desc:false".to_owned())
+        } else {
+            let printed: Vec<String> = handles.iter().map(handle_text).collect();
+            (
+                format!("table:{visible}{}", partition_object(partitions)),
+                format!(
+                    "handle:[{}], keep order:false, desc:false",
+                    printed.join(" ")
+                ),
+            )
+        };
         self.replace_top(PlanNode::new(
             "Batch_Point_Get",
             Some(handles.len() as f64),
-            format!("table:{visible}{}", partition_object(partitions)),
-            format!(
-                "handle:[{}], keep order:false, desc:false",
-                printed.join(" ")
-            ),
+            access,
+            info,
         ));
         self.consumed = true;
     }
 
     /// Go's `Point_Get` fast path. `None` is a handle no row can carry --
     /// Go still plans a `Point_Get` and reads nothing.
-    pub(crate) fn point_get(&mut self, visible: &str, handle: Option<&TableHandle>) {
-        let printed = match handle {
-            Some(handle) => handle_text(handle),
-            None => "NULL".to_owned(),
+    pub(crate) fn point_get(
+        &mut self,
+        visible: &str,
+        table: &KvTable,
+        handle: Option<&TableHandle>,
+    ) {
+        let (access, info) = match common_handle_access(visible, table, &[]) {
+            Some(access) => (access, String::new()),
+            None => {
+                let printed = match handle {
+                    Some(handle) => handle_text(handle),
+                    None => "NULL".to_owned(),
+                };
+                (format!("table:{visible}"), format!("handle:{printed}"))
+            }
         };
-        self.replace_top(PlanNode::new(
-            "Point_Get",
-            Some(1.0),
-            format!("table:{visible}"),
-            format!("handle:{printed}"),
-        ));
+        let mut point = PlanNode::new("Point_Get", Some(1.0), access, info);
+        // A one-row relation has NDV one for every join key it can expose, so
+        // an equi-join of two point gets has Go's exact one-row estimate.
+        point.key_ndv_ratio = Some(1.0);
+        self.replace_top(point);
         self.consumed = true;
     }
 
@@ -688,6 +718,445 @@ impl PlanTrace {
         self.consumed = true;
     }
 
+    /// Exposes the two stages already performed by a non-covering
+    /// [`crate::access_path::IndexRangeSourceExec`]: build a handle batch from
+    /// the secondary index, then probe the table rows by those handles.
+    pub(crate) fn index_lookup(&mut self, visible: &str, estimate: ScanEstimate) -> bool {
+        let Some(mut index_scan) = self.stack.pop() else {
+            return false;
+        };
+        if !matches!(index_scan.name, "IndexFullScan" | "IndexRangeScan")
+            || !index_scan.children.is_empty()
+        {
+            self.stack.push(index_scan);
+            return false;
+        }
+        index_scan.task = "cop[tikv]";
+        index_scan.label = "(Build)";
+        let rows = index_scan.est_rows;
+        let act_rows = index_scan.act_rows.clone();
+        let key_ndv_ratio = index_scan.key_ndv_ratio;
+
+        let mut table_scan = PlanNode::new(
+            "TableRowIDScan",
+            rows,
+            format!("table:{visible}"),
+            format!("keep order:false{}", pseudo_suffix(estimate)),
+        );
+        table_scan.task = "cop[tikv]";
+        table_scan.label = "(Probe)";
+        table_scan.act_rows = act_rows.clone();
+        table_scan.key_ndv_ratio = key_ndv_ratio;
+
+        let mut lookup = PlanNode::new("IndexLookUp", rows, String::new(), String::new());
+        lookup.act_rows = act_rows;
+        lookup.key_ndv_ratio = key_ndv_ratio;
+        lookup.children.push(index_scan);
+        lookup.children.push(table_scan);
+        self.stack.push(lookup);
+        true
+    }
+
+    /// Moves a physical table/index scan below the root reader boundary.
+    ///
+    /// The executor already performs a TiKV-backed scan; this method records
+    /// the same root/cop task split that Go's physical plan assigns to that
+    /// request. It deliberately accepts only a bare scan so EXPLAIN cannot
+    /// claim a pushdown through an operator the executor still runs at root.
+    pub(crate) fn scan_reader(&mut self) -> bool {
+        let Some(mut scan) = self.stack.pop() else {
+            return false;
+        };
+        let reader = match scan.name {
+            "TableFullScan" | "TableRangeScan" => "TableReader",
+            "IndexFullScan" | "IndexRangeScan" => "IndexReader",
+            _ => {
+                self.stack.push(scan);
+                return false;
+            }
+        };
+        let scan_name = scan.name;
+        scan.task = "cop[tikv]";
+        let estimate = scan.est_rows;
+        let key_ndv_ratio = scan.key_ndv_ratio;
+        let act_rows = scan.act_rows.clone();
+        let info = if reader == "TableReader" {
+            format!("data:{scan_name}")
+        } else {
+            format!("index:{scan_name}")
+        };
+        let mut reader_node = PlanNode::new(reader, estimate, String::new(), info);
+        reader_node.key_ndv_ratio = key_ndv_ratio;
+        reader_node.act_rows = act_rows;
+        reader_node.children.push(scan);
+        self.stack.push(reader_node);
+        true
+    }
+
+    /// Places the two scan children of a merge join behind their root reader
+    /// boundaries.  Leaf predicate pushdown can leave either a bare scan or a
+    /// cop `Selection` over one; both are TiKV tasks in the physical plan,
+    /// while the merge itself remains a root executor.
+    pub(crate) fn join_scan_readers(&mut self) {
+        fn reader(mut child: PlanNode) -> PlanNode {
+            let scan_name = if matches!(
+                child.name,
+                "TableFullScan" | "TableRangeScan" | "IndexFullScan" | "IndexRangeScan"
+            ) {
+                Some(child.name)
+            } else if child.name == "Selection"
+                && child.children.len() == 1
+                && matches!(
+                    child.children[0].name,
+                    "TableFullScan" | "TableRangeScan" | "IndexFullScan" | "IndexRangeScan"
+                )
+            {
+                Some(child.children[0].name)
+            } else {
+                None
+            };
+            let Some(scan_name) = scan_name else {
+                return child;
+            };
+            fn mark_cop(node: &mut PlanNode) {
+                node.task = "cop[tikv]";
+                for child in &mut node.children {
+                    mark_cop(child);
+                }
+            }
+            mark_cop(&mut child);
+            let reader = if matches!(scan_name, "IndexFullScan" | "IndexRangeScan") {
+                "IndexReader"
+            } else {
+                "TableReader"
+            };
+            let estimate = child.est_rows;
+            let act_rows = child.act_rows.clone();
+            let key_ndv_ratio = child.key_ndv_ratio;
+            let mut root = PlanNode::new(
+                reader,
+                estimate,
+                String::new(),
+                if reader == "IndexReader" {
+                    format!("index:{}", child.name)
+                } else {
+                    format!("data:{}", child.name)
+                },
+            );
+            root.act_rows = act_rows;
+            root.key_ndv_ratio = key_ndv_ratio;
+            root.children.push(child);
+            root
+        }
+
+        if self.stack.len() < 2 {
+            return;
+        }
+        let right = reader(self.stack.pop().expect("two join children"));
+        let left = reader(self.stack.pop().expect("two join children"));
+        self.stack.push(left);
+        self.stack.push(right);
+    }
+
+    /// Marks the committed scan as preserving the access order requested by
+    /// the physical property. The executor accepted the same offer before
+    /// this is called, so the annotation describes real row order.
+    pub(crate) fn keep_order(&mut self) -> bool {
+        let Some(scan) = self.stack.last_mut() else {
+            return false;
+        };
+        if !matches!(
+            scan.name,
+            "TableFullScan" | "TableRangeScan" | "IndexFullScan" | "IndexRangeScan"
+        ) || !scan.info.contains("keep order:false")
+        {
+            return false;
+        }
+        scan.info = scan.info.replacen("keep order:false", "keep order:true", 1);
+        true
+    }
+
+    /// Moves a bare scan and a global partial StreamAgg into the TiKV task,
+    /// leaving the root reader above it. This is the physical split Go picks
+    /// for high-estimate Sysbench `COUNT`/`SUM` ranges.
+    pub(crate) fn partial_stream_agg(
+        &mut self,
+        select: &tidb_ast::SelectStmt,
+        qualify: &Qualifier<'_>,
+        sum: bool,
+    ) -> bool {
+        let Some(mut scan) = self.stack.pop() else {
+            return false;
+        };
+        let reader = match scan.name {
+            "TableFullScan" | "TableRangeScan" => "TableReader",
+            "IndexFullScan" | "IndexRangeScan" => "IndexReader",
+            _ => {
+                self.stack.push(scan);
+                return false;
+            }
+        };
+        let argument = select.fields.fields().iter().find_map(|field| match field {
+            tidb_ast::SelectField::Expr {
+                expr: tidb_ast::Expr::Aggregate { args, .. },
+                ..
+            } => args.first(),
+            _ => None,
+        });
+        let Some(argument) = argument else {
+            self.stack.push(scan);
+            return false;
+        };
+        scan.task = "cop[tikv]";
+        let act_rows = scan.act_rows.clone();
+        let key_ndv_ratio = scan.key_ndv_ratio;
+        let mut partial = PlanNode::new(
+            "StreamAgg",
+            Some(1.0),
+            String::new(),
+            format!(
+                "funcs:{}({})->Column#0",
+                if sum { "sum" } else { "count" },
+                qualify.expr(argument)
+            ),
+        );
+        partial.task = "cop[tikv]";
+        partial.act_rows = act_rows.clone();
+        partial.children.push(scan);
+
+        let mut reader_node = PlanNode::new(
+            reader,
+            Some(1.0),
+            String::new(),
+            if reader == "TableReader" {
+                "data:StreamAgg".to_owned()
+            } else {
+                "index:StreamAgg".to_owned()
+            },
+        );
+        reader_node.key_ndv_ratio = key_ndv_ratio;
+        reader_node.act_rows = act_rows;
+        reader_node.children.push(partial);
+        self.stack.push(reader_node);
+        true
+    }
+
+    /// Moves a one-column grouping stage below the reader. The root HashAgg
+    /// still deduplicates keys that different regions emitted.
+    pub(crate) fn partial_hash_agg(
+        &mut self,
+        fields: &[tidb_ast::SelectField],
+        qualify: &Qualifier<'_>,
+    ) -> bool {
+        let Some(mut scan) = self.stack.pop() else {
+            return false;
+        };
+        let reader = match scan.name {
+            "TableFullScan" | "TableRangeScan" => "TableReader",
+            "IndexFullScan" | "IndexRangeScan" => "IndexReader",
+            _ => {
+                self.stack.push(scan);
+                return false;
+            }
+        };
+        let estimate = Est::ScaleFloorOne(DISTINCT_FACTOR).apply(scan.est_rows);
+        let projected = field_list(fields, qualify);
+        scan.task = "cop[tikv]";
+        let act_rows = scan.act_rows.clone();
+        let key_ndv_ratio = scan.key_ndv_ratio;
+        let mut partial = PlanNode::new(
+            "HashAgg",
+            estimate,
+            String::new(),
+            format!("group by:{projected},"),
+        );
+        partial.task = "cop[tikv]";
+        partial.act_rows = act_rows.clone();
+        partial.children.push(scan);
+
+        let mut reader_node = PlanNode::new(
+            reader,
+            estimate,
+            String::new(),
+            if reader == "TableReader" {
+                "data:HashAgg".to_owned()
+            } else {
+                "index:HashAgg".to_owned()
+            },
+        );
+        reader_node.key_ndv_ratio = key_ndv_ratio;
+        reader_node.act_rows = act_rows;
+        reader_node.children.push(partial);
+        self.stack.push(reader_node);
+        true
+    }
+
+    /// Moves a one-key, one-SUM partial HashAgg below the table reader.  The
+    /// estimate is derived from the logical DataSource rows rather than the
+    /// access scan's lower-bound-adjusted rows, matching Go's aggregation
+    /// statistics pipeline.
+    pub(crate) fn partial_grouped_sum(
+        &mut self,
+        select: &tidb_ast::SelectStmt,
+        qualify: &Qualifier<'_>,
+        logical_rows: Option<f64>,
+    ) -> bool {
+        let Some(mut scan) = self.stack.pop() else {
+            return false;
+        };
+        if !matches!(scan.name, "TableFullScan" | "TableRangeScan") {
+            self.stack.push(scan);
+            return false;
+        }
+        let Some(group) = select.group_by.first() else {
+            self.stack.push(scan);
+            return false;
+        };
+        let Some(sum_argument) = select.fields.fields().iter().find_map(|field| match field {
+            tidb_ast::SelectField::Expr {
+                expr: tidb_ast::Expr::Aggregate { name, args, .. },
+                ..
+            } if name.eq_ignore_ascii_case("SUM") => args.first(),
+            _ => None,
+        }) else {
+            self.stack.push(scan);
+            return false;
+        };
+
+        let estimate = logical_rows
+            .map(|rows| (rows * DISTINCT_FACTOR).max(1.0))
+            .or_else(|| Est::ScaleFloorOne(DISTINCT_FACTOR).apply(scan.est_rows));
+        let group = qualify.expr(&group.expr);
+        let sum_argument = qualify.expr(sum_argument);
+        scan.task = "cop[tikv]";
+        let act_rows = scan.act_rows.clone();
+        let key_ndv_ratio = scan.key_ndv_ratio;
+        let mut partial = PlanNode::new(
+            "HashAgg",
+            estimate,
+            String::new(),
+            format!("group by:{group}, funcs:sum({sum_argument})->Column#0"),
+        );
+        partial.task = "cop[tikv]";
+        partial.act_rows = act_rows.clone();
+        partial.children.push(scan);
+
+        let mut reader = PlanNode::new(
+            "TableReader",
+            estimate,
+            String::new(),
+            "data:HashAgg".to_owned(),
+        );
+        reader.key_ndv_ratio = key_ndv_ratio;
+        reader.act_rows = act_rows;
+        reader.children.push(partial);
+        self.stack.push(reader);
+        true
+    }
+
+    /// Moves an ordered grouped partial StreamAgg below its reader. The
+    /// executor negotiated the same partial package with the scan before this
+    /// trace mutation, so the root/cop boundary describes work TiKV actually
+    /// performs.
+    pub(crate) fn partial_grouped_stream_agg(
+        &mut self,
+        select: &tidb_ast::SelectStmt,
+        qualify: &Qualifier<'_>,
+    ) -> bool {
+        let Some(mut scan) = self.stack.pop() else {
+            return false;
+        };
+        let reader = match scan.name {
+            "TableFullScan" | "TableRangeScan" => "TableReader",
+            "IndexFullScan" | "IndexRangeScan" => "IndexReader",
+            _ => {
+                self.stack.push(scan);
+                return false;
+            }
+        };
+        let estimate = Est::Scale(DISTINCT_FACTOR).apply(scan.est_rows);
+        scan.task = "cop[tikv]";
+        let act_rows = scan.act_rows.clone();
+        let key_ndv_ratio = scan.key_ndv_ratio;
+        let mut partial = PlanNode::new(
+            "StreamAgg",
+            estimate,
+            String::new(),
+            grouped_aggregate_info(select, qualify, false, false),
+        );
+        partial.task = "cop[tikv]";
+        partial.act_rows = act_rows.clone();
+        partial.children.push(scan);
+
+        let mut reader_node = PlanNode::new(
+            reader,
+            estimate,
+            String::new(),
+            if reader == "TableReader" {
+                "data:StreamAgg".to_owned()
+            } else {
+                "index:StreamAgg".to_owned()
+            },
+        );
+        reader_node.key_ndv_ratio = key_ndv_ratio;
+        reader_node.act_rows = act_rows;
+        reader_node.children.push(partial);
+        self.stack.push(reader_node);
+        true
+    }
+
+    /// Root merger for [`Self::partial_grouped_stream_agg`]. Go keeps the
+    /// original function names in EXPLAIN even though final-mode COUNT adds
+    /// the partial count columns internally.
+    pub(crate) fn final_grouped_stream_agg(
+        &mut self,
+        select: &tidb_ast::SelectStmt,
+        qualify: &Qualifier<'_>,
+    ) {
+        self.wrap(
+            "StreamAgg",
+            Est::Inherit,
+            grouped_aggregate_info(select, qualify, true, true),
+        );
+    }
+
+    /// The root final stage for [`Self::partial_grouped_sum`].
+    pub(crate) fn final_grouped_sum_hash_agg(
+        &mut self,
+        select: &tidb_ast::SelectStmt,
+        qualify: &Qualifier<'_>,
+    ) {
+        let Some(group) = select.group_by.first() else {
+            self.refuse("grouped SUM final stage has no group key");
+            return;
+        };
+        let group = qualify.expr(&group.expr);
+        self.wrap(
+            "HashAgg",
+            Est::Inherit,
+            format!(
+                "group by:{group}, funcs:sum(Column#0)->Column#1, funcs:firstrow({group})->{group}"
+            ),
+        );
+    }
+
+    /// The select-order projection above a grouped SUM final stage.
+    pub(crate) fn grouped_sum_projection(
+        &mut self,
+        select: &tidb_ast::SelectStmt,
+        qualify: &Qualifier<'_>,
+    ) {
+        let Some(group) = select.group_by.first() else {
+            self.refuse("grouped SUM projection has no group key");
+            return;
+        };
+        self.wrap(
+            "Projection",
+            Est::Inherit,
+            format!("{}, Column#1", qualify.expr(&group.expr)),
+        );
+    }
+
     /// Rewrites the inner side's scan node into the range read an index join
     /// decided per outer key: Go's `IndexRangeScan`/`TableRangeScan` with
     /// `range: decided by [...]` instead of a literal interval.
@@ -706,12 +1175,16 @@ impl PlanTrace {
         access: String,
         range_info: &str,
         index: bool,
+        filters: &[String],
+        filter_selectivity: f64,
     ) -> Result<(), ()> {
         let depth = self.stack.len();
         if depth < 2 {
             return Err(());
         }
         let at = if lookup_is_left { depth - 2 } else { depth - 1 };
+        let outer_at = if lookup_is_left { depth - 1 } else { depth - 2 };
+        let outer_rows = self.stack[outer_at].est_rows;
         let node = &mut self.stack[at];
         // The decision only ever names a bare base table, so its child
         // subtree is the single scan node `build_from` pushed for it. Anything
@@ -738,6 +1211,88 @@ impl PlanTrace {
         };
         node.access = access;
         node.info = format!("range: decided by {range_info}, keep order:false{pseudo}");
+
+        // One dynamic range is opened per outer row. Go derives the table
+        // scan's cardinality from that probe population, not from the inner
+        // table's earlier constant-only access path.
+        node.est_rows = outer_rows.or(node.est_rows);
+
+        // Rebuild the two physical reader boundaries now that the strategy is
+        // committed. Both leaves were built before the join family was known,
+        // so they still sit on the stack as bare scans at this point.
+        let mut right = self.stack.pop().ok_or(())?;
+        let mut left = self.stack.pop().ok_or(())?;
+        let inner = if lookup_is_left {
+            &mut left
+        } else {
+            &mut right
+        };
+        if !filters.is_empty() {
+            let estimate = inner
+                .est_rows
+                .map(|rows| rows * filter_selectivity.clamp(0.0, 1.0));
+            let mut selection =
+                PlanNode::new("Selection", estimate, String::new(), filters.join(", "));
+            selection.task = "cop[tikv]";
+            selection.act_rows = inner.act_rows.clone();
+            selection.key_ndv_ratio = inner.key_ndv_ratio;
+            inner.task = "cop[tikv]";
+            selection.children.push(std::mem::replace(
+                inner,
+                PlanNode::new("TableDual", Some(0.0), String::new(), String::new()),
+            ));
+            *inner = selection;
+        }
+
+        fn reader(mut child: PlanNode, forced_index: Option<bool>) -> PlanNode {
+            let reader = forced_index.map_or_else(
+                || match child.name {
+                    "IndexFullScan" | "IndexRangeScan" => "IndexReader",
+                    _ => "TableReader",
+                },
+                |index| if index { "IndexReader" } else { "TableReader" },
+            );
+            fn mark_cop(node: &mut PlanNode) {
+                node.task = "cop[tikv]";
+                for child in &mut node.children {
+                    mark_cop(child);
+                }
+            }
+            mark_cop(&mut child);
+            let estimate = child.est_rows;
+            let act_rows = child.act_rows.clone();
+            let key_ndv_ratio = child.key_ndv_ratio;
+            let info = if reader == "IndexReader" {
+                format!("index:{}", child.name)
+            } else {
+                format!("data:{}", child.name)
+            };
+            let mut reader_node = PlanNode::new(reader, estimate, String::new(), info);
+            reader_node.act_rows = act_rows;
+            reader_node.key_ndv_ratio = key_ndv_ratio;
+            reader_node.children.push(child);
+            reader_node
+        }
+
+        if lookup_is_left {
+            left = reader(left, Some(index));
+            if matches!(
+                right.name,
+                "TableFullScan" | "TableRangeScan" | "IndexFullScan" | "IndexRangeScan"
+            ) {
+                right = reader(right, None);
+            }
+        } else {
+            right = reader(right, Some(index));
+            if matches!(
+                left.name,
+                "TableFullScan" | "TableRangeScan" | "IndexFullScan" | "IndexRangeScan"
+            ) {
+                left = reader(left, None);
+            }
+        }
+        self.stack.push(left);
+        self.stack.push(right);
         Ok(())
     }
 
@@ -814,6 +1369,44 @@ impl PlanTrace {
         self.wrap("Selection", est, qualify.expr(predicate));
     }
 
+    /// A Selection whose child projection has eliminated source names. The
+    /// executable expression already contains both the internal column
+    /// offsets and comparison casts Go prints, so EXPLAIN renders that same
+    /// expression instead of reconstructing the written predicate.
+    pub(crate) fn physical_selection(
+        &mut self,
+        predicate: &Expression,
+        written: &tidb_ast::Expr,
+        stats_selectivity: Option<f64>,
+    ) -> bool {
+        let Some(info) = physical_expression_text(predicate) else {
+            return false;
+        };
+        let est = if self.consumed {
+            Est::Inherit
+        } else {
+            Est::Scale(stats_selectivity.unwrap_or_else(|| pseudo_selectivity(written)))
+        };
+        self.wrap("Selection", est, info);
+        true
+    }
+
+    /// A residual `Selection` above an access range. The range estimate has
+    /// priced only its access conditions, so this predicate must reduce that
+    /// estimate once, with Go's one-row physical-plan floor.
+    pub(crate) fn residual_selection(
+        &mut self,
+        predicate: &tidb_ast::Expr,
+        qualify: &Qualifier<'_>,
+        stats_selectivity: Option<f64>,
+    ) {
+        self.wrap(
+            "Selection",
+            Est::ScaleFloorOne(stats_selectivity.unwrap_or_else(|| pseudo_selectivity(predicate))),
+            qualify.expr(predicate),
+        );
+    }
+
     /// The one-phase aggregate this tier builds for `GROUP BY` / an
     /// aggregate select field.
     pub(crate) fn hash_agg(&mut self, select: &tidb_ast::SelectStmt, qualify: &Qualifier<'_>) {
@@ -847,6 +1440,191 @@ impl PlanTrace {
             Est::Scale(DISTINCT_FACTOR)
         };
         self.wrap("HashAgg", est, info);
+    }
+
+    /// A one-phase grouped StreamAgg whose child already delivers the written
+    /// group-key order.
+    pub(crate) fn grouped_stream_agg(
+        &mut self,
+        select: &tidb_ast::SelectStmt,
+        qualify: &Qualifier<'_>,
+        input_projection: bool,
+        logical_rows: Option<f64>,
+        physical_info: Option<&str>,
+    ) {
+        self.wrap(
+            "StreamAgg",
+            logical_rows.map_or_else(
+                || {
+                    if input_projection {
+                        Est::Inherit
+                    } else {
+                        Est::Scale(DISTINCT_FACTOR)
+                    }
+                },
+                Est::Fixed,
+            ),
+            physical_info.map_or_else(
+                || grouped_aggregate_info(select, qualify, false, true),
+                str::to_owned,
+            ),
+        );
+    }
+
+    /// Restores the written select-field order above a top-level physical
+    /// grouped StreamAgg whose aggregate results precede its FIRST_ROW group
+    /// carriers. A derived table can eliminate this projection and map its
+    /// relation directly onto the same aggregation schema.
+    pub(crate) fn grouped_stream_output_projection(
+        &mut self,
+        select: &tidb_ast::SelectStmt,
+        qualify: &Qualifier<'_>,
+    ) {
+        let mut next_aggregate = 0;
+        let fields = select
+            .fields
+            .fields()
+            .iter()
+            .filter_map(|field| match field {
+                tidb_ast::SelectField::Expr {
+                    expr: tidb_ast::Expr::Aggregate { .. },
+                    ..
+                } => {
+                    let column = format!("Column#{next_aggregate}");
+                    next_aggregate += 1;
+                    Some(column)
+                }
+                tidb_ast::SelectField::Expr { expr, .. } => Some(qualify.expr(expr)),
+                tidb_ast::SelectField::Wildcard(_) => None,
+            })
+            .collect::<Vec<_>>();
+        self.wrap("Projection", Est::Inherit, fields.join(", "));
+    }
+
+    /// The compact projection Go injects between a complex ordered source and
+    /// its grouped StreamAgg: group keys first, then unique aggregate inputs.
+    pub(crate) fn grouped_stream_input_projection(
+        &mut self,
+        expressions: &[String],
+        injected_for_scalar: bool,
+    ) {
+        let info = if injected_for_scalar {
+            expressions
+                .iter()
+                .enumerate()
+                .map(|(index, expression)| format!("{expression}->Column#{index}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        } else {
+            expressions.join(", ")
+        };
+        self.wrap("Projection", Est::Inherit, info);
+    }
+
+    /// The root projection that evaluates scalar expressions over aggregate
+    /// result columns. Go lowers each aggregate call to a `Column#N` first;
+    /// only the remaining arithmetic/cast/function expression lives here.
+    pub(crate) fn aggregate_projection(
+        &mut self,
+        select: &tidb_ast::SelectStmt,
+        qualify: &Qualifier<'_>,
+    ) {
+        let mut next_aggregate = 0;
+        let fields = select
+            .fields
+            .fields()
+            .iter()
+            .filter_map(|field| match field {
+                tidb_ast::SelectField::Expr { expr, .. }
+                    if !matches!(expr, tidb_ast::Expr::Aggregate { .. }) =>
+                {
+                    Some(post_aggregate_expr(expr, qualify, &mut next_aggregate))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        if !fields.is_empty() {
+            self.wrap("Projection", Est::Inherit, fields.join(", "));
+        }
+    }
+
+    /// The root projection Go inserts before an integer `SUM`, converting the
+    /// integer argument to the exact DECIMAL input domain consumed by SUM.
+    pub(crate) fn sum_cast_projection(
+        &mut self,
+        select: &tidb_ast::SelectStmt,
+        qualify: &Qualifier<'_>,
+        precision: i64,
+    ) {
+        let argument = select.fields.fields().iter().find_map(|field| match field {
+            tidb_ast::SelectField::Expr {
+                expr: tidb_ast::Expr::Aggregate { name, args, .. },
+                ..
+            } if name.eq_ignore_ascii_case("SUM") => args.first(),
+            _ => None,
+        });
+        let Some(argument) = argument else {
+            self.refuse("integer SUM projection has no source argument");
+            return;
+        };
+        self.wrap(
+            "Projection",
+            Est::Inherit,
+            format!(
+                "cast({}, decimal({precision},0) BINARY)->Column#0",
+                qualify.expr(argument)
+            ),
+        );
+    }
+
+    /// A global root StreamAgg over the single aggregate selected by the
+    /// Sysbench range plans. `projected` names the cast projection's output;
+    /// COUNT reads its source column directly.
+    pub(crate) fn stream_agg(
+        &mut self,
+        select: &tidb_ast::SelectStmt,
+        qualify: &Qualifier<'_>,
+        projected: bool,
+    ) {
+        let aggregate = select.fields.fields().iter().find_map(|field| match field {
+            tidb_ast::SelectField::Expr {
+                expr:
+                    tidb_ast::Expr::Aggregate {
+                        name,
+                        distinct,
+                        args,
+                    },
+                ..
+            } => Some((name, *distinct, args.first())),
+            _ => None,
+        });
+        let Some((name, distinct, argument)) = aggregate else {
+            self.refuse("stream aggregation has no aggregate expression");
+            return;
+        };
+        let input = if projected {
+            "Column#0".to_owned()
+        } else {
+            fn without_parens(mut expr: &tidb_ast::Expr) -> &tidb_ast::Expr {
+                while let tidb_ast::Expr::Paren(inner) = expr {
+                    expr = inner;
+                }
+                expr
+            }
+            argument.map_or_else(
+                || "1".to_owned(),
+                |argument| qualify.expr(without_parens(argument)),
+            )
+        };
+        self.wrap(
+            "StreamAgg",
+            Est::Fixed(1.0),
+            format!(
+                "funcs:{}({}{input})->Column#0",
+                name.to_ascii_lowercase(),
+                if distinct { "distinct " } else { "" },
+            ),
+        );
     }
 
     /// Go `util.ExplainByItems`: the by-item list a `Sort` or a `TopN` prints.
@@ -893,16 +1671,268 @@ impl PlanTrace {
         );
     }
 
+    /// Pushes an already-accepted ordered scan cap into TiKV and leaves the
+    /// corresponding reader boundary above it. The root Limit is recorded
+    /// separately by [`Self::limit`], exactly as Go keeps both stages.
+    pub(crate) fn pushed_limit_reader(&mut self, offset: u64, count: u64) -> bool {
+        let Some(mut scan) = self.stack.pop() else {
+            return false;
+        };
+        if !matches!(scan.name, "TableFullScan" | "TableRangeScan") {
+            self.stack.push(scan);
+            return false;
+        }
+        scan.task = "cop[tikv]";
+        let estimate = Est::CapAt(count as f64).apply(scan.est_rows);
+        let act_rows = scan.act_rows.clone();
+        let key_ndv_ratio = scan.key_ndv_ratio;
+        let mut partial = PlanNode::new(
+            "Limit",
+            estimate,
+            String::new(),
+            format!("offset:{offset}, count:{count}"),
+        );
+        partial.task = "cop[tikv]";
+        partial.act_rows = act_rows.clone();
+        partial.children.push(scan);
+
+        let mut reader = PlanNode::new(
+            "TableReader",
+            estimate,
+            String::new(),
+            "data:Limit".to_owned(),
+        );
+        reader.key_ndv_ratio = key_ndv_ratio;
+        reader.act_rows = act_rows;
+        reader.children.push(partial);
+        self.stack.push(reader);
+        true
+    }
+
+    /// Places a bounded sort after an optional pushed Selection in TiKV and
+    /// returns its rows through a TableReader. The root TopN remains above
+    /// this reader and applies the SQL offset/count again, as in Go TiDB.
+    pub(crate) fn pushed_topn_reader(
+        &mut self,
+        order_by: &[tidb_ast::OrderItem],
+        qualify: &Qualifier<'_>,
+        count: u64,
+    ) -> bool {
+        let Some(mut input) = self.stack.pop() else {
+            return false;
+        };
+        let valid = if matches!(input.name, "TableFullScan" | "TableRangeScan") {
+            input.task = "cop[tikv]";
+            true
+        } else if input.name == "Selection" && input.children.len() == 1 {
+            let scan = &mut input.children[0];
+            if matches!(scan.name, "TableFullScan" | "TableRangeScan") {
+                scan.task = "cop[tikv]";
+                input.task = "cop[tikv]";
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        if !valid {
+            self.stack.push(input);
+            return false;
+        }
+        let estimate = Est::CapAt(count as f64).apply(input.est_rows);
+        let act_rows = input.act_rows.clone();
+        let key_ndv_ratio = input.key_ndv_ratio;
+        let mut partial = PlanNode::new(
+            "TopN",
+            estimate,
+            String::new(),
+            format!(
+                "{}, offset:0, count:{count}",
+                Self::by_items_text(order_by, qualify)
+            ),
+        );
+        partial.task = "cop[tikv]";
+        partial.act_rows = act_rows.clone();
+        partial.children.push(input);
+
+        let mut reader = PlanNode::new(
+            "TableReader",
+            estimate,
+            String::new(),
+            "data:TopN".to_owned(),
+        );
+        reader.key_ndv_ratio = key_ndv_ratio;
+        reader.act_rows = act_rows;
+        reader.children.push(partial);
+        self.stack.push(reader);
+        true
+    }
+
+    /// Go's locking-read marker. Cluster sessions collect the raw keys read
+    /// by the executor and issue the matching pessimistic lock after the
+    /// statement attempt, so this wrapper records that real transaction seam.
+    pub(crate) fn select_lock(&mut self) {
+        self.wrap("SelectLock", Est::Inherit, "for update 0".to_owned());
+    }
+
     /// The projection the driver always builds (divergence 3).
     pub(crate) fn projection(&mut self, fields: &[tidb_ast::SelectField], qualify: &Qualifier<'_>) {
-        self.wrap("Projection", Est::Inherit, field_list(fields, qualify));
+        self.projection_at_rows(fields, qualify, None);
+    }
+
+    /// A projection whose logical data-source estimate differs from the
+    /// physical scan estimate raised by `adjustCountAfterAccess`.
+    pub(crate) fn projection_at_rows(
+        &mut self,
+        fields: &[tidb_ast::SelectField],
+        qualify: &Qualifier<'_>,
+        rows: Option<f64>,
+    ) {
+        self.wrap(
+            "Projection",
+            rows.map_or(Est::Inherit, Est::Fixed),
+            field_list(fields, qualify),
+        );
+    }
+
+    /// Records a simple projection executed by the TiKV request and the
+    /// TableReader boundary that returns it to the root task. The source has
+    /// already accepted the matching kept-column list, so these nodes
+    /// describe the pushed execution rather than changing EXPLAIN alone.
+    pub(crate) fn cop_table_projection(
+        &mut self,
+        fields: &[tidb_ast::SelectField],
+        qualify: &Qualifier<'_>,
+        logical_rows: Option<f64>,
+    ) {
+        let Some(mut scan) = self.stack.pop() else {
+            return;
+        };
+        scan.task = "cop[tikv]";
+        let estimate = logical_rows.or(scan.est_rows);
+        let key_ndv_ratio = scan.key_ndv_ratio;
+        let act_rows = scan.act_rows.clone();
+
+        let mut projection = PlanNode::new(
+            "Projection",
+            estimate,
+            String::new(),
+            field_list(fields, qualify),
+        );
+        projection.task = "cop[tikv]";
+        projection.key_ndv_ratio = key_ndv_ratio;
+        projection.act_rows = act_rows.clone();
+        projection.children.push(scan);
+
+        let mut reader = PlanNode::new(
+            "TableReader",
+            estimate,
+            String::new(),
+            "data:Projection".to_owned(),
+        );
+        reader.key_ndv_ratio = key_ndv_ratio;
+        reader.act_rows = act_rows;
+        reader.children.push(projection);
+        self.stack.push(reader);
+    }
+
+    /// Places an access-path residual Selection and the scan's accepted
+    /// column projection in the TiKV task, then returns them through a table
+    /// reader. The executor has already pushed the same residual into the
+    /// scan and pruned its output schema before this method is called.
+    pub(crate) fn cop_selection_projection_reader(
+        &mut self,
+        fields: &[tidb_ast::SelectField],
+        qualify: &Qualifier<'_>,
+    ) -> bool {
+        let Some(mut selection) = self.stack.pop() else {
+            return false;
+        };
+        if selection.name != "Selection" || selection.children.len() != 1 {
+            self.stack.push(selection);
+            return false;
+        }
+        let mut scan = selection.children.pop().expect("one Selection child");
+        if !matches!(scan.name, "TableFullScan" | "TableRangeScan") {
+            selection.children.push(scan);
+            self.stack.push(selection);
+            return false;
+        }
+        scan.task = "cop[tikv]";
+        selection.task = "cop[tikv]";
+        selection.children.push(scan);
+        let estimate = selection.est_rows;
+        let act_rows = selection.act_rows.clone();
+        let key_ndv_ratio = selection.key_ndv_ratio;
+
+        let mut projection = PlanNode::new(
+            "Projection",
+            estimate,
+            String::new(),
+            field_list(fields, qualify),
+        );
+        projection.task = "cop[tikv]";
+        projection.key_ndv_ratio = key_ndv_ratio;
+        projection.act_rows = act_rows.clone();
+        projection.children.push(selection);
+
+        let mut reader = PlanNode::new(
+            "TableReader",
+            estimate,
+            String::new(),
+            "data:Projection".to_owned(),
+        );
+        reader.key_ndv_ratio = key_ndv_ratio;
+        reader.act_rows = act_rows;
+        reader.children.push(projection);
+        self.stack.push(reader);
+        true
     }
 
     /// `SELECT DISTINCT`: Go's `buildDistinct` is an aggregation grouping by
     /// every projected column, so it carries the same NDV assumption.
     pub(crate) fn distinct(&mut self, fields: &[tidb_ast::SelectField], qualify: &Qualifier<'_>) {
-        let info = format!("group by:{}, funcs:firstrow", field_list(fields, qualify));
-        self.wrap("HashAgg", Est::Scale(DISTINCT_FACTOR), info);
+        let projected = field_list(fields, qualify);
+        let funcs = fields
+            .iter()
+            .filter_map(|field| match field {
+                tidb_ast::SelectField::Expr { expr, .. } => {
+                    let text = qualify.expr(expr);
+                    Some(format!("firstrow({text})->{text}"))
+                }
+                tidb_ast::SelectField::Wildcard(_) => None,
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let info = format!("group by:{projected}, funcs:{funcs}");
+        self.wrap("HashAgg", Est::ScaleFloorOne(DISTINCT_FACTOR), info);
+    }
+
+    /// The final distinct stage over already-grouped partial keys. Its row
+    /// estimate is the partial NDV, not that NDV multiplied a second time.
+    pub(crate) fn final_distinct(
+        &mut self,
+        fields: &[tidb_ast::SelectField],
+        qualify: &Qualifier<'_>,
+    ) {
+        let projected = field_list(fields, qualify);
+        let funcs = fields
+            .iter()
+            .filter_map(|field| match field {
+                tidb_ast::SelectField::Expr { expr, .. } => {
+                    let text = qualify.expr(expr);
+                    Some(format!("firstrow({text})->{text}"))
+                }
+                tidb_ast::SelectField::Wildcard(_) => None,
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        self.wrap(
+            "HashAgg",
+            Est::Inherit,
+            format!("group by:{projected}, funcs:{funcs}"),
+        );
     }
 
     /// `LIMIT [offset,] count`, which caps the child's estimate as Go's does.
@@ -983,11 +2013,9 @@ impl PlanTrace {
         if let Some(keys) = &merge_keys {
             // `left key:%s, right key:%s` over `ExplainColumnList`, which
             // prints the LEFT child's keys and then the RIGHT child's, each
-            // comma-separated -- not pairwise. The residual `ON` conjuncts
-            // this tier still evaluates are NOT printed as `other cond:`,
-            // because Go moved the USED equal conditions out of that list and
-            // this tier keeps them (see `crate::join`); printing them would
-            // report conditions Go's plan does not carry.
+            // comma-separated -- not pairwise. Equal conditions used as merge
+            // keys are represented by those lists; a non-equality condition
+            // remains visible below as `other cond:`.
             tail.push_str(", left key:");
             tail.push_str(
                 &keys
@@ -1006,9 +2034,8 @@ impl PlanTrace {
             );
         } else if let Some(text) = &index_lookup {
             // Go `PhysicalIndexJoin.explainInfo`: the reader, then the two
-            // key lists, then the equal conditions spelled in full. The
-            // residual `ON` conjuncts this tier still evaluates are not
-            // printed, for the same reason the merge arm does not print them.
+            // key lists, then the equal conditions spelled in full. A
+            // non-equality condition remains visible below as `other cond:`.
             tail.push_str(", inner:");
             tail.push_str(text.reader);
             tail.push_str(", outer key:");
@@ -1029,9 +2056,16 @@ impl PlanTrace {
                     .collect::<Vec<_>>()
                     .join(", "),
             );
-            if !equal.is_empty() {
+            if !text.keys.is_empty() {
                 tail.push_str(", equal cond:");
-                tail.push_str(&equal.join(", "));
+                tail.push_str(
+                    &text
+                        .keys
+                        .iter()
+                        .map(|(outer, inner)| format!("eq({outer}, {inner})"))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                );
             }
         } else {
             if !equal.is_empty() {
@@ -1039,10 +2073,10 @@ impl PlanTrace {
                 tail.push_str(&equal.join(" "));
                 tail.push(']');
             }
-            if !other.is_empty() {
-                tail.push_str(", other cond:");
-                tail.push_str(&other.join(", "));
-            }
+        }
+        if !other.is_empty() {
+            tail.push_str(", other cond:");
+            tail.push_str(&other.join(", "));
         }
         let (Some(mut right), Some(mut left)) = (self.stack.pop(), self.stack.pop()) else {
             return Err(());
@@ -1051,7 +2085,17 @@ impl PlanTrace {
         // (`flat_plan.go`'s `BuildSide`/`ProbeSide`).
         left.label = if build_is_left { "(Build)" } else { "(Probe)" };
         right.label = if build_is_left { "(Probe)" } else { "(Build)" };
-        let est_rows = full_join_row_count(&left, &right, equal.len());
+        let est_rows = index_lookup
+            .as_ref()
+            .filter(|text| text.unique)
+            .and_then(|text| {
+                if text.lookup_is_left {
+                    right.est_rows
+                } else {
+                    left.est_rows
+                }
+            })
+            .or_else(|| full_join_row_count(&left, &right, equal.len()));
         // Which index-join executor this site's row names, decided by the one
         // cost term that differs between them (`index_join_operator`).
         //
@@ -1069,7 +2113,9 @@ impl PlanTrace {
             let probe_rows_one = est_rows
                 .zip(build_rows)
                 .map(|(equal_cond_out, rows)| equal_cond_out / rows);
-            index_join_operator(build_rows, probe_rows_one, text, equal.len())
+            text.forced_name.unwrap_or_else(|| {
+                index_join_operator(build_rows, probe_rows_one, text, equal.len())
+            })
         });
         let children = if build_is_left {
             vec![left, right]
@@ -1094,6 +2140,7 @@ impl PlanTrace {
             est_rows,
             access: String::new(),
             info,
+            task: "root",
             // `explainJoinLeftSide` names the LEFT child's operator, and only
             // for an OUTER join. The name carries its own id in `format='row'`,
             // which is not assigned yet, so the renderer splices it in.
@@ -1124,7 +2171,10 @@ impl PlanTrace {
         // Of the two errors this is the smaller -- for
         // `t1.a = t2.a and t1.b > 5` it prints 12500.00 against TiDB's
         // 4162.50, where charging the equality twice would print 4.16.
-        self.consumed |= !pushed.is_empty();
+        // A join is a new predicate boundary. Access conditions consumed by
+        // either child must not suppress selectivity of a different residual
+        // predicate above the joined rows.
+        self.consumed = !pushed.is_empty();
         Ok(())
     }
 
@@ -1180,6 +2230,137 @@ fn field_list(fields: &[tidb_ast::SelectField], qualify: &Qualifier<'_>) -> Stri
     rendered.join(", ")
 }
 
+/// The physical-expression subset currently needed after derived aggregate
+/// projection elimination. Unsupported nodes are refused by the caller; a
+/// fallback to AST text would describe a different expression than the one
+/// the Selection executor evaluates.
+fn physical_expression_text(expression: &Expression) -> Option<String> {
+    match expression {
+        Expression::Column(column) => Some(format!("Column#{}", column.index)),
+        Expression::ScalarFunction(function) => {
+            let arguments = function
+                .args
+                .iter()
+                .map(physical_expression_text)
+                .collect::<Option<Vec<_>>>()?;
+            if function.func_name.lowercase() == "cast_decimal" {
+                if arguments.len() != 1 {
+                    return None;
+                }
+                let result_type = function.ret_type.as_ref()?;
+                Some(format!(
+                    "cast({}, decimal({},{}) BINARY)",
+                    arguments[0],
+                    result_type.flen(),
+                    result_type.decimal()
+                ))
+            } else {
+                Some(format!(
+                    "{}({})",
+                    function.func_name.lowercase(),
+                    arguments.join(", ")
+                ))
+            }
+        }
+        Expression::Constant(_) | Expression::CorrelatedColumn(_) => None,
+    }
+}
+
+fn aggregate_exprs(expr: &tidb_ast::Expr) -> Vec<tidb_ast::Expr> {
+    struct Collect(Vec<tidb_ast::Expr>);
+    impl tidb_ast::Visitor for Collect {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            if let Some(expr @ tidb_ast::Expr::Aggregate { .. }) =
+                node.downcast_ref::<tidb_ast::Expr>()
+            {
+                self.0.push(expr.clone());
+            }
+            false
+        }
+
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            true
+        }
+    }
+
+    let mut collect = Collect(Vec::new());
+    let mut owned = expr.clone();
+    tidb_ast::Visitable::accept(&mut owned, &mut collect);
+    collect.0
+}
+
+fn grouped_aggregate_info(
+    select: &tidb_ast::SelectStmt,
+    qualify: &Qualifier<'_>,
+    partial_inputs: bool,
+    include_first_row: bool,
+) -> String {
+    let groups = select
+        .group_by
+        .iter()
+        .map(|item| qualify.expr(&item.expr))
+        .collect::<Vec<_>>();
+    let mut functions = Vec::new();
+    let mut aggregate_index = 0;
+    for field in select.fields.fields() {
+        let tidb_ast::SelectField::Expr { expr, .. } = field else {
+            continue;
+        };
+        for aggregate in aggregate_exprs(expr) {
+            let tidb_ast::Expr::Aggregate {
+                name,
+                distinct,
+                args,
+            } = aggregate
+            else {
+                unreachable!("aggregate_exprs returns only aggregates");
+            };
+            let input = if partial_inputs {
+                format!("Column#{aggregate_index}")
+            } else {
+                args.first()
+                    .map_or_else(|| "1".to_owned(), |arg| qualify.expr(arg))
+            };
+            let name = name.to_ascii_lowercase();
+            functions.push(format!(
+                "funcs:{name}({}{input})->Column#{aggregate_index}",
+                if distinct { "distinct " } else { "" },
+            ));
+            aggregate_index += 1;
+        }
+    }
+    if include_first_row {
+        for field in select.fields.fields() {
+            let tidb_ast::SelectField::Expr { expr, .. } = field else {
+                continue;
+            };
+            if let tidb_ast::Expr::Column(path) = expr {
+                let text = qualify.expr(expr);
+                if select.group_by.iter().any(
+                    |item| matches!(&item.expr, tidb_ast::Expr::Column(group) if group == path),
+                ) {
+                    functions.push(format!("funcs:firstrow({text})->{text}"));
+                }
+            }
+        }
+    }
+    format!("group by:{}, {}", groups.join(", "), functions.join(", "))
+}
+
+fn post_aggregate_expr(
+    expr: &tidb_ast::Expr,
+    qualify: &Qualifier<'_>,
+    next_aggregate: &mut usize,
+) -> String {
+    let mut rendered = qualify.expr(expr);
+    for aggregate in aggregate_exprs(expr) {
+        let aggregate_text = qualify.expr(&aggregate);
+        rendered = rendered.replacen(&aggregate_text, &format!("Column#{}", *next_aggregate), 1);
+        *next_aggregate += 1;
+    }
+    format!("{rendered}->Column#{}", *next_aggregate)
+}
+
 /// Counts the rows its child really produced, without touching them.
 ///
 /// This is how `EXPLAIN ANALYZE`'s `actRows` is measured: the trace wraps
@@ -1232,6 +2413,10 @@ impl Executor for CountExec {
         self.child.table_access()
     }
 
+    fn consumes_where(&self) -> bool {
+        self.child.consumes_where()
+    }
+
     /// The same reason, for the same reason: Go's `aggExecutorTreeInputEmpty`
     /// walks THROUGH a single-child operator, and a meter is exactly that.
     fn agg_tree_input_empty(&self) -> bool {
@@ -1246,6 +2431,30 @@ fn handle_text(handle: &TableHandle) -> String {
         // datums, which needs the handle codec this printer does not carry.
         TableHandle::Common(_) => "<common handle>".to_owned(),
     }
+}
+
+/// Go identifies a common-handle point access by its clustered primary
+/// index. The encoded handle bytes are deliberately absent from operator
+/// info; unlike integer handles, Go does not render them there.
+fn common_handle_access(visible: &str, table: &KvTable, partitions: &[String]) -> Option<String> {
+    let offsets = table.common_handle_offsets();
+    if offsets.is_empty() {
+        return None;
+    }
+    let columns = offsets
+        .iter()
+        .map(|offset| {
+            table
+                .columns
+                .get(*offset)
+                .map(|column| column.name.as_str())
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some(format!(
+        "table:{visible}{}, clustered index:PRIMARY({})",
+        partition_object(partitions),
+        columns.join(", ")
+    ))
 }
 
 /// Go's range notation: a square bracket includes the bound, a parenthesis
@@ -1474,6 +2683,11 @@ pub(crate) struct IndexJoinText {
     /// built over the outer side for `IndexHashJoin` and over the inner one
     /// for `IndexJoin`.
     pub(crate) lookup_is_left: bool,
+    /// Whether one complete probe tuple can return at most one inner row.
+    pub(crate) unique: bool,
+    /// The exact index-family executor a statement hint forced, or `None`
+    /// when Go's coster chooses between the lookup variants.
+    pub(crate) forced_name: Option<&'static str>,
     /// `getAvgRowSize(build.StatsInfo(), build.Schema().Columns)` for the
     /// OUTER side, and the same for the INNER one. Computed where the two
     /// sides' column types are known (`driver::from::build_join`), because a
@@ -1582,6 +2796,10 @@ fn index_join_operator(
 }
 
 pub(crate) fn collect_and<'a>(expr: &'a tidb_ast::Expr, out: &mut Vec<&'a tidb_ast::Expr>) {
+    if let tidb_ast::Expr::Paren(inner) = expr {
+        collect_and(inner, out);
+        return;
+    }
     if let tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicAnd, lhs, rhs) = expr {
         collect_and(lhs, out);
         collect_and(rhs, out);
@@ -1601,6 +2819,7 @@ pub(crate) struct Qualifier<'a> {
 impl Qualifier<'_> {
     pub(crate) fn expr(&self, expr: &tidb_ast::Expr) -> String {
         match expr {
+            tidb_ast::Expr::Paren(inner) => self.expr(inner),
             tidb_ast::Expr::Column(path) => self.column(path),
             tidb_ast::Expr::Int(text) => text.clone(),
             tidb_ast::Expr::Decimal(text) => text.clone(),
@@ -1612,6 +2831,22 @@ impl Qualifier<'_> {
                 // rather than mislabelled with an invented function name.
                 None => expr.restore(),
             },
+            tidb_ast::Expr::Unary(
+                tidb_ast::UnaryOp::Not | tidb_ast::UnaryOp::NotKeyword,
+                inner,
+            ) => format!("not({})", self.expr(inner)),
+            tidb_ast::Expr::Is {
+                expr,
+                target: tidb_ast::IsTarget::Null,
+                not,
+            } => {
+                let is_null = format!("isnull({})", self.expr(expr));
+                if *not {
+                    format!("not({is_null})")
+                } else {
+                    is_null
+                }
+            }
             tidb_ast::Expr::Aggregate {
                 name,
                 distinct,
@@ -1684,6 +2919,8 @@ mod tests {
             reader: "IndexReader",
             keys: vec![("a".to_owned(), "b".to_owned())],
             lookup_is_left: false,
+            unique: false,
+            forced_name: None,
             outer_row_size,
             inner_row_size,
         }

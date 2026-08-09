@@ -166,6 +166,7 @@
 //! [`SessionTransaction`]: tidb_exec::cluster_table_storage::SessionTransaction
 
 use std::cell::Cell;
+use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -177,10 +178,13 @@ use tidb_exec::real_tikv_ddl::prepare_cluster_ddl_with_context;
 use tidb_exec::stats_watch::SharedStats;
 use tidb_executor::access_path::StatementReadShape;
 use tidb_executor::cluster_storage::{
-    BufferImage, ClusterSnapshot, ClusterTableStorage, MutationBuffer, SwappableSnapshot,
+    BufferImage, ClusterSnapshot, ClusterTableStorage, MutationBuffer, StatementReadKeys,
+    SwappableSnapshot,
 };
 use tidb_executor::remote_scan::PushdownScanner;
+use tidb_planner::read_only_scan::ReadLockWait;
 use tidb_planner::transaction_control::{classify_transaction_control, TransactionControl};
+use tidb_planner::txn_mode::SessionTxnMode;
 use tidb_session::privilege::PrivilegeRegistry;
 use tidb_session::process::ProcessRegistry;
 use tidb_session::{GlobalSysvars, Session, StmtKind, StmtOutput, StmtResult, StoredStateChange};
@@ -206,6 +210,9 @@ const ER_TABLEACCESS_DENIED_ERROR: u16 = 1142;
 /// Go `kv.ErrWriteConflict`, the one cause an autocommit statement is replayed
 /// for.
 const ERR_WRITE_CONFLICT: u16 = tidb_exec::pessimistic_lock_error::ERR_WRITE_CONFLICT;
+/// Go `kv.ErrRegionUnavailable`, which is safe to replay after refreshing the
+/// route to the affected region.
+const ERR_REGION_UNAVAILABLE: u16 = tidb_exec::pessimistic_lock_error::ERR_REGION_UNAVAILABLE;
 
 /// How many times an autocommit statement that lost the race is run again
 /// before the conflict reaches the client.
@@ -236,8 +243,8 @@ const RETRY_BACK_OFF_CAP_MS: u32 = 100;
 /// `retryCnt` before the sleep -- so the first wait is drawn from `[0, 2)ms`.
 ///
 /// This is also what bounds a spinning retry in time as well as in count: even
-/// a statement that loses all ten races sleeps a capped amount rather than
-/// hammering the conflicting key.
+/// a statement that repeatedly loses races sleeps a capped amount rather
+/// than hammering the conflicting key.
 fn back_off(attempts: u32) {
     std::thread::sleep(Duration::from_millis(u64::from(jitter_below(
         back_off_upper_ms(attempts),
@@ -324,6 +331,22 @@ enum StatementRoute {
     /// One `ANALYZE TABLE`, per table it named.
     Analyze(Vec<AnalyzeStatement>),
 }
+
+#[derive(Clone, Copy)]
+enum StatementLock {
+    None,
+    WrittenKeys,
+    ReadKeys(ReadLockWait),
+}
+
+enum StatementAttempt<T> {
+    Complete(T),
+    RetryPessimistic(tidb_exec::pessimistic_lock_error::LockSqlError),
+}
+
+/// Go's default `pessimistic-txn.max-retry-count`
+/// (`pkg/config/config.go::DefaultPessimisticTxn`).
+const PESSIMISTIC_STATEMENT_RETRY_LIMIT: u32 = 256;
 
 /// Opens one cluster-backed wide-SQL [`Session`] per authenticated connection.
 pub struct ClusterSessionFactory {
@@ -469,6 +492,7 @@ impl QuerySessionFactory for ClusterSessionFactory {
         let buffer = MutationBuffer::new();
         let handle: Arc<Mutex<dyn ClusterSnapshot>> = Arc::clone(&slot) as _;
         let mut storage = ClusterTableStorage::new(buffer.clone(), handle);
+        let read_keys = storage.read_keys();
         if let Some(scanner) = self.cop_scans.as_ref() {
             storage = storage.with_remote_scanner(Arc::clone(scanner));
         }
@@ -508,6 +532,7 @@ impl QuerySessionFactory for ClusterSessionFactory {
             buffer,
             slot,
             storage,
+            read_keys,
             transactions: Arc::clone(&self.transactions),
             ddl: Arc::clone(&self.ddl),
             accounts: Arc::clone(&self.accounts),
@@ -537,6 +562,8 @@ pub struct ClusterServerSession {
     /// connection's catalog can be rebuilt after a DDL without disturbing the
     /// snapshot slot or the staged writes.
     storage: ClusterTableStorage,
+    /// Raw keys consumed by a locking read in the current statement.
+    read_keys: StatementReadKeys,
     transactions: Arc<dyn ClusterTransactions>,
     /// The route a stored-schema change takes; see [`ClusterDdl`].
     ddl: Arc<dyn ClusterDdl>,
@@ -625,51 +652,35 @@ impl ClusterServerSession {
     fn with_statement<T>(
         &mut self,
         shape: StatementReadShape,
+        lock: StatementLock,
         run: impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
     ) -> Result<T, SqlQueryError> {
         self.rebuild_catalog_if_stale();
         self.begin_if_autocommit_off()?;
-        self.with_bound_statement(shape, run)
-    }
-
-    /// [`Self::with_statement`] for work the CLIENT did not ask to run: the
-    /// PREPARE probe, which executes a query only to learn its result columns.
-    ///
-    /// The one thing it must not do is open the transaction `autocommit = 0`
-    /// implies. Go's `PrepareStmt` calls `PrepareTxnCtx` too
-    /// (`pkg/session/session.go:3171`), but with a nil statement and through
-    /// `EnterNewTxnBeforeStmt`, which leaves the transaction *pending*: no
-    /// timestamp is spent and the first statement that really reads is what
-    /// takes one. Captured: `@@tidb_current_ts` is `0` after a PREPARE under
-    /// `autocommit = 0`, and a read issued after another session's commit sees
-    /// the NEW value. Opening it here would instead pin this connection's
-    /// `start_ts` at PREPARE time, so every later statement of the
-    /// transaction, and the conflict check of its commit, would live at a
-    /// timestamp the client never asked for.
-    ///
-    /// An already-open transaction is read through as usual -- a PREPARE
-    /// inside `BEGIN` costs no timestamp either way -- so this differs from
-    /// [`Self::with_statement`] in exactly one thing: it never OPENS one.
-    fn probe_statement<T>(
-        &mut self,
-        shape: StatementReadShape,
-        run: impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
-    ) -> Result<T, SqlQueryError> {
-        self.rebuild_catalog_if_stale();
-        self.with_bound_statement(shape, run)
+        self.with_bound_statement(shape, lock, run)
     }
 
     /// The statement lifecycle proper: savepoint, attempt, replay budget.
     fn with_bound_statement<T>(
         &mut self,
         shape: StatementReadShape,
+        lock: StatementLock,
         mut run: impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
     ) -> Result<T, SqlQueryError> {
         let savepoint = self.buffer.staged();
         let mut retried: u32 = 0;
+        let mut pessimistic_retried: u32 = 0;
         let outcome = loop {
-            match self.attempt_statement(shape, savepoint.clone(), &mut run) {
-                Ok(value) => break Ok(value),
+            match self.attempt_statement(shape, lock, savepoint.clone(), &mut run) {
+                Ok(StatementAttempt::Complete(value)) => break Ok(value),
+                Ok(StatementAttempt::RetryPessimistic(error)) => {
+                    if pessimistic_retried >= PESSIMISTIC_STATEMENT_RETRY_LIMIT {
+                        break Err(SqlQueryError::new(error.code, error.state, error.message));
+                    }
+                    pessimistic_retried += 1;
+                    back_off(pessimistic_retried);
+                    self.session.retry_auto_ids().borrow_mut().begin_attempt();
+                }
                 Err(error) => {
                     if !self.may_retry_autocommit_statement(&error, retried) {
                         break Err(error);
@@ -702,13 +713,22 @@ impl ClusterServerSession {
     fn attempt_statement<T>(
         &mut self,
         shape: StatementReadShape,
+        lock: StatementLock,
         savepoint: BufferImage,
         run: &mut impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
-    ) -> Result<T, SqlQueryError> {
+    ) -> Result<StatementAttempt<T>, SqlQueryError> {
         // The statement's own timestamp, filled in by its first read and read
         // back by its publication after the read handle is gone. Autocommit
         // publishes THERE, not at a fresh one: see `StatementReadTs`.
         let read_ts = transactions::StatementReadTs::default();
+        let pessimistic = self
+            .explicit
+            .as_ref()
+            .is_some_and(|transaction| transaction.mode().is_pessimistic());
+        let collect_read_keys = pessimistic && matches!(lock, StatementLock::ReadKeys(_));
+        if collect_read_keys {
+            self.read_keys.begin();
+        }
         let snapshot = match self.explicit.as_ref() {
             // The transaction's timestamp is already spent; its per-statement
             // read handle costs nothing, so there is nothing to defer.
@@ -732,17 +752,76 @@ impl ClusterServerSession {
         match outcome {
             Ok(value) => {
                 finished?;
+                let keys = match lock {
+                    StatementLock::None => Vec::new(),
+                    StatementLock::ReadKeys(_) if collect_read_keys => self.read_keys.finish(),
+                    StatementLock::ReadKeys(_) => Vec::new(),
+                    StatementLock::WrittenKeys if pessimistic => {
+                        statement_mutation_keys(&savepoint, &self.buffer.staged())
+                    }
+                    StatementLock::WrittenKeys => Vec::new(),
+                };
+                if pessimistic && !keys.is_empty() {
+                    let wait = match lock {
+                        StatementLock::ReadKeys(wait) => wait,
+                        StatementLock::WrittenKeys | StatementLock::None => ReadLockWait::Blocking,
+                    };
+                    match self.lock_explicit_keys(&keys, wait)? {
+                        tidb_exec::multi_statement_transaction::LockKeysOutcome::Acquired => {}
+                        tidb_exec::multi_statement_transaction::LockKeysOutcome::Retry(error) => {
+                            self.buffer.restore(savepoint);
+                            return Ok(StatementAttempt::RetryPessimistic(error));
+                        }
+                    }
+                }
                 self.commit_if_session_left_transaction()?;
                 self.flush_if_autocommit(read_ts.get())?;
-                Ok(value)
+                Ok(StatementAttempt::Complete(value))
             }
             Err(error) => {
+                if collect_read_keys {
+                    self.read_keys.cancel();
+                }
                 // The statement's own writes go; every earlier statement's
                 // writes in this transaction stay.
                 self.buffer.restore(savepoint);
                 Err(error)
             }
         }
+    }
+
+    fn lock_explicit_keys(
+        &mut self,
+        keys: &[Vec<u8>],
+        wait: ReadLockWait,
+    ) -> Result<tidb_exec::multi_statement_transaction::LockKeysOutcome, SqlQueryError> {
+        let result = self
+            .explicit
+            .as_mut()
+            .expect("the pessimistic caller has an explicit transaction")
+            .lock_keys_once(keys, &BTreeSet::new(), wait);
+        match result {
+            Ok(outcome) => Ok(outcome),
+            Err(error) => {
+                let keeps_transaction_open = error.keeps_transaction_open();
+                let sql_error = error.sql_error().clone();
+                if !keeps_transaction_open {
+                    self.explicit.take();
+                    self.buffer.reset();
+                    self.savepoints.clear();
+                }
+                Err(SqlQueryError::new(
+                    sql_error.code,
+                    sql_error.state,
+                    sql_error.message,
+                ))
+            }
+        }
+    }
+
+    fn statement_lock(&self, sql: &str) -> Result<StatementLock, SqlQueryError> {
+        let wait = self.session.statement_lock_wait(sql).map_err(map_error)?;
+        Ok(wait.map_or(StatementLock::None, StatementLock::ReadKeys))
     }
 
     /// Whether the statement that just failed is one Go would have retried
@@ -802,7 +881,7 @@ impl ClusterServerSession {
     /// computed from a stale read would introduce exactly the lost update this
     /// seam exists to prevent.
     fn may_retry_autocommit_statement(&self, error: &SqlQueryError, retried: u32) -> bool {
-        error.code == ERR_WRITE_CONFLICT
+        matches!(error.code, ERR_WRITE_CONFLICT | ERR_REGION_UNAVAILABLE)
             && retried < AUTOCOMMIT_RETRY_LIMIT
             && self.explicit.is_none()
             && !self.session.in_transaction()
@@ -870,7 +949,12 @@ impl ClusterServerSession {
         if self.explicit.is_some() || self.session.is_autocommit() {
             return Ok(());
         }
-        self.explicit = Some(self.transactions.begin().map_err(SqlQueryError::unknown)?);
+        let mode = self.session.configured_txn_mode();
+        self.explicit = Some(
+            self.transactions
+                .begin(mode)
+                .map_err(SqlQueryError::unknown)?,
+        );
         Ok(())
     }
 
@@ -1256,7 +1340,15 @@ impl QuerySession for ClusterServerSession {
             // that its COMMIT will prewrite at.
             Some(TransactionControl::Begin { .. }) => {
                 self.discard_explicit()?;
-                self.explicit = Some(self.transactions.begin().map_err(SqlQueryError::unknown)?);
+                let mode = self
+                    .session
+                    .txn_mode()
+                    .unwrap_or(SessionTxnMode::Pessimistic);
+                self.explicit = Some(
+                    self.transactions
+                        .begin(mode)
+                        .map_err(SqlQueryError::unknown)?,
+                );
             }
             Some(
                 control @ (TransactionControl::Savepoint(_)
@@ -1297,15 +1389,17 @@ impl QuerySession for ClusterServerSession {
         // A write declares nothing. Its read-before-write reaches the snapshot
         // as the same `get` a point-get SELECT issues, which is exactly why the
         // declaration is made from the statement rather than from the read.
-        let affected_rows = self.with_statement(StatementReadShape::Unknown, move |session| {
-            match session.run(&owned).map_err(map_error)? {
+        let affected_rows = self.with_statement(
+            StatementReadShape::Unknown,
+            StatementLock::WrittenKeys,
+            move |session| match session.run(&owned).map_err(map_error)? {
                 StmtResult::Affected(count) => Ok(count),
                 StmtResult::Done(_) => Ok(0),
                 StmtResult::Rows(_) => Err(SqlQueryError::unknown(
                     "a write statement unexpectedly produced rows",
                 )),
-            }
-        })?;
+            },
+        )?;
         Ok(Some(WriteOutcome {
             affected_rows,
             last_insert_id: self.session.statement_insert_id(),
@@ -1341,29 +1435,22 @@ impl QuerySession for ClusterServerSession {
                 Vec::new(),
             ));
         }
-        // Go reports a query's result columns at PREPARE time, which it gets
-        // by planning the statement with every marker bound to NULL. Planning
-        // reads the catalog and may read rows, so it takes a snapshot like any
-        // other statement.
-        let owned = sql.to_owned();
-        // The PREPARE probe runs the statement with every marker NULL, which
-        // is not the statement the client will execute; it declares nothing,
-        // and -- see `probe_statement` -- it opens no transaction either.
-        let result_columns = self.probe_statement(StatementReadShape::Unknown, move |session| {
-            let probe: Vec<tidb_datatype::Datum> =
-                std::iter::repeat_n(tidb_datatype::Datum::Null, parameter_count).collect();
-            Ok(match session.run_with_params(&owned, &probe) {
-                Ok(StmtOutput::Rows { columns, .. }) => {
-                    crate::pipeline_session::select_columns(&columns)
-                }
-                // A query whose metadata cannot be resolved without real
-                // values reports none at prepare time -- which a client
-                // frames its EXECUTE against, so it is the shape that
-                // answers `2014 Commands out of sync` rather than a harmless
-                // omission. See `crate::pipeline_session::prepare_general`.
-                _ => Vec::new(),
-            })
-        })?;
+        // Go reports a query's result columns at PREPARE time by planning the
+        // statement with every marker bound to NULL. The catalog is refreshed
+        // exactly as it is for an executed statement, but the executor is
+        // neither opened nor drained, so PREPARE opens no read transaction.
+        self.rebuild_catalog_if_stale();
+        let probe: Vec<tidb_datatype::Datum> =
+            std::iter::repeat_n(tidb_datatype::Datum::Null, parameter_count).collect();
+        let result_columns = match self.session.plan_query_with_params(sql, &probe) {
+            Ok(columns) => crate::pipeline_session::select_columns(&columns),
+            // A query whose metadata cannot be resolved without real values
+            // reports none at prepare time -- which a client frames its
+            // EXECUTE against, so it is the shape that answers `2014 Commands
+            // out of sync` rather than a harmless omission. See
+            // `crate::pipeline_session::prepare_general`.
+            Err(_) => Vec::new(),
+        };
         Ok(PreparedGeneral::new(
             sql.to_owned(),
             parameter_count,
@@ -1478,10 +1565,11 @@ impl QuerySession for ClusterServerSession {
         }
         let owned = sql.to_owned();
         let shape = self.session.statement_read_shape(sql, &[]);
+        let lock = self.statement_lock(sql)?;
         // The rows are materialized inside the statement's snapshot, because
         // the snapshot's read transaction ends when the statement does; a lazy
         // source would be reading through a finished transaction.
-        let source = self.with_statement(shape, move |session| {
+        let source = self.with_statement(shape, lock, move |session| {
             let output = session.run_with_columns(&owned).map_err(map_error)?;
             Ok(match output {
                 StmtOutput::Rows { columns, rows } => MaterializedResultSetSource::new(
@@ -1502,6 +1590,18 @@ impl QuerySession for ClusterServerSession {
 fn map_error(error: tidb_executor::DriverError) -> SqlQueryError {
     let mapped = error.to_mysql_error();
     SqlQueryError::new(mapped.code, mapped.state, mapped.message)
+}
+
+fn statement_mutation_keys(before: &BufferImage, after: &BufferImage) -> Vec<Vec<u8>> {
+    after
+        .iter()
+        .filter(|(key, value)| {
+            before
+                .binary_search_by(|(before_key, _)| before_key.cmp(key))
+                .map_or(true, |index| before[index].1.as_ref() != value.as_ref())
+        })
+        .map(|(key, _)| key.as_bytes().to_vec())
+        .collect()
 }
 
 /// Storage bound to no snapshot, used only to decide which tables a catalog

@@ -365,13 +365,21 @@ pub(crate) fn cluster_table(
     // cluster-wide home would allocate from a fresh in-process cell and
     // re-issue ids the table already holds, which is why this loader used to
     // refuse such a table outright rather than serve it half-wired.
-    if let Some(offset) = columns.iter().position(|column| {
+    let auto_increment_offset = columns.iter().position(|column| {
         column
             .read()
             .field_type
             .has_flag(FieldTypeFlags::AUTO_INCREMENT)
-    }) {
+    });
+    if let Some(offset) = auto_increment_offset {
         kv_table.set_auto_increment_offset(offset);
+    }
+    // Go uses one row-id allocator for every table without a clustered
+    // handle. This includes tables without an explicit AUTO_INCREMENT column:
+    // their hidden `_tidb_rowid` must be allocated from the same
+    // cluster-wide counter on every SQL node, or concurrent inserts can
+    // overwrite one another's record keys.
+    if auto_increment_offset.is_some() || (!table.pk_is_handle && !table.is_common_handle) {
         kv_table.set_auto_id(auto.allocator_for(table));
     }
     if table.pk_is_handle {
@@ -1048,6 +1056,42 @@ mod tests {
         let first = homes.allocator_for(1, &table);
         let second = homes.allocator_for(1, &table);
         assert!(first.same_allocator_as(&second));
+    }
+
+    /// A table without a primary key uses the hidden `_tidb_rowid`. Separate
+    /// SQL sessions on one node must draw those handles from one allocator,
+    /// or concurrent inserts reuse the same record key and one row overwrites
+    /// the other.
+    #[test]
+    fn non_clustered_tables_share_the_hidden_rowid_allocator() {
+        let table = TableInfo {
+            id: 403,
+            name: CiString::new("no_pk"),
+            columns: vec![column(1, 0, "v", false)].into(),
+            state: SchemaState::PUBLIC,
+            ..TableInfo::default()
+        };
+        let catalog = one_table_catalog(table);
+        let (storage, buffer, _) = cluster_storage();
+        let homes = LocalTableAutoIds::default();
+
+        let (mut first, first_skipped) =
+            session_with_cluster_storage(&catalog, &storage, &StatsSnapshot::new(), &homes);
+        let (mut second, second_skipped) =
+            session_with_cluster_storage(&catalog, &storage, &StatsSnapshot::new(), &homes);
+        assert!(first_skipped.is_empty());
+        assert!(second_skipped.is_empty());
+        first.run("USE app").unwrap();
+        second.run("USE app").unwrap();
+
+        first.run("INSERT INTO no_pk (v) VALUES (10)").unwrap();
+        second.run("INSERT INTO no_pk (v) VALUES (20)").unwrap();
+
+        assert_eq!(buffer.len(), 2, "peer sessions must not overwrite rowids");
+        let StmtResult::Rows(rows) = first.run("SELECT v FROM no_pk ORDER BY v").unwrap() else {
+            panic!("expected rows");
+        };
+        assert_eq!(format!("{rows:?}"), "[[Int(10)], [Int(20)]]");
     }
 
     /// The `CREATE INDEX`/`DROP INDEX` backfill walks the rows a table already

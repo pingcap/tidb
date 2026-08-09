@@ -66,6 +66,31 @@ fn an_explicit_transaction_publishes_once_at_commit() {
     assert_eq!(cluster.live.load(Ordering::Acquire), 0);
 }
 
+/// The transaction mode parsed by the driver must reach the cluster seam. A
+/// mode flag that only changes the driver's catalog copy leaves real TiKV on
+/// its optimistic path and silently drops every pessimistic lock request.
+#[test]
+fn begin_mode_reaches_the_cluster_transaction_opener() {
+    let (mut session, cluster) = open_session();
+
+    session
+        .control_transaction("BEGIN OPTIMISTIC")
+        .expect("optimistic begin");
+    session.control_transaction("ROLLBACK").expect("rollback");
+    session
+        .control_transaction("BEGIN PESSIMISTIC")
+        .expect("pessimistic begin");
+    session.control_transaction("ROLLBACK").expect("rollback");
+
+    assert_eq!(
+        *cluster.begun_modes.lock().expect("begun modes"),
+        vec![
+            tidb_planner::txn_mode::SessionTxnMode::Optimistic,
+            tidb_planner::txn_mode::SessionTxnMode::Pessimistic,
+        ]
+    );
+}
+
 /// One `BEGIN` takes one timestamp, and every statement until `COMMIT`
 /// reads through that same transaction rather than opening its own.
 #[test]

@@ -811,7 +811,7 @@ pub(crate) fn run_multi_delete(
             }
             (TableEntry::Kv(kv), RowId::Kv(handle)) => {
                 kv.delete_row(handle, &ctx.session_zone())
-                    .map_err(|e| DriverError::Parse(format!("row delete failed: {e:?}")))?
+                    .map_err(|e| super::dml::kv_read_error("row delete failed", e))?
             }
             _ => {
                 return Err(DriverError::unsupported(

@@ -125,6 +125,45 @@ fn a_prepared_point_get_takes_no_timestamp_either() {
     assert_eq!(node.live.load(Ordering::Acquire), 0);
 }
 
+/// PREPARE reports a query's result metadata from planning alone. In
+/// particular, binding row markers to NULL must not execute the locking read
+/// just to discover that the query returns two columns.
+#[test]
+fn preparing_a_composite_batch_point_get_opens_no_snapshot() {
+    let (mut session, node) = open_session();
+    session
+        .execute_write(
+            "CREATE TABLE stock (w_id BIGINT, i_id BIGINT, v BIGINT, PRIMARY KEY (w_id, i_id) CLUSTERED)",
+        )
+        .expect("create common-handle table");
+    session
+        .execute_write("INSERT INTO stock VALUES (1, 1, 10), (1, 2, 20)")
+        .expect("seed common-handle table");
+
+    let mut statement = None;
+    let opens = opens_of(&node, || {
+        statement = Some(
+            session
+                .prepare_general(
+                    "SELECT w_id, i_id FROM stock WHERE (w_id, i_id) IN ((?, ?), (?, ?)) FOR UPDATE",
+                )
+                .expect("prepare"),
+        );
+    });
+    let statement = statement.expect("prepared statement");
+    assert_eq!(statement.parameter_count(), 4);
+    assert_eq!(statement.result_columns().len(), 2);
+    assert_eq!(
+        opens,
+        Opens {
+            timestamped: 0,
+            max_ts: 0,
+        },
+        "PREPARE executed the query while deriving result metadata",
+    );
+    assert_eq!(node.live.load(Ordering::Acquire), 0);
+}
+
 /// A second equality beside the handle is NOT this tier's point get: the
 /// handle arm requires exactly one name/value pair (Go's `len(pairs) == 1`),
 /// so the statement plans as a scan with a filter and must pay.

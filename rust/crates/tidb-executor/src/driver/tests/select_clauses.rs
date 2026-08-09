@@ -37,6 +37,62 @@ fn select_with_where() {
     );
 }
 
+/// Row-valued `IN` is the predicate shape go-tpc uses to lock stock rows.
+/// Go lowers each tuple equality column by column, preserving SQL's
+/// three-valued NULL behavior, then joins the candidates with `OR`.
+#[test]
+fn row_in_matches_go_tuple_and_null_semantics() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE stock (id INT PRIMARY KEY, w_id INT, i_id INT)",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO stock VALUES \
+         (1, 1, 1), (2, 2, 2), (3, 1, 3), (4, 1, NULL), \
+         (5, 2, NULL), (6, NULL, 2), (7, NULL, NULL), (8, 3, NULL)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    assert_eq!(
+        run_select_on(
+            "SELECT id FROM stock \
+             WHERE (w_id, i_id) IN ((1, 1), (2, 2)) \
+             ORDER BY id FOR UPDATE",
+            &catalog,
+            &ctx,
+        )
+        .unwrap(),
+        vec![vec![Datum::Int(1)], vec![Datum::Int(2)]],
+    );
+    assert_eq!(
+        run_select_on(
+            "SELECT id FROM stock \
+             WHERE (w_id, i_id) NOT IN ((1, 1), (2, 2)) \
+             ORDER BY id",
+            &catalog,
+            &ctx,
+        )
+        .unwrap(),
+        vec![vec![Datum::Int(3)], vec![Datum::Int(8)]],
+    );
+}
+
+#[test]
+fn row_in_rejects_a_different_column_count_like_go() {
+    let error = run_select("SELECT (1, 2) IN ((1, 2, 3))")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(
+        (error.code, error.state, error.message.as_str()),
+        (1241, *b"21000", "Operand should contain 2 column(s)",),
+    );
+}
+
 #[test]
 fn limit_and_order_by_wire_up() {
     // LIMIT truncates / zeroes the single row.

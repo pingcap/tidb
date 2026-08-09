@@ -20,6 +20,7 @@ use tidb_proto::tipb::{ExecType, Executor, Expr, ExprType, FieldType, ScalarFunc
 #[test]
 fn bounded_selection_contract_keeps_upstream_numeric_values() {
     assert_eq!(ExecType::TypeSelection as i32, 2);
+    assert_eq!(ExecType::TypeTopN as i32, 4);
     assert_eq!(ExprType::Null as i32, 0);
     assert_eq!(ExprType::Int64 as i32, 1);
     assert_eq!(ExprType::ColumnRef as i32, 201);
@@ -50,6 +51,8 @@ fn selection_executor_and_nonnullable_defaults_keep_exact_wire_tags() {
         selection: Some(Selection {
             conditions: vec![literal],
         }),
+        aggregation: None,
+        top_n: None,
         limit: None,
         executor_id: Some(String::new()),
         parent_idx: None,

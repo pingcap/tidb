@@ -443,14 +443,6 @@ fn transaction(
     server: &TestServer,
     topology: SplitTopology,
 ) -> RealOptimisticTransaction<TonicCoprocessorClient, SplitTopology, FixedTimestampSource> {
-    transaction_with_timeout(server, topology, CALL_TIMEOUT)
-}
-
-fn transaction_with_timeout(
-    server: &TestServer,
-    topology: SplitTopology,
-    timeout: Duration,
-) -> RealOptimisticTransaction<TonicCoprocessorClient, SplitTopology, FixedTimestampSource> {
     let client = TonicCoprocessorClient::new().unwrap();
     let runtime = SharedReadRuntime::new_injected(client, RegionCache::new(topology));
     assert_eq!(runtime.cluster_id(), 7);
@@ -458,7 +450,6 @@ fn transaction_with_timeout(
     RealOptimisticTransaction::new_injected(
         runtime,
         FixedTimestampSource::new(NEXT_TIMESTAMP.fetch_add(1, Ordering::Relaxed)),
-        timeout,
         START_TS,
         Instant::now(),
         4,
@@ -707,8 +698,7 @@ fn cleanup_backs_off_on_its_own_budget_not_the_statement_timeout() {
     let recorded = Arc::clone(&service.recorded);
     let server = TestServer::start(service);
     let topology = SplitTopology::new_always_routable(server.store_address());
-    let transaction =
-        transaction_with_timeout(&server, topology.clone(), Duration::from_millis(1));
+    let transaction = transaction(&server, topology.clone());
 
     let outcome = transaction
         .commit(

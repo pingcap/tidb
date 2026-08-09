@@ -471,6 +471,9 @@ pub struct JoinExec<C: Columns> {
     index_lookup: Option<IndexLookupPlan>,
     /// The index strategy's live state; absent until the first `next()`.
     index_state: Option<IndexLookupState>,
+    /// True only when the committed join strategy installed every leaf-local
+    /// filter and every inter-leaf equality from the written `WHERE`.
+    consumes_where: bool,
     /// How many times the `ON` clause has been evaluated. This is the cost
     /// the hash table exists to remove, so it is the number a scaling test
     /// asserts on directly instead of timing the machine.
@@ -528,6 +531,7 @@ impl<C: Columns> JoinExec<C> {
             merge_state: None,
             index_lookup: None,
             index_state: None,
+            consumes_where: false,
             condition_evals: Cell::new(0),
             memory,
             tracker,
@@ -729,6 +733,11 @@ impl<C: Columns> JoinExec<C> {
     /// the probed object's key columns ARE the join's own equality columns.
     pub(crate) fn set_index_lookup_plan(&mut self, plan: IndexLookupPlan) {
         self.index_lookup = Some(plan);
+    }
+
+    /// Records that this committed join tree enforces the complete `WHERE`.
+    pub(crate) fn set_consumes_where(&mut self, consumes_where: bool) {
+        self.consumes_where = consumes_where;
     }
 
     /// Whether this join looks its inner side up per outer batch.
@@ -1774,6 +1783,10 @@ impl<C: Columns> Executor for JoinExec<C> {
 
     fn new_chunk(&self) -> Chunk {
         self.meta.new_chunk()
+    }
+
+    fn consumes_where(&self) -> bool {
+        self.consumes_where
     }
 }
 

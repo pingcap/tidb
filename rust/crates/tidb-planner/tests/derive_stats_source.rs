@@ -29,8 +29,8 @@
 //! all. The oracle is a default-format `EXPLAIN` of the same statements.
 
 use tidb_planner::cardinality::derive_stats::{
-    ColumnId, DeriveStatsContext, DerivedNode, LogicalNode, ProjectionExpr, calc_join_cum_cost,
-    derive_stats,
+    calc_join_cum_cost, derive_stats, ColumnId, DeriveStatsContext, DerivedNode, LogicalNode,
+    ProjectionExpr,
 };
 
 const T1_A: ColumnId = 1;
@@ -191,6 +191,23 @@ fn a_logical_selection_is_a_flat_zero_point_eight() {
     assert_row_counts(&derive_stats(&plan, &ctx()), &[8000.0, 10000.0]);
 }
 
+/// `LogicalAggregation.DeriveStats` uses the group-key NDV as both its row
+/// count and every output column's NDV. A pseudo equality leaves ten rows and
+/// an NDV of eight on the grouped column, matching TPCC condition 04's inner
+/// `GROUP BY ol_d_id` fixture.
+#[test]
+fn a_grouped_aggregation_uses_the_group_key_ndv_for_every_output() {
+    let plan = LogicalNode::Aggregation {
+        child: Box::new(table(&[T1_A, T1_B], 1.0 / 1000.0)),
+        group_by: vec![T1_B],
+        columns: vec![DT_KEY_A, DT_DOUBLED_B],
+    };
+    let derived = derive_stats(&plan, &ctx());
+    assert_row_counts(&derived, &[8.0, 10.0]);
+    assert_eq!(derived.stats.col_ndvs[&DT_KEY_A], 8.0);
+    assert_eq!(derived.stats.col_ndvs[&DT_DOUBLED_B], 8.0);
+}
+
 /// `LogicalJoin.DeriveStats` clamps every inherited column NDV to the join's
 /// own row count (`logicalop/logical_join.go:604-610`), and once a join has
 /// produced fewer rows than a key's NDV the clamp is what the *next* join
@@ -290,7 +307,12 @@ fn t5() -> LogicalNode {
 #[test]
 fn statement_1_plain_key_join_matches_the_recorded_est_rows() {
     let plan = join(
-        join(table(&[T1_A, T1_B, T1_C], 1.0), dt(1.0), &[T1_A], &[DT_KEY_A]),
+        join(
+            table(&[T1_A, T1_B, T1_C], 1.0),
+            dt(1.0),
+            &[T1_A],
+            &[DT_KEY_A],
+        ),
         table(&[T5_A], 1.0),
         &[DT_KEY_A],
         &[T5_A],
@@ -408,7 +430,12 @@ fn statement_3_two_computed_keys_apply_one_correlation_factor() {
 #[test]
 fn statement_4_a_filtered_derived_table_rescales_the_key_ndv() {
     let plan = join(
-        join(table(&[T1_A, T1_B, T1_C], 1.0), dt(0.8), &[T1_A], &[DT_KEY_A]),
+        join(
+            table(&[T1_A, T1_B, T1_C], 1.0),
+            dt(0.8),
+            &[T1_A],
+            &[DT_KEY_A],
+        ),
         table(&[T5_A], 1.0),
         &[DT_KEY_A],
         &[T5_A],

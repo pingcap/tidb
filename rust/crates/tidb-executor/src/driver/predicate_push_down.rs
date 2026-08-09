@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! WHERE equi-conditions carried down into the inner join that can use them.
+//! WHERE conditions carried down into the inner join that can use them.
 //!
 //! Mirrors the part of Go's `pkg/planner/core/rule_predicate_push_down.go`
 //! that `LogicalJoin.PredicatePushDown` performs for an inner join: a
@@ -39,29 +39,23 @@
 //!
 //! # Why the row set cannot move
 //!
-//! A pushed conjunct is not REMOVED from `WHERE`. It is COPIED into the inner
-//! join's condition list, where -- for an inner join, the only kind this
-//! touches -- a condition is a filter over the same pairs the `WHERE` above
-//! would have filtered. So the output is `WHERE(J(a,b))` before and
-//! `WHERE(J_c(a,b))` after with `J_c ⊆ J`, and every pair `J_c` drops is a
-//! pair `WHERE` dropped anyway. Redundancy is the proof: no reasoning about
-//! null-extension or about condition placement is needed, which is exactly
-//! the reasoning an outer join would require -- and outer joins are refused
-//! here rather than reasoned about.
+//! A pushed conjunct becomes an inner-join condition at the lowest node whose
+//! two children together supply its columns. The join-group inventory may
+//! then remove the redundant root predicate after the committed physical
+//! paths prove that every other conjunct is accounted for; without that
+//! proof it stays in `WHERE` as a second, equivalent check. Outer joins are
+//! refused here because moving a predicate across null-extension needs a
+//! different proof.
 //!
-//! Only a bare `col = col` between two columns is eligible. That is the whole
-//! of what turns a nested loop into a hash join
-//! ([`crate::hash_join::split_equi`] indexes nothing else), and it is
-//! trivially free of the two hazards a general predicate carries when it is
-//! evaluated twice: a subquery (whose cost and, for `EXISTS` over a mutating
-//! source, whose answer are not idempotent) and a mutable-effects or
-//! non-deterministic expression, which Go screens for by name
-//! (`expression.IsMutableEffectsExpr`, `CheckNonDeterministic`).
+//! A bare `col = col` becomes an equality key; every other eligible
+//! cross-child predicate becomes the join's `other cond`. Subqueries,
+//! variables, assignments, schema-qualified calls and mutable or
+//! non-deterministic builtins are refused, matching the safety gates Go puts
+//! around predicate movement.
 
-use tidb_ast::{BinaryOp, Expr};
+use tidb_ast::Expr;
 
 use super::from::{FromScope, ScopeResolver};
-use tidb_expr::rewriter::ColumnResolver;
 
 /// The `WHERE` conjuncts an enclosing `SELECT` offers to the joins below it.
 ///
@@ -76,29 +70,57 @@ pub(crate) fn offered_conjuncts(where_clause: Option<&Expr>) -> Vec<&Expr> {
     };
     let mut conjuncts = Vec::new();
     crate::plan_trace::collect_and(expr, &mut conjuncts);
-    conjuncts.retain(|c| column_equality(c).is_some());
+    conjuncts.retain(|conjunct| condition_is_stable(conjunct));
     conjuncts
 }
 
-/// The two column paths of a bare `col = col`, or `None` for anything else.
-fn column_equality(expr: &Expr) -> Option<(&[String], &[String])> {
-    match expr {
-        Expr::Binary(BinaryOp::Eq, lhs, rhs) => match (&**lhs, &**rhs) {
-            (Expr::Column(left), Expr::Column(right)) => Some((left, right)),
-            _ => None,
-        },
-        _ => None,
+/// Whether moving this condition can neither duplicate side effects nor
+/// observe a different volatile value at a lower join node.
+fn condition_is_stable(expr: &Expr) -> bool {
+    struct Check {
+        stable: bool,
     }
+
+    impl tidb_ast::Visitor for Check {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            let Some(expr) = node.downcast_ref::<Expr>() else {
+                return false;
+            };
+            match expr {
+                Expr::UserVar(_)
+                | Expr::SysVar { .. }
+                | Expr::Assign { .. }
+                | Expr::GenericFuncCall { .. } => self.stable = false,
+                Expr::Func { name, .. } => {
+                    let name = name.to_ascii_lowercase();
+                    if super::through_proj::is_mutable_effects(&name)
+                        || super::through_proj::is_unfoldable(&name)
+                    {
+                        self.stable = false;
+                    }
+                }
+                _ => {}
+            }
+            false
+        }
+
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            true
+        }
+    }
+
+    let mut check = Check { stable: true };
+    let mut owned = expr.clone();
+    tidb_ast::Visitable::accept(&mut owned, &mut check);
+    check.stable
 }
 
 /// The offered conjuncts this join is the lowest node able to evaluate.
 ///
-/// "Lowest" needs no search: a conjunct whose two columns land on OPPOSITE
-/// sides of `left_width` is one neither child could have evaluated alone, and
-/// a conjunct whose columns land on the same side was already offered to that
-/// child's own join node (or belongs to a single table, which is a scan-level
-/// filter this does not attempt). Testing the sides is therefore the whole
-/// placement rule.
+/// "Lowest" needs no search: a conjunct that reads at least one column on
+/// EACH side of `left_width` is one neither child could have evaluated alone.
+/// A conjunct whose columns all land on one side was already offered to that
+/// child's own join node (or belongs to one table, which is scan-level work).
 pub(crate) fn spanning_conjuncts<'a>(
     offered: Offered<'a>,
     scope: &FromScope,
@@ -108,17 +130,15 @@ pub(crate) fn spanning_conjuncts<'a>(
     offered
         .iter()
         .filter(|conjunct| {
-            let Some((left, right)) = column_equality(conjunct) else {
-                return false;
-            };
-            // An unresolvable column is one this scope does not own -- an
-            // outer-query correlation above all -- and is left where it is.
-            let (Some((left_offset, _, _)), Some((right_offset, _, _))) =
-                (resolver.resolve(left), resolver.resolve(right))
+            // This is column pruning's exhaustive expression walk. It refuses
+            // subqueries, parameter markers and any shape whose references it
+            // cannot prove belong to this scope.
+            let Some(offsets) = crate::column_prune::expr_column_offsets(conjunct, &resolver)
             else {
                 return false;
             };
-            (left_offset < left_width) != (right_offset < left_width)
+            offsets.iter().any(|offset| *offset < left_width)
+                && offsets.iter().any(|offset| *offset >= left_width)
         })
         .copied()
         .collect()

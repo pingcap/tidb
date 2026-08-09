@@ -166,6 +166,15 @@ impl Session {
         self.txn.as_ref().map(|txn| txn.mode)
     }
 
+    /// The mode a transaction opened now would use, from the session's
+    /// `@@tidb_txn_mode` setting. This is needed by storage tiers that open
+    /// their transaction alongside the driver's lazy `autocommit = 0` one,
+    /// before the first statement has asked the driver to create its copy.
+    #[must_use]
+    pub fn configured_txn_mode(&self) -> SessionTxnMode {
+        self.resolve_begin_txn_mode(tidb_ast::TransactionMode::Default)
+    }
+
     /// Installs a transaction over the shared catalog as it stands now.
     ///
     /// The lock is taken and released here rather than held across the

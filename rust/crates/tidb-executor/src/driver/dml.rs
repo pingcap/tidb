@@ -705,7 +705,7 @@ pub(crate) fn run_insert_traced(
         }
         let conflicts = target(catalog, &database, &table_name)
             .conflicting_handles(row, &ctx.session_zone())
-            .map_err(|e| DriverError::Parse(format!("conflict lookup failed: {e:?}")))?;
+            .map_err(|e| kv_read_error("conflict lookup failed", e))?;
         if !conflicts.is_empty() {
             if insert.replace {
                 // Go `InsertValues.removeRow` (`insert_common.go`): a
@@ -719,7 +719,7 @@ pub(crate) fn run_insert_traced(
                 for handle in &conflicts {
                     let existing = target(catalog, &database, &table_name)
                         .get_row_by_handle(handle, &ctx.session_zone())
-                        .map_err(|e| DriverError::Parse(format!("row read failed: {e:?}")))?;
+                        .map_err(|e| kv_read_error("row read failed", e))?;
                     if existing.as_deref() == Some(row) {
                         inserted += 1;
                         unchanged = true;
@@ -746,7 +746,7 @@ pub(crate) fn run_insert_traced(
                     // row.
                     target(catalog, &database, &table_name)
                         .delete_row(handle, &ctx.session_zone())
-                        .map_err(|e| DriverError::Parse(format!("row delete failed: {e:?}")))?;
+                        .map_err(|e| kv_read_error("row delete failed", e))?;
                     inserted += 1;
                 }
                 if unchanged {
@@ -766,7 +766,7 @@ pub(crate) fn run_insert_traced(
             } else if insert.ignore {
                 let reported = target(catalog, &database, &table_name)
                     .duplicate_entry_error(row, &ctx.session_zone())
-                    .map_err(|e| DriverError::Parse(format!("conflict lookup failed: {e:?}")))?;
+                    .map_err(|e| kv_read_error("conflict lookup failed", e))?;
                 if let crate::kv_table::KvTableError::DuplicateEntry { value, key } = reported {
                     let warning = DriverError::DuplicateEntry { value, key }.to_mysql_error();
                     ctx.append_warning_parts(warning.code, &warning.message);
@@ -801,6 +801,9 @@ pub(crate) fn run_insert_traced(
 /// would replace the code an application branches on.
 pub(crate) fn kv_write_error(error: crate::kv_table::KvTableError) -> DriverError {
     match error {
+        crate::kv_table::KvTableError::Storage(message) if message.starts_with("Retryable(") => {
+            DriverError::Txn(crate::TxnErrorKind::RegionUnavailable)
+        }
         crate::kv_table::KvTableError::DuplicateEntry { value, key } => {
             DriverError::DuplicateEntry { value, key }
         }
@@ -826,6 +829,17 @@ pub(crate) fn kv_write_error(error: crate::kv_table::KvTableError) -> DriverErro
         // same 1467 an allocated column value would have reported.
         crate::kv_table::KvTableError::AutoIdExhausted => DriverError::AutoincReadFailed,
         other => DriverError::Parse(format!("row encode failed: {other:?}")),
+    }
+}
+
+/// Renders a table read failure while preserving the storage layer's
+/// retryable-region signal as a transaction error instead of a parse error.
+pub(crate) fn kv_read_error(operation: &str, error: crate::kv_table::KvTableError) -> DriverError {
+    match error {
+        crate::kv_table::KvTableError::Storage(message) if message.starts_with("Retryable(") => {
+            DriverError::Txn(crate::TxnErrorKind::RegionUnavailable)
+        }
+        other => DriverError::Parse(format!("{operation}: {other:?}")),
     }
 }
 
@@ -1082,7 +1096,7 @@ pub(crate) fn apply_on_duplicate(
 ) -> Result<u64, DriverError> {
     let Some(existing) = table
         .get_row_by_handle(handle, &ctx.session_zone())
-        .map_err(|e| DriverError::Parse(format!("row read failed: {e:?}")))?
+        .map_err(|e| kv_read_error("row read failed", e))?
     else {
         return Ok(0);
     };
@@ -1427,36 +1441,47 @@ pub(crate) fn run_update_traced(
     // key, otherwise the handle intervals it implies. See
     // `access::write_read_path` for the Go functions this mirrors and for why
     // neither narrowing can change which rows the statement acts on.
-    let read_path = super::access::write_read_path(
-        catalog,
-        &database,
-        &name,
-        &super::access::PointPlanStmt::of_write(
-            update.where_clause.as_ref(),
-            &update.order_by,
-            update.limit.as_ref(),
+    let point_plan = super::access::PointPlanStmt::of_write(
+        update.where_clause.as_ref(),
+        &update.order_by,
+        update.limit.as_ref(),
+    );
+    let read_path = super::access::write_read_path(catalog, &database, &name, &point_plan, &zone)?;
+    let predicate_consumed = match catalog.get_in(&database, &name) {
+        Some(TableEntry::Kv(table)) => super::access::write_read_path_consumes_predicate(
+            read_path.as_ref(),
+            &point_plan,
+            table,
+            &column_list,
+            &zone,
         ),
-        &ctx.session_zone(),
-    )?;
+        _ => false,
+    };
     if let Some(trace) = trace.as_deref_mut() {
         trace_dml_source(
             trace,
-            catalog,
-            DmlTarget {
-                table_ref,
-                database: &database,
-                name: &name,
+            DmlSourceTrace {
+                catalog,
+                target: DmlTarget {
+                    table_ref,
+                    database: &database,
+                    name: &name,
+                },
+                columns: &column_list,
+                predicate: &update.where_clause,
+                read_path: read_path.as_ref(),
+                current_db,
+                zone: &zone,
+                ctx,
+                predicate_consumed,
             },
-            &column_list,
-            &update.where_clause,
-            read_path.as_ref(),
-            current_db,
         );
         trace.write("Update", true);
         if trace.is_plan_only() {
             return Ok(0);
         }
     }
+    let predicate = if predicate_consumed { None } else { predicate };
     // Assigned by every arm that reaches the loops below (a view returns
     // before them), so a write's read plan always reports a real count.
     let scanned;
@@ -1788,36 +1813,47 @@ pub(crate) fn run_delete_traced(
     let row_limit = dml_row_limit(&delete.limit)?;
     // As in UPDATE: the key or the handle intervals the `WHERE` implies are
     // the records this write fetches.
-    let read_path = super::access::write_read_path(
-        catalog,
-        &database,
-        &name,
-        &super::access::PointPlanStmt::of_write(
-            delete.where_clause.as_ref(),
-            &delete.order_by,
-            delete.limit.as_ref(),
+    let point_plan = super::access::PointPlanStmt::of_write(
+        delete.where_clause.as_ref(),
+        &delete.order_by,
+        delete.limit.as_ref(),
+    );
+    let read_path = super::access::write_read_path(catalog, &database, &name, &point_plan, &zone)?;
+    let predicate_consumed = match catalog.get_in(&database, &name) {
+        Some(TableEntry::Kv(table)) => super::access::write_read_path_consumes_predicate(
+            read_path.as_ref(),
+            &point_plan,
+            table,
+            &column_list,
+            &zone,
         ),
-        &ctx.session_zone(),
-    )?;
+        _ => false,
+    };
     if let Some(trace) = trace.as_deref_mut() {
         trace_dml_source(
             trace,
-            catalog,
-            DmlTarget {
-                table_ref,
-                database: &database,
-                name: &name,
+            DmlSourceTrace {
+                catalog,
+                target: DmlTarget {
+                    table_ref,
+                    database: &database,
+                    name: &name,
+                },
+                columns: &column_list,
+                predicate: &delete.where_clause,
+                read_path: read_path.as_ref(),
+                current_db,
+                zone: &zone,
+                ctx,
+                predicate_consumed,
             },
-            &column_list,
-            &delete.where_clause,
-            read_path.as_ref(),
-            current_db,
         );
         trace.write("Delete", true);
         if trace.is_plan_only() {
             return Ok(0);
         }
     }
+    let predicate = if predicate_consumed { None } else { predicate };
     let scanned;
     let entry = catalog
         .get_mut_in(&database, &name)
@@ -1911,7 +1947,7 @@ pub(crate) fn run_delete_traced(
         };
         for (handle, _) in &doomed {
             kv.delete_row(handle, &zone)
-                .map_err(|e| DriverError::Parse(format!("row delete failed: {e:?}")))?;
+                .map_err(|e| kv_read_error("row delete failed", e))?;
             deleted += 1;
         }
     }
@@ -1954,6 +1990,15 @@ fn fetch_write_rows(
         Some(super::access::WriteReadPath::Ranges(ranges, _)) => kv
             .scan_rows_with_handles_in(Some(ranges), zone)
             .map_err(decode_failed),
+        Some(super::access::WriteReadPath::Batch(handles)) => {
+            let mut rows = Vec::with_capacity(handles.len());
+            for handle in handles {
+                if let Some(row) = kv.get_row_by_handle(handle, zone).map_err(decode_failed)? {
+                    rows.push((handle.clone(), row));
+                }
+            }
+            Ok(rows)
+        }
         Some(super::access::WriteReadPath::IndexRanges(index_id, ranges, _)) => {
             // The index range narrows WHICH records are fetched, in index
             // order; the row is then read by its handle, and the `WHERE` above
@@ -1983,6 +2028,21 @@ fn fetch_write_rows(
 /// `TableRangeScan`, or the full scan neither narrowed -- with a `Selection`
 /// above it for the `WHERE` (`explain`'s divergences 7 and 8).
 ///
+/// Everything required to describe the read side of one single-table write.
+struct DmlSourceTrace<'a> {
+    catalog: &'a Catalog,
+    target: DmlTarget<'a>,
+    columns: &'a [(String, FieldType)],
+    predicate: &'a Option<tidb_ast::Expr>,
+    read_path: Option<&'a super::access::WriteReadPath>,
+    current_db: &'a str,
+    zone: &'a tidb_datatype::SessionTimeZone,
+    ctx: &'a crate::StmtContext,
+    /// The point/batch key is the complete WHERE, so Go's fast write plan
+    /// has no Selection above it.
+    predicate_consumed: bool,
+}
+
 /// The table a single-table write reads, as the statement names it.
 struct DmlTarget<'a> {
     /// The `FROM`-side reference, which carries the alias `EXPLAIN` prints.
@@ -2026,15 +2086,18 @@ fn trace_write_index_scan(
     }
 }
 
-fn trace_dml_source(
-    trace: &mut PlanTrace,
-    catalog: &Catalog,
-    target: DmlTarget<'_>,
-    columns: &[(String, FieldType)],
-    where_clause: &Option<tidb_ast::Expr>,
-    read_path: Option<&super::access::WriteReadPath>,
-    current_db: &str,
-) {
+fn trace_dml_source(trace: &mut PlanTrace, source: DmlSourceTrace<'_>) {
+    let DmlSourceTrace {
+        catalog,
+        target,
+        columns,
+        predicate,
+        read_path,
+        current_db,
+        zone,
+        ctx,
+        predicate_consumed,
+    } = source;
     let DmlTarget {
         table_ref,
         database,
@@ -2047,7 +2110,7 @@ fn trace_dml_source(
         name,
         &visible,
         columns,
-        where_clause.as_ref(),
+        predicate.as_ref(),
     );
     trace.table_full_scan(&visible, estimate, false);
     // The same two rewrites the read side performs, from the same chooser: a
@@ -2057,6 +2120,9 @@ fn trace_dml_source(
     match read_path {
         Some(super::access::WriteReadPath::Ranges(ranges, range_estimate)) => {
             trace.table_range_scan(&visible, ranges, *range_estimate);
+            if predicate_consumed {
+                trace.scan_reader();
+            }
         }
         Some(super::access::WriteReadPath::IndexRanges(index_id, ranges, range_estimate)) => {
             trace_write_index_scan(
@@ -2070,12 +2136,20 @@ fn trace_dml_source(
                 *range_estimate,
             );
         }
+        Some(super::access::WriteReadPath::Batch(handles)) => {
+            if let Some(super::catalog::TableEntry::Kv(table)) = catalog.get_in(database, name) {
+                let partitions = table.handle_partition_names(handles, zone, ctx);
+                trace.batch_point_get(&visible, table, handles, &partitions);
+            }
+        }
         Some(super::access::WriteReadPath::Point(handle)) => {
-            trace.point_get(&visible, handle.as_ref());
+            if let Some(super::catalog::TableEntry::Kv(table)) = catalog.get_in(database, name) {
+                trace.point_get(&visible, table, handle.as_ref());
+            }
         }
         None => {}
     }
-    let Some(predicate) = where_clause else {
+    let Some(predicate) = predicate.as_ref().filter(|_| !predicate_consumed) else {
         return;
     };
     let scope = PlanTrace::single_table_scope(

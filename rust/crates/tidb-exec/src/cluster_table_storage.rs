@@ -56,25 +56,33 @@
 //! [`ClusterSnapshot`]: tidb_executor::cluster_storage::ClusterSnapshot
 //! [`MutationBuffer`]: tidb_executor::cluster_storage::MutationBuffer
 
+use std::collections::BTreeSet;
 use std::fmt;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crate::multi_statement_transaction::TRANSACTION_END_TIMEOUT;
+use crate::multi_statement_transaction::{
+    LockKeysOutcome, TransactionStatementError, TRANSACTION_END_TIMEOUT,
+};
 use tidb_executor::cluster_storage::{
     ClusterSnapshot, ClusterTableStorage, MutationBuffer, SnapshotPairs,
 };
 use tidb_executor::storage::StorageError;
+use tidb_planner::read_only_scan::ReadLockWait;
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{
-    OptimisticCommitOutcome, OptimisticCoordinatorError, OptimisticMutation,
-    ProductionOptimisticTransaction, RealOptimisticTransactionOpener, MAX_OPTIMISTIC_MUTATIONS,
+    CommitProtocol, LockKeepAlive, LockWaitTime, OptimisticCommitOutcome,
+    OptimisticCoordinatorError, OptimisticMutation, ProductionOptimisticTransaction,
+    ProductionPessimisticTransaction, RealOptimisticTransactionOpener, MAX_OPTIMISTIC_MUTATIONS,
     MAX_OPTIMISTIC_TRANSACTION_BYTES,
 };
 use tidb_txnkv::Key;
 
-use crate::pessimistic_lock_error::{commit_outcome_to_sql_error, LockSqlError};
+use crate::pessimistic_lock_error::{
+    commit_outcome_to_sql_error, is_retryable_statement_failure, lock_failure_to_sql_error,
+    locked_with_conflict_error, transaction_cause_to_sql_error, LockSqlError,
+};
 use crate::pinned_thread_pool::PinnedThreadPool;
 
 /// One request the transaction's own thread serves, with the channel its answer
@@ -91,6 +99,12 @@ enum TransactionRequest {
         /// batch it consumes rather than for its whole range.
         limit: Option<usize>,
         reply: Sender<Result<SnapshotPairs, StorageError>>,
+    },
+    LockKeys {
+        keys: Vec<Vec<u8>>,
+        presume_not_exists: BTreeSet<Vec<u8>>,
+        wait: ReadLockWait,
+        reply: Sender<Result<WorkerLockOutcome, TransactionStatementError>>,
     },
     /// Publishes `mutations` at the transaction's original `start_ts` and ends
     /// the thread, whatever the outcome.
@@ -121,6 +135,32 @@ enum TransactionRequest {
 struct TransactionThread {
     requests: Option<Sender<TransactionRequest>>,
     start_ts: u64,
+    statement_read_ts: u64,
+}
+
+struct WorkerLockOutcome {
+    outcome: LockKeysOutcome,
+    statement_read_ts: u64,
+}
+
+/// Go client-go `KVSnapshot.Get`/`BatchGet` use a 20-second retry backoff
+/// budget (`getMaxBackoff`/`batchGetMaxBackoff`) around their short TiKV RPCs.
+const SNAPSHOT_READ_MAX_BACKOFF: Duration = Duration::from_secs(20);
+
+fn transaction_request_timeout(request: &TransactionRequest, default: Duration) -> Duration {
+    match request {
+        TransactionRequest::Get { .. } | TransactionRequest::Scan { .. } => {
+            default.max(SNAPSHOT_READ_MAX_BACKOFF)
+        }
+        TransactionRequest::LockKeys { wait, .. } => match wait {
+            ReadLockWait::Blocking => default.max(Duration::from_secs(55)),
+            ReadLockWait::NoWait => default,
+            ReadLockWait::Seconds(seconds) => {
+                default.max(Duration::from_secs(seconds.saturating_add(5)))
+            }
+        },
+        _ => default,
+    }
 }
 
 /// Which transaction a [`TransactionThread`] opens, and therefore what its
@@ -135,6 +175,26 @@ enum TransactionOpen {
     Writable,
     ReadOnly,
     ReadOnlyAtMaxTs,
+    /// A multi-statement transaction whose statements may take pessimistic
+    /// locks. It still publishes through the same two-phase coordinator.
+    Pessimistic {
+        fair_locking: bool,
+        commit_protocol: CommitProtocol,
+    },
+}
+
+enum OpenTransaction {
+    Optimistic(ProductionOptimisticTransaction),
+    Pessimistic(ProductionPessimisticTransaction),
+}
+
+impl OpenTransaction {
+    fn start_ts(&self) -> u64 {
+        match self {
+            Self::Optimistic(transaction) => transaction.start_ts(),
+            Self::Pessimistic(transaction) => transaction.start_ts(),
+        }
+    }
 }
 
 impl TransactionOpen {
@@ -181,18 +241,35 @@ impl TransactionThread {
                 name,
                 Box::new(move || {
                     let begun = match open {
-                        TransactionOpen::Writable => {
-                            opener.begin(MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES)
+                        TransactionOpen::Writable => opener
+                            .begin(MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES)
+                            .map(OpenTransaction::Optimistic),
+                        TransactionOpen::ReadOnly => {
+                            opener.begin_read_only().map(OpenTransaction::Optimistic)
                         }
-                        TransactionOpen::ReadOnly => opener.begin_read_only(),
-                        TransactionOpen::ReadOnlyAtMaxTs => opener.begin_read_only_at_max_ts(),
+                        TransactionOpen::ReadOnlyAtMaxTs => opener
+                            .begin_read_only_at_max_ts()
+                            .map(OpenTransaction::Optimistic),
+                        TransactionOpen::Pessimistic {
+                            fair_locking,
+                            commit_protocol,
+                        } => opener
+                            .begin_pessimistic(
+                                MAX_OPTIMISTIC_MUTATIONS,
+                                MAX_OPTIMISTIC_TRANSACTION_BYTES,
+                            )
+                            .map(|mut transaction| {
+                                transaction.set_fair_locking(fair_locking);
+                                transaction.set_commit_protocol(commit_protocol);
+                                OpenTransaction::Pessimistic(transaction)
+                            }),
                     };
                     let transaction = match begun {
                         Ok(transaction) => {
                             // A caller that stopped waiting leaves no lock
                             // behind: the transaction ends here instead.
                             if opened.send(Ok(transaction.start_ts())).is_err() {
-                                let _ = transaction.finish_without_writes();
+                                finish_open_transaction(transaction);
                                 return;
                             }
                             transaction
@@ -202,7 +279,7 @@ impl TransactionThread {
                             return;
                         }
                     };
-                    serve_transaction(transaction, &incoming, timeout);
+                    serve_transaction(transaction, &incoming, timeout, &opener);
                 }),
             )
             .map_err(OptimisticCoordinatorError::SnapshotGet)?;
@@ -217,6 +294,7 @@ impl TransactionThread {
         Ok(Self {
             requests: Some(requests),
             start_ts,
+            statement_read_ts: start_ts,
         })
     }
 
@@ -259,6 +337,45 @@ impl TransactionThread {
         }
     }
 
+    fn lock_keys_once(
+        &mut self,
+        keys: &[Vec<u8>],
+        presume_not_exists: &BTreeSet<Vec<u8>>,
+        wait: ReadLockWait,
+    ) -> Result<LockKeysOutcome, TransactionStatementError> {
+        let requests = self.requests.as_ref().cloned().ok_or_else(|| {
+            TransactionStatementError::Transaction(LockSqlError {
+                code: 1105,
+                state: *b"HY000",
+                message: "the transaction is already finished".to_owned(),
+            })
+        })?;
+        let (reply, answer) = mpsc::channel();
+        requests
+            .send(TransactionRequest::LockKeys {
+                keys: keys.to_vec(),
+                presume_not_exists: presume_not_exists.clone(),
+                wait,
+                reply,
+            })
+            .map_err(|_| {
+                TransactionStatementError::Transaction(LockSqlError {
+                    code: 1105,
+                    state: *b"HY000",
+                    message: "the transaction thread is gone".to_owned(),
+                })
+            })?;
+        let answer = answer.recv().map_err(|_| {
+            TransactionStatementError::Transaction(LockSqlError {
+                code: 1105,
+                state: *b"HY000",
+                message: "the transaction thread stopped while locking keys".to_owned(),
+            })
+        })??;
+        self.statement_read_ts = answer.statement_read_ts;
+        Ok(answer.outcome)
+    }
+
     fn sender(&self) -> Result<Sender<TransactionRequest>, StorageError> {
         self.requests
             .as_ref()
@@ -293,24 +410,32 @@ fn ask<T>(
 /// Serves the transaction on its own thread until it is committed, finished, or
 /// its last handle goes away.
 fn serve_transaction(
-    mut transaction: ProductionOptimisticTransaction,
+    mut transaction: OpenTransaction,
     incoming: &Receiver<TransactionRequest>,
     timeout: Duration,
+    opener: &RealOptimisticTransactionOpener,
 ) {
+    let mut keep_alive: Option<LockKeepAlive> = None;
     while let Ok(request) = incoming.recv() {
         // Minted per request, never once for the thread. `UnaryCallContext`
         // carries an ABSOLUTE deadline, so a single context made when the
         // transaction opened would charge every later statement — and the
         // commit — for the wall-clock time the client spent holding the
         // transaction, which is not work anything did.
-        let call = UnaryCallContext::with_timeout(timeout);
+        let call = UnaryCallContext::with_timeout(transaction_request_timeout(&request, timeout));
         let call = &call;
         match request {
             TransactionRequest::Get { key, reply } => {
-                let answer = transaction
-                    .snapshot_get(&key, call)
-                    .map(|result| result.value)
-                    .map_err(classify);
+                let answer = match &mut transaction {
+                    OpenTransaction::Optimistic(transaction) => transaction
+                        .snapshot_get(&key, call)
+                        .map(|result| result.value)
+                        .map_err(classify),
+                    OpenTransaction::Pessimistic(transaction) => transaction
+                        .statement_snapshot_get(&key, call)
+                        .map(|result| result.value)
+                        .map_err(classify),
+                };
                 let _ = reply.send(answer);
             }
             TransactionRequest::Scan {
@@ -319,9 +444,73 @@ fn serve_transaction(
                 limit,
                 reply,
             } => {
-                let answer = transaction
-                    .snapshot_scan(&start, &end, limit, call)
-                    .map_err(classify);
+                let answer = match &mut transaction {
+                    OpenTransaction::Optimistic(transaction) => transaction
+                        .snapshot_scan(&start, &end, limit, call)
+                        .map_err(classify),
+                    OpenTransaction::Pessimistic(transaction) => transaction
+                        .statement_snapshot_scan(&start, &end, limit, call)
+                        .map_err(classify),
+                };
+                let _ = reply.send(answer);
+            }
+            TransactionRequest::LockKeys {
+                keys,
+                presume_not_exists,
+                wait,
+                reply,
+            } => {
+                let answer = match &mut transaction {
+                    OpenTransaction::Optimistic(_) => {
+                        Err(TransactionStatementError::Statement(LockSqlError {
+                            code: 1105,
+                            state: *b"HY000",
+                            message: "an optimistic transaction cannot take pessimistic locks"
+                                .to_owned(),
+                        }))
+                    }
+                    OpenTransaction::Pessimistic(transaction) => {
+                        let outcome = lock_pessimistic_keys_once(
+                            transaction,
+                            &keys,
+                            &presume_not_exists,
+                            wait,
+                            call,
+                        );
+                        match outcome {
+                            Ok(outcome) => {
+                                let keep_alive_result = if keep_alive.is_none() {
+                                    transaction.primary_key().map_or(Ok(()), |primary_key| {
+                                        opener
+                                            .start_lock_keep_alive(
+                                                primary_key.to_vec(),
+                                                transaction.start_ts(),
+                                            )
+                                            .map(|started| keep_alive = Some(started))
+                                            .map_err(|error| {
+                                                TransactionStatementError::Transaction(
+                                                    LockSqlError {
+                                                        code: 1105,
+                                                        state: *b"HY000",
+                                                        message: format!(
+                                                            "cannot keep the transaction's primary lock alive: {error}"
+                                                        ),
+                                                    },
+                                                )
+                                            })
+                                    })
+                                } else {
+                                    Ok(())
+                                };
+                                keep_alive_result.map(|()| WorkerLockOutcome {
+                                    outcome,
+                                    statement_read_ts: transaction.statement_read_ts(),
+                                })
+                            }
+                            Err(error) => Err(error),
+                        }
+                    }
+                };
                 let _ = reply.send(answer);
             }
             TransactionRequest::Commit { mutations, reply } => {
@@ -333,25 +522,147 @@ fn serve_transaction(
                 // backoffers on `c.store.Ctx()` with `cleanupMaxBackoff`,
                 // deliberately decoupled from the statement's context.
                 let end_call = UnaryCallContext::with_timeout(TRANSACTION_END_TIMEOUT);
-                let _ = reply.send(
-                    transaction
+                if let Some(keep_alive) = keep_alive.take() {
+                    keep_alive.close();
+                }
+                let answer = match transaction {
+                    OpenTransaction::Optimistic(transaction) => transaction
                         .commit(mutations, &end_call)
                         .map_err(|error| error.to_string()),
-                );
+                    OpenTransaction::Pessimistic(transaction) => transaction
+                        .commit(mutations, &end_call)
+                        .map_err(|error| error.to_string()),
+                };
+                let _ = reply.send(answer);
                 return;
             }
             TransactionRequest::Finish { reply } => {
-                let _ = reply.send(
-                    transaction
+                if let Some(keep_alive) = keep_alive.take() {
+                    keep_alive.close();
+                }
+                let answer = match transaction {
+                    OpenTransaction::Optimistic(transaction) => transaction
                         .finish_without_writes()
                         .map(|_| ())
                         .map_err(|error| StorageError::Backend(error.to_string())),
-                );
+                    OpenTransaction::Pessimistic(mut transaction) => {
+                        let call = UnaryCallContext::with_timeout(TRANSACTION_END_TIMEOUT);
+                        let locked = transaction.locked_keys();
+                        if let Err(error) = transaction.pessimistic_rollback(&locked, &call) {
+                            Err(StorageError::Backend(error.to_string()))
+                        } else {
+                            transaction
+                                .into_two_pc()
+                                .finish_without_writes()
+                                .map(|_| ())
+                                .map_err(|error| StorageError::Backend(error.to_string()))
+                        }
+                    }
+                };
+                let _ = reply.send(answer);
                 return;
             }
         }
     }
-    let _ = transaction.finish_without_writes();
+    finish_open_transaction(transaction);
+}
+
+fn lock_pessimistic_keys_once(
+    transaction: &mut ProductionPessimisticTransaction,
+    keys: &[Vec<u8>],
+    presume_not_exists: &BTreeSet<Vec<u8>>,
+    wait: ReadLockWait,
+    call: &UnaryCallContext,
+) -> Result<LockKeysOutcome, TransactionStatementError> {
+    if keys.is_empty() {
+        return Ok(LockKeysOutcome::Acquired);
+    }
+    let wait = match wait {
+        ReadLockWait::Blocking => LockWaitTime::session_lock_wait_timeout(),
+        ReadLockWait::NoWait => LockWaitTime::NoWait,
+        ReadLockWait::Seconds(seconds) => LockWaitTime::Timeout(Duration::from_secs(seconds)),
+    };
+    let held: BTreeSet<Vec<u8>> = transaction.locked_keys().into_iter().collect();
+    // Fair locking keeps a lock granted with a newer committed version while
+    // the caller reruns the statement at the advanced `for_update_ts`. That
+    // lock is already owned by this transaction on the retry; asking TiKV to
+    // ForceLock it again reports the same `LockedWithConflict` forever and
+    // exhausts the statement retry budget. Reacquire only keys this statement
+    // has not already inherited from an earlier attempt or statement.
+    let keys_to_lock = lock_keys_not_held(keys, &held);
+    if keys_to_lock.is_empty() {
+        return Ok(LockKeysOutcome::Acquired);
+    }
+    let presume_not_exists_to_lock = presume_not_exists
+        .iter()
+        .filter(|key| !held.contains(*key))
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let retry_reason =
+        match transaction.acquire_locks(&keys_to_lock, &presume_not_exists_to_lock, wait, call) {
+            Ok(acquired) if acquired.locked_with_conflict.is_empty() => {
+                return Ok(LockKeysOutcome::Acquired);
+            }
+            Ok(acquired) => {
+                let (key, conflict_commit_ts) = acquired
+                    .locked_with_conflict
+                    .iter()
+                    .max_by_key(|(_, conflict_ts)| *conflict_ts)
+                    .expect("the non-empty branch admits a conflict");
+                locked_with_conflict_error(transaction.start_ts(), *conflict_commit_ts, key)
+            }
+            Err(failure) => {
+                let added = transaction
+                    .locked_keys()
+                    .into_iter()
+                    .filter(|key| !held.contains(key))
+                    .collect::<Vec<_>>();
+                if let Err(cause) = transaction.pessimistic_rollback(&added, call) {
+                    return Err(TransactionStatementError::Transaction(
+                        transaction_cause_to_sql_error(&cause),
+                    ));
+                }
+                if !is_retryable_statement_failure(&failure) {
+                    let error = lock_failure_to_sql_error(&failure);
+                    return Err(if failure.is_statement_scoped() {
+                        TransactionStatementError::Statement(error)
+                    } else {
+                        TransactionStatementError::Transaction(error)
+                    });
+                }
+                lock_failure_to_sql_error(&failure)
+            }
+        };
+    transaction.advance_for_update_ts().map_err(|failure| {
+        let error = lock_failure_to_sql_error(&failure);
+        if failure.is_statement_scoped() {
+            TransactionStatementError::Statement(error)
+        } else {
+            TransactionStatementError::Transaction(error)
+        }
+    })?;
+    Ok(LockKeysOutcome::Retry(retry_reason))
+}
+
+fn lock_keys_not_held(keys: &[Vec<u8>], held: &BTreeSet<Vec<u8>>) -> Vec<Vec<u8>> {
+    keys.iter()
+        .filter(|key| !held.contains(*key))
+        .cloned()
+        .collect()
+}
+
+fn finish_open_transaction(transaction: OpenTransaction) {
+    match transaction {
+        OpenTransaction::Optimistic(transaction) => {
+            let _ = transaction.finish_without_writes();
+        }
+        OpenTransaction::Pessimistic(mut transaction) => {
+            let call = UnaryCallContext::with_timeout(TRANSACTION_END_TIMEOUT);
+            let locked = transaction.locked_keys();
+            let _ = transaction.pessimistic_rollback(&locked, &call);
+            let _ = transaction.into_two_pc().finish_without_writes();
+        }
+    }
 }
 
 /// One statement's read snapshot: a real read-only transaction at one PD
@@ -415,6 +726,12 @@ impl StatementSnapshot {
         self.thread.start_ts
     }
 
+    /// The timestamp the next statement reads at.
+    #[must_use]
+    pub const fn statement_read_ts(&self) -> u64 {
+        self.thread.statement_read_ts
+    }
+
     /// Ends the statement's read transaction, leaving no locks behind.
     ///
     /// Calling it twice is a no-op: the statement is already finished.
@@ -463,6 +780,7 @@ impl ClusterSnapshot for StatementSnapshot {
 /// read.
 pub struct SessionTransaction {
     thread: TransactionThread,
+    mode: tidb_planner::txn_mode::SessionTxnMode,
 }
 
 impl fmt::Debug for SessionTransaction {
@@ -485,15 +803,60 @@ impl SessionTransaction {
         opener: Arc<RealOptimisticTransactionOpener>,
         timeout: Duration,
     ) -> Result<Self, OptimisticCoordinatorError> {
-        Ok(Self {
-            thread: TransactionThread::open(&opener, timeout, true, "cluster-session-transaction")?,
-        })
+        Self::begin_mode(
+            opener,
+            timeout,
+            tidb_planner::txn_mode::SessionTxnMode::Optimistic,
+            false,
+            CommitProtocol::two_phase_only(),
+        )
+    }
+
+    /// Opens a real multi-statement transaction in the requested TiDB mode.
+    ///
+    /// The wide SQL session uses this entry point with no configured table;
+    /// reads are addressed by raw keys and therefore work for every loaded
+    /// table in the connection's catalog.
+    pub fn begin_mode(
+        opener: Arc<RealOptimisticTransactionOpener>,
+        timeout: Duration,
+        mode: tidb_planner::txn_mode::SessionTxnMode,
+        fair_locking: bool,
+        commit_protocol: CommitProtocol,
+    ) -> Result<Self, OptimisticCoordinatorError> {
+        let thread = match mode {
+            tidb_planner::txn_mode::SessionTxnMode::Optimistic => {
+                TransactionThread::open(&opener, timeout, true, "cluster-session-transaction")?
+            }
+            tidb_planner::txn_mode::SessionTxnMode::Pessimistic => TransactionThread::open_with(
+                &opener,
+                timeout,
+                TransactionOpen::Pessimistic {
+                    fair_locking,
+                    commit_protocol,
+                },
+                "cluster-session-pessimistic-transaction",
+            )?,
+        };
+        Ok(Self { thread, mode })
+    }
+
+    /// The mode selected when the transaction opened.
+    #[must_use]
+    pub const fn mode(&self) -> tidb_planner::txn_mode::SessionTxnMode {
+        self.mode
     }
 
     /// The one timestamp every statement of this transaction reads at.
     #[must_use]
     pub const fn start_ts(&self) -> u64 {
         self.thread.start_ts
+    }
+
+    /// The timestamp the next statement reads at.
+    #[must_use]
+    pub const fn statement_read_ts(&self) -> u64 {
+        self.thread.statement_read_ts
     }
 
     /// A read handle onto this transaction, for one statement to bind.
@@ -503,8 +866,20 @@ impl SessionTransaction {
     pub fn snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, StorageError> {
         Ok(Box::new(SessionSnapshot {
             requests: self.thread.sender()?,
-            start_ts: self.thread.start_ts,
+            start_ts: self.thread.statement_read_ts,
         }))
+    }
+
+    /// Attempts one raw-key pessimistic lock batch. A retry result means the
+    /// caller must restore its statement buffer image and rerun the SQL at the
+    /// transaction's advanced statement timestamp.
+    pub fn lock_keys_once(
+        &mut self,
+        keys: &[Vec<u8>],
+        presume_not_exists: &BTreeSet<Vec<u8>>,
+        wait: ReadLockWait,
+    ) -> Result<LockKeysOutcome, TransactionStatementError> {
+        self.thread.lock_keys_once(keys, presume_not_exists, wait)
     }
 
     /// Publishes every staged write of the transaction at its own `start_ts`.
@@ -781,5 +1156,69 @@ mod tests {
             )),
             StorageError::Backend(_)
         ));
+    }
+
+    #[test]
+    fn a_statement_retry_does_not_relock_fairly_acquired_keys() {
+        let held = BTreeSet::from([b"already-locked".to_vec()]);
+        let requested = vec![b"already-locked".to_vec(), b"new-key".to_vec()];
+
+        assert_eq!(
+            lock_keys_not_held(&requested, &held),
+            vec![b"new-key".to_vec()]
+        );
+    }
+
+    #[test]
+    fn a_lock_request_deadline_covers_its_wait_budget() {
+        let default = Duration::from_secs(5);
+        let request = |wait| {
+            let (reply, _) = mpsc::channel();
+            TransactionRequest::LockKeys {
+                keys: vec![b"key".to_vec()],
+                presume_not_exists: BTreeSet::new(),
+                wait,
+                reply,
+            }
+        };
+
+        assert_eq!(
+            transaction_request_timeout(&request(ReadLockWait::NoWait), default),
+            default
+        );
+        assert_eq!(
+            transaction_request_timeout(&request(ReadLockWait::Blocking), default),
+            Duration::from_secs(55)
+        );
+        assert_eq!(
+            transaction_request_timeout(&request(ReadLockWait::Seconds(60)), default),
+            Duration::from_secs(65)
+        );
+    }
+
+    #[test]
+    fn a_snapshot_request_deadline_covers_client_go_backoff() {
+        let default = Duration::from_secs(5);
+        let (get_reply, _) = mpsc::channel();
+        let get = TransactionRequest::Get {
+            key: b"key".to_vec(),
+            reply: get_reply,
+        };
+        let (scan_reply, _) = mpsc::channel();
+        let scan = TransactionRequest::Scan {
+            start: b"a".to_vec(),
+            end: b"z".to_vec(),
+            limit: None,
+            reply: scan_reply,
+        };
+
+        assert_eq!(
+            transaction_request_timeout(&get, default),
+            SNAPSHOT_READ_MAX_BACKOFF
+        );
+        assert_eq!(
+            transaction_request_timeout(&scan, default),
+            SNAPSHOT_READ_MAX_BACKOFF
+        );
     }
 }

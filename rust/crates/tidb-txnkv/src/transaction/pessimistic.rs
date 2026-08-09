@@ -58,6 +58,7 @@ use crate::rpc::UnaryCallContext;
 use super::command_client::{PublishedCommand, TransactionCommandClient};
 use super::coordinator::{
     classify_key_error, PessimisticPrewritePlan, RealOptimisticTransaction, RecoveryPhase,
+    SnapshotGetResult, SnapshotScanPairs,
 };
 use super::mutation::OptimisticMutation;
 use super::region_batches::{group_keys, RegionKeyBatch};
@@ -345,6 +346,44 @@ where
     #[must_use]
     pub const fn for_update_ts(&self) -> u64 {
         self.for_update_ts
+    }
+
+    /// Timestamp the next pessimistic statement must read at.
+    ///
+    /// It starts at the transaction's `start_ts` and advances after a
+    /// statement loses a lock race. Reads at the older transaction snapshot
+    /// after that advance would recompute from the losing value and can cause
+    /// a lost update even though the lock itself succeeded.
+    #[must_use]
+    pub const fn statement_read_ts(&self) -> u64 {
+        self.for_update_ts
+    }
+
+    /// Reads one key at the current statement timestamp.
+    ///
+    /// The underlying 2PC transaction still owns locks and commits at
+    /// `start_ts`; only the statement's read view advances.
+    pub fn statement_snapshot_get(
+        &mut self,
+        key: &[u8],
+        call: &UnaryCallContext,
+    ) -> Result<SnapshotGetResult, OptimisticCoordinatorError> {
+        self.two_pc.snapshot_get_at(key, self.for_update_ts, call)
+    }
+
+    /// Scans one range at the current statement timestamp.
+    ///
+    /// Point reads and range reads use the same timestamp so a retry cannot
+    /// mix its old and new snapshots.
+    pub fn statement_snapshot_scan(
+        &mut self,
+        start_key: &[u8],
+        end_key: &[u8],
+        limit: Option<usize>,
+        call: &UnaryCallContext,
+    ) -> Result<SnapshotScanPairs, OptimisticCoordinatorError> {
+        self.two_pc
+            .snapshot_scan_at(start_key, end_key, limit, self.for_update_ts, call)
     }
 
     /// Primary key, present once any key has been locked.
@@ -827,7 +866,7 @@ where
         if blockers.is_empty() {
             // TiKV reported only lock errors it wants re-sent, which is how a
             // wait-timeout wake-up looks when nothing is worth resolving.
-            return self.check_wait_budget(wait, wait_started_at, batch.keys().first());
+            return self.check_wait_budget(wait, wait_started_at, batch.keys().first(), call);
         }
         let blocked_key = blockers[0].key().to_vec();
         let recovery = resolve_blocking_locks(
@@ -848,7 +887,7 @@ where
             // At least one owner is alive. TiKV already queued and woke this
             // request, so client-go does not add its own backoff here; only the
             // statement's own budget decides whether to try again.
-            return self.check_wait_budget(wait, wait_started_at, Some(&blocked_key));
+            return self.check_wait_budget(wait, wait_started_at, Some(&blocked_key), call);
         }
         // The blockers are gone; the immediate retry will take the lock.
         Ok(())
@@ -859,6 +898,7 @@ where
         wait: LockWaitTime,
         wait_started_at: Instant,
         blocked_key: Option<&Vec<u8>>,
+        call: &UnaryCallContext,
     ) -> Result<(), PessimisticLockFailure> {
         let key = blocked_key.cloned().unwrap_or_default();
         if matches!(wait, LockWaitTime::NoWait) {
@@ -875,11 +915,15 @@ where
         // it a transport failure instead escalates a blocked `FOR UPDATE` into
         // 1105 and destroys the whole transaction, which no amount of waiting
         // ever justifies.
-        if wait_started_at.elapsed() >= self.two_pc.call_timeout() {
+        if call_deadline_exhausted(call) {
             return Err(PessimisticLockFailure::LockWaitTimeout { key });
         }
         Ok(())
     }
+}
+
+fn call_deadline_exhausted(call: &UnaryCallContext) -> bool {
+    Instant::now() >= call.deadline()
 }
 
 enum BatchOutcome {
@@ -1027,5 +1071,14 @@ mod tests {
         assert!(wait.is_exhausted(Duration::from_secs(50)));
         // The arm this makes reachable is the statement-scoped one.
         assert!(PessimisticLockFailure::LockWaitTimeout { key: Vec::new() }.is_statement_scoped());
+    }
+
+    #[test]
+    fn a_lock_wait_uses_the_current_request_deadline() {
+        let active = UnaryCallContext::with_timeout(Duration::from_secs(50));
+        let expired = UnaryCallContext::with_timeout(Duration::ZERO);
+
+        assert!(!call_deadline_exhausted(&active));
+        assert!(call_deadline_exhausted(&expired));
     }
 }

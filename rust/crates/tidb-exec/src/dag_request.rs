@@ -192,6 +192,8 @@ pub fn limit_to_pb(limit: u64) -> Executor {
         tbl_scan: None,
         idx_scan: None,
         selection: None,
+        aggregation: None,
+        top_n: None,
         limit: Some(Limit { limit: Some(limit) }),
         executor_id: Some(String::new()),
         parent_idx: None,
@@ -395,6 +397,8 @@ fn selection_executor(conditions: Vec<Expr>) -> Result<Executor, DagRequestBuild
         tbl_scan: None,
         idx_scan: None,
         selection: Some(Selection { conditions }),
+        aggregation: None,
+        top_n: None,
         limit: None,
         // PhysicalSelection.ToPB always takes the address of executorID; it
         // remains empty for TiKV's list form.
@@ -468,6 +472,8 @@ fn table_scan_to_pb(spec: &TiKvTableScanSpec) -> Result<Executor, DagRequestBuil
         }),
         idx_scan: None,
         selection: None,
+        aggregation: None,
+        top_n: None,
         limit: None,
         // PhysicalTableScan.ToPB takes the address of its initially empty ID
         // even for TiKV, so field 10 is present with an empty string.
@@ -493,6 +499,8 @@ fn index_scan_to_pb(plan: &PhysicalIndexScanPlan) -> Result<Executor, DagRequest
         tbl_scan: None,
         idx_scan: Some(index_payload_to_pb(spec, plan)),
         selection: None,
+        aggregation: None,
+        top_n: None,
         limit: None,
         executor_id: None,
         parent_idx: None,

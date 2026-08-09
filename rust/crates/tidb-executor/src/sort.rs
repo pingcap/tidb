@@ -56,6 +56,7 @@ use crate::sort_partition::{spill_action, SortPartition, SPILL_CHUNK_SIZE};
 
 /// Go `planner/util.ByItems`: one `ORDER BY` item -- the key expression and
 /// its direction.
+#[derive(Clone)]
 pub struct SortByItem {
     /// Go `ByItems.Expr`.
     pub expr: Expression,

@@ -303,7 +303,7 @@ impl QuerySession for PipelineServerSession {
 
     /// Go reports a prepared statement's marker count and result columns at
     /// PREPARE time. The columns come from planning the statement with every
-    /// marker bound to NULL, which is side-effect free for a query; a
+    /// marker bound to NULL, without opening or draining its executor; a
     /// statement that answers with an OK packet reports none.
     fn prepare_general(&mut self, sql: &str) -> Result<PreparedGeneral, SqlQueryError> {
         let parameter_count = self.session.parameter_count(sql).map_err(map_error)?;
@@ -311,8 +311,8 @@ impl QuerySession for PipelineServerSession {
             StmtKind::Query => {
                 let probe: Vec<tidb_datatype::Datum> =
                     std::iter::repeat_n(tidb_datatype::Datum::Null, parameter_count).collect();
-                match self.session.run_with_params(sql, &probe) {
-                    Ok(StmtOutput::Rows { columns, .. }) => select_columns(&columns),
+                match self.session.plan_query_with_params(sql, &probe) {
+                    Ok(columns) => select_columns(&columns),
                     // A query whose metadata this tier cannot resolve without
                     // real values reports no columns at prepare time. That is
                     // a LAST resort and not a free one: a MySQL client frames

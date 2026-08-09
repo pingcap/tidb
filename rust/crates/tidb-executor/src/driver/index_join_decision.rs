@@ -411,7 +411,9 @@
 //! protocol between `build_join` and its children), not another estimator and
 //! not a bigger cost model.
 
-use tidb_datatype::FieldType;
+use tidb_datatype::{Datum, FieldType};
+use tidb_expr::expression::Expression;
+use tidb_expr::rewriter::rewrite_expr_resolved;
 
 use crate::driver::from::FromScope;
 use crate::driver::{Catalog, TableEntry};
@@ -430,6 +432,9 @@ pub(crate) struct IndexJoinDecision {
     /// Offsets into the join's equality keys that decide the probe range, in
     /// the object's own key-column order.
     pub(crate) probe_keys: Vec<usize>,
+    /// The complete object key assembled from dynamic join keys and static
+    /// access conditions.
+    pub(crate) probe_parts: Vec<crate::access_path::LookupProbePart>,
     /// The table the probes read.
     pub(crate) table: KvTable,
     /// The object the probes read: an index, or the clustered handle.
@@ -442,6 +447,16 @@ pub(crate) struct IndexJoinDecision {
     /// The `EXPLAIN` text of what decided the range: Go's
     /// `indexJoinPathRangeInfo` / `indexJoinIntPKRangeInfo`.
     pub(crate) range_info: String,
+    /// Every predicate local to the looked-up leaf, in statement form for
+    /// EXPLAIN and rewritten form for execution.
+    pub(crate) filters: Vec<tidb_ast::Expr>,
+    pub(crate) filter_exprs: Vec<Expression>,
+    /// Selectivity of the filter residue not already represented by a static
+    /// object-key part.
+    pub(crate) filter_selectivity: f64,
+    /// Whether those leaf filters plus the join equalities cover the complete
+    /// written WHERE.
+    pub(crate) consumes_where: bool,
 }
 
 /// One join side reduced to what the decision reads about it.
@@ -476,12 +491,35 @@ pub(crate) struct JoinSide<'a> {
 /// `keys` are the join's equality conjuncts as
 /// [`crate::hash_join::split_equi`] produced them: `left` is an offset in the
 /// LEFT child's row and `right` an offset in the RIGHT child's.
+#[cfg(test)]
 pub(crate) fn index_join_decision(
     kind: crate::join::JoinKind,
     keys: &[EquiKey],
     left: &JoinSide<'_>,
     right: &JoinSide<'_>,
     merge_chosen: bool,
+) -> Option<IndexJoinDecision> {
+    index_join_decision_with_context(
+        kind,
+        keys,
+        left,
+        right,
+        merge_chosen,
+        None,
+        &crate::StmtContext::for_query(),
+    )
+}
+
+/// The production decision with the statement's derived leaf predicates and
+/// evaluation context.
+pub(crate) fn index_join_decision_with_context(
+    kind: crate::join::JoinKind,
+    keys: &[EquiKey],
+    left: &JoinSide<'_>,
+    right: &JoinSide<'_>,
+    merge_chosen: bool,
+    rows: Option<&crate::driver::join_reorder::RowSource>,
+    ctx: &crate::StmtContext,
 ) -> Option<IndexJoinDecision> {
     if keys.is_empty() || merge_chosen {
         return None;
@@ -501,7 +539,7 @@ pub(crate) fn index_join_decision(
         let Some(table) = inner.table else {
             continue;
         };
-        if let Some(decision) = decide_over(table, lookup_is_left, keys, inner, outer) {
+        if let Some(decision) = decide_over(table, lookup_is_left, keys, inner, outer, rows, ctx) {
             return Some(decision);
         }
     }
@@ -515,6 +553,8 @@ fn decide_over(
     keys: &[EquiKey],
     inner: &JoinSide<'_>,
     outer: &JoinSide<'_>,
+    rows: Option<&crate::driver::join_reorder::RowSource>,
+    ctx: &crate::StmtContext,
 ) -> Option<IndexJoinDecision> {
     // A partitioned table's probe would have to name the partition the key
     // falls in; Go refuses `keepOrder` there and prunes per probe, neither of
@@ -541,6 +581,54 @@ fn decide_over(
                 && probe_compatible(&inner.types[inner_at(key)], &outer.types[outer_at(key)])
         })
     };
+    let filters = rows
+        .and_then(|rows| rows.filters_for(&inner.visible))
+        .unwrap_or_default()
+        .to_vec();
+    let filter_exprs = rewrite_inner_filters(inner, &columns, &filters, ctx)?;
+    let constants = static_equalities(&columns, &filters, ctx);
+    let consumes_where = rows
+        .is_some_and(crate::driver::join_reorder::RowSource::all_where_is_leaf_or_join_equality);
+
+    // Builds the object's complete leading key from dynamic equality columns
+    // and leaf-local constants. At least one part must be dynamic -- a wholly
+    // static key is a point get, not an index join.
+    let probe_for = |offsets: &[usize]| {
+        let mut probe_keys = Vec::new();
+        let mut probe_parts = Vec::new();
+        let mut dynamic_info = Vec::new();
+        let mut static_info = Vec::new();
+        let mut static_columns = Vec::new();
+        for offset in offsets {
+            if let Some(key) = key_of_column(*offset) {
+                let dynamic = probe_keys.len();
+                probe_keys.push(key);
+                probe_parts.push(crate::access_path::LookupProbePart::Dynamic(dynamic));
+                dynamic_info.push(format!(
+                    "eq({}, {})",
+                    inner_column_name(inner, *offset),
+                    outer.names[outer_at(&keys[key])]
+                ));
+            } else if let Some(value) = constants.get(*offset).and_then(Clone::clone) {
+                probe_parts.push(crate::access_path::LookupProbePart::Constant(value.clone()));
+                static_columns.push(*offset);
+                static_info.push(format!(
+                    "eq({}, {})",
+                    inner_column_name(inner, *offset),
+                    datum_text(&value)
+                ));
+            } else {
+                break;
+            }
+        }
+        (!probe_keys.is_empty()).then_some((
+            probe_keys,
+            probe_parts,
+            dynamic_info,
+            static_info,
+            static_columns,
+        ))
+    };
 
     // The clustered integer handle first, as Go does
     // (`buildDataSource2TableScanByIndexJoinProp` is "no worse than" the
@@ -551,71 +639,226 @@ fn decide_over(
             return Some(IndexJoinDecision {
                 lookup_is_left,
                 probe_keys: vec![key],
+                probe_parts: vec![crate::access_path::LookupProbePart::Dynamic(0)],
                 table: table.clone(),
                 object: crate::access_path::LookupObject::Handle,
+                filter_selectivity: residual_filter_selectivity(
+                    &filters,
+                    &[],
+                    &columns,
+                    &ctx.session_zone(),
+                ),
                 columns,
                 visible: inner.visible.clone(),
                 // Go `indexJoinIntPKRangeInfo`: the OUTER keys, bare.
                 range_info: format!("[{}]", outer.names[outer_at(&keys[key])]),
+                filters,
+                filter_exprs,
+                consumes_where,
             });
+        }
+    }
+
+    // A clustered composite primary key is a table path, not a secondary
+    // PRIMARY index. Constants may pin any leading parts while join keys fill
+    // the rest; the resulting complete tuple addresses the record directly.
+    if !table.common_handle_offsets().is_empty() {
+        if let Some((probe_keys, probe_parts, dynamic, static_parts, static_columns)) =
+            probe_for(table.common_handle_offsets())
+        {
+            if probe_parts.len() == table.common_handle_offsets().len() {
+                let range_info = format!(
+                    "[{}]",
+                    dynamic
+                        .into_iter()
+                        .chain(static_parts)
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                );
+                return Some(IndexJoinDecision {
+                    lookup_is_left,
+                    probe_keys,
+                    probe_parts,
+                    table: table.clone(),
+                    object: crate::access_path::LookupObject::CommonHandle,
+                    filter_selectivity: residual_filter_selectivity(
+                        &filters,
+                        &static_columns,
+                        &columns,
+                        &ctx.session_zone(),
+                    ),
+                    columns,
+                    visible: inner.visible.clone(),
+                    range_info,
+                    filters,
+                    filter_exprs,
+                    consumes_where,
+                });
+            }
         }
     }
 
     // Otherwise the longest LEADING run of an index's columns that are all
     // join keys -- Go's `indexJoinPathTmpInit` walk, which stops at the first
     // index column no inner key covers.
-    let mut best: Option<(i64, Vec<usize>)> = None;
+    let mut best: Option<(
+        i64,
+        Vec<usize>,
+        Vec<crate::access_path::LookupProbePart>,
+        Vec<String>,
+        Vec<String>,
+        Vec<usize>,
+    )> = None;
     for index in table.indexes() {
         if !index.visible || index.has_prefix() {
             continue;
         }
-        let mut probe_keys = Vec::new();
-        for offset in &index.column_offsets {
-            let Some(key) = key_of_column(*offset) else {
-                break;
-            };
-            probe_keys.push(key);
-        }
-        if probe_keys.is_empty() {
+        let Some((probe_keys, probe_parts, dynamic, static_parts, static_columns)) =
+            probe_for(&index.column_offsets)
+        else {
             continue;
-        }
+        };
         if best
             .as_ref()
-            .is_none_or(|(_, best)| best.len() < probe_keys.len())
+            .is_none_or(|(_, best, ..)| best.len() < probe_keys.len())
         {
-            best = Some((index.id, probe_keys));
+            best = Some((
+                index.id,
+                probe_keys,
+                probe_parts,
+                dynamic,
+                static_parts,
+                static_columns,
+            ));
         }
     }
-    let (index_id, probe_keys) = best?;
-    let index = table.indexes().iter().find(|i| i.id == index_id)?;
+    let (index_id, probe_keys, probe_parts, dynamic, static_parts, static_columns) = best?;
     // Go `indexJoinPathRangeInfo`: `eq(<index column>, <outer key>)` per
     // covered index column, in index order. The index column is Go's
     // `OrigName`, which an alias does not rename -- see [`JoinSide::origin`].
     let range_info = format!(
         "[{}]",
-        probe_keys
-            .iter()
-            .enumerate()
-            .map(|(at, key)| {
-                let column = index.column_offsets[at];
-                format!(
-                    "eq({}, {})",
-                    inner_column_name(inner, column),
-                    outer.names[outer_at(&keys[*key])]
-                )
-            })
+        dynamic
+            .into_iter()
+            .chain(static_parts)
             .collect::<Vec<_>>()
             .join(" ")
     );
     Some(IndexJoinDecision {
         lookup_is_left,
         probe_keys,
+        probe_parts,
         table: table.clone(),
         object: crate::access_path::LookupObject::Index(index_id),
+        filter_selectivity: residual_filter_selectivity(
+            &filters,
+            &static_columns,
+            &columns,
+            &ctx.session_zone(),
+        ),
         columns,
         visible: inner.visible.clone(),
         range_info,
+        filters,
+        filter_exprs,
+        consumes_where,
     })
+}
+
+/// Rewrites leaf-local predicates against the full table row the lookup
+/// source returns. `RowSource` has already classified them as belonging to
+/// this leaf; a rewrite failure therefore means the physical and logical
+/// scopes disagree, and the index strategy is refused.
+fn rewrite_inner_filters(
+    inner: &JoinSide<'_>,
+    columns: &[(String, FieldType)],
+    filters: &[tidb_ast::Expr],
+    ctx: &crate::StmtContext,
+) -> Option<Vec<Expression>> {
+    let database = inner
+        .origin
+        .as_deref()
+        .and_then(|origin| origin.rsplit_once('.'))
+        .map(|(database, _)| database.to_owned());
+    let mut scope = crate::plan_trace::PlanTrace::single_table_scope(
+        &inner.visible,
+        database,
+        columns.to_vec(),
+    );
+    scope.zone = ctx.session_zone();
+    let resolver = crate::driver::from::ScopeResolver { scope: &scope };
+    filters
+        .iter()
+        .map(|filter| rewrite_expr_resolved(filter, &resolver).ok())
+        .collect()
+}
+
+/// Constant equalities available to the looked-up table, in table-column
+/// order and already converted into each column's storage domain.
+fn static_equalities(
+    columns: &[(String, FieldType)],
+    filters: &[tidb_ast::Expr],
+    ctx: &crate::StmtContext,
+) -> Vec<Option<Datum>> {
+    let mut values = vec![None; columns.len()];
+    for filter in filters {
+        let mut pairs = Vec::new();
+        if !crate::driver::access::name_value_pairs(filter, &mut pairs, &ctx.session_zone())
+            || pairs.len() != 1
+            || !crate::driver::access::convert_pairs_to_column_domain(&mut pairs, columns)
+        {
+            continue;
+        }
+        let pair = &pairs[0];
+        if let Some(offset) = columns
+            .iter()
+            .position(|(name, _)| name.eq_ignore_ascii_case(pair.column()))
+        {
+            values[offset] = Some(pair.value().clone());
+        }
+    }
+    values
+}
+
+/// Pseudo selectivity of the inner filters not already represented by static
+/// key parts. Go leaves the static equality visible in the cop Selection but
+/// prices it in the range only once.
+fn residual_filter_selectivity(
+    filters: &[tidb_ast::Expr],
+    static_columns: &[usize],
+    columns: &[(String, FieldType)],
+    zone: &tidb_datatype::SessionTimeZone,
+) -> f64 {
+    let residual: Vec<&tidb_ast::Expr> = filters
+        .iter()
+        .filter(|filter| {
+            let mut pairs = Vec::new();
+            if !crate::driver::access::name_value_pairs(filter, &mut pairs, zone)
+                || pairs.len() != 1
+            {
+                return true;
+            }
+            !static_columns.iter().any(|offset| {
+                columns
+                    .get(*offset)
+                    .is_some_and(|(name, _)| pairs[0].column().eq_ignore_ascii_case(name))
+            })
+        })
+        .collect();
+    if residual.is_empty() {
+        1.0
+    } else {
+        crate::plan_trace::pseudo_selectivity_of_conjuncts(&residual)
+    }
+}
+
+fn datum_text(value: &Datum) -> String {
+    match value {
+        Datum::Int(value) => value.to_string(),
+        Datum::UInt(value) => value.to_string(),
+        Datum::Bytes(value) => format!("\"{}\"", String::from_utf8_lossy(value)),
+        other => other.sql_string().unwrap_or_else(|_| format!("{other:?}")),
+    }
 }
 
 /// One looked-up column as `EXPLAIN` prints it INSIDE a range, which is Go's

@@ -116,6 +116,9 @@ impl Selectable for DatumSelection<'_> {
 pub enum AggKind {
     /// `COUNT(expr)` / `COUNT(*)` (no argument).
     Count,
+    /// Root final stage for a pushed partial `COUNT`: add the per-region
+    /// counts instead of counting the number of partial rows.
+    FinalCount,
     /// `SUM(expr)`.
     Sum,
     /// `FIRST_ROW(expr)`: the first row's value (the planner's group-column
@@ -252,6 +255,7 @@ impl AggFunc {
 /// One group's partial results, in agg-func order.
 enum Partial {
     Count(i64),
+    FinalCount(i64),
     /// `None` until the first non-NULL input (an empty sum is NULL). Go
     /// sums an integer or decimal argument exactly, in the decimal domain --
     /// `SUM` over a BIGINT column is a DECIMAL in MySQL.
@@ -553,6 +557,7 @@ impl Partial {
     fn new(kind: &AggKind) -> Partial {
         match kind {
             AggKind::Count => Partial::Count(0),
+            AggKind::FinalCount => Partial::FinalCount(0),
             // The sum's domain is chosen lazily from the first non-NULL input.
             AggKind::Sum => Partial::SumDecimal(None),
             AggKind::GroupConcat { separator } => Partial::GroupConcat {
@@ -672,6 +677,17 @@ impl Partial {
             (Partial::Count(n), None) => *n += 1,
             (Partial::Count(_), Some(Datum::Null)) => {}
             (Partial::Count(n), Some(_)) => *n += 1,
+            (Partial::FinalCount(_), None | Some(Datum::Null)) => {}
+            (Partial::FinalCount(total), Some(Datum::Int(value))) => *total += value,
+            (Partial::FinalCount(total), Some(Datum::UInt(value))) => {
+                *total += i64::try_from(value)
+                    .map_err(|_| ExecError::unsupported("partial COUNT exceeds i64"))?;
+            }
+            (Partial::FinalCount(_), Some(_)) => {
+                return Err(ExecError::unsupported(
+                    "final COUNT requires integer partial results",
+                ))
+            }
             (Partial::SumDecimal(_) | Partial::SumReal(_), None) => {
                 return Err(ExecError::unsupported("SUM requires an argument"))
             }
@@ -866,7 +882,7 @@ impl Partial {
         div_precision_increment: u32,
     ) -> Result<Datum, ExecError> {
         Ok(match self {
-            Partial::Count(n) => Datum::Int(*n),
+            Partial::Count(n) | Partial::FinalCount(n) => Datum::Int(*n),
             // An empty group is SQL NULL, not the empty document `[]`/`{}`.
             Partial::JsonArrayAgg(entries, _) if entries.is_empty() => Datum::Null,
             Partial::JsonArrayAgg(entries, _) => encode_json(BinaryJSONValue::Array(
@@ -1059,6 +1075,348 @@ pub(crate) fn aggregate_rows(
     partial.finish(&[], div_precision_increment)
 }
 
+/// Finishes one aggregate state, including GROUP_CONCAT's statement warning
+/// and byte limit. Both hash and stream aggregation use this exact path so a
+/// physical algorithm choice cannot change an aggregate's value semantics.
+fn finish_agg_value<C: Columns>(
+    state: &mut AggState,
+    func: &AggFunc,
+    ctx: &C,
+    truncated: &mut bool,
+) -> Result<Datum, ExecError> {
+    let mut value = state
+        .partial
+        .finish(&func.order_by, ctx.div_precision_increment())?;
+    if let Datum::Bytes(joined) = &mut value {
+        if matches!(func.kind, AggKind::GroupConcat { .. }) {
+            let max_len = group_concat_max_len(ctx);
+            if max_len > 0 && joined.len() as u64 > max_len {
+                joined.truncate(max_len as usize);
+                if !*truncated {
+                    *truncated = true;
+                    let text = group_concat_arg_text(func);
+                    ctx.append_warning(1260, &format!("Some rows were cut by GROUPCONCAT({text})"));
+                }
+            }
+        }
+    }
+    Ok(value)
+}
+
+/// Go `StreamAggExec` for a global aggregate (an empty group-by list).
+///
+/// A global aggregate is already one ordered group, so no hash table or row
+/// materialization is needed: each child row is folded into the one vector of
+/// partial results and that vector emits exactly once, including for empty
+/// input. The driver selects this executor only for Go plan shapes that choose
+/// StreamAgg; grouped input continues through [`HashAggExec`].
+pub struct StreamAggExec<C: Columns> {
+    meta: ExecutorMeta,
+    agg_funcs: Vec<AggFunc>,
+    child: Box<dyn Executor>,
+    ctx: C,
+    child_chunk: Chunk,
+    states: Vec<AggState>,
+    truncated: Vec<bool>,
+    emitted: bool,
+    child_returned_empty: bool,
+}
+
+impl<C: Columns> StreamAggExec<C> {
+    /// Builds a one-group streaming aggregation over `child`.
+    #[must_use]
+    pub fn new(
+        meta: ExecutorMeta,
+        agg_funcs: Vec<AggFunc>,
+        child: Box<dyn Executor>,
+        ctx: C,
+    ) -> Self {
+        let child_chunk = child.new_chunk();
+        let states = agg_funcs.iter().map(AggState::new).collect();
+        let truncated = vec![false; agg_funcs.len()];
+        Self {
+            meta,
+            agg_funcs,
+            child,
+            ctx,
+            child_chunk,
+            states,
+            truncated,
+            emitted: false,
+            child_returned_empty: true,
+        }
+    }
+
+    fn update_row(
+        agg_funcs: &[AggFunc],
+        ctx: &C,
+        states: &mut [AggState],
+        row: tidb_chunk::row::Row<'_>,
+    ) -> Result<(), ExecError> {
+        for index in 0..agg_funcs.len() {
+            let func = &agg_funcs[index];
+            let mut extra_values = Vec::new();
+            let value = eval_agg_input(func, ctx, row, &mut extra_values)?;
+            let mut sort_key = Vec::with_capacity(func.order_by.len());
+            for (expr, _) in &func.order_by {
+                sort_key.push(expr.eval(ctx, row)?);
+            }
+            states[index].update(value, &extra_values, sort_key)?;
+        }
+        Ok(())
+    }
+}
+
+impl<C: Columns> Executor for StreamAggExec<C> {
+    fn agg_tree_input_empty(&self) -> bool {
+        self.child_returned_empty
+    }
+
+    fn open(&mut self) -> Result<(), ExecError> {
+        self.child.open()?;
+        self.child_chunk.reset();
+        self.states = self.agg_funcs.iter().map(AggState::new).collect();
+        self.truncated.fill(false);
+        self.emitted = false;
+        self.child_returned_empty = true;
+        Ok(())
+    }
+
+    fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+        req.reset();
+        if self.emitted {
+            return Ok(());
+        }
+        loop {
+            self.child.next(&mut self.child_chunk)?;
+            let rows = self.child_chunk.num_rows();
+            if rows == 0 {
+                break;
+            }
+            self.child_returned_empty = false;
+            for row_index in 0..rows {
+                Self::update_row(
+                    &self.agg_funcs,
+                    &self.ctx,
+                    &mut self.states,
+                    self.child_chunk.get_row(row_index),
+                )?;
+            }
+            self.child_chunk.reset();
+        }
+        if self.agg_funcs.is_empty() {
+            req.set_num_virtual_rows(1);
+        } else {
+            for index in 0..self.agg_funcs.len() {
+                let value = finish_agg_value(
+                    &mut self.states[index],
+                    &self.agg_funcs[index],
+                    &self.ctx,
+                    &mut self.truncated[index],
+                )?;
+                req.append_datum(index, &value);
+            }
+        }
+        self.emitted = true;
+        Ok(())
+    }
+
+    fn close(&mut self) -> Result<(), ExecError> {
+        self.states.clear();
+        self.child.close()
+    }
+
+    fn schema(&self) -> &Schema {
+        self.meta.schema()
+    }
+
+    fn ret_field_types(&self) -> &[FieldType] {
+        self.meta.ret_field_types()
+    }
+
+    fn init_cap(&self) -> usize {
+        self.meta.init_cap()
+    }
+
+    fn max_chunk_size(&self) -> usize {
+        self.meta.max_chunk_size()
+    }
+
+    fn new_chunk(&self) -> Chunk {
+        self.meta.new_chunk()
+    }
+}
+
+/// Go `StreamAggExec` for input already ordered by every `GROUP BY` item.
+///
+/// Unlike [`HashAggExec`], this operator holds one group at a time. A change
+/// in the encoded group key finishes the current aggregate states before the
+/// first row of the next group is folded. The driver constructs it only after
+/// the child reports the required physical order, so equal keys are contiguous
+/// and a completed group can never reappear later in the stream.
+pub struct GroupedStreamAggExec<C: Columns> {
+    meta: ExecutorMeta,
+    group_by: Vec<Expression>,
+    agg_funcs: Vec<AggFunc>,
+    /// Output column for each aggregate state. This separates TiKV's
+    /// function-first physical state order from the aggregation schema order
+    /// Go exposes without an extra Projection.
+    output_positions: Vec<usize>,
+    child: Box<dyn Executor>,
+    ctx: C,
+    child_chunk: Chunk,
+    child_at: usize,
+    states: Vec<AggState>,
+    truncated: Vec<bool>,
+    current_key: Option<Vec<u8>>,
+    child_done: bool,
+    child_returned_empty: bool,
+}
+
+impl<C: Columns> GroupedStreamAggExec<C> {
+    /// Builds a grouped streaming aggregation over an already ordered child.
+    #[must_use]
+    pub fn new(
+        meta: ExecutorMeta,
+        group_by: Vec<Expression>,
+        agg_funcs: Vec<AggFunc>,
+        output_positions: Vec<usize>,
+        child: Box<dyn Executor>,
+        ctx: C,
+    ) -> Self {
+        debug_assert!(!group_by.is_empty());
+        debug_assert_eq!(agg_funcs.len(), output_positions.len());
+        debug_assert!(output_positions
+            .iter()
+            .copied()
+            .all(|position| position < agg_funcs.len()));
+        debug_assert!((0..agg_funcs.len()).all(|position| output_positions.contains(&position)));
+        let child_chunk = child.new_chunk();
+        let states = agg_funcs.iter().map(AggState::new).collect();
+        let truncated = vec![false; agg_funcs.len()];
+        Self {
+            meta,
+            group_by,
+            agg_funcs,
+            output_positions,
+            child,
+            ctx,
+            child_chunk,
+            child_at: 0,
+            states,
+            truncated,
+            current_key: None,
+            child_done: false,
+            child_returned_empty: true,
+        }
+    }
+
+    fn group_key(&self, row: tidb_chunk::row::Row<'_>) -> Result<Vec<u8>, ExecError> {
+        let mut key = Vec::new();
+        for expr in &self.group_by {
+            let datum = expr.eval(&self.ctx, row)?;
+            key.extend_from_slice(&group_key_part(&expr_collation(expr), &datum));
+            key.push(0xff);
+        }
+        Ok(key)
+    }
+
+    fn emit_current(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+        for index in 0..self.states.len() {
+            let value = finish_agg_value(
+                &mut self.states[index],
+                &self.agg_funcs[index],
+                &self.ctx,
+                &mut self.truncated[index],
+            )?;
+            req.append_datum(self.output_positions[index], &value);
+        }
+        Ok(())
+    }
+}
+
+impl<C: Columns> Executor for GroupedStreamAggExec<C> {
+    fn agg_tree_input_empty(&self) -> bool {
+        self.child_returned_empty
+    }
+
+    fn open(&mut self) -> Result<(), ExecError> {
+        self.child.open()?;
+        self.child_chunk.reset();
+        self.child_at = 0;
+        self.states = self.agg_funcs.iter().map(AggState::new).collect();
+        self.truncated.fill(false);
+        self.current_key = None;
+        self.child_done = false;
+        self.child_returned_empty = true;
+        Ok(())
+    }
+
+    fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+        req.reset();
+        let cap = self.meta.max_chunk_size();
+        while req.num_rows() < cap {
+            if self.child_done {
+                if self.current_key.take().is_some() {
+                    self.emit_current(req)?;
+                }
+                break;
+            }
+            if self.child_at >= self.child_chunk.num_rows() {
+                self.child_chunk.reset();
+                self.child.next(&mut self.child_chunk)?;
+                self.child_at = 0;
+                if self.child_chunk.num_rows() == 0 {
+                    self.child_done = true;
+                    continue;
+                }
+            }
+
+            let key = self.group_key(self.child_chunk.get_row(self.child_at))?;
+            if self
+                .current_key
+                .as_ref()
+                .is_some_and(|current| current != &key)
+            {
+                self.emit_current(req)?;
+                self.states = self.agg_funcs.iter().map(AggState::new).collect();
+            }
+            self.current_key = Some(key);
+            let row = self.child_chunk.get_row(self.child_at);
+            StreamAggExec::<C>::update_row(&self.agg_funcs, &self.ctx, &mut self.states, row)?;
+            self.child_at += 1;
+            self.child_returned_empty = false;
+        }
+        Ok(())
+    }
+
+    fn close(&mut self) -> Result<(), ExecError> {
+        self.states.clear();
+        self.current_key = None;
+        self.child.close()
+    }
+
+    fn schema(&self) -> &Schema {
+        self.meta.schema()
+    }
+
+    fn ret_field_types(&self) -> &[FieldType] {
+        self.meta.ret_field_types()
+    }
+
+    fn init_cap(&self) -> usize {
+        self.meta.init_cap()
+    }
+
+    fn max_chunk_size(&self) -> usize {
+        self.meta.max_chunk_size()
+    }
+
+    fn new_chunk(&self) -> Chunk {
+        self.meta.new_chunk()
+    }
+}
+
 /// Go `HashAggExec` (serial `unparallelExec`): hash aggregation over the
 /// child's rows, in ROUNDS when the statement's memory quota forces a spill.
 ///
@@ -1246,40 +1604,14 @@ impl<C: Columns> HashAggExec<C> {
     }
 
     /// Appends group `idx`'s final values to `req`.
-    fn emit_group(
-        &mut self,
-        idx: usize,
-        req: &mut Chunk,
-        max_len: u64,
-        div_precision_increment: u32,
-    ) -> Result<(), ExecError> {
+    fn emit_group(&mut self, idx: usize, req: &mut Chunk) -> Result<(), ExecError> {
         for c in 0..self.ordered[idx].len() {
-            let order_by = self
-                .agg_funcs
-                .get(c)
-                .map_or(&[][..], |func| func.order_by.as_slice());
-            let mut value = self.ordered[idx][c]
-                .partial
-                .finish(order_by, div_precision_increment)?;
-            if let (Some(func), Datum::Bytes(joined)) = (self.agg_funcs.get(c), &mut value) {
-                if matches!(func.kind, AggKind::GroupConcat { .. })
-                    && max_len > 0
-                    && joined.len() as u64 > max_len
-                {
-                    // Go `bytes.Buffer.Truncate(int(e.maxLen))`: a BYTE cut, so
-                    // it lands mid-character or mid-separator (captured:
-                    // max_len 4 over 'ccc','bbb' -> `ccc,`).
-                    joined.truncate(max_len as usize);
-                    if !self.truncated[c] {
-                        self.truncated[c] = true;
-                        let text = group_concat_arg_text(func);
-                        self.ctx.append_warning(
-                            1260,
-                            &format!("Some rows were cut by GROUPCONCAT({text})"),
-                        );
-                    }
-                }
-            }
+            let value = finish_agg_value(
+                &mut self.ordered[idx][c],
+                &self.agg_funcs[c],
+                &self.ctx,
+                &mut self.truncated[c],
+            )?;
             req.append_datum(c, &value);
         }
         Ok(())
@@ -1340,8 +1672,6 @@ impl<C: Columns> Executor for HashAggExec<C> {
     /// full, and when they run out, run the next round.
     fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
         req.reset();
-        let max_len = group_concat_max_len(&self.ctx);
-        let div_precision_increment = self.ctx.div_precision_increment();
         let batch = self.meta.max_chunk_size();
         loop {
             if self.prepared {
@@ -1351,7 +1681,7 @@ impl<C: Columns> Executor for HashAggExec<C> {
                         // group with no aggregate columns is still a row.
                         req.set_num_virtual_rows(req.num_rows() + 1);
                     }
-                    self.emit_group(self.cursor, req, max_len, div_precision_increment)?;
+                    self.emit_group(self.cursor, req)?;
                     self.cursor += 1;
                     if req.num_rows() >= batch {
                         return Ok(());
