@@ -1034,17 +1034,28 @@ fn decode_restored_values_v5(
     restored: &[u8],
 ) -> Result<Vec<Vec<u8>>, TableIndexError> {
     let restore_columns = restored_columns(use_new_collation, columns);
-    let offsets = columns
+    // The rowcodec payload contains ONLY columns whose collation loses data.
+    // Its output layout must therefore be dense over that subset. Mapping the
+    // full index+handle column list here leaves a hole for every ordinary
+    // integer common-handle component and makes a valid value fail with
+    // InvalidOutputOffset.
+    let offsets = restore_columns
         .iter()
         .enumerate()
         .map(|(index, column)| (column.id, index))
         .collect::<BTreeMap<_, _>>();
     let restored_values =
         decode_row_to_old_bytes(restored, &restore_columns, &offsets, &[], None, None)?;
-    for (index, restored_value) in restored_values.into_iter().enumerate() {
+    for (restored_column, restored_value) in restore_columns.iter().zip(restored_values) {
         if restored_value.is_empty() {
             continue;
         }
+        let index = columns
+            .iter()
+            .position(|column| column.id == restored_column.id)
+            .ok_or(TableIndexError::Metadata(
+                "restored column is not in the decode projection",
+            ))?;
         if is_bin_collation(columns[index].field_type.collation_name()) {
             let original = decode_column_value(&results[index], &columns[index].field_type, None)?;
             let count_type = FieldType::new(FieldTypeCode::LongLong).with_unsigned(true);
@@ -1467,3 +1478,147 @@ pub const INDEX_INT_HANDLE_FLAG: u8 = INT_FLAG;
 pub const INDEX_UINT_FLAG: u8 = UINT_FLAG;
 /// Encoded table record key width used by tablecodec allocation sizing.
 pub const TABLE_RECORD_ROW_KEY_LEN: usize = RECORD_ROW_KEY_LEN;
+
+#[cfg(test)]
+mod source_tests {
+    use super::*;
+
+    fn long_column(id: i64, offset: usize) -> TableColumn {
+        TableColumn {
+            id,
+            offset,
+            field_type: FieldType::new(FieldTypeCode::LongLong),
+            primary_key: true,
+            changing_field_type: None,
+        }
+    }
+
+    fn varchar_column(id: i64, offset: usize) -> TableColumn {
+        TableColumn {
+            id,
+            offset,
+            field_type: FieldType::new(FieldTypeCode::Varchar)
+                .with_collation(Collation::Utf8Mb4Bin),
+            primary_key: false,
+            changing_field_type: None,
+        }
+    }
+
+    fn index_column(offset: usize) -> IndexColumn {
+        IndexColumn {
+            offset,
+            length: UNSPECIFIED_LENGTH,
+            use_changing_type: false,
+        }
+    }
+
+    #[test]
+    fn test_multi_column_common_handle() {
+        // Direct port of
+        // pkg/table/tables/index_test.go::TestMultiColumnCommonHandle. Both
+        // unique and non-unique entries decode to the indexed value followed
+        // by the two common-handle components.
+        let table = TableInfo {
+            columns: vec![
+                long_column(1, 0),
+                long_column(2, 1),
+                varchar_column(3, 2),
+                varchar_column(4, 3),
+            ],
+            indices: vec![IndexInfo {
+                id: 1,
+                columns: vec![index_column(0), index_column(1)],
+                unique: true,
+                global: false,
+                global_index_version: 0,
+                primary: true,
+            }],
+            pk_is_handle: false,
+            is_common_handle: true,
+            common_handle_version: 1,
+        };
+        let zone = SessionTimeZone::utc();
+        let encoded_handle = Encoder::new(true)
+            .encode_key_in_timezone(&zone, &[Datum::Int(3), Datum::Int(2)])
+            .unwrap();
+        let handle: Handle = CommonHandle::new(encoded_handle).unwrap().into();
+
+        for (index_id, unique, offset, column_id) in [(10, true, 2, 3), (11, false, 3, 4)] {
+            let index = IndexInfo {
+                id: index_id,
+                columns: vec![index_column(offset)],
+                unique,
+                global: false,
+                global_index_version: 0,
+                primary: false,
+            };
+            let mut indexed_values = vec![Datum::new_collation_string(
+                b"abc".to_vec(),
+                Collation::Utf8Mb4Bin,
+            )];
+            let (key, distinct) = generate_index_key(
+                Encoder::new(true),
+                Some(&zone),
+                &table,
+                &index,
+                42,
+                &mut indexed_values,
+                Some(&handle),
+            )
+            .unwrap();
+            assert_eq!(distinct, unique);
+            let value = generate_index_value(
+                true,
+                Some(&zone),
+                &table,
+                &index,
+                true,
+                distinct,
+                false,
+                &indexed_values,
+                &handle,
+                0,
+                &[],
+            )
+            .unwrap();
+            let columns = [
+                ColumnInfo {
+                    id: column_id,
+                    is_pk_handle: false,
+                    virtual_generated: false,
+                    field_type: table.columns[offset].field_type.clone(),
+                },
+                ColumnInfo {
+                    id: 1,
+                    is_pk_handle: false,
+                    virtual_generated: false,
+                    field_type: table.columns[0].field_type.clone(),
+                },
+                ColumnInfo {
+                    id: 2,
+                    is_pk_handle: false,
+                    virtual_generated: false,
+                    field_type: table.columns[1].field_type.clone(),
+                },
+            ];
+
+            let decoded =
+                decode_index_kv(true, &key, &value, 1, HandleStatus::Default, &columns).unwrap();
+            assert_eq!(decoded.len(), 3, "index {index_id}");
+            let (_, indexed) = decode_one(&decoded[0]).unwrap();
+            let (_, a) = decode_one(&decoded[1]).unwrap();
+            let (_, b) = decode_one(&decoded[2]).unwrap();
+            assert_eq!(indexed.as_raw_bytes().unwrap(), b"abc");
+            assert_eq!(a, Datum::Int(3));
+            assert_eq!(b, Datum::Int(2));
+
+            let decoded_handle = decode_index_handle(&key, &value, 1).unwrap();
+            assert!(!decoded_handle.is_int());
+            assert_eq!(
+                decoded_handle.encoded(),
+                handle.encoded(),
+                "index {index_id}"
+            );
+        }
+    }
+}
