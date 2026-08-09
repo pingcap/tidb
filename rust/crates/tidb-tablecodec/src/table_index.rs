@@ -1894,4 +1894,104 @@ mod source_tests {
             vec![b"23".to_vec()]
         );
     }
+
+    #[test]
+    fn test_gen_index_value_with_large_padding_size() {
+        // Direct port of
+        // pkg/table/tables/index_test.go::TestGenIndexValueWithLargePaddingSize
+        // (issue #47115). Restored-data padding must preserve a count of 128,
+        // while the two-column common handle remains recoverable.
+        let table = TableInfo {
+            columns: vec![long_column(1, 0), long_column(2, 1), varchar_column(3, 2)],
+            indices: vec![IndexInfo {
+                id: 1,
+                columns: vec![index_column(0), index_column(1)],
+                unique: true,
+                global: false,
+                global_index_version: 0,
+                primary: true,
+            }],
+            pk_is_handle: false,
+            is_common_handle: true,
+            common_handle_version: 1,
+        };
+        let index = IndexInfo {
+            id: 10,
+            columns: vec![index_column(2)],
+            unique: false,
+            global: false,
+            global_index_version: 0,
+            primary: false,
+        };
+        let zone = SessionTimeZone::utc();
+        let encoded_handle = Encoder::new(true)
+            .encode_key_in_timezone(&zone, &[Datum::Int(1), Datum::Int(2)])
+            .unwrap();
+        let handle: Handle = CommonHandle::new(encoded_handle).unwrap().into();
+        let mut padded = b"abc".to_vec();
+        padded.resize(padded.len() + 128, b' ');
+        let mut indexed_values = vec![Datum::new_collation_string(
+            padded.clone(),
+            Collation::Utf8Mb4Bin,
+        )];
+        let (key, distinct) = generate_index_key(
+            Encoder::new(true),
+            Some(&zone),
+            &table,
+            &index,
+            42,
+            &mut indexed_values,
+            Some(&handle),
+        )
+        .unwrap();
+        assert!(!distinct);
+        let value = generate_index_value(
+            true,
+            Some(&zone),
+            &table,
+            &index,
+            true,
+            distinct,
+            false,
+            &indexed_values,
+            &handle,
+            0,
+            &[],
+        )
+        .unwrap();
+        let columns = [
+            ColumnInfo {
+                id: 3,
+                is_pk_handle: false,
+                virtual_generated: false,
+                field_type: table.columns[2].field_type.clone(),
+            },
+            ColumnInfo {
+                id: 1,
+                is_pk_handle: false,
+                virtual_generated: false,
+                field_type: table.columns[0].field_type.clone(),
+            },
+            ColumnInfo {
+                id: 2,
+                is_pk_handle: false,
+                virtual_generated: false,
+                field_type: table.columns[1].field_type.clone(),
+            },
+        ];
+
+        let decoded =
+            decode_index_kv(true, &key, &value, 1, HandleStatus::Default, &columns).unwrap();
+        assert_eq!(decoded.len(), 3);
+        let (_, indexed) = decode_one(&decoded[0]).unwrap();
+        let (_, a) = decode_one(&decoded[1]).unwrap();
+        let (_, b) = decode_one(&decoded[2]).unwrap();
+        assert_eq!(indexed.as_raw_bytes().unwrap(), padded);
+        assert_eq!(a, Datum::Int(1));
+        assert_eq!(b, Datum::Int(2));
+        assert_eq!(
+            decode_index_handle(&key, &value, 1).unwrap().encoded(),
+            handle.encoded()
+        );
+    }
 }
