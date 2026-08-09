@@ -59,8 +59,8 @@ impl Datum {
             Self::Int(value) => value.to_string().into_bytes(),
             Self::UInt(value) => value.to_string().into_bytes(),
             Self::Decimal(value) => value.to_string().into_bytes(),
-            Self::Real(value) => value.to_string().into_bytes(),
-            Self::Float32(value) => (*value as f32).to_string().into_bytes(),
+            Self::Real(value) => format_go_float_f(*value).into_bytes(),
+            Self::Float32(value) => format_go_float_f(*value as f32).into_bytes(),
             Self::String(value) => value.bytes().to_vec(),
             Self::Bytes(value) => value.clone(),
             Self::BinaryLiteral(value) | Self::Bit(value) => value.as_bytes().to_vec(),
@@ -280,7 +280,7 @@ fn quote_value_expr_bytes(value: &[u8]) -> Vec<u8> {
     quoted
 }
 
-trait GoScientificFloat: fmt::LowerExp + Copy {
+trait GoScientificFloat: fmt::Display + fmt::LowerExp + Copy {
     fn special(self) -> Option<&'static str>;
 }
 
@@ -312,6 +312,14 @@ impl GoScientificFloat for f64 {
     }
 }
 
+/// Go `strconv.FormatFloat(value, 'f', -1, bitSize)` special-value spelling
+/// plus Rust's equivalent shortest fixed rendering for finite values.
+fn format_go_float_f<T: GoScientificFloat>(value: T) -> String {
+    value
+        .special()
+        .map_or_else(|| value.to_string(), str::to_owned)
+}
+
 /// Go `strconv.FormatFloat(value, 'e', -1, bitSize)` differs from Rust's
 /// lower-exponent display only in special values and exponent normalization.
 fn format_go_float_e<T: GoScientificFloat>(value: T) -> String {
@@ -330,6 +338,18 @@ fn format_go_float_e<T: GoScientificFloat>(value: T) -> String {
 #[cfg(test)]
 mod tests {
     use super::Datum;
+
+    #[test]
+    fn sql_float_stringification_matches_go_special_values() {
+        assert_eq!(Datum::Real(f64::INFINITY).sql_string().unwrap(), "+Inf");
+        assert_eq!(Datum::Real(f64::NEG_INFINITY).sql_string().unwrap(), "-Inf");
+        assert_eq!(Datum::Real(f64::NAN).sql_string().unwrap(), "NaN");
+        assert_eq!(Datum::Float32(f64::INFINITY).sql_string().unwrap(), "+Inf");
+        assert_eq!(
+            Datum::Float32(-3.1111111).sql_string().unwrap(),
+            "-3.1111112"
+        );
+    }
 
     /// Source: `pkg/types/datum.go::GetString` / `GetBytes`. Diagnostics may
     /// encode arbitrary octets, but semantic stringification must reject
