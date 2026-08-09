@@ -79,7 +79,14 @@ impl Codec {
             columns.push(column);
             ordinal += 1;
         }
-        (Chunk::from_reusable_columns(columns, 0, 0), remained)
+        let chunk = if columns.is_empty() {
+            // Go starts with `&Chunk{}` and therefore preserves nil-column
+            // zero-value semantics when the input itself is empty.
+            Chunk::default()
+        } else {
+            Chunk::from_reusable_columns(columns, 0, 0)
+        };
+        (chunk, remained)
     }
 
     /// Go `DecodeToChunk`: read into `chunk`'s existing columns, returning the
@@ -539,6 +546,18 @@ mod tests {
         assert_eq!(chunk.column(0).get_int64(0), 1);
         assert!(chunk.column(0).is_null(1));
         assert_eq!(chunk.column(0).get_int64(2), -2);
+    }
+
+    #[test]
+    fn decoding_empty_input_preserves_nil_column_state() {
+        let (decoded, remained) = Codec::new(Vec::new()).decode(&[]);
+        assert!(remained.is_empty());
+        assert_eq!(decoded.num_cols(), 0);
+        // Renewal is the public observer of Go nil versus non-nil empty
+        // columns: only the literal nil state collapses to a zero-value chunk.
+        let renewed = decoded.renew_with_capacity(7, 9);
+        assert_eq!(renewed.capacity(), 0);
+        assert_eq!(renewed.required_rows(), 0);
     }
 
     fn decoder_source(rows: usize) -> (Vec<FieldType>, Chunk) {

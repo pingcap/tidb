@@ -104,11 +104,8 @@ impl DiskFormatRow {
         }
     }
 
-    /// Go `diskFormatRow.toRow`: appends this row to `chk`.
-    ///
-    /// Go allocates a fresh 1024-row chunk when `chk` is nil or full and
-    /// returns it; the caller here always supplies the chunk, so only the
-    /// append remains. Returns the index of the appended row.
+    /// Go `diskFormatRow.toRow`'s append half. Destination selection and the
+    /// nil/full replacement policy live at the public container boundary.
     fn to_row(&self, chk: &mut Chunk) -> usize {
         let mut cell_off = 0;
         for (col_idx, size) in self.sizes_of_columns.iter().enumerate() {
@@ -121,6 +118,56 @@ impl DiskFormatRow {
             }
         }
         chk.num_rows() - 1
+    }
+}
+
+/// The chunk carrying a row returned by
+/// [`DataInDiskByRows::get_row_and_append_to_chunk`].
+pub enum AppendedRowChunk<'a> {
+    /// The caller's non-full chunk was reused in place.
+    Existing(&'a mut Chunk),
+    /// The caller supplied no chunk, or supplied a full one, so Go's fresh
+    /// 1024-row replacement is owned by the result.
+    Replacement(Chunk),
+}
+
+/// Rust ownership form of Go's `(Row, *Chunk)` return from
+/// `GetRowAndAppendToChunk`.
+pub struct AppendedDiskRow<'a> {
+    chunk: AppendedRowChunk<'a>,
+    row_index: usize,
+}
+
+impl AppendedDiskRow<'_> {
+    /// The chunk that owns the appended row.
+    #[must_use]
+    pub fn chunk(&self) -> &Chunk {
+        match &self.chunk {
+            AppendedRowChunk::Existing(chunk) => &**chunk,
+            AppendedRowChunk::Replacement(chunk) => chunk,
+        }
+    }
+
+    /// The appended row's index in [`Self::chunk`].
+    #[must_use]
+    pub fn row_index(&self) -> usize {
+        self.row_index
+    }
+
+    /// Whether the nil/full source path allocated a fresh chunk.
+    #[must_use]
+    pub fn is_replacement(&self) -> bool {
+        matches!(&self.chunk, AppendedRowChunk::Replacement(_))
+    }
+
+    /// Take the fresh replacement and row index, or `None` when the caller's
+    /// existing chunk was used.
+    #[must_use]
+    pub fn into_replacement(self) -> Option<(Chunk, usize)> {
+        match self.chunk {
+            AppendedRowChunk::Replacement(chunk) => Some((chunk, self.row_index)),
+            AppendedRowChunk::Existing(_) => None,
+        }
     }
 }
 
@@ -310,21 +357,50 @@ impl DataInDiskByRows {
         Ok(chk)
     }
 
-    /// Go `GetRowAndAppendToChunk`: appends the row `ptr` points at to `chk`
-    /// and returns its index there.
-    ///
-    /// Go returns a `Row`, which borrows the chunk it was appended to; a Rust
-    /// `Row` cannot outlive that borrow, so the INDEX comes back instead and
-    /// the caller reads `chk.get_row(index)` while it still owns `chk`.
-    pub fn get_row_and_append_to_chunk(
+    /// Go `GetRowAndAppendToChunk`: append into a supplied non-full chunk, or
+    /// allocate and return a fresh capacity-1024 chunk when it is `None` or
+    /// already full.
+    pub fn get_row_and_append_to_chunk<'a>(
         &self,
         ptr: RowPtr,
-        chk: &mut Chunk,
-    ) -> Result<usize, DiskError> {
+        chunk: Option<&'a mut Chunk>,
+    ) -> Result<AppendedDiskRow<'a>, DiskError> {
         let off = self.get_offset(ptr.chk_idx, ptr.row_idx)?;
         let mut format = DiskFormatRow::default();
         read_row_from(&self.data_file, off, self.field_types.len(), &mut format)?;
-        Ok(format.to_row(chk))
+        match chunk {
+            Some(chunk) if !chunk.is_full() => {
+                let row_index = format.to_row(chunk);
+                Ok(AppendedDiskRow {
+                    chunk: AppendedRowChunk::Existing(chunk),
+                    row_index,
+                })
+            }
+            _ => {
+                let mut replacement = Chunk::new_with_capacity(&self.field_types, 1024);
+                let row_index = format.to_row(&mut replacement);
+                Ok(AppendedDiskRow {
+                    chunk: AppendedRowChunk::Replacement(replacement),
+                    row_index,
+                })
+            }
+        }
+    }
+
+    /// Checked thin helper for callers whose contract guarantees an existing
+    /// non-full destination and needs only the appended row index.
+    pub fn get_row_and_append_to_existing_chunk(
+        &self,
+        ptr: RowPtr,
+        chunk: &mut Chunk,
+    ) -> Result<usize, DiskError> {
+        assert!(
+            !chunk.is_full(),
+            "existing row-in-disk destination must not be full"
+        );
+        Ok(self
+            .get_row_and_append_to_chunk(ptr, Some(chunk))?
+            .row_index())
     }
 
     /// Go `GetRow`: the row on its own, in a chunk allocated for it.
@@ -333,9 +409,11 @@ impl DataInDiskByRows {
     /// 1024 and the returned `Row` keeps it alive. Here the chunk is returned
     /// with the row's index in it.
     pub fn get_row(&self, ptr: RowPtr) -> Result<(Chunk, usize), DiskError> {
-        let mut chk = Chunk::new_with_capacity(&self.field_types, 1024);
-        let idx = self.get_row_and_append_to_chunk(ptr, &mut chk)?;
-        Ok((chk, idx))
+        self.get_row_and_append_to_chunk(ptr, None)?
+            .into_replacement()
+            .ok_or(DiskError::Message(
+                "nil row-in-disk destination did not allocate a replacement",
+            ))
     }
 
     /// Go `Close`: releases the tracked disk usage and removes both files.
@@ -738,6 +816,62 @@ mod tests {
                 }
             }
         }
+        drop(container);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Go `diskFormatRow.toRow` replaces a nil OR full destination with a
+    /// fresh capacity-1024 chunk. A full caller-owned chunk is not mutated.
+    #[test]
+    fn row_read_replaces_a_full_destination() {
+        let _guard = temp_dir_guard();
+        let dir = scratch_temp_dir("full-row-destination");
+        disk::set_temp_storage_path(&dir);
+        let (fields, chunks) = int64_case();
+        let container = spill(&fields, &chunks);
+
+        let mut full = Chunk::new(&fields, 1, 1);
+        full.append_int64(0, 99);
+        assert!(full.is_full());
+        let appended = container
+            .get_row_and_append_to_chunk(RowPtr::new(0, 0), Some(&mut full))
+            .expect("read row");
+        assert!(appended.is_replacement());
+        assert_eq!(appended.chunk().capacity(), 1024);
+        assert_eq!(
+            appended.chunk().get_row(appended.row_index()).get_int64(0),
+            1
+        );
+        let (replacement, row_index) = appended.into_replacement().expect("replacement chunk");
+        assert_eq!(replacement.get_row(row_index).get_int64(0), 1);
+
+        // The source pointer passed to Go remains the same full chunk. The
+        // borrowed Rust input proves the same identity/value contract.
+        assert_eq!(full.num_rows(), 1);
+        assert_eq!(full.get_row(0).get_int64(0), 99);
+        drop(container);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn row_read_appends_to_a_non_full_destination() {
+        let _guard = temp_dir_guard();
+        let dir = scratch_temp_dir("non-full-row-destination");
+        disk::set_temp_storage_path(&dir);
+        let (fields, chunks) = int64_case();
+        let container = spill(&fields, &chunks);
+
+        let mut destination = Chunk::new(&fields, 1, 2);
+        destination.append_int64(0, 99);
+        let appended = container
+            .get_row_and_append_to_chunk(RowPtr::new(0, 2), Some(&mut destination))
+            .expect("read row");
+        assert!(!appended.is_replacement());
+        assert_eq!(appended.row_index(), 1);
+        assert_eq!(appended.chunk().get_row(1).get_int64(0), -2);
+        drop(appended);
+        assert_eq!(destination.num_rows(), 2);
+
         drop(container);
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -431,7 +431,7 @@ impl RowContainer {
                 if let Some(error) = &self.records.spill_error {
                     return Err(DiskError::Owned(error.clone()));
                 }
-                in_disk.get_row_and_append_to_chunk(ptr, chk)
+                in_disk.get_row_and_append_to_existing_chunk(ptr, chk)
             }
             None => {
                 chk.append_row(self.records.in_memory.get_row(ptr));
