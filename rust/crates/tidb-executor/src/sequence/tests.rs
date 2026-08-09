@@ -17,6 +17,10 @@
 //! derived from the ported formula.
 
 use super::*;
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
 
 /// Reads `n` values, reporting an exhausted sequence as `None` so a whole
 /// captured run (values then error) is one assertion.
@@ -93,6 +97,57 @@ fn test_sequence_autoid() {
         seek_to_first_sequence_value(base, 2, -10, base, state.end),
         None
     );
+}
+
+/// Complete translation of
+/// `pkg/meta/autoid/seq_autoid_test.go::TestConcurrentAllocSequence`.
+#[test]
+fn test_concurrent_alloc_sequence() {
+    let allocator = SequenceAllocator::new(SequenceInfo {
+        start: 100,
+        cycle: false,
+        cache: true,
+        min_value: -100,
+        max_value: 100,
+        increment: -2,
+        cache_value: 3,
+    });
+    let seen = Arc::new(Mutex::new(HashSet::new()));
+
+    let workers = (0..10)
+        .map(|worker| {
+            // Go constructs a fresh allocator for every goroutine over the
+            // same store: each has an independent local cache, but all ten
+            // reserve through one SequenceValue meta key.
+            let peer = allocator.peer();
+            let seen = Arc::clone(&seen);
+            thread::spawn(move || -> Result<(), String> {
+                thread::sleep(Duration::from_micros(worker));
+                for _ in 0..3 {
+                    let (base, end, _) = peer
+                        .alloc_seq_cache()
+                        .map_err(|error| format!("sequence allocation failed: {error:?}"))?;
+                    let mut seen = seen.lock().expect("seen sequence ranges");
+                    // The source test checks the whole descending reservation,
+                    // not only values on the sequence's increment ladder.
+                    for value in (end..base).rev() {
+                        if !seen.insert(value) {
+                            return Err(format!("duplicate id:{value}"));
+                        }
+                    }
+                }
+                Ok(())
+            })
+        })
+        .collect::<Vec<_>>();
+
+    for worker in workers {
+        worker.join().expect("sequence worker panicked").unwrap();
+    }
+    // The first `[101, 96]` reservation covers five integers. Each later
+    // reservation first realigns to the even START ladder and therefore
+    // spans six; Go's 30 source batches consequently cover 5 + 29 * 6.
+    assert_eq!(seen.lock().unwrap().len(), 179);
 }
 
 /// `create sequence s1` -> 1, 2, 3. The corpus fixture, and the defaults
