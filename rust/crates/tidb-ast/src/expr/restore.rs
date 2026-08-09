@@ -243,9 +243,14 @@ impl Expr {
                 out.push_str("MATCH(");
                 for (index, column) in columns.iter().enumerate() {
                     if index > 0 {
-                        out.push_str(", ");
+                        out.push(',');
                     }
-                    restore_path(column, out);
+                    for (part_index, part) in column.iter().enumerate() {
+                        if part_index > 0 {
+                            out.push('.');
+                        }
+                        out.push_str(&identifier_to_lower(part));
+                    }
                 }
                 out.push_str(") AGAINST(");
                 against.format_into(out);

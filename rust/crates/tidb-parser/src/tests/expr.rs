@@ -1085,6 +1085,51 @@ fn match_against() {
     );
 }
 
+/// `pkg/parser/parser_test.go::TestFulltextSearch`.
+#[test]
+fn test_fulltext_search() {
+    fn where_format(sql: &str) -> String {
+        let Stmt::Query(query) = parse(sql).unwrap_or_else(|error| panic!("{sql}: {error:?}"))
+        else {
+            panic!("expected query: {sql}");
+        };
+        let tidb_ast::QueryStmt::Select(select) = query.as_ref() else {
+            panic!("expected SELECT: {sql}");
+        };
+        select
+            .where_clause
+            .as_ref()
+            .unwrap_or_else(|| panic!("expected WHERE: {sql}"))
+            .format()
+    }
+
+    assert!(parse("SELECT * FROM fulltext_test WHERE MATCH(content) AGAINST('search')").is_ok());
+    for sql in [
+        "SELECT * FROM fulltext_test WHERE MATCH() AGAINST('search')",
+        "SELECT * FROM fulltext_test WHERE MATCH(content) AGAINST()",
+        "SELECT * FROM fulltext_test WHERE MATCH(content) AGAINST('search' IN)",
+        "SELECT * FROM fulltext_test WHERE MATCH(content) AGAINST('search' IN BOOLEAN MODE WITH QUERY EXPANSION)",
+    ] {
+        assert!(parse(sql).is_err(), "{sql}");
+    }
+    for (sql, expected) in [
+        (
+            "SELECT * FROM fulltext_test WHERE MATCH(title,content) AGAINST('search' IN NATURAL LANGUAGE MODE)",
+            r#"MATCH(title,content) AGAINST("search")"#,
+        ),
+        (
+            "SELECT * FROM fulltext_test WHERE MATCH(title,content) AGAINST('search' IN BOOLEAN MODE)",
+            r#"MATCH(title,content) AGAINST("search" IN BOOLEAN MODE)"#,
+        ),
+        (
+            "SELECT * FROM fulltext_test WHERE MATCH(title,content) AGAINST('search' WITH QUERY EXPANSION)",
+            r#"MATCH(title,content) AGAINST("search" WITH QUERY EXPANSION)"#,
+        ),
+    ] {
+        assert_eq!(where_format(sql), expected, "{sql}");
+    }
+}
+
 /// `col -> path` / `col ->> path` — JSON extraction, DESUGARS at parse
 /// time to `JSON_EXTRACT(col, path)` / `JSON_UNQUOTE(JSON_EXTRACT(col,
 /// path))` (real TiDB's own grammar has no dedicated AST node for this
