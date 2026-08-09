@@ -157,6 +157,74 @@ fn lock_tables_leaf_grammar_matches_go_ast_restore_contract() {
     );
 }
 
+/// `pkg/parser/parser_test.go::TestLockUnlockTables`.
+#[test]
+fn test_lock_unlock_tables() {
+    for (sql, expected) in [
+        ("UNLOCK TABLES;", Some("UNLOCK TABLES")),
+        ("LOCK TABLES t1 READ;", Some("LOCK TABLES `t1` READ")),
+        (
+            "LOCK TABLES t1 READ LOCAL;",
+            Some("LOCK TABLES `t1` READ LOCAL"),
+        ),
+        (
+            "show table status like 't'",
+            Some("SHOW TABLE STATUS LIKE _UTF8MB4't'"),
+        ),
+        ("LOCK TABLES t2 WRITE", Some("LOCK TABLES `t2` WRITE")),
+        (
+            "LOCK TABLES t2 WRITE LOCAL;",
+            Some("LOCK TABLES `t2` WRITE LOCAL"),
+        ),
+        (
+            "LOCK TABLES t1 WRITE, t2 READ;",
+            Some("LOCK TABLES `t1` WRITE, `t2` READ"),
+        ),
+        (
+            "LOCK TABLES t1 WRITE LOCAL, t2 READ LOCAL;",
+            Some("LOCK TABLES `t1` WRITE LOCAL, `t2` READ LOCAL"),
+        ),
+        ("UNLOCK TABLE;", Some("UNLOCK TABLES")),
+        ("LOCK TABLE t1 READ;", Some("LOCK TABLES `t1` READ")),
+        (
+            "LOCK TABLE t1 READ LOCAL;",
+            Some("LOCK TABLES `t1` READ LOCAL"),
+        ),
+        (
+            "show table status like 't'",
+            Some("SHOW TABLE STATUS LIKE _UTF8MB4't'"),
+        ),
+        ("LOCK TABLE t2 WRITE", Some("LOCK TABLES `t2` WRITE")),
+        (
+            "LOCK TABLE t2 WRITE LOCAL;",
+            Some("LOCK TABLES `t2` WRITE LOCAL"),
+        ),
+        (
+            "LOCK TABLE t1 WRITE, t2 READ;",
+            Some("LOCK TABLES `t1` WRITE, `t2` READ"),
+        ),
+        ("ADMIN CLEANUP TABLE LOCK", None),
+        (
+            "ADMIN CLEANUP TABLE LOCK t",
+            Some("ADMIN CLEANUP TABLE LOCK `t`"),
+        ),
+        (
+            "ADMIN CLEANUP TABLE LOCK t1,t2",
+            Some("ADMIN CLEANUP TABLE LOCK `t1`, `t2`"),
+        ),
+        ("ALTER TABLE t READ ONLY", Some("ALTER TABLE `t` READ ONLY")),
+        (
+            "ALTER TABLE t READ WRITE",
+            Some("ALTER TABLE `t` READ WRITE"),
+        ),
+    ] {
+        match expected {
+            Some(expected) => assert_eq!(r(sql), expected, "{sql}"),
+            None => assert!(parse(sql).is_err(), "{sql}"),
+        }
+    }
+}
+
 #[test]
 fn drop_index_leaf_grammar_preserves_typed_options() {
     let mut parser =
