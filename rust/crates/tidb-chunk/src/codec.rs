@@ -634,10 +634,10 @@ mod tests {
         assert_eq!(target.num_rows(), 3);
         assert_eq!(target.column(1).offsets[0], 0);
         for row in 0..3 {
-            for column in 0..2 {
+            for (column, field) in fields.iter().enumerate().take(2) {
                 assert_eq!(
-                    target.get_row(row).get_datum(column, &fields[column]),
-                    source.get_row(row + 16).get_datum(column, &fields[column])
+                    target.get_row(row).get_datum(column, field),
+                    source.get_row(row + 16).get_datum(column, field)
                 );
             }
         }
