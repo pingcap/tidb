@@ -50,7 +50,7 @@ import (
 
 const tiflashCheckTiDBHTTPAPIHalfInterval = 2500 * time.Millisecond
 
-const truncateTTLOldRegistrationCompensationLogKeyword = "truncate_ttl_restore_old_registration_failed"
+const truncateTTLRestoreOldRegistrationLogKey = "truncate_ttl_restore_old_registration_failed"
 
 func repairTableOrViewWithCheck(t *meta.Mutator, job *model.Job, schemaID int64, tbInfo *model.TableInfo) error {
 	err := checkTableInfoValid(tbInfo)
@@ -494,7 +494,7 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 			if err := jobCtx.oldDDLCtx.registerTTLTableToExternalWorkload(jobCtx.ctx, newTTLTableInfo); err != nil {
 				if compensateErr := jobCtx.oldDDLCtx.registerTTLTableToExternalWorkload(jobCtx.ctx, oldTblInfo); compensateErr != nil {
 					logutil.DDLLogger().Warn("truncate TTL external workload compensation failed",
-						zap.String("keyword", truncateTTLOldRegistrationCompensationLogKeyword),
+						zap.String("keyword", truncateTTLRestoreOldRegistrationLogKey),
 						zap.Int64("oldTableID", oldTblInfo.ID),
 						zap.Int64("newTableID", newTTLTableInfo.ID),
 						zap.Error(compensateErr),
