@@ -321,3 +321,38 @@ fn transaction_set_sugar_restores_as_system_variables() {
     );
     assert!(parse("set transaction isolation level read committed, read only").is_err());
 }
+
+/// Exact AST assertions from `pkg/parser/parser_test.go::TestSetTransaction`.
+#[test]
+fn test_set_transaction_source_of_truth() {
+    for (sql, expected_scope, expected_value) in [
+        (
+            "SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED",
+            tidb_ast::SystemVariableScope::Session,
+            "READ-COMMITTED",
+        ),
+        (
+            "SET GLOBAL TRANSACTION ISOLATION LEVEL REPEATABLE READ",
+            tidb_ast::SystemVariableScope::Global,
+            "REPEATABLE-READ",
+        ),
+    ] {
+        let statement = parse(sql).unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+        let tidb_ast::Stmt::Session(session) = statement else {
+            panic!("expected session statement");
+        };
+        let tidb_ast::SessionStmt::Set(set) = session.as_ref() else {
+            panic!("expected SET statement");
+        };
+        let [assignment] = set.assignments.as_slice() else {
+            panic!("expected one assignment");
+        };
+        assert_eq!(assignment.name, "tx_isolation", "{sql}");
+        assert_eq!(assignment.scope, expected_scope, "{sql}");
+        assert!(matches!(
+            &assignment.value,
+            tidb_ast::SetVariableValue::Expr(tidb_ast::Expr::String(value))
+                if value == expected_value
+        ));
+    }
+}
