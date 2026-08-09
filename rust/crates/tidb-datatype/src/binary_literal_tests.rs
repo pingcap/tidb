@@ -17,7 +17,7 @@ use std::cmp::Ordering;
 
 /// Complete translation of `pkg/types/binary_literal_test.go::TestBinaryLiteral`.
 #[test]
-fn binary_literal_executes_the_complete_original_source_table() {
+fn test_binary_literal() {
     let trim_rows: &[(&[u8], &[u8])] = &[
         (&[], &[]),
         (&[0x0], &[0x0]),
