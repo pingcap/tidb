@@ -58,7 +58,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use tidb_executor::kv_table::{AutoIdStore, AutoIdStoreError};
+use tidb_executor::kv_table::{advance, calc_needed_batch_size, AutoIdStore, AutoIdStoreError};
 use tidb_meta::{key, value};
 use tidb_model::table_info::TableInfo;
 use tidb_txnkv::rpc::UnaryCallContext;
@@ -207,7 +207,7 @@ impl ClusterAutoIdStore {
 impl AutoIdStore for ClusterAutoIdStore {
     fn reserve(&self, step: u64, unsigned: bool) -> Result<(u64, u64), AutoIdStoreError> {
         self.transact(|current| {
-            let end = tidb_executor::kv_table::advance(current, step, unsigned);
+            let end = advance(current, step, unsigned);
             // No room left: say so by handing back an empty range instead of
             // writing the key, which is Go returning from inside the
             // reservation without ever calling `Inc`.
@@ -216,6 +216,19 @@ impl AutoIdStore for ClusterAutoIdStore {
             } else {
                 (Some(end), (current, end))
             }
+        })
+    }
+
+    fn reserve_batch(
+        &self,
+        minimum_step: u64,
+        n: u64,
+        increment: u64,
+        offset: u64,
+        unsigned: bool,
+    ) -> Result<(u64, u64), AutoIdStoreError> {
+        self.transact(|current| {
+            batch_reservation(current, minimum_step, n, increment, offset, unsigned)
         })
     }
 
@@ -240,10 +253,55 @@ impl AutoIdStore for ClusterAutoIdStore {
     }
 }
 
+/// The decision run inside the counter transaction for one batch request.
+/// Computing `needed` here, after the current global base was read, is the
+/// source invariant exercised by `TestAllocComputationIssue`.
+fn batch_reservation(
+    current: u64,
+    minimum_step: u64,
+    n: u64,
+    increment: u64,
+    offset: u64,
+    unsigned: bool,
+) -> (Option<u64>, (u64, u64)) {
+    let needed = calc_needed_batch_size(current, n, increment, offset, unsigned);
+    let end = advance(current, minimum_step.max(needed), unsigned);
+    if end == current {
+        (None, (current, current))
+    } else {
+        (Some(end), (current, end))
+    }
+}
+
 /// One phrase for every way the counter's home can be out of reach, so the
 /// statement that surfaces it says which step failed.
 fn store_error(step: &str, error: &impl std::fmt::Display) -> AutoIdStoreError {
     AutoIdStoreError(format!(
         "the table's auto-increment counter could not be {step}: {error}"
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Source: `pkg/meta/autoid/autoid_test.go::TestAllocComputationIssue`.
+    #[test]
+    fn test_alloc_computation_issue() {
+        // The stale allocator-local bases in the Go regression are 9 and 4.
+        // Its transaction reads the actual shared bases 10 and 7, and the
+        // next two values on an increment-3 ladder therefore need six slots.
+        assert_eq!(
+            batch_reservation(10, 3, 2, 3, 1, true),
+            (Some(16), (10, 16))
+        );
+        assert_eq!(batch_reservation(7, 3, 2, 3, 1, false), (Some(13), (7, 13)));
+
+        // The configured reservation step may be larger, but never smaller
+        // than the batch recomputed from the transaction's own base.
+        assert_eq!(
+            batch_reservation(10, 30, 2, 3, 1, false),
+            (Some(40), (10, 40))
+        );
+    }
 }
