@@ -93,6 +93,85 @@ pub fn dedup_index_columns(
         .collect()
 }
 
+#[derive(Default)]
+struct AstColumnPaths(Vec<Vec<String>>);
+
+impl tidb_ast::Visitor for AstColumnPaths {
+    fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+        if let Some(tidb_ast::Expr::Column(path)) = node.downcast_mut::<tidb_ast::Expr>() {
+            self.0.push(path.clone());
+            return true;
+        }
+        false
+    }
+
+    fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+        true
+    }
+}
+
+/// Extracts table columns referenced by a partial-index predicate.
+///
+/// Go `tables.ExtractColumnsFromCondition` optionally expands a virtual
+/// generated column to its base-column dependencies, then still returns the
+/// virtual column itself. Stored generated columns remain ordinary columns.
+pub fn extract_columns_from_index_condition(
+    index: &tidb_model::IndexInfo,
+    table: &tidb_model::TableInfo,
+    include_virtual_generated_dependencies: bool,
+) -> Result<Vec<tidb_model::GoShared<tidb_model::IndexColumn>>, String> {
+    if index.condition_expr_string.is_empty() {
+        return Ok(Vec::new());
+    }
+    let expression = index.condition_expr().map_err(|error| error.message)?;
+    extract_columns_from_expression(expression, table, include_virtual_generated_dependencies)
+}
+
+fn extract_columns_from_expression(
+    mut expression: tidb_ast::Expr,
+    table: &tidb_model::TableInfo,
+    include_virtual_generated_dependencies: bool,
+) -> Result<Vec<tidb_model::GoShared<tidb_model::IndexColumn>>, String> {
+    use tidb_ast::Visitable;
+
+    let mut paths = AstColumnPaths::default();
+    expression.accept(&mut paths);
+    let mut columns = Vec::new();
+    for path in paths.0 {
+        let name = path
+            .last()
+            .ok_or_else(|| "partial-index condition contains an empty column path".to_owned())?;
+        let lowercase_name = tidb_ast::CiString::new(name).lowercase().to_owned();
+        let (offset, column) = table
+            .columns
+            .iter_deref()
+            .enumerate()
+            .find(|(_, column)| column.read().name.lowercase() == lowercase_name)
+            .ok_or_else(|| format!("unknown column '{name}' in partial-index condition"))?;
+        let column = column.read();
+        if include_virtual_generated_dependencies && column.is_virtual_generated() {
+            let generated_index = tidb_model::IndexInfo {
+                condition_expr_string: column.generated_expr_string.clone(),
+                ..Default::default()
+            };
+            let generated = generated_index
+                .condition_expr()
+                .map_err(|error| error.message)?;
+            columns.extend(extract_columns_from_expression(
+                generated,
+                table,
+                include_virtual_generated_dependencies,
+            )?);
+        }
+        columns.push(tidb_model::GoShared::new(tidb_model::IndexColumn {
+            name: column.name.clone(),
+            offset: offset as i64,
+            ..Default::default()
+        }));
+    }
+    Ok(columns)
+}
+
 /// Options shared by table mutations and index writes.
 ///
 /// Go stores an opaque `context.Context` handle in `commonMutateOpt`, and its
@@ -2291,6 +2370,71 @@ mod tests {
         assert_eq!(result.len(), all_columns.len());
         for (actual, expected) in result.iter().zip(&all_columns) {
             assert!(actual.ptr_eq(expected));
+        }
+    }
+
+    #[test]
+    fn test_extract_columns_from_condition() {
+        // Direct port of
+        // pkg/table/tables/index_test.go::TestExtractColumnsFromCondition.
+        let column = |name: &str, offset, generated: &str, stored| tidb_model::ColumnInfo {
+            name: tidb_ast::CiString::new(name),
+            offset,
+            state: tidb_model::SchemaState::PUBLIC,
+            generated_expr_string: generated.to_owned(),
+            generated_stored: stored,
+            ..Default::default()
+        };
+        let table = tidb_model::TableInfo {
+            name: tidb_ast::CiString::new("test_table"),
+            columns: vec![
+                column("c1", 0, "", false),
+                column("c2", 1, "", false),
+                column("c3", 2, "c1 + c2", false),
+                column("c4", 3, "c1 + c2", true),
+            ]
+            .into(),
+            ..Default::default()
+        };
+        let cases = [
+            (
+                "c1 AND c2",
+                vec![("c1", 0), ("c2", 1)],
+                vec![("c1", 0), ("c2", 1)],
+            ),
+            ("c1 > 100", vec![("c1", 0)], vec![("c1", 0)]),
+            (
+                "c3 > 50",
+                vec![("c3", 2)],
+                vec![("c1", 0), ("c2", 1), ("c3", 2)],
+            ),
+            ("c4 > 50", vec![("c4", 3)], vec![("c4", 3)]),
+        ];
+
+        for (condition, expected, expected_with_virtual) in cases {
+            let index = tidb_model::IndexInfo {
+                condition_expr_string: condition.to_owned(),
+                ..Default::default()
+            };
+            for (include_virtual, expected) in [
+                (false, expected.as_slice()),
+                (true, expected_with_virtual.as_slice()),
+            ] {
+                let actual =
+                    extract_columns_from_index_condition(&index, &table, include_virtual).unwrap();
+                let actual = actual
+                    .iter()
+                    .map(|column| {
+                        let column = column.read();
+                        (column.name.original().to_owned(), column.offset)
+                    })
+                    .collect::<Vec<_>>();
+                let expected = expected
+                    .iter()
+                    .map(|(name, offset)| ((*name).to_owned(), *offset))
+                    .collect::<Vec<_>>();
+                assert_eq!(actual, expected, "condition {condition}");
+            }
         }
     }
 
