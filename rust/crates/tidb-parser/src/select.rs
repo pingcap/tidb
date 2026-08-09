@@ -1138,6 +1138,13 @@ impl Parser {
     /// (Go's `CanBeImplicitAlias` mirror) has never listed every reserved
     /// keyword, only the ones ambiguous as a BARE trailing word.
     fn parse_opt_alias(&mut self) -> PResult<Option<String>> {
+        // The lexer combines adjacent `AS OF` into one token for stale-read
+        // grammar. In a select-field alias position there is no stale-read
+        // production: this is still `AS` followed by the reserved word `OF`,
+        // and Go rejects it through FieldAsName's Identifier gate.
+        if self.is_kw("AS OF") {
+            return Err(self.err_here("expected identifier after AS"));
+        }
         if self.is_kw("AS") {
             self.bump();
             return Ok(Some(self.parse_explicit_alias_name()?));
