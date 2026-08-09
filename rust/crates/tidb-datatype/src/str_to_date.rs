@@ -710,11 +710,16 @@ mod tests {
         }
     }
 
+    /// Complete translation of `pkg/types/time_test.go::TestGetFormatType`.
     #[test]
-    fn test_get_format_type_source_rows() {
+    fn test_get_format_type() {
         assert_eq!(get_format_type("TEST"), (false, false));
         assert_eq!(get_format_type("%y %m %d 2019 04 01"), (false, true));
         assert_eq!(get_format_type("%h 30"), (true, false));
+    }
+
+    #[test]
+    fn get_format_type_supplemental_rows() {
         assert_eq!(get_format_type("%Y-%m-%d %H:%i:%s"), (true, true));
         assert_eq!(get_format_type("%"), (false, false));
     }
