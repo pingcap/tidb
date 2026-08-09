@@ -214,6 +214,19 @@ impl Parser {
         } else if self.is_kw("FLOAT") {
             self.bump();
             self.parse_float_cast_type()
+        } else if self.is_kw("VECTOR") {
+            self.bump();
+            if self.is_op("<") {
+                self.bump();
+                if self.is_kw("FLOAT") || self.is_kw("FLOAT4") {
+                    self.bump();
+                } else {
+                    return Err(self.err_here("only VECTOR<FLOAT> is supported"));
+                }
+                self.expect_op(">")?;
+            }
+            let dimensions = self.parse_optional_paren_uint()?;
+            Ok(CastType::Vector { dimensions })
         } else if self.is_kw("JSON") {
             self.bump();
             Ok(CastType::Json)

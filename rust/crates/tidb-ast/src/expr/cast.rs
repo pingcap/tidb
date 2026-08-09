@@ -256,6 +256,15 @@ pub enum CastType {
     /// own two-argument-only-past-that restriction being the OPPOSITE
     /// asymmetry — checked, not assumed uniform.
     Float,
+    /// `VECTOR[<FLOAT|FLOAT4>][(dimensions)]`. TiDB currently supports only
+    /// Float32 vectors; the optional element spelling is canonicalized away
+    /// on restore. The dimension remains in the typed AST for result metadata
+    /// and evaluation even though Go's `RestoreAsCastType` prints only
+    /// `VECTOR`.
+    Vector {
+        /// Expected vector dimension, if specified.
+        dimensions: Option<u32>,
+    },
     /// `JSON`. Parses and restores fully, but evaluation is deliberately
     /// `Unsupported` — this crate has no JSON value domain at all yet.
     Json,
@@ -350,6 +359,7 @@ pub(crate) fn restore_cast_type(ty: &CastType, array: bool, out: &mut String) {
         CastType::Year => out.push_str("YEAR"),
         CastType::Double => out.push_str("DOUBLE"),
         CastType::Float => out.push_str("FLOAT"),
+        CastType::Vector { .. } => out.push_str("VECTOR"),
         CastType::Json => out.push_str("JSON"),
     }
     if array {
@@ -434,6 +444,9 @@ impl crate::Visitable for CastType {
             Self::Year => {}
             Self::Double => {}
             Self::Float => {}
+            Self::Vector { dimensions } => {
+                let _ = dimensions;
+            }
             Self::Json => {}
         }
         visitor.leave(self)

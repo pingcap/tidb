@@ -31,6 +31,7 @@ use crate::time_fn::calendar::{format_ymd_result, parse_date_ymd};
 use crate::Decimal;
 use crate::{Datum, EvalError};
 use tidb_ast::CastType;
+use tidb_datatype::{ConversionFlags, FieldType, FieldTypeCode};
 
 /// Evaluates a [`CastType`] against an already-evaluated, non-`NULL`
 /// operand (`NULL` is handled by the caller — every target type maps
@@ -52,7 +53,10 @@ pub(crate) fn eval_cast(
         return Err(EvalError::Unsupported("range sentinel cast operand"));
     }
     if matches!(v, Datum::VectorFloat32(_))
-        && !matches!(cast_type, CastType::Char { .. } | CastType::Binary { .. })
+        && !matches!(
+            cast_type,
+            CastType::Char { .. } | CastType::Binary { .. } | CastType::Vector { .. }
+        )
     {
         return Err(EvalError::Unsupported(
             "a vector can only be cast to string or vector",
@@ -132,6 +136,15 @@ pub(crate) fn eval_cast(
         ),
         CastType::Year => cast_to_year(&v),
         CastType::Double | CastType::Float => Ok(Datum::Real(to_f64_for_cast(&v))),
+        CastType::Vector { dimensions } => {
+            let mut target = FieldType::new(FieldTypeCode::VectorFloat32);
+            if let Some(dimensions) = dimensions {
+                target.set_flen(i64::from(*dimensions));
+            }
+            v.convert_to(&target, ConversionFlags::default())
+                .map(|converted| converted.value)
+                .map_err(|_| EvalError::Unsupported("invalid CAST AS VECTOR operand"))
+        }
         CastType::Time { .. } => Err(EvalError::Unsupported("CAST AS TIME")),
         CastType::Json => crate::builtin_ext::cast_as_json(&v),
     }

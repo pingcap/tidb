@@ -429,6 +429,13 @@ fn infer_type(
                     None,
                     Collation::Binary,
                 )),
+                CastType::Vector { dimensions } => Ok(type_metadata(
+                    FieldTypeCode::VectorFloat32,
+                    0,
+                    *dimensions,
+                    Some(0),
+                    Collation::Binary,
+                )),
                 CastType::Json => unresolved("JSON result metadata requires a JSON value domain"),
             },
             Expr::Func { name, args, .. } => infer_function(name, args, default_collation)

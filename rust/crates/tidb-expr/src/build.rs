@@ -137,6 +137,13 @@ impl BuildContext {
                 }
                 CastType::Decimal { .. } => FieldType::new(FieldTypeCode::NewDecimal),
                 CastType::Double | CastType::Float => FieldType::new(FieldTypeCode::Double),
+                CastType::Vector { dimensions } => {
+                    let mut field_type = FieldType::new(FieldTypeCode::VectorFloat32);
+                    if let Some(dimensions) = dimensions {
+                        field_type.set_flen(i64::from(*dimensions));
+                    }
+                    field_type
+                }
                 CastType::Date
                 | CastType::DateTime { .. }
                 | CastType::Time { .. }

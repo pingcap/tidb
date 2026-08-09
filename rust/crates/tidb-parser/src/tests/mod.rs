@@ -144,6 +144,7 @@ mod ddl_create_table;
 mod ddl_default_source;
 mod ddl_remaining_source;
 mod ddl_table_parser_source;
+mod differential_source;
 mod dml;
 mod dml_join_restore_source;
 mod dml_restore_source;

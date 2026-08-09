@@ -160,7 +160,7 @@ fn cast_target(cast_type: &tidb_ast::CastType) -> Option<(&'static str, FieldTyp
         CastType::Year => "cast_year",
         CastType::Double | CastType::Float => "cast_double",
         CastType::Json => "cast_json",
-        CastType::Time { .. } => return None,
+        CastType::Time { .. } | CastType::Vector { .. } => return None,
     };
     let ft = match cast_type {
         CastType::Signed => FieldType::new(FieldTypeCode::LongLong),
@@ -202,7 +202,7 @@ fn cast_target(cast_type: &tidb_ast::CastType) -> Option<(&'static str, FieldTyp
         CastType::Year => FieldType::new(FieldTypeCode::LongLong),
         CastType::Double | CastType::Float => FieldType::new(FieldTypeCode::Double),
         CastType::Json => FieldType::new(FieldTypeCode::Json),
-        CastType::Time { .. } => return None,
+        CastType::Time { .. } | CastType::Vector { .. } => return None,
     };
     Some((name, ft))
 }
