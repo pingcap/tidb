@@ -1011,8 +1011,9 @@ mod tests {
         BinaryJSON::parse(text).unwrap()
     }
 
+    /// Complete translation of `pkg/types/json_binary_test.go::TestBinaryJSONExtract`.
     #[test]
-    fn test_binary_json_extract_source_rows() {
+    fn test_binary_json_extract() {
         let cases = [
             (
                 r#"{"\"hello\"":"world","a":[1,"2",{"aa":"bb"},4.0,{"aa":"cc"}],"b":true,"c":["d"]}"#,
@@ -1300,8 +1301,9 @@ mod tests {
         }
     }
 
+    /// Complete translation of `pkg/types/json_binary_test.go::TestBinaryJSONMerge`.
     #[test]
-    fn test_binary_json_merge_and_contains_source_rows() {
+    fn test_binary_json_merge() {
         for (inputs, expected) in [
             (vec![r#"{"a":1}"#, r#"{"b":2}"#], r#"{"a":1,"b":2}"#),
             (vec![r#"{"a":1}"#, r#"{"a":2}"#], r#"{"a":[1,2]}"#),
@@ -1410,8 +1412,9 @@ mod tests {
         }
     }
 
+    /// Complete translation of `pkg/types/json_binary_test.go::TestBinaryJSONModify`.
     #[test]
-    fn test_binary_json_modify_and_remove_source_rows() {
+    fn test_binary_json_modify() {
         for (base, path, value, expected, mode) in [
             ("null", "$", "{}", "{}", JSONModifyType::Set),
             ("{}", "$.a", "3", r#"{"a":3}"#, JSONModifyType::Set),
@@ -1695,6 +1698,18 @@ mod tests {
         );
     }
 
+    /// Complete translation of `pkg/types/json_binary_test.go::TestFunctions`.
+    #[test]
+    fn test_functions() {
+        let source = b"\\bfnrtuz0";
+        assert_eq!(
+            crate::unquote_json_string("\\bfnrtuz0").unwrap(),
+            "\u{8}fnrtuz0"
+        );
+        assert!(peek_binary_json_len(source).is_err());
+        assert!(peek_binary_json_len(b"").is_err());
+    }
+
     #[test]
     fn test_hash_value() {
         let values = [
@@ -1777,8 +1792,9 @@ mod tests {
         }
     }
 
+    /// Complete translation of `pkg/types/json_binary_test.go::TestBinaryJSONWalk`.
     #[test]
-    fn test_binary_json_walk_and_search_source_rows() {
+    fn test_binary_json_walk() {
         let document = json(r#"["abc",[{"k":"10"},"def"],{"x":"abc"},{"y":"bcd"}]"#);
         let expected = [
             ("$", r#"["abc",[{"k":"10"},"def"],{"x":"abc"},{"y":"bcd"}]"#),
@@ -1799,23 +1815,39 @@ mod tests {
             assert_eq!(value.to_string(), json(expected_value).to_string());
         }
 
+        let expected_subtree = ["$[1]", "$[1][0]", "$[1][0].k", "$[1][1]"];
         let subtree = document
-            .walk(&[
-                parse_json_path_expr("$[1]").unwrap(),
-                parse_json_path_expr("$[1]").unwrap(),
-            ])
+            .walk(&[parse_json_path_expr("$[1]").unwrap()])
             .unwrap();
         assert_eq!(
             subtree
                 .iter()
                 .map(|(path, _)| path.to_string())
                 .collect::<Vec<_>>(),
-            ["$[1]", "$[1][0]", "$[1][0].k", "$[1][1]"]
+            expected_subtree
+        );
+
+        let duplicate_subtree = document
+            .walk(&[
+                parse_json_path_expr("$[1]").unwrap(),
+                parse_json_path_expr("$[1]").unwrap(),
+            ])
+            .unwrap();
+        assert_eq!(
+            duplicate_subtree
+                .iter()
+                .map(|(path, _)| path.to_string())
+                .collect::<Vec<_>>(),
+            expected_subtree
         );
         assert!(document
             .walk(&[parse_json_path_expr("$.m").unwrap()])
             .unwrap()
             .is_empty());
+        let empty_object = json("{}").walk(&[]).unwrap();
+        assert_eq!(empty_object.len(), 1);
+        assert_eq!(empty_object[0].0.to_string(), "$");
+        assert_eq!(empty_object[0].1.to_string(), "{}");
 
         assert_eq!(
             document
