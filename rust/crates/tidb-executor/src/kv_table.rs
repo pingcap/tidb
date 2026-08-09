@@ -46,8 +46,8 @@ mod table_scan;
 pub use column_deps::ColumnDependent;
 
 pub use auto_id::{
-    advance, exceeds, AutoIdError, AutoIdStore, AutoIdStoreError, LocalAutoIdStore,
-    DEFAULT_AUTO_ID_STEP,
+    advance, calc_needed_batch_size, exceeds, AutoIdError, AutoIdStore, AutoIdStoreError,
+    LocalAutoIdStore, DEFAULT_AUTO_ID_STEP,
 };
 
 pub use auto_increment::{AutoIncrement, TableAutoId};
