@@ -193,6 +193,15 @@ const REMOVED_CONFIG: &[&str] = &[
 /// `hideConfig`).
 const HIDE_CONFIG: &[&str] = &["performance.index-usage-sync-lease"];
 
+/// Go `ContainHiddenConfig`.
+pub fn contain_hidden_config(value: &str) -> bool {
+    let value = value.to_lowercase();
+    HIDE_CONFIG
+        .iter()
+        .chain(REMOVED_CONFIG.iter())
+        .any(|hidden| value.contains(hidden))
+}
+
 /// Whether all undecoded items belong to the removed-config set (Go
 /// `isAllRemovedConfigItems`).
 pub fn is_all_removed_config_items(items: &[String]) -> bool {
@@ -772,6 +781,33 @@ error-msg-extension = [
         assert_eq!(config.deploy_mode, Mode::Starter);
         assert_eq!(config.error_message_extensions, expected);
         assert!(new_config().error_message_extensions.is_empty());
+    }
+
+    // Go TestConfigExample.
+    #[test]
+    fn test_config_example() {
+        const SAMPLE: &str = include_str!("../../../../../pkg/config/config.toml.example");
+
+        fn check_keys(value: &toml::Value) {
+            match value {
+                toml::Value::Table(table) => {
+                    for (key, value) in table {
+                        assert!(!contain_hidden_config(key), "{key} should be hidden");
+                        check_keys(value);
+                    }
+                }
+                toml::Value::Array(values) => {
+                    for value in values {
+                        check_keys(value);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let value: toml::Value = toml::from_str(SAMPLE).unwrap();
+        let _: Config = toml::from_str(SAMPLE).unwrap();
+        check_keys(&value);
     }
 
     // A valid partial config loads and keeps defaults.
