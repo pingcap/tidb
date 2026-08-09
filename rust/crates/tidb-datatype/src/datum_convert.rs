@@ -1145,7 +1145,17 @@ fn year_from_text(
     text: &str,
 ) -> Result<(i64, bool, Option<ScalarConversionEvent>), DatumValueError> {
     let trimmed = text.trim();
-    let converted = crate::str_to_int(trimmed, false);
+    let mut converted = crate::str_to_int(trimmed, false);
+    // Go `ConvertToMysqlYear` returns the zero YEAR beside any `StrToInt`
+    // error. In particular, an overflowing decimal string must not continue
+    // through `AdjustYear` with `i64::MAX`, which would turn the error-side
+    // value into the upper YEAR bound (2155).
+    if matches!(
+        converted.event.as_ref(),
+        Some(ScalarConversionEvent::Overflow(_))
+    ) {
+        converted.value = 0;
+    }
     let adjust_zero = text.len() != 4 && converted.value == 0 && trimmed.starts_with('0');
     Ok((converted.value, adjust_zero, converted.event))
 }
@@ -1343,6 +1353,22 @@ mod tests {
                 }
             ))
         );
+    }
+
+    #[test]
+    fn overflowing_year_text_returns_zero_beside_the_error() {
+        let converted = Datum::new_string("99999999999999999999999999999999999")
+            .convert_to(
+                &FieldType::new(FieldTypeCode::Year),
+                crate::DEFAULT_STATEMENT_FLAGS.with_ignore_truncate_err(true),
+            )
+            .unwrap();
+
+        assert_eq!(converted.value, Datum::Int(0));
+        assert!(matches!(
+            converted.event,
+            Some(ScalarConversionEvent::Overflow(_))
+        ));
     }
 
     #[test]
