@@ -367,3 +367,56 @@ pub fn index_key_bounds(table_id: i64, index_id: i64) -> (Vec<u8>, Vec<u8>) {
         .to_vec();
     (low, high)
 }
+
+#[cfg(test)]
+mod source_tests {
+    use super::*;
+    use tidb_datatype::{FieldType, FieldTypeCode};
+
+    #[test]
+    fn test_compare_index_data() {
+        // Direct port of
+        // pkg/table/tables/mutation_checker_test.go::TestCompareIndexData.
+        // Go compares decoded index values with the row after applying each
+        // IndexColumn prefix length to the row side. ADMIN CHECK uses the
+        // same cut through KvTable::index_key, so exercise that shared rule.
+        let field_types = [
+            FieldType::new(FieldTypeCode::Short),
+            FieldType::new(FieldTypeCode::String),
+        ];
+        let cases = [
+            (
+                vec![Datum::Int(1), Datum::new_string("some string")],
+                vec![Datum::Int(1), Datum::new_string("some string")],
+                [
+                    crate::index_prefix_cut::UNSPECIFIED_LENGTH,
+                    crate::index_prefix_cut::UNSPECIFIED_LENGTH,
+                ],
+                true,
+            ),
+            (
+                vec![Datum::Int(1), Datum::new_string("some string")],
+                vec![Datum::Int(1), Datum::new_string("some string2")],
+                [
+                    crate::index_prefix_cut::UNSPECIFIED_LENGTH,
+                    crate::index_prefix_cut::UNSPECIFIED_LENGTH,
+                ],
+                false,
+            ),
+            (
+                vec![Datum::Int(1), Datum::new_string("some string")],
+                vec![Datum::Int(1), Datum::new_string("some string2")],
+                [crate::index_prefix_cut::UNSPECIFIED_LENGTH, 11],
+                true,
+            ),
+        ];
+
+        for (index_data, mut row_data, lengths, expected) in cases {
+            for ((value, length), field_type) in row_data.iter_mut().zip(lengths).zip(&field_types)
+            {
+                crate::index_prefix_cut::cut_index_value(value, length, field_type);
+            }
+            assert_eq!(index_data == row_data, expected);
+        }
+    }
+}
