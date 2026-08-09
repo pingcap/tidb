@@ -882,3 +882,59 @@ fn start_transaction_options_preserve_go_ast_payload() {
     assert!(parse("start transaction read only as of").is_err());
     assert!(parse("start transaction read only as of timestamp").is_err());
 }
+
+/// `pkg/parser/parser_test.go::TestStartTransaction`.
+#[test]
+fn test_start_transaction() {
+    let cases = [
+        (
+            "START TRANSACTION READ WRITE",
+            Some("START TRANSACTION"),
+        ),
+        (
+            "START TRANSACTION WITH CONSISTENT SNAPSHOT",
+            Some("START TRANSACTION"),
+        ),
+        (
+            "START TRANSACTION WITH CAUSAL CONSISTENCY ONLY",
+            Some("START TRANSACTION WITH CAUSAL CONSISTENCY ONLY"),
+        ),
+        (
+            "START TRANSACTION READ ONLY",
+            Some("START TRANSACTION READ ONLY"),
+        ),
+        ("START TRANSACTION READ ONLY AS OF", None),
+        ("START TRANSACTION READ ONLY AS OF TIMESTAMP", None),
+        (
+            "START TRANSACTION READ ONLY AS OF TIMESTAMP '2015-09-21 00:07:01'",
+            Some(
+                "START TRANSACTION READ ONLY AS OF TIMESTAMP _UTF8MB4'2015-09-21 00:07:01'",
+            ),
+        ),
+        (
+            "START TRANSACTION READ ONLY AS OF TIMESTAMP TIDB_BOUNDED_STALENESS(_UTF8MB4'2015-09-21 00:07:01', NOW())",
+            Some(
+                "START TRANSACTION READ ONLY AS OF TIMESTAMP TIDB_BOUNDED_STALENESS(_UTF8MB4'2015-09-21 00:07:01', NOW())",
+            ),
+        ),
+        (
+            "START TRANSACTION READ ONLY AS OF TIMESTAMP TIDB_BOUNDED_STALENESS(DATE_SUB(NOW(), INTERVAL 3 SECOND), NOW())",
+            Some(
+                "START TRANSACTION READ ONLY AS OF TIMESTAMP TIDB_BOUNDED_STALENESS(DATE_SUB(NOW(), INTERVAL 3 SECOND), NOW())",
+            ),
+        ),
+        (
+            "START TRANSACTION READ ONLY AS OF TIMESTAMP TIDB_BOUNDED_STALENESS(_UTF8MB4'2015-09-21 00:07:01', '2021-04-27 11:26:13')",
+            Some(
+                "START TRANSACTION READ ONLY AS OF TIMESTAMP TIDB_BOUNDED_STALENESS(_UTF8MB4'2015-09-21 00:07:01', _UTF8MB4'2021-04-27 11:26:13')",
+            ),
+        ),
+    ];
+
+    for (sql, expected) in cases {
+        match expected {
+            Some(expected) => assert_eq!(r(sql), expected, "{sql}"),
+            None => assert!(parse(sql).is_err(), "{sql}"),
+        }
+    }
+}
