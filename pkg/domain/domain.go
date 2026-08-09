@@ -2894,7 +2894,8 @@ func (do *Domain) serverIDKeeper() {
 	}
 }
 
-// StartTTLJobManager creates and starts the ttl job manager
+// StartTTLJobManager creates and starts the ttl job manager when this domain
+// should run it; otherwise it returns without storing a manager instance.
 func (do *Domain) StartTTLJobManager() {
 	role, configured := do.ttlExternalWorkloadRole()
 	if !do.shouldStartTTLJobManager() {
