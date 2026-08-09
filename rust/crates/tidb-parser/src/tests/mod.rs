@@ -211,4 +211,5 @@ mod update_default_source;
 mod use_reserved_name_source;
 mod user;
 mod util;
+mod view_source;
 mod with_parenthesized_source;
