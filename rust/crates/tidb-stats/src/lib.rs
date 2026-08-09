@@ -286,6 +286,7 @@ pub use sample_collector::{
     legacy_row_to_datums, legacy_sample_collector_from_proto, legacy_sample_collector_to_proto,
     sort_legacy_sample_items, LegacyRecordChunk, LegacySampleBuilder, LegacySampleBuilderError,
     LegacySampleCollector, LegacySampleCollectorProto, LegacySampleItem, LegacySampleRng,
+    EMPTY_SAMPLE_ITEM_SIZE,
 };
 pub use scalar_enum::{enum_range_values, MAX_NUM_STEP};
 pub use scalar_geometry::{

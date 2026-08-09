@@ -35,6 +35,13 @@ pub struct LegacySampleItem {
     pub ordinal: isize,
 }
 
+/// Source `EmptySampleItemSize` on TiDB's supported 64-bit targets.
+///
+/// This is Go memory-accounting geometry, not Rust's native struct layout:
+/// `types.Datum` is 72 bytes, a `kv.Handle` interface is 16 bytes, and an
+/// `int` is 8 bytes.
+pub const EMPTY_SAMPLE_ITEM_SIZE: i64 = 96;
+
 /// Injectable form of the two `util/fastrand` draws used by Go's legacy
 /// reservoir sampler.
 pub trait LegacySampleRng {
@@ -420,15 +427,16 @@ impl LegacySampleBuilder {
                     datums.remove(0);
                 }
                 for (index, datum) in datums.into_iter().enumerate() {
-                    if datum == Datum::Null {
-                        collectors[index]
-                            .collect(datum, |_| unreachable!("NULL never reaches FM encoding"))
-                            .map_err(LegacySampleBuilderError::Encode)?;
-                        continue;
-                    }
                     let collated = self.collated_columns[index];
-                    let datum = prepare(index, datum, collated)
-                        .map_err(LegacySampleBuilderError::Encode)?;
+                    // Go indexes Collators before testing NULL and invokes
+                    // tablecodec only when both operands of its `&&` are
+                    // true. Keep the callback behind that exact gate: it is
+                    // allowed to fail and therefore cannot be a no-op call.
+                    let datum = if collated && datum != Datum::Null {
+                        prepare(index, datum, collated).map_err(LegacySampleBuilderError::Encode)?
+                    } else {
+                        datum
+                    };
                     collectors[index]
                         .collect(datum, |value| encode_value(value))
                         .map_err(LegacySampleBuilderError::Encode)?;

@@ -18,7 +18,7 @@ use tidb_stats::{
     legacy_sample_collector_to_proto, sort_legacy_sample_items, CmsSketch, FmSketch,
     LegacyRecordChunk, LegacySampleBuilder, LegacySampleBuilderError, LegacySampleCollector,
     LegacySampleCollectorProto, LegacySampleItem, LegacySampleRng, SortedHistogramBuilder,
-    MAX_SAMPLE_VALUE_LENGTH,
+    EMPTY_SAMPLE_ITEM_SIZE, MAX_SAMPLE_VALUE_LENGTH,
 };
 
 fn item(value: i64) -> LegacySampleItem {
@@ -27,6 +27,12 @@ fn item(value: i64) -> LegacySampleItem {
         handle: None,
         ordinal: value as isize,
     }
+}
+
+#[test]
+fn source_sample_constants_match_go_64_bit_layout_and_length_gate() {
+    assert_eq!(EMPTY_SAMPLE_ITEM_SIZE, 72 + 16 + 8);
+    assert_eq!(MAX_SAMPLE_VALUE_LENGTH, 65_535 / 2);
 }
 
 #[test]
@@ -135,6 +141,26 @@ fn source_collect_null_nonnull_and_destroy_boundaries_match() {
     assert_eq!(collector.samples.capacity(), 0, "Go assigns Samples=nil");
     assert_eq!(collector.count, 0);
     assert!(!collector.is_merger);
+}
+
+#[test]
+fn source_collect_null_wraps_and_returns_before_every_other_mutation() {
+    let mut collector = LegacySampleCollector {
+        null_count: i64::MAX,
+        count: 7,
+        seen_values: 11,
+        total_size: 13,
+        max_sample_size: 1,
+        ..LegacySampleCollector::default()
+    };
+    collector
+        .collect(Datum::Null, |_| Err::<Vec<u8>, _>("must not encode NULL"))
+        .unwrap();
+    assert_eq!(collector.null_count, i64::MIN);
+    assert_eq!(collector.count, 7);
+    assert_eq!(collector.seen_values, 11);
+    assert_eq!(collector.total_size, 13);
+    assert!(collector.samples.is_empty());
 }
 
 #[test]
@@ -306,6 +332,31 @@ fn source_extract_topn_zero_and_frequency_boundaries_match() {
     assert_eq!(top_n.num(), 2);
     assert_eq!(top_n.query_bytes(&[1]), Some(3));
     assert_eq!(top_n.query_bytes(&[2]), Some(2));
+}
+
+#[test]
+fn source_extract_topn_zero_returns_before_reading_or_mutating_the_collector() {
+    let mut collector = LegacySampleCollector {
+        top_n: Some(tidb_stats::TopN::new(3)),
+        count: 7,
+        ..LegacySampleCollector::default()
+    };
+    collector
+        .extract_topn(0, |_| Err::<Vec<u8>, _>("normalizer must not run"))
+        .unwrap();
+    assert_eq!(collector.count, 7);
+    assert_eq!(collector.top_n.as_ref().unwrap().num(), 0);
+    assert!(collector.cmsketch.is_none());
+}
+
+#[test]
+fn source_calc_total_size_empty_resets_the_accumulator() {
+    let mut collector = LegacySampleCollector {
+        total_size: i64::MIN,
+        ..LegacySampleCollector::default()
+    };
+    collector.calculate_total_size();
+    assert_eq!(collector.total_size, 0);
 }
 
 #[test]
@@ -515,6 +566,109 @@ fn source_sample_builder_skips_prepare_and_fm_encoding_for_null() {
         .unwrap();
     assert_eq!(callbacks.get(), 0);
     assert_eq!(collectors[0].null_count, 1);
+}
+
+#[test]
+fn source_sample_builder_collator_gate_and_index_order_match() {
+    let uncollated = LegacySampleBuilder {
+        column_count: 1,
+        max_sample_size: 1,
+        max_fm_sketch_size: 8,
+        cmsketch_depth: 0,
+        cmsketch_width: 0,
+        collated_columns: vec![false],
+    };
+    let prepare_calls = std::cell::Cell::new(0);
+    let collectors = uncollated
+        .collect_column_stats(
+            [LegacyRecordChunk {
+                field_count: 1,
+                rows: vec![vec![Datum::Bytes(vec![1])]],
+            }],
+            None,
+            |_, _, _| {
+                prepare_calls.set(prepare_calls.get() + 1);
+                Err::<Datum, _>("uncollated values must not be prepared")
+            },
+            |datum| Ok::<_, &str>(tidb_codec::encode_value(std::slice::from_ref(datum)).unwrap()),
+        )
+        .unwrap();
+    assert_eq!(prepare_calls.get(), 0);
+    assert_eq!(collectors[0].count, 1);
+
+    let collated = LegacySampleBuilder {
+        collated_columns: vec![true],
+        ..uncollated.clone()
+    };
+    let prepare_calls = std::cell::Cell::new(0);
+    let encode_calls = std::cell::Cell::new(0);
+    let collectors = collated
+        .collect_column_stats(
+            [LegacyRecordChunk {
+                field_count: 1,
+                rows: vec![vec![Datum::Null], vec![Datum::Bytes(vec![2])]],
+            }],
+            None,
+            |_, datum, _| {
+                prepare_calls.set(prepare_calls.get() + 1);
+                Ok::<_, ()>(datum)
+            },
+            |_| {
+                encode_calls.set(encode_calls.get() + 1);
+                Ok::<_, ()>(Vec::new())
+            },
+        )
+        .unwrap();
+    assert_eq!(prepare_calls.get(), 1);
+    assert_eq!(encode_calls.get(), 1);
+    assert_eq!(collectors[0].null_count, 1);
+    assert_eq!(collectors[0].count, 1);
+
+    let missing_collator = LegacySampleBuilder {
+        collated_columns: Vec::new(),
+        ..uncollated
+    };
+    let panic = std::panic::catch_unwind(|| {
+        let _ = missing_collator.collect_column_stats(
+            [LegacyRecordChunk {
+                field_count: 1,
+                rows: vec![vec![Datum::Null]],
+            }],
+            None,
+            |_, datum, _| Ok::<_, ()>(datum),
+            |_| Ok::<_, ()>(Vec::new()),
+        );
+    });
+    assert!(
+        panic.is_err(),
+        "Go indexes Collators[i] before testing whether the datum is NULL"
+    );
+}
+
+#[test]
+fn source_sample_builder_cms_dimensions_require_two_positive_operands() {
+    for (depth, width, expected) in [(0, 8, false), (8, 0, false), (-1, 8, false), (8, 4, true)] {
+        let builder = LegacySampleBuilder {
+            column_count: 1,
+            max_sample_size: 0,
+            max_fm_sketch_size: 1,
+            cmsketch_depth: depth,
+            cmsketch_width: width,
+            collated_columns: vec![false],
+        };
+        let collectors = builder
+            .collect_column_stats(
+                [LegacyRecordChunk {
+                    field_count: 1,
+                    rows: Vec::new(),
+                }],
+                None,
+                |_, datum, _| Ok::<_, ()>(datum),
+                |_| Ok::<_, ()>(Vec::new()),
+            )
+            .unwrap();
+        assert_eq!(collectors[0].cmsketch.is_some(), expected);
+    }
 }
 
 #[test]
