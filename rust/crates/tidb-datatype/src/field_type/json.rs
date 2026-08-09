@@ -286,8 +286,7 @@ mod tests {
         }
 
         for (length, capacity) in [(1, 8), (8, 8), (9, 16)] {
-            let flags = std::iter::repeat("false")
-                .take(length)
+            let flags = std::iter::repeat_n("false", length)
                 .collect::<Vec<_>>()
                 .join(",");
             let decoded =
