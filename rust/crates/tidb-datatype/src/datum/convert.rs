@@ -390,11 +390,16 @@ mod tests {
     use crate::{BinaryJSON, BinaryLiteral, Collation, Decimal, MySqlDuration, TimeType};
 
     #[test]
-    fn source_to_bool_rows() {
-        for (datum, expected) in [
+    fn test_to_bool() {
+        let rows = vec![
+            // Go's first two rows differ by `int` versus `int64`; both map to
+            // the source-compatible signed Datum representation in Rust.
+            (Datum::Int(0), 0),
             (Datum::Int(0), 0),
             (Datum::UInt(0), 0),
             (Datum::Float32(0.1), 1),
+            (Datum::Real(0.1), 1),
+            (Datum::Real(0.5), 1),
             (Datum::Real(0.499), 1),
             (Datum::new_string(""), 0),
             (Datum::new_string("0.1"), 1),
@@ -404,13 +409,39 @@ mod tests {
                 Datum::new_binary_literal(BinaryLiteral::from_uint(0, None)),
                 0,
             ),
+            (
+                Datum::new_enum(crate::MysqlEnum::new("a", 1), Collation::DEFAULT),
+                1,
+            ),
+            (
+                Datum::new_set(crate::MysqlSet::new("a", 1), Collation::DEFAULT),
+                1,
+            ),
             (Datum::new_json(BinaryJSON::parse("1").unwrap()), 1),
             (Datum::new_json(BinaryJSON::parse("0").unwrap()), 0),
             (Datum::new_json(BinaryJSON::parse("\"0\"").unwrap()), 1),
+            (Datum::new_json(BinaryJSON::parse("\"aaabbb\"").unwrap()), 1),
+            (Datum::new_json(BinaryJSON::parse("0.0").unwrap()), 0),
+            (Datum::new_json(BinaryJSON::parse("3.1415").unwrap()), 1),
+            (Datum::new_json(BinaryJSON::parse("[1,2]").unwrap()), 1),
+            (
+                Datum::new_json(BinaryJSON::parse(r#"{"ke":"val"}"#).unwrap()),
+                1,
+            ),
+            (
+                Datum::new_json(BinaryJSON::parse("\"0000-00-00 00:00:00\"").unwrap()),
+                1,
+            ),
+            (Datum::new_json(BinaryJSON::parse("\"0778\"").unwrap()), 1),
+            (Datum::new_json(BinaryJSON::parse("\"0000\"").unwrap()), 1),
             (Datum::new_json(BinaryJSON::parse("null").unwrap()), 1),
+            (Datum::new_json(BinaryJSON::parse("[null]").unwrap()), 1),
+            (Datum::new_json(BinaryJSON::parse("true").unwrap()), 1),
             (Datum::new_json(BinaryJSON::parse("false").unwrap()), 1),
-        ] {
-            assert_eq!(datum.to_bool().unwrap().value, expected, "{datum:?}");
+            (Datum::new_json(BinaryJSON::parse("\"\"").unwrap()), 1),
+        ];
+        for (datum, expected) in rows.iter() {
+            assert_eq!(datum.to_bool().unwrap().value, *expected, "{datum:?}");
         }
         let time = crate::parse_time(
             "2011-11-10 11:11:11.999999",
@@ -424,8 +455,10 @@ mod tests {
         .unwrap()
         .time;
         assert_eq!(Datum::new_time(time).to_bool().unwrap().value, 1);
+        let mut source_rows = rows.len() + 1;
         let duration = MySqlDuration::new(11, 11, 11, 999_999, 6).unwrap();
         assert_eq!(Datum::new_duration(duration).to_bool().unwrap().value, 1);
+        source_rows += 1;
         assert_eq!(
             Datum::new_decimal(Decimal::from_signed_literal("0.14159"))
                 .to_bool()
@@ -433,6 +466,9 @@ mod tests {
                 .value,
             1
         );
+        source_rows += 1;
+        assert_eq!(source_rows, 33, "one entry per Go success source row");
+        assert!(Datum::new_raw(b"unsupported").to_bool().is_err());
     }
 
     #[test]
@@ -482,7 +518,7 @@ mod tests {
     }
 
     #[test]
-    fn test_to_bytes_source_rows() {
+    fn test_to_bytes() {
         for (datum, expected) in [
             (Datum::Int(1), b"1".as_slice()),
             (Datum::new_decimal(Decimal::from_int(1)), b"1".as_slice()),
