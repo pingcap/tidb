@@ -79,6 +79,23 @@ use crate::real_tikv_catalog::TransactionMetaSnapshot;
 /// [`DEFAULT_AUTO_ID_STEP`]: tidb_executor::kv_table::DEFAULT_AUTO_ID_STEP
 const MAX_RESERVE_RETRIES: usize = 100;
 
+/// Go `autoid.AutoIDLeaderPath`.
+pub const AUTO_ID_LEADER_PATH: &str = "tidb/autoid/leader";
+const KEYSPACE_AUTO_ID_LEADER_PATH: &str = "/tidb/autoid/leader";
+
+/// Go `autoid.GetAutoIDServiceLeaderEtcdPath`.
+///
+/// Nullspace uses the path as-is. A keyspace-scoped etcd client already has
+/// the `/keyspaces/tidb/<id>` namespace, so its relative key starts with `/`.
+#[must_use]
+pub const fn auto_id_service_leader_etcd_path(keyspace_id: u32) -> &'static str {
+    if keyspace_id == 0 {
+        AUTO_ID_LEADER_PATH
+    } else {
+        KEYSPACE_AUTO_ID_LEADER_PATH
+    }
+}
+
 /// The meta key holding `table`'s auto-increment counter, as Go chooses it.
 ///
 /// See the module doc: `IID:` only for a separate-allocator table
@@ -303,5 +320,13 @@ mod tests {
             batch_reservation(10, 30, 2, 3, 1, false),
             (Some(40), (10, 40))
         );
+    }
+
+    /// Source:
+    /// `pkg/meta/autoid/autoid_test.go::TestGetAutoIDServiceLeaderEtcdPath`.
+    #[test]
+    fn test_get_auto_id_service_leader_etcd_path() {
+        assert_eq!(auto_id_service_leader_etcd_path(0), AUTO_ID_LEADER_PATH);
+        assert_eq!(auto_id_service_leader_etcd_path(1), "/tidb/autoid/leader");
     }
 }
