@@ -927,6 +927,47 @@ pub fn find_column_info_by_id(
     cols.iter_deref().find(|column| column.read().id == id)
 }
 
+/// Go `table.FindCols`: resolves names in order, retaining the original
+/// column pointers, or returns the first missing name.
+pub fn find_column_infos(
+    cols: &GoSharedPointerSlice<ColumnInfo>,
+    names: &[&str],
+    pk_is_handle: bool,
+) -> (Option<GoSharedPointerSlice<ColumnInfo>>, String) {
+    let mut found = Vec::with_capacity(names.len());
+    for name in names {
+        if let Some(column) = find_column_info(cols, name) {
+            found.push(Some(column));
+        } else if *name == EXTRA_HANDLE_NAME && !pk_is_handle {
+            let mut column = ColumnInfo::new_extra_handle_col_info();
+            column.offset = cols.len() as i64;
+            found.push(Some(GoShared::new(column)));
+        } else {
+            return (None, (*name).to_owned());
+        }
+    }
+    (
+        Some(GoSharedPointerSlice::from_handles(found)),
+        String::new(),
+    )
+}
+
+/// Go `table.FindOnUpdateCols`: retains every source pointer carrying the
+/// `ON UPDATE CURRENT_TIMESTAMP` flag, in source order.
+#[must_use]
+pub fn find_on_update_column_infos(
+    cols: &GoSharedPointerSlice<ColumnInfo>,
+) -> GoSharedPointerSlice<ColumnInfo> {
+    GoSharedPointerSlice::from_handles(
+        cols.iter_deref()
+            .filter(|column| {
+                column.read().get_flag() & u64::from(FieldTypeFlags::ON_UPDATE_NOW) != 0
+            })
+            .map(Some)
+            .collect(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1064,6 +1105,35 @@ mod tests {
             GoSharedPointerSlice::from_nullable(vec![None, Some(col("bar", FieldTypeCode::Long))]);
         assert!(std::panic::catch_unwind(|| find_column_info(&nullable, "bar")).is_err());
         assert!(std::panic::catch_unwind(|| find_column_info_by_id(&nullable, 0)).is_err());
+    }
+
+    #[test]
+    fn test_find() {
+        // Direct port of pkg/table/column_test.go::TestFind.
+        let cols: GoSharedPointerSlice<_> = vec![
+            col("a", FieldTypeCode::Long),
+            col("b", FieldTypeCode::Long),
+            col("c", FieldTypeCode::Long),
+        ]
+        .into();
+
+        let (found, missing) = find_column_infos(&cols, &["a"], true);
+        let found = found.expect("a is present");
+        assert_eq!(missing, "");
+        assert_eq!(found.len(), 1);
+        assert!(found.get(0).unwrap().ptr_eq(&cols.get(0).unwrap()));
+
+        let (found, missing) = find_column_infos(&cols, &["d"], true);
+        assert!(found.is_none());
+        assert_eq!(missing, "d");
+
+        cols.get(0)
+            .unwrap()
+            .write()
+            .add_flag(u64::from(FieldTypeFlags::ON_UPDATE_NOW));
+        let on_update = find_on_update_column_infos(&cols);
+        assert_eq!(on_update.len(), 1);
+        assert!(on_update.get(0).unwrap().ptr_eq(&cols.get(0).unwrap()));
     }
 
     // Go TestDefaultValue (the non-JSON assertions): plain and BIT columns,
