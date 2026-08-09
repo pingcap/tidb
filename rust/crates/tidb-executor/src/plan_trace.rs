@@ -123,6 +123,15 @@ pub(crate) struct PlanNode {
     /// does not scale with the row count. A join over such a side prints
     /// `N/A` rather than a number derived from the wrong NDV.
     pub(crate) key_ndv_ratio: Option<f64>,
+    /// NDVs retained under their physical source-column names after a join.
+    ///
+    /// Go's `LogicalJoin.DeriveStats` copies each child's column NDV into the
+    /// joined schema without scaling it to the join row count. The one-ratio
+    /// summary above therefore cannot survive a join, but a parent join may
+    /// still need the NDV of the exact column it uses. Keeping only committed
+    /// merge keys is sufficient for that parent and avoids pretending every
+    /// output column has one common ratio.
+    pub(crate) named_key_ndvs: Vec<(String, f64)>,
 }
 
 impl PlanNode {
@@ -139,6 +148,7 @@ impl PlanNode {
             children: Vec::new(),
             act_rows: None,
             key_ndv_ratio: None,
+            named_key_ndvs: Vec::new(),
         }
     }
 
@@ -1796,6 +1806,43 @@ impl PlanTrace {
         );
     }
 
+    /// Records the executable projection after Go's implicit real-argument
+    /// casts have been built into it. Base-table columns retain their source
+    /// names while derived aggregate outputs stay internal `Column#N` values,
+    /// matching projection elimination in Go.
+    ///
+    /// The gate is intentionally narrow: until another build-time cast family
+    /// needs physical rendering, ordinary projections keep the established
+    /// AST printer. This prevents a trace-only rewrite from changing plans
+    /// whose executor tree has no such physical node.
+    pub(crate) fn physical_real_projection(
+        &mut self,
+        expressions: &[Expression],
+        column_names: &[Option<String>],
+        rows: Option<f64>,
+    ) -> bool {
+        if !expressions
+            .iter()
+            .any(|expression| expression_has_function(expression, "cast_double"))
+        {
+            return false;
+        }
+        let Some(info) = expressions
+            .iter()
+            .enumerate()
+            .map(|(index, expression)| {
+                physical_expression_text_with_columns(expression, column_names)
+                    .map(|text| format!("{text}->Column#{index}"))
+            })
+            .collect::<Option<Vec<_>>>()
+            .map(|parts| parts.join(", "))
+        else {
+            return false;
+        };
+        self.wrap("Projection", rows.map_or(Est::Inherit, Est::Fixed), info);
+        true
+    }
+
     /// Records a simple projection executed by the TiKV request and the
     /// TableReader boundary that returns it to the root task. The source has
     /// already accepted the matching kept-column list, so these nodes
@@ -2095,7 +2142,18 @@ impl PlanTrace {
                     left.est_rows
                 }
             })
-            .or_else(|| full_join_row_count(&left, &right, equal.len()));
+            .or_else(|| full_join_row_count(&left, &right, equal.len(), merge_keys.as_deref()));
+        let named_key_ndvs = merge_keys.as_deref().map_or_else(Vec::new, |keys| {
+            keys.iter()
+                .flat_map(|(left_name, right_name)| {
+                    [
+                        node_key_ndv(&left, left_name).map(|ndv| (left_name.clone(), ndv)),
+                        node_key_ndv(&right, right_name).map(|ndv| (right_name.clone(), ndv)),
+                    ]
+                })
+                .flatten()
+                .collect()
+        });
         // Which index-join executor this site's row names, decided by the one
         // cost term that differs between them (`index_join_operator`).
         //
@@ -2154,6 +2212,7 @@ impl PlanTrace {
             // children's maps rather than scaling either one, so the single
             // ratio this trace carries does not survive a join.
             key_ndv_ratio: None,
+            named_key_ndvs,
         });
         // The same rule an access path follows when its range consumed a
         // condition: the join has now PRICED the `WHERE` conjuncts pushed
@@ -2235,13 +2294,24 @@ fn field_list(fields: &[tidb_ast::SelectField], qualify: &Qualifier<'_>) -> Stri
 /// fallback to AST text would describe a different expression than the one
 /// the Selection executor evaluates.
 fn physical_expression_text(expression: &Expression) -> Option<String> {
+    physical_expression_text_with_columns(expression, &[])
+}
+
+fn physical_expression_text_with_columns(
+    expression: &Expression,
+    column_names: &[Option<String>],
+) -> Option<String> {
     match expression {
-        Expression::Column(column) => Some(format!("Column#{}", column.index)),
+        Expression::Column(column) => usize::try_from(column.index)
+            .ok()
+            .and_then(|index| column_names.get(index))
+            .and_then(|name| name.clone())
+            .or_else(|| Some(format!("Column#{}", column.index))),
         Expression::ScalarFunction(function) => {
             let arguments = function
                 .args
                 .iter()
-                .map(physical_expression_text)
+                .map(|argument| physical_expression_text_with_columns(argument, column_names))
                 .collect::<Option<Vec<_>>>()?;
             if function.func_name.lowercase() == "cast_decimal" {
                 if arguments.len() != 1 {
@@ -2254,6 +2324,11 @@ fn physical_expression_text(expression: &Expression) -> Option<String> {
                     result_type.flen(),
                     result_type.decimal()
                 ))
+            } else if function.func_name.lowercase() == "cast_double" {
+                if arguments.len() != 1 {
+                    return None;
+                }
+                Some(format!("cast({}, double BINARY)", arguments[0]))
             } else {
                 Some(format!(
                     "{}({})",
@@ -2262,8 +2337,22 @@ fn physical_expression_text(expression: &Expression) -> Option<String> {
                 ))
             }
         }
+        Expression::Constant(constant) if constant.param_marker.is_none() => {
+            Some(datum_go_text(&constant.value, false))
+        }
         Expression::Constant(_) | Expression::CorrelatedColumn(_) => None,
     }
+}
+
+fn expression_has_function(expression: &Expression, name: &str) -> bool {
+    let Expression::ScalarFunction(function) = expression else {
+        return false;
+    };
+    function.func_name.lowercase() == name
+        || function
+            .args
+            .iter()
+            .any(|argument| expression_has_function(argument, name))
 }
 
 fn aggregate_exprs(expr: &tidb_ast::Expr) -> Vec<tidb_ast::Expr> {
@@ -2614,20 +2703,61 @@ pub(crate) fn pseudo_selectivity_of_conjuncts(conjuncts: &[&tidb_ast::Expr]) -> 
 /// this tier's are 10000, and it prints 12487.50 where this prints 12500.00.
 /// The gap is that missing rewrite, not this arithmetic -- a CARTESIAN join,
 /// which gets no such rewrite, matches TiDB exactly.
-fn full_join_row_count(left: &PlanNode, right: &PlanNode, equal_count: usize) -> Option<f64> {
+fn node_key_ndv(node: &PlanNode, name: &str) -> Option<f64> {
+    node.named_key_ndvs
+        .iter()
+        .find(|(candidate, _)| candidate.eq_ignore_ascii_case(name))
+        .map(|(_, ndv)| *ndv)
+        .or_else(|| {
+            node.key_ndv_ratio
+                .zip(node.est_rows)
+                .map(|(ratio, rows)| rows * ratio)
+        })
+}
+
+fn full_join_row_count(
+    left: &PlanNode,
+    right: &PlanNode,
+    equal_count: usize,
+    merge_keys: Option<&[(String, String)]>,
+) -> Option<f64> {
     use tidb_planner::cardinality::join::{
         estimate_full_join_row_count, FullJoinRowCountInput, JoinKeyEstimate,
     };
     let (left_rows, right_rows) = (left.est_rows?, right.est_rows?);
-    let key = |node: &PlanNode| {
-        node.key_ndv_ratio
-            .zip(node.est_rows)
-            .map(|(ratio, rows)| JoinKeyEstimate::new(rows * ratio, 1, equal_count))
+    let key = |node: &PlanNode, left_side: bool| {
+        let named = merge_keys.and_then(|keys| {
+            if keys.len() != equal_count {
+                return None;
+            }
+            keys.iter()
+                .map(|(left_name, right_name)| {
+                    node.named_key_ndvs
+                        .iter()
+                        .find(|(candidate, _)| {
+                            candidate.eq_ignore_ascii_case(if left_side {
+                                left_name
+                            } else {
+                                right_name
+                            })
+                        })
+                        .map(|(_, ndv)| *ndv)
+                })
+                .collect::<Option<Vec<_>>>()
+                .and_then(|ndvs| ndvs.into_iter().reduce(f64::max))
+        });
+        named
+            .or_else(|| {
+                node.key_ndv_ratio
+                    .zip(node.est_rows)
+                    .map(|(ratio, rows)| rows * ratio)
+            })
+            .map(|ndv| JoinKeyEstimate::new(ndv, 1, equal_count))
     };
     let (left_keys, right_keys) = if equal_count == 0 {
         (JoinKeyEstimate::empty(), JoinKeyEstimate::empty())
     } else {
-        (key(left)?, key(right)?)
+        (key(left, true)?, key(right, false)?)
     };
     Some(estimate_full_join_row_count(&FullJoinRowCountInput {
         left_row_count: left_rows,

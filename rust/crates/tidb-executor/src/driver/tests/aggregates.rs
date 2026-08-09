@@ -432,8 +432,101 @@ fn tpcc_condition_two_orders_group_uses_the_covering_index_range() {
             operator.contains("IndexRangeScan")
                 && access.contains("idx_order")
                 && info.contains("range:[1,1]")
+                && info.contains("keep order:true")
         }),
         "{plan:#?}"
+    );
+
+    crate::run_create_table_on(
+        "CREATE TABLE district (d_id INT NOT NULL, d_w_id INT NOT NULL, \
+            d_next_o_id INT NOT NULL, PRIMARY KEY (d_w_id,d_id))",
+        &mut catalog,
+    )
+    .unwrap();
+    let TableEntry::Kv(district) = catalog.get_mut_in("test", "district").unwrap() else {
+        panic!("district is not a KV table");
+    };
+    district.add_index(crate::kv_table::KvIndex {
+        id: 3,
+        name: "PRIMARY".to_owned(),
+        unique: true,
+        prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 2],
+        column_offsets: vec![1, 0],
+        visible: true,
+        global: false,
+    });
+    crate::run_create_table_on(
+        "CREATE TABLE new_order (no_o_id INT NOT NULL, no_d_id INT NOT NULL, \
+            no_w_id INT NOT NULL, PRIMARY KEY (no_w_id,no_d_id,no_o_id))",
+        &mut catalog,
+    )
+    .unwrap();
+    let TableEntry::Kv(new_order) = catalog.get_mut_in("test", "new_order").unwrap() else {
+        panic!("new_order is not a KV table");
+    };
+    new_order.add_index(crate::kv_table::KvIndex {
+        id: 4,
+        name: "PRIMARY".to_owned(),
+        unique: true,
+        prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 3],
+        column_offsets: vec![2, 1, 0],
+        visible: true,
+        global: false,
+    });
+    run_insert_on(
+        "INSERT INTO district VALUES (1,1,5),(2,1,6),(1,2,10)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO new_order VALUES (2,1,1),(3,2,1),(9,1,2)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    let condition = "SELECT POWER((d_next_o_id-1-mo),2) + \
+        POWER((d_next_o_id-1-mno),2) diff FROM district dis, \
+        (SELECT o_d_id,MAX(o_id) mo FROM orders WHERE o_w_id=1 GROUP BY o_d_id) q, \
+        (SELECT no_d_id,MAX(no_o_id) mno FROM new_order WHERE no_w_id=1 \
+        GROUP BY no_d_id) no WHERE d_w_id=1 AND q.o_d_id=dis.d_id \
+        AND no.no_d_id=dis.d_id";
+    assert_eq!(
+        run_select_on(condition, &catalog, &ctx).unwrap(),
+        vec![vec![Datum::Real(8.0)], vec![Datum::Real(8.0)]],
+    );
+    let stmt = tidb_parser::parse(condition).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let cell = |row: usize, column: usize| match &rows[row][column] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+    assert_eq!(cell(0, 1), "10.00");
+    assert!(
+        cell(0, 4)
+            .starts_with("plus(power(cast(minus(minus(test.district.d_next_o_id, 1), Column#"),
+        "{}",
+        cell(0, 4)
+    );
+    assert!(cell(0, 4).ends_with(")->Column#0"), "{}", cell(0, 4));
+    assert_eq!(cell(1, 1), "10.00");
+    assert!(
+        cell(1, 4).contains("left key:test.district.d_id"),
+        "{}",
+        cell(1, 4)
+    );
+    assert!(
+        cell(6, 4).contains("left key:test.district.d_id"),
+        "{}",
+        cell(6, 4)
     );
 }
 

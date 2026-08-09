@@ -2195,11 +2195,11 @@ pub(crate) fn build_join(
                         .expect("a committed merge keeps its logical key names"),
                 )
                 .map(|(key, (left_name, right_name))| {
-                    let left = crate::driver::merge_decision::derived_column_trace_name(
+                    let left = crate::driver::merge_decision::physical_column_trace_name(
                         &join.left, left_name, catalog, current_db,
                     )
                     .unwrap_or_else(|| qualified_scope_column(&scope, current_db, key.left));
-                    let right = crate::driver::merge_decision::derived_column_trace_name(
+                    let right = crate::driver::merge_decision::physical_column_trace_name(
                         right_node, right_name, catalog, current_db,
                     )
                     .unwrap_or_else(|| {

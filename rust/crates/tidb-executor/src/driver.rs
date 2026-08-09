@@ -1829,6 +1829,37 @@ pub(super) fn run_select_traced_with_delivery(
     // valid ORDER BY on that output above the aggregate.
     let projection_elided =
         cop_projection_ready || cop_filtered_projection_ready || full_row_projection;
+    // Only EXPLAIN needs a second view of the executable expression tree.
+    // Ordinary execution moves the sole copy into ProjectionExec, so the
+    // TPCC hot path pays no clone for physical-expression rendering.
+    let projection_trace_exprs =
+        (trace.is_some() && direct_distinct_input.is_none() && !projection_elided)
+            .then(|| exprs.clone());
+    let projection_trace_columns = projection_trace_exprs.as_ref().map(|_| {
+        (0..current_scope.width())
+            .map(|offset| {
+                let path = current_scope.qualified_path(offset)?;
+                let [relation, column] = path.as_slice() else {
+                    return None;
+                };
+                let key = crate::driver::merge_decision::RelColumn {
+                    relation: relation.clone(),
+                    column: column.clone(),
+                };
+                let from = select.from.as_ref()?;
+                crate::driver::merge_decision::physical_column_trace_name(
+                    &from.left, &key, catalog, current_db,
+                )
+                .or_else(|| {
+                    from.right.as_ref().and_then(|right| {
+                        crate::driver::merge_decision::physical_column_trace_name(
+                            right, &key, catalog, current_db,
+                        )
+                    })
+                })
+            })
+            .collect::<Vec<_>>()
+    });
     let mut root: Box<dyn Executor> = if let Some(input) = direct_distinct_input.as_ref() {
         let input = if partial_distinct {
             Expression::Column(source.schema().columns[0].clone())
@@ -1872,10 +1903,21 @@ pub(super) fn run_select_traced_with_delivery(
     };
     if direct_distinct_input.is_none() && !projection_elided {
         if let Some(trace) = trace.as_deref_mut() {
-            if reader_ready {
-                trace.projection_at_rows(traced_select.fields.fields(), &qualify, logical_rows);
-            } else {
-                trace.projection(traced_select.fields.fields(), &qualify);
+            let physical = projection_trace_exprs
+                .as_deref()
+                .is_some_and(|expressions| {
+                    trace.physical_real_projection(
+                        expressions,
+                        projection_trace_columns.as_deref().unwrap_or(&[]),
+                        reader_ready.then_some(logical_rows).flatten(),
+                    )
+                });
+            if !physical {
+                if reader_ready {
+                    trace.projection_at_rows(traced_select.fields.fields(), &qualify, logical_rows);
+                } else {
+                    trace.projection(traced_select.fields.fields(), &qualify);
+                }
             }
             root = trace.meter(root);
         }

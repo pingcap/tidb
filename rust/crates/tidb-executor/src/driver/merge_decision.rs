@@ -793,16 +793,30 @@ fn grouped_derived_properties(
     ))
 }
 
-/// The source-column name behind a bare-column derived output. Projection
-/// elimination keeps this lineage in Go's physical join keys even though the
-/// executor resolves the key through the derived alias. Returning `None`
-/// leaves callers on the ordinary final-scope name.
-pub(crate) fn derived_column_trace_name(
+/// The source-column name behind a physical join key. Go's projection
+/// elimination keeps the original table identity in `MergeJoin` key text,
+/// even when SQL name resolution used a base-table or derived-table alias.
+/// Returning `None` leaves callers on the ordinary final-scope name.
+pub(crate) fn physical_column_trace_name(
     node: &JoinNode,
     column: &RelColumn,
     catalog: &Catalog,
     current_db: &str,
 ) -> Option<String> {
+    if let JoinNode::Table(table_ref) = node {
+        let (database, name) = split_table_path(&table_ref.name, current_db).ok()?;
+        let visible = table_ref.alias.as_deref().unwrap_or(name);
+        return visible
+            .eq_ignore_ascii_case(&column.relation)
+            .then(|| format!("{database}.{name}.{}", column.column));
+    }
+    if let JoinNode::Join(join) = node {
+        return physical_column_trace_name(&join.left, column, catalog, current_db).or_else(|| {
+            join.right
+                .as_ref()
+                .and_then(|right| physical_column_trace_name(right, column, catalog, current_db))
+        });
+    }
     let JoinNode::Derived {
         subquery,
         alias: Some(alias),

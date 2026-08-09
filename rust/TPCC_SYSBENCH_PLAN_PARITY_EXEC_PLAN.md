@@ -76,9 +76,10 @@ from CSE branch `codex/table-group-m1`; the baseline is not rerun.
 - [x] (2026-08-09) Isolated the upstream rebase in
   `/mnt/nvme/src/tidb-hparser-integration-rebased` on branch
   `codex/hparser-integration-parity`, based on upstream commit
-  `854c784e7216d709d294ca08529c4e908444d012`. Six textual conflicts were
-  reconciled with upstream ownership and APIs taking precedence; the original
-  dirty detached worktree remains untouched.
+  `8b28739bf921a34f3c3dc98035aa9dab46641d02`. The latest 27 upstream commits
+  rebased without conflict; the earlier six conflict resolutions already gave
+  upstream ownership and APIs precedence. The original dirty detached
+  worktree remains untouched.
 - [x] (2026-08-09) Restored exact parity for all 63 TPCC transaction plans and
   all 13,984 expanded Sysbench run-plan cases. Receipts are
   `tpcc-run-63-after-index-join.json` and
@@ -96,10 +97,15 @@ from CSE branch `codex/table-group-m1`; the baseline is not rerun.
   TiPB lowering regression passes 1/1. Receipt:
   `tpcc-check-03-exact.json`; candidate SHA-256
   `b3f530c87aeb101874c0545561a87e7ff94a3d73c70f9585110d7a1c894155ac`.
+- [x] (2026-08-09) Matched TPCC conditions 01, 02, and 04 exactly without
+  regressing 03, 05, or 07. Condition 02 now executes Go's covering
+  `idx_order` range, partial/final StreamAgg, ordered MergeJoin pair,
+  source-column lineage, retained join-key NDV, and POWER real-argument casts.
+  The complete check receipt is `tpcc-check-after-condition02-full.json`;
+  candidate SHA-256 is
+  `e2856b07a5b06b36775050a42c92386bc98e8976c93ee23d0b4113b5834079e1`.
 - [ ] (2026-08-09) Match the remaining TPCC consistency plans (completed:
-  3/12 exact and 0 protocol errors; remaining: grouped StreamAgg/partial-final
-  aggregation, derived-table decorrelation, and index-join families in
-  conditions 01-04, 06, and 08-12).
+  6/12 exact and 0 protocol errors; remaining: conditions 06 and 08-12).
 - [ ] Promote the generated manifest from `incomplete` to `complete` only after
   source and runtime coverage both prove no unknown or unreachable SQL shapes.
 - [ ] Implement Go-faithful coprocessor `IndexLookUp` execution and plan text
@@ -108,7 +114,8 @@ from CSE branch `codex/table-group-m1`; the baseline is not rerun.
 - [ ] Bootstrap clean formal TPCC and Sysbench datasets and run correctness,
   prepare-time, throughput, latency, health, and CPU-profile measurements.
 - [ ] Update the branch README, run the Ready validation profile, self-review,
-  commit with signoff, and push `hparser-integration`.
+  commit with signoff, push the feature branch, and create a Draft PR targeting
+  `pingcap/tidb:hparser-integration`.
 
 ## Surprises & Discoveries
 
@@ -282,7 +289,7 @@ from CSE branch `codex/table-group-m1`; the baseline is not rerun.
 No final outcome yet. The cluster is operational. The differential gate now
 expands to 15,248 SQL shapes and remains explicitly incomplete pending runtime
 coverage. All 63 TPCC transaction plans and 13,984 expanded Sysbench run plans
-match; TPCC checks are at 3/12 with no protocol errors. Formal datasets and
+match; TPCC checks are at 6/12 with no protocol errors. Formal datasets and
 benchmark results remain blocked on complete plan parity.
 
 ## Context and Orientation
@@ -290,7 +297,7 @@ benchmark results remain blocked on complete plan parity.
 The active source worktree is
 `/mnt/nvme/src/tidb-hparser-integration-rebased` on `i4i-test-4`, branch
 `codex/hparser-integration-parity`, based on upstream commit
-`854c784e7216d709d294ca08529c4e908444d012`. The original detached worktree at
+`8b28739bf921a34f3c3dc98035aa9dab46641d02`. The original detached worktree at
 `/mnt/nvme/src/tidb-hparser-integration` and its pre-existing local changes are
 preserved untouched. The Rust workspace is `rust/`.
 

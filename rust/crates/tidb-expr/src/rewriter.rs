@@ -277,6 +277,52 @@ fn wrap_binary_literals(
         .collect()
 }
 
+/// Applies the two `types.ETReal` argument declarations of Go's
+/// `powFunctionClass.getFunction` while the executable expression is built.
+///
+/// Go's `newBaseBuiltinFuncWithTp(..., ETReal, ETReal, ETReal)` inserts a
+/// `WrapWithCastAsReal` node around each non-real expression. A numeric
+/// constant is folded to the real family instead, so `POWER(x, 2)` explains
+/// as `power(cast(x, double BINARY), 2)`, not with a redundant cast around
+/// the literal. Keeping these nodes in the executable tree makes the plan
+/// text and runtime coercion share one source of truth.
+fn wrap_power_arguments(name: &str, args: Vec<Expression>) -> Vec<Expression> {
+    if !matches!(name, "pow" | "power") {
+        return args;
+    }
+    args.into_iter()
+        .map(|arg| {
+            if arg
+                .static_type()
+                .is_some_and(|field_type| field_type.eval_type() == tidb_datatype::EvalType::Real)
+            {
+                return arg;
+            }
+            if let Expression::Constant(constant) = &arg {
+                let real = match constant.value {
+                    Datum::Int(value) => Some(value as f64),
+                    Datum::UInt(value) => Some(value as f64),
+                    _ => None,
+                };
+                if let Some(value) = real {
+                    return Expression::Constant(Constant::new(
+                        Datum::Real(value),
+                        FieldType::new(FieldTypeCode::Double),
+                    ));
+                }
+            }
+            let mut ret_type = FieldType::new(FieldTypeCode::Double);
+            ret_type.set_flen(23);
+            ret_type.set_decimal(tidb_datatype::UNSPECIFIED_LENGTH);
+            Expression::ScalarFunction(ScalarFunction::new(
+                CiString::new("cast_double"),
+                ret_type,
+                vec![arg],
+            ))
+        })
+        .collect()
+}
+
 fn constant(datum: Datum, code: FieldTypeCode) -> Expression {
     Expression::Constant(Constant::new(datum, FieldType::new(code)))
 }
@@ -1060,6 +1106,7 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
                 .iter()
                 .map(|arg| rewrite_expr_resolved(arg, resolver))
                 .collect::<Result<_, _>>()?;
+            let rewritten = wrap_power_arguments(&lowered, rewritten);
             let ret_type = builtin_return_type(&lowered, &rewritten).ok_or(
                 EvalError::Unsupported("this builtin is not yet built for chunk evaluation"),
             )?;
@@ -1481,6 +1528,38 @@ mod tests {
         ))));
         let neg = Expr::Unary(UnaryOp::Minus, paren);
         assert_eq!(eval_const(&neg), Datum::Int(-2));
+    }
+
+    #[test]
+    fn power_builds_gos_real_argument_casts() {
+        let minus = Expr::Binary(
+            BinaryOp::Minus,
+            Box::new(Expr::Binary(
+                BinaryOp::Minus,
+                Box::new(Expr::Int("5".to_owned())),
+                Box::new(Expr::Int("1".to_owned())),
+            )),
+            Box::new(Expr::Int("2".to_owned())),
+        );
+        let power = Expr::Func {
+            name: "POWER".to_owned(),
+            args: vec![minus, Expr::Int("2".to_owned())],
+            origin_position: 0,
+        };
+        let rewritten = rewrite_expr(&power).unwrap();
+        let Expression::ScalarFunction(power_call) = &rewritten else {
+            panic!("POWER was not rewritten as a scalar function");
+        };
+        assert_eq!(power_call.func_name.lowercase(), "power");
+        let Expression::ScalarFunction(cast) = &power_call.args[0] else {
+            panic!("POWER's integer expression was not cast to real");
+        };
+        assert_eq!(cast.func_name.lowercase(), "cast_double");
+        let Expression::Constant(exponent) = &power_call.args[1] else {
+            panic!("POWER's integer literal was not folded to a real constant");
+        };
+        assert_eq!(exponent.value, Datum::Real(2.0));
+        assert_eq!(eval_const(&power), Datum::Real(4.0));
     }
 
     #[test]

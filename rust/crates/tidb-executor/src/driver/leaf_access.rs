@@ -388,6 +388,9 @@ pub(crate) fn leaf_index_source(
             trace.index_full_scan(visible, &index.name, &index_columns, estimate, keep_order);
         } else {
             trace.index_range_scan(visible, &index.name, &index_columns, &ranges, estimate);
+            if keep_order {
+                trace.keep_order();
+            }
         }
     }
     let mut exec = IndexRangeSourceExec::new_with_context(
