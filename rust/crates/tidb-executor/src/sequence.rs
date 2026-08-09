@@ -42,9 +42,11 @@
 //! * Exhaustion is error 4135 `Sequence '<db>.<name>' has run out`, not the
 //!   auto-id allocator's 1467.
 //!
-//! The allocator state is `Arc`-shared, so a staged catalog copy allocates from
-//! the same counter -- consuming a value must not be undone by a catalog swap
-//! any more than by a rollback.
+//! A cloned allocator shares its table-local cache, so a staged catalog copy
+//! cannot undo a value by swapping an older cache back in. A
+//! [`SequenceAllocator::peer`] has its own cache but shares the stored counter,
+//! matching two TiDB nodes whose table objects independently reserve batches
+//! from the same meta key.
 
 use std::sync::{Arc, Mutex};
 
@@ -227,27 +229,38 @@ fn calc_sequence_batch_size(
     Some((base - nr) + (size - 1) * -increment)
 }
 
-/// The mutable half of a sequence: Go's stored `SequenceValue`/`SequenceCycle`
-/// plus the `sequenceCommon` cache window that walks inside the last batch.
+/// Go's meta-store half of a sequence. Every allocator for the same sequence
+/// serializes batch reservation through this state.
+#[derive(Debug)]
+struct SequenceStoreState {
+    /// Go meta `SequenceValue`: the end of the last batch handed out.
+    stored: i64,
+    /// Go meta `SequenceCycle`: how many times `CYCLE` has wrapped.
+    round: i64,
+}
+
+/// Go `sequenceCommon`: one table instance's local cache window.
 #[derive(Debug)]
 struct SequenceState {
-    /// Go's meta `SequenceValue`: the end of the last batch handed out.
-    stored: i64,
-    /// Go's meta `SequenceCycle`: how many times `CYCLE` has wrapped. Non-zero
-    /// switches the congruence offset from `START` to `MIN`/`MAXVALUE`.
-    round: i64,
     /// Go `sequenceCommon.base`: the last value this table handed out.
     base: i64,
     /// Go `sequenceCommon.end`: the end of the batch `base` walks inside.
     /// `base == end` means "no cache", which is also the initial state.
     end: i64,
+    /// The cycle round attached to this particular reserved batch. Non-zero
+    /// switches the congruence offset from `START` to `MIN`/`MAXVALUE`.
+    round: i64,
 }
 
-/// A sequence's identity-independent state, `Arc`-shared so every catalog copy
-/// allocates from one counter (see the module doc).
+/// A sequence allocator with a shared meta counter and a table-local cache.
+///
+/// [`Clone`] shares both handles because catalog staging is another handle to
+/// the same table object. [`Self::peer`] instead models a separately built
+/// table/allocator: its cache starts empty while its meta counter is shared.
 #[derive(Clone, Debug)]
 pub struct SequenceAllocator {
     info: SequenceInfo,
+    store: Arc<Mutex<SequenceStoreState>>,
     state: Arc<Mutex<SequenceState>>,
 }
 
@@ -267,11 +280,27 @@ impl SequenceAllocator {
         };
         SequenceAllocator {
             info,
+            store: Arc::new(Mutex::new(SequenceStoreState { stored, round: 0 })),
             state: Arc::new(Mutex::new(SequenceState {
-                stored,
+                base: 0,
+                end: 0,
                 round: 0,
-                base: stored,
-                end: stored,
+            })),
+        }
+    }
+
+    /// Builds another Go `NewSequenceAllocator`/table instance over the same
+    /// meta keys. Its local `sequenceCommon` cache is empty, but reservations
+    /// advance the same stored `SequenceValue` and cannot overlap this one.
+    #[must_use]
+    pub fn peer(&self) -> Self {
+        SequenceAllocator {
+            info: self.info,
+            store: Arc::clone(&self.store),
+            state: Arc::new(Mutex::new(SequenceState {
+                base: 0,
+                end: 0,
+                round: 0,
             })),
         }
     }
@@ -290,8 +319,7 @@ impl SequenceAllocator {
     pub fn alter(&mut self, info: SequenceInfo) {
         self.info = info;
         let mut state = self.state.lock().expect("sequence state");
-        state.base = state.stored;
-        state.end = state.stored;
+        state.base = state.end;
     }
 
     /// Go `ddl.AlterSequence` with `RESTART`: the stored counter goes one
@@ -299,14 +327,16 @@ impl SequenceAllocator {
     /// requested value.
     pub fn restart(&mut self, restart_with: i64) {
         let mut state = self.state.lock().expect("sequence state");
-        state.stored = if self.info.increment > 0 {
+        let mut store = self.store.lock().expect("sequence store state");
+        store.stored = if self.info.increment > 0 {
             restart_with - 1
         } else {
             restart_with + 1
         };
+        store.round = 0;
+        state.base = store.stored;
+        state.end = store.stored;
         state.round = 0;
-        state.base = state.stored;
-        state.end = state.stored;
     }
 
     /// Go `sequenceCommon.getOffset`: the congruence offset is `START` until
@@ -363,16 +393,18 @@ impl SequenceAllocator {
         Ok(next)
     }
 
-    /// Go `allocator.alloc4Sequence`: advance the stored counter by one cache
-    /// batch, wrapping first if the sequence is spent and `CYCLE` is set.
-    fn refill(&self, state: &mut SequenceState) -> Result<(), SequenceError> {
+    /// Go `Allocator.AllocSeqCache`: atomically reserve one batch from the
+    /// shared meta counter. The returned bounds belong exclusively to the
+    /// caller; consuming values inside them needs no store lock.
+    pub fn alloc_seq_cache(&self) -> Result<(i64, i64, i64), SequenceError> {
         let size = if self.info.cache {
             self.info.cache_value
         } else {
             1
         };
-        let mut base = state.stored;
-        let mut offset = self.offset(state.round);
+        let mut store = self.store.lock().expect("sequence store state");
+        let mut base = store.stored;
+        let mut offset = self.offset(store.round);
         let step = match calc_sequence_batch_size(
             base,
             size,
@@ -395,8 +427,8 @@ impl SequenceAllocator {
                     base = self.info.max_value + 1;
                     offset = self.info.max_value;
                 }
-                state.round += 1;
-                state.stored = base;
+                store.round += 1;
+                store.stored = base;
                 calc_sequence_batch_size(
                     base,
                     size,
@@ -409,9 +441,16 @@ impl SequenceAllocator {
             }
         };
         let delta = if self.info.increment > 0 { step } else { -step };
+        store.stored = base + delta;
+        Ok((base, store.stored, store.round))
+    }
+
+    /// Refill one table instance's local cache from [`Self::alloc_seq_cache`].
+    fn refill(&self, state: &mut SequenceState) -> Result<(), SequenceError> {
+        let (base, end, round) = self.alloc_seq_cache()?;
         state.base = base;
-        state.stored = base + delta;
-        state.end = state.stored;
+        state.end = end;
+        state.round = round;
         Ok(())
     }
 
@@ -445,13 +484,14 @@ impl SequenceAllocator {
         // Go `rebase4Sequence`: a store already at or past `new_val` is left
         // untouched and reported as `alreadySatisfied`. The cache window is
         // collapsed onto `new_val` EITHER WAY.
+        let mut store = self.store.lock().expect("sequence store state");
         let already_satisfied = if self.info.increment > 0 {
-            state.stored >= new_val
+            store.stored >= new_val
         } else {
-            state.stored <= new_val
+            store.stored <= new_val
         };
         if !already_satisfied {
-            state.stored = new_val;
+            store.stored = new_val;
         }
         state.base = new_val;
         state.end = new_val;
