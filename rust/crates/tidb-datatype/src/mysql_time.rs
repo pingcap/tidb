@@ -889,8 +889,9 @@ mod tests {
         }
     }
 
+    /// Complete translation of `pkg/types/time_test.go::TestTimeEncoding`.
     #[test]
-    fn test_go_time_encoding_source_rows() {
+    fn test_time_encoding() {
         for (core, kind, fsp, expected) in [
             (
                 CoreTime::from_date(2019, 9, 16, 0, 0, 0, 0),
@@ -917,8 +918,9 @@ mod tests {
         }
     }
 
+    /// Complete translation of `pkg/types/time_test.go::TestCompare`.
     #[test]
-    fn test_compare_string_source_rows() {
+    fn test_compare() {
         for (left, right, expected) in [
             (
                 "2011-10-10 11:11:11",
@@ -968,6 +970,21 @@ mod tests {
         assert!(value
             .compare_string("Test should error", true, false, &chrono_tz::UTC)
             .is_err());
+
+        for (left, right, expected) in [
+            ("11:11:11", "11:11:11", Ordering::Equal),
+            ("11:11:11.123456", "11:11:11.1", Ordering::Greater),
+            ("11:11:11", "11:11:11.123", Ordering::Less),
+        ] {
+            let left_text = left;
+            let parsed = crate::parse_duration(left_text.as_bytes(), 6).unwrap();
+            let left = MySqlDuration::from_nanoseconds(parsed.nanoseconds(), parsed.fsp()).unwrap();
+            assert_eq!(
+                left.compare_string(right).unwrap(),
+                expected,
+                "{left_text} compared with {right}"
+            );
+        }
     }
 
     #[test]
@@ -986,8 +1003,62 @@ mod tests {
         assert_eq!(timestamp.to_string(), "2018-03-11 03:00:00");
     }
 
+    /// Complete translation of `pkg/types/time_test.go::TestConvert`.
     #[test]
-    fn test_time_overflow_source_rows() {
+    fn test_convert() {
+        let los_angeles = chrono_tz::America::Los_Angeles;
+        for (input, fsp, expected) in [
+            ("2012-12-31 11:30:45.123456", 4, "11:30:45.1235"),
+            ("2012-12-31 11:30:45.123456", 6, "11:30:45.123456"),
+            ("2012-12-31 11:30:45.123456", 0, "11:30:45"),
+            ("2012-12-31 11:30:45.999999", 0, "11:30:46"),
+            ("2017-01-05 08:40:59.575601", 0, "08:41:00"),
+            ("2017-01-05 23:59:59.575601", 0, "00:00:00"),
+            ("0000-00-00 00:00:00", 6, "00:00:00"),
+        ] {
+            let time = crate::parse_time(
+                input,
+                TimeType::DateTime,
+                fsp,
+                false,
+                true,
+                false,
+                &los_angeles,
+            )
+            .unwrap()
+            .time;
+            assert_eq!(time.to_duration().unwrap().to_string(), expected, "{input}");
+        }
+
+        let now = Utc.with_ymd_and_hms(2026, 1, 15, 12, 0, 0).unwrap();
+        let midnight = Utc.with_ymd_and_hms(2026, 1, 15, 0, 0, 0).unwrap();
+        for (input, fsp) in [
+            ("11:30:45.123456", 4),
+            ("11:30:45.123456", 6),
+            ("11:30:45.123456", 0),
+            ("1 11:30:45.999999", 0),
+        ] {
+            let parsed = crate::parse_duration(input.as_bytes(), fsp).unwrap();
+            let duration =
+                MySqlDuration::from_nanoseconds(parsed.nanoseconds(), parsed.fsp()).unwrap();
+            let converted = duration
+                .convert_to_time(now, TimeType::DateTime, true, false)
+                .unwrap();
+            let converted = converted.core_time().to_datetime(&Utc).unwrap();
+            assert_eq!(
+                converted
+                    .signed_duration_since(midnight)
+                    .num_nanoseconds()
+                    .unwrap(),
+                duration.nanoseconds(),
+                "{input} fsp={fsp}"
+            );
+        }
+    }
+
+    /// Complete translation of `pkg/types/time_test.go::TestTimeOverflow`.
+    #[test]
+    fn test_time_overflow() {
         for (input, overflow) in [
             ("2012-12-31 11:30:45", false),
             ("12-12-31 11:30:45", false),
@@ -1030,7 +1101,7 @@ mod tests {
     }
 
     #[test]
-    fn test_date_time_and_type_fsp() {
+    fn date_time_type_and_fsp_supplemental() {
         let core = CoreTime::from_date(2012, 12, 12, 10, 10, 10, 123_456);
         let mut datetime = Time::new(core, TimeType::DateTime, 3).unwrap();
         assert_eq!(datetime.to_string(), "2012-12-12 10:10:10.123");
@@ -1041,6 +1112,19 @@ mod tests {
         assert_eq!(datetime.fsp(), 0);
         datetime.set_fsp(6).unwrap();
         assert_eq!(datetime.fsp(), 0);
+    }
+
+    /// Complete translation of `pkg/types/time_test.go::TestDateFSP`.
+    #[test]
+    fn test_date_fsp() {
+        for (input, expected) in [
+            ("2004-01-01 12:00:00.111", 3),
+            ("2004-01-01 12:00:00.11", 2),
+            ("2004-01-01 12:00:00.111111", 6),
+            ("2004-01-01 12:00:00", 0),
+        ] {
+            assert_eq!(date_fsp(input), expected, "{input}");
+        }
     }
 
     #[test]
@@ -1095,7 +1179,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_fsp_and_frac_index() {
+    fn get_fsp_and_frac_index_supplemental() {
         for (value, index, fsp) in [
             ("2012-01-01 00:00:00", -1, 0),
             ("2012-01-01 00:00:00.1", 19, 1),
@@ -1112,8 +1196,36 @@ mod tests {
         }
     }
 
+    /// Complete translation of `pkg/types/time_test.go::TestGetFsp`.
     #[test]
-    fn test_get_timezone_source_rows() {
+    fn test_get_fsp() {
+        for (input, expected) in [
+            ("2019:04:12 14:00:00.123456", 6),
+            ("2019:04:12 14:00:00.1234567890", 6),
+            ("2019:04:12 14:00:00.1", 1),
+            ("2019:04:12 14:00:00", 0),
+        ] {
+            assert_eq!(get_fsp(input), expected, "{input}");
+        }
+    }
+
+    /// Complete translation of `pkg/types/time_test.go::TestGetFracIndex`.
+    #[test]
+    fn test_get_frac_index() {
+        for (input, expected) in [
+            ("2019.01.01 00:00:00", -1),
+            ("2019.01.01 00:00:00.1", 19),
+            ("12345.6", 5),
+            ("2020-01-01 12:00:00.123456 +0600 PST", 19),
+            ("2020-01-01 12:00:00.123456 -0600 PST", 19),
+        ] {
+            assert_eq!(get_frac_index(input), expected, "{input}");
+        }
+    }
+
+    /// Complete translation of `pkg/types/time_test.go::TestGetTimezone`.
+    #[test]
+    fn test_get_timezone() {
         for (input, expected) in [
             ("2020-10-10T10:10:10Z", Some((19, None, None, false, None))),
             ("2020-10-10T10:10:10", None),
@@ -1158,7 +1270,7 @@ mod tests {
     }
 
     #[test]
-    fn test_invalid_zero_and_format_int_width_n() {
+    fn invalid_zero_and_format_width_supplemental() {
         assert!(Time::new(CoreTime::default(), TimeType::DateTime, 0)
             .unwrap()
             .is_zero());
@@ -1173,8 +1285,40 @@ mod tests {
         assert_eq!(format_int_width(12345, 4), "12345");
     }
 
+    /// Complete translation of `pkg/types/time_test.go::TestInvalidZero`.
     #[test]
-    fn test_from_datetime_rounds_to_microseconds_like_source() {
+    fn test_invalid_zero() {
+        for (core, invalid) in [
+            (CoreTime::default(), true),
+            (CoreTime::from_date(2019, 0, 0, 0, 0, 0, 0), true),
+            (CoreTime::from_date(2019, 4, 12, 12, 0, 0, 0), false),
+        ] {
+            let value = Time::new(core, TimeType::Timestamp, 0).unwrap();
+            assert_eq!(value.invalid_zero(), invalid, "{core}");
+        }
+    }
+
+    /// Complete translation of `pkg/types/time_test.go::TestFormatIntWidthN`.
+    #[test]
+    fn test_format_int_width_n() {
+        for (value, width, expected) in [
+            (0, 0, "0"),
+            (1, 0, "1"),
+            (1, 1, "1"),
+            (1, 2, "01"),
+            (10, 2, "10"),
+            (99, 3, "099"),
+            (100, 3, "100"),
+            (999, 3, "999"),
+            (1000, 3, "1000"),
+        ] {
+            assert_eq!(format_int_width(value, width), expected);
+        }
+    }
+
+    /// Complete translation of `pkg/types/time_test.go::TestFromGoTime`.
+    #[test]
+    fn test_from_go_time() {
         for (input, expected) in [
             (
                 "2006-01-02T15:04:05.999999999Z",
@@ -1202,8 +1346,9 @@ mod tests {
         }
     }
 
+    /// Complete translation of `pkg/types/time_test.go::TestConvertTimeZone`.
     #[test]
-    fn test_convert_time_zone_source_rows() {
+    fn test_convert_time_zone() {
         let utc = chrono_tz::UTC;
         let shanghai: chrono_tz::Tz = "Asia/Shanghai".parse().unwrap();
         for (input, from_shanghai, expected) in [
@@ -1232,58 +1377,87 @@ mod tests {
         assert!(zero.is_zero());
     }
 
+    /// Complete translation of `pkg/types/time_test.go::TestCurrentTime`.
     #[test]
-    fn test_current_time_preserves_requested_type_and_zero_fsp() {
+    fn test_current_time() {
         let value = Time::current(TimeType::Timestamp);
         assert_eq!(value.kind(), TimeType::Timestamp);
         assert_eq!(value.fsp(), 0);
     }
 
+    /// Complete translation of `pkg/types/time_test.go::TestToNumber`.
     #[test]
-    fn test_to_number_and_duration_source_shapes() {
-        for (time, expected) in [
-            (
-                Time::from_date_checked(2012, 12, 31, 11, 30, 45, 0, TimeType::DateTime, 0)
-                    .unwrap(),
-                "20121231113045",
-            ),
-            (
-                Time::from_date_checked(2012, 12, 31, 11, 30, 45, 123_345, TimeType::DateTime, 3)
-                    .unwrap(),
-                "20121231113045.123",
-            ),
-            (
-                Time::from_date_checked(2012, 12, 31, 11, 30, 45, 123_345, TimeType::Date, 0)
-                    .unwrap(),
-                "20121231",
-            ),
+    fn test_to_number() {
+        let los_angeles = chrono_tz::America::Los_Angeles;
+        for (input, fsp, expected) in [
+            ("12-12-31 11:30:45", 0, "20121231113045"),
+            ("12-12-31 11:30:45", 6, "20121231113045.000000"),
+            ("12-12-31 11:30:45.123", 6, "20121231113045.123000"),
+            ("12-12-31 11:30:45.123345", 0, "20121231113045"),
+            ("12-12-31 11:30:45.123345", 3, "20121231113045.123"),
+            ("12-12-31 11:30:45.123345", 5, "20121231113045.12335"),
+            ("12-12-31 11:30:45.123345", 6, "20121231113045.123345"),
+            ("12-12-31 11:30:45.1233457", 6, "20121231113045.123346"),
+            ("12-12-31 11:30:45.823345", 0, "20121231113046"),
         ] {
-            assert_eq!(time.to_number().to_string(), expected);
+            let time = crate::parse_time(
+                input,
+                TimeType::DateTime,
+                fsp,
+                false,
+                true,
+                false,
+                &los_angeles,
+            )
+            .unwrap()
+            .time;
+            assert_eq!(time.to_number().to_string(), expected, "{input} fsp={fsp}");
         }
-        assert_eq!(
-            Time::new(CoreTime::default(), TimeType::DateTime, 0)
-                .unwrap()
-                .to_number()
-                .to_string(),
-            "0"
-        );
 
-        let time =
-            Time::from_date_checked(2012, 12, 12, 10, 10, 10, 123_456, TimeType::DateTime, 6)
-                .unwrap();
-        assert_eq!(time.to_duration().unwrap().to_string(), "10:10:10.123456");
-        assert_eq!(
-            Time::new(CoreTime::default(), TimeType::DateTime, 6)
-                .unwrap()
-                .to_duration()
-                .unwrap()
-                .to_string(),
-            "00:00:00"
-        );
+        for input in [
+            "12-12-31 11:30:45",
+            "12-12-31 11:30:45",
+            "12-12-31 11:30:45.123",
+            "12-12-31 11:30:45.123345",
+            "12-12-31 11:30:45.123345",
+            "12-12-31 11:30:45.123345",
+            "12-12-31 11:30:45.123345",
+            "12-12-31 11:30:45.1233457",
+            "12-12-31 11:30:45.823345",
+        ] {
+            let time =
+                crate::parse_time(input, TimeType::Date, 0, false, true, false, &los_angeles)
+                    .unwrap()
+                    .time;
+            assert_eq!(time.to_number().to_string(), "20121231", "{input}");
+        }
+
+        for (input, fsp, expected) in [
+            ("11:30:45", 0, "113045"),
+            ("11:30:45", 6, "113045.000000"),
+            ("11:30:45.123", 6, "113045.123000"),
+            ("11:30:45.123345", 0, "113045"),
+            ("11:30:45.123345", 3, "113045.123"),
+            ("11:30:45.123345", 5, "113045.12335"),
+            ("11:30:45.123345", 6, "113045.123345"),
+            ("11:30:45.1233456", 6, "113045.123346"),
+            ("11:30:45.9233456", 0, "113046"),
+            ("-11:30:45.9233456", 0, "-113046"),
+        ] {
+            let parsed = crate::parse_duration(input.as_bytes(), fsp).unwrap();
+            let duration =
+                MySqlDuration::from_nanoseconds(parsed.nanoseconds(), parsed.fsp()).unwrap();
+            assert_eq!(
+                duration.to_number().to_string(),
+                expected,
+                "{input} fsp={fsp}"
+            );
+        }
     }
 
+    /// Complete translation of `pkg/types/time_test.go::TestRoundFrac`.
     #[test]
-    fn test_round_frac_source_rows() {
+    fn test_round_frac() {
         let timezone = chrono_tz::UTC;
         for (core, fsp, expected) in [
             (
@@ -1338,10 +1512,68 @@ mod tests {
                 expected
             );
         }
+
+        let los_angeles = chrono_tz::America::Los_Angeles;
+        for (input, fsp, expected) in [
+            ("2019-11-25 07:25:45.123456", 4, "2019-11-25 07:25:45.1235"),
+            ("2019-11-25 07:25:45.123456", 5, "2019-11-25 07:25:45.12346"),
+            ("2019-11-25 07:25:45.123456", 0, "2019-11-25 07:25:45"),
+            ("2019-11-25 07:25:45.123456", 2, "2019-11-25 07:25:45.12"),
+            ("2019-11-26 11:30:45.999999", 4, "2019-11-26 11:30:46.0000"),
+            ("2019-11-26 11:30:45.999999", 0, "2019-11-26 11:30:46"),
+            ("2019-11-26 11:30:45.999999", 3, "2019-11-26 11:30:46.000"),
+        ] {
+            let time = crate::parse_time(
+                input,
+                TimeType::DateTime,
+                6,
+                false,
+                true,
+                false,
+                &los_angeles,
+            )
+            .unwrap()
+            .time;
+            assert_eq!(
+                time.round_frac(fsp, &los_angeles).unwrap().to_string(),
+                expected,
+                "{input} fsp={fsp}"
+            );
+        }
+
+        for (input, fsp, expected) in [
+            ("11:30:45.123456", 4, "11:30:45.1235"),
+            ("11:30:45.123456", 6, "11:30:45.123456"),
+            ("11:30:45.123456", 0, "11:30:45"),
+            ("1 11:30:45.123456", 1, "35:30:45.1"),
+            ("1 11:30:45.999999", 4, "35:30:46.0000"),
+            ("-1 11:30:45.999999", 0, "-35:30:46"),
+        ] {
+            let parsed = crate::parse_duration(input.as_bytes(), 6).unwrap();
+            let duration =
+                MySqlDuration::from_nanoseconds(parsed.nanoseconds(), parsed.fsp()).unwrap();
+            assert_eq!(
+                duration.round_frac(fsp).unwrap().to_string(),
+                expected,
+                "{input} fsp={fsp}"
+            );
+        }
+
+        for (nanosecond, expected_second) in [(888_888, 10), (111_111, 10)] {
+            let value = Utc
+                .with_ymd_and_hms(2011, 11, 11, 10, 10, 10)
+                .unwrap()
+                .with_nanosecond(nanosecond)
+                .unwrap();
+            assert_eq!(
+                round_datetime_fraction(value, 0).unwrap().second(),
+                expected_second
+            );
+        }
     }
 
     #[test]
-    fn test_standalone_round_and_truncate_frac_source_rows() {
+    fn standalone_fraction_helpers_supplemental() {
         let first = Utc
             .with_ymd_and_hms(2011, 11, 11, 10, 10, 10)
             .unwrap()
@@ -1359,8 +1591,25 @@ mod tests {
         assert_eq!(date_fsp("2004-01-01 12:00:00.1111111"), 7);
     }
 
+    /// Complete translation of `pkg/types/time_test.go::TestTruncateFrac`.
     #[test]
-    fn test_time_add_and_sub_source_rows() {
+    fn test_truncate_frac() {
+        for (nanosecond, expected_second) in [(888_888, 10), (111_111, 10)] {
+            let value = Utc
+                .with_ymd_and_hms(2011, 11, 11, 10, 10, 10)
+                .unwrap()
+                .with_nanosecond(nanosecond)
+                .unwrap();
+            assert_eq!(
+                truncate_datetime_fraction(value, 0).unwrap().second(),
+                expected_second
+            );
+        }
+    }
+
+    /// Complete translation of `pkg/types/time_test.go::TestTimeSub`.
+    #[test]
+    fn test_time_sub() {
         let timezone = chrono_tz::UTC;
         for (left, right, expected) in [
             (
@@ -1383,7 +1632,11 @@ mod tests {
             let right = Time::new(right, TimeType::DateTime, 6).unwrap();
             assert_eq!(left.sub(right, &timezone).unwrap().to_string(), expected);
         }
+    }
 
+    /// Complete translation of `pkg/types/time_test.go::TestTimeAdd`.
+    #[test]
+    fn test_time_add() {
         for (time, duration, expected) in [
             (
                 CoreTime::from_date(2017, 1, 18, 0, 0, 0, 0),
@@ -1469,8 +1722,9 @@ mod tests {
         assert!(zero_in_date.validate(true, false, &chrono_tz::UTC).is_ok());
     }
 
+    /// Complete translation of `pkg/types/time_test.go::TestCheckTimestamp`.
     #[test]
-    fn test_check_timestamp_source_rows() {
+    fn test_check_timestamp() {
         let shanghai: chrono_tz::Tz = "Asia/Shanghai".parse().unwrap();
         let los_angeles: chrono_tz::Tz = "America/Los_Angeles".parse().unwrap();
         let london: chrono_tz::Tz = "Europe/London".parse().unwrap();
