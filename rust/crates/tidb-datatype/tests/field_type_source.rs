@@ -266,6 +266,49 @@ fn test_field_type_to_str_source_rows() {
     assert_eq!(type_to_str(C::String, "binary"), "binary");
 }
 
+/// Source: `pkg/types/etc_test.go::TestTypeToStr`.
+#[test]
+fn test_type_to_str() {
+    for (code, expected) in [(C::Year, "year"), (C::Unknown(0xdd), "")] {
+        assert_eq!(type_str(code), expected, "{code:?}");
+    }
+
+    for (code, charset, expected) in [
+        (C::Blob, "utf8", "text"),
+        (C::LongBlob, "utf8", "longtext"),
+        (C::TinyBlob, "utf8", "tinytext"),
+        (C::MediumBlob, "utf8", "mediumtext"),
+        (C::Varchar, "binary", "varbinary"),
+        (C::String, "binary", "binary"),
+        (C::Tiny, "binary", "tinyint"),
+        (C::Blob, "binary", "blob"),
+        (C::LongBlob, "binary", "longblob"),
+        (C::TinyBlob, "binary", "tinyblob"),
+        (C::MediumBlob, "binary", "mediumblob"),
+        (C::Varchar, "utf8", "varchar"),
+        (C::String, "utf8", "char"),
+        (C::Short, "binary", "smallint"),
+        (C::Int24, "binary", "mediumint"),
+        (C::Long, "binary", "int"),
+        (C::LongLong, "binary", "bigint"),
+        (C::Float, "binary", "float"),
+        (C::Double, "binary", "double"),
+        (C::Year, "binary", "year"),
+        (C::Duration, "binary", "time"),
+        (C::Datetime, "binary", "datetime"),
+        (C::Date, "binary", "date"),
+        (C::Timestamp, "binary", "timestamp"),
+        (C::NewDecimal, "binary", "decimal"),
+        (C::Unspecified, "binary", "unspecified"),
+        (C::Unknown(0xdd), "binary", ""),
+        (C::Bit, "binary", "bit"),
+        (C::Enum, "binary", "enum"),
+        (C::Set, "binary", "set"),
+    ] {
+        assert_eq!(type_to_str(code, charset), expected, "{code:?}");
+    }
+}
+
 /// Go: pkg/parser/types/field_type_test.go:30 TestFieldType.
 #[test]
 fn parser_field_type() {
