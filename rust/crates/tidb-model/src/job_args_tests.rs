@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use super::*;
+use crate::ColumnarIndexType;
 
 pub(crate) fn encoded_job<T: JobArgs>(
     version: JobVersion,
