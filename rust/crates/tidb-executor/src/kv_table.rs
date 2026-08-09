@@ -635,6 +635,13 @@ impl KvTable {
         self
     }
 
+    /// Whether persisted keys and expressions use the captured new-collation
+    /// encoding mode (Go `table.Table.UseNewCollate`).
+    #[must_use]
+    pub const fn use_new_collation(&self) -> bool {
+        self.use_new_collation
+    }
+
     /// Go `session.HasDirtyContent(tid)`: whether the open transaction has
     /// staged a row write to this table. See the field's own doc.
     #[must_use]
@@ -2470,6 +2477,30 @@ mod tests {
             2
         );
         assert_eq!(table.index_entries_for_check(1).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_table_from_meta_with_collate_uses_fixed_mode() {
+        // Direct port of pkg/table/tables/tables_test.go::
+        // TestTableFromMetaWithCollateUsesFixedMode. The table captures the
+        // supplied persisted mode instead of consulting process-global state.
+        for use_new_collation in [false, true] {
+            let table = KvTable::with_storage_and_collation(
+                1,
+                vec![KvColumn {
+                    name: "a".to_owned(),
+                    id: 1,
+                    field_type: varstr(),
+                    column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                    default_value: None,
+                    origin_default: None,
+                    generated: None,
+                }],
+                Box::new(MemTableStorage::new()),
+                use_new_collation,
+            );
+            assert_eq!(table.use_new_collation(), use_new_collation);
+        }
     }
 
     /// The scan bound must cover the whole table and nothing beyond it: the
