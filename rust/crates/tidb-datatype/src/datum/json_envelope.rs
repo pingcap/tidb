@@ -289,14 +289,19 @@ fn base64_digit(byte: u8) -> Result<u8, DatumValueError> {
 #[cfg(test)]
 mod tests {
     use super::Datum;
-    use crate::{parse_datetime, BinaryJSON, BinaryLiteral, Collation, Decimal, MySqlDuration};
+    use crate::{
+        BinaryJSON, BinaryLiteral, Collation, CoreTime, Decimal, MySqlDuration, Time, TimeType,
+    };
 
     /// Source: `pkg/types/datum_test.go::TestMarshalDatum`.
     #[test]
-    fn source_marshal_datum_round_trips_every_stored_kind() {
-        let time = parse_datetime("2018-03-08 16:01:00.315313", &chrono_tz::UTC, true, false)
-            .unwrap()
-            .time;
+    fn test_marshal_datum() {
+        let time = Time::new(
+            CoreTime::from_date(2018, 3, 8, 16, 1, 0, 315_313),
+            TimeType::Timestamp,
+            6,
+        )
+        .unwrap();
         let values = vec![
             Datum::Int(1),
             Datum::UInt(72),
@@ -315,15 +320,25 @@ mod tests {
             Datum::new_enum(crate::MysqlEnum::new("a", 1), Collation::AsciiBin),
             Datum::new_set(crate::MysqlSet::new("a", 1), Collation::GbkBin),
             Datum::new_json(BinaryJSON::parse("1").unwrap()),
-            Datum::new_raw(b"raw"),
-            Datum::new_vector_float32(crate::VectorFloat32::parse("[1,2]").unwrap()),
             Datum::MinNotNull,
             Datum::MaxValue,
         ];
+        assert_eq!(values.len(), 19, "one entry per Go source row");
         for (index, value) in values.into_iter().enumerate() {
             let encoded = value.marshal_json().unwrap();
             let decoded = Datum::unmarshal_json(&encoded).unwrap();
             assert_eq!(decoded, value, "round-trip row {index}: {encoded:?}");
+        }
+    }
+
+    #[test]
+    fn extended_kind_round_trips() {
+        for value in [
+            Datum::new_raw(b"raw"),
+            Datum::new_vector_float32(crate::VectorFloat32::parse("[1,2]").unwrap()),
+        ] {
+            let encoded = value.marshal_json().unwrap();
+            assert_eq!(Datum::unmarshal_json(&encoded).unwrap(), value);
         }
     }
 }
