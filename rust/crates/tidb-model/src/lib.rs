@@ -54,7 +54,9 @@ pub mod table_info;
 pub mod table_mode;
 
 pub use action_type::{ActionType, ACTION_MAP};
-pub use bdr::{ts_convert_2_time, DDLBDRType, ACTION_BDR_MAP, BDR_ACTION_MAP};
+pub use bdr::{
+    ts_convert_2_time, ActionBDRMap, BDRActionMap, DDLBDRType, ACTION_BDR_MAP, BDR_ACTION_MAP,
+};
 pub use cascades_hash::{CascadesHasher, HashInt64};
 pub use column::{
     gen_removing_obj_name, gen_unique_changing_column_name, ChangeStateInfo, ColumnInfo,

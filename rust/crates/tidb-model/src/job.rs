@@ -25,7 +25,7 @@ use tidb_error::terror::TerrorError;
 
 use crate::action_type::ActionType;
 use crate::db::DBInfo;
-use crate::go_runtime::{GoShared, GoSharedPointerSlice};
+use crate::go_runtime::{GoShared, GoSharedPointerSlice, GoSharedSlice};
 pub use crate::history::HistoryInfo;
 use crate::job_enums::{JobState, JobVersion};
 use crate::reorg::{DDLReorgMeta, ReorgStage, ReorgType};
@@ -91,28 +91,56 @@ pub const JOB_RESUME_REASON_KV_DISK_FULL: &str = "tikv_disk_full";
 /// package's Go formatter compacts only insignificant whitespace, preserving
 /// duplicate keys, member order, and numeric lexical forms like Go Marshal.
 #[derive(Clone, Debug)]
-pub struct PersistedRawJson(Box<RawValue>);
+pub struct PersistedRawJson(GoSharedSlice<u8>);
 
 impl PersistedRawJson {
     /// Validates and owns exact JSON text.
     pub fn from_string(json: String) -> Result<Self, serde_json::Error> {
-        RawValue::from_string(json).map(Self)
+        let _: &RawValue = serde_json::from_str(&json)?;
+        Ok(Self(GoSharedSlice::from_vec(json.into_bytes())))
     }
 
-    /// Returns the exact decoded JSON text before outer-marshaler compaction.
+    /// Constructs the exact Go `json.RawMessage` byte slice without validating
+    /// it. Direct Go struct construction permits arbitrary bytes; validation
+    /// happens when an outer `encoding/json` marshal consumes the message.
     #[must_use]
-    pub fn get(&self) -> &str {
-        self.0.get()
+    pub fn from_bytes(bytes: Vec<u8>) -> Self {
+        Self(GoSharedSlice::from_vec(bytes))
+    }
+
+    /// Returns a snapshot of the exact decoded JSON text before
+    /// outer-marshaler compaction. A caller that mutates the source byte slice
+    /// to invalid UTF-8 must inspect [`Self::bytes`] instead.
+    #[must_use]
+    pub fn get(&self) -> String {
+        String::from_utf8(self.bytes()).expect("RawMessage contains invalid UTF-8")
+    }
+
+    /// Returns an exact byte snapshot.
+    #[must_use]
+    pub fn bytes(&self) -> Vec<u8> {
+        self.0.snapshot()
+    }
+
+    /// Mutates one byte through every shallow copy of this Go slice header.
+    pub fn set_byte(&self, index: usize, byte: u8) {
+        self.0.set(index, byte);
+    }
+
+    /// Reports Go slice backing-array identity.
+    #[must_use]
+    pub fn backing_ptr_eq(&self, other: &Self) -> bool {
+        self.0.backing_ptr_eq(&other.0)
     }
 
     fn from_value(value: &serde_json::Value) -> Result<Self, serde_json::Error> {
-        serde_json::value::to_raw_value(value).map(Self)
+        serde_json::to_vec(value).map(|bytes| Self(GoSharedSlice::from_vec(bytes)))
     }
 }
 
 impl PartialEq for PersistedRawJson {
     fn eq(&self, other: &Self) -> bool {
-        self.get() == other.get()
+        self.bytes() == other.bytes()
     }
 }
 
@@ -123,7 +151,11 @@ impl serde::Serialize for PersistedRawJson {
     where
         S: serde::Serializer,
     {
-        serde::Serialize::serialize(&self.0, serializer)
+        use serde::ser::Error as _;
+
+        let bytes = self.bytes();
+        let raw: &RawValue = serde_json::from_slice(&bytes).map_err(S::Error::custom)?;
+        serde::Serialize::serialize(raw, serializer)
     }
 }
 
@@ -132,7 +164,8 @@ impl<'de> serde::Deserialize<'de> for PersistedRawJson {
     where
         D: serde::Deserializer<'de>,
     {
-        serde::Deserialize::deserialize(deserializer).map(Self)
+        let raw = <Box<RawValue> as serde::Deserialize>::deserialize(deserializer)?;
+        Ok(Self(GoSharedSlice::from_vec(raw.get().as_bytes().to_vec())))
     }
 }
 
@@ -1197,7 +1230,14 @@ fn option_map_is_none_or_empty<K, V>(values: &Option<BTreeMap<K, V>>) -> bool {
 
 impl std::fmt::Display for Job {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let start = crate::bdr::ts_convert_2_time(self.start_ts).format("%Y-%m-%d %H:%M:%S %z UTC");
+        let start_time = crate::bdr::ts_convert_2_time(self.start_ts);
+        // The full TSO physical domain is within Chrono's supported year
+        // range. Conversion is only for this legacy formatter; the model API
+        // itself retains GoTime and its process-local location identity.
+        let start = start_time
+            .to_chrono_utc()
+            .expect("TSO physical milliseconds fit Chrono")
+            .format("%Y-%m-%d %H:%M:%S %z UTC");
         let error = self
             .error
             .as_ref()
@@ -1338,10 +1378,10 @@ mod tests {
                     id: 1,
                     name: CiString::new("db-kept"),
                     charset: "old-db-charset".to_owned(),
-                    placement_policy_ref: Some(PolicyRefInfo {
+                    placement_policy_ref: Some(GoShared::new(PolicyRefInfo {
                         id: 11,
                         name: CiString::new("db-policy-kept"),
-                    }),
+                    })),
                     ..Default::default()
                 })),
                 table_info: Some(GoShared::new(TableInfo {
@@ -1430,6 +1470,7 @@ mod tests {
             assert_eq!(database.charset, "old-db-charset");
             assert_eq!(database.collate, "db-later");
             let db_policy = database.placement_policy_ref.as_ref().unwrap();
+            let db_policy = db_policy.read();
             assert_eq!(db_policy.id, 11);
             assert_eq!(db_policy.name.original(), "db-policy-later");
             let table = history.table_info.as_ref().unwrap().read();

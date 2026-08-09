@@ -1149,6 +1149,59 @@ where
     }
 }
 
+/// Deserializes a scalar Go pointer while retaining its shared pointee
+/// identity. Null clears the pointer. A non-null value allocates a zero
+/// pointee before decoding when needed, so a recoverable type error leaves the
+/// same allocation installed, matching `encoding/json`'s pointer walk.
+pub(crate) struct OptionSharedScalarSeed<'a, T>(pub(crate) &'a mut Option<GoShared<T>>);
+
+impl<'de, T> DeserializeSeed<'de> for OptionSharedScalarSeed<'_, T>
+where
+    T: Default + Deserialize<'de>,
+{
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct SharedScalarVisitor<'a, T>(&'a mut Option<GoShared<T>>);
+
+        impl<'de, T> Visitor<'de> for SharedScalarVisitor<'_, T>
+        where
+            T: Default + Deserialize<'de>,
+        {
+            type Value = ();
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("null or a shared scalar pointer value")
+            }
+
+            fn visit_none<E>(self) -> Result<Self::Value, E> {
+                *self.0 = None;
+                Ok(())
+            }
+
+            fn visit_unit<E>(self) -> Result<Self::Value, E> {
+                *self.0 = None;
+                Ok(())
+            }
+
+            fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                let destination = self.0.get_or_insert_with(|| GoShared::new(T::default()));
+                let decoded = T::deserialize(deserializer)?;
+                *destination.write() = decoded;
+                Ok(())
+            }
+        }
+
+        deserializer.deserialize_option(SharedScalarVisitor(self.0))
+    }
+}
+
 /// Replaces a Go pointer slice while retaining null elements and continuing
 /// after recoverable element errors.
 pub(crate) struct OptionPointerSliceSeed<'a, T>(pub(crate) &'a mut Option<Vec<Option<T>>>);

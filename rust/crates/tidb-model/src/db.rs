@@ -21,11 +21,12 @@ use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
 use tidb_ast::CiString;
 
+use crate::go_runtime::{GoNullClonePolicy, GoShared, GoSharedPointerSlice};
 use crate::placement::PolicyRefInfo;
 use crate::schema_state::SchemaState;
 use crate::serde_helpers::{
     go_json_field_matches, ignore_unknown, impl_go_json_deserialize, impl_go_json_merge_object,
-    FatalSeed, NullNoopSeed, OptionMergeSeed, ValueMergeSeed,
+    FatalSeed, NullNoopSeed, OptionSharedMergeSeed, ValueMergeSeed,
 };
 use crate::table_info::TableInfo;
 
@@ -43,13 +44,13 @@ pub struct DBInfo {
     pub collate: String,
     /// Go's `Deprecated.Tables` (not set in infoschema v2). Go tags the inner
     /// field `json:"-"`, so only the empty wrapper object is ever stored.
-    pub deprecated_tables: Vec<TableInfo>,
+    pub deprecated_tables: GoSharedPointerSlice<TableInfo>,
     /// The online-DDL state.
     pub state: SchemaState,
     /// The placement-policy reference.
-    pub placement_policy_ref: Option<PolicyRefInfo>,
+    pub placement_policy_ref: Option<GoShared<PolicyRefInfo>>,
     /// A table-name -> table-ID index (Go `json:"-"`).
-    pub table_name2id: BTreeMap<String, i64>,
+    pub table_name2id: Option<GoShared<BTreeMap<String, i64>>>,
 }
 
 impl_go_json_merge_object!(DBInfo, destination, map, key, {
@@ -67,7 +68,7 @@ impl_go_json_merge_object!(DBInfo, destination, map, key, {
     } else if go_json_field_matches(&key, "state") {
         map.next_value_seed(NullNoopSeed(&mut destination.state))?;
     } else if go_json_field_matches(&key, "policy_ref_info") {
-        map.next_value_seed(OptionMergeSeed(&mut destination.placement_policy_ref))?;
+        map.next_value_seed(OptionSharedMergeSeed(&mut destination.placement_policy_ref))?;
     } else {
         ignore_unknown(&mut map)?;
     }
@@ -82,6 +83,48 @@ struct DeprecatedTables;
 impl Serialize for DeprecatedTables {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_struct("Deprecated", 0)?.end()
+    }
+}
+
+impl DBInfo {
+    /// Go `DBInfo.Clone`: copy the struct, allocate a fresh outer table slice,
+    /// and invoke `TableInfo.Clone` for every pointee. The placement-policy
+    /// pointer and table-name map are not named by the source method and
+    /// therefore retain their original allocation identity.
+    #[must_use]
+    pub fn clone_like_go(&self) -> Self {
+        Self {
+            deprecated_tables: self
+                .deprecated_tables
+                .map_clone_with(GoNullClonePolicy::Panic, TableInfo::clone_like_go),
+            ..self.clone()
+        }
+    }
+
+    /// Go `DBInfo.Copy`: copy the struct and only copy the outer table-pointer
+    /// slice. Table pointees, the placement-policy pointer, and the map remain
+    /// shared. `make(..., len(nil))` turns a nil source slice into an allocated
+    /// empty result, which [`GoSharedPointerSlice::copy_outer`] preserves.
+    #[must_use]
+    pub fn copy_like_go(&self) -> Self {
+        Self {
+            deprecated_tables: self.deprecated_tables.copy_outer(),
+            ..self.clone()
+        }
+    }
+
+    /// Pointer-shaped Go `(*DBInfo).Clone` boundary. The source dereferences a
+    /// nil receiver at `newInfo := *db`, so nil is a panic rather than a nil
+    /// result.
+    #[must_use]
+    pub fn clone_pointer(database: Option<&Self>) -> GoShared<Self> {
+        GoShared::new(database.expect("nil *DBInfo").clone_like_go())
+    }
+
+    /// Pointer-shaped Go `(*DBInfo).Copy` boundary.
+    #[must_use]
+    pub fn copy_pointer(database: Option<&Self>) -> GoShared<Self> {
+        GoShared::new(database.expect("nil *DBInfo").copy_like_go())
     }
 }
 
@@ -111,20 +154,54 @@ mod tests {
     use super::*;
 
     #[test]
-    fn clone_and_order() {
-        let mut a = DBInfo {
+    fn clone_copy_and_order_preserve_source_ownership() {
+        let table = GoShared::new(TableInfo {
+            name: CiString::new("t1"),
+            ..Default::default()
+        });
+        let policy = GoShared::new(PolicyRefInfo {
+            id: 5,
+            ..Default::default()
+        });
+        let names = GoShared::new(BTreeMap::from([("t1".to_owned(), 7)]));
+        let a = DBInfo {
             id: 1,
             name: CiString::new("Alpha"),
-            deprecated_tables: vec![TableInfo {
-                name: CiString::new("t1"),
-                ..Default::default()
-            }],
+            deprecated_tables: GoSharedPointerSlice::from_handles(vec![Some(table.clone())]),
+            placement_policy_ref: Some(policy.clone()),
+            table_name2id: Some(names.clone()),
             ..Default::default()
         };
-        // The clone deep-copies the tables.
-        let c = a.clone();
-        a.deprecated_tables[0].name = CiString::new("changed");
-        assert_eq!(c.deprecated_tables[0].name.original(), "t1");
+        let structural = a.clone();
+        assert!(structural
+            .deprecated_tables
+            .backing_ptr_eq(&a.deprecated_tables));
+        assert!(structural.deprecated_tables.get(0).unwrap().ptr_eq(&table));
+        assert!(structural
+            .placement_policy_ref
+            .as_ref()
+            .unwrap()
+            .ptr_eq(&policy));
+        assert!(structural.table_name2id.as_ref().unwrap().ptr_eq(&names));
+
+        let deep = a.clone_like_go();
+        assert!(!deep.deprecated_tables.backing_ptr_eq(&a.deprecated_tables));
+        assert!(!deep.deprecated_tables.get(0).unwrap().ptr_eq(&table));
+        assert!(deep.placement_policy_ref.as_ref().unwrap().ptr_eq(&policy));
+        assert!(deep.table_name2id.as_ref().unwrap().ptr_eq(&names));
+
+        let shallow = a.copy_like_go();
+        assert!(!shallow
+            .deprecated_tables
+            .backing_ptr_eq(&a.deprecated_tables));
+        assert!(shallow.deprecated_tables.get(0).unwrap().ptr_eq(&table));
+        shallow.deprecated_tables.get(0).unwrap().write().name = CiString::new("changed");
+        assert_eq!(table.read().name.original(), "changed");
+
+        let nil_tables = DBInfo::default();
+        assert!(!nil_tables.deprecated_tables.is_allocated());
+        assert!(nil_tables.clone_like_go().deprecated_tables.is_allocated());
+        assert!(nil_tables.copy_like_go().deprecated_tables.is_allocated());
 
         let b = DBInfo {
             name: CiString::new("beta"),
@@ -149,10 +226,10 @@ mod tests {
 
         let mut database = DBInfo {
             id: 9,
-            placement_policy_ref: Some(PolicyRefInfo {
+            placement_policy_ref: Some(GoShared::new(PolicyRefInfo {
                 id: 11,
                 name: CiString::new("before"),
-            }),
+            })),
             ..Default::default()
         };
         let mut decoder = serde_json::Deserializer::from_str(
@@ -162,6 +239,7 @@ mod tests {
         assert_eq!(database.id, 9);
         assert_eq!(database.collate, "after-error");
         let policy = database.placement_policy_ref.unwrap();
+        let policy = policy.read();
         assert_eq!(policy.id, 11);
         assert_eq!(policy.name.original(), "later");
 
@@ -182,5 +260,11 @@ mod tests {
         assert_eq!(named.name.original(), "Later");
         assert_eq!(named.name.lowercase(), "later");
         assert_eq!(named.collate, "kept");
+    }
+
+    #[test]
+    #[should_panic(expected = "nil *DBInfo")]
+    fn clone_nil_receiver_matches_source_dereference() {
+        let _ = DBInfo::clone_pointer(None);
     }
 }
