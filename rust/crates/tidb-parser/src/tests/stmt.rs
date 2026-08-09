@@ -31,6 +31,22 @@ fn root_statement_preserves_source_text_and_position() {
     assert_eq!(statements[1].original_text(), b"SELECT 2");
 }
 
+/// `pkg/parser/parser_test.go::TestSQLModeANSIQuotes`.
+#[test]
+fn test_sql_mode_ansi_quotes() {
+    let mode = SqlMode {
+        ansi_quotes: true,
+        ..SqlMode::default()
+    };
+    for sql in [
+        r#"CREATE TABLE "table" ("id" int)"#,
+        r#"select * from t "tt""#,
+    ] {
+        parse_with_sql_mode(sql, mode)
+            .unwrap_or_else(|error| panic!("source SQL failed: {sql}: {error:?}"));
+    }
+}
+
 /// `pkg/parser/parser_test.go::TestMultiStmt`.
 #[test]
 fn test_multi_stmt() {
