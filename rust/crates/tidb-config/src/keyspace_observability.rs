@@ -202,6 +202,12 @@ impl KeyspaceObservability {
 mod tests {
     use super::*;
 
+    #[derive(Deserialize)]
+    struct ConfigFile {
+        #[serde(rename = "keyspace-observability")]
+        keyspace_observability: KeyspaceObservability,
+    }
+
     fn field(
         source: &str,
         metric: &str,
@@ -298,6 +304,159 @@ mod tests {
         for (cfg, want) in cases {
             let err = cfg.valid().unwrap_err();
             assert!(err.contains(want), "{err} !~ {want}");
+        }
+    }
+
+    // Go TestKeyspaceObservabilityInvalid table cases.
+    #[test]
+    fn test_keyspace_observability_invalid() {
+        let cases = [
+            (
+                "empty source",
+                r#"
+[[keyspace-observability.fields]]
+source = ""
+metric-label = "keyspace_meta_label_a"
+"#,
+                "source cannot be empty",
+            ),
+            (
+                "empty output",
+                r#"
+[[keyspace-observability.fields]]
+source = "meta_a"
+"#,
+                "at least one output must be set",
+            ),
+            (
+                "invalid label",
+                r#"
+[[keyspace-observability.fields]]
+source = "meta_a"
+metric-label = "1_label"
+"#,
+                r#"invalid metric-label "1_label""#,
+            ),
+            (
+                "duplicate label",
+                r#"
+[[keyspace-observability.fields]]
+source = "meta_a"
+metric-label = "keyspace_meta_label_a"
+
+[[keyspace-observability.fields]]
+source = "meta_b"
+metric-label = "KEYSPACE_META_LABEL_A"
+"#,
+                r#"duplicated metric-label "KEYSPACE_META_LABEL_A""#,
+            ),
+            (
+                "reserved label without prefix",
+                r#"
+[[keyspace-observability.fields]]
+source = "meta_a"
+metric-label = "KEYSPACE_ID"
+"#,
+                r#"metric-label "KEYSPACE_ID" must start with "keyspace_meta_""#,
+            ),
+            (
+                "metric variable label without prefix",
+                r#"
+[[keyspace-observability.fields]]
+source = "meta_a"
+metric-label = "TYPE"
+"#,
+                r#"metric-label "TYPE" must start with "keyspace_meta_""#,
+            ),
+            (
+                "api label without prefix",
+                r#"
+[[keyspace-observability.fields]]
+source = "meta_a"
+metric-label = "api"
+"#,
+                r#"metric-label "api" must start with "keyspace_meta_""#,
+            ),
+            (
+                "service scope label without prefix",
+                r#"
+[[keyspace-observability.fields]]
+source = "meta_a"
+metric-label = "service_scope"
+"#,
+                r#"metric-label "service_scope" must start with "keyspace_meta_""#,
+            ),
+            (
+                "task id label without prefix",
+                r#"
+[[keyspace-observability.fields]]
+source = "meta_a"
+metric-label = "task_id"
+"#,
+                r#"metric-label "task_id" must start with "keyspace_meta_""#,
+            ),
+            (
+                "slow log field without prefix",
+                r#"
+[[keyspace-observability.fields]]
+source = "meta_a"
+slow-log-field = "Digest"
+"#,
+                r#"slow-log-field "Digest" must start with "Keyspace_meta_""#,
+            ),
+            (
+                "slow log field with lowercase prefix",
+                r#"
+[[keyspace-observability.fields]]
+source = "meta_a"
+slow-log-field = "keyspace_meta_slow"
+"#,
+                r#"slow-log-field "keyspace_meta_slow" must start with "Keyspace_meta_""#,
+            ),
+            (
+                "invalid slow log field",
+                r#"
+[[keyspace-observability.fields]]
+source = "meta_a"
+slow-log-field = "Bad Field"
+"#,
+                r#"invalid slow-log-field "Bad Field""#,
+            ),
+            (
+                "duplicate slow log field",
+                r#"
+[[keyspace-observability.fields]]
+source = "meta_a"
+slow-log-field = "Keyspace_meta_slow"
+
+[[keyspace-observability.fields]]
+source = "meta_b"
+slow-log-field = "Keyspace_meta_SLOW"
+"#,
+                r#"duplicated slow-log-field "Keyspace_meta_SLOW""#,
+            ),
+            (
+                "duplicate stmt log field",
+                r#"
+[[keyspace-observability.fields]]
+source = "meta_a"
+stmt-log-field = "stmt_meta"
+
+[[keyspace-observability.fields]]
+source = "meta_b"
+stmt-log-field = "stmt_meta"
+"#,
+                r#"duplicated stmt-log-field "stmt_meta""#,
+            ),
+        ];
+
+        for (name, content, expected) in cases {
+            let config: ConfigFile = toml::from_str(content).unwrap();
+            let error = config.keyspace_observability.valid().unwrap_err();
+            assert!(
+                error.contains(expected),
+                "case {name}: {error:?} does not contain {expected:?}"
+            );
         }
     }
 
