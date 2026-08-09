@@ -1273,7 +1273,7 @@ mod tests {
 
     /// `pkg/types/convert_test.go:921` `TestGetValidFloat`, first table.
     #[test]
-    fn source_valid_float_prefix_rows() {
+    fn test_get_valid_float() {
         for (input, expected, cast, truncated) in [
             ("-100", "-100", false, false),
             ("1abc", "1", false, true),
@@ -1303,6 +1303,7 @@ mod tests {
             assert_eq!(actual.value(), expected, "{input:?}");
             assert_eq!(actual.truncated(), truncated, "{input:?}");
         }
+        assert_source_float_string_to_integer_rows();
     }
 
     /// `pkg/types/convert_test.go:843` `TestGetValidInt`, first table: the
@@ -1454,8 +1455,7 @@ mod tests {
 
     /// `pkg/types/convert_test.go:965` `TestGetValidFloat`, second table
     /// (`floatStrToIntStr`), including every saturating-exponent row.
-    #[test]
-    fn source_float_string_to_integer_rows() {
+    fn assert_source_float_string_to_integer_rows() {
         for (input, expected) in [
             ("1e5", "100000"),
             ("-123.45678e5", "-12345678"),
