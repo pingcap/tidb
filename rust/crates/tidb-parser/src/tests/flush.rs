@@ -48,6 +48,32 @@ fn flush_tables_restore_and_shape_match_go() {
     ));
 }
 
+/// Exact AST assertions from `pkg/parser/parser_test.go::TestFlushTable`.
+#[test]
+fn test_flush_table_source_of_truth() {
+    let statement = parse("flush local tables tbl1,tbl2 with read lock")
+        .expect("parse source FLUSH TABLES row");
+    assert_eq!(
+        statement.restore(),
+        "FLUSH NO_WRITE_TO_BINLOG TABLES `tbl1`, `tbl2` WITH READ LOCK"
+    );
+    let tidb_ast::Stmt::Admin(admin) = statement else {
+        panic!("expected administrative statement");
+    };
+    let tidb_ast::AdminStmt::Flush(flush) = admin.as_ref() else {
+        panic!("expected FLUSH statement");
+    };
+    assert!(flush.no_write_to_binlog);
+    let tidb_ast::FlushTarget::Tables { tables, read_lock } = &flush.target else {
+        panic!("expected FLUSH TABLES target");
+    };
+    assert_eq!(
+        tables,
+        &[vec!["tbl1".to_string()], vec!["tbl2".to_string()]]
+    );
+    assert!(*read_lock);
+}
+
 #[test]
 fn flush_status_and_privileges_keep_distinct_payloads() {
     assert_eq!(r("flush status"), "FLUSH STATUS");
