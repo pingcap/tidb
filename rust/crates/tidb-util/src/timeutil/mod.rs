@@ -24,10 +24,10 @@
 //! data with no I/O, so the cache is a non-observable performance artifact
 //! with nothing to port.
 //!
-//! `time.go`'s `Sleep(ctx, d)` is a Go-context-interruptible sleep; the
-//! cancellation primitive belongs to the async server runtime
-//! (`tokio::select!` over a sleep and a cancel signal) and fabricating a
-//! polling flag here would invent API, so it is deliberately not ported.
+//! `time.go`'s `Sleep(ctx, d)` maps to [`sleep`] plus [`SleepContext`]. The
+//! context uses a condition variable, so cancellation wakes a sleeping thread
+//! immediately without polling, and a deadline bounds the same wait just as
+//! Go's `context.WithTimeout` bounds `<-timer.C`.
 
 mod time_zone;
 
@@ -37,10 +37,173 @@ pub use time_zone::{
     TimeZoneError,
 };
 
-use std::sync::LazyLock;
+use std::sync::{Arc, Condvar, LazyLock, Mutex};
+use std::time::{Duration, Instant};
 use tidb_error::terror::TerrorError;
 use tidb_error::tidb::errcode;
+
+#[derive(Debug, Default)]
+struct SleepContextState {
+    cause: Mutex<Option<SleepError>>,
+    changed: Condvar,
+}
+
+/// Why a [`SleepContext`] finished before the requested duration.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SleepError {
+    /// Go `context.Canceled`.
+    Cancelled,
+    /// Go `context.DeadlineExceeded`.
+    DeadlineExceeded,
+}
+
+impl std::fmt::Display for SleepError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Cancelled => "context canceled",
+            Self::DeadlineExceeded => "context deadline exceeded",
+        })
+    }
+}
+
+impl std::error::Error for SleepError {}
+
+/// The cancellation/deadline subset of Go `context.Context` consumed by
+/// [`sleep`]. Clones share cancellation and retain the same deadline.
+#[derive(Clone, Debug, Default)]
+pub struct SleepContext {
+    state: Arc<SleepContextState>,
+    deadline: Option<Instant>,
+}
+
+impl SleepContext {
+    /// A context with no deadline, like `context.Background()`.
+    #[must_use]
+    pub fn background() -> Self {
+        Self::default()
+    }
+
+    /// A background context canceled after `timeout`, like
+    /// `context.WithTimeout(context.Background(), timeout)`.
+    #[must_use]
+    pub fn with_timeout(timeout: Duration) -> Self {
+        Self {
+            state: Arc::new(SleepContextState::default()),
+            deadline: Instant::now().checked_add(timeout),
+        }
+    }
+
+    /// Cancels this context and wakes every current sleeper.
+    pub fn cancel(&self) {
+        let mut cause = self
+            .state
+            .cause
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if cause.is_none() {
+            *cause = Some(
+                if self
+                    .deadline
+                    .is_some_and(|deadline| deadline <= Instant::now())
+                {
+                    SleepError::DeadlineExceeded
+                } else {
+                    SleepError::Cancelled
+                },
+            );
+        }
+        drop(cause);
+        self.state.changed.notify_all();
+    }
+
+    /// Whether explicit cancellation or the deadline has already fired.
+    #[must_use]
+    pub fn is_cancelled(&self) -> bool {
+        self.state
+            .cause
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .is_some()
+            || self
+                .deadline
+                .is_some_and(|deadline| deadline <= Instant::now())
+    }
+}
+
+/// Go `timeutil.Sleep`: blocks until `duration` elapses or `context` is
+/// canceled/deadlined, whichever happens first.
+pub fn sleep(context: &SleepContext, duration: Duration) -> Result<(), SleepError> {
+    let started = Instant::now();
+    let sleep_deadline = started.checked_add(duration);
+    let wait_deadline = match (sleep_deadline, context.deadline) {
+        (Some(sleep_deadline), Some(context_deadline)) => {
+            Some(sleep_deadline.min(context_deadline))
+        }
+        (Some(sleep_deadline), None) => Some(sleep_deadline),
+        (None, Some(context_deadline)) => Some(context_deadline),
+        (None, None) => None,
+    };
+    let mut cause = context
+        .state
+        .cause
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    loop {
+        if let Some(cause) = *cause {
+            return Err(cause);
+        }
+
+        let now = Instant::now();
+        if context.deadline.is_some_and(|context_deadline| {
+            context_deadline <= now
+                && sleep_deadline.is_none_or(|sleep_deadline| context_deadline <= sleep_deadline)
+        }) {
+            *cause = Some(SleepError::DeadlineExceeded);
+            return Err(SleepError::DeadlineExceeded);
+        }
+        if sleep_deadline.is_some_and(|sleep_deadline| sleep_deadline <= now) {
+            return Ok(());
+        }
+
+        let Some(remaining) = wait_deadline.map(|deadline| deadline.saturating_duration_since(now))
+        else {
+            cause = context
+                .state
+                .changed
+                .wait(cause)
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            continue;
+        };
+        let (next, _) = context
+            .state
+            .changed
+            .wait_timeout(cause, remaining)
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        cause = next;
+    }
+}
 
 /// `ErrUnknownTimeZone` (Go `errors.go`): unknown time zone.
 pub static ERR_UNKNOWN_TIME_ZONE: LazyLock<TerrorError> =
     LazyLock::new(|| crate::dbterror::CLASS_VARIABLE.new_std(errcode::ErrUnknownTimeZone));
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Source: `pkg/util/timeutil/time_test.go::TestSleep`.
+    #[test]
+    fn test_sleep() {
+        let context_timeout = Duration::from_millis(10);
+        let sleep_time = Duration::from_secs(10);
+        let context = SleepContext::with_timeout(context_timeout);
+        let now = Instant::now();
+
+        let result = sleep(&context, sleep_time);
+
+        let since = now.elapsed();
+        assert_eq!(result, Err(SleepError::DeadlineExceeded));
+        assert!(since > context_timeout);
+        assert!(since < sleep_time);
+    }
+}
