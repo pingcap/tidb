@@ -207,6 +207,7 @@ mod show;
 mod stmt;
 mod table_option_charset_source;
 mod table_option_source;
+mod table_sample_source;
 mod traffic;
 mod update_default_source;
 mod use_reserved_name_source;
