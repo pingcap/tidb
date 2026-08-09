@@ -1125,6 +1125,30 @@ fn nonreserved_keyword_as_identifier() {
     assert!(parse("select select from t").is_err());
 }
 
+/// `pkg/parser/parser_test.go::TestUUIDKeywordCompatibility`.
+#[test]
+fn test_uuid_keyword_compatibility() {
+    for (sql, expected) in [
+        ("SELECT uuid FROM t", "SELECT `uuid` FROM `t`"),
+        (
+            "SELECT uuid.uuid FROM uuid",
+            "SELECT `uuid`.`uuid` FROM `uuid`",
+        ),
+        ("SELECT 1 AS uuid", "SELECT 1 AS `uuid`"),
+        ("SELECT * FROM t AS uuid", "SELECT * FROM `t` AS `uuid`"),
+        (
+            "ALTER TABLE t ADD COLUMN uuid INT",
+            "ALTER TABLE `t` ADD COLUMN `uuid` INT",
+        ),
+        (
+            "CREATE TABLE t (uuid INT, KEY uuid (uuid))",
+            "CREATE TABLE `t` (`uuid` INT,INDEX `uuid`(`uuid`))",
+        ),
+    ] {
+        assert_eq!(r(sql), expected, "source SQL: {sql}");
+    }
+}
+
 /// Pins the two-Go-list split behind reserved-keyword identifier
 /// admission — see `tidb_lexer::reserved`'s own doc and
 /// `rust/docs/parser-lexer-divergence.md` finding #4/#5. Go's
@@ -1542,6 +1566,35 @@ fn charset_string_literal() {
 fn unsupported_charset_introducer_rows_reject_like_go() {
     for sql in ["select _gbk 'a'", "select _ujis 'a'"] {
         assert!(parse(sql).is_err(), "unexpectedly accepted {sql}");
+    }
+}
+
+/// `pkg/parser/parser_test.go::TestUnderscoreCharset`.
+#[test]
+fn test_underscore_charset() {
+    assert!(parse("select hex(_utf8 '3F')").is_ok());
+
+    for charset in ["gbk", "ujis"] {
+        let sql = format!("select hex(_{charset} '3F')");
+        let error = parse(&sql).expect_err("registered legacy introducer is unsupported");
+        assert_eq!(
+            error.compatibility_message(&sql),
+            format!("[parser:1115]Unsupported character introducer: '{charset}'"),
+            "source SQL: {sql}"
+        );
+    }
+
+    for (charset, expected) in [
+        ("gbk1", "line 1 column 21 near \"'3F')\" "),
+        ("ujisx", "line 1 column 22 near \"'3F')\" "),
+    ] {
+        let sql = format!("select hex(_{charset} '3F')");
+        let error = parse(&sql).expect_err("unknown introducer must fail as grammar");
+        assert_eq!(
+            error.compatibility_message(&sql),
+            expected,
+            "source SQL: {sql}"
+        );
     }
 }
 
