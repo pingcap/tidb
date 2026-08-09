@@ -36,9 +36,9 @@ impl KeyFlags {
     /// Applies one source assertion operation.
     ///
     /// This primitive performs the replacement defined by
-    /// `pkg/kv/assertion.go`. Transaction-level first-assertion-wins behavior is
-    /// owned by `pkg/table/tables/assertion.go` and requires a real transaction
-    /// buffer; it is deliberately not pretended here.
+    /// `pkg/kv/assertion.go`. Table-level first-assertion-wins behavior is a
+    /// separate transition in [`Self::apply_assertion_once`], so raw buffer
+    /// code cannot accidentally acquire the stronger table rule.
     #[must_use]
     pub const fn apply_assertion_op(self, op: AssertionOp) -> Self {
         match op {
@@ -46,6 +46,22 @@ impl KeyFlags {
             AssertionOp::AssertNotExist => self.with_assertion_state(AssertionState::NotExists),
             AssertionOp::AssertUnknown => self.with_assertion_state(AssertionState::Unknown),
             AssertionOp::AssertNone => self,
+        }
+    }
+
+    /// Applies Go `pkg/table/tables.setAssertion`'s transaction-buffer rule.
+    ///
+    /// The first non-empty assertion attached to a key wins for the lifetime
+    /// of that buffered entry. Later table operations may replace the value
+    /// and add ordinary flags, but they cannot weaken or reverse the assertion
+    /// made by the operation that first touched the key. `AssertNone` leaves
+    /// an unasserted key available for a later real assertion.
+    #[must_use]
+    pub const fn apply_assertion_once(self, op: AssertionOp) -> Self {
+        if self.has_assertion_flags() {
+            self
+        } else {
+            self.apply_assertion_op(op)
         }
     }
 }
@@ -125,5 +141,66 @@ mod tests {
             let origin = KeyFlags::new().with_assertion_state(assertion);
             assert_eq!(origin.apply_assertion_op(AssertionOp::AssertNone), origin);
         }
+    }
+
+    #[test]
+    fn test_set_assertion() {
+        // Direct port of pkg/table/tables/assertion_test.go::TestSetAssertion.
+        // KeyFlags is the typed state stored by the Rust transaction buffer;
+        // value writes are deliberately represented by leaving these flags
+        // untouched, exactly as txn.Set does in the source test.
+        fn set(flags: &mut KeyFlags, assertion: AssertionOp) {
+            *flags = flags.apply_assertion_once(assertion);
+        }
+
+        fn assert_unchangeable(flags: &mut KeyFlags, expected: AssertionState) {
+            for assertion in ASSERTION_OPS {
+                set(flags, assertion);
+                assert_eq!(flags.assertion(), expected);
+            }
+        }
+
+        let mut k1 = KeyFlags::new();
+        set(&mut k1, AssertionOp::AssertExist);
+        assert_eq!(k1.assertion(), AssertionState::Exists);
+        assert_unchangeable(&mut k1, AssertionState::Exists);
+
+        let mut k2 = KeyFlags::new();
+        set(&mut k2, AssertionOp::AssertNotExist);
+        assert_eq!(k2.assertion(), AssertionState::NotExists);
+        assert_unchangeable(&mut k2, AssertionState::NotExists);
+
+        let mut k3 = KeyFlags::new();
+        set(&mut k3, AssertionOp::AssertUnknown);
+        assert_eq!(k3.assertion(), AssertionState::Unknown);
+        assert_unchangeable(&mut k3, AssertionState::Unknown);
+
+        let mut k4 = KeyFlags::new();
+        set(&mut k4, AssertionOp::AssertNone);
+        assert_eq!(k4.assertion(), AssertionState::Unset);
+        set(&mut k4, AssertionOp::AssertExist);
+        assert_eq!(k4.assertion(), AssertionState::Exists);
+        assert_unchangeable(&mut k4, AssertionState::Exists);
+
+        // A plain txn.Set writes a value without inventing an assertion.
+        let mut k5 = KeyFlags::new();
+        assert_eq!(k5.assertion(), AssertionState::Unset);
+        set(&mut k5, AssertionOp::AssertNotExist);
+        assert_unchangeable(&mut k5, AssertionState::NotExists);
+
+        let mut k6 = KeyFlags::new();
+        set(&mut k6, AssertionOp::AssertNotExist);
+        k6 = k6.apply_flags_ops([FlagsOp::SetPresumeKeyNotExists]);
+        assert_unchangeable(&mut k6, AssertionState::NotExists);
+        assert!(k6.has_presume_key_not_exists());
+        k6 = k6.apply_flags_ops([FlagsOp::SetNeedLocked]);
+        assert_unchangeable(&mut k6, AssertionState::NotExists);
+        assert!(k6.has_presume_key_not_exists());
+        assert!(k6.has_need_locked());
+
+        // LockKeys does not pass through table.setAssertion.
+        let k7 = KeyFlags::new();
+        assert_eq!(k7.assertion(), AssertionState::Unset);
+        assert!(!k7.has_assertion_flags());
     }
 }
