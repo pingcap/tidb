@@ -509,11 +509,9 @@ const FULL_COL_DESC_PRIVILEGES: &str = "select,insert,update,references";
 ///
 /// `Default` is the column's stored `DEFAULT`, or NULL when none was written.
 ///
-/// `Extra` reports `auto_increment` for the auto column.
-///
-/// NOT MODELLED (documented): the other `Extra` values -- ON UPDATE
-/// CURRENT_TIMESTAMP and the generated-column markers -- because those column
-/// kinds are rejected at DDL time, so no column can carry them.
+/// `Extra` follows Go `NewColDesc`'s ordered precedence: auto increment,
+/// ON UPDATE CURRENT_TIMESTAMP, generated-column kind, then expression
+/// default.
 fn column_description(
     column: &tidb_executor::KvColumn,
     offset: usize,
@@ -526,12 +524,15 @@ fn column_description(
     } else {
         "YES"
     };
-    // Go `NewColDesc`: an auto-increment column reports auto_increment.
-    let extra = if table.auto_increment_offset() == Some(offset) {
-        "auto_increment"
-    } else {
-        ""
-    };
+    let extra = column_extra(
+        &column.field_type,
+        table.auto_increment_offset() == Some(offset),
+        column.generated.as_ref().map(|generated| generated.stored),
+        column
+            .default_value
+            .as_ref()
+            .is_some_and(tidb_executor::column_default::ColumnDefault::is_default_generated),
+    );
     let key_flag = column_key_flag(table, offset);
     let default = match &column.default_value {
         Some(tidb_executor::column_default::ColumnDefault::Value(value)) => {
@@ -562,7 +563,7 @@ fn column_description(
             Datum::Bytes(null_flag.as_bytes().to_vec()),
             Datum::Bytes(key_flag.into_bytes()),
             default,
-            Datum::Bytes(extra.as_bytes().to_vec()),
+            Datum::Bytes(extra.clone().into_bytes()),
         ]);
     }
     let collation = column_collation_cell(&column.field_type);
@@ -573,10 +574,42 @@ fn column_description(
         Datum::Bytes(null_flag.as_bytes().to_vec()),
         Datum::Bytes(key_flag.into_bytes()),
         default,
-        Datum::Bytes(extra.as_bytes().to_vec()),
+        Datum::Bytes(extra.into_bytes()),
         Datum::Bytes(FULL_COL_DESC_PRIVILEGES.as_bytes().to_vec()),
         Datum::Bytes(Vec::new()), // Comment: no per-column comments modelled.
     ])
+}
+
+/// Go `table.NewColDesc`'s `Extra` field, kept as a pure formatter so every
+/// metadata producer supplies the same four source facts in the same order.
+fn column_extra(
+    field_type: &tidb_datatype::FieldType,
+    auto_increment: bool,
+    generated_stored: Option<bool>,
+    default_is_expr: bool,
+) -> String {
+    if auto_increment {
+        return "auto_increment".to_owned();
+    }
+    if field_type.has_flag(tidb_datatype::FieldTypeFlags::ON_UPDATE_NOW) {
+        let fsp = field_type.decimal();
+        return if fsp > 0 {
+            format!("DEFAULT_GENERATED on update CURRENT_TIMESTAMP({fsp})")
+        } else {
+            "DEFAULT_GENERATED on update CURRENT_TIMESTAMP".to_owned()
+        };
+    }
+    if let Some(stored) = generated_stored {
+        return if stored {
+            "STORED GENERATED".to_owned()
+        } else {
+            "VIRTUAL GENERATED".to_owned()
+        };
+    }
+    if default_is_expr {
+        return "DEFAULT_GENERATED".to_owned();
+    }
+    String::new()
 }
 
 /// A view column's `SHOW COLUMNS` row.
@@ -1007,7 +1040,7 @@ impl Session {
                     "SHOW COLUMNS needs a storage-backed table",
                 ));
             };
-            Ok(table
+            table
                 .visible_columns()
                 .iter()
                 .enumerate()
@@ -1015,7 +1048,7 @@ impl Session {
                     column.is_none_or(|name| candidate.name.eq_ignore_ascii_case(name))
                 })
                 .map(|(offset, candidate)| column_description(candidate, offset, table, full, &ctx))
-                .collect::<Result<Vec<_>, _>>()?)
+                .collect::<Result<Vec<_>, _>>()
         })?;
         let field_type = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
         let field_names = if full {
@@ -1777,5 +1810,65 @@ impl Session {
             }
             _ => Ok(None),
         }
+    }
+}
+
+#[cfg(test)]
+mod column_description_source_tests {
+    use super::*;
+    use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags};
+
+    #[test]
+    fn test_desc() {
+        // Direct port of pkg/table/column_test.go::TestDesc. The Go test
+        // drives NewColDesc by replacing the column flags, then toggles the
+        // generated-column storage bit and asks for both result schemas.
+        let auto = FieldType::new(FieldTypeCode::Long).with_flags(
+            FieldTypeFlags::AUTO_INCREMENT | FieldTypeFlags::NOT_NULL | FieldTypeFlags::PRI_KEY,
+        );
+        assert_eq!(column_extra(&auto, true, None, false), "auto_increment");
+
+        let multiple = FieldType::new(FieldTypeCode::Long).with_flags(FieldTypeFlags::MULTIPLE_KEY);
+        assert_eq!(column_extra(&multiple, false, None, false), "");
+
+        let on_update = FieldType::new(FieldTypeCode::Timestamp)
+            .with_flags(FieldTypeFlags::UNIQUE_KEY | FieldTypeFlags::ON_UPDATE_NOW);
+        assert_eq!(
+            column_extra(&on_update, false, None, false),
+            "DEFAULT_GENERATED on update CURRENT_TIMESTAMP"
+        );
+
+        let ordinary = FieldType::new(FieldTypeCode::Long);
+        assert_eq!(
+            column_extra(&ordinary, false, Some(true), false),
+            "STORED GENERATED"
+        );
+        assert_eq!(
+            column_extra(&ordinary, false, Some(false), false),
+            "VIRTUAL GENERATED"
+        );
+        assert_eq!(
+            column_extra(&ordinary, false, None, true),
+            "DEFAULT_GENERATED"
+        );
+
+        assert_eq!(
+            COL_DESC_FIELD_NAMES,
+            ["Field", "Type", "Null", "Key", "Default", "Extra"]
+        );
+        assert_eq!(
+            FULL_COL_DESC_FIELD_NAMES,
+            [
+                "Field",
+                "Type",
+                "Collation",
+                "Null",
+                "Key",
+                "Default",
+                "Extra",
+                "Privileges",
+                "Comment",
+            ]
+        );
     }
 }
