@@ -312,13 +312,15 @@ mod tests {
         Decimal, MySqlDuration,
     };
 
-    /// Source: `pkg/types/compare_test.go::TestCompare` and
-    /// `TestCompareDatum`. Each row is also checked in reverse because the Go
+    /// Source: `pkg/types/compare_test.go::TestCompare`. Every source row is
+    /// kept, including duplicates whose Go operands differ only by `int`
+    /// versus `int64`. Each row is also checked in reverse because the Go
     /// table makes antisymmetry part of the contract.
     #[test]
-    fn source_compare_cross_kind_rows() {
+    fn test_compare() {
         use std::cmp::Ordering::{Equal, Greater, Less};
 
+        let decimal_zero = || Datum::new_decimal(Decimal::from_int(0));
         let decimal_one = || Datum::new_decimal(Decimal::from_int(1));
         let literal = |value| Datum::new_binary_literal(BinaryLiteral::from_uint(value, None));
         let enum_one = || Datum::new_enum(parse_enum_value(&["a"], 1).unwrap(), Collation::Binary);
@@ -328,34 +330,97 @@ mod tests {
                 .unwrap()
                 .time,
         );
-        let later_time = Datum::new_time(
-            parse_datetime("2011-01-01 11:11:11", &chrono_tz::UTC, true, false)
+        // The Go source uses `time.Now()` and `time.Now().Add(10s)`. Fixed
+        // instants preserve the intended ordering without making the test
+        // depend on wall-clock time.
+        let current_time = Datum::new_time(
+            parse_datetime("2026-08-10 12:00:00", &chrono_tz::UTC, true, false)
+                .unwrap()
+                .time,
+        );
+        let future_time = Datum::new_time(
+            parse_datetime("2026-08-10 12:00:10", &chrono_tz::UTC, true, false)
                 .unwrap()
                 .time,
         );
         let zero_duration = Datum::new_duration(MySqlDuration::from_nanoseconds(0, 0).unwrap());
-        let positive_duration =
-            Datum::new_duration(MySqlDuration::from_nanoseconds(29_034, 2).unwrap());
+        let duration = |nanoseconds| {
+            Datum::new_duration(MySqlDuration::from_nanoseconds(nanoseconds, 2).unwrap())
+        };
 
         let rows = vec![
+            (Datum::Real(1.0), Datum::Real(1.0), Equal),
             (Datum::Real(1.0), Datum::new_string("1"), Equal),
+            (Datum::Int(1), Datum::Int(1), Equal),
             (Datum::Int(-1), Datum::UInt(1), Less),
             (Datum::Int(-1), Datum::new_string("-1"), Equal),
+            (Datum::UInt(1), Datum::UInt(1), Equal),
+            (Datum::UInt(1), Datum::Int(-1), Greater),
             (Datum::UInt(1), Datum::new_string("1"), Equal),
+            (decimal_one(), decimal_one(), Equal),
             (decimal_one(), Datum::new_string("1"), Equal),
             (decimal_one(), Datum::new_bytes(b"1"), Equal),
+            (Datum::new_string("1"), Datum::new_string("1"), Equal),
             (Datum::new_string("1"), Datum::Int(-1), Greater),
             (Datum::new_string("1"), Datum::Real(2.0), Less),
+            (Datum::new_string("1"), Datum::UInt(1), Equal),
+            (Datum::new_string("1"), decimal_one(), Equal),
             (
-                Datum::new_string("hello"),
-                Datum::new_decimal(Decimal::from_int(0)),
-                Equal,
+                Datum::new_string("2011-01-01 11:11:11"),
+                current_time.clone(),
+                Less,
             ),
+            (
+                Datum::new_string("12:00:00"),
+                zero_duration.clone(),
+                Greater,
+            ),
+            (zero_duration.clone(), zero_duration.clone(), Equal),
+            (future_time, current_time.clone(), Greater),
             (Datum::Null, Datum::Int(2), Less),
+            (Datum::Null, Datum::Null, Equal),
+            (Datum::Int(0), Datum::Null, Greater),
+            (Datum::Int(0), Datum::Int(1), Less),
+            (Datum::Int(1), Datum::Int(1), Equal),
+            (Datum::Int(0), Datum::Int(0), Equal),
+            (Datum::Int(1), Datum::Int(2), Less),
+            (Datum::Real(1.23), Datum::Null, Greater),
+            (Datum::Real(0.0), Datum::Real(3.45), Less),
+            (Datum::Real(354.23), Datum::Real(3.45), Greater),
+            (Datum::Real(3.452), Datum::Real(3.452), Equal),
+            (Datum::Int(432), Datum::Null, Greater),
+            (Datum::Int(-4), Datum::Int(32), Less),
+            (Datum::Int(4), Datum::Int(-32), Greater),
+            (Datum::Int(432), Datum::Int(12), Greater),
+            (Datum::Int(23), Datum::Int(128), Less),
+            (Datum::Int(123), Datum::Int(123), Equal),
+            (Datum::Int(432), Datum::Int(12), Greater),
+            (Datum::Int(23), Datum::Int(123), Less),
+            (Datum::Int(133), Datum::Int(183), Less),
+            (Datum::UInt(133), Datum::UInt(183), Less),
+            (Datum::UInt(2), Datum::Int(-2), Greater),
+            (Datum::UInt(2), Datum::Int(1), Greater),
             (Datum::new_string(""), Datum::Null, Greater),
+            (Datum::new_string(""), Datum::new_string("24"), Less),
             (Datum::new_string("aasf"), Datum::new_string("4"), Greater),
+            (Datum::new_string(""), Datum::new_string(""), Equal),
+            (Datum::new_bytes(b""), Datum::Null, Greater),
+            (Datum::new_bytes(b""), Datum::new_bytes(b"sff"), Less),
+            (zero_time.clone(), Datum::Null, Greater),
+            (zero_time.clone(), current_time.clone(), Less),
+            (
+                current_time,
+                Datum::new_string("0000-00-00 00:00:00"),
+                Greater,
+            ),
+            (duration(34), Datum::Null, Greater),
+            (duration(34), duration(29_034), Less),
+            (duration(3_340), duration(34), Greater),
+            (duration(34), duration(34), Equal),
+            (Datum::new_bytes(b""), Datum::new_bytes(b""), Equal),
             (Datum::new_bytes(b"abc"), Datum::new_bytes(b"ab"), Greater),
             (Datum::new_bytes(b"123"), Datum::Int(1234), Less),
+            (Datum::new_bytes(b""), Datum::Null, Greater),
             (literal(1), Datum::Int(1), Equal),
             (
                 Datum::new_binary_literal(BinaryLiteral::from_uint(0x004D_7953_514C, None)),
@@ -363,50 +428,31 @@ mod tests {
                 Equal,
             ),
             (literal(0), Datum::UInt(10), Less),
+            (literal(1), Datum::Real(0.0), Greater),
             (literal(1), decimal_one(), Equal),
+            (literal(1), literal(0), Greater),
+            (literal(1), literal(1), Equal),
             (enum_one(), Datum::Int(1), Equal),
             (enum_one(), Datum::new_string("a"), Equal),
             (enum_one(), Datum::UInt(10), Less),
+            (enum_one(), Datum::Real(0.0), Greater),
+            (enum_one(), decimal_one(), Equal),
             (enum_one(), literal(2), Less),
+            (enum_one(), literal(1), Equal),
+            (enum_one(), enum_one(), Equal),
             (set_one(), Datum::Int(1), Equal),
             (set_one(), Datum::new_string("a"), Equal),
+            (set_one(), Datum::UInt(10), Less),
+            (set_one(), Datum::Real(0.0), Greater),
+            (set_one(), decimal_one(), Equal),
+            (set_one(), literal(2), Less),
+            (set_one(), literal(1), Equal),
             (set_one(), enum_one(), Equal),
-            (zero_time.clone(), later_time.clone(), Less),
-            (
-                later_time,
-                Datum::new_string("0000-00-00 00:00:00"),
-                Greater,
-            ),
-            (zero_duration.clone(), positive_duration, Less),
-            (Datum::new_string("12:00:00"), zero_duration, Greater),
-            (Datum::MaxValue, Datum::new_string("00:00:00"), Greater),
-            (Datum::MinNotNull, Datum::new_string("00:00:00"), Less),
-            (Datum::Null, Datum::MinNotNull, Less),
-            (Datum::MinNotNull, Datum::MaxValue, Less),
-            (
-                Datum::new_json(BinaryJSON::parse("1").unwrap()),
-                Datum::Null,
-                Less,
-            ),
-            // Source `Datum.GetBinaryLiteral4Cmp`. A `BIT(16)` payload is
-            // stored zero-padded, so comparison must not let the declared
-            // width decide the order: `b'1'` is `b'1'` at every width.
-            (
-                Datum::new_mysql_bit(BinaryLiteral::from(vec![0x00, 0x01])),
-                literal(1),
-                Equal,
-            ),
-            (
-                Datum::new_mysql_bit(BinaryLiteral::from(vec![0x00, 0x01])),
-                Datum::new_string(vec![0x01]),
-                Equal,
-            ),
-            (
-                Datum::new_mysql_bit(BinaryLiteral::from(vec![0x00, 0x00])),
-                literal(0),
-                Equal,
-            ),
+            (set_one(), set_one(), Equal),
+            (Datum::new_string("hello"), decimal_zero(), Equal),
+            (decimal_zero(), Datum::new_string("hello"), Equal),
         ];
+        assert_eq!(rows.len(), 86, "one entry per Go TestCompare source row");
 
         for (index, (left, right, expected)) in rows.into_iter().enumerate() {
             assert_eq!(
@@ -418,6 +464,39 @@ mod tests {
                 right.compare(&left, Collation::Binary).unwrap(),
                 expected.reverse(),
                 "reverse row {index}: {right:?} versus {left:?}"
+            );
+        }
+    }
+
+    /// Source: `pkg/types/datum.go::Datum.GetBinaryLiteral4Cmp`. A `BIT(16)`
+    /// payload is stored zero-padded, so comparison must not let the declared
+    /// width decide the order: `b'1'` is `b'1'` at every width.
+    #[test]
+    fn bit_comparison_ignores_declared_width() {
+        let literal = |value| Datum::new_binary_literal(BinaryLiteral::from_uint(value, None));
+        let rows = [
+            (
+                Datum::new_mysql_bit(BinaryLiteral::from(vec![0x00, 0x01])),
+                literal(1),
+            ),
+            (
+                Datum::new_mysql_bit(BinaryLiteral::from(vec![0x00, 0x01])),
+                Datum::new_string(vec![0x01]),
+            ),
+            (
+                Datum::new_mysql_bit(BinaryLiteral::from(vec![0x00, 0x00])),
+                literal(0),
+            ),
+        ];
+
+        for (left, right) in rows {
+            assert_eq!(
+                left.compare(&right, Collation::Binary).unwrap(),
+                std::cmp::Ordering::Equal
+            );
+            assert_eq!(
+                right.compare(&left, Collation::Binary).unwrap(),
+                std::cmp::Ordering::Equal
             );
         }
     }
