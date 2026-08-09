@@ -197,6 +197,59 @@ fn vector_column_type_restore_and_scope() {
     );
 }
 
+/// Exact rows from `pkg/parser/parser_test.go::TestCompatMariaDB`.
+#[test]
+fn test_compat_mariadb_source_rows() {
+    for (sql, expected) in [
+        (
+            "CREATE TABLE uuid (uuid int)",
+            "CREATE TABLE `uuid` (`uuid` INT)",
+        ),
+        (
+            "CREATE TABLE t1 (a TEXT DEFAULT UUID())",
+            "CREATE TABLE `t1` (`a` TEXT DEFAULT (UUID()))",
+        ),
+        (
+            "CREATE TABLE t1 (pk varchar(36) DEFAULT uuid())",
+            "CREATE TABLE `t1` (`pk` VARCHAR(36) DEFAULT (UUID()))",
+        ),
+        (
+            "CREATE TABLE t1 AS SELECT uuid(), length(uuid())",
+            "CREATE TABLE `t1` AS SELECT UUID(),LENGTH(UUID())",
+        ),
+        (
+            "CREATE TABLE t4 (a INT(11) DEFAULT NULL, b BIGINT(20) DEFAULT uuid_short()) SELECT * FROM t3",
+            "CREATE TABLE `t4` (`a` INT(11) DEFAULT NULL,`b` BIGINT(20) DEFAULT (UUID_SHORT())) AS SELECT * FROM `t3`",
+        ),
+        (
+            "CREATE TABLE t (id int PRIMARY KEY) PAGE_CHECKSUM=1",
+            "CREATE TABLE `t` (`id` INT PRIMARY KEY) PAGE_CHECKSUM = 1",
+        ),
+        (
+            "CREATE TABLE t (id int PRIMARY KEY) PAGE_COMPRESSED=1",
+            "CREATE TABLE `t` (`id` INT PRIMARY KEY) PAGE_COMPRESSED = 1",
+        ),
+        (
+            "CREATE TABLE t (id int PRIMARY KEY) PAGE_COMPRESSION_LEVEL=1",
+            "CREATE TABLE `t` (`id` INT PRIMARY KEY) PAGE_COMPRESSION_LEVEL = 1",
+        ),
+        (
+            "CREATE TABLE t (id int PRIMARY KEY) TRANSACTIONAL=0",
+            "CREATE TABLE `t` (`id` INT PRIMARY KEY) TRANSACTIONAL = 0",
+        ),
+        (
+            "CREATE TABLE t (id int PRIMARY KEY) IETF_QUOTES=YES",
+            "CREATE TABLE `t` (`id` INT PRIMARY KEY) IETF_QUOTES = YES",
+        ),
+        (
+            "CREATE TABLE t (id int PRIMARY KEY) SEQUENCE=1",
+            "CREATE TABLE `t` (`id` INT PRIMARY KEY) SEQUENCE = 1",
+        ),
+    ] {
+        assert_eq!(r(sql), expected, "source SQL: {sql}");
+    }
+}
+
 #[test]
 fn alter_table_add_vector_index_preserves_expression_parts() {
     assert_eq!(
