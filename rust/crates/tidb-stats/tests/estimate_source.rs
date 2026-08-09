@@ -225,6 +225,26 @@ fn source_global_singleton_estimator_does_not_mutate_caller_sketches() {
     assert_eq!(singleton_sketches, singleton_before);
 }
 
+#[test]
+fn source_estimate_global_singleton_all_original_obligations() {
+    source_test_helpers_cover_empty_duplicate_and_singleton_boundaries();
+    test_estimate_global_singleton_doc_comment_example();
+    test_estimate_global_singleton_single_node();
+    test_estimate_global_singleton_no_overlap();
+    test_estimate_global_singleton_full_overlap();
+    test_estimate_global_singleton_negative_contribution_is_clamped();
+    test_estimate_global_singleton_nil_entry();
+    test_estimate_global_singleton_empty_input();
+    test_estimate_global_singleton_mismatched_lengths();
+    source_global_singleton_estimator_does_not_mutate_caller_sketches();
+}
+
+#[test]
+fn source_estimate_ndv_all_original_obligations() {
+    test_estimate_ndv_by_gee_all_source_cases();
+    test_estimate_ndv_by_gee_invalid_input_assertions();
+}
+
 fn assert_panic_equals(function: impl FnOnce() + std::panic::UnwindSafe, expected: &str) {
     let payload = std::panic::catch_unwind(function).expect_err("source assertion must panic");
     let message = payload
