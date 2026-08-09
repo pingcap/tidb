@@ -1145,6 +1145,30 @@ fn source_bounded_add_sub_div_mod_tables() {
     }
 }
 
+/// Go `pkg/types/mydecimal_test.go::TestReset` reuses an already-populated
+/// output buffer for a second addition and requires the old digits to be
+/// completely replaced. Rust returns an owned value instead of accepting an
+/// output buffer, so the equivalent contract is that consecutive additions
+/// remain independent and the second result equals a fresh calculation.
+#[test]
+fn test_reset() {
+    let (first, first_warning) =
+        parse_signed("38520.130741106671").add_mysql(&parse_signed("9863.944799797851"));
+    assert_eq!(first_warning, None);
+    assert_eq!(first.to_string(), "48384.075540904522");
+
+    let left = parse_signed("121519.080207244");
+    let right = parse_signed("54982.444519146");
+    let (fresh, fresh_warning) = left.add_mysql(&right);
+    assert_eq!(fresh_warning, None);
+    assert_eq!(fresh.to_string(), "176501.524726390");
+
+    let (replacement, replacement_warning) = left.add_mysql(&right);
+    assert_eq!(replacement_warning, None);
+    assert_eq!(replacement, fresh);
+    assert_ne!(replacement, first);
+}
+
 /// Complete source `TestToFloat` input table. Rust and Go both require the
 /// nearest IEEE-754 binary64 value, so numeric equality is the contract.
 #[test]
