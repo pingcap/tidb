@@ -1543,6 +1543,20 @@ mod tests {
         }
     }
 
+    /// Source: `pkg/types/mydecimal_test.go::TestToString`.
+    #[test]
+    fn test_to_string() {
+        for (input, expected) in [
+            ("123.123", "123.123"),
+            ("123.1230", "123.1230"),
+            ("00123.123", "123.123"),
+        ] {
+            let (decimal, error) = MyDecimal::from_string(input.as_bytes());
+            assert_eq!(error, None, "FromString({input})");
+            assert_eq!(decimal.to_string_bytes(), expected.as_bytes(), "{input}");
+        }
+    }
+
     #[test]
     fn from_uint_to_string() {
         let d = MyDecimal::from_uint(u64::MAX);
