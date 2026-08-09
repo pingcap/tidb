@@ -20,18 +20,19 @@
 //! /changing-column predicates, and `FindColumnInfo` helpers are ported below.
 //!
 //! The default-value accessors (`Set`/`GetDefaultValue` and the origin
-//! variants) are ported too, over a [`ColumnDefaultValue`] value type that
-//! models a Go string as `Vec<u8>`, so the BIT-type byte default (Go's
-//! invalid-UTF-8 case in `TestDefaultValue`) is a normal case.
+//! variants) use [`GoAny`], whose dynamic values retain source type identity,
+//! interface-copy behavior, arbitrary Go string bytes, and explicit
+//! JSON/format/equality hooks.
 //!
 //! The `NewExtra*ColInfo` constructors and `GetTypeDesc` are ported too.
 //!
-//! The generic JSON domain of Go's `interface{}` is retained recursively,
-//! including arrays, objects, nulls, and float64-decoded JSON numbers.
+//! The generic JSON domain of Go's `interface{}` is retained recursively;
+//! nested JSON nulls remain nil interfaces rather than a fabricated dynamic
+//! null type.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
-use serde::de::{DeserializeSeed, MapAccess, SeqAccess, Visitor};
+use serde::de::{DeserializeSeed, MapAccess, Visitor};
 use serde::{Deserialize, Serialize};
 use tidb_ast::CiString;
 use tidb_datatype::{
@@ -41,12 +42,16 @@ use tidb_datatype::{
 use tidb_error::mysql::{errname, FormatArg};
 use tidb_error::terror::TerrorError;
 
-use crate::go_runtime::{GoShared, GoSharedPointerSlice, GoSharedSlice};
+pub use crate::go_any::{ColumnDefaultValue, GoAny};
+use crate::go_runtime::{
+    go_64_next_slice_capacity_for_element, GoShared, GoSharedPointerSlice, GoSharedSlice,
+    GoSliceElementLayout,
+};
 use crate::schema_state::SchemaState;
 use crate::serde_helpers::{
     deserialize_go_object, go_json_field_matches, ignore_unknown, impl_go_json_deserialize,
     impl_go_json_merge_object, AtomicReplaceSeed, FatalSeed, NullNoopSeed,
-    OptionBoxAtomicReplaceSeed, OptionBytesSeed, OptionMergeSeed, ValueMergeSeed,
+    OptionSharedAtomicReplaceSeed, OptionSharedMergeSeed, ValueMergeSeed,
 };
 use crate::table_info::TableInfo;
 
@@ -93,8 +98,8 @@ pub fn gen_unique_changing_column_name(table: &TableInfo, old_column: &ColumnInf
 ///
 /// A nil map serializes as `null`, an allocated empty map as `{}`, and keys in
 /// an allocated map sort lexically through the underlying [`BTreeSet`].
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct GoStringSet(Option<BTreeSet<String>>);
+#[derive(Clone, Debug, Default)]
+pub struct GoStringSet(Option<GoShared<BTreeSet<GoString>>>);
 
 impl GoStringSet {
     /// Returns whether the source map has an allocation, independently of its
@@ -107,36 +112,66 @@ impl GoStringSet {
     /// Returns whether the map has no keys (`len(nil)` is zero in Go).
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.0.as_ref().is_none_or(BTreeSet::is_empty)
+        self.0
+            .as_ref()
+            .is_none_or(|values| values.read().is_empty())
     }
 
-    /// Iterates keys in the same lexical order used by `encoding/json`.
-    pub fn iter(&self) -> impl Iterator<Item = &String> {
-        self.0.iter().flatten()
+    /// Copies keys in their source byte order. The immutable string backing
+    /// remains shared across the snapshot.
+    #[must_use]
+    pub fn snapshot(&self) -> Vec<GoString> {
+        self.0
+            .as_ref()
+            .map_or_else(Vec::new, |values| values.read().iter().cloned().collect())
     }
 
     /// Reports whether a dependency is present.
     #[must_use]
     pub fn contains(&self, value: &str) -> bool {
-        self.0.as_ref().is_some_and(|values| values.contains(value))
+        self.0.as_ref().is_some_and(|values| {
+            values
+                .read()
+                .iter()
+                .any(|key| key.as_bytes() == value.as_bytes())
+        })
     }
 
     /// Inserts a dependency, allocating the map just as a Go map assignment
     /// requires.
-    pub fn insert(&mut self, value: String) -> bool {
-        self.0.get_or_insert_with(BTreeSet::new).insert(value)
+    pub fn insert(&mut self, value: impl Into<GoString>) -> bool {
+        self.0
+            .get_or_insert_with(|| GoShared::new(BTreeSet::new()))
+            .write()
+            .insert(value.into())
     }
 
     /// Clears keys without changing nil versus allocated-empty identity.
     pub fn clear(&mut self) {
-        if let Some(values) = &mut self.0 {
-            values.clear();
+        if let Some(values) = &self.0 {
+            values.write().clear();
         }
     }
 
     /// Constructs an allocated map, including the allocated-empty case.
-    pub fn allocated(values: impl IntoIterator<Item = String>) -> Self {
-        Self(Some(values.into_iter().collect()))
+    pub fn allocated<T>(values: impl IntoIterator<Item = T>) -> Self
+    where
+        T: Into<GoString>,
+    {
+        Self(Some(GoShared::new(
+            values.into_iter().map(Into::into).collect(),
+        )))
+    }
+
+    /// Reports source map identity. Two structural `ColumnInfo` clones share
+    /// the same non-nil dependency map.
+    #[must_use]
+    pub fn ptr_eq(&self, other: &Self) -> bool {
+        match (&self.0, &other.0) {
+            (None, None) => true,
+            (Some(left), Some(right)) => left.ptr_eq(right),
+            _ => false,
+        }
     }
 }
 
@@ -147,7 +182,16 @@ impl Serialize for GoStringSet {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match &self.0 {
             None => serializer.serialize_none(),
-            Some(values) => serializer.collect_map(values.iter().map(|key| (key, EmptyObject {}))),
+            Some(values) => {
+                use serde::ser::SerializeMap;
+
+                let values = values.read().iter().cloned().collect::<Vec<_>>();
+                let mut object = serializer.serialize_map(Some(values.len()))?;
+                for key in values {
+                    object.serialize_entry(&key.to_utf8_lossy_go(), &EmptyObject {})?;
+                }
+                object.end()
+            }
         }
     }
 }
@@ -200,14 +244,17 @@ impl<'de> DeserializeSeed<'de> for GoStringSetSeed<'_> {
                     where
                         A: MapAccess<'de>,
                     {
-                        let values = self.0 .0.get_or_insert_with(BTreeSet::new);
+                        let values = self
+                            .0
+                             .0
+                            .get_or_insert_with(|| GoShared::new(BTreeSet::new()));
                         let mut first_error = None;
                         while let Some(key) = map.next_key::<String>()? {
                             let mut empty = EmptyObject::default();
                             if let Err(error) = map.next_value_seed(NullNoopSeed(&mut empty)) {
                                 first_error.get_or_insert(error);
                             }
-                            values.insert(key);
+                            values.write().insert(GoString::from(key));
                         }
                         if let Some(error) = first_error {
                             return Err(error);
@@ -296,133 +343,8 @@ pub fn changing_origin_name(name: &str) -> String {
     }
 }
 
-/// A column default value (Go's `any`). Go strings are byte sequences that
-/// need not be valid UTF-8, so the string variant holds `Vec<u8>`; this makes
-/// the BIT-type default (which can be arbitrary bytes) a normal case rather
-/// than a special one. Go `nil` is represented by `Option::None` at the field.
-#[derive(Clone, Debug, PartialEq)]
-pub enum ColumnDefaultValue {
-    /// A nested JSON null in an array or object.
-    Null,
-    /// A signed integer default.
-    Int(i64),
-    /// An unsigned integer default.
-    Uint(u64),
-    /// A floating-point default.
-    Float(f64),
-    /// A boolean default.
-    Bool(bool),
-    /// A string default (Go string = arbitrary byte sequence).
-    Str(Vec<u8>),
-    /// A Go `[]any` default.
-    Array(Vec<ColumnDefaultValue>),
-    /// A Go `map[string]any` default, whose JSON keys sort lexically.
-    Object(BTreeMap<String, ColumnDefaultValue>),
-}
-
-impl ColumnDefaultValue {
-    /// A string default from a UTF-8 `str`.
-    #[must_use]
-    pub fn str(s: &str) -> Self {
-        ColumnDefaultValue::Str(s.as_bytes().to_vec())
-    }
-}
-
-// Go's `any` marshals as the bare JSON value, so this enum is written
-// untagged. A Go string that is not valid UTF-8 is emitted by `encoding/json`
-// with each invalid byte replaced by U+FFFD. Rust's standard lossy conversion
-// can consume a whole malformed subsequence for one replacement, while Go's
-// `utf8.DecodeRuneInString` consumes exactly one invalid byte at a time.
-fn go_json_string_fragment(bytes: &[u8]) -> String {
-    GoString::from(bytes).to_go_json_literal()
-}
-
-impl Serialize for ColumnDefaultValue {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        match self {
-            ColumnDefaultValue::Null => serializer.serialize_none(),
-            ColumnDefaultValue::Int(v) => serializer.serialize_i64(*v),
-            ColumnDefaultValue::Uint(v) => serializer.serialize_u64(*v),
-            ColumnDefaultValue::Float(v) if v.is_finite() => serializer.serialize_f64(*v),
-            ColumnDefaultValue::Float(v) => {
-                Err(serde::ser::Error::custom(format!("unsupported value: {v}")))
-            }
-            ColumnDefaultValue::Bool(v) => serializer.serialize_bool(*v),
-            ColumnDefaultValue::Str(bytes) => {
-                serde_json::value::RawValue::from_string(go_json_string_fragment(bytes))
-                    .map_err(serde::ser::Error::custom)?
-                    .serialize(serializer)
-            }
-            ColumnDefaultValue::Array(values) => values.serialize(serializer),
-            ColumnDefaultValue::Object(values) => values.serialize(serializer),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for ColumnDefaultValue {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        struct AnyVisitor;
-
-        impl<'de> serde::de::Visitor<'de> for AnyVisitor {
-            type Value = ColumnDefaultValue;
-
-            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                f.write_str("a JSON value (Go any)")
-            }
-
-            fn visit_none<E>(self) -> Result<Self::Value, E> {
-                Ok(ColumnDefaultValue::Null)
-            }
-
-            fn visit_unit<E>(self) -> Result<Self::Value, E> {
-                Ok(ColumnDefaultValue::Null)
-            }
-
-            fn visit_bool<E>(self, v: bool) -> Result<Self::Value, E> {
-                Ok(ColumnDefaultValue::Bool(v))
-            }
-            fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E> {
-                // `encoding/json` decodes every JSON number stored in an
-                // `any` field as float64, even when its lexical form is an
-                // integer.
-                Ok(ColumnDefaultValue::Float(v as f64))
-            }
-            fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E> {
-                Ok(ColumnDefaultValue::Float(v as f64))
-            }
-            fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E> {
-                Ok(ColumnDefaultValue::Float(v))
-            }
-            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E> {
-                Ok(ColumnDefaultValue::str(v))
-            }
-
-            fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
-            where
-                A: SeqAccess<'de>,
-            {
-                let mut values = Vec::with_capacity(sequence.size_hint().unwrap_or(0));
-                while let Some(value) = sequence.next_element()? {
-                    values.push(value);
-                }
-                Ok(ColumnDefaultValue::Array(values))
-            }
-
-            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
-            where
-                A: MapAccess<'de>,
-            {
-                let mut values = BTreeMap::new();
-                while let Some((key, value)) = map.next_entry()? {
-                    values.insert(key, value);
-                }
-                Ok(ColumnDefaultValue::Object(values))
-            }
-        }
-
-        deserializer.deserialize_any(AnyVisitor)
-    }
-}
+// Go's `any` domain lives in `go_any`: the interface header, exact dynamic
+// type, source copy operation, and JSON/fmt/equality hooks form one boundary.
 
 /// Go's zero-value `types.FieldType`, i.e. what Go produces for a missing
 /// `"type"` key. Spelled as the empty JSON object so it stays defined by the
@@ -431,12 +353,57 @@ fn zero_field_type() -> FieldType {
     FieldType::from_json(b"{}").expect("the empty object decodes to the zero field type")
 }
 
+mod go_shared_bytes {
+    use serde::{Deserializer, Serializer};
+
+    use crate::go_runtime::GoSharedSlice;
+
+    pub(super) fn serialize<S: Serializer>(
+        value: &GoSharedSlice<u8>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        let value = value.is_allocated().then(|| value.snapshot());
+        crate::serde_helpers::go_bytes::serialize(&value, serializer)
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<GoSharedSlice<u8>, D::Error> {
+        Ok(
+            match crate::serde_helpers::go_bytes::deserialize(deserializer)? {
+                None => GoSharedSlice::default(),
+                Some(value) => {
+                    // The byte decoder allocates DecodedLen bytes before
+                    // slicing to the actual decoded length; those zeroed
+                    // spare bytes remain observable through Go's slice cap.
+                    let capacity = value.capacity();
+                    GoSharedSlice::from_vec_with_capacity(value, capacity)
+                }
+            },
+        )
+    }
+}
+
+struct GoSharedBytesSeed<'a>(&'a mut GoSharedSlice<u8>);
+
+impl<'de> DeserializeSeed<'de> for GoSharedBytesSeed<'_> {
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        *self.0 = go_shared_bytes::deserialize(deserializer)?;
+        Ok(())
+    }
+}
+
 /// Go `ColumnInfo`: metadata describing a table column.
 ///
-/// The `any`-typed `OriginDefaultValue`/`DefaultValue` are modelled as
-/// `Option<ColumnDefaultValue>` (`None` = Go `nil`); the accompanying `*_bit`
-/// byte fields (`Option<Vec<u8>>`, `None` = Go `nil` slice) hold the BIT-type
-/// default.
+/// The `any`-typed `OriginDefaultValue`/`DefaultValue` retain nil interfaces,
+/// typed nils, and exact dynamic types through [`GoAny`]. The accompanying
+/// `*_bit` byte slices copy their Go headers and retain mutable backing-array
+/// identity across the source's shallow [`Clone`] operation.
 #[derive(Clone, Debug, Serialize)]
 pub struct ColumnInfo {
     /// The column ID.
@@ -448,26 +415,18 @@ pub struct ColumnInfo {
     /// The column's position in the table.
     #[serde(rename = "offset", default)]
     pub offset: i64,
-    /// The original default value (`any`); `None` = Go `nil`.
+    /// The original default value (`any`).
     #[serde(rename = "origin_default", default)]
-    pub origin_default_value: Option<ColumnDefaultValue>,
-    /// The BIT-type original default value bytes; `None` = Go `nil` slice.
-    #[serde(
-        rename = "origin_default_bit",
-        default,
-        with = "crate::serde_helpers::go_bytes"
-    )]
-    pub origin_default_value_bit: Option<Vec<u8>>,
-    /// The default value (`any`); `None` = Go `nil`.
+    pub origin_default_value: GoAny,
+    /// The BIT-type original default value bytes.
+    #[serde(rename = "origin_default_bit", default, with = "go_shared_bytes")]
+    pub origin_default_value_bit: GoSharedSlice<u8>,
+    /// The default value (`any`).
     #[serde(rename = "default", default)]
-    pub default_value: Option<ColumnDefaultValue>,
-    /// The BIT-type default value bytes; `None` = Go `nil` slice.
-    #[serde(
-        rename = "default_bit",
-        default,
-        with = "crate::serde_helpers::go_bytes"
-    )]
-    pub default_value_bit: Option<Vec<u8>>,
+    pub default_value: GoAny,
+    /// The BIT-type default value bytes.
+    #[serde(rename = "default_bit", default, with = "go_shared_bytes")]
+    pub default_value_bit: GoSharedSlice<u8>,
     /// Whether the default value string is an expression.
     #[serde(rename = "default_is_expr", default)]
     pub default_is_expr: bool,
@@ -493,7 +452,7 @@ pub struct ColumnInfo {
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub changing_field_type: Option<Box<FieldType>>,
+    pub changing_field_type: Option<GoShared<FieldType>>,
     /// The online-DDL state of the column.
     #[serde(rename = "state", default)]
     pub state: SchemaState,
@@ -511,7 +470,7 @@ pub struct ColumnInfo {
     /// anonymous field, which makes it a plain named field rather than an
     /// inlined one, so it serializes as `"change_state_info": {...}` / `null`.
     #[serde(rename = "change_state_info", default)]
-    pub change_state_info: Option<ChangeStateInfo>,
+    pub change_state_info: Option<GoShared<ChangeStateInfo>>,
     /// The column-info version (see the `COLUMN_INFO_VERSION*` constants).
     #[serde(rename = "version", default)]
     pub version: u64,
@@ -527,11 +486,11 @@ impl_go_json_merge_object!(ColumnInfo, destination, map, key, {
     } else if go_json_field_matches(&key, "origin_default") {
         destination.origin_default_value = map.next_value()?;
     } else if go_json_field_matches(&key, "origin_default_bit") {
-        map.next_value_seed(OptionBytesSeed(&mut destination.origin_default_value_bit))?;
+        map.next_value_seed(GoSharedBytesSeed(&mut destination.origin_default_value_bit))?;
     } else if go_json_field_matches(&key, "default") {
         destination.default_value = map.next_value()?;
     } else if go_json_field_matches(&key, "default_bit") {
-        map.next_value_seed(OptionBytesSeed(&mut destination.default_value_bit))?;
+        map.next_value_seed(GoSharedBytesSeed(&mut destination.default_value_bit))?;
     } else if go_json_field_matches(&key, "default_is_expr") {
         map.next_value_seed(NullNoopSeed(&mut destination.default_is_expr))?;
     } else if go_json_field_matches(&key, "generated_expr_string") {
@@ -543,7 +502,7 @@ impl_go_json_merge_object!(ColumnInfo, destination, map, key, {
     } else if go_json_field_matches(&key, "type") {
         map.next_value_seed(FatalSeed(AtomicReplaceSeed(&mut destination.field_type)))?;
     } else if go_json_field_matches(&key, "changing_type") {
-        map.next_value_seed(FatalSeed(OptionBoxAtomicReplaceSeed::new(
+        map.next_value_seed(FatalSeed(OptionSharedAtomicReplaceSeed::new(
             &mut destination.changing_field_type,
             zero_field_type,
         )))?;
@@ -554,7 +513,7 @@ impl_go_json_merge_object!(ColumnInfo, destination, map, key, {
     } else if go_json_field_matches(&key, "hidden") {
         map.next_value_seed(NullNoopSeed(&mut destination.hidden))?;
     } else if go_json_field_matches(&key, "change_state_info") {
-        map.next_value_seed(OptionMergeSeed(&mut destination.change_state_info))?;
+        map.next_value_seed(OptionSharedMergeSeed(&mut destination.change_state_info))?;
     } else if go_json_field_matches(&key, "version") {
         map.next_value_seed(NullNoopSeed(&mut destination.version))?;
     } else {
@@ -570,10 +529,10 @@ impl Default for ColumnInfo {
             id: 0,
             name: CiString::default(),
             offset: 0,
-            origin_default_value: None,
-            origin_default_value_bit: None,
-            default_value: None,
-            default_value_bit: None,
+            origin_default_value: GoAny::nil(),
+            origin_default_value_bit: GoSharedSlice::default(),
+            default_value: GoAny::nil(),
+            default_value_bit: GoSharedSlice::default(),
             default_is_expr: false,
             generated_expr_string: String::new(),
             generated_stored: false,
@@ -590,6 +549,20 @@ impl Default for ColumnInfo {
 }
 
 impl ColumnInfo {
+    /// Non-nil body of Go `ColumnInfo.Clone`: `nc := *c` is a structural
+    /// value copy. Interface values run their source copy hook, slices copy
+    /// only their headers, and maps/pointers retain identity.
+    #[must_use]
+    pub fn clone_like_go(&self) -> Self {
+        self.clone()
+    }
+
+    /// Nil-safe pointer-shaped Go `(*ColumnInfo).Clone` boundary.
+    #[must_use]
+    pub fn clone_pointer(column: Option<&Self>) -> Option<GoShared<Self>> {
+        column.map(|column| GoShared::new(column.clone_like_go()))
+    }
+
     // FieldType-delegating accessors (Go `ColumnInfo.Get*`/`Set*`, which just
     // forward to the embedded FieldType). get_type returns the typed
     // FieldTypeCode; Go returns the raw byte, but comparing against
@@ -678,13 +651,11 @@ impl ColumnInfo {
     /// Go `SetOriginDefaultValue`. The value is always stored; for a BIT
     /// column, a string value is additionally kept as raw bytes, a `nil` is
     /// accepted, and any other type is rejected (Go `ErrInvalidDefault`).
-    pub fn set_origin_default_value(
-        &mut self,
-        value: Option<ColumnDefaultValue>,
-    ) -> Result<(), TerrorError> {
+    pub fn set_origin_default_value(&mut self, value: impl Into<GoAny>) -> Result<(), TerrorError> {
+        let value = value.into();
         self.origin_default_value = value.clone();
         if self.get_type() == FieldTypeCode::Bit {
-            return self.store_bit_default(value, /* origin */ true);
+            return self.store_bit_default(&value, /* origin */ true);
         }
         Ok(())
     }
@@ -692,23 +663,20 @@ impl ColumnInfo {
     /// Go `GetOriginDefaultValue`: for a BIT column with the bit bytes set,
     /// returns them as a string; otherwise the stored value.
     #[must_use]
-    pub fn get_origin_default_value(&self) -> Option<ColumnDefaultValue> {
-        if self.get_type() == FieldTypeCode::Bit {
-            if let Some(bytes) = &self.origin_default_value_bit {
-                return Some(ColumnDefaultValue::Str(bytes.clone()));
-            }
+    pub fn get_origin_default_value(&self) -> GoAny {
+        if self.get_type() == FieldTypeCode::Bit && self.origin_default_value_bit.is_allocated() {
+            return ColumnDefaultValue::string_bytes(self.origin_default_value_bit.snapshot())
+                .into();
         }
         self.origin_default_value.clone()
     }
 
     /// Go `SetDefaultValue` (see [`set_origin_default_value`](Self::set_origin_default_value)).
-    pub fn set_default_value(
-        &mut self,
-        value: Option<ColumnDefaultValue>,
-    ) -> Result<(), TerrorError> {
+    pub fn set_default_value(&mut self, value: impl Into<GoAny>) -> Result<(), TerrorError> {
+        let value = value.into();
         self.default_value = value.clone();
         if self.get_type() == FieldTypeCode::Bit {
-            return self.store_bit_default(value, /* origin */ false);
+            return self.store_bit_default(&value, /* origin */ false);
         }
         Ok(())
     }
@@ -716,40 +684,45 @@ impl ColumnInfo {
     /// Go `GetDefaultValue`: the BIT bytes as a string when set, else the
     /// stored value.
     #[must_use]
-    pub fn get_default_value(&self) -> Option<ColumnDefaultValue> {
-        if self.get_type() == FieldTypeCode::Bit {
-            if let Some(bytes) = &self.default_value_bit {
-                return Some(ColumnDefaultValue::Str(bytes.clone()));
-            }
+    pub fn get_default_value(&self) -> GoAny {
+        if self.get_type() == FieldTypeCode::Bit && self.default_value_bit.is_allocated() {
+            return ColumnDefaultValue::string_bytes(self.default_value_bit.snapshot()).into();
         }
         self.default_value.clone()
     }
 
     // The shared BIT default-value rule: nil is accepted (no bytes), a string
     // is stored as raw bytes, anything else is invalid.
-    fn store_bit_default(
-        &mut self,
-        value: Option<ColumnDefaultValue>,
-        origin: bool,
-    ) -> Result<(), TerrorError> {
-        match value {
-            None => Ok(()),
-            Some(ColumnDefaultValue::Str(bytes)) => {
-                if origin {
-                    self.origin_default_value_bit = Some(bytes);
-                } else {
-                    self.default_value_bit = Some(bytes);
-                }
-                Ok(())
-            }
-            Some(_) => {
-                let formatted = ERR_INVALID_DEFAULT.fast_generate(
-                    errname::ErrInvalidDefault.raw,
-                    &[FormatArg::from(self.name.original())],
-                );
-                Err(ERR_INVALID_DEFAULT.generate_with_stack(formatted.message().to_owned()))
-            }
+    fn store_bit_default(&mut self, value: &GoAny, origin: bool) -> Result<(), TerrorError> {
+        if value.is_nil() {
+            return Ok(());
         }
+        if let Some(value) = value.builtin_string() {
+            let bytes = value.as_bytes().to_vec();
+            let capacity = if bytes.is_empty() {
+                0
+            } else {
+                go_64_next_slice_capacity_for_element(
+                    bytes.len(),
+                    0,
+                    std::mem::size_of::<u8>(),
+                    GoSliceElementLayout::NoPointers,
+                )
+            };
+            let bytes = GoSharedSlice::from_vec_with_capacity(bytes, capacity);
+            if origin {
+                self.origin_default_value_bit = bytes;
+            } else {
+                self.default_value_bit = bytes;
+            }
+            return Ok(());
+        }
+
+        let formatted = ERR_INVALID_DEFAULT.fast_generate(
+            errname::ErrInvalidDefault.raw,
+            &[FormatArg::from(self.name.original())],
+        );
+        Err(ERR_INVALID_DEFAULT.generate_with_stack(formatted.message().to_owned()))
     }
 
     /// Go `GetTypeDesc`: the column type description.
@@ -831,10 +804,10 @@ impl ColumnInfo {
             id,
             name: CiString::new(name),
             offset: 0,
-            origin_default_value: None,
-            origin_default_value_bit: None,
-            default_value: None,
-            default_value_bit: None,
+            origin_default_value: GoAny::nil(),
+            origin_default_value_bit: GoSharedSlice::default(),
+            default_value: GoAny::nil(),
+            default_value_bit: GoSharedSlice::default(),
             default_is_expr: false,
             generated_expr_string: String::new(),
             generated_stored: false,
@@ -856,10 +829,10 @@ impl ColumnInfo {
             id,
             name: CiString::new(name),
             offset: 0,
-            origin_default_value: None,
-            origin_default_value_bit: None,
-            default_value: None,
-            default_value_bit: None,
+            origin_default_value: GoAny::nil(),
+            origin_default_value_bit: GoSharedSlice::default(),
+            default_value: GoAny::nil(),
+            default_value_bit: GoSharedSlice::default(),
             default_is_expr: false,
             generated_expr_string: String::new(),
             generated_stored: false,
@@ -930,6 +903,7 @@ pub fn find_column_info_by_id(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::go_any::{GoAnyPointer, GoAnySlice, GoAnyView, GoTypeIdentity, GoTypeKind};
 
     #[test]
     fn versions_and_change_state() {
@@ -977,10 +951,10 @@ mod tests {
             id: 0,
             name: CiString::new(name),
             offset: 0,
-            origin_default_value: None,
-            origin_default_value_bit: None,
-            default_value: None,
-            default_value_bit: None,
+            origin_default_value: GoAny::nil(),
+            origin_default_value_bit: GoSharedSlice::default(),
+            default_value: GoAny::nil(),
+            default_value_bit: GoSharedSlice::default(),
             default_is_expr: false,
             generated_expr_string: String::new(),
             generated_stored: false,
@@ -1071,21 +1045,19 @@ mod tests {
     fn default_value() {
         let rand_plain = ColumnDefaultValue::str("random_plain_string");
         // A BIT default of raw, non-UTF-8 bytes (Go string([]byte{25, 185})).
-        let rand_bit = ColumnDefaultValue::Str(vec![25, 185]);
+        let rand_bit = ColumnDefaultValue::string_bytes(vec![25, 185]);
 
         // Plain column: any value round-trips as-is.
         let mut plain = col("plain", FieldTypeCode::Long);
-        plain
-            .set_default_value(Some(ColumnDefaultValue::Int(1)))
-            .unwrap();
+        plain.set_default_value(ColumnDefaultValue::Int(1)).unwrap();
         assert_eq!(plain.get_default_value(), Some(ColumnDefaultValue::Int(1)));
-        plain.set_default_value(Some(rand_plain.clone())).unwrap();
+        plain.set_default_value(rand_plain.clone()).unwrap();
         assert_eq!(plain.get_default_value(), Some(rand_plain));
 
         // BIT column: only strings (and nil) are allowed.
         let mut bit = col("bit", FieldTypeCode::Bit);
         let err = bit
-            .set_default_value(Some(ColumnDefaultValue::Int(1)))
+            .set_default_value(ColumnDefaultValue::Int(1))
             .unwrap_err();
         assert_eq!(err.class(), tidb_error::terror::TerrorClass::Types);
         assert_eq!(err.code().value(), 1067);
@@ -1095,28 +1067,212 @@ mod tests {
         assert!(err.stack().is_some());
         // The value was still stored before the error (as in Go).
         assert_eq!(bit.get_default_value(), Some(ColumnDefaultValue::Int(1)));
-        bit.set_default_value(Some(rand_bit.clone())).unwrap();
+        bit.set_default_value(rand_bit.clone()).unwrap();
         assert_eq!(bit.get_default_value(), Some(rand_bit));
 
         // BIT column with a nil origin default.
         let mut null_bit = col("nullBit", FieldTypeCode::Bit);
-        null_bit.set_origin_default_value(None).unwrap();
-        assert_eq!(null_bit.get_origin_default_value(), None);
+        null_bit.set_origin_default_value(GoAny::nil()).unwrap();
+        assert!(null_bit.get_origin_default_value().is_nil());
     }
 
     #[test]
     fn default_string_json_replaces_each_invalid_go_byte() {
-        let truncated = ColumnDefaultValue::Str(vec![0xe2, 0x82]);
+        let truncated = ColumnDefaultValue::string_bytes(vec![0xe2, 0x82]);
         assert_eq!(
             serde_json::to_string(&truncated).unwrap(),
             r#""\ufffd\ufffd""#
         );
 
-        let mixed = ColumnDefaultValue::Str(vec![b'a', 0xf0, 0x9f, b'b']);
+        let mixed = ColumnDefaultValue::string_bytes(vec![b'a', 0xf0, 0x9f, b'b']);
         assert_eq!(
             serde_json::to_string(&mixed).unwrap(),
             r#""a\ufffd\ufffdb""#
         );
+    }
+
+    #[test]
+    fn bit_default_assignment_retains_exact_stale_shadow_semantics() {
+        let mut column = col("bit_col", FieldTypeCode::Bit);
+        column
+            .set_default_value(ColumnDefaultValue::str("old"))
+            .unwrap();
+        assert!(column.default_value_bit.is_allocated());
+        assert_eq!(column.default_value_bit.snapshot(), b"old");
+        // Escaping string-to-byte conversion goes through rawbyteslice and
+        // exposes the allocator-rounded capacity on Go 1.25's 64-bit runtime.
+        assert_eq!(column.default_value_bit.capacity(), 8);
+        let old_bit_backing = column.default_value_bit.clone();
+
+        column.set_default_value(GoAny::nil()).unwrap();
+        assert!(column.default_value.is_nil());
+        assert_eq!(
+            column.get_default_value(),
+            Some(ColumnDefaultValue::str("old"))
+        );
+
+        let named_type = GoTypeIdentity::defined(
+            "example.com/defaults",
+            "BitText",
+            "defaults.BitText",
+            GoTypeKind::String,
+        );
+        assert!(column
+            .set_default_value(ColumnDefaultValue::defined_string(named_type, "new"))
+            .is_err());
+        assert!(matches!(
+            column.default_value.view(),
+            Some(GoAnyView::DefinedString(_, _))
+        ));
+        assert_eq!(
+            column.get_default_value(),
+            Some(ColumnDefaultValue::str("old"))
+        );
+
+        assert!(column
+            .set_default_value(ColumnDefaultValue::Pointer(GoAnyPointer::default()))
+            .is_err());
+        assert!(!column.default_value.is_nil());
+        assert_eq!(
+            column.get_default_value(),
+            Some(ColumnDefaultValue::str("old"))
+        );
+
+        column.set_type(FieldTypeCode::Long);
+        column
+            .set_default_value(ColumnDefaultValue::Int(7))
+            .unwrap();
+        assert_eq!(column.get_default_value(), Some(ColumnDefaultValue::Int(7)));
+        assert_eq!(column.default_value_bit.snapshot(), b"old");
+        column.set_type(FieldTypeCode::Bit);
+        assert_eq!(
+            column.get_default_value(),
+            Some(ColumnDefaultValue::str("old"))
+        );
+
+        column
+            .set_default_value(ColumnDefaultValue::string_bytes(Vec::<u8>::new()))
+            .unwrap();
+        assert!(column.default_value_bit.is_allocated());
+        assert!(!column.default_value_bit.backing_ptr_eq(&old_bit_backing));
+        assert_eq!(old_bit_backing.snapshot(), b"old");
+        assert_eq!(column.default_value_bit.len(), 0);
+        assert_eq!(
+            column.get_default_value(),
+            Some(ColumnDefaultValue::string_bytes(Vec::<u8>::new()))
+        );
+
+        column
+            .set_origin_default_value(ColumnDefaultValue::string_bytes(vec![0xff, 0]))
+            .unwrap();
+        let origin_backing = column.origin_default_value_bit.clone();
+        assert_eq!(column.origin_default_value_bit.capacity(), 8);
+        assert!(column.set_origin_default_value(GoAny::nil()).is_ok());
+        assert!(column.origin_default_value.is_nil());
+        assert!(column
+            .origin_default_value_bit
+            .backing_ptr_eq(&origin_backing));
+        assert_eq!(
+            column.get_origin_default_value(),
+            Some(ColumnDefaultValue::string_bytes(vec![0xff, 0]))
+        );
+    }
+
+    #[test]
+    fn column_clone_is_the_source_struct_copy_with_transitive_aliases() {
+        let mut column = col("enum_col", FieldTypeCode::Enum);
+        column.default_value_bit = GoSharedSlice::from_vec_with_capacity(vec![1_u8, 2_u8], 8);
+        column.origin_default_value_bit = GoSharedSlice::from_vec_with_capacity(vec![3_u8], 8);
+        column.dependences = GoStringSet::allocated(["a"]);
+        column
+            .field_type
+            .set_elems(GoSharedSlice::from_vec_with_capacity(
+                vec![GoString::from("one"), GoString::from("two")],
+                4,
+            ));
+        column
+            .field_type
+            .set_elem_with_binary_literal(0, "one", true);
+        let default_slice =
+            GoAnySlice::from_values_with_capacity(vec![ColumnDefaultValue::Int(1).into()], 4);
+        column.default_value = ColumnDefaultValue::Slice(default_slice).into();
+        let changing = GoShared::new(FieldType::new(FieldTypeCode::Varchar));
+        let change_state = GoShared::new(ChangeStateInfo {
+            dependency_column_offset: 2,
+        });
+        column.changing_field_type = Some(changing.clone());
+        column.change_state_info = Some(change_state.clone());
+
+        let mut cloned = column.clone_like_go();
+        assert!(column
+            .default_value_bit
+            .backing_ptr_eq(&cloned.default_value_bit));
+        assert_eq!(cloned.default_value_bit.capacity(), 8);
+        cloned.default_value_bit.set(0, 9);
+        assert_eq!(column.default_value_bit.get(0), 9);
+        cloned.default_value_bit.clear();
+        assert_eq!(cloned.default_value_bit.len(), 0);
+        assert_eq!(column.default_value_bit.len(), 2);
+        assert!(column
+            .origin_default_value_bit
+            .backing_ptr_eq(&cloned.origin_default_value_bit));
+
+        assert!(column.dependences.ptr_eq(&cloned.dependences));
+        cloned.dependences.insert("b");
+        assert!(column.dependences.contains("b"));
+
+        let source_elems = column.get_elems();
+        let cloned_elems = cloned.get_elems();
+        assert!(source_elems.backing_ptr_eq(&cloned_elems));
+        assert_eq!(cloned_elems.capacity(), 4);
+        cloned.field_type.set_elem(1, "changed");
+        assert_eq!(column.field_type.elem(1), "changed");
+        cloned
+            .field_type
+            .set_elem_with_binary_literal(1, "changed", true);
+        assert!(column.field_type.elem_is_binary_literal(1));
+
+        let Some(GoAnyView::Slice(cloned_default)) = cloned.default_value.view() else {
+            panic!("cloned default retains its []any dynamic type");
+        };
+        let Some(GoAnyView::Slice(source_default)) = column.default_value.view() else {
+            panic!("source default retains its []any dynamic type");
+        };
+        assert!(cloned_default.backing_ptr_eq(source_default));
+        cloned_default.set(0, ColumnDefaultValue::Int(8).into());
+        assert!(source_default
+            .get(0)
+            .go_equal(&ColumnDefaultValue::Int(8).into()));
+
+        assert!(cloned
+            .changing_field_type
+            .as_ref()
+            .unwrap()
+            .ptr_eq(&changing));
+        assert!(cloned
+            .change_state_info
+            .as_ref()
+            .unwrap()
+            .ptr_eq(&change_state));
+        cloned
+            .changing_field_type
+            .as_ref()
+            .unwrap()
+            .write()
+            .set_flen(32);
+        cloned
+            .change_state_info
+            .as_ref()
+            .unwrap()
+            .write()
+            .dependency_column_offset = 7;
+        assert_eq!(changing.read().flen(), 32);
+        assert_eq!(change_state.read().dependency_column_offset, 7);
+
+        cloned.set_type(FieldTypeCode::Long);
+        assert_eq!(column.get_type(), FieldTypeCode::Enum);
+        assert!(ColumnInfo::clone_pointer(None).is_none());
+        assert!(ColumnInfo::clone_pointer(Some(&column)).is_some());
     }
 
     // Go TestDefaultValue's constructor assertions + the other extra columns.
@@ -1203,16 +1359,30 @@ mod tests {
             col.origin_default_value,
             Some(ColumnDefaultValue::str("abc"))
         );
-        assert_eq!(col.origin_default_value_bit, Some(vec![25, 185, 0]));
+        assert!(col.origin_default_value_bit.is_allocated());
+        assert_eq!(col.origin_default_value_bit.snapshot(), [25, 185, 0]);
         assert_eq!(col.default_value, Some(ColumnDefaultValue::Float(7.0)));
-        assert_eq!(col.dependences.iter().collect::<Vec<_>>(), ["a", "b"]);
+        assert_eq!(
+            col.dependences
+                .snapshot()
+                .iter()
+                .map(GoString::to_utf8_lossy_go)
+                .collect::<Vec<_>>(),
+            ["a", "b"]
+        );
         assert_eq!(col.get_type(), FieldTypeCode::Varchar);
         assert_eq!(col.get_flen(), 20);
         assert_eq!(col.state, SchemaState::WRITE_ONLY);
-        assert_eq!(col.change_state_info.unwrap().dependency_column_offset, 4);
+        assert_eq!(
+            col.change_state_info
+                .unwrap()
+                .read()
+                .dependency_column_offset,
+            4
+        );
 
         let mut allocated_empty = ColumnInfo::default();
-        allocated_empty.dependences = GoStringSet::allocated(std::iter::empty());
+        allocated_empty.dependences = GoStringSet::allocated(Vec::<String>::new());
         let encoded = serde_json::to_value(&allocated_empty).unwrap();
         assert_eq!(encoded["dependences"], serde_json::json!({}));
         let decoded: ColumnInfo = serde_json::from_value(encoded).unwrap();
@@ -1222,30 +1392,23 @@ mod tests {
         // Both signs and integers beyond float64's exact-integer range follow
         // the concrete type produced by Go's `any` decoder.
         assert_eq!(
-            serde_json::from_str::<ColumnDefaultValue>("-7").unwrap(),
-            ColumnDefaultValue::Float(-7.0)
+            serde_json::from_str::<GoAny>("-7").unwrap(),
+            Some(ColumnDefaultValue::Float(-7.0))
         );
         assert_eq!(
-            serde_json::from_str::<ColumnDefaultValue>("9007199254740993").unwrap(),
-            ColumnDefaultValue::Float(9_007_199_254_740_992.0)
+            serde_json::from_str::<GoAny>("9007199254740993").unwrap(),
+            Some(ColumnDefaultValue::Float(9_007_199_254_740_992.0))
         );
         assert_eq!(
-            serde_json::from_str::<ColumnDefaultValue>("2.2250738585072012e-308").unwrap(),
-            ColumnDefaultValue::Float(f64::from_bits(0x0010_0000_0000_0000))
+            serde_json::from_str::<GoAny>("2.2250738585072012e-308").unwrap(),
+            Some(ColumnDefaultValue::Float(f64::from_bits(
+                0x0010_0000_0000_0000
+            )))
         );
+        let nested: GoAny = serde_json::from_str(r#"{"a":[1,null,{"z":true}]}"#).unwrap();
         assert_eq!(
-            serde_json::from_str::<ColumnDefaultValue>(r#"{"a":[1,null,{"z":true}]}"#).unwrap(),
-            ColumnDefaultValue::Object(BTreeMap::from([(
-                "a".to_owned(),
-                ColumnDefaultValue::Array(vec![
-                    ColumnDefaultValue::Float(1.0),
-                    ColumnDefaultValue::Null,
-                    ColumnDefaultValue::Object(BTreeMap::from([(
-                        "z".to_owned(),
-                        ColumnDefaultValue::Bool(true),
-                    )])),
-                ]),
-            )]))
+            String::from_utf8(crate::serde_helpers::to_go_json(&nested).unwrap()).unwrap(),
+            r#"{"a":[1,null,{"z":true}]}"#
         );
         for non_finite in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
             assert!(
@@ -1267,8 +1430,8 @@ mod tests {
         let with_newline: ColumnInfo =
             serde_json::from_str(r#"{"origin_default_bit":"Gbk\nA"}"#).unwrap();
         assert_eq!(
-            with_newline.origin_default_value_bit,
-            Some(vec![25, 185, 0])
+            with_newline.origin_default_value_bit.snapshot(),
+            [25, 185, 0]
         );
 
         let html = ColumnInfo {
@@ -1285,11 +1448,11 @@ mod tests {
 
         let mut column = ColumnInfo {
             id: 7,
-            default_value_bit: Some(vec![1]),
+            default_value_bit: GoSharedSlice::from_vec(vec![1]),
             dependences: GoStringSet::allocated(["kept".to_owned()]),
-            change_state_info: Some(ChangeStateInfo {
+            change_state_info: Some(GoShared::new(ChangeStateInfo {
                 dependency_column_offset: 5,
-            }),
+            })),
             ..Default::default()
         };
         let mut decoder = serde_json::Deserializer::from_str(
@@ -1303,7 +1466,7 @@ mod tests {
         );
         assert!(column.go_json_merge(&mut decoder).is_err());
         assert_eq!(column.id, 7);
-        assert_eq!(column.default_value_bit, Some(vec![1]));
+        assert_eq!(column.default_value_bit.snapshot(), [1]);
         assert!(column.dependences.contains("kept"));
         assert!(column.dependences.contains("added"));
         assert_eq!(
@@ -1311,6 +1474,7 @@ mod tests {
                 .change_state_info
                 .as_ref()
                 .unwrap()
+                .read()
                 .dependency_column_offset,
             5
         );
@@ -1366,25 +1530,27 @@ mod tests {
         );
         assert!(column.go_json_merge(&mut decoder).is_err());
         assert_eq!(
-            column.changing_field_type.as_deref(),
-            Some(&zero_field_type())
+            *column.changing_field_type.as_ref().unwrap().read(),
+            zero_field_type()
         );
         assert_eq!(column.comment, "before-changing-type");
 
-        let changing = column.changing_field_type.as_ref().unwrap();
-        let pointer = &**changing as *const FieldType;
-        let previous = (**changing).clone();
+        let pointer = column.changing_field_type.as_ref().unwrap().clone();
+        let previous = pointer.read().clone();
         let mut decoder = serde_json::Deserializer::from_str(r#"{"changing_type":{"Tp":"bad"}}"#);
         assert!(column.go_json_merge(&mut decoder).is_err());
         let changing = column.changing_field_type.as_ref().unwrap();
-        assert_eq!(&**changing as *const FieldType, pointer);
-        assert_eq!(**changing, previous);
+        assert!(changing.ptr_eq(&pointer));
+        assert_eq!(*changing.read(), previous);
 
         let mut decoder = serde_json::Deserializer::from_str(r#"{"changing_type":{"Tp":3}}"#);
         column.go_json_merge(&mut decoder).unwrap();
         let changing = column.changing_field_type.as_ref().unwrap();
-        assert_eq!(&**changing as *const FieldType, pointer);
-        assert_eq!(**changing, FieldType::from_json(br#"{"Tp":3}"#).unwrap());
+        assert!(changing.ptr_eq(&pointer));
+        assert_eq!(
+            *changing.read(),
+            FieldType::from_json(br#"{"Tp":3}"#).unwrap()
+        );
 
         let mut decoder = serde_json::Deserializer::from_str(r#"{"changing_type":null}"#);
         column.go_json_merge(&mut decoder).unwrap();

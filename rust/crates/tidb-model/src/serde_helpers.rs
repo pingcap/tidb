@@ -900,6 +900,78 @@ where
     }
 }
 
+/// Deserializes a shared Go pointer through an atomic custom unmarshaller
+/// while preserving pointee identity.
+///
+/// A non-null value allocates the language-level zero pointee before invoking
+/// the custom decoder. Failure therefore leaves a newly allocated zero behind,
+/// while an existing pointee retains both its address and its prior value.
+pub(crate) struct OptionSharedAtomicReplaceSeed<'a, T> {
+    destination: &'a mut Option<GoShared<T>>,
+    zero: fn() -> T,
+}
+
+impl<'a, T> OptionSharedAtomicReplaceSeed<'a, T> {
+    pub(crate) fn new(destination: &'a mut Option<GoShared<T>>, zero: fn() -> T) -> Self {
+        Self { destination, zero }
+    }
+}
+
+impl<'de, T> DeserializeSeed<'de> for OptionSharedAtomicReplaceSeed<'_, T>
+where
+    T: Deserialize<'de>,
+{
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct AtomicSharedPointerVisitor<'a, T> {
+            destination: &'a mut Option<GoShared<T>>,
+            zero: fn() -> T,
+        }
+
+        impl<'de, T> Visitor<'de> for AtomicSharedPointerVisitor<'_, T>
+        where
+            T: Deserialize<'de>,
+        {
+            type Value = ();
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("null or a shared custom-unmarshal pointer value")
+            }
+
+            fn visit_none<E>(self) -> Result<Self::Value, E> {
+                *self.destination = None;
+                Ok(())
+            }
+
+            fn visit_unit<E>(self) -> Result<Self::Value, E> {
+                *self.destination = None;
+                Ok(())
+            }
+
+            fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                let destination = self
+                    .destination
+                    .get_or_insert_with(|| GoShared::new((self.zero)()));
+                let replacement = T::deserialize(deserializer)?;
+                *destination.write() = replacement;
+                Ok(())
+            }
+        }
+
+        deserializer.deserialize_option(AtomicSharedPointerVisitor {
+            destination: self.destination,
+            zero: self.zero,
+        })
+    }
+}
+
 /// Deserializes a slice-like field, clearing it on JSON null.
 pub(crate) struct NullDefaultSeed<'a, T>(pub(crate) &'a mut T);
 

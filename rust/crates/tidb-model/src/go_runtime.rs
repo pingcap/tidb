@@ -127,6 +127,13 @@ impl<T> GoShared<T> {
         Arc::ptr_eq(&self.0, &other.0)
     }
 
+    /// Stable process-local address used by Go `%p`/default pointer
+    /// formatting. Semantic equality should continue to use [`Self::ptr_eq`].
+    #[must_use]
+    pub(crate) fn identity_address(&self) -> usize {
+        Arc::as_ptr(&self.0) as usize
+    }
+
     /// Allocates an independent pointer using Rust value `Clone`.
     ///
     /// This is a representation primitive, not a model source-clone claim;
