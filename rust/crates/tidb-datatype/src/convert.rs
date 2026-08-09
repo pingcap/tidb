@@ -1546,15 +1546,20 @@ mod tests {
         ));
     }
 
+    /// Source: `pkg/types/convert_test.go::TestStrToNum`.
     #[test]
-    fn source_string_to_number_rows() {
+    fn test_str_to_num() {
         for (input, expected, truncated) in [
             ("0", 0, false),
             ("-1", -1, false),
             ("100", 100, false),
             ("65.0", 65, false),
+            ("65.0", 65, false),
+            ("", 0, true),
             ("", 0, true),
             ("xx", 0, true),
+            ("xx", 0, true),
+            ("11xx", 11, true),
             ("11xx", 11, true),
             ("xx11", 0, true),
         ] {
@@ -1567,24 +1572,37 @@ mod tests {
             );
         }
 
-        for (input, expected, truncated) in [
-            ("0", 0, false),
-            ("", 0, true),
-            ("100", 100, false),
-            ("+100", 100, false),
-            ("65.0", 65, false),
-            ("xx", 0, true),
-            ("11xx", 11, true),
-            ("xx11", 0, true),
-            ("-00", 0, false),
+        for (input, expected, event_kind) in [
+            ("0", Some(0), 0),
+            ("", Some(0), 1),
+            ("", Some(0), 1),
+            // Go asserts only ErrOverflow for this row, not the value.
+            ("-1", None, 2),
+            ("100", Some(100), 0),
+            ("+100", Some(100), 0),
+            ("65.0", Some(65), 0),
+            ("xx", Some(0), 1),
+            ("11xx", Some(11), 1),
+            ("xx11", Some(0), 1),
+            ("-00", Some(0), 0),
         ] {
             let actual = str_to_uint(input, false);
-            assert_eq!(actual.value, expected, "{input:?}");
-            assert_eq!(
-                actual.event == Some(ScalarConversionEvent::Truncated),
-                truncated,
-                "{input:?}"
-            );
+            if let Some(expected) = expected {
+                assert_eq!(actual.value, expected, "{input:?}");
+            }
+            match event_kind {
+                0 => assert_eq!(actual.event, None, "{input:?}"),
+                1 => assert_eq!(
+                    actual.event,
+                    Some(ScalarConversionEvent::Truncated),
+                    "{input:?}"
+                ),
+                2 => assert!(
+                    matches!(actual.event, Some(ScalarConversionEvent::Overflow(_))),
+                    "{input:?}"
+                ),
+                _ => unreachable!(),
+            }
         }
 
         for (input, expected, truncated) in [
@@ -1592,11 +1610,15 @@ mod tests {
             ("-1", -1.0, false),
             ("1.11", 1.11, false),
             ("1.11.00", 1.11, true),
+            ("1.11.00", 1.11, true),
             ("xx", 0.0, true),
             ("0x00", 0.0, true),
             ("11.xx", 11.0, true),
+            ("11.xx", 11.0, true),
             ("xx.11", 0.0, true),
             ("1e649", f64::MAX, true),
+            ("1e649", f64::MAX, true),
+            ("-1e649", -f64::MAX, true),
             ("-1e649", -f64::MAX, true),
         ] {
             let actual = str_to_float(input, false);
@@ -1606,6 +1628,20 @@ mod tests {
                 truncated,
                 "{input:?}"
             );
+        }
+
+        // `testSelectUpdateDeleteEmptyStringError` repeats the empty input
+        // under `TruncateAsWarning`. The scalar result still carries the
+        // recoverable event; the statement context consumes it as a warning.
+        assert_eq!(str_to_int("", false).value, 0);
+        assert_eq!(str_to_uint("", false).value, 0);
+        assert_eq!(str_to_float("", false).value, 0.0);
+        for event in [
+            str_to_int("", false).event,
+            str_to_uint("", false).event,
+            str_to_float("", false).event,
+        ] {
+            assert_eq!(event, Some(ScalarConversionEvent::Truncated));
         }
     }
 
