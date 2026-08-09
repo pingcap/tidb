@@ -629,6 +629,20 @@ fn function_cast_integer_prefix(input: &str) -> (String, bool) {
 
 /// `StrToInt`, preserving the best-effort value and truncation/overflow event.
 pub fn str_to_int(input: &str, is_function_cast: bool) -> Converted<i64> {
+    str_to_int_with_truncate_policy(input, is_function_cast, true)
+}
+
+/// `StrToInt` with the source context's `HandleTruncate` decision.
+///
+/// When truncation is an error, Go returns the float prefix directly from
+/// `getValidIntPrefix`; `strconv.ParseInt` then turns a prefix containing a
+/// decimal point or exponent into the BIGINT overflow result. When truncation
+/// is ignored or becomes a warning, Go continues through `floatStrToIntStr`.
+pub(crate) fn str_to_int_with_truncate_policy(
+    input: &str,
+    is_function_cast: bool,
+    truncate_as_warning: bool,
+) -> Converted<i64> {
     let input = input.trim();
     let float = valid_float_prefix(input, is_function_cast);
     let mut function_cast_consumed_all = true;
@@ -636,6 +650,8 @@ pub fn str_to_int(input: &str, is_function_cast: bool) -> Converted<i64> {
         let (prefix, consumed_all) = function_cast_integer_prefix(input);
         function_cast_consumed_all = consumed_all;
         prefix
+    } else if float.truncated() && !truncate_as_warning {
+        float.value().to_owned()
     } else {
         match float_string_to_integer_string(float.value(), input) {
             Ok(value) => value,
@@ -658,11 +674,11 @@ pub fn str_to_int(input: &str, is_function_cast: bool) -> Converted<i64> {
             Converted::truncated(value)
         }
         Ok(value) => Converted::exact(value),
-        Err(_) => {
-            let value = if integer.starts_with('-') {
-                i64::MIN
-            } else {
-                i64::MAX
+        Err(error) => {
+            let value = match error.kind() {
+                std::num::IntErrorKind::PosOverflow => i64::MAX,
+                std::num::IntErrorKind::NegOverflow => i64::MIN,
+                _ => 0,
             };
             Converted {
                 value,
@@ -677,6 +693,17 @@ pub fn str_to_int(input: &str, is_function_cast: bool) -> Converted<i64> {
 
 /// `StrToUint`, including the source rule that only negative zero is valid.
 pub fn str_to_uint(input: &str, is_function_cast: bool) -> Converted<u64> {
+    str_to_uint_with_truncate_policy(input, is_function_cast, true)
+}
+
+/// `StrToUint` with the source context's `HandleTruncate` decision. See
+/// [`str_to_int_with_truncate_policy`] for why strict truncation keeps the
+/// unrounded float prefix.
+pub(crate) fn str_to_uint_with_truncate_policy(
+    input: &str,
+    is_function_cast: bool,
+    truncate_as_warning: bool,
+) -> Converted<u64> {
     let input = input.trim();
     let float = valid_float_prefix(input, is_function_cast);
     let mut function_cast_consumed_all = true;
@@ -684,6 +711,8 @@ pub fn str_to_uint(input: &str, is_function_cast: bool) -> Converted<u64> {
         let (prefix, consumed_all) = function_cast_integer_prefix(input);
         function_cast_consumed_all = consumed_all;
         prefix
+    } else if float.truncated() && !truncate_as_warning {
+        float.value().to_owned()
     } else {
         match float_string_to_integer_string(float.value(), input) {
             Ok(value) => value,
@@ -717,8 +746,12 @@ pub fn str_to_uint(input: &str, is_function_cast: bool) -> Converted<u64> {
             Converted::truncated(value)
         }
         Ok(value) => Converted::exact(value),
-        Err(_) => Converted {
-            value: u64::MAX,
+        Err(error) => Converted {
+            value: if matches!(error.kind(), std::num::IntErrorKind::PosOverflow) {
+                u64::MAX
+            } else {
+                0
+            },
             event: Some(ScalarConversionEvent::Overflow(overflow(
                 &integer,
                 FieldTypeCode::LongLong,
@@ -1319,34 +1352,15 @@ mod tests {
     /// `"123."` here and `"123"` above -- the reason the policy is a parameter
     /// of `valid_integer_prefix` rather than something its caller applies.
     ///
-    /// DIVERGENCE, recorded not fixed: Go's error is
-    /// `ErrTruncatedWrongVal("INTEGER", str)`; this tier reports
-    /// `InvalidUnsignedInteger`, so only the value is pinned.
+    /// The Rust helper keeps the source value boundary while representing the
+    /// numeric error as a typed event. Caller-level tests separately verify
+    /// that strict conversion keeps the unrounded float prefix and therefore
+    /// reaches the BIGINT overflow path:
     ///
-    /// A SECOND, LIVE divergence hangs off the same rule, and an earlier note
-    /// here mis-scoped it as unreachable "because the function has no caller".
-    /// [`str_to_int`] and [`str_to_uint`] ARE callers of this rule -- reached
-    /// from `datum_convert.rs` and `datum/convert.rs` -- and they hard-code the
-    /// warning policy. So when Go runs strict and the float prefix is not
-    /// itself a valid integer literal, Go returns the FLOAT prefix, its
-    /// `ParseInt` fails, and the statement error is `ErrOverflow` (1690)
-    /// `BIGINT value is out of range in '123.'` with value 0, whereas this tier
-    /// answers `123` plus a truncation. Captured in this checkout:
-    ///
-    /// | input       | Go strict                | Go warning | here      |
-    /// | ----------- | ------------------------ | ---------- | --------- |
-    /// | `"123..34"` | `0`, 1690 on `"123."`    | `123`, nil | `123`, tr |
-    /// | `"1.1e1.3"` | `0`, 1690 on `"1.1e1"`   | `11`, nil  | `11`, tr  |
-    /// | `"123abc"`  | `123`, 1292              | `123`, nil | `123`, tr |
-    /// | `"-1-1"`    | `-1`, 1292               | `-1`, nil  | `-1`, tr  |
-    /// | `"  12  "`  | `12`, nil                | `12`, nil  | `12`, nil |
-    /// | `""`        | `0`, 1292                | `0`, nil   | `0`, tr   |
-    ///
-    /// Only the strict column diverges, and only on the first two rows. Closing
-    /// it means threading the statement's truncation policy down to
-    /// `str_to_int`/`str_to_uint` -- the callers do not carry it today -- so it
-    /// is left recorded rather than half-applied: hard-coding the strict policy
-    /// instead would turn today's correct non-strict answers into errors.
+    /// | input       | strict result          | warning result |
+    /// | ----------- | ---------------------- | -------------- |
+    /// | `"123..34"` | `0`, overflow `"123."` | `123`, truncate |
+    /// | `"1.1e1.3"` | `0`, overflow `"1.1e1"`| `11`, truncate  |
     #[test]
     fn source_valid_integer_prefix_strict_rows() {
         for (input, expected, errored) in [
@@ -1377,6 +1391,47 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_get_valid_int_strict_and_warning_source_rows() {
+        for (input, strict_value, warning_value) in [("123..34", 0, 123), ("1.1e1.3", 0, 11)] {
+            let strict = str_to_int_with_truncate_policy(input, false, false);
+            assert_eq!(strict.value, strict_value, "strict {input:?}");
+            assert!(matches!(
+                strict.event,
+                Some(ScalarConversionEvent::Overflow(_))
+            ));
+
+            let warning = str_to_int_with_truncate_policy(input, false, true);
+            assert_eq!(warning.value, warning_value, "warning {input:?}");
+            assert_eq!(warning.event, Some(ScalarConversionEvent::Truncated));
+        }
+
+        for (input, expected, truncated) in [
+            ("123abc", 123, true),
+            ("-1-1", -1, true),
+            ("  12  ", 12, false),
+            ("", 0, true),
+        ] {
+            let strict = str_to_int_with_truncate_policy(input, false, false);
+            assert_eq!(strict.value, expected, "{input:?}");
+            assert_eq!(
+                strict.event == Some(ScalarConversionEvent::Truncated),
+                truncated,
+                "{input:?}"
+            );
+        }
+
+        let strict = str_to_uint_with_truncate_policy("123..34", false, false);
+        assert_eq!(strict.value, 0);
+        assert!(matches!(
+            strict.event,
+            Some(ScalarConversionEvent::Overflow(_))
+        ));
+        let warning = str_to_uint_with_truncate_policy("123..34", false, true);
+        assert_eq!(warning.value, 123);
+        assert_eq!(warning.event, Some(ScalarConversionEvent::Truncated));
     }
 
     /// `pkg/types/convert_test.go:828` `TestRoundIntStr`. Three rows, and all
