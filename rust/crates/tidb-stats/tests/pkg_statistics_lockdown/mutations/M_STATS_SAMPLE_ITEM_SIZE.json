@@ -1,0 +1,1 @@
+{"mutation_id":"M_STATS_SAMPLE_ITEM_SIZE","replacements":[{"expected_count":1,"new":"pub const EMPTY_SAMPLE_ITEM_SIZE: i64 = 95;","old":"pub const EMPTY_SAMPLE_ITEM_SIZE: i64 = 96;"}],"rust_path":"rust/crates/tidb-stats/src/sample_collector.rs","schema":"go-package-lockdown-mutation-operator-v1","source_sha256":"50409bd8d2a53fd1b14f8bca4fd379706a8d262df0be108cc7ec8e1e225a56c7"}
