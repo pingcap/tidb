@@ -1230,7 +1230,7 @@ mod tests {
     }
 
     #[test]
-    fn test_year_source_rows() {
+    fn test_year() {
         for (input, expected) in [("1990", 1990), ("10", 2010), ("0", 2000), ("99", 1999)] {
             assert_eq!(parse_year(input).unwrap(), expected);
         }
@@ -1908,7 +1908,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_date_source_rows() {
+    fn test_date() {
         for (input, expected) in [
             ("0001-12-13", "0001-12-13"),
             ("2011-12-13", "2011-12-13"),
