@@ -145,3 +145,65 @@ fn analyze_complete_stats_source_payloads_match_go() {
         assert_eq!(statement.restore(), restored, "{sql}");
     }
 }
+
+/// Exact source vectors from `pkg/parser/parser_test.go::TestAnalyze`.
+#[test]
+fn test_analyze_source_of_truth() {
+    for (sql, restored) in [
+        ("analyze table t1", "ANALYZE TABLE `t1`"),
+        ("analyze table t,t1", "ANALYZE TABLE `t`,`t1`"),
+        ("analyze table t1 index", "ANALYZE TABLE `t1` INDEX"),
+        ("analyze table t1 index a", "ANALYZE TABLE `t1` INDEX `a`"),
+        ("analyze table t1 index a,b", "ANALYZE TABLE `t1` INDEX `a`,`b`"),
+        ("analyze table t with 4 buckets", "ANALYZE TABLE `t` WITH 4 BUCKETS"),
+        ("analyze table t with 4 topn", "ANALYZE TABLE `t` WITH 4 TOPN"),
+        ("analyze table t with 4 cmsketch width", "ANALYZE TABLE `t` WITH 4 CMSKETCH WIDTH"),
+        ("analyze table t with 4 cmsketch depth", "ANALYZE TABLE `t` WITH 4 CMSKETCH DEPTH"),
+        ("analyze table t with 4 samples", "ANALYZE TABLE `t` WITH 4 SAMPLES"),
+        ("analyze table t with 4 buckets, 4 topn, 4 cmsketch width, 4 cmsketch depth, 4 samples", "ANALYZE TABLE `t` WITH 4 BUCKETS, 4 TOPN, 4 CMSKETCH WIDTH, 4 CMSKETCH DEPTH, 4 SAMPLES"),
+        ("analyze table t index a with 4 buckets", "ANALYZE TABLE `t` INDEX `a` WITH 4 BUCKETS"),
+        ("analyze table t partition a", "ANALYZE TABLE `t` PARTITION `a`"),
+        ("analyze table t partition a with 4 buckets", "ANALYZE TABLE `t` PARTITION `a` WITH 4 BUCKETS"),
+        ("analyze table t partition a index b", "ANALYZE TABLE `t` PARTITION `a` INDEX `b`"),
+        ("analyze table t partition a index b with 4 buckets", "ANALYZE TABLE `t` PARTITION `a` INDEX `b` WITH 4 BUCKETS"),
+        ("analyze incremental table t index", "ANALYZE INCREMENTAL TABLE `t` INDEX"),
+        ("analyze incremental table t index idx", "ANALYZE INCREMENTAL TABLE `t` INDEX `idx`"),
+        ("analyze table t update histogram on b with 1024 buckets", "ANALYZE TABLE `t` UPDATE HISTOGRAM ON `b` WITH 1024 BUCKETS"),
+        ("analyze table t drop histogram on b", "ANALYZE TABLE `t` DROP HISTOGRAM ON `b`"),
+        ("analyze table t update histogram on c1, c2;", "ANALYZE TABLE `t` UPDATE HISTOGRAM ON `c1`,`c2`"),
+        ("analyze table t drop histogram on c1, c2;", "ANALYZE TABLE `t` DROP HISTOGRAM ON `c1`,`c2`"),
+        ("analyze table t1,t2 all columns", "ANALYZE TABLE `t1`,`t2` ALL COLUMNS"),
+        ("analyze table t partition a all columns", "ANALYZE TABLE `t` PARTITION `a` ALL COLUMNS"),
+        ("analyze table t1,t2 all columns with 4 topn", "ANALYZE TABLE `t1`,`t2` ALL COLUMNS WITH 4 TOPN"),
+        ("analyze table t partition a all columns with 1024 buckets", "ANALYZE TABLE `t` PARTITION `a` ALL COLUMNS WITH 1024 BUCKETS"),
+        ("analyze table t1,t2 predicate columns", "ANALYZE TABLE `t1`,`t2` PREDICATE COLUMNS"),
+        ("analyze table t partition a predicate columns", "ANALYZE TABLE `t` PARTITION `a` PREDICATE COLUMNS"),
+        ("analyze table t1,t2 predicate columns with 4 topn", "ANALYZE TABLE `t1`,`t2` PREDICATE COLUMNS WITH 4 TOPN"),
+        ("analyze table t partition a predicate columns with 1024 buckets", "ANALYZE TABLE `t` PARTITION `a` PREDICATE COLUMNS WITH 1024 BUCKETS"),
+        ("analyze table t columns c1,c2", "ANALYZE TABLE `t` COLUMNS `c1`,`c2`"),
+        ("analyze table t partition a columns c1,c2", "ANALYZE TABLE `t` PARTITION `a` COLUMNS `c1`,`c2`"),
+        ("analyze table t columns c1,c2 with 4 topn", "ANALYZE TABLE `t` COLUMNS `c1`,`c2` WITH 4 TOPN"),
+        ("analyze table t partition a columns c1,c2 with 1024 buckets", "ANALYZE TABLE `t` PARTITION `a` COLUMNS `c1`,`c2` WITH 1024 BUCKETS"),
+        ("analyze table t with 10 samplerate", "ANALYZE TABLE `t` WITH 10 SAMPLERATE"),
+        ("analyze table t with 0.1 samplerate", "ANALYZE TABLE `t` WITH 0.1 SAMPLERATE"),
+        ("analyze table t with 0.05 ndvrate", "ANALYZE TABLE `t` WITH 0.05 NDVRATE"),
+        ("analyze table t with 0.05 ndvrate 0.00001 samplerate", "ANALYZE TABLE `t` WITH 0.05 NDVRATE, 0.00001 SAMPLERATE"),
+        ("analyze no_write_to_binlog table t1", "ANALYZE NO_WRITE_TO_BINLOG TABLE `t1`"),
+        ("analyze local table t,t1", "ANALYZE NO_WRITE_TO_BINLOG TABLE `t`,`t1`"),
+    ] {
+        assert_eq!(r(sql), restored, "{sql}");
+    }
+
+    for sql in [
+        "analyze table t1.*",
+        "analyze table t update histogram on t.c1, t.c2",
+        "analyze table t drop histogram on t.c1, t.c2",
+        "analyze table t columns t.c1,t.c2",
+        "analyze table t partition a columns t.c1,t.c2",
+        "analyze table t index a columns c",
+        "analyze table t index a all columns",
+        "analyze table t index a predicate columns",
+    ] {
+        assert!(parse(sql).is_err(), "expected parse error for: {sql}");
+    }
+}
