@@ -343,3 +343,175 @@ pub(crate) fn rewrite_with_prepared_defaults(
     }
     Ok(rewritten)
 }
+
+#[cfg(test)]
+mod source_tests {
+    use super::*;
+    use tidb_datatype::{CoreTime, FieldTypeCode, FieldTypeFlags, MysqlEnum, Time, TimeType};
+
+    #[derive(Clone)]
+    enum Expected {
+        Value(Datum),
+        Error,
+    }
+
+    fn assert_materialized(
+        field_type: &FieldType,
+        default_value: Option<crate::column_default::ColumnDefault>,
+        strict: bool,
+        expected: Expected,
+    ) {
+        let ctx = crate::StmtContext::for_dml(false, strict, false).with_time_zone(
+            tidb_datatype::SessionTimeZone::Named(chrono_tz::America::Los_Angeles),
+        );
+        let meta = ColumnDefaultMeta {
+            default_value,
+            not_null: field_type.has_flag(FieldTypeFlags::NOT_NULL),
+            no_default_value: field_type.has_flag(FieldTypeFlags::NO_DEFAULT_VALUE),
+            name: "a".to_owned(),
+            field_type: field_type.clone(),
+            column_info_version: tidb_model::column::COLUMN_INFO_VERSION2,
+            generated: false,
+        };
+        let actual = materialize_column_default(
+            &meta,
+            DefaultUse::Expression,
+            &ctx,
+            tidb_chunk::row::Row::empty(),
+        );
+        match expected {
+            Expected::Value(expected) => assert_eq!(actual.unwrap(), expected, "{field_type:?}"),
+            Expected::Error => assert!(actual.is_err(), "{field_type:?}: {actual:?}"),
+        }
+    }
+
+    #[test]
+    fn test_get_default_value() {
+        // Direct port of both loops in pkg/table/column_test.go's
+        // TestGetDefaultValue. Each row is materialized once from
+        // DefaultValue and once from OriginDefaultValue; the expression row
+        // deliberately has no origin expression, just as ColumnInfo does.
+        let not_null_bigint =
+            FieldType::new(FieldTypeCode::LongLong).with_flags(FieldTypeFlags::NOT_NULL);
+        let nullable_bigint = FieldType::new(FieldTypeCode::LongLong);
+        let not_null_enum = FieldType::new(FieldTypeCode::Enum)
+            .with_flags(FieldTypeFlags::NOT_NULL)
+            .with_elems(["abc", "def"]);
+        let timestamp =
+            FieldType::new(FieldTypeCode::Timestamp).with_flags(FieldTypeFlags::TIMESTAMP);
+        let auto_bigint = FieldType::new(FieldTypeCode::LongLong)
+            .with_flags(FieldTypeFlags::NOT_NULL | FieldTypeFlags::AUTO_INCREMENT);
+
+        let zero_timestamp =
+            Datum::new_time(Time::new(CoreTime::from_raw(0), TimeType::Timestamp, 0).unwrap());
+        let local_timestamp = Datum::new_time(
+            Time::new(
+                CoreTime::from_date(2019, 5, 6, 12, 48, 49, 0),
+                TimeType::Timestamp,
+                0,
+            )
+            .unwrap(),
+        );
+        let enum_first = Datum::new_enum(MysqlEnum::new("abc", 1), not_null_enum.collation());
+
+        let value = |datum| Some(crate::column_default::ColumnDefault::Value(datum));
+        let computed_one = Some(crate::column_default::ColumnDefault::Computed(Box::new(
+            crate::column_default::ComputedDefault {
+                text: "1".to_owned(),
+                is_expr: true,
+                expr: Expression::Constant(tidb_expr::constant::Constant::new(
+                    Datum::Int(1),
+                    not_null_bigint.clone(),
+                )),
+            },
+        )));
+
+        let cases = vec![
+            (
+                not_null_bigint.clone(),
+                value(Datum::Real(1.0)),
+                value(Datum::Real(1.0)),
+                false,
+                Expected::Value(Datum::Int(1)),
+                Expected::Value(Datum::Int(1)),
+            ),
+            (
+                not_null_bigint.clone(),
+                None,
+                None,
+                false,
+                Expected::Value(Datum::Int(0)),
+                Expected::Value(Datum::Int(0)),
+            ),
+            (
+                nullable_bigint,
+                None,
+                None,
+                false,
+                Expected::Value(Datum::Null),
+                Expected::Value(Datum::Null),
+            ),
+            (
+                not_null_enum,
+                None,
+                None,
+                false,
+                Expected::Value(enum_first.clone()),
+                Expected::Value(enum_first),
+            ),
+            (
+                timestamp.clone(),
+                value(Datum::new_string("0000-00-00 00:00:00")),
+                value(Datum::new_string("0000-00-00 00:00:00")),
+                false,
+                Expected::Value(zero_timestamp.clone()),
+                Expected::Value(zero_timestamp),
+            ),
+            (
+                timestamp.clone(),
+                value(Datum::new_string("2019-05-06 19:48:49")),
+                value(Datum::new_string("2019-05-06 19:48:49")),
+                true,
+                Expected::Value(local_timestamp.clone()),
+                Expected::Value(local_timestamp),
+            ),
+            (
+                timestamp,
+                value(Datum::new_string("not valid date")),
+                value(Datum::new_string("not valid date")),
+                true,
+                Expected::Error,
+                Expected::Error,
+            ),
+            (
+                not_null_bigint.clone(),
+                None,
+                None,
+                true,
+                Expected::Error,
+                Expected::Error,
+            ),
+            (
+                auto_bigint,
+                None,
+                None,
+                true,
+                Expected::Value(Datum::Int(0)),
+                Expected::Value(Datum::Int(0)),
+            ),
+            (
+                not_null_bigint,
+                computed_one,
+                None,
+                false,
+                Expected::Value(Datum::Int(1)),
+                Expected::Value(Datum::Int(0)),
+            ),
+        ];
+
+        for (field_type, current, origin, strict, expected_current, expected_origin) in cases {
+            assert_materialized(&field_type, current, strict, expected_current);
+            assert_materialized(&field_type, origin, strict, expected_origin);
+        }
+    }
+}
