@@ -172,6 +172,60 @@ fn table_option_affinity_source_rows_keep_go_literal_and_restore_contract() {
     }
 }
 
+/// Table- and partition-option rows from Go
+/// `pkg/parser/parser_test.go:TestSecondaryEngineAttribute`. Column and index
+/// rows have distinct parser owners and are covered in their source modules.
+#[test]
+fn secondary_engine_attribute_table_and_partition_source_rows_match_go() {
+    for (sql, expected) in [
+        (
+            r#"CREATE TABLE t (id INT) PARTITION BY RANGE (id) (PARTITION p0 VALUES LESS THAN (10) SECONDARY_ENGINE_ATTRIBUTE='{"key":"value"}',PARTITION p1 VALUES LESS THAN (20) SECONDARY_ENGINE_ATTRIBUTE='{"key":"value2"}')"#,
+            Some(r#"CREATE TABLE `t` (`id` INT) PARTITION BY RANGE (`id`) (PARTITION `p0` VALUES LESS THAN (10) SECONDARY_ENGINE_ATTRIBUTE = '{"key":"value"}',PARTITION `p1` VALUES LESS THAN (20) SECONDARY_ENGINE_ATTRIBUTE = '{"key":"value2"}')"#),
+        ),
+        (
+            r#"CREATE TABLE t (id INT) SECONDARY_ENGINE_ATTRIBUTE='{"key":"value"}'"#,
+            Some(r#"CREATE TABLE `t` (`id` INT) SECONDARY_ENGINE_ATTRIBUTE = '{"key":"value"}'"#),
+        ),
+        (
+            r#"CREATE TABLE t (id INT) SECONDARY_ENGINE_ATTRIBUTE='{"key":"value"}' PARTITION BY RANGE (id) (PARTITION p0 VALUES LESS THAN (10) SECONDARY_ENGINE_ATTRIBUTE='{"key":"partition_value"}')"#,
+            Some(r#"CREATE TABLE `t` (`id` INT) SECONDARY_ENGINE_ATTRIBUTE = '{"key":"value"}' PARTITION BY RANGE (`id`) (PARTITION `p0` VALUES LESS THAN (10) SECONDARY_ENGINE_ATTRIBUTE = '{"key":"partition_value"}')"#),
+        ),
+        (
+            r#"CREATE TABLE t (id INT) TABLESPACE ts1 SECONDARY_ENGINE_ATTRIBUTE='{"key":"value"}'"#,
+            Some(r#"CREATE TABLE `t` (`id` INT) TABLESPACE = `ts1` SECONDARY_ENGINE_ATTRIBUTE = '{"key":"value"}'"#),
+        ),
+        (
+            "CREATE TABLE t (id INT) PARTITION BY RANGE (id) (PARTITION p0 VALUES LESS THAN (10) SECONDARY_ENGINE_ATTRIBUTE=)",
+            None,
+        ),
+        (
+            "CREATE TABLE t (id INT) SECONDARY_ENGINE_ATTRIBUTE=",
+            None,
+        ),
+        (
+            "CREATE TABLE t (id INT) TABLESPACE ts1 SECONDARY_ENGINE_ATTRIBUTE=",
+            None,
+        ),
+        (
+            "CREATE TABLE t (id INT) PARTITION BY RANGE (id) (PARTITION p0 VALUES LESS THAN (10) SECONDARY_ENGINE_ATTRIBUTE)",
+            None,
+        ),
+        (
+            "CREATE TABLE t (id INT) SECONDARY_ENGINE_ATTRIBUTE",
+            None,
+        ),
+        (
+            "CREATE TABLE t (id INT) TABLESPACE ts1 SECONDARY_ENGINE_ATTRIBUTE",
+            None,
+        ),
+    ] {
+        match expected {
+            Some(expected) => assert_eq!(r(sql), expected, "source SQL: {sql}"),
+            None => assert!(parse(sql).is_err(), "Go rejects: {sql}"),
+        }
+    }
+}
+
 /// MariaDB compatibility options are accepted by TiDB's shared
 /// `parseTableOption` production, warned as ignored by storage engines, and
 /// restored as bare values. Keep every source fixture in one direct parser
