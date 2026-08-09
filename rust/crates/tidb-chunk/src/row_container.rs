@@ -581,27 +581,23 @@ impl RowContainerChunk<'_> {
     }
 }
 
-enum RowContainerRowInner<'a> {
-    InMemory {
-        records: RwLockReadGuard<'a, RowContainerRecord>,
-        ptr: RowPtr,
-    },
-    Appended {
-        row_index: usize,
-    },
+enum RowContainerRowInner {
+    InMemory { chunk: Chunk, row_index: usize },
+    Appended { row_index: usize },
 }
 
 /// A row loaded through Go `GetRowAndAppendToChunkIfInDisk`.
 ///
-/// While the container is in memory this value holds the records read guard
-/// and [`RowContainerRow::row`] returns the live row without touching the
-/// caller's scratch chunk. After a spill, the row is decoded into that scratch
-/// chunk and this value remembers its row index there.
-pub struct RowContainerRow<'a> {
-    inner: RowContainerRowInner<'a>,
+/// While the container is in memory this value retains shallow column owners,
+/// so [`RowContainerRow::row`] remains valid across a later spill without
+/// retaining the container lock or touching the caller's scratch chunk. After
+/// a spill, the row is decoded into that scratch chunk and this value remembers
+/// its row index there.
+pub struct RowContainerRow {
+    inner: RowContainerRowInner,
 }
 
-impl RowContainerRow<'_> {
+impl RowContainerRow {
     /// The appended row index, or `None` when the row is still a live
     /// in-memory view.
     #[must_use]
@@ -617,7 +613,7 @@ impl RowContainerRow<'_> {
     #[must_use]
     pub fn row<'a>(&'a self, appended_chunk: &'a Chunk) -> Row<'a> {
         match &self.inner {
-            RowContainerRowInner::InMemory { records, ptr } => records.in_memory.get_row(*ptr),
+            RowContainerRowInner::InMemory { chunk, row_index } => chunk.get_row(*row_index),
             RowContainerRowInner::Appended { row_index } => appended_chunk.get_row(*row_index),
         }
     }
@@ -1130,15 +1126,16 @@ impl RowContainer {
 
     /// Go `GetRowAndAppendToChunkIfInDisk`.
     ///
-    /// An in-memory row remains a guard-backed live view and `chk` is
-    /// untouched. A spilled row is decoded into `chk`; the returned value then
-    /// identifies that appended row. Errors are reported before `chk` changes.
-    pub fn get_row_and_append_to_chunk_if_in_disk<'a>(
-        &'a self,
+    /// An in-memory row retains shallow column owners while leaving `chk`
+    /// untouched and retaining no container lock. A spilled row is decoded
+    /// into `chk`; the returned value then identifies that appended row.
+    /// Errors are reported before `chk` changes.
+    pub fn get_row_and_append_to_chunk_if_in_disk(
+        &self,
         ptr: RowPtr,
         chk: &mut Chunk,
-    ) -> Result<RowContainerRow<'a>, DiskError> {
-        let records = read_unpoisoned(&self.shared.records);
+    ) -> Result<RowContainerRow, DiskError> {
+        let mut records = write_unpoisoned(&self.shared.records);
         match &records.in_disk {
             Some(in_disk) => {
                 if let Some(error) = &records.spill_error {
@@ -1149,9 +1146,12 @@ impl RowContainer {
                     inner: RowContainerRowInner::Appended { row_index },
                 })
             }
-            None => Ok(RowContainerRow {
-                inner: RowContainerRowInner::InMemory { records, ptr },
-            }),
+            None => {
+                let (chunk, row_index) = records.in_memory.alias_row_owner(ptr);
+                Ok(RowContainerRow {
+                    inner: RowContainerRowInner::InMemory { chunk, row_index },
+                })
+            }
         }
     }
 
@@ -1163,8 +1163,8 @@ impl RowContainer {
     ) -> Result<usize, DiskError> {
         let loaded = self.get_row_and_append_to_chunk_if_in_disk(ptr, chk)?;
         match loaded.inner {
-            RowContainerRowInner::InMemory { records, ptr } => {
-                chk.append_row(records.in_memory.get_row(ptr));
+            RowContainerRowInner::InMemory { chunk, row_index } => {
+                chk.append_row(chunk.get_row(row_index));
                 Ok(chk.num_rows() - 1)
             }
             RowContainerRowInner::Appended { row_index } => Ok(row_index),

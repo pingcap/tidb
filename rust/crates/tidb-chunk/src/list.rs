@@ -235,6 +235,12 @@ impl List {
         self.chunks[ptr.chk_idx as usize].get_row(ptr.row_idx as usize)
     }
 
+    /// Retains the chunk owners needed by `ptr` without retaining a list lock.
+    pub(crate) fn alias_row_owner(&mut self, ptr: RowPtr) -> (Chunk, usize) {
+        let chunk = self.chunks[ptr.chk_idx as usize].alias_snapshot();
+        (chunk, ptr.row_idx as usize)
+    }
+
     /// Go `Reset`: account the unaccounted tail, then move every chunk to the
     /// freelist for reuse. The freelist chunks stay charged to the tracker
     /// until [`List::alloc_chunk`] takes one back.

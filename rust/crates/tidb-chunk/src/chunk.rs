@@ -118,6 +118,23 @@ impl Chunk {
         }
     }
 
+    /// Builds a stable metadata snapshot whose columns retain the same owners.
+    ///
+    /// Row-container reads use this to release the container lock before
+    /// returning. A later spill may drop the list's chunk, while this snapshot
+    /// keeps the exact column data alive without copying it.
+    pub(crate) fn alias_snapshot(&mut self) -> Self {
+        Chunk {
+            sel: self.sel.clone(),
+            columns: self.columns.iter_mut().map(ColumnSlot::alias).collect(),
+            columns_initialized: self.columns_initialized,
+            num_virtual_rows: self.num_virtual_rows,
+            capacity: self.capacity,
+            required_rows: self.required_rows,
+            in_complete_chunk: self.in_complete_chunk,
+        }
+    }
+
     /// Go `NumCols`.
     #[must_use]
     pub fn num_cols(&self) -> usize {

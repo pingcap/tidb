@@ -15,7 +15,8 @@
 //! Public row-container boundaries owned by `pkg/util/chunk`.
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{mpsc, Arc};
+use std::time::Duration;
 
 use tidb_chunk::chunk::Chunk;
 use tidb_chunk::list::RowPtr;
@@ -23,21 +24,42 @@ use tidb_chunk::row_container::RowContainer;
 use tidb_datatype::{FieldType, FieldTypeCode};
 use tidb_util::disk::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
 
-fn open_storage(case: &str, quota_bytes: i64) -> (Arc<SpillStorage>, PathBuf) {
-    let path = std::env::temp_dir().join(format!(
-        "tidb_chunk_row_container_contract_{case}_{}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&path);
-    let storage = Arc::new(
-        SpillStorage::open(SpillStorageSpec {
-            path: path.clone(),
-            quota_bytes,
-            encryption: SpillEncryptionMethod::Plaintext,
-        })
-        .expect("spill storage"),
-    );
-    (storage, path)
+struct TestStorage {
+    authority: Option<Arc<SpillStorage>>,
+    path: PathBuf,
+}
+
+impl TestStorage {
+    fn open(case: &str, quota_bytes: i64) -> Self {
+        let path = std::env::temp_dir().join(format!(
+            "tidb_chunk_row_container_contract_{case}_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&path);
+        let authority = Arc::new(
+            SpillStorage::open(SpillStorageSpec {
+                path: path.clone(),
+                quota_bytes,
+                encryption: SpillEncryptionMethod::Plaintext,
+            })
+            .expect("spill storage"),
+        );
+        TestStorage {
+            authority: Some(authority),
+            path,
+        }
+    }
+
+    fn authority(&self) -> Arc<SpillStorage> {
+        Arc::clone(self.authority.as_ref().expect("live test storage"))
+    }
+}
+
+impl Drop for TestStorage {
+    fn drop(&mut self) {
+        drop(self.authority.take());
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
 }
 
 fn int64_chunk(fields: &[FieldType], value: i64) -> Chunk {
@@ -51,28 +73,40 @@ fn row_container_conditional_read_boundary() {
     let fields = vec![FieldType::new(FieldTypeCode::LongLong)];
     let pointer = RowPtr::new(0, 0);
 
-    let (storage, path) = open_storage("success", -1);
-    let mut rows = RowContainer::new(&fields, 1, Arc::clone(&storage));
+    let storage = TestStorage::open("success", -1);
+    let authority = storage.authority();
+    let mut rows = RowContainer::new(&fields, 1, Arc::clone(&authority));
     rows.disk_tracker()
-        .attach_to_global_tracker(storage.global_tracker());
+        .attach_to_global_tracker(authority.global_tracker());
     rows.add(int64_chunk(&fields, 41)).expect("memory add");
 
     let mut scratch = Chunk::new_with_capacity(&fields, 1);
-    {
-        let loaded =
-            tidb_chunk::row_container::RowContainer::get_row_and_append_to_chunk_if_in_disk(
-                &rows,
-                pointer,
-                &mut scratch,
-            )
-            .expect("in-memory read");
-        assert_eq!(loaded.appended_row_index(), None);
-        assert_eq!(loaded.row(&scratch).get_int64(0), 41);
-        assert_eq!(scratch.num_rows(), 0, "memory reads remain live views");
-    }
+    let loaded = tidb_chunk::row_container::RowContainer::get_row_and_append_to_chunk_if_in_disk(
+        &rows,
+        pointer,
+        &mut scratch,
+    )
+    .expect("in-memory read");
+    assert_eq!(loaded.appended_row_index(), None);
+    assert_eq!(loaded.row(&scratch).get_int64(0), 41);
+    assert_eq!(scratch.num_rows(), 0, "memory reads remain live views");
 
-    rows.spill_to_disk();
+    let mut spiller = rows.shallow_copy();
+    let (spilled_tx, spilled_rx) = mpsc::sync_channel(1);
+    let spill = std::thread::spawn(move || {
+        spiller.spill_to_disk();
+        spilled_tx.send(()).expect("report spill completion");
+    });
+    if let Err(error) = spilled_rx.recv_timeout(Duration::from_secs(2)) {
+        drop(loaded);
+        spill.join().expect("spill thread after releasing row");
+        panic!("a retained row must not retain the container lock: {error}");
+    }
+    spill.join().expect("spill thread");
     assert!(rows.already_spilled());
+    assert_eq!(loaded.row(&scratch).get_int64(0), 41);
+    assert_eq!(scratch.num_rows(), 0);
+    drop(loaded);
     let loaded = tidb_chunk::row_container::RowContainer::get_row_and_append_to_chunk_if_in_disk(
         &rows,
         pointer,
@@ -85,13 +119,14 @@ fn row_container_conditional_read_boundary() {
     drop(loaded);
     rows.close();
     drop(rows);
+    drop(authority);
     drop(storage);
-    std::fs::remove_dir_all(path).expect("remove successful spill directory");
 
-    let (storage, path) = open_storage("quota", 1);
-    let mut rows = RowContainer::new(&fields, 1, Arc::clone(&storage));
+    let storage = TestStorage::open("quota", 1);
+    let authority = storage.authority();
+    let mut rows = RowContainer::new(&fields, 1, Arc::clone(&authority));
     rows.disk_tracker()
-        .attach_to_global_tracker(storage.global_tracker());
+        .attach_to_global_tracker(authority.global_tracker());
     rows.add(int64_chunk(&fields, 42)).expect("memory add");
     rows.spill_to_disk();
     let stored = rows.spill_error().expect("quota failure is stored");
@@ -109,6 +144,6 @@ fn row_container_conditional_read_boundary() {
     assert_eq!(scratch.num_rows(), 0, "errors must preserve scratch");
     rows.close();
     drop(rows);
+    drop(authority);
     drop(storage);
-    std::fs::remove_dir_all(path).expect("remove quota spill directory");
 }

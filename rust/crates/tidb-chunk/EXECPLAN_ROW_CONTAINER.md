@@ -27,7 +27,8 @@ This plan covers only the plain Go `RowContainer`, `SpillDiskAction`, `iterator4
 - [x] (2026-08-09 12:44Z) Reran the final writer-lane static checks after the generation/live-view review fixes: exact-file `rustfmt`, source-size ratchet, `git diff --check`, full diff/status review, direct-callsite scan, and stale atomic-trigger/borrowed-reader/per-handle-drop scans all pass.
 - [x] (2026-08-09 12:44Z) Created one bounded semantic checkpoint for handoff with the exact root-owned executable gate commands below; the coordinator owns Cargo/workspace execution and remote operations.
 - [x] (2026-08-10) Reopened the row-read boundary after proving the hash join copied every unspilled build row into its disk scratch chunk. The exact baseline regression failed at `10a833e1a6` with scratch rows `1`, expected `0`.
-- [x] (2026-08-10) Added guard-backed `GetRowAndAppendToChunkIfInDisk`, made the always-append helper build on it, and migrated hash and merge join to preserve the conditional copy boundary.
+- [x] (2026-08-10) Added `GetRowAndAppendToChunkIfInDisk`, made the always-append helper build on it, and migrated hash and merge join to preserve the conditional copy boundary.
+- [x] (2026-08-10) Replaced the returned records guard with a shallow column-owner snapshot. The returned row now survives a cross-handle spill without copying packed column data or retaining the container lock.
 - [x] (2026-08-10) Completed the follow-up validation: focused red-to-green regressions, all row-container/hash/merge suites, both affected crates, strict affected-crate Clippy, and all-target workspace check pass. The full workspace test sweep stops only at the independently baseline-proven stale `tidb-exec` lease-source assertion.
 
 ## Surprises & Discoveries
@@ -52,6 +53,9 @@ This plan covers only the plain Go `RowContainer`, `SpillDiskAction`, `iterator4
 
 - Observation: the always-append Rust helper erased an accepted ownership distinction even though every caller immediately converted the row to owned datums.
   Evidence: Go `GetRowAndAppendToChunkIfInDisk` returns the live list row and a nil chunk before spill. The baseline executor regression left one row in `hashRowContainer.chkBuf`; the new path leaves zero in memory and exactly one after spill while returning identical datums.
+
+- Observation: retaining the records read guard in `RowContainerRow` made safe Rust hold off a spill for the wrapper's lifetime, while Go releases its row-container read lock before returning the row.
+  Evidence: the package boundary test now keeps the returned in-memory row alive while a shallow handle spills on another thread. Spill completes before the wrapper drops, the wrapper still reads the original value, and caller scratch remains empty.
 
 - Observation: branch-local `rust/HANDOFF.md` and `rust/PARALLEL.md` named by older rewrite guidance are absent at this checkpoint.
   Evidence: direct reads returned `No such file or directory`; the current repository `AGENTS.md`, `PLANS.md`, design document, source, and parent task contract are used instead.
@@ -85,8 +89,8 @@ This plan covers only the plain Go `RowContainer`, `SpillDiskAction`, `iterator4
   Rationale: lifecycle phases cannot strand waiters, but Go panic order outside spill is not a required runtime contract. The phase lease is lock hygiene rather than panic emulation.
   Date/Author: 2026-08-09 / Codex
 
-- Decision: `get_chunk` returns `RowContainerChunk`, and conditional row reads return `RowContainerRow`; each owns the decoded disk position or holds a records read guard over the live in-memory storage. Public mutations retain `&mut self`. The iterator and reader continue to own only cursor data that must cross lock boundaries.
-  Rationale: this preserves the public live/no-copy memory contract without letting a bare borrow escape the guard. Hash and merge join materialize datums while the short guard is live, so their scratch chunks are touched only by disk reads. The mutable receivers preserve same-handle borrow exclusion. `RowContainerReader` still takes an owned in-memory snapshot because its current chunk must survive another shallow handle spilling the shared records.
+- Decision: `get_chunk` returns `RowContainerChunk`, while an in-memory `RowContainerRow` owns a metadata snapshot whose `ColumnSlot`s alias the list chunk's stable column owners. Public mutations retain `&mut self`. The iterator and reader continue to own only cursor data that must cross lock boundaries.
+  Rationale: the shallow owner snapshot keeps packed row data alive across spill without copying it, releases the records lock before return like Go, and leaves caller scratch untouched. Hash and merge join therefore copy only spilled rows. `RowContainerReader` still takes a deep in-memory snapshot because it advances independently across a potentially changing container.
   Date/Author: 2026-08-09 / Codex
 
 - Decision: remove per-handle `Drop for RowContainer`; explicit `close` closes/detaches the shared state exactly once and publishes `Closed` to every clone. Add final cleanup to `Drop for RowContainerShared`.
@@ -103,7 +107,7 @@ The plain semantic root is implemented and static-clean. `RowContainer` is now a
 
 The writer lane intentionally did not run Cargo or broader rewrite gates. Executable proof remains for the coordinator/root lane using the commands below. This checkpoint does not claim the still-separate `SortedRowContainer`, receipt/evidence work, or whole Go-package completion.
 
-The 2026-08-10 conditional-read follow-up now restores the remaining live-row boundary for direct hash/merge consumers. Its test-only baseline failed with `left: 1, right: 0`; the focused row-container suite and both hash/merge spill suites pass after the change. The combined affected-crate tests, strict Clippy, and all-target workspace check pass. The full workspace test sweep reached only the unrelated `nextgen_readonly_vars_source::declined_lease_runtime_seams_are_explicit` failure already reproduced at a clean baseline.
+The 2026-08-10 conditional-read follow-up now restores the remaining live-row boundary for direct hash/merge consumers. Its test-only baseline failed with `left: 1, right: 0`; the focused row-container suite and both hash/merge spill suites pass after the change. Final receipt review also exposed and closed the returned-lock lifetime gap: a shallow column-owner snapshot now remains readable while another handle spills to disk. The combined affected-crate tests, strict Clippy, and all-target workspace check pass. The full workspace test sweep reached only the unrelated `nextgen_readonly_vars_source::declined_lease_runtime_seams_are_explicit` failure already reproduced at a clean baseline.
 
 ## Context and Orientation
 
@@ -195,6 +199,6 @@ The exhaustive stale-shape scan found no implementation/callsite `set_status`, `
 
 `RowContainerRecord` continues to own exactly one `List`, an optional `DataInDiskByRows`, and an optional spill error. `List` remains the sole authority for memory accounting; this tranche does not alter `List::add`, `reset`, or `clear`. `DataInDiskByRows` remains the sole authority for row spill format and disk accounting.
 
-`RowContainerReader` owns a shallow container handle and an optional owned snapshot so its current chunk can survive a mid-read spill by another handle. This snapshot is the remaining non-production/cross-consumer ownership seam; direct `get_chunk` callers retain the live view. `Iterator4RowContainer` borrows the handle and owns only the one-row scratch chunk needed across its records guard. Neither returns a bare row borrow through the lock.
+`RowContainerReader` owns a shallow container handle and an optional deep snapshot so its current chunk can survive a mid-read spill by another handle. Direct `get_chunk` callers retain the guard-backed live view. Conditional in-memory row reads retain only shallow column owners and no container lock. `Iterator4RowContainer` borrows the handle and owns only the one-row scratch chunk needed across its records guard. Neither returns a bare row borrow through the lock.
 
-Revision note (2026-08-09): created the plan after mapping the authoritative Go flow, Rust seed, tracker reentrancy, ownership boundaries, tests, and direct consumers. It records the accepted shared-state phase architecture and the static-only writer-lane boundary. Updated it after implementation/review to narrow panic catching to spill, move automatic cleanup to the final shared inner, preserve `spillError`, serialize reset/fallback generations, restore public mutable receivers, keep the live `get_chunk` view, and name the reader snapshot seam.
+Revision note (2026-08-09): created the plan after mapping the authoritative Go flow, Rust seed, tracker reentrancy, ownership boundaries, tests, and direct consumers. It records the accepted shared-state phase architecture and the static-only writer-lane boundary. Updated it after implementation/review to narrow panic catching to spill, move automatic cleanup to the final shared inner, preserve `spillError`, serialize reset/fallback generations, restore public mutable receivers, keep the live `get_chunk` view, and name the reader snapshot seam. Revised again on 2026-08-10 so conditional rows release the records lock before return while shallow owners keep their data alive across spill.
