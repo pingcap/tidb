@@ -23,7 +23,7 @@
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use crate::hash_agg::{AggFunc, AggKind, HashAggExec};
 use crate::mem_quota::{OomAction, StatementMemory};
-use crate::test_temp_storage::{guard as temp_dir_guard, scratch_dir as scratch_temp_dir};
+use crate::test_temp_storage::{scratch_dir as scratch_temp_dir, storage as test_storage};
 use std::collections::BTreeMap;
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
@@ -262,9 +262,7 @@ fn tight_quota() -> i64 {
 /// THE AGGREGATION SPILL TEST.
 #[test]
 fn an_over_quota_group_by_answers_exactly_what_the_unspilled_one_answers() {
-    let _guard = temp_dir_guard();
     let dir = scratch_temp_dir("hashagg");
-    tidb_util::disk::set_temp_storage_path(&dir);
 
     let rows = interleaved_rows();
 
@@ -277,7 +275,8 @@ fn an_over_quota_group_by_answers_exactly_what_the_unspilled_one_answers() {
     reference.close().unwrap();
 
     // The same aggregation under a quota it cannot hold its groups within.
-    let memory = StatementMemory::new(tight_quota(), OomAction::Cancel, 42);
+    let memory = StatementMemory::new(tight_quota(), OomAction::Cancel, 42)
+        .with_spill_storage(test_storage(&dir));
     let mut exec = grouped(&rows, 64, memory);
     exec.open().unwrap();
     let mut got = BTreeMap::new();
@@ -320,6 +319,7 @@ fn an_over_quota_group_by_answers_exactly_what_the_unspilled_one_answers() {
         spill_files_in(&dir).is_empty(),
         "close must remove every spill file"
     );
+    drop(exec);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -328,12 +328,11 @@ fn an_over_quota_group_by_answers_exactly_what_the_unspilled_one_answers() {
 /// no file. The spill is what saves it, not luck.
 #[test]
 fn the_same_group_by_raises_8175_when_tmp_storage_is_disabled() {
-    let _guard = temp_dir_guard();
     let dir = scratch_temp_dir("hashagggate");
-    tidb_util::disk::set_temp_storage_path(&dir);
 
-    let memory =
-        StatementMemory::new(tight_quota(), OomAction::Cancel, 42).with_tmp_storage_on_oom(false);
+    let memory = StatementMemory::new(tight_quota(), OomAction::Cancel, 42)
+        .with_spill_storage(test_storage(&dir))
+        .with_tmp_storage_on_oom(false);
     let mut exec = grouped(&interleaved_rows(), 64, memory);
     exec.open().unwrap();
     let mut req = exec.new_chunk();
@@ -342,6 +341,7 @@ fn the_same_group_by_raises_8175_when_tmp_storage_is_disabled() {
         other => panic!("expected 8175 with tmp storage disabled, got {other:?}"),
     }
     assert!(spill_files_in(&dir).is_empty(), "no file may be written");
+    drop(exec);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -350,11 +350,10 @@ fn the_same_group_by_raises_8175_when_tmp_storage_is_disabled() {
 /// over the quota and the statement would die at 8175 anyway.
 #[test]
 fn each_round_gives_the_statements_budget_back() {
-    let _guard = temp_dir_guard();
     let dir = scratch_temp_dir("hashaggbudget");
-    tidb_util::disk::set_temp_storage_path(&dir);
 
-    let memory = StatementMemory::new(tight_quota(), OomAction::Cancel, 42);
+    let memory = StatementMemory::new(tight_quota(), OomAction::Cancel, 42)
+        .with_spill_storage(test_storage(&dir));
     let mut exec = grouped(&interleaved_rows(), 64, memory.clone());
     let got = drain(&mut exec);
     assert_eq!(got.len(), GROUPS as usize);
@@ -365,5 +364,7 @@ fn each_round_gives_the_statements_budget_back() {
         0,
         "close must return every byte to the statement"
     );
+    drop(exec);
+    drop(memory);
     let _ = std::fs::remove_dir_all(&dir);
 }

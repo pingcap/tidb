@@ -61,9 +61,10 @@
 //! runs to completion here where TiDB cancels it.
 
 use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use tidb_datatype::{estimated_mem_usage, Datum};
+use tidb_util::disk::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
 use tidb_util::memory::{
     ActionOnExceed, ArcAction, BaseOomAction, LogOnExceed, Tracker, DEF_MEM_QUOTA_QUERY,
     DEF_PANIC_PRIORITY, LABEL_FOR_SESSION, LABEL_FOR_SQL_TEXT,
@@ -166,6 +167,22 @@ impl ActionOnExceed for CancelOnExceed {
     }
 }
 
+fn fallback_spill_storage() -> Arc<SpillStorage> {
+    static STORAGE: OnceLock<Arc<SpillStorage>> = OnceLock::new();
+    Arc::clone(STORAGE.get_or_init(|| {
+        let path =
+            std::env::temp_dir().join(format!("tidb-rust-standalone-spill-{}", std::process::id()));
+        Arc::new(
+            SpillStorage::open(SpillStorageSpec {
+                path,
+                quota_bytes: -1,
+                encryption: SpillEncryptionMethod::Plaintext,
+            })
+            .expect("standalone executor spill storage"),
+        )
+    }))
+}
+
 /// One statement's memory budget: the session tracker holding
 /// `tidb_mem_quota_query` and the statement tracker every operator attaches
 /// to.
@@ -177,6 +194,9 @@ impl ActionOnExceed for CancelOnExceed {
 pub struct StatementMemory {
     session: Arc<Tracker>,
     stmt: Arc<Tracker>,
+    disk_session: Arc<Tracker>,
+    disk_stmt: Arc<Tracker>,
+    spill_storage: Option<Arc<SpillStorage>>,
     /// `@@tidb_enable_tmp_storage_on_oom` (Go `vardef.EnableTmpStorageOnOOM`,
     /// default ON): whether an operator that can spill is allowed to, instead
     /// of failing the statement with 8175.
@@ -235,9 +255,18 @@ impl StatementMemory {
         stmt.session_id.store(connection_id, SeqCst);
         stmt.attach_to(&session);
 
+        let disk_session = Tracker::new(LABEL_FOR_SESSION, -1);
+        disk_session.session_id.store(connection_id, SeqCst);
+        let disk_stmt = Tracker::new(LABEL_FOR_SQL_TEXT, -1);
+        disk_stmt.session_id.store(connection_id, SeqCst);
+        disk_stmt.attach_to(&disk_session);
+
         StatementMemory {
             session,
             stmt,
+            disk_session,
+            disk_stmt,
+            spill_storage: None,
             tmp_storage_on_oom: true,
             killer,
         }
@@ -249,7 +278,29 @@ impl StatementMemory {
     #[must_use]
     pub fn with_tmp_storage_on_oom(mut self, enabled: bool) -> Self {
         self.tmp_storage_on_oom = enabled;
+        self.refresh_global_disk_attachment();
         self
+    }
+
+    /// Installs the process spill-storage authority captured at server
+    /// startup. This must happen before executor construction so every disk
+    /// tracker and physical file shares one policy.
+    #[must_use]
+    pub fn with_spill_storage(mut self, storage: Arc<SpillStorage>) -> Self {
+        self.disk_session.detach();
+        self.spill_storage = Some(storage);
+        self.refresh_global_disk_attachment();
+        self
+    }
+
+    fn refresh_global_disk_attachment(&self) {
+        self.disk_session.detach();
+        if self.tmp_storage_on_oom {
+            if let Some(storage) = &self.spill_storage {
+                self.disk_session
+                    .attach_to_global_tracker(storage.global_tracker());
+            }
+        }
     }
 
     /// Whether spilling is enabled for this statement.
@@ -283,6 +334,37 @@ impl StatementMemory {
             .store(self.session.session_id.load(SeqCst), SeqCst);
         tracker.attach_to(&self.stmt);
         tracker
+    }
+
+    /// A fresh operator disk tracker attached to the statement disk root.
+    #[must_use]
+    pub fn operator_disk_tracker(&self, label: i64) -> Arc<Tracker> {
+        let tracker = Tracker::new(label, -1);
+        tracker
+            .session_id
+            .store(self.session.session_id.load(SeqCst), SeqCst);
+        tracker.attach_to(&self.disk_stmt);
+        tracker
+    }
+
+    /// Immutable storage authority used by physical spill stores.
+    ///
+    /// Production sessions always install the server-owned authority. The
+    /// lazy process-local fallback keeps standalone executor/unit construction
+    /// safe without a mutable global configuration seam.
+    #[must_use]
+    pub fn spill_storage(&self) -> Arc<SpillStorage> {
+        self.spill_storage
+            .as_ref()
+            .map_or_else(fallback_spill_storage, Arc::clone)
+    }
+
+    /// The explicitly installed server authority, without creating the
+    /// standalone fallback. Statement-context rebuilds use this to preserve
+    /// the session's startup policy across quota changes.
+    #[must_use]
+    pub(crate) fn configured_spill_storage(&self) -> Option<Arc<SpillStorage>> {
+        self.spill_storage.as_ref().map(Arc::clone)
     }
 
     /// Whether the quota has been exceeded and the statement must stop, as
@@ -416,6 +498,18 @@ impl WriteMemory {
 mod tests {
     use super::*;
 
+    fn test_spill_storage(name: &str) -> Arc<SpillStorage> {
+        Arc::new(
+            SpillStorage::open(SpillStorageSpec {
+                path: std::env::temp_dir()
+                    .join(format!("tidb-executor-{name}-spill-{}", std::process::id())),
+                quota_bytes: -1,
+                encryption: SpillEncryptionMethod::Plaintext,
+            })
+            .unwrap(),
+        )
+    }
+
     #[test]
     fn the_shipped_default_is_cancel_at_one_gibibyte() {
         // Captured: `select @@tidb_mem_quota_query` -> 1073741824, and
@@ -474,5 +568,45 @@ mod tests {
         let op = mem.operator_tracker(3);
         op.consume(1 << 40);
         assert!(mem.check().is_ok());
+    }
+
+    #[test]
+    fn statement_disk_usage_reaches_the_one_startup_global_tracker() {
+        let storage = test_spill_storage("global-hierarchy");
+        let mem = StatementMemory::new(4096, OomAction::Cancel, 7)
+            .with_spill_storage(Arc::clone(&storage));
+        let operator = mem.operator_disk_tracker(42);
+
+        operator.consume(64);
+        assert_eq!(mem.disk_stmt.bytes_consumed(), 64);
+        assert_eq!(mem.disk_session.bytes_consumed(), 64);
+        assert_eq!(storage.global_tracker().bytes_consumed(), 64);
+
+        operator.consume(-64);
+        assert_eq!(storage.global_tracker().bytes_consumed(), 0);
+        let path = storage.path().to_owned();
+        drop(operator);
+        drop(mem);
+        drop(storage);
+        std::fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn disabling_tmp_storage_detaches_the_session_from_global_disk_quota() {
+        let storage = test_spill_storage("disabled-hierarchy");
+        let mem = StatementMemory::new(4096, OomAction::Cancel, 7)
+            .with_spill_storage(Arc::clone(&storage))
+            .with_tmp_storage_on_oom(false);
+        let operator = mem.operator_disk_tracker(42);
+
+        operator.consume(64);
+        assert_eq!(mem.disk_stmt.bytes_consumed(), 64);
+        assert_eq!(mem.disk_session.bytes_consumed(), 64);
+        assert_eq!(storage.global_tracker().bytes_consumed(), 0);
+        let path = storage.path().to_owned();
+        drop(operator);
+        drop(mem);
+        drop(storage);
+        std::fs::remove_dir_all(path).unwrap();
     }
 }

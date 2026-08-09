@@ -67,6 +67,7 @@ use tidb_chunk::list::RowPtr;
 use tidb_chunk::row_container::{RowContainer, SpillDiskAction};
 use tidb_datatype::{Collation, Datum, EvalType, FieldType};
 use tidb_expr::expression::Expression;
+use tidb_util::disk::SpillStorage;
 use tidb_util::memory::Tracker;
 
 /// The comparison domain a hash join key column is encoded in.
@@ -338,9 +339,13 @@ impl BuildTable {
     /// An empty container over the build side's types, chunked at
     /// `chunk_size` -- Go `newHashRowContainer`, which passes
     /// `SessionVars.MaxChunkSize`.
-    pub(crate) fn new(field_types: &[FieldType], chunk_size: usize) -> Self {
+    pub(crate) fn new(
+        field_types: &[FieldType],
+        chunk_size: usize,
+        spill_storage: Arc<SpillStorage>,
+    ) -> Self {
         BuildTable {
-            rows: RowContainer::new(field_types, chunk_size),
+            rows: RowContainer::new(field_types, chunk_size, spill_storage),
             buckets: HashMap::new(),
         }
     }

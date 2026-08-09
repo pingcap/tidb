@@ -23,6 +23,7 @@
 
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::{DriverError, Session, StatementKind, StmtOutput};
 
@@ -371,7 +372,7 @@ impl Session {
             allow_invalid_dates: has("ALLOW_INVALID_DATES"),
         };
         if !is_dml {
-            return tidb_executor::StmtContext::for_query()
+            let ctx = tidb_executor::StmtContext::for_query()
                 // A read's error levels do not depend on the mode, but DDL
                 // takes this same context and Go's DDL checks DO read
                 // `SQLMode.HasStrictMode()`. See `StmtContext::with_strict`.
@@ -401,9 +402,10 @@ impl Session {
                 .with_sequences(self.sequence_snapshot())
                 .with_sql_mode(scanner_sql_mode_of(&mode))
                 .with_clock(clock, zone);
+            return self.attach_spill_storage(ctx);
         }
         let (increment, offset) = self.auto_increment_step();
-        tidb_executor::StmtContext::for_dml(
+        let ctx = tidb_executor::StmtContext::for_dml(
             has("ERROR_FOR_DIVISION_BY_ZERO"),
             has("STRICT_TRANS_TABLES") || has("STRICT_ALL_TABLES"),
             ignore_err,
@@ -436,7 +438,15 @@ impl Session {
         .with_join_reorder_through_proj(join_reorder_through_proj)
         .with_join_reorder_through_sel(join_reorder_through_sel)
         .with_outer_join_reorder(outer_join_reorder)
-        .with_static_partition_prune(static_partition_prune)
+        .with_static_partition_prune(static_partition_prune);
+        self.attach_spill_storage(ctx)
+    }
+
+    fn attach_spill_storage(&self, ctx: tidb_executor::StmtContext) -> tidb_executor::StmtContext {
+        match &self.spill_storage {
+            Some(storage) => ctx.with_spill_storage(Arc::clone(storage)),
+            None => ctx,
+        }
     }
 
     /// Go `SessionVars.ForeignKeyChecks`, read off `@@foreign_key_checks`.

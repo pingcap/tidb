@@ -1587,6 +1587,11 @@ mod tests {
             max_topn_rows: 1_024,
             schema_lease: Duration::from_millis(45_000),
             cluster_security: tidb_pd_client::ClusterSecurity::plaintext(),
+            spill_storage: tidb_util::disk::SpillStorageSpec {
+                path: std::env::temp_dir().join("tidb-sql-node-unit-spill"),
+                quota_bytes: -1,
+                encryption: tidb_util::disk::SpillEncryptionMethod::Plaintext,
+            },
         }
     }
 

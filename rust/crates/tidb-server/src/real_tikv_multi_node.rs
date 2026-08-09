@@ -976,13 +976,21 @@ fn emit_multi_query_transport_publication(
 
 /// Starts the existing listener/lifecycle against the two-relation factory.
 pub fn run_configured_multi_node(config: NodeConfig) -> Result<(), RunConfiguredNodeError> {
+    let spill_storage = crate::open_spill_storage(&config)?;
+    run_configured_multi_node_with_spill(config, spill_storage)
+}
+
+pub(crate) fn run_configured_multi_node_with_spill(
+    config: NodeConfig,
+    spill_storage: Arc<tidb_util::disk::SpillStorage>,
+) -> Result<(), RunConfiguredNodeError> {
     let users =
         ConfiguredUserStore::load(&config.auth_file).map_err(RunConfiguredNodeError::Auth)?;
     crate::real_tikv_node::apply_expired_password_policy(&config, &users);
     let users = Arc::new(users);
     let (factory, authority) =
         RealTiKvMultiSessionFactory::connect(&config).map_err(RunConfiguredNodeError::Engine)?;
-    run_bound_multi_node(config, factory, authority, users, None)
+    run_bound_multi_node(config, factory, authority, users, spill_storage, None)
 }
 
 /// Starts the same listener/lifecycle over an already-connected two-table
@@ -997,6 +1005,7 @@ pub(crate) fn run_bound_multi_node(
     factory: RealTiKvMultiSessionFactory,
     authority: ProductionReadProcessAuthority,
     users: Arc<ConfiguredUserStore>,
+    spill_storage: Arc<tidb_util::disk::SpillStorage>,
     privilege_reloader: Option<PrivilegeReloader>,
 ) -> Result<(), RunConfiguredNodeError> {
     let factory = Arc::new(factory);
@@ -1016,6 +1025,7 @@ pub(crate) fn run_bound_multi_node(
         .collect::<Vec<_>>()
         .join(",");
     run_with_process_shutdown(factory, authority, move |factory| {
+        let _spill_storage = spill_storage;
         // Held for exactly the node's run: the reload thread it owns is
         // stopped by `Drop` when this closure returns, whether the node
         // exited normally or by error.

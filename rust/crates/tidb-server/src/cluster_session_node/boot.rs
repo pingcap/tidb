@@ -42,6 +42,14 @@ use super::{
 /// Starts the convergence node: wide SQL over cluster storage and cluster
 /// accounts, served on the MySQL port.
 pub fn run_cluster_session_node(config: NodeConfig) -> Result<(), RunConfiguredNodeError> {
+    let spill_storage = crate::open_spill_storage(&config)?;
+    run_cluster_session_node_with_spill(config, spill_storage)
+}
+
+pub(crate) fn run_cluster_session_node_with_spill(
+    config: NodeConfig,
+    spill_storage: Arc<tidb_util::disk::SpillStorage>,
+) -> Result<(), RunConfiguredNodeError> {
     let mut loaded = None;
     let authority = ProductionReadProcessAuthority::connect_with_catalog(
         config.pd_endpoints.clone(),
@@ -160,7 +168,8 @@ pub fn run_cluster_session_node(config: NodeConfig) -> Result<(), RunConfiguredN
                 CONTROL_PLANE_TIMEOUT,
             )),
         )
-        .with_cop_scans(cop_scans),
+        .with_cop_scans(cop_scans)
+        .with_spill_storage(spill_storage),
     );
     let skipped = render_skipped(factory.boot_skipped_tables());
     let stats_receipt = stats.receipt();

@@ -161,6 +161,7 @@ impl<C: Columns> SortExec<C> {
         memory: StatementMemory,
     ) -> Self {
         let tracker = memory.operator_tracker(meta.id());
+        let disk_tracker = memory.operator_disk_tracker(meta.id());
         let spill_limit = memory.quota() / 10;
         let enable_tmp_storage_on_oom = memory.tmp_storage_on_oom();
         SortExec {
@@ -172,7 +173,7 @@ impl<C: Columns> SortExec<C> {
             partitions: Vec::new(),
             memory,
             tracker,
-            disk_tracker: tidb_util::disk::new_tracker(-1, -1),
+            disk_tracker,
             enable_tmp_storage_on_oom,
             spill_limit,
             need_spill: Arc::new(AtomicBool::new(false)),
@@ -214,7 +215,8 @@ impl<C: Columns> SortExec<C> {
     /// Go `switchToNewSortPartition`: start a fresh run and point the spill
     /// action at it.
     fn new_partition(&mut self, fields: &[FieldType]) -> SortPartition {
-        let mut partition = SortPartition::new(fields.to_vec(), &self.tracker);
+        let mut partition =
+            SortPartition::new(fields.to_vec(), &self.tracker, self.memory.spill_storage());
         partition.set_spill_chunk_size(self.spill_chunk_size);
         if self.enable_tmp_storage_on_oom {
             partition.disk_tracker().attach_to(&self.disk_tracker);
@@ -794,8 +796,7 @@ mod tests {
     /// must not run at the same time inside one test binary -- and that
     /// includes the aggregation's and the TopN's spill tests, which is why the
     /// lock is the CRATE's rather than this module's.
-    use crate::test_temp_storage::guard as temp_dir_guard;
-    use crate::test_temp_storage::scratch_dir as scratch_temp_dir;
+    use crate::test_temp_storage::{scratch_dir as scratch_temp_dir, storage as test_storage};
 
     fn spill_files_in(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
         std::fs::read_dir(dir)
@@ -847,9 +848,7 @@ mod tests {
     /// unsorted sequence, and so would one that picked the wrong end.
     #[test]
     fn a_sort_over_the_quota_spills_to_disk_and_returns_every_row() {
-        let _guard = temp_dir_guard();
         let dir = scratch_temp_dir("sortexec");
-        tidb_util::disk::set_temp_storage_path(&dir);
 
         let n = 8192i64;
         let rows: Vec<Vec<Option<i64>>> = (0..n).map(|i| vec![Some((i * 7919) % n)]).collect();
@@ -865,7 +864,8 @@ mod tests {
         reference.close().unwrap();
 
         // Now the same sort under a quota it cannot hold, spilling enabled.
-        let memory = StatementMemory::new(1 << 16, OomAction::Cancel, 42);
+        let memory = StatementMemory::new(1 << 16, OomAction::Cancel, 42)
+            .with_spill_storage(test_storage(&dir));
         let mut exec = multi_chunk_sorter(&rows, asc(), 256, memory);
         // Small spill chunks so each run becomes many spilled chunks, the
         // shape Go's `SetSmallSpillChunkSizeForTest` produces.
@@ -908,6 +908,7 @@ mod tests {
             spill_files_in(&dir).is_empty(),
             "close must remove every spill file"
         );
+        drop(exec);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -915,16 +916,15 @@ mod tests {
     /// both directions rather than only the one the ascending test pins.
     #[test]
     fn a_spilled_descending_sort_returns_every_row_in_order() {
-        let _guard = temp_dir_guard();
         let dir = scratch_temp_dir("sortdesc");
-        tidb_util::disk::set_temp_storage_path(&dir);
 
         let n = 8192i64;
         let rows: Vec<Vec<Option<i64>>> = (0..n).map(|i| vec![Some((i * 7919) % n)]).collect();
         let mut expected: Vec<i64> = rows.iter().map(|r| r[0].expect("no nulls")).collect();
         expected.sort_unstable_by(|a, b| b.cmp(a));
 
-        let memory = StatementMemory::new(1 << 16, OomAction::Cancel, 42);
+        let memory = StatementMemory::new(1 << 16, OomAction::Cancel, 42)
+            .with_spill_storage(test_storage(&dir));
         let mut exec = multi_chunk_sorter(
             &rows,
             vec![SortByItem {
@@ -940,6 +940,7 @@ mod tests {
         assert!(exec.num_non_empty_partitions() > 1, "this test needs runs");
         assert_eq!(got, expected);
         exec.close().unwrap();
+        drop(exec);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -947,12 +948,11 @@ mod tests {
     /// the SAME quota raises 8175 instead of spilling, and leaves no file.
     #[test]
     fn the_same_sort_raises_8175_when_tmp_storage_is_disabled() {
-        let _guard = temp_dir_guard();
         let dir = scratch_temp_dir("sortgate");
-        tidb_util::disk::set_temp_storage_path(&dir);
 
-        let memory =
-            StatementMemory::new(1 << 15, OomAction::Cancel, 42).with_tmp_storage_on_oom(false);
+        let memory = StatementMemory::new(1 << 15, OomAction::Cancel, 42)
+            .with_spill_storage(test_storage(&dir))
+            .with_tmp_storage_on_oom(false);
         let mut exec = sorter_with_memory(
             1,
             &one_col_rows(4096),
@@ -969,6 +969,7 @@ mod tests {
             other => panic!("expected 8175 with tmp storage disabled, got {other:?}"),
         }
         assert!(spill_files_in(&dir).is_empty(), "no file may be written");
+        drop(exec);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

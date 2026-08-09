@@ -160,23 +160,14 @@ pub use tidb_expr::{
 pub use topn::TopNExec;
 pub use view::{run_create_view_in, run_drop_view_in, view_column_list};
 
-/// The spill tests all point the PROCESS-WIDE temporary-storage path at their
-/// own scratch directory, so exactly one of them may run at a time. ONE lock
-/// for the whole crate: a per-module lock does not serialise modules against
-/// each other, which is how a test in one module can delete the directory
-/// another is writing into. (`tidb-chunk` carries the same module for the same
-/// reason.)
+/// Explicit isolated spill authorities for executor tests.
 #[cfg(test)]
 pub(crate) mod test_temp_storage {
+    use std::path::Path;
     use std::path::PathBuf;
-    use std::sync::{Mutex, MutexGuard, PoisonError};
+    use std::sync::Arc;
 
-    static LOCK: Mutex<()> = Mutex::new(());
-
-    /// Held for the duration of a test that sets the temporary-storage path.
-    pub(crate) fn guard() -> MutexGuard<'static, ()> {
-        LOCK.lock().unwrap_or_else(PoisonError::into_inner)
-    }
+    use tidb_util::disk::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
 
     /// A fresh scratch directory named after the test.
     pub(crate) fn scratch_dir(name: &str) -> PathBuf {
@@ -184,5 +175,17 @@ pub(crate) mod test_temp_storage {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("scratch temp dir");
         dir
+    }
+
+    /// Opens one immutable authority over `path` for the test statement.
+    pub(crate) fn storage(path: &Path) -> Arc<SpillStorage> {
+        Arc::new(
+            SpillStorage::open(SpillStorageSpec {
+                path: path.to_owned(),
+                quota_bytes: -1,
+                encryption: SpillEncryptionMethod::Plaintext,
+            })
+            .expect("test spill storage"),
+        )
     }
 }

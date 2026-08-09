@@ -20,14 +20,20 @@
 //! signed-BIGINT table-column catalogs. Unknown or duplicate options fail startup so an
 //! operator cannot believe an unsupported TiDB setting was applied.
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::fmt;
+use std::fs;
 use std::net::IpAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use base64::engine::general_purpose::URL_SAFE;
+use base64::Engine;
+use tidb_config::config_tree::Config as SourceConfig;
+use tidb_config::configtypes::parse_go_duration;
 use tidb_pd_client::ClusterSecurity;
 use tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET;
+use tidb_util::disk::{SpillEncryptionMethod, SpillStorageSpec};
 
 const DEFAULT_MAX_CONNECTIONS: usize = 8;
 const MAX_CONNECTION_WORKERS: usize = 256;
@@ -185,10 +191,14 @@ pub struct NodeConfig {
     /// `--mysql-ssl=off`). `--no-auto-tls` restores the plaintext-only port.
     pub auto_tls: bool,
     /// Cluster-facing gRPC transport security (TiDB's `[security]`
-    /// `cluster-ssl-ca` / `cluster-ssl-cert` / `cluster-ssl-key` /
-    /// `cluster-verify-cn`). Plaintext by default; setting a CA path engages
-    /// TLS for the PD, TiKV, and etcd transports.
+    /// `cluster-ssl-ca` / `cluster-ssl-cert` / `cluster-ssl-key`). Plaintext
+    /// by default; setting a CA path engages TLS for the PD, TiKV, and etcd
+    /// transports. `cluster-verify-cn` is rejected until this outbound-only
+    /// node owns an inbound cluster endpoint on which it can be enforced.
     pub cluster_security: ClusterSecurity,
+    /// Fully resolved process spill policy. Startup acquires the directory
+    /// lease and validates capacity before opening any SQL listener.
+    pub spill_storage: SpillStorageSpec,
 }
 
 /// Startup configuration failure.
@@ -202,6 +212,16 @@ pub enum NodeConfigError {
     DuplicateOption(String),
     /// The bounded executable does not implement this option.
     UnknownOption(String),
+    /// The TOML file could not be read or decoded.
+    ConfigFile {
+        /// Configured path.
+        path: PathBuf,
+        /// Stable I/O or decode reason.
+        reason: String,
+    },
+    /// The source config recognizes these leaves, but this node has no owner
+    /// for their behavior and therefore refuses to pretend to honor them.
+    UnsupportedConfigOptions(Vec<String>),
     /// An option did not have a following value.
     MissingValue(String),
     /// An option value was malformed or outside the admitted domain.
@@ -224,6 +244,14 @@ impl fmt::Display for NodeConfigError {
             Self::MissingOption(option) => write!(formatter, "missing required option {option}"),
             Self::DuplicateOption(option) => write!(formatter, "duplicate option {option}"),
             Self::UnknownOption(option) => write!(formatter, "unsupported option {option}"),
+            Self::ConfigFile { path, reason } => {
+                write!(formatter, "cannot load config {}: {reason}", path.display())
+            }
+            Self::UnsupportedConfigOptions(options) => write!(
+                formatter,
+                "unsupported config options: {}",
+                options.join(", ")
+            ),
             Self::MissingValue(option) => write!(formatter, "missing value for {option}"),
             Self::InvalidValue { option, reason } => {
                 write!(formatter, "invalid value for {option}: {reason}")
@@ -243,6 +271,144 @@ impl fmt::Display for NodeConfigError {
 }
 
 impl std::error::Error for NodeConfigError {}
+
+const SUPPORTED_CONFIG_LEAVES: &[&str] = &[
+    "host",
+    "instance.max_connections",
+    "lease",
+    "max-allowed-packet",
+    "path",
+    "port",
+    "security.auto-tls",
+    "security.cluster-ssl-ca",
+    "security.cluster-ssl-cert",
+    "security.cluster-ssl-key",
+    "security.disconnect-on-expired-password",
+    "security.spilled-file-encryption-method",
+    "security.ssl-cert",
+    "security.ssl-key",
+    "store",
+    "tmp-storage-path",
+    "tmp-storage-quota",
+];
+
+struct LoadedSourceConfig {
+    config: SourceConfig,
+    defined: BTreeSet<String>,
+}
+
+impl LoadedSourceConfig {
+    fn is_defined(&self, key: &str) -> bool {
+        self.defined.contains(key)
+    }
+}
+
+fn load_source_config(path: &str) -> Result<LoadedSourceConfig, NodeConfigError> {
+    let path = PathBuf::from(path);
+    let text = fs::read_to_string(&path).map_err(|error| NodeConfigError::ConfigFile {
+        path: path.clone(),
+        reason: error.to_string(),
+    })?;
+    let table: toml::Table =
+        toml::from_str(&text).map_err(|error| NodeConfigError::ConfigFile {
+            path: path.clone(),
+            reason: error.to_string(),
+        })?;
+    let mut config = SourceConfig::default();
+    config
+        .load_str(path.to_string_lossy().as_ref(), &text)
+        .map_err(|error| NodeConfigError::ConfigFile {
+            path: path.clone(),
+            reason: error.to_string(),
+        })?;
+    config
+        .removed_variable_check(&text)
+        .map_err(|reason| NodeConfigError::ConfigFile {
+            path: path.clone(),
+            reason,
+        })?;
+
+    let mut defined = BTreeSet::new();
+    collect_toml_leaves(&table, "", &mut defined);
+    let supported: BTreeSet<&str> = SUPPORTED_CONFIG_LEAVES.iter().copied().collect();
+    let unsupported = defined
+        .iter()
+        .filter(|key| !supported.contains(key.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !unsupported.is_empty() {
+        return Err(NodeConfigError::UnsupportedConfigOptions(unsupported));
+    }
+    Ok(LoadedSourceConfig { config, defined })
+}
+
+fn collect_toml_leaves(table: &toml::Table, prefix: &str, leaves: &mut BTreeSet<String>) {
+    for (name, value) in table {
+        let path = if prefix.is_empty() {
+            name.clone()
+        } else {
+            format!("{prefix}.{name}")
+        };
+        match value {
+            toml::Value::Table(nested) => collect_toml_leaves(nested, &path, leaves),
+            _ => {
+                leaves.insert(path);
+            }
+        }
+    }
+}
+
+fn parse_file_schema_lease(value: &str) -> Result<Duration, NodeConfigError> {
+    let nanos = parse_go_duration(value)
+        .or_else(|_| parse_go_duration(&format!("{value}s")))
+        .map_err(|reason| invalid("lease", &reason))?;
+    if nanos < 0 {
+        return Err(invalid("lease", "value must not be negative"));
+    }
+    if nanos == 0 {
+        return Ok(Duration::from_millis(DEFAULT_SCHEMA_LEASE_MS));
+    }
+    Ok(Duration::from_nanos(
+        u64::try_from(nanos).expect("positive i64 fits u64"),
+    ))
+}
+
+fn nonempty(value: String) -> Option<String> {
+    (!value.is_empty()).then_some(value)
+}
+
+fn resolve_spill_storage(
+    configured_base: Option<&str>,
+    quota_bytes: i64,
+    encryption: SpillEncryptionMethod,
+    host: IpAddr,
+    port: u16,
+) -> SpillStorageSpec {
+    let os_temp = std::env::temp_dir();
+    let source_default = encoded_spill_path(&os_temp, "0.0.0.0", 4000);
+    let base = match configured_base {
+        None => os_temp,
+        Some(path) if std::path::Path::new(path) == source_default => std::env::temp_dir(),
+        Some(path) => PathBuf::from(path),
+    };
+    SpillStorageSpec {
+        path: encoded_spill_path(&base, &host.to_string(), port),
+        quota_bytes,
+        encryption,
+    }
+}
+
+fn encoded_spill_path(base: &std::path::Path, host: &str, port: u16) -> PathBuf {
+    let identity = format!("{host}:{port}/0.0.0.0:10080");
+    let encoded = URL_SAFE.encode(identity.as_bytes());
+    #[cfg(unix)]
+    let uid = rustix::process::getuid().as_raw().to_string();
+    #[cfg(not(unix))]
+    let uid = String::new();
+    base.join(format!("{uid}_tidb"))
+        .join(encoded)
+        .join("tmp-storage")
+}
 
 impl NodeConfig {
     /// Parses the source-shaped command line, including the executable name.
@@ -280,7 +446,7 @@ impl NodeConfig {
         let mut cluster_ssl_ca = None;
         let mut cluster_ssl_cert = None;
         let mut cluster_ssl_key = None;
-        let mut cluster_verify_cn = None;
+        let mut config_path = None;
 
         while let Some(argument) = pending.next() {
             if argument == "--help" || argument == "-h" {
@@ -369,8 +535,80 @@ impl NodeConfig {
                 "--cluster-ssl-ca" => set_once(&mut cluster_ssl_ca, option, value)?,
                 "--cluster-ssl-cert" => set_once(&mut cluster_ssl_cert, option, value)?,
                 "--cluster-ssl-key" => set_once(&mut cluster_ssl_key, option, value)?,
-                "--cluster-verify-cn" => set_once(&mut cluster_verify_cn, option, value)?,
+                "--config" => set_once(&mut config_path, option, value)?,
                 _ => return Err(NodeConfigError::UnknownOption(option.to_owned())),
+            }
+        }
+
+        let mut source = config_path.as_deref().map(load_source_config).transpose()?;
+        let mut file_schema_lease = None;
+        let mut temp_storage_base = None;
+        let mut temp_storage_quota = -1;
+        let mut spill_encryption = SpillEncryptionMethod::Plaintext;
+        let mut file_auto_tls = None;
+        let mut file_disconnect_on_expired_password = None;
+        if let Some(loaded) = source.as_ref() {
+            let config = &loaded.config;
+            if host.is_none() && loaded.is_defined("host") {
+                host = Some(config.host.clone());
+            }
+            if port.is_none() && loaded.is_defined("port") {
+                port = Some(config.port.to_string());
+            }
+            if path.is_none() && loaded.is_defined("path") {
+                path = Some(config.path.clone());
+            }
+            if store.is_none() && loaded.is_defined("store") {
+                store = Some(config.store.0.clone());
+            }
+            if max_allowed_packet.is_none() && loaded.is_defined("max-allowed-packet") {
+                max_allowed_packet = Some(config.max_allowed_packet.to_string());
+            }
+            if max_connections.is_none() && loaded.is_defined("instance.max_connections") {
+                max_connections = Some(config.instance.max_connections.to_string());
+            }
+            if schema_lease_ms.is_none() && loaded.is_defined("lease") {
+                file_schema_lease = Some(parse_file_schema_lease(&config.lease)?);
+            }
+            if ssl_cert.is_none() && loaded.is_defined("security.ssl-cert") {
+                ssl_cert = nonempty(config.security.ssl_cert.clone());
+            }
+            if ssl_key.is_none() && loaded.is_defined("security.ssl-key") {
+                ssl_key = nonempty(config.security.ssl_key.clone());
+            }
+            if cluster_ssl_ca.is_none() && loaded.is_defined("security.cluster-ssl-ca") {
+                cluster_ssl_ca = nonempty(config.security.cluster_ssl_ca.clone());
+            }
+            if cluster_ssl_cert.is_none() && loaded.is_defined("security.cluster-ssl-cert") {
+                cluster_ssl_cert = nonempty(config.security.cluster_ssl_cert.clone());
+            }
+            if cluster_ssl_key.is_none() && loaded.is_defined("security.cluster-ssl-key") {
+                cluster_ssl_key = nonempty(config.security.cluster_ssl_key.clone());
+            }
+            if loaded.is_defined("security.auto-tls") {
+                file_auto_tls = Some(config.security.auto_tls);
+            }
+            if loaded.is_defined("security.disconnect-on-expired-password") {
+                file_disconnect_on_expired_password =
+                    Some(config.security.disconnect_on_expired_password);
+            }
+            if loaded.is_defined("tmp-storage-path") {
+                temp_storage_base = Some(config.temp_storage_path.clone());
+            }
+            if loaded.is_defined("tmp-storage-quota") {
+                temp_storage_quota = config.temp_storage_quota;
+            }
+            if loaded.is_defined("security.spilled-file-encryption-method") {
+                spill_encryption = config
+                    .security
+                    .spilled_file_encryption_method
+                    .parse::<SpillEncryptionMethod>()
+                    .map_err(|error| {
+                        invalid(
+                            "security.spilled-file-encryption-method",
+                            &error.to_string(),
+                        )
+                    })?;
             }
         }
 
@@ -437,16 +675,61 @@ impl NodeConfig {
         }
         // A zero lease would make the reload thread spin; the parser rejects it
         // here so the node never has to.
-        let schema_lease = Duration::from_millis(match schema_lease_ms {
-            Some(value) => parse_positive_number("--lease-ms", &value)?,
-            None => DEFAULT_SCHEMA_LEASE_MS,
-        });
+        let schema_lease = match schema_lease_ms.as_deref() {
+            Some(value) => Duration::from_millis(parse_positive_number("--lease-ms", value)?),
+            None => {
+                file_schema_lease.unwrap_or_else(|| Duration::from_millis(DEFAULT_SCHEMA_LEASE_MS))
+            }
+        };
+        let auto_tls = if no_auto_tls {
+            false
+        } else {
+            file_auto_tls.unwrap_or(true)
+        };
+        let disconnect_on_expired_password = if no_disconnect_on_expired_password {
+            false
+        } else {
+            file_disconnect_on_expired_password.unwrap_or(true)
+        };
         let cluster_security = build_cluster_security(
-            cluster_ssl_ca,
-            cluster_ssl_cert,
-            cluster_ssl_key,
-            cluster_verify_cn,
+            cluster_ssl_ca.clone(),
+            cluster_ssl_cert.clone(),
+            cluster_ssl_key.clone(),
         )?;
+        if let Some(loaded) = source.as_mut() {
+            let config = &mut loaded.config;
+            config.host = host.to_string();
+            config.port = u32::from(port);
+            config.store = tidb_config::store::StoreType("tikv".to_owned());
+            config.path = pd_endpoints.join(",");
+            config.max_allowed_packet = u64::try_from(max_allowed_packet).unwrap_or(u64::MAX);
+            config.instance.max_connections =
+                u32::try_from(max_connections).expect("bounded worker count fits u32");
+            if let Some(value) = schema_lease_ms.as_deref() {
+                config.lease = format!("{value}ms");
+            }
+            config.security.ssl_cert = ssl_cert.clone().unwrap_or_default();
+            config.security.ssl_key = ssl_key.clone().unwrap_or_default();
+            config.security.auto_tls = auto_tls;
+            config.security.disconnect_on_expired_password = disconnect_on_expired_password;
+            config.security.cluster_ssl_ca = cluster_ssl_ca.clone().unwrap_or_default();
+            config.security.cluster_ssl_cert = cluster_ssl_cert.clone().unwrap_or_default();
+            config.security.cluster_ssl_key = cluster_ssl_key.clone().unwrap_or_default();
+            config.security.spilled_file_encryption_method =
+                spill_encryption.as_config_value().to_owned();
+            config.temp_storage_quota = temp_storage_quota;
+            config.temp_storage_path = temp_storage_base.clone().unwrap_or_default();
+            config
+                .valid()
+                .map_err(|reason| invalid("--config", &reason))?;
+        }
+        let spill_storage = resolve_spill_storage(
+            temp_storage_base.as_deref(),
+            temp_storage_quota,
+            spill_encryption,
+            host,
+            port,
+        );
 
         Ok(Self {
             host,
@@ -464,16 +747,17 @@ impl NodeConfig {
             cluster_session,
             ssl_cert: ssl_cert.map(PathBuf::from),
             ssl_key: ssl_key.map(PathBuf::from),
-            auto_tls: !no_auto_tls,
-            disconnect_on_expired_password: !no_disconnect_on_expired_password,
+            auto_tls,
+            disconnect_on_expired_password,
             cluster_security,
+            spill_storage,
         })
     }
 
     /// Stable usage text printed by the executable for `--help`.
     #[must_use]
     pub const fn help_text() -> &'static str {
-        "Usage: tidb-server --path <pd[,pd...]> \
+        "Usage: tidb-server [--config <tidb.toml>] --path <pd[,pd...]> \
 [--read-table <database> <table> <table-id> <column-count> \
 <name>:<id>:<clustered-pk|stored-not-null> \
 [<name>:<id>:<clustered-pk|stored-not-null> ...]] \
@@ -486,8 +770,7 @@ impl NodeConfig {
 [--max-allowed-packet <bytes>] \
 [--ssl-cert <cert-pem> --ssl-key <key-pem>] [--no-auto-tls] \
 [--no-disconnect-on-expired-password] \
-[--cluster-ssl-ca <ca-pem> [--cluster-ssl-cert <cert-pem> --cluster-ssl-key <key-pem>] \
-[--cluster-verify-cn <cn[,cn...]>]]"
+[--cluster-ssl-ca <ca-pem> [--cluster-ssl-cert <cert-pem> --cluster-ssl-key <key-pem>]]"
     }
 }
 
@@ -863,9 +1146,8 @@ fn build_cluster_security(
     ca: Option<String>,
     cert: Option<String>,
     key: Option<String>,
-    verify_cn: Option<String>,
 ) -> Result<ClusterSecurity, NodeConfigError> {
-    if ca.is_none() && (cert.is_some() || key.is_some() || verify_cn.is_some()) {
+    if ca.is_none() && (cert.is_some() || key.is_some()) {
         return Err(invalid(
             "--cluster-ssl-ca",
             "cluster TLS material requires --cluster-ssl-ca; without a CA the transport stays plaintext",
@@ -886,21 +1168,11 @@ fn build_cluster_security(
         }
         _ => {}
     }
-    let verify_cn = verify_cn
-        .map(|value| {
-            value
-                .split(',')
-                .map(str::trim)
-                .filter(|name| !name.is_empty())
-                .map(str::to_owned)
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
     Ok(ClusterSecurity::new(
         ca.unwrap_or_default(),
         cert.unwrap_or_default(),
         key.unwrap_or_default(),
-        verify_cn,
+        Vec::new(),
     ))
 }
 
@@ -934,7 +1206,7 @@ mod tests {
         let plaintext = NodeConfig::parse(base).unwrap();
         assert!(!plaintext.cluster_security.is_tls_enabled());
 
-        // CA + client key pair + verify-CN list: full mutual TLS.
+        // CA + client key pair: full mutual TLS.
         let secured = NodeConfig::parse(
             base.iter()
                 .copied()
@@ -945,8 +1217,6 @@ mod tests {
                     "/tls/cert.pem",
                     "--cluster-ssl-key",
                     "/tls/key.pem",
-                    "--cluster-verify-cn",
-                    "tidb,tikv",
                 ])
                 .collect::<Vec<_>>(),
         )
@@ -954,7 +1224,20 @@ mod tests {
         assert!(secured.cluster_security.is_tls_enabled());
         assert_eq!(secured.cluster_security.ca_path(), "/tls/ca.pem");
         assert_eq!(secured.cluster_security.cert_path(), "/tls/cert.pem");
-        assert_eq!(secured.cluster_security.verify_cn(), ["tidb", "tikv"]);
+        assert!(secured.cluster_security.verify_cn().is_empty());
+
+        // The accepted option is an inbound peer-CN allowlist. This node owns
+        // only outbound cluster clients, so accepting it would falsely claim
+        // a restriction no transport can enforce.
+        assert!(matches!(
+            NodeConfig::parse(
+                base.iter()
+                    .copied()
+                    .chain(["--cluster-verify-cn", "tidb,tikv"])
+                    .collect::<Vec<_>>(),
+            ),
+            Err(NodeConfigError::UnknownOption(option)) if option == "--cluster-verify-cn"
+        ));
 
         // Cert without key is rejected.
         assert!(matches!(

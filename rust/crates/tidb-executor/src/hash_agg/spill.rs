@@ -95,7 +95,7 @@ impl<C: Columns> HashAggExec<C> {
         let in_disk = match &mut self.data_in_disk {
             Some(in_disk) => in_disk,
             None => {
-                let in_disk = DataInDiskByChunks::new(field_types, "");
+                let in_disk = DataInDiskByChunks::new(field_types, "", self.memory.spill_storage());
                 in_disk.disk_tracker().attach_to(&self.disk_tracker);
                 self.data_in_disk.insert(in_disk)
             }

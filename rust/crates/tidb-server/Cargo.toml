@@ -13,6 +13,7 @@ build = "../../scripts/aggregate-tests.rs"
 workspace = true
 
 [dependencies]
+base64.workspace = true
 ctrlc.workspace = true
 rcgen.workspace = true
 rustix.workspace = true
@@ -33,6 +34,8 @@ tidb-session = { path = "../tidb-session" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-util = { path = "../tidb-util" }
 serde_json = { workspace = true }
+tidb-config = { path = "../tidb-config" }
+toml.workspace = true
 
 [dev-dependencies]
 prost.workspace = true

@@ -60,7 +60,7 @@ use tidb_chunk::chunk::Chunk;
 use tidb_chunk::chunk_in_disk::DataInDiskByChunks;
 use tidb_datatype::{Datum, FieldType};
 use tidb_expr::Columns;
-use tidb_util::disk;
+use tidb_util::disk::{self, SpillStorage};
 use tidb_util::memory::{
     ActionOnExceed, ArcAction, BaseOomAction, Tracker, DEF_SPILL_PRIORITY, LABEL_FOR_ROW_CONTAINER,
 };
@@ -186,10 +186,11 @@ impl SpilledRun {
         row_ptrs: &[(usize, usize)],
         spill_chunk_size: usize,
         parent: &Arc<disk::Tracker>,
+        spill_storage: Arc<SpillStorage>,
     ) -> Result<SpilledRun, ExecError> {
         let disk_tracker = disk::new_tracker(LABEL_FOR_ROW_CONTAINER, -1);
         disk_tracker.attach_to(parent);
-        let mut in_disk = DataInDiskByChunks::new(field_types.to_vec(), "");
+        let mut in_disk = DataInDiskByChunks::new(field_types.to_vec(), "", spill_storage);
         in_disk.disk_tracker().attach_to(&disk_tracker);
         let mut tmp = Chunk::new_with_capacity(field_types, spill_chunk_size);
         for &(chunk_index, row_index) in row_ptrs {

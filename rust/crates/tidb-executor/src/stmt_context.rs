@@ -26,6 +26,8 @@ use crate::error_context::{ErrGroup, Level, LevelMap};
 use crate::mem_quota::{OomAction, StatementMemory};
 use crate::statement_pushdown::{push_down_flags, PushDownFlagsInput, StatementKind};
 use crate::DriverError;
+use std::sync::Arc;
+use tidb_util::disk::SpillStorage;
 
 /// Which of Go's mutually exclusive `StatementContext` statement-kind
 /// booleans this statement sets (`InInsertStmt`, `InUpdateStmt`/
@@ -608,7 +610,13 @@ impl StmtContext {
     /// `vardef.OOMAction` selects.
     #[must_use]
     pub fn with_mem_quota(mut self, quota: i64, oom_action: OomAction) -> Self {
-        self.memory = StatementMemory::new(quota, oom_action, self.connection_id.unwrap_or(0));
+        let tmp_storage_on_oom = self.memory.tmp_storage_on_oom();
+        let spill_storage = self.memory.configured_spill_storage();
+        self.memory = StatementMemory::new(quota, oom_action, self.connection_id.unwrap_or(0))
+            .with_tmp_storage_on_oom(tmp_storage_on_oom);
+        if let Some(storage) = spill_storage {
+            self.memory = self.memory.with_spill_storage(storage);
+        }
         self
     }
 
@@ -621,6 +629,15 @@ impl StmtContext {
     #[must_use]
     pub fn with_tmp_storage_on_oom(mut self, enabled: bool) -> Self {
         self.memory = self.memory.with_tmp_storage_on_oom(enabled);
+        self
+    }
+
+    /// Installs the process-wide spill authority captured and validated at
+    /// server startup. Every physical spill store built from this statement
+    /// receives the same immutable path, encryption, and quota policy.
+    #[must_use]
+    pub fn with_spill_storage(mut self, storage: Arc<SpillStorage>) -> Self {
+        self.memory = self.memory.with_spill_storage(storage);
         self
     }
 

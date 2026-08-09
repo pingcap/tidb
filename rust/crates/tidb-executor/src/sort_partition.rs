@@ -45,7 +45,7 @@ use tidb_chunk::chunk::Chunk;
 use tidb_chunk::chunk_in_disk::DataInDiskByChunks;
 use tidb_datatype::{Datum, FieldType};
 use tidb_expr::Columns;
-use tidb_util::disk;
+use tidb_util::disk::{self, SpillStorage};
 use tidb_util::memory::{
     ActionOnExceed, ArcAction, BaseOomAction, Tracker, DEF_SPILL_PRIORITY, LABEL_FOR_ROW_CONTAINER,
 };
@@ -149,6 +149,8 @@ pub struct SortPartition {
     mem_tracker: Arc<Tracker>,
     /// Go `diskTracker`.
     disk_tracker: Arc<disk::Tracker>,
+    /// The statement's immutable physical spill authority.
+    spill_storage: Arc<SpillStorage>,
     spill_chunk_size: usize,
 
     // --- read cursor (Go `sliceIter` in memory, `dataCursor` on disk) ---
@@ -163,7 +165,11 @@ pub struct SortPartition {
 
 impl SortPartition {
     /// Go `newSortPartition`.
-    pub fn new(field_types: Vec<FieldType>, parent: &Arc<Tracker>) -> Self {
+    pub fn new(
+        field_types: Vec<FieldType>,
+        parent: &Arc<Tracker>,
+        spill_storage: Arc<SpillStorage>,
+    ) -> Self {
         let mem_tracker = Tracker::new(LABEL_FOR_ROW_CONTAINER, -1);
         mem_tracker.attach_to(parent);
         SortPartition {
@@ -175,6 +181,7 @@ impl SortPartition {
             in_disk: None,
             mem_tracker,
             disk_tracker: disk::new_tracker(LABEL_FOR_ROW_CONTAINER, -1),
+            spill_storage,
             spill_chunk_size: SPILL_CHUNK_SIZE,
             cursor: 0,
             disk_chunk_idx: 0,
@@ -298,7 +305,11 @@ impl SortPartition {
             ));
         }
 
-        let mut in_disk = DataInDiskByChunks::new(self.field_types.clone(), "");
+        let mut in_disk = DataInDiskByChunks::new(
+            self.field_types.clone(),
+            "",
+            Arc::clone(&self.spill_storage),
+        );
         in_disk.disk_tracker().attach_to(&self.disk_tracker);
         let mut tmp = Chunk::new_with_capacity(&self.field_types, self.spill_chunk_size);
         for &(chunk_index, row_index) in &self.rows {

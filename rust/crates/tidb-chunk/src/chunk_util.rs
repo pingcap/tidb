@@ -22,10 +22,9 @@
 //! layers `tidb_util::checksum` over the temporary file.
 //!
 //! The spill stack has both Go variants: checksum -> file for `plaintext`, and
-//! checksum -> AES-CTR -> file for `aes128-ctr`. [`set_spilled_file_encryption_method`]
-//! is the config seam; the bounded server does not yet load the top-level Go
-//! config tree, so its startup path must call that seam before it can claim to
-//! honour `security.spilled-file-encryption-method`.
+//! checksum -> AES-CTR -> file for `aes128-ctr`. The immutable
+//! [`tidb_util::disk::SpillStorage`] passed by the server owns that choice and
+//! the directory lease for every file in one process.
 
 use crate::chunk::Chunk;
 use crate::column::Column;
@@ -33,8 +32,8 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, Write};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::OnceLock;
+use tidb_util::disk::{SpillEncryptionMethod, SpillStorage};
 use tidb_util::layered_io::ReadAt;
 use tidb_util::{checksum, encrypt};
 
@@ -479,55 +478,6 @@ mod tests {
     }
 }
 
-/// A random decimal run for a temporary file name, standing in for the one
-/// Go's `os.CreateTemp` appends. Uniqueness is enforced by the `create_new`
-/// retry loop in `crate::chunk_in_disk::create_temp_file`, exactly as Go's is.
-pub(crate) fn next_random_suffix() -> u64 {
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_nanos() as u64);
-    nanos.wrapping_mul(6_364_136_223_846_793_005)
-        ^ COUNTER
-            .fetch_add(1, Ordering::Relaxed)
-            .wrapping_mul(1_442_695_040_888_963_407)
-}
-
-/// Process-wide choice corresponding to Go's
-/// `config.Security.SpilledFileEncryptionMethod`.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum SpilledFileEncryptionMethod {
-    /// Go `SpilledFileEncryptionMethodPlaintext`.
-    #[default]
-    Plaintext,
-    /// Go `SpilledFileEncryptionMethodAES128CTR`.
-    Aes128Ctr,
-}
-
-static SPILLED_FILE_ENCRYPTION_METHOD: AtomicU8 = AtomicU8::new(0);
-
-/// Sets the process-wide spill-file encryption method.
-///
-/// Go reads this choice from its global config whenever it creates a spill
-/// file. A Rust config loader must call this equivalent seam once at startup;
-/// tests may switch it while holding their process-global spill guard.
-pub fn set_spilled_file_encryption_method(method: SpilledFileEncryptionMethod) {
-    let value = match method {
-        SpilledFileEncryptionMethod::Plaintext => 0,
-        SpilledFileEncryptionMethod::Aes128Ctr => 1,
-    };
-    SPILLED_FILE_ENCRYPTION_METHOD.store(value, Ordering::SeqCst);
-}
-
-/// Returns the method new spill files will use.
-#[must_use]
-pub fn spilled_file_encryption_method() -> SpilledFileEncryptionMethod {
-    match SPILLED_FILE_ENCRYPTION_METHOD.load(Ordering::SeqCst) {
-        0 => SpilledFileEncryptionMethod::Plaintext,
-        _ => SpilledFileEncryptionMethod::Aes128Ctr,
-    }
-}
-
 enum DiskWriter {
     Plaintext(checksum::Writer<File>),
     Aes128Ctr {
@@ -577,20 +527,25 @@ pub struct DiskFileReaderWriter {
 
 impl DiskFileReaderWriter {
     /// Go `initWithFileName`.
-    pub fn init_with_file_name(&mut self, file_name: &str) -> io::Result<()> {
-        let cipher = match spilled_file_encryption_method() {
-            SpilledFileEncryptionMethod::Plaintext => None,
-            SpilledFileEncryptionMethod::Aes128Ctr => Some(encrypt::CtrCipher::new()?),
+    pub fn init_with_file_name(
+        &mut self,
+        storage: &SpillStorage,
+        file_name: &str,
+    ) -> io::Result<()> {
+        let cipher = match storage.encryption() {
+            SpillEncryptionMethod::Plaintext => None,
+            SpillEncryptionMethod::Aes128Ctr => Some(encrypt::CtrCipher::new()?),
         };
-        self.init_with_file_name_and_optional_cipher(file_name, cipher)
+        self.init_with_file_name_and_optional_cipher(storage, file_name, cipher)
     }
 
     fn init_with_file_name_and_optional_cipher(
         &mut self,
+        storage: &SpillStorage,
         file_name: &str,
         cipher: Option<encrypt::CtrCipher>,
     ) -> io::Result<()> {
-        let (file, path) = crate::chunk_in_disk::create_temp_file(file_name)?;
+        let (file, path) = storage.create_file(file_name)?;
         let write_handle = file.try_clone()?;
         self.file = Some(file);
         self.path = Some(path);
@@ -611,10 +566,11 @@ impl DiskFileReaderWriter {
     #[cfg(test)]
     pub(crate) fn init_with_file_name_and_cipher(
         &mut self,
+        storage: &SpillStorage,
         file_name: &str,
         cipher: encrypt::CtrCipher,
     ) -> io::Result<()> {
-        self.init_with_file_name_and_optional_cipher(file_name, Some(cipher))
+        self.init_with_file_name_and_optional_cipher(storage, file_name, Some(cipher))
     }
 
     /// Whether the file has been created (Go's `l.file != nil`).

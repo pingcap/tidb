@@ -1132,6 +1132,7 @@ impl<C: Columns> HashAggExec<C> {
         let child_chunk = child.new_chunk();
         let tmp_chk_for_spill = child.new_chunk();
         let tracker = memory.operator_tracker(meta.id());
+        let disk_tracker = memory.operator_disk_tracker(meta.id());
         let truncated = vec![false; agg_funcs.len()];
         HashAggExec {
             meta,
@@ -1149,7 +1150,7 @@ impl<C: Columns> HashAggExec<C> {
             truncated,
             memory,
             tracker,
-            disk_tracker: tidb_util::disk::new_tracker(-1, -1),
+            disk_tracker,
             in_spill_mode: Arc::new(AtomicBool::new(false)),
             spill_action: None,
             data_in_disk: None,

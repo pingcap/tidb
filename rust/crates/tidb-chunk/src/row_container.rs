@@ -574,6 +574,7 @@ struct RowContainerShared {
     phase_changed: Condvar,
     mem_tracker: Arc<Tracker>,
     disk_tracker: Arc<disk::Tracker>,
+    storage: Arc<disk::SpillStorage>,
     action_spill: Mutex<Option<Arc<SpillDiskAction>>>,
     #[cfg(test)]
     spill_start_hook: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
@@ -595,7 +596,10 @@ impl RowContainerShared {
         let mut records = write_unpoisoned(&self.records);
         let spill = catch_unwind(AssertUnwindSafe(|| -> Result<(), String> {
             if records.in_disk.is_none() {
-                let in_disk = DataInDiskByRows::new(records.in_memory.field_types().to_vec());
+                let in_disk = DataInDiskByRows::new(
+                    records.in_memory.field_types().to_vec(),
+                    Arc::clone(&self.storage),
+                );
                 in_disk.disk_tracker().attach_to(&self.disk_tracker);
                 records.in_disk = Some(in_disk);
             }
@@ -770,7 +774,11 @@ pub struct RowContainer {
 impl RowContainer {
     /// Go `NewRowContainer`.
     #[must_use]
-    pub fn new(field_types: &[FieldType], chunk_size: usize) -> Self {
+    pub fn new(
+        field_types: &[FieldType],
+        chunk_size: usize,
+        storage: Arc<disk::SpillStorage>,
+    ) -> Self {
         let list = List::new(field_types, chunk_size, chunk_size);
         let mem_tracker = Tracker::new(LABEL_FOR_ROW_CONTAINER, -1);
         list.mem_tracker().attach_to(&mem_tracker);
@@ -785,6 +793,7 @@ impl RowContainer {
                 phase_changed: Condvar::new(),
                 mem_tracker,
                 disk_tracker: disk::new_tracker(LABEL_FOR_ROW_CONTAINER, -1),
+                storage,
                 action_spill: Mutex::new(None),
                 #[cfg(test)]
                 spill_start_hook: Mutex::new(None),
@@ -1387,10 +1396,6 @@ mod tests {
     use tidb_datatype::FieldTypeCode as C;
     use tidb_util::memory::BaseOomAction;
 
-    use crate::test_temp_storage::guard as temp_dir_guard;
-
-    use crate::test_temp_storage::scratch_dir as scratch_temp_dir;
-
     fn int64_fields() -> Vec<FieldType> {
         vec![FieldType::new(C::LongLong)]
     }
@@ -1487,7 +1492,7 @@ mod tests {
     /// Go `TestNewRowContainer`.
     #[test]
     fn a_new_row_container_has_not_spilled() {
-        let rc = RowContainer::new(&int64_fields(), 1024);
+        let rc = RowContainer::new(&int64_fields(), 1024, crate::test_temp_storage::storage());
         assert!(!rc.already_spilled());
         assert_eq!(rc.num_row(), 0);
     }
@@ -1497,7 +1502,7 @@ mod tests {
     /// shared.
     #[test]
     fn get_chunk_keeps_the_live_in_memory_view() {
-        let mut rc = RowContainer::new(&int64_fields(), 4);
+        let mut rc = RowContainer::new(&int64_fields(), 4, crate::test_temp_storage::storage());
         rc.add(int64_chunk(4)).expect("add");
         let stored = {
             let records = read_unpoisoned(&rc.shared.records);
@@ -1516,14 +1521,10 @@ mod tests {
     /// own here and the trailing chunk is checked separately.
     #[test]
     fn a_selection_vector_survives_the_spill() {
-        let _guard = temp_dir_guard();
-        let dir = scratch_temp_dir("sel");
-        disk::set_temp_storage_path(&dir);
-
         let fields = int64_fields();
         let sz = 4usize;
         let n = 64usize;
-        let mut rc = RowContainer::new(&fields, sz);
+        let mut rc = RowContainer::new(&fields, sz, crate::test_temp_storage::storage());
         let mut chk = Chunk::new_with_capacity(&fields, sz);
         let mut num_rows = 0;
         for i in 0..(n - sz) {
@@ -1552,20 +1553,15 @@ mod tests {
         rc.close();
         assert_eq!(rc.mem_tracker().bytes_consumed(), 0);
         assert!(rc.mem_tracker().max_consumed() > 0);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Go `TestSpillAction`: the second chunk pushes the tracker past its
     /// limit, the container moves to disk, and later adds go straight there.
     #[test]
     fn the_spill_action_moves_the_container_to_disk() {
-        let _guard = temp_dir_guard();
-        let dir = scratch_temp_dir("spillaction");
-        disk::set_temp_storage_path(&dir);
-
         let fields = int64_fields();
         let sz = 4;
-        let mut rc = RowContainer::new(&fields, sz);
+        let mut rc = RowContainer::new(&fields, sz, crate::test_temp_storage::storage());
         let chk = int64_chunk(sz);
         let action = rc.action_spill();
         rc.mem_tracker().set_bytes_limit(chk.memory_usage() + 1);
@@ -1608,7 +1604,6 @@ mod tests {
         }
 
         rc.reset();
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// `List::add` may make two positive `Consume` calls when its tail was not
@@ -1617,11 +1612,7 @@ mod tests {
     /// add that cannot finish until it returns.
     #[test]
     fn repeated_reentrant_actions_return_to_the_same_add() {
-        let _guard = temp_dir_guard();
-        let dir = scratch_temp_dir("repeated-reentrant-add");
-        disk::set_temp_storage_path(&dir);
-
-        let mut rc = RowContainer::new(&int64_fields(), 4);
+        let mut rc = RowContainer::new(&int64_fields(), 4, crate::test_temp_storage::storage());
         let seed = int64_chunk(1);
         write_unpoisoned(&rc.shared.records)
             .in_memory
@@ -1637,7 +1628,6 @@ mod tests {
         assert!(rc.already_spilled());
         assert_eq!(rc.mem_tracker().bytes_consumed(), 0);
         assert_eq!(iterate(&rc), vec![0, 0]);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A repeat on the mutating thread must return to `List::add`, but a
@@ -1645,11 +1635,7 @@ mod tests {
     /// then checks fallback instead of disappearing with the reentrant call.
     #[test]
     fn a_concurrent_second_action_waits_for_the_reentrant_add_spill() {
-        let _guard = temp_dir_guard();
-        let dir = scratch_temp_dir("concurrent-second-action");
-        disk::set_temp_storage_path(&dir);
-
-        let mut rc = RowContainer::new(&int64_fields(), 4);
+        let mut rc = RowContainer::new(&int64_fields(), 4, crate::test_temp_storage::storage());
         let statement_tracker = Tracker::new(-1, 1);
         rc.mem_tracker().attach_to(&statement_tracker);
         let unrelated_tracker = Tracker::new(-2, -1);
@@ -1690,7 +1676,6 @@ mod tests {
         assert_eq!(fallback.calls.load(SeqCst), 1);
         unrelated_tracker.consume(-2);
         rc.close();
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// `List::reset` accounts its final unaccounted tail and can therefore
@@ -1698,11 +1683,7 @@ mod tests {
     /// pending spill, which clears the accounted freelist memory.
     #[test]
     fn resetting_memory_processes_its_reentrant_spill() {
-        let _guard = temp_dir_guard();
-        let dir = scratch_temp_dir("reentrant-reset");
-        disk::set_temp_storage_path(&dir);
-
-        let mut rc = RowContainer::new(&int64_fields(), 4);
+        let mut rc = RowContainer::new(&int64_fields(), 4, crate::test_temp_storage::storage());
         let seed = int64_chunk(1);
         write_unpoisoned(&rc.shared.records)
             .in_memory
@@ -1718,7 +1699,6 @@ mod tests {
         assert_eq!(rc.num_row(), 0);
         assert_eq!(rc.mem_tracker().bytes_consumed(), 0);
         assert_eq!(action.status(), SpillStatus::SpilledYet);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A quota action belongs to the shared statement tracker, so any child
@@ -1726,12 +1706,8 @@ mod tests {
     /// container. The spill cannot depend on a later `RowContainer::add`.
     #[test]
     fn an_unrelated_parent_allocation_spills_without_another_add() {
-        let _guard = temp_dir_guard();
-        let dir = scratch_temp_dir("unrelated-parent-allocation");
-        disk::set_temp_storage_path(&dir);
-
         let fields = int64_fields();
-        let mut rc = RowContainer::new(&fields, 4);
+        let mut rc = RowContainer::new(&fields, 4, crate::test_temp_storage::storage());
         let statement_tracker = Tracker::new(-1, -1);
         rc.mem_tracker().attach_to(&statement_tracker);
         let unrelated_tracker = Tracker::new(-2, -1);
@@ -1760,18 +1736,13 @@ mod tests {
 
         rc.close();
         unrelated_tracker.consume(-2);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The first trigger is reserved for spill even when unrelated memory
     /// remains above quota. Only a later trigger may invoke fallback.
     #[test]
     fn fallback_runs_only_after_the_first_trigger_finishes_spilling() {
-        let _guard = temp_dir_guard();
-        let dir = scratch_temp_dir("fallback-after-spill");
-        disk::set_temp_storage_path(&dir);
-
-        let mut rc = RowContainer::new(&int64_fields(), 4);
+        let mut rc = RowContainer::new(&int64_fields(), 4, crate::test_temp_storage::storage());
         let statement_tracker = Tracker::new(-1, -1);
         rc.mem_tracker().attach_to(&statement_tracker);
         let unrelated_tracker = Tracker::new(-2, -1);
@@ -1794,7 +1765,6 @@ mod tests {
 
         rc.close();
         unrelated_tracker.consume(-(bytes + 3));
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// If reset publishes a new generation before a waiting action claims the
@@ -1802,11 +1772,7 @@ mod tests {
     /// generation. It must not run a stale fallback from the spilled state.
     #[test]
     fn reset_wins_the_race_with_a_waiting_fallback() {
-        let _guard = temp_dir_guard();
-        let dir = scratch_temp_dir("reset-wins-fallback-race");
-        disk::set_temp_storage_path(&dir);
-
-        let mut rc = RowContainer::new(&int64_fields(), 4);
+        let mut rc = RowContainer::new(&int64_fields(), 4, crate::test_temp_storage::storage());
         let statement_tracker = Tracker::new(-1, 1);
         rc.mem_tracker().attach_to(&statement_tracker);
         let unrelated_tracker = Tracker::new(-2, -1);
@@ -1838,18 +1804,13 @@ mod tests {
         );
         unrelated_tracker.consume(-2);
         rc.close();
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// If a later action claims fallback first, reset waits for that callback
     /// to finish before it closes storage and publishes the next generation.
     #[test]
     fn fallback_wins_the_race_with_reset() {
-        let _guard = temp_dir_guard();
-        let dir = scratch_temp_dir("fallback-wins-reset-race");
-        disk::set_temp_storage_path(&dir);
-
-        let mut rc = RowContainer::new(&int64_fields(), 4);
+        let mut rc = RowContainer::new(&int64_fields(), 4, crate::test_temp_storage::storage());
         let statement_tracker = Tracker::new(-1, 1);
         rc.mem_tracker().attach_to(&statement_tracker);
         let unrelated_tracker = Tracker::new(-2, -1);
@@ -1892,20 +1853,15 @@ mod tests {
         assert!(!rc.already_spilled());
         unrelated_tracker.consume(-2);
         rc.close();
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Go `TestRowContainerResetAndAction`: after a reset the container spills
     /// again, which only works if the action's `once` was re-armed.
     #[test]
     fn a_reset_container_spills_again() {
-        let _guard = temp_dir_guard();
-        let dir = scratch_temp_dir("resetaction");
-        disk::set_temp_storage_path(&dir);
-
         let fields = int64_fields();
         let sz = 20;
-        let mut rc = RowContainer::new(&fields, sz);
+        let mut rc = RowContainer::new(&fields, sz, crate::test_temp_storage::storage());
         let chk = int64_chunk(sz);
         let action = rc.action_spill();
         rc.mem_tracker().set_bytes_limit(chk.memory_usage() + 1);
@@ -1925,20 +1881,15 @@ mod tests {
         rc.add(chk.clone()).expect("add");
         rc.add(chk.clone()).expect("add");
         assert!(rc.disk_tracker().bytes_consumed() > 0);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Go `TestActionBlocked`, case 1: ten adds under a small quota end with
     /// the action in `spilledYet`, the memory released, and disk in use.
     #[test]
     fn ten_adds_under_quota_end_spilled_with_the_memory_released() {
-        let _guard = temp_dir_guard();
-        let dir = scratch_temp_dir("actionblocked1");
-        disk::set_temp_storage_path(&dir);
-
         let fields = int64_fields();
         let sz = 4;
-        let mut rc = RowContainer::new(&fields, sz);
+        let mut rc = RowContainer::new(&fields, sz, crate::test_temp_storage::storage());
         let action = rc.action_spill();
         rc.mem_tracker().set_bytes_limit(1450);
         rc.mem_tracker()
@@ -1950,7 +1901,6 @@ mod tests {
         assert_eq!(rc.mem_tracker().bytes_consumed(), 0);
         assert!(rc.mem_tracker().max_consumed() > 0);
         assert!(rc.disk_tracker().bytes_consumed() > 0);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Go `TestActionBlocked`, case 2: an action that arrives while a spill is
@@ -1958,11 +1908,7 @@ mod tests {
     /// because the memory is about to be released.
     #[test]
     fn an_action_blocks_while_a_spill_is_in_flight() {
-        let _guard = temp_dir_guard();
-        let dir = scratch_temp_dir("action-waits-for-spill");
-        disk::set_temp_storage_path(&dir);
-
-        let mut rc = RowContainer::new(&int64_fields(), 4);
+        let mut rc = RowContainer::new(&int64_fields(), 4, crate::test_temp_storage::storage());
         rc.add(int64_chunk(4)).expect("add");
         let tracker = Arc::clone(rc.mem_tracker());
         let action = rc.action_spill();
@@ -1984,7 +1930,6 @@ mod tests {
         action_handle.join().expect("action thread");
         done_rx.recv().expect("action completion");
         rc.set_spill_start_hook(None);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Go `TestSpillActionDeadLock`: an action firing CONCURRENTLY with `Add`
@@ -1993,13 +1938,9 @@ mod tests {
     /// coordinator; `add` releases records before it performs the spill.
     #[test]
     fn a_concurrent_action_and_add_do_not_deadlock() {
-        let _guard = temp_dir_guard();
-        let dir = scratch_temp_dir("deadlock");
-        disk::set_temp_storage_path(&dir);
-
         let fields = int64_fields();
         let sz = 4;
-        let mut rc = RowContainer::new(&fields, sz);
+        let mut rc = RowContainer::new(&fields, sz, crate::test_temp_storage::storage());
         let tracker = Arc::clone(rc.mem_tracker());
         let action = rc.action_spill();
         rc.mem_tracker().set_bytes_limit(1);
@@ -2016,18 +1957,13 @@ mod tests {
         rc.add(int64_chunk(sz)).expect("add");
         handle.join().expect("the action thread must finish");
         assert!(rc.already_spilled());
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Shallow handles share records and synchronization rather than closing
     /// or snapshotting one another's state.
     #[test]
     fn shallow_copy_observes_spill_reset_and_close() {
-        let _guard = temp_dir_guard();
-        let dir = scratch_temp_dir("shallow-copy");
-        disk::set_temp_storage_path(&dir);
-
-        let mut rc = RowContainer::new(&int64_fields(), 4);
+        let mut rc = RowContainer::new(&int64_fields(), 4, crate::test_temp_storage::storage());
         rc.add(int64_chunk(4)).expect("first add");
         rc.add(int64_chunk(4)).expect("second add");
         let mut copy = rc.shallow_copy();
@@ -2048,18 +1984,14 @@ mod tests {
         rc.close();
         assert_eq!(copy.phase(), CoordinatorPhase::Closed);
         assert!(copy.add(int64_chunk(1)).is_err());
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Reset and close claim lifecycle phases only after an active spill has
     /// published its terminal disk phase; neither may strand a waiter.
     #[test]
     fn reset_and_close_serialize_with_spill() {
-        let _guard = temp_dir_guard();
-        let dir = scratch_temp_dir("lifecycle-vs-spill");
-        disk::set_temp_storage_path(&dir);
-
-        let mut reset_rc = RowContainer::new(&int64_fields(), 4);
+        let mut reset_rc =
+            RowContainer::new(&int64_fields(), 4, crate::test_temp_storage::storage());
         reset_rc.add(int64_chunk(4)).expect("reset add");
         let (started, release) = pause_next_spill(&reset_rc);
         let mut spilling = reset_rc.shallow_copy();
@@ -2080,7 +2012,8 @@ mod tests {
         assert_eq!(reset_rc.phase(), CoordinatorPhase::MemoryIdle);
         assert!(!reset_rc.already_spilled());
 
-        let mut close_rc = RowContainer::new(&int64_fields(), 4);
+        let mut close_rc =
+            RowContainer::new(&int64_fields(), 4, crate::test_temp_storage::storage());
         close_rc.add(int64_chunk(4)).expect("close add");
         let (started, release) = pause_next_spill(&close_rc);
         let mut spilling = close_rc.shallow_copy();
@@ -2100,14 +2033,13 @@ mod tests {
         assert_eq!(close_rc.phase(), CoordinatorPhase::Closed);
         assert_eq!(close_rc.mem_tracker().bytes_consumed(), 0);
         assert_eq!(close_rc.disk_tracker().bytes_consumed(), 0);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The iterator's cursor protocol, on a container that never spills.
     #[test]
     fn the_iterator_walks_an_in_memory_container() {
         let fields = int64_fields();
-        let mut rc = RowContainer::new(&fields, 4);
+        let mut rc = RowContainer::new(&fields, 4, crate::test_temp_storage::storage());
         rc.add(int64_chunk(4)).expect("add");
         rc.add(int64_chunk(4)).expect("add");
 
@@ -2134,17 +2066,13 @@ mod tests {
     /// before the spill starts, and the first poll must raise it.
     #[test]
     fn a_kill_signal_stops_a_spill_in_progress() {
-        let _guard = temp_dir_guard();
-        let dir = scratch_temp_dir("killduringspill");
-        disk::set_temp_storage_path(&dir);
-
         let root = Tracker::new(-1, -1);
         root.is_root_tracker_of_sess
             .store(true, std::sync::atomic::Ordering::SeqCst);
         root.killer.conn_id.store(1, SeqCst);
 
         let fields = int64_fields();
-        let mut rc = RowContainer::new(&fields, 20);
+        let mut rc = RowContainer::new(&fields, 20, crate::test_temp_storage::storage());
         rc.mem_tracker().attach_to(&root);
         rc.add(int64_chunk(20)).expect("add");
         rc.add(int64_chunk(20)).expect("add");
@@ -2172,6 +2100,5 @@ mod tests {
         );
         rc.spill_to_disk();
         assert_eq!(rc.spill_error().as_deref(), Some(error.as_str()));
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -19,21 +19,16 @@
 //! disk tracker here is [`crate::memory::Tracker`] re-exported under the same
 //! name, and `NewTracker` is [`new_tracker`].
 //!
-//! NOT PORTED, named so it is not mistaken for covered: Go
-//! `InitializeTempDir` takes a `gofslock` advisory lock on `<tmp>/_dir.lock`
-//! so two tidb-servers configured onto the same `tmp-storage-path` refuse to
-//! share it, and `CleanUp` releases it. An advisory `flock(2)` needs a libc
-//! dependency this workspace does not carry, so the lock is absent here: the
-//! directory is created and stale contents are swept, but a second process
-//! pointed at the same directory is NOT refused. That is a misconfiguration
-//! guard, not a query-path behavior; the spill path itself is unaffected
-//! because each spill file is created with a unique random name.
+//! [`SpillStorage`] is the one immutable process authority for path,
+//! encryption, quota, directory lease, stale-file cleanup, and secure file
+//! creation. Keeping those decisions together prevents a query operator from
+//! silently bypassing startup policy through a second mutable global.
 
-pub mod temp_dir;
+pub mod spill_storage;
 
-pub use temp_dir::{
-    check_and_create_dir, check_and_init_temp_dir, clean_up, encode_def_temp_storage_dir,
-    initialize_temp_dir, set_temp_storage_path, temp_storage_path,
+pub use spill_storage::{
+    SpillEncryptionMethod, SpillEncryptionParseError, SpillStorage, SpillStorageOpenError,
+    SpillStorageSpec, LOCAL_TEMPORARY_SPACE_QUOTA_ERROR,
 };
 
 use std::sync::Arc;

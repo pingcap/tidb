@@ -85,6 +85,10 @@ pub type SharedCatalog = Arc<Mutex<Catalog>>;
 /// tier (documented deferral).
 pub struct Session {
     catalog: SharedCatalog,
+    /// Immutable physical spill authority installed by the server that owns
+    /// this session. Standalone sessions leave it absent and use the
+    /// executor's isolated fallback.
+    spill_storage: Option<Arc<tidb_util::disk::SpillStorage>>,
     /// The open transaction, if any.
     txn: Option<Transaction>,
     /// The session's system and user variables.
@@ -237,6 +241,7 @@ impl Default for Session {
     fn default() -> Self {
         Session {
             catalog: SharedCatalog::default(),
+            spill_storage: None,
             txn: None,
             vars: SessionVars::new(),
             warnings: Vec::new(),
@@ -428,6 +433,12 @@ impl Session {
             catalog,
             ..Session::default()
         }
+    }
+
+    /// Installs the server-owned spill policy for every statement created by
+    /// this session.
+    pub fn set_spill_storage(&mut self, storage: Arc<tidb_util::disk::SpillStorage>) {
+        self.spill_storage = Some(storage);
     }
 
     /// The shared catalog handle, for opening a peer session over the same

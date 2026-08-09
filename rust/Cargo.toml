@@ -86,6 +86,12 @@ getrandom = "0.3"
 # Safe process signal delivery for bounded SQL-node graceful shutdown.
 ctrlc = { version = "3.4", features = ["termination"] }
 rustix = { version = "1.1", features = ["process"] }
+base64 = "0.22"
+# Secure, atomic temporary spill-file creation. The random-name algorithm is
+# an OS/library concern; TiDB's contract is uniqueness, privacy, and exclusive
+# creation, all of which `tempfile` provides without a hand-rolled loop.
+tempfile = "3.27"
+toml = "0.8"
 # TiDB's `TIDB_SHARD` uses Vitess' exact DES-ECB/null-key hash. RustCrypto's
 # audited DES implementation preserves that algorithm without a hand-rolled
 # cryptographic primitive.

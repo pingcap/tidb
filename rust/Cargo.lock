@@ -1824,6 +1824,7 @@ dependencies = [
 name = "tidb-server"
 version = "0.0.0"
 dependencies = [
+ "base64",
  "ctrlc",
  "prost",
  "rcgen",
@@ -1835,6 +1836,7 @@ dependencies = [
  "sha2",
  "subtle",
  "tidb-ast",
+ "tidb-config",
  "tidb-datatype",
  "tidb-distsql",
  "tidb-exec",
@@ -1849,6 +1851,7 @@ dependencies = [
  "tidb-tablecodec",
  "tidb-txnkv",
  "tidb-util",
+ "toml",
 ]
 
 [[package]]
@@ -1926,9 +1929,11 @@ dependencies = [
  "getrandom 0.3.4",
  "num-traits",
  "regex",
+ "rustix",
  "serde",
  "serde_json",
  "sha2",
+ "tempfile",
  "tidb-error",
  "tidb-hack",
  "tidb-log",

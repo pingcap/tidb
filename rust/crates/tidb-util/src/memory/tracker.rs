@@ -46,6 +46,8 @@ pub const LABEL_FOR_CHUNK_LIST: i64 = -7;
 pub const LABEL_FOR_CHUNK_DATA_IN_DISK_BY_ROWS: i64 = -9;
 /// `LabelForRowContainer`.
 pub const LABEL_FOR_ROW_CONTAINER: i64 = -10;
+/// `LabelForGlobalStorage`: process-wide local temporary-storage accounting.
+pub const LABEL_FOR_GLOBAL_STORAGE: i64 = -11;
 /// `LabelForChunkDataInDiskByChunks`: the chunk-addressed spill file.
 pub const LABEL_FOR_CHUNK_DATA_IN_DISK_BY_CHUNKS: i64 = -30;
 
@@ -346,12 +348,24 @@ impl Tracker {
     /// tracker (Go `Consume`). Panics with the kill error when the session
     /// root's killer has a pending signal, as the source does.
     pub fn consume(self: &Arc<Self>, bs: i64) {
+        let _ = self.consume_and_check_exceed(bs);
+    }
+
+    /// Consumes bytes and reports whether this operation reached the hard
+    /// limit of this tracker or any ancestor.
+    ///
+    /// Disk spilling uses the result to return TiDB's local-temporary-space
+    /// error without reproducing Go's panic-based quota transport. Accounting
+    /// and configured tracker actions remain identical to [`Self::consume`].
+    #[must_use]
+    pub fn consume_and_check_exceed(self: &Arc<Self>, bs: i64) -> bool {
         if bs == 0 {
-            return;
+            return false;
         }
         let mut root_exceed: Option<Arc<Tracker>> = None;
         let mut root_exceed_soft: Option<Arc<Tracker>> = None;
         let mut session_root: Option<Arc<Tracker>> = None;
+        let mut hard_limit_reached = false;
 
         let mut cursor = Some(Arc::clone(self));
         while let Some(tracker) = cursor {
@@ -362,6 +376,7 @@ impl Tracker {
             let released = tracker.bytes_released.load(SeqCst);
             let limits = *tracker.limits.lock().unwrap();
             if consumed + released >= limits.hard && limits.hard > 0 {
+                hard_limit_reached = true;
                 root_exceed = Some(Arc::clone(&tracker));
             }
             if consumed + released >= limits.soft && limits.soft > 0 {
@@ -397,6 +412,7 @@ impl Tracker {
                 root.action_for_soft_limit.try_action(&root);
             }
         }
+        hard_limit_reached
     }
 
     /// Go `HandleKillSignal`.

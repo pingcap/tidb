@@ -360,6 +360,7 @@ impl<C: Columns> JoinExec<C> {
     ) -> Self {
         let keys = crate::hash_join::split_equi(&conditions, left.ret_field_types().len()).keys;
         let tracker = memory.operator_tracker(meta.id());
+        let disk_tracker = memory.operator_disk_tracker(meta.id());
         JoinExec {
             meta,
             kind,
@@ -377,7 +378,7 @@ impl<C: Columns> JoinExec<C> {
             condition_evals: Cell::new(0),
             memory,
             tracker,
-            disk_tracker: tidb_util::disk::new_tracker(-1, -1),
+            disk_tracker,
             registered_action: None,
             build_spilled: false,
             spilled_bytes: 0,
@@ -1073,7 +1074,11 @@ impl<C: Columns> JoinExec<C> {
         } else {
             self.right.ret_field_types().to_vec()
         };
-        let mut table = BuildTable::new(&build_types, self.meta.max_chunk_size());
+        let mut table = BuildTable::new(
+            &build_types,
+            self.meta.max_chunk_size(),
+            self.memory.spill_storage(),
+        );
         table.mem_tracker().attach_to(&self.tracker);
         table.disk_tracker().attach_to(&self.disk_tracker);
         // Go: `if vardef.EnableTmpStorageOnOOM.Load() { ...
