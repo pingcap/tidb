@@ -63,7 +63,8 @@ impl Codec {
     }
 
     /// Go `Decode`: read a whole chunk out of `buffer`, one column per encoded
-    /// block, returning the chunk and the unconsumed tail.
+    /// block. The source loops until the buffer is exhausted, so the returned
+    /// tail is empty for every valid image.
     ///
     /// # Panics
     /// Panics on a truncated image, or on more encoded columns than the codec
@@ -134,7 +135,7 @@ impl Codec {
             num_data_bytes = num_fixed_bytes * length;
             // Go grows `elemBuf` only when it is too small to hold one element;
             // an already-typed column (the `DecodeToChunk` case) keeps its own.
-            if column.elem_buf.len() < num_fixed_bytes {
+            if column.elem_buffer_capacity() < num_fixed_bytes {
                 column.elem_buf = vec![0; num_fixed_bytes];
             }
         }
@@ -196,24 +197,21 @@ impl Decoder {
     /// in Go; the next caller observes `is_full` and returns it immediately.
     ///
     /// # Panics
-    /// Panics when a nonzero-column target is already full. The production Go
-    /// caller guards this method with `!chk.IsFull()`; keeping that precondition
-    /// checked prevents Rust's unsigned arithmetic from silently turning the
-    /// source's invalid signed/slice path into a no-op.
+    /// Panics for an overfull target. Go's signed deficit becomes a negative
+    /// slice length in that invalid state; this checked boundary prevents an
+    /// unsigned wrap. An exactly-full non-empty target is valid and performs
+    /// the source's zero-row bitmap-padding normalization without consuming
+    /// the intermediate chunk.
     pub fn decode(&mut self, target: &mut Chunk) {
         assert!(
-            target.num_cols() == 0 || target.num_rows() < target.required_rows(),
-            "Decoder.Decode requires a non-full target"
+            target.num_rows() <= target.required_rows(),
+            "Decoder.Decode target exceeds RequiredRows"
         );
         let deficit = target.required_rows() - target.num_rows();
         let rows = deficit
             .div_ceil(8)
             .saturating_mul(8)
             .min(self.remained_rows);
-        if rows == 0 {
-            return;
-        }
-        assert_eq!(target.num_cols(), self.intermediate.num_cols());
         for ordinal in 0..target.num_cols() {
             self.decode_column(target, ordinal, rows);
         }
@@ -221,50 +219,61 @@ impl Decoder {
     }
 
     fn decode_column(&mut self, target: &mut Chunk, ordinal: usize, rows: usize) {
-        {
-            let source = self.intermediate.column(ordinal);
-            let destination = target.column_mut(ordinal);
-            let type_size = get_fixed_len(&self.codec.col_types[ordinal]);
-            let source_offset_base = if type_size == VAR_ELEM_LEN {
-                source.offsets[0]
-            } else {
-                0
-            };
-            for row in 0..rows {
-                destination.append_null_bitmap(!source.is_null(row));
-                if type_size == VAR_ELEM_LEN {
-                    let start = usize::try_from(source.offsets[row] - source_offset_base)
-                        .expect("non-negative relative source offset");
-                    let end = usize::try_from(source.offsets[row + 1] - source_offset_base)
-                        .expect("non-negative relative source offset");
-                    destination.data.extend_from_slice(&source.data[start..end]);
-                    destination.offsets.push(destination.data.len() as i64);
-                } else {
-                    let width = usize::try_from(type_size).expect("fixed width is positive");
-                    let start = row.checked_mul(width).expect("decoder row offset overflow");
-                    destination
-                        .data
-                        .extend_from_slice(&source.data[start..start + width]);
-                }
-                destination.length += 1;
-            }
-        }
-
         let type_size = get_fixed_len(&self.codec.col_types[ordinal]);
         let source = self.intermediate.column_mut(ordinal);
+        let destination = target.column_mut(ordinal);
         let data_bytes = if type_size == VAR_ELEM_LEN {
-            let start = usize::try_from(source.offsets[0]).expect("non-negative source offset");
-            let end = usize::try_from(source.offsets[rows]).expect("non-negative source offset");
+            let start = source.offsets[0];
+            let end = source.offsets[rows];
+            let delta = destination.offsets[destination.length] - start;
+            if rows > 0 {
+                let first_new_offset = destination.length + 1;
+                destination
+                    .offsets
+                    .extend_from_slice(&source.offsets[1..rows + 1]);
+                for offset in &mut destination.offsets[first_new_offset..=destination.length + rows]
+                {
+                    *offset += delta;
+                }
+            }
             source.offsets.drain(..rows);
-            end - start
+            usize::try_from(end - start).expect("non-negative decoder data length")
         } else {
             usize::try_from(type_size)
                 .expect("fixed width is positive")
                 .checked_mul(rows)
                 .expect("decoder data size overflow")
         };
+
+        let bitmap_bytes = rows.div_ceil(8);
+        if destination.length % 8 == 0 {
+            destination
+                .null_bitmap
+                .extend_from_slice(&source.null_bitmap[..bitmap_bytes]);
+        } else {
+            destination.append_multi_same_null_bitmap(false, rows);
+            let bitmap_len = destination.null_bitmap.len();
+            let bit_offset = destination.length % 8;
+            let start_index = (destination.length - 1) >> 3;
+            for (index, source_byte) in source.null_bitmap[..bitmap_bytes].iter().enumerate() {
+                destination.null_bitmap[start_index + index] |= *source_byte << bit_offset;
+                if start_index + index + 1 < bitmap_len {
+                    destination.null_bitmap[start_index + index + 1] |=
+                        *source_byte >> (8 - bit_offset);
+                }
+            }
+        }
+        let redundant_bits = destination.null_bitmap.len() * 8 - destination.length - rows;
+        let bit_mask = ((1u16 << (8 - redundant_bits)) as u8).wrapping_sub(1);
+        let last = destination.null_bitmap.len() - 1;
+        destination.null_bitmap[last] &= bit_mask;
+
+        source.null_bitmap.drain(..bitmap_bytes);
+        destination.length += rows;
+        destination
+            .data
+            .extend_from_slice(&source.data[..data_bytes]);
         source.data.drain(..data_bytes);
-        source.null_bitmap.drain(..rows.div_ceil(8));
     }
 
     /// Go `Decoder.ReuseIntermChk`: normalize the remaining variable offsets,
@@ -290,6 +299,14 @@ impl Decoder {
     #[must_use]
     pub fn intermediate_chunk(&self) -> &Chunk {
         &self.intermediate
+    }
+
+    /// Consume the decoder and return its intermediate chunk. This is the
+    /// ownership-safe adapter for Go's one-shot caller that retains the
+    /// `*Chunk` passed to `NewDecoder` after `Reset`.
+    #[must_use]
+    pub fn into_intermediate_chunk(self) -> Chunk {
+        self.intermediate
     }
 }
 
@@ -529,18 +546,11 @@ mod tests {
         }
     }
 
-    /// Two chunks back to back: `Decode` stops at the first chunk's end and
-    /// hands the rest back.
     #[test]
-    fn decode_returns_the_unconsumed_tail() {
+    fn decode_reads_an_exact_single_column_image() {
         let (fields, _) = int64_with_null();
-        let mut buffer = go_bytes("int64_with_null");
-        let tail_marker = [0xaa_u8, 0xbb];
-        buffer.extend_from_slice(&tail_marker);
-        // One field type, so `Decode` reads exactly one column and would panic
-        // on a second -- the tail here is what a caller slices off instead.
-        let one_column = &buffer[..buffer.len() - 2];
-        let (chunk, remained) = Codec::new(fields).decode(one_column);
+        let buffer = go_bytes("int64_with_null");
+        let (chunk, remained) = Codec::new(fields).decode(&buffer);
         assert!(remained.is_empty());
         assert_eq!(chunk.column(0).rows(), 3);
         assert_eq!(chunk.column(0).get_int64(0), 1);
@@ -647,9 +657,11 @@ mod tests {
         assert!(decoder.intermediate_chunk().column(1).offsets[0] > 0);
 
         let mut target = Chunk::new(&fields, 0, 64);
+        target.set_incomplete_chunk(true);
         decoder.reuse_intermediate_chunk(&mut target);
         assert!(decoder.is_finished());
         assert_eq!(target.required_rows(), 64);
+        assert!(target.is_incomplete_chunk());
         assert_eq!(target.num_rows(), 3);
         assert_eq!(target.column(1).offsets[0], 0);
         for row in 0..3 {
@@ -685,8 +697,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Decoder.Decode requires a non-full target")]
-    fn decoder_rejects_the_full_target_excluded_by_the_source_caller() {
+    fn decoder_full_target_consumes_nothing_and_masks_padding() {
         let (fields, source) = decoder_source(1);
         let image = Codec::new(fields.clone()).encode(&source);
         let mut decoder = Decoder::new(Chunk::new_with_capacity(&fields, 0), fields.clone());
@@ -694,6 +705,64 @@ mod tests {
         let mut full = Chunk::new(&fields, 1, 1);
         full.append_int64(0, 1);
         full.append_string(1, "full");
+        full.column_mut(0).null_bitmap[0] = 0xff;
+        full.column_mut(1).null_bitmap[0] = 0xff;
+        let remained = decoder.remained_rows();
         decoder.decode(&mut full);
+        assert_eq!(decoder.remained_rows(), remained);
+        assert_eq!(full.num_rows(), 1);
+        assert_eq!(full.column(0).null_bitmap, vec![0x01]);
+        assert_eq!(full.column(1).null_bitmap, vec![0x01]);
+    }
+
+    #[test]
+    fn decoder_bulk_paths_cover_all_bitmap_alignments_and_deficits() {
+        let (fields, source) = decoder_source(17);
+        let image = Codec::new(fields.clone()).encode(&source);
+        for prefix in 0..=8 {
+            for deficit in [1usize, 7, 8, 9] {
+                let mut decoder =
+                    Decoder::new(Chunk::new_with_capacity(&fields, 0), fields.clone());
+                decoder.reset(&image);
+                let mut target = Chunk::new(&fields, prefix, prefix + deficit);
+                for row in 0..prefix {
+                    target.append_int64(0, -(row as i64) - 1);
+                    target.append_string(1, "prefix");
+                }
+                decoder.decode(&mut target);
+                let decoded = deficit.div_ceil(8).saturating_mul(8).min(17);
+                assert_eq!(target.num_rows(), prefix + decoded);
+                assert_eq!(decoder.remained_rows(), 17 - decoded);
+                for row in 0..decoded {
+                    for (column, field) in fields.iter().enumerate() {
+                        assert_eq!(
+                            target.get_row(prefix + row).get_datum(column, field),
+                            source.get_row(row).get_datum(column, field),
+                            "prefix={prefix} deficit={deficit} row={row} col={column}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn decoder_reset_ignores_decode_to_chunk_suffix_and_can_return_owner() {
+        let (fields, source) = decoder_source(3);
+        let mut image = Codec::new(fields.clone()).encode(&source);
+        image.extend_from_slice(&[0xaa, 0xbb, 0xcc]);
+        let mut decoder = Decoder::new(Chunk::new_with_capacity(&fields, 0), fields.clone());
+        decoder.reset(&image);
+        assert_eq!(decoder.remained_rows(), 3);
+        let intermediate = decoder.into_intermediate_chunk();
+        assert_eq!(intermediate.num_rows(), 3);
+        for row in 0..3 {
+            for (column, field) in fields.iter().enumerate() {
+                assert_eq!(
+                    intermediate.get_row(row).get_datum(column, field),
+                    source.get_row(row).get_datum(column, field)
+                );
+            }
+        }
     }
 }
