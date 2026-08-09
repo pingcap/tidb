@@ -53,8 +53,8 @@ pub use auto_id::{
 pub use auto_increment::{AutoIncrement, TableAutoId};
 
 pub use table_meta::{
-    FkAction, IndexRange, KvColumn, KvForeignKey, KvIndex, RowDecodeContext, TableCharset,
-    TableHandle,
+    index_ranges_estimated_memory_usage, intersect_index_ranges, FkAction, IndexRange, KvColumn,
+    KvForeignKey, KvIndex, RowDecodeContext, TableCharset, TableHandle,
 };
 pub use table_scan::{
     capture_decoded_column_ids, IndexRangeCursor, RemoteRowCursor, RowCursor, TableScanExec,

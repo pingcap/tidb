@@ -27,6 +27,8 @@
 //! scan -- stay in the parent module.
 
 use crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
+use std::cmp::Ordering;
+use std::fmt;
 use tidb_codec::table_key::RecordHandle;
 use tidb_datatype::{Charset, Collation, ConversionFlags, Datum, FieldType, SessionTimeZone};
 
@@ -204,6 +206,242 @@ impl IndexRange {
     pub fn is_full(&self) -> bool {
         *self == IndexRange::full()
     }
+
+    /// Go `ranger.Range.IsPoint`, with the caller's `RegardNULLAsPoint`
+    /// statement-context policy made explicit.
+    #[must_use]
+    pub fn is_point(&self, regard_null_as_point: bool) -> bool {
+        self.low.len() == self.high.len()
+            && !self.low_exclusive
+            && !self.high_exclusive
+            && self.low.iter().zip(&self.high).all(|(low, high)| {
+                !matches!(low, Datum::MinNotNull)
+                    && !matches!(high, Datum::MaxValue)
+                    && (regard_null_as_point || !matches!((low, high), (Datum::Null, Datum::Null)))
+                    && compare_index_bound_datums(low, high) == Ordering::Equal
+            })
+    }
+
+    /// Go `ranger.Range.IsFullRange`, including its integer-handle boundary
+    /// spellings and the source rule that `[NULL, NULL]` is not full.
+    #[must_use]
+    pub fn is_full_range(&self, unsigned_int_handle: bool) -> bool {
+        if unsigned_int_handle {
+            return self.low.len() == 1
+                && self.high.len() == 1
+                && is_range_boundary(&self.low[0], true, true)
+                && is_range_boundary(&self.high[0], true, false);
+        }
+        self.low.len() == self.high.len()
+            && self.low.iter().zip(&self.high).all(|(low, high)| {
+                let left_is_null = matches!(low, Datum::Null);
+                let right_is_null = matches!(high, Datum::Null);
+                (is_range_boundary(low, false, true) || left_is_null)
+                    && (is_range_boundary(high, false, false) || right_is_null)
+                    && !(left_is_null && right_is_null)
+            })
+    }
+
+    /// Rust-representation equivalent of Go `ranger.Range.MemUsage`.
+    ///
+    /// The struct owns both tuple vector headers inline and every datum on
+    /// their heaps. Rust does not store Go's collator-interface slice on each
+    /// range; collation is typed into string datums and index metadata.
+    #[must_use]
+    pub fn estimated_memory_usage(&self) -> usize {
+        std::mem::size_of::<Self>()
+            + self
+                .low
+                .iter()
+                .chain(&self.high)
+                .map(Datum::estimated_mem_usage)
+                .sum::<usize>()
+    }
+
+    /// Go `ranger.Range.IntersectRange` for already typed index bounds.
+    ///
+    /// A shorter tuple is a prefix constraint. Before comparing it with a
+    /// longer tuple, Go extends the missing suffix with `-inf` or `+inf`
+    /// according to whether that endpoint is a lower/upper and open/closed
+    /// bound. Preserving that rule is what makes a one-column point intersect
+    /// a more granular `(a, b)` interval correctly.
+    #[must_use]
+    pub fn intersect(&self, other: &Self) -> Option<Self> {
+        let other_is_more_granular = self.low.len() <= other.low.len();
+
+        if compare_range_bounds(
+            &self.low,
+            &other.high,
+            self.low_exclusive,
+            other.high_exclusive,
+            true,
+            false,
+        ) == Ordering::Greater
+            || compare_range_bounds(
+                &other.low,
+                &self.high,
+                other.low_exclusive,
+                self.high_exclusive,
+                true,
+                false,
+            ) == Ordering::Greater
+        {
+            return None;
+        }
+
+        let low_cmp = compare_range_bounds(
+            &self.low,
+            &other.low,
+            self.low_exclusive,
+            other.low_exclusive,
+            true,
+            true,
+        );
+        let (low, low_exclusive) = if low_cmp == Ordering::Less
+            || (low_cmp == Ordering::Equal && other_is_more_granular)
+        {
+            (other.low.clone(), other.low_exclusive)
+        } else {
+            (self.low.clone(), self.low_exclusive)
+        };
+
+        let high_cmp = compare_range_bounds(
+            &self.high,
+            &other.high,
+            self.high_exclusive,
+            other.high_exclusive,
+            false,
+            false,
+        );
+        let (high, high_exclusive) = if high_cmp == Ordering::Greater
+            || (high_cmp == Ordering::Equal && other_is_more_granular)
+        {
+            (other.high.clone(), other.high_exclusive)
+        } else {
+            (self.high.clone(), self.high_exclusive)
+        };
+
+        Some(Self {
+            low,
+            high,
+            low_exclusive,
+            high_exclusive,
+        })
+    }
+}
+
+impl fmt::Display for IndexRange {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&crate::plan_trace::range_text(self))
+    }
+}
+
+/// Go `ranger.Ranges.MemUsage`.
+#[must_use]
+pub fn index_ranges_estimated_memory_usage(ranges: &[IndexRange]) -> usize {
+    ranges.iter().map(IndexRange::estimated_memory_usage).sum()
+}
+
+/// Go `ranger.Ranges.IntersectRanges`, preserving left-major result order.
+#[must_use]
+pub fn intersect_index_ranges(left: &[IndexRange], right: &[IndexRange]) -> Vec<IndexRange> {
+    let mut intersections = Vec::new();
+    for left_range in left {
+        for right_range in right {
+            if let Some(intersection) = left_range.intersect(right_range) {
+                intersections.push(intersection);
+            }
+        }
+    }
+    intersections
+}
+
+fn compare_range_bounds(
+    left: &[Datum],
+    right: &[Datum],
+    left_open: bool,
+    right_open: bool,
+    left_is_low: bool,
+    right_is_low: bool,
+) -> Ordering {
+    let length = left.len().max(right.len());
+    let left = extend_range_bound(left, length, left_is_low, left_open);
+    let right = extend_range_bound(right, length, right_is_low, right_open);
+
+    for (left, right) in left.iter().zip(&right) {
+        let ordering = compare_index_bound_datums(left, right);
+        if ordering != Ordering::Equal {
+            return ordering;
+        }
+    }
+
+    if !left_open && !right_open {
+        Ordering::Equal
+    } else if left_open == right_open {
+        if left_is_low == right_is_low {
+            Ordering::Equal
+        } else if left_is_low {
+            Ordering::Greater
+        } else {
+            Ordering::Less
+        }
+    } else if left_open {
+        if left_is_low {
+            Ordering::Greater
+        } else {
+            Ordering::Less
+        }
+    } else if right_is_low {
+        Ordering::Less
+    } else {
+        Ordering::Greater
+    }
+}
+
+fn extend_range_bound(bound: &[Datum], length: usize, is_low: bool, open: bool) -> Vec<Datum> {
+    let mut extended = Vec::with_capacity(length);
+    extended.extend_from_slice(bound);
+    let suffix = match (is_low, open) {
+        (true, true) | (false, false) => Datum::MaxValue,
+        (true, false) | (false, true) => Datum::MinNotNull,
+    };
+    extended.resize(length, suffix);
+    extended
+}
+
+fn is_range_boundary(value: &Datum, unsigned_int_handle: bool, left_side: bool) -> bool {
+    match value {
+        Datum::MinNotNull => left_side,
+        Datum::MaxValue => !left_side,
+        Datum::Int(value) => {
+            (*value == i64::MIN && left_side) || (*value == i64::MAX && !left_side)
+        }
+        Datum::UInt(value) => {
+            (*value == 0 && unsigned_int_handle && left_side) || (*value == u64::MAX && !left_side)
+        }
+        _ => false,
+    }
+}
+
+fn compare_index_bound_datums(left: &Datum, right: &Datum) -> Ordering {
+    let rank = |value: &Datum| match value {
+        Datum::Null => 0,
+        Datum::MinNotNull => 1,
+        Datum::MaxValue => 3,
+        _ => 2,
+    };
+    match rank(left).cmp(&rank(right)) {
+        Ordering::Equal => {}
+        ordering => return ordering,
+    }
+    if rank(left) != 2 {
+        return Ordering::Equal;
+    }
+    let collation = left
+        .collation()
+        .or_else(|| right.collation())
+        .unwrap_or(Collation::Binary);
+    tidb_expr::compare_datums_with_collation(left, right, collation).unwrap_or(Ordering::Equal)
 }
 
 /// One index of a [`KvTable`]: Go `model.IndexInfo`, reduced to what an index
