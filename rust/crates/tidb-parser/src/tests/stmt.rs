@@ -31,8 +31,9 @@ fn root_statement_preserves_source_text_and_position() {
     assert_eq!(statements[1].original_text(), b"SELECT 2");
 }
 
+/// `pkg/parser/parser_test.go::TestMultiStmt`.
 #[test]
-fn select_fields_preserve_their_exact_source_text() {
+fn test_multi_stmt() {
     fn field_texts(statement: &tidb_ast::Stmt) -> Vec<&[u8]> {
         let tidb_ast::Stmt::Query(query) = statement else {
             panic!("expected query statement");
