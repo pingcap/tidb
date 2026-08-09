@@ -159,6 +159,8 @@ use std::cell::Cell;
 use std::cmp::Ordering;
 use std::sync::Arc;
 use tidb_chunk::chunk::Chunk;
+use tidb_chunk::list::RowPtr;
+use tidb_chunk::row_container::RowContainer;
 use tidb_datatype::{Datum, FieldType};
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
@@ -195,32 +197,151 @@ struct HashState {
 }
 
 /// One side of the merge strategy: the chunk it streams into, how far that
-/// chunk is consumed, and the group of equal-keyed rows currently held.
+/// chunk is consumed, and the current equal-key group metadata.
 ///
-/// Go's `MergeJoinTable`. The group is `Vec<Vec<Datum>>` rather than Go's
-/// `chunk.RowContainer` because this tier has no spill container; the bound
-/// is the statement budget, polled after each group lands, exactly as the
-/// nested path polls it.
+/// Only the OUTER side owns `group` datum rows. The INNER side sets
+/// `group_len` and writes its rows to [`MergeInnerGroup`], which is the
+/// spillable authority accepted TiDB uses for a run crossing chunk bounds.
 struct MergeSide {
     chunk: Chunk,
+    /// The exact live capacity charge for `chunk`.
+    chunk_bytes: i64,
     row: usize,
     /// Whether the child has returned its final (empty) chunk.
     done: bool,
-    /// The rows of the current group -- all with the same join key.
+    /// The current OUTER row. The INNER side stores no datum rows here.
+    ///
+    /// TiDB's merge join retains one equal-key INNER group, but streams the
+    /// OUTER side through it. Keeping this vector bounded to one row is what
+    /// prevents a duplicate-key run on the preserved side from becoming a
+    /// second, non-spillable build side.
     group: Vec<Vec<Datum>>,
+    /// Accounted bytes retained by `group`; released before the next group.
+    group_bytes: i64,
+    /// Number of rows in the current group. The inner group is not stored in
+    /// `group`, so emptiness cannot be derived from the vector.
+    group_len: usize,
     /// The key of `group`, empty when `group` is.
     key: Vec<Datum>,
 }
 
 impl MergeSide {
     fn new(chunk: Chunk) -> Self {
+        let chunk_bytes = chunk.memory_usage();
         MergeSide {
             chunk,
+            chunk_bytes,
             row: 0,
             done: false,
             group: Vec::new(),
+            group_bytes: 0,
+            group_len: 0,
             key: Vec::new(),
         }
+    }
+}
+
+/// The merge INNER side's current equal-key group.
+///
+/// `staging` is the child-sized chunk currently being filled. Its memory is
+/// charged directly to the join tracker until ownership is transferred to
+/// `rows`; `RowContainer::add` charges the same chunk before that direct
+/// charge is released, matching TiDB's child-chunk-to-container handoff.
+struct MergeInnerGroup {
+    rows: RowContainer,
+    staging: Chunk,
+    types: Vec<FieldType>,
+}
+
+impl MergeInnerGroup {
+    fn new(
+        types: Vec<FieldType>,
+        chunk_size: usize,
+        memory: &StatementMemory,
+        tracker: &Arc<Tracker>,
+        disk_tracker: &Arc<tidb_util::disk::Tracker>,
+    ) -> Self {
+        let mut rows = RowContainer::new(&types, chunk_size, memory.spill_storage());
+        rows.mem_tracker().attach_to(tracker);
+        rows.disk_tracker().attach_to(disk_tracker);
+        let staging = rows.alloc_chunk();
+        Self {
+            rows,
+            staging,
+            types,
+        }
+    }
+
+    fn reset(&mut self) {
+        debug_assert_eq!(self.staging.num_rows(), 0);
+        self.rows.reset();
+    }
+
+    fn append(
+        &mut self,
+        row: tidb_chunk::row::Row<'_>,
+        tracker: &Arc<Tracker>,
+        memory: &StatementMemory,
+    ) -> Result<(), ExecError> {
+        let before = self.staging.memory_usage();
+        self.staging.append_row(row);
+        tracker.consume(self.staging.memory_usage() - before);
+        if self.staging.is_full() {
+            self.flush(tracker)?;
+        }
+        memory.check()
+    }
+
+    fn finish_group(&mut self, tracker: &Arc<Tracker>) -> Result<(), ExecError> {
+        if self.staging.num_rows() != 0 {
+            self.flush(tracker)?;
+        }
+        Ok(())
+    }
+
+    fn flush(&mut self, tracker: &Arc<Tracker>) -> Result<(), ExecError> {
+        let chunk = std::mem::take(&mut self.staging);
+        let chunk_bytes = chunk.memory_usage();
+        let result = self
+            .rows
+            .add(chunk)
+            .map_err(|error| ExecError::SpillFailed(error.to_string()));
+        tracker.consume(-chunk_bytes);
+        result?;
+        self.staging = self.rows.alloc_chunk();
+        tracker.consume(self.staging.memory_usage());
+        Ok(())
+    }
+
+    fn close(&mut self, tracker: &Arc<Tracker>) {
+        tracker.consume(-self.staging.memory_usage());
+        self.staging = Chunk::default();
+        self.rows.close();
+    }
+
+    fn first_ptr(&self) -> Option<RowPtr> {
+        (self.rows.num_chunks() != 0).then_some(RowPtr::new(0, 0))
+    }
+
+    fn next_ptr(&self, ptr: RowPtr) -> Option<RowPtr> {
+        let chunk_index = ptr.chk_idx as usize;
+        let next_row = ptr.row_idx as usize + 1;
+        if next_row < self.rows.num_rows_of_chunk(chunk_index) {
+            return Some(RowPtr::new(ptr.chk_idx, next_row as u32));
+        }
+        let next_chunk = chunk_index + 1;
+        (next_chunk < self.rows.num_chunks()).then_some(RowPtr::new(next_chunk as u32, 0))
+    }
+
+    fn datum_row(&mut self, ptr: RowPtr) -> Result<Vec<Datum>, ExecError> {
+        self.staging.reset();
+        let row_index = self
+            .rows
+            .get_row_and_always_append_to_chunk(ptr, &mut self.staging)
+            .map_err(|error| ExecError::SpillFailed(error.to_string()))?;
+        let row = self.staging.get_row(row_index).get_datum_row(&self.types);
+        self.staging.reset();
+        Ok(row)
     }
 }
 
@@ -287,6 +408,36 @@ struct IndexLookupState {
 struct MergeState {
     left: MergeSide,
     right: MergeSide,
+    inner_is_left: bool,
+    inner_group: Option<MergeInnerGroup>,
+    pending: Option<MergePendingOutput>,
+}
+
+/// Output cursor for a merge group whose cross product or outer misses span
+/// several requested chunks.
+enum MergePendingOutput {
+    Matched {
+        outer: Vec<Vec<Datum>>,
+        retained_bytes: i64,
+        outer_index: usize,
+        inner_ptr: Option<RowPtr>,
+        matched_current_outer: bool,
+    },
+    Unmatched {
+        outer: Vec<Vec<Datum>>,
+        retained_bytes: i64,
+        outer_index: usize,
+    },
+}
+
+impl MergePendingOutput {
+    fn retained_bytes(&self) -> i64 {
+        match self {
+            Self::Matched { retained_bytes, .. } | Self::Unmatched { retained_bytes, .. } => {
+                *retained_bytes
+            }
+        }
+    }
 }
 
 /// A join of two children, hashing its equal conditions when it can and
@@ -837,18 +988,13 @@ impl<C: Columns> JoinExec<C> {
         self.merge.is_some()
     }
 
-    /// Pulls the next group of equal-keyed rows into `side`, leaving it empty
-    /// when the child is exhausted.
+    /// Pulls one OUTER row into owned datums.
     ///
-    /// Go's `fetchNextInnerGroup`/`fetchNextOuterGroup`, collapsed into one:
-    /// Go splits them because its inner group spans chunks through a spill
-    /// container while its outer group stops at a chunk boundary, an
-    /// asymmetry that exists to bound memory. Here BOTH sides collect a whole
-    /// group, so the outer side's group is never split across calls and the
-    /// duplicate-key cross product below is complete on both sides -- which is
-    /// the property the asymmetric Go pair also has, reached by its own
-    /// `MultiIterator`.
-    fn fetch_group(
+    /// The equal-key INNER run remains installed across calls, so adjacent
+    /// OUTER rows with the same key reuse it. This is the bounded streaming
+    /// half of Go's merge join: only the INNER run is materialized and
+    /// spillable.
+    fn fetch_outer_group(
         side: &mut MergeSide,
         child: &mut dyn Executor,
         key_offsets: &[usize],
@@ -856,34 +1002,178 @@ impl<C: Columns> JoinExec<C> {
         tracker: &Arc<Tracker>,
         memory: &StatementMemory,
     ) -> Result<(), ExecError> {
+        tracker.consume(-side.group_bytes);
         side.group.clear();
+        side.group_bytes = 0;
+        side.group_len = 0;
+        side.key.clear();
+        while side.row >= side.chunk.num_rows() {
+            if side.done {
+                return Ok(());
+            }
+            let result = child.next(&mut side.chunk);
+            let current_bytes = side.chunk.memory_usage();
+            tracker.consume(current_bytes - side.chunk_bytes);
+            side.chunk_bytes = current_bytes;
+            result?;
+            memory.check()?;
+            side.row = 0;
+            if side.chunk.num_rows() == 0 {
+                side.done = true;
+                return Ok(());
+            }
+        }
+
+        let row = datum_row(&side.chunk, side.row, types);
+        side.key = key_offsets.iter().map(|&at| row[at].clone()).collect();
+        let bytes = row_bytes(&row);
+        tracker.consume(bytes);
+        side.group_bytes = bytes;
+        side.group.push(row);
+        side.group_len = 1;
+        side.row += 1;
+        memory.check()
+    }
+
+    /// Pulls the next INNER group into the spillable row container. Only the
+    /// key is materialized as datums; complete rows remain chunk encoded.
+    fn fetch_inner_group(
+        side: &mut MergeSide,
+        child: &mut dyn Executor,
+        key_offsets: &[usize],
+        types: &[FieldType],
+        group: &mut MergeInnerGroup,
+        tracker: &Arc<Tracker>,
+        memory: &StatementMemory,
+    ) -> Result<(), ExecError> {
+        group.reset();
+        side.group.clear();
+        side.group_bytes = 0;
+        side.group_len = 0;
         side.key.clear();
         loop {
             if side.row >= side.chunk.num_rows() {
                 if side.done {
                     break;
                 }
-                child.next(&mut side.chunk)?;
+                let result = child.next(&mut side.chunk);
+                let current_bytes = side.chunk.memory_usage();
+                tracker.consume(current_bytes - side.chunk_bytes);
+                side.chunk_bytes = current_bytes;
+                result?;
+                memory.check()?;
                 side.row = 0;
                 if side.chunk.num_rows() == 0 {
                     side.done = true;
                     break;
                 }
             }
-            let row = datum_row(&side.chunk, side.row, types);
-            let key: Vec<Datum> = key_offsets.iter().map(|&at| row[at].clone()).collect();
-            if side.group.is_empty() {
+            let row = side.chunk.get_row(side.row);
+            let key: Vec<Datum> = key_offsets
+                .iter()
+                .map(|&at| row.get_datum(at, &types[at]))
+                .collect();
+            if side.group_len == 0 {
                 side.key = key;
             } else if merge_key_cmp(&side.key, &key, false)? != Ordering::Equal {
-                // The next group starts here; leave `row` unconsumed.
                 break;
             }
-            tracker.consume(row_bytes(&row));
-            side.group.push(row);
+            group.append(row, tracker, memory)?;
+            side.group_len += 1;
             side.row += 1;
         }
-        memory.check()?;
-        Ok(())
+        group.finish_group(tracker)?;
+        memory.check()
+    }
+
+    /// Drains as much of the current merge cross product as the caller's
+    /// requested chunk can hold. The cursor is restored to `MergeState` even
+    /// when expression evaluation or a spill read fails, so `close` can still
+    /// release the container and action.
+    fn drain_merge_pending(&mut self, req: &mut Chunk) -> Result<bool, ExecError> {
+        let (mut pending, mut inner) = {
+            let state = self.merge_state.as_mut().expect("merge state exists");
+            (
+                state.pending.take().expect("pending output exists"),
+                state.inner_group.take().expect("inner group installed"),
+            )
+        };
+        let mut error = None;
+        match &mut pending {
+            MergePendingOutput::Matched {
+                outer,
+                retained_bytes: _,
+                outer_index,
+                inner_ptr,
+                matched_current_outer,
+            } => {
+                while *outer_index < outer.len() && !req.is_full() {
+                    if let Some(ptr) = *inner_ptr {
+                        let next = inner.next_ptr(ptr);
+                        let inner_row = match inner.datum_row(ptr) {
+                            Ok(row) => row,
+                            Err(current) => {
+                                error = Some(current);
+                                break;
+                            }
+                        };
+                        *inner_ptr = next;
+                        let joined = self.join_rows(&outer[*outer_index], &inner_row);
+                        match self.matches(&joined) {
+                            Ok(true) => {
+                                *matched_current_outer = true;
+                                Self::append(req, &joined);
+                            }
+                            Ok(false) => {}
+                            Err(current) => {
+                                error = Some(current);
+                                break;
+                            }
+                        }
+                        continue;
+                    }
+
+                    if !*matched_current_outer && self.kind != JoinKind::Inner {
+                        Self::append(req, &self.padded_row(&outer[*outer_index]));
+                    }
+                    *outer_index += 1;
+                    *matched_current_outer = false;
+                    if *outer_index < outer.len() {
+                        *inner_ptr = inner.first_ptr();
+                    }
+                }
+            }
+            MergePendingOutput::Unmatched {
+                outer,
+                retained_bytes: _,
+                outer_index,
+            } => {
+                while *outer_index < outer.len() && !req.is_full() {
+                    Self::append(req, &self.padded_row(&outer[*outer_index]));
+                    *outer_index += 1;
+                }
+            }
+        }
+        let done = match &pending {
+            MergePendingOutput::Matched {
+                outer, outer_index, ..
+            }
+            | MergePendingOutput::Unmatched {
+                outer, outer_index, ..
+            } => *outer_index == outer.len(),
+        };
+        if done {
+            self.tracker.consume(-pending.retained_bytes());
+        }
+        let state = self.merge_state.as_mut().expect("merge state exists");
+        state.inner_group = Some(inner);
+        if !done {
+            state.pending = Some(pending);
+        }
+        if let Some(error) = error {
+            return Err(error);
+        }
+        Ok(done)
     }
 
     /// The merge path: advance the side whose key falls behind, and emit the
@@ -903,41 +1193,122 @@ impl<C: Columns> JoinExec<C> {
         let right_keys: Vec<usize> = plan.keys.iter().map(|key| key.right).collect();
         let left_types: Vec<FieldType> = self.left.ret_field_types().to_vec();
         let right_types: Vec<FieldType> = self.right.ret_field_types().to_vec();
+        let outer_is_left = self.outer_is_left();
         if self.merge_state.is_none() {
+            let inner_is_left = !outer_is_left;
+            let inner_types = if inner_is_left {
+                left_types.clone()
+            } else {
+                right_types.clone()
+            };
+            let mut inner_group = MergeInnerGroup::new(
+                inner_types,
+                self.meta.max_chunk_size(),
+                &self.memory,
+                &self.tracker,
+                &self.disk_tracker,
+            );
+            if self.memory.tmp_storage_on_oom() {
+                let action: ArcAction = inner_group.rows.action_spill();
+                self.memory
+                    .session_tracker()
+                    .fallback_old_and_set_new_action(Arc::clone(&action));
+                self.registered_action = Some(action);
+            }
+            let staging_bytes = inner_group.staging.memory_usage();
+            let left = MergeSide::new(self.left.new_chunk());
+            let right = MergeSide::new(self.right.new_chunk());
+            let input_bytes = left.chunk_bytes + right.chunk_bytes;
             self.merge_state = Some(MergeState {
-                left: MergeSide::new(self.left.new_chunk()),
-                right: MergeSide::new(self.right.new_chunk()),
+                left,
+                right,
+                inner_is_left,
+                inner_group: Some(inner_group),
+                pending: None,
             });
+            self.tracker.consume(staging_bytes + input_bytes);
+            self.memory.check()?;
         }
         let tracker = Arc::clone(&self.tracker);
         let memory = self.memory.clone();
-        let outer_is_left = self.outer_is_left();
         loop {
+            if self
+                .merge_state
+                .as_ref()
+                .is_some_and(|state| state.pending.is_some())
+            {
+                self.drain_merge_pending(req)?;
+                self.memory.check()?;
+                if req.num_rows() > 0 {
+                    return Ok(());
+                }
+                continue;
+            }
+            let (already_spilled, disk_bytes) = {
+                let state = self.merge_state.as_ref().expect("just created");
+                let inner = state.inner_group.as_ref().expect("inner group installed");
+                (
+                    inner.rows.already_spilled(),
+                    inner.rows.disk_tracker().bytes_consumed(),
+                )
+            };
+            self.build_spilled |= already_spilled;
+            self.spilled_bytes = self.spilled_bytes.max(disk_bytes);
+
             let state = self.merge_state.as_mut().expect("just created");
-            if state.left.group.is_empty() {
-                Self::fetch_group(
-                    &mut state.left,
-                    self.left.as_mut(),
-                    &left_keys,
-                    &left_types,
-                    &tracker,
-                    &memory,
-                )?;
+            if state.left.group_len == 0 {
+                if state.inner_is_left {
+                    let MergeState {
+                        left, inner_group, ..
+                    } = state;
+                    Self::fetch_inner_group(
+                        left,
+                        self.left.as_mut(),
+                        &left_keys,
+                        &left_types,
+                        inner_group.as_mut().expect("inner group installed"),
+                        &tracker,
+                        &memory,
+                    )?;
+                } else {
+                    Self::fetch_outer_group(
+                        &mut state.left,
+                        self.left.as_mut(),
+                        &left_keys,
+                        &left_types,
+                        &tracker,
+                        &memory,
+                    )?;
+                }
             }
             let state = self.merge_state.as_mut().expect("just created");
-            if state.right.group.is_empty() {
-                Self::fetch_group(
-                    &mut state.right,
-                    self.right.as_mut(),
-                    &right_keys,
-                    &right_types,
-                    &tracker,
-                    &memory,
-                )?;
+            if state.right.group_len == 0 {
+                if state.inner_is_left {
+                    Self::fetch_outer_group(
+                        &mut state.right,
+                        self.right.as_mut(),
+                        &right_keys,
+                        &right_types,
+                        &tracker,
+                        &memory,
+                    )?;
+                } else {
+                    let MergeState {
+                        right, inner_group, ..
+                    } = state;
+                    Self::fetch_inner_group(
+                        right,
+                        self.right.as_mut(),
+                        &right_keys,
+                        &right_types,
+                        inner_group.as_mut().expect("inner group installed"),
+                        &tracker,
+                        &memory,
+                    )?;
+                }
             }
             let state = self.merge_state.as_mut().expect("just created");
-            let (left_empty, right_empty) =
-                (state.left.group.is_empty(), state.right.group.is_empty());
+            let (left_empty, right_empty) = (state.left.group_len == 0, state.right.group_len == 0);
             if left_empty && right_empty {
                 return Ok(());
             }
@@ -963,32 +1334,73 @@ impl<C: Columns> JoinExec<C> {
             // the normal path instead of by a special case.
             match order {
                 Ordering::Equal => {
-                    let left_group = std::mem::take(&mut state.left.group);
-                    let right_group = std::mem::take(&mut state.right.group);
-                    let (outer, inner) = if outer_is_left {
-                        (&left_group, &right_group)
-                    } else {
-                        (&right_group, &left_group)
+                    let outer_bytes = {
+                        let state = self.merge_state.as_mut().expect("state exists");
+                        let (outer, bytes) = if outer_is_left {
+                            state.left.group_len = 0;
+                            let bytes = std::mem::take(&mut state.left.group_bytes);
+                            (std::mem::take(&mut state.left.group), bytes)
+                        } else {
+                            state.right.group_len = 0;
+                            let bytes = std::mem::take(&mut state.right.group_bytes);
+                            (std::mem::take(&mut state.right.group), bytes)
+                        };
+                        let first = state
+                            .inner_group
+                            .as_ref()
+                            .expect("inner group installed")
+                            .first_ptr();
+                        state.pending = Some(MergePendingOutput::Matched {
+                            outer,
+                            retained_bytes: bytes,
+                            outer_index: 0,
+                            inner_ptr: first,
+                            matched_current_outer: false,
+                        });
+                        bytes
                     };
-                    for outer_row in outer {
-                        self.emit_outer_row(req, outer_row, inner.iter().cloned())?;
-                    }
+                    debug_assert!(outer_bytes >= 0);
+                    self.drain_merge_pending(req)?;
                 }
                 // The left group is behind, or the right side is spent.
                 Ordering::Less => {
-                    let group = std::mem::take(&mut state.left.group);
-                    if outer_is_left {
-                        for row in &group {
-                            self.emit_outer_row(req, row, std::iter::empty())?;
-                        }
+                    let (group, bytes, is_outer) = {
+                        let state = self.merge_state.as_mut().expect("state exists");
+                        state.left.group_len = 0;
+                        let group = std::mem::take(&mut state.left.group);
+                        let bytes = std::mem::take(&mut state.left.group_bytes);
+                        (group, bytes, outer_is_left)
+                    };
+                    if is_outer && self.kind != JoinKind::Inner {
+                        self.merge_state.as_mut().expect("state exists").pending =
+                            Some(MergePendingOutput::Unmatched {
+                                outer: group,
+                                retained_bytes: bytes,
+                                outer_index: 0,
+                            });
+                        self.drain_merge_pending(req)?;
+                    } else {
+                        tracker.consume(-bytes);
                     }
                 }
                 Ordering::Greater => {
-                    let group = std::mem::take(&mut state.right.group);
-                    if !outer_is_left {
-                        for row in &group {
-                            self.emit_outer_row(req, row, std::iter::empty())?;
-                        }
+                    let (group, bytes, is_outer) = {
+                        let state = self.merge_state.as_mut().expect("state exists");
+                        state.right.group_len = 0;
+                        let group = std::mem::take(&mut state.right.group);
+                        let bytes = std::mem::take(&mut state.right.group_bytes);
+                        (group, bytes, !outer_is_left)
+                    };
+                    if is_outer && self.kind != JoinKind::Inner {
+                        self.merge_state.as_mut().expect("state exists").pending =
+                            Some(MergePendingOutput::Unmatched {
+                                outer: group,
+                                retained_bytes: bytes,
+                                outer_index: 0,
+                            });
+                        self.drain_merge_pending(req)?;
+                    } else {
+                        tracker.consume(-bytes);
                     }
                 }
             }
@@ -1314,6 +1726,22 @@ impl<C: Columns> Executor for JoinExec<C> {
         if let Some(hash) = self.hash.as_mut() {
             hash.table.close();
         }
+        if let Some(mut state) = self.merge_state.take() {
+            self.tracker.consume(-state.left.group_bytes);
+            self.tracker.consume(-state.right.group_bytes);
+            self.tracker.consume(-state.left.chunk_bytes);
+            self.tracker.consume(-state.right.chunk_bytes);
+            if let Some(pending) = state.pending.take() {
+                self.tracker.consume(-pending.retained_bytes());
+            }
+            if let Some(inner) = state.inner_group.as_mut() {
+                self.build_spilled |= inner.rows.already_spilled();
+                self.spilled_bytes = self
+                    .spilled_bytes
+                    .max(inner.rows.disk_tracker().bytes_consumed());
+                inner.close(&self.tracker);
+            }
+        }
         if let Some(action) = self.registered_action.take() {
             self.memory
                 .session_tracker()
@@ -1348,419 +1776,12 @@ impl<C: Columns> Executor for JoinExec<C> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use tidb_ast::CiString;
-    use tidb_datatype::FieldTypeCode;
-    use tidb_expr::column::Column;
-    use tidb_expr::scalar_function::ScalarFunction;
-    pub(super) use tidb_expr::NoColumns;
-
-    const CHUNK: usize = 1024;
-
-    fn long() -> FieldType {
-        FieldType::new(FieldTypeCode::Long)
-    }
-
-    fn schema_of(width: usize) -> Schema {
-        Schema::new(
-            (0..width)
-                .map(|i| {
-                    let mut column = Column::new(i as i64 + 1, long());
-                    column.index = i as i64;
-                    column
-                })
-                .collect(),
-        )
-    }
-
-    /// A source that hands out prebuilt rows in `max_chunk_size` batches, so
-    /// the probe side really is pulled incrementally rather than in one go.
-    struct RowSource {
-        meta: ExecutorMeta,
-        rows: Vec<Vec<Datum>>,
-        cursor: usize,
-    }
-
-    impl RowSource {
-        fn new(rows: Vec<Vec<Datum>>, width: usize) -> Self {
-            RowSource {
-                meta: ExecutorMeta::new(schema_of(width), 0, CHUNK, CHUNK),
-                rows,
-                cursor: 0,
-            }
-        }
-    }
-
-    impl Executor for RowSource {
-        fn open(&mut self) -> Result<(), ExecError> {
-            self.cursor = 0;
-            Ok(())
-        }
-        fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
-            req.reset();
-            let end = (self.cursor + CHUNK).min(self.rows.len());
-            for row in &self.rows[self.cursor..end] {
-                for (c, value) in row.iter().enumerate() {
-                    req.append_datum(c, value);
-                }
-            }
-            self.cursor = end;
-            Ok(())
-        }
-        fn close(&mut self) -> Result<(), ExecError> {
-            Ok(())
-        }
-        fn schema(&self) -> &Schema {
-            self.meta.schema()
-        }
-        fn ret_field_types(&self) -> &[FieldType] {
-            self.meta.ret_field_types()
-        }
-        fn init_cap(&self) -> usize {
-            self.meta.init_cap()
-        }
-        fn max_chunk_size(&self) -> usize {
-            self.meta.max_chunk_size()
-        }
-        fn new_chunk(&self) -> Chunk {
-            self.meta.new_chunk()
-        }
-    }
-
-    /// `left.<lhs> = right.<rhs>`, addressed against the joined schema.
-    pub(super) fn eq_on(lhs: usize, rhs: usize, left_width: usize) -> Expression {
-        let column = |index: usize| {
-            let mut column = Column::new(index as i64 + 1, long());
-            column.index = index as i64;
-            Expression::Column(column)
-        };
-        Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new("eq"),
-            long(),
-            vec![column(lhs), column(left_width + rhs)],
-        ))
-    }
-
-    pub(super) fn join_of(
-        kind: JoinKind,
-        conditions: Vec<Expression>,
-        left: Vec<Vec<Datum>>,
-        right: Vec<Vec<Datum>>,
-        width: usize,
-    ) -> JoinExec<NoColumns> {
-        join_with_memory(
-            kind,
-            conditions,
-            left,
-            right,
-            width,
-            StatementMemory::default(),
-        )
-    }
-
-    pub(super) fn join_with_memory(
-        kind: JoinKind,
-        conditions: Vec<Expression>,
-        left: Vec<Vec<Datum>>,
-        right: Vec<Vec<Datum>>,
-        width: usize,
-        memory: StatementMemory,
-    ) -> JoinExec<NoColumns> {
-        JoinExec::new(
-            ExecutorMeta::new(schema_of(2 * width), 1, CHUNK, CHUNK),
-            kind,
-            conditions,
-            Box::new(RowSource::new(left, width)),
-            Box::new(RowSource::new(right, width)),
-            NoColumns,
-            memory,
-        )
-    }
-
-    /// Drains a join to completion, exactly as a caller does: repeated
-    /// `next()` until an empty chunk.
-    pub(super) fn run(join: &mut JoinExec<NoColumns>) -> Vec<Vec<i64>> {
-        join.open().unwrap();
-        let types = join.ret_field_types().to_vec();
-        let mut out = Vec::new();
-        let mut req = join.new_chunk();
-        loop {
-            join.next(&mut req).unwrap();
-            if req.num_rows() == 0 {
-                break;
-            }
-            for r in 0..req.num_rows() {
-                let row = req.get_row(r);
-                out.push(
-                    (0..types.len())
-                        .map(|c| match row.get_datum(c, &types[c]) {
-                            Datum::Int(value) => value,
-                            // NULL padding, distinguishable from any test
-                            // value because every fixture value is >= 0.
-                            Datum::Null => -1,
-                            other => panic!("unexpected datum {other:?}"),
-                        })
-                        .collect(),
-                );
-            }
-        }
-        join.close().unwrap();
-        out
-    }
-
-    /// Left rows: key `i % 7` (so keys repeat and both sides fan out), value
-    /// `i`, with every 11th key NULL. Right rows: key `i % 5`, so some keys
-    /// match nothing on either side.
-    fn fixture(n: i64, modulus: i64) -> Vec<Vec<Datum>> {
-        (0..n)
-            .map(|i| {
-                let key = if i % 11 == 10 {
-                    Datum::Null
-                } else {
-                    Datum::Int(i % modulus)
-                };
-                vec![key, Datum::Int(i)]
-            })
-            .collect()
-    }
-
-    /// The hash path must reproduce the nested loop ROW FOR ROW -- same
-    /// rows, same order -- for every join kind, over data with duplicate
-    /// keys, unmatched keys on both sides, and NULL keys on both sides.
-    ///
-    /// The NULL rows are the point of the fixture: a NULL key matches
-    /// nothing (not even another NULL), so an inner join must drop those
-    /// rows and an outer join must still emit them NULL-padded. Getting that
-    /// wrong is exactly the failure a bucket-based key can introduce.
-    #[test]
-    fn hash_path_matches_the_nested_loop_row_for_row() {
-        for kind in [JoinKind::Inner, JoinKind::Left, JoinKind::Right] {
-            let left = fixture(200, 7);
-            let right = fixture(200, 5);
-            let mut hashed = join_of(kind, vec![eq_on(0, 0, 2)], left.clone(), right.clone(), 2);
-            assert!(hashed.is_hash_join());
-            let mut looped = join_of(kind, vec![eq_on(0, 0, 2)], left, right, 2);
-            looped.force_nested_loop();
-            assert_eq!(run(&mut hashed), run(&mut looped), "{kind:?}");
-        }
-    }
-
-    /// The same, with a non-equi conjunct riding along: the hash table
-    /// selects candidates on the equal condition, and the residue still has
-    /// to reject the pairs it rejects.
-    #[test]
-    fn residual_conditions_still_filter_hashed_candidates() {
-        let left = fixture(150, 7);
-        let right = fixture(150, 5);
-        // `l.key = r.key AND l.value = r.value` -- the second conjunct is
-        // also an equal condition, so both become keys; the composite key is
-        // what must not let one column borrow the other's bytes.
-        let conditions = vec![eq_on(0, 0, 2), eq_on(1, 1, 2)];
-        let mut hashed = join_of(
-            JoinKind::Left,
-            conditions.clone(),
-            left.clone(),
-            right.clone(),
-            2,
-        );
-        let mut looped = join_of(JoinKind::Left, conditions, left, right, 2);
-        looped.force_nested_loop();
-        assert_eq!(run(&mut hashed), run(&mut looped));
-    }
-
-    /// A join with no equal condition keeps the nested loop, as documented.
-    #[test]
-    fn cross_join_falls_back_to_the_nested_loop() {
-        let mut join = join_of(JoinKind::Inner, Vec::new(), fixture(4, 7), fixture(4, 5), 2);
-        assert!(!join.is_hash_join());
-        assert_eq!(run(&mut join).len(), 16);
-    }
-
-    /// The scaling claim, asserted on the cost the hash table exists to
-    /// remove rather than on the wall clock.
-    ///
-    /// 10k x 10k over 10k distinct keys: the nested loop would evaluate the
-    /// `ON` clause 100_000_000 times. The hash join evaluates it once per
-    /// candidate pair a bucket produces -- here exactly once per matching
-    /// row, because the keys are distinct.
-    #[test]
-    fn ten_thousand_by_ten_thousand_is_linear_not_quadratic() {
-        let rows = 10_000i64;
-        let side: Vec<Vec<Datum>> = (0..rows)
-            .map(|i| vec![Datum::Int(i), Datum::Int(i * 2)])
-            .collect();
-        let mut join = join_of(JoinKind::Inner, vec![eq_on(0, 0, 2)], side.clone(), side, 2);
-        assert!(join.is_hash_join());
-        let out = run(&mut join);
-        assert_eq!(out.len(), rows as usize);
-        // Every output row is the key joined to itself.
-        assert_eq!(out[0], vec![0, 0, 0, 0]);
-        assert_eq!(out[9_999], vec![9_999, 19_998, 9_999, 19_998]);
-
-        let evals = join.condition_evals();
-        let nested_loop_evals = (rows * rows) as u64;
-        assert_eq!(evals, rows as u64, "one candidate pair per probe row");
-        // Stated as a ratio so the assertion says what it means: at least
-        // four orders of magnitude fewer, not a tuned constant.
-        assert!(
-            evals * 10_000 <= nested_loop_evals,
-            "{evals} evaluations vs the nested loop's {nested_loop_evals}"
-        );
-    }
-}
+#[path = "join_tests.rs"]
+mod tests;
 
 #[cfg(test)]
-mod merge_path_tests {
-    use super::tests::{eq_on, join_of, run};
-    use super::JoinKind;
-    use crate::merge_join_plan::{MergeJoinKey, MergeJoinPlan};
-    use tidb_datatype::Datum;
-
-    /// The same fixture shape as the hash differential test -- duplicate keys
-    /// on both sides, keys present on one side only, and NULL keys -- but
-    /// SORTED, because that is the promise a merge join is given.
-    ///
-    /// NULLs sort first, which is where a key-ordered read puts them, so this
-    /// is a stream a real ordered scan could produce.
-    fn sorted_fixture(n: i64, modulus: i64, nulls: bool) -> Vec<Vec<Datum>> {
-        let mut rows: Vec<Vec<Datum>> = (0..n)
-            .map(|i| {
-                let key = if nulls && i % 11 == 10 {
-                    Datum::Null
-                } else {
-                    Datum::Int(i % modulus)
-                };
-                vec![key, Datum::Int(i)]
-            })
-            .collect();
-        rows.sort_by_key(|row| match row[0] {
-            Datum::Null => (0, 0),
-            Datum::Int(key) => (1, key),
-            _ => unreachable!("the fixture builds only NULLs and ints"),
-        });
-        rows
-    }
-
-    /// A multiset comparison: the merge path emits in KEY order and the hash
-    /// path in OUTER-ROW order, so the two agree on rows without agreeing on
-    /// their sequence. That difference is the algorithm, not a bug -- Go's
-    /// merge join reorders the result the same way, which is why its plans
-    /// still carry a `Sort` above when the query asked for one.
-    pub(super) fn as_multiset(mut rows: Vec<Vec<i64>>) -> Vec<Vec<i64>> {
-        rows.sort_unstable();
-        rows
-    }
-
-    /// The merge path must produce the same ROWS as the hash path for every
-    /// join kind, over sorted data with duplicate keys on BOTH sides (the
-    /// group-by-group cross product), keys matched on neither side, and NULL
-    /// keys (which must match nothing, not even each other).
-    #[test]
-    fn merge_path_matches_the_hash_path_row_for_row() {
-        for kind in [JoinKind::Inner, JoinKind::Left, JoinKind::Right] {
-            let left = sorted_fixture(200, 7, true);
-            let right = sorted_fixture(200, 5, true);
-            let mut merged = join_of(kind, vec![eq_on(0, 0, 2)], left.clone(), right.clone(), 2);
-            merged.set_merge_plan(MergeJoinPlan {
-                keys: vec![MergeJoinKey { left: 0, right: 0 }],
-                desc: false,
-            });
-            assert!(merged.is_merge_join());
-            let mut hashed = join_of(kind, vec![eq_on(0, 0, 2)], left, right, 2);
-            assert!(hashed.is_hash_join());
-            assert_eq!(
-                as_multiset(run(&mut merged)),
-                as_multiset(run(&mut hashed)),
-                "{kind:?}"
-            );
-        }
-    }
-
-    /// A residual conjunct still filters the pairs a matched group produces,
-    /// and an outer row every pair rejects is still emitted NULL-padded --
-    /// the rule `emit_outer_row` owns for all three strategies.
-    #[test]
-    fn residual_conditions_still_filter_merged_groups() {
-        let left = sorted_fixture(150, 7, false);
-        let right = sorted_fixture(150, 5, false);
-        let conditions = vec![eq_on(0, 0, 2), eq_on(1, 1, 2)];
-        let mut merged = join_of(
-            JoinKind::Left,
-            conditions.clone(),
-            left.clone(),
-            right.clone(),
-            2,
-        );
-        merged.set_merge_plan(MergeJoinPlan {
-            keys: vec![MergeJoinKey { left: 0, right: 0 }],
-            desc: false,
-        });
-        let mut hashed = join_of(JoinKind::Left, conditions, left, right, 2);
-        assert_eq!(as_multiset(run(&mut merged)), as_multiset(run(&mut hashed)));
-    }
-
-    /// A DESCENDING merge reads both sides high to low, and must find the
-    /// same matches: `PhysicalMergeJoin.Desc` reverses the comparison, not
-    /// the semantics.
-    #[test]
-    fn a_descending_merge_finds_the_same_matches() {
-        let mut left = sorted_fixture(120, 7, false);
-        let mut right = sorted_fixture(120, 5, false);
-        left.reverse();
-        right.reverse();
-        let mut merged = join_of(
-            JoinKind::Inner,
-            vec![eq_on(0, 0, 2)],
-            left.clone(),
-            right.clone(),
-            2,
-        );
-        merged.set_merge_plan(MergeJoinPlan {
-            keys: vec![MergeJoinKey { left: 0, right: 0 }],
-            desc: true,
-        });
-        let mut hashed = join_of(JoinKind::Inner, vec![eq_on(0, 0, 2)], left, right, 2);
-        assert_eq!(as_multiset(run(&mut merged)), as_multiset(run(&mut hashed)));
-    }
-
-    /// One empty side: an inner join produces nothing, and an outer join
-    /// still emits every preserved row NULL-padded. This is the arm where a
-    /// merge loop most easily stops early.
-    #[test]
-    fn an_empty_side_still_emits_the_preserved_rows() {
-        for (kind, expected) in [
-            (JoinKind::Inner, 0),
-            (JoinKind::Left, 30),
-            (JoinKind::Right, 0),
-        ] {
-            let left = sorted_fixture(30, 7, false);
-            let mut merged = join_of(kind, vec![eq_on(0, 0, 2)], left, Vec::new(), 2);
-            merged.set_merge_plan(MergeJoinPlan {
-                keys: vec![MergeJoinKey { left: 0, right: 0 }],
-                desc: false,
-            });
-            assert_eq!(run(&mut merged).len(), expected, "{kind:?}");
-        }
-    }
-
-    /// A group larger than one chunk must still be one group: the merge
-    /// collects a whole run of equal keys before joining it, so a 3000-row
-    /// group spanning several source chunks fans out completely.
-    #[test]
-    fn a_group_spanning_chunks_is_still_one_group() {
-        let left: Vec<Vec<Datum>> = (0..3000)
-            .map(|i| vec![Datum::Int(1), Datum::Int(i)])
-            .collect();
-        let right = vec![vec![Datum::Int(1), Datum::Int(0)]; 3];
-        let mut merged = join_of(JoinKind::Inner, vec![eq_on(0, 0, 2)], left, right, 2);
-        merged.set_merge_plan(MergeJoinPlan {
-            keys: vec![MergeJoinKey { left: 0, right: 0 }],
-            desc: false,
-        });
-        assert_eq!(run(&mut merged).len(), 9000);
-    }
-}
+#[path = "join_merge_path_tests.rs"]
+mod merge_path_tests;
 
 /// The build side's spill-to-disk, ported from Go's hash join v1
 /// (`BuildWorkerV1.BuildHashTableForList` + `chunk.RowContainer`).
@@ -1772,291 +1793,5 @@ mod merge_path_tests {
 /// hand-written expectation, and asserts that the spilled run really did go
 /// to disk -- otherwise the comparison would pass trivially.
 #[cfg(test)]
-mod spill_tests {
-    use super::merge_path_tests::as_multiset;
-    use super::tests::{eq_on, join_with_memory, run, NoColumns};
-    use super::*;
-    use crate::mem_quota::{OomAction, StatementMemory};
-
-    /// A build side big enough that its chunks outweigh any quota worth
-    /// setting, with duplicate keys so each probe row walks a multi-entry
-    /// bucket -- the case where reading rows back in the wrong order would
-    /// show up.
-    fn fixture(rows: i64, modulus: i64) -> Vec<Vec<Datum>> {
-        (0..rows)
-            .map(|i| vec![Datum::Int(i % modulus), Datum::Int(i)])
-            .collect()
-    }
-
-    /// The build side is the RIGHT child for an inner join. 5000 rows at a
-    /// 1024-row chunk is five chunks, and `i % 1000` puts each key's five
-    /// duplicates in five DIFFERENT chunks -- so a bucket walk after a spill
-    /// touches every chunk of the file, in build order.
-    const BUILD_ROWS: i64 = 5000;
-    const BUILD_KEYS: i64 = 1000;
-    const PROBE_ROWS: i64 = 200;
-
-    fn inner_join(memory: StatementMemory) -> JoinExec<NoColumns> {
-        join_with_memory(
-            JoinKind::Inner,
-            vec![eq_on(0, 0, 2)],
-            fixture(PROBE_ROWS, BUILD_KEYS),
-            fixture(BUILD_ROWS, BUILD_KEYS),
-            2,
-            memory,
-        )
-    }
-
-    /// A quota the build side cannot fit in, but which is still far larger
-    /// than a single chunk -- so the spill has something to release and the
-    /// read-path cancellation #289 describes is not what is being measured.
-    fn tight_quota() -> StatementMemory {
-        StatementMemory::new(64 * 1024, OomAction::Cancel, 1)
-    }
-
-    /// What one build chunk costs, measured rather than assumed, so the
-    /// quota above can be stated as a MULTIPLE of it -- the regime where a
-    /// spill has something to release. (#289: at quotas below one chunk Go
-    /// cancels on read-path accounting before any spill can help, and that
-    /// is deliberately not what these tests exercise.)
-    #[test]
-    fn the_tight_quota_is_several_chunks_not_a_fraction_of_one() {
-        // Measured with room to spare, so nothing is released mid-build, and
-        // read BEFORE `close` detaches the tracker.
-        let mut join = inner_join(StatementMemory::default());
-        join.open().unwrap();
-        let mut req = join.new_chunk();
-        join.next(&mut req).unwrap();
-        let chunks = i64::try_from(BUILD_ROWS as usize).unwrap() / CHUNK_ROWS as i64 + 1;
-        let one_chunk = join.tracker.bytes_consumed() / chunks;
-        assert!(one_chunk > 0, "the build side must account something");
-        assert!(
-            64 * 1024 > 2 * one_chunk,
-            "quota 65536 must be several chunks, one chunk is {one_chunk}"
-        );
-        assert!(
-            join.tracker.bytes_consumed() > 64 * 1024,
-            "the build side must not fit in the quota the spill tests use"
-        );
-    }
-
-    const CHUNK_ROWS: usize = 1024;
-
-    /// The read-back buffer must not accumulate. Go reuses one `chkBuf` per
-    /// probe and lets the disk reader recycle it; here it is reset before
-    /// every row, so after a join that read 1000 rows back from disk it holds
-    /// exactly the last one. Without the reset this grows by one row per
-    /// matched pair, which on a large spilled join is the whole build side
-    /// pulled back into memory -- the precise thing the spill exists to
-    /// prevent.
-    #[test]
-    fn the_read_back_buffer_does_not_accumulate_across_a_spilled_probe() {
-        let mut join = inner_join(tight_quota());
-        join.open().unwrap();
-        let mut req = join.new_chunk();
-        let mut seen = 0;
-        loop {
-            join.next(&mut req).unwrap();
-            if req.num_rows() == 0 {
-                break;
-            }
-            seen += req.num_rows();
-            assert!(
-                join.build_buf_rows() <= 1,
-                "the read-back buffer holds {} rows after {seen} output rows",
-                join.build_buf_rows()
-            );
-        }
-        assert!(join.build_side_spilled());
-        assert_eq!(seen, 1000);
-    }
-
-    /// The end-to-end claim: spilled and unspilled produce identical output.
-    #[test]
-    fn a_spilled_build_side_answers_exactly_the_unspilled_rows() {
-        let mut roomy = inner_join(StatementMemory::default());
-        let expected = run(&mut roomy);
-        assert!(
-            !roomy.build_side_spilled(),
-            "the control run must NOT spill, or it proves nothing"
-        );
-        assert!(!expected.is_empty());
-
-        // An INDEPENDENT oracle, not just the unspilled hash run: the nested
-        // loop shares no build-side addressing with the hash path, so a
-        // pointer bug that corrupts both hash runs identically still shows
-        // up here. (A mutation probe that shifted the chunk index by one
-        // survived the spilled-vs-unspilled comparison alone.)
-        let mut looped = inner_join(StatementMemory::default());
-        looped.force_nested_loop();
-        assert_eq!(
-            as_multiset(run(&mut looped)),
-            as_multiset(expected.clone()),
-            "the hash path must agree with the nested loop it replaces"
-        );
-
-        let mut tight = inner_join(tight_quota());
-        let spilled = run(&mut tight);
-        assert!(
-            tight.build_side_spilled(),
-            "the build side must actually reach disk"
-        );
-        assert!(
-            tight.spilled_bytes() > 0,
-            "a spilled build side must have written bytes"
-        );
-        // Row for row and in order, not merely as a set: a bucket read back
-        // from disk out of build order would still match as a multiset.
-        assert_eq!(spilled, expected);
-    }
-
-    /// The same claim for a LEFT join, where the probe side is preserved and
-    /// a build row that fails to come back from disk would look like a
-    /// legitimate NULL pad rather than an error.
-    #[test]
-    fn a_spilled_outer_join_pads_exactly_where_the_unspilled_one_does() {
-        let build = |memory| {
-            join_with_memory(
-                JoinKind::Left,
-                vec![eq_on(0, 0, 2)],
-                fixture(PROBE_ROWS, BUILD_KEYS),
-                fixture(BUILD_ROWS, 97),
-                2,
-                memory,
-            )
-        };
-        let mut roomy = build(StatementMemory::default());
-        let expected = run(&mut roomy);
-        assert!(!roomy.build_side_spilled());
-
-        let mut tight = build(tight_quota());
-        let spilled = run(&mut tight);
-        assert!(tight.build_side_spilled());
-        assert_eq!(spilled, expected);
-    }
-
-    /// The gate. Go registers the spill action only when
-    /// `tidb_enable_tmp_storage_on_oom` is on; with it off the memory action
-    /// is still the cancellation, so the statement fails with 8175 instead of
-    /// spilling. This is the behaviour that existed before this unit, and it
-    /// must survive unchanged.
-    #[test]
-    fn with_tmp_storage_off_an_over_quota_build_side_is_cancelled_not_spilled() {
-        let memory = tight_quota().with_tmp_storage_on_oom(false);
-        let mut join = inner_join(memory);
-        join.open().unwrap();
-        let mut req = join.new_chunk();
-        let error = loop {
-            match join.next(&mut req) {
-                Err(error) => break error,
-                Ok(()) if req.num_rows() == 0 => panic!("the quota must be enforced"),
-                Ok(()) => {}
-            }
-        };
-        assert!(
-            !join.build_side_spilled(),
-            "with the gate off nothing may reach disk"
-        );
-        assert!(matches!(error, ExecError::MemoryExceedForQuery { .. }));
-    }
-
-    /// A spill that fires must not leave the action bound to the session
-    /// tracker: Go's `Close` calls `UnbindActionFromHardLimit`, and a
-    /// statement that inherited a closed join's action would spill into a
-    /// container that no longer exists.
-    #[test]
-    fn close_unbinds_the_spill_action_from_the_session_tracker() {
-        let memory = tight_quota();
-        let mut join = inner_join(memory.clone());
-        join.open().unwrap();
-        let mut req = join.new_chunk();
-        join.next(&mut req).unwrap();
-        let spill = join
-            .registered_spill_action()
-            .expect("the gate is on, so an action was registered");
-        // Registered: the spill action is at the head, ahead of the
-        // cancellation it pushed down as its fallback.
-        let head = memory
-            .session_tracker()
-            .get_fallback_for_test(false)
-            .expect("the session tracker always has an action");
-        assert!(Arc::ptr_eq(&head, &spill), "the spill action must be bound");
-
-        join.close().unwrap();
-
-        // Unbound: the chain still ACTS -- the cancellation is back at the
-        // head -- but this join's action, whose container is now closed, is
-        // gone from it.
-        let mut current = memory.session_tracker().get_fallback_for_test(false);
-        let mut found_any = false;
-        while let Some(action) = current {
-            found_any = true;
-            assert!(
-                !Arc::ptr_eq(&action, &spill),
-                "a closed join's spill action must not stay in the chain"
-            );
-            current = action.get_fallback();
-        }
-        assert!(
-            found_any,
-            "unbinding must restore the fallback, not clear the chain"
-        );
-    }
-
-    /// The container is the only thing that moves: the hash TABLE stays in
-    /// memory, so a spilled join still answers a miss without touching disk
-    /// and a NULL key still matches nothing.
-    #[test]
-    fn a_spilled_build_side_keeps_null_and_miss_semantics() {
-        let mut build = fixture(BUILD_ROWS, BUILD_KEYS);
-        build.push(vec![Datum::Null, Datum::Int(-1)]);
-        let probe = vec![
-            vec![Datum::Int(7), Datum::Int(0)],
-            vec![Datum::Null, Datum::Int(1)],
-            vec![Datum::Int(9999), Datum::Int(2)],
-        ];
-        let make = |memory| {
-            join_with_memory(
-                JoinKind::Inner,
-                vec![eq_on(0, 0, 2)],
-                probe.clone(),
-                build.clone(),
-                2,
-                memory,
-            )
-        };
-        let mut roomy = make(StatementMemory::default());
-        let expected = run(&mut roomy);
-        assert!(!roomy.build_side_spilled());
-
-        let mut tight = make(tight_quota());
-        let spilled = run(&mut tight);
-        assert!(tight.build_side_spilled());
-        assert_eq!(spilled, expected);
-        // The NULL-keyed build row and the 9999 probe row match nothing, and
-        // the NULL probe row matches nothing either.
-        assert!(spilled.iter().all(|row| row[0] == 7));
-    }
-
-    /// A cross join has no equal conditions, so it never reaches the hash
-    /// path and never gets a container -- Go's v1 spill covers the build side
-    /// of a hash join only. The nested loop's existing 8175 cancellation is
-    /// what still bounds it, gate or no gate.
-    #[test]
-    fn a_cross_join_still_cancels_rather_than_spilling() {
-        let mut join = join_with_memory(
-            JoinKind::Inner,
-            Vec::new(),
-            fixture(PROBE_ROWS, BUILD_KEYS),
-            fixture(BUILD_ROWS, BUILD_KEYS),
-            2,
-            tight_quota(),
-        );
-        assert!(!join.is_hash_join());
-        join.open().unwrap();
-        let mut req = join.new_chunk();
-        let error = join.next(&mut req).expect_err("the quota must be enforced");
-        assert!(matches!(error, ExecError::MemoryExceedForQuery { .. }));
-        assert!(!join.build_side_spilled());
-    }
-}
+#[path = "join_spill_tests.rs"]
+mod spill_tests;

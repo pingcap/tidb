@@ -27,18 +27,20 @@
 //! "one past the end" cursor parking that makes `Current()` return `End` after
 //! the loop finishes.
 //!
-//! Ported: `Iterator4Slice`, `Iterator4Chunk`, `iterator4List`,
-//! `iterator4RowPtr` and `multiIterator`.
-//!
-//! DEFERRED, documented: `iterator4RowContainer`, which is `row_container.go`'s
-//! iterator and lands with that file. It is also the only iterator that can
-//! FAIL (its `GetRow` reads a spill file), which is why [`ChunkIterator::error`]
-//! exists here with a never-failing default -- `multiIterator` already
-//! propagates it so the seam is in place.
+//! `Iterator4Slice`, `Iterator4Chunk`, `iterator4List`, `iterator4RowPtr`,
+//! `iterator4RowContainer`, and `multiIterator` are all present. The ordinary
+//! sources implement [`ChunkIterator`] because their rows borrow storage that
+//! outlives the iterator. A spilled row-container row instead borrows a decode
+//! buffer owned by the iterator itself, so [`LendingIterator`] and
+//! [`LendingMultiIterator`] provide the Rust-native common surface: each row
+//! borrows only the call that returned it. This is an ownership adaptation,
+//! not a semantic omission; concatenation order and the first spill-read error
+//! are the same package contract.
 
 use crate::chunk::Chunk;
 use crate::list::{List, RowPtr};
 use crate::row::Row;
+use crate::row_container::{Iterator4RowContainer, RowContainer};
 
 /// Go `chunk.Iterator`.
 ///
@@ -428,6 +430,230 @@ impl<'a> ChunkIterator<'a> for MultiIterator<'a> {
     }
 }
 
+/// A Rust lending form of Go `chunk.Iterator`.
+///
+/// The enum keeps the source set closed inside `tidb-chunk`, which makes it
+/// possible to return `Row<'_>` borrowing this cursor without an object-safe
+/// generic-associated-type trait. Ordinary chunk/list variants still borrow
+/// their original storage; the row-container variant may return a row from
+/// its owned spill decode buffer.
+pub enum LendingIterator<'a> {
+    /// Go `Iterator4Slice`.
+    Slice(Iterator4Slice<'a>),
+    /// Go `Iterator4Chunk`.
+    Chunk(Iterator4Chunk<'a>),
+    /// Go `iterator4List`.
+    List(Iterator4List<'a>),
+    /// Go `iterator4RowPtr`.
+    RowPtr(Iterator4RowPtr<'a>),
+    /// Go `iterator4RowContainer`.
+    RowContainer(Iterator4RowContainer<'a>),
+}
+
+impl<'a> LendingIterator<'a> {
+    /// Wraps a slice iterator.
+    #[must_use]
+    pub fn slice(rows: Vec<Row<'a>>) -> Self {
+        Self::Slice(Iterator4Slice::new(rows))
+    }
+
+    /// Wraps a chunk iterator.
+    #[must_use]
+    pub fn chunk(chunk: &'a Chunk) -> Self {
+        Self::Chunk(Iterator4Chunk::new(chunk))
+    }
+
+    /// Wraps a list iterator.
+    #[must_use]
+    pub fn list(list: &'a List) -> Self {
+        Self::List(Iterator4List::new(list))
+    }
+
+    /// Wraps a row-pointer iterator.
+    #[must_use]
+    pub fn row_ptrs(list: &'a List, ptrs: Vec<RowPtr>) -> Self {
+        Self::RowPtr(Iterator4RowPtr::new(list, ptrs))
+    }
+
+    /// Wraps a row-container iterator, whether the container is in memory or
+    /// spilled.
+    #[must_use]
+    pub fn row_container(container: &'a RowContainer) -> Self {
+        Self::RowContainer(Iterator4RowContainer::new(container))
+    }
+
+    /// Go `Begin`.
+    pub fn begin(&mut self) -> Option<Row<'_>> {
+        match self {
+            Self::Slice(iterator) => iterator.begin(),
+            Self::Chunk(iterator) => iterator.begin(),
+            Self::List(iterator) => iterator.begin(),
+            Self::RowPtr(iterator) => iterator.begin(),
+            Self::RowContainer(iterator) => iterator.begin(),
+        }
+    }
+
+    /// Go `Next`.
+    pub fn next_row(&mut self) -> Option<Row<'_>> {
+        match self {
+            Self::Slice(iterator) => iterator.next_row(),
+            Self::Chunk(iterator) => iterator.next_row(),
+            Self::List(iterator) => iterator.next_row(),
+            Self::RowPtr(iterator) => iterator.next_row(),
+            Self::RowContainer(iterator) => iterator.next_row(),
+        }
+    }
+
+    /// Go `Current`.
+    #[must_use]
+    pub fn current(&self) -> Option<Row<'_>> {
+        match self {
+            Self::Slice(iterator) => iterator.current(),
+            Self::Chunk(iterator) => iterator.current(),
+            Self::List(iterator) => iterator.current(),
+            Self::RowPtr(iterator) => iterator.current(),
+            Self::RowContainer(iterator) => iterator.current(),
+        }
+    }
+
+    /// Go `ReachEnd`.
+    pub fn reach_end(&mut self) {
+        match self {
+            Self::Slice(iterator) => iterator.reach_end(),
+            Self::Chunk(iterator) => iterator.reach_end(),
+            Self::List(iterator) => iterator.reach_end(),
+            Self::RowPtr(iterator) => iterator.reach_end(),
+            Self::RowContainer(iterator) => iterator.reach_end(),
+        }
+    }
+
+    /// Go `Len`.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Slice(iterator) => iterator.len(),
+            Self::Chunk(iterator) => iterator.len(),
+            Self::List(iterator) => iterator.len(),
+            Self::RowPtr(iterator) => iterator.len(),
+            Self::RowContainer(iterator) => iterator.len(),
+        }
+    }
+
+    /// Whether the source contains no rows.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Go `Error`. Only the row-container variant can fail.
+    #[must_use]
+    pub fn error(&self) -> Option<&str> {
+        match self {
+            Self::RowContainer(iterator) => iterator.error(),
+            Self::Slice(_) | Self::Chunk(_) | Self::List(_) | Self::RowPtr(_) => None,
+        }
+    }
+}
+
+/// Go `multiIterator` over lending chunk and row-container sources.
+///
+/// Empty sources are removed at construction. If a spilled source fails,
+/// iteration stops immediately, latches that error, and never advances into a
+/// following source.
+pub struct LendingMultiIterator<'a> {
+    iters: Vec<LendingIterator<'a>>,
+    length: usize,
+    cur_ptr: usize,
+    remaining_in_current: usize,
+}
+
+impl<'a> LendingMultiIterator<'a> {
+    /// Go `NewMultiIterator`.
+    #[must_use]
+    pub fn new(iters: Vec<LendingIterator<'a>>) -> Self {
+        let mut kept = Vec::new();
+        let mut length = 0;
+        for iterator in iters {
+            if !iterator.is_empty() {
+                length += iterator.len();
+                kept.push(iterator);
+            }
+        }
+        Self {
+            iters: kept,
+            length,
+            cur_ptr: 0,
+            remaining_in_current: 0,
+        }
+    }
+
+    /// Go `Len`.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.length
+    }
+
+    /// Whether all inputs are empty.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.length == 0
+    }
+
+    /// Go `Begin`.
+    pub fn begin(&mut self) -> Option<Row<'_>> {
+        self.cur_ptr = 0;
+        if self.iters.is_empty() {
+            return None;
+        }
+        if self.iters[0].error().is_some() {
+            self.remaining_in_current = 0;
+            return None;
+        }
+        self.remaining_in_current = self.iters[0].len();
+        self.remaining_in_current -= 1;
+        self.iters[0].begin()
+    }
+
+    /// Go `Next`.
+    pub fn next_row(&mut self) -> Option<Row<'_>> {
+        if self.cur_ptr >= self.iters.len() || self.iters[self.cur_ptr].error().is_some() {
+            return None;
+        }
+        if self.remaining_in_current == 0 {
+            self.cur_ptr += 1;
+            if self.cur_ptr == self.iters.len() {
+                return None;
+            }
+            self.remaining_in_current = self.iters[self.cur_ptr].len();
+            self.remaining_in_current -= 1;
+            return self.iters[self.cur_ptr].begin();
+        }
+        self.remaining_in_current -= 1;
+        self.iters[self.cur_ptr].next_row()
+    }
+
+    /// Go `Current`.
+    #[must_use]
+    pub fn current(&self) -> Option<Row<'_>> {
+        self.iters
+            .get(self.cur_ptr)
+            .and_then(LendingIterator::current)
+    }
+
+    /// Go `ReachEnd`.
+    pub fn reach_end(&mut self) {
+        self.cur_ptr = self.iters.len();
+    }
+
+    /// Go `Error`.
+    #[must_use]
+    pub fn error(&self) -> Option<&str> {
+        self.iters
+            .get(self.cur_ptr)
+            .and_then(LendingIterator::error)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -476,10 +702,8 @@ mod tests {
     }
 
     /// Go `TestMultiIterator`: concatenation drops empty inputs and joins the
-    /// rest end to end, across chunk and list sources.
-    ///
-    /// The `iterator4RowContainer` cases of Go's test are omitted; that
-    /// iterator is deferred with `row_container.go`.
+    /// rest end to end, across chunk and list sources. Row-container
+    /// composition is pinned separately through the lending form below.
     #[test]
     fn go_test_multi_iterator() {
         let empty = Chunk::default();
@@ -543,10 +767,8 @@ mod tests {
 
     /// Go `TestIterator`: every iterator kind walks the same ten rows, and
     /// after `ReachEnd` reports `End` from `Current` while `Begin` still
-    /// rewinds. The empty-source cases close the file.
-    ///
-    /// The `iterator4RowContainer` cases of Go's test are omitted; that
-    /// iterator is deferred with `row_container.go`.
+    /// rewinds. The empty-source cases close the file. Row-container
+    /// iteration is pinned separately through the lending form below.
     #[test]
     fn go_test_iterator() {
         let fields = long_long_fields();
@@ -642,5 +864,111 @@ mod tests {
         assert_eq!(it.begin(), it.end());
         let mut it = Iterator4RowPtr::new(&li, Vec::new());
         assert_eq!(it.begin(), it.end());
+    }
+
+    fn collect_lending(iterator: &mut LendingMultiIterator<'_>) -> Vec<i64> {
+        let mut values = Vec::new();
+        if let Some(row) = iterator.begin() {
+            values.push(row.get_int64(0));
+        }
+        while let Some(row) = iterator.next_row() {
+            values.push(row.get_int64(0));
+        }
+        assert_eq!(iterator.error(), None);
+        values
+    }
+
+    /// Go `TestSel`: a selected row container followed by a selected trailing
+    /// chunk is one logical iterator both before and after the container
+    /// spills. This is the composition `MergeJoinTable` relies on for an
+    /// equal-key group that crosses a chunk boundary.
+    #[test]
+    fn selected_row_container_and_trailing_chunk_compose_before_and_after_spill() {
+        let fields = long_long_fields();
+        let mut container = RowContainer::new(&fields, 4, crate::test_temp_storage::storage());
+        for base in (0..60i64).step_by(4) {
+            let mut chunk = Chunk::new_with_capacity(&fields, 4);
+            for value in base..base + 4 {
+                chunk.append_int64(0, value);
+            }
+            chunk.set_sel(Some(vec![0, 2]));
+            container.add(chunk).unwrap();
+        }
+        let mut trailing = Chunk::new_with_capacity(&fields, 4);
+        for value in 60..64 {
+            trailing.append_int64(0, value);
+        }
+        trailing.set_sel(Some(vec![0, 1, 2]));
+
+        let mut expected: Vec<i64> = (0..60).step_by(2).collect();
+        expected.extend([60, 61, 62]);
+        {
+            let mut iterator = LendingMultiIterator::new(vec![
+                LendingIterator::row_container(&container),
+                LendingIterator::chunk(&trailing),
+            ]);
+            assert_eq!(collect_lending(&mut iterator), expected);
+        }
+
+        container.spill_to_disk();
+        assert!(container.already_spilled());
+        {
+            let mut iterator = LendingMultiIterator::new(vec![
+                LendingIterator::row_container(&container),
+                LendingIterator::chunk(&trailing),
+            ]);
+            assert_eq!(collect_lending(&mut iterator), expected);
+        }
+        container.close();
+    }
+
+    /// A nonempty failed row-container source stops a multi iterator before
+    /// any later chunk. The read error remains available through `Error`,
+    /// which is the merge join's disk-failure boundary.
+    #[test]
+    fn a_row_container_error_is_latched_before_the_following_source() {
+        let fields = long_long_fields();
+        let mut container = RowContainer::new(&fields, 4, crate::test_temp_storage::storage());
+        let mut stored = Chunk::new_with_capacity(&fields, 4);
+        stored.append_int64(0, 1);
+        container.add(stored).unwrap();
+        container.spill_to_disk();
+        container.set_spill_error_for_test("injected iterator spill failure");
+        assert_eq!(
+            container.spill_error().as_deref(),
+            Some("injected iterator spill failure")
+        );
+
+        let mut trailing = Chunk::new_with_capacity(&fields, 1);
+        trailing.append_int64(0, 99);
+        let mut iterator = LendingMultiIterator::new(vec![
+            LendingIterator::row_container(&container),
+            LendingIterator::chunk(&trailing),
+        ]);
+        assert!(iterator.begin().is_none());
+        assert_eq!(iterator.error(), Some("injected iterator spill failure"));
+        assert!(iterator.next_row().is_none());
+        assert_eq!(iterator.error(), Some("injected iterator spill failure"));
+
+        container.close();
+    }
+
+    /// Go `NewMultiIterator` removes every zero-length source. A historical
+    /// spill error on an empty reset container therefore cannot mask a later
+    /// valid source.
+    #[test]
+    fn an_empty_container_with_a_historical_error_is_omitted() {
+        let fields = long_long_fields();
+        let container = RowContainer::new(&fields, 4, crate::test_temp_storage::storage());
+        container.set_spill_error_for_test("historical spill failure");
+
+        let mut trailing = Chunk::new_with_capacity(&fields, 1);
+        trailing.append_int64(0, 99);
+        let mut iterator = LendingMultiIterator::new(vec![
+            LendingIterator::row_container(&container),
+            LendingIterator::chunk(&trailing),
+        ]);
+
+        assert_eq!(collect_lending(&mut iterator), vec![99]);
     }
 }
