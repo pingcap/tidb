@@ -21,10 +21,11 @@ use crate::serde_helpers::{
 };
 use crate::serde_shared_slices::{SharedObjectSliceSeed, SharedScalarSliceSeed};
 use crate::{
-    BatchCreateTableArgs, CreateSchemaArgs, CreateTableArgs, DropSchemaArgs, EmptyArgs,
-    ExchangeTablePartitionArgs, ModifySchemaArgs, ModifyTableCharsetAndCollateArgs,
-    ModifyTableCommentArgs, RebaseAutoIDArgs, TableIDIndexID, TablePartitionArgs,
-    TruncateTableArgs,
+    AlterIndexVisibilityArgs, AlterTableModeArgs, BatchCreateTableArgs, CreateSchemaArgs,
+    CreateTableArgs, DropForeignKeyArgs, DropSchemaArgs, EmptyArgs, ExchangeTablePartitionArgs,
+    ModifySchemaArgs, ModifyTableAutoIDCacheArgs, ModifyTableCharsetAndCollateArgs,
+    ModifyTableCommentArgs, ModifyTableEngineAttributeArgs, RebaseAutoIDArgs, RefreshMetaArgs,
+    SetDefaultValueArgs, ShardRowIDArgs, TableIDIndexID, TablePartitionArgs, TruncateTableArgs,
 };
 
 impl_go_json_merge_object!(EmptyArgs, _destination, map, _key, {
@@ -207,3 +208,87 @@ impl_go_json_merge_object!(ModifyTableCharsetAndCollateArgs, destination, map, k
     }
 });
 impl_go_json_deserialize!(ModifyTableCharsetAndCollateArgs);
+
+impl_go_json_merge_object!(AlterIndexVisibilityArgs, destination, map, key, {
+    if go_json_field_matches(&key, "index_name") {
+        map.next_value_seed(NullNoopSeed(&mut *destination.index_name.write()))?;
+    } else if go_json_field_matches(&key, "invisible") {
+        map.next_value_seed(NullNoopSeed(&mut *destination.invisible.write()))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+impl_go_json_deserialize!(AlterIndexVisibilityArgs);
+
+impl_go_json_merge_object!(DropForeignKeyArgs, destination, map, key, {
+    if go_json_field_matches(&key, "fk_name") {
+        map.next_value_seed(NullNoopSeed(&mut *destination.foreign_key_name.write()))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+impl_go_json_deserialize!(DropForeignKeyArgs);
+
+impl_go_json_merge_object!(ModifyTableAutoIDCacheArgs, destination, map, key, {
+    if go_json_field_matches(&key, "new_cache") {
+        map.next_value_seed(NullNoopSeed(&mut *destination.new_cache.write()))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+impl_go_json_deserialize!(ModifyTableAutoIDCacheArgs);
+
+impl_go_json_merge_object!(ShardRowIDArgs, destination, map, key, {
+    if go_json_field_matches(&key, "shard_row_id_bits") {
+        map.next_value_seed(NullNoopSeed(&mut *destination.shard_row_id_bits.write()))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+impl_go_json_deserialize!(ShardRowIDArgs);
+
+impl_go_json_merge_object!(SetDefaultValueArgs, destination, map, key, {
+    if go_json_field_matches(&key, "column_info") {
+        map.next_value_seed(OptionSharedMergeSeed(&mut *destination.column.write()))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+impl_go_json_deserialize!(SetDefaultValueArgs);
+
+impl_go_json_merge_object!(RefreshMetaArgs, destination, map, key, {
+    if go_json_field_matches(&key, "schema_id") {
+        map.next_value_seed(NullNoopSeed(&mut *destination.schema_id.write()))?;
+    } else if go_json_field_matches(&key, "table_id") {
+        map.next_value_seed(NullNoopSeed(&mut *destination.table_id.write()))?;
+    } else if go_json_field_matches(&key, "involved_db") {
+        map.next_value_seed(NullNoopSeed(&mut *destination.involved_database.write()))?;
+    } else if go_json_field_matches(&key, "involved_table") {
+        map.next_value_seed(NullNoopSeed(&mut *destination.involved_table.write()))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+impl_go_json_deserialize!(RefreshMetaArgs);
+
+impl_go_json_merge_object!(ModifyTableEngineAttributeArgs, destination, map, key, {
+    if go_json_field_matches(&key, "engine_attribute") {
+        map.next_value_seed(NullNoopSeed(&mut *destination.engine_attribute.write()))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+impl_go_json_deserialize!(ModifyTableEngineAttributeArgs);
+
+impl_go_json_merge_object!(AlterTableModeArgs, destination, map, key, {
+    if go_json_field_matches(&key, "table_mode") {
+        map.next_value_seed(NullNoopSeed(&mut *destination.table_mode.write()))?;
+    } else if go_json_field_matches(&key, "schema_id") {
+        map.next_value_seed(NullNoopSeed(&mut *destination.schema_id.write()))?;
+    } else if go_json_field_matches(&key, "table_id") {
+        map.next_value_seed(NullNoopSeed(&mut *destination.table_id.write()))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+impl_go_json_deserialize!(AlterTableModeArgs);

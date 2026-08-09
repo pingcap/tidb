@@ -28,13 +28,14 @@ use tidb_ast::CiString;
 use tidb_datatype::GoString;
 
 use crate::{
-    ActionType, ColumnDefaultValue, ColumnarIndexType, DBInfo, GoAny, GoAnyBytes, GoAnyJsonError,
+    ActionType, ColumnDefaultValue, ColumnInfo, DBInfo, GoAny, GoAnyBytes, GoAnyJsonError,
     GoAnyValue, GoEqualityProjection, GoJsonProjection, GoJsonReference, GoJsonReferenceIdentity,
     GoJsonValue, GoShared, GoSharedPointerSlice, GoSharedSlice, GoTypeIdentity, GoTypeKind, Job,
-    JobState, JobVersion, PartitionInfo, PolicyRefInfo, TableInfo,
+    JobState, JobVersion, PartitionInfo, PolicyRefInfo, TableInfo, TableMode,
 };
 
 const MODEL_PACKAGE_PATH: &str = "github.com/pingcap/tidb/pkg/meta/model";
+const AST_PACKAGE_PATH: &str = "github.com/pingcap/tidb/pkg/parser/ast";
 
 fn model_type(name: &str, kind: GoTypeKind) -> GoTypeIdentity {
     GoTypeIdentity::defined(MODEL_PACKAGE_PATH, name, format!("model.{name}"), kind)
@@ -42,6 +43,10 @@ fn model_type(name: &str, kind: GoTypeKind) -> GoTypeIdentity {
 
 fn builtin_type(name: &str, kind: GoTypeKind) -> GoTypeIdentity {
     GoTypeIdentity::unnamed(name, kind)
+}
+
+fn ast_type(name: &str, kind: GoTypeKind) -> GoTypeIdentity {
+    GoTypeIdentity::defined(AST_PACKAGE_PATH, name, format!("ast.{name}"), kind)
 }
 
 /// One addressable embedded Go struct field.
@@ -401,6 +406,22 @@ pub enum JobArgsValue {
     ModifyTableComment(Option<GoShared<ModifyTableCommentArgs>>),
     /// `*model.ModifyTableCharsetAndCollateArgs`, including a typed nil pointer.
     ModifyTableCharsetAndCollate(Option<GoShared<ModifyTableCharsetAndCollateArgs>>),
+    /// `*model.AlterIndexVisibilityArgs`, including a typed nil pointer.
+    AlterIndexVisibility(Option<GoShared<AlterIndexVisibilityArgs>>),
+    /// `*model.DropForeignKeyArgs`, including a typed nil pointer.
+    DropForeignKey(Option<GoShared<DropForeignKeyArgs>>),
+    /// `*model.ModifyTableAutoIDCacheArgs`, including a typed nil pointer.
+    ModifyTableAutoIdCache(Option<GoShared<ModifyTableAutoIDCacheArgs>>),
+    /// `*model.ShardRowIDArgs`, including a typed nil pointer.
+    ShardRowId(Option<GoShared<ShardRowIDArgs>>),
+    /// `*model.SetDefaultValueArgs`, including a typed nil pointer.
+    SetDefaultValue(Option<GoShared<SetDefaultValueArgs>>),
+    /// `*model.RefreshMetaArgs`, including a typed nil pointer.
+    RefreshMeta(Option<GoShared<RefreshMetaArgs>>),
+    /// `*model.ModifyTableEngineAttributeArgs`, including a typed nil pointer.
+    ModifyTableEngineAttribute(Option<GoShared<ModifyTableEngineAttributeArgs>>),
+    /// `*model.AlterTableModeArgs`, including a typed nil pointer.
+    AlterTableMode(Option<GoShared<AlterTableModeArgs>>),
 }
 
 impl JobArgsValue {
@@ -418,6 +439,14 @@ impl JobArgsValue {
             Self::RebaseAutoId(_) => "RebaseAutoIDArgs",
             Self::ModifyTableComment(_) => "ModifyTableCommentArgs",
             Self::ModifyTableCharsetAndCollate(_) => "ModifyTableCharsetAndCollateArgs",
+            Self::AlterIndexVisibility(_) => "AlterIndexVisibilityArgs",
+            Self::DropForeignKey(_) => "DropForeignKeyArgs",
+            Self::ModifyTableAutoIdCache(_) => "ModifyTableAutoIDCacheArgs",
+            Self::ShardRowId(_) => "ShardRowIDArgs",
+            Self::SetDefaultValue(_) => "SetDefaultValueArgs",
+            Self::RefreshMeta(_) => "RefreshMetaArgs",
+            Self::ModifyTableEngineAttribute(_) => "ModifyTableEngineAttributeArgs",
+            Self::AlterTableMode(_) => "AlterTableModeArgs",
         };
         model_type(name, GoTypeKind::Struct).pointer_to()
     }
@@ -438,6 +467,16 @@ impl JobArgsValue {
             Self::ModifyTableCharsetAndCollate(value) => {
                 value.as_ref().map(GoShared::identity_address)
             }
+            Self::AlterIndexVisibility(value) => value.as_ref().map(GoShared::identity_address),
+            Self::DropForeignKey(value) => value.as_ref().map(GoShared::identity_address),
+            Self::ModifyTableAutoIdCache(value) => value.as_ref().map(GoShared::identity_address),
+            Self::ShardRowId(value) => value.as_ref().map(GoShared::identity_address),
+            Self::SetDefaultValue(value) => value.as_ref().map(GoShared::identity_address),
+            Self::RefreshMeta(value) => value.as_ref().map(GoShared::identity_address),
+            Self::ModifyTableEngineAttribute(value) => {
+                value.as_ref().map(GoShared::identity_address)
+            }
+            Self::AlterTableMode(value) => value.as_ref().map(GoShared::identity_address),
         }
     }
 
@@ -502,6 +541,46 @@ impl JobArgsValue {
                 value.clone(),
             )
             .go_json_projection(),
+            Self::AlterIndexVisibility(value) => GoTypedPointer::new(
+                model_type("AlterIndexVisibilityArgs", GoTypeKind::Struct),
+                value.clone(),
+            )
+            .go_json_projection(),
+            Self::DropForeignKey(value) => GoTypedPointer::new(
+                model_type("DropForeignKeyArgs", GoTypeKind::Struct),
+                value.clone(),
+            )
+            .go_json_projection(),
+            Self::ModifyTableAutoIdCache(value) => GoTypedPointer::new(
+                model_type("ModifyTableAutoIDCacheArgs", GoTypeKind::Struct),
+                value.clone(),
+            )
+            .go_json_projection(),
+            Self::ShardRowId(value) => GoTypedPointer::new(
+                model_type("ShardRowIDArgs", GoTypeKind::Struct),
+                value.clone(),
+            )
+            .go_json_projection(),
+            Self::SetDefaultValue(value) => GoTypedPointer::new(
+                model_type("SetDefaultValueArgs", GoTypeKind::Struct),
+                value.clone(),
+            )
+            .go_json_projection(),
+            Self::RefreshMeta(value) => GoTypedPointer::new(
+                model_type("RefreshMetaArgs", GoTypeKind::Struct),
+                value.clone(),
+            )
+            .go_json_projection(),
+            Self::ModifyTableEngineAttribute(value) => GoTypedPointer::new(
+                model_type("ModifyTableEngineAttributeArgs", GoTypeKind::Struct),
+                value.clone(),
+            )
+            .go_json_projection(),
+            Self::AlterTableMode(value) => GoTypedPointer::new(
+                model_type("AlterTableModeArgs", GoTypeKind::Struct),
+                value.clone(),
+            )
+            .go_json_projection(),
         }
     }
 }
@@ -557,6 +636,21 @@ pub trait JobArgs:
 pub trait FinishedJobArgs: JobArgs {
     /// Go `getFinishedArgsV1`.
     fn get_finished_args_v1(value: Option<&GoShared<Self>>, job: &Job) -> GoSharedSlice<GoAny>;
+}
+
+macro_rules! job_args_identity_methods {
+    ($variant:ident) => {
+        fn into_job_args_value(value: Option<GoShared<Self>>) -> JobArgsValue {
+            JobArgsValue::$variant(value)
+        }
+
+        fn from_job_args_value(value: &JobArgsValue) -> Option<Option<GoShared<Self>>> {
+            match value {
+                JobArgsValue::$variant(value) => Some(value.clone()),
+                _ => None,
+            }
+        }
+    };
 }
 
 impl Job {
@@ -1683,94 +1777,378 @@ pub fn get_modify_table_charset_and_collate_args(
     get_or_decode_args(job)
 }
 
-/// Go `IndexOp` (a byte), used by version-1 index arguments.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct IndexOp(pub u8);
-
-impl IndexOp {
-    /// Go `OpAddIndex`.
-    pub const ADD_INDEX: Self = Self(0);
-    /// Go `OpDropIndex`.
-    pub const DROP_INDEX: Self = Self(1);
-    /// Go `OpRollbackAddIndex`.
-    pub const ROLLBACK_ADD_INDEX: Self = Self(2);
+/// Go `AlterIndexVisibilityArgs`.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct AlterIndexVisibilityArgs {
+    /// Index name. Go's struct-valued `CIStr` is never omitted by `omitempty`.
+    #[serde(rename = "index_name", default)]
+    pub index_name: GoField<CiString>,
+    /// Whether the index is invisible.
+    #[serde(
+        rename = "invisible",
+        default,
+        skip_serializing_if = "field_is_default"
+    )]
+    pub invisible: GoField<bool>,
 }
 
-/// Go `IndexArg.GetColumnarIndexType`, expressed over the only two fields the
-/// source rule reads so that it does not fabricate the still-deferred AST
-/// argument surface.
-#[must_use]
-pub fn index_arg_columnar_index_type(
-    columnar_index_type: ColumnarIndexType,
-    is_columnar: bool,
-) -> ColumnarIndexType {
-    if columnar_index_type == ColumnarIndexType::NA && is_columnar {
-        ColumnarIndexType::VECTOR
-    } else {
-        columnar_index_type
+impl JobArgs for AlterIndexVisibilityArgs {
+    job_args_identity_methods!(AlterIndexVisibility);
+
+    fn get_args_v1(value: Option<&GoShared<Self>>, _job: &Job) -> GoSharedSlice<GoAny> {
+        let value = value
+            .expect("nil *AlterIndexVisibilityArgs receiver")
+            .read();
+        GoSharedSlice::from_vec(vec![
+            typed_value_any(
+                ast_type("CIStr", GoTypeKind::Struct),
+                value.index_name.get(),
+            ),
+            ColumnDefaultValue::Bool(value.invisible.get()).into(),
+        ])
+    }
+
+    fn decode_v1(job: &mut Job) -> Result<Option<GoShared<Self>>, serde_json::Error> {
+        let value = GoShared::new(Self::default());
+        let mut decoder = V1Decoder::new(job)?;
+        decoder.decode(
+            &value.read().index_name,
+            ast_type("CIStr", GoTypeKind::Struct),
+        )?;
+        decoder.decode(
+            &value.read().invisible,
+            builtin_type("bool", GoTypeKind::Bool),
+        )?;
+        decoder.finish(job);
+        Ok(Some(value))
     }
 }
 
-/// Go `RenameTableArgs`, the data boundary consumed by
-/// `GetRenameTablesArgsFromV1`.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RenameTableArgs {
-    /// Original schema identifier.
-    #[serde(rename = "old_schema_id", default, skip_serializing_if = "is_zero_i64")]
-    pub old_schema_id: i64,
-    /// Original schema name.
-    #[serde(rename = "old_schema_name")]
-    pub old_schema_name: CiString,
-    /// Destination table name.
-    #[serde(rename = "new_table_name")]
-    pub new_table_name: CiString,
-    /// Original table name (used by multi-table rename).
-    #[serde(rename = "old_table_name")]
-    pub old_table_name: CiString,
-    /// Destination schema identifier.
-    #[serde(rename = "new_schema_id", default, skip_serializing_if = "is_zero_i64")]
-    pub new_schema_id: i64,
+/// Go `GetAlterIndexVisibilityArgs`.
+pub fn get_alter_index_visibility_args(
+    job: &mut Job,
+) -> Result<Option<GoShared<AlterIndexVisibilityArgs>>, serde_json::Error> {
+    get_or_decode_args(job)
+}
+
+/// Go `DropForeignKeyArgs`.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct DropForeignKeyArgs {
+    /// Foreign-key name. Go's struct-valued `CIStr` is never omitted.
+    #[serde(rename = "fk_name", default)]
+    pub foreign_key_name: GoField<CiString>,
+}
+
+impl JobArgs for DropForeignKeyArgs {
+    job_args_identity_methods!(DropForeignKey);
+
+    fn get_args_v1(value: Option<&GoShared<Self>>, _job: &Job) -> GoSharedSlice<GoAny> {
+        let value = value.expect("nil *DropForeignKeyArgs receiver").read();
+        GoSharedSlice::from_vec(vec![typed_value_any(
+            ast_type("CIStr", GoTypeKind::Struct),
+            value.foreign_key_name.get(),
+        )])
+    }
+
+    fn decode_v1(job: &mut Job) -> Result<Option<GoShared<Self>>, serde_json::Error> {
+        let value = GoShared::new(Self::default());
+        let mut decoder = V1Decoder::new(job)?;
+        decoder.decode(
+            &value.read().foreign_key_name,
+            ast_type("CIStr", GoTypeKind::Struct),
+        )?;
+        decoder.finish(job);
+        Ok(Some(value))
+    }
+}
+
+/// Go `GetDropForeignKeyArgs`.
+pub fn get_drop_foreign_key_args(
+    job: &mut Job,
+) -> Result<Option<GoShared<DropForeignKeyArgs>>, serde_json::Error> {
+    get_or_decode_args(job)
+}
+
+/// Go `ModifyTableAutoIDCacheArgs`.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct ModifyTableAutoIDCacheArgs {
+    /// Replacement cache size.
+    #[serde(
+        rename = "new_cache",
+        default,
+        skip_serializing_if = "field_is_default"
+    )]
+    pub new_cache: GoField<i64>,
+}
+
+impl JobArgs for ModifyTableAutoIDCacheArgs {
+    job_args_identity_methods!(ModifyTableAutoIdCache);
+
+    fn get_args_v1(value: Option<&GoShared<Self>>, _job: &Job) -> GoSharedSlice<GoAny> {
+        let value = value
+            .expect("nil *ModifyTableAutoIDCacheArgs receiver")
+            .read();
+        GoSharedSlice::from_vec(vec![ColumnDefaultValue::Int(value.new_cache.get()).into()])
+    }
+
+    fn decode_v1(job: &mut Job) -> Result<Option<GoShared<Self>>, serde_json::Error> {
+        let value = GoShared::new(Self::default());
+        let mut decoder = V1Decoder::new(job)?;
+        decoder.decode(
+            &value.read().new_cache,
+            builtin_type("int64", GoTypeKind::Int64),
+        )?;
+        decoder.finish(job);
+        Ok(Some(value))
+    }
+}
+
+/// Go `GetModifyTableAutoIDCacheArgs`.
+pub fn get_modify_table_auto_id_cache_args(
+    job: &mut Job,
+) -> Result<Option<GoShared<ModifyTableAutoIDCacheArgs>>, serde_json::Error> {
+    get_or_decode_args(job)
+}
+
+/// Go `ShardRowIDArgs`.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct ShardRowIDArgs {
+    /// Shard-row-ID bit width.
+    #[serde(
+        rename = "shard_row_id_bits",
+        default,
+        skip_serializing_if = "field_is_default"
+    )]
+    pub shard_row_id_bits: GoField<u64>,
+}
+
+impl JobArgs for ShardRowIDArgs {
+    job_args_identity_methods!(ShardRowId);
+
+    fn get_args_v1(value: Option<&GoShared<Self>>, _job: &Job) -> GoSharedSlice<GoAny> {
+        let value = value.expect("nil *ShardRowIDArgs receiver").read();
+        GoSharedSlice::from_vec(vec![ColumnDefaultValue::Uint(
+            value.shard_row_id_bits.get(),
+        )
+        .into()])
+    }
+
+    fn decode_v1(job: &mut Job) -> Result<Option<GoShared<Self>>, serde_json::Error> {
+        let value = GoShared::new(Self::default());
+        let mut decoder = V1Decoder::new(job)?;
+        decoder.decode(
+            &value.read().shard_row_id_bits,
+            builtin_type("uint64", GoTypeKind::Uint64),
+        )?;
+        decoder.finish(job);
+        Ok(Some(value))
+    }
+}
+
+/// Go `GetShardRowIDArgs`.
+pub fn get_shard_row_id_args(
+    job: &mut Job,
+) -> Result<Option<GoShared<ShardRowIDArgs>>, serde_json::Error> {
+    get_or_decode_args(job)
+}
+
+/// Go `SetDefaultValueArgs`.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct SetDefaultValueArgs {
+    /// Column metadata pointer.
+    #[serde(
+        rename = "column_info",
+        default,
+        skip_serializing_if = "field_shared_pointer_is_none"
+    )]
+    pub column: GoField<Option<GoShared<ColumnInfo>>>,
+}
+
+impl JobArgs for SetDefaultValueArgs {
+    job_args_identity_methods!(SetDefaultValue);
+
+    fn get_args_v1(value: Option<&GoShared<Self>>, _job: &Job) -> GoSharedSlice<GoAny> {
+        let value = value.expect("nil *SetDefaultValueArgs receiver").read();
+        GoSharedSlice::from_vec(vec![typed_pointer_any(
+            model_type("ColumnInfo", GoTypeKind::Struct),
+            value.column.get(),
+        )])
+    }
+
+    fn decode_v1(job: &mut Job) -> Result<Option<GoShared<Self>>, serde_json::Error> {
+        // Go preallocates `&ColumnInfo{}` and decodes into the pointee, so a
+        // JSON null retains a non-nil zero column and caches that field pointer.
+        let column = GoShared::new(ColumnInfo::default());
+        let value = GoShared::new(Self {
+            column: GoField::new(Some(column.clone())),
+        });
+        let mut decoder = V1Decoder::new(job)?;
+        decoder.decode_pointee(&column, model_type("ColumnInfo", GoTypeKind::Struct))?;
+        decoder.finish(job);
+        Ok(Some(value))
+    }
+}
+
+/// Go `GetSetDefaultValueArgs`.
+pub fn get_set_default_value_args(
+    job: &mut Job,
+) -> Result<Option<GoShared<SetDefaultValueArgs>>, serde_json::Error> {
+    get_or_decode_args(job)
+}
+
+/// Go `RefreshMetaArgs`.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct RefreshMetaArgs {
+    /// Schema identifier.
+    #[serde(
+        rename = "schema_id",
+        default,
+        skip_serializing_if = "field_is_default"
+    )]
+    pub schema_id: GoField<i64>,
     /// Table identifier.
-    #[serde(rename = "table_id", default, skip_serializing_if = "is_zero_i64")]
-    pub table_id: i64,
-    /// Runtime-only Go field (`json:"-"`).
-    #[serde(skip)]
-    pub old_schema_id_for_schema_diff: i64,
+    #[serde(rename = "table_id", default, skip_serializing_if = "field_is_default")]
+    pub table_id: GoField<i64>,
+    /// Involved database as arbitrary Go-string bytes.
+    #[serde(
+        rename = "involved_db",
+        default,
+        skip_serializing_if = "field_is_default"
+    )]
+    pub involved_database: GoField<GoString>,
+    /// Involved table as arbitrary Go-string bytes.
+    #[serde(
+        rename = "involved_table",
+        default,
+        skip_serializing_if = "field_is_default"
+    )]
+    pub involved_table: GoField<GoString>,
 }
 
-const fn is_zero_i64(value: &i64) -> bool {
-    *value == 0
+impl JobArgs for RefreshMetaArgs {
+    job_args_identity_methods!(RefreshMeta);
+
+    fn get_args_v1(value: Option<&GoShared<Self>>, _job: &Job) -> GoSharedSlice<GoAny> {
+        let value = value.expect("nil *RefreshMetaArgs receiver");
+        GoSharedSlice::from_vec(vec![typed_pointer_any(
+            model_type("RefreshMetaArgs", GoTypeKind::Struct),
+            Some(value.clone()),
+        )])
+    }
+
+    fn decode_v1(job: &mut Job) -> Result<Option<GoShared<Self>>, serde_json::Error> {
+        let value = GoShared::new(Self::default());
+        let mut decoder = V1Decoder::new(job)?;
+        decoder.decode_pointee(&value, model_type("RefreshMetaArgs", GoTypeKind::Struct))?;
+        decoder.finish(job);
+        Ok(Some(value))
+    }
 }
 
-/// Go `GetRenameTablesArgsFromV1`.
-///
-/// Length mismatches intentionally panic at the first missing parallel entry,
-/// exactly like Go's unchecked slice indexing. Extra entries are ignored
-/// because the source iterates only `oldSchemaIDs`.
-#[must_use]
-pub fn rename_tables_args_from_v1(
-    old_schema_ids: &[i64],
-    old_schema_names: &[CiString],
-    old_table_names: &[CiString],
-    new_schema_ids: &[i64],
-    new_table_names: &[CiString],
-    table_ids: &[i64],
-) -> Vec<RenameTableArgs> {
-    old_schema_ids
-        .iter()
-        .enumerate()
-        .map(|(index, old_schema_id)| RenameTableArgs {
-            old_schema_id: *old_schema_id,
-            old_schema_name: old_schema_names[index].clone(),
-            old_table_name: old_table_names[index].clone(),
-            new_schema_id: new_schema_ids[index],
-            new_table_name: new_table_names[index].clone(),
-            table_id: table_ids[index],
-            old_schema_id_for_schema_diff: 0,
-        })
-        .collect()
+/// Go `GetRefreshMetaArgs`.
+pub fn get_refresh_meta_args(
+    job: &mut Job,
+) -> Result<Option<GoShared<RefreshMetaArgs>>, serde_json::Error> {
+    get_or_decode_args(job)
 }
+
+/// Go `ModifyTableEngineAttributeArgs`.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct ModifyTableEngineAttributeArgs {
+    /// Replacement engine attribute as arbitrary Go-string bytes.
+    #[serde(
+        rename = "engine_attribute",
+        default,
+        skip_serializing_if = "field_is_default"
+    )]
+    pub engine_attribute: GoField<GoString>,
+}
+
+impl JobArgs for ModifyTableEngineAttributeArgs {
+    job_args_identity_methods!(ModifyTableEngineAttribute);
+
+    fn get_args_v1(value: Option<&GoShared<Self>>, _job: &Job) -> GoSharedSlice<GoAny> {
+        let value = value
+            .expect("nil *ModifyTableEngineAttributeArgs receiver")
+            .read();
+        GoSharedSlice::from_vec(vec![
+            ColumnDefaultValue::Str(value.engine_attribute.get()).into()
+        ])
+    }
+
+    fn decode_v1(job: &mut Job) -> Result<Option<GoShared<Self>>, serde_json::Error> {
+        let value = GoShared::new(Self::default());
+        let mut decoder = V1Decoder::new(job)?;
+        decoder.decode(
+            &value.read().engine_attribute,
+            builtin_type("string", GoTypeKind::String),
+        )?;
+        decoder.finish(job);
+        Ok(Some(value))
+    }
+}
+
+/// Go `GetModifyTableEngineAttributeArgs`.
+pub fn get_modify_table_engine_attribute_args(
+    job: &mut Job,
+) -> Result<Option<GoShared<ModifyTableEngineAttributeArgs>>, serde_json::Error> {
+    get_or_decode_args(job)
+}
+
+/// Go `AlterTableModeArgs`.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct AlterTableModeArgs {
+    /// New table mode.
+    #[serde(
+        rename = "table_mode",
+        default,
+        skip_serializing_if = "field_is_default"
+    )]
+    pub table_mode: GoField<TableMode>,
+    /// Schema identifier.
+    #[serde(
+        rename = "schema_id",
+        default,
+        skip_serializing_if = "field_is_default"
+    )]
+    pub schema_id: GoField<i64>,
+    /// Table identifier.
+    #[serde(rename = "table_id", default, skip_serializing_if = "field_is_default")]
+    pub table_id: GoField<i64>,
+}
+
+impl JobArgs for AlterTableModeArgs {
+    job_args_identity_methods!(AlterTableMode);
+
+    fn get_args_v1(value: Option<&GoShared<Self>>, _job: &Job) -> GoSharedSlice<GoAny> {
+        let value = value.expect("nil *AlterTableModeArgs receiver");
+        GoSharedSlice::from_vec(vec![typed_pointer_any(
+            model_type("AlterTableModeArgs", GoTypeKind::Struct),
+            Some(value.clone()),
+        )])
+    }
+
+    fn decode_v1(job: &mut Job) -> Result<Option<GoShared<Self>>, serde_json::Error> {
+        let value = GoShared::new(Self::default());
+        let mut decoder = V1Decoder::new(job)?;
+        decoder.decode_pointee(&value, model_type("AlterTableModeArgs", GoTypeKind::Struct))?;
+        decoder.finish(job);
+        Ok(Some(value))
+    }
+}
+
+/// Go `GetAlterTableModeArgs`.
+pub fn get_alter_table_mode_args(
+    job: &mut Job,
+) -> Result<Option<GoShared<AlterTableModeArgs>>, serde_json::Error> {
+    get_or_decode_args(job)
+}
+
+#[path = "job_args_compat.rs"]
+mod compat;
+pub use compat::{
+    index_arg_columnar_index_type, rename_tables_args_from_v1, IndexOp, RenameTableArgs,
+};
 
 #[cfg(test)]
 #[path = "job_args_tests.rs"]

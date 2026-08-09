@@ -1084,3 +1084,176 @@ fn index_operation_values_keep_go_iota_and_byte_width() {
     assert_eq!(IndexOp::ROLLBACK_ADD_INDEX.0, 2);
     assert_eq!(serde_json::to_string(&IndexOp(255)).unwrap(), "255");
 }
+
+#[test]
+pub(crate) fn scalar_and_existing_model_args_match_the_source_v1_v2_matrix() {
+    for version in [JobVersion::V1, JobVersion::V2] {
+        let mut job = encoded_job(
+            version,
+            ActionType::ACTION_ALTER_INDEX_VISIBILITY,
+            GoShared::new(AlterIndexVisibilityArgs {
+                index_name: GoField::new(CiString::new("index-name")),
+                invisible: GoField::new(true),
+            }),
+        );
+        let args = get_alter_index_visibility_args(&mut job).unwrap().unwrap();
+        assert_eq!(args.read().index_name.get().original(), "index-name");
+        assert!(args.read().invisible.get());
+
+        let mut job = encoded_job(
+            version,
+            ActionType::ACTION_DROP_FOREIGN_KEY,
+            GoShared::new(DropForeignKeyArgs {
+                foreign_key_name: GoField::new(CiString::new("fk-name")),
+            }),
+        );
+        let args = get_drop_foreign_key_args(&mut job).unwrap().unwrap();
+        assert_eq!(args.read().foreign_key_name.get().original(), "fk-name");
+
+        let mut job = encoded_job(
+            version,
+            ActionType::ACTION_MODIFY_TABLE_AUTO_IDCACHE,
+            GoShared::new(ModifyTableAutoIDCacheArgs {
+                new_cache: GoField::new(7_527),
+            }),
+        );
+        assert_eq!(
+            get_modify_table_auto_id_cache_args(&mut job)
+                .unwrap()
+                .unwrap()
+                .read()
+                .new_cache
+                .get(),
+            7_527
+        );
+
+        let mut job = encoded_job(
+            version,
+            ActionType::ACTION_SHARD_ROW_ID,
+            GoShared::new(ShardRowIDArgs {
+                shard_row_id_bits: GoField::new(101),
+            }),
+        );
+        assert_eq!(
+            get_shard_row_id_args(&mut job)
+                .unwrap()
+                .unwrap()
+                .read()
+                .shard_row_id_bits
+                .get(),
+            101
+        );
+
+        let column = GoShared::new(ColumnInfo {
+            id: 7_527,
+            name: CiString::new("col_name"),
+            ..Default::default()
+        });
+        let mut job = encoded_job(
+            version,
+            ActionType::ACTION_SET_DEFAULT_VALUE,
+            GoShared::new(SetDefaultValueArgs {
+                column: GoField::new(Some(column)),
+            }),
+        );
+        let args = get_set_default_value_args(&mut job).unwrap().unwrap();
+        let column = args.read().column.get().unwrap();
+        assert_eq!(column.read().id, 7_527);
+        assert_eq!(column.read().name.original(), "col_name");
+
+        let mut job = encoded_job(
+            version,
+            ActionType::ACTION_REFRESH_META,
+            GoShared::new(RefreshMetaArgs {
+                schema_id: GoField::new(i64::MIN),
+                table_id: GoField::new(i64::MAX),
+                involved_database: GoField::new(GoString::from("db")),
+                involved_table: GoField::new(GoString::from("table")),
+            }),
+        );
+        let args = get_refresh_meta_args(&mut job).unwrap().unwrap();
+        assert_eq!(args.read().schema_id.get(), i64::MIN);
+        assert_eq!(args.read().table_id.get(), i64::MAX);
+        assert_eq!(args.read().involved_database.get().as_bytes(), b"db");
+        assert_eq!(args.read().involved_table.get().as_bytes(), b"table");
+
+        let mut job = encoded_job(
+            version,
+            ActionType::ACTION_MODIFY_ENGINE_ATTRIBUTE,
+            GoShared::new(ModifyTableEngineAttributeArgs {
+                engine_attribute: GoField::new(GoString::from("attribute")),
+            }),
+        );
+        assert_eq!(
+            get_modify_table_engine_attribute_args(&mut job)
+                .unwrap()
+                .unwrap()
+                .read()
+                .engine_attribute
+                .get()
+                .as_bytes(),
+            b"attribute"
+        );
+
+        let mut job = encoded_job(
+            version,
+            ActionType::ACTION_ALTER_TABLE_MODE,
+            GoShared::new(AlterTableModeArgs {
+                table_mode: GoField::new(TableMode(255)),
+                schema_id: GoField::new(-1),
+                table_id: GoField::new(2),
+            }),
+        );
+        let args = get_alter_table_mode_args(&mut job).unwrap().unwrap();
+        assert_eq!(args.read().table_mode.get(), TableMode(255));
+        assert_eq!(args.read().schema_id.get(), -1);
+        assert_eq!(args.read().table_id.get(), 2);
+    }
+}
+
+#[test]
+pub(crate) fn new_native_args_preserve_go_null_duplicate_and_pointer_rules() {
+    let visibility: AlterIndexVisibilityArgs = serde_json::from_str(
+        r#"{"index_name":{"O":"first","L":"first"},"INDEX_NAME":"last","invisible":true,"INVISIBLE":null}"#,
+    )
+    .unwrap();
+    assert_eq!(visibility.index_name.get().original(), "last");
+    assert_eq!(visibility.index_name.get().lowercase(), "last");
+    assert!(visibility.invisible.get(), "scalar null is a no-op");
+
+    let default: SetDefaultValueArgs =
+        serde_json::from_str(r#"{"column_info":{"id":7},"COLUMN_INFO":{"name":"Col"}}"#).unwrap();
+    let column = default.column.get().unwrap();
+    assert_eq!(column.read().id, 7);
+    assert_eq!(column.read().name.original(), "Col");
+
+    let refresh: RefreshMetaArgs = serde_json::from_str(
+        r#"{"schema_id":1,"SCHEMA_ID":null,"involved_db":"first","INVOLVED_DB":"last"}"#,
+    )
+    .unwrap();
+    assert_eq!(refresh.schema_id.get(), 1);
+    assert_eq!(refresh.involved_database.get().as_bytes(), b"last");
+
+    let zero_visibility = serde_json::to_value(AlterIndexVisibilityArgs::default()).unwrap();
+    assert_eq!(
+        zero_visibility,
+        serde_json::json!({"index_name":{"O":"","L":""}})
+    );
+
+    let mut v1_null = Job {
+        version: JobVersion::V1,
+        raw_args: Some(crate::PersistedRawJson::from_bytes(b"[null]".to_vec())),
+        ..Default::default()
+    };
+    let default = get_set_default_value_args(&mut v1_null).unwrap().unwrap();
+    assert!(default.read().column.get().is_some());
+    assert_eq!(
+        v1_null
+            .decoded_args()
+            .get(0)
+            .dynamic_type()
+            .unwrap()
+            .display_name(),
+        "*model.ColumnInfo"
+    );
+}
