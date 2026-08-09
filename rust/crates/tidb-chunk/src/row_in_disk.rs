@@ -143,7 +143,7 @@ impl AppendedDiskRow<'_> {
     #[must_use]
     pub fn chunk(&self) -> &Chunk {
         match &self.chunk {
-            AppendedRowChunk::Existing(chunk) => &**chunk,
+            AppendedRowChunk::Existing(chunk) => chunk,
             AppendedRowChunk::Replacement(chunk) => chunk,
         }
     }
