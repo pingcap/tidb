@@ -1451,6 +1451,55 @@ fn go_test_index_hint_quoted_name_row() {
     );
 }
 
+/// `pkg/parser/parser_test.go::TestIndexHint`.
+#[test]
+fn test_index_hint() {
+    for (sql, expected) in [
+        (
+            "select * from t use index (primary)",
+            "SELECT * FROM `t` USE INDEX (`primary`)",
+        ),
+        (
+            "select * from t use index (`primary`)",
+            "SELECT * FROM `t` USE INDEX (`primary`)",
+        ),
+        (
+            "select * from t use index ();",
+            "SELECT * FROM `t` USE INDEX ()",
+        ),
+        (
+            "select * from t use index (idx);",
+            "SELECT * FROM `t` USE INDEX (`idx`)",
+        ),
+        (
+            "select * from t use index (idx1, idx2);",
+            "SELECT * FROM `t` USE INDEX (`idx1`, `idx2`)",
+        ),
+        (
+            "select * from t ignore key (idx1)",
+            "SELECT * FROM `t` IGNORE INDEX (`idx1`)",
+        ),
+        (
+            "select * from t force index for join (idx1)",
+            "SELECT * FROM `t` FORCE INDEX FOR JOIN (`idx1`)",
+        ),
+        (
+            "select * from t use index for order by (idx1)",
+            "SELECT * FROM `t` USE INDEX FOR ORDER BY (`idx1`)",
+        ),
+        (
+            "select * from t force index for group by (idx1)",
+            "SELECT * FROM `t` FORCE INDEX FOR GROUP BY (`idx1`)",
+        ),
+        (
+            "select * from t use index for group by (idx1) use index for order by (idx2), t2",
+            "SELECT * FROM (`t` USE INDEX FOR GROUP BY (`idx1`) USE INDEX FOR ORDER BY (`idx2`)) JOIN `t2`",
+        ),
+    ] {
+        assert_eq!(r(sql), expected, "{sql}");
+    }
+}
+
 /// `PARTITION (name, ...)` table hints. Every assertion here was
 /// cross-checked against real TiDB via `godump restore` (not assumed) —
 /// see `tidb_ast::TableRef::partitions`'s own doc for the grammar
