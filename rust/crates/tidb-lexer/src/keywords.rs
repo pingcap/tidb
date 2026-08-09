@@ -1,6 +1,7 @@
 // Generated from pkg/parser/misc.go token maps. DO NOT EDIT BY HAND.
 //
-// Regenerate with: cargo xtask gen-keywords  (or the documented python step).
+// The separate parser.y-derived public catalog can be validated with:
+// cargo run -p tidb-lexer --bin generate_keyword -- <parser.y> --check
 // These three sets mirror tokenMap, btFuncTokenMap and windowFuncTokenMap and
 // are consulted exactly as pkg/parser/misc.go's isTokenIdentifier does.
 #![allow(clippy::all)]
