@@ -4,30 +4,67 @@ go_package = "pkg/util/chunk"
 source_commit = "665fc02e2be48a7199d5ffeb5d3d6bec1dfed04f"
 primary_rust_crate = "tidb-chunk"
 mapped_rust_crates = ["tidb-chunk"]
-extra_artifacts = []
+extra_artifacts = [
+  "rust/difftests/chunk-tests/fixtures/chunk_codec_vectors.tsv",
+  "rust/difftests/chunk-tests/fixtures/compare_vectors.tsv",
+  "rust/difftests/chunk-tests/fixtures/encrypted_spill_vectors.tsv",
+  "rust/difftests/chunk-tests/fixtures/generate_chunk_codec_vectors.go",
+  "rust/difftests/chunk-tests/fixtures/generate_compare_vectors.go",
+  "rust/difftests/chunk-tests/fixtures/generate_encrypted_spill_vectors.go",
+  "rust/difftests/chunk-tests/fixtures/generate_mutrow_vectors.go",
+  "rust/difftests/chunk-tests/fixtures/generate_row_in_disk_vectors.go",
+  "rust/difftests/chunk-tests/fixtures/mutrow_vectors.tsv",
+  "rust/difftests/chunk-tests/fixtures/row_in_disk_vectors.tsv",
+]
 excluded_subpackages = []
 owned_rust_files = [
   "rust/crates/tidb-chunk/Cargo.toml",
+  "rust/crates/tidb-chunk/EXECPLAN_ALIAS_OWNERSHIP.md",
+  "rust/crates/tidb-chunk/EXECPLAN_CHUNK_COLUMN_IDENTITY.md",
+  "rust/crates/tidb-chunk/EXECPLAN_ROW_CONTAINER.md",
+  "rust/crates/tidb-chunk/EXECPLAN_SORTED_ROW_CONTAINER.md",
+  "rust/crates/tidb-chunk/src/alloc.rs",
   "rust/crates/tidb-chunk/src/chunk.rs",
+  "rust/crates/tidb-chunk/src/chunk_identity_tests.rs",
   "rust/crates/tidb-chunk/src/chunk_in_disk.rs",
   "rust/crates/tidb-chunk/src/chunk_util.rs",
   "rust/crates/tidb-chunk/src/codec.rs",
   "rust/crates/tidb-chunk/src/column.rs",
+  "rust/crates/tidb-chunk/src/column_slot.rs",
+  "rust/crates/tidb-chunk/src/column_tests.rs",
+  "rust/crates/tidb-chunk/src/column_view.rs",
   "rust/crates/tidb-chunk/src/compare.rs",
   "rust/crates/tidb-chunk/src/iterator.rs",
   "rust/crates/tidb-chunk/src/lib.rs",
   "rust/crates/tidb-chunk/src/list.rs",
   "rust/crates/tidb-chunk/src/mutrow.rs",
+  "rust/crates/tidb-chunk/src/pool.rs",
   "rust/crates/tidb-chunk/src/row.rs",
   "rust/crates/tidb-chunk/src/row_container.rs",
   "rust/crates/tidb-chunk/src/row_container_reader.rs",
+  "rust/crates/tidb-chunk/src/row_container_test_hooks.rs",
+  "rust/crates/tidb-chunk/src/row_container_tests.rs",
   "rust/crates/tidb-chunk/src/row_in_disk.rs",
+  "rust/crates/tidb-chunk/src/shared_bytes.rs",
+  "rust/crates/tidb-chunk/src/sorted_row_container.rs",
   "rust/crates/tidb-chunk/tests/compare_vectors.rs",
   "rust/crates/tidb-chunk/tests/pkg_util_chunk_fixture_observation.rs",
   "rust/crates/tidb-chunk/tests/pkg_util_chunk_fixture_probe.rs",
+  "rust/crates/tidb-chunk/tests/row_container_contract.rs",
+  "rust/crates/tidb-chunk/tests/sorted_row_container_contract.rs",
 ]
 
 [artifact_roles]
+"rust/difftests/chunk-tests/fixtures/chunk_codec_vectors.tsv" = "generated-output"
+"rust/difftests/chunk-tests/fixtures/compare_vectors.tsv" = "generated-output"
+"rust/difftests/chunk-tests/fixtures/encrypted_spill_vectors.tsv" = "generated-output"
+"rust/difftests/chunk-tests/fixtures/generate_chunk_codec_vectors.go" = "generated-input"
+"rust/difftests/chunk-tests/fixtures/generate_compare_vectors.go" = "generated-input"
+"rust/difftests/chunk-tests/fixtures/generate_encrypted_spill_vectors.go" = "generated-input"
+"rust/difftests/chunk-tests/fixtures/generate_mutrow_vectors.go" = "generated-input"
+"rust/difftests/chunk-tests/fixtures/generate_row_in_disk_vectors.go" = "generated-input"
+"rust/difftests/chunk-tests/fixtures/mutrow_vectors.tsv" = "generated-output"
+"rust/difftests/chunk-tests/fixtures/row_in_disk_vectors.tsv" = "generated-output"
 
 [unresolved_fixture_evidence]
 "pkg/util/chunk/row_in_disk_test.go:83:os.Stat:l.dataFile.file.Name()" = "evidence-artifact:rust/crates/tidb-chunk/tests/pkg_util_chunk_lockdown/fixture-evidence/row-in-disk-stat-path.json@sha256:0732ad8e207966e84a8f6245fe527da045e0a4c4a8e7c054482224bb55678508"
