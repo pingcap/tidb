@@ -108,6 +108,8 @@ pub struct Config {
     pub temp_storage_path: String,
     #[serde(rename = "tmp-storage-quota")]
     pub temp_storage_quota: i64,
+    #[serde(skip)]
+    pub txn_local_latches: tikvcfg::TxnLocalLatches,
     #[serde(rename = "server-version")]
     pub server_version: String,
     #[serde(rename = "version-comment")]
@@ -287,6 +289,7 @@ impl Default for Config {
             temp_dir: DEF_TEMP_DIR.into(),
             temp_storage_path: String::new(),
             temp_storage_quota: -1,
+            txn_local_latches: tikvcfg::TxnLocalLatches::default(),
             server_version: String::new(),
             version_comment: String::new(),
             tidb_edition: String::new(),
@@ -386,6 +389,35 @@ fn has_root_privilege() -> bool {
 }
 
 impl Config {
+    /// Go `Config.GetTiKVConfig`.
+    pub fn get_tikv_config(&self) -> tikvcfg::Config {
+        let zone_label = self.labels.get("zone").cloned().unwrap_or_default();
+        tikvcfg::Config {
+            committer_concurrency: self.performance.committer_concurrency,
+            max_txn_ttl: self.performance.max_txn_ttl,
+            tikv_client: self.tikv_client.clone(),
+            security: tikvcfg::Security::new(
+                self.security.cluster_ssl_ca.clone(),
+                self.security.cluster_ssl_cert.clone(),
+                self.security.cluster_ssl_key.clone(),
+                self.security.cluster_verify_cn.clone(),
+            ),
+            pd_client: self.pd_client,
+            pessimistic_txn: tikvcfg::PessimisticTxn {
+                max_retry_count: self.pessimistic_txn.max_retry_count,
+            },
+            txn_local_latches: self.txn_local_latches,
+            stores_refresh_interval: self.stores_refresh_interval,
+            open_tracing_enable: self.open_tracing.enable,
+            path: self.path.clone(),
+            enable_forwarding: self.enable_forwarding,
+            txn_scope: zone_label.clone(),
+            zone_label,
+            enable_async_batch_get: self.performance.enable_async_batch_get,
+            ..tikvcfg::Config::default()
+        }
+    }
+
     /// Go `Config.Valid`.
     pub fn valid(&self) -> Result<(), String> {
         if !valid_keyspace_name(&self.keyspace_name) {
@@ -660,6 +692,17 @@ mod tests {
             .valid()
             .unwrap_err()
             .contains("invalid keyspace name"));
+    }
+
+    // Go TestGetTiKVConfigKeepsZeroRUV2RUScale.
+    #[test]
+    fn test_get_tikv_config_keeps_zero_ru_v2_ru_scale() {
+        let mut config = new_config();
+        config.ru_v2.ru_scale = 123.0;
+        config.tikv_client.ru_v2.ru_scale = 0.0;
+
+        let tikv_config = config.get_tikv_config();
+        assert_eq!(tikv_config.tikv_client.ru_v2.ru_scale, 0.0);
     }
 
     // Go TestMaxIndexLength.
