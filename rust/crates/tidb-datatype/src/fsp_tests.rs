@@ -16,7 +16,7 @@ use super::*;
 
 /// Complete translation of `pkg/types/fsp_test.go::TestCheckFsp`.
 #[test]
-fn check_fsp_executes_every_original_assertion() {
+fn test_check_fsp() {
     assert_eq!(check_fsp(UNSPECIFIED_FSP), Ok(DEFAULT_FSP));
 
     let error = check_fsp(-2019).unwrap_err();
@@ -38,7 +38,7 @@ fn check_fsp_executes_every_original_assertion() {
 
 /// Complete translation of `pkg/types/fsp_test.go::TestParseFrac`.
 #[test]
-fn parse_frac_executes_every_original_assertion() {
+fn test_parse_frac() {
     assert_eq!(parse_frac(b"", 5), Ok((0, false)));
 
     let error = parse_frac(b"999", -56).unwrap_err();
@@ -67,7 +67,7 @@ fn parse_frac_keeps_go_byte_slicing_and_empty_input_ordering() {
 
 /// Complete translation of `pkg/types/fsp_test.go::TestAlignFrac`.
 #[test]
-fn align_frac_executes_every_original_assertion() {
+fn test_align_frac() {
     assert_eq!(align_frac(b"100", 6), b"100000");
     assert_eq!(align_frac(b"10000000000", 6), b"10000000000");
     assert_eq!(align_frac(b"-100", 6), b"-100000");
