@@ -718,6 +718,19 @@ mod tests {
         update_global(|config| config.tikv_worker_url.clear());
     }
 
+    // Go TestAutoScalerConfig.
+    #[test]
+    fn test_auto_scaler_config() {
+        let config = new_config();
+        assert!(!config.use_auto_scaler);
+        assert!(!get_global_config().use_auto_scaler);
+
+        update_global(|config| config.use_auto_scaler = true);
+        assert!(get_global_config().use_auto_scaler);
+
+        update_global(|config| config.use_auto_scaler = false);
+    }
+
     // Go TestKeyspaceActivateModeConfig (the source test runs under the
     // `nextgen` build tag).
     #[cfg(feature = "nextgen")]
