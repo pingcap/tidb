@@ -1435,8 +1435,9 @@ mod tests {
         }
     }
 
+    /// Source: `pkg/types/convert_test.go::TestConvertToBinaryString`.
     #[test]
-    fn source_convert_to_binary_string_rows() {
+    fn test_convert_to_binary_string() {
         let utf8 = "你好".as_bytes().to_vec();
         let gbk = vec![0xC4, 0xE3, 0xBA, 0xC3];
         let invalid_utf8 = [utf8.as_slice(), &[0x81]].concat();
