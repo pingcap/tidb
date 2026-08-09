@@ -81,6 +81,8 @@ pub enum DiskError {
     Owned(String),
     /// Process-wide local temporary-storage quota was reached.
     QuotaExceeded,
+    /// Go `ErrCannotAddBecauseSorted`.
+    CannotAddBecauseSorted,
 }
 
 impl From<io::Error> for DiskError {
@@ -96,6 +98,7 @@ impl std::fmt::Display for DiskError {
             DiskError::Message(message) => formatter.write_str(message),
             DiskError::Owned(message) => formatter.write_str(message),
             DiskError::QuotaExceeded => formatter.write_str(LOCAL_TEMPORARY_SPACE_QUOTA_ERROR),
+            DiskError::CannotAddBecauseSorted => formatter.write_str("can not add because sorted"),
         }
     }
 }

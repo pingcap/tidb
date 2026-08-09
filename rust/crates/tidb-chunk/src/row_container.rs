@@ -40,14 +40,10 @@
 //! therefore never escape the records read guard, and readers may safely cross
 //! an in-memory-to-disk transition between chunks.
 //!
-//! # Deliberately not reproduced
-//!
-//! Go uses a spill goroutine, per-handle read locks, write-lock fan-out, cache
-//! padding, and `WaitForTest` to coordinate that runtime shape. None changes
-//! row values, ordering, tracker accounting, spill errors, or fallback order,
-//! so the Rust coordinator does not reproduce them. `SortedRowContainer` and
-//! `SortAndSpillDiskAction` remain a separate package obligation.
+//! Go's spill goroutine, per-handle lock fan-out, cache padding, and
+//! `WaitForTest` do not change package behavior and are not reproduced.
 
+use std::cmp::Ordering;
 use std::ops::Deref;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
@@ -135,8 +131,6 @@ impl Coordinator {
     }
 }
 
-/// Restores a non-busy phase and wakes waiters if a non-spill operation
-/// unwinds. It never locks records and never performs disk I/O.
 struct PhaseLease<'a> {
     shared: &'a RowContainerShared,
     active: CoordinatorPhase,
@@ -193,9 +187,6 @@ impl Drop for PhaseLease<'_> {
     }
 }
 
-/// Releases the coordinator's fallback slot and wakes lifecycle waiters even
-/// when a fallback callback unwinds. Its destructor performs no I/O or
-/// callback work.
 struct FallbackLease<'a> {
     shared: &'a RowContainerShared,
 }
@@ -247,7 +238,7 @@ impl SpillDiskAction {
         }
     }
 
-    /// Whether a reentrant in-memory operation has handed off a pending spill.
+    /// Whether an in-memory operation handed off a pending spill.
     #[must_use]
     pub fn is_triggered(&self) -> bool {
         self.shared.upgrade().is_some_and(|shared| {
@@ -276,9 +267,45 @@ impl SpillDiskAction {
         }
     }
 
-    /// Claim the serialized fallback slot for `generation`. `false` means a
-    /// reset won the terminal race and the caller must re-enter as an action
-    /// in the new generation.
+    pub(crate) fn action_with_admission(&self, tracker: &Arc<Tracker>, admitted: bool) {
+        if admitted {
+            self.action(tracker);
+        } else {
+            let Some(shared) = self.shared.upgrade() else {
+                self.finished.store(true, SeqCst);
+                return;
+            };
+            let thread_id = std::thread::current().id();
+            let mut coordinator = lock_unpoisoned(&shared.coordinator);
+            loop {
+                let reentrant = coordinator.active_mutator == Some(thread_id);
+                if coordinator.fallback_active
+                    || (!reentrant
+                        && matches!(
+                            coordinator.phase,
+                            CoordinatorPhase::AddingMemory
+                                | CoordinatorPhase::AddingDisk
+                                | CoordinatorPhase::Spilling
+                                | CoordinatorPhase::ResettingMemory
+                                | CoordinatorPhase::ResettingDisk
+                                | CoordinatorPhase::Closing
+                        ))
+                {
+                    coordinator = wait_unpoisoned(&shared.phase_changed, coordinator);
+                    continue;
+                }
+                if coordinator.phase == CoordinatorPhase::Closed {
+                    return;
+                }
+                coordinator.fallback_active = true;
+                break;
+            }
+            drop(coordinator);
+            let _lease = FallbackLease { shared: &shared };
+            self.invoke_fallback_if_needed(tracker);
+        }
+    }
+
     fn run_fallback_for_generation(
         &self,
         shared: &Arc<RowContainerShared>,
@@ -320,12 +347,6 @@ impl SpillDiskAction {
         }
     }
 
-    /// Finish the action generation that was observed while another thread
-    /// owned a memory mutation or while disk/spill work was active.
-    ///
-    /// `true` means the later call is complete. `false` means reset published
-    /// a new generation before this action could claim fallback, so the caller
-    /// must re-enter the action state machine.
     fn wait_for_generation(
         &self,
         shared: &Arc<RowContainerShared>,
@@ -509,14 +530,12 @@ impl ActionOnExceed for SpillDiskAction {
     }
 }
 
-/// Go `rowContainerRecord`: the in-memory half, the on-disk half, and the
-/// error a failed spill leaves behind.
 struct RowContainerRecord {
     in_memory: List,
     in_disk: Option<DataInDiskByRows>,
     spill_error: Option<String>,
 }
-
+type PreSpill = Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
 enum RowContainerChunkInner<'a> {
     InMemory {
         records: RwLockReadGuard<'a, RowContainerRecord>,
@@ -525,13 +544,7 @@ enum RowContainerChunkInner<'a> {
     Owned(Chunk),
 }
 
-/// A chunk read from a [`RowContainer`].
-///
-/// In-memory reads keep the shared records read guard alive and dereference to
-/// the live chunk, matching Go's no-copy access. Disk reads own the decoded
-/// chunk. Public mutating container methods retain `&mut self`, so safe
-/// same-handle code cannot hold this view and then deadlock itself on spill or
-/// reset; another shallow handle remains the concurrent path.
+/// A live guarded in-memory chunk or owned decoded disk chunk.
 pub struct RowContainerChunk<'a> {
     inner: RowContainerChunkInner<'a>,
 }
@@ -576,6 +589,7 @@ struct RowContainerShared {
     disk_tracker: Arc<disk::Tracker>,
     storage: Arc<disk::SpillStorage>,
     action_spill: Mutex<Option<Arc<SpillDiskAction>>>,
+    pre_spill: Mutex<Option<PreSpill>>,
     #[cfg(test)]
     spill_start_hook: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
     #[cfg(test)]
@@ -593,6 +607,16 @@ impl RowContainerShared {
             hook();
         }
 
+        let pre_spill = lock_unpoisoned(&self.pre_spill).clone();
+        let pre_spill_error =
+            pre_spill.and_then(
+                |prepare| match catch_unwind(AssertUnwindSafe(|| prepare())) {
+                    Ok(Ok(())) => None,
+                    Ok(Err(message)) => Some(message),
+                    Err(payload) => Some(panic_message(payload.as_ref())),
+                },
+            );
+
         let mut records = write_unpoisoned(&self.records);
         let spill = catch_unwind(AssertUnwindSafe(|| -> Result<(), String> {
             if records.in_disk.is_none() {
@@ -602,6 +626,10 @@ impl RowContainerShared {
                 );
                 in_disk.disk_tracker().attach_to(&self.disk_tracker);
                 records.in_disk = Some(in_disk);
+            }
+
+            if let Some(message) = pre_spill_error {
+                return Err(message);
             }
 
             let RowContainerRecord {
@@ -764,7 +792,6 @@ enum AddMode {
     Memory,
     Disk,
 }
-
 /// Go `RowContainer`, with shallow-copy semantics provided by [`Clone`].
 #[derive(Clone)]
 pub struct RowContainer {
@@ -795,6 +822,7 @@ impl RowContainer {
                 disk_tracker: disk::new_tracker(LABEL_FOR_ROW_CONTAINER, -1),
                 storage,
                 action_spill: Mutex::new(None),
+                pre_spill: Mutex::new(None),
                 #[cfg(test)]
                 spill_start_hook: Mutex::new(None),
                 #[cfg(test)]
@@ -807,12 +835,11 @@ impl RowContainer {
         }
     }
 
-    /// Idiomatic equivalent of Go `ShallowCopyWithNewMutex`.
+    /// Idiomatic Go `ShallowCopyWithNewMutex` equivalent.
     #[must_use]
     pub fn shallow_copy(&self) -> Self {
         self.clone()
     }
-
     /// Go `alreadySpilled` and `AlreadySpilledSafeForTest`.
     #[must_use]
     pub fn already_spilled(&self) -> bool {
@@ -839,6 +866,10 @@ impl RowContainer {
 
     /// Go `ActionSpill`: the action, created on first use.
     pub fn action_spill(&mut self) -> Arc<SpillDiskAction> {
+        self.action_spill_shared()
+    }
+
+    pub(crate) fn action_spill_shared(&self) -> Arc<SpillDiskAction> {
         let mut action = lock_unpoisoned(&self.shared.action_spill);
         Arc::clone(
             action.get_or_insert_with(|| {
@@ -890,12 +921,29 @@ impl RowContainer {
             .alloc_chunk()
     }
 
-    /// Go `Add`: appends a chunk, to memory or to the spill file.
-    ///
-    /// The spill the memory-quota action asked for happens HERE, on the way
-    /// out; see the module doc.
+    /// Go `Add`: appends a chunk to memory or the spill file.
     pub fn add(&mut self, chk: Chunk) -> Result<(), DiskError> {
+        self.add_shared_with_prepare(chk, || Ok(()))
+    }
+
+    pub(crate) fn add_shared_with_prepare<Prepare, Guard>(
+        &self,
+        chk: Chunk,
+        prepare: Prepare,
+    ) -> Result<(), DiskError>
+    where
+        Prepare: FnOnce() -> Result<Guard, DiskError>,
+    {
         let (mode, mut lease) = self.begin_add()?;
+        let guard = match prepare() {
+            Ok(guard) => guard,
+            Err(error) => {
+                if self.shared.finish_add(mode, &mut lease) {
+                    self.shared.perform_spill(&mut lease);
+                }
+                return Err(error);
+            }
+        };
         let result = {
             let mut records = write_unpoisoned(&self.shared.records);
             match mode {
@@ -910,6 +958,7 @@ impl RowContainer {
                     .add(&chk),
             }
         };
+        drop(guard);
         if self.shared.finish_add(mode, &mut lease) {
             self.shared.perform_spill(&mut lease);
         }
@@ -970,9 +1019,12 @@ impl RowContainer {
         }
     }
 
-    /// Go `SpillToDisk`/`spillToDisk(nil)`: move every in-memory chunk into a
-    /// fresh [`DataInDiskByRows`] and release the memory.
+    /// Go `SpillToDisk`/`spillToDisk(nil)`.
     pub fn spill_to_disk(&mut self) {
+        self.spill_to_disk_shared();
+    }
+
+    pub(crate) fn spill_to_disk_shared(&self) {
         let mut coordinator = lock_unpoisoned(&self.shared.coordinator);
         loop {
             match coordinator.phase {
@@ -1005,8 +1057,7 @@ impl RowContainer {
         }
     }
 
-    /// Go `GetChunk`: a guard-backed live view in memory and an owned decoded
-    /// chunk on disk.
+    /// Go `GetChunk`.
     pub fn get_chunk(&self, chk_idx: usize) -> Result<RowContainerChunk<'_>, DiskError> {
         let records = read_unpoisoned(&self.shared.records);
         if records.in_disk.is_none() {
@@ -1030,16 +1081,12 @@ impl RowContainer {
         })
     }
 
-    /// Owned chunk snapshot for cursors that must outlive the records guard.
-    /// Public `get_chunk` deliberately keeps the in-memory no-copy contract.
     pub(crate) fn get_chunk_snapshot(&self, chk_idx: usize) -> Result<Chunk, DiskError> {
         self.get_chunk(chk_idx)
             .map(RowContainerChunk::into_snapshot)
     }
 
-    /// Go `GetRowAndAlwaysAppendToChunk`: append the row `ptr` points at to
-    /// `chk`, whether the container has spilled or not, and return its index
-    /// in `chk`.
+    /// Go `GetRowAndAlwaysAppendToChunk`.
     pub fn get_row_and_always_append_to_chunk(
         &self,
         ptr: RowPtr,
@@ -1060,8 +1107,7 @@ impl RowContainer {
         }
     }
 
-    /// The container's field types, owned for safe use outside the records
-    /// guard.
+    /// Returns an owned copy of the configured field types.
     #[must_use]
     pub fn field_types(&self) -> Vec<FieldType> {
         read_unpoisoned(&self.shared.records)
@@ -1070,8 +1116,48 @@ impl RowContainer {
             .to_vec()
     }
 
+    pub(crate) fn in_memory_row_ptrs(&self) -> Result<Vec<RowPtr>, DiskError> {
+        let records = read_unpoisoned(&self.shared.records);
+        if records.in_disk.is_some() {
+            return Err(DiskError::Owned(
+                "cannot initialize sorted row pointers after spill".to_owned(),
+            ));
+        }
+        let mut pointers = Vec::with_capacity(records.in_memory.len());
+        for chunk_index in 0..records.in_memory.num_chunks() {
+            for row_index in 0..records.in_memory.num_rows_of_chunk(chunk_index) {
+                pointers.push(RowPtr::new(chunk_index as u32, row_index as u32));
+            }
+        }
+        Ok(pointers)
+    }
+
+    pub(crate) fn sort_in_memory_row_ptrs_by(
+        &self,
+        pointers: &mut [RowPtr],
+        mut compare: impl FnMut(Row<'_>, Row<'_>) -> Ordering,
+    ) -> Result<(), DiskError> {
+        let records = read_unpoisoned(&self.shared.records);
+        if records.in_disk.is_some() {
+            return Err(DiskError::Owned(
+                "cannot sort row pointers after spill".to_owned(),
+            ));
+        }
+        pointers.sort_unstable_by(|left, right| {
+            compare(
+                records.in_memory.get_row(*left),
+                records.in_memory.get_row(*right),
+            )
+        });
+        Ok(())
+    }
+
     /// Go `Reset`.
     pub fn reset(&mut self) {
+        self.reset_shared();
+    }
+
+    pub(crate) fn reset_shared(&self) {
         let (was_disk, mut lease) = match self.begin_reset() {
             Some(reset) => reset,
             None => return,
@@ -1165,12 +1251,12 @@ impl RowContainer {
         }
     }
 
-    /// Go `Close`.
-    ///
-    /// Go nils out `records.inMemory` so a later use panics; the list is
-    /// cleared here instead, so a later read sees an empty container rather
-    /// than a crash.
+    /// Go `Close`; later safe Rust reads observe the cleared container.
     pub fn close(&mut self) {
+        self.close_shared();
+    }
+
+    pub(crate) fn close_shared(&self) {
         let mut lease = match self.begin_close() {
             Some(lease) => lease,
             None => return,
@@ -1233,6 +1319,15 @@ impl RowContainer {
                 }
             }
         }
+    }
+
+    pub(crate) fn set_pre_spill(&self, prepare: PreSpill) {
+        let mut pre_spill = lock_unpoisoned(&self.shared.pre_spill);
+        assert!(
+            pre_spill.is_none(),
+            "row container pre-spill hook already set"
+        );
+        *pre_spill = Some(prepare);
     }
 
     #[cfg(test)]

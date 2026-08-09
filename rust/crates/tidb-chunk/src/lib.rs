@@ -54,6 +54,7 @@ pub mod row_container;
 pub mod row_container_reader;
 pub mod row_in_disk;
 mod shared_bytes;
+pub mod sorted_row_container;
 
 #[cfg(test)]
 mod chunk_identity_tests;
