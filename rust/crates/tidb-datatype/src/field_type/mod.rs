@@ -1825,7 +1825,7 @@ mod tests {
     }
 
     #[test]
-    fn test_is_type_source_rows() {
+    fn test_is_type() {
         for (code, expected) in [
             (FieldTypeCode::TinyBlob, true),
             (FieldTypeCode::MediumBlob, true),
@@ -1845,7 +1845,7 @@ mod tests {
     }
 
     #[test]
-    fn test_is_type_temporal_source_rows() {
+    fn test_is_type_temporal() {
         for (code, expected) in [
             (FieldTypeCode::Duration, true),
             (FieldTypeCode::Datetime, true),
@@ -1859,7 +1859,7 @@ mod tests {
     }
 
     #[test]
-    fn test_is_temporal_with_date_source_rows() {
+    fn test_is_temporal_with_date() {
         for (code, expected) in [
             (FieldTypeCode::Datetime, true),
             (FieldTypeCode::Date, true),
@@ -1871,7 +1871,7 @@ mod tests {
     }
 
     #[test]
-    fn test_is_type_prefixable_source_rows() {
+    fn test_is_type_prefixable() {
         for (code, expected) in [
             (FieldTypeCode::Unknown(b't'), false),
             (FieldTypeCode::Blob, true),
@@ -1881,7 +1881,7 @@ mod tests {
     }
 
     #[test]
-    fn test_is_type_fractionable_source_rows() {
+    fn test_is_type_fractionable() {
         for (code, expected) in [
             (FieldTypeCode::Datetime, true),
             (FieldTypeCode::Duration, true),
@@ -1893,7 +1893,7 @@ mod tests {
     }
 
     #[test]
-    fn test_is_type_numeric_source_rows() {
+    fn test_is_type_numeric() {
         for (code, expected) in [
             (FieldTypeCode::Bit, true),
             (FieldTypeCode::Tiny, true),
@@ -1911,19 +1911,39 @@ mod tests {
         }
     }
 
-    /// Source: `pkg/types/etc_test.go::TestIsBinaryStr` and
-    /// `pkg/types/etc_test.go::TestIsNonBinaryStr`.
+    /// Source: `pkg/types/etc_test.go::TestIsBinaryStr`.
     #[test]
-    fn source_binary_and_non_binary_string_rows() {
-        let bit = FieldType::new(FieldTypeCode::Bit)
-            .with_collation(Collation::Utf8Bin)
-            .with_unsigned(true);
+    fn test_is_binary_str() {
+        let mut bit = FieldType::new(FieldTypeCode::Bit).with_unsigned(true);
+        bit.set_collation(Collation::Utf8Bin);
         assert!(!bit.is_binary_string());
-        assert!(!bit.is_character_string());
 
-        let binary_blob = FieldType::new(FieldTypeCode::Blob);
-        assert!(binary_blob.is_binary_string());
-        assert!(!binary_blob.is_character_string());
+        bit.set_collation(Collation::Binary);
+        assert!(!bit.is_binary_string());
+
+        bit.set_code(FieldTypeCode::Blob);
+        assert!(bit.is_binary_string());
+    }
+
+    /// Source: `pkg/types/etc_test.go::TestIsNonBinaryStr`.
+    #[test]
+    fn test_is_non_binary_str() {
+        let mut bit = FieldType::new(FieldTypeCode::Bit)
+            .with_unsigned(true)
+            .with_collation(Collation::Binary);
+        assert!(!bit.is_binary_string());
+
+        bit.set_collation(Collation::Utf8Bin);
+        assert!(!bit.is_binary_string());
+
+        bit.set_code(FieldTypeCode::Blob);
+        assert!(!bit.is_binary_string());
+    }
+
+    #[test]
+    fn binary_and_character_string_varchar_classification() {
+        let bit = FieldType::new(FieldTypeCode::Bit).with_collation(Collation::Utf8Bin);
+        assert!(!bit.is_character_string());
 
         let text_blob = FieldType::new(FieldTypeCode::Blob).with_collation(Collation::Utf8Bin);
         assert!(!text_blob.is_binary_string());
@@ -1939,7 +1959,7 @@ mod tests {
 
     /// Source: `pkg/types/etc_test.go::TestNeedRestoredData`.
     #[test]
-    fn source_need_restored_data_rows() {
+    fn test_need_restored_data() {
         let rows = [
             (FieldTypeCode::String, Collation::Binary, false),
             (FieldTypeCode::VarString, Collation::Binary, false),
@@ -1949,23 +1969,33 @@ mod tests {
             (FieldTypeCode::VarString, Collation::Utf8Mb4GeneralCi, true),
             (FieldTypeCode::String, Collation::Utf8Mb4UnicodeCi, true),
             (FieldTypeCode::VarString, Collation::Utf8Mb4UnicodeCi, true),
-            (FieldTypeCode::String, Collation::Utf8Bin, false),
-            (FieldTypeCode::VarString, Collation::Utf8Bin, true),
-            // Go `NeedRestoredDataWithCollate` ends with an explicit
-            // `ft.GetCollate() != "utf8mb4_0900_bin"` guard that OVERRIDES the
-            // VARCHAR exemption, so this collation never carries restored
-            // data. Both rows below are storage-format decisions: emitting
-            // restored data Go does not emit makes the index and row bytes
-            // mutually undecodable.
+            (FieldTypeCode::String, Collation::Utf8Mb40900AiCi, true),
+            (FieldTypeCode::VarString, Collation::Utf8Mb40900AiCi, true),
             (FieldTypeCode::String, Collation::Utf8Mb40900Bin, false),
             (FieldTypeCode::VarString, Collation::Utf8Mb40900Bin, false),
-            (FieldTypeCode::Varchar, Collation::Utf8Mb40900Bin, false),
+            (FieldTypeCode::String, Collation::GbkBin, true),
+            (FieldTypeCode::VarString, Collation::GbkBin, true),
+            (FieldTypeCode::String, Collation::GbkChineseCi, true),
+            (FieldTypeCode::VarString, Collation::GbkChineseCi, true),
+            (FieldTypeCode::String, Collation::Gb18030Bin, true),
+            (FieldTypeCode::VarString, Collation::Gb18030Bin, true),
+            (FieldTypeCode::String, Collation::Gb18030ChineseCi, true),
+            (FieldTypeCode::VarString, Collation::Gb18030ChineseCi, true),
         ];
+        assert_eq!(rows.len(), 20, "one entry per Go source row");
         for (code, collation, expected) in rows {
             let field_type = FieldType::new(code).with_collation(collation);
             assert_eq!(field_type.need_restored_data(), expected);
             assert!(!field_type.need_restored_data_with_collation(false));
         }
+    }
+
+    #[test]
+    fn utf8mb4_0900_bin_never_needs_restored_data() {
+        // Go's explicit trailing guard overrides the VARCHAR exemption too.
+        let field_type =
+            FieldType::new(FieldTypeCode::Varchar).with_collation(Collation::Utf8Mb40900Bin);
+        assert!(!field_type.need_restored_data());
     }
 
     /// Source: `pkg/parser/types/field_type_test.go::TestFieldType` and
