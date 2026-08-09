@@ -22,6 +22,29 @@ use tidb_exec::aggregate::runtime::{
 };
 use tidb_planner::aggregation_descriptor::AggregateKind;
 
+// Go pkg/expression/aggregation/aggregation_test.go::TestCount.
+#[test]
+fn test_count() {
+    let mut rows = Vec::with_capacity(5_050);
+    for value in 1..=100 {
+        rows.extend(std::iter::repeat_n(Datum::Int(value), value as usize));
+    }
+
+    let mut count = CountState::new();
+    assert_eq!(count.result(), 0);
+    for row in &rows {
+        count.update(row);
+    }
+    assert_eq!(count.result(), 5_050);
+    count.update(&Datum::Null);
+    assert_eq!(count.result(), 5_050);
+
+    assert_eq!(
+        fold_values(AggregateKind::Count, true, &rows, 4).unwrap(),
+        Datum::Int(100)
+    );
+}
+
 #[test]
 fn count_original_partial_merge_slide_and_distinct_share_one_runtime() {
     // func_count_test.go:43,51 and generated typed rows at 63/78/109;
