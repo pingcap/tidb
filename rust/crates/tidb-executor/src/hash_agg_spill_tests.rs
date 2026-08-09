@@ -25,6 +25,7 @@ use crate::hash_agg::{AggFunc, AggKind, HashAggExec};
 use crate::mem_quota::{OomAction, StatementMemory};
 use crate::test_temp_storage::{guard as temp_dir_guard, scratch_dir as scratch_temp_dir};
 use std::collections::BTreeMap;
+use std::time::{Duration, Instant};
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_expr::column::Column;
@@ -259,9 +260,14 @@ fn tight_quota() -> i64 {
     1 << 20
 }
 
-/// THE AGGREGATION SPILL TEST.
+/// Source: `pkg/executor/aggregate/agg_spill_test.go::TestGetCorrectResult`.
+///
+/// The Go test runs the same grouped aggregation before and after forcing the
+/// parallel executor to spill. This serial implementation preserves the same
+/// observable oracle: every aggregate cell must equal the unspilled run, the
+/// spill must really reach disk, and close must remove every spill file.
 #[test]
-fn an_over_quota_group_by_answers_exactly_what_the_unspilled_one_answers() {
+fn test_get_correct_result() {
     let _guard = temp_dir_guard();
     let dir = scratch_temp_dir("hashagg");
     tidb_util::disk::set_temp_storage_path(&dir);
@@ -323,11 +329,14 @@ fn an_over_quota_group_by_answers_exactly_what_the_unspilled_one_answers() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The gate, exactly as the sort's: with `tidb_enable_tmp_storage_on_oom`
-/// OFF, the SAME aggregation under the SAME quota raises 8175 and writes
-/// no file. The spill is what saves it, not luck.
+/// Source: `pkg/executor/aggregate/agg_spill_test.go::TestFallBackAction`.
+///
+/// Go observes that an aggregation unable to spill reaches the previously
+/// installed root exceed action. Rust's root fallback is the typed CANCEL
+/// action: disabling temporary storage under the same quota must therefore
+/// reach 8175, rather than swallowing the overrun, and must create no file.
 #[test]
-fn the_same_group_by_raises_8175_when_tmp_storage_is_disabled() {
+fn test_fall_back_action() {
     let _guard = temp_dir_guard();
     let dir = scratch_temp_dir("hashagggate");
     tidb_util::disk::set_temp_storage_path(&dir);
@@ -343,6 +352,47 @@ fn the_same_group_by_raises_8175_when_tmp_storage_is_disabled() {
     }
     assert!(spill_files_in(&dir).is_empty(), "no file may be written");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Source: `pkg/executor/aggregate/agg_spill_test.go::TestRandomFail`.
+///
+/// Go injects a disk failure while racing `Close` against its parallel
+/// workers and asserts the executor never hangs. Rust owns the spill loop and
+/// `Close` through one mutable executor, so the type system removes that data
+/// race; the equivalent failure boundary is a real write attempt below a
+/// regular file. It must return promptly, close successfully, and release the
+/// complete statement charge.
+#[test]
+fn test_random_fail() {
+    let _guard = temp_dir_guard();
+    let dir = scratch_temp_dir("hashaggfail");
+    let not_a_directory = dir.join("not-a-directory");
+    std::fs::write(&not_a_directory, b"block spill file creation").unwrap();
+    tidb_util::disk::set_temp_storage_path(&not_a_directory);
+
+    let memory = StatementMemory::new(tight_quota(), OomAction::Cancel, 42);
+    let mut exec = grouped(&interleaved_rows(), 64, memory.clone());
+    exec.open().unwrap();
+    let mut req = exec.new_chunk();
+    let started = Instant::now();
+    let error = exec.next(&mut req).unwrap_err();
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "a failed spill must not strand the executor"
+    );
+    match error {
+        ExecError::SpillFailed(message) => assert!(!message.is_empty()),
+        other => panic!("expected a spill failure, got {other:?}"),
+    }
+    exec.close().unwrap();
+    assert_eq!(
+        memory.bytes_consumed(),
+        0,
+        "failure followed by close must release every tracked byte"
+    );
+
+    tidb_util::disk::set_temp_storage_path(&dir);
+    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 /// A spilled aggregation must release the round's memory: without
