@@ -357,19 +357,35 @@ fn invalid_utf8_executes_all_original_collator_assertions() {
 }
 
 #[test]
-fn mode_id_and_helper_functions_follow_source() {
+fn test_set_new_collate_enabled() {
     let _mode = NewCollationModeGuard::set(true);
     assert!(new_collation_enabled());
-    assert_eq!(
-        get_charset_info("gbk").unwrap().default_collation,
-        "gbk_chinese_ci"
-    );
+}
+
+#[test]
+fn test_rewrite_and_restore_collation_id() {
+    let _mode = NewCollationModeGuard::set(true);
     assert_eq!(rewrite_new_collation_id_if_needed(5), -5);
     assert_eq!(rewrite_new_collation_id_if_needed(-5), -5);
     assert_eq!(rewrite_new_collation_id_if_needed(i32::MIN), i32::MIN);
     assert_eq!(restore_collation_id_if_needed(-5), 5);
     assert_eq!(restore_collation_id_if_needed(5), 5);
     assert_eq!(restore_collation_id_if_needed(i32::MIN), i32::MIN);
+
+    set_new_collation_enabled(false);
+    assert_eq!(rewrite_new_collation_id_if_needed(5), 5);
+    assert_eq!(rewrite_new_collation_id_if_needed(-5), -5);
+    assert_eq!(restore_collation_id_if_needed(5), 5);
+    assert_eq!(restore_collation_id_if_needed(-5), -5);
+}
+
+#[test]
+fn mode_id_and_helper_functions_follow_source() {
+    let _mode = NewCollationModeGuard::set(true);
+    assert_eq!(
+        get_charset_info("gbk").unwrap().default_collation,
+        "gbk_chinese_ci"
+    );
     assert_eq!(collation_to_proto("utf8mb4_bin"), -46);
     assert_eq!(proto_to_collation(-46), "utf8mb4_bin");
 
@@ -378,10 +394,6 @@ fn mode_id_and_helper_functions_follow_source() {
         get_charset_info("gbk").unwrap().default_collation,
         "gbk_bin"
     );
-    assert_eq!(rewrite_new_collation_id_if_needed(5), 5);
-    assert_eq!(rewrite_new_collation_id_if_needed(-5), -5);
-    assert_eq!(restore_collation_id_if_needed(5), 5);
-    assert_eq!(restore_collation_id_if_needed(-5), -5);
     assert_eq!(
         get_collator_with_mode(false, "binary"),
         Collator::DerivedBinary
