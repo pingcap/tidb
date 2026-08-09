@@ -699,8 +699,14 @@ pub fn run_create_table_in(
     let mut columns = Vec::with_capacity(create.columns.len());
     for (i, def) in create.columns.iter().enumerate() {
         let field_type = field_type_of(def, table_charset)?;
-        let mut col = ColumnInfo::new((i + 1) as i64, &def.name, field_type);
-        col.offset = i as i32;
+        let column_id = i64::try_from(
+            i.checked_add(1)
+                .expect("a parsed table cannot contain usize::MAX columns"),
+        )
+        .expect("a parsed table cannot exceed the model column-id domain");
+        let mut col = ColumnInfo::new(column_id, &def.name, field_type);
+        col.offset =
+            i64::try_from(i).expect("a parsed table cannot exceed the model column-offset domain");
         columns.push(col);
     }
 
@@ -712,7 +718,7 @@ pub fn run_create_table_in(
             .iter()
             .any(|option| matches!(option, tidb_ast::ColumnOption::NotNull))
         {
-            columns[i].add_flag(NOT_NULL_FLAG);
+            columns[i].add_flag(u64::from(NOT_NULL_FLAG));
         }
     }
 
@@ -736,7 +742,7 @@ pub fn run_create_table_in(
         }
         // An auto-increment column is implicitly NOT NULL and carries Go's
         // AutoIncrementFlag.
-        columns[i].add_flag(NOT_NULL_FLAG | AUTO_INCREMENT_FLAG);
+        columns[i].add_flag(u64::from(NOT_NULL_FLAG | AUTO_INCREMENT_FLAG));
         auto_increment_offset = Some(i);
     }
 
@@ -780,7 +786,7 @@ pub fn run_create_table_in(
         }
         // A primary key column is implicitly NOT NULL, as in MySQL, and Go
         // marks it PRI (mysql.NotNullFlag, mysql.PriKeyFlag).
-        columns[*offset].add_flag(NOT_NULL_FLAG | PRI_KEY_FLAG);
+        columns[*offset].add_flag(u64::from(NOT_NULL_FLAG | PRI_KEY_FLAG));
     }
 
     // Go evaluates a constant DEFAULT at DDL time and stores the value on the
@@ -910,12 +916,16 @@ pub fn run_create_table_in(
     let kv_columns: Vec<KvColumn> = info
         .columns
         .iter()
-        .map(|c| KvColumn {
+        .enumerate()
+        .map(|(position, c)| KvColumn {
             name: c.name.original().to_owned(),
             id: c.id,
             field_type: c.field_type.clone(),
-            generated: generated[c.offset as usize].clone(),
-            default_value: defaults[c.offset as usize].clone(),
+            // These vectors were built in the same definition-order pass.
+            // Keeping that position directly avoids narrowing the model's
+            // signed i64 offset back into a host index.
+            generated: generated[position].clone(),
+            default_value: defaults[position].clone(),
             // A column present at CREATE TABLE has no pre-existing rows.
             origin_default: None,
         })

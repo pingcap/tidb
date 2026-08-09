@@ -14,6 +14,9 @@
 
 //! Encoded-datum and protobuf boundaries from `pkg/statistics/fmsketch.go`.
 
+use chrono::TimeZone;
+use tidb_datatype::Datum;
+
 use crate::{hash_bytes, FmSketch, MAX_SKETCH_SIZE};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -53,12 +56,34 @@ fn read_varint(input: &[u8], cursor: &mut usize) -> Result<u64, FmSketchCodecErr
     Err(FmSketchCodecError::VarintOverflow)
 }
 
-fn skip_field(wire: u64, input: &[u8], cursor: &mut usize) -> Result<(), FmSketchCodecError> {
+fn skip_field(
+    field_number: u64,
+    wire: u64,
+    input: &[u8],
+    cursor: &mut usize,
+) -> Result<(), FmSketchCodecError> {
     let length = match wire {
         0 => return read_varint(input, cursor).map(|_| ()),
         1 => 8,
         2 => usize::try_from(read_varint(input, cursor)?)
             .map_err(|_| FmSketchCodecError::VarintOverflow)?,
+        3 => loop {
+            let tag = read_varint(input, cursor)?;
+            let nested_field = tag >> 3;
+            let nested_wire = tag & 7;
+            if nested_field == 0 || i32::try_from(nested_field).is_err() {
+                return Err(FmSketchCodecError::InvalidWireType);
+            }
+            if nested_wire == 4 {
+                return if nested_field == field_number {
+                    Ok(())
+                } else {
+                    Err(FmSketchCodecError::InvalidWireType)
+                };
+            }
+            skip_field(nested_field, nested_wire, input, cursor)?;
+        },
+        4 => return Err(FmSketchCodecError::InvalidWireType),
         5 => 4,
         _ => return Err(FmSketchCodecError::InvalidWireType),
     };
@@ -99,14 +124,115 @@ pub fn insert_encoded_row<'a>(
     insert_encoded_value(sketch, &row);
 }
 
+/// Go `hashDatum`: encode one typed datum with the statement time zone, then
+/// hash the exact `codec.EncodeValue` bytes.
+pub fn hash_datum<TZ: TimeZone>(
+    timezone: &TZ,
+    value: &Datum,
+) -> Result<u64, tidb_codec::CodecError> {
+    hash_datum_with_error_policy(timezone, value, |_, error| Err(error))
+}
+
+/// Go `hashDatum` with the statement-context error policy made explicit.
+///
+/// `codec.EncodeValue` returns both partial bytes and an error. When Go's
+/// `StatementContext.HandleError` downgrades that error to a warning, those
+/// partial bytes are still hashed. Rust's codec returns only the error, so a
+/// policy that chooses to continue must supply the exact partial bytes at
+/// this boundary. A strict policy simply returns the error.
+pub fn hash_datum_with_error_policy<TZ: TimeZone, E>(
+    timezone: &TZ,
+    value: &Datum,
+    mut handle_error: impl FnMut(&Datum, tidb_codec::CodecError) -> Result<Vec<u8>, E>,
+) -> Result<u64, E> {
+    let encoded = match tidb_codec::encode_value_in_timezone(timezone, std::slice::from_ref(value))
+    {
+        Ok(encoded) => encoded,
+        Err(error) => handle_error(value, error)?,
+    };
+    Ok(hash_bytes(&encoded).h1)
+}
+
+/// Go `hashRow`: stream each typed datum's value encoding into one hash.
+pub fn hash_row<TZ: TimeZone>(
+    timezone: &TZ,
+    values: &[Datum],
+) -> Result<u64, tidb_codec::CodecError> {
+    hash_row_with_error_policy(timezone, values, |_, error| Err(error))
+}
+
+/// Go `hashRow` with its per-datum error-context decision exposed.
+///
+/// Successful values are encoded independently and concatenated, matching
+/// the source's repeated reset/write sequence. A downgraded error contributes
+/// the partial bytes returned by the policy, after which later values are
+/// still encoded and hashed.
+pub fn hash_row_with_error_policy<TZ: TimeZone, E>(
+    timezone: &TZ,
+    values: &[Datum],
+    mut handle_error: impl FnMut(&Datum, tidb_codec::CodecError) -> Result<Vec<u8>, E>,
+) -> Result<u64, E> {
+    let mut encoded_row = Vec::new();
+    for value in values {
+        let encoded =
+            match tidb_codec::encode_value_in_timezone(timezone, std::slice::from_ref(value)) {
+                Ok(encoded) => encoded,
+                Err(error) => handle_error(value, error)?,
+            };
+        encoded_row.extend_from_slice(&encoded);
+    }
+    Ok(hash_bytes(&encoded_row).h1)
+}
+
+/// Go `FMSketch.InsertValue` over a typed datum.
+pub fn insert_value<TZ: TimeZone>(
+    sketch: &mut FmSketch,
+    timezone: &TZ,
+    value: &Datum,
+) -> Result<(), tidb_codec::CodecError> {
+    sketch.insert_hash(hash_datum(timezone, value)?);
+    Ok(())
+}
+
+/// Go `FMSketch.InsertValue` with an explicit statement error policy.
+pub fn insert_value_with_error_policy<TZ: TimeZone, E>(
+    sketch: &mut FmSketch,
+    timezone: &TZ,
+    value: &Datum,
+    handle_error: impl FnMut(&Datum, tidb_codec::CodecError) -> Result<Vec<u8>, E>,
+) -> Result<(), E> {
+    sketch.insert_hash(hash_datum_with_error_policy(timezone, value, handle_error)?);
+    Ok(())
+}
+
+/// Go `FMSketch.InsertRowValue` over typed row datums.
+pub fn insert_row_value<TZ: TimeZone>(
+    sketch: &mut FmSketch,
+    timezone: &TZ,
+    values: &[Datum],
+) -> Result<(), tidb_codec::CodecError> {
+    sketch.insert_hash(hash_row(timezone, values)?);
+    Ok(())
+}
+
+/// Go `FMSketch.InsertRowValue` with an explicit per-datum error policy.
+pub fn insert_row_value_with_error_policy<TZ: TimeZone, E>(
+    sketch: &mut FmSketch,
+    timezone: &TZ,
+    values: &[Datum],
+    handle_error: impl FnMut(&Datum, tidb_codec::CodecError) -> Result<Vec<u8>, E>,
+) -> Result<(), E> {
+    sketch.insert_hash(hash_row_with_error_policy(timezone, values, handle_error)?);
+    Ok(())
+}
+
 #[must_use]
 pub fn encode_fm_sketch(sketch: Option<&FmSketch>) -> Option<Vec<u8>> {
     let proto = fm_sketch_to_proto(Some(sketch?));
     let mut output = Vec::new();
-    if proto.mask != 0 {
-        output.push(0x08);
-        encode_varint(proto.mask, &mut output);
-    }
+    // Current generated tipb marks Mask non-nullable and always writes it.
+    output.push(0x08);
+    encode_varint(proto.mask, &mut output);
     for hash in proto.hashset {
         output.push(0x10);
         encode_varint(hash, &mut output);
@@ -122,10 +248,16 @@ pub fn decode_fm_sketch(data: Option<&[u8]>) -> Result<Option<FmSketch>, FmSketc
     let mut proto = FmSketchProto::default();
     while cursor < data.len() {
         let tag = read_varint(data, &mut cursor)?;
-        match (tag >> 3, tag & 7) {
-            (1, 0) => proto.mask = read_varint(data, &mut cursor)?,
-            (2, 0) => proto.hashset.push(read_varint(data, &mut cursor)?),
-            (2, 2) => {
+        let field_number = tag >> 3;
+        let wire = tag & 7;
+        if field_number == 0 || i32::try_from(field_number).is_err() {
+            return Err(FmSketchCodecError::InvalidWireType);
+        }
+        match field_number {
+            1 if wire == 0 => proto.mask = read_varint(data, &mut cursor)?,
+            1 => return Err(FmSketchCodecError::InvalidWireType),
+            2 if wire == 0 => proto.hashset.push(read_varint(data, &mut cursor)?),
+            2 if wire == 2 => {
                 let length = usize::try_from(read_varint(data, &mut cursor)?)
                     .map_err(|_| FmSketchCodecError::VarintOverflow)?;
                 let end = cursor
@@ -136,8 +268,8 @@ pub fn decode_fm_sketch(data: Option<&[u8]>) -> Result<Option<FmSketch>, FmSketc
                     proto.hashset.push(read_varint(&data[..end], &mut cursor)?);
                 }
             }
-            (0, _) => return Err(FmSketchCodecError::InvalidWireType),
-            (_, wire) => skip_field(wire, data, &mut cursor)?,
+            2 => return Err(FmSketchCodecError::InvalidWireType),
+            _ => skip_field(field_number, wire, data, &mut cursor)?,
         }
     }
     Ok(Some(FmSketch::from_raw_parts(

@@ -50,7 +50,7 @@ pub fn merge_histogram_free_topn(partitions: &[TopN], n: usize) -> Option<Global
         if partition.total_count() == 0 {
             continue;
         }
-        for entry in partition.entries() {
+        for entry in partition.resolved_entries() {
             let count = counts.entry(entry.encoded.clone()).or_default();
             *count = count.wrapping_add(entry.count);
         }

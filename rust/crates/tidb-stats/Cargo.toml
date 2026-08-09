@@ -17,6 +17,7 @@ chrono.workspace = true
 chrono-tz.workspace = true
 tidb-codec = { path = "../tidb-codec" }
 tidb-datatype = { path = "../tidb-datatype" }
+tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-util = { path = "../tidb-util" }
 
 [dev-dependencies]

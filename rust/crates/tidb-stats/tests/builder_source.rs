@@ -22,11 +22,14 @@
 //! hand: a bucket count is a row count, a repeat is an occurrence count, and
 //! a TopN count is what it says.
 
-use tidb_datatype::Datum;
+use std::panic::AssertUnwindSafe;
+
+use tidb_datatype::{Datum, VectorFloat32};
 use tidb_stats::builder::{
-    build_column, build_column_histogram, build_hist_and_topn, BuildOptions, SampleCollector,
-    SampleItem, SequentialRangeChecker,
+    build_column, build_hist_and_topn, BuildOptions, ComparedBytesResult, HistogramBuildError,
+    SampleCollector, SampleItem, SequentialRangeChecker,
 };
+use tidb_util::memory::{Tracker, TRACK_MEM_WHEN_EXCEEDS};
 
 /// An integer sample, encoded the way an order-preserving key encoder would:
 /// sign-flipped big-endian, so byte order is numeric order.
@@ -37,7 +40,7 @@ fn int_of(value: &Datum) -> i64 {
     }
 }
 
-fn item(value: i64, ordinal: i64) -> SampleItem {
+fn item(value: i64, ordinal: isize) -> SampleItem {
     let bits = (value as u64) ^ (1 << 63);
     SampleItem {
         encoded: bits.to_be_bytes().to_vec(),
@@ -54,7 +57,7 @@ fn collector(values: &[i64]) -> SampleCollector {
         samples: values
             .iter()
             .enumerate()
-            .map(|(ordinal, value)| item(*value, ordinal as i64))
+            .map(|(ordinal, value)| item(*value, ordinal as isize))
             .collect(),
         null_count: 0,
         count: values.len() as i64,
@@ -65,14 +68,24 @@ fn collector(values: &[i64]) -> SampleCollector {
 
 #[test]
 fn build_column_hist_uses_explicit_counts_and_clamps_ndv() {
-    let collector = collector(&[3, 1, 2]);
-    let histogram = build_column_histogram(9, &collector, 2, 6, 10, 4);
+    let mut collector = collector(&[3, 1, 2]);
+    let histogram =
+        tidb_stats::builder::try_build_column_histogram_in_place(9, &mut collector, 2, 6, 10, 4)
+            .unwrap();
     assert_eq!(histogram.id, 9);
     assert_eq!(histogram.ndv, 6);
     assert_eq!(histogram.null_count, 4);
     assert_eq!(histogram.tot_col_size, 24);
     assert_eq!(histogram.buckets.last().unwrap().count, 6);
     assert_eq!(histogram.correlation, -0.5);
+    assert_eq!(
+        collector
+            .samples
+            .iter()
+            .map(|sample| int_of(&sample.value))
+            .collect::<Vec<_>>(),
+        [1, 2, 3]
+    );
 }
 
 #[test]
@@ -278,8 +291,10 @@ fn an_empty_column_produces_no_buckets() {
 /// whether an index range scan will read rows in table order.
 #[test]
 fn correlation_reads_the_physical_order() {
-    let ascending: Vec<SampleItem> = (0..10).map(|value| item(value, value)).collect();
-    let descending: Vec<SampleItem> = (0..10).map(|value| item(value, 9 - value)).collect();
+    let ascending: Vec<SampleItem> = (0..10).map(|value| item(value, value as isize)).collect();
+    let descending: Vec<SampleItem> = (0..10)
+        .map(|value| item(value, (9 - value) as isize))
+        .collect();
     for (samples, expected) in [(ascending, 1.0_f64), (descending, -1.0_f64)] {
         let built = build_hist_and_topn(
             1,
@@ -374,7 +389,10 @@ fn test_sequential_range_checker_matches_go_boundaries() {
     let mut empty = SequentialRangeChecker::from_ranges(&[]);
     assert!(!empty.is_index_in_topn_range(0));
 
-    let mut unsorted = SequentialRangeChecker::from_ranges(&[(20, 22), (5, 8), (12, 15)]);
+    let mut input = [(20, 22), (5, 8), (12, 15)];
+    let mut unsorted =
+        tidb_stats::builder::SequentialRangeChecker::from_ranges_in_place(&mut input);
+    assert_eq!(input, [(5, 8), (12, 15), (20, 22)]);
     assert!(unsorted.is_index_in_topn_range(6));
     assert!(unsorted.is_index_in_topn_range(13));
     assert!(unsorted.is_index_in_topn_range(21));
@@ -382,4 +400,250 @@ fn test_sequential_range_checker_matches_go_boundaries() {
     // The source is deliberately sequential: after advancing past one range,
     // a backwards probe does not rewind the cursor.
     assert!(!unsorted.is_index_in_topn_range(6));
+}
+
+#[test]
+fn build_hist_and_topn_sorts_the_callers_samples_in_place() {
+    let mut collected = collector(&[3, 1, 2]);
+    let mut codec_calls = 0;
+    let result = tidb_stats::builder::try_build_hist_and_topn_in_place(
+        1,
+        &mut collected,
+        BuildOptions {
+            num_buckets: 2,
+            num_topn: 0,
+            ..BuildOptions::default()
+        },
+        true,
+        |sample, _| {
+            codec_calls += 1;
+            ComparedBytesResult::<std::convert::Infallible>::success(sample.encoded.clone())
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        collected
+            .samples
+            .iter()
+            .map(|item| int_of(&item.value))
+            .collect::<Vec<_>>(),
+        [1, 2, 3]
+    );
+    assert_eq!(
+        codec_calls, 1,
+        "Go calls the codec once even with TopN disabled"
+    );
+    assert_eq!(result.histogram.buckets.last().unwrap().count, 3);
+}
+
+#[test]
+fn negative_sizes_keep_go_empty_and_nonempty_boundaries() {
+    let mut empty = collector(&[]);
+    let empty_result = tidb_stats::builder::try_build_hist_and_topn_in_place(
+        1,
+        &mut empty,
+        BuildOptions {
+            num_buckets: -1,
+            num_topn: -1,
+            ..BuildOptions::default()
+        },
+        true,
+        |_, _| -> ComparedBytesResult<std::convert::Infallible> {
+            panic!("the source returns before sorting, allocation, or encoding")
+        },
+    );
+    assert!(empty_result.is_ok());
+
+    let mut nonempty = collector(&[2, 1]);
+    let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        tidb_stats::builder::try_build_hist_and_topn_in_place(
+            1,
+            &mut nonempty,
+            BuildOptions {
+                num_buckets: 0,
+                num_topn: -1,
+                ..BuildOptions::default()
+            },
+            true,
+            |sample, _| {
+                ComparedBytesResult::<std::convert::Infallible>::success(sample.encoded.clone())
+            },
+        )
+    }));
+    assert!(outcome.is_err(), "Go's negative heap capacity panics");
+    assert_eq!(
+        nonempty
+            .samples
+            .iter()
+            .map(|item| int_of(&item.value))
+            .collect::<Vec<_>>(),
+        [1, 2],
+        "the stable sort precedes the negative heap-capacity panic"
+    );
+}
+
+#[test]
+fn negative_histogram_capacity_panics_after_sort_before_topn_or_codec() {
+    let mut nonempty = collector(&[3, 1, 2]);
+    let mut codec_calls = 0;
+    let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        tidb_stats::builder::try_build_hist_and_topn_in_place(
+            1,
+            &mut nonempty,
+            BuildOptions {
+                num_buckets: -1,
+                num_topn: 1,
+                ..BuildOptions::default()
+            },
+            true,
+            |sample, _| {
+                codec_calls += 1;
+                ComparedBytesResult::<std::convert::Infallible>::success(sample.encoded.clone())
+            },
+        )
+    }));
+    assert!(
+        outcome.is_err(),
+        "Go NewHistogram panics while allocating a negative bucket capacity"
+    );
+    assert_eq!(
+        codec_calls, 0,
+        "NewHistogram runs before heap construction and the first codec call"
+    );
+    assert_eq!(
+        nonempty
+            .samples
+            .iter()
+            .map(|item| int_of(&item.value))
+            .collect::<Vec<_>>(),
+        [1, 2, 3],
+        "the caller-visible stable sort precedes NewHistogram"
+    );
+}
+
+#[test]
+fn build_column_distinguishes_zero_from_negative_bucket_capacity() {
+    let mut zero = collector(&[3, 1, 2]);
+    let histogram =
+        tidb_stats::builder::try_build_column_histogram_in_place(1, &mut zero, 0, 3, 3, 0).unwrap();
+    assert_eq!(histogram.buckets.len(), 1);
+    assert_eq!(histogram.buckets[0].count, 3);
+    assert_eq!(
+        zero.samples
+            .iter()
+            .map(|item| int_of(&item.value))
+            .collect::<Vec<_>>(),
+        [1, 2, 3]
+    );
+
+    let mut negative = collector(&[3, 1, 2]);
+    let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        tidb_stats::builder::try_build_column_histogram_in_place(1, &mut negative, -1, 3, 3, 0)
+    }));
+    assert!(outcome.is_err());
+    assert_eq!(
+        negative
+            .samples
+            .iter()
+            .map(|item| int_of(&item.value))
+            .collect::<Vec<_>>(),
+        [1, 2, 3],
+        "negative allocation panics only after the caller's samples are sorted"
+    );
+}
+
+#[test]
+fn sort_error_wins_before_negative_bucket_panic() {
+    let vector = Datum::new_vector_float32(VectorFloat32::must_create(vec![1.0]));
+    let mut collected = SampleCollector {
+        samples: vec![
+            SampleItem {
+                encoded: vec![0],
+                value: vector,
+                ordinal: 0,
+            },
+            item(1, 1),
+        ],
+        count: 2,
+        ndv: 2,
+        ..SampleCollector::default()
+    };
+    let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        tidb_stats::builder::try_build_hist_and_topn_in_place(
+            1,
+            &mut collected,
+            BuildOptions {
+                num_buckets: -1,
+                num_topn: 0,
+                ..BuildOptions::default()
+            },
+            true,
+            |sample, _| {
+                ComparedBytesResult::<std::convert::Infallible>::success(sample.encoded.clone())
+            },
+        )
+    }));
+    let result = outcome.expect("Go returns the comparison error before allocating buckets");
+    assert!(matches!(result, Err(HistogramBuildError::Compare(_))));
+}
+
+#[test]
+fn codec_error_keeps_partial_allocation_accounting() {
+    let tracker = Tracker::new(1, -1);
+    let mut collected = collector(&[1]);
+    let result = tidb_stats::builder::try_build_hist_and_topn_tracked(
+        1,
+        &mut collected,
+        BuildOptions::default(),
+        true,
+        Some(tracker.clone()),
+        |_, _| {
+            let mut partial = Vec::with_capacity(17);
+            partial.extend_from_slice(b"partial");
+            ComparedBytesResult::failure(partial, "codec failed")
+        },
+    );
+    assert!(matches!(
+        result,
+        Err(HistogramBuildError::Encode("codec failed"))
+    ));
+    assert_eq!(tracker.max_consumed(), 17);
+    assert_eq!(tracker.bytes_consumed(), 0);
+}
+
+#[test]
+fn builder_memory_buffer_flushes_below_at_and_above_go_threshold() {
+    fn observe(bytes: i64) -> (i64, i64, i64, i64) {
+        let tracker = Tracker::new(1, -1);
+        let mut buffer = tidb_stats::builder::BuilderMemoryBuffer::new(Some(tracker.clone()));
+        tidb_stats::builder::BuilderMemoryBuffer::account_temporary(&mut buffer, bytes);
+        let pending_consume = buffer.pending_consume();
+        let pending_release = buffer.pending_release();
+        let before_final_flush = tracker.max_consumed();
+        buffer.flush();
+        (
+            pending_consume,
+            pending_release,
+            before_final_flush,
+            tracker.max_consumed(),
+        )
+    }
+
+    assert_eq!(
+        observe(TRACK_MEM_WHEN_EXCEEDS - 1),
+        (
+            TRACK_MEM_WHEN_EXCEEDS - 1,
+            TRACK_MEM_WHEN_EXCEEDS - 1,
+            0,
+            TRACK_MEM_WHEN_EXCEEDS - 1,
+        )
+    );
+    assert_eq!(
+        observe(TRACK_MEM_WHEN_EXCEEDS),
+        (0, 0, TRACK_MEM_WHEN_EXCEEDS, TRACK_MEM_WHEN_EXCEEDS)
+    );
+    assert_eq!(
+        observe(TRACK_MEM_WHEN_EXCEEDS + 1),
+        (0, 0, TRACK_MEM_WHEN_EXCEEDS + 1, TRACK_MEM_WHEN_EXCEEDS + 1,)
+    );
 }

@@ -56,7 +56,11 @@ pub struct WeightedReservoir<T> {
 }
 
 impl<T> WeightedReservoir<T> {
-    /// Creates an empty reservoir. A zero-sized reservoir accepts no samples.
+    /// Creates an empty reservoir.
+    ///
+    /// A direct zero-sized source collector is constructible, but offering a
+    /// row then indexes its empty root and panics. The higher-level factory
+    /// avoids constructing that state.
     #[must_use]
     pub fn new(max_sample_size: usize) -> Self {
         Self {
@@ -71,10 +75,6 @@ impl<T> WeightedReservoir<T> {
     /// vector is a min heap once it reaches capacity; its order is otherwise
     /// unspecified, just like Go's `container/heap` representation.
     pub fn consider(&mut self, weight: i64, payload: T) {
-        if self.max_sample_size == 0 {
-            return;
-        }
-
         if self.samples.len() < self.max_sample_size {
             self.samples.push(WeightedSample::new(weight, payload));
             if self.samples.len() == self.max_sample_size {
@@ -124,11 +124,9 @@ impl<T> WeightedReservoir<T> {
             }
             let right = left + 1;
             let mut child = left;
-            // `container/heap` chooses the right child when `Less(left,
-            // right)` is false, including equal weights. Keep that detail so
-            // heap-order ties remain source-shaped even though selection is
-            // governed only by the strict root comparison above.
-            if right < self.samples.len() && self.samples[left].weight >= self.samples[right].weight
+            // `container/heap.down` chooses the right child only when it is
+            // strictly less than the left one; equal children keep the left.
+            if right < self.samples.len() && self.samples[right].weight < self.samples[left].weight
             {
                 child = right;
             }

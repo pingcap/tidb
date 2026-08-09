@@ -1,0 +1,1 @@
+{"mutation_id":"M_STATS_CMS_PROTO_ROWS","replacements":[{"expected_count":1,"new":"        // Mutation: accumulate counts across protobuf rows.","old":"        sketch.count = 0;"}],"rust_path":"rust/crates/tidb-stats/src/cmsketch.rs","schema":"go-package-lockdown-mutation-operator-v1","source_sha256":"aec5efa21e3b8910c68932ab568e8311c1e932b0d33461cc9a4a42938c428551"}

@@ -18,11 +18,47 @@
 //! scenarios, then pin the encoded-datum and tipb protobuf boundaries owned
 //! by the adjacent codec layer.
 
+use chrono::Utc;
+use tidb_datatype::Datum;
 use tidb_stats::{
-    decode_fm_sketch, encode_fm_sketch, fm_sketch_from_proto, fm_sketch_to_proto,
-    insert_encoded_row, insert_encoded_value, FmSketch, FmSketchCodecError, FmSketchProto,
-    MAX_SKETCH_SIZE,
+    copy_fm_sketch, decode_fm_sketch, encode_fm_sketch, fm_sketch_from_proto, fm_sketch_ndv,
+    fm_sketch_to_proto, hash_datum, hash_row, hash_row_with_error_policy, insert_encoded_row,
+    insert_encoded_value, insert_row_value, insert_value, merge_fm_sketch, FmSketch,
+    FmSketchCodecError, FmSketchProto, MAX_SKETCH_SIZE,
 };
+
+fn source_statistics_values(count: usize) -> Vec<Datum> {
+    let start = 1_000;
+    let mut values = vec![Datum::Int(0); count];
+    for value in values.iter_mut().take(start).skip(1) {
+        *value = Datum::Int(2);
+    }
+    for (position, value) in values.iter_mut().enumerate().skip(start) {
+        let mut integer = position as i64;
+        // Go's two mutation loops begin at `start` and then advance by their
+        // stride, so both schedules are relative to that nonzero origin.
+        if (position - start) % 3 == 0 {
+            integer += 1;
+        }
+        if (position - start) % 5 == 0 {
+            integer += 2;
+        }
+        *value = Datum::Int(integer);
+    }
+    values.sort_by_key(|value| match value {
+        Datum::Int(integer) => *integer,
+        other => panic!("source fixture contains only integers, not {other:?}"),
+    });
+    values
+}
+
+fn build_source_sketch(values: &[Datum]) -> FmSketch {
+    let mut sketch = FmSketch::new(1_000);
+    for value in values {
+        insert_value(&mut sketch, &Utc, value).unwrap();
+    }
+    sketch
+}
 
 #[test]
 fn source_threshold_advances_mask_and_retains_zero_suffixes() {
@@ -94,6 +130,28 @@ fn source_copy_and_memory_shape_are_independent() {
 }
 
 #[test]
+fn source_signed_constructor_and_nil_receiver_boundaries_match() {
+    let negative = std::panic::catch_unwind(|| tidb_stats::fmsketch::FmSketch::new_signed(-1));
+    assert!(negative.is_err(), "Go make(map, negative) panics");
+    assert!(FmSketch::new_signed(0).is_empty());
+
+    assert_eq!(copy_fm_sketch(None), None);
+    assert_eq!(fm_sketch_ndv(None), 0);
+    merge_fm_sketch(None, None);
+
+    let mut destination = FmSketch::new_signed(2);
+    destination.insert_hash(2);
+    let before = destination.clone();
+    merge_fm_sketch(Some(&mut destination), None);
+    assert_eq!(destination, before);
+
+    let copied = copy_fm_sketch(Some(&destination)).unwrap();
+    destination.insert_hash(4);
+    assert_eq!(copied.sorted_hashes(), [2]);
+    assert_eq!(fm_sketch_ndv(Some(&copied)), copied.ndv());
+}
+
+#[test]
 fn source_proto_nil_empty_and_raw_state_boundaries_match() {
     assert_eq!(fm_sketch_to_proto(None), FmSketchProto::default());
     assert!(fm_sketch_from_proto(None).is_none());
@@ -111,6 +169,13 @@ fn source_proto_nil_empty_and_raw_state_boundaries_match() {
 fn source_wire_round_trip_and_packed_repeated_values_match() {
     assert_eq!(encode_fm_sketch(None), None);
     assert_eq!(decode_fm_sketch(None).unwrap(), None);
+    assert_eq!(
+        encode_fm_sketch(Some(&FmSketch::new(8))),
+        Some(vec![0x08, 0x00])
+    );
+    let decoded_empty = decode_fm_sketch(Some(&[])).unwrap().unwrap();
+    assert!(decoded_empty.is_empty());
+    assert_eq!(decoded_empty.max_size(), MAX_SKETCH_SIZE);
     let sketch = FmSketch::from_raw_parts(1, 5, [2, 4, 6]);
     let bytes = encode_fm_sketch(Some(&sketch)).unwrap();
     let decoded = decode_fm_sketch(Some(&bytes)).unwrap().unwrap();
@@ -131,7 +196,7 @@ fn source_wire_round_trip_and_packed_repeated_values_match() {
 #[test]
 fn source_wire_rejects_malformed_inputs() {
     assert_eq!(
-        decode_fm_sketch(Some(&[0x08])).unwrap_err(),
+        tidb_stats::fmsketch_codec::decode_fm_sketch(Some(&[0x08])).unwrap_err(),
         FmSketchCodecError::Truncated
     );
     assert_eq!(
@@ -145,6 +210,19 @@ fn source_wire_rejects_malformed_inputs() {
         .unwrap_err(),
         FmSketchCodecError::VarintOverflow
     );
+    for wrong_known_wire in [
+        &[0x0a, 0x00][..],
+        &[0x15, 0x00, 0x00, 0x00, 0x00][..],
+        &[0x00, 0x00][..],
+        &[0x1c][..],
+    ] {
+        assert_eq!(
+            decode_fm_sketch(Some(wrong_known_wire)).unwrap_err(),
+            FmSketchCodecError::InvalidWireType
+        );
+    }
+    let balanced_unknown_group = [0x1b, 0x20, 0x01, 0x1c];
+    assert!(decode_fm_sketch(Some(&balanced_unknown_group)).is_ok());
 }
 
 #[test]
@@ -155,4 +233,98 @@ fn source_encoded_value_and_row_hash_the_same_stream() {
     insert_encoded_row(&mut row, [b"a".as_slice(), b"bc".as_slice()]);
     assert_eq!(value, row);
     assert_eq!(value.len(), 1);
+}
+
+#[test]
+fn source_typed_insert_value_and_row_own_the_datum_encoding() {
+    let values = [Datum::Int(1), Datum::Bytes(b"abc".to_vec())];
+    let encoded_first = tidb_codec::encode_value(&values[..1]).unwrap();
+    assert_eq!(
+        hash_datum(&Utc, &values[0]).unwrap(),
+        tidb_stats::hash_bytes(&encoded_first).h1
+    );
+
+    let encoded_row = tidb_codec::encode_value(&values).unwrap();
+    assert_eq!(
+        hash_row(&Utc, &values).unwrap(),
+        tidb_stats::hash_bytes(&encoded_row).h1
+    );
+
+    let mut typed_value = FmSketch::new(8);
+    insert_value(&mut typed_value, &Utc, &values[0]).unwrap();
+    let mut encoded_value = FmSketch::new(8);
+    insert_encoded_value(&mut encoded_value, &encoded_first);
+    assert_eq!(typed_value, encoded_value);
+
+    let mut typed_row = FmSketch::new(8);
+    insert_row_value(&mut typed_row, &Utc, &values).unwrap();
+    let mut encoded_row_sketch = FmSketch::new(8);
+    insert_encoded_value(&mut encoded_row_sketch, &encoded_row);
+    assert_eq!(typed_row, encoded_row_sketch);
+}
+
+#[test]
+fn source_statement_error_policy_controls_partial_hashing_and_row_continuation() {
+    let raw = Datum::Raw(b"unsupported".to_vec());
+    assert!(hash_datum(&Utc, &raw).is_err());
+
+    let mut warnings = 0;
+    let warned_hash =
+        tidb_stats::fmsketch_codec::hash_datum_with_error_policy(&Utc, &raw, |value, _| {
+            assert!(matches!(value, Datum::Raw(_)));
+            warnings += 1;
+            Ok::<_, std::convert::Infallible>(Vec::new())
+        })
+        .unwrap();
+    assert_eq!(warnings, 1);
+    assert_eq!(warned_hash, tidb_stats::hash_bytes(&[]).h1);
+
+    let values = [Datum::Int(1), raw, Datum::Int(2)];
+    let row_hash = hash_row_with_error_policy(&Utc, &values, |_, _| {
+        Ok::<_, std::convert::Infallible>(Vec::new())
+    })
+    .unwrap();
+    let mut expected = tidb_codec::encode_value(&values[..1]).unwrap();
+    expected.extend_from_slice(&tidb_codec::encode_value(&values[2..]).unwrap());
+    assert_eq!(row_hash, tidb_stats::hash_bytes(&expected).h1);
+
+    let strict: Result<u64, &str> = hash_row_with_error_policy(&Utc, &values, |_, _| Err("strict"));
+    assert_eq!(strict, Err("strict"));
+}
+
+#[test]
+fn source_original_statistics_fixture_pins_typed_ndv_merge_and_coding() {
+    // `createTestStatisticsSamples` is shared support owned by main_test.go.
+    // Its 10,000-row sample, 100,000-row record column, and monotone primary
+    // key are the original high-volume FM-sketch oracles. Keeping the
+    // generator here (rather than recording its answers as raw hashes) makes
+    // any Datum codec or FM admission mutation cross the same boundary as Go.
+    let sample = source_statistics_values(10_000);
+    let record_column = source_statistics_values(100_000);
+    let primary_key = (0..100_000)
+        .map(|value| Datum::Int(value as i64))
+        .collect::<Vec<_>>();
+
+    let sample_sketch = build_source_sketch(&sample);
+    let record_sketch = build_source_sketch(&record_column);
+    let primary_sketch = build_source_sketch(&primary_key);
+    assert_eq!(sample_sketch.ndv(), 6_232);
+    assert_eq!(record_sketch.ndv(), 73_344);
+    assert_eq!(primary_sketch.ndv(), 100_480);
+
+    let mut merged = sample_sketch.clone();
+    merged.merge(&primary_sketch);
+    merged.merge(&record_sketch);
+    assert_eq!(merged.ndv(), 100_480);
+
+    for expected in [&sample_sketch, &record_sketch, &primary_sketch] {
+        let proto = fm_sketch_to_proto(Some(expected));
+        let from_proto = fm_sketch_from_proto(Some(&proto)).unwrap();
+        assert_eq!(from_proto.mask(), expected.mask());
+        assert_eq!(from_proto.sorted_hashes(), expected.sorted_hashes());
+
+        let wire = tidb_stats::fmsketch_codec::encode_fm_sketch(Some(expected)).unwrap();
+        let decoded = decode_fm_sketch(Some(&wire)).unwrap().unwrap();
+        assert_eq!(decoded.ndv(), expected.ndv());
+    }
 }

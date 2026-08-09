@@ -18,16 +18,23 @@
 //! Datum/tablecodec encoding, sampled TopN construction, protobuf snapshots,
 //! and the statistics handle are not silently replaced by test fixtures.
 
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    sync::{Arc, RwLock},
+};
 
+use chrono::Utc;
 use tidb_datatype::Datum;
 use tidb_stats::cmsketch::encode_integer_datum_value;
 use tidb_stats::{
-    decode_cmsketch, decode_cmsketch_and_embedded_topn, decode_cmsketch_and_topn,
-    encode_cmsketch_and_topn, encode_cmsketch_without_topn, get_merged_topn_from_sorted_slice,
-    hash_bytes, merge_topn, merge_topn_and_update_cmsketch, new_cmsketch_and_topn,
-    new_cmsketch_and_topn_with_tie_stabilization, sort_topn_meta, topn_meta_compare, CmsSketch,
-    Hash128, MergeError, TopN, TopNEntry,
+    cmsketch_and_topn_from_proto, decode_cmsketch, decode_cmsketch_and_embedded_topn,
+    decode_cmsketch_and_topn, encode_cmsketch_and_topn, encode_cmsketch_without_topn, find_topn,
+    get_merged_topn_from_sorted_slice, hash_bytes, merge_topn, merge_topn_and_update_cmsketch,
+    new_cmsketch_and_topn, new_cmsketch_and_topn_with_tie_stabilization, query_topn, query_value,
+    sort_topn_meta, topn_between_count, topn_decoded_string, topn_display_string, topn_lower_bound,
+    topn_meta_compare, topn_min_count, topn_total_count, CmsSketch, CmsSketchProto,
+    CmsSketchProtoRow, CmsSketchProtoTopN, CodecError, Hash128, MergeError, SharedTopNBytes, TopN,
+    TopNEntry,
 };
 
 fn build_seeded_zipf_sketch(
@@ -900,25 +907,273 @@ fn source_merge_requires_equal_dimensions_and_clone_is_deep() {
 }
 
 #[test]
-fn source_topn_sort_lookup_range_and_clone_shape() {
+fn source_topn_lookup_and_between_count_preserve_nil_and_lower_bound_contract() {
+    assert_eq!(query_topn(None, b"a"), None);
+    assert_eq!(find_topn(None, b"a"), None);
+    assert_eq!(topn_lower_bound(None, b"a"), (0, false));
+    assert_eq!(topn_between_count(None, b"a", b"z"), 0);
+
+    let empty = TopN::new(0);
+    assert_eq!(find_topn(Some(&empty), b"a"), None);
+    assert_eq!(topn_lower_bound(Some(&empty), b"a"), (0, false));
+    assert_eq!(topn_between_count(Some(&empty), b"a", b"z"), 0);
+
+    let mut singleton = TopN::new(1);
+    singleton.append(b"m", 11);
+    assert_eq!(find_topn(Some(&singleton), b"m"), Some(0));
+    assert_eq!(find_topn(Some(&singleton), b"l"), None);
+    assert_eq!(query_topn(Some(&singleton), b"m"), Some(11));
+
+    let mut zero_count = TopN::new(1);
+    zero_count.append(b"q", 0);
+    assert_eq!(query_topn(Some(&zero_count), b"q"), Some(0));
+
     let mut topn = TopN::new(3);
+    topn.append(b"d", 4);
     topn.append(b"b", 2);
-    topn.append(b"a", 4);
-    topn.append(b"c", 8);
+    topn.append(b"f", 8);
     topn.sort();
 
-    assert_eq!(topn.entries()[0].encoded, b"a");
-    assert_eq!(topn.query_bytes(b"b"), Some(2));
-    assert_eq!(topn.query_bytes(b"missing"), None);
-    assert_eq!(topn.lower_bound(b"bb"), 2);
-    assert_eq!(topn.between_count(b"a", b"c"), 6);
-    assert_eq!(topn.total_count(), 14);
-    assert_eq!(topn.min_count(), 2);
+    assert_eq!(find_topn(Some(&topn), b"a"), None);
+    assert_eq!(find_topn(Some(&topn), b"z"), None);
+    assert_eq!(find_topn(Some(&topn), b"c"), None);
+    assert_eq!(find_topn(Some(&topn), b"d"), Some(1));
+    assert_eq!(query_topn(Some(&topn), b"d"), Some(4));
+    assert_eq!(query_topn(Some(&topn), b"missing"), None);
+    assert_eq!(topn_lower_bound(Some(&topn), b"d"), (1, true));
+    assert_eq!(topn_lower_bound(Some(&topn), b"c"), (1, false));
 
-    let clone = topn.clone();
-    topn.append(b"d", 16);
-    assert_eq!(clone.total_count(), 14);
-    assert_eq!(clone.query_bytes(b"a"), Some(4));
+    let mut duplicates = TopN::new(4);
+    duplicates.append(b"a", 1);
+    duplicates.append(b"a", 2);
+    duplicates.append(b"a", 3);
+    duplicates.append(b"b", 4);
+    assert_eq!(topn_lower_bound(Some(&duplicates), b"a"), (0, true));
+    assert_eq!(find_topn(Some(&duplicates), b"a"), Some(0));
+    assert_eq!(query_topn(Some(&duplicates), b"a"), Some(1));
+    assert_eq!(topn_between_count(Some(&duplicates), b"a", b"b"), 6);
+    assert_eq!(topn_between_count(Some(&duplicates), b"b", b"b"), 0);
+    assert_eq!(topn_between_count(Some(&duplicates), b"b", b"a"), 0);
+
+    let mut wrapping = TopN::new(2);
+    wrapping.append(b"a", u64::MAX);
+    wrapping.append(b"b", 1);
+    assert_eq!(topn_between_count(Some(&wrapping), b"a", b"c"), 0);
+}
+
+#[test]
+fn source_topn_count_cache_preserves_once_wrap_clone_and_intest_order() {
+    fn panic_text(panic: Box<dyn std::any::Any + Send>) -> String {
+        panic.downcast_ref::<&str>().map_or_else(
+            || panic.downcast_ref::<String>().cloned().unwrap_or_default(),
+            |message| (*message).to_owned(),
+        )
+    }
+
+    assert_eq!(topn_total_count(None), 0);
+    assert_eq!(topn_min_count(None), 0);
+    let empty = TopN::new(0);
+    assert_eq!(topn_total_count(Some(&empty)), 0);
+    assert_eq!(topn_min_count(Some(&empty)), 0);
+
+    let mut total_stale = TopN::new(3);
+    total_stale.append(b"a", 4);
+    total_stale.append(b"b", 2);
+    total_stale.append(b"c", 8);
+    assert_eq!(topn_total_count(Some(&total_stale)), 14);
+    assert_eq!(topn_min_count(Some(&total_stale)), 2);
+    total_stale.append(b"d", 16);
+    assert_eq!(topn_total_count(Some(&total_stale)), 14);
+    assert_eq!(topn_min_count(Some(&total_stale)), 2);
+    let total_panic = std::panic::catch_unwind(|| total_stale.assert_cached_counts_current())
+        .expect_err("stale total must fail intest validation");
+    assert!(panic_text(total_panic).contains("totalCount should be equal"));
+
+    let refreshed_clone = total_stale.clone();
+    assert_eq!(topn_total_count(Some(&refreshed_clone)), 30);
+    assert_eq!(topn_min_count(Some(&refreshed_clone)), 2);
+
+    let mut min_stale = TopN::new(2);
+    min_stale.append(b"a", 4);
+    min_stale.append(b"b", 8);
+    assert_eq!(topn_min_count(Some(&min_stale)), 4);
+    assert_eq!(topn_total_count(Some(&min_stale)), 12);
+    min_stale.append(b"c", 1);
+    let min_panic = std::panic::catch_unwind(|| min_stale.assert_cached_counts_current())
+        .expect_err("stale minimum must fail before the total assertion");
+    assert!(panic_text(min_panic).contains("minCount should be equal"));
+
+    let mut direct_empty = TopN::new(0);
+    assert!(std::panic::catch_unwind(|| direct_empty.assert_cached_counts_current()).is_err());
+    direct_empty.append(b"a", 7);
+    direct_empty.assert_cached_counts_current();
+    assert_eq!(topn_total_count(Some(&direct_empty)), 7);
+    assert_eq!(topn_min_count(Some(&direct_empty)), 7);
+
+    let mut wrapping = TopN::new(2);
+    wrapping.append(b"a", u64::MAX);
+    wrapping.append(b"b", 1);
+    assert_eq!(topn_total_count(Some(&wrapping)), 0);
+    assert_eq!(topn_min_count(Some(&wrapping)), 1);
+    wrapping.assert_cached_counts_current();
+}
+
+#[test]
+fn source_test_topn_scale_preserves_factors_truncation_and_rounding_bound() {
+    // The accepted test draws these twenty values from the unseeded package
+    // RNG. Pinning a spread of the same [0, 100000) domain makes the rounding
+    // assertion deterministic without pretending to reproduce that harness.
+    let counts = [
+        0_u64, 1, 2, 3, 7, 11, 31, 97, 255, 1_024, 4_095, 9_999, 12_345, 23_456, 34_567, 45_678,
+        56_789, 67_890, 78_901, 99_999,
+    ];
+    for scale_factor in [0.9999, 1.00001, 1.9999, 4.9999, 5.001, 9.99] {
+        let mut topn = TopN::new(counts.len());
+        let mut sum_count = 0_u64;
+        for count in counts {
+            sum_count = sum_count.wrapping_add(count);
+            topn.append(b"", (count as f64 * scale_factor) as u64);
+        }
+        let scale_count = sum_count as f64 * scale_factor;
+        let delta = (topn_total_count(Some(&topn)) as f64 - scale_count).abs();
+        assert!(delta / scale_count < 0.0001);
+        topn.assert_cached_counts_current();
+    }
+}
+
+#[test]
+fn source_topn_strings_match() {
+    let mut display = TopN::new(1);
+    display.append(b"ab", 3);
+    assert_eq!(display.display_string(), "TopN{length: 1, [([97 98], 3)]}");
+    assert_eq!(topn_display_string(None), "EmptyTopN");
+    assert_eq!(
+        topn_decoded_string(Some(&display), |bytes| {
+            Ok::<_, ()>(String::from_utf8(bytes.to_vec()).unwrap())
+        })
+        .unwrap(),
+        "TopN{length: 1, [(ab, 3)]}"
+    );
+    assert_eq!(
+        topn_decoded_string(None, |_| Ok::<_, ()>(String::new())).unwrap(),
+        ""
+    );
+}
+
+#[test]
+fn source_topn_sort_matches_go_1_25_10_pdqsort_duplicate_permutations() {
+    fn b_values_then_a(length: u64) -> TopN {
+        let mut topn = TopN::new(length as usize);
+        for count in 0..length - 1 {
+            topn.append(b"b", count);
+        }
+        topn.append(b"a", length - 1);
+        topn.sort();
+        topn
+    }
+
+    fn counts(topn: &TopN) -> Vec<u64> {
+        topn.entries().iter().map(|entry| entry.count).collect()
+    }
+
+    for (length, expected) in [
+        (2, vec![1, 0]),
+        (3, vec![2, 0, 1]),
+        (12, vec![11, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]),
+        (13, vec![12, 6, 2, 3, 4, 5, 0, 7, 8, 9, 10, 11, 1]),
+        (
+            25,
+            vec![
+                24, 12, 7, 3, 4, 5, 6, 0, 8, 9, 10, 2, 11, 17, 14, 15, 16, 13, 18, 19, 20, 21, 22,
+                23, 1,
+            ],
+        ),
+    ] {
+        let topn = b_values_then_a(length);
+        assert_eq!(counts(&topn), expected, "length {length}");
+        assert_eq!(topn.entries()[0].encoded, b"a", "length {length}");
+        assert!(topn.entries()[1..]
+            .iter()
+            .all(|entry| entry.encoded == b"b"));
+        assert_eq!(topn.find(b"b"), Some(1), "length {length}");
+        assert_eq!(
+            topn.query_bytes(b"b"),
+            Some(match length {
+                13 => 6,
+                25 => 12,
+                _ => 0,
+            }),
+            "length {length}"
+        );
+    }
+
+    // The sampled Tukey-ninther positions remain strictly decreasing, so Go
+    // records all twelve pivot swaps, reverses the range, and recognizes the
+    // result as ordered. The equal key at source positions 4 and 5 proves the
+    // reverse operation's observable duplicate order.
+    let mut large = TopN::new(64);
+    for count in 0_u64..64 {
+        let encoded = if count == 5 {
+            60
+        } else {
+            u8::try_from(64 - count).unwrap()
+        };
+        large.append(&[encoded], count);
+    }
+    large.sort();
+    assert_eq!(counts(&large), (0_u64..64).rev().collect::<Vec<_>>());
+    assert_eq!(large.find(&[60]), Some(58));
+    assert_eq!(large.query_bytes(&[60]), Some(5));
+}
+
+#[test]
+fn source_append_topn_aliases_the_callers_bytes() {
+    let encoded: SharedTopNBytes = Arc::new(RwLock::new(b"a".to_vec()));
+    let mut topn = TopN::new(1);
+    topn.append_shared(Arc::clone(&encoded), 5);
+    topn.sort();
+    assert_eq!(topn.query_bytes(b"a"), Some(5));
+
+    *encoded.write().unwrap() = b"b".to_vec();
+    assert_eq!(topn.query_bytes(b"a"), None);
+    assert_eq!(topn.query_bytes(b"b"), Some(5));
+    assert_eq!(topn.entry_bytes(0).unwrap(), b"b");
+    assert_eq!(topn.display_string(), "TopN{length: 1, [([98], 5)]}");
+
+    let wire = encode_cmsketch_and_topn(None, Some(&topn)).unwrap();
+    assert!(wire.windows(3).any(|window| window == [0x0a, 0x01, b'b']));
+
+    let copied = topn.clone();
+    *encoded.write().unwrap() = b"c".to_vec();
+    assert_eq!(topn.query_bytes(b"c"), Some(5));
+    assert_eq!(copied.query_bytes(b"b"), Some(5));
+}
+
+#[test]
+fn source_query_value_supports_all_typed_datums_and_nil_cms_topn_hits() {
+    let value = Datum::new_string("typed");
+    let encoded = tidb_codec::encode_value_in_timezone(&Utc, std::slice::from_ref(&value)).unwrap();
+    let mut topn = TopN::new(1);
+    topn.append(&encoded, 77);
+    topn.sort();
+    assert_eq!(query_value(None, Some(&topn), &value, &Utc).unwrap(), 77);
+
+    let mut cms = CmsSketch::new(5, 2_048);
+    cms.insert_bytes(&encoded);
+    assert_eq!(query_value(Some(&cms), None, &value, &Utc).unwrap(), 1);
+    assert!(
+        std::panic::catch_unwind(|| { query_value(None, None, &value, &Utc).unwrap() }).is_err()
+    );
+}
+
+#[test]
+fn source_query_bytes_failpoint_returns_the_scripted_go_int_conversion() {
+    let cms = CmsSketch::new(5, 2_048);
+    assert_eq!(
+        cms.query_bytes_with_failpoint(b"ignored", Some(-1)),
+        u64::MAX
+    );
+    assert_eq!(cms.query_bytes_with_failpoint(b"ignored", Some(7)), 7);
 }
 
 #[test]
@@ -1053,6 +1308,183 @@ fn cmsketch_proto_small_vectors_and_nil_message_match_generated_go_wire() {
         decode_cmsketch_and_embedded_topn(&[0x18, 0x00]).unwrap(),
         (None, None)
     );
+}
+
+#[test]
+fn source_cmsketch_and_topn_from_proto_preserves_graph_and_ordering_semantics() {
+    assert_eq!(cmsketch_and_topn_from_proto(None), (None, None));
+    assert_eq!(
+        cmsketch_and_topn_from_proto(Some(&CmsSketchProto {
+            rows: Some(Vec::new()),
+            top_n: Some(Vec::new()),
+            default_value: 9,
+        })),
+        (None, None)
+    );
+
+    let mut proto_topn = (0_u64..12)
+        .map(|count| {
+            Some(CmsSketchProtoTopN {
+                data: Some(b"b".to_vec()),
+                count,
+            })
+        })
+        .collect::<Vec<_>>();
+    proto_topn.push(Some(CmsSketchProtoTopN {
+        data: Some(b"a".to_vec()),
+        count: 12,
+    }));
+    let mut no_rows = CmsSketchProto {
+        rows: None,
+        top_n: Some(proto_topn),
+        default_value: 7,
+    };
+    let (sketch, topn) = cmsketch_and_topn_from_proto(Some(&no_rows));
+    assert!(sketch.is_none());
+    let topn = topn.expect("TopN is converted before the empty-row return");
+    assert_eq!(
+        topn.entries()
+            .iter()
+            .map(|entry| entry.count)
+            .collect::<Vec<_>>(),
+        vec![12, 6, 2, 3, 4, 5, 0, 7, 8, 9, 10, 11, 1]
+    );
+    assert_eq!(topn.find(b"b"), Some(1));
+    assert_eq!(topn.query_bytes(b"b"), Some(6));
+    no_rows.top_n.as_mut().unwrap()[0]
+        .as_mut()
+        .unwrap()
+        .data
+        .as_mut()
+        .unwrap()[0] = b'c';
+    assert_eq!(topn.entry_bytes(6).unwrap(), b"b");
+
+    let nil_and_empty_data = CmsSketchProto {
+        rows: None,
+        top_n: Some(vec![
+            Some(CmsSketchProtoTopN {
+                data: None,
+                count: 4,
+            }),
+            Some(CmsSketchProtoTopN {
+                data: Some(Vec::new()),
+                count: 5,
+            }),
+        ]),
+        default_value: 0,
+    };
+    let (_, normalized) = cmsketch_and_topn_from_proto(Some(&nil_and_empty_data));
+    let normalized = normalized.expect("two TopN entries");
+    assert_eq!(
+        normalized
+            .entries()
+            .iter()
+            .map(|entry| (entry.encoded.clone(), entry.count))
+            .collect::<Vec<_>>(),
+        vec![(Vec::new(), 4), (Vec::new(), 5)]
+    );
+    let wire = encode_cmsketch_and_topn(None, Some(&normalized)).unwrap();
+    assert!(wire
+        .windows(4)
+        .any(|bytes| bytes == [0x0a, 0x00, 0x10, 0x04]));
+    assert!(wire
+        .windows(4)
+        .any(|bytes| bytes == [0x0a, 0x00, 0x10, 0x05]));
+
+    let rows = CmsSketchProto {
+        rows: Some(vec![
+            Some(CmsSketchProtoRow {
+                counters: Some(vec![1, 2]),
+            }),
+            Some(CmsSketchProtoRow {
+                counters: Some(vec![3]),
+            }),
+        ]),
+        top_n: None,
+        default_value: 9,
+    };
+    let (sketch, topn) = cmsketch_and_topn_from_proto(Some(&rows));
+    assert!(topn.is_none());
+    let sketch = sketch.expect("rows reconstruct a sketch");
+    assert_eq!((sketch.depth(), sketch.width()), (2, 2));
+    assert_eq!(sketch.counter_at(0, 0), Some(1));
+    assert_eq!(sketch.counter_at(0, 1), Some(2));
+    assert_eq!(sketch.counter_at(1, 0), Some(3));
+    assert_eq!(sketch.counter_at(1, 1), Some(0));
+    assert_eq!(sketch.total_count(), 3);
+    assert_eq!(sketch.default_value(), 9);
+
+    let empty_row = cmsketch_and_topn_from_proto(Some(&CmsSketchProto {
+        rows: Some(vec![Some(CmsSketchProtoRow { counters: None })]),
+        top_n: None,
+        default_value: 7,
+    }))
+    .0
+    .expect("one nil-counter row");
+    assert_eq!((empty_row.depth(), empty_row.width()), (1, 0));
+    assert_eq!(empty_row.default_value(), 7);
+
+    let longer = CmsSketchProto {
+        rows: Some(vec![
+            Some(CmsSketchProtoRow {
+                counters: Some(vec![1]),
+            }),
+            Some(CmsSketchProtoRow {
+                counters: Some(vec![2, 3]),
+            }),
+        ]),
+        top_n: None,
+        default_value: 0,
+    };
+    assert!(std::panic::catch_unwind(|| cmsketch_and_topn_from_proto(Some(&longer))).is_err());
+
+    let nil_elements = CmsSketchProto {
+        rows: Some(vec![None]),
+        top_n: Some(vec![None]),
+        default_value: 0,
+    };
+    let panic = std::panic::catch_unwind(|| cmsketch_and_topn_from_proto(Some(&nil_elements)))
+        .expect_err("TopN nil element panics before the row nil element");
+    let message = panic
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| panic.downcast_ref::<String>().map(String::as_str));
+    assert_eq!(message, Some("nil CMSketchTopN message"));
+
+    let nil_row_after_topn = CmsSketchProto {
+        rows: Some(vec![None]),
+        top_n: Some(vec![Some(CmsSketchProtoTopN {
+            data: Some(b"built-first".to_vec()),
+            count: 1,
+        })]),
+        default_value: 0,
+    };
+    let panic =
+        std::panic::catch_unwind(|| cmsketch_and_topn_from_proto(Some(&nil_row_after_topn)))
+            .expect_err("row nil element panics after TopN construction");
+    let message = panic
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| panic.downcast_ref::<String>().map(String::as_str));
+    assert_eq!(message, Some("nil CMSketchRow message"));
+
+    let nil_second_row = CmsSketchProto {
+        rows: Some(vec![
+            Some(CmsSketchProtoRow {
+                counters: Some(vec![7]),
+            }),
+            None,
+        ]),
+        top_n: None,
+        default_value: 0,
+    };
+    let panic = std::panic::catch_unwind(|| cmsketch_and_topn_from_proto(Some(&nil_second_row)))
+        .expect_err("later nil row panics after allocating and filling earlier rows");
+    let message = panic
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| panic.downcast_ref::<String>().map(String::as_str));
+    assert_eq!(message, Some("nil CMSketchRow message"));
 }
 
 #[test]
@@ -1278,4 +1710,137 @@ fn source_decoder_accepts_packed_counter_wire_form() {
     assert_eq!(sketch.counter_at(0, 2), Some(300));
     assert_eq!(sketch.total_count(), 303);
     assert_eq!(sketch.default_value(), 7);
+}
+
+#[test]
+fn source_decoder_rejects_tag_zero_and_known_field_wrong_wires() {
+    for (malformed, expected_wire) in [
+        (&[0x00, 0x00][..], 0),
+        (&[0x08, 0x00][..], 0),
+        (&[0x10, 0x00][..], 0),
+        (&[0x1a, 0x00][..], 2),
+        (&[0x0a, 0x01, 0x0d][..], 5),
+        (&[0x12, 0x02, 0x08, 0x00][..], 0),
+        (&[0x12, 0x02, 0x12, 0x00][..], 2),
+        (&[0x0a, 0x01, 0x00][..], 0),
+        (&[0x12, 0x01, 0x00][..], 0),
+    ] {
+        assert_eq!(
+            decode_cmsketch_and_embedded_topn(malformed).unwrap_err(),
+            CodecError::InvalidWireType(expected_wire)
+        );
+    }
+}
+
+#[test]
+fn source_decoder_matches_generated_go_tenth_byte_varint_rules() {
+    // Generated gogoprotobuf accepts a terminal tenth byte greater than one.
+    // Its uint64 shift truncates those high bits, leaving the low value two.
+    let terminal_tenth_byte = [
+        0x0a, 0x02, 0x08, 0x01, 0x18, 0x82, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x02,
+    ];
+    let sketch = decode_cmsketch(&terminal_tenth_byte)
+        .expect("terminal tenth byte is accepted")
+        .expect("one row");
+    assert_eq!(sketch.default_value(), 2);
+
+    // A continued tenth byte advances the generated loop to shift 70, where
+    // it reports integer overflow before attempting to read an eleventh byte.
+    let mut continued_tenth_byte = vec![0x18];
+    continued_tenth_byte.extend([0x80; 10]);
+    assert_eq!(
+        decode_cmsketch_and_embedded_topn(&continued_tenth_byte).unwrap_err(),
+        CodecError::VarintOverflow
+    );
+}
+
+#[test]
+fn source_decoder_balances_unknown_groups_by_depth_only() {
+    // skipAnalyze accepts mismatched end-group field numbers. Only depth is
+    // tracked: fields 6 and 7 close groups opened by fields 5 and 4.
+    let mismatched_but_balanced = [0x23, 0x2b, 0x34, 0x3c, 0x0a, 0x02, 0x08, 0x09, 0x18, 0x07];
+    let sketch = decode_cmsketch(&mismatched_but_balanced)
+        .expect("balanced unknown groups")
+        .expect("row after group");
+    assert_eq!(sketch.counter_at(0, 0), Some(9));
+    assert_eq!(sketch.default_value(), 7);
+
+    // Nested tag zero is not validated while generated skipAnalyze is inside
+    // an unknown group; it is treated as wire-zero plus its following value.
+    let nested_tag_zero = [0x23, 0x00, 0x00, 0x24, 0x18, 0x00];
+    assert!(decode_cmsketch_and_embedded_topn(&nested_tag_zero).is_ok());
+    assert_eq!(
+        decode_cmsketch_and_embedded_topn(&[0x23]).unwrap_err(),
+        CodecError::UnexpectedEof
+    );
+    assert_eq!(
+        decode_cmsketch_and_embedded_topn(&[0x24]).unwrap_err(),
+        CodecError::InvalidWireType(4)
+    );
+}
+
+#[test]
+fn source_decoder_finishes_wire_parse_before_converting_row_shapes() {
+    assert_eq!(decode_cmsketch(&[]), Ok(None));
+    assert_eq!(decode_cmsketch(&[0x18, 0x00]), Ok(None));
+
+    // A present row with no counters is distinct from a message with no rows.
+    let empty_row = decode_cmsketch(&[0x0a, 0x00, 0x18, 0x07])
+        .unwrap()
+        .expect("one empty row");
+    assert_eq!((empty_row.depth(), empty_row.width()), (1, 0));
+    assert_eq!(empty_row.total_count(), 0);
+    assert_eq!(empty_row.default_value(), 7);
+
+    // First row width two, second row width one: Go leaves the missing cell 0.
+    let shorter = [
+        0x0a, 0x04, 0x08, 0x01, 0x08, 0x02, 0x0a, 0x02, 0x08, 0x03, 0x18, 0x00,
+    ];
+    let sketch = decode_cmsketch(&shorter).unwrap().unwrap();
+    assert_eq!((sketch.depth(), sketch.width()), (2, 2));
+    assert_eq!(sketch.counter_at(1, 0), Some(3));
+    assert_eq!(sketch.counter_at(1, 1), Some(0));
+    assert_eq!(sketch.total_count(), 3);
+
+    let longer = [
+        0x0a, 0x02, 0x08, 0x01, 0x0a, 0x04, 0x08, 0x02, 0x08, 0x03, 0x18, 0x00,
+    ];
+    let panic = std::panic::catch_unwind(|| decode_cmsketch(&longer));
+    assert!(panic.is_err());
+
+    // Unmarshal finishes before DecodeCMSketch copies row counters. A later
+    // wire error therefore wins over the longer-row index panic.
+    let wrong_wire_after_longer_row = [
+        0x0a, 0x02, 0x08, 0x01, 0x0a, 0x04, 0x08, 0x02, 0x08, 0x03, 0x1a, 0x00,
+    ];
+    assert!(matches!(
+        std::panic::catch_unwind(|| decode_cmsketch(&wrong_wire_after_longer_row)),
+        Ok(Err(CodecError::InvalidWireType(2)))
+    ));
+
+    let truncated_varint_after_longer_row = [
+        0x0a, 0x02, 0x08, 0x01, 0x0a, 0x04, 0x08, 0x02, 0x08, 0x03, 0x18, 0x80,
+    ];
+    assert!(matches!(
+        std::panic::catch_unwind(|| decode_cmsketch(&truncated_varint_after_longer_row)),
+        Ok(Err(CodecError::UnexpectedEof))
+    ));
+
+    let wrong_topn_wire_after_longer_row = [
+        0x0a, 0x02, 0x08, 0x01, 0x0a, 0x04, 0x08, 0x02, 0x08, 0x03, 0x12, 0x02, 0x08, 0x00,
+    ];
+    assert!(matches!(
+        std::panic::catch_unwind(|| {
+            decode_cmsketch_and_embedded_topn(&wrong_topn_wire_after_longer_row)
+        }),
+        Ok(Err(CodecError::InvalidWireType(0)))
+    ));
+
+    let valid_topn_after_longer_row = [
+        0x0a, 0x02, 0x08, 0x01, 0x0a, 0x04, 0x08, 0x02, 0x08, 0x03, 0x12, 0x02, 0x10, 0x01,
+    ];
+    assert!(std::panic::catch_unwind(|| {
+        decode_cmsketch_and_embedded_topn(&valid_topn_after_longer_row)
+    })
+    .is_err());
 }

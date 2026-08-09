@@ -14,30 +14,31 @@
 
 //! Source-backed tests for histogram order correlation.
 
-use tidb_stats::calc_correlation;
-
 #[test]
 fn source_single_item_is_perfectly_correlated() {
-    assert_eq!(calc_correlation(1, 0.0), 1.0);
+    assert_eq!(tidb_stats::correlation::calc_correlation(1, 0.0), 1.0);
 }
 
 #[test]
 fn source_identity_and_reverse_orders_match_pearson_formula() {
     // For five samples, the identity cross-sum is sum(i*i) = 30.
-    assert_eq!(calc_correlation(5, 30.0), 1.0);
+    assert_eq!(tidb_stats::correlation::calc_correlation(5, 30.0), 1.0);
 
     // The reverse order [4, 3, 2, 1, 0] has cross-sum 10.
-    assert_eq!(calc_correlation(5, 10.0), -1.0);
+    assert_eq!(tidb_stats::correlation::calc_correlation(5, 10.0), -1.0);
 }
 
 #[test]
 fn source_partial_correlation_preserves_fractional_result() {
     // Six samples with cross-sum 52 produce 87/105, the same value surfaced
     // by the Go handle-level TestCorrelation fixture.
-    assert_eq!(calc_correlation(6, 52.0), 0.8285714285714286);
+    assert_eq!(
+        tidb_stats::correlation::calc_correlation(6, 52.0),
+        0.8285714285714286
+    );
 }
 
 #[test]
 fn source_zero_sample_keeps_undefined_correlation() {
-    assert!(calc_correlation(0, 0.0).is_nan());
+    assert!(tidb_stats::correlation::calc_correlation(0, 0.0).is_nan());
 }

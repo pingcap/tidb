@@ -19,9 +19,14 @@
 //! session tracing remain explicit caller seams; this module owns all of the
 //! arithmetic, ranking, merge, and protobuf-wire behavior below those seams.
 
-use std::{cmp::Ordering, collections::HashMap, fmt};
+use std::{
+    cmp::Ordering,
+    collections::HashMap,
+    fmt,
+    sync::{Arc, OnceLock, RwLock},
+};
 
-use crate::estimate::calculate_estimate_ndv;
+use crate::{estimate::calculate_estimate_ndv, go_pdqsort::go_sort_func_by};
 use tidb_datatype::Datum;
 
 const MURMUR_C1: u64 = 0x87c3_7b91_1142_53d5;
@@ -346,6 +351,17 @@ impl CmsSketch {
     /// Queries an encoded value through the source count/noise boundary.
     #[must_use]
     pub fn query_bytes(&self, bytes: &[u8]) -> u64 {
+        self.query_bytes_with_failpoint(bytes, None)
+    }
+
+    /// Exact seam for Go's `mockQueryBytesMaxUint64` failpoint. The Go
+    /// injection asserts an `int` value and converts it to `uint64`, so a
+    /// negative scripted value wraps instead of being rejected.
+    #[must_use]
+    pub fn query_bytes_with_failpoint(&self, bytes: &[u8], mock_value: Option<i64>) -> u64 {
+        if let Some(mock_value) = mock_value {
+            return mock_value as u64;
+        }
         self.query_hashed(hash_bytes(bytes))
     }
 
@@ -490,6 +506,21 @@ fn new_topn_helper(
     }
 }
 
+/// Go `newTopNHelper`'s selected prefix for callers such as
+/// `SampleCollector.ExtractTopN` that own the later codec/CMS mutation step.
+pub(crate) fn sampled_topn_candidates(
+    sample: &[Vec<u8>],
+    num_top: u32,
+    stabilize_equal_counts: bool,
+) -> Vec<TopNEntry> {
+    let helper = new_topn_helper(sample, num_top, stabilize_equal_counts);
+    helper
+        .sorted
+        .into_iter()
+        .take(helper.actual_num_top as usize)
+        .collect()
+}
+
 fn calculate_default_value(
     helper: &TopNBuildHelper,
     estimate_ndv: u64,
@@ -600,10 +631,74 @@ pub struct TopNEntry {
 /// Call [`TopN::sort`] after appending entries before using binary-search
 /// lookup.  Sample extraction, TopN selection thresholds, persistence, and
 /// histogram ownership remain outside this type.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Debug)]
 pub struct TopN {
     entries: Vec<TopNEntry>,
+    shared_encoded: Vec<Option<SharedTopNBytes>>,
+    cached_counts: OnceLock<(u64, u64)>,
 }
+
+/// Safe native representation of Go's aliased `[]byte` passed to
+/// `AppendTopN`. Mutating this value changes subsequent TopN lookup,
+/// formatting, copying, and persistence just as mutating the source slice
+/// does.
+pub type SharedTopNBytes = Arc<RwLock<Vec<u8>>>;
+
+/// Native counterpart of tipb's nullable `CMSketchRow` message.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct CmsSketchProtoRow {
+    /// Nullable unpacked counter slice.
+    pub counters: Option<Vec<u32>>,
+}
+
+/// Native counterpart of tipb's nullable `CMSketchTopN` message.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct CmsSketchProtoTopN {
+    /// Nullable encoded-value slice.
+    pub data: Option<Vec<u8>>,
+    /// Estimated count for the value.
+    pub count: u64,
+}
+
+/// Mutable source-shaped input graph for `CMSketchAndTopNFromProto`.
+///
+/// Both repeated-message fields and their pointer elements retain Go's
+/// nil-versus-allocated representation. Counter and data byte slices do the
+/// same, including a distinct present-empty state.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct CmsSketchProto {
+    /// Nullable row-pointer slice.
+    pub rows: Option<Vec<Option<CmsSketchProtoRow>>>,
+    /// Nullable TopN-pointer slice.
+    pub top_n: Option<Vec<Option<CmsSketchProtoTopN>>>,
+    /// Sketch default value.
+    pub default_value: u64,
+}
+
+impl Clone for TopN {
+    fn clone(&self) -> Self {
+        // Go `Copy` deep-copies entries and returns a fresh sync.Once.
+        Self {
+            entries: self.resolved_entries(),
+            shared_encoded: vec![None; self.entries.len()],
+            cached_counts: OnceLock::new(),
+        }
+    }
+}
+
+impl Default for TopN {
+    fn default() -> Self {
+        Self::new(0)
+    }
+}
+
+impl PartialEq for TopN {
+    fn eq(&self, other: &Self) -> bool {
+        self.resolved_entries() == other.resolved_entries()
+    }
+}
+
+impl Eq for TopN {}
 
 impl TopN {
     /// Creates an empty TopN with the requested allocation hint.
@@ -611,6 +706,8 @@ impl TopN {
     pub fn new(capacity: usize) -> Self {
         Self {
             entries: Vec::with_capacity(capacity),
+            shared_encoded: Vec::with_capacity(capacity),
+            cached_counts: OnceLock::new(),
         }
     }
 
@@ -620,6 +717,20 @@ impl TopN {
             encoded: encoded.to_vec(),
             count,
         });
+        self.shared_encoded.push(None);
+    }
+
+    /// Go `AppendTopN` without an implicit byte copy.
+    pub fn append_shared(&mut self, encoded: SharedTopNBytes, count: u64) {
+        let snapshot = encoded
+            .read()
+            .expect("shared TopN bytes lock poisoned")
+            .clone();
+        self.entries.push(TopNEntry {
+            encoded: snapshot,
+            count,
+        });
+        self.shared_encoded.push(Some(encoded));
     }
 
     /// Number of entries (the source calls this `Num` because Histogram owns
@@ -634,9 +745,17 @@ impl TopN {
     #[must_use]
     pub fn display_string(&self) -> String {
         let entries = self
-            .entries
-            .iter()
-            .map(|entry| format!("({:?}, {})", entry.encoded, entry.count))
+            .resolved_entries()
+            .into_iter()
+            .map(|entry| {
+                let bytes = entry
+                    .encoded
+                    .iter()
+                    .map(u8::to_string)
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                format!("([{bytes}], {})", entry.count)
+            })
             .collect::<Vec<_>>()
             .join(", ");
         format!("TopN{{length: {}, [{}]}}", self.entries.len(), entries)
@@ -644,8 +763,19 @@ impl TopN {
 
     /// Sorts entries using the source bytewise ordering.
     pub fn sort(&mut self) {
-        self.entries
-            .sort_unstable_by(|left, right| left.encoded.cmp(&right.encoded));
+        self.refresh_shared_bytes();
+        let mut paired: Vec<_> = self
+            .entries
+            .drain(..)
+            .zip(self.shared_encoded.drain(..))
+            .collect();
+        go_sort_func_by(&mut paired, |left, right| {
+            left.0.encoded.cmp(&right.0.encoded)
+        });
+        for (entry, shared) in paired {
+            self.entries.push(entry);
+            self.shared_encoded.push(shared);
+        }
     }
 
     /// Returns the sorted entries for metadata inspection.
@@ -654,68 +784,131 @@ impl TopN {
         &self.entries
     }
 
+    /// Returns the currently aliased bytes for one entry.
+    #[must_use]
+    pub fn entry_bytes(&self, index: usize) -> Option<Vec<u8>> {
+        self.entries.get(index).map(|_| self.resolved_bytes(index))
+    }
+
     /// Returns the index of an exact entry, or `None` if absent.
     #[must_use]
     pub fn find(&self, encoded: &[u8]) -> Option<usize> {
-        self.entries
-            .binary_search_by(|entry| entry.encoded.as_slice().cmp(encoded))
-            .ok()
+        find_topn(Some(self), encoded)
     }
 
     /// Returns the exact TopN count, or `None` when the encoded value is not
     /// represented by TopN.
     #[must_use]
     pub fn query_bytes(&self, encoded: &[u8]) -> Option<u64> {
-        self.find(encoded).map(|index| self.entries[index].count)
+        query_topn(Some(self), encoded)
     }
 
     /// Returns the half-open interval count for encoded bytes `[left, right)`.
     #[must_use]
     pub fn between_count(&self, left: &[u8], right: &[u8]) -> u64 {
-        let left_index = self.lower_bound(left);
-        let right_index = self.lower_bound(right);
-        if left_index >= right_index {
-            return 0;
-        }
-        self.entries[left_index..right_index]
-            .iter()
-            .map(|entry| entry.count)
-            .sum()
+        topn_between_count(Some(self), left, right)
     }
 
     /// Returns the first index whose encoded value is not less than `encoded`.
     #[must_use]
     pub fn lower_bound(&self, encoded: &[u8]) -> usize {
-        self.entries
-            .binary_search_by(|entry| entry.encoded.as_slice().cmp(encoded))
-            .unwrap_or_else(|index| index)
+        self.lower_bound_with_match(encoded).0
+    }
+
+    fn lower_bound_with_match(&self, encoded: &[u8]) -> (usize, bool) {
+        let mut left = 0;
+        let mut right = self.entries.len();
+        while left < right {
+            let middle = left + (right - left) / 2;
+            if self.resolved_bytes(middle).as_slice() < encoded {
+                left = middle + 1;
+            } else {
+                right = middle;
+            }
+        }
+        (
+            left,
+            left < self.entries.len() && self.resolved_bytes(left) == encoded,
+        )
     }
 
     /// Returns the sum of all TopN counts.
     #[must_use]
     pub fn total_count(&self) -> u64 {
-        self.entries
-            .iter()
-            .fold(0_u64, |total, entry| total.wrapping_add(entry.count))
+        topn_total_count(Some(self))
     }
 
     /// Returns the smallest TopN count, or zero for an empty list.
     #[must_use]
     pub fn min_count(&self) -> u64 {
-        self.entries
-            .iter()
-            .map(|entry| entry.count)
-            .min()
-            .unwrap_or(0)
+        topn_min_count(Some(self))
+    }
+
+    /// `intest.InTest` validation: mutation after the once-cache initialized
+    /// is a source assertion failure rather than a silently refreshed value.
+    pub fn assert_cached_counts_current(&self) {
+        self.calculate_min_count_and_count(true);
+    }
+
+    fn calculate_min_count_and_count(&self, in_test: bool) -> (u64, u64) {
+        if in_test {
+            // Go calculates the current pair before touching sync.Once. An
+            // empty direct call therefore panics without consuming the once,
+            // and a stale cache reports the minimum mismatch before total.
+            let current = self.calculate_min_count_and_count_internal();
+            let cached = self.once_calculate_min_count_and_count();
+            assert_eq!(
+                current.0, cached.0,
+                "minCount should be equal to the calculated minCount"
+            );
+            assert_eq!(
+                current.1, cached.1,
+                "totalCount should be equal to the calculated totalCount"
+            );
+            return cached;
+        }
+        self.once_calculate_min_count_and_count()
+    }
+
+    fn once_calculate_min_count_and_count(&self) -> (u64, u64) {
+        *self
+            .cached_counts
+            .get_or_init(|| self.calculate_min_count_and_count_internal())
+    }
+
+    fn calculate_min_count_and_count_internal(&self) -> (u64, u64) {
+        // Deliberately index before the loop: the unexported Go helper does
+        // the same, so a direct empty call panics before sync.Once is touched.
+        let mut min_count = self.entries[0].count;
+        let mut total_count = 0_u64;
+        for entry in &self.entries {
+            min_count = min_count.min(entry.count);
+            total_count = total_count.wrapping_add(entry.count);
+        }
+        (min_count, total_count)
     }
 
     /// Returns the source's approximate TopN memory footprint.
     #[must_use]
     pub fn memory_usage(&self) -> u64 {
-        32_u64.saturating_add(self.entries.iter().fold(0_u64, |sum, entry| {
-            sum.saturating_add(32)
-                .saturating_add(entry.encoded.capacity() as u64)
-        }))
+        32_u64.saturating_add(
+            self.entries
+                .iter()
+                .enumerate()
+                .fold(0_u64, |sum, (index, entry)| {
+                    let encoded_capacity = self.shared_encoded[index].as_ref().map_or_else(
+                        || entry.encoded.capacity(),
+                        |shared| {
+                            shared
+                                .read()
+                                .expect("shared TopN bytes lock poisoned")
+                                .capacity()
+                        },
+                    );
+                    sum.saturating_add(32)
+                        .saturating_add(encoded_capacity as u64)
+                }),
+        )
     }
 
     /// Equality follows Go's TopN contract: two empty lists compare equal,
@@ -725,8 +918,194 @@ impl TopN {
         let Some(other) = other else {
             return self.entries.is_empty();
         };
-        self.total_count() == other.total_count() && self.entries == other.entries
+        self.total_count() == other.total_count()
+            && self.resolved_entries() == other.resolved_entries()
     }
+
+    /// Go `DecodedString` with the schema/session-aware `ValueToString`
+    /// dependency supplied by the caller.
+    pub fn decoded_string<E>(
+        &self,
+        mut value_to_string: impl FnMut(&[u8]) -> Result<String, E>,
+    ) -> Result<String, E> {
+        let mut rendered = Vec::with_capacity(self.entries.len());
+        for (index, entry) in self.entries.iter().enumerate() {
+            rendered.push(format!(
+                "({}, {})",
+                value_to_string(&self.resolved_bytes(index))?,
+                entry.count
+            ));
+        }
+        Ok(format!(
+            "TopN{{length: {}, [{}]}}",
+            self.entries.len(),
+            rendered.join(", ")
+        ))
+    }
+
+    fn resolved_bytes(&self, index: usize) -> Vec<u8> {
+        self.shared_encoded[index].as_ref().map_or_else(
+            || self.entries[index].encoded.clone(),
+            |shared| {
+                shared
+                    .read()
+                    .expect("shared TopN bytes lock poisoned")
+                    .clone()
+            },
+        )
+    }
+
+    /// Returns entries after reading every shared `AppendTopN` byte source.
+    #[must_use]
+    pub fn resolved_entries(&self) -> Vec<TopNEntry> {
+        self.entries
+            .iter()
+            .enumerate()
+            .map(|(index, entry)| TopNEntry {
+                encoded: self.resolved_bytes(index),
+                count: entry.count,
+            })
+            .collect()
+    }
+
+    fn refresh_shared_bytes(&mut self) {
+        for (entry, shared) in self.entries.iter_mut().zip(&self.shared_encoded) {
+            if let Some(shared) = shared {
+                entry.encoded = shared
+                    .read()
+                    .expect("shared TopN bytes lock poisoned")
+                    .clone();
+            }
+        }
+    }
+}
+
+/// Go `(*TopN).QueryTopN`, including the nil receiver and its `(0, false)`
+/// result represented as `None`.
+#[must_use]
+pub fn query_topn(topn: Option<&TopN>, encoded: &[u8]) -> Option<u64> {
+    let topn = topn?;
+    let index = find_topn(Some(topn), encoded)?;
+    Some(topn.entries[index].count)
+}
+
+/// Go `(*TopN).FindTopN`, including nil, empty, singleton, boundary, and
+/// lower-bound paths. `None` is the native counterpart of source index `-1`.
+#[must_use]
+pub fn find_topn(topn: Option<&TopN>, encoded: &[u8]) -> Option<usize> {
+    let topn = topn?;
+    if topn.entries.is_empty() {
+        return None;
+    }
+    if topn.entries.len() == 1 {
+        return (topn.resolved_bytes(0) == encoded).then_some(0);
+    }
+
+    let last_index = topn.entries.len() - 1;
+    if topn.resolved_bytes(last_index).as_slice() < encoded {
+        return None;
+    }
+    if topn.resolved_bytes(0).as_slice() > encoded {
+        return None;
+    }
+
+    let (index, matched) = topn.lower_bound_with_match(encoded);
+    matched.then_some(index)
+}
+
+/// Go `(*TopN).LowerBound`, retaining both the insertion index and match bit.
+/// A nil receiver returns `(0, false)`.
+#[must_use]
+pub fn topn_lower_bound(topn: Option<&TopN>, encoded: &[u8]) -> (usize, bool) {
+    topn.map_or((0, false), |topn| topn.lower_bound_with_match(encoded))
+}
+
+/// Go `(*TopN).BetweenCount` for the half-open interval `[left, right)`,
+/// including nil receivers and unsigned wrapping addition.
+#[must_use]
+pub fn topn_between_count(topn: Option<&TopN>, left: &[u8], right: &[u8]) -> u64 {
+    let Some(topn) = topn else {
+        return 0;
+    };
+    let (left_index, _) = topn.lower_bound_with_match(left);
+    let (right_index, _) = topn.lower_bound_with_match(right);
+    let mut total = 0_u64;
+    for index in left_index..right_index {
+        total = total.wrapping_add(topn.entries[index].count);
+    }
+    total
+}
+
+/// Go `(*TopN).TotalCount`, including nil and empty receivers. The first
+/// nonempty call initializes the source-compatible once-cache.
+#[must_use]
+pub fn topn_total_count(topn: Option<&TopN>) -> u64 {
+    let Some(topn) = topn else {
+        return 0;
+    };
+    if topn.entries.is_empty() {
+        return 0;
+    }
+    topn.calculate_min_count_and_count(false).1
+}
+
+/// Go `(*TopN).MinCount`, including nil and empty receivers. The first
+/// nonempty call shares the same once-cache as [`topn_total_count`].
+#[must_use]
+pub fn topn_min_count(topn: Option<&TopN>) -> u64 {
+    let Some(topn) = topn else {
+        return 0;
+    };
+    if topn.entries.is_empty() {
+        return 0;
+    }
+    topn.calculate_min_count_and_count(false).0
+}
+
+/// Go `(*TopN).String`, including the nil receiver result.
+#[must_use]
+pub fn topn_display_string(topn: Option<&TopN>) -> String {
+    topn.map_or_else(|| "EmptyTopN".to_owned(), TopN::display_string)
+}
+
+/// Go `(*TopN).DecodedString`, including its nil receiver result.
+pub fn topn_decoded_string<E>(
+    topn: Option<&TopN>,
+    value_to_string: impl FnMut(&[u8]) -> Result<String, E>,
+) -> Result<String, E> {
+    match topn {
+        Some(topn) => topn.decoded_string(value_to_string),
+        None => Ok(String::new()),
+    }
+}
+
+/// Go `QueryValue` with statement-context encoding/error policy supplied by
+/// the caller. TopN is queried before the CMS pointer is dereferenced.
+pub fn query_value_with_encoder<E>(
+    cms: Option<&CmsSketch>,
+    topn: Option<&TopN>,
+    value: &Datum,
+    encode_value: impl FnOnce(&Datum) -> Result<Vec<u8>, E>,
+) -> Result<u64, E> {
+    let encoded = encode_value(value)?;
+    if let Some(count) = topn.and_then(|topn| topn.query_bytes(&encoded)) {
+        return Ok(count);
+    }
+    Ok(cms
+        .expect("QueryValue CMSketch is nil after a TopN miss")
+        .query_bytes(&encoded))
+}
+
+/// Native typed Go `QueryValue` using the requested session time zone.
+pub fn query_value<TZ: chrono::TimeZone>(
+    cms: Option<&CmsSketch>,
+    topn: Option<&TopN>,
+    value: &Datum,
+    timezone: &TZ,
+) -> Result<u64, tidb_codec::CodecError> {
+    query_value_with_encoder(cms, topn, value, |value| {
+        tidb_codec::encode_value_in_timezone(timezone, std::slice::from_ref(value))
+    })
 }
 
 /// Orders TopN metadata by count descending and encoded bytes ascending.
@@ -740,7 +1119,7 @@ pub fn topn_meta_compare(left: &TopNEntry, right: &TopNEntry) -> Ordering {
 
 /// Sorts ranking metadata in the source order.
 pub fn sort_topn_meta(entries: &mut [TopNEntry]) {
-    entries.sort_unstable_by(topn_meta_compare);
+    go_sort_func_by(entries, topn_meta_compare);
 }
 
 /// Splits ranked metadata into a byte-sorted TopN and ranked remainder.
@@ -782,7 +1161,7 @@ pub fn merge_topn(topns: &[Option<&TopN>], n: u32) -> (Option<TopN>, Vec<TopNEnt
         if topn.total_count() == 0 {
             continue;
         }
-        for entry in topn.entries() {
+        for entry in topn.resolved_entries() {
             let count = counts.entry(entry.encoded.clone()).or_default();
             *count = count.wrapping_add(entry.count);
         }
@@ -864,10 +1243,13 @@ pub fn encode_cmsketch_without_topn(
     Ok(Some(encode_cmsketch_proto(sketch, None)))
 }
 
-/// Encodes a CMSketch and its embedded TopN entries using the full tipb
-/// message layout.  This is the in-memory counterpart of Go's
-/// `CMSketchToProto`; callers that persist TopN in a separate column should
-/// continue using [`encode_cmsketch_without_topn`].
+/// Encodes a CMSketch and its embedded TopN entries using the full tipb wire
+/// layout.
+///
+/// This wire-only convenience does not replace Go `CMSketchToProto`'s mutable
+/// returned graph or its independently mutable, aliased TopN slice headers.
+/// Callers that persist TopN in a separate column should continue using
+/// [`encode_cmsketch_without_topn`].
 pub fn encode_cmsketch_and_topn(
     sketch: Option<&CmsSketch>,
     topn: Option<&TopN>,
@@ -895,7 +1277,7 @@ fn encode_cmsketch_proto(sketch: &CmsSketch, topn: Option<&TopN>) -> Vec<u8> {
         encode_message_field(1, &encoded_row, &mut output);
     }
     if let Some(topn) = topn {
-        for entry in topn.entries() {
+        for entry in topn.resolved_entries() {
             let mut encoded_entry = Vec::new();
             encoded_entry.push(0x0a); // CMSketchTopN.data = 1, bytes.
             encode_varint(entry.encoded.len() as u64, &mut encoded_entry);
@@ -913,7 +1295,7 @@ fn encode_cmsketch_proto(sketch: &CmsSketch, topn: Option<&TopN>) -> Vec<u8> {
 fn encode_cmsketch_proto_without_sketch(topn: Option<&TopN>) -> Vec<u8> {
     let mut output = Vec::new();
     if let Some(topn) = topn {
-        for entry in topn.entries() {
+        for entry in topn.resolved_entries() {
             let mut encoded_entry = Vec::new();
             encoded_entry.push(0x0a);
             encode_varint(entry.encoded.len() as u64, &mut encoded_entry);
@@ -930,13 +1312,13 @@ fn encode_cmsketch_proto_without_sketch(topn: Option<&TopN>) -> Vec<u8> {
 
 fn read_varint(input: &[u8], cursor: &mut usize) -> Result<u64, CodecError> {
     let mut value = 0_u64;
+    // Generated gogoprotobuf checks for shift >= 64 only before each byte.
+    // It therefore accepts any terminal tenth byte and lets the u64 shift
+    // discard high bits; a continued tenth byte overflows on the next loop.
     for shift in (0..70).step_by(7) {
         let byte = *input.get(*cursor).ok_or(CodecError::UnexpectedEof)?;
         *cursor += 1;
-        if shift >= 64 && byte & 0x7f != 0 {
-            return Err(CodecError::VarintOverflow);
-        }
-        value |= u64::from(byte & 0x7f) << shift.min(63);
+        value |= u64::from(byte & 0x7f) << shift;
         if byte & 0x80 == 0 {
             return Ok(value);
         }
@@ -955,33 +1337,57 @@ fn read_bytes<'a>(input: &'a [u8], cursor: &mut usize) -> Result<&'a [u8], Codec
     Ok(bytes)
 }
 
-fn skip_field(input: &[u8], cursor: &mut usize, wire: u8) -> Result<(), CodecError> {
-    match wire {
-        0 => {
-            read_varint(input, cursor)?;
-            Ok(())
-        }
-        1 => {
-            *cursor = cursor.checked_add(8).ok_or(CodecError::UnexpectedEof)?;
-            if *cursor > input.len() {
-                Err(CodecError::UnexpectedEof)
-            } else {
-                Ok(())
+fn read_tag(input: &[u8], cursor: &mut usize) -> Result<(i32, u8), CodecError> {
+    let tag = read_varint(input, cursor)?;
+    // The generated gogoprotobuf decoder converts the decoded field number to
+    // int32 before rejecting non-positive tags.
+    let field = (tag >> 3) as i32;
+    let wire = (tag & 7) as u8;
+    if field <= 0 {
+        return Err(CodecError::InvalidWireType(wire));
+    }
+    Ok((field, wire))
+}
+
+fn skip_field(input: &[u8], cursor: &mut usize, mut wire: u8) -> Result<(), CodecError> {
+    // This intentionally mirrors generated skipAnalyze: groups are balanced
+    // only by depth. The generated code neither compares the closing field
+    // number with the opener nor validates nested field numbers while it is
+    // skipping an unknown group.
+    let mut depth = 0_u32;
+    loop {
+        match wire {
+            0 => {
+                read_varint(input, cursor)?;
             }
-        }
-        2 => {
-            read_bytes(input, cursor)?;
-            Ok(())
-        }
-        5 => {
-            *cursor = cursor.checked_add(4).ok_or(CodecError::UnexpectedEof)?;
-            if *cursor > input.len() {
-                Err(CodecError::UnexpectedEof)
-            } else {
-                Ok(())
+            1 => {
+                *cursor = cursor.checked_add(8).ok_or(CodecError::UnexpectedEof)?;
+                if *cursor > input.len() {
+                    return Err(CodecError::UnexpectedEof);
+                }
             }
+            2 => {
+                read_bytes(input, cursor)?;
+            }
+            3 => depth += 1,
+            4 => {
+                if depth == 0 {
+                    return Err(CodecError::InvalidWireType(wire));
+                }
+                depth -= 1;
+            }
+            5 => {
+                *cursor = cursor.checked_add(4).ok_or(CodecError::UnexpectedEof)?;
+                if *cursor > input.len() {
+                    return Err(CodecError::UnexpectedEof);
+                }
+            }
+            wire => return Err(CodecError::InvalidWireType(wire)),
         }
-        wire => Err(CodecError::InvalidWireType(wire)),
+        if depth == 0 {
+            return Ok(());
+        }
+        wire = (read_varint(input, cursor)? & 7) as u8;
     }
 }
 
@@ -989,12 +1395,10 @@ fn decode_row(input: &[u8]) -> Result<Vec<u32>, CodecError> {
     let mut counters = Vec::new();
     let mut cursor = 0;
     while cursor < input.len() {
-        let tag = read_varint(input, &mut cursor)?;
-        let field = (tag >> 3) as u32;
-        let wire = (tag & 7) as u8;
-        match (field, wire) {
-            (1, 0) => counters.push(read_varint(input, &mut cursor)? as u32),
-            (1, 2) => {
+        let (field, wire) = read_tag(input, &mut cursor)?;
+        match field {
+            1 if wire == 0 => counters.push(read_varint(input, &mut cursor)? as u32),
+            1 if wire == 2 => {
                 // Although the generated tipb marshaler currently emits one
                 // unpacked varint per counter, protobuf permits packed
                 // repeated scalars and the authoritative Go unmarshaler
@@ -1005,6 +1409,7 @@ fn decode_row(input: &[u8]) -> Result<Vec<u32>, CodecError> {
                     counters.push(read_varint(packed, &mut packed_cursor)? as u32);
                 }
             }
+            1 => return Err(CodecError::InvalidWireType(wire)),
             _ => skip_field(input, &mut cursor, wire)?,
         }
     }
@@ -1016,12 +1421,12 @@ fn decode_topn_entry(input: &[u8]) -> Result<TopNEntry, CodecError> {
     let mut count = 0_u64;
     let mut cursor = 0;
     while cursor < input.len() {
-        let tag = read_varint(input, &mut cursor)?;
-        let field = (tag >> 3) as u32;
-        let wire = (tag & 7) as u8;
-        match (field, wire) {
-            (1, 2) => encoded = read_bytes(input, &mut cursor)?.to_vec(),
-            (2, 0) => count = read_varint(input, &mut cursor)?,
+        let (field, wire) = read_tag(input, &mut cursor)?;
+        match field {
+            1 if wire == 2 => encoded = read_bytes(input, &mut cursor)?.to_vec(),
+            1 => return Err(CodecError::InvalidWireType(wire)),
+            2 if wire == 0 => count = read_varint(input, &mut cursor)?,
+            2 => return Err(CodecError::InvalidWireType(wire)),
             _ => skip_field(input, &mut cursor, wire)?,
         }
     }
@@ -1036,13 +1441,14 @@ fn decode_proto(input: &[u8]) -> Result<DecodedSketch, CodecError> {
     let mut default_value = 0_u64;
     let mut cursor = 0;
     while cursor < input.len() {
-        let tag = read_varint(input, &mut cursor)?;
-        let field = (tag >> 3) as u32;
-        let wire = (tag & 7) as u8;
-        match (field, wire) {
-            (1, 2) => rows.push(decode_row(read_bytes(input, &mut cursor)?)?),
-            (2, 2) => topn.push(decode_topn_entry(read_bytes(input, &mut cursor)?)?),
-            (3, 0) => default_value = read_varint(input, &mut cursor)?,
+        let (field, wire) = read_tag(input, &mut cursor)?;
+        match field {
+            1 if wire == 2 => rows.push(decode_row(read_bytes(input, &mut cursor)?)?),
+            1 => return Err(CodecError::InvalidWireType(wire)),
+            2 if wire == 2 => topn.push(decode_topn_entry(read_bytes(input, &mut cursor)?)?),
+            2 => return Err(CodecError::InvalidWireType(wire)),
+            3 if wire == 0 => default_value = read_varint(input, &mut cursor)?,
+            3 => return Err(CodecError::InvalidWireType(wire)),
             _ => skip_field(input, &mut cursor, wire)?,
         }
     }
@@ -1060,14 +1466,14 @@ fn sketch_from_rows(
     let width = first.len() as u32;
     let mut sketch =
         CmsSketch::try_new(depth, width).map_err(|_| CodecError::InconsistentRowShape)?;
-    for row in &rows {
-        if row.len() > first.len() {
-            return Err(CodecError::InconsistentRowShape);
-        }
-    }
     for (row_index, row) in rows.iter().enumerate() {
         let start = row_index * first.len();
-        sketch.counters[start..start + row.len()].copy_from_slice(row);
+        for (column_index, counter) in row.iter().enumerate() {
+            // The generated Go converter allocates every row to the first
+            // row's width, then indexes it with every later counter. A longer
+            // later row therefore panics; a shorter one leaves zeroes.
+            sketch.counters[start + column_index] = *counter;
+        }
         // Go resets count once per row and leaves the sum of the final row.
         sketch.count = row
             .iter()
@@ -1075,6 +1481,60 @@ fn sketch_from_rows(
     }
     sketch.default_value = default_value;
     Ok(Some(sketch))
+}
+
+/// Go `CMSketchAndTopNFromProto` at its nullable in-memory message boundary.
+///
+/// TopN conversion deliberately precedes the empty-row check and row pointer
+/// dereferences. It deep-copies every data slice, normalizes nil data to an
+/// allocated empty value, and uses Go 1.25.10 `slices.SortFunc` ordering.
+/// The first row fixes width; shorter rows zero-fill, a longer row panics, and
+/// total count is reset to the sum of each row in turn.
+#[must_use]
+pub fn cmsketch_and_topn_from_proto(
+    proto: Option<&CmsSketchProto>,
+) -> (Option<CmsSketch>, Option<TopN>) {
+    let Some(proto) = proto else {
+        return (None, None);
+    };
+
+    let proto_topn = proto.top_n.as_deref().unwrap_or_default();
+    let topn = if proto_topn.is_empty() {
+        None
+    } else {
+        let mut topn = TopN::new(proto_topn.len());
+        for entry in proto_topn {
+            let entry = entry.as_ref().expect("nil CMSketchTopN message");
+            topn.append(entry.data.as_deref().unwrap_or_default(), entry.count);
+        }
+        topn.sort();
+        Some(topn)
+    };
+
+    let proto_rows = proto.rows.as_deref().unwrap_or_default();
+    if proto_rows.is_empty() {
+        return (None, topn);
+    }
+    let first = proto_rows[0].as_ref().expect("nil CMSketchRow message");
+    let width = first.counters.as_deref().unwrap_or_default().len() as u32;
+    let mut sketch = CmsSketch::try_new(proto_rows.len() as u32, width)
+        .expect("CMSketch protobuf dimensions exceed addressable memory");
+    for (row_index, row) in proto_rows.iter().enumerate() {
+        sketch.count = 0;
+        let row = row.as_ref().expect("nil CMSketchRow message");
+        for (column_index, &counter) in row
+            .counters
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .enumerate()
+        {
+            sketch.counters[row_index * width as usize + column_index] = counter;
+            sketch.count = sketch.count.wrapping_add(u64::from(counter));
+        }
+    }
+    sketch.default_value = proto.default_value;
+    (Some(sketch), topn)
 }
 
 /// Decodes a CMSketch snapshot. Empty input is the Go `nil` result.
@@ -1088,9 +1548,10 @@ pub fn decode_cmsketch(data: &[u8]) -> Result<Option<CmsSketch>, CodecError> {
 
 /// Decodes the complete tipb CMSketch message, including embedded TopN.
 ///
-/// This mirrors Go's `CMSketchAndTopNFromProto`; the persistence-oriented
-/// [`decode_cmsketch_and_topn`] below continues loading TopN from separate
-/// storage rows.
+/// This wire adapter validates the entire message before reconstructing its
+/// objects. Use [`cmsketch_and_topn_from_proto`] for the exact nullable native
+/// conversion boundary. The persistence-oriented [`decode_cmsketch_and_topn`]
+/// below continues loading TopN from separate storage rows.
 pub fn decode_cmsketch_and_embedded_topn(
     data: &[u8],
 ) -> Result<(Option<CmsSketch>, Option<TopN>), CodecError> {

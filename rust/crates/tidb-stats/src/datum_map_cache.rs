@@ -21,8 +21,8 @@
 use std::collections::HashMap;
 
 use chrono::TimeZone;
-use tidb_codec::{decode_one, decode_one_typed_in_timezone, CodecError};
-use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+use tidb_codec::{decode_as_datetime, decode_as_float32, decode_one, CodecError};
+use tidb_datatype::{Datum, FieldTypeCode, TimeType};
 
 /// Caches decoded Datum values by their immutable encoded TopN bytes.
 #[derive(Clone, Debug, Default)]
@@ -60,16 +60,7 @@ impl DatumMapCache {
         is_index: bool,
         timezone: Option<&TZ>,
     ) -> Result<Datum, CodecError> {
-        let datum = if is_index {
-            Datum::Bytes(encoded_value.to_vec())
-        } else {
-            let code = FieldTypeCode::from_mysql_type(mysql_type);
-            if code.is_type_time() || code.is_type_float() {
-                decode_one_typed_in_timezone(encoded_value, &FieldType::new(code), timezone)?.1
-            } else {
-                decode_one(encoded_value)?.1
-            }
-        };
+        let datum = top_n_meta_to_datum(encoded_value, mysql_type, is_index, timezone)?;
         Ok(self.put(cache_key, datum))
     }
 
@@ -84,4 +75,28 @@ impl DatumMapCache {
     pub fn is_empty(&self) -> bool {
         self.datum_map.is_empty()
     }
+}
+
+fn top_n_meta_to_datum<TZ: TimeZone>(
+    encoded_value: &[u8],
+    mysql_type: u8,
+    is_index: bool,
+    timezone: Option<&TZ>,
+) -> Result<Datum, CodecError> {
+    if is_index {
+        return Ok(Datum::Bytes(encoded_value.to_vec()));
+    }
+
+    let datum = match FieldTypeCode::from_mysql_type(mysql_type) {
+        FieldTypeCode::Date => decode_as_datetime(encoded_value, TimeType::Date, timezone)?.1,
+        FieldTypeCode::Datetime => {
+            decode_as_datetime(encoded_value, TimeType::DateTime, timezone)?.1
+        }
+        FieldTypeCode::Timestamp => {
+            decode_as_datetime(encoded_value, TimeType::Timestamp, timezone)?.1
+        }
+        FieldTypeCode::Float => decode_as_float32(encoded_value)?.1,
+        _ => decode_one(encoded_value)?.1,
+    };
+    Ok(datum)
 }

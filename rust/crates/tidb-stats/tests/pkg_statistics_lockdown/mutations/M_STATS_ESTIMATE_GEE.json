@@ -1,0 +1,1 @@
+{"mutation_id":"M_STATS_ESTIMATE_GEE","replacements":[{"expected_count":1,"new":"let ndv = estimate as u64;","old":"let ndv = (estimate + 0.5) as u64;"}],"rust_path":"rust/crates/tidb-stats/src/estimate.rs","schema":"go-package-lockdown-mutation-operator-v1","source_sha256":"fa3812441a1008f786c844f755fea18b8d65009de97904e34964aa91d799b5c7"}

@@ -65,6 +65,7 @@
 //! caller's, exactly as it is `analyze_col_sampling.go`'s.
 
 use tidb_datatype::Datum;
+use tidb_txnkv::Handle;
 use tidb_util::fastrand;
 
 use crate::cmsketch::hash_bytes;
@@ -114,6 +115,35 @@ pub enum SamplePolicy {
         /// Go `SampleRate`, in `[0, 1]`.
         sample_rate: f64,
     },
+}
+
+/// The only randomness Go's row samplers consume.
+///
+/// `RowSampleBuilder.Rng` is caller-owned, so deterministic/distributed
+/// callers must be able to provide the same `math/rand.Rand.Int63` stream.
+/// The default [`float64`](Self::float64) is Go's exact `Rand.Float64`
+/// construction, including its retry when the conversion rounds to `1.0`.
+pub trait RowSampleRng {
+    /// Returns one non-negative 63-bit word, as Go `Rand.Int63` does.
+    fn int63(&mut self) -> i64;
+
+    /// Returns Go `Rand.Float64` from this source's `Int63` stream.
+    fn float64(&mut self) -> f64 {
+        loop {
+            let value = self.int63() as f64 / (1_u64 << 63) as f64;
+            if value != 1.0 {
+                return value;
+            }
+        }
+    }
+}
+
+struct GlobalRowSampleRng;
+
+impl RowSampleRng for GlobalRowSampleRng {
+    fn int63(&mut self) -> i64 {
+        fastrand::uint64_n(1 << 63) as i64
+    }
 }
 
 impl SamplePolicy {
@@ -229,12 +259,10 @@ pub struct SlotStats {
 pub struct SampledRow {
     /// The analyzed columns' values, in the caller's column order.
     pub columns: Vec<Datum>,
-    /// The row's position among the kept rows, in physical scan order.
-    ///
-    /// Go's `SampleItem.Ordinal` is the row's index in the collector's own
-    /// sample slice, which is what `calcCorrelation` needs: it correlates
-    /// against `0..sample_num`, not against the table's row IDs.
-    pub ordinal: i64,
+    /// The executor-built row handle used to restore physical row order.
+    pub handle: Handle,
+    /// The row's position after the executor sorts samples by KV handle.
+    pub ordinal: isize,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -248,7 +276,9 @@ pub struct RowSampleCollectorProto {
     pub samples: Vec<RowSampleProto>,
     pub null_counts: Vec<i64>,
     pub count: i64,
-    pub fm_sketches: Vec<FmSketchProto>,
+    /// Go protobuf uses `[]*tipb.FMSketch`, so an individual repeated entry
+    /// can be nil even though generated wire decoding normally creates it.
+    pub fm_sketches: Vec<Option<FmSketchProto>>,
     pub total_sizes: Vec<i64>,
 }
 
@@ -261,17 +291,22 @@ pub struct RowSampleCollector {
     policy: SamplePolicy,
     /// Rows scanned, sampled or not.
     count: i64,
-    slots: Vec<SlotStats>,
-    sketches: Vec<FmSketch>,
+    // These are deliberately independent vectors. Go `FromProto` assigns
+    // each repeated protobuf field without requiring the lengths to match.
+    null_counts: Vec<i64>,
+    total_sizes: Vec<i64>,
+    sketches: Vec<Option<FmSketch>>,
     /// The reservoir's min-heap on weight. The Bernoulli policy leaves every
     /// weight at zero and never evicts, exactly as Go's does.
-    samples: Vec<(i64, Vec<Datum>, i64)>,
-    scanned_ordinal: i64,
+    samples: Vec<(i64, Vec<Datum>)>,
     /// The bound the kept rows are held to, and what they have consumed of
     /// it. Go tracks the same quantity -- the sample items' datums and their
     /// payloads -- through `GlobalAnalyzeMemoryTracker`.
     quota: SampleMemoryQuota,
     consumed_bytes: u64,
+    /// Go `baseCollector.MemSize`, maintained by protobuf restoration and
+    /// collector merge independently of the external quota tracker.
+    go_mem_size: i64,
 }
 
 impl RowSampleCollector {
@@ -288,17 +323,29 @@ impl RowSampleCollector {
         policy: SamplePolicy,
         quota: SampleMemoryQuota,
     ) -> Self {
+        Self::with_memory_quota_and_fm_sketch_size(slot_count, policy, quota, MAX_SKETCH_SIZE)
+    }
+
+    /// Creates a collector with Go `RowSampleBuilder.MaxFMSketchSize`.
+    #[must_use]
+    pub fn with_memory_quota_and_fm_sketch_size(
+        slot_count: usize,
+        policy: SamplePolicy,
+        quota: SampleMemoryQuota,
+        max_fm_sketch_size: usize,
+    ) -> Self {
         Self {
             policy,
             count: 0,
-            slots: vec![SlotStats::default(); slot_count],
+            null_counts: vec![0; slot_count],
+            total_sizes: vec![0; slot_count],
             sketches: (0..slot_count)
-                .map(|_| FmSketch::new(MAX_SKETCH_SIZE))
+                .map(|_| Some(FmSketch::new(max_fm_sketch_size)))
                 .collect(),
             samples: Vec::new(),
-            scanned_ordinal: 0,
             quota,
             consumed_bytes: 0,
+            go_mem_size: 0,
         }
     }
 
@@ -306,6 +353,15 @@ impl RowSampleCollector {
     #[must_use]
     pub const fn count(&self) -> i64 {
         self.count
+    }
+
+    /// The configured Go `MaxFMSketchSize` for each present slot sketch.
+    #[must_use]
+    pub fn fm_sketch_max_sizes(&self) -> Vec<Option<usize>> {
+        self.sketches
+            .iter()
+            .map(|sketch| sketch.as_ref().map(FmSketch::max_size))
+            .collect()
     }
 
     /// Offers one scanned row.
@@ -324,104 +380,101 @@ impl RowSampleCollector {
     /// would silently stop counting the slots it omits, which is a wrong
     /// answer rather than an error.
     pub fn collect(&mut self, row: &ScannedRow<'_>) -> Result<(), SampleMemoryExceeded> {
+        let mut rng = GlobalRowSampleRng;
+        self.collect_with_rng(row, &mut rng)
+    }
+
+    /// Offers one row using the caller-owned Go-compatible random stream.
+    pub fn collect_with_rng(
+        &mut self,
+        row: &ScannedRow<'_>,
+        rng: &mut impl RowSampleRng,
+    ) -> Result<(), SampleMemoryExceeded> {
         assert_eq!(
             row.slots.len(),
-            self.slots.len(),
+            self.null_counts.len(),
             "a scanned row must carry one value per collector slot"
         );
         self.count = self.count.wrapping_add(1);
         for (position, value) in row.slots.iter().enumerate() {
             if value.is_null {
-                self.slots[position].null_count = self.slots[position].null_count.wrapping_add(1);
+                self.null_counts[position] = self.null_counts[position].wrapping_add(1);
                 continue;
             }
-            self.slots[position].total_size =
-                self.slots[position].total_size.wrapping_add(value.size);
+            self.total_sizes[position] = self.total_sizes[position].wrapping_add(value.size);
             // Go's `FMSketch.InsertValue` hashes `codec.EncodeValue` with
             // murmur3's 64-bit sum, which is the first lane of its 128-bit
             // one.
-            self.sketches[position].insert_hash(hash_bytes(value.encoded_value).h1);
+            self.sketches[position]
+                .as_mut()
+                .expect("RowSampleBuilder installs one FM sketch per slot")
+                .insert_hash(hash_bytes(value.encoded_value).h1);
         }
-        let ordinal = self.scanned_ordinal;
-        self.scanned_ordinal = self.scanned_ordinal.wrapping_add(1);
-        self.sample_row(row.columns, ordinal)
+        self.sample_row(row.columns, rng)
     }
 
     /// Go `MergeCollector` for both reservoir and Bernoulli collectors.
     /// Whole-scan facts merge independently of which rows survive sampling.
-    pub fn merge(&mut self, mut other: Self) -> Result<(), SampleMemoryExceeded> {
-        assert_eq!(
-            self.slots.len(),
-            other.slots.len(),
-            "collector slot count differs"
-        );
+    pub fn merge(&mut self, mut other: Self) {
         self.count = self.count.wrapping_add(other.count);
-        self.scanned_ordinal = self.scanned_ordinal.wrapping_add(other.scanned_ordinal);
-        for ((slot, sketch), (other_slot, other_sketch)) in self
-            .slots
-            .iter_mut()
-            .zip(&mut self.sketches)
-            .zip(other.slots.iter().zip(&other.sketches))
-        {
-            slot.null_count = slot.null_count.wrapping_add(other_slot.null_count);
-            slot.total_size = slot.total_size.wrapping_add(other_slot.total_size);
-            sketch.merge(other_sketch);
+        for (position, other_sketch) in other.sketches.iter().enumerate() {
+            // Go indexes the destination with every source position: shorter
+            // source arrays are valid prefixes; a longer source panics.
+            if let (Some(sketch), Some(other_sketch)) = (&mut self.sketches[position], other_sketch)
+            {
+                sketch.merge(other_sketch);
+            }
+        }
+        for (position, other_null_count) in other.null_counts.iter().enumerate() {
+            self.null_counts[position] = self.null_counts[position].wrapping_add(*other_null_count);
+        }
+        for (position, other_total_size) in other.total_sizes.iter().enumerate() {
+            self.total_sizes[position] = self.total_sizes[position].wrapping_add(*other_total_size);
         }
 
-        match (self.policy, other.policy) {
-            (
-                SamplePolicy::Reservoir { max_sample_size },
-                SamplePolicy::Reservoir {
-                    max_sample_size: other_size,
-                },
-            ) => {
-                assert_eq!(max_sample_size, other_size, "reservoir sizes differ");
-                for (weight, columns, ordinal) in other.samples.drain(..) {
-                    if max_sample_size == 0 {
-                        continue;
-                    }
+        // The dynamic Go interface dispatches on the destination receiver.
+        // The source collector's policy/rate/capacity is never inspected.
+        match self.policy {
+            SamplePolicy::Reservoir { max_sample_size } => {
+                let old_sample_count = self.samples.len() as i64;
+                let source_sample_count = other.samples.len() as i64;
+                for (weight, columns) in other.samples.drain(..) {
                     if self.samples.len() < max_sample_size {
-                        self.charge(&columns)?;
-                        self.samples.push((weight, columns, ordinal));
+                        self.samples.push((weight, columns));
                         if self.samples.len() == max_sample_size {
                             self.heapify();
                         }
                     } else if self.samples[0].0 < weight {
-                        self.samples[0] = (weight, columns, ordinal);
+                        self.samples[0] = (weight, columns);
                         self.sift_down(0);
                     }
                 }
+                let total_sample_count = old_sample_count.wrapping_add(source_sample_count);
+                self.go_mem_size = if total_sample_count == 0 {
+                    0
+                } else {
+                    self.go_mem_size
+                        .wrapping_add(other.go_mem_size)
+                        .wrapping_mul(self.samples.len() as i64)
+                        / total_sample_count
+                };
             }
-            (
-                SamplePolicy::Bernoulli { sample_rate },
-                SamplePolicy::Bernoulli {
-                    sample_rate: other_rate,
-                },
-            ) => {
-                assert_eq!(sample_rate, other_rate, "sample rates differ");
-                for (_, columns, ordinal) in other.samples.drain(..) {
-                    self.charge(&columns)?;
-                    self.samples.push((0, columns, ordinal));
+            SamplePolicy::Bernoulli { .. } => {
+                for (weight, columns) in other.samples.drain(..) {
+                    self.samples.push((weight, columns));
                 }
+                self.go_mem_size = self.go_mem_size.wrapping_add(other.go_mem_size);
             }
-            _ => panic!("cannot merge different row-sampling policies"),
         }
-        Ok(())
+        self.consumed_bytes = u64::try_from(self.go_mem_size).unwrap_or_default();
     }
 
-    /// Go `DestroyAndPutToPool`: eagerly releases every retained row and
-    /// resets all whole-scan facts.
+    /// Go `DestroyAndPutToPool`: release only the FM-sketch slice.
+    ///
+    /// Despite its name, the source deliberately leaves rows, counts, sizes,
+    /// memory accounting, and sampling configuration untouched.
     pub fn destroy(&mut self) {
-        self.count = 0;
-        self.scanned_ordinal = 0;
-        self.consumed_bytes = 0;
-        self.samples.clear();
-        for slot in &mut self.slots {
-            *slot = SlotStats::default();
-        }
-        for sketch in &mut self.sketches {
-            *sketch = FmSketch::new(MAX_SKETCH_SIZE);
-        }
+        self.sketches.clear();
     }
 
     /// Go `baseCollector.ToProto` and `RowSamplesToProto`.
@@ -431,62 +484,38 @@ impl RowSampleCollector {
             samples: self
                 .samples
                 .iter()
-                .map(|(weight, columns, _)| RowSampleProto {
+                .map(|(weight, columns)| RowSampleProto {
                     row: columns.iter().map(sample_column_bytes).collect(),
                     weight: *weight,
                 })
                 .collect(),
-            null_counts: self.slots.iter().map(|slot| slot.null_count).collect(),
+            null_counts: self.null_counts.clone(),
             count: self.count,
             fm_sketches: self
                 .sketches
                 .iter()
-                .map(|sketch| fm_sketch_to_proto(Some(sketch)))
+                // `FMSketchToProto(nil)` returns a non-nil empty message.
+                .map(|sketch| Some(fm_sketch_to_proto(sketch.as_ref())))
                 .collect(),
-            total_sizes: self.slots.iter().map(|slot| slot.total_size).collect(),
+            total_sizes: self.total_sizes.clone(),
         }
     }
 
-    /// Go `baseCollector.FromProto`. Valid TiDB protobufs carry matching
-    /// null-count, total-size, and FM-sketch slot counts.
+    /// Go `baseCollector.FromProto`, including independent repeated fields.
     pub fn from_proto(
         proto: &RowSampleCollectorProto,
         policy: SamplePolicy,
         quota: SampleMemoryQuota,
     ) -> Result<Self, SampleMemoryExceeded> {
-        assert_eq!(
-            proto.null_counts.len(),
-            proto.total_sizes.len(),
-            "row-sample protobuf slot counts differ"
-        );
-        assert_eq!(
-            proto.null_counts.len(),
-            proto.fm_sketches.len(),
-            "row-sample protobuf sketch counts differ"
-        );
         let sketches: Vec<_> = proto
             .fm_sketches
             .iter()
-            .map(|sketch| {
-                fm_sketch_from_proto(Some(sketch)).expect("present FM protobuf returned nil")
-            })
-            .collect();
-        let slots = proto
-            .null_counts
-            .iter()
-            .zip(&proto.total_sizes)
-            .zip(&sketches)
-            .map(|((null_count, total_size), sketch)| SlotStats {
-                null_count: *null_count,
-                total_size: *total_size,
-                ndv: sketch.ndv(),
-            })
+            .map(|sketch| fm_sketch_from_proto(sketch.as_ref()))
             .collect();
         let samples = proto
             .samples
             .iter()
-            .enumerate()
-            .map(|(ordinal, sample)| {
+            .map(|sample| {
                 (
                     sample.weight,
                     sample
@@ -494,7 +523,6 @@ impl RowSampleCollector {
                         .iter()
                         .map(|column| Datum::Bytes(column.clone()))
                         .collect(),
-                    ordinal as i64,
                 )
             })
             .collect();
@@ -508,18 +536,25 @@ impl RowSampleCollector {
         Ok(Self {
             policy,
             count: proto.count,
-            slots,
+            null_counts: proto.null_counts.clone(),
+            total_sizes: proto.total_sizes.clone(),
             sketches,
             samples,
-            scanned_ordinal: proto.samples.len() as i64,
             quota,
             consumed_bytes: memory_size as u64,
+            go_mem_size: memory_size,
         })
     }
 
     #[must_use]
     pub const fn consumed_memory_bytes(&self) -> u64 {
         self.consumed_bytes
+    }
+
+    /// Go `baseCollector.MemSize` after protobuf restoration/merge.
+    #[must_use]
+    pub const fn go_mem_size(&self) -> i64 {
+        self.go_mem_size
     }
 
     /// The bytes one kept row costs.
@@ -552,23 +587,28 @@ impl RowSampleCollector {
         Ok(())
     }
 
-    fn sample_row(&mut self, columns: &[Datum], ordinal: i64) -> Result<(), SampleMemoryExceeded> {
+    fn sample_row(
+        &mut self,
+        columns: &[Datum],
+        rng: &mut impl RowSampleRng,
+    ) -> Result<(), SampleMemoryExceeded> {
         match self.policy {
             SamplePolicy::Bernoulli { sample_rate } => {
-                if random_float64() > sample_rate {
+                if rng.float64() > sample_rate {
                     return Ok(());
                 }
                 self.charge(columns)?;
-                self.samples.push((0, columns.to_vec(), ordinal));
+                self.samples.push((0, columns.to_vec()));
             }
             SamplePolicy::Reservoir { max_sample_size } => {
-                if max_sample_size == 0 {
-                    return Ok(());
-                }
-                let weight = random_int63();
+                // Go draws the weight before checking capacity. A direct
+                // zero-capacity collector consequently indexes Samples[0]
+                // below and panics; `NewRowSampleCollector` normally makes
+                // that state unreachable by selecting no reservoir policy.
+                let weight = rng.int63();
                 if self.samples.len() < max_sample_size {
                     self.charge(columns)?;
-                    self.samples.push((weight, columns.to_vec(), ordinal));
+                    self.samples.push((weight, columns.to_vec()));
                     if self.samples.len() == max_sample_size {
                         self.heapify();
                     }
@@ -578,7 +618,7 @@ impl RowSampleCollector {
                 // weights is a uniform sample of the rows. An eviction leaves
                 // the sample's size where it was, so it is not charged again.
                 if self.samples[0].0 < weight {
-                    self.samples[0] = (weight, columns.to_vec(), ordinal);
+                    self.samples[0] = (weight, columns.to_vec());
                     self.sift_down(0);
                 }
             }
@@ -586,28 +626,58 @@ impl RowSampleCollector {
         Ok(())
     }
 
-    /// Answers the scan's totals: rows scanned, per-slot facts, and the kept
-    /// rows in physical scan order with their ordinals renumbered from zero.
+    /// Answers the scan totals after reproducing the executor-owned handle
+    /// phase: build every sampled row's KV handle, sort by `Handle.Compare`,
+    /// then assign `SampleItem.Ordinal = j`.
     ///
-    /// The renumbering is what makes the correlation meaningful: Go's
-    /// `calcCorrelation` compares a sample's position in the sample against
-    /// its position in the sorted sample, and both run `0..sample_num`.
-    #[must_use]
-    pub fn into_parts(mut self) -> (i64, Vec<SlotStats>, Vec<SampledRow>) {
-        for (slot, sketch) in self.slots.iter_mut().zip(&self.sketches) {
-            slot.ndv = sketch.ndv();
-        }
-        self.samples.sort_by_key(|(_, _, ordinal)| *ordinal);
-        let rows = self
-            .samples
+    /// Handle construction can fail and belongs to the schema-aware caller;
+    /// keeping it as a supplied typed key avoids pretending scan/heap order is
+    /// handle order after distributed collectors merge.
+    pub fn into_parts<E>(
+        mut self,
+        mut build_handle: impl FnMut(&[Datum]) -> Result<Handle, E>,
+    ) -> Result<(i64, Vec<SlotStats>, Vec<SampledRow>), E> {
+        assert_eq!(
+            self.null_counts.len(),
+            self.total_sizes.len(),
+            "building stats requires one null/size entry per slot"
+        );
+        assert_eq!(
+            self.null_counts.len(),
+            self.sketches.len(),
+            "building stats requires one FM entry per slot"
+        );
+        let slots = self
+            .null_counts
             .into_iter()
-            .enumerate()
-            .map(|(position, (_, columns, _))| SampledRow {
-                columns,
-                ordinal: position as i64,
+            .zip(self.total_sizes)
+            .zip(self.sketches)
+            .map(|((null_count, total_size), sketch)| SlotStats {
+                null_count,
+                total_size,
+                ndv: sketch.as_ref().map_or(0, FmSketch::ndv),
             })
             .collect();
-        (self.count, self.slots, rows)
+        let mut rows_with_handles = Vec::with_capacity(self.samples.len());
+        for (_, columns) in self.samples.drain(..) {
+            let handle = build_handle(&columns)?;
+            rows_with_handles.push((columns, handle));
+        }
+        rows_with_handles.sort_unstable_by(|left, right| {
+            left.1.compare(&right.1).unwrap_or_else(|error| {
+                panic!("Go Handle.Compare rejected mixed handle domains: {error}")
+            })
+        });
+        let rows = rows_with_handles
+            .into_iter()
+            .enumerate()
+            .map(|(position, (columns, handle))| SampledRow {
+                columns,
+                handle,
+                ordinal: position as isize,
+            })
+            .collect();
+        Ok((self.count, slots, rows))
     }
 
     fn heapify(&mut self) {
@@ -638,23 +708,12 @@ impl RowSampleCollector {
     }
 }
 
-/// Go `rand.Float64()`: `Int63n(1<<53) / (1<<53)`, the one construction that
-/// cannot round up to exactly 1.0.
-fn random_float64() -> f64 {
-    (fastrand::uint64_n(1 << 53) as f64) / ((1_u64 << 53) as f64)
-}
-
-/// Go `rand.Int63()`.
-fn random_int63() -> i64 {
-    fastrand::uint64_n(1 << 63) as i64
-}
-
 fn sample_column_bytes(column: &Datum) -> Vec<u8> {
     match column {
         Datum::Null => vec![tidb_codec::NIL_FLAG],
-        Datum::Bytes(bytes) => bytes.clone(),
-        Datum::String(string) => string.bytes().to_vec(),
-        _ => panic!("row sample column is not an encoded byte datum"),
+        Datum::Json(value) => value.value().to_vec(),
+        Datum::VectorFloat32(value) => value.serialize(),
+        value => value.go_bytes().to_vec(),
     }
 }
 

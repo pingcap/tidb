@@ -25,9 +25,15 @@
 
 use std::{cmp::Ordering, fmt};
 
-use tidb_datatype::{Collation, Datum, DatumValueError, Time};
+use tidb_datatype::{Collation, Datum, DatumValueError};
 
-use crate::row_estimate::{default_row_est, RowEstimate};
+pub use crate::scalar_geometry::{
+    calc_fraction, calc_fraction_from_datums, convert_bytes_to_scalar, convert_datum_to_scalar,
+};
+use crate::{
+    row_estimate::{default_row_est, RowEstimate},
+    scalar_geometry::common_prefix_length as common_prefix_length_all,
+};
 
 /// A single histogram bucket.
 ///
@@ -129,150 +135,17 @@ impl From<DatumValueError> for HistogramMergeError {
     }
 }
 
-/// `pkg/statistics/scalar.go`'s `calcFraction`: fraction of `[lower, upper]`
-/// covered by `[lower, value]` under the continuous-value assumption.
-#[must_use]
-pub fn calc_fraction(lower: f64, upper: f64, value: f64) -> f64 {
-    if upper <= lower {
-        return 0.5;
-    }
-    if value <= lower {
-        return 0.0;
-    }
-    if value >= upper {
-        return 1.0;
-    }
-    let frac = (value - lower) / (upper - lower);
-    if frac.is_nan() || frac.is_infinite() || !(0.0..=1.0).contains(&frac) {
-        return 0.5;
-    }
-    frac
-}
-
-/// `pkg/statistics/scalar.go`'s `commonPrefixLength`.
+/// Two-bound compatibility view of `pkg/statistics/scalar.go`'s variadic
+/// `commonPrefixLength` helper.
 #[must_use]
 pub fn common_prefix_length(a: &[u8], b: &[u8]) -> usize {
-    let min_len = a.len().min(b.len());
-    for i in 0..min_len {
-        if a[i] != b[i] {
-            return i;
-        }
-    }
-    min_len
-}
-
-/// `pkg/statistics/scalar.go`'s `convertBytesToScalar`: treats up to the
-/// first 8 bytes as a big-endian, left-padded base-256 value.
-#[must_use]
-pub fn convert_bytes_to_scalar(value: &[u8]) -> f64 {
-    let mut buf = [0_u8; 8];
-    let n = value.len().min(8);
-    buf[..n].copy_from_slice(&value[..n]);
-    u64::from_be_bytes(buf) as f64
-}
-
-fn min_datetime_core() -> tidb_datatype::CoreTime {
-    tidb_datatype::CoreTime::from_date(1, 1, 1, 0, 0, 0, 0)
-}
-
-fn min_timestamp_core() -> tidb_datatype::CoreTime {
-    tidb_datatype::CoreTime::from_date(1970, 1, 1, 0, 0, 1, 0)
-}
-
-fn time_to_scalar(value: Time) -> f64 {
-    // Go subtracts a per-kind minimum time to get a `time.Duration` and
-    // takes its nanosecond count. For DATE/DATETIME, Go's `Time.Sub` builds
-    // that duration as `seconds*1e9 + microseconds*1e3` using plain `int64`
-    // arithmetic, which silently *wraps* on overflow (`1e9` seconds worth of
-    // 2000+ year gaps against `MinDatetime` routinely overflow `int64`
-    // nanoseconds). `tidb_datatype::Time::sub` instead saturates to avoid UB,
-    // which would diverge from Go's wrapped value here, so this port
-    // reimplements the DATE/DATETIME branch's wrapping arithmetic directly.
-    // The TIMESTAMP branch uses actual (non-overflowing, post-1970) instants
-    // and can use `Time::sub` as-is.
-    let min_kind = value.kind();
-    if min_kind == tidb_datatype::TimeType::Timestamp {
-        let min_time = Time::new(min_timestamp_core(), min_kind, tidb_datatype::DEFAULT_FSP)
-            .expect("min-time construction cannot fail for a fixed calendar date");
-        return match value.sub(min_time, &chrono_tz::UTC) {
-            Ok(duration) => duration.nanoseconds() as f64,
-            Err(_) => 0.0,
-        };
-    }
-    let diff = value.core_time().time_diff(min_datetime_core(), 1);
-    let magnitude = diff
-        .seconds
-        .wrapping_mul(1_000_000_000)
-        .wrapping_add(i64::from(diff.microseconds).wrapping_mul(1_000));
-    (if diff.negative { -magnitude } else { magnitude }) as f64
-}
-
-/// `pkg/statistics/scalar.go`'s `convertDatumToScalar`.
-#[must_use]
-pub fn convert_datum_to_scalar(value: &Datum, common_pfx_len: usize) -> f64 {
-    match value {
-        Datum::Float32(v) | Datum::Real(v) => *v,
-        Datum::Int(v) => *v as f64,
-        Datum::UInt(v) => *v as f64,
-        Datum::Duration(v) => v.nanoseconds() as f64,
-        Datum::Decimal(v) => v.to_f64(),
-        Datum::Time(v) => time_to_scalar(*v),
-        Datum::String(v) => bytes_to_scalar(v.bytes(), common_pfx_len),
-        Datum::Bytes(v) => bytes_to_scalar(v, common_pfx_len),
-        Datum::MinNotNull => -f64::MAX,
-        Datum::MaxValue => f64::MAX,
-        _ => 0.0,
-    }
-}
-
-fn bytes_to_scalar(bytes: &[u8], common_pfx_len: usize) -> f64 {
-    if bytes.len() <= common_pfx_len {
-        0.0
-    } else {
-        convert_bytes_to_scalar(&bytes[common_pfx_len..])
-    }
-}
-
-/// `pkg/statistics/scalar.go`'s `calcFraction4Datums`: fraction computed
-/// directly from a `(lower, upper, value)` datum triple, without a
-/// precomputed scalar cache. This crate always takes this path (no
-/// `Histogram.Scalars` cache is ported) since bucket bounds are already
-/// plain [`Datum`]s here.
-#[must_use]
-pub fn calc_fraction_from_datums(lower: &Datum, upper: &Datum, value: &Datum) -> f64 {
-    match value {
-        Datum::Float32(v) | Datum::Real(v) => calc_fraction(
-            convert_datum_to_scalar(lower, 0),
-            convert_datum_to_scalar(upper, 0),
-            *v,
-        ),
-        Datum::Int(_)
-        | Datum::UInt(_)
-        | Datum::Duration(_)
-        | Datum::Decimal(_)
-        | Datum::Time(_) => calc_fraction(
-            convert_datum_to_scalar(lower, 0),
-            convert_datum_to_scalar(upper, 0),
-            convert_datum_to_scalar(value, 0),
-        ),
-        Datum::String(_) | Datum::Bytes(_) => {
-            let lower_bytes = datum_bytes(lower);
-            let upper_bytes = datum_bytes(upper);
-            let common_pfx_len = common_prefix_length(lower_bytes, upper_bytes);
-            calc_fraction(
-                convert_datum_to_scalar(lower, common_pfx_len),
-                convert_datum_to_scalar(upper, common_pfx_len),
-                convert_datum_to_scalar(value, common_pfx_len),
-            )
-        }
-        _ => 0.5,
-    }
+    common_prefix_length_all(&[a, b])
 }
 
 fn datum_bytes(value: &Datum) -> &[u8] {
     match value {
-        Datum::String(v) => v.bytes(),
-        Datum::Bytes(v) => v,
+        Datum::String(value) => value.bytes(),
+        Datum::Bytes(value) => value,
         _ => &[],
     }
 }

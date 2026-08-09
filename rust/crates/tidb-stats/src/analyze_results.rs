@@ -16,6 +16,9 @@
 
 use crate::{AnalyzeJob, AnalyzeTableId};
 
+/// The dynamic error slot carried by Go `AnalyzeResults.Err`.
+pub type AnalyzeError = Box<dyn std::error::Error + Send + Sync + 'static>;
+
 /// Histogram-side lifecycle invoked by Go `DestroyAndPutToPool`.
 pub trait AnalyzeHistogramLifecycle {
     fn destroy_and_put_to_pool(&mut self);
@@ -28,7 +31,7 @@ pub struct AnalyzeResult<H, C, T, F> {
     pub cmsketches: Vec<Option<C>>,
     pub top_ns: Vec<Option<T>>,
     pub fm_sketches: Vec<Option<F>>,
-    pub is_index: i32,
+    pub is_index: isize,
 }
 
 impl<H, C, T, F> Default for AnalyzeResult<H, C, T, F> {
@@ -60,12 +63,12 @@ impl<H: AnalyzeHistogramLifecycle, C, T, F> AnalyzeResult<H, C, T, F> {
 /// Complete results returned by one analyze task.
 #[derive(Debug)]
 pub struct AnalyzeResults<H, C, T, F> {
-    pub error: Option<String>,
+    pub error: Option<AnalyzeError>,
     pub job: Option<AnalyzeJob>,
-    pub results: Vec<AnalyzeResult<H, C, T, F>>,
+    pub results: Vec<Option<AnalyzeResult<H, C, T, F>>>,
     pub table_id: AnalyzeTableId,
     pub count: i64,
-    pub stats_version: i32,
+    pub stats_version: isize,
     pub snapshot: u64,
     pub base_count: i64,
     pub base_modify_count: i64,
@@ -77,7 +80,10 @@ impl<H: AnalyzeHistogramLifecycle, C, T, F> AnalyzeResults<H, C, T, F> {
     /// the outer result metadata intact.
     pub fn destroy_and_put_to_pool(&mut self) {
         for result in &mut self.results {
-            result.destroy_and_put_to_pool();
+            result
+                .as_mut()
+                .expect("analyze results contains a nil result")
+                .destroy_and_put_to_pool();
         }
     }
 }
