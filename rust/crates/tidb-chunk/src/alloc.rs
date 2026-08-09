@@ -298,9 +298,7 @@ impl Drop for AllocatedChunk {
             return;
         }
         let columns = chunk.drain_columns_for_allocator();
-        for ((type_size, cache), column) in
-            self.column_registrations.drain(..).zip(columns.into_iter())
-        {
+        for ((type_size, cache), column) in self.column_registrations.drain(..).zip(columns) {
             if cache {
                 state
                     .pending_columns
