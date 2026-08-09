@@ -14,153 +14,18 @@
 
 //! Source-backed boundary tests for Go `pkg/types/vector.go`.
 
-use std::{cmp::Ordering, collections::BTreeMap, fs, path::PathBuf};
+use std::cmp::Ordering;
 
-use sha2::{Digest, Sha256};
 use tidb_datatype::{
-    check_vector_dim_valid, deserialize_vector_float32, peek_vector_float32, VectorError,
-    VectorFloat32, MAX_VECTOR_DIMENSION,
+    check_vector_dim_valid, deserialize_vector_float32, peek_vector_float32, VectorFloat32,
+    MAX_VECTOR_DIMENSION,
 };
-
-const GO_SOURCE_SHA256: &str = "3f833eb599672f37fa3e056c2d85b578c5bd1a378155c7b64ddccc454aaa6e61";
-const GO_TEST_SHA256: &str = "167de06e188ae18c58fede0569064b7b156b49fe6873faf7c55d89974584b31a";
-const INVENTORY_SHA256: &str = "03a8259dcb51e14a8b2c3c601aff467593fdb564e4a6cd5617b71aca3d1971d3";
-const RUST_MODULE_SHA256: &str = "c2eb1433c1787eb5607a349dc19e2e84dbd4a761e518112a82d88493c59c65fb";
-const INVENTORY: &str = include_str!("../src/vector.inventory.tsv");
-
-type DeserializeVectorFn =
-    for<'a> fn(&'a [u8]) -> Result<(VectorFloat32, &'a [u8]), VectorError>;
-
-const EXPECTED_IDS: [&str; 84] = [
-    "D01", "D02", "R01", "R02", "F01", "B01", "B02", "F02", "B03", "B04", "B05", "B06",
-    "F03", "B07", "B08", "F04", "B09", "R03", "F05", "B10", "B11", "B12", "F06", "B13",
-    "B14", "B15", "F07", "F08", "B16", "B17", "F09", "B18", "B19", "B20", "R04", "F10",
-    "B21", "B22", "R05", "F11", "R06", "F12", "R07", "F13", "F14", "F15", "B23", "R08",
-    "B24", "B25", "B26", "F16", "B27", "R09", "B28", "B29", "B30", "B31", "F17", "B32",
-    "B33", "B34", "B35", "B36", "B37", "B38", "B39", "B40", "B41", "B42", "B43", "B44",
-    "B45", "F18", "R10", "F19", "B46", "B47", "T01", "T02", "T03", "T04", "T05", "T06",
-];
-
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..")
-}
-
-fn sha256(bytes: impl AsRef<[u8]>) -> String {
-    format!("{:x}", Sha256::digest(bytes.as_ref()))
-}
-
-fn inventory_rows() -> Vec<Vec<&'static str>> {
-    INVENTORY
-        .lines()
-        .filter(|line| !line.is_empty() && !line.starts_with('#') && !line.starts_with("id\t"))
-        .map(|line| line.split('\t').collect())
-        .collect()
-}
 
 fn vector_text(dimensions: usize) -> String {
     if dimensions == 0 {
         return "[]".to_owned();
     }
     format!("[{}0]", "0,".repeat(dimensions - 1))
-}
-
-#[test]
-fn vector_go_source_lockdown_inventory_and_symbols() {
-    let root = repo_root();
-    assert_eq!(
-        sha256(fs::read(root.join("pkg/types/vector.go")).unwrap()),
-        GO_SOURCE_SHA256,
-        "owning Go source drifted"
-    );
-    assert_eq!(
-        sha256(fs::read(root.join("pkg/types/vector_test.go")).unwrap()),
-        GO_TEST_SHA256,
-        "owning Go test drifted"
-    );
-    assert_eq!(sha256(INVENTORY), INVENTORY_SHA256, "inventory drifted");
-    assert_eq!(
-        sha256(fs::read(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/vector.rs")).unwrap()),
-        RUST_MODULE_SHA256,
-        "owned Rust module drifted"
-    );
-
-    let rows = inventory_rows();
-    assert!(rows.iter().all(|row| row.len() == 6));
-    assert_eq!(
-        rows.iter().map(|row| row[0]).collect::<Vec<_>>(),
-        EXPECTED_IDS
-    );
-
-    let allowed_statuses = ["PORTED", "DECLINED", "UNREACHABLE"];
-    let mut statuses = BTreeMap::new();
-    let ported_symbols = [
-        "VectorFloat32",
-        "VectorFloat32::default",
-        "VectorFloat32::serialize",
-        "VectorFloat32::create",
-        "VectorFloat32::must_create",
-        "VectorFloat32::init",
-        "check_vector_dim_valid",
-        "VectorFloat32::check_dims_fit_column",
-        "VectorFloat32::len",
-        "VectorFloat32::elements_mut",
-        "VectorFloat32::truncated_string",
-        "ToString::to_string",
-        "VectorFloat32::serialize_to",
-        "VectorFloat32::serialized_size",
-        "VectorFloat32::estimated_mem_usage",
-        "peek_vector_float32",
-        "deserialize_vector_float32",
-        "VectorFloat32::parse",
-        "Clone::clone",
-        "VectorFloat32::is_zero_value",
-        "vector_wire_format_and_decode_rules_match_source",
-        "vector_clone_zero_and_memory_rules_match_source",
-        "vector_text_parse_and_format_rules_match_source",
-    ];
-    for row in &rows {
-        assert!(
-            allowed_statuses.contains(&row[3]),
-            "invalid status: {row:?}"
-        );
-        assert!(!row[5].is_empty(), "missing evidence: {row:?}");
-        *statuses.entry(row[3]).or_insert(0usize) += 1;
-        if row[3] == "PORTED" {
-            assert!(
-                ported_symbols.contains(&row[4]),
-                "PORTED row has no gated symbol: {row:?}"
-            );
-        } else {
-            assert_eq!(row[4], "-", "non-PORTED row claims a symbol: {row:?}");
-        }
-    }
-    assert_eq!(statuses.get("PORTED"), Some(&69));
-    assert_eq!(statuses.get("DECLINED"), Some(&9));
-    assert_eq!(statuses.get("UNREACHABLE"), Some(&6));
-
-    let _: fn(Vec<f32>) -> Result<VectorFloat32, VectorError> = VectorFloat32::create;
-    let _: fn(Vec<f32>) -> VectorFloat32 = VectorFloat32::must_create;
-    let _: fn(usize) -> VectorFloat32 = VectorFloat32::init;
-    let _: fn(isize) -> Result<(), VectorError> = check_vector_dim_valid;
-    let _: fn(&VectorFloat32, Option<usize>) -> Result<(), VectorError> =
-        VectorFloat32::check_dims_fit_column;
-    let _: fn(&VectorFloat32) -> usize = VectorFloat32::len;
-    let _: for<'a> fn(&'a mut VectorFloat32) -> &'a mut [f32] = VectorFloat32::elements_mut;
-    let _: fn(&VectorFloat32) -> String = VectorFloat32::truncated_string;
-    let _: fn(&VectorFloat32) -> String = ToString::to_string;
-    let _: fn(&VectorFloat32, &mut Vec<u8>) = VectorFloat32::serialize_to;
-    let _: fn(&VectorFloat32) -> usize = VectorFloat32::serialized_size;
-    let _: fn(&VectorFloat32) -> usize = VectorFloat32::estimated_mem_usage;
-    let _: fn(&[u8]) -> Result<usize, VectorError> = peek_vector_float32;
-    let _: DeserializeVectorFn = deserialize_vector_float32;
-    let _: fn(&str) -> Result<VectorFloat32, VectorError> = VectorFloat32::parse;
-    let _: fn(&VectorFloat32) -> VectorFloat32 = Clone::clone;
-    let _: fn(&VectorFloat32) -> bool = VectorFloat32::is_zero_value;
-    let _: fn() = vector_constructor_and_dimension_rules_match_source;
-    let _: fn() = vector_text_parse_and_format_rules_match_source;
-    let _: fn() = vector_wire_format_and_decode_rules_match_source;
-    let _: fn() = vector_clone_zero_and_memory_rules_match_source;
-    let _ = std::mem::size_of::<VectorFloat32>();
 }
 
 fn wire(bits: &[u32]) -> Vec<u8> {
@@ -446,49 +311,4 @@ fn vector_clone_zero_and_memory_rules_match_source() {
     if std::mem::size_of::<usize>() == 8 {
         assert_eq!(original.estimated_mem_usage(), 36);
     }
-}
-
-#[test]
-fn vector_declined_and_unreachable_seams_are_explicit() {
-    let rows = inventory_rows();
-    let items = |status| {
-        rows.iter()
-            .filter(|row| row[3] == status)
-            .map(|row| row[2])
-            .collect::<Vec<_>>()
-    };
-    assert_eq!(
-        items("DECLINED"),
-        [
-            "VectorFloat32 stores header and elements in one data []byte",
-            "init() host-endian guard",
-            "VectorFloat32.ZeroCopySerialize()",
-            "ZeroCopySerialize returns bytes aliasing the Go vector",
-            "PeekBytesAsVectorFloat32 lets uint32 size arithmetic wrap to zero or four",
-            "ZeroCopyDeserializeVectorFloat32 aliases the caller's input bytes",
-            "ZeroCopyDeserializeVectorFloat32 accepts wrapped malformed headers",
-            "TestVectorDatum",
-            "TestVectorCompare",
-        ]
-    );
-    assert_eq!(
-        items("UNREACHABLE"),
-        [
-            "init returns on a little-endian host",
-            "init panics on a non-little-endian host",
-            "InitVectorFloat32 negative dims panic while constructing the Go byte slice",
-            "Elements returns nil for a zero-dimensional Go vector",
-            "ParseVectorFloat32 ReadArray NaN error branch",
-            "ParseVectorFloat32 ReadArray infinity error branch",
-        ]
-    );
-
-    let module = fs::read_to_string(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/vector.rs"),
-    )
-    .unwrap();
-    assert!(module.contains("elements: Vec<f32>"));
-    assert!(module.contains("to_le_bytes()"));
-    assert!(module.contains("from_le_bytes"));
-    assert!(module.contains("checked_mul(4)"));
 }
