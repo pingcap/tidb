@@ -104,9 +104,9 @@ fn table_option_source_rows_use_the_physical_option_leaf() {
     }
 }
 
-/// All CREATE rows from Go `TestTableAffinityOption`, including the accepted
-/// arbitrary level. The parser owns only the literal boundary; TiDB's DDL
-/// layer validates the known affinity levels later.
+/// All rows from Go `TestTableAffinityOption`, including the accepted arbitrary
+/// level. The parser owns only the literal boundary; TiDB's DDL layer validates
+/// the known affinity levels later.
 #[test]
 fn table_option_affinity_source_rows_keep_go_literal_and_restore_contract() {
     for (sql, expected) in [
@@ -141,6 +141,23 @@ fn table_option_affinity_source_rows_keep_go_literal_and_restore_contract() {
         (
             "create table t (a int) affinity 'abcd'",
             "CREATE TABLE `t` (`a` INT) AFFINITY = 'abcd'",
+        ),
+    ] {
+        assert_eq!(r(sql), expected, "source SQL: {sql}");
+    }
+
+    for (sql, expected) in [
+        (
+            "alter table t affinity = 'table'",
+            "ALTER TABLE `t` AFFINITY = 'table'",
+        ),
+        (
+            "alter table t affinity 'TABLE'",
+            "ALTER TABLE `t` AFFINITY = 'TABLE'",
+        ),
+        (
+            "alter table t /*T![affinity] affinity 'table'*/",
+            "ALTER TABLE `t` AFFINITY = 'table'",
         ),
     ] {
         assert_eq!(r(sql), expected, "source SQL: {sql}");
