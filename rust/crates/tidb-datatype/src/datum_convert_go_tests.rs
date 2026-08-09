@@ -401,6 +401,85 @@ fn test_convert_type() {
     convert_err(&Datum::Int(9), &set_type, "set 9");
 }
 
+/// Source: `pkg/types/convert_test.go::TestConvertToString`.
+///
+/// The final Go-only `invalidMockType` row exercises `ToString(any)`'s dynamic
+/// reflection fallback. Rust's typed [`Datum`] cannot represent that input.
+#[test]
+fn test_convert_to_string() {
+    let timestamp = parse_datetime_fsp("2011-11-10 11:11:11.999999", TimeType::Timestamp, 6);
+    let parsed_duration = crate::parse_duration(b"11:11:11.999999", 6).unwrap();
+    let duration =
+        MySqlDuration::from_nanoseconds(parsed_duration.nanoseconds(), parsed_duration.fsp())
+            .unwrap();
+    let rows = [
+        (Datum::new_string("0"), b"0".as_slice()),
+        // Go's bool and native int both normalize to an integer Datum.
+        (Datum::Int(1), b"1"),
+        (Datum::new_string("false"), b"false"),
+        (Datum::Int(0), b"0"),
+        (Datum::Int(0), b"0"),
+        (Datum::UInt(0), b"0"),
+        (Datum::Float32(f64::from(1.6_f32)), b"1.6"),
+        (Datum::Real(-0.6), b"-0.6"),
+        (Datum::new_bytes([1]), b"\x01"),
+        (
+            Datum::new_binary_literal(BinaryLiteral::from_uint(0x4D79_5351_4C, None)),
+            b"MySQL",
+        ),
+        (
+            Datum::new_binary_literal(BinaryLiteral::from_uint(0x41, None)),
+            b"A",
+        ),
+        (
+            Datum::new_enum(
+                parse_enum_value(&["a"], 1).unwrap(),
+                Collation::Utf8Mb4GeneralCi,
+            ),
+            b"a",
+        ),
+        (
+            Datum::new_set(
+                parse_set_value(&["a"], 1).unwrap(),
+                Collation::Utf8Mb4GeneralCi,
+            ),
+            b"a",
+        ),
+        (Datum::new_time(timestamp), b"2011-11-10 11:11:11.999999"),
+        (Datum::new_duration(duration), b"11:11:11.999999"),
+        (
+            Datum::new_decimal(Decimal::from_signed_literal("3.14159")),
+            b"3.14159",
+        ),
+    ];
+    assert_eq!(rows.len(), 16, "one entry per Go source value row");
+    for (datum, expected) in rows {
+        assert_eq!(datum.sql_bytes().unwrap(), expected, "{datum:?}");
+    }
+
+    let text = "你好，世界";
+    for (flen, collation, expected) in [
+        (5, Collation::Utf8Bin, "你好，世界"),
+        (5, Collation::Utf8Mb4Bin, "你好，世界"),
+        (4, Collation::Utf8Bin, "你好，世"),
+        (4, Collation::Utf8Mb4Bin, "你好，世"),
+        (15, Collation::Binary, "你好，世界"),
+        (12, Collation::Binary, "你好，世"),
+        (0, Collation::Binary, ""),
+    ] {
+        let target = FieldType::new(FieldTypeCode::Varchar)
+            .with_flen(flen)
+            .with_collation(collation);
+        let (converted, failed) = go_convert(&Datum::new_string(text), &target);
+        assert_eq!(failed, text != expected, "flen={flen} {collation:?}");
+        assert_eq!(
+            converted.unwrap().as_raw_bytes(),
+            Some(expected.as_bytes()),
+            "flen={flen} {collation:?}"
+        );
+    }
+}
+
 /// `convertToMysqlEnum`/`convertToMysqlSet` call `SetMysqlEnum`/`SetMysqlSet`
 /// UNCONDITIONALLY and return the zero value *beside* `ErrTruncated`, so a
 /// non-strict statement stores the empty ENUM/SET and only warns. Every
