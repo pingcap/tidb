@@ -55,7 +55,9 @@
 //! the mechanism that keeps the counters disjoint, so it is a normal event,
 //! not an error.
 
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::thread;
 use std::time::Duration;
 
 use tidb_executor::kv_table::{advance, calc_needed_batch_size, AutoIdStore, AutoIdStoreError};
@@ -93,6 +95,295 @@ pub const fn auto_id_service_leader_etcd_path(keyspace_id: u32) -> &'static str 
         AUTO_ID_LEADER_PATH
     } else {
         KEYSPACE_AUTO_ID_LEADER_PATH
+    }
+}
+
+const AUTO_ID_BACKOFF_MIN: Duration = Duration::from_millis(5);
+const AUTO_ID_BACKOFF_MAX: Duration = Duration::from_millis(100);
+
+/// One typed request to Go's AutoID service `AllocAutoID` RPC.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AutoIdServiceAllocRequest {
+    /// Database identity in the meta key.
+    pub db_id: i64,
+    /// Table identity in the meta key.
+    pub table_id: i64,
+    /// Number of sequence-ladder values requested.
+    pub n: u64,
+    /// Session `auto_increment_increment`.
+    pub increment: i64,
+    /// Session `auto_increment_offset`.
+    pub offset: i64,
+    /// Whether comparisons use the unsigned 64-bit domain.
+    pub unsigned: bool,
+    /// TiKV API-v2 keyspace identity; zero is Nullspace.
+    pub keyspace_id: u32,
+}
+
+/// One typed request to Go's AutoID service `Rebase` RPC.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AutoIdServiceRebaseRequest {
+    /// Database identity in the meta key.
+    pub db_id: i64,
+    /// Table identity in the meta key.
+    pub table_id: i64,
+    /// New global base requested by the caller.
+    pub new_base: i64,
+    /// Whether the service must set the base even when it moves backwards.
+    pub force: bool,
+    /// Whether comparisons use the unsigned 64-bit domain.
+    pub unsigned: bool,
+    /// TiKV API-v2 keyspace identity; zero is Nullspace.
+    pub keyspace_id: u32,
+}
+
+/// A transport failure classified before the AutoID retry policy runs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AutoIdServiceRpcError {
+    /// A gRPC transport/status failure. Go recognizes this by the brittle
+    /// `"rpc error"` substring; the Rust boundary keeps it typed.
+    Rpc(String),
+    /// A service/discovery failure that retrying a connection cannot repair.
+    Other(String),
+}
+
+impl std::fmt::Display for AutoIdServiceRpcError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Rpc(message) | Self::Other(message) => formatter.write_str(message),
+        }
+    }
+}
+
+impl std::error::Error for AutoIdServiceRpcError {}
+
+/// The transport/discovery seam used by [`AutoIdServiceAllocator`].
+///
+/// `reset_connection` receives the generation that failed. The allocator
+/// calls it at most once for that generation, matching Go `resetConn`'s CAS.
+pub trait AutoIdServiceRpc: Send + Sync + 'static {
+    /// Calls `AutoIDAlloc.AllocAutoID` once.
+    fn alloc_auto_id(
+        &self,
+        call: &UnaryCallContext,
+        request: AutoIdServiceAllocRequest,
+    ) -> Result<(i64, i64), AutoIdServiceRpcError>;
+
+    /// Calls `AutoIDAlloc.Rebase` once.
+    fn rebase(
+        &self,
+        call: &UnaryCallContext,
+        request: AutoIdServiceRebaseRequest,
+    ) -> Result<(), AutoIdServiceRpcError>;
+
+    /// Drops the client for one failed generation so discovery can reconnect.
+    fn reset_connection(&self, _generation: u64, _reason: &AutoIdServiceRpcError) {}
+}
+
+/// Terminal results of the AutoID service retry loop.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AutoIdServiceError {
+    /// The statement/query owner canceled the call (Go `context.Canceled`).
+    Cancelled,
+    /// The caller's absolute RPC deadline elapsed.
+    DeadlineExceeded,
+    /// `increment` or `offset` was outside Go's inclusive `[1, 65535]` range.
+    InvalidIncrementAndOffset {
+        /// Rejected increment.
+        increment: i64,
+        /// Rejected offset.
+        offset: i64,
+    },
+    /// A non-retryable discovery, transport, or service failure.
+    Rpc(AutoIdServiceRpcError),
+}
+
+impl std::fmt::Display for AutoIdServiceError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Cancelled => formatter.write_str("auto ID service call cancelled"),
+            Self::DeadlineExceeded => formatter.write_str("auto ID service call deadline exceeded"),
+            Self::InvalidIncrementAndOffset { increment, offset } => write!(
+                formatter,
+                "invalid auto ID increment {increment} or offset {offset}"
+            ),
+            Self::Rpc(error) => write!(formatter, "auto ID service call failed: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for AutoIdServiceError {}
+
+/// Go `singlePointAlloc`: an AutoID service client with generation-safe
+/// reconnect and cancellation-aware retries.
+pub struct AutoIdServiceAllocator<C> {
+    client: Arc<C>,
+    db_id: i64,
+    table_id: i64,
+    unsigned: bool,
+    keyspace_id: u32,
+    generation: AtomicU64,
+    last_allocated: AtomicI64,
+}
+
+impl<C: AutoIdServiceRpc> AutoIdServiceAllocator<C> {
+    /// Binds one table to a service transport/discovery implementation.
+    #[must_use]
+    pub fn new(
+        client: Arc<C>,
+        db_id: i64,
+        table_id: i64,
+        unsigned: bool,
+        keyspace_id: u32,
+    ) -> Self {
+        Self {
+            client,
+            db_id,
+            table_id,
+            unsigned,
+            keyspace_id,
+            generation: AtomicU64::new(0),
+            last_allocated: AtomicI64::new(0),
+        }
+    }
+
+    /// Go `singlePointAlloc.Alloc`: retry an RPC generation, but let caller
+    /// cancellation/deadline win before connection reset or backoff.
+    pub fn alloc(
+        &self,
+        call: &UnaryCallContext,
+        n: u64,
+        increment: i64,
+        offset: i64,
+    ) -> Result<(i64, i64), AutoIdServiceError> {
+        if !(1..=65_535).contains(&increment) || !(1..=65_535).contains(&offset) {
+            return Err(AutoIdServiceError::InvalidIncrementAndOffset { increment, offset });
+        }
+        let request = AutoIdServiceAllocRequest {
+            db_id: self.db_id,
+            table_id: self.table_id,
+            n,
+            increment,
+            offset,
+            unsigned: self.unsigned,
+            keyspace_id: self.keyspace_id,
+        };
+        let mut backoff = AutoIdServiceBackoff::default();
+        loop {
+            let generation = self.generation.load(Ordering::Acquire);
+            match self.client.alloc_auto_id(call, request) {
+                Ok((min, max)) => {
+                    backoff.reset();
+                    self.last_allocated.store(min, Ordering::Release);
+                    return Ok((min, max));
+                }
+                Err(error @ AutoIdServiceRpcError::Rpc(_)) => {
+                    stopped(call)?;
+                    self.reset_generation(generation, &error);
+                    backoff.backoff(Some(call))?;
+                }
+                Err(error) => return Err(AutoIdServiceError::Rpc(error)),
+            }
+        }
+    }
+
+    /// Go `singlePointAlloc.rebase`, with the same terminal cancellation rule
+    /// as allocation.
+    pub fn rebase(
+        &self,
+        call: &UnaryCallContext,
+        new_base: i64,
+        force: bool,
+    ) -> Result<(), AutoIdServiceError> {
+        let mut backoff = AutoIdServiceBackoff::default();
+        let request = AutoIdServiceRebaseRequest {
+            db_id: self.db_id,
+            table_id: self.table_id,
+            new_base,
+            force,
+            unsigned: self.unsigned,
+            keyspace_id: self.keyspace_id,
+        };
+        loop {
+            let generation = self.generation.load(Ordering::Acquire);
+            match self.client.rebase(call, request) {
+                Ok(()) => {
+                    backoff.reset();
+                    self.last_allocated.store(new_base, Ordering::Release);
+                    return Ok(());
+                }
+                Err(error @ AutoIdServiceRpcError::Rpc(_)) => {
+                    stopped(call)?;
+                    self.reset_generation(generation, &error);
+                    backoff.backoff(Some(call))?;
+                }
+                Err(error) => return Err(AutoIdServiceError::Rpc(error)),
+            }
+        }
+    }
+
+    /// Last minimum/base returned by the service, for Go `Transfer` parity.
+    #[must_use]
+    pub fn last_allocated(&self) -> i64 {
+        self.last_allocated.load(Ordering::Acquire)
+    }
+
+    fn reset_generation(&self, generation: u64, error: &AutoIdServiceRpcError) {
+        if self
+            .generation
+            .compare_exchange(
+                generation,
+                generation.wrapping_add(1),
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok()
+        {
+            self.client.reset_connection(generation, error);
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct AutoIdServiceBackoff {
+    duration: Duration,
+}
+
+impl AutoIdServiceBackoff {
+    fn reset(&mut self) {
+        self.duration = AUTO_ID_BACKOFF_MIN;
+    }
+
+    fn backoff(&mut self, call: Option<&UnaryCallContext>) -> Result<(), AutoIdServiceError> {
+        if self.duration.is_zero() {
+            self.duration = AUTO_ID_BACKOFF_MIN;
+        }
+        self.duration = self.duration.saturating_mul(2).min(AUTO_ID_BACKOFF_MAX);
+
+        let Some(call) = call else {
+            thread::sleep(self.duration);
+            return Ok(());
+        };
+        stopped(call)?;
+        let remaining = call.timeout();
+        let wait = self.duration.min(remaining);
+        if call.cancellation().wait_timeout(wait) {
+            return Err(AutoIdServiceError::Cancelled);
+        }
+        if call.timeout().is_zero() {
+            return Err(AutoIdServiceError::DeadlineExceeded);
+        }
+        Ok(())
+    }
+}
+
+fn stopped(call: &UnaryCallContext) -> Result<(), AutoIdServiceError> {
+    if call.cancellation().is_cancelled() {
+        Err(AutoIdServiceError::Cancelled)
+    } else if call.timeout().is_zero() {
+        Err(AutoIdServiceError::DeadlineExceeded)
+    } else {
+        Ok(())
     }
 }
 
@@ -301,6 +592,47 @@ fn store_error(step: &str, error: &impl std::fmt::Display) -> AutoIdStoreError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicUsize;
+    use std::time::Instant;
+
+    #[derive(Debug)]
+    struct MockAutoIdServiceRpc {
+        alloc_calls: AtomicUsize,
+        rebase_calls: AtomicUsize,
+        reset_calls: AtomicUsize,
+        alloc_error: Option<AutoIdServiceRpcError>,
+        rebase_error: Option<AutoIdServiceRpcError>,
+    }
+
+    impl AutoIdServiceRpc for MockAutoIdServiceRpc {
+        fn alloc_auto_id(
+            &self,
+            _call: &UnaryCallContext,
+            _request: AutoIdServiceAllocRequest,
+        ) -> Result<(i64, i64), AutoIdServiceRpcError> {
+            self.alloc_calls.fetch_add(1, Ordering::Relaxed);
+            self.alloc_error.clone().map_or(Ok((0, 1)), Err)
+        }
+
+        fn rebase(
+            &self,
+            _call: &UnaryCallContext,
+            _request: AutoIdServiceRebaseRequest,
+        ) -> Result<(), AutoIdServiceRpcError> {
+            self.rebase_calls.fetch_add(1, Ordering::Relaxed);
+            self.rebase_error.clone().map_or(Ok(()), Err)
+        }
+
+        fn reset_connection(&self, _generation: u64, _reason: &AutoIdServiceRpcError) {
+            self.reset_calls.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    fn canceled_call() -> UnaryCallContext {
+        let cancellation = tidb_txnkv::rpc::UnaryCancellation::new();
+        cancellation.cancel();
+        UnaryCallContext::new(Duration::from_secs(1), cancellation)
+    }
 
     /// Source: `pkg/meta/autoid/autoid_test.go::TestAllocComputationIssue`.
     #[test]
@@ -328,5 +660,88 @@ mod tests {
     fn test_get_auto_id_service_leader_etcd_path() {
         assert_eq!(auto_id_service_leader_etcd_path(0), AUTO_ID_LEADER_PATH);
         assert_eq!(auto_id_service_leader_etcd_path(1), "/tidb/autoid/leader");
+    }
+
+    /// Source:
+    /// `pkg/meta/autoid/autoid_service_test.go::TestAllocCanceledRPCReturnsQuickly`.
+    #[test]
+    fn test_alloc_canceled_rpc_returns_quickly() {
+        let client = Arc::new(MockAutoIdServiceRpc {
+            alloc_calls: AtomicUsize::new(0),
+            rebase_calls: AtomicUsize::new(0),
+            reset_calls: AtomicUsize::new(0),
+            alloc_error: Some(AutoIdServiceRpcError::Rpc(
+                "rpc error: code = Canceled desc = context canceled".to_owned(),
+            )),
+            rebase_error: None,
+        });
+        let allocator = AutoIdServiceAllocator::new(Arc::clone(&client), 1, 1, false, 0);
+        let start = Instant::now();
+
+        assert_eq!(
+            allocator.alloc(&canceled_call(), 1, 1, 1),
+            Err(AutoIdServiceError::Cancelled)
+        );
+        assert!(start.elapsed() < Duration::from_secs(1));
+        assert_eq!(client.alloc_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(client.reset_calls.load(Ordering::Relaxed), 0);
+    }
+
+    /// Source:
+    /// `pkg/meta/autoid/autoid_service_test.go::TestRebaseCanceledRPCReturnsQuickly`.
+    #[test]
+    fn test_rebase_canceled_rpc_returns_quickly() {
+        let client = Arc::new(MockAutoIdServiceRpc {
+            alloc_calls: AtomicUsize::new(0),
+            rebase_calls: AtomicUsize::new(0),
+            reset_calls: AtomicUsize::new(0),
+            alloc_error: None,
+            rebase_error: Some(AutoIdServiceRpcError::Rpc(
+                "rpc error: code = Canceled desc = context canceled".to_owned(),
+            )),
+        });
+        let allocator = AutoIdServiceAllocator::new(Arc::clone(&client), 1, 1, false, 0);
+        let start = Instant::now();
+
+        assert_eq!(
+            allocator.rebase(&canceled_call(), 100, false),
+            Err(AutoIdServiceError::Cancelled)
+        );
+        assert!(start.elapsed() < Duration::from_secs(1));
+        assert_eq!(client.rebase_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(client.reset_calls.load(Ordering::Relaxed), 0);
+    }
+
+    /// Source: `pkg/meta/autoid/autoid_service_test.go::TestBackoffCtxAware`.
+    #[test]
+    fn test_backoff_ctx_aware() {
+        let mut backoff = AutoIdServiceBackoff::default();
+
+        let start = Instant::now();
+        backoff.backoff(None).unwrap();
+        let elapsed = start.elapsed();
+        assert!(elapsed >= AUTO_ID_BACKOFF_MIN);
+        assert!(elapsed <= AUTO_ID_BACKOFF_MIN + Duration::from_millis(50));
+
+        backoff.reset();
+        let start = Instant::now();
+        assert_eq!(
+            backoff.backoff(Some(&canceled_call())),
+            Err(AutoIdServiceError::Cancelled)
+        );
+        assert!(start.elapsed() < Duration::from_millis(10));
+
+        backoff.reset();
+        let cancellation = tidb_txnkv::rpc::UnaryCancellation::new();
+        let cancel_from_thread = cancellation.clone();
+        let worker = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(5));
+            cancel_from_thread.cancel();
+        });
+        let call = UnaryCallContext::new(Duration::from_secs(1), cancellation);
+        let start = Instant::now();
+        let _ = backoff.backoff(Some(&call));
+        assert!(start.elapsed() < Duration::from_millis(50));
+        worker.join().unwrap();
     }
 }
