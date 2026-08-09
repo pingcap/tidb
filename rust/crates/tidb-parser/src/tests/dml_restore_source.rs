@@ -83,6 +83,77 @@ fn statement_priority_and_select_modifier_source_rows() {
     }
 }
 
+/// `pkg/parser/parser_test.go::TestPriority`.
+#[test]
+fn test_priority() {
+    for (sql, expected) in [
+        (
+            "select high_priority * from t",
+            "SELECT HIGH_PRIORITY * FROM `t`",
+        ),
+        (
+            "select low_priority * from t",
+            "SELECT LOW_PRIORITY * FROM `t`",
+        ),
+        ("select delayed * from t", "SELECT DELAYED * FROM `t`"),
+        (
+            "insert high_priority into t values (1)",
+            "INSERT HIGH_PRIORITY INTO `t` VALUES (1)",
+        ),
+        (
+            "insert LOW_PRIORITY into t values (1)",
+            "INSERT LOW_PRIORITY INTO `t` VALUES (1)",
+        ),
+        (
+            "insert delayed into t values (1)",
+            "INSERT DELAYED INTO `t` VALUES (1)",
+        ),
+        (
+            "update low_priority t set a = 2",
+            "UPDATE LOW_PRIORITY `t` SET `a`=2",
+        ),
+        (
+            "update high_priority t set a = 2",
+            "UPDATE HIGH_PRIORITY `t` SET `a`=2",
+        ),
+        ("update delayed t set a = 2", "UPDATE DELAYED `t` SET `a`=2"),
+        (
+            "delete low_priority from t where a = 2",
+            "DELETE LOW_PRIORITY FROM `t` WHERE `a`=2",
+        ),
+        (
+            "delete high_priority from t where a = 2",
+            "DELETE HIGH_PRIORITY FROM `t` WHERE `a`=2",
+        ),
+        (
+            "delete delayed from t where a = 2",
+            "DELETE DELAYED FROM `t` WHERE `a`=2",
+        ),
+        (
+            "replace high_priority into t values (1)",
+            "REPLACE HIGH_PRIORITY INTO `t` VALUES (1)",
+        ),
+        (
+            "replace LOW_PRIORITY into t values (1)",
+            "REPLACE LOW_PRIORITY INTO `t` VALUES (1)",
+        ),
+        (
+            "replace delayed into t values (1)",
+            "REPLACE DELAYED INTO `t` VALUES (1)",
+        ),
+    ] {
+        assert_eq!(r(sql), expected, "{sql}");
+    }
+
+    let Stmt::Query(query) = parse("select HIGH_PRIORITY * from t").unwrap() else {
+        panic!("expected query");
+    };
+    let tidb_ast::QueryStmt::Select(select) = query.as_ref() else {
+        panic!("expected SELECT");
+    };
+    assert_eq!(select.priority, tidb_ast::StatementPriority::High);
+}
+
 /// `pkg/parser/parser_test.go::TestSQLResult`.
 #[test]
 fn test_sql_result() {
