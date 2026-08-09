@@ -233,6 +233,25 @@ fn test_like_escape() {
     }
 }
 
+/// `pkg/parser/parser_test.go::TestEscape`.
+#[test]
+fn test_escape() {
+    for (sql, expected) in [
+        (r#"select """;"#, None),
+        (r#"select """";"#, Some(r#"SELECT _UTF8MB4'"'"#)),
+        (r#"select "汉字";"#, Some("SELECT _UTF8MB4'汉字'")),
+        (r#"select 'abc"def';"#, Some(r#"SELECT _UTF8MB4'abc"def'"#)),
+        (r#"select 'a\r\n';"#, Some("SELECT _UTF8MB4'a\r\n'")),
+        (r#"select "\a\r\n""#, Some("SELECT _UTF8MB4'a\r\n'")),
+        (r#"select "\xFF""#, Some("SELECT _UTF8MB4'xFF'")),
+    ] {
+        match expected {
+            Some(expected) => assert_eq!(r(sql), expected, "{sql:?}"),
+            None => assert!(parse(sql).is_err(), "{sql:?}"),
+        }
+    }
+}
+
 #[test]
 fn functions_and_literals() {
     assert_eq!(r("select f(a, b+1)"), "SELECT F(`a`, `b`+1)");
