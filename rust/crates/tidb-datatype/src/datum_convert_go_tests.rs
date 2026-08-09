@@ -460,6 +460,326 @@ fn test_convert_type() {
     convert_err(&Datum::Int(9), &set_type, "set 9");
 }
 
+/// Complete translation of `pkg/types/convert_test.go::TestConvert`.
+#[test]
+fn test_convert() {
+    fn check(input: Datum, code: FieldTypeCode, unsigned: bool, denied: bool, expected: &str) {
+        let target = if unsigned {
+            FieldType::new(code).with_added_flags(FieldTypeFlags::UNSIGNED)
+        } else {
+            FieldType::new(code)
+        };
+        let flags = if denied {
+            crate::DEFAULT_STATEMENT_FLAGS
+        } else {
+            crate::DEFAULT_STATEMENT_FLAGS.with_ignore_truncate_err(true)
+        };
+        let label = format!("{input:?} -> {code:?} unsigned={unsigned}");
+        let (value, failed) = match input.convert_to(&target, flags) {
+            Ok(converted) => (
+                Some(converted.value),
+                !matches!(
+                    converted.event,
+                    None | Some(ScalarConversionEvent::RoundedToScale)
+                ),
+            ),
+            Err(DatumValueError::IncorrectTemporal(value)) => (Some(Datum::new_time(value)), true),
+            Err(error) => panic!("{label}: Go returns a value beside the error: {error:?}"),
+        };
+        if denied {
+            assert!(failed, "{label}: expected an error");
+        }
+        let actual = value
+            .unwrap_or_else(|| panic!("{label}: expected Go's error-side value"))
+            .sql_string()
+            .unwrap_or_else(|error| panic!("{label}: stringify failed: {error}"));
+        assert_eq!(actual, expected, "{label}");
+    }
+
+    let mut source_rows = 0_usize;
+    macro_rules! sa {
+        ($code:ident, $value:expr, $expected:expr) => {{
+            source_rows += 1;
+            check($value, FieldTypeCode::$code, false, false, $expected);
+        }};
+    }
+    macro_rules! sd {
+        ($code:ident, $value:expr, $expected:expr) => {{
+            source_rows += 1;
+            check($value, FieldTypeCode::$code, false, true, $expected);
+        }};
+    }
+    macro_rules! ua {
+        ($code:ident, $value:expr, $expected:expr) => {{
+            source_rows += 1;
+            check($value, FieldTypeCode::$code, true, false, $expected);
+        }};
+    }
+    macro_rules! ud {
+        ($code:ident, $value:expr, $expected:expr) => {{
+            source_rows += 1;
+            check($value, FieldTypeCode::$code, true, true, $expected);
+        }};
+    }
+    let literal = |value| Datum::new_binary_literal(BinaryLiteral::from_uint(value, None));
+
+    // Integer ranges.
+    sd!(Tiny, Datum::Int(-129), "-128");
+    sa!(Tiny, Datum::Int(-128), "-128");
+    sa!(Tiny, Datum::Int(127), "127");
+    sd!(Tiny, Datum::Int(128), "127");
+    sa!(Tiny, literal(127), "127");
+    sd!(Tiny, literal(128), "127");
+    ud!(Tiny, Datum::Int(-1), "255");
+    ua!(Tiny, Datum::Int(0), "0");
+    ua!(Tiny, Datum::Int(255), "255");
+    ud!(Tiny, Datum::Int(256), "255");
+    ua!(Tiny, literal(0), "0");
+    ua!(Tiny, literal(255), "255");
+    ud!(Tiny, literal(256), "255");
+
+    sd!(Short, Datum::Int(i64::from(i16::MIN) - 1), "-32768");
+    sa!(Short, Datum::Int(i64::from(i16::MIN)), "-32768");
+    sa!(Short, Datum::Int(i64::from(i16::MAX)), "32767");
+    sd!(Short, Datum::Int(i64::from(i16::MAX) + 1), "32767");
+    sa!(Short, literal(i16::MAX as u64), "32767");
+    sd!(Short, literal(i16::MAX as u64 + 1), "32767");
+    ud!(Short, Datum::Int(-1), "65535");
+    ua!(Short, Datum::Int(0), "0");
+    ua!(Short, Datum::UInt(u64::from(u16::MAX)), "65535");
+    ud!(Short, Datum::UInt(u64::from(u16::MAX) + 1), "65535");
+    ua!(Short, literal(0), "0");
+    ua!(Short, literal(u64::from(u16::MAX)), "65535");
+    ud!(Short, literal(u64::from(u16::MAX) + 1), "65535");
+
+    sd!(Int24, Datum::Int(-(1_i64 << 23) - 1), "-8388608");
+    sa!(Int24, Datum::Int(-(1_i64 << 23)), "-8388608");
+    sa!(Int24, Datum::Int((1_i64 << 23) - 1), "8388607");
+    sd!(Int24, Datum::Int(1_i64 << 23), "8388607");
+    sa!(Int24, literal((1_u64 << 23) - 1), "8388607");
+    sd!(Int24, literal(1_u64 << 23), "8388607");
+    ud!(Int24, Datum::Int(-1), "16777215");
+    ua!(Int24, Datum::Int(0), "0");
+    ua!(Int24, Datum::Int((1_i64 << 24) - 1), "16777215");
+    ud!(Int24, Datum::Int(1_i64 << 24), "16777215");
+    ua!(Int24, literal(0), "0");
+    ua!(Int24, literal((1_u64 << 24) - 1), "16777215");
+    ud!(Int24, literal(1_u64 << 24), "16777215");
+
+    sd!(Long, Datum::Int(i64::from(i32::MIN) - 1), "-2147483648");
+    sa!(Long, Datum::Int(i64::from(i32::MIN)), "-2147483648");
+    sa!(Long, Datum::Int(i64::from(i32::MAX)), "2147483647");
+    sd!(Long, Datum::UInt(u64::MAX), "2147483647");
+    sd!(Long, Datum::Int(i64::from(i32::MAX) + 1), "2147483647");
+    sd!(
+        Long,
+        Datum::new_string("1343545435346432587475"),
+        "2147483647"
+    );
+    sa!(Long, literal(i32::MAX as u64), "2147483647");
+    sd!(Long, literal(u64::MAX), "2147483647");
+    sd!(Long, literal(i32::MAX as u64 + 1), "2147483647");
+    ud!(Long, Datum::Int(-1), "4294967295");
+    ua!(Long, Datum::Int(0), "0");
+    ua!(Long, Datum::UInt(u64::from(u32::MAX)), "4294967295");
+    ud!(Long, Datum::UInt(u64::from(u32::MAX) + 1), "4294967295");
+    ua!(Long, literal(0), "0");
+    ua!(Long, literal(u64::from(u32::MAX)), "4294967295");
+    ud!(Long, literal(u64::from(u32::MAX) + 1), "4294967295");
+
+    sd!(
+        LongLong,
+        Datum::Real(i64::MIN as f64 * 1.1),
+        "-9223372036854775808"
+    );
+    sa!(LongLong, Datum::Int(i64::MIN), "-9223372036854775808");
+    sa!(LongLong, Datum::Int(i64::MAX), "9223372036854775807");
+    sd!(
+        LongLong,
+        Datum::Real(i64::MAX as f64 * 1.1),
+        "9223372036854775807"
+    );
+    sa!(LongLong, literal(i64::MAX as u64), "9223372036854775807");
+    sd!(
+        LongLong,
+        literal(i64::MAX as u64 + 1),
+        "9223372036854775807"
+    );
+    ua!(LongLong, Datum::Int(-1), "18446744073709551615");
+    ua!(LongLong, Datum::Int(0), "0");
+    ua!(LongLong, Datum::UInt(u64::MAX), "18446744073709551615");
+    ud!(
+        LongLong,
+        Datum::Real(u64::MAX as f64 * 1.1),
+        "18446744073709551615"
+    );
+    ua!(LongLong, literal(0), "0");
+    ua!(LongLong, literal(u64::MAX), "18446744073709551615");
+
+    // Integer from string.
+    for (input, expected) in [
+        ("\t  234  ", "234"),
+        (" 2.35e3  ", "2350"),
+        (" 2.e3  ", "2000"),
+        (" -2.e3  ", "-2000"),
+        (" 2e2  ", "200"),
+        (" 0.002e3  ", "2"),
+        (" .002e3  ", "2"),
+        (" 20e-2  ", "0"),
+        (" -20e-2  ", "0"),
+        (" +2.51 ", "3"),
+        (" -9999.5 ", "-10000"),
+        (" 999.4", "999"),
+        (" -3.58", "-4"),
+    ] {
+        sa!(Long, Datum::new_string(input), expected);
+    }
+    sd!(Long, Datum::new_string(" 1a "), "1");
+    sd!(Long, Datum::new_string(" +1+ "), "1");
+
+    // Integer from float.
+    sa!(Long, Datum::Real(234.5456), "235");
+    sa!(Long, Datum::Real(-23.45), "-23");
+    ua!(LongLong, Datum::Real(234.5456), "235");
+    ud!(LongLong, Datum::Real(-23.45), "18446744073709551593");
+
+    // Float from string and numeric kinds.
+    sa!(Float, Datum::new_string("23.523"), "23.523");
+    sa!(Float, Datum::Int(123), "123");
+    sa!(Float, Datum::UInt(123), "123");
+    sa!(Float, Datum::Int(123), "123");
+    sa!(Float, Datum::Float32(f64::from(123_f32)), "123");
+    sa!(Float, Datum::Real(123.0), "123");
+    sa!(Double, Datum::new_string(" -23.54"), "-23.54");
+    sd!(Double, Datum::new_string("-23.54a"), "-23.54");
+    sd!(Double, Datum::new_string("-23.54e2e"), "-2354");
+    sd!(Double, Datum::new_string("+.e"), "0");
+    sa!(Double, Datum::new_string("1e+1"), "10");
+
+    // YEAR.
+    sd!(Year, Datum::Int(123), "1901");
+    sd!(Year, Datum::Int(3000), "2155");
+    sa!(Year, Datum::new_string("2000"), "2000");
+    sa!(Year, Datum::new_string("abc"), "0");
+    sa!(Year, Datum::new_string("00abc"), "2000");
+    sa!(Year, Datum::new_string("0019"), "2019");
+    sa!(Year, Datum::Int(2155), "2155");
+    sa!(Year, Datum::Real(2155.123), "2155");
+    sd!(Year, Datum::Int(2156), "2155");
+    sd!(Year, Datum::Real(123.123), "1901");
+    sd!(Year, Datum::Int(1900), "1901");
+    sa!(Year, Datum::Int(1901), "1901");
+    sa!(Year, Datum::Real(1900.567), "1901");
+    sd!(Year, Datum::Real(1900.456), "1901");
+    sa!(Year, Datum::Int(0), "0");
+    for input in ["0", "00", " 0", " 00"] {
+        sa!(Year, Datum::new_string(input), "2000");
+    }
+    sa!(Year, Datum::new_string(" 000"), "0");
+    sa!(Year, Datum::new_string(" 0000 "), "2000");
+    for input in [" 0ab", "00bc", "000a"] {
+        sa!(Year, Datum::new_string(input), "0");
+    }
+    sa!(Year, Datum::new_string(" 000a "), "2000");
+    sa!(Year, Datum::Int(1), "2001");
+    sa!(Year, Datum::new_string("1"), "2001");
+    sa!(Year, Datum::new_string("01"), "2001");
+    sa!(Year, Datum::Int(69), "2069");
+    sa!(Year, Datum::new_string("69"), "2069");
+    sa!(Year, Datum::Int(70), "1970");
+    sa!(Year, Datum::new_string("70"), "1970");
+    sa!(Year, Datum::Int(99), "1999");
+    sa!(Year, Datum::new_string("99"), "1999");
+    sd!(Year, Datum::Int(100), "1901");
+    sd!(
+        Year,
+        Datum::new_string("99999999999999999999999999999999999"),
+        "0"
+    );
+
+    // Time from string and temporal/numeric zero values.
+    let zero_datetime = Time::new(CoreTime::default(), TimeType::DateTime, 0).unwrap();
+    let zero_duration = MySqlDuration::from_nanoseconds(0, 0).unwrap();
+    let temporal_decimal = Decimal::from_literal("20010101100000.123456");
+    sa!(Date, Datum::new_string("2012-08-23"), "2012-08-23");
+    sa!(
+        Datetime,
+        Datum::new_string("2012-08-23 12:34:03.123456"),
+        "2012-08-23 12:34:03"
+    );
+    sa!(
+        Datetime,
+        Datum::new_time(zero_datetime),
+        "0000-00-00 00:00:00"
+    );
+    sa!(Datetime, Datum::Int(0), "0000-00-00 00:00:00");
+    sa!(
+        Datetime,
+        Datum::new_decimal(temporal_decimal.clone()),
+        "2001-01-01 10:00:00"
+    );
+    sa!(
+        Timestamp,
+        Datum::new_string("2012-08-23 12:34:03.123456"),
+        "2012-08-23 12:34:03"
+    );
+    sa!(
+        Timestamp,
+        Datum::new_decimal(temporal_decimal),
+        "2001-01-01 10:00:00"
+    );
+    sa!(Duration, Datum::new_string("10:11:12"), "10:11:12");
+    sa!(Duration, Datum::new_time(zero_datetime), "00:00:00");
+    sa!(Duration, Datum::new_duration(zero_duration), "00:00:00");
+    sa!(Duration, Datum::Int(0), "00:00:00");
+
+    sd!(Date, Datum::new_string("2012-08-x"), "0000-00-00");
+    sd!(
+        Datetime,
+        Datum::new_string("2012-08-x"),
+        "0000-00-00 00:00:00"
+    );
+    sd!(
+        Timestamp,
+        Datum::new_string("2012-08-x"),
+        "0000-00-00 00:00:00"
+    );
+    sd!(Duration, Datum::new_string("2012-08-x"), "00:20:12");
+    sd!(Duration, Datum::new_string("0000-00-00"), "00:00:00");
+    sd!(Duration, Datum::new_string("1234abc"), "00:12:34");
+
+    // String from string and the other source kinds in the Go table.
+    sa!(String, Datum::new_string("abc"), "abc");
+    sa!(String, Datum::Int(5678), "5678");
+    sa!(String, Datum::new_duration(zero_duration), "00:00:00");
+    sa!(
+        String,
+        Datum::new_time(zero_datetime),
+        "0000-00-00 00:00:00"
+    );
+    sa!(String, Datum::new_bytes("123"), "123");
+
+    // NewDecimal.
+    sa!(NewDecimal, Datum::Int(123), "123");
+    sa!(NewDecimal, Datum::Int(123), "123");
+    sa!(NewDecimal, Datum::UInt(123), "123");
+    sa!(NewDecimal, Datum::Float32(f64::from(123_f32)), "123");
+    sa!(NewDecimal, Datum::Real(123.456), "123.456");
+    sa!(NewDecimal, Datum::new_string("-123.456"), "-123.456");
+    sa!(
+        NewDecimal,
+        Datum::new_decimal(Decimal::from_literal("12300000")),
+        "12300000"
+    );
+    sa!(
+        NewDecimal,
+        Datum::new_decimal(Decimal::from_literal("-0.00123")),
+        "-0.00123"
+    );
+
+    assert_eq!(source_rows, 163, "one entry per Go source row");
+}
+
 /// Source: `pkg/types/convert_test.go::TestConvertToString`.
 ///
 /// The final Go-only `invalidMockType` row exercises `ToString(any)`'s dynamic
@@ -546,7 +866,7 @@ fn test_convert_to_string() {
 /// ordinal outside the declaration, and a number whose bits do not fit the
 /// SET.
 #[test]
-fn go_test_convert_type_out_of_range_enum_and_set_keep_the_empty_value() {
+fn out_of_range_enum_and_set_keep_the_empty_value() {
     let enum_type = FieldType::new(FieldTypeCode::Enum).with_elems(["a", "b", "c"]);
     let collation = enum_type.collation();
     for input in [Datum::Int(4), Datum::Int(0), Datum::new_string("d")] {
