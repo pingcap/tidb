@@ -383,9 +383,15 @@ pub fn new_config() -> Config {
 }
 
 static GLOBAL_CONFIG: OnceLock<RwLock<Config>> = OnceLock::new();
+static PREPARED_ERROR_MESSAGE_EXTENSIONS: OnceLock<RwLock<Vec<ErrorMessageExtension>>> =
+    OnceLock::new();
 
 fn global_config() -> &'static RwLock<Config> {
     GLOBAL_CONFIG.get_or_init(|| RwLock::new(new_config()))
+}
+
+fn prepared_error_message_extensions() -> &'static RwLock<Vec<ErrorMessageExtension>> {
+    PREPARED_ERROR_MESSAGE_EXTENSIONS.get_or_init(|| RwLock::new(Vec::new()))
 }
 
 /// Go `GetGlobalConfig`. Rust returns an owned snapshot so readers never
@@ -397,12 +403,39 @@ pub fn get_global_config() -> Config {
         .clone()
 }
 
+/// Go `GetErrorMessageExtensions`.
+pub fn get_error_message_extensions() -> Vec<ErrorMessageExtension> {
+    prepared_error_message_extensions()
+        .read()
+        .expect("prepared error message extensions lock poisoned")
+        .clone()
+}
+
+/// Go `StoreGlobalConfig`.
+pub fn store_global_config(config: Config) {
+    let (extensions, _) = prepare_error_message_extensions(&config.error_message_extensions, true)
+        .expect("ignore-invalid preparation cannot fail");
+    let mut global = global_config()
+        .write()
+        .expect("global config lock poisoned");
+    let mut prepared = prepared_error_message_extensions()
+        .write()
+        .expect("prepared error message extensions lock poisoned");
+    *global = config;
+    *prepared = extensions;
+}
+
 /// Go `UpdateGlobal`.
 pub fn update_global(update: impl FnOnce(&mut Config)) {
     let mut config = global_config()
         .write()
         .expect("global config lock poisoned");
     update(&mut config);
+    let (extensions, _) = prepare_error_message_extensions(&config.error_message_extensions, true)
+        .expect("ignore-invalid preparation cannot fail");
+    *prepared_error_message_extensions()
+        .write()
+        .expect("prepared error message extensions lock poisoned") = extensions;
 }
 
 /// Go `GetGlobalKeyspaceName`.
@@ -672,6 +705,8 @@ impl Config {
 mod tests {
     use super::*;
 
+    static GLOBAL_CONFIG_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     // Go TestCloneConf.
     #[test]
     fn test_clone_conf() {
@@ -696,6 +731,7 @@ mod tests {
     // Go TestGetGlobalKeyspaceName.
     #[test]
     fn test_get_global_keyspace_name() {
+        let _guard = GLOBAL_CONFIG_TEST_LOCK.lock().unwrap();
         let config = new_config();
         assert!(config.keyspace_name.is_empty());
 
@@ -708,6 +744,7 @@ mod tests {
     // Go TestGetGlobalTiKVWorkerURL.
     #[test]
     fn test_get_global_tikv_worker_url() {
+        let _guard = GLOBAL_CONFIG_TEST_LOCK.lock().unwrap();
         let config = new_config();
         assert!(config.tikv_worker_url.is_empty());
 
@@ -720,6 +757,7 @@ mod tests {
     // Go TestAutoScalerConfig.
     #[test]
     fn test_auto_scaler_config() {
+        let _guard = GLOBAL_CONFIG_TEST_LOCK.lock().unwrap();
         let config = new_config();
         assert!(!config.use_auto_scaler);
         assert!(!get_global_config().use_auto_scaler);
@@ -781,6 +819,26 @@ mod tests {
             config.external_workload.role.0,
             crate::external_workload::ROLE_GCV2_WORKER
         );
+    }
+
+    // The global-copy portion of Go TestErrorMessageExtensionConfig.
+    #[test]
+    fn error_message_extension_config_global_copy() {
+        let _guard = GLOBAL_CONFIG_TEST_LOCK.lock().unwrap();
+        let original = get_global_config();
+        let mut config = new_config();
+        config.error_message_extensions = vec![ErrorMessageExtension {
+            pattern: "^Access denied$".to_owned(),
+            suffix: "see documentation".to_owned(),
+        }];
+        store_global_config(config);
+
+        let mut prepared = get_error_message_extensions();
+        assert!(!prepared.is_empty());
+        prepared[0].suffix.clear();
+        assert!(!get_error_message_extensions()[0].suffix.is_empty());
+
+        store_global_config(original);
     }
 
     // Go TestKeyspaceActivateModeConfig (the source test runs under the
