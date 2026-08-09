@@ -113,25 +113,21 @@ func (dc *ddlCtx) externalWorkloadManager() (extworkload.Manager, bool) {
 }
 
 func cancelJobOnExternalTTLWorkloadError(job *model.Job, err error) error {
-	if err == nil {
-		return nil
-	}
 	job.State = model.JobStateCancelled
 	return errors.Trace(err)
 }
 
+// tblInfo must be non-nil.
 func (dc *ddlCtx) registerTTLTableToExternalWorkload(ctx context.Context, tblInfo *model.TableInfo) error {
 	manager, ok := dc.externalWorkloadManager()
-	if !ok || tblInfo == nil || tblInfo.TTLInfo == nil || !tblInfo.TTLInfo.Enable {
+	if !ok || tblInfo.TTLInfo == nil || !tblInfo.TTLInfo.Enable {
 		return nil
 	}
 	return manager.RegisterTTLTask(ctx, tblInfo.ID, vardef.EnableTTLJob.Load())
 }
 
+// tblInfo must be non-nil.
 func (dc *ddlCtx) syncTTLTableToExternalWorkload(ctx context.Context, tblInfo *model.TableInfo) error {
-	if tblInfo == nil {
-		return nil
-	}
 	if tblInfo.TTLInfo == nil || !tblInfo.TTLInfo.Enable {
 		return dc.deleteTTLTableFromExternalWorkload(ctx, tblInfo.ID)
 	}
