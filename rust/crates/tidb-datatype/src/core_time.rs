@@ -862,7 +862,17 @@ mod tests {
     use chrono::{Datelike, Offset};
 
     #[test]
-    fn test_week_behaviour_and_week() {
+    fn test_week_behaviour() {
+        assert_eq!(1, WEEK_BEHAVIOUR_MONDAY_FIRST);
+        assert_eq!(2, WEEK_BEHAVIOUR_YEAR);
+        assert_eq!(4, WEEK_BEHAVIOUR_FIRST_WEEKDAY);
+        assert_ne!(1 & WEEK_BEHAVIOUR_MONDAY_FIRST, 0);
+        assert_ne!(2 & WEEK_BEHAVIOUR_YEAR, 0);
+        assert_ne!(4 & WEEK_BEHAVIOUR_FIRST_WEEKDAY, 0);
+    }
+
+    #[test]
+    fn test_week() {
         let time = CoreTime::from_date(2008, 2, 20, 0, 0, 0, 0);
         assert_eq!(time.week(0), 7);
         assert_eq!(time.week(1), 8);
