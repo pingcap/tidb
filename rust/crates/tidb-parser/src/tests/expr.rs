@@ -976,26 +976,48 @@ fn pipes_as_concat_sql_mode_matches_go() {
 /// `pkg/parser/parser_test.go:TestHighNotPrecedenceMode`.
 #[test]
 fn high_not_precedence_sql_mode_matches_go() {
-    assert_eq!(
-        parse("SELECT NOT 1 BETWEEN -5 AND 5").unwrap().restore(),
-        "SELECT NOT 1 BETWEEN -5 AND 5"
-    );
-    assert_eq!(
-        parse("SELECT !1 BETWEEN -5 AND 5").unwrap().restore(),
-        "SELECT !1 BETWEEN -5 AND 5"
-    );
-    assert_eq!(
-        parse_with_sql_mode(
-            "SELECT NOT 1 BETWEEN -5 AND 5",
-            SqlMode {
-                high_not_precedence: true,
-                ..SqlMode::default()
-            },
-        )
-        .unwrap()
-        .restore(),
-        "SELECT !1 BETWEEN -5 AND 5"
-    );
+    fn first_select_expr(statement: Stmt) -> Expr {
+        let Stmt::Query(query) = statement else {
+            panic!("expected query")
+        };
+        let tidb_ast::QueryStmt::Select(select) = query.into_inner() else {
+            panic!("expected SELECT")
+        };
+        let SelectField::Expr { expr, .. } = select
+            .fields
+            .into_iter()
+            .next()
+            .expect("expected one SELECT field")
+        else {
+            panic!("expected expression field")
+        };
+        expr
+    }
+
+    let default_not = parse("SELECT NOT 1 BETWEEN -5 AND 5").unwrap();
+    assert_eq!(default_not.restore(), "SELECT NOT 1 BETWEEN -5 AND 5");
+    assert!(matches!(
+        first_select_expr(default_not),
+        Expr::Unary(tidb_ast::UnaryOp::NotKeyword, _)
+    ));
+
+    let default_bang = parse("SELECT !1 BETWEEN -5 AND 5").unwrap();
+    assert_eq!(default_bang.restore(), "SELECT !1 BETWEEN -5 AND 5");
+    assert!(matches!(
+        first_select_expr(default_bang),
+        Expr::Between { .. }
+    ));
+
+    let high_not = parse_with_sql_mode(
+        "SELECT NOT 1 BETWEEN -5 AND 5",
+        SqlMode {
+            high_not_precedence: true,
+            ..SqlMode::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(high_not.restore(), "SELECT !1 BETWEEN -5 AND 5");
+    assert!(matches!(first_select_expr(high_not), Expr::Between { .. }));
 }
 
 #[test]
