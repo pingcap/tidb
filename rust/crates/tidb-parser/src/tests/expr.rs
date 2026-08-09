@@ -204,6 +204,35 @@ fn like_escape_clause() {
     );
 }
 
+/// `pkg/parser/parser_test.go::TestLikeEscape`.
+#[test]
+fn test_like_escape() {
+    for (sql, expected) in [
+        (
+            r#"select "abc_" like "abc\\_" escape ''"#,
+            Some(r#"SELECT _UTF8MB4'abc_' LIKE _UTF8MB4'abc\\_' ESCAPE ''"#),
+        ),
+        (
+            r#"select "abc_" like "abc\\_" escape '\\'"#,
+            Some(r#"SELECT _UTF8MB4'abc_' LIKE _UTF8MB4'abc\\_'"#),
+        ),
+        (r#"select "abc_" like "abc\\_" escape '||'"#, None),
+        (
+            r#"select "abc" like "escape" escape '+'"#,
+            Some(r#"SELECT _UTF8MB4'abc' LIKE _UTF8MB4'escape' ESCAPE '+'"#),
+        ),
+        (
+            r#"select '''_' like '''_' escape ''''"#,
+            Some(r#"SELECT _UTF8MB4'''_' LIKE _UTF8MB4'''_' ESCAPE ''''"#),
+        ),
+    ] {
+        match expected {
+            Some(expected) => assert_eq!(r(sql), expected, "{sql}"),
+            None => assert!(parse(sql).is_err(), "{sql}"),
+        }
+    }
+}
+
 #[test]
 fn functions_and_literals() {
     assert_eq!(r("select f(a, b+1)"), "SELECT F(`a`, `b`+1)");
