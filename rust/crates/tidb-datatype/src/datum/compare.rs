@@ -502,7 +502,7 @@ mod tests {
     }
 
     #[test]
-    fn test_null_not_equal_with_others_source_rows() {
+    fn test_null_not_equal_with_others() {
         let zero_time = Datum::new_time(
             parse_datetime("0000-00-00 00:00:00", &chrono_tz::UTC, true, false)
                 .unwrap()
