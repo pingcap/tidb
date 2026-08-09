@@ -368,11 +368,7 @@ impl BuildTable {
         let chk_idx = u32::try_from(self.rows.num_chunks()).map_err(|_| BuildError::Key)?;
         for row_idx in 0..chunk.num_rows() {
             let chunk_row = chunk.get_row(row_idx);
-            let row: Vec<Datum> = types
-                .iter()
-                .enumerate()
-                .map(|(c, ft)| chunk_row.get_datum(c, ft))
-                .collect();
+            let row = chunk_row.get_datum_row(types);
             // A row whose key holds a NULL matches nothing, so it is simply
             // not indexed -- but it IS still stored, because Go stores the
             // whole chunk and only the hash-table entry is skipped. The build
@@ -415,11 +411,7 @@ impl BuildTable {
         buf.reset();
         let index = self.rows.get_row_and_always_append_to_chunk(ptr, buf)?;
         let row = buf.get_row(index);
-        Ok(types
-            .iter()
-            .enumerate()
-            .map(|(c, ft)| row.get_datum(c, ft))
-            .collect())
+        Ok(row.get_datum_row(types))
     }
 
     /// Go `hashRowContainer.GetMemTracker`, which the build worker attaches

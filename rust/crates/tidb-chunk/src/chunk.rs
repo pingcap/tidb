@@ -1169,6 +1169,75 @@ mod tests {
     }
 
     #[test]
+    fn decimal_get_datum_preserves_declared_shape_and_effective_fraction() {
+        let fields = [
+            FieldType::new(FieldTypeCode::NewDecimal)
+                .with_flen(10)
+                .with_decimal(4),
+            FieldType::new(FieldTypeCode::NewDecimal).with_flen(10),
+        ];
+        let mut chunk = Chunk::new_with_capacity(&fields, 1);
+        chunk.append_my_decimal(0, &MyDecimal::from_string(b"12.3").0);
+        chunk.append_my_decimal(1, &MyDecimal::from_string(b"12.340").0);
+
+        let row = chunk.get_row(0);
+        let shapes = std::array::from_fn(|column| match row.get_datum(column, &fields[column]) {
+            Datum::Decimal(decimal) => decimal.declared_shape(),
+            other => panic!("expected decimal datum, got {other:?}"),
+        });
+        assert_eq!(shapes, [Some((10, 4)), Some((10, 3))]);
+    }
+
+    #[test]
+    fn decimal_get_datum_preserves_hidden_fraction_words_and_result_scale() {
+        let field = FieldType::new(FieldTypeCode::NewDecimal).with_flen(20);
+        let mut raw = MyDecimal::from_string(b"1.234567890").0.to_raw_bytes();
+        raw[2] = 7;
+        let stored = MyDecimal::from_raw_bytes(raw).expect("valid decimal layout");
+        let mut chunk = Chunk::new_with_capacity(std::slice::from_ref(&field), 1);
+        chunk.append_my_decimal(0, &stored);
+
+        match chunk.get_row(0).get_datum(0, &field) {
+            Datum::Decimal(decimal) => {
+                assert_eq!(decimal.to_string(), "1.2345679");
+                assert_eq!(decimal.storage_string(), "1.234567890");
+                assert_eq!(decimal.declared_shape(), Some((20, 9)));
+            }
+            other => panic!("expected decimal datum, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn datum_row_buffer_is_overwritten_and_reused() {
+        let fields = [
+            FieldType::new(FieldTypeCode::LongLong),
+            FieldType::new(FieldTypeCode::NewDecimal)
+                .with_flen(10)
+                .with_decimal(4),
+        ];
+        let mut chunk = Chunk::new_with_capacity(&fields, 1);
+        chunk.append_int64(0, 7);
+        chunk.append_my_decimal(1, &MyDecimal::from_string(b"12.3").0);
+
+        let row = chunk.get_row(0);
+        let mut buffer = vec![Datum::Null, Datum::Int(99)];
+        let returned = row.get_datum_row_with_buffer(&fields, &mut buffer);
+        assert_eq!(returned[0], Datum::Int(7));
+        match &returned[1] {
+            Datum::Decimal(decimal) => {
+                assert_eq!(decimal.to_string(), "12.3");
+                assert_eq!(decimal.declared_shape(), Some((10, 4)));
+            }
+            other => panic!("expected decimal datum, got {other:?}"),
+        }
+        assert_eq!(row.get_datum_row(&fields), returned);
+
+        let mut cell = Datum::new_string("stale");
+        row.datum_with_buffer(0, &fields[0], &mut cell);
+        assert_eq!(cell, Datum::Int(7));
+    }
+
+    #[test]
     fn time_duration_datum_roundtrip() {
         use tidb_datatype::{CoreTime, Datum, TimeType};
         let fields = vec![

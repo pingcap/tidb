@@ -116,14 +116,7 @@ impl OuterCursor {
                         && chunk.num_rows() == 1
                         && outer.agg_tree_input_empty());
                     self.cursor += 1;
-                    return Ok(Some((
-                        types
-                            .iter()
-                            .enumerate()
-                            .map(|(c, ft)| row.get_datum(c, ft))
-                            .collect(),
-                        selected,
-                    )));
+                    return Ok(Some((row.get_datum_row(types), selected)));
                 }
             }
             if self.done {

@@ -27,7 +27,7 @@ use crate::chunk::Chunk;
 use crate::CellBytes;
 use tidb_datatype::{
     Datum, Decimal, FieldType, FieldTypeCode, GoString, MyDecimal, MySqlDuration, Time,
-    VectorFloat32,
+    VectorFloat32, UNSPECIFIED_LENGTH,
 };
 
 /// Go `chunk.RowSize = unsafe.Sizeof(Row{})`: what one retained row CURSOR
@@ -199,6 +199,28 @@ impl<'a> Row<'a> {
         self.chunk().column(col_idx).is_null(self.idx)
     }
 
+    /// Go `GetDatumRow`: materializes every column with the corresponding
+    /// field type.
+    #[must_use]
+    pub fn get_datum_row(&self, field_types: &[FieldType]) -> Vec<Datum> {
+        let mut datums = vec![Datum::Null; self.len()];
+        self.get_datum_row_with_buffer(field_types, &mut datums);
+        datums
+    }
+
+    /// Go `GetDatumRowWithBuffer`: overwrites the caller's reusable datum
+    /// buffer in place and returns that same buffer.
+    pub fn get_datum_row_with_buffer<'b>(
+        &self,
+        field_types: &[FieldType],
+        datums: &'b mut [Datum],
+    ) -> &'b mut [Datum] {
+        for (column, datum) in datums.iter_mut().enumerate() {
+            self.datum_with_buffer(column, &field_types[column], datum);
+        }
+        datums
+    }
+
     /// Go `GetDatum` (`DatumWithBuffer`): read the cell at `col_idx` as a
     /// [`Datum`], interpreted by `field_type`.
     ///
@@ -212,10 +234,19 @@ impl<'a> Row<'a> {
     /// silently-null datum.
     #[must_use]
     pub fn get_datum(&self, col_idx: usize, field_type: &FieldType) -> Datum {
+        let mut datum = Datum::Null;
+        self.datum_with_buffer(col_idx, field_type, &mut datum);
+        datum
+    }
+
+    /// Go `DatumWithBuffer`: materializes one cell into caller-owned datum
+    /// storage. Existing contents are overwritten for every supported kind.
+    pub fn datum_with_buffer(&self, col_idx: usize, field_type: &FieldType, datum: &mut Datum) {
         if self.is_null(col_idx) {
-            return Datum::Null;
+            *datum = Datum::Null;
+            return;
         }
-        match field_type.code() {
+        *datum = match field_type.code() {
             FieldTypeCode::Tiny
             | FieldTypeCode::Short
             | FieldTypeCode::Int24
@@ -278,24 +309,22 @@ impl<'a> Row<'a> {
             FieldTypeCode::Duration => {
                 Datum::Duration(self.get_duration(col_idx, field_type.decimal()))
             }
-            // Go additionally calls SetLength(tp.GetFlen()) and
-            // SetFrac(tp.GetDecimal()) here. The value and its own fractional
-            // digits round-trip exactly through the canonical decimal text
-            // (matching Go's unspecified-decimal branch, which uses the stored
-            // digitsFrac). DEFERRED, documented: the explicit
-            // SetFrac(tp.GetDecimal()) display-metadata override, which only
-            // differs when a column's declared scale disagrees with the scale
-            // actually stored in the cell -- reproducing it needs a
-            // frac-metadata setter that does not round the value.
             FieldTypeCode::NewDecimal => {
-                let text = String::from_utf8(self.get_my_decimal(col_idx).to_string_bytes())
-                    .expect("decimal text is ASCII");
-                Datum::Decimal(Decimal::from_literal(&text))
+                let stored = self.get_my_decimal(col_idx);
+                let fraction = if field_type.decimal() == UNSPECIFIED_LENGTH {
+                    i64::from(stored.digits_frac())
+                } else {
+                    field_type.decimal()
+                };
+                Datum::Decimal(
+                    Decimal::from_my_decimal(&stored)
+                        .with_declared_shape(field_type.flen(), fraction),
+                )
             }
             FieldTypeCode::VectorFloat32 => Datum::VectorFloat32(self.get_vector_float32(col_idx)),
             other => panic!(
                 "chunk Row::get_datum: column type {other:?} not yet supported (deferred with its column getter)"
             ),
-        }
+        };
     }
 }

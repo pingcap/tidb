@@ -1375,13 +1375,7 @@ pub(crate) fn run_select_traced(
             break;
         }
         for r in 0..n {
-            let row = req.get_row(r);
-            let values = ret_types
-                .iter()
-                .enumerate()
-                .map(|(c, ft)| row.get_datum(c, ft))
-                .collect();
-            rows.push(values);
+            rows.push(req.get_row(r).get_datum_row(&ret_types));
         }
     }
     root.close()?;
@@ -1475,14 +1469,7 @@ fn drain_executor_rows(
             break;
         }
         for r in 0..n {
-            let row = req.get_row(r);
-            rows.push(
-                types
-                    .iter()
-                    .enumerate()
-                    .map(|(c, ft)| row.get_datum(c, ft))
-                    .collect(),
-            );
+            rows.push(req.get_row(r).get_datum_row(types));
         }
     }
     exec.close()?;

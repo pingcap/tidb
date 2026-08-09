@@ -14,6 +14,8 @@
 
 use std::cmp::Ordering;
 
+use crate::MyDecimal;
+
 /// A fixed-point decimal value: `(-1)^negative * digits * 10^-scale`, where
 /// `digits` is an unsigned decimal digit string (no separators) at least
 /// `scale` characters long (left-padded with `0` so slicing off the
@@ -151,6 +153,22 @@ impl Decimal {
         // `Decimal::new` normalizes a numerically zero magnitude back to
         // non-negative, so `-0.00` needs no branch of its own here.
         Decimal::new(negative, format!("{int_norm}{frac_part}"), scale)
+    }
+
+    /// Converts the exact chunk-layout [`MyDecimal`] into the value-layer
+    /// decimal without losing either its visible `resultFrac` or the hidden
+    /// base-1e9 fraction digits retained for later arithmetic.
+    #[must_use]
+    pub fn from_my_decimal(value: &MyDecimal) -> Self {
+        let text =
+            String::from_utf8(value.to_string_bytes()).expect("MyDecimal text is always ASCII");
+        let parsed = Self::from_literal(&text);
+        let result_scale = u32::try_from(value.result_frac()).unwrap_or(0);
+        let storage_scale = u32::try_from(value.digits_frac())
+            .unwrap_or(0)
+            .max(result_scale);
+        let digits = pad_scale(&parsed.digits, parsed.storage_scale, storage_scale);
+        Self::new_with_storage(parsed.negative, digits, result_scale, storage_scale)
     }
 
     /// Parses the signed decimal strings accepted by datatype conversion.

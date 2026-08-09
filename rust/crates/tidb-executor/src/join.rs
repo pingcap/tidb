@@ -1222,12 +1222,7 @@ pub(crate) fn row_bytes(row: &[Datum]) -> i64 {
 
 /// One chunk row as owned `Datum`s.
 fn datum_row(chunk: &Chunk, index: usize, types: &[FieldType]) -> Vec<Datum> {
-    let row = chunk.get_row(index);
-    types
-        .iter()
-        .enumerate()
-        .map(|(c, ft)| row.get_datum(c, ft))
-        .collect()
+    chunk.get_row(index).get_datum_row(types)
 }
 
 /// A key datum outside its column's statically determined class. The class

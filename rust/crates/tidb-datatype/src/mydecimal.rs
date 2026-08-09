@@ -1226,6 +1226,13 @@ impl MyDecimal {
         self.digits_frac
     }
 
+    /// Go `resultFrac`: fractional digits exposed by `String`, which may be
+    /// fewer than the whole base-1e9 words retained in `digitsFrac`.
+    #[must_use]
+    pub fn result_frac(&self) -> i8 {
+        self.result_frac
+    }
+
     /// Go `removeLeadingZeros`.
     fn remove_leading_zeros(&self) -> (usize, i32) {
         let mut word_idx = 0usize;
