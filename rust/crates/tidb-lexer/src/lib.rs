@@ -1142,6 +1142,9 @@ mod tests {
     #[path = "lexer_source.rs"]
     mod lexer_source;
 
+    #[path = "consistent_source.rs"]
+    mod consistent_source;
+
     /// Renders a SQL string to its space-joined token labels for compact
     /// assertions (the terminal `Eof` is dropped).
     fn labels(sql: &str) -> String {
