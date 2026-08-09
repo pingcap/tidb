@@ -20,7 +20,7 @@
 
 use std::fmt;
 
-use super::{Datum, DatumKind, DatumStringError};
+use super::{Datum, DatumKind, DatumStringError, DatumValueError};
 
 impl Datum {
     /// Renders the scalar in the existing Go-oracle label format.
@@ -104,6 +104,46 @@ impl Datum {
             other => other.sql_bytes()?,
         };
         Ok(truncate_diagnostic_bytes(bytes))
+    }
+
+    /// Restores the default-field-type rows from Go parser driver's
+    /// `ValueExpr.Restore`.
+    ///
+    /// The parser driver also consults field-type flags for boolean integers,
+    /// charset introducers, and unsigned binary literals. A [`Datum`] does not
+    /// carry that metadata, so this method deliberately models the default
+    /// field types constructed by `types.New*Datum`, which are the source
+    /// contract exercised by `value_expr_test.go`.
+    pub fn restore_value_expr(&self) -> Result<Vec<u8>, DatumValueError> {
+        match self {
+            Self::String(value) => Ok(quote_value_expr(value.bytes())),
+            Self::Bytes(value) => Ok(quote_value_expr_bytes(value)),
+            Self::Duration(value) => Ok(quote_value_expr_bytes(value.to_string().as_bytes())),
+            Self::Time(value) => Ok(quote_value_expr_bytes(value.to_string().as_bytes())),
+            other => other.value_expr_scalar("value expression restore"),
+        }
+    }
+
+    /// Formats the default-field-type rows from Go parser driver's
+    /// `ValueExpr.Format` without assuming the source bytes are UTF-8.
+    pub fn format_value_expr(&self) -> Result<Vec<u8>, DatumValueError> {
+        self.value_expr_scalar("value expression format")
+    }
+
+    fn value_expr_scalar(&self, target: &'static str) -> Result<Vec<u8>, DatumValueError> {
+        let value = match self {
+            Self::Null => b"NULL".to_vec(),
+            Self::Int(value) => value.to_string().into_bytes(),
+            Self::UInt(value) => value.to_string().into_bytes(),
+            Self::Float32(value) => format_go_float_e(*value as f32).into_bytes(),
+            Self::Real(value) => format_go_float_e(*value).into_bytes(),
+            Self::String(value) => quote_value_expr(value.bytes()),
+            Self::Bytes(value) => quote_value_expr(value),
+            Self::BinaryLiteral(value) => value.to_bit_literal_string(true).into_bytes(),
+            Self::Decimal(value) => value.to_string().into_bytes(),
+            other => return Err(DatumValueError::Unsupported(other.kind(), target)),
+        };
+        Ok(value)
     }
 }
 
@@ -214,6 +254,77 @@ fn encode_hex(bytes: &[u8]) -> String {
         write!(encoded, "{byte:02X}").expect("writing to String cannot fail");
     }
     encoded
+}
+
+fn quote_value_expr(value: &[u8]) -> Vec<u8> {
+    let mut escaped = Vec::with_capacity(value.len());
+    for byte in value {
+        escaped.push(*byte);
+        if *byte == b'\\' {
+            escaped.push(b'\\');
+        }
+    }
+    quote_value_expr_bytes(&escaped)
+}
+
+fn quote_value_expr_bytes(value: &[u8]) -> Vec<u8> {
+    let mut quoted = Vec::with_capacity(value.len() + 2);
+    quoted.push(b'\'');
+    for byte in value {
+        match byte {
+            b'\'' => quoted.extend_from_slice(b"''"),
+            other => quoted.push(*other),
+        }
+    }
+    quoted.push(b'\'');
+    quoted
+}
+
+trait GoScientificFloat: fmt::LowerExp + Copy {
+    fn special(self) -> Option<&'static str>;
+}
+
+impl GoScientificFloat for f32 {
+    fn special(self) -> Option<&'static str> {
+        if self.is_nan() {
+            Some("NaN")
+        } else if self == Self::INFINITY {
+            Some("+Inf")
+        } else if self == Self::NEG_INFINITY {
+            Some("-Inf")
+        } else {
+            None
+        }
+    }
+}
+
+impl GoScientificFloat for f64 {
+    fn special(self) -> Option<&'static str> {
+        if self.is_nan() {
+            Some("NaN")
+        } else if self == Self::INFINITY {
+            Some("+Inf")
+        } else if self == Self::NEG_INFINITY {
+            Some("-Inf")
+        } else {
+            None
+        }
+    }
+}
+
+/// Go `strconv.FormatFloat(value, 'e', -1, bitSize)` differs from Rust's
+/// lower-exponent display only in special values and exponent normalization.
+fn format_go_float_e<T: GoScientificFloat>(value: T) -> String {
+    if let Some(special) = value.special() {
+        return special.to_owned();
+    }
+    let scientific = format!("{value:e}");
+    let (mantissa, exponent) = scientific
+        .split_once('e')
+        .expect("Rust scientific float contains an exponent");
+    let exponent: i32 = exponent.parse().expect("Rust float exponent is numeric");
+    let sign = if exponent < 0 { '-' } else { '+' };
+    format!("{mantissa}e{sign}{:02}", exponent.unsigned_abs())
 }
 
 #[cfg(test)]
