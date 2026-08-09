@@ -83,6 +83,61 @@ fn statement_priority_and_select_modifier_source_rows() {
     }
 }
 
+/// `pkg/parser/parser_test.go::TestSQLResult`.
+#[test]
+fn test_sql_result() {
+    for (sql, expected) in [
+        (
+            "select SQL_BIG_RESULT c1 from t group by c1",
+            "SELECT SQL_BIG_RESULT `c1` FROM `t` GROUP BY `c1`",
+        ),
+        (
+            "select SQL_SMALL_RESULT c1 from t group by c1",
+            "SELECT SQL_SMALL_RESULT `c1` FROM `t` GROUP BY `c1`",
+        ),
+        (
+            "select SQL_BUFFER_RESULT * from t",
+            "SELECT SQL_BUFFER_RESULT * FROM `t`",
+        ),
+        (
+            "select sql_small_result sql_big_result sql_buffer_result 1",
+            "SELECT SQL_SMALL_RESULT SQL_BIG_RESULT SQL_BUFFER_RESULT 1",
+        ),
+        (
+            "select STRAIGHT_JOIN SQL_SMALL_RESULT * from t",
+            "SELECT SQL_SMALL_RESULT STRAIGHT_JOIN * FROM `t`",
+        ),
+        (
+            "select SQL_CALC_FOUND_ROWS DISTINCT * from t",
+            "SELECT SQL_CALC_FOUND_ROWS DISTINCT * FROM `t`",
+        ),
+    ] {
+        assert_eq!(r(sql), expected, "source SQL: {sql}");
+    }
+}
+
+/// `pkg/parser/parser_test.go::TestSQLNoCache`.
+#[test]
+fn test_sql_no_cache() {
+    for (sql, expected_sql_cache) in [
+        ("select SQL_NO_CACHE * from t", false),
+        ("select SQL_CACHE * from t", true),
+        ("select * from t", true),
+    ] {
+        let Stmt::Query(query) = parse(sql).unwrap_or_else(|error| panic!("{sql}: {error:?}"))
+        else {
+            panic!("expected query statement: {sql}");
+        };
+        let tidb_ast::QueryStmt::Select(select) = query.as_ref() else {
+            panic!("expected SELECT statement: {sql}");
+        };
+        assert_eq!(
+            !select.sql_no_cache, expected_sql_cache,
+            "source SQL: {sql}"
+        );
+    }
+}
+
 fn field_list(sql: &str) -> String {
     let statement = parse(&format!("SELECT {sql}")).expect("parse select field list");
     let tidb_ast::Stmt::Query(query) = statement else {
