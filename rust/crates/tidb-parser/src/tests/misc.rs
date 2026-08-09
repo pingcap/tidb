@@ -842,6 +842,93 @@ fn test_compact_table_stmt_restore() {
     }
 }
 
+/// Exact restore table from `pkg/parser/parser_test.go::TestPlanReplayer`.
+#[test]
+fn test_plan_replayer() {
+    let cases = [
+        (
+            "PLAN REPLAYER DUMP EXPLAIN SELECT a FROM t",
+            "PLAN REPLAYER DUMP EXPLAIN SELECT `a` FROM `t`",
+        ),
+        (
+            "PLAN REPLAYER DUMP EXPLAIN SELECT * FROM t WHERE a > 10",
+            "PLAN REPLAYER DUMP EXPLAIN SELECT * FROM `t` WHERE `a`>10",
+        ),
+        (
+            "PLAN REPLAYER DUMP EXPLAIN ANALYZE SELECT * FROM t WHERE a > 10",
+            "PLAN REPLAYER DUMP EXPLAIN ANALYZE SELECT * FROM `t` WHERE `a`>10",
+        ),
+        (
+            "PLAN REPLAYER DUMP EXPLAIN SLOW QUERY WHERE a > 10 and t < 1 ORDER BY t LIMIT 10",
+            "PLAN REPLAYER DUMP EXPLAIN SLOW QUERY WHERE `a`>10 AND `t`<1 ORDER BY `t` LIMIT 10",
+        ),
+        (
+            "PLAN REPLAYER DUMP EXPLAIN ANALYZE SLOW QUERY WHERE a > 10 and t < 1 ORDER BY t LIMIT 10",
+            "PLAN REPLAYER DUMP EXPLAIN ANALYZE SLOW QUERY WHERE `a`>10 AND `t`<1 ORDER BY `t` LIMIT 10",
+        ),
+        (
+            "PLAN REPLAYER DUMP EXPLAIN SLOW QUERY WHERE a > 10 and t < 1 LIMIT 10",
+            "PLAN REPLAYER DUMP EXPLAIN SLOW QUERY WHERE `a`>10 AND `t`<1 LIMIT 10",
+        ),
+        (
+            "PLAN REPLAYER DUMP EXPLAIN ANALYZE SLOW QUERY WHERE a > 10 and t < 1 LIMIT 10",
+            "PLAN REPLAYER DUMP EXPLAIN ANALYZE SLOW QUERY WHERE `a`>10 AND `t`<1 LIMIT 10",
+        ),
+        (
+            "PLAN REPLAYER DUMP EXPLAIN SLOW QUERY LIMIT 10",
+            "PLAN REPLAYER DUMP EXPLAIN SLOW QUERY LIMIT 10",
+        ),
+        (
+            "PLAN REPLAYER DUMP EXPLAIN ANALYZE SLOW QUERY LIMIT 10",
+            "PLAN REPLAYER DUMP EXPLAIN ANALYZE SLOW QUERY LIMIT 10",
+        ),
+        (
+            "PLAN REPLAYER DUMP EXPLAIN SLOW QUERY",
+            "PLAN REPLAYER DUMP EXPLAIN SLOW QUERY",
+        ),
+        (
+            "PLAN REPLAYER DUMP EXPLAIN ANALYZE SLOW QUERY",
+            "PLAN REPLAYER DUMP EXPLAIN ANALYZE SLOW QUERY",
+        ),
+        (
+            "PLAN REPLAYER LOAD '/tmp/sdfaalskdjf.zip'",
+            "PLAN REPLAYER LOAD '/tmp/sdfaalskdjf.zip'",
+        ),
+        (
+            "PLAN REPLAYER DUMP EXPLAIN 'sql.txt'",
+            "PLAN REPLAYER DUMP EXPLAIN 'sql.txt'",
+        ),
+        (
+            "PLAN REPLAYER DUMP EXPLAIN ANALYZE 'sql.txt'",
+            "PLAN REPLAYER DUMP EXPLAIN ANALYZE 'sql.txt'",
+        ),
+        (
+            "PLAN REPLAYER DUMP EXPLAIN ('SELECT * FROM t1')",
+            "PLAN REPLAYER DUMP EXPLAIN ('SELECT * FROM t1')",
+        ),
+        (
+            "PLAN REPLAYER DUMP EXPLAIN ( 'SELECT * FROM t1' , 'SELECT * FROM t2' )",
+            "PLAN REPLAYER DUMP EXPLAIN ('SELECT * FROM t1', 'SELECT * FROM t2')",
+        ),
+        (
+            "PLAN REPLAYER DUMP EXPLAIN ANALYZE ('SELECT * FROM t1', 'SELECT * FROM t2 WHERE id = 1')",
+            "PLAN REPLAYER DUMP EXPLAIN ANALYZE ('SELECT * FROM t1', 'SELECT * FROM t2 WHERE id = 1')",
+        ),
+        (
+            "PLAN REPLAYER CAPTURE '123' '123'",
+            "PLAN REPLAYER CAPTURE '123' '123'",
+        ),
+        (
+            "PLAN REPLAYER CAPTURE REMOVE '123' '123'",
+            "PLAN REPLAYER CAPTURE REMOVE '123' '123'",
+        ),
+    ];
+    assert_eq!(cases.len(), 19, "Go source row count drifted");
+    for (sql, expected) in cases {
+        assert_eq!(r(sql), expected, "{sql}");
+    }
+}
+
 #[test]
 fn test_plan_replayer_stmt_restore() {
     for (sql, expected) in [
