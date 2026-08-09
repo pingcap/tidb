@@ -21,17 +21,22 @@ use sha2::{Digest, Sha256};
 
 use crate::job_args::{get_or_decode_args, get_or_decode_args_v2};
 use crate::{
-    fill_rollback_args_for_add_partition, get_batch_create_table_args, get_create_schema_args,
-    get_create_table_args, get_drop_schema_args, get_exchange_table_partition_args,
-    get_finished_drop_schema_args, get_finished_table_partition_args,
-    get_finished_truncate_table_args, get_modify_schema_args,
-    get_modify_table_charset_and_collate_args, get_modify_table_comment_args,
-    get_rebase_auto_id_args, get_table_partition_args, get_truncate_table_args,
-    index_arg_columnar_index_type, rename_tables_args_from_v1, BatchCreateTableArgs,
-    ColumnarIndexType, CreateSchemaArgs, CreateTableArgs, DropSchemaArgs, EmptyArgs,
-    ExchangeTablePartitionArgs, FinishedJobArgs, GoAny, GoShared, GoSharedSlice, IndexOp, Job,
-    JobArgs, ModifySchemaArgs, ModifyTableCharsetAndCollateArgs, ModifyTableCommentArgs,
-    RebaseAutoIDArgs, RenameTableArgs, TableIDIndexID, TablePartitionArgs, TruncateTableArgs,
+    fill_rollback_args_for_add_partition, get_alter_index_visibility_args,
+    get_alter_table_mode_args, get_batch_create_table_args, get_create_schema_args,
+    get_create_table_args, get_drop_foreign_key_args, get_drop_schema_args,
+    get_exchange_table_partition_args, get_finished_drop_schema_args,
+    get_finished_table_partition_args, get_finished_truncate_table_args, get_modify_schema_args,
+    get_modify_table_auto_id_cache_args, get_modify_table_charset_and_collate_args,
+    get_modify_table_comment_args, get_modify_table_engine_attribute_args, get_rebase_auto_id_args,
+    get_refresh_meta_args, get_set_default_value_args, get_shard_row_id_args,
+    get_table_partition_args, get_truncate_table_args, index_arg_columnar_index_type,
+    rename_tables_args_from_v1, AlterIndexVisibilityArgs, AlterTableModeArgs, BatchCreateTableArgs,
+    ColumnarIndexType, CreateSchemaArgs, CreateTableArgs, DropForeignKeyArgs, DropSchemaArgs,
+    EmptyArgs, ExchangeTablePartitionArgs, FinishedJobArgs, GoAny, GoShared, GoSharedSlice,
+    IndexOp, Job, JobArgs, ModifySchemaArgs, ModifyTableAutoIDCacheArgs,
+    ModifyTableCharsetAndCollateArgs, ModifyTableCommentArgs, ModifyTableEngineAttributeArgs,
+    RebaseAutoIDArgs, RefreshMetaArgs, RenameTableArgs, SetDefaultValueArgs, ShardRowIDArgs,
+    TableIDIndexID, TablePartitionArgs, TruncateTableArgs,
 };
 use tidb_ast::CiString;
 
@@ -132,8 +137,8 @@ fn every_ast_obligation_has_exactly_one_concrete_verdict() {
 
     assert_eq!(ids.len(), 1_612);
     assert_eq!(categories, expected_categories);
-    assert_eq!(verdicts.get("PORTED"), Some(&495));
-    assert_eq!(verdicts.get("DECLINED"), Some(&1_117));
+    assert_eq!(verdicts.get("PORTED"), Some(&589));
+    assert_eq!(verdicts.get("DECLINED"), Some(&1_023));
     assert_eq!(verdicts.get("UNREACHABLE"), None);
     assert_eq!(sha256(&ordered_identity), ORDERED_AST_IDENTITY_SHA256);
 }
@@ -172,6 +177,14 @@ fn every_ported_symbol_remains_compile_anchored() {
     let _ = get_rebase_auto_id_args;
     let _ = get_modify_table_comment_args;
     let _ = get_modify_table_charset_and_collate_args;
+    let _ = get_alter_index_visibility_args;
+    let _ = get_drop_foreign_key_args;
+    let _ = get_modify_table_auto_id_cache_args;
+    let _ = get_shard_row_id_args;
+    let _ = get_set_default_value_args;
+    let _ = get_refresh_meta_args;
+    let _ = get_modify_table_engine_attribute_args;
+    let _ = get_alter_table_mode_args;
     let _ = <EmptyArgs as JobArgs>::get_args_v1;
     let _ = <EmptyArgs as JobArgs>::decode_v1;
     let _ = <CreateSchemaArgs as JobArgs>::get_args_v1;
@@ -199,6 +212,22 @@ fn every_ported_symbol_remains_compile_anchored() {
     let _ = <ModifyTableCommentArgs as JobArgs>::decode_v1;
     let _ = <ModifyTableCharsetAndCollateArgs as JobArgs>::get_args_v1;
     let _ = <ModifyTableCharsetAndCollateArgs as JobArgs>::decode_v1;
+    let _ = <AlterIndexVisibilityArgs as JobArgs>::get_args_v1;
+    let _ = <AlterIndexVisibilityArgs as JobArgs>::decode_v1;
+    let _ = <DropForeignKeyArgs as JobArgs>::get_args_v1;
+    let _ = <DropForeignKeyArgs as JobArgs>::decode_v1;
+    let _ = <ModifyTableAutoIDCacheArgs as JobArgs>::get_args_v1;
+    let _ = <ModifyTableAutoIDCacheArgs as JobArgs>::decode_v1;
+    let _ = <ShardRowIDArgs as JobArgs>::get_args_v1;
+    let _ = <ShardRowIDArgs as JobArgs>::decode_v1;
+    let _ = <SetDefaultValueArgs as JobArgs>::get_args_v1;
+    let _ = <SetDefaultValueArgs as JobArgs>::decode_v1;
+    let _ = <RefreshMetaArgs as JobArgs>::get_args_v1;
+    let _ = <RefreshMetaArgs as JobArgs>::decode_v1;
+    let _ = <ModifyTableEngineAttributeArgs as JobArgs>::get_args_v1;
+    let _ = <ModifyTableEngineAttributeArgs as JobArgs>::decode_v1;
+    let _ = <AlterTableModeArgs as JobArgs>::get_args_v1;
+    let _ = <AlterTableModeArgs as JobArgs>::decode_v1;
     let _ = EmptyArgs::default();
     let _ = CreateSchemaArgs::default().db_info;
     let drop_schema = DropSchemaArgs::default();
@@ -261,6 +290,10 @@ fn every_ported_symbol_remains_compile_anchored() {
     let _: fn() = crate::job_args::tests::rebase_auto_id_args_match_source_matrix;
     let _: fn() = crate::job_args::tests::modify_table_comment_args_match_source_matrix;
     let _: fn() = crate::job_args::tests::modify_table_charset_and_collate_args_pin_every_field;
+    let _: fn() =
+        crate::job_args::tests::scalar_and_existing_model_args_match_the_source_v1_v2_matrix;
+    let _: fn() =
+        crate::job_args::tests::new_native_args_preserve_go_null_duplicate_and_pointer_rules;
     let _: Option<GoSharedSlice<GoAny>> = None;
 
     let symbols: BTreeSet<_> = INVENTORY
@@ -274,6 +307,12 @@ fn every_ported_symbol_remains_compile_anchored() {
     assert_eq!(
         symbols,
         BTreeSet::from([
+            "job_args::AlterIndexVisibilityArgs",
+            "job_args::AlterIndexVisibilityArgs::decode_v1",
+            "job_args::AlterIndexVisibilityArgs::get_args_v1",
+            "job_args::AlterTableModeArgs",
+            "job_args::AlterTableModeArgs::decode_v1",
+            "job_args::AlterTableModeArgs::get_args_v1",
             "job_args::BatchCreateTableArgs",
             "job_args::BatchCreateTableArgs::decode_v1",
             "job_args::BatchCreateTableArgs::get_args_v1",
@@ -283,6 +322,9 @@ fn every_ported_symbol_remains_compile_anchored() {
             "job_args::CreateTableArgs",
             "job_args::CreateTableArgs::decode_v1",
             "job_args::CreateTableArgs::get_args_v1",
+            "job_args::DropForeignKeyArgs",
+            "job_args::DropForeignKeyArgs::decode_v1",
+            "job_args::DropForeignKeyArgs::get_args_v1",
             "job_args::DropSchemaArgs",
             "job_args::DropSchemaArgs::decode_v1",
             "job_args::DropSchemaArgs::get_args_v1",
@@ -299,16 +341,31 @@ fn every_ported_symbol_remains_compile_anchored() {
             "job_args::ModifySchemaArgs",
             "job_args::ModifySchemaArgs::decode_v1",
             "job_args::ModifySchemaArgs::get_args_v1",
+            "job_args::ModifyTableAutoIDCacheArgs",
+            "job_args::ModifyTableAutoIDCacheArgs::decode_v1",
+            "job_args::ModifyTableAutoIDCacheArgs::get_args_v1",
             "job_args::ModifyTableCharsetAndCollateArgs",
             "job_args::ModifyTableCharsetAndCollateArgs::decode_v1",
             "job_args::ModifyTableCharsetAndCollateArgs::get_args_v1",
             "job_args::ModifyTableCommentArgs",
             "job_args::ModifyTableCommentArgs::decode_v1",
             "job_args::ModifyTableCommentArgs::get_args_v1",
+            "job_args::ModifyTableEngineAttributeArgs",
+            "job_args::ModifyTableEngineAttributeArgs::decode_v1",
+            "job_args::ModifyTableEngineAttributeArgs::get_args_v1",
             "job_args::RebaseAutoIDArgs",
             "job_args::RebaseAutoIDArgs::decode_v1",
             "job_args::RebaseAutoIDArgs::get_args_v1",
+            "job_args::RefreshMetaArgs",
+            "job_args::RefreshMetaArgs::decode_v1",
+            "job_args::RefreshMetaArgs::get_args_v1",
             "job_args::RenameTableArgs",
+            "job_args::SetDefaultValueArgs",
+            "job_args::SetDefaultValueArgs::decode_v1",
+            "job_args::SetDefaultValueArgs::get_args_v1",
+            "job_args::ShardRowIDArgs",
+            "job_args::ShardRowIDArgs::decode_v1",
+            "job_args::ShardRowIDArgs::get_args_v1",
             "job_args::TruncateTableArgs",
             "job_args::TruncateTableArgs::decode_v1",
             "job_args::TruncateTableArgs::get_args_v1",
@@ -319,16 +376,24 @@ fn every_ported_symbol_remains_compile_anchored() {
             "job_args::TablePartitionArgs::get_args_v1",
             "job_args::TablePartitionArgs::get_finished_args_v1",
             "job_args::fill_rollback_args_for_add_partition",
+            "job_args::get_alter_index_visibility_args",
+            "job_args::get_alter_table_mode_args",
             "job_args::get_batch_create_table_args",
             "job_args::get_create_schema_args",
             "job_args::get_create_table_args",
+            "job_args::get_drop_foreign_key_args",
             "job_args::get_drop_schema_args",
             "job_args::get_exchange_table_partition_args",
             "job_args::get_finished_drop_schema_args",
             "job_args::get_modify_schema_args",
+            "job_args::get_modify_table_auto_id_cache_args",
             "job_args::get_modify_table_charset_and_collate_args",
             "job_args::get_modify_table_comment_args",
+            "job_args::get_modify_table_engine_attribute_args",
             "job_args::get_rebase_auto_id_args",
+            "job_args::get_refresh_meta_args",
+            "job_args::get_set_default_value_args",
+            "job_args::get_shard_row_id_args",
             "job_args::get_finished_truncate_table_args",
             "job_args::get_finished_table_partition_args",
             "job_args::get_or_decode_args",
@@ -344,6 +409,7 @@ fn every_ported_symbol_remains_compile_anchored() {
             "job_args::tests::first_source_getter_matrix_round_trips_values_in_both_versions",
             "job_args::tests::modify_table_comment_args_match_source_matrix",
             "job_args::tests::rebase_auto_id_args_match_source_matrix",
+            "job_args::tests::scalar_and_existing_model_args_match_the_source_v1_v2_matrix",
             "job_args::tests::truncate_table_submission_and_finished_action_matrix_matches_source",
             "job_args::tests::table_partition_args_match_source",
             "job_args::tests::finished_table_partition_matrix_and_add_assertion_match_source",
@@ -383,6 +449,22 @@ fn declined_rows_pin_the_remaining_typed_job_args_boundary() {
         "pub fn get_modify_table_comment_args",
         "pub struct ModifyTableCharsetAndCollateArgs",
         "pub fn get_modify_table_charset_and_collate_args",
+        "pub struct AlterIndexVisibilityArgs",
+        "pub fn get_alter_index_visibility_args",
+        "pub struct DropForeignKeyArgs",
+        "pub fn get_drop_foreign_key_args",
+        "pub struct ModifyTableAutoIDCacheArgs",
+        "pub fn get_modify_table_auto_id_cache_args",
+        "pub struct ShardRowIDArgs",
+        "pub fn get_shard_row_id_args",
+        "pub struct SetDefaultValueArgs",
+        "pub fn get_set_default_value_args",
+        "pub struct RefreshMetaArgs",
+        "pub fn get_refresh_meta_args",
+        "pub struct ModifyTableEngineAttributeArgs",
+        "pub fn get_modify_table_engine_attribute_args",
+        "pub struct AlterTableModeArgs",
+        "pub fn get_alter_table_mode_args",
     ] {
         assert!(
             rust_job_args.contains(present_typed_symbol),
@@ -395,8 +477,8 @@ fn declined_rows_pin_the_remaining_typed_job_args_boundary() {
         "remaining typed job-argument boundary changed: {absent_typed_symbol}"
     );
 
-    const CURRENT_BOUNDARY: &str = "Measured boundary: the source-shaped JobArgs and FinishedJobArgs framework plus Empty, CreateSchema, DropSchema, ModifySchema, CreateTable, BatchCreateTable, TruncateTable, TablePartition, ExchangeTablePartition, RebaseAutoID, ModifyTableComment, and ModifyTableCharsetAndCollate argument types are native; this obligation belongs to a later concrete argument type or its imported AST or PD representation, so no source-equivalent typed entry point exists yet.";
-    assert_eq!(INVENTORY.matches(CURRENT_BOUNDARY).count(), 1_117);
+    const CURRENT_BOUNDARY: &str = "Measured boundary: the source-shaped JobArgs and FinishedJobArgs framework plus Empty, CreateSchema, DropSchema, ModifySchema, CreateTable, BatchCreateTable, TruncateTable, TablePartition, ExchangeTablePartition, RebaseAutoID, ModifyTableComment, ModifyTableCharsetAndCollate, AlterIndexVisibility, DropForeignKey, ModifyTableAutoIDCache, ShardRowID, SetDefaultValue, RefreshMeta, ModifyTableEngineAttribute, and AlterTableMode argument types are native; this obligation belongs to a later concrete argument type or its imported AST or PD representation, so no source-equivalent typed entry point exists yet.";
+    assert_eq!(INVENTORY.matches(CURRENT_BOUNDARY).count(), 1_023);
     assert!(!INVENTORY.contains("explicitly defers Job RawArgs Encode Decode and FillArgs"));
 
     let go_tests = std::str::from_utf8(GO_TEST_SUPPORT).expect("Go test source is UTF-8");
