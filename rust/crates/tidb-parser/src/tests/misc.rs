@@ -266,6 +266,49 @@ fn test_help() {
     assert_eq!(r("HELP 'select'"), "HELP 'select'");
 }
 
+/// `pkg/parser/parser_test.go::TestStatisticsOps`.
+#[test]
+fn test_statistics_ops() {
+    for (sql, expected) in [
+        (
+            "create statistics stats1 (cardinality) on t(a,b,c)",
+            Some("CREATE STATISTICS `stats1` (CARDINALITY) ON `t`(`a`, `b`, `c`)"),
+        ),
+        (
+            "create statistics stats2 (dependency) on t(a,b)",
+            Some("CREATE STATISTICS `stats2` (DEPENDENCY) ON `t`(`a`, `b`)"),
+        ),
+        (
+            "create statistics stats3 (correlation) on t(a,b)",
+            Some("CREATE STATISTICS `stats3` (CORRELATION) ON `t`(`a`, `b`)"),
+        ),
+        ("create statistics stats3 on t(a,b)", None),
+        (
+            "create statistics if not exists stats1 (cardinality) on t(a,b,c)",
+            Some("CREATE STATISTICS IF NOT EXISTS `stats1` (CARDINALITY) ON `t`(`a`, `b`, `c`)"),
+        ),
+        (
+            "create statistics if not exists stats2 (dependency) on t(a,b)",
+            Some("CREATE STATISTICS IF NOT EXISTS `stats2` (DEPENDENCY) ON `t`(`a`, `b`)"),
+        ),
+        (
+            "create statistics if not exists stats3 (correlation) on t(a,b)",
+            Some("CREATE STATISTICS IF NOT EXISTS `stats3` (CORRELATION) ON `t`(`a`, `b`)"),
+        ),
+        ("create statistics if not exists stats3 on t(a,b)", None),
+        (
+            "create statistics stats1(cardinality) on t(a,b,c)",
+            Some("CREATE STATISTICS `stats1` (CARDINALITY) ON `t`(`a`, `b`, `c`)"),
+        ),
+        ("drop statistics stats1", Some("DROP STATISTICS `stats1`")),
+    ] {
+        match expected {
+            Some(expected) => assert_eq!(r(sql), expected, "{sql}"),
+            None => assert!(parse(sql).is_err(), "{sql}"),
+        }
+    }
+}
+
 #[test]
 fn statistics_zero_value_and_name_boundaries_match_go_source() {
     assert_eq!(
