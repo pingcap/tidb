@@ -72,6 +72,220 @@ use index_entries::{duplicate_value_text, index_entry_handle};
 use tidb_tablecodec::{decode_table_row_to_map, encode_table_row};
 use tidb_txnkv::Key;
 
+/// Options shared by table mutations and index writes.
+///
+/// Go stores an opaque `context.Context` handle in `commonMutateOpt`, and its
+/// source test observes that the SAME handle survives every derived option.
+/// Rust keeps its native [`crate::StmtContext`] behind `Rc` for that reason:
+/// an update can derive add-record and create-index options without replacing
+/// the statement object with a value snapshot.
+#[derive(Clone, Default)]
+struct CommonMutateOptions {
+    context: Option<std::rc::Rc<crate::StmtContext>>,
+}
+
+/// Go `table.AddRecordOpt`, in the fields exercised by
+/// `pkg/table/table_test.go::TestOptions`.
+#[derive(Clone, Default)]
+pub struct AddRecordOptions {
+    common: CommonMutateOptions,
+    is_update: bool,
+    generate_record_id: bool,
+    reserve_auto_id: usize,
+}
+
+impl AddRecordOptions {
+    /// Creates the Go zero-value option set.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Go `WithCtx` for an add-record operation.
+    #[must_use]
+    pub fn with_context(mut self, context: std::rc::Rc<crate::StmtContext>) -> Self {
+        self.common.context = Some(context);
+        self
+    }
+
+    /// Go `IsUpdate`: the add is the insert half of an update and therefore
+    /// allocates a replacement row id when the table has no clustered handle.
+    #[must_use]
+    pub fn for_update(mut self) -> Self {
+        self.is_update = true;
+        self.generate_record_id = true;
+        self
+    }
+
+    /// Go `WithReserveAutoIDHint`.
+    #[must_use]
+    pub fn with_reserve_auto_id_hint(mut self, count: usize) -> Self {
+        self.reserve_auto_id = count;
+        self
+    }
+
+    /// The statement context propagated by `WithCtx`.
+    #[must_use]
+    pub fn context(&self) -> Option<&std::rc::Rc<crate::StmtContext>> {
+        self.common.context.as_ref()
+    }
+
+    /// Whether this add belongs to an update.
+    #[must_use]
+    pub const fn is_update(&self) -> bool {
+        self.is_update
+    }
+
+    /// Whether a new `_tidb_rowid` must be generated.
+    #[must_use]
+    pub const fn generate_record_id(&self) -> bool {
+        self.generate_record_id
+    }
+
+    /// The auto-id batch size hinted by the caller.
+    #[must_use]
+    pub const fn reserve_auto_id(&self) -> usize {
+        self.reserve_auto_id
+    }
+
+    /// Go `AddRecordOpt.GetCreateIdxOpt`.
+    #[must_use]
+    pub fn create_index_options(&self) -> CreateIndexOptions {
+        CreateIndexOptions {
+            common: self.common.clone(),
+            ..CreateIndexOptions::default()
+        }
+    }
+}
+
+/// Go `table.UpdateRecordOpt`, including its conversions to the options used
+/// by the delete/add and index halves of an update.
+#[derive(Clone, Default)]
+pub struct UpdateRecordOptions {
+    common: CommonMutateOptions,
+    skip_write_untouched_indices: bool,
+}
+
+impl UpdateRecordOptions {
+    /// Creates the Go zero-value option set.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Go `WithCtx` for an update-record operation.
+    #[must_use]
+    pub fn with_context(mut self, context: std::rc::Rc<crate::StmtContext>) -> Self {
+        self.common.context = Some(context);
+        self
+    }
+
+    /// Go `SkipWriteUntouchedIndices`.
+    #[must_use]
+    pub fn with_skip_write_untouched_indices(mut self) -> Self {
+        self.skip_write_untouched_indices = true;
+        self
+    }
+
+    /// The statement context propagated by `WithCtx`.
+    #[must_use]
+    pub fn context(&self) -> Option<&std::rc::Rc<crate::StmtContext>> {
+        self.common.context.as_ref()
+    }
+
+    /// Whether unchanged index entries may be left alone.
+    #[must_use]
+    pub const fn skip_write_untouched_indices(&self) -> bool {
+        self.skip_write_untouched_indices
+    }
+
+    /// Go `UpdateRecordOpt.GetAddRecordOpt`.
+    #[must_use]
+    pub fn add_record_options(&self) -> AddRecordOptions {
+        AddRecordOptions {
+            common: self.common.clone(),
+            is_update: true,
+            generate_record_id: true,
+            reserve_auto_id: 0,
+        }
+    }
+
+    /// Go `UpdateRecordOpt.GetAddRecordOptKeepRecordID`.
+    #[must_use]
+    pub fn add_record_options_keep_record_id(&self) -> AddRecordOptions {
+        AddRecordOptions {
+            common: self.common.clone(),
+            is_update: true,
+            generate_record_id: false,
+            reserve_auto_id: 0,
+        }
+    }
+
+    /// Go `UpdateRecordOpt.GetCreateIdxOpt`.
+    #[must_use]
+    pub fn create_index_options(&self) -> CreateIndexOptions {
+        CreateIndexOptions {
+            common: self.common.clone(),
+            ..CreateIndexOptions::default()
+        }
+    }
+}
+
+/// Go `table.CreateIdxOpt`.
+#[derive(Clone, Default)]
+pub struct CreateIndexOptions {
+    common: CommonMutateOptions,
+    ignore_assertion: bool,
+    from_backfill: bool,
+}
+
+impl CreateIndexOptions {
+    /// Creates the Go zero-value option set.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Go `WithCtx` for an index write.
+    #[must_use]
+    pub fn with_context(mut self, context: std::rc::Rc<crate::StmtContext>) -> Self {
+        self.common.context = Some(context);
+        self
+    }
+
+    /// Go `WithIgnoreAssertion`.
+    #[must_use]
+    pub fn with_ignore_assertion(mut self) -> Self {
+        self.ignore_assertion = true;
+        self
+    }
+
+    /// Go `FromBackfill`.
+    #[must_use]
+    pub fn with_backfill_source(mut self) -> Self {
+        self.from_backfill = true;
+        self
+    }
+
+    /// The statement context propagated by `WithCtx`.
+    #[must_use]
+    pub fn context(&self) -> Option<&std::rc::Rc<crate::StmtContext>> {
+        self.common.context.as_ref()
+    }
+
+    /// Whether the index write skips transaction assertions.
+    #[must_use]
+    pub const fn ignore_assertion(&self) -> bool {
+        self.ignore_assertion
+    }
+
+    /// Whether the index write comes from a DDL backfill worker.
+    #[must_use]
+    pub const fn from_backfill(&self) -> bool {
+        self.from_backfill
+    }
+}
+
 /// A table whose rows live as TiKV-format bytes in a sorted key/value map.
 #[derive(Clone, Debug)]
 pub struct KvTable {
@@ -1942,6 +2156,96 @@ mod tests {
                 },
             ],
         )
+    }
+
+    #[test]
+    fn test_options() {
+        // Direct port of pkg/table/table_test.go::TestOptions. Rust builders
+        // replace Go's variadic functional options, but the zero values and
+        // every conversion retain the same observable fields.
+        let add = AddRecordOptions::new();
+        assert!(add.context().is_none());
+        assert!(!add.is_update());
+        assert!(!add.generate_record_id());
+        assert_eq!(add.reserve_auto_id(), 0);
+        let create = add.create_index_options();
+        assert!(create.context().is_none());
+        assert!(!create.ignore_assertion());
+        assert!(!create.from_backfill());
+
+        let context = std::rc::Rc::new(crate::StmtContext::default());
+        let add = AddRecordOptions::new()
+            .with_context(context.clone())
+            .for_update()
+            .with_reserve_auto_id_hint(12);
+        assert!(add.context().is_some());
+        assert!(add.is_update());
+        assert!(add.generate_record_id());
+        assert_eq!(add.reserve_auto_id(), 12);
+        assert!(std::rc::Rc::ptr_eq(
+            add.create_index_options().context().unwrap(),
+            &context
+        ));
+
+        let update = UpdateRecordOptions::new();
+        assert!(update.context().is_none());
+        assert!(!update.skip_write_untouched_indices());
+        let generated = update.add_record_options();
+        assert!(generated.is_update());
+        assert!(generated.generate_record_id());
+        let kept = update.add_record_options_keep_record_id();
+        assert!(kept.is_update());
+        assert!(!kept.generate_record_id());
+        assert!(update.create_index_options().context().is_none());
+
+        let update = UpdateRecordOptions::new().with_context(context.clone());
+        assert!(std::rc::Rc::ptr_eq(update.context().unwrap(), &context));
+        assert!(std::rc::Rc::ptr_eq(
+            update.add_record_options().context().unwrap(),
+            &context
+        ));
+        assert!(std::rc::Rc::ptr_eq(
+            update
+                .add_record_options_keep_record_id()
+                .context()
+                .unwrap(),
+            &context
+        ));
+        assert!(std::rc::Rc::ptr_eq(
+            update.create_index_options().context().unwrap(),
+            &context
+        ));
+
+        let create = CreateIndexOptions::new();
+        assert!(create.context().is_none());
+        assert!(!create.ignore_assertion());
+        assert!(!create.from_backfill());
+        let create = create
+            .with_context(context.clone())
+            .with_ignore_assertion()
+            .with_backfill_source();
+        assert!(std::rc::Rc::ptr_eq(create.context().unwrap(), &context));
+        assert!(create.ignore_assertion());
+        assert!(create.from_backfill());
+
+        // The source context remains live through each of those same handles.
+        context.append_warning_parts(1105, "source context marker");
+        assert_eq!(create.context().unwrap().warning_count(), 1);
+        assert_eq!(
+            add.create_index_options()
+                .context()
+                .unwrap()
+                .warning_count(),
+            1
+        );
+        assert_eq!(
+            update
+                .add_record_options()
+                .context()
+                .unwrap()
+                .warning_count(),
+            1
+        );
     }
 
     /// The scan bound must cover the whole table and nothing beyond it: the
