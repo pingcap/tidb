@@ -1615,7 +1615,11 @@ mod tests {
                 assert_eq!(result, expected, "{input}");
             }
         }
+    }
 
+    /// Complete translation of `pkg/types/json_binary_test.go::TestQuoteString`.
+    #[test]
+    fn test_quote_string() {
         for (raw, quoted) in [
             ("3", "\"3\""),
             (
@@ -1627,6 +1631,7 @@ mod tests {
             ("null", "null"),
             ("\"", r#""\"""#),
             ("'", "\"'\""),
+            ("''", "\"''\""),
             ("", "\"\""),
             ("\\ \" \u{8} \u{c} \n \r \t", r#""\\ \" \b \f \n \r \t""#),
         ] {
