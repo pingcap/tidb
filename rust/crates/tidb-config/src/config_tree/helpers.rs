@@ -15,13 +15,15 @@
 //! Self-contained pieces of Go `pkg/config/config.go` and
 //! `config_util.go`: the error-message-extension preparation, the `CSE`
 //! and `TrxSummary` sub-sections, the `max_allowed_packet` validity rule,
-//! and `FlattenConfigItems`.
+//! `FlattenConfigItems`, and `MergeConfigItems`.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use serde::{Deserialize, Serialize};
 
 use crate::configtypes::Duration;
+
+use super::config::Config;
 
 /// max_allowed_packet must be in `[1024, 1<<30]` and a multiple of 1024.
 pub const MAX_ALLOWED_PACKET_UNIT: u64 = 1024;
@@ -170,6 +172,153 @@ impl TrxSummary {
 /// flattened away).
 pub type FlatValue = serde_json::Value;
 
+/// Go `dynamicConfigItems`.
+pub const DYNAMIC_CONFIG_ITEMS: &[&str] = &[
+    "Performance.MaxProcs",
+    "Performance.MaxMemory",
+    "Performance.CrossJoin",
+    "Performance.PseudoEstimateRatio",
+    "Performance.StmtCountLimit",
+    "Performance.TCPKeepAlive",
+    "TiKVClient.StoreLimit",
+    "Log.Level",
+    "Log.ExpensiveThreshold",
+    "Instance.SlowThreshold",
+    "Instance.CheckMb4ValueInUTF8",
+    "TxnLocalLatches.Capacity",
+    "CompatibleKillQuery",
+    "TreatOldVersionUTF8AsUTF8MB4",
+    "OpenTracing.Enable",
+];
+
+/// Go `MergeConfigItems`: applies runtime-dynamic fields and reports all
+/// other changed fields as rejected.
+pub fn merge_config_items(dst: &mut Config, new: &Config) -> (Vec<String>, Vec<String>) {
+    let mut accepted = Vec::new();
+    macro_rules! merge_dynamic {
+        ($name:literal, $dst:expr, $new:expr) => {
+            if $dst != $new {
+                $dst = $new.clone();
+                accepted.push($name.to_owned());
+            }
+        };
+    }
+
+    merge_dynamic!(
+        "Performance.MaxProcs",
+        dst.performance.max_procs,
+        new.performance.max_procs
+    );
+    merge_dynamic!(
+        "Performance.MaxMemory",
+        dst.performance.max_memory,
+        new.performance.max_memory
+    );
+    merge_dynamic!(
+        "Performance.CrossJoin",
+        dst.performance.cross_join,
+        new.performance.cross_join
+    );
+    merge_dynamic!(
+        "Performance.PseudoEstimateRatio",
+        dst.performance.pseudo_estimate_ratio,
+        new.performance.pseudo_estimate_ratio
+    );
+    merge_dynamic!(
+        "Performance.StmtCountLimit",
+        dst.performance.stmt_count_limit,
+        new.performance.stmt_count_limit
+    );
+    merge_dynamic!(
+        "Performance.TCPKeepAlive",
+        dst.performance.tcp_keep_alive,
+        new.performance.tcp_keep_alive
+    );
+    merge_dynamic!(
+        "TiKVClient.StoreLimit",
+        dst.tikv_client.store_limit,
+        new.tikv_client.store_limit
+    );
+    merge_dynamic!("Log.Level", dst.log.level, new.log.level);
+    merge_dynamic!(
+        "Log.ExpensiveThreshold",
+        dst.log.expensive_threshold,
+        new.log.expensive_threshold
+    );
+    merge_dynamic!(
+        "Instance.SlowThreshold",
+        dst.instance.slow_threshold,
+        new.instance.slow_threshold
+    );
+    merge_dynamic!(
+        "Instance.CheckMb4ValueInUTF8",
+        dst.instance.check_mb4_value_in_utf8,
+        new.instance.check_mb4_value_in_utf8
+    );
+    merge_dynamic!(
+        "TxnLocalLatches.Capacity",
+        dst.txn_local_latches.capacity,
+        new.txn_local_latches.capacity
+    );
+    merge_dynamic!(
+        "CompatibleKillQuery",
+        dst.compatible_kill_query,
+        new.compatible_kill_query
+    );
+    merge_dynamic!(
+        "TreatOldVersionUTF8AsUTF8MB4",
+        dst.treat_old_version_utf8_as_utf8mb4,
+        new.treat_old_version_utf8_as_utf8mb4
+    );
+    merge_dynamic!(
+        "OpenTracing.Enable",
+        dst.open_tracing.enable,
+        new.open_tracing.enable
+    );
+
+    let dst_value = serde_json::to_value(&*dst).expect("Config must serialize");
+    let new_value = serde_json::to_value(new).expect("Config must serialize");
+    let mut rejected = Vec::new();
+    collect_config_differences(&dst_value, &new_value, "", &mut rejected);
+    if dst.txn_local_latches.enabled != new.txn_local_latches.enabled {
+        rejected.push("TxnLocalLatches.Enabled".to_owned());
+    }
+    if dst.performance.mem_profile_interval != new.performance.mem_profile_interval {
+        rejected.push("Performance.MemProfileInterval".to_owned());
+    }
+    rejected.sort();
+    rejected.dedup();
+    (accepted, rejected)
+}
+
+fn collect_config_differences(
+    left: &serde_json::Value,
+    right: &serde_json::Value,
+    prefix: &str,
+    differences: &mut Vec<String>,
+) {
+    match (left, right) {
+        (serde_json::Value::Object(left), serde_json::Value::Object(right)) => {
+            let keys: BTreeSet<_> = left.keys().chain(right.keys()).collect();
+            for key in keys {
+                let path = if prefix.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{prefix}.{key}")
+                };
+                match (left.get(key), right.get(key)) {
+                    (Some(left), Some(right)) => {
+                        collect_config_differences(left, right, &path, differences);
+                    }
+                    _ => differences.push(path),
+                }
+            }
+        }
+        _ if left != right => differences.push(prefix.to_owned()),
+        _ => {}
+    }
+}
+
 /// Flattens a nested config map into dotted keys (Go `FlattenConfigItems`).
 /// Arrays are not flattened.
 pub fn flatten_config_items(
@@ -212,6 +361,49 @@ mod tests {
         assert!(!valid_max_allowed_packet(1023));
         assert!(!valid_max_allowed_packet(1500)); // not a multiple of 1024
         assert!(!valid_max_allowed_packet((1 << 30) + 1024));
+    }
+
+    // Go TestMergeConfigItems.
+    #[test]
+    fn test_merge_config_items() {
+        let original = Config::default();
+        let mut old = original.clone();
+        let mut new = old.clone();
+
+        new.performance.max_procs = 123;
+        new.performance.max_memory = 123;
+        new.performance.cross_join = false;
+        new.performance.pseudo_estimate_ratio = 123.0;
+        new.tikv_client.store_limit = 123;
+
+        new.store = crate::store::StoreType("tiflash".to_owned());
+        new.port = 2333;
+        new.advertise_address = "1.2.3.4".to_owned();
+        new.instance.slow_threshold = 2345;
+
+        let (accepted, rejected) = merge_config_items(&mut old, &new);
+        assert_eq!(accepted.len(), 6);
+        assert_eq!(rejected.len(), 3);
+        assert!(accepted
+            .iter()
+            .all(|item| DYNAMIC_CONFIG_ITEMS.contains(&item.as_str())));
+        assert!(rejected
+            .iter()
+            .all(|item| !DYNAMIC_CONFIG_ITEMS.contains(&item.as_str())));
+
+        assert_eq!(old.performance.max_procs, new.performance.max_procs);
+        assert_eq!(old.performance.max_memory, new.performance.max_memory);
+        assert_eq!(old.performance.cross_join, new.performance.cross_join);
+        assert_eq!(
+            old.performance.pseudo_estimate_ratio,
+            new.performance.pseudo_estimate_ratio
+        );
+        assert_eq!(old.tikv_client.store_limit, new.tikv_client.store_limit);
+        assert_eq!(old.instance.slow_threshold, new.instance.slow_threshold);
+
+        assert_eq!(old.store, original.store);
+        assert_eq!(old.port, original.port);
+        assert_eq!(old.advertise_address, original.advertise_address);
     }
 
     // Covers the standalone parts of Go
