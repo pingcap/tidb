@@ -50,8 +50,8 @@
 //! direct `GetString` surface returns [`GoString`] instead of Rust `str`.
 
 use tidb_datatype::{
-    deserialize_vector_float32, EvalType, FieldType, FieldTypeCode, GoString, MyDecimal,
-    MySqlDuration, MysqlEnum, MysqlSet, Time, VectorFloat32, MYDECIMAL_STRUCT_SIZE,
+    deserialize_vector_float32, EvalType, FieldType, FieldTypeCode, GoString, GoStringSource,
+    MyDecimal, MySqlDuration, MysqlEnum, MysqlSet, Time, VectorFloat32, MYDECIMAL_STRUCT_SIZE,
 };
 
 use crate::column_view::ColumnBytes;
@@ -568,10 +568,9 @@ impl Column {
     }
 
     /// Go `AppendString`: append a string's bytes as one row.
-    pub fn append_string(&mut self, value: impl Into<GoString>) {
+    pub fn append_string(&mut self, value: impl GoStringSource) {
         debug_assert!(!self.is_fixed(), "append_string on a fixed-length column");
-        let value = value.into();
-        self.data.extend_from_slice(value.as_bytes());
+        self.data.extend_from_slice(value.as_go_bytes());
         self.finish_append_var();
     }
 
@@ -704,6 +703,7 @@ impl Column {
     }
 
     /// Mutate all `i64` cells through an aligned, borrow-scoped slice.
+    /// Changes commit only on normal return; a panic leaves packed bytes unchanged.
     pub fn with_int64s_mut<R>(&mut self, mutate: impl FnOnce(&mut [i64]) -> R) -> R {
         self.with_typed_values_mut(
             8,
@@ -714,6 +714,7 @@ impl Column {
     }
 
     /// Mutate all `u64` cells through an aligned, borrow-scoped slice.
+    /// Changes commit only on normal return; a panic leaves packed bytes unchanged.
     pub fn with_uint64s_mut<R>(&mut self, mutate: impl FnOnce(&mut [u64]) -> R) -> R {
         self.with_typed_values_mut(
             8,
@@ -724,6 +725,7 @@ impl Column {
     }
 
     /// Mutate all `f32` cells through an aligned, borrow-scoped slice.
+    /// Changes commit only on normal return; a panic leaves packed bytes unchanged.
     pub fn with_float32s_mut<R>(&mut self, mutate: impl FnOnce(&mut [f32]) -> R) -> R {
         self.with_typed_values_mut(
             4,
@@ -734,6 +736,7 @@ impl Column {
     }
 
     /// Mutate all `f64` cells through an aligned, borrow-scoped slice.
+    /// Changes commit only on normal return; a panic leaves packed bytes unchanged.
     pub fn with_float64s_mut<R>(&mut self, mutate: impl FnOnce(&mut [f64]) -> R) -> R {
         self.with_typed_values_mut(
             8,
@@ -744,11 +747,13 @@ impl Column {
     }
 
     /// Mutate all Go duration nanosecond values through an aligned slice.
+    /// Changes commit only on normal return; a panic leaves packed bytes unchanged.
     pub fn with_go_durations_mut<R>(&mut self, mutate: impl FnOnce(&mut [i64]) -> R) -> R {
         self.with_int64s_mut(mutate)
     }
 
     /// Mutate all decimal cells through decoded `MyDecimal` values.
+    /// Changes commit only on normal return; a panic leaves packed bytes unchanged.
     pub fn with_decimals_mut<R>(&mut self, mutate: impl FnOnce(&mut [MyDecimal]) -> R) -> R {
         self.with_typed_values_mut(
             MYDECIMAL_STRUCT_SIZE,
@@ -763,6 +768,7 @@ impl Column {
     }
 
     /// Mutate all packed time cells through decoded `Time` values.
+    /// Changes commit only on normal return; a panic leaves packed bytes unchanged.
     pub fn with_times_mut<R>(&mut self, mutate: impl FnOnce(&mut [Time]) -> R) -> R {
         self.with_typed_values_mut(
             SIZE_TIME as usize,
@@ -776,6 +782,7 @@ impl Column {
     }
 
     /// Mutate one cell's bytes without retaining a lock across user code.
+    /// Changes commit only on normal return; a panic leaves packed bytes unchanged.
     pub fn with_cell_bytes_mut<R>(
         &mut self,
         row_id: usize,

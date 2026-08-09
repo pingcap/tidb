@@ -27,7 +27,9 @@
 
 use crate::column::Column;
 use crate::row::Row;
-use tidb_datatype::{Datum, FieldType, MyDecimal, MySqlDuration, Time, VectorFloat32};
+use tidb_datatype::{
+    Datum, FieldType, GoStringSource, MyDecimal, MySqlDuration, Time, VectorFloat32,
+};
 
 /// Go `chunk.InitialCapacity`: the capacity a chunk grows to when it is renewed
 /// from a chunk that had no capacity of its own.
@@ -433,7 +435,7 @@ impl Chunk {
     }
 
     /// Go `AppendString`.
-    pub fn append_string(&mut self, col_idx: usize, value: impl Into<tidb_datatype::GoString>) {
+    pub fn append_string(&mut self, col_idx: usize, value: impl GoStringSource) {
         self.append_sel(col_idx);
         self.columns[col_idx].append_string(value);
     }

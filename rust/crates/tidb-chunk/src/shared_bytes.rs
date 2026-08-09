@@ -22,7 +22,7 @@
 use std::fmt;
 use std::mem;
 use std::ops::{Deref, Range};
-use std::sync::{Arc, RwLock, RwLockReadGuard};
+use std::sync::{Arc, RwLock, RwLockReadGuard, TryLockError};
 
 enum Backing {
     Owned(Vec<u8>),
@@ -250,37 +250,48 @@ impl SharedBytes {
     }
 
     fn ensure_initialized(&mut self, len: usize) {
-        let required = self
-            .start
-            .checked_add(len)
-            .expect("SharedBytes backing length overflow");
-        match &mut self.backing {
-            Backing::Owned(bytes) => {
-                if required > bytes.len() {
-                    bytes.resize(required, 0);
-                }
+        self.with_mutable_backing(len, |bytes, start| {
+            let required = start
+                .checked_add(len)
+                .expect("SharedBytes backing length overflow");
+            if required > bytes.len() {
+                bytes.resize(required, 0);
             }
-            Backing::Shared(backing) => {
-                let mut bytes = backing
-                    .write()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                if required > bytes.len() {
-                    bytes.resize(required, 0);
-                }
-            }
-        }
+        });
     }
 
     fn with_write<R>(&mut self, update: impl FnOnce(&mut [u8]) -> R) -> R {
+        let len = self.len;
+        self.with_mutable_backing(len, |bytes, start| update(&mut bytes[start..start + len]))
+    }
+
+    fn with_mutable_backing<R>(
+        &mut self,
+        minimum_capacity: usize,
+        update: impl FnOnce(&mut Vec<u8>, usize) -> R,
+    ) -> R {
         let start = self.start;
-        let end = start + self.len;
+        if let Backing::Owned(bytes) = &mut self.backing {
+            return update(bytes, start);
+        }
+
+        match &self.backing {
+            Backing::Owned(_) => unreachable!("owned backing returned above"),
+            Backing::Shared(backing) => match backing.try_write() {
+                Ok(mut bytes) => return update(&mut bytes, start),
+                Err(TryLockError::Poisoned(poisoned)) => {
+                    let mut bytes = poisoned.into_inner();
+                    return update(&mut bytes, start);
+                }
+                Err(TryLockError::WouldBlock) => {}
+            },
+        }
+
+        self.detach_with_capacity(minimum_capacity.max(self.len));
         match &mut self.backing {
-            Backing::Owned(bytes) => update(&mut bytes[start..end]),
-            Backing::Shared(backing) => {
-                let mut bytes = backing
-                    .write()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                update(&mut bytes[start..end])
+            Backing::Owned(bytes) => update(bytes, 0),
+            Backing::Shared(_) => {
+                unreachable!("contention detaches only the mutating header")
             }
         }
     }
@@ -358,5 +369,19 @@ mod tests {
         bytes.reserve(128);
         bytes.resize_preserving(96);
         assert!(!bytes.is_shared());
+    }
+
+    #[test]
+    fn live_sibling_reader_detaches_mutating_header() {
+        let mut source = SharedBytes::with_capacity(8);
+        source.extend_from_slice(b"abc");
+        let alias = source.share_range(0, 3);
+        let reader = alias.read();
+
+        source.set(0, b'X');
+
+        assert_eq!(reader.as_ref(), b"abc");
+        assert_eq!(source.read().as_ref(), b"Xbc");
+        assert!(!source.backing_ptr_eq(&alias));
     }
 }

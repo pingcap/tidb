@@ -22,6 +22,8 @@ The source authority is accepted Go commit `665fc02e2be48a7199d5ffeb5d3d6bec1dfe
 - [x] (2026-08-09) Split `column_tests.rs` out of production `column.rs` before the source-size ratchet.
 - [x] (2026-08-09) Finished the static call-site/stale-symbol audit, focused semantic tests, formatting, source-size validation, and diff validation.
 - [x] (2026-08-09) Prepared one bounded semantic checkpoint; its resulting SHA is reported in the handoff because embedding a commit's own SHA is recursive.
+- [x] (2026-08-09) Made shared-byte mutation contention-aware so a live sibling read guard triggers detachment instead of a blocking self-deadlock, including the append initialization path.
+- [x] (2026-08-09) Kept `AppendString` byte-authoritative without allocating a transient `GoString`, by accepting `GoStringSource` and copying directly from `as_go_bytes()`.
 
 ## Surprises & Discoveries
 
@@ -31,17 +33,23 @@ The source authority is accepted Go commit `665fc02e2be48a7199d5ffeb5d3d6bec1dfe
 - Observation: a universal `Arc<RwLock<Vec<u8>>>` would tax every expression-row read. Requiring mutable source ownership for alias creation lets `SharedBytes` move an ordinary `Vec` into an `Arc<RwLock<_>>` only at the rare shallow-copy boundary.
   Evidence: the only current Rust `shallow_copy_partial_row` callers are local tests; ordinary `Column` reads dominate the crate's hot paths.
 
+- Observation: a guard-backed cell read and a mutation through a sibling header are valid safe Rust even though they refer to the same promoted allocation. A blocking shared write lock self-deadlocks in that sequence.
+  Evidence: `shared_bytes::tests::live_sibling_reader_detaches_mutating_header` pins direct mutation, while `mutrow::tests::shallow_copy_partial_row_matches_go` holds a public cell guard across an append that initializes more backing bytes.
+
 - Observation: a bare `&[u8]` cannot safely escape a potentially shared backing after its read guard drops. A small view that owns either an ordinary borrow or a shared read guard retains slice ergonomics without unsafe lifetime extension.
   Evidence: `ColumnBytes` implements `Deref<Target=[u8]>`, `AsRef<[u8]>`, debug, and useful equality traits.
 
-- Observation: typed mutable Go slices cannot be reproduced by casting packed bytes safely because byte alignment is not guaranteed. Decoding to an aligned temporary inside a callback and writing native-endian bytes back before return makes each operation immediately visible and holds no shared lock across user code.
-  Evidence: `with_int64s_mut`, `with_uint64s_mut`, `with_float32s_mut`, `with_float64s_mut`, `with_go_durations_mut`, `with_decimals_mut`, and `with_times_mut` all use one scoped decode/callback/encode operation.
+- Observation: typed mutable Go slices cannot be reproduced by casting packed bytes safely because byte alignment is not guaranteed. Decoding to an aligned temporary inside a callback and writing native-endian bytes back after normal return makes each operation transactional and holds no shared lock across user code; panic discards the staged values.
+  Evidence: `with_int64s_mut`, `with_uint64s_mut`, `with_float32s_mut`, `with_float64s_mut`, `with_go_durations_mut`, `with_decimals_mut`, and `with_times_mut` all use one scoped decode/callback/encode operation, and the MutRow alias test observes the committed bytes through a sibling after return.
 
 - Observation: the accepted `GetVectorFloat32` ignores deserializer remainder. A valid vector image with trailing cell bytes therefore succeeds.
   Evidence: `get_vector_float32` now discards the returned remainder and has a focused suffix test.
 
 - Observation: Go `SetRaw` uses `copy`, so it copies `min(input length, cell width)`. Short writes preserve the cell tail, long writes truncate, and empty input changes nothing.
   Evidence: `SharedBytes::copy_from_slice` returns the copied prefix length and the Column test pins all three cases.
+
+- Observation: constructing an owned `GoString` before every append adds an avoidable Arc allocation even though `Column` immediately copies the bytes into packed storage.
+  Evidence: `Column::append_string` and `Chunk::append_string` now accept `GoStringSource`; UTF-8 strings, arbitrary byte containers, and existing `GoString` values all expose their bytes without a transient carrier.
 
 ## Decision Log
 
@@ -54,7 +62,7 @@ The source authority is accepted Go commit `665fc02e2be48a7199d5ffeb5d3d6bec1dfe
   Date/Author: 2026-08-09, Codex.
 
 - Decision: use `SharedBytes::{Owned(Vec<u8>), Shared(Arc<RwLock<Vec<u8>>>), start, len}` only for packed data.
-  Rationale: ordinary columns remain lock-free. `share_range(&mut self)` promotes once, sibling writes within the existing allocation are visible, and Rust-native growth detaches the growing view.
+  Rationale: ordinary columns remain lock-free. `share_range(&mut self)` promotes once, and uncontended sibling writes within the existing allocation remain visible. Shared mutation uses `try_write`; lock availability writes through, poison recovers the guard, and contention snapshots this header into owned storage before mutation. This keeps a live reader stable and prevents reentrant self-deadlock without promising behavior for concurrent Go data races.
   Date/Author: 2026-08-09, Codex.
 
 - Decision: change the Rust shallow-copy API to require `&mut Chunk` plus a row index.
@@ -63,6 +71,10 @@ The source authority is accepted Go commit `665fc02e2be48a7199d5ffeb5d3d6bec1dfe
 
 - Decision: return `ColumnBytes` / `CellBytes` guards for `GetBytes` and `GetRaw`, and use callbacks for mutation.
   Rationale: views retain the storage guard for their borrow; callbacks never expose a reference after a guard drops and never retain a write lock across caller code.
+  Date/Author: 2026-08-09, Codex.
+
+- Decision: ACCEPT transactional typed and cell mutation callbacks; DECLINE Go's live mutable-slice visibility during the callback.
+  Rationale: staged aligned values commit to packed storage only after normal return, so a panic rolls back and siblings see the new bytes after commit. No current production Rust consumer depends on mid-callback visibility; reproducing a live typed slice over potentially unaligned shared bytes would require unsafe casts or runtime-emulation machinery outside the corrected goal.
   Date/Author: 2026-08-09, Codex.
 
 - Decision: `Column::memory_usage` uses the accepted Go 64-bit payload constant `112` plus the current logical backing capacities.
@@ -75,7 +87,9 @@ The source authority is accepted Go commit `665fc02e2be48a7199d5ffeb5d3d6bec1dfe
 
 ## Outcomes & Retrospective
 
-The previous milestone-1 `GoSlice<T>` experiment was useful falsification evidence but is not retained. The corrected checkpoint is smaller: three metadata/scratch fields use standard collections, one byte-specific module handles the only required backing alias, and public byte/typed access is safe. Exact-path `rustfmt` and `rustfmt --check` passed, `rust/scripts/check-source-size.sh` reported `source-size ratchet: OK`, `git diff --check` passed, and the final stale-symbol scan found no `GoSlice` module/import/API reference under `tidb-chunk` source or tests. Production `column.rs` is 1,324 lines, `shared_bytes.rs` is 362, and `column_view.rs` is 85. Cargo, Go tests, clippy, runtime probes, and behavioral execution are intentionally not part of this writer checkpoint and must not be inferred from formatting/static success.
+The previous milestone-1 `GoSlice<T>` experiment was useful falsification evidence but is not retained. The corrected checkpoint is smaller: three metadata/scratch fields use standard collections, one byte-specific module handles the only required backing alias, and public byte/typed access is safe. Exact-path `rustfmt` and `rustfmt --check` passed, `rust/scripts/check-source-size.sh` reported `source-size ratchet: OK`, `git diff --check` passed, and the final stale-symbol scan found no `GoSlice` module/import/API reference under `tidb-chunk` source or tests. Production `column.rs` is 1,331 lines, `shared_bytes.rs` is 387, and `column_view.rs` is 85. Cargo, Go tests, clippy, runtime probes, and behavioral execution are intentionally not part of this writer checkpoint and must not be inferred from formatting/static success.
+
+Final review found two Rust-native boundary gaps in that outcome. First, a public read guard could outlive an attempted mutation through a sibling header and make a blocking write lock wait on itself. The contention-aware copy-on-write fallback now covers both ordinary writes and backing initialization during append. Uncontended reset/reappend still writes through the shared allocation; a guarded reader instead retains its stable snapshot while the mutating header detaches. Second, the byte-authoritative string append path no longer constructs an Arc-backed `GoString` merely to copy its bytes into the column. Typed and byte-cell callbacks intentionally commit only after normal return and roll back on panic; this safe transactional boundary replaces, rather than claims, Go live-slice semantics.
 
 Known cross-crate carrier seams remain explicit:
 
@@ -85,6 +99,8 @@ Known cross-crate carrier seams remain explicit:
 - Go reinterprets arbitrary decimal/time struct bits; `MyDecimal::from_raw_bytes` and `Time::from_go_raw` validate and can reject bit patterns the Go unsafe view would carry.
 
 These are datatype ownership questions outside the sole-writer boundary for `tidb-chunk`; this checkpoint preserves current valid-value behavior and does not claim those alias/raw-domain branches exact.
+
+One dependency-closed integration seam also remains: accepted join/MPP callers pass an immutable `Row` to source-shaped `ShallowCopyPartialRow`, while safe lazy promotion currently requires `MutRow::shallow_copy_partial_row` to borrow a mutable source `Chunk` plus row index. The current Rust workspace has no production caller, so this WIP checkpoint does not reintroduce universal locks and does not claim source-shaped shallow-copy API completion. Future join/MPP ownership or iterator migration is required before whole-package completion.
 
 ## Context and Orientation
 
@@ -129,12 +145,13 @@ Focused semantic tests for this checkpoint are:
 - `shared_bytes::tests::aliases_promote_lazily_and_detach_on_growth`
 - `shared_bytes::tests::clone_is_an_owned_deep_copy`
 - `shared_bytes::tests::ordinary_growth_stays_on_the_owned_vec_fast_path`
+- `shared_bytes::tests::live_sibling_reader_detaches_mutating_header`
 - `column::tests::memory_usage_uses_the_public_go_payload_constant`
 - `column::tests::append_string_accepts_arbitrary_bytes_and_set_raw_copies_to_cell_width`
 - `column::tests::guarded_cell_mutation_and_clone_isolation_are_immediate`
 - `column::tests::typed_mutation_callbacks_write_through_without_unsafe_casts`
 - `column::tests::vector_decoder_accepts_a_valid_image_with_a_suffix`
-- `mutrow::tests::shallow_copy_partial_row_matches_go` (including source mutation visibility, typed write-through, and destination growth detachment)
+- `mutrow::tests::shallow_copy_partial_row_matches_go` (including uncontended reset/reappend visibility, guard-held append detachment, typed write-through, and destination growth detachment)
 
 Static acceptance requires every touched Rust path to format cleanly, every production source to remain below the source-size cap, and `git diff --check` to pass. Runtime acceptance is explicitly NOT verified in this checkpoint because this writer-lane assignment prohibits Cargo, Go, and probes; the coordinator/root gate owns Cargo, clippy, and workspace validation.
 

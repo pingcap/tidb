@@ -971,6 +971,13 @@ mod tests {
         chunk.column_mut(1).append_string("RESET!!");
         assert_eq!(second.to_row().get_bytes(2), b"RESET!!");
 
+        let alias_row = second.to_row();
+        let guarded_cell = alias_row.get_bytes(2);
+        chunk.column_mut(1).append_bytes(guarded_cell.as_ref());
+        assert_eq!(guarded_cell, b"RESET!!");
+        assert_eq!(chunk.get_row(1).get_bytes(1), b"RESET!!");
+        drop(guarded_cell);
+
         let grown_source = "source growth detaches this backing".repeat(2);
         chunk.column_mut(1).reset();
         chunk.column_mut(1).append_string(&grown_source);
