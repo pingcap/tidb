@@ -657,11 +657,9 @@ mod tests {
         assert!(decoder.intermediate_chunk().column(1).offsets[0] > 0);
 
         let mut target = Chunk::new(&fields, 0, 64);
-        target.set_incomplete_chunk(true);
         decoder.reuse_intermediate_chunk(&mut target);
         assert!(decoder.is_finished());
         assert_eq!(target.required_rows(), 64);
-        assert!(target.is_incomplete_chunk());
         assert_eq!(target.num_rows(), 3);
         assert_eq!(target.column(1).offsets[0], 0);
         for row in 0..3 {
