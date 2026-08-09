@@ -1774,6 +1774,31 @@ fn group_by_with_rollup() {
     assert!(parse("select a from t group by with rollup").is_err());
 }
 
+/// `pkg/parser/parser_test.go::TestWithRollup`.
+#[test]
+fn test_with_rollup() {
+    for (sql, expected) in [
+        ("select * from t group by a, b rollup", None),
+        (
+            "select * from t group by a, b with rollup",
+            Some("SELECT * FROM `t` GROUP BY `a`,`b` WITH ROLLUP"),
+        ),
+        (
+            "select * from t group by (a, b) with rollup",
+            Some("SELECT * FROM `t` GROUP BY ROW(`a`,`b`) WITH ROLLUP"),
+        ),
+        (
+            "select * from t group by (a+b) with rollup",
+            Some("SELECT * FROM `t` GROUP BY (`a`+`b`) WITH ROLLUP"),
+        ),
+    ] {
+        match expected {
+            Some(expected) => assert_eq!(r(sql), expected, "{sql}"),
+            None => assert!(parse(sql).is_err(), "{sql}"),
+        }
+    }
+}
+
 #[test]
 fn derived_table_optional_alias() {
     // A plain derived table's alias is grammatically OPTIONAL (confirmed
