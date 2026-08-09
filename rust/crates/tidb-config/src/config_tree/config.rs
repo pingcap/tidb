@@ -126,7 +126,7 @@ pub struct Config {
     pub keyspace_name: String,
     #[serde(rename = "tikv-worker-url")]
     pub tikv_worker_url: String,
-    #[serde(rename = "log")]
+    #[serde(rename = "log", alias = "Log")]
     pub log: Log,
     #[serde(rename = "instance")]
     pub instance: Instance,
@@ -419,12 +419,22 @@ impl Config {
     }
 
     /// Go `Config.Valid`.
-    pub fn valid(&self) -> Result<(), String> {
+    pub fn valid(&mut self) -> Result<(), String> {
         if !valid_keyspace_name(&self.keyspace_name) {
             return Err(format!(
                 "invalid keyspace name: the value '{}' is invalid. It must be {} characters or fewer and consist only of letters (a-z, A-Z), numbers (0-9), hyphens (-), and underscores (_)",
                 self.keyspace_name, MAX_KEYSPACE_NAME_LENGTH
             ));
+        }
+        if self.log.enable_error_stack == self.log.disable_error_stack
+            && self.log.enable_error_stack != crate::config_tree::NB_UNSET
+        {
+            self.log.disable_error_stack = crate::config_tree::NB_UNSET;
+        }
+        if self.log.enable_timestamp == self.log.disable_timestamp
+            && self.log.enable_timestamp != crate::config_tree::NB_UNSET
+        {
+            self.log.disable_timestamp = crate::config_tree::NB_UNSET;
         }
 
         if self.security.skip_grant_table && !has_root_privilege() {
@@ -705,6 +715,88 @@ mod tests {
         assert_eq!(tikv_config.tikv_client.ru_v2.ru_scale, 0.0);
     }
 
+    // Go TestLogConfig.
+    #[test]
+    fn test_log_config() {
+        use crate::config_tree::{NB_FALSE, NB_TRUE, NB_UNSET};
+
+        for (
+            text,
+            expected_enable_error_stack,
+            expected_disable_error_stack,
+            expected_enable_timestamp,
+            expected_disable_timestamp,
+            resulting_disable_timestamp,
+            resulting_disable_error_stack,
+        ) in [
+            (
+                "[Log]\n", NB_UNSET, NB_UNSET, NB_UNSET, NB_UNSET, false, true,
+            ),
+            (
+                "[Log]\nenable-timestamp = false\n",
+                NB_UNSET,
+                NB_UNSET,
+                NB_FALSE,
+                NB_UNSET,
+                true,
+                true,
+            ),
+            (
+                "[Log]\nenable-timestamp = true\ndisable-timestamp = false\n",
+                NB_UNSET,
+                NB_UNSET,
+                NB_TRUE,
+                NB_FALSE,
+                false,
+                true,
+            ),
+            (
+                "[Log]\nenable-timestamp = false\ndisable-timestamp = true\n",
+                NB_UNSET,
+                NB_UNSET,
+                NB_FALSE,
+                NB_TRUE,
+                true,
+                true,
+            ),
+            (
+                "[Log]\nenable-timestamp = true\ndisable-timestamp = true\n",
+                NB_UNSET,
+                NB_UNSET,
+                NB_TRUE,
+                NB_UNSET,
+                false,
+                true,
+            ),
+            (
+                "[Log]\nenable-error-stack = false\ndisable-error-stack = false\n",
+                NB_FALSE,
+                NB_UNSET,
+                NB_UNSET,
+                NB_UNSET,
+                false,
+                true,
+            ),
+        ] {
+            let mut config = new_config();
+            config.load_str("log_config.toml", text).unwrap();
+            config.valid().unwrap();
+
+            assert_eq!(config.log.enable_error_stack, expected_enable_error_stack);
+            assert_eq!(config.log.disable_error_stack, expected_disable_error_stack);
+            assert_eq!(config.log.enable_timestamp, expected_enable_timestamp);
+            assert_eq!(config.log.disable_timestamp, expected_disable_timestamp);
+            assert_eq!(
+                config.log.get_disable_timestamp(),
+                resulting_disable_timestamp
+            );
+            assert_eq!(
+                config.log.get_disable_error_stack(),
+                resulting_disable_error_stack
+            );
+        }
+    }
+
     // Go TestMaxIndexLength.
     #[test]
     fn max_index_length() {
@@ -833,7 +925,7 @@ mod tests {
     // The default config is valid, and TestTcpNoDelay's default.
     #[test]
     fn default_config_valid() {
-        let c = new_config();
+        let mut c = new_config();
         c.valid().unwrap();
         assert!(c.performance.tcp_no_delay);
         assert_eq!(c.token_limit, 1000);
@@ -843,7 +935,8 @@ mod tests {
     // Full-config TOML round-trip keeps defaults for unspecified keys.
     #[test]
     fn toml_partial_load() {
-        let c: Config = toml::from_str("port = 5000\n[performance]\ncross-join = false\n").unwrap();
+        let mut c: Config =
+            toml::from_str("port = 5000\n[performance]\ncross-join = false\n").unwrap();
         assert_eq!(c.port, 5000);
         assert!(!c.performance.cross_join);
         assert_eq!(c.host, "0.0.0.0"); // default retained
