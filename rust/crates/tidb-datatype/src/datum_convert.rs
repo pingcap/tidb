@@ -1584,6 +1584,63 @@ mod tests {
         );
     }
 
+    /// Source: `pkg/types/datum_test.go::TestConvertToFloat`.
+    #[test]
+    fn test_convert_to_float() {
+        let double = FieldType::new(FieldTypeCode::Double);
+        let double_rows = [
+            (Datum::Float32(f64::from(3.0_f32)), 3.0),
+            (Datum::Real(12_345.678), 12_345.678),
+            (Datum::new_string("12345.678"), 12_345.678),
+            (Datum::new_bytes(b"12345.678"), 12_345.678),
+            (Datum::Int(12_345), 12_345.0),
+            (Datum::UInt(123_456), 123_456.0),
+        ];
+        for (input, expected) in double_rows {
+            let converted = input
+                .convert_to(&double, crate::DEFAULT_STATEMENT_FLAGS)
+                .unwrap();
+            assert_eq!(converted.value, Datum::Real(expected), "{input:?}");
+            assert_eq!(converted.event, None, "{input:?}");
+        }
+
+        // Go's `byte(123)` becomes its unsupported KindInterface. Raw is the
+        // corresponding unsupported stored kind in the Rust representation.
+        assert!(Datum::new_raw([123])
+            .convert_to(&double, crate::DEFAULT_STATEMENT_FLAGS)
+            .is_err());
+
+        for (input, expected) in [
+            (f64::NAN, 0.0),
+            (f64::NEG_INFINITY, f64::NEG_INFINITY),
+            (f64::INFINITY, f64::INFINITY),
+        ] {
+            let converted = Datum::Real(input)
+                .convert_to(&double, crate::DEFAULT_STATEMENT_FLAGS)
+                .unwrap();
+            let Datum::Real(actual) = converted.value else {
+                panic!("DOUBLE conversion returned another datum kind")
+            };
+            assert_eq!(actual, expected);
+            assert!(matches!(
+                converted.event,
+                Some(ScalarConversionEvent::Overflow(_))
+            ));
+        }
+
+        let float = FieldType::new(FieldTypeCode::Float);
+        for input in [
+            Datum::Float32(f64::from(281.37_f32)),
+            Datum::new_string("281.37"),
+        ] {
+            let converted = input
+                .convert_to(&float, crate::DEFAULT_STATEMENT_FLAGS)
+                .unwrap();
+            assert_eq!(converted.value, Datum::Float32(f64::from(281.37_f32)));
+            assert_eq!(converted.event, None);
+        }
+    }
+
     #[test]
     fn test_to_uint32() {
         let uint32 = FieldType::new(FieldTypeCode::Long).with_unsigned(true);
