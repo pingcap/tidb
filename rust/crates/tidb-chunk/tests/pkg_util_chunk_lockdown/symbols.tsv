@@ -1,2 +1,3 @@
 # symbols-v1
 symbol_id	rust_crate	rust_symbol	definition_path	anchor_path	anchor_target	anchor_name
+S_CHUNK_ROW_CONTAINER_CONDITIONAL_READ	tidb-chunk	tidb_chunk::row_container::RowContainer::get_row_and_append_to_chunk_if_in_disk	rust/crates/tidb-chunk/src/row_container.rs	rust/crates/tidb-chunk/tests/row_container_contract.rs	row_container_contract	row_container_conditional_read_boundary

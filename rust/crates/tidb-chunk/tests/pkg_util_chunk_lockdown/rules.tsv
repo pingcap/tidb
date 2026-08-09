@@ -1,2 +1,3 @@
 # rules-v1
 rule_id	cluster_id	description	obligation_ids	boundary_cases	mutation_ids
+R_CHUNK_ROW_CONTAINER_CONDITIONAL_READ	C_ROW_CONTAINER_CONDITIONAL_READ	an in-memory row remains live without occupying disk scratch, a spilled row appends exactly once, and a stored spill error leaves scratch unchanged	Ob44a4fa9fb86b9c0;O459d1faf894643d6;O6e0f79e9b77d6308;Odcf02707631c9d37;O970930610e8035c5	memory-live-row-no-append;spilled-row-appends-once;spill-error-preserves-scratch	M_CHUNK_ROW_CONTAINER_CONDITIONAL_READ

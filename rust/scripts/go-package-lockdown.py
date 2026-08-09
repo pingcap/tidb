@@ -250,7 +250,7 @@ def normalized_test_observation(
 ) -> str:
     text = command_output(stdout, stderr).decode("utf-8", errors="replace")
     status = "PASS" if exit_code == 0 else "FAIL"
-    if runner == "cargo-test":
+    if runner in {"cargo-test", "cargo-test-pretty"}:
         pass_marker = rf"(?m)^test {re.escape(named_test)} \.\.\. ok$"
         fail_marker = rf"(?m)^test {re.escape(named_test)} \.\.\. FAILED$"
     elif runner == "go-test":
@@ -2794,7 +2794,7 @@ class PackageLockdown:
         named_test: str,
         context: str,
     ) -> list[str]:
-        if runner == "cargo-test":
+        if runner in {"cargo-test", "cargo-test-pretty"}:
             if not re.fullmatch(
                 r"[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*", named_test
             ):
@@ -2803,11 +2803,14 @@ class PackageLockdown:
                 raise LockdownError(f"{context} uses an unmapped Rust crate")
             if not re.fullmatch(r"[A-Za-z0-9_-]+", test_target):
                 raise LockdownError(f"{context} has an invalid Cargo test target")
-            return [
+            argv = [
                 "cargo", "test", "--offline", "--locked", "-j12", "--quiet",
                 "-p", test_subject, "--test", test_target, named_test, "--",
                 "--exact", "--nocapture",
             ]
+            if runner == "cargo-test-pretty":
+                argv.append("--format=pretty")
+            return argv
         if runner == "go-test":
             if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", named_test):
                 raise LockdownError(f"{context} has an invalid exact Go test name")
@@ -2860,7 +2863,11 @@ class PackageLockdown:
         context: str,
     ) -> tuple[list[str], subprocess.CompletedProcess[bytes]]:
         argv = self._runner_argv(runner, test_subject, test_target, named_test, context)
-        working_directory = self.root / "rust" if runner == "cargo-test" else self.root
+        working_directory = (
+            self.root / "rust"
+            if runner in {"cargo-test", "cargo-test-pretty"}
+            else self.root
+        )
         try:
             completed = subprocess.run(
                 argv,
