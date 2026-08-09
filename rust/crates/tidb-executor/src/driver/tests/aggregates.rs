@@ -593,6 +593,78 @@ fn tpcc_condition_eight_uses_index_join_and_carries_warehouse_ytd() {
     assert!(cell(8, 4).contains("range: decided by"));
 }
 
+/// TPCC condition 09 starts with a grouped district relation whose two group
+/// keys are the complete clustered primary key. Every group therefore holds
+/// at most one row, so Go eliminates the aggregation and widens the nullable
+/// DECIMAL `SUM` argument with a real projection cast.
+#[test]
+fn tpcc_condition_nine_eliminates_the_unique_district_aggregation() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE district (d_id INT NOT NULL, d_w_id INT NOT NULL, \
+            d_ytd DECIMAL(12,2), PRIMARY KEY (d_w_id,d_id))",
+        &mut catalog,
+    )
+    .unwrap();
+    let TableEntry::Kv(district) = catalog.get_mut_in("test", "district").unwrap() else {
+        panic!("district is not a KV table");
+    };
+    district.add_index(crate::kv_table::KvIndex {
+        id: 1,
+        name: "PRIMARY".to_owned(),
+        unique: true,
+        prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 2],
+        column_offsets: vec![1, 0],
+        visible: true,
+        global: false,
+    });
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO district VALUES (1,1,10.25),(2,1,NULL),(1,2,20.50)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    let sql = "SELECT d_id,d_w_id,SUM(d_ytd) s1 FROM district \
+        WHERE d_w_id=1 GROUP BY d_id,d_w_id";
+    let (columns, rows) = crate::run_select_meta_on(sql, &catalog, &ctx).unwrap();
+    assert_eq!(rows.len(), 2, "{rows:#?}");
+    assert!(rows.iter().any(|row| matches!(row[2], Datum::Null)));
+    assert_eq!(columns[2].1.code(), FieldTypeCode::NewDecimal);
+    assert_eq!(columns[2].1.flen(), 34);
+    assert_eq!(columns[2].1.decimal(), 2);
+
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, plan) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let cell = |row: usize, column: usize| match &plan[row][column] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+    assert_eq!(
+        (0..plan.len()).map(|row| cell(row, 0)).collect::<Vec<_>>(),
+        vec!["Projection", "└─TableReader", "  └─TableRangeScan"],
+        "{plan:#?}",
+    );
+    assert_eq!(
+        cell(0, 4),
+        "test.district.d_id, test.district.d_w_id, \
+         cast(test.district.d_ytd, decimal(34,2) BINARY)->Column#2"
+    );
+    assert_eq!(cell(1, 4), "data:TableRangeScan");
+    assert!(cell(2, 4).contains("range:[1,1]"), "{}", cell(2, 4));
+    assert!(cell(2, 4).contains("keep order:false"), "{}", cell(2, 4));
+}
+
 #[test]
 fn tpcc_condition_two_orders_group_uses_the_covering_index_range() {
     use crate::explain::{explain_select_stmt, ExplainFormat};

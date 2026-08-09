@@ -1945,6 +1945,35 @@ impl PlanTrace {
         true
     }
 
+    /// The executable projection left after Go eliminates a grouped
+    /// aggregation whose group keys cover a unique key. Carried columns keep
+    /// their source names; rewritten aggregate scalars name their new output
+    /// columns explicitly.
+    pub(crate) fn aggregation_elimination_projection(
+        &mut self,
+        expressions: &[Expression],
+        column_names: &[Option<String>],
+    ) -> bool {
+        let Some(info) = expressions
+            .iter()
+            .enumerate()
+            .map(|(index, expression)| {
+                let text = physical_expression_text_with_columns(expression, column_names)?;
+                Some(if matches!(expression, Expression::Column(_)) {
+                    text
+                } else {
+                    format!("{text}->Column#{index}")
+                })
+            })
+            .collect::<Option<Vec<_>>>()
+            .map(|parts| parts.join(", "))
+        else {
+            return false;
+        };
+        self.wrap("Projection", Est::Inherit, info);
+        true
+    }
+
     /// Records a simple projection executed by the TiKV request and the
     /// TableReader boundary that returns it to the root task. The source has
     /// already accepted the matching kept-column list, so these nodes

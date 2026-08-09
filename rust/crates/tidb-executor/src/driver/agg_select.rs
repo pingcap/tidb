@@ -108,6 +108,97 @@ fn agg_output_resolver(state: &AggPipelineState, ctx: &crate::StmtContext) -> Ag
     }
 }
 
+/// Whether Go's `EliminateAggregation` can replace this grouped query block
+/// with a projection over one unique source row per group.
+///
+/// This first port deliberately owns the shape needed by TPCC condition 09:
+/// one base table, plain-column group keys covering a non-null unique key,
+/// and a select list made only of carried columns and single-column `SUM`s.
+/// Every unsupported aggregate or clause fails closed and keeps the ordinary
+/// aggregation pipeline.
+pub(super) fn aggregation_can_be_eliminated(
+    select: &tidb_ast::SelectStmt,
+    catalog: &Catalog,
+    current_db: &str,
+) -> bool {
+    if select.rollup
+        || select.distinct
+        || select.group_by.is_empty()
+        || select.having.is_some()
+        || !select.order_by.is_empty()
+        || select.limit.is_some()
+        || !select.windows.is_empty()
+    {
+        return false;
+    }
+    let Some(table) = crate::driver::access::single_kv_table(&select.from, catalog, current_db)
+    else {
+        return false;
+    };
+    let column_offset = |path: &[String]| {
+        let name = path.last()?;
+        table
+            .columns
+            .iter()
+            .position(|column| column.name.eq_ignore_ascii_case(name))
+    };
+    let Some(group_offsets) = select
+        .group_by
+        .iter()
+        .map(|item| match &item.expr {
+            tidb_ast::Expr::Column(path) => column_offset(path),
+            _ => None,
+        })
+        .collect::<Option<std::collections::BTreeSet<_>>>()
+    else {
+        return false;
+    };
+    let key_is_covered =
+        |key: &[usize]| !key.is_empty() && key.iter().all(|offset| group_offsets.contains(offset));
+    let primary_is_covered = table
+        .pk_handle_offset()
+        .is_some_and(|offset| group_offsets.contains(&offset))
+        || key_is_covered(table.common_handle_offsets());
+    let unique_index_is_covered = table.plan_indexes().any(|index| {
+        index.unique
+            && index
+                .prefix_lengths
+                .iter()
+                .all(|length| *length == crate::ddl::index_prefix::UNSPECIFIED_LENGTH)
+            && key_is_covered(&index.column_offsets)
+            && index.column_offsets.iter().all(|offset| {
+                table.columns[*offset]
+                    .field_type
+                    .has_flag(FieldTypeFlags::NOT_NULL)
+            })
+    });
+    if !primary_is_covered && !unique_index_is_covered {
+        return false;
+    }
+    select.fields.fields().iter().all(|field| match field {
+        tidb_ast::SelectField::Expr {
+            expr: tidb_ast::Expr::Column(_),
+            ..
+        } => true,
+        tidb_ast::SelectField::Expr {
+            expr:
+                tidb_ast::Expr::Aggregate {
+                    name,
+                    distinct: false,
+                    args,
+                },
+            ..
+        } => {
+            name.eq_ignore_ascii_case("SUM")
+                && matches!(args.as_slice(), [tidb_ast::Expr::Column(path)]
+                if column_offset(path).is_some_and(|offset| {
+                    table.columns[offset].field_type.code() == FieldTypeCode::NewDecimal
+                }))
+        }
+        _ => false,
+    })
+}
+
 /// Runs an aggregate `SELECT` (`GROUP BY` and/or aggregate select fields)
 /// through [`HashAggExec`].
 ///
@@ -1727,6 +1818,47 @@ fn physical_source_column_names(
         .collect()
 }
 
+/// Builds the executable projection that replaces a grouped aggregation once
+/// [`aggregation_can_be_eliminated`] proved every group contains at most one
+/// source row. `FIRST_ROW(x)` becomes `x`; decimal `SUM(x)` becomes the same
+/// widened DECIMAL cast Go installs during aggregation elimination.
+fn eliminated_aggregation_projection(
+    select: &tidb_ast::SelectStmt,
+    state: &mut AggPipelineState,
+    catalog: &Catalog,
+    current_db: &str,
+    has_pre_agg_applies: bool,
+) -> Option<Vec<Expression>> {
+    if has_pre_agg_applies || !aggregation_can_be_eliminated(select, catalog, current_db) {
+        return None;
+    }
+    let mut expressions = Vec::with_capacity(state.agg_funcs.len());
+    let mut result_types = state.types.clone();
+    for (index, function) in state.agg_funcs.iter().enumerate() {
+        if function.distinct || !function.extra_args.is_empty() || !function.order_by.is_empty() {
+            return None;
+        }
+        let argument = function.arg.as_ref()?.clone();
+        match function.kind {
+            AggKind::FirstRow => expressions.push(argument),
+            AggKind::Sum if argument.static_type()?.code() == FieldTypeCode::NewDecimal => {
+                let result = super::agg_build::sum_result_type(argument.static_type());
+                result_types[index] = result.clone();
+                expressions.push(Expression::ScalarFunction(
+                    tidb_expr::scalar_function::ScalarFunction::new(
+                        tidb_ast::CiString::new("cast_decimal"),
+                        result,
+                        vec![argument],
+                    ),
+                ));
+            }
+            _ => return None,
+        }
+    }
+    state.types = result_types;
+    Some(expressions)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn build_aggregation(
     select: &tidb_ast::SelectStmt,
@@ -1919,6 +2051,8 @@ fn build_aggregation(
     let has_pre_agg_applies = !state.pre_agg_applies.is_empty();
     let mut source =
         build_pre_agg_applies(source, state, resolver.scope, catalog, current_db, ctx)?;
+    let aggregation_elimination =
+        eliminated_aggregation_projection(select, state, catalog, current_db, has_pre_agg_applies);
 
     // Go's physical optimizer chooses a root StreamAgg for the two Sysbench
     // range families once the range has been fully consumed by a table/index
@@ -1993,70 +2127,71 @@ fn build_aggregation(
     // changes the physical root aggregation to [SUM, FIRST_ROW(group)] and
     // remaps the select slots; stage 10 then builds the real [group, SUM]
     // projection Go has above that final aggregation.
-    let partial_grouped_sum = grouped_sum_plan(
-        select,
-        state,
-        &group_by,
-        has_pre_agg_applies,
-        scan_consumed_where,
-    )
-    .is_some_and(|plan| {
-        let aggregate = PushdownPartialAggregate::GroupBySum {
-            group_offset: plan.group_input,
-            sum_offset: plan.sum_input,
-            sum_type: plan.sum_type.clone(),
-            group_type: plan.group_type.clone(),
-        };
-        if !source
-            .table_access()
-            .is_some_and(|access| access.accept_partial_aggregate(&aggregate))
-        {
-            return false;
-        }
-
-        let old_funcs = std::mem::take(&mut state.agg_funcs);
-        state.agg_funcs = vec![
-            old_funcs[plan.sum_func].clone(),
-            old_funcs[plan.group_func].clone(),
-        ];
-        let old_names = std::mem::take(&mut state.names);
-        state.names = vec![
-            old_names[plan.sum_func].clone(),
-            old_names[plan.group_func].clone(),
-        ];
-        let old_types = std::mem::take(&mut state.types);
-        state.types = vec![
-            old_types[plan.sum_func].clone(),
-            old_types[plan.group_func].clone(),
-        ];
-        for slot in &mut state.slots {
-            if let OutputSlot::Agg(index) = slot {
-                *index = if *index == plan.sum_func {
-                    0
-                } else {
-                    debug_assert_eq!(*index, plan.group_func);
-                    1
-                };
+    let partial_grouped_sum = aggregation_elimination.is_none()
+        && grouped_sum_plan(
+            select,
+            state,
+            &group_by,
+            has_pre_agg_applies,
+            scan_consumed_where,
+        )
+        .is_some_and(|plan| {
+            let aggregate = PushdownPartialAggregate::GroupBySum {
+                group_offset: plan.group_input,
+                sum_offset: plan.sum_input,
+                sum_type: plan.sum_type.clone(),
+                group_type: plan.group_type.clone(),
+            };
+            if !source
+                .table_access()
+                .is_some_and(|access| access.accept_partial_aggregate(&aggregate))
+            {
+                return false;
             }
-        }
 
-        let mut partial_sum = source.schema().columns[0].clone();
-        partial_sum.index = 0;
-        let mut partial_group = source.schema().columns[1].clone();
-        partial_group.index = 1;
-        state.agg_funcs[0].arg = Some(Expression::Column(partial_sum));
-        state.agg_funcs[1].arg = Some(Expression::Column(partial_group.clone()));
-        group_by.clear();
-        group_by.push(Expression::Column(partial_group));
-        state.partial_grouped_sum = true;
-        true
-    });
+            let old_funcs = std::mem::take(&mut state.agg_funcs);
+            state.agg_funcs = vec![
+                old_funcs[plan.sum_func].clone(),
+                old_funcs[plan.group_func].clone(),
+            ];
+            let old_names = std::mem::take(&mut state.names);
+            state.names = vec![
+                old_names[plan.sum_func].clone(),
+                old_names[plan.group_func].clone(),
+            ];
+            let old_types = std::mem::take(&mut state.types);
+            state.types = vec![
+                old_types[plan.sum_func].clone(),
+                old_types[plan.group_func].clone(),
+            ];
+            for slot in &mut state.slots {
+                if let OutputSlot::Agg(index) = slot {
+                    *index = if *index == plan.sum_func {
+                        0
+                    } else {
+                        debug_assert_eq!(*index, plan.group_func);
+                        1
+                    };
+                }
+            }
+
+            let mut partial_sum = source.schema().columns[0].clone();
+            partial_sum.index = 0;
+            let mut partial_group = source.schema().columns[1].clone();
+            partial_group.index = 1;
+            state.agg_funcs[0].arg = Some(Expression::Column(partial_sum));
+            state.agg_funcs[1].arg = Some(Expression::Column(partial_group.clone()));
+            group_by.clear();
+            group_by.push(Expression::Column(partial_group));
+            state.partial_grouped_sum = true;
+            true
+        });
 
     // An ordered grouped scan can run all decomposable functions at TiKV and
     // stream the partial groups through the reader. The final root stage
     // keeps the same grouping order; COUNT alone changes kind because it must
     // sum per-region partial counts rather than count partial rows.
-    let partial_grouped_stream = (!partial_grouped_sum)
+    let partial_grouped_stream = (aggregation_elimination.is_none() && !partial_grouped_sum)
         .then(|| {
             grouped_stream_partial_plan(
                 select,
@@ -2174,7 +2309,8 @@ fn build_aggregation(
             grouped_projection_expression_text(argument, &qualify, &derived_aliases)
         })
         .collect::<Vec<_>>();
-    let grouped_stream_input_projection = if grouped_stream_ordered
+    let grouped_stream_input_projection = if aggregation_elimination.is_none()
+        && grouped_stream_ordered
         && !partial_grouped_sum
         && !partial_grouped_stream
         && crate::driver::access::single_kv_table(&select.from, catalog, current_db).is_none()
@@ -2253,7 +2389,14 @@ fn build_aggregation(
         .collect();
     let out_schema = Schema::new(out_columns);
 
-    let root: Box<dyn Executor> = if select.rollup {
+    let root: Box<dyn Executor> = if let Some(expressions) = &aggregation_elimination {
+        Box::new(ProjectionExec::new(
+            ExecutorMeta::new(out_schema.clone(), 2, INIT_CAP, MAX_CHUNK_SIZE),
+            expressions.clone(),
+            source,
+            ctx.clone(),
+        ))
+    } else if select.rollup {
         run_rollup_aggregate(
             source,
             &group_by,
@@ -2336,7 +2479,20 @@ fn build_aggregation(
     };
     let root = match trace {
         Some(trace) => {
-            if let Some(stream_plan) = stream_plan {
+            if let Some(expressions) = aggregation_elimination.as_deref() {
+                if !trace.scan_reader() {
+                    trace.refuse("aggregation elimination child is not a bare scan");
+                }
+                let column_names = physical_source_column_names(
+                    traced_select,
+                    resolver.scope,
+                    catalog,
+                    current_db,
+                );
+                if !trace.aggregation_elimination_projection(expressions, &column_names) {
+                    trace.refuse("aggregation elimination projection is not printable yet");
+                }
+            } else if let Some(stream_plan) = stream_plan {
                 if partial_stream_agg {
                     if !trace.partial_stream_agg(
                         traced_select,

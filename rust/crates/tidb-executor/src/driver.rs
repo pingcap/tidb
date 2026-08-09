@@ -784,8 +784,19 @@ pub(super) fn run_select_traced_with_delivery(
             // build the cross product the filter would then throw away. See
             // `driver::predicate_push_down`.
             let offered = predicate_push_down::offered_conjuncts(select.where_clause.as_ref());
+            // Go's aggregation elimination runs before physical property
+            // enforcement. Once a unique group becomes a projection, the
+            // source no longer owes a group-key order; asking for it here
+            // would make the eventual scan claim `keep order:true` for work
+            // the executable plan does not require.
             aggregation_order =
-                merge_decision::aggregation_order(select, join, catalog, current_db, &offered);
+                (!agg_select::aggregation_can_be_eliminated(select, catalog, current_db))
+                    .then(|| {
+                        merge_decision::aggregation_order(
+                            select, join, catalog, current_db, &offered,
+                        )
+                    })
+                    .flatten();
             // Go's `rule_column_pruning`: what every `DataSource` below still
             // has to produce, which is the input its access-path costing
             // needs (`isCoveringIndex`). A `FROM` of ONE base table is
