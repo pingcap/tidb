@@ -22,6 +22,8 @@
 //! following tranche). `Valid`'s skip-grant-table check delegates to the
 //! process euid and is noted where it lands.
 
+use std::sync::{OnceLock, RwLock};
+
 use serde::{Deserialize, Serialize};
 
 use super::big_sections::{
@@ -380,6 +382,38 @@ pub fn new_config() -> Config {
     Config::default()
 }
 
+static GLOBAL_CONFIG: OnceLock<RwLock<Config>> = OnceLock::new();
+
+fn global_config() -> &'static RwLock<Config> {
+    GLOBAL_CONFIG.get_or_init(|| RwLock::new(new_config()))
+}
+
+/// Go `GetGlobalConfig`. Rust returns an owned snapshot so readers never
+/// retain a lock while using the configuration.
+pub fn get_global_config() -> Config {
+    global_config()
+        .read()
+        .expect("global config lock poisoned")
+        .clone()
+}
+
+/// Go `UpdateGlobal`.
+pub fn update_global(update: impl FnOnce(&mut Config)) {
+    let mut config = global_config()
+        .write()
+        .expect("global config lock poisoned");
+    update(&mut config);
+}
+
+/// Go `GetGlobalKeyspaceName`.
+pub fn get_global_keyspace_name() -> String {
+    global_config()
+        .read()
+        .expect("global config lock poisoned")
+        .keyspace_name
+        .clone()
+}
+
 // Go `hasRootPrivilege`. Reads the process effective uid; deferred here
 // (returns false) because std has no geteuid and skip-grant-table defaults
 // off, so the only effect is that skip-grant-table=true is conservatively
@@ -658,6 +692,18 @@ mod tests {
             second.instance.enable_slow_log
         );
         assert_ne!(first.repair_table_list, second.repair_table_list);
+    }
+
+    // Go TestGetGlobalKeyspaceName.
+    #[test]
+    fn test_get_global_keyspace_name() {
+        let config = new_config();
+        assert!(config.keyspace_name.is_empty());
+
+        update_global(|config| config.keyspace_name = "test".to_owned());
+        assert_eq!(get_global_keyspace_name(), "test");
+
+        update_global(|config| config.keyspace_name.clear());
     }
 
     // Go TestKeyspaceActivateModeConfig (the source test runs under the
