@@ -256,8 +256,9 @@ fn parser_remaining_field_type_surface_is_source_complete() {
     assert_eq!(json_field.memory_usage(), 173);
 }
 
+/// Source: `pkg/types/convert_test.go::TestFieldTypeToStr`.
 #[test]
-fn test_field_type_to_str_source_rows() {
+fn test_field_type_to_str() {
     assert_eq!(
         type_to_str(C::Unspecified, "not binary"),
         type_str(C::Unspecified)
