@@ -45,7 +45,9 @@ use super::sections::{
 };
 use crate::deploymode::Mode;
 use crate::external_workload::ExternalWorkload;
-use crate::keyspace_observability::KeyspaceObservability;
+use crate::keyspace_observability::{
+    KeyspaceObservability, KeyspaceObservabilityLogField, KeyspaceObservabilityValues,
+};
 use crate::store::StoreType;
 use crate::tiflash::is_valid_auto_scaler_config;
 use crate::tikvcfg;
@@ -266,6 +268,8 @@ pub struct Config {
     pub error_message_extensions: Vec<ErrorMessageExtension>,
     #[serde(rename = "keyspace-observability")]
     pub keyspace_observability: KeyspaceObservability,
+    #[serde(skip)]
+    pub keyspace_observability_values: KeyspaceObservabilityValues,
     #[serde(rename = "enable-global-index")]
     pub enable_global_index: bool,
     #[serde(rename = "deprecate-integer-display-length")]
@@ -407,6 +411,7 @@ impl Default for Config {
             labels: std::collections::HashMap::new(),
             error_message_extensions: Vec::new(),
             keyspace_observability: KeyspaceObservability::default(),
+            keyspace_observability_values: KeyspaceObservabilityValues::default(),
             enable_global_index: false,
             deprecate_integer_display_width: true,
             enable_enum_length_limit: true,
@@ -542,6 +547,34 @@ fn has_root_privilege() -> bool {
 }
 
 impl Config {
+    /// Go `Config.ResolveKeyspaceObservability`.
+    pub fn resolve_keyspace_observability(
+        &mut self,
+        values: &std::collections::HashMap<String, String>,
+    ) -> Result<(), String> {
+        self.keyspace_observability_values = self.keyspace_observability.resolve(values)?;
+        Ok(())
+    }
+
+    /// Go `Config.GetKeyspaceObservabilityMetricLabels`.
+    pub fn get_keyspace_observability_metric_labels(
+        &self,
+    ) -> &std::collections::HashMap<String, String> {
+        &self.keyspace_observability_values.metric_labels
+    }
+
+    /// Go `Config.GetKeyspaceObservabilitySlowLogFields`.
+    pub fn get_keyspace_observability_slow_log_fields(&self) -> &[KeyspaceObservabilityLogField] {
+        &self.keyspace_observability_values.slow_log_fields
+    }
+
+    /// Go `Config.GetKeyspaceObservabilityStmtLogFields`.
+    pub fn get_keyspace_observability_stmt_log_fields(
+        &self,
+    ) -> &std::collections::HashMap<String, String> {
+        &self.keyspace_observability_values.stmt_log_fields
+    }
+
     /// Go `Config.GetTiKVConfig`.
     pub fn get_tikv_config(&self) -> tikvcfg::Config {
         let zone_label = self.labels.get("zone").cloned().unwrap_or_default();
@@ -909,6 +942,64 @@ mod tests {
         let azure = metering.azure.unwrap();
         assert_eq!(azure.account_name, "test-account");
         assert_eq!(azure.account_key, "test-key");
+    }
+
+    // Go TestKeyspaceObservability.
+    #[test]
+    fn test_keyspace_observability() {
+        let content = r#"
+[[keyspace-observability.fields]]
+source = "meta_a"
+metric-label = "keyspace_meta_label_a"
+slow-log-field = "Keyspace_meta_slow_a"
+stmt-log-field = "stmt_meta_a"
+required = true
+
+[[keyspace-observability.fields]]
+source = "meta_b"
+metric-label = "keyspace_meta_label_b"
+slow-log-field = "Keyspace_meta_slow_b"
+"#;
+        let mut config: Config = toml::from_str(content).unwrap();
+        config.keyspace_observability.valid().unwrap();
+        config
+            .resolve_keyspace_observability(&std::collections::HashMap::from([
+                ("meta_a".to_owned(), "value_a".to_owned()),
+                ("meta_b".to_owned(), "value_b".to_owned()),
+            ]))
+            .unwrap();
+        assert_eq!(
+            config.get_keyspace_observability_metric_labels(),
+            &std::collections::HashMap::from([
+                ("keyspace_meta_label_a".to_owned(), "value_a".to_owned()),
+                ("keyspace_meta_label_b".to_owned(), "value_b".to_owned()),
+            ])
+        );
+        assert_eq!(
+            config.get_keyspace_observability_slow_log_fields(),
+            [
+                KeyspaceObservabilityLogField {
+                    name: "Keyspace_meta_slow_a".to_owned(),
+                    value: "value_a".to_owned(),
+                },
+                KeyspaceObservabilityLogField {
+                    name: "Keyspace_meta_slow_b".to_owned(),
+                    value: "value_b".to_owned(),
+                },
+            ]
+        );
+        assert_eq!(
+            config.get_keyspace_observability_stmt_log_fields(),
+            &std::collections::HashMap::from([("stmt_meta_a".to_owned(), "value_a".to_owned())])
+        );
+
+        assert!(config
+            .resolve_keyspace_observability(&std::collections::HashMap::from([(
+                "meta_b".to_owned(),
+                "value_b".to_owned()
+            )]))
+            .unwrap_err()
+            .contains("missing required keyspace metadata entry \"meta_a\""));
     }
 
     // Go TestExternalWorkloadValid.
