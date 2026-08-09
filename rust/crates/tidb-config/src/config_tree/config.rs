@@ -1002,6 +1002,22 @@ slow-log-field = "Keyspace_meta_slow_b"
             .contains("missing required keyspace metadata entry \"meta_a\""));
     }
 
+    // Go TestKeyspaceObservabilityInvalid deploy-mode check.
+    #[test]
+    fn test_keyspace_observability_invalid_deploy_mode() {
+        let mut config: Config = toml::from_str(
+            r#"
+[[keyspace-observability.fields]]
+source = "meta_a"
+metric-label = "keyspace_meta_label_a"
+"#,
+        )
+        .unwrap();
+        assert!(config.valid().unwrap_err().contains(
+            "keyspace-observability.fields can only be configured when deploy-mode is starter"
+        ));
+    }
+
     // Go TestExternalWorkloadValid.
     #[test]
     fn test_external_workload_valid() {
