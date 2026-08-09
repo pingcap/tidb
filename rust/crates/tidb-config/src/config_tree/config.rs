@@ -587,6 +587,27 @@ impl Config {
 mod tests {
     use super::*;
 
+    // Go TestCloneConf.
+    #[test]
+    fn test_clone_conf() {
+        let mut first = new_config();
+        let second = first.clone();
+        assert_eq!(first, second);
+
+        first.host = "example.invalid".to_owned();
+        first.port = 2333;
+        first.instance.enable_slow_log = AtomicBool::new(!first.instance.enable_slow_log.load());
+        first.repair_table_list.push("test.t".to_owned());
+
+        assert_ne!(first.host, second.host);
+        assert_ne!(first.port, second.port);
+        assert_ne!(
+            first.instance.enable_slow_log,
+            second.instance.enable_slow_log
+        );
+        assert_ne!(first.repair_table_list, second.repair_table_list);
+    }
+
     // Go TestMaxIndexLength.
     #[test]
     fn max_index_length() {
