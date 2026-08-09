@@ -211,6 +211,110 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_handle_bad_null() {
+        // pkg/table/column_test.go::TestHandleBadNull is the source table:
+        // nullable NULL is untouched, an error-level NOT NULL violation
+        // fails, and warning level substitutes the type's zero.
+        let nullable = FieldType::new(FieldTypeCode::Long);
+        let context = crate::StmtContext::default();
+        let mut value = Datum::Null;
+        assert!(!handle_bad_null(&mut value, &nullable, "a", NullLevel::Error, &context,).unwrap());
+        assert_eq!(value, Datum::Null);
+
+        let not_null = nullable.with_flags(NOT_NULL_FLAG);
+        assert!(matches!(
+            handle_bad_null(
+                &mut Datum::Null,
+                &not_null,
+                "a",
+                NullLevel::Error,
+                &context,
+            ),
+            Err(DriverError::ColumnCannotBeNull(column)) if column == "a"
+        ));
+
+        let mut warned = Datum::Null;
+        assert!(handle_bad_null(&mut warned, &not_null, "a", NullLevel::Warn, &context,).unwrap());
+        assert_eq!(warned, Datum::Int(0));
+        assert_eq!(context.take_warnings().len(), 1);
+    }
+
+    #[test]
+    fn test_get_zero_value() {
+        // Direct port of pkg/table/column_test.go::TestGetZeroValue. Expected
+        // string datums use each FieldType's own collation, matching Go's
+        // collator-based comparison instead of comparing collation metadata.
+        let unsigned = FieldType::new(FieldTypeCode::LongLong).with_unsigned(true);
+        let fixed_binary = field(FieldTypeCode::String, 2, "binary", "binary");
+        let fixed_utf8 = field(FieldTypeCode::String, 2, "utf8mb4", "binary");
+
+        let string_zero = |field_type: &FieldType, bytes: Vec<u8>| {
+            Datum::String(StringDatum::new(bytes, field_type.collation()))
+        };
+        let time_zero = |kind, field_type: &FieldType| {
+            Datum::new_time(
+                Time::new(CoreTime::from_raw(0), kind, field_type.decimal())
+                    .or_else(|_| Time::new(CoreTime::from_raw(0), kind, 0))
+                    .unwrap(),
+            )
+        };
+
+        let signed = FieldType::new(FieldTypeCode::Long);
+        let float = FieldType::new(FieldTypeCode::Float);
+        let double = FieldType::new(FieldTypeCode::Double);
+        let decimal = FieldType::new(FieldTypeCode::NewDecimal);
+        let varchar = FieldType::new(FieldTypeCode::Varchar);
+        let blob = FieldType::new(FieldTypeCode::Blob);
+        let duration = FieldType::new(FieldTypeCode::Duration);
+        let datetime = FieldType::new(FieldTypeCode::Datetime);
+        let timestamp = FieldType::new(FieldTypeCode::Timestamp);
+        let date = FieldType::new(FieldTypeCode::Date);
+        let bit = FieldType::new(FieldTypeCode::Bit);
+        let set = FieldType::new(FieldTypeCode::Set);
+        let enumeration = FieldType::new(FieldTypeCode::Enum);
+        let json = FieldType::new(FieldTypeCode::Json);
+        let json_null = BinaryJSON::from_typed_value(&BinaryJSONValue::Null)
+            .map(Datum::new_json)
+            .unwrap();
+
+        let cases = vec![
+            (signed, Datum::Int(0)),
+            (unsigned, Datum::UInt(0)),
+            (float, Datum::Float32(0.0)),
+            (double, Datum::Real(0.0)),
+            (decimal, Datum::new_decimal(Decimal::from_int(0))),
+            (varchar.clone(), string_zero(&varchar, Vec::new())),
+            (blob.clone(), string_zero(&blob, Vec::new())),
+            (
+                duration,
+                Datum::new_duration(MySqlDuration::from_nanoseconds(0, 0).unwrap()),
+            ),
+            (datetime.clone(), time_zero(TimeType::DateTime, &datetime)),
+            (
+                timestamp.clone(),
+                time_zero(TimeType::Timestamp, &timestamp),
+            ),
+            (date.clone(), time_zero(TimeType::Date, &date)),
+            (bit, Datum::Bit(BinaryLiteral::from_uint(0, None))),
+            (
+                set.clone(),
+                Datum::new_set(MysqlSet::new(String::new(), 0), set.collation()),
+            ),
+            (
+                enumeration.clone(),
+                Datum::new_enum(MysqlEnum::new(String::new(), 0), enumeration.collation()),
+            ),
+            (fixed_binary.clone(), string_zero(&fixed_binary, vec![0, 0])),
+            (fixed_utf8.clone(), string_zero(&fixed_utf8, Vec::new())),
+            (json, json_null),
+        ];
+
+        for (field_type, expected) in cases {
+            assert_eq!(zero_value(&field_type), expected, "{field_type:?}");
+        }
+    }
+
     /// Go `table.GetZeroValue`'s `mysql.TypeString` arm. Captured from TiDB:
     ///
     /// ```text
