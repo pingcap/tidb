@@ -30,12 +30,14 @@ fn pkg_meta_model_bdr_boundary() {
         "safe DDL"
     );
     assert_eq!(
-        tidb_model::ACTION_BDR_MAP.get(&tidb_model::ActionType::ACTION_CREATE_TABLE),
+        tidb_model::ACTION_BDR_MAP
+            .read()
+            .get(&tidb_model::ActionType::ACTION_CREATE_TABLE),
         Some(&DDLBDRType::SAFE_DDL)
     );
-    assert_eq!(tidb_model::ts_convert_2_time(0).timestamp_millis(), 0);
+    assert_eq!(tidb_model::ts_convert_2_time(0).unix_millis(), 0);
     assert_eq!(
-        tidb_model::ts_convert_2_time(u64::MAX).timestamp_millis(),
+        tidb_model::ts_convert_2_time(u64::MAX).unix_millis(),
         (u64::MAX >> 18) as i64
     );
 }
@@ -74,22 +76,29 @@ fn pkg_meta_model_table_mode_boundary() {
 
 #[test]
 fn pkg_meta_model_probe_owned_clone_boundaries() {
-    let mut original = DBInfo {
+    let original = DBInfo {
         deprecated_tables: vec![TableInfo {
             name: tidb_ast::CiString::new("before"),
             ..Default::default()
-        }],
+        }]
+        .into(),
         ..Default::default()
     };
-    let cloned = original.clone();
-    original.deprecated_tables[0].name = tidb_ast::CiString::new("after");
+    let cloned = original.clone_like_go();
+    original
+        .deprecated_tables
+        .get(0)
+        .expect("non-null table")
+        .write()
+        .name = tidb_ast::CiString::new("after");
 
-    let clone_observation = if cloned.deprecated_tables[0].name.original() == "before" {
+    let cloned_table = cloned.deprecated_tables.get(0).expect("non-null table");
+    let clone_observation = if cloned_table.read().name.original() == "before" {
         "owned-deep-copy"
     } else {
         "shared-table-identity"
     };
-    let map_observation = if DBInfo::default().table_name2id.is_empty() {
+    let map_observation = if DBInfo::default().table_name2id.is_none() {
         "one-empty-map-state"
     } else {
         "unexpected-nonempty-map"

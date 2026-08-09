@@ -15,36 +15,61 @@
 //! `pkg/meta/model/bdr.go`: classifying DDL actions by their safety under
 //! bidirectional replication (BDR).
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
-use chrono::{DateTime, Utc};
-
 use crate::action_type::ActionType;
+use crate::go_runtime::{GoShared, GoSharedSlice, GoTime};
 
 /// Go `DDLBDRType` (a `string`): a DDL's safety class under BDR.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct DDLBDRType(pub &'static str);
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct DDLBDRType(Cow<'static, str>);
 
 impl DDLBDRType {
     /// The DDL can't be run by a user on a Primary/Secondary cluster.
-    pub const UNSAFE_DDL: DDLBDRType = DDLBDRType("unsafe DDL");
+    pub const UNSAFE_DDL: DDLBDRType = DDLBDRType(Cow::Borrowed("unsafe DDL"));
     /// The DDL can be run by a user on a Primary cluster.
-    pub const SAFE_DDL: DDLBDRType = DDLBDRType("safe DDL");
+    pub const SAFE_DDL: DDLBDRType = DDLBDRType(Cow::Borrowed("safe DDL"));
     /// The DDL can't be synced by CDC.
-    pub const UNMANAGEMENT_DDL: DDLBDRType = DDLBDRType("unmanagement DDL");
+    pub const UNMANAGEMENT_DDL: DDLBDRType = DDLBDRType(Cow::Borrowed("unmanagement DDL"));
     /// The DDL is unknown.
-    pub const UNKNOWN_DDL: DDLBDRType = DDLBDRType("unknown DDL");
+    pub const UNKNOWN_DDL: DDLBDRType = DDLBDRType(Cow::Borrowed("unknown DDL"));
+
+    /// Constructs an arbitrary Go string value. `DDLBDRType` is a named
+    /// string, not a closed enum; zero and future values must round-trip.
+    #[must_use]
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(Cow::Owned(value.into()))
+    }
+
+    /// Returns the underlying Go string.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Default for DDLBDRType {
+    fn default() -> Self {
+        Self(Cow::Borrowed(""))
+    }
+}
+
+impl From<String> for DDLBDRType {
+    fn from(value: String) -> Self {
+        Self(Cow::Owned(value))
+    }
 }
 
 impl std::fmt::Display for DDLBDRType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.0)
+        f.write_str(&self.0)
     }
 }
 
-/// Go `BDRActionMap`: the DDL actions in each BDR safety class.
-pub const BDR_ACTION_MAP: &[(DDLBDRType, &[ActionType])] = &[
+/// Immutable declaration input used by Go package initialization.
+const BDR_ACTION_ENTRIES: &[(DDLBDRType, &[ActionType])] = &[
     (
         DDLBDRType::SAFE_DDL,
         &[
@@ -145,24 +170,46 @@ pub const BDR_ACTION_MAP: &[(DDLBDRType, &[ActionType])] = &[
     ),
 ];
 
-/// Go `ActionBDRMap` (built by `init` from `BDRActionMap`): the BDR class of
-/// each DDL action.
-pub static ACTION_BDR_MAP: LazyLock<HashMap<ActionType, DDLBDRType>> = LazyLock::new(|| {
-    let mut m = HashMap::new();
-    for (bdr_type, actions) in BDR_ACTION_MAP {
+/// Source-shaped Go `BDRActionMap` value.
+pub type BDRActionMap = HashMap<DDLBDRType, GoSharedSlice<ActionType>>;
+
+/// Source-shaped Go `ActionBDRMap` value.
+pub type ActionBDRMap = HashMap<ActionType, DDLBDRType>;
+
+fn initial_bdr_action_map() -> BDRActionMap {
+    BDR_ACTION_ENTRIES
+        .iter()
+        .map(|(role, actions)| (role.clone(), GoSharedSlice::from_vec(actions.to_vec())))
+        .collect()
+}
+
+fn initial_action_bdr_map() -> ActionBDRMap {
+    let mut action_map = HashMap::new();
+    for (role, actions) in BDR_ACTION_ENTRIES {
         for action in *actions {
-            m.insert(*action, *bdr_type);
+            action_map.insert(*action, role.clone());
         }
     }
-    m
-});
+    action_map
+}
+
+/// Go `BDRActionMap`: one mutable map allocation whose slice values retain
+/// Go backing-array identity when copied.
+pub static BDR_ACTION_MAP: LazyLock<GoShared<BDRActionMap>> =
+    LazyLock::new(|| GoShared::new(initial_bdr_action_map()));
+
+/// Go `ActionBDRMap` (built by `init` from `BDRActionMap`): the BDR class of
+/// each DDL action. Initialization uses the declaration input once, matching
+/// Go package `init`; later mutations of either public map do not repair the
+/// other map automatically.
+pub static ACTION_BDR_MAP: LazyLock<GoShared<ActionBDRMap>> =
+    LazyLock::new(|| GoShared::new(initial_action_bdr_map()));
 
 /// Go `TSConvert2Time`: converts a TSO timestamp to a time (the high bits are
 /// physical milliseconds; the low 18 bits are the logical counter).
 #[must_use]
-pub fn ts_convert_2_time(ts: u64) -> DateTime<Utc> {
-    let ms = (ts >> 18) as i64;
-    DateTime::<Utc>::from_timestamp_millis(ms).unwrap_or(DateTime::<Utc>::UNIX_EPOCH)
+pub const fn ts_convert_2_time(ts: u64) -> GoTime {
+    GoTime::from_tso(ts)
 }
 
 #[cfg(test)]
@@ -174,31 +221,59 @@ mod tests {
     // and the classification covers exactly the named actions.
     #[test]
     fn action_bdr_map() {
-        assert_eq!(ACTION_MAP.len(), ACTION_BDR_MAP.len());
+        let actions_by_role = BDR_ACTION_MAP.read();
+        let role_by_action = ACTION_BDR_MAP.read();
+        assert_eq!(ACTION_MAP.len(), role_by_action.len());
         let mut total = 0;
-        for (bdr_type, actions) in BDR_ACTION_MAP {
-            for action in *actions {
+        for (bdr_type, actions) in actions_by_role.iter() {
+            for action in actions.snapshot() {
                 assert_eq!(
-                    ACTION_BDR_MAP.get(action),
+                    role_by_action.get(&action),
                     Some(bdr_type),
                     "action {action}"
                 );
             }
             total += actions.len();
         }
-        assert_eq!(total, ACTION_BDR_MAP.len());
+        assert_eq!(total, role_by_action.len());
+    }
+
+    #[test]
+    fn roles_and_maps_keep_open_string_and_alias_semantics() {
+        assert_eq!(DDLBDRType::default().as_str(), "");
+        let future = DDLBDRType::new("future role");
+        assert_eq!(future.to_string(), "future role");
+
+        let by_role = GoShared::new(initial_bdr_action_map());
+        let alias = by_role.clone();
+        assert!(alias.ptr_eq(&by_role));
+        alias.write().insert(
+            future.clone(),
+            GoSharedSlice::from_vec(vec![ActionType::ACTION_CREATE_TABLE]),
+        );
+        assert_eq!(by_role.read().get(&future).unwrap().len(), 1);
+
+        let safe = by_role.read().get(&DDLBDRType::SAFE_DDL).unwrap().clone();
+        let safe_alias = safe.clone();
+        safe_alias.set(0, ActionType::ACTION_DROP_SCHEMA);
+        assert_eq!(safe.get(0), ActionType::ACTION_DROP_SCHEMA);
     }
 
     #[test]
     fn ts_convert() {
-        assert_eq!(ts_convert_2_time(0), DateTime::<Utc>::UNIX_EPOCH);
-        assert_eq!(
-            ts_convert_2_time((1_u64 << 18) - 1),
-            DateTime::<Utc>::UNIX_EPOCH
-        );
-        assert_eq!(ts_convert_2_time(1_u64 << 18).timestamp_millis(), 1);
+        assert_eq!(ts_convert_2_time(0).unix_millis(), 0);
+        assert_eq!(ts_convert_2_time((1_u64 << 18) - 1).unix_millis(), 0);
+        assert_eq!(ts_convert_2_time(1_u64 << 18).unix_millis(), 1);
         // 1700000000000 ms shifted into the physical position.
         let ts = 1_700_000_000_000u64 << 18;
-        assert_eq!(ts_convert_2_time(ts).timestamp_millis(), 1_700_000_000_000);
+        assert_eq!(ts_convert_2_time(ts).unix_millis(), 1_700_000_000_000);
+        assert_eq!(
+            ts_convert_2_time(u64::MAX).unix_millis(),
+            (u64::MAX >> 18) as i64
+        );
+        assert_eq!(
+            ts_convert_2_time(0).location(),
+            crate::go_runtime::GoTimeLocation::Local
+        );
     }
 }

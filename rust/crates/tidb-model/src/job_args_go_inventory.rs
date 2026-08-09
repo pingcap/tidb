@@ -19,9 +19,19 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use sha2::{Digest, Sha256};
 
+use crate::job_args::{get_or_decode_args, get_or_decode_args_v2};
 use crate::{
-    index_arg_columnar_index_type, rename_tables_args_from_v1, ColumnarIndexType, IndexOp,
-    RenameTableArgs,
+    fill_rollback_args_for_add_partition, get_batch_create_table_args, get_create_schema_args,
+    get_create_table_args, get_drop_schema_args, get_exchange_table_partition_args,
+    get_finished_drop_schema_args, get_finished_table_partition_args,
+    get_finished_truncate_table_args, get_modify_schema_args,
+    get_modify_table_charset_and_collate_args, get_modify_table_comment_args,
+    get_rebase_auto_id_args, get_table_partition_args, get_truncate_table_args,
+    index_arg_columnar_index_type, rename_tables_args_from_v1, BatchCreateTableArgs,
+    ColumnarIndexType, CreateSchemaArgs, CreateTableArgs, DropSchemaArgs, EmptyArgs,
+    ExchangeTablePartitionArgs, FinishedJobArgs, GoAny, GoShared, GoSharedSlice, IndexOp, Job,
+    JobArgs, ModifySchemaArgs, ModifyTableCharsetAndCollateArgs, ModifyTableCommentArgs,
+    RebaseAutoIDArgs, RenameTableArgs, TableIDIndexID, TablePartitionArgs, TruncateTableArgs,
 };
 use tidb_ast::CiString;
 
@@ -122,8 +132,8 @@ fn every_ast_obligation_has_exactly_one_concrete_verdict() {
 
     assert_eq!(ids.len(), 1_612);
     assert_eq!(categories, expected_categories);
-    assert_eq!(verdicts.get("PORTED"), Some(&24));
-    assert_eq!(verdicts.get("DECLINED"), Some(&1_588));
+    assert_eq!(verdicts.get("PORTED"), Some(&495));
+    assert_eq!(verdicts.get("DECLINED"), Some(&1_117));
     assert_eq!(verdicts.get("UNREACHABLE"), None);
     assert_eq!(sha256(&ordered_identity), ORDERED_AST_IDENTITY_SHA256);
 }
@@ -145,6 +155,113 @@ fn every_ported_symbol_remains_compile_anchored() {
     );
     let _: fn(ColumnarIndexType, bool) -> ColumnarIndexType = index_arg_columnar_index_type;
     let _: RenameFromV1Fn = rename_tables_args_from_v1;
+    let _ = get_or_decode_args::<CreateSchemaArgs>;
+    let _ = get_or_decode_args_v2::<CreateSchemaArgs>;
+    let _ = get_create_schema_args;
+    let _ = get_drop_schema_args;
+    let _ = get_finished_drop_schema_args;
+    let _ = get_modify_schema_args;
+    let _ = get_create_table_args;
+    let _ = get_batch_create_table_args;
+    let _ = get_truncate_table_args;
+    let _ = get_finished_truncate_table_args;
+    let _ = get_table_partition_args;
+    let _ = get_finished_table_partition_args;
+    let _ = fill_rollback_args_for_add_partition;
+    let _ = get_exchange_table_partition_args;
+    let _ = get_rebase_auto_id_args;
+    let _ = get_modify_table_comment_args;
+    let _ = get_modify_table_charset_and_collate_args;
+    let _ = <EmptyArgs as JobArgs>::get_args_v1;
+    let _ = <EmptyArgs as JobArgs>::decode_v1;
+    let _ = <CreateSchemaArgs as JobArgs>::get_args_v1;
+    let _ = <CreateSchemaArgs as JobArgs>::decode_v1;
+    let _ = <DropSchemaArgs as JobArgs>::get_args_v1;
+    let _ = <DropSchemaArgs as JobArgs>::decode_v1;
+    let _ = <DropSchemaArgs as FinishedJobArgs>::get_finished_args_v1;
+    let _ = <ModifySchemaArgs as JobArgs>::get_args_v1;
+    let _ = <ModifySchemaArgs as JobArgs>::decode_v1;
+    let _ = <CreateTableArgs as JobArgs>::get_args_v1;
+    let _ = <CreateTableArgs as JobArgs>::decode_v1;
+    let _ = <BatchCreateTableArgs as JobArgs>::get_args_v1;
+    let _ = <BatchCreateTableArgs as JobArgs>::decode_v1;
+    let _ = <TruncateTableArgs as JobArgs>::get_args_v1;
+    let _ = <TruncateTableArgs as JobArgs>::decode_v1;
+    let _ = <TruncateTableArgs as FinishedJobArgs>::get_finished_args_v1;
+    let _ = <TablePartitionArgs as JobArgs>::get_args_v1;
+    let _ = <TablePartitionArgs as JobArgs>::decode_v1;
+    let _ = <TablePartitionArgs as FinishedJobArgs>::get_finished_args_v1;
+    let _ = <ExchangeTablePartitionArgs as JobArgs>::get_args_v1;
+    let _ = <ExchangeTablePartitionArgs as JobArgs>::decode_v1;
+    let _ = <RebaseAutoIDArgs as JobArgs>::get_args_v1;
+    let _ = <RebaseAutoIDArgs as JobArgs>::decode_v1;
+    let _ = <ModifyTableCommentArgs as JobArgs>::get_args_v1;
+    let _ = <ModifyTableCommentArgs as JobArgs>::decode_v1;
+    let _ = <ModifyTableCharsetAndCollateArgs as JobArgs>::get_args_v1;
+    let _ = <ModifyTableCharsetAndCollateArgs as JobArgs>::decode_v1;
+    let _ = EmptyArgs::default();
+    let _ = CreateSchemaArgs::default().db_info;
+    let drop_schema = DropSchemaArgs::default();
+    let _ = (drop_schema.fk_check, drop_schema.all_dropped_table_ids);
+    let modify_schema = ModifySchemaArgs::default();
+    let _ = (
+        modify_schema.to_charset,
+        modify_schema.to_collate,
+        modify_schema.policy_ref,
+    );
+    let create_table = CreateTableArgs::default();
+    let _ = (
+        create_table.table_info,
+        create_table.on_exist_replace,
+        create_table.old_view_table_id,
+        create_table.fk_check,
+    );
+    let _: fn(crate::JobVersion, crate::ActionType, GoShared<CreateSchemaArgs>) -> Job =
+        crate::job_args::tests::encoded_job::<CreateSchemaArgs>;
+    let _: fn(crate::JobVersion, crate::ActionType, GoShared<DropSchemaArgs>) -> Job =
+        crate::job_args::tests::encoded_finished_job::<DropSchemaArgs>;
+    let _: fn() = crate::job_args::tests::v2_getter_reuses_the_exact_typed_pointer;
+    let _: fn() =
+        crate::job_args::tests::first_source_getter_matrix_round_trips_values_in_both_versions;
+    let _: fn() =
+        crate::job_args::tests::batch_create_table_v1_shares_one_fk_flag_and_v2_keeps_each_value;
+    let _: fn() =
+        crate::job_args::tests::truncate_table_submission_and_finished_action_matrix_matches_source;
+    let _: fn() = crate::job_args::tests::table_partition_args_match_source;
+    let _: fn() =
+        crate::job_args::tests::finished_table_partition_matrix_and_add_assertion_match_source;
+    let table_partition = TablePartitionArgs::default();
+    let _ = (
+        table_partition.part_names,
+        table_partition.part_info,
+        table_partition.old_physical_table_ids,
+        table_partition.old_global_indexes,
+        table_partition.new_partition_ids,
+    );
+    let table_index = TableIDIndexID::default();
+    let _ = (table_index.table_id, table_index.index_id);
+    let exchange = ExchangeTablePartitionArgs::default();
+    let _ = (
+        exchange.partition_id,
+        exchange.partitioned_table_schema_id,
+        exchange.partitioned_table_id,
+        exchange.partition_name,
+        exchange.with_validation,
+    );
+    let _: fn() = crate::job_args::tests::exchange_table_partition_args_match_source;
+    let rebase = RebaseAutoIDArgs::default();
+    let _ = (rebase.new_base, rebase.force);
+    let _ = ModifyTableCommentArgs::default().comment;
+    let charset = ModifyTableCharsetAndCollateArgs::default();
+    let _ = (
+        charset.to_charset,
+        charset.to_collate,
+        charset.needs_overwrite_columns,
+    );
+    let _: fn() = crate::job_args::tests::rebase_auto_id_args_match_source_matrix;
+    let _: fn() = crate::job_args::tests::modify_table_comment_args_match_source_matrix;
+    let _: fn() = crate::job_args::tests::modify_table_charset_and_collate_args_pin_every_field;
+    let _: Option<GoSharedSlice<GoAny>> = None;
 
     let symbols: BTreeSet<_> = INVENTORY
         .lines()
@@ -157,16 +274,86 @@ fn every_ported_symbol_remains_compile_anchored() {
     assert_eq!(
         symbols,
         BTreeSet::from([
+            "job_args::BatchCreateTableArgs",
+            "job_args::BatchCreateTableArgs::decode_v1",
+            "job_args::BatchCreateTableArgs::get_args_v1",
+            "job_args::CreateSchemaArgs",
+            "job_args::CreateSchemaArgs::decode_v1",
+            "job_args::CreateSchemaArgs::get_args_v1",
+            "job_args::CreateTableArgs",
+            "job_args::CreateTableArgs::decode_v1",
+            "job_args::CreateTableArgs::get_args_v1",
+            "job_args::DropSchemaArgs",
+            "job_args::DropSchemaArgs::decode_v1",
+            "job_args::DropSchemaArgs::get_args_v1",
+            "job_args::DropSchemaArgs::get_finished_args_v1",
+            "job_args::EmptyArgs",
+            "job_args::EmptyArgs::decode_v1",
+            "job_args::EmptyArgs::get_args_v1",
+            "job_args::ExchangeTablePartitionArgs",
+            "job_args::ExchangeTablePartitionArgs::decode_v1",
+            "job_args::ExchangeTablePartitionArgs::get_args_v1",
+            "job_args::FinishedJobArgs",
             "job_args::IndexOp",
+            "job_args::JobArgs",
+            "job_args::ModifySchemaArgs",
+            "job_args::ModifySchemaArgs::decode_v1",
+            "job_args::ModifySchemaArgs::get_args_v1",
+            "job_args::ModifyTableCharsetAndCollateArgs",
+            "job_args::ModifyTableCharsetAndCollateArgs::decode_v1",
+            "job_args::ModifyTableCharsetAndCollateArgs::get_args_v1",
+            "job_args::ModifyTableCommentArgs",
+            "job_args::ModifyTableCommentArgs::decode_v1",
+            "job_args::ModifyTableCommentArgs::get_args_v1",
+            "job_args::RebaseAutoIDArgs",
+            "job_args::RebaseAutoIDArgs::decode_v1",
+            "job_args::RebaseAutoIDArgs::get_args_v1",
             "job_args::RenameTableArgs",
+            "job_args::TruncateTableArgs",
+            "job_args::TruncateTableArgs::decode_v1",
+            "job_args::TruncateTableArgs::get_args_v1",
+            "job_args::TruncateTableArgs::get_finished_args_v1",
+            "job_args::TableIDIndexID",
+            "job_args::TablePartitionArgs",
+            "job_args::TablePartitionArgs::decode_v1",
+            "job_args::TablePartitionArgs::get_args_v1",
+            "job_args::TablePartitionArgs::get_finished_args_v1",
+            "job_args::fill_rollback_args_for_add_partition",
+            "job_args::get_batch_create_table_args",
+            "job_args::get_create_schema_args",
+            "job_args::get_create_table_args",
+            "job_args::get_drop_schema_args",
+            "job_args::get_exchange_table_partition_args",
+            "job_args::get_finished_drop_schema_args",
+            "job_args::get_modify_schema_args",
+            "job_args::get_modify_table_charset_and_collate_args",
+            "job_args::get_modify_table_comment_args",
+            "job_args::get_rebase_auto_id_args",
+            "job_args::get_finished_truncate_table_args",
+            "job_args::get_finished_table_partition_args",
+            "job_args::get_or_decode_args",
+            "job_args::get_or_decode_args_v2",
+            "job_args::get_truncate_table_args",
+            "job_args::get_table_partition_args",
             "job_args::index_arg_columnar_index_type",
             "job_args::rename_tables_args_from_v1",
+            "job_args::tests::batch_create_table_v1_shares_one_fk_flag_and_v2_keeps_each_value",
+            "job_args::tests::encoded_finished_job",
+            "job_args::tests::encoded_job",
+            "job_args::tests::exchange_table_partition_args_match_source",
+            "job_args::tests::first_source_getter_matrix_round_trips_values_in_both_versions",
+            "job_args::tests::modify_table_comment_args_match_source_matrix",
+            "job_args::tests::rebase_auto_id_args_match_source_matrix",
+            "job_args::tests::truncate_table_submission_and_finished_action_matrix_matches_source",
+            "job_args::tests::table_partition_args_match_source",
+            "job_args::tests::finished_table_partition_matrix_and_add_assertion_match_source",
+            "job_args::tests::v2_getter_reuses_the_exact_typed_pointer",
         ])
     );
 }
 
 #[test]
-fn declined_rows_pin_the_current_typed_job_args_boundary() {
+fn declined_rows_pin_the_remaining_typed_job_args_boundary() {
     let rust_job = include_str!("job.rs");
     for native_generic_symbol in [
         "pub struct Job {",
@@ -180,24 +367,37 @@ fn declined_rows_pin_the_current_typed_job_args_boundary() {
             "generic Job envelope disappeared: {native_generic_symbol}"
         );
     }
-    assert!(!rust_job.contains("pub fn fill_args("));
-    assert!(!rust_job.contains("pub fn fill_finished_args("));
-
     let rust_job_args = include_str!("job_args.rs");
-    for absent_typed_symbol in [
+    for present_typed_symbol in [
         "pub trait JobArgs",
         "pub trait FinishedJobArgs",
         "pub struct CreateSchemaArgs",
         "pub fn get_create_schema_args",
+        "pub struct TablePartitionArgs",
+        "pub fn get_table_partition_args",
+        "pub struct ExchangeTablePartitionArgs",
+        "pub fn get_exchange_table_partition_args",
+        "pub struct RebaseAutoIDArgs",
+        "pub fn get_rebase_auto_id_args",
+        "pub struct ModifyTableCommentArgs",
+        "pub fn get_modify_table_comment_args",
+        "pub struct ModifyTableCharsetAndCollateArgs",
+        "pub fn get_modify_table_charset_and_collate_args",
     ] {
         assert!(
+            rust_job_args.contains(present_typed_symbol),
+            "typed job-argument surface disappeared: {present_typed_symbol}"
+        );
+    }
+    for absent_typed_symbol in ["pub struct DropTableArgs"] {
+        assert!(
             !rust_job_args.contains(absent_typed_symbol),
-            "typed job-argument boundary changed: {absent_typed_symbol}"
+            "remaining typed job-argument boundary changed: {absent_typed_symbol}"
         );
     }
 
-    const CURRENT_BOUNDARY: &str = "Measured boundary: generic Job and raw JSON envelope encode/decode are native in job.rs, but typed JobArgs and FinishedJobArgs structures plus their source-specific getArgsV1, decodeV1, Get, FillArgs, and FillFinishedArgs rules remain absent; no source-equivalent typed entry point exists.";
-    assert_eq!(INVENTORY.matches(CURRENT_BOUNDARY).count(), 1_588);
+    const CURRENT_BOUNDARY: &str = "Measured boundary: the source-shaped JobArgs and FinishedJobArgs framework plus Empty, CreateSchema, DropSchema, ModifySchema, CreateTable, BatchCreateTable, TruncateTable, TablePartition, ExchangeTablePartition, RebaseAutoID, ModifyTableComment, and ModifyTableCharsetAndCollate argument types are native; this obligation belongs to a later concrete argument type or its imported AST or PD representation, so no source-equivalent typed entry point exists yet.";
+    assert_eq!(INVENTORY.matches(CURRENT_BOUNDARY).count(), 1_117);
     assert!(!INVENTORY.contains("explicitly defers Job RawArgs Encode Decode and FillArgs"));
 
     let go_tests = std::str::from_utf8(GO_TEST_SUPPORT).expect("Go test source is UTF-8");

@@ -23,9 +23,10 @@ use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
 
 use crate::action_type::ActionType;
+use crate::go_runtime::GoSharedPointerSlice;
 use crate::serde_helpers::{
     go_json_field_matches, ignore_unknown, impl_go_json_deserialize, impl_go_json_merge_object,
-    GoValueSlice, NullNoopSeed, OptionPointerSliceSeed, OptionValueSliceSeed,
+    GoValueSlice, NullNoopSeed, OptionValueSliceSeed, SharedPointerSliceSeed,
 };
 
 /// Go `AffectedOption`: one extra (schema, table) pair a diff touches beyond
@@ -67,7 +68,7 @@ impl_go_json_deserialize!(AffectedOption);
 /// `is_refresh_meta` is Go's `json:"-"` field: it is set in memory by the
 /// BR-only `refreshMeta` path and is never stored, so it is skipped by serde
 /// (fresh decodes are `false`, while receiver merges leave it unchanged).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default)]
 pub struct SchemaDiff {
     /// The schema version this diff produces.
     pub version: i64,
@@ -89,9 +90,43 @@ pub struct SchemaDiff {
     /// meta store for the new table definition directly.
     pub read_table_from_meta: bool,
     /// Extra tables the same DDL touched.
-    pub affected_options: Option<Vec<Option<AffectedOption>>>,
+    pub affected_options: GoSharedPointerSlice<AffectedOption>,
     /// In-memory only (Go `json:"-"`): set by BR's `refreshMeta` DDL.
     pub is_refresh_meta: bool,
+}
+
+impl PartialEq for SchemaDiff {
+    fn eq(&self, other: &Self) -> bool {
+        self.version == other.version
+            && self.action_type == other.action_type
+            && self.schema_id == other.schema_id
+            && self.table_id == other.table_id
+            && self.sub_action_types == other.sub_action_types
+            && self.old_table_id == other.old_table_id
+            && self.old_schema_id == other.old_schema_id
+            && self.regenerate_schema_map == other.regenerate_schema_map
+            && self.read_table_from_meta == other.read_table_from_meta
+            && self.is_refresh_meta == other.is_refresh_meta
+            && pointer_slice_values_eq(&self.affected_options, &other.affected_options)
+    }
+}
+
+impl Eq for SchemaDiff {}
+
+fn pointer_slice_values_eq(
+    left: &GoSharedPointerSlice<AffectedOption>,
+    right: &GoSharedPointerSlice<AffectedOption>,
+) -> bool {
+    left.is_allocated() == right.is_allocated()
+        && left.len() == right.len()
+        && left
+            .iter_handles()
+            .zip(right.iter_handles())
+            .all(|(left, right)| match (left, right) {
+                (None, None) => true,
+                (Some(left), Some(right)) => *left.read() == *right.read(),
+                _ => false,
+            })
 }
 
 impl_go_json_merge_object!(SchemaDiff, destination, map, key, {
@@ -114,7 +149,7 @@ impl_go_json_merge_object!(SchemaDiff, destination, map, key, {
     } else if go_json_field_matches(&key, "read_table_from_meta") {
         map.next_value_seed(NullNoopSeed(&mut destination.read_table_from_meta))?;
     } else if go_json_field_matches(&key, "affected_options") {
-        map.next_value_seed(OptionPointerSliceSeed(&mut destination.affected_options))?;
+        map.next_value_seed(SharedPointerSliceSeed(&mut destination.affected_options))?;
     } else {
         ignore_unknown(&mut map)?;
     }
@@ -125,11 +160,8 @@ impl_go_json_deserialize!(SchemaDiff);
 impl SchemaDiff {
     /// Iterates affected options at the same dereference boundary as Go
     /// consumers. A null element panics instead of being silently skipped.
-    pub fn affected_options_iter(&self) -> impl Iterator<Item = &AffectedOption> {
-        self.affected_options
-            .iter()
-            .flatten()
-            .map(|option| option.as_ref().expect("nil *AffectedOption"))
+    pub fn affected_options_iter(&self) -> impl Iterator<Item = crate::GoShared<AffectedOption>> {
+        self.affected_options.iter_deref()
     }
 }
 
@@ -179,7 +211,7 @@ mod tests {
         assert_eq!(diff.action_type, ActionType::ACTION_CREATE_TABLE);
         assert_eq!(diff.schema_id, 2);
         assert_eq!(diff.table_id, 104);
-        assert!(diff.affected_options.is_none());
+        assert!(!diff.affected_options.is_allocated());
         assert!(!diff.is_refresh_meta);
         assert_eq!(
             String::from_utf8(to_go_json(&diff).unwrap()).unwrap(),
@@ -197,9 +229,8 @@ mod tests {
         );
         assert!(diff.regenerate_schema_map);
         assert!(diff.read_table_from_meta);
-        let affected = diff.affected_options.as_ref().unwrap();
-        assert_eq!(affected.len(), 1);
-        assert_eq!(affected[0].as_ref().unwrap().table_id, 105);
+        assert_eq!(diff.affected_options.len(), 1);
+        assert_eq!(diff.affected_options.get(0).unwrap().read().table_id, 105);
         assert_eq!(
             String::from_utf8(to_go_json(&diff).unwrap()).unwrap(),
             stored
@@ -214,7 +245,7 @@ mod tests {
         .unwrap();
         assert!(diff.sub_action_types.is_empty());
         assert!(!diff.sub_action_types.is_allocated());
-        assert!(diff.affected_options.is_none());
+        assert!(!diff.affected_options.is_allocated());
         assert_eq!(diff.action_type, ActionType::ACTION_NONE);
     }
 
@@ -247,7 +278,7 @@ mod tests {
         let mut diff = SchemaDiff {
             version: 5,
             is_refresh_meta: true,
-            affected_options: Some(vec![Some(AffectedOption {
+            affected_options: GoSharedPointerSlice::from_nullable(vec![Some(AffectedOption {
                 schema_id: 1,
                 table_id: 2,
                 ..Default::default()
@@ -260,11 +291,10 @@ mod tests {
         assert!(diff.go_json_merge(&mut decoder).is_err());
         assert_eq!(diff.version, 5);
         assert!(diff.is_refresh_meta);
-        let affected = diff.affected_options.as_ref().unwrap();
-        assert_eq!(affected.len(), 2);
-        assert_eq!(affected[0].as_ref().unwrap().schema_id, 1);
-        assert_eq!(affected[0].as_ref().unwrap().table_id, 9);
-        assert!(affected[1].is_none());
+        assert_eq!(diff.affected_options.len(), 2);
+        assert_eq!(diff.affected_options.get(0).unwrap().read().schema_id, 1);
+        assert_eq!(diff.affected_options.get(0).unwrap().read().table_id, 9);
+        assert!(diff.affected_options.get(1).is_none());
         assert_eq!(diff.old_schema_id, 4);
     }
 
@@ -274,14 +304,14 @@ mod tests {
         assert!(nil["affected_options"].is_null());
 
         let empty = serde_json::to_value(SchemaDiff {
-            affected_options: Some(Vec::new()),
+            affected_options: GoSharedPointerSlice::from_nullable(Vec::new()),
             ..Default::default()
         })
         .unwrap();
         assert_eq!(empty["affected_options"], serde_json::json!([]));
 
         let nullable = SchemaDiff {
-            affected_options: Some(vec![
+            affected_options: GoSharedPointerSlice::from_nullable(vec![
                 None,
                 Some(AffectedOption {
                     schema_id: i64::MIN,
@@ -295,17 +325,18 @@ mod tests {
         assert_eq!(encoded["affected_options"][0], serde_json::Value::Null);
         assert_eq!(encoded["affected_options"][1]["schema_id"], i64::MIN);
         assert_eq!(encoded["affected_options"][1]["table_id"], i64::MAX);
+        let encoded = serde_json::to_vec(&encoded).unwrap();
         assert_eq!(
-            serde_json::from_value::<SchemaDiff>(encoded).unwrap(),
+            serde_json::from_slice::<SchemaDiff>(&encoded).unwrap(),
             nullable
         );
     }
 
     #[test]
-    #[should_panic(expected = "nil *AffectedOption")]
+    #[should_panic(expected = "nil pointer in Go slice")]
     fn affected_options_iterator_panics_at_go_dereference_boundary() {
         let diff = SchemaDiff {
-            affected_options: Some(vec![None]),
+            affected_options: GoSharedPointerSlice::from_nullable(vec![None]),
             ..Default::default()
         };
         let _ = diff.affected_options_iter().next();

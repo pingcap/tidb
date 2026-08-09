@@ -25,6 +25,7 @@ use std::marker::PhantomData;
 use serde::de::{DeserializeSeed, IgnoredAny, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::value::RawValue;
+use tidb_datatype::GoString;
 
 use crate::go_runtime::{
     go_64_slice_decode_capacity, GoShared, GoSharedPointerSlice, GoSharedSlice,
@@ -199,10 +200,6 @@ impl<T> GoPointerSlice<T> {
     /// boundary rather than dereferencing it.
     pub fn nullable(&self) -> Option<&[Option<T>]> {
         self.0.as_deref()
-    }
-
-    pub(crate) fn raw_mut(&mut self) -> &mut Option<Vec<Option<T>>> {
-        &mut self.0
     }
 }
 
@@ -826,26 +823,24 @@ where
     }
 }
 
-/// Deserializes a boxed pointer through an atomic custom unmarshaller while
-/// preserving the existing allocation.
+/// Deserializes a shared Go pointer through an atomic custom unmarshaller
+/// while preserving pointee identity.
 ///
-/// Go allocates a zero pointee before invoking `UnmarshalJSON` on a nil
-/// pointer. A failed custom decode therefore leaves that newly allocated zero
-/// pointee installed, while an existing pointee retains both its address and
-/// value. The explicit zero constructor avoids imposing Rust's `Default` on a
-/// Go type whose language-level zero differs from its ordinary constructor.
-pub(crate) struct OptionBoxAtomicReplaceSeed<'a, T> {
-    destination: &'a mut Option<Box<T>>,
+/// A non-null value allocates the language-level zero pointee before invoking
+/// the custom decoder. Failure therefore leaves a newly allocated zero behind,
+/// while an existing pointee retains both its address and its prior value.
+pub(crate) struct OptionSharedAtomicReplaceSeed<'a, T> {
+    destination: &'a mut Option<GoShared<T>>,
     zero: fn() -> T,
 }
 
-impl<'a, T> OptionBoxAtomicReplaceSeed<'a, T> {
-    pub(crate) fn new(destination: &'a mut Option<Box<T>>, zero: fn() -> T) -> Self {
+impl<'a, T> OptionSharedAtomicReplaceSeed<'a, T> {
+    pub(crate) fn new(destination: &'a mut Option<GoShared<T>>, zero: fn() -> T) -> Self {
         Self { destination, zero }
     }
 }
 
-impl<'de, T> DeserializeSeed<'de> for OptionBoxAtomicReplaceSeed<'_, T>
+impl<'de, T> DeserializeSeed<'de> for OptionSharedAtomicReplaceSeed<'_, T>
 where
     T: Deserialize<'de>,
 {
@@ -855,19 +850,19 @@ where
     where
         D: Deserializer<'de>,
     {
-        struct AtomicPointerVisitor<'a, T> {
-            destination: &'a mut Option<Box<T>>,
+        struct AtomicSharedPointerVisitor<'a, T> {
+            destination: &'a mut Option<GoShared<T>>,
             zero: fn() -> T,
         }
 
-        impl<'de, T> Visitor<'de> for AtomicPointerVisitor<'_, T>
+        impl<'de, T> Visitor<'de> for AtomicSharedPointerVisitor<'_, T>
         where
             T: Deserialize<'de>,
         {
             type Value = ();
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                formatter.write_str("null or a custom-unmarshal pointer value")
+                formatter.write_str("null or a shared custom-unmarshal pointer value")
             }
 
             fn visit_none<E>(self) -> Result<Self::Value, E> {
@@ -886,14 +881,14 @@ where
             {
                 let destination = self
                     .destination
-                    .get_or_insert_with(|| Box::new((self.zero)()));
+                    .get_or_insert_with(|| GoShared::new((self.zero)()));
                 let replacement = T::deserialize(deserializer)?;
-                **destination = replacement;
+                *destination.write() = replacement;
                 Ok(())
             }
         }
 
-        deserializer.deserialize_option(AtomicPointerVisitor {
+        deserializer.deserialize_option(AtomicSharedPointerVisitor {
             destination: self.destination,
             zero: self.zero,
         })
@@ -945,56 +940,6 @@ where
         }
 
         deserializer.deserialize_option(NullDefaultVisitor(self.0))
-    }
-}
-
-/// Deserializes a pointer-like object field into its existing allocation.
-/// JSON null clears the pointer; a non-null object preserves omitted fields.
-pub(crate) struct OptionMergeSeed<'a, T>(pub(crate) &'a mut Option<T>);
-
-impl<'de, T> DeserializeSeed<'de> for OptionMergeSeed<'_, T>
-where
-    T: Default + GoJsonMerge,
-{
-    type Value = ();
-
-    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        struct OptionMergeVisitor<'a, T>(&'a mut Option<T>);
-
-        impl<'de, T> Visitor<'de> for OptionMergeVisitor<'_, T>
-        where
-            T: Default + GoJsonMerge,
-        {
-            type Value = ();
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                formatter.write_str("null or a JSON object")
-            }
-
-            fn visit_none<E>(self) -> Result<Self::Value, E> {
-                *self.0 = None;
-                Ok(())
-            }
-
-            fn visit_unit<E>(self) -> Result<Self::Value, E> {
-                *self.0 = None;
-                Ok(())
-            }
-
-            fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
-            where
-                D: Deserializer<'de>,
-            {
-                self.0
-                    .get_or_insert_with(T::default)
-                    .go_json_merge(deserializer)
-            }
-        }
-
-        deserializer.deserialize_option(OptionMergeVisitor(self.0))
     }
 }
 
@@ -1097,12 +1042,13 @@ where
     }
 }
 
-/// Deserializes a scalar pointer into its existing allocation. A non-null
-/// invalid value allocates a zero pointee before returning the recoverable
-/// type error, matching encoding/json's pointer walk.
-pub(crate) struct OptionScalarSeed<'a, T>(pub(crate) &'a mut Option<T>);
+/// Deserializes a scalar Go pointer while retaining its shared pointee
+/// identity. Null clears the pointer. A non-null value allocates a zero
+/// pointee before decoding when needed, so a recoverable type error leaves the
+/// same allocation installed, matching `encoding/json`'s pointer walk.
+pub(crate) struct OptionSharedScalarSeed<'a, T>(pub(crate) &'a mut Option<GoShared<T>>);
 
-impl<'de, T> DeserializeSeed<'de> for OptionScalarSeed<'_, T>
+impl<'de, T> DeserializeSeed<'de> for OptionSharedScalarSeed<'_, T>
 where
     T: Default + Deserialize<'de>,
 {
@@ -1112,16 +1058,16 @@ where
     where
         D: Deserializer<'de>,
     {
-        struct OptionScalarVisitor<'a, T>(&'a mut Option<T>);
+        struct SharedScalarVisitor<'a, T>(&'a mut Option<GoShared<T>>);
 
-        impl<'de, T> Visitor<'de> for OptionScalarVisitor<'_, T>
+        impl<'de, T> Visitor<'de> for SharedScalarVisitor<'_, T>
         where
             T: Default + Deserialize<'de>,
         {
             type Value = ();
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                formatter.write_str("null or a scalar pointer value")
+                formatter.write_str("null or a shared scalar pointer value")
             }
 
             fn visit_none<E>(self) -> Result<Self::Value, E> {
@@ -1138,92 +1084,14 @@ where
             where
                 D: Deserializer<'de>,
             {
-                let destination = self.0.get_or_insert_with(T::default);
+                let destination = self.0.get_or_insert_with(|| GoShared::new(T::default()));
                 let decoded = T::deserialize(deserializer)?;
-                *destination = decoded;
+                *destination.write() = decoded;
                 Ok(())
             }
         }
 
-        deserializer.deserialize_option(OptionScalarVisitor(self.0))
-    }
-}
-
-/// Replaces a Go pointer slice while retaining null elements and continuing
-/// after recoverable element errors.
-pub(crate) struct OptionPointerSliceSeed<'a, T>(pub(crate) &'a mut Option<Vec<Option<T>>>);
-
-impl<'de, T> DeserializeSeed<'de> for OptionPointerSliceSeed<'_, T>
-where
-    T: Default + GoJsonMerge,
-{
-    type Value = ();
-
-    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        struct PointerSliceVisitor<'a, T>(&'a mut Option<Vec<Option<T>>>);
-
-        impl<'de, T> Visitor<'de> for PointerSliceVisitor<'_, T>
-        where
-            T: Default + GoJsonMerge,
-        {
-            type Value = ();
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                formatter.write_str("null or an array of nullable JSON objects")
-            }
-
-            fn visit_none<E>(self) -> Result<Self::Value, E> {
-                *self.0 = None;
-                Ok(())
-            }
-
-            fn visit_unit<E>(self) -> Result<Self::Value, E> {
-                *self.0 = None;
-                Ok(())
-            }
-
-            fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
-            where
-                D: Deserializer<'de>,
-            {
-                let RawArrayMembers(elements) = RawArrayMembers::deserialize(deserializer)?;
-                let mut existing = self.0.take().unwrap_or_default().into_iter();
-                let mut decoded = Vec::with_capacity(elements.len());
-                let mut first_error = None;
-                for raw in elements {
-                    let previous = existing.next().flatten();
-                    if raw.get() == "null" {
-                        decoded.push(None);
-                        continue;
-                    }
-                    let mut value = previous.unwrap_or_default();
-                    let mut element = serde_json::Deserializer::from_str(raw.get());
-                    if let Err(error) = value
-                        .go_json_merge(&mut element)
-                        .and_then(|()| element.end())
-                    {
-                        if is_fatal_json_error(&error) {
-                            decoded.push(Some(value));
-                            decoded.extend(existing);
-                            *self.0 = Some(decoded);
-                            return Err(serde::de::Error::custom(error));
-                        }
-                        first_error.get_or_insert_with(|| error.to_string());
-                    }
-                    decoded.push(Some(value));
-                }
-                *self.0 = Some(decoded);
-                if let Some(error) = first_error {
-                    return Err(serde::de::Error::custom(error));
-                }
-                Ok(())
-            }
-        }
-
-        deserializer.deserialize_option(PointerSliceVisitor(self.0))
+        deserializer.deserialize_option(SharedScalarVisitor(self.0))
     }
 }
 
@@ -1598,10 +1466,14 @@ where
     }
 }
 
-/// Merges a JSON object into a Go map field and clears the map on JSON null.
-pub(crate) struct OptionStringMapMergeSeed<'a, V>(pub(crate) &'a mut Option<BTreeMap<String, V>>);
+/// Merges a JSON object into an aliasable Go `map[string]V`, retaining the
+/// existing map allocation and its entries when the incoming object omits a
+/// key. JSON null clears the map pointer.
+pub(crate) struct OptionSharedGoStringMapMergeSeed<'a, V>(
+    pub(crate) &'a mut Option<GoShared<BTreeMap<GoString, V>>>,
+);
 
-impl<'de, V> DeserializeSeed<'de> for OptionStringMapMergeSeed<'_, V>
+impl<'de, V> DeserializeSeed<'de> for OptionSharedGoStringMapMergeSeed<'_, V>
 where
     V: Default + Deserialize<'de>,
 {
@@ -1611,12 +1483,12 @@ where
     where
         D: Deserializer<'de>,
     {
-        struct OptionMapVisitor<'a, V> {
-            destination: &'a mut Option<BTreeMap<String, V>>,
+        struct SharedMapVisitor<'a, V> {
+            destination: &'a mut Option<GoShared<BTreeMap<GoString, V>>>,
             marker: PhantomData<V>,
         }
 
-        impl<'de, V> Visitor<'de> for OptionMapVisitor<'_, V>
+        impl<'de, V> Visitor<'de> for SharedMapVisitor<'_, V>
         where
             V: Default + Deserialize<'de>,
         {
@@ -1647,16 +1519,19 @@ where
             where
                 A: MapAccess<'de>,
             {
-                let destination = self.destination.get_or_insert_with(BTreeMap::new);
+                let destination = self
+                    .destination
+                    .get_or_insert_with(|| GoShared::new(BTreeMap::new()));
+                let mut destination = destination.write();
                 let mut first_error = None;
                 while let Some(key) = map.next_key::<String>()? {
                     let mut value = V::default();
                     match map.next_value_seed(NullDefaultSeed(&mut value)) {
                         Ok(()) => {
-                            destination.insert(key, value);
+                            destination.insert(GoString::from(key), value);
                         }
                         Err(error) => {
-                            destination.insert(key, value);
+                            destination.insert(GoString::from(key), value);
                             first_error.get_or_insert(error);
                         }
                     }
@@ -1668,94 +1543,10 @@ where
             }
         }
 
-        deserializer.deserialize_option(OptionMapVisitor {
+        deserializer.deserialize_option(SharedMapVisitor {
             destination: self.0,
             marker: PhantomData,
         })
-    }
-}
-
-/// Merges a Go map whose value type implements custom `UnmarshalJSON`.
-/// Value errors abort immediately, before insertion or later members.
-pub(crate) struct OptionStringMapFatalMergeSeed<'a, V>(
-    pub(crate) &'a mut Option<BTreeMap<String, V>>,
-);
-
-impl<'de, V> DeserializeSeed<'de> for OptionStringMapFatalMergeSeed<'_, V>
-where
-    V: Default + Deserialize<'de>,
-{
-    type Value = ();
-
-    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        struct FatalMapVisitor<'a, V> {
-            destination: &'a mut Option<BTreeMap<String, V>>,
-            marker: PhantomData<V>,
-        }
-
-        impl<'de, V> Visitor<'de> for FatalMapVisitor<'_, V>
-        where
-            V: Default + Deserialize<'de>,
-        {
-            type Value = ();
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                formatter.write_str("null or a JSON object")
-            }
-
-            fn visit_none<E>(self) -> Result<Self::Value, E> {
-                *self.destination = None;
-                Ok(())
-            }
-
-            fn visit_unit<E>(self) -> Result<Self::Value, E> {
-                *self.destination = None;
-                Ok(())
-            }
-
-            fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
-            where
-                D: Deserializer<'de>,
-            {
-                deserialize_go_object(deserializer, self)
-            }
-
-            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
-            where
-                A: MapAccess<'de>,
-            {
-                let destination = self.destination.get_or_insert_with(BTreeMap::new);
-                while let Some(key) = map.next_key::<String>()? {
-                    let mut value = V::default();
-                    map.next_value_seed(FatalSeed(NullDefaultSeed(&mut value)))?;
-                    destination.insert(key, value);
-                }
-                Ok(())
-            }
-        }
-
-        deserializer.deserialize_option(FatalMapVisitor {
-            destination: self.0,
-            marker: PhantomData,
-        })
-    }
-}
-
-/// Assigns a Go byte slice only after its base64 value decodes successfully.
-pub(crate) struct OptionBytesSeed<'a>(pub(crate) &'a mut Option<Vec<u8>>);
-
-impl<'de> DeserializeSeed<'de> for OptionBytesSeed<'_> {
-    type Value = ();
-
-    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        *self.0 = go_bytes::deserialize(deserializer)?;
-        Ok(())
     }
 }
 
@@ -1792,9 +1583,15 @@ pub mod go_bytes {
         output
     }
 
-    fn decode<E: serde::de::Error>(text: &str) -> Result<Vec<u8>, E> {
+    pub(crate) fn decode_with_capacity<E: serde::de::Error>(
+        text: &str,
+    ) -> Result<(Vec<u8>, usize), E> {
         // `encoding/base64.StdEncoding`, used by `encoding/json`, requires
         // padded four-byte quanta and ignores CR/LF only.
+        // `encoding/json` allocates `StdEncoding.DecodedLen(len(text))`
+        // before decoding, so CR/LF and padding affect the observable slice
+        // capacity even though they do not contribute output bytes.
+        let decoded_capacity = text.len() / 4 * 3;
         let compact: Vec<u8> = text
             .bytes()
             .filter(|byte| !matches!(byte, b'\r' | b'\n'))
@@ -1836,7 +1633,11 @@ pub mod go_bytes {
             let fourth = value(quartet[3])?;
             output.push((((third & 0x03) << 6) | fourth) as u8);
         }
-        Ok(output)
+        Ok((output, decoded_capacity))
+    }
+
+    fn decode<E: serde::de::Error>(text: &str) -> Result<Vec<u8>, E> {
+        decode_with_capacity(text).map(|(bytes, _)| bytes)
     }
 
     /// Serializes nil as `null` and bytes as padded standard base64.
@@ -1858,6 +1659,33 @@ pub mod go_bytes {
             None => Ok(None),
             Some(text) => decode(&text).map(Some),
         }
+    }
+}
+
+/// Go `[]byte` JSON encoding over a source-shaped shared slice header.
+pub mod go_shared_bytes {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    use crate::go_runtime::GoSharedSlice;
+
+    /// Serializes nil as `null` and allocated bytes as padded base64.
+    pub fn serialize<S: Serializer>(
+        value: &GoSharedSlice<u8>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        let snapshot = value.is_allocated().then(|| value.snapshot());
+        super::go_bytes::serialize(&snapshot, serializer)
+    }
+
+    /// Deserializes into a fresh Go byte-slice backing allocation.
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<GoSharedSlice<u8>, D::Error> {
+        let Some(text) = Option::<String>::deserialize(deserializer)? else {
+            return Ok(GoSharedSlice::default());
+        };
+        let (bytes, capacity) = super::go_bytes::decode_with_capacity(&text)?;
+        Ok(GoSharedSlice::from_vec_with_capacity(bytes, capacity))
     }
 }
 

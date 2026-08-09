@@ -21,13 +21,15 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use serde::de::{DeserializeSeed, MapAccess, Visitor};
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Serialize, Serializer};
-use tidb_error::terror::TerrorError;
+use tidb_datatype::GoString;
+use tidb_error::terror::{TerrorCode, TerrorError};
 
+use crate::go_runtime::{GoShared, GoSharedSlice};
 use crate::job::{JobMeta, TimeZoneLocation};
 use crate::serde_helpers::{
     deserialize_go_object, go_json_field_matches, ignore_unknown, impl_go_json_deserialize,
-    is_fatal_json_error, FatalSeed, FatalValueSeed, GoJsonMerge, NullNoopSeed, OptionBytesSeed,
-    OptionMergeSeed, OptionScalarSeed, OptionStringMapFatalMergeSeed, OptionStringMapMergeSeed,
+    is_fatal_json_error, FatalSeed, FatalValueSeed, GoJsonMerge, NullDefaultSeed, NullNoopSeed,
+    OptionSharedAtomicReplaceSeed, OptionSharedMergeSeed, OptionSharedScalarSeed,
 };
 
 /// Go `BackfillState` (a `byte`): the state of the backfill-merge process.
@@ -78,16 +80,43 @@ pub struct ReorgStage(
     pub u8,
 );
 
-static DDL_REORG_WORKER_COUNT: AtomicI64 = AtomicI64::new(4);
-static DDL_REORG_BATCH_SIZE: AtomicI64 = AtomicI64::new(256);
-
-/// Updates the process defaults used for old persisted metadata whose dynamic
-/// fields are zero. This is the Rust boundary corresponding to Go vardef's
-/// runtime atomics.
-pub fn set_ddl_reorg_process_defaults(worker_count: i64, batch_size: i64) {
-    DDL_REORG_WORKER_COUNT.store(worker_count, Ordering::SeqCst);
-    DDL_REORG_BATCH_SIZE.store(batch_size, Ordering::SeqCst);
+/// Live process-default readers used by zero-valued persisted reorg metadata.
+///
+/// The model cannot own these values: Go reads vardef's runtime atomics on
+/// every getter call. A higher layer supplies callbacks into its authoritative
+/// runtime variables, keeping this dependency-leaf crate free of session
+/// dependencies without turning a live value into a stale snapshot.
+#[derive(Clone, Copy)]
+pub struct DDLReorgProcessDefaults {
+    worker_count: fn() -> i64,
+    batch_size: fn() -> i64,
 }
+
+impl DDLReorgProcessDefaults {
+    /// Connects the model getters to authoritative live runtime readers.
+    #[must_use]
+    pub const fn new(worker_count: fn() -> i64, batch_size: fn() -> i64) -> Self {
+        Self {
+            worker_count,
+            batch_size,
+        }
+    }
+
+    fn worker_count(self) -> i64 {
+        (self.worker_count)()
+    }
+
+    fn batch_size(self) -> i64 {
+        (self.batch_size)()
+    }
+}
+
+/// Go warning map type. The map allocation and each non-nil error pointer are
+/// independently shared by structural copies.
+pub type DDLWarningMap = BTreeMap<GoString, Option<GoShared<TerrorError>>>;
+
+/// Go warning-count map type. Structural copies retain the map allocation.
+pub type DDLWarningCountMap = BTreeMap<GoString, i64>;
 
 /// Go `DDLReorgMeta`. Warning values use the shared `tidb-error` envelope so
 /// class/code/message/RFC JSON stays compatible without a Rust-only hierarchy.
@@ -96,11 +125,11 @@ pub struct DDLReorgMeta {
     /// SQL mode captured for reorganization expression evaluation.
     pub sql_mode: u64,
     /// Warning payloads keyed by TiDB error identifier.
-    pub warnings: Option<BTreeMap<String, Option<TerrorError>>>,
+    pub warnings: Option<GoShared<DDLWarningMap>>,
     /// Warning occurrence counts keyed by TiDB error identifier.
-    pub warnings_count: Option<BTreeMap<String, i64>>,
+    pub warnings_count: Option<GoShared<DDLWarningCountMap>>,
     /// Time zone captured for reorganization expression evaluation.
-    pub location: Option<TimeZoneLocation>,
+    pub location: Option<GoShared<TimeZoneLocation>>,
     /// Reorganization strategy.
     pub reorg_type: ReorgType,
     /// Whether fast ingest reorganization is enabled.
@@ -110,11 +139,11 @@ pub struct DDLReorgMeta {
     /// Whether reorganization uses cloud storage.
     pub use_cloud_storage: bool,
     /// Resource group assigned to the reorganization.
-    pub resource_group_name: String,
+    pub resource_group_name: GoString,
     /// Persisted reorganization metadata version.
     pub version: i64,
     /// Store-label scope targeted by the job.
-    pub target_scope: String,
+    pub target_scope: GoString,
     /// Maximum number of nodes used by distributed reorganization.
     pub max_node_count: i64,
     /// Analyze phase state stored with modify-column work.
@@ -122,7 +151,7 @@ pub struct DDLReorgMeta {
     /// Current reorganization stage.
     pub stage: ReorgStage,
     /// Captured collation mode; `None` requests the caller-provided fallback.
-    pub use_new_collate: Option<bool>,
+    pub use_new_collate: Option<GoShared<bool>>,
     /// Dynamically adjustable worker count. Go stores this in `atomic.Int64`.
     concurrency: AtomicI64,
     /// Dynamically adjustable batch size. Go stores this in `atomic.Int64`.
@@ -149,10 +178,50 @@ impl Clone for DDLReorgMeta {
             max_node_count: self.max_node_count,
             analyze_state: self.analyze_state,
             stage: self.stage,
-            use_new_collate: self.use_new_collate,
+            use_new_collate: self.use_new_collate.clone(),
             concurrency: AtomicI64::new(self.concurrency.load(Ordering::SeqCst)),
             batch_size: AtomicI64::new(self.batch_size.load(Ordering::SeqCst)),
             max_write_speed: AtomicI64::new(self.max_write_speed.load(Ordering::SeqCst)),
+        }
+    }
+}
+
+struct SharedGoStringMap<'a, V>(&'a Option<GoShared<BTreeMap<GoString, V>>>);
+
+impl<V: Serialize> Serialize for SharedGoStringMap<'_, V> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let Some(pointer) = self.0 else {
+            return serializer.serialize_none();
+        };
+        let values = pointer.read();
+        let mut encoded = Vec::new();
+        encoded.push(b'{');
+        for (key, value) in values.iter() {
+            if encoded.len() != 1 {
+                encoded.push(b',');
+            }
+            encoded.extend_from_slice(key.to_go_json_literal().as_bytes());
+            encoded.push(b':');
+            encoded.extend_from_slice(
+                &crate::serde_helpers::to_go_json(value).map_err(serde::ser::Error::custom)?,
+            );
+        }
+        encoded.push(b'}');
+        let encoded = String::from_utf8(encoded).expect("Go JSON map encoding is UTF-8");
+        let raw =
+            serde_json::value::RawValue::from_string(encoded).map_err(serde::ser::Error::custom)?;
+        raw.serialize(serializer)
+    }
+}
+
+struct SharedGoBytes<'a>(&'a GoSharedSlice<u8>);
+
+impl Serialize for SharedGoBytes<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        if self.0.is_allocated() {
+            crate::serde_helpers::go_bytes::serialize(&Some(self.0.snapshot()), serializer)
+        } else {
+            crate::serde_helpers::go_bytes::serialize(&None, serializer)
         }
     }
 }
@@ -168,8 +237,8 @@ impl Serialize for DDLReorgMeta {
         };
         let mut value = serializer.serialize_struct("DDLReorgMeta", field_count)?;
         value.serialize_field("sql_mode", &self.sql_mode)?;
-        value.serialize_field("warnings", &self.warnings)?;
-        value.serialize_field("warnings_count", &self.warnings_count)?;
+        value.serialize_field("warnings", &SharedGoStringMap(&self.warnings))?;
+        value.serialize_field("warnings_count", &SharedGoStringMap(&self.warnings_count))?;
         value.serialize_field("location", &self.location)?;
         value.serialize_field("reorg_tp", &self.reorg_type)?;
         value.serialize_field("is_fast_reorg", &self.is_fast_reorg)?;
@@ -181,8 +250,8 @@ impl Serialize for DDLReorgMeta {
         value.serialize_field("max_node_count", &self.max_node_count)?;
         value.serialize_field("analyze_state", &self.analyze_state)?;
         value.serialize_field("stage", &self.stage)?;
-        if let Some(use_new_collate) = self.use_new_collate {
-            value.serialize_field("use_new_collate", &use_new_collate)?;
+        if let Some(use_new_collate) = &self.use_new_collate {
+            value.serialize_field("use_new_collate", &*use_new_collate.read())?;
         }
         value.serialize_field("concurrency", &self.concurrency.load(Ordering::SeqCst))?;
         value.serialize_field("batch_size", &self.batch_size.load(Ordering::SeqCst))?;
@@ -211,23 +280,166 @@ impl<'de> DeserializeSeed<'de> for AtomicI64Seed<'_> {
     }
 }
 
+struct OptionSharedWarningMapSeed<'a>(&'a mut Option<GoShared<DDLWarningMap>>);
+
+impl<'de> DeserializeSeed<'de> for OptionSharedWarningMapSeed<'_> {
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct WarningMapVisitor<'a>(&'a mut Option<GoShared<DDLWarningMap>>);
+
+        impl<'de> Visitor<'de> for WarningMapVisitor<'_> {
+            type Value = ();
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("null or a warning map")
+            }
+
+            fn visit_none<E>(self) -> Result<Self::Value, E> {
+                *self.0 = None;
+                Ok(())
+            }
+
+            fn visit_unit<E>(self) -> Result<Self::Value, E> {
+                *self.0 = None;
+                Ok(())
+            }
+
+            fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                deserialize_go_object(deserializer, self)
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let pointer = self.0.get_or_insert_with(|| GoShared::new(BTreeMap::new()));
+                while let Some(key) = map.next_key::<GoString>()? {
+                    // A map element is decoded from a fresh zero value. The
+                    // error pointer is therefore newly allocated after every
+                    // successful non-null duplicate member.
+                    let value = map.next_value_seed(FatalValueSeed::new())?;
+                    pointer.write().insert(key, value);
+                }
+                Ok(())
+            }
+        }
+
+        deserializer.deserialize_option(WarningMapVisitor(self.0))
+    }
+}
+
+struct OptionSharedWarningCountMapSeed<'a>(&'a mut Option<GoShared<DDLWarningCountMap>>);
+
+impl<'de> DeserializeSeed<'de> for OptionSharedWarningCountMapSeed<'_> {
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct WarningCountMapVisitor<'a>(&'a mut Option<GoShared<DDLWarningCountMap>>);
+
+        impl<'de> Visitor<'de> for WarningCountMapVisitor<'_> {
+            type Value = ();
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("null or a warning-count map")
+            }
+
+            fn visit_none<E>(self) -> Result<Self::Value, E> {
+                *self.0 = None;
+                Ok(())
+            }
+
+            fn visit_unit<E>(self) -> Result<Self::Value, E> {
+                *self.0 = None;
+                Ok(())
+            }
+
+            fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                deserialize_go_object(deserializer, self)
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let pointer = self.0.get_or_insert_with(|| GoShared::new(BTreeMap::new()));
+                let mut first_error = None;
+                while let Some(key) = map.next_key::<GoString>()? {
+                    let mut value = 0_i64;
+                    if let Err(error) = map.next_value_seed(NullDefaultSeed(&mut value)) {
+                        first_error.get_or_insert(error);
+                    }
+                    pointer.write().insert(key, value);
+                }
+                if let Some(error) = first_error {
+                    return Err(error);
+                }
+                Ok(())
+            }
+        }
+
+        deserializer.deserialize_option(WarningCountMapVisitor(self.0))
+    }
+}
+
+struct SharedBytesSeed<'a>(&'a mut GoSharedSlice<u8>);
+
+impl<'de> DeserializeSeed<'de> for SharedBytesSeed<'_> {
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        match Option::<String>::deserialize(deserializer)? {
+            None => *self.0 = GoSharedSlice::default(),
+            Some(text) => {
+                let (bytes, capacity) =
+                    crate::serde_helpers::go_bytes::decode_with_capacity(&text)?;
+                *self.0 = GoSharedSlice::from_vec_with_capacity(bytes, capacity);
+            }
+        }
+        Ok(())
+    }
+}
+
+fn zero_terror_error() -> TerrorError {
+    TerrorError::compatible(TerrorCode::new(0), "")
+}
+
 impl DDLReorgMeta {
-    /// Go `ShallowCopy`'s scalar value result.
-    ///
-    /// Rust's owned warning maps are copied rather than aliased. The source
-    /// map-backing-store identity is recorded as a measured representation
-    /// boundary in the package ledger instead of being hidden by this method.
+    /// Go `ShallowCopy`: allocates a new outer pointer, shares every map and
+    /// pointer field, and copies each atomic value into an independent cell.
     #[must_use]
-    pub fn shallow_copy(&self) -> Self {
-        self.clone()
+    pub fn shallow_copy(&self) -> GoShared<Self> {
+        GoShared::new(self.clone())
+    }
+
+    /// Explicit nullable receiver boundary for Go `(*DDLReorgMeta).ShallowCopy`.
+    /// A nil receiver panics when the source dereferences it.
+    #[must_use]
+    pub fn shallow_copy_pointer(receiver: Option<&Self>) -> GoShared<Self> {
+        receiver.expect("nil *DDLReorgMeta receiver").shallow_copy()
     }
 
     /// Returns persisted concurrency, or the current process default when zero.
     #[must_use]
-    pub fn get_concurrency(&self) -> i64 {
+    pub fn get_concurrency(&self, defaults: DDLReorgProcessDefaults) -> i64 {
         let concurrency = self.concurrency.load(Ordering::SeqCst);
         if concurrency == 0 {
-            DDL_REORG_WORKER_COUNT.load(Ordering::SeqCst)
+            defaults.worker_count()
         } else {
             concurrency
         }
@@ -240,10 +452,10 @@ impl DDLReorgMeta {
 
     /// Returns persisted batch size, or the current process default when zero.
     #[must_use]
-    pub fn get_batch_size(&self) -> i64 {
+    pub fn get_batch_size(&self, defaults: DDLReorgProcessDefaults) -> i64 {
         let batch_size = self.batch_size.load(Ordering::SeqCst);
         if batch_size == 0 {
-            DDL_REORG_BATCH_SIZE.load(Ordering::SeqCst)
+            defaults.batch_size()
         } else {
             batch_size
         }
@@ -269,12 +481,14 @@ impl DDLReorgMeta {
     /// Returns the captured collation mode or `default_value` for old metadata.
     #[must_use]
     pub fn get_use_new_collate_or_default(&self, default_value: bool) -> bool {
-        self.use_new_collate.unwrap_or(default_value)
+        self.use_new_collate
+            .as_ref()
+            .map_or(default_value, |value| *value.read())
     }
 
-    /// Captures the collation mode for persisted reorganization work.
+    /// Captures the collation mode in a freshly allocated Go `*bool`.
     pub fn set_use_new_collate(&mut self, use_new_collate: bool) {
-        self.use_new_collate = Some(use_new_collate);
+        self.use_new_collate = Some(GoShared::new(use_new_collate));
     }
 }
 
@@ -303,15 +517,15 @@ impl GoJsonMerge for DDLReorgMeta {
                         if go_json_field_matches(&key, "sql_mode") {
                             map.next_value_seed(NullNoopSeed(&mut destination.sql_mode))?;
                         } else if go_json_field_matches(&key, "warnings") {
-                            map.next_value_seed(OptionStringMapFatalMergeSeed(
+                            map.next_value_seed(OptionSharedWarningMapSeed(
                                 &mut destination.warnings,
                             ))?;
                         } else if go_json_field_matches(&key, "warnings_count") {
-                            map.next_value_seed(OptionStringMapMergeSeed(
+                            map.next_value_seed(OptionSharedWarningCountMapSeed(
                                 &mut destination.warnings_count,
                             ))?;
                         } else if go_json_field_matches(&key, "location") {
-                            map.next_value_seed(OptionMergeSeed(&mut destination.location))?;
+                            map.next_value_seed(OptionSharedMergeSeed(&mut destination.location))?;
                         } else if go_json_field_matches(&key, "reorg_tp") {
                             map.next_value_seed(NullNoopSeed(&mut destination.reorg_type))?;
                         } else if go_json_field_matches(&key, "is_fast_reorg") {
@@ -335,7 +549,7 @@ impl GoJsonMerge for DDLReorgMeta {
                         } else if go_json_field_matches(&key, "stage") {
                             map.next_value_seed(NullNoopSeed(&mut destination.stage))?;
                         } else if go_json_field_matches(&key, "use_new_collate") {
-                            map.next_value_seed(OptionScalarSeed(
+                            map.next_value_seed(OptionSharedScalarSeed(
                                 &mut destination.use_new_collate,
                             ))?;
                         } else if go_json_field_matches(&key, "concurrency") {
@@ -448,53 +662,66 @@ pub mod analyze_state {
 }
 
 /// Go `BackfillMeta` and its JSON codec.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default)]
 pub struct BackfillMeta {
     /// Whether the backfilled index enforces uniqueness.
-    #[serde(rename = "is_unique", default)]
     pub is_unique: bool,
     /// Whether the end key belongs to the backfill range.
-    #[serde(rename = "end_include", default)]
     pub end_include: bool,
     /// Persisted backfill error payload.
-    #[serde(rename = "err", default)]
-    pub error: Option<TerrorError>,
+    pub error: Option<GoShared<TerrorError>>,
     /// SQL mode captured for backfill evaluation.
-    #[serde(rename = "sql_mode", default)]
     pub sql_mode: u64,
     /// Warning payloads keyed by TiDB error identifier.
-    #[serde(rename = "warnings", default)]
-    pub warnings: Option<BTreeMap<String, Option<TerrorError>>>,
+    pub warnings: Option<GoShared<DDLWarningMap>>,
     /// Warning occurrence counts keyed by TiDB error identifier.
-    #[serde(rename = "warnings_count", default)]
-    pub warnings_count: Option<BTreeMap<String, i64>>,
+    pub warnings_count: Option<GoShared<DDLWarningCountMap>>,
     /// Time zone captured for backfill evaluation.
-    #[serde(rename = "location", default)]
-    pub location: Option<TimeZoneLocation>,
+    pub location: Option<GoShared<TimeZoneLocation>>,
     /// Backfill reorganization strategy.
-    #[serde(rename = "reorg_tp", default)]
     pub reorg_type: ReorgType,
     /// Rows processed by the backfill task.
-    #[serde(rename = "row_count", default)]
     pub row_count: i64,
-    #[serde(rename = "start_key", default, with = "crate::serde_helpers::go_bytes")]
     /// Inclusive start key, preserving nil versus allocated-empty bytes.
-    pub start_key: Option<Vec<u8>>,
-    #[serde(rename = "end_key", default, with = "crate::serde_helpers::go_bytes")]
+    pub start_key: GoSharedSlice<u8>,
     /// End key, preserving nil versus allocated-empty bytes.
-    pub end_key: Option<Vec<u8>>,
-    #[serde(rename = "curr_key", default, with = "crate::serde_helpers::go_bytes")]
+    pub end_key: GoSharedSlice<u8>,
     /// Current progress key, preserving nil versus allocated-empty bytes.
-    pub current_key: Option<Vec<u8>>,
+    pub current_key: GoSharedSlice<u8>,
     /// Embedded subset of the owning DDL job metadata.
-    #[serde(rename = "job_meta", default)]
-    pub job_meta: Option<JobMeta>,
+    pub job_meta: Option<GoShared<JobMeta>>,
+}
+
+impl Serialize for BackfillMeta {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut value = serializer.serialize_struct("BackfillMeta", 13)?;
+        value.serialize_field("is_unique", &self.is_unique)?;
+        value.serialize_field("end_include", &self.end_include)?;
+        value.serialize_field("err", &self.error)?;
+        value.serialize_field("sql_mode", &self.sql_mode)?;
+        value.serialize_field("warnings", &SharedGoStringMap(&self.warnings))?;
+        value.serialize_field("warnings_count", &SharedGoStringMap(&self.warnings_count))?;
+        value.serialize_field("location", &self.location)?;
+        value.serialize_field("reorg_tp", &self.reorg_type)?;
+        value.serialize_field("row_count", &self.row_count)?;
+        value.serialize_field("start_key", &SharedGoBytes(&self.start_key))?;
+        value.serialize_field("end_key", &SharedGoBytes(&self.end_key))?;
+        value.serialize_field("curr_key", &SharedGoBytes(&self.current_key))?;
+        value.serialize_field("job_meta", &self.job_meta)?;
+        value.end()
+    }
 }
 
 impl BackfillMeta {
     /// Go `Encode`.
     pub fn encode(&self) -> Result<Vec<u8>, serde_json::Error> {
         crate::serde_helpers::to_go_json(self)
+    }
+
+    /// Explicit nullable receiver boundary for Go `(*BackfillMeta).Encode`.
+    /// A nil receiver is marshaled as JSON `null`.
+    pub fn encode_pointer(receiver: Option<&Self>) -> Result<Vec<u8>, serde_json::Error> {
+        crate::serde_helpers::to_go_json(&receiver)
     }
 
     /// Go `Decode`.
@@ -510,6 +737,22 @@ impl BackfillMeta {
         self.go_json_merge(&mut deserializer)
             .map_err(crate::serde_helpers::normalize_fatal_json_error)?;
         deserializer.end()
+    }
+
+    /// Explicit nullable receiver boundary for Go `(*BackfillMeta).Decode`.
+    pub fn decode_pointer(
+        receiver: Option<&mut Self>,
+        bytes: &[u8],
+    ) -> Result<(), serde_json::Error> {
+        // `json.Unmarshal` validates the document before checking whether its
+        // destination pointer is usable.
+        let _: &serde_json::value::RawValue = serde_json::from_slice(bytes)?;
+        let Some(receiver) = receiver else {
+            return Err(<serde_json::Error as serde::de::Error>::custom(
+                "json: Unmarshal(nil *model.BackfillMeta)",
+            ));
+        };
+        receiver.decode(bytes)
     }
 }
 
@@ -540,31 +783,34 @@ impl GoJsonMerge for BackfillMeta {
                         } else if go_json_field_matches(&key, "end_include") {
                             map.next_value_seed(NullNoopSeed(&mut destination.end_include))?;
                         } else if go_json_field_matches(&key, "err") {
-                            destination.error = map.next_value_seed(FatalValueSeed::new())?;
+                            map.next_value_seed(FatalSeed(OptionSharedAtomicReplaceSeed::new(
+                                &mut destination.error,
+                                zero_terror_error,
+                            )))?;
                         } else if go_json_field_matches(&key, "sql_mode") {
                             map.next_value_seed(NullNoopSeed(&mut destination.sql_mode))?;
                         } else if go_json_field_matches(&key, "warnings") {
-                            map.next_value_seed(OptionStringMapFatalMergeSeed(
+                            map.next_value_seed(OptionSharedWarningMapSeed(
                                 &mut destination.warnings,
                             ))?;
                         } else if go_json_field_matches(&key, "warnings_count") {
-                            map.next_value_seed(OptionStringMapMergeSeed(
+                            map.next_value_seed(OptionSharedWarningCountMapSeed(
                                 &mut destination.warnings_count,
                             ))?;
                         } else if go_json_field_matches(&key, "location") {
-                            map.next_value_seed(OptionMergeSeed(&mut destination.location))?;
+                            map.next_value_seed(OptionSharedMergeSeed(&mut destination.location))?;
                         } else if go_json_field_matches(&key, "reorg_tp") {
                             map.next_value_seed(NullNoopSeed(&mut destination.reorg_type))?;
                         } else if go_json_field_matches(&key, "row_count") {
                             map.next_value_seed(NullNoopSeed(&mut destination.row_count))?;
                         } else if go_json_field_matches(&key, "start_key") {
-                            map.next_value_seed(OptionBytesSeed(&mut destination.start_key))?;
+                            map.next_value_seed(SharedBytesSeed(&mut destination.start_key))?;
                         } else if go_json_field_matches(&key, "end_key") {
-                            map.next_value_seed(OptionBytesSeed(&mut destination.end_key))?;
+                            map.next_value_seed(SharedBytesSeed(&mut destination.end_key))?;
                         } else if go_json_field_matches(&key, "curr_key") {
-                            map.next_value_seed(OptionBytesSeed(&mut destination.current_key))?;
+                            map.next_value_seed(SharedBytesSeed(&mut destination.current_key))?;
                         } else if go_json_field_matches(&key, "job_meta") {
-                            map.next_value_seed(OptionMergeSeed(&mut destination.job_meta))?;
+                            map.next_value_seed(OptionSharedMergeSeed(&mut destination.job_meta))?;
                         } else {
                             ignore_unknown(&mut map)?;
                         }
@@ -588,9 +834,25 @@ impl GoJsonMerge for BackfillMeta {
     }
 }
 
+impl_go_json_deserialize!(BackfillMeta);
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    static TEST_WORKER_COUNT: AtomicI64 = AtomicI64::new(4);
+    static TEST_BATCH_SIZE: AtomicI64 = AtomicI64::new(256);
+
+    fn test_worker_count() -> i64 {
+        TEST_WORKER_COUNT.load(Ordering::SeqCst)
+    }
+
+    fn test_batch_size() -> i64 {
+        TEST_BATCH_SIZE.load(Ordering::SeqCst)
+    }
+
+    const TEST_DEFAULTS: DDLReorgProcessDefaults =
+        DDLReorgProcessDefaults::new(test_worker_count, test_batch_size);
 
     #[test]
     fn backfill_state_strings() {
@@ -631,23 +893,36 @@ mod tests {
 
     #[test]
     fn ddl_reorg_meta_dynamic_defaults_and_collation_boundaries() {
-        set_ddl_reorg_process_defaults(7, 512);
+        TEST_WORKER_COUNT.store(7, Ordering::SeqCst);
+        TEST_BATCH_SIZE.store(512, Ordering::SeqCst);
         let mut meta = DDLReorgMeta::default();
-        assert_eq!(meta.get_concurrency(), 7);
-        assert_eq!(meta.get_batch_size(), 512);
+        assert_eq!(meta.get_concurrency(TEST_DEFAULTS), 7);
+        assert_eq!(meta.get_batch_size(TEST_DEFAULTS), 512);
+        TEST_WORKER_COUNT.store(8, Ordering::SeqCst);
+        TEST_BATCH_SIZE.store(1024, Ordering::SeqCst);
+        assert_eq!(meta.get_concurrency(TEST_DEFAULTS), 8);
+        assert_eq!(meta.get_batch_size(TEST_DEFAULTS), 1024);
         assert_eq!(meta.get_max_write_speed(), 0);
         meta.set_concurrency(1);
         meta.set_batch_size(2);
         meta.set_max_write_speed(3);
-        assert_eq!(meta.get_concurrency(), 1);
-        assert_eq!(meta.get_batch_size(), 2);
+        assert_eq!(meta.get_concurrency(TEST_DEFAULTS), 1);
+        assert_eq!(meta.get_batch_size(TEST_DEFAULTS), 2);
         assert_eq!(meta.get_max_write_speed(), 3);
+        meta.set_concurrency(-1);
+        meta.set_batch_size(-2);
+        assert_eq!(meta.get_concurrency(TEST_DEFAULTS), -1);
+        assert_eq!(meta.get_batch_size(TEST_DEFAULTS), -2);
         assert!(meta.get_use_new_collate_or_default(true));
         assert!(!meta.get_use_new_collate_or_default(false));
         meta.set_use_new_collate(false);
+        let first_collate = meta.use_new_collate.as_ref().unwrap().clone();
         assert!(!meta.get_use_new_collate_or_default(true));
+        meta.set_use_new_collate(true);
+        assert!(!first_collate.ptr_eq(meta.use_new_collate.as_ref().unwrap()));
+        assert!(meta.get_use_new_collate_or_default(false));
         let json = serde_json::to_string(&meta).unwrap();
-        assert!(json.contains(r#""use_new_collate":false"#));
+        assert!(json.contains(r#""use_new_collate":true"#));
 
         let mut decoder = serde_json::Deserializer::from_str(
             r#"{"concurrency":null,"batch_size":null,"max_write_speed":null}"#,
@@ -669,8 +944,18 @@ mod tests {
             serde_json::Deserializer::from_str(r#"{"use_new_collate":"bad","version":7}"#);
         let error = meta.go_json_merge(&mut decoder).unwrap_err();
         assert!(error.to_string().contains("invalid type"));
-        assert_eq!(meta.use_new_collate, Some(false));
+        let allocated = meta.use_new_collate.as_ref().unwrap().clone();
+        assert!(!*allocated.read());
         assert_eq!(meta.version, 7);
+
+        let mut decoder = serde_json::Deserializer::from_str(r#"{"use_new_collate":true}"#);
+        meta.go_json_merge(&mut decoder).unwrap();
+        assert!(allocated.ptr_eq(meta.use_new_collate.as_ref().unwrap()));
+        assert!(*allocated.read());
+
+        let mut decoder = serde_json::Deserializer::from_str(r#"{"use_new_collate":null}"#);
+        meta.go_json_merge(&mut decoder).unwrap();
+        assert!(meta.use_new_collate.is_none());
     }
 
     #[test]
@@ -692,10 +977,10 @@ mod tests {
             writer.join().unwrap();
         }
 
-        assert!((1..=8).contains(&meta.get_concurrency()));
+        assert!((1..=8).contains(&meta.get_concurrency(TEST_DEFAULTS)));
         assert!((10..=80)
             .step_by(10)
-            .any(|value| value == meta.get_batch_size()));
+            .any(|value| value == meta.get_batch_size(TEST_DEFAULTS)));
         assert!((100..=800)
             .step_by(100)
             .any(|value| value == meta.get_max_write_speed()));
@@ -731,18 +1016,68 @@ mod tests {
     }
 
     #[test]
+    fn ddl_reorg_shallow_copy_shares_handles_and_copies_atomics() {
+        let warnings = GoShared::new(BTreeMap::from([
+            ("warn".into(), None),
+            (GoString::from_bytes(vec![b'k', 0xff]), None),
+        ]));
+        let counts = GoShared::new(BTreeMap::from([("warn".into(), 1)]));
+        let location = GoShared::new(TimeZoneLocation {
+            name: "UTC".into(),
+            ..Default::default()
+        });
+        let collate = GoShared::new(false);
+        let source = DDLReorgMeta {
+            warnings: Some(warnings.clone()),
+            warnings_count: Some(counts.clone()),
+            location: Some(location.clone()),
+            use_new_collate: Some(collate.clone()),
+            resource_group_name: GoString::from_bytes(vec![b'r', 0xff]),
+            target_scope: GoString::from_bytes(vec![b't', 0xfe]),
+            ..Default::default()
+        };
+        source.set_concurrency(7);
+
+        let copied = source.shallow_copy();
+        let copied_value = copied.read();
+        assert!(warnings.ptr_eq(copied_value.warnings.as_ref().unwrap()));
+        assert!(counts.ptr_eq(copied_value.warnings_count.as_ref().unwrap()));
+        assert!(location.ptr_eq(copied_value.location.as_ref().unwrap()));
+        assert!(collate.ptr_eq(copied_value.use_new_collate.as_ref().unwrap()));
+        assert_eq!(copied_value.get_concurrency(TEST_DEFAULTS), 7);
+        copied_value.set_concurrency(8);
+        drop(copied_value);
+        assert_eq!(source.get_concurrency(TEST_DEFAULTS), 7);
+        assert_eq!(copied.read().get_concurrency(TEST_DEFAULTS), 8);
+
+        warnings.write().insert("later".into(), None);
+        assert!(copied
+            .read()
+            .warnings
+            .as_ref()
+            .unwrap()
+            .read()
+            .contains_key(&GoString::from("later")));
+        assert!(std::panic::catch_unwind(|| DDLReorgMeta::shallow_copy_pointer(None)).is_err());
+        let json = String::from_utf8(crate::serde_helpers::to_go_json(&source).unwrap()).unwrap();
+        assert!(json.contains(r#""resource_group_name":"r\ufffd""#));
+        assert!(json.contains(r#""target_scope":"t\ufffd""#));
+        assert!(json.contains(r#""k\ufffd":null"#));
+    }
+
+    #[test]
     fn backfill_meta_codec_preserves_byte_boundaries() {
         let original = BackfillMeta {
             end_include: true,
-            start_key: Some(vec![0, 1, 255]),
-            end_key: Some(Vec::new()),
-            job_meta: Some(JobMeta {
+            start_key: GoSharedSlice::from_vec(vec![0, 1, 255]),
+            end_key: GoSharedSlice::from_vec(Vec::new()),
+            job_meta: Some(GoShared::new(JobMeta {
                 schema_id: 1,
                 table_id: 2,
-                query: "alter table t add index idx(a)".to_owned(),
+                query: "alter table t add index idx(a)".into(),
                 priority: 1,
                 ..Default::default()
-            }),
+            })),
             ..Default::default()
         };
         let bytes = original.encode().unwrap();
@@ -752,22 +1087,26 @@ mod tests {
         assert!(json.contains(r#""curr_key":null"#));
         let mut decoded = BackfillMeta::default();
         decoded.decode(&bytes).unwrap();
-        assert_eq!(decoded.start_key, original.start_key);
-        assert_eq!(decoded.end_key, original.end_key);
-        assert_eq!(decoded.job_meta, original.job_meta);
+        assert_eq!(decoded.start_key.snapshot(), original.start_key.snapshot());
+        assert_eq!(decoded.end_key.snapshot(), original.end_key.snapshot());
+        assert!(decoded.end_key.is_allocated());
+        assert_eq!(
+            decoded.job_meta.as_ref().unwrap().read().query,
+            original.job_meta.as_ref().unwrap().read().query
+        );
         decoded.decode(b"null").unwrap();
-        assert_eq!(decoded.start_key, original.start_key);
+        assert_eq!(decoded.start_key.snapshot(), original.start_key.snapshot());
 
         decoded.decode(br#"{"row_count":9}"#).unwrap();
         assert_eq!(decoded.row_count, 9);
-        assert_eq!(decoded.start_key, original.start_key);
+        assert_eq!(decoded.start_key.snapshot(), original.start_key.snapshot());
 
         let error = decoded
             .decode(br#"{"row_count":10,"sql_mode":"bad"}"#)
             .unwrap_err();
         assert!(error.to_string().contains("invalid type"));
         assert_eq!(decoded.row_count, 10);
-        assert_eq!(decoded.end_key, original.end_key);
+        assert_eq!(decoded.end_key.snapshot(), original.end_key.snapshot());
 
         // Go's padded StdEncoding rejects incomplete quanta and padding in a
         // non-final quartet, while accepting CR/LF inside valid input.
@@ -782,41 +1121,97 @@ mod tests {
             assert!(serde_json::from_str::<BackfillMeta>(invalid).is_err());
         }
         let with_newline: BackfillMeta = serde_json::from_str(r#"{"start_key":"AA\nH/"}"#).unwrap();
-        assert_eq!(with_newline.start_key, Some(vec![0, 1, 255]));
+        assert_eq!(with_newline.start_key.snapshot(), vec![0, 1, 255]);
+        assert_eq!(with_newline.start_key.capacity(), 3);
 
         let escaped = BackfillMeta {
-            error: Some(tidb_error::terror::TerrorError::compatible(
+            error: Some(GoShared::new(tidb_error::terror::TerrorError::compatible(
                 tidb_error::terror::TerrorCode::new(2),
                 "<>&\u{2028}\u{2029}",
-            )),
+            ))),
             ..Default::default()
         }
         .encode()
         .unwrap();
         let escaped = std::str::from_utf8(&escaped).unwrap();
         assert!(escaped.contains(r#"\u003c\u003e\u0026\u2028\u2029"#));
+
+        assert_eq!(BackfillMeta::encode_pointer(None).unwrap(), b"null");
+        let error = BackfillMeta::decode_pointer(None, br#"{}"#).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("json: Unmarshal(nil *model.BackfillMeta)"));
+        let syntax = BackfillMeta::decode_pointer(None, b"{").unwrap_err();
+        assert!(!syntax
+            .to_string()
+            .contains("json: Unmarshal(nil *model.BackfillMeta)"));
+    }
+
+    #[test]
+    fn backfill_structural_clone_shares_source_handles_and_slice_backing() {
+        let error = GoShared::new(TerrorError::compatible(TerrorCode::new(2), "error"));
+        let warnings = GoShared::new(BTreeMap::from([("warn".into(), None)]));
+        let counts = GoShared::new(BTreeMap::from([("warn".into(), 1)]));
+        let location = GoShared::new(TimeZoneLocation {
+            name: "UTC".into(),
+            ..Default::default()
+        });
+        let job_meta = GoShared::new(JobMeta {
+            query: GoString::from_bytes(vec![b'q', 0xff]),
+            ..Default::default()
+        });
+        let start_key = GoSharedSlice::from_vec_with_capacity(vec![1, 2], 8);
+        let source = BackfillMeta {
+            error: Some(error.clone()),
+            warnings: Some(warnings.clone()),
+            warnings_count: Some(counts.clone()),
+            location: Some(location.clone()),
+            start_key: start_key.clone(),
+            job_meta: Some(job_meta.clone()),
+            ..Default::default()
+        };
+
+        let copied = source.clone();
+        assert!(error.ptr_eq(copied.error.as_ref().unwrap()));
+        assert!(warnings.ptr_eq(copied.warnings.as_ref().unwrap()));
+        assert!(counts.ptr_eq(copied.warnings_count.as_ref().unwrap()));
+        assert!(location.ptr_eq(copied.location.as_ref().unwrap()));
+        assert!(job_meta.ptr_eq(copied.job_meta.as_ref().unwrap()));
+        assert!(start_key.backing_ptr_eq(&copied.start_key));
+        assert_eq!(copied.start_key.capacity(), 8);
+        copied.start_key.set(0, 9);
+        assert_eq!(source.start_key.snapshot(), vec![9, 2]);
+        let json = String::from_utf8(source.encode().unwrap()).unwrap();
+        assert!(json.contains(r#""query":"q\ufffd""#));
     }
 
     #[test]
     fn backfill_decode_matches_go_object_stream_boundaries() {
         let mut location = TimeZoneLocation::default();
-        location.name = "UTC".to_owned();
+        location.name = "UTC".into();
         let mut meta = BackfillMeta {
             row_count: 1,
             sql_mode: 9,
-            start_key: Some(vec![0, 1, 255]),
-            end_key: Some(vec![2]),
-            warnings: Some(BTreeMap::from([("old".to_owned(), None)])),
-            warnings_count: Some(BTreeMap::from([("old".to_owned(), 1)])),
-            location: Some(location),
-            job_meta: Some(JobMeta {
+            start_key: GoSharedSlice::from_vec_with_capacity(vec![0, 1, 255], 8),
+            end_key: GoSharedSlice::from_vec(vec![2]),
+            warnings: Some(GoShared::new(BTreeMap::from([("old".into(), None)]))),
+            warnings_count: Some(GoShared::new(BTreeMap::from([("old".into(), 1)]))),
+            location: Some(GoShared::new(location)),
+            job_meta: Some(GoShared::new(JobMeta {
                 schema_id: 10,
                 table_id: 20,
-                query: "old query".to_owned(),
+                query: "old query".into(),
                 ..Default::default()
-            }),
+            })),
             ..Default::default()
         };
+        let old_error = GoShared::new(TerrorError::compatible(TerrorCode::new(9), "old"));
+        meta.error = Some(old_error.clone());
+        let warnings_pointer = meta.warnings.as_ref().unwrap().clone();
+        let warning_counts_pointer = meta.warnings_count.as_ref().unwrap().clone();
+        let location_pointer = meta.location.as_ref().unwrap().clone();
+        let job_meta_pointer = meta.job_meta.as_ref().unwrap().clone();
+        let old_start_key = meta.start_key.clone();
 
         meta.decode(
             br#"{
@@ -834,27 +1229,52 @@ mod tests {
         .unwrap();
         assert_eq!(meta.row_count, 3);
         assert_eq!(meta.sql_mode, 9);
-        assert_eq!(meta.error.as_ref().unwrap().message(), "backfill failed");
-        assert_eq!(meta.start_key, Some(vec![0, 1, 255]));
-        assert_eq!(meta.end_key, Some(vec![2]));
-        assert!(meta.warnings.as_ref().unwrap().contains_key("old"));
-        assert!(meta.warnings.as_ref().unwrap().contains_key("new"));
+        assert!(old_error.ptr_eq(meta.error.as_ref().unwrap()));
         assert_eq!(
-            meta.warnings.as_ref().unwrap()["new"]
+            meta.error.as_ref().unwrap().read().message(),
+            "backfill failed"
+        );
+        assert_eq!(meta.start_key.snapshot(), vec![0, 1, 255]);
+        assert_eq!(meta.end_key.snapshot(), vec![2]);
+        assert!(warnings_pointer.ptr_eq(meta.warnings.as_ref().unwrap()));
+        assert!(warning_counts_pointer.ptr_eq(meta.warnings_count.as_ref().unwrap()));
+        assert!(location_pointer.ptr_eq(meta.location.as_ref().unwrap()));
+        assert!(job_meta_pointer.ptr_eq(meta.job_meta.as_ref().unwrap()));
+        let warnings = meta.warnings.as_ref().unwrap().read();
+        assert!(warnings.contains_key(&GoString::from("old")));
+        assert!(warnings.contains_key(&GoString::from("new")));
+        assert_eq!(
+            warnings[&GoString::from("new")]
                 .as_ref()
                 .unwrap()
+                .read()
                 .message(),
             "new"
         );
-        assert_eq!(meta.warnings_count.as_ref().unwrap()["old"], 1);
-        assert_eq!(meta.warnings_count.as_ref().unwrap()["new"], 2);
-        let location = meta.location.as_ref().unwrap();
+        drop(warnings);
+        assert_eq!(
+            meta.warnings_count.as_ref().unwrap().read()[&GoString::from("old")],
+            1
+        );
+        assert_eq!(
+            meta.warnings_count.as_ref().unwrap().read()[&GoString::from("new")],
+            2
+        );
+        meta.decode(br#"{"warnings_count":{"duplicate":1,"duplicate":2}}"#)
+            .unwrap();
+        assert_eq!(
+            meta.warnings_count.as_ref().unwrap().read()[&GoString::from("duplicate")],
+            2
+        );
+        let location = meta.location.as_ref().unwrap().read();
         assert_eq!(location.name, "UTC");
         assert_eq!(location.offset, 3600);
-        let job_meta = meta.job_meta.as_ref().unwrap();
+        drop(location);
+        let job_meta = meta.job_meta.as_ref().unwrap().read();
         assert_eq!(job_meta.schema_id, 10);
         assert_eq!(job_meta.table_id, 21);
         assert_eq!(job_meta.query, "old query");
+        drop(job_meta);
 
         let malformed_row_count = meta.row_count;
         assert!(meta.decode(br#"{"row_count":99,"sql_mode":}"#).is_err());
@@ -865,7 +1285,8 @@ mod tests {
             .unwrap_err();
         assert!(error.to_string().contains("illegal base64 data"));
         assert_eq!(meta.row_count, 4);
-        assert_eq!(meta.start_key, Some(vec![0, 1, 255]));
+        assert_eq!(meta.start_key.snapshot(), vec![0, 1, 255]);
+        assert!(meta.start_key.backing_ptr_eq(&old_start_key));
         assert!(meta.end_include);
         assert_eq!(meta.sql_mode, 9);
 
@@ -873,6 +1294,8 @@ mod tests {
         let error = meta.decode(br#"{"err":[],"is_unique":true}"#).unwrap_err();
         assert!(error.to_string().contains("invalid type"));
         assert_eq!(meta.is_unique, was_unique);
+        assert!(old_error.ptr_eq(meta.error.as_ref().unwrap()));
+        assert_eq!(old_error.read().message(), "backfill failed");
 
         assert!(meta
             .decode(br#"{"end_include":true,"row_count":1.5,"sql_mode":10}"#)
@@ -892,26 +1315,47 @@ mod tests {
             .decode(br#"{"warnings_count":{"bad":"bad","later":3},"row_count":5}"#)
             .unwrap_err();
         assert!(error.to_string().contains("invalid type"));
-        assert_eq!(meta.warnings_count.as_ref().unwrap()["bad"], 0);
-        assert_eq!(meta.warnings_count.as_ref().unwrap()["later"], 3);
+        assert_eq!(
+            meta.warnings_count.as_ref().unwrap().read()[&GoString::from("bad")],
+            0
+        );
+        assert_eq!(
+            meta.warnings_count.as_ref().unwrap().read()[&GoString::from("later")],
+            3
+        );
         assert_eq!(meta.row_count, 5);
 
         meta.decode(br#"{"warnings_count":{"null_value":null},"row_count":6}"#)
             .unwrap();
-        assert_eq!(meta.warnings_count.as_ref().unwrap()["null_value"], 0);
+        assert_eq!(
+            meta.warnings_count.as_ref().unwrap().read()[&GoString::from("null_value")],
+            0
+        );
         assert_eq!(meta.row_count, 6);
 
         let error = meta
             .decode(br#"{"warnings":{"bad":7,"later":null},"row_count":7}"#)
             .unwrap_err();
         assert!(error.to_string().contains("invalid type"));
-        assert!(!meta.warnings.as_ref().unwrap().contains_key("bad"));
-        assert!(!meta.warnings.as_ref().unwrap().contains_key("later"));
+        assert!(!meta
+            .warnings
+            .as_ref()
+            .unwrap()
+            .read()
+            .contains_key(&GoString::from("bad")));
+        assert!(!meta
+            .warnings
+            .as_ref()
+            .unwrap()
+            .read()
+            .contains_key(&GoString::from("later")));
         assert_eq!(meta.row_count, 6);
 
         meta.decode("{\"start_Key\":\"AAH/\",\"row_count\":8}".as_bytes())
             .unwrap();
-        assert_eq!(meta.start_key, Some(vec![0, 1, 255]));
+        assert_eq!(meta.start_key.snapshot(), vec![0, 1, 255]);
+        assert!(!meta.start_key.backing_ptr_eq(&old_start_key));
+        assert_eq!(meta.start_key.capacity(), 3);
         assert_eq!(meta.row_count, 8);
 
         assert!(meta
@@ -922,6 +1366,7 @@ mod tests {
         meta.decode(
             br#"{
                 "row_count":null,
+                "err":null,
                 "warnings":null,
                 "warnings_count":null,
                 "location":null,
@@ -933,12 +1378,13 @@ mod tests {
         )
         .unwrap();
         assert_eq!(meta.row_count, 8);
+        assert!(meta.error.is_none());
         assert!(meta.warnings.is_none());
         assert!(meta.warnings_count.is_none());
         assert!(meta.location.is_none());
-        assert!(meta.start_key.is_none());
-        assert!(meta.end_key.is_none());
-        assert!(meta.current_key.is_none());
+        assert!(!meta.start_key.is_allocated());
+        assert!(!meta.end_key.is_allocated());
+        assert!(!meta.current_key.is_allocated());
         assert!(meta.job_meta.is_none());
     }
 }

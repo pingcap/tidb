@@ -25,6 +25,7 @@ pub mod column;
 pub mod db;
 pub mod engine_attribute;
 pub mod flags;
+pub mod go_any;
 pub mod go_duration;
 pub mod go_runtime;
 pub mod history;
@@ -33,6 +34,7 @@ pub mod job;
 pub mod job_args;
 #[cfg(test)]
 mod job_args_go_inventory;
+mod job_args_json;
 pub mod job_enums;
 mod job_json;
 pub mod masking_policy;
@@ -54,7 +56,9 @@ pub mod table_info;
 pub mod table_mode;
 
 pub use action_type::{ActionType, ACTION_MAP};
-pub use bdr::{ts_convert_2_time, DDLBDRType, ACTION_BDR_MAP, BDR_ACTION_MAP};
+pub use bdr::{
+    ts_convert_2_time, ActionBDRMap, BDRActionMap, DDLBDRType, ACTION_BDR_MAP, BDR_ACTION_MAP,
+};
 pub use cascades_hash::{CascadesHasher, HashInt64};
 pub use column::{
     gen_removing_obj_name, gen_unique_changing_column_name, ChangeStateInfo, ColumnInfo,
@@ -63,6 +67,12 @@ pub use db::{less_db_info, DBInfo};
 pub use engine_attribute::{
     parse_engine_attribute_from_string, EngineAttribute, StorageClassDef, StorageClassSettings,
     StorageClassTransitRule,
+};
+pub use go_any::{
+    ColumnDefaultValue, GoAny, GoAnyArray, GoAnyBytes, GoAnyJsonError, GoAnyJsonErrorKind,
+    GoAnyMap, GoAnyPointer, GoAnySlice, GoAnyStruct, GoAnyValue, GoAnyView, GoDefinedString,
+    GoEqualityProjection, GoJsonContext, GoJsonProjection, GoJsonReference,
+    GoJsonReferenceIdentity, GoJsonValue, GoTypeIdentity, GoTypeKind,
 };
 pub use go_runtime::{
     GoNullClonePolicy, GoPointerAny, GoShared, GoSharedPointerSlice, GoSharedSlice, GoTime,
@@ -78,11 +88,21 @@ pub use index::{
 };
 pub use job::{
     AddForeignKeyInfo, AdminCommandOperator, HistoryInfo, InvolvingSchemaInfo,
-    InvolvingSchemaInfoMode, Job, JobMeta, JobPauseReason, JobResumeReason, JobW, MultiSchemaInfo,
-    PersistedRawJson, ResolvedTimeZone, SubJob, TimeZoneLocation, TraceInfo,
+    InvolvingSchemaInfoMode, Job, JobMeta, JobPauseReason, JobResumeReason, JobW, JobWarnings,
+    MultiSchemaInfo, PersistedRawJson, ResolvedTimeZone, SubJob, TimeZoneLocation, TraceInfo,
 };
 pub use job_args::{
-    index_arg_columnar_index_type, rename_tables_args_from_v1, IndexOp, RenameTableArgs,
+    fill_rollback_args_for_add_partition, get_batch_create_table_args, get_create_schema_args,
+    get_create_table_args, get_drop_schema_args, get_exchange_table_partition_args,
+    get_finished_drop_schema_args, get_finished_table_partition_args,
+    get_finished_truncate_table_args, get_modify_schema_args,
+    get_modify_table_charset_and_collate_args, get_modify_table_comment_args,
+    get_rebase_auto_id_args, get_table_partition_args, get_truncate_table_args,
+    index_arg_columnar_index_type, rename_tables_args_from_v1, BatchCreateTableArgs,
+    CreateSchemaArgs, CreateTableArgs, DropSchemaArgs, EmptyArgs, ExchangeTablePartitionArgs,
+    FinishedJobArgs, GoByteSlice, GoField, IndexOp, JobArgs, JobArgsValue, ModifySchemaArgs,
+    ModifyTableCharsetAndCollateArgs, ModifyTableCommentArgs, RebaseAutoIDArgs, RenameTableArgs,
+    TableIDIndexID, TablePartitionArgs, TruncateTableArgs,
 };
 pub use job_enums::{
     get_job_ver_in_use, modify_type_to_string, set_job_ver_in_use, str_to_job_state, JobState,
@@ -94,8 +114,8 @@ pub use masking_policy::{
 pub use partition::{PartitionDefinition, PartitionInfo, PartitionState, UpdateIndexInfo};
 pub use placement::{PlacementSettings, PolicyInfo, PolicyRefInfo};
 pub use reorg::{
-    set_ddl_reorg_process_defaults, BackfillMeta, BackfillState, DDLReorgMeta, ReorgStage,
-    ReorgType,
+    BackfillMeta, BackfillState, DDLReorgMeta, DDLReorgProcessDefaults, DDLWarningCountMap,
+    DDLWarningMap, ReorgStage, ReorgType,
 };
 pub use resource_group::{
     ResourceGroupBackgroundSettings, ResourceGroupInfo, ResourceGroupRunawayAction,

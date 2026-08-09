@@ -127,6 +127,13 @@ impl<T> GoShared<T> {
         Arc::ptr_eq(&self.0, &other.0)
     }
 
+    /// Stable process-local address used by Go `%p`/default pointer
+    /// formatting. Semantic equality should continue to use [`Self::ptr_eq`].
+    #[must_use]
+    pub(crate) fn identity_address(&self) -> usize {
+        Arc::as_ptr(&self.0) as usize
+    }
+
     /// Allocates an independent pointer using Rust value `Clone`.
     ///
     /// This is a representation primitive, not a model source-clone claim;
@@ -364,11 +371,6 @@ impl<T> GoSharedPointerSlice<T> {
         self.0.clear();
     }
 
-    pub(crate) fn replace_decoded(&mut self, values: Vec<Option<GoShared<T>>>) {
-        let grown_capacity = go_64_pointer_slice_decode_capacity(self.0.capacity(), values.len());
-        self.0.replace_decoded(values, grown_capacity);
-    }
-
     pub(crate) fn prepare_decode_slot(&mut self, index: usize) {
         let grown_capacity = go_64_pointer_slice_decode_capacity(self.0.capacity(), index + 1);
         self.0.prepare_decode_slot(index, grown_capacity);
@@ -583,25 +585,5 @@ mod tests {
             go_64_next_slice_capacity_for_element(33, 32, 16, GoSliceElementLayout::PointerBearing,),
             71
         );
-
-        let mut decoded = GoSharedPointerSlice::<Item>::default();
-        decoded.replace_decoded(vec![
-            Some(GoShared::new(Item { id: 1 })),
-            None,
-            Some(GoShared::new(Item { id: 3 })),
-        ]);
-        assert_eq!(decoded.len(), 3);
-        assert_eq!(decoded.capacity(), 4);
-        let alias = decoded.clone();
-        decoded.replace_decoded(vec![
-            Some(GoShared::new(Item { id: 4 })),
-            None,
-            None,
-            Some(GoShared::new(Item { id: 7 })),
-        ]);
-        assert!(decoded.backing_ptr_eq(&alias));
-        assert_eq!(decoded.capacity(), 4);
-        assert_eq!(alias.len(), 3);
-        assert_eq!(alias.get(0).unwrap().read().id, 4);
     }
 }

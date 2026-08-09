@@ -20,8 +20,14 @@
 
 use std::collections::BTreeMap;
 
+// Cargo also treats every top-level `tests/*.rs` helper as its own integration
+// target. These two items are live when this file is imported by the named
+// receipt probes, and structurally unused only in that standalone helper
+// target.
+#[allow(dead_code)]
 const SOURCE_COMMIT: &str = "665fc02e2be48a7199d5ffeb5d3d6bec1dfed04f";
 
+#[allow(dead_code)]
 pub(crate) fn emit(probe_id: &str, conclusion: &str, cases: &[(&str, &str, &str)]) {
     let boundary_observations = cases
         .iter()

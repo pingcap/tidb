@@ -876,8 +876,9 @@ impl TableInfo {
             }
         }
         for column in self.columns.iter_deref() {
-            let mut col = column.write();
-            if let Some(cs) = &mut col.change_state_info {
+            let col = column.write();
+            if let Some(cs) = &col.change_state_info {
+                let mut cs = cs.write();
                 if let Some(&new_offset) = updated.get(&(cs.dependency_column_offset as isize)) {
                     cs.dependency_column_offset = new_offset as i64;
                 }
@@ -1589,9 +1590,9 @@ mod tests {
             column("b", 1, true, false),
             column("c", 2, true, false),
         ];
-        columns[2].change_state_info = Some(crate::column::ChangeStateInfo {
+        columns[2].change_state_info = Some(GoShared::new(crate::column::ChangeStateInfo {
             dependency_column_offset: 0,
-        });
+        }));
         let mut t = TableInfo {
             columns: columns.into(),
             indices: vec![IndexInfo {
@@ -1657,6 +1658,7 @@ mod tests {
                 .change_state_info
                 .as_ref()
                 .unwrap()
+                .read()
                 .dependency_column_offset,
             2
         );
@@ -1695,6 +1697,7 @@ mod tests {
                 .change_state_info
                 .as_ref()
                 .unwrap()
+                .read()
                 .dependency_column_offset,
             0
         );

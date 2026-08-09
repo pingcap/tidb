@@ -15,19 +15,64 @@
 //! Go-compatible persisted JSON stream decoders for DDL jobs and their nested
 //! metadata. Domain types and lifecycle rules remain in [`crate::job`].
 
-use crate::go_runtime::GoSliceElementLayout;
+use serde::de::DeserializeSeed;
+use serde::Deserialize;
+use serde_json::value::RawValue;
+use tidb_error::terror::{TerrorCode, TerrorError};
+
+use crate::go_runtime::{GoSharedSlice, GoSliceElementLayout};
 use crate::job::{
-    HistoryInfo, Job, JobMeta, JobPauseReason, JobResumeReason, MultiSchemaInfo, SubJob,
-    TimeZoneLocation, TraceInfo,
+    HistoryInfo, InvolvingSchemaInfo, Job, JobMeta, JobPauseReason, JobResumeReason,
+    MultiSchemaInfo, PersistedRawJson, SubJob, TimeZoneLocation, TraceInfo,
 };
 use crate::serde_helpers::{
     go_json_field_matches, ignore_unknown, impl_go_json_deserialize, impl_go_json_merge_object,
-    FatalSeed, FatalValueSeed, NullNoopSeed, OptionBytesSeed, OptionMergeSeed,
-    OptionPointerSliceSeed, OptionSharedMergeSeed, OptionStringMapMergeSeed,
-    SharedPointerSliceSeed, ValueMergeSeed,
+    FatalSeed, NullNoopSeed, OptionSharedAtomicReplaceSeed, OptionSharedGoStringMapMergeSeed,
+    OptionSharedMergeSeed, SharedPointerSliceSeed, ValueMergeSeed,
 };
 use crate::serde_shared_slices::SharedObjectSliceSeed;
 use crate::table_info::TableInfo;
+
+fn zero_terror_error() -> TerrorError {
+    TerrorError::compatible(TerrorCode::new(0), "")
+}
+
+struct RawMessageSeed<'a>(&'a mut Option<PersistedRawJson>);
+
+impl<'de> DeserializeSeed<'de> for RawMessageSeed<'_> {
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = <&RawValue>::deserialize(deserializer)?;
+        let destination = self.0.get_or_insert_with(PersistedRawJson::default);
+        destination.replace_unmarshal_json(raw.get().as_bytes().to_vec());
+        Ok(())
+    }
+}
+
+struct SharedBytesSeed<'a>(&'a mut GoSharedSlice<u8>);
+
+impl<'de> DeserializeSeed<'de> for SharedBytesSeed<'_> {
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        match Option::<String>::deserialize(deserializer)? {
+            None => *self.0 = GoSharedSlice::default(),
+            Some(text) => {
+                let (bytes, capacity) =
+                    crate::serde_helpers::go_bytes::decode_with_capacity(&text)?;
+                *self.0 = GoSharedSlice::from_vec_with_capacity(bytes, capacity);
+            }
+        }
+        Ok(())
+    }
+}
 
 impl_go_json_merge_object!(JobPauseReason, destination, map, key, {
     if go_json_field_matches(&key, "type") {
@@ -38,6 +83,7 @@ impl_go_json_merge_object!(JobPauseReason, destination, map, key, {
         ignore_unknown(&mut map)?;
     }
 });
+impl_go_json_deserialize!(JobPauseReason);
 
 impl_go_json_merge_object!(JobResumeReason, destination, map, key, {
     if go_json_field_matches(&key, "type") {
@@ -46,6 +92,7 @@ impl_go_json_merge_object!(JobResumeReason, destination, map, key, {
         ignore_unknown(&mut map)?;
     }
 });
+impl_go_json_deserialize!(JobResumeReason);
 
 impl_go_json_merge_object!(JobMeta, destination, map, key, {
     if go_json_field_matches(&key, "schema_id") {
@@ -62,6 +109,7 @@ impl_go_json_merge_object!(JobMeta, destination, map, key, {
         ignore_unknown(&mut map)?;
     }
 });
+impl_go_json_deserialize!(JobMeta);
 
 impl_go_json_merge_object!(TimeZoneLocation, destination, map, key, {
     if go_json_field_matches(&key, "name") {
@@ -72,24 +120,43 @@ impl_go_json_merge_object!(TimeZoneLocation, destination, map, key, {
         ignore_unknown(&mut map)?;
     }
 });
+impl_go_json_deserialize!(TimeZoneLocation);
 
 impl_go_json_merge_object!(TraceInfo, destination, map, key, {
     if go_json_field_matches(&key, "session_alias") {
         map.next_value_seed(NullNoopSeed(&mut destination.session_alias))?;
     } else if go_json_field_matches(&key, "trace_id") {
-        map.next_value_seed(OptionBytesSeed(&mut destination.trace_id))?;
+        map.next_value_seed(SharedBytesSeed(&mut destination.trace_id))?;
     } else if go_json_field_matches(&key, "connection_id") {
         map.next_value_seed(NullNoopSeed(&mut destination.connection_id))?;
     } else {
         ignore_unknown(&mut map)?;
     }
 });
+impl_go_json_deserialize!(TraceInfo);
+
+impl_go_json_merge_object!(InvolvingSchemaInfo, destination, map, key, {
+    if go_json_field_matches(&key, "database") {
+        map.next_value_seed(NullNoopSeed(&mut destination.database))?;
+    } else if go_json_field_matches(&key, "table") {
+        map.next_value_seed(NullNoopSeed(&mut destination.table))?;
+    } else if go_json_field_matches(&key, "policy") {
+        map.next_value_seed(NullNoopSeed(&mut destination.policy))?;
+    } else if go_json_field_matches(&key, "resource_group") {
+        map.next_value_seed(NullNoopSeed(&mut destination.resource_group))?;
+    } else if go_json_field_matches(&key, "mode") {
+        map.next_value_seed(NullNoopSeed(&mut destination.mode))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+impl_go_json_deserialize!(InvolvingSchemaInfo);
 
 impl_go_json_merge_object!(SubJob, destination, map, key, {
     if go_json_field_matches(&key, "type") {
         map.next_value_seed(NullNoopSeed(&mut destination.type_))?;
     } else if go_json_field_matches(&key, "raw_args") {
-        destination.raw_args = Some(map.next_value()?);
+        map.next_value_seed(RawMessageSeed(&mut destination.raw_args))?;
     } else if go_json_field_matches(&key, "schema_state") {
         map.next_value_seed(NullNoopSeed(&mut destination.schema_state))?;
     } else if go_json_field_matches(&key, "snapshot_ver") {
@@ -103,7 +170,10 @@ impl_go_json_merge_object!(SubJob, destination, map, key, {
     } else if go_json_field_matches(&key, "row_count") {
         map.next_value_seed(NullNoopSeed(&mut destination.row_count))?;
     } else if go_json_field_matches(&key, "warning") {
-        destination.warning = map.next_value_seed(FatalValueSeed::new())?;
+        map.next_value_seed(FatalSeed(OptionSharedAtomicReplaceSeed::new(
+            &mut destination.warning,
+            zero_terror_error,
+        )))?;
     } else if go_json_field_matches(&key, "schema_version") {
         map.next_value_seed(NullNoopSeed(&mut destination.schema_version))?;
     } else if go_json_field_matches(&key, "reorg_tp") {
@@ -116,10 +186,11 @@ impl_go_json_merge_object!(SubJob, destination, map, key, {
         ignore_unknown(&mut map)?;
     }
 });
+impl_go_json_deserialize!(SubJob);
 
 impl_go_json_merge_object!(MultiSchemaInfo, destination, map, key, {
     if go_json_field_matches(&key, "sub_jobs") {
-        map.next_value_seed(OptionPointerSliceSeed(&mut destination.sub_jobs))?;
+        map.next_value_seed(SharedPointerSliceSeed(&mut destination.sub_jobs))?;
     } else if go_json_field_matches(&key, "revertible") {
         map.next_value_seed(NullNoopSeed(&mut destination.revertible))?;
     } else if go_json_field_matches(&key, "seq") {
@@ -128,6 +199,7 @@ impl_go_json_merge_object!(MultiSchemaInfo, destination, map, key, {
         ignore_unknown(&mut map)?;
     }
 });
+impl_go_json_deserialize!(MultiSchemaInfo);
 
 // `HistoryInfo` owns pointers to these two model objects. Go's decoder reuses
 // an existing pointed-to allocation and mutates its fields in declaration
@@ -283,15 +355,21 @@ impl_go_json_merge_object!(Job, destination, map, key, {
     } else if go_json_field_matches(&key, "state") {
         map.next_value_seed(NullNoopSeed(&mut destination.state))?;
     } else if go_json_field_matches(&key, "warning") {
-        destination.warning = map.next_value_seed(FatalValueSeed::new())?;
+        map.next_value_seed(FatalSeed(OptionSharedAtomicReplaceSeed::new(
+            &mut destination.warning,
+            zero_terror_error,
+        )))?;
     } else if go_json_field_matches(&key, "err") {
-        destination.error = map.next_value_seed(FatalValueSeed::new())?;
+        map.next_value_seed(FatalSeed(OptionSharedAtomicReplaceSeed::new(
+            &mut destination.error,
+            zero_terror_error,
+        )))?;
     } else if go_json_field_matches(&key, "err_count") {
         map.next_value_seed(NullNoopSeed(&mut destination.error_count))?;
     } else if go_json_field_matches(&key, "row_count") {
         map.next_value_seed(NullNoopSeed(&mut destination.row_count))?;
     } else if go_json_field_matches(&key, "raw_args") {
-        destination.raw_args = Some(map.next_value()?);
+        map.next_value_seed(RawMessageSeed(&mut destination.raw_args))?;
     } else if go_json_field_matches(&key, "schema_state") {
         map.next_value_seed(NullNoopSeed(&mut destination.schema_state))?;
     } else if go_json_field_matches(&key, "snapshot_ver") {
@@ -305,13 +383,13 @@ impl_go_json_merge_object!(Job, destination, map, key, {
     } else if go_json_field_matches(&key, "query") {
         map.next_value_seed(NullNoopSeed(&mut destination.query))?;
     } else if go_json_field_matches(&key, "binlog") {
-        map.next_value_seed(OptionMergeSeed(&mut destination.binlog_info))?;
+        map.next_value_seed(OptionSharedMergeSeed(&mut destination.binlog_info))?;
     } else if go_json_field_matches(&key, "version") {
         map.next_value_seed(NullNoopSeed(&mut destination.version))?;
     } else if go_json_field_matches(&key, "reorg_meta") {
-        map.next_value_seed(OptionMergeSeed(&mut destination.reorg_meta))?;
+        map.next_value_seed(OptionSharedMergeSeed(&mut destination.reorg_meta))?;
     } else if go_json_field_matches(&key, "multi_schema_info") {
-        map.next_value_seed(OptionMergeSeed(&mut destination.multi_schema_info))?;
+        map.next_value_seed(OptionSharedMergeSeed(&mut destination.multi_schema_info))?;
     } else if go_json_field_matches(&key, "priority") {
         map.next_value_seed(NullNoopSeed(&mut destination.priority))?;
     } else if go_json_field_matches(&key, "seq_num") {
@@ -321,15 +399,19 @@ impl_go_json_merge_object!(Job, destination, map, key, {
     } else if go_json_field_matches(&key, "collate") {
         map.next_value_seed(NullNoopSeed(&mut destination.collate))?;
     } else if go_json_field_matches(&key, "involving_schema_info") {
-        destination.involving_schema_info = map.next_value()?;
+        map.next_value_seed(SharedObjectSliceSeed::new(
+            &mut destination.involving_schema_info,
+            72,
+            GoSliceElementLayout::PointerBearing,
+        ))?;
     } else if go_json_field_matches(&key, "admin_operator") {
         map.next_value_seed(NullNoopSeed(&mut destination.admin_operator))?;
     } else if go_json_field_matches(&key, "pause_reason") {
-        map.next_value_seed(OptionMergeSeed(&mut destination.pause_reason))?;
+        map.next_value_seed(OptionSharedMergeSeed(&mut destination.pause_reason))?;
     } else if go_json_field_matches(&key, "resume_reason") {
-        map.next_value_seed(OptionMergeSeed(&mut destination.resume_reason))?;
+        map.next_value_seed(OptionSharedMergeSeed(&mut destination.resume_reason))?;
     } else if go_json_field_matches(&key, "trace_info") {
-        map.next_value_seed(OptionMergeSeed(&mut destination.trace_info))?;
+        map.next_value_seed(OptionSharedMergeSeed(&mut destination.trace_info))?;
     } else if go_json_field_matches(&key, "bdr_role") {
         map.next_value_seed(NullNoopSeed(&mut destination.bdr_role))?;
     } else if go_json_field_matches(&key, "cdc_write_source") {
@@ -339,10 +421,13 @@ impl_go_json_merge_object!(Job, destination, map, key, {
     } else if go_json_field_matches(&key, "sql_mode") {
         map.next_value_seed(NullNoopSeed(&mut destination.sql_mode))?;
     } else if go_json_field_matches(&key, "session_vars") {
-        map.next_value_seed(OptionStringMapMergeSeed(&mut destination.session_vars))?;
+        map.next_value_seed(OptionSharedGoStringMapMergeSeed(
+            &mut destination.session_vars,
+        ))?;
     } else if go_json_field_matches(&key, "last_schema_version") {
         map.next_value_seed(NullNoopSeed(&mut destination.last_schema_version))?;
     } else {
         ignore_unknown(&mut map)?;
     }
 });
+impl_go_json_deserialize!(Job);

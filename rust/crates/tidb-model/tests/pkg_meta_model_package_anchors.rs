@@ -19,10 +19,10 @@
 mod observation_emitter;
 
 use tidb_model::{
-    BackfillMeta, BackfillState, ColumnInfo, DDLReorgMeta, EngineAttribute, IndexInfo, Job,
-    JobState, MaskingPolicyInfo, MultiSchemaInfo, PartitionDefinition, PartitionInfo,
-    PlacementSettings, RenameTableArgs, SchemaDiff, SchemaState, StorageClassTransitRule,
-    TableInfo,
+    BackfillMeta, BackfillState, ColumnInfo, DDLReorgMeta, EngineAttribute, GoAny, GoShared,
+    GoSharedPointerSlice, GoSharedSlice, IndexInfo, Job, JobState, MaskingPolicyInfo,
+    MultiSchemaInfo, PartitionDefinition, PartitionInfo, PlacementSettings, RenameTableArgs,
+    SchemaDiff, SchemaState, StorageClassTransitRule, TableInfo,
 };
 
 #[test]
@@ -38,9 +38,11 @@ fn pkg_meta_model_column_boundary() {
     );
     let wide = ColumnInfo {
         offset: i64::MAX,
-        change_state_info: Some(tidb_model::ChangeStateInfo {
-            dependency_column_offset: i64::MIN,
-        }),
+        change_state_info: Some(tidb_model::go_runtime::GoShared::new(
+            tidb_model::ChangeStateInfo {
+                dependency_column_offset: i64::MIN,
+            },
+        )),
         ..Default::default()
     };
     let encoded = serde_json::to_value(&wide).unwrap();
@@ -162,10 +164,8 @@ fn pkg_meta_model_schema_diff_boundary() {
 #[test]
 fn pkg_meta_model_job_boundary() {
     assert!(std::mem::size_of::<tidb_model::job::Job>() > 0);
-    let mut job = Job {
-        state: JobState::RUNNING,
-        ..Default::default()
-    };
+    let mut job = Job::default();
+    job.state = JobState::RUNNING;
     assert!(job.is_running());
     job.set_row_count(i64::MAX);
     assert_eq!(job.get_row_count(), i64::MAX);
@@ -221,7 +221,8 @@ fn pkg_meta_model_partition_boundary() {
             id: 7,
             name: tidb_ast::CiString::new("P0"),
             ..Default::default()
-        }],
+        }]
+        .into(),
         ..Default::default()
     };
     assert_eq!(partition.get_partition_id_by_name("p0"), 7);
@@ -263,7 +264,7 @@ fn pkg_meta_model_probe_column_representation_boundaries() {
         "owned-deep-map"
     };
     let empty_mode = if !ColumnInfo::default().dependences.is_allocated()
-        && tidb_model::column::GoStringSet::allocated(std::iter::empty()).is_allocated()
+        && tidb_model::column::GoStringSet::allocated(std::iter::empty::<String>()).is_allocated()
     {
         "nil-and-allocated-empty"
     } else {
@@ -274,16 +275,14 @@ fn pkg_meta_model_probe_column_representation_boundaries() {
     } else {
         "non-u64"
     };
-    let default_domain = if std::any::type_name::<tidb_model::column::ColumnDefaultValue>()
-        .contains("ColumnDefaultValue")
-    {
-        "closed-json-value-domain"
+    let default_domain = if std::any::type_name::<tidb_model::GoAny>().contains("GoAny") {
+        "open-go-interface-domain"
     } else {
         "unexpected-default-domain"
     };
     observation_emitter::emit(
         "MODEL-COLUMN-REPRESENTATION",
-        "Rust column ownership preserves the complete Go uint flag word and nil/allocated map states but cannot expose Go shallow map identity or arbitrary pre-JSON interface values",
+        "Rust column ownership preserves the Go interface, shallow map identity, complete uint flag word, and nil/allocated map states",
         &[
             ("clone-map-alias", "mutate-source-dependences", clone_mode),
             ("dependency-allocation", "nil-versus-empty-map", empty_mode),
@@ -323,7 +322,7 @@ fn pkg_meta_model_flag_width_integration_dependency() {
 
     let encoded = serde_json::to_value(&column).unwrap();
     assert_eq!(encoded["type"]["Flag"].as_u64(), Some(HIGH));
-    let decoded: ColumnInfo = serde_json::from_value(encoded).unwrap();
+    let decoded: ColumnInfo = serde_json::from_str(&encoded.to_string()).unwrap();
     assert_eq!(decoded.get_flag(), HIGH);
 }
 
@@ -384,7 +383,7 @@ fn pkg_meta_model_probe_vector_allocation_boundaries() {
     } else {
         "allocation-distinguished"
     };
-    let mut clone_source = IndexInfo {
+    let clone_source = IndexInfo {
         columns: vec![tidb_model::IndexColumn {
             name: tidb_ast::CiString::new("before"),
             ..Default::default()
@@ -392,9 +391,15 @@ fn pkg_meta_model_probe_vector_allocation_boundaries() {
         .into(),
         ..Default::default()
     };
-    let clone = clone_source.clone();
-    clone_source.columns[0].name = tidb_ast::CiString::new("after");
-    let clone_mode = if clone.columns[0].name.original() == "before" {
+    let clone = clone_source.clone_like_go();
+    clone_source
+        .columns
+        .get(0)
+        .expect("source index column")
+        .write()
+        .name = tidb_ast::CiString::new("after");
+    let clone_column = clone.columns.get(0).expect("cloned index column");
+    let clone_mode = if clone_column.read().name.original() == "before" {
         "owned-deep-elements"
     } else {
         "shared-pointer-elements"
@@ -476,12 +481,12 @@ fn pkg_meta_model_probe_placement_callback_surface() {
 fn pkg_meta_model_schema_diff_affected_options_boundary() {
     let nil_encoded = serde_json::to_value(SchemaDiff::default()).unwrap();
     let empty_encoded = serde_json::to_value(SchemaDiff {
-        affected_options: Some(Vec::new()),
+        affected_options: GoSharedPointerSlice::from_nullable(Vec::new()),
         ..Default::default()
     })
     .unwrap();
     let nullable_encoded = serde_json::to_value(SchemaDiff {
-        affected_options: Some(vec![None]),
+        affected_options: GoSharedPointerSlice::from_handles(vec![None]),
         ..Default::default()
     })
     .unwrap();
@@ -496,25 +501,33 @@ fn pkg_meta_model_schema_diff_affected_options_boundary() {
 #[test]
 fn pkg_meta_model_probe_job_runtime_representation() {
     let multi = MultiSchemaInfo::default();
-    let runtime_lists = if multi.add_columns.is_empty() && multi.add_indexes.is_empty() {
-        "one-empty-runtime-list-state"
+    let runtime_lists = if !multi.add_columns.is_allocated()
+        && !multi.add_indexes.is_allocated()
+        && multi.add_columns.is_empty()
+        && multi.add_indexes.is_empty()
+    {
+        "nil-runtime-slice-state"
     } else {
         "unexpected-nonempty-runtime-list"
     };
-    let argument_domain = if std::any::type_name::<serde_json::Value>().contains("serde_json") {
-        "json-value-cache-only"
+    let argument_domain = if GoAny::nil().is_nil() {
+        "go-interface-nil-state"
     } else {
         "unexpected-argument-domain"
     };
-    let wrapper = tidb_model::JobW::new(Job::default(), Vec::new());
-    let byte_mode = if wrapper.bytes.is_empty() {
-        "one-empty-byte-state"
+    let job = GoShared::new(Job::default());
+    let wrapper = tidb_model::JobW::new(Some(job.clone()), GoSharedSlice::from_vec(Vec::new()));
+    let byte_mode = if wrapper.job.as_ref().unwrap().ptr_eq(&job)
+        && wrapper.bytes.is_allocated()
+        && wrapper.bytes.is_empty()
+    {
+        "shared-job-and-allocated-empty-bytes"
     } else {
-        "unexpected-nonempty-bytes"
+        "unexpected-wrapper-ownership"
     };
     observation_emitter::emit(
         "MODEL-JOB-RUNTIME-REPRESENTATION",
-        "Rust job ownership cannot expose arbitrary Go JobArgs, pointer alias identity, or nil runtime list and byte states",
+        "Rust job ownership exposes Go interface values, shared job identity, and distinct nil/allocated-empty slice headers",
         &[
             (
                 "multi-schema-runtime-lists",
@@ -560,29 +573,29 @@ fn pkg_meta_model_probe_process_hooks() {
 
 #[test]
 fn pkg_meta_model_probe_reorg_identity() {
-    let mut source = DDLReorgMeta {
-        warnings_count: Some(std::collections::BTreeMap::from([("w".to_owned(), 1)])),
-        ..Default::default()
-    };
+    let mut source = DDLReorgMeta::default();
+    let warning_counts =
+        tidb_model::go_runtime::GoShared::new(std::collections::BTreeMap::from([("w".into(), 1)]));
+    source.warnings_count = Some(warning_counts.clone());
+    source.set_max_write_speed(10);
     let clone = source.clone();
-    source
-        .warnings_count
-        .as_mut()
-        .unwrap()
-        .insert("w".to_owned(), 2);
-    let warning_mode = if clone.warnings_count.as_ref().unwrap()["w"] == 1 {
-        "owned-deep-map"
-    } else {
+    warning_counts.write().insert("w".into(), 2);
+    let warning_mode = if warning_counts.ptr_eq(clone.warnings_count.as_ref().unwrap())
+        && clone.warnings_count.as_ref().unwrap().read()[&tidb_datatype::GoString::from("w")] == 2
+    {
         "shared-map-backing"
-    };
-    let object_mode = if std::mem::size_of::<DDLReorgMeta>() > 0 {
-        "native-rust-object-identity"
     } else {
-        "unexpected-zero-layout"
+        "unexpected-owned-map"
+    };
+    source.set_max_write_speed(20);
+    let object_mode = if source.get_max_write_speed() == 20 && clone.get_max_write_speed() == 10 {
+        "independent-outer-atomics"
+    } else {
+        "unexpected-shared-atomic"
     };
     observation_emitter::emit(
         "MODEL-REORG-IDENTITY",
-        "Rust reorg clones values and cannot preserve Go warning-map, atomic, mutex, error-pointer, or stack identity",
+        "Rust reorg structural clones preserve Go shared map pointers and independent outer atomic cells",
         &[
             (
                 "warning-map-alias",
@@ -591,7 +604,7 @@ fn pkg_meta_model_probe_reorg_identity() {
             ),
             (
                 "runtime-object-identity",
-                "atomic-mutex-error-pointers",
+                "independent-outer-atomics",
                 object_mode,
             ),
         ],

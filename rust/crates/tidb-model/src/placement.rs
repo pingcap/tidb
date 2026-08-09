@@ -20,6 +20,7 @@
 use serde::Serialize;
 use tidb_ast::CiString;
 
+use crate::go_runtime::GoShared;
 use crate::schema_state::SchemaState;
 use crate::serde_helpers::{
     go_json_field_matches, ignore_unknown, impl_go_json_deserialize, impl_go_json_merge_object,
@@ -227,13 +228,21 @@ impl std::fmt::Display for PlacementSettings {
     }
 }
 
+impl PlacementSettings {
+    /// Pointer-shaped Go `(*PlacementSettings).Clone` boundary.
+    #[must_use]
+    pub fn clone_pointer(settings: Option<&Self>) -> GoShared<Self> {
+        GoShared::new(settings.expect("nil *PlacementSettings").clone())
+    }
+}
+
 /// Go `PolicyInfo`: a placement policy (its settings plus identity/state).
 /// The embedded settings pointer is encoded as promoted fields and remains
 /// nil when none of those fields occur during decode.
 #[derive(Clone, Debug, Default)]
 pub struct PolicyInfo {
     /// The placement settings (Go's embedded `*PlacementSettings`).
-    pub placement_settings: Option<Box<PlacementSettings>>,
+    pub placement_settings: Option<GoShared<PlacementSettings>>,
     /// The policy ID.
     pub id: i64,
     /// The policy name.
@@ -248,6 +257,7 @@ impl Serialize for PolicyInfo {
 
         let mut map = serializer.serialize_map(None)?;
         if let Some(settings) = &self.placement_settings {
+            let settings = settings.read();
             map.serialize_entry("primary_region", &settings.primary_region)?;
             map.serialize_entry("regions", &settings.regions)?;
             map.serialize_entry("learners", &settings.learners)?;
@@ -272,62 +282,74 @@ impl_go_json_merge_object!(PolicyInfo, destination, map, key, {
     if go_json_field_matches(&key, "primary_region") {
         let settings = destination
             .placement_settings
-            .get_or_insert_with(|| Box::new(PlacementSettings::default()));
+            .get_or_insert_with(|| GoShared::new(PlacementSettings::default()));
+        let mut settings = settings.write();
         map.next_value_seed(NullNoopSeed(&mut settings.primary_region))?;
     } else if go_json_field_matches(&key, "regions") {
         let settings = destination
             .placement_settings
-            .get_or_insert_with(|| Box::new(PlacementSettings::default()));
+            .get_or_insert_with(|| GoShared::new(PlacementSettings::default()));
+        let mut settings = settings.write();
         map.next_value_seed(NullNoopSeed(&mut settings.regions))?;
     } else if go_json_field_matches(&key, "learners") {
         let settings = destination
             .placement_settings
-            .get_or_insert_with(|| Box::new(PlacementSettings::default()));
+            .get_or_insert_with(|| GoShared::new(PlacementSettings::default()));
+        let mut settings = settings.write();
         map.next_value_seed(NullNoopSeed(&mut settings.learners))?;
     } else if go_json_field_matches(&key, "followers") {
         let settings = destination
             .placement_settings
-            .get_or_insert_with(|| Box::new(PlacementSettings::default()));
+            .get_or_insert_with(|| GoShared::new(PlacementSettings::default()));
+        let mut settings = settings.write();
         map.next_value_seed(NullNoopSeed(&mut settings.followers))?;
     } else if go_json_field_matches(&key, "voters") {
         let settings = destination
             .placement_settings
-            .get_or_insert_with(|| Box::new(PlacementSettings::default()));
+            .get_or_insert_with(|| GoShared::new(PlacementSettings::default()));
+        let mut settings = settings.write();
         map.next_value_seed(NullNoopSeed(&mut settings.voters))?;
     } else if go_json_field_matches(&key, "schedule") {
         let settings = destination
             .placement_settings
-            .get_or_insert_with(|| Box::new(PlacementSettings::default()));
+            .get_or_insert_with(|| GoShared::new(PlacementSettings::default()));
+        let mut settings = settings.write();
         map.next_value_seed(NullNoopSeed(&mut settings.schedule))?;
     } else if go_json_field_matches(&key, "constraints") {
         let settings = destination
             .placement_settings
-            .get_or_insert_with(|| Box::new(PlacementSettings::default()));
+            .get_or_insert_with(|| GoShared::new(PlacementSettings::default()));
+        let mut settings = settings.write();
         map.next_value_seed(NullNoopSeed(&mut settings.constraints))?;
     } else if go_json_field_matches(&key, "leader_constraints") {
         let settings = destination
             .placement_settings
-            .get_or_insert_with(|| Box::new(PlacementSettings::default()));
+            .get_or_insert_with(|| GoShared::new(PlacementSettings::default()));
+        let mut settings = settings.write();
         map.next_value_seed(NullNoopSeed(&mut settings.leader_constraints))?;
     } else if go_json_field_matches(&key, "learner_constraints") {
         let settings = destination
             .placement_settings
-            .get_or_insert_with(|| Box::new(PlacementSettings::default()));
+            .get_or_insert_with(|| GoShared::new(PlacementSettings::default()));
+        let mut settings = settings.write();
         map.next_value_seed(NullNoopSeed(&mut settings.learner_constraints))?;
     } else if go_json_field_matches(&key, "follower_constraints") {
         let settings = destination
             .placement_settings
-            .get_or_insert_with(|| Box::new(PlacementSettings::default()));
+            .get_or_insert_with(|| GoShared::new(PlacementSettings::default()));
+        let mut settings = settings.write();
         map.next_value_seed(NullNoopSeed(&mut settings.follower_constraints))?;
     } else if go_json_field_matches(&key, "voter_constraints") {
         let settings = destination
             .placement_settings
-            .get_or_insert_with(|| Box::new(PlacementSettings::default()));
+            .get_or_insert_with(|| GoShared::new(PlacementSettings::default()));
+        let mut settings = settings.write();
         map.next_value_seed(NullNoopSeed(&mut settings.voter_constraints))?;
     } else if go_json_field_matches(&key, "survival_preferences") {
         let settings = destination
             .placement_settings
-            .get_or_insert_with(|| Box::new(PlacementSettings::default()));
+            .get_or_insert_with(|| GoShared::new(PlacementSettings::default()));
+        let mut settings = settings.write();
         map.next_value_seed(NullNoopSeed(&mut settings.survival_preferences))?;
     } else if go_json_field_matches(&key, "id") {
         map.next_value_seed(NullNoopSeed(&mut destination.id))?;
@@ -349,17 +371,23 @@ impl PolicyInfo {
     #[must_use]
     pub fn clone_like_go(&self) -> Self {
         Self {
-            placement_settings: Some(Box::new(
-                (**self
-                    .placement_settings
+            placement_settings: Some(GoShared::new(
+                self.placement_settings
                     .as_ref()
-                    .expect("nil PlacementSettings in PolicyInfo.Clone"))
-                .clone(),
+                    .expect("nil PlacementSettings in PolicyInfo.Clone")
+                    .read()
+                    .clone(),
             )),
             id: self.id,
             name: self.name.clone(),
             state: self.state,
         }
+    }
+
+    /// Pointer-shaped Go `(*PolicyInfo).Clone` boundary.
+    #[must_use]
+    pub fn clone_pointer(policy: Option<&Self>) -> GoShared<Self> {
+        GoShared::new(policy.expect("nil *PolicyInfo").clone_like_go())
     }
 }
 
@@ -370,17 +398,38 @@ mod tests {
     #[test]
     fn policy_clone_deep_copies_settings() {
         let policy = PolicyInfo {
-            placement_settings: Some(Box::new(PlacementSettings {
+            placement_settings: Some(GoShared::new(PlacementSettings {
                 primary_region: "r1".to_owned(),
                 ..Default::default()
             })),
             id: 1,
             ..Default::default()
         };
-        let mut clone = policy.clone_like_go();
-        clone.placement_settings.as_mut().unwrap().primary_region = "r2".to_owned();
+        let structural = policy.clone();
+        assert!(structural
+            .placement_settings
+            .as_ref()
+            .unwrap()
+            .ptr_eq(policy.placement_settings.as_ref().unwrap()));
+        let clone = policy.clone_like_go();
+        assert!(!clone
+            .placement_settings
+            .as_ref()
+            .unwrap()
+            .ptr_eq(policy.placement_settings.as_ref().unwrap()));
+        clone
+            .placement_settings
+            .as_ref()
+            .unwrap()
+            .write()
+            .primary_region = "r2".to_owned();
         assert_eq!(
-            policy.placement_settings.as_ref().unwrap().primary_region,
+            policy
+                .placement_settings
+                .as_ref()
+                .unwrap()
+                .read()
+                .primary_region,
             "r1"
         );
     }
@@ -404,6 +453,7 @@ mod tests {
                 .placement_settings
                 .as_ref()
                 .unwrap()
+                .read()
                 .primary_region,
             "r1"
         );
@@ -418,8 +468,23 @@ mod tests {
                 .placement_settings
                 .as_ref()
                 .unwrap()
+                .read()
                 .primary_region,
             ""
+        );
+
+        // `encoding/json` uses Unicode SimpleFold for promoted field names.
+        // This allocation must be decided here in the model decoder; a
+        // post-decode exact-spelling scan drops valid metadata.
+        let folded: PolicyInfo = serde_json::from_str(r#"{"PRIMARY_REGION":"r2","ID":3}"#).unwrap();
+        assert_eq!(
+            folded
+                .placement_settings
+                .as_ref()
+                .unwrap()
+                .read()
+                .primary_region,
+            "r2"
         );
     }
 
@@ -449,6 +514,7 @@ mod tests {
         assert!(policy.go_json_merge(&mut decoder).is_err());
         assert_eq!(policy.id, 9);
         let promoted = policy.placement_settings.unwrap();
+        let promoted = promoted.read();
         assert_eq!(promoted.primary_region, "");
         assert_eq!(promoted.voters, 3);
 
@@ -461,6 +527,12 @@ mod tests {
     #[should_panic(expected = "nil PlacementSettings")]
     fn policy_clone_nil_settings_matches_source_invariant() {
         let _ = PolicyInfo::default().clone_like_go();
+    }
+
+    #[test]
+    #[should_panic(expected = "nil *PolicyInfo")]
+    fn policy_clone_nil_receiver_matches_source_dereference() {
+        let _ = PolicyInfo::clone_pointer(None);
     }
 
     // Go TestPlacementSettingsString.
@@ -527,7 +599,7 @@ mod tests {
     #[test]
     fn policy_info_json_matches_go() {
         let p = PolicyInfo {
-            placement_settings: Some(Box::new(PlacementSettings {
+            placement_settings: Some(GoShared::new(PlacementSettings {
                 primary_region: "r".into(),
                 followers: 2,
                 ..Default::default()
@@ -542,24 +614,29 @@ mod tests {
         assert_eq!(serde_json::to_string(&back).unwrap(), want);
     }
 
-    // Go TestPlacementPolicyClone: the clone deep-copies the settings box.
+    // Go TestPlacementPolicyClone: the source method deep-copies the settings.
     #[test]
     fn policy_clone() {
         let policy = PolicyInfo {
-            placement_settings: Some(Box::new(PlacementSettings::default())),
+            placement_settings: Some(GoShared::new(PlacementSettings::default())),
             ..Default::default()
         };
-        let mut cloned = policy.clone();
+        let mut cloned = policy.clone_like_go();
         cloned.id = 100;
         cloned.name = CiString::new("p2");
         cloned.state = SchemaState::DELETE_ONLY;
-        cloned.placement_settings.as_mut().unwrap().followers = 10;
+        cloned
+            .placement_settings
+            .as_ref()
+            .unwrap()
+            .write()
+            .followers = 10;
 
         assert_eq!(policy.id, 0);
         assert_eq!(policy.name, CiString::new(""));
         assert_eq!(policy.state, SchemaState::NONE);
         assert_eq!(
-            **policy.placement_settings.as_ref().unwrap(),
+            *policy.placement_settings.as_ref().unwrap().read(),
             PlacementSettings::default()
         );
     }

@@ -22,6 +22,8 @@
 //! that cannot be expressed by the existing owned Rust model.
 
 use chrono::{DateTime, FixedOffset};
+use std::ops::{Deref, DerefMut};
+use std::sync::{RwLockReadGuard, RwLockWriteGuard};
 use tidb_ast::{
     CiString, ColumnChoice, TableLockType, ViewAlgorithm, ViewCheckOption, ViewSecurity,
 };
@@ -704,33 +706,83 @@ pub fn find_fk_info_by_name_mut(
     find_fk_info_by_name(foreign_keys, name)
 }
 
+/// Read guard returned by [`get_idx_changing_field_type`].
+pub enum FieldTypeRef<'a> {
+    /// The column's inline field type.
+    Inline(&'a FieldType),
+    /// The online-DDL field type behind its shared Go pointer.
+    Changing(RwLockReadGuard<'a, FieldType>),
+}
+
+impl Deref for FieldTypeRef<'_> {
+    type Target = FieldType;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Inline(value) => &**value,
+            Self::Changing(value) => &**value,
+        }
+    }
+}
+
+/// Mutable counterpart of [`FieldTypeRef`].
+pub enum FieldTypeMut<'a> {
+    /// The column's inline field type.
+    Inline(&'a mut FieldType),
+    /// The online-DDL field type behind its shared Go pointer.
+    Changing(RwLockWriteGuard<'a, FieldType>),
+}
+
+impl Deref for FieldTypeMut<'_> {
+    type Target = FieldType;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Inline(value) => &**value,
+            Self::Changing(value) => &**value,
+        }
+    }
+}
+
+impl DerefMut for FieldTypeMut<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        match self {
+            Self::Inline(value) => &mut **value,
+            Self::Changing(value) => &mut **value,
+        }
+    }
+}
+
 /// Go `GetIdxChangingFieldType`: selects the online-DDL changing type only
 /// when both the index-column marker and changing type are present.
 #[must_use]
 pub fn get_idx_changing_field_type<'a>(
     index_column: &IndexColumn,
     column: &'a ColumnInfo,
-) -> &'a FieldType {
+) -> FieldTypeRef<'a> {
     if index_column.use_changing_type {
         if let Some(changing) = &column.changing_field_type {
-            return changing;
+            return FieldTypeRef::Changing(changing.read());
         }
     }
-    &column.field_type
+    FieldTypeRef::Inline(&column.field_type)
 }
 
 /// Mutable form of Go `GetIdxChangingFieldType`.
 pub fn get_idx_changing_field_type_mut<'a>(
     index_column: &IndexColumn,
     column: &'a mut ColumnInfo,
-) -> &'a mut FieldType {
+) -> FieldTypeMut<'a> {
     if index_column.use_changing_type && column.changing_field_type.is_some() {
-        return column
-            .changing_field_type
-            .as_deref_mut()
-            .expect("checked changing field type");
+        return FieldTypeMut::Changing(
+            column
+                .changing_field_type
+                .as_ref()
+                .expect("checked changing field type")
+                .write(),
+        );
     }
-    &mut column.field_type
+    FieldTypeMut::Inline(&mut column.field_type)
 }
 
 /// Go `TableNameInfo`.
@@ -1444,7 +1496,7 @@ mod tests {
     fn changing_field_type_boundary() {
         let mut column = ColumnInfo {
             field_type: tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Long),
-            changing_field_type: Some(Box::new(tidb_datatype::FieldType::new(
+            changing_field_type: Some(GoShared::new(tidb_datatype::FieldType::new(
                 tidb_datatype::FieldTypeCode::Varchar,
             ))),
             ..Default::default()
@@ -1465,13 +1517,13 @@ mod tests {
             tidb_datatype::FieldTypeCode::Long
         );
 
-        column.changing_field_type = Some(Box::new(tidb_datatype::FieldType::new(
+        column.changing_field_type = Some(GoShared::new(tidb_datatype::FieldType::new(
             tidb_datatype::FieldTypeCode::Varchar,
         )));
         *get_idx_changing_field_type_mut(&index_column, &mut column) =
             tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Double);
         assert_eq!(
-            column.changing_field_type.as_ref().unwrap().code(),
+            column.changing_field_type.as_ref().unwrap().read().code(),
             tidb_datatype::FieldTypeCode::Double
         );
         index_column.use_changing_type = false;
@@ -1817,9 +1869,11 @@ mod tests {
         assert_eq!(table_name.id, 5);
         assert_eq!(table_name.name.original(), "Table");
         assert_eq!(table_name.name.lowercase(), "table");
-        // `ast.CIStr` is a Go struct on this persisted boundary; the parser
-        // crate's convenient string shorthand must not leak into model JSON.
-        assert!(serde_json::from_str::<TableNameInfo>(r#"{"name":"Table"}"#).is_err());
+        // `ast.CIStr.UnmarshalJSON` accepts its historical single-string form
+        // and derives the lowercase spelling from it.
+        let shorthand: TableNameInfo = serde_json::from_str(r#"{"name":"Table"}"#).unwrap();
+        assert_eq!(shorthand.name.original(), "Table");
+        assert_eq!(shorthand.name.lowercase(), "table");
 
         let mut table_name = TableNameInfo {
             id: 1,

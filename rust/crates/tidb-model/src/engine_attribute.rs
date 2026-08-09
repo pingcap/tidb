@@ -17,12 +17,13 @@
 
 use serde::Serialize;
 
+use crate::go_runtime::{GoShared, GoSharedPointerSlice, GoSharedSlice, GoSliceElementLayout};
 use crate::job::PersistedRawJson;
 use crate::serde_helpers::{
     go_json_field_matches, ignore_unknown, impl_go_json_deserialize, impl_go_json_merge_object,
-    NullNoopSeed, OptionObjectSliceSeed, OptionPointerSliceSeed, OptionScalarSeed,
-    OptionValueSliceSeed,
+    NullNoopSeed, OptionSharedScalarSeed, SharedPointerSliceSeed, SharedStringSliceSeed,
 };
+use crate::serde_shared_slices::SharedObjectSliceSeed;
 
 /// Go `EngineAttribute`: the JSON form of a table's `ENGINE_ATTRIBUTE`.
 ///
@@ -75,28 +76,32 @@ pub struct StorageClassDef {
     pub tier: String,
     /// Scope: the partition/table names this applies to.
     #[serde(default)]
-    pub names_in: Option<Vec<String>>,
+    pub names_in: GoSharedSlice<String>,
     /// Scope: an upper bound.
-    pub less_than: Option<String>,
+    pub less_than: Option<GoShared<String>>,
     /// Scope: an explicit value set.
     #[serde(default)]
-    pub values_in: Option<Vec<String>>,
+    pub values_in: GoSharedSlice<String>,
     /// The transition rules.
     #[serde(default)]
-    pub transitions: Option<Vec<StorageClassTransitRule>>,
+    pub transitions: GoSharedSlice<StorageClassTransitRule>,
 }
 
 impl_go_json_merge_object!(StorageClassDef, destination, map, key, {
     if go_json_field_matches(&key, "tier") {
         map.next_value_seed(NullNoopSeed(&mut destination.tier))?;
     } else if go_json_field_matches(&key, "names_in") {
-        map.next_value_seed(OptionValueSliceSeed(&mut destination.names_in))?;
+        map.next_value_seed(SharedStringSliceSeed(&mut destination.names_in))?;
     } else if go_json_field_matches(&key, "less_than") {
-        map.next_value_seed(OptionScalarSeed(&mut destination.less_than))?;
+        map.next_value_seed(OptionSharedScalarSeed(&mut destination.less_than))?;
     } else if go_json_field_matches(&key, "values_in") {
-        map.next_value_seed(OptionValueSliceSeed(&mut destination.values_in))?;
+        map.next_value_seed(SharedStringSliceSeed(&mut destination.values_in))?;
     } else if go_json_field_matches(&key, "transitions") {
-        map.next_value_seed(OptionObjectSliceSeed(&mut destination.transitions))?;
+        map.next_value_seed(SharedObjectSliceSeed::new(
+            &mut destination.transitions,
+            32,
+            GoSliceElementLayout::PointerBearing,
+        ))?;
     } else {
         ignore_unknown(&mut map)?;
     }
@@ -108,9 +113,7 @@ impl StorageClassDef {
     /// Go `HasNoScopeDef`: whether no scope (names/less-than/values) is set.
     #[must_use]
     pub fn has_no_scope_def(&self) -> bool {
-        self.names_in.as_ref().is_none_or(Vec::is_empty)
-            && self.less_than.is_none()
-            && self.values_in.as_ref().is_none_or(Vec::is_empty)
+        self.names_in.is_empty() && self.less_than.is_none() && self.values_in.is_empty()
     }
 }
 
@@ -120,12 +123,12 @@ impl StorageClassDef {
 pub struct StorageClassSettings {
     /// The definitions.
     #[serde(default)]
-    pub defs: Option<Vec<Option<StorageClassDef>>>,
+    pub defs: GoSharedPointerSlice<StorageClassDef>,
 }
 
 impl_go_json_merge_object!(StorageClassSettings, destination, map, key, {
     if go_json_field_matches(&key, "defs") {
-        map.next_value_seed(OptionPointerSliceSeed(&mut destination.defs))?;
+        map.next_value_seed(SharedPointerSliceSeed(&mut destination.defs))?;
     } else {
         ignore_unknown(&mut map)?;
     }
@@ -295,11 +298,11 @@ mod tests {
     fn has_no_scope_def() {
         let mut d = StorageClassDef::default();
         assert!(d.has_no_scope_def());
-        d.names_in = Some(vec!["p0".to_owned()]);
+        d.names_in = vec!["p0".to_owned()].into();
         assert!(!d.has_no_scope_def());
 
         let d = StorageClassDef {
-            less_than: Some("100".to_owned()),
+            less_than: Some(GoShared::new("100".to_owned())),
             ..Default::default()
         };
         assert!(!d.has_no_scope_def());
@@ -308,32 +311,38 @@ mod tests {
         assert_eq!(zero["names_in"], serde_json::Value::Null);
         assert_eq!(zero["values_in"], serde_json::Value::Null);
         assert_eq!(zero["transitions"], serde_json::Value::Null);
-        let allocated: StorageClassDef = serde_json::from_value(serde_json::json!({
+        let allocated_json = serde_json::json!({
             "names_in": [],
             "values_in": [],
             "transitions": []
-        }))
-        .unwrap();
-        assert_eq!(allocated.names_in, Some(Vec::new()));
-        assert_eq!(allocated.values_in, Some(Vec::new()));
-        assert!(allocated.transitions.as_ref().is_some_and(Vec::is_empty));
+        });
+        let allocated: StorageClassDef = serde_json::from_str(&allocated_json.to_string()).unwrap();
+        assert!(allocated.names_in.is_allocated());
+        assert!(allocated.names_in.is_empty());
+        assert!(allocated.values_in.is_allocated());
+        assert!(allocated.values_in.is_empty());
+        assert!(allocated.transitions.is_allocated());
+        assert!(allocated.transitions.is_empty());
 
         let settings = serde_json::to_value(StorageClassSettings::default()).unwrap();
         assert_eq!(settings["defs"], serde_json::Value::Null);
+        let settings_json = serde_json::json!({"defs": []});
         let settings: StorageClassSettings =
-            serde_json::from_value(serde_json::json!({"defs": []})).unwrap();
-        assert!(settings.defs.as_ref().is_some_and(Vec::is_empty));
+            serde_json::from_str(&settings_json.to_string()).unwrap();
+        assert!(settings.defs.is_allocated());
+        assert!(settings.defs.is_empty());
 
         // Go fills omitted scalar fields with their zero values and preserves
         // nil entries in []*StorageClassDef.
+        let settings_json = serde_json::json!({"defs": [null, {}]});
         let settings: StorageClassSettings =
-            serde_json::from_value(serde_json::json!({"defs": [null, {}]})).unwrap();
-        let defs = settings.defs.unwrap();
-        assert!(defs[0].is_none());
-        assert_eq!(defs[1].as_ref().unwrap().tier, "");
+            serde_json::from_str(&settings_json.to_string()).unwrap();
+        assert!(settings.defs.get(0).is_none());
+        assert_eq!(settings.defs.get(1).unwrap().read().tier, "");
 
+        let transition_json = serde_json::json!({});
         let transition: StorageClassTransitRule =
-            serde_json::from_value(serde_json::json!({})).unwrap();
+            serde_json::from_str(&transition_json.to_string()).unwrap();
         assert_eq!(transition.tier, "");
         assert_eq!(transition.after_days, 0);
     }
@@ -352,16 +361,22 @@ mod tests {
         assert!(definition.go_json_merge(&mut decoder).is_err());
         assert_eq!(definition.tier, "final");
         assert_eq!(
-            definition.names_in,
-            Some(vec![String::new(), "ok".to_owned()])
+            definition.names_in.snapshot(),
+            vec![String::new(), "ok".to_owned()]
         );
-        assert_eq!(definition.less_than.as_deref(), Some("later"));
+        assert_eq!(
+            definition
+                .less_than
+                .as_ref()
+                .map(|value| value.read().clone()),
+            Some("later".to_owned())
+        );
 
         let definition: StorageClassDef = serde_json::from_str(
             r#"{"transitions":[null,{"TIER":"IA","after_days":null,"after_seconds":2}]}"#,
         )
         .unwrap();
-        let transitions = definition.transitions.unwrap();
+        let transitions = definition.transitions.snapshot();
         assert_eq!(transitions.len(), 2);
         assert_eq!(transitions[0].tier, "");
         assert_eq!(transitions[0].after_days, 0);
@@ -372,9 +387,63 @@ mod tests {
         let settings: StorageClassSettings =
             serde_json::from_str(r#"{"defs":[{"tier":"first"}],"DEFS":[null,{"tier":"last"}]}"#)
                 .unwrap();
-        let defs = settings.defs.unwrap();
-        assert!(defs[0].is_none());
-        assert_eq!(defs[1].as_ref().unwrap().tier, "last");
+        assert!(settings.defs.get(0).is_none());
+        assert_eq!(settings.defs.get(1).unwrap().read().tier, "last");
+    }
+
+    #[test]
+    fn storage_class_struct_copies_preserve_source_aliases() {
+        let less_than = GoShared::new("100".to_owned());
+        let names = GoSharedSlice::from_vec(vec!["p0".to_owned()]);
+        let transitions = GoSharedSlice::from_vec(vec![StorageClassTransitRule {
+            tier: "IA".to_owned(),
+            ..Default::default()
+        }]);
+        let definition = StorageClassDef {
+            names_in: names.clone(),
+            less_than: Some(less_than.clone()),
+            transitions: transitions.clone(),
+            ..Default::default()
+        };
+        let copied = definition.clone();
+        assert!(copied.names_in.backing_ptr_eq(&names));
+        assert!(copied.less_than.as_ref().unwrap().ptr_eq(&less_than));
+        assert!(copied.transitions.backing_ptr_eq(&transitions));
+        copied.names_in.set(0, "changed".to_owned());
+        copied
+            .less_than
+            .as_ref()
+            .unwrap()
+            .write()
+            .replace_range(.., "200");
+        assert_eq!(names.get(0), "changed");
+        assert_eq!(&*less_than.read(), "200");
+
+        let pointee = GoShared::new(definition);
+        let settings = StorageClassSettings {
+            defs: GoSharedPointerSlice::from_handles(vec![None, Some(pointee.clone())]),
+        };
+        let copied = settings.clone();
+        assert!(copied.defs.backing_ptr_eq(&settings.defs));
+        assert!(copied.defs.get(1).unwrap().ptr_eq(&pointee));
+    }
+
+    #[test]
+    fn raw_message_struct_copies_share_the_go_byte_slice() {
+        let attr = parse_engine_attribute_from_string(r#"{"storage_class":1}"#).unwrap();
+        let copied = attr.clone();
+        let source = attr.storage_class.as_ref().unwrap();
+        let alias = copied.storage_class.as_ref().unwrap();
+        assert!(source.backing_ptr_eq(alias));
+        alias.set_byte(0, b'2');
+        assert_eq!(source.get(), "2");
+        assert_eq!(
+            serde_json::to_string(&attr).unwrap(),
+            r#"{"storage_class":2}"#
+        );
+
+        alias.set_byte(0, b'x');
+        assert!(serde_json::to_string(&attr).is_err());
     }
 
     #[test]
