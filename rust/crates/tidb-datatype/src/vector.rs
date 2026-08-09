@@ -481,14 +481,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn original_vector_endianness_zero_parse_compare_serialize_and_datum_rows() {
+    fn test_vector_endianess() {
         let mut vector = VectorFloat32::init(2);
         vector.elements_mut().copy_from_slice(&[1.1, 2.2]);
         assert_eq!(
             vector.serialize(),
             [2, 0, 0, 0, 0xCD, 0xCC, 0x8C, 0x3F, 0xCD, 0xCC, 0x0C, 0x40]
         );
+    }
 
+    #[test]
+    fn test_zero_vector() {
         let zero = VectorFloat32::default();
         assert!(zero.is_zero_value());
         assert_eq!(zero.compare(&zero), Ordering::Equal);
@@ -496,6 +499,22 @@ mod tests {
         assert_eq!(zero.serialized_size(), 4);
         assert_eq!(zero.to_string(), "[]");
 
+        let mut prefixed = vec![1, 2, 3];
+        zero.serialize_to(&mut prefixed);
+        assert_eq!(prefixed, [1, 2, 3, 0, 0, 0, 0]);
+
+        let serialized = zero.serialize();
+        let (round_trip, remaining) = deserialize_vector_float32(&serialized).unwrap();
+        assert!(remaining.is_empty());
+        assert!(round_trip.is_zero_value());
+        assert_eq!(round_trip.len(), 0);
+        assert_eq!(round_trip.to_string(), "[]");
+        assert_eq!(round_trip.compare(&zero), Ordering::Equal);
+        assert_eq!(zero.compare(&round_trip), Ordering::Equal);
+    }
+
+    #[test]
+    fn test_vector_parse() {
         for invalid in [
             "abc",
             "null",
@@ -507,10 +526,14 @@ mod tests {
         ] {
             assert!(VectorFloat32::parse(invalid).is_err(), "{invalid}");
         }
+        let zero = VectorFloat32::default();
         assert_eq!(VectorFloat32::parse("[]").unwrap(), zero);
         let parsed = VectorFloat32::parse("[1.1, 2.2, 3.3]").unwrap();
+        assert_eq!(parsed.len(), 3);
         assert_eq!(parsed.to_string(), "[1.1,2.2,3.3]");
+        assert!(!parsed.is_zero_value());
         assert_eq!(parsed.compare(&zero), Ordering::Greater);
+        assert_eq!(zero.compare(&parsed), Ordering::Less);
         assert_eq!(
             VectorFloat32::parse("[-1e39, 1e39]")
                 .unwrap_err()
@@ -519,14 +542,43 @@ mod tests {
         );
         assert!(check_vector_dim_valid(-1).is_err());
         for invalid in ["[1,2,3,4.4]ddddddddddddfasfa", "[1,2,3]extra"] {
-            assert!(VectorFloat32::parse(invalid).is_err());
+            assert!(
+                VectorFloat32::parse(invalid)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("Invalid vector text"),
+                "{invalid}"
+            );
         }
+    }
 
+    #[test]
+    fn test_vector_datum() {
+        let datum = crate::Datum::new_vector_float32(VectorFloat32::default());
+        let crate::Datum::VectorFloat32(vector) = datum else {
+            panic!("expected vector datum")
+        };
+        assert_eq!(vector.len(), 0);
+        assert_eq!(vector.to_string(), "[]");
+        assert!(vector.is_zero_value());
+        assert_eq!(vector.compare(&VectorFloat32::default()), Ordering::Equal);
+        assert_eq!(VectorFloat32::default().compare(&vector), Ordering::Equal);
+    }
+
+    #[test]
+    fn test_vector_compare() {
+        let parsed = VectorFloat32::parse("[1.1, 2.2, 3.3]").unwrap();
         let other = VectorFloat32::parse("[-1.1, 4.2]").unwrap();
         assert_eq!(parsed.compare(&other), Ordering::Greater);
+        assert_eq!(other.compare(&parsed), Ordering::Less);
         let other = VectorFloat32::parse("[1.1, 4.2]").unwrap();
         assert_eq!(parsed.compare(&other), Ordering::Less);
+        assert_eq!(other.compare(&parsed), Ordering::Greater);
+    }
 
+    #[test]
+    fn test_vector_serialize() {
+        let parsed = VectorFloat32::parse("[1.1, 2.2, 3.3]").unwrap();
         let mut serialized = parsed.serialize();
         serialized.extend_from_slice(&[1, 2, 3, 4]);
         let (round_trip, remaining) = deserialize_vector_float32(&serialized).unwrap();
