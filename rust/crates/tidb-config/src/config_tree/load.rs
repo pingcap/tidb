@@ -279,6 +279,52 @@ fn instance_section_migration(
     (conflict, deprecated)
 }
 
+fn format_go_toml_type_error(
+    text: &str,
+    table: &toml::Table,
+    error: &toml::de::Error,
+) -> Option<String> {
+    let rendered = error.to_string();
+    let destination_type = if rendered.contains("expected a boolean") {
+        "boolean"
+    } else {
+        return None;
+    };
+    let span = error.span()?;
+    let line_index = text[..span.start]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count();
+    let lines: Vec<&str> = text.lines().collect();
+    let line = *lines.get(line_index)?;
+    let key = line.split_once('=')?.0.trim();
+
+    let section = lines[..line_index]
+        .iter()
+        .rev()
+        .map(|line| line.trim())
+        .find(|line| line.starts_with('[') && line.ends_with(']'))?
+        .trim_matches(['[', ']']);
+    let mut current = table;
+    for component in section.split('.') {
+        current = current.get(component)?.as_table()?;
+    }
+    let source_type = match current.get(key)? {
+        toml::Value::Integer(_) => "int64",
+        toml::Value::Float(_) => "float64",
+        toml::Value::Boolean(_) => "boolean",
+        toml::Value::String(_) => "string",
+        toml::Value::Datetime(_) => "datetime",
+        toml::Value::Array(_) => "array",
+        toml::Value::Table(_) => "table",
+    };
+
+    Some(format!(
+        "toml: line {} (last key \"{section}.{key}\"): incompatible types: TOML value has type {source_type}; destination has type {destination_type}",
+        line_index + 1
+    ))
+}
+
 impl Config {
     /// Go `Config.Load` (from an already-read config-file string; file I/O
     /// is the caller's, matching how the rewrite reads config text).
@@ -292,7 +338,12 @@ impl Config {
         let parsed: Config = serde_ignored::deserialize(de, |path| {
             undecoded.push(path.to_string());
         })
-        .map_err(|e| LoadError::Other(e.to_string()))?;
+        .map_err(|error| {
+            LoadError::Other(
+                format_go_toml_type_error(text, &table, &error)
+                    .unwrap_or_else(|| error.to_string()),
+            )
+        })?;
         *self = parsed;
 
         if !crate::kerneltype::is_next_gen() && is_defined(&table, &["deploy-mode"]) {
@@ -626,6 +677,18 @@ mod tests {
         assert!(json.contains("rpc-metrics"), "missing rpc-metrics");
         // Tab-indented (Go json.Indent with "\t").
         assert!(json.contains("\n\t"), "expected tab indentation");
+    }
+
+    // Go TestInvalidConfigWithDeprecatedConfig.
+    #[test]
+    fn invalid_config_with_deprecated_config() {
+        let text = "\n[log]\nslow-threshold = 1000\n[performance]\nenforce-mpp = 1\n";
+        let mut config = Config::default();
+        let error = config.load_str("config.toml", text).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "toml: line 5 (last key \"performance.enforce-mpp\"): incompatible types: TOML value has type int64; destination has type boolean"
+        );
     }
 
     // A valid partial config loads and keeps defaults.
