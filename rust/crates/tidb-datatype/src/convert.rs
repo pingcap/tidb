@@ -1323,7 +1323,7 @@ mod tests {
     /// succeed for every row, so the obligation it carries is that the prefix
     /// is a parseable integer literal, asserted here directly.
     #[test]
-    fn source_valid_integer_prefix_warning_rows() {
+    fn test_get_valid_int() {
         for (input, expected, signed, warned) in [
             ("100", "100", true, false),
             ("-100", "-100", true, false),
@@ -1355,6 +1355,7 @@ mod tests {
                 assert!(actual.value.parse::<u64>().is_ok(), "{input:?}");
             }
         }
+        assert_source_valid_integer_prefix_strict_rows();
     }
 
     /// `pkg/types/convert_test.go:889` `TestGetValidInt`, second table: the
@@ -1372,8 +1373,7 @@ mod tests {
     /// | ----------- | ---------------------- | -------------- |
     /// | `"123..34"` | `0`, overflow `"123."` | `123`, truncate |
     /// | `"1.1e1.3"` | `0`, overflow `"1.1e1"`| `11`, truncate  |
-    #[test]
-    fn source_valid_integer_prefix_strict_rows() {
+    fn assert_source_valid_integer_prefix_strict_rows() {
         for (input, expected, errored) in [
             ("100", "100", false),
             ("-100", "-100", false),
