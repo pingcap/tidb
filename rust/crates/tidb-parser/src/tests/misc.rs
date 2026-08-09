@@ -175,6 +175,97 @@ fn remaining_misc_statement_restore_source_rows() {
     }
 }
 
+/// `pkg/parser/parser_test.go::TestDeallocate`.
+#[test]
+fn test_deallocate() {
+    for (sql, expected) in [
+        ("DEALLOCATE PREPARE test", "DEALLOCATE PREPARE `test`"),
+        ("DEALLOCATE PREPARE ``", "DEALLOCATE PREPARE ``"),
+    ] {
+        assert_eq!(r(sql), expected, "source SQL: {sql}");
+    }
+}
+
+/// `pkg/parser/parser_test.go::TestTrace`.
+#[test]
+fn test_trace() {
+    for (sql, expected) in [
+        ("trace begin", "TRACE START TRANSACTION"),
+        ("trace commit", "TRACE COMMIT"),
+        ("trace rollback", "TRACE ROLLBACK"),
+        ("trace set a = 1", "TRACE SET @@SESSION.`a`=1"),
+        ("trace select c1 from t1", "TRACE SELECT `c1` FROM `t1`"),
+        (
+            "trace delete t1, t2 from t1 inner join t2 inner join t3 where t1.id=t2.id and t2.id=t3.id;",
+            "TRACE DELETE `t1`,`t2` FROM (`t1` JOIN `t2`) JOIN `t3` WHERE `t1`.`id`=`t2`.`id` AND `t2`.`id`=`t3`.`id`",
+        ),
+        (
+            "trace insert into t values (1), (2), (3)",
+            "TRACE INSERT INTO `t` VALUES (1),(2),(3)",
+        ),
+        (
+            "trace replace into foo values (1 || 2)",
+            "TRACE REPLACE INTO `foo` VALUES (1 OR 2)",
+        ),
+        (
+            "trace update t set id = id + 1 order by id desc;",
+            "TRACE UPDATE `t` SET `id`=`id`+1 ORDER BY `id` DESC",
+        ),
+        (
+            "trace select c1 from t1 union (select c2 from t2) limit 1, 1",
+            "TRACE SELECT `c1` FROM `t1` UNION (SELECT `c2` FROM `t2`) LIMIT 1,1",
+        ),
+        (
+            "trace format = 'row' select c1 from t1 union (select c2 from t2) limit 1, 1",
+            "TRACE SELECT `c1` FROM `t1` UNION (SELECT `c2` FROM `t2`) LIMIT 1,1",
+        ),
+        (
+            "trace format = 'json' update t set id = id + 1 order by id desc;",
+            "TRACE FORMAT = 'json' UPDATE `t` SET `id`=`id`+1 ORDER BY `id` DESC",
+        ),
+        (
+            "trace plan select c1 from t1",
+            "TRACE PLAN SELECT `c1` FROM `t1`",
+        ),
+        (
+            "trace plan target = 'estimation' select c1 from t1",
+            "TRACE PLAN TARGET = 'estimation' SELECT `c1` FROM `t1`",
+        ),
+        (
+            "trace plan target = 'arandomstring' select c1 from t1",
+            "TRACE PLAN TARGET = 'arandomstring' SELECT `c1` FROM `t1`",
+        ),
+    ] {
+        assert_eq!(r(sql), expected, "source SQL: {sql}");
+    }
+}
+
+/// `pkg/parser/parser_test.go::TestSessionManage`.
+#[test]
+fn test_session_manage() {
+    for (sql, expected) in [
+        ("kill 23123", "KILL 23123"),
+        ("kill CONNECTION_ID()", "KILL CONNECTION_ID()"),
+        ("kill connection 23123", "KILL 23123"),
+        ("kill query 23123", "KILL QUERY 23123"),
+        ("kill tidb 23123", "KILL TIDB 23123"),
+        ("kill tidb connection 23123", "KILL TIDB 23123"),
+        ("kill tidb query 23123", "KILL TIDB QUERY 23123"),
+        ("show processlist", "SHOW PROCESSLIST"),
+        ("show full processlist", "SHOW FULL PROCESSLIST"),
+        ("shutdown", "SHUTDOWN"),
+        ("restart", "RESTART"),
+    ] {
+        assert_eq!(r(sql), expected, "source SQL: {sql}");
+    }
+}
+
+/// `pkg/parser/parser_test.go::TestHelp`.
+#[test]
+fn test_help() {
+    assert_eq!(r("HELP 'select'"), "HELP 'select'");
+}
+
 #[test]
 fn statistics_zero_value_and_name_boundaries_match_go_source() {
     assert_eq!(
