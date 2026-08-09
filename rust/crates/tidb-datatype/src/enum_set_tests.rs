@@ -18,7 +18,7 @@ use std::error::Error;
 /// Every row and assertion in `pkg/types/enum_test.go::TestEnum`: ten
 /// source-defined rows, thirteen executions across the original collations.
 #[test]
-fn enum_executes_every_original_test_enum_row_and_assertion() {
+fn test_enum() {
     let parse_rows: &[(&[&str], &str, usize)] =
         &[(&["a", "b"], "a", 1), (&["a"], "b", 0), (&["a"], "1", 1)];
     for collation in [Collation::Utf8Mb4Bin, Collation::Utf8UnicodeCi] {
@@ -77,7 +77,7 @@ fn enum_executes_every_original_test_enum_row_and_assertion() {
 /// Every row and assertion in `pkg/types/set_test.go::TestSet`: eighteen
 /// source-defined rows, twenty-five executions across the original collations.
 #[test]
-fn set_executes_every_original_test_set_row_and_assertion() {
+fn test_set() {
     let elements = ["a", "b", "c", "d"];
     let parse_rows = [
         ("a", 1, "a"),
