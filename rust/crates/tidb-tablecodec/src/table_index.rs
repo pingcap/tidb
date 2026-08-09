@@ -163,6 +163,87 @@ impl TableInfo {
     pub const fn has_clustered_index(&self) -> bool {
         self.pk_is_handle || self.is_common_handle
     }
+
+    /// Decodes and renders the indexed columns from one index entry.
+    ///
+    /// This is the byte-preserving counterpart of Go
+    /// `tables.GenIndexValueFromIndex`. Binary strings and bit values escape
+    /// every non-printable ASCII byte as an uppercase `\\xNN` sequence.
+    pub fn generate_index_values_from_index(
+        &self,
+        use_new_collation: bool,
+        timezone: Option<&SessionTimeZone>,
+        index: &IndexInfo,
+        key: &[u8],
+        value: &[u8],
+    ) -> Result<Vec<Vec<u8>>, TableIndexError> {
+        let columns = index
+            .columns
+            .iter()
+            .map(|index_column| {
+                let column = self
+                    .columns
+                    .get(index_column.offset)
+                    .ok_or(TableIndexError::Metadata("invalid index column offset"))?;
+                let field_type = if index_column.use_changing_type {
+                    column
+                        .changing_field_type
+                        .as_ref()
+                        .unwrap_or(&column.field_type)
+                } else {
+                    &column.field_type
+                };
+                Ok(ColumnInfo {
+                    id: column.id,
+                    is_pk_handle: self.pk_is_handle && column.primary_key,
+                    virtual_generated: false,
+                    field_type: field_type.clone(),
+                })
+            })
+            .collect::<Result<Vec<_>, TableIndexError>>()?;
+        let encoded_values = decode_index_kv(
+            use_new_collation,
+            key,
+            value,
+            columns.len(),
+            HandleStatus::NotNeeded,
+            &columns,
+        )?;
+
+        encoded_values
+            .iter()
+            .zip(&columns)
+            .map(|(encoded, column)| {
+                let datum = decode_column_value(encoded, &column.field_type, timezone)?;
+                let mut rendered = datum.sql_bytes().unwrap_or_else(|_| encoded.clone());
+                if column.field_type.is_binary_string()
+                    || column.field_type.code() == FieldTypeCode::Bit
+                {
+                    rendered = format_non_ascii_printable_to_hex(&rendered);
+                }
+                Ok(rendered)
+            })
+            .collect()
+    }
+}
+
+fn format_non_ascii_printable_to_hex(bytes: &[u8]) -> Vec<u8> {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+
+    let mut rendered = Vec::with_capacity(bytes.len());
+    for &byte in bytes {
+        if (32..127).contains(&byte) {
+            rendered.push(byte);
+        } else {
+            rendered.extend_from_slice(&[
+                b'\\',
+                b'x',
+                HEX[usize::from(byte >> 4)],
+                HEX[usize::from(byte & 0x0f)],
+            ]);
+        }
+    }
+    rendered
 }
 
 /// Whether `decode_index_kv` should materialize the row handle.
@@ -1737,5 +1818,80 @@ mod source_tests {
             assert!(is_untouched_index_kv(&key, &untouched));
             assert_decodes(&untouched);
         }
+    }
+
+    #[test]
+    fn test_gen_index_value_from_index() {
+        // Direct port of
+        // pkg/table/tables/index_test.go::TestGenIndexValueFromIndex. A
+        // unique secondary-index KV generated for b=23 must render only the
+        // indexed column and must not leak the integer row handle.
+        let value_column = |id, offset, primary_key| TableColumn {
+            id,
+            offset,
+            field_type: FieldType::new(FieldTypeCode::LongLong),
+            primary_key,
+            changing_field_type: None,
+        };
+        let index = IndexInfo {
+            id: 10,
+            columns: vec![index_column(1)],
+            unique: true,
+            global: false,
+            global_index_version: 0,
+            primary: false,
+        };
+        let table = TableInfo {
+            columns: vec![
+                value_column(1, 0, true),
+                value_column(2, 1, false),
+                TableColumn {
+                    id: 3,
+                    offset: 2,
+                    field_type: FieldType::new(FieldTypeCode::Blob)
+                        .with_collation(Collation::Utf8Mb4Bin),
+                    primary_key: false,
+                    changing_field_type: None,
+                },
+            ],
+            indices: vec![index.clone()],
+            pk_is_handle: true,
+            is_common_handle: false,
+            common_handle_version: 0,
+        };
+        let handle: Handle = IntHandle::new(1).into();
+        let mut indexed_values = vec![Datum::Int(23)];
+        let (key, distinct) = generate_index_key(
+            Encoder::new(true),
+            None,
+            &table,
+            &index,
+            42,
+            &mut indexed_values,
+            Some(&handle),
+        )
+        .unwrap();
+        assert!(distinct);
+        let value = generate_index_value(
+            true,
+            None,
+            &table,
+            &index,
+            false,
+            distinct,
+            false,
+            &indexed_values,
+            &handle,
+            0,
+            &[],
+        )
+        .unwrap();
+
+        assert_eq!(
+            table
+                .generate_index_values_from_index(true, None, &index, &key, &value)
+                .unwrap(),
+            vec![b"23".to_vec()]
+        );
     }
 }
