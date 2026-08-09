@@ -443,7 +443,7 @@ fn go_test_convert_type_out_of_range_enum_and_set_keep_the_empty_value() {
 /// so every row asserts the value while the recoverable event is ignored --
 /// which is exactly what that flag means.
 #[test]
-fn go_test_to_int64() {
+fn test_to_int64() {
     fn to_int64(value: &Datum) -> i64 {
         value
             .to_i64_in(&crate::SessionTimeZone::utc())
@@ -458,8 +458,11 @@ fn go_test_to_int64() {
     // 3.14159.
     let decimal = Decimal::from_signed_literal("3.14159");
 
-    for (value, expected) in [
+    let rows = [
         (Datum::new_string("0"), 0_i64),
+        // Go's `int(0)` and `int64(0)` both become signed Datums in Rust,
+        // but remain separate source rows.
+        (Datum::Int(0), 0),
         (Datum::Int(0), 0),
         (Datum::UInt(0), 0),
         (Datum::Float32(f64::from(3.1_f32)), 3),
@@ -486,7 +489,9 @@ fn go_test_to_int64() {
         (Datum::new_time(timestamp), 20_111_110_111_112),
         (Datum::new_duration(duration), 111_112),
         (Datum::new_decimal(decimal), 3),
-    ] {
+    ];
+    assert_eq!(rows.len(), 13, "one entry per Go source row");
+    for (value, expected) in rows {
         assert_eq!(to_int64(&value), expected, "{value:?}");
     }
 
