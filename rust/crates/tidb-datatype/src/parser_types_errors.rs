@@ -130,7 +130,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn source_error_sql_codes_match_terror_codes() {
+    fn test_error() {
         let errors = [
             &*ERR_INVALID_DEFAULT,
             &*ERR_DATA_TOO_LONG,
