@@ -84,12 +84,42 @@ pub(crate) fn cast_value_for_column(
         row_index,
         ctx,
         CastShape::InsertRow,
+        false,
     )
 }
 
-/// Which of Go's two namings the failure of one cast takes.
+/// Go `table.CastValue`: the raw conversion before an INSERT/UPDATE caller
+/// completes its error, including the exceptional `forceIgnoreTruncate`
+/// switch used by virtual-column and union-scan materialization.
+///
+/// The production write paths use [`cast_value_for_column`].  Virtual-column
+/// and union-scan consumers have not been transcreated yet, but keeping their
+/// source-level entry point here prevents their raw error shape from being
+/// conflated with the completed INSERT form.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn cast_table_value(
+    value: Datum,
+    field_type: &FieldType,
+    column: &str,
+    ctx: &crate::StmtContext,
+    force_ignore_truncate: bool,
+) -> Result<Datum, DriverError> {
+    cast_value_shaped(
+        value,
+        field_type,
+        column,
+        0,
+        ctx,
+        CastShape::RawTable,
+        force_ignore_truncate,
+    )
+}
+
+/// Which source call site names the failure of one cast.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CastShape {
+    /// `table.CastValue` itself: no statement caller has attached a row.
+    RawTable,
     /// `completeInsertErr`: the column and the row are appended, and the code
     /// becomes 1366 / 1265 / 1406 / 1264 accordingly.
     InsertRow,
@@ -99,22 +129,50 @@ pub(crate) enum CastShape {
 }
 
 fn cast_value_shaped(
-    value: Datum,
+    mut value: Datum,
     field_type: &FieldType,
     column: &str,
     row_index: usize,
     ctx: &crate::StmtContext,
     shape: CastShape,
+    force_ignore_truncate: bool,
 ) -> Result<Datum, DriverError> {
     if value.is_null() {
         return Ok(value);
     }
+    let source = value.clone();
     let incorrect_value = || DriverError::IncorrectValue {
         type_name: tidb_datatype::type_str(field_type.code()).to_owned(),
-        value: datum_error_text(&value),
+        value: datum_error_text(&source),
         column: column.to_owned(),
         row: row_index + 1,
     };
+    if let Some((converted_bytes, invalid_bytes)) =
+        invalid_string_conversion(&value, field_type, ctx.write_conversion_flags())
+    {
+        if !force_ignore_truncate {
+            let value = invalid_bytes
+                .iter()
+                .map(|byte| format!("\\x{byte:02X}"))
+                .collect::<String>();
+            let raw = DriverError::IncorrectValue {
+                type_name: "string".to_owned(),
+                value,
+                column: column.to_owned(),
+                // Raw table.CastValue failure: no statement caller has
+                // attached a one-based row yet.
+                row: 0,
+            };
+            return Err(if shape == CastShape::InsertRow {
+                incorrect_value()
+            } else {
+                raw
+            });
+        }
+        // Go keeps the bytes returned beside the charset error, clears that
+        // error, and then still applies the target width/collation rules.
+        value = Datum::new_collation_string(converted_bytes, field_type.collation());
+    }
     // Go `table.CastValue` passes `sctx.GetSessionVars().StmtCtx.TypeCtx()`,
     // whose location is the session's. A TIMESTAMP column's admissible range
     // is expressed in wall-clock time, so it MOVES with that zone.
@@ -135,7 +193,7 @@ fn cast_value_shaped(
         }
         Err(error) => {
             let named = json_write_error(&error).unwrap_or_else(incorrect_value);
-            return Err(shape.name(named, &value, field_type));
+            return Err(shape.name(named, &source, field_type));
         }
     };
     converted.value = truncate_char_trailing_spaces(converted.value, field_type);
@@ -195,13 +253,57 @@ fn cast_value_shaped(
         tidb_datatype::ScalarConversionEvent::Truncated
         | tidb_datatype::ScalarConversionEvent::RoundedToScale => incorrect_value(),
     };
-    let error = shape.name(error, &value, field_type);
+    let error = shape.name(error, &source, field_type);
     if ctx.strict() {
         return Err(error);
     }
     let reported = error.to_mysql_error();
     ctx.append_warning_parts(reported.code, &reported.message);
     Ok(converted.value)
+}
+
+/// Runs the exact charset conversion Go performs before producing a string
+/// value and returns both halves only when it found an invalid source group.
+fn invalid_string_conversion(
+    value: &Datum,
+    field_type: &FieldType,
+    flags: tidb_datatype::ConversionFlags,
+) -> Option<(Vec<u8>, Vec<u8>)> {
+    use tidb_datatype::{Collation, FieldTypeCode};
+
+    if !matches!(
+        field_type.code(),
+        FieldTypeCode::String
+            | FieldTypeCode::Varchar
+            | FieldTypeCode::VarString
+            | FieldTypeCode::Blob
+            | FieldTypeCode::TinyBlob
+            | FieldTypeCode::MediumBlob
+            | FieldTypeCode::LongBlob
+    ) {
+        return None;
+    }
+
+    let transformed = match value {
+        Datum::String(_) | Datum::Bytes(_) => {
+            let from_binary = value.collation() == Some(Collation::Binary);
+            let to_binary = field_type.charset() == tidb_datatype::Charset::Binary;
+            if from_binary && to_binary {
+                return None;
+            }
+            if from_binary {
+                value.binary_string_decoded(flags, field_type.charset().name())
+            } else if to_binary {
+                return None;
+            } else {
+                value.string_with_check(flags, field_type.charset().name())?
+            }
+        }
+        Datum::BinaryLiteral(_) => value.binary_string_decoded(flags, field_type.charset().name()),
+        _ => return None,
+    };
+    let (bytes, error) = transformed.into_parts();
+    error.map(|error| (bytes, error.invalid_bytes().to_vec()))
 }
 
 /// Go `table.truncateTrailingSpaces`: a non-binary `CHAR(M)` drops every
@@ -311,6 +413,7 @@ pub(crate) fn cast_value_for_update_assignment(
         row_index,
         ctx,
         CastShape::UpdateAssignment,
+        false,
     )
 }
 
@@ -321,6 +424,7 @@ impl CastShape {
     /// makes it fatal.
     fn name(self, error: DriverError, source: &Datum, field_type: &FieldType) -> DriverError {
         match self {
+            Self::RawTable => error,
             Self::InsertRow => error,
             Self::UpdateAssignment => match error {
                 // Go's `handleUpdateError` re-titles exactly these two.
@@ -536,7 +640,7 @@ pub(crate) fn datum_error_text(value: &Datum) -> String {
 #[cfg(test)]
 mod source_tests {
     use super::*;
-    use tidb_datatype::{FieldTypeCode, FieldTypeFlags};
+    use tidb_datatype::{BinaryLiteral, Collation, FieldTypeCode, FieldTypeFlags};
 
     fn assert_strict_cast(
         input: Datum,
@@ -570,6 +674,68 @@ mod source_tests {
         assert_eq!(write.is_err(), should_fail, "{field_type:?}");
         if !should_fail {
             assert_eq!(write.unwrap(), expected, "{field_type:?}");
+        }
+    }
+
+    #[test]
+    fn test_cast_value() {
+        // Direct port of pkg/table/column_test.go::TestCastValue.
+        let ctx = crate::StmtContext::for_dml(false, true, false);
+        let integer = FieldType::new(FieldTypeCode::Long).with_charset_name("utf8");
+
+        assert_eq!(
+            cast_table_value(Datum::Null, &integer, "", &ctx, false).unwrap(),
+            Datum::Null
+        );
+
+        // Go returns the best-effort zero beside this error.  Rust separates
+        // that conversion pair from the write Result, so assert both halves.
+        let converted = Datum::new_string("test")
+            .convert_to_in(&integer, ctx.write_conversion_flags(), &ctx.session_zone())
+            .unwrap();
+        assert_eq!(converted.value, Datum::Int(0));
+        assert!(converted.event.is_some());
+        assert!(cast_table_value(Datum::new_string("test"), &integer, "", &ctx, false).is_err());
+
+        let plain_string = FieldType::new(FieldTypeCode::String);
+        assert!(
+            cast_table_value(Datum::new_string("test"), &plain_string, "", &ctx, false).is_ok()
+        );
+
+        let utf8 = FieldType::new(FieldTypeCode::String).with_charset_name("utf8");
+        let mb4_rune = Datum::new_bytes([0xf0, 0x9f, 0x8c, 0x80]);
+        assert!(cast_table_value(mb4_rune.clone(), &utf8, "", &ctx, false).is_err());
+        assert!(cast_table_value(mb4_rune, &utf8, "", &ctx, true).is_ok());
+
+        let utf8mb4 = FieldType::new(FieldTypeCode::String).with_charset_name("utf8mb4");
+        let incomplete_rune = Datum::new_bytes([0xf0, 0x9f, 0x80]);
+        assert!(cast_table_value(incomplete_rune.clone(), &utf8mb4, "", &ctx, false).is_err());
+        assert!(cast_table_value(incomplete_rune, &utf8mb4, "", &ctx, true).is_ok());
+
+        let ascii = FieldType::new(FieldTypeCode::String).with_charset_name("ascii");
+        let non_ascii = Datum::new_bytes([0x32, 0xf0]);
+        assert!(cast_table_value(non_ascii.clone(), &ascii, "", &ctx, false).is_err());
+        assert!(cast_table_value(non_ascii, &ascii, "", &ctx, true).is_ok());
+
+        let general_ci = FieldType::new(FieldTypeCode::String)
+            .with_charset_name("utf8mb4")
+            .with_collation_name("utf8mb4_general_ci");
+        let good_literal = Datum::new_binary_literal(BinaryLiteral::from(&[0xE5, 0xA5, 0xBD]));
+        let cast = cast_table_value(good_literal, &general_ci, "", &ctx, false).unwrap();
+        assert_eq!(cast.collation(), Some(Collation::Utf8Mb4GeneralCi));
+
+        for invalid in [
+            Datum::new_binary_literal(BinaryLiteral::from(&[0xE5, 0xA5, 0xBD, 0x81])),
+            Datum::new_bytes([0xE5, 0xA5, 0xBD, 0x81]),
+        ] {
+            let error = cast_table_value(invalid, &general_ci, "", &ctx, false)
+                .unwrap_err()
+                .to_mysql_error();
+            assert_eq!(error.code, 1366);
+            assert_eq!(
+                error.message,
+                "Incorrect string value '\\x81' for column ''"
+            );
         }
     }
 
