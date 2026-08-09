@@ -816,6 +816,20 @@ mod tests {
         assert_eq!(string.collation(), Some(Collation::DEFAULT));
     }
 
+    #[test]
+    fn test_is_null() {
+        for (datum, expected) in [
+            (Datum::Null, true),
+            (Datum::Int(0), false),
+            (Datum::Int(1), false),
+            (Datum::Real(1.1), false),
+            (Datum::new_string("string"), false),
+            (Datum::new_string(""), false),
+        ] {
+            assert_eq!(datum.is_null(), expected, "{datum:?}");
+        }
+    }
+
     /// Replacing a datum through Go's setters must replace kind-specific
     /// metadata as well. The enum assignment makes that transition atomic.
     #[test]
