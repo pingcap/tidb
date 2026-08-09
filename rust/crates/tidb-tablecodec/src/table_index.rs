@@ -1621,4 +1621,121 @@ mod source_tests {
             );
         }
     }
+
+    #[test]
+    fn test_single_column_common_handle() {
+        // Direct port of
+        // pkg/table/tables/index_test.go::TestSingleColumnCommonHandle. The
+        // common handle is recoverable from both unique and non-unique index
+        // entries, including the untouched value form used by pessimistic
+        // updates.
+        let mut primary = varchar_column(1, 0);
+        primary.primary_key = true;
+        let value_column = |id, offset| TableColumn {
+            id,
+            offset,
+            field_type: FieldType::new(FieldTypeCode::LongLong),
+            primary_key: false,
+            changing_field_type: None,
+        };
+        let table = TableInfo {
+            columns: vec![primary, value_column(2, 1), value_column(3, 2)],
+            indices: vec![IndexInfo {
+                id: 1,
+                columns: vec![index_column(0)],
+                unique: true,
+                global: false,
+                global_index_version: 0,
+                primary: true,
+            }],
+            pk_is_handle: false,
+            is_common_handle: true,
+            common_handle_version: 1,
+        };
+        let zone = SessionTimeZone::utc();
+        let encoded_handle = Encoder::new(true)
+            .encode_key_in_timezone(
+                &zone,
+                &[Datum::new_collation_string(
+                    b"abc".to_vec(),
+                    Collation::Utf8Mb4Bin,
+                )],
+            )
+            .unwrap();
+        let handle: Handle = CommonHandle::new(encoded_handle).unwrap().into();
+
+        for (index_id, unique, offset, column_id) in [(10, true, 1, 2), (11, false, 2, 3)] {
+            let index = IndexInfo {
+                id: index_id,
+                columns: vec![index_column(offset)],
+                unique,
+                global: false,
+                global_index_version: 0,
+                primary: false,
+            };
+            let mut indexed_values = vec![Datum::Int(1)];
+            let (key, distinct) = generate_index_key(
+                Encoder::new(true),
+                Some(&zone),
+                &table,
+                &index,
+                42,
+                &mut indexed_values,
+                Some(&handle),
+            )
+            .unwrap();
+            let value = generate_index_value(
+                true,
+                Some(&zone),
+                &table,
+                &index,
+                false,
+                distinct,
+                false,
+                &indexed_values,
+                &handle,
+                0,
+                &[Datum::Int(0)],
+            )
+            .unwrap();
+            let columns = [
+                ColumnInfo {
+                    id: column_id,
+                    is_pk_handle: false,
+                    virtual_generated: false,
+                    field_type: table.columns[offset].field_type.clone(),
+                },
+                ColumnInfo {
+                    id: 1,
+                    is_pk_handle: false,
+                    virtual_generated: false,
+                    field_type: table.columns[0].field_type.clone(),
+                },
+            ];
+
+            let assert_decodes = |value: &[u8]| {
+                let decoded =
+                    decode_index_kv(true, &key, value, 1, HandleStatus::Default, &columns).unwrap();
+                assert_eq!(decoded.len(), 2, "index {index_id}");
+                let (_, indexed) = decode_one(&decoded[0]).unwrap();
+                let (_, primary) = decode_one(&decoded[1]).unwrap();
+                assert_eq!(indexed, Datum::Int(1));
+                assert_eq!(primary.as_raw_bytes().unwrap(), b"abc");
+                let decoded_handle = decode_index_handle(&key, value, 1).unwrap();
+                assert!(!decoded_handle.is_int());
+                assert_eq!(
+                    decoded_handle.encoded(),
+                    handle.encoded(),
+                    "index {index_id}"
+                );
+            };
+            assert_decodes(&value);
+
+            let mut untouched = value.clone();
+            untouched[0] = 1;
+            untouched.push(UNCOMMITTED_INDEX_KV_FLAG);
+            assert!(is_untouched_index_kv(&key, &untouched));
+            assert_decodes(&untouched);
+        }
+    }
 }
