@@ -841,6 +841,78 @@ mod tests {
         store_global_config(original);
     }
 
+    // Go TestErrorMessageExtensionInvalidRegexp.
+    #[test]
+    fn test_error_message_extension_invalid_regexp() {
+        let mut config = new_config();
+        config.deploy_mode = Mode::Starter;
+        config.error_message_extensions = vec![ErrorMessageExtension {
+            pattern: "[".to_owned(),
+            suffix: "invalid regexp".to_owned(),
+        }];
+        assert!(config
+            .valid()
+            .unwrap_err()
+            .contains("invalid error-msg-extension regexp"));
+
+        let mut config = new_config();
+        config.deploy_mode = Mode::Starter;
+        config.error_message_extensions = vec![ErrorMessageExtension {
+            pattern: " \t".to_owned(),
+            suffix: "missing pattern".to_owned(),
+        }];
+        assert!(config
+            .valid()
+            .unwrap_err()
+            .contains("empty error-msg-extension pattern"));
+
+        let mut config = new_config();
+        config.error_message_extensions = vec![ErrorMessageExtension {
+            pattern: ".*".to_owned(),
+            suffix: "not allowed".to_owned(),
+        }];
+        assert!(config
+            .valid()
+            .unwrap_err()
+            .contains("error-msg-extension can only be configured when deploy-mode is starter"));
+
+        let mut config = new_config();
+        assert!(config
+            .load_str(
+                "config.toml",
+                "error-msg-extension = [\n  { pattern = \".*\", suffix = \"not allowed\" },\n]\n"
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("error-msg-extension can only be configured when deploy-mode is starter"));
+
+        let mut config = new_config();
+        config.deploy_mode = Mode::Starter;
+        config
+            .load_str(
+                "config.toml",
+                "error-msg-extension = [\n  { suffix = \"missing pattern\" },\n]\n",
+            )
+            .unwrap();
+        assert!(config
+            .valid()
+            .unwrap_err()
+            .contains("empty error-msg-extension pattern"));
+
+        let mut config = new_config();
+        config.deploy_mode = Mode::Starter;
+        config
+            .load_str(
+                "config.toml",
+                "error-msg-extension = [\n  { pattern = \"\", suffix = \"empty pattern\" },\n]\n",
+            )
+            .unwrap();
+        assert!(config
+            .valid()
+            .unwrap_err()
+            .contains("empty error-msg-extension pattern"));
+    }
+
     // Go TestKeyspaceActivateModeConfig (the source test runs under the
     // `nextgen` build tag).
     #[cfg(feature = "nextgen")]
