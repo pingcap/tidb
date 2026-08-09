@@ -593,8 +593,7 @@ impl Config {
                 );
             }
         } else {
-            let mut ew = self.external_workload.clone();
-            ew.valid()?;
+            self.external_workload.valid()?;
         }
         if self.performance.txn_total_size_limit > 1 << 40 {
             return Err(format!(
@@ -729,6 +728,59 @@ mod tests {
         assert!(get_global_config().use_auto_scaler);
 
         update_global(|config| config.use_auto_scaler = false);
+    }
+
+    // Go TestExternalWorkloadValid.
+    #[test]
+    fn test_external_workload_valid() {
+        let mut config = new_config();
+        config.valid().unwrap();
+
+        config.external_workload.enable = true;
+        assert!(config
+            .valid()
+            .unwrap_err()
+            .contains("external-workload can only be configured when deploy-mode is starter"));
+
+        let mut config = new_config();
+        assert!(config
+            .load_str("tidb.toml", "[external-workload]\nenable = false\n")
+            .unwrap_err()
+            .to_string()
+            .contains("external-workload can only be configured when deploy-mode is starter"));
+
+        if !crate::kerneltype::is_next_gen() {
+            return;
+        }
+
+        let mut config = new_config();
+        config.deploy_mode = Mode::Starter;
+        config.external_workload.enable = true;
+        assert!(config
+            .valid()
+            .unwrap_err()
+            .contains("external-workload controller-addr must not be empty"));
+
+        config.external_workload.controller_addr = "http://127.0.0.1:1234".to_owned();
+        config.external_workload.tidb_pool.clear();
+        assert!(config
+            .valid()
+            .unwrap_err()
+            .contains("external-workload tidb-pool must not be empty"));
+
+        config.external_workload.tidb_pool = "pool-a".to_owned();
+        config.external_workload.role.0 = "unknown".to_owned();
+        assert!(config
+            .valid()
+            .unwrap_err()
+            .contains("invalid external-workload role \"unknown\""));
+
+        config.external_workload.role.0 = " GCV2 ".to_owned();
+        config.valid().unwrap();
+        assert_eq!(
+            config.external_workload.role.0,
+            crate::external_workload::ROLE_GCV2_WORKER
+        );
     }
 
     // Go TestKeyspaceActivateModeConfig (the source test runs under the
