@@ -180,6 +180,39 @@ fn nested_statement_owners_preserve_go_source_text_boundaries() {
     assert_eq!(procedure.body.text(), b"begin select 1; end");
 }
 
+/// `pkg/parser/parser_test.go::TestFieldText`.
+#[test]
+fn test_field_text() {
+    let statement = parse("select a from t").expect("SELECT parses");
+    let Stmt::Query(query) = statement else {
+        panic!("expected query");
+    };
+    let tidb_ast::QueryStmt::Select(select) = query.as_ref() else {
+        panic!("expected SELECT");
+    };
+    assert_eq!(select.fields.text(0), Some(b"a".as_slice()));
+
+    for sql in [
+        "trace select a from t",
+        "trace format = 'row' select a from t",
+        "trace format = 'json' select a from t",
+    ] {
+        let statement = parse(sql).unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+        assert_eq!(statement.text(), sql.as_bytes(), "source SQL: {sql}");
+        let Stmt::Admin(admin) = statement else {
+            panic!("expected TRACE: {sql}");
+        };
+        let tidb_ast::AdminStmt::Trace(trace) = admin.as_ref() else {
+            panic!("expected TRACE: {sql}");
+        };
+        assert_eq!(
+            trace.statement.text(),
+            b"select a from t",
+            "source SQL: {sql}"
+        );
+    }
+}
+
 #[test]
 fn rejects_unsupported() {
     // Out-of-scope constructs error rather than mis-parse. (`TRUNCATE
