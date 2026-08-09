@@ -233,10 +233,6 @@ impl std::error::Error for GoAnyJsonError {}
 const GO_JSON_START_DETECTING_CYCLES_AFTER: usize = 1_000;
 
 /// Identity key used by Go `encoding/json` for one recursive reference.
-///
-/// Custom composite [`GoAnyValue`] implementations use this with
-/// [`GoJsonContext::with_reference`] so their children participate in the
-/// same current-path cycle traversal as built-in model values.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum GoJsonReferenceIdentity {
     /// A typed Go pointer identity.
@@ -245,7 +241,74 @@ pub enum GoJsonReferenceIdentity {
     /// even when their process-local tokens happen to be numerically equal.
     Map(usize),
     /// A Go slice's first-element/backing identity and visible length.
-    Slice { backing: usize, len: usize },
+    Slice {
+        /// Process-local identity of the slice's first element/backing array.
+        backing: usize,
+        /// Visible slice length, which is part of `encoding/json`'s key.
+        len: usize,
+    },
+}
+
+/// One non-nil map, non-byte slice, or pointer in a JSON projection.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GoJsonReference {
+    identity: GoJsonReferenceIdentity,
+    dynamic_type: GoTypeIdentity,
+}
+
+impl GoJsonReference {
+    /// Constructs a source reference from its process-local identity and
+    /// exact dynamic type.
+    #[must_use]
+    pub fn new(identity: GoJsonReferenceIdentity, dynamic_type: GoTypeIdentity) -> Self {
+        Self {
+            identity,
+            dynamic_type,
+        }
+    }
+
+    /// Source identity key.
+    #[must_use]
+    pub const fn identity(&self) -> GoJsonReferenceIdentity {
+        self.identity
+    }
+
+    /// Exact dynamic type used by pointer identity and cycle errors.
+    #[must_use]
+    pub fn dynamic_type(&self) -> &GoTypeIdentity {
+        &self.dynamic_type
+    }
+}
+
+/// One declarative, object-safe JSON projection step.
+///
+/// Returning children instead of recursively projecting them lets
+/// [`GoJsonContext`] preserve Go's depth-first hook order on an explicit heap
+/// stack. Custom composite values use the referenced variants to join the
+/// same current-path cycle domain as built-in model values.
+#[derive(Debug)]
+pub enum GoJsonProjection {
+    /// A completed scalar, null, byte slice, or custom JSON value.
+    Value(GoJsonValue),
+    /// A Go array's child interfaces in source order.
+    Array(Vec<GoAny>),
+    /// A Go struct's JSON fields in source order.
+    Struct(Vec<(String, GoAny)>),
+    /// A custom non-byte slice and its child interfaces.
+    ReferencedArray(GoJsonReference, Vec<GoAny>),
+    /// A custom map and its already ordered JSON fields.
+    ReferencedObject(GoJsonReference, Vec<(GoString, GoAny)>),
+    /// A custom pointer and its loaded pointee interface.
+    ReferencedPointer(GoJsonReference, GoAny),
+    /// Built-in model `[]interface{}`; its elements are loaded after the
+    /// traversal enters the source slice reference.
+    InterfaceSlice(GoAnySlice),
+    /// Built-in model `map[string]interface{}`; its fields are loaded after
+    /// the traversal enters the source map reference.
+    InterfaceMap(GoAnyMap),
+    /// Built-in model `*interface{}`; its pointee is loaded after the
+    /// traversal enters the source pointer reference.
+    InterfacePointer(GoAnyPointer),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -271,27 +334,32 @@ impl GoJsonSeenReference {
 
 /// One Go `encoding/json` traversal state.
 ///
-/// Custom [`GoAnyValue`] hooks receive this context so nested interfaces stay
-/// in the same reference-depth and current-path cycle domain. The context is
-/// fresh for each top-level [`GoAny::go_json_value`] call.
+/// Projection work lives on the heap, so Go's depth-1001 cycle boundary does
+/// not depend on the host thread's fixed call-stack size.
 #[derive(Debug, Default)]
 pub struct GoJsonContext {
     reference_depth: usize,
     seen_references: HashSet<GoJsonSeenReference>,
 }
 
-struct GoJsonReferenceFrame<'a> {
-    context: &'a mut GoJsonContext,
-    seen_reference: Option<GoJsonSeenReference>,
+enum GoJsonWork {
+    Project(GoAny),
+    FinishArray(usize),
+    FinishGoObject(Vec<GoString>),
+    FinishStruct(Vec<String>),
+    ExitReference(Option<GoJsonSeenReference>),
 }
 
-impl Drop for GoJsonReferenceFrame<'_> {
+struct GoJsonTraversal<'a> {
+    context: &'a mut GoJsonContext,
+}
+
+impl Drop for GoJsonTraversal<'_> {
     fn drop(&mut self) {
-        if let Some(seen_reference) = &self.seen_reference {
-            let removed = self.context.seen_references.remove(seen_reference);
-            debug_assert!(removed, "tracked Go JSON reference was not removed");
-        }
-        self.context.reference_depth -= 1;
+        // Go empties ptrSeen through defers and resets ptrLevel before an
+        // encodeState is reused. This also runs when a custom hook panics.
+        self.context.reference_depth = 0;
+        self.context.seen_references.clear();
     }
 }
 
@@ -302,49 +370,262 @@ impl GoJsonContext {
         Self::default()
     }
 
-    /// Projects a nested interface through this traversal.
+    /// Projects an interface through a stack-safe Go traversal.
     pub fn project(&mut self, value: &GoAny) -> Result<GoJsonValue, GoAnyJsonError> {
-        match value.0.as_deref() {
-            None => Ok(GoJsonValue::Null),
-            Some(value) => self.project_dynamic(value),
-        }
+        self.reference_depth = 0;
+        self.seen_references.clear();
+        GoJsonTraversal { context: self }.run_interface(value)
     }
 
     fn project_dynamic(&mut self, value: &dyn GoAnyValue) -> Result<GoJsonValue, GoAnyJsonError> {
-        value.go_json_value(self)
-    }
-
-    /// Projects one non-nil map, non-byte slice, or pointer. `identity` must
-    /// remain stable for that source reference during this traversal.
-    pub fn with_reference(
-        &mut self,
-        identity: GoJsonReferenceIdentity,
-        dynamic_type: GoTypeIdentity,
-        project: impl FnOnce(&mut Self) -> Result<GoJsonValue, GoAnyJsonError>,
-    ) -> Result<GoJsonValue, GoAnyJsonError> {
-        self.reference_depth += 1;
-        let tracked = self.reference_depth > GO_JSON_START_DETECTING_CYCLES_AFTER;
-        let seen_reference = tracked.then(|| GoJsonSeenReference::new(identity, &dynamic_type));
-        if seen_reference
-            .as_ref()
-            .is_some_and(|reference| !self.seen_references.insert(reference.clone()))
-        {
-            self.reference_depth -= 1;
-            return Err(GoAnyJsonError::unsupported_value(
-                dynamic_type.clone(),
-                format!("encountered a cycle via {}", dynamic_type.display_name()),
-            ));
-        }
-
-        let mut frame = GoJsonReferenceFrame {
-            context: self,
-            seen_reference,
-        };
-        project(&mut *frame.context)
+        self.reference_depth = 0;
+        self.seen_references.clear();
+        GoJsonTraversal { context: self }.run_dynamic(value)
     }
 }
 
-/// Owned JSON projection returned by [`GoAnyValue::go_json_value`].
+impl GoJsonTraversal<'_> {
+    fn run_interface(&mut self, value: &GoAny) -> Result<GoJsonValue, GoAnyJsonError> {
+        let projection = match value.0.as_deref() {
+            None => GoJsonProjection::Value(GoJsonValue::Null),
+            Some(value) => value.go_json_projection()?,
+        };
+        self.run(projection)
+    }
+
+    fn run_dynamic(&mut self, value: &dyn GoAnyValue) -> Result<GoJsonValue, GoAnyJsonError> {
+        self.run(value.go_json_projection()?)
+    }
+
+    fn run(&mut self, root: GoJsonProjection) -> Result<GoJsonValue, GoAnyJsonError> {
+        let mut work = Vec::new();
+        let mut projected = Vec::new();
+        self.schedule_projection(root, &mut work, &mut projected)?;
+
+        while let Some(step) = work.pop() {
+            match step {
+                GoJsonWork::Project(value) => {
+                    let projection = match value.0.as_deref() {
+                        None => GoJsonProjection::Value(GoJsonValue::Null),
+                        Some(value) => value.go_json_projection()?,
+                    };
+                    self.schedule_projection(projection, &mut work, &mut projected)?;
+                }
+                GoJsonWork::FinishArray(len) => {
+                    let values = take_projected_tail(&mut projected, len);
+                    projected.push(GoJsonValue::Array(values));
+                }
+                GoJsonWork::FinishGoObject(names) => {
+                    let values = take_projected_tail(&mut projected, names.len());
+                    projected.push(GoJsonValue::GoObject(
+                        names.into_iter().zip(values).collect(),
+                    ));
+                }
+                GoJsonWork::FinishStruct(names) => {
+                    let values = take_projected_tail(&mut projected, names.len());
+                    projected.push(GoJsonValue::Struct(names.into_iter().zip(values).collect()));
+                }
+                GoJsonWork::ExitReference(seen_reference) => {
+                    self.exit_reference(seen_reference);
+                }
+            }
+        }
+
+        debug_assert_eq!(self.context.reference_depth, 0);
+        debug_assert!(self.context.seen_references.is_empty());
+        assert_eq!(projected.len(), 1, "Go JSON projection produced no root");
+        Ok(projected.pop().expect("checked one Go JSON root"))
+    }
+
+    fn schedule_projection(
+        &mut self,
+        projection: GoJsonProjection,
+        work: &mut Vec<GoJsonWork>,
+        projected: &mut Vec<GoJsonValue>,
+    ) -> Result<(), GoAnyJsonError> {
+        match projection {
+            GoJsonProjection::Value(value) => projected.push(value),
+            GoJsonProjection::Array(values) => {
+                self.schedule_array(None, values, work)?;
+            }
+            GoJsonProjection::Struct(fields) => self.schedule_struct(fields, work),
+            GoJsonProjection::ReferencedArray(reference, values) => {
+                self.schedule_array(Some(reference), values, work)?;
+            }
+            GoJsonProjection::ReferencedObject(reference, fields) => {
+                self.schedule_go_object(Some(reference), fields, work)?;
+            }
+            GoJsonProjection::ReferencedPointer(reference, value) => {
+                self.schedule_pointer(reference, value, work)?;
+            }
+            GoJsonProjection::InterfaceSlice(value) => {
+                if !value.values.is_allocated() {
+                    projected.push(GoJsonValue::Null);
+                } else {
+                    let reference = GoJsonReference::new(
+                        value.json_reference_identity(),
+                        GoTypeIdentity::unnamed("[]interface {}", GoTypeKind::Slice),
+                    );
+                    let seen_reference = self.enter_reference(&reference)?;
+                    let values = value.values.snapshot();
+                    self.schedule_array_after_enter(seen_reference, values, work);
+                }
+            }
+            GoJsonProjection::InterfaceMap(value) => {
+                let Some(values) = &value.values else {
+                    projected.push(GoJsonValue::Null);
+                    return Ok(());
+                };
+                let reference = GoJsonReference::new(
+                    GoJsonReferenceIdentity::Map(values.identity_address()),
+                    GoTypeIdentity::unnamed("map[string]interface {}", GoTypeKind::Map),
+                );
+                let seen_reference = self.enter_reference(&reference)?;
+                let fields = values.read().clone().into_iter().collect::<Vec<_>>();
+                self.schedule_go_object_after_enter(seen_reference, fields, work);
+            }
+            GoJsonProjection::InterfacePointer(value) => {
+                let Some(value) = &value.value else {
+                    projected.push(GoJsonValue::Null);
+                    return Ok(());
+                };
+                let reference = GoJsonReference::new(
+                    GoJsonReferenceIdentity::Pointer(value.identity_address()),
+                    GoTypeIdentity::unnamed("*interface {}", GoTypeKind::Pointer),
+                );
+                let seen_reference = self.enter_reference(&reference)?;
+                let value = value.read().clone();
+                self.schedule_pointer_after_enter(seen_reference, value, work);
+            }
+        }
+        Ok(())
+    }
+
+    fn schedule_array(
+        &mut self,
+        reference: Option<GoJsonReference>,
+        values: Vec<GoAny>,
+        work: &mut Vec<GoJsonWork>,
+    ) -> Result<(), GoAnyJsonError> {
+        if let Some(reference) = &reference {
+            let seen_reference = self.enter_reference(reference)?;
+            self.schedule_array_after_enter(seen_reference, values, work);
+        } else {
+            work.push(GoJsonWork::FinishArray(values.len()));
+            work.extend(values.into_iter().rev().map(GoJsonWork::Project));
+        }
+        Ok(())
+    }
+
+    fn schedule_array_after_enter(
+        &self,
+        seen_reference: Option<GoJsonSeenReference>,
+        values: Vec<GoAny>,
+        work: &mut Vec<GoJsonWork>,
+    ) {
+        work.push(GoJsonWork::ExitReference(seen_reference));
+        work.push(GoJsonWork::FinishArray(values.len()));
+        work.extend(values.into_iter().rev().map(GoJsonWork::Project));
+    }
+
+    fn schedule_go_object(
+        &mut self,
+        reference: Option<GoJsonReference>,
+        fields: Vec<(GoString, GoAny)>,
+        work: &mut Vec<GoJsonWork>,
+    ) -> Result<(), GoAnyJsonError> {
+        if let Some(reference) = &reference {
+            let seen_reference = self.enter_reference(reference)?;
+            self.schedule_go_object_after_enter(seen_reference, fields, work);
+        } else {
+            let (names, values): (Vec<_>, Vec<_>) = fields.into_iter().unzip();
+            work.push(GoJsonWork::FinishGoObject(names));
+            work.extend(values.into_iter().rev().map(GoJsonWork::Project));
+        }
+        Ok(())
+    }
+
+    fn schedule_go_object_after_enter(
+        &self,
+        seen_reference: Option<GoJsonSeenReference>,
+        fields: Vec<(GoString, GoAny)>,
+        work: &mut Vec<GoJsonWork>,
+    ) {
+        let (names, values): (Vec<_>, Vec<_>) = fields.into_iter().unzip();
+        work.push(GoJsonWork::ExitReference(seen_reference));
+        work.push(GoJsonWork::FinishGoObject(names));
+        work.extend(values.into_iter().rev().map(GoJsonWork::Project));
+    }
+
+    fn schedule_struct(&self, fields: Vec<(String, GoAny)>, work: &mut Vec<GoJsonWork>) {
+        let (names, values): (Vec<_>, Vec<_>) = fields.into_iter().unzip();
+        work.push(GoJsonWork::FinishStruct(names));
+        work.extend(values.into_iter().rev().map(GoJsonWork::Project));
+    }
+
+    fn schedule_pointer(
+        &mut self,
+        reference: GoJsonReference,
+        value: GoAny,
+        work: &mut Vec<GoJsonWork>,
+    ) -> Result<(), GoAnyJsonError> {
+        let seen_reference = self.enter_reference(&reference)?;
+        self.schedule_pointer_after_enter(seen_reference, value, work);
+        Ok(())
+    }
+
+    fn schedule_pointer_after_enter(
+        &self,
+        seen_reference: Option<GoJsonSeenReference>,
+        value: GoAny,
+        work: &mut Vec<GoJsonWork>,
+    ) {
+        work.push(GoJsonWork::ExitReference(seen_reference));
+        work.push(GoJsonWork::Project(value));
+    }
+
+    fn enter_reference(
+        &mut self,
+        reference: &GoJsonReference,
+    ) -> Result<Option<GoJsonSeenReference>, GoAnyJsonError> {
+        self.context.reference_depth += 1;
+        let tracked = self.context.reference_depth > GO_JSON_START_DETECTING_CYCLES_AFTER;
+        let seen_reference =
+            tracked.then(|| GoJsonSeenReference::new(reference.identity, &reference.dynamic_type));
+        if seen_reference
+            .as_ref()
+            .is_some_and(|reference| !self.context.seen_references.insert(reference.clone()))
+        {
+            self.context.reference_depth -= 1;
+            return Err(GoAnyJsonError::unsupported_value(
+                reference.dynamic_type.clone(),
+                format!(
+                    "encountered a cycle via {}",
+                    reference.dynamic_type.display_name()
+                ),
+            ));
+        }
+        Ok(seen_reference)
+    }
+
+    fn exit_reference(&mut self, seen_reference: Option<GoJsonSeenReference>) {
+        if let Some(seen_reference) = &seen_reference {
+            let removed = self.context.seen_references.remove(seen_reference);
+            debug_assert!(removed, "tracked Go JSON reference was not removed");
+        }
+        self.context.reference_depth -= 1;
+    }
+}
+
+fn take_projected_tail(projected: &mut Vec<GoJsonValue>, len: usize) -> Vec<GoJsonValue> {
+    let start = projected
+        .len()
+        .checked_sub(len)
+        .expect("Go JSON projection child underflow");
+    projected.split_off(start)
+}
+
+/// Owned JSON value assembled from [`GoAnyValue::go_json_projection`].
 ///
 /// Go strings remain byte preserving until serialization; byte slices retain
 /// their special base64 representation instead of becoming numeric arrays.
@@ -517,10 +798,10 @@ pub trait GoAnyValue: fmt::Debug + Send + Sync {
     /// Copies the source interface's dynamic value.
     fn copy_for_interface(&self) -> Box<dyn GoAnyValue>;
 
-    /// Projects the dynamic value through Go `encoding/json` semantics.
-    /// Nested interface values must be projected through `context` so map,
-    /// slice, and pointer cycles share one source traversal state.
-    fn go_json_value(&self, context: &mut GoJsonContext) -> Result<GoJsonValue, GoAnyJsonError>;
+    /// Supplies one declarative Go `encoding/json` projection step. Nested
+    /// children are returned rather than recursively visited so the central
+    /// traversal remains stack-safe and preserves source hook order.
+    fn go_json_projection(&self) -> Result<GoJsonProjection, GoAnyJsonError>;
 
     /// Appends the dynamic value's Go default `%v` bytes. A byte buffer is
     /// deliberate: Go strings may contain bytes that no Rust `str` can hold.
@@ -1174,83 +1455,42 @@ impl GoAnyValue for ColumnDefaultValue {
         Box::new(self.clone())
     }
 
-    fn go_json_value(&self, context: &mut GoJsonContext) -> Result<GoJsonValue, GoAnyJsonError> {
+    fn go_json_projection(&self) -> Result<GoJsonProjection, GoAnyJsonError> {
         match self {
-            Self::Int(value) => Ok(GoJsonValue::Int(*value)),
-            Self::Uint(value) => Ok(GoJsonValue::Uint(*value)),
-            Self::Byte(value) => Ok(GoJsonValue::Uint(u64::from(*value))),
-            Self::Float(value) if value.is_finite() => Ok(GoJsonValue::Float(*value)),
+            Self::Int(value) => Ok(GoJsonProjection::Value(GoJsonValue::Int(*value))),
+            Self::Uint(value) => Ok(GoJsonProjection::Value(GoJsonValue::Uint(*value))),
+            Self::Byte(value) => Ok(GoJsonProjection::Value(GoJsonValue::Uint(u64::from(
+                *value,
+            )))),
+            Self::Float(value) if value.is_finite() => {
+                Ok(GoJsonProjection::Value(GoJsonValue::Float(*value)))
+            }
             Self::Float(value) => Err(GoAnyJsonError::unsupported_value(
                 self.go_type_identity(),
                 go_non_finite_float_description(*value),
             )),
-            Self::Bool(value) => Ok(GoJsonValue::Bool(*value)),
-            Self::Str(value) => Ok(GoJsonValue::String(value.clone())),
-            Self::DefinedString(value) => Ok(GoJsonValue::String(value.value.clone())),
-            Self::Bytes(value) => Ok(GoJsonValue::Bytes(
+            Self::Bool(value) => Ok(GoJsonProjection::Value(GoJsonValue::Bool(*value))),
+            Self::Str(value) => Ok(GoJsonProjection::Value(GoJsonValue::String(value.clone()))),
+            Self::DefinedString(value) => Ok(GoJsonProjection::Value(GoJsonValue::String(
+                value.value.clone(),
+            ))),
+            Self::Bytes(value) => Ok(GoJsonProjection::Value(GoJsonValue::Bytes(
                 value.bytes.is_allocated().then(|| value.bytes.snapshot()),
-            )),
-            Self::Slice(value) => {
-                if !value.values.is_allocated() {
-                    return Ok(GoJsonValue::Null);
-                }
-                context.with_reference(
-                    value.json_reference_identity(),
-                    self.go_type_identity(),
-                    |context| {
-                        let mut projected = Vec::with_capacity(value.values.len());
-                        for value in value.values.snapshot() {
-                            projected.push(context.project(&value)?);
-                        }
-                        Ok(GoJsonValue::Array(projected))
-                    },
-                )
+            ))),
+            Self::Slice(value) if !value.values.is_allocated() => {
+                Ok(GoJsonProjection::Value(GoJsonValue::Null))
             }
-            Self::Map(value) => {
-                let Some(values) = &value.values else {
-                    return Ok(GoJsonValue::Null);
-                };
-                context.with_reference(
-                    GoJsonReferenceIdentity::Map(values.identity_address()),
-                    self.go_type_identity(),
-                    |context| {
-                        let values = values.read().clone();
-                        let mut projected = Vec::with_capacity(values.len());
-                        for (key, value) in values {
-                            projected.push((key, context.project(&value)?));
-                        }
-                        Ok(GoJsonValue::GoObject(projected))
-                    },
-                )
+            Self::Slice(value) => Ok(GoJsonProjection::InterfaceSlice(value.clone())),
+            Self::Map(value) if !value.is_allocated() => {
+                Ok(GoJsonProjection::Value(GoJsonValue::Null))
             }
-            Self::Pointer(value) => match &value.value {
-                None => Ok(GoJsonValue::Null),
-                Some(value) => context.with_reference(
-                    GoJsonReferenceIdentity::Pointer(value.identity_address()),
-                    self.go_type_identity(),
-                    |context| {
-                        // Do not hold the synchronization guard across a
-                        // recursive projection. Loading an interface copies
-                        // its header in Go as well.
-                        let value = value.read().clone();
-                        context.project(&value)
-                    },
-                ),
-            },
-            Self::Array(value) => {
-                let mut projected = Vec::with_capacity(value.values.len());
-                for value in &value.values {
-                    projected.push(context.project(value)?);
-                }
-                Ok(GoJsonValue::Array(projected))
+            Self::Map(value) => Ok(GoJsonProjection::InterfaceMap(value.clone())),
+            Self::Pointer(value) if value.value.is_none() => {
+                Ok(GoJsonProjection::Value(GoJsonValue::Null))
             }
-            Self::Struct(value) => {
-                let mut projected = Vec::with_capacity(value.fields.len());
-                for (name, value) in &value.fields {
-                    projected.push((name.clone(), context.project(value)?));
-                }
-                Ok(GoJsonValue::Struct(projected))
-            }
+            Self::Pointer(value) => Ok(GoJsonProjection::InterfacePointer(value.clone())),
+            Self::Array(value) => Ok(GoJsonProjection::Array(value.values.clone())),
+            Self::Struct(value) => Ok(GoJsonProjection::Struct(value.fields.clone())),
         }
     }
 
@@ -1429,11 +1669,10 @@ mod tests {
             Box::new(Self(self.0))
         }
 
-        fn go_json_value(
-            &self,
-            _context: &mut GoJsonContext,
-        ) -> Result<GoJsonValue, GoAnyJsonError> {
-            Ok(GoJsonValue::String(GoString::from_bytes(self.0.to_vec())))
+        fn go_json_projection(&self) -> Result<GoJsonProjection, GoAnyJsonError> {
+            Ok(GoJsonProjection::Value(GoJsonValue::String(
+                GoString::from_bytes(self.0.to_vec()),
+            )))
         }
 
         fn append_go_format(&self, output: &mut Vec<u8>) {
@@ -1442,6 +1681,51 @@ mod tests {
 
         fn equality_projection(&self) -> Option<GoEqualityProjection<'_>> {
             Some(GoEqualityProjection::Opaque(&self.0))
+        }
+    }
+
+    #[derive(Debug)]
+    struct OrderedHook {
+        id: u8,
+        log: GoShared<Vec<u8>>,
+        children: Vec<GoAny>,
+    }
+
+    impl GoAnyValue for OrderedHook {
+        fn go_type(&self) -> GoTypeIdentity {
+            GoTypeIdentity::defined(
+                "example.com/hooks",
+                "Ordered",
+                "hooks.Ordered",
+                GoTypeKind::Other,
+            )
+        }
+
+        fn copy_for_interface(&self) -> Box<dyn GoAnyValue> {
+            Box::new(Self {
+                id: self.id,
+                log: self.log.clone(),
+                children: self.children.clone(),
+            })
+        }
+
+        fn go_json_projection(&self) -> Result<GoJsonProjection, GoAnyJsonError> {
+            self.log.write().push(self.id);
+            if self.children.is_empty() {
+                Ok(GoJsonProjection::Value(GoJsonValue::Uint(u64::from(
+                    self.id,
+                ))))
+            } else {
+                Ok(GoJsonProjection::Array(self.children.clone()))
+            }
+        }
+
+        fn append_go_format(&self, output: &mut Vec<u8>) {
+            output.extend_from_slice(self.id.to_string().as_bytes());
+        }
+
+        fn equality_projection(&self) -> Option<GoEqualityProjection<'_>> {
+            None
         }
     }
 
@@ -1620,6 +1904,34 @@ mod tests {
         assert!(matches!(custom.view(), Some(GoAnyView::Custom)));
     }
 
+    #[test]
+    fn json_projection_hooks_remain_depth_first_on_the_work_stack() {
+        let log = GoShared::new(Vec::new());
+        let leaf = |id| {
+            GoAny::new(OrderedHook {
+                id,
+                log: log.clone(),
+                children: Vec::new(),
+            })
+        };
+        let left = GoAny::new(OrderedHook {
+            id: 2,
+            log: log.clone(),
+            children: vec![leaf(4)],
+        });
+        let root = GoAny::new(OrderedHook {
+            id: 1,
+            log: log.clone(),
+            children: vec![left, leaf(3)],
+        });
+
+        assert_eq!(
+            String::from_utf8(crate::serde_helpers::to_go_json(&root).unwrap()).unwrap(),
+            "[[4],3]"
+        );
+        assert_eq!(log.read().as_slice(), &[1, 2, 4, 3]);
+    }
+
     fn assert_cycle_error(error: &GoAnyJsonError, display_type: &str, kind: GoTypeKind) {
         assert_eq!(error.kind(), GoAnyJsonErrorKind::UnsupportedValue);
         let dynamic_type = error.dynamic_type().unwrap();
@@ -1699,6 +2011,21 @@ mod tests {
     }
 
     #[test]
+    fn json_projection_removes_tracked_aliases_before_the_next_sibling() {
+        let pointer = GoAnyPointer::new(ColumnDefaultValue::Int(1).into());
+        let mut branch = GoAny::from(ColumnDefaultValue::Pointer(pointer));
+        for _ in 0..=GO_JSON_START_DETECTING_CYCLES_AFTER {
+            branch = ColumnDefaultValue::Slice(GoAnySlice::from_values(vec![branch])).into();
+        }
+        let root = GoAny::from(ColumnDefaultValue::Array(GoAnyArray::new(
+            GoTypeIdentity::unnamed("[2]interface {}", GoTypeKind::Array),
+            vec![branch.clone(), branch],
+        )));
+
+        assert!(root.go_json_value().is_ok());
+    }
+
+    #[test]
     fn json_slice_cycle_key_includes_visible_len_after_threshold() {
         let shared = GoAnySlice::from_values(vec![GoAny::nil()]);
         let mut empty_alias = shared.clone();
@@ -1715,35 +2042,48 @@ mod tests {
         cleanup.set(0, GoAny::nil());
     }
 
-    fn project_repeated_reference(
+    fn enter_repeated_reference(
         context: &mut GoJsonContext,
-        remaining: usize,
-    ) -> Result<GoJsonValue, GoAnyJsonError> {
-        if remaining == 0 {
-            return Ok(GoJsonValue::Null);
-        }
-        context.with_reference(
+        depth: usize,
+    ) -> Result<(), GoAnyJsonError> {
+        let reference = GoJsonReference::new(
             GoJsonReferenceIdentity::Pointer(1),
             GoTypeIdentity::unnamed("*interface {}", GoTypeKind::Pointer),
-            |context| project_repeated_reference(context, remaining - 1),
-        )
+        );
+        let mut traversal = GoJsonTraversal { context };
+        let mut entered = Vec::with_capacity(depth);
+        for _ in 0..depth {
+            match traversal.enter_reference(&reference) {
+                Ok(seen_reference) => entered.push(seen_reference),
+                Err(error) => {
+                    while let Some(seen_reference) = entered.pop() {
+                        traversal.exit_reference(seen_reference);
+                    }
+                    return Err(error);
+                }
+            }
+        }
+        while let Some(seen_reference) = entered.pop() {
+            traversal.exit_reference(seen_reference);
+        }
+        Ok(())
     }
 
     #[test]
     fn json_cycle_threshold_and_traversal_cleanup_match_go_1_25() {
         let mut context = GoJsonContext::new();
         assert!(
-            project_repeated_reference(&mut context, GO_JSON_START_DETECTING_CYCLES_AFTER + 1,)
+            enter_repeated_reference(&mut context, GO_JSON_START_DETECTING_CYCLES_AFTER + 1,)
                 .is_ok()
         );
 
         let error =
-            project_repeated_reference(&mut context, GO_JSON_START_DETECTING_CYCLES_AFTER + 2)
+            enter_repeated_reference(&mut context, GO_JSON_START_DETECTING_CYCLES_AFTER + 2)
                 .unwrap_err();
         assert_cycle_error(&error, "*interface {}", GoTypeKind::Pointer);
 
         assert_eq!(context.reference_depth, 0);
         assert!(context.seen_references.is_empty());
-        assert!(project_repeated_reference(&mut context, 1).is_ok());
+        assert!(enter_repeated_reference(&mut context, 1).is_ok());
     }
 }
