@@ -28,7 +28,7 @@ fn source_non_partition_identity_uses_table_id() {
 fn source_partition_identity_uses_partition_id() {
     let partition = AnalyzeTableId::new(42, 1001);
     assert_eq!(
-        tidb_stats::analyze_table_id::AnalyzeTableId::statistics_id(&partition),
+        tidb_stats::analyze_table_id::AnalyzeTableId::statistics_id(partition),
         1001
     );
     assert!(partition.is_partition_table());

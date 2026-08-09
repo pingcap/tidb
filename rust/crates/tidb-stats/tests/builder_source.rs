@@ -291,8 +291,10 @@ fn an_empty_column_produces_no_buckets() {
 /// whether an index range scan will read rows in table order.
 #[test]
 fn correlation_reads_the_physical_order() {
-    let ascending: Vec<SampleItem> = (0..10).map(|value| item(value, value)).collect();
-    let descending: Vec<SampleItem> = (0..10).map(|value| item(value, 9 - value)).collect();
+    let ascending: Vec<SampleItem> = (0..10).map(|value| item(value, value as isize)).collect();
+    let descending: Vec<SampleItem> = (0..10)
+        .map(|value| item(value, (9 - value) as isize))
+        .collect();
     for (samples, expected) in [(ascending, 1.0_f64), (descending, -1.0_f64)] {
         let built = build_hist_and_topn(
             1,

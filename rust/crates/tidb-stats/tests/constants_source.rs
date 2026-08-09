@@ -14,7 +14,7 @@
 
 //! Source-backed tests for statistics default constants.
 
-use tidb_stats::{DEFAULT_HISTOGRAM_BUCKETS, DEFAULT_TOP_N_VALUE};
+use tidb_stats::DEFAULT_HISTOGRAM_BUCKETS;
 
 #[test]
 fn source_defaults_match_statistics_constants() {

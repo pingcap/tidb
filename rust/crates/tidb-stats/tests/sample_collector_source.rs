@@ -120,7 +120,7 @@ fn source_collect_null_nonnull_and_destroy_boundaries_match() {
     assert_eq!(collector.total_size, -1);
     assert_eq!(collector.seen_values, 1);
     assert_eq!(collector.samples.len(), 1);
-    assert_eq!(collector.samples[0].value.go_bytes(), []);
+    assert!(collector.samples[0].value.go_bytes().is_empty());
     assert!(collector
         .fm_sketch
         .as_ref()

@@ -19,8 +19,8 @@ use std::time::Duration;
 use chrono::{TimeZone, Utc};
 
 use tidb_stats::{
-    AnalyzeJob, AnalyzeProgress, JobType, ANALYZE_FAILED, ANALYZE_FINISHED, ANALYZE_PENDING,
-    ANALYZE_RUNNING, DUMP_TIME_INTERVAL, MAX_DELTA,
+    AnalyzeJob, AnalyzeProgress, JobType, ANALYZE_FAILED, ANALYZE_FINISHED, ANALYZE_RUNNING,
+    DUMP_TIME_INTERVAL, MAX_DELTA,
 };
 
 #[test]
