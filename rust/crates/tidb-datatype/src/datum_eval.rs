@@ -88,7 +88,7 @@ mod tests {
     use crate::Decimal;
 
     #[test]
-    fn test_compute_plus_and_minus_source_rows() {
+    fn test_compute_plus_and_minus() {
         for (left, right, expected) in [
             (Datum::Int(72), Datum::Int(28), Datum::Int(100)),
             (Datum::Int(72), Datum::UInt(28), Datum::UInt(100)),
