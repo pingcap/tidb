@@ -452,7 +452,7 @@ mod tests {
                 | FieldTypeCode::Blob
                 | FieldTypeCode::TinyBlob
                 | FieldTypeCode::MediumBlob
-                | FieldTypeCode::LongBlob => chk.append_string(i, &k.to_string()),
+                | FieldTypeCode::LongBlob => chk.append_string(i, k.to_string()),
                 FieldTypeCode::Date | FieldTypeCode::Datetime | FieldTypeCode::Timestamp => {
                     chk.append_time(i, time_from_days(2000 * 365 + k));
                 }

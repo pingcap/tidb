@@ -452,7 +452,7 @@ mod tests {
                 )
                 .expect("a datetime"),
             );
-            chunk.append_string(7, &format!("v{i}"));
+            chunk.append_string(7, format!("v{i}"));
             chunk.append_bytes(8, &[i as u8, i as u8 + 1]);
             chunk.append_json(9, &BinaryJSON::parse(&i.to_string()).expect("JSON"));
             chunk.append_enum(10, &MysqlEnum::new("e", i as u64));
@@ -583,7 +583,7 @@ mod tests {
             if row % 4 == 2 {
                 chunk.append_null(1);
             } else {
-                chunk.append_string(1, &format!("value-{row}"));
+                chunk.append_string(1, format!("value-{row}"));
             }
         }
         (fields, chunk)

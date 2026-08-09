@@ -623,7 +623,7 @@ mod tests {
         for index in 0..12 {
             let mut chunk = allocator.alloc(&varchar, 1, 1);
             if index == 0 {
-                chunk.append_string(0, &"x".repeat(128));
+                chunk.append_string(0, "x".repeat(128));
             }
         }
         allocator.reset();

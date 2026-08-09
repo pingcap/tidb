@@ -151,7 +151,7 @@ fn reconstruct_var_len() {
             if i % 2 == 0 {
                 col.append_null();
             } else {
-                col.append_string(&(i * i * i).to_string());
+                col.append_string((i * i * i).to_string());
             }
         }
 

@@ -1161,7 +1161,7 @@ mod tests {
         let mut chunk = Chunk::new_with_capacity(&fields, 8);
         for row in 0..4 {
             chunk.append_int64(0, row);
-            chunk.append_string(1, &format!("s{row}"));
+            chunk.append_string(1, format!("s{row}"));
         }
         chunk.set_sel(Some(vec![1, 3]));
         chunk.append_int64(0, 9);
@@ -1189,7 +1189,7 @@ mod tests {
         let mut source = Chunk::new_with_capacity(&fields, 6);
         for row in 0..3 {
             source.append_int64(0, row);
-            source.append_string(1, &format!("s{row}"));
+            source.append_string(1, format!("s{row}"));
         }
 
         let mut range = Chunk::new_with_capacity(&fields, 8);

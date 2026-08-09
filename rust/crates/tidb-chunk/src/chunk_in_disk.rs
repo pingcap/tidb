@@ -502,7 +502,7 @@ mod tests {
         let mut chk = Chunk::new_with_capacity(&mixed_fields(), 8);
         for i in 0..5i64 {
             chk.append_int64(0, i * 1000);
-            chk.append_string(1, &format!("s{i}"));
+            chk.append_string(1, format!("s{i}"));
             chk.append_float64(2, i as f64 + 0.5);
         }
         chk.capacity = 17;
@@ -572,7 +572,7 @@ mod tests {
             if r % 7 == 3 {
                 chk.append_null(1);
             } else {
-                chk.append_string(1, &format!("row-{c}-{r}-{}", "x".repeat(r % 11)));
+                chk.append_string(1, format!("row-{c}-{r}-{}", "x".repeat(r % 11)));
             }
             chk.append_float64(2, n as f64 / 3.0);
         }
@@ -589,7 +589,7 @@ mod tests {
             let mut chk = Chunk::new_with_capacity(&fields, 32);
             for row_idx in 0..32usize {
                 let ordinal = chunk_idx * 32 + row_idx;
-                chk.append_string(0, &"x".repeat(ordinal % 31 + 1));
+                chk.append_string(0, "x".repeat(ordinal % 31 + 1));
                 if ordinal % 11 == 5 {
                     chk.append_null(1);
                 } else {

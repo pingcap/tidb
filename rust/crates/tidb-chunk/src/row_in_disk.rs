@@ -567,7 +567,7 @@ mod tests {
         for chk_idx in 0..num_chk {
             let mut chk = Chunk::new_with_capacity(&fields, num_row);
             for row_idx in 0..num_row {
-                chk.append_string(0, &"西xi瓜gua".repeat(row_idx + 1));
+                chk.append_string(0, "西xi瓜gua".repeat(row_idx + 1));
                 chk.append_null(1);
                 chk.append_null(2);
                 chk.append_int64(3, (chk_idx * num_row + row_idx) as i64);
@@ -600,7 +600,7 @@ mod tests {
             let mut chk = Chunk::new_with_capacity(&fields, 50);
             for row_idx in 0..50usize {
                 let n = chk_idx * 50 + row_idx;
-                chk.append_string(0, &"z".repeat(n % 17));
+                chk.append_string(0, "z".repeat(n % 17));
                 chk.append_int64(1, n as i64);
             }
             chunks.push(chk);
@@ -615,7 +615,7 @@ mod tests {
             let mut chk = Chunk::new_with_capacity(&fields, 32);
             for row_idx in 0..32usize {
                 let ordinal = chunk_idx * 32 + row_idx;
-                chk.append_string(0, &"x".repeat(ordinal % 31 + 1));
+                chk.append_string(0, "x".repeat(ordinal % 31 + 1));
                 if ordinal % 11 == 5 {
                     chk.append_null(1);
                 } else {
