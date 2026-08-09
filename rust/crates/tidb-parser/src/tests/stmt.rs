@@ -535,6 +535,21 @@ fn prepared_statements() {
     assert_eq!(visitor.0, 3);
 }
 
+/// `pkg/parser/parser_test.go::TestPrepare`.
+#[test]
+fn test_prepare() {
+    for (sql, expected) in [
+        (
+            "PREPARE pname FROM 'SELECT ?'",
+            "PREPARE `pname` FROM 'SELECT ?'",
+        ),
+        ("PREPARE pname FROM @test", "PREPARE `pname` FROM @`test`"),
+        ("PREPARE `` FROM @test", "PREPARE `` FROM @`test`"),
+    ] {
+        assert_eq!(r(sql), expected, "source SQL: {sql}");
+    }
+}
+
 #[test]
 fn current_time_functions() {
     // NOW always needs `()`; CURRENT_TIMESTAMP also parses bare (a real
