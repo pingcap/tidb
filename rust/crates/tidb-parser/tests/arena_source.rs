@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Direct source tests for `pkg/parser/arena.go`.
+//! Direct source tests for `pkg/parser/arena.go` and `arena_test.go`.
 
 use std::collections::HashSet;
 
@@ -60,12 +60,15 @@ fn test_arena_alloc_slice() {
 #[test]
 fn test_arena_reset() {
     let mut arena = Arena::new();
-    let mut old = alloc::<Bytes<1024>>(&arena);
-    old.0[0] = 7;
+    let mut filled = (0..100)
+        .map(|_| alloc::<Bytes<1024>>(&arena))
+        .collect::<Vec<_>>();
+    filled[0].0[0] = 7;
     arena.reset();
     let fresh = alloc::<Bytes<1024>>(&arena);
     assert!(fresh.0.iter().all(|value| *value == 0));
-    assert_eq!(old.0[0], 7);
+    assert_eq!(filled.len(), 100);
+    assert_eq!(filled[0].0[0], 7);
 }
 
 #[test]
@@ -91,7 +94,9 @@ fn test_arena_oversized_alloc() {
         (huge.0[0], huge.0[DEFAULT_BLOCK_SIZE * 2 - 1]),
         (0xff, 0xfe)
     );
-    assert_eq!(*alloc::<i64>(&arena), 0);
+    let mut small = alloc::<i64>(&arena);
+    *small = 12_345;
+    assert_eq!(*small, 12_345);
 }
 
 #[derive(Default)]

@@ -12,7 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Stable workloads corresponding to Go's three arena benchmarks.
+//! Stable workloads corresponding to `pkg/parser/arena_test.go`'s three
+//! arena benchmarks.
 
 use std::hint::black_box;
 
@@ -20,7 +21,10 @@ use tidb_parser::arena::{alloc, Arena, Slab};
 
 #[derive(Default)]
 struct Node {
+    _left: Option<Box<Node>>,
+    _right: Option<Box<Node>>,
     value: i64,
+    _flags: u64,
 }
 
 #[test]
@@ -39,7 +43,10 @@ fn benchmark_arena_alloc() {
 #[test]
 fn benchmark_heap_alloc() {
     for index in 0..10_000 {
-        black_box(Box::new(Node { value: index }));
+        black_box(Box::new(Node {
+            value: index,
+            ..Node::default()
+        }));
     }
 }
 
