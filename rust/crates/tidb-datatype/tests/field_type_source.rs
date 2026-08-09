@@ -1111,7 +1111,7 @@ fn runtime_agg_field_type() {
 
 /// Go: pkg/types/field_type_test.go:303 TestAggFieldTypeForTypeFlag.
 #[test]
-fn runtime_agg_field_type_flags() {
+fn test_agg_field_type_for_type_flag() {
     let plain = FieldType::new(C::LongLong);
     assert_eq!(agg_field_type(&[plain.clone(), plain.clone()]).flags(), 0);
     assert_eq!(
@@ -1134,7 +1134,7 @@ fn runtime_agg_field_type_flags() {
 
 /// Go: pkg/types/field_type_test.go:330 TestAggFieldTypeForIntegralPromotion.
 #[test]
-fn runtime_agg_field_type_integral_promotion() {
+fn test_agg_field_type_for_integral_promotion() {
     let codes = [
         C::Tiny,
         C::Short,
