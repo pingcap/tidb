@@ -652,7 +652,10 @@ mod tests {
         datums_to_string_no_error_smart, estimated_mem_usage, is_printable, sort_datums, Datum,
         DatumKind,
     };
-    use crate::{parse_enum_value, Charset, Collation, ConversionFlags, Decimal, Time};
+    use crate::{
+        parse_datetime, parse_enum_value, BinaryJSON, BinaryLiteral, Charset, Collation,
+        ConversionFlags, Decimal, MySqlDuration, Time,
+    };
 
     /// Source: `pkg/types/datum.go` (`NewStringDatum`,
     /// `NewCollationStringDatum`, `GetString`, `GetBytes`, and `SetBytes`).
@@ -850,7 +853,7 @@ mod tests {
     }
 
     #[test]
-    fn test_clone_datum_source_rows() {
+    fn test_clone_datum() {
         let row = vec![
             Datum::Int(72),
             Datum::UInt(72),
@@ -875,7 +878,7 @@ mod tests {
     }
 
     #[test]
-    fn test_estimated_mem_usage_representation_rows() {
+    fn test_estimated_mem_usage() {
         // The Go source row measures a 72-byte Datum, 40-byte MyDecimal,
         // 8-byte Time, and 5,530 bytes for ten copies. Rust deliberately owns
         // a different enum/heap representation, so exact byte parity is not a
@@ -908,24 +911,41 @@ mod tests {
     }
 
     #[test]
-    fn source_datums_to_string_and_null_rows() {
-        assert!(datums_contain_null(&[Datum::Int(1), Datum::Null]));
-        assert!(!datums_contain_null(&[Datum::Int(1), Datum::UInt(2)]));
-
+    fn test_datums_to_string() {
+        let zero_time = Datum::new_time(
+            parse_datetime("0000-00-00 00:00:00", &chrono_tz::UTC, true, false)
+                .unwrap()
+                .time,
+        );
         let datums = [
             Datum::Int(1),
             Datum::UInt(2),
             Datum::Float32(-3.1111111),
             Datum::Real(4.123),
+            Datum::Real(f64::INFINITY),
             Datum::new_decimal(Decimal::from_signed_literal("6.6")),
             Datum::new_string("abc"),
+            Datum::new_collation_string("", Collation::Binary),
+            Datum::new_duration(MySqlDuration::from_nanoseconds(11_111, 0).unwrap()),
+            zero_time,
+            Datum::new_bytes(b"xxx"),
+            Datum::new_binary_literal(BinaryLiteral::from(Vec::<u8>::new())),
+            Datum::new_json(BinaryJSON::parse("null").unwrap()),
             Datum::MinNotNull,
             Datum::MaxValue,
         ];
         assert_eq!(
             datums_to_string(&datums, true, false).unwrap(),
-            "(1, 2, -3.1111112, 4.123, 6.6, \"abc\", -inf, +inf)"
+            "(1, 2, -3.1111112, 4.123, +Inf, 6.6, \"abc\", \"\", 00:00:00, \
+             0000-00-00 00:00:00, xxx, , null, -inf, +inf)"
         );
+    }
+
+    #[test]
+    fn datum_row_helpers() {
+        assert!(datums_contain_null(&[Datum::Int(1), Datum::Null]));
+        assert!(!datums_contain_null(&[Datum::Int(1), Datum::UInt(2)]));
+
         let mut sortable = vec![Datum::Int(3), Datum::Int(-1), Datum::Int(2)];
         sort_datums(&mut sortable).unwrap();
         assert_eq!(sortable, vec![Datum::Int(-1), Datum::Int(2), Datum::Int(3)]);
@@ -940,7 +960,7 @@ mod tests {
     }
 
     #[test]
-    fn test_is_printable_source_rows() {
+    fn test_is_printable() {
         for (input, expected) in [
             (b"abc".as_slice(), true),
             (b"a\0bc".as_slice(), false),
