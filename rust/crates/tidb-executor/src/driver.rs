@@ -1854,8 +1854,16 @@ pub(super) fn run_select_traced_with_delivery(
     // A direct one-column DISTINCT groups the source expression itself. Go
     // absorbs its FIRST_ROW output projection into HashAgg, and places a
     // valid ORDER BY on that output above the aggregate.
-    let projection_elided =
+    let projection_elision_candidate =
         cop_projection_ready || cop_filtered_projection_ready || full_row_projection;
+    // A correlated subquery in HAVING appends its Apply result to the source
+    // row after the identity-projection decision above was made.  The final
+    // projection is no longer an identity in that case: it has to trim the
+    // private Apply column before the row reaches the client.  Keep elision
+    // fail-closed on the physical output width so Row::GetDatumRow retains
+    // Go's one-field-type-per-chunk-column invariant.
+    let projection_elided =
+        projection_elision_candidate && source.schema().columns.len() == out_schema.columns.len();
     // Only EXPLAIN needs a second view of the executable expression tree.
     // Ordinary execution moves the sole copy into ProjectionExec, so the
     // TPCC hot path pays no clone for physical-expression rendering.
