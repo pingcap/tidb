@@ -19,9 +19,8 @@
 //! `InitializeConfig` (flag parsing + `os.Exit`), the global-config atomic
 //! singleton, and `Load`'s TOML-metadata undecoded/instance-section
 //! migration (which depends on the toml library's metadata API — a
-//! following tranche). `Valid`'s keyspace-name check delegates to
-//! `pkg/util/naming` and the skip-grant-table check to the process euid;
-//! both are noted where they land.
+//! following tranche). `Valid`'s skip-grant-table check delegates to the
+//! process euid and is noted where it lands.
 
 use serde::{Deserialize, Serialize};
 
@@ -66,6 +65,14 @@ const MAX_DXF_RESOURCE_LIMIT: i64 = 100;
 const DEF_PORT: u32 = 4000;
 const DEF_HOST: &str = "0.0.0.0";
 const DEF_TEMP_DIR: &str = "/tmp/tidb";
+const MAX_KEYSPACE_NAME_LENGTH: usize = 20;
+
+fn valid_keyspace_name(name: &str) -> bool {
+    name.len() <= MAX_KEYSPACE_NAME_LENGTH
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+}
 
 /// Configuration options (Go `Config`). Deprecated/upgrade-only fields are
 /// carried for TOML round-trip fidelity, as in the source.
@@ -381,9 +388,12 @@ fn has_root_privilege() -> bool {
 impl Config {
     /// Go `Config.Valid`.
     pub fn valid(&self) -> Result<(), String> {
-        // Keyspace-name check delegates to pkg/util/naming in Go; deferred
-        // here (empty and simple names pass). Full validation lands with
-        // that unit.
+        if !valid_keyspace_name(&self.keyspace_name) {
+            return Err(format!(
+                "invalid keyspace name: the value '{}' is invalid. It must be {} characters or fewer and consist only of letters (a-z, A-Z), numbers (0-9), hyphens (-), and underscores (_)",
+                self.keyspace_name, MAX_KEYSPACE_NAME_LENGTH
+            ));
+        }
 
         if self.security.skip_grant_table && !has_root_privilege() {
             return Err("TiDB run with skip-grant-table need root privilege".into());
@@ -630,6 +640,26 @@ mod tests {
             .valid()
             .unwrap_err()
             .contains("keyspace-activate can only be configured for starter deploy mode"));
+    }
+
+    // Go TestKeyspaceName.
+    #[test]
+    fn test_keyspace_name() {
+        let mut config = new_config();
+        config.keyspace_name = "#!".to_owned();
+        assert!(config.valid().unwrap_err().contains("is invalid"));
+
+        config.keyspace_name = "abc".to_owned();
+        config.valid().unwrap();
+
+        config.keyspace_name = "18446744073709551615".to_owned();
+        config.valid().unwrap();
+
+        config.keyspace_name = "a18446744073709551615".to_owned();
+        assert!(config
+            .valid()
+            .unwrap_err()
+            .contains("invalid keyspace name"));
     }
 
     // Go TestMaxIndexLength.
