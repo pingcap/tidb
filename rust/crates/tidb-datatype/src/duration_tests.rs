@@ -262,7 +262,7 @@ fn complete_duration_parser_handles_source_datetime_fallback_rows() {
 }
 
 #[test]
-fn complete_duration_parser_matches_all_test_time_rows() {
+fn test_time() {
     for (input, expected) in [
         ("10:11:12", "10:11:12"),
         ("101112", "10:11:12"),
@@ -331,6 +331,33 @@ fn complete_duration_parser_matches_all_test_time_rows() {
         overflow.event(),
         Some(DurationParseEvent::Overflow(DurationOverflow::Positive))
     );
+
+    assert!(parse_duration(b"00:00:00.1", -2).is_err());
+    for (left, right, expected) in [
+        (1, 0, std::cmp::Ordering::Greater),
+        (0, 1, std::cmp::Ordering::Less),
+        (0, 0, std::cmp::Ordering::Equal),
+    ] {
+        let left = MySqlDuration::from_nanoseconds(left, 0).unwrap();
+        let right = MySqlDuration::from_nanoseconds(right, 0).unwrap();
+        assert_eq!(left.compare(right), expected);
+    }
+}
+
+#[test]
+fn test_duration_clock() {
+    for (input, hour, minute, second, microsecond) in [
+        ("11:11:11.11", 11, 11, 11, 110_000),
+        ("1 11:11:11.000011", 35, 11, 11, 11),
+        ("2010-10-10 11:11:11.000011", 11, 11, 11, 11),
+    ] {
+        let parsed = parse_mysql_duration(input, 6, &chrono_tz::UTC, true, false).unwrap();
+        let duration = MySqlDuration::from_nanoseconds(parsed.nanoseconds(), parsed.fsp()).unwrap();
+        assert_eq!(duration.hour(), hour, "{input}");
+        assert_eq!(duration.minute(), minute, "{input}");
+        assert_eq!(duration.second(), second, "{input}");
+        assert_eq!(duration.microsecond(), microsecond, "{input}");
+    }
 }
 
 #[test]
