@@ -246,7 +246,7 @@ impl Decoder {
         };
 
         let bitmap_bytes = rows.div_ceil(8);
-        if destination.length % 8 == 0 {
+        if destination.length.is_multiple_of(8) {
             destination
                 .null_bitmap
                 .extend_from_slice(&source.null_bitmap[..bitmap_bytes]);
