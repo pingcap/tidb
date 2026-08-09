@@ -240,6 +240,101 @@ fn test_trace() {
     }
 }
 
+/// Exact parse/restore table from `pkg/parser/parser_test.go::TestComment`.
+#[test]
+fn test_comment() {
+    let cases = [
+        (
+            "create table t (c int comment 'comment')",
+            Some("CREATE TABLE `t` (`c` INT COMMENT 'comment')"),
+        ),
+        (
+            "create table t (c int) comment = 'comment'",
+            Some("CREATE TABLE `t` (`c` INT) COMMENT = 'comment'"),
+        ),
+        (
+            "create table t (c int) comment 'comment'",
+            Some("CREATE TABLE `t` (`c` INT) COMMENT = 'comment'"),
+        ),
+        ("create table t (c int) comment comment", None),
+        (
+            "create table t (comment text)",
+            Some("CREATE TABLE `t` (`comment` TEXT)"),
+        ),
+        (
+            "START TRANSACTION /*!40108 WITH CONSISTENT SNAPSHOT */",
+            Some("START TRANSACTION"),
+        ),
+        (
+            "/*comment*/ /*comment*/ select c /* this is a comment */ from t;",
+            Some("SELECT `c` FROM `t`"),
+        ),
+        ("delete from t where a = 7 or 1=1/*' and b = 'p'", None),
+        ("create table t (ssl int)", None),
+        ("create table t (require int)", None),
+        (
+            "create table t (account int)",
+            Some("CREATE TABLE `t` (`account` INT)"),
+        ),
+        (
+            "create table t (expire int)",
+            Some("CREATE TABLE `t` (`expire` INT)"),
+        ),
+        (
+            "create table t (cipher int)",
+            Some("CREATE TABLE `t` (`cipher` INT)"),
+        ),
+        (
+            "create table t (issuer int)",
+            Some("CREATE TABLE `t` (`issuer` INT)"),
+        ),
+        (
+            "create table t (never int)",
+            Some("CREATE TABLE `t` (`never` INT)"),
+        ),
+        (
+            "create table t (subject int)",
+            Some("CREATE TABLE `t` (`subject` INT)"),
+        ),
+        (
+            "create table t (x509 int)",
+            Some("CREATE TABLE `t` (`x509` INT)"),
+        ),
+        (
+            r#"create user commentUser COMMENT '123456' '{"name": "Tom", "age", 19}"#,
+            None,
+        ),
+        (
+            r#"alter user commentUser COMMENT '123456' '{"name": "Tom", "age", 19}"#,
+            None,
+        ),
+        (
+            "create user commentUser COMMENT '123456'",
+            Some("CREATE USER `commentUser`@`%` COMMENT '123456'"),
+        ),
+        (
+            "alter user commentUser COMMENT '123456'",
+            Some("ALTER USER `commentUser`@`%` COMMENT '123456'"),
+        ),
+        (
+            r#"create user commentUser ATTRIBUTE '{"name": "Tom", "age", 19}'"#,
+            Some(r#"CREATE USER `commentUser`@`%` ATTRIBUTE '{"name": "Tom", "age", 19}'"#),
+        ),
+        (
+            r#"alter user commentUser ATTRIBUTE '{"name": "Tom", "age", 19}'"#,
+            Some(r#"ALTER USER `commentUser`@`%` ATTRIBUTE '{"name": "Tom", "age", 19}'"#),
+        ),
+    ];
+
+    assert_eq!(cases.len(), 23, "Go source row count drifted");
+    for (sql, expected) in cases {
+        match expected {
+            Some(expected) => assert_eq!(r(sql), expected, "source SQL: {sql}"),
+            None => assert!(parse(sql).is_err(), "Go rejects: {sql}"),
+        }
+    }
+}
+
 /// `pkg/parser/parser_test.go::TestSessionManage`.
 #[test]
 fn test_session_manage() {
