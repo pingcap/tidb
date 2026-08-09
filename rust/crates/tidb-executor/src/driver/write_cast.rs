@@ -118,7 +118,7 @@ fn cast_value_shaped(
     // Go `table.CastValue` passes `sctx.GetSessionVars().StmtCtx.TypeCtx()`,
     // whose location is the session's. A TIMESTAMP column's admissible range
     // is expressed in wall-clock time, so it MOVES with that zone.
-    let converted = match value.convert_to_in(
+    let mut converted = match value.convert_to_in(
         field_type,
         ctx.write_conversion_flags(),
         &ctx.session_zone(),
@@ -138,6 +138,7 @@ fn cast_value_shaped(
             return Err(shape.name(named, &value, field_type));
         }
     };
+    converted.value = truncate_char_trailing_spaces(converted.value, field_type);
     if let tidb_datatype::Datum::Time(time) = converted.value {
         return apply_zero_date(
             time, false, field_type, &value, column, row_index, ctx, shape,
@@ -201,6 +202,27 @@ fn cast_value_shaped(
     let reported = error.to_mysql_error();
     ctx.append_warning_parts(reported.code, &reported.message);
     Ok(converted.value)
+}
+
+/// Go `table.truncateTrailingSpaces`: a non-binary `CHAR(M)` drops every
+/// trailing ASCII space after width handling, including a retained space that
+/// fitted inside `M`. Other string families and binary CHAR keep their bytes.
+fn truncate_char_trailing_spaces(value: Datum, field_type: &FieldType) -> Datum {
+    if field_type.code() != tidb_datatype::FieldTypeCode::String || field_type.is_binary_string() {
+        return value;
+    }
+    let Datum::String(value) = value else {
+        return value;
+    };
+    let collation = value.collation();
+    let mut bytes = value.into_bytes();
+    bytes.truncate(
+        bytes
+            .iter()
+            .rposition(|byte| *byte != b' ')
+            .map_or(0, |i| i + 1),
+    );
+    Datum::new_collation_string(bytes, collation)
 }
 
 /// Go `doDupRowUpdate`'s assignment cast (`pkg/executor/insert.go:495-521`),
@@ -508,5 +530,87 @@ pub(crate) fn datum_error_text(value: &Datum) -> String {
         Datum::Time(time) => time.to_string(),
         Datum::Duration(duration) => duration.to_string(),
         other => format!("{other:?}"),
+    }
+}
+
+#[cfg(test)]
+mod source_tests {
+    use super::*;
+    use tidb_datatype::{FieldTypeCode, FieldTypeFlags};
+
+    fn assert_strict_cast(
+        input: Datum,
+        field_type: &FieldType,
+        expected: Datum,
+        should_fail: bool,
+    ) {
+        let ctx = crate::StmtContext::for_dml(false, true, false);
+        // Go returns its best-effort value beside the error. Rust represents
+        // that pair as Converted { value, event }; recover that half before
+        // the write layer turns a non-silent event into DriverError.
+        let mut converted = input
+            .convert_to_in(
+                field_type,
+                ctx.write_conversion_flags(),
+                &ctx.session_zone(),
+            )
+            .unwrap();
+        converted.value = truncate_char_trailing_spaces(converted.value, field_type);
+        let conversion_failed = converted
+            .event
+            .as_ref()
+            .is_some_and(|event| !conversion_event_is_silent(event));
+        assert_eq!(
+            conversion_failed, should_fail,
+            "{input:?} -> {field_type:?}"
+        );
+        assert_eq!(converted.value, expected, "{input:?} -> {field_type:?}");
+
+        let write = cast_value_for_column(input, field_type, "", 0, &ctx);
+        assert_eq!(write.is_err(), should_fail, "{field_type:?}");
+        if !should_fail {
+            assert_eq!(write.unwrap(), expected, "{field_type:?}");
+        }
+    }
+
+    #[test]
+    fn test_cast_value_strict() {
+        // Direct port of pkg/table/column_test.go::TestCastValueStrict: the
+        // three failing rows retain the clamped/truncated value, while the
+        // three widening or trailing-space rows succeed exactly.
+        let unsigned_bigint =
+            FieldType::new(FieldTypeCode::LongLong).with_flags(FieldTypeFlags::UNSIGNED);
+        assert_strict_cast(Datum::Int(-1), &unsigned_bigint, Datum::UInt(0), true);
+
+        let signed_bigint = FieldType::new(FieldTypeCode::LongLong);
+        assert_strict_cast(Datum::Int(1), &signed_bigint, Datum::Int(1), false);
+
+        let signed_int = FieldType::new(FieldTypeCode::Long);
+        assert_strict_cast(
+            Datum::Int(1_i64 << 40),
+            &signed_int,
+            Datum::Int(i64::from(i32::MAX)),
+            true,
+        );
+        assert_strict_cast(
+            Datum::Int(1_i64 << 16),
+            &signed_bigint,
+            Datum::Int(1_i64 << 16),
+            false,
+        );
+
+        let char_two = FieldType::new(FieldTypeCode::String).with_flen(2);
+        assert_strict_cast(
+            Datum::new_string("abcd"),
+            &char_two,
+            Datum::new_string("ab"),
+            true,
+        );
+        assert_strict_cast(
+            Datum::new_string("a   "),
+            &char_two,
+            Datum::new_string("a"),
+            false,
+        );
     }
 }
