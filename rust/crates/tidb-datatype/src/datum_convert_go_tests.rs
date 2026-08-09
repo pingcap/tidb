@@ -424,7 +424,7 @@ fn test_convert_to_string() {
         (Datum::Real(-0.6), b"-0.6"),
         (Datum::new_bytes([1]), b"\x01"),
         (
-            Datum::new_binary_literal(BinaryLiteral::from_uint(0x4D79_5351_4C, None)),
+            Datum::new_binary_literal(BinaryLiteral::from_uint(0x004D_7953_514C, None)),
             b"MySQL",
         ),
         (
