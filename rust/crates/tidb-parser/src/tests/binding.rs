@@ -173,3 +173,101 @@ fn binding_wildcard_schema_table_restore() {
     );
     assert!(parse("select * from *").is_err());
 }
+
+/// Exact source vectors from `pkg/parser/parser_test.go::TestBinding`.
+#[test]
+fn test_binding_source_of_truth() {
+    for (sql, restored) in [
+        ("create global binding for select * from t using select * from t use index(a)", "CREATE GLOBAL BINDING FOR SELECT * FROM `t` USING SELECT * FROM `t` USE INDEX (`a`)"),
+        ("create session binding for select * from t using select * from t use index(a)", "CREATE SESSION BINDING FOR SELECT * FROM `t` USING SELECT * FROM `t` USE INDEX (`a`)"),
+        ("drop global binding for select * from t", "DROP GLOBAL BINDING FOR SELECT * FROM `t`"),
+        ("drop session binding for select * from t", "DROP SESSION BINDING FOR SELECT * FROM `t`"),
+        ("drop global binding for select * from t using select * from t use index(a)", "DROP GLOBAL BINDING FOR SELECT * FROM `t` USING SELECT * FROM `t` USE INDEX (`a`)"),
+        ("drop session binding for select * from t using select * from t use index(a)", "DROP SESSION BINDING FOR SELECT * FROM `t` USING SELECT * FROM `t` USE INDEX (`a`)"),
+        ("show global bindings", "SHOW GLOBAL BINDINGS"),
+        ("show session bindings", "SHOW SESSION BINDINGS"),
+        ("set binding enabled for select * from t", "SET BINDING ENABLED FOR SELECT * FROM `t`"),
+        ("set binding enabled for select * from t using select * from t use index(a)", "SET BINDING ENABLED FOR SELECT * FROM `t` USING SELECT * FROM `t` USE INDEX (`a`)"),
+        ("set binding disabled for select * from t", "SET BINDING DISABLED FOR SELECT * FROM `t`"),
+        ("set binding disabled for select * from t using select * from t use index(a)", "SET BINDING DISABLED FOR SELECT * FROM `t` USING SELECT * FROM `t` USE INDEX (`a`)"),
+        ("create global binding for select * from t union all select * from t using select * from t use index(a) union all select * from t use index(a)", "CREATE GLOBAL BINDING FOR SELECT * FROM `t` UNION ALL SELECT * FROM `t` USING SELECT * FROM `t` USE INDEX (`a`) UNION ALL SELECT * FROM `t` USE INDEX (`a`)"),
+        ("create session binding for select * from t union all select * from t using select * from t use index(a) union all select * from t use index(a)", "CREATE SESSION BINDING FOR SELECT * FROM `t` UNION ALL SELECT * FROM `t` USING SELECT * FROM `t` USE INDEX (`a`) UNION ALL SELECT * FROM `t` USE INDEX (`a`)"),
+        ("drop global binding for select * from t union all select * from t using select * from t use index(a) union all select * from t use index(a)", "DROP GLOBAL BINDING FOR SELECT * FROM `t` UNION ALL SELECT * FROM `t` USING SELECT * FROM `t` USE INDEX (`a`) UNION ALL SELECT * FROM `t` USE INDEX (`a`)"),
+        ("drop session binding for select * from t union all select * from t using select * from t use index(a) union all select * from t use index(a)", "DROP SESSION BINDING FOR SELECT * FROM `t` UNION ALL SELECT * FROM `t` USING SELECT * FROM `t` USE INDEX (`a`) UNION ALL SELECT * FROM `t` USE INDEX (`a`)"),
+        ("drop global binding for select * from t union all select * from t", "DROP GLOBAL BINDING FOR SELECT * FROM `t` UNION ALL SELECT * FROM `t`"),
+        ("create session binding for select 1 union select 2 intersect select 3 using select 1 union select 2 intersect select 3", "CREATE SESSION BINDING FOR SELECT 1 UNION SELECT 2 INTERSECT SELECT 3 USING SELECT 1 UNION SELECT 2 INTERSECT SELECT 3"),
+        ("drop session binding for select 1 union select 2 intersect select 3 using select 1 union select 2 intersect select 3", "DROP SESSION BINDING FOR SELECT 1 UNION SELECT 2 INTERSECT SELECT 3 USING SELECT 1 UNION SELECT 2 INTERSECT SELECT 3"),
+        ("drop session binding for select 1 union select 2 intersect select 3", "DROP SESSION BINDING FOR SELECT 1 UNION SELECT 2 INTERSECT SELECT 3"),
+        ("create global binding using select * from *.t1", "CREATE GLOBAL BINDING FOR SELECT * FROM `*`.`t1` USING SELECT * FROM `*`.`t1`"),
+        ("create global binding using select * from *.t1 where t1.a > (select max(a) from t2)", "CREATE GLOBAL BINDING FOR SELECT * FROM `*`.`t1` WHERE `t1`.`a`>(SELECT MAX(`a`) FROM `t2`) USING SELECT * FROM `*`.`t1` WHERE `t1`.`a`>(SELECT MAX(`a`) FROM `t2`)"),
+        ("create session binding using select * from *.t1", "CREATE SESSION BINDING FOR SELECT * FROM `*`.`t1` USING SELECT * FROM `*`.`t1`"),
+        ("create binding using select * from *.t1", "CREATE SESSION BINDING FOR SELECT * FROM `*`.`t1` USING SELECT * FROM `*`.`t1`"),
+        ("CREATE GLOBAL BINDING FOR UPDATE `t` SET `a`=1 WHERE `b`=1 USING UPDATE /*+ USE_INDEX(`t` `b`)*/ `t` SET `a`=1 WHERE `b`=1", "CREATE GLOBAL BINDING FOR UPDATE `t` SET `a`=1 WHERE `b`=1 USING UPDATE /*+ USE_INDEX(`t` `b`)*/ `t` SET `a`=1 WHERE `b`=1"),
+        ("CREATE SESSION BINDING FOR UPDATE `t` SET `a`=1 WHERE `b`=1 USING UPDATE /*+ USE_INDEX(`t` `b`)*/ `t` SET `a`=1 WHERE `b`=1", "CREATE SESSION BINDING FOR UPDATE `t` SET `a`=1 WHERE `b`=1 USING UPDATE /*+ USE_INDEX(`t` `b`)*/ `t` SET `a`=1 WHERE `b`=1"),
+        ("drop global binding for update t set a = 1 where b = 1", "DROP GLOBAL BINDING FOR UPDATE `t` SET `a`=1 WHERE `b`=1"),
+        ("drop session binding for update t set a = 1 where b = 1", "DROP SESSION BINDING FOR UPDATE `t` SET `a`=1 WHERE `b`=1"),
+        ("DROP GLOBAL BINDING FOR UPDATE `t` SET `a`=1 WHERE `b`=1 USING UPDATE /*+ USE_INDEX(`t` `b`)*/ `t` SET `a`=1 WHERE `b`=1", "DROP GLOBAL BINDING FOR UPDATE `t` SET `a`=1 WHERE `b`=1 USING UPDATE /*+ USE_INDEX(`t` `b`)*/ `t` SET `a`=1 WHERE `b`=1"),
+        ("DROP SESSION BINDING FOR UPDATE `t` SET `a`=1 WHERE `b`=1 USING UPDATE /*+ USE_INDEX(`t` `b`)*/ `t` SET `a`=1 WHERE `b`=1", "DROP SESSION BINDING FOR UPDATE `t` SET `a`=1 WHERE `b`=1 USING UPDATE /*+ USE_INDEX(`t` `b`)*/ `t` SET `a`=1 WHERE `b`=1"),
+        ("CREATE GLOBAL BINDING FOR UPDATE `t1` JOIN `t2` SET `t1`.`a`=1 WHERE `t1`.`b`=`t2`.`b` USING UPDATE /*+ INL_JOIN(`t1`)*/ `t1` JOIN `t2` SET `t1`.`a`=1 WHERE `t1`.`b`=`t2`.`b`", "CREATE GLOBAL BINDING FOR UPDATE `t1` JOIN `t2` SET `t1`.`a`=1 WHERE `t1`.`b`=`t2`.`b` USING UPDATE /*+ INL_JOIN(`t1`)*/ `t1` JOIN `t2` SET `t1`.`a`=1 WHERE `t1`.`b`=`t2`.`b`"),
+        ("CREATE SESSION BINDING FOR UPDATE `t1` JOIN `t2` SET `t1`.`a`=1 WHERE `t1`.`b`=`t2`.`b` USING UPDATE /*+ INL_JOIN(`t1`)*/ `t1` JOIN `t2` SET `t1`.`a`=1 WHERE `t1`.`b`=`t2`.`b`", "CREATE SESSION BINDING FOR UPDATE `t1` JOIN `t2` SET `t1`.`a`=1 WHERE `t1`.`b`=`t2`.`b` USING UPDATE /*+ INL_JOIN(`t1`)*/ `t1` JOIN `t2` SET `t1`.`a`=1 WHERE `t1`.`b`=`t2`.`b`"),
+        ("DROP GLOBAL BINDING FOR UPDATE `t1` JOIN `t2` SET `t1`.`a`=1 WHERE `t1`.`b`=`t2`.`b`", "DROP GLOBAL BINDING FOR UPDATE `t1` JOIN `t2` SET `t1`.`a`=1 WHERE `t1`.`b`=`t2`.`b`"),
+        ("DROP SESSION BINDING FOR UPDATE `t1` JOIN `t2` SET `t1`.`a`=1 WHERE `t1`.`b`=`t2`.`b`", "DROP SESSION BINDING FOR UPDATE `t1` JOIN `t2` SET `t1`.`a`=1 WHERE `t1`.`b`=`t2`.`b`"),
+        ("DROP GLOBAL BINDING FOR UPDATE `t1` JOIN `t2` SET `t1`.`a`=1 WHERE `t1`.`b`=`t2`.`b` USING UPDATE /*+ INL_JOIN(`t1`)*/ `t1` JOIN `t2` SET `t1`.`a`=1 WHERE `t1`.`b`=`t2`.`b`", "DROP GLOBAL BINDING FOR UPDATE `t1` JOIN `t2` SET `t1`.`a`=1 WHERE `t1`.`b`=`t2`.`b` USING UPDATE /*+ INL_JOIN(`t1`)*/ `t1` JOIN `t2` SET `t1`.`a`=1 WHERE `t1`.`b`=`t2`.`b`"),
+        ("DROP SESSION BINDING FOR UPDATE `t1` JOIN `t2` SET `t1`.`a`=1 WHERE `t1`.`b`=`t2`.`b` USING UPDATE /*+ INL_JOIN(`t1`)*/ `t1` JOIN `t2` SET `t1`.`a`=1 WHERE `t1`.`b`=`t2`.`b`", "DROP SESSION BINDING FOR UPDATE `t1` JOIN `t2` SET `t1`.`a`=1 WHERE `t1`.`b`=`t2`.`b` USING UPDATE /*+ INL_JOIN(`t1`)*/ `t1` JOIN `t2` SET `t1`.`a`=1 WHERE `t1`.`b`=`t2`.`b`"),
+        ("CREATE GLOBAL BINDING FOR DELETE FROM `t` WHERE `a`=1 USING DELETE /*+ USE_INDEX(`t` `a`)*/ FROM `t` WHERE `a`=1", "CREATE GLOBAL BINDING FOR DELETE FROM `t` WHERE `a`=1 USING DELETE /*+ USE_INDEX(`t` `a`)*/ FROM `t` WHERE `a`=1"),
+        ("CREATE SESSION BINDING FOR DELETE FROM `t` WHERE `a`=1 USING DELETE /*+ USE_INDEX(`t` `a`)*/ FROM `t` WHERE `a`=1", "CREATE SESSION BINDING FOR DELETE FROM `t` WHERE `a`=1 USING DELETE /*+ USE_INDEX(`t` `a`)*/ FROM `t` WHERE `a`=1"),
+        ("drop global binding for delete from t where a = 1", "DROP GLOBAL BINDING FOR DELETE FROM `t` WHERE `a`=1"),
+        ("drop session binding for delete from t where a = 1", "DROP SESSION BINDING FOR DELETE FROM `t` WHERE `a`=1"),
+        ("DROP GLOBAL BINDING FOR DELETE FROM `t` WHERE `a`=1 USING DELETE /*+ USE_INDEX(`t` `a`)*/ FROM `t` WHERE `a`=1", "DROP GLOBAL BINDING FOR DELETE FROM `t` WHERE `a`=1 USING DELETE /*+ USE_INDEX(`t` `a`)*/ FROM `t` WHERE `a`=1"),
+        ("DROP SESSION BINDING FOR DELETE FROM `t` WHERE `a`=1 USING DELETE /*+ USE_INDEX(`t` `a`)*/ FROM `t` WHERE `a`=1", "DROP SESSION BINDING FOR DELETE FROM `t` WHERE `a`=1 USING DELETE /*+ USE_INDEX(`t` `a`)*/ FROM `t` WHERE `a`=1"),
+        ("CREATE GLOBAL BINDING FOR DELETE `t1`,`t2` FROM `t1` JOIN `t2` ON `t1`.`b`=`t2`.`b` WHERE `t1`.`a`=1 USING DELETE /*+ HASH_JOIN(`t1`, `t2`)*/ `t1`,`t2` FROM `t1` JOIN `t2` ON `t1`.`b`=`t2`.`b` WHERE `t1`.`a`=1", "CREATE GLOBAL BINDING FOR DELETE `t1`,`t2` FROM `t1` JOIN `t2` ON `t1`.`b`=`t2`.`b` WHERE `t1`.`a`=1 USING DELETE /*+ HASH_JOIN(`t1`, `t2`)*/ `t1`,`t2` FROM `t1` JOIN `t2` ON `t1`.`b`=`t2`.`b` WHERE `t1`.`a`=1"),
+        ("CREATE SESSION BINDING FOR DELETE `t1`,`t2` FROM `t1` JOIN `t2` ON `t1`.`b`=`t2`.`b` WHERE `t1`.`a`=1 USING DELETE /*+ HASH_JOIN(`t1`, `t2`)*/ `t1`,`t2` FROM `t1` JOIN `t2` ON `t1`.`b`=`t2`.`b` WHERE `t1`.`a`=1", "CREATE SESSION BINDING FOR DELETE `t1`,`t2` FROM `t1` JOIN `t2` ON `t1`.`b`=`t2`.`b` WHERE `t1`.`a`=1 USING DELETE /*+ HASH_JOIN(`t1`, `t2`)*/ `t1`,`t2` FROM `t1` JOIN `t2` ON `t1`.`b`=`t2`.`b` WHERE `t1`.`a`=1"),
+        ("drop global binding for delete t1, t2 from t1 inner join t2 on t1.b = t2.b where t1.a = 1", "DROP GLOBAL BINDING FOR DELETE `t1`,`t2` FROM `t1` JOIN `t2` ON `t1`.`b`=`t2`.`b` WHERE `t1`.`a`=1"),
+        ("drop session binding for delete t1, t2 from t1 inner join t2 on t1.b = t2.b where t1.a = 1", "DROP SESSION BINDING FOR DELETE `t1`,`t2` FROM `t1` JOIN `t2` ON `t1`.`b`=`t2`.`b` WHERE `t1`.`a`=1"),
+        ("DROP GLOBAL BINDING FOR DELETE `t1`,`t2` FROM `t1` JOIN `t2` ON `t1`.`b`=`t2`.`b` WHERE `t1`.`a`=1 USING DELETE /*+ HASH_JOIN(`t1`, `t2`)*/ `t1`,`t2` FROM `t1` JOIN `t2` ON `t1`.`b`=`t2`.`b` WHERE `t1`.`a`=1", "DROP GLOBAL BINDING FOR DELETE `t1`,`t2` FROM `t1` JOIN `t2` ON `t1`.`b`=`t2`.`b` WHERE `t1`.`a`=1 USING DELETE /*+ HASH_JOIN(`t1`, `t2`)*/ `t1`,`t2` FROM `t1` JOIN `t2` ON `t1`.`b`=`t2`.`b` WHERE `t1`.`a`=1"),
+        ("DROP SESSION BINDING FOR DELETE `t1`,`t2` FROM `t1` JOIN `t2` ON `t1`.`b`=`t2`.`b` WHERE `t1`.`a`=1 USING DELETE /*+ HASH_JOIN(`t1`, `t2`)*/ `t1`,`t2` FROM `t1` JOIN `t2` ON `t1`.`b`=`t2`.`b` WHERE `t1`.`a`=1", "DROP SESSION BINDING FOR DELETE `t1`,`t2` FROM `t1` JOIN `t2` ON `t1`.`b`=`t2`.`b` WHERE `t1`.`a`=1 USING DELETE /*+ HASH_JOIN(`t1`, `t2`)*/ `t1`,`t2` FROM `t1` JOIN `t2` ON `t1`.`b`=`t2`.`b` WHERE `t1`.`a`=1"),
+        ("CREATE GLOBAL BINDING FOR INSERT INTO `t1` SELECT * FROM `t2` WHERE `t2`.`a`=1 USING INSERT INTO `t1` SELECT /*+ USE_INDEX(`t2` `a`)*/ * FROM `t2` WHERE `t2`.`a`=1", "CREATE GLOBAL BINDING FOR INSERT INTO `t1` SELECT * FROM `t2` WHERE `t2`.`a`=1 USING INSERT INTO `t1` SELECT /*+ USE_INDEX(`t2` `a`)*/ * FROM `t2` WHERE `t2`.`a`=1"),
+        ("CREATE SESSION BINDING FOR INSERT INTO `t1` SELECT * FROM `t2` WHERE `t2`.`a`=1 USING INSERT INTO `t1` SELECT /*+ USE_INDEX(`t2` `a`)*/ * FROM `t2` WHERE `t2`.`a`=1", "CREATE SESSION BINDING FOR INSERT INTO `t1` SELECT * FROM `t2` WHERE `t2`.`a`=1 USING INSERT INTO `t1` SELECT /*+ USE_INDEX(`t2` `a`)*/ * FROM `t2` WHERE `t2`.`a`=1"),
+        ("drop global binding for insert into t1 select * from t2 where t1.a=1", "DROP GLOBAL BINDING FOR INSERT INTO `t1` SELECT * FROM `t2` WHERE `t1`.`a`=1"),
+        ("drop session binding for insert into t1 select * from t2 where t1.a=1", "DROP SESSION BINDING FOR INSERT INTO `t1` SELECT * FROM `t2` WHERE `t1`.`a`=1"),
+        ("DROP GLOBAL BINDING FOR INSERT INTO `t1` SELECT * FROM `t2` WHERE `t2`.`a`=1 USING INSERT INTO `t1` SELECT /*+ USE_INDEX(`t2` `a`)*/ * FROM `t2` WHERE `t2`.`a`=1", "DROP GLOBAL BINDING FOR INSERT INTO `t1` SELECT * FROM `t2` WHERE `t2`.`a`=1 USING INSERT INTO `t1` SELECT /*+ USE_INDEX(`t2` `a`)*/ * FROM `t2` WHERE `t2`.`a`=1"),
+        ("DROP SESSION BINDING FOR INSERT INTO `t1` SELECT * FROM `t2` WHERE `t2`.`a`=1 USING INSERT INTO `t1` SELECT /*+ USE_INDEX(`t2` `a`)*/ * FROM `t2` WHERE `t2`.`a`=1", "DROP SESSION BINDING FOR INSERT INTO `t1` SELECT * FROM `t2` WHERE `t2`.`a`=1 USING INSERT INTO `t1` SELECT /*+ USE_INDEX(`t2` `a`)*/ * FROM `t2` WHERE `t2`.`a`=1"),
+        ("CREATE GLOBAL BINDING FOR REPLACE INTO `t1` SELECT * FROM `t2` WHERE `t2`.`a`=1 USING REPLACE INTO `t1` SELECT /*+ USE_INDEX(`t2` `a`)*/ * FROM `t2` WHERE `t2`.`a`=1", "CREATE GLOBAL BINDING FOR REPLACE INTO `t1` SELECT * FROM `t2` WHERE `t2`.`a`=1 USING REPLACE INTO `t1` SELECT /*+ USE_INDEX(`t2` `a`)*/ * FROM `t2` WHERE `t2`.`a`=1"),
+        ("CREATE SESSION BINDING FOR REPLACE INTO `t1` SELECT * FROM `t2` WHERE `t2`.`a`=1 USING REPLACE INTO `t1` SELECT /*+ USE_INDEX(`t2` `a`)*/ * FROM `t2` WHERE `t2`.`a`=1", "CREATE SESSION BINDING FOR REPLACE INTO `t1` SELECT * FROM `t2` WHERE `t2`.`a`=1 USING REPLACE INTO `t1` SELECT /*+ USE_INDEX(`t2` `a`)*/ * FROM `t2` WHERE `t2`.`a`=1"),
+        ("drop global binding for replace into t1 select * from t2 where t1.a=1", "DROP GLOBAL BINDING FOR REPLACE INTO `t1` SELECT * FROM `t2` WHERE `t1`.`a`=1"),
+        ("drop session binding for replace into t1 select * from t2 where t1.a=1", "DROP SESSION BINDING FOR REPLACE INTO `t1` SELECT * FROM `t2` WHERE `t1`.`a`=1"),
+        ("DROP GLOBAL BINDING FOR REPLACE INTO `t1` SELECT * FROM `t2` WHERE `t2`.`a`=1 USING REPLACE INTO `t1` SELECT /*+ USE_INDEX(`t2` `a`)*/ * FROM `t2` WHERE `t2`.`a`=1", "DROP GLOBAL BINDING FOR REPLACE INTO `t1` SELECT * FROM `t2` WHERE `t2`.`a`=1 USING REPLACE INTO `t1` SELECT /*+ USE_INDEX(`t2` `a`)*/ * FROM `t2` WHERE `t2`.`a`=1"),
+        ("DROP SESSION BINDING FOR REPLACE INTO `t1` SELECT * FROM `t2` WHERE `t2`.`a`=1 USING REPLACE INTO `t1` SELECT /*+ USE_INDEX(`t2` `a`)*/ * FROM `t2` WHERE `t2`.`a`=1", "DROP SESSION BINDING FOR REPLACE INTO `t1` SELECT * FROM `t2` WHERE `t2`.`a`=1 USING REPLACE INTO `t1` SELECT /*+ USE_INDEX(`t2` `a`)*/ * FROM `t2` WHERE `t2`.`a`=1"),
+        ("DROP SESSION BINDING FOR SQL DIGEST 'a'", "DROP SESSION BINDING FOR SQL DIGEST 'a'"),
+        ("drop global binding for sql digest 's'", "DROP GLOBAL BINDING FOR SQL DIGEST 's'"),
+        ("drop global binding for sql digest @a, @b, 'test1,test2', @c, 'test333'", "DROP GLOBAL BINDING FOR SQL DIGEST @`a`, @`b`, 'test1,test2', @`c`, 'test333'"),
+        ("create session binding from history using plan digest 'sss'", "CREATE SESSION BINDING FROM HISTORY USING PLAN DIGEST 'sss'"),
+        ("create session binding from history using plan digest @a, @b, 'test1,test2', @c, 'test333'", "CREATE SESSION BINDING FROM HISTORY USING PLAN DIGEST @`a`, @`b`, 'test1,test2', @`c`, 'test333'"),
+        ("CREATE GLOBAL BINDING FROM HISTORY USING PLAN DIGEST 'sss'", "CREATE GLOBAL BINDING FROM HISTORY USING PLAN DIGEST 'sss'"),
+        ("set binding enabled for sql digest '1'", "SET BINDING ENABLED FOR SQL DIGEST '1'"),
+        ("set binding disabled for sql digest '1'", "SET BINDING DISABLED FOR SQL DIGEST '1'"),
+        ("explain explore 'select a from t'", "EXPLAIN EXPLORE 'select a from t'"),
+        ("explain explore '23adc8e6f62'", "EXPLAIN EXPLORE '23adc8e6f62'"),
+    ] {
+        assert_eq!(r(sql), restored, "{sql}");
+    }
+
+    let statement =
+        parse("create global binding for select * from t using select * from t use index(a)")
+            .expect("parse source CREATE BINDING row");
+    let tidb_ast::Stmt::Admin(admin) = statement else {
+        panic!("expected administrative statement");
+    };
+    let tidb_ast::AdminStmt::CreateBinding(binding) = admin.as_ref() else {
+        panic!("expected CREATE BINDING statement");
+    };
+    let tidb_ast::CreateBindingSource::Statement { target } = &binding.source else {
+        panic!("expected statement binding source");
+    };
+    assert_eq!(target.origin.text(), b"select * from t");
+    assert_eq!(
+        target.hinted.as_ref().expect("hinted statement").text(),
+        b"select * from t use index(a)"
+    );
+    assert_eq!(binding.scope, tidb_ast::BindingScope::Global);
+}
