@@ -33,7 +33,7 @@ impl ConversionWarningAppender for WarningStore {
 }
 
 #[test]
-fn test_with_new_flags_preserves_original_location_and_sink() {
+fn test_with_new_flags() {
     let warnings = WarningStore::default();
     let context = ConversionContext::new(
         STRICT_FLAGS.with_skip_ascii_check(true),
@@ -51,7 +51,7 @@ fn test_with_new_flags_preserves_original_location_and_sink() {
 }
 
 #[test]
-fn test_simple_on_off_flags_matches_source_bit_operations() {
+fn test_simple_on_off_flags() {
     type FlagCase = (
         u16,
         fn(ConversionFlags) -> bool,
