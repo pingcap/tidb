@@ -372,6 +372,7 @@ impl Config {
 
         let txn_local_latches = self.txn_local_latches;
         let mem_profile_interval = self.performance.mem_profile_interval.clone();
+        let keyspace_observability_values = self.keyspace_observability_values.clone();
         let mut merged =
             toml::Value::try_from(&*self).map_err(|error| LoadError::Other(error.to_string()))?;
         let mut overlay = table.clone();
@@ -384,6 +385,7 @@ impl Config {
             .map_err(|error: toml::de::Error| LoadError::Other(error.to_string()))?;
         parsed.txn_local_latches = txn_local_latches;
         parsed.performance.mem_profile_interval = mem_profile_interval;
+        parsed.keyspace_observability_values = keyspace_observability_values;
         *self = parsed;
 
         if !crate::kerneltype::is_next_gen() && is_defined(&table, &["deploy-mode"]) {
@@ -819,5 +821,49 @@ error-msg-extension = [
         assert!(!c.performance.cross_join);
         assert_eq!(c.host, "0.0.0.0");
         assert_eq!(c.token_limit, 1000);
+    }
+
+    #[test]
+    fn load_partial_preserves_resolved_keyspace_observability() {
+        let mut config: Config = toml::from_str(
+            r#"
+[[keyspace-observability.fields]]
+source = "meta_a"
+metric-label = "keyspace_meta_label_a"
+slow-log-field = "Keyspace_meta_slow_a"
+stmt-log-field = "stmt_meta_a"
+"#,
+        )
+        .unwrap();
+        config
+            .resolve_keyspace_observability(&std::collections::HashMap::from([(
+                "meta_a".to_owned(),
+                "value_a".to_owned(),
+            )]))
+            .unwrap();
+
+        config.load_str("c.toml", "port = 4100\n").unwrap();
+
+        assert_eq!(config.port, 4100);
+        assert_eq!(
+            config.get_keyspace_observability_metric_labels(),
+            &std::collections::HashMap::from([(
+                "keyspace_meta_label_a".to_owned(),
+                "value_a".to_owned()
+            )])
+        );
+        assert_eq!(
+            config.get_keyspace_observability_slow_log_fields(),
+            [
+                crate::keyspace_observability::KeyspaceObservabilityLogField {
+                    name: "Keyspace_meta_slow_a".to_owned(),
+                    value: "value_a".to_owned(),
+                }
+            ]
+        );
+        assert_eq!(
+            config.get_keyspace_observability_stmt_log_fields(),
+            &std::collections::HashMap::from([("stmt_meta_a".to_owned(), "value_a".to_owned())])
+        );
     }
 }
