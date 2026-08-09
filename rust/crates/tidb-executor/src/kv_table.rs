@@ -62,7 +62,7 @@ pub use table_scan::{
 
 use crate::storage::{MemTableStorage, StorageError, TableStorage};
 use auto_id::AutoIdAllocator;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use table_meta::NOT_NULL_FLAG;
 use table_scan::fill_handle_columns;
 use tidb_codec::table_key::{encode_row_key_with_handle, get_table_handle_key_range};
@@ -71,6 +71,27 @@ use tidb_datatype::{new_collation_enabled, Datum, FieldType, SessionTimeZone};
 use index_entries::{duplicate_value_text, index_entry_handle};
 use tidb_tablecodec::{decode_table_row_to_map, encode_table_row};
 use tidb_txnkv::Key;
+
+/// Deduplicates index columns by table-column offset, preserving the first
+/// occurrence and its pointer identity.
+///
+/// This is Go `tables.DedupIndexColumns`; an index condition can mention the
+/// same column repeatedly, but downstream row extraction needs each offset at
+/// most once and in its first-seen order.
+#[must_use]
+pub fn dedup_index_columns(
+    columns: Vec<tidb_model::GoShared<tidb_model::IndexColumn>>,
+) -> Vec<tidb_model::GoShared<tidb_model::IndexColumn>> {
+    if columns.len() <= 1 {
+        return columns;
+    }
+
+    let mut seen = HashSet::with_capacity(columns.len());
+    columns
+        .into_iter()
+        .filter(|column| seen.insert(column.read().offset))
+        .collect()
+}
 
 /// Options shared by table mutations and index writes.
 ///
@@ -2246,6 +2267,31 @@ mod tests {
                 .warning_count(),
             1
         );
+    }
+
+    #[test]
+    fn test_dedup_index_columns_4_test() {
+        // Direct port of
+        // pkg/table/tables/index_test.go::TestDedupIndexColumns4Test.
+        let all_columns = (0..100)
+            .map(|offset| {
+                tidb_model::GoShared::new(tidb_model::IndexColumn {
+                    name: tidb_ast::CiString::new(format!("c{offset}")),
+                    offset,
+                    ..Default::default()
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut columns = all_columns.clone();
+        for index in 0..100 {
+            columns.push(all_columns[(index * 37) % all_columns.len()].clone());
+        }
+
+        let result = dedup_index_columns(columns);
+        assert_eq!(result.len(), all_columns.len());
+        for (actual, expected) in result.iter().zip(&all_columns) {
+            assert!(actual.ptr_eq(expected));
+        }
     }
 
     /// The scan bound must cover the whole table and nothing beyond it: the
