@@ -43,6 +43,7 @@ go_library(
         "//pkg/expression",
         "//pkg/expression/aggregation",
         "//pkg/expression/exprctx",
+        "//pkg/expression/fulltext",
         "//pkg/infoschema",
         "//pkg/kv",
         "//pkg/meta/model",

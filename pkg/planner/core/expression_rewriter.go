@@ -2377,6 +2377,19 @@ func (er *expressionRewriter) matchAgainstToExpression(v *ast.MatchAgainst) {
 	if er.planCtx != nil && er.planCtx.builder != nil && er.planCtx.builder.ctx != nil {
 		sessVars := er.planCtx.builder.ctx.GetSessionVars()
 		if er.inDirectMatchBooleanContext() {
+			// Alternative logical planning is a dependency of both the legacy
+			// ILIKE fallback and the local residual round. Record it regardless
+			// of the current switch values so EXPLAIN EXPLORE can enumerate the
+			// joint local=ON, alternative=ON state from their default OFF state.
+			sessVars.RecordRelevantOptVar(vardef.TiDBOptEnableAlternativeLogicalPlans)
+			if expression.FTSModifierSupportedByLocalNoScore(v.Modifier) {
+				sessVars.RecordRelevantOptVar(vardef.TiDBEnableLocalMatchAgainst)
+			}
+			if sessVars.EnableLocalMatchAgainst && expression.FTSModifierSupportedByLocalNoScore(v.Modifier) {
+				if sessVars.EnableAlternativeLogicalPlans {
+					er.planCtx.builder.MarkLocalMatchCandidate()
+				}
+			}
 			if sessVars.StmtCtx.AlternativeLogicalPlanFTSLikeFallback {
 				// fts-like-fallback round: boolean-context MATCH rewrites to ILIKE.
 				useLikeFallback = true
@@ -2522,6 +2535,12 @@ func (er *expressionRewriter) matchAgainstToBuiltin(v *ast.MatchAgainst, numCols
 	if err := expression.SetFTSMysqlMatchAgainstModifier(sf, v.Modifier); err != nil {
 		er.err = err
 		return
+	}
+	if er.inDirectMatchBooleanContext() {
+		if err := expression.SetFTSMysqlMatchAgainstUsage(sf, expression.FTSMatchUsageDirectFilter); err != nil {
+			er.err = err
+			return
+		}
 	}
 	er.ctxStackAppend(fn, types.EmptyName)
 }

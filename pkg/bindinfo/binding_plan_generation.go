@@ -16,7 +16,9 @@ package bindinfo
 
 import (
 	"container/list"
+	"context"
 	"fmt"
+	"maps"
 	"sort"
 	"strconv"
 	"strings"
@@ -53,6 +55,14 @@ func (g *planGenerator) Generate(defaultSchema, sql, charset, collation string) 
 	}
 
 	err = callWithSCtx(g.sPool, false, func(sctx sessionctx.Context) error {
+		sessVars := sctx.GetSessionVars()
+		originalCurrentDB := sessVars.CurrentDB
+		originalCostModelVersion := sessVars.CostModelVersion
+		defer func() {
+			sessVars.CurrentDB = originalCurrentDB
+			sessVars.CostModelVersion = originalCostModelVersion
+		}()
+
 		genedPlans, err := generatePlanWithSCtx(sctx, defaultSchema, sql, charset, collation)
 		if err != nil {
 			return err
@@ -254,8 +264,9 @@ func generatePlanWithSCtx(sctx sessionctx.Context, defaultSchema, sql, charset, 
 	if err != nil {
 		return nil, err
 	}
-	sctx.GetSessionVars().CurrentDB = defaultSchema
-	sctx.GetSessionVars().CostModelVersion = 2 // cost factor only works on cost-model v2
+	sessVars := sctx.GetSessionVars()
+	sessVars.CurrentDB = defaultSchema
+	sessVars.CostModelVersion = 2 // cost factor only works on cost-model v2
 	vars, fixes, err := RecordRelevantOptVarsAndFixes(sctx, stmt)
 	if err != nil {
 		return nil, err
@@ -354,6 +365,25 @@ func breadthFirstPlanSearch(sctx sessionctx.Context, stmt ast.StmtNode,
 
 // genPlanUnderState returns a plan generated under the given state (vars and fix-controls).
 func genPlanUnderState(sctx sessionctx.Context, stmt ast.StmtNode, state *state) (plan *genedPlan, err error) {
+	sessVars := sctx.GetSessionVars()
+	originalVarValues := make(map[string]string, len(state.varNames))
+	for _, varName := range state.varNames {
+		value, getErr := sessVars.GetSessionOrGlobalSystemVar(context.Background(), varName)
+		if getErr != nil {
+			return nil, getErr
+		}
+		originalVarValues[varName] = value
+	}
+	originalFixControl := maps.Clone(sessVars.OptimizerFixControl)
+	defer func() {
+		sessVars.OptimizerFixControl = originalFixControl
+		for _, varName := range state.varNames {
+			if restoreErr := sessVars.SetSystemVarWithoutValidation(varName, originalVarValues[varName]); restoreErr != nil && err == nil {
+				err = restoreErr
+			}
+		}
+	}()
+
 	for i, varName := range state.varNames {
 		switch varName {
 		case vardef.TiDBOptIndexScanCostFactor:
@@ -408,6 +438,8 @@ func genPlanUnderState(sctx sessionctx.Context, stmt ast.StmtNode, state *state)
 			sctx.GetSessionVars().SelectivityFactor = state.varValues[i].(float64)
 		case vardef.TiDBOptEnableAlternativeLogicalPlans:
 			sctx.GetSessionVars().EnableAlternativeLogicalPlans = state.varValues[i].(bool)
+		case vardef.TiDBEnableLocalMatchAgainst:
+			sctx.GetSessionVars().EnableLocalMatchAgainst = state.varValues[i].(bool)
 		default:
 			return nil, fmt.Errorf("unsupported variable %s in plan generation", varName)
 		}
@@ -478,11 +510,40 @@ func genPlanUnderState(sctx sessionctx.Context, stmt ast.StmtNode, state *state)
 	if err != nil {
 		return nil, err
 	}
+	planHints = addFeatureGateStateHints(planHints, state)
 	return &genedPlan{
 		planDigest: planDigest,
 		planText:   planText,
 		planHints:  planHints,
 	}, nil
+}
+
+func addFeatureGateStateHints(planHints string, state *state) string {
+	if state == nil {
+		return planHints
+	}
+	hints := make([]string, 0, 3)
+	for i, varName := range state.varNames {
+		if i >= len(state.varValues) {
+			break
+		}
+		switch varName {
+		case vardef.TiDBEnableLocalMatchAgainst, vardef.TiDBOptEnableAlternativeLogicalPlans:
+			value, ok := state.varValues[i].(bool)
+			if !ok {
+				continue
+			}
+			onOff := "off"
+			if value {
+				onOff = "on"
+			}
+			hints = append(hints, fmt.Sprintf("set_var(%s=%s)", varName, onOff))
+		}
+	}
+	if planHints != "" {
+		hints = append(hints, planHints)
+	}
+	return strings.Join(hints, ", ")
 }
 
 // adjustVar returns the new value of the variable for plan generation.
@@ -509,7 +570,8 @@ func adjustVar(varName string, varVal any) (newVarVal any, err error) {
 		}
 		// increase 0.1 each step
 		return v + 0.1, nil
-	case vardef.TiDBOptPreferRangeScan, vardef.TiDBOptEnableNoDecorrelateInSelect, vardef.TiDBOptAlwaysKeepJoinKey, vardef.TiDBOptEnableSemiJoinRewrite, vardef.TiDBOptEnableAlternativeLogicalPlans: // flip the switch
+	case vardef.TiDBOptPreferRangeScan, vardef.TiDBOptEnableNoDecorrelateInSelect, vardef.TiDBOptAlwaysKeepJoinKey,
+		vardef.TiDBOptEnableSemiJoinRewrite, vardef.TiDBOptEnableAlternativeLogicalPlans, vardef.TiDBEnableLocalMatchAgainst: // flip the switch
 		return !varVal.(bool), nil
 	}
 	return nil, fmt.Errorf("unsupported variable %s in plan generation", varName)
@@ -604,6 +666,8 @@ func getStartState(vars []string, fixes []uint64, indexHintCount int) (*state, e
 			s.varValues = append(s.varValues, vardef.DefOptCartesianJoinOrderThreshold)
 		case vardef.TiDBOptEnableAlternativeLogicalPlans:
 			s.varValues = append(s.varValues, vardef.DefOptEnableAlternativeLogicalPlans)
+		case vardef.TiDBEnableLocalMatchAgainst:
+			s.varValues = append(s.varValues, vardef.DefTiDBEnableLocalMatchAgainst)
 		default:
 			return nil, fmt.Errorf("unsupported variable %s in plan generation", varName)
 		}

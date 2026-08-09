@@ -380,7 +380,28 @@ func updateTiCISearchPathStats(ds *logicalop.DataSource, path *util.AccessPath, 
 	// predicates can participate in normal selectivity estimation. Today those predicates
 	// are consumed into FtsQueryInfo before deriveStatsByFilter runs, and the TiCI search
 	// count is only known during path stats derivation.
-	ds.SetStats(ds.TableStats.ScaleByExpectCnt(ds.SCtx().GetSessionVars(), countAfterFilters))
+	applyTiCISearchPathStatsToDataSource(ds, path, countAfterFilters)
+}
+
+func applyTiCISearchPathStatsToDataSource(ds *logicalop.DataSource, path *util.AccessPath, rowCount float64) {
+	if !isOnlySelectedTiCIFTSPath(ds, path) || ds.TableStats == nil {
+		return
+	}
+	statsToScale := ds.TableStats
+	if stats := ds.StatsInfo(); stats != nil {
+		rowCount = min(rowCount, stats.RowCount)
+		statsToScale = stats
+	}
+	ds.SetStats(statsToScale.ScaleByExpectCnt(ds.SCtx().GetSessionVars(), rowCount))
+}
+
+func isOnlySelectedTiCIFTSPath(ds *logicalop.DataSource, path *util.AccessPath) bool {
+	return path != nil &&
+		path.Index != nil &&
+		path.Index.IsTiCIIndex() &&
+		path.FtsQueryInfo != nil &&
+		len(ds.PossibleAccessPaths) == 1 &&
+		ds.PossibleAccessPaths[0] == path
 }
 
 func deriveTiCISearchPathStats(ds *logicalop.DataSource, path *util.AccessPath) (float64, bool) {

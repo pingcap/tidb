@@ -1928,10 +1928,10 @@ func TestAddColumnarIndexSimple(t *testing.T) {
 }
 
 func TestFullTextIndexSysvarsPassedToTiCI(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomainWithSchemaLease(t, tiflashReplicaLease, mockstore.WithMockTiFlash(2))
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, tiflashReplicaLease, mockstore.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t, t_create, sw;")
+	tk.MustExec("drop table if exists t, t_create, t_legacy, t_legacy_fk, parent, sw;")
 
 	tiflash := infosync.NewMockTiFlash()
 	infosync.SetMockTiFlash(tiflash)
@@ -1968,13 +1968,96 @@ func TestFullTextIndexSysvarsPassedToTiCI(t *testing.T) {
 	tk.MustExec("set @@innodb_ft_user_stopword_table='test/sw'")
 
 	// CREATE TABLE with FULLTEXT INDEX should also pass sysvars + stopwords.
+	// The analyzer snapshot must already be present in the initially persisted
+	// job args, before the worker can make any TiCI RPC.
+	var configInInitialJobArgs atomic.Bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.Type != model.ActionCreateTable || job.TableName != "t_create" {
+			return
+		}
+		args, err := model.GetCreateTableArgs(job)
+		if err == nil && args.TableInfo != nil && len(args.TableInfo.Indices) == 1 &&
+			args.TableInfo.Indices[0].FullTextInfo != nil &&
+			args.TableInfo.Indices[0].FullTextInfo.ParserConfig != nil {
+			configInInitialJobArgs.Store(true)
+		}
+	})
 	tici.ResetMockTiCICreateIndexRequest()
 	tk.MustExec("create table t_create (id int, c text, fulltext index fts_idx(c))")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
+	require.True(t, configInInitialJobArgs.Load())
 	raw := tici.GetMockTiCICreateIndexRequest()
 	require.NotEmpty(t, raw)
 	assertTiCIFulltextParserInfo(t, raw)
+	assertFullTextParserConfigPersisted(t, dom.InfoSchema(), "t_create")
 
-	tk.MustExec("create table t (id int, c text)")
+	// Simulate a CREATE TABLE job submitted by an older executor, before
+	// ParserConfig was added to the initial job args. The worker cannot know
+	// whether an earlier owner already completed the TiCI RPC and then failed to
+	// commit the DDL step, so it must not turn the current stopword table into a
+	// trusted snapshot. Native TiCI creation still receives the legacy job
+	// configuration, while metadata remains unbound for local MATCH.
+	var strippedLegacySnapshot atomic.Bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.Type != model.ActionCreateTable || job.TableName != "t_legacy" ||
+			!strippedLegacySnapshot.CompareAndSwap(false, true) {
+			return
+		}
+		args, err := model.GetCreateTableArgs(job)
+		if err != nil || args.TableInfo == nil {
+			return
+		}
+		index := args.TableInfo.FindIndexByName("fts_idx")
+		if index != nil && index.FullTextInfo != nil {
+			index.FullTextInfo.ParserConfig = nil
+		}
+	})
+	tici.ResetMockTiCICreateIndexRequest()
+	tk.MustExec("create table t_legacy (id int, c text, fulltext index fts_idx(c))")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
+	require.True(t, strippedLegacySnapshot.Load())
+	raw = tici.GetMockTiCICreateIndexRequest()
+	require.NotEmpty(t, raw)
+	assertTiCIFulltextParserInfo(t, raw)
+	legacyTable, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_legacy"))
+	require.NoError(t, err)
+	require.Nil(t, legacyTable.Meta().FindIndexByName("fts_idx").FullTextInfo.ParserConfig)
+
+	// A legacy foreign-key CREATE TABLE in DeleteOnly has definitely reached a
+	// step where TiCI may already have been created. Publishing the table must
+	// preserve the missing snapshot instead of synthesizing one during the
+	// DeleteOnly -> Public transition.
+	tk.MustExec("create table parent (id int primary key)")
+	var strippedLegacyFKSnapshot atomic.Bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.Type != model.ActionCreateTable || job.TableName != "t_legacy_fk" ||
+			job.SchemaState != model.StateDeleteOnly ||
+			!strippedLegacyFKSnapshot.CompareAndSwap(false, true) {
+			return
+		}
+		args, err := model.GetCreateTableArgs(job)
+		if err != nil || args.TableInfo == nil {
+			return
+		}
+		index := args.TableInfo.FindIndexByName("fts_idx")
+		if index != nil && index.FullTextInfo != nil {
+			index.FullTextInfo.ParserConfig = nil
+		}
+	})
+	tk.MustExec(`create table t_legacy_fk (
+		id int primary key,
+		parent_id int,
+		c text,
+		fulltext index fts_idx(c),
+		foreign key (parent_id) references parent(id)
+	)`)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
+	require.True(t, strippedLegacyFKSnapshot.Load())
+	legacyFKTable, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_legacy_fk"))
+	require.NoError(t, err)
+	require.Nil(t, legacyFKTable.Meta().FindIndexByName("fts_idx").FullTextInfo.ParserConfig)
+
+	tk.MustExec("create table t (id int, c text, d text)")
 	tk.MustExec("alter table t set tiflash replica 2 location labels 'a','b';")
 
 	tici.ResetMockTiCICreateIndexRequest()
@@ -1985,6 +2068,7 @@ func TestFullTextIndexSysvarsPassedToTiCI(t *testing.T) {
 	raw = tici.GetMockTiCICreateIndexRequest()
 	require.NotEmpty(t, raw)
 	assertTiCIFulltextParserInfo(t, raw)
+	assertFullTextParserConfigPersisted(t, dom.InfoSchema(), "t")
 
 	rows := tk.MustQuery("admin show ddl jobs 1").Rows()
 	require.Len(t, rows, 1)
@@ -1999,6 +2083,23 @@ func TestFullTextIndexSysvarsPassedToTiCI(t *testing.T) {
 	var finishReq tici.FinishImportIndexUploadRequest
 	require.NoError(t, json.Unmarshal(raw, &finishReq))
 	require.Equal(t, expectedTaskID, finishReq.TidbTaskId)
+
+	// Sequential ALTER ADD must apply the same per-table parser-config bound
+	// as CREATE TABLE. Lower the bound after the first index so each individual
+	// snapshot still fits while their aggregate does not.
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	firstConfig, err := json.Marshal(tbl.Meta().FindIndexByName("fts_idx").FullTextInfo.ParserConfig)
+	require.NoError(t, err)
+	vardef.SetDDLErrorCountLimit(1)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockFullTextParserConfigSizeLimit",
+		fmt.Sprintf("return(%d)", len(firstConfig)*3/2))
+	tk.MustContainErrMsg("alter table t add fulltext index fts_idx_d(d)",
+		"fulltext parser configurations are too large for one table")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/mockFullTextParserConfigSizeLimit")
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	require.Nil(t, tbl.Meta().FindIndexByName("fts_idx_d"))
 }
 
 func TestFulltextIndexRequiresGlobalSortForBackfill(t *testing.T) {
@@ -2150,6 +2251,21 @@ func assertTiCIFulltextParserInfo(t *testing.T, raw []byte) {
 	stopwords := append([]string(nil), req.ParserInfo.StopWords...)
 	sort.Strings(stopwords)
 	require.Equal(t, []string{"a", "foo", "the"}, stopwords)
+}
+
+func assertFullTextParserConfigPersisted(t *testing.T, is infoschema.InfoSchema, tableName string) {
+	t.Helper()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(tableName))
+	require.NoError(t, err)
+	index := tbl.Meta().FindIndexByName("fts_idx")
+	require.NotNil(t, index)
+	require.NotNil(t, index.FullTextInfo)
+	require.NotNil(t, index.FullTextInfo.ParserConfig)
+	require.Equal(t, "1", index.FullTextInfo.ParserConfig.ParserParams[vardef.InnodbFtMinTokenSize])
+	require.Equal(t, "10", index.FullTextInfo.ParserConfig.ParserParams[vardef.InnodbFtMaxTokenSize])
+	require.Equal(t, vardef.On, index.FullTextInfo.ParserConfig.ParserParams[vardef.InnodbFtEnableStopword])
+	require.Equal(t, "test/sw", index.FullTextInfo.ParserConfig.ParserParams[vardef.InnodbFtUserStopwordTable])
+	require.Equal(t, []string{"a", "foo", "the"}, index.FullTextInfo.ParserConfig.StopWords)
 }
 
 func testAddColumnarIndexRollback(prepareSQL []string, addIdxSQL string, t *testing.T) {

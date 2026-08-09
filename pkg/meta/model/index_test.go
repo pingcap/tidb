@@ -69,3 +69,21 @@ func TestIsIndexPrefixCovered(t *testing.T) {
 	require.Equal(t, true, IsIndexPrefixCovered(tbl, i1, ast.NewCIStr("c_4"), ast.NewCIStr("c_2")))
 	require.Equal(t, false, IsIndexPrefixCovered(tbl, i0, ast.NewCIStr("c_2")))
 }
+
+func TestIndexInfoCloneFullTextParserConfig(t *testing.T) {
+	index := &IndexInfo{
+		FullTextInfo: &FullTextIndexInfo{
+			ParserType: FullTextParserTypeStandardV1,
+			ParserConfig: &FullTextIndexParserConfig{
+				ParserParams: map[string]string{"innodb_ft_min_token_size": "3"},
+				StopWords:    []string{"foo"},
+			},
+		},
+	}
+
+	cloned := index.Clone()
+	cloned.FullTextInfo.ParserConfig.ParserParams["innodb_ft_min_token_size"] = "1"
+	cloned.FullTextInfo.ParserConfig.StopWords[0] = "bar"
+	require.Equal(t, "3", index.FullTextInfo.ParserConfig.ParserParams["innodb_ft_min_token_size"])
+	require.Equal(t, []string{"foo"}, index.FullTextInfo.ParserConfig.StopWords)
+}

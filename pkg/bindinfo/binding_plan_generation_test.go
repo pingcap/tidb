@@ -18,8 +18,10 @@ import (
 	"math"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -73,6 +75,9 @@ func TestAdjustVars(t *testing.T) {
 	v, err = adjustVar(vardef.TiDBOptOrderingIdxSelRatio, 0.95)
 	require.NoError(t, err)
 	require.Equal(t, roundTo4Decimal(v.(float64)), 0.95)
+	v, err = adjustVar(vardef.TiDBEnableLocalMatchAgainst, false)
+	require.NoError(t, err)
+	require.Equal(t, true, v)
 
 	_, err = adjustVar(vardef.TiFlashReplicaRead, -1.0)
 	require.Error(t, err) // unsupported
@@ -106,10 +111,51 @@ func TestStartState(t *testing.T) {
 		vardef.TiDBOptEnableNoDecorrelateInSelect,
 		vardef.TiDBOptEnableSemiJoinRewrite,
 		vardef.TiDBOptCartesianJoinOrderThreshold,
+		vardef.TiDBEnableLocalMatchAgainst,
 	}
 	fixes := []uint64{fixcontrol.Fix44855, fixcontrol.Fix45132, fixcontrol.Fix52869}
 
 	state, err := getStartState(vars, fixes, 0)
 	require.NoError(t, err)
-	require.Equal(t, state.Encode(), "1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,0.0100,0.0000,0.0000,0.0000,0.8000,true,false,false,0.0000,OFF,1000,OFF")
+	require.Equal(t, state.Encode(), "1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,0.0100,0.0000,0.0000,0.0000,0.8000,true,false,false,0.0000,false,OFF,1000,OFF")
+}
+
+func TestGenPlanUnderStateRestoresSessionVars(t *testing.T) {
+	sctx := mock.NewContext()
+	stmt, err := parser.New().ParseOneStmt("select 1", "", "")
+	require.NoError(t, err)
+	sessVars := sctx.GetSessionVars()
+	sessVars.EnableLocalMatchAgainst = false
+	sessVars.EnableAlternativeLogicalPlans = false
+	sessVars.OptimizerFixControl = map[uint64]string{fixcontrol.Fix44855: vardef.Off}
+
+	_, err = genPlanUnderState(sctx, stmt, &state{
+		varNames: []string{
+			vardef.TiDBEnableLocalMatchAgainst,
+			vardef.TiDBOptEnableAlternativeLogicalPlans,
+		},
+		varValues: []any{true, true},
+		fixIDs:    []uint64{fixcontrol.Fix44855},
+		fixValues: []string{vardef.On},
+	})
+	// The minimal mock context cannot complete physical optimization, but state
+	// restoration must run on both success and error paths.
+	require.Error(t, err)
+	require.False(t, sessVars.EnableLocalMatchAgainst)
+	require.False(t, sessVars.EnableAlternativeLogicalPlans)
+	require.Equal(t, map[uint64]string{fixcontrol.Fix44855: vardef.Off}, sessVars.OptimizerFixControl)
+}
+
+func TestAddFeatureGateStateHints(t *testing.T) {
+	hints := addFeatureGateStateHints("use_index(@`sel_1` `test`.`t` `idx_a`)", &state{
+		varNames: []string{
+			vardef.TiDBEnableLocalMatchAgainst,
+			vardef.TiDBOptEnableAlternativeLogicalPlans,
+		},
+		varValues: []any{true, false},
+	})
+	require.Equal(t,
+		"set_var(tidb_enable_local_match_against=on), set_var(tidb_opt_enable_alternative_logical_plans=off), use_index(@`sel_1` `test`.`t` `idx_a`)",
+		hints,
+	)
 }

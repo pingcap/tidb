@@ -18,6 +18,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -128,6 +129,33 @@ func TestAnalyzeStandardV1CustomStopwords(t *testing.T) {
 		{Text: "the", Position: 1},
 		{Text: "bar", Position: 2},
 	}, tokens)
+}
+
+func TestAnalyzerConfigFromFullTextIndexInfo(t *testing.T) {
+	indexInfo := &model.FullTextIndexInfo{
+		ParserType: model.FullTextParserTypeStandardV1,
+		ParserConfig: &model.FullTextIndexParserConfig{
+			ParserParams: map[string]string{
+				vardef.InnodbFtMinTokenSize:   "2",
+				vardef.InnodbFtMaxTokenSize:   "10",
+				vardef.InnodbFtEnableStopword: vardef.On,
+			},
+			StopWords: []string{"foo"},
+		},
+	}
+
+	config, err := AnalyzerConfigFromFullTextIndexInfo(indexInfo)
+	require.NoError(t, err)
+	require.Equal(t, AnalyzerConfig{
+		ParserType:             model.FullTextParserTypeStandardV1,
+		InnodbFtMinTokenSize:   2,
+		InnodbFtMaxTokenSize:   10,
+		InnodbFtEnableStopword: true,
+		Stopwords:              []string{"foo"},
+	}, config)
+
+	_, err = AnalyzerConfigFromFullTextIndexInfo(&model.FullTextIndexInfo{ParserType: model.FullTextParserTypeStandardV1})
+	require.ErrorContains(t, err, "missing its analyzer configuration snapshot")
 }
 
 func newFulltextTestContext(t *testing.T) *mock.Context {
