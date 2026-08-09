@@ -800,10 +800,33 @@ mod tests {
         }
     }
 
-    /// Source: `pkg/types/datum_test.go::TestDatum` and the constructor block
-    /// in `pkg/types/datum.go`.
+    /// Complete typed translation of `pkg/types/datum_test.go::TestDatum`.
+    ///
+    /// Go's sixth row, `[]int{1}`, exercises `KindInterface`. Rust's closed
+    /// [`Datum`] domain deliberately has no interface payload, so that row is
+    /// unrepresentable rather than silently mapped to a different SQL kind.
     #[test]
-    fn go_supported_scalar_constructor_vectors() {
+    fn test_datum() {
+        let rows = [
+            (Datum::Int(1), DatumKind::Int, "1"),
+            (Datum::UInt(1), DatumKind::UInt, "1"),
+            (Datum::Real(1.1), DatumKind::Real, "1.1"),
+            (Datum::new_string("abc"), DatumKind::String, "abc"),
+            (Datum::new_bytes("abc"), DatumKind::Bytes, "abc"),
+        ];
+        assert_eq!(rows.len(), 5, "all representable Go source rows");
+        for (datum, kind, text) in rows {
+            assert_eq!(datum.kind(), kind);
+            assert_eq!(datum.clone(), datum);
+            assert_eq!(datum.sql_string().unwrap(), text);
+            if matches!(kind, DatumKind::String | DatumKind::Bytes) {
+                assert_eq!(datum.as_raw_bytes().unwrap().len(), 3);
+            }
+        }
+    }
+
+    #[test]
+    fn scalar_constructor_supplemental() {
         assert!(Datum::default().is_null());
         assert_eq!(Datum::new_int(-1).as_int(), Some(-1));
         assert_eq!(Datum::new_uint(u64::MAX).as_uint(), Some(u64::MAX));
