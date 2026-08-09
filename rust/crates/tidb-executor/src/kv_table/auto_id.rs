@@ -87,6 +87,23 @@ pub trait AutoIdStore: fmt::Debug + Send + Sync {
     /// pattern is compared and how much room is left above it.
     fn reserve(&self, step: u64, unsigned: bool) -> Result<(u64, u64), AutoIdStoreError>;
 
+    /// Reserve enough space for a concrete source `Allocator.Alloc` request.
+    ///
+    /// Go reads the shared base and computes the batch span in the same
+    /// transaction. Implementations that can do so should override this
+    /// method. The default safely reserves the maximum possible span; it may
+    /// leave a larger cache window but cannot overlap another allocator.
+    fn reserve_batch(
+        &self,
+        minimum_step: u64,
+        n: u64,
+        increment: u64,
+        _offset: u64,
+        unsigned: bool,
+    ) -> Result<(u64, u64), AutoIdStoreError> {
+        self.reserve(minimum_step.max(n.saturating_mul(increment)), unsigned)
+    }
+
     /// Go `rebase4Signed`/`rebase4Unsigned` with `allocIDs == false`: raise
     /// the stored value to `required` if it is not already past it, so the
     /// next id ANY node allocates exceeds `required`.
@@ -164,6 +181,28 @@ impl AutoIdStore for LocalAutoIdStore {
         let mut base = self.last.load(Ordering::SeqCst);
         loop {
             let end = advance(base, step, unsigned);
+            match self
+                .last
+                .compare_exchange_weak(base, end, Ordering::SeqCst, Ordering::SeqCst)
+            {
+                Ok(_) => return Ok((base, end)),
+                Err(observed) => base = observed,
+            }
+        }
+    }
+
+    fn reserve_batch(
+        &self,
+        minimum_step: u64,
+        n: u64,
+        increment: u64,
+        offset: u64,
+        unsigned: bool,
+    ) -> Result<(u64, u64), AutoIdStoreError> {
+        let mut base = self.last.load(Ordering::SeqCst);
+        loop {
+            let needed = calc_needed_batch_size(base, n, increment, offset, unsigned);
+            let end = advance(base, minimum_step.max(needed), unsigned);
             match self
                 .last
                 .compare_exchange_weak(base, end, Ordering::SeqCst, Ordering::SeqCst)
@@ -261,6 +300,28 @@ pub fn seek_to_first(base: u64, increment: u64, offset: u64, unsigned: bool) -> 
         let nr = base.wrapping_add(increment).wrapping_sub(offset) / increment;
         nr.wrapping_mul(increment).wrapping_add(offset) as u64
     }
+}
+
+/// Go `autoid.CalcNeededBatchSize`: the distance from `base` to the final id
+/// of an `n`-value batch on the increment/offset progression.
+#[must_use]
+pub fn calc_needed_batch_size(
+    base: u64,
+    n: u64,
+    increment: u64,
+    offset: u64,
+    unsigned: bool,
+) -> u64 {
+    if n == 0 {
+        return 0;
+    }
+    if increment == 1 {
+        return n;
+    }
+    let first = seek_to_first(base, increment, offset, unsigned);
+    first
+        .wrapping_sub(base)
+        .wrapping_add((n - 1).wrapping_mul(increment))
 }
 
 /// True when `value` ranks after `other` in the column's domain.
@@ -393,6 +454,16 @@ impl AutoIdAllocator {
     /// [`increment_and_offset`]); the default `1, 1` reduces the seek to
     /// `base + 1`, so the stepped and the ordinary case are the same code.
     pub(crate) fn alloc(&self, increment: u64, offset: u64) -> Result<u64, AutoIdError> {
+        self.alloc_batch(1, increment, offset)
+            .map(|(_, maximum)| maximum)
+    }
+
+    /// Go `Allocator.Alloc`: reserve `n` ids and return the half-open batch
+    /// description `(base, maximum]` used by the caller to enumerate them.
+    fn alloc_batch(&self, n: u64, increment: u64, offset: u64) -> Result<(u64, u64), AutoIdError> {
+        if n == 0 {
+            return Ok((0, 0));
+        }
         let mut cache = self.cache.lock().expect("auto id cache poisoned");
         // Go `alloc4Signed`/`alloc4Unsigned` first rebases to `offset - 1`
         // when the offset lies beyond the current base. The table caller
@@ -409,11 +480,12 @@ impl AutoIdAllocator {
             }
             cache.base = offset_base;
         }
-        let mut target = seek_to_first(cache.base, increment, offset, self.unsigned);
-        if headroom(cache.base, self.unsigned) <= u128::from(target.wrapping_sub(cache.base)) {
+        let mut needed = calc_needed_batch_size(cache.base, n, increment, offset, self.unsigned);
+        if headroom(cache.base, self.unsigned) <= u128::from(needed) {
             return Err(AutoIdError::Exhausted);
         }
-        if exceeds(target, cache.end, self.unsigned) {
+        let mut maximum = cache.base.wrapping_add(needed);
+        if exceeds(maximum, cache.end, self.unsigned) {
             // The cached range cannot answer the seek: reserve the next one
             // from the store, which is also where a peer node's allocations
             // become visible. Go re-seeks from the NEW base rather than
@@ -424,28 +496,35 @@ impl AutoIdAllocator {
             if self.dynamic_step && cache.end != 0 {
                 next_reservation = next_step(cache.step, cache.last_reserve_at.elapsed());
             }
-            let needed = next_reservation.max(target.wrapping_sub(cache.base));
             let (base, end) = self
                 .store
-                .reserve(needed, self.unsigned)
+                .reserve_batch(next_reservation, n, increment, offset, self.unsigned)
                 .map_err(AutoIdError::Store)?;
+            // The shared store may have advanced since this allocator last
+            // observed it. Go recomputes the batch from that new base rather
+            // than carrying the old distance across.
+            needed = calc_needed_batch_size(base, n, increment, offset, self.unsigned);
+            if headroom(base, self.unsigned) <= u128::from(needed) {
+                return Err(AutoIdError::Exhausted);
+            }
+            maximum = base.wrapping_add(needed);
+            if exceeds(maximum, end, self.unsigned) {
+                return Err(AutoIdError::Exhausted);
+            }
             *cache = AutoIdRange {
                 base,
                 end,
                 step: if self.dynamic_step {
-                    needed
+                    next_reservation.max(needed)
                 } else {
                     cache.step
                 },
                 last_reserve_at: Instant::now(),
             };
-            target = seek_to_first(base, increment, offset, self.unsigned);
-            if headroom(base, self.unsigned) <= u128::from(target.wrapping_sub(base)) {
-                return Err(AutoIdError::Exhausted);
-            }
         }
-        cache.base = target;
-        Ok(target)
+        let base = cache.base;
+        cache.base = maximum;
+        Ok((base, maximum))
     }
 
     /// The id the next allocation will return, as a pattern. Meaningful only
@@ -517,6 +596,27 @@ impl AutoIdAllocator {
 mod tests {
     use super::*;
 
+    fn allocator(unsigned: bool) -> (Arc<LocalAutoIdStore>, AutoIdAllocator) {
+        let store = Arc::new(LocalAutoIdStore::new());
+        let mut allocator = AutoIdAllocator::over(store.clone(), DEFAULT_AUTO_ID_STEP);
+        allocator.set_unsigned(unsigned);
+        (store, allocator)
+    }
+
+    fn allocator_over(store: &Arc<LocalAutoIdStore>, unsigned: bool) -> AutoIdAllocator {
+        let mut allocator = AutoIdAllocator::over(store.clone(), DEFAULT_AUTO_ID_STEP);
+        allocator.set_unsigned(unsigned);
+        allocator
+    }
+
+    fn global_next(store: &LocalAutoIdStore) -> u64 {
+        store.last.load(Ordering::SeqCst).wrapping_add(1)
+    }
+
+    fn cache_end(allocator: &AutoIdAllocator) -> u64 {
+        allocator.cache.lock().expect("auto id cache").end
+    }
+
     /// Source: `pkg/meta/autoid/autoid_test.go::TestNextStep`.
     #[test]
     fn test_next_step() {
@@ -525,13 +625,135 @@ mod tests {
         assert_eq!(next_step(50_000, Duration::from_secs(600)), 30_000);
     }
 
+    /// Complete allocator-value translation of
+    /// `pkg/meta/autoid/autoid_test.go::TestSignedAutoid`.
+    #[test]
+    fn test_signed_autoid() {
+        let (store, mut alloc) = allocator(false);
+        assert_eq!(global_next(&store), 1);
+        assert_eq!(alloc.alloc(1, 1), Ok(1));
+        assert_eq!(alloc.alloc(1, 1), Ok(2));
+        assert_eq!(global_next(&store), DEFAULT_AUTO_ID_STEP + 1);
+
+        alloc.rebase(1).unwrap();
+        assert_eq!(alloc.alloc(1, 1), Ok(3));
+        alloc.rebase(3).unwrap();
+        assert_eq!(alloc.alloc(1, 1), Ok(4));
+        alloc.rebase(10).unwrap();
+        assert_eq!(alloc.alloc(1, 1), Ok(11));
+        alloc.rebase(3010).unwrap();
+        assert_eq!(alloc.alloc(1, 1), Ok(3011));
+
+        alloc = allocator_over(&store, false);
+        assert_eq!(alloc.alloc(1, 1), Ok(DEFAULT_AUTO_ID_STEP + 1));
+
+        let (_, table_two) = allocator(false);
+        table_two.rebase(1).unwrap();
+        assert_eq!(table_two.alloc(1, 1), Ok(2));
+
+        let (table_three_store, first_table_three) = allocator(false);
+        first_table_three.rebase(3210).unwrap();
+        let table_three = allocator_over(&table_three_store, false);
+        table_three.rebase(3000).unwrap();
+        assert_eq!(table_three.alloc(1, 1), Ok(3211));
+        table_three.rebase(6543).unwrap();
+        assert_eq!(table_three.alloc(1, 1), Ok(6544));
+        table_three.rebase(i64::MAX as u64 - 1).unwrap();
+        assert_eq!(table_three.alloc(1, 1), Err(AutoIdError::Exhausted));
+        table_three.rebase(i64::MAX as u64).unwrap();
+
+        let (batch_store, batch) = allocator(false);
+        assert_eq!(global_next(&batch_store), 1);
+        assert_eq!(batch.alloc_batch(1, 1, 1), Ok((0, 1)));
+        assert_eq!(batch.alloc_batch(2, 1, 1), Ok((1, 3)));
+        assert_eq!(batch.alloc_batch(100, 1, 1), Ok((3, 103)));
+        batch.rebase(1000).unwrap();
+        assert_eq!(batch.alloc_batch(3, 1, 1), Ok((1000, 1003)));
+        let last_reserved_end = cache_end(&batch);
+        batch.rebase(last_reserved_end - 2).unwrap();
+        let (minimum, maximum) = batch.alloc_batch(5, 1, 1).unwrap();
+        assert_eq!(maximum - minimum, 5);
+        assert!(minimum + 1 > last_reserved_end);
+
+        let (_, stepped) = allocator(false);
+        assert_eq!(stepped.alloc_batch(1, 2, 100), Ok((99, 100)));
+        assert_eq!(stepped.alloc_batch(2, 2, 100), Ok((100, 104)));
+        assert_eq!(calc_needed_batch_size(100, 2, 2, 100, false), 4);
+        assert_eq!(stepped.alloc_batch(3, 5, 100), Ok((104, 115)));
+        assert_eq!(calc_needed_batch_size(104, 3, 5, 100, false), 11);
+        assert_eq!(seek_to_first(104, 5, 100, false), 105);
+        assert_eq!(stepped.alloc_batch(2, 15, 100), Ok((115, 145)));
+        assert_eq!(calc_needed_batch_size(115, 2, 15, 100, false), 30);
+        assert_eq!(seek_to_first(115, 15, 100, false), 130);
+        assert_eq!(stepped.alloc_batch(2, 15, 200), Ok((199, 215)));
+        assert_eq!(calc_needed_batch_size(199, 2, 15, 200, false), 16);
+        assert_eq!(seek_to_first(199, 15, 200, false), 200);
+    }
+
+    /// Complete allocator-value translation of
+    /// `pkg/meta/autoid/autoid_test.go::TestUnsignedAutoid`.
+    #[test]
+    fn test_unsigned_autoid() {
+        let (store, mut alloc) = allocator(true);
+        assert_eq!(global_next(&store), 1);
+        assert_eq!(alloc.alloc(1, 1), Ok(1));
+        assert_eq!(alloc.alloc(1, 1), Ok(2));
+        assert_eq!(global_next(&store), DEFAULT_AUTO_ID_STEP + 1);
+
+        alloc.rebase(1).unwrap();
+        assert_eq!(alloc.alloc(1, 1), Ok(3));
+        alloc.rebase(3).unwrap();
+        assert_eq!(alloc.alloc(1, 1), Ok(4));
+        alloc.rebase(10).unwrap();
+        assert_eq!(alloc.alloc(1, 1), Ok(11));
+        alloc.rebase(3010).unwrap();
+        assert_eq!(alloc.alloc(1, 1), Ok(3011));
+
+        alloc = allocator_over(&store, true);
+        assert_eq!(alloc.alloc(1, 1), Ok(DEFAULT_AUTO_ID_STEP + 1));
+
+        let (_, table_two) = allocator(true);
+        table_two.rebase(1).unwrap();
+        assert_eq!(table_two.alloc(1, 1), Ok(2));
+
+        let (table_three_store, first_table_three) = allocator(true);
+        first_table_three.rebase(3210).unwrap();
+        let table_three = allocator_over(&table_three_store, true);
+        table_three.rebase(3000).unwrap();
+        assert_eq!(table_three.alloc(1, 1), Ok(3211));
+        table_three.rebase(6543).unwrap();
+        assert_eq!(table_three.alloc(1, 1), Ok(6544));
+        table_three.rebase(u64::MAX - 1).unwrap();
+        assert_eq!(table_three.alloc(1, 1), Err(AutoIdError::Exhausted));
+        table_three.rebase(u64::MAX).unwrap();
+
+        let (batch_store, batch) = allocator(true);
+        assert_eq!(global_next(&batch_store), 1);
+        assert_eq!(batch.alloc_batch(2, 1, 1), Ok((0, 2)));
+        batch.rebase(500).unwrap();
+        assert_eq!(batch.alloc_batch(2, 1, 1), Ok((500, 502)));
+        let last_reserved_end = cache_end(&batch);
+        batch.rebase(last_reserved_end - 2).unwrap();
+        let (minimum, maximum) = batch.alloc_batch(5, 1, 1).unwrap();
+        assert_eq!(maximum - minimum, 5);
+        assert!(minimum + 1 > last_reserved_end);
+
+        let (_, stepped) = allocator(true);
+        let offset = u64::MAX - 100;
+        assert_eq!(
+            stepped.alloc_batch(2, 2, offset),
+            Ok((u64::MAX - 101, u64::MAX - 98))
+        );
+        assert_eq!(
+            calc_needed_batch_size(u64::MAX - 101, 2, 2, offset, true),
+            3
+        );
+        assert_eq!(seek_to_first(u64::MAX - 101, 2, offset, true), offset);
+    }
+
     /// Complete observable translation of
     /// `pkg/meta/autoid/memid_test.go::TestInMemoryAlloc`.
     ///
-    /// Rust's table-facing allocator issues one id per call, while Go's
-    /// package method can return a batch range. Repeating the one-id call
-    /// preserves every value the source test observes: its assertions use
-    /// only the returned maximum, never the batch minimum.
     #[test]
     fn test_in_memory_alloc() {
         fn alloc_many(
@@ -540,11 +762,9 @@ mod tests {
             increment: u64,
             offset: u64,
         ) -> Result<u64, AutoIdError> {
-            let mut last = 0;
-            for _ in 0..count {
-                last = allocator.alloc(increment, offset)?;
-            }
-            Ok(last)
+            allocator
+                .alloc_batch(count, increment, offset)
+                .map(|(_, maximum)| maximum)
         }
 
         let allocator = AutoIdAllocator::new();
