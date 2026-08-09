@@ -17,16 +17,17 @@
 //! Go can retain a raw pointer to every allocated chunk and later reclaim its
 //! fields from `Allocator.Reset`. Rust expresses the same ownership boundary
 //! without a second mutable owner: [`AllocatedChunk`] owns the chunk, queues
-//! it when dropped, and [`Allocator::reset`] moves queued objects into the
-//! bounded free lists. Callers therefore end a chunk's lease before reset;
-//! live chunks cannot be invalidated behind a safe Rust reference.
+//! only the allocation-time registry entries admitted by the source bounds,
+//! and [`Allocator::reset`] moves those objects into the free lists. Callers
+//! therefore end a chunk's lease before reset; live chunks cannot be
+//! invalidated behind a safe Rust reference.
 
 use crate::chunk::Chunk;
 use crate::column::{get_fixed_len, Column, VAR_ELEM_LEN};
 use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, Once, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use tidb_datatype::FieldType;
 
 const DEFAULT_MAX_FREE_CHUNKS: usize = 64;
@@ -147,46 +148,74 @@ fn check_column_type(expected_type_size: i64, column: &Column) -> bool {
     column.is_fixed() && expected_type_size == column.elem_buffer_capacity() as i64
 }
 
-#[derive(Debug)]
-struct PendingChunk {
-    chunk: Chunk,
-    expected_type_sizes: Vec<i64>,
+fn can_register_allocated_column(expected_type_size: i64, column: &Column) -> bool {
+    !column.avoid_reusing
+        && (expected_type_size > 0 || expected_type_size == VAR_ELEM_LEN)
+        && column.data_capacity() < MAX_CACHED_LEN.load(Ordering::Relaxed)
 }
 
 #[derive(Debug)]
 struct AllocatorState {
-    pending: Vec<PendingChunk>,
+    pending_chunks: Vec<Chunk>,
+    pending_columns: HashMap<i64, Vec<Column>>,
     free_chunks: Vec<Chunk>,
     columns: PoolColumnAllocator,
     free_chunk_limit: usize,
+    registered_chunks: usize,
+    registered_columns: HashMap<i64, usize>,
+    generation: u64,
 }
 
 impl AllocatorState {
-    fn alloc(&mut self, fields: &[FieldType], capacity: usize, max_chunk_size: usize) -> Chunk {
+    fn alloc(
+        &mut self,
+        fields: &[FieldType],
+        capacity: usize,
+        max_chunk_size: usize,
+    ) -> (Chunk, bool, Vec<(i64, bool)>, u64) {
         let capacity = capacity.min(max_chunk_size);
-        let columns: Vec<_> = fields
-            .iter()
-            .map(|field| self.columns.new_column(field, capacity))
-            .collect();
-        if let Some(mut chunk) = self.free_chunks.pop() {
+        let cache_chunk = self.registered_chunks < self.free_chunk_limit;
+        if cache_chunk {
+            self.registered_chunks += 1;
+        }
+        let mut registrations = Vec::with_capacity(fields.len());
+        let mut columns = Vec::with_capacity(fields.len());
+        let column_limit = self.columns.free_columns_per_type;
+        for field in fields {
+            let type_size = get_fixed_len(field);
+            let column = self.columns.new_column(field, capacity);
+            let registered = self.registered_columns.entry(type_size).or_default();
+            // Go registers a column at allocation time only when `put` admits
+            // it. An over-sized column must not consume one of the bounded
+            // registry slots that a later small column can use.
+            let cache_column =
+                *registered < column_limit && can_register_allocated_column(type_size, &column);
+            if cache_column {
+                *registered += 1;
+            }
+            registrations.push((type_size, cache_column));
+            columns.push(column);
+        }
+        let chunk = if let Some(mut chunk) = self.free_chunks.pop() {
             chunk.restore_reusable_columns(columns, capacity, max_chunk_size);
             chunk
         } else {
             Chunk::from_reusable_columns(columns, capacity, max_chunk_size)
-        }
+        };
+        (chunk, cache_chunk, registrations, self.generation)
     }
 
     fn reset(&mut self) {
-        for mut pending in self.pending.drain(..) {
-            let columns = pending.chunk.drain_columns_for_allocator();
-            for (expected_type_size, column) in pending.expected_type_sizes.into_iter().zip(columns)
-            {
+        for (expected_type_size, columns) in std::mem::take(&mut self.pending_columns) {
+            for column in columns {
                 self.columns.put_if_eligible(expected_type_size, column);
             }
-            if self.free_chunks.len() < self.free_chunk_limit {
-                self.free_chunks.push(pending.chunk);
-            }
         }
+        self.free_chunks
+            .extend(std::mem::take(&mut self.pending_chunks));
+        self.registered_chunks = 0;
+        self.registered_columns.clear();
+        self.generation = self.generation.wrapping_add(1);
     }
 }
 
@@ -196,20 +225,30 @@ fn lock_state(state: &Mutex<AllocatorState>) -> MutexGuard<'_, AllocatorState> {
 
 /// An ownership-safe lease returned by [`Allocator::alloc`].
 ///
-/// It dereferences to [`Chunk`]. Dropping it queues the chunk for the next
-/// allocator reset, which is the Rust equivalent of ending all Go uses before
-/// calling `Allocator.Reset`.
+/// It dereferences to [`Chunk`]. Dropping it queues any allocation-time
+/// registered shell/columns for the next allocator reset, which is the Rust
+/// equivalent of ending all Go uses before calling `Allocator.Reset`.
 pub struct AllocatedChunk {
     chunk: Option<Chunk>,
-    expected_type_sizes: Vec<i64>,
+    cache_chunk: bool,
+    column_registrations: Vec<(i64, bool)>,
+    generation: u64,
     recycler: Option<Arc<Mutex<AllocatorState>>>,
 }
 
 impl AllocatedChunk {
-    fn pooled(chunk: Chunk, fields: &[FieldType], recycler: Arc<Mutex<AllocatorState>>) -> Self {
+    fn pooled(
+        chunk: Chunk,
+        cache_chunk: bool,
+        column_registrations: Vec<(i64, bool)>,
+        generation: u64,
+        recycler: Arc<Mutex<AllocatorState>>,
+    ) -> Self {
         Self {
             chunk: Some(chunk),
-            expected_type_sizes: fields.iter().map(get_fixed_len).collect(),
+            cache_chunk,
+            column_registrations,
+            generation,
             recycler: Some(recycler),
         }
     }
@@ -217,7 +256,9 @@ impl AllocatedChunk {
     fn unpooled(chunk: Chunk) -> Self {
         Self {
             chunk: Some(chunk),
-            expected_type_sizes: Vec::new(),
+            cache_chunk: false,
+            column_registrations: Vec::new(),
+            generation: 0,
             recycler: None,
         }
     }
@@ -246,13 +287,31 @@ impl DerefMut for AllocatedChunk {
 
 impl Drop for AllocatedChunk {
     fn drop(&mut self) {
-        let (Some(recycler), Some(chunk)) = (self.recycler.take(), self.chunk.take()) else {
+        let (Some(recycler), Some(mut chunk)) = (self.recycler.take(), self.chunk.take()) else {
             return;
         };
-        lock_state(&recycler).pending.push(PendingChunk {
-            chunk,
-            expected_type_sizes: std::mem::take(&mut self.expected_type_sizes),
-        });
+        let mut state = lock_state(&recycler);
+        // A lease surviving Reset cannot be invalidated as Go's raw pointer
+        // can. Discard it when it eventually drops so stale generations never
+        // defeat the source cache bounds.
+        if self.generation != state.generation {
+            return;
+        }
+        let columns = chunk.drain_columns_for_allocator();
+        for ((type_size, cache), column) in
+            self.column_registrations.drain(..).zip(columns.into_iter())
+        {
+            if cache {
+                state
+                    .pending_columns
+                    .entry(type_size)
+                    .or_default()
+                    .push(column);
+            }
+        }
+        if self.cache_chunk {
+            state.pending_chunks.push(chunk);
+        }
     }
 }
 
@@ -283,10 +342,14 @@ impl ChunkAllocator {
         let free_columns_per_type = MAX_FREE_COLUMNS_PER_TYPE.load(Ordering::Relaxed);
         Self {
             state: Arc::new(Mutex::new(AllocatorState {
-                pending: Vec::new(),
+                pending_chunks: Vec::with_capacity(free_chunk_limit),
+                pending_columns: HashMap::new(),
                 free_chunks: Vec::with_capacity(free_chunk_limit),
                 columns: PoolColumnAllocator::new(free_columns_per_type),
                 free_chunk_limit,
+                registered_chunks: 0,
+                registered_columns: HashMap::new(),
+                generation: 0,
             })),
         }
     }
@@ -299,6 +362,12 @@ impl ChunkAllocator {
     #[cfg(test)]
     fn cached_columns(&self, type_size: i64) -> usize {
         lock_state(&self.state).columns.cached(type_size)
+    }
+
+    #[cfg(test)]
+    fn pending_objects(&self) -> usize {
+        let state = lock_state(&self.state);
+        state.pending_chunks.len() + state.pending_columns.values().map(Vec::len).sum::<usize>()
     }
 }
 
@@ -315,8 +384,15 @@ impl Allocator for ChunkAllocator {
         capacity: usize,
         max_chunk_size: usize,
     ) -> AllocatedChunk {
-        let chunk = lock_state(&self.state).alloc(fields, capacity, max_chunk_size);
-        AllocatedChunk::pooled(chunk, fields, Arc::clone(&self.state))
+        let (chunk, cache_chunk, column_registrations, generation) =
+            lock_state(&self.state).alloc(fields, capacity, max_chunk_size);
+        AllocatedChunk::pooled(
+            chunk,
+            cache_chunk,
+            column_registrations,
+            generation,
+            Arc::clone(&self.state),
+        )
     }
 
     fn check_reuse_alloc_size(&self) -> bool {
@@ -386,7 +462,7 @@ pub fn new_sync_allocator(allocator: impl Allocator + 'static) -> SyncAllocator 
 
 /// Go `reuseHookAllocator`.
 pub struct ReuseHookAllocator {
-    once: Once,
+    hook_called: Mutex<bool>,
     hook: Box<dyn Fn() + Send + Sync>,
     allocator: Box<dyn Allocator>,
 }
@@ -399,7 +475,7 @@ impl ReuseHookAllocator {
         hook: impl Fn() + Send + Sync + 'static,
     ) -> Self {
         Self {
-            once: Once::new(),
+            hook_called: Mutex::new(false),
             hook: Box::new(hook),
             allocator: Box::new(allocator),
         }
@@ -414,7 +490,20 @@ impl Allocator for ReuseHookAllocator {
         max_chunk_size: usize,
     ) -> AllocatedChunk {
         if self.allocator.check_reuse_alloc_size() {
-            self.once.call_once(|| (self.hook)());
+            // Go `sync.Once` serializes all callers through the hook, marks it
+            // done even when the hook panics, and lets recovered later calls
+            // proceed. Hold a poison-recovering mutex across the invocation to
+            // preserve all three properties.
+            {
+                let mut hook_called = self
+                    .hook_called
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner);
+                if !*hook_called {
+                    *hook_called = true;
+                    (self.hook)();
+                }
+            }
         }
         self.allocator.alloc(fields, capacity, max_chunk_size)
     }
@@ -468,6 +557,8 @@ pub const fn new_empty_allocator() -> EmptyAllocator {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::mpsc;
+    use std::time::Duration;
     use tidb_datatype::{EvalType, FieldTypeCode};
 
     static CONFIG_TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -539,11 +630,49 @@ mod tests {
         }
         allocator.reset();
         assert_eq!(allocator.cached_chunks(), 5);
-        assert_eq!(allocator.cached_columns(VAR_ELEM_LEN), 3);
+        // The first three columns consume the allocation registry slots. The
+        // first one is later rejected for being over-sized, exactly as Go's
+        // two-stage `put`/`Reset` admission leaves two cached columns.
+        assert_eq!(allocator.cached_columns(VAR_ELEM_LEN), 2);
 
         init_chunk_alloc_size(0, 0);
         let disabled = new_allocator();
         assert!(!disabled.check_reuse_alloc_size());
+        restore_defaults();
+    }
+
+    #[test]
+    fn allocator_bounds_pending_ownership_before_reset() {
+        let _guard = CONFIG_TEST_LOCK.lock().expect("config test lock");
+        let varchar = vec![FieldType::new(FieldTypeCode::Varchar)];
+
+        init_chunk_alloc_size(2, 3);
+        let bounded = new_allocator();
+        for _ in 0..100 {
+            drop(bounded.alloc(&varchar, 1, 1));
+        }
+        assert_eq!(bounded.pending_objects(), 5);
+        bounded.reset();
+        assert_eq!(bounded.cached_chunks(), 2);
+        assert_eq!(bounded.cached_columns(VAR_ELEM_LEN), 3);
+
+        init_chunk_alloc_size(0, 1);
+        MAX_CACHED_LEN.store(64, Ordering::Relaxed);
+        let admission = new_allocator();
+        // An initially over-sized column is rejected by Go's allocation-time
+        // `put` and therefore leaves the one slot available to this small one.
+        drop(admission.alloc(&varchar, 8, 8));
+        drop(admission.alloc(&varchar, 1, 1));
+        assert_eq!(admission.pending_objects(), 1);
+        admission.reset();
+        assert_eq!(admission.cached_columns(VAR_ELEM_LEN), 1);
+
+        init_chunk_alloc_size(0, 0);
+        let disabled = new_allocator();
+        for _ in 0..100 {
+            drop(disabled.alloc(&varchar, 1, 1));
+        }
+        assert_eq!(disabled.pending_objects(), 0);
         restore_defaults();
     }
 
@@ -591,6 +720,92 @@ mod tests {
         drop(enabled.alloc(&fields(), 5, 100));
         assert_eq!(calls.load(Ordering::Relaxed), 1);
         restore_defaults();
+    }
+
+    #[test]
+    fn reuse_hook_panic_is_marked_done_like_go_sync_once() {
+        let _guard = CONFIG_TEST_LOCK.lock().expect("config test lock");
+        init_chunk_alloc_size(1, 1);
+        let allocator = Arc::new(new_reuse_hook_allocator(new_allocator(), || {
+            panic!("hook panic");
+        }));
+        let first = Arc::clone(&allocator);
+        assert!(
+            std::thread::spawn(move || drop(first.alloc(&fields(), 1, 1)))
+                .join()
+                .is_err()
+        );
+
+        // Go's sync.Once is done after the panic. The next allocation reaches
+        // the wrapped allocator instead of re-running/re-panicking the hook.
+        let chunk = allocator.alloc(&fields(), 1, 1);
+        assert_eq!(chunk.num_cols(), fields().len());
+        restore_defaults();
+    }
+
+    #[derive(Clone)]
+    struct ProbeAllocator {
+        allocated: mpsc::Sender<()>,
+    }
+
+    impl Allocator for ProbeAllocator {
+        fn alloc(
+            &self,
+            fields: &[FieldType],
+            capacity: usize,
+            max_chunk_size: usize,
+        ) -> AllocatedChunk {
+            self.allocated.send(()).expect("allocation observer");
+            AllocatedChunk::unpooled(Chunk::new(fields, capacity, max_chunk_size))
+        }
+
+        fn check_reuse_alloc_size(&self) -> bool {
+            true
+        }
+
+        fn reset(&self) {}
+    }
+
+    #[test]
+    fn reuse_hook_blocks_concurrent_alloc_until_hook_returns() {
+        let (hook_entered_tx, hook_entered_rx) = mpsc::channel();
+        let release_hook = Arc::new(std::sync::Barrier::new(2));
+        let hook_release = Arc::clone(&release_hook);
+        let (allocated_tx, allocated_rx) = mpsc::channel();
+        let allocator = Arc::new(new_reuse_hook_allocator(
+            ProbeAllocator {
+                allocated: allocated_tx,
+            },
+            move || {
+                hook_entered_tx.send(()).expect("hook observer");
+                hook_release.wait();
+            },
+        ));
+
+        let first = Arc::clone(&allocator);
+        let first_thread = std::thread::spawn(move || drop(first.alloc(&fields(), 1, 1)));
+        hook_entered_rx.recv().expect("hook entered");
+
+        let (second_started_tx, second_started_rx) = mpsc::channel();
+        let second = Arc::clone(&allocator);
+        let second_thread = std::thread::spawn(move || {
+            second_started_tx.send(()).expect("second started");
+            drop(second.alloc(&fields(), 1, 1));
+        });
+        second_started_rx.recv().expect("second started");
+        let passed_wrapped_allocator_early =
+            allocated_rx.recv_timeout(Duration::from_millis(50)).is_ok();
+
+        release_hook.wait();
+        let remaining_allocations = if passed_wrapped_allocator_early { 1 } else { 2 };
+        for _ in 0..remaining_allocations {
+            allocated_rx
+                .recv_timeout(Duration::from_secs(1))
+                .expect("wrapped allocation after hook release");
+        }
+        first_thread.join().expect("first allocation thread");
+        second_thread.join().expect("second allocation thread");
+        assert!(!passed_wrapped_allocator_early);
     }
 
     /// Go `TestSyncAllocator` with enough contention to exercise every lock

@@ -291,6 +291,12 @@ impl Chunk {
     /// memory can be reused.
     pub fn reset(&mut self) {
         self.sel = None;
+        // Go returns immediately for a literal nil `columns` slice, retaining
+        // `numVirtualRows`. Constructed zero-column chunks are non-nil and do
+        // clear it, so the explicit initialization bit is the discriminator.
+        if !self.columns_initialized {
+            return;
+        }
         for col in &mut self.columns {
             col.reset();
         }
@@ -442,7 +448,8 @@ impl Chunk {
     /// `type code || value`, exactly the encoding `BinaryJSON` carries on the
     /// wire and in a row value.
     pub fn append_json(&mut self, col_idx: usize, value: &tidb_datatype::BinaryJSON) {
-        self.append_bytes(col_idx, &value.encoded());
+        self.append_sel(col_idx);
+        self.columns[col_idx].append_json(value);
     }
 
     /// Go `AppendEnum`.
@@ -487,7 +494,7 @@ impl Chunk {
                 self.columns[col_idx].append_float32(*f as f32);
             }
             Datum::String(s) => self.append_bytes(col_idx, s.bytes()),
-            Datum::Bytes(b) => self.append_bytes(col_idx, b),
+            Datum::Bytes(b) | Datum::Raw(b) => self.append_bytes(col_idx, b),
             // A hex or bit literal lives in a binary `VarString` column, so
             // its cell is the literal's own bytes -- which is how Go stores
             // `KindBinaryLiteral`/`KindMysqlBit` in a chunk too.
@@ -599,18 +606,26 @@ impl Chunk {
 
     /// Go `Append(other, begin, end)` for distinct chunks.
     pub fn append_range_from(&mut self, other: &Chunk, begin: usize, end: usize) {
-        assert!(begin <= end && end <= other.num_rows());
+        assert!(begin <= end && end <= other.physical_num_rows());
         for row in begin..end {
-            self.append_row(other.get_row(row));
+            // Go `Chunk.Append` indexes the physical column arrays directly;
+            // it intentionally ignores the source selection vector.
+            self.append_row(Row::new(other, row));
         }
     }
 
     /// The self-overlap case Go permits (`c.Append(c, begin, end)`). Snapshot
     /// the source range before mutating so reallocation cannot invalidate it.
     pub fn append_own_range(&mut self, begin: usize, end: usize) {
-        assert!(begin <= end && end <= self.num_rows());
+        assert!(begin <= end && end <= self.physical_num_rows());
         let snapshot = self.copy_construct();
         self.append_range_from(&snapshot, begin, end);
+    }
+
+    fn physical_num_rows(&self) -> usize {
+        self.columns
+            .first()
+            .map_or(self.num_virtual_rows, Column::rows)
     }
 
     /// Go `Reconstruct`: materialize the installed selection and remove it.
@@ -1201,6 +1216,49 @@ mod tests {
         let mut virtual_only = Chunk::new_empty(&[]);
         assert_eq!(virtual_only.append_rows_by_col_idxs(&rows, Some(&[])), 0);
         assert_eq!(virtual_only.num_rows(), 2);
+    }
+
+    #[test]
+    fn reset_distinguishes_nil_and_constructed_zero_column_chunks() {
+        let mut nil_columns = Chunk::default();
+        nil_columns.set_num_virtual_rows(7);
+        nil_columns.reset();
+        assert_eq!(nil_columns.num_virtual_rows(), 7);
+
+        let mut initialized_empty = Chunk::new_empty(&[]);
+        initialized_empty.set_num_virtual_rows(7);
+        initialized_empty.reset();
+        assert_eq!(initialized_empty.num_virtual_rows(), 0);
+    }
+
+    /// Go `Chunk.Append` indexes physical columns and does not apply `sel` to
+    /// the source range.
+    #[test]
+    fn append_range_ignores_source_selection() {
+        let fields = vec![FieldType::new(FieldTypeCode::LongLong)];
+        let mut source = Chunk::new_with_capacity(&fields, 3);
+        for value in [10, 20, 30] {
+            source.append_int64(0, value);
+        }
+        source.set_sel(Some(vec![2, 0]));
+
+        let mut target = Chunk::new_with_capacity(&fields, 2);
+        target.append_range_from(&source, 0, 2);
+        assert_eq!(target.get_row(0).get_int64(0), 10);
+        assert_eq!(target.get_row(1).get_int64(0), 20);
+
+        source.append_own_range(1, 3);
+        assert_eq!(source.column(0).get_int64(3), 20);
+        assert_eq!(source.column(0).get_int64(4), 30);
+        assert_eq!(source.sel(), Some(&[2, 0, 3, 4][..]));
+    }
+
+    #[test]
+    fn raw_datum_appends_as_a_variable_cell() {
+        let field = FieldType::new(FieldTypeCode::VarString);
+        let mut chunk = Chunk::new_with_capacity(std::slice::from_ref(&field), 1);
+        chunk.append_datum(0, &Datum::Raw(vec![0, 255]));
+        assert_eq!(chunk.get_row(0).get_bytes(0), &[0, 255]);
     }
 
     #[test]

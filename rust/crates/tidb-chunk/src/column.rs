@@ -45,11 +45,9 @@
 //! `getNameValue`: the 8-byte native-endian value followed by the element
 //! name, in one variable-length row).
 //!
-//! DEFERRED (documented, later tranches): the `Resize*` family;
-//! `Reset(EvalType)`; the `Reserve`/`resize` capacity helpers;
-//! `SetNull(s)`/`nullCount`; a `str`-typed `GetString`; and the `Chunk`/`Row`
-//! containers built on `Column`. JSON and VectorFloat32 typed storage is
-//! implemented as variable-length source-format cells.
+//! The resize/reserve/null-mutation families and JSON/VectorFloat32 typed
+//! storage are implemented below. Go strings remain arbitrary bytes, so the
+//! direct `GetString` surface returns [`GoString`] instead of Rust `str`.
 
 use tidb_datatype::{
     deserialize_vector_float32, EvalType, FieldType, FieldTypeCode, GoString, MyDecimal,
@@ -564,6 +562,11 @@ impl Column {
         self.finish_append_var();
     }
 
+    /// Go `Column.AppendJSON`.
+    pub fn append_json(&mut self, value: &tidb_datatype::BinaryJSON) {
+        self.append_bytes(&value.encoded());
+    }
+
     /// Go `GetBytes`: the raw bytes of a variable-length row.
     ///
     /// TiDB strings are arbitrary byte sequences, so this returns `&[u8]`; a
@@ -573,6 +576,13 @@ impl Column {
         let start = self.offsets[row_id] as usize;
         let end = self.offsets[row_id + 1] as usize;
         &self.data[start..end]
+    }
+
+    /// Go `Column.GetString`, represented with [`GoString`] so arbitrary Go
+    /// string bytes are not rejected as invalid UTF-8.
+    #[must_use]
+    pub fn get_string(&self, row_id: usize) -> GoString {
+        GoString::from_bytes(self.get_bytes(row_id).to_vec())
     }
 
     /// Go `GetJSON`: the cell's first byte is the JSON type code and the rest
@@ -833,27 +843,51 @@ impl Column {
         }
     }
 
+    fn copy_construct_into(&self, destination: Option<Column>) -> Column {
+        let Some(mut destination) = destination else {
+            return self.copy_construct();
+        };
+        // Go's supplied-destination branch overwrites every data/shape field
+        // but deliberately leaves `avoidReusing` untouched.
+        destination.length = self.length;
+        destination.null_bitmap.clear();
+        destination.null_bitmap.extend_from_slice(&self.null_bitmap);
+        destination.offsets.clear();
+        destination.offsets.extend_from_slice(&self.offsets);
+        destination.data.clear();
+        destination.data.extend_from_slice(&self.data);
+        destination.elem_buf.clear();
+        destination.elem_buf.extend_from_slice(&self.elem_buf);
+        destination
+    }
+
     /// Go `CopyReconstruct`: deep-copy only the selected rows, reusing `dst`
     /// storage when supplied. `None` selection is the ordinary deep-copy path.
     #[must_use]
     pub fn copy_reconstruct(&self, sel: Option<&[usize]>, dst: Option<Column>) -> Column {
         let Some(sel) = sel else {
-            return self.copy_construct();
+            return self.copy_construct_into(dst);
         };
         if sel.len() == self.length && sel.windows(2).all(|pair| pair[0] <= pair[1]) {
-            return self.copy_construct();
+            return self.copy_construct_into(dst);
         }
 
         let mut destination =
             dst.unwrap_or_else(|| Column::new_column_with_type_size(self.type_size(), sel.len()));
         destination.reset();
-        if destination.type_size() != self.type_size() {
-            destination = Column::new_column_with_type_size(self.type_size(), sel.len());
+        if self.is_fixed() {
+            // Go allocates a fresh scratch element in this branch while
+            // retaining dst.offsets and dst.avoidReusing.
+            destination.elem_buf = vec![0; self.elem_buf.len()];
+        } else {
+            destination.elem_buf.clear();
+            if destination.offsets.is_empty() {
+                destination.offsets.push(0);
+            }
         }
         for &row in sel {
             destination.append_cell_from(self, row);
         }
-        destination.avoid_reusing = false;
         destination
     }
 
@@ -1078,6 +1112,49 @@ impl Column {
     pub(crate) fn length(&self) -> usize {
         self.length
     }
+}
+
+/// Go `AppendCellFromRawData`: append one cell from a join row's packed raw
+/// stream and return the offset immediately after it.
+///
+/// Fixed-width cells occupy exactly the destination column's element width.
+/// Variable-width cells carry a native-endian uint32 length prefix followed by
+/// that many payload bytes. Nullity is intentionally not changed; the join
+/// probe appends its null bitmap bit separately before calling this function.
+pub fn append_cell_from_raw_data(
+    destination: &mut Column,
+    row_data: &[u8],
+    current_offset: usize,
+) -> usize {
+    if destination.is_fixed() {
+        let width = destination.elem_buf.len();
+        let end = current_offset
+            .checked_add(width)
+            .expect("fixed raw-cell offset overflow");
+        destination
+            .data
+            .extend_from_slice(&row_data[current_offset..end]);
+        destination.length += 1;
+        return end;
+    }
+
+    let length_end = current_offset
+        .checked_add(4)
+        .expect("variable raw-cell length offset overflow");
+    let length = u32::from_ne_bytes(
+        row_data[current_offset..length_end]
+            .try_into()
+            .expect("four-byte variable cell length"),
+    ) as usize;
+    let end = length_end
+        .checked_add(length)
+        .expect("variable raw-cell offset overflow");
+    destination
+        .data
+        .extend_from_slice(&row_data[length_end..end]);
+    destination.offsets.push(destination.data.len() as i64);
+    destination.length += 1;
+    end
 }
 
 #[cfg(test)]
@@ -1611,6 +1688,75 @@ mod tests {
         assert_eq!(selected.get_bytes(1), b"a");
         assert!(selected.is_null(2));
         assert_eq!(selected.offsets, vec![0, 3, 4, 4]);
+    }
+
+    #[test]
+    fn copy_reconstruct_reuses_destination_and_preserves_avoid_reusing() {
+        let mut fixed = Column::new_fixed_len(8, 3);
+        fixed.append_int64(10);
+        fixed.append_int64(20);
+        fixed.append_int64(30);
+
+        let mut borrowed = fixed.clone();
+        borrowed.avoid_reusing = true;
+        let owned = borrowed.copy_construct();
+        assert!(borrowed.avoid_reusing);
+        assert!(!owned.avoid_reusing);
+        assert_eq!(owned.data, borrowed.data);
+
+        let mut destination = Column::new_var_len(16);
+        destination.append_string("old");
+        destination.avoid_reusing = true;
+        let original_data_capacity = destination.data_capacity();
+        let full = fixed.copy_reconstruct(None, Some(destination));
+        assert!(full.avoid_reusing);
+        assert_eq!(full.rows(), 3);
+        assert_eq!(full.get_int64(1), 20);
+        assert!(full.data_capacity() >= original_data_capacity);
+        assert!(full.offsets.is_empty());
+
+        let mut destination = Column::new_var_len(8);
+        destination.avoid_reusing = true;
+        let selected = fixed.copy_reconstruct(Some(&[2, 0]), Some(destination));
+        assert!(selected.avoid_reusing);
+        assert_eq!(selected.rows(), 2);
+        assert_eq!(selected.get_int64(0), 30);
+        assert_eq!(selected.get_int64(1), 10);
+        // Go's selected fixed reconstruction leaves the former var-len
+        // destination's leading offset header in place.
+        assert_eq!(selected.offsets, vec![0]);
+    }
+
+    #[test]
+    fn direct_string_json_and_raw_join_cell_surfaces_match_go() {
+        let mut strings = Column::new_var_len(2);
+        strings.append_string("hello");
+        strings.append_bytes(&[0, 255]);
+        assert_eq!(strings.get_string(0).as_bytes(), b"hello");
+        assert_eq!(strings.get_string(1).as_bytes(), &[0, 255]);
+
+        let json = tidb_datatype::BinaryJSON::parse(r#"{"a": 1}"#).expect("JSON");
+        let mut json_column = Column::new_var_len(1);
+        json_column.append_json(&json);
+        assert_eq!(json_column.get_json(0), json);
+
+        let mut fixed = Column::new_fixed_len(8, 1);
+        fixed.append_null_bitmap(true);
+        let mut fixed_stream = vec![9, 8, 7];
+        fixed_stream.extend_from_slice(&123_i64.to_ne_bytes());
+        assert_eq!(append_cell_from_raw_data(&mut fixed, &fixed_stream, 3), 11);
+        assert_eq!(fixed.get_int64(0), 123);
+
+        let mut variable = Column::new_var_len(1);
+        variable.append_null_bitmap(true);
+        let mut variable_stream = vec![9, 8, 7];
+        variable_stream.extend_from_slice(&5_u32.to_ne_bytes());
+        variable_stream.extend_from_slice(b"hello");
+        assert_eq!(
+            append_cell_from_raw_data(&mut variable, &variable_stream, 3),
+            12
+        );
+        assert_eq!(variable.get_bytes(0), b"hello");
     }
 
     #[test]
