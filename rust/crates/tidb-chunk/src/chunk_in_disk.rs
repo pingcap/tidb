@@ -391,16 +391,22 @@ pub(crate) fn read_full_at(
     while total < destination.len() {
         let result = reader.read_at(&mut destination[total..], offset + total as i64);
         total += result.n;
+        if total == destination.len() {
+            return Ok(total);
+        }
         if let Some(error) = result.error {
-            if result.n == 0 || !error.is_eof() {
-                return match error {
-                    tidb_util::layered_io::ReadAtError::Eof => Ok(total),
-                    tidb_util::layered_io::ReadAtError::Io(error) => Err(error),
-                };
-            }
+            return match error {
+                tidb_util::layered_io::ReadAtError::Eof => {
+                    Err(io::Error::new(io::ErrorKind::UnexpectedEof, error))
+                }
+                tidb_util::layered_io::ReadAtError::Io(error) => Err(error),
+            };
         }
         if result.n == 0 {
-            break;
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "positional reader made no progress before filling the destination",
+            ));
         }
     }
     Ok(total)
@@ -411,6 +417,49 @@ mod tests {
     use super::*;
     use crate::chunk::Chunk;
     use tidb_datatype::FieldTypeCode;
+    use tidb_util::layered_io::{ReadAtError, ReadAtResult};
+
+    struct BytesReader(&'static [u8]);
+
+    impl ReadAt for BytesReader {
+        fn read_at(&self, destination: &mut [u8], offset: i64) -> ReadAtResult {
+            let Ok(offset) = usize::try_from(offset) else {
+                return ReadAtResult::io(
+                    0,
+                    io::Error::new(io::ErrorKind::InvalidInput, "negative offset"),
+                );
+            };
+            if offset >= self.0.len() {
+                return ReadAtResult::eof(0);
+            }
+            let count = destination.len().min(self.0.len() - offset);
+            destination[..count].copy_from_slice(&self.0[offset..offset + count]);
+            if count == destination.len() {
+                ReadAtResult::ok(count)
+            } else {
+                ReadAtResult {
+                    n: count,
+                    error: Some(ReadAtError::Eof),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn read_full_at_rejects_a_short_spill_read() {
+        let mut destination = [0x7f; 4];
+        let error = read_full_at(&BytesReader(&[1, 2]), &mut destination, 0)
+            .expect_err("a truncated spill image must not decode as zero-filled data");
+        assert_eq!(error.kind(), io::ErrorKind::UnexpectedEof);
+        assert_eq!(destination, [1, 2, 0x7f, 0x7f]);
+
+        let mut exact = [0; 2];
+        assert_eq!(
+            read_full_at(&BytesReader(&[3, 4]), &mut exact, 0).expect("exact read"),
+            2
+        );
+        assert_eq!(exact, [3, 4]);
+    }
 
     const ENCRYPTED_GO_VECTORS: &str =
         include_str!("../../../difftests/chunk-tests/fixtures/encrypted_spill_vectors.tsv");

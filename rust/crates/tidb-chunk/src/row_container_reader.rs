@@ -38,6 +38,9 @@ pub struct RowContainerReader {
     /// The chunk the cursor is inside, decoded on demand.
     chunk: Option<Chunk>,
     chk_idx: usize,
+    /// The chunk extent captured when the reader starts. Appends made after
+    /// construction belong to a later scan, as in Go's bounded range loop.
+    end_chk_idx: usize,
     row_idx: usize,
     /// Set once the cursor has run off the end.
     ended: bool,
@@ -50,10 +53,12 @@ impl RowContainerReader {
     /// `Current()` already stands on the first row.
     #[must_use]
     pub fn new(rc: &RowContainer) -> Self {
+        let end_chk_idx = rc.num_chunks();
         let mut reader = RowContainerReader {
             rc: rc.shallow_copy(),
             chunk: None,
             chk_idx: 0,
+            end_chk_idx,
             row_idx: 0,
             ended: false,
             err: None,
@@ -66,7 +71,7 @@ impl RowContainerReader {
     /// iteration when there are no chunks left.
     fn load_chunk(&mut self) {
         loop {
-            if self.chk_idx >= self.rc.num_chunks() {
+            if self.chk_idx >= self.end_chk_idx {
                 self.chunk = None;
                 self.ended = true;
                 return;
@@ -198,6 +203,27 @@ mod tests {
             reader.next_row();
         }
         assert!(reader.current().is_none());
+    }
+
+    #[test]
+    fn the_reader_snapshots_its_chunk_extent_at_construction() {
+        let fields = vec![FieldType::new(C::LongLong)];
+        let mut rc = RowContainer::new(&fields, 2, crate::test_temp_storage::storage());
+        let mut first = Chunk::new_with_capacity(&fields, 1);
+        first.append_int64(0, 11);
+        rc.add(first).expect("first chunk");
+
+        let mut reader = RowContainerReader::new(&rc);
+        let mut appended_later = Chunk::new_with_capacity(&fields, 1);
+        appended_later.append_int64(0, 22);
+        rc.add(appended_later).expect("later chunk");
+
+        assert_eq!(reader.current().expect("first row").get_int64(0), 11);
+        assert!(
+            reader.next_row().is_none(),
+            "a reader must not include chunks appended after it started"
+        );
+        assert_eq!(reader.error(), None);
     }
 
     /// Go `TestCloseRowContainerReader`: closing part-way through is allowed

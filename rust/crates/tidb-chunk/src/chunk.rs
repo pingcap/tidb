@@ -695,7 +695,8 @@ impl Chunk {
     ///
     /// Supports the kinds whose column storage exists (NULL, int/uint, real/
     /// float32, string/bytes, binary literal, time, duration, decimal, JSON,
-    /// enum, set). Other kinds panic, pending their column support.
+    /// enum, set). The two range-only sentinels have no source switch arm and
+    /// are exact no-ops; Rust has no untyped `KindInterface` datum variant.
     pub fn append_datum(&mut self, col_idx: usize, datum: &Datum) {
         match datum {
             Datum::Null => self.append_null(col_idx),
@@ -729,9 +730,7 @@ impl Chunk {
                 );
                 self.append_my_decimal(col_idx, &value);
             }
-            other => panic!(
-                "Chunk::append_datum: datum {other:?} not yet supported (pending its column storage)"
-            ),
+            Datum::MinNotNull | Datum::MaxValue => {}
         }
     }
 

@@ -51,6 +51,8 @@ owned_rust_files = [
   "rust/crates/tidb-chunk/tests/pkg_util_chunk_fixture_observation.rs",
   "rust/crates/tidb-chunk/tests/pkg_util_chunk_fixture_probe.rs",
   "rust/crates/tidb-chunk/tests/row_container_contract.rs",
+  "rust/crates/tidb-chunk/tests/row_public_contract.rs",
+  "rust/crates/tidb-chunk/tests/spill_reader_contract.rs",
   "rust/crates/tidb-chunk/tests/sorted_row_container_contract.rs",
 ]
 
