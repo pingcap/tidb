@@ -1197,8 +1197,9 @@ mod tests {
         );
     }
 
+    /// Source: `pkg/types/convert_test.go::TestConvertScientificNotation`.
     #[test]
-    fn test_convert_scientific_notation_source_rows() {
+    fn test_convert_scientific_notation() {
         for (input, expected) in [
             ("123.456e0", "123.456"),
             ("123.456e1", "1234.56"),
@@ -1214,8 +1215,6 @@ mod tests {
             ("123.456e-5", "0.00123456"),
             ("123.456e-6", "0.000123456"),
             ("123.456e-7", "0.0000123456"),
-            (".12345E+5", "12345"),
-            ("1E6", "1000000"),
         ] {
             assert_eq!(
                 convert_scientific_notation(input).unwrap(),
@@ -1229,7 +1228,15 @@ mod tests {
     }
 
     #[test]
-    fn test_convert_decimal_str_to_uint_source_rows() {
+    fn convert_scientific_notation_supplemental_rows() {
+        for (input, expected) in [(".12345E+5", "12345"), ("1E6", "1000000")] {
+            assert_eq!(convert_scientific_notation(input).unwrap(), expected);
+        }
+    }
+
+    /// Source: `pkg/types/convert_test.go::TestConvertDecimalStrToUint`.
+    #[test]
+    fn test_convert_decimal_str_to_uint() {
         for (input, expected) in [
             ("0.", 0),
             ("72.40", 72),
@@ -1250,13 +1257,16 @@ mod tests {
                 "{input}"
             );
         }
-        for input in [
-            "18446744073709551615.544",
-            "-111.111",
-            "-10000000000000000000.0",
+        for (input, expected) in [
+            ("18446744073709551615.544", u64::MAX),
+            ("-111.111", 0),
+            ("-10000000000000000000.0", 0),
         ] {
-            assert!(
-                convert_decimal_str_to_uint(input, u64::MAX, FieldTypeCode::LongLong).is_err(),
+            assert_eq!(
+                convert_decimal_str_to_uint(input, u64::MAX, FieldTypeCode::LongLong)
+                    .unwrap_err()
+                    .0,
+                expected,
                 "{input}"
             );
         }
@@ -1439,7 +1449,7 @@ mod tests {
     /// three take the all-nines carry that grows the string, including the
     /// signed forms where the carry must land after the sign byte.
     #[test]
-    fn source_round_integer_string_rows() {
+    fn test_round_int_str() {
         for (integer, next_fraction_digit, expected) in [
             ("+999", b'5', "+1000"),
             ("999", b'5', "1000"),
