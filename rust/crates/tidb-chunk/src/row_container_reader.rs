@@ -22,27 +22,21 @@
 //! chunk, which is why the executors that scan a container end to end use
 //! this one.
 //!
-//! FAITHFUL ADAPTATION (concurrency shape): Go spawns a goroutine that reads
-//! chunks ahead into a buffered channel of rows, so decoding overlaps with
-//! consumption, and therefore also needs a `context`, a `WaitGroup`, a
-//! `Close` that cancels, and a finalizer that warns when `Close` was
-//! forgotten. Nothing about WHICH rows come out, or in what order, depends on
-//! that: this reader decodes the next chunk when the cursor reaches it. So
-//! [`RowContainerReader::close`] has nothing to cancel and the finalizer has
-//! nothing to warn about -- both are kept as no-op API so a caller written
-//! against Go's shape still reads correctly.
-
-use std::borrow::Cow;
+//! Go's goroutine and channel overlap decoding with consumption. That runtime
+//! pipeline does not affect which rows appear or their order, so this reader
+//! decodes one owned chunk when its cursor reaches it. Owning both a shallow
+//! container handle and the current chunk also means a spill may happen
+//! between chunks without invalidating the current row.
 
 use crate::chunk::Chunk;
 use crate::row::Row;
 use crate::row_container::RowContainer;
 
 /// Go `rowContainerReader`.
-pub struct RowContainerReader<'a> {
-    rc: &'a RowContainer,
+pub struct RowContainerReader {
+    rc: RowContainer,
     /// The chunk the cursor is inside, decoded on demand.
-    chunk: Option<Cow<'a, Chunk>>,
+    chunk: Option<Chunk>,
     chk_idx: usize,
     row_idx: usize,
     /// Set once the cursor has run off the end.
@@ -51,13 +45,13 @@ pub struct RowContainerReader<'a> {
     err: Option<String>,
 }
 
-impl<'a> RowContainerReader<'a> {
+impl RowContainerReader {
     /// Go `NewRowContainerReader`, whose last act is one `Next()` so that
     /// `Current()` already stands on the first row.
     #[must_use]
-    pub fn new(rc: &'a RowContainer) -> Self {
+    pub fn new(rc: &RowContainer) -> Self {
         let mut reader = RowContainerReader {
-            rc,
+            rc: rc.shallow_copy(),
             chunk: None,
             chk_idx: 0,
             row_idx: 0,
@@ -77,7 +71,7 @@ impl<'a> RowContainerReader<'a> {
                 self.ended = true;
                 return;
             }
-            match self.rc.get_chunk(self.chk_idx) {
+            match self.rc.get_chunk_snapshot(self.chk_idx) {
                 Ok(chunk) => {
                     if chunk.num_rows() > 0 {
                         self.chunk = Some(chunk);
@@ -201,8 +195,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// The same walk over a container that never spilled: the reader borrows
-    /// the live chunks instead of decoding them.
+    /// The same walk over a container that never spilled.
     #[test]
     fn the_reader_walks_an_in_memory_container() {
         let (rc, all_rows) = insert_bytes_rows(8, 8);
@@ -237,6 +230,42 @@ mod tests {
         reader.close();
         assert!(reader.current().is_none(), "a closed reader yields nothing");
         drop(rc);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Go `TestReadAfterSpillWithRowContainerReader`: the reader owns its
+    /// current chunk, so the shared container may spill before the next chunk
+    /// is loaded and the remaining values still appear exactly once in order.
+    #[test]
+    fn the_reader_crosses_a_mid_read_spill() {
+        let _guard = temp_dir_guard();
+        let dir = scratch_temp_dir("reader-mid-spill");
+        disk::set_temp_storage_path(&dir);
+
+        let (mut rc, all_rows) = insert_bytes_rows(16, 16);
+        let mut reader = RowContainerReader::new(&rc);
+        for (i, want) in all_rows.iter().take(8 * 16).enumerate() {
+            let row = reader
+                .current()
+                .unwrap_or_else(|| panic!("row {i} missing before spill"));
+            assert_eq!(row.get_bytes(0), &want[..], "row {i}");
+            reader.next_row();
+        }
+
+        rc.spill_to_disk();
+        assert!(rc.already_spilled());
+
+        for (i, want) in all_rows.iter().enumerate().skip(8 * 16) {
+            let row = reader
+                .current()
+                .unwrap_or_else(|| panic!("row {i} missing after spill"));
+            assert_eq!(row.get_bytes(0), &want[..], "row {i}");
+            reader.next_row();
+        }
+        assert!(reader.current().is_none());
+        assert_eq!(reader.error(), None);
+        reader.close();
+        rc.close();
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

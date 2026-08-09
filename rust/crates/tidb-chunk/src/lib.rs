@@ -27,8 +27,9 @@
 //! [`compare`] adds Go `compare.go` whole: `GetCompareFunc`, `Compare` against
 //! a `Datum`, and `Chunk::lower_bound`/`upper_bound`. [`list`] and [`iterator`]
 //! add Go `list.go`/`iterator.go` whole -- the unbounded in-memory chunk
-//! sequence and the five iterators that do not need a `RowContainer`. Together
-//! they are the in-memory half of what `row_container.go` will need.
+//! sequence and the five standalone iterators. [`row_container`] adds the
+//! shared in-memory/disk storage root and quota spill action, while
+//! [`row_container_reader`] provides its chunk-at-a-time forward reader.
 //!
 //! [`chunk_in_disk`] adds the spill-to-disk container `DataInDiskByChunks`
 //! (Go `chunk_in_disk.go`) over the checksum-framed temporary file in
