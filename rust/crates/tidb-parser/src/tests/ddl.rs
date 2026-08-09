@@ -440,6 +440,21 @@ fn test_alter_database_restore() {
     assert!(parse("alter database db1").is_err());
 }
 
+/// `pkg/parser/parser_test.go::TestCharset`.
+#[test]
+fn test_charset() {
+    for sql in [
+        "ALTER SCHEMA GLOBAL DEFAULT CHAR SET utf8mb4",
+        "ALTER DATABASE CHAR SET = utf8mb4",
+        "ALTER DATABASE DEFAULT CHAR SET = utf8mb4",
+    ] {
+        assert!(
+            matches!(parse(sql), Ok(Stmt::Ddl(ddl)) if matches!(ddl.as_ref(), tidb_ast::DdlStmt::AlterDatabase { .. })),
+            "source SQL: {sql}"
+        );
+    }
+}
+
 #[test]
 fn test_ddl_drop_table_stmt_restore() {
     assert_eq!(r("drop table t"), "DROP TABLE `t`");
