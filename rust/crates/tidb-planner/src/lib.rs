@@ -128,3 +128,204 @@ pub mod tikv_scan_spec;
 pub mod topn_push_down;
 pub mod typed_condition;
 pub mod window_frame;
+
+/// Typed Rust counterpart of Go `planner/util.SliceRecursiveFlattenIter`.
+///
+/// Go discovers slice depth with reflection. Rust represents the same
+/// arbitrary-depth tree explicitly, preserving lazy depth-first iteration,
+/// global leaf indices, and early iterator termination without runtime type
+/// inspection.
+pub mod recursive_flatten {
+    /// One leaf or nested slice in an arbitrary-dimensional input.
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub enum RecursiveSlice<T> {
+        /// One lowest-level element.
+        Item(T),
+        /// Another slice layer; an empty vector represents either a nil or an
+        /// empty Go slice, which are observationally identical to the source
+        /// iterator.
+        Slice(Vec<Self>),
+    }
+
+    impl<T> RecursiveSlice<T> {
+        /// Constructs a lowest-level value.
+        pub fn item(value: T) -> Self {
+            Self::Item(value)
+        }
+
+        /// Constructs one nested slice layer.
+        #[must_use]
+        pub fn slice(values: Vec<Self>) -> Self {
+            Self::Slice(values)
+        }
+    }
+
+    /// Lazy depth-first iterator over all leaves of recursive slices.
+    pub struct RecursiveFlatten<'a, T> {
+        stack: Vec<std::slice::Iter<'a, RecursiveSlice<T>>>,
+        index: usize,
+    }
+
+    impl<'a, T> Iterator for RecursiveFlatten<'a, T> {
+        type Item = (usize, &'a T);
+
+        fn next(&mut self) -> Option<Self::Item> {
+            loop {
+                let node = self.stack.last_mut()?.next();
+                match node {
+                    Some(RecursiveSlice::Item(value)) => {
+                        let index = self.index;
+                        self.index += 1;
+                        return Some((index, value));
+                    }
+                    Some(RecursiveSlice::Slice(values)) => self.stack.push(values.iter()),
+                    None => {
+                        self.stack.pop();
+                    }
+                }
+            }
+        }
+    }
+
+    /// Go `SliceRecursiveFlattenIter`: recursively yields each leaf together
+    /// with its zero-based position in the completely flattened sequence.
+    pub fn slice_recursive_flatten_iter<T>(
+        values: &[RecursiveSlice<T>],
+    ) -> RecursiveFlatten<'_, T> {
+        RecursiveFlatten {
+            stack: vec![values.iter()],
+            index: 0,
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        type ThreeDimensional = Vec<Vec<Vec<&'static str>>>;
+
+        fn recursive(input: ThreeDimensional) -> Vec<RecursiveSlice<String>> {
+            input
+                .into_iter()
+                .map(|middle| {
+                    RecursiveSlice::slice(
+                        middle
+                            .into_iter()
+                            .map(|leaf| {
+                                RecursiveSlice::slice(
+                                    leaf.into_iter()
+                                        .map(|value| RecursiveSlice::item(value.to_owned()))
+                                        .collect(),
+                                )
+                            })
+                            .collect(),
+                    )
+                })
+                .collect()
+        }
+
+        struct Case {
+            input: ThreeDimensional,
+            continue_values: &'static [&'static str],
+            break_value: Option<&'static str>,
+            expected: &'static [(usize, &'static str)],
+        }
+
+        /// Source:
+        /// `pkg/planner/util/slice_recursive_flatten_iter_test.go::TestSliceRecursiveFlattenIter`.
+        #[test]
+        fn test_slice_recursive_flatten_iter() {
+            let cases = [
+                Case {
+                    input: vec![],
+                    continue_values: &[],
+                    break_value: None,
+                    expected: &[],
+                },
+                Case {
+                    input: vec![
+                        vec![vec![], vec![]],
+                        vec![],
+                        vec![],
+                        vec![vec![], vec![]],
+                        vec![],
+                        vec![],
+                        vec![vec![]],
+                        vec![vec![], vec![]],
+                    ],
+                    continue_values: &[],
+                    break_value: None,
+                    expected: &[],
+                },
+                Case {
+                    input: vec![vec![vec!["111", "", "333"]]],
+                    continue_values: &[],
+                    break_value: None,
+                    expected: &[(0, "111"), (1, ""), (2, "333")],
+                },
+                Case {
+                    input: vec![
+                        vec![],
+                        vec![vec!["111", "", "333"], vec![], vec!["234"]],
+                        vec![],
+                    ],
+                    continue_values: &[],
+                    break_value: None,
+                    expected: &[(0, "111"), (1, ""), (2, "333"), (3, "234")],
+                },
+                Case {
+                    input: vec![vec![
+                        vec!["111", "", "333"],
+                        vec![],
+                        vec!["444", "555", "666"],
+                    ]],
+                    continue_values: &["444"],
+                    break_value: None,
+                    expected: &[(0, "111"), (1, ""), (2, "333"), (4, "555"), (5, "666")],
+                },
+                Case {
+                    input: vec![vec![
+                        vec!["111", "", "333"],
+                        vec![],
+                        vec!["444", "555", "666"],
+                    ]],
+                    continue_values: &["111"],
+                    break_value: Some("555"),
+                    expected: &[(1, ""), (2, "333"), (3, "444")],
+                },
+                Case {
+                    input: vec![
+                        vec![
+                            vec![],
+                            vec!["", "", "998877"],
+                            vec![],
+                            vec![],
+                            vec![],
+                            vec![],
+                            vec!["321"],
+                        ],
+                        vec![vec!["555", "222", "1"]],
+                    ],
+                    continue_values: &["321"],
+                    break_value: Some("222"),
+                    expected: &[(0, ""), (1, ""), (2, "998877"), (4, "555")],
+                },
+            ];
+
+            for case in cases {
+                let input = recursive(case.input);
+                let mut output = Vec::new();
+                for (index, value) in slice_recursive_flatten_iter(&input) {
+                    if case.continue_values.contains(&value.as_str()) {
+                        continue;
+                    }
+                    if case.break_value == Some(value.as_str()) {
+                        break;
+                    }
+                    output.push((index, value.as_str()));
+                }
+                assert_eq!(output, case.expected);
+            }
+        }
+    }
+}
