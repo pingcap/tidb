@@ -28,7 +28,7 @@ The starting Rust checkpoint is `996e712c676297ea125e569d2224fc9f2ca54ef7`. It i
 - [x] (2026-08-09) Audited Go whole-column pointer identity, MutRow data-only shallow aliases, allocator registration, typed mutable views, and consumer blast radius.
 - [x] (2026-08-09) Established a green and pushed starting checkpoint at `996e712c67`.
 - [x] (2026-08-09) Wrote and committed this living ExecPlan before semantic edits.
-- [ ] Prototype the owned/shared slice header and prove within-capacity sharing, growth detachment, independent headers, capacity accounting, and `Send` without unsafe code.
+- [x] (2026-08-09) Prototyped the private owned/shared slice header with direct tests for nilness, subheaders, within-capacity sharing, growth detachment, guarded/native-endian access, exact capacity accounting, and `Send`, without migrating `Column` or `Chunk`.
 - [ ] Replace `Column`'s four `Vec` fields with the slice-header abstraction while preserving the unshared no-lock path and all existing scalar/vector/codec behavior.
 - [ ] Add alignment-safe typed mutable views and port the original mutable-slice tests.
 - [ ] Replace `Chunk.columns: Vec<Column>` with stable column slots and port exact reference, prune, set, swap, helper, copy, and selection behavior.
@@ -60,6 +60,12 @@ The starting Rust checkpoint is `996e712c676297ea125e569d2224fc9f2ca54ef7`. It i
 
 - Observation: ordinary per-slot operations deliberately do not deduplicate aliases. `MemoryUsage` counts repeated column slots repeatedly, and `Reset` visits a repeated alias once per slot. Identity deduplication belongs only to allocator recycling and alias-group reconstruction.
   Evidence: accepted `Chunk.MemoryUsage`, `Chunk.Reset`, `TestSwapColumn`, and `TestNoDuplicateColumnReuse`.
+
+- Observation: the accepted Go 1.25 capacity helper is publicly reachable through the dependency module, not the crate root.
+  Evidence: `tidb-datatype/src/lib.rs` exposes `pub mod go_runtime`; milestone 1 imports `tidb_datatype::go_runtime::{go_64_next_slice_capacity_for_element, GoSliceElementLayout}` without editing the dependency crate.
+
+- Observation: accepting a borrowed slice for append would let a caller retain a sibling `GoSliceRead` guard while append tries to write the same promoted backing.
+  Evidence: a source slice borrowed from `peer.read_visible()` keeps the `RwLockReadGuard` alive for the call, so an within-capacity destination write would wait on its own thread. Milestone 1 instead consumes owned values or snapshots a source header before taking the destination write guard.
 
 ## Decision Log
 
@@ -99,9 +105,17 @@ The starting Rust checkpoint is `996e712c676297ea125e569d2224fc9f2ca54ef7`. It i
   Rationale: Go can reuse a raw pointer while an old pointer variable still exists. Safe Rust must not create two unguarded mutable owners. The original source precondition and observable tests determine whether a generation-discard lease is sufficient or whether allocator-created chunks need a separate shared handle.
   Date/Author: 2026-08-09, Codex.
 
+- Decision: give the owned slice backing a boxed local `OwnedBacking<T>` newtype and expose identity only through `backing_ptr_eq`.
+  Rationale: boxing the local newtype keeps the lock-free path, avoids boxing a standard collection directly, and gives allocated-empty owned headers a stable identity distinct from nil. Once sharing is requested, both headers compare the promoted `Arc` directly; no pointer-number surrogate or unsafe address extension is needed.
+  Date/Author: 2026-08-09, Codex.
+
+- Decision: make fundamental append consume a `Vec<T>` and provide a separate header-to-header append that snapshots before mutation.
+  Rationale: the API shape prevents a borrowed visible slice from carrying a live read guard into a same-backing write. Same-backing append and copy use closed snapshot scopes, so the primitive never holds both source and destination locks.
+  Date/Author: 2026-08-09, Codex.
+
 ## Outcomes & Retrospective
 
-The plan is established; semantic outcomes are not yet claimed. At each milestone, record the commit SHA, exact tests, any rejected design, and remaining semantic seams here. Completion of this plan means the alias representation and its original tests are green, not that the whole `pkg/util/chunk` package receipt is complete.
+Milestone 1 now provides the private Go-slice root primitive and direct behavioral tests without changing any `Column` or `Chunk` behavior. Static checks for the milestone are recorded in `Artifacts and Notes`; runtime execution is intentionally deferred to the coordinator gate because this bounded writer was instructed not to run Cargo or tests. The next semantic seam is `Column` migration, including guard-backed byte APIs and typed native-endian writeback. Completion of this plan still means the whole alias representation and its original tests are green, not that the whole `pkg/util/chunk` package receipt is complete.
 
 ## Context and Orientation
 
@@ -258,13 +272,20 @@ The starting checkpoint's verified evidence was:
 - `cargo test --offline --locked -j12 --workspace --quiet`: passed outside the sandbox with an isolated Go cache.
 - `origin/hparser-integration` and `ngaut/hparser-integration`: both resolved to `996e712c676297ea125e569d2224fc9f2ca54ef7`.
 
+Milestone 1 writer evidence on 2026-08-09:
+
+- `rustfmt --edition 2021 --check rust/crates/tidb-chunk/src/go_slice.rs rust/crates/tidb-chunk/src/lib.rs`: passed.
+- `rust/scripts/check-source-size.sh`: passed with `source-size ratchet: OK`.
+- `git diff --check`: passed.
+- Cargo, tests, and clippy were not run in this writer worktree by explicit milestone instruction; the coordinator gate must execute the direct tests before integration.
+
 The package lockdown inventory already exists under `rust/crates/tidb-chunk/tests/pkg_util_chunk_lockdown`, but its obligations remain unclassified and are intentionally outside this semantic plan. After this plan is complete, the package owner must update the all-verdict receipt rather than inferring parity from green tests.
 
 ## Interfaces and Dependencies
 
 This plan may add private modules under `rust/crates/tidb-chunk/src` and re-export only source-shaped public APIs. It may read but must not edit `tidb-datatype` or `tidb-util` in this unit.
 
-Use `tidb_datatype::go_64_next_slice_capacity_for_element` and `GoSliceElementLayout` as the Go 1.25 growth authority if their visibility permits. If the helper is not publicly reachable through the crate root, keep the first prototype's capacity API local and report the dependency export seam rather than copying the size-class table without ownership approval.
+Use `tidb_datatype::go_runtime::{go_64_next_slice_capacity_for_element, GoSliceElementLayout}` as the Go 1.25 growth authority. The dependency exposes the helper through its public `go_runtime` module rather than re-exporting it at the crate root; do not duplicate the size-class table in `tidb-chunk`.
 
 The expected core interfaces are:
 
@@ -296,9 +317,12 @@ The expected core interfaces are:
         fn share_subheader(&mut self, start: usize, len: usize) -> GoSlice<T>;
         fn with_visible<R>(&self, read: impl FnOnce(&[T]) -> R) -> R;
         fn with_visible_mut<R>(&mut self, write: impl FnOnce(&mut [T]) -> R) -> R;
-        fn append_go(&mut self, values: &[T], element_size: usize, layout: GoSliceElementLayout);
+        fn append_owned_go(&mut self, values: Vec<T>, element_size: usize, layout: GoSliceElementLayout);
+        fn append_from_go(&mut self, source: &GoSlice<T>, element_size: usize, layout: GoSliceElementLayout);
     }
 
 The concrete APIs must avoid returning references after a shared guard is dropped. `CellBytes` and typed mutable-view guards own the necessary read/write guard for their entire lifetime. Two-object operations compare stable identities before locking and never acquire the same `RwLock` twice.
 
 Revision note (2026-08-09): initial plan created from the accepted Go source audits and the green `996e712c67` checkpoint. It establishes the root representation, milestone order, and acceptance matrix before semantic edits.
+
+Revision note (2026-08-09): milestone 1 added the private owned/shared Go-slice prototype and direct tests, confirmed the module-qualified Go 1.25 growth authority, and left `Column`/`Chunk` migration for milestone 2 and later.
