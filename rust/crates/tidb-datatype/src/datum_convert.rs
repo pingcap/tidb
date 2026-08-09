@@ -1585,7 +1585,7 @@ mod tests {
     }
 
     #[test]
-    fn test_to_uint32_source_rows() {
+    fn test_to_uint32() {
         let uint32 = FieldType::new(FieldTypeCode::Long).with_unsigned(true);
         for (input, expected, overflow) in [
             (Datum::Int(5_000_000_000), u32::MAX as u64, true),
@@ -1614,7 +1614,7 @@ mod tests {
     }
 
     #[test]
-    fn test_to_json_source_rows() {
+    fn test_to_json() {
         let target = FieldType::new(FieldTypeCode::Json);
         let timestamp = crate::parse_time(
             "2011-11-10 11:11:11.111111",
@@ -1673,7 +1673,7 @@ mod tests {
     }
 
     #[test]
-    fn test_string_to_mysql_bit_source_rows() {
+    fn test_string_to_mysql_bit() {
         for (text, flen, expected, truncated) in [
             ("true", 1, vec![1], true),
             ("true", 32, b"true".to_vec(), false),
@@ -1699,7 +1699,7 @@ mod tests {
     }
 
     #[test]
-    fn test_produce_dec_with_specified_tp_source_rows() {
+    fn test_produce_dec_with_specified_tp() {
         for (input, flen, scale, expected, overflow, rounded) in [
             ("0.0000", 4, 3, "0.000", false, false),
             ("0.0001", 4, 3, "0.000", false, true),
@@ -1744,7 +1744,7 @@ mod tests {
     }
 
     #[test]
-    fn test_change_reverse_result_by_upper_lower_bound_source_rows() {
+    fn test_change_reverse_result_by_upper_lower_bound() {
         let unsigned = FieldType::new(FieldTypeCode::LongLong).with_unsigned(true);
         assert_eq!(get_min_value(&unsigned), Datum::UInt(0));
         assert_eq!(get_max_value(&unsigned), Datum::UInt(u64::MAX));
