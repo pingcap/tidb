@@ -70,15 +70,14 @@ fn float_type(flen: i64, decimal: i64) -> FieldType {
 
 /// Complete translation of `pkg/types/convert_test.go:44::TestConvertType`.
 ///
-/// Two Go rows have no Rust counterpart and are named where they were dropped:
+/// One Go row has no Rust counterpart and is named where it was dropped:
 /// `Convert(&invalidMockType{}, ...)` exercises Go's `any` reflection fallback,
-/// which a typed [`Datum`] makes unreachable, and the `Datum.ToDecimal`
-/// truncate-flag rows live with the decimal conversion API rather than here.
+/// which a typed [`Datum`] makes unreachable.
 #[test]
 // The Go table's decimal rows literally use 3.1416; it is a table value, not
 // an approximation of pi that should be spelled with the constant.
 #[allow(clippy::approx_constant)]
-fn go_test_convert_type() {
+fn test_convert_type() {
     // For TypeBlob and TypeString: over-length input truncates with
     // ErrDataTooLong.
     let blob4 = FieldType::new(FieldTypeCode::Blob)
@@ -318,6 +317,13 @@ fn go_test_convert_type() {
         .unwrap(),
         "199.0000"
     );
+
+    // Go calls `Datum.ToDecimal` first with strict truncation and then with
+    // `WithIgnoreTruncateErr(true)`. Rust returns the shared best-effort value
+    // and recoverable event; the caller decides whether that event is an error.
+    let malformed = Datum::new_string("hello").to_decimal().unwrap();
+    assert_eq!(malformed.value, Decimal::from_int(0));
+    assert_eq!(malformed.event, Some(ScalarConversionEvent::Truncated));
 
     // For TypeYear.
     let year = FieldType::new(FieldTypeCode::Year);
