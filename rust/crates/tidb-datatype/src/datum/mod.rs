@@ -737,8 +737,9 @@ mod tests {
             .is_none());
     }
 
+    /// Source: `pkg/types/convert_test.go::TestConvertToStringWithCheck`.
     #[test]
-    fn test_convert_to_string_with_check_source_rows() {
+    fn test_convert_to_string_with_check() {
         let utf8 = "你好".as_bytes();
         let utf8mb4 = "你好👋".as_bytes();
         let invalid_utf8 = [utf8, &[0x81]].concat();
