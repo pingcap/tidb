@@ -1698,8 +1698,9 @@ mod tests {
         }
     }
 
+    /// Source: `pkg/types/convert_test.go::TestConvertJSONToInt`.
     #[test]
-    fn test_convert_json_to_int_source_rows() {
+    fn test_convert_json_to_int() {
         for (input, expected, truncated) in [
             ("{}", 0, true),
             ("[]", 0, true),
@@ -1720,30 +1721,39 @@ mod tests {
         }
     }
 
+    /// Source: `pkg/types/convert_test.go::TestConvertJSONToFloat`.
     #[test]
-    fn test_convert_json_to_float_source_rows() {
-        for (input, expected, truncated) in [
-            ("{}", 0.0, true),
-            ("[]", 0.0, true),
-            ("3", 3.0, false),
-            ("-3", -3.0, false),
-            ("4.5", 4.5, false),
-            ("true", 1.0, false),
-            ("false", 0.0, false),
-            ("null", 0.0, true),
-            ("\"hello\"", 0.0, true),
-            ("\"123.456hello\"", 123.456, true),
-            ("\"1234\"", 1234.0, false),
+    fn test_convert_json_to_float() {
+        for (input, expected, type_code, truncated) in [
+            ("{}", 0.0, JSON_TYPE_CODE_OBJECT, true),
+            ("[]", 0.0, JSON_TYPE_CODE_ARRAY, true),
+            ("3", 3.0, JSON_TYPE_CODE_INT64, false),
+            ("-3", -3.0, JSON_TYPE_CODE_INT64, false),
+            (
+                "9223372036854775808",
+                9_223_372_036_854_775_808.0,
+                JSON_TYPE_CODE_UINT64,
+                false,
+            ),
+            ("4.5", 4.5, JSON_TYPE_CODE_FLOAT64, false),
+            ("true", 1.0, JSON_TYPE_CODE_LITERAL, false),
+            ("false", 0.0, JSON_TYPE_CODE_LITERAL, false),
+            ("null", 0.0, JSON_TYPE_CODE_LITERAL, true),
+            ("\"hello\"", 0.0, JSON_TYPE_CODE_STRING, true),
+            ("\"123.456hello\"", 123.456, JSON_TYPE_CODE_STRING, true),
+            ("\"1234\"", 1234.0, JSON_TYPE_CODE_STRING, false),
         ] {
             let json = BinaryJSON::parse(input).unwrap();
+            assert_eq!(json.type_code(), type_code, "{input}");
             let actual = json_to_float(&json);
             assert_eq!(actual.value, expected, "{input}");
             assert_eq!(actual.event.is_some(), truncated, "{input}");
         }
     }
 
+    /// Source: `pkg/types/convert_test.go::TestConvertJSONToDecimal`.
     #[test]
-    fn test_convert_json_to_decimal_source_rows() {
+    fn test_convert_json_to_decimal() {
         for (input, expected, truncated) in [
             ("3", "3", false),
             ("-3", "-3", false),
