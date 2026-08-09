@@ -170,7 +170,7 @@ func NewJobManager(id string, sessPool syssession.Pool, store kv.Storage, etcdCl
 	manager.leaderFunc = leaderFunc
 	if extworkload.IsTTLTaskWorker(manager.extWorkload) && etcdCli != nil && !intest.InTest {
 		manager.ownerManager = owner.NewOwnerManager(context.Background(), etcdCli, ttlJobManagerPrompt, id, ttlJobManagerLeaderPath)
-		manager.ownerManager.SetListener(&ttlJobManagerOwnerListener{})
+		manager.ownerManager.SetListener(&ttlOwnerListener{})
 		if err := manager.ownerManager.CampaignOwner(5); err != nil {
 			logutil.BgLogger().Error("failed to campaign ttl job manager owner",
 				zap.Error(err))
@@ -180,11 +180,11 @@ func NewJobManager(id string, sessPool syssession.Pool, store kv.Storage, etcdCl
 	return
 }
 
-type ttlJobManagerOwnerListener struct{}
+type ttlOwnerListener struct{}
 
-func (*ttlJobManagerOwnerListener) OnRetireOwner() {}
+func (*ttlOwnerListener) OnRetireOwner() {}
 
-func (*ttlJobManagerOwnerListener) OnBecomeOwner() {
+func (*ttlOwnerListener) OnBecomeOwner() {
 	logutil.BgLogger().Info("leader change of TTL job manager service, this node become owner")
 }
 
