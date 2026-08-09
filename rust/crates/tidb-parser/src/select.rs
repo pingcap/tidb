@@ -271,8 +271,15 @@ impl Parser {
     /// parenthesized terms need different tail-parsing timing).
     fn parse_one_term(&mut self) -> PResult<(bool, SetOprTermBody)> {
         if self.starts_parenthesized_query() {
-            self.bump(); // (
-            let inner = if self.is_kw("WITH") {
+            self.bump();
+            // A leading WITH may itself own a parenthesized outer query:
+            // `(WITH cte AS (...) (SELECT ...)) UNION ...`. In that shape
+            // the parentheses after WITH belong to the SelectStmt, while the
+            // parentheses consumed here belong to the set-operation term.
+            // Keep both owners. Ordinary nested parentheses around SELECT
+            // are collapsed by Go, so their inner SelectStmt bit is cleared.
+            let inner_starts_with = self.is_kw("WITH");
+            let inner = if inner_starts_with {
                 self.parse_with_select()?
             } else {
                 self.parse_select_or_setopr()?
@@ -280,7 +287,9 @@ impl Parser {
             self.expect_op(")")?;
             let body = match inner {
                 QueryStmt::Select(mut sel) => {
-                    sel.is_in_braces = false;
+                    if !inner_starts_with {
+                        sel.is_in_braces = false;
+                    }
                     SetOprTermBody::Select(sel)
                 }
                 QueryStmt::SetOpr(so) => SetOprTermBody::Nested(so),

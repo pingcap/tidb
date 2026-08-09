@@ -700,6 +700,82 @@ fn cte() {
     );
 }
 
+/// `pkg/parser/parser_test.go::TestCTEMerge`.
+#[test]
+fn test_cte_merge() {
+    for (sql, expected) in [
+        (
+            "WITH `cte` AS (SELECT 1,2) SELECT `col1`,`col2` FROM `cte`",
+            Some("WITH `cte` AS (SELECT 1,2) SELECT `col1`,`col2` FROM `cte`"),
+        ),
+        (
+            "WITH `cte` (col1, col2) AS (SELECT 1,2 UNION ALL SELECT 3,4) SELECT col1, col2 FROM cte;",
+            Some("WITH `cte` (`col1`, `col2`) AS (SELECT 1,2 UNION ALL SELECT 3,4) SELECT `col1`,`col2` FROM `cte`"),
+        ),
+        (
+            "WITH `cte` AS (SELECT 1,2), cte2 as (select 3) SELECT `col1`,`col2` FROM `cte`",
+            Some("WITH `cte` AS (SELECT 1,2), `cte2` AS (SELECT 3) SELECT `col1`,`col2` FROM `cte`"),
+        ),
+        (
+            "with cte(a) as (select 1) update t, cte set t.a=1  where t.a=cte.a;",
+            Some("WITH `cte` (`a`) AS (SELECT 1) UPDATE (`t`) JOIN `cte` SET `t`.`a`=1 WHERE `t`.`a`=`cte`.`a`"),
+        ),
+        (
+            "with cte(a) as (select 1) delete t from t, cte where t.a=cte.a;",
+            Some("WITH `cte` (`a`) AS (SELECT 1) DELETE `t` FROM (`t`) JOIN `cte` WHERE `t`.`a`=`cte`.`a`"),
+        ),
+        (
+            "WITH cte1 AS (SELECT 1) SELECT * FROM (WITH cte2 AS (SELECT 2) SELECT * FROM cte2 JOIN cte1) AS dt;",
+            Some("WITH `cte1` AS (SELECT 1) SELECT * FROM (WITH `cte2` AS (SELECT 2) SELECT * FROM `cte2` JOIN `cte1`) AS `dt`"),
+        ),
+        (
+            "WITH cte AS (SELECT 1) SELECT /*+ MAX_EXECUTION_TIME(1000) */ * FROM cte;",
+            Some("WITH `cte` AS (SELECT 1) SELECT /*+ MAX_EXECUTION_TIME(1000)*/ * FROM `cte`"),
+        ),
+        (
+            "with cte as (table t) table cte;",
+            Some("WITH `cte` AS (TABLE `t`) TABLE `cte`"),
+        ),
+        (
+            "with cte as (select 1) select 1 union with cte as (select 1) select * from cte;",
+            None,
+        ),
+        (
+            "with cte as (select 1) (select 1);",
+            Some("WITH `cte` AS (SELECT 1) (SELECT 1)"),
+        ),
+        (
+            "with cte as (select 1) (select 1 union select 1)",
+            Some("WITH `cte` AS (SELECT 1) (SELECT 1 UNION SELECT 1)"),
+        ),
+        (
+            "select * from (with cte as (select 1) select 1 union select 2) qn",
+            Some("SELECT * FROM (WITH `cte` AS (SELECT 1) SELECT 1 UNION SELECT 2) AS `qn`"),
+        ),
+        (
+            "select * from t where 1 > (with cte as (select 2) select * from cte)",
+            Some("SELECT * FROM `t` WHERE 1>(WITH `cte` AS (SELECT 2) SELECT * FROM `cte`)"),
+        ),
+        (
+            "( with cte(n) as ( select 1 )  select n+1 from cte  union select n+2 from cte) union select 1",
+            Some("(WITH `cte` (`n`) AS (SELECT 1) SELECT `n`+1 FROM `cte` UNION SELECT `n`+2 FROM `cte`) UNION SELECT 1"),
+        ),
+        (
+            "( with cte(n) as ( select 1 )  select n+1 from cte) union select 1",
+            Some("(WITH `cte` (`n`) AS (SELECT 1) SELECT `n`+1 FROM `cte`) UNION SELECT 1"),
+        ),
+        (
+            "( with cte(n) as ( select 1 )  (select n+1 from cte)) union select 1",
+            Some("(WITH `cte` (`n`) AS (SELECT 1) (SELECT `n`+1 FROM `cte`)) UNION SELECT 1"),
+        ),
+    ] {
+        match expected {
+            Some(expected) => assert_eq!(r(sql), expected, "source SQL: {sql}"),
+            None => assert!(parse(sql).is_err(), "source SQL unexpectedly parsed: {sql}"),
+        }
+    }
+}
+
 #[test]
 fn window_functions() {
     assert_eq!(
