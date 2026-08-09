@@ -608,6 +608,30 @@ mod tests {
         assert_ne!(first.repair_table_list, second.repair_table_list);
     }
 
+    // Go TestKeyspaceActivateModeConfig (the source test runs under the
+    // `nextgen` build tag).
+    #[cfg(feature = "nextgen")]
+    #[test]
+    fn test_keyspace_activate_mode_config() {
+        let mut config = new_config();
+        config.deploy_mode = Mode::Starter;
+        config.keyspace_activate_mode = true;
+        config.valid().unwrap();
+
+        config.standby.standby_mode = true;
+        assert!(config
+            .valid()
+            .unwrap_err()
+            .contains("can't set standby and keyspace-activate mode at the same time"));
+
+        config.standby.standby_mode = false;
+        config.deploy_mode = Mode::Premium;
+        assert!(config
+            .valid()
+            .unwrap_err()
+            .contains("keyspace-activate can only be configured for starter deploy mode"));
+    }
+
     // Go TestMaxIndexLength.
     #[test]
     fn max_index_length() {
