@@ -544,7 +544,7 @@ mod tests {
         fn assert_send<T: Send>() {}
         assert_send::<GoSlice<u8>>();
 
-        let slice = GoSlice::with_capacity(4);
+        let slice = GoSlice::<u8>::with_capacity(4);
         let returned = std::thread::spawn(move || slice).join().expect("worker");
         assert!(returned.is_allocated());
         assert_eq!((returned.len(), returned.capacity()), (0, 4));
