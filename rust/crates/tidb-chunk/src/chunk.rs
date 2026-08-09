@@ -18,15 +18,12 @@
 //! of every column. Executors produce chunks and expression evaluation reads
 //! rows out of them (see [`crate::row::Row`]).
 //!
-//! Ported: construction from field types, `num_cols`/`num_rows` (selection
-//! aware), `column`(`_mut`), `get_row`, `reset`, `set_num_virtual_rows`,
-//! `capacity`, the by-column typed append helpers, and `append_row`/
-//! `append_partial_row` (row copy via `Column::append_cell_from`).
-//!
-//! DEFERRED (documented): the `requiredRows`/`IsFull` growth policy,
-//! `GrowAndReset`, `CopyConstructSel` and other selection transforms, the chunk
-//! pool/allocator, and some selection transforms. Time, Duration, decimal,
-//! JSON, Enum/Set, and VectorFloat32 typed append paths are implemented.
+//! Ported: construction, required-row/capacity growth, selection-aware row
+//! access, typed append paths, range and projected batch appends, truncate and
+//! reconstruct transforms, deep/selected copies, column-vector swapping, and
+//! allocator/global-pool ownership transfer. Pointer-identity column aliases
+//! (`MakeRef`/`MakeRefTo` and alias-preserving single-column swaps) remain a
+//! separate representation tranche.
 
 use crate::column::Column;
 use crate::row::Row;
@@ -200,6 +197,19 @@ impl Chunk {
     /// Go `SetSel`: install (or, with `None`, drop) the selection vector.
     pub fn set_sel(&mut self, sel: Option<Vec<usize>>) {
         self.sel = sel;
+    }
+
+    /// Go `SwapColumns`: swap only selection, column ownership, and virtual
+    /// row count. Capacity, required rows, and incomplete state belong to the
+    /// receiving chunk and deliberately remain in place.
+    pub fn swap_columns(&mut self, other: &mut Chunk) {
+        std::mem::swap(&mut self.sel, &mut other.sel);
+        std::mem::swap(&mut self.columns, &mut other.columns);
+        std::mem::swap(
+            &mut self.columns_initialized,
+            &mut other.columns_initialized,
+        );
+        std::mem::swap(&mut self.num_virtual_rows, &mut other.num_virtual_rows);
     }
 
     /// Go `Sel`: the installed selection vector, if any.
