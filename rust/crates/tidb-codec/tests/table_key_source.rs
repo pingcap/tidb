@@ -25,6 +25,31 @@ fn test_table_codec_invalid() {
 }
 
 #[test]
+fn test_row_key_codec() {
+    // Direct port of pkg/table/tables/tables_test.go::TestRowKeyCodec.
+    for (table_id, handle) in [(1, 1_234_567_890), (2, 1), (3, -1), (4, -1)] {
+        let key = encode_row_key_with_handle(table_id, &RecordHandle::Int(handle));
+        assert_eq!(
+            decode_record_key(&key),
+            Ok((table_id, RecordHandle::Int(handle)))
+        );
+        assert_eq!(decode_row_key(&key), Ok(RecordHandle::Int(handle)));
+    }
+
+    for invalid in [
+        "",
+        "x",
+        "t1",
+        "t12345678",
+        "t12345678_i",
+        "t12345678_r1",
+        "t12345678_r1234567",
+    ] {
+        assert!(decode_row_key(invalid.as_bytes()).is_err(), "{invalid:?}");
+    }
+}
+
+#[test]
 fn test_index_key() {
     assert_eq!(
         decode_key_head(&encode_index_seek_key(4, 5, &[])),
