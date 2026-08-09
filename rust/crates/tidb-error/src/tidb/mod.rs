@@ -5,5 +5,6 @@
 
 pub mod errcode;
 pub mod errname;
+pub mod infoschema;
 
 pub use errname::{entry_by_code, message_by_code, CATALOG};
