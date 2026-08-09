@@ -20,11 +20,9 @@
 //! - Go's `metaData.Undecoded()` (the full list of unrecognized keys)
 //!   becomes `serde_ignored`, the Rust equivalent — it records every
 //!   ignored key path while still deserializing normally.
-//! - Go decodes into the caller's `Config` (started from `NewConfig`), so
-//!   absent keys keep their defaults. Since serde's `Config` default is
-//!   `DefaultConfig`, deserializing a partial file yields the same result;
-//!   `load_str` replaces `self` with it, matching how the config is always
-//!   loaded into a fresh `NewConfig`.
+//! - Go decodes into the caller's existing `Config`, so absent keys retain
+//!   their current values. `load_str` recursively overlays the input TOML
+//!   on a serialized snapshot to preserve the same behavior.
 //!
 //! The instance-section migration (`sectionMovedToInstance` ->
 //! `ErrConfigInstanceSection`) reports options that were relocated into the
@@ -325,6 +323,24 @@ fn format_go_toml_type_error(
     ))
 }
 
+fn merge_toml_value(base: &mut toml::Value, overlay: toml::Value) {
+    if let toml::Value::Table(overlay_table) = overlay {
+        if let Some(base_table) = base.as_table_mut() {
+            for (key, value) in overlay_table {
+                if let Some(existing) = base_table.get_mut(&key) {
+                    merge_toml_value(existing, value);
+                } else {
+                    base_table.insert(key, value);
+                }
+            }
+            return;
+        }
+        *base = toml::Value::Table(overlay_table);
+    } else {
+        *base = overlay;
+    }
+}
+
 impl Config {
     /// Go `Config.Load` (from an already-read config-file string; file I/O
     /// is the caller's, matching how the rewrite reads config text).
@@ -335,7 +351,7 @@ impl Config {
         // Decode, collecting unrecognized keys (Go's metaData.Undecoded()).
         let mut undecoded: Vec<String> = Vec::new();
         let de = toml::Deserializer::new(text);
-        let parsed: Config = serde_ignored::deserialize(de, |path| {
+        let _: Config = serde_ignored::deserialize(de, |path| {
             undecoded.push(path.to_string());
         })
         .map_err(|error| {
@@ -344,6 +360,21 @@ impl Config {
                     .unwrap_or_else(|| error.to_string()),
             )
         })?;
+
+        let txn_local_latches = self.txn_local_latches;
+        let mem_profile_interval = self.performance.mem_profile_interval.clone();
+        let mut merged =
+            toml::Value::try_from(&*self).map_err(|error| LoadError::Other(error.to_string()))?;
+        let mut overlay = table.clone();
+        if let Some(log) = overlay.remove("Log") {
+            overlay.insert("log".to_owned(), log);
+        }
+        merge_toml_value(&mut merged, toml::Value::Table(overlay));
+        let mut parsed: Config = merged
+            .try_into()
+            .map_err(|error: toml::de::Error| LoadError::Other(error.to_string()))?;
+        parsed.txn_local_latches = txn_local_latches;
+        parsed.performance.mem_profile_interval = mem_profile_interval;
         *self = parsed;
 
         if !crate::kerneltype::is_next_gen() && is_defined(&table, &["deploy-mode"]) {
@@ -689,6 +720,58 @@ mod tests {
             error.to_string(),
             "toml: line 5 (last key \"performance.enforce-mpp\"): incompatible types: TOML value has type int64; destination has type boolean"
         );
+    }
+
+    // The load portion of Go TestErrorMessageExtensionConfig.
+    #[test]
+    fn error_message_extension_config_load() {
+        use crate::config_tree::ErrorMessageExtension;
+
+        let text = r#"
+error-msg-extension = [
+  { pattern = "^Access denied for user '.+'@'.+' \\(using password: (YES|NO)\\)$", suffix = "see https://docs.pingcap.com/tidbcloud/select-cluster-tier#user-name-prefix for more details" },
+  { pattern = "^require_secure_transport can not be set to ON with SEM\\(security enhanced mode\\) enabled$", suffix = "see https://docs.pingcap.com/tidbcloud/secure-connections-to-serverless-tier-clusters for more details" },
+  { pattern = "^sleep\\(\\) argument is greater than [0-9]+$", suffix = "see https://docs.pingcap.com/tidbcloud/serverless-tier-limitations#sql for more details" },
+  { pattern = "^[A-Z ]+ command denied to user '[^']+'@'[^']+' for table '[^']+'$", suffix = "see https://docs.pingcap.com/tidbcloud/limited-sql-features#system-tables for more details" },
+  { pattern = "^Access denied; you need \\(at least one of\\) the RESTRICTED_VARIABLES_ADMIN privilege\\(s\\) for this operation$", suffix = "see https://docs.pingcap.com/tidbcloud/limited-sql-features#system-variables for more details" },
+  { pattern = "^Feature '.+' is not supported when security enhanced mode is enabled$", suffix = "see https://docs.pingcap.com/tidbcloud/limited-sql-features#statements for more details" },
+]
+"#;
+        let expected = vec![
+            ErrorMessageExtension {
+                pattern: r"^Access denied for user '.+'@'.+' \(using password: (YES|NO)\)$"
+                    .to_owned(),
+                suffix: "see https://docs.pingcap.com/tidbcloud/select-cluster-tier#user-name-prefix for more details".to_owned(),
+            },
+            ErrorMessageExtension {
+                pattern: r"^require_secure_transport can not be set to ON with SEM\(security enhanced mode\) enabled$".to_owned(),
+                suffix: "see https://docs.pingcap.com/tidbcloud/secure-connections-to-serverless-tier-clusters for more details".to_owned(),
+            },
+            ErrorMessageExtension {
+                pattern: r"^sleep\(\) argument is greater than [0-9]+$".to_owned(),
+                suffix: "see https://docs.pingcap.com/tidbcloud/serverless-tier-limitations#sql for more details".to_owned(),
+            },
+            ErrorMessageExtension {
+                pattern: "^[A-Z ]+ command denied to user '[^']+'@'[^']+' for table '[^']+'$".to_owned(),
+                suffix: "see https://docs.pingcap.com/tidbcloud/limited-sql-features#system-tables for more details".to_owned(),
+            },
+            ErrorMessageExtension {
+                pattern: r"^Access denied; you need \(at least one of\) the RESTRICTED_VARIABLES_ADMIN privilege\(s\) for this operation$".to_owned(),
+                suffix: "see https://docs.pingcap.com/tidbcloud/limited-sql-features#system-variables for more details".to_owned(),
+            },
+            ErrorMessageExtension {
+                pattern: "^Feature '.+' is not supported when security enhanced mode is enabled$"
+                    .to_owned(),
+                suffix: "see https://docs.pingcap.com/tidbcloud/limited-sql-features#statements for more details".to_owned(),
+            },
+        ];
+
+        let mut config = new_config();
+        config.deploy_mode = Mode::Starter;
+        config.load_str("config.toml", text).unwrap();
+        assert_eq!(config.deploy_mode, Mode::Starter);
+        assert_eq!(config.error_message_extensions, expected);
+        assert!(new_config().error_message_extensions.is_empty());
     }
 
     // A valid partial config loads and keeps defaults.
