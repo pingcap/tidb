@@ -22,7 +22,10 @@
 //! following tranche). `Valid`'s skip-grant-table check delegates to the
 //! process euid and is noted where it lands.
 
-use std::sync::{OnceLock, RwLock};
+use std::sync::{
+    atomic::{AtomicBool as StdAtomicBool, Ordering},
+    OnceLock, RwLock,
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -385,6 +388,7 @@ pub fn new_config() -> Config {
 static GLOBAL_CONFIG: OnceLock<RwLock<Config>> = OnceLock::new();
 static PREPARED_ERROR_MESSAGE_EXTENSIONS: OnceLock<RwLock<Vec<ErrorMessageExtension>>> =
     OnceLock::new();
+static CHECK_TABLE_BEFORE_DROP: StdAtomicBool = StdAtomicBool::new(false);
 
 fn global_config() -> &'static RwLock<Config> {
     GLOBAL_CONFIG.get_or_init(|| RwLock::new(new_config()))
@@ -423,6 +427,19 @@ pub fn store_global_config(config: Config) {
         .expect("prepared error message extensions lock poisoned");
     *global = config;
     *prepared = extensions;
+}
+
+/// Go `CheckTableBeforeDrop`.
+pub fn check_table_before_drop() -> bool {
+    CHECK_TABLE_BEFORE_DROP.load(Ordering::Relaxed)
+}
+
+/// Go `initByLDFlags`.
+pub fn init_by_ld_flags(_edition: &str, check_before_drop_ld_flag: &str) {
+    store_global_config(new_config());
+    if check_before_drop_ld_flag == "1" {
+        CHECK_TABLE_BEFORE_DROP.store(true, Ordering::Relaxed);
+    }
 }
 
 /// Go `UpdateGlobal`.
@@ -766,6 +783,35 @@ mod tests {
         assert!(get_global_config().use_auto_scaler);
 
         update_global(|config| config.use_auto_scaler = false);
+    }
+
+    // Go TestModifyThroughLDFlags.
+    #[test]
+    fn test_modify_through_ld_flags() {
+        let _guard = GLOBAL_CONFIG_TEST_LOCK.lock().unwrap();
+        let original_check_table_before_drop = check_table_before_drop();
+        let original_global_config = get_global_config();
+
+        for (edition, flag, enable_telemetry, expected_check_before_drop) in [
+            ("Community", "None", false, false),
+            ("Community", "1", false, true),
+            ("Enterprise", "None", false, false),
+            ("Enterprise", "1", false, true),
+        ] {
+            CHECK_TABLE_BEFORE_DROP.store(false, Ordering::Relaxed);
+            init_by_ld_flags(edition, flag);
+
+            assert_eq!(get_global_config().enable_telemetry, enable_telemetry);
+            assert_eq!(new_config().enable_telemetry, enable_telemetry);
+            assert_eq!(
+                check_table_before_drop(),
+                expected_check_before_drop,
+                "edition={edition}, flag={flag}"
+            );
+        }
+
+        CHECK_TABLE_BEFORE_DROP.store(original_check_table_before_drop, Ordering::Relaxed);
+        store_global_config(original_global_config);
     }
 
     // Go TestExternalWorkloadValid.
