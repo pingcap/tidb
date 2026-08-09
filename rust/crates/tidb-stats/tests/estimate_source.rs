@@ -41,14 +41,29 @@ fn sketches_from_integer_samples(
             encode_integer_datum_value(&Datum::new_int(sample)).expect("integer EncodeValue");
         ndv.insert_hash(hash_bytes(&encoded).h1);
     }
-    for (&sample, &count) in &counts {
-        if count == 1 {
-            let encoded =
-                encode_integer_datum_value(&Datum::new_int(sample)).expect("integer EncodeValue");
-            singletons.insert_hash(hash_bytes(&encoded).h1);
+    for &sample in samples {
+        if counts.get(&sample) != Some(&1) {
+            continue;
         }
+        let encoded =
+            encode_integer_datum_value(&Datum::new_int(sample)).expect("integer EncodeValue");
+        singletons.insert_hash(hash_bytes(&encoded).h1);
+        counts.remove(&sample);
     }
     (Some(ndv), Some(singletons))
+}
+
+#[test]
+fn source_test_helpers_cover_empty_duplicate_and_singleton_boundaries() {
+    assert_eq!(sketch([]).unwrap().ndv(), 0);
+
+    let (empty_ndv, empty_singletons) = sketches_from_integer_samples(8, &[]);
+    assert_eq!(empty_ndv.unwrap().ndv(), 0);
+    assert_eq!(empty_singletons.unwrap().ndv(), 0);
+
+    let (ndv, singletons) = sketches_from_integer_samples(8, &[1, 1, 2]);
+    assert_eq!(ndv.unwrap().ndv(), 2);
+    assert_eq!(singletons.unwrap().ndv(), 1);
 }
 
 #[test]
@@ -193,6 +208,21 @@ fn test_estimate_global_singleton_mismatched_lengths() {
         },
         "assert failed, ndvSketches and singletonSketches should have the same length",
     );
+}
+
+#[test]
+fn source_global_singleton_estimator_does_not_mutate_caller_sketches() {
+    let ndv_sketches = vec![sketch([100, 200]), sketch([200, 300])];
+    let singleton_sketches = vec![sketch([100]), sketch([300])];
+    let ndv_before = ndv_sketches.clone();
+    let singleton_before = singleton_sketches.clone();
+
+    assert_eq!(
+        estimate_global_singleton_by_sketches(&ndv_sketches, &singleton_sketches),
+        2
+    );
+    assert_eq!(ndv_sketches, ndv_before);
+    assert_eq!(singleton_sketches, singleton_before);
 }
 
 fn assert_panic_equals(function: impl FnOnce() + std::panic::UnwindSafe, expected: &str) {
