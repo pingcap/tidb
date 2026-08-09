@@ -216,18 +216,45 @@ mod tests {
     }
 
     #[test]
-    fn def_temp_storage_dir_shape() {
-        let dir = encode_def_temp_storage_dir(
-            Path::new("/tmp"),
-            DEF_HOST,
-            DEF_STATUS_HOST,
-            DEF_PORT,
-            DEF_STATUS_PORT,
-            "501",
-        );
-        assert_eq!(
-            dir,
-            Path::new("/tmp/501_tidb/MC4wLjAuMDo0MDAwLzAuMC4wLjA6MTAwODA=/tmp-storage")
-        );
+    fn test_encode_def_temp_storage_dir() {
+        for (host, status_host, port, status_port, encoded) in [
+            (
+                "0.0.0.0",
+                "0.0.0.0",
+                4000,
+                10080,
+                "MC4wLjAuMDo0MDAwLzAuMC4wLjA6MTAwODA=",
+            ),
+            (
+                "127.0.0.1",
+                "127.16.5.1",
+                4000,
+                10080,
+                "MTI3LjAuMC4xOjQwMDAvMTI3LjE2LjUuMToxMDA4MA==",
+            ),
+            (
+                "127.0.0.1",
+                "127.16.5.1",
+                4000,
+                15532,
+                "MTI3LjAuMC4xOjQwMDAvMTI3LjE2LjUuMToxNTUzMg==",
+            ),
+        ] {
+            let dir = encode_def_temp_storage_dir(
+                Path::new("/tmp"),
+                host,
+                status_host,
+                port,
+                status_port,
+                "501",
+            );
+            assert_eq!(
+                dir,
+                Path::new("/tmp")
+                    .join("501_tidb")
+                    .join(encoded)
+                    .join("tmp-storage")
+            );
+        }
     }
 }
