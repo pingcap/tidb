@@ -31,6 +31,86 @@ fn user_variable_assignments_restore_as_their_own_typed_set() {
     assert!(parse("set xx.xx.xx = 666").is_err());
 }
 
+/// Exact 11-row AST matrix from `pkg/parser/parser_test.go::TestSetVariable`.
+#[test]
+fn test_set_variable_source_of_truth() {
+    use tidb_ast::{SessionStmt, Stmt, SystemVariableScope};
+
+    #[derive(Clone, Copy)]
+    enum ExpectedKind {
+        System(SystemVariableScope),
+        User,
+    }
+
+    for (sql, expected) in [
+        (
+            "set xx.xx = 666",
+            ExpectedKind::System(SystemVariableScope::Session),
+        ),
+        (
+            "set session xx.xx = 666",
+            ExpectedKind::System(SystemVariableScope::Session),
+        ),
+        (
+            "set local xx.xx = 666",
+            ExpectedKind::System(SystemVariableScope::Session),
+        ),
+        (
+            "set global xx.xx = 666",
+            ExpectedKind::System(SystemVariableScope::Global),
+        ),
+        (
+            "set instance xx.xx = 666",
+            ExpectedKind::System(SystemVariableScope::Instance),
+        ),
+        (
+            "set @@xx.xx = 666",
+            ExpectedKind::System(SystemVariableScope::Session),
+        ),
+        (
+            "set @@session.xx.xx = 666",
+            ExpectedKind::System(SystemVariableScope::Session),
+        ),
+        (
+            "set @@local.xx.xx = 666",
+            ExpectedKind::System(SystemVariableScope::Session),
+        ),
+        (
+            "set @@global.xx.xx = 666",
+            ExpectedKind::System(SystemVariableScope::Global),
+        ),
+        (
+            "set @@instance.xx.xx = 666",
+            ExpectedKind::System(SystemVariableScope::Instance),
+        ),
+        ("set @xx.xx = 666", ExpectedKind::User),
+    ] {
+        let Stmt::Session(statement) =
+            parse(sql).unwrap_or_else(|error| panic!("{sql}: {error:?}"))
+        else {
+            panic!("{sql}: expected session statement");
+        };
+        match (statement.as_ref(), expected) {
+            (SessionStmt::Set(set), ExpectedKind::System(expected_scope)) => {
+                let [assignment] = set.assignments.as_slice() else {
+                    panic!("{sql}: expected one system-variable assignment");
+                };
+                assert_eq!(assignment.name, "xx.xx", "{sql}");
+                assert_eq!(assignment.scope, expected_scope, "{sql}");
+            }
+            (SessionStmt::SetUserVar(set), ExpectedKind::User) => {
+                let [assignment] = set.assignments.as_slice() else {
+                    panic!("{sql}: expected one user-variable assignment");
+                };
+                assert_eq!(assignment.name, "xx.xx", "{sql}");
+            }
+            (actual, _) => panic!("{sql}: unexpected SET statement shape: {actual:?}"),
+        }
+    }
+
+    assert!(parse("set xx.xx.xx = 666").is_err());
+}
+
 /// `SET PASSWORD` is a distinct typed session statement, rather than a
 /// generic system-variable assignment. The vectors are from TiDB's parser
 /// tests (`pkg/parser/parser_test.go:1441-1442,5363-5364`), including the
