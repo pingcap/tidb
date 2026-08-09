@@ -17,7 +17,7 @@
 use super::*;
 
 #[test]
-fn create_table_split_source_selector_from_go_test_split_partition() {
+fn split_source_selector_from_go_test_split_partition() {
     for (sql, expected) in [
         (
             "create table t (id BIGINT, user_id BIGINT, action_type VARCHAR(20), PRIMARY KEY (id), INDEX idx_user_id (user_id)) SPLIT PRIMARY KEY BETWEEN (0) AND (1000000) REGIONS 4 SPLIT INDEX idx_user_id BETWEEN (1000) AND (100000) REGIONS 3",
@@ -26,6 +26,22 @@ fn create_table_split_source_selector_from_go_test_split_partition() {
         (
             "create table t (id BIGINT) SPLIT BETWEEN (0) AND (1000000) REGIONS 4",
             "CREATE TABLE `t` (`id` BIGINT) SPLIT BETWEEN (0) AND (1000000) REGIONS 4",
+        ),
+        (
+            "create table t (id BIGINT, INDEX idx(id)) SPLIT BETWEEN (0) AND (1000000) REGIONS 4 SPLIT INDEX idx BETWEEN (0) AND (1000000) REGIONS 2",
+            "CREATE TABLE `t` (`id` BIGINT,INDEX `idx`(`id`)) SPLIT BETWEEN (0) AND (1000000) REGIONS 4 SPLIT INDEX `idx` BETWEEN (0) AND (1000000) REGIONS 2",
+        ),
+        (
+            "alter table t SPLIT PRIMARY KEY BETWEEN (0) AND (1000000) REGIONS 4",
+            "ALTER TABLE `t` SPLIT PRIMARY KEY BETWEEN (0) AND (1000000) REGIONS 4",
+        ),
+        (
+            "alter table t SPLIT INDEX ss BETWEEN (0) AND (1000000) REGIONS 3",
+            "ALTER TABLE `t` SPLIT INDEX `ss` BETWEEN (0) AND (1000000) REGIONS 3",
+        ),
+        (
+            "alter table t SPLIT BETWEEN (0) AND (1000000) REGIONS 3",
+            "ALTER TABLE `t` SPLIT BETWEEN (0) AND (1000000) REGIONS 3",
         ),
         (
             "create global temporary table t (id int) on commit delete rows split region table by (1)",
