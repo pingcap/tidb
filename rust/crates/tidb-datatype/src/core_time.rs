@@ -1023,33 +1023,41 @@ mod tests {
     }
 
     #[test]
-    fn test_is_leap_year_and_get_last_day() {
-        for (year, expected) in [
-            (1960, true),
-            (1963, false),
-            (2008, true),
-            (2017, false),
-            (1988, true),
-            (2000, true),
-            (1992, true),
-            (2024, true),
-            (2016, true),
-            (2015, false),
-            (2014, false),
-            (2001, false),
-            (1989, false),
+    fn test_is_leap_year() {
+        for (time, expected) in [
+            (CoreTime::from_date(1960, 1, 1, 0, 0, 0, 0), true),
+            (CoreTime::from_date(1963, 2, 21, 0, 0, 0, 0), false),
+            (CoreTime::from_date(2008, 11, 25, 0, 0, 0, 0), true),
+            (CoreTime::from_date(2017, 4, 24, 0, 0, 0, 0), false),
+            (CoreTime::from_date(1988, 2, 29, 0, 0, 0, 0), true),
+            (CoreTime::from_date(2000, 3, 15, 0, 0, 0, 0), true),
+            (CoreTime::from_date(1992, 5, 3, 0, 0, 0, 0), true),
+            (CoreTime::from_date(2024, 10, 1, 0, 0, 0, 0), true),
+            (CoreTime::from_date(2016, 6, 29, 0, 0, 0, 0), true),
+            (CoreTime::from_date(2015, 6, 29, 0, 0, 0, 0), false),
+            (CoreTime::from_date(2014, 9, 31, 0, 0, 0, 0), false),
+            (CoreTime::from_date(2001, 12, 7, 0, 0, 0, 0), false),
+            (CoreTime::from_date(1989, 7, 6, 0, 0, 0, 0), false),
         ] {
-            assert_eq!(is_leap_year(year), expected);
+            assert_eq!(time.is_leap_year(), expected, "{time}");
         }
-        assert_eq!(get_last_day(2000, 1), 31);
-        assert_eq!(get_last_day(2000, 2), 29);
-        assert_eq!(get_last_day(2000, 4), 30);
-        assert_eq!(get_last_day(1900, 2), 28);
-        assert_eq!(get_last_day(1996, 2), 29);
     }
 
     #[test]
-    fn test_weekday_normalizes_invalid_calendar_dates() {
+    fn test_get_last_day() {
+        for (year, month, expected) in [
+            (2000, 1, 31),
+            (2000, 2, 29),
+            (2000, 4, 30),
+            (1900, 2, 28),
+            (1996, 2, 29),
+        ] {
+            assert_eq!(get_last_day(year, month), expected);
+        }
+    }
+
+    #[test]
+    fn test_weekday() {
         for (time, expected) in [
             (
                 CoreTime::from_date(2019, 1, 1, 0, 0, 0, 0),
@@ -1070,7 +1078,42 @@ mod tests {
     }
 
     #[test]
-    fn test_add_date_source_boundaries_and_month_end() {
+    fn test_add_date() {
+        let january_first = CoreTime::from_date(2000, 1, 1, 0, 0, 0, 0);
+        for (years, months, days, original, should_error) in [
+            (1, 1, 0, january_first, false),
+            (2, 1, 12, january_first, false),
+            (3, 1, 12, january_first, false),
+            (
+                4,
+                2,
+                24,
+                CoreTime::from_date(2000, 2, 10, 0, 0, 0, 0),
+                false,
+            ),
+            (1, 4, 5, CoreTime::from_date(2019, 4, 1, 1, 2, 3, 0), false),
+            (7_999, 1, 1, january_first, false),
+            (-2_000, 1, 1, january_first, false),
+            (8_000, 1, 1, january_first, true),
+            (10_001 * 365, 1, 1, january_first, true),
+            (1, 10_001 * 36, 1, january_first, true),
+            (1, 1, 10_001 * 365, january_first, true),
+            (-2_001, 1, 1, january_first, true),
+            (-10_001 * 365, 1, 1, january_first, true),
+            (1, -10_001 * 36, 1, january_first, true),
+            (1, 1, -10_001 * 365, january_first, true),
+        ] {
+            let result = original.add_date(years, months, days);
+            if should_error {
+                assert_eq!(result, Err(DateAddError));
+            } else {
+                assert_eq!(result.unwrap().year(), original.year() + years as i32);
+            }
+        }
+    }
+
+    #[test]
+    fn add_date_clamps_month_end() {
         let january_end = CoreTime::from_date(2018, 1, 31, 1, 2, 3, 4);
         assert_eq!(
             january_end.add_date(0, 1, 0).unwrap(),
@@ -1080,37 +1123,10 @@ mod tests {
             january_end.add_date(0, 1, 12).unwrap(),
             CoreTime::from_date(2018, 3, 15, 1, 2, 3, 4)
         );
-
-        let source = CoreTime::from_date(2000, 1, 1, 0, 0, 0, 0);
-        for (years, months, days, expected_year) in [
-            (1, 1, 0, 2001),
-            (2, 1, 12, 2002),
-            (3, 1, 12, 2003),
-            (4, 2, 24, 2004),
-            (7_999, 1, 1, 9999),
-            (-2_000, 1, 1, 0),
-        ] {
-            assert_eq!(
-                source.add_date(years, months, days).unwrap().year(),
-                expected_year
-            );
-        }
-        for (years, months, days) in [
-            (8_000, 1, 1),
-            (10_001 * 365, 1, 1),
-            (1, 10_001 * 36, 1),
-            (1, 1, 10_001 * 365),
-            (-2_001, 1, 1),
-            (-10_001 * 365, 1, 1),
-            (1, -10_001 * 36, 1),
-            (1, 1, -10_001 * 365),
-        ] {
-            assert_eq!(source.add_date(years, months, days), Err(DateAddError));
-        }
     }
 
     #[test]
-    fn test_get_fix_days_source_rows() {
+    fn test_get_fix_days() {
         for (years, months, days, original, expected) in [
             (
                 2_000,
@@ -1147,7 +1163,7 @@ mod tests {
     }
 
     #[test]
-    fn test_adjusted_datetime_source_dst_rows() {
+    fn test_adjusted_go_time() {
         for (zone, input, expected_date, expected_clock, expected_microsecond, expected_offset) in [
             (
                 "Australia/Lord_Howe",
