@@ -21,8 +21,9 @@
 
 use super::*;
 
+/// `pkg/parser/parser_test.go::TestFuncCallExprOffset`.
 #[test]
-fn function_calls_preserve_original_source_offsets() {
+fn test_func_call_expr_offset() {
     let Stmt::Query(query) = parse("SELECT s.a(), b();").expect("function calls parse") else {
         panic!("expected query statement");
     };
