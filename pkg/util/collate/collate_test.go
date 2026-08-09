@@ -176,9 +176,9 @@ func TestLatin1CollatorCompare(t *testing.T) {
 		{"\xC4", "\xC5", []int{-1, 1}}, // Ä after Å, opposite of the byte order
 		{"\xD6", "\xC4", []int{1, 1}},  // Ö after Ä
 		{"\xC6", "\xC4", []int{1, 0}},  // Æ collates as Ä
-		// MySQL quirks worth pinning down: Ü and Ý fold to Y but ÿ does not; ß folds to
-		// nothing, so it is equal to neither "s" nor "ss" (that is latin1_german2_ci);
-		// and Ø/ø fold to each other but not to O.
+		// MySQL quirks worth pinning down: Ü and Ý fold to Y but ÿ does not; ß keeps its
+		// own weight 0xDF, so it is equal to neither "s" nor "ss" (the expansion to "ss"
+		// is latin1_german2_ci); and Ø/ø fold to each other but not to O.
 		{"\xDC", "Y", []int{1, 0}},
 		{"\xDD", "y", []int{1, 0}},
 		{"\xFF", "Y", []int{1, 1}},
