@@ -48,6 +48,9 @@ const ER_WARN_ALLOWED_PACKET_OVERFLOWED: u16 = 1301;
 pub(super) fn to_mysql_error(error: ExecError) -> MysqlError {
     match error {
         ExecError::Eval(eval) => eval_to_mysql_error(eval),
+        // An internal invariant error carries the exact message Go returns
+        // through its generic error path.
+        ExecError::Internal(message) => MysqlError::unknown(message),
         // A porting boundary rather than a TiDB error: the carried text is
         // already the whole message, and Go has no answer to compare it with.
         ExecError::Unsupported(reason) => MysqlError::unknown(reason),
@@ -251,6 +254,15 @@ mod tests {
             )))
             .message,
             "a binary operation between a Float32 and a Json value is not supported yet"
+        );
+    }
+
+    #[test]
+    fn an_internal_executor_error_is_not_reported_as_unsupported() {
+        let mysql = rendered(ExecError::internal("chunk invariant failed"));
+        assert_eq!(
+            mysql,
+            MysqlError::new(1105, *b"HY000", "chunk invariant failed")
         );
     }
 }

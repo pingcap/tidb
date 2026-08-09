@@ -21,6 +21,7 @@
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::FieldType;
+use tidb_expr::evaluator::{EvaluatorError, EvaluatorSuite};
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_expr::Columns;
@@ -32,7 +33,7 @@ use tidb_expr::Columns;
 /// session/variable state suffices for column and arithmetic projections.
 pub struct ProjectionExec<C: Columns> {
     meta: ExecutorMeta,
-    exprs: Vec<Expression>,
+    evaluator_suite: EvaluatorSuite,
     child: Box<dyn Executor>,
     ctx: C,
     child_chunk: Chunk,
@@ -50,7 +51,7 @@ impl<C: Columns> ProjectionExec<C> {
         let child_chunk = child.new_chunk();
         ProjectionExec {
             meta,
-            exprs,
+            evaluator_suite: EvaluatorSuite::new(exprs, false),
             child,
             ctx,
             child_chunk,
@@ -66,17 +67,24 @@ impl<C: Columns> Executor for ProjectionExec<C> {
     }
 
     fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
-        req.reset();
+        let max_chunk_size = self.max_chunk_size();
+        // Go calls GrowAndReset before reading RequiredRows. Growing restores
+        // the maximum demand, while an ordinary reset preserves the parent's
+        // current request.
+        req.grow_and_reset(max_chunk_size);
+        let required_rows = isize::try_from(req.required_rows()).unwrap_or(isize::MAX);
+        self.child_chunk
+            .set_required_rows(required_rows, max_chunk_size);
         self.child.next(&mut self.child_chunk)?;
-        let rows = self.child_chunk.num_rows();
-        for r in 0..rows {
-            let row = self.child_chunk.get_row(r);
-            for (i, expr) in self.exprs.iter().enumerate() {
-                let value = expr.eval(&self.ctx, row)?;
-                req.append_datum(i, &value);
-            }
+        if self.child_chunk.num_rows() == 0 {
+            return Ok(());
         }
-        Ok(())
+        self.evaluator_suite
+            .run(&self.ctx, &mut self.child_chunk, req)
+            .map_err(|error| match error {
+                EvaluatorError::Eval(error) => ExecError::Eval(error),
+                EvaluatorError::Chunk(message) => ExecError::internal(message),
+            })
     }
 
     fn close(&mut self) -> Result<(), ExecError> {

@@ -982,7 +982,7 @@ impl KvTable {
         let index = self.indexes.remove(position);
         let rows = self.scan_rows_with_handles_with_context(decode_context)?;
         for (handle, row) in &rows {
-            let (key, _) = self.index_key(&index, row, handle, &zone)?;
+            let (key, _) = self.index_key(&index, row, handle, zone)?;
             self.store
                 .delete(Key::from_bytes(key))
                 .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;

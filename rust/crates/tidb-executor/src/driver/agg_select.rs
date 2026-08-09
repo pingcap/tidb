@@ -1560,7 +1560,7 @@ fn build_order_and_limit(
         };
         let limit_schema = root.schema().clone();
         root = Box::new(LimitExec::new(
-            ExecutorMeta::new(limit_schema, 4, INIT_CAP, MAX_CHUNK_SIZE),
+            ExecutorMeta::new(limit_schema, 4, limit_init_cap(count), MAX_CHUNK_SIZE),
             offset,
             count,
             root,

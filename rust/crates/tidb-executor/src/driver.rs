@@ -347,6 +347,24 @@ pub use errors::{DriverError, MysqlError, SchemaErrorKind, TxnErrorKind, VarErro
 const INIT_CAP: usize = 1;
 const MAX_CHUNK_SIZE: usize = 1024;
 
+fn limit_init_cap(count: u64) -> usize {
+    usize::try_from(count)
+        .unwrap_or(usize::MAX)
+        .min(MAX_CHUNK_SIZE)
+}
+
+#[cfg(test)]
+mod limit_chunk_capacity_tests {
+    use super::{limit_init_cap, MAX_CHUNK_SIZE};
+
+    #[test]
+    fn limit_initial_capacity_is_count_capped_at_max_chunk_size() {
+        assert_eq!(limit_init_cap(0), 0);
+        assert_eq!(limit_init_cap(7), 7);
+        assert_eq!(limit_init_cap(u64::MAX), MAX_CHUNK_SIZE);
+    }
+}
+
 /// Parses and runs a `FROM`-less `SELECT`, returning its rows as `Datum`s.
 pub fn run_select(sql: &str) -> Result<Vec<Vec<Datum>>, DriverError> {
     run_select_on(sql, &Catalog::default(), &crate::StmtContext::for_query())
@@ -1330,7 +1348,7 @@ pub(crate) fn run_select_traced(
         };
         let limit_schema = root.schema().clone();
         root = Box::new(LimitExec::new(
-            ExecutorMeta::new(limit_schema, 4, INIT_CAP, MAX_CHUNK_SIZE),
+            ExecutorMeta::new(limit_schema, 4, limit_init_cap(count), MAX_CHUNK_SIZE),
             offset,
             count,
             root,

@@ -28,6 +28,11 @@ use tidb_expr::EvalError;
 pub enum ExecError {
     /// An expression failed to evaluate.
     Eval(EvalError),
+    /// A violated executor/chunk invariant surfaced as Go's generic 1105.
+    ///
+    /// This is distinct from [`ExecError::Unsupported`]: the requested SQL is
+    /// supported, but an internal state made it unsafe to continue.
+    Internal(Cow<'static, str>),
     /// An operator or feature is not yet ported.
     ///
     /// [`Cow`] for the same reason [`crate::DriverError::Unsupported`] is:
@@ -67,6 +72,13 @@ pub enum ExecError {
 }
 
 impl ExecError {
+    /// [`ExecError::Internal`] from either a fixed message or one built per
+    /// call.
+    #[must_use]
+    pub fn internal(message: impl Into<Cow<'static, str>>) -> Self {
+        ExecError::Internal(message.into())
+    }
+
     /// [`ExecError::Unsupported`] from either a fixed reason or one built per
     /// call.
     #[must_use]

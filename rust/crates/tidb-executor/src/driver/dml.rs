@@ -313,7 +313,7 @@ pub(crate) fn run_insert_traced(
 
     enum PreparedInsertValue {
         Generated,
-        Expression(Expression),
+        Expression(Box<Expression>),
     }
 
     // Go lowers every explicit VALUES default while building the insert plan,
@@ -443,7 +443,7 @@ pub(crate) fn run_insert_traced(
                         rewrite_with_prepared_defaults(value, &resolver, &defaults)?
                     }
                 };
-                prepared.push(PreparedInsertValue::Expression(expression));
+                prepared.push(PreparedInsertValue::Expression(Box::new(expression)));
             }
             prepared_value_rows.push(prepared);
         }
