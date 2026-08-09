@@ -335,11 +335,13 @@ impl MergeInnerGroup {
 
     fn datum_row(&mut self, ptr: RowPtr) -> Result<Vec<Datum>, ExecError> {
         self.staging.reset();
-        let row_index = self
-            .rows
-            .get_row_and_always_append_to_chunk(ptr, &mut self.staging)
-            .map_err(|error| ExecError::SpillFailed(error.to_string()))?;
-        let row = self.staging.get_row(row_index).get_datum_row(&self.types);
+        let row = {
+            let loaded = self
+                .rows
+                .get_row_and_append_to_chunk_if_in_disk(ptr, &mut self.staging)
+                .map_err(|error| ExecError::SpillFailed(error.to_string()))?;
+            loaded.row(&self.staging).get_datum_row(&self.types)
+        };
         self.staging.reset();
         Ok(row)
     }
@@ -554,10 +556,10 @@ impl<C: Columns> JoinExec<C> {
     }
 
     /// How many rows the reusable read-back buffer (Go
-    /// `hashRowContainer.chkBuf`) is holding. It is reset per matched row, so
-    /// this is 1 while probing and 0 before the build finishes -- a growing
-    /// value would mean the buffer accumulates every row the join ever read
-    /// back from disk.
+    /// `hashRowContainer.chkBuf`) is holding. It stays empty for an in-memory
+    /// build and holds exactly one decoded row after a spilled probe -- a
+    /// growing value would mean the buffer accumulates every row the join ever
+    /// read back from disk.
     #[must_use]
     pub fn build_buf_rows(&self) -> usize {
         self.hash

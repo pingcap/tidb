@@ -26,6 +26,9 @@ This plan covers only the plain Go `RowContainer`, `SpillDiskAction`, `iterator4
 - [x] (2026-08-09 12:44Z) Restored baseline `&mut self` receivers on public mutation/lifecycle methods so a same-handle `RowContainerChunk` live view cannot be followed by a safe self-deadlocking spill/reset call.
 - [x] (2026-08-09 12:44Z) Reran the final writer-lane static checks after the generation/live-view review fixes: exact-file `rustfmt`, source-size ratchet, `git diff --check`, full diff/status review, direct-callsite scan, and stale atomic-trigger/borrowed-reader/per-handle-drop scans all pass.
 - [x] (2026-08-09 12:44Z) Created one bounded semantic checkpoint for handoff with the exact root-owned executable gate commands below; the coordinator owns Cargo/workspace execution and remote operations.
+- [x] (2026-08-10) Reopened the row-read boundary after proving the hash join copied every unspilled build row into its disk scratch chunk. The exact baseline regression failed at `10a833e1a6` with scratch rows `1`, expected `0`.
+- [x] (2026-08-10) Added guard-backed `GetRowAndAppendToChunkIfInDisk`, made the always-append helper build on it, and migrated hash and merge join to preserve the conditional copy boundary.
+- [x] (2026-08-10) Completed the follow-up validation: focused red-to-green regressions, all row-container/hash/merge suites, both affected crates, strict affected-crate Clippy, and all-target workspace check pass. The full workspace test sweep stops only at the independently baseline-proven stale `tidb-exec` lease-source assertion.
 
 ## Surprises & Discoveries
 
@@ -47,6 +50,9 @@ This plan covers only the plain Go `RowContainer`, `SpillDiskAction`, `iterator4
 - Observation: fallback and reset need one terminal ordering decision. A waiter cannot run an old-generation fallback after reset has rearmed the action, and reset cannot close/rearm while a claimed fallback callback is active.
   Evidence: the coordinator generation increments only when reset publishes `MemoryIdle, armed=true`. A later action claims `fallback_active` for its observed generation or, if reset won first, re-enters the action machine in the new generation. `FallbackLease` clears/notifies on unwind and reset waits for an active claim.
 
+- Observation: the always-append Rust helper erased an accepted ownership distinction even though every caller immediately converted the row to owned datums.
+  Evidence: Go `GetRowAndAppendToChunkIfInDisk` returns the live list row and a nil chunk before spill. The baseline executor regression left one row in `hashRowContainer.chkBuf`; the new path leaves zero in memory and exactly one after spill while returning identical datums.
+
 - Observation: branch-local `rust/HANDOFF.md` and `rust/PARALLEL.md` named by older rewrite guidance are absent at this checkpoint.
   Evidence: direct reads returned `No such file or directory`; the current repository `AGENTS.md`, `PLANS.md`, design document, source, and parent task contract are used instead.
 
@@ -57,7 +63,7 @@ This plan covers only the plain Go `RowContainer`, `SpillDiskAction`, `iterator4
 
 - Decision: represent all plain-container ownership as `RowContainer { shared: Arc<RowContainerShared> }`, and make `Clone`/`shallow_copy` the Rust equivalent of Go `ShallowCopyWithNewMutex`.
   Rationale: all handles, the spill action, reset, and close must observe one records/tracker/lifecycle state. Go's extra read mutexes and write-lock fan-out are contention machinery, not observable behavior; `Arc<RwLock<_>>` gives the required shared semantics directly.
-  Date/Author: 2026-08-09 / Codex
+  Date/Author: 2026-08-09, revised 2026-08-10 / Codex
 
 - Decision: use `CoordinatorPhase::{MemoryIdle, AddingMemory, AddingDisk, Spilling, DiskIdle, Failed, ResettingMemory, ResettingDisk, Closing, Closed}` plus `pending_spill` and `armed`.
   Rationale: the phases distinguish operations with different reentrant action behavior. Only `AddingMemory` and `ResettingMemory` may arm a pending spill; `AddingDisk` must wait/fallback rather than recursively request a second spill. Terminal disk and failed states let every waiter make the same decision.
@@ -79,8 +85,8 @@ This plan covers only the plain Go `RowContainer`, `SpillDiskAction`, `iterator4
   Rationale: lifecycle phases cannot strand waiters, but Go panic order outside spill is not a required runtime contract. The phase lease is lock hygiene rather than panic emulation.
   Date/Author: 2026-08-09 / Codex
 
-- Decision: `get_chunk` returns `RowContainerChunk`, which owns the decoded disk chunk or holds a records read guard over the live in-memory chunk. Public mutations retain `&mut self`. Row access copies into caller-owned scratch storage; iterator and reader own only the cursor data that must cross lock boundaries.
-  Rationale: this preserves the public live/no-copy memory contract without letting a bare borrow escape the guard. The mutable receivers preserve same-handle borrow exclusion. `RowContainerReader` still takes an owned in-memory snapshot because its current chunk must survive another shallow handle spilling the shared records.
+- Decision: `get_chunk` returns `RowContainerChunk`, and conditional row reads return `RowContainerRow`; each owns the decoded disk position or holds a records read guard over the live in-memory storage. Public mutations retain `&mut self`. The iterator and reader continue to own only cursor data that must cross lock boundaries.
+  Rationale: this preserves the public live/no-copy memory contract without letting a bare borrow escape the guard. Hash and merge join materialize datums while the short guard is live, so their scratch chunks are touched only by disk reads. The mutable receivers preserve same-handle borrow exclusion. `RowContainerReader` still takes an owned in-memory snapshot because its current chunk must survive another shallow handle spilling the shared records.
   Date/Author: 2026-08-09 / Codex
 
 - Decision: remove per-handle `Drop for RowContainer`; explicit `close` closes/detaches the shared state exactly once and publishes `Closed` to every clone. Add final cleanup to `Drop for RowContainerShared`.
@@ -97,13 +103,15 @@ The plain semantic root is implemented and static-clean. `RowContainer` is now a
 
 The writer lane intentionally did not run Cargo or broader rewrite gates. Executable proof remains for the coordinator/root lane using the commands below. This checkpoint does not claim the still-separate `SortedRowContainer`, receipt/evidence work, or whole Go-package completion.
 
+The 2026-08-10 conditional-read follow-up now restores the remaining live-row boundary for direct hash/merge consumers. Its test-only baseline failed with `left: 1, right: 0`; the focused row-container suite and both hash/merge spill suites pass after the change. The combined affected-crate tests, strict Clippy, and all-target workspace check pass. The full workspace test sweep reached only the unrelated `nextgen_readonly_vars_source::declined_lease_runtime_seams_are_explicit` failure already reproduced at a clean baseline.
+
 ## Context and Orientation
 
 The repository root is the Go TiDB source. The Rust workspace is under `rust/`. Go `pkg/util/chunk/row_container.go` defines the authoritative container and action behavior; `pkg/util/chunk/row_container_test.go` includes spill, reset, deadlock, concurrent reader, spill panic, and kill regressions. `rust/crates/tidb-chunk/src/row_container.rs` is the current Rust seed. `rust/crates/tidb-chunk/src/list.rs` owns in-memory chunks and deliberately preserves Go's lagging memory-accounting rule. `rust/crates/tidb-chunk/src/row_in_disk.rs` owns the row-addressed spill files and disk tracker. `rust/crates/tidb-util/src/memory/tracker.rs` synchronously invokes `ActionOnExceed` while `consume` is still on the caller's stack.
 
 A “reentrant action” is an action invoked from inside `List::add` or `List::reset` because that operation called `Tracker::consume`. A “pending spill” is a coordinator bit set by that action; it tells the outer operation to release the records lock and then claim the spill. “Armed” means the first quota trigger is still available. A “later action” is any action after armed has been consumed; it waits for the spill and may invoke fallback if the triggering tracker still exceeds its limit.
 
-`rust/crates/tidb-executor/src/hash_join.rs` is the only production Rust consumer at this checkpoint. It stores a `RowContainer`, indexes chunks by `RowPtr`, registers `SpillDiskAction` on the session tracker, reads rows into an owned scratch chunk, checks whether spilling occurred, and explicitly closes the table. Its call shapes can remain source-compatible when mutating container methods become `&self` methods.
+`rust/crates/tidb-executor/src/hash_join.rs` and the merge-group storage in `join.rs` are the direct production Rust row-read consumers. Each stores a `RowContainer`, indexes rows by `RowPtr`, and registers `SpillDiskAction` on the session tracker. Their scratch chunks now remain empty while the container is in memory and hold only decoded disk rows after spill.
 
 ## Plan of Work
 

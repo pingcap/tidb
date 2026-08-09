@@ -120,6 +120,34 @@ fn a_new_row_container_has_not_spilled() {
     assert_eq!(rc.num_row(), 0);
 }
 
+/// Go `GetRowAndAppendToChunkIfInDisk`: a live memory row does not occupy the
+/// caller's disk scratch chunk, while the same pointer appends exactly one row
+/// after spill.
+#[test]
+fn conditional_row_read_materializes_only_after_spill() {
+    let fields = int64_fields();
+    let mut rc = RowContainer::new(&fields, 4, crate::test_temp_storage::storage());
+    rc.add(int64_chunk(2)).expect("add rows");
+    let mut scratch = Chunk::new_with_capacity(&fields, 1);
+
+    {
+        let loaded = rc
+            .get_row_and_append_to_chunk_if_in_disk(RowPtr::new(0, 1), &mut scratch)
+            .expect("read memory row");
+        assert_eq!(loaded.appended_row_index(), None);
+        assert_eq!(scratch.num_rows(), 0);
+        assert_eq!(loaded.row(&scratch).get_int64(0), 1);
+    }
+
+    rc.spill_to_disk();
+    let loaded = rc
+        .get_row_and_append_to_chunk_if_in_disk(RowPtr::new(0, 1), &mut scratch)
+        .expect("read spilled row");
+    assert_eq!(loaded.appended_row_index(), Some(0));
+    assert_eq!(scratch.num_rows(), 1);
+    assert_eq!(loaded.row(&scratch).get_int64(0), 1);
+}
+
 /// In memory `GetChunk` exposes the live chunk under a records read guard;
 /// it does not deep-clone row buffers merely because the container state is
 /// shared.
@@ -746,6 +774,13 @@ fn disk_quota_failure_is_sticky_for_reads_and_later_adds() {
     assert!(rc.already_spilled(), "the disk authority was installed");
 
     let mut scratch = Chunk::new_with_capacity(&fields, 1);
+    let conditional =
+        match rc.get_row_and_append_to_chunk_if_in_disk(RowPtr::new(0, 0), &mut scratch) {
+            Ok(_) => panic!("conditional reads must replay the spill failure"),
+            Err(error) => error,
+        };
+    assert_eq!(conditional.to_string(), stored);
+    assert_eq!(scratch.num_rows(), 0, "an error must not modify scratch");
     let read = rc
         .get_row_and_always_append_to_chunk(RowPtr::new(0, 0), &mut scratch)
         .expect_err("reads replay the spill failure");

@@ -100,14 +100,30 @@ fn the_read_back_buffer_does_not_accumulate_across_a_spilled_probe() {
             break;
         }
         seen += req.num_rows();
-        assert!(
-            join.build_buf_rows() <= 1,
-            "the read-back buffer holds {} rows after {seen} output rows",
-            join.build_buf_rows()
+        assert_eq!(
+            join.build_buf_rows(),
+            1,
+            "a spilled probe must reuse exactly one decoded row after {seen} output rows"
         );
     }
     assert!(join.build_side_spilled());
     assert_eq!(seen, 1000);
+}
+
+/// An in-memory build row is already a live row in the row container. Go's
+/// conditional read path returns it directly and leaves `chkBuf` empty; only
+/// a disk read materializes into that scratch chunk.
+#[test]
+fn an_unspilled_probe_does_not_materialize_build_scratch() {
+    let mut join = inner_join(StatementMemory::default());
+    let rows = run(&mut join);
+    assert!(!rows.is_empty());
+    assert!(!join.build_side_spilled());
+    assert_eq!(
+        join.build_buf_rows(),
+        0,
+        "an in-memory row must not be copied into the disk read-back buffer"
+    );
 }
 
 /// The end-to-end claim: spilled and unspilled produce identical output.

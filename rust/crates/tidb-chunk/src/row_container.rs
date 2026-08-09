@@ -581,6 +581,48 @@ impl RowContainerChunk<'_> {
     }
 }
 
+enum RowContainerRowInner<'a> {
+    InMemory {
+        records: RwLockReadGuard<'a, RowContainerRecord>,
+        ptr: RowPtr,
+    },
+    Appended {
+        row_index: usize,
+    },
+}
+
+/// A row loaded through Go `GetRowAndAppendToChunkIfInDisk`.
+///
+/// While the container is in memory this value holds the records read guard
+/// and [`RowContainerRow::row`] returns the live row without touching the
+/// caller's scratch chunk. After a spill, the row is decoded into that scratch
+/// chunk and this value remembers its row index there.
+pub struct RowContainerRow<'a> {
+    inner: RowContainerRowInner<'a>,
+}
+
+impl RowContainerRow<'_> {
+    /// The appended row index, or `None` when the row is still a live
+    /// in-memory view.
+    #[must_use]
+    pub fn appended_row_index(&self) -> Option<usize> {
+        match &self.inner {
+            RowContainerRowInner::InMemory { .. } => None,
+            RowContainerRowInner::Appended { row_index } => Some(*row_index),
+        }
+    }
+
+    /// Returns the selected row. `appended_chunk` must be the scratch chunk
+    /// passed to [`RowContainer::get_row_and_append_to_chunk_if_in_disk`].
+    #[must_use]
+    pub fn row<'a>(&'a self, appended_chunk: &'a Chunk) -> Row<'a> {
+        match &self.inner {
+            RowContainerRowInner::InMemory { records, ptr } => records.in_memory.get_row(*ptr),
+            RowContainerRowInner::Appended { row_index } => appended_chunk.get_row(*row_index),
+        }
+    }
+}
+
 struct RowContainerShared {
     records: RwLock<RowContainerRecord>,
     coordinator: Mutex<Coordinator>,
@@ -1086,24 +1128,46 @@ impl RowContainer {
             .map(RowContainerChunk::into_snapshot)
     }
 
-    /// Go `GetRowAndAlwaysAppendToChunk`.
-    pub fn get_row_and_always_append_to_chunk(
-        &self,
+    /// Go `GetRowAndAppendToChunkIfInDisk`.
+    ///
+    /// An in-memory row remains a guard-backed live view and `chk` is
+    /// untouched. A spilled row is decoded into `chk`; the returned value then
+    /// identifies that appended row. Errors are reported before `chk` changes.
+    pub fn get_row_and_append_to_chunk_if_in_disk<'a>(
+        &'a self,
         ptr: RowPtr,
         chk: &mut Chunk,
-    ) -> Result<usize, DiskError> {
+    ) -> Result<RowContainerRow<'a>, DiskError> {
         let records = read_unpoisoned(&self.shared.records);
         match &records.in_disk {
             Some(in_disk) => {
                 if let Some(error) = &records.spill_error {
                     return Err(DiskError::Owned(error.clone()));
                 }
-                in_disk.get_row_and_append_to_existing_chunk(ptr, chk)
+                let row_index = in_disk.get_row_and_append_to_existing_chunk(ptr, chk)?;
+                Ok(RowContainerRow {
+                    inner: RowContainerRowInner::Appended { row_index },
+                })
             }
-            None => {
+            None => Ok(RowContainerRow {
+                inner: RowContainerRowInner::InMemory { records, ptr },
+            }),
+        }
+    }
+
+    /// Go `GetRowAndAlwaysAppendToChunk`.
+    pub fn get_row_and_always_append_to_chunk(
+        &self,
+        ptr: RowPtr,
+        chk: &mut Chunk,
+    ) -> Result<usize, DiskError> {
+        let loaded = self.get_row_and_append_to_chunk_if_in_disk(ptr, chk)?;
+        match loaded.inner {
+            RowContainerRowInner::InMemory { records, ptr } => {
                 chk.append_row(records.in_memory.get_row(ptr));
                 Ok(chk.num_rows() - 1)
             }
+            RowContainerRowInner::Appended { row_index } => Ok(row_index),
         }
     }
 

@@ -20,7 +20,9 @@ The implementation preserves TiDB semantics without copying Go's iterator ABI, s
 - [x] (2026-08-10) Added sticky row-container disk-quota, selection-plus-trailing-chunk, spill/result, required-row, gate, right-side, and cleanup regressions.
 - [x] (2026-08-10) Charged both live child chunks and pending output until release; early close drops merge state, closes spill storage, unbinds the action, and leaves the join tracker at zero.
 - [x] (2026-08-10) Ran focused/full crate tests, strict Clippy, all-target workspace compilation, source-size, formatting, and diff checks.
-- [ ] Commit and push the verified checkpoint. The full workspace test sweep has one source-receipt failure reproduced unchanged at baseline and recorded below.
+- [x] (2026-08-10) Committed and pushed the verified merge checkpoint.
+- [x] (2026-08-10) Reopened the readback boundary: a test-only baseline regression at `10a833e1a6` proved unspilled hash reads left one row in the disk scratch chunk. Hash and merge now consume `GetRowAndAppendToChunkIfInDisk`, so only spilled rows enter scratch.
+- [x] (2026-08-10) Validated the conditional-read follow-up with its focused red-to-green regression, the row-container/hash/merge suites, both full affected crates, strict affected-crate Clippy, and all-target workspace check. The full workspace test sweep stops only at the independently baseline-proven stale `tidb-exec` lease-source assertion.
 
 ## Surprises & Discoveries
 
@@ -42,6 +44,9 @@ The implementation preserves TiDB semantics without copying Go's iterator ABI, s
 - Observation: length-zero sources are removed before multi-iterator traversal even when their container retains historical error state.
   Evidence: accepted `NewMultiIterator` filters solely on `Len() > 0`; retaining an empty failed source caused an unsigned decrement/panic and masked later rows in Rust.
 
+- Observation: converting the selected row to owned datums does not make an intermediate scratch copy semantically free.
+  Evidence: accepted hash/merge consumers preserve `GetRowAndAppendToChunkIfInDisk`: the container's memory row feeds datum conversion directly, while only a spill read lands in `chkBuf`. The baseline Rust path populated scratch in both states; the new regression distinguishes zero rows before spill from exactly one after spill.
+
 - Observation: ownership transfer into pending output does not end its memory lifetime.
   Evidence: required-row batching keeps the pending outer row across `Next` calls. Its charge now moves with that state and is released only when drained or closed.
 
@@ -55,6 +60,10 @@ The implementation preserves TiDB semantics without copying Go's iterator ABI, s
   Rationale: This matches TiDB's ownership and spill boundary and avoids inventing a second spill format or duplicating tracker/action logic.
   Date/Author: 2026-08-10 / Codex.
 
+- Decision: Materialize datums through the row-container's conditional guarded row, not through the always-append convenience API.
+  Rationale: Both memory and disk paths still produce owned datums, but only disk decoding needs a scratch chunk. Retaining that distinction preserves accepted transient memory/accounting and gives diagnostics an exact spill observer.
+  Date/Author: 2026-08-10 / Codex.
+
 ## Outcomes & Retrospective
 
 The dependency-closed merge/lending tranche is implemented. The baseline spill regression is red at `cfd547a8aa` and green in the current tree; a 5,000-row inner run spills and matches the roomy control, a 5,000-row outer duplicate run streams successfully in both LEFT and RIGHT orientations, required-row batches stay at or below 137, temporary-storage disablement preserves memory cancellation, and early close returns the join tracker to zero.
@@ -62,6 +71,8 @@ The dependency-closed merge/lending tranche is implemented. The baseline spill r
 Focused evidence is green: all 176 `tidb-chunk` unit tests plus its integration tests, all 566 active `tidb-executor` unit tests plus integration tests, strict Clippy for both changed crates, and the all-target workspace check. Final self-review, commit, and push remain before this checkpoint is shippable. This does not claim whole `pkg/util/chunk` completion; server cursor integration and receipt classification remain separate package-level work.
 
 The full workspace test sweep reached one unrelated `tidb-exec` receipt assertion, `nextgen_readonly_vars_source::declined_lease_runtime_seams_are_explicit`. The exact test fails identically at clean baseline `cfd547a8aa` because it expects the stale source fragment `let schema_lease = Duration::from_millis`; this tranche changes neither file. It is baseline validation debt, not a merge/lending regression.
+
+The conditional-read follow-up is red-before/green-after: `an_unspilled_probe_does_not_materialize_build_scratch` failed at `10a833e1a6` with one scratch row and now passes with zero; the existing spilled probe test is strengthened to require exactly one scratch row. The merge spill suite also remains green because its guarded memory row is converted before the guard is released. The combined `tidb-chunk`/`tidb-executor` run, strict Clippy, and all-target workspace check pass; the full workspace run again reaches only the unrelated baseline failure documented above.
 
 ## Context and Orientation
 
