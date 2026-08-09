@@ -1,0 +1,34 @@
+schema = "go-package-lockdown-spec-v2"
+claim = "whole-go-package"
+go_package = "pkg/util/chunk"
+source_commit = "665fc02e2be48a7199d5ffeb5d3d6bec1dfed04f"
+primary_rust_crate = "tidb-chunk"
+mapped_rust_crates = ["tidb-chunk"]
+extra_artifacts = []
+excluded_subpackages = []
+owned_rust_files = [
+  "rust/crates/tidb-chunk/Cargo.toml",
+  "rust/crates/tidb-chunk/src/chunk.rs",
+  "rust/crates/tidb-chunk/src/chunk_in_disk.rs",
+  "rust/crates/tidb-chunk/src/chunk_util.rs",
+  "rust/crates/tidb-chunk/src/codec.rs",
+  "rust/crates/tidb-chunk/src/column.rs",
+  "rust/crates/tidb-chunk/src/compare.rs",
+  "rust/crates/tidb-chunk/src/iterator.rs",
+  "rust/crates/tidb-chunk/src/lib.rs",
+  "rust/crates/tidb-chunk/src/list.rs",
+  "rust/crates/tidb-chunk/src/mutrow.rs",
+  "rust/crates/tidb-chunk/src/row.rs",
+  "rust/crates/tidb-chunk/src/row_container.rs",
+  "rust/crates/tidb-chunk/src/row_container_reader.rs",
+  "rust/crates/tidb-chunk/src/row_in_disk.rs",
+  "rust/crates/tidb-chunk/tests/compare_vectors.rs",
+  "rust/crates/tidb-chunk/tests/pkg_util_chunk_fixture_observation.rs",
+  "rust/crates/tidb-chunk/tests/pkg_util_chunk_fixture_probe.rs",
+]
+
+[artifact_roles]
+
+[unresolved_fixture_evidence]
+"pkg/util/chunk/row_in_disk_test.go:83:os.Stat:l.dataFile.file.Name()" = "evidence-artifact:rust/crates/tidb-chunk/tests/pkg_util_chunk_lockdown/fixture-evidence/row-in-disk-stat-path.json@sha256:0732ad8e207966e84a8f6245fe527da045e0a4c4a8e7c054482224bb55678508"
+"pkg/util/chunk/row_in_disk_test.go:162:os.Open:l.file.Name()" = "evidence-artifact:rust/crates/tidb-chunk/tests/pkg_util_chunk_lockdown/fixture-evidence/row-in-disk-open-path.json@sha256:20bde58e447e18a13b7478d01ead2db3a3a7bf10a9691ed1e35d9a75fd1bbcfd"
