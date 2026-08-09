@@ -261,13 +261,13 @@ mod tests {
 
         let stale = table(17);
         let mut nil_tables_job = Job {
-            binlog_info: Some(HistoryInfo {
+            binlog_info: Some(GoShared::new(HistoryInfo {
                 table_info: Some(stale.clone()),
                 multiple_table_infos: GoSharedPointerSlice::from_nullable(vec![Some(
                     TableInfo::default(),
                 )]),
                 ..Default::default()
-            }),
+            })),
             ..Default::default()
         };
         let nil_tables = GoSharedPointerSlice::default();
@@ -282,7 +282,7 @@ mod tests {
         .is_err());
         assert_eq!(nil_tables_job.state, JobState::DONE);
         assert_eq!(nil_tables_job.schema_state, SchemaState::PUBLIC);
-        let history = nil_tables_job.binlog_info.as_ref().unwrap();
+        let history = nil_tables_job.binlog_info.as_ref().unwrap().read();
         assert_eq!(history.schema_version, 18);
         assert!(!history.multiple_table_infos.is_allocated());
         assert!(history.table_info.as_ref().unwrap().ptr_eq(&stale));

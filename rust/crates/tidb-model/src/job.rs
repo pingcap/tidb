@@ -18,7 +18,7 @@
 //! metadata retains its typed string/base64/uint64 source contract.
 
 use std::collections::BTreeMap;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 use serde_json::value::RawValue;
 use tidb_datatype::GoString;
@@ -26,6 +26,7 @@ use tidb_error::terror::TerrorError;
 
 use crate::action_type::ActionType;
 use crate::db::DBInfo;
+use crate::go_any::GoAny;
 use crate::go_runtime::{GoShared, GoSharedPointerSlice, GoSharedSlice};
 pub use crate::history::HistoryInfo;
 use crate::job_enums::{JobState, JobVersion};
@@ -91,7 +92,7 @@ pub const JOB_RESUME_REASON_KV_DISK_FULL: &str = "tikv_disk_full";
 /// The exact valid JSON text is retained on decode. Encoding through the
 /// package's Go formatter compacts only insignificant whitespace, preserving
 /// duplicate keys, member order, and numeric lexical forms like Go Marshal.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct PersistedRawJson(GoSharedSlice<u8>);
 
 impl PersistedRawJson {
@@ -109,6 +110,14 @@ impl PersistedRawJson {
         Self(GoSharedSlice::from_vec(bytes))
     }
 
+    /// Constructs an allocated raw-message header with an explicit Go slice
+    /// capacity. This is primarily useful when a caller already observed the
+    /// source header rather than merely its visible bytes.
+    #[must_use]
+    pub fn from_bytes_with_capacity(bytes: Vec<u8>, capacity: usize) -> Self {
+        Self(GoSharedSlice::from_vec_with_capacity(bytes, capacity))
+    }
+
     /// Returns a snapshot of the exact decoded JSON text before
     /// outer-marshaler compaction. A caller that mutates the source byte slice
     /// to invalid UTF-8 must inspect [`Self::bytes`] instead.
@@ -123,6 +132,12 @@ impl PersistedRawJson {
         self.0.snapshot()
     }
 
+    /// Returns the visible Go slice capacity.
+    #[must_use]
+    pub const fn capacity(&self) -> usize {
+        self.0.capacity()
+    }
+
     /// Mutates one byte through every shallow copy of this Go slice header.
     pub fn set_byte(&self, index: usize, byte: u8) {
         self.0.set(index, byte);
@@ -134,8 +149,28 @@ impl PersistedRawJson {
         self.0.backing_ptr_eq(&other.0)
     }
 
-    fn from_value(value: &serde_json::Value) -> Result<Self, serde_json::Error> {
-        serde_json::to_vec(value).map(|bytes| Self(GoSharedSlice::from_vec(bytes)))
+    pub(crate) fn replace_unmarshal_json(&mut self, bytes: Vec<u8>) {
+        let capacity = if bytes.len() <= self.0.capacity() {
+            self.0.capacity()
+        } else {
+            crate::go_runtime::go_64_next_slice_capacity_for_element(
+                bytes.len(),
+                self.0.capacity(),
+                1,
+                crate::go_runtime::GoSliceElementLayout::NoPointers,
+            )
+        };
+        self.0.replace_decoded(bytes, capacity);
+    }
+
+    fn from_marshaled_bytes(bytes: Vec<u8>) -> Self {
+        let capacity = crate::go_runtime::go_64_next_slice_capacity_for_element(
+            bytes.len(),
+            0,
+            1,
+            crate::go_runtime::GoSliceElementLayout::NoPointers,
+        );
+        Self(GoSharedSlice::from_vec_with_capacity(bytes, capacity))
     }
 }
 
@@ -171,20 +206,20 @@ impl<'de> serde::Deserialize<'de> for PersistedRawJson {
 }
 
 /// Go `InvolvingSchemaInfo`: a schema object a DDL job involves (for locking).
-#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
 pub struct InvolvingSchemaInfo {
     /// The database name.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub database: String,
+    #[serde(default, skip_serializing_if = "GoString::is_empty")]
+    pub database: GoString,
     /// The table name.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub table: String,
+    #[serde(default, skip_serializing_if = "GoString::is_empty")]
+    pub table: GoString,
     /// The placement policy name.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub policy: String,
+    #[serde(default, skip_serializing_if = "GoString::is_empty")]
+    pub policy: GoString,
     /// The resource group name.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub resource_group: String,
+    #[serde(default, skip_serializing_if = "GoString::is_empty")]
+    pub resource_group: GoString,
     /// The involvement mode.
     #[serde(default, skip_serializing_if = "is_exclusive_mode")]
     pub mode: InvolvingSchemaInfoMode,
@@ -195,26 +230,26 @@ fn is_exclusive_mode(mode: &InvolvingSchemaInfoMode) -> bool {
 }
 
 /// Go `JobPauseReason`: why a DDL job was paused.
-#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
 pub struct JobPauseReason {
     /// The reason type.
     #[serde(rename = "type", default)]
-    pub type_: String,
+    pub type_: GoString,
     /// The reason message.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub message: String,
+    #[serde(default, skip_serializing_if = "GoString::is_empty")]
+    pub message: GoString,
 }
 
 /// Go `JobResumeReason`: why a DDL job was resumed.
-#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
 pub struct JobResumeReason {
     /// The reason type.
     #[serde(rename = "type", default)]
-    pub type_: String,
+    pub type_: GoString,
 }
 
 /// Go `JobMeta`: the subset of job metadata embedded by a backfill task.
-#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
 pub struct JobMeta {
     /// Schema identifier of the DDL job.
     #[serde(rename = "schema_id", default)]
@@ -237,6 +272,8 @@ pub struct JobMeta {
 /// offsets remain distinct because the latter retains the caller's name.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ResolvedTimeZone {
+    /// Go's mutable process-local location.
+    Local,
     /// A named IANA time zone loaded from the time-zone database.
     Named(chrono_tz::Tz),
     /// A fixed offset retaining the source-provided zone name.
@@ -253,6 +290,7 @@ impl ResolvedTimeZone {
     #[must_use]
     pub fn name(&self) -> String {
         match self {
+            Self::Local => "Local".to_owned(),
             Self::Named(zone) => zone.name().to_owned(),
             Self::Fixed { name, .. } => name.to_utf8_lossy_go(),
         }
@@ -262,6 +300,7 @@ impl ResolvedTimeZone {
     #[must_use]
     pub fn name_bytes(&self) -> &[u8] {
         match self {
+            Self::Local => b"Local",
             Self::Named(zone) => zone.name().as_bytes(),
             Self::Fixed { name, .. } => name.as_bytes(),
         }
@@ -271,7 +310,7 @@ impl ResolvedTimeZone {
 /// Go `TimeZoneLocation`. The lazily initialized location cache is not
 /// serialized and, like Go's mutex-protected pointer, remains stable even if
 /// the public name/offset fields are modified after the first lookup.
-#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, serde::Serialize)]
 pub struct TimeZoneLocation {
     /// IANA or fixed-zone name persisted by the DDL job.
     #[serde(rename = "name", default)]
@@ -280,39 +319,43 @@ pub struct TimeZoneLocation {
     #[serde(rename = "offset", default)]
     pub offset: i64,
     #[serde(skip)]
-    location: OnceLock<ResolvedTimeZone>,
+    pub(crate) location: OnceLock<GoShared<ResolvedTimeZone>>,
 }
 
 /// Go `tracing.TraceInfo`: persisted SQL tracing identity carried by a DDL job.
-#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, serde::Serialize)]
 pub struct TraceInfo {
     /// Alias of the SQL session that created the job.
     #[serde(rename = "session_alias", default)]
-    pub session_alias: String,
+    pub session_alias: GoString,
     /// Statement trace identifier, preserving nil versus allocated-empty bytes.
-    #[serde(rename = "trace_id", default, with = "crate::serde_helpers::go_bytes")]
-    pub trace_id: Option<Vec<u8>>,
+    #[serde(
+        rename = "trace_id",
+        default,
+        with = "crate::serde_helpers::go_shared_bytes"
+    )]
+    pub trace_id: GoSharedSlice<u8>,
     /// Connection identifier of the creating SQL session.
     #[serde(rename = "connection_id", default)]
     pub connection_id: u64,
 }
 
 /// Go `AddForeignKeyInfo` (runtime-only; no JSON fields in its owner).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default)]
 pub struct AddForeignKeyInfo {
     /// Foreign-key constraint name.
     pub name: tidb_ast::CiString,
     /// Referencing column names.
-    pub columns: Vec<tidb_ast::CiString>,
+    pub columns: GoSharedSlice<tidb_ast::CiString>,
 }
 
 /// Go `MultiSchemaInfo`.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, serde::Serialize)]
 pub struct MultiSchemaInfo {
-    /// Ordered nullable sub-job pointers, with outer `None` retaining Go's
-    /// nil-slice state.
+    /// Ordered nullable sub-job pointers, retaining nil/empty/capacity and
+    /// outer-backing identity.
     #[serde(rename = "sub_jobs", default)]
-    pub sub_jobs: Option<Vec<Option<SubJob>>>,
+    pub sub_jobs: GoSharedPointerSlice<SubJob>,
     /// Whether every sub-job can still be reverted.
     #[serde(rename = "revertible", default)]
     pub revertible: bool,
@@ -324,59 +367,63 @@ pub struct MultiSchemaInfo {
     pub skip_version: bool,
     /// Runtime set of columns being added.
     #[serde(skip)]
-    pub add_columns: Vec<tidb_ast::CiString>,
+    pub add_columns: GoSharedSlice<tidb_ast::CiString>,
     /// Runtime set of columns being dropped.
     #[serde(skip)]
-    pub drop_columns: Vec<tidb_ast::CiString>,
+    pub drop_columns: GoSharedSlice<tidb_ast::CiString>,
     /// Runtime set of columns being modified.
     #[serde(skip)]
-    pub modify_columns: Vec<tidb_ast::CiString>,
+    pub modify_columns: GoSharedSlice<tidb_ast::CiString>,
     /// Runtime set of indexes being added.
     #[serde(skip)]
-    pub add_indexes: Vec<tidb_ast::CiString>,
+    pub add_indexes: GoSharedSlice<tidb_ast::CiString>,
     /// Runtime set of indexes being dropped.
     #[serde(skip)]
-    pub drop_indexes: Vec<tidb_ast::CiString>,
+    pub drop_indexes: GoSharedSlice<tidb_ast::CiString>,
     /// Runtime set of indexes being altered.
     #[serde(skip)]
-    pub alter_indexes: Vec<tidb_ast::CiString>,
+    pub alter_indexes: GoSharedSlice<tidb_ast::CiString>,
     /// Runtime foreign keys being added.
     #[serde(skip)]
-    pub add_foreign_keys: Vec<AddForeignKeyInfo>,
+    pub add_foreign_keys: GoSharedSlice<AddForeignKeyInfo>,
     /// Runtime columns referenced by positional clauses.
     #[serde(skip)]
-    pub relative_columns: Vec<tidb_ast::CiString>,
+    pub relative_columns: GoSharedSlice<tidb_ast::CiString>,
     /// Runtime target columns for positional clauses.
     #[serde(skip)]
-    pub position_columns: Vec<tidb_ast::CiString>,
+    pub position_columns: GoSharedSlice<tidb_ast::CiString>,
 }
 
 impl Default for MultiSchemaInfo {
     fn default() -> Self {
         Self {
-            sub_jobs: None,
+            sub_jobs: GoSharedPointerSlice::default(),
             revertible: true,
             seq: 0,
             skip_version: false,
-            add_columns: Vec::new(),
-            drop_columns: Vec::new(),
-            modify_columns: Vec::new(),
-            add_indexes: Vec::new(),
-            drop_indexes: Vec::new(),
-            alter_indexes: Vec::new(),
-            add_foreign_keys: Vec::new(),
-            relative_columns: Vec::new(),
-            position_columns: Vec::new(),
+            add_columns: GoSharedSlice::default(),
+            drop_columns: GoSharedSlice::default(),
+            modify_columns: GoSharedSlice::default(),
+            add_indexes: GoSharedSlice::default(),
+            drop_indexes: GoSharedSlice::default(),
+            alter_indexes: GoSharedSlice::default(),
+            add_foreign_keys: GoSharedSlice::default(),
+            relative_columns: GoSharedSlice::default(),
+            position_columns: GoSharedSlice::default(),
         }
     }
 }
 
 /// Go `SubJob` persisted fields.
-#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, serde::Serialize)]
 pub struct SubJob {
     /// DDL action performed by this sub-job.
     #[serde(rename = "type", default)]
     pub type_: ActionType,
+    /// Runtime typed argument interface. The nil interface remains distinct
+    /// from typed-nil and arbitrary dynamic values.
+    #[serde(skip)]
+    pub job_args: GoAny,
     /// Persisted delayed-decode argument envelope.
     #[serde(rename = "raw_args", default)]
     pub raw_args: Option<PersistedRawJson>,
@@ -400,7 +447,7 @@ pub struct SubJob {
     pub row_count: i64,
     /// Persisted warning payload from the sub-job.
     #[serde(rename = "warning", default)]
-    pub warning: Option<TerrorError>,
+    pub warning: Option<GoShared<TerrorError>>,
     /// Runtime hint used by modify-column reorganization.
     #[serde(skip)]
     pub need_reorg: bool,
@@ -417,7 +464,7 @@ pub struct SubJob {
     #[serde(rename = "analyze_state", default)]
     pub analyze_state: i8,
     #[serde(skip)]
-    args: Option<Vec<serde_json::Value>>,
+    pub(crate) args: GoSharedSlice<GoAny>,
 }
 
 impl SubJob {
@@ -472,11 +519,11 @@ impl SubJob {
             query: parent.query.clone(),
             binlog_info: parent.binlog_info.clone(),
             reorg_meta,
-            multi_schema_info: Some(MultiSchemaInfo {
+            multi_schema_info: Some(GoShared::new(MultiSchemaInfo {
                 revertible: self.revertible,
                 seq: sequence as i32,
                 ..Default::default()
-            }),
+            })),
             priority: parent.priority,
             sequence_number: parent.sequence_number,
             charset: parent.charset.clone(),
@@ -496,6 +543,7 @@ impl SubJob {
             .multi_schema_info
             .as_ref()
             .expect("proxy Job.MultiSchemaInfo is required by FromProxyJob")
+            .read()
             .revertible;
         self.schema_state = proxy.schema_state;
         self.snapshot_version = proxy.snapshot_version;
@@ -518,14 +566,46 @@ impl SubJob {
     #[must_use]
     pub fn clone_without_args(&self) -> Self {
         let mut cloned = self.clone();
-        cloned.args = None;
+        cloned.args = GoSharedSlice::default();
         cloned
+    }
+
+    /// Installs the exact private `[]any` header produced by a version-1
+    /// `JobArgs.getArgsV1` hook. The hook itself belongs to `job_args.go`.
+    pub fn set_v1_decoded_args(&mut self, args: GoSharedSlice<GoAny>) {
+        self.args = args;
+    }
+
+    /// Compatibility adapter for callers that have already erased argument
+    /// dynamic types into JSON values. Source-shaped callers should install a
+    /// Go interface slice with [`Self::set_v1_decoded_args`] instead.
+    pub fn fill_raw_args(&mut self, args: Vec<serde_json::Value>) {
+        self.args = GoSharedSlice::from_vec(
+            args.into_iter()
+                .map(|value| {
+                    serde_json::from_value(value)
+                        .expect("a serde_json::Value is always valid interface JSON")
+                })
+                .collect(),
+        );
+    }
+
+    /// Go version-2 `SubJob.FillArgs`: the typed JobArgs interface is the one
+    /// private argument element.
+    pub fn fill_v2_args(&mut self) {
+        self.args = GoSharedSlice::from_vec(vec![self.job_args.clone()]);
+    }
+
+    /// Returns a copied Go slice header for the private argument cache.
+    #[must_use]
+    pub fn decoded_args(&self) -> GoSharedSlice<GoAny> {
+        self.args.clone()
     }
 }
 
 impl TimeZoneLocation {
     /// Go `GetLocation`.
-    pub fn get_location(&self) -> Result<ResolvedTimeZone, String> {
+    pub fn get_location(&self) -> Result<GoShared<ResolvedTimeZone>, String> {
         if let Some(location) = self.location.get() {
             return Ok(location.clone());
         }
@@ -535,25 +615,55 @@ impl TimeZoneLocation {
                 offset_seconds: self.offset,
             })
         } else {
-            let canonical = if self.name.is_empty() {
-                Ok("UTC")
+            let canonical = self
+                .name
+                .as_utf8()
+                .map_err(|_| format!("unknown time zone {}", self.name))?;
+            if canonical == "Local" {
+                Ok(ResolvedTimeZone::Local)
             } else {
-                self.name
-                    .as_utf8()
-                    .map_err(|_| format!("unknown time zone {}", self.name))
-            }?;
-            canonical
-                .parse::<chrono_tz::Tz>()
-                .map(ResolvedTimeZone::Named)
-                .map_err(|_| format!("unknown time zone {canonical}"))
+                let canonical = if canonical.is_empty() {
+                    "UTC"
+                } else {
+                    canonical
+                };
+                canonical
+                    .parse::<chrono_tz::Tz>()
+                    .map(ResolvedTimeZone::Named)
+                    .map_err(|_| format!("unknown time zone {canonical}"))
+            }
         }?;
+        let resolved = GoShared::new(resolved);
         let _ = self.location.set(resolved.clone());
         Ok(self.location.get().cloned().unwrap_or(resolved))
     }
 }
 
+#[derive(Default)]
+pub(crate) struct JobMutex(Mutex<()>);
+
+impl Clone for JobMutex {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+impl std::fmt::Debug for JobMutex {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("JobMutex")
+    }
+}
+
+impl JobMutex {
+    fn lock(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
 /// Go `Job`: the persisted DDL operation envelope.
-#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, serde::Serialize)]
 pub struct Job {
     /// Persistent job identifier.
     #[serde(rename = "id", default)]
@@ -569,30 +679,32 @@ pub struct Job {
     pub table_id: i64,
     /// Source schema name used by scheduling involvement fallback.
     #[serde(rename = "schema_name", default)]
-    pub schema_name: String,
+    pub schema_name: GoString,
     /// Source table name used by scheduling involvement fallback.
     #[serde(rename = "table_name", default)]
-    pub table_name: String,
+    pub table_name: GoString,
     /// Current lifecycle state.
     #[serde(rename = "state", default)]
     pub state: JobState,
     /// Persisted warning payload.
     #[serde(rename = "warning", default)]
-    pub warning: Option<TerrorError>,
+    pub warning: Option<GoShared<TerrorError>>,
     /// Persisted execution error payload.
     #[serde(rename = "err", default)]
-    pub error: Option<TerrorError>,
+    pub error: Option<GoShared<TerrorError>>,
     /// Number of execution errors observed.
     #[serde(rename = "err_count", default)]
     pub error_count: i64,
     /// Number of rows processed.
     #[serde(rename = "row_count", default)]
     pub row_count: i64,
+    #[serde(skip)]
+    pub(crate) mu: JobMutex,
     /// Runtime modify-column hint; not a precise persisted reorg decision.
     #[serde(skip)]
     pub need_reorg: bool,
     #[serde(skip)]
-    args: Option<Vec<serde_json::Value>>,
+    pub(crate) args: GoSharedSlice<GoAny>,
     /// Persisted delayed-decode argument envelope.
     #[serde(rename = "raw_args", default)]
     pub raw_args: Option<PersistedRawJson>,
@@ -613,10 +725,10 @@ pub struct Job {
     pub dependency_id: i64,
     /// Original DDL query text.
     #[serde(rename = "query", default)]
-    pub query: String,
+    pub query: GoString,
     /// Schema-history snapshot written when the job finishes.
     #[serde(rename = "binlog", default)]
-    pub binlog_info: Option<HistoryInfo>,
+    pub binlog_info: Option<GoShared<HistoryInfo>>,
     /// Persisted job argument encoding version.
     #[serde(rename = "version", default)]
     pub version: JobVersion,
@@ -625,7 +737,7 @@ pub struct Job {
     pub reorg_meta: Option<GoShared<DDLReorgMeta>>,
     /// Multi-schema sub-job state, when present.
     #[serde(rename = "multi_schema_info", default)]
-    pub multi_schema_info: Option<MultiSchemaInfo>,
+    pub multi_schema_info: Option<GoShared<MultiSchemaInfo>>,
     /// Operation priority used by index creation.
     #[serde(rename = "priority", default)]
     pub priority: i64,
@@ -634,17 +746,17 @@ pub struct Job {
     pub sequence_number: u64,
     /// Character set captured when the job was created.
     #[serde(rename = "charset", default)]
-    pub charset: String,
+    pub charset: GoString,
     /// Collation captured when the job was created.
     #[serde(rename = "collate", default)]
-    pub collate: String,
+    pub collate: GoString,
     #[serde(
         rename = "involving_schema_info",
         default,
-        skip_serializing_if = "option_vec_is_none_or_empty"
+        skip_serializing_if = "shared_slice_is_empty"
     )]
     /// Explicit scheduling-lock objects; `None` activates name fallback.
-    pub involving_schema_info: Option<Vec<InvolvingSchemaInfo>>,
+    pub involving_schema_info: GoSharedSlice<InvolvingSchemaInfo>,
     /// Origin of an administrative command.
     #[serde(rename = "admin_operator", default)]
     pub admin_operator: AdminCommandOperator,
@@ -654,20 +766,20 @@ pub struct Job {
         skip_serializing_if = "Option::is_none"
     )]
     /// Durable reason for a system-initiated pause.
-    pub pause_reason: Option<JobPauseReason>,
+    pub pause_reason: Option<GoShared<JobPauseReason>>,
     #[serde(
         rename = "resume_reason",
         default,
         skip_serializing_if = "Option::is_none"
     )]
     /// Durable reason for explicit resume.
-    pub resume_reason: Option<JobResumeReason>,
+    pub resume_reason: Option<GoShared<JobResumeReason>>,
     /// SQL tracing metadata retained with Go's typed/base64 field contract.
     #[serde(rename = "trace_info", default)]
-    pub trace_info: Option<TraceInfo>,
+    pub trace_info: Option<GoShared<TraceInfo>>,
     /// BDR cluster role captured for this DDL.
     #[serde(rename = "bdr_role", default)]
-    pub bdr_role: String,
+    pub bdr_role: GoString,
     /// CDC write-source identifier.
     #[serde(rename = "cdc_write_source", default)]
     pub cdc_write_source: u64,
@@ -676,14 +788,14 @@ pub struct Job {
     pub local_mode: bool,
     /// SQL mode used to execute the DDL statement.
     #[serde(rename = "sql_mode", default)]
-    pub sql_mode: u64,
+    pub sql_mode: i64,
     #[serde(
         rename = "session_vars",
         default,
-        skip_serializing_if = "option_map_is_none_or_empty"
+        skip_serializing_if = "shared_map_is_none_or_empty"
     )]
     /// Session system variables captured for DDL execution.
-    pub session_vars: Option<BTreeMap<String, String>>,
+    pub session_vars: Option<GoShared<BTreeMap<GoString, GoString>>>,
     /// Latest schema version returned by the last execution step.
     #[serde(rename = "last_schema_version", default)]
     pub last_schema_version: i64,
@@ -692,32 +804,18 @@ pub struct Job {
 /// Go `JobW`: a decoded job and the exact binary representation it came with.
 #[derive(Clone, Debug)]
 pub struct JobW {
-    /// Decoded job value.
-    pub job: Job,
+    /// Decoded nullable job pointer.
+    pub job: Option<GoShared<Job>>,
     /// Exact original binary representation.
-    pub bytes: Vec<u8>,
+    pub bytes: GoSharedSlice<u8>,
 }
 
 impl JobW {
     /// Go `NewJobW`. The byte vector is retained unchanged, including empty
     /// and non-JSON payloads; construction does not decode it.
     #[must_use]
-    pub fn new(job: Job, bytes: Vec<u8>) -> Self {
+    pub fn new(job: Option<GoShared<Job>>, bytes: GoSharedSlice<u8>) -> Self {
         Self { job, bytes }
-    }
-}
-
-impl std::ops::Deref for JobW {
-    type Target = Job;
-
-    fn deref(&self) -> &Self::Target {
-        &self.job
-    }
-}
-
-impl std::ops::DerefMut for JobW {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.job
     }
 }
 
@@ -731,12 +829,14 @@ pub type JobWarnings = (
 impl Job {
     /// Sets the processed row count.
     pub fn set_row_count(&mut self, count: i64) {
+        let _guard = self.mu.lock();
         self.row_count = count;
     }
 
     /// Returns the processed row count.
     #[must_use]
     pub fn get_row_count(&self) -> i64 {
+        let _guard = self.mu.lock();
         self.row_count
     }
 
@@ -746,6 +846,7 @@ impl Job {
         warnings: Option<GoShared<crate::reorg::DDLWarningMap>>,
         warning_counts: Option<GoShared<crate::reorg::DDLWarningCountMap>>,
     ) {
+        let _guard = self.mu.lock();
         let metadata = self
             .reorg_meta
             .as_ref()
@@ -758,6 +859,7 @@ impl Job {
     /// Returns aliases of the reorganization warning maps.
     #[must_use]
     pub fn get_warnings(&self) -> JobWarnings {
+        let _guard = self.mu.lock();
         let metadata = self
             .reorg_meta
             .as_ref()
@@ -777,8 +879,9 @@ impl Job {
         self.state = state;
         self.schema_state = schema_state;
         self.binlog_info
-            .as_mut()
+            .as_ref()
             .expect("Job.BinlogInfo is required by FinishTableJob")
+            .write()
             .add_table_info(version, table);
     }
 
@@ -794,8 +897,9 @@ impl Job {
         self.schema_state = schema_state;
         let binlog = self
             .binlog_info
-            .as_mut()
+            .as_ref()
             .expect("Job.BinlogInfo is required by FinishMultipleTableJob");
+        let mut binlog = binlog.write();
         binlog.schema_version = version;
         // Go assigns the outer slice header before indexing its final element;
         // the empty-input panic therefore leaves the caller's nil or
@@ -820,62 +924,67 @@ impl Job {
         self.state = state;
         self.schema_state = schema_state;
         self.binlog_info
-            .as_mut()
+            .as_ref()
             .expect("Job.BinlogInfo is required by FinishDBJob")
+            .write()
             .add_db_info(version, database);
     }
 
     /// Makes a multi-schema job permanently non-revertible.
     pub fn mark_non_revertible(&mut self) {
-        if let Some(info) = &mut self.multi_schema_info {
-            info.revertible = false;
+        if let Some(info) = &self.multi_schema_info {
+            info.write().revertible = false;
         }
     }
 
-    /// Replaces the decoded generic argument cache used by [`Self::encode`].
-    pub fn fill_raw_args(&mut self, args: Vec<serde_json::Value>) {
-        self.args = Some(args);
+    /// Installs the exact private `[]any` header produced by a version-1
+    /// `JobArgs` or `FinishedJobArgs` hook.
+    pub fn set_v1_decoded_args(&mut self, args: GoSharedSlice<GoAny>) {
+        self.args = args;
+    }
+
+    /// Go version-2 `FillArgs`/`FillFinishedArgs`: one dynamic typed argument
+    /// is stored in an allocated one-element `[]any`.
+    pub fn fill_v2_arg(&mut self, argument: GoAny) {
+        self.args = GoSharedSlice::from_vec(vec![argument]);
+    }
+
+    /// Returns a copied Go slice header for the private decoded argument cache.
+    #[must_use]
+    pub fn decoded_args(&self) -> GoSharedSlice<GoAny> {
+        self.args.clone()
     }
 
     /// Encodes the job with Go-compatible JSON, optionally refreshing raw arguments.
     pub fn encode(&mut self, update_raw_args: bool) -> Result<Vec<u8>, serde_json::Error> {
         if update_raw_args {
-            let raw_args = if self.version.0 <= JobVersion::V1.0 {
-                self.args
-                    .clone()
-                    .map_or(serde_json::Value::Null, serde_json::Value::Array)
-            } else {
-                debug_assert_eq!(self.version, JobVersion::V2);
-                debug_assert!(self.args.as_ref().map_or(0, Vec::len) <= 1);
-                self.args
-                    .as_ref()
-                    .and_then(|args| args.first())
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Null)
-            };
-            self.raw_args = Some(PersistedRawJson::from_value(&raw_args)?);
-            if let Some(info) = &mut self.multi_schema_info {
-                if let Some(sub_jobs) = &mut info.sub_jobs {
-                    for sub_job in sub_jobs {
-                        let Some(sub_job) = sub_job else {
-                            continue;
-                        };
-                        let Some(args) = &sub_job.args else {
-                            continue;
-                        };
-                        let raw_args = if self.version.0 <= JobVersion::V1.0 {
-                            serde_json::Value::Array(args.clone())
-                        } else {
-                            debug_assert_eq!(self.version, JobVersion::V2);
-                            debug_assert!(args.len() <= 1);
-                            args.first().cloned().unwrap_or(serde_json::Value::Null)
-                        };
-                        sub_job.raw_args = Some(PersistedRawJson::from_value(&raw_args)?);
+            match marshal_args(self.version, &self.args) {
+                Ok(raw_args) => self.raw_args = Some(raw_args),
+                Err(error) => {
+                    self.raw_args = None;
+                    return Err(error);
+                }
+            }
+            if let Some(info) = &self.multi_schema_info {
+                let sub_jobs = info.read().sub_jobs.clone();
+                for sub_job in sub_jobs.iter_handles() {
+                    let sub_job = sub_job.expect("nil SubJob in MultiSchemaInfo.SubJobs");
+                    let mut sub_job = sub_job.write();
+                    if !sub_job.args.is_allocated() {
+                        continue;
+                    }
+                    match marshal_args(self.version, &sub_job.args) {
+                        Ok(raw_args) => sub_job.raw_args = Some(raw_args),
+                        Err(error) => {
+                            sub_job.raw_args = None;
+                            return Err(error);
+                        }
                     }
                 }
             }
         }
-        crate::serde_helpers::to_go_json(self)
+        let _guard = self.mu.lock();
+        crate::serde_helpers::to_go_json(&*self)
     }
 
     /// Explicit nullable receiver boundary for Go `(*Job).Encode`. The source
@@ -919,12 +1028,33 @@ impl Job {
         receiver.decode(bytes)
     }
 
-    /// Clones through the persisted codec and clears private decoded arguments.
+    /// Go `Job.Clone`: clones through the persisted codec, clears private
+    /// decoded argument slices, and restores only each SubJob JobArgs
+    /// interface value.
     #[must_use]
     pub fn deep_clone(&mut self) -> Option<Self> {
         let bytes = self.encode(true).ok()?;
         let mut cloned = Self::default();
         cloned.decode(&bytes).ok()?;
+        if let Some(source_info) = &self.multi_schema_info {
+            let source_sub_jobs = source_info.read().sub_jobs.clone();
+            let cloned_sub_jobs = cloned
+                .multi_schema_info
+                .as_ref()
+                .expect("encoded MultiSchemaInfo must decode")
+                .read()
+                .sub_jobs
+                .clone();
+            for index in 0..source_sub_jobs.len() {
+                let source = source_sub_jobs
+                    .get(index)
+                    .expect("nil SubJob in source Job.Clone");
+                let destination = cloned_sub_jobs
+                    .get(index)
+                    .expect("nil SubJob in cloned Job.Clone");
+                destination.write().job_args = source.read().job_args.clone();
+            }
+        }
         Some(cloned)
     }
 
@@ -1010,15 +1140,15 @@ impl Job {
     pub fn has_pause_reason(&self, reason: &str) -> bool {
         self.pause_reason
             .as_ref()
-            .is_some_and(|value| value.type_ == reason)
+            .is_some_and(|value| value.read().type_ == reason)
     }
 
     /// Records a durable pause reason and message.
-    pub fn set_pause_reason(&mut self, type_: impl Into<String>, message: impl Into<String>) {
-        self.pause_reason = Some(JobPauseReason {
+    pub fn set_pause_reason(&mut self, type_: impl Into<GoString>, message: impl Into<GoString>) {
+        self.pause_reason = Some(GoShared::new(JobPauseReason {
             type_: type_.into(),
             message: message.into(),
-        });
+        }));
     }
 
     /// Clears the durable pause reason.
@@ -1031,14 +1161,14 @@ impl Job {
     pub fn has_resume_reason(&self, reason: &str) -> bool {
         self.resume_reason
             .as_ref()
-            .is_some_and(|value| value.type_ == reason)
+            .is_some_and(|value| value.read().type_ == reason)
     }
 
     /// Records a durable resume reason.
-    pub fn set_resume_reason(&mut self, type_: impl Into<String>) {
-        self.resume_reason = Some(JobResumeReason {
+    pub fn set_resume_reason(&mut self, type_: impl Into<GoString>) {
+        self.resume_reason = Some(GoShared::new(JobResumeReason {
             type_: type_.into(),
-        });
+        }));
     }
 
     /// Clears the durable resume reason.
@@ -1089,20 +1219,20 @@ impl Job {
     }
 
     /// Inserts one captured session system variable.
-    pub fn add_system_var(&mut self, name: impl Into<String>, value: impl Into<String>) {
+    pub fn add_system_var(&mut self, name: impl Into<GoString>, value: impl Into<GoString>) {
         self.session_vars
-            .as_mut()
+            .as_ref()
             .expect("assignment to entry in nil SessionVars map")
+            .write()
             .insert(name.into(), value.into());
     }
 
     /// Returns one captured session system variable.
     #[must_use]
-    pub fn get_system_var(&self, name: &str) -> Option<&str> {
+    pub fn get_system_var(&self, name: &str) -> Option<GoString> {
         self.session_vars
             .as_ref()
-            .and_then(|variables| variables.get(name))
-            .map(String::as_str)
+            .and_then(|variables| variables.read().get(&GoString::from(name)).cloned())
     }
 
     /// Reports whether this action may require data reorganization.
@@ -1115,25 +1245,22 @@ impl Job {
             | ActionType::ACTION_REMOVE_PARTITIONING
             | ActionType::ACTION_ALTER_TABLE_PARTITIONING => true,
             ActionType::ACTION_MODIFY_COLUMN => self.need_reorg,
-            ActionType::ACTION_MULTI_SCHEMA_CHANGE => self
-                .multi_schema_info
-                .as_ref()
-                .expect("multi-schema job requires MultiSchemaInfo")
-                .sub_jobs
-                .as_ref()
-                .is_some_and(|sub_jobs| {
-                    sub_jobs.iter().any(|sub_job| {
-                        let sub_job = sub_job
-                            .as_ref()
-                            .expect("nil SubJob in MultiSchemaInfo.SubJobs");
-                        Job {
-                            type_: sub_job.type_,
-                            need_reorg: sub_job.need_reorg,
-                            ..Default::default()
-                        }
-                        .may_need_reorg()
-                    })
-                }),
+            ActionType::ACTION_MULTI_SCHEMA_CHANGE => {
+                let info = self
+                    .multi_schema_info
+                    .as_ref()
+                    .expect("multi-schema job requires MultiSchemaInfo")
+                    .read();
+                info.sub_jobs.iter_deref().any(|sub_job| {
+                    let sub_job = sub_job.read();
+                    Job {
+                        type_: sub_job.type_,
+                        need_reorg: sub_job.need_reorg,
+                        ..Default::default()
+                    }
+                    .may_need_reorg()
+                })
+            }
             _ => false,
         }
     }
@@ -1179,6 +1306,7 @@ impl Job {
                 self.multi_schema_info
                     .as_ref()
                     .expect("multi-schema job requires MultiSchemaInfo")
+                    .read()
                     .revertible
             }
             ActionType::ACTION_FLASHBACK_CLUSTER => !matches!(
@@ -1196,43 +1324,39 @@ impl Job {
 
     /// Returns explicit scheduling involvement or the schema/table fallback.
     #[must_use]
-    pub fn get_involving_schema_info(&self) -> Vec<InvolvingSchemaInfo> {
-        if let Some(info) = self
-            .involving_schema_info
-            .as_ref()
-            .filter(|info| !info.is_empty())
-        {
-            return info.clone();
+    pub fn get_involving_schema_info(&self) -> GoSharedSlice<InvolvingSchemaInfo> {
+        if !self.involving_schema_info.is_empty() {
+            return self.involving_schema_info.clone();
         }
         let table = if !self.schema_name.is_empty() && self.table_name.is_empty() {
-            INVOLVING_ALL.to_owned()
+            GoString::from(INVOLVING_ALL)
         } else {
             self.table_name.clone()
         };
-        vec![InvolvingSchemaInfo {
+        GoSharedSlice::from_vec(vec![InvolvingSchemaInfo {
             database: self.schema_name.clone(),
             table,
             ..Default::default()
-        }]
+        }])
     }
 
     /// Lowercases scheduling names while preserving `*` and empty sentinels.
     pub fn normalize_involving_schema_info(&mut self) {
         self.schema_name = normalize_involving_name(&self.schema_name);
         self.table_name = normalize_involving_name(&self.table_name);
-        if let Some(involving) = &mut self.involving_schema_info {
-            for info in involving {
+        for index in 0..self.involving_schema_info.len() {
+            self.involving_schema_info.update(index, |info| {
                 info.database = normalize_involving_name(&info.database);
                 info.table = normalize_involving_name(&info.table);
                 info.policy = normalize_involving_name(&info.policy);
                 info.resource_group = normalize_involving_name(&info.resource_group);
-            }
+            });
         }
     }
 
     /// Validates that each scheduling entry identifies exactly one object kind.
     pub fn check_involving_schema_info(&self) -> Result<(), &'static str> {
-        for info in self.get_involving_schema_info() {
+        for info in self.get_involving_schema_info().snapshot() {
             let object_types = usize::from(!info.policy.is_empty())
                 + usize::from(!info.resource_group.is_empty())
                 + usize::from(!info.database.is_empty() || !info.table.is_empty());
@@ -1253,40 +1377,52 @@ impl Job {
 
     /// Clears the private decoded-argument cache without changing raw JSON.
     pub fn clear_decoded_args(&mut self) {
-        self.args = None;
+        self.args = GoSharedSlice::default();
     }
 }
 
-fn normalize_involving_name(name: &str) -> String {
-    if matches!(name, INVOLVING_ALL | INVOLVING_NONE) {
-        name.to_owned()
+fn marshal_args(
+    version: JobVersion,
+    args: &GoSharedSlice<GoAny>,
+) -> Result<PersistedRawJson, serde_json::Error> {
+    let bytes = if version.0 <= JobVersion::V1.0 {
+        crate::serde_helpers::to_go_json(args)?
     } else {
-        tidb_mysql::to_lowercase(name)
+        let argument = if args.is_empty() {
+            GoAny::nil()
+        } else {
+            args.get(0)
+        };
+        crate::serde_helpers::to_go_json(&argument)?
+    };
+    Ok(PersistedRawJson::from_marshaled_bytes(bytes))
+}
+
+fn normalize_involving_name(name: &GoString) -> GoString {
+    if name == INVOLVING_ALL || name == INVOLVING_NONE {
+        name.clone()
+    } else {
+        GoString::from(tidb_mysql::to_lowercase(&name.to_utf8_lossy_go()))
     }
 }
 
-fn option_vec_is_none_or_empty<T>(values: &Option<Vec<T>>) -> bool {
-    values.as_ref().is_none_or(Vec::is_empty)
+fn shared_slice_is_empty<T>(values: &GoSharedSlice<T>) -> bool {
+    values.is_empty()
 }
 
-fn option_map_is_none_or_empty<K, V>(values: &Option<BTreeMap<K, V>>) -> bool {
-    values.as_ref().is_none_or(BTreeMap::is_empty)
+fn shared_map_is_none_or_empty<K, V>(values: &Option<GoShared<BTreeMap<K, V>>>) -> bool {
+    values
+        .as_ref()
+        .is_none_or(|values| values.read().is_empty())
 }
 
 impl std::fmt::Display for Job {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let start_time = crate::bdr::ts_convert_2_time(self.start_ts);
-        // The full TSO physical domain is within Chrono's supported year
-        // range. Conversion is only for this legacy formatter; the model API
-        // itself retains GoTime and its process-local location identity.
-        let start = start_time
-            .to_chrono_utc()
-            .expect("TSO physical milliseconds fit Chrono")
-            .format("%Y-%m-%d %H:%M:%S %z UTC");
+        let start = format_tso_in_process_location(self.start_ts);
         let error = self
             .error
             .as_ref()
-            .map_or_else(|| "<nil>".to_owned(), ToString::to_string);
+            .map_or_else(|| "<nil>".to_owned(), |error| error.read().to_string());
         write!(
             formatter,
             "ID:{}, Type:{}, State:{}, SchemaState:{}, SchemaID:{}, TableID:{}, RowCount:{}, ArgLen:{}, start time: {}, Err:{}, ErrCount:{}, SnapshotVersion:{}, Version: {}",
@@ -1296,8 +1432,8 @@ impl std::fmt::Display for Job {
             self.schema_state,
             self.schema_id,
             self.table_id,
-            self.row_count,
-            self.args.as_ref().map_or(0, Vec::len),
+            self.get_row_count(),
+            self.args.len(),
             start,
             error,
             self.error_count,
@@ -1324,6 +1460,7 @@ impl std::fmt::Display for Job {
         }
         if self.type_ != ActionType::ACTION_MULTI_SCHEMA_CHANGE {
             if let Some(info) = &self.multi_schema_info {
+                let info = info.read();
                 write!(
                     formatter,
                     ", Multi-Schema Change:true, Revertible:{}",
@@ -1335,1037 +1472,26 @@ impl std::fmt::Display for Job {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::placement::PolicyRefInfo;
-    use tidb_ast::CiString;
+fn format_tso_in_process_location(tso: u64) -> String {
+    use chrono::TimeZone as _;
 
-    fn raw_json(json: &str) -> PersistedRawJson {
-        PersistedRawJson::from_string(json.to_owned()).unwrap()
+    let millis = crate::bdr::ts_convert_2_time(tso).unix_millis();
+    let value = chrono::Local
+        .timestamp_millis_opt(millis)
+        .single()
+        .expect("TSO physical milliseconds fit Chrono");
+    let mut output = value.format("%Y-%m-%d %H:%M:%S").to_string();
+    let fractional = millis.rem_euclid(1_000);
+    if fractional != 0 {
+        let fraction = format!("{fractional:03}");
+        output.push('.');
+        output.push_str(fraction.trim_end_matches('0'));
     }
-
-    #[test]
-    fn enums_and_reasons() {
-        assert_eq!(
-            AdminCommandOperator::default(),
-            AdminCommandOperator::BY_NOT_KNOWN
-        );
-        assert_ne!(
-            AdminCommandOperator::BY_SYSTEM,
-            AdminCommandOperator::BY_END_USER
-        );
-        assert_eq!(
-            InvolvingSchemaInfoMode::default(),
-            InvolvingSchemaInfoMode::EXCLUSIVE
-        );
-        assert_eq!(INVOLVING_ALL, "*");
-        assert_eq!(INVOLVING_NONE, "");
-
-        let inv = InvolvingSchemaInfo {
-            database: INVOLVING_ALL.to_owned(),
-            mode: InvolvingSchemaInfoMode::SHARED,
-            ..Default::default()
-        };
-        assert_eq!(inv.clone(), inv);
-
-        let r = JobPauseReason {
-            type_: "kv".to_owned(),
-            message: "disk full".to_owned(),
-        };
-        assert_eq!(r.message, "disk full");
-        assert_eq!(AdminCommandOperator::BY_END_USER.to_string(), "EndUser");
-        assert_eq!(AdminCommandOperator(99).to_string(), "None");
-    }
-
-    #[test]
-    fn history_info() {
-        let table_pointer = GoShared::new(TableInfo {
-            name: CiString::new("t"),
-            ..Default::default()
-        });
-        let h = HistoryInfo {
-            schema_version: 42,
-            table_info: Some(table_pointer.clone()),
-            multiple_table_infos: GoSharedPointerSlice::from_nullable(vec![Some(
-                TableInfo::default(),
-            )]),
-            ..Default::default()
-        };
-        // An ordinary HistoryInfo copy is shallow in Go.
-        let c = h.clone();
-        assert_eq!(c.schema_version, 42);
-        assert!(c.table_info.as_ref().unwrap().ptr_eq(&table_pointer));
-        assert_eq!(c.table_info.as_ref().unwrap().read().name.original(), "t");
-        assert_eq!(c.multiple_table_infos.len(), 1);
-
-        let nil_json = serde_json::to_value(HistoryInfo::default()).unwrap();
-        assert_eq!(nil_json["MultipleTableInfos"], serde_json::Value::Null);
-        let mut allocated_empty = HistoryInfo::default();
-        allocated_empty.set_table_infos(1, &GoSharedPointerSlice::from_nullable(Vec::new()));
-        let empty_json = serde_json::to_value(&allocated_empty).unwrap();
-        assert_eq!(empty_json["MultipleTableInfos"], serde_json::json!([]));
-        let mut copied_from_nil = HistoryInfo::default();
-        copied_from_nil.set_table_infos(2, &GoSharedPointerSlice::default());
-        assert!(copied_from_nil.multiple_table_infos.is_allocated());
-        assert!(copied_from_nil.multiple_table_infos.is_empty());
-
-        let mut h = h;
-        h.finished_ts = 99;
-        h.clean();
-        assert_eq!(h.schema_version, 0);
-        assert!(h.table_info.is_none());
-        assert_eq!(h.finished_ts, 99);
-    }
-
-    #[test]
-    fn history_decode_merges_existing_nested_objects_and_continues_after_errors() {
-        let mut job = Job {
-            binlog_info: Some(HistoryInfo {
-                schema_version: 10,
-                db_info: Some(GoShared::new(DBInfo {
-                    id: 1,
-                    name: CiString::new("db-kept"),
-                    charset: "old-db-charset".to_owned(),
-                    placement_policy_ref: Some(GoShared::new(PolicyRefInfo {
-                        id: 11,
-                        name: CiString::new("db-policy-kept"),
-                    })),
-                    ..Default::default()
-                })),
-                table_info: Some(GoShared::new(TableInfo {
-                    id: 2,
-                    name: CiString::new("table-kept"),
-                    comment: "old-comment".to_owned(),
-                    placement_policy_ref: Some(GoShared::new(PolicyRefInfo {
-                        id: 12,
-                        name: CiString::new("table-policy-kept"),
-                    })),
-                    ..Default::default()
-                })),
-                finished_ts: 20,
-                multiple_table_infos: GoSharedPointerSlice::from_nullable_with_capacity(
-                    vec![Some(TableInfo {
-                        id: 3,
-                        ..Default::default()
-                    })],
-                    3,
-                ),
-            }),
-            ..Default::default()
-        };
-        let database_alias = job
-            .binlog_info
-            .as_ref()
-            .unwrap()
-            .db_info
-            .as_ref()
-            .unwrap()
-            .clone();
-        let table_alias = job
-            .binlog_info
-            .as_ref()
-            .unwrap()
-            .table_info
-            .as_ref()
-            .unwrap()
-            .clone();
-        let table_slice_alias = job
-            .binlog_info
-            .as_ref()
-            .unwrap()
-            .multiple_table_infos
-            .clone();
-
-        let error = job
-            .decode(
-                br#"{
-                    "binlog": {
-                        "DBInfo":{
-                            "id":"bad",
-                            "charset":null,
-                            "policy_ref_info":{"id":"bad","name":{"O":"db-policy-later","L":"db-policy-later"}},
-                            "collate":"db-later"
-                        },
-                        "TableInfo":{
-                            "id":"bad",
-                            "policy_ref_info":{"id":"bad","name":{"O":"table-policy-later","L":"table-policy-later"}},
-                            "comment":"table-later"
-                        },
-                        "MultipleTableInfos":[
-                            null,
-                            {"id":"bad","comment":"element-later"},
-                            {"id":7,"comment":"last-element"}
-                        ],
-                        "FinishedTS":30
-                    },
-                    "row_count":40
-                }"#,
-            )
-            .unwrap_err();
-        assert!(error.to_string().contains("invalid type"));
-
-        {
-            let history = job.binlog_info.as_ref().unwrap();
-            assert_eq!(history.schema_version, 10);
-            assert!(history.db_info.as_ref().unwrap().ptr_eq(&database_alias));
-            assert!(history.table_info.as_ref().unwrap().ptr_eq(&table_alias));
-            assert!(history
-                .multiple_table_infos
-                .backing_ptr_eq(&table_slice_alias));
-            let database = history.db_info.as_ref().unwrap().read();
-            assert_eq!(database.id, 1);
-            assert_eq!(database.name.original(), "db-kept");
-            assert_eq!(database.charset, "old-db-charset");
-            assert_eq!(database.collate, "db-later");
-            let db_policy = database.placement_policy_ref.as_ref().unwrap();
-            let db_policy = db_policy.read();
-            assert_eq!(db_policy.id, 11);
-            assert_eq!(db_policy.name.original(), "db-policy-later");
-            let table = history.table_info.as_ref().unwrap().read();
-            assert_eq!(table.id, 2);
-            assert_eq!(table.name.original(), "table-kept");
-            assert_eq!(table.comment, "table-later");
-            let table_policy = table.placement_policy_ref.as_ref().unwrap();
-            assert_eq!(table_policy.read().id, 12);
-            assert_eq!(table_policy.read().name.original(), "table-policy-later");
-            assert_eq!(history.finished_ts, 30);
-            let tables = &history.multiple_table_infos;
-            assert!(tables.get(0).is_none());
-            let second = tables.get(1).unwrap();
-            assert_eq!(second.read().id, 0);
-            assert_eq!(second.read().comment, "element-later");
-            let third = tables.get(2).unwrap();
-            assert_eq!(third.read().id, 7);
-            assert_eq!(third.read().comment, "last-element");
-            assert_eq!(job.row_count, 40);
-        }
-
-        job.decode(br#"{"binlog":{"DBInfo":{"Deprecated":null,"collate":"after-null"}}}"#)
-            .unwrap();
-        assert_eq!(
-            job.binlog_info
-                .as_ref()
-                .unwrap()
-                .db_info
-                .as_ref()
-                .unwrap()
-                .read()
-                .collate,
-            "after-null"
-        );
-
-        job.decode(br#"{"binlog":{"DBInfo":null,"TableInfo":null,"MultipleTableInfos":null}}"#)
-            .unwrap();
-        let history = job.binlog_info.as_ref().unwrap();
-        assert_eq!(history.schema_version, 10);
-        assert!(history.db_info.is_none());
-        assert!(history.table_info.is_none());
-        assert!(!history.multiple_table_infos.is_allocated());
-        assert_eq!(history.finished_ts, 30);
-    }
-
-    #[test]
-    fn history_finish_methods_preserve_go_pointer_and_outer_slice_identity() {
-        let first = GoShared::new(TableInfo {
-            id: 1,
-            ..Default::default()
-        });
-        let last = GoShared::new(TableInfo {
-            id: 2,
-            ..Default::default()
-        });
-        let caller =
-            GoSharedPointerSlice::from_handles(vec![Some(first.clone()), None, Some(last.clone())]);
-        let mut argument_header = caller.clone();
-        let mut job = Job {
-            binlog_info: Some(HistoryInfo::default()),
-            ..Default::default()
-        };
-        job.finish_multiple_table_job(JobState::DONE, SchemaState::PUBLIC, 10, &argument_header);
-        let history = job.binlog_info.as_ref().unwrap();
-        assert!(history.multiple_table_infos.backing_ptr_eq(&caller));
-        argument_header.clear();
-        assert_eq!(argument_header.len(), 0);
-        assert_eq!(history.multiple_table_infos.len(), 3);
-        assert!(history.table_info.as_ref().unwrap().ptr_eq(&last));
-        last.write().id = 9;
-        assert_eq!(history.table_info.as_ref().unwrap().read().id, 9);
-        assert_eq!(history.multiple_table_infos.get(2).unwrap().read().id, 9);
-
-        let replacement = GoShared::new(TableInfo {
-            id: 11,
-            ..Default::default()
-        });
-        caller.set(0, Some(replacement.clone()));
-        assert!(history
-            .multiple_table_infos
-            .get(0)
-            .unwrap()
-            .ptr_eq(&replacement));
-
-        let mut copied = HistoryInfo::default();
-        copied.set_table_infos(11, &caller);
-        assert!(!copied.multiple_table_infos.backing_ptr_eq(&caller));
-        assert!(copied.multiple_table_infos.get(2).unwrap().ptr_eq(&last));
-        caller.set(2, None);
-        assert!(copied.multiple_table_infos.get(2).is_some());
-
-        let mut nullable = Job {
-            binlog_info: Some(HistoryInfo::default()),
-            ..Default::default()
-        };
-        let single = GoShared::new(TableInfo {
-            id: 12,
-            ..Default::default()
-        });
-        nullable.finish_table_job(
-            JobState::DONE,
-            SchemaState::PUBLIC,
-            12,
-            Some(single.clone()),
-        );
-        assert!(nullable
-            .binlog_info
-            .as_ref()
-            .unwrap()
-            .table_info
-            .as_ref()
-            .unwrap()
-            .ptr_eq(&single));
-        nullable.finish_table_job(JobState::DONE, SchemaState::PUBLIC, 12, None);
-        assert!(nullable.binlog_info.as_ref().unwrap().table_info.is_none());
-
-        let database = GoShared::new(DBInfo {
-            id: 14,
-            ..Default::default()
-        });
-        nullable.finish_db_job(
-            JobState::DONE,
-            SchemaState::PUBLIC,
-            14,
-            Some(database.clone()),
-        );
-        assert!(nullable
-            .binlog_info
-            .as_ref()
-            .unwrap()
-            .db_info
-            .as_ref()
-            .unwrap()
-            .ptr_eq(&database));
-
-        let nil_last = GoSharedPointerSlice::from_nullable(vec![None]);
-        nullable.finish_multiple_table_job(JobState::DONE, SchemaState::PUBLIC, 15, &nil_last);
-        assert!(nullable.binlog_info.as_ref().unwrap().table_info.is_none());
-
-        let empty = GoSharedPointerSlice::from_nullable(Vec::new());
-        let stale = GoShared::new(TableInfo {
-            id: 99,
-            ..Default::default()
-        });
-        let mut empty_job = Job {
-            binlog_info: Some(HistoryInfo {
-                table_info: Some(stale.clone()),
-                multiple_table_infos: GoSharedPointerSlice::from_nullable(vec![Some(
-                    TableInfo::default(),
-                )]),
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            empty_job.finish_multiple_table_job(JobState::DONE, SchemaState::PUBLIC, 13, &empty);
-        }))
-        .is_err());
-        assert_eq!(empty_job.state, JobState::DONE);
-        assert_eq!(empty_job.schema_state, SchemaState::PUBLIC);
-        let history = empty_job.binlog_info.as_ref().unwrap();
-        assert_eq!(history.schema_version, 13);
-        assert!(history.multiple_table_infos.is_allocated());
-        assert!(history.multiple_table_infos.is_empty());
-        assert!(history.table_info.as_ref().unwrap().ptr_eq(&stale));
-    }
-
-    #[test]
-    fn time_zone_location_boundaries() {
-        let mut cached = TimeZoneLocation::default();
-        let utc = cached.get_location().unwrap();
-        assert_eq!(utc.name(), "UTC");
-        cached.name = "Asia/Shanghai".into();
-        assert_eq!(cached.get_location().unwrap().name(), "UTC");
-        let shanghai = TimeZoneLocation {
-            name: "Asia/Shanghai".into(),
-            ..Default::default()
-        };
-        assert_eq!(shanghai.get_location().unwrap().name(), "Asia/Shanghai");
-        let fixed = TimeZoneLocation {
-            name: "UTC".into(),
-            offset: 18_000,
-            ..Default::default()
-        }
-        .get_location()
-        .unwrap();
-        assert_eq!(fixed.name(), "UTC");
-        assert!(TimeZoneLocation {
-            name: "Not/AZone".into(),
-            offset: 0,
-            ..Default::default()
-        }
-        .get_location()
-        .is_err());
-
-        let widest_go_int = TimeZoneLocation {
-            name: "wide".into(),
-            offset: i64::MAX,
-            ..Default::default()
-        };
-        assert_eq!(
-            serde_json::to_value(&widest_go_int).unwrap()["offset"],
-            serde_json::json!(i64::MAX)
-        );
-        assert!(matches!(
-            widest_go_int.get_location().unwrap(),
-            ResolvedTimeZone::Fixed {
-                offset_seconds: i64::MAX,
-                ..
-            }
-        ));
-
-        let arbitrary = TimeZoneLocation {
-            name: GoString::from_bytes(vec![b'x', 0xff]),
-            offset: 1,
-            ..Default::default()
-        };
-        assert_eq!(arbitrary.get_location().unwrap().name_bytes(), [b'x', 0xff]);
-    }
-
-    #[test]
-    fn job_state_pause_and_reorg_boundaries() {
-        let mut job = Job {
-            type_: ActionType::ACTION_MODIFY_COLUMN,
-            state: JobState::RUNNING,
-            schema_state: SchemaState::WRITE_ONLY,
-            need_reorg: true,
-            admin_operator: AdminCommandOperator::BY_SYSTEM,
-            session_vars: Some(BTreeMap::new()),
-            ..Default::default()
-        };
-        assert!(job.is_running());
-        assert!(job.started());
-        assert!(job.may_need_reorg());
-        assert!(job.is_rollbackable());
-        assert!(job.is_pausable());
-        job.set_pause_reason(JOB_PAUSE_REASON_KV_DISK_FULL, "disk full");
-        job.state = JobState::PAUSED;
-        assert!(job.is_paused_by_system_for_kv_disk_full());
-        assert!(job.is_resumable());
-        job.set_resume_reason(JOB_RESUME_REASON_KV_DISK_FULL);
-        assert!(job.has_resume_reason(JOB_RESUME_REASON_KV_DISK_FULL));
-        job.clear_pause_reason();
-        assert!(!job.has_pause_reason(JOB_PAUSE_REASON_KV_DISK_FULL));
-
-        job.schema_state = SchemaState::PUBLIC;
-        assert!(!job.is_rollbackable());
-        job.add_system_var("sql_mode", "strict");
-        assert_eq!(job.get_system_var("sql_mode"), Some("strict"));
-    }
-
-    #[test]
-    fn job_string_zero_time_boundary() {
-        let job = Job {
-            version: JobVersion::V1,
-            id: 123,
-            binlog_info: Some(HistoryInfo::default()),
-            ..Default::default()
-        };
-        assert_eq!(
-            job.to_string(),
-            "ID:123, Type:none, State:none, SchemaState:none, SchemaID:0, TableID:0, RowCount:0, ArgLen:0, start time: 1970-01-01 00:00:00 +0000 UTC, Err:<nil>, ErrCount:0, SnapshotVersion:0, Version: v1"
-        );
-    }
-
-    #[test]
-    fn rollbackability_action_boundaries() {
-        let mut job = Job {
-            type_: ActionType::ACTION_DROP_INDEX,
-            schema_state: SchemaState::NONE,
-            ..Default::default()
-        };
-        assert!(job.is_rollbackable());
-        for state in [
-            SchemaState::DELETE_ONLY,
-            SchemaState::DELETE_REORGANIZATION,
-            SchemaState::WRITE_ONLY,
-        ] {
-            job.schema_state = state;
-            assert!(!job.is_rollbackable());
-        }
-        job.type_ = ActionType::ACTION_ADD_TABLE_PARTITION;
-        job.schema_state = SchemaState::REPLICA_ONLY;
-        assert!(job.is_rollbackable());
-        job.schema_state = SchemaState::WRITE_ONLY;
-        assert!(!job.is_rollbackable());
-        job.type_ = ActionType::ACTION_TRUNCATE_TABLE_PARTITION;
-        assert!(job.is_rollbackable());
-        job.schema_state = SchemaState::DELETE_ONLY;
-        assert!(!job.is_rollbackable());
-    }
-
-    #[test]
-    fn involving_schema_normalization_and_validation_boundaries() {
-        let mut job = Job {
-            schema_name: "TeSt".to_owned(),
-            table_name: "TaBlE".to_owned(),
-            ..Default::default()
-        };
-        job.normalize_involving_schema_info();
-        assert_eq!(job.schema_name, "test");
-        assert_eq!(job.table_name, "table");
-        assert!(job.check_involving_schema_info().is_ok());
-
-        job.schema_name = "\u{130}".to_owned();
-        job.table_name = "\u{130}".to_owned();
-        job.normalize_involving_schema_info();
-        assert_eq!(job.schema_name, "i");
-        assert_eq!(job.table_name, "i");
-
-        let mut allocated_empty = job.clone();
-        allocated_empty.involving_schema_info = Some(Vec::new());
-        assert_eq!(
-            allocated_empty.get_involving_schema_info(),
-            vec![InvolvingSchemaInfo {
-                database: "i".to_owned(),
-                table: "i".to_owned(),
-                ..Default::default()
-            }]
-        );
-        assert!(serde_json::to_value(&allocated_empty)
-            .unwrap()
-            .get("involving_schema_info")
-            .is_none());
-
-        let mut multi = MultiSchemaInfo::default();
-        assert!(multi.add_columns.is_empty());
-        assert!(multi.drop_columns.is_empty());
-        assert!(multi.modify_columns.is_empty());
-        assert!(multi.add_indexes.is_empty());
-        assert!(multi.drop_indexes.is_empty());
-        assert!(multi.alter_indexes.is_empty());
-        assert!(multi.add_foreign_keys.is_empty());
-        assert!(multi.relative_columns.is_empty());
-        assert!(multi.position_columns.is_empty());
-        assert_eq!(
-            serde_json::to_value(&multi).unwrap()["sub_jobs"],
-            serde_json::Value::Null
-        );
-        multi.sub_jobs = Some(Vec::new());
-        assert_eq!(
-            serde_json::to_value(&multi).unwrap()["sub_jobs"],
-            serde_json::json!([])
-        );
-
-        job.involving_schema_info = Some(vec![InvolvingSchemaInfo {
-            database: "db".to_owned(),
-            table: "t".to_owned(),
-            policy: "p".to_owned(),
-            ..Default::default()
-        }]);
-        assert_eq!(
-            job.check_involving_schema_info().unwrap_err(),
-            "InvolvingSchemaInfo must involve only one type of object among database/table, placement policy, resource group"
-        );
-        job.involving_schema_info = Some(vec![InvolvingSchemaInfo {
-            database: INVOLVING_ALL.to_owned(),
-            table: "t".to_owned(),
-            ..Default::default()
-        }]);
-        assert_eq!(
-            job.check_involving_schema_info().unwrap_err(),
-            "DDL job operating on all databases, must not set table name in InvolvingSchemaInfo"
-        );
-    }
-
-    #[test]
-    fn job_argument_version_and_proxy_boundaries() {
-        let mut nil_v1 = Job {
-            version: JobVersion::V1,
-            ..Default::default()
-        };
-        let encoded = nil_v1.encode(true).unwrap();
-        assert!(std::str::from_utf8(&encoded)
-            .unwrap()
-            .contains(r#""raw_args":null"#));
-
-        let mut empty_v1 = Job {
-            version: JobVersion::V1,
-            ..Default::default()
-        };
-        empty_v1.fill_raw_args(Vec::new());
-        let encoded = empty_v1.encode(true).unwrap();
-        assert!(std::str::from_utf8(&encoded)
-            .unwrap()
-            .contains(r#""raw_args":[]"#));
-
-        let mut v1 = Job {
-            version: JobVersion::V1,
-            ..Default::default()
-        };
-        v1.fill_raw_args(vec![serde_json::json!(1), serde_json::json!("x")]);
-        let encoded = v1.encode(true).unwrap();
-        assert!(std::str::from_utf8(&encoded)
-            .unwrap()
-            .contains(r#""raw_args":[1,"x"]"#));
-
-        let mut v2 = Job {
-            version: JobVersion::V2,
-            resume_reason: Some(JobResumeReason {
-                type_: JOB_RESUME_REASON_KV_DISK_FULL.to_owned(),
-            }),
-            ..Default::default()
-        };
-        v2.fill_raw_args(vec![serde_json::json!({"a": 1})]);
-        let encoded = v2.encode(true).unwrap();
-        assert!(std::str::from_utf8(&encoded)
-            .unwrap()
-            .contains(r#""raw_args":{"a":1}"#));
-
-        v2.fill_raw_args(vec![serde_json::json!({
-            "text": "<>&\u{2028}\u{2029}",
-            "ratio": 1.0
-        })]);
-        let encoded = v2.encode(true).unwrap();
-        let encoded = std::str::from_utf8(&encoded).unwrap();
-        assert!(encoded.contains(r#"\u003c\u003e\u0026\u2028\u2029"#));
-        assert!(encoded.contains(r#""ratio":1"#));
-
-        let parent_warnings = GoShared::new(BTreeMap::from([("old".into(), None)]));
-        let parent_location = GoShared::new(TimeZoneLocation {
-            name: "UTC".into(),
-            ..Default::default()
-        });
-        let parent_reorg = GoShared::new(DDLReorgMeta {
-            warnings: Some(parent_warnings.clone()),
-            location: Some(parent_location.clone()),
-            reorg_type: ReorgType::TXN,
-            stage: ReorgStage::NONE,
-            analyze_state: 1,
-            ..Default::default()
-        });
-        v2.reorg_meta = Some(parent_reorg.clone());
-        let (returned_warnings, returned_counts) = v2.get_warnings();
-        assert!(parent_warnings.ptr_eq(returned_warnings.as_ref().unwrap()));
-        assert!(returned_counts.is_none());
-        let sub_job = SubJob {
-            type_: ActionType::ACTION_ADD_INDEX,
-            state: JobState::QUEUEING,
-            reorg_type: ReorgType::INGEST,
-            reorg_stage: ReorgStage::MODIFY_COLUMN_RECREATE_INDEX,
-            analyze_state: 3,
-            ..Default::default()
-        };
-        let proxy = sub_job.to_proxy_job(&v2, i64::MAX);
-        assert!(proxy.has_resume_reason(JOB_RESUME_REASON_KV_DISK_FULL));
-        assert_eq!(proxy.type_, ActionType::ACTION_ADD_INDEX);
-        let proxy_reorg = proxy.reorg_meta.as_ref().unwrap();
-        assert!(!parent_reorg.ptr_eq(proxy_reorg));
-        let proxy_reorg = proxy_reorg.read();
-        assert!(parent_warnings.ptr_eq(proxy_reorg.warnings.as_ref().unwrap()));
-        assert!(parent_location.ptr_eq(proxy_reorg.location.as_ref().unwrap()));
-        assert_eq!(proxy_reorg.reorg_type, ReorgType::INGEST);
-        assert_eq!(proxy_reorg.stage, ReorgStage::MODIFY_COLUMN_RECREATE_INDEX);
-        assert_eq!(proxy_reorg.analyze_state, 3);
-        drop(proxy_reorg);
-        assert_eq!(parent_reorg.read().reorg_type, ReorgType::TXN);
-        assert_eq!(proxy.multi_schema_info.as_ref().unwrap().seq, -1);
-
-        let mut restored = SubJob::default();
-        restored.from_proxy_job(&proxy, 9);
-        assert_eq!(restored.reorg_type, ReorgType::INGEST);
-        assert_eq!(
-            restored.reorg_stage,
-            ReorgStage::MODIFY_COLUMN_RECREATE_INDEX
-        );
-        assert_eq!(restored.analyze_state, 3);
-
-        let mut preserved = SubJob {
-            reorg_type: ReorgType::TXN_MERGE,
-            reorg_stage: ReorgStage::MODIFY_COLUMN_COMPLETED,
-            analyze_state: 5,
-            ..Default::default()
-        };
-        preserved.from_proxy_job(
-            &Job {
-                multi_schema_info: Some(MultiSchemaInfo::default()),
-                ..Default::default()
-            },
-            10,
-        );
-        assert_eq!(preserved.reorg_type, ReorgType::TXN_MERGE);
-        assert_eq!(preserved.reorg_stage, ReorgStage::MODIFY_COLUMN_COMPLETED);
-        assert_eq!(preserved.analyze_state, 5);
-        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            preserved.from_proxy_job(&Job::default(), 11);
-        }))
-        .is_err());
-
-        let cached = SubJob {
-            args: Some(vec![serde_json::json!({"decoded": true})]),
-            raw_args: Some(raw_json(r#"{"persisted":true}"#)),
-            ..Default::default()
-        };
-        let clone = cached.clone_without_args();
-        assert!(clone.args.is_none());
-        assert_eq!(clone.raw_args, cached.raw_args);
-
-        let mut clone_source = Job {
-            version: JobVersion::V1,
-            ..Default::default()
-        };
-        clone_source.fill_raw_args(vec![serde_json::json!("persisted by clone")]);
-        assert!(clone_source.raw_args.is_none());
-        let clone = clone_source.deep_clone().unwrap();
-        assert_eq!(
-            clone_source.raw_args,
-            Some(raw_json(r#"["persisted by clone"]"#))
-        );
-        assert_eq!(clone.raw_args, clone_source.raw_args);
-
-        let raw = vec![0, 1, 255];
-        let mut wrapped = JobW::new(v2, raw.clone());
-        assert_eq!(wrapped.bytes, raw);
-        assert!(wrapped.has_resume_reason(JOB_RESUME_REASON_KV_DISK_FULL));
-        wrapped.id = 88;
-        assert_eq!(wrapped.job.id, 88);
-
-        let mut lexical = Job::default();
-        lexical
-            .decode(br#"{"raw_args":{ "n":18446744073709551616, "n":1.0, "s":"<>&" }}"#)
-            .unwrap();
-        assert_eq!(
-            lexical.raw_args.as_ref().unwrap().get(),
-            r#"{ "n":18446744073709551616, "n":1.0, "s":"<>&" }"#
-        );
-        let encoded = String::from_utf8(lexical.encode(false).unwrap()).unwrap();
-        assert!(encoded
-            .contains(r#""raw_args":{"n":18446744073709551616,"n":1.0,"s":"\u003c\u003e\u0026"}"#));
-        assert!(PersistedRawJson::from_string("{".to_owned()).is_err());
-
-        let mut unchanged = Job {
-            id: 42,
-            ..Default::default()
-        };
-        unchanged.decode(b"null").unwrap();
-        assert_eq!(unchanged.id, 42);
-
-        unchanged.decode(br#"{"row_count":9}"#).unwrap();
-        assert_eq!(unchanged.id, 42);
-        assert_eq!(unchanged.row_count, 9);
-
-        let error = unchanged
-            .decode(br#"{"err_count":7,"priority":"bad"}"#)
-            .unwrap_err();
-        assert!(error.to_string().contains("invalid type"));
-        assert_eq!(unchanged.error_count, 7);
-
-        assert!(std::panic::catch_unwind(|| Job::encode_pointer(None, false)).is_err());
-        let error = Job::decode_pointer(None, br#"{}"#).unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("json: Unmarshal(nil *model.Job)"));
-        let syntax = Job::decode_pointer(None, b"{").unwrap_err();
-        assert!(!syntax
-            .to_string()
-            .contains("json: Unmarshal(nil *model.Job)"));
-    }
-
-    #[test]
-    fn job_decode_matches_go_object_stream_boundaries() {
-        let mut reorg_meta = DDLReorgMeta::default();
-        reorg_meta.resource_group_name = "existing".into();
-        let warning_map = GoShared::new(BTreeMap::from([("old".into(), None)]));
-        reorg_meta.warnings = Some(warning_map.clone());
-        let reorg_pointer = GoShared::new(reorg_meta);
-        let mut job = Job {
-            id: 42,
-            row_count: 1,
-            raw_args: Some(raw_json(r#"["old"]"#)),
-            involving_schema_info: Some(vec![InvolvingSchemaInfo {
-                database: "db".to_owned(),
-                table: "t".to_owned(),
-                ..Default::default()
-            }]),
-            pause_reason: Some(JobPauseReason {
-                type_: "old".to_owned(),
-                message: "old message".to_owned(),
-            }),
-            session_vars: Some(BTreeMap::from([("old".to_owned(), "1".to_owned())])),
-            reorg_meta: Some(reorg_pointer.clone()),
-            ..Default::default()
-        };
-
-        job.decode(
-            br#"{
-                "ROW_COUNT":2,
-                "row_count":3,
-                "ID":null,
-                "raw_args":null,
-                "warning":{"class":21,"code":2,"message":"warn","rfccode":"global:2"},
-                "err":{"class":5,"code":3,"message":"failed","rfccode":"executor:3"},
-                "trace_info":{"session_alias":"alias","trace_id":"AAH/","connection_id":9},
-                "SESSION_VARS":{"new":"2"},
-                "session_vars":{"new":"3"},
-                "reorg_meta":{
-                    "WARNINGS":{"new":{"class":21,"code":2,"message":"new","rfccode":"global:2"}},
-                    "MAX_NODE_COUNT":4,
-                    "max_node_count":5
-                },
-                "pause_reason":null,
-                "involving_schema_info":null,
-                "unknown":{"ignored":[1,true,null]}
-            }"#,
-        )
-        .unwrap();
-        assert_eq!(job.id, 42);
-        assert_eq!(job.row_count, 3);
-        assert_eq!(job.raw_args, Some(raw_json("null")));
-        assert_eq!(job.warning.as_ref().unwrap().message(), "warn");
-        assert_eq!(job.error.as_ref().unwrap().message(), "failed");
-        assert_eq!(
-            job.trace_info,
-            Some(TraceInfo {
-                session_alias: "alias".to_owned(),
-                trace_id: Some(vec![0, 1, 255]),
-                connection_id: 9,
-            })
-        );
-        assert!(job.pause_reason.is_none());
-        assert!(job.involving_schema_info.is_none());
-        assert_eq!(job.get_system_var("old"), Some("1"));
-        assert_eq!(job.get_system_var("new"), Some("3"));
-        assert!(reorg_pointer.ptr_eq(job.reorg_meta.as_ref().unwrap()));
-        let reorg = job.reorg_meta.as_ref().unwrap().read();
-        assert_eq!(reorg.resource_group_name, "existing");
-        assert_eq!(reorg.max_node_count, 5);
-        assert!(warning_map.ptr_eq(reorg.warnings.as_ref().unwrap()));
-        let warnings = reorg.warnings.as_ref().unwrap().read();
-        assert!(warnings.contains_key(&GoString::from("old")));
-        assert!(warnings.contains_key(&GoString::from("new")));
-        assert_eq!(
-            warnings[&GoString::from("new")]
-                .as_ref()
-                .unwrap()
-                .read()
-                .message(),
-            "new"
-        );
-        drop(warnings);
-        drop(reorg);
-
-        job.decode(
-            "{\"warning\":{\"claſs\":5,\"code\":3,\"message\":\"folded\",\"rfccode\":\"executor:3\"}}"
-                .as_bytes(),
-        )
-        .unwrap();
-        assert_eq!(
-            job.warning.as_ref().unwrap().class(),
-            tidb_error::terror::TerrorClass::from_value(5)
-        );
-
-        job.decode(br#"{"session_vars":null,"reorg_meta":{"warnings":null}}"#)
-            .unwrap();
-        assert!(job.session_vars.is_none());
-        assert!(job.reorg_meta.as_ref().unwrap().read().warnings.is_none());
-
-        let id_before_syntax_error = job.id;
-        assert!(job.decode(br#"{"id":99,"row_count":}"#).is_err());
-        assert_eq!(job.id, id_before_syntax_error);
-
-        let error = job
-            .decode(br#"{"err_count":7,"priority":1.5}"#)
-            .unwrap_err();
-        assert!(error.to_string().contains("invalid type"));
-        assert_eq!(job.error_count, 7);
-
-        job.decode(br#"{"dependency_id":8,"row_count":9223372036854775808}"#)
-            .unwrap_err();
-        assert_eq!(job.dependency_id, 8);
-
-        let error = job
-            .decode(br#"{"warning":7,"id":51,"row_count":9223372036854775808,"table_id":52}"#)
-            .unwrap_err();
-        assert!(error.to_string().contains("invalid type"));
-        assert_eq!(job.id, 42);
-        assert_eq!(job.table_id, 0);
-
-        let error = job
-            .decode(br#"{"session_vars":{"bad":7,"later":"ok"},"id":53}"#)
-            .unwrap_err();
-        assert!(error.to_string().contains("invalid type"));
-        assert_eq!(job.get_system_var("bad"), Some(""));
-        assert_eq!(job.get_system_var("later"), Some("ok"));
-        assert_eq!(job.id, 53);
-
-        job.decode(br#"{"session_vars":{"null_value":null},"id":54}"#)
-            .unwrap();
-        assert_eq!(job.get_system_var("null_value"), Some(""));
-        assert_eq!(job.id, 54);
-
-        let reorg_max_nodes = job.reorg_meta.as_ref().unwrap().read().max_node_count;
-        let error = job
-            .decode(
-                br#"{"reorg_meta":{"warnings":{"bad":7,"later":null},"max_node_count":99},"id":55}"#,
-            )
-            .unwrap_err();
-        assert!(error.to_string().contains("invalid type"));
-        let reorg = job.reorg_meta.as_ref().unwrap().read();
-        assert!(!reorg
-            .warnings
-            .as_ref()
-            .unwrap()
-            .read()
-            .contains_key(&GoString::from("bad")));
-        assert!(!reorg
-            .warnings
-            .as_ref()
-            .unwrap()
-            .read()
-            .contains_key(&GoString::from("later")));
-        assert_eq!(reorg.max_node_count, reorg_max_nodes);
-        drop(reorg);
-        assert_eq!(job.id, 54);
-
-        job.decode(br#"{"row_count":18446744073709551616,"table_id":54}"#)
-            .unwrap_err();
-        assert_eq!(job.table_id, 54);
-
-        let error = job
-            .decode(br#"{"trace_info":{"session_alias":"changed","trace_id":"AA$=","connection_id":10},"schema_id":53}"#)
-            .unwrap_err();
-        assert!(error.to_string().contains("illegal base64 data"));
-        assert_eq!(job.trace_info.as_ref().unwrap().session_alias, "changed");
-        assert_eq!(job.trace_info.as_ref().unwrap().connection_id, 10);
-        assert_eq!(job.schema_id, 53);
-
-        let error = job
-            .decode(br#"{"reorg_meta":{"version":9,"max_node_count":"bad"}}"#)
-            .unwrap_err();
-        assert!(error.to_string().contains("invalid type"));
-        assert_eq!(job.reorg_meta.as_ref().unwrap().read().version, 9);
-    }
-
-    #[test]
-    fn multi_schema_sub_jobs_reuse_nullable_pointers_and_propagate_fatal_errors() {
-        let mut job = Job {
-            id: 40,
-            multi_schema_info: Some(MultiSchemaInfo {
-                sub_jobs: Some(vec![Some(SubJob {
-                    row_count: 5,
-                    schema_version: 6,
-                    raw_args: Some(raw_json(r#"{"kept":true}"#)),
-                    ..Default::default()
-                })]),
-                seq: 1,
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-
-        let error = job
-            .decode(
-                br#"{
-                    "multi_schema_info":{
-                        "sub_jobs":[
-                            {"row_count":"bad","schema_version":7},
-                            null,
-                            {"row_count":8}
-                        ],
-                        "seq":2
-                    },
-                    "id":41
-                }"#,
-            )
-            .unwrap_err();
-        assert!(error.to_string().contains("invalid type"));
-        let info = job.multi_schema_info.as_ref().unwrap();
-        assert_eq!(info.seq, 2);
-        let sub_jobs = info.sub_jobs.as_ref().unwrap();
-        assert_eq!(sub_jobs.len(), 3);
-        let first = sub_jobs[0].as_ref().unwrap();
-        assert_eq!(first.row_count, 5);
-        assert_eq!(first.schema_version, 7);
-        assert_eq!(first.raw_args, Some(raw_json(r#"{"kept":true}"#)));
-        assert!(sub_jobs[1].is_none());
-        assert_eq!(sub_jobs[2].as_ref().unwrap().row_count, 8);
-        assert_eq!(job.id, 41);
-
-        let error = job
-            .decode(
-                br#"{
-                    "multi_schema_info":{
-                        "sub_jobs":[{"warning":7,"schema_version":9},null],
-                        "seq":3
-                    },
-                    "id":42
-                }"#,
-            )
-            .unwrap_err();
-        assert!(error.to_string().contains("invalid type"));
-        let info = job.multi_schema_info.as_ref().unwrap();
-        assert_eq!(info.seq, 2);
-        let sub_jobs = info.sub_jobs.as_ref().unwrap();
-        assert_eq!(sub_jobs[0].as_ref().unwrap().schema_version, 7);
-        assert!(sub_jobs[1].is_none());
-        assert_eq!(sub_jobs[2].as_ref().unwrap().row_count, 8);
-        assert_eq!(job.id, 41);
-    }
-
-    #[test]
-    fn job_go_int_width_boundaries() {
-        let maximum = Job {
-            priority: i64::MAX,
-            ..Default::default()
-        };
-        let minimum = JobMeta {
-            priority: i64::MIN,
-            ..Default::default()
-        };
-        assert_eq!(
-            serde_json::to_value(maximum).unwrap()["priority"],
-            serde_json::json!(i64::MAX)
-        );
-        assert_eq!(
-            serde_json::to_value(minimum).unwrap()["priority"],
-            serde_json::json!(i64::MIN)
-        );
-    }
-
-    #[test]
-    #[cfg(debug_assertions)]
-    fn v2_argument_cardinality_matches_intest_assertions() {
-        let mut job = Job {
-            version: JobVersion::V2,
-            ..Default::default()
-        };
-        job.fill_raw_args(vec![serde_json::json!(1), serde_json::json!(2)]);
-        assert!(
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job.encode(true))).is_err()
-        );
-
-        let sub_job = SubJob {
-            args: Some(vec![serde_json::json!(1), serde_json::json!(2)]),
-            ..Default::default()
-        };
-        let mut job = Job {
-            version: JobVersion::V2,
-            multi_schema_info: Some(MultiSchemaInfo {
-                sub_jobs: Some(vec![Some(sub_job)]),
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-        assert!(
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job.encode(true))).is_err()
-        );
-    }
+    output.push(' ');
+    output.push_str(&value.format("%z %Z").to_string());
+    output
 }
+
+#[cfg(test)]
+#[path = "job_tests.rs"]
+mod tests;
