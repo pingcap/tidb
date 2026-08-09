@@ -776,6 +776,16 @@ fn test_cte_merge() {
     }
 }
 
+/// The recursive-only row from `pkg/parser/parser_test.go::TestCTE`; the
+/// other source rows are shared verbatim with `TestCTEMerge` above.
+#[test]
+fn test_cte_recursive_source_row() {
+    assert_eq!(
+        r("WITH RECURSIVE cte (n) AS (  SELECT 1  UNION ALL  SELECT n + 1 FROM cte WHERE n < 5)SELECT * FROM cte;"),
+        "WITH RECURSIVE `cte` (`n`) AS (SELECT 1 UNION ALL SELECT `n`+1 FROM `cte` WHERE `n`<5) SELECT * FROM `cte`"
+    );
+}
+
 #[test]
 fn window_functions() {
     assert_eq!(
