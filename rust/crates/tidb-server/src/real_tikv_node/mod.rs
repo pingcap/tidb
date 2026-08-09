@@ -31,6 +31,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use tidb_datatype::{Collation, FieldType, FieldTypeCode, FieldTypeFlags};
 use tidb_distsql::{CancelHandle, DirectUnaryTransportEvidenceHandle, PublishedDispatchEvidence};
 use tidb_exec::catalog_reload::ReloadedCatalog;
 use tidb_exec::catalog_watch::{
@@ -101,6 +102,11 @@ pub(crate) use schema_following::{
 pub(crate) use session_time_zone::{parse_set_time_zone, RealTiKvSessionTimeZone};
 
 const PRODUCTION_CONTROL_PLANE_TIMEOUT: Duration = Duration::from_secs(5);
+// Go `vardef.DefInitChunkSize` / `DefMaxChunkSize`. The bounded real-TiKV
+// session has no sysvar table of its own, so these are its shipped session
+// defaults rather than a second runtime source of truth.
+pub(crate) const CURSOR_INIT_CHUNK_SIZE: usize = 32;
+pub(crate) const CURSOR_MAX_CHUNK_SIZE: usize = 1024;
 
 /// `MYSQL_TYPE_NEWDECIMAL`, the result type of `SUM` over an integer column.
 const MYSQL_TYPE_NEWDECIMAL: u8 = 246;
@@ -117,7 +123,7 @@ const BINARY_FLAG: u16 = 128;
 /// group is `NULL`), with the flen Go `typeInfer4Sum` assigns. The metadata is
 /// used both for the prepare response and, because the binary row encoder
 /// dispatches each cell on its column type, for the execute-time cell encoding.
-fn aggregate_result_columns(aggregate: &PreparedAggregate) -> Vec<ColumnInfo> {
+pub(crate) fn aggregate_result_columns(aggregate: &PreparedAggregate) -> Vec<ColumnInfo> {
     let type_code = match aggregate.kind() {
         PreparedAggregateKind::Sum => MYSQL_TYPE_NEWDECIMAL,
     };
@@ -130,6 +136,91 @@ fn aggregate_result_columns(aggregate: &PreparedAggregate) -> Vec<ColumnInfo> {
         type_code,
         ..ColumnInfo::default()
     }]
+}
+
+pub(crate) fn aggregate_result_field_types(aggregate: &PreparedAggregate) -> Vec<FieldType> {
+    let code = match aggregate.kind() {
+        PreparedAggregateKind::Sum => FieldTypeCode::NewDecimal,
+    };
+    vec![FieldType::new(code)
+        .with_flen(i64::from(aggregate.result_column_length()))
+        .with_decimal(i64::from(aggregate.result_decimals()))
+        .with_collation(Collation::Binary)
+        .with_flags(FieldTypeFlags::BINARY)]
+}
+
+pub(crate) fn point_read_result_field_types(plan: &ReadOnlyScanPlan) -> Vec<FieldType> {
+    plan.projected_columns()
+        .iter()
+        .map(|column| {
+            let mut field_type = column.scalar_type().chunk_field_type();
+            if !column.is_nullable() {
+                field_type = field_type.with_added_flags(FieldTypeFlags::NOT_NULL);
+            }
+            if column.kind() == ConfiguredColumnKind::ClusteredPrimaryKey {
+                field_type = field_type.with_added_flags(FieldTypeFlags::PRI_KEY);
+            }
+            field_type
+        })
+        .collect()
+}
+
+pub(crate) fn default_cursor_memory(
+    connection_id: u64,
+    spill_storage: Option<&Arc<tidb_util::disk::SpillStorage>>,
+) -> tidb_executor::SessionMemory {
+    let memory = tidb_executor::SessionMemory::new(
+        tidb_util::memory::DEF_MEM_QUOTA_QUERY,
+        tidb_executor::OomAction::Cancel,
+        connection_id,
+    )
+    .with_tmp_storage_on_oom(true);
+    match spill_storage {
+        Some(storage) => memory.with_spill_storage(Arc::clone(storage)),
+        None => memory,
+    }
+}
+
+pub(crate) fn shape_prepared_point_read_result<'a>(
+    result: QueryResult<'a>,
+    statement: &PreparedPointRead,
+) -> QueryResult<'a> {
+    let template = statement.template();
+    let aggregate = template.aggregate();
+    let order_by = template.order_by();
+    let distinct = template.is_distinct();
+    if aggregate.is_none() && order_by.is_empty() && !distinct {
+        return result;
+    }
+
+    let warnings = result.warning_count();
+    let status = result.wire_status();
+    if let Some(aggregate) = aggregate {
+        let kind = match aggregate.kind() {
+            PreparedAggregateKind::Sum => AggregateKind::Sum,
+        };
+        return QueryResult::new(Box::new(AggregateResultSetSource::new(
+            result.into_source(),
+            kind,
+            aggregate.source_offset(),
+            statement.result_columns().to_vec(),
+        )))
+        .with_statement_status(warnings, status);
+    }
+
+    let output_width = statement.result_columns().len();
+    let mut source = result.into_source();
+    if !order_by.is_empty() {
+        source = Box::new(SortingResultSetSource::new(
+            source,
+            order_by.to_vec(),
+            output_width,
+        ));
+    }
+    if distinct {
+        source = Box::new(DistinctResultSetSource::new(source));
+    }
+    QueryResult::new(source).with_statement_status(warnings, status)
 }
 
 impl ActiveQueryCancellation for CancelHandle {
@@ -174,6 +265,10 @@ pub struct RealTiKvSessionFactory {
     /// The lease-cadence stats reload thread, stopped and joined when this
     /// factory is dropped.
     stats_reloader: Option<StatsReloader>,
+    /// Startup-validated temporary-storage authority shared by every cursor
+    /// opened by this process. `None` exists only for direct unit factories;
+    /// the production runner installs it before accepting connections.
+    spill_storage: Option<Arc<tidb_util::disk::SpillStorage>>,
 }
 
 impl RealTiKvSessionFactory {
@@ -271,7 +366,16 @@ impl RealTiKvSessionFactory {
             schema_notifier,
             stats,
             stats_reloader,
+            spill_storage: None,
         }
+    }
+
+    pub(crate) fn with_spill_storage(
+        mut self,
+        spill_storage: Arc<tidb_util::disk::SpillStorage>,
+    ) -> Self {
+        self.spill_storage = Some(spill_storage);
+        self
     }
 
     /// Returns the PD cluster identity validated during process bootstrap.
@@ -350,6 +454,8 @@ impl QuerySessionFactory for RealTiKvSessionFactory {
             .opener
             .open_session()
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+        let cursor_memory =
+            default_cursor_memory(context.connection_id, self.spill_storage.as_ref());
         Ok(RealTiKvServerSession {
             inner,
             transaction_opener: self.transaction_opener.clone(),
@@ -360,6 +466,7 @@ impl QuerySessionFactory for RealTiKvSessionFactory {
             next_query_id: 1,
             transaction: SessionTransaction::new(),
             time_zone: RealTiKvSessionTimeZone::default(),
+            cursor_memory,
         })
     }
 }
@@ -386,6 +493,8 @@ pub struct RealTiKvServerSession {
     /// `SessionVars.Location()` would. `SET time_zone` updates it in place;
     /// a fresh session starts at `UTC`/`0`, matching Go's connection default.
     time_zone: RealTiKvSessionTimeZone,
+    /// Persistent connection-level quota roots retained by open cursors.
+    cursor_memory: tidb_executor::SessionMemory,
 }
 
 impl RealTiKvServerSession {
@@ -844,19 +953,25 @@ impl QuerySession for RealTiKvServerSession {
             .map_err(|error| refusal_aware_error(&self.table_refusals, error.to_string()))?;
         // An aggregate's result column is its own type (a DECIMAL for SUM), not
         // the summed scan column's, so it bypasses the scan-derived metadata.
-        let result_columns = if let Some(aggregate) = template.aggregate() {
-            aggregate_result_columns(aggregate)
+        let (result_columns, result_field_types) = if let Some(aggregate) = template.aggregate() {
+            (
+                aggregate_result_columns(aggregate),
+                aggregate_result_field_types(aggregate),
+            )
         } else {
             // Bind placeholder handles only to resolve the result-column
             // metadata; a range template needs one placeholder per marker.
             let metadata_plan = template
                 .bind(&vec![0; template.parameter_count()])
                 .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-            self.inner
+            let result_field_types = point_read_result_field_types(&metadata_plan);
+            let result_columns = self
+                .inner
                 .protocol_columns_for_plan(&metadata_plan)
-                .map_err(|error| SqlQueryError::unknown(error.to_string()))?
+                .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+            (result_columns, result_field_types)
         };
-        Ok(PreparedPointRead::new(template, result_columns))
+        PreparedPointRead::new(template, result_columns, result_field_types)
     }
 
     fn execute_prepared_point_read<'a>(
@@ -864,6 +979,12 @@ impl QuerySession for RealTiKvServerSession {
         statement: &PreparedPointRead,
         parameters: &[i64],
     ) -> Result<QueryResult<'a>, SqlQueryError> {
+        let field_types = statement.result_field_types().to_vec();
+        let authority = tidb_session::ResultMaterializationAuthority::new(
+            self.cursor_memory.statement(),
+            CURSOR_INIT_CHUNK_SIZE,
+            CURSOR_MAX_CHUNK_SIZE,
+        );
         let plan = statement
             .template()
             .bind(parameters)
@@ -871,6 +992,7 @@ impl QuerySession for RealTiKvServerSession {
         let (query_id, query_activity) = self.begin_query()?;
         let cancellation = Arc::new(CancelHandle::default());
         let cancellation_lease = self.context.cancellation.install(cancellation.clone());
+        let statement_status = self.wire_status();
         let result = self.execute_read(
             plan,
             cancellation,
@@ -878,46 +1000,10 @@ impl QuerySession for RealTiKvServerSession {
             cancellation_lease,
             query_activity,
         )?;
-        // A SUM has no GROUP BY, so it collapses the whole scan to one row; wrap
-        // the observed scan so the fold runs outside the storage-facing observer.
-        // It is mutually exclusive with ORDER BY / DISTINCT (the planner rejects
-        // those combinations), so it is handled before them.
-        let template = statement.template();
-        if let Some(aggregate) = template.aggregate() {
-            let columns = statement.result_columns().to_vec();
-            let kind = match aggregate.kind() {
-                PreparedAggregateKind::Sum => AggregateKind::Sum,
-            };
-            return Ok(QueryResult::new(Box::new(AggregateResultSetSource::new(
-                result.into_source(),
-                kind,
-                aggregate.source_offset(),
-                columns,
-            ))));
-        }
-        // ORDER BY (a SQL-layer sort over the projected output rows) and DISTINCT
-        // (a whole-tuple dedup) are executor stages layered over the observed
-        // scan stream. Compose sort inside dedup so `DISTINCT ... ORDER BY`
-        // returns distinct rows already in sorted order; an unordered,
-        // non-distinct read keeps the observed source untouched.
-        let order_by = template.order_by();
-        let distinct = template.is_distinct();
-        if order_by.is_empty() && !distinct {
-            return Ok(result);
-        }
-        let output_width = statement.result_columns().len();
-        let mut source = result.into_source();
-        if !order_by.is_empty() {
-            source = Box::new(SortingResultSetSource::new(
-                source,
-                order_by.to_vec(),
-                output_width,
-            ));
-        }
-        if distinct {
-            source = Box::new(DistinctResultSetSource::new(source));
-        }
-        Ok(QueryResult::new(source))
+        let warnings = result.warning_count();
+        let result = result.with_statement_status(warnings, statement_status);
+        Ok(shape_prepared_point_read_result(result, statement)
+            .with_cursor_materialization(field_types, authority))
     }
 
     fn prepare_write(&mut self, sql: &str) -> Result<PreparedWrite, SqlQueryError> {
@@ -1151,7 +1237,7 @@ pub(crate) fn run_bound_node(
     spill_storage: Arc<tidb_util::disk::SpillStorage>,
     privilege_reloader: Option<PrivilegeReloader>,
 ) -> Result<(), RunConfiguredNodeError> {
-    let factory = Arc::new(factory);
+    let factory = Arc::new(factory.with_spill_storage(spill_storage));
     let cluster_id = factory.cluster_id();
     let authority_id = factory.authority_id();
     let read_authority_id = factory.read_authority_id();
@@ -1172,7 +1258,6 @@ pub(crate) fn run_bound_node(
         .collect::<Vec<_>>()
         .join(",");
     run_with_process_shutdown(factory, authority, move |factory| {
-        let _spill_storage = spill_storage;
         // Held for exactly the node's run: the reload thread it owns is
         // stopped by `Drop` when this closure returns, whether the node
         // exited normally or by error.
@@ -1617,6 +1702,44 @@ mod tests {
     use super::*;
     use std::cell::Cell;
     use std::sync::Mutex;
+
+    #[test]
+    fn prepared_point_read_fields_keep_storage_flags_and_aggregate_shape() {
+        let table = ConfiguredTable::new(
+            "test",
+            "rows",
+            42,
+            [
+                ConfiguredColumn::clustered_primary_key("id", 1),
+                ConfiguredColumn::stored_not_null("balance", 2),
+            ],
+        );
+        let catalog = ConfiguredCatalog::new([table]).unwrap();
+        let template = prepare_configured_point_read(
+            "SELECT id, balance FROM test.rows WHERE id = ?",
+            &catalog,
+        )
+        .unwrap();
+        let plan = template.bind(&[7]).unwrap();
+        let fields = point_read_result_field_types(&plan);
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[0].code(), FieldTypeCode::LongLong);
+        assert!(fields[0].has_flag(FieldTypeFlags::NOT_NULL));
+        assert!(fields[0].has_flag(FieldTypeFlags::PRI_KEY));
+        assert!(fields[1].has_flag(FieldTypeFlags::NOT_NULL));
+        assert!(!fields[1].has_flag(FieldTypeFlags::PRI_KEY));
+
+        let aggregate = prepare_configured_point_read(
+            "SELECT SUM(balance) FROM test.rows WHERE id = ?",
+            &catalog,
+        )
+        .unwrap();
+        let fields = aggregate_result_field_types(aggregate.aggregate().unwrap());
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].code(), FieldTypeCode::NewDecimal);
+        assert!(fields[0].has_flag(FieldTypeFlags::BINARY));
+        assert_eq!(fields[0].collation(), Collation::Binary);
+    }
 
     #[test]
     fn contradiction_then_remote_query_leaves_no_stale_publication_observer() {

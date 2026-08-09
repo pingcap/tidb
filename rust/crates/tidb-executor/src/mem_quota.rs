@@ -183,6 +183,164 @@ fn fallback_spill_storage() -> Arc<SpillStorage> {
     }))
 }
 
+fn install_oom_action(
+    session: &Arc<Tracker>,
+    oom_action: OomAction,
+    connection_id: u64,
+) -> Option<Arc<SqlKiller>> {
+    session.killer.reset();
+    match oom_action {
+        OomAction::Cancel => {
+            let killer = Arc::new(SqlKiller::default());
+            killer.conn_id.store(connection_id, SeqCst);
+            session.set_action_on_exceed(Some(Arc::new(CancelOnExceed {
+                base: BaseOomAction::default(),
+                killer: Arc::clone(&killer),
+                acted: AtomicBool::new(false),
+            })));
+            Some(killer)
+        }
+        OomAction::Log => {
+            session.set_action_on_exceed(Some(Arc::new(LogOnExceed::default())));
+            None
+        }
+    }
+}
+
+fn refresh_global_disk_attachment(
+    disk_session: &Arc<Tracker>,
+    tmp_storage_on_oom: bool,
+    spill_storage: Option<&Arc<SpillStorage>>,
+) {
+    disk_session.detach();
+    if tmp_storage_on_oom {
+        if let Some(storage) = spill_storage {
+            disk_session.attach_to_global_tracker(storage.global_tracker());
+        }
+    }
+}
+
+/// One connection's persistent memory and disk accounting roots.
+///
+/// Go retains `SessionVars.MemTracker`/`DiskTracker` across statements, while
+/// `ResetContextOfStmt` installs a fresh statement tracker, OOM action and
+/// kill signal for each execution. Keeping that split explicit prevents one
+/// cancelled cursor materialization from poisoning the next execution while
+/// still charging all open cursors to the same connection quota.
+#[derive(Clone)]
+pub struct SessionMemory {
+    session: Arc<Tracker>,
+    disk_session: Arc<Tracker>,
+    spill_storage: Option<Arc<SpillStorage>>,
+    tmp_storage_on_oom: bool,
+    oom_action: OomAction,
+}
+
+struct StatementLifetime {
+    stmt: Arc<Tracker>,
+    disk_stmt: Arc<Tracker>,
+    finished: AtomicBool,
+}
+
+impl StatementLifetime {
+    fn finish(&self) {
+        if self.finished.swap(true, SeqCst) {
+            return;
+        }
+        self.stmt.detach();
+        self.disk_stmt.detach();
+    }
+}
+
+impl Drop for StatementLifetime {
+    fn drop(&mut self) {
+        self.finish();
+    }
+}
+
+impl SessionMemory {
+    /// Creates persistent session roots. Call [`Self::statement`] for each
+    /// execution; the returned statement owns fresh cancellation state.
+    #[must_use]
+    pub fn new(quota: i64, oom_action: OomAction, connection_id: u64) -> Self {
+        let session = Tracker::new(LABEL_FOR_SESSION, -1);
+        session.set_bytes_limit(quota);
+        session.is_root_tracker_of_sess.store(true, SeqCst);
+        session.session_id.store(connection_id, SeqCst);
+
+        let disk_session = Tracker::new(LABEL_FOR_SESSION, -1);
+        disk_session.session_id.store(connection_id, SeqCst);
+
+        Self {
+            session,
+            disk_session,
+            spill_storage: None,
+            tmp_storage_on_oom: true,
+            oom_action,
+        }
+    }
+
+    /// Sets `@@tidb_enable_tmp_storage_on_oom` for subsequently created
+    /// statements.
+    #[must_use]
+    pub fn with_tmp_storage_on_oom(mut self, enabled: bool) -> Self {
+        self.tmp_storage_on_oom = enabled;
+        refresh_global_disk_attachment(
+            &self.disk_session,
+            self.tmp_storage_on_oom,
+            self.spill_storage.as_ref(),
+        );
+        self
+    }
+
+    /// Installs the process spill authority on the persistent disk root.
+    #[must_use]
+    pub fn with_spill_storage(mut self, storage: Arc<SpillStorage>) -> Self {
+        self.spill_storage = Some(storage);
+        refresh_global_disk_attachment(
+            &self.disk_session,
+            self.tmp_storage_on_oom,
+            self.spill_storage.as_ref(),
+        );
+        self
+    }
+
+    /// Starts one statement with fresh OOM action and kill state while
+    /// retaining the connection's accumulated cursor bytes.
+    #[must_use]
+    pub fn statement(&self) -> StatementMemory {
+        let connection_id = self.session.session_id.load(SeqCst);
+        let killer = install_oom_action(&self.session, self.oom_action, connection_id);
+
+        let stmt = Tracker::new(LABEL_FOR_SQL_TEXT, -1);
+        stmt.session_id.store(connection_id, SeqCst);
+        stmt.attach_to(&self.session);
+
+        let disk_stmt = Tracker::new(LABEL_FOR_SQL_TEXT, -1);
+        disk_stmt.session_id.store(connection_id, SeqCst);
+        disk_stmt.attach_to(&self.disk_session);
+
+        StatementMemory {
+            lifetime: Arc::new(StatementLifetime {
+                stmt,
+                disk_stmt,
+                finished: AtomicBool::new(false),
+            }),
+            session: Arc::clone(&self.session),
+            disk_session: Arc::clone(&self.disk_session),
+            spill_storage: self.spill_storage.as_ref().map(Arc::clone),
+            tmp_storage_on_oom: self.tmp_storage_on_oom,
+            killer,
+        }
+    }
+
+    /// Bytes retained by every statement and open cursor in this connection.
+    #[must_use]
+    pub fn bytes_consumed(&self) -> i64 {
+        self.session.bytes_consumed()
+    }
+}
+
 /// One statement's memory budget: the session tracker holding
 /// `tidb_mem_quota_query` and the statement tracker every operator attaches
 /// to.
@@ -192,10 +350,11 @@ fn fallback_spill_storage() -> Arc<SpillStorage> {
 /// [`crate::StmtContext`]'s single constructor.
 #[derive(Clone)]
 pub struct StatementMemory {
+    /// Shared final-clone cleanup for this statement's tracker children.
+    /// Operators clone `StatementMemory`; only the last handle may detach.
+    lifetime: Arc<StatementLifetime>,
     session: Arc<Tracker>,
-    stmt: Arc<Tracker>,
     disk_session: Arc<Tracker>,
-    disk_stmt: Arc<Tracker>,
     spill_storage: Option<Arc<SpillStorage>>,
     /// `@@tidb_enable_tmp_storage_on_oom` (Go `vardef.EnableTmpStorageOnOOM`,
     /// default ON): whether an operator that can spill is allowed to, instead
@@ -225,51 +384,7 @@ impl StatementMemory {
     /// A `quota <= 0` is Go's "no limit", which `SetBytesLimit` normalizes.
     #[must_use]
     pub fn new(quota: i64, oom_action: OomAction, connection_id: u64) -> Self {
-        let session = Tracker::new(LABEL_FOR_SESSION, -1);
-        session.set_bytes_limit(quota);
-        session.is_root_tracker_of_sess.store(true, SeqCst);
-        session.session_id.store(connection_id, SeqCst);
-
-        let killer = match oom_action {
-            OomAction::Cancel => {
-                let killer = Arc::new(SqlKiller::default());
-                killer.conn_id.store(connection_id, SeqCst);
-                session.set_action_on_exceed(Some(Arc::new(CancelOnExceed {
-                    base: BaseOomAction::default(),
-                    killer: Arc::clone(&killer),
-                    acted: AtomicBool::new(false),
-                })));
-                Some(killer)
-            }
-            OomAction::Log => {
-                let action = LogOnExceed::default();
-                session.set_action_on_exceed(Some(Arc::new(action)));
-                None
-            }
-        };
-
-        // Go `sc.InitMemTracker(memory.LabelForSQLText, -1)` then
-        // `sc.MemTracker.AttachTo(vars.MemTracker)`: the statement tracker
-        // carries no limit of its own, only the session root's.
-        let stmt = Tracker::new(LABEL_FOR_SQL_TEXT, -1);
-        stmt.session_id.store(connection_id, SeqCst);
-        stmt.attach_to(&session);
-
-        let disk_session = Tracker::new(LABEL_FOR_SESSION, -1);
-        disk_session.session_id.store(connection_id, SeqCst);
-        let disk_stmt = Tracker::new(LABEL_FOR_SQL_TEXT, -1);
-        disk_stmt.session_id.store(connection_id, SeqCst);
-        disk_stmt.attach_to(&disk_session);
-
-        StatementMemory {
-            session,
-            stmt,
-            disk_session,
-            disk_stmt,
-            spill_storage: None,
-            tmp_storage_on_oom: true,
-            killer,
-        }
+        SessionMemory::new(quota, oom_action, connection_id).statement()
     }
 
     /// Sets `@@tidb_enable_tmp_storage_on_oom`. Go reads the sysvar in
@@ -294,13 +409,11 @@ impl StatementMemory {
     }
 
     fn refresh_global_disk_attachment(&self) {
-        self.disk_session.detach();
-        if self.tmp_storage_on_oom {
-            if let Some(storage) = &self.spill_storage {
-                self.disk_session
-                    .attach_to_global_tracker(storage.global_tracker());
-            }
-        }
+        refresh_global_disk_attachment(
+            &self.disk_session,
+            self.tmp_storage_on_oom,
+            self.spill_storage.as_ref(),
+        );
     }
 
     /// Whether spilling is enabled for this statement.
@@ -320,7 +433,7 @@ impl StatementMemory {
     /// `StmtCtx.MemTracker`).
     #[must_use]
     pub fn stmt_tracker(&self) -> &Arc<Tracker> {
-        &self.stmt
+        &self.lifetime.stmt
     }
 
     /// The session disk root, which Go exposes as `SessionVars.DiskTracker`.
@@ -340,7 +453,7 @@ impl StatementMemory {
         tracker
             .session_id
             .store(self.session.session_id.load(SeqCst), SeqCst);
-        tracker.attach_to(&self.stmt);
+        tracker.attach_to(&self.lifetime.stmt);
         tracker
     }
 
@@ -351,7 +464,7 @@ impl StatementMemory {
         tracker
             .session_id
             .store(self.session.session_id.load(SeqCst), SeqCst);
-        tracker.attach_to(&self.disk_stmt);
+        tracker.attach_to(&self.lifetime.disk_stmt);
         tracker
     }
 
@@ -390,6 +503,14 @@ impl StatementMemory {
             }),
             _ => Ok(()),
         }
+    }
+
+    /// Ends the statement-scoped tracker/action lifetime after every source
+    /// and operator has closed. Persistent cursor rows may remain attached to
+    /// the session root; a later [`SessionMemory::statement`] installs fresh
+    /// cancellation state over that retained accounting.
+    pub fn finish_statement(&self) {
+        self.lifetime.finish();
     }
 
     /// An accountant for one write operator, labelled by the operator it
@@ -562,6 +683,93 @@ mod tests {
     }
 
     #[test]
+    fn a_session_gives_each_statement_fresh_cancellation_state() {
+        let session = SessionMemory::new(1, OomAction::Cancel, 7);
+
+        let first = session.statement();
+        let first_op = first.operator_tracker(3);
+        first_op.consume(1);
+        assert!(matches!(
+            first.check(),
+            Err(ExecError::MemoryExceedForQuery { conn_id: 7 })
+        ));
+        first.finish_statement();
+        assert_eq!(session.bytes_consumed(), 0);
+
+        let second = session.statement();
+        assert!(
+            second.check().is_ok(),
+            "the previous kill is statement-local"
+        );
+        let second_op = second.operator_tracker(3);
+        second_op.consume(1);
+        assert!(matches!(
+            second.check(),
+            Err(ExecError::MemoryExceedForQuery { conn_id: 7 })
+        ));
+    }
+
+    #[test]
+    fn closing_a_retained_cursor_cannot_remove_the_next_statement_action() {
+        let session = SessionMemory::new(1, OomAction::Cancel, 7);
+        let cursor = Tracker::new(tidb_util::memory::LABEL_FOR_CURSOR_FETCH, -1);
+        let first = session.statement();
+        cursor.attach_to(first.session_tracker());
+        cursor.detach();
+        first.finish_statement();
+
+        let second = session.statement();
+        let op = second.operator_tracker(3);
+        op.consume(1);
+        assert!(matches!(
+            second.check(),
+            Err(ExecError::MemoryExceedForQuery { conn_id: 7 })
+        ));
+    }
+
+    #[test]
+    fn retained_cursor_bytes_count_against_the_next_statement() {
+        let session = SessionMemory::new(10, OomAction::Cancel, 7);
+        let first = session.statement();
+        let cursor = Tracker::new(tidb_util::memory::LABEL_FOR_CURSOR_FETCH, -1);
+        cursor.attach_to(first.session_tracker());
+        cursor.consume(6);
+        first.finish_statement();
+        assert_eq!(session.bytes_consumed(), 6);
+
+        let second = session.statement();
+        let op = second.operator_tracker(3);
+        op.consume(4);
+        assert!(matches!(
+            second.check(),
+            Err(ExecError::MemoryExceedForQuery { conn_id: 7 })
+        ));
+        cursor.detach();
+        assert_eq!(session.bytes_consumed(), 4);
+    }
+
+    #[test]
+    fn final_statement_handle_drop_detaches_its_accounting_tree() {
+        let session = SessionMemory::new(10, OomAction::Cancel, 7);
+        let statement = session.statement();
+        let clone = statement.clone();
+        let op = statement.operator_tracker(3);
+        op.consume(4);
+        drop(statement);
+        assert_eq!(session.bytes_consumed(), 4, "one statement handle remains");
+        drop(clone);
+        assert_eq!(
+            session.bytes_consumed(),
+            0,
+            "final handle detaches the tree"
+        );
+
+        let next = session.statement();
+        assert!(next.check().is_ok());
+        drop(op);
+    }
+
+    #[test]
     fn log_never_fails_the_statement_however_far_it_overruns() {
         let mem = StatementMemory::new(4096, OomAction::Log, 7);
         let op = mem.operator_tracker(3);
@@ -586,7 +794,7 @@ mod tests {
         let operator = mem.operator_disk_tracker(42);
 
         operator.consume(64);
-        assert_eq!(mem.disk_stmt.bytes_consumed(), 64);
+        assert_eq!(mem.lifetime.disk_stmt.bytes_consumed(), 64);
         assert_eq!(mem.disk_session.bytes_consumed(), 64);
         assert_eq!(storage.global_tracker().bytes_consumed(), 64);
 
@@ -608,7 +816,7 @@ mod tests {
         let operator = mem.operator_disk_tracker(42);
 
         operator.consume(64);
-        assert_eq!(mem.disk_stmt.bytes_consumed(), 64);
+        assert_eq!(mem.lifetime.disk_stmt.bytes_consumed(), 64);
         assert_eq!(mem.disk_session.bytes_consumed(), 64);
         assert_eq!(storage.global_tracker().bytes_consumed(), 0);
         let path = storage.path().to_owned();

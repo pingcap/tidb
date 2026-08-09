@@ -110,6 +110,35 @@ fn single_and_multi_table_sessions_open_the_existing_real_tikv_plan_path() {
 }
 
 #[test]
+fn point_read_cursor_uses_the_same_typed_storage_authority_on_both_real_routes() {
+    let connection = include_str!("../src/mysql_connection.rs");
+    let single = include_str!("../src/real_tikv_node/mod.rs");
+    let multi = include_str!("../src/real_tikv_multi_node.rs");
+    let statement = include_str!("../src/sql_node.rs");
+
+    let point_read = connection
+        .find("PreparedStatement::PointRead(point_read) => {")
+        .expect("point-read execute branch");
+    let cursor = connection[point_read..]
+        .find("open_prepared_cursor(")
+        .map(|offset| point_read + offset)
+        .expect("point read enters the shared cursor owner");
+    let direct = connection[point_read..]
+        .find("write_connection_binary_result_set_to_sink(")
+        .map(|offset| point_read + offset)
+        .expect("noncursor point read keeps direct binary streaming");
+    assert!(cursor < direct);
+
+    assert!(statement.contains("result_field_types: Vec<tidb_datatype::FieldType>"));
+    for route in [single, multi] {
+        assert!(route.contains("default_cursor_memory("));
+        assert!(route.contains("with_spill_storage(spill_storage)"));
+        assert!(route.contains(".with_cursor_materialization(field_types, authority)"));
+        assert!(route.contains("shape_prepared_point_read_result(result, statement)"));
+    }
+}
+
+#[test]
 fn close_is_silent_and_binary_writer_rejects_non_signed_bigint_rows() {
     let connection = include_str!("../src/mysql_connection.rs");
     let close_start = connection

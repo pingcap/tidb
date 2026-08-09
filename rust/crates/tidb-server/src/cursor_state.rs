@@ -50,6 +50,23 @@ pub(crate) enum CursorFetchError {
 }
 
 impl CursorState {
+    /// Materializes a result with the exact statement authority captured by
+    /// its producer. Both general prepared reads and optimized point reads go
+    /// through this door, so neither route can silently fall back to an
+    /// unrelated quota or spill directory.
+    pub(crate) fn materialize_result(result: &mut QueryResult<'_>) -> Result<Self, SqlQueryError> {
+        let Some(authority) = result.take_cursor_materialization() else {
+            let close = result.source().close().map_err(SqlQueryError::unknown);
+            return match close {
+                Ok(()) => Err(SqlQueryError::unknown(
+                    "prepared cursor result is missing its materialization authority",
+                )),
+                Err(error) => Err(error),
+            };
+        };
+        Self::materialize(result, authority)
+    }
+
     pub(crate) fn materialize(
         result: &mut QueryResult<'_>,
         authority: CursorMaterializationAuthority,
@@ -106,6 +123,7 @@ impl CursorState {
             )));
         }
         cursor.reader = Some(reader);
+        cursor.finish_materialization();
         Ok(cursor)
     }
 
@@ -225,16 +243,21 @@ impl CursorState {
         write_eof_or_ok(output, sequence, options).map_err(CursorFetchError::Transport)
     }
 
-    fn close(&mut self) {
-        if let Some(reader) = self.reader.as_mut() {
-            reader.close();
-        }
+    fn finish_materialization(&mut self) {
         if let Some(action) = self.registered_action.take() {
             self.memory
                 .session_tracker()
                 .unbind_action_from_hard_limit(&action);
             action.set_finished();
         }
+        self.memory.finish_statement();
+    }
+
+    fn close(&mut self) {
+        if let Some(reader) = self.reader.as_mut() {
+            reader.close();
+        }
+        self.finish_materialization();
         self.rows.close();
     }
 }

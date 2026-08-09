@@ -341,19 +341,28 @@ pub(crate) struct CursorMaterializationAuthority {
 pub struct PreparedPointRead {
     template: ConfiguredPreparedPointReadTemplate,
     result_columns: Vec<ColumnInfo>,
+    result_field_types: Vec<tidb_datatype::FieldType>,
 }
 
 impl PreparedPointRead {
     /// Creates a concrete prepared definition after parser/catalog admission.
-    #[must_use]
     pub fn new(
         template: ConfiguredPreparedPointReadTemplate,
         result_columns: Vec<ColumnInfo>,
-    ) -> Self {
-        Self {
+        result_field_types: Vec<tidb_datatype::FieldType>,
+    ) -> Result<Self, SqlQueryError> {
+        if result_columns.len() != result_field_types.len() {
+            return Err(SqlQueryError::unknown(format!(
+                "prepared point-read schema has {} wire columns but {} chunk field types",
+                result_columns.len(),
+                result_field_types.len()
+            )));
+        }
+        Ok(Self {
             template,
             result_columns,
-        }
+            result_field_types,
+        })
     }
 
     /// Returns the immutable typed template retained by this connection.
@@ -366,6 +375,21 @@ impl PreparedPointRead {
     #[must_use]
     pub fn result_columns(&self) -> &[ColumnInfo] {
         &self.result_columns
+    }
+
+    /// Returns the exact storage/result types retained with the prepared
+    /// schema. Cursor materialization must not reconstruct these from MySQL
+    /// column packets, which omit collation, signedness, and temporal FSP
+    /// details needed by a [`tidb_chunk::chunk::Chunk`].
+    #[must_use]
+    pub fn result_field_types(&self) -> &[tidb_datatype::FieldType] {
+        &self.result_field_types
+    }
+
+    /// Positional markers the typed template binds at execute time.
+    #[must_use]
+    pub const fn parameter_count(&self) -> usize {
+        self.template.parameter_count()
     }
 }
 
@@ -478,7 +502,7 @@ impl PreparedStatement {
     #[must_use]
     pub fn parameter_count(&self) -> usize {
         match self {
-            Self::PointRead(_) => 1,
+            Self::PointRead(read) => read.parameter_count(),
             Self::Write(write) => write.parameter_count(),
             Self::General(general) => general.parameter_count(),
             // Transaction control has no markers to bind.

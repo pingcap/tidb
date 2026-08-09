@@ -48,12 +48,12 @@ use crate::handshake::{
 };
 use crate::mysql_tls::{ClientStream, MysqlServerTls};
 use crate::native_password::generate_handshake_salt;
-use crate::resultset_source::ResultSetSource;
 use crate::resultset_writer::ResultSetSink;
 use crate::secure_transport::TransportKind;
 use crate::sql_node::{
     ConnectionCancellation, ConnectionClose, ConnectionTracker, GeneralExecuteOutcome,
-    PreparedStatement, QuerySession, QuerySessionFactory, SessionContext,
+    PreparedStatement, QueryResult, QuerySession, QuerySessionFactory, SessionContext,
+    SqlQueryError,
 };
 use crate::wire_status::{WireStatus, SERVER_STATUS_CURSOR_EXISTS, SERVER_STATUS_LAST_ROW_SEND};
 use tidb_planner::prepared_dml::PreparedBindValue;
@@ -72,6 +72,47 @@ fn point_read_integer_parameters(values: Vec<PreparedValue>) -> Result<Vec<i64>,
             _ => Err("prepared point read parameter must be an integer".to_owned()),
         })
         .collect()
+}
+
+enum PreparedCursorOpenError {
+    Query(SqlQueryError),
+    Transport(MysqlConnectionError),
+}
+
+fn open_prepared_cursor(
+    result: &mut QueryResult<'_>,
+    output: &mut ClientStream,
+    framing: WireFraming,
+    result_encoder: ResultEncoder,
+) -> Result<CursorState, PreparedCursorOpenError> {
+    let warnings = result.warning_count();
+    let status = result.wire_status();
+    let cursor = CursorState::materialize_result(result).map_err(PreparedCursorOpenError::Query)?;
+    let options = framing.result_set(
+        status.with(SERVER_STATUS_CURSOR_EXISTS),
+        warnings,
+        result_encoder,
+    );
+    let mut stream = tidb_protocol::BinaryResultSetStream::new(cursor.columns().to_vec(), options)
+        .map_err(|error| {
+            PreparedCursorOpenError::Query(SqlQueryError::unknown(error.to_string()))
+        })?;
+    let metadata = stream.metadata_packets().map_err(|error| {
+        PreparedCursorOpenError::Query(SqlQueryError::unknown(error.to_string()))
+    })?;
+    let mut sequence = 1;
+    for packet in metadata {
+        write_packet_to(output, sequence, &packet).map_err(PreparedCursorOpenError::Transport)?;
+        sequence = sequence.wrapping_add(1);
+    }
+    // Legacy metadata framing already includes its EOF. Under
+    // CLIENT_DEPRECATE_EOF the stream intentionally omits it, so cursor
+    // execute supplies the one OK-as-EOF terminator that advertises the open
+    // cursor without sending a row.
+    if framing.deprecate_eof {
+        write_eof_or_ok(output, sequence, options).map_err(PreparedCursorOpenError::Transport)?;
+    }
+    Ok(cursor)
 }
 
 /// Converts decoded execute values into the planner's storage-neutral bind
@@ -1308,6 +1349,29 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                     continue;
                                 }
                             };
+                        if execute.cursor_flags & tidb_protocol::CURSOR_TYPE_READ_ONLY != 0 {
+                            match open_prepared_cursor(
+                                &mut result,
+                                &mut output,
+                                framing,
+                                result_encoder,
+                            ) {
+                                Ok(cursor) => {
+                                    drop(result);
+                                    drop(prepared.open_cursor(statement_id, cursor));
+                                    queries += 1;
+                                    commands.stmt_execute_successes += 1;
+                                }
+                                Err(PreparedCursorOpenError::Query(error)) => {
+                                    drop(result);
+                                    write_query_error(&mut output, &error, protocol_41)?;
+                                }
+                                Err(PreparedCursorOpenError::Transport(error)) => {
+                                    return Err(error);
+                                }
+                            }
+                            continue;
+                        }
                         let write_result = {
                             let statement_options = framing.result_set(
                                 result.wire_status(),
@@ -1352,87 +1416,26 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                             let mut write_outcome = None;
                             match engine.execute_general(&general, &values) {
                                 Ok(GeneralExecuteOutcome::Rows(mut result)) => {
-                                    let warnings = result.warning_count();
-                                    let status = result.wire_status();
-                                    let authority = match result.take_cursor_materialization() {
-                                        Some(authority) => authority,
-                                        None => {
-                                            let _ = result.source().close();
-                                            drop(result);
-                                            write_error(
-                                                &mut output,
-                                                1,
-                                                ER_UNKNOWN_ERROR,
-                                                *b"HY000",
-                                                "prepared cursor result is missing its materialization authority",
-                                                protocol_41,
-                                            )?;
-                                            continue;
-                                        }
-                                    };
-                                    let cursor =
-                                        match CursorState::materialize(&mut result, authority) {
-                                            Ok(cursor) => cursor,
-                                            Err(error) => {
-                                                drop(result);
-                                                write_query_error(
-                                                    &mut output,
-                                                    &error,
-                                                    protocol_41,
-                                                )?;
-                                                continue;
-                                            }
-                                        };
-                                    let columns = cursor.columns().to_vec();
-                                    drop(result);
-                                    let cursor_options = framing.result_set(
-                                        status.with(SERVER_STATUS_CURSOR_EXISTS),
-                                        warnings,
+                                    match open_prepared_cursor(
+                                        &mut result,
+                                        &mut output,
+                                        framing,
                                         result_encoder,
-                                    );
-                                    let mut stream = match tidb_protocol::BinaryResultSetStream::new(
-                                        columns.clone(),
-                                        cursor_options,
                                     ) {
-                                        Ok(stream) => stream,
-                                        Err(error) => {
-                                            write_error(
-                                                &mut output,
-                                                1,
-                                                ER_UNKNOWN_ERROR,
-                                                *b"HY000",
-                                                error.to_string(),
-                                                protocol_41,
-                                            )?;
-                                            continue;
+                                        Ok(cursor) => {
+                                            drop(result);
+                                            drop(prepared.open_cursor(statement_id, cursor));
+                                            queries += 1;
+                                            commands.stmt_execute_successes += 1;
                                         }
-                                    };
-                                    let mut sequence = 1;
-                                    let metadata = match stream.metadata_packets() {
-                                        Ok(metadata) => metadata,
-                                        Err(error) => {
-                                            write_error(
-                                                &mut output,
-                                                1,
-                                                ER_UNKNOWN_ERROR,
-                                                *b"HY000",
-                                                error.to_string(),
-                                                protocol_41,
-                                            )?;
-                                            continue;
+                                        Err(PreparedCursorOpenError::Query(error)) => {
+                                            drop(result);
+                                            write_query_error(&mut output, &error, protocol_41)?;
                                         }
-                                    };
-                                    for packet in metadata {
-                                        write_packet_to(&mut output, sequence, &packet)?;
-                                        sequence += 1;
+                                        Err(PreparedCursorOpenError::Transport(error)) => {
+                                            return Err(error);
+                                        }
                                     }
-                                    // The deprecate-EOF mode still terminates
-                                    // the metadata with an OK-as-EOF here,
-                                    // because no row packets follow.
-                                    write_eof_or_ok(&mut output, sequence, cursor_options)?;
-                                    drop(prepared.open_cursor(statement_id, cursor));
-                                    queries += 1;
-                                    commands.stmt_execute_successes += 1;
                                 }
                                 // Go clears the cursor bit when the statement
                                 // produced no result set and answers a plain

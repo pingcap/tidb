@@ -47,11 +47,13 @@ use crate::cluster_privileges::PrivilegeReloader;
 use crate::configured_user_store::ConfiguredUserStore;
 use crate::node_config::NodeConfig;
 use crate::real_tikv_node::{
-    configured_catalog, emit_connections_startup_failure, execute_cluster_ddl,
+    aggregate_result_columns, aggregate_result_field_types, configured_catalog,
+    default_cursor_memory, emit_connections_startup_failure, execute_cluster_ddl,
     install_remote_publication_observer, lightweight_ddl_statement_context,
-    observe_real_tikv_query, parse_set_time_zone, refusal_aware_error, run_with_process_shutdown,
-    served_table_descriptor, QueryActivity, QueryCompletion, RealTiKvSessionTimeZone,
-    RunConfiguredNodeError,
+    observe_real_tikv_query, parse_set_time_zone, point_read_result_field_types,
+    refusal_aware_error, run_with_process_shutdown, served_table_descriptor,
+    shape_prepared_point_read_result, QueryActivity, QueryCompletion, RealTiKvSessionTimeZone,
+    RunConfiguredNodeError, CURSOR_INIT_CHUNK_SIZE, CURSOR_MAX_CHUNK_SIZE,
 };
 use crate::resultset_source::ResultSetSource;
 use crate::sql_node::{
@@ -81,6 +83,7 @@ pub struct RealTiKvMultiSessionFactory {
     /// The etcd client a catalog change committed here announces itself
     /// through, so peers reload without waiting out their lease.
     schema_notifier: Option<Arc<tidb_pd_client::EtcdClient>>,
+    spill_storage: Option<Arc<tidb_util::disk::SpillStorage>>,
 }
 
 impl RealTiKvMultiSessionFactory {
@@ -135,7 +138,16 @@ impl RealTiKvMultiSessionFactory {
             max_topn_rows,
             table_refusals: Arc::new(table_refusals),
             schema_notifier,
+            spill_storage: None,
         }
+    }
+
+    pub(crate) fn with_spill_storage(
+        mut self,
+        spill_storage: Arc<tidb_util::disk::SpillStorage>,
+    ) -> Self {
+        self.spill_storage = Some(spill_storage);
+        self
     }
 
     /// The two tables this node serves, whether described on the command line
@@ -184,6 +196,8 @@ impl QuerySessionFactory for RealTiKvMultiSessionFactory {
             .opener
             .open_multi_session(self.tables.clone())
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+        let cursor_memory =
+            default_cursor_memory(context.connection_id, self.spill_storage.as_ref());
         Ok(RealTiKvMultiServerSession {
             reader,
             transaction_opener: self.transaction_opener.clone(),
@@ -194,6 +208,7 @@ impl QuerySessionFactory for RealTiKvMultiSessionFactory {
             next_query_id: 1,
             max_topn_rows: self.max_topn_rows,
             time_zone: RealTiKvSessionTimeZone::default(),
+            cursor_memory,
         })
     }
 }
@@ -215,6 +230,7 @@ pub struct RealTiKvMultiServerSession {
     /// and into `TIMESTAMP` write literals, mirroring the single-table
     /// session's own `time_zone` field (`RealTiKvServerSession`).
     time_zone: RealTiKvSessionTimeZone,
+    cursor_memory: tidb_executor::SessionMemory,
 }
 
 impl QuerySession for RealTiKvMultiServerSession {
@@ -338,16 +354,25 @@ impl QuerySession for RealTiKvMultiServerSession {
         let catalog = configured_catalog_from_tables(&self.reader)?;
         let template = prepare_configured_point_read(sql, &catalog)
             .map_err(|error| refusal_aware_error(&self.table_refusals, error.to_string()))?;
-        // Bind placeholder handles only to resolve the result-column metadata;
-        // a range template needs one placeholder per marker.
-        let metadata_plan = template
-            .bind(&vec![0; template.parameter_count()])
-            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-        let result_columns = self
-            .reader
-            .protocol_columns_for_point_read_plan(&metadata_plan)
-            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-        Ok(PreparedPointRead::new(template, result_columns))
+        let (result_columns, result_field_types) = if let Some(aggregate) = template.aggregate() {
+            (
+                aggregate_result_columns(aggregate),
+                aggregate_result_field_types(aggregate),
+            )
+        } else {
+            // Bind placeholder handles only to resolve the result-column
+            // metadata; a range template needs one placeholder per marker.
+            let metadata_plan = template
+                .bind(&vec![0; template.parameter_count()])
+                .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+            let result_field_types = point_read_result_field_types(&metadata_plan);
+            let result_columns = self
+                .reader
+                .protocol_columns_for_point_read_plan(&metadata_plan)
+                .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+            (result_columns, result_field_types)
+        };
+        PreparedPointRead::new(template, result_columns, result_field_types)
     }
 
     fn execute_prepared_point_read<'a>(
@@ -355,6 +380,12 @@ impl QuerySession for RealTiKvMultiServerSession {
         statement: &PreparedPointRead,
         parameters: &[i64],
     ) -> Result<QueryResult<'a>, SqlQueryError> {
+        let field_types = statement.result_field_types().to_vec();
+        let authority = tidb_session::ResultMaterializationAuthority::new(
+            self.cursor_memory.statement(),
+            CURSOR_INIT_CHUNK_SIZE,
+            CURSOR_MAX_CHUNK_SIZE,
+        );
         let plan = statement
             .template()
             .bind(parameters)
@@ -384,7 +415,7 @@ impl QuerySession for RealTiKvMultiServerSession {
             .reader
             .execute_point_read_plan_with_cancellation(plan, cancellation)
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-        observe_real_tikv_query(
+        let result = observe_real_tikv_query(
             &self.context,
             query,
             query_id,
@@ -392,7 +423,9 @@ impl QuerySession for RealTiKvMultiServerSession {
             activity,
             cluster_id,
             evidence,
-        )
+        )?;
+        Ok(shape_prepared_point_read_result(result, statement)
+            .with_cursor_materialization(field_types, authority))
     }
 
     fn prepare_write(&mut self, sql: &str) -> Result<PreparedWrite, SqlQueryError> {
@@ -1008,7 +1041,7 @@ pub(crate) fn run_bound_multi_node(
     spill_storage: Arc<tidb_util::disk::SpillStorage>,
     privilege_reloader: Option<PrivilegeReloader>,
 ) -> Result<(), RunConfiguredNodeError> {
-    let factory = Arc::new(factory);
+    let factory = Arc::new(factory.with_spill_storage(spill_storage));
     let cluster_id = factory.cluster_id();
     let authority_id = factory.authority_id();
     let read_authority_id = factory.read_authority_id();
@@ -1025,7 +1058,6 @@ pub(crate) fn run_bound_multi_node(
         .collect::<Vec<_>>()
         .join(",");
     run_with_process_shutdown(factory, authority, move |factory| {
-        let _spill_storage = spill_storage;
         // Held for exactly the node's run: the reload thread it owns is
         // stopped by `Drop` when this closure returns, whether the node
         // exited normally or by error.
