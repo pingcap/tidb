@@ -68,6 +68,65 @@ fn float_type(flen: i64, decimal: i64) -> FieldType {
         .with_decimal(decimal)
 }
 
+/// Complete translation of `pkg/types/convert_test.go::TestConvertTime`.
+///
+/// The three repeated DATETIME-to-TIMESTAMP rows are intentional: they are
+/// repeated in the Go source table and remain separate parity obligations.
+#[test]
+fn test_convert_time() {
+    let raw = CoreTime::from_date(2002, 3, 4, 4, 6, 7, 8);
+    let zones = [
+        SessionTimeZone::utc(),
+        SessionTimeZone::Fixed {
+            name: String::new(),
+            offset_secs: 3 * 3_600,
+        },
+        SessionTimeZone::Local,
+    ];
+    let rows = [
+        (
+            TimeType::DateTime,
+            FieldTypeCode::Timestamp,
+            TimeType::Timestamp,
+        ),
+        (
+            TimeType::DateTime,
+            FieldTypeCode::Timestamp,
+            TimeType::Timestamp,
+        ),
+        (
+            TimeType::DateTime,
+            FieldTypeCode::Timestamp,
+            TimeType::Timestamp,
+        ),
+        (
+            TimeType::Timestamp,
+            FieldTypeCode::Datetime,
+            TimeType::DateTime,
+        ),
+    ];
+    assert_eq!(rows.len(), 4, "one entry per Go source row");
+
+    for zone in zones {
+        for (input_kind, target_code, expected_kind) in rows {
+            let input = Datum::new_time(Time::new(raw, input_kind, 0).unwrap());
+            let converted = input
+                .convert_to_in(
+                    &FieldType::new(target_code),
+                    crate::DEFAULT_STATEMENT_FLAGS,
+                    &zone,
+                )
+                .unwrap_or_else(|error| panic!("{input_kind:?} in {zone:?}: {error:?}"));
+            assert_eq!(converted.event, None, "{input_kind:?} in {zone:?}");
+            let Datum::Time(value) = converted.value else {
+                panic!("{input_kind:?} in {zone:?}: expected a Time datum")
+            };
+            assert_eq!(value.kind(), expected_kind, "{input_kind:?} in {zone:?}");
+            assert_eq!(value.core_time(), raw, "{input_kind:?} in {zone:?}");
+        }
+    }
+}
+
 /// Complete translation of `pkg/types/convert_test.go:44::TestConvertType`.
 ///
 /// One Go row has no Rust counterpart and is named where it was dropped:
