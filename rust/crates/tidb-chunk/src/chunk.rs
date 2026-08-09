@@ -112,6 +112,39 @@ impl Chunk {
         self.columns.iter().map(Column::memory_usage).sum()
     }
 
+    /// Go `RequiredRows`.
+    #[must_use]
+    pub fn required_rows(&self) -> usize {
+        self.required_rows
+    }
+
+    /// Go `SetRequiredRows`. Values outside `1..=max_chunk_size` normalize to
+    /// `max_chunk_size`.
+    pub fn set_required_rows(&mut self, required_rows: isize, max_chunk_size: usize) -> &mut Self {
+        self.required_rows = match usize::try_from(required_rows) {
+            Ok(value) if value > 0 && value <= max_chunk_size => value,
+            _ => max_chunk_size,
+        };
+        self
+    }
+
+    /// Go `IsFull`.
+    #[must_use]
+    pub fn is_full(&self) -> bool {
+        self.num_rows() >= self.required_rows
+    }
+
+    /// Go `SetInCompleteChunk`.
+    pub fn set_incomplete_chunk(&mut self, incomplete: bool) {
+        self.in_complete_chunk = incomplete;
+    }
+
+    /// Go `IsInCompleteChunk`.
+    #[must_use]
+    pub fn is_incomplete_chunk(&self) -> bool {
+        self.in_complete_chunk
+    }
+
     /// Go `NumRows`: the logical row count (selection aware; virtual for a
     /// column-less or incomplete chunk).
     #[must_use]
@@ -234,6 +267,28 @@ impl Chunk {
             col.reset();
         }
         self.num_virtual_rows = 0;
+    }
+
+    /// Go `GrowAndReset`: grow only when the current chunk is full, otherwise
+    /// retain its allocation and clear rows.
+    pub fn grow_and_reset(&mut self, max_chunk_size: usize) {
+        self.sel = None;
+        if !self.columns_initialized {
+            return;
+        }
+        let new_capacity = self.re_calc_capacity(max_chunk_size);
+        if new_capacity <= self.capacity {
+            self.reset();
+            return;
+        }
+        self.columns = self
+            .columns
+            .iter()
+            .map(|column| Column::new_column_with_type_size(column.type_size(), new_capacity))
+            .collect();
+        self.capacity = new_capacity;
+        self.num_virtual_rows = 0;
+        self.required_rows = max_chunk_size;
     }
 
     /// Go `appendSel`: when appending to column 0 of a selection-carrying chunk,
@@ -401,6 +456,147 @@ impl Chunk {
     pub fn append_row(&mut self, row: Row<'_>) {
         self.append_partial_row(0, row);
         self.num_virtual_rows += 1;
+    }
+
+    /// Go `AppendPartialRowByColIdxs`. `None` is Go's nil slice (all columns),
+    /// while `Some(&[])` deliberately appends no physical cells.
+    pub fn append_partial_row_by_col_idxs(
+        &mut self,
+        col_off: usize,
+        row: Row<'_>,
+        col_idxs: Option<&[usize]>,
+    ) -> usize {
+        let Some(col_idxs) = col_idxs else {
+            self.append_partial_row(col_off, row);
+            return row.len();
+        };
+        self.append_sel(col_off);
+        for (dst_offset, &src_index) in col_idxs.iter().enumerate() {
+            self.columns[col_off + dst_offset]
+                .append_cell_from(row.chunk().column(src_index), row.idx());
+        }
+        col_idxs.len()
+    }
+
+    /// Go `AppendRowByColIdxs`.
+    pub fn append_row_by_col_idxs(&mut self, row: Row<'_>, col_idxs: Option<&[usize]>) -> usize {
+        let width = self.append_partial_row_by_col_idxs(0, row, col_idxs);
+        self.num_virtual_rows += 1;
+        width
+    }
+
+    /// Go `AppendRowsByColIdxs`.
+    pub fn append_rows_by_col_idxs(
+        &mut self,
+        rows: &[Row<'_>],
+        col_idxs: Option<&[usize]>,
+    ) -> usize {
+        if col_idxs.is_none() {
+            if rows.is_empty() {
+                return 0;
+            }
+            self.append_rows(rows);
+            return rows[0].len().saturating_mul(rows.len());
+        }
+        let col_idxs = col_idxs.expect("checked Some");
+        for &row in rows {
+            self.append_partial_row_by_col_idxs(0, row, Some(col_idxs));
+        }
+        self.num_virtual_rows += rows.len();
+        col_idxs.len().saturating_mul(rows.len())
+    }
+
+    /// Go `AppendPartialRows`.
+    pub fn append_partial_rows(&mut self, col_off: usize, rows: &[Row<'_>]) {
+        for dst_offset in 0..self.columns.len().saturating_sub(col_off) {
+            for &row in rows {
+                if dst_offset == 0 {
+                    self.append_sel(col_off);
+                }
+                self.columns[col_off + dst_offset]
+                    .append_cell_from(row.chunk().column(dst_offset), row.idx());
+            }
+        }
+    }
+
+    /// Go `AppendRows`.
+    pub fn append_rows(&mut self, rows: &[Row<'_>]) {
+        self.append_partial_rows(0, rows);
+        self.num_virtual_rows += rows.len();
+    }
+
+    /// Go `Append(other, begin, end)` for distinct chunks.
+    pub fn append_range_from(&mut self, other: &Chunk, begin: usize, end: usize) {
+        assert!(begin <= end && end <= other.num_rows());
+        for row in begin..end {
+            self.append_row(other.get_row(row));
+        }
+    }
+
+    /// The self-overlap case Go permits (`c.Append(c, begin, end)`). Snapshot
+    /// the source range before mutating so reallocation cannot invalidate it.
+    pub fn append_own_range(&mut self, begin: usize, end: usize) {
+        assert!(begin <= end && end <= self.num_rows());
+        let snapshot = self.copy_construct();
+        self.append_range_from(&snapshot, begin, end);
+    }
+
+    /// Go `Reconstruct`: materialize the installed selection and remove it.
+    pub fn reconstruct(&mut self) {
+        let Some(selection) = self.sel.take() else {
+            return;
+        };
+        for column in &mut self.columns {
+            column.reconstruct(&selection);
+        }
+        self.num_virtual_rows = selection.len();
+    }
+
+    /// Go `TruncateTo`.
+    pub fn truncate_to(&mut self, num_rows: usize) {
+        self.reconstruct();
+        for column in &mut self.columns {
+            assert!(num_rows <= column.rows());
+            if column.is_fixed() {
+                column.data.truncate(num_rows * column.elem_buf.len());
+            } else {
+                let data_len = usize::try_from(column.offsets[num_rows])
+                    .expect("column offset is non-negative");
+                column.data.truncate(data_len);
+                column.offsets.truncate(num_rows + 1);
+            }
+            column.length = num_rows;
+            column.null_bitmap.truncate((num_rows + 7) >> 3);
+            if num_rows & 7 != 0 {
+                let last = column
+                    .null_bitmap
+                    .last_mut()
+                    .expect("non-zero row count has bitmap");
+                *last &= ((1u16 << (num_rows & 7)) - 1) as u8;
+            }
+        }
+        self.num_virtual_rows = num_rows;
+    }
+
+    /// Go `CopyConstructSel`.
+    #[must_use]
+    pub fn copy_construct_sel(&self) -> Chunk {
+        let Some(selection) = &self.sel else {
+            return self.copy_construct();
+        };
+        let mut copy = self.renew_with_capacity(self.capacity, self.required_rows);
+        for &row in selection {
+            for (dst, src) in copy.columns.iter_mut().zip(&self.columns) {
+                dst.append_cell_from(src, row);
+            }
+        }
+        copy
+    }
+
+    /// Go `CloneEmpty`.
+    #[must_use]
+    pub fn clone_empty(&self, max_capacity: usize) -> Chunk {
+        self.renew_with_capacity(max_capacity, max_capacity)
     }
 
     /// Go `CopyConstruct`: a new chunk with a deep copy of this chunk's data.
@@ -848,6 +1044,91 @@ mod tests {
         assert_eq!(chk.num_rows(), 5);
         assert!(!chk.get_row(0).is_empty());
         assert!(Row::empty().is_empty());
+    }
+
+    #[test]
+    fn required_rows_fullness_and_grow_reset_follow_source_boundaries() {
+        let fields = vec![FieldType::new(FieldTypeCode::LongLong)];
+        let mut chunk = Chunk::new(&fields, 2, 8);
+        assert_eq!(chunk.required_rows(), 8);
+        chunk.set_required_rows(2, 8);
+        assert_eq!(chunk.required_rows(), 2);
+        assert!(!chunk.is_full());
+        chunk.append_int64(0, 1);
+        chunk.append_int64(0, 2);
+        assert!(chunk.is_full());
+        chunk.grow_and_reset(8);
+        assert_eq!(chunk.capacity(), 4);
+        assert_eq!(chunk.required_rows(), 8);
+        assert_eq!(chunk.num_rows(), 0);
+
+        chunk.set_required_rows(0, 8).set_required_rows(9, 8);
+        assert_eq!(chunk.required_rows(), 8);
+        chunk.set_required_rows(-1, 8);
+        assert_eq!(chunk.required_rows(), 8);
+    }
+
+    #[test]
+    fn selection_append_copy_reconstruct_and_truncate_match_go() {
+        let fields = int_str_fields();
+        let mut chunk = Chunk::new_with_capacity(&fields, 8);
+        for row in 0..4 {
+            chunk.append_int64(0, row);
+            chunk.append_string(1, &format!("s{row}"));
+        }
+        chunk.set_sel(Some(vec![1, 3]));
+        chunk.append_int64(0, 9);
+        chunk.append_string(1, "s9");
+        assert_eq!(chunk.sel(), Some(&[1, 3, 4][..]));
+
+        let selected = chunk.copy_construct_sel();
+        assert_eq!(selected.num_rows(), 3);
+        assert_eq!(selected.get_row(0).get_int64(0), 1);
+        assert_eq!(selected.get_row(1).get_int64(0), 3);
+        assert_eq!(selected.get_row(2).get_int64(0), 9);
+
+        chunk.reconstruct();
+        assert!(chunk.sel().is_none());
+        assert_eq!(chunk.num_rows(), 3);
+        assert_eq!(chunk.get_row(2).get_bytes(1), b"s9");
+        chunk.truncate_to(2);
+        assert_eq!(chunk.num_rows(), 2);
+        assert_eq!(chunk.get_row(1).get_int64(0), 3);
+    }
+
+    #[test]
+    fn append_ranges_rows_and_projection_preserve_width_and_order() {
+        let fields = int_str_fields();
+        let mut source = Chunk::new_with_capacity(&fields, 6);
+        for row in 0..3 {
+            source.append_int64(0, row);
+            source.append_string(1, &format!("s{row}"));
+        }
+
+        let mut range = Chunk::new_with_capacity(&fields, 8);
+        range.append_range_from(&source, 1, 3);
+        assert_eq!(range.num_rows(), 2);
+        assert_eq!(range.get_row(0).get_int64(0), 1);
+        range.append_own_range(0, 2);
+        assert_eq!(range.num_rows(), 4);
+        assert_eq!(range.get_row(3).get_bytes(1), b"s2");
+
+        let rows = [source.get_row(2), source.get_row(0)];
+        let mut projected = Chunk::new_with_capacity(
+            &[
+                FieldType::new(FieldTypeCode::VarString),
+                FieldType::new(FieldTypeCode::LongLong),
+            ],
+            4,
+        );
+        assert_eq!(projected.append_rows_by_col_idxs(&rows, Some(&[1, 0])), 4);
+        assert_eq!(projected.get_row(0).get_bytes(0), b"s2");
+        assert_eq!(projected.get_row(0).get_int64(1), 2);
+        assert_eq!(projected.get_row(1).get_bytes(0), b"s0");
+
+        let mut virtual_only = Chunk::new_empty(&[]);
+        assert_eq!(virtual_only.append_rows_by_col_idxs(&rows, Some(&[])), 0);
+        assert_eq!(virtual_only.num_rows(), 2);
     }
 
     #[test]

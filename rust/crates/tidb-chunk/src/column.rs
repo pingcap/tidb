@@ -52,8 +52,8 @@
 //! implemented as variable-length source-format cells.
 
 use tidb_datatype::{
-    deserialize_vector_float32, FieldType, FieldTypeCode, GoString, MyDecimal, MySqlDuration,
-    MysqlEnum, MysqlSet, Time, VectorFloat32, MYDECIMAL_STRUCT_SIZE,
+    deserialize_vector_float32, EvalType, FieldType, FieldTypeCode, GoString, MyDecimal,
+    MySqlDuration, MysqlEnum, MysqlSet, Time, VectorFloat32, MYDECIMAL_STRUCT_SIZE,
 };
 
 /// Go `VarElemLen` (`= -1`): the sentinel element length of a variable-length
@@ -217,6 +217,24 @@ impl Column {
         }
     }
 
+    /// Go `GetNullBitmapCap`.
+    #[must_use]
+    pub fn null_bitmap_capacity(&self) -> usize {
+        self.null_bitmap.capacity()
+    }
+
+    /// Go `GetOffsetCap`.
+    #[must_use]
+    pub fn offset_capacity(&self) -> usize {
+        self.offsets.capacity()
+    }
+
+    /// Go `GetDataCap`.
+    #[must_use]
+    pub fn data_capacity(&self) -> usize {
+        self.data.capacity()
+    }
+
     /// Go `Rows`: the number of rows currently stored.
     #[must_use]
     pub fn rows(&self) -> usize {
@@ -243,6 +261,64 @@ impl Column {
         }
     }
 
+    /// Go `Reserve`: preserve current content while reserving additional
+    /// bitmap/data/offset capacity.
+    pub fn reserve(&mut self, more_null_bitmap: usize, more_data: usize, more_offsets: usize) {
+        self.null_bitmap.reserve(more_null_bitmap);
+        self.data.reserve(more_data);
+        self.offsets.reserve(more_offsets);
+    }
+
+    /// Go `CalculateLenDeltaForAppendCellNTimesForNullBitMap`.
+    #[must_use]
+    pub fn null_bitmap_len_delta_for_append_cell_n_times(&self, times: usize) -> usize {
+        ((self.length + times + 7) >> 3).saturating_sub(self.null_bitmap.len())
+    }
+
+    /// Go `CalculateLenDeltaForAppendCellNTimesForFixedElem`.
+    #[must_use]
+    pub fn fixed_len_delta_for_append_cell_n_times(src: &Column, times: usize) -> usize {
+        src.elem_buf.len().saturating_mul(times)
+    }
+
+    /// Go `CalculateLenDeltaForAppendCellNTimesForVarElem`.
+    #[must_use]
+    pub fn var_len_delta_for_append_cell_n_times(src: &Column, row: usize, times: usize) -> usize {
+        let cell_len = usize::try_from(src.offsets[row + 1] - src.offsets[row])
+            .expect("column offsets are non-decreasing");
+        cell_len.saturating_mul(times)
+    }
+
+    /// Go `AppendCellNTimes`: append one source cell `times` times, preserving
+    /// both bytes and nullity.
+    pub fn append_cell_n_times(&mut self, src: &Column, row: usize, times: usize) {
+        if times == 0 {
+            return;
+        }
+        let not_null = !src.is_null(row);
+        if times == 1 {
+            self.append_null_bitmap(not_null);
+        } else {
+            self.append_multi_same_null_bitmap(not_null, times);
+        }
+        if self.is_fixed() {
+            let elem_len = src.elem_buf.len();
+            let start = row * elem_len;
+            for _ in 0..times {
+                self.data
+                    .extend_from_slice(&src.data[start..start + elem_len]);
+            }
+        } else {
+            let start = usize::try_from(src.offsets[row]).expect("non-negative offset");
+            let end = usize::try_from(src.offsets[row + 1]).expect("non-negative offset");
+            for _ in 0..times {
+                self.data.extend_from_slice(&src.data[start..end]);
+                self.offsets.push(self.data.len() as i64);
+            }
+        }
+        self.length += times;
+    }
+
     /// Go `reset` (lowercase): drop all rows but keep the element type. A
     /// var-length column keeps its leading `0` offset.
     pub fn reset(&mut self) {
@@ -254,6 +330,21 @@ impl Column {
             self.offsets.push(0);
         }
         self.data.clear();
+    }
+
+    /// Go exported `Reset(EvalType)`: clear the column and reset its physical
+    /// element shape for the requested evaluation type.
+    pub fn reset_for_eval_type(&mut self, eval_type: EvalType) {
+        match eval_type {
+            EvalType::Int => self.resize_int64(0, false),
+            EvalType::Real => self.resize_float64(0, false),
+            EvalType::Decimal => self.resize_decimal(0, false),
+            EvalType::String => self.reserve_string(0),
+            EvalType::Datetime | EvalType::Timestamp => self.resize_time(0, false),
+            EvalType::Duration => self.resize_go_duration(0, false),
+            EvalType::Json => self.reserve_json(0),
+            EvalType::VectorFloat32 => self.reserve_vector_float32(0),
+        }
     }
 
     /// Go `finishAppendFixed`: commit the scratch `elem_buf` as one not-null row.
@@ -417,6 +508,23 @@ impl Column {
         self.length += 1;
     }
 
+    /// Go `AppendNNulls`.
+    pub fn append_n_nulls(&mut self, n: usize) {
+        if n == 0 {
+            return;
+        }
+        self.append_multi_same_null_bitmap(false, n);
+        if self.is_fixed() {
+            for _ in 0..n {
+                self.data.extend_from_slice(&self.elem_buf);
+            }
+        } else {
+            let current = self.offsets[self.length];
+            self.offsets.extend(std::iter::repeat_n(current, n));
+        }
+        self.length += n;
+    }
+
     /// Go `finishAppendVar`: commit the bytes appended to `data` as one not-null
     /// variable-length row (records the new end offset).
     fn finish_append_var(&mut self) {
@@ -500,6 +608,28 @@ impl Column {
         }
     }
 
+    /// Go `GetRawLength`.
+    #[must_use]
+    pub fn raw_len(&self, row_id: usize) -> usize {
+        if self.is_fixed() {
+            self.elem_buf.len()
+        } else {
+            usize::try_from(self.offsets[row_id + 1] - self.offsets[row_id])
+                .expect("column offsets are non-decreasing")
+        }
+    }
+
+    /// Go `SetRaw`. The caller must provide exactly the existing variable-cell
+    /// width; this assertion turns Go's documented precondition into a checked
+    /// Rust boundary.
+    pub fn set_raw(&mut self, row_id: usize, bytes: &[u8]) {
+        assert!(!self.is_fixed(), "SetRaw requires a variable-length column");
+        let start = usize::try_from(self.offsets[row_id]).expect("non-negative offset");
+        let end = usize::try_from(self.offsets[row_id + 1]).expect("non-negative offset");
+        assert_eq!(bytes.len(), end - start, "SetRaw width must not change");
+        self.data[start..end].copy_from_slice(bytes);
+    }
+
     /// Go `GetInt64`.
     #[must_use]
     pub fn get_int64(&self, row_id: usize) -> i64 {
@@ -524,6 +654,131 @@ impl Column {
         f64::from_ne_bytes(self.fixed_elem::<8>(row_id))
     }
 
+    /// Go `resize`, shared by the exported fixed-width resize helpers.
+    fn resize_fixed(&mut self, n: usize, type_size: usize, is_null: bool) {
+        let data_len = n.checked_mul(type_size).expect("column size overflow");
+        self.data.resize(data_len, 0);
+        if !is_null {
+            self.data.fill(0);
+        }
+
+        self.null_bitmap.resize((n + 7) >> 3, 0);
+        self.null_bitmap.fill(if is_null { 0 } else { 0xff });
+        if !is_null && n & 7 != 0 {
+            let last = self
+                .null_bitmap
+                .last_mut()
+                .expect("non-zero row count has a bitmap byte");
+            *last = ((1u16 << (n & 7)) - 1) as u8;
+        }
+
+        self.elem_buf.resize(type_size, 0);
+        self.elem_buf.fill(0);
+        self.offsets.clear();
+        self.length = n;
+    }
+
+    /// Go `reserve`, shared by variable-width Reserve* helpers.
+    fn reserve_var(&mut self, n: usize, estimated_size: usize) {
+        let data_capacity = n
+            .checked_mul(estimated_size)
+            .expect("column reserve size overflow");
+        if self.data.capacity() < data_capacity {
+            self.data = Vec::with_capacity(data_capacity);
+        } else {
+            self.data.clear();
+        }
+        let bitmap_capacity = (n + 7) >> 3;
+        if self.null_bitmap.capacity() < bitmap_capacity {
+            self.null_bitmap = Vec::with_capacity(bitmap_capacity);
+        } else {
+            self.null_bitmap.clear();
+        }
+        let offset_capacity = n.checked_add(1).expect("offset capacity overflow");
+        if self.offsets.capacity() < offset_capacity {
+            self.offsets = Vec::with_capacity(offset_capacity);
+        } else {
+            self.offsets.clear();
+        }
+        self.offsets.push(0);
+        self.elem_buf.clear();
+        self.length = 0;
+    }
+
+    pub fn resize_int64(&mut self, n: usize, is_null: bool) {
+        self.resize_fixed(n, 8, is_null);
+    }
+
+    pub fn resize_uint64(&mut self, n: usize, is_null: bool) {
+        self.resize_fixed(n, 8, is_null);
+    }
+
+    pub fn resize_float32(&mut self, n: usize, is_null: bool) {
+        self.resize_fixed(n, 4, is_null);
+    }
+
+    pub fn resize_float64(&mut self, n: usize, is_null: bool) {
+        self.resize_fixed(n, 8, is_null);
+    }
+
+    pub fn resize_decimal(&mut self, n: usize, is_null: bool) {
+        self.resize_fixed(n, MYDECIMAL_STRUCT_SIZE as usize, is_null);
+    }
+
+    pub fn resize_go_duration(&mut self, n: usize, is_null: bool) {
+        self.resize_fixed(n, 8, is_null);
+    }
+
+    pub fn resize_time(&mut self, n: usize, is_null: bool) {
+        self.resize_fixed(n, SIZE_TIME as usize, is_null);
+    }
+
+    pub fn reserve_string(&mut self, n: usize) {
+        self.reserve_var(n, ESTIMATED_ELEM_LEN);
+    }
+
+    pub fn reserve_string_with_size_hint(&mut self, n: usize, size: usize) {
+        self.reserve_var(n, size);
+    }
+
+    pub fn reserve_bytes(&mut self, n: usize) {
+        self.reserve_var(n, ESTIMATED_ELEM_LEN);
+    }
+
+    pub fn reserve_json(&mut self, n: usize) {
+        self.reserve_var(n, ESTIMATED_ELEM_LEN);
+    }
+
+    pub fn reserve_vector_float32(&mut self, n: usize) {
+        self.reserve_var(n, ESTIMATED_ELEM_LEN);
+    }
+
+    pub fn reserve_set(&mut self, n: usize) {
+        self.reserve_var(n, ESTIMATED_ELEM_LEN);
+    }
+
+    pub fn reserve_enum(&mut self, n: usize) {
+        self.reserve_var(n, ESTIMATED_ELEM_LEN);
+    }
+
+    /// Go `SetNull` (`is_null=true` clears the not-null bit).
+    pub fn set_null(&mut self, row_id: usize, is_null: bool) {
+        let mask = 1u8 << (row_id & 7);
+        if is_null {
+            self.null_bitmap[row_id >> 3] &= !mask;
+        } else {
+            self.null_bitmap[row_id >> 3] |= mask;
+        }
+    }
+
+    /// Go `SetNulls`: set the half-open row range `[begin, end)`.
+    pub fn set_nulls(&mut self, begin: usize, end: usize, is_null: bool) {
+        assert!(begin <= end && end <= self.length);
+        for row in begin..end {
+            self.set_null(row, is_null);
+        }
+    }
+
     /// Reads the `N` element bytes of a fixed-length row.
     fn fixed_elem<const N: usize>(&self, row_id: usize) -> [u8; N] {
         let start = row_id * N;
@@ -546,6 +801,30 @@ impl Column {
             // view, so it is safe to return to the allocator.
             avoid_reusing: false,
         }
+    }
+
+    /// Go `CopyReconstruct`: deep-copy only the selected rows, reusing `dst`
+    /// storage when supplied. `None` selection is the ordinary deep-copy path.
+    #[must_use]
+    pub fn copy_reconstruct(&self, sel: Option<&[usize]>, dst: Option<Column>) -> Column {
+        let Some(sel) = sel else {
+            return self.copy_construct();
+        };
+        if sel.len() == self.length && sel.windows(2).all(|pair| pair[0] <= pair[1]) {
+            return self.copy_construct();
+        }
+
+        let mut destination =
+            dst.unwrap_or_else(|| Column::new_column_with_type_size(self.type_size(), sel.len()));
+        destination.reset();
+        if destination.type_size() != self.type_size() {
+            destination = Column::new_column_with_type_size(self.type_size(), sel.len());
+        }
+        for &row in sel {
+            destination.append_cell_from(self, row);
+        }
+        destination.avoid_reusing = false;
+        destination
     }
 
     /// Go `appendCellByCell`: append `src`'s cell at `row_idx` (value and
@@ -600,6 +879,45 @@ impl Column {
             i += 1;
         }
         cnt
+    }
+
+    /// Go `MergeNulls`: the result row is not-null only when every input row
+    /// is not-null.
+    pub fn merge_nulls(&mut self, columns: &[&Column]) {
+        assert!(self.is_fixed(), "result column should be fixed-length type");
+        for column in columns {
+            assert_eq!(
+                self.length, column.length,
+                "all merged columns must have the same length"
+            );
+        }
+        for column in columns {
+            for (left, right) in self.null_bitmap.iter_mut().zip(&column.null_bitmap) {
+                *left &= *right;
+            }
+        }
+    }
+
+    /// Go `DestroyDataForTest`: overwrite every occupied byte so tests can
+    /// prove a supposed copy does not retain the source backing.
+    pub fn destroy_data_for_test(&mut self) {
+        for (index, byte) in self.data.iter_mut().enumerate() {
+            *byte = (index as u8).wrapping_mul(31).wrapping_add(0xa5);
+        }
+    }
+
+    /// Go `ContainsVeryLargeElement`.
+    #[must_use]
+    pub fn contains_very_large_element(&self) -> bool {
+        if self.length == 0 || self.is_fixed() {
+            return false;
+        }
+        if self.offsets[self.length] <= i64::from(u32::MAX) {
+            return false;
+        }
+        self.offsets[..=self.length]
+            .windows(2)
+            .any(|pair| pair[1] - pair[0] > i64::from(u32::MAX))
     }
 
     /// Go `reconstruct`: compact this column in place so that row `n` becomes
@@ -1164,6 +1482,105 @@ mod tests {
         assert_eq!(copied.get_bytes(0), b"owned value");
         assert!(!copied.avoid_reusing);
         assert!(source.avoid_reusing);
+    }
+
+    #[test]
+    fn resize_reserve_and_eval_type_reset_match_go_shapes() {
+        let mut column = Column::new_column(&FieldType::new(FieldTypeCode::LongLong), 2);
+        column.resize_int64(4, false);
+        assert_eq!(column.rows(), 4);
+        assert_eq!(column.null_bitmap, vec![0x0f]);
+        assert_eq!(column.data.len(), 32);
+        assert!(column.data.iter().all(|byte| *byte == 0));
+
+        column.resize_uint64(11, false);
+        assert_eq!(column.null_bitmap, vec![0xff, 0x07]);
+        column.resize_uint64(7, true);
+        assert_eq!(column.null_bitmap, vec![0]);
+
+        column.reset_for_eval_type(EvalType::Duration);
+        assert!(column.is_fixed());
+        assert_eq!(column.type_size(), 8);
+        assert_eq!(column.rows(), 0);
+        column.append_duration(MySqlDuration::from_nanoseconds(7, 0).unwrap());
+        assert_eq!(column.data.len(), 8);
+
+        column.reset_for_eval_type(EvalType::String);
+        assert!(!column.is_fixed());
+        assert_eq!(column.offsets, vec![0]);
+        column.append_string("x");
+        assert_eq!(column.get_bytes(0), b"x");
+    }
+
+    #[test]
+    fn reserve_preserves_content_and_typed_reserve_clears_rows() {
+        let mut column = Column::new_var_len(0);
+        column.append_string("alpha");
+        let bitmap = column.null_bitmap.clone();
+        let offsets = column.offsets.clone();
+        let data = column.data.clone();
+        column.reserve(10, 10, 10);
+        assert_eq!(column.null_bitmap, bitmap);
+        assert_eq!(column.offsets, offsets);
+        assert_eq!(column.data, data);
+        assert!(column.null_bitmap.capacity() >= bitmap.len() + 10);
+        assert!(column.offsets.capacity() >= offsets.len() + 10);
+        assert!(column.data.capacity() >= data.len() + 10);
+
+        column.reserve_string_with_size_hint(9, 36);
+        assert_eq!(column.rows(), 0);
+        assert_eq!(column.offsets, vec![0]);
+        assert!(column.data_capacity() >= 9 * 36);
+        assert!(column.offset_capacity() >= 10);
+        assert!(column.null_bitmap_capacity() >= 2);
+    }
+
+    #[test]
+    fn append_cell_n_times_and_copy_reconstruct_cover_fixed_var_and_null() {
+        let mut fixed = Column::new_fixed_len(8, 4);
+        fixed.append_int64(11);
+        fixed.append_null();
+        fixed.append_int64(33);
+
+        let mut fixed_copy = Column::new_fixed_len(8, 0);
+        fixed_copy.append_cell_n_times(&fixed, 0, 3);
+        fixed_copy.append_cell_n_times(&fixed, 1, 2);
+        assert_eq!(fixed_copy.rows(), 5);
+        assert_eq!(fixed_copy.get_int64(0), 11);
+        assert_eq!(fixed_copy.get_int64(2), 11);
+        assert!(fixed_copy.is_null(3));
+        assert!(fixed_copy.is_null(4));
+
+        let mut variable = Column::new_var_len(4);
+        variable.append_string("a");
+        variable.append_null();
+        variable.append_string("ccc");
+        let selected = variable.copy_reconstruct(Some(&[2, 0, 1]), None);
+        assert_eq!(selected.get_bytes(0), b"ccc");
+        assert_eq!(selected.get_bytes(1), b"a");
+        assert!(selected.is_null(2));
+        assert_eq!(selected.offsets, vec![0, 3, 4, 4]);
+    }
+
+    #[test]
+    fn set_null_ranges_and_merge_nulls_match_rowwise_and() {
+        let mut left = Column::new_fixed_len(8, 16);
+        let mut right = Column::new_fixed_len(8, 16);
+        let mut result = Column::new_fixed_len(8, 16);
+        left.resize_int64(11, false);
+        right.resize_int64(11, false);
+        result.resize_int64(11, false);
+        left.set_nulls(1, 4, true);
+        right.set_nulls(3, 8, true);
+        result.merge_nulls(&[&left, &right]);
+        for row in 0..11 {
+            assert_eq!(
+                result.is_null(row),
+                left.is_null(row) || right.is_null(row),
+                "row {row}"
+            );
+        }
+        assert_eq!(result.null_count(), 7);
     }
 
     /// Go `TestLargeStringColumnOffset` (`pkg/util/chunk/column_test.go`): a
