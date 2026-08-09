@@ -7,6 +7,40 @@
 
 use super::*;
 
+/// EXPLAIN infers a correlated scalar subquery's output type from its plan.
+/// It must not execute the inner query merely to discover that type: on TPCC
+/// condition 10 that planning-time scan alone exceeds the protocol timeout.
+#[test]
+fn explaining_a_correlated_scalar_type_reads_no_storage() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on("CREATE TABLE outer_t (k BIGINT)", &mut catalog).unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE inner_t (k BIGINT, v DECIMAL(6,2))",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on("INSERT INTO inner_t VALUES (1, 2.50)", &mut catalog, &ctx).unwrap();
+
+    let statement = tidb_parser::parse(
+        "SELECT (SELECT SUM(v) FROM inner_t WHERE inner_t.k=outer_t.k) FROM outer_t",
+    )
+    .unwrap();
+    let Stmt::Query(query) = &statement else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (explained, operations) = crate::storage::capture_storage_ops(|| {
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief)
+    });
+    explained.unwrap();
+    assert_eq!(operations, crate::storage::StorageOps::default());
+}
+
 /// Uncorrelated subqueries are evaluated and folded into literals, the way
 /// Go's handleScalarSubquery does for the non-Apply case.
 #[test]

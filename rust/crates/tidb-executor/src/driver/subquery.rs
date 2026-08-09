@@ -40,7 +40,9 @@ use super::*;
 /// bound to a stand-in value, which reaches the same field type without
 /// depending on any outer row -- and it must, because the appended column's
 /// width is fixed before the first inner run (a `SUM` is a 40-byte decimal,
-/// not an 8-byte integer).
+/// not an 8-byte integer). The plan-only entry point is essential: type
+/// inference must never drain the inner executor merely to inspect its output
+/// schema.
 ///
 /// The stand-in is [`probe_datum`] of the outer column's own type, NOT a bare
 /// NULL, for the reason `build_lateral_join` already states for the `LATERAL`
@@ -71,9 +73,9 @@ pub(crate) fn subquery_result_type(
         })
         .collect();
     let typed = bind_subquery_columns(&correlated.select, &probes).ok()?;
-    run_select_stmt(&typed, catalog, current_db, ctx)
+    plan_select_meta_stmt(&typed, catalog, current_db, ctx)
         .ok()
-        .and_then(|(columns, _)| columns.first().map(|(_, ft)| ft.clone()))
+        .and_then(|columns| columns.first().map(|(_, ft)| ft.clone()))
 }
 
 /// A short description of a driver error, for the executor-level error the
