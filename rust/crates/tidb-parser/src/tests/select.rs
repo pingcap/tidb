@@ -950,6 +950,74 @@ fn window_functions() {
         );
 }
 
+/// Exact table from `pkg/parser/parser_test.go::TestWindowFunctions`.
+#[test]
+fn test_window_functions_source_rows() {
+    let cases = [
+        ("SELECT CUME_DIST() OVER w FROM t;", Some("SELECT CUME_DIST() OVER `w` FROM `t`")),
+        ("SELECT DENSE_RANK() OVER (w) FROM t;", Some("SELECT DENSE_RANK() OVER (`w`) FROM `t`")),
+        ("SELECT FIRST_VALUE(val) OVER w FROM t;", Some("SELECT FIRST_VALUE(`val`) OVER `w` FROM `t`")),
+        ("SELECT FIRST_VALUE(val) RESPECT NULLS OVER w FROM t;", Some("SELECT FIRST_VALUE(`val`) OVER `w` FROM `t`")),
+        ("SELECT FIRST_VALUE(val) IGNORE NULLS OVER w FROM t;", Some("SELECT FIRST_VALUE(`val`) IGNORE NULLS OVER `w` FROM `t`")),
+        ("SELECT LAG(val) OVER (w) FROM t;", Some("SELECT LAG(`val`) OVER (`w`) FROM `t`")),
+        ("SELECT LAG(val, 1) OVER (w) FROM t;", Some("SELECT LAG(`val`, 1) OVER (`w`) FROM `t`")),
+        ("SELECT LAG(val, 1, def) OVER (w) FROM t;", Some("SELECT LAG(`val`, 1, `def`) OVER (`w`) FROM `t`")),
+        ("SELECT LAST_VALUE(val) OVER (w) FROM t;", Some("SELECT LAST_VALUE(`val`) OVER (`w`) FROM `t`")),
+        ("SELECT LEAD(val) OVER w FROM t;", Some("SELECT LEAD(`val`) OVER `w` FROM `t`")),
+        ("SELECT LEAD(val, 1) OVER w FROM t;", Some("SELECT LEAD(`val`, 1) OVER `w` FROM `t`")),
+        ("SELECT LEAD(val, 1, def) OVER w FROM t;", Some("SELECT LEAD(`val`, 1, `def`) OVER `w` FROM `t`")),
+        ("SELECT NTH_VALUE(val, 233) OVER w FROM t;", Some("SELECT NTH_VALUE(`val`, 233) OVER `w` FROM `t`")),
+        ("SELECT NTH_VALUE(val, 233) FROM FIRST OVER w FROM t;", Some("SELECT NTH_VALUE(`val`, 233) OVER `w` FROM `t`")),
+        ("SELECT NTH_VALUE(val, 233) FROM LAST OVER w FROM t;", Some("SELECT NTH_VALUE(`val`, 233) FROM LAST OVER `w` FROM `t`")),
+        ("SELECT NTH_VALUE(val, 233) FROM LAST IGNORE NULLS OVER w FROM t;", Some("SELECT NTH_VALUE(`val`, 233) FROM LAST IGNORE NULLS OVER `w` FROM `t`")),
+        ("SELECT NTH_VALUE(val) OVER w FROM t;", None),
+        ("SELECT NTILE(233) OVER (w) FROM t;", Some("SELECT NTILE(233) OVER (`w`) FROM `t`")),
+        ("SELECT PERCENT_RANK() OVER (w) FROM t;", Some("SELECT PERCENT_RANK() OVER (`w`) FROM `t`")),
+        ("SELECT RANK() OVER (w) FROM t;", Some("SELECT RANK() OVER (`w`) FROM `t`")),
+        ("SELECT ROW_NUMBER() OVER (w) FROM t;", Some("SELECT ROW_NUMBER() OVER (`w`) FROM `t`")),
+        ("SELECT n, LAG(n, 1, 0) OVER (w), LEAD(n, 1, 0) OVER w, n + LAG(n, 1, 0) OVER (w) FROM fib;", Some("SELECT `n`,LAG(`n`, 1, 0) OVER (`w`),LEAD(`n`, 1, 0) OVER `w`,`n`+LAG(`n`, 1, 0) OVER (`w`) FROM `fib`")),
+        ("SELECT SUM(profit) OVER(PARTITION BY country) AS country_profit FROM sales;", Some("SELECT SUM(`profit`) OVER (PARTITION BY `country`) AS `country_profit` FROM `sales`")),
+        ("SELECT SUM(profit) OVER() AS country_profit FROM sales;", Some("SELECT SUM(`profit`) OVER () AS `country_profit` FROM `sales`")),
+        ("SELECT AVG(profit) OVER() AS country_profit FROM sales;", Some("SELECT AVG(`profit`) OVER () AS `country_profit` FROM `sales`")),
+        ("SELECT BIT_XOR(profit) OVER() AS country_profit FROM sales;", Some("SELECT BIT_XOR(`profit`) OVER () AS `country_profit` FROM `sales`")),
+        ("SELECT COUNT(profit) OVER() AS country_profit FROM sales;", Some("SELECT COUNT(`profit`) OVER () AS `country_profit` FROM `sales`")),
+        ("SELECT COUNT(ALL profit) OVER() AS country_profit FROM sales;", Some("SELECT COUNT(`profit`) OVER () AS `country_profit` FROM `sales`")),
+        ("SELECT COUNT(*) OVER() AS country_profit FROM sales;", Some("SELECT COUNT(1) OVER () AS `country_profit` FROM `sales`")),
+        ("SELECT MAX(profit) OVER() AS country_profit FROM sales;", Some("SELECT MAX(`profit`) OVER () AS `country_profit` FROM `sales`")),
+        ("SELECT MIN(profit) OVER() AS country_profit FROM sales;", Some("SELECT MIN(`profit`) OVER () AS `country_profit` FROM `sales`")),
+        ("SELECT SUM(profit) OVER() AS country_profit FROM sales;", Some("SELECT SUM(`profit`) OVER () AS `country_profit` FROM `sales`")),
+        ("SELECT ROW_NUMBER() OVER(PARTITION BY country) AS row_num1 FROM sales;", Some("SELECT ROW_NUMBER() OVER (PARTITION BY `country`) AS `row_num1` FROM `sales`")),
+        ("SELECT ROW_NUMBER() OVER(PARTITION BY country, d ORDER BY year, product) AS row_num2 FROM sales;", Some("SELECT ROW_NUMBER() OVER (PARTITION BY `country`, `d` ORDER BY `year`,`product`) AS `row_num2` FROM `sales`")),
+        ("SELECT SUM(val) OVER (PARTITION BY subject ORDER BY time ROWS UNBOUNDED PRECEDING) FROM t;", Some("SELECT SUM(`val`) OVER (PARTITION BY `subject` ORDER BY `time` ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM `t`")),
+        ("SELECT AVG(val) OVER (PARTITION BY subject ORDER BY time ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) FROM t;", Some("SELECT AVG(`val`) OVER (PARTITION BY `subject` ORDER BY `time` ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) FROM `t`")),
+        ("SELECT AVG(val) OVER (ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) FROM t;", Some("SELECT AVG(`val`) OVER (ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) FROM `t`")),
+        ("SELECT AVG(val) OVER (ROWS BETWEEN 1 PRECEDING AND UNBOUNDED FOLLOWING) FROM t;", Some("SELECT AVG(`val`) OVER (ROWS BETWEEN 1 PRECEDING AND UNBOUNDED FOLLOWING) FROM `t`")),
+        ("SELECT AVG(val) OVER (RANGE BETWEEN INTERVAL 5 DAY PRECEDING AND INTERVAL '2:30' MINUTE_SECOND FOLLOWING) FROM t;", Some("SELECT AVG(`val`) OVER (RANGE BETWEEN INTERVAL 5 DAY PRECEDING AND INTERVAL _UTF8MB4'2:30' MINUTE_SECOND FOLLOWING) FROM `t`")),
+        ("SELECT AVG(val) OVER (RANGE BETWEEN CURRENT ROW AND CURRENT ROW) FROM t;", Some("SELECT AVG(`val`) OVER (RANGE BETWEEN CURRENT ROW AND CURRENT ROW) FROM `t`")),
+        ("SELECT AVG(val) OVER (RANGE CURRENT ROW) FROM t;", Some("SELECT AVG(`val`) OVER (RANGE BETWEEN CURRENT ROW AND CURRENT ROW) FROM `t`")),
+        ("SELECT RANK() OVER (w) FROM t WINDOW w AS (ORDER BY val);", Some("SELECT RANK() OVER (`w`) FROM `t` WINDOW `w` AS (ORDER BY `val`)")),
+        ("SELECT RANK() OVER w FROM t WINDOW w AS ();", Some("SELECT RANK() OVER `w` FROM `t` WINDOW `w` AS ()")),
+        ("SELECT FIRST_VALUE(year) OVER (w ORDER BY year) AS first FROM sales WINDOW w AS (PARTITION BY country);", Some("SELECT FIRST_VALUE(`year`) OVER (`w` ORDER BY `year`) AS `first` FROM `sales` WINDOW `w` AS (PARTITION BY `country`)")),
+        ("SELECT RANK() OVER (w1) FROM t WINDOW w1 AS (w2), w2 AS (), w3 AS (w1);", Some("SELECT RANK() OVER (`w1`) FROM `t` WINDOW `w1` AS (`w2`),`w2` AS (),`w3` AS (`w1`)")),
+        ("SELECT RANK() OVER w1 FROM t WINDOW w1 AS (w2), w2 AS (w3), w3 AS (w1);", Some("SELECT RANK() OVER `w1` FROM `t` WINDOW `w1` AS (`w2`),`w2` AS (`w3`),`w3` AS (`w1`)")),
+        ("select tidb_parse_tso(1)", Some("SELECT TIDB_PARSE_TSO(1)")),
+        ("select tidb_parse_tso_logical(1)", Some("SELECT TIDB_PARSE_TSO_LOGICAL(1)")),
+        ("select tidb_bounded_staleness('2015-09-21 00:07:01', NOW())", Some("SELECT TIDB_BOUNDED_STALENESS(_UTF8MB4'2015-09-21 00:07:01', NOW())")),
+        ("select tidb_bounded_staleness(DATE_SUB(NOW(), INTERVAL 3 SECOND), NOW())", Some("SELECT TIDB_BOUNDED_STALENESS(DATE_SUB(NOW(), INTERVAL 3 SECOND), NOW())")),
+        ("select tidb_bounded_staleness('2015-09-21 00:07:01', '2021-04-27 11:26:13')", Some("SELECT TIDB_BOUNDED_STALENESS(_UTF8MB4'2015-09-21 00:07:01', _UTF8MB4'2021-04-27 11:26:13')")),
+        ("select from_unixtime(404411537129996288)", Some("SELECT FROM_UNIXTIME(404411537129996288)")),
+        ("select from_unixtime(404411537129996288.22)", Some("SELECT FROM_UNIXTIME(404411537129996288.22)")),
+    ];
+
+    assert_eq!(cases.len(), 53, "Go source row count drifted");
+    for (sql, expected) in cases {
+        match expected {
+            Some(expected) => assert_eq!(r(sql), expected, "source SQL: {sql}"),
+            None => assert!(parse(sql).is_err(), "Go rejects: {sql}"),
+        }
+    }
+}
+
 /// Exact visitor cases from Go `pkg/parser/parser_test.go`'s
 /// `TestVisitFrameBound` (pingcap/parser#51).
 #[test]
