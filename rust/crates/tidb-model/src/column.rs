@@ -1385,7 +1385,9 @@ mod tests {
         allocated_empty.dependences = GoStringSet::allocated(Vec::<String>::new());
         let encoded = serde_json::to_value(&allocated_empty).unwrap();
         assert_eq!(encoded["dependences"], serde_json::json!({}));
-        let decoded: ColumnInfo = serde_json::from_value(encoded).unwrap();
+        // Go's decoder consumes JSON bytes. Re-encode the Rust-only `Value`
+        // fixture so the raw-member decoder retains that same boundary.
+        let decoded: ColumnInfo = serde_json::from_str(&encoded.to_string()).unwrap();
         assert!(decoded.dependences.is_allocated());
         assert!(decoded.dependences.is_empty());
 

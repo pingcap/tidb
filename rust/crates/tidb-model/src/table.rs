@@ -1869,9 +1869,11 @@ mod tests {
         assert_eq!(table_name.id, 5);
         assert_eq!(table_name.name.original(), "Table");
         assert_eq!(table_name.name.lowercase(), "table");
-        // `ast.CIStr` is a Go struct on this persisted boundary; the parser
-        // crate's convenient string shorthand must not leak into model JSON.
-        assert!(serde_json::from_str::<TableNameInfo>(r#"{"name":"Table"}"#).is_err());
+        // `ast.CIStr.UnmarshalJSON` accepts its historical single-string form
+        // and derives the lowercase spelling from it.
+        let shorthand: TableNameInfo = serde_json::from_str(r#"{"name":"Table"}"#).unwrap();
+        assert_eq!(shorthand.name.original(), "Table");
+        assert_eq!(shorthand.name.lowercase(), "table");
 
         let mut table_name = TableNameInfo {
             id: 1,

@@ -311,12 +311,12 @@ mod tests {
         assert_eq!(zero["names_in"], serde_json::Value::Null);
         assert_eq!(zero["values_in"], serde_json::Value::Null);
         assert_eq!(zero["transitions"], serde_json::Value::Null);
-        let allocated: StorageClassDef = serde_json::from_value(serde_json::json!({
+        let allocated_json = serde_json::json!({
             "names_in": [],
             "values_in": [],
             "transitions": []
-        }))
-        .unwrap();
+        });
+        let allocated: StorageClassDef = serde_json::from_str(&allocated_json.to_string()).unwrap();
         assert!(allocated.names_in.is_allocated());
         assert!(allocated.names_in.is_empty());
         assert!(allocated.values_in.is_allocated());
@@ -326,20 +326,23 @@ mod tests {
 
         let settings = serde_json::to_value(StorageClassSettings::default()).unwrap();
         assert_eq!(settings["defs"], serde_json::Value::Null);
+        let settings_json = serde_json::json!({"defs": []});
         let settings: StorageClassSettings =
-            serde_json::from_value(serde_json::json!({"defs": []})).unwrap();
+            serde_json::from_str(&settings_json.to_string()).unwrap();
         assert!(settings.defs.is_allocated());
         assert!(settings.defs.is_empty());
 
         // Go fills omitted scalar fields with their zero values and preserves
         // nil entries in []*StorageClassDef.
+        let settings_json = serde_json::json!({"defs": [null, {}]});
         let settings: StorageClassSettings =
-            serde_json::from_value(serde_json::json!({"defs": [null, {}]})).unwrap();
+            serde_json::from_str(&settings_json.to_string()).unwrap();
         assert!(settings.defs.get(0).is_none());
         assert_eq!(settings.defs.get(1).unwrap().read().tier, "");
 
+        let transition_json = serde_json::json!({});
         let transition: StorageClassTransitRule =
-            serde_json::from_value(serde_json::json!({})).unwrap();
+            serde_json::from_str(&transition_json.to_string()).unwrap();
         assert_eq!(transition.tier, "");
         assert_eq!(transition.after_days, 0);
     }

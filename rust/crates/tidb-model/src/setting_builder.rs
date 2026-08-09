@@ -61,8 +61,13 @@ pub(crate) fn write_setting_item(sb: &mut String, item: &str, sep: Option<&str>)
 
 /// Go `writeSettingStringToBuilder`: `ITEM="value"` with `"` escaped to `\"`.
 pub(crate) fn write_setting_string(sb: &mut String, item: &str, value: &str, sep: Option<&str>) {
-    let rendered = format!("{item}=\"{}\"", value.replace('"', "\\\""));
-    with_fixed_separator(sb, &rendered, sep);
+    match sep {
+        None => write_setting_string_with_separators(sb, item, value, &mut []),
+        Some(separator) => {
+            let mut write_separator = |builder: &mut String| builder.push_str(separator);
+            write_setting_string_with_separators(sb, item, value, &mut [&mut write_separator]);
+        }
+    }
 }
 
 /// Exact variadic-separator form of Go `writeSettingStringToBuilder`.
@@ -78,7 +83,13 @@ pub(crate) fn write_setting_string_with_separators(
 
 /// Go `writeSettingIntegerToBuilder`: `ITEM=value`.
 pub(crate) fn write_setting_integer(sb: &mut String, item: &str, value: u64, sep: Option<&str>) {
-    with_fixed_separator(sb, &format!("{item}={value}"), sep);
+    match sep {
+        None => write_setting_integer_with_separators(sb, item, value, &mut []),
+        Some(separator) => {
+            let mut write_separator = |builder: &mut String| builder.push_str(separator);
+            write_setting_integer_with_separators(sb, item, value, &mut [&mut write_separator]);
+        }
+    }
 }
 
 /// Exact variadic-separator form of Go `writeSettingIntegerToBuilder`.
@@ -93,6 +104,10 @@ pub(crate) fn write_setting_integer_with_separators(
 
 /// Go `writeSettingDurationToBuilder`: render an `i64` nanosecond duration
 /// through `time.Duration.String` and retain arbitrary separator callbacks.
+// The accepted Rust production callers currently carry already-formatted
+// duration strings, but this distinct Go helper is part of the package source
+// surface and its arbitrary-callback behavior is covered below.
+#[allow(dead_code)]
 pub(crate) fn write_setting_duration_with_separators(
     sb: &mut String,
     item: &str,
