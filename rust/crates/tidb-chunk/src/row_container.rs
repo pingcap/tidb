@@ -35,9 +35,10 @@
 //!
 //! # Rows and lifetimes
 //!
-//! Accessors materialize owned chunks or copy into a caller-owned chunk. A
-//! borrow can therefore never escape the records read guard, and readers may
-//! safely cross an in-memory-to-disk transition between chunks.
+//! Accessors either return a guard-backed live in-memory view, materialize an
+//! owned disk chunk, or copy into caller-owned storage. A bare borrow can
+//! therefore never escape the records read guard, and readers may safely cross
+//! an in-memory-to-disk transition between chunks.
 //!
 //! # Deliberately not reproduced
 //!
