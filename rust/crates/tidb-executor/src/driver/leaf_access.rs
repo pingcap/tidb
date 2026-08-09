@@ -322,7 +322,7 @@ pub(crate) fn leaf_index_source(
     columns: &[(String, FieldType)],
     path: LeafIndexPath,
     trace: Option<&mut PlanTrace>,
-    zone: &tidb_datatype::SessionTimeZone,
+    ctx: &crate::StmtContext,
 ) -> Box<dyn Executor> {
     let LeafIndexPath {
         index_id,
@@ -331,7 +331,7 @@ pub(crate) fn leaf_index_source(
         order: _,
         keep_order,
     } = path;
-    let mut exec = IndexRangeSourceExec::new(
+    let mut exec = IndexRangeSourceExec::new_with_context(
         ExecutorMeta::new(
             Schema::new(source_schema_columns(columns)),
             0,
@@ -341,7 +341,7 @@ pub(crate) fn leaf_index_source(
         table.clone(),
         index_id,
         ranges,
-        zone.clone(),
+        crate::kv_table::RowDecodeContext::for_query(ctx),
     );
     if keep_order {
         // Go's `keep order:true` index read: `canReorderHandles` is false, so

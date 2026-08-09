@@ -744,6 +744,7 @@ pub fn build_column(id: i64, collector: &SampleCollector, num_buckets: i64) -> H
 /// Every count written here is cumulative, and every one is a sample count
 /// scaled up by `sample_factor` -- the histogram describes the table, not the
 /// sample.
+#[allow(clippy::too_many_arguments)] // Retain Go buildHist's source-shaped argument boundary.
 fn build_hist(
     histogram: &mut Histogram,
     samples: &[SampleItem],

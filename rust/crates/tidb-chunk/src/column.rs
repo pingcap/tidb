@@ -54,7 +54,7 @@
 //! containers built on `Column`.
 
 use tidb_datatype::{
-    FieldType, FieldTypeCode, MyDecimal, MySqlDuration, MysqlEnum, MysqlSet, Time,
+    FieldType, FieldTypeCode, GoString, MyDecimal, MySqlDuration, MysqlEnum, MysqlSet, Time,
     MYDECIMAL_STRUCT_SIZE,
 };
 
@@ -347,47 +347,43 @@ impl Column {
     /// `uint64` value followed by the name bytes, in one variable-length row.
     /// This is the layout `Column::get_name_value` and the chunk-codec
     /// decoder both read.
-    fn append_name_value(&mut self, name: &str, value: u64) {
+    fn append_name_value(&mut self, name: &[u8], value: u64) {
         debug_assert!(
             !self.is_fixed(),
             "append_name_value on a fixed-length column"
         );
         self.data.extend_from_slice(&value.to_ne_bytes());
-        self.data.extend_from_slice(name.as_bytes());
+        self.data.extend_from_slice(name);
         self.finish_append_var();
     }
 
     /// Go `AppendEnum`.
     pub fn append_enum(&mut self, value: &MysqlEnum) {
-        self.append_name_value(value.name(), value.value());
+        self.append_name_value(value.name_bytes(), value.value());
     }
 
     /// Go `AppendSet`.
     pub fn append_set(&mut self, value: &MysqlSet) {
-        self.append_name_value(value.name(), value.value());
+        self.append_name_value(value.name_bytes(), value.value());
     }
 
     /// Go `getNameValue`: an empty cell is the zero pair, exactly as in Go;
     /// otherwise the leading 8 bytes are the value and the rest is the name.
     ///
     /// # Panics
-    /// Panics on a non-empty cell shorter than the 8-byte value prefix, or one
-    /// whose name bytes are not UTF-8 -- neither is producible by
-    /// [`Column::append_enum`]/[`Column::append_set`].
+    /// Panics on a non-empty cell shorter than the 8-byte value prefix, which
+    /// is not producible by [`Column::append_enum`]/[`Column::append_set`].
     #[must_use]
-    pub fn get_name_value(&self, row_id: usize) -> (String, u64) {
+    pub fn get_name_value(&self, row_id: usize) -> (GoString, u64) {
         let cell = self.get_bytes(row_id);
         if cell.is_empty() {
-            return (String::new(), 0);
+            return (GoString::default(), 0);
         }
         let (value_bytes, name_bytes) = cell
             .split_at_checked(8)
             .expect("a name/value cell carries its 8-byte value prefix");
         let value = u64::from_ne_bytes(value_bytes.try_into().expect("eight bytes"));
-        let name = std::str::from_utf8(name_bytes)
-            .expect("a name/value cell holds a UTF-8 element name")
-            .to_owned();
-        (name, value)
+        (GoString::from(name_bytes), value)
     }
 
     /// Go `GetEnum`.
@@ -984,7 +980,7 @@ mod tests {
         assert!(c.is_null(1));
         // A null cell is zero-width, which is exactly the case Go's
         // `getNameValue` short-circuits.
-        assert_eq!(c.get_name_value(1), (String::new(), 0));
+        assert_eq!(c.get_name_value(1), (GoString::default(), 0));
         assert_eq!(c.get_set(2), MysqlSet::new("Select,Update", 5));
 
         let mut e = Column::new_column(&FieldType::new(FieldTypeCode::Enum), 2);
@@ -992,6 +988,12 @@ mod tests {
         e.append_enum(&MysqlEnum::new("Y", 2));
         assert_eq!(e.get_enum(0), MysqlEnum::new("N", 1));
         assert_eq!(e.get_enum(1), MysqlEnum::new("Y", 2));
+
+        let mut raw = Column::new_column(&FieldType::new(FieldTypeCode::Enum), 2);
+        raw.append_enum(&MysqlEnum::new(vec![0xff], 1));
+        raw.append_set(&MysqlSet::new(vec![0xfe], 2));
+        assert_eq!(raw.get_enum(0).name_bytes(), &[0xff]);
+        assert_eq!(raw.get_set(1).name_bytes(), &[0xfe]);
     }
 
     #[test]

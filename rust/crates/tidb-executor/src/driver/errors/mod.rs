@@ -1449,6 +1449,10 @@ impl DriverError {
             *b"42000",
             format!("Invalid default value for '{column}'"),
         ),
+        DriverError::FieldGetDefaultFailed(column) => MysqlError::coded(
+            8038,
+            format!("Field '{column}' get default value fail"),
+        ),
         DriverError::PrimaryCantHaveNull => MysqlError::new(
             1171,
             *b"42000",

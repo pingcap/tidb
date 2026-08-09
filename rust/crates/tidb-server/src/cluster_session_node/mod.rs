@@ -173,7 +173,7 @@ use tidb_exec::catalog_watch::SharedCatalog as SharedClusterCatalog;
 use tidb_exec::cluster_analyze::AnalyzeStatement;
 use tidb_exec::cluster_ddl::DdlStatement;
 use tidb_exec::real_tikv_analyze::prepare_cluster_analyze;
-use tidb_exec::real_tikv_ddl::prepare_cluster_ddl;
+use tidb_exec::real_tikv_ddl::prepare_cluster_ddl_with_context;
 use tidb_exec::stats_watch::SharedStats;
 use tidb_executor::access_path::StatementReadShape;
 use tidb_executor::cluster_storage::{
@@ -1056,7 +1056,12 @@ impl ClusterServerSession {
                 }
             }
             StoredStateChange::Schema => {
-                match prepare_cluster_ddl(sql, self.session.current_database()) {
+                let context = self.session.ddl_statement_context();
+                match prepare_cluster_ddl_with_context(
+                    sql,
+                    self.session.current_database(),
+                    &context,
+                ) {
                     Ok(Some(statement)) => Ok(StatementRoute::Ddl(statement)),
                     Ok(None) => Err(SqlQueryError::unknown(
                         "this node changes the cluster's catalog for CREATE TABLE, DROP TABLE, \
@@ -1068,7 +1073,7 @@ impl ClusterServerSession {
                     // shape this server will not do from an internal failure.
                     Err(refusal) => Err(SqlQueryError::new(
                         refusal.code,
-                        *b"HY000",
+                        refusal.sql_state(),
                         refusal.to_string(),
                     )),
                 }

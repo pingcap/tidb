@@ -47,7 +47,9 @@
 use std::collections::BTreeMap;
 
 use tidb_ast::{DdlStmt, Stmt};
-use tidb_exec::table_info_build::{build_table_info, ClusteredIndexDefMode};
+use tidb_exec::table_info_build::{
+    build_table_info, build_table_info_with_context, ClusteredIndexDefMode,
+};
 use tidb_metadef::BOOTSTRAP_TABLES;
 use tidb_model::table_info::TableInfo;
 
@@ -114,7 +116,12 @@ fn every_mysql_bootstrap_table_lowers_to_the_table_info_go_builds() {
 /// Names the JSON paths where two `TableInfo`s differ, so a failure points at
 /// the offending field rather than dumping two whole tables.
 fn field_diff(ours: &serde_json::Value, expected: &serde_json::Value) -> Vec<String> {
-    fn walk(path: &str, ours: &serde_json::Value, expected: &serde_json::Value, out: &mut Vec<String>) {
+    fn walk(
+        path: &str,
+        ours: &serde_json::Value,
+        expected: &serde_json::Value,
+        out: &mut Vec<String>,
+    ) {
         match (ours, expected) {
             (serde_json::Value::Object(ours), serde_json::Value::Object(expected)) => {
                 for key in ours.keys().chain(expected.keys()) {
@@ -180,19 +187,27 @@ fn a_non_clustered_composite_primary_key_lowers_to_an_index_not_a_handle() {
     );
     assert!(!user.pk_is_handle);
     assert!(!user.is_common_handle);
-    let primary = &user.indices[0];
+    let primary = user
+        .indices
+        .get(0)
+        .expect("mysql.user declares its PRIMARY index");
+    let primary = primary.read();
     assert_eq!(primary.name.original(), "PRIMARY");
     assert!(primary.primary && primary.unique);
     assert_eq!(
         primary
             .columns
-            .iter()
-            .map(|column| column.name.original())
+            .iter_deref()
+            .map(|column| column.read().name.original().to_owned())
             .collect::<Vec<_>>(),
-        ["Host", "User"]
+        ["Host".to_owned(), "User".to_owned()]
     );
     // ... and the secondary KEY beside it, which is neither primary nor unique.
-    let secondary = &user.indices[1];
+    let secondary = user
+        .indices
+        .get(1)
+        .expect("mysql.user declares its secondary index");
+    let secondary = secondary.read();
     assert_eq!(secondary.name.original(), "i_user");
     assert!(!secondary.primary && !secondary.unique);
     assert_eq!(user.max_index_id, 2);
@@ -209,21 +224,83 @@ fn a_declared_default_is_stored_in_gos_own_string_form() {
     );
     let default_of = |name: &str| {
         user.columns
-            .iter()
-            .find(|column| column.name.lowercase() == name)
-            .and_then(|column| column.default_value.clone())
+            .iter_deref()
+            .find(|column| column.read().name.lowercase() == name)
+            .map(|column| column.read().default_value.clone())
+            .unwrap_or_else(tidb_model::GoAny::nil)
     };
-    let text = |name: &str| match default_of(name) {
-        Some(tidb_model::column::ColumnDefaultValue::Str(bytes)) => {
-            Some(String::from_utf8(bytes).expect("a UTF-8 default"))
+    let text = |name: &str| {
+        let default = default_of(name);
+        match default.view() {
+            Some(tidb_model::GoAnyView::String(bytes)) => {
+                Some(bytes.as_utf8().expect("a UTF-8 default").to_owned())
+            }
+            _ => None,
         }
-        _ => None,
     };
     // Go stores every default as a STRING, whatever the column type is.
     assert_eq!(text("select_priv").as_deref(), Some("N"));
     assert_eq!(text("max_user_connections").as_deref(), Some("0"));
-    assert_eq!(text("password_last_changed").as_deref(), Some("CURRENT_TIMESTAMP"));
+    assert_eq!(
+        text("password_last_changed").as_deref(),
+        Some("CURRENT_TIMESTAMP")
+    );
     // `smallint unsigned DEFAULT NULL` declares a default and stores none, so
     // the column is NOT marked as having no default value.
-    assert_eq!(default_of("password_reuse_history"), None);
+    assert!(default_of("password_reuse_history").is_nil());
+}
+
+#[test]
+fn bootstrap_mode_none_is_not_replaced_by_the_live_ddl_mode() {
+    let global_priv = BOOTSTRAP_TABLES
+        .iter()
+        .find(|table| table.name == "global_priv")
+        .expect("mysql.global_priv is a bootstrap table");
+    let parsed = tidb_parser::parse(global_priv.create_sql).expect("the bootstrap SQL parses");
+    let Stmt::Ddl(ddl) = &parsed else {
+        panic!("the bootstrap statement is DDL");
+    };
+    let DdlStmt::CreateTable(create) = ddl.as_ref() else {
+        panic!("the bootstrap statement is CREATE TABLE");
+    };
+
+    // Classic bootstrap deliberately uses ModeNone, so this still runs the
+    // ordinary BLOB/TEXT default checker but takes its non-strict warning arm.
+    let bootstrap = build_table_info(
+        create,
+        "utf8mb4",
+        "utf8mb4_bin",
+        ClusteredIndexDefMode::IntOnly,
+    )
+    .expect("ModeNone admits bootstrap's empty LONGTEXT default");
+    let priv_column = bootstrap
+        .columns
+        .iter_deref()
+        .find(|column| column.read().name.lowercase() == "priv")
+        .expect("global_priv declares Priv");
+    let priv_column = priv_column.read();
+    assert!(matches!(
+        priv_column.default_value.view(),
+        Some(tidb_model::GoAnyView::String(value)) if value.is_empty()
+    ));
+
+    // The same AST issued by a stock live session remains 1101; bootstrap's
+    // exception must not become a global validation bypass.
+    let live = tidb_executor::StmtContext::for_query()
+        .with_strict(true)
+        .with_date_modes(tidb_datatype::DateModes::TIDB_DEFAULT_SQL_MODE)
+        .with_time_zone(tidb_datatype::SessionTimeZone::utc());
+    let error = build_table_info_with_context(
+        create,
+        "utf8mb4",
+        "utf8mb4_bin",
+        ClusteredIndexDefMode::IntOnly,
+        &live,
+    )
+    .expect_err("strict live DDL rejects an empty LONGTEXT default");
+    assert_eq!(error.code, 1101);
+    assert_eq!(
+        error.reason,
+        "BLOB/TEXT/JSON column 'Priv' can't have a default value"
+    );
 }

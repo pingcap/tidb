@@ -84,10 +84,11 @@ fn table_after_add_column() -> TableInfo {
     table.id = 4242;
     let added = table
         .columns
-        .iter_mut()
-        .find(|column| column.name.lowercase() == "c")
+        .iter_deref()
+        .find(|column| column.read().name.lowercase() == "c")
         .expect("the fixture declares c");
     added
+        .write()
         .set_origin_default_value(Some(ColumnDefaultValue::str("5")))
         .expect("an INT origin default is valid");
     table
@@ -97,12 +98,13 @@ fn table_after_add_column() -> TableInfo {
 fn rows_predating_the_added_column(table: &TableInfo) -> RowStore {
     let column_a = table
         .columns
-        .iter()
-        .find(|column| column.name.lowercase() == "a")
+        .iter_deref()
+        .find(|column| column.read().name.lowercase() == "a")
         .expect("the fixture declares a");
+    let column_a_id = column_a.read().id;
     let mut store = RowStore::default();
     for handle in 1..=100_i64 {
-        let value = encode_table_row(None, &[Datum::Int(handle)], &[column_a.id], true, None)
+        let value = encode_table_row(None, &[Datum::Int(handle)], &[column_a_id], true, None)
             .expect("a one-column row encodes");
         let key = encode_row_key(
             table.id,
@@ -128,12 +130,13 @@ fn a_column_added_after_the_rows_analyzes_as_its_origin_default() {
     assert_eq!(report.scanned_rows, 100);
     let added = table
         .columns
-        .iter()
-        .find(|column| column.name.lowercase() == "c")
+        .iter_deref()
+        .find(|column| column.read().name.lowercase() == "c")
         .expect("the fixture declares c");
+    let added_id = added.read().id;
     let stats = report
         .stats
-        .column(added.id)
+        .column(added_id)
         .expect("the added column gets a histogram");
     assert_eq!(
         stats.histogram.null_count, 0,

@@ -309,6 +309,107 @@ fn show_columns_reports_the_stored_default_text() {
     assert_eq!(clock[1][4], "CURRENT_TIMESTAMP");
 }
 
+/// A literal TIMESTAMP default is stored as a UTC wall clock in version-1+
+/// metadata, but every metadata display reads it through
+/// `GetColDefaultValue` and therefore prints it in the consuming session's
+/// zone. DATETIME is the control: its stored spelling is zone-free and must
+/// not move. Captured from TiDB:
+///
+/// ```text
+/// set time_zone = '+00:00';
+/// create table td (ts timestamp default '2020-01-02 00:00:00',
+///                  dt datetime default '2020-01-02 00:00:00');
+/// set time_zone = '+08:00';
+/// show columns from td;
+///   ts ... 2020-01-02 08:00:00
+///   dt ... 2020-01-02 00:00:00
+/// ```
+#[test]
+fn literal_timestamp_defaults_print_in_the_consuming_session_zone() {
+    let mut session = Session::new();
+    session.run("SET time_zone = '+00:00'").unwrap();
+    session
+        .run(
+            "CREATE TABLE td (ts TIMESTAMP DEFAULT '2020-01-02 00:00:00', \
+             dt DATETIME DEFAULT '2020-01-02 00:00:00')",
+        )
+        .unwrap();
+
+    session.run("SET time_zone = '+08:00'").unwrap();
+    let columns = rows(&mut session, "SHOW COLUMNS FROM td");
+    assert_eq!(columns[0][4], "2020-01-02 08:00:00");
+    assert_eq!(columns[1][4], "2020-01-02 00:00:00");
+    let create = show_create(&mut session, "td");
+    assert!(
+        create.contains("`ts` timestamp DEFAULT '2020-01-02 08:00:00'"),
+        "{create}"
+    );
+    assert!(
+        create.contains("`dt` datetime DEFAULT '2020-01-02 00:00:00'"),
+        "{create}"
+    );
+    assert_eq!(
+        rows(
+            &mut session,
+            "SELECT column_name, column_default FROM information_schema.columns \
+             WHERE table_schema = 'test' AND table_name = 'td' \
+             ORDER BY ordinal_position",
+        ),
+        vec![
+            vec!["ts".to_owned(), "2020-01-02 08:00:00".to_owned()],
+            vec!["dt".to_owned(), "2020-01-02 00:00:00".to_owned()],
+        ]
+    );
+
+    session.run("SET time_zone = '+00:00'").unwrap();
+    assert_eq!(
+        rows(&mut session, "SHOW COLUMNS FROM td")[0][4],
+        "2020-01-02 00:00:00"
+    );
+}
+
+/// Metadata corruption is not hidden by the display layer. SHOW propagates
+/// the TIMESTAMP conversion failure; INFORMATION_SCHEMA.COLUMNS follows Go's
+/// best-effort retriever and falls back to the raw stored string.
+#[test]
+fn malformed_literal_timestamp_default_has_surface_specific_error_handling() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE bad_ts (ts TIMESTAMP DEFAULT '2020-01-02 00:00:00')")
+        .unwrap();
+    session
+        .with_catalog_mut(|catalog| {
+            let Some(tidb_executor::TableEntry::Kv(table)) = catalog.table_mut_in("test", "bad_ts")
+            else {
+                panic!("bad_ts is not storage-backed");
+            };
+            table.columns[0].default_value =
+                Some(tidb_executor::column_default::ColumnDefault::Value(
+                    Datum::new_string("not-a-timestamp"),
+                ));
+            Ok(())
+        })
+        .unwrap();
+
+    for sql in ["SHOW COLUMNS FROM bad_ts", "SHOW CREATE TABLE bad_ts"] {
+        let error = session
+            .run(sql)
+            .expect_err("SHOW propagates malformed TIMESTAMP metadata")
+            .to_mysql_error();
+        assert_eq!(error.code, 8038, "{sql}");
+        assert_eq!(error.state, *b"HY000", "{sql}");
+        assert_eq!(error.message, "Field 'ts' get default value fail", "{sql}");
+    }
+    assert_eq!(
+        rows(
+            &mut session,
+            "SELECT column_default FROM information_schema.columns \
+             WHERE table_schema = 'test' AND table_name = 'bad_ts'",
+        ),
+        vec![vec!["not-a-timestamp".to_owned()]]
+    );
+}
+
 /// Transcreates Go `pkg/ddl/db_integration_test.go`'s `TestEnumAndSetDefaultValue`.
 ///
 /// A HEX LITERAL is a legal way to spell an `ENUM`/`SET` element and its
@@ -773,6 +874,14 @@ fn alter_column_set_default_reaches_the_next_row_only() {
     assert_eq!(
         code(
             &mut session,
+            "ALTER TABLE test_alter_column ALTER COLUMN col_not_exist SET DEFAULT (ABS(1))"
+        ),
+        Some(1054),
+        "the missing target must win before the independently unsupported default"
+    );
+    assert_eq!(
+        code(
+            &mut session,
             "ALTER TABLE test_alter_column ALTER COLUMN c SET DEFAULT null"
         ),
         Some(1067),
@@ -780,15 +889,18 @@ fn alter_column_set_default_reaches_the_next_row_only() {
     );
 }
 
-/// Go `pkg/ddl/add_column.go` `checkDefaultValue`'s last two arms, which every
-/// path that writes a default runs -- `CREATE TABLE`, `ADD COLUMN`,
-/// `MODIFY COLUMN` and `ALTER COLUMN ... SET DEFAULT` alike:
+/// Go `pkg/ddl/add_column.go` runs the inline-key precheck before installing a
+/// table-level primary key and before the final `checkDefaultValue`:
 ///
 ///  * a `NOT NULL` column whose `DEFAULT` is `NULL` is `ErrInvalidDefault`
 ///    (1067);
-///  * a `PRIMARY KEY` column whose `DEFAULT` is `NULL` is
-///    `ErrPrimaryCantHaveNull` (1171), which is checked FIRST and so wins on a
-///    column that is both.
+///  * an inline `PRIMARY KEY DEFAULT NULL` is also 1067 because its PRI flag
+///    exists at the early `checkPriKeyConstraint` precheck;
+///  * a table-level primary key is installed only after that precheck, so its
+///    `DEFAULT NULL` reaches final validation as `ErrPrimaryCantHaveNull`
+///    (1171);
+///  * `NULL` and `NOT NULL` options change the flag in source order, while the
+///    occurrence of any explicit `NULL` remains a primary-key refusal.
 ///
 /// This is accept-then-discard in its purest form: the column is declared
 /// unable to hold NULL and handed NULL as the value an omitted column takes.
@@ -798,6 +910,7 @@ fn alter_column_set_default_reaches_the_next_row_only() {
 /// ```text
 /// create table n1 (a int not null default null)                ERR
 /// create table n2 (a int primary key default null)             ERR
+/// create table n4 (a int default null, primary key(a))          ERR
 /// create table n3 (a int not null)                             OK
 /// alter table n3 add column b varchar(4) not null default null ERR
 /// ```
@@ -819,6 +932,20 @@ fn a_column_that_cannot_hold_null_cannot_default_to_it() {
             &mut session,
             "CREATE TABLE n2 (a INT PRIMARY KEY DEFAULT null)"
         ),
+        Some(1067)
+    );
+    assert_eq!(
+        code(
+            &mut session,
+            "CREATE TABLE n4 (a INT DEFAULT null, PRIMARY KEY (a))"
+        ),
+        Some(1171)
+    );
+    assert_eq!(
+        code(
+            &mut session,
+            "CREATE TABLE n8 (a INT NOT NULL DEFAULT null, PRIMARY KEY (a))"
+        ),
         Some(1171)
     );
     session.run("CREATE TABLE n3 (a INT NOT NULL)").unwrap();
@@ -833,6 +960,81 @@ fn a_column_that_cannot_hold_null_cannot_default_to_it() {
         code(
             &mut session,
             "ALTER TABLE n3 MODIFY COLUMN a INT NOT NULL DEFAULT null"
+        ),
+        Some(1067)
+    );
+
+    session
+        .run("CREATE TABLE n5 (a INT NOT NULL NULL)")
+        .unwrap();
+    session.run("INSERT INTO n5 VALUES (NULL)").unwrap();
+    session
+        .run("CREATE TABLE n6 (a INT NULL NOT NULL)")
+        .unwrap();
+    assert_eq!(
+        code(&mut session, "INSERT INTO n6 VALUES (NULL)"),
+        Some(1048)
+    );
+    assert_eq!(
+        code(&mut session, "CREATE TABLE n7 (a INT NULL PRIMARY KEY)"),
+        Some(1171)
+    );
+
+    // The same source-order mutation is used by ADD and MODIFY. The last
+    // NULL/NOT NULL option controls the final flag that `checkDefaultValue`
+    // sees; merely finding any NOT NULL is not equivalent.
+    session.run("CREATE TABLE n9 (a INT)").unwrap();
+    assert_eq!(
+        code(
+            &mut session,
+            "ALTER TABLE n9 ADD COLUMN b INT NOT NULL NULL DEFAULT null"
+        ),
+        None
+    );
+    assert!(show_create(&mut session, "n9").contains("`b` int DEFAULT NULL"));
+    assert_eq!(
+        code(
+            &mut session,
+            "ALTER TABLE n9 ADD COLUMN c INT NULL NOT NULL DEFAULT null"
+        ),
+        Some(1067)
+    );
+    assert_eq!(
+        code(
+            &mut session,
+            "ALTER TABLE n9 MODIFY COLUMN a INT NOT NULL NULL DEFAULT null"
+        ),
+        None
+    );
+    assert!(show_create(&mut session, "n9").contains("`a` int DEFAULT NULL"));
+    assert_eq!(
+        code(
+            &mut session,
+            "ALTER TABLE n9 MODIFY COLUMN a INT NULL NOT NULL DEFAULT null"
+        ),
+        Some(1067)
+    );
+
+    // MODIFY copies an existing primary key's PRI/NOT-NULL baseline before
+    // visiting its options. Any explicit NULL is then 1171 even if NOT NULL
+    // follows it, while DEFAULT NULL wins in the preceding key-default check
+    // with 1067.
+    session.run("CREATE TABLE n10 (a INT PRIMARY KEY)").unwrap();
+    assert_eq!(
+        code(&mut session, "ALTER TABLE n10 MODIFY COLUMN a INT NULL"),
+        Some(1171)
+    );
+    assert_eq!(
+        code(
+            &mut session,
+            "ALTER TABLE n10 MODIFY COLUMN a INT NULL NOT NULL"
+        ),
+        Some(1171)
+    );
+    assert_eq!(
+        code(
+            &mut session,
+            "ALTER TABLE n10 MODIFY COLUMN a INT NULL DEFAULT null"
         ),
         Some(1067)
     );

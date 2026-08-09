@@ -45,7 +45,7 @@ use tidb_executor::cluster_storage::ClusterTableStorage;
 use tidb_executor::driver::Catalog;
 use tidb_executor::kv_table::{KvColumn, KvIndex, KvTable, TableAutoId};
 use tidb_executor::storage::TableStorage;
-use tidb_model::{SchemaState, TableInfo};
+use tidb_model::{GoShared, SchemaState, TableInfo};
 use tidb_planner::cardinality::row_count_estimator::{ColumnStats, IndexStats};
 use tidb_session::{Session, SharedCatalog};
 
@@ -297,7 +297,8 @@ pub(crate) fn cluster_table(
             table.state.0
         ));
     }
-    let columns: Vec<&tidb_model::column::ColumnInfo> = table.cols();
+    let columns: Vec<GoShared<tidb_model::column::ColumnInfo>> =
+        table.cols().iter_deref().collect();
     if columns.is_empty() {
         return Err("it has no public columns".to_owned());
     }
@@ -317,33 +318,38 @@ pub(crate) fn cluster_table(
     // refuses the whole table by name, the way a prefix index does below.
     let mut kv_columns: Vec<KvColumn> = Vec::with_capacity(columns.len());
     for column in &columns {
+        let column = column.read();
         let name = column.name.original().to_owned();
-        // `None` is Go's nil default -- "no DEFAULT was written" -- which is
-        // not the same fact as a `DEFAULT NULL`, so it must stay `None`
-        // rather than become `Some(Null)`: only the first makes an omitted
-        // NOT NULL column the 1364 it is in Go.
-        let default_value = match column.default_value {
-            None => None,
+        // A nil Go interface is "no DEFAULT was written", which is not the
+        // same fact as a `DEFAULT NULL`, so it must become `None` here rather
+        // than `Some(Null)`: only the first makes an omitted NOT NULL column
+        // the 1364 it is in Go.
+        let default_value = if column.default_value.is_nil() {
+            None
+        } else {
             // The loader refuses a computed default above, so what survives
             // is always a settled value.
-            Some(_) => Some(tidb_executor::column_default::ColumnDefault::Value(
-                tidb_exec::system_row_write::literal_default(column, table.name.original())
+            Some(tidb_executor::column_default::ColumnDefault::Value(
+                tidb_exec::system_row_write::literal_default(&column, table.name.original())
                     .map_err(|error| format!("its column {name} has a default {error}"))?,
-            )),
+            ))
         };
-        let origin_default = match column.get_origin_default_value() {
-            None => None,
-            Some(_) => Some(
-                tidb_exec::system_row_write::origin_default(column, table.name.original())
+        let origin_default_value = column.get_origin_default_value();
+        let origin_default = if origin_default_value.is_nil() {
+            None
+        } else {
+            Some(
+                tidb_exec::system_row_write::origin_default(&column, table.name.original())
                     .map_err(|error| {
                         format!("its column {name} has an original default {error}")
                     })?,
-            ),
+            )
         };
         kv_columns.push(KvColumn {
             name,
             id: column.id,
             field_type: column.field_type.clone(),
+            column_info_version: column.version,
             // The cluster catalog loader refuses a generated column outright
             // (`tidb_exec::cluster_catalog`), so a table that reaches here
             // never has one.
@@ -359,17 +365,19 @@ pub(crate) fn cluster_table(
     // cluster-wide home would allocate from a fresh in-process cell and
     // re-issue ids the table already holds, which is why this loader used to
     // refuse such a table outright rather than serve it half-wired.
-    if let Some(offset) = columns
-        .iter()
-        .position(|column| column.field_type.has_flag(FieldTypeFlags::AUTO_INCREMENT))
-    {
+    if let Some(offset) = columns.iter().position(|column| {
+        column
+            .read()
+            .field_type
+            .has_flag(FieldTypeFlags::AUTO_INCREMENT)
+    }) {
         kv_table.set_auto_increment_offset(offset);
         kv_table.set_auto_id(auto.allocator_for(table));
     }
     if table.pk_is_handle {
         let handle = columns
             .iter()
-            .position(|column| column.field_type.flags() & PRI_KEY_FLAG != 0)
+            .position(|column| column.read().field_type.flags() & PRI_KEY_FLAG != 0)
             .ok_or_else(|| {
                 "it is marked PKIsHandle but has no public primary key column".to_owned()
             })?;
@@ -378,11 +386,12 @@ pub(crate) fn cluster_table(
         let handles = clustered_handle_offsets(table, &columns)?;
         kv_table.set_common_handle_offsets(handles);
     }
-    for index in &table.indices {
+    for index in table.indices.iter_deref() {
+        let index = index.read();
         if index.state != SchemaState::PUBLIC {
             continue;
         }
-        kv_table.add_index(kv_index(index, &columns)?);
+        kv_table.add_index(kv_index(&index, &columns)?);
     }
     Ok(kv_table)
 }
@@ -404,7 +413,7 @@ pub(crate) fn cluster_table(
 /// answer this tier keeps hunting.
 pub(crate) fn kv_index(
     index: &tidb_model::index::IndexInfo,
-    columns: &[&tidb_model::column::ColumnInfo],
+    columns: &[GoShared<tidb_model::column::ColumnInfo>],
 ) -> Result<KvIndex, String> {
     // A prefix index (`KEY idx(s(4))`) stores each column value CUT to the
     // prefix. The IN-PROCESS engine now cuts on both sides of that -- see
@@ -423,29 +432,35 @@ pub(crate) fn kv_index(
         ));
     }
     let mut offsets = Vec::with_capacity(index.columns.len());
-    for column in &index.columns {
+    let mut prefix_lengths = Vec::with_capacity(index.columns.len());
+    for column in index.columns.iter_deref() {
+        let (name, original_name, length) = {
+            let column = column.read();
+            (
+                column.name.lowercase().to_owned(),
+                column.name.original().to_owned(),
+                i64::from(column.length),
+            )
+        };
         let offset = columns
             .iter()
-            .position(|public| public.name.lowercase() == column.name.lowercase())
+            .position(|public| public.read().name.lowercase() == name.as_str())
             .ok_or_else(|| {
                 format!(
                     "its index {} covers non-public column {}",
                     index.name.original(),
-                    column.name.original()
+                    original_name
                 )
             })?;
         offsets.push(offset);
+        prefix_lengths.push(length);
     }
     Ok(KvIndex {
         id: index.id,
         name: index.name.original().to_owned(),
         unique: index.unique,
         column_offsets: offsets,
-        prefix_lengths: index
-            .columns
-            .iter()
-            .map(|column| i64::from(column.length))
-            .collect(),
+        prefix_lengths,
         visible: !index.invisible,
         global: index.global,
     })
@@ -466,30 +481,35 @@ const UNSIGNED_FLAG: u32 = 1 << 5;
 /// the estimator keys on the live schema.
 fn planner_statistics(stats: &ClusterTableStats, table: &TableInfo) -> TableStatistics {
     let mut columns = std::collections::BTreeMap::new();
-    for column in table.cols() {
-        let Some(item) = stats.column(column.id).filter(stats_available) else {
+    for column in table.cols().iter_deref() {
+        let (id, unsigned) = {
+            let column = column.read();
+            (column.id, column.field_type.flags() & UNSIGNED_FLAG != 0)
+        };
+        let Some(item) = stats.column(id).filter(stats_available) else {
             continue;
         };
         columns.insert(
-            column.id,
+            id,
             ColumnStats {
                 histogram: item.histogram.clone(),
                 topn: item.topn.clone(),
                 cms: item.cms.clone(),
                 stats_ver: item.stats_ver,
-                unsigned: column.field_type.flags() & UNSIGNED_FLAG != 0,
+                unsigned,
             },
         );
     }
     let mut indexes = std::collections::BTreeMap::new();
-    for index in &table.indices {
-        let Some(item) = stats.index(index.id).filter(stats_available) else {
+    for index in table.indices.iter_deref() {
+        let (id, num_columns, unique) = {
+            let index = index.read();
+            (index.id, index.columns.len(), index.unique)
+        };
+        let Some(item) = stats.index(id).filter(stats_available) else {
             continue;
         };
-        indexes.insert(
-            index.id,
-            index_statistics(item, index.columns.len(), index.unique),
-        );
+        indexes.insert(id, index_statistics(item, num_columns, unique));
     }
     // `TableStatistics::new` decides `pseudo` -- Go's `GetStatsTable` reaches
     // it both from an uninitialized histogram set and from a zero row count,
@@ -529,22 +549,30 @@ fn index_statistics(item: &ClusterStatsItem, num_columns: usize, unique: bool) -
 /// The public-column offsets of a clustered composite handle, in key order.
 fn clustered_handle_offsets(
     table: &TableInfo,
-    columns: &[&tidb_model::column::ColumnInfo],
+    columns: &[GoShared<tidb_model::column::ColumnInfo>],
 ) -> Result<Vec<usize>, String> {
     let primary = table
         .indices
-        .iter()
-        .find(|index| index.primary)
+        .iter_deref()
+        .find(|index| index.read().primary)
         .ok_or_else(|| "it is marked clustered but has no PRIMARY KEY index".to_owned())?;
-    let mut offsets = Vec::with_capacity(primary.columns.len());
-    for column in &primary.columns {
+    let primary_columns = primary.read().columns.clone();
+    let mut offsets = Vec::with_capacity(primary_columns.len());
+    for column in primary_columns.iter_deref() {
+        let (name, original_name) = {
+            let column = column.read();
+            (
+                column.name.lowercase().to_owned(),
+                column.name.original().to_owned(),
+            )
+        };
         let offset = columns
             .iter()
-            .position(|public| public.name.lowercase() == column.name.lowercase())
+            .position(|public| public.read().name.lowercase() == name.as_str())
             .ok_or_else(|| {
                 format!(
                     "its clustered PRIMARY KEY covers non-public column {}",
-                    column.name.original()
+                    original_name
                 )
             })?;
         offsets.push(offset);
@@ -563,6 +591,7 @@ mod tests {
     use tidb_model::column::{ColumnDefaultValue, ColumnInfo};
     use tidb_model::db::DBInfo;
     use tidb_model::index::{IndexColumn, IndexInfo};
+    use tidb_model::GoAny;
     use tidb_session::StmtResult;
     use tidb_txnkv::Key;
 
@@ -610,7 +639,7 @@ mod tests {
         let base = TableInfo {
             id: 101,
             name: CiString::new("t"),
-            columns: vec![column(1, 0, "id", true), column(2, 1, "v", false)],
+            columns: vec![column(1, 0, "id", true), column(2, 1, "v", false)].into(),
             pk_is_handle: true,
             state: SchemaState::PUBLIC,
             ..TableInfo::default()
@@ -618,7 +647,7 @@ mod tests {
         let pending = TableInfo {
             id: 102,
             name: CiString::new("t_pending"),
-            columns: vec![column(1, 0, "id", false)],
+            columns: vec![column(1, 0, "id", false)].into(),
             state: SchemaState::NONE,
             ..TableInfo::default()
         };
@@ -715,12 +744,12 @@ mod tests {
     /// the stored `ColumnInfo`, not on anything this node builds by hand.
     fn default_catalog() -> ClusterCatalog {
         let mut v = column(2, 1, "v", false);
-        v.default_value = Some(ColumnDefaultValue::str("7"));
-        v.origin_default_value = Some(ColumnDefaultValue::str("7"));
+        v.default_value = ColumnDefaultValue::string_bytes(b"7".to_vec()).into();
+        v.origin_default_value = ColumnDefaultValue::string_bytes(b"7".to_vec()).into();
         let table = TableInfo {
             id: 301,
             name: CiString::new("d"),
-            columns: vec![column(1, 0, "id", true), v],
+            columns: vec![column(1, 0, "id", true), v].into(),
             pk_is_handle: true,
             state: SchemaState::PUBLIC,
             ..TableInfo::default()
@@ -771,10 +800,16 @@ mod tests {
     /// instant, or dropping it, would both write rows TiDB does not.
     #[test]
     fn a_cluster_column_whose_default_is_not_a_literal_refuses_the_table() {
-        let mut catalog = default_catalog();
-        let column = &mut catalog.databases[0].tables[0].columns[1];
-        column.default_value = Some(ColumnDefaultValue::str("CURRENT_TIMESTAMP"));
-        column.origin_default_value = None;
+        let catalog = default_catalog();
+        let column = catalog.databases[0].tables[0]
+            .columns
+            .get(1)
+            .expect("the fixture has its value column");
+        let mut column = column.write();
+        column.default_value =
+            ColumnDefaultValue::string_bytes(b"CURRENT_TIMESTAMP".to_vec()).into();
+        column.origin_default_value = GoAny::nil();
+        drop(column);
         let (storage, _, _) = cluster_storage();
         let (_, skipped) = session_with_cluster_storage(
             &catalog,
@@ -812,7 +847,7 @@ mod tests {
         let table = TableInfo {
             id: 201,
             name: CiString::new("ci"),
-            columns: vec![column(1, 0, "id", true), c],
+            columns: vec![column(1, 0, "id", true), c].into(),
             pk_is_handle: true,
             state: SchemaState::PUBLIC,
             ..TableInfo::default()
@@ -989,7 +1024,7 @@ mod tests {
         let table = TableInfo {
             id: 401,
             name: CiString::new("ai"),
-            columns: vec![column(1, 0, "id", true), v],
+            columns: vec![column(1, 0, "id", true), v].into(),
             pk_is_handle: true,
             state: SchemaState::PUBLIC,
             ..TableInfo::default()
@@ -1041,7 +1076,7 @@ mod tests {
         let table = TableInfo {
             id: 402,
             name: CiString::new("ai"),
-            columns: vec![column(1, 0, "id", true), v],
+            columns: vec![column(1, 0, "id", true), v].into(),
             pk_is_handle: true,
             state: SchemaState::PUBLIC,
             ..TableInfo::default()
@@ -1066,8 +1101,8 @@ mod tests {
         // Now the backfill's own view of the same table: no counter at all.
         let mut walked = cluster_table(&table, &storage, &AutoIdSource::Unavailable)
             .expect("the backfill builds this table");
-        let index =
-            kv_index(&index(1, "vi", "v", 1, -1), &table.cols()).expect("a full-value index");
+        let columns: Vec<_> = table.cols().iter_deref().collect();
+        let index = kv_index(&index(1, "vi", "v", 1, -1), &columns).expect("a full-value index");
 
         walked
             .create_index(index, &tidb_executor::StmtContext::default())
@@ -1100,10 +1135,10 @@ mod tests {
         let table = TableInfo {
             id: 201,
             name: CiString::new("p"),
-            columns: vec![column(1, 0, "id", true), column(2, 1, "s", false)],
+            columns: vec![column(1, 0, "id", true), column(2, 1, "s", false)].into(),
             pk_is_handle: true,
             state: SchemaState::PUBLIC,
-            indices: vec![index(1, "idx", "s", 1, 4)],
+            indices: vec![index(1, "idx", "s", 1, 4)].into(),
             ..TableInfo::default()
         };
         let (mut session, skipped) = session_with_cluster_storage(
@@ -1142,14 +1177,19 @@ mod tests {
         let table = TableInfo {
             id: 202,
             name: CiString::new("iv"),
-            columns: vec![column(1, 0, "id", true), column(2, 1, "a", false)],
+            columns: vec![column(1, 0, "id", true), column(2, 1, "a", false)].into(),
             pk_is_handle: true,
             state: SchemaState::PUBLIC,
-            indices: vec![index(1, "inv", "a", 1, -1)],
+            indices: vec![index(1, "inv", "a", 1, -1)].into(),
             ..TableInfo::default()
         };
-        let mut invisible = table.clone();
-        invisible.indices[0].invisible = true;
+        let invisible = table.clone_like_go();
+        invisible
+            .indices
+            .get(0)
+            .expect("the fixture has its index")
+            .write()
+            .invisible = true;
 
         for (info, expect_plan_index) in [(table, true), (invisible, false)] {
             // Each pass gets its own storage: the two catalogs describe the

@@ -35,7 +35,7 @@
 //! selected charset decides what a "unit" is (one byte, or one character's
 //! bytes), and each builtin indexes units without knowing which it got.
 
-use tidb_datatype::{Collation, Datum};
+use tidb_datatype::{Collation, Datum, GoString};
 
 use crate::coerce::coerce_str_bytes;
 use crate::EvalError;
@@ -53,6 +53,7 @@ pub(crate) fn is_binary_str(value: &Datum) -> bool {
         // `IsTypeBit`.
         Datum::Bytes(_) | Datum::BinaryLiteral(_) | Datum::Bit(_) => true,
         Datum::String(value) => value.collation() == Collation::Binary,
+        Datum::Enum(_, collation) | Datum::Set(_, collation) => *collation == Collation::Binary,
         _ => false,
     }
 }
@@ -102,17 +103,25 @@ impl StrUnits {
     }
 
     fn from_bytes(bytes: Vec<u8>, binary: bool) -> Self {
-        let mut bounds = Vec::with_capacity(bytes.len() + 1);
         if binary {
-            bounds.extend(0..=bytes.len());
-        } else {
-            let mut offset = 0;
-            while offset < bytes.len() {
-                bounds.push(offset);
-                offset += char_width(&bytes[offset..]);
-            }
-            bounds.push(bytes.len());
+            let bounds = (0..=bytes.len()).collect();
+            return Self {
+                bytes,
+                bounds,
+                binary,
+            };
         }
+
+        // Every Go UTF-8 signature materializes `[]rune(str)` before it
+        // slices or reorders. Converting that rune slice back to a string
+        // replaces EACH malformed source byte with one U+FFFD. Normalize once
+        // here, then derive every boundary in one linear pass; retaining the
+        // malformed octet and merely counting it as a unit produces the right
+        // length but the wrong returned bytes.
+        let bytes = GoString::from(bytes).to_utf8_lossy_go().into_bytes();
+        let text = std::str::from_utf8(&bytes).expect("Go replacement yields valid UTF-8");
+        let mut bounds: Vec<usize> = text.char_indices().map(|(offset, _)| offset).collect();
+        bounds.push(bytes.len());
         Self {
             bytes,
             bounds,
@@ -156,22 +165,6 @@ impl StrUnits {
             Datum::new_string(bytes)
         }
     }
-}
-
-/// The byte width of the leading character, with Go's `utf8.DecodeRune`
-/// fallback of one byte per malformed encoding.
-fn char_width(bytes: &[u8]) -> usize {
-    let leading = match std::str::from_utf8(bytes) {
-        Ok(text) => text,
-        Err(error) if error.valid_up_to() > 0 => {
-            std::str::from_utf8(&bytes[..error.valid_up_to()]).expect("prefix is valid UTF-8")
-        }
-        Err(_) => return 1,
-    };
-    leading
-        .chars()
-        .next()
-        .map_or(1, |character| character.len_utf8())
 }
 
 #[cfg(test)]
@@ -228,7 +221,32 @@ mod tests {
         let value = Datum::new_string(vec![b'a', 0xFF, b'b']);
         let units = StrUnits::of(&value).unwrap().unwrap();
         assert_eq!(units.len(), 3);
-        assert_eq!(units.slice(1, 2), &[0xFF]);
+        assert_eq!(units.slice(1, 2), "\u{fffd}".as_bytes());
+        assert_eq!(
+            units.pack(units.slice(0, 2).to_vec()),
+            Datum::new_string("a\u{fffd}")
+        );
+    }
+
+    #[test]
+    fn enum_and_set_use_their_stored_charset_for_signature_selection() {
+        use tidb_datatype::{MysqlEnum, MysqlSet};
+
+        let binary_enum = Datum::new_enum(MysqlEnum::new([0xff], 1), Collation::Binary);
+        let binary_set = Datum::new_set(MysqlSet::new([0xfe], 1), Collation::Binary);
+        assert!(is_binary_str(&binary_enum));
+        assert!(is_binary_str(&binary_set));
+        assert_eq!(
+            StrUnits::of(&binary_enum).unwrap().unwrap().slice(0, 1),
+            [0xff]
+        );
+
+        let text_enum = Datum::new_enum(MysqlEnum::new([0xff], 1), Collation::Utf8Mb4Bin);
+        assert!(!is_binary_str(&text_enum));
+        assert_eq!(
+            StrUnits::of(&text_enum).unwrap().unwrap().slice(0, 1),
+            "\u{fffd}".as_bytes()
+        );
     }
 
     #[test]

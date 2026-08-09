@@ -719,8 +719,8 @@ impl Deref for FieldTypeRef<'_> {
 
     fn deref(&self) -> &Self::Target {
         match self {
-            Self::Inline(value) => &**value,
-            Self::Changing(value) => &**value,
+            Self::Inline(value) => value,
+            Self::Changing(value) => value,
         }
     }
 }
@@ -738,8 +738,8 @@ impl Deref for FieldTypeMut<'_> {
 
     fn deref(&self) -> &Self::Target {
         match self {
-            Self::Inline(value) => &**value,
-            Self::Changing(value) => &**value,
+            Self::Inline(value) => value,
+            Self::Changing(value) => value,
         }
     }
 }
@@ -747,8 +747,8 @@ impl Deref for FieldTypeMut<'_> {
 impl DerefMut for FieldTypeMut<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         match self {
-            Self::Inline(value) => &mut **value,
-            Self::Changing(value) => &mut **value,
+            Self::Inline(value) => value,
+            Self::Changing(value) => value,
         }
     }
 }
@@ -773,14 +773,10 @@ pub fn get_idx_changing_field_type_mut<'a>(
     index_column: &IndexColumn,
     column: &'a mut ColumnInfo,
 ) -> FieldTypeMut<'a> {
-    if index_column.use_changing_type && column.changing_field_type.is_some() {
-        return FieldTypeMut::Changing(
-            column
-                .changing_field_type
-                .as_ref()
-                .expect("checked changing field type")
-                .write(),
-        );
+    if index_column.use_changing_type {
+        if let Some(changing) = &column.changing_field_type {
+            return FieldTypeMut::Changing(changing.write());
+        }
     }
     FieldTypeMut::Inline(&mut column.field_type)
 }
@@ -1464,7 +1460,7 @@ mod tests {
         let empty = GoSharedSlice::<CiString>::from_vec_with_capacity(Vec::new(), 4);
         let values = GoSharedSlice::from_vec_with_capacity(
             (0..18)
-                .map(|index| CiString::new(&format!("c{index}")))
+                .map(|index| CiString::new(format!("c{index}")))
                 .collect(),
             24,
         );

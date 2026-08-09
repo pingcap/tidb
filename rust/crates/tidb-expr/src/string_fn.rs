@@ -23,6 +23,7 @@ use crate::coerce::{coerce_str, coerce_str_bytes};
 use crate::ops::to_f64_with_mysql_string;
 use crate::string_signature::StrUnits;
 use crate::{Datum, EvalError};
+use tidb_datatype::GoString;
 
 /// CONCAT: `NULL` if any argument is `NULL`, else the concatenation.
 pub(crate) fn concat(vals: &[Datum]) -> Result<Datum, EvalError> {
@@ -57,14 +58,43 @@ pub(crate) fn case_convert(vals: &[Datum], upper: bool) -> Result<Datum, EvalErr
         value if crate::string_signature::is_binary_str(value) => Ok(Datum::new_bytes(
             coerce_str_bytes(value)?.expect("non-NULL value has bytes"),
         )),
-        value => match coerce_str(value)? {
-            Some(text) => Ok(Datum::new_string(if upper {
+        value => {
+            let Some(bytes) = coerce_str_bytes(value)? else {
+                return Ok(Datum::Null);
+            };
+            // Go's charset encoders receive a Go string. Their Unicode case
+            // path ranges over it, so each malformed byte becomes one
+            // RuneError before case mapping rather than causing an error or
+            // being collapsed with an adjacent malformed byte.
+            let text = GoString::from(bytes).to_utf8_lossy_go();
+            Ok(Datum::new_string(if upper {
                 text.to_uppercase()
             } else {
                 text.to_lowercase()
-            })),
-            None => Ok(Datum::Null),
-        },
+            }))
+        }
+    }
+}
+
+#[cfg(test)]
+mod case_convert_tests {
+    use super::case_convert;
+    use crate::Datum;
+    use tidb_datatype::{Collation, MysqlEnum};
+
+    #[test]
+    fn enum_names_follow_the_selected_binary_or_unicode_signature() {
+        let binary = Datum::new_enum(MysqlEnum::new([0xff], 1), Collation::Binary);
+        assert_eq!(
+            case_convert(&[binary], true),
+            Ok(Datum::new_bytes(vec![0xff]))
+        );
+
+        let text = Datum::new_enum(MysqlEnum::new([0xe2, 0x82], 1), Collation::Utf8Mb4Bin);
+        assert_eq!(
+            case_convert(&[text], true),
+            Ok(Datum::new_string("\u{fffd}\u{fffd}"))
+        );
     }
 }
 

@@ -123,7 +123,7 @@ pub(crate) fn commit_fast_path_source(
     }
     // Go tries the batch point get before the single one.
     if let Some(handles) = try_batch_point_get(select, &table, &columns, zone)? {
-        let exec = HandleSourceExec::new(
+        let exec = HandleSourceExec::new_with_context(
             ExecutorMeta::new(
                 Schema::new(source_schema_columns(&columns)),
                 0,
@@ -132,7 +132,7 @@ pub(crate) fn commit_fast_path_source(
             ),
             table.clone(),
             handles.clone(),
-            zone.clone(),
+            crate::kv_table::RowDecodeContext::for_query(ctx),
         );
         if let Some(trace) = trace.as_deref_mut() {
             trace.batch_point_get(
@@ -223,7 +223,7 @@ pub(crate) fn commit_fast_path_source(
                     from_source,
                     trace.as_deref_mut(),
                     &mut index_order,
-                    zone,
+                    ctx,
                 );
             }
             None => {}
@@ -237,7 +237,7 @@ pub(crate) fn commit_fast_path_source(
     {
         // A `None` handle is a WHERE that pins a handle no row can have: the
         // plan is a point get over an empty handle list.
-        let exec = HandleSourceExec::new(
+        let exec = HandleSourceExec::new_with_context(
             ExecutorMeta::new(
                 Schema::new(source_schema_columns(&columns)),
                 0,
@@ -246,7 +246,7 @@ pub(crate) fn commit_fast_path_source(
             ),
             table.clone(),
             handle.clone().into_iter().collect(),
-            zone.clone(),
+            crate::kv_table::RowDecodeContext::for_query(ctx),
         );
         if let Some(trace) = trace {
             trace.point_get(source_table_name(scope, &table.name), handle.as_ref());
@@ -361,9 +361,9 @@ fn commit_index_range_source(
     from_source: &mut Option<Box<dyn Executor>>,
     trace: Option<&mut PlanTrace>,
     index_order: &mut Option<IndexAccessOrder>,
-    zone: &tidb_datatype::SessionTimeZone,
+    ctx: &crate::StmtContext,
 ) {
-    let mut exec = IndexRangeSourceExec::new(
+    let mut exec = IndexRangeSourceExec::new_with_context(
         ExecutorMeta::new(
             Schema::new(source_schema_columns(columns)),
             0,
@@ -373,7 +373,7 @@ fn commit_index_range_source(
         table.clone(),
         index_id,
         ranges.clone(),
-        zone.clone(),
+        crate::kv_table::RowDecodeContext::for_query(ctx),
     );
     // A covering path is Go's `PhysicalIndexReader`: the index answers on its
     // own, no handle batch is ever built, and the rows leave in INDEX order.

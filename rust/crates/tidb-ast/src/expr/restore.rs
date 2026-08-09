@@ -46,7 +46,7 @@ impl Expr {
             }
             Self::Bit(value) => {
                 out.push_str("b'");
-                out.push_str(value);
+                out.push_str(&value.restored_digits());
                 out.push('\'');
             }
             Self::String(value) | Self::RawString(value) | Self::CharsetString { value, .. } => {
@@ -312,7 +312,7 @@ impl Expr {
             }
             Expr::Bit(b) => {
                 out.push_str("b'");
-                out.push_str(b);
+                out.push_str(&b.restored_digits());
                 out.push('\'');
             }
             Expr::String(v) => {

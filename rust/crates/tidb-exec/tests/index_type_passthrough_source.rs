@@ -57,15 +57,19 @@ fn using_hypo_stores_the_hypo_ordinal_not_btree() {
     let table = build("CREATE TABLE t (a INT, INDEX i(a) USING HYPO)");
     let index = table
         .indices
-        .iter()
-        .find(|idx| idx.name.lowercase() == "i")
+        .iter_deref()
+        .find(|index| index.read().name.lowercase() == "i")
         .expect("the fixture declares index i");
+    let index = index.read();
     assert_eq!(
         index.tp,
         tidb_ast::IndexType::HYPO,
         "USING HYPO must be stored verbatim, matching Go's non-Invalid passthrough"
     );
-    assert_eq!(index.tp.0, 4, "HYPO's ordinal per pkg/parser/ast/model.go's IndexTypes block");
+    assert_eq!(
+        index.tp.0, 4,
+        "HYPO's ordinal per pkg/parser/ast/model.go's IndexTypes block"
+    );
 }
 
 /// No `USING` clause at all: Go's `indexOption.Tp == ast.IndexTypeInvalid`
@@ -75,9 +79,10 @@ fn no_using_clause_defaults_to_btree() {
     let table = build("CREATE TABLE t (a INT, INDEX i(a))");
     let index = table
         .indices
-        .iter()
-        .find(|idx| idx.name.lowercase() == "i")
+        .iter_deref()
+        .find(|index| index.read().name.lowercase() == "i")
         .expect("the fixture declares index i");
+    let index = index.read();
     assert_eq!(
         index.tp,
         tidb_ast::IndexType::BTREE,

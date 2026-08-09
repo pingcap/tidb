@@ -1187,8 +1187,10 @@ mod tests {
 
     #[test]
     fn backfill_decode_matches_go_object_stream_boundaries() {
-        let mut location = TimeZoneLocation::default();
-        location.name = "UTC".into();
+        let location = TimeZoneLocation {
+            name: "UTC".into(),
+            ..TimeZoneLocation::default()
+        };
         let mut meta = BackfillMeta {
             row_count: 1,
             sql_mode: 9,

@@ -66,11 +66,15 @@ impl Session {
                 }
             }
         }
-        // SYSTEM: the host's own zone, which is what Go's SystemLocation is.
-        let local = chrono::Local::now();
-        SessionTimeZone::Fixed {
-            name: "System".to_owned(),
-            offset_secs: chrono::Offset::fix(local.offset()).local_minus_utc(),
+        // SYSTEM is TiDB's process-wide `SystemLocation`, not an offset
+        // snapshot. Preserve a resolved IANA zone (and therefore DST), with
+        // the process-local zone as the same fallback Go uses.
+        match tidb_util::timeutil::system_location() {
+            tidb_util::timeutil::TimeZone::Local => SessionTimeZone::Local,
+            tidb_util::timeutil::TimeZone::Named(zone) => SessionTimeZone::Named(zone),
+            tidb_util::timeutil::TimeZone::Fixed { name, offset_secs } => {
+                SessionTimeZone::Fixed { name, offset_secs }
+            }
         }
     }
 
@@ -103,6 +107,13 @@ impl Session {
             None => (utc.timestamp(), utc.timestamp_subsec_nanos()),
         };
         let offset = match zone {
+            SessionTimeZone::Local => {
+                use chrono::TimeZone;
+                let at = chrono::DateTime::from_timestamp(seconds, nanos)
+                    .unwrap_or(utc)
+                    .naive_utc();
+                chrono::Offset::fix(&chrono::Local.offset_from_utc_datetime(&at)).local_minus_utc()
+            }
             SessionTimeZone::Fixed { offset_secs, .. } => *offset_secs,
             SessionTimeZone::Named(zone) => {
                 use chrono::TimeZone;
@@ -191,6 +202,16 @@ impl Session {
     pub(crate) fn parse(&self, sql: &str) -> Result<tidb_ast::Stmt, DriverError> {
         tidb_parser::parse_with_sql_mode(sql, self.scanner_sql_mode())
             .map_err(|e| DriverError::Parse(format!("{e:?}")))
+    }
+
+    /// The statement context a session-aware DDL front end must carry through
+    /// parsing, default admission, and catalog persistence.
+    ///
+    /// DDL uses the query-shaped context because it does not write table rows,
+    /// while its default checks still consult the captured strict/date modes
+    /// and session time zone.
+    pub fn ddl_statement_context(&self) -> tidb_executor::StmtContext {
+        self.statement_context(false)
     }
 
     pub(crate) fn statement_context(&self, is_dml: bool) -> tidb_executor::StmtContext {

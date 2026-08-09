@@ -365,7 +365,7 @@ fn source_extract_topn_keeps_the_two_thirds_candidate_tail() {
         cmsketch: Some(CmsSketch::new(5, 2_048)),
         ..LegacySampleCollector::default()
     };
-    for value in [b'a', b'a', b'a', b'b', b'b', b'b', b'c', b'c', b'd', b'd'] {
+    for value in *b"aaabbbccdd" {
         collector.cmsketch.as_mut().unwrap().insert_bytes(&[value]);
         collector.samples.push(LegacySampleItem {
             value: Datum::Bytes(vec![value]),
@@ -398,7 +398,7 @@ fn source_extract_topn_error_exposes_completed_prefix_mutation() {
         cmsketch: Some(CmsSketch::new(5, 2_048)),
         ..LegacySampleCollector::default()
     };
-    for value in [b'a', b'a', b'a', b'b', b'b'] {
+    for value in *b"aaabb" {
         collector.cmsketch.as_mut().unwrap().insert_bytes(&[value]);
         collector.samples.push(LegacySampleItem {
             value: Datum::Bytes(vec![value]),

@@ -276,7 +276,8 @@ fn cluster_analyze_plan(table: &TableInfo) -> Result<AnalyzePlan, AnalyzeError> 
     }
     let mut columns = Vec::new();
     let mut by_offset: BTreeMap<i64, usize> = BTreeMap::new();
-    for column in table.cols() {
+    for column in table.cols().iter_deref() {
+        let column = column.read();
         if column.state != SchemaState::PUBLIC || column.hidden {
             continue;
         }
@@ -293,7 +294,7 @@ fn cluster_analyze_plan(table: &TableInfo) -> Result<AnalyzePlan, AnalyzeError> 
         // Materialised once, here, so a column whose origin default this
         // node cannot express refuses the whole ANALYZE instead of
         // silently analyzing its pre-DDL rows as NULL.
-        let absent_value = origin_default(column, table.name.original()).map_err(|error| {
+        let absent_value = origin_default(&column, table.name.original()).map_err(|error| {
             AnalyzeError::unsupported(format!(
                 "this node does not analyze `{}`.`{}`: a row written before the column existed \
                  reads as its origin default, which it cannot materialise ({error})",
@@ -311,7 +312,8 @@ fn cluster_analyze_plan(table: &TableInfo) -> Result<AnalyzePlan, AnalyzeError> 
     }
 
     let mut indexes = Vec::new();
-    for index in &table.indices {
+    for index in table.indices.iter_deref() {
+        let index = index.read();
         if index.state != SchemaState::PUBLIC {
             continue;
         }
@@ -329,7 +331,8 @@ fn cluster_analyze_plan(table: &TableInfo) -> Result<AnalyzePlan, AnalyzeError> 
             )));
         }
         let mut column_positions = Vec::with_capacity(index.columns.len());
-        for index_column in &index.columns {
+        for index_column in index.columns.iter_deref() {
+            let index_column = index_column.read();
             if i64::from(index_column.length) != UNSPECIFIED_LENGTH {
                 return Err(AnalyzeError::unsupported(format!(
                     "this node does not analyze the prefix index `{}` on `{}`: its sampled \

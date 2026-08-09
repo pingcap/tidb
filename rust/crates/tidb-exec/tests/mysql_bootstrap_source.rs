@@ -23,11 +23,13 @@
 
 use std::collections::BTreeMap;
 
-use tidb_exec::cluster_catalog::{load_cluster_catalog, ClusterCatalogError, MetaPairs, MetaSnapshot};
+use tidb_datatype::{Time, TimeType};
+use tidb_exec::cluster_catalog::{
+    load_cluster_catalog, ClusterCatalogError, MetaPairs, MetaSnapshot,
+};
 use tidb_exec::cluster_privilege_load::{
     load_cluster_privileges, read_bootstrap_state, ClusterBootstrapState,
 };
-use tidb_datatype::{Time, TimeType};
 use tidb_exec::mysql_bootstrap::{
     plan_mysql_bootstrap, BootstrapEnvironment, BootstrapError, BootstrapWrite,
 };
@@ -42,7 +44,13 @@ fn environment() -> BootstrapEnvironment {
         new_collation_enabled: true,
         cluster_id: 7_667_705_271_188_879_689,
         current_timestamp: Time::from_date_checked(
-            2026, 7, 29, 6, 12, 55, 0,
+            2026,
+            7,
+            29,
+            6,
+            12,
+            55,
+            0,
             TimeType::Timestamp,
             0,
         )
@@ -91,7 +99,8 @@ fn apply(store: &mut MetaStore, write: &BootstrapWrite) {
 
 fn bootstrapped() -> MetaStore {
     let mut store = MetaStore::default();
-    let write = plan_mysql_bootstrap(&mut store, 467_996_279_696_261_139, &environment()).expect("a fresh keyspace bootstraps");
+    let write = plan_mysql_bootstrap(&mut store, 467_996_279_696_261_139, &environment())
+        .expect("a fresh keyspace bootstraps");
     apply(&mut store, &write);
     store
 }
@@ -136,9 +145,13 @@ fn the_bootstrap_marker_is_the_one_the_detector_reads() {
 fn the_seeded_root_account_loads_back_as_an_unlocked_superuser() {
     let mut store = bootstrapped();
     let catalog = load_cluster_catalog(&mut store).expect("the catalog loads");
-    let privileges = load_cluster_privileges(&mut store, &catalog).expect("the seed row reads back");
+    let privileges =
+        load_cluster_privileges(&mut store, &catalog).expect("the seed row reads back");
     let [root] = privileges.users.as_slice() else {
-        panic!("a bootstrap seeds exactly one account, got {:?}", privileges.users.len());
+        panic!(
+            "a bootstrap seeds exactly one account, got {:?}",
+            privileges.users.len()
+        );
     };
     assert_eq!(root.host, "%");
     assert_eq!(root.user, "root");
@@ -152,7 +165,8 @@ fn the_seeded_root_account_loads_back_as_an_unlocked_superuser() {
 #[test]
 fn a_second_bootstrap_is_refused_rather_than_layered_on_top() {
     let mut store = bootstrapped();
-    let error = plan_mysql_bootstrap(&mut store, 1, &environment()).expect_err("a bootstrapped keyspace is refused");
+    let error = plan_mysql_bootstrap(&mut store, 1, &environment())
+        .expect_err("a bootstrapped keyspace is refused");
     assert!(
         matches!(error, BootstrapError::AlreadyPresent { .. }),
         "{error}"
@@ -167,7 +181,8 @@ fn a_second_bootstrap_is_refused_rather_than_layered_on_top() {
         ),
         b"{}".to_vec(),
     );
-    let error = plan_mysql_bootstrap(&mut half, 1, &environment()).expect_err("a half-bootstrapped keyspace is refused");
+    let error = plan_mysql_bootstrap(&mut half, 1, &environment())
+        .expect_err("a half-bootstrapped keyspace is refused");
     assert!(
         matches!(error, BootstrapError::AlreadyPresent { .. }),
         "{error}"
@@ -180,7 +195,8 @@ fn a_bootstrap_spends_exactly_one_schema_version_and_describes_it() {
     store
         .pairs
         .insert(key::schema_version_kv_key(), b"60".to_vec());
-    let write = plan_mysql_bootstrap(&mut store, 7, &environment()).expect("the keyspace bootstraps");
+    let write =
+        plan_mysql_bootstrap(&mut store, 7, &environment()).expect("the keyspace bootstraps");
     assert_eq!(write.schema_version, 61);
     assert_eq!(write.diff.version, 61);
     assert_eq!(
@@ -189,13 +205,10 @@ fn a_bootstrap_spends_exactly_one_schema_version_and_describes_it() {
     );
     // Every created table is named in the diff, which is what makes a real
     // TiDB's own reloader pick them all up at this one version.
-    let affected = write
-        .diff
-        .affected_options
-        .as_ref()
-        .expect("bootstrap allocates its affected-options list");
+    let affected = &write.diff.affected_options;
+    assert!(affected.is_allocated());
     assert_eq!(affected.len(), BOOTSTRAP_TABLES.len());
-    assert!(affected.iter().all(Option::is_some));
+    assert!(affected.iter_handles().all(|affected| affected.is_some()));
     apply(&mut store, &write);
     assert_eq!(store.pairs[&key::schema_version_kv_key()], b"61");
 }
@@ -205,7 +218,8 @@ fn every_seeded_row_carries_the_index_entries_its_table_declares() {
     // `mysql.user` and `mysql.tidb` are both NON-clustered, so a row with no
     // index entry is a row half of TiDB cannot find. Nothing backfills them
     // later, so the bootstrap that writes the row must write them.
-    let write = plan_mysql_bootstrap(&mut MetaStore::default(), 7, &environment()).expect("the keyspace bootstraps");
+    let write = plan_mysql_bootstrap(&mut MetaStore::default(), 7, &environment())
+        .expect("the keyspace bootstraps");
     let index_entries = write
         .mutations
         .iter()

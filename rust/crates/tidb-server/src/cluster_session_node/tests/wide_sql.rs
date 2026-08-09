@@ -49,8 +49,10 @@ fn a_select_over_stored_enum_and_set_columns_answers_with_their_names() {
     assert_eq!(selected[0][0], Datum::Int(1));
     match (&selected[0][1], &selected[0][2]) {
         (Datum::Enum(member, _), Datum::Set(members, _)) => {
-            assert_eq!((member.name(), member.value()), ("Y", 2));
-            assert_eq!((members.name(), members.value()), ("Select,Grant", 9));
+            assert_eq!(member.name_bytes(), b"Y");
+            assert_eq!(member.value(), 2);
+            assert_eq!(members.name_bytes(), b"Select,Grant");
+            assert_eq!(members.value(), 9);
         }
         other => panic!("the ENUM/SET columns came back as {other:?}"),
     }

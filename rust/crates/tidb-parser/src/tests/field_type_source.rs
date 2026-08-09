@@ -428,6 +428,14 @@ fn field_type_binary_string_options_match_go_normal_form() {
         r("alter table t add column a varchar(10) charset binary"),
         "ALTER TABLE `t` ADD COLUMN `a` VARBINARY(10)"
     );
+    for kind in ["enum('a')", "set('a')"] {
+        let ty = parsed_column_type(&format!("create table t (a {kind} character set binary)"));
+        assert_eq!(
+            ty.charset.as_deref(),
+            Some("binary"),
+            "{kind} retains Go's semantic binary charset even though restore omits it"
+        );
+    }
     assert!(parse("create table t (a int charset utf8)").is_err());
     assert!(parse("create table t (a int binary)").is_err());
     assert!(parse("create table t (a text unicode)").is_err());

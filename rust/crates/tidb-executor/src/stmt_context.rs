@@ -945,6 +945,18 @@ impl StmtContext {
         self
     }
 
+    /// Attaches the session's time zone without inventing a statement clock.
+    ///
+    /// Metadata-only statement paths such as cluster DDL need the zone for
+    /// literal `TIMESTAMP` normalization but never evaluate `NOW()`. Keeping
+    /// those two facts separate avoids manufacturing a clock reading merely
+    /// to carry the session's real zone.
+    #[must_use]
+    pub fn with_time_zone(mut self, time_zone: tidb_expr::SessionTimeZone) -> Self {
+        self.time_zone = Some(time_zone);
+        self
+    }
+
     /// A context for `INSERT`/`UPDATE`/`DELETE`, where Go resolves the level
     /// from the SQL mode: without `ERROR_FOR_DIVISION_BY_ZERO` the condition
     /// is ignored entirely, a non-strict mode warns, and the default strict
@@ -1062,6 +1074,61 @@ impl StmtContext {
             self.date_modes,
             self.strict,
         )
+    }
+
+    /// Go `ResetContextOfStmt`'s CREATE/ALTER type flags after
+    /// `CtxWithHandleTruncateErrLevel(LevelError)` has made every truncation
+    /// fatal. DDL differs from an INSERT in both zero-date formulas, so this
+    /// is intentionally not an alias for [`Self::write_conversion_flags`].
+    #[must_use]
+    pub fn ddl_default_conversion_flags(&self) -> tidb_datatype::ConversionFlags {
+        tidb_datatype::DEFAULT_STATEMENT_FLAGS
+            .with_ignore_truncate_err(false)
+            .with_truncate_as_warning(false)
+            .with_allow_negative_to_unsigned(false)
+            .with_ignore_invalid_date_err(self.date_modes.allow_invalid_dates)
+            .with_ignore_zero_in_date_err(
+                !self.date_modes.no_zero_in_date
+                    || !self.strict
+                    || self.date_modes.allow_invalid_dates,
+            )
+            .with_ignore_zero_date_err(!self.date_modes.no_zero_date || !self.strict)
+    }
+
+    /// Go `ddl.reorgTypeFlagsWithSQLMode`: the type flags used while a DDL
+    /// reorg decodes old rows and materializes their origin defaults.
+    ///
+    /// This is deliberately separate from [`Self::ddl_default_conversion_flags`].
+    /// CREATE/ALTER default admission derives both zero-date bits from the
+    /// session modes and makes truncation fatal; reorg starts from
+    /// `StrictFlags`, warns on truncation only outside strict mode, ignores
+    /// invalid/zero-in dates only when the reorg SQL mode says so, and uses
+    /// the source time-to-YEAR concatenation rule.
+    #[must_use]
+    pub fn reorg_default_conversion_flags(&self) -> tidb_datatype::ConversionFlags {
+        tidb_datatype::STRICT_FLAGS
+            .with_truncate_as_warning(!self.strict)
+            .with_ignore_invalid_date_err(self.date_modes.allow_invalid_dates)
+            .with_ignore_zero_in_date_err(!self.strict || self.date_modes.allow_invalid_dates)
+            .with_cast_time_to_year_through_concat(true)
+    }
+
+    /// Go `ResetContextOfStmt`'s `SELECT` flags for reading a stored default.
+    #[must_use]
+    pub fn query_default_conversion_flags(&self) -> tidb_datatype::ConversionFlags {
+        tidb_datatype::DEFAULT_STATEMENT_FLAGS
+            .with_truncate_as_warning(true)
+            .with_ignore_zero_in_date_err(true)
+            .with_ignore_invalid_date_err(self.date_modes.allow_invalid_dates)
+    }
+
+    /// Go `ResetContextOfStmt`'s `SHOW` flags for reading a stored default.
+    #[must_use]
+    pub fn show_default_conversion_flags(&self) -> tidb_datatype::ConversionFlags {
+        tidb_datatype::DEFAULT_STATEMENT_FLAGS
+            .with_ignore_truncate_err(true)
+            .with_ignore_zero_in_date_err(true)
+            .with_ignore_invalid_date_err(self.date_modes.allow_invalid_dates)
     }
 
     /// Records a warning the driver rendered itself.
@@ -1563,5 +1630,35 @@ mod tests {
         assert_eq!(ctx.rand_seeded_next(1, 1), Some(0.8716141803857071));
         // A different key is seeded independently, even with the same seed.
         assert_eq!(ctx.rand_seeded_next(2, 1), Some(0.40540353712197724));
+    }
+
+    #[test]
+    fn reorg_flags_are_not_ddl_default_admission_flags() {
+        let strict =
+            StmtContext::for_dml(true, true, false).with_date_modes(crate::zero_date::DateModes {
+                no_zero_date: true,
+                no_zero_in_date: true,
+                allow_invalid_dates: false,
+            });
+        let flags = strict.reorg_default_conversion_flags();
+        assert!(!flags.truncate_as_warning());
+        assert!(!flags.ignore_zero_date_err());
+        assert!(!flags.ignore_zero_in_date_err());
+        assert!(!flags.ignore_invalid_date_err());
+        assert!(flags.cast_time_to_year_through_concat());
+        assert_ne!(flags, strict.ddl_default_conversion_flags());
+
+        let permissive =
+            StmtContext::for_dml(true, false, false).with_date_modes(crate::zero_date::DateModes {
+                no_zero_date: true,
+                no_zero_in_date: true,
+                allow_invalid_dates: true,
+            });
+        let flags = permissive.reorg_default_conversion_flags();
+        assert!(flags.truncate_as_warning());
+        assert!(!flags.ignore_zero_date_err());
+        assert!(flags.ignore_zero_in_date_err());
+        assert!(flags.ignore_invalid_date_err());
+        assert!(flags.cast_time_to_year_through_concat());
     }
 }

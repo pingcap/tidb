@@ -28,7 +28,7 @@ use tidb_datatype::{Charset, Collation, FieldTypeCode};
 use tidb_planner::aggregation_descriptor::AggregateKind;
 
 use crate::result_metadata::{
-    FieldNameMetadata, IdentifierMetadata, ResultFieldTypeMetadata, UNSIGNED_FLAG,
+    FieldNameMetadata, IdentifierMetadata, ResultFieldTypeMetadata, NOT_NULL_FLAG, UNSIGNED_FLAG,
 };
 
 /// Input for one projected result field.
@@ -198,7 +198,7 @@ fn display_name(expr: &Expr) -> String {
         Expr::Null => "NULL".to_owned(),
         Expr::Bool(value) => value.to_string().to_ascii_uppercase(),
         Expr::Hex(value) => format!("x'{value}'"),
-        Expr::Bit(value) => format!("b'{value}'"),
+        Expr::Bit(value) => format!("b'{}'", value.restored_digits()),
         // The AST intentionally keeps expression restore private to its
         // statement owner. Preserve an explicit, deterministic fallback
         // rather than claiming source-text fidelity for unsupported shapes.
@@ -289,15 +289,15 @@ fn infer_type(
             }
             Expr::Hex(value) => Ok(type_metadata(
                 FieldTypeCode::VarString,
-                UNSIGNED_FLAG,
-                Some((value.len() * 3) as u32),
+                tidb_protocol::BINARY_FLAG | NOT_NULL_FLAG | UNSIGNED_FLAG,
+                Some((value.len() / 2 * 3) as u32),
                 Some(0),
                 Collation::Binary,
             )),
             Expr::Bit(value) => Ok(type_metadata(
                 FieldTypeCode::VarString,
-                0,
-                Some((value.len() * 3) as u32),
+                tidb_protocol::BINARY_FLAG | NOT_NULL_FLAG,
+                Some((value.as_bytes().len() * 3) as u32),
                 Some(0),
                 Collation::Binary,
             )),

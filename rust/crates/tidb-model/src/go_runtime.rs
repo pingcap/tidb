@@ -305,6 +305,25 @@ impl<T> GoSharedPointerSlice<T> {
         self.0.set(index, value);
     }
 
+    /// Appends one non-null pointer with Go 1.25's 64-bit pointer-slice growth
+    /// rule. Appending within capacity writes the shared backing while changing
+    /// only this header's length; growth detaches only this header.
+    pub fn push_go(&mut self, value: T) {
+        self.push_handle_go(Some(GoShared::new(value)));
+    }
+
+    /// Appends one nullable pointer handle while preserving pointee identity.
+    pub fn push_handle_go(&mut self, value: Option<GoShared<T>>) {
+        self.0
+            .push_go(value, 8, GoSliceElementLayout::PointerBearing);
+    }
+
+    /// Deletes a half-open pointer range with Go 1.25 `slices.Delete`
+    /// semantics, including same-backing tail movement and nil-clearing.
+    pub fn delete_go(&mut self, start: usize, end: usize) {
+        self.0.delete_go(start, end);
+    }
+
     /// Copies the outer slice while sharing every non-null pointee.
     #[must_use]
     pub fn copy_outer(&self) -> Self {
@@ -542,6 +561,127 @@ mod tests {
             assigned.map_clone_with(GoNullClonePolicy::Panic, Clone::clone)
         })
         .is_err());
+    }
+
+    #[test]
+    fn go_shared_pointer_slice_append_shares_spare_capacity_and_detaches_on_growth() {
+        let first = GoShared::new(Item { id: 1 });
+        let mut within_capacity =
+            GoSharedPointerSlice::from_handles_with_capacity(vec![Some(first.clone())], 2);
+        let short_sibling = within_capacity.clone();
+        let appended = GoShared::new(Item { id: 2 });
+        within_capacity.push_handle_go(Some(appended.clone()));
+        assert_eq!(within_capacity.len(), 2);
+        assert_eq!(within_capacity.capacity(), 2);
+        assert_eq!(short_sibling.len(), 1);
+        assert!(within_capacity.backing_ptr_eq(&short_sibling));
+        assert!(within_capacity.get(1).unwrap().ptr_eq(&appended));
+
+        let mut must_grow = GoSharedPointerSlice::from_handles(vec![Some(first.clone())]);
+        let old_backing = must_grow.clone();
+        must_grow.push_handle_go(None);
+        assert_eq!(must_grow.len(), 2);
+        assert_eq!(must_grow.capacity(), 2);
+        assert!(must_grow.get(1).is_none());
+        assert!(!must_grow.backing_ptr_eq(&old_backing));
+        assert_eq!(old_backing.len(), 1);
+        assert!(old_backing.get(0).unwrap().ptr_eq(&first));
+
+        let nil_sibling = GoSharedPointerSlice::<Item>::default();
+        let mut appended_nil = nil_sibling.clone();
+        appended_nil.push_go(Item { id: 3 });
+        assert!(!nil_sibling.is_allocated());
+        assert!(appended_nil.is_allocated());
+        assert_eq!(appended_nil.capacity(), 1);
+
+        let mut allocator_boundary =
+            GoSharedPointerSlice::<Item>::from_handles_with_capacity(vec![None; 256], 256);
+        allocator_boundary.push_handle_go(None);
+        assert_eq!(allocator_boundary.len(), 257);
+        assert_eq!(allocator_boundary.capacity(), 607);
+    }
+
+    #[test]
+    fn go_shared_pointer_slice_delete_shifts_and_clears_shared_backing() {
+        let first = GoShared::new(Item { id: 1 });
+        let removed = GoShared::new(Item { id: 2 });
+        let last = GoShared::new(Item { id: 3 });
+        let fourth = GoShared::new(Item { id: 4 });
+        let fifth = GoShared::new(Item { id: 5 });
+        let hidden = GoShared::new(Item { id: 6 });
+        let mut shortened = GoSharedPointerSlice::from_handles_with_capacity(
+            vec![
+                Some(first.clone()),
+                Some(removed),
+                Some(last),
+                Some(fourth.clone()),
+                Some(fifth.clone()),
+            ],
+            6,
+        );
+        shortened.prepare_decode_slot(5);
+        shortened.set_decode_slot(5, Some(hidden.clone()));
+        shortened.finish_decode(5);
+        let old_header = shortened.clone();
+
+        shortened.delete_go(1, 3);
+        assert_eq!(shortened.len(), 3);
+        assert_eq!(shortened.capacity(), 6);
+        assert!(shortened.backing_ptr_eq(&old_header));
+        assert!(shortened.get(0).unwrap().ptr_eq(&first));
+        assert!(shortened.get(1).unwrap().ptr_eq(&fourth));
+        assert!(shortened.get(2).unwrap().ptr_eq(&fifth));
+        assert_eq!(old_header.len(), 5);
+        assert!(old_header.get(1).unwrap().ptr_eq(&fourth));
+        assert!(old_header.get(2).unwrap().ptr_eq(&fifth));
+        assert!(old_header.get(3).is_none());
+        assert!(old_header.get(4).is_none());
+        let mut expose_hidden = old_header.clone();
+        expose_hidden.prepare_decode_slot(5);
+        assert!(expose_hidden.decode_slot(5).unwrap().ptr_eq(&hidden));
+
+        let backing_before_noop = shortened.clone();
+        shortened.delete_go(1, 1);
+        assert_eq!(shortened.len(), 3);
+        assert!(shortened.backing_ptr_eq(&backing_before_noop));
+
+        let mut nil_noop = GoSharedPointerSlice::<Item>::default();
+        nil_noop.delete_go(0, 0);
+        assert!(!nil_noop.is_allocated());
+        let mut allocated_empty = GoSharedPointerSlice::<Item>::from_handles(Vec::new());
+        let empty_backing = allocated_empty.clone();
+        allocated_empty.delete_go(0, 0);
+        assert!(allocated_empty.is_allocated());
+        assert!(allocated_empty.backing_ptr_eq(&empty_backing));
+
+        let visible_ids = |slice: &GoSharedPointerSlice<Item>| {
+            slice
+                .iter_handles()
+                .map(|pointer| pointer.map(|pointer| pointer.read().id))
+                .collect::<Vec<_>>()
+        };
+        let before_invalid = visible_ids(&old_header);
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut invalid = old_header.clone();
+            invalid.delete_go(2, 1);
+        }))
+        .is_err());
+        assert_eq!(visible_ids(&old_header), before_invalid);
+
+        let old_length_sibling = old_header.clone();
+        let mut full_delete = old_header.clone();
+        full_delete.delete_go(0, 5);
+        assert!(full_delete.is_allocated());
+        assert_eq!(full_delete.len(), 0);
+        assert_eq!(full_delete.capacity(), 6);
+        assert!(full_delete.backing_ptr_eq(&old_length_sibling));
+        assert_eq!(visible_ids(&old_length_sibling), vec![None; 5]);
+        let mut expose_hidden_after_full_delete = old_length_sibling.clone();
+        expose_hidden_after_full_delete.prepare_decode_slot(5);
+        assert!(expose_hidden_after_full_delete
+            .decode_slot(5)
+            .unwrap()
+            .ptr_eq(&hidden));
     }
 
     #[test]

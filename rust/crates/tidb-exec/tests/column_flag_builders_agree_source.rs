@@ -79,7 +79,8 @@ fn both_create_table_builders_stamp_the_same_type_flags() {
         FieldTypeFlags::UNSIGNED | FieldTypeFlags::ZEROFILL | FieldTypeFlags::BINARY;
 
     assert_eq!(cluster.columns.len(), live.len());
-    for (cluster_column, (live_name, live_type)) in cluster.columns.iter().zip(live.iter()) {
+    for (cluster_column, (live_name, live_type)) in cluster.columns.iter_deref().zip(live.iter()) {
+        let cluster_column = cluster_column.read();
         let name = cluster_column.name.original();
         assert_eq!(name, live_name);
         assert_eq!(
@@ -110,10 +111,16 @@ fn both_create_table_builders_stamp_the_same_type_flags() {
             .flags()
             & TYPE_FLAGS
     };
-    assert_eq!(flags("a"), FieldTypeFlags::UNSIGNED | FieldTypeFlags::ZEROFILL);
+    assert_eq!(
+        flags("a"),
+        FieldTypeFlags::UNSIGNED | FieldTypeFlags::ZEROFILL
+    );
     assert_eq!(flags("b"), FieldTypeFlags::UNSIGNED);
     assert_eq!(flags("c"), FieldTypeFlags::UNSIGNED);
-    assert_eq!(flags("d"), FieldTypeFlags::UNSIGNED | FieldTypeFlags::ZEROFILL);
+    assert_eq!(
+        flags("d"),
+        FieldTypeFlags::UNSIGNED | FieldTypeFlags::ZEROFILL
+    );
     assert_eq!(flags("e"), 0);
     assert_eq!(flags("f"), FieldTypeFlags::BINARY);
     assert_eq!(flags("g"), 0);

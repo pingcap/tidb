@@ -40,10 +40,12 @@ use tidb_txnkv::transaction::{
 };
 
 use crate::cluster_ddl::{
-    lower_ddl, plan_ddl, DdlAdmissionError, DdlPlan, DdlPlanError, DdlStatement, IndexBackfill,
+    lower_ddl_with_context, plan_ddl, DdlAdmissionError, DdlPlan, DdlPlanError, DdlStatement,
+    IndexBackfill,
 };
 use crate::cluster_table_storage::SessionTransaction;
 use crate::real_tikv_catalog::{SnapshotMetaSnapshot, TransactionMetaSnapshot};
+use crate::table_info_build::default_ddl_statement_context;
 
 /// Parses and admits one text-protocol statement as a catalog change.
 ///
@@ -57,10 +59,24 @@ pub fn prepare_cluster_ddl(
     sql: &str,
     default_schema: &str,
 ) -> Result<Option<DdlStatement>, DdlAdmissionError> {
-    let Ok(statement) = tidb_parser::parse(sql) else {
+    let context = default_ddl_statement_context();
+    prepare_cluster_ddl_with_context(sql, default_schema, &context)
+}
+
+/// [`prepare_cluster_ddl`] under the statement's actual SQL mode and time zone.
+///
+/// Parsing and default-value admission deliberately share one context: scanner
+/// mode, temporal SQL-mode bits, and session-zone normalization cannot drift
+/// between the two halves of one `CREATE TABLE`.
+pub fn prepare_cluster_ddl_with_context(
+    sql: &str,
+    default_schema: &str,
+    context: &tidb_executor::StmtContext,
+) -> Result<Option<DdlStatement>, DdlAdmissionError> {
+    let Ok(statement) = tidb_parser::parse_with_sql_mode(sql, context.sql_mode()) else {
         return Ok(None);
     };
-    lower_ddl(&statement, default_schema)
+    lower_ddl_with_context(&statement, default_schema, context)
 }
 
 /// Why a catalog change did not happen.

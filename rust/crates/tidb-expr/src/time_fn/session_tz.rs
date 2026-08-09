@@ -35,7 +35,7 @@
 //! - The zero-argument `UNIX_TIMESTAMP()` needs the statement clock and
 //!   declines when [`Columns::now`] is absent.
 
-use chrono::{Datelike, NaiveDateTime, TimeZone as _, Timelike, Utc};
+use chrono::{Datelike, NaiveDateTime, Timelike, Utc};
 
 use super::calendar::date_format;
 use super::convert_tz::parse_datetime;
@@ -52,6 +52,7 @@ const MAX_UNIX_MICROS: i64 = 32_536_771_199_999_999;
 fn instant_to_local(secs: i64, micros: u32, tz: &SessionTimeZone) -> Option<NaiveDateTime> {
     let utc = chrono::DateTime::<Utc>::from_timestamp(secs, micros * 1000)?;
     Some(match tz {
+        SessionTimeZone::Local => utc.with_timezone(&chrono::Local).naive_local(),
         SessionTimeZone::Fixed { offset_secs, .. } => {
             (utc + chrono::Duration::seconds(i64::from(*offset_secs))).naive_utc()
         }
@@ -178,6 +179,7 @@ pub(super) fn unix_timestamp(vals: &[Datum], cols: &dyn Columns) -> Result<Datum
     let fsp = frac.len().min(6);
 
     let instant = match &cols.time_zone() {
+        SessionTimeZone::Local => local_to_instant(&chrono::Local, &naive),
         SessionTimeZone::Fixed { offset_secs, .. } => {
             Some(naive.and_utc() - chrono::Duration::seconds(i64::from(*offset_secs)))
         }
@@ -207,8 +209,8 @@ pub(super) fn unix_timestamp(vals: &[Datum], cols: &dyn Columns) -> Result<Datum
 ///
 /// A wall clock that renders back from NEITHER exists in no offset at all: it
 /// is inside a spring-forward gap, which is [`dst_gap_bound`]'s subject.
-pub(super) fn local_to_instant(
-    tz: &chrono_tz::Tz,
+pub(super) fn local_to_instant<TZ: chrono::TimeZone>(
+    tz: &TZ,
     naive: &NaiveDateTime,
 ) -> Option<chrono::DateTime<Utc>> {
     let first = *naive - chrono::Duration::seconds(i64::from(offset_at(tz, naive)));
@@ -222,7 +224,7 @@ pub(super) fn local_to_instant(
 }
 
 /// The zone's offset east of UTC at a UTC instant (Go's `Location.lookup`).
-fn offset_at(tz: &chrono_tz::Tz, instant: &NaiveDateTime) -> i32 {
+fn offset_at<TZ: chrono::TimeZone>(tz: &TZ, instant: &NaiveDateTime) -> i32 {
     use chrono::Offset as _;
     tz.offset_from_utc_datetime(instant).fix().local_minus_utc()
 }
@@ -246,7 +248,10 @@ fn offset_at(tz: &chrono_tz::Tz, instant: &NaiveDateTime) -> i32 {
 /// transition table itself. Within a gap the PRECEDING bound is always the
 /// nearer one -- the following transition is a season away -- so the bisection
 /// only has to find that one.
-fn dst_gap_bound(tz: &chrono_tz::Tz, naive: &NaiveDateTime) -> Option<chrono::DateTime<Utc>> {
+fn dst_gap_bound<TZ: chrono::TimeZone>(
+    tz: &TZ,
+    naive: &NaiveDateTime,
+) -> Option<chrono::DateTime<Utc>> {
     use chrono::Offset as _;
     let offset_at =
         |instant: &NaiveDateTime| tz.offset_from_utc_datetime(instant).fix().local_minus_utc();

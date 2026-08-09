@@ -195,6 +195,11 @@ fn the_string_typed_hybrids_take_the_early_return_and_bit_does_not() {
     assert_eq!(eval_string(&enum_value).unwrap().unwrap(), b"b");
     assert_eq!(eval_string(&set_value).unwrap().unwrap(), b"a,b");
 
+    let raw_enum = Datum::new_enum(MysqlEnum::new([0xff], 1), Collation::Binary);
+    let raw_set = Datum::new_set(MysqlSet::new([0xfe], 1), Collation::Binary);
+    assert_eq!(eval_string(&raw_enum).unwrap().unwrap(), [0xff]);
+    assert_eq!(eval_string(&raw_set).unwrap().unwrap(), [0xfe]);
+
     // BIT alone is rewritten, and to its bytes.
     let bit = Datum::Bit(BinaryLiteral::from_uint(3, None));
     let out = wrap_string_args("LTRIM", vec![bit], &[None], &NoColumns).unwrap();

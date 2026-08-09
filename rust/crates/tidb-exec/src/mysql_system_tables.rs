@@ -167,16 +167,22 @@ impl HandleLayout {
     pub fn of(table: &TableInfo) -> Self {
         if table.pk_is_handle {
             if let Some(column) = table.get_pk_col_info() {
+                let column = column.read();
                 return Self::Int(column.name.lowercase().to_owned());
             }
         }
         if table.is_common_handle {
-            if let Some(primary) = table.indices.iter().find(|index| index.primary) {
+            if let Some(primary) = table
+                .indices
+                .iter_deref()
+                .find(|index| index.read().primary)
+            {
+                let primary = primary.read();
                 return Self::Common(
                     primary
                         .columns
-                        .iter()
-                        .map(|column| column.name.lowercase().to_owned())
+                        .iter_deref()
+                        .map(|column| column.read().name.lowercase().to_owned())
                         .collect(),
                 );
             }
@@ -250,7 +256,8 @@ impl SystemTableView {
         let key_columns = handle.columns();
         let mut ids = BTreeMap::new();
         let mut types = BTreeMap::new();
-        for column in table.cols() {
+        for column in table.cols().iter_deref() {
+            let column = column.read();
             if column.state != SchemaState::PUBLIC {
                 continue;
             }
@@ -603,7 +610,9 @@ impl<'view> SystemRow<'view> {
             return Ok(None);
         };
         match datum {
-            Datum::Enum(value, _) => Ok(Some(value.name().to_owned())),
+            Datum::Enum(value, _) => std::str::from_utf8(value.name_bytes())
+                .map(|label| Some(label.to_owned()))
+                .map_err(|_| self.wrong_value(column, "a UTF-8 ENUM label", datum)),
             other => Err(self.wrong_value(column, "ENUM", other)),
         }
     }
@@ -628,7 +637,15 @@ impl<'view> SystemRow<'view> {
         };
         match datum {
             Datum::Set(value, _) if value.name().is_empty() => Ok(Vec::new()),
-            Datum::Set(value, _) => Ok(value.name().split(',').map(str::to_owned).collect()),
+            Datum::Set(value, _) => value
+                .name_bytes()
+                .split(|byte| *byte == b',')
+                .map(|label| {
+                    std::str::from_utf8(label)
+                        .map(str::to_owned)
+                        .map_err(|_| self.wrong_value(column, "UTF-8 SET labels", datum))
+                })
+                .collect(),
             other => Err(self.wrong_value(column, "SET", other)),
         }
     }
@@ -637,7 +654,7 @@ impl<'view> SystemRow<'view> {
 #[cfg(test)]
 mod tests {
     use tidb_ast::CiString;
-    use tidb_datatype::FieldTypeCode;
+    use tidb_datatype::{FieldTypeCode, GoString};
     use tidb_model::column::ColumnInfo;
 
     use super::*;
@@ -703,7 +720,7 @@ mod tests {
     /// fixture table must give each one its own.
     fn column(offset: i64, id: i64, name: &str, mut field_type: FieldType) -> ColumnInfo {
         if field_type.code() == FieldTypeCode::Enum {
-            field_type.set_elems(vec!["N".to_owned(), "Y".to_owned()]);
+            field_type.set_elems(vec![GoString::from("N"), GoString::from("Y")]);
         }
         let mut column = ColumnInfo::new(id, name, field_type);
         column.offset = offset;
@@ -727,7 +744,8 @@ mod tests {
                 column(4, 5, "Select_priv", enum_type.clone()),
                 column(5, 16, "Super_priv", enum_type.clone()),
                 column(6, 32, "Account_locked", enum_type),
-            ],
+            ]
+            .into(),
             ..TableInfo::default()
         }
     }
@@ -825,7 +843,8 @@ mod tests {
             columns: vec![
                 column(0, 1, "VARIABLE_NAME", varchar.clone()),
                 column(1, 2, "VARIABLE_VALUE", varchar),
-            ],
+            ]
+            .into(),
             ..TableInfo::default()
         };
         let view =
@@ -928,7 +947,7 @@ mod clustered_handle_tests {
             id: 26,
             name: CiString::new("stats_buckets"),
             is_common_handle: true,
-            indices: vec![primary(&["table_id", "is_index", "hist_id", "bucket_id"])],
+            indices: vec![primary(&["table_id", "is_index", "hist_id", "bucket_id"])].into(),
             columns: vec![
                 stats_column(0, 1, "table_id", FieldTypeCode::LongLong),
                 stats_column(1, 2, "is_index", FieldTypeCode::Tiny),
@@ -939,7 +958,8 @@ mod clustered_handle_tests {
                 stats_column(6, 7, "upper_bound", FieldTypeCode::LongBlob),
                 stats_column(7, 8, "lower_bound", FieldTypeCode::LongBlob),
                 stats_column(8, 9, "ndv", FieldTypeCode::LongLong),
-            ],
+            ]
+            .into(),
             ..TableInfo::default()
         }
     }
@@ -962,7 +982,8 @@ mod clustered_handle_tests {
                 table_id,
                 stats_column(2, 3, "modify_count", FieldTypeCode::LongLong),
                 count,
-            ],
+            ]
+            .into(),
             ..TableInfo::default()
         }
     }
@@ -1052,7 +1073,7 @@ mod clustered_handle_tests {
         let table = TableInfo {
             id: 4,
             name: CiString::new("user"),
-            columns: vec![stats_column(0, 1, "Host", FieldTypeCode::String)],
+            columns: vec![stats_column(0, 1, "Host", FieldTypeCode::String)].into(),
             ..TableInfo::default()
         };
         let view = SystemTableView::project("mysql.user", &table, &["host"]);

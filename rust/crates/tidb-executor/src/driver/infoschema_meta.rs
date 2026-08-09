@@ -1342,6 +1342,7 @@ pub fn register_tables(catalog: &mut Catalog) {
                 name: column.name.to_owned(),
                 id: i64::try_from(offset).unwrap_or(0),
                 field_type: column.field_type(),
+                column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
                 default_value: column
                     .deflt
                     .map(|text| ColumnDefault::Value(Datum::Bytes(text.as_bytes().to_vec()))),

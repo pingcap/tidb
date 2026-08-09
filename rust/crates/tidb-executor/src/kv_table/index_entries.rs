@@ -28,6 +28,7 @@
 //! session files is the entry a UTC session seeks.
 
 use tidb_codec::table_key::encode_index_seek_key;
+use tidb_codec::Encoder;
 use tidb_datatype::{is_bin_collation, Datum, SessionTimeZone};
 use tidb_tablecodec::{
     cut_index_key, decode_handle_in_index_value, generate_index_value, index_kv_is_unique,
@@ -40,14 +41,6 @@ use crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
 use crate::storage::StorageError;
 
 use super::{datum_text, KvIndex, KvTable, KvTableError, TableHandle};
-
-/// Go `collate.NewCollationEnabled()`: whether an index key is a new-collation
-/// SORT KEY rather than the raw bytes.
-///
-/// This tier's key codec always builds sort keys, which is exactly why the
-/// entry VALUE has to carry restored data -- a sort key case-folds and trims,
-/// so the column cannot be read back out of the key.
-const USE_NEW_COLLATION: bool = true;
 
 impl KvTable {
     /// The values one index entry is built from: the indexed columns of
@@ -95,13 +88,16 @@ impl KvTable {
     ) -> Result<(Vec<u8>, bool), KvTableError> {
         let values = self.index_values(index, row);
         let distinct = index.unique && !values.contains(&Datum::Null);
-        let mut encoded = tidb_codec::encode_key_in_timezone(zone, &values)
+        let encoder = Encoder::new(self.use_new_collation);
+        let mut encoded = encoder
+            .encode_key_in_timezone(zone, &values)
             .map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
         if !distinct {
             // Go appends the handle so non-distinct entries stay unique.
             match handle {
                 TableHandle::Int(value) => encoded.extend_from_slice(
-                    &tidb_codec::encode_key(&[Datum::Int(*value)])
+                    &encoder
+                        .encode_key(&[Datum::Int(*value)])
                         .map_err(|e| KvTableError::Encode(format!("{e:?}")))?,
                 ),
                 TableHandle::Common(bytes) => encoded.extend_from_slice(bytes),
@@ -204,7 +200,7 @@ impl KvTable {
             self.columns.get(*offset).is_some_and(|column| {
                 column
                     .field_type
-                    .need_restored_data_with_collation(USE_NEW_COLLATION)
+                    .need_restored_data_with_collation(self.use_new_collation)
             })
         })
     }
@@ -224,7 +220,7 @@ impl KvTable {
                 let column = self.columns.get(*offset)?;
                 if !column
                     .field_type
-                    .need_restored_data_with_collation(USE_NEW_COLLATION)
+                    .need_restored_data_with_collation(self.use_new_collation)
                 {
                     return None;
                 }
@@ -233,7 +229,7 @@ impl KvTable {
                 // key differs from the data only by the trailing spaces it
                 // trimmed, so the COUNT restores it and the string would be a
                 // second copy of the key.
-                if is_bin_collation(column.field_type.collation().name()) {
+                if is_bin_collation(column.field_type.collation_name()) {
                     return Some(Datum::Int(trailing_spaces(&value) as i64));
                 }
                 Some(value)
@@ -266,7 +262,7 @@ impl KvTable {
                 .into(),
         };
         generate_index_value(
-            USE_NEW_COLLATION,
+            self.use_new_collation,
             Some(zone),
             &self.codec_table_info(),
             &self.codec_index_info(index),
@@ -357,7 +353,8 @@ impl KvTable {
         if index.has_prefix() {
             return Ok(None);
         }
-        let encoded = tidb_codec::encode_key_in_timezone(zone, values)
+        let encoded = Encoder::new(self.use_new_collation)
+            .encode_key_in_timezone(zone, values)
             .map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
         let key = Key::from_bytes(encode_index_seek_key(self.table_id, index.id, &encoded));
         match self.store.get(&key) {

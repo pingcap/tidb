@@ -171,8 +171,8 @@ impl MutRow {
             Datum::Time(t) => {
                 column.data[..SIZE_TIME as usize].copy_from_slice(&t.go_raw().to_ne_bytes());
             }
-            Datum::Enum(e, _) => set_mut_row_name_value(column, e.name(), e.value()),
-            Datum::Set(s, _) => set_mut_row_name_value(column, s.name(), s.value()),
+            Datum::Enum(e, _) => set_mut_row_name_value(column, e.name_bytes(), e.value()),
+            Datum::Set(s, _) => set_mut_row_name_value(column, s.name_bytes(), s.value()),
             Datum::Json(j) => set_mut_row_json(column, j),
             Datum::VectorFloat32(v) => set_mut_row_bytes(column, &v.serialize()),
             // Go's `any` switch has no arm for these, so nothing is written.
@@ -236,8 +236,8 @@ impl MutRow {
             }
             Datum::Json(j) => set_mut_row_json(column, j),
             Datum::VectorFloat32(v) => set_mut_row_bytes(column, &v.serialize()),
-            Datum::Enum(e, _) => set_mut_row_name_value(column, e.name(), e.value()),
-            Datum::Set(s, _) => set_mut_row_name_value(column, s.name(), s.value()),
+            Datum::Enum(e, _) => set_mut_row_name_value(column, e.name_bytes(), e.value()),
+            Datum::Set(s, _) => set_mut_row_name_value(column, s.name_bytes(), s.value()),
             // Go's `default` arm REPLACES the column with a freshly built one
             // and then sets the not-null bit on the column it just replaced
             // away -- so the new column keeps whatever nullity
@@ -402,17 +402,17 @@ fn make_mut_row_column(value: &Datum) -> Column {
             column.data.copy_from_slice(&d.nanoseconds().to_ne_bytes());
             column
         }
-        Datum::Enum(e, _) => make_name_value_column(e.name(), e.value()),
-        Datum::Set(s, _) => make_name_value_column(s.name(), s.value()),
+        Datum::Enum(e, _) => make_name_value_column(e.name_bytes(), e.value()),
+        Datum::Set(s, _) => make_name_value_column(s.name_bytes(), s.value()),
     }
 }
 
 /// Go's `types.Enum`/`types.Set` arm of `makeMutRowColumn`: the 8-byte value
 /// followed by the element name.
-fn make_name_value_column(name: &str, value: u64) -> Column {
+fn make_name_value_column(name: &[u8], value: u64) -> Column {
     let mut column = new_mut_row_var_len_column(name.len() + 8);
     column.data[..8].copy_from_slice(&value.to_ne_bytes());
-    column.data[8..].copy_from_slice(name.as_bytes());
+    column.data[8..].copy_from_slice(name);
     column
 }
 
@@ -468,8 +468,8 @@ fn zero_column_for_type(field_type: &FieldType) -> Column {
                 Time::new(tidb_datatype::CoreTime::default(), kind, 0).expect("zero time"),
             ))
         }
-        C::Set => make_name_value_column("", 0),
-        C::Enum => make_name_value_column("", 0),
+        C::Set => make_name_value_column(b"", 0),
+        C::Enum => make_name_value_column(b"", 0),
         // Go `types.CreateBinaryJSON(nil)`: the JSON literal `null`.
         C::Json => make_mut_row_column(&Datum::Json(
             BinaryJSON::parse("null").expect("the JSON null literal"),
@@ -514,7 +514,7 @@ fn set_mut_row_bytes(column: &mut Column, bytes: &[u8]) {
 }
 
 /// Go `setMutRowNameValue`.
-fn set_mut_row_name_value(column: &mut Column, name: &str, value: u64) {
+fn set_mut_row_name_value(column: &mut Column, name: &[u8], value: u64) {
     let data_len = name.len() + 8;
     if column.data.len() >= data_len {
         column.data.truncate(data_len);
@@ -523,7 +523,7 @@ fn set_mut_row_name_value(column: &mut Column, name: &str, value: u64) {
         column.null_bitmap = vec![0];
     }
     column.data[..8].copy_from_slice(&value.to_le_bytes());
-    column.data[8..].copy_from_slice(name.as_bytes());
+    column.data[8..].copy_from_slice(name);
     column.offsets[1] = data_len as i64;
 }
 
@@ -870,6 +870,27 @@ mod tests {
         mut_row.set_value(4, &Datum::Null);
         mut_row.set_value(0, &Datum::Null);
         assert_matches_go("set_value_nil", &mut_row);
+    }
+
+    #[test]
+    fn enum_and_set_mutations_preserve_non_utf8_name_bytes() {
+        let mut mut_row = MutRow::from_datums(&[
+            Datum::Enum(MysqlEnum::new(vec![0xff], 1), Collation::Binary),
+            Datum::Set(MysqlSet::new(vec![0xfe], 1), Collation::Binary),
+        ]);
+        assert_eq!(mut_row.to_row().get_enum(0).name_bytes(), &[0xff]);
+        assert_eq!(mut_row.to_row().get_set(1).name_bytes(), &[0xfe]);
+
+        mut_row.set_datum(
+            0,
+            &Datum::Enum(MysqlEnum::new(vec![0xfe], 2), Collation::Binary),
+        );
+        mut_row.set_value(
+            1,
+            &Datum::Set(MysqlSet::new(vec![0xff], 2), Collation::Binary),
+        );
+        assert_eq!(mut_row.to_row().get_enum(0).name_bytes(), &[0xfe]);
+        assert_eq!(mut_row.to_row().get_set(1).name_bytes(), &[0xff]);
     }
 
     /// `SetRow` copies a real chunk row in, NULL cell included, and `Clone`

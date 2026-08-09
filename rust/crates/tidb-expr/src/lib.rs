@@ -398,7 +398,11 @@ use binary_literal::{bit_literal_value, hex_literal_value};
 fn is_signed_binary_literal(expr: &Expr) -> bool {
     match expr {
         Expr::Bit(_) => true,
-        Expr::Paren(inner) => is_signed_binary_literal(inner),
+        // Go drops unary plus while building the expression, so it cannot
+        // change a BIT literal into the unsigned HEX-literal domain.
+        Expr::Paren(inner) | Expr::Unary(tidb_ast::UnaryOp::Plus, inner) => {
+            is_signed_binary_literal(inner)
+        }
         _ => false,
     }
 }
@@ -416,6 +420,21 @@ use string_fn::{position, trim_value};
 /// Evaluates a constant expression, or returns why it is out of scope.
 pub fn eval(expr: &Expr) -> Result<Datum, EvalError> {
     eval_in(expr, &NoColumns)
+}
+
+/// Evaluates one already-built expression against the caller's statement
+/// context and the single virtual row used for a column-free expression.
+///
+/// DDL constant folding lives in crates that should not depend directly on
+/// `tidb-chunk`; keeping the virtual-row detail here also ensures every such
+/// fold uses the same row shape instead of inventing a second evaluator.
+pub fn eval_expression_once(
+    expression: &expression::Expression,
+    ctx: &impl Columns,
+) -> Result<Datum, EvalError> {
+    let mut dual = tidb_chunk::chunk::Chunk::new_empty(&[]);
+    dual.set_num_virtual_rows(1);
+    expression.eval(ctx, dual.get_row(0))
 }
 
 /// Applies a binary operator to already-evaluated operands. Exposed so callers
@@ -555,6 +574,11 @@ pub fn eval_in(expr: &Expr, cols: &dyn Columns) -> Result<Datum, EvalError> {
         Expr::Float(f) => Ok(Datum::Real(*f)),
         Expr::Hex(digits) => hex_literal_value(digits),
         Expr::Bit(digits) => bit_literal_value(digits),
+        // Go's charset introducer annotates the ValueExpr FieldType while the
+        // Datum remains the same KindBinaryLiteral/KindMysqlBit payload. The
+        // value-tier evaluator therefore delegates to the introduced leaf;
+        // the chunk rewriter below retains the type annotation separately.
+        Expr::CharsetBinary { value, .. } => eval_in(value, cols),
         Expr::Null => Ok(Datum::Null),
         Expr::Column(path) => cols
             .get(path)
@@ -599,6 +623,12 @@ pub fn eval_in(expr: &Expr, cols: &dyn Columns) -> Result<Datum, EvalError> {
             .sysvar(*scope, name)
             .ok_or(EvalError::Unsupported("unknown system variable")),
         Expr::Paren(e) => eval_in(e, cols),
+        // Go's parser does not build an operator node for unary plus: it
+        // returns the operand unchanged. Delegating here preserves the
+        // operand's exact Datum kind as well as its value (notably signed BIT
+        // literals, which the generic numeric-unary path would promote to a
+        // Decimal before surrounding arithmetic can inspect the type).
+        Expr::Unary(tidb_ast::UnaryOp::Plus, e) => eval_in(e, cols),
         Expr::Unary(op, e) => eval_unary(*op, eval_in(e, cols)?, ops::Operand::Literal, cols),
         // `ROW(...) <op> ROW(...)` — see `crate::row`'s own doc for
         // why this is a special case rather than a new `Datum`

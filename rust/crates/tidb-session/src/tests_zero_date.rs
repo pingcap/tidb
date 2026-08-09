@@ -80,6 +80,98 @@ fn rows(session: &mut Session, sql: &str) -> Vec<Vec<String>> {
     row_text(session.run(sql))
 }
 
+/// Applies one DATETIME literal default through every DDL entry point that
+/// Go routes through `SetDefaultValue`. Keeping these four together prevents
+/// CREATE from becoming mode-aware while ADD, MODIFY, or SET DEFAULT quietly
+/// retain a hard-coded strict conversion context.
+fn check_datetime_default_ddl(
+    sql_mode: &str,
+    literal: &str,
+    accepted: bool,
+    set_default_accepted: bool,
+) {
+    let cases = [
+        (
+            "create",
+            None,
+            format!("CREATE TABLE d (v DATETIME DEFAULT '{literal}')"),
+        ),
+        (
+            "add",
+            Some("CREATE TABLE d (id INT)"),
+            format!("ALTER TABLE d ADD COLUMN v DATETIME DEFAULT '{literal}'"),
+        ),
+        (
+            "modify",
+            Some("CREATE TABLE d (v DATETIME)"),
+            format!("ALTER TABLE d MODIFY COLUMN v DATETIME DEFAULT '{literal}'"),
+        ),
+        (
+            "set default",
+            Some("CREATE TABLE d (v DATETIME)"),
+            format!("ALTER TABLE d ALTER COLUMN v SET DEFAULT '{literal}'"),
+        ),
+    ];
+
+    for (name, setup, ddl) in cases {
+        // Go's DDL owner revalidates ALTER COLUMN ... SET DEFAULT under
+        // newReorgExprCtx (ModeNone + DefaultStmtFlags), after the session
+        // pass. In particular, ALLOW_INVALID_DATES can admit the spelling in
+        // CREATE/ADD/MODIFY while that second owner pass still returns 1067.
+        let accepted = if name == "set default" {
+            set_default_accepted
+        } else {
+            accepted
+        };
+        let mut session = Session::new();
+        if let Some(setup) = setup {
+            session.run(setup).expect("setup table");
+        }
+        session
+            .run(&format!("SET sql_mode='{sql_mode}'"))
+            .unwrap_or_else(|error| panic!("SET sql_mode='{sql_mode}' failed: {error:?}"));
+        let result = session.run(&ddl);
+        if accepted {
+            result.unwrap_or_else(|error| {
+                panic!("{name} rejected DATETIME DEFAULT '{literal}' in {sql_mode}: {error:?}")
+            });
+            let stored = session
+                .with_catalog_mut(|catalog| {
+                    let Some(tidb_executor::TableEntry::Kv(table)) =
+                        catalog.table_mut_in("test", "d")
+                    else {
+                        panic!("d is not storage-backed");
+                    };
+                    Ok(table
+                        .columns
+                        .iter()
+                        .find(|column| column.name == "v")
+                        .expect("default column v")
+                        .default_value
+                        .clone())
+                })
+                .expect("read stored default");
+            let shown = rows(&mut session, "SHOW COLUMNS FROM d");
+            let displayed = shown
+                .iter()
+                .find(|row| row[0] == "v")
+                .expect("SHOW row for v");
+            assert_ne!(
+                displayed[4], "NULL",
+                "{name} dropped an accepted default in {sql_mode}; metadata was {stored:?}"
+            );
+        } else {
+            let error = result
+                .err()
+                .unwrap_or_else(|| {
+                    panic!("{name} accepted DATETIME DEFAULT '{literal}' in {sql_mode}")
+                })
+                .to_mysql_error();
+            assert_eq!(error.code, 1067, "{name}: {ddl}");
+        }
+    }
+}
+
 /// One captured INSERT: the value written, and what TiDB did with it.
 enum Outcome {
     /// Accepted with no warning, and the column reads back as this text.
@@ -185,6 +277,66 @@ fn default_mode_refuses_every_bad_date() {
             ],
         );
     }
+}
+
+/// DDL derives its date flags from the statement SQL mode before it settles
+/// a literal default. These are the four independent bits in Go's
+/// `ResetContextOfStmt` CREATE/ALTER arm, exercised through every caller of
+/// the shared default pipeline.
+#[test]
+fn datetime_defaults_follow_ddl_sql_mode_in_every_entry_point() {
+    check_datetime_default_ddl(
+        "STRICT_TRANS_TABLES,NO_ZERO_DATE",
+        "0000-00-00",
+        false,
+        false,
+    );
+    check_datetime_default_ddl("STRICT_TRANS_TABLES", "0000-00-00", true, true);
+    check_datetime_default_ddl(
+        "STRICT_TRANS_TABLES,NO_ZERO_IN_DATE",
+        "2999-00-00",
+        false,
+        false,
+    );
+    check_datetime_default_ddl("STRICT_TRANS_TABLES", "2999-00-00", true, false);
+    check_datetime_default_ddl("STRICT_TRANS_TABLES", "2999-02-30", false, false);
+    check_datetime_default_ddl(
+        "STRICT_TRANS_TABLES,ALLOW_INVALID_DATES",
+        "2999-02-30",
+        true,
+        false,
+    );
+}
+
+/// A row written before `ADD COLUMN` has no bytes for the new column, so the
+/// query path must cast its stored `OriginDefaultValue` with SELECT flags.
+/// SELECT tolerates a partial-zero date even under strict SQL mode, through
+/// both scan and point-read plans.
+#[test]
+fn origin_default_query_read_uses_query_statement_flags() {
+    let mut session = Session::new();
+    session.run("SET sql_mode=''").unwrap();
+    session
+        .run("CREATE TABLE origin_read (id INT PRIMARY KEY)")
+        .unwrap();
+    session.run("INSERT INTO origin_read VALUES (1)").unwrap();
+    session
+        .run("ALTER TABLE origin_read ADD COLUMN v DATE DEFAULT '2024-00-01'")
+        .unwrap();
+
+    session
+        .run("SET sql_mode='STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE'")
+        .unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT v FROM origin_read"),
+        vec![vec!["2024-00-01".to_owned()]],
+        "a SELECT scan uses the SELECT conversion flags"
+    );
+    assert_eq!(
+        rows(&mut session, "SELECT v FROM origin_read WHERE id = 1"),
+        vec![vec!["2024-00-01".to_owned()]],
+        "a point read uses the same SELECT conversion flags as a scan"
+    );
 }
 
 /// `sql_mode = ''`: nothing is an error, the zero and zero-in dates are

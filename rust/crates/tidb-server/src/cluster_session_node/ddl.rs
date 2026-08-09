@@ -162,8 +162,13 @@ impl IndexBackfiller for KvTableIndexBackfiller {
         // carries no database id, so the alternative would be inventing one
         // and handing over a counter starting at zero, which against shared
         // cluster storage re-issues ids the table already holds.
-        let mut table = cluster_table(&plan.table, &storage, &AutoIdSource::Unavailable)?;
-        let index = kv_index(&plan.index, &plan.table.cols())?;
+        let mut table = cluster_table(&plan.table, &storage, &AutoIdSource::Unavailable)?
+            .with_new_collation_mode(plan.use_new_collation);
+        let columns: Vec<_> = plan.table.cols().iter_deref().collect();
+        let index = {
+            let index = plan.index.read();
+            kv_index(&index, &columns)?
+        };
         let name = index.name.clone();
         if plan.add {
             // The DDL's own context: no session variables reach a catalog

@@ -37,6 +37,7 @@
 //! therefore follow the same representation path; only an operation that
 //! explicitly needs character semantics performs checked decoding.
 
+use tidb_ast::BitLiteralValue;
 use tidb_datatype::BinaryLiteral;
 
 use crate::{Datum, EvalError};
@@ -61,28 +62,16 @@ pub(crate) fn hex_literal_value(digits: &str) -> Result<Datum, EvalError> {
     bytes_to_value(bytes)
 }
 
-/// Decodes a normalized bit-literal digit string (`tidb_ast::Expr::Bit`'s
-/// own field — leading-zero-stripped binary digits, `""` for the empty
-/// literal `b''`, `"0"` for an all-zero literal like `b'0'`/`b'000'`,
-/// confirmed by `tidb_parser::expr::normalize_bit`) into the MINIMAL
-/// big-endian byte sequence representing its numeric value — confirmed
-/// via `gorun`: `HEX(b'101')` is `'05'` (1 byte, `ceil(3 bits / 8)`),
-/// `HEX(b'111111111')` is `'01FF'` (2 bytes, `ceil(9 bits / 8)`),
-/// `HEX(b'')` is `''` (0 bytes). A literal wider than 64 bits — real
-/// MySQL/TiDB's own `BIT` column max width, though a bare literal
-/// EXPRESSION isn't confirmed to enforce this same limit — is
-/// `Unsupported` rather than guessed at.
-pub(crate) fn bit_literal_value(digits: &str) -> Result<Datum, EvalError> {
-    if digits.is_empty() {
-        return bytes_to_value(Vec::new());
-    }
-    if digits.len() > 64 {
-        return Err(EvalError::Unsupported("bit literal wider than 64 bits"));
-    }
-    let value = u64::from_str_radix(digits, 2).expect("normalized binary digits");
-    let byte_len = digits.len().div_ceil(8);
-    let bytes = value.to_be_bytes();
-    bytes_to_value(bytes[8 - byte_len..].to_vec())
+/// Carries [`tidb_ast::Expr::Bit`]'s decoded, byte-width-preserving payload
+/// into Go's runtime `BinaryLiteral` datum kind.
+///
+/// `b'101'` is `[0x05]`, `b'111111111'` is `[0x01, 0xff]`, and
+/// `b'000000001'` is `[0x00, 0x01]`. Bare literals are not limited to BIT
+/// columns' 64-bit width; numeric conversion applies its own truncation rule.
+pub(crate) fn bit_literal_value(value: &BitLiteralValue) -> Result<Datum, EvalError> {
+    Ok(Datum::new_binary_literal(BinaryLiteral::from(
+        value.as_bytes(),
+    )))
 }
 
 /// Source `Datum.SetValueWithDefaultCollation`/`SetValue`, whose

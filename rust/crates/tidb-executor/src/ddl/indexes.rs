@@ -297,6 +297,7 @@ pub(crate) fn add_index_to_table(
             name: column.name,
             id: table.next_column_id(),
             field_type: column.field_type,
+            column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
             generated: Some(column.generated),
             default_value: None,
             origin_default: None,
@@ -304,7 +305,7 @@ pub(crate) fn add_index_to_table(
     }
     let id = table.next_index_id();
     let result = table
-        .create_index(
+        .create_index_with_context(
             KvIndex {
                 id,
                 name: index_name.to_owned(),
@@ -391,7 +392,6 @@ pub(crate) fn drop_index_from_table(
     if_exists: bool,
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
-    let zone = &ctx.session_zone();
     // Go `ddl.checkIndexNeededInForeignKey`, before anything is removed: an
     // index a live constraint relies on is 1553, on either side.
     crate::foreign_key::check_index_needed(catalog, database, table_name, index_name)?;
@@ -421,7 +421,7 @@ pub(crate) fn drop_index_from_table(
         })
         .unwrap_or_default();
     let dropped = table
-        .drop_index(index_name, zone)
+        .drop_index_with_context(index_name, ctx)
         .map_err(|e| DriverError::Parse(format!("index drop failed: {e:?}")))?;
     if !dropped {
         // Go's `IF EXISTS` does not silence the index that was not there --

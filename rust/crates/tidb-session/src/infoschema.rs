@@ -177,6 +177,7 @@ pub fn table_rows(
     name: &str,
     catalog: &Catalog,
     visibility: &SchemaVisibility,
+    ctx: &tidb_executor::StmtContext,
 ) -> Option<Vec<Vec<Datum>>> {
     if name.eq_ignore_ascii_case("SCHEMATA") {
         return Some(schemata_rows(catalog, visibility));
@@ -188,7 +189,7 @@ pub fn table_rows(
         return Some(views_rows(catalog, visibility));
     }
     if name.eq_ignore_ascii_case("COLUMNS") {
-        return Some(columns_rows(catalog, visibility));
+        return Some(columns_rows(catalog, visibility, ctx));
     }
     if name.eq_ignore_ascii_case("KEY_COLUMN_USAGE") {
         return Some(key_column_usage_rows(catalog, visibility));
@@ -574,7 +575,11 @@ fn pk_type(table: &KvTable) -> String {
 /// walks `mysql.AllColumnPrivs` and admits the table when ANY of
 /// `SELECT`/`INSERT`/`UPDATE`/`REFERENCES` is held, so a table reachable only
 /// through, say, a `DROP` grant lists no columns.
-fn columns_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datum>> {
+fn columns_rows(
+    catalog: &Catalog,
+    visibility: &SchemaVisibility,
+    ctx: &tidb_executor::StmtContext,
+) -> Vec<Vec<Datum>> {
     let mut rows = Vec::new();
     for (schema, table_name) in visible_tables(catalog, visibility, PrivMask::Column) {
         match catalog.table_in(&schema, &table_name) {
@@ -586,7 +591,7 @@ fn columns_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Dat
                 // Captured: a table with an expression index and columns
                 // `a`, `z` reports exactly a|1, z|2.
                 for (offset, column) in table.visible_columns().iter().enumerate() {
-                    rows.push(column_row(&schema, &table_name, table, offset, column));
+                    rows.push(column_row(&schema, &table_name, table, offset, column, ctx));
                 }
             }
             // A view's columns are its body's, resolved now rather than
@@ -595,7 +600,6 @@ fn columns_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Dat
             // table entirely, which is what Go answers (captured: a view
             // over a dropped column reports no COLUMNS rows at all).
             Some(TableEntry::View(view)) => {
-                let ctx = tidb_executor::StmtContext::for_query();
                 let Ok(columns) = tidb_executor::view_column_list(view, &schema, catalog, &ctx)
                 else {
                     continue;
@@ -623,6 +627,7 @@ fn column_row(
     table: &KvTable,
     offset: usize,
     column: &tidb_executor::KvColumn,
+    ctx: &tidb_executor::StmtContext,
 ) -> Vec<Datum> {
     let field_type = &column.field_type;
     let not_null = field_type.flags() & 1 != 0;
@@ -650,7 +655,20 @@ fn column_row(
             // `ColDesc.DefaultValue`, the same string `SHOW COLUMNS` reports,
             // so a computed default reports its stored text unparenthesised.
             Some(tidb_executor::column_default::ColumnDefault::Value(value)) => {
-                text(&crate::show::column_default_text(value, field_type).unwrap_or_default())
+                // Go's INFORMATION_SCHEMA retriever deliberately keeps the
+                // stored metadata text when GetColDefaultValue cannot
+                // materialize it; SHOW propagates the same conversion error.
+                let visible = crate::show::literal_column_default_text(
+                    value,
+                    column,
+                    ctx.query_default_conversion_flags(),
+                    &ctx.session_zone(),
+                )
+                .ok()
+                .flatten()
+                .or_else(|| crate::show::column_default_text(value, field_type))
+                .unwrap_or_default();
+                text(&visible)
             }
             Some(computed) => match computed.column_desc_text(field_type) {
                 Some(stored) => text(&stored),

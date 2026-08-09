@@ -21,6 +21,14 @@
 use super::*;
 use crate::kv_table::{AutoIdError, AutoIncrement};
 
+mod defaults;
+
+pub(crate) use defaults::{
+    column_default, column_metadata, materialize_column_default, prepare_named_defaults,
+    rewrite_with_prepared_defaults, ColumnDefaultMeta, DefaultColumnIdentity, DefaultUse,
+    PreparedNamedDefault, ResolvedDefaultColumn,
+};
+
 /// Parses and runs a plain `INSERT INTO t [(cols)] VALUES (...), ...` against
 /// `catalog`, returning the number of inserted rows.
 ///
@@ -90,6 +98,93 @@ pub(crate) fn run_insert_stmt(
     run_insert_traced(insert, catalog, current_db, ctx, None)
 }
 
+struct InsertTargetLayout {
+    database: String,
+    table_name: String,
+    column_list: Vec<(String, FieldType)>,
+    target_offsets: Vec<usize>,
+    generated_targets: Vec<bool>,
+    column_meta: Vec<ColumnDefaultMeta>,
+}
+
+/// Resolves everything owned by the INSERT target before an INSERT SELECT
+/// source is executed. Go plans the target and rejects a view, sequence,
+/// unknown field or generated target before opening the source executor; a
+/// source with user-variable or sequence side effects must not run first.
+fn resolve_insert_target(
+    insert: &tidb_ast::InsertStmt,
+    catalog: &Catalog,
+    current_db: &str,
+) -> Result<InsertTargetLayout, DriverError> {
+    let (database, table_name) = split_table_path(&insert.table, current_db)?;
+    let (database, table_name) = (database.to_owned(), table_name.to_owned());
+    let table = catalog
+        .get_in(&database, &table_name)
+        .ok_or(DriverError::unsupported("table not found in catalog"))?;
+    if table.is_view() {
+        return Err(DriverError::InsertIntoViewUnsupported(table_name));
+    }
+    if table.is_sequence() {
+        return Err(DriverError::InsertIntoSequenceUnsupported(table_name));
+    }
+    let column_list = table.column_list();
+    let named_columns: Vec<String> = if insert.set_syntax {
+        insert
+            .set_columns
+            .iter()
+            .map(|path| path.last().cloned().unwrap_or_default())
+            .collect()
+    } else {
+        insert.columns.clone()
+    };
+    let target_offsets = if insert.set_syntax || insert.columns_specified {
+        named_columns
+            .iter()
+            .map(|name| {
+                column_list
+                    .iter()
+                    .position(|(candidate, _)| candidate.eq_ignore_ascii_case(name))
+                    .ok_or_else(|| DriverError::UnknownColumnInClause {
+                        column: name.clone(),
+                        clause: "field list".to_owned(),
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?
+    } else {
+        (0..column_list.len()).collect()
+    };
+    let generated_targets: Vec<bool> = match table {
+        TableEntry::Kv(kv) => kv
+            .visible_columns()
+            .iter()
+            .map(|column| column.generated.is_some())
+            .collect(),
+        TableEntry::Mem(_) => vec![false; column_list.len()],
+        TableEntry::View(_) | TableEntry::Sequence(_) => {
+            unreachable!("view and sequence targets were refused above")
+        }
+    };
+    let column_meta = column_metadata(table);
+    if insert.source.is_some() {
+        for &offset in &target_offsets {
+            if generated_targets[offset] {
+                return Err(DriverError::BadGeneratedColumn {
+                    column: column_list[offset].0.clone(),
+                    table: table_name,
+                });
+            }
+        }
+    }
+    Ok(InsertTargetLayout {
+        database,
+        table_name,
+        column_list,
+        target_offsets,
+        generated_targets,
+        column_meta,
+    })
+}
+
 /// [`run_insert_stmt`], recording the plan it builds into `trace`.
 ///
 /// An `INSERT ... SELECT`'s source is traced by the very run that feeds the
@@ -107,11 +202,28 @@ pub(crate) fn run_insert_traced(
         return Err(DriverError::unsupported("partitions are not supported yet"));
     }
 
-    // `INSERT ... SELECT` runs its source query first, over the catalog as it
-    // stands: Go materializes the SelectExec's rows and feeds them to the
-    // insert, so a source that reads the target table sees the pre-insert
-    // rows. The query runs before the table is borrowed mutably, which is the
-    // same ordering.
+    let target_layout = resolve_insert_target(insert, catalog, current_db)?;
+    let eval_chunk = {
+        let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
+        chunk.set_num_virtual_rows(1);
+        chunk
+    };
+    let select_on_duplicate = if insert.source.is_some() {
+        Some(prepare_on_duplicate_assignments(
+            &insert.on_duplicate,
+            &target_layout.column_list,
+            &target_layout.column_meta,
+            &target_layout.table_name,
+            ctx,
+            eval_chunk.get_row(0),
+        )?)
+    } else {
+        None
+    };
+
+    // Once the target is valid, `INSERT ... SELECT` runs its source over the
+    // pre-insert catalog and materializes those rows before the table is
+    // borrowed mutably.
     let source_rows: Option<Vec<Vec<Datum>>> = match &insert.source {
         Some(query) => Some(match &**query {
             tidb_ast::QueryStmt::Select(select) => {
@@ -144,129 +256,17 @@ pub(crate) fn run_insert_traced(
         }
     }
 
-    let (database, table_name) = split_table_path(&insert.table, current_db)?;
-    let (database, table_name) = (database.to_owned(), table_name.to_owned());
+    let InsertTargetLayout {
+        database,
+        table_name,
+        column_list,
+        target_offsets,
+        generated_targets,
+        column_meta,
+    } = target_layout;
     let table = catalog
         .get_mut_in(&database, &table_name)
         .ok_or(DriverError::unsupported("table not found in catalog"))?;
-    // Go refuses a write through a view before planning anything.
-    if table.is_view() {
-        return Err(DriverError::InsertIntoViewUnsupported(table_name.clone()));
-    }
-    // Go refuses the same way for a sequence, with the same shape of plain
-    // message; captured: `insert into sequence s1 is not supported now`.
-    if table.is_sequence() {
-        return Err(DriverError::InsertIntoSequenceUnsupported(
-            table_name.clone(),
-        ));
-    }
-    let column_list = table.column_list();
-
-    // Map an explicit column list to table offsets; without one, values map to
-    // every column in order.
-    //
-    // `INSERT ... SET a = 1, b = 2` is the same statement as
-    // `INSERT (a, b) VALUES (1, 2)` -- Go normalizes its `Setlist` into
-    // `Columns` + one `Lists` entry, and the parser here does the same, so
-    // the assignment columns are simply another way to name the targets.
-    let named_columns: Vec<String> = if insert.set_syntax {
-        insert
-            .set_columns
-            .iter()
-            .map(|path| path.last().cloned().unwrap_or_default())
-            .collect()
-    } else {
-        insert.columns.clone()
-    };
-    let target_offsets: Vec<usize> = if insert.set_syntax || insert.columns_specified {
-        named_columns
-            .iter()
-            .map(|name| {
-                column_list
-                    .iter()
-                    .position(|(n, _)| n.eq_ignore_ascii_case(name))
-                    .ok_or_else(|| DriverError::UnknownColumnInClause {
-                        column: name.clone(),
-                        clause: "field list".to_owned(),
-                    })
-            })
-            .collect::<Result<_, _>>()?
-    } else {
-        (0..column_list.len()).collect()
-    };
-
-    // Go `planbuilder.getInsertColExpr` / `buildSelectPlanOfInsert`: a
-    // generated column's value comes from its expression, so writing to it is
-    // ErrBadGeneratedColumn (3105). The one permitted spelling is `DEFAULT`,
-    // which means exactly "leave it to the expression"; an `INSERT ...
-    // SELECT` has no `DEFAULT` spelling at all, so any generated target is
-    // refused there.
-    // Over the VISIBLE columns, so this indexes the same row `column_list`
-    // does. A hidden expression-index column is generated too, but no
-    // statement can name it, so it is never a target -- and the row this
-    // builds is widened to the physical width when it is written, which is
-    // where its value gets computed.
-    let generated_targets: Vec<bool> = match table {
-        TableEntry::Kv(kv) => kv
-            .visible_columns()
-            .iter()
-            .map(|c| c.generated.is_some())
-            .collect(),
-        _ => vec![false; column_list.len()],
-    };
-    if generated_targets.iter().any(|generated| *generated) {
-        for (position, &offset) in target_offsets.iter().enumerate() {
-            if !generated_targets[offset] {
-                continue;
-            }
-            let written = match &source_rows {
-                // A source query supplies a value for every target.
-                Some(_) => true,
-                None => insert.rows.iter().any(|row| {
-                    row.get(position)
-                        .is_some_and(|value| !matches!(value, tidb_ast::Expr::Default(_)))
-                }),
-            };
-            if written {
-                return Err(DriverError::BadGeneratedColumn {
-                    column: column_list[offset].0.clone(),
-                    table: table_name.clone(),
-                });
-            }
-        }
-    }
-
-    // Evaluate each VALUES row (constant expressions over the dual row).
-    let eval_chunk = {
-        let mut c = tidb_chunk::chunk::Chunk::new_empty(&[]);
-        c.set_num_virtual_rows(1);
-        c
-    };
-    // The per-column metadata the default and NOT NULL rules read.
-    let column_meta: Vec<ColumnMeta> = match table {
-        TableEntry::Kv(kv) => kv
-            .columns
-            .iter()
-            .map(|c| {
-                (
-                    c.default_value.clone(),
-                    c.field_type.flags() & 1 != 0,
-                    c.name.clone(),
-                    c.field_type.clone(),
-                )
-            })
-            .collect(),
-        // A matrix-backed table carries no column metadata, so every column
-        // is nullable with no default -- the original mock behavior.
-        TableEntry::Mem(mem) => mem
-            .columns
-            .iter()
-            .map(|(name, field_type)| (None, false, name.clone(), field_type.clone()))
-            .collect(),
-        TableEntry::View(_) | TableEntry::Sequence(_) => {
-            unreachable!("INSERT through a view or sequence is refused above")
-        }
-    };
 
     let auto_increment_offset = match table {
         TableEntry::Kv(kv) => kv.auto_increment_offset(),
@@ -310,6 +310,177 @@ pub(crate) fn run_insert_traced(
     let bad_null_level = crate::bad_null::NullLevel::from_is_error(
         !ctx.ignore_err() && (ctx.strict() || insert.rows.len() == 1),
     );
+
+    enum PreparedInsertValue {
+        Generated,
+        Expression(Expression),
+    }
+
+    // Go lowers every explicit VALUES default while building the insert plan,
+    // row-major and before an ordinary VALUES expression is evaluated. This
+    // ordering is observable for computed defaults such as RAND(), and is
+    // deliberately distinct from omitted columns, whose defaults are filled
+    // later while each runtime row is built.
+    let mut prepared_value_rows: Vec<Vec<PreparedInsertValue>> = Vec::new();
+    let names_a_column = insert.set_syntax || insert.columns_specified;
+    let mut previous_width = target_offsets.len();
+    if source_rows.is_none() {
+        let resolver = TableResolver {
+            table_name: &table_name,
+            columns: &column_list,
+            zone: ctx.session_zone(),
+        };
+        for (index, values) in insert.rows.iter().enumerate() {
+            let width = values.len();
+            let expected = if index == 0 {
+                target_offsets.len()
+            } else {
+                previous_width
+            };
+            let arity_is_checked = index > 0 || names_a_column || width > 0;
+            if arity_is_checked && width != expected {
+                return Err(DriverError::unsupported(
+                    "VALUES arity does not match the column list",
+                ));
+            }
+            previous_width = width;
+
+            let mut prepared = Vec::with_capacity(width);
+            for (position, value) in values.iter().enumerate() {
+                let target_offset = target_offsets[position];
+                let target = ResolvedDefaultColumn {
+                    identity: DefaultColumnIdentity {
+                        table: 0,
+                        column: target_offset,
+                    },
+                    meta: column_meta[target_offset].clone(),
+                };
+                let resolve_root_default =
+                    |path: &[String]| -> Result<ResolvedDefaultColumn, DriverError> {
+                        let name = path
+                            .last()
+                            .ok_or(DriverError::unsupported("DEFAULT() needs a column"))?;
+                        let column = column_meta
+                            .iter()
+                            .position(|meta| meta.name.eq_ignore_ascii_case(name))
+                            .ok_or_else(|| DriverError::UnknownColumnInClause {
+                                column: name.clone(),
+                                clause: "field list".to_owned(),
+                            })?;
+                        Ok(ResolvedDefaultColumn {
+                            identity: DefaultColumnIdentity { table: 0, column },
+                            meta: column_meta[column].clone(),
+                        })
+                    };
+
+                let expression = match value {
+                    tidb_ast::Expr::Default(None) if target.meta.generated => {
+                        prepared.push(PreparedInsertValue::Generated);
+                        continue;
+                    }
+                    tidb_ast::Expr::Default(None) => {
+                        let datum = materialize_column_default(
+                            &target.meta,
+                            DefaultUse::Insert,
+                            ctx,
+                            eval_chunk.get_row(0),
+                        )?;
+                        Expression::Constant(tidb_expr::constant::Constant::new(
+                            datum,
+                            target.meta.field_type,
+                        ))
+                    }
+                    tidb_ast::Expr::Default(Some(path)) => {
+                        let source = resolve_root_default(path)?;
+                        if target.identity != source.identity
+                            && (target.meta.generated || source.meta.generated)
+                        {
+                            return Err(DriverError::BadGeneratedColumn {
+                                column: target.meta.name,
+                                table: table_name.clone(),
+                            });
+                        }
+                        if target.meta.generated {
+                            prepared.push(PreparedInsertValue::Generated);
+                            continue;
+                        }
+                        let datum = materialize_column_default(
+                            &source.meta,
+                            DefaultUse::Insert,
+                            ctx,
+                            eval_chunk.get_row(0),
+                        )?;
+                        Expression::Constant(tidb_expr::constant::Constant::new(
+                            datum,
+                            source.meta.field_type,
+                        ))
+                    }
+                    _ if target.meta.generated => {
+                        return Err(DriverError::BadGeneratedColumn {
+                            column: target.meta.name,
+                            table: table_name.clone(),
+                        });
+                    }
+                    _ => {
+                        let defaults = prepare_named_defaults(
+                            value,
+                            ctx,
+                            eval_chunk.get_row(0),
+                            DefaultUse::Expression,
+                            |path| {
+                                let (column, _, _) = resolver.resolve(path).ok_or_else(|| {
+                                    DriverError::UnknownColumnInClause {
+                                        column: path.last().cloned().unwrap_or_default(),
+                                        clause: "field list".to_owned(),
+                                    }
+                                })?;
+                                Ok(ResolvedDefaultColumn {
+                                    identity: DefaultColumnIdentity { table: 0, column },
+                                    meta: column_meta[column].clone(),
+                                })
+                            },
+                        )?;
+                        rewrite_with_prepared_defaults(value, &resolver, &defaults)?
+                    }
+                };
+                prepared.push(PreparedInsertValue::Expression(expression));
+            }
+            prepared_value_rows.push(prepared);
+        }
+    } else {
+        // INSERT SELECT still performs the same arity check, but has no AST
+        // values to lower.
+        for (index, values) in value_rows.iter().enumerate() {
+            let width = values.len();
+            let expected = if index == 0 {
+                target_offsets.len()
+            } else {
+                previous_width
+            };
+            if width != expected {
+                return Err(DriverError::unsupported(
+                    "VALUES arity does not match the column list",
+                ));
+            }
+            previous_width = width;
+        }
+    }
+
+    // Go resolves ON DUPLICATE after the VALUES lists and before execution.
+    // Keeping that placement makes generated-column and DEFAULT errors visible
+    // even when no candidate row ends up conflicting.
+    let prepared_on_duplicate = match select_on_duplicate {
+        Some(prepared) => prepared,
+        None => prepare_on_duplicate_assignments(
+            &insert.on_duplicate,
+            &column_list,
+            &column_meta,
+            &table_name,
+            ctx,
+            eval_chunk.get_row(0),
+        )?,
+    };
+
     let mut new_rows: Vec<Vec<Datum>> = Vec::with_capacity(row_count);
     // Go `buildValuesListOfInsert` checks arity in two steps: the FIRST row
     // against the target columns, and every later row against the one before
@@ -319,46 +490,22 @@ pub(crate) fn run_insert_traced(
     // predecessor is then what still rejects `VALUES (), (1)`. An empty row
     // assigns nothing, so the default, auto-increment and NOT NULL rules
     // below fill the whole row.
-    let names_a_column = insert.set_syntax || insert.columns_specified;
-    let mut previous_width = target_offsets.len();
     for index in 0..row_count {
         let width = match source_rows.as_ref() {
             Some(_) => value_rows.get(index).map_or(0, Vec::len),
             None => insert.rows[index].len(),
         };
-        let expected = if index == 0 {
-            target_offsets.len()
-        } else {
-            previous_width
-        };
-        let arity_is_checked = index > 0 || source_rows.is_some() || names_a_column || width > 0;
-        if arity_is_checked && width != expected {
-            return Err(DriverError::unsupported(
-                "VALUES arity does not match the column list",
-            ));
-        }
-        previous_width = width;
         let mut row = vec![Datum::Null; column_list.len()];
         let mut assigned = vec![false; column_list.len()];
         for (position, &offset) in target_offsets.iter().enumerate().take(width) {
-            // A generated target survived the 3105 check only by being
-            // written `DEFAULT`, which stands for the expression: there is no
-            // value to evaluate, and the expression fills the slot below.
-            if generated_targets[offset] {
-                continue;
-            }
             let value = match source_rows.as_ref() {
                 Some(_) => value_rows[index][position].clone(),
-                None => {
-                    let rewritten = rewrite_expr_resolved(
-                        &insert.rows[index][position],
-                        &tidb_expr::rewriter::ZonedNoResolver(ctx.session_zone()),
-                    )
-                    .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
-                    rewritten
+                None => match &prepared_value_rows[index][position] {
+                    PreparedInsertValue::Generated => continue,
+                    PreparedInsertValue::Expression(expression) => expression
                         .eval(ctx, eval_chunk.get_row(0))
-                        .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?
-                }
+                        .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?,
+                },
             };
             row[offset] = value;
             assigned[offset] = true;
@@ -403,7 +550,7 @@ pub(crate) fn run_insert_traced(
             if assigned[offset] && !generated_targets[offset] {
                 crate::bad_null::handle_bad_null(
                     value,
-                    &column_meta[offset].3,
+                    &column_meta[offset].field_type,
                     &column_list[offset].0,
                     bad_null_level,
                     ctx,
@@ -610,7 +757,7 @@ pub(crate) fn run_insert_traced(
                     target(catalog, &database, &table_name),
                     &conflicts[0],
                     row,
-                    &insert.on_duplicate,
+                    &prepared_on_duplicate,
                     &column_list,
                     position,
                     ctx,
@@ -820,6 +967,103 @@ pub(crate) fn dml_row_limit(limit: &Option<tidb_ast::Limit>) -> Result<Option<u6
     Ok(Some(eval_limit_bound(&limit.count)?))
 }
 
+#[derive(Clone, Debug)]
+enum PreparedOnDuplicateValue {
+    Constant(Expression),
+    Ast {
+        value: tidb_ast::Expr,
+        defaults: Vec<PreparedNamedDefault>,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct PreparedOnDuplicateAssignment {
+    offset: usize,
+    value: PreparedOnDuplicateValue,
+}
+
+/// Resolves ON DUPLICATE assignments once, whether or not an inserted row
+/// eventually conflicts. `VALUES(col)` remains in the AST until a candidate
+/// row exists, but every DEFAULT leaf is already a typed statement constant.
+fn prepare_on_duplicate_assignments(
+    assignments: &[tidb_ast::Assignment],
+    column_list: &[(String, FieldType)],
+    column_meta: &[ColumnDefaultMeta],
+    table_name: &str,
+    ctx: &crate::StmtContext,
+    row: tidb_chunk::row::Row<'_>,
+) -> Result<Vec<PreparedOnDuplicateAssignment>, DriverError> {
+    let resolver = TableResolver {
+        table_name,
+        columns: column_list,
+        zone: ctx.session_zone(),
+    };
+    let mut prepared = Vec::with_capacity(assignments.len());
+    for assignment in assignments {
+        let (offset, _, _) = resolver.resolve(&assignment.col).ok_or_else(|| {
+            DriverError::UnknownColumnInClause {
+                column: assignment.col.last().cloned().unwrap_or_default(),
+                clause: "field list".to_owned(),
+            }
+        })?;
+        let target_identity = DefaultColumnIdentity {
+            table: 0,
+            column: offset,
+        };
+        let target_meta = &column_meta[offset];
+
+        if target_meta.generated {
+            let is_own_default = match &assignment.value {
+                tidb_ast::Expr::Default(None) => true,
+                tidb_ast::Expr::Default(Some(path)) => {
+                    resolver.resolve(path).is_some_and(|(column, _, _)| {
+                        target_identity == (DefaultColumnIdentity { table: 0, column })
+                    })
+                }
+                _ => false,
+            };
+            if is_own_default {
+                continue;
+            }
+            return Err(DriverError::BadGeneratedColumn {
+                column: target_meta.name.clone(),
+                table: table_name.to_owned(),
+            });
+        }
+
+        let value = match &assignment.value {
+            tidb_ast::Expr::Default(None) => {
+                let datum =
+                    materialize_column_default(target_meta, DefaultUse::Expression, ctx, row)?;
+                PreparedOnDuplicateValue::Constant(Expression::Constant(
+                    tidb_expr::constant::Constant::new(datum, target_meta.field_type.clone()),
+                ))
+            }
+            value => {
+                let defaults =
+                    prepare_named_defaults(value, ctx, row, DefaultUse::Expression, |path| {
+                        let (column, _, _) = resolver.resolve(path).ok_or_else(|| {
+                            DriverError::UnknownColumnInClause {
+                                column: path.last().cloned().unwrap_or_default(),
+                                clause: "field list".to_owned(),
+                            }
+                        })?;
+                        Ok(ResolvedDefaultColumn {
+                            identity: DefaultColumnIdentity { table: 0, column },
+                            meta: column_meta[column].clone(),
+                        })
+                    })?;
+                PreparedOnDuplicateValue::Ast {
+                    value: value.clone(),
+                    defaults,
+                }
+            }
+        };
+        prepared.push(PreparedOnDuplicateAssignment { offset, value });
+    }
+    Ok(prepared)
+}
+
 /// Go `ON DUPLICATE KEY UPDATE`: applies the assignments to the row already
 /// stored, and reports what the statement counts as affected.
 ///
@@ -831,7 +1075,7 @@ pub(crate) fn apply_on_duplicate(
     table: &mut crate::KvTable,
     handle: &crate::kv_table::TableHandle,
     candidate: &[Datum],
-    assignments: &[tidb_ast::Assignment],
+    assignments: &[PreparedOnDuplicateAssignment],
     column_list: &[(String, FieldType)],
     row_index: usize,
     ctx: &crate::StmtContext,
@@ -843,37 +1087,31 @@ pub(crate) fn apply_on_duplicate(
         return Ok(0);
     };
     let field_types: Vec<FieldType> = column_list.iter().map(|(_, ft)| ft.clone()).collect();
+    let resolver = TableResolver {
+        table_name: "",
+        columns: column_list,
+        zone: ctx.session_zone(),
+    };
     let mut updated = existing.clone();
     for assignment in assignments {
-        let name = assignment
-            .col
-            .last()
-            .ok_or(DriverError::unsupported("empty assignment column"))?;
-        let offset = column_list
-            .iter()
-            .position(|(candidate, _)| candidate.eq_ignore_ascii_case(name))
-            .ok_or_else(|| DriverError::UnknownColumnInClause {
-                column: name.clone(),
-                clause: "field list".to_owned(),
-            })?;
-        // `VALUES(col)` is the value the insert would have written, which Go
-        // resolves before evaluating the assignment.
-        let bound = substitute_values_references(&assignment.value, candidate, column_list)?;
-        let resolver = TableResolver {
-            table_name: "",
-            columns: column_list,
-            zone: ctx.session_zone(),
+        let expr = match &assignment.value {
+            PreparedOnDuplicateValue::Constant(expression) => expression.clone(),
+            PreparedOnDuplicateValue::Ast { value, defaults } => {
+                // `VALUES(col)` is the value the insert would have written,
+                // resolved only after this candidate exists. DEFAULT leaves
+                // remain bound to the statement constants prepared earlier.
+                let bound = substitute_values_references(value, candidate, column_list)?;
+                rewrite_with_prepared_defaults(&bound, &resolver, defaults)?
+            }
         };
-        let expr = rewrite_expr_resolved(&bound, &resolver)
-            .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
         let chunk = row_chunk(&updated, &field_types)?;
         let value = expr
             .eval(ctx, chunk.get_row(0))
             .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
-        updated[offset] = cast_value_for_assignment(
+        updated[assignment.offset] = cast_value_for_assignment(
             value,
-            &field_types[offset],
-            &column_list[offset].0,
+            &field_types[assignment.offset],
+            &column_list[assignment.offset].0,
             row_index,
             ctx,
         )?;
@@ -982,51 +1220,6 @@ pub(crate) fn substitute_values_references(
     }
 }
 
-/// One column's share of what the default and NOT NULL rules read:
-/// `(default, NOT NULL, name, type)`. The TYPE is here because a COMPUTED
-/// default is cast into it per row, so the rules cannot be applied without it.
-type ColumnMeta = (
-    Option<crate::column_default::ColumnDefault>,
-    bool,
-    String,
-    tidb_datatype::FieldType,
-);
-
-/// The value an omitted column takes, following Go `GetColDefaultValue` and
-/// `getColDefaultValueFromNil`: the stored `DEFAULT` when one was written, or
-/// NULL for a nullable column; a NOT NULL column with no default is Go's
-/// `ErrNoDefaultForField` under strict mode, and under a non-strict mode the
-/// same message as a WARNING plus that type's zero value
-/// (`getColDefaultValueFromNil`'s `if !strictSQLMode` arm). Captured from
-/// TiDB under `sql_mode = ''`: `INSERT INTO t (b) VALUES (9)` into
-/// `t(a INT NOT NULL, b INT NOT NULL DEFAULT 3)` is accepted, warns 1364 and
-/// stores `0`.
-pub(crate) fn column_default(
-    meta: &[ColumnMeta],
-    offset: usize,
-    ctx: &crate::StmtContext,
-    row: tidb_chunk::row::Row<'_>,
-) -> Result<Datum, DriverError> {
-    let (default_value, not_null, name, field_type) = &meta[offset];
-    match default_value {
-        // A COMPUTED default reads the statement's own clock here rather than
-        // a value settled at DDL time, which is what makes every row of one
-        // `INSERT` share one `CURRENT_TIMESTAMP` reading -- Go's
-        // `GetColDefaultValue` over the same fixed `EvalContext`.
-        Some(default) => crate::column_default::evaluate(default, field_type, ctx, row)
-            .map_err(|e| DriverError::Exec(ExecError::Eval(e))),
-        None if *not_null && !ctx.strict() => {
-            ctx.append_warning_parts(
-                1364,
-                &format!("Field '{name}' doesn't have a default value"),
-            );
-            Ok(crate::bad_null::zero_value(field_type))
-        }
-        None if *not_null => Err(DriverError::NoDefaultForField(name.clone())),
-        None => Ok(Datum::Null),
-    }
-}
-
 /// Runs a single-table `UPDATE`, returning MySQL's affected-row count.
 ///
 /// Go `executor.UpdateExec` + `updateRecord`: each row the `WHERE` selects is
@@ -1129,10 +1322,11 @@ pub(crate) fn run_update_traced(
         }
     };
     let (database, name) = single_table_name(table_ref, current_db)?;
-    let column_list = catalog
+    let table = catalog
         .get_in(&database, &name)
-        .ok_or(DriverError::unsupported("unknown table"))?
-        .column_list();
+        .ok_or(DriverError::unsupported("unknown table"))?;
+    let column_list = table.column_list();
+    let column_meta = column_metadata(table);
 
     // An alias REPLACES the table name as the only usable qualifier, in the
     // SET list as much as the WHERE: `UPDATE u AS x SET x.v = 1` resolves and
@@ -1148,23 +1342,25 @@ pub(crate) fn run_update_traced(
         let (offset, _, _) = resolver
             .resolve(&assignment.col)
             .ok_or(DriverError::unsupported("unknown column in SET"))?;
-        // Go `buildUpdateLists`: assigning to a generated column is 3105
-        // unless the assigned value is `DEFAULT`, which means "leave it to
-        // the expression" -- the same rule INSERT follows.
-        if let Some(TableEntry::Kv(kv)) = catalog.get_in(&database, &name) {
-            if kv.columns[offset].generated.is_some()
-                && !matches!(assignment.value, tidb_ast::Expr::Default(_))
-            {
+        // Go `IsDefaultExprSameColumn`: a generated target accepts only bare
+        // DEFAULT or DEFAULT(the same resolved column). DEFAULT(other), even
+        // though it has the same AST variant, is error 3105.
+        if column_meta[offset].generated {
+            let own_default = match &assignment.value {
+                tidb_ast::Expr::Default(None) => true,
+                tidb_ast::Expr::Default(Some(path)) => resolver
+                    .resolve(path)
+                    .is_some_and(|(source, _, _)| source == offset),
+                _ => false,
+            };
+            if !own_default {
                 return Err(DriverError::BadGeneratedColumn {
-                    column: kv.columns[offset].name.clone(),
+                    column: column_meta[offset].name.clone(),
                     table: name.clone(),
                 });
             }
-            if kv.columns[offset].generated.is_some() {
-                // `SET g = DEFAULT` asks for the expression, which the write
-                // recomputes anyway, so it assigns nothing.
-                continue;
-            }
+            // The generation expression remains the value source.
+            continue;
         }
         assignments.push((offset, assignment.value.clone()));
     }
@@ -1175,13 +1371,53 @@ pub(crate) fn run_update_traced(
         ),
         None => None,
     };
+    let default_row = {
+        let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
+        chunk.set_num_virtual_rows(1);
+        chunk
+    };
     let mut set_exprs = Vec::with_capacity(assignments.len());
     for (offset, value) in &assignments {
-        set_exprs.push((
-            *offset,
-            rewrite_expr_resolved(value, &resolver)
-                .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?,
-        ));
+        let expression = match value {
+            // Go fills a bare update DEFAULT with the target column name and
+            // resolves it through GetColDefaultValue while building the
+            // assignment. Do the same once here, before row iteration, so a
+            // computed default and any warning are statement-scoped.
+            tidb_ast::Expr::Default(None) => {
+                let value = materialize_column_default(
+                    &column_meta[*offset],
+                    DefaultUse::Expression,
+                    ctx,
+                    default_row.get_row(0),
+                )?;
+                Expression::Constant(tidb_expr::constant::Constant::new(
+                    value,
+                    column_meta[*offset].field_type.clone(),
+                ))
+            }
+            _ => {
+                let defaults = prepare_named_defaults(
+                    value,
+                    ctx,
+                    default_row.get_row(0),
+                    DefaultUse::Expression,
+                    |path| {
+                        let (column, _, _) = resolver.resolve(path).ok_or_else(|| {
+                            DriverError::UnknownColumnInClause {
+                                column: path.last().cloned().unwrap_or_default(),
+                                clause: "field list".to_owned(),
+                            }
+                        })?;
+                        Ok(ResolvedDefaultColumn {
+                            identity: DefaultColumnIdentity { table: 0, column },
+                            meta: column_meta[column].clone(),
+                        })
+                    },
+                )?;
+                rewrite_with_prepared_defaults(value, &resolver, &defaults)?
+            }
+        };
+        set_exprs.push((*offset, expression));
     }
 
     let field_types: Vec<FieldType> = column_list.iter().map(|(_, ft)| ft.clone()).collect();

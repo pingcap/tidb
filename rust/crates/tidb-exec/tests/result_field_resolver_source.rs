@@ -16,7 +16,7 @@
 
 #![allow(missing_docs)]
 
-use tidb_ast::{Expr, SelectField};
+use tidb_ast::{BitLiteralValue, Expr, SelectField};
 use tidb_datatype::{Collation, FieldTypeCode};
 use tidb_exec::{
     resolve_result_fields, resolve_select_fields, ResultFieldResolveError, ResultFieldSpec,
@@ -41,6 +41,32 @@ fn tableless_literals_use_source_expression_names_and_types() {
     assert_eq!(fields[1].field_type.decimal, Some(2));
     assert_eq!(fields[2].names.column.original, "'raw'");
     assert_eq!(fields[2].field_type.collation, Collation::Utf8Mb4Bin);
+}
+
+#[test]
+fn binary_literal_metadata_uses_decoded_width_and_source_flags() {
+    let fields = resolve_result_fields(
+        &[
+            ResultFieldSpec::new(Expr::Hex("0001".to_owned())),
+            ResultFieldSpec::new(Expr::Bit(BitLiteralValue::from_digits("000000001"))),
+        ],
+        Collation::DEFAULT,
+    )
+    .expect("binary literal metadata");
+
+    assert_eq!(fields[0].names.column.original, "x'0001'");
+    assert_eq!(fields[0].field_type.flen, Some(6));
+    assert_eq!(
+        fields[0].field_type.flags,
+        tidb_protocol::BINARY_FLAG | tidb_exec::NOT_NULL_FLAG | tidb_exec::UNSIGNED_FLAG
+    );
+
+    assert_eq!(fields[1].names.column.original, "b'1'");
+    assert_eq!(fields[1].field_type.flen, Some(6));
+    assert_eq!(
+        fields[1].field_type.flags,
+        tidb_protocol::BINARY_FLAG | tidb_exec::NOT_NULL_FLAG
+    );
 }
 
 #[test]

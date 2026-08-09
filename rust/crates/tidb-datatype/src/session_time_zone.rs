@@ -38,13 +38,17 @@
 //! needs it most and they are BELOW the session in the crate graph, exactly
 //! as Go's `tablecodec` is below `sessionctx`.
 
-use chrono::{FixedOffset, LocalResult, NaiveDate, NaiveDateTime, Offset, TimeZone};
+use chrono::{FixedOffset, Local, LocalResult, NaiveDate, NaiveDateTime, Offset, TimeZone};
 use chrono_tz::Tz;
 
 /// The session `time_zone`: a fixed offset (Go `time.FixedZone`) or a named
 /// IANA zone (Go `time.LoadLocation`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SessionTimeZone {
+    /// Go `time.Local`, used when TiDB's `SystemLocation` cannot be resolved
+    /// to an IANA name. Unlike a fixed snapshot, this retains historical and
+    /// future daylight-saving transitions.
+    Local,
     /// A fixed offset east of UTC with its display name.
     Fixed {
         /// The zone's display name.
@@ -83,6 +87,10 @@ impl SessionTimeZone {
     #[must_use]
     pub fn dag_zone(&self) -> (String, i64) {
         match self {
+            Self::Local => (
+                "System".to_owned(),
+                i64::from(Local::now().offset().fix().local_minus_utc()),
+            ),
             // Go's `SystemLocation()` keeps its own name, which `Zone`
             // rewrites from `"Local"` to `"System"`; every other fixed zone
             // this session builds is the anonymous offset one.
@@ -107,6 +115,7 @@ impl SessionTimeZone {
     #[must_use]
     pub fn is_utc(&self) -> bool {
         match self {
+            Self::Local => false,
             Self::Fixed { offset_secs, .. } => *offset_secs == 0,
             Self::Named(zone) => *zone == Tz::UTC,
         }
@@ -175,6 +184,7 @@ impl TimeZone for SessionTimeZone {
 
     fn offset_from_local_date(&self, local: &NaiveDate) -> LocalResult<Self::Offset> {
         match self {
+            Self::Local => lift(Local.offset_from_local_date(local)),
             Self::Fixed { offset_secs, .. } => {
                 lift(fixed(*offset_secs).offset_from_local_date(local))
             }
@@ -184,6 +194,7 @@ impl TimeZone for SessionTimeZone {
 
     fn offset_from_local_datetime(&self, local: &NaiveDateTime) -> LocalResult<Self::Offset> {
         match self {
+            Self::Local => lift(Local.offset_from_local_datetime(local)),
             Self::Fixed { offset_secs, .. } => {
                 lift(fixed(*offset_secs).offset_from_local_datetime(local))
             }
@@ -193,6 +204,9 @@ impl TimeZone for SessionTimeZone {
 
     fn offset_from_utc_date(&self, utc: &NaiveDate) -> Self::Offset {
         match self {
+            Self::Local => SessionTimeZoneOffset {
+                fixed: Local.offset_from_utc_date(utc).fix(),
+            },
             Self::Fixed { offset_secs, .. } => SessionTimeZoneOffset {
                 fixed: fixed(*offset_secs).offset_from_utc_date(utc).fix(),
             },
@@ -204,6 +218,9 @@ impl TimeZone for SessionTimeZone {
 
     fn offset_from_utc_datetime(&self, utc: &NaiveDateTime) -> Self::Offset {
         match self {
+            Self::Local => SessionTimeZoneOffset {
+                fixed: Local.offset_from_utc_datetime(utc).fix(),
+            },
             Self::Fixed { offset_secs, .. } => SessionTimeZoneOffset {
                 fixed: fixed(*offset_secs).offset_from_utc_datetime(utc).fix(),
             },

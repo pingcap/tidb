@@ -269,17 +269,20 @@ pub(crate) fn find_in_set_with_collation(
     vals: &[Datum],
     collation: tidb_datatype::Collation,
 ) -> Result<Datum, EvalError> {
-    let (Some(needle), Some(list)) = (coerce_str(&vals[0])?, coerce_str(&vals[1])?) else {
+    let (Some(needle), Some(list)) = (
+        crate::coerce::coerce_str_bytes(&vals[0])?,
+        crate::coerce::coerce_str_bytes(&vals[1])?,
+    ) else {
         return Ok(Datum::Null);
     };
     if list.is_empty() {
         return Ok(Datum::Int(0));
     }
     let collator = tidb_datatype::get_collator(collation.name());
-    let needle_key = collator.key_without_trim_right_space(needle.as_bytes());
+    let needle_key = collator.key_without_trim_right_space(&needle);
     Ok(Datum::Int(
-        list.split(',')
-            .position(|entry| collator.key_without_trim_right_space(entry.as_bytes()) == needle_key)
+        list.split(|byte| *byte == b',')
+            .position(|entry| collator.key_without_trim_right_space(entry) == needle_key)
             .map_or(0, |index| index as i64 + 1),
     ))
 }
@@ -341,6 +344,7 @@ mod tests {
     use crate::string_fn::{char_func, format_num, format_num_locale, position, substring};
     use crate::string_packet::to_base64;
     use crate::Datum;
+    use tidb_datatype::{Collation, MysqlEnum, MysqlSet};
 
     fn string(value: &str) -> Datum {
         Datum::new_string(value.to_string())
@@ -557,6 +561,17 @@ mod tests {
         assert_eq!(
             call("FIND_IN_SET", &[string("1"), Datum::Int(1)]),
             Datum::Int(1)
+        );
+        assert_eq!(
+            call(
+                "FIND_IN_SET",
+                &[
+                    Datum::new_enum(MysqlEnum::new([0xff], 1), Collation::Binary),
+                    Datum::new_set(MysqlSet::new([0xfe, b',', 0xff], 3), Collation::Binary,),
+                ],
+            ),
+            Datum::Int(2),
+            "Go EvalString compares arbitrary enum/set name bytes"
         );
         for args in [
             vec![string("foo"), Datum::Null],

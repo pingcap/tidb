@@ -32,7 +32,7 @@ use std::sync::{Arc, Mutex};
 
 use tidb_datatype::{Collation, Datum, FieldType, FieldTypeCode};
 use tidb_executor::storage::{MemTableStorage, StorageError, StorageIterator, TableStorage};
-use tidb_executor::{KvColumn, KvIndex, KvTable};
+use tidb_executor::{IndexRange, KvColumn, KvIndex, KvTable};
 use tidb_txnkv::Key;
 
 const FIXTURE: &str =
@@ -123,13 +123,17 @@ impl TableStorage for Mirror {
 type Written = Arc<Mutex<BTreeMap<Vec<u8>, Vec<u8>>>>;
 
 fn table(columns: Vec<KvColumn>) -> (KvTable, Written) {
+    table_with_collation(columns, true)
+}
+
+fn table_with_collation(columns: Vec<KvColumn>, use_new_collation: bool) -> (KvTable, Written) {
     let written: Written = Arc::new(Mutex::new(BTreeMap::new()));
     let store = Mirror {
         inner: MemTableStorage::new(),
         written: Arc::clone(&written),
     };
     (
-        KvTable::with_storage(TABLE_ID, columns, Box::new(store)),
+        KvTable::with_storage_and_collation(TABLE_ID, columns, Box::new(store), use_new_collation),
         written,
     )
 }
@@ -139,6 +143,7 @@ fn column(id: i64, name: &str, field_type: FieldType) -> KvColumn {
         name: name.to_owned(),
         id,
         field_type,
+        column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
         default_value: None,
         origin_default: None,
         generated: None,
@@ -207,6 +212,53 @@ fn a_unique_case_insensitive_entry_carries_gos_restored_data() {
     )
     .unwrap();
     assert_entry("unique_general_ci_A", &written);
+}
+
+/// Go's table object captures one encoder mode and uses it for both halves of
+/// every index entry. Legacy mode stores raw string keys without restored
+/// data; new mode stores lossy sort keys and the value that restores them.
+#[test]
+fn one_captured_mode_drives_both_kv_index_key_and_value() {
+    let columns = vec![column(2, "s", varchar(Collation::Utf8Mb4GeneralCi))];
+    let (mut legacy, legacy_written) = table_with_collation(columns.clone(), false);
+    let (mut modern, modern_written) = table_with_collation(columns, true);
+    legacy.add_index(index(1, true, vec![0]));
+    modern.add_index(index(1, true, vec![0]));
+    let row = [Datum::new_collation_string(
+        b"A".to_vec(),
+        Collation::Utf8Mb4GeneralCi,
+    )];
+
+    let legacy_handle = legacy.insert_row(&row, &tidb_expr::NoColumns).unwrap();
+    let modern_handle = modern.insert_row(&row, &tidb_expr::NoColumns).unwrap();
+    let (legacy_key, legacy_value) = only_index_entry(&legacy_written);
+    let (modern_key, modern_value) = only_index_entry(&modern_written);
+
+    assert_ne!(legacy_key, modern_key, "the key format follows the mode");
+    assert_ne!(
+        legacy_value, modern_value,
+        "the restored-data value follows the same mode"
+    );
+    assert_entry("unique_general_ci_A", &modern_written);
+
+    let point = IndexRange {
+        low: row.to_vec(),
+        high: row.to_vec(),
+        low_exclusive: false,
+        high_exclusive: false,
+    };
+    assert_eq!(legacy_handle, modern_handle);
+    let zone = tidb_datatype::SessionTimeZone::utc();
+    assert_eq!(
+        legacy.scan_index_range(1, &point, &zone).unwrap(),
+        vec![legacy_handle],
+        "legacy range bounds use the legacy entry's key format"
+    );
+    assert_eq!(
+        modern.scan_index_range(1, &point, &zone).unwrap(),
+        vec![modern_handle],
+        "new-collation range bounds use the new entry's key format"
+    );
 }
 
 /// The same column under a NON-unique index: the handle moves into the key,

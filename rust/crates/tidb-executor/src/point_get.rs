@@ -120,6 +120,7 @@ mod tests {
             name: name.to_owned(),
             id,
             field_type: FieldType::new(FieldTypeCode::LongLong),
+            column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
             default_value: None,
             origin_default: None,
             generated: None,

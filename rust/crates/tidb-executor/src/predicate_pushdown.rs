@@ -346,6 +346,7 @@ mod tests {
             name: name.to_owned(),
             id,
             field_type: long(),
+            column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
             default_value: None,
             origin_default: None,
             generated: None,
@@ -410,14 +411,17 @@ mod tests {
             .insert_row(&[Datum::Int(3), Datum::Int(30)], &tidb_expr::NoColumns)
             .unwrap();
         table
-            .update_row(
+            .update_row_with_context(
                 &committed_moved,
                 &[Datum::Int(8), Datum::Int(80)],
-                &tidb_expr::NoColumns,
+                &crate::StmtContext::for_dml(false, false, false),
             )
             .unwrap();
         table
-            .delete_row(&committed_low, &tidb_datatype::SessionTimeZone::utc())
+            .delete_row_with_context(
+                &committed_low,
+                &crate::StmtContext::for_dml(false, false, false),
+            )
             .unwrap();
         assert!(!buffer.is_empty(), "the writes are staged, not committed");
 

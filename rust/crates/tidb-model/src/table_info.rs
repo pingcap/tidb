@@ -1715,7 +1715,7 @@ mod tests {
         fn make_column(id: i64) -> ColumnInfo {
             ColumnInfo {
                 id,
-                name: CiString::new(&format!("c_{id}")),
+                name: CiString::new(format!("c_{id}")),
                 offset: id,
                 state: SchemaState::PUBLIC,
                 ..Default::default()
@@ -1725,11 +1725,11 @@ mod tests {
         fn make_index(id: i64, ids: &[i64]) -> IndexInfo {
             IndexInfo {
                 id,
-                name: CiString::new(&format!("i_{id}")),
+                name: CiString::new(format!("i_{id}")),
                 columns: ids
                     .iter()
                     .map(|id| IndexColumn {
-                        name: CiString::new(&format!("c_{id}")),
+                        name: CiString::new(format!("c_{id}")),
                         offset: *id,
                         ..Default::default()
                     })

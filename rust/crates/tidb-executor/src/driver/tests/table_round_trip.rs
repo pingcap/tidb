@@ -170,6 +170,7 @@ fn sql_round_trips_through_real_tikv_bytes() {
                     name: "a".to_owned(),
                     id: 1,
                     field_type: FieldType::new(FieldTypeCode::LongLong),
+                    column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
                     default_value: None,
                     // A column present at CREATE TABLE has no pre-existing rows.
                     origin_default: None,
@@ -179,6 +180,7 @@ fn sql_round_trips_through_real_tikv_bytes() {
                     name: "b".to_owned(),
                     id: 2,
                     field_type: FieldType::new(FieldTypeCode::LongLong),
+                    column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
                     default_value: None,
                     // A column present at CREATE TABLE has no pre-existing rows.
                     origin_default: None,

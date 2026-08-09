@@ -894,7 +894,7 @@ mod tests {
 
         let columns = GoSharedSlice::from_vec_with_capacity(
             (0..18)
-                .map(|index| CiString::new(&format!("c{index}")))
+                .map(|index| CiString::new(format!("c{index}")))
                 .collect(),
             24,
         );

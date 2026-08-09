@@ -54,6 +54,7 @@ fn column(name: &str, id: i64) -> KvColumn {
         name: name.to_owned(),
         id,
         field_type: long(),
+        column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
         default_value: None,
         origin_default: None,
         generated: None,
@@ -80,7 +81,7 @@ fn schema_of(width: usize) -> Schema {
 fn inner_table(rows: &[(i64, i64)]) -> KvTable {
     let mut table = KvTable::new(91, vec![column("a", 1), column("b", 2)]);
     table
-        .create_index(
+        .create_index_with_context(
             KvIndex {
                 id: 1,
                 name: "ib".to_owned(),
@@ -90,7 +91,7 @@ fn inner_table(rows: &[(i64, i64)]) -> KvTable {
                 visible: true,
                 global: false,
             },
-            &tidb_expr::NoColumns,
+            &crate::StmtContext::for_query(),
         )
         .unwrap();
     for (a, b) in rows {
@@ -115,20 +116,20 @@ fn outer_source(rows: &[Vec<Datum>]) -> Box<dyn Executor> {
 
 /// A whole-table scan of `table`, which is what the hash strategy reads.
 fn scan_of(table: &KvTable, width: usize) -> Box<dyn Executor> {
-    Box::new(crate::kv_table::TableScanExec::new(
+    Box::new(crate::kv_table::TableScanExec::new_with_context(
         ExecutorMeta::new(schema_of(width), 0, INIT_CAP, CHUNK),
         table.clone(),
-        tidb_datatype::SessionTimeZone::utc(),
+        crate::RowDecodeContext::for_test_query_utc(),
         crate::remote_scan::PushdownStatementContext::default(),
     ))
 }
 
 fn lookup_source(table: &KvTable, object: LookupObject, width: usize) -> IndexJoinLookupExec {
-    IndexJoinLookupExec::new(
+    IndexJoinLookupExec::new_with_context(
         ExecutorMeta::new(schema_of(width), 0, INIT_CAP, CHUNK),
         table.clone(),
         object,
-        tidb_datatype::SessionTimeZone::utc(),
+        crate::RowDecodeContext::for_test_query_utc(),
     )
 }
 
@@ -586,7 +587,7 @@ mod decision {
         b.field_type = FieldType::new(FieldTypeCode::LongLong).with_unsigned(true);
         let mut table = KvTable::new(93, vec![column("a", 1), b]);
         table
-            .create_index(
+            .create_index_with_context(
                 crate::kv_table::KvIndex {
                     id: 1,
                     name: "ib".to_owned(),
@@ -596,7 +597,7 @@ mod decision {
                     visible: true,
                     global: false,
                 },
-                &tidb_expr::NoColumns,
+                &crate::StmtContext::for_query(),
             )
             .unwrap();
         table

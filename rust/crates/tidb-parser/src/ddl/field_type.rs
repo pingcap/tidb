@@ -548,7 +548,15 @@ pub(super) fn normalize_binary_charset(ty: &mut ColumnType) {
         "TEXT" => Some("BLOB"),
         "MEDIUMTEXT" => Some("MEDIUMBLOB"),
         "LONGTEXT" => Some("LONGBLOB"),
-        "ENUM" | "SET" => None,
+        // Go keeps ENUM/SET as those logical types while retaining binary as
+        // their semantic charset/collation. `ColumnType::restore_into`
+        // deliberately omits a charset suffix for ENUM/SET, so preserving the
+        // semantic input here does not change the canonical SQL spelling.
+        "ENUM" | "SET" => {
+            ty.binary = false;
+            ty.charset = Some("binary".to_owned());
+            return;
+        }
         _ => return,
     };
     if let Some(name) = replacement {

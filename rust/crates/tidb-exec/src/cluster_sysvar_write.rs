@@ -193,11 +193,12 @@ fn locate(catalog: &ClusterCatalog) -> Result<&TableInfo, SysvarWriteError> {
 }
 
 fn full_view(table: &TableInfo) -> SystemTableView {
-    let columns: Vec<&str> = table
+    let column_names: Vec<String> = table
         .cols()
-        .iter()
-        .map(|column| column.name.lowercase())
+        .iter_deref()
+        .map(|column| column.read().name.lowercase().to_owned())
         .collect();
+    let columns: Vec<&str> = column_names.iter().map(String::as_str).collect();
     SystemTableView::project(
         &format!("{SYSTEM_DB}.{}", table.name.original()),
         table,
@@ -208,8 +209,11 @@ fn full_view(table: &TableInfo) -> SystemTableView {
 fn column_types(table: &TableInfo) -> BTreeMap<i64, tidb_datatype::FieldType> {
     table
         .cols()
-        .iter()
-        .map(|column| (column.id, column.field_type.clone()))
+        .iter_deref()
+        .map(|column| {
+            let column = column.read();
+            (column.id, column.field_type.clone())
+        })
         .collect()
 }
 
@@ -223,10 +227,8 @@ fn stored_text(values: &RowValues, column_id: i64) -> String {
 
 fn column_id(table: &TableInfo, column: &str) -> Result<i64, SysvarWriteError> {
     table
-        .cols()
-        .iter()
-        .find(|stored| stored.name.lowercase() == column)
-        .map(|stored| stored.id)
+        .find_public_column_by_name(column)
+        .map(|stored| stored.read().id)
         .ok_or(SysvarWriteError::MissingTable)
 }
 

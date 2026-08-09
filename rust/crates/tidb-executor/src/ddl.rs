@@ -227,10 +227,13 @@ mod table_lifecycle;
 pub mod table_partition;
 pub mod table_partition_range;
 
-pub use alter_table::run_alter_table_in;
+pub use alter_table::{
+    check_column_default_value, normalize_column_default, prepare_column_default,
+    run_alter_table_in, settle_column_default, validate_column_default, PreparedColumnDefault,
+    SettledColumnDefault,
+};
 pub use table_partition::linear_partitioning_warning;
 
-use alter_table::normalize_column_default;
 use column_types::{field_type_of, table_charset_of, NOT_NULL_FLAG};
 pub use indexes::{run_create_index_in, run_drop_index_in};
 use table_constraints::{
@@ -244,11 +247,9 @@ pub use table_lifecycle::{run_drop_table_in, run_rename_table_in, run_truncate_t
 use crate::driver::{Catalog, DriverError};
 use crate::kv_table::{FkAction, KvColumn, KvForeignKey, KvIndex, KvTable, TableCharset};
 use crate::SchemaErrorKind;
-use tidb_ast::CiString;
 use tidb_ast::{ColumnDef, DdlStmt, Stmt};
 use tidb_datatype::FieldTypeCode;
 use tidb_model::column::ColumnInfo;
-use tidb_model::table_info::TableInfo;
 
 /// The row-handle layout a table is built with, decided ONCE per
 /// `CREATE TABLE` and then read by everything downstream.
@@ -317,16 +318,6 @@ impl HandleKind {
         } else {
             Self::CommonHandle(pk_offsets.to_vec())
         }
-    }
-
-    /// Go `TableInfo.PKIsHandle`.
-    fn pk_is_handle(&self) -> bool {
-        matches!(self, Self::IntHandle(_))
-    }
-
-    /// Go `TableInfo.IsCommonHandle`.
-    fn is_common_handle(&self) -> bool {
-        matches!(self, Self::CommonHandle(_))
     }
 
     /// Go `TableInfo.HasClusteredIndex`.
@@ -705,20 +696,37 @@ pub fn run_create_table_in(
         )
         .expect("a parsed table cannot exceed the model column-id domain");
         let mut col = ColumnInfo::new(column_id, &def.name, field_type);
+        col.version = tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION;
         col.offset =
             i64::try_from(i).expect("a parsed table cannot exceed the model column-offset domain");
         columns.push(col);
     }
 
-    // The primary key, written either inline on a column or as a table
-    // constraint.
+    // Column flags are applied in source order. `NULL` really can clear a
+    // preceding NOT NULL/AUTO_INCREMENT/inline-primary flag, while its
+    // occurrence remains recorded for `checkPriKeyConstraint` even if a
+    // later option sets NOT NULL again.
+    let mut has_null_flag = vec![false; create.columns.len()];
     for (i, def) in create.columns.iter().enumerate() {
-        if def
-            .options
-            .iter()
-            .any(|option| matches!(option, tidb_ast::ColumnOption::NotNull))
-        {
-            columns[i].add_flag(u64::from(NOT_NULL_FLAG));
+        for option in &def.options {
+            match option {
+                tidb_ast::ColumnOption::NotNull => {
+                    columns[i].add_flag(u64::from(NOT_NULL_FLAG));
+                }
+                tidb_ast::ColumnOption::Null => {
+                    columns[i].del_flag(u64::from(NOT_NULL_FLAG));
+                    has_null_flag[i] = true;
+                }
+                tidb_ast::ColumnOption::AutoIncrement => {
+                    columns[i].add_flag(u64::from(NOT_NULL_FLAG | AUTO_INCREMENT_FLAG));
+                }
+                tidb_ast::ColumnOption::InlineKey(inline)
+                    if matches!(inline.kind, tidb_ast::InlineKeyKind::Primary { .. }) =>
+                {
+                    columns[i].add_flag(u64::from(NOT_NULL_FLAG | PRI_KEY_FLAG));
+                }
+                _ => {}
+            }
         }
     }
 
@@ -740,9 +748,6 @@ pub fn run_create_table_in(
         if !is_int_column(&columns[i]) {
             return Err(DriverError::WrongColumnSpecifier(def.name.clone()));
         }
-        // An auto-increment column is implicitly NOT NULL and carries Go's
-        // AutoIncrementFlag.
-        columns[i].add_flag(u64::from(NOT_NULL_FLAG | AUTO_INCREMENT_FLAG));
         auto_increment_offset = Some(i);
     }
 
@@ -784,22 +789,24 @@ pub fn run_create_table_in(
                 columns[*offset].name.original().to_owned(),
             ));
         }
-        // A primary key column is implicitly NOT NULL, as in MySQL, and Go
-        // marks it PRI (mysql.NotNullFlag, mysql.PriKeyFlag).
-        columns[*offset].add_flag(u64::from(NOT_NULL_FLAG | PRI_KEY_FLAG));
     }
 
     // Go evaluates a constant DEFAULT at DDL time and stores the value on the
-    // ColumnInfo; a NOT NULL column with no DEFAULT keeps NoDefaultValueFlag,
-    // which is the `None` case here.
-    let mut defaults: Vec<Option<crate::column_default::ColumnDefault>> =
+    // ColumnInfo while it walks the options, but defers every flag-sensitive
+    // check until `processAndCheckDefaultValueAndColumn`. Keep that split so
+    // the primary-key check below can preserve Go's observable error order.
+    struct StagedCreateDefault {
+        has_default: bool,
+        value: crate::column_default::ColumnDefault,
+    }
+    let mut staged_defaults: Vec<Option<StagedCreateDefault>> =
         Vec::with_capacity(create.columns.len());
     for def in &create.columns {
         let mut default_value = None;
         for option in &def.options {
             match option {
                 tidb_ast::ColumnOption::Default(expr) => {
-                    let field_type = columns[defaults.len()].field_type.clone();
+                    let field_type = columns[staged_defaults.len()].field_type.clone();
                     // Go `SetDefaultValue`: a FUNCTION-CALL default takes the
                     // whitelist route and never the constant folder, which is
                     // why `DEFAULT (abs(1))` is 3770 in TiDB despite folding.
@@ -816,47 +823,31 @@ pub fn run_create_table_in(
                         // Go `EvalSimpleAst`: the expression is EVALUATED,
                         // not merely required to be a literal already, which
                         // is what settles `DEFAULT (1 + 1)` to 2.
-                        let mut dual = tidb_chunk::chunk::Chunk::new_empty(&[]);
-                        dual.set_num_virtual_rows(1);
-                        rewritten.eval(ctx, dual.get_row(0)).map_err(|_| {
+                        tidb_expr::eval_expression_once(&rewritten, ctx).map_err(|_| {
                             crate::column_default::DefaultError::Unsupported(
                                 "a DEFAULT this node cannot evaluate",
                             )
                         })
                     })
-                    .map_err(|error| column_default_error(error, &def.name))?;
-                    // Go normalizes and checks a SETTLED default against the
-                    // column's own type at DDL time; a computed one is cast
-                    // per row instead, exactly as Go's `CastColumnValue` does.
-                    //
-                    // Go's two steps, in Go's order: `checkColumnDefaultValue`
-                    // answers the BLOB/TEXT/JSON rule and may rewrite the
-                    // value, then `getDefaultValue` + `checkDefaultValue`
-                    // normalize what it returned.
+                    .map_err(|error| error.into_driver_error(&def.name))?;
                     default_value = Some(match built {
                         crate::column_default::ColumnDefault::Value(value) => {
-                            let (has_default, value) = alter_table::check_column_default_value(
+                            let settled = alter_table::settle_column_default(
                                 value,
                                 &field_type,
                                 &def.name,
                                 ctx,
-                            )?;
-                            // Go's `setNoDefaultValueFlag`: only a NOT NULL
-                            // column takes the flag that hides the DEFAULT,
-                            // and this tier spells that flag as "no default".
-                            if !has_default && field_type.has_flag(NOT_NULL_FLAG) {
-                                // `default_value` stays None and the push at
-                                // the end of this column's loop records it.
-                                continue;
-                            }
-                            crate::column_default::ColumnDefault::Value(normalize_column_default(
-                                value,
-                                &field_type,
-                                &def.name,
                                 &ctx.session_zone(),
-                            )?)
+                            )?;
+                            StagedCreateDefault {
+                                has_default: settled.has_default,
+                                value: crate::column_default::ColumnDefault::Value(settled.stored),
+                            }
                         }
-                        computed => computed,
+                        computed => StagedCreateDefault {
+                            has_default: true,
+                            value: computed,
+                        },
                     });
                 }
                 // AUTO_INCREMENT is its own value source, handled below.
@@ -867,30 +858,84 @@ pub fn run_create_table_in(
                 _ => {}
             }
         }
-        defaults.push(default_value);
+        staged_defaults.push(default_value);
     }
 
-    let info = TableInfo {
-        id: catalog.allocate_table_id(),
-        name: CiString::new(name),
-        columns,
-        pk_is_handle: handle.pk_is_handle(),
-        is_common_handle: handle.is_common_handle(),
-        // Go sets `CommonHandleVersion = 1` alongside `IsCommonHandle`; the
-        // two are one fact, so they are written from one value.
-        common_handle_version: u16::from(handle.is_common_handle()),
-        ..TableInfo::default()
-    };
+    // Go `checkPriKeyConstraint`, in source order:
+    // 1. an inline PRI flag plus DEFAULT NULL is 1067;
+    // 2. only then is a table-level primary key's PRI flag installed;
+    // 3. any explicit NULL option on the resulting primary key is 1171.
+    let mut primary_offsets = vec![false; columns.len()];
+    for offset in &pk_offsets {
+        primary_offsets[*offset] = true;
+    }
+    for (offset, column) in columns.iter_mut().enumerate() {
+        let staged = staged_defaults[offset].as_ref();
+        let has_null_default = staged.is_some_and(|default| {
+            default.has_default
+                && matches!(
+                    &default.value,
+                    crate::column_default::ColumnDefault::Value(value) if value.is_null()
+                )
+        });
+        if column.field_type.has_flag(PRI_KEY_FLAG) && has_null_default {
+            return Err(DriverError::InvalidDefault(
+                column.name.original().to_owned(),
+            ));
+        }
+        if primary_offsets[offset] && !column.field_type.has_flag(PRI_KEY_FLAG) {
+            column.add_flag(u64::from(PRI_KEY_FLAG));
+        }
+        if column.field_type.has_flag(PRI_KEY_FLAG) && has_null_flag[offset] {
+            return Err(DriverError::PrimaryCantHaveNull);
+        }
+    }
+
+    // Go `checkDefaultValue` runs only after the primary-key transition above.
+    // It validates the persisted spelling but does not replace it with the
+    // typed runtime value. `setNoDefaultValueFlag` is likewise based on the
+    // now-final option flags, not the flags present when DEFAULT was visited.
+    let mut defaults = Vec::with_capacity(staged_defaults.len());
+    for (offset, staged) in staged_defaults.into_iter().enumerate() {
+        let Some(staged) = staged else {
+            defaults.push(None);
+            continue;
+        };
+        if staged.has_default {
+            if let crate::column_default::ColumnDefault::Value(stored) = &staged.value {
+                alter_table::validate_column_default(
+                    stored,
+                    &columns[offset].field_type,
+                    &create.columns[offset].name,
+                    columns[offset].version,
+                    ctx.ddl_default_conversion_flags(),
+                    &ctx.session_zone(),
+                )?;
+            }
+        }
+        if !staged.has_default && columns[offset].field_type.has_flag(NOT_NULL_FLAG) {
+            defaults.push(None);
+        } else {
+            defaults.push(Some(staged.value));
+        }
+    }
+
+    // Primary-key columns become NOT NULL in the finished metadata only after
+    // the source checks above have observed the intermediate flag state.
+    for offset in &pk_offsets {
+        columns[*offset].add_flag(u64::from(NOT_NULL_FLAG));
+    }
+
+    let table_id = catalog.allocate_table_id();
 
     // The generated columns, built against the table's own final column list
     // so their expressions index the stored row directly.
-    let column_names: Vec<String> = info
-        .columns
+    let column_names: Vec<String> = columns
         .iter()
         .map(|c| c.name.original().to_owned())
         .collect();
     let column_types: Vec<tidb_datatype::FieldType> =
-        info.columns.iter().map(|c| c.field_type.clone()).collect();
+        columns.iter().map(|c| c.field_type.clone()).collect();
     let generated = crate::generated_column::build_generated_columns(
         &create.columns,
         &column_names,
@@ -913,8 +958,7 @@ pub fn run_create_table_in(
         }
     }
 
-    let kv_columns: Vec<KvColumn> = info
-        .columns
+    let kv_columns: Vec<KvColumn> = columns
         .iter()
         .enumerate()
         .map(|(position, c)| KvColumn {
@@ -924,13 +968,14 @@ pub fn run_create_table_in(
             // These vectors were built in the same definition-order pass.
             // Keeping that position directly avoids narrowing the model's
             // signed i64 offset back into a host index.
+            column_info_version: c.version,
             generated: generated[position].clone(),
             default_value: defaults[position].clone(),
             // A column present at CREATE TABLE has no pre-existing rows.
             origin_default: None,
         })
         .collect();
-    let table = KvTable::new(info.id, kv_columns);
+    let table = KvTable::new(table_id, kv_columns);
     let mut table = table;
     table.set_name(name);
     table.set_charset(table_charset);
@@ -956,13 +1001,13 @@ pub fn run_create_table_in(
             }
         }
     }
-    let (indexes, hidden_columns) = table_indexes(create, &info.columns, clustered, ctx)?;
+    let (indexes, hidden_columns) = table_indexes(create, &columns, clustered, ctx)?;
     for hidden in hidden_columns {
         // Go `checkExpressionIndexAutoIncrement`: an expression index may not
         // read an AUTO_INCREMENT column. Captured as 3754 naming the index,
         // which is the index whose part built this column.
         if let Some(auto) = auto_increment_offset {
-            let auto_name = info.columns[auto].name.original().to_owned();
+            let auto_name = columns[auto].name.original().to_owned();
             if hidden
                 .generated
                 .dependencies
@@ -976,7 +1021,7 @@ pub fn run_create_table_in(
                             index
                                 .column_offsets
                                 .iter()
-                                .any(|offset| *offset >= info.columns.len())
+                                .any(|offset| *offset >= columns.len())
                         })
                         .map_or_else(String::new, |index| index.name.clone()),
                 ));
@@ -986,6 +1031,7 @@ pub fn run_create_table_in(
             name: hidden.name,
             id: table.next_column_id(),
             field_type: hidden.field_type,
+            column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
             generated: Some(hidden.generated),
             default_value: None,
             origin_default: None,
@@ -994,13 +1040,8 @@ pub fn run_create_table_in(
     for index in indexes {
         table.add_index(index);
     }
-    for foreign_key in table_foreign_keys(
-        create,
-        &info.columns,
-        catalog,
-        &database,
-        foreign_key_checks,
-    )? {
+    for foreign_key in table_foreign_keys(create, &columns, catalog, &database, foreign_key_checks)?
+    {
         // Go `addForeignKeyIndex`: a foreign key needs an index on its
         // referencing columns, and TiDB adds one named after the constraint
         // UNLESS an existing key -- the clustered primary key included --
@@ -1018,7 +1059,7 @@ pub fn run_create_table_in(
             .cols
             .iter()
             .filter_map(|name| {
-                info.columns
+                columns
                     .iter()
                     .position(|column| column.name.original().eq_ignore_ascii_case(name))
             })
@@ -1029,8 +1070,7 @@ pub fn run_create_table_in(
                 && fk_offsets.iter().enumerate().all(|(position, at)| {
                     let length = index.prefix_length(position);
                     length == crate::ddl::index_prefix::UNSPECIFIED_LENGTH
-                        || info
-                            .columns
+                        || columns
                             .get(*at)
                             .is_some_and(|column| length >= column.field_type.flen())
                 })
@@ -1105,20 +1145,6 @@ fn create_like_source<'a>(
         None => Err(DriverError::Schema(crate::SchemaErrorKind::UnknownTable(
             format!("{database}.{name}"),
         ))),
-    }
-}
-
-/// Names a column-default DDL refusal the way Go's own error does. Go's 3770
-/// message names both the column and the function, and only the caller knows
-/// the column.
-fn column_default_error(error: crate::column_default::DefaultError, column: &str) -> DriverError {
-    use crate::column_default::DefaultError;
-    match error {
-        DefaultError::FunctionNotAllowed(function) => {
-            DriverError::DefaultFunctionNotAllowed(column.to_owned(), function)
-        }
-        DefaultError::InvalidDefault => DriverError::InvalidDefault(column.to_owned()),
-        DefaultError::Unsupported(reason) => DriverError::unsupported(reason),
     }
 }
 

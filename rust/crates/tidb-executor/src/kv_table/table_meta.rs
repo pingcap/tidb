@@ -28,7 +28,105 @@
 
 use crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
 use tidb_codec::table_key::RecordHandle;
-use tidb_datatype::{Charset, Collation, Datum, FieldType};
+use tidb_datatype::{Charset, Collation, ConversionFlags, Datum, FieldType, SessionTimeZone};
+
+/// The statement-owned facts needed while stored row bytes become Datums.
+///
+/// Go hands row decoding an expression/type context, so the same absent
+/// column can be cast under SELECT, DML, DDL, or ANALYZE flags without the
+/// table inventing a process-wide default. Rust keeps only the two facts this
+/// decoder consumes: the flags for `OriginDefaultValue` and the session zone
+/// for temporal decoding.
+#[derive(Clone, Debug)]
+pub struct RowDecodeContext {
+    origin_default_flags: ConversionFlags,
+    zone: SessionTimeZone,
+}
+
+impl RowDecodeContext {
+    /// The pre-migration row-decoder contract: caller supplies only a zone,
+    /// and origin defaults use `DEFAULT_STATEMENT_FLAGS`.
+    ///
+    /// Kept crate-private solely for the legacy compatibility wrappers while
+    /// DML/FK/server callsites await explicit authorization to select their
+    /// statement class. New production code must use a semantic constructor.
+    #[must_use]
+    pub(crate) fn legacy_default(zone: &SessionTimeZone) -> Self {
+        Self {
+            origin_default_flags: tidb_datatype::DEFAULT_STATEMENT_FLAGS,
+            zone: zone.clone(),
+        }
+    }
+
+    /// A SELECT/read-operator context. Go's SELECT arm always tolerates a
+    /// zero-in-date and treats truncation as a warning.
+    #[must_use]
+    pub fn for_query(ctx: &crate::StmtContext) -> Self {
+        Self {
+            origin_default_flags: ctx.query_default_conversion_flags(),
+            zone: ctx.session_zone(),
+        }
+    }
+
+    /// A DML/FK context. Reading an old row is part of the write statement,
+    /// so its SQL-mode-dependent write flags decide the origin-default cast.
+    #[must_use]
+    pub fn for_write(ctx: &crate::StmtContext) -> Self {
+        Self {
+            origin_default_flags: ctx.write_conversion_flags(),
+            zone: ctx.session_zone(),
+        }
+    }
+
+    /// A DDL reorg/backfill context. It uses the same CREATE/ALTER type flags
+    /// that validated the default the schema change is now reading.
+    #[must_use]
+    pub fn for_ddl(ctx: &crate::StmtContext) -> Self {
+        Self {
+            origin_default_flags: ctx.reorg_default_conversion_flags(),
+            zone: ctx.session_zone(),
+        }
+    }
+
+    /// An in-process ANALYZE context.
+    ///
+    /// Accepted Go `ResetContextOfStmt` has no ANALYZE switch arm, so ANALYZE
+    /// takes the default arm: ignore truncation, ignore zero-in-date, and
+    /// honor `ALLOW_INVALID_DATES`. That is exactly the flag set exposed as
+    /// `show_default_conversion_flags`; this constructor names the distinct
+    /// caller class instead of making ANALYZE pretend to be SHOW.
+    #[must_use]
+    pub fn for_analyze(ctx: &crate::StmtContext) -> Self {
+        Self {
+            origin_default_flags: ctx.show_default_conversion_flags(),
+            zone: ctx.session_zone(),
+        }
+    }
+
+    /// The temporal location used by row codecs, index codecs, and generated
+    /// columns while this row is decoded.
+    #[must_use]
+    pub(crate) fn zone(&self) -> &SessionTimeZone {
+        &self.zone
+    }
+
+    /// The caller-class flags used only for an absent column's origin value.
+    #[must_use]
+    pub(crate) fn origin_default_flags(&self) -> ConversionFlags {
+        self.origin_default_flags
+    }
+
+    /// Query-class UTC decoding for unit fixtures with no session.
+    ///
+    /// This is compiled only into `tidb-executor`'s own tests, so production
+    /// code cannot use it as a convenience escape from choosing a caller
+    /// class.
+    #[cfg(test)]
+    #[must_use]
+    pub fn for_test_query_utc() -> Self {
+        Self::for_query(&crate::StmtContext::for_query())
+    }
+}
 
 /// Go `kv.Handle`: the row identifier a record key encodes.
 ///
@@ -281,6 +379,9 @@ pub struct KvColumn {
     pub id: i64,
     /// The column type.
     pub field_type: FieldType,
+    /// Go `ColumnInfo.Version`: literal TIMESTAMP defaults written by v0 are
+    /// system-local wall clocks, while v1 and later persist UTC wall clocks.
+    pub column_info_version: u64,
     /// Go `ColumnInfo.DefaultValue` + `DefaultIsExpr`: where the value of an
     /// omitted column comes from. `None` means no `DEFAULT` was written,
     /// which is not the same as a `DEFAULT NULL`. See
@@ -348,15 +449,21 @@ impl KvColumn {
     /// own type when a row reads it (`GetColOriginDefaultValue` ->
     /// `CastValue`), which is why `DECIMAL(6,2) DEFAULT 3.14159` reports
     /// `'3.14159'` in SHOW CREATE but reads back as `3.14`.
-    pub(crate) fn origin_default_value(&self) -> Datum {
+    pub(crate) fn origin_default_value(
+        &self,
+        flags: ConversionFlags,
+        zone: &SessionTimeZone,
+    ) -> Result<Datum, tidb_datatype::DatumValueError> {
         let Some(value) = self.origin_default.clone() else {
-            return Datum::Null;
+            return Ok(Datum::Null);
         };
-        match value.convert_to(&self.field_type, tidb_datatype::DEFAULT_STATEMENT_FLAGS) {
-            Ok(converted) => converted.value,
-            // A default the column cannot hold is refused at DDL time, so
-            // this is unreachable for a table this tier built.
-            Err(_) => value,
-        }
+        crate::column_default::materialize_stored_literal(
+            &value,
+            &self.field_type,
+            self.column_info_version,
+            flags,
+            zone,
+        )
+        .map(|converted| converted.value)
     }
 }

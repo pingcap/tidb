@@ -267,6 +267,23 @@ pub(crate) fn alter_column_default_action(
     default_value: Option<&tidb_ast::Expr>,
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
+    // Go resolves the table and target column before it examines the new
+    // default expression. Preserve that observable error order: a missing
+    // target is 1054 even when the DEFAULT itself could not be rewritten.
+    let table = table_of(catalog, database, table_name)?;
+    let Some(offset) = table
+        .columns
+        .iter()
+        .position(|column| column.name.eq_ignore_ascii_case(column_name))
+    else {
+        return Err(DriverError::UnknownColumnInTable {
+            column: column_name.to_owned(),
+            table: table_name.to_owned(),
+        });
+    };
+    let field_type = table.columns[offset].field_type.clone();
+    let column_info_version = table.columns[offset].column_info_version;
+
     let zone = &ctx.session_zone();
     let Some(expr) = default_value else {
         return Err(DriverError::unsupported(
@@ -287,36 +304,52 @@ pub(crate) fn alter_column_default_action(
     let value = constant
         .eval()
         .map_err(|e| DriverError::Exec(crate::ExecError::Eval(e)))?;
+    // The session first builds and validates the exact ColumnInfo spelling.
+    // Keep that spelling in the catalog: omitted writes cast it later, while
+    // SHOW CREATE must not replace e.g. DECIMAL 3.14159 with the rounded 3.14.
+    let prepared = super::alter_table::prepare_column_default(
+        value,
+        &field_type,
+        column_name,
+        column_info_version,
+        ctx,
+        zone,
+    )?;
 
-    let table = table_of(catalog, database, table_name)?;
-    let Some(offset) = table
-        .columns
-        .iter()
-        .position(|column| column.name.eq_ignore_ascii_case(column_name))
-    else {
-        return Err(DriverError::UnknownColumnInTable {
-            column: column_name.to_owned(),
-            table: table_name.to_owned(),
-        });
-    };
-    let field_type = table.columns[offset].field_type.clone();
-    // Go runs this twice for a SET DEFAULT: `SetDefaultValue` calls
-    // `checkColumnDefaultValue` in the session, and the DDL job's
-    // `updateColumnDefaultValue` (`pkg/ddl/column.go:1150`) calls it AGAIN
-    // and turns `!hasDefaultValue` into `ErrInvalidDefaultValue` -- which is
-    // why `sql_mode=''; ALTER TABLE t ALTER COLUMN c1 SET DEFAULT ''` on a
-    // TEXT column is 1067, not the silent acceptance ADD COLUMN gets.
-    let (has_default, value) =
-        super::alter_table::check_column_default_value(value, &field_type, column_name, ctx)?;
+    // Go runs `checkColumnDefaultValue` a SECOND time in the DDL owner under
+    // `newReorgExprCtx` (ModeNone/default statement flags), and turns
+    // `!hasDefaultValue` into ErrInvalidDefaultValue. That is why
+    // sql_mode='' plus ALTER ... SET DEFAULT '' on TEXT is 1067 rather than
+    // ADD COLUMN's lenient acceptance.
+    let reorg_ctx = crate::StmtContext::for_dml(false, false, false);
+    let (has_default, _) = super::alter_table::check_column_default_value(
+        prepared.stored.clone(),
+        &field_type,
+        column_name,
+        &reorg_ctx,
+        &tidb_datatype::SessionTimeZone::utc(),
+    )?;
     if !has_default {
         return Err(DriverError::InvalidDefault(column_name.to_owned()));
     }
-    let normalized =
-        super::alter_table::normalize_column_default(value, &field_type, column_name, zone)?;
+    // `updateColumnDefaultValue` then validates the installed spelling again
+    // in that reorg context. The first session validation is not a substitute:
+    // the two contexts intentionally have different SQL modes.
+    super::alter_table::validate_column_default(
+        &prepared.stored,
+        &field_type,
+        column_name,
+        column_info_version,
+        // `newReorgExprCtx()` is exactly ModeNone + DefaultStmtFlags here,
+        // not the SQL-mode-aware reorg context used by row backfill and not
+        // CREATE/ALTER default-admission flags.
+        tidb_datatype::DEFAULT_STATEMENT_FLAGS,
+        &tidb_datatype::SessionTimeZone::utc(),
+    )?;
     let KvColumn {
         default_value: stored,
         ..
     } = &mut table.columns[offset];
-    *stored = Some(crate::column_default::ColumnDefault::Value(normalized));
+    *stored = Some(crate::column_default::ColumnDefault::Value(prepared.stored));
     Ok(())
 }

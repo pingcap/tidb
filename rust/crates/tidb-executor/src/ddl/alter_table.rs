@@ -573,14 +573,35 @@ fn set_table_options_action(
 /// `text DEFAULT ''` keeps printing `DEFAULT ''`. This tier models that flag
 /// as "no default recorded", so the pair maps onto `None` for a NOT NULL
 /// column and onto the stored value otherwise.
-pub(crate) fn check_column_default_value(
+pub fn check_column_default_value(
     value: Datum,
     field_type: &FieldType,
     column: &str,
     ctx: &crate::StmtContext,
+    zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<(bool, Datum), DriverError> {
     use tidb_datatype::FieldTypeCode;
 
+    if !value.is_null() && field_type.code() == FieldTypeCode::VectorFloat32 {
+        return Err(DriverError::unsupported(format!(
+            "VECTOR column '{column}' can't have a literal default. Use expression default instead: ((VEC_FROM_TEXT('...')))"
+        )));
+    }
+    if !value.is_null()
+        && ctx.strict()
+        && ctx.date_modes().no_zero_date
+        && matches!(
+            field_type.code(),
+            FieldTypeCode::Date | FieldTypeCode::Datetime | FieldTypeCode::Timestamp
+        )
+    {
+        let converted = value
+            .convert_to_in(field_type, ctx.ddl_default_conversion_flags(), zone)
+            .map_err(|_| DriverError::InvalidDefault(column.to_owned()))?;
+        if matches!(converted.value, Datum::Time(time) if time.is_zero()) {
+            return Err(DriverError::InvalidDefault(column.to_owned()));
+        }
+    }
     if value.is_null()
         || !matches!(
             field_type.code(),
@@ -607,44 +628,202 @@ pub(crate) fn check_column_default_value(
 }
 
 /// One `ADD COLUMN`.
-/// Go `getDefaultValue` + `checkDefaultValue`: normalizes a column's written
-/// DEFAULT and rejects one the column cannot hold.
+/// The result of Go `getDefaultValue` -> `checkColumnDefaultValue` ->
+/// `setDefaultValueWithBinaryPadding`, before final column flags validate it.
+#[derive(Clone, Debug)]
+pub struct SettledColumnDefault {
+    /// Go `hasDefaultValue`; an empty non-strict BLOB/TEXT default may be
+    /// stored while this is false.
+    pub has_default: bool,
+    /// The exact persisted `ColumnInfo.DefaultValue` string, represented as a
+    /// byte-capable Datum, or NULL.
+    pub stored: Datum,
+}
+
+/// A settled default after Go `checkDefaultValue` has proved that the stored
+/// spelling can be read through the column's final type.
+#[derive(Clone, Debug)]
+pub struct PreparedColumnDefault {
+    /// The source `hasDefaultValue` disposition.
+    pub has_default: bool,
+    /// The exact metadata spelling retained by `ColumnInfo`.
+    pub stored: Datum,
+}
+
+/// Runs the source storage stages without the final-column-flag validation.
 ///
-/// Go converts the value to a "standard format" only for the integer and
-/// float/double types -- which is why `INT DEFAULT 7.6` reports `DEFAULT '8'`
-/// while `DECIMAL(10,3) DEFAULT 1.23456` keeps `'1.23456'` and only rounds
-/// when a row reads it. It then evaluates the stored default with truncation
-/// at error level, so a value the column cannot hold is
-/// `ErrInvalidDefault` (1067) at DDL time rather than a surprise per row.
-pub(crate) fn normalize_column_default(
+/// CREATE TABLE needs this split because Go visits DEFAULT in option order,
+/// but checks NULL against NOT NULL / PRIMARY KEY only after every option and
+/// table-level key has stamped the final FieldType.
+pub fn settle_column_default(
     value: Datum,
     field_type: &FieldType,
     column: &str,
-    // The SESSION's zone. Go's `checkDefaultValue` evaluates the written
-    // default through `table.CastValue` with the statement's own type
-    // context, and a `TIMESTAMP` column's admissible range is a wall-clock
-    // range, so `DEFAULT '2038-01-19 03:14:07'` is accepted at `+00:00` and
-    // refused at `-08:00`.
+    ctx: &crate::StmtContext,
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Result<SettledColumnDefault, DriverError> {
+    let flags = ctx.ddl_default_conversion_flags();
+    let stored = column_default_storage_value(value, field_type, column, flags, zone)?;
+    let (has_default, stored) = check_column_default_value(stored, field_type, column, ctx, zone)?;
+    let stored = timestamp_default_to_utc(stored, field_type, column, flags, zone)?;
+    Ok(SettledColumnDefault {
+        has_default,
+        stored: pad_fixed_width_binary_default(stored, field_type),
+    })
+}
+
+/// Runs every source stage when the caller already owns the final FieldType.
+pub fn prepare_column_default(
+    value: Datum,
+    field_type: &FieldType,
+    column: &str,
+    column_info_version: u64,
+    ctx: &crate::StmtContext,
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Result<PreparedColumnDefault, DriverError> {
+    let settled = settle_column_default(value, field_type, column, ctx, zone)?;
+    validate_column_default(
+        &settled.stored,
+        field_type,
+        column,
+        column_info_version,
+        ctx.ddl_default_conversion_flags(),
+        zone,
+    )?;
+    Ok(PreparedColumnDefault {
+        has_default: settled.has_default,
+        stored: settled.stored,
+    })
+}
+
+/// Go `checkDefaultValue`: validate the persisted spelling against the
+/// column's final flags and return the typed value an omitted row receives.
+pub fn validate_column_default(
+    stored: &Datum,
+    field_type: &FieldType,
+    column: &str,
+    column_info_version: u64,
+    flags: tidb_datatype::ConversionFlags,
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<Datum, DriverError> {
-    // The BLOB/TEXT/JSON rule does NOT live here: it is Go's
-    // `checkColumnDefaultValue`, a SEPARATE step that runs before this one at
-    // every entry point (see [`check_column_default_value`]). Answering it
-    // twice, once as a blanket refusal, is what used to refuse the very
-    // `null` that a non-strict JSON default is rewritten to.
-    //
-    // Go `checkDefaultValue`'s two arms for a NULL default, in Go's order: a
-    // column that cannot HOLD NULL cannot DEFAULT to it, and a primary key
-    // says so with its own error rather than 1067.
-    if value.is_null() {
+    let invalid = || DriverError::InvalidDefault(column.to_owned());
+    if stored.is_null() {
+        // Inline PRIMARY KEY + DEFAULT NULL was already intercepted by
+        // `checkPriKeyConstraint`. At this later `checkDefaultValue` boundary
+        // Go checks PRI before NOT NULL, so a table-level key is 1171 even
+        // when the column also spelled NOT NULL.
         if field_type.has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY) {
             return Err(DriverError::PrimaryCantHaveNull);
         }
         if field_type.has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL) {
-            return Err(DriverError::InvalidDefault(column.to_owned()));
+            return Err(invalid());
         }
+        return Ok(Datum::Null);
+    }
+
+    let checked = crate::column_default::materialize_stored_literal(
+        stored,
+        field_type,
+        column_info_version,
+        flags,
+        zone,
+    )
+    .map_err(|_| invalid())?;
+    if checked
+        .event
+        .as_ref()
+        .is_some_and(|event| !crate::driver::conversion_event_is_silent(event))
+    {
+        return Err(invalid());
+    }
+    Ok(checked.value)
+}
+
+/// Compatibility entrypoint for callers that need only the typed value and
+/// have already applied `checkColumnDefaultValue` themselves.
+pub fn normalize_column_default(
+    value: Datum,
+    field_type: &FieldType,
+    column: &str,
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Result<Datum, DriverError> {
+    let stored =
+        column_default_storage_value(value, field_type, column, tidb_datatype::STRICT_FLAGS, zone)?;
+    let stored = pad_fixed_width_binary_default(stored, field_type);
+    validate_column_default(
+        &stored,
+        field_type,
+        column,
+        tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+        tidb_datatype::STRICT_FLAGS,
+        zone,
+    )
+}
+
+/// Go `getDefaultValue`: settle one evaluated expression to the exact byte
+/// string `ColumnInfo.DefaultValue` stores. This is deliberately distinct
+/// from [`validate_column_default`], which returns the typed runtime value.
+fn column_default_storage_value(
+    value: Datum,
+    field_type: &FieldType,
+    column: &str,
+    flags: tidb_datatype::ConversionFlags,
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Result<Datum, DriverError> {
+    if value.is_null() {
+        return Ok(Datum::Null);
     }
     let invalid = || DriverError::InvalidDefault(column.to_owned());
+
+    // Go handles binary literals before its target-type switch. The three
+    // branches are exhaustive and return immediately, so FLOAT/DOUBLE never
+    // round their persisted spelling and DECIMAL/TIME/YEAR never retain the
+    // literal's raw control bytes.
+    if let Datum::BinaryLiteral(literal) | Datum::Bit(literal) = &value {
+        if matches!(
+            field_type.code(),
+            tidb_datatype::FieldTypeCode::Date
+                | tidb_datatype::FieldTypeCode::Datetime
+                | tidb_datatype::FieldTypeCode::Timestamp
+        ) {
+            return Err(invalid());
+        }
+        let bytes = if matches!(
+            field_type.code(),
+            tidb_datatype::FieldTypeCode::Blob
+                | tidb_datatype::FieldTypeCode::TinyBlob
+                | tidb_datatype::FieldTypeCode::MediumBlob
+                | tidb_datatype::FieldTypeCode::LongBlob
+                | tidb_datatype::FieldTypeCode::Json
+                | tidb_datatype::FieldTypeCode::VectorFloat32
+        ) {
+            literal.as_bytes().to_vec()
+        } else if matches!(
+            field_type.code(),
+            tidb_datatype::FieldTypeCode::Bit
+                | tidb_datatype::FieldTypeCode::String
+                | tidb_datatype::FieldTypeCode::Varchar
+                | tidb_datatype::FieldTypeCode::VarString
+                | tidb_datatype::FieldTypeCode::Enum
+                | tidb_datatype::FieldTypeCode::Set
+        ) {
+            let (bytes, error) = value
+                .binary_string_decoded(flags, field_type.charset_name())
+                .into_parts();
+            if error.is_some() {
+                return Err(invalid());
+            }
+            bytes
+        } else {
+            let outcome = literal.to_int();
+            if outcome.is_truncated() {
+                return Err(invalid());
+            }
+            outcome.value().to_string().into_bytes()
+        };
+        return Ok(Datum::new_collation_string(bytes, field_type.collation()));
+    }
+
     let normalized = match field_type.code() {
         tidb_datatype::FieldTypeCode::Tiny
         | tidb_datatype::FieldTypeCode::Short
@@ -656,7 +835,7 @@ pub(crate) fn normalize_column_default(
             // Go adopts the converted value only when the conversion itself
             // succeeded (`if temp, err := v.ConvertTo(...); err == nil`), and
             // otherwise keeps the original for the check below to report.
-            match value.convert_to(field_type, tidb_datatype::STRICT_FLAGS) {
+            match value.convert_to_in(field_type, flags, zone) {
                 Ok(converted) if converted.event.is_none() => converted.value,
                 _ => value.clone(),
             }
@@ -664,46 +843,63 @@ pub(crate) fn normalize_column_default(
         tidb_datatype::FieldTypeCode::Enum | tidb_datatype::FieldTypeCode::Set => {
             enum_set_column_default(&value, field_type).ok_or_else(invalid)?
         }
-        tidb_datatype::FieldTypeCode::Bit => bit_column_default(&value, field_type, column)?,
-        // Go's `KindBinaryLiteral || KindMysqlBit` branch runs BEFORE its type
-        // switch and covers the string types alongside `BIT`, `ENUM` and
-        // `SET`: `DEFAULT 0x61` on a `VARCHAR` is the text `a` decoded in the
-        // column's charset, not a hex literal the printers have no rendering
-        // for.
-        tidb_datatype::FieldTypeCode::String
-        | tidb_datatype::FieldTypeCode::Varchar
-        | tidb_datatype::FieldTypeCode::VarString => {
-            let decoded = match &value {
-                Datum::BinaryLiteral(_) | Datum::Bit(_) => {
-                    let (bytes, error) = value
-                        .binary_string_decoded(
-                            tidb_datatype::STRICT_FLAGS,
-                            field_type.charset_name(),
-                        )
-                        .into_parts();
-                    if error.is_some() {
-                        return Err(invalid());
-                    }
-                    Datum::new_collation_string(bytes, field_type.collation())
-                }
-                _ => value.clone(),
-            };
-            pad_fixed_width_binary_default(decoded, field_type)
+        tidb_datatype::FieldTypeCode::Date
+        | tidb_datatype::FieldTypeCode::Datetime
+        | tidb_datatype::FieldTypeCode::Timestamp
+        | tidb_datatype::FieldTypeCode::Duration => {
+            let converted = value
+                .convert_to_in(field_type, flags, zone)
+                .map_err(|_| invalid())?;
+            if converted
+                .event
+                .as_ref()
+                .is_some_and(|event| !crate::driver::conversion_event_is_silent(event))
+            {
+                return Err(invalid());
+            }
+            converted.value
         }
+        tidb_datatype::FieldTypeCode::Bit => bit_column_default(&value, field_type, column)?,
         _ => value.clone(),
     };
-    // The check phase: strict conversion of what will be stored.
-    let checked = normalized
-        .convert_to_in(field_type, tidb_datatype::STRICT_FLAGS, zone)
+    let bytes = normalized.sql_bytes().map_err(|_| invalid())?;
+    Ok(Datum::new_collation_string(bytes, field_type.collation()))
+}
+
+/// Go `convertTimestampDefaultValToUTC`: a literal TIMESTAMP is persisted as
+/// a UTC wall clock after it has passed the session-zone admission checks.
+/// Zero stays zero, and computed `CURRENT_TIMESTAMP` never reaches this path.
+fn timestamp_default_to_utc(
+    stored: Datum,
+    field_type: &FieldType,
+    column: &str,
+    flags: tidb_datatype::ConversionFlags,
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Result<Datum, DriverError> {
+    if stored.is_null() || field_type.code() != tidb_datatype::FieldTypeCode::Timestamp {
+        return Ok(stored);
+    }
+    let invalid = || DriverError::InvalidDefault(column.to_owned());
+    let converted = stored
+        .convert_to_in(field_type, flags, zone)
         .map_err(|_| invalid())?;
-    if checked
+    if converted
         .event
         .as_ref()
         .is_some_and(|event| !crate::driver::conversion_event_is_silent(event))
     {
         return Err(invalid());
     }
-    Ok(normalized)
+    let Datum::Time(mut time) = converted.value else {
+        return Err(invalid());
+    };
+    if time.is_zero() {
+        return Ok(stored);
+    }
+    time.convert_time_zone(zone, &tidb_datatype::SessionTimeZone::utc())
+        .map_err(|_| invalid())?;
+    let bytes = Datum::new_time(time).sql_bytes().map_err(|_| invalid())?;
+    Ok(Datum::new_collation_string(bytes, field_type.collation()))
 }
 
 /// An `ENUM`/`SET` column's written `DEFAULT`, resolved to a MEMBER of the
@@ -737,9 +933,7 @@ pub(crate) fn normalize_column_default(
 /// Without it, `BINARY(4) DEFAULT 0x61` records a one-byte default for a
 /// column that can only ever hold four.
 fn pad_fixed_width_binary_default(value: Datum, field_type: &FieldType) -> Datum {
-    if field_type.code() != tidb_datatype::FieldTypeCode::String
-        || field_type.charset() != tidb_datatype::Charset::Binary
-    {
+    if field_type.code() != tidb_datatype::FieldTypeCode::String || !field_type.is_binary_string() {
         return value;
     }
     let width = field_type.flen();
@@ -802,8 +996,8 @@ fn bit_column_default(
 }
 
 fn enum_set_column_default(value: &Datum, field_type: &FieldType) -> Option<Datum> {
-    let elements = field_type.elems();
-    let collation = field_type.collation();
+    let collator = field_type.runtime_collator();
+    let datum_collation = field_type.collation();
     let is_set = field_type.code() == tidb_datatype::FieldTypeCode::Set;
     let member = match value {
         Datum::BinaryLiteral(_) | Datum::Bit(_) => {
@@ -816,40 +1010,56 @@ fn enum_set_column_default(value: &Datum, field_type: &FieldType) -> Option<Datu
             if error.is_some() {
                 return None;
             }
-            String::from_utf8(bytes).ok()?
+            bytes
         }
-        Datum::Int(_) | Datum::UInt(_) => {
-            let index = value
-                .as_uint()
-                .or_else(|| value.as_int().map(|v| v as u64))?;
+        Datum::Int(index) => {
             if is_set {
-                tidb_datatype::parse_set_value(elements, index)
-                    .ok()?
-                    .name()
-                    .to_owned()
+                let element_count = field_type.elems().len();
+                let upper = if element_count >= i64::BITS as usize {
+                    -1
+                } else {
+                    (1_i64 << element_count).wrapping_sub(1)
+                };
+                if *index < 1 || *index > upper {
+                    return None;
+                }
+            }
+            let index = u64::try_from(*index).ok()?;
+            if is_set {
+                field_type.with_elems_visible(|elements| {
+                    tidb_datatype::parse_set_value(elements, index)
+                        .ok()
+                        .map(|members| members.name_bytes().to_vec())
+                })?
             } else {
-                tidb_datatype::parse_enum_value(elements, index)
-                    .ok()?
-                    .name()
-                    .to_owned()
+                field_type.with_elems_visible(|elements| {
+                    tidb_datatype::parse_enum_value(elements, index)
+                        .ok()
+                        .map(|member| member.name_bytes().to_vec())
+                })?
             }
         }
         _ => {
-            let text = value.sql_string().ok()?;
+            let mut text = value.sql_bytes().ok()?;
             if is_set {
-                tidb_datatype::parse_set_name(elements, &text, collation)
-                    .ok()?
-                    .name()
-                    .to_owned()
+                field_type.with_elems_visible(|elements| {
+                    tidb_datatype::parse_set_name(elements, text.as_slice(), collator)
+                        .ok()
+                        .map(|members| members.name_bytes().to_vec())
+                })?
             } else {
-                tidb_datatype::parse_enum_name(elements, text.trim_end_matches(' '), collation)
-                    .ok()?
-                    .name()
-                    .to_owned()
+                while text.last() == Some(&b' ') {
+                    text.pop();
+                }
+                field_type.with_elems_visible(|elements| {
+                    tidb_datatype::parse_enum_name(elements, text.as_slice(), collator)
+                        .ok()
+                        .map(|member| member.name_bytes().to_vec())
+                })?
             }
         }
     };
-    Some(Datum::new_collation_string(member, collation))
+    Some(Datum::new_collation_string(member, datum_collation))
 }
 
 /// `ALTER TABLE ... MODIFY COLUMN` and `... CHANGE COLUMN`, which differ only
@@ -997,6 +1207,8 @@ fn modify_column_action(
     } = request;
     let field_type = field_type_of(def, existing_table_charset(catalog, database, table_name))?;
     let mut default_value = None;
+    let mut nullability = None;
+    let mut has_null_flag = false;
     for option in &def.options {
         match option {
             tidb_ast::ColumnOption::Default(expr) => {
@@ -1016,12 +1228,18 @@ fn modify_column_action(
                         .map_err(|e| DriverError::Exec(crate::ExecError::Eval(e)))?,
                 );
             }
-            tidb_ast::ColumnOption::NotNull
-            | tidb_ast::ColumnOption::Null
+            tidb_ast::ColumnOption::NotNull => nullability = Some(true),
+            tidb_ast::ColumnOption::Null => {
+                nullability = Some(false);
+                // Go retains this independently of the final flag: any
+                // explicit NULL on an existing primary-key column is 1171,
+                // even when a later NOT NULL adds the flag back.
+                has_null_flag = true;
+            }
             // AUTO_INCREMENT is legal here as long as the column already has
             // it; the set/remove rules are checked below, once the old column
             // is in hand.
-            | tidb_ast::ColumnOption::AutoIncrement
+            tidb_ast::ColumnOption::AutoIncrement
             // Whether the generated-ness is allowed to change is a question
             // about the OLD column, so it is asked below once that column is
             // in hand.
@@ -1037,10 +1255,6 @@ fn modify_column_action(
         tidb_ast::ColumnOption::Generated { stored, .. } => Some(*stored),
         _ => None,
     });
-    let not_null = def
-        .options
-        .iter()
-        .any(|option| matches!(option, tidb_ast::ColumnOption::NotNull));
     let wants_auto_increment = def
         .options
         .iter()
@@ -1152,17 +1366,35 @@ fn modify_column_action(
     };
 
     let mut field_type = field_type;
-    if not_null {
-        field_type.add_flags(NOT_NULL_FLAG);
-    }
     // Go `pkg/ddl/modify_column.go`: the new column is built from the new
     // definition, then the OLD column's index flags are copied onto it and a
-    // primary key re-implies NOT NULL. Without this the definition alone
-    // decides, so `ALTER TABLE mc MODIFY COLUMN a bigint` on a primary key
-    // silently made the key column nullable and printed `DEFAULT NULL`.
+    // primary key supplies the NOT NULL state with which option processing
+    // starts. NULL/NOT NULL then mutate that state in source order. Without
+    // the baseline, `ALTER TABLE mc MODIFY COLUMN a bigint` on a primary key
+    // silently makes the key column nullable; without the ordered mutation,
+    // `... NOT NULL NULL` incorrectly keeps the first option.
     let old_flags = table.columns[offset].field_type.flags();
-    if old_flags & PRI_KEY_FLAG != 0 {
+    let old_is_primary = old_flags & PRI_KEY_FLAG != 0;
+    if old_is_primary {
         field_type.add_flags(PRI_KEY_FLAG | NOT_NULL_FLAG);
+    }
+    match nullability {
+        Some(true) => field_type.add_flags(NOT_NULL_FLAG),
+        Some(false) => field_type.del_flags(NOT_NULL_FLAG),
+        None => {}
+    }
+    // Go `checkPriKeyConstraint`, in its exact order. This is deliberately
+    // scoped to the copied OLD primary-key flag: MODIFY cannot add a primary
+    // key, and ordinary columns do not inherit either error merely because
+    // they spell NULL. A NULL default wins with 1067; otherwise any explicit
+    // NULL option on the key is 1171, even if NOT NULL followed it.
+    if old_is_primary {
+        if default_value.as_ref().is_some_and(Datum::is_null) {
+            return Err(DriverError::InvalidDefault(def.name.clone()));
+        }
+        if has_null_flag {
+            return Err(DriverError::PrimaryCantHaveNull);
+        }
     }
     // Go `checkModifyTypes` (`pkg/ddl/modify_column.go:2262`), reached right
     // after the index-flag copy above and before the AUTO_INCREMENT checks
@@ -1293,25 +1525,25 @@ fn modify_column_action(
             Some(if target > offset { target } else { target + 1 })
         }
     };
-    // An ALTER-written default is always a literal here: the expression forms
-    // are refused above, so the settled value and the ORIGIN_DEFAULT existing
-    // rows read back are the same value.
-    // Go's `SetDefaultValue` order: `checkColumnDefaultValue` (the
-    // BLOB/TEXT/JSON rule, which may rewrite the value or report that the
-    // column ends up with NO default) and only then the normalization.
+    // An ALTER-written default is always a literal here. Keep Go's exact
+    // metadata spelling in both DefaultValue and OriginDefaultValue; omitted
+    // inserts and pre-DDL rows cast that spelling through the column type when
+    // they read it. `prepare_column_default` performs the DDL-time strict cast
+    // only as validation and deliberately does not replace the spelling.
     let default_value = match default_value {
         Some(value) => {
-            let (has_default, value) =
-                check_column_default_value(value, &field_type, &def.name, ctx)?;
-            if !has_default && field_type.has_flag(NOT_NULL_FLAG) {
+            let prepared = prepare_column_default(
+                value,
+                &field_type,
+                &def.name,
+                tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                ctx,
+                zone,
+            )?;
+            if !prepared.has_default && field_type.has_flag(NOT_NULL_FLAG) {
                 None
             } else {
-                Some(normalize_column_default(
-                    value,
-                    &field_type,
-                    &def.name,
-                    zone,
-                )?)
+                Some(prepared.stored)
             }
         }
         None => None,
@@ -1332,6 +1564,7 @@ fn modify_column_action(
         name: def.name.clone(),
         id: table.columns[offset].id,
         field_type,
+        column_info_version: table.columns[offset].column_info_version,
         // A generated column option is refused above, so a MODIFY never
         // produces one.
         generated: None,
@@ -1342,7 +1575,7 @@ fn modify_column_action(
         table.clear_auto_increment_offset();
     }
     table
-        .modify_column(offset, column, new_position, zone)
+        .modify_column_with_context(offset, column, new_position, ctx)
         .map_err(|e| match e {
             crate::kv_table::KvTableError::TruncatedIncorrectValue { kind, value } => {
                 DriverError::TruncatedIncorrectValue {
@@ -1374,6 +1607,7 @@ fn add_column_action(
     let zone = &ctx.session_zone();
     let field_type = field_type_of(def, existing_table_charset(catalog, database, table_name))?;
     let mut default_value = None;
+    let mut not_null = false;
     for option in &def.options {
         match option {
             tidb_ast::ColumnOption::Default(expr) => {
@@ -1393,8 +1627,11 @@ fn add_column_action(
                         .map_err(|e| DriverError::Exec(crate::ExecError::Eval(e)))?,
                 );
             }
-            tidb_ast::ColumnOption::NotNull => {}
-            tidb_ast::ColumnOption::Null => {}
+            // Go mutates the flag while visiting options. Replacing this with
+            // `any(NotNull)` loses the last-option-wins result of legal forms
+            // such as `NOT NULL NULL`.
+            tidb_ast::ColumnOption::NotNull => not_null = true,
+            tidb_ast::ColumnOption::Null => not_null = false,
             // Go `checkAddColumnTooManyColumns`'s neighbour in
             // `pkg/ddl/column.go`: a STORED generated column added by ALTER
             // would have to be backfilled into every existing row, which TiDB
@@ -1420,11 +1657,6 @@ fn add_column_action(
         tidb_ast::ColumnOption::Generated { expression, .. } => Some(expression),
         _ => None,
     });
-    let not_null = def
-        .options
-        .iter()
-        .any(|option| matches!(option, tidb_ast::ColumnOption::NotNull));
-
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
         return Err(DriverError::unsupported(
             "ALTER TABLE needs a storage-backed table",
@@ -1451,25 +1683,24 @@ fn add_column_action(
     if not_null {
         field_type.add_flags(NOT_NULL_FLAG);
     }
-    // An ALTER-written default is always a literal here: the expression forms
-    // are refused above, so the settled value and the ORIGIN_DEFAULT existing
-    // rows read back are the same value.
-    // Go's `SetDefaultValue` order: `checkColumnDefaultValue` (the
-    // BLOB/TEXT/JSON rule, which may rewrite the value or report that the
-    // column ends up with NO default) and only then the normalization.
+    // Store the exact metadata spelling. Both a newly omitted value and an
+    // old row's OriginDefaultValue are cast through `field_type` when read;
+    // replacing this with the prepared runtime value would make SHOW CREATE
+    // silently print rounded DECIMAL defaults.
     let default_value = match default_value {
         Some(value) => {
-            let (has_default, value) =
-                check_column_default_value(value, &field_type, &def.name, ctx)?;
-            if !has_default && field_type.has_flag(NOT_NULL_FLAG) {
+            let prepared = prepare_column_default(
+                value,
+                &field_type,
+                &def.name,
+                tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                ctx,
+                zone,
+            )?;
+            if !prepared.has_default && field_type.has_flag(NOT_NULL_FLAG) {
                 None
             } else {
-                Some(normalize_column_default(
-                    value,
-                    &field_type,
-                    &def.name,
-                    zone,
-                )?)
+                Some(prepared.stored)
             }
         }
         None => None,
@@ -1507,6 +1738,7 @@ fn add_column_action(
             name: def.name.clone(),
             id,
             field_type,
+            column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
             generated,
             default_value: stored_default,
             // Rows written before this column existed read back the default.
@@ -1535,7 +1767,6 @@ fn drop_column_action(
     if_exists: bool,
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
-    let zone = &ctx.session_zone();
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
         return Err(DriverError::unsupported(
             "ALTER TABLE needs a storage-backed table",
@@ -1602,7 +1833,7 @@ fn drop_column_action(
         .collect();
     for index_name in covering {
         table
-            .drop_index(&index_name, zone)
+            .drop_index_with_context(&index_name, ctx)
             .map_err(|e| DriverError::Parse(format!("index drop failed: {e:?}")))?;
     }
     table.drop_column(offset);
@@ -1611,8 +1842,66 @@ fn drop_column_action(
 
 #[cfg(test)]
 mod type_change_gate_tests {
-    use super::{check_type_change_supported, DriverError};
-    use tidb_datatype::{FieldType, FieldTypeCode};
+    use super::{
+        check_type_change_supported, enum_set_column_default, normalize_column_default, DriverError,
+    };
+    use tidb_datatype::{
+        BinaryLiteral, Datum, FieldType, FieldTypeCode, GoString, SessionTimeZone,
+    };
+
+    #[test]
+    fn enum_set_defaults_preserve_raw_member_bytes() {
+        let mut enum_type = FieldType::new(FieldTypeCode::Enum);
+        enum_type.set_elems(vec![GoString::from([0xff])]);
+        let value = enum_set_column_default(&Datum::Bytes(vec![0xff]), &enum_type)
+            .expect("raw ENUM default matches its declaration");
+        match value {
+            Datum::String(value) => assert_eq!(value.bytes(), [0xff]),
+            other => panic!("expected a string default, got {other:?}"),
+        }
+        let value = normalize_column_default(
+            Datum::new_binary_literal(BinaryLiteral::from(vec![0xff])),
+            &enum_type,
+            "e",
+            &SessionTimeZone::utc(),
+        )
+        .expect("the raw ENUM member passes final strict validation");
+        assert_eq!(value.sql_bytes().unwrap(), [0xff]);
+
+        let mut set_type = FieldType::new(FieldTypeCode::Set);
+        set_type.set_elems(vec![GoString::from([0xfe])]);
+        let value = enum_set_column_default(&Datum::Bytes(vec![0xfe]), &set_type)
+            .expect("raw SET default matches its declaration");
+        match value {
+            Datum::String(value) => assert_eq!(value.bytes(), [0xfe]),
+            other => panic!("expected a string default, got {other:?}"),
+        }
+        let value = normalize_column_default(
+            Datum::new_binary_literal(BinaryLiteral::from(vec![0xfe])),
+            &set_type,
+            "s",
+            &SessionTimeZone::utc(),
+        )
+        .expect("the raw SET member passes final strict validation");
+        assert_eq!(value.sql_bytes().unwrap(), [0xfe]);
+    }
+
+    #[test]
+    fn enum_set_uint_defaults_use_member_names_not_signed_indexes() {
+        let number = 9_223_372_036_854_775_808_u64;
+        let member = GoString::from(number.to_string());
+
+        for code in [FieldTypeCode::Enum, FieldTypeCode::Set] {
+            let mut field_type = FieldType::new(code);
+            field_type.set_elems(vec![member.clone()]);
+            let value = enum_set_column_default(&Datum::UInt(number), &field_type)
+                .expect("a uint default follows Go's string-name branch");
+            match value {
+                Datum::String(value) => assert_eq!(value.bytes(), member.as_bytes()),
+                other => panic!("expected a string default, got {other:?}"),
+            }
+        }
+    }
 
     /// Rule 4 (`field_type.go:1591-1594`, `TypeTiDBVectorFloat32` on either
     /// side) exercised directly rather than through SQL: this tier's

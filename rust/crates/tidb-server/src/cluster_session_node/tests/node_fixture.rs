@@ -17,7 +17,7 @@ use crate::sql_node::{ConnectionCancellation, ConnectionClose};
 use sha1::{Digest, Sha1};
 use std::net::SocketAddr;
 use tidb_ast::CiString;
-use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+use tidb_datatype::{Datum, FieldType, FieldTypeCode, GoString};
 use tidb_exec::cluster_catalog::{ClusterCatalog, LoadedDatabase};
 use tidb_model::column::ColumnInfo as ModelColumnInfo;
 use tidb_model::db::DBInfo;
@@ -61,7 +61,12 @@ pub(super) fn named_value_column(
     elems: &[&str],
 ) -> ModelColumnInfo {
     let mut field_type = FieldType::new(code);
-    field_type.set_elems(elems.iter().map(|elem| (*elem).to_owned()).collect());
+    field_type.set_elems(
+        elems
+            .iter()
+            .map(|elem| GoString::from(*elem))
+            .collect::<Vec<_>>(),
+    );
     let mut column = ModelColumnInfo::new(id, name, field_type);
     column.offset = offset;
     column
@@ -86,7 +91,8 @@ pub(super) fn loaded_catalog() -> ClusterCatalog {
                 FieldTypeCode::Set,
                 &["Select", "Insert", "Update", "Grant"],
             ),
-        ],
+        ]
+        .into(),
         pk_is_handle: true,
         state: SchemaState::PUBLIC,
         ..TableInfo::default()
@@ -94,7 +100,7 @@ pub(super) fn loaded_catalog() -> ClusterCatalog {
     let t = TableInfo {
         id: 101,
         name: CiString::new("t"),
-        columns: vec![column(1, 0, "id", true), column(2, 1, "v", false)],
+        columns: vec![column(1, 0, "id", true), column(2, 1, "v", false)].into(),
         pk_is_handle: true,
         state: SchemaState::PUBLIC,
         ..TableInfo::default()
@@ -102,7 +108,7 @@ pub(super) fn loaded_catalog() -> ClusterCatalog {
     let g = TableInfo {
         id: 102,
         name: CiString::new("g"),
-        columns: vec![column(1, 0, "id", true), column(2, 1, "grp", false)],
+        columns: vec![column(1, 0, "id", true), column(2, 1, "grp", false)].into(),
         pk_is_handle: true,
         state: SchemaState::PUBLIC,
         ..TableInfo::default()
@@ -115,7 +121,7 @@ pub(super) fn loaded_catalog() -> ClusterCatalog {
     let hnd = TableInfo {
         id: 105,
         name: CiString::new("hnd"),
-        columns: vec![column(1, 0, "v", false)],
+        columns: vec![column(1, 0, "v", false)].into(),
         indices: vec![IndexInfo {
             id: 1,
             name: CiString::new("uv"),
@@ -130,7 +136,8 @@ pub(super) fn loaded_catalog() -> ClusterCatalog {
             unique: true,
             state: SchemaState::PUBLIC,
             ..IndexInfo::default()
-        }],
+        }]
+        .into(),
         state: SchemaState::PUBLIC,
         ..TableInfo::default()
     };
@@ -141,7 +148,7 @@ pub(super) fn loaded_catalog() -> ClusterCatalog {
     let ai = TableInfo {
         id: 106,
         name: CiString::new("ai"),
-        columns: vec![auto_increment_column(1, 0, "id"), column(2, 1, "v", false)],
+        columns: vec![auto_increment_column(1, 0, "id"), column(2, 1, "v", false)].into(),
         pk_is_handle: true,
         state: SchemaState::PUBLIC,
         ..TableInfo::default()
@@ -149,7 +156,7 @@ pub(super) fn loaded_catalog() -> ClusterCatalog {
     let pending = TableInfo {
         id: 103,
         name: CiString::new("t_pending"),
-        columns: vec![column(1, 0, "id", false)],
+        columns: vec![column(1, 0, "id", false)].into(),
         state: SchemaState::NONE,
         ..TableInfo::default()
     };

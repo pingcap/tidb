@@ -147,28 +147,7 @@ pub fn serialize_schema_diff(diff: &SchemaDiff) -> Result<Vec<u8>> {
 /// Go `ListPolicies`: JSON behind the magic byte.
 pub fn parse_policy_info(value: &[u8]) -> Result<PolicyInfo> {
     let data = detach_magic_byte(value)?;
-    let mut policy: PolicyInfo = from_json(data)?;
-    // Go leaves the embedded *PlacementSettings nil if none of its promoted
-    // fields occur. serde's flattened Option otherwise manufactures Some(0).
-    let object: serde_json::Map<String, serde_json::Value> = from_json(data)?;
-    const SETTINGS: &[&str] = &[
-        "primary_region",
-        "regions",
-        "learners",
-        "followers",
-        "voters",
-        "schedule",
-        "constraints",
-        "leader_constraints",
-        "learner_constraints",
-        "follower_constraints",
-        "voter_constraints",
-        "survival_preferences",
-    ];
-    if !SETTINGS.iter().any(|name| object.contains_key(*name)) {
-        policy.placement_settings = None;
-    }
-    Ok(policy)
+    from_json(data)
 }
 
 /// The write side of [`parse_policy_info`]. Go `Mutator.CreatePolicy`.

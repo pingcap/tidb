@@ -73,7 +73,7 @@ pub const fn value_size_of_unsigned_int(mut value: u64) -> usize {
 
 /// Source `ConvertByCollation`.
 pub fn convert_by_collation(raw: &[u8], field_type: &FieldType) -> Vec<u8> {
-    field_type.collation().key(raw)
+    field_type.runtime_collator().key(raw)
 }
 
 /// Source `ConvertByCollationStr`, byte-preserving for Go string semantics.
@@ -220,7 +220,7 @@ pub fn encode_hash_datum(
             Datum::String(value),
         ) => (
             COMPACT_BYTES_FLAG,
-            field_type.collation().key(value.bytes()),
+            field_type.runtime_collator().key(value.bytes()),
         ),
         (
             FieldTypeCode::String
@@ -231,7 +231,7 @@ pub fn encode_hash_datum(
             | FieldTypeCode::MediumBlob
             | FieldTypeCode::LongBlob,
             Datum::Bytes(value),
-        ) => (COMPACT_BYTES_FLAG, field_type.collation().key(value)),
+        ) => (COMPACT_BYTES_FLAG, field_type.runtime_collator().key(value)),
         (
             FieldTypeCode::Date | FieldTypeCode::Datetime | FieldTypeCode::Timestamp,
             Datum::Time(value),
@@ -259,17 +259,19 @@ pub fn encode_hash_datum(
             (UVARINT_FLAG, value.value().to_le_bytes().to_vec())
         }
         (FieldTypeCode::Enum, Datum::Enum(value, _)) => {
-            let name = parse_enum_value(field_type.elems(), value.value())
-                .map(|value| value.name().as_bytes().to_vec())
+            let name = field_type
+                .with_elems_visible(|elements| parse_enum_value(elements, value.value()))
+                .map(|value| value.name_bytes().to_vec())
                 .unwrap_or_default();
-            (COMPACT_BYTES_FLAG, field_type.collation().key(&name))
+            (COMPACT_BYTES_FLAG, field_type.runtime_collator().key(&name))
         }
         (FieldTypeCode::Set, Datum::Set(value, _)) => {
-            let value = parse_set_value(field_type.elems(), value.value())
+            let value = field_type
+                .with_elems_visible(|elements| parse_set_value(elements, value.value()))
                 .map_err(|_| CodecError::InvalidEncoding("invalid set value"))?;
             (
                 COMPACT_BYTES_FLAG,
-                field_type.collation().key(value.name().as_bytes()),
+                field_type.runtime_collator().key(value.name_bytes()),
             )
         }
         (FieldTypeCode::Bit, Datum::Bit(value))
@@ -365,6 +367,7 @@ pub fn hash_group_key_in_timezone<TZ: TimeZone>(
     values: &[Datum],
     field_type: &FieldType,
 ) -> Result<Vec<Vec<u8>>, CodecError> {
+    let collator = field_type.runtime_collator();
     values
         .iter()
         .map(|value| {
@@ -420,27 +423,29 @@ pub fn hash_group_key_in_timezone<TZ: TimeZone>(
                 }
                 (EvalType::String, Datum::String(value)) => {
                     output.push(COMPACT_BYTES_FLAG);
-                    let key = field_type.collation().key(value.bytes());
+                    let key = collator.key(value.bytes());
                     crate::encode_compact_bytes(&mut output, &key);
                 }
                 (EvalType::String, Datum::Bytes(value)) => {
                     output.push(COMPACT_BYTES_FLAG);
-                    let key = field_type.collation().key(value);
+                    let key = collator.key(value);
                     crate::encode_compact_bytes(&mut output, &key);
                 }
                 (EvalType::String, Datum::Enum(value, _)) => {
                     output.push(COMPACT_BYTES_FLAG);
-                    let name = parse_enum_value(field_type.elems(), value.value())
-                        .map(|value| value.name().as_bytes().to_vec())
+                    let name = field_type
+                        .with_elems_visible(|elements| parse_enum_value(elements, value.value()))
+                        .map(|value| value.name_bytes().to_vec())
                         .unwrap_or_default();
-                    let key = field_type.collation().key(&name);
+                    let key = collator.key(&name);
                     crate::encode_compact_bytes(&mut output, &key);
                 }
                 (EvalType::String, Datum::Set(value, _)) => {
                     output.push(COMPACT_BYTES_FLAG);
-                    let value = parse_set_value(field_type.elems(), value.value())
+                    let value = field_type
+                        .with_elems_visible(|elements| parse_set_value(elements, value.value()))
                         .map_err(|_| CodecError::InvalidEncoding("invalid set value"))?;
-                    let key = field_type.collation().key(value.name().as_bytes());
+                    let key = collator.key(value.name_bytes());
                     crate::encode_compact_bytes(&mut output, &key);
                 }
                 (EvalType::VectorFloat32, Datum::VectorFloat32(value)) => {
@@ -629,12 +634,14 @@ pub fn decode_one_typed_in_timezone<'a, TZ: TimeZone>(
             Datum::new_time(value)
         }
         (FieldTypeCode::Enum, Datum::UInt(value)) => Datum::new_enum(
-            parse_enum_value(field_type.elems(), value)
+            field_type
+                .with_elems_visible(|elements| parse_enum_value(elements, value))
                 .unwrap_or_else(|_| tidb_datatype::MysqlEnum::new("", 0)),
             field_type.collation(),
         ),
         (FieldTypeCode::Set, Datum::UInt(value)) => Datum::new_set(
-            parse_set_value(field_type.elems(), value)
+            field_type
+                .with_elems_visible(|elements| parse_set_value(elements, value))
                 .map_err(|_| CodecError::InvalidEncoding("invalid set value"))?,
             field_type.collation(),
         ),

@@ -491,11 +491,12 @@ fn locate<'catalog>(
 /// Every public column of one table, so a row is decoded whole rather than
 /// projected: a rewrite must preserve the columns this writer does not own.
 fn full_view(table: &TableInfo) -> SystemTableView {
-    let columns: Vec<&str> = table
+    let column_names: Vec<String> = table
         .cols()
-        .iter()
-        .map(|column| column.name.lowercase())
+        .iter_deref()
+        .map(|column| column.read().name.lowercase().to_owned())
         .collect();
+    let columns: Vec<&str> = column_names.iter().map(String::as_str).collect();
     SystemTableView::project(
         &format!("{SYSTEM_DB}.{}", table.name.original()),
         table,
@@ -525,40 +526,41 @@ fn read_rows<S: MetaSnapshot>(
 fn column_types(table: &TableInfo) -> BTreeMap<i64, tidb_datatype::FieldType> {
     table
         .cols()
-        .iter()
-        .map(|column| (column.id, column.field_type.clone()))
+        .iter_deref()
+        .map(|column| {
+            let column = column.read();
+            (column.id, column.field_type.clone())
+        })
         .collect()
 }
 
 /// The text one stored column holds, in the spelling the loader reads it as.
-fn stored_text(values: &RowValues, column_id: i64) -> String {
-    match values.get(&column_id) {
-        Some(Datum::Bytes(bytes)) => String::from_utf8_lossy(bytes).into_owned(),
-        Some(Datum::String(string)) => String::from_utf8_lossy(string.bytes()).into_owned(),
-        Some(Datum::Enum(member, _)) => member.name().to_owned(),
-        Some(Datum::Set(members, _)) => members.name().to_owned(),
-        _ => String::new(),
-    }
+fn stored_text(values: &RowValues, column_id: i64) -> Result<String, AccountWriteError> {
+    let bytes = match values.get(&column_id) {
+        Some(Datum::Bytes(bytes)) => bytes.as_slice(),
+        Some(Datum::String(string)) => string.bytes(),
+        Some(Datum::Enum(member, _)) => member.name_bytes(),
+        Some(Datum::Set(members, _)) => members.name_bytes(),
+        _ => return Ok(String::new()),
+    };
+    std::str::from_utf8(bytes).map(str::to_owned).map_err(|_| {
+        AccountWriteError::Unsupported(format!(
+            "stored account column {column_id} is not valid UTF-8"
+        ))
+    })
 }
 
-fn declared_column<'table>(
-    table: &'table TableInfo,
+fn declared_column(
+    table: &TableInfo,
     column: &str,
-) -> Result<&'table tidb_model::column::ColumnInfo, AccountWriteError> {
-    table
-        .cols()
-        .into_iter()
-        .find(|stored| stored.name.lowercase() == column)
-        .ok_or_else(|| {
-            AccountWriteError::MissingTable(format!(
-                "{SYSTEM_DB}.{}.{column}",
-                table.name.original()
-            ))
-        })
+) -> Result<tidb_model::GoShared<tidb_model::column::ColumnInfo>, AccountWriteError> {
+    table.find_public_column_by_name(column).ok_or_else(|| {
+        AccountWriteError::MissingTable(format!("{SYSTEM_DB}.{}.{column}", table.name.original()))
+    })
 }
 
 fn column_id(table: &TableInfo, column: &str) -> Result<i64, AccountWriteError> {
-    declared_column(table, column).map(|stored| stored.id)
+    declared_column(table, column).map(|stored| stored.read().id)
 }
 
 /// Makes one table's rows match `desired`.
@@ -610,8 +612,10 @@ fn reconcile<S: MetaSnapshot>(
         .value_columns
         .iter()
         .map(|column| {
-            declared_column(table, column)
-                .map(|stored| (*column, stored.id, stored.field_type.clone()))
+            declared_column(table, column).map(|stored| {
+                let stored = stored.read();
+                (*column, stored.id, stored.field_type.clone())
+            })
         })
         .collect::<Result<_, _>>()?;
 
@@ -621,7 +625,7 @@ fn reconcile<S: MetaSnapshot>(
         let identity = key_ids
             .iter()
             .map(|id| stored_text(&row.values, *id))
-            .collect();
+            .collect::<Result<Vec<_>, _>>()?;
         by_key.insert(identity, row);
     }
 
@@ -635,7 +639,7 @@ fn reconcile<S: MetaSnapshot>(
                     // A `SET` column reads back in declaration order, so the
                     // two sides are compared in the column's own spelling
                     // rather than in whatever order the image listed them.
-                    if stored_text(&row.values, *id) != canonical_text(field_type, &wanted)? {
+                    if stored_text(&row.values, *id)? != canonical_text(field_type, &wanted)? {
                         row.values.insert(*id, Datum::Bytes(wanted.into_bytes()));
                         moved = true;
                     }

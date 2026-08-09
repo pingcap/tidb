@@ -1834,6 +1834,7 @@ mod tests {
             name: name.to_owned(),
             id,
             field_type: FieldType::new(FieldTypeCode::LongLong),
+            column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
             default_value: None,
             origin_default: None,
             generated: None,
@@ -1856,6 +1857,7 @@ mod tests {
             name: "s".to_owned(),
             id: 1,
             field_type: FieldType::new(FieldTypeCode::Varchar),
+            column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
             default_value: None,
             origin_default: None,
             generated: None,
@@ -1895,7 +1897,7 @@ mod tests {
             Box::new(MemTableStorage::new()),
         );
         table
-            .create_index(
+            .create_index_with_context(
                 KvIndex {
                     id: 1,
                     name: "ib".to_owned(),
@@ -1905,7 +1907,7 @@ mod tests {
                     visible: true,
                     global: false,
                 },
-                &tidb_expr::NoColumns,
+                &crate::StmtContext::for_query(),
             )
             .unwrap();
         table

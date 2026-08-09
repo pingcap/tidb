@@ -14,7 +14,6 @@
 
 //! Compile anchors for the complete `pkg/meta/model` package receipt.
 
-mod pkg_meta_model_observation_emitter;
 mod pkg_meta_model_package_anchors;
 
 use tidb_model::{
@@ -103,7 +102,7 @@ fn pkg_meta_model_probe_owned_clone_boundaries() {
     } else {
         "unexpected-nonempty-map"
     };
-    pkg_meta_model_observation_emitter::emit(
+    pkg_meta_model_package_anchors::observation_emitter::emit(
         "MODEL-DB-OWNERSHIP",
         "Rust ownership cannot preserve Go DBInfo shallow pointer aliases or nil map identity",
         &[

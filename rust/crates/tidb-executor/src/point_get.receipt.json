@@ -24,12 +24,12 @@
   "mutation_suites": 12,
   "obligation_count": 763,
   "owned_file_sha256": {
-    "rust/crates/tidb-executor/src/lib.rs": "d3861196083ddf66b09a43b3077b7ac9b404ac19e9fe5d5e75ea6826c9a1019e",
+    "rust/crates/tidb-executor/src/lib.rs": "23dd3c22084e443b1d95bff041b19451375d3c89a592c44f6ee40a966cd329ca",
     "rust/crates/tidb-executor/src/point_get.artifacts.tsv": "eebacdb9bd85d0d132326a8bc5767b6509b69a916bc93339529034b872dfc765",
     "rust/crates/tidb-executor/src/point_get.inventory.tsv": "f45e0546ebbbff30eb417f1f4a094bdd1420f6720620976a21f588a9912a81ac",
-    "rust/crates/tidb-executor/src/point_get.mutation-plan.tsv": "dcec5c7b5712d62c308db0096e248794e538ee8e5f20362852ea7f9a26c13fa4",
-    "rust/crates/tidb-executor/src/point_get.mutation-results.tsv": "f78f68396db78c64b0c1152d82b8ba5c865180c6db9a912ce878d71e1bd397b6",
-    "rust/crates/tidb-executor/src/point_get.rs": "62bf005745295f5f51bebee168cf22ce8fd7d41bd8e76364a9dd88333b8205c9",
+    "rust/crates/tidb-executor/src/point_get.mutation-plan.tsv": "3b896d8f3bd968b00224d8dd940d5c9494391e18d216e5b2099b106b3f084711",
+    "rust/crates/tidb-executor/src/point_get.mutation-results.tsv": "9d81b8991f3e945d3c74cc31ee7a8f86331cde582c80b70440ba0ed384643c47",
+    "rust/crates/tidb-executor/src/point_get.rs": "5c042b32a97655c976b1dfbe0cb504cca913d71d6d70355b7747328d911e5271",
     "rust/docs/operations/executor-point-get-go-lockdown-execplan.md": "73c505a2e90b108a10b52ac3d631fb2a09eee0c9f8d3bd32bf16d511f4aadc5a",
     "rust/scripts/pkg-executor-point-get-lockdown.py": "bdc2139d8882bd55e3dbe0fdc4cf8c83596d435742d4b304e96dea3859880511"
   },

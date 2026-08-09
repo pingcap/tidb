@@ -187,18 +187,20 @@ pub fn unflatten_datum(
         ),
         FieldTypeCode::Enum => {
             let number = datum.as_uint().ok_or(TableRowError::InvalidDatum("enum"))?;
-            let value = parse_enum_value(field_type.elems(), number)
+            let value = field_type
+                .with_elems_visible(|elements| parse_enum_value(elements, number))
                 .unwrap_or_else(|_| MysqlEnum::default());
             Datum::Enum(value, field_type.collation())
         }
-        FieldTypeCode::Set => Datum::Set(
-            parse_set_value(
-                field_type.elems(),
-                datum.as_uint().ok_or(TableRowError::InvalidDatum("set"))?,
+        FieldTypeCode::Set => {
+            let number = datum.as_uint().ok_or(TableRowError::InvalidDatum("set"))?;
+            Datum::Set(
+                field_type
+                    .with_elems_visible(|elements| parse_set_value(elements, number))
+                    .map_err(|error| TableRowError::Datatype(error.to_string()))?,
+                field_type.collation(),
             )
-            .map_err(|error| TableRowError::Datatype(error.to_string()))?,
-            field_type.collation(),
-        ),
+        }
         FieldTypeCode::Bit => {
             let byte_size = ((field_type.flen().max(0) + 7) >> 3) as u8;
             Datum::Bit(tidb_datatype::BinaryLiteral::from_uint(

@@ -254,19 +254,20 @@ pub struct HandleSourceExec {
     cursor: usize,
     /// Rows produced so far, which the trace reads as this node's `actRows`.
     produced: Rc<Cell<u64>>,
-    /// The session `time_zone` a stored `TIMESTAMP` is read back into,
-    /// captured where the statement's context is (`Executor` has none).
-    zone: SessionTimeZone,
+    /// The statement-class flags for an origin default plus the session zone
+    /// a stored `TIMESTAMP` is read back into, captured where the statement's
+    /// context is (`Executor` has none).
+    decode_context: crate::kv_table::RowDecodeContext,
 }
 
 impl HandleSourceExec {
-    /// Builds a source over `handles`, in the order the plan lists them.
+    /// Builds a source over `handles` with an explicit row-decode context.
     #[must_use]
-    pub fn new(
+    pub fn new_with_context(
         meta: ExecutorMeta,
         table: KvTable,
         handles: Vec<TableHandle>,
-        zone: SessionTimeZone,
+        decode_context: crate::kv_table::RowDecodeContext,
     ) -> Self {
         HandleSourceExec {
             meta,
@@ -274,8 +275,25 @@ impl HandleSourceExec {
             handles,
             cursor: 0,
             produced: Rc::new(Cell::new(0)),
-            zone,
+            decode_context,
         }
+    }
+
+    /// Legacy zone-only constructor retained for unmigrated callers. Origin
+    /// defaults use the exact former `DEFAULT_STATEMENT_FLAGS` behavior.
+    #[must_use]
+    pub fn new(
+        meta: ExecutorMeta,
+        table: KvTable,
+        handles: Vec<TableHandle>,
+        zone: SessionTimeZone,
+    ) -> Self {
+        Self::new_with_context(
+            meta,
+            table,
+            handles,
+            crate::kv_table::RowDecodeContext::legacy_default(&zone),
+        )
     }
 
     /// The live count of rows this source produced.
@@ -304,7 +322,7 @@ impl Executor for HandleSourceExec {
             // plan is right, the row is simply absent.
             let row = self
                 .table
-                .get_row_by_handle(handle, &self.zone)
+                .get_row_by_handle_with_context(handle, &self.decode_context)
                 .map_err(|_| ExecError::unsupported("table bytes failed to decode"))?;
             if let Some(row) = row {
                 for (c, value) in visible_of(&self.table, &row).iter().enumerate() {
@@ -451,9 +469,9 @@ pub struct IndexRangeSourceExec {
     /// Go's `indexWorker.batchSize`: how many handles the next batch collects,
     /// doubling per batch up to [`MAX_HANDLE_BATCH`].
     batch_size: usize,
-    /// The session `time_zone` the index probe and the row are encoded and
-    /// decoded in; see [`HandleSourceExec`].
-    zone: SessionTimeZone,
+    /// The statement-class flags and session zone the row is decoded under;
+    /// the zone also encodes the index probe. See [`HandleSourceExec`].
+    decode_context: crate::kv_table::RowDecodeContext,
 }
 
 /// Go's `indexWorker.batchSize` at its first batch.
@@ -471,14 +489,14 @@ const INIT_HANDLE_BATCH: usize = 1024;
 const MAX_HANDLE_BATCH: usize = 20000;
 
 impl IndexRangeSourceExec {
-    /// Builds a source over `ranges` of the index `index_id`.
+    /// Builds a source over `ranges` with an explicit row-decode context.
     #[must_use]
-    pub fn new(
+    pub fn new_with_context(
         meta: ExecutorMeta,
         table: KvTable,
         index_id: i64,
         ranges: Vec<IndexRange>,
-        zone: SessionTimeZone,
+        decode_context: crate::kv_table::RowDecodeContext,
     ) -> Self {
         IndexRangeSourceExec {
             meta,
@@ -495,8 +513,27 @@ impl IndexRangeSourceExec {
             batch: Vec::new(),
             batch_at: 0,
             batch_size: INIT_HANDLE_BATCH,
-            zone,
+            decode_context,
         }
+    }
+
+    /// Legacy zone-only constructor retained for unmigrated callers. Origin
+    /// defaults use the exact former `DEFAULT_STATEMENT_FLAGS` behavior.
+    #[must_use]
+    pub fn new(
+        meta: ExecutorMeta,
+        table: KvTable,
+        index_id: i64,
+        ranges: Vec<IndexRange>,
+        zone: SessionTimeZone,
+    ) -> Self {
+        Self::new_with_context(
+            meta,
+            table,
+            index_id,
+            ranges,
+            crate::kv_table::RowDecodeContext::legacy_default(&zone),
+        )
     }
 
     /// The live count of rows this source produced.
@@ -578,7 +615,7 @@ impl IndexRangeSourceExec {
             self.next_range += 1;
             self.cursor = Some(
                 self.table
-                    .index_range_cursor(self.index_id, &range, &self.zone)
+                    .index_range_cursor(self.index_id, &range, self.decode_context.zone())
                     .map_err(|_| ExecError::unsupported("index range is not scannable"))?,
             );
         }
@@ -615,7 +652,7 @@ impl Executor for IndexRangeSourceExec {
             };
             let row = self
                 .table
-                .get_row_by_handle(&handle, &self.zone)
+                .get_row_by_handle_with_context(&handle, &self.decode_context)
                 .map_err(|_| ExecError::unsupported("table bytes failed to decode"))?;
             // An index entry whose row is gone is not a row: the same
             // `if let Some(row)` the materializing path had.
@@ -755,7 +792,7 @@ pub struct IndexJoinLookupExec {
     /// Rows produced since `open`, which the trace reads as `actRows`.
     produced: Rc<Cell<u64>>,
     /// See [`HandleSourceExec`].
-    zone: SessionTimeZone,
+    decode_context: crate::kv_table::RowDecodeContext,
 }
 
 impl IndexJoinLookupExec {
@@ -763,11 +800,11 @@ impl IndexJoinLookupExec {
     /// before the first batch is seeded it is an empty relation, which is
     /// what an index join whose outer side produced no rows must read.
     #[must_use]
-    pub fn new(
+    pub fn new_with_context(
         meta: ExecutorMeta,
         table: KvTable,
         object: LookupObject,
-        zone: SessionTimeZone,
+        decode_context: crate::kv_table::RowDecodeContext,
     ) -> Self {
         IndexJoinLookupExec {
             meta,
@@ -777,8 +814,25 @@ impl IndexJoinLookupExec {
             next_probe: 0,
             cursor: None,
             produced: Rc::new(Cell::new(0)),
-            zone,
+            decode_context,
         }
+    }
+
+    /// Legacy zone-only constructor retained for unmigrated callers. Origin
+    /// defaults use the exact former `DEFAULT_STATEMENT_FLAGS` behavior.
+    #[must_use]
+    pub fn new(
+        meta: ExecutorMeta,
+        table: KvTable,
+        object: LookupObject,
+        zone: SessionTimeZone,
+    ) -> Self {
+        Self::new_with_context(
+            meta,
+            table,
+            object,
+            crate::kv_table::RowDecodeContext::legacy_default(&zone),
+        )
     }
 
     /// Seeds the next outer batch's probe list and rewinds the walk.
@@ -828,7 +882,7 @@ impl IndexJoinLookupExec {
                     };
                     self.cursor = Some(
                         self.table
-                            .index_range_cursor(*index_id, &range, &self.zone)
+                            .index_range_cursor(*index_id, &range, self.decode_context.zone())
                             .map_err(|_| ExecError::unsupported("index range is not scannable"))?,
                     );
                 }
@@ -877,7 +931,7 @@ impl Executor for IndexJoinLookupExec {
             };
             let row = self
                 .table
-                .get_row_by_handle(&handle, &self.zone)
+                .get_row_by_handle_with_context(&handle, &self.decode_context)
                 .map_err(|_| ExecError::unsupported("table bytes failed to decode"))?;
             // An index entry whose row is gone is not a row, as in
             // [`IndexRangeSourceExec`].
@@ -1010,6 +1064,7 @@ mod tests {
             name: name.to_owned(),
             id,
             field_type: long(),
+            column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
             default_value: None,
             origin_default: None,
             generated: None,
@@ -1031,7 +1086,7 @@ mod tests {
         );
         if indexed {
             table
-                .create_index(
+                .create_index_with_context(
                     crate::kv_table::KvIndex {
                         id: 1,
                         name: "ib".to_owned(),
@@ -1041,7 +1096,7 @@ mod tests {
                         visible: true,
                         global: false,
                     },
-                    &tidb_expr::NoColumns,
+                    &crate::StmtContext::for_query(),
                 )
                 .unwrap();
         }
@@ -1132,10 +1187,10 @@ mod tests {
             1,
             1024,
         );
-        let mut scan = crate::kv_table::TableScanExec::new(
+        let mut scan = crate::kv_table::TableScanExec::new_with_context(
             meta,
             table,
-            tidb_datatype::SessionTimeZone::utc(),
+            crate::RowDecodeContext::for_test_query_utc(),
             crate::remote_scan::PushdownStatementContext::default(),
         );
         scan.open().unwrap();
@@ -1373,7 +1428,7 @@ mod tests {
             Box::new(MemTableStorage::default()),
         );
         table
-            .create_index(
+            .create_index_with_context(
                 crate::kv_table::KvIndex {
                     id: 1,
                     name: "ibc".to_owned(),
@@ -1386,7 +1441,7 @@ mod tests {
                     visible: true,
                     global: false,
                 },
-                &tidb_expr::NoColumns,
+                &crate::StmtContext::for_query(),
             )
             .unwrap();
         for (a, b, c) in [(1, 2, 20), (2, 1, 30), (3, 2, 10), (4, 1, 40)] {
@@ -1412,12 +1467,12 @@ mod tests {
                 column
             })
             .collect();
-        let mut exec = IndexRangeSourceExec::new(
+        let mut exec = IndexRangeSourceExec::new_with_context(
             ExecutorMeta::new(tidb_expr::schema::Schema::new(columns), 0, 32, 1024),
             table,
             1,
             vec![IndexRange::full()],
-            tidb_datatype::SessionTimeZone::utc(),
+            crate::RowDecodeContext::for_test_query_utc(),
         );
         if covering {
             exec.answer_in_index_order();
@@ -1560,7 +1615,7 @@ mod tests {
             Box::new(MemTableStorage::default()),
         );
         table
-            .create_index(
+            .create_index_with_context(
                 crate::kv_table::KvIndex {
                     id: 1,
                     name: "ibc".to_owned(),
@@ -1573,7 +1628,7 @@ mod tests {
                     visible: true,
                     global: false,
                 },
-                &tidb_expr::NoColumns,
+                &crate::StmtContext::for_query(),
             )
             .unwrap();
         for handle in 1..=n {

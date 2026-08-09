@@ -408,6 +408,52 @@ fn a_current_timestamp_default_separates_from_its_datetime_twin_by_the_offset() 
     assert_eq!(read_at(&mut session, "+08:00", select), [["-8"]]);
 }
 
+/// A literal `TIMESTAMP` default is catalog metadata for one instant, not
+/// wall-clock text to reinterpret in whichever session first omits the
+/// column. Go stores version-1+ metadata in UTC, then projects it into the
+/// writing session before the ordinary row encoder converts it back to UTC.
+///
+/// Creating at `+08:00` and omitting the column once there and once at UTC is
+/// the distinguishing boundary: both rows must be the same instant. Keeping
+/// the local `14:46:14` spelling in metadata would make the UTC insert eight
+/// hours later while still looking correct in a same-zone-only test.
+#[test]
+fn a_literal_timestamp_default_is_one_instant_across_writing_sessions() {
+    let mut session = session();
+    set_zone(&mut session, "+08:00");
+    session
+        .run(
+            "CREATE TABLE ltd (id INT PRIMARY KEY, \
+             ts TIMESTAMP DEFAULT '2019-01-17 14:46:14', \
+             dt DATETIME DEFAULT '2019-01-17 14:46:14')",
+        )
+        .expect("create");
+    session
+        .run("INSERT INTO ltd (id) VALUES (1)")
+        .expect("insert at +08:00");
+
+    set_zone(&mut session, "+00:00");
+    session
+        .run("INSERT INTO ltd (id) VALUES (2)")
+        .expect("insert at UTC");
+
+    let select = "SELECT id, ts, dt FROM ltd ORDER BY id";
+    for (zone, timestamp) in [
+        ("+08:00", "2019-01-17 14:46:14"),
+        ("+00:00", "2019-01-17 06:46:14"),
+        ("-08:00", "2019-01-16 22:46:14"),
+    ] {
+        assert_eq!(
+            read_at(&mut session, zone, select),
+            [
+                ["1", timestamp, "2019-01-17 14:46:14"],
+                ["2", timestamp, "2019-01-17 14:46:14"],
+            ],
+            "read from {zone}"
+        );
+    }
+}
+
 /// An INDEX over a `TIMESTAMP` column is filed under the same stored value
 /// the row is, so a lookup from a different zone finds the row: Go threads
 /// the statement's `loc` into `GenIndexKey` for exactly this reason.

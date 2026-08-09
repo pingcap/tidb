@@ -16,7 +16,7 @@
 //! `pkg/meta/model` package receipt.
 
 #[path = "pkg_meta_model_observation_emitter.rs"]
-mod observation_emitter;
+pub(crate) mod observation_emitter;
 
 use tidb_model::{
     BackfillMeta, BackfillState, ColumnInfo, DDLReorgMeta, EngineAttribute, GoAny, GoShared,

@@ -52,10 +52,12 @@
 use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
 use tidb_codec::Encoder;
 use tidb_datatype::{
-    is_bin_collation, parse_enum, parse_set_name, Collation, Datum, FieldType, FieldTypeCode, Time,
+    is_bin_collation, new_collation_enabled, parse_enum, parse_set_name, Datum, FieldType,
+    FieldTypeCode, GoString, Time,
 };
-use tidb_model::column::{ColumnDefaultValue, ColumnInfo};
+use tidb_model::column::ColumnInfo;
 use tidb_model::table_info::TableInfo;
+use tidb_model::{GoAny, GoAnyView};
 use tidb_tablecodec::{
     encode_table_row, generate_index_key, generate_index_value, truncate_index_value,
     IndexColumn as CodecIndexColumn, IndexInfo as CodecIndexInfo, TableColumn as CodecTableColumn,
@@ -68,13 +70,6 @@ use crate::mysql_system_tables::HandleLayout;
 
 /// Go `ast.CurrentTimestamp`, as a column default stores it.
 pub(crate) const CURRENT_TIMESTAMP: &str = "CURRENT_TIMESTAMP";
-
-/// Go `collate.NewCollationEnabled()`: an index key is a new-collation SORT
-/// KEY rather than the raw bytes, which is exactly why the entry VALUE has to
-/// carry restored data -- a sort key case-folds and trims trailing spaces, so
-/// the column cannot be read back out of the key. The one `Encoder::new(true)`
-/// this module builds already commits to it.
-const USE_NEW_COLLATION: bool = true;
 
 /// Go `types.UnspecifiedLength`: a key part that stores its whole column.
 const UNSPECIFIED_LENGTH: i64 = -1;
@@ -115,8 +110,12 @@ pub type RowValues = std::collections::BTreeMap<i64, Datum>;
 /// NOT NULL column" or as a zero time it refuses to convert.
 pub fn defaults_row(table: &TableInfo, now: Time) -> Result<RowValues, RowEncodeError> {
     let mut values = RowValues::new();
-    for column in table.cols() {
-        values.insert(column.id, declared_default(column, table_name(table), now)?);
+    for column in table.cols().iter_deref() {
+        let column = column.read();
+        values.insert(
+            column.id,
+            declared_default(&column, table_name(table), now)?,
+        );
     }
     Ok(values)
 }
@@ -127,6 +126,21 @@ pub fn insert_row(
     row_id: i64,
     values: &RowValues,
 ) -> Result<Vec<OptimisticMutation>, RowEncodeError> {
+    insert_row_with_collation(table, row_id, values, new_collation_enabled())
+}
+
+/// [`insert_row`] with the cluster's persisted collation mode already
+/// captured.
+///
+/// Go fixes this mode in the table/index encoder. Accepting it once here keeps
+/// the entry key, restored-data decision, and entry value on one format even
+/// if the process-level source changes while the mutations are assembled.
+pub fn insert_row_with_collation(
+    table: &TableInfo,
+    row_id: i64,
+    values: &RowValues,
+    use_new_collation: bool,
+) -> Result<Vec<OptimisticMutation>, RowEncodeError> {
     let key = encode_row_key_with_handle(table.id, &RecordHandle::Int(row_id));
     let mut mutations = vec![OptimisticMutation::insert(key, encode_row(table, values)?)
         .map_err(|error| encode_error(error.to_string()))?];
@@ -135,6 +149,7 @@ pub fn insert_row(
         &Handle::Int(IntHandle::new(row_id)),
         values,
         IndexOp::Put,
+        use_new_collation,
     )?);
     Ok(mutations)
 }
@@ -160,6 +175,15 @@ pub fn delete_row(
     key: &[u8],
     values: &RowValues,
 ) -> Result<Vec<OptimisticMutation>, RowEncodeError> {
+    delete_row_with_collation(table, key, values, new_collation_enabled())
+}
+
+fn delete_row_with_collation(
+    table: &TableInfo,
+    key: &[u8],
+    values: &RowValues,
+    use_new_collation: bool,
+) -> Result<Vec<OptimisticMutation>, RowEncodeError> {
     let row_id = row_id_of(key)?;
     let mut mutations = vec![OptimisticMutation::delete(key.to_vec())
         .map_err(|error| encode_error(error.to_string()))?];
@@ -168,6 +192,7 @@ pub fn delete_row(
         &Handle::Int(IntHandle::new(row_id)),
         values,
         IndexOp::Delete,
+        use_new_collation,
     )?);
     Ok(mutations)
 }
@@ -187,14 +212,23 @@ pub fn clustered_record_key(
     table: &TableInfo,
     values: &RowValues,
 ) -> Result<(Vec<u8>, Handle), RowEncodeError> {
+    clustered_record_key_with_collation(table, values, new_collation_enabled())
+}
+
+fn clustered_record_key_with_collation(
+    table: &TableInfo,
+    values: &RowValues,
+    use_new_collation: bool,
+) -> Result<(Vec<u8>, Handle), RowEncodeError> {
     let layout = HandleLayout::of(table);
     let named = |name: &str| -> Result<&Datum, RowEncodeError> {
         let column = table
             .cols()
-            .into_iter()
-            .find(|column| column.name.lowercase() == name)
+            .iter_deref()
+            .find(|column| column.read().name.lowercase() == name)
             .ok_or_else(|| encode_error(format!("{} has no column `{name}`", table_name(table))))?;
-        values.get(&column.id).ok_or_else(|| {
+        let column_id = column.read().id;
+        values.get(&column_id).ok_or_else(|| {
             encode_error(format!(
                 "{}.{name} has no value in the row being written",
                 table_name(table)
@@ -228,8 +262,9 @@ pub fn clustered_record_key(
             for column in columns {
                 datums.push(named(column)?.clone());
             }
-            let encoded =
-                tidb_codec::encode_key(&datums).map_err(|error| encode_error(error.to_string()))?;
+            let encoded = Encoder::new(use_new_collation)
+                .encode_key(&datums)
+                .map_err(|error| encode_error(error.to_string()))?;
             let handle = CommonHandle::new(encoded.clone())
                 .map_err(|error| encode_error(error.to_string()))?;
             Ok((
@@ -259,13 +294,28 @@ pub fn store_clustered_row(
     existing: Option<&RowValues>,
     values: &RowValues,
 ) -> Result<Vec<OptimisticMutation>, RowEncodeError> {
-    let (key, handle) = clustered_record_key(table, values)?;
+    store_clustered_row_with_collation(table, existing, values, new_collation_enabled())
+}
+
+fn store_clustered_row_with_collation(
+    table: &TableInfo,
+    existing: Option<&RowValues>,
+    values: &RowValues,
+    use_new_collation: bool,
+) -> Result<Vec<OptimisticMutation>, RowEncodeError> {
+    let (key, handle) = clustered_record_key_with_collation(table, values, use_new_collation)?;
     match existing {
-        Some(existing) => rewrite_row(table, &key, &handle, existing, values),
+        Some(existing) => rewrite_row(table, &key, &handle, existing, values, use_new_collation),
         None => {
             let mut mutations = vec![OptimisticMutation::insert(key, encode_row(table, values)?)
                 .map_err(|error| encode_error(error.to_string()))?];
-            mutations.extend(index_entries(table, &handle, values, IndexOp::Put)?);
+            mutations.extend(index_entries(
+                table,
+                &handle,
+                values,
+                IndexOp::Put,
+                use_new_collation,
+            )?);
             Ok(mutations)
         }
     }
@@ -286,8 +336,18 @@ pub fn rewrite_rowid_row(
     existing: &RowValues,
     values: &RowValues,
 ) -> Result<Vec<OptimisticMutation>, RowEncodeError> {
+    rewrite_rowid_row_with_collation(table, key, existing, values, new_collation_enabled())
+}
+
+fn rewrite_rowid_row_with_collation(
+    table: &TableInfo,
+    key: &[u8],
+    existing: &RowValues,
+    values: &RowValues,
+    use_new_collation: bool,
+) -> Result<Vec<OptimisticMutation>, RowEncodeError> {
     let handle = Handle::Int(IntHandle::new(row_id_of(key)?));
-    rewrite_row(table, key, &handle, existing, values)
+    rewrite_row(table, key, &handle, existing, values, use_new_collation)
 }
 
 /// The record put and the index moves that turn `existing` into `values`
@@ -298,6 +358,7 @@ fn rewrite_row(
     handle: &Handle,
     existing: &RowValues,
     values: &RowValues,
+    use_new_collation: bool,
 ) -> Result<Vec<OptimisticMutation>, RowEncodeError> {
     let mut mutations =
         vec![
@@ -308,8 +369,8 @@ fn rewrite_row(
     // indexed value moved. When it did not, both share a key -- and both a
     // duplicate mutation on one key and a retraction of what the write just
     // stored are wrong -- so the unchanged case emits neither.
-    let stale = index_entries(table, handle, existing, IndexOp::Delete)?;
-    let fresh = index_entries(table, handle, values, IndexOp::Put)?;
+    let stale = index_entries(table, handle, existing, IndexOp::Delete, use_new_collation)?;
+    let fresh = index_entries(table, handle, values, IndexOp::Put, use_new_collation)?;
     for (retract, store) in stale.into_iter().zip(fresh) {
         if retract.key() == store.key() {
             continue;
@@ -326,10 +387,24 @@ pub fn delete_clustered_row(
     table: &TableInfo,
     values: &RowValues,
 ) -> Result<Vec<OptimisticMutation>, RowEncodeError> {
-    let (key, handle) = clustered_record_key(table, values)?;
+    delete_clustered_row_with_collation(table, values, new_collation_enabled())
+}
+
+fn delete_clustered_row_with_collation(
+    table: &TableInfo,
+    values: &RowValues,
+    use_new_collation: bool,
+) -> Result<Vec<OptimisticMutation>, RowEncodeError> {
+    let (key, handle) = clustered_record_key_with_collation(table, values, use_new_collation)?;
     let mut mutations =
         vec![OptimisticMutation::delete(key).map_err(|error| encode_error(error.to_string()))?];
-    mutations.extend(index_entries(table, &handle, values, IndexOp::Delete)?);
+    mutations.extend(index_entries(
+        table,
+        &handle,
+        values,
+        IndexOp::Delete,
+        use_new_collation,
+    )?);
     Ok(mutations)
 }
 
@@ -355,9 +430,10 @@ pub fn row_id_of(key: &[u8]) -> Result<i64, RowEncodeError> {
 /// [`update_row`] does not perform.
 pub fn indexed_columns(table: &TableInfo) -> Vec<String> {
     let mut names = Vec::new();
-    for index in &table.indices {
-        for column in &index.columns {
-            names.push(column.name.lowercase().to_owned());
+    for index in table.indices.iter_deref() {
+        let index = index.read();
+        for column in index.columns.iter_deref() {
+            names.push(column.read().name.lowercase().to_owned());
         }
     }
     names
@@ -378,7 +454,8 @@ fn encode_row(table: &TableInfo, values: &RowValues) -> Result<Vec<u8>, RowEncod
     let key_columns = handle.columns();
     let mut column_ids = Vec::with_capacity(table.columns.len());
     let mut row = Vec::with_capacity(table.columns.len());
-    for column in table.cols() {
+    for column in table.cols().iter_deref() {
+        let column = column.read();
         if key_columns.iter().any(|key| key == column.name.lowercase()) {
             continue;
         }
@@ -407,23 +484,31 @@ fn index_entries(
     handle: &Handle,
     values: &RowValues,
     op: IndexOp,
+    use_new_collation: bool,
 ) -> Result<Vec<OptimisticMutation>, RowEncodeError> {
     let handle = handle.clone();
     let codec_table = codec_table_info(table);
     let mut mutations = Vec::new();
-    for (position, index) in table.indices.iter().enumerate() {
+    for (position, index) in table.indices.iter_deref().enumerate() {
+        let index = index.read();
         let codec_index = &codec_table.indices[position];
         let mut indexed = Vec::with_capacity(index.columns.len());
-        for index_column in &index.columns {
+        for index_column in index.columns.iter_deref() {
+            let index_column = index_column.read();
             let offset =
                 usize::try_from(index_column.offset).expect("a column offset is not negative");
-            let column = table.columns.get(offset).ok_or_else(|| {
-                encode_error(format!(
+            if offset >= table.columns.len() {
+                return Err(encode_error(format!(
                     "{}'s index `{}` names an offset the table does not have",
                     table_name(table),
                     index.name.original()
-                ))
-            })?;
+                )));
+            }
+            let column = table
+                .columns
+                .get(offset)
+                .expect("nil *ColumnInfo in TableInfo.Columns");
+            let column = column.read();
             let value = values.get(&column.id).ok_or_else(|| {
                 encode_error(format!(
                     "{}.{} has no value for index `{}`",
@@ -438,7 +523,7 @@ fn index_entries(
             ));
         }
         let (index_key, distinct) = generate_index_key(
-            Encoder::new(true),
+            Encoder::new(use_new_collation),
             None,
             &codec_table,
             codec_index,
@@ -451,22 +536,29 @@ fn index_entries(
             IndexOp::Delete => OptimisticMutation::index_delete(index_key),
             IndexOp::Put => {
                 let index_value = generate_index_value(
-                    USE_NEW_COLLATION,
+                    use_new_collation,
                     None,
                     &codec_table,
                     codec_index,
                     // Go `tables.NeedRestoredData`, computed per index rather
-                    // than assumed absent: the index KEY is a new-collation
-                    // sort key, so for an indexed VARCHAR (or any column under
-                    // a case-insensitive collation) this value is the only
-                    // place the original bytes survive.
-                    needs_restored_data(&codec_table, codec_index),
+                    // than assumed absent: in new-collation mode the index KEY
+                    // is a sort key, so for an indexed VARCHAR (or any column
+                    // under a case-insensitive collation) this value is the
+                    // only place the original bytes survive. Legacy mode makes
+                    // the same predicate false and keeps the raw key instead.
+                    needs_restored_data(&codec_table, codec_index, use_new_collation),
                     distinct,
                     false,
                     &indexed,
                     &handle,
                     0,
-                    &handle_restored_data(table, &codec_table, codec_index, values)?,
+                    &handle_restored_data(
+                        table,
+                        &codec_table,
+                        codec_index,
+                        values,
+                        use_new_collation,
+                    )?,
                 )
                 .map_err(|error| encode_error(error.to_string()))?;
                 OptimisticMutation::index_put(index_key, index_value)
@@ -479,13 +571,14 @@ fn index_entries(
 
 /// A string value re-tagged with the collation of the column it belongs to.
 ///
-/// An index KEY is a new-collation SORT KEY, and the key codec takes the
-/// collation from the DATUM. A caller states its values as plain bytes, whose
-/// collation is `binary`, so without this every index key over a
+/// In new-collation mode an index KEY is a SORT KEY, and the key codec takes
+/// the collation from the DATUM. A caller states its values as plain bytes,
+/// whose collation is `binary`, so without this every index key over a
 /// `utf8mb4_general_ci` column would hold the raw bytes where Go holds the
 /// case-folded weights -- and a Go server would not find the row through the
-/// index at all. `mysql.db`, `mysql.tables_priv` and `mysql.columns_priv` all
-/// key on such a column.
+/// index at all. In legacy mode the same tagged datum encodes its raw bytes.
+/// `mysql.db`, `mysql.tables_priv` and `mysql.columns_priv` all key on such a
+/// column.
 ///
 /// Go reaches the same place from the other side: its `INSERT` casts each
 /// value to the column type (`table.CastValue`), and a cast result carries the
@@ -521,10 +614,14 @@ fn indexed_field_type<'a>(
 
 /// Go `tables.NeedRestoredData`: whether any of this index's key parts stores
 /// a column whose new-collation sort key loses the original bytes.
-fn needs_restored_data(codec_table: &CodecTableInfo, codec_index: &CodecIndexInfo) -> bool {
+fn needs_restored_data(
+    codec_table: &CodecTableInfo,
+    codec_index: &CodecIndexInfo,
+    use_new_collation: bool,
+) -> bool {
     codec_index.columns.iter().any(|index_column| {
         indexed_field_type(codec_table, index_column).is_some_and(|field_type| {
-            field_type.need_restored_data_with_collation(USE_NEW_COLLATION)
+            field_type.need_restored_data_with_collation(use_new_collation)
         })
     })
 }
@@ -538,6 +635,7 @@ fn handle_restored_data(
     codec_table: &CodecTableInfo,
     codec_index: &CodecIndexInfo,
     values: &RowValues,
+    use_new_collation: bool,
 ) -> Result<Vec<Datum>, RowEncodeError> {
     if !codec_table.is_common_handle || codec_table.common_handle_version == 0 {
         return Ok(Vec::new());
@@ -558,7 +656,7 @@ fn handle_restored_data(
             })?;
         if !column
             .field_type
-            .need_restored_data_with_collation(USE_NEW_COLLATION)
+            .need_restored_data_with_collation(use_new_collation)
         {
             continue;
         }
@@ -584,7 +682,7 @@ fn handle_restored_data(
         // Go `ConvertDatumToTailSpaceCount`: a bin collation's sort key
         // differs from the data only by the trailing spaces it trimmed, so the
         // COUNT restores it and the string would be a second copy of the key.
-        if is_bin_collation(column.field_type.collation().name()) {
+        if is_bin_collation(column.field_type.collation_name()) {
             value = Datum::Int(trailing_spaces(&value) as i64);
         }
         restored.push(value);
@@ -634,7 +732,7 @@ pub fn declared_default(
     }
     materialise(
         column,
-        column.default_value.as_ref(),
+        &column.default_value,
         table,
         Some(current_timestamp),
     )
@@ -654,12 +752,15 @@ pub fn literal_default(column: &ColumnInfo, table: &str) -> Result<Datum, RowEnc
     if column.default_is_expr {
         return Err(unmaterialisable(column, table));
     }
-    if let Some(ColumnDefaultValue::Str(bytes)) = column.default_value.as_ref() {
-        if String::from_utf8_lossy(bytes).eq_ignore_ascii_case(CURRENT_TIMESTAMP) {
+    if let Some(GoAnyView::String(bytes)) = column.default_value.view() {
+        if bytes
+            .as_bytes()
+            .eq_ignore_ascii_case(CURRENT_TIMESTAMP.as_bytes())
+        {
             return Err(unmaterialisable(column, table));
         }
     }
-    materialise(column, column.default_value.as_ref(), table, None)
+    materialise(column, &column.default_value, table, None)
 }
 
 /// The datum one column's `OriginDefaultValue` materialises to.
@@ -671,17 +772,13 @@ pub fn literal_default(column: &ColumnInfo, table: &str) -> Result<Datum, RowEnc
 /// `GetColOriginDefaultValueWithoutStrictSQLMode`), so the scan -- and the
 /// `ANALYZE` reading through it -- sees the default rather than NULL.
 ///
-/// `None` is Go's nil `OriginDefaultValue`, whose read *is* NULL
+/// A nil interface is Go's nil `OriginDefaultValue`, whose read *is* NULL
 /// (`pkg/table/column.go`'s `getColDefaultValueFromNil`). Unlike a declared
 /// default this one is always a literal: the DDL that added the column
 /// evaluated any expression once, at that moment, and stored the result.
 pub fn origin_default(column: &ColumnInfo, table: &str) -> Result<Datum, RowEncodeError> {
-    materialise(
-        column,
-        column.get_origin_default_value().as_ref(),
-        table,
-        None,
-    )
+    let default = column.get_origin_default_value();
+    materialise(column, &default, table, None)
 }
 
 fn unmaterialisable(column: &ColumnInfo, table: &str) -> RowEncodeError {
@@ -695,7 +792,7 @@ fn unmaterialisable(column: &ColumnInfo, table: &str) -> RowEncodeError {
 /// declared default, the one kind that may still spell `CURRENT_TIMESTAMP`.
 fn materialise(
     column: &ColumnInfo,
-    declared: Option<&ColumnDefaultValue>,
+    declared: &GoAny,
     table: &str,
     current_timestamp: Option<Time>,
 ) -> Result<Datum, RowEncodeError> {
@@ -703,23 +800,26 @@ fn materialise(
     // A `TIMESTAMP DEFAULT CURRENT_TIMESTAMP` column stores that very word as
     // its default: an `INSERT` evaluates it, so a writer that stores the word
     // instead writes a row TiDB rejects as an `Incorrect time value`.
-    if let (Some(ColumnDefaultValue::Str(bytes)), Some(now)) = (declared, current_timestamp) {
-        if String::from_utf8_lossy(bytes).eq_ignore_ascii_case(CURRENT_TIMESTAMP) {
+    if let (Some(GoAnyView::String(bytes)), Some(now)) = (declared.view(), current_timestamp) {
+        if bytes
+            .as_bytes()
+            .eq_ignore_ascii_case(CURRENT_TIMESTAMP.as_bytes())
+        {
             return Ok(Datum::new_time(now));
         }
     }
-    let Some(default) = declared else {
+    let Some(default) = declared.view() else {
         // No declared default: an `INSERT` stores NULL, and the column is
         // nullable or the schema would not have parsed.
         return Ok(Datum::Null);
     };
     let datum = match default {
-        ColumnDefaultValue::Int(value) => Datum::Int(*value),
-        ColumnDefaultValue::Uint(value) => Datum::UInt(*value),
-        ColumnDefaultValue::Bool(value) => Datum::Int(i64::from(*value)),
-        ColumnDefaultValue::Float(value) => Datum::Real(*value),
-        ColumnDefaultValue::Str(bytes) => {
-            let text = Datum::Bytes(bytes.clone());
+        GoAnyView::Int(value) => Datum::Int(value),
+        GoAnyView::Uint(value) => Datum::UInt(value),
+        GoAnyView::Bool(value) => Datum::Int(i64::from(value)),
+        GoAnyView::Float(value) => Datum::Real(value),
+        GoAnyView::String(bytes) => {
+            let text = Datum::Bytes(bytes.as_bytes().to_vec());
             // A numeric column's default is stored as its printed form, so it
             // has to be read back as a number before it is encoded as one.
             match column.get_type() {
@@ -729,7 +829,7 @@ fn materialise(
                 | FieldTypeCode::Long
                 | FieldTypeCode::LongLong
                 | FieldTypeCode::Year => {
-                    let printed = String::from_utf8_lossy(bytes);
+                    let printed = std::str::from_utf8(bytes.as_bytes()).map_err(|_| refuse())?;
                     let parsed = printed.trim().parse::<i64>().map_err(|_| refuse())?;
                     if column
                         .field_type
@@ -743,6 +843,19 @@ fn materialise(
                 _ => typed_value(&text, &column.field_type)?,
             }
         }
+        // `types.NewDatum` accepts a dynamic `[]byte` without converting it
+        // through text. Copy the visible Go slice bytes while retaining the
+        // nil-interface/typed-nil distinction: a typed nil `[]byte` is an
+        // empty byte datum, not SQL NULL.
+        GoAnyView::Bytes(bytes) => Datum::Bytes(bytes.header().snapshot()),
+        GoAnyView::Byte(_)
+        | GoAnyView::DefinedString(_, _)
+        | GoAnyView::Slice(_)
+        | GoAnyView::Map(_)
+        | GoAnyView::Pointer(_)
+        | GoAnyView::Array(_)
+        | GoAnyView::Struct(_)
+        | GoAnyView::Custom => return Err(refuse()),
     };
     Ok(datum)
 }
@@ -764,27 +877,40 @@ pub fn typed_value(value: &Datum, field_type: &FieldType) -> Result<Datum, RowEn
     if !matches!(code, FieldTypeCode::Enum | FieldTypeCode::Set) {
         return Ok(value.clone());
     }
-    let name = String::from_utf8_lossy(bytes).into_owned();
-    let elements = field_type.elems();
-    if elements.is_empty() {
+    let diagnostic_name = GoString::from(bytes.as_slice()).to_utf8_lossy_go();
+    if field_type.elems().is_empty() {
         return Err(RowEncodeError(format!(
-            "a {code:?} column that declares no elements cannot store `{name}`"
+            "a {code:?} column that declares no elements cannot store `{diagnostic_name}`"
         )));
     }
     // The stored spelling is the declared one, so name matching runs under the
     // column's own collation -- which is how Go's `ParseEnum`/`ParseSet` do it.
-    let collation = Collation::from_name(field_type.collation_name()).unwrap_or(Collation::Binary);
+    let collator = field_type.runtime_collator();
+    let datum_collation = field_type.collation();
     if code == FieldTypeCode::Enum {
-        let member = parse_enum(elements, &name, collation)
+        let member = field_type
+            .with_elems_visible(|elements| parse_enum(elements, bytes.as_slice(), collator))
             .map_err(|error| RowEncodeError(error.to_string()))?;
-        Ok(Datum::new_enum(member, collation))
+        Ok(Datum::new_enum(member, datum_collation))
     } else {
         // Go stores a SET as the declaration-ordered bit mask plus the joined
         // names; `parse_set_name` computes both, and answers the empty set for
         // the empty string rather than treating it as an unknown element.
-        let members = parse_set_name(elements, &name, collation)
+        let members = field_type
+            .with_elems_visible(|elements| parse_set_name(elements, bytes.as_slice(), collator))
             .map_err(|error| RowEncodeError(error.to_string()))?;
-        Ok(Datum::new_set(members, collation))
+        Ok(Datum::new_set(members, datum_collation))
+    }
+}
+
+/// The byte-authoritative spelling a value reads back with after column
+/// typing. ENUM/SET declarations and stored values are Go strings, so this
+/// path deliberately retains invalid UTF-8 instead of manufacturing text.
+pub fn canonical_bytes(field_type: &FieldType, bytes: &[u8]) -> Result<Vec<u8>, RowEncodeError> {
+    match typed_value(&Datum::Bytes(bytes.to_vec()), field_type)? {
+        Datum::Set(members, _) => Ok(members.name_bytes().to_vec()),
+        Datum::Enum(member, _) => Ok(member.name_bytes().to_vec()),
+        _ => Ok(bytes.to_vec()),
     }
 }
 
@@ -796,11 +922,9 @@ pub fn typed_value(value: &Datum, field_type: &FieldType) -> Result<Datum, RowEn
 /// stored one has to compare the two in the same spelling or it rewrites the
 /// row forever.
 pub fn canonical_text(field_type: &FieldType, text: &str) -> Result<String, RowEncodeError> {
-    match typed_value(&Datum::Bytes(text.as_bytes().to_vec()), field_type)? {
-        Datum::Set(members, _) => Ok(members.name().to_owned()),
-        Datum::Enum(member, _) => Ok(member.name().to_owned()),
-        _ => Ok(text.to_owned()),
-    }
+    String::from_utf8(canonical_bytes(field_type, text.as_bytes())?).map_err(|_| {
+        RowEncodeError("the canonical ENUM/SET spelling is not valid UTF-8".to_owned())
+    })
 }
 
 /// The tablecodec view of one stored `TableInfo`.
@@ -811,46 +935,58 @@ pub fn codec_table_info(table: &TableInfo) -> CodecTableInfo {
     CodecTableInfo {
         columns: table
             .columns
-            .iter()
+            .iter_deref()
             .enumerate()
-            .map(|(offset, column)| CodecTableColumn {
-                id: column.id,
-                offset,
-                field_type: column.field_type.clone(),
-                primary_key: column
-                    .field_type
-                    .has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY),
-                // Go `ColumnInfo.ChangingFieldType`: the type an in-flight
-                // `MODIFY COLUMN` is moving this column to, which the key
-                // parts flagged `using_changing_type` encode under.
-                changing_field_type: column.changing_field_type.as_deref().cloned(),
+            .map(|(offset, column)| {
+                let column = column.read();
+                CodecTableColumn {
+                    id: column.id,
+                    offset,
+                    field_type: column.field_type.clone(),
+                    primary_key: column
+                        .field_type
+                        .has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY),
+                    // Go `ColumnInfo.ChangingFieldType`: the type an in-flight
+                    // `MODIFY COLUMN` is moving this column to, which the key
+                    // parts flagged `using_changing_type` encode under.
+                    changing_field_type: column
+                        .changing_field_type
+                        .as_ref()
+                        .map(|changing| changing.read().clone()),
+                }
             })
             .collect(),
         indices: table
             .indices
-            .iter()
-            .map(|index| CodecIndexInfo {
-                id: index.id,
-                columns: index
-                    .columns
-                    .iter()
-                    .map(|column| CodecIndexColumn {
-                        offset: usize::try_from(column.offset)
-                            .expect("a column offset is not negative"),
-                        length: i64::from(column.length),
-                        use_changing_type: column.use_changing_type,
-                    })
-                    .collect(),
-                unique: index.unique,
-                global: index.global,
-                // Go `IndexInfo.GlobalIndexVersion` decides whether the
-                // partition id is part of the index KEY, so it is read from
-                // the schema rather than assumed. Every `mysql.*` table this
-                // crate writes is unpartitioned, so the value is 0 in
-                // practice — but assuming that in the code would be a lie the
-                // first time a partitioned table reaches this path.
-                global_index_version: index.global_index_version,
-                primary: index.primary,
+            .iter_deref()
+            .map(|index| {
+                let index = index.read();
+                CodecIndexInfo {
+                    id: index.id,
+                    columns: index
+                        .columns
+                        .iter_deref()
+                        .map(|column| {
+                            let column = column.read();
+                            CodecIndexColumn {
+                                offset: usize::try_from(column.offset)
+                                    .expect("a column offset is not negative"),
+                                length: i64::from(column.length),
+                                use_changing_type: column.use_changing_type,
+                            }
+                        })
+                        .collect(),
+                    unique: index.unique,
+                    global: index.global,
+                    // Go `IndexInfo.GlobalIndexVersion` decides whether the
+                    // partition id is part of the index KEY, so it is read from
+                    // the schema rather than assumed. Every `mysql.*` table this
+                    // crate writes is unpartitioned, so the value is 0 in
+                    // practice — but assuming that in the code would be a lie the
+                    // first time a partitioned table reaches this path.
+                    global_index_version: index.global_index_version,
+                    primary: index.primary,
+                }
             })
             .collect(),
         pk_is_handle: table.pk_is_handle,
@@ -881,7 +1017,12 @@ mod tests {
 
     fn declared(code: FieldTypeCode, elements: &[&str]) -> FieldType {
         let mut field_type = FieldType::new(code);
-        field_type.set_elems(elements.iter().map(|e| (*e).to_owned()).collect());
+        field_type.set_elems(
+            elements
+                .iter()
+                .map(|e| GoString::from(*e))
+                .collect::<Vec<_>>(),
+        );
         field_type
     }
 
@@ -894,11 +1035,121 @@ mod tests {
         let no = typed_value(&Datum::Bytes(b"N".to_vec()), &enum_type).expect("N is declared");
         match (yes, no) {
             (Datum::Enum(yes, _), Datum::Enum(no, _)) => {
-                assert_eq!((yes.name(), yes.value()), ("Y", 2));
-                assert_eq!((no.name(), no.value()), ("N", 1));
+                assert_eq!((yes.name_bytes(), yes.value()), (b"Y".as_slice(), 2));
+                assert_eq!((no.name_bytes(), no.value()), (b"N".as_slice(), 1));
             }
             other => panic!("the enums did not survive typing: {other:?}"),
         }
+    }
+
+    #[test]
+    fn enum_and_set_typing_preserve_arbitrary_go_string_bytes() {
+        let mut enum_type = FieldType::new(FieldTypeCode::Enum);
+        enum_type.set_elems(vec![GoString::from([0xff]), GoString::from([0x15])]);
+        let typed = typed_value(&Datum::Bytes(vec![0xff]), &enum_type)
+            .expect("the raw ENUM member is declared");
+        match typed {
+            Datum::Enum(member, _) => {
+                assert_eq!(member.name_bytes(), [0xff]);
+                assert_eq!(member.value(), 1);
+            }
+            other => panic!("the raw ENUM did not survive typing: {other:?}"),
+        }
+        assert_eq!(canonical_bytes(&enum_type, &[0xff]).unwrap(), [0xff]);
+        assert!(canonical_text(&enum_type, "\u{fffd}").is_err());
+
+        let mut set_type = FieldType::new(FieldTypeCode::Set);
+        set_type.set_elems(vec![GoString::from([0xfe])]);
+        let typed = typed_value(&Datum::Bytes(vec![0xfe]), &set_type)
+            .expect("the raw SET member is declared");
+        match typed {
+            Datum::Set(member, _) => {
+                assert_eq!(member.name_bytes(), [0xfe]);
+                assert_eq!(member.value(), 1);
+            }
+            other => panic!("the raw SET did not survive typing: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn dynamic_defaults_preserve_go_bytes_and_nil_interface_identity() {
+        let mut column = ColumnInfo::default();
+        column.set_type(FieldTypeCode::Varchar);
+
+        column
+            .set_default_value(tidb_model::ColumnDefaultValue::string_bytes(vec![
+                0xff, 0x80, b'x',
+            ]))
+            .expect("a built-in Go string is a valid VARCHAR default");
+        assert_eq!(
+            literal_default(&column, "t").expect("the raw string default materialises"),
+            Datum::Bytes(vec![0xff, 0x80, b'x'])
+        );
+
+        column
+            .set_default_value(tidb_model::ColumnDefaultValue::Bytes(
+                tidb_model::GoAnyBytes::from_vec(vec![0xfe, 0x81]),
+            ))
+            .expect("a dynamic []byte default is retained");
+        assert_eq!(
+            literal_default(&column, "t").expect("the raw []byte default materialises"),
+            Datum::Bytes(vec![0xfe, 0x81])
+        );
+
+        // A typed nil []byte is a non-nil interface and therefore stays a
+        // byte datum. Only a nil interface maps to SQL NULL.
+        column
+            .set_default_value(tidb_model::ColumnDefaultValue::Bytes(
+                tidb_model::GoAnyBytes::default(),
+            ))
+            .expect("a typed nil []byte is retained");
+        assert!(!column.default_value.is_nil());
+        assert_eq!(
+            literal_default(&column, "t").expect("the typed nil []byte materialises"),
+            Datum::Bytes(Vec::new())
+        );
+
+        column
+            .set_default_value(GoAny::nil())
+            .expect("a nil interface is a valid nullable default");
+        assert!(column.default_value.is_nil());
+        assert_eq!(
+            literal_default(&column, "t").expect("the nil interface materialises"),
+            Datum::Null
+        );
+    }
+
+    #[test]
+    fn codec_projection_reads_the_current_shared_changing_field_type() {
+        let changing = tidb_model::GoShared::new(FieldType::new(FieldTypeCode::Varchar));
+        let mut column = ColumnInfo::default();
+        column.field_type = FieldType::new(FieldTypeCode::Long);
+        column.changing_field_type = Some(changing.clone());
+        let table = TableInfo {
+            columns: vec![column].into(),
+            ..Default::default()
+        };
+
+        let projected = codec_table_info(&table);
+        assert_eq!(
+            projected.columns[0]
+                .changing_field_type
+                .as_ref()
+                .expect("the changing type is projected")
+                .code(),
+            FieldTypeCode::Varchar
+        );
+
+        changing.write().set_code(FieldTypeCode::LongLong);
+        let projected = codec_table_info(&table);
+        assert_eq!(
+            projected.columns[0]
+                .changing_field_type
+                .as_ref()
+                .expect("the current shared changing type is projected")
+                .code(),
+            FieldTypeCode::LongLong
+        );
     }
 
     /// `mysql.tables_priv`.`Table_priv`'s own element list, in declaration
@@ -939,7 +1190,9 @@ mod tests {
         // An empty SET is the empty mask, not an unknown element -- that is the
         // value a `tables_priv` row carries when only its columns are granted.
         match typed_value(&Datum::Bytes(Vec::new()), &set_type).expect("the empty SET is valid") {
-            Datum::Set(members, _) => assert_eq!((members.name(), members.value()), ("", 0)),
+            Datum::Set(members, _) => {
+                assert_eq!((members.name_bytes(), members.value()), (b"".as_slice(), 0));
+            }
             other => panic!("the empty SET did not survive typing: {other:?}"),
         }
     }

@@ -54,13 +54,50 @@ pub(crate) fn column_default_text(
     if field_type.code() == tidb_datatype::FieldTypeCode::Bit {
         return match value {
             Datum::Null => None,
-            Datum::BinaryLiteral(bits) | Datum::Bit(bits) => Some(bits.to_bit_literal_string(true)),
+            Datum::String(_)
+            | Datum::Bytes(_)
+            | Datum::Raw(_)
+            | Datum::BinaryLiteral(_)
+            | Datum::Bit(_) => Some(
+                tidb_datatype::BinaryLiteral::from(value.go_bytes()).to_bit_literal_string(true),
+            ),
             // Anything else never settled into the column's own domain;
             // rendering it as bits would invent a value it does not hold.
             other => datum_text(other),
         };
     }
     datum_text(value)
+}
+
+/// The SQL-visible text of one LITERAL column default.
+///
+/// Go stores a version-1-and-later `TIMESTAMP` default as a UTC wall clock,
+/// then `GetColDefaultValue` projects it into the reading session before any
+/// metadata surface prints it. Version 0 uses the system zone as the source;
+/// [`tidb_executor::column_default::materialize_stored_literal`] owns that
+/// version boundary. Other types do not pass through this cast here: their
+/// stored metadata spelling is the spelling SHOW and INFORMATION_SCHEMA
+/// report.
+pub(crate) fn literal_column_default_text(
+    value: &Datum,
+    column: &tidb_executor::KvColumn,
+    flags: tidb_datatype::ConversionFlags,
+    session_zone: &tidb_datatype::SessionTimeZone,
+) -> Result<Option<String>, tidb_datatype::DatumValueError> {
+    if column.field_type.code() != tidb_datatype::FieldTypeCode::Timestamp {
+        return Ok(column_default_text(value, &column.field_type));
+    }
+    let converted = tidb_executor::column_default::materialize_stored_literal(
+        value,
+        &column.field_type,
+        column.column_info_version,
+        flags,
+        session_zone,
+    )?;
+    Ok(match converted.value {
+        Datum::Time(time) => Some(time.to_string()),
+        other => column_default_text(&other, &column.field_type),
+    })
 }
 
 /// Go `stringutil.Escape` with a non-ANSI_QUOTES sql_mode: backtick-quoted,
@@ -150,7 +187,12 @@ fn index_part_text(table: &tidb_executor::KvTable, offset: usize, prefix_length:
 /// charset differs prints `CHARACTER SET <cs> COLLATE <coll>`, one that only
 /// differs in collation prints `COLLATE <coll>`, and a binary-charset column
 /// (`varbinary`, `blob`) prints neither because its type name already says so.
-fn show_create_table_text(database: &str, name: &str, table: &tidb_executor::KvTable) -> String {
+fn show_create_table_text(
+    database: &str,
+    name: &str,
+    table: &tidb_executor::KvTable,
+    ctx: &tidb_executor::StmtContext,
+) -> Result<String, DriverError> {
     let mut out = format!("CREATE TABLE {} (\n", escape_name(name));
     let mut clauses: Vec<String> = Vec::with_capacity(table.columns.len() + 1);
 
@@ -209,7 +251,14 @@ fn show_create_table_text(database: &str, name: &str, table: &tidb_executor::KvT
                 // `ColumnDefault::show_create_clause` for which is which.
                 let literal = match default {
                     tidb_executor::column_default::ColumnDefault::Value(value) => {
-                        column_default_text(value, &column.field_type).unwrap_or_default()
+                        literal_column_default_text(
+                            value,
+                            column,
+                            ctx.show_default_conversion_flags(),
+                            &ctx.session_zone(),
+                        )
+                        .map_err(|_| DriverError::FieldGetDefaultFailed(column.name.clone()))?
+                        .unwrap_or_default()
                     }
                     _ => String::new(),
                 };
@@ -322,7 +371,7 @@ fn show_create_table_text(database: &str, name: &str, table: &tidb_executor::KvT
         table_charset.collation.name()
     ));
     out.push_str(&partition_clause_text(table));
-    out
+    Ok(out)
 }
 
 /// Go `ddl.AppendPartitionInfo`: the `PARTITION BY ...` tail, or the empty
@@ -470,7 +519,8 @@ fn column_description(
     offset: usize,
     table: &tidb_executor::KvTable,
     full: bool,
-) -> Vec<Datum> {
+    ctx: &tidb_executor::StmtContext,
+) -> Result<Vec<Datum>, DriverError> {
     let null_flag = if column.field_type.flags() & NOT_NULL_FLAG != 0 {
         "NO"
     } else {
@@ -485,7 +535,14 @@ fn column_description(
     let key_flag = column_key_flag(table, offset);
     let default = match &column.default_value {
         Some(tidb_executor::column_default::ColumnDefault::Value(value)) => {
-            match column_default_text(value, &column.field_type) {
+            match literal_column_default_text(
+                value,
+                column,
+                ctx.show_default_conversion_flags(),
+                &ctx.session_zone(),
+            )
+            .map_err(|_| DriverError::FieldGetDefaultFailed(column.name.clone()))?
+            {
                 Some(text) => Datum::Bytes(text.into_bytes()),
                 None => Datum::Null,
             }
@@ -499,17 +556,17 @@ fn column_description(
         None => Datum::Null,
     };
     if !full {
-        return vec![
+        return Ok(vec![
             Datum::Bytes(column.name.clone().into_bytes()),
             type_desc_cell(&column.field_type),
             Datum::Bytes(null_flag.as_bytes().to_vec()),
             Datum::Bytes(key_flag.into_bytes()),
             default,
             Datum::Bytes(extra.as_bytes().to_vec()),
-        ];
+        ]);
     }
     let collation = column_collation_cell(&column.field_type);
-    vec![
+    Ok(vec![
         Datum::Bytes(column.name.clone().into_bytes()),
         type_desc_cell(&column.field_type),
         collation,
@@ -519,7 +576,7 @@ fn column_description(
         Datum::Bytes(extra.as_bytes().to_vec()),
         Datum::Bytes(FULL_COL_DESC_PRIVILEGES.as_bytes().to_vec()),
         Datum::Bytes(Vec::new()), // Comment: no per-column comments modelled.
-    ]
+    ])
 }
 
 /// A view column's `SHOW COLUMNS` row.
@@ -957,8 +1014,8 @@ impl Session {
                 .filter(|(_, candidate)| {
                     column.is_none_or(|name| candidate.name.eq_ignore_ascii_case(name))
                 })
-                .map(|(offset, candidate)| column_description(candidate, offset, table, full))
-                .collect::<Vec<_>>())
+                .map(|(offset, candidate)| column_description(candidate, offset, table, full, &ctx))
+                .collect::<Result<Vec<_>, _>>()?)
         })?;
         let field_type = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
         let field_names = if full {
@@ -1543,6 +1600,7 @@ impl Session {
                     [database, table] => (database.clone(), table.clone()),
                     _ => return Err(DriverError::unsupported("empty table name")),
                 };
+                let ctx = self.statement_context(false);
                 // A view answers either spelling with the same row, which
                 // is Go's own behaviour; only `SHOW CREATE VIEW` on a base
                 // table is refused.
@@ -1567,7 +1625,7 @@ impl Session {
                             true,
                         )),
                         tidb_executor::TableEntry::Kv(table) => Ok((
-                            show_create_table_text(&database, &table_name, table),
+                            show_create_table_text(&database, &table_name, table, &ctx)?,
                             table_name.clone(),
                             false,
                             false,

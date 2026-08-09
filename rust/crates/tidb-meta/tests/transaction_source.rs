@@ -32,6 +32,7 @@ use tidb_meta::transaction::{
     NAME_EXTRACT_REGEXP,
 };
 use tidb_meta::{key, structure, value, MetaError, Result};
+use tidb_model::go_runtime::GoShared;
 use tidb_model::placement::PlacementSettings;
 use tidb_model::resource_group::{ResourceGroupInfo, ResourceGroupSettings};
 use tidb_model::{
@@ -502,7 +503,7 @@ fn catalog_fast_paths_cover_metas_names_attributes_cancellation_and_corruption()
         TableInfo {
             id: 11,
             name: CiString::new("Special"),
-            affinity: Some(Box::new(tidb_model::table::TableAffinityInfo {
+            affinity: Some(GoShared::new(tidb_model::table::TableAffinityInfo {
                 level: "s".to_owned(),
             })),
             ..Default::default()
@@ -638,7 +639,7 @@ fn policies_masking_policies_and_resource_groups_preserve_source_lifecycle() {
     let mut policy = PolicyInfo {
         id: 7,
         name: CiString::new("p"),
-        placement_settings: Some(Box::new(PlacementSettings {
+        placement_settings: Some(GoShared::new(PlacementSettings {
             primary_region: "my primary".to_owned(),
             regions: "my regions".to_owned(),
             learners: 1,
@@ -660,6 +661,7 @@ fn policies_masking_policies_and_resource_groups_preserve_source_lifecycle() {
             .placement_settings
             .as_ref()
             .unwrap()
+            .read()
             .primary_region,
         "my primary"
     );
@@ -668,14 +670,16 @@ fn policies_masking_policies_and_resource_groups_preserve_source_lifecycle() {
             .placement_settings
             .as_ref()
             .unwrap()
+            .read()
             .learner_constraints,
         "+zone=shanghai"
     );
     policy.name = CiString::new("p2");
     policy
         .placement_settings
-        .as_mut()
+        .as_ref()
         .unwrap()
+        .write()
         .learner_constraints = "+zone=nanjing".to_owned();
     meta.update_policy(&policy).unwrap();
     let listed = meta.policies().unwrap();
@@ -685,6 +689,7 @@ fn policies_masking_policies_and_resource_groups_preserve_source_lifecycle() {
             .placement_settings
             .as_ref()
             .unwrap()
+            .read()
             .learner_constraints,
         "+zone=nanjing"
     );
@@ -706,6 +711,7 @@ fn policies_masking_policies_and_resource_groups_preserve_source_lifecycle() {
             .unwrap()
             .placement_settings
             .unwrap()
+            .read()
             .learner_constraints,
         "+zone=nanjing"
     );
@@ -1104,7 +1110,7 @@ fn composed_auto_id_sequence_and_schema_diff_methods_preserve_source_order() {
         name: CiString::new("increment"),
         version: tidb_model::table_info::TABLE_INFO_VERSION5,
         auto_id_cache: 1,
-        columns: vec![auto_increment_column],
+        columns: vec![auto_increment_column].into(),
         ..Default::default()
     };
     meta.create_table_and_set_auto_id(
@@ -1360,7 +1366,7 @@ fn source_range_partial_json_and_filter_boundaries() {
     ));
 
     let ordered = value::serialize_table_info(&TableInfo {
-        affinity: Some(Box::new(tidb_model::table::TableAffinityInfo {
+        affinity: Some(GoShared::new(tidb_model::table::TableAffinityInfo {
             level: "s".to_owned(),
         })),
         ..Default::default()
@@ -1374,7 +1380,7 @@ fn source_range_partial_json_and_filter_boundaries() {
 
     let source_cases = [
         TableInfo {
-            ttl_info: Some(Box::new(tidb_model::table::TTLInfo {
+            ttl_info: Some(GoShared::new(tidb_model::table::TTLInfo {
                 interval_expr_str: "1".to_owned(),
                 interval_time_unit: 3,
                 job_interval: "1h".to_owned(),
@@ -1383,34 +1389,34 @@ fn source_range_partial_json_and_filter_boundaries() {
             ..Default::default()
         },
         TableInfo {
-            affinity: Some(Box::new(tidb_model::table::TableAffinityInfo {
+            affinity: Some(GoShared::new(tidb_model::table::TableAffinityInfo {
                 level: "s".to_owned(),
             })),
             ..Default::default()
         },
         TableInfo {
-            tiflash_replica: Some(Box::new(tidb_model::table::TiFlashReplicaInfo {
+            tiflash_replica: Some(GoShared::new(tidb_model::table::TiFlashReplicaInfo {
                 count: 1,
                 ..Default::default()
             })),
             ..Default::default()
         },
         TableInfo {
-            placement_policy_ref: Some(tidb_model::placement::PolicyRefInfo {
+            placement_policy_ref: Some(GoShared::new(tidb_model::placement::PolicyRefInfo {
                 id: 1,
                 ..Default::default()
-            }),
+            })),
             ..Default::default()
         },
         TableInfo {
-            partition: Some(Box::new(tidb_model::partition::PartitionInfo {
+            partition: Some(GoShared::new(tidb_model::partition::PartitionInfo {
                 expr: "a".to_owned(),
                 ..Default::default()
             })),
             ..Default::default()
         },
         TableInfo {
-            lock: Some(Box::new(tidb_model::table::TableLockInfo {
+            lock: Some(GoShared::new(tidb_model::table::TableLockInfo {
                 tp: tidb_ast::TableLockType::NONE,
                 sessions: Vec::new().into(),
                 state: tidb_model::table::TableLockState::PRE_LOCK,
@@ -1422,7 +1428,8 @@ fn source_range_partial_json_and_filter_boundaries() {
             foreign_keys: vec![tidb_model::table::FKInfo {
                 id: 1,
                 ..Default::default()
-            }],
+            }]
+            .into(),
             ..Default::default()
         },
         TableInfo {
@@ -1438,7 +1445,7 @@ fn source_range_partial_json_and_filter_boundaries() {
     for ordinary in [
         TableInfo::default(),
         TableInfo {
-            foreign_keys: Vec::new(),
+            foreign_keys: Vec::new().into(),
             ..Default::default()
         },
         TableInfo {

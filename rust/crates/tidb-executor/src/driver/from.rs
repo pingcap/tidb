@@ -617,13 +617,13 @@ pub(crate) fn build_from(
                                 &columns,
                                 path,
                                 trace.as_deref_mut(),
-                                &ctx.session_zone(),
+                                ctx,
                             )
                         }
-                        None => Box::new(TableScanExec::new(
+                        None => Box::new(TableScanExec::new_with_context(
                             ExecutorMeta::new(schema, 0, INIT_CAP, MAX_CHUNK_SIZE),
                             restricted_to_partitions(kv, &table_ref.partitions, name)?,
-                            ctx.session_zone(),
+                            crate::kv_table::RowDecodeContext::for_query(ctx),
                             // The one production build site: the statement's own
                             // `DAGRequest.flags` and its warning sink, taken
                             // together from the context that decided both.
@@ -1842,7 +1842,7 @@ pub(crate) fn build_join(
         })
         .flatten();
     let index_text = index_join.as_ref().map(|decision| {
-        let source = crate::access_path::IndexJoinLookupExec::new(
+        let source = crate::access_path::IndexJoinLookupExec::new_with_context(
             ExecutorMeta::new(
                 Schema::new(
                     decision
@@ -1862,7 +1862,7 @@ pub(crate) fn build_join(
             ),
             decision.table.clone(),
             decision.object.clone(),
-            ctx.session_zone(),
+            crate::kv_table::RowDecodeContext::for_query(ctx),
         );
         let keys: Vec<(String, String)> = decision
             .probe_keys

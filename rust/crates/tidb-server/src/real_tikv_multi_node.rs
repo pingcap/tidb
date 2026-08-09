@@ -48,9 +48,10 @@ use crate::configured_user_store::ConfiguredUserStore;
 use crate::node_config::NodeConfig;
 use crate::real_tikv_node::{
     configured_catalog, emit_connections_startup_failure, execute_cluster_ddl,
-    install_remote_publication_observer, observe_real_tikv_query, parse_set_time_zone,
-    refusal_aware_error, run_with_process_shutdown, served_table_descriptor, QueryActivity,
-    QueryCompletion, RealTiKvSessionTimeZone, RunConfiguredNodeError,
+    install_remote_publication_observer, lightweight_ddl_statement_context,
+    observe_real_tikv_query, parse_set_time_zone, refusal_aware_error, run_with_process_shutdown,
+    served_table_descriptor, QueryActivity, QueryCompletion, RealTiKvSessionTimeZone,
+    RunConfiguredNodeError,
 };
 use crate::resultset_source::ResultSetSource;
 use crate::sql_node::{
@@ -450,10 +451,12 @@ impl QuerySession for RealTiKvMultiServerSession {
         let default_schema = self.reader.configured_tables()[0].schema().to_owned();
         // This surface has no explicit-transaction state of its own, so a
         // catalog change here is always its own autocommit transaction.
+        let ddl_context = lightweight_ddl_statement_context(&self.time_zone);
         execute_cluster_ddl(
             &self.transaction_opener,
             sql,
             &default_schema,
+            &ddl_context,
             false,
             self.schema_notifier.as_ref(),
         )

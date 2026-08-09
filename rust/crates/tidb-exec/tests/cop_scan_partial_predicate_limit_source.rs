@@ -232,6 +232,7 @@ fn column(name: &str, id: i64, unsigned: bool) -> KvColumn {
         name: name.to_owned(),
         id,
         field_type,
+        column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
         default_value: None,
         origin_default: None,
         generated: None,

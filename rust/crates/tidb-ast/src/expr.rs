@@ -108,6 +108,63 @@ pub enum SysVarScope {
     Instance,
 }
 
+/// Go's decoded `types.BitLiteral` payload as stored in a value-expression AST.
+///
+/// The AST owns bytes rather than source digits: `b'1'` and `b'00000001'`
+/// are the same one-byte value, while `b'000000001'` is the distinct two-byte
+/// value `[0, 1]`. This makes derived expression equality match Go and keeps
+/// byte width available to type inference without retaining irrelevant source
+/// spelling.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+pub struct BitLiteralValue(Vec<u8>);
+
+impl BitLiteralValue {
+    /// Decodes the digit span inside `0b…` / `b'…'` syntax.
+    #[must_use]
+    pub fn from_digits(digits: &str) -> Self {
+        if digits.is_empty() {
+            return Self::default();
+        }
+        let mut bytes = vec![0_u8; digits.len().div_ceil(8)];
+        let padding = bytes.len() * 8 - digits.len();
+        for (index, digit) in digits.bytes().enumerate() {
+            let bit = match digit {
+                b'0' => 0,
+                b'1' => 1,
+                _ => unreachable!("the lexer admits only binary digits"),
+            };
+            let aligned = padding + index;
+            bytes[aligned / 8] |= bit << (7 - aligned % 8);
+        }
+        Self(bytes)
+    }
+
+    /// The unchanged byte-aligned payload.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+
+    /// Go `BinaryLiteral.ToBitLiteralString(true)`'s digits without wrapper.
+    #[must_use]
+    pub fn restored_digits(&self) -> String {
+        if self.0.is_empty() {
+            return String::new();
+        }
+        let mut digits = String::with_capacity(self.0.len() * 8);
+        for byte in &self.0 {
+            use std::fmt::Write;
+            write!(digits, "{byte:08b}").expect("writing to String cannot fail");
+        }
+        let trimmed = digits.trim_start_matches('0');
+        if trimmed.is_empty() {
+            "0".to_owned()
+        } else {
+            trimmed.to_owned()
+        }
+    }
+}
+
 /// A scalar expression.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
@@ -138,8 +195,8 @@ pub enum Expr {
     Float(f64),
     /// A hexadecimal literal's normalized lowercase, even-length hex digits.
     Hex(String),
-    /// A bit literal's normalized (leading-zero-stripped) bit digits.
-    Bit(String),
+    /// A decoded bit-literal value.
+    Bit(BitLiteralValue),
     /// A string literal's decoded value (delimiters and doubling removed).
     String(String),
     /// A bare quoted string, restoring WITHOUT [`Expr::String`]'s own

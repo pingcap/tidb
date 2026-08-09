@@ -19,8 +19,8 @@ use std::cmp::Ordering;
 use chrono::{FixedOffset, Utc};
 use tidb_codec::*;
 use tidb_datatype::{
-    parse_datetime, BinaryJSON, BinaryLiteral, Collation, Datum, Decimal, FieldType,
-    FieldTypeCode, FieldTypeFlags, MySqlDuration, TimeType, VectorFloat32,
+    parse_datetime, BinaryJSON, BinaryLiteral, Collation, Datum, Decimal, FieldType, FieldTypeCode,
+    FieldTypeFlags, MySqlDuration, TimeType, VectorFloat32,
 };
 
 fn varchar(collation: Collation) -> FieldType {
@@ -52,9 +52,7 @@ fn test_bytes_codec() {
         (&[1, 2, 3][..], vec![1, 2, 3, 0, 0, 0, 0, 0, 250]),
         (
             &[1, 2, 3, 4, 5, 6, 7, 8][..],
-            vec![
-                1, 2, 3, 4, 5, 6, 7, 8, 255, 0, 0, 0, 0, 0, 0, 0, 0, 247,
-            ],
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 255, 0, 0, 0, 0, 0, 0, 0, 0, 247],
         ),
     ] {
         let mut encoded = Vec::new();
@@ -93,8 +91,7 @@ fn test_bytes_codec_ext() {
 #[test]
 fn test_decimal_codec() {
     for text in [
-        "123400", "1234", "12.34", "0.1234", "0.01234", "-0.1234", "-0.01234", "-12.34",
-        "0",
+        "123400", "1234", "12.34", "0.1234", "0.01234", "-0.1234", "-0.01234", "-12.34", "0",
     ] {
         let value = Decimal::from_signed_literal(text);
         let mut encoded = Vec::new();
@@ -111,13 +108,13 @@ fn test_decimal_codec() {
 
 #[test]
 fn test_frac() {
-    for value in [
-        Decimal::from_int(3),
-        Decimal::from_signed_literal("0.03"),
-    ] {
+    for value in [Decimal::from_int(3), Decimal::from_signed_literal("0.03")] {
         let mut encoded = Vec::new();
         encode_decimal_fixed(&mut encoded, &value, 0, 0).unwrap();
-        assert_eq!(decode_decimal(&encoded).unwrap().1.to_string(), value.to_string());
+        assert_eq!(
+            decode_decimal(&encoded).unwrap().1.to_string(),
+            value.to_string()
+        );
     }
 }
 
@@ -140,10 +137,7 @@ fn test_codec_key() {
         vec![Datum::Null],
         vec![
             Datum::new_binary_literal(BinaryLiteral::from_uint(100, None)),
-            Datum::new_enum(
-                tidb_datatype::MysqlEnum::new("a", 1),
-                Collation::Binary,
-            ),
+            Datum::new_enum(tidb_datatype::MysqlEnum::new("a", 1), Collation::Binary),
         ],
     ];
     for row in rows {
@@ -231,14 +225,7 @@ fn test_number_order() {
 
 #[test]
 fn test_float_codec() {
-    for value in [
-        -1.0,
-        0.0,
-        1.0,
-        f64::MAX,
-        f64::NEG_INFINITY,
-        f64::INFINITY,
-    ] {
+    for value in [-1.0, 0.0, 1.0, f64::MAX, f64::NEG_INFINITY, f64::INFINITY] {
         let mut encoded = Vec::new();
         encode_float(&mut encoded, value);
         assert_eq!(decode_float(&encoded).unwrap(), (&[][..], value));
@@ -258,7 +245,10 @@ fn test_bytes() {
     ] {
         let mut encoded = Vec::new();
         encode_compact_bytes(&mut encoded, &input);
-        assert_eq!(decode_compact_bytes(&encoded).unwrap(), (&[][..], input.as_slice()));
+        assert_eq!(
+            decode_compact_bytes(&encoded).unwrap(),
+            (&[][..], input.as_slice())
+        );
     }
 }
 
@@ -361,10 +351,7 @@ fn test_set_raw_values() {
     assert_eq!(values.len(), 2);
     assert_eq!(
         values.iter().map(Datum::as_raw_bytes).collect::<Vec<_>>(),
-        vec![
-            Some(&encoded[..2]),
-            Some(&encoded[2..]),
-        ]
+        vec![Some(&encoded[..2]), Some(&encoded[2..]),]
     );
 }
 
@@ -383,10 +370,7 @@ fn test_decode_one_to_chunk() {
     let encoded = encode_value(&[Datum::UInt(2)]).unwrap();
     assert_eq!(
         decode_one_typed(&encoded, &enum_type).unwrap().1,
-        Datum::new_enum(
-            tidb_datatype::MysqlEnum::new("b", 2),
-            Collation::Utf8Mb4Bin
-        )
+        Datum::new_enum(tidb_datatype::MysqlEnum::new("b", 2), Collation::Utf8Mb4Bin)
     );
 
     let decimal_type = FieldType::new(FieldTypeCode::NewDecimal).with_decimal(2);
@@ -479,13 +463,15 @@ fn test_value_size_of_unsigned_int() {
 
 #[test]
 fn test_hash_chunk_columns() {
-    let rows = vec![
-        vec![Datum::Int(1)],
-        vec![Datum::Null],
-        vec![Datum::Int(2)],
-    ];
-    let (all, nulls) =
-        hash_column(&rows, &FieldType::new(FieldTypeCode::LongLong), 0, None, false).unwrap();
+    let rows = vec![vec![Datum::Int(1)], vec![Datum::Null], vec![Datum::Int(2)]];
+    let (all, nulls) = hash_column(
+        &rows,
+        &FieldType::new(FieldTypeCode::LongLong),
+        0,
+        None,
+        false,
+    )
+    .unwrap();
     assert!(all.iter().all(Option::is_some));
     assert_eq!(nulls, [false, true, false]);
     let (selected, _) = hash_column(
@@ -553,19 +539,48 @@ fn test_hash_chunk_row_collation() {
 
 #[test]
 fn test_hash_chunk_columns_collation() {
-    let rows = vec![
-        vec![Datum::new_string("a")],
-        vec![Datum::new_string("A ")],
-    ];
-    let (hashes, _) = hash_column(
-        &rows,
-        &varchar(Collation::Utf8Mb4GeneralCi),
-        0,
-        None,
-        false,
-    )
-    .unwrap();
+    let rows = vec![vec![Datum::new_string("a")], vec![Datum::new_string("A ")]];
+    let (hashes, _) =
+        hash_column(&rows, &varchar(Collation::Utf8Mb4GeneralCi), 0, None, false).unwrap();
     assert_eq!(hashes[0], hashes[1]);
+}
+
+#[test]
+fn source_collation_keys_use_exact_name_and_runtime_mode() {
+    let canonical =
+        FieldType::new(FieldTypeCode::Varchar).with_collation_name("utf8mb4_general_ci");
+    assert_eq!(
+        canonical.runtime_collator_with_mode(true).key(b"a"),
+        canonical.runtime_collator_with_mode(true).key(b"A ")
+    );
+    assert_ne!(
+        canonical.runtime_collator_with_mode(false).key(b"a"),
+        canonical.runtime_collator_with_mode(false).key(b"A ")
+    );
+    assert_eq!(
+        canonical
+            .runtime_collator_with_mode(false)
+            .key(&[0xff, 0xfe]),
+        vec![0xff, 0xfe]
+    );
+    assert_eq!(
+        convert_by_collation(b"A ", &canonical),
+        canonical.runtime_collator().key(b"A ")
+    );
+
+    for exact_name in ["UTF8MB4_GENERAL_CI", "unknown_collation"] {
+        let field_type = FieldType::new(FieldTypeCode::Varchar).with_collation_name(exact_name);
+        assert_eq!(
+            convert_by_collation(&[0xff, 0xfe], &field_type),
+            field_type.runtime_collator().key(&[0xff, 0xfe])
+        );
+        assert_eq!(
+            field_type
+                .runtime_collator_with_mode(false)
+                .key(&[0xff, 0xfe]),
+            vec![0xff, 0xfe]
+        );
+    }
 }
 
 #[test]
@@ -623,6 +638,30 @@ fn source_enum_set_hash_modes() {
     assert_eq!(
         encode_hash_datum(&enum_value, &enum_integer).unwrap().0,
         UVARINT_FLAG
+    );
+
+    let raw_enum_type = FieldType::new(FieldTypeCode::Enum)
+        .with_elems([vec![0xff]])
+        .with_collation_name("binary");
+    let raw_enum = Datum::new_enum(
+        tidb_datatype::MysqlEnum::new(vec![0xff], 1),
+        Collation::Binary,
+    );
+    assert_eq!(
+        encode_hash_datum(&raw_enum, &raw_enum_type).unwrap(),
+        (COMPACT_BYTES_FLAG, vec![0xff])
+    );
+
+    let raw_set_type = FieldType::new(FieldTypeCode::Set)
+        .with_elems([vec![0xfe]])
+        .with_collation_name("binary");
+    let raw_set = Datum::new_set(
+        tidb_datatype::MysqlSet::new(vec![0xfe], 1),
+        Collation::Binary,
+    );
+    assert_eq!(
+        encode_hash_datum(&raw_set, &raw_set_type).unwrap(),
+        (COMPACT_BYTES_FLAG, vec![0xfe])
     );
 }
 

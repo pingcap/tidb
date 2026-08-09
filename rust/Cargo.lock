@@ -1879,6 +1879,7 @@ dependencies = [
  "sha2",
  "tidb-codec",
  "tidb-datatype",
+ "tidb-txnkv",
  "tidb-util",
 ]
 

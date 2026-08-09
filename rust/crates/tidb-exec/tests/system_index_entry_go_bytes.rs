@@ -33,7 +33,7 @@
 use std::collections::BTreeMap;
 
 use tidb_datatype::Datum;
-use tidb_exec::system_row_write::{insert_row, RowValues};
+use tidb_exec::system_row_write::{insert_row, insert_row_with_collation, RowValues};
 use tidb_model::table_info::TableInfo;
 use tidb_txnkv::transaction::OptimisticMutation;
 
@@ -77,15 +77,17 @@ fn hex(bytes: &[u8]) -> String {
 /// Every column of `table` set to `NULL`, then the named ones overwritten.
 fn row(table: &TableInfo, named: &[(&str, &str)]) -> RowValues {
     let mut values = RowValues::new();
-    for column in table.cols() {
+    for column in table.cols().iter_deref() {
+        let column = column.read();
         values.insert(column.id, Datum::Null);
     }
     for (name, text) in named {
         let column = table
             .cols()
-            .into_iter()
-            .find(|column| column.name.lowercase() == *name)
+            .iter_deref()
+            .find(|column| column.read().name.lowercase() == *name)
             .unwrap_or_else(|| panic!("no column {name}"));
+        let column = column.read();
         values.insert(column.id, Datum::Bytes(text.as_bytes().to_vec()));
     }
     values
@@ -99,8 +101,7 @@ fn entry(mutations: &[OptimisticMutation], index_id: i64) -> (Vec<u8>, Vec<u8>) 
         // big-endian (`codec.EncodeInt`).
         .filter(|mutation| mutation.key().get(10) == Some(&b'i'))
         .filter(|mutation| {
-            mutation.key().get(11..19)
-                == Some(&((index_id as u64) ^ (1 << 63)).to_be_bytes()[..])
+            mutation.key().get(11..19) == Some(&((index_id as u64) ^ (1 << 63)).to_be_bytes()[..])
         })
         .map(|mutation| (mutation.key().to_vec(), mutation.value().to_vec()))
         .collect();
@@ -137,6 +138,34 @@ fn a_global_variable_entry_carries_gos_restored_data() {
     );
     let mutations = insert_row(&table, 1, &values).expect("the row encodes");
     assert_entry("mysql_global_variables", &mutations, 1);
+}
+
+/// Legacy and new-collation clusters persist different halves of one index
+/// entry together: legacy mode keeps the raw key and needs no restored-data
+/// payload, while new mode writes a sort key and carries what that key lost.
+///
+/// This deliberately uses `mysql.db`'s case-insensitive key. The ordinary
+/// `mysql.global_variables` value `max_connections` is non-discriminating:
+/// its `utf8mb4_bin` new-collation sort key is byte-identical to the legacy
+/// raw key because it has no trailing spaces, even though the entry value does
+/// correctly gain restored data.
+#[test]
+fn one_captured_mode_drives_both_system_index_key_and_value() {
+    let table = table("db");
+    let values = row(&table, &[("host", "%"), ("db", "Test"), ("user", "root")]);
+    let legacy =
+        insert_row_with_collation(&table, 1, &values, false).expect("the legacy-mode row encodes");
+    let modern =
+        insert_row_with_collation(&table, 1, &values, true).expect("the new-collation row encodes");
+    let (legacy_key, legacy_value) = entry(&legacy, 1);
+    let (modern_key, modern_value) = entry(&modern, 1);
+
+    assert_ne!(legacy_key, modern_key, "the key format follows the mode");
+    assert_ne!(
+        legacy_value, modern_value,
+        "the restored-data value follows the same mode"
+    );
+    assert_entry("mysql_db", &modern, 1);
 }
 
 /// `GRANT ... ON db.*` writes `mysql.db`, whose PRIMARY holds two

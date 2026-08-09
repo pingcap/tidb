@@ -60,10 +60,13 @@
 //! [`func_call_default`] are refused by name.
 
 use tidb_ast::Expr;
-use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+use tidb_datatype::{
+    ConversionFlags, Converted, Datum, DatumValueError, FieldType, FieldTypeCode, SessionTimeZone,
+};
 use tidb_expr::expression::Expression;
 use tidb_expr::rewriter::{rewrite_expr_resolved, NoResolver};
 use tidb_expr::Columns;
+use tidb_model::column::COLUMN_INFO_VERSION1;
 
 /// Go's pair (`ColumnInfo.DefaultValue`, `ColumnInfo.DefaultIsExpr`): where
 /// the value of an omitted column comes from.
@@ -182,6 +185,20 @@ pub enum DefaultError {
     /// A form Go accepts that this tier does not model yet, named so a
     /// refusal says which.
     Unsupported(&'static str),
+}
+
+impl DefaultError {
+    /// Attaches the column name and converts this shared DEFAULT decision to
+    /// the exact driver error every DDL frontend must expose.
+    pub fn into_driver_error(self, column: &str) -> crate::DriverError {
+        match self {
+            Self::FunctionNotAllowed(function) => {
+                crate::DriverError::DefaultFunctionNotAllowed(column.to_owned(), function)
+            }
+            Self::InvalidDefault => crate::DriverError::InvalidDefault(column.to_owned()),
+            Self::Unsupported(reason) => crate::DriverError::unsupported(reason),
+        }
+    }
 }
 
 /// The names Go's `getFuncCallDefaultValue` treats as the clock marker on a
@@ -327,6 +344,76 @@ pub fn build(
     fold(expr).map(ColumnDefault::Value)
 }
 
+/// Materializes one literal `ColumnInfo.DefaultValue` in the consumer's zone.
+///
+/// Go `pkg/table/column.go::getColDefaultValue` casts every non-`TIMESTAMP`
+/// value with the consumer context. A literal `TIMESTAMP` has a second zone
+/// authority: version-1-and-later metadata stores its wall clock in UTC,
+/// while version 0 predates that contract and has already lost its original
+/// zone, so Go reads it in `timeutil.SystemLocation()`. After parsing in that
+/// source zone, Go projects every nonzero timestamp into the session zone.
+///
+/// The conversion event belongs to the original cast. Reprojection changes
+/// only the produced wall clock and deliberately leaves that event intact.
+pub fn materialize_stored_literal(
+    stored: &Datum,
+    field_type: &FieldType,
+    column_info_version: u64,
+    flags: ConversionFlags,
+    session_zone: &SessionTimeZone,
+) -> Result<Converted<Datum>, DatumValueError> {
+    materialize_stored_literal_with_system_zone(
+        stored,
+        field_type,
+        column_info_version,
+        flags,
+        session_zone,
+        system_location_as_session_zone,
+    )
+}
+
+fn system_location_as_session_zone() -> SessionTimeZone {
+    match tidb_util::timeutil::system_location() {
+        tidb_util::timeutil::TimeZone::Local => SessionTimeZone::Local,
+        tidb_util::timeutil::TimeZone::Named(zone) => SessionTimeZone::Named(zone),
+        tidb_util::timeutil::TimeZone::Fixed { name, offset_secs } => {
+            SessionTimeZone::Fixed { name, offset_secs }
+        }
+    }
+}
+
+fn materialize_stored_literal_with_system_zone(
+    stored: &Datum,
+    field_type: &FieldType,
+    column_info_version: u64,
+    flags: ConversionFlags,
+    session_zone: &SessionTimeZone,
+    system_zone: impl FnOnce() -> SessionTimeZone,
+) -> Result<Converted<Datum>, DatumValueError> {
+    if field_type.code() != FieldTypeCode::Timestamp {
+        return stored.convert_to_in(field_type, flags, session_zone);
+    }
+
+    let utc = SessionTimeZone::utc();
+    let resolved_system_zone;
+    let source_zone = if column_info_version >= COLUMN_INFO_VERSION1 {
+        &utc
+    } else {
+        resolved_system_zone = system_zone();
+        &resolved_system_zone
+    };
+    let mut converted = stored.convert_to_in(field_type, flags, source_zone)?;
+    let Datum::Time(time) = &mut converted.value else {
+        return Ok(converted);
+    };
+    if time.is_zero() {
+        return Ok(converted);
+    }
+    time.convert_time_zone(source_zone, session_zone)
+        .map_err(|error| DatumValueError::Comparison(error.to_string()))?;
+    Ok(converted)
+}
+
 /// Go `table.GetColDefaultValue`: the value an omitted column takes for ONE
 /// row. A settled default is that value; a computed one is evaluated now,
 /// against the statement's own context, so `CURRENT_TIMESTAMP` reads the
@@ -334,6 +421,8 @@ pub fn build(
 pub fn evaluate(
     default: &ColumnDefault,
     field_type: &FieldType,
+    column_info_version: u64,
+    flags: ConversionFlags,
     ctx: &impl Columns,
     row: tidb_chunk::row::Row<'_>,
 ) -> Result<Datum, tidb_expr::EvalError> {
@@ -341,7 +430,15 @@ pub fn evaluate(
         let ColumnDefault::Value(value) = default else {
             unreachable!("a default is settled or computed")
         };
-        return Ok(value.clone());
+        return materialize_stored_literal(
+            value,
+            field_type,
+            column_info_version,
+            flags,
+            &ctx.time_zone(),
+        )
+        .map(|converted| converted.value)
+        .map_err(|_| tidb_expr::EvalError::Unsupported("a stored DEFAULT the column cannot hold"));
     };
     let value = computed.expr.eval(ctx, row)?;
     if value.is_null() {
@@ -351,10 +448,199 @@ pub fn evaluate(
     // type before it is stored, which is what gives a `TIMESTAMP(0)` column a
     // second-resolution reading of a clock that has more.
     value
-        .convert_to(field_type, tidb_datatype::DEFAULT_STATEMENT_FLAGS)
+        .convert_to_in(field_type, flags, &ctx.time_zone())
         .map(|converted| converted.value)
         // A default whose computed value does not fit its own column is
         // refused at DDL time by Go's own argument checks, so this is
         // unreachable for a table this tier built.
         .map_err(|_| tidb_expr::EvalError::Unsupported("a computed DEFAULT the column cannot hold"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tidb_datatype::{CoreTime, Time, TimeType, STRICT_FLAGS};
+    use tidb_model::column::COLUMN_INFO_VERSION0;
+
+    fn fixed_zone(name: &str, offset_secs: i32) -> SessionTimeZone {
+        SessionTimeZone::Fixed {
+            name: name.to_owned(),
+            offset_secs,
+        }
+    }
+
+    fn materialized_time_text(converted: &Converted<Datum>) -> String {
+        match &converted.value {
+            Datum::Time(time) => time.to_string(),
+            other => panic!("expected materialized time, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn version1_timestamp_uses_stored_utc_then_consumer_zone() {
+        // Written as 08:00 in a +08 session, the DDL path persists this UTC
+        // wall clock. Reading it must recover the same instant everywhere.
+        let stored = Datum::new_string("2020-01-02 00:00:00");
+        let field_type = FieldType::new(FieldTypeCode::Timestamp);
+        let utc = SessionTimeZone::utc();
+        let plus_eight = fixed_zone("+08:00", 8 * 60 * 60);
+
+        for (consumer, expected) in [
+            (&utc, "2020-01-02 00:00:00"),
+            (&plus_eight, "2020-01-02 08:00:00"),
+        ] {
+            let converted = materialize_stored_literal(
+                &stored,
+                &field_type,
+                COLUMN_INFO_VERSION1,
+                STRICT_FLAGS,
+                consumer,
+            )
+            .unwrap();
+            assert_eq!(materialized_time_text(&converted), expected);
+            assert_eq!(converted.event, None);
+        }
+    }
+
+    #[test]
+    fn version0_timestamp_uses_injected_system_zone() {
+        let stored = Datum::new_string("2020-01-02 08:00:00");
+        let field_type = FieldType::new(FieldTypeCode::Timestamp);
+        let system_plus_eight = fixed_zone("System", 8 * 60 * 60);
+        let converted = materialize_stored_literal_with_system_zone(
+            &stored,
+            &field_type,
+            COLUMN_INFO_VERSION0,
+            STRICT_FLAGS,
+            &SessionTimeZone::utc(),
+            || system_plus_eight.clone(),
+        )
+        .unwrap();
+
+        assert_eq!(materialized_time_text(&converted), "2020-01-02 00:00:00");
+    }
+
+    #[test]
+    fn zero_timestamp_is_not_projected() {
+        let stored = Datum::new_string("0000-00-00 00:00:00");
+        let field_type = FieldType::new(FieldTypeCode::Timestamp);
+        let converted = materialize_stored_literal(
+            &stored,
+            &field_type,
+            COLUMN_INFO_VERSION1,
+            tidb_datatype::DEFAULT_STATEMENT_FLAGS,
+            &fixed_zone("+08:00", 8 * 60 * 60),
+        )
+        .unwrap();
+
+        assert_eq!(materialized_time_text(&converted), "0000-00-00 00:00:00");
+    }
+
+    #[test]
+    fn non_timestamp_uses_consumer_conversion_and_preserves_event() {
+        let field_type = FieldType::new(FieldTypeCode::LongLong);
+        let temporal = Datum::new_time(
+            Time::new(
+                CoreTime::from_date(2011, 3, 13, 1, 59, 59, 999_999),
+                TimeType::DateTime,
+                6,
+            )
+            .unwrap(),
+        );
+        let utc = SessionTimeZone::utc();
+        let los_angeles = SessionTimeZone::Named(chrono_tz::America::Los_Angeles);
+        for (consumer, expected) in [
+            (&utc, Datum::Int(20_110_313_020_000)),
+            (&los_angeles, Datum::Int(20_110_313_030_000)),
+        ] {
+            let converted = materialize_stored_literal(
+                &temporal,
+                &field_type,
+                COLUMN_INFO_VERSION1,
+                STRICT_FLAGS,
+                consumer,
+            )
+            .unwrap();
+            assert_eq!(converted.value, expected);
+        }
+
+        let stored = Datum::new_string("12x");
+        let consumer = fixed_zone("+08:00", 8 * 60 * 60);
+        let expected = stored
+            .convert_to_in(&field_type, STRICT_FLAGS, &consumer)
+            .unwrap();
+        assert_eq!(
+            expected.event,
+            Some(tidb_datatype::ScalarConversionEvent::Truncated)
+        );
+
+        assert_eq!(
+            materialize_stored_literal(
+                &stored,
+                &field_type,
+                COLUMN_INFO_VERSION1,
+                STRICT_FLAGS,
+                &consumer,
+            )
+            .unwrap(),
+            expected
+        );
+    }
+
+    #[test]
+    fn timestamp_projection_preserves_conversion_event() {
+        let stored = Datum::new_time(
+            Time::new(
+                CoreTime::from_date(2011, 3, 13, 2, 30, 0, 0),
+                TimeType::DateTime,
+                0,
+            )
+            .unwrap(),
+        );
+        let field_type = FieldType::new(FieldTypeCode::Timestamp);
+        let system_zone = SessionTimeZone::Named(chrono_tz::America::Los_Angeles);
+        let converted = materialize_stored_literal_with_system_zone(
+            &stored,
+            &field_type,
+            COLUMN_INFO_VERSION0,
+            STRICT_FLAGS,
+            &SessionTimeZone::utc(),
+            || system_zone.clone(),
+        )
+        .unwrap();
+
+        assert_eq!(materialized_time_text(&converted), "2011-03-13 10:00:00");
+        assert_eq!(
+            converted.event,
+            Some(tidb_datatype::ScalarConversionEvent::Truncated)
+        );
+    }
+
+    #[test]
+    fn timezone_projection_failure_is_a_datum_comparison_error() {
+        // A typed timestamp can carry a wall clock in a spring-forward gap;
+        // conversion into the type is exact, and source-zone projection is
+        // the operation that must expose the timezone failure.
+        let stored = Datum::new_time(
+            Time::new(
+                CoreTime::from_date(2011, 3, 13, 2, 30, 0, 0),
+                TimeType::Timestamp,
+                0,
+            )
+            .unwrap(),
+        );
+        let field_type = FieldType::new(FieldTypeCode::Timestamp);
+        let system_zone = SessionTimeZone::Named(chrono_tz::America::Los_Angeles);
+        let error = materialize_stored_literal_with_system_zone(
+            &stored,
+            &field_type,
+            COLUMN_INFO_VERSION0,
+            STRICT_FLAGS,
+            &SessionTimeZone::utc(),
+            || system_zone.clone(),
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, DatumValueError::Comparison(_)));
+    }
 }

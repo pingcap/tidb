@@ -32,9 +32,9 @@
 //! fields, ...).
 
 use tidb_ast::{
-    BinaryOp, CastExpr, CastStyle, CastType, Expr, FrameBound, FrameKind, GetFormatSelector,
-    IsTarget, MatchModifier, SysVarScope, TrimDirection, UnaryOp, WeightStringType, WindowDef,
-    WindowFrame, WindowOver, WindowSpec,
+    BinaryOp, BitLiteralValue, CastExpr, CastStyle, CastType, Expr, FrameBound, FrameKind,
+    GetFormatSelector, IsTarget, MatchModifier, SysVarScope, TrimDirection, UnaryOp,
+    WeightStringType, WindowDef, WindowFrame, WindowOver, WindowSpec,
 };
 use tidb_lexer::{canonical_charset, canonical_collation, canonical_legacy_charset, TokenKind};
 
@@ -378,23 +378,19 @@ impl Parser {
                 Ok(Expr::Float(f))
             }
             TokenKind::HexLit => {
-                // Go LEXES `0X11` as hexLit (`startWithNumber`, 'x' || 'X' in
-                // one arm) and then FAILS at literal construction: the parser
-                // calls `ast.NewHexLiteral` -> `ParseHexStr`, whose number
-                // form checks `strings.HasPrefix(s, "0x")` -- LOWERCASE ONLY
-                // (test_driver_datum.go:384) -- so `select 0X11` is a
-                // statement error while `select 0x11` and `X'11'` both parse
-                // (parser_test.go:5237,5240). Reproduce the constructor half
-                // here; the quoted `x'..'`/`X'..'` forms accept either case.
-                if t.text.starts_with("0X") {
-                    return Err(self.err_here("invalid hexadecimal format"));
-                }
+                // The lexer deliberately gives all three spellings one token
+                // kind, but Go's `ast.NewHexLiteral` constructor retains their
+                // semantic differences: quoted x'..'/X'..' requires an even
+                // digit count, lowercase 0x.. pads an odd count, and uppercase
+                // 0X.. is rejected. Keep that contract in the shared helper so
+                // this arm and the charset-introduced arm cannot drift.
+                let digits = normalize_hex(&t.text).map_err(|reason| self.err_here(reason))?;
                 self.bump();
-                Ok(Expr::Hex(normalize_hex(&t.text)))
+                Ok(Expr::Hex(digits))
             }
             TokenKind::BitLit => {
                 self.bump();
-                Ok(Expr::Bit(normalize_bit(&t.text)))
+                Ok(Expr::Bit(bit_literal_digits(&t.text)))
             }
             // MySQL/TiDB concatenates adjacent bare string-literal tokens:
             // `'a' 'b'` parses as the SINGLE value `'ab'`, no operator
@@ -475,15 +471,10 @@ impl Parser {
                         }
                     }
                     TokenKind::HexLit => {
-                        // Same constructor rule as the bare-literal arm:
-                        // Go's ParseHexStr accepts only a LOWERCASE `0x`
-                        // number prefix, so `_utf8 0XD0B1` is a statement
-                        // error while `_utf8 0xD0B1` parses.
-                        if self.peek().text.starts_with("0X") {
-                            return Err(self.err_here("invalid hexadecimal format"));
-                        }
-                        let token = self.bump();
-                        let value = Expr::Hex(normalize_hex(&token.text));
+                        let digits = normalize_hex(&self.peek().text)
+                            .map_err(|reason| self.err_here(reason))?;
+                        self.bump();
+                        let value = Expr::Hex(digits);
                         if matches!(charset, "binary" | "utf8mb4") {
                             Ok(value)
                         } else {
@@ -495,7 +486,7 @@ impl Parser {
                     }
                     TokenKind::BitLit => {
                         let token = self.bump();
-                        let value = Expr::Bit(normalize_bit(&token.text));
+                        let value = Expr::Bit(bit_literal_digits(&token.text));
                         if matches!(charset, "binary" | "utf8mb4") {
                             Ok(value)
                         } else {
@@ -1075,50 +1066,46 @@ fn is_clause_keyword(name: &str) -> bool {
     )
 }
 
-/// Normalizes a hex literal token (`0xFF`, `x'1a2b'`) to lowercase, even-length
-/// hex digits, matching the Go AST's `x'..'` restore.
-fn normalize_hex(text: &str) -> String {
-    let digits = if let Some(rest) = text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
-        rest.to_string()
+/// Applies Go `ParseHexStr`'s constructor contract and returns the canonical
+/// lowercase digits used by the Rust AST.
+///
+/// The lexer has already validated the digit alphabet and token shape. This
+/// layer preserves the remaining syntax-dependent rules: quoted x'..'/X'..'
+/// requires pairs of digits, numeric lowercase 0x.. permits an odd count and
+/// pads it, and numeric uppercase 0X.. is invalid.
+fn normalize_hex(text: &str) -> Result<String, &'static str> {
+    let (digits, may_pad) = if let Some(rest) = text.strip_prefix("0x") {
+        (rest, true)
+    } else if text.starts_with("0X") {
+        return Err("invalid hexadecimal format");
     } else {
-        // x'..' / X'..'
-        text[1..].trim_matches('\'').to_string()
+        let quoted = text[1..].trim_matches('\'');
+        if !quoted.len().is_multiple_of(2) {
+            return Err("invalid hexadecimal format");
+        }
+        (quoted, false)
     };
     let mut lower = digits.to_ascii_lowercase();
-    if lower.len() % 2 != 0 {
+    if may_pad && !lower.len().is_multiple_of(2) {
         lower.insert(0, '0');
     }
-    lower
+    Ok(lower)
 }
 
-/// Normalizes a bit literal token (`0b101`, `b'0101'`) to its leading-zero-
-/// stripped bit digits, matching the Go AST's `b'..'` restore. A genuinely
-/// EMPTY quoted literal (`b''`/`B''` — confirmed via `godump restore` to be
-/// real, valid grammar, lexed as a `BitLit` with a zero-length digit span
-/// between the quotes; the bare `0b` form can never reach here empty, since
-/// the lexer only emits `BitLit` for `0b` when at least one binary digit
-/// follows, otherwise treating the whole span as an identifier) stays empty
-/// (`b''`) rather than being folded into `b'0'` — those are DIFFERENT values
-/// in real TiDB (confirmed via `goeval`: `LENGTH(b'')` is `0`, `LENGTH(b'0')`
-/// is `1`, even though both evaluate to `0` under arithmetic), so only a
-/// digit string that had leading zeros STRIPPED DOWN TO empty (`0`, `00`,
-/// ...) — genuinely non-empty to begin with — falls back to `"0"`.
-fn normalize_bit(text: &str) -> String {
+/// Extracts the exact bit digits from `0b101` / `b'0101'` syntax.
+///
+/// Go parses those digits into `ceil(len/8)` bytes before attaching the value
+/// to the AST. Leading zeroes therefore determine byte width and cannot be
+/// discarded here. Canonical restore trims them later via
+/// [`BitLiteralValue::restored_digits`].
+fn bit_literal_digits(text: &str) -> BitLiteralValue {
     let digits = if let Some(rest) = text.strip_prefix("0b").or_else(|| text.strip_prefix("0B")) {
-        rest.to_string()
+        rest
     } else {
         // b'..' / B'..'
-        text[1..].trim_matches('\'').to_string()
+        text[1..].trim_matches('\'')
     };
-    if digits.is_empty() {
-        return digits;
-    }
-    let trimmed = digits.trim_start_matches('0');
-    if trimmed.is_empty() {
-        "0".to_string()
-    } else {
-        trimmed.to_string()
-    }
+    BitLiteralValue::from_digits(digits)
 }
 
 impl Parser {

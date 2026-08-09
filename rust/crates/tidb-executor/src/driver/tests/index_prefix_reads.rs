@@ -282,8 +282,12 @@ fn writes_through_a_prefix_index_stay_admin_check_clean() {
             panic!("the table is not storage-backed");
         };
         assert_eq!(
-            crate::admin_check::check_table(table, None, &tidb_datatype::SessionTimeZone::utc())
-                .expect("every stored entry re-encodes from the row it names"),
+            crate::admin_check::check_table(
+                table,
+                None,
+                &crate::RowDecodeContext::for_test_query_utc(),
+            )
+            .expect("every stored entry re-encodes from the row it names"),
             1
         );
     };
@@ -329,8 +333,12 @@ fn a_multi_byte_column_is_cut_by_characters() {
         panic!("the table is not storage-backed");
     };
     assert_eq!(
-        crate::admin_check::check_table(table, None, &tidb_datatype::SessionTimeZone::utc())
-            .unwrap(),
+        crate::admin_check::check_table(
+            table,
+            None,
+            &crate::RowDecodeContext::for_test_query_utc(),
+        )
+        .unwrap(),
         1
     );
 }
@@ -359,8 +367,12 @@ fn create_index_backfills_cut_entries() {
         panic!("the table is not storage-backed");
     };
     assert_eq!(
-        crate::admin_check::check_table(table, None, &tidb_datatype::SessionTimeZone::utc())
-            .unwrap(),
+        crate::admin_check::check_table(
+            table,
+            None,
+            &crate::RowDecodeContext::for_test_query_utc(),
+        )
+        .unwrap(),
         1
     );
 }
@@ -404,8 +416,12 @@ fn modify_column_clears_a_prefix_the_new_type_cannot_carry() {
         );
         // The entries were rebuilt under the new (absent) length, so the
         // index still agrees with the rows.
-        crate::admin_check::check_table(table, None, &tidb_datatype::SessionTimeZone::utc())
-            .expect("the rebuilt entries match the rows");
+        crate::admin_check::check_table(
+            table,
+            None,
+            &crate::RowDecodeContext::for_test_query_utc(),
+        )
+        .expect("the rebuilt entries match the rows");
     }
 }
 
@@ -438,7 +454,7 @@ fn modify_column_keeps_a_prefix_the_new_type_can_carry() {
         panic!("the table is not storage-backed");
     };
     assert_eq!(table.indexes()[0].prefix_lengths, vec![2]);
-    crate::admin_check::check_table(table, None, &tidb_datatype::SessionTimeZone::utc())
+    crate::admin_check::check_table(table, None, &crate::RowDecodeContext::for_test_query_utc())
         .expect("the cut entries match the rows");
 
     // The same column with NO surviving prefix is Go's 1170.

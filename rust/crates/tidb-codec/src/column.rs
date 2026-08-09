@@ -548,7 +548,7 @@ pub fn decode_column_datums(
                     }
                     let bytes = column.value(row)?;
                     let (name, value) = if bytes.is_empty() {
-                        (String::new(), 0_u64)
+                        (Vec::new(), 0_u64)
                     } else {
                         let (value_bytes, name_bytes) = bytes.split_at_checked(EIGHT_BYTES).ok_or(
                             TypedColumnError::InvalidTypedPayload {
@@ -561,14 +561,7 @@ pub fn decode_column_datums(
                             },
                         )?;
                         let value = u64::from_ne_bytes(value_bytes.try_into().unwrap());
-                        let name = String::from_utf8(name_bytes.to_vec()).map_err(|error| {
-                            TypedColumnError::InvalidTypedPayload {
-                                field_type: code,
-                                row,
-                                message: error.to_string(),
-                            }
-                        })?;
-                        (name, value)
+                        (name_bytes.to_vec(), value)
                     };
                     Ok(if code == FieldTypeCode::Enum {
                         Datum::new_enum(MysqlEnum::new(name, value), field_type.collation())
@@ -997,5 +990,38 @@ mod tests {
                 Datum::Null,
             ]
         );
+    }
+
+    #[test]
+    fn enum_and_set_names_preserve_non_utf8_source_bytes() {
+        let enum_data = [1, 0, 0, 0, 0, 0, 0, 0, 0xff];
+        let enum_column = RawColumn {
+            length: 1,
+            null_count: 0,
+            null_bitmap: None,
+            offsets: Some(vec![0, enum_data.len() as i64]),
+            data: &enum_data,
+        };
+        let enum_datums =
+            decode_column_datums(&enum_column, FieldType::new(FieldTypeCode::Enum)).unwrap();
+        match enum_datums.as_slice() {
+            [Datum::Enum(value, _)] => assert_eq!(value.name_bytes(), &[0xff]),
+            other => panic!("unexpected enum datums: {other:?}"),
+        }
+
+        let set_data = [2, 0, 0, 0, 0, 0, 0, 0, 0xfe];
+        let set_column = RawColumn {
+            length: 1,
+            null_count: 0,
+            null_bitmap: None,
+            offsets: Some(vec![0, set_data.len() as i64]),
+            data: &set_data,
+        };
+        let set_datums =
+            decode_column_datums(&set_column, FieldType::new(FieldTypeCode::Set)).unwrap();
+        match set_datums.as_slice() {
+            [Datum::Set(value, _)] => assert_eq!(value.name_bytes(), &[0xfe]),
+            other => panic!("unexpected set datums: {other:?}"),
+        }
     }
 }

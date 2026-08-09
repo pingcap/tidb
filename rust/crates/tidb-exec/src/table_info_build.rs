@@ -53,6 +53,10 @@
 //! classic bootstrap uses (`mysql.ModeNone`, `ClusteredIndexDefModeIntOnly`).
 //! The capture is `tests/data/mysql_bootstrap_tableinfos.json` and the
 //! comparison is `tests/mysql_bootstrap_tableinfo_source.rs`.
+//! That capture defines the metadata target; it does not authorize a live
+//! session path to reuse `ModeNone`. [`build_table_info`] is the explicit
+//! bootstrap/fixture entrypoint, while live callers pass their statement
+//! context through [`build_table_info_with_context`].
 //!
 //! **What is refused rather than guessed.** Validity checks Go performs on top
 //! of the metadata (index length limits, too-long identifiers, generated-column
@@ -66,11 +70,11 @@ use tidb_ast::IndexType;
 use tidb_ast::{CiString, IndexOptions};
 use tidb_ast::{
     ColumnDef, ColumnOption, ColumnType, CreateTableStmt, Expr, IndexConstraintKind, IndexPart,
-    InlineKeyKind, PrimaryKeyStorage, TableConstraint, TableOption, UnaryOp,
+    InlineKeyKind, PrimaryKeyStorage, TableConstraint, TableOption,
 };
 use tidb_datatype::{
     get_collation_by_name, get_default_charset_and_collate, get_default_collation, FieldType,
-    FieldTypeCode, FieldTypeFlags,
+    FieldTypeCode, FieldTypeFlags, SessionTimeZone,
 };
 // The declared-type -> `FieldType` rule set is SHARED with the runnable-path
 // `CREATE TABLE` builder; see `column_field_type`'s module doc for why.
@@ -79,7 +83,7 @@ use tidb_executor::ddl::column_field_type::{
     process_column_flags, ColumnTypeError,
 };
 use tidb_model::column::{
-    ColumnDefaultValue, ColumnInfo, GoStringSet, CURR_LATEST_COLUMN_INFO_VERSION,
+    ColumnDefaultValue, ColumnInfo, GoAny, GoStringSet, CURR_LATEST_COLUMN_INFO_VERSION,
 };
 use tidb_model::index::{IndexColumn, IndexInfo};
 use tidb_model::schema_state::SchemaState;
@@ -145,6 +149,19 @@ impl DdlAdmissionError {
             reason: reason.into(),
             code,
         }
+    }
+
+    /// The SQLSTATE paired with [`Self::code`] by Go's MySQL error catalog.
+    ///
+    /// Keeping this derivation on the admission error prevents transport
+    /// callers from preserving the errno while silently flattening every DDL
+    /// refusal back to `HY000`.
+    #[must_use]
+    pub fn sql_state(&self) -> [u8; 5] {
+        tidb_error::mysql::mysql_state(self.code)
+            .as_bytes()
+            .try_into()
+            .expect("the MySQL error catalog stores five-byte SQLSTATEs")
     }
 }
 
@@ -240,16 +257,35 @@ impl std::error::Error for DdlAdmissionError {}
 
 type Refusal<T> = Result<T, DdlAdmissionError>;
 
-/// Builds the `TableInfo` a real TiDB would persist for one `CREATE TABLE`.
+/// Builds a bootstrap `TableInfo` under classic bootstrap's exact `ModeNone`
+/// evaluation context.
 ///
 /// `db_charset`/`db_collate` are the owning database's, which a table with no
 /// charset option of its own inherits. The returned table carries no ID and no
-/// `update_ts`: those belong to the transaction that publishes it.
+/// `update_ts`: those belong to the transaction that publishes it. Live DDL
+/// must call [`build_table_info_with_context`] with the issuing session's
+/// context instead.
 pub fn build_table_info(
     create: &CreateTableStmt,
     db_charset: &str,
     db_collate: &str,
     clustered_mode: ClusteredIndexDefMode,
+) -> Refusal<TableInfo> {
+    let context = bootstrap_ddl_statement_context();
+    build_table_info_with_context(create, db_charset, db_collate, clustered_mode, &context)
+}
+
+/// [`build_table_info`] under the statement's actual SQL mode and time zone.
+///
+/// A live session must use this entrypoint: literal temporal defaults are
+/// admitted under its mode bits, and a literal `TIMESTAMP` is persisted as the
+/// UTC projection of its session wall clock.
+pub fn build_table_info_with_context(
+    create: &CreateTableStmt,
+    db_charset: &str,
+    db_collate: &str,
+    clustered_mode: ClusteredIndexDefMode,
+    context: &tidb_executor::StmtContext,
 ) -> Refusal<TableInfo> {
     let refuse = |what: &str| {
         Err(DdlAdmissionError::new(format!(
@@ -330,6 +366,7 @@ pub fn build_table_info(
             out_primary_key.as_ref(),
             &table_charset,
             &table_collate,
+            context,
         )?;
         // An inline PRIMARY KEY / UNIQUE becomes a constraint of its own, in
         // the position Go appends it: after every table-level one.
@@ -479,6 +516,7 @@ fn build_column(
     out_primary_key: Option<&Constraint>,
     table_charset: &str,
     table_collate: &str,
+    context: &tidb_executor::StmtContext,
 ) -> Refusal<(ColumnInfo, Vec<Constraint>)> {
     let name = &column.name;
     if !column.qualifier.is_empty() {
@@ -543,10 +581,10 @@ fn build_column(
         id: 0,
         name: CiString::new(name.clone()),
         offset: i64::try_from(offset).expect("a column offset fits in i64"),
-        origin_default_value: None,
-        origin_default_value_bit: None,
-        default_value: None,
-        default_value_bit: None,
+        origin_default_value: GoAny::nil(),
+        origin_default_value_bit: Default::default(),
+        default_value: GoAny::nil(),
+        default_value_bit: Default::default(),
         default_is_expr: false,
         generated_expr_string: String::new(),
         generated_stored: false,
@@ -554,7 +592,10 @@ fn build_column(
         // column. It allocates only for generated columns, which this tier
         // refuses before metadata construction.
         dependences: GoStringSet::default(),
-        field_type: FieldType::new(FieldTypeCode::LongLong),
+        // Keep the declared type until option and constraint processing has
+        // produced the final one. Staged defaults are installed through the
+        // model setter only after that final type is in place below.
+        field_type: field_type.clone(),
         changing_field_type: None,
         state: SchemaState::PUBLIC,
         comment: String::new(),
@@ -564,7 +605,7 @@ fn build_column(
     };
 
     let mut constraints = Vec::new();
-    let mut has_default_value = false;
+    let mut staged_default = None;
     let mut has_null_flag = false;
     let mut set_on_update_now = false;
     for option in &column.options {
@@ -616,7 +657,7 @@ fn build_column(
                 }
             },
             ColumnOption::Default(expr) => {
-                has_default_value = set_default_value(name, &mut info, &field_type, expr)?;
+                staged_default = Some(stage_column_default(name, &field_type, expr, context)?);
                 remove_on_update_now(&mut field_type);
             }
             ColumnOption::OnUpdate(expr) => {
@@ -686,8 +727,35 @@ fn build_column(
         }
     }
 
-    // Go `checkPriKeyConstraint`: a table-level PRIMARY KEY naming this column
-    // stamps the flag even though the column itself declared nothing.
+    // Go `processDefaultValue` then `processColumnFlags`, before its ordered
+    // `checkPriKeyConstraint` gates below.
+    let has_default_value = staged_default
+        .as_ref()
+        .is_some_and(StagedColumnDefault::has_default);
+    process_default_value(
+        &mut info,
+        &mut field_type,
+        has_default_value,
+        set_on_update_now,
+    );
+    process_column_flags(&mut field_type);
+
+    // Go `checkPriKeyConstraint` first asks about an INLINE primary key,
+    // because only that flag exists before the outer constraint is visited.
+    // Its DEFAULT NULL is 1067, and this must win over an explicit NULL that
+    // would otherwise reach the later 1171 arm.
+    if field_type.has_flag(FieldTypeFlags::PRI_KEY)
+        && staged_default
+            .as_ref()
+            .is_some_and(StagedColumnDefault::has_null_default)
+    {
+        return Err(default_admission_error(
+            tidb_executor::DriverError::InvalidDefault(name.to_owned()),
+        ));
+    }
+
+    // Only after the inline precheck does Go stamp a table-level PRIMARY KEY
+    // naming this column.
     if !field_type.has_flag(FieldTypeFlags::PRI_KEY) {
         if let Some(primary_key) = out_primary_key {
             if primary_key
@@ -700,20 +768,17 @@ fn build_column(
         }
     }
     if field_type.has_flag(FieldTypeFlags::PRI_KEY) && has_null_flag {
-        return Err(DdlAdmissionError::new(format!(
-            "column `{name}` is a PRIMARY KEY column declared NULL"
-        )));
+        return Err(default_admission_error(
+            tidb_executor::DriverError::PrimaryCantHaveNull,
+        ));
     }
 
-    // Go `processDefaultValue` then `processColumnFlags`.
-    process_default_value(
-        &mut info,
-        &mut field_type,
-        has_default_value,
-        set_on_update_now,
-    );
-    process_column_flags(&mut field_type);
+    // Go's final `checkDefaultValue` now sees every final flag. The staged
+    // spelling is persisted only after that check succeeds.
     info.field_type = field_type;
+    if let Some(staged_default) = staged_default {
+        persist_column_default(name, &mut info, staged_default, context)?;
+    }
     Ok((info, constraints))
 }
 
@@ -736,15 +801,16 @@ fn process_default_value(
         if field_type.has_flag(FieldTypeFlags::TIMESTAMP)
             && field_type.has_flag(FieldTypeFlags::NOT_NULL)
         {
-            info.default_value = Some(ColumnDefaultValue::str(if set_on_update_now {
+            info.default_value = ColumnDefaultValue::str(if set_on_update_now {
                 "0000-00-00 00:00:00"
             } else {
                 "CURRENT_TIMESTAMP"
-            }));
+            })
+            .into();
         }
         if field_type.code() == FieldTypeCode::Year && field_type.has_flag(FieldTypeFlags::NOT_NULL)
         {
-            info.default_value = Some(ColumnDefaultValue::str("0000"));
+            info.default_value = ColumnDefaultValue::str("0000").into();
         }
         // Go `setNoDefaultValueFlag`.
         if field_type.has_flag(FieldTypeFlags::NOT_NULL)
@@ -775,7 +841,7 @@ fn stamp_constraint_flags(columns: &mut [ColumnInfo], constraint: &Constraint) -
                     .add_flags(FieldTypeFlags::PRI_KEY | FieldTypeFlags::NOT_NULL);
                 // Go re-runs `setNoDefaultValueFlag` here now that NOT NULL is
                 // certain, using the default the column already carries.
-                if column.default_value.is_none()
+                if column.default_value.is_nil()
                     && !column.field_type.has_flag(FieldTypeFlags::AUTO_INCREMENT)
                     && !column.field_type.has_flag(FieldTypeFlags::TIMESTAMP)
                 {
@@ -839,7 +905,7 @@ fn build_table(
         table.max_column_id += 1;
         column.id = table.max_column_id;
     }
-    table.columns = columns;
+    table.columns = columns.into();
 
     if constraints
         .iter()
@@ -880,14 +946,16 @@ fn build_table(
             constraint.name.clone()
         };
         let mut index_columns = Vec::with_capacity(constraint.parts.len());
-        let mut part_lengths: Vec<(&tidb_datatype::FieldType, i64)> =
+        let mut part_lengths: Vec<(tidb_datatype::FieldType, i64)> =
             Vec::with_capacity(constraint.parts.len());
         for part in &constraint.parts {
-            let Some(column) = table
-                .columns
-                .iter()
-                .find(|column| column.name.lowercase().eq_ignore_ascii_case(&part.name))
-            else {
+            let Some(column) = table.columns.iter_deref().find(|column| {
+                column
+                    .read()
+                    .name
+                    .lowercase()
+                    .eq_ignore_ascii_case(&part.name)
+            }) else {
                 return Err(DdlAdmissionError::new(format!(
                     "index `{name}` names column `{}`, which the table does not declare",
                     part.name
@@ -900,8 +968,9 @@ fn build_table(
             // unlike the executor tier it keeps a legal one rather than
             // deferring; what it must not do is store an ILLEGAL one, which
             // is what it did before this call existed.
+            let column = column.read();
             let length = prefix_length(&column.field_type, column.name.original(), part)?;
-            part_lengths.push((&column.field_type, length));
+            part_lengths.push((column.field_type.clone(), length));
             index_columns.push(IndexColumn {
                 name: column.name.clone(),
                 offset: column.offset,
@@ -913,12 +982,14 @@ fn build_table(
         // must stay within `config.MaxIndexLength`. Each part above may be
         // legal on its own and the total still refused.
         key_length_sum(
-            part_lengths,
+            part_lengths
+                .iter()
+                .map(|(field_type, length)| (field_type, *length)),
             constraint.parts.len(),
             primary || constraint.kind == ConstraintKind::Unique,
         )?;
         table.max_index_id += 1;
-        table.indices.push(IndexInfo {
+        table.indices.push_go(IndexInfo {
             id: table.max_index_id,
             name: CiString::new(name),
             table: CiString::default(),
@@ -943,11 +1014,17 @@ fn is_single_int_primary_key(constraint: &Constraint, table: &TableInfo) -> bool
     };
     table
         .columns
-        .iter()
-        .find(|column| column.name.lowercase().eq_ignore_ascii_case(&part.name))
+        .iter_deref()
+        .find(|column| {
+            column
+                .read()
+                .name
+                .lowercase()
+                .eq_ignore_ascii_case(&part.name)
+        })
         // Go `isIntCol` looks at the type alone: an UNSIGNED BIGINT primary
         // key is just as much a clustered handle as a signed one.
-        .is_some_and(|column| column.field_type.code().is_type_integer())
+        .is_some_and(|column| column.read().field_type.code().is_type_integer())
 }
 
 /// Go `ShouldBuildClusteredIndex`.
@@ -1030,125 +1107,166 @@ fn is_current_timestamp(expr: &Expr) -> bool {
     }
 }
 
+/// A DEFAULT retained between Go's option-order storage stages and its final
+/// `checkDefaultValue` pass.
+enum StagedColumnDefault {
+    /// `CURRENT_TIMESTAMP` is computed at row-write time and therefore has no
+    /// settled spelling to cast through the final column type.
+    CurrentTimestamp(String),
+    /// A literal's exact metadata spelling, including fixed-binary padding.
+    Settled(tidb_executor::ddl::SettledColumnDefault),
+}
+
+impl StagedColumnDefault {
+    fn has_default(&self) -> bool {
+        match self {
+            Self::CurrentTimestamp(_) => true,
+            Self::Settled(default) => default.has_default,
+        }
+    }
+
+    fn has_null_default(&self) -> bool {
+        matches!(
+            self,
+            Self::Settled(default) if default.has_default && default.stored.is_null()
+        )
+    }
+}
+
+fn default_admission_error(error: tidb_executor::DriverError) -> DdlAdmissionError {
+    let error = error.to_mysql_error();
+    DdlAdmissionError::with_code(error.code, error.message)
+}
+
 /// Go `SetDefaultValue` -> `getDefaultValue` -> `checkColumnDefaultValue`,
 /// bounded to the literal and `CURRENT_TIMESTAMP` defaults a `CREATE TABLE`
-/// actually writes.
+/// actually writes. Literal defaults are deliberately not persisted here:
+/// later column options and table constraints can still change their validity.
 ///
-/// The stored form is always Go's own: a *string*, whatever the column type,
-/// because `getDefaultValue` finishes with `Datum.ToString()`. An integer
-/// default is stored as its decimal text, and a `TIMESTAMP`'s
-/// `CURRENT_TIMESTAMP` as that literal word.
-fn set_default_value(
+/// The stored form is Go's own string payload. Most values finish through
+/// `Datum.ToString`; binary/bit literals take Go's earlier raw-byte branches,
+/// and `CURRENT_TIMESTAMP` stores its marker word.
+fn stage_column_default(
     name: &str,
-    info: &mut ColumnInfo,
     field_type: &FieldType,
     expr: &Expr,
-) -> Refusal<bool> {
-    let code = field_type.code();
-    let is_time = matches!(
-        code,
-        FieldTypeCode::Timestamp | FieldTypeCode::Datetime | FieldTypeCode::Date
-    );
-    if is_time && is_current_timestamp(expr) {
-        info.default_value = Some(ColumnDefaultValue::str("CURRENT_TIMESTAMP"));
-        return Ok(true);
-    }
-    let Some(text) = literal_default_text(expr, code) else {
-        return Err(DdlAdmissionError::new(format!(
-            "column `{name}` declares a DEFAULT this node cannot evaluate; it accepts a \
-             literal or CURRENT_TIMESTAMP"
-        )));
-    };
-    let Some(text) = text else {
-        // `DEFAULT NULL`: Go records that a default was declared but stores
-        // none, which is exactly what keeps `NoDefaultValueFlag` off.
-        return Ok(true);
-    };
-    // Go `checkColumnDefaultValue`: in non-strict mode an EMPTY default on a
-    // TEXT/BLOB column is stored but not counted as "has a default", so the
-    // column still gets `NoDefaultValueFlag`; a non-empty one is an error.
-    let blob_like = matches!(
-        code,
-        FieldTypeCode::Json
-            | FieldTypeCode::TinyBlob
-            | FieldTypeCode::Blob
-            | FieldTypeCode::MediumBlob
-            | FieldTypeCode::LongBlob
-    );
-    if blob_like {
-        if !text.is_empty() {
-            return Err(DdlAdmissionError::new(format!(
-                "BLOB/TEXT/JSON column `{name}` can't have a default value"
-            )));
+    context: &tidb_executor::StmtContext,
+) -> Refusal<StagedColumnDefault> {
+    let built = tidb_executor::column_default::build(expr, field_type, |expr| {
+        let rewritten = tidb_expr::rewriter::rewrite_expr_resolved(
+            expr,
+            &tidb_expr::rewriter::ZonedNoResolver(context.session_zone()),
+        )
+        .map_err(|_| {
+            tidb_executor::column_default::DefaultError::Unsupported(
+                "a DEFAULT this node cannot evaluate",
+            )
+        })?;
+        tidb_expr::eval_expression_once(&rewritten, context).map_err(|_| {
+            tidb_executor::column_default::DefaultError::Unsupported(
+                "a DEFAULT this node cannot evaluate",
+            )
+        })
+    })
+    .map_err(|error| default_admission_error(error.into_driver_error(name)))?;
+
+    match built {
+        tidb_executor::column_default::ColumnDefault::Computed(computed) => {
+            if computed.is_expr {
+                return Err(DdlAdmissionError::new(format!(
+                    "column `{name}` uses a computed DEFAULT this catalog writer cannot execute"
+                )));
+            }
+            Ok(StagedColumnDefault::CurrentTimestamp(computed.text))
         }
-        let ignored = matches!(code, FieldTypeCode::Blob | FieldTypeCode::LongBlob);
-        info.default_value = Some(ColumnDefaultValue::str(if code == FieldTypeCode::Json {
-            "null"
-        } else {
-            ""
-        }));
-        return Ok(!ignored);
+        tidb_executor::column_default::ColumnDefault::Value(value) => {
+            let zone = context.session_zone();
+            let settled =
+                tidb_executor::ddl::settle_column_default(value, field_type, name, context, &zone)
+                    .map_err(default_admission_error)?;
+            Ok(StagedColumnDefault::Settled(settled))
+        }
     }
-    if matches!(code, FieldTypeCode::Enum | FieldTypeCode::Set) && !field_type.elems().is_empty() {
-        // Go `getEnumDefaultValue`/`getSetDefaultValue`: the stored form is the
-        // member's own spelling, matched case-insensitively.
-        let matched = field_type
-            .elems()
-            .iter()
-            .find(|elem| elem.eq_ignore_ascii_case(&text));
-        let Some(matched) = matched else {
-            return Err(DdlAdmissionError::new(format!(
-                "column `{name}` has an invalid default value `{text}` for its {} members",
-                if code == FieldTypeCode::Enum {
-                    "ENUM"
-                } else {
-                    "SET"
-                }
-            )));
-        };
-        info.default_value = Some(ColumnDefaultValue::str(matched));
-        return Ok(true);
-    }
-    info.default_value = Some(ColumnDefaultValue::str(&text));
-    Ok(true)
 }
 
-/// The stored text of one literal default, or `None` when the expression is
-/// not a literal this builder evaluates. `Some(None)` is `DEFAULT NULL`.
-fn literal_default_text(expr: &Expr, code: FieldTypeCode) -> Option<Option<String>> {
-    match expr {
-        Expr::Null => Some(None),
-        Expr::String(value) | Expr::RawString(value) => Some(Some(value.clone())),
-        // Go evaluates TRUE/FALSE to the integers 1/0 before storing them.
-        Expr::Bool(value) => Some(Some(i64::from(*value).to_string())),
-        Expr::Int(digits) => Some(Some(normalize_numeric_default(digits, code))),
-        Expr::Decimal(digits) => Some(Some(normalize_numeric_default(digits, code))),
-        Expr::Float(value) => Some(Some(normalize_numeric_default(&value.to_string(), code))),
-        Expr::Unary(UnaryOp::Minus, inner) => {
-            let Some(Some(text)) = literal_default_text(inner, code) else {
-                return None;
+/// Go `checkDefaultValue` followed by `ColumnInfo.SetDefaultValue`, after the
+/// final FieldType has been installed. The setter is load-bearing for BIT:
+/// it retains the raw-byte shadow alongside the JSON-facing default value.
+fn persist_column_default(
+    name: &str,
+    info: &mut ColumnInfo,
+    staged: StagedColumnDefault,
+    context: &tidb_executor::StmtContext,
+) -> Refusal<()> {
+    match staged {
+        StagedColumnDefault::CurrentTimestamp(text) => {
+            info.default_is_expr = false;
+            info.set_default_value(ColumnDefaultValue::str(&text))
+                .map_err(|error| DdlAdmissionError::new(error.to_string()))?;
+        }
+        StagedColumnDefault::Settled(settled) => {
+            // Any inline-key NULL default returned at the earlier precheck,
+            // so a PRI flag reaching this final Go `checkDefaultValue` arm
+            // came from the table-level constraint and is 1171, even when a
+            // separate NOT NULL option is also present.
+            if settled.has_default
+                && settled.stored.is_null()
+                && info.field_type.has_flag(FieldTypeFlags::PRI_KEY)
+            {
+                return Err(default_admission_error(
+                    tidb_executor::DriverError::PrimaryCantHaveNull,
+                ));
+            }
+            let zone = context.session_zone();
+            tidb_executor::ddl::validate_column_default(
+                &settled.stored,
+                &info.field_type,
+                name,
+                info.version,
+                context.ddl_default_conversion_flags(),
+                &zone,
+            )
+            .map_err(default_admission_error)?;
+            let stored = if settled.stored.is_null() {
+                GoAny::nil()
+            } else {
+                ColumnDefaultValue::string_bytes(settled.stored.sql_bytes().map_err(|_| {
+                    DdlAdmissionError::new(format!("column `{name}` has an invalid default value"))
+                })?)
+                .into()
             };
-            Some(Some(match text.strip_prefix('-') {
-                Some(positive) => positive.to_owned(),
-                None => format!("-{text}"),
-            }))
+            info.set_default_value(stored)
+                .map_err(|error| DdlAdmissionError::new(error.to_string()))?;
         }
-        Expr::Unary(UnaryOp::Plus, inner) => literal_default_text(inner, code),
-        _ => None,
     }
+    Ok(())
 }
 
-/// Go converts a numeric default to the column's own type before storing it,
-/// so an integer column's default is integer text.
-fn normalize_numeric_default(text: &str, code: FieldTypeCode) -> String {
-    if !code.is_type_integer() {
-        return text.to_owned();
-    }
-    match text.parse::<f64>() {
-        // Go's `ConvertTo` rounds half away from zero, as MySQL does.
-        Ok(value) => format!("{}", value.round() as i64),
-        Err(_) => text.to_owned(),
-    }
+/// Classic bootstrap's exact DDL context.
+///
+/// Accepted Go constructs every `mysql.*` table with
+/// `exprstatic.WithSQLMode(mysql.ModeNone)`. In particular, that makes the
+/// empty `LONGTEXT` default on `mysql.global_priv.Priv` a warning while still
+/// running the ordinary default validation and storage path.
+fn bootstrap_ddl_statement_context() -> tidb_executor::StmtContext {
+    tidb_executor::StmtContext::for_query()
+        .with_strict(false)
+        .with_date_modes(tidb_datatype::DateModes::default())
+        .with_time_zone(SessionTimeZone::utc())
+}
+
+/// TiDB's shipped DDL mode in UTC, for non-session live compatibility
+/// callers.
+///
+/// Live statement paths must pass their own context through
+/// [`build_table_info_with_context`]. Keeping this constructor explicit makes
+/// the legacy live wrappers deterministic without leaking bootstrap's
+/// `ModeNone` into user DDL.
+pub(crate) fn default_ddl_statement_context() -> tidb_executor::StmtContext {
+    tidb_executor::StmtContext::for_query()
+        .with_strict(true)
+        .with_date_modes(tidb_datatype::DateModes::TIDB_DEFAULT_SQL_MODE)
+        .with_time_zone(SessionTimeZone::utc())
 }
 
 fn describe_column_option(option: &ColumnOption) -> &'static str {

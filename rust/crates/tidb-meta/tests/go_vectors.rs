@@ -367,9 +367,12 @@ fn tableinfo_round_trips_byte_identically_with_go() {
     assert_eq!(table.id, 77);
     assert_eq!(table.name.original(), "T");
     assert_eq!(table.columns.len(), 2);
-    assert_eq!(table.columns[1].name.original(), "Name");
+    assert_eq!(table.columns.get(1).unwrap().read().name.original(), "Name");
     assert_eq!(table.indices.len(), 1);
-    assert_eq!(table.indices[0].name.original(), "idx_name");
+    assert_eq!(
+        table.indices.get(0).unwrap().read().name.original(),
+        "idx_name"
+    );
     assert!(table.pk_is_handle);
     assert_eq!(table.update_ts, 445_566_778_899);
     assert_eq!(table.version, 5);
@@ -389,16 +392,16 @@ fn fully_populated_tableinfo_round_trips_byte_identically_with_go() {
     let reserialized = value::serialize_table_info(&table).unwrap();
     assert_eq!(String::from_utf8(reserialized).unwrap(), GO_TABLEINFO_FULL);
 
-    let partition = table.partition.as_ref().unwrap();
+    let partition = table.partition.as_ref().unwrap().read();
     assert_eq!(partition.definitions.len(), 2);
-    assert_eq!(partition.definitions[0].name.original(), "p0");
-    assert_eq!(table.view.as_ref().unwrap().select_stmt, "select 1");
-    assert_eq!(table.sequence.as_ref().unwrap().cache_value, 1000);
-    assert_eq!(table.lock.as_ref().unwrap().ts, 1234);
-    assert_eq!(table.tiflash_replica.as_ref().unwrap().count, 2);
+    assert_eq!(partition.definitions.get(0).name.original(), "p0");
+    assert_eq!(table.view.as_ref().unwrap().read().select_stmt, "select 1");
+    assert_eq!(table.sequence.as_ref().unwrap().read().cache_value, 1000);
+    assert_eq!(table.lock.as_ref().unwrap().read().ts, 1234);
+    assert_eq!(table.tiflash_replica.as_ref().unwrap().read().count, 2);
     assert_eq!(table.foreign_keys.len(), 1);
-    assert_eq!(table.ttl_info.as_ref().unwrap().job_interval, "1h");
-    assert_eq!(table.affinity.as_ref().unwrap().level, "table");
+    assert_eq!(table.ttl_info.as_ref().unwrap().read().job_interval, "1h");
+    assert_eq!(table.affinity.as_ref().unwrap().read().level, "table");
 
     // Go HTML-escapes `>` inside a string; the constraint expression proves the
     // encoder reproduces that rather than emitting the raw byte.

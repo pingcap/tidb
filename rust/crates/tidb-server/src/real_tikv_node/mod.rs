@@ -43,7 +43,7 @@ use tidb_exec::multi_statement_transaction::{
 };
 use tidb_exec::real_tikv_catalog::{load_catalog_from_cluster, reload_catalog_from_cluster};
 use tidb_exec::real_tikv_ddl::{
-    commit_cluster_ddl, prepare_cluster_ddl, ClusterDdlReport, SchemaVersionNotifier,
+    commit_cluster_ddl, prepare_cluster_ddl_with_context, ClusterDdlReport, SchemaVersionNotifier,
 };
 use tidb_exec::real_tikv_dml::{
     commit_configured_write, prepare_configured_write, prepare_text_write, ConfiguredWriteError,
@@ -719,6 +719,17 @@ fn served_table(
     }
 }
 
+/// The fixed SQL-mode policy and live session zone used by the lightweight
+/// real-TiKV front ends, which do not own a full [`tidb_session::Session`].
+pub(crate) fn lightweight_ddl_statement_context(
+    time_zone: &RealTiKvSessionTimeZone,
+) -> tidb_executor::StmtContext {
+    tidb_executor::StmtContext::for_query()
+        .with_strict(true)
+        .with_date_modes(tidb_datatype::DateModes::TIDB_DEFAULT_SQL_MODE)
+        .with_time_zone(time_zone.zone())
+}
+
 /// Runs one statement as a catalog change, if that is what it is.
 ///
 /// `Ok(None)` means the statement is not a DDL this node owns, so the caller
@@ -739,11 +750,12 @@ pub(crate) fn execute_cluster_ddl(
     opener: &RealOptimisticTransactionOpener,
     sql: &str,
     default_schema: &str,
+    context: &tidb_executor::StmtContext,
     in_transaction: bool,
     schema_notifier: Option<&Arc<EtcdClient>>,
 ) -> Result<Option<WriteOutcome>, SqlQueryError> {
-    let Some(statement) = prepare_cluster_ddl(sql, default_schema)
-        .map_err(|error| SqlQueryError::unknown(error.reason))?
+    let Some(statement) = prepare_cluster_ddl_with_context(sql, default_schema, context)
+        .map_err(|error| SqlQueryError::new(error.code, error.sql_state(), error.reason))?
     else {
         return Ok(None);
     };
@@ -934,10 +946,12 @@ impl QuerySession for RealTiKvServerSession {
         // A catalog change is answered before the DML lowering, because it is
         // not a write against the served table at all: it commits its own
         // transaction against the `m` meta namespace.
+        let ddl_context = lightweight_ddl_statement_context(&self.time_zone);
         if let Some(outcome) = execute_cluster_ddl(
             &self.transaction_opener,
             sql,
             self.inner.configured_table().schema(),
+            &ddl_context,
             self.transaction.is_active(),
             self.schema_notifier.as_ref(),
         )? {

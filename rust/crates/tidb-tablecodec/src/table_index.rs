@@ -18,7 +18,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::fmt;
 
 use tidb_datatype::{
-    is_bin_collation, Charset, Collation, Datum, FieldType, FieldTypeCode, SessionTimeZone,
+    is_bin_collation, Collation, Datum, FieldType, FieldTypeCode, SessionTimeZone,
     UNSPECIFIED_LENGTH,
 };
 use tidb_txnkv::{CommonHandle, Handle, IntHandle, PartitionHandle};
@@ -680,8 +680,8 @@ pub fn truncate_index_value(
     let length = usize::try_from(index_column.length)
         .map_err(|_| TableIndexError::Metadata("negative index prefix length"))?;
     let collation = table_column.field_type.collation();
-    match table_column.field_type.charset() {
-        Charset::Binary | Charset::Ascii => {
+    match table_column.field_type.charset_name() {
+        "binary" | "ascii" => {
             if bytes.len() > length {
                 let truncated = bytes[..length].to_vec();
                 *value = if was_bytes {
@@ -932,7 +932,7 @@ fn generate_index_value_v1(
                 let indexed = indexed_values
                     .get(position)
                     .ok_or(TableIndexError::Metadata("missing indexed value"))?;
-                if is_bin_collation(field_type.collation().name()) {
+                if is_bin_collation(field_type.collation_name()) {
                     let spaces = indexed
                         .as_raw_bytes()
                         .map(|bytes| bytes.iter().rev().take_while(|byte| **byte == b' ').count())
@@ -1018,7 +1018,7 @@ fn restored_columns(use_new_collation: bool, columns: &[ColumnInfo]) -> Vec<Colu
             id: column.id,
             is_pk_handle: column.is_pk_handle,
             virtual_generated: column.virtual_generated,
-            field_type: if is_bin_collation(column.field_type.collation().name()) {
+            field_type: if is_bin_collation(column.field_type.collation_name()) {
                 FieldType::new(FieldTypeCode::LongLong).with_unsigned(true)
             } else {
                 column.field_type.clone()
@@ -1045,7 +1045,7 @@ fn decode_restored_values_v5(
         if restored_value.is_empty() {
             continue;
         }
-        if is_bin_collation(columns[index].field_type.collation().name()) {
+        if is_bin_collation(columns[index].field_type.collation_name()) {
             let original = decode_column_value(&results[index], &columns[index].field_type, None)?;
             let count_type = FieldType::new(FieldTypeCode::LongLong).with_unsigned(true);
             let padding = decode_column_value(&restored_value, &count_type, None)?

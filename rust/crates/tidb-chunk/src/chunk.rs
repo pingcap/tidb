@@ -728,7 +728,7 @@ mod tests {
         use tidb_datatype::Collation;
         // The same collation `Row::get_datum` stamps on an enum/set datum.
         fn collation_of(field_type: &FieldType) -> Collation {
-            Collation::from_name(field_type.collation_name()).unwrap_or(Collation::Binary)
+            field_type.collation()
         }
         use tidb_datatype::{
             BinaryJSON, BinaryLiteral, CoreTime, Decimal, FieldTypeCode as C, MysqlEnum, MysqlSet,

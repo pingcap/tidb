@@ -27,7 +27,7 @@
 
 use crate::chunk::Chunk;
 use tidb_datatype::{
-    Collation, Datum, Decimal, FieldType, FieldTypeCode, MyDecimal, MySqlDuration, Time,
+    Datum, Decimal, FieldType, FieldTypeCode, GoString, MyDecimal, MySqlDuration, Time,
 };
 
 /// Go `chunk.RowSize = unsafe.Sizeof(Row{})`: what one retained row CURSOR
@@ -163,7 +163,7 @@ impl<'a> Row<'a> {
 
     /// Go `getNameValue`: the `(name, value)` pair an ENUM/SET cell stores.
     #[must_use]
-    pub fn get_name_value(&self, col_idx: usize) -> (String, u64) {
+    pub fn get_name_value(&self, col_idx: usize) -> (GoString, u64) {
         self.chunk.columns()[col_idx].get_name_value(self.idx)
     }
 
@@ -213,10 +213,8 @@ impl<'a> Row<'a> {
             | FieldTypeCode::TinyBlob
             | FieldTypeCode::MediumBlob
             | FieldTypeCode::LongBlob => {
-                let collation =
-                    Collation::from_name(field_type.collation_name()).unwrap_or(Collation::Binary);
                 let mut d = Datum::Null;
-                d.set_string(self.get_bytes(col_idx).to_vec(), collation);
+                d.set_string(self.get_bytes(col_idx).to_vec(), field_type.collation());
                 d
             }
             // Go `d.SetMysqlBit(r.GetBytes(colIdx))`: a BIT column is a
@@ -241,11 +239,11 @@ impl<'a> Row<'a> {
             // collation so name comparison stays collation-aware.
             FieldTypeCode::Enum => Datum::new_enum(
                 self.get_enum(col_idx),
-                Collation::from_name(field_type.collation_name()).unwrap_or(Collation::Binary),
+                field_type.collation(),
             ),
             FieldTypeCode::Set => Datum::new_set(
                 self.get_set(col_idx),
-                Collation::from_name(field_type.collation_name()).unwrap_or(Collation::Binary),
+                field_type.collation(),
             ),
             FieldTypeCode::Date | FieldTypeCode::Datetime | FieldTypeCode::Timestamp => {
                 Datum::Time(self.get_time(col_idx))

@@ -232,8 +232,9 @@ pub fn configure_loaded_table(
     }
 
     let mut columns = Vec::new();
-    for column in table.cols() {
-        columns.push(configure_loaded_column(column).map_err(&refuse)?);
+    for column in table.cols().iter_deref() {
+        let column = column.read();
+        columns.push(configure_loaded_column(&column).map_err(&refuse)?);
     }
     if columns.is_empty() {
         return Err(refuse("it has no public columns".to_owned()));

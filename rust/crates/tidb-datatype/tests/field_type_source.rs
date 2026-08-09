@@ -202,8 +202,12 @@ fn parser_remaining_field_type_surface_is_source_complete() {
         unicode_charset.restore_bytes(),
         "VARCHAR(1) CHARACTER SET É".as_bytes()
     );
+    assert_eq!(unicode_charset.restore_as_cast_type(true), "");
     assert_eq!(
-        unicode_charset.restore_as_cast_type(true),
+        FieldType::parser(C::VarString)
+            .with_flen(1)
+            .with_charset_name("é")
+            .restore_as_cast_type(true),
         "CHAR(1) CHARSET É"
     );
     assert_eq!(

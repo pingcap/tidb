@@ -346,15 +346,16 @@ fn write_row(
     for seed in &row.values {
         let column = table
             .columns
-            .iter()
-            .find(|column| column.name.lowercase() == seed.column)
+            .iter_deref()
+            .find(|column| column.read().name.lowercase() == seed.column)
             .ok_or_else(|| {
                 BootstrapError::Encode(format!(
                     "mysql.{} has no column `{}` to seed",
                     row.table, seed.column
                 ))
             })?;
-        values.insert(column.id, seed.value.clone());
+        let column_id = column.read().id;
+        values.insert(column_id, seed.value.clone());
     }
     mutations.extend(insert_row(table, row_id, &values).map_err(encode)?);
     Ok(())

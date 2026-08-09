@@ -56,6 +56,7 @@ use std::fmt;
 
 use tidb_ast::CiString;
 use tidb_ast::{CreateIndexStmt, CreateTableStmt, DdlStmt, DropIndexStmt, DropTableStmt, Stmt};
+use tidb_datatype::new_collation_enabled;
 use tidb_meta::{key, value};
 use tidb_metadef::MAX_USER_GLOBAL_ID;
 use tidb_model::action_type::ActionType;
@@ -64,12 +65,15 @@ use tidb_model::index::{IndexColumn, IndexInfo};
 use tidb_model::schema_diff::SchemaDiff;
 use tidb_model::schema_state::SchemaState;
 use tidb_model::table_info::TableInfo;
+use tidb_model::GoShared;
 use tidb_txnkv::transaction::{MutationSetError, OptimisticMutation};
 
 use crate::cluster_catalog::{
     load_cluster_catalog, ClusterCatalog, ClusterCatalogError, MetaSnapshot,
 };
-use crate::table_info_build::{build_table_info, ClusteredIndexDefMode};
+use crate::table_info_build::{
+    build_table_info_with_context, default_ddl_statement_context, ClusteredIndexDefMode,
+};
 
 pub use crate::table_info_build::DdlAdmissionError;
 
@@ -165,6 +169,19 @@ pub fn lower_ddl(
     statement: &Stmt,
     default_schema: &str,
 ) -> Result<Option<DdlStatement>, DdlAdmissionError> {
+    let context = default_ddl_statement_context();
+    lower_ddl_with_context(statement, default_schema, &context)
+}
+
+/// [`lower_ddl`] under the statement's actual SQL mode and time zone.
+///
+/// Live session paths must use this entrypoint so admission and metadata
+/// persistence observe the same statement context that parsed the SQL.
+pub fn lower_ddl_with_context(
+    statement: &Stmt,
+    default_schema: &str,
+    context: &tidb_executor::StmtContext,
+) -> Result<Option<DdlStatement>, DdlAdmissionError> {
     let Stmt::Ddl(ddl) = statement else {
         return Ok(None);
     };
@@ -189,7 +206,9 @@ pub fn lower_ddl(
             name: name.clone(),
             if_exists: *if_exists,
         })),
-        DdlStmt::CreateTable(create) => lower_create_table(create, default_schema).map(Some),
+        DdlStmt::CreateTable(create) => {
+            lower_create_table(create, default_schema, context).map(Some)
+        }
         DdlStmt::DropTable(drop) => lower_drop_table(drop, default_schema).map(Some),
         DdlStmt::CreateIndex(create) => lower_create_index(create, default_schema).map(Some),
         DdlStmt::DropIndex(drop) => lower_drop_index(drop, default_schema).map(Some),
@@ -239,16 +258,18 @@ fn lower_drop_table(
 fn lower_create_table(
     create: &CreateTableStmt,
     default_schema: &str,
+    context: &tidb_executor::StmtContext,
 ) -> Result<DdlStatement, DdlAdmissionError> {
     let (schema, table) = split_name(&create.name, default_schema, "table")?;
     // The server default `tidb_enable_clustered_index = ON`, which is what a
     // real TiDB builds a user table under. Bootstrap is the one caller that
     // uses a different mode, and it says so at its own call site.
-    let template = build_table_info(
+    let template = build_table_info_with_context(
         create,
         CATALOG_CHARSET,
         CATALOG_COLLATION,
         ClusteredIndexDefMode::On,
+        context,
     )?;
     Ok(DdlStatement::CreateTable {
         schema,
@@ -512,7 +533,18 @@ pub struct IndexBackfill {
     /// The table as the snapshot holds it, before this change.
     pub table: Box<TableInfo>,
     /// The index whose entries are to be written or removed.
-    pub index: Box<IndexInfo>,
+    ///
+    /// On `CREATE INDEX` this is the SAME Go pointer appended to the new
+    /// `TableInfo.Indices`, just as Go's `checkAndBuildIndexInfo` returns the
+    /// pointer it appended. Resolving the ID or columns through either owner
+    /// must name one index, not two snapshots that merely started equal.
+    pub index: GoShared<IndexInfo>,
+    /// The persisted collation mode captured when this DDL was planned.
+    ///
+    /// Go stores this in `DDLReorgMeta.UseNewCollate`; the backfill must not
+    /// re-read a process global after the metadata half has already chosen
+    /// the key/value format.
+    pub use_new_collation: bool,
     /// Whether the entries are being written (`CREATE INDEX`) or removed
     /// (`DROP INDEX`).
     pub add: bool,
@@ -536,6 +568,20 @@ pub fn plan_ddl<S: MetaSnapshot>(
     snapshot: &mut S,
     statement: &DdlStatement,
     start_ts: u64,
+) -> Result<DdlPlan, DdlPlanError> {
+    plan_ddl_with_collation(snapshot, statement, start_ts, new_collation_enabled())
+}
+
+/// [`plan_ddl`] with an already captured persisted collation mode.
+///
+/// This is the source-shaped equivalent of Go carrying
+/// `DDLReorgMeta.UseNewCollate`: callers that already own the cluster setting
+/// pass it once, and both halves of an index change keep that same value.
+pub fn plan_ddl_with_collation<S: MetaSnapshot>(
+    snapshot: &mut S,
+    statement: &DdlStatement,
+    start_ts: u64,
+    use_new_collation: bool,
 ) -> Result<DdlPlan, DdlPlanError> {
     let catalog = load_cluster_catalog(snapshot)?;
     let schema_version = catalog.schema_version + 1;
@@ -625,7 +671,14 @@ pub fn plan_ddl<S: MetaSnapshot>(
             let db_id = database.info.id;
             let table_id = allocate(snapshot, &mut writes, 1)?[0];
             created_id = Some(table_id);
-            let mut info = TableInfo::clone(template);
+            // Go's create-table path publishes the TableInfo the builder
+            // produced; it does not call `TableInfo.Clone` on the way to
+            // `Mutator.CreateTableOrView`. A plain struct/header copy is all
+            // this immutable plan needs before stamping its two scalar
+            // transaction-owned fields. `clone_like_go()` would allocate an
+            // empty `Indices` slice even when the builder left it nil, turning
+            // Go's persisted `"index_info":null` into `[]`.
+            let mut info = (**template).clone();
             info.id = table_id;
             // Go `createTable` stamps the job transaction's own start timestamp.
             info.update_ts = start_ts;
@@ -705,6 +758,7 @@ pub fn plan_ddl<S: MetaSnapshot>(
         } => {
             let (db_id, stored) = locate_table(&catalog, schema, table)?;
             if let Some(existing) = find_index(stored, index.name.original()) {
+                let existing = existing.read();
                 if *if_not_exists {
                     return Ok(already(format!(
                         "index `{}` already exists on `{schema}`.`{table}`",
@@ -715,29 +769,32 @@ pub fn plan_ddl<S: MetaSnapshot>(
                     index.name.original().to_owned(),
                 ));
             }
-            let mut added = IndexInfo::clone(index);
+            let mut added = index.clone_like_go();
             // Go's `IndexColumn.Offset` is a position in `TableInfo.Columns`,
             // and the loader reads it back that way, so it is resolved against
             // the stored table rather than trusted from the statement.
-            for column in &mut added.columns {
+            for column in added.columns.iter_deref() {
+                let mut column = column.write();
                 let Some(stored_column) = stored
                     .columns
-                    .iter()
-                    .find(|candidate| candidate.name.lowercase() == column.name.lowercase())
+                    .iter_deref()
+                    .find(|candidate| candidate.read().name.lowercase() == column.name.lowercase())
                 else {
                     return Err(DdlPlanError::UnknownIndexColumn {
                         column: column.name.original().to_owned(),
                         index: index.name.original().to_owned(),
                     });
                 };
+                let stored_column = stored_column.read();
                 column.name = stored_column.name.clone();
                 column.offset = stored_column.offset;
             }
-            let mut info = TableInfo::clone(stored);
+            let mut info = stored.clone_like_go();
             info.max_index_id += 1;
             added.id = info.max_index_id;
             added.table = info.name.clone();
-            info.indices.push(added.clone());
+            let added = GoShared::new(added);
+            info.indices.push_handle_go(Some(added.clone()));
             info.update_ts = start_ts;
             let table_id = info.id;
             let encoded = value::serialize_table_info(&info)
@@ -747,8 +804,9 @@ pub fn plan_ddl<S: MetaSnapshot>(
                 encoded,
             )?);
             backfill = Some(IndexBackfill {
-                table: Box::new(stored.clone()),
-                index: Box::new(added),
+                table: Box::new(stored.clone_like_go()),
+                index: added,
+                use_new_collation,
                 add: true,
             });
             diff.action_type = ActionType::ACTION_ADD_INDEX;
@@ -762,7 +820,7 @@ pub fn plan_ddl<S: MetaSnapshot>(
             if_exists,
         } => {
             let (db_id, stored) = locate_table(&catalog, schema, table)?;
-            let Some(dropped) = find_index(stored, index).cloned() else {
+            let Some(dropped) = find_index(stored, index) else {
                 if *if_exists {
                     return Ok(already(format!(
                         "index `{index}` does not exist on `{schema}`.`{table}`"
@@ -770,8 +828,20 @@ pub fn plan_ddl<S: MetaSnapshot>(
                 }
                 return Err(DdlPlanError::UnknownIndex(index.clone()));
             };
-            let mut info = TableInfo::clone(stored);
-            info.indices.retain(|candidate| candidate.id != dropped.id);
+            let dropped = dropped.read().clone_like_go();
+            let mut info = stored.clone_like_go();
+            if let Some(offset) = info.indices.iter_handles().position(|candidate| {
+                candidate
+                    .as_ref()
+                    .expect("nil *IndexInfo in TableInfo.Indices")
+                    .read()
+                    .id
+                    == dropped.id
+            }) {
+                // Go `removeIndexInfo` stops at the first matching ID, then
+                // `slices.Delete`s exactly that slot in the same backing.
+                info.indices.delete_go(offset, offset + 1);
+            }
             info.update_ts = start_ts;
             let table_id = info.id;
             let encoded = value::serialize_table_info(&info)
@@ -790,8 +860,9 @@ pub fn plan_ddl<S: MetaSnapshot>(
             // restored or rebuilt table can produce — reads as a row that is
             // not there.
             backfill = Some(IndexBackfill {
-                table: Box::new(stored.clone()),
-                index: Box::new(dropped),
+                table: Box::new(stored.clone_like_go()),
+                index: GoShared::new(dropped),
+                use_new_collation,
                 add: false,
             });
             diff.action_type = ActionType::ACTION_DROP_INDEX;
@@ -850,11 +921,11 @@ fn locate_table<'catalog>(
 
 /// The table's index of that name, matched the way MySQL matches one:
 /// case-insensitively.
-fn find_index<'table>(table: &'table TableInfo, name: &str) -> Option<&'table IndexInfo> {
+fn find_index(table: &TableInfo, name: &str) -> Option<GoShared<IndexInfo>> {
     table
         .indices
-        .iter()
-        .find(|index| index.name.original().eq_ignore_ascii_case(name))
+        .iter_deref()
+        .find(|index| index.read().name.original().eq_ignore_ascii_case(name))
 }
 
 /// Go `GenGlobalIDs(n)`: `Inc(NextGlobalID, n)` answers the new maximum, and

@@ -421,6 +421,11 @@ fn number_literals() {
         "SELECT x'ff',x'0f',x'abcdef'"
     );
     assert_eq!(r("select 0b101, 0b0101"), "SELECT b'101',b'101'");
+    let one = tidb_ast::BitLiteralValue::from_digits("1");
+    assert_eq!(one, tidb_ast::BitLiteralValue::from_digits("00000001"));
+    let wide_one = tidb_ast::BitLiteralValue::from_digits("000000001");
+    assert_ne!(one, wide_one, "byte width is part of the Go AST value");
+    assert_eq!(wide_one.as_bytes(), &[0x00, 0x01]);
     // A genuinely EMPTY quoted bit literal (`b''`/`B''`) restores as
     // `b''`, NOT `b'0'` — a different value from `b'0'` in real TiDB
     // (confirmed via `goeval`: `LENGTH(b'')` is 0, `LENGTH(b'0')` is 1,
@@ -439,6 +444,27 @@ fn number_literals() {
     assert!(parse("select 1.7976931348623157e308").is_ok());
     assert!(parse("select 1.8e308").is_err());
     assert!(parse("select 1e400").is_err());
+}
+
+/// Go's `ast.NewHexLiteral` keeps quoted and numeric hexadecimal syntax
+/// distinct after lexing: x'..'/X'..' requires byte pairs, lowercase 0x..
+/// pads an odd digit count, and uppercase numeric 0X.. is invalid. The same
+/// constructor owns bare and charset-introduced literals.
+#[test]
+fn quoted_hex_requires_byte_pairs_while_numeric_hex_pads() {
+    assert_eq!(r("select 0xF, _utf8 0xF"), "SELECT x'0f',_UTF8 x'0f'");
+    assert_eq!(r("select x'0F', X'0F'"), "SELECT x'0f',x'0f'");
+
+    for sql in [
+        "select x'F'",
+        "select X'F'",
+        "select _utf8 x'F'",
+        "select _utf8 X'F'",
+        "select 0XF",
+        "select _utf8 0XF",
+    ] {
+        assert!(parse(sql).is_err(), "Go rejects {sql}");
+    }
 }
 
 /// A decimal/integer literal whose digit count exceeds real MySQL/TiDB's

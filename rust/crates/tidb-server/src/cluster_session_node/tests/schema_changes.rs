@@ -64,6 +64,36 @@ fn a_ddl_shape_the_cluster_path_cannot_express_is_refused_precisely() {
     assert_eq!(node.catalog.load().schema_version, 11);
 }
 
+/// A coded DEFAULT refusal keeps its errno, SQLSTATE, and source message when
+/// the full cluster session turns DDL admission into its client-facing error.
+#[test]
+fn cluster_create_default_errors_cross_the_schema_route_unchanged() {
+    let (session, node) = open_session();
+    for (sql, code, state, message) in [
+        (
+            "CREATE TABLE bad_function (a INT DEFAULT (ABS(1)))",
+            3770,
+            *b"HY000",
+            "Default value expression of column 'a' contains a disallowed function: `abs`.",
+        ),
+        (
+            "CREATE TABLE bad_fsp (ts TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP)",
+            1067,
+            *b"42000",
+            "Invalid default value for 'ts'",
+        ),
+    ] {
+        let Err(error) = session.schema_route(sql) else {
+            panic!("the invalid default must be refused before catalog publication: {sql}");
+        };
+        assert_eq!((error.code, error.state), (code, state), "{sql}");
+        assert_eq!(error.message, message, "{sql}");
+    }
+
+    assert_eq!(node.ddl.applied.load(Ordering::Acquire), 0);
+    assert_eq!(node.catalog.load().schema_version, 11);
+}
+
 /// The unit this mode gained: a `CREATE TABLE` issued through the wide-SQL
 /// session executes as a cluster catalog change, and the SAME connection
 /// can then write and read the new table -- which it can only do if its

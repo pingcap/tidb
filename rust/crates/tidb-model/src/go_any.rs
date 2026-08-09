@@ -1151,6 +1151,12 @@ impl GoAnyBytes {
         self.bytes.len()
     }
 
+    /// Whether no bytes are visible through this header.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+
     /// Visible capacity.
     #[must_use]
     pub const fn capacity(&self) -> usize {
@@ -1208,6 +1214,12 @@ impl GoAnySlice {
     #[must_use]
     pub const fn len(&self) -> usize {
         self.values.len()
+    }
+
+    /// Whether no interface values are visible through this header.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.values.is_empty()
     }
 
     /// Visible capacity.
@@ -1938,7 +1950,7 @@ mod tests {
         assert_eq!(error.to_string(), "json: unsupported value: +Inf");
         assert!(crate::serde_helpers::to_go_json(&non_finite).is_err());
 
-        let custom = GoAny::new(HookedValue([b'x']));
+        let custom = GoAny::new(HookedValue(*b"x"));
         let copied = custom.clone();
         assert!(custom.go_equal(&copied));
         assert_eq!(custom.to_string(), "hook:120");

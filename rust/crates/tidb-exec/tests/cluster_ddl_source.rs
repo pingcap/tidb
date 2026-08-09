@@ -24,8 +24,12 @@
 use std::collections::BTreeMap;
 
 use tidb_exec::cluster_catalog::{prefix_scan_end, ClusterCatalogError, MetaPairs, MetaSnapshot};
-use tidb_exec::cluster_ddl::{lower_ddl, plan_ddl, DdlPlan, DdlPlanError, DdlStatement};
+use tidb_exec::cluster_ddl::{
+    lower_ddl, lower_ddl_with_context, plan_ddl, plan_ddl_with_collation, DdlPlan, DdlPlanError,
+    DdlStatement,
+};
 use tidb_meta::{key, value};
+use tidb_model::GoAnyView;
 use tidb_txnkv::transaction::OptimisticMutationKind;
 
 /// A mutable snapshot of stored meta bytes: reads observe it, and a test may
@@ -72,15 +76,34 @@ fn bootstrapped() -> MetaStore {
 fn statement(sql: &str) -> DdlStatement {
     let parsed = tidb_parser::parse(sql).expect("the fixture SQL parses");
     lower_ddl(&parsed, "u6")
-        .expect("the fixture SQL is admitted")
+        .unwrap_or_else(|error| panic!("the fixture SQL is admitted: {sql}: {error:?}"))
         .expect("the fixture SQL is a catalog change")
 }
 
-fn refusal(sql: &str) -> String {
+fn stored_default_bytes(sql: &str) -> Vec<u8> {
+    let DdlStatement::CreateTable { template, .. } = statement(sql) else {
+        panic!("the fixture is not CREATE TABLE: {sql}");
+    };
+    let column = template
+        .columns
+        .get(0)
+        .expect("the fixture declares one non-null column");
+    let column = column.read();
+    match column.default_value.view() {
+        Some(GoAnyView::String(bytes)) => bytes.as_bytes().to_vec(),
+        other => panic!("the fixture stored a non-string default: {other:?}"),
+    }
+}
+
+fn refusal_with_code(sql: &str) -> (u16, String) {
     let parsed = tidb_parser::parse(sql).expect("the fixture SQL parses");
-    lower_ddl(&parsed, "u6")
-        .expect_err("this shape must be refused before any mutation")
-        .reason
+    let error =
+        lower_ddl(&parsed, "u6").expect_err("this shape must be refused before any mutation");
+    (error.code, error.reason)
+}
+
+fn refusal(sql: &str) -> String {
+    refusal_with_code(sql).1
 }
 
 fn plan(store: &mut MetaStore, sql: &str, start_ts: u64) -> tidb_exec::cluster_ddl::DdlWrite {
@@ -175,6 +198,11 @@ fn a_created_table_is_stored_exactly_as_the_go_server_stores_it() {
         stored_value(&write, &key::table_kv_key(112, 116)),
         &[],
     );
+    assert_eq!(
+        stored_table(&write, 116)["index_info"],
+        serde_json::Value::Null,
+        "a clustered integer primary key builds no IndexInfo, and Go persists the builder's nil slice"
+    );
 }
 
 #[test]
@@ -221,10 +249,18 @@ fn a_table_constraint_primary_key_is_the_same_clustered_handle_as_an_inline_one(
     // The clustered handle IS the row key, so it is recorded in the flag and
     // in the column's own PriKeyFlag, and gets no IndexInfo of its own.
     assert!(inline.indices.is_empty());
-    assert!(inline.columns[0]
+    assert!(inline
+        .columns
+        .get(0)
+        .expect("the fixture declares id")
+        .read()
         .field_type
         .has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY));
-    assert!(!inline.columns[1]
+    assert!(!inline
+        .columns
+        .get(1)
+        .expect("the fixture declares v")
+        .read()
         .field_type
         .has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY));
 }
@@ -262,9 +298,10 @@ fn every_catalog_change_writes_the_schema_version_and_its_diff() {
             b"61",
             "{sql}"
         );
-        let stored_diff = value::parse_schema_diff(stored_value(&write, &key::schema_diff_kv_key(61)))
-            .expect("the stored diff decodes")
-            .expect("the stored diff is not empty");
+        let stored_diff =
+            value::parse_schema_diff(stored_value(&write, &key::schema_diff_kv_key(61)))
+                .expect("the stored diff decodes")
+                .expect("the stored diff is not empty");
         // The reloader (ours and a real TiDB's domain) reads exactly this back.
         assert_eq!(stored_diff, write.diff, "{sql}");
     }
@@ -281,10 +318,7 @@ fn the_allocated_id_advances_the_global_counter_by_exactly_what_it_took() {
     // Go `GenGlobalIDs(1)`: the key holds the max USED id, so one table moves
     // it from 116 to 117 and the table's own id is 117.
     assert_eq!(write.created_id, Some(117));
-    assert_eq!(
-        stored_value(&write, &key::next_global_id_kv_key()),
-        b"117"
-    );
+    assert_eq!(stored_value(&write, &key::next_global_id_kv_key()), b"117");
 }
 
 #[test]
@@ -353,12 +387,10 @@ fn dropping_a_database_removes_every_field_of_its_hash() {
     expected.sort();
     assert_eq!(deleted, expected);
     apply(&mut store, &dropped);
-    assert!(
-        tidb_exec::cluster_catalog::load_cluster_catalog(&mut store)
-            .expect("the catalog loads")
-            .databases
-            .is_empty()
-    );
+    assert!(tidb_exec::cluster_catalog::load_cluster_catalog(&mut store)
+        .expect("the catalog loads")
+        .databases
+        .is_empty());
 }
 
 #[test]
@@ -513,6 +545,309 @@ fn the_shapes_a_bootstrap_needs_are_admitted_rather_than_refused() {
 }
 
 #[test]
+fn parsed_binary_enum_default_reaches_the_shared_normalizer_losslessly() {
+    let sql = "CREATE TABLE u6.t (a ENUM(0xff,0x15) CHARACTER SET binary DEFAULT 0xff)";
+    let parsed = tidb_parser::parse(sql).expect("the fixture SQL parses");
+    let tidb_ast::Stmt::Ddl(ddl) = &parsed else {
+        panic!("the fixture is DDL");
+    };
+    let tidb_ast::DdlStmt::CreateTable(create) = &**ddl else {
+        panic!("the fixture is CREATE TABLE");
+    };
+    let column = &create.columns[0];
+    let field_type = tidb_executor::ddl::column_field_type::build_field_type(
+        &column.name,
+        &column.ty,
+        "binary",
+        "binary",
+    )
+    .expect("the parsed binary ENUM type is buildable");
+    assert_eq!(field_type.elem(0).as_bytes(), [0xff]);
+    assert_eq!(field_type.elem(1).as_bytes(), [0x15]);
+
+    let default = column
+        .options
+        .iter()
+        .find_map(|option| match option {
+            tidb_ast::ColumnOption::Default(expr) => Some(expr),
+            _ => None,
+        })
+        .expect("the parsed column retains its DEFAULT");
+    let value = tidb_expr::eval(default).expect("the literal folds");
+    assert!(matches!(value, tidb_datatype::Datum::BinaryLiteral(_)));
+    assert_eq!(value.go_bytes(), [0xff]);
+
+    let value = tidb_executor::ddl::normalize_column_default(
+        value,
+        &field_type,
+        &column.name,
+        &tidb_datatype::SessionTimeZone::utc(),
+    )
+    .expect("the parsed raw member passes final strict validation");
+    assert_eq!(value.sql_bytes().unwrap(), [0xff]);
+}
+
+#[test]
+fn enum_and_set_integer_defaults_keep_their_literal_kind() {
+    for (sql, expected) in [
+        (
+            "CREATE TABLE u6.t (a ENUM('2','3','4') DEFAULT 2)",
+            b"3".as_slice(),
+        ),
+        (
+            "CREATE TABLE u6.t (a ENUM('a','c','d') DEFAULT 2)",
+            b"c".as_slice(),
+        ),
+        (
+            "CREATE TABLE u6.t (a ENUM('2','3','4') DEFAULT '2')",
+            b"2".as_slice(),
+        ),
+        (
+            "CREATE TABLE u6.t (a ENUM('9223372036854775808') DEFAULT 9223372036854775808)",
+            b"9223372036854775808".as_slice(),
+        ),
+        (
+            "CREATE TABLE u6.t (a ENUM('first','second') DEFAULT TRUE)",
+            b"first".as_slice(),
+        ),
+        (
+            "CREATE TABLE u6.t (a SET('2','x') DEFAULT 2)",
+            b"x".as_slice(),
+        ),
+        (
+            "CREATE TABLE u6.t (a SET('2','x') DEFAULT '2')",
+            b"2".as_slice(),
+        ),
+        (
+            "CREATE TABLE u6.t (a SET('9223372036854775808') DEFAULT 9223372036854775808)",
+            b"9223372036854775808".as_slice(),
+        ),
+        (
+            "CREATE TABLE u6.t (a SET('1','4','10','21') DEFAULT 3)",
+            b"1,4".as_slice(),
+        ),
+        (
+            "CREATE TABLE u6.t (a SET('1','4','10','21') DEFAULT 15)",
+            b"1,4,10,21".as_slice(),
+        ),
+        (
+            "CREATE TABLE u6.t (a ENUM(0xff,0x15) CHARACTER SET binary DEFAULT 0xff)",
+            &[0xff],
+        ),
+        (
+            "CREATE TABLE u6.t (a SET(0xff,0x15) CHARACTER SET binary DEFAULT 0x15)",
+            &[0x15],
+        ),
+        (
+            "CREATE TABLE u6.t (a ENUM(b'11111111',b'00010101') CHARACTER SET binary DEFAULT b'00010101')",
+            &[0x15],
+        ),
+        (
+            "CREATE TABLE u6.t (a VARBINARY(2) DEFAULT b'000000001')",
+            &[0x00, 0x01],
+        ),
+        (
+            "CREATE TABLE u6.t (a BIGINT DEFAULT 0x10)",
+            b"16".as_slice(),
+        ),
+    ] {
+        assert_eq!(stored_default_bytes(sql), expected, "{sql}");
+    }
+
+    for sql in [
+        "CREATE TABLE u6.t (a ENUM('1','4','10') DEFAULT 0)",
+        "CREATE TABLE u6.t (a ENUM('1','4','10') DEFAULT FALSE)",
+        "CREATE TABLE u6.t (a ENUM('1','4','10') DEFAULT 4)",
+        "CREATE TABLE u6.t (a SET('1','4','10') DEFAULT 0)",
+        "CREATE TABLE u6.t (a SET('1','4','10') DEFAULT 8)",
+    ] {
+        assert_eq!(refusal(sql), "Invalid default value for 'a'", "{sql}");
+    }
+}
+
+#[test]
+fn defaults_are_validated_and_persisted_against_the_final_column_type() {
+    // A non-key NULL default is checked only after later nullability options.
+    assert_eq!(
+        refusal_with_code("CREATE TABLE u6.t (a BIGINT DEFAULT NULL NOT NULL)"),
+        (1067, "Invalid default value for 'a'".to_owned())
+    );
+
+    // Go's first `checkPriKeyConstraint` arm can see only an INLINE key. Its
+    // DEFAULT NULL is 1067 and wins even when an explicit NULL also exists.
+    for sql in [
+        "CREATE TABLE u6.t (a BIGINT PRIMARY KEY DEFAULT NULL)",
+        "CREATE TABLE u6.t (a BIGINT PRIMARY KEY NULL DEFAULT NULL)",
+    ] {
+        assert_eq!(
+            refusal_with_code(sql),
+            (1067, "Invalid default value for 'a'".to_owned()),
+            "{sql}"
+        );
+    }
+
+    // The table-level key is installed only after that precheck. An explicit
+    // NULL is then 1171, even ahead of a non-NULL spelling that final default
+    // validation would reject. Without explicit NULL, a NULL default is also
+    // 1171, including when a separate NOT NULL option is present.
+    for sql in [
+        "CREATE TABLE u6.t (a BIGINT DEFAULT NULL, PRIMARY KEY (a))",
+        "CREATE TABLE u6.t (a BIGINT NULL DEFAULT NULL, PRIMARY KEY (a))",
+        "CREATE TABLE u6.t (a BIGINT NULL DEFAULT 'bad', PRIMARY KEY (a))",
+        "CREATE TABLE u6.t (a BIGINT NOT NULL DEFAULT NULL, PRIMARY KEY (a))",
+    ] {
+        assert_eq!(
+            refusal_with_code(sql),
+            (
+                1171,
+                "All parts of a PRIMARY KEY must be NOT NULL; if you need NULL in a key, use UNIQUE instead"
+                    .to_owned()
+            ),
+            "{sql}"
+        );
+    }
+
+    // The settled spelling includes Go's fixed-BINARY padding, while the
+    // model setter retains a BIT default's raw-byte shadow.
+    assert_eq!(
+        stored_default_bytes("CREATE TABLE u6.t (a BINARY(4) DEFAULT 0x61)"),
+        b"a\0\0\0".as_slice()
+    );
+    let DdlStatement::CreateTable { template, .. } =
+        statement("CREATE TABLE u6.t (a BIT(9) DEFAULT b'1')")
+    else {
+        panic!("the fixture is CREATE TABLE");
+    };
+    let column = template
+        .columns
+        .get(0)
+        .expect("the fixture declares a BIT column");
+    let column = column.read();
+    assert_eq!(column.default_value_bit.snapshot(), vec![1]);
+    assert_eq!(
+        column.default_value.builtin_string().map(|value| value.as_bytes()),
+        Some(&[1][..])
+    );
+
+    // The non-expression clock marker stays on its computed-default path.
+    assert_eq!(
+        stored_default_bytes("CREATE TABLE u6.t (a TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"),
+        b"CURRENT_TIMESTAMP".as_slice()
+    );
+}
+
+#[test]
+fn cluster_create_persists_a_literal_timestamp_in_utc_from_the_session_zone() {
+    let context = tidb_executor::StmtContext::for_query()
+        .with_strict(true)
+        .with_date_modes(tidb_datatype::DateModes::TIDB_DEFAULT_SQL_MODE)
+        .with_time_zone(tidb_datatype::SessionTimeZone::Fixed {
+            name: "+08:00".to_owned(),
+            offset_secs: 8 * 60 * 60,
+        });
+    let sql = "CREATE TABLE u6.t (a TIMESTAMP DEFAULT '2020-01-02 08:00:00')";
+    let parsed = tidb_parser::parse_with_sql_mode(sql, context.sql_mode()).expect("parses");
+    let DdlStatement::CreateTable { template, .. } =
+        lower_ddl_with_context(&parsed, "u6", &context)
+            .expect("the timestamp default is admitted")
+            .expect("the statement is cluster DDL")
+    else {
+        panic!("the fixture is CREATE TABLE");
+    };
+    let column_handle = template.columns.get(0).expect("one column");
+    let column = column_handle.read();
+    assert_eq!(
+        column.default_value.builtin_string().map(|value| value.as_bytes()),
+        Some(b"2020-01-02 00:00:00".as_slice())
+    );
+}
+
+#[test]
+fn cluster_create_folds_a_timestamp_expression_in_the_session_zone() {
+    fn stored(zone: tidb_datatype::SessionTimeZone) -> Vec<u8> {
+        let context = tidb_executor::StmtContext::for_query()
+            .with_strict(true)
+            .with_date_modes(tidb_datatype::DateModes::TIDB_DEFAULT_SQL_MODE)
+            .with_time_zone(zone);
+        let sql =
+            "CREATE TABLE u6.t (v VARCHAR(64) DEFAULT (TIMESTAMP '2024-01-01 14:00:00+05:00'))";
+        let parsed = tidb_parser::parse_with_sql_mode(sql, context.sql_mode()).expect("parses");
+        let DdlStatement::CreateTable { template, .. } =
+            lower_ddl_with_context(&parsed, "u6", &context)
+                .expect("the expression default is admitted")
+                .expect("the statement is cluster DDL")
+        else {
+            panic!("the fixture is CREATE TABLE");
+        };
+        let column_handle = template.columns.get(0).expect("one column");
+        let column = column_handle.read();
+        match column.default_value.view() {
+            Some(GoAnyView::String(bytes)) => bytes.as_bytes().to_vec(),
+            other => panic!("the fixture stored a non-string default: {other:?}"),
+        }
+    }
+
+    assert_eq!(
+        stored(tidb_datatype::SessionTimeZone::Fixed {
+            name: "+02:00".to_owned(),
+            offset_secs: 2 * 60 * 60,
+        }),
+        b"2024-01-01 11:00:00"
+    );
+    assert_eq!(
+        stored(tidb_datatype::SessionTimeZone::utc()),
+        b"2024-01-01 09:00:00"
+    );
+}
+
+#[test]
+fn cluster_create_default_admission_uses_the_captured_date_modes() {
+    let sql = "CREATE TABLE u6.t (a DATE DEFAULT '0000-00-00')";
+    let strict_default = tidb_executor::StmtContext::for_query()
+        .with_strict(true)
+        .with_date_modes(tidb_datatype::DateModes::TIDB_DEFAULT_SQL_MODE)
+        .with_time_zone(tidb_datatype::SessionTimeZone::utc());
+    let parsed = tidb_parser::parse_with_sql_mode(sql, strict_default.sql_mode()).expect("parses");
+    let error = lower_ddl_with_context(&parsed, "u6", &strict_default)
+        .expect_err("NO_ZERO_DATE rejects the default");
+    assert_eq!(
+        (error.code, error.sql_state(), error.reason.as_str()),
+        (1067, *b"42000", "Invalid default value for 'a'")
+    );
+
+    let permissive = tidb_executor::StmtContext::for_query()
+        .with_strict(true)
+        .with_date_modes(tidb_datatype::DateModes::default())
+        .with_time_zone(tidb_datatype::SessionTimeZone::utc());
+    assert!(lower_ddl_with_context(&parsed, "u6", &permissive)
+        .expect("zero dates are admitted when the mode bits allow them")
+        .is_some());
+}
+
+#[test]
+fn cluster_create_preserves_coded_default_errors() {
+    for (sql, code, state, message) in [
+        (
+            "CREATE TABLE u6.t (a INT DEFAULT (ABS(1)))",
+            3770,
+            *b"HY000",
+            "Default value expression of column 'a' contains a disallowed function: `abs`.",
+        ),
+        (
+            "CREATE TABLE u6.t (ts TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP)",
+            1067,
+            *b"42000",
+            "Invalid default value for 'ts'",
+        ),
+    ] {
+        let parsed = tidb_parser::parse(sql).expect("parses");
+        let error = lower_ddl(&parsed, "u6").expect_err("the default is refused");
+        assert_eq!((error.code, error.sql_state()), (code, state), "{sql}");
+        assert_eq!(error.reason, message, "{sql}");
+    }
+}
+
+#[test]
 fn a_statement_this_module_does_not_own_is_left_to_its_own_path() {
     for sql in [
         "SELECT 1",
@@ -566,7 +901,11 @@ fn create_table_with_auto_increment_is_admitted_now_the_counter_has_a_home() {
         panic!("a CREATE TABLE");
     };
     assert!(
-        template.columns[0]
+        template
+            .columns
+            .get(0)
+            .expect("the fixture declares id")
+            .read()
             .field_type
             .has_flag(tidb_datatype::FieldTypeFlags::AUTO_INCREMENT),
         "the admitted template keeps the AUTO_INCREMENT flag the loader reads"
@@ -608,7 +947,10 @@ fn a_separate_allocator_table_counts_in_the_increment_key() {
     );
 
     template.auto_id_cache = 1;
-    assert!(template.sep_auto_inc(), "AUTO_ID_CACHE 1 is Go's SepAutoInc");
+    assert!(
+        template.sep_auto_inc(),
+        "AUTO_ID_CACHE 1 is Go's SepAutoInc"
+    );
     assert_eq!(
         tidb_exec::cluster_auto_id::auto_id_key_for(7, &template),
         tidb_meta::key::auto_increment_id_kv_key(7, 91),
@@ -651,7 +993,10 @@ fn create_index_stores_the_index_and_owes_a_backfill() {
     // `state` 5 is Go's `StatePublic`.
     assert_eq!(index["state"], 5);
     assert_eq!(index["idx_cols"][0]["name"]["O"], "v");
-    assert_eq!(index["idx_cols"][0]["offset"], 1, "`v` is the second column");
+    assert_eq!(
+        index["idx_cols"][0]["offset"], 1,
+        "`v` is the second column"
+    );
     assert_eq!(index["idx_cols"][0]["length"], -1, "not a prefix index");
     assert_eq!(
         stored["update_timestamp"], 470_000_000_u64,
@@ -667,12 +1012,47 @@ fn create_index_stores_the_index_and_owes_a_backfill() {
     // that cannot perform it refuses outright rather than writing the meta half.
     let backfill = write.backfill.as_ref().expect("entries are owed");
     assert!(backfill.add);
-    assert_eq!(backfill.index.id, 1);
+    {
+        let index = backfill.index.read();
+        assert_eq!(index.id, 1);
+    }
     assert_eq!(
         backfill.table.indices.len(),
         0,
         "the walker gets the table as its stored ROWS have it: before the change"
     );
+}
+
+/// Go captures `collate.NewCollationEnabled()` in `DDLReorgMeta` when the job
+/// is built. The backfill must carry that snapshot rather than re-read the
+/// runtime switch after the catalog mutation has already been planned.
+#[test]
+fn index_backfill_carries_the_planned_collation_mode() {
+    for use_new_collation in [false, true] {
+        let mut store = bootstrapped();
+        table_with_two_columns(&mut store);
+        let write = match plan_ddl_with_collation(
+            &mut store,
+            &statement("CREATE INDEX vi ON u6.minimal (v)"),
+            470_000_000,
+            use_new_collation,
+        )
+        .expect("the fixture plans")
+        {
+            DdlPlan::Write(write) => write,
+            DdlPlan::AlreadySatisfied { detail } => {
+                panic!("expected a write, got already-satisfied: {detail}")
+            }
+        };
+        assert_eq!(
+            write
+                .backfill
+                .as_ref()
+                .expect("CREATE INDEX owes a backfill")
+                .use_new_collation,
+            use_new_collation
+        );
+    }
 }
 
 /// A second index of the same name is 1061, and `IF NOT EXISTS` makes it a
@@ -762,7 +1142,10 @@ fn drop_index_removes_it_and_owes_the_entry_removal() {
     assert_eq!(write.diff.action_type.0, 8);
     let backfill = write.backfill.as_ref().expect("entries are owed");
     assert!(!backfill.add);
-    assert_eq!(backfill.index.name.original(), "vi");
+    {
+        let index = backfill.index.read();
+        assert_eq!(index.name.original(), "vi");
+    }
     assert_eq!(
         backfill.table.indices.len(),
         1,

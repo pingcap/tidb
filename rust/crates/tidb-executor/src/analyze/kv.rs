@@ -52,7 +52,7 @@ use crate::analyze::{
     AnalyzeError, AnalyzeOptions, AnalyzePlan, AnalyzeRun, AnalyzedColumn, AnalyzedHistogram,
     AnalyzedIndex,
 };
-use crate::kv_table::KvTable;
+use crate::kv_table::{KvTable, RowDecodeContext};
 
 /// Runs one `ANALYZE TABLE` over a table's stored rows.
 ///
@@ -67,15 +67,18 @@ pub fn analyze_kv_table(
     table: &mut KvTable,
     options: &AnalyzeOptions,
     realtime_count: Option<i64>,
-    zone: &tidb_datatype::SessionTimeZone,
+    ctx: &crate::StmtContext,
 ) -> Result<TableStatistics, AnalyzeError> {
-    let plan = kv_analyze_plan(table)?;
-    let rows = table.scan_rows(zone).map_err(|error| {
-        AnalyzeError::Unsupported(format!(
-            "this node could not read `{}` to analyze it: {error:?}",
-            table.name
-        ))
-    })?;
+    let decode_context = RowDecodeContext::for_analyze(ctx);
+    let plan = kv_analyze_plan(table, &decode_context)?;
+    let rows = table
+        .scan_rows_with_context(&decode_context)
+        .map_err(|error| {
+            AnalyzeError::Unsupported(format!(
+                "this node could not read `{}` to analyze it: {error:?}",
+                table.name
+            ))
+        })?;
     let analyzed_columns = plan.columns().len();
     let mut run = AnalyzeRun::start(&plan, options, realtime_count)?;
     for row in &rows {
@@ -157,7 +160,10 @@ fn index_statistics(built: AnalyzedHistogram, num_columns: usize, unique: bool) 
 }
 
 /// Which columns and indexes an `ANALYZE` of this in-process table covers.
-fn kv_analyze_plan(table: &KvTable) -> Result<AnalyzePlan, AnalyzeError> {
+fn kv_analyze_plan(
+    table: &KvTable,
+    context: &RowDecodeContext,
+) -> Result<AnalyzePlan, AnalyzeError> {
     let visible = table.visible_columns();
     let mut columns = Vec::with_capacity(visible.len());
     for column in visible {
@@ -179,7 +185,13 @@ fn kv_analyze_plan(table: &KvTable) -> Result<AnalyzePlan, AnalyzeError> {
             // decoder already substitutes it, so a value never reaches the
             // sampler missing -- but the plan carries it anyway, because what
             // an absent value IS belongs to the shared core.
-            absent_value: column.origin_default_value(),
+            absent_value: column
+                .origin_default_value(context.origin_default_flags(), context.zone())
+                .map_err(|error| {
+                    AnalyzeError::Unsupported(format!(
+                        "this node could not materialize `{qualified}`'s origin default: {error}"
+                    ))
+                })?,
         });
     }
 

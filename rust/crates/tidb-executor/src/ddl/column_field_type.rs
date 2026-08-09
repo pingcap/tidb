@@ -60,9 +60,10 @@
 //! `utf8mb4`/`utf8mb4_bin`. The resolved pair itself is the caller's input.
 
 use tidb_ast::{ColumnType, ColumnTypeArg};
+use tidb_datatype::go_runtime::GoSharedSlice;
 use tidb_datatype::{
     enum_set_display_length_from_lengths, get_charset_info, FieldType, FieldTypeCode,
-    FieldTypeFlags, UNSPECIFIED_LENGTH,
+    FieldTypeFlags, GoString, UNSPECIFIED_LENGTH,
 };
 
 /// Go `charset.CharsetBin`.
@@ -177,15 +178,22 @@ pub fn build_field_type(
                     declared.name
                 )));
             }
-            let mut elems = Vec::with_capacity(declared.args.len());
-            for argument in &declared.args {
-                elems.push(argument.as_text_lossy());
+            field_type.set_elems(GoSharedSlice::from_vec(vec![
+                GoString::default();
+                declared.args.len()
+            ]));
+            for (index, argument) in declared.args.iter().enumerate() {
+                match argument {
+                    ColumnTypeArg::Text(value) => field_type.set_elem(index, value.as_str()),
+                    ColumnTypeArg::Bytes(value) => {
+                        field_type.set_elem_with_binary_literal(index, value.as_slice(), true)
+                    }
+                }
             }
             flen = enum_set_display_length_from_lengths(
                 code,
                 declared.args.iter().map(ColumnTypeArg::byte_len),
             );
-            field_type.set_elems(elems);
         }
         // `FLOAT(M,D)` and `DOUBLE(M,D)` carry a precision AND a scale exactly
         // as DECIMAL does; captured, `float(10,2)` reports NUMERIC_PRECISION 10
@@ -416,6 +424,7 @@ fn type_argument(
 #[cfg(test)]
 mod tests {
     use super::{build_field_type, process_column_flags};
+    use tidb_ast::{ColumnType, ColumnTypeArg};
     use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags};
 
     /// The declared type of the one column of `CREATE TABLE probe (<decl>)`.
@@ -438,6 +447,30 @@ mod tests {
         let (name, declared) = parsed_type(declaration);
         build_field_type(&name, &declared, "utf8mb4", "utf8mb4_bin")
             .expect("the probe declaration is buildable")
+    }
+
+    #[test]
+    fn binary_enum_members_keep_bytes_and_literal_markers() {
+        let declared = ColumnType {
+            name: "ENUM".to_owned(),
+            args: vec![
+                ColumnTypeArg::Bytes(vec![0xff]),
+                ColumnTypeArg::Bytes(vec![0x15]),
+            ],
+            unsigned: false,
+            zerofill: false,
+            binary: false,
+            charset: None,
+        };
+        let field_type = build_field_type("raw", &declared, "binary", "binary")
+            .expect("binary ENUM members are valid Go strings");
+
+        assert_eq!(field_type.elem(0).as_bytes(), [0xff]);
+        assert_eq!(field_type.elem(1).as_bytes(), [0x15]);
+        assert!(field_type.elem_is_binary_literal(0));
+        assert!(field_type.elem_is_binary_literal(1));
+        assert_eq!(field_type.flen(), 1);
+        assert_eq!(field_type.restore_bytes(), b"ENUM('\xff','\x15')");
     }
 
     /// Captured from real TiDB with `create table bt (a varchar(10) binary,
@@ -674,21 +707,27 @@ pub fn check_column_attributes(field_type: &FieldType) -> Result<(), ColumnAttri
             }
         }
         code @ (FieldTypeCode::Enum | FieldTypeCode::Set) => {
-            let collation = field_type.collation();
-            let mut seen: Vec<Vec<u8>> = Vec::with_capacity(field_type.elems().len());
-            for member in field_type.elems() {
-                let key = collation.key(member.as_bytes());
-                if seen.contains(&key) {
-                    return Err(ColumnAttributeError::DuplicatedValueInType {
-                        value: member.clone(),
-                        type_name: if code == FieldTypeCode::Set {
-                            "SET"
-                        } else {
-                            "ENUM"
-                        },
-                    });
+            let collator = field_type.runtime_collator();
+            let duplicate = field_type.with_elems_visible(|members| {
+                let mut seen: Vec<Vec<u8>> = Vec::with_capacity(members.len());
+                for member in members {
+                    let key = collator.key(member.as_bytes());
+                    if seen.contains(&key) {
+                        return Some(member.clone());
+                    }
+                    seen.push(key);
                 }
-                seen.push(key);
+                None
+            });
+            if let Some(member) = duplicate {
+                return Err(ColumnAttributeError::DuplicatedValueInType {
+                    value: member.to_utf8_lossy_go(),
+                    type_name: if code == FieldTypeCode::Set {
+                        "SET"
+                    } else {
+                        "ENUM"
+                    },
+                });
             }
         }
         _ => {}

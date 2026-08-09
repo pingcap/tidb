@@ -61,6 +61,14 @@ pub trait ColumnResolver {
     /// `(row index, result type, unique id)`, or `None` when unknown.
     fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)>;
 
+    /// Resolves a `DEFAULT(column)` leaf to the statement-scoped constant its
+    /// DML planner prepared. A default implementation keeps ordinary query
+    /// resolvers unaware of write-only metadata; write resolvers override it
+    /// after materializing defaults in Go's planning order.
+    fn resolve_default(&self, _path: &[String]) -> Option<Expression> {
+        None
+    }
+
     /// The session `time_zone` the rewrite runs under -- Go's
     /// `ctx.Location()`, which `getFunction` reaches while BUILDING the
     /// expression and which the `TIMESTAMP 'lit'` fold both normalizes an
@@ -298,6 +306,11 @@ pub fn rewrite_expr_resolved(
     expr: &Expr,
     resolver: &impl ColumnResolver,
 ) -> Result<Expression, EvalError> {
+    if let Expr::Default(Some(path)) = expr {
+        return resolver
+            .resolve_default(path)
+            .ok_or(EvalError::Unsupported("unresolved DEFAULT column"));
+    }
     if let Expr::Column(path) = expr {
         let (index, ret_type, unique_id) = resolver
             .resolve(path)
@@ -443,14 +456,39 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
             )))
         }
         // `b'1010'`: the same shape as a hex literal, but signed.
-        Expr::Bit(digits) => {
-            let literal = tidb_datatype::parse_bit_str(&format!("0b{digits}"))
-                .map_err(|_| EvalError::Unsupported("malformed bit literal"))?;
-            let ft = binary_literal_type(literal.as_bytes().len(), false);
+        Expr::Bit(value) => {
+            let literal = tidb_datatype::BinaryLiteral::from(value.as_bytes());
+            let ft = binary_literal_type(value.as_bytes().len(), false);
             Ok(Expression::Constant(Constant::new(
                 Datum::BinaryLiteral(literal),
                 ft,
             )))
+        }
+        // Go `parseCharsetIntroducer` retains the binary literal Datum and
+        // annotates only its FieldType. Keeping the wrapper at this boundary
+        // lets DDL constant evaluation remain byte-authoritative while live
+        // expression consumers still see the explicit charset/collation and
+        // UnderScoreCharset/Binary flags.
+        Expr::CharsetBinary { charset, value } => {
+            let mut rewritten = rewrite_leaf(value, resolver)?;
+            let lower = charset.to_ascii_lowercase();
+            let collation = tidb_datatype::get_default_collation(&lower)
+                .map_err(|_| EvalError::Unsupported("unknown character introducer"))?;
+            let Expression::Constant(constant) = &mut rewritten else {
+                return Err(EvalError::Unsupported(
+                    "character introducer requires a literal",
+                ));
+            };
+            let field_type = constant.ret_type.as_mut().ok_or(EvalError::Unsupported(
+                "character-introduced literal has no type",
+            ))?;
+            field_type.set_charset_name(lower);
+            field_type.set_collation_name(&collation);
+            field_type.add_flags(tidb_datatype::FieldTypeFlags::UNDERSCORE_CHARSET);
+            if collation == "binary" {
+                field_type.add_flags(tidb_datatype::FieldTypeFlags::BINARY);
+            }
+            Ok(rewritten)
         }
         // The inline `@name := expr` assignment expression: Go's
         // `builtinSetVar*Sig`, whose whole point is the SIDE EFFECT on the

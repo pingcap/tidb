@@ -29,6 +29,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// A Go string header retaining arbitrary bytes and immutable backing identity.
+#[derive(Default)]
 pub struct GoString {
     backing: Option<Arc<[u8]>>,
     start: usize,
@@ -248,16 +249,6 @@ impl Clone for GoString {
             backing: self.backing.clone(),
             start: self.start,
             len: self.len,
-        }
-    }
-}
-
-impl Default for GoString {
-    fn default() -> Self {
-        Self {
-            backing: None,
-            start: 0,
-            len: 0,
         }
     }
 }

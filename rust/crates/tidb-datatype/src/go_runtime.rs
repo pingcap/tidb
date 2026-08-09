@@ -246,6 +246,38 @@ impl<T> GoSharedSlice<T> {
         self.set(index, value);
     }
 
+    /// Go 1.25 `slices.Delete`: shift the retained tail in the same backing,
+    /// clear the vacated visible slots to their zero value, and shorten only
+    /// this header. Sibling headers therefore observe both the shift and clear
+    /// while retaining their own length and capacity.
+    pub fn delete_go(&mut self, start: usize, end: usize)
+    where
+        T: Clone + Default,
+    {
+        assert!(start <= end, "invalid Go slice delete range");
+        assert!(end <= self.len, "slice bounds out of range in Go delete");
+        if start == end {
+            return;
+        }
+
+        let old_len = self.len;
+        let removed = end - start;
+        let new_len = old_len - removed;
+        let mut values = self
+            .backing
+            .as_ref()
+            .expect("delete from nil Go slice")
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        for destination in start..new_len {
+            values[self.start + destination] = values[self.start + destination + removed].clone();
+        }
+        for cleared in new_len..old_len {
+            values[self.start + cleared] = T::default();
+        }
+        self.len = new_len;
+    }
+
     /// Clones the visible element values. Pointer handles contained in `T`
     /// retain their own pointee identity.
     #[must_use]

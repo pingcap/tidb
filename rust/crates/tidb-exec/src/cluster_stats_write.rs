@@ -570,10 +570,8 @@ fn system_db_id(catalog: &ClusterCatalog) -> Result<i64, StatsWriteError> {
 
 fn column_id(table: &TableInfo, name: &str) -> Result<i64, StatsWriteError> {
     table
-        .cols()
-        .into_iter()
-        .find(|column| column.name.lowercase() == name)
-        .map(|column| column.id)
+        .find_public_column_by_name(name)
+        .map(|column| column.read().id)
         .ok_or_else(|| {
             StatsWriteError::MissingTable(format!("{SYSTEM_DB}.{}.{name}", table.name.original()))
         })
@@ -593,8 +591,8 @@ fn set(table: &TableInfo, values: &mut RowValues, name: &str, value: Datum) {
 fn full_view(table: &TableInfo) -> SystemTableView {
     let names: Vec<String> = table
         .cols()
-        .into_iter()
-        .map(|column| column.name.lowercase().to_owned())
+        .iter_deref()
+        .map(|column| column.read().name.lowercase().to_owned())
         .collect();
     let borrowed: Vec<&str> = names.iter().map(String::as_str).collect();
     SystemTableView::project(
@@ -625,12 +623,13 @@ fn read_rows_with_keys<S: MetaSnapshot>(
     for (key, value) in pairs {
         let parsed = SystemRow::parse(&view, &key, &value)?;
         let mut values = RowValues::new();
-        for column in table.cols() {
-            let stored = parsed
-                .datum(column.name.lowercase())?
-                .cloned()
-                .unwrap_or(Datum::Null);
-            values.insert(column.id, stored);
+        for column in table.cols().iter_deref() {
+            let (id, name) = {
+                let column = column.read();
+                (column.id, column.name.lowercase().to_owned())
+            };
+            let stored = parsed.datum(&name)?.cloned().unwrap_or(Datum::Null);
+            values.insert(id, stored);
         }
         if let Some(id) = table_id {
             if values.get(&column_id(table, "table_id")?) != Some(&Datum::Int(id)) {

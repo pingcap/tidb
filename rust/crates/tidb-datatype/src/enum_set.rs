@@ -104,7 +104,7 @@ impl EnumParseError {
     pub fn message_bytes(&self) -> Vec<u8> {
         let mut message = self.context.as_bytes().to_vec();
         message.extend_from_slice(b": ");
-        message.extend_from_slice((&*crate::ERR_TRUNCATED).to_string().as_bytes());
+        message.extend_from_slice((*crate::ERR_TRUNCATED).to_string().as_bytes());
         message
     }
 
@@ -116,7 +116,7 @@ impl EnumParseError {
 
 impl fmt::Display for EnumParseError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{}: {}", self.context, &*crate::ERR_TRUNCATED)
+        write!(formatter, "{}: {}", self.context, *crate::ERR_TRUNCATED)
     }
 }
 

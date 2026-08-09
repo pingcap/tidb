@@ -18,10 +18,9 @@ use std::collections::BTreeMap;
 
 use tidb_codec::{
     append_datum_for_checksum, calculate_raw_checksum, decode_one, decode_row_to_datums,
-    decode_row_to_map,
-    decode_row_to_old_bytes, encode_row, encode_row_from_old, encode_row_with_checksum,
-    encode_value, is_new_format, is_row_key, remove_keyspace_prefix, ColumnInfo, DatumColumn,
-    DecodeRowOptions, Handle, RowChecksumPolicy, RowData, RowLayout,
+    decode_row_to_map, decode_row_to_old_bytes, encode_row, encode_row_from_old,
+    encode_row_with_checksum, encode_value, is_new_format, is_row_key, remove_keyspace_prefix,
+    ColumnInfo, DatumColumn, DecodeRowOptions, Handle, RowChecksumPolicy, RowData, RowLayout,
 };
 use tidb_datatype::{
     BinaryJSON, BinaryLiteral, BinaryLiteralWidth, Collation, CoreTime, Datum, Decimal, FieldType,
@@ -62,10 +61,7 @@ fn round_trip(ids: &[i64], values: &[Datum], columns: &[ColumnInfo]) -> Vec<Datu
 fn test_remove_keyspace_prefix() {
     let nextgen = hex("78000001748000fffffffffffe5f728000000000000002");
     let classic = &nextgen[4..];
-    assert_eq!(
-        remove_keyspace_prefix(&nextgen, true, true, false),
-        nextgen
-    );
+    assert_eq!(remove_keyspace_prefix(&nextgen, true, true, false), nextgen);
     assert_eq!(
         remove_keyspace_prefix(&nextgen, false, true, false),
         classic
@@ -78,10 +74,7 @@ fn test_remove_keyspace_prefix() {
         remove_keyspace_prefix(&nextgen, false, false, true),
         classic
     );
-    assert_eq!(
-        remove_keyspace_prefix(classic, false, true, false),
-        classic
-    );
+    assert_eq!(remove_keyspace_prefix(classic, false, true, false), classic);
 }
 
 /// Source: `rowcodec_test.go::TestEncodeLargeSmallReuseBug`.
@@ -163,9 +156,11 @@ fn test_decode_decimal_fsp_not_match() {
             .with_flen(6)
             .with_decimal(3),
     }];
-    let decoded =
-        decode_row_to_datums(&encoded, &columns, &DecodeRowOptions::default()).unwrap();
-    assert_eq!(decoded.values[0].as_decimal().unwrap().to_string(), "11.990");
+    let decoded = decode_row_to_datums(&encoded, &columns, &DecodeRowOptions::default()).unwrap();
+    assert_eq!(
+        decoded.values[0].as_decimal().unwrap().to_string(),
+        "11.990"
+    );
 }
 
 /// Source: `rowcodec_test.go::TestTypesNewRowCodec`.
@@ -175,10 +170,8 @@ fn test_types_new_row_codec() {
     let json = BinaryJSON::parse(r#"{"a":2}"#).unwrap();
     let vector = VectorFloat32::must_create(vec![1.0, 2.5]);
     let duration = MySqlDuration::new(4, 0, 0, 0, 0).unwrap();
-    let bit = BinaryLiteral::from_uint(
-        3_223_600,
-        Some(BinaryLiteralWidth::try_from(3_u8).unwrap()),
-    );
+    let bit =
+        BinaryLiteral::from_uint(3_223_600, Some(BinaryLiteralWidth::try_from(3_u8).unwrap()));
     let values = vec![
         Datum::Int(1),
         Datum::UInt(2),
@@ -306,7 +299,13 @@ fn test_varint_compatibility() {
         },
     ];
     let mut encoded = Vec::new();
-    encode_row(None, &[1, 2], &[Datum::Int(1), Datum::UInt(1)], &mut encoded).unwrap();
+    encode_row(
+        None,
+        &[1, 2],
+        &[Datum::Int(1), Datum::UInt(1)],
+        &mut encoded,
+    )
+    .unwrap();
     let old = decode_row_to_old_bytes(
         &encoded,
         &columns,
@@ -408,7 +407,11 @@ fn test_65535_bug() {
 #[allow(clippy::approx_constant)]
 fn test_column_encode() {
     fn length_value(value: &[u8]) -> Vec<u8> {
-        [u32::try_from(value.len()).unwrap().to_le_bytes().as_slice(), value].concat()
+        [
+            u32::try_from(value.len()).unwrap().to_le_bytes().as_slice(),
+            value,
+        ]
+        .concat()
     }
     fn assert_encoding(field_type: FieldTypeCode, datum: Datum, expected: Vec<u8>) {
         let mut output = Vec::new();
@@ -424,7 +427,15 @@ fn test_column_encode() {
         FieldTypeCode::Int24,
     ];
     for field_type in integer_types {
-        for value in [0_i64, 42, -2, i8::MIN.into(), i16::MIN.into(), i32::MIN.into(), i64::MIN] {
+        for value in [
+            0_i64,
+            42,
+            -2,
+            i8::MIN.into(),
+            i16::MIN.into(),
+            i32::MIN.into(),
+            i64::MIN,
+        ] {
             assert_encoding(
                 field_type,
                 Datum::Int(value),
@@ -553,13 +564,7 @@ fn test_column_encode() {
             length_value(duration.to_string().as_bytes()),
         );
     }
-    for literal in [
-        "0.000",
-        "3.14",
-        "-1.2",
-        "-999999.999999",
-        "999999.999999",
-    ] {
+    for literal in ["0.000", "3.14", "-1.2", "-999999.999999", "999999.999999"] {
         let decimal = Decimal::from_literal(literal);
         assert_encoding(
             FieldTypeCode::NewDecimal,
@@ -587,13 +592,8 @@ fn test_column_encode() {
             append_datum_for_checksum(None, &mut Vec::new(), &Datum::Int(1), field_type).is_err()
         );
     }
-    for code in [
-        FieldTypeCode::Unspecified,
-        FieldTypeCode::Unknown(42),
-    ] {
-        assert!(
-            append_datum_for_checksum(None, &mut Vec::new(), &Datum::Int(1), code).is_err()
-        );
+    for code in [FieldTypeCode::Unspecified, FieldTypeCode::Unknown(42)] {
+        assert!(append_datum_for_checksum(None, &mut Vec::new(), &Datum::Int(1), code).is_err());
     }
     for code in [
         FieldTypeCode::Unspecified,
@@ -727,6 +727,38 @@ fn test_decode_with_commit_ts() {
             Datum::new_collation_string(b"test2", Collation::DEFAULT),
         ]
     );
+}
+
+#[test]
+fn enum_and_set_rows_preserve_non_utf8_element_bytes() {
+    let columns = [
+        ColumnInfo {
+            id: 1,
+            field_type: field(FieldTypeCode::Enum).with_elems([vec![0xff]]),
+            ..column(1, FieldTypeCode::Enum)
+        },
+        ColumnInfo {
+            id: 2,
+            field_type: field(FieldTypeCode::Set).with_elems([vec![0xfe]]),
+            ..column(2, FieldTypeCode::Set)
+        },
+    ];
+    let decoded = round_trip(
+        &[1, 2],
+        &[
+            Datum::Enum(MysqlEnum::new(vec![0xff], 1), Collation::Binary),
+            Datum::Set(MysqlSet::new(vec![0xfe], 1), Collation::Binary),
+        ],
+        &columns,
+    );
+    match &decoded[0] {
+        Datum::Enum(value, _) => assert_eq!(value.name_bytes(), &[0xff]),
+        other => panic!("unexpected enum datum: {other:?}"),
+    }
+    match &decoded[1] {
+        Datum::Set(value, _) => assert_eq!(value.name_bytes(), &[0xfe]),
+        other => panic!("unexpected set datum: {other:?}"),
+    }
 }
 
 /// Source: `bench_test.go::TestBenchDaily`.

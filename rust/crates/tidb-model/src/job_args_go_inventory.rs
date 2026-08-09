@@ -389,12 +389,11 @@ fn declined_rows_pin_the_remaining_typed_job_args_boundary() {
             "typed job-argument surface disappeared: {present_typed_symbol}"
         );
     }
-    for absent_typed_symbol in ["pub struct DropTableArgs"] {
-        assert!(
-            !rust_job_args.contains(absent_typed_symbol),
-            "remaining typed job-argument boundary changed: {absent_typed_symbol}"
-        );
-    }
+    let absent_typed_symbol = "pub struct DropTableArgs";
+    assert!(
+        !rust_job_args.contains(absent_typed_symbol),
+        "remaining typed job-argument boundary changed: {absent_typed_symbol}"
+    );
 
     const CURRENT_BOUNDARY: &str = "Measured boundary: the source-shaped JobArgs and FinishedJobArgs framework plus Empty, CreateSchema, DropSchema, ModifySchema, CreateTable, BatchCreateTable, TruncateTable, TablePartition, ExchangeTablePartition, RebaseAutoID, ModifyTableComment, and ModifyTableCharsetAndCollate argument types are native; this obligation belongs to a later concrete argument type or its imported AST or PD representation, so no source-equivalent typed entry point exists yet.";
     assert_eq!(INVENTORY.matches(CURRENT_BOUNDARY).count(), 1_117);

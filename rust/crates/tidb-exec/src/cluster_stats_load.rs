@@ -143,8 +143,11 @@ impl ClusterTableStats {
 pub fn column_types_of(table: &TableInfo) -> BTreeMap<i64, FieldType> {
     table
         .cols()
-        .into_iter()
-        .map(|column| (column.id, column.field_type.clone()))
+        .iter_deref()
+        .map(|column| {
+            let column = column.read();
+            (column.id, column.field_type.clone())
+        })
         .collect()
 }
 

@@ -367,8 +367,8 @@ pub(crate) fn eval_string(v: &Datum) -> Result<Option<Vec<u8>>, EvalError> {
         Datum::String(value) => Ok(Some(value.bytes().to_vec())),
         Datum::Bytes(value) => Ok(Some(value.clone())),
         Datum::BinaryLiteral(value) => Ok(Some(value.as_bytes().to_vec())),
-        Datum::Enum(value, _) => Ok(Some(value.to_string().into_bytes())),
-        Datum::Set(value, _) => Ok(Some(value.to_string().into_bytes())),
+        Datum::Enum(value, _) => Ok(Some(value.name_bytes().to_vec())),
+        Datum::Set(value, _) => Ok(Some(value.name_bytes().to_vec())),
         // Same contract as [`eval_int`]: the layer named this position
         // `types.ETString`, so an un-cast datum here means an evaluator entry
         // point reached the signature without passing through

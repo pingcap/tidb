@@ -534,6 +534,9 @@ pub enum DriverError {
     },
     /// Go `types.ErrInvalidDefault` (1067).
     InvalidDefault(String),
+    /// Go `table.errGetDefaultFailed` / `ErrFieldGetDefaultFailed` (8038):
+    /// persisted default metadata could not be parsed as this column's type.
+    FieldGetDefaultFailed(String),
     /// Go `dbterror.ErrPrimaryCantHaveNull` (1171): a `PRIMARY KEY` column
     /// was given `DEFAULT NULL`. Go's `checkDefaultValue` tests this BEFORE
     /// the plain NOT NULL arm, so a primary key -- which is implicitly NOT

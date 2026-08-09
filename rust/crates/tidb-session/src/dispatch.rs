@@ -236,6 +236,7 @@ impl Session {
                 "{schema}.{table_name}"
             ))));
         };
+        let ctx = self.statement_context(false);
         // `PROCESSLIST` is session/registry state, not catalog state, so it
         // is built directly rather than through `infoschema::table_rows`,
         // which only ever sees the catalog.
@@ -246,7 +247,10 @@ impl Session {
         } else {
             let visibility = self.schema_visibility();
             self.with_catalog_mut(|catalog| {
-                Ok(infoschema::table_rows(&table_name, catalog, &visibility).unwrap_or_default())
+                Ok(
+                    infoschema::table_rows(&table_name, catalog, &visibility, &ctx)
+                        .unwrap_or_default(),
+                )
             })?
         };
 
@@ -258,7 +262,6 @@ impl Session {
             &table_name,
             tidb_executor::MemTable { columns, rows },
         );
-        let ctx = self.statement_context(false);
         let (columns, rows) = tidb_executor::run_select_meta_stmt(
             select,
             &scratch,

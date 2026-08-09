@@ -147,8 +147,16 @@ pub(crate) fn coerce_str(value: &Datum) -> Result<Option<String>, EvalError> {
             .map(|text| Some(text.to_owned()))
             .map_err(|_| EvalError::Unsupported("invalid UTF-8 binary literal")),
         Datum::Duration(value) => Ok(Some(value.to_string())),
-        Datum::Enum(value, _) => Ok(Some(value.to_string())),
-        Datum::Set(value, _) => Ok(Some(value.to_string())),
+        Datum::Enum(value, _) => value
+            .name()
+            .as_utf8()
+            .map(|text| Some(text.to_owned()))
+            .map_err(|_| EvalError::Unsupported("invalid UTF-8 ENUM name")),
+        Datum::Set(value, _) => value
+            .name()
+            .as_utf8()
+            .map(|text| Some(text.to_owned()))
+            .map_err(|_| EvalError::Unsupported("invalid UTF-8 SET name")),
         Datum::Time(value) => Ok(Some(value.to_string())),
         Datum::Json(value) => Ok(Some(value.to_string())),
         Datum::Raw(value) => std::str::from_utf8(value)
@@ -181,8 +189,8 @@ pub(crate) fn coerce_str_bytes(value: &Datum) -> Result<Option<Vec<u8>>, EvalErr
         Datum::Float32(value) => Some((*value as f32).to_string().into_bytes()),
         Datum::BinaryLiteral(value) | Datum::Bit(value) => Some(value.as_bytes().to_vec()),
         Datum::Duration(value) => Some(value.to_string().into_bytes()),
-        Datum::Enum(value, _) => Some(value.to_string().into_bytes()),
-        Datum::Set(value, _) => Some(value.to_string().into_bytes()),
+        Datum::Enum(value, _) => Some(value.name_bytes().to_vec()),
+        Datum::Set(value, _) => Some(value.name_bytes().to_vec()),
         Datum::Time(value) => Some(value.to_string().into_bytes()),
         Datum::Json(value) => Some(value.to_string().into_bytes()),
         Datum::Raw(value) => Some(value.clone()),

@@ -17,8 +17,15 @@
 use std::collections::BTreeMap;
 
 /// Go `time.UTC`, the zone these source tests encode and decode in.
-const UTC: tidb_datatype::SessionTimeZone =
-    tidb_datatype::SessionTimeZone::Named(chrono_tz::UTC);
+const UTC: tidb_datatype::SessionTimeZone = tidb_datatype::SessionTimeZone::Named(chrono_tz::UTC);
+use tidb_codec::{
+    cut_one, decode_decimal_with_fault, decode_int, decode_one, decode_table_id, encode_int,
+    encode_key, encode_row, encode_value, Encoder,
+};
+use tidb_datatype::{
+    BinaryLiteral, BinaryLiteralWidth, Collation, CoreTime, Datum, Decimal, FieldType,
+    FieldTypeCode, MySqlDuration, MysqlEnum, MysqlSet, Time, TimeType, UNSPECIFIED_LENGTH,
+};
 use tidb_tablecodec::table_key::{
     cut_index_prefix, cut_row_key_prefix, decode_index_id, decode_index_key, decode_key_head,
     decode_meta_key, decode_record_key, decode_row_key, encode_index_seek_key, encode_meta_key,
@@ -27,27 +34,18 @@ use tidb_tablecodec::table_key::{
     gen_table_record_prefix, get_table_handle_key_range, truncate_to_row_key_len, KeyHead,
     RecordHandle, META_PREFIX, RECORD_ROW_KEY_LEN, TABLE_PREFIX,
 };
-use tidb_codec::{
-    cut_one, decode_decimal_with_fault, decode_int, decode_one, decode_table_id, encode_int,
-    encode_key, encode_row, encode_value, Encoder,
-};
 use tidb_tablecodec::{
     cut_index_key, cut_index_key_by_ids, cut_table_row, decode_column_value,
     decode_handle_in_index_value, decode_index_handle, decode_table_row_into_map,
     decode_table_row_to_map, decode_temp_index_value, encode_handle_in_unique_index_value,
     encode_old_table_row, encode_table_row, encode_table_value,
     filter_overwritten_temp_index_values, generate_index_key, generate_index_value,
-    get_table_index_key_range,
-    index_key_to_temp_index_key, index_kv_is_unique, is_index_key, is_record_key, is_table_key,
-    is_temp_index_key, is_untouched_index_kv, split_index_value, temp_index_key_to_index_key,
-    temp_index_value_is_untouched, truncate_index_value, unflatten_datum, unflatten_datums,
-    verify_table_ids_for_ranges, IndexColumn, IndexInfo, TableColumn, TableInfo, TableKeyRange,
-    TempIndexValue, TempIndexValueElem, COMMON_HANDLE_FLAG, INDEX_ID_MASK, INDEX_VERSION_FLAG,
-    PARTITION_ID_FLAG, UNCOMMITTED_INDEX_KV_FLAG,
-};
-use tidb_datatype::{
-    BinaryLiteral, BinaryLiteralWidth, Collation, CoreTime, Datum, Decimal, FieldType,
-    FieldTypeCode, MySqlDuration, MysqlEnum, MysqlSet, Time, TimeType, UNSPECIFIED_LENGTH,
+    get_table_index_key_range, index_key_to_temp_index_key, index_kv_is_unique, is_index_key,
+    is_record_key, is_table_key, is_temp_index_key, is_untouched_index_kv, split_index_value,
+    temp_index_key_to_index_key, temp_index_value_is_untouched, truncate_index_value,
+    unflatten_datum, unflatten_datums, verify_table_ids_for_ranges, IndexColumn, IndexInfo,
+    TableColumn, TableInfo, TableKeyRange, TempIndexValue, TempIndexValueElem, COMMON_HANDLE_FLAG,
+    INDEX_ID_MASK, INDEX_VERSION_FLAG, PARTITION_ID_FLAG, UNCOMMITTED_INDEX_KV_FLAG,
 };
 use tidb_txnkv::{CommonHandle, Handle, IntHandle, PartitionHandle};
 
@@ -135,8 +133,7 @@ fn test_row_codec() {
     ];
     let ids = [1, 2, 3, 4, 5, 6];
     for new_format in [false, true] {
-        let encoded =
-            encode_table_row(Some(&UTC), &row, &ids, new_format, None).unwrap();
+        let encoded = encode_table_row(Some(&UTC), &row, &ids, new_format, None).unwrap();
         let decoded = decode_table_row_to_map(&encoded, &columns, Some(&UTC)).unwrap();
         assert_eq!(decoded.len(), row.len());
         assert_eq!(decoded[&1], row[0]);
@@ -166,14 +163,14 @@ fn test_row_codec() {
 /// Source: `tablecodec_test.go::TestDecodeColumnValue`.
 #[test]
 fn test_decode_column_value() {
-    let timestamp =
-        Time::new(CoreTime::from_date(2026, 7, 23, 12, 34, 56, 0), TimeType::Timestamp, 0)
-            .unwrap();
+    let timestamp = Time::new(
+        CoreTime::from_date(2026, 7, 23, 12, 34, 56, 0),
+        TimeType::Timestamp,
+        0,
+    )
+    .unwrap();
     let cases = [
-        (
-            Datum::Time(timestamp),
-            field(FieldTypeCode::Timestamp),
-        ),
+        (Datum::Time(timestamp), field(FieldTypeCode::Timestamp)),
         (
             Datum::Set(MysqlSet::new("a", 1), Collation::Binary),
             field(FieldTypeCode::Set).with_elems(["a", "b", "c"].map(String::from)),
@@ -199,16 +196,40 @@ fn test_decode_column_value() {
     }
 }
 
+#[test]
+fn enum_and_set_column_values_preserve_non_utf8_element_bytes() {
+    let enum_value = Datum::Enum(MysqlEnum::new(vec![0xff], 1), Collation::Binary);
+    let enum_type = field(FieldTypeCode::Enum).with_elems([vec![0xff]]);
+    let decoded = decode_column_value(
+        &encode_table_value(Some(&UTC), &enum_value).unwrap(),
+        &enum_type,
+        Some(&UTC),
+    )
+    .unwrap();
+    match decoded {
+        Datum::Enum(value, _) => assert_eq!(value.name_bytes(), &[0xff]),
+        other => panic!("unexpected enum datum: {other:?}"),
+    }
+
+    let set_value = Datum::Set(MysqlSet::new(vec![0xfe], 1), Collation::Binary);
+    let set_type = field(FieldTypeCode::Set).with_elems([vec![0xfe]]);
+    let decoded = decode_column_value(
+        &encode_table_value(Some(&UTC), &set_value).unwrap(),
+        &set_type,
+        Some(&UTC),
+    )
+    .unwrap();
+    match decoded {
+        Datum::Set(value, _) => assert_eq!(value.name_bytes(), &[0xfe]),
+        other => panic!("unexpected set datum: {other:?}"),
+    }
+}
+
 /// Source: `tablecodec_test.go::TestUnflattenDatums`.
 #[test]
 fn test_unflatten_datums() {
     let mut values = vec![Datum::Int(1)];
-    unflatten_datums(
-        &mut values,
-        &[field(FieldTypeCode::LongLong)],
-        Some(&UTC),
-    )
-    .unwrap();
+    unflatten_datums(&mut values, &[field(FieldTypeCode::LongLong)], Some(&UTC)).unwrap();
     assert_eq!(values, [Datum::Int(1)]);
 
     let mut values = vec![Datum::new_bytes(b"aaa")];
@@ -220,9 +241,12 @@ fn test_unflatten_datums() {
 /// Source: `tablecodec_test.go::TestTimeCodec`.
 #[test]
 fn test_time_codec() {
-    let timestamp =
-        Time::new(CoreTime::from_date(2016, 6, 23, 11, 30, 45, 0), TimeType::Timestamp, 0)
-            .unwrap();
+    let timestamp = Time::new(
+        CoreTime::from_date(2016, 6, 23, 11, 30, 45, 0),
+        TimeType::Timestamp,
+        0,
+    )
+    .unwrap();
     let duration = MySqlDuration::new(12, 59, 59, 999_999, 6).unwrap();
     let row = [
         Datum::Int(100),
@@ -319,9 +343,15 @@ fn test_index_key() {
 fn test_record_key() {
     let handle = RecordHandle::Int(u32::MAX.into());
     let key = encode_row_key_with_handle(55, &handle);
-    assert_eq!(decode_key_head(&key).unwrap(), KeyHead::Record { table_id: 55 });
+    assert_eq!(
+        decode_key_head(&key).unwrap(),
+        KeyHead::Record { table_id: 55 }
+    );
     assert_eq!(decode_record_key(&key).unwrap(), (55, handle.clone()));
-    assert_eq!(encode_record_key(&gen_table_record_prefix(55), &handle), key);
+    assert_eq!(
+        encode_record_key(&gen_table_record_prefix(55), &handle),
+        key
+    );
     assert!(decode_record_key(&[]).is_err());
     assert!(decode_record_key(b"abcdefghijklmnopqrstuvwxyz").is_err());
     assert_eq!(decode_table_id(&[]), 0);
@@ -357,7 +387,10 @@ fn test_prefix() {
     extended.extend_from_slice(b"xyz");
     assert_eq!(truncate_to_row_key_len(&extended).len(), RECORD_ROW_KEY_LEN);
     assert_eq!(truncate_to_row_key_len(&key).len(), key.len());
-    assert!(is_record_key(&encode_row_key_with_handle(66, &RecordHandle::Int(1))));
+    assert!(is_record_key(&encode_row_key_with_handle(
+        66,
+        &RecordHandle::Int(1)
+    )));
     assert!(is_index_key(&encode_table_index_prefix(66, 1)));
     assert!(is_table_key(&key));
 }
@@ -365,11 +398,7 @@ fn test_prefix() {
 /// Source: `tablecodec_test.go::TestDecodeIndexKey`.
 #[test]
 fn test_decode_index_key() {
-    let values = [
-        Datum::Int(1),
-        Datum::new_bytes(b"abc"),
-        Datum::Real(123.45),
-    ];
+    let values = [Datum::Int(1), Datum::new_bytes(b"abc"), Datum::Real(123.45)];
     let key = encode_index_seek_key(4, 5, &encode_key(&values).unwrap());
     assert_eq!(
         decode_index_key(&key).unwrap(),
@@ -400,8 +429,8 @@ fn test_range() {
 #[test]
 fn test_decode_auto_id_meta() {
     let encoded = [
-        0x6d, 0x44, 0x42, 0x3a, 0x35, 0x36, 0x0, 0x0, 0x0, 0xfc, 0x0, 0x0, 0x0, 0x0, 0x0,
-        0x0, 0x0, 0x68, 0x54, 0x49, 0x44, 0x3a, 0x31, 0x30, 0x38, 0x0, 0xfe,
+        0x6d, 0x44, 0x42, 0x3a, 0x35, 0x36, 0x0, 0x0, 0x0, 0xfc, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+        0x68, 0x54, 0x49, 0x44, 0x3a, 0x31, 0x30, 0x38, 0x0, 0xfe,
     ];
     assert_eq!(
         decode_meta_key(&encoded).unwrap(),
@@ -427,18 +456,13 @@ fn test_untouched_index_kvalue() {
     let mut key = encode_table_index_prefix(1, 1);
     let legacy = [0, 0, 0, 0, 0, 0, 0, 1, UNCOMMITTED_INDEX_KV_FLAG];
     assert!(is_untouched_index_kv(&key, &legacy));
-    assert!(!is_untouched_index_kv(
-        &key,
-        &[0, INDEX_VERSION_FLAG, 1]
-    ));
+    assert!(!is_untouched_index_kv(&key, &[0, INDEX_VERSION_FLAG, 1]));
     assert!(is_untouched_index_kv(
         &key,
         &[1, INDEX_VERSION_FLAG, 1, UNCOMMITTED_INDEX_KV_FLAG]
     ));
-    let marker_like = encode_handle_in_unique_index_value(
-        &int_handle(0x017d_0100_0000_0031),
-        false,
-    );
+    let marker_like =
+        encode_handle_in_unique_index_value(&int_handle(0x017d_0100_0000_0031), false);
     assert!(!is_untouched_index_kv(&key, &marker_like));
     index_key_to_temp_index_key(&mut key).unwrap();
     assert!(is_untouched_index_kv(&key, &legacy));
@@ -498,7 +522,13 @@ fn temp_element(
 /// Source: `tablecodec_test.go::TestTempIndexValueCodec`.
 #[test]
 fn test_temp_index_value_codec() {
-    let normal = temp_element(encode_value(&[Datum::Int(1)]).unwrap(), None, b'b', false, false);
+    let normal = temp_element(
+        encode_value(&[Datum::Int(1)]).unwrap(),
+        None,
+        b'b',
+        false,
+        false,
+    );
     let distinct = temp_element(
         encode_handle_in_unique_index_value(&int_handle(100), false),
         None,
@@ -541,13 +571,11 @@ fn test_temp_index_value_codec() {
         filter_overwritten_temp_index_values(vec![first.clone(), second.clone(), third.clone()]),
         [second, third]
     );
-    assert!(!index_kv_is_unique(
-        &{
-            let mut value = Vec::new();
-            distinct_deleted.encode(&mut value).unwrap();
-            value
-        }
-    ));
+    assert!(!index_kv_is_unique(&{
+        let mut value = Vec::new();
+        distinct_deleted.encode(&mut value).unwrap();
+        value
+    }));
 
     let history = TempIndexValue {
         elements: vec![first],
@@ -734,7 +762,9 @@ fn verify_table_id_for_ranges() {
         },
     ]];
     assert_eq!(
-        verify_table_ids_for_ranges(&invalid).unwrap_err().to_string(),
+        verify_table_ids_for_ranges(&invalid)
+            .unwrap_err()
+            .to_string(),
         "Incorrect keyRange is constrcuted"
     );
 
@@ -799,6 +829,88 @@ fn truncate_index_values_preserve_byte_and_character_domains() {
     let mut preserved = Datum::new_bytes(invalid_utf8.clone());
     truncate_index_value(&mut preserved, &no_truncation, &utf8_column).unwrap();
     assert_eq!(preserved.as_raw_bytes().unwrap(), invalid_utf8);
+
+    // Go compares the exact charset spelling against "binary" and "ascii".
+    // A case variant or unknown name therefore takes the rune path even
+    // though the typed charset cache can resolve or fall back to binary.
+    let one_rune = IndexColumn {
+        length: 1,
+        ..index_column
+    };
+    let input = "éx".as_bytes();
+    let mut exact_binary = Datum::new_bytes(input);
+    truncate_index_value(&mut exact_binary, &one_rune, &binary_column).unwrap();
+    assert_eq!(exact_binary.as_raw_bytes().unwrap(), &[0xc3]);
+
+    for charset_name in ["BINARY", "unknown_charset"] {
+        let column = TableColumn {
+            field_type: binary_column
+                .field_type
+                .clone()
+                .with_charset_name(charset_name),
+            ..binary_column.clone()
+        };
+        let mut value = Datum::new_bytes(input);
+        truncate_index_value(&mut value, &one_rune, &column).unwrap();
+        assert_eq!(value.as_raw_bytes().unwrap(), "é".as_bytes());
+        assert!(matches!(value, Datum::String(_)));
+    }
+}
+
+#[test]
+fn restored_values_use_exact_collation_spelling() {
+    for collation_name in ["UTF8MB4_BIN", "unknown_collation"] {
+        let field_type = field(FieldTypeCode::Varchar).with_collation_name(collation_name);
+        let table = TableInfo {
+            columns: vec![TableColumn {
+                id: 7,
+                offset: 0,
+                field_type: field_type.clone(),
+                primary_key: false,
+                changing_field_type: None,
+            }],
+            indices: Vec::new(),
+            pk_is_handle: false,
+            is_common_handle: true,
+            common_handle_version: 1,
+        };
+        let index = IndexInfo {
+            id: 9,
+            columns: vec![IndexColumn {
+                offset: 0,
+                length: UNSPECIFIED_LENGTH,
+                use_changing_type: false,
+            }],
+            unique: false,
+            global: false,
+            global_index_version: 0,
+            primary: false,
+        };
+        let handle = common_handle(encode_key(&[Datum::Int(1)]).unwrap());
+        let source = vec![0xff, 0xfe, b' '];
+        let value = generate_index_value(
+            true,
+            Some(&UTC),
+            &table,
+            &index,
+            true,
+            false,
+            false,
+            &[Datum::new_collation_string(
+                source.clone(),
+                field_type.collation(),
+            )],
+            &handle,
+            0,
+            &[],
+        )
+        .unwrap();
+        let restored = split_index_value(&value).unwrap().restored_values.unwrap();
+        let decoded =
+            decode_table_row_to_map(&restored, &BTreeMap::from([(7, field_type)]), Some(&UTC))
+                .unwrap();
+        assert_eq!(decoded[&7].as_raw_bytes().unwrap(), source);
+    }
 }
 
 /// Source support: V1 uniqueness is carried only by a common handle.
@@ -912,9 +1024,7 @@ fn unique_index_handle_raw_bytes_round_trip_signed_domain() {
     for value in [i64::MIN, -1, 0, 1, i64::MAX] {
         let encoded = encode_handle_in_unique_index_value(&int_handle(value), false);
         assert_eq!(
-            decode_handle_in_index_value(&encoded)
-                .unwrap()
-                .int_value(),
+            decode_handle_in_index_value(&encoded).unwrap().int_value(),
             Some(value)
         );
     }
@@ -982,8 +1092,7 @@ fn unused_common_handle_columns_are_not_decoded() {
 /// Source support: old-row value boundaries are independently cuttable.
 #[test]
 fn old_row_value_boundaries_are_exact() {
-    let encoded =
-        encode_old_table_row(Some(&UTC), &[Datum::Int(1)], &[9]).unwrap();
+    let encoded = encode_old_table_row(Some(&UTC), &[Datum::Int(1)], &[9]).unwrap();
     let (column, remaining) = cut_one(&encoded).unwrap();
     assert_eq!(decode_one(column).unwrap().1, Datum::Int(9));
     assert_eq!(decode_one(remaining).unwrap().1, Datum::Int(1));

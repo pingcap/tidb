@@ -1940,6 +1940,10 @@ fn hex_and_bit_literals_are_binary_literals_in_a_numeric_context() {
             "INT:-1",
         ),
         (
+            "+b'1111111111111111111111111111111111111111111111111111111111111111' + 0",
+            "INT:-1",
+        ),
+        (
             "b'1111111111111111111111111111111111111111111111111111111111111111' - 1",
             "INT:-2",
         ),
@@ -1999,6 +2003,14 @@ fn hex_and_bit_literals_are_binary_literals_in_a_numeric_context() {
         ("x'ffffffffffffffff' + 0", "UINT:18446744073709551615"),
         ("b'101' + 1", "INT:6"),
         ("0x1A + 1", "UINT:27"),
+        // The introducer keeps KindBinaryLiteral but makes IsBinaryStr false,
+        // so Go's numericContextResultType deliberately selects ETReal.
+        ("_latin1 0x41 + 0", "FLOAT:65"),
+        ("_latin1 b'1' + 0", "FLOAT:1"),
+        (
+            "+b'1111111111111111111111111111111111111111111111111111111111111111' + 0",
+            "INT:-1",
+        ),
     ] {
         assert_eq!(chunk_e(expr), want, "{expr} (chunk tier)");
     }

@@ -742,15 +742,24 @@ fn decode_column_datum(
             MySqlDuration::from_nanoseconds(decode_raw_int(bytes)?, field_type.decimal())
                 .map_err(|error| RowPackageError::Datatype(error.to_string()))?,
         ),
-        FieldTypeCode::Enum => Datum::Enum(
-            parse_enum_value(field_type.elems(), decode_raw_uint(bytes)?).unwrap_or_default(),
-            field_type.collation(),
-        ),
-        FieldTypeCode::Set => Datum::Set(
-            parse_set_value(field_type.elems(), decode_raw_uint(bytes)?)
-                .map_err(|error| RowPackageError::Datatype(error.to_string()))?,
-            field_type.collation(),
-        ),
+        FieldTypeCode::Enum => {
+            let value = decode_raw_uint(bytes)?;
+            Datum::Enum(
+                field_type
+                    .with_elems_visible(|elements| parse_enum_value(elements, value))
+                    .unwrap_or_default(),
+                field_type.collation(),
+            )
+        }
+        FieldTypeCode::Set => {
+            let value = decode_raw_uint(bytes)?;
+            Datum::Set(
+                field_type
+                    .with_elems_visible(|elements| parse_set_value(elements, value))
+                    .map_err(|error| RowPackageError::Datatype(error.to_string()))?,
+                field_type.collation(),
+            )
+        }
         FieldTypeCode::Bit => {
             let byte_size = ((field_type.flen().max(0) + 7) >> 3) as u8;
             let width = BinaryLiteralWidth::try_from(byte_size)

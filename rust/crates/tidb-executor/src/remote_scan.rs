@@ -382,7 +382,11 @@ mod tests {
                 })
                 .collect();
             let mut cursor = table
-                .row_cursor_projected(Some(&keep), None, &tidb_datatype::SessionTimeZone::utc())
+                .row_cursor_projected_with_context(
+                    Some(&keep),
+                    None,
+                    &crate::RowDecodeContext::for_test_query_utc(),
+                )
                 .unwrap();
             let mut rows = Vec::new();
             while let Some((handle, mut row)) = cursor.next_row().unwrap() {
@@ -512,6 +516,7 @@ mod tests {
             name: name.to_owned(),
             id,
             field_type: FieldType::new(FieldTypeCode::LongLong),
+            column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
             default_value: None,
             origin_default: None,
             generated: None,
@@ -869,15 +874,18 @@ mod tests {
             .unwrap();
         fixture
             .table
-            .update_row(
+            .update_row_with_context(
                 &committed_moved,
                 &[Datum::Int(8), Datum::Int(80)],
-                &tidb_expr::NoColumns,
+                &crate::StmtContext::for_dml(false, false, false),
             )
             .unwrap();
         fixture
             .table
-            .delete_row(&committed_low, &tidb_datatype::SessionTimeZone::utc())
+            .delete_row_with_context(
+                &committed_low,
+                &crate::StmtContext::for_dml(false, false, false),
+            )
             .unwrap();
         assert!(!fixture.buffer.is_empty(), "the writes are staged");
 
@@ -928,11 +936,17 @@ mod tests {
         // 1..3, of which only one survives the overlay.
         fixture
             .table
-            .delete_row(&TableHandle::Int(1), &tidb_datatype::SessionTimeZone::utc())
+            .delete_row_with_context(
+                &TableHandle::Int(1),
+                &crate::StmtContext::for_dml(false, false, false),
+            )
             .unwrap();
         fixture
             .table
-            .delete_row(&TableHandle::Int(2), &tidb_datatype::SessionTimeZone::utc())
+            .delete_row_with_context(
+                &TableHandle::Int(2),
+                &crate::StmtContext::for_dml(false, false, false),
+            )
             .unwrap();
 
         let catalog = catalog_of(fixture.table);

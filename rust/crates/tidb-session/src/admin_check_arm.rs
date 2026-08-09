@@ -76,11 +76,17 @@ impl Session {
                 }
                 let index = index.clone();
                 let ranges = handle_ranges.clone();
-                let zone = self.statement_context(false).session_zone();
+                let ctx = self.statement_context(false);
+                let decode_context = tidb_executor::RowDecodeContext::for_query(&ctx);
                 let (names, rows) = self.with_catalog_mut(|catalog| {
                     let table = admin_check_table_mut(catalog, &database, &name)?;
-                    tidb_executor::admin_check::check_index_ranges(table, &index, &ranges, &zone)
-                        .map_err(admin_check_error)
+                    tidb_executor::admin_check::check_index_ranges(
+                        table,
+                        &index,
+                        &ranges,
+                        &decode_context,
+                    )
+                    .map_err(admin_check_error)
                 })?;
                 let text = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
                 let columns = names.into_iter().map(|name| (name, text.clone())).collect();
@@ -109,10 +115,11 @@ impl Session {
     ) -> Result<usize, DriverError> {
         let (database, name) = (database.to_owned(), name.to_owned());
         let only_index = only_index.map(str::to_owned);
-        let zone = self.statement_context(false).session_zone();
+        let ctx = self.statement_context(false);
+        let decode_context = tidb_executor::RowDecodeContext::for_query(&ctx);
         self.with_catalog_mut(|catalog| {
             let table = admin_check_table_mut(catalog, &database, &name)?;
-            tidb_executor::admin_check::check_table(table, only_index.as_deref(), &zone)
+            tidb_executor::admin_check::check_table(table, only_index.as_deref(), &decode_context)
                 .map_err(admin_check_error)
         })
     }

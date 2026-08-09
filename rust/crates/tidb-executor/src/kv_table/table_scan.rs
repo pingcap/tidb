@@ -28,7 +28,8 @@
 //! the parent module, and this file is only the read direction.
 
 use super::{
-    index_entry_handle, IndexRange, KvColumn, KvIndex, KvTable, KvTableError, TableHandle,
+    index_entry_handle, IndexRange, KvColumn, KvIndex, KvTable, KvTableError, RowDecodeContext,
+    TableHandle,
 };
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use crate::predicate_pushdown::ScanPredicate;
@@ -43,6 +44,7 @@ use tidb_codec::table_key::{
     encode_index_seek_key, encode_row_key_with_handle, get_table_handle_key_range, RecordHandle,
     RECORD_ROW_KEY_LEN,
 };
+use tidb_codec::Encoder;
 use tidb_datatype::{Datum, FieldType, SessionTimeZone};
 use tidb_expr::schema::Schema;
 use tidb_tablecodec::decode_table_row_to_map;
@@ -51,17 +53,21 @@ use tidb_txnkv::Key;
 /// The read direction of [`KvTable`]: the entry points that open a decoder
 /// or a cursor over the stored bytes.
 impl KvTable {
-    /// The row-decoding metadata, detached from the table.
+    /// The row-decoding metadata, detached from the table and optionally
+    /// narrowed to the columns at `keep` (offsets into [`KvTable::columns`],
+    /// ascending and unique).
     ///
     /// A cursor holds the storage iterator and must decode without borrowing
     /// the table it came from, so it carries its own copy of everything
-    /// decoding reads. The copy is a snapshot of the schema at cursor-open
-    /// time, which is the schema the statement planned against.
-    /// The row decoder for this table, optionally narrowed to the columns at `keep` (offsets
-    /// into [`KvTable::columns`], ascending and unique): the row codec is
-    /// asked for only those columns' ids, so an unreferenced column is never
-    /// decoded. `None` keeps the whole schema.
-    fn row_decoder_projected(&self, keep: Option<&[usize]>, zone: &SessionTimeZone) -> RowDecoder {
+    /// decoding reads. The copy is a snapshot of the schema and statement
+    /// context at cursor-open time. The row codec is asked for only the kept
+    /// columns' ids, so an unreferenced column is never decoded; `None` keeps
+    /// the whole schema.
+    fn row_decoder_projected(
+        &self,
+        keep: Option<&[usize]>,
+        context: &RowDecodeContext,
+    ) -> RowDecoder {
         let kept: Option<std::collections::BTreeSet<usize>> = keep.map(|keep| {
             let mut kept: std::collections::BTreeSet<usize> = keep.iter().copied().collect();
             // A kept generated column is computed, not decoded, so the
@@ -117,7 +123,7 @@ impl KvTable {
             pk_handle_offset: self.pk_handle_offset,
             common_handle_offsets: self.common_handle_offsets.clone(),
             keep: keep.map(<[usize]>::to_vec),
-            zone: zone.clone(),
+            context: context.clone(),
         }
     }
 
@@ -130,8 +136,18 @@ impl KvTable {
     /// property of the backend's `iter`; see [`crate::access_path`].) The seam
     /// returns an owned iterator, so the cursor does not borrow the table and
     /// a caller may hold it across chunk boundaries.
+    pub fn row_cursor_with_context(
+        &mut self,
+        context: &RowDecodeContext,
+    ) -> Result<RowCursor, KvTableError> {
+        self.row_cursor_projected_with_context(None, None, context)
+    }
+
+    /// Legacy zone-only cursor retained while write callers await an explicit
+    /// statement-class migration. Origin defaults use the exact former
+    /// `DEFAULT_STATEMENT_FLAGS` behavior.
     pub fn row_cursor(&mut self, zone: &SessionTimeZone) -> Result<RowCursor, KvTableError> {
-        self.row_cursor_projected(None, None, zone)
+        self.row_cursor_with_context(&RowDecodeContext::legacy_default(zone))
     }
 
     /// [`KvTable::row_cursor`] narrowed to the columns at `keep`: the cursor
@@ -140,13 +156,13 @@ impl KvTable {
     /// `handle_ranges` narrows which RECORDS are read, as
     /// [`crate::table_access::TableAccess::accept_handle_ranges`] describes:
     /// `None` reads the whole table.
-    pub fn row_cursor_projected(
+    pub fn row_cursor_projected_with_context(
         &mut self,
         keep: Option<&[usize]>,
         handle_ranges: Option<&[IndexRange]>,
-        zone: &SessionTimeZone,
+        context: &RowDecodeContext,
     ) -> Result<RowCursor, KvTableError> {
-        let decoder = self.row_decoder_projected(keep, zone);
+        let decoder = self.row_decoder_projected(keep, context);
         let mut iterators = Vec::new();
         for (low, upper) in self.record_key_ranges(handle_ranges) {
             iterators.push(
@@ -160,6 +176,20 @@ impl KvTable {
             current: None,
             decoder,
         })
+    }
+
+    /// Legacy zone-only projected cursor; see [`KvTable::row_cursor`].
+    pub fn row_cursor_projected(
+        &mut self,
+        keep: Option<&[usize]>,
+        handle_ranges: Option<&[IndexRange]>,
+        zone: &SessionTimeZone,
+    ) -> Result<RowCursor, KvTableError> {
+        self.row_cursor_projected_with_context(
+            keep,
+            handle_ranges,
+            &RowDecodeContext::legacy_default(zone),
+        )
     }
 
     /// The record ranges this scan reads, as the storage seam's half-open
@@ -214,13 +244,13 @@ impl KvTable {
     /// this cursor cannot compare is a shape it must not claim to serve. So is
     /// a scan whose handle ranges cover no record at all, which a coprocessor
     /// request cannot express.
-    pub fn pushdown_row_cursor(
+    pub fn pushdown_row_cursor_with_context(
         &mut self,
         keep: &[usize],
         predicates: &[ScanPredicate],
         limit: Option<u64>,
         handle_ranges: Option<&[IndexRange]>,
-        zone: &SessionTimeZone,
+        context: &RowDecodeContext,
         statement: &PushdownStatementContext,
     ) -> Result<Option<RemoteRowCursor>, KvTableError> {
         if !self.common_handle_offsets.is_empty() {
@@ -301,7 +331,7 @@ impl KvTable {
         // `Unsupported` the caller turned into a byte-level cursor) is not
         // recorded as a coprocessor read.
         crate::storage::note_storage_op(|ops| ops.cop_scans += 1);
-        let decoder = self.row_decoder_projected(Some(keep), zone);
+        let decoder = self.row_decoder_projected(Some(keep), context);
         let mut staged = Vec::with_capacity(scan.staged.len());
         for (key, value) in scan.staged {
             let row = match value {
@@ -322,15 +352,44 @@ impl KvTable {
         }))
     }
 
+    /// Legacy zone-only coprocessor cursor; see [`KvTable::row_cursor`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn pushdown_row_cursor(
+        &mut self,
+        keep: &[usize],
+        predicates: &[ScanPredicate],
+        limit: Option<u64>,
+        handle_ranges: Option<&[IndexRange]>,
+        zone: &SessionTimeZone,
+        statement: &PushdownStatementContext,
+    ) -> Result<Option<RemoteRowCursor>, KvTableError> {
+        self.pushdown_row_cursor_with_context(
+            keep,
+            predicates,
+            limit,
+            handle_ranges,
+            &RowDecodeContext::legacy_default(zone),
+            statement,
+        )
+    }
+
     /// Scans the table's record-key range in key order, decoding each value.
     /// Returns rows as `Datum`s in schema order (a missing column decodes
     /// NULL, and the handle columns come from the key).
-    pub fn scan_rows(&mut self, zone: &SessionTimeZone) -> Result<Vec<Vec<Datum>>, KvTableError> {
+    pub fn scan_rows_with_context(
+        &mut self,
+        context: &RowDecodeContext,
+    ) -> Result<Vec<Vec<Datum>>, KvTableError> {
         Ok(self
-            .scan_rows_with_handles(zone)?
+            .scan_rows_with_handles_with_context(context)?
             .into_iter()
             .map(|(_, row)| row)
             .collect())
+    }
+
+    /// Legacy zone-only materializing scan; see [`KvTable::row_cursor`].
+    pub fn scan_rows(&mut self, zone: &SessionTimeZone) -> Result<Vec<Vec<Datum>>, KvTableError> {
+        self.scan_rows_with_context(&RowDecodeContext::legacy_default(zone))
     }
 
     /// Like [`KvTable::scan_rows`], but each row carries the record handle its
@@ -339,11 +398,19 @@ impl KvTable {
     /// This drains a [`RowCursor`]; a caller that does not need the whole
     /// relation in memory should hold the cursor instead (see
     /// [`KvTable::row_cursor`]).
+    pub fn scan_rows_with_handles_with_context(
+        &mut self,
+        context: &RowDecodeContext,
+    ) -> Result<Vec<(TableHandle, Vec<Datum>)>, KvTableError> {
+        self.scan_rows_with_handles_in_with_context(None, context)
+    }
+
+    /// Legacy zone-only handle scan; see [`KvTable::row_cursor`].
     pub fn scan_rows_with_handles(
         &mut self,
         zone: &SessionTimeZone,
     ) -> Result<Vec<(TableHandle, Vec<Datum>)>, KvTableError> {
-        self.scan_rows_with_handles_in(None, zone)
+        self.scan_rows_with_handles_with_context(&RowDecodeContext::legacy_default(zone))
     }
 
     /// [`KvTable::scan_rows_with_handles`] narrowed to `handle_ranges`: the
@@ -356,17 +423,29 @@ impl KvTable {
     /// `WHERE` admits, and the caller still evaluates that `WHERE` per row, so
     /// the set of rows a statement acts on is the same set the full scan
     /// produced.
-    pub fn scan_rows_with_handles_in(
+    pub fn scan_rows_with_handles_in_with_context(
         &mut self,
         handle_ranges: Option<&[IndexRange]>,
-        zone: &SessionTimeZone,
+        context: &RowDecodeContext,
     ) -> Result<Vec<(TableHandle, Vec<Datum>)>, KvTableError> {
-        let mut cursor = self.row_cursor_projected(None, handle_ranges, zone)?;
+        let mut cursor = self.row_cursor_projected_with_context(None, handle_ranges, context)?;
         let mut rows = Vec::new();
         while let Some(entry) = cursor.next_row()? {
             rows.push(entry);
         }
         Ok(rows)
+    }
+
+    /// Legacy zone-only ranged handle scan; see [`KvTable::row_cursor`].
+    pub fn scan_rows_with_handles_in(
+        &mut self,
+        handle_ranges: Option<&[IndexRange]>,
+        zone: &SessionTimeZone,
+    ) -> Result<Vec<(TableHandle, Vec<Datum>)>, KvTableError> {
+        self.scan_rows_with_handles_in_with_context(
+            handle_ranges,
+            &RowDecodeContext::legacy_default(zone),
+        )
     }
 
     /// [`KvTable::scan_rows_with_handles`] narrowed to the columns at `keep`
@@ -376,17 +455,29 @@ impl KvTable {
     ///
     /// This drains a projected [`RowCursor`]; the projection lives in the
     /// cursor so the streaming path prunes too.
-    pub fn scan_rows_with_handles_projected(
+    pub fn scan_rows_with_handles_projected_with_context(
         &mut self,
         keep: &[usize],
-        zone: &SessionTimeZone,
+        context: &RowDecodeContext,
     ) -> Result<Vec<(TableHandle, Vec<Datum>)>, KvTableError> {
-        let mut cursor = self.row_cursor_projected(Some(keep), None, zone)?;
+        let mut cursor = self.row_cursor_projected_with_context(Some(keep), None, context)?;
         let mut rows = Vec::new();
         while let Some(entry) = cursor.next_row()? {
             rows.push(entry);
         }
         Ok(rows)
+    }
+
+    /// Legacy zone-only projected handle scan; see [`KvTable::row_cursor`].
+    pub fn scan_rows_with_handles_projected(
+        &mut self,
+        keep: &[usize],
+        zone: &SessionTimeZone,
+    ) -> Result<Vec<(TableHandle, Vec<Datum>)>, KvTableError> {
+        self.scan_rows_with_handles_projected_with_context(
+            keep,
+            &RowDecodeContext::legacy_default(zone),
+        )
     }
 
     /// The handles an index range covers, in index order.
@@ -427,8 +518,10 @@ impl KvTable {
         else {
             return Err(KvTableError::Decode("no such index".to_owned()));
         };
+        let encoder = Encoder::new(self.use_new_collation);
         let encode = |values: &[Datum]| -> Result<Vec<u8>, KvTableError> {
-            tidb_codec::encode_key_in_timezone(zone, values)
+            encoder
+                .encode_key_in_timezone(zone, values)
                 .map_err(|e| KvTableError::Encode(format!("{e:?}")))
         };
         let mut low = Key::from_bytes(encode_index_seek_key(
@@ -527,14 +620,15 @@ pub(crate) struct RowDecoder {
     /// the point, and it is why `column_types` may ask the row codec for
     /// fewer ids than the table has columns.
     keep: Option<Vec<usize>>,
-    /// The session `time_zone` a stored `TIMESTAMP` is rendered back into.
+    /// The statement class and session zone used to materialize a missing
+    /// column's origin default and render stored `TIMESTAMP` values.
     ///
     /// It belongs to the DECODER rather than to the table because the table
     /// is shared by every session while the zone is not: two sessions
     /// scanning the same table must read the same stored bytes as two
     /// different wall-clock values, which is exactly what `TIMESTAMP` means
     /// and `DATETIME` does not.
-    zone: SessionTimeZone,
+    context: RowDecodeContext,
 }
 
 /// Restores the handle columns into a decoded row, which Go does by reading
@@ -612,26 +706,28 @@ impl RowDecoder {
         value: &[u8],
     ) -> Result<(TableHandle, Vec<Datum>), KvTableError> {
         let handle = self.record_handle(key)?;
-        let mut decoded = decode_table_row_to_map(value, &self.column_types, Some(&self.zone))
-            .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
-        let mut row: Vec<Datum> = self
-            .columns
-            .iter()
-            .map(|column| {
-                decoded
-                    .remove(&column.id)
-                    // A row written before this column existed reads back its
-                    // origin default.
-                    .unwrap_or_else(|| column.origin_default_value())
-            })
-            .collect();
+        let mut decoded =
+            decode_table_row_to_map(value, &self.column_types, Some(self.context.zone()))
+                .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
+        let mut row = Vec::with_capacity(self.columns.len());
+        for column in &self.columns {
+            let value = match decoded.remove(&column.id) {
+                Some(value) => value,
+                // A row written before this column existed reads back its
+                // origin default.
+                None => column
+                    .origin_default_value(self.context.origin_default_flags(), self.context.zone())
+                    .map_err(|error| KvTableError::Decode(error.to_string()))?,
+            };
+            row.push(value);
+        }
         fill_handle_columns(
             &self.columns,
             self.pk_handle_offset,
             &self.common_handle_offsets,
             &mut row,
             &handle,
-            &self.zone,
+            self.context.zone(),
         )?;
         // A VIRTUAL generated column was never written, so it is restored the
         // same way it was skipped: by evaluating its expression over the row.
@@ -645,7 +741,7 @@ impl RowDecoder {
             &self.columns,
             &mut row,
             true,
-            &tidb_expr::ZonedNoColumns(self.zone.clone()),
+            &tidb_expr::ZonedNoColumns(self.context.zone().clone()),
         )
         .map_err(|error| KvTableError::Generation {
             column: error.column,
@@ -931,24 +1027,24 @@ pub struct TableScanExec {
     /// them and this scan took them ([`Executor::accept_handle_ranges`]).
     /// `None` reads the whole table, which is every scan until the offer.
     handle_ranges: Option<Vec<IndexRange>>,
-    /// The session `time_zone` this scan decodes stored `TIMESTAMP` values
-    /// into. Captured when the scan is BUILT, which is where the statement's
-    /// own context is; `Executor::open` is a trait method with none.
-    zone: SessionTimeZone,
-    /// The statement's coprocessor seam -- `DAGRequest.flags` plus the sink
-    /// TiKV's warnings must reach. Captured beside `zone` and for the same
-    /// reason: `Executor::open`, where the request is built, has no statement
+    /// The statement class and session zone this scan decodes under. Captured
+    /// when the scan is BUILT, because `Executor::open` has no statement
     /// context of its own.
+    decode_context: RowDecodeContext,
+    /// The statement's coprocessor seam -- `DAGRequest.flags` plus the sink
+    /// TiKV's warnings must reach. Captured beside `decode_context` and for
+    /// the same reason: `Executor::open`, where the request is built, has no
+    /// statement context of its own.
     statement: PushdownStatementContext,
 }
 
 impl TableScanExec {
-    /// Builds a scan over `table`.
+    /// Builds a scan over `table` with an explicit row-decode context.
     #[must_use]
-    pub fn new(
+    pub fn new_with_context(
         meta: ExecutorMeta,
         table: KvTable,
-        zone: SessionTimeZone,
+        decode_context: RowDecodeContext,
         statement: PushdownStatementContext,
     ) -> Self {
         // A scan emits the VISIBLE columns: the schema its rows are appended
@@ -970,9 +1066,27 @@ impl TableScanExec {
             limit: None,
             emitted: 0,
             handle_ranges: None,
-            zone,
+            decode_context,
             statement,
         }
+    }
+
+    /// Legacy zone-only constructor retained for unmigrated write/server
+    /// callers. Origin defaults use the exact former
+    /// `DEFAULT_STATEMENT_FLAGS` behavior.
+    #[must_use]
+    pub fn new(
+        meta: ExecutorMeta,
+        table: KvTable,
+        zone: SessionTimeZone,
+        statement: PushdownStatementContext,
+    ) -> Self {
+        Self::new_with_context(
+            meta,
+            table,
+            RowDecodeContext::legacy_default(&zone),
+            statement,
+        )
     }
 
     /// The live count of rows read from storage, before any pushed filter.
@@ -1023,12 +1137,12 @@ impl Executor for TableScanExec {
         // one.
         self.remote = self
             .table
-            .pushdown_row_cursor(
+            .pushdown_row_cursor_with_context(
                 &self.keep.clone(),
                 &self.pushed,
                 self.limit,
                 self.handle_ranges.as_deref(),
-                &self.zone,
+                &self.decode_context,
                 &self.statement,
             )
             .map_err(|_| ExecError::unsupported("table bytes failed to decode"))?;
@@ -1045,7 +1159,11 @@ impl Executor for TableScanExec {
         let handle_ranges = self.handle_ranges.clone();
         self.cursor = Some(
             self.table
-                .row_cursor_projected(projection, handle_ranges.as_deref(), &self.zone)
+                .row_cursor_projected_with_context(
+                    projection,
+                    handle_ranges.as_deref(),
+                    &self.decode_context,
+                )
                 .map_err(|_| ExecError::unsupported("table bytes failed to decode"))?,
         );
         Ok(())

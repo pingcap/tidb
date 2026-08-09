@@ -137,6 +137,8 @@ struct SourceTable {
     /// Whether a write may name this source, and where it writes if so.
     origin: SourceOrigin,
     columns: Vec<(String, FieldType)>,
+    /// Default/generation metadata aligned with `columns`.
+    default_meta: Vec<super::dml::ColumnDefaultMeta>,
     /// Where this table's columns start in the joined row.
     offset: usize,
 }
@@ -307,6 +309,18 @@ fn scan_derived_table(
     // column names under the statement's names -- silently wrong values --
     // the moment a parser admits the form.
     super::from::rename_derived_columns(&mut columns, column_names)?;
+    let default_meta = columns
+        .iter()
+        .map(|(name, field_type)| super::dml::ColumnDefaultMeta {
+            default_value: None,
+            not_null: false,
+            no_default_value: false,
+            name: name.clone(),
+            field_type: field_type.clone(),
+            column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+            generated: false,
+        })
+        .collect();
     Ok(MultiSource {
         zone: ctx.session_zone(),
         tables: vec![SourceTable {
@@ -315,6 +329,7 @@ fn scan_derived_table(
             qualifiable_db: None,
             origin: SourceOrigin::Derived,
             columns,
+            default_meta,
             offset: 0,
         }],
         rows: rows.into_iter().map(|row| (vec![None], row)).collect(),
@@ -333,6 +348,7 @@ fn scan_base_table(
         .get_in(database, name)
         .ok_or(DriverError::unsupported("table not found in catalog"))?;
     let columns = entry.column_list();
+    let default_meta = super::dml::column_metadata(entry);
     let rows: Vec<SourceRow> = match entry {
         TableEntry::Mem(mem) => mem
             .rows
@@ -372,6 +388,7 @@ fn scan_base_table(
                 name: name.to_owned(),
             },
             columns,
+            default_meta,
             offset: 0,
         }],
         rows,
@@ -540,7 +557,7 @@ pub(crate) fn run_multi_update(
 ) -> Result<u64, DriverError> {
     let mut source = build_multi_source(from, catalog, current_db, ctx)?;
     let scope = source.scope();
-    let assignments = resolve_assignments(&update.assignments, &source, &scope)?;
+    let assignments = resolve_assignments(&update.assignments, &source, &scope, ctx)?;
     let field_types = source.field_types();
     let rows = selected_rows(
         &mut source,
@@ -611,8 +628,14 @@ fn resolve_assignments(
     assignments: &[tidb_ast::Assignment],
     source: &MultiSource,
     scope: &FromScope,
+    ctx: &crate::StmtContext,
 ) -> Result<Vec<MultiAssignment>, DriverError> {
     let resolver = ScopeResolver { scope };
+    let default_row = {
+        let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
+        chunk.set_num_virtual_rows(1);
+        chunk
+    };
     let mut resolved = Vec::with_capacity(assignments.len());
     for assignment in assignments {
         // Go reports a `SET` column it cannot bind -- including one
@@ -633,11 +656,82 @@ fn resolve_assignments(
         if matches!(source.tables[slot].origin, SourceOrigin::Derived) {
             return Err(source.tables[slot].not_updatable("UPDATE"));
         }
+        let column = offset - source.tables[slot].offset;
+        let target_meta = &source.tables[slot].default_meta[column];
+        if target_meta.generated {
+            let own_default = match &assignment.value {
+                tidb_ast::Expr::Default(None) => true,
+                tidb_ast::Expr::Default(Some(path)) => resolver
+                    .resolve(path)
+                    .is_some_and(|(default_offset, _, _)| default_offset == offset),
+                _ => false,
+            };
+            if own_default {
+                continue;
+            }
+            let table_name = match &source.tables[slot].origin {
+                SourceOrigin::Base { name, .. } => name.clone(),
+                SourceOrigin::Derived => source.tables[slot].visible.clone(),
+            };
+            return Err(DriverError::BadGeneratedColumn {
+                column: target_meta.name.clone(),
+                table: table_name,
+            });
+        }
+
+        let value = match &assignment.value {
+            tidb_ast::Expr::Default(None) => {
+                let datum = super::dml::materialize_column_default(
+                    target_meta,
+                    super::dml::DefaultUse::Expression,
+                    ctx,
+                    default_row.get_row(0),
+                )?;
+                Expression::Constant(tidb_expr::constant::Constant::new(
+                    datum,
+                    target_meta.field_type.clone(),
+                ))
+            }
+            value => {
+                let defaults = super::dml::prepare_named_defaults(
+                    value,
+                    ctx,
+                    default_row.get_row(0),
+                    super::dml::DefaultUse::Expression,
+                    |path| {
+                        let (default_offset, _, _) = resolver.resolve(path).ok_or_else(|| {
+                            DriverError::UnknownColumnInClause {
+                                column: path.last().cloned().unwrap_or_default(),
+                                clause: "field list".to_owned(),
+                            }
+                        })?;
+                        let default_slot = source
+                            .table_of_column(default_offset)
+                            .ok_or(DriverError::unsupported("DEFAULT column outside the join"))?;
+                        let default_column = default_offset - source.tables[default_slot].offset;
+                        if matches!(source.tables[default_slot].origin, SourceOrigin::Derived) {
+                            return Err(DriverError::NoDefaultForField(
+                                source.tables[default_slot].columns[default_column]
+                                    .0
+                                    .clone(),
+                            ));
+                        }
+                        Ok(super::dml::ResolvedDefaultColumn {
+                            identity: super::dml::DefaultColumnIdentity {
+                                table: default_slot,
+                                column: default_column,
+                            },
+                            meta: source.tables[default_slot].default_meta[default_column].clone(),
+                        })
+                    },
+                )?;
+                super::dml::rewrite_with_prepared_defaults(value, &resolver, &defaults)?
+            }
+        };
         resolved.push(MultiAssignment {
             slot,
-            column: offset - source.tables[slot].offset,
-            value: rewrite_expr_resolved(&assignment.value, &resolver)
-                .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?,
+            column,
+            value,
         });
     }
     Ok(resolved)

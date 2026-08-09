@@ -459,7 +459,11 @@ fn run_topic_on_this_stack(topic: &str) -> Result<CatalogReport, String> {
 /// `text_default_blob` both read back a `DEFAULT ''` TiDB does not print.
 /// They now MATCH rather than vanish: compared held at 219 and matched rose
 /// 117 -> 119, so no read stopped being examined.
-const KNOWN_CATALOG_DIVERGENCES: usize = 100;
+/// 100 -> 95: the integrated metadata/default ownership work compares 220
+/// catalog reads, of which 125 now match. Five previously red reads left the
+/// divergence set while the compared surface grew by one; the exact remaining
+/// set is independently pinned by [`CATALOG_DIVERGENCE_FINGERPRINT`].
+const KNOWN_CATALOG_DIVERGENCES: usize = 95;
 
 /// The floor on catalog reads that MATCH TiDB's recording exactly. See
 /// [`KNOWN_CATALOG_DIVERGENCES`] for why a divergence ceiling alone is not a
@@ -481,7 +485,9 @@ const KNOWN_CATALOG_DIVERGENCES: usize = 100;
 /// 106 -> 107: RANGE partitioning is built, so `executor/show`'s `thash2`
 /// definition reads back and matches. See [`KNOWN_CATALOG_DIVERGENCES`] for
 /// the second newly-measurable read, which does not.
-const MATCHED_FLOOR: usize = 114;
+/// 114 -> 125: the same integrated metadata/default checkpoint raised the
+/// measured exact-match count to 125 while also adding one comparable read.
+const MATCHED_FLOOR: usize = 125;
 
 /// A fingerprint over the TEXT of every carried divergence, and the reason it
 /// exists is a hole this gate was CAUGHT having on its first day.
@@ -543,7 +549,11 @@ const MATCHED_FLOOR: usize = 114;
 /// `SHOW CREATE TABLE` reads that stopped printing a `DEFAULT ''` TiDB does
 /// not print (`text_default_text` and `text_default_blob`) left the set, and
 /// nothing else in it changed.
-const CATALOG_DIVERGENCE_FINGERPRINT: u64 = 6_068_344_160_096_210_003;
+/// 6_068_344_160_096_210_003 -> 6_833_596_090_493_068_542 with the measured
+/// 100 -> 95 divergence and 114 -> 125 match ratchets above. This pins the
+/// exact 95 carried texts after the integrated metadata/default ownership
+/// changes rather than treating the improved count alone as sufficient.
+const CATALOG_DIVERGENCE_FINGERPRINT: u64 = 6_833_596_090_493_068_542;
 
 /// FNV-1a over the sorted divergence texts. Sorted because the value must
 /// depend on WHAT diverges and not on the order topics happen to run in.
