@@ -309,24 +309,24 @@ fn test_type_to_str() {
     }
 }
 
-/// Go: pkg/parser/types/field_type_test.go:30 TestFieldType.
+/// Source: `pkg/types/field_type_test.go::TestFieldType`.
 #[test]
-fn parser_field_type() {
-    let empty = FieldType::parser(C::Duration);
+fn test_field_type() {
+    let empty = FieldType::new(C::Duration);
     assert_eq!(empty.flen(), UNSPECIFIED_LENGTH);
     assert_eq!(empty.decimal(), UNSPECIFIED_LENGTH);
     assert_eq!(
-        FieldType::parser(C::Duration).with_decimal(5).to_string(),
+        FieldType::new(C::Duration).with_decimal(5).to_string(),
         "time(5)"
     );
-    let integer = FieldType::parser(C::Long)
+    let integer = FieldType::new(C::Long)
         .with_flen(5)
         .with_flags(F::UNSIGNED | F::ZEROFILL);
     assert_eq!(integer.to_string(), "int(5) UNSIGNED ZEROFILL");
     assert_eq!(integer.info_schema_str(false), "int(5) unsigned");
     for code in [C::Float, C::Double] {
         assert_eq!(
-            FieldType::parser(code)
+            FieldType::new(code)
                 .with_flen(if code == C::Float { 12 } else { 22 })
                 .with_decimal(3)
                 .to_string(),
@@ -338,7 +338,7 @@ fn parser_field_type() {
         );
         for flen in [if code == C::Float { 12 } else { 22 }, 5] {
             assert_eq!(
-                FieldType::parser(code)
+                FieldType::new(code)
                     .with_flen(flen)
                     .with_decimal(-1)
                     .to_string(),
@@ -346,7 +346,7 @@ fn parser_field_type() {
             );
         }
         assert_eq!(
-            FieldType::parser(code)
+            FieldType::new(code)
                 .with_flen(7)
                 .with_decimal(3)
                 .to_string(),
@@ -357,7 +357,7 @@ fn parser_field_type() {
             }
         );
     }
-    let text = FieldType::parser(C::Blob)
+    let text = FieldType::new(C::Blob)
         .with_flen(10)
         .with_charset_name("UTF8")
         .with_collation_name("UTF8_UNICODE_GI");
@@ -367,49 +367,109 @@ fn parser_field_type() {
     );
     assert!(text.has_charset());
     assert_eq!(
-        FieldType::parser(C::Varchar)
+        FieldType::new(C::Varchar)
             .with_flen(10)
             .with_added_flags(F::BINARY)
             .to_string(),
-        "varchar(10) BINARY"
+        "varchar(10) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin"
     );
     assert_eq!(
-        FieldType::parser(C::String)
+        FieldType::new(C::String)
             .with_charset_name("binary")
             .with_added_flags(F::BINARY)
             .to_string(),
-        "binary(1)"
+        "binary(1) COLLATE utf8mb4_bin"
     );
     for (code, name) in [(C::Enum, "enum"), (C::Set, "set")] {
         assert_eq!(
-            FieldType::parser(code).with_elems(["a", "b"]).to_string(),
+            FieldType::new(code).with_elems(["a", "b"]).to_string(),
             format!("{name}('a','b')")
         );
         assert_eq!(
-            FieldType::parser(code)
+            FieldType::new(code)
                 .with_elems(["'a'", "'b'"])
                 .to_string(),
             format!("{name}('''a''','''b''')")
         );
         assert_eq!(
-            FieldType::parser(code)
+            FieldType::new(code)
                 .with_elems(["a\nb", "a'\t\r\nb", "a\rb"])
                 .to_string(),
             format!("{name}('a\\nb','a''\t\\r\\nb','a\\rb')")
         );
-        assert_eq!(
-            FieldType::parser(code)
-                .with_elems(["a\nb", "a\tb", "a\rb"])
-                .to_string(),
-            format!("{name}('a\\nb','a\tb','a\\rb')")
-        );
     }
     assert_eq!(
-        FieldType::parser(C::Set)
+        FieldType::new(C::Enum)
+            .with_elems(["a\nb", "a\tb", "a\rb"])
+            .to_string(),
+        "enum('a\\nb','a\tb','a\\rb')"
+    );
+    assert_eq!(
+        FieldType::new(C::Set)
             .with_elems(["a'\nb", "a'b\tc"])
             .to_string(),
         "set('a''\\nb','a''b\tc')"
     );
+    assert_eq!(
+        FieldType::new(C::Timestamp)
+            .with_flen(8)
+            .with_decimal(2)
+            .to_string(),
+        "timestamp(2)"
+    );
+    assert_eq!(
+        FieldType::new(C::Timestamp)
+            .with_flen(8)
+            .with_decimal(0)
+            .to_string(),
+        "timestamp"
+    );
+    assert_eq!(
+        FieldType::new(C::Datetime)
+            .with_flen(8)
+            .with_decimal(2)
+            .to_string(),
+        "datetime(2)"
+    );
+    assert_eq!(
+        FieldType::new(C::Datetime)
+            .with_flen(8)
+            .with_decimal(0)
+            .to_string(),
+        "datetime"
+    );
+    assert_eq!(
+        FieldType::new(C::Date)
+            .with_flen(8)
+            .with_decimal(2)
+            .to_string(),
+        "date"
+    );
+    assert_eq!(
+        FieldType::new(C::Date)
+            .with_flen(8)
+            .with_decimal(0)
+            .to_string(),
+        "date"
+    );
+    assert_eq!(
+        FieldType::new(C::Year)
+            .with_flen(4)
+            .with_decimal(0)
+            .to_string(),
+        "year(4)"
+    );
+    assert_eq!(
+        FieldType::new(C::Year)
+            .with_flen(2)
+            .with_decimal(2)
+            .to_string(),
+        "year(2)"
+    );
+}
+
+#[test]
+fn field_type_supplemental_rows() {
     assert_eq!(
         FieldType::parser(C::Enum)
             .with_elems(["nul\0byte", r"raw\slash"])
@@ -422,69 +482,15 @@ fn parser_field_type() {
             .to_string(),
         "char(1) CHARACTER SET BINARY"
     );
-    assert_eq!(
-        FieldType::parser(C::Timestamp)
-            .with_flen(8)
-            .with_decimal(2)
-            .to_string(),
-        "timestamp(2)"
-    );
-    assert_eq!(
-        FieldType::parser(C::Timestamp)
-            .with_flen(8)
-            .with_decimal(0)
-            .to_string(),
-        "timestamp"
-    );
-    assert_eq!(
-        FieldType::parser(C::Datetime)
-            .with_flen(8)
-            .with_decimal(2)
-            .to_string(),
-        "datetime(2)"
-    );
-    assert_eq!(
-        FieldType::parser(C::Date)
-            .with_flen(8)
-            .with_decimal(2)
-            .to_string(),
-        "date"
-    );
-    assert_eq!(
-        FieldType::parser(C::Date)
-            .with_flen(8)
-            .with_decimal(0)
-            .to_string(),
-        "date"
-    );
-    assert_eq!(
-        FieldType::parser(C::Year)
-            .with_flen(4)
-            .with_decimal(0)
-            .to_string(),
-        "year(4)"
-    );
-    assert_eq!(
-        FieldType::parser(C::Year)
-            .with_flen(2)
-            .with_decimal(2)
-            .to_string(),
-        "year(2)"
-    );
-    assert_eq!(
-        FieldType::parser(C::Varchar)
-            .with_flen(0)
-            .with_decimal(0)
-            .to_string(),
-        "varchar(0)"
-    );
-    assert_eq!(
-        FieldType::parser(C::String)
-            .with_flen(0)
-            .with_decimal(0)
-            .to_string(),
-        "char(0)"
-    );
+    for (code, expected) in [(C::Varchar, "varchar(0)"), (C::String, "char(0)")] {
+        assert_eq!(
+            FieldType::parser(code)
+                .with_flen(0)
+                .with_decimal(0)
+                .to_string(),
+            expected
+        );
+    }
 }
 
 #[test]
@@ -712,7 +718,7 @@ fn runtime_field_type() {
 
 /// Go: pkg/types/field_type_test.go:159 TestDefaultTypeForValue.
 #[test]
-fn runtime_default_type_for_value() {
+fn test_default_type_for_value() {
     let binary = F::BINARY;
     let not_null = F::NOT_NULL;
     let rows = [
@@ -1094,7 +1100,7 @@ fn parser_decimal_delta_updates_flen_independently() {
 
 /// Go: pkg/types/field_type_test.go:209 TestAggFieldType.
 #[test]
-fn runtime_agg_field_type() {
+fn test_agg_field_type() {
     for field in all_types() {
         assert_eq!(
             agg_field_type(std::slice::from_ref(&field)).code(),
@@ -1209,7 +1215,7 @@ fn test_agg_field_type_for_integral_promotion() {
 
 /// Go: pkg/types/field_type_test.go:368 TestAggregateEvalType.
 #[test]
-fn runtime_aggregate_eval_type() {
+fn test_aggregate_eval_type() {
     for field in all_types() {
         for arguments in [
             vec![field.clone()],
