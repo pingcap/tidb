@@ -14,10 +14,8 @@
 
 use super::{Decimal, DecimalIntegerWarning, DecimalParseError};
 
-/// Exact source `TestFromInt`, `TestFromUint`, `TestFromFloat`, `TestToInt`,
-/// and `TestToUint` conversion tables.
 #[test]
-fn source_decimal_integer_and_float_conversion_tables() {
+fn test_from_int() {
     for (input, output) in [
         (-12_345, "-12345"),
         (-1, "-1"),
@@ -27,6 +25,10 @@ fn source_decimal_integer_and_float_conversion_tables() {
     ] {
         assert_eq!(Decimal::from_int(input).to_string(), output);
     }
+}
+
+#[test]
+fn test_from_uint() {
     for (input, output) in [
         (12_345, "12345"),
         (0, "0"),
@@ -34,6 +36,10 @@ fn source_decimal_integer_and_float_conversion_tables() {
     ] {
         assert_eq!(Decimal::from_uint(input).to_string(), output);
     }
+}
+
+#[test]
+fn test_to_int() {
     for (input, output, warning) in [
         (
             "18446744073709551615",
@@ -62,6 +68,10 @@ fn source_decimal_integer_and_float_conversion_tables() {
             "{input}"
         );
     }
+}
+
+#[test]
+fn test_to_uint() {
     for (input, output, warning) in [
         ("12345", 12_345, None),
         ("0", 0, None),
@@ -85,6 +95,10 @@ fn source_decimal_integer_and_float_conversion_tables() {
             "{input}"
         );
     }
+}
+
+#[test]
+fn test_from_float() {
     for (value, output) in [
         (12_345.0, "12345"),
         (123.45, "123.45"),
@@ -96,9 +110,8 @@ fn source_decimal_integer_and_float_conversion_tables() {
     }
 }
 
-/// Exact source `TestMaxDecimal` and `TestMaxOrMinMyDecimal` rows.
 #[test]
-fn source_max_decimal_tables() {
+fn test_max_decimal() {
     for (precision, frac, output) in [
         (1, 1, "0.9"),
         (1, 0, "9"),
@@ -121,6 +134,10 @@ fn source_max_decimal_tables() {
             output
         );
     }
+}
+
+#[test]
+fn test_max_or_min_my_decimal() {
     for (negative, precision, frac, output) in [
         (true, 2, 1, "-9.9"),
         (false, 1, 1, "0.9"),
@@ -679,7 +696,7 @@ fn go_to_bin_from_bin_round_trip() {
 /// `round_to_scale` across positive, zero, and negative scales, including full
 /// carry propagation (`999999999` at scale -9 grows to `1000000000`).
 #[test]
-fn go_round_half_up_vectors() {
+fn test_round_with_half_even() {
     let cases: &[(&str, i32, &str)] = &[
         ("123456789.987654321", 1, "123456790.0"),
         ("15.1", 0, "15"),
@@ -710,7 +727,7 @@ fn go_round_half_up_vectors() {
 /// `pkg/types/mydecimal_test.go`. Exercises `truncate_to_scale` across positive,
 /// zero, and negative scales.
 #[test]
-fn go_round_truncate_vectors() {
+fn test_round_with_truncate() {
     let cases: &[(&str, i32, &str)] = &[
         ("123456789.987654321", 1, "123456789.9"),
         ("15.1", 0, "15"),
@@ -741,7 +758,7 @@ fn go_round_truncate_vectors() {
 /// `ModeCeiling` behavior rounds discarded magnitude away from zero, including
 /// the documented negative-value bug; transcreation preserves that behavior.
 #[test]
-fn go_round_with_ceil() {
+fn test_round_with_ceil() {
     let cases: &[(&str, i32, &str)] = &[
         ("123456789.987654321", 1, "123456790.0"),
         ("15.1", 0, "16"),
@@ -773,7 +790,7 @@ fn go_round_with_ceil() {
 /// Exact TiDB `TestMulMyDecimal`, including the fixed nine-word buffer's
 /// truncation and overflow outcomes.
 #[test]
-fn go_mul_vectors() {
+fn test_mul_my_decimal() {
     let cases: &[(&str, &str, &str, Option<DecimalCodecWarning>)] = &[
         ("12", "10", "120", None),
         ("-123.456", "98765.4321", "-12193185.1853376", None),
@@ -1022,10 +1039,9 @@ fn test_from_string_my_decimal() {
     }
 }
 
-/// Complete source `TestAddMyDecimal`, `TestSubMyDecimal`, and
-/// `TestDivModMyDecimal` row sets.
+/// Complete source `TestAddMyDecimal` row set.
 #[test]
-fn source_bounded_add_sub_div_mod_tables() {
+fn test_add_my_decimal() {
     for (left, right, output) in [
         (".00012345000098765", "123.45", "123.45012345000098765"),
         (".1", ".45", "0.55"),
@@ -1058,7 +1074,11 @@ fn source_bounded_add_sub_div_mod_tables() {
         Decimal::from_literal(&large_left).add_mysql(&Decimal::from_literal(&large_right));
     assert_eq!(warning, None);
     assert_eq!(actual.to_string(), large_output);
+}
 
+/// Complete source `TestSubMyDecimal` row set.
+#[test]
+fn test_sub_my_decimal() {
     for (left, right, output) in [
         (".00012345000098765", "123.45", "-123.44987654999901235"),
         (
@@ -1084,7 +1104,11 @@ fn source_bounded_add_sub_div_mod_tables() {
         assert_eq!(warning, None, "{left} - {right}");
         assert_eq!(actual.to_string(), output, "{left} - {right}");
     }
+}
 
+/// Complete source `TestDivModMyDecimal` division, modulo, and scale rows.
+#[test]
+fn test_div_mod_my_decimal() {
     for (left, right, output) in [
         ("120", "10", "12.000000000"),
         ("123", "0.01", "12300.000000000"),
@@ -1109,9 +1133,11 @@ fn source_bounded_add_sub_div_mod_tables() {
             .unwrap();
         assert_eq!(actual.storage_string(), output, "{left} / {right}");
     }
-    assert!(Decimal::from_int(123)
-        .div_mysql(&Decimal::from_int(0), 5)
-        .is_none());
+    for numerator in [123, 0] {
+        assert!(Decimal::from_int(numerator)
+            .div_mysql(&Decimal::from_int(0), 5)
+            .is_none());
+    }
 
     for (left, right, output) in [
         ("1", "1", "1.0000"),
