@@ -845,22 +845,46 @@ pub fn parse_time_from_num<TZ: TimeZone>(
     allow_invalid_date: bool,
     timezone: &TZ,
 ) -> Result<ParsedTime, TimeError> {
-    if number == 0 {
-        return Ok(ParsedTime {
-            time: Time::new(CoreTime::default(), kind, 0)?,
-            truncated: false,
-        });
-    }
-    let (normalized, _) = normalize_numeric_datetime(number)?;
-    let fields = numeric_fields(normalized);
-    let time = Time::from_date_checked(
-        fields[0], fields[1], fields[2], fields[3], fields[4], fields[5], 0, kind, fsp,
-    )?;
-    time.validate(allow_zero_in_date, allow_invalid_date, timezone)?;
-    Ok(ParsedTime {
-        time,
+    parse_time_from_num_with_error(
+        number,
+        kind,
+        fsp,
+        allow_zero_in_date,
+        allow_invalid_date,
+        timezone,
+    )
+    .into_result()
+}
+
+fn parse_time_from_num_with_error<TZ: TimeZone>(
+    number: i64,
+    kind: TimeType,
+    fsp: i64,
+    allow_zero_in_date: bool,
+    allow_invalid_date: bool,
+    timezone: &TZ,
+) -> TemporalOutcome<ParsedTime> {
+    let fallback = ParsedTime {
+        time: Time::new(CoreTime::default(), kind, 0)
+            .expect("zero target time is a valid MySQL error-side value"),
         truncated: false,
-    })
+    };
+    let result = (|| {
+        if number == 0 {
+            return Ok(fallback);
+        }
+        let (normalized, _) = normalize_numeric_datetime(number)?;
+        let fields = numeric_fields(normalized);
+        let time = Time::from_date_checked(
+            fields[0], fields[1], fields[2], fields[3], fields[4], fields[5], 0, kind, fsp,
+        )?;
+        time.validate(allow_zero_in_date, allow_invalid_date, timezone)?;
+        Ok(ParsedTime {
+            time,
+            truncated: false,
+        })
+    })();
+    TemporalOutcome::from_result(result, fallback)
 }
 
 /// Parses an integer using TiDB's native DATE-versus-DATETIME classification.
@@ -1088,9 +1112,9 @@ mod tests {
         }
     }
 
-    /// TiDB `TestParseDateFormat` (`pkg/types/time_test.go`).
+    /// Complete translation of `pkg/types/time_test.go::TestParseDateFormat`.
     #[test]
-    fn go_parse_date_format_vectors() {
+    fn test_parse_date_format() {
         let cases: &[(&str, Option<Vec<String>>)] = &[
             (
                 "2011-11-11 10:10:10.123456",
@@ -1221,8 +1245,9 @@ mod tests {
         }
     }
 
+    /// Complete translation of `pkg/types/time_test.go::TestIsDateFormat`.
     #[test]
-    fn test_is_date_format_source_rows() {
+    fn test_is_date_format() {
         assert!(!is_date_format("1234:321"));
         assert!(is_date_format("2019-04-01"));
         assert!(is_date_format("2019-4-1"));
@@ -1242,8 +1267,9 @@ mod tests {
         assert!(parse_year("100").is_err());
     }
 
+    /// Complete translation of `pkg/types/time_test.go::TestTimestampDiff`.
     #[test]
-    fn test_timestamp_diff_source_rows() {
+    fn test_timestamp_diff() {
         for (unit, start, end, expected) in [
             (
                 "MONTH",
@@ -1399,8 +1425,9 @@ mod tests {
         );
     }
 
+    /// Complete translation of `pkg/types/time_test.go::TestParseDurationValue`.
     #[test]
-    fn test_parse_duration_value_source_rows() {
+    fn test_parse_duration_value() {
         for (format, unit, expected) in [
             ("52", "WEEK", (0, 0, 364, 0, 0, false)),
             ("12", "DAY", (0, 0, 12, 0, 0, false)),
@@ -1505,8 +1532,9 @@ mod tests {
         }
     }
 
+    /// Complete translation of `pkg/types/time_test.go::TestExtractDurationValue`.
     #[test]
-    fn test_extract_duration_value_source_rows() {
+    fn test_extract_duration_value() {
         for (unit, format, expected) in [
             ("MICROSECOND", "50", "00:00:00.000050"),
             ("SECOND", "50", "00:00:50"),
@@ -1552,8 +1580,15 @@ mod tests {
         parse_datetime(input, &chrono_tz::UTC, true, false)
     }
 
+    /// Complete translation of `pkg/types/time_test.go::TestDateTime`.
     #[test]
-    fn test_parse_datetime_source_rows() {
+    fn test_date_time() {
+        assert_date_time_source_rows();
+        assert_date_time_fsp_source_rows();
+        assert_date_time_source_errors_or_warnings();
+    }
+
+    fn assert_date_time_source_rows() {
         for (input, expected) in [
             ("2012-12-31 11:30:45", "2012-12-31 11:30:45"),
             ("0000-00-00 00:00:00", "0000-00-00 00:00:00"),
@@ -1585,6 +1620,7 @@ mod tests {
             ("2020.10.10 10.10.10", "2020-10-10 10:10:10.00"),
             ("2020-10-10 10-10.10", "2020-10-10 10:10:10.00"),
             ("2020-10-10 10.10", "2020-10-10 10:10:00.00"),
+            ("2018.01.01", "2018-01-01 00:00:00.00"),
             ("2018.01.01 00:00:00", "2018-01-01 00:00:00"),
             ("2018/01/01-00:00:00", "2018-01-01 00:00:00"),
             ("4710072", "2047-10-07 02:00:00"),
@@ -1612,8 +1648,7 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_parse_datetime_fsp_source_rows() {
+    fn assert_date_time_fsp_source_rows() {
         for (input, fsp, expected) in [
             ("20170118.123", 6, "2017-01-18 12:03:00.000000"),
             ("121231113045.123345", 6, "2012-12-31 11:30:45.123345"),
@@ -1646,8 +1681,7 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_parse_datetime_source_errors_or_warnings() {
+    fn assert_date_time_source_errors_or_warnings() {
         for input in [
             "1000-01-01 00:00:70",
             "1000-13-00 00:00:00",
@@ -1673,52 +1707,154 @@ mod tests {
         }
     }
 
+    /// Complete translation of `pkg/types/time_test.go::TestParseTimeFromNum`.
     #[test]
-    fn test_parse_time_from_num_source_rows() {
-        for (input, expected) in [
-            (20_101_010_111_111, "2010-10-10 11:11:11"),
-            (2_010_101_011_111, "0201-01-01 01:11:11"),
-            (201_010_101_111, "2020-10-10 10:11:11"),
-            (20_101_010_111, "2002-01-01 01:01:11"),
-            (201_010_101, "2000-02-01 01:01:01"),
-            (20_101_010, "2010-10-10 00:00:00"),
-            (2_010_101, "0201-01-01 00:00:00"),
-            (201_010, "2020-10-10 00:00:00"),
-            (20_101, "2002-01-01 00:00:00"),
-            (201, "2000-02-01 00:00:00"),
-            (0, "0000-00-00 00:00:00"),
-            (10_000_102_000_000, "1000-01-02 00:00:00"),
-            (19_690_101_000_000, "1969-01-01 00:00:00"),
-            (991_231_235_959, "1999-12-31 23:59:59"),
-            (691_231_235_959, "2069-12-31 23:59:59"),
-            (370_119_031_407, "2037-01-19 03:14:07"),
-            (380_120_031_407, "2038-01-20 03:14:07"),
-            (11_111_111_111, "2001-11-11 11:11:11"),
-        ] {
-            let parsed =
-                parse_time_from_num(input, TimeType::DateTime, 0, true, false, &chrono_tz::UTC)
-                    .unwrap();
-            assert_eq!(parsed.time.to_string(), expected, "{input}");
-        }
-        for input in [
-            2_010_101_011,
-            2_010,
-            20,
-            2,
-            -1,
-            99_999_999_999_999,
-            100_000_000_000_000,
-        ] {
-            assert!(
-                parse_time_from_num(input, TimeType::DateTime, 0, true, false, &chrono_tz::UTC)
-                    .is_err(),
-                "{input}"
-            );
+    fn test_parse_time_from_num() {
+        let rows = [
+            (
+                20_101_010_111_111,
+                Some("2010-10-10 11:11:11"),
+                Some("2010-10-10 11:11:11"),
+                Some("2010-10-10"),
+            ),
+            (
+                2_010_101_011_111,
+                Some("0201-01-01 01:11:11"),
+                None,
+                Some("0201-01-01"),
+            ),
+            (
+                201_010_101_111,
+                Some("2020-10-10 10:11:11"),
+                Some("2020-10-10 10:11:11"),
+                Some("2020-10-10"),
+            ),
+            (
+                20_101_010_111,
+                Some("2002-01-01 01:01:11"),
+                Some("2002-01-01 01:01:11"),
+                Some("2002-01-01"),
+            ),
+            (2_010_101_011, None, None, None),
+            (
+                201_010_101,
+                Some("2000-02-01 01:01:01"),
+                Some("2000-02-01 01:01:01"),
+                Some("2000-02-01"),
+            ),
+            (
+                20_101_010,
+                Some("2010-10-10 00:00:00"),
+                Some("2010-10-10 00:00:00"),
+                Some("2010-10-10"),
+            ),
+            (
+                2_010_101,
+                Some("0201-01-01 00:00:00"),
+                None,
+                Some("0201-01-01"),
+            ),
+            (
+                201_010,
+                Some("2020-10-10 00:00:00"),
+                Some("2020-10-10 00:00:00"),
+                Some("2020-10-10"),
+            ),
+            (
+                20_101,
+                Some("2002-01-01 00:00:00"),
+                Some("2002-01-01 00:00:00"),
+                Some("2002-01-01"),
+            ),
+            (2_010, None, None, None),
+            (
+                201,
+                Some("2000-02-01 00:00:00"),
+                Some("2000-02-01 00:00:00"),
+                Some("2000-02-01"),
+            ),
+            (20, None, None, None),
+            (2, None, None, None),
+            (
+                0,
+                Some("0000-00-00 00:00:00"),
+                Some("0000-00-00 00:00:00"),
+                Some("0000-00-00"),
+            ),
+            (-1, None, None, None),
+            (99_999_999_999_999, None, None, None),
+            (100_000_000_000_000, None, None, None),
+            (
+                10_000_102_000_000,
+                Some("1000-01-02 00:00:00"),
+                None,
+                Some("1000-01-02"),
+            ),
+            (
+                19_690_101_000_000,
+                Some("1969-01-01 00:00:00"),
+                None,
+                Some("1969-01-01"),
+            ),
+            (
+                991_231_235_959,
+                Some("1999-12-31 23:59:59"),
+                Some("1999-12-31 23:59:59"),
+                Some("1999-12-31"),
+            ),
+            (
+                691_231_235_959,
+                Some("2069-12-31 23:59:59"),
+                None,
+                Some("2069-12-31"),
+            ),
+            (
+                370_119_031_407,
+                Some("2037-01-19 03:14:07"),
+                Some("2037-01-19 03:14:07"),
+                Some("2037-01-19"),
+            ),
+            (
+                380_120_031_407,
+                Some("2038-01-20 03:14:07"),
+                None,
+                Some("2038-01-20"),
+            ),
+            (
+                11_111_111_111,
+                Some("2001-11-11 11:11:11"),
+                Some("2001-11-11 11:11:11"),
+                Some("2001-11-11"),
+            ),
+        ];
+        assert_eq!(rows.len(), 25, "one entry per Go source row");
+
+        for (input, datetime, timestamp, date) in rows {
+            for (kind, expected, zero) in [
+                (TimeType::DateTime, datetime, "0000-00-00 00:00:00"),
+                (TimeType::Timestamp, timestamp, "0000-00-00 00:00:00"),
+                (TimeType::Date, date, "0000-00-00"),
+            ] {
+                let outcome =
+                    parse_time_from_num_with_error(input, kind, 0, false, false, &chrono_tz::UTC);
+                assert_eq!(
+                    outcome.error.is_some(),
+                    expected.is_none(),
+                    "{input} {kind:?}: error expectation"
+                );
+                assert_eq!(outcome.value.time.kind(), kind, "{input} {kind:?}");
+                assert_eq!(
+                    outcome.value.time.to_string(),
+                    expected.unwrap_or(zero),
+                    "{input} {kind:?}"
+                );
+            }
         }
     }
 
+    /// Complete translation of `pkg/types/time_test.go::TestParseTimeFromFloatString`.
     #[test]
-    fn test_parse_time_from_float_string_source_rows() {
+    fn test_parse_time_from_float_string() {
         for (input, fsp, expected) in [
             ("20170118.123", 3, "2017-01-18 00:00:00.000"),
             ("121231113045.123345", 6, "2012-12-31 11:30:45.123345"),
@@ -1740,6 +1876,7 @@ mod tests {
         }
         for (input, fsp) in [
             ("201705051315111.22", 2),
+            ("2011110859.1111", 4),
             ("2011110859.1111", 4),
             ("191203081.1111", 4),
             ("43128.121105", 6),
@@ -1824,8 +1961,9 @@ mod tests {
         assert_eq!(invalid.error, Some(TimeError::OutOfRange("month")));
     }
 
+    /// Complete translation of `pkg/types/time_test.go::TestParseTimeFromDecimal`.
     #[test]
-    fn test_parse_time_from_decimal_source_rows() {
+    fn test_parse_time_from_decimal() {
         for (input, kind, expected, microsecond, fsp) in [
             ("20000102", TimeType::Date, "2000-01-02", 0, 0),
             ("20000102.9", TimeType::Date, "2000-01-02", 0, 0),
@@ -1878,8 +2016,9 @@ mod tests {
         assert_eq!(invalid.error, Some(TimeError::OutOfRange("month")));
     }
 
+    /// Complete translation of `pkg/types/time_test.go::TestTimestamp`.
     #[test]
-    fn test_parse_timestamp_source_bounds() {
+    fn test_timestamp() {
         assert!(parse_time(
             "2012-12-31 11:30:45",
             TimeType::Timestamp,
@@ -2001,8 +2140,9 @@ mod tests {
         }
     }
 
+    /// Complete translation of `pkg/types/time_test.go::TestParseWithTimezone`.
     #[test]
-    fn test_parse_with_timezone_source_rows() {
+    fn test_parse_with_timezone() {
         for (literal, fsp, system_offset, expected_timestamp) in [
             ("2006-01-02T15:04:05Z", 0, 0, 1_136_214_245),
             ("2006-01-02T15:04:05Z", 0, 10 * 3_600, 1_136_214_245),
