@@ -254,13 +254,17 @@ pub struct SequenceAllocator {
 impl SequenceAllocator {
     /// A sequence that has issued nothing yet.
     ///
-    /// Go's `CREATE SEQUENCE` seeds the stored value to `start - increment`, so
-    /// that the first `nextval` seek lands exactly on `START` (verified against
-    /// the captured first values for an ascending `start with 5 increment by 3`
-    /// and a descending `increment by -1 start with 1`).
+    /// Go's `CREATE SEQUENCE` seeds the stored value one INTEGER outside
+    /// `START`: `start - 1` for ascending sequences and `start + 1` for
+    /// descending ones. The congruence seek still lands on `START`, while the
+    /// exact base remains observable through the allocated cache range.
     #[must_use]
     pub fn new(info: SequenceInfo) -> Self {
-        let stored = info.start - info.increment;
+        let stored = if info.increment > 0 {
+            info.start - 1
+        } else {
+            info.start + 1
+        };
         SequenceAllocator {
             info,
             state: Arc::new(Mutex::new(SequenceState {
@@ -290,11 +294,16 @@ impl SequenceAllocator {
         state.end = state.stored;
     }
 
-    /// Go `ddl.AlterSequence` with `RESTART`: the stored counter goes back to
-    /// `restart_with - increment`, so the next value is `restart_with`.
+    /// Go `ddl.AlterSequence` with `RESTART`: the stored counter goes one
+    /// integer outside `restart_with`, so the next congruence seek returns the
+    /// requested value.
     pub fn restart(&mut self, restart_with: i64) {
         let mut state = self.state.lock().expect("sequence state");
-        state.stored = restart_with - self.info.increment;
+        state.stored = if self.info.increment > 0 {
+            restart_with - 1
+        } else {
+            restart_with + 1
+        };
         state.round = 0;
         state.base = state.stored;
         state.end = state.stored;
