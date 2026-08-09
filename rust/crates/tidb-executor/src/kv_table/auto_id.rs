@@ -374,6 +374,21 @@ impl AutoIdAllocator {
     /// `base + 1`, so the stepped and the ordinary case are the same code.
     pub(crate) fn alloc(&self, increment: u64, offset: u64) -> Result<u64, AutoIdError> {
         let mut cache = self.cache.lock().expect("auto id cache poisoned");
+        // Go `alloc4Signed`/`alloc4Unsigned` first rebases to `offset - 1`
+        // when the offset lies beyond the current base. The table caller
+        // normally supplies an offset no greater than the increment, but the
+        // allocator contract itself permits the full validated offset range:
+        // `(base=21, increment=1, offset=30)` must allocate 30, not 22.
+        let offset_base = offset.saturating_sub(1);
+        if exceeds(offset_base, cache.base, self.unsigned) {
+            if exceeds(offset_base, cache.end, self.unsigned) {
+                self.store
+                    .rebase(offset_base, self.unsigned)
+                    .map_err(AutoIdError::Store)?;
+                cache.end = offset_base;
+            }
+            cache.base = offset_base;
+        }
         let mut target = seek_to_first(cache.base, increment, offset, self.unsigned);
         if headroom(cache.base, self.unsigned) <= u128::from(target.wrapping_sub(cache.base)) {
             return Err(AutoIdError::Exhausted);
@@ -457,5 +472,65 @@ impl AutoIdAllocator {
         self.store.reset()?;
         *cache = AutoIdRange { base: 0, end: 0 };
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Complete observable translation of
+    /// `pkg/meta/autoid/memid_test.go::TestInMemoryAlloc`.
+    ///
+    /// Rust's table-facing allocator issues one id per call, while Go's
+    /// package method can return a batch range. Repeating the one-id call
+    /// preserves every value the source test observes: its assertions use
+    /// only the returned maximum, never the batch minimum.
+    #[test]
+    fn test_in_memory_alloc() {
+        fn alloc_many(
+            allocator: &AutoIdAllocator,
+            count: u64,
+            increment: u64,
+            offset: u64,
+        ) -> Result<u64, AutoIdError> {
+            let mut last = 0;
+            for _ in 0..count {
+                last = allocator.alloc(increment, offset)?;
+            }
+            Ok(last)
+        }
+
+        let allocator = AutoIdAllocator::new();
+        assert_eq!(allocator.next(), 1);
+        assert_eq!(alloc_many(&allocator, 1, 1, 1), Ok(1));
+        assert_eq!(allocator.next(), 2);
+        assert_eq!(alloc_many(&allocator, 1, 1, 1), Ok(2));
+        assert_eq!(alloc_many(&allocator, 10, 1, 1), Ok(12));
+        assert_eq!(alloc_many(&allocator, 1, 10, 1), Ok(21));
+        assert_eq!(alloc_many(&allocator, 1, 1, 30), Ok(30));
+
+        allocator.rebase(40).unwrap();
+        assert_eq!(alloc_many(&allocator, 1, 1, 1), Ok(41));
+        assert_eq!(allocator.next(), 42);
+        allocator.rebase(10).unwrap();
+        assert_eq!(alloc_many(&allocator, 1, 1, 1), Ok(42));
+
+        allocator.rebase(i64::MAX as u64 - 2).unwrap();
+        assert_eq!(alloc_many(&allocator, 1, 1, 1), Ok(i64::MAX as u64 - 1));
+        assert_eq!(alloc_many(&allocator, 1, 1, 1), Err(AutoIdError::Exhausted));
+
+        let mut unsigned = AutoIdAllocator::new();
+        unsigned.set_unsigned(true);
+        let near_unsigned_max = u64::MAX - 2;
+        unsigned.rebase(near_unsigned_max).unwrap();
+        assert_eq!(unsigned.next(), near_unsigned_max + 1);
+        assert_eq!(alloc_many(&unsigned, 1, 1, 1), Ok(near_unsigned_max + 1));
+        assert_eq!(alloc_many(&unsigned, 1, 1, 1), Err(AutoIdError::Exhausted));
+
+        let initial_base = AutoIdAllocator::new();
+        initial_base.rebase_to_next(100).unwrap();
+        assert_eq!(initial_base.next(), 100);
+        assert_eq!(alloc_many(&initial_base, 1, 1, 1), Ok(100));
     }
 }
