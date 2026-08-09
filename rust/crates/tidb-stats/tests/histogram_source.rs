@@ -54,8 +54,10 @@ const GO_HISTOGRAM_BENCH_SHA256: &str =
     "7c7a0a4ca77720ea94afa353ed1070cce6b03f6735f87780ca4767e10ff74780";
 const GO_ADJACENT_TEST_SHA256: &str =
     "2252313be49f161986afe7a94c379ca875bf79930b4f6c52a0b5e3cd9ffafe35";
+// `0af3d15190`, `e1356ed4d4`, and `f20c852949` completed then moved the
+// separately locked scalar rules; the histogram behavior tests stayed.
 const RUST_HISTOGRAM_SHA256: &str =
-    "f01d5fe10a8bae9531c6588c84f31fdfa14c9c1c0dd386c5a2c1145c35cbfb95";
+    "4562ecc70c29bad0d561f7e074b5c55310b8c396e24fcc7669ba197c0bd60a8c";
 const INVENTORY_SHA256: &str = "377ef285f6824b12d7f89e74b3ab2f41d4b49dc0de6b7205ff6b4a51dc0353e5";
 const DECLINE_EVIDENCE_SHA256: &str =
     "6a741b83456edbeaba33893451c26c006171d608f99b28a894140586132d6a21";

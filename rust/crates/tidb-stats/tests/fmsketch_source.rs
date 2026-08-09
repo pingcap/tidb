@@ -35,10 +35,12 @@ fn source_statistics_values(count: usize) -> Vec<Datum> {
     }
     for (position, value) in values.iter_mut().enumerate().skip(start) {
         let mut integer = position as i64;
-        if position % 3 == 0 {
+        // Go's two mutation loops begin at `start` and then advance by their
+        // stride, so both schedules are relative to that nonzero origin.
+        if (position - start) % 3 == 0 {
             integer += 1;
         }
-        if position % 5 == 0 {
+        if (position - start) % 5 == 0 {
             integer += 2;
         }
         *value = Datum::Int(integer);
