@@ -372,10 +372,10 @@ fn auto_random_retains_each_argument_and_uses_go_special_comment_restore() {
     }
 }
 
+/// `pkg/parser/parser_test.go::TestSystemVersionedColumnMariaDBEnabled`.
 #[test]
-fn mariadb_row_markers_require_the_same_explicit_parser_mode_as_go() {
-    // Every accepted row from
-    // `pkg/parser/parser_test.go:TestSystemVersionedColumnMariaDBEnabled`.
+fn test_system_versioned_column_maria_db_enabled() {
+    // Every accepted row from the Go source test.
     // The ALTER cases prove that the shared column entrypoint, rather than a
     // CREATE-only fork, reaches the generated-option leaf.
     for (sql, expected) in [
@@ -421,7 +421,17 @@ fn mariadb_row_markers_require_the_same_explicit_parser_mode_as_go() {
         );
     }
 
-    // Every disabled-mode row from the companion Go test.
+    assert!(crate::parse_with_mariadb(
+        "create table t (a timestamp(6) generated always as row middle)",
+        true,
+    )
+    .is_err());
+}
+
+/// `pkg/parser/parser_test.go::TestSystemVersionedColumnMariaDBDisabled`.
+#[test]
+fn test_system_versioned_column_maria_db_disabled() {
+    // Every disabled-mode row from the Go source test.
     for sql in [
         "CREATE TABLE t (a TIMESTAMP(6) GENERATED ALWAYS AS ROW START)",
         "CREATE TABLE t (a TIMESTAMP(6) GENERATED ALWAYS AS ROW END)",
@@ -430,10 +440,4 @@ fn mariadb_row_markers_require_the_same_explicit_parser_mode_as_go() {
     ] {
         assert!(parse(sql).is_err(), "source SQL: {sql}");
     }
-
-    assert!(crate::parse_with_mariadb(
-        "create table t (a timestamp(6) generated always as row middle)",
-        true,
-    )
-    .is_err());
 }
