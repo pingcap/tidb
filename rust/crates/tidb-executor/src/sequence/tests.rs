@@ -24,6 +24,77 @@ fn take(alloc: &SequenceAllocator, n: usize) -> Vec<Option<i64>> {
     (0..n).map(|_| alloc.next_val().ok()).collect()
 }
 
+/// Complete translation of
+/// `pkg/meta/autoid/seq_autoid_test.go::TestSequenceAutoid`.
+#[test]
+fn test_sequence_autoid() {
+    let info = SequenceInfo {
+        start: 1,
+        cycle: true,
+        cache: true,
+        min_value: -10,
+        max_value: 10,
+        increment: 2,
+        cache_value: 3,
+    };
+    let allocator = SequenceAllocator::new(info);
+    let mut state = allocator.state.lock().unwrap();
+    assert_eq!((state.base, state.end, state.round), (0, 0, 0));
+
+    allocator.refill(&mut state).unwrap();
+    assert_eq!((state.base, state.end, state.round), (0, 5, 0));
+    assert_eq!(
+        calc_sequence_batch_size(0, 3, 2, 1, -10, 10),
+        Some(state.end - state.base)
+    );
+    let mut base = state.base;
+    for expected in [1, 3, 5] {
+        let next = seek_to_first_sequence_value(base, 2, 1, base, state.end);
+        assert_eq!(next, Some(expected));
+        base = expected;
+    }
+    assert_eq!(
+        seek_to_first_sequence_value(base, 2, 1, base, state.end),
+        None
+    );
+    state.base = base;
+
+    allocator.refill(&mut state).unwrap();
+    assert_eq!((state.base, state.end, state.round), (5, 10, 0));
+    assert_eq!(
+        calc_sequence_batch_size(0, 3, 2, 1, -10, 10),
+        Some(state.end - state.base)
+    );
+    base = state.base;
+    for expected in [7, 9] {
+        let next = seek_to_first_sequence_value(base, 2, 1, base, state.end);
+        assert_eq!(next, Some(expected));
+        base = expected;
+    }
+    assert_eq!(
+        seek_to_first_sequence_value(base, 2, 1, base, state.end),
+        None
+    );
+    state.base = base;
+
+    allocator.refill(&mut state).unwrap();
+    assert_eq!((state.base, state.end, state.round), (-11, -6, 1));
+    assert_eq!(
+        calc_sequence_batch_size(0, 3, 2, 1, -10, 10),
+        Some(state.end - state.base)
+    );
+    base = state.base;
+    for expected in [-10, -8, -6] {
+        let next = seek_to_first_sequence_value(base, 2, -10, base, state.end);
+        assert_eq!(next, Some(expected));
+        base = expected;
+    }
+    assert_eq!(
+        seek_to_first_sequence_value(base, 2, -10, base, state.end),
+        None
+    );
+}
+
 /// `create sequence s1` -> 1, 2, 3. The corpus fixture, and the defaults
 /// `SHOW CREATE SEQUENCE` prints for an option-free sequence.
 #[test]
