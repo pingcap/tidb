@@ -135,6 +135,28 @@ impl GoTypeIdentity {
         }
     }
 
+    /// Constructs the exact unnamed pointer type to this source type.
+    #[must_use]
+    pub fn pointer_to(&self) -> Self {
+        Self {
+            identity: format!("*{}", self.identity),
+            display: format!("*{}", self.display),
+            kind: GoTypeKind::Pointer,
+        }
+    }
+
+    /// Constructs the exact unnamed slice type whose element has this source
+    /// type. The element's package-qualified identity remains part of dynamic
+    /// type equality while diagnostics use Go's ordinary display spelling.
+    #[must_use]
+    pub fn slice_of(&self) -> Self {
+        Self {
+            identity: format!("[]{}", self.identity),
+            display: format!("[]{}", self.display),
+            kind: GoTypeKind::Slice,
+        }
+    }
+
     /// The exact identity token used by interface comparison.
     #[must_use]
     pub fn identity(&self) -> &str {
@@ -654,6 +676,8 @@ pub enum GoJsonValue {
     GoObject(Vec<(GoString, GoJsonValue)>),
     /// JSON object in source struct-field order.
     Struct(Vec<(String, GoJsonValue)>),
+    /// A complete JSON value already emitted through the Go formatter.
+    Raw(String),
 }
 
 impl Serialize for GoJsonValue {
@@ -685,6 +709,9 @@ impl Serialize for GoJsonValue {
                 }
                 object.end()
             }
+            Self::Raw(value) => serde_json::value::RawValue::from_string(value.clone())
+                .map_err(serde::ser::Error::custom)?
+                .serialize(serializer),
         }
     }
 }
@@ -709,6 +736,8 @@ pub enum GoEqualityProjection<'a> {
     String(&'a GoString),
     /// Pointer identity, with `None` representing a typed nil pointer.
     Pointer(Option<&'a GoShared<GoAny>>),
+    /// Pointer identity for a custom typed pointee.
+    PointerAddress(Option<usize>),
     /// Comparable Go array elements.
     Array(&'a [GoAny]),
     /// Comparable Go struct fields, in declaration order.
@@ -732,6 +761,10 @@ fn equality_projection_eq(left: GoEqualityProjection<'_>, right: GoEqualityProje
                 _ => false,
             }
         }
+        (
+            GoEqualityProjection::PointerAddress(left),
+            GoEqualityProjection::PointerAddress(right),
+        ) => left == right,
         (GoEqualityProjection::Array(left), GoEqualityProjection::Array(right)) => {
             left.len() == right.len()
                 && left
@@ -821,6 +854,12 @@ pub trait GoAnyValue: fmt::Debug + Send + Sync {
     fn builtin_string(&self) -> Option<&GoString> {
         None
     }
+
+    /// Explicit model JobArgs view. This keeps Go's dynamic-type assertion
+    /// source-shaped without introducing Rust `Any` or unsafe downcasts.
+    fn job_args_value(&self) -> Option<&crate::job_args::JobArgsValue> {
+        None
+    }
 }
 
 /// One Go interface header. `None` is a nil interface; `Some` may still hold
@@ -870,6 +909,12 @@ impl GoAny {
     #[must_use]
     pub fn builtin_string(&self) -> Option<&GoString> {
         self.0.as_deref().and_then(|value| value.builtin_string())
+    }
+
+    /// Exact typed JobArgs value stored in this interface, when present.
+    #[must_use]
+    pub(crate) fn job_args_value(&self) -> Option<&crate::job_args::JobArgsValue> {
+        self.0.as_deref().and_then(|value| value.job_args_value())
     }
 
     /// Projects this interface through the dynamic JSON hook.

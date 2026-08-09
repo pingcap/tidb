@@ -34,6 +34,7 @@ pub mod job;
 pub mod job_args;
 #[cfg(test)]
 mod job_args_go_inventory;
+mod job_args_json;
 pub mod job_enums;
 mod job_json;
 pub mod masking_policy;
@@ -91,7 +92,17 @@ pub use job::{
     MultiSchemaInfo, PersistedRawJson, ResolvedTimeZone, SubJob, TimeZoneLocation, TraceInfo,
 };
 pub use job_args::{
-    index_arg_columnar_index_type, rename_tables_args_from_v1, IndexOp, RenameTableArgs,
+    fill_rollback_args_for_add_partition, get_batch_create_table_args, get_create_schema_args,
+    get_create_table_args, get_drop_schema_args, get_exchange_table_partition_args,
+    get_finished_drop_schema_args, get_finished_table_partition_args,
+    get_finished_truncate_table_args, get_modify_schema_args,
+    get_modify_table_charset_and_collate_args, get_modify_table_comment_args,
+    get_rebase_auto_id_args, get_table_partition_args, get_truncate_table_args,
+    index_arg_columnar_index_type, rename_tables_args_from_v1, BatchCreateTableArgs,
+    CreateSchemaArgs, CreateTableArgs, DropSchemaArgs, EmptyArgs, ExchangeTablePartitionArgs,
+    FinishedJobArgs, GoByteSlice, GoField, IndexOp, JobArgs, JobArgsValue, ModifySchemaArgs,
+    ModifyTableCharsetAndCollateArgs, ModifyTableCommentArgs, RebaseAutoIDArgs, RenameTableArgs,
+    TableIDIndexID, TablePartitionArgs, TruncateTableArgs,
 };
 pub use job_enums::{
     get_job_ver_in_use, modify_type_to_string, set_job_ver_in_use, str_to_job_state, JobState,
