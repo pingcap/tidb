@@ -260,6 +260,30 @@ fn go_test_compat_types_rows_match() {
     }
 }
 
+/// Exact rows from `pkg/parser/parser_test.go::TestVector`.
+#[test]
+fn go_test_vector_rows_match() {
+    for (sql, expected) in [
+        (
+            "CREATE TABLE t (a VECTOR)",
+            Some("CREATE TABLE `t` (`a` VECTOR)"),
+        ),
+        (
+            "CREATE TABLE t (a VECTOR<FLOAT>)",
+            Some("CREATE TABLE `t` (`a` VECTOR)"),
+        ),
+        ("CREATE TABLE t (a VECTOR<INT>)", None),
+        ("CREATE TABLE t (a VECTOR<DOUBLE>)", None),
+        ("CREATE TABLE t (a VECTOR<ABC>)", None),
+        ("CREATE TABLE t (a VECTOR(5)<FLOAT>)", None),
+    ] {
+        match expected {
+            Some(expected) => assert_eq!(r(sql), expected, "source SQL: {sql}"),
+            None => assert!(parse(sql).is_err(), "Go rejects: {sql}"),
+        }
+    }
+}
+
 /// Exact rows from `pkg/parser/parser_test.go:TestUUIDTypeMariaDBEnabled`
 /// and `TestUUIDTypeMariaDBDisabled`. Go's MariaDB-only UUID pseudo-type is
 /// normalized by the field-type parser itself to `CHAR(36)`; the same source
