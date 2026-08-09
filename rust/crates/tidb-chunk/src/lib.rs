@@ -16,11 +16,10 @@
 //! and every expression `Eval*` consumes.
 //!
 //! SEED SCOPE (grown incrementally): [`column`] ports the `Column` columnar
-//! storage (fixed-length int/real + variable-length string/bytes + the
+//! storage (fixed-length int/real + variable-length string/bytes/vector + the
 //! `getFixedLen`/`NewColumn` type dispatch); [`chunk`] the `Chunk` batch; and
 //! [`row`] the `Row` cursor that expression evaluation reads. DEFERRED
-//! (documented per module): the typed appends/getters for
-//! `VectorFloat32`, `Reset(EvalType)`, the growth/pool/disk paths,
+//! (documented per module): `Reset(EvalType)`, the growth/pool paths,
 //! and a `str`-typed `GetString`.
 //!
 //! [`mutrow`] adds Go's `MutRow`, the mutable one-row chunk that partition

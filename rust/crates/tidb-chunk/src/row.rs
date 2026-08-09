@@ -20,14 +20,14 @@
 //!
 //! Ported: the accessors a simple query needs -- `chunk`, `idx`, `len`,
 //! `get_int64`/`get_uint64`/`get_float32`/`get_float64`, `get_bytes`/`get_raw`,
-//! `get_time`/`get_duration`, and `is_null`. DEFERRED (documented): the typed
-//! getters that need `MyDecimal`/JSON column support (see
-//! `column.rs` for the `MyDecimal` layout deferral), `GetDatumRow`, `CopyConstruct`, and
+//! `get_time`/`get_duration`, VectorFloat32, JSON, decimal, and `is_null`.
+//! DEFERRED (documented): `GetDatumRow`, `CopyConstruct`, and
 //! a `str`-typed `GetString` (pending the crate-wide bytes-vs-str policy).
 
 use crate::chunk::Chunk;
 use tidb_datatype::{
     Datum, Decimal, FieldType, FieldTypeCode, GoString, MyDecimal, MySqlDuration, Time,
+    VectorFloat32,
 };
 
 /// Go `chunk.RowSize = unsafe.Sizeof(Row{})`: what one retained row CURSOR
@@ -41,7 +41,7 @@ pub const ROW_SIZE: i64 = size_of::<Row<'static>>() as i64;
 /// Go `chunk.Row`: a cursor to one row of a [`Chunk`].
 #[derive(Clone, Copy, Debug)]
 pub struct Row<'a> {
-    chunk: &'a Chunk,
+    chunk: Option<&'a Chunk>,
     idx: usize,
 }
 
@@ -51,7 +51,11 @@ pub struct Row<'a> {
 /// `require.Equal(t, rows[i], it.Current())` both rely on exactly that.
 impl PartialEq for Row<'_> {
     fn eq(&self, other: &Self) -> bool {
-        std::ptr::eq(self.chunk, other.chunk) && self.idx == other.idx
+        match (self.chunk, other.chunk) {
+            (None, None) => self.idx == other.idx,
+            (Some(left), Some(right)) => std::ptr::eq(left, right) && self.idx == other.idx,
+            _ => false,
+        }
     }
 }
 
@@ -61,13 +65,26 @@ impl<'a> Row<'a> {
     /// Builds a row cursor at physical index `idx` of `chunk`.
     #[must_use]
     pub(crate) fn new(chunk: &'a Chunk, idx: usize) -> Self {
-        Row { chunk, idx }
+        Row {
+            chunk: Some(chunk),
+            idx,
+        }
+    }
+
+    /// Go's zero `Row{}` sentinel. It is distinct from a valid row of a
+    /// zero-column chunk, whose column count is also zero.
+    #[must_use]
+    pub const fn empty() -> Self {
+        Row {
+            chunk: None,
+            idx: 0,
+        }
     }
 
     /// Go `Chunk`: the chunk this row belongs to.
     #[must_use]
     pub fn chunk(&self) -> &'a Chunk {
-        self.chunk
+        self.chunk.expect("empty Row has no Chunk")
     }
 
     /// Go `Idx`: the (physical) row index within the chunk.
@@ -79,98 +96,105 @@ impl<'a> Row<'a> {
     /// Go `Len`: the number of columns.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.chunk.num_cols()
+        self.chunk.map_or(0, Chunk::num_cols)
     }
 
-    /// Whether the row has no columns.
+    /// Go `IsEmpty`: only the zero `Row{}` sentinel is empty. A valid row of a
+    /// zero-column/virtual chunk is not empty.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.len() == 0
+        self.chunk.is_none()
     }
 
     /// Go `GetInt64`.
     #[must_use]
     pub fn get_int64(&self, col_idx: usize) -> i64 {
-        self.chunk.columns()[col_idx].get_int64(self.idx)
+        self.chunk().columns()[col_idx].get_int64(self.idx)
     }
 
     /// Go `GetUint64`.
     #[must_use]
     pub fn get_uint64(&self, col_idx: usize) -> u64 {
-        self.chunk.columns()[col_idx].get_uint64(self.idx)
+        self.chunk().columns()[col_idx].get_uint64(self.idx)
     }
 
     /// Go `GetFloat32`.
     #[must_use]
     pub fn get_float32(&self, col_idx: usize) -> f32 {
-        self.chunk.columns()[col_idx].get_float32(self.idx)
+        self.chunk().columns()[col_idx].get_float32(self.idx)
     }
 
     /// Go `GetFloat64`.
     #[must_use]
     pub fn get_float64(&self, col_idx: usize) -> f64 {
-        self.chunk.columns()[col_idx].get_float64(self.idx)
+        self.chunk().columns()[col_idx].get_float64(self.idx)
     }
 
     /// Go `GetTime`.
     #[must_use]
     pub fn get_time(&self, col_idx: usize) -> Time {
-        self.chunk.columns()[col_idx].get_time(self.idx)
+        self.chunk().columns()[col_idx].get_time(self.idx)
     }
 
     /// Go `GetDuration`: reads the cell's nanoseconds and stamps `fill_fsp` on
     /// (the column stores no fsp).
     #[must_use]
     pub fn get_duration(&self, col_idx: usize, fill_fsp: i64) -> MySqlDuration {
-        self.chunk.columns()[col_idx].get_duration(self.idx, fill_fsp)
+        self.chunk().columns()[col_idx].get_duration(self.idx, fill_fsp)
     }
 
     /// Go `GetMyDecimal`.
     #[must_use]
     pub fn get_my_decimal(&self, col_idx: usize) -> MyDecimal {
-        self.chunk.columns()[col_idx].get_my_decimal(self.idx)
+        self.chunk().columns()[col_idx].get_my_decimal(self.idx)
     }
 
     /// Go `GetEnum`.
     #[must_use]
     pub fn get_enum(&self, col_idx: usize) -> tidb_datatype::MysqlEnum {
-        self.chunk.columns()[col_idx].get_enum(self.idx)
+        self.chunk().columns()[col_idx].get_enum(self.idx)
     }
 
     /// Go `GetSet`.
     #[must_use]
     pub fn get_set(&self, col_idx: usize) -> tidb_datatype::MysqlSet {
-        self.chunk.columns()[col_idx].get_set(self.idx)
+        self.chunk().columns()[col_idx].get_set(self.idx)
     }
 
     /// Go `GetBytes`: the raw bytes of a variable-length column's cell.
     #[must_use]
     pub fn get_bytes(&self, col_idx: usize) -> &'a [u8] {
-        self.chunk.columns()[col_idx].get_bytes(self.idx)
+        self.chunk().columns()[col_idx].get_bytes(self.idx)
     }
 
     /// Go `GetRaw`: the raw element bytes for either column kind.
     #[must_use]
     pub fn get_raw(&self, col_idx: usize) -> &'a [u8] {
-        self.chunk.columns()[col_idx].get_raw(self.idx)
+        self.chunk().columns()[col_idx].get_raw(self.idx)
     }
 
     /// Go `GetJSON`.
     #[must_use]
     pub fn get_json(&self, col_idx: usize) -> tidb_datatype::BinaryJSON {
-        self.chunk.columns()[col_idx].get_json(self.idx)
+        self.chunk().columns()[col_idx].get_json(self.idx)
+    }
+
+    /// Go `GetVectorFloat32`.
+    #[must_use]
+    pub fn get_vector_float32(&self, col_idx: usize) -> VectorFloat32 {
+        self.chunk().columns()[col_idx].get_vector_float32(self.idx)
     }
 
     /// Go `getNameValue`: the `(name, value)` pair an ENUM/SET cell stores.
     #[must_use]
     pub fn get_name_value(&self, col_idx: usize) -> (GoString, u64) {
-        self.chunk.columns()[col_idx].get_name_value(self.idx)
+        self.chunk().columns()[col_idx].get_name_value(self.idx)
     }
 
     /// Go `IsNull`.
     #[must_use]
     pub fn is_null(&self, col_idx: usize) -> bool {
-        self.chunk.columns()[col_idx].is_null(self.idx)
+        self.chunk().columns()[col_idx].is_null(self.idx)
     }
 
     /// Go `GetDatum` (`DatumWithBuffer`): read the cell at `col_idx` as a
@@ -266,6 +290,7 @@ impl<'a> Row<'a> {
                     .expect("decimal text is ASCII");
                 Datum::Decimal(Decimal::from_literal(&text))
             }
+            FieldTypeCode::VectorFloat32 => Datum::VectorFloat32(self.get_vector_float32(col_idx)),
             other => panic!(
                 "chunk Row::get_datum: column type {other:?} not yet supported (deferred with its column getter)"
             ),

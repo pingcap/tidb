@@ -36,11 +36,8 @@
 //!   than any non-null cell) and additionally orders the `MinNotNull`/`MaxValue`
 //!   range sentinels.
 //!
-//! DEFERRED, documented: the `TiDBVectorFloat32` arms of both surfaces. The
-//! `VectorFloat32` COLUMN storage does not exist yet (see [`crate::column`]),
-//! so there is nothing to read; the dispatch is ported and the body panics
-//! rather than returning a wrong ordering, matching how [`crate::row::Row::get_datum`]
-//! handles the same gap.
+//! `TiDBVectorFloat32` uses the datatype layer's source-compatible
+//! lexicographic vector comparison over serialized variable-length cells.
 
 use crate::chunk::Chunk;
 use crate::row::Row;
@@ -237,11 +234,12 @@ fn cmp_null_const(_l: Row<'_>, _l_col: usize, _r: Row<'_>, _r_col: usize) -> Ord
     Ordering::Equal
 }
 
-/// Go `cmpVectorFloat32`. DEFERRED with `VectorFloat32` column storage.
-fn cmp_vector_float32(_l: Row<'_>, _l_col: usize, _r: Row<'_>, _r_col: usize) -> Ordering {
-    panic!(
-        "chunk compare: VectorFloat32 columns are not stored yet (deferred with the column getter)"
-    )
+/// Go `cmpVectorFloat32`.
+fn cmp_vector_float32(l: Row<'_>, l_col: usize, r: Row<'_>, r_col: usize) -> Ordering {
+    null_order(l, l_col, r, r_col).unwrap_or_else(|| {
+        l.get_vector_float32(l_col)
+            .compare(&r.get_vector_float32(r_col))
+    })
 }
 
 /// Go `chunk.Compare`: compares the cell at `col_idx` of `row` with the datum
@@ -304,9 +302,7 @@ pub fn compare(row: Row<'_>, col_idx: usize, ad: &Datum) -> Ordering {
         Datum::Enum(value, _) => row.get_enum(col_idx).value().cmp(&value.value()),
         Datum::Set(value, _) => row.get_set(col_idx).value().cmp(&value.value()),
         Datum::Json(value) => compare_binary_json(&row.get_json(col_idx), value),
-        Datum::VectorFloat32(_) => panic!(
-            "chunk compare: VectorFloat32 columns are not stored yet (deferred with the column getter)"
-        ),
+        Datum::VectorFloat32(value) => row.get_vector_float32(col_idx).compare(value),
         Datum::Time(value) => row.get_time(col_idx).compare(*value),
         Datum::Raw(_) => Ordering::Equal,
     }
@@ -619,5 +615,39 @@ mod tests {
                 assert_eq!(cmp_func(row, i, r1, i), Ordering::Equal, "row {k} col {i}");
             }
         }
+    }
+
+    #[test]
+    fn vector_float32_comparators_cover_null_empty_and_lexicographic_values() {
+        use tidb_datatype::VectorFloat32;
+
+        let field = FieldType::new(FieldTypeCode::VectorFloat32);
+        let mut chunk = Chunk::new_with_capacity(std::slice::from_ref(&field), 4);
+        chunk.append_null(0);
+        chunk.append_vector_float32(0, &VectorFloat32::default());
+        chunk.append_vector_float32(0, &VectorFloat32::must_create(vec![1.0, 2.0]));
+        chunk.append_vector_float32(0, &VectorFloat32::must_create(vec![1.0, 3.0]));
+
+        let compare_cells = get_compare_func(&field).expect("vector comparator");
+        assert_eq!(
+            compare_cells(chunk.get_row(0), 0, chunk.get_row(1), 0),
+            Ordering::Less
+        );
+        assert_eq!(
+            compare_cells(chunk.get_row(1), 0, chunk.get_row(2), 0),
+            Ordering::Less
+        );
+        assert_eq!(
+            compare_cells(chunk.get_row(2), 0, chunk.get_row(3), 0),
+            Ordering::Less
+        );
+        assert_eq!(
+            compare(
+                chunk.get_row(2),
+                0,
+                &Datum::VectorFloat32(VectorFloat32::must_create(vec![1.0, 2.0])),
+            ),
+            Ordering::Equal
+        );
     }
 }

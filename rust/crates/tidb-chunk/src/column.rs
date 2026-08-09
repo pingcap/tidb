@@ -34,28 +34,26 @@
 //! `int64` nanosecond count; fsp is supplied by the reader, matching Go
 //! `AppendDuration`/`GetDuration`).
 //!
-//! DEFERRED -- `MyDecimal` cells: Go stores a `NewDecimal` cell as the raw
+//! `MyDecimal` cells use Go's raw
 //! 40-byte in-memory `types.MyDecimal` struct
 //! (`digitsInt`/`digitsFrac`/`resultFrac`/`negative` + 9 base-1e9 `int32`
 //! words). The Rust `tidb_datatype::Decimal` is a decimal-digit-string
 //! representation and cannot round-trip that 40-byte layout byte-for-byte;
-//! faking a different layout would silently break Go/Rust chunk fidelity, so
-//! `AppendMyDecimal`/`GetDecimal` wait until a layout-faithful `MyDecimal`
-//! exists.
+//! the layout-faithful `MyDecimal` provided by `tidb-datatype`.
 //!
 //! Also ported: the Enum/Set name-value cells (Go `appendNameValue`/
 //! `getNameValue`: the 8-byte native-endian value followed by the element
 //! name, in one variable-length row).
 //!
-//! DEFERRED (documented, later tranches): the typed appends and `Resize*` for
-//! `MyDecimal` (see above), JSON, and `VectorFloat32`;
+//! DEFERRED (documented, later tranches): the `Resize*` family;
 //! `Reset(EvalType)`; the `Reserve`/`resize` capacity helpers;
 //! `SetNull(s)`/`nullCount`; a `str`-typed `GetString`; and the `Chunk`/`Row`
-//! containers built on `Column`.
+//! containers built on `Column`. JSON and VectorFloat32 typed storage is
+//! implemented as variable-length source-format cells.
 
 use tidb_datatype::{
-    FieldType, FieldTypeCode, GoString, MyDecimal, MySqlDuration, MysqlEnum, MysqlSet, Time,
-    MYDECIMAL_STRUCT_SIZE,
+    deserialize_vector_float32, FieldType, FieldTypeCode, GoString, MyDecimal, MySqlDuration,
+    MysqlEnum, MysqlSet, Time, VectorFloat32, MYDECIMAL_STRUCT_SIZE,
 };
 
 /// Go `VarElemLen` (`= -1`): the sentinel element length of a variable-length
@@ -70,6 +68,9 @@ pub const SIZE_TIME: i64 = 8;
 /// Go `types.MyDecimalStructSize` (`= 40`): the fixed element width of a
 /// `NewDecimal` column.
 pub const MY_DECIMAL_STRUCT_SIZE: i64 = 40;
+
+/// Go `estimatedElemLen`: initial bytes reserved per variable-length row.
+pub const ESTIMATED_ELEM_LEN: usize = 8;
 
 /// Go `getFixedLen`: the fixed element width for a column of `field_type`, or
 /// [`VAR_ELEM_LEN`] when the type is variable-length.
@@ -187,9 +188,12 @@ impl Column {
     pub fn new_var_len(capacity: usize) -> Self {
         let mut offsets = Vec::with_capacity(capacity + 1);
         offsets.push(0);
+        let data_capacity = ESTIMATED_ELEM_LEN
+            .checked_mul(capacity)
+            .expect("variable-length column capacity overflow");
         Column {
             elem_buf: Vec::new(),
-            data: Vec::new(),
+            data: Vec::with_capacity(data_capacity),
             null_bitmap: Vec::with_capacity((capacity + 7) >> 3),
             offsets,
             length: 0,
@@ -435,6 +439,17 @@ impl Column {
         self.finish_append_var();
     }
 
+    /// Go `AppendVectorFloat32`: append the vector's serialized little-endian
+    /// image as one variable-length cell.
+    pub fn append_vector_float32(&mut self, value: &VectorFloat32) {
+        debug_assert!(
+            !self.is_fixed(),
+            "append_vector_float32 on a fixed-length column"
+        );
+        value.serialize_to(&mut self.data);
+        self.finish_append_var();
+    }
+
     /// Go `GetBytes`: the raw bytes of a variable-length row.
     ///
     /// TiDB strings are arbitrary byte sequences, so this returns `&[u8]`; a
@@ -455,6 +470,23 @@ impl Column {
             .split_first()
             .expect("a JSON cell always carries its type code");
         tidb_datatype::BinaryJSON::from_encoded_parts(*type_code, value)
+    }
+
+    /// Go `GetVectorFloat32`: deserialize one vector cell. A malformed cell
+    /// panics, matching Go's `panic(err)` path. The cell boundary must contain
+    /// exactly one vector image; accepting a suffix would silently hide a
+    /// corrupt chunk offset table.
+    #[must_use]
+    pub fn get_vector_float32(&self, row_id: usize) -> VectorFloat32 {
+        let cell = self.get_bytes(row_id);
+        let (value, remaining) = deserialize_vector_float32(cell)
+            .unwrap_or_else(|error| panic!("invalid VectorFloat32 chunk cell: {error}"));
+        assert!(
+            remaining.is_empty(),
+            "VectorFloat32 chunk cell has {} trailing bytes",
+            remaining.len()
+        );
+        value
     }
 
     /// Go `GetRaw`: the raw element bytes of a row, for either column kind.
@@ -503,7 +535,17 @@ impl Column {
     /// Go `CopyConstruct` (the `dst == nil` branch): a deep copy.
     #[must_use]
     pub fn copy_construct(&self) -> Column {
-        self.clone()
+        Column {
+            length: self.length,
+            null_bitmap: self.null_bitmap.clone(),
+            offsets: self.offsets.clone(),
+            data: self.data.clone(),
+            elem_buf: self.elem_buf.clone(),
+            // Go intentionally does not propagate `avoidReusing`: the copy
+            // owns all buffers even when the source was a zero-copy codec
+            // view, so it is safe to return to the allocator.
+            avoid_reusing: false,
+        }
     }
 
     /// Go `appendCellByCell`: append `src`'s cell at `row_idx` (value and
@@ -1110,6 +1152,18 @@ mod tests {
         assert_eq!(empty_fixed.type_size(), 4);
         let empty_var = Column::new_empty_column(&FieldType::new(FieldTypeCode::Blob));
         assert!(!empty_var.is_fixed());
+    }
+
+    #[test]
+    fn copy_construct_owns_buffers_and_clears_zero_copy_reuse_guard() {
+        let mut source = Column::new_var_len(2);
+        source.append_string("owned value");
+        source.avoid_reusing = true;
+
+        let copied = source.copy_construct();
+        assert_eq!(copied.get_bytes(0), b"owned value");
+        assert!(!copied.avoid_reusing);
+        assert!(source.avoid_reusing);
     }
 
     /// Go `TestLargeStringColumnOffset` (`pkg/util/chunk/column_test.go`): a

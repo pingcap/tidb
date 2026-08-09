@@ -25,13 +25,12 @@
 //!
 //! DEFERRED (documented): the `requiredRows`/`IsFull` growth policy,
 //! `GrowAndReset`, `CopyConstructSel` and other selection transforms, the chunk
-//! pool/allocator, disk spilling (`chunk_in_disk`), and the exotic-typed append
-//! helpers that depend on `VectorFloat32` column support (Time and
-//! Duration are ported; see `column.rs` for the `MyDecimal` layout deferral).
+//! pool/allocator, and some selection transforms. Time, Duration, decimal,
+//! JSON, Enum/Set, and VectorFloat32 typed append paths are implemented.
 
 use crate::column::Column;
 use crate::row::Row;
-use tidb_datatype::{Datum, FieldType, MyDecimal, MySqlDuration, Time};
+use tidb_datatype::{Datum, FieldType, MyDecimal, MySqlDuration, Time, VectorFloat32};
 
 /// Go `chunk.InitialCapacity`: the capacity a chunk grows to when it is renewed
 /// from a chunk that had no capacity of its own.
@@ -44,6 +43,12 @@ pub struct Chunk {
     /// selected.
     pub(crate) sel: Option<Vec<usize>>,
     pub(crate) columns: Vec<Column>,
+    /// Go distinguishes a nil `columns` slice from a non-nil zero-length
+    /// slice. `Vec::is_empty` cannot represent that distinction, so keep the
+    /// construction state explicitly. Renewal of a valid zero-column chunk
+    /// must preserve its capacity policy; only a literal zero-value Chunk has
+    /// nil-column semantics.
+    columns_initialized: bool,
     /// Go `numVirtualRows`: the row count when the chunk holds no columns.
     pub(crate) num_virtual_rows: usize,
     /// Go `capacity`: the max rows this chunk was sized for.
@@ -66,6 +71,7 @@ impl Chunk {
                 .iter()
                 .map(|f| Column::new_column(f, capacity))
                 .collect(),
+            columns_initialized: true,
             num_virtual_rows: 0,
             capacity,
             required_rows: max_chunk_size,
@@ -84,6 +90,7 @@ impl Chunk {
     pub fn new_empty(fields: &[FieldType]) -> Self {
         Chunk {
             columns: fields.iter().map(Column::new_empty_column).collect(),
+            columns_initialized: true,
             ..Chunk::default()
         }
     }
@@ -174,7 +181,7 @@ impl Chunk {
     /// only `inCompleteChunk`; an empty `columns` vector reproduces it.
     #[must_use]
     pub fn renew_with_capacity(&self, capacity: usize, required_rows: usize) -> Chunk {
-        if self.columns.is_empty() {
+        if !self.columns_initialized {
             return Chunk {
                 in_complete_chunk: self.in_complete_chunk,
                 ..Chunk::default()
@@ -187,6 +194,7 @@ impl Chunk {
                 .iter()
                 .map(|col| Column::new_column_with_type_size(col.type_size(), capacity))
                 .collect(),
+            columns_initialized: true,
             num_virtual_rows: 0,
             capacity,
             required_rows,
@@ -322,6 +330,12 @@ impl Chunk {
         self.columns[col_idx].append_set(value);
     }
 
+    /// Go `AppendVectorFloat32`.
+    pub fn append_vector_float32(&mut self, col_idx: usize, value: &VectorFloat32) {
+        self.append_sel(col_idx);
+        self.columns[col_idx].append_vector_float32(value);
+    }
+
     /// Go `AppendDatum`: append a [`Datum`] value into column `col_idx`,
     /// dispatching on its kind (the inverse of [`Row::get_datum`]).
     ///
@@ -356,6 +370,7 @@ impl Chunk {
             Datum::Json(value) => self.append_json(col_idx, value),
             Datum::Enum(value, _) => self.append_enum(col_idx, value),
             Datum::Set(value, _) => self.append_set(col_idx, value),
+            Datum::VectorFloat32(value) => self.append_vector_float32(col_idx, value),
             Datum::Time(t) => self.append_time(col_idx, *t),
             Datum::Duration(d) => self.append_duration(col_idx, *d),
             Datum::Decimal(dec) => {
@@ -394,6 +409,7 @@ impl Chunk {
         Chunk {
             sel: self.sel.clone(),
             columns: self.columns.iter().map(Column::copy_construct).collect(),
+            columns_initialized: self.columns_initialized,
             num_virtual_rows: self.num_virtual_rows,
             capacity: self.capacity,
             required_rows: self.required_rows,
@@ -448,21 +464,16 @@ mod tests {
         assert_eq!(Chunk::new(&bigint, 1024, 1024).memory_usage(), 8440);
     }
 
-    /// A VARIABLE-length column does NOT agree with Go, and the gap is in the
-    /// chunk port's allocation strategy rather than in this accounting: Go's
-    /// `newVarLenColumn` pre-reserves `data` for `estimatedElemLen*capacity`
-    /// bytes while [`Column::new_var_len`] starts `data` empty. Go reports 636
-    /// for a fresh single-VARCHAR chunk at capacity 32; the port reports the
-    /// bytes it actually holds, which is less because it actually allocated
-    /// less. Accounting the Go number here would over-count memory this
-    /// process never took.
+    /// Go `newVarLenColumn` pre-reserves `estimatedElemLen*capacity` data bytes.
+    /// That allocation is part of the memory-tracker/spill contract, not an
+    /// implementation detail: a fresh single-VARCHAR chunk at capacity 32 is
+    /// exactly 636 bytes in both implementations.
     #[test]
-    fn memory_usage_of_a_var_length_column_reports_what_was_actually_allocated() {
+    fn memory_usage_of_a_var_length_column_matches_go() {
         let varchar = vec![FieldType::new(FieldTypeCode::VarString)];
         let chk = Chunk::new(&varchar, 32, 1024);
-        // 112 struct + 4 null bitmap + 33*8 offsets + 0 data + 0 elemBuf.
-        assert_eq!(chk.memory_usage(), 112 + 4 + 33 * 8);
-        assert!(chk.memory_usage() < 636, "Go's number for the same chunk");
+        // 112 struct + 4 null bitmap + 33*8 offsets + 32*8 data + 0 elemBuf.
+        assert_eq!(chk.memory_usage(), 636);
     }
 
     /// The tracked number must GROW as rows land, or an operator that fills a
@@ -515,6 +526,14 @@ mod tests {
         let renewed = full.renew(1024);
         assert_eq!(renewed.num_cols(), 1);
         assert_eq!(renewed.num_rows(), 0);
+
+        // Go distinguishes a nil columns slice from a non-nil empty one. A
+        // constructed zero-column chunk keeps renewal policy even though its
+        // logical column count is zero.
+        let zero_columns = Chunk::new(&[], 7, 31);
+        let zero_columns = zero_columns.renew_with_capacity(13, 31);
+        assert_eq!(zero_columns.capacity(), 13);
+        assert_eq!(zero_columns.required_rows, 31);
     }
 
     #[test]
@@ -827,5 +846,25 @@ mod tests {
         assert_eq!(chk.num_cols(), 0);
         chk.set_num_virtual_rows(5);
         assert_eq!(chk.num_rows(), 5);
+        assert!(!chk.get_row(0).is_empty());
+        assert!(Row::empty().is_empty());
+    }
+
+    #[test]
+    fn vector_float32_cell_and_datum_round_trip() {
+        let field = FieldType::new(FieldTypeCode::VectorFloat32);
+        let mut chunk = Chunk::new_with_capacity(std::slice::from_ref(&field), 3);
+        let empty = VectorFloat32::default();
+        let values = VectorFloat32::must_create(vec![-1.25, 0.0, 3.5]);
+        chunk.append_vector_float32(0, &empty);
+        chunk.append_datum(0, &Datum::VectorFloat32(values.clone()));
+        chunk.append_null(0);
+
+        assert_eq!(chunk.get_row(0).get_vector_float32(0), empty);
+        assert_eq!(
+            chunk.get_row(1).get_datum(0, &field),
+            Datum::VectorFloat32(values)
+        );
+        assert_eq!(chunk.get_row(2).get_datum(0, &field), Datum::Null);
     }
 }
