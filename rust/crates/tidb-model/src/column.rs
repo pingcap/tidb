@@ -30,7 +30,10 @@
 //! nested JSON nulls remain nil interfaces rather than a fabricated dynamic
 //! null type.
 
-use std::{collections::BTreeSet, fmt};
+use std::{
+    collections::{BTreeSet, HashSet},
+    fmt,
+};
 
 use serde::de::{DeserializeSeed, MapAccess, Visitor};
 use serde::{Deserialize, Serialize};
@@ -968,6 +971,53 @@ pub fn find_on_update_column_infos(
     )
 }
 
+/// Go `table.errDuplicateColumn` / MySQL `ErrFieldSpecifiedTwice` (1110).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DuplicateColumnError {
+    name: CiString,
+}
+
+impl DuplicateColumnError {
+    /// Returns the duplicated source column name.
+    #[must_use]
+    pub fn name(&self) -> &CiString {
+        &self.name
+    }
+
+    /// Returns Go's table-local wire error number.
+    #[must_use]
+    pub const fn code(&self) -> u16 {
+        tidb_error::tidb::errcode::ErrFieldSpecifiedTwice
+    }
+}
+
+impl fmt::Display for DuplicateColumnError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "Column '{}' specified twice",
+            self.name.original()
+        )
+    }
+}
+
+impl std::error::Error for DuplicateColumnError {}
+
+/// Go `table.CheckOnce`: checks the case-insensitive column-name namespace
+/// and stops at the first duplicate.
+pub fn check_column_infos_once(
+    cols: &GoSharedPointerSlice<ColumnInfo>,
+) -> Result<(), DuplicateColumnError> {
+    let mut names = HashSet::with_capacity(cols.len());
+    for column in cols.iter_deref() {
+        let name = column.read().name.clone();
+        if !names.insert(name.lowercase().to_owned()) {
+            return Err(DuplicateColumnError { name });
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1134,6 +1184,19 @@ mod tests {
         let on_update = find_on_update_column_infos(&cols);
         assert_eq!(on_update.len(), 1);
         assert!(on_update.get(0).unwrap().ptr_eq(&cols.get(0).unwrap()));
+    }
+
+    #[test]
+    fn check_once_rejects_the_first_source_duplicate() {
+        let column = GoShared::new(col("a", FieldTypeCode::Long));
+        let duplicate =
+            GoSharedPointerSlice::from_handles(vec![Some(column.clone()), Some(column.clone())]);
+        let error = check_column_infos_once(&duplicate).unwrap_err();
+        assert_eq!(error.name().original(), "a");
+        assert_eq!(error.code(), 1110);
+        assert_eq!(error.to_string(), "Column 'a' specified twice");
+
+        assert!(check_column_infos_once(&GoSharedPointerSlice::default()).is_ok());
     }
 
     // Go TestDefaultValue (the non-JSON assertions): plain and BIT columns,
