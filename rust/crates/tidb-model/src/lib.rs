@@ -87,8 +87,8 @@ pub use index::{
 };
 pub use job::{
     AddForeignKeyInfo, AdminCommandOperator, HistoryInfo, InvolvingSchemaInfo,
-    InvolvingSchemaInfoMode, Job, JobMeta, JobPauseReason, JobResumeReason, JobW, MultiSchemaInfo,
-    PersistedRawJson, ResolvedTimeZone, SubJob, TimeZoneLocation, TraceInfo,
+    InvolvingSchemaInfoMode, Job, JobMeta, JobPauseReason, JobResumeReason, JobW, JobWarnings,
+    MultiSchemaInfo, PersistedRawJson, ResolvedTimeZone, SubJob, TimeZoneLocation, TraceInfo,
 };
 pub use job_args::{
     index_arg_columnar_index_type, rename_tables_args_from_v1, IndexOp, RenameTableArgs,
@@ -103,8 +103,8 @@ pub use masking_policy::{
 pub use partition::{PartitionDefinition, PartitionInfo, PartitionState, UpdateIndexInfo};
 pub use placement::{PlacementSettings, PolicyInfo, PolicyRefInfo};
 pub use reorg::{
-    set_ddl_reorg_process_defaults, BackfillMeta, BackfillState, DDLReorgMeta, ReorgStage,
-    ReorgType,
+    BackfillMeta, BackfillState, DDLReorgMeta, DDLReorgProcessDefaults, DDLWarningCountMap,
+    DDLWarningMap, ReorgStage, ReorgType,
 };
 pub use resource_group::{
     ResourceGroupBackgroundSettings, ResourceGroupInfo, ResourceGroupRunawayAction,

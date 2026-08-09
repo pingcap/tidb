@@ -21,6 +21,7 @@ use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
 use serde_json::value::RawValue;
+use tidb_datatype::GoString;
 use tidb_error::terror::TerrorError;
 
 use crate::action_type::ActionType;
@@ -226,7 +227,7 @@ pub struct JobMeta {
     pub type_: ActionType,
     /// Original DDL query text.
     #[serde(rename = "query", default)]
-    pub query: String,
+    pub query: GoString,
     /// Operation priority used by index creation.
     #[serde(rename = "priority", default)]
     pub priority: i64,
@@ -241,7 +242,7 @@ pub enum ResolvedTimeZone {
     /// A fixed offset retaining the source-provided zone name.
     Fixed {
         /// Caller-provided fixed-zone name.
-        name: String,
+        name: GoString,
         /// Offset in seconds east of UTC.
         offset_seconds: i64,
     },
@@ -250,10 +251,19 @@ pub enum ResolvedTimeZone {
 impl ResolvedTimeZone {
     /// Returns the stable source-visible location name.
     #[must_use]
-    pub fn name(&self) -> &str {
+    pub fn name(&self) -> String {
         match self {
-            Self::Named(zone) => zone.name(),
-            Self::Fixed { name, .. } => name,
+            Self::Named(zone) => zone.name().to_owned(),
+            Self::Fixed { name, .. } => name.to_utf8_lossy_go(),
+        }
+    }
+
+    /// Returns the exact source-visible location-name bytes.
+    #[must_use]
+    pub fn name_bytes(&self) -> &[u8] {
+        match self {
+            Self::Named(zone) => zone.name().as_bytes(),
+            Self::Fixed { name, .. } => name.as_bytes(),
         }
     }
 }
@@ -265,7 +275,7 @@ impl ResolvedTimeZone {
 pub struct TimeZoneLocation {
     /// IANA or fixed-zone name persisted by the DDL job.
     #[serde(rename = "name", default)]
-    pub name: String,
+    pub name: GoString,
     /// Fixed offset in seconds east of UTC; zero selects named-zone loading.
     #[serde(rename = "offset", default)]
     pub offset: i64,
@@ -432,12 +442,15 @@ impl SubJob {
     /// Builds the parent-shaped proxy job used to execute this sub-job.
     #[must_use]
     pub fn to_proxy_job(&self, parent: &Job, sequence: i64) -> Job {
-        let mut reorg_meta = parent.reorg_meta.clone();
-        if let Some(meta) = &mut reorg_meta {
-            meta.reorg_type = self.reorg_type;
-            meta.stage = self.reorg_stage;
-            meta.analyze_state = self.analyze_state;
-        }
+        let reorg_meta = parent.reorg_meta.as_ref().map(|parent_meta| {
+            let meta = parent_meta.read().shallow_copy();
+            let mut meta_value = meta.write();
+            meta_value.reorg_type = self.reorg_type;
+            meta_value.stage = self.reorg_stage;
+            meta_value.analyze_state = self.analyze_state;
+            drop(meta_value);
+            meta
+        });
         Job {
             version: parent.version,
             id: parent.id,
@@ -482,7 +495,8 @@ impl SubJob {
         self.revertible = proxy
             .multi_schema_info
             .as_ref()
-            .is_some_and(|info| info.revertible);
+            .expect("proxy Job.MultiSchemaInfo is required by FromProxyJob")
+            .revertible;
         self.schema_state = proxy.schema_state;
         self.snapshot_version = proxy.snapshot_version;
         self.real_start_ts = proxy.real_start_ts;
@@ -492,6 +506,7 @@ impl SubJob {
         self.row_count = proxy.row_count;
         self.schema_version = schema_version;
         if let Some(meta) = &proxy.reorg_meta {
+            let meta = meta.read();
             self.reorg_type = meta.reorg_type;
             self.reorg_stage = meta.stage;
             self.analyze_state = meta.analyze_state;
@@ -521,10 +536,12 @@ impl TimeZoneLocation {
             })
         } else {
             let canonical = if self.name.is_empty() {
-                "UTC"
+                Ok("UTC")
             } else {
-                self.name.as_str()
-            };
+                self.name
+                    .as_utf8()
+                    .map_err(|_| format!("unknown time zone {}", self.name))
+            }?;
             canonical
                 .parse::<chrono_tz::Tz>()
                 .map(ResolvedTimeZone::Named)
@@ -605,7 +622,7 @@ pub struct Job {
     pub version: JobVersion,
     /// Reorganization execution metadata.
     #[serde(rename = "reorg_meta", default)]
-    pub reorg_meta: Option<DDLReorgMeta>,
+    pub reorg_meta: Option<GoShared<DDLReorgMeta>>,
     /// Multi-schema sub-job state, when present.
     #[serde(rename = "multi_schema_info", default)]
     pub multi_schema_info: Option<MultiSchemaInfo>,
@@ -704,10 +721,11 @@ impl std::ops::DerefMut for JobW {
     }
 }
 
-/// Borrowed warning and warning-count maps returned by [`Job::get_warnings`].
-pub type JobWarningsRef<'a> = (
-    Option<&'a BTreeMap<String, Option<TerrorError>>>,
-    Option<&'a BTreeMap<String, i64>>,
+/// Shared warning and warning-count map handles returned by
+/// [`Job::get_warnings`].
+pub type JobWarnings = (
+    Option<GoShared<crate::reorg::DDLWarningMap>>,
+    Option<GoShared<crate::reorg::DDLWarningCountMap>>,
 );
 
 impl Job {
@@ -725,25 +743,27 @@ impl Job {
     /// Replaces the reorganization warning maps.
     pub fn set_warnings(
         &mut self,
-        warnings: Option<BTreeMap<String, Option<TerrorError>>>,
-        warning_counts: Option<BTreeMap<String, i64>>,
+        warnings: Option<GoShared<crate::reorg::DDLWarningMap>>,
+        warning_counts: Option<GoShared<crate::reorg::DDLWarningCountMap>>,
     ) {
         let metadata = self
             .reorg_meta
-            .as_mut()
+            .as_ref()
             .expect("Job.ReorgMeta is required by SetWarnings");
+        let mut metadata = metadata.write();
         metadata.warnings = warnings;
         metadata.warnings_count = warning_counts;
     }
 
-    /// Borrows the reorganization warning maps.
+    /// Returns aliases of the reorganization warning maps.
     #[must_use]
-    pub fn get_warnings(&self) -> JobWarningsRef<'_> {
+    pub fn get_warnings(&self) -> JobWarnings {
         let metadata = self
             .reorg_meta
             .as_ref()
             .expect("Job.ReorgMeta is required by GetWarnings");
-        (metadata.warnings.as_ref(), metadata.warnings_count.as_ref())
+        let metadata = metadata.read();
+        (metadata.warnings.clone(), metadata.warnings_count.clone())
     }
 
     /// Marks a table job finished and records its schema-history snapshot.
@@ -858,6 +878,15 @@ impl Job {
         crate::serde_helpers::to_go_json(self)
     }
 
+    /// Explicit nullable receiver boundary for Go `(*Job).Encode`. The source
+    /// dereferences a nil receiver while updating or marshaling it.
+    pub fn encode_pointer(
+        receiver: Option<&mut Self>,
+        update_raw_args: bool,
+    ) -> Result<Vec<u8>, serde_json::Error> {
+        receiver.expect("nil *Job receiver").encode(update_raw_args)
+    }
+
     /// Decodes persisted JSON into this job; JSON `null` leaves it unchanged.
     pub fn decode(&mut self, bytes: &[u8]) -> Result<(), serde_json::Error> {
         // Go's scanner rejects malformed JSON before it starts assigning
@@ -872,6 +901,22 @@ impl Job {
         self.go_json_merge(&mut deserializer)
             .map_err(crate::serde_helpers::normalize_fatal_json_error)?;
         deserializer.end()
+    }
+
+    /// Explicit nullable receiver boundary for Go `(*Job).Decode`.
+    pub fn decode_pointer(
+        receiver: Option<&mut Self>,
+        bytes: &[u8],
+    ) -> Result<(), serde_json::Error> {
+        // `json.Unmarshal` validates the document before checking whether its
+        // destination pointer is usable.
+        let _: &serde_json::value::RawValue = serde_json::from_slice(bytes)?;
+        let Some(receiver) = receiver else {
+            return Err(<serde_json::Error as serde::de::Error>::custom(
+                "json: Unmarshal(nil *model.Job)",
+            ));
+        };
+        receiver.decode(bytes)
     }
 
     /// Clones through the persisted codec and clears private decoded arguments.
@@ -1260,6 +1305,7 @@ impl std::fmt::Display for Job {
             self.version,
         )?;
         if let Some(metadata) = &self.reorg_meta {
+            let metadata = metadata.read();
             if self.type_ == ActionType::ACTION_MODIFY_COLUMN {
                 write!(
                     formatter,
@@ -1270,7 +1316,10 @@ impl std::fmt::Display for Job {
             write!(
                 formatter,
                 ", UniqueWarnings:{}",
-                metadata.warnings.as_ref().map_or(0, BTreeMap::len)
+                metadata
+                    .warnings
+                    .as_ref()
+                    .map_or(0, |warnings| warnings.read().len())
             )?;
         }
         if self.type_ != ActionType::ACTION_MULTI_SCHEMA_CHANGE {
@@ -1643,15 +1692,15 @@ mod tests {
         let mut cached = TimeZoneLocation::default();
         let utc = cached.get_location().unwrap();
         assert_eq!(utc.name(), "UTC");
-        cached.name = "Asia/Shanghai".to_owned();
+        cached.name = "Asia/Shanghai".into();
         assert_eq!(cached.get_location().unwrap().name(), "UTC");
         let shanghai = TimeZoneLocation {
-            name: "Asia/Shanghai".to_owned(),
+            name: "Asia/Shanghai".into(),
             ..Default::default()
         };
         assert_eq!(shanghai.get_location().unwrap().name(), "Asia/Shanghai");
         let fixed = TimeZoneLocation {
-            name: "UTC".to_owned(),
+            name: "UTC".into(),
             offset: 18_000,
             ..Default::default()
         }
@@ -1659,7 +1708,7 @@ mod tests {
         .unwrap();
         assert_eq!(fixed.name(), "UTC");
         assert!(TimeZoneLocation {
-            name: "Not/AZone".to_owned(),
+            name: "Not/AZone".into(),
             offset: 0,
             ..Default::default()
         }
@@ -1667,7 +1716,7 @@ mod tests {
         .is_err());
 
         let widest_go_int = TimeZoneLocation {
-            name: "wide".to_owned(),
+            name: "wide".into(),
             offset: i64::MAX,
             ..Default::default()
         };
@@ -1682,6 +1731,13 @@ mod tests {
                 ..
             }
         ));
+
+        let arbitrary = TimeZoneLocation {
+            name: GoString::from_bytes(vec![b'x', 0xff]),
+            offset: 1,
+            ..Default::default()
+        };
+        assert_eq!(arbitrary.get_location().unwrap().name_bytes(), [b'x', 0xff]);
     }
 
     #[test]
@@ -1883,15 +1939,75 @@ mod tests {
         assert!(encoded.contains(r#"\u003c\u003e\u0026\u2028\u2029"#));
         assert!(encoded.contains(r#""ratio":1"#));
 
+        let parent_warnings = GoShared::new(BTreeMap::from([("old".into(), None)]));
+        let parent_location = GoShared::new(TimeZoneLocation {
+            name: "UTC".into(),
+            ..Default::default()
+        });
+        let parent_reorg = GoShared::new(DDLReorgMeta {
+            warnings: Some(parent_warnings.clone()),
+            location: Some(parent_location.clone()),
+            reorg_type: ReorgType::TXN,
+            stage: ReorgStage::NONE,
+            analyze_state: 1,
+            ..Default::default()
+        });
+        v2.reorg_meta = Some(parent_reorg.clone());
+        let (returned_warnings, returned_counts) = v2.get_warnings();
+        assert!(parent_warnings.ptr_eq(returned_warnings.as_ref().unwrap()));
+        assert!(returned_counts.is_none());
         let sub_job = SubJob {
             type_: ActionType::ACTION_ADD_INDEX,
             state: JobState::QUEUEING,
+            reorg_type: ReorgType::INGEST,
+            reorg_stage: ReorgStage::MODIFY_COLUMN_RECREATE_INDEX,
+            analyze_state: 3,
             ..Default::default()
         };
         let proxy = sub_job.to_proxy_job(&v2, i64::MAX);
         assert!(proxy.has_resume_reason(JOB_RESUME_REASON_KV_DISK_FULL));
         assert_eq!(proxy.type_, ActionType::ACTION_ADD_INDEX);
-        assert_eq!(proxy.multi_schema_info.unwrap().seq, -1);
+        let proxy_reorg = proxy.reorg_meta.as_ref().unwrap();
+        assert!(!parent_reorg.ptr_eq(proxy_reorg));
+        let proxy_reorg = proxy_reorg.read();
+        assert!(parent_warnings.ptr_eq(proxy_reorg.warnings.as_ref().unwrap()));
+        assert!(parent_location.ptr_eq(proxy_reorg.location.as_ref().unwrap()));
+        assert_eq!(proxy_reorg.reorg_type, ReorgType::INGEST);
+        assert_eq!(proxy_reorg.stage, ReorgStage::MODIFY_COLUMN_RECREATE_INDEX);
+        assert_eq!(proxy_reorg.analyze_state, 3);
+        drop(proxy_reorg);
+        assert_eq!(parent_reorg.read().reorg_type, ReorgType::TXN);
+        assert_eq!(proxy.multi_schema_info.as_ref().unwrap().seq, -1);
+
+        let mut restored = SubJob::default();
+        restored.from_proxy_job(&proxy, 9);
+        assert_eq!(restored.reorg_type, ReorgType::INGEST);
+        assert_eq!(
+            restored.reorg_stage,
+            ReorgStage::MODIFY_COLUMN_RECREATE_INDEX
+        );
+        assert_eq!(restored.analyze_state, 3);
+
+        let mut preserved = SubJob {
+            reorg_type: ReorgType::TXN_MERGE,
+            reorg_stage: ReorgStage::MODIFY_COLUMN_COMPLETED,
+            analyze_state: 5,
+            ..Default::default()
+        };
+        preserved.from_proxy_job(
+            &Job {
+                multi_schema_info: Some(MultiSchemaInfo::default()),
+                ..Default::default()
+            },
+            10,
+        );
+        assert_eq!(preserved.reorg_type, ReorgType::TXN_MERGE);
+        assert_eq!(preserved.reorg_stage, ReorgStage::MODIFY_COLUMN_COMPLETED);
+        assert_eq!(preserved.analyze_state, 5);
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            preserved.from_proxy_job(&Job::default(), 11);
+        }))
+        .is_err());
 
         let cached = SubJob {
             args: Some(vec![serde_json::json!({"decoded": true})]),
@@ -1951,13 +2067,25 @@ mod tests {
             .unwrap_err();
         assert!(error.to_string().contains("invalid type"));
         assert_eq!(unchanged.error_count, 7);
+
+        assert!(std::panic::catch_unwind(|| Job::encode_pointer(None, false)).is_err());
+        let error = Job::decode_pointer(None, br#"{}"#).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("json: Unmarshal(nil *model.Job)"));
+        let syntax = Job::decode_pointer(None, b"{").unwrap_err();
+        assert!(!syntax
+            .to_string()
+            .contains("json: Unmarshal(nil *model.Job)"));
     }
 
     #[test]
     fn job_decode_matches_go_object_stream_boundaries() {
         let mut reorg_meta = DDLReorgMeta::default();
-        reorg_meta.resource_group_name = "existing".to_owned();
-        reorg_meta.warnings = Some(BTreeMap::from([("old".to_owned(), None)]));
+        reorg_meta.resource_group_name = "existing".into();
+        let warning_map = GoShared::new(BTreeMap::from([("old".into(), None)]));
+        reorg_meta.warnings = Some(warning_map.clone());
+        let reorg_pointer = GoShared::new(reorg_meta);
         let mut job = Job {
             id: 42,
             row_count: 1,
@@ -1972,7 +2100,7 @@ mod tests {
                 message: "old message".to_owned(),
             }),
             session_vars: Some(BTreeMap::from([("old".to_owned(), "1".to_owned())])),
-            reorg_meta: Some(reorg_meta),
+            reorg_meta: Some(reorg_pointer.clone()),
             ..Default::default()
         };
 
@@ -2015,18 +2143,24 @@ mod tests {
         assert!(job.involving_schema_info.is_none());
         assert_eq!(job.get_system_var("old"), Some("1"));
         assert_eq!(job.get_system_var("new"), Some("3"));
-        let reorg = job.reorg_meta.as_ref().unwrap();
+        assert!(reorg_pointer.ptr_eq(job.reorg_meta.as_ref().unwrap()));
+        let reorg = job.reorg_meta.as_ref().unwrap().read();
         assert_eq!(reorg.resource_group_name, "existing");
         assert_eq!(reorg.max_node_count, 5);
-        assert!(reorg.warnings.as_ref().unwrap().contains_key("old"));
-        assert!(reorg.warnings.as_ref().unwrap().contains_key("new"));
+        assert!(warning_map.ptr_eq(reorg.warnings.as_ref().unwrap()));
+        let warnings = reorg.warnings.as_ref().unwrap().read();
+        assert!(warnings.contains_key(&GoString::from("old")));
+        assert!(warnings.contains_key(&GoString::from("new")));
         assert_eq!(
-            reorg.warnings.as_ref().unwrap()["new"]
+            warnings[&GoString::from("new")]
                 .as_ref()
                 .unwrap()
+                .read()
                 .message(),
             "new"
         );
+        drop(warnings);
+        drop(reorg);
 
         job.decode(
             "{\"warning\":{\"claſs\":5,\"code\":3,\"message\":\"folded\",\"rfccode\":\"executor:3\"}}"
@@ -2041,7 +2175,7 @@ mod tests {
         job.decode(br#"{"session_vars":null,"reorg_meta":{"warnings":null}}"#)
             .unwrap();
         assert!(job.session_vars.is_none());
-        assert!(job.reorg_meta.as_ref().unwrap().warnings.is_none());
+        assert!(job.reorg_meta.as_ref().unwrap().read().warnings.is_none());
 
         let id_before_syntax_error = job.id;
         assert!(job.decode(br#"{"id":99,"row_count":}"#).is_err());
@@ -2077,17 +2211,28 @@ mod tests {
         assert_eq!(job.get_system_var("null_value"), Some(""));
         assert_eq!(job.id, 54);
 
-        let reorg_max_nodes = job.reorg_meta.as_ref().unwrap().max_node_count;
+        let reorg_max_nodes = job.reorg_meta.as_ref().unwrap().read().max_node_count;
         let error = job
             .decode(
                 br#"{"reorg_meta":{"warnings":{"bad":7,"later":null},"max_node_count":99},"id":55}"#,
             )
             .unwrap_err();
         assert!(error.to_string().contains("invalid type"));
-        let reorg = job.reorg_meta.as_ref().unwrap();
-        assert!(!reorg.warnings.as_ref().unwrap().contains_key("bad"));
-        assert!(!reorg.warnings.as_ref().unwrap().contains_key("later"));
+        let reorg = job.reorg_meta.as_ref().unwrap().read();
+        assert!(!reorg
+            .warnings
+            .as_ref()
+            .unwrap()
+            .read()
+            .contains_key(&GoString::from("bad")));
+        assert!(!reorg
+            .warnings
+            .as_ref()
+            .unwrap()
+            .read()
+            .contains_key(&GoString::from("later")));
         assert_eq!(reorg.max_node_count, reorg_max_nodes);
+        drop(reorg);
         assert_eq!(job.id, 54);
 
         job.decode(br#"{"row_count":18446744073709551616,"table_id":54}"#)
@@ -2106,7 +2251,7 @@ mod tests {
             .decode(br#"{"reorg_meta":{"version":9,"max_node_count":"bad"}}"#)
             .unwrap_err();
         assert!(error.to_string().contains("invalid type"));
-        assert_eq!(job.reorg_meta.as_ref().unwrap().version, 9);
+        assert_eq!(job.reorg_meta.as_ref().unwrap().read().version, 9);
     }
 
     #[test]

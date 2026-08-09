@@ -1917,9 +1917,15 @@ pub mod go_bytes {
         output
     }
 
-    fn decode<E: serde::de::Error>(text: &str) -> Result<Vec<u8>, E> {
+    pub(crate) fn decode_with_capacity<E: serde::de::Error>(
+        text: &str,
+    ) -> Result<(Vec<u8>, usize), E> {
         // `encoding/base64.StdEncoding`, used by `encoding/json`, requires
         // padded four-byte quanta and ignores CR/LF only.
+        // `encoding/json` allocates `StdEncoding.DecodedLen(len(text))`
+        // before decoding, so CR/LF and padding affect the observable slice
+        // capacity even though they do not contribute output bytes.
+        let decoded_capacity = text.len() / 4 * 3;
         let compact: Vec<u8> = text
             .bytes()
             .filter(|byte| !matches!(byte, b'\r' | b'\n'))
@@ -1961,7 +1967,11 @@ pub mod go_bytes {
             let fourth = value(quartet[3])?;
             output.push((((third & 0x03) << 6) | fourth) as u8);
         }
-        Ok(output)
+        Ok((output, decoded_capacity))
+    }
+
+    fn decode<E: serde::de::Error>(text: &str) -> Result<Vec<u8>, E> {
+        decode_with_capacity(text).map(|(bytes, _)| bytes)
     }
 
     /// Serializes nil as `null` and bytes as padded standard base64.

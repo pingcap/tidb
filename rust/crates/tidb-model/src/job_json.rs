@@ -309,7 +309,7 @@ impl_go_json_merge_object!(Job, destination, map, key, {
     } else if go_json_field_matches(&key, "version") {
         map.next_value_seed(NullNoopSeed(&mut destination.version))?;
     } else if go_json_field_matches(&key, "reorg_meta") {
-        map.next_value_seed(OptionMergeSeed(&mut destination.reorg_meta))?;
+        map.next_value_seed(OptionSharedMergeSeed(&mut destination.reorg_meta))?;
     } else if go_json_field_matches(&key, "multi_schema_info") {
         map.next_value_seed(OptionMergeSeed(&mut destination.multi_schema_info))?;
     } else if go_json_field_matches(&key, "priority") {
