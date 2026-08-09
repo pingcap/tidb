@@ -50,16 +50,23 @@
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 /// Go `autoid.GetStep()`'s `defaultStep`: how many ids an allocator reserves
 /// from a shared store at once.
 ///
-/// DIVERGENCE (documented, and only about how OFTEN the store is read): Go
-/// grows this between reservations from how fast the last one was consumed
-/// (`NextStep`, `minStep` 30000 up to `maxStep` 2000000). A fixed step issues
-/// the same ids in the same order and differs only in the number of meta-key
-/// transactions a long insert run costs.
 pub const DEFAULT_AUTO_ID_STEP: u64 = 30000;
+
+const MAX_AUTO_ID_STEP: u64 = 2_000_000;
+const DEFAULT_CONSUME_TIME: Duration = Duration::from_secs(10);
+
+/// Go `autoid.NextStep`: resize the next reservation by how quickly the
+/// current one was consumed, bounded by `minStep` and `maxStep`.
+#[must_use]
+pub fn next_step(current_step: u64, consume_duration: Duration) -> u64 {
+    let consume_rate = DEFAULT_CONSUME_TIME.as_secs_f64() / consume_duration.as_secs_f64();
+    ((current_step as f64 * consume_rate) as u64).clamp(DEFAULT_AUTO_ID_STEP, MAX_AUTO_ID_STEP)
+}
 
 /// Where an allocator's counter really lives.
 ///
@@ -301,8 +308,10 @@ pub(crate) struct AutoIdAllocator {
     cache: Arc<Mutex<AutoIdRange>>,
     /// Where the counter really lives.
     store: Arc<dyn AutoIdStore>,
-    /// Go `allocator.step`: how much to reserve when the cache runs dry.
-    step: u64,
+    /// Initial reservation size. The default enables Go's dynamic `NextStep`;
+    /// any explicitly different value remains a fixed custom step.
+    initial_step: u64,
+    dynamic_step: bool,
     /// Go `allocator.isUnsigned`: which domain the patterns are read in.
     pub(crate) unsigned: bool,
 }
@@ -314,6 +323,10 @@ struct AutoIdRange {
     base: u64,
     /// The highest id this cache may hand out.
     end: u64,
+    /// Go `allocator.step`, updated after each dynamic reservation.
+    step: u64,
+    /// Go `allocator.lastAllocTime`.
+    last_reserve_at: Instant,
 }
 
 impl AutoIdAllocator {
@@ -324,11 +337,18 @@ impl AutoIdAllocator {
 
     /// An allocator over `store`, reserving `step` ids at a time.
     pub(crate) fn over(store: Arc<dyn AutoIdStore>, step: u64) -> Self {
+        let step = step.max(1);
         AutoIdAllocator {
             // An empty range, so the first allocation reserves.
-            cache: Arc::new(Mutex::new(AutoIdRange { base: 0, end: 0 })),
+            cache: Arc::new(Mutex::new(AutoIdRange {
+                base: 0,
+                end: 0,
+                step,
+                last_reserve_at: Instant::now(),
+            })),
             store,
-            step: step.max(1),
+            initial_step: step,
+            dynamic_step: step == DEFAULT_AUTO_ID_STEP,
             unsigned: false,
         }
     }
@@ -400,12 +420,25 @@ impl AutoIdAllocator {
             // carrying the old target across (`alloc4Signed`: "CalcNeededBatchSize
             // calculates the total batch size needed on global base"), because
             // the store may have moved the counter further than this node knew.
-            let needed = self.step.max(target.wrapping_sub(cache.base));
+            let mut next_reservation = cache.step;
+            if self.dynamic_step && cache.end != 0 {
+                next_reservation = next_step(cache.step, cache.last_reserve_at.elapsed());
+            }
+            let needed = next_reservation.max(target.wrapping_sub(cache.base));
             let (base, end) = self
                 .store
                 .reserve(needed, self.unsigned)
                 .map_err(AutoIdError::Store)?;
-            *cache = AutoIdRange { base, end };
+            *cache = AutoIdRange {
+                base,
+                end,
+                step: if self.dynamic_step {
+                    needed
+                } else {
+                    cache.step
+                },
+                last_reserve_at: Instant::now(),
+            };
             target = seek_to_first(base, increment, offset, self.unsigned);
             if headroom(base, self.unsigned) <= u128::from(target.wrapping_sub(base)) {
                 return Err(AutoIdError::Exhausted);
@@ -470,7 +503,12 @@ impl AutoIdAllocator {
     pub(crate) fn reset(&self) -> Result<(), AutoIdStoreError> {
         let mut cache = self.cache.lock().expect("auto id cache poisoned");
         self.store.reset()?;
-        *cache = AutoIdRange { base: 0, end: 0 };
+        *cache = AutoIdRange {
+            base: 0,
+            end: 0,
+            step: self.initial_step,
+            last_reserve_at: Instant::now(),
+        };
         Ok(())
     }
 }
@@ -478,6 +516,14 @@ impl AutoIdAllocator {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Source: `pkg/meta/autoid/autoid_test.go::TestNextStep`.
+    #[test]
+    fn test_next_step() {
+        assert_eq!(next_step(2_000_000, Duration::from_nanos(1)), 2_000_000);
+        assert_eq!(next_step(678_910, Duration::from_secs(10)), 678_910);
+        assert_eq!(next_step(50_000, Duration::from_secs(600)), 30_000);
+    }
 
     /// Complete observable translation of
     /// `pkg/meta/autoid/memid_test.go::TestInMemoryAlloc`.
