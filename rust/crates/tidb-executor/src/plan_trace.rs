@@ -1185,12 +1185,18 @@ impl PlanTrace {
     pub(crate) fn index_join_inner_scan(
         &mut self,
         lookup_is_left: bool,
-        access: String,
-        range_info: &str,
-        index: bool,
+        path: IndexJoinInnerPathText<'_>,
         filters: &[String],
         filter_selectivity: f64,
     ) -> Result<(), ()> {
+        let IndexJoinInnerPathText {
+            access,
+            range_info,
+            index,
+            index_lookup,
+            visible,
+            estimated_rows,
+        } = path;
         let depth = self.stack.len();
         if depth < 2 {
             return Err(());
@@ -1233,15 +1239,28 @@ impl PlanTrace {
         scan.access = access;
         scan.info = format!("range: decided by {range_info}, keep order:false{pseudo}");
 
-        // One dynamic range is opened per outer row. Go derives the table
-        // scan's cardinality from that probe population, not from the inner
-        // table's earlier constant-only access path.
-        scan.est_rows = outer_rows.or(scan.est_rows);
+        // One dynamic range is opened per outer row. When the statement's
+        // estimator owns this simple join, its joined-row count is the exact
+        // post-filter inner estimate for a one-row driver. Recover the access
+        // estimate by removing the residual selectivity; otherwise preserve
+        // the older trace-owned outer-row fallback.
+        scan.est_rows = estimated_rows
+            .map(|rows| {
+                if filter_selectivity > 0.0 {
+                    rows / filter_selectivity.clamp(0.0, 1.0)
+                } else {
+                    rows
+                }
+            })
+            .or(outer_rows)
+            .or(scan.est_rows);
         if had_selection {
             let node = &mut self.stack[at];
-            node.est_rows = outer_rows
-                .or(node.est_rows)
-                .map(|rows| rows * filter_selectivity.clamp(0.0, 1.0));
+            node.est_rows = estimated_rows.or_else(|| {
+                outer_rows
+                    .or(node.est_rows)
+                    .map(|rows| rows * filter_selectivity.clamp(0.0, 1.0))
+            });
             if !filters.is_empty() {
                 node.info = filters.join(", ");
             }
@@ -1258,9 +1277,11 @@ impl PlanTrace {
             &mut right
         };
         if !filters.is_empty() && inner.name != "Selection" {
-            let estimate = inner
-                .est_rows
-                .map(|rows| rows * filter_selectivity.clamp(0.0, 1.0));
+            let estimate = estimated_rows.or_else(|| {
+                inner
+                    .est_rows
+                    .map(|rows| rows * filter_selectivity.clamp(0.0, 1.0))
+            });
             let mut selection =
                 PlanNode::new("Selection", estimate, String::new(), filters.join(", "));
             selection.task = "cop[tikv]";
@@ -1274,14 +1295,12 @@ impl PlanTrace {
             *inner = selection;
         }
 
-        fn reader(mut child: PlanNode, forced_index: Option<bool>) -> PlanNode {
-            let reader = forced_index.map_or_else(
-                || match child.name {
-                    "IndexFullScan" | "IndexRangeScan" => "IndexReader",
-                    _ => "TableReader",
-                },
-                |index| if index { "IndexReader" } else { "TableReader" },
-            );
+        fn reader(
+            mut child: PlanNode,
+            forced_index: Option<bool>,
+            index_lookup: bool,
+            visible: &str,
+        ) -> PlanNode {
             fn mark_cop(node: &mut PlanNode) {
                 node.task = "cop[tikv]";
                 for child in &mut node.children {
@@ -1289,6 +1308,46 @@ impl PlanTrace {
                 }
             }
             mark_cop(&mut child);
+            if index_lookup {
+                let estimate = child.est_rows;
+                let act_rows = child.act_rows.clone();
+                let key_ndv_ratio = child.key_ndv_ratio;
+                let pseudo = child.info.contains("stats:pseudo")
+                    || child
+                        .children
+                        .iter()
+                        .any(|node| node.info.contains("stats:pseudo"));
+                child.label = "(Build)";
+
+                let mut table_scan = PlanNode::new(
+                    "TableRowIDScan",
+                    estimate,
+                    format!("table:{visible}"),
+                    format!(
+                        "keep order:false{}",
+                        if pseudo { ", stats:pseudo" } else { "" }
+                    ),
+                );
+                table_scan.task = "cop[tikv]";
+                table_scan.label = "(Probe)";
+                table_scan.act_rows = act_rows.clone();
+                table_scan.key_ndv_ratio = key_ndv_ratio;
+
+                let mut lookup =
+                    PlanNode::new("IndexLookUp", estimate, String::new(), String::new());
+                lookup.act_rows = act_rows;
+                lookup.key_ndv_ratio = key_ndv_ratio;
+                lookup.children.push(child);
+                lookup.children.push(table_scan);
+                return lookup;
+            }
+            let reader = forced_index.map_or_else(
+                || match child.name {
+                    "IndexFullScan" | "IndexRangeScan" => "IndexReader",
+                    _ => "TableReader",
+                },
+                |index| if index { "IndexReader" } else { "TableReader" },
+            );
             let estimate = child.est_rows;
             let act_rows = child.act_rows.clone();
             let key_ndv_ratio = child.key_ndv_ratio;
@@ -1305,20 +1364,20 @@ impl PlanTrace {
         }
 
         if lookup_is_left {
-            left = reader(left, Some(index));
+            left = reader(left, Some(index), index_lookup, visible);
             if matches!(
                 right.name,
                 "TableFullScan" | "TableRangeScan" | "IndexFullScan" | "IndexRangeScan"
             ) {
-                right = reader(right, None);
+                right = reader(right, None, false, visible);
             }
         } else {
-            right = reader(right, Some(index));
+            right = reader(right, Some(index), index_lookup, visible);
             if matches!(
                 left.name,
                 "TableFullScan" | "TableRangeScan" | "IndexFullScan" | "IndexRangeScan"
             ) {
-                left = reader(left, None);
+                left = reader(left, None, false, visible);
             }
         }
         self.stack.push(left);
@@ -1409,7 +1468,19 @@ impl PlanTrace {
         written: &tidb_ast::Expr,
         stats_selectivity: Option<f64>,
     ) -> bool {
-        let Some(info) = physical_expression_text(predicate) else {
+        self.physical_selection_with_columns(predicate, written, stats_selectivity, &[])
+    }
+
+    /// [`Self::physical_selection`] with source-table names for the physical
+    /// columns that projection elimination can still trace to a base table.
+    pub(crate) fn physical_selection_with_columns(
+        &mut self,
+        predicate: &Expression,
+        written: &tidb_ast::Expr,
+        stats_selectivity: Option<f64>,
+        column_names: &[Option<String>],
+    ) -> bool {
+        let Some(info) = physical_expression_text_with_columns(predicate, column_names) else {
             return false;
         };
         let est = if self.consumed {
@@ -1481,7 +1552,21 @@ impl PlanTrace {
         input_projection: bool,
         logical_rows: Option<f64>,
         physical_info: Option<&str>,
+        extra_first_rows: &[String],
     ) {
+        let mut info = physical_info.map_or_else(
+            || grouped_aggregate_info(select, qualify, false, true),
+            str::to_owned,
+        );
+        // A carrier introduced for an enclosing predicate is absent from the
+        // derived SELECT's written field list, but it is a real aggregate
+        // state and must remain visible in the physical plan. An explicitly
+        // supplied physical payload already enumerates every state.
+        if physical_info.is_none() {
+            for carrier in extra_first_rows {
+                info.push_str(&format!(", funcs:firstrow({carrier})->{carrier}"));
+            }
+        }
         self.wrap(
             "StreamAgg",
             logical_rows.map_or_else(
@@ -1494,10 +1579,7 @@ impl PlanTrace {
                 },
                 Est::Fixed,
             ),
-            physical_info.map_or_else(
-                || grouped_aggregate_info(select, qualify, false, true),
-                str::to_owned,
-            ),
+            info,
         );
     }
 
@@ -2164,13 +2246,17 @@ impl PlanTrace {
         right.label = if build_is_left { "(Probe)" } else { "(Build)" };
         let est_rows = index_lookup
             .as_ref()
-            .filter(|text| text.unique)
             .and_then(|text| {
-                if text.lookup_is_left {
-                    right.est_rows
-                } else {
-                    left.est_rows
-                }
+                text.estimated_join_rows.or_else(|| {
+                    if !text.unique {
+                        return None;
+                    }
+                    if text.lookup_is_left {
+                        right.est_rows
+                    } else {
+                        left.est_rows
+                    }
+                })
             })
             .or_else(|| full_join_row_count(&left, &right, equal.len(), merge_keys.as_deref()));
         let named_key_ndvs = merge_keys.as_deref().map_or_else(Vec::new, |keys| {
@@ -2323,10 +2409,6 @@ fn field_list(fields: &[tidb_ast::SelectField], qualify: &Qualifier<'_>) -> Stri
 /// projection elimination. Unsupported nodes are refused by the caller; a
 /// fallback to AST text would describe a different expression than the one
 /// the Selection executor evaluates.
-fn physical_expression_text(expression: &Expression) -> Option<String> {
-    physical_expression_text_with_columns(expression, &[])
-}
-
 fn physical_expression_text_with_columns(
     expression: &Expression,
     column_names: &[Option<String>],
@@ -2896,7 +2978,8 @@ pub(crate) struct JoinStrategy {
 /// the scan itself -- so it is named from the probed object rather than read
 /// off a child that does not exist here.
 pub(crate) struct IndexJoinText {
-    /// `IndexReader` for an index probe, `TableReader` for a handle probe.
+    /// `IndexReader` for a covering index probe, `IndexLookUp` for a double
+    /// read, and `TableReader` for a handle probe.
     pub(crate) reader: &'static str,
     /// The outer and inner key column names, already qualified, in probe
     /// order.
@@ -2917,6 +3000,28 @@ pub(crate) struct IndexJoinText {
     /// plan row carries only their text.
     pub(crate) outer_row_size: f64,
     pub(crate) inner_row_size: f64,
+    /// Statement-owned estimates used to choose `IndexJoin` versus
+    /// `IndexHashJoin`. They are independent of whether EXPLAIN is active.
+    pub(crate) estimated_outer_rows: Option<f64>,
+    pub(crate) estimated_probe_rows_one: Option<f64>,
+    /// The statement-owned equality-join output estimate.
+    pub(crate) estimated_join_rows: Option<f64>,
+}
+
+/// The physical inner access path an index join commits to its plan trace.
+pub(crate) struct IndexJoinInnerPathText<'a> {
+    /// The table or index object printed on the dynamic range scan.
+    pub(crate) access: String,
+    /// Go's `range: decided by` payload.
+    pub(crate) range_info: &'a str,
+    /// Whether the dynamic range reads a secondary index.
+    pub(crate) index: bool,
+    /// Whether that secondary-index access needs a table double read.
+    pub(crate) index_lookup: bool,
+    /// The looked-up table's visible name.
+    pub(crate) visible: &'a str,
+    /// The statement-owned post-filter inner estimate for a one-row driver.
+    pub(crate) estimated_rows: Option<f64>,
 }
 
 /// Unsays `keep order:true` on every leaf under `node` that a join above it
@@ -2993,6 +3098,8 @@ fn index_join_operator(
 ) -> &'static str {
     use tidb_planner::plan_cost_ver2::{hash_build_cost, Ver2Factors};
     use tidb_planner::task_type::TaskType;
+    let outer = text.estimated_outer_rows.or(outer);
+    let inner_rows_one = text.estimated_probe_rows_one.or(inner_rows_one);
     let (Some(build_rows), Some(probe_rows_one)) = (outer, inner_rows_one) else {
         // No estimate on one of the two sides: Go always has one, and this
         // tier's fallback is the candidate Go enumerates first.
@@ -3168,6 +3275,9 @@ mod tests {
             forced_name: None,
             outer_row_size,
             inner_row_size,
+            estimated_outer_rows: None,
+            estimated_probe_rows_one: None,
+            estimated_join_rows: None,
         }
     }
 

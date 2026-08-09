@@ -2071,13 +2071,11 @@ pub(crate) fn build_join(
                 .any(|equi| equi.left == key.left && equi.right == key.right)
         })
     });
-    if let Some(plan) = merged.clone() {
-        join_exec.set_merge_plan(plan);
-    }
     // The index strategy: one side read once per outer key rather than whole.
-    // It is asked only where the merge decision declined, and it refuses a
-    // coalesced join for the same reason the merge one is dropped there --
-    // that scope addresses columns by row offset, not by name.
+    // The search may choose it over an available merge plan for a one-row
+    // outer side. It refuses a coalesced join for the same reason the merge
+    // one is dropped there -- that scope addresses columns by row offset, not
+    // by name.
     //
     // WHICH strategy this site may use is asked of Go's own enumeration --
     // `exhaustPhysicalPlans4LogicalJoin` under the property this join was
@@ -2110,7 +2108,15 @@ pub(crate) fn build_join(
             rows: demand.rows,
         })
     };
-    let index_join = (!coalescing && chosen == crate::driver::join_search::Chosen::Index)
+    let estimated_join_rows = crate::driver::join_search::estimated_rows(join, demand.rows);
+    let index_chosen = matches!(
+        chosen,
+        crate::driver::join_search::Chosen::Index
+            | crate::driver::join_search::Chosen::IndexForSingleOuterRow
+    );
+    let single_outer_row_choice =
+        chosen == crate::driver::join_search::Chosen::IndexForSingleOuterRow;
+    let index_join = (!coalescing && index_chosen)
         .then(|| {
             let (left_side, right_side) = crate::driver::index_join_decision::join_sides(
                 join,
@@ -2126,12 +2132,33 @@ pub(crate) fn build_join(
                 &split.keys,
                 &left_side,
                 &right_side,
-                merged.is_some(),
+                merged.is_some() && !single_outer_row_choice,
                 demand.rows,
                 ctx,
             )
         })
         .flatten();
+    let index_join = index_join.filter(|decision| {
+        if !single_outer_row_choice {
+            return true;
+        }
+        let crate::access_path::LookupObject::Index(id) = &decision.object else {
+            return false;
+        };
+        decision
+            .table
+            .indexes()
+            .iter()
+            .find(|index| index.id == *id)
+            .is_some_and(|index| !index.name.eq_ignore_ascii_case("PRIMARY"))
+    });
+    // Commit exactly one strategy to the executor. A chosen index candidate
+    // replaces the merge candidate; if its structural decision fails closed,
+    // retain the already validated merge plan as the fallback.
+    let merged = if index_join.is_some() { None } else { merged };
+    if let Some(plan) = merged.clone() {
+        join_exec.set_merge_plan(plan);
+    }
     let index_text = index_join.as_ref().map(|decision| {
         let mut source = crate::access_path::IndexJoinLookupExec::new_with_context(
             ExecutorMeta::new(
@@ -2178,6 +2205,17 @@ pub(crate) fn build_join(
             crate::access_path::LookupObject::Handle
             | crate::access_path::LookupObject::CommonHandle => false,
         };
+        let needed_columns = demand.columns.map_or_else(
+            || (0..decision.columns.len()).collect::<Vec<_>>(),
+            |columns| columns.needed(&decision.visible, &decision.columns),
+        );
+        let index_lookup = match &decision.object {
+            crate::access_path::LookupObject::Index(id) => {
+                !crate::access_cost::index_is_covering(&decision.table, *id, &needed_columns)
+            }
+            crate::access_path::LookupObject::Handle
+            | crate::access_path::LookupObject::CommonHandle => false,
+        };
         let unique = match &decision.object {
             crate::access_path::LookupObject::Index(id) => decision
                 .table
@@ -2213,6 +2251,15 @@ pub(crate) fn build_join(
                 format!("table:{}", decision.visible)
             }
         };
+        let (estimated_outer_rows, estimated_probe_rows_one) =
+            estimated_join_rows.map_or((None, None), |rows| {
+                let outer = if decision.lookup_is_left {
+                    rows.right
+                } else {
+                    rows.left
+                };
+                (Some(outer), (outer > 0.0).then_some(rows.joined / outer))
+            });
         join_exec.set_index_lookup_plan(crate::join::IndexLookupPlan {
             lookup_is_left: decision.lookup_is_left,
             probe_keys: decision.probe_keys.clone(),
@@ -2221,7 +2268,13 @@ pub(crate) fn build_join(
         join_exec.set_consumes_where(decision.consumes_where);
         (
             crate::plan_trace::IndexJoinText {
-                reader: if index { "IndexReader" } else { "TableReader" },
+                reader: if index_lookup {
+                    "IndexLookUp"
+                } else if index {
+                    "IndexReader"
+                } else {
+                    "TableReader"
+                },
                 keys,
                 lookup_is_left: decision.lookup_is_left,
                 unique,
@@ -2245,11 +2298,15 @@ pub(crate) fn build_join(
                         &right_types
                     },
                 ),
+                estimated_outer_rows,
+                estimated_probe_rows_one,
+                estimated_join_rows: estimated_join_rows.map(|rows| rows.joined),
             },
             decision.lookup_is_left,
             access,
             decision.range_info.clone(),
             index,
+            index_lookup,
         )
     });
     // The plan row and the executor are one decision: if the recorder cannot
@@ -2257,7 +2314,7 @@ pub(crate) fn build_join(
     // refused rather than printed with a whole-table read under an index
     // join. The EXECUTOR is unaffected -- it still answers correctly.
     let index_text = match (index_text, trace.as_deref_mut()) {
-        (Some((text, lookup_is_left, access, range_info, index)), Some(trace)) => {
+        (Some((text, lookup_is_left, access, range_info, index, index_lookup)), Some(trace)) => {
             let decision = index_join
                 .as_ref()
                 .expect("printable index text has an index decision");
@@ -2273,9 +2330,14 @@ pub(crate) fn build_join(
             if trace
                 .index_join_inner_scan(
                     lookup_is_left,
-                    access,
-                    &range_info,
-                    index,
+                    crate::plan_trace::IndexJoinInnerPathText {
+                        access,
+                        range_info: &range_info,
+                        index,
+                        index_lookup,
+                        visible: &decision.visible,
+                        estimated_rows: estimated_join_rows.map(|rows| rows.joined),
+                    },
                     &filters,
                     decision.filter_selectivity,
                 )

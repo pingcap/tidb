@@ -489,6 +489,110 @@ fn tpcc_condition_six_simplifies_and_pushes_through_derived_tables() {
     assert!(cell(8, 4).contains("keep order:true"), "{}", cell(8, 4));
 }
 
+/// TPCC condition 08: the fixed warehouse row is the ordered outer side of
+/// an IndexHashJoin into history's secondary index. The grouped SUM carries
+/// `w_ytd` through FIRST_ROW because the derived table's outer predicate
+/// compares that value with the aggregate result.
+#[test]
+fn tpcc_condition_eight_uses_index_join_and_carries_warehouse_ytd() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE warehouse (w_id INT PRIMARY KEY, w_ytd DECIMAL(12,2) NOT NULL)",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE history (h_w_id INT NOT NULL, h_amount DECIMAL(6,2) NOT NULL, \
+            KEY idx_h_w_id(h_w_id))",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO warehouse VALUES (1,10.00),(2,20.00)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO history VALUES (1,3.00),(1,4.00),(2,20.00)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    let sql = "SELECT count(*) cn FROM \
+        (SELECT w_id,w_ytd,SUM(h_amount) sm FROM history,warehouse \
+         WHERE h_w_id=w_id and w_id=1 GROUP BY w_id) t1 WHERE w_ytd<>sm";
+    assert_eq!(
+        run_select_on(sql, &catalog, &ctx).unwrap(),
+        vec![vec![Datum::Int(1)]],
+    );
+
+    crate::driver::join_search::ANSWERS.with(|answers| answers.borrow_mut().clear());
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let answers = crate::driver::join_search::ANSWERS.with(|answers| answers.borrow().clone());
+    assert_eq!(answers.len(), 1, "{answers:#?}");
+    assert_eq!(
+        answers[0].chosen,
+        crate::driver::join_search::Chosen::IndexForSingleOuterRow,
+        "{answers:#?}"
+    );
+    let cell = |row: usize, column: usize| match &rows[row][column] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+    assert_eq!(
+        (0..rows.len()).map(|row| cell(row, 0)).collect::<Vec<_>>(),
+        vec![
+            "StreamAgg",
+            "└─Selection",
+            "  └─StreamAgg",
+            "    └─Projection",
+            "      └─IndexHashJoin",
+            "        ├─Point_Get(Build)",
+            "        └─IndexLookUp(Probe)",
+            "          ├─Selection(Build)",
+            "          │ └─IndexRangeScan",
+            "          └─TableRowIDScan(Probe)",
+        ],
+        "{rows:#?}",
+    );
+    assert_eq!(
+        cell(1, 4),
+        "ne(test.warehouse.w_ytd, Column#1)",
+        "{rows:#?}"
+    );
+    for row in [3, 4, 6, 7, 9] {
+        assert_eq!(cell(row, 1), "1.25", "{rows:#?}");
+    }
+    assert_eq!(cell(8, 1), "1250.00", "{rows:#?}");
+    assert_eq!(
+        cell(3, 4),
+        "test.history.h_amount, test.warehouse.w_id, test.warehouse.w_ytd"
+    );
+    assert!(cell(2, 4).contains("funcs:sum(test.history.h_amount)->Column#"));
+    assert!(
+        cell(2, 4).contains("funcs:firstrow(test.warehouse.w_ytd)->test.warehouse.w_ytd"),
+        "{}",
+        cell(2, 4)
+    );
+    assert!(cell(4, 4).contains("outer key:test.warehouse.w_id"));
+    assert!(cell(4, 4).contains("inner key:test.history.h_w_id"));
+    assert!(cell(5, 3).contains("table:warehouse"));
+    assert!(cell(8, 4).contains("range: decided by"));
+}
+
 #[test]
 fn tpcc_condition_two_orders_group_uses_the_covering_index_range() {
     use crate::explain::{explain_select_stmt, ExplainFormat};

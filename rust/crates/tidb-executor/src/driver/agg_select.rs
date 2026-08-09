@@ -1379,10 +1379,11 @@ fn collect_derived_aliases(node: &tidb_ast::JoinNode, aliases: &mut Vec<String>)
     }
 }
 
-/// The projection below a complex grouped StreamAgg. If wrapping an aggregate
-/// argument introduced a scalar function, Go's `InjectProjBelowAgg` emits
-/// aggregate arguments first and group items after them. Otherwise the
-/// compact projection produced by column pruning keeps group keys first.
+/// The projection below a complex grouped StreamAgg. Go's
+/// `InjectProjBelowAgg` emits real aggregate arguments first, group items
+/// next, and `FIRST_ROW` carriers last when either a scalar wrapper or an
+/// ungrouped carrier requires the projection. Otherwise the compact
+/// projection produced by column pruning keeps group keys first.
 fn grouped_stream_input_projection_plan(
     group_by: &[Expression],
     functions: &[AggFunc],
@@ -1395,32 +1396,49 @@ fn grouped_stream_input_projection_plan(
     let injected_for_scalar = function_arguments
         .iter()
         .any(|argument| matches!(argument, Expression::ScalarFunction(_)));
-    let (group_positions, function_positions) = if injected_for_scalar {
+    let has_ungrouped_carrier =
+        functions
+            .iter()
+            .zip(&function_arguments)
+            .any(|(function, argument)| {
+                matches!(function.kind, AggKind::FirstRow)
+                    && !group_by.iter().any(|group| group.equal(argument))
+            });
+    let (group_positions, function_positions) = if injected_for_scalar || has_ungrouped_carrier {
         // Column pruning moves FIRST_ROW group carriers behind the real
         // aggregate functions. They still read the group-key projection
         // slot, but must not make that slot appear before SUM's injected
-        // cast (Go condition 04: cast(SUM arg), MAX arg, group key).
-        let mut function_positions = function_arguments
-            .iter()
-            .map(|argument| {
-                if group_by.iter().any(|group| group.equal(argument)) {
-                    Some(None)
-                } else {
-                    add_grouped_projection_expression(&mut expressions, argument).map(Some)
-                }
-            })
-            .collect::<Option<Vec<_>>>()?;
+        // cast (Go condition 04: cast(SUM arg), MAX arg, group key), nor may
+        // an ungrouped carrier precede SUM (TPCC condition 08).
+        let mut function_positions = vec![None; function_arguments.len()];
+        for (position, (function, argument)) in function_positions
+            .iter_mut()
+            .zip(functions.iter().zip(&function_arguments))
+        {
+            if !matches!(function.kind, AggKind::FirstRow)
+                && !group_by.iter().any(|group| group.equal(argument))
+            {
+                *position = Some(add_grouped_projection_expression(
+                    &mut expressions,
+                    argument,
+                )?);
+            }
+        }
         let group_positions = group_by
             .iter()
             .map(|group| add_grouped_projection_expression(&mut expressions, group))
             .collect::<Option<Vec<_>>>()?;
         for (position, argument) in function_positions.iter_mut().zip(&function_arguments) {
             if position.is_none() {
-                let group = group_by
-                    .iter()
-                    .position(|group| group.equal(argument))
-                    .expect("a deferred aggregate argument is a group carrier");
-                *position = Some(group_positions[group]);
+                *position =
+                    if let Some(group) = group_by.iter().position(|group| group.equal(argument)) {
+                        Some(group_positions[group])
+                    } else {
+                        Some(add_grouped_projection_expression(
+                            &mut expressions,
+                            argument,
+                        )?)
+                    };
             }
         }
         let function_positions = function_positions
@@ -1673,6 +1691,42 @@ fn grouped_sum_plan(
     })
 }
 
+/// Source-table identities behind a derived relation's physical columns.
+/// Aggregate outputs deliberately remain `None` and therefore print as
+/// internal `Column#N` values.
+fn physical_source_column_names(
+    select: &tidb_ast::SelectStmt,
+    scope: &FromScope,
+    catalog: &Catalog,
+    current_db: &str,
+) -> Vec<Option<String>> {
+    let Some(from) = &select.from else {
+        return vec![None; scope.width()];
+    };
+    (0..scope.width())
+        .map(|offset| {
+            let path = scope.qualified_path(offset)?;
+            let [.., relation, column] = path.as_slice() else {
+                return None;
+            };
+            let column = crate::driver::merge_decision::RelColumn {
+                relation: relation.clone(),
+                column: column.clone(),
+            };
+            crate::driver::merge_decision::physical_column_trace_name(
+                &from.left, &column, catalog, current_db,
+            )
+            .or_else(|| {
+                from.right.as_ref().and_then(|right| {
+                    crate::driver::merge_decision::physical_column_trace_name(
+                        right, &column, catalog, current_db,
+                    )
+                })
+            })
+        })
+        .collect()
+}
+
 #[allow(clippy::too_many_arguments)]
 fn build_aggregation(
     select: &tidb_ast::SelectStmt,
@@ -1835,7 +1889,18 @@ fn build_aggregation(
                         let mut physical = rewrite_expr_resolved(predicate, resolver)
                             .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
                         refine_comparisons(&mut physical, ctx);
-                        if !trace.physical_selection(&physical, written, stats) {
+                        let column_names = physical_source_column_names(
+                            traced_select,
+                            resolver.scope,
+                            catalog,
+                            current_db,
+                        );
+                        if !trace.physical_selection_with_columns(
+                            &physical,
+                            written,
+                            stats,
+                            &column_names,
+                        ) {
                             trace.refuse(
                                 "a pruned derived aggregation's Selection is not printable yet",
                             );
@@ -2099,6 +2164,16 @@ fn build_aggregation(
             collect_derived_aliases(right, &mut derived_aliases);
         }
     }
+    let grouped_stream_extra_first_rows = state
+        .agg_funcs
+        .iter()
+        .filter(|function| matches!(function.kind, AggKind::FirstRow))
+        .filter_map(|function| function.arg.as_ref())
+        .filter(|argument| !group_by.iter().any(|group| group.equal(argument)))
+        .filter_map(|argument| {
+            grouped_projection_expression_text(argument, &qualify, &derived_aliases)
+        })
+        .collect::<Vec<_>>();
     let grouped_stream_input_projection = if grouped_stream_ordered
         && !partial_grouped_sum
         && !partial_grouped_stream
@@ -2310,6 +2385,7 @@ fn build_aggregation(
                     grouped_stream_input_projection,
                     grouped_logical_rows,
                     grouped_stream_physical_agg_trace.as_deref(),
+                    &grouped_stream_extra_first_rows,
                 );
             } else {
                 trace.hash_agg(traced_select, &qualify);
