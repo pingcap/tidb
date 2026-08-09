@@ -235,6 +235,12 @@ impl Column {
         self.data.capacity()
     }
 
+    /// Go allocator's `cap(col.elemBuf)` type-eligibility check.
+    #[must_use]
+    pub(crate) fn elem_buffer_capacity(&self) -> usize {
+        self.elem_buf.capacity()
+    }
+
     /// Go `Rows`: the number of rows currently stored.
     #[must_use]
     pub fn rows(&self) -> usize {
@@ -672,9 +678,15 @@ impl Column {
             *last = ((1u16 << (n & 7)) - 1) as u8;
         }
 
+        // Go re-slices `elemBuf` here.  In particular, resizing an existing
+        // fixed-width column does not zero the append scratch buffer: a later
+        // AppendNull copies the last scratch value into the null cell.  Rust's
+        // `Vec::resize` preserves the bytes when the length is unchanged,
+        // which is the ordinary same-evaluation-type path.
         self.elem_buf.resize(type_size, 0);
-        self.elem_buf.fill(0);
-        self.offsets.clear();
+        // Go's fixed-width resize does not touch `offsets`.  A column that was
+        // previously variable-width therefore retains that slice header; it
+        // is reused if the column later becomes variable-width again.
         self.length = n;
     }
 
@@ -697,66 +709,84 @@ impl Column {
         let offset_capacity = n.checked_add(1).expect("offset capacity overflow");
         if self.offsets.capacity() < offset_capacity {
             self.offsets = Vec::with_capacity(offset_capacity);
-        } else {
-            self.offsets.clear();
         }
-        self.offsets.push(0);
+        if self.offsets.is_empty() {
+            self.offsets.push(0);
+        } else {
+            // Go uses `offsets[:1]`, preserving the first header word rather
+            // than manufacturing a new zero when the backing is reusable.
+            self.offsets.truncate(1);
+        }
         self.elem_buf.clear();
         self.length = 0;
     }
 
+    /// Go `ResizeInt64`.
     pub fn resize_int64(&mut self, n: usize, is_null: bool) {
         self.resize_fixed(n, 8, is_null);
     }
 
+    /// Go `ResizeUint64`.
     pub fn resize_uint64(&mut self, n: usize, is_null: bool) {
         self.resize_fixed(n, 8, is_null);
     }
 
+    /// Go `ResizeFloat32`.
     pub fn resize_float32(&mut self, n: usize, is_null: bool) {
         self.resize_fixed(n, 4, is_null);
     }
 
+    /// Go `ResizeFloat64`.
     pub fn resize_float64(&mut self, n: usize, is_null: bool) {
         self.resize_fixed(n, 8, is_null);
     }
 
+    /// Go `ResizeDecimal`.
     pub fn resize_decimal(&mut self, n: usize, is_null: bool) {
-        self.resize_fixed(n, MYDECIMAL_STRUCT_SIZE as usize, is_null);
+        self.resize_fixed(n, MYDECIMAL_STRUCT_SIZE, is_null);
     }
 
+    /// Go `ResizeGoDuration`.
     pub fn resize_go_duration(&mut self, n: usize, is_null: bool) {
         self.resize_fixed(n, 8, is_null);
     }
 
+    /// Go `ResizeTime`.
     pub fn resize_time(&mut self, n: usize, is_null: bool) {
         self.resize_fixed(n, SIZE_TIME as usize, is_null);
     }
 
+    /// Go `ReserveString`.
     pub fn reserve_string(&mut self, n: usize) {
         self.reserve_var(n, ESTIMATED_ELEM_LEN);
     }
 
+    /// Go `ReserveStringWithSizeHint`.
     pub fn reserve_string_with_size_hint(&mut self, n: usize, size: usize) {
         self.reserve_var(n, size);
     }
 
+    /// Go `ReserveBytes`.
     pub fn reserve_bytes(&mut self, n: usize) {
         self.reserve_var(n, ESTIMATED_ELEM_LEN);
     }
 
+    /// Go `ReserveJSON`.
     pub fn reserve_json(&mut self, n: usize) {
         self.reserve_var(n, ESTIMATED_ELEM_LEN);
     }
 
+    /// Go `ReserveVectorFloat32`.
     pub fn reserve_vector_float32(&mut self, n: usize) {
         self.reserve_var(n, ESTIMATED_ELEM_LEN);
     }
 
+    /// Go `ReserveSet`.
     pub fn reserve_set(&mut self, n: usize) {
         self.reserve_var(n, ESTIMATED_ELEM_LEN);
     }
 
+    /// Go `ReserveEnum`.
     pub fn reserve_enum(&mut self, n: usize) {
         self.reserve_var(n, ESTIMATED_ELEM_LEN);
     }
@@ -1510,6 +1540,27 @@ mod tests {
         assert_eq!(column.offsets, vec![0]);
         column.append_string("x");
         assert_eq!(column.get_bytes(0), b"x");
+    }
+
+    /// Go `Column.resize` re-slices rather than recreating the append scratch
+    /// and leaves the unrelated offsets slice alone.  Both details are
+    /// observable after an evaluation-type transition.
+    #[test]
+    fn resize_preserves_scratch_and_offset_headers() {
+        let mut fixed = Column::new_fixed_len(8, 2);
+        let scratch = 0x0102_0304_0506_0708_i64;
+        fixed.append_int64(scratch);
+        fixed.resize_int64(0, false);
+        fixed.append_null();
+        assert!(fixed.is_null(0));
+        assert_eq!(fixed.get_raw(0), &scratch.to_ne_bytes());
+
+        let mut changing = Column::new_var_len(2);
+        changing.offsets = vec![7, 9];
+        changing.resize_int64(0, false);
+        assert_eq!(changing.offsets, vec![7, 9]);
+        changing.reserve_string(1);
+        assert_eq!(changing.offsets, vec![7]);
     }
 
     #[test]

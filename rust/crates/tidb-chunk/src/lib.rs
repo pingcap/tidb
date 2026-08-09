@@ -36,6 +36,7 @@
 //! [`chunk_util`]; [`row_in_disk`] carries the read-while-writing reader it
 //! needs.
 
+pub mod alloc;
 pub mod chunk;
 pub mod chunk_in_disk;
 pub mod chunk_util;
@@ -45,6 +46,7 @@ pub mod compare;
 pub mod iterator;
 pub mod list;
 pub mod mutrow;
+pub mod pool;
 pub mod row;
 pub mod row_container;
 pub mod row_container_reader;

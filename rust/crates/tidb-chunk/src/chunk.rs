@@ -95,6 +95,24 @@ impl Chunk {
         }
     }
 
+    /// Builds a source-shaped initialized chunk from columns transferred out
+    /// of an allocator or pool.
+    pub(crate) fn from_reusable_columns(
+        columns: Vec<Column>,
+        capacity: usize,
+        required_rows: usize,
+    ) -> Self {
+        Chunk {
+            sel: None,
+            columns,
+            columns_initialized: true,
+            num_virtual_rows: 0,
+            capacity,
+            required_rows,
+            in_complete_chunk: false,
+        }
+    }
+
     /// Go `NumCols`.
     #[must_use]
     pub fn num_cols(&self) -> usize {
@@ -267,6 +285,50 @@ impl Chunk {
             col.reset();
         }
         self.num_virtual_rows = 0;
+    }
+
+    /// Go `resetForReuse`: decouple all column owners and restore the literal
+    /// zero-value chunk metadata while returning the columns to the caller.
+    pub(crate) fn take_columns_for_reuse(&mut self) -> Vec<Column> {
+        self.sel = None;
+        self.num_virtual_rows = 0;
+        self.capacity = 0;
+        self.required_rows = 0;
+        self.in_complete_chunk = false;
+        self.columns_initialized = false;
+        std::mem::take(&mut self.columns)
+    }
+
+    /// Go allocator `resetForReuse`: drain column owners while preserving the
+    /// empty column-slot allocation cached with the chunk shell.
+    pub(crate) fn drain_columns_for_allocator(&mut self) -> Vec<Column> {
+        self.sel = None;
+        self.num_virtual_rows = 0;
+        self.capacity = 0;
+        self.required_rows = 0;
+        self.in_complete_chunk = false;
+        self.columns_initialized = true;
+        self.columns.drain(..).collect()
+    }
+
+    /// Populate a chunk shell recovered from the allocator's free list.
+    pub(crate) fn restore_reusable_columns(
+        &mut self,
+        columns: Vec<Column>,
+        capacity: usize,
+        required_rows: usize,
+    ) {
+        debug_assert!(self.columns.is_empty());
+        self.columns.extend(columns);
+        self.columns_initialized = true;
+        self.capacity = capacity;
+        self.required_rows = required_rows;
+    }
+
+    /// Go `Chunk.Destroy`: return this chunk's columns to the global pool for
+    /// `init_capacity`.
+    pub fn destroy(&mut self, init_capacity: usize, fields: &[FieldType]) {
+        crate::pool::put_chunk_from_pool(init_capacity, fields, self);
     }
 
     /// Go `GrowAndReset`: grow only when the current chunk is full, otherwise
