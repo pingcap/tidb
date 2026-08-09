@@ -240,3 +240,17 @@ fn mem_exceed_error(t: &Arc<Tracker>) -> TerrorError {
         ],
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Source: `pkg/util/memory/tracker_test.go::TestErrorCode`.
+    #[test]
+    fn test_error_code() {
+        assert_eq!(
+            ERR_MEM_EXCEED_THRESHOLD.to_sql_error().code,
+            errcode::ErrMemExceedThreshold
+        );
+    }
+}
