@@ -840,7 +840,7 @@ pub fn number_to_duration(
                 number,
                 TimeType::DateTime,
                 fsp,
-                true,
+                false,
                 false,
                 &chrono_tz::UTC,
             ) {
@@ -1655,32 +1655,48 @@ mod tests {
         }
     }
 
+    /// Source: `pkg/types/convert_test.go::TestNumberToDuration`.
     #[test]
-    fn source_number_and_string_to_duration_rows() {
-        for (number, expected, event) in [
-            (171_222, "17:12:22", false),
-            (-171_222, "-17:12:22", false),
-            (838_1222, "838:12:22", false),
-            (1_001_222, "100:12:22", false),
-            (20_171_222, "838:59:59", true),
-            // Go's truncation arm answers `ZeroDuration` (fsp 0), so the
-            // requested fsp 1 does NOT appear in the printed value.
-            (176_022, "00:00:00", true),
-            (171_260, "00:00:00", true),
-            // `i64::MIN` must not be negated before its range is ruled out.
-            (i64::MIN, "-838:59:59", true),
-            (i64::MAX, "838:59:59", true),
+    fn test_number_to_duration() {
+        for (number, fsp, has_error, hour, minute, second) in [
+            (20_171_222, 0, true, 0, 0, 0),
+            (171_222, 0, false, 17, 12, 22),
+            (20_171_222_020_005, 0, false, 2, 0, 5),
+            (10_000_000_000, 0, true, 0, 0, 0),
+            (171_222, 1, false, 17, 12, 22),
+            (176_022, 1, true, 0, 0, 0),
+            (8_391_222, 1, true, 0, 0, 0),
+            (8_381_222, 0, false, 838, 12, 22),
+            (1_001_222, 0, false, 100, 12, 22),
+            (171_260, 1, true, 0, 0, 0),
         ] {
-            let actual =
-                number_to_duration(number, i64::from(number == 176_022 || number == 171_260))
-                    .unwrap();
-            assert_eq!(actual.value.to_string(), expected, "{number}");
-            assert_eq!(actual.event.is_some(), event, "{number}");
+            let actual = number_to_duration(number, fsp).unwrap();
+            assert_eq!(actual.event.is_some(), has_error, "{number} fsp={fsp}");
+            if !has_error {
+                assert_eq!(actual.value.hour(), hour, "{number} fsp={fsp}");
+                assert_eq!(actual.value.minute(), minute, "{number} fsp={fsp}");
+                assert_eq!(actual.value.second(), second, "{number} fsp={fsp}");
+            }
         }
-        let datetime = number_to_duration(20_171_222_020_005, 0).unwrap();
-        assert_eq!(datetime.value.to_string(), "02:00:05");
-        assert!(datetime.event.is_none());
 
+        let positive = number_to_duration(171_222, 0).unwrap().value;
+        let negative = number_to_duration(-171_222, 0).unwrap().value;
+        assert_eq!(positive.nanoseconds(), -negative.nanoseconds());
+    }
+
+    #[test]
+    fn number_to_duration_supplemental_extremes() {
+        // `i64::MIN` must not be negated before its range is ruled out.
+        for (number, expected) in [(i64::MIN, "-838:59:59"), (i64::MAX, "838:59:59")] {
+            let actual = number_to_duration(number, 0).unwrap();
+            assert_eq!(actual.value.to_string(), expected, "{number}");
+            assert!(actual.event.is_some(), "{number}");
+        }
+    }
+
+    /// Source: `pkg/types/convert_test.go::TestStrToDuration`.
+    #[test]
+    fn test_str_to_duration() {
         for (input, fsp, is_duration) in [
             ("20190412120000", 4, false),
             ("20190101180000", 6, false),
