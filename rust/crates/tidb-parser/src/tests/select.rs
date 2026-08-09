@@ -1556,6 +1556,55 @@ fn as_of_timestamp() {
     );
 }
 
+/// `pkg/parser/parser_test.go::TestAsOfClause`.
+#[test]
+fn test_as_of_clause() {
+    for (sql, expected) in [
+        (
+            "SELECT * FROM `t` AS /* comment */ a;",
+            "SELECT * FROM `t` AS `a`",
+        ),
+        (
+            "SELECT * FROM `t` AS OF TIMESTAMP TIDB_BOUNDED_STALENESS(DATE_SUB(NOW(), INTERVAL 3 SECOND), NOW());",
+            "SELECT * FROM `t` AS OF TIMESTAMP TIDB_BOUNDED_STALENESS(DATE_SUB(NOW(), INTERVAL 3 SECOND), NOW())",
+        ),
+        (
+            "select * from `t` as of timestamp '2021-04-15 00:00:00'",
+            "SELECT * FROM `t` AS OF TIMESTAMP _UTF8MB4'2021-04-15 00:00:00'",
+        ),
+        (
+            "SELECT * FROM (`a` AS OF TIMESTAMP TIDB_BOUNDED_STALENESS(DATE_SUB(NOW(), INTERVAL 3 SECOND), NOW())) JOIN `b` AS OF TIMESTAMP TIDB_BOUNDED_STALENESS(DATE_SUB(NOW(), INTERVAL 3 SECOND), NOW());",
+            "SELECT * FROM (`a` AS OF TIMESTAMP TIDB_BOUNDED_STALENESS(DATE_SUB(NOW(), INTERVAL 3 SECOND), NOW())) JOIN `b` AS OF TIMESTAMP TIDB_BOUNDED_STALENESS(DATE_SUB(NOW(), INTERVAL 3 SECOND), NOW())",
+        ),
+        (
+            "INSERT INTO `employees` (SELECT * FROM `employees` AS OF TIMESTAMP (DATE_SUB(NOW(), INTERVAL _UTF8MB4'60' MINUTE)) NOT IN (SELECT * FROM `employees`))",
+            "INSERT INTO `employees` (SELECT * FROM `employees` AS OF TIMESTAMP (DATE_SUB(NOW(), INTERVAL _UTF8MB4'60' MINUTE)) NOT IN (SELECT * FROM `employees`))",
+        ),
+        (
+            "SET TRANSACTION READ ONLY as of timestamp '2021-04-21 00:42:12'",
+            "SET @@SESSION.`tx_read_ts`=_UTF8MB4'2021-04-21 00:42:12'",
+        ),
+        (
+            "START TRANSACTION READ ONLY AS OF TIMESTAMP '2015-09-21 00:07:01'",
+            "START TRANSACTION READ ONLY AS OF TIMESTAMP _UTF8MB4'2015-09-21 00:07:01'",
+        ),
+        (
+            "START TRANSACTION READ ONLY AS OF TIMESTAMP TIDB_BOUNDED_STALENESS(_UTF8MB4'2015-09-21 00:07:01', NOW())",
+            "START TRANSACTION READ ONLY AS OF TIMESTAMP TIDB_BOUNDED_STALENESS(_UTF8MB4'2015-09-21 00:07:01', NOW())",
+        ),
+        (
+            "START TRANSACTION READ ONLY AS OF TIMESTAMP TIDB_BOUNDED_STALENESS(DATE_SUB(NOW(), INTERVAL 3 SECOND), NOW())",
+            "START TRANSACTION READ ONLY AS OF TIMESTAMP TIDB_BOUNDED_STALENESS(DATE_SUB(NOW(), INTERVAL 3 SECOND), NOW())",
+        ),
+        (
+            "START TRANSACTION READ ONLY AS OF TIMESTAMP TIDB_BOUNDED_STALENESS(_UTF8MB4'2015-09-21 00:07:01', '2021-04-27 11:26:13')",
+            "START TRANSACTION READ ONLY AS OF TIMESTAMP TIDB_BOUNDED_STALENESS(_UTF8MB4'2015-09-21 00:07:01', _UTF8MB4'2021-04-27 11:26:13')",
+        ),
+    ] {
+        assert_eq!(r(sql), expected, "source SQL: {sql}");
+    }
+}
+
 /// `NATURAL [LEFT|RIGHT] JOIN`. Every assertion here was cross-checked
 /// against real TiDB via `godump restore` (not assumed).
 #[test]
