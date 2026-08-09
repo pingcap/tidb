@@ -109,92 +109,94 @@ impl<'a> Row<'a> {
     /// Go `GetInt64`.
     #[must_use]
     pub fn get_int64(&self, col_idx: usize) -> i64 {
-        self.chunk().columns()[col_idx].get_int64(self.idx)
+        self.chunk().column(col_idx).get_int64(self.idx)
     }
 
     /// Go `GetUint64`.
     #[must_use]
     pub fn get_uint64(&self, col_idx: usize) -> u64 {
-        self.chunk().columns()[col_idx].get_uint64(self.idx)
+        self.chunk().column(col_idx).get_uint64(self.idx)
     }
 
     /// Go `GetFloat32`.
     #[must_use]
     pub fn get_float32(&self, col_idx: usize) -> f32 {
-        self.chunk().columns()[col_idx].get_float32(self.idx)
+        self.chunk().column(col_idx).get_float32(self.idx)
     }
 
     /// Go `GetFloat64`.
     #[must_use]
     pub fn get_float64(&self, col_idx: usize) -> f64 {
-        self.chunk().columns()[col_idx].get_float64(self.idx)
+        self.chunk().column(col_idx).get_float64(self.idx)
     }
 
     /// Go `GetTime`.
     #[must_use]
     pub fn get_time(&self, col_idx: usize) -> Time {
-        self.chunk().columns()[col_idx].get_time(self.idx)
+        self.chunk().column(col_idx).get_time(self.idx)
     }
 
     /// Go `GetDuration`: reads the cell's nanoseconds and stamps `fill_fsp` on
     /// (the column stores no fsp).
     #[must_use]
     pub fn get_duration(&self, col_idx: usize, fill_fsp: i64) -> MySqlDuration {
-        self.chunk().columns()[col_idx].get_duration(self.idx, fill_fsp)
+        self.chunk()
+            .column(col_idx)
+            .get_duration(self.idx, fill_fsp)
     }
 
     /// Go `GetMyDecimal`.
     #[must_use]
     pub fn get_my_decimal(&self, col_idx: usize) -> MyDecimal {
-        self.chunk().columns()[col_idx].get_my_decimal(self.idx)
+        self.chunk().column(col_idx).get_my_decimal(self.idx)
     }
 
     /// Go `GetEnum`.
     #[must_use]
     pub fn get_enum(&self, col_idx: usize) -> tidb_datatype::MysqlEnum {
-        self.chunk().columns()[col_idx].get_enum(self.idx)
+        self.chunk().column(col_idx).get_enum(self.idx)
     }
 
     /// Go `GetSet`.
     #[must_use]
     pub fn get_set(&self, col_idx: usize) -> tidb_datatype::MysqlSet {
-        self.chunk().columns()[col_idx].get_set(self.idx)
+        self.chunk().column(col_idx).get_set(self.idx)
     }
 
     /// Go `GetBytes`: the raw bytes of a variable-length column's cell.
     #[must_use]
     pub fn get_bytes(&self, col_idx: usize) -> CellBytes<'a> {
-        self.chunk().columns()[col_idx].get_bytes(self.idx)
+        self.chunk().column_slots()[col_idx].get_bytes(self.idx)
     }
 
     /// Go `GetRaw`: the raw element bytes for either column kind.
     #[must_use]
     pub fn get_raw(&self, col_idx: usize) -> CellBytes<'a> {
-        self.chunk().columns()[col_idx].get_raw(self.idx)
+        self.chunk().column_slots()[col_idx].get_raw(self.idx)
     }
 
     /// Go `GetJSON`.
     #[must_use]
     pub fn get_json(&self, col_idx: usize) -> tidb_datatype::BinaryJSON {
-        self.chunk().columns()[col_idx].get_json(self.idx)
+        self.chunk().column(col_idx).get_json(self.idx)
     }
 
     /// Go `GetVectorFloat32`.
     #[must_use]
     pub fn get_vector_float32(&self, col_idx: usize) -> VectorFloat32 {
-        self.chunk().columns()[col_idx].get_vector_float32(self.idx)
+        self.chunk().column(col_idx).get_vector_float32(self.idx)
     }
 
     /// Go `getNameValue`: the `(name, value)` pair an ENUM/SET cell stores.
     #[must_use]
     pub fn get_name_value(&self, col_idx: usize) -> (GoString, u64) {
-        self.chunk().columns()[col_idx].get_name_value(self.idx)
+        self.chunk().column(col_idx).get_name_value(self.idx)
     }
 
     /// Go `IsNull`.
     #[must_use]
     pub fn is_null(&self, col_idx: usize) -> bool {
-        self.chunk().columns()[col_idx].is_null(self.idx)
+        self.chunk().column(col_idx).is_null(self.idx)
     }
 
     /// Go `GetDatum` (`DatumWithBuffer`): read the cell at `col_idx` as a

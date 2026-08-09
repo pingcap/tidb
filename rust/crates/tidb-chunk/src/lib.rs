@@ -42,6 +42,7 @@ pub mod chunk_in_disk;
 pub mod chunk_util;
 pub mod codec;
 pub mod column;
+mod column_slot;
 mod column_view;
 pub mod compare;
 pub mod iterator;
@@ -54,6 +55,10 @@ pub mod row_container_reader;
 pub mod row_in_disk;
 mod shared_bytes;
 
+#[cfg(test)]
+mod chunk_identity_tests;
+
+pub use column_slot::{ColumnHandle, ColumnRead, ColumnWrite};
 pub use column_view::{CellBytes, ColumnBytes};
 
 /// The spill tests all point the process-wide temporary-storage path at their

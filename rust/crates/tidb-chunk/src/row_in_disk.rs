@@ -109,7 +109,7 @@ impl DiskFormatRow {
     fn to_row(&self, chk: &mut Chunk) -> usize {
         let mut cell_off = 0;
         for (col_idx, size) in self.sizes_of_columns.iter().enumerate() {
-            let col = chk.column_mut(col_idx);
+            let mut col = chk.column_mut(col_idx);
             if *size == -1 {
                 col.append_null();
             } else {

@@ -57,8 +57,9 @@ impl Codec {
     #[must_use]
     pub fn encode(&self, chunk: &Chunk) -> Vec<u8> {
         let mut buffer = Vec::with_capacity(usize::try_from(chunk.memory_usage()).unwrap_or(0));
-        for column in chunk.columns() {
-            encode_column(&mut buffer, column);
+        for column in chunk.column_slots() {
+            let column = column.read();
+            encode_column(&mut buffer, &column);
         }
         buffer
     }
@@ -99,9 +100,8 @@ impl Codec {
     pub fn decode_to_chunk<'a>(&self, buffer: &'a [u8], chunk: &mut Chunk) -> &'a [u8] {
         let mut remained = buffer;
         for ordinal in 0..chunk.columns.len() {
-            let mut column = std::mem::take(&mut chunk.columns[ordinal]);
+            let mut column = chunk.columns[ordinal].write();
             remained = self.decode_column(remained, &mut column, ordinal);
-            chunk.columns[ordinal] = column;
         }
         remained
     }
@@ -221,42 +221,54 @@ impl Decoder {
 
     fn decode_column(&mut self, target: &mut Chunk, ordinal: usize, rows: usize) {
         let type_size = get_fixed_len(&self.codec.col_types[ordinal]);
-        let source = self.intermediate.column_mut(ordinal);
-        let destination = target.column_mut(ordinal);
-        let data_bytes = if type_size == VAR_ELEM_LEN {
-            let start = source.offsets[0];
-            let end = source.offsets[rows];
-            let delta = destination.offsets[destination.length] - start;
-            if rows > 0 {
-                let first_new_offset = destination.length + 1;
-                destination
-                    .offsets
-                    .extend_from_slice(&source.offsets[1..rows + 1]);
-                for offset in &mut destination.offsets[first_new_offset..=destination.length + rows]
-                {
-                    *offset += delta;
-                }
-            }
-            source.offsets.drain(..rows);
-            usize::try_from(end - start).expect("non-negative decoder data length")
-        } else {
-            usize::try_from(type_size)
-                .expect("fixed width is positive")
-                .checked_mul(rows)
-                .expect("decoder data size overflow")
+        let bitmap_bytes = rows.div_ceil(8);
+        let (start, offsets, bitmap, data) = {
+            let mut source = self.intermediate.column_mut(ordinal);
+            let (start, offsets, data_bytes) = if type_size == VAR_ELEM_LEN {
+                let start = source.offsets[0];
+                let end = source.offsets[rows];
+                let offsets = source.offsets[1..rows + 1].to_vec();
+                source.offsets.drain(..rows);
+                (
+                    start,
+                    offsets,
+                    usize::try_from(end - start).expect("non-negative decoder data length"),
+                )
+            } else {
+                (
+                    0,
+                    Vec::new(),
+                    usize::try_from(type_size)
+                        .expect("fixed width is positive")
+                        .checked_mul(rows)
+                        .expect("decoder data size overflow"),
+                )
+            };
+            let bitmap = source.null_bitmap[..bitmap_bytes].to_vec();
+            source.null_bitmap.drain(..bitmap_bytes);
+            let data = source.data.read()[..data_bytes].to_vec();
+            source.data.advance(data_bytes);
+            (start, offsets, bitmap, data)
         };
 
-        let bitmap_bytes = rows.div_ceil(8);
+        let mut destination = target.column_mut(ordinal);
+        if type_size == VAR_ELEM_LEN && rows > 0 {
+            let delta = destination.offsets[destination.length] - start;
+            let first_new_offset = destination.length + 1;
+            let last_new_offset = destination.length + rows;
+            destination.offsets.extend_from_slice(&offsets);
+            for offset in &mut destination.offsets[first_new_offset..=last_new_offset] {
+                *offset += delta;
+            }
+        }
         if destination.length.is_multiple_of(8) {
-            destination
-                .null_bitmap
-                .extend_from_slice(&source.null_bitmap[..bitmap_bytes]);
+            destination.null_bitmap.extend_from_slice(&bitmap);
         } else {
             destination.append_multi_same_null_bitmap(false, rows);
             let bitmap_len = destination.null_bitmap.len();
             let bit_offset = destination.length % 8;
             let start_index = (destination.length - 1) >> 3;
-            for (index, source_byte) in source.null_bitmap[..bitmap_bytes].iter().enumerate() {
+            for (index, source_byte) in bitmap.iter().enumerate() {
                 destination.null_bitmap[start_index + index] |= *source_byte << bit_offset;
                 if start_index + index + 1 < bitmap_len {
                     destination.null_bitmap[start_index + index + 1] |=
@@ -269,17 +281,15 @@ impl Decoder {
         let last = destination.null_bitmap.len() - 1;
         destination.null_bitmap[last] &= bit_mask;
 
-        source.null_bitmap.drain(..bitmap_bytes);
         destination.length += rows;
-        let data = source.data.read()[..data_bytes].to_vec();
         destination.data.extend_from_slice(&data);
-        source.data.advance(data_bytes);
     }
 
     /// Go `Decoder.ReuseIntermChk`: normalize the remaining variable offsets,
     /// then swap the intermediate columns directly into an empty target.
     pub fn reuse_intermediate_chunk(&mut self, target: &mut Chunk) {
         for (ordinal, column) in self.intermediate.columns.iter_mut().enumerate() {
+            let mut column = column.write();
             column.length = self.remained_rows;
             if get_fixed_len(&self.codec.col_types[ordinal]) == VAR_ELEM_LEN {
                 let delta = column.offsets[0];

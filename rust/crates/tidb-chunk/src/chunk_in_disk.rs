@@ -120,6 +120,7 @@ pub fn serialize_data_to_buf(chk: &Chunk, buf: &mut Vec<u8>) -> i64 {
     let sel_size = chk.sel.as_ref().map_or(0, Vec::len) * INT_LEN;
     let mut total_bytes = CHK_FIXED_SIZE + sel_size;
     for col in &chk.columns {
+        let col = col.read();
         total_bytes +=
             COL_META_SIZE + col.null_bitmap.len() + col.data.len() + col.offsets.len() * INT64_LEN;
     }
@@ -140,6 +141,7 @@ pub fn serialize_data_to_buf(chk: &Chunk, buf: &mut Vec<u8>) -> i64 {
     }
 
     for col in &chk.columns {
+        let col = col.read();
         put_i64(buf, col.length as i64);
         put_i64(buf, col.null_bitmap.len() as i64);
         put_i64(buf, col.data.len() as i64);
@@ -183,6 +185,7 @@ pub fn deserialize_data_to_chunk(chk: &mut Chunk, buf: &[u8]) {
     }
 
     for col in &mut chk.columns {
+        let mut col = col.write();
         let length = get_i64(buf, &mut pos);
         let null_map_size = get_i64(buf, &mut pos) as usize;
         let data_size = get_i64(buf, &mut pos) as usize;

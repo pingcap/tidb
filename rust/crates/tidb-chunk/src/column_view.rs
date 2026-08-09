@@ -19,12 +19,17 @@ use std::ops::Deref;
 
 use crate::shared_bytes::SharedBytesRead;
 
+pub(crate) enum ColumnBytesStorage<'a> {
+    Borrowed(SharedBytesRead<'a>),
+    Owned(Vec<u8>),
+}
+
 /// A read guard over a contiguous region of a column's packed bytes.
 ///
 /// The guard keeps shared storage stable for the duration of the borrow and
 /// behaves like a byte slice through [`Deref`] and [`AsRef`].
 pub struct ColumnBytes<'a> {
-    pub(crate) bytes: SharedBytesRead<'a>,
+    pub(crate) storage: ColumnBytesStorage<'a>,
     pub(crate) start: usize,
     pub(crate) end: usize,
 }
@@ -32,11 +37,26 @@ pub struct ColumnBytes<'a> {
 /// A row-cell byte view returned by [`crate::column::Column`].
 pub type CellBytes<'a> = ColumnBytes<'a>;
 
+impl<'a> ColumnBytes<'a> {
+    pub(crate) fn owned(bytes: Vec<u8>) -> Self {
+        let end = bytes.len();
+        Self {
+            storage: ColumnBytesStorage::Owned(bytes),
+            start: 0,
+            end,
+        }
+    }
+}
+
 impl Deref for ColumnBytes<'_> {
     type Target = [u8];
 
     fn deref(&self) -> &Self::Target {
-        &self.bytes[self.start..self.end]
+        let bytes = match &self.storage {
+            ColumnBytesStorage::Borrowed(bytes) => bytes.as_ref(),
+            ColumnBytesStorage::Owned(bytes) => bytes.as_slice(),
+        };
+        &bytes[self.start..self.end]
     }
 }
 

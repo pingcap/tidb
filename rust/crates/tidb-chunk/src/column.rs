@@ -54,7 +54,7 @@ use tidb_datatype::{
     MyDecimal, MySqlDuration, MysqlEnum, MysqlSet, Time, VectorFloat32, MYDECIMAL_STRUCT_SIZE,
 };
 
-use crate::column_view::ColumnBytes;
+use crate::column_view::{ColumnBytes, ColumnBytesStorage};
 use crate::shared_bytes::SharedBytes;
 
 /// Go `VarElemLen` (`= -1`): the sentinel element length of a variable-length
@@ -608,7 +608,7 @@ impl Column {
         let start = self.offsets[row_id] as usize;
         let end = self.offsets[row_id + 1] as usize;
         ColumnBytes {
-            bytes: self.data.read(),
+            storage: ColumnBytesStorage::Borrowed(self.data.read()),
             start,
             end,
         }
@@ -650,7 +650,7 @@ impl Column {
             let elem_len = self.elem_buffer_len();
             let start = row_id * elem_len;
             ColumnBytes {
-                bytes: self.data.read(),
+                storage: ColumnBytesStorage::Borrowed(self.data.read()),
                 start,
                 end: start + elem_len,
             }
@@ -1071,6 +1071,23 @@ impl Column {
             let end = src.offsets[row_idx + 1] as usize;
             let cell = src.data.read()[start..end].to_vec();
             self.data.extend_from_slice(&cell);
+            self.offsets.push(self.data.len() as i64);
+        }
+        self.length += 1;
+    }
+
+    /// Append one cell after its source owner has been unlocked. This is the
+    /// same physical operation as [`Column::append_cell_from`], with nullity,
+    /// shape, and bytes prepared while the source was borrowed.
+    pub(crate) fn append_prepared_cell(
+        &mut self,
+        not_null: bool,
+        source_is_fixed: bool,
+        cell: &[u8],
+    ) {
+        self.append_null_bitmap(not_null);
+        self.data.extend_from_slice(cell);
+        if !source_is_fixed {
             self.offsets.push(self.data.len() as i64);
         }
         self.length += 1;

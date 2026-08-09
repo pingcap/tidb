@@ -29,17 +29,19 @@
 
 use crate::chunk::Chunk;
 use crate::column::Column;
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
+use std::sync::OnceLock;
 use tidb_util::layered_io::ReadAt;
 use tidb_util::{checksum, encrypt};
 
 /// Go `msgErrSelNotNil`: a bulk copy refuses chunks carrying a selection
 /// vector, because the copy walks physical rows.
 pub const MSG_ERR_SEL_NOT_NIL: &str =
-    "The chunk with sel isn't supported, please use the chunk without sel";
+    "The selection vector of Chunk is not nil. Please file a bug to the TiDB Team";
 
 /// Go `CopySelectedRows`: append every `selected` row of `src` to `dst`.
 pub fn copy_selected_rows(dst: &mut Column, src: &Column, selected: &[bool]) {
@@ -76,6 +78,24 @@ pub fn copy_rows(dst: &mut Column, src: &Column, selected: &[usize]) {
     dst.copy_rows_from(src, selected);
 }
 
+fn copy_selected_chunk_column(
+    dst: &mut Chunk,
+    dst_index: usize,
+    src: &Chunk,
+    src_index: usize,
+    selected: &[bool],
+) {
+    if dst.column_is_shared(dst_index) || src.column_is_shared(src_index) {
+        let source = src.column(src_index).copy_construct();
+        let mut destination = dst.column_mut(dst_index);
+        copy_selected_rows(&mut destination, &source, selected);
+    } else {
+        let source = src.column(src_index);
+        let mut destination = dst.column_mut(dst_index);
+        copy_selected_rows(&mut destination, &source, selected);
+    }
+}
+
 /// Go `CopySelectedJoinRowsDirect`: copy the selected joined rows of `src`
 /// straight into `dst`. Returns whether at least one row was selected.
 ///
@@ -100,7 +120,7 @@ pub fn copy_selected_join_rows_direct(
 
     let old_len = dst.column(0).length();
     for j in 0..src.num_cols() {
-        copy_selected_rows(dst.column_mut(j), src.column(j), selected);
+        copy_selected_chunk_column(dst, j, src, j, selected);
     }
     let num_selected = dst.column(0).length() - old_len;
     dst.add_virtual_rows(num_selected);
@@ -149,9 +169,11 @@ fn copy_selected_inner_rows(
     }
     let old_len = dst.column(inner_col_offset).length();
     for j in 0..inner_col_len {
-        copy_selected_rows(
-            dst.column_mut(inner_col_offset + j),
-            src.column(inner_col_offset + j),
+        copy_selected_chunk_column(
+            dst,
+            inner_col_offset + j,
+            src,
+            inner_col_offset + j,
             selected,
         );
     }
@@ -173,11 +195,96 @@ fn copy_same_outer_rows(
     // the logical and physical index of row 0 coincide.
     let row_idx = 0;
     for i in 0..outer_col_len {
-        dst.column_mut(outer_col_offset + i).copy_same_rows_from(
-            src.column(outer_col_offset + i),
-            row_idx,
-            num_rows,
-        );
+        let index = outer_col_offset + i;
+        if dst.column_is_shared(index) || src.column_is_shared(index) {
+            let source = src.column(index).copy_construct();
+            dst.column_mut(index)
+                .copy_same_rows_from(&source, row_idx, num_rows);
+        } else {
+            let source = src.column(index);
+            dst.column_mut(index)
+                .copy_same_rows_from(&source, row_idx, num_rows);
+        }
+    }
+}
+
+/// Go `ColumnSwapHelper`: maps input-column owners to output slots and caches
+/// the runtime merge of input indexes that designate one owner.
+#[derive(Debug)]
+pub struct ColumnSwapHelper {
+    /// Go `InputIdxToOutputIdxes`.
+    pub input_idx_to_output_idxes: HashMap<usize, Vec<usize>>,
+    merged_input_idx_to_output_idxes: OnceLock<HashMap<usize, Vec<usize>>>,
+}
+
+impl ColumnSwapHelper {
+    /// Go `NewColumnSwapHelper`.
+    #[must_use]
+    pub fn new(used_column_indexes: &[usize]) -> Self {
+        let mut input_idx_to_output_idxes = HashMap::new();
+        for (output_index, &input_index) in used_column_indexes.iter().enumerate() {
+            input_idx_to_output_idxes
+                .entry(input_index)
+                .or_insert_with(Vec::new)
+                .push(output_index);
+        }
+        Self {
+            input_idx_to_output_idxes,
+            merged_input_idx_to_output_idxes: OnceLock::new(),
+        }
+    }
+
+    /// Construct from the source-shaped public mapping.
+    #[must_use]
+    pub fn from_mapping(input_idx_to_output_idxes: HashMap<usize, Vec<usize>>) -> Self {
+        Self {
+            input_idx_to_output_idxes,
+            merged_input_idx_to_output_idxes: OnceLock::new(),
+        }
+    }
+
+    fn merge_input_indexes(&self, input: &Chunk) -> HashMap<usize, Vec<usize>> {
+        let mut merged = HashMap::<usize, Vec<usize>>::new();
+        for (&input_index, output_indexes) in &self.input_idx_to_output_idxes {
+            let owner_index = (0..input.num_cols())
+                .find(|&candidate| input.columns_share_identity(candidate, input, input_index))
+                .unwrap_or(input_index);
+            merged
+                .entry(owner_index)
+                .or_default()
+                .extend_from_slice(output_indexes);
+        }
+        merged
+    }
+
+    /// Go `SwapColumns`. The empty mapping is a true no-op, including when a
+    /// chunk carries a selection; a non-empty mapping validates both chunks
+    /// before the first owner move.
+    pub fn swap_columns(&self, input: &mut Chunk, output: &mut Chunk) -> Result<(), &'static str> {
+        if self.input_idx_to_output_idxes.is_empty() {
+            return Ok(());
+        }
+        if input.has_sel() || output.has_sel() {
+            return Err(MSG_ERR_SEL_NOT_NIL);
+        }
+        let merged = self
+            .merged_input_idx_to_output_idxes
+            .get_or_init(|| self.merge_input_indexes(input));
+        for (&input_index, output_indexes) in merged {
+            let Some((&first, rest)) = output_indexes.split_first() else {
+                continue;
+            };
+            output.swap_column_with(first, input, input_index)?;
+            for &output_index in rest {
+                output.make_ref(first, output_index);
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn merged_mapping(&self) -> Option<&HashMap<usize, Vec<usize>>> {
+        self.merged_input_idx_to_output_idxes.get()
     }
 }
 

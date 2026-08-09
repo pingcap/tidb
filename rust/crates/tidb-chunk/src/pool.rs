@@ -126,8 +126,9 @@ impl Pool {
             "Pool.PutChunk field/column width mismatch"
         );
         let columns = chunk.take_columns_for_reuse();
-        for (field, column) in fields.iter().zip(columns) {
-            self.bucket(get_fixed_len(field)).put(column);
+        for column in columns {
+            let type_size = column.type_size();
+            self.bucket(type_size).put(column);
         }
     }
 }
@@ -230,6 +231,32 @@ mod tests {
         let reused = pool.get_chunk(&fields);
         assert_eq!(reused.num_rows(), 0);
         assert_eq!(reused.column(0).data_capacity(), data_capacity);
+    }
+
+    #[test]
+    fn put_chunk_buckets_aliased_owner_by_physical_width() {
+        let fields = vec![
+            FieldType::new(FieldTypeCode::LongLong),
+            FieldType::new(FieldTypeCode::NewDecimal),
+        ];
+        let pool = Pool::new(8);
+        let mut chunk = pool.get_chunk(&fields);
+        chunk.make_ref(1, 0);
+        assert!(chunk.columns_share_identity(0, &chunk, 1));
+        assert_eq!(chunk.column(0).type_size(), 40);
+        assert_eq!(chunk.column(1).type_size(), 40);
+
+        pool.put_chunk(&fields, &mut chunk);
+        assert_eq!(chunk.num_cols(), 0);
+        assert_eq!(pool.fixed8.len(), 0);
+        assert_eq!(pool.fixed40.len(), 1);
+
+        let reused = pool.get_chunk(&fields);
+        assert_eq!(reused.column(0).type_size(), 8);
+        assert_eq!(reused.column(1).type_size(), 40);
+        assert!(!reused.columns_share_identity(0, &reused, 1));
+        assert_eq!(pool.fixed8.len(), 0);
+        assert_eq!(pool.fixed40.len(), 0);
     }
 
     #[test]

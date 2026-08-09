@@ -35,6 +35,7 @@
 
 use crate::chunk::Chunk;
 use crate::column::{Column, MY_DECIMAL_STRUCT_SIZE, SIZE_TIME};
+use crate::column_slot::ColumnSlot;
 use crate::row::Row;
 use crate::shared_bytes::SharedBytes;
 use tidb_datatype::{
@@ -84,7 +85,7 @@ impl MutRow {
     /// constructor.
     fn from_columns(columns: Vec<Column>) -> MutRow {
         let mut chunk = Chunk::default();
-        chunk.columns = columns;
+        chunk.columns = columns.into_iter().map(ColumnSlot::new).collect();
         MutRow { chunk }
     }
 
@@ -95,25 +96,29 @@ impl MutRow {
     /// bit is never set.
     pub fn set_row(&mut self, row: Row<'_>) {
         let source = row.chunk();
-        for (col_idx, source_column) in source.columns().iter().enumerate() {
-            let target = &mut self.chunk.columns[col_idx];
-            clean_col_of_mut_row(target);
-            if source_column.is_null(row.idx()) {
+        for col_idx in 0..source.num_cols() {
+            let (is_null, elem_len, cell) = {
+                let source_column = source.column(col_idx);
+                let raw = source_column.get_raw(row.idx());
+                let cell = raw.to_vec();
+                (
+                    source_column.is_null(row.idx()),
+                    source_column.elem_buffer_len(),
+                    cell,
+                )
+            };
+            let mut target = self.chunk.column_mut(col_idx);
+            clean_col_of_mut_row(&mut target);
+            if is_null {
                 continue;
             }
-            let elem_len = source_column.elem_buffer_len();
             if elem_len > 0 {
-                let offset = row.idx() * elem_len;
-                let cell = source_column.data.read()[offset..offset + elem_len].to_vec();
                 // Go copies with `copy(dst, src)`, which stops at the shorter
                 // of the two.
                 let n = target.data.len().min(cell.len());
                 target.data.copy_from_slice(0..n, &cell[..n]);
             } else {
-                let start = source_column.offsets[row.idx()] as usize;
-                let end = source_column.offsets[row.idx() + 1] as usize;
-                let cell = source_column.data.read()[start..end].to_vec();
-                set_mut_row_bytes(target, &cell);
+                set_mut_row_bytes(&mut target, &cell);
             }
             target.null_bitmap[0] = 1;
         }
@@ -143,23 +148,25 @@ impl MutRow {
     /// or when a bytes-shaped value reaches a fixed-length column -- both of
     /// which are Go panics too.
     pub fn set_value(&mut self, col_idx: usize, value: &Datum) {
-        let column = &mut self.chunk.columns[col_idx];
-        clean_col_of_mut_row(column);
+        let mut column = self.chunk.column_mut(col_idx);
+        clean_col_of_mut_row(&mut column);
         if matches!(value, Datum::Null) {
             return;
         }
         match value {
-            Datum::Int(i) => put_uint64(column, *i as u64),
-            Datum::UInt(u) => put_uint64(column, *u),
-            Datum::Real(f) => put_uint64(column, f.to_bits()),
+            Datum::Int(i) => put_uint64(&mut column, *i as u64),
+            Datum::UInt(u) => put_uint64(&mut column, *u),
+            Datum::Real(f) => put_uint64(&mut column, f.to_bits()),
             Datum::Float32(f) => {
                 column
                     .data
                     .copy_from_slice(0..4, &(*f as f32).to_bits().to_le_bytes());
             }
-            Datum::String(s) => set_mut_row_bytes(column, s.bytes()),
-            Datum::Bytes(b) => set_mut_row_bytes(column, b),
-            Datum::BinaryLiteral(l) | Datum::Bit(l) => set_mut_row_bytes(column, l.as_bytes()),
+            Datum::String(s) => set_mut_row_bytes(&mut column, s.bytes()),
+            Datum::Bytes(b) => set_mut_row_bytes(&mut column, b),
+            Datum::BinaryLiteral(l) | Datum::Bit(l) => {
+                set_mut_row_bytes(&mut column, l.as_bytes());
+            }
             Datum::Duration(d) => {
                 column
                     .data
@@ -176,14 +183,18 @@ impl MutRow {
                     .data
                     .copy_from_slice(0..SIZE_TIME as usize, &t.go_raw().to_ne_bytes());
             }
-            Datum::Enum(e, _) => set_mut_row_name_value(column, e.name_bytes(), e.value()),
-            Datum::Set(s, _) => set_mut_row_name_value(column, s.name_bytes(), s.value()),
-            Datum::Json(j) => set_mut_row_json(column, j),
-            Datum::VectorFloat32(v) => set_mut_row_bytes(column, &v.serialize()),
+            Datum::Enum(e, _) => {
+                set_mut_row_name_value(&mut column, e.name_bytes(), e.value());
+            }
+            Datum::Set(s, _) => {
+                set_mut_row_name_value(&mut column, s.name_bytes(), s.value());
+            }
+            Datum::Json(j) => set_mut_row_json(&mut column, j),
+            Datum::VectorFloat32(v) => set_mut_row_bytes(&mut column, &v.serialize()),
             // Go's `any` switch has no arm for these, so nothing is written.
             Datum::Null | Datum::MinNotNull | Datum::MaxValue | Datum::Raw(_) => {}
         }
-        self.chunk.columns[col_idx].null_bitmap[0] = 1;
+        column.null_bitmap[0] = 1;
     }
 
     /// Go `SetDatums`.
@@ -201,8 +212,12 @@ impl MutRow {
     /// is NOT updated, so `GetRaw`/`GetBytes` still report an empty cell while
     /// the typed getter reads the value back. This port reproduces that.
     pub fn set_datum(&mut self, col_idx: usize, datum: &Datum) {
-        let column = &mut self.chunk.columns[col_idx];
-        clean_col_of_mut_row(column);
+        if matches!(datum, Datum::MinNotNull | Datum::MaxValue | Datum::Raw(_)) {
+            self.chunk.columns[col_idx] = ColumnSlot::new(make_mut_row_column(datum));
+            return;
+        }
+        let mut column = self.chunk.column_mut(col_idx);
+        clean_col_of_mut_row(&mut column);
         if matches!(datum, Datum::Null) {
             return;
         }
@@ -210,7 +225,7 @@ impl MutRow {
             // Go writes `d.GetUint64()` for all three kinds, which is the
             // datum's raw 64-bit payload -- the float's bit pattern included.
             Datum::Int(_) | Datum::UInt(_) | Datum::Real(_) => {
-                grow_data_to(column, 8);
+                grow_data_to(&mut column, 8);
                 let bits = match datum {
                     Datum::Int(i) => *i as u64,
                     Datum::UInt(u) => *u,
@@ -220,48 +235,51 @@ impl MutRow {
                 column.data.copy_from_slice(0..8, &bits.to_le_bytes());
             }
             Datum::Float32(f) => {
-                grow_data_to(column, 4);
+                grow_data_to(&mut column, 4);
                 column
                     .data
                     .copy_from_slice(0..4, &(*f as f32).to_bits().to_le_bytes());
             }
-            Datum::String(s) => set_mut_row_bytes(column, s.bytes()),
-            Datum::Bytes(b) => set_mut_row_bytes(column, b),
-            Datum::BinaryLiteral(l) | Datum::Bit(l) => set_mut_row_bytes(column, l.as_bytes()),
+            Datum::String(s) => set_mut_row_bytes(&mut column, s.bytes()),
+            Datum::Bytes(b) => set_mut_row_bytes(&mut column, b),
+            Datum::BinaryLiteral(l) | Datum::Bit(l) => {
+                set_mut_row_bytes(&mut column, l.as_bytes());
+            }
             Datum::Time(t) => {
-                grow_data_to(column, SIZE_TIME as usize);
+                grow_data_to(&mut column, SIZE_TIME as usize);
                 column
                     .data
                     .copy_from_slice(0..SIZE_TIME as usize, &t.go_raw().to_ne_bytes());
             }
             Datum::Duration(d) => {
-                grow_data_to(column, 8);
+                grow_data_to(&mut column, 8);
                 column
                     .data
                     .copy_from_slice(0..8, &d.nanoseconds().to_ne_bytes());
             }
             Datum::Decimal(d) => {
-                grow_data_to(column, MY_DECIMAL_STRUCT_SIZE as usize);
+                grow_data_to(&mut column, MY_DECIMAL_STRUCT_SIZE as usize);
                 column.data.copy_from_slice(
                     0..MY_DECIMAL_STRUCT_SIZE as usize,
                     &my_decimal_of(d).to_raw_bytes(),
                 );
             }
-            Datum::Json(j) => set_mut_row_json(column, j),
-            Datum::VectorFloat32(v) => set_mut_row_bytes(column, &v.serialize()),
-            Datum::Enum(e, _) => set_mut_row_name_value(column, e.name_bytes(), e.value()),
-            Datum::Set(s, _) => set_mut_row_name_value(column, s.name_bytes(), s.value()),
+            Datum::Json(j) => set_mut_row_json(&mut column, j),
+            Datum::VectorFloat32(v) => set_mut_row_bytes(&mut column, &v.serialize()),
+            Datum::Enum(e, _) => {
+                set_mut_row_name_value(&mut column, e.name_bytes(), e.value());
+            }
+            Datum::Set(s, _) => {
+                set_mut_row_name_value(&mut column, s.name_bytes(), s.value());
+            }
             // Go's `default` arm REPLACES the column with a freshly built one
             // and then sets the not-null bit on the column it just replaced
             // away -- so the new column keeps whatever nullity
             // `makeMutRowColumn` gave it, which for these sentinel kinds is
             // NULL. Returning early is that behaviour, written out.
-            Datum::Null | Datum::MinNotNull | Datum::MaxValue | Datum::Raw(_) => {
-                self.chunk.columns[col_idx] = make_mut_row_column(datum);
-                return;
-            }
+            Datum::Null | Datum::MinNotNull | Datum::MaxValue | Datum::Raw(_) => unreachable!(),
         }
-        self.chunk.columns[col_idx].null_bitmap[0] = 1;
+        column.null_bitmap[0] = 1;
     }
 
     /// Go `ShallowCopyPartialRow`: place `row`'s cells into the columns
@@ -271,21 +289,44 @@ impl MutRow {
     /// byte backing; ordinary columns remain lock-free `Vec` storage.
     pub fn shallow_copy_partial_row(&mut self, col_idx: usize, source: &mut Chunk, row_idx: usize) {
         for i in 0..source.columns.len() {
-            let source_column = &mut source.columns[i];
-            let target = &mut self.chunk.columns[col_idx + i];
-            // A MutRow holds one row, so the whole byte is the null bit.
-            target.null_bitmap[0] = u8::from(!source_column.is_null(row_idx));
-
-            if source_column.is_fixed() {
-                let elem_len = source_column.elem_buffer_len();
-                let offset = row_idx * elem_len;
-                target.data = source_column.data.share_range(offset, offset + elem_len);
-            } else {
-                let start = source_column.offsets[row_idx] as usize;
-                let end = source_column.offsets[row_idx + 1] as usize;
-                target.data = source_column.data.share_range(start, end);
-                target.offsets[1] = target.data.len() as i64;
+            let prepared = {
+                let mut source_column = source.column_mut(i);
+                prepare_shallow_column(&mut source_column, row_idx)
+            };
+            let mut target = self.chunk.column_mut(col_idx + i);
+            target.null_bitmap[0] = u8::from(prepared.not_null);
+            target.data = prepared.data;
+            if let Some(length) = prepared.variable_length {
+                target.offsets[1] = length;
             }
+        }
+    }
+}
+
+struct PreparedShallowColumn {
+    not_null: bool,
+    data: SharedBytes,
+    variable_length: Option<i64>,
+}
+
+fn prepare_shallow_column(source: &mut Column, row_idx: usize) -> PreparedShallowColumn {
+    let not_null = !source.is_null(row_idx);
+    if source.is_fixed() {
+        let elem_len = source.elem_buffer_len();
+        let offset = row_idx * elem_len;
+        PreparedShallowColumn {
+            not_null,
+            data: source.data.share_range(offset, offset + elem_len),
+            variable_length: None,
+        }
+    } else {
+        let start = source.offsets[row_idx] as usize;
+        let end = source.offsets[row_idx + 1] as usize;
+        let data = source.data.share_range(start, end);
+        PreparedShallowColumn {
+            not_null,
+            variable_length: Some(data.len() as i64),
+            data,
         }
     }
 }
@@ -772,9 +813,12 @@ mod tests {
         let mut mut_row = MutRow::from_types(&types);
         let before: Vec<_> = mut_row
             .chunk
-            .columns()
+            .column_slots()
             .iter()
-            .map(|c| (c.data.clone(), c.elem_buf.clone()))
+            .map(|slot| {
+                let column = slot.read();
+                (column.data.clone(), column.elem_buf.clone())
+            })
             .collect();
         for (i, (data, elem_buf)) in before.iter().enumerate() {
             mut_row.set_datum(i, &Datum::Null);

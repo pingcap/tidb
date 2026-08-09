@@ -27,7 +27,7 @@ use crate::column::{get_fixed_len, Column, VAR_ELEM_LEN};
 use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use tidb_datatype::FieldType;
 
 const DEFAULT_MAX_FREE_CHUNKS: usize = 64;
@@ -166,6 +166,53 @@ struct AllocatorState {
     generation: u64,
 }
 
+/// Recycling provenance carried by one allocation-time admitted column owner.
+/// It moves with lazy whole-column aliases and enqueues the raw column exactly
+/// once when that owner finally dies.
+pub(crate) struct ColumnRecycleRegistration {
+    expected_type_size: i64,
+    generation: u64,
+    recycler: Weak<Mutex<AllocatorState>>,
+}
+
+impl ColumnRecycleRegistration {
+    fn new(
+        expected_type_size: i64,
+        generation: u64,
+        recycler: Weak<Mutex<AllocatorState>>,
+    ) -> Self {
+        Self {
+            expected_type_size,
+            generation,
+            recycler,
+        }
+    }
+
+    pub(crate) fn recycle(self, column: Column) {
+        let Some(recycler) = self.recycler.upgrade() else {
+            return;
+        };
+        let mut state = lock_state(&recycler);
+        if self.generation == state.generation {
+            state
+                .pending_columns
+                .entry(self.expected_type_size)
+                .or_default()
+                .push(column);
+        }
+    }
+}
+
+impl std::fmt::Debug for ColumnRecycleRegistration {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ColumnRecycleRegistration")
+            .field("expected_type_size", &self.expected_type_size)
+            .field("generation", &self.generation)
+            .finish_non_exhaustive()
+    }
+}
+
 impl AllocatorState {
     fn alloc(
         &mut self,
@@ -231,23 +278,33 @@ fn lock_state(state: &Mutex<AllocatorState>) -> MutexGuard<'_, AllocatorState> {
 pub struct AllocatedChunk {
     chunk: Option<Chunk>,
     cache_chunk: bool,
-    column_registrations: Vec<(i64, bool)>,
     generation: u64,
     recycler: Option<Arc<Mutex<AllocatorState>>>,
 }
 
 impl AllocatedChunk {
     fn pooled(
-        chunk: Chunk,
+        mut chunk: Chunk,
         cache_chunk: bool,
         column_registrations: Vec<(i64, bool)>,
         generation: u64,
         recycler: Arc<Mutex<AllocatorState>>,
     ) -> Self {
+        let weak_recycler = Arc::downgrade(&recycler);
+        chunk.attach_allocator_registrations(column_registrations.into_iter().map(
+            |(expected_type_size, cache)| {
+                cache.then(|| {
+                    ColumnRecycleRegistration::new(
+                        expected_type_size,
+                        generation,
+                        Weak::clone(&weak_recycler),
+                    )
+                })
+            },
+        ));
         Self {
             chunk: Some(chunk),
             cache_chunk,
-            column_registrations,
             generation,
             recycler: Some(recycler),
         }
@@ -257,7 +314,6 @@ impl AllocatedChunk {
         Self {
             chunk: Some(chunk),
             cache_chunk: false,
-            column_registrations: Vec::new(),
             generation: 0,
             recycler: None,
         }
@@ -266,6 +322,10 @@ impl AllocatedChunk {
     /// Consume the lease without recycling it.
     #[must_use]
     pub fn into_chunk(mut self) -> Chunk {
+        self.chunk
+            .as_mut()
+            .expect("allocated chunk is present")
+            .detach_allocator_registrations();
         self.recycler = None;
         self.chunk.take().expect("allocated chunk is present")
     }
@@ -290,25 +350,22 @@ impl Drop for AllocatedChunk {
         let (Some(recycler), Some(mut chunk)) = (self.recycler.take(), self.chunk.take()) else {
             return;
         };
-        let mut state = lock_state(&recycler);
+        let state = lock_state(&recycler);
         // A lease surviving Reset cannot be invalidated as Go's raw pointer
         // can. Discard it when it eventually drops so stale generations never
         // defeat the source cache bounds.
         if self.generation != state.generation {
             return;
         }
-        let columns = chunk.drain_columns_for_allocator();
-        for ((type_size, cache), column) in self.column_registrations.drain(..).zip(columns) {
-            if cache {
-                state
-                    .pending_columns
-                    .entry(type_size)
-                    .or_default()
-                    .push(column);
-            }
-        }
+        drop(state);
+        // Owner drops can enqueue into `recycler`, so they MUST happen without
+        // its state mutex held.
+        chunk.clear_columns_for_allocator();
         if self.cache_chunk {
-            state.pending_chunks.push(chunk);
+            let mut state = lock_state(&recycler);
+            if self.generation == state.generation {
+                state.pending_chunks.push(chunk);
+            }
         }
     }
 }
@@ -693,6 +750,93 @@ mod tests {
         drop(retyped);
         allocator.reset();
         assert_eq!(allocator.cached_columns(4), 0);
+        restore_defaults();
+    }
+
+    /// Go `TestNoDuplicateColumnReuse` plus the displaced-owner failure class:
+    /// aliasing one slot must neither enqueue one identity twice nor lose the
+    /// owner that the destination slot previously held.
+    #[test]
+    fn allocator_aliases_recycle_each_original_owner_once() {
+        let _guard = CONFIG_TEST_LOCK.lock().expect("config test lock");
+        init_chunk_alloc_size(8, 32);
+        let allocator = new_allocator();
+        {
+            let mut chunk = allocator.alloc(&fields(), 5, 10);
+            chunk.make_ref(1, 3);
+            assert!(chunk.columns_share_identity(1, &chunk, 3));
+        }
+        allocator.reset();
+
+        // Every allocation-time owner is present exactly once. In particular,
+        // index 3's displaced 40-byte decimal owner was not lost, and index 1's
+        // aliased variable owner was not registered twice.
+        assert_eq!(allocator.cached_columns(VAR_ELEM_LEN), 2);
+        assert_eq!(allocator.cached_columns(4), 1);
+        assert_eq!(allocator.cached_columns(8), 4);
+        assert_eq!(allocator.cached_columns(40), 1);
+
+        let reused = allocator.alloc(&fields(), 5, 10);
+        for left in 0..reused.num_cols() {
+            for right in left + 1..reused.num_cols() {
+                assert!(
+                    !reused.columns_share_identity(left, &reused, right),
+                    "allocator published one owner in slots {left} and {right}"
+                );
+            }
+        }
+        drop(reused);
+        restore_defaults();
+    }
+
+    #[test]
+    fn allocator_recycles_a_displaced_original_while_lease_remains_live() {
+        let _guard = CONFIG_TEST_LOCK.lock().expect("config test lock");
+        init_chunk_alloc_size(0, 2);
+        let allocator = new_allocator();
+        let int_fields = vec![
+            FieldType::new(FieldTypeCode::LongLong),
+            FieldType::new(FieldTypeCode::LongLong),
+        ];
+        let mut chunk = allocator.alloc(&int_fields, 1, 1);
+        chunk.make_ref(0, 1);
+
+        // Replacing slot 1 drops its independently registered owner. Its
+        // provenance queues it even though the lease and aliased owner live.
+        allocator.reset();
+        assert_eq!(allocator.cached_columns(8), 1);
+        assert!(chunk.columns_share_identity(0, &chunk, 1));
+        drop(chunk);
+        restore_defaults();
+    }
+
+    #[test]
+    fn allocator_never_resets_a_live_cross_chunk_alias() {
+        let _guard = CONFIG_TEST_LOCK.lock().expect("config test lock");
+        init_chunk_alloc_size(1, 1);
+        let allocator = new_allocator();
+        let fields = vec![FieldType::new(FieldTypeCode::LongLong)];
+        let mut source = allocator.alloc(&fields, 1, 1);
+        source.append_int64(0, 17);
+        let mut destination = Chunk::new_with_capacity(&fields, 1);
+        destination
+            .make_ref_to(0, &mut source, 0)
+            .expect("neither chunk has a selection");
+
+        drop(source);
+        allocator.reset();
+        assert_eq!(allocator.cached_columns(8), 0);
+        assert_eq!(destination.column(0).get_int64(0), 17);
+        destination
+            .column_mut(0)
+            .with_int64s_mut(|values| values[0] = 23);
+        assert_eq!(destination.column(0).get_int64(0), 23);
+
+        // The registration belongs to the pre-reset generation, so final owner
+        // drop discards it instead of polluting the new generation's cache.
+        drop(destination);
+        allocator.reset();
+        assert_eq!(allocator.cached_columns(8), 0);
         restore_defaults();
     }
 

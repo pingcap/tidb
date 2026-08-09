@@ -20,12 +20,13 @@
 //!
 //! Ported: construction, required-row/capacity growth, selection-aware row
 //! access, typed append paths, range and projected batch appends, truncate and
-//! reconstruct transforms, deep/selected copies, column-vector swapping, and
-//! allocator/global-pool ownership transfer. Pointer-identity column aliases
-//! (`MakeRef`/`MakeRefTo` and alias-preserving single-column swaps) remain a
-//! separate representation tranche.
+//! reconstruct transforms, deep/selected copies, whole-column aliases,
+//! alias-preserving swaps, column-vector swapping, and allocator/global-pool
+//! ownership transfer.
 
+use crate::chunk_util::MSG_ERR_SEL_NOT_NIL;
 use crate::column::Column;
+use crate::column_slot::{ColumnHandle, ColumnRead, ColumnSlot, ColumnWrite};
 use crate::row::Row;
 use tidb_datatype::{
     Datum, FieldType, GoStringSource, MyDecimal, MySqlDuration, Time, VectorFloat32,
@@ -41,7 +42,7 @@ pub struct Chunk {
     /// Go `sel`: the selected physical row indices, or `None` when all rows are
     /// selected.
     pub(crate) sel: Option<Vec<usize>>,
-    pub(crate) columns: Vec<Column>,
+    pub(crate) columns: Vec<ColumnSlot>,
     /// Go distinguishes a nil `columns` slice from a non-nil zero-length
     /// slice. `Vec::is_empty` cannot represent that distinction, so keep the
     /// construction state explicitly. Renewal of a valid zero-column chunk
@@ -69,6 +70,7 @@ impl Chunk {
             columns: fields
                 .iter()
                 .map(|f| Column::new_column(f, capacity))
+                .map(ColumnSlot::new)
                 .collect(),
             columns_initialized: true,
             num_virtual_rows: 0,
@@ -88,7 +90,11 @@ impl Chunk {
     #[must_use]
     pub fn new_empty(fields: &[FieldType]) -> Self {
         Chunk {
-            columns: fields.iter().map(Column::new_empty_column).collect(),
+            columns: fields
+                .iter()
+                .map(Column::new_empty_column)
+                .map(ColumnSlot::new)
+                .collect(),
             columns_initialized: true,
             ..Chunk::default()
         }
@@ -103,7 +109,7 @@ impl Chunk {
     ) -> Self {
         Chunk {
             sel: None,
-            columns,
+            columns: columns.into_iter().map(ColumnSlot::new).collect(),
             columns_initialized: true,
             num_virtual_rows: 0,
             capacity,
@@ -126,7 +132,10 @@ impl Chunk {
     /// chunk keeps its whole allocation, not just the rows in use.
     #[must_use]
     pub fn memory_usage(&self) -> i64 {
-        self.columns.iter().map(Column::memory_usage).sum()
+        self.columns
+            .iter()
+            .map(|column| column.read().memory_usage())
+            .sum()
     }
 
     /// Go `RequiredRows`.
@@ -172,18 +181,156 @@ impl Chunk {
         if self.in_complete_chunk || self.num_cols() == 0 {
             return self.num_virtual_rows;
         }
-        self.columns[0].rows()
+        self.columns[0].read().rows()
     }
 
     /// Go `Column`: the column at `col_idx`.
     #[must_use]
-    pub fn column(&self, col_idx: usize) -> &Column {
-        &self.columns[col_idx]
+    pub fn column(&self, col_idx: usize) -> ColumnRead<'_> {
+        self.columns[col_idx].read()
     }
 
     /// A mutable borrow of the column at `col_idx`.
-    pub fn column_mut(&mut self, col_idx: usize) -> &mut Column {
-        &mut self.columns[col_idx]
+    pub fn column_mut(&mut self, col_idx: usize) -> ColumnWrite<'_> {
+        self.columns[col_idx].write()
+    }
+
+    /// Go `Prune`: retain the requested column owners in the requested order.
+    /// Duplicate indices remain duplicate aliases. Safe lazy promotion requires
+    /// a mutable source borrow, but the source's values and metadata do not
+    /// change.
+    #[must_use]
+    pub fn prune(&mut self, used_col_idxs: &[usize]) -> Chunk {
+        let columns = used_col_idxs
+            .iter()
+            .map(|&index| self.columns[index].alias())
+            .collect();
+        Chunk {
+            sel: self.sel.clone(),
+            columns,
+            columns_initialized: true,
+            num_virtual_rows: self.num_virtual_rows,
+            capacity: self.capacity,
+            required_rows: self.required_rows,
+            in_complete_chunk: self.in_complete_chunk,
+        }
+    }
+
+    /// Go `MakeRef`: make `destination` designate `source`'s column owner.
+    pub fn make_ref(&mut self, source: usize, destination: usize) {
+        let alias = self.columns[source].alias();
+        self.columns[destination] = alias;
+    }
+
+    /// Obtain a transferable handle to a column owner. The first handle lazily
+    /// promotes an owned slot; subsequent handles clone only the owner `Arc`.
+    pub fn column_handle(&mut self, index: usize) -> ColumnHandle {
+        ColumnHandle {
+            slot: self.columns[index].alias(),
+        }
+    }
+
+    /// Go `MakeRefTo`: make one destination slot designate a source-chunk
+    /// owner. Neither chunk may carry a selection vector.
+    pub fn make_ref_to(
+        &mut self,
+        destination: usize,
+        source: &mut Chunk,
+        source_index: usize,
+    ) -> Result<(), &'static str> {
+        if self.sel.is_some() || source.sel.is_some() {
+            return Err(MSG_ERR_SEL_NOT_NIL);
+        }
+        let alias = source.columns[source_index].alias();
+        self.columns[destination] = alias;
+        Ok(())
+    }
+
+    /// Go `SetCol`: replace one owner and return the displaced owner. Installing
+    /// the same identity is a no-op and returns `None`.
+    pub fn set_col(&mut self, index: usize, column: ColumnHandle) -> Option<ColumnHandle> {
+        if self.columns[index].same_identity(&column.slot) {
+            return None;
+        }
+        Some(ColumnHandle {
+            slot: std::mem::replace(&mut self.columns[index], column.slot),
+        })
+    }
+
+    /// Whether two slots, possibly in different chunks, designate one mutable
+    /// column owner. Value equality alone does not imply identity.
+    #[must_use]
+    pub fn columns_share_identity(&self, index: usize, other: &Chunk, other_index: usize) -> bool {
+        self.columns[index].same_identity(&other.columns[other_index])
+    }
+
+    fn leftmost_alias(&self, index: usize) -> usize {
+        (0..index)
+            .find(|&candidate| self.columns[candidate].same_identity(&self.columns[index]))
+            .unwrap_or(index)
+    }
+
+    fn alias_indexes(&self, owner_index: usize) -> Vec<usize> {
+        self.columns
+            .iter()
+            .enumerate()
+            .filter_map(|(index, slot)| {
+                slot.same_identity(&self.columns[owner_index])
+                    .then_some(index)
+            })
+            .collect()
+    }
+
+    fn rebuild_aliases(&mut self, owner_index: usize, indexes: &[usize]) {
+        for &index in indexes {
+            if index != owner_index {
+                self.make_ref(owner_index, index);
+            }
+        }
+    }
+
+    /// Go private `swapColumn`, for two distinct chunks.
+    pub(crate) fn swap_column_with(
+        &mut self,
+        index: usize,
+        other: &mut Chunk,
+        other_index: usize,
+    ) -> Result<(), &'static str> {
+        if self.sel.is_some() || other.sel.is_some() {
+            return Err(MSG_ERR_SEL_NOT_NIL);
+        }
+        let owner_index = self.leftmost_alias(index);
+        let other_owner_index = other.leftmost_alias(other_index);
+        if self.columns[owner_index].same_identity(&other.columns[other_owner_index]) {
+            return Ok(());
+        }
+        let indexes = self.alias_indexes(owner_index);
+        let other_indexes = other.alias_indexes(other_owner_index);
+        std::mem::swap(
+            &mut self.columns[owner_index],
+            &mut other.columns[other_owner_index],
+        );
+        self.rebuild_aliases(owner_index, &indexes);
+        other.rebuild_aliases(other_owner_index, &other_indexes);
+        Ok(())
+    }
+
+    /// Go private `swapColumn`, when both indexes belong to this chunk.
+    pub fn swap_column(&mut self, index: usize, other_index: usize) -> Result<(), &'static str> {
+        if self.sel.is_some() {
+            return Err(MSG_ERR_SEL_NOT_NIL);
+        }
+        let owner_index = self.leftmost_alias(index);
+        let other_owner_index = self.leftmost_alias(other_index);
+        if owner_index == other_owner_index {
+            return Ok(());
+        }
+        let indexes = self.alias_indexes(owner_index);
+        let other_indexes = self.alias_indexes(other_owner_index);
+        self.columns.swap(owner_index, other_owner_index);
+        self.rebuild_aliases(owner_index, &indexes);
+        self.rebuild_aliases(other_owner_index, &other_indexes);
+        Ok(())
     }
 
     /// Go `GetRow`: the logical row at `idx`, mapped through the selection.
@@ -255,7 +402,12 @@ impl Chunk {
             columns: self
                 .columns
                 .iter()
-                .map(|col| Column::new_column_with_type_size(col.type_size(), capacity))
+                .map(|col| {
+                    ColumnSlot::new(Column::new_column_with_type_size(
+                        col.read().type_size(),
+                        capacity,
+                    ))
+                })
                 .collect(),
             columns_initialized: true,
             num_virtual_rows: 0,
@@ -300,13 +452,15 @@ impl Chunk {
             return;
         }
         for col in &mut self.columns {
-            col.reset();
+            col.write().reset();
         }
         self.num_virtual_rows = 0;
     }
 
     /// Go `resetForReuse`: decouple all column owners and restore the literal
-    /// zero-value chunk metadata while returning the columns to the caller.
+    /// zero-value chunk metadata while returning each UNIQUE column owner to
+    /// the caller. Aliased slots yield one owner; a cross-chunk live owner is
+    /// not reusable yet.
     pub(crate) fn take_columns_for_reuse(&mut self) -> Vec<Column> {
         self.sel = None;
         self.num_virtual_rows = 0;
@@ -314,19 +468,53 @@ impl Chunk {
         self.required_rows = 0;
         self.in_complete_chunk = false;
         self.columns_initialized = false;
-        std::mem::take(&mut self.columns)
+        let slots = std::mem::take(&mut self.columns);
+        let mut unique_slots: Vec<ColumnSlot> = Vec::with_capacity(slots.len());
+        for slot in slots {
+            if unique_slots
+                .iter()
+                .any(|existing| existing.same_identity(&slot))
+            {
+                continue;
+            }
+            unique_slots.push(slot);
+        }
+        unique_slots
+            .into_iter()
+            .filter_map(|slot| slot.into_unique_column().ok())
+            .collect()
     }
 
-    /// Go allocator `resetForReuse`: drain column owners while preserving the
-    /// empty column-slot allocation cached with the chunk shell.
-    pub(crate) fn drain_columns_for_allocator(&mut self) -> Vec<Column> {
+    /// Go allocator `resetForReuse`: drop column owners (which independently
+    /// enqueue their registered columns) while preserving the empty slot
+    /// allocation cached with the chunk shell.
+    pub(crate) fn clear_columns_for_allocator(&mut self) {
         self.sel = None;
         self.num_virtual_rows = 0;
         self.capacity = 0;
         self.required_rows = 0;
         self.in_complete_chunk = false;
         self.columns_initialized = true;
-        self.columns.drain(..).collect()
+        self.columns.clear();
+    }
+
+    /// Remove allocator provenance before transferring a lease into an
+    /// ordinary independently owned chunk.
+    pub(crate) fn detach_allocator_registrations(&mut self) {
+        for column in &mut self.columns {
+            column.detach_registration();
+        }
+    }
+
+    pub(crate) fn attach_allocator_registrations(
+        &mut self,
+        registrations: impl IntoIterator<Item = Option<crate::alloc::ColumnRecycleRegistration>>,
+    ) {
+        for (column, registration) in self.columns.iter_mut().zip(registrations) {
+            if let Some(registration) = registration {
+                column.attach_registration(registration);
+            }
+        }
     }
 
     /// Populate a chunk shell recovered from the allocator's free list.
@@ -337,7 +525,8 @@ impl Chunk {
         required_rows: usize,
     ) {
         debug_assert!(self.columns.is_empty());
-        self.columns.extend(columns);
+        self.columns
+            .extend(columns.into_iter().map(ColumnSlot::new));
         self.columns_initialized = true;
         self.capacity = capacity;
         self.required_rows = required_rows;
@@ -364,7 +553,12 @@ impl Chunk {
         self.columns = self
             .columns
             .iter()
-            .map(|column| Column::new_column_with_type_size(column.type_size(), new_capacity))
+            .map(|column| {
+                ColumnSlot::new(Column::new_column_with_type_size(
+                    column.read().type_size(),
+                    new_capacity,
+                ))
+            })
             .collect();
         self.capacity = new_capacity;
         self.num_virtual_rows = 0;
@@ -380,7 +574,7 @@ impl Chunk {
     fn append_sel(&mut self, col_idx: usize) {
         if col_idx == 0 {
             if let Some(sel) = &mut self.sel {
-                let len = self.columns[0].rows();
+                let len = self.columns[0].read().rows();
                 sel.push(len);
             }
         }
@@ -389,61 +583,61 @@ impl Chunk {
     /// Go `AppendNull`.
     pub fn append_null(&mut self, col_idx: usize) {
         self.append_sel(col_idx);
-        self.columns[col_idx].append_null();
+        self.columns[col_idx].write().append_null();
     }
 
     /// Go `AppendInt64`.
     pub fn append_int64(&mut self, col_idx: usize, value: i64) {
         self.append_sel(col_idx);
-        self.columns[col_idx].append_int64(value);
+        self.columns[col_idx].write().append_int64(value);
     }
 
     /// Go `AppendUint64`.
     pub fn append_uint64(&mut self, col_idx: usize, value: u64) {
         self.append_sel(col_idx);
-        self.columns[col_idx].append_uint64(value);
+        self.columns[col_idx].write().append_uint64(value);
     }
 
     /// Go `AppendFloat32`.
     pub fn append_float32(&mut self, col_idx: usize, value: f32) {
         self.append_sel(col_idx);
-        self.columns[col_idx].append_float32(value);
+        self.columns[col_idx].write().append_float32(value);
     }
 
     /// Go `AppendFloat64`.
     pub fn append_float64(&mut self, col_idx: usize, value: f64) {
         self.append_sel(col_idx);
-        self.columns[col_idx].append_float64(value);
+        self.columns[col_idx].write().append_float64(value);
     }
 
     /// Go `AppendTime`.
     pub fn append_time(&mut self, col_idx: usize, value: Time) {
         self.append_sel(col_idx);
-        self.columns[col_idx].append_time(value);
+        self.columns[col_idx].write().append_time(value);
     }
 
     /// Go `AppendDuration` (fsp is ignored, as in Go).
     pub fn append_duration(&mut self, col_idx: usize, value: MySqlDuration) {
         self.append_sel(col_idx);
-        self.columns[col_idx].append_duration(value);
+        self.columns[col_idx].write().append_duration(value);
     }
 
     /// Go `AppendMyDecimal`.
     pub fn append_my_decimal(&mut self, col_idx: usize, value: &MyDecimal) {
         self.append_sel(col_idx);
-        self.columns[col_idx].append_my_decimal(value);
+        self.columns[col_idx].write().append_my_decimal(value);
     }
 
     /// Go `AppendString`.
     pub fn append_string(&mut self, col_idx: usize, value: impl GoStringSource) {
         self.append_sel(col_idx);
-        self.columns[col_idx].append_string(value);
+        self.columns[col_idx].write().append_string(value);
     }
 
     /// Go `AppendBytes`.
     pub fn append_bytes(&mut self, col_idx: usize, value: &[u8]) {
         self.append_sel(col_idx);
-        self.columns[col_idx].append_bytes(value);
+        self.columns[col_idx].write().append_bytes(value);
     }
 
     /// Go `AppendJSON`: a JSON cell is the var-length byte string
@@ -451,25 +645,25 @@ impl Chunk {
     /// wire and in a row value.
     pub fn append_json(&mut self, col_idx: usize, value: &tidb_datatype::BinaryJSON) {
         self.append_sel(col_idx);
-        self.columns[col_idx].append_json(value);
+        self.columns[col_idx].write().append_json(value);
     }
 
     /// Go `AppendEnum`.
     pub fn append_enum(&mut self, col_idx: usize, value: &tidb_datatype::MysqlEnum) {
         self.append_sel(col_idx);
-        self.columns[col_idx].append_enum(value);
+        self.columns[col_idx].write().append_enum(value);
     }
 
     /// Go `AppendSet`.
     pub fn append_set(&mut self, col_idx: usize, value: &tidb_datatype::MysqlSet) {
         self.append_sel(col_idx);
-        self.columns[col_idx].append_set(value);
+        self.columns[col_idx].write().append_set(value);
     }
 
     /// Go `AppendVectorFloat32`.
     pub fn append_vector_float32(&mut self, col_idx: usize, value: &VectorFloat32) {
         self.append_sel(col_idx);
-        self.columns[col_idx].append_vector_float32(value);
+        self.columns[col_idx].write().append_vector_float32(value);
     }
 
     /// Go `AppendDatum`: append a [`Datum`] value into column `col_idx`,
@@ -493,7 +687,7 @@ impl Chunk {
             Datum::Real(f) => self.append_float64(col_idx, *f),
             Datum::Float32(f) => {
                 self.append_sel(col_idx);
-                self.columns[col_idx].append_float32(*f as f32);
+                self.columns[col_idx].write().append_float32(*f as f32);
             }
             Datum::String(s) => self.append_bytes(col_idx, s.bytes()),
             Datum::Bytes(b) | Datum::Raw(b) => self.append_bytes(col_idx, b),
@@ -529,8 +723,20 @@ impl Chunk {
     pub fn append_partial_row(&mut self, col_off: usize, row: Row<'_>) {
         self.append_sel(col_off);
         for (i, src_col) in row.chunk().columns.iter().enumerate() {
-            self.columns[col_off + i].append_cell_from(src_col, row.idx());
+            Self::append_cell_between(&mut self.columns[col_off + i], src_col, row.idx());
         }
+    }
+
+    fn append_cell_between(destination: &mut ColumnSlot, source: &ColumnSlot, row: usize) {
+        let (not_null, source_is_fixed, cell) = {
+            let source = source.read();
+            let raw = source.get_raw(row);
+            let cell = raw.to_vec();
+            (!source.is_null(row), source.is_fixed(), cell)
+        };
+        destination
+            .write()
+            .append_prepared_cell(not_null, source_is_fixed, &cell);
     }
 
     /// Go `AppendRow`: append a whole row (from another chunk) to this chunk.
@@ -553,8 +759,11 @@ impl Chunk {
         };
         self.append_sel(col_off);
         for (dst_offset, &src_index) in col_idxs.iter().enumerate() {
-            self.columns[col_off + dst_offset]
-                .append_cell_from(row.chunk().column(src_index), row.idx());
+            Self::append_cell_between(
+                &mut self.columns[col_off + dst_offset],
+                &row.chunk().columns[src_index],
+                row.idx(),
+            );
         }
         col_idxs.len()
     }
@@ -594,8 +803,11 @@ impl Chunk {
                 if dst_offset == 0 {
                     self.append_sel(col_off);
                 }
-                self.columns[col_off + dst_offset]
-                    .append_cell_from(row.chunk().column(dst_offset), row.idx());
+                Self::append_cell_between(
+                    &mut self.columns[col_off + dst_offset],
+                    &row.chunk().columns[dst_offset],
+                    row.idx(),
+                );
             }
         }
     }
@@ -627,7 +839,7 @@ impl Chunk {
     fn physical_num_rows(&self) -> usize {
         self.columns
             .first()
-            .map_or(self.num_virtual_rows, Column::rows)
+            .map_or(self.num_virtual_rows, |column| column.read().rows())
     }
 
     /// Go `Reconstruct`: materialize the installed selection and remove it.
@@ -636,7 +848,7 @@ impl Chunk {
             return;
         };
         for column in &mut self.columns {
-            column.reconstruct(&selection);
+            column.write().reconstruct(&selection);
         }
         self.num_virtual_rows = selection.len();
     }
@@ -645,9 +857,11 @@ impl Chunk {
     pub fn truncate_to(&mut self, num_rows: usize) {
         self.reconstruct();
         for column in &mut self.columns {
+            let mut column = column.write();
             assert!(num_rows <= column.rows());
             if column.is_fixed() {
-                column.data.truncate(num_rows * column.elem_buffer_len());
+                let elem_buffer_len = column.elem_buffer_len();
+                column.data.truncate(num_rows * elem_buffer_len);
             } else {
                 let data_len = usize::try_from(column.offsets[num_rows])
                     .expect("column offset is non-negative");
@@ -676,7 +890,7 @@ impl Chunk {
         let mut copy = self.renew_with_capacity(self.capacity, self.required_rows);
         for &row in selection {
             for (dst, src) in copy.columns.iter_mut().zip(&self.columns) {
-                dst.append_cell_from(src, row);
+                Self::append_cell_between(dst, src, row);
             }
         }
         copy
@@ -693,7 +907,7 @@ impl Chunk {
     pub fn copy_construct(&self) -> Chunk {
         Chunk {
             sel: self.sel.clone(),
-            columns: self.columns.iter().map(Column::copy_construct).collect(),
+            columns: self.columns.iter().map(ColumnSlot::deep_copy).collect(),
             columns_initialized: self.columns_initialized,
             num_virtual_rows: self.num_virtual_rows,
             capacity: self.capacity,
@@ -702,9 +916,13 @@ impl Chunk {
         }
     }
 
-    /// The chunk's columns (for row accessors within the crate).
-    pub(crate) fn columns(&self) -> &[Column] {
+    /// The chunk's private ownership slots for dependency-closed helpers.
+    pub(crate) fn column_slots(&self) -> &[ColumnSlot] {
         &self.columns
+    }
+
+    pub(crate) fn column_is_shared(&self, index: usize) -> bool {
+        self.columns[index].is_shared()
     }
 
     /// Go `c.sel != nil`: whether a selection vector is installed.
