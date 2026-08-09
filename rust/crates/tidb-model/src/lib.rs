@@ -68,9 +68,10 @@ pub use engine_attribute::{
     StorageClassTransitRule,
 };
 pub use go_any::{
-    ColumnDefaultValue, GoAny, GoAnyArray, GoAnyBytes, GoAnyJsonError, GoAnyMap, GoAnyPointer,
-    GoAnySlice, GoAnyStruct, GoAnyValue, GoAnyView, GoDefinedString, GoEqualityProjection,
-    GoJsonValue, GoTypeIdentity, GoTypeKind,
+    ColumnDefaultValue, GoAny, GoAnyArray, GoAnyBytes, GoAnyJsonError, GoAnyJsonErrorKind,
+    GoAnyMap, GoAnyPointer, GoAnySlice, GoAnyStruct, GoAnyValue, GoAnyView, GoDefinedString,
+    GoEqualityProjection, GoJsonContext, GoJsonReferenceIdentity, GoJsonValue, GoTypeIdentity,
+    GoTypeKind,
 };
 pub use go_runtime::{
     GoNullClonePolicy, GoPointerAny, GoShared, GoSharedPointerSlice, GoSharedSlice, GoTime,

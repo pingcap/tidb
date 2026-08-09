@@ -24,7 +24,7 @@
 //! without participating in Rust reflection.
 
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fmt;
 use std::hash::{Hash, Hasher};
 
@@ -154,25 +154,195 @@ impl GoTypeIdentity {
     }
 }
 
+/// Source error class produced by a dynamic value's explicit Go JSON
+/// projection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GoAnyJsonErrorKind {
+    /// Go `encoding/json.UnsupportedValueError`. Rust cannot retain the
+    /// source `reflect.Value`, so [`GoAnyJsonError`] retains its exact dynamic
+    /// type and `Str` payload instead.
+    UnsupportedValue,
+    /// An error supplied by a custom [`GoAnyValue`] hook.
+    Custom,
+}
+
 /// Error produced by a dynamic value's explicit Go JSON projection.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct GoAnyJsonError(String);
+pub struct GoAnyJsonError {
+    kind: GoAnyJsonErrorKind,
+    message: String,
+    dynamic_type: Option<GoTypeIdentity>,
+    unsupported_value_description: Option<String>,
+}
 
 impl GoAnyJsonError {
-    /// Constructs a source-facing projection error.
+    /// Constructs an error supplied by a custom projection hook.
     #[must_use]
     pub fn new(message: impl Into<String>) -> Self {
-        Self(message.into())
+        Self {
+            kind: GoAnyJsonErrorKind::Custom,
+            message: message.into(),
+            dynamic_type: None,
+            unsupported_value_description: None,
+        }
+    }
+
+    /// Constructs Go `encoding/json.UnsupportedValueError` with the source
+    /// value represented by its exact dynamic type and `Str` description.
+    #[must_use]
+    pub fn unsupported_value(dynamic_type: GoTypeIdentity, description: impl Into<String>) -> Self {
+        let description = description.into();
+        Self {
+            kind: GoAnyJsonErrorKind::UnsupportedValue,
+            message: format!("json: unsupported value: {description}"),
+            dynamic_type: Some(dynamic_type),
+            unsupported_value_description: Some(description),
+        }
+    }
+
+    /// Source error class.
+    #[must_use]
+    pub const fn kind(&self) -> GoAnyJsonErrorKind {
+        self.kind
+    }
+
+    /// Exact dynamic type of Go's unsupported `reflect.Value`, when this is
+    /// an [`GoAnyJsonErrorKind::UnsupportedValue`] error.
+    #[must_use]
+    pub fn dynamic_type(&self) -> Option<&GoTypeIdentity> {
+        self.dynamic_type.as_ref()
+    }
+
+    /// Go `UnsupportedValueError.Str`, when representable.
+    #[must_use]
+    pub fn unsupported_value_description(&self) -> Option<&str> {
+        self.unsupported_value_description.as_deref()
     }
 }
 
 impl fmt::Display for GoAnyJsonError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
+        formatter.write_str(&self.message)
     }
 }
 
 impl std::error::Error for GoAnyJsonError {}
+
+// Go 1.25.10 encoding/json waits until the 1001st nested map, non-byte
+// slice, or pointer before paying for current-path identity tracking.
+const GO_JSON_START_DETECTING_CYCLES_AFTER: usize = 1_000;
+
+/// Identity key used by Go `encoding/json` for one recursive reference.
+///
+/// Custom composite [`GoAnyValue`] implementations use this with
+/// [`GoJsonContext::with_reference`] so their children participate in the
+/// same current-path cycle traversal as built-in model values.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum GoJsonReferenceIdentity {
+    /// A typed Go pointer identity.
+    Pointer(usize),
+    /// A Go map allocation identity. It is distinct from [`Self::Pointer`]
+    /// even when their process-local tokens happen to be numerically equal.
+    Map(usize),
+    /// A Go slice's first-element/backing identity and visible length.
+    Slice { backing: usize, len: usize },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum GoJsonSeenReference {
+    // Go's ptrSeen key for pointers is an interface, so its dynamic pointer
+    // type is part of equality. Map and slice keys erase their source type.
+    Pointer(GoTypeIdentity, usize),
+    Map(usize),
+    Slice { backing: usize, len: usize },
+}
+
+impl GoJsonSeenReference {
+    fn new(identity: GoJsonReferenceIdentity, dynamic_type: &GoTypeIdentity) -> Self {
+        match identity {
+            GoJsonReferenceIdentity::Pointer(identity) => {
+                Self::Pointer(dynamic_type.clone(), identity)
+            }
+            GoJsonReferenceIdentity::Map(identity) => Self::Map(identity),
+            GoJsonReferenceIdentity::Slice { backing, len } => Self::Slice { backing, len },
+        }
+    }
+}
+
+/// One Go `encoding/json` traversal state.
+///
+/// Custom [`GoAnyValue`] hooks receive this context so nested interfaces stay
+/// in the same reference-depth and current-path cycle domain. The context is
+/// fresh for each top-level [`GoAny::go_json_value`] call.
+#[derive(Debug, Default)]
+pub struct GoJsonContext {
+    reference_depth: usize,
+    seen_references: HashSet<GoJsonSeenReference>,
+}
+
+struct GoJsonReferenceFrame<'a> {
+    context: &'a mut GoJsonContext,
+    seen_reference: Option<GoJsonSeenReference>,
+}
+
+impl Drop for GoJsonReferenceFrame<'_> {
+    fn drop(&mut self) {
+        if let Some(seen_reference) = &self.seen_reference {
+            let removed = self.context.seen_references.remove(seen_reference);
+            debug_assert!(removed, "tracked Go JSON reference was not removed");
+        }
+        self.context.reference_depth -= 1;
+    }
+}
+
+impl GoJsonContext {
+    /// Constructs a fresh Go JSON traversal.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Projects a nested interface through this traversal.
+    pub fn project(&mut self, value: &GoAny) -> Result<GoJsonValue, GoAnyJsonError> {
+        match value.0.as_deref() {
+            None => Ok(GoJsonValue::Null),
+            Some(value) => self.project_dynamic(value),
+        }
+    }
+
+    fn project_dynamic(&mut self, value: &dyn GoAnyValue) -> Result<GoJsonValue, GoAnyJsonError> {
+        value.go_json_value(self)
+    }
+
+    /// Projects one non-nil map, non-byte slice, or pointer. `identity` must
+    /// remain stable for that source reference during this traversal.
+    pub fn with_reference(
+        &mut self,
+        identity: GoJsonReferenceIdentity,
+        dynamic_type: GoTypeIdentity,
+        project: impl FnOnce(&mut Self) -> Result<GoJsonValue, GoAnyJsonError>,
+    ) -> Result<GoJsonValue, GoAnyJsonError> {
+        self.reference_depth += 1;
+        let tracked = self.reference_depth > GO_JSON_START_DETECTING_CYCLES_AFTER;
+        let seen_reference = tracked.then(|| GoJsonSeenReference::new(identity, &dynamic_type));
+        if seen_reference
+            .as_ref()
+            .is_some_and(|reference| !self.seen_references.insert(reference.clone()))
+        {
+            self.reference_depth -= 1;
+            return Err(GoAnyJsonError::unsupported_value(
+                dynamic_type.clone(),
+                format!("encountered a cycle via {}", dynamic_type.display_name()),
+            ));
+        }
+
+        let mut frame = GoJsonReferenceFrame {
+            context: self,
+            seen_reference,
+        };
+        project(&mut *frame.context)
+    }
+}
 
 /// Owned JSON projection returned by [`GoAnyValue::go_json_value`].
 ///
@@ -348,7 +518,9 @@ pub trait GoAnyValue: fmt::Debug + Send + Sync {
     fn copy_for_interface(&self) -> Box<dyn GoAnyValue>;
 
     /// Projects the dynamic value through Go `encoding/json` semantics.
-    fn go_json_value(&self) -> Result<GoJsonValue, GoAnyJsonError>;
+    /// Nested interface values must be projected through `context` so map,
+    /// slice, and pointer cycles share one source traversal state.
+    fn go_json_value(&self, context: &mut GoJsonContext) -> Result<GoJsonValue, GoAnyJsonError>;
 
     /// Appends the dynamic value's Go default `%v` bytes. A byte buffer is
     /// deliberate: Go strings may contain bytes that no Rust `str` can hold.
@@ -421,10 +593,7 @@ impl GoAny {
 
     /// Projects this interface through the dynamic JSON hook.
     pub fn go_json_value(&self) -> Result<GoJsonValue, GoAnyJsonError> {
-        match self.0.as_deref() {
-            None => Ok(GoJsonValue::Null),
-            Some(value) => value.go_json_value(),
-        }
+        GoJsonContext::new().project(self)
     }
 
     /// Exact bytes produced by the dynamic value's formatting hook.
@@ -678,6 +847,10 @@ impl GoAnyBytes {
 #[derive(Clone, Debug, Default)]
 pub struct GoAnySlice {
     values: GoSharedSlice<GoAny>,
+    // `GoSharedSlice` intentionally hides its Arc. This token follows the
+    // same header-copy/backing-allocation lifetime and supplies the source
+    // first-element identity needed by encoding/json cycle detection.
+    backing_identity: Option<GoShared<()>>,
 }
 
 impl GoAnySlice {
@@ -686,6 +859,7 @@ impl GoAnySlice {
     pub fn from_values(values: Vec<GoAny>) -> Self {
         Self {
             values: GoSharedSlice::from_vec(values),
+            backing_identity: Some(GoShared::new(())),
         }
     }
 
@@ -694,6 +868,7 @@ impl GoAnySlice {
     pub fn from_values_with_capacity(values: Vec<GoAny>, capacity: usize) -> Self {
         Self {
             values: GoSharedSlice::from_vec_with_capacity(values, capacity),
+            backing_identity: Some(GoShared::new(())),
         }
     }
 
@@ -735,6 +910,18 @@ impl GoAnySlice {
     #[must_use]
     pub fn backing_ptr_eq(&self, other: &Self) -> bool {
         self.values.backing_ptr_eq(&other.values)
+    }
+
+    fn json_reference_identity(&self) -> GoJsonReferenceIdentity {
+        let backing = self
+            .backing_identity
+            .as_ref()
+            .expect("allocated GoAnySlice is missing its backing identity")
+            .identity_address();
+        GoJsonReferenceIdentity::Slice {
+            backing,
+            len: self.values.len(),
+        }
     }
 }
 
@@ -967,6 +1154,17 @@ impl ColumnDefaultValue {
     }
 }
 
+fn go_non_finite_float_description(value: f64) -> &'static str {
+    if value.is_nan() {
+        "NaN"
+    } else if value == f64::INFINITY {
+        "+Inf"
+    } else {
+        debug_assert_eq!(value, f64::NEG_INFINITY);
+        "-Inf"
+    }
+}
+
 impl GoAnyValue for ColumnDefaultValue {
     fn go_type(&self) -> GoTypeIdentity {
         self.go_type_identity()
@@ -976,15 +1174,16 @@ impl GoAnyValue for ColumnDefaultValue {
         Box::new(self.clone())
     }
 
-    fn go_json_value(&self) -> Result<GoJsonValue, GoAnyJsonError> {
+    fn go_json_value(&self, context: &mut GoJsonContext) -> Result<GoJsonValue, GoAnyJsonError> {
         match self {
             Self::Int(value) => Ok(GoJsonValue::Int(*value)),
             Self::Uint(value) => Ok(GoJsonValue::Uint(*value)),
             Self::Byte(value) => Ok(GoJsonValue::Uint(u64::from(*value))),
             Self::Float(value) if value.is_finite() => Ok(GoJsonValue::Float(*value)),
-            Self::Float(value) => Err(GoAnyJsonError::new(format!(
-                "json: unsupported value: {value}"
-            ))),
+            Self::Float(value) => Err(GoAnyJsonError::unsupported_value(
+                self.go_type_identity(),
+                go_non_finite_float_description(*value),
+            )),
             Self::Bool(value) => Ok(GoJsonValue::Bool(*value)),
             Self::Str(value) => Ok(GoJsonValue::String(value.clone())),
             Self::DefinedString(value) => Ok(GoJsonValue::String(value.value.clone())),
@@ -995,41 +1194,63 @@ impl GoAnyValue for ColumnDefaultValue {
                 if !value.values.is_allocated() {
                     return Ok(GoJsonValue::Null);
                 }
-                value
-                    .values
-                    .snapshot()
-                    .into_iter()
-                    .map(|value| value.go_json_value())
-                    .collect::<Result<Vec<_>, _>>()
-                    .map(GoJsonValue::Array)
+                context.with_reference(
+                    value.json_reference_identity(),
+                    self.go_type_identity(),
+                    |context| {
+                        let mut projected = Vec::with_capacity(value.values.len());
+                        for value in value.values.snapshot() {
+                            projected.push(context.project(&value)?);
+                        }
+                        Ok(GoJsonValue::Array(projected))
+                    },
+                )
             }
             Self::Map(value) => {
                 let Some(values) = &value.values else {
                     return Ok(GoJsonValue::Null);
                 };
-                let values = values.read().clone();
-                values
-                    .into_iter()
-                    .map(|(key, value)| value.go_json_value().map(|value| (key, value)))
-                    .collect::<Result<Vec<_>, _>>()
-                    .map(GoJsonValue::GoObject)
+                context.with_reference(
+                    GoJsonReferenceIdentity::Map(values.identity_address()),
+                    self.go_type_identity(),
+                    |context| {
+                        let values = values.read().clone();
+                        let mut projected = Vec::with_capacity(values.len());
+                        for (key, value) in values {
+                            projected.push((key, context.project(&value)?));
+                        }
+                        Ok(GoJsonValue::GoObject(projected))
+                    },
+                )
             }
             Self::Pointer(value) => match &value.value {
                 None => Ok(GoJsonValue::Null),
-                Some(value) => value.read().go_json_value(),
+                Some(value) => context.with_reference(
+                    GoJsonReferenceIdentity::Pointer(value.identity_address()),
+                    self.go_type_identity(),
+                    |context| {
+                        // Do not hold the synchronization guard across a
+                        // recursive projection. Loading an interface copies
+                        // its header in Go as well.
+                        let value = value.read().clone();
+                        context.project(&value)
+                    },
+                ),
             },
-            Self::Array(value) => value
-                .values
-                .iter()
-                .map(GoAny::go_json_value)
-                .collect::<Result<Vec<_>, _>>()
-                .map(GoJsonValue::Array),
-            Self::Struct(value) => value
-                .fields
-                .iter()
-                .map(|(name, value)| value.go_json_value().map(|value| (name.clone(), value)))
-                .collect::<Result<Vec<_>, _>>()
-                .map(GoJsonValue::Struct),
+            Self::Array(value) => {
+                let mut projected = Vec::with_capacity(value.values.len());
+                for value in &value.values {
+                    projected.push(context.project(value)?);
+                }
+                Ok(GoJsonValue::Array(projected))
+            }
+            Self::Struct(value) => {
+                let mut projected = Vec::with_capacity(value.fields.len());
+                for (name, value) in &value.fields {
+                    projected.push((name.clone(), context.project(value)?));
+                }
+                Ok(GoJsonValue::Struct(projected))
+            }
         }
     }
 
@@ -1152,7 +1373,8 @@ impl PartialEq for ColumnDefaultValue {
 
 impl Serialize for ColumnDefaultValue {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        self.go_json_value()
+        GoJsonContext::new()
+            .project_dynamic(self)
             .map_err(serde::ser::Error::custom)?
             .serialize(serializer)
     }
@@ -1207,7 +1429,10 @@ mod tests {
             Box::new(Self(self.0))
         }
 
-        fn go_json_value(&self) -> Result<GoJsonValue, GoAnyJsonError> {
+        fn go_json_value(
+            &self,
+            _context: &mut GoJsonContext,
+        ) -> Result<GoJsonValue, GoAnyJsonError> {
             Ok(GoJsonValue::String(GoString::from_bytes(self.0.to_vec())))
         }
 
@@ -1374,7 +1599,14 @@ mod tests {
         .is_err());
 
         let non_finite = GoAny::from(ColumnDefaultValue::Float(f64::INFINITY));
-        assert!(non_finite.go_json_value().is_err());
+        let error = non_finite.go_json_value().unwrap_err();
+        assert_eq!(error.kind(), GoAnyJsonErrorKind::UnsupportedValue);
+        assert_eq!(
+            error.dynamic_type().unwrap(),
+            &GoTypeIdentity::unnamed("float64", GoTypeKind::Float64)
+        );
+        assert_eq!(error.unsupported_value_description(), Some("+Inf"));
+        assert_eq!(error.to_string(), "json: unsupported value: +Inf");
         assert!(crate::serde_helpers::to_go_json(&non_finite).is_err());
 
         let custom = GoAny::new(HookedValue([b'x']));
@@ -1386,5 +1618,132 @@ mod tests {
             r#""x""#
         );
         assert!(matches!(custom.view(), Some(GoAnyView::Custom)));
+    }
+
+    fn assert_cycle_error(error: &GoAnyJsonError, display_type: &str, kind: GoTypeKind) {
+        assert_eq!(error.kind(), GoAnyJsonErrorKind::UnsupportedValue);
+        let dynamic_type = error.dynamic_type().unwrap();
+        assert_eq!(dynamic_type.kind(), kind);
+        assert_eq!(dynamic_type.display_name(), display_type);
+        let description = format!("encountered a cycle via {display_type}");
+        assert_eq!(
+            error.unsupported_value_description(),
+            Some(description.as_str())
+        );
+        assert_eq!(
+            error.to_string(),
+            format!("json: unsupported value: {description}")
+        );
+    }
+
+    #[test]
+    fn json_projection_detects_direct_pointer_and_slice_cycles() {
+        let pointer = GoAnyPointer::new(GoAny::nil());
+        let pointer_value = GoAny::from(ColumnDefaultValue::Pointer(pointer.clone()));
+        let pointee = pointer.pointee().unwrap();
+        *pointee.write() = pointer_value.clone();
+
+        let error = pointer_value.go_json_value().unwrap_err();
+        assert_cycle_error(&error, "*interface {}", GoTypeKind::Pointer);
+        *pointee.write() = GoAny::nil();
+
+        let slice = GoAnySlice::from_values(vec![GoAny::nil()]);
+        let slice_value = GoAny::from(ColumnDefaultValue::Slice(slice.clone()));
+        slice.set(0, slice_value.clone());
+
+        let error = slice_value.go_json_value().unwrap_err();
+        assert_cycle_error(&error, "[]interface {}", GoTypeKind::Slice);
+        slice.set(0, GoAny::nil());
+    }
+
+    #[test]
+    fn json_projection_detects_indirect_map_pointer_cycle() {
+        let mut map = GoAnyMap::allocated(Vec::<(String, GoAny)>::new());
+        let pointer = GoAnyPointer::new(ColumnDefaultValue::Map(map.clone()).into());
+        map.insert(
+            "pointer",
+            ColumnDefaultValue::Pointer(pointer.clone()).into(),
+        );
+        let map_value = GoAny::from(ColumnDefaultValue::Map(map.clone()));
+
+        let error = map_value.go_json_value().unwrap_err();
+        assert_cycle_error(&error, "map[string]interface {}", GoTypeKind::Map);
+
+        map.insert("pointer", GoAny::nil());
+    }
+
+    #[test]
+    fn json_projection_allows_shared_acyclic_aliases() {
+        let pointer = GoAnyPointer::new(ColumnDefaultValue::Int(1).into());
+        let pointer_value = GoAny::from(ColumnDefaultValue::Pointer(pointer));
+        let map = GoAnyMap::allocated([("k", ColumnDefaultValue::Int(2).into())]);
+        let map_value = GoAny::from(ColumnDefaultValue::Map(map));
+        let slice = GoAnySlice::from_values(vec![ColumnDefaultValue::Int(3).into()]);
+        let slice_value = GoAny::from(ColumnDefaultValue::Slice(slice));
+        let root = GoAny::from(ColumnDefaultValue::Array(GoAnyArray::new(
+            GoTypeIdentity::unnamed("[6]interface {}", GoTypeKind::Array),
+            vec![
+                pointer_value.clone(),
+                pointer_value,
+                map_value.clone(),
+                map_value,
+                slice_value.clone(),
+                slice_value,
+            ],
+        )));
+
+        assert_eq!(
+            String::from_utf8(crate::serde_helpers::to_go_json(&root).unwrap()).unwrap(),
+            r#"[1,1,{"k":2},{"k":2},[3],[3]]"#
+        );
+    }
+
+    #[test]
+    fn json_slice_cycle_key_includes_visible_len_after_threshold() {
+        let shared = GoAnySlice::from_values(vec![GoAny::nil()]);
+        let mut empty_alias = shared.clone();
+        empty_alias.clear();
+        shared.set(0, ColumnDefaultValue::Slice(empty_alias).into());
+        let cleanup = shared.clone();
+
+        let mut root = GoAny::from(ColumnDefaultValue::Slice(shared));
+        for _ in 0..GO_JSON_START_DETECTING_CYCLES_AFTER {
+            root = ColumnDefaultValue::Slice(GoAnySlice::from_values(vec![root])).into();
+        }
+
+        assert!(root.go_json_value().is_ok());
+        cleanup.set(0, GoAny::nil());
+    }
+
+    fn project_repeated_reference(
+        context: &mut GoJsonContext,
+        remaining: usize,
+    ) -> Result<GoJsonValue, GoAnyJsonError> {
+        if remaining == 0 {
+            return Ok(GoJsonValue::Null);
+        }
+        context.with_reference(
+            GoJsonReferenceIdentity::Pointer(1),
+            GoTypeIdentity::unnamed("*interface {}", GoTypeKind::Pointer),
+            |context| project_repeated_reference(context, remaining - 1),
+        )
+    }
+
+    #[test]
+    fn json_cycle_threshold_and_traversal_cleanup_match_go_1_25() {
+        let mut context = GoJsonContext::new();
+        assert!(
+            project_repeated_reference(&mut context, GO_JSON_START_DETECTING_CYCLES_AFTER + 1,)
+                .is_ok()
+        );
+
+        let error =
+            project_repeated_reference(&mut context, GO_JSON_START_DETECTING_CYCLES_AFTER + 2)
+                .unwrap_err();
+        assert_cycle_error(&error, "*interface {}", GoTypeKind::Pointer);
+
+        assert_eq!(context.reference_depth, 0);
+        assert!(context.seen_references.is_empty());
+        assert!(project_repeated_reference(&mut context, 1).is_ok());
     }
 }
