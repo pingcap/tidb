@@ -115,7 +115,7 @@ The starting Rust checkpoint is `996e712c676297ea125e569d2224fc9f2ca54ef7`. It i
 
 ## Outcomes & Retrospective
 
-Milestone 1 now provides the private Go-slice root primitive and direct behavioral tests without changing any `Column` or `Chunk` behavior. Static checks for the milestone are recorded in `Artifacts and Notes`; runtime execution is intentionally deferred to the coordinator gate because this bounded writer was instructed not to run Cargo or tests. The next semantic seam is `Column` migration, including guard-backed byte APIs and typed native-endian writeback. Completion of this plan still means the whole alias representation and its original tests are green, not that the whole `pkg/util/chunk` package receipt is complete.
+Milestone 1 is green at `586910bc4a5f0c7a23caba2c92935b3de248a4a9`. It provides the private Go-slice root primitive and six direct behavioral tests without changing any `Column` or `Chunk` behavior. The coordinator gate passed the focused tests, all `tidb-chunk` targets, clippy with warnings denied, workspace all-target compilation, and the full workspace test suite. The next semantic seam is `Column` migration, including guard-backed byte APIs and typed native-endian writeback. Completion of this plan still means the whole alias representation and its original tests are green, not that the whole `pkg/util/chunk` package receipt is complete.
 
 ## Context and Orientation
 
@@ -277,7 +277,15 @@ Milestone 1 writer evidence on 2026-08-09:
 - `rustfmt --edition 2021 --check rust/crates/tidb-chunk/src/go_slice.rs rust/crates/tidb-chunk/src/lib.rs`: passed.
 - `rust/scripts/check-source-size.sh`: passed with `source-size ratchet: OK`.
 - `git diff --check`: passed.
-- Cargo, tests, and clippy were not run in this writer worktree by explicit milestone instruction; the coordinator gate must execute the direct tests before integration.
+- Cargo, tests, and clippy were not run in the writer worktree by explicit milestone instruction.
+
+Milestone 1 coordinator evidence at `586910bc4a5f0c7a23caba2c92935b3de248a4a9` on 2026-08-09:
+
+- `cargo test --offline --locked -j12 -p tidb-chunk go_slice::tests --lib`: 6 passed.
+- `cargo test --offline --locked -j12 -p tidb-chunk --quiet`: 126 library tests plus integration/doc targets passed.
+- `cargo clippy --offline --locked -j12 -p tidb-chunk --all-targets -- -D warnings`: passed.
+- `cargo check --offline --locked -j12 --workspace --all-targets`: passed.
+- `CARGO_TARGET_DIR=/private/tmp/task325-chunk-gates-target GOCACHE=/private/tmp/task325-chunk-go-cache cargo test --offline --locked -j12 --workspace --quiet`: passed outside the sandbox because PD mock tests bind localhost.
 
 The package lockdown inventory already exists under `rust/crates/tidb-chunk/tests/pkg_util_chunk_lockdown`, but its obligations remain unclassified and are intentionally outside this semantic plan. After this plan is complete, the package owner must update the all-verdict receipt rather than inferring parity from green tests.
 
