@@ -2438,6 +2438,40 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_unique_index_multiple_null_entries() {
+        // Direct port of
+        // pkg/table/tables/tables_test.go::TestUniqueIndexMultipleNullEntries.
+        // NULL-bearing UNIQUE keys are non-distinct and carry the row handle,
+        // so two NULLs must create two entries without a duplicate error.
+        let mut table = test_table();
+        table.set_pk_handle_offset(0);
+        table.add_index(KvIndex {
+            id: 1,
+            name: "s".to_owned(),
+            unique: true,
+            column_offsets: vec![1],
+            prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
+            visible: true,
+            global: false,
+        });
+
+        table
+            .insert_row(&[Datum::Int(1), Datum::Null], &tidb_expr::NoColumns)
+            .unwrap();
+        table
+            .insert_row(&[Datum::Int(2), Datum::Null], &tidb_expr::NoColumns)
+            .unwrap();
+        assert_eq!(
+            table
+                .scan_rows_with_context(&RowDecodeContext::for_test_query_utc())
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(table.index_entries_for_check(1).unwrap().len(), 2);
+    }
+
     /// The scan bound must cover the whole table and nothing beyond it: the
     /// codec's handle range is inclusive at the top while the iterator's upper
     /// bound is exclusive, so the largest handle must still be returned and a
