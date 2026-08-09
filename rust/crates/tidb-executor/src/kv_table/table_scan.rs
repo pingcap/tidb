@@ -265,6 +265,7 @@ impl KvTable {
     /// this cursor cannot compare is a shape it must not claim to serve. So is
     /// a scan whose handle ranges cover no record at all, which a coprocessor
     /// request cannot express.
+    #[allow(clippy::too_many_arguments)]
     pub fn pushdown_row_cursor_with_context(
         &mut self,
         keep: &[usize],

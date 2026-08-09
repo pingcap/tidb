@@ -701,14 +701,15 @@ fn decide_over(
     // Otherwise the longest LEADING run of an index's columns that are all
     // join keys -- Go's `indexJoinPathTmpInit` walk, which stops at the first
     // index column no inner key covers.
-    let mut best: Option<(
+    type IndexCandidate = (
         i64,
         Vec<usize>,
         Vec<crate::access_path::LookupProbePart>,
         Vec<String>,
         Vec<String>,
         Vec<usize>,
-    )> = None;
+    );
+    let mut best: Option<IndexCandidate> = None;
     for index in table.indexes() {
         if !index.visible || index.has_prefix() {
             continue;

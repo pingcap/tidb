@@ -1087,13 +1087,16 @@ impl PlanTrace {
         let estimate = Est::Scale(DISTINCT_FACTOR).apply(scan.est_rows);
         scan.task = "cop[tikv]";
         let act_rows = scan.act_rows.clone();
-        let key_ndv_ratio = scan.key_ndv_ratio;
         let mut partial = PlanNode::new(
             "StreamAgg",
             estimate,
             String::new(),
             grouped_aggregate_info(select, qualify, false, false),
         );
+        // The complete group tuple is unique in the aggregate output, so its
+        // NDV is the aggregate row count rather than the source column's
+        // pseudo 0.8 ratio. A merge join on all group keys uses this value.
+        partial.key_ndv_ratio = Some(1.0);
         partial.task = "cop[tikv]";
         partial.act_rows = act_rows.clone();
         partial.children.push(scan);
@@ -1108,7 +1111,7 @@ impl PlanTrace {
                 "index:StreamAgg".to_owned()
             },
         );
-        reader_node.key_ndv_ratio = key_ndv_ratio;
+        reader_node.key_ndv_ratio = Some(1.0);
         reader_node.act_rows = act_rows;
         reader_node.children.push(partial);
         self.stack.push(reader_node);
@@ -1195,37 +1198,54 @@ impl PlanTrace {
         let at = if lookup_is_left { depth - 2 } else { depth - 1 };
         let outer_at = if lookup_is_left { depth - 1 } else { depth - 2 };
         let outer_rows = self.stack[outer_at].est_rows;
-        let node = &mut self.stack[at];
-        // The decision only ever names a bare base table, so its child
-        // subtree is the single scan node `build_from` pushed for it. Anything
-        // else means the two disagree, and renaming it would print a range
-        // over an operator that reads none.
-        if !matches!(
-            node.name,
-            "TableFullScan" | "IndexFullScan" | "TableRangeScan" | "IndexRangeScan"
-        ) || !node.children.is_empty()
-        {
-            return Err(());
+        fn is_scan(node: &PlanNode) -> bool {
+            matches!(
+                node.name,
+                "TableFullScan" | "IndexFullScan" | "TableRangeScan" | "IndexRangeScan"
+            ) && node.children.is_empty()
         }
+
+        let node = &mut self.stack[at];
+        // A residual predicate may already have put the base scan under a cop
+        // Selection. That is still the same inner data source; any deeper or
+        // different subtree would make the dynamic range untruthful.
+        let had_selection = node.name == "Selection";
+        let scan = if is_scan(node) {
+            node
+        } else if node.name == "Selection" && node.children.len() == 1 && is_scan(&node.children[0])
+        {
+            &mut node.children[0]
+        } else {
+            return Err(());
+        };
         // `stats:pseudo` is a property of the TABLE, not of the path, so it
         // survives the rename -- and the replay compares it.
-        let pseudo = if node.info.contains("stats:pseudo") {
+        let pseudo = if scan.info.contains("stats:pseudo") {
             ", stats:pseudo"
         } else {
             ""
         };
-        node.name = if index {
+        scan.name = if index {
             "IndexRangeScan"
         } else {
             "TableRangeScan"
         };
-        node.access = access;
-        node.info = format!("range: decided by {range_info}, keep order:false{pseudo}");
+        scan.access = access;
+        scan.info = format!("range: decided by {range_info}, keep order:false{pseudo}");
 
         // One dynamic range is opened per outer row. Go derives the table
         // scan's cardinality from that probe population, not from the inner
         // table's earlier constant-only access path.
-        node.est_rows = outer_rows.or(node.est_rows);
+        scan.est_rows = outer_rows.or(scan.est_rows);
+        if had_selection {
+            let node = &mut self.stack[at];
+            node.est_rows = outer_rows
+                .or(node.est_rows)
+                .map(|rows| rows * filter_selectivity.clamp(0.0, 1.0));
+            if !filters.is_empty() {
+                node.info = filters.join(", ");
+            }
+        }
 
         // Rebuild the two physical reader boundaries now that the strategy is
         // committed. Both leaves were built before the join family was known,
@@ -1237,7 +1257,7 @@ impl PlanTrace {
         } else {
             &mut right
         };
-        if !filters.is_empty() {
+        if !filters.is_empty() && inner.name != "Selection" {
             let estimate = inner
                 .est_rows
                 .map(|rows| rows * filter_selectivity.clamp(0.0, 1.0));
@@ -2006,6 +2026,7 @@ impl PlanTrace {
             build_is_left,
             merge_keys,
             index_lookup,
+            physical_conditions,
         } = strategy;
         let build_is_left = *build_is_left;
         let qualify = Qualifier {
@@ -2035,8 +2056,17 @@ impl PlanTrace {
         }
         let mut equal = Vec::new();
         let mut other = Vec::new();
-        for (conjunct, is_equal) in conjuncts.iter().zip(equal_mask.iter()) {
-            let rendered = qualify.expr(conjunct);
+        for (index, (conjunct, is_equal)) in conjuncts.iter().zip(equal_mask.iter()).enumerate() {
+            let rendered = if *is_equal {
+                qualify.expr(conjunct)
+            } else {
+                physical_conditions
+                    .as_ref()
+                    .and_then(|(conditions, columns)| {
+                        physical_expression_text_with_columns(conditions.get(index)?, columns)
+                    })
+                    .unwrap_or_else(|| qualify.expr(conjunct))
+            };
             if *is_equal {
                 equal.push(rendered);
             } else {
@@ -2661,8 +2691,13 @@ pub(crate) fn pseudo_selectivity(predicate: &tidb_ast::Expr) -> f64 {
 /// `cardinality.Selectivity` takes `[]expression.Expression` for the same
 /// reason.
 pub(crate) fn pseudo_selectivity_of_conjuncts(conjuncts: &[&tidb_ast::Expr]) -> f64 {
-    let mut factor = SELECTIVITY_FACTOR;
+    let mut factor: Option<f64> = None;
+    let mut has_unclassified = false;
     for conjunct in conjuncts {
+        if complementary_null_predicates(conjunct) {
+            factor = Some(factor.map_or(1.0, |current| current.min(1.0)));
+            continue;
+        }
         let rate = match conjunct {
             tidb_ast::Expr::Binary(op, _, _) => match op {
                 tidb_ast::BinaryOp::Eq | tidb_ast::BinaryOp::NullEq => 1.0 / PSEUDO_EQUAL_RATE,
@@ -2670,14 +2705,67 @@ pub(crate) fn pseudo_selectivity_of_conjuncts(conjuncts: &[&tidb_ast::Expr]) -> 
                 | tidb_ast::BinaryOp::Gt
                 | tidb_ast::BinaryOp::Le
                 | tidb_ast::BinaryOp::Lt => 1.0 / PSEUDO_LESS_RATE,
-                _ => continue,
+                _ => {
+                    has_unclassified = true;
+                    continue;
+                }
             },
             tidb_ast::Expr::In { .. } => 1.0 / PSEUDO_EQUAL_RATE,
-            _ => continue,
+            tidb_ast::Expr::Is {
+                target: tidb_ast::IsTarget::Null,
+                not,
+                ..
+            } => {
+                if *not {
+                    1.0 - 1.0 / PSEUDO_EQUAL_RATE
+                } else {
+                    1.0 / PSEUDO_EQUAL_RATE
+                }
+            }
+            _ => {
+                has_unclassified = true;
+                continue;
+            }
         };
-        factor = factor.min(rate);
+        factor = Some(factor.map_or(rate, |current| current.min(rate)));
     }
-    factor
+    match (factor, has_unclassified) {
+        (Some(factor), true) => factor.min(SELECTIVITY_FACTOR),
+        (Some(factor), false) => factor,
+        (None, _) => SELECTIVITY_FACTOR,
+    }
+}
+
+fn complementary_null_predicates(predicate: &tidb_ast::Expr) -> bool {
+    let tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicOr, left, right) = strip_paren(predicate)
+    else {
+        return false;
+    };
+    let (Some((left, left_not)), Some((right, right_not))) =
+        (null_predicate(left), null_predicate(right))
+    else {
+        return false;
+    };
+    left == right && left_not != right_not
+}
+
+fn null_predicate(predicate: &tidb_ast::Expr) -> Option<(&tidb_ast::Expr, bool)> {
+    let tidb_ast::Expr::Is {
+        expr,
+        target: tidb_ast::IsTarget::Null,
+        not,
+    } = strip_paren(predicate)
+    else {
+        return None;
+    };
+    Some((strip_paren(expr), *not))
+}
+
+fn strip_paren(mut expression: &tidb_ast::Expr) -> &tidb_ast::Expr {
+    while let tidb_ast::Expr::Paren(inner) = expression {
+        expression = inner;
+    }
+    expression
 }
 
 /// Go `cardinality.EstimateFullJoinRowCount` over the two subtrees a
@@ -2793,6 +2881,11 @@ pub(crate) struct JoinStrategy {
     /// and the `(outer key, inner key)` column names. `None` for every other
     /// strategy.
     pub(crate) index_lookup: Option<IndexJoinText>,
+    /// The executor's flattened conditions and the physical origin of each
+    /// joined-row column. Present only when a derived aggregate output has
+    /// no source-column name, so non-equality conditions print the internal
+    /// `Column#N` the executor evaluates instead of inventing an alias name.
+    pub(crate) physical_conditions: Option<(Vec<Expression>, Vec<Option<String>>)>,
 }
 
 /// What an index join's plan row says beyond its join kind.
@@ -3043,6 +3136,28 @@ fn binary_func_name(op: tidb_ast::BinaryOp) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn complementary_null_predicates_are_a_tautology() {
+        let column = tidb_ast::Expr::Column(vec!["c".to_owned()]);
+        let is_null = tidb_ast::Expr::Is {
+            expr: Box::new(column.clone()),
+            target: tidb_ast::IsTarget::Null,
+            not: false,
+        };
+        let is_not_null = tidb_ast::Expr::Is {
+            expr: Box::new(column),
+            target: tidb_ast::IsTarget::Null,
+            not: true,
+        };
+        let predicate = tidb_ast::Expr::Binary(
+            tidb_ast::BinaryOp::LogicOr,
+            Box::new(is_null),
+            Box::new(is_not_null),
+        );
+
+        assert_eq!(pseudo_selectivity(&predicate), 1.0);
+    }
 
     fn index_join_text(outer_row_size: f64, inner_row_size: f64) -> IndexJoinText {
         IndexJoinText {

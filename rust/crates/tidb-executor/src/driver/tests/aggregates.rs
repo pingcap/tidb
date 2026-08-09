@@ -347,6 +347,148 @@ fn tpcc_condition_four_streams_across_a_grouped_derived_table() {
     assert!(cell(4, 4).contains("right key:test.order_line.ol_d_id"));
 }
 
+/// TPCC condition 06: the predicate above a pass-through derived projection
+/// rejects the LEFT JOIN's NULL row, so Go simplifies it to an inner merge
+/// join. The fixed warehouse key then reaches both common-handle scans, while
+/// the nullable left comparison operand becomes a coprocessor IS NOT NULL
+/// filter.
+#[test]
+fn tpcc_condition_six_simplifies_and_pushes_through_derived_tables() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE orders (o_id INT NOT NULL, o_d_id INT NOT NULL, o_w_id INT NOT NULL, \
+            o_ol_cnt INT, PRIMARY KEY (o_w_id,o_d_id,o_id))",
+        &mut catalog,
+    )
+    .unwrap();
+    let TableEntry::Kv(orders) = catalog.get_mut_in("test", "orders").unwrap() else {
+        panic!("orders is not a KV table");
+    };
+    orders.add_index(crate::kv_table::KvIndex {
+        id: 1,
+        name: "PRIMARY".to_owned(),
+        unique: true,
+        prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 3],
+        column_offsets: vec![2, 1, 0],
+        visible: true,
+        global: false,
+    });
+    crate::run_create_table_on(
+        "CREATE TABLE order_line (ol_o_id INT NOT NULL, ol_d_id INT NOT NULL, \
+            ol_w_id INT NOT NULL, ol_number INT NOT NULL, \
+            PRIMARY KEY (ol_w_id,ol_d_id,ol_o_id,ol_number))",
+        &mut catalog,
+    )
+    .unwrap();
+    let TableEntry::Kv(order_line) = catalog.get_mut_in("test", "order_line").unwrap() else {
+        panic!("order_line is not a KV table");
+    };
+    order_line.add_index(crate::kv_table::KvIndex {
+        id: 2,
+        name: "PRIMARY".to_owned(),
+        unique: true,
+        prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 4],
+        column_offsets: vec![2, 1, 0, 3],
+        visible: true,
+        global: false,
+    });
+
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO orders VALUES (1,1,1,2),(2,1,1,2),(3,2,1,NULL),(4,1,2,1)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO order_line VALUES \
+            (1,1,1,1),(1,1,1,2),(2,1,1,1),(3,2,1,1),(4,1,2,1)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    let sql = "SELECT COUNT(*) FROM \
+        (SELECT o_ol_cnt, order_line_count FROM orders LEFT JOIN \
+          (SELECT ol_w_id, ol_d_id, ol_o_id, count(*) order_line_count \
+           FROM order_line GROUP BY ol_w_id, ol_d_id, ol_o_id \
+           ORDER BY ol_w_id, ol_d_id, ol_o_id) AS order_line \
+         ON orders.o_w_id=order_line.ol_w_id \
+         AND orders.o_d_id=order_line.ol_d_id \
+         AND orders.o_id=order_line.ol_o_id \
+         WHERE orders.o_w_id=1) AS T \
+        WHERE T.o_ol_cnt != T.order_line_count";
+    assert_eq!(
+        run_select_on(sql, &catalog, &ctx).unwrap(),
+        vec![vec![Datum::Int(1)]],
+    );
+
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let cell = |row: usize, column: usize| match &rows[row][column] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+    assert_eq!(
+        (0..rows.len()).map(|row| cell(row, 0)).collect::<Vec<_>>(),
+        vec![
+            "StreamAgg",
+            "└─MergeJoin",
+            "  ├─StreamAgg(Build)",
+            "  │ └─TableReader",
+            "  │   └─StreamAgg",
+            "  │     └─TableRangeScan",
+            "  └─TableReader(Probe)",
+            "    └─Selection",
+            "      └─TableRangeScan",
+        ],
+    );
+    assert_eq!(cell(1, 1), "9.99", "selection estimate={}", cell(7, 1));
+    assert!(cell(1, 4).contains("inner join"), "{}", cell(1, 4));
+    assert!(cell(1, 4).contains("other cond:ne("), "{}", cell(1, 4));
+    assert!(cell(1, 4).contains(", Column#"), "{}", cell(1, 4));
+    assert!(
+        cell(2, 4).starts_with(
+            "group by:test.order_line.ol_d_id, test.order_line.ol_o_id, \
+             test.order_line.ol_w_id, funcs:count(Column#"
+        ),
+        "{}",
+        cell(2, 4)
+    );
+    assert!(
+        cell(2, 4).contains(
+            "funcs:firstrow(test.order_line.ol_o_id)->test.order_line.ol_o_id, \
+             funcs:firstrow(test.order_line.ol_d_id)->test.order_line.ol_d_id, \
+             funcs:firstrow(test.order_line.ol_w_id)->test.order_line.ol_w_id"
+        ),
+        "{}",
+        cell(2, 4)
+    );
+    assert!(
+        cell(4, 4).starts_with(
+            "group by:test.order_line.ol_d_id, test.order_line.ol_o_id, \
+             test.order_line.ol_w_id, funcs:count(1)->Column#"
+        ),
+        "{}",
+        cell(4, 4)
+    );
+    assert!(cell(5, 4).contains("range:[1,1]"), "{}", cell(5, 4));
+    assert!(cell(5, 4).contains("keep order:true"), "{}", cell(5, 4));
+    assert!(cell(7, 4).contains("not(isnull("), "{}", cell(7, 4));
+    assert_eq!(cell(7, 1), "9.99");
+    assert!(cell(8, 4).contains("range:[1,1]"), "{}", cell(8, 4));
+    assert!(cell(8, 4).contains("keep order:true"), "{}", cell(8, 4));
+}
+
 #[test]
 fn tpcc_condition_two_orders_group_uses_the_covering_index_range() {
     use crate::explain::{explain_select_stmt, ExplainFormat};

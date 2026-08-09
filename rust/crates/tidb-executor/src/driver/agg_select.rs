@@ -143,6 +143,7 @@ pub(crate) fn run_aggregate_select(
     logical_rows: Option<f64>,
     grouped_logical_rows: Option<f64>,
     grouped_stream_ordered: bool,
+    grouped_stream_physical_order: Option<Vec<usize>>,
     derived_output: bool,
     physical_source_columns: bool,
     mut trace: Option<&mut PlanTrace>,
@@ -220,6 +221,7 @@ pub(crate) fn run_aggregate_select(
         logical_rows,
         grouped_logical_rows,
         grouped_stream_ordered,
+        grouped_stream_physical_order,
         derived_output,
         physical_source_columns,
         trace.as_deref_mut(),
@@ -1495,12 +1497,19 @@ fn grouped_stream_partial_plan(
     grouped_stream_ordered: bool,
     source_has_no_residual_filter: bool,
 ) -> Option<GroupedStreamPartialPlan> {
+    let order_by_matches_groups = select.order_by.is_empty()
+        || (select.order_by.len() == select.group_by.len()
+            && select
+                .order_by
+                .iter()
+                .zip(&select.group_by)
+                .all(|(order, group)| !order.desc && order.expr == group.expr));
     if !grouped_stream_ordered
         || !source_has_no_residual_filter
         || select.rollup
         || select.distinct
         || select.having.is_some()
-        || !select.order_by.is_empty()
+        || !order_by_matches_groups
         || select.limit.is_some()
         || !state.window_calls.is_empty()
         || has_pre_agg_applies
@@ -1577,6 +1586,16 @@ fn grouped_stream_partial_plan(
     if functions.is_empty() {
         return None;
     }
+    // Go orders FIRST_ROW carriers by their physical source-column offset,
+    // independently of the SELECT-list order. The final projection maps
+    // these states back to the visible derived-table columns.
+    carrier_states.sort_by_key(|(state_index, _)| {
+        state.agg_funcs[*state_index]
+            .arg
+            .as_ref()
+            .and_then(Expression::as_column)
+            .map_or(i64::MAX, |column| column.index)
+    });
     function_states.extend(carrier_states);
     let (state_order, sources): (Vec<_>, Vec<_>) = function_states.into_iter().unzip();
     Some(GroupedStreamPartialPlan {
@@ -1668,6 +1687,7 @@ fn build_aggregation(
     logical_rows: Option<f64>,
     grouped_logical_rows: Option<f64>,
     grouped_stream_ordered: bool,
+    grouped_stream_physical_order: Option<Vec<usize>>,
     derived_output: bool,
     physical_source_columns: bool,
     mut trace: Option<&mut PlanTrace>,
@@ -1688,6 +1708,77 @@ fn build_aggregation(
                 .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?,
         );
     }
+    // Go's StreamAgg property matching removes equality-fixed index prefixes
+    // and places those fixed group keys after the ordered suffix. This changes
+    // neither group identity nor visible output, but it does define the
+    // physical group tuple and the plan text.
+    let physical_group_order = grouped_stream_physical_order
+        .as_ref()
+        .and_then(|source_offsets| {
+            source_offsets
+                .iter()
+                .map(|source_offset| {
+                    group_by.iter().position(|group| {
+                        group
+                            .as_column()
+                            .and_then(|column| usize::try_from(column.index).ok())
+                            == Some(*source_offset)
+                    })
+                })
+                .collect::<Option<Vec<_>>>()
+        })
+        .filter(|order| order.len() == group_by.len())
+        .unwrap_or_else(|| (0..group_by.len()).collect());
+    let reordered_groups = !physical_group_order.iter().copied().eq(0..group_by.len());
+    if reordered_groups {
+        group_by = physical_group_order
+            .iter()
+            .map(|index| group_by[*index].clone())
+            .collect();
+    }
+    let physical_trace_select;
+    let traced_select = if reordered_groups && traced_select.group_by.len() == group_by.len() {
+        physical_trace_select = {
+            let mut rewritten = traced_select.clone();
+            rewritten.group_by = physical_group_order
+                .iter()
+                .map(|index| traced_select.group_by[*index].clone())
+                .collect();
+            let mut fields = rewritten.fields.fields().to_vec();
+            let carrier_positions = fields
+                .iter()
+                .enumerate()
+                .filter_map(|(index, field)| match field {
+                    tidb_ast::SelectField::Expr {
+                        expr: tidb_ast::Expr::Column(path),
+                        ..
+                    } if traced_select.group_by.iter().any(|group| {
+                        matches!(&group.expr, tidb_ast::Expr::Column(group_path) if group_path == path)
+                    }) => Some(index),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            let mut carriers = carrier_positions
+                .iter()
+                .map(|index| fields[*index].clone())
+                .collect::<Vec<_>>();
+            carriers.sort_by_key(|field| match field {
+                tidb_ast::SelectField::Expr {
+                    expr: tidb_ast::Expr::Column(path),
+                    ..
+                } => resolver.resolve(path).map_or(usize::MAX, |column| column.0),
+                _ => usize::MAX,
+            });
+            for (position, field) in carrier_positions.into_iter().zip(carriers) {
+                fields[position] = field;
+            }
+            rewritten.fields = fields.into();
+            rewritten
+        };
+        &physical_trace_select
+    } else {
+        traced_select
+    };
 
     // Source (+ WHERE), as in the plain path.
     let (mut source, source_schema): (Box<dyn Executor>, Schema) = match from_source {
@@ -1734,29 +1825,26 @@ fn build_aggregation(
     // whether or not an executor survived above the scan: Go prints one
     // `Selection` for both halves, and this tier prints no `cop[tikv]` task
     // to distinguish them.
-    if !access_consumed_where && select.where_clause.is_some() {
-        if let Some(trace) = trace.as_deref_mut() {
-            if let Some(written) = &traced_select.where_clause {
-                let stats = select_stats_selectivity(select, catalog, current_db, resolver.scope);
-                if physical_source_columns {
-                    let mut physical = rewrite_expr_resolved(
-                        select
-                            .where_clause
-                            .as_ref()
-                            .expect("a recorded Selection has a predicate"),
-                        resolver,
-                    )
-                    .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
-                    refine_comparisons(&mut physical, ctx);
-                    if !trace.physical_selection(&physical, written, stats) {
-                        trace.refuse(
-                            "a pruned derived aggregation's Selection is not printable yet",
-                        );
+    if !access_consumed_where {
+        if let Some(predicate) = select.where_clause.as_ref() {
+            if let Some(trace) = trace.as_deref_mut() {
+                if let Some(written) = &traced_select.where_clause {
+                    let stats =
+                        select_stats_selectivity(select, catalog, current_db, resolver.scope);
+                    if physical_source_columns {
+                        let mut physical = rewrite_expr_resolved(predicate, resolver)
+                            .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+                        refine_comparisons(&mut physical, ctx);
+                        if !trace.physical_selection(&physical, written, stats) {
+                            trace.refuse(
+                                "a pruned derived aggregation's Selection is not printable yet",
+                            );
+                        }
+                    } else {
+                        trace.selection(written, &qualify, stats);
                     }
-                } else {
-                    trace.selection(written, &qualify, stats);
+                    source = trace.meter(source);
                 }
-                source = trace.meter(source);
             }
         }
     }

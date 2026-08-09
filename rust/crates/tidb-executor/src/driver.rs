@@ -298,6 +298,7 @@ mod agg_select;
 mod catalog;
 mod clause_resolve;
 mod derived_agg_pruning;
+mod derived_projection_pushdown;
 mod dml;
 mod errors;
 mod from;
@@ -695,6 +696,18 @@ pub(super) fn run_select_traced_with_delivery(
         }
         None => select,
     };
+    // Go substitutes predicates through a pass-through derived projection
+    // before simplifying NULL-rejecting outer joins. The TPCC consistency
+    // checks use that chain to expose both leaf ranges and a local inner
+    // merge join; the proof-shaped rewrite refuses every other derived form.
+    let globally_counted;
+    let select = match derived_projection_pushdown::fuse_global_count(select, catalog, current_db) {
+        Some(rewritten) => {
+            globally_counted = rewritten;
+            &globally_counted
+        }
+        None => select,
+    };
     // Go's `LogicalAggregation.PruneColumns` reaching a derived table: an
     // ungrouped aggregation nobody reads a column of keeps only the `count(1)`
     // that carries its row. See `driver::derived_agg_pruning`.
@@ -783,22 +796,33 @@ pub(super) fn run_select_traced_with_delivery(
             // property that has to reach the leaf before the aggregate is
             // built, so the leaf must cost its WHERE-constrained ordered path
             // here instead of waiting for the later empty-property fast path.
-            let wanted = (access::single_kv_table(&select.from, catalog, current_db).is_none()
-                || aggregation_order.is_some())
-            .then(|| leaf_demand::LeafDemand::of_select(select));
+            let plan_at_leaf = access::single_kv_table(&select.from, catalog, current_db).is_none()
+                || aggregation_order.is_some();
+            let wanted = plan_at_leaf.then(|| leaf_demand::LeafDemand::of_select(select));
             // The estimate owner: every relation of this `FROM` with the row
             // count `derive_stats` derives for it, read off the statement,
             // the catalog and the statistics. It is built here, beside the
             // reorder that costs the same models, because both need the join
             // group as WRITTEN -- and NOT off `PlanTrace`, which exists only
             // under `EXPLAIN`. See `driver::join_search`.
-            let row_source = join_reorder::row_source(
-                join,
-                select.where_clause.as_ref(),
-                catalog,
-                current_db,
-                ctx,
-            );
+            // A plain single-KV-table SELECT is costed later by
+            // `commit_fast_path_source`, with its original WHERE intact. If
+            // RowSource consumes that predicate here while column demand is
+            // deliberately absent, the later point/range chooser sees no
+            // key condition and the statement degenerates to a full scan.
+            // A grouped stream plan is the exception above: its non-empty
+            // property has already committed leaf planning at this site.
+            let row_source = plan_at_leaf
+                .then(|| {
+                    join_reorder::row_source(
+                        join,
+                        select.where_clause.as_ref(),
+                        catalog,
+                        current_db,
+                        ctx,
+                    )
+                })
+                .flatten();
             grouped_logical_rows = row_source
                 .as_ref()
                 .and_then(|rows| rows.grouped_rows(&select.group_by));
@@ -930,10 +954,9 @@ pub(super) fn run_select_traced_with_delivery(
         .as_ref()
         .is_some_and(|order| order.is_delivered_by(&from_delivered, &scope));
     if grouped_stream_ordered {
-        if let (Some(delivered), Some(order)) = (
-            output_delivered.as_deref_mut(),
-            grouped_select_output_order(traced_select),
-        ) {
+        if let (Some(delivered), Some(order)) =
+            (output_delivered, grouped_select_output_order(traced_select))
+        {
             delivered.push(order);
         }
     }
@@ -1081,6 +1104,9 @@ pub(super) fn run_select_traced_with_delivery(
             .iter()
             .any(|item| item.expr.has_aggregate_flag());
     if is_aggregate {
+        let grouped_stream_physical_order = aggregation_order
+            .as_ref()
+            .and_then(|order| order.physical_group_offsets(&scope));
         let resolver = ScopeResolver { scope: &scope };
         return run_aggregate_select(
             select,
@@ -1094,6 +1120,7 @@ pub(super) fn run_select_traced_with_delivery(
             logical_rows,
             grouped_logical_rows,
             grouped_stream_ordered,
+            grouped_stream_physical_order,
             derived_output,
             grouped_derived_output_pruned,
             trace,

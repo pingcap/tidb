@@ -1374,7 +1374,7 @@ impl Executor for IndexJoinLookupExec {
             // [`IndexRangeSourceExec`].
             if let Some(row) = row {
                 let visible = visible_of(&self.table, &row);
-                if !self.row_passes_filters(&visible)? {
+                if !self.row_passes_filters(visible)? {
                     continue;
                 }
                 for (c, value) in visible.iter().enumerate() {

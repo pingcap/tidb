@@ -374,6 +374,7 @@ pub(crate) fn reorder(
     let threshold = ctx.join_reorder_threshold();
     let scope = Scope {
         outer_join_reorder: ctx.outer_join_reorder(),
+        allow_ordered_derived: false,
     };
     let mut ids = Ids::default();
     let mut leaves = Vec::new();
@@ -784,6 +785,10 @@ struct Outer {
 /// that the extended side be a single relation.
 struct Scope {
     outer_join_reorder: bool,
+    /// Row estimation may look through an ORDER BY because it does not
+    /// change cardinality. Logical join reordering keeps declining that
+    /// shape until it can prove the requested physical order survives.
+    allow_ordered_derived: bool,
 }
 
 /// Go's `extractJoinGroupImpl`, narrowed: walks the join spine, pushing every
@@ -840,7 +845,7 @@ fn collect<'a>(
                 return false;
             }
             let at = leaves.len();
-            match leaf_of(right, catalog, current_db, ids) {
+            match leaf_of(right, catalog, current_db, scope, ids) {
                 Some(leaf) => leaves.push(leaf),
                 None => return false,
             }
@@ -848,7 +853,7 @@ fn collect<'a>(
         }
         Some(_) => {
             let at = leaves.len();
-            match leaf_of(&join.left, catalog, current_db, ids) {
+            match leaf_of(&join.left, catalog, current_db, scope, ids) {
                 Some(leaf) => leaves.push(leaf),
                 None => return false,
             }
@@ -889,7 +894,7 @@ fn push_node<'a>(
     if let JoinNode::Join(inner) = node {
         return collect(inner, catalog, current_db, scope, ids, leaves, on_conds);
     }
-    match leaf_of(node, catalog, current_db, ids) {
+    match leaf_of(node, catalog, current_db, scope, ids) {
         Some(leaf) => {
             leaves.push(leaf);
             true
@@ -903,6 +908,7 @@ fn leaf_of<'a>(
     node: &'a JoinNode,
     catalog: &'a Catalog,
     current_db: &str,
+    scope: &Scope,
     ids: &mut Ids,
 ) -> Option<Leaf<'a>> {
     match node {
@@ -964,7 +970,7 @@ fn leaf_of<'a>(
                 || select.distinct
                 || select.limit.is_some()
                 || select.with.is_some()
-                || !select.order_by.is_empty()
+                || (!scope.allow_ordered_derived && !select.order_by.is_empty())
                 || !select.windows.is_empty()
             {
                 return None;
@@ -992,6 +998,7 @@ fn leaf_of<'a>(
             // into the subquery; this module leaves that relation atomic.
             let inner_scope = Scope {
                 outer_join_reorder: false,
+                allow_ordered_derived: scope.allow_ordered_derived,
             };
             if !collect(
                 from,
@@ -1955,6 +1962,7 @@ pub(crate) fn row_source(
     // strategy coster away from these rows.
     let scope = Scope {
         outer_join_reorder: true,
+        allow_ordered_derived: true,
     };
     if !collect(
         join,
@@ -2115,8 +2123,9 @@ fn project_dnf_to_leaf(expr: &Expr, target: usize, leaves: &[Leaf<'_>]) -> Optio
 /// Copies a constant equality through the inner-join equality graph. This is
 /// the narrow constant-propagation rule needed for composite leading keys:
 /// `warehouse.w_id = 1` plus `customer.c_w_id = warehouse.w_id` gives the
-/// customer leaf a local `c_w_id = 1` range. Only base-table columns with the
-/// same integer domain are propagated; refusing other types is fail-closed.
+/// customer leaf a local `c_w_id = 1` range. Only columns with the same
+/// integer domain are propagated; a derived output qualifies only when it is
+/// a bare pass-through column whose source type can be followed recursively.
 fn propagate_leaf_constants(leaves: &[Leaf<'_>], edges: &[JoinEdge], filters: &mut [Vec<Expr>]) {
     let mut constants = Vec::new();
     for predicates in filters.iter() {
@@ -2205,9 +2214,10 @@ fn leaf_column_path(leaves: &[Leaf<'_>], (leaf, column): (usize, usize)) -> Opti
 }
 
 fn same_integer_domain(leaves: &[Leaf<'_>], left: (usize, usize), right: (usize, usize)) -> bool {
-    let column_type = |(leaf, column): (usize, usize)| match &leaves.get(leaf)?.rel {
-        Rel::Table(table) => table.columns.get(column).map(|(_, field_type)| field_type),
-        Rel::Derived(_) => None,
+    let column_type = |(leaf, column): (usize, usize)| {
+        leaves
+            .get(leaf)
+            .and_then(|leaf| relation_column_type(&leaf.rel, column))
     };
     let (Some(left), Some(right)) = (column_type(left), column_type(right)) else {
         return false;
@@ -2215,6 +2225,19 @@ fn same_integer_domain(leaves: &[Leaf<'_>], left: (usize, usize), right: (usize,
     left.code().is_type_integer()
         && right.code().is_type_integer()
         && left.is_unsigned() == right.is_unsigned()
+}
+
+fn relation_column_type<'a>(rel: &'a Rel<'a>, column: usize) -> Option<&'a FieldType> {
+    match rel {
+        Rel::Table(table) => table.columns.get(column).map(|(_, field_type)| field_type),
+        Rel::Derived(derived) => {
+            let Expr::Column(path) = strip(derived.exprs.get(column)?) else {
+                return None;
+            };
+            let (leaf, column) = resolve(path, &derived.inner)?;
+            relation_column_type(&derived.inner.get(leaf)?.rel, column)
+        }
+    }
 }
 
 impl RowSource {

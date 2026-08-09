@@ -433,6 +433,7 @@ pub(crate) fn delivers(delivered: &[Vec<usize>], wanted: &[usize]) -> bool {
 pub(crate) struct AggregationOrder {
     required: tidb_planner::physical_property::PhysicalProperty,
     required_columns: Vec<RelColumn>,
+    physical_group_columns: Vec<RelColumn>,
 }
 
 impl AggregationOrder {
@@ -468,6 +469,28 @@ impl AggregationOrder {
             })
             .collect::<Option<Vec<_>>>();
         required_offsets.is_some_and(|required| delivers(delivered, &required))
+    }
+
+    /// Group-key offsets in the physical StreamAgg tuple: ordered non-fixed
+    /// keys first, then equality-fixed keys. The returned offsets use the
+    /// committed (possibly pruned) source scope.
+    pub(crate) fn physical_group_offsets(&self, scope: &super::FromScope) -> Option<Vec<usize>> {
+        self.physical_group_columns
+            .iter()
+            .map(|required| {
+                scope
+                    .tables
+                    .iter()
+                    .find(|table| table.name.eq_ignore_ascii_case(&required.relation))
+                    .and_then(|table| {
+                        table
+                            .columns
+                            .iter()
+                            .position(|(column, _)| column.eq_ignore_ascii_case(&required.column))
+                            .map(|offset| table.offset + offset)
+                    })
+            })
+            .collect()
     }
 }
 
@@ -518,17 +541,42 @@ pub(crate) fn aggregation_order(
             .iter()
             .take_while(|offset| fixed.contains(offset))
             .count();
-        if !order[fixed_prefix..].starts_with(&group_offsets) {
+        // A fixed group key contributes no ordering demand of its own. Go's
+        // `EqCondCount` removes it while matching the property, even when the
+        // same column is also written in GROUP BY. Counting it a second time
+        // would ask `(w,d,o,n)` of an index that already delivers the needed
+        // `(w,d,o)` order for `WHERE w=1 GROUP BY w,d,o`.
+        let ordered_group_offsets: Vec<usize> = group_offsets
+            .iter()
+            .copied()
+            .filter(|offset| !fixed.contains(offset))
+            .collect();
+        if !order[fixed_prefix..].starts_with(&ordered_group_offsets) {
             continue;
         }
-        let required_offsets = order[..fixed_prefix + group_offsets.len()].to_vec();
+        let required_offsets = order[..fixed_prefix + ordered_group_offsets.len()].to_vec();
         let required_columns = required_offsets
+            .iter()
+            .map(|offset| source.column_at(*offset))
+            .collect::<Option<Vec<_>>>()?;
+        let physical_group_offsets = ordered_group_offsets
+            .iter()
+            .copied()
+            .chain(
+                group_offsets
+                    .iter()
+                    .copied()
+                    .filter(|offset| fixed.contains(offset)),
+            )
+            .collect::<Vec<_>>();
+        let physical_group_columns = physical_group_offsets
             .iter()
             .map(|offset| source.column_at(*offset))
             .collect::<Option<Vec<_>>>()?;
         return Some(AggregationOrder {
             required: child_required_prop(required_offsets.iter().copied(), false),
             required_columns,
+            physical_group_columns,
         });
     }
     None

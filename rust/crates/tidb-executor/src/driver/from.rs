@@ -557,6 +557,10 @@ pub(crate) fn build_from(
             // offsets. Empty until an index branch fills it in; the table
             // branch's answer is read off the catalog at the end of the arm.
             let mut walked_index: Option<Vec<usize>> = None;
+            // A handle range consumes only its access conjuncts. The
+            // remainder is still executed by the scan as a cop Selection and
+            // must remain visible in the physical plan.
+            let mut access_residual_filter = None;
             let mut access_consumed_filter = false;
             // `RowSource` has already classified predicates that reference
             // only this leaf. Keep them as one local WHERE for range costing;
@@ -670,6 +674,26 @@ pub(crate) fn build_from(
                                 .table_access()
                                 .is_some_and(|access| access.accept_handle_ranges(&ranges));
                             if accepted {
+                                access_residual_filter =
+                                    leaf_where.as_ref().and_then(|predicate| {
+                                        crate::handle_range::build_handle_ranges(
+                                            kv,
+                                            predicate,
+                                            &ctx.session_zone(),
+                                        )?
+                                        .residual
+                                        .into_iter()
+                                        .cloned()
+                                        .reduce(
+                                            |left, right| {
+                                                tidb_ast::Expr::Binary(
+                                                    tidb_ast::BinaryOp::LogicAnd,
+                                                    Box::new(left),
+                                                    Box::new(right),
+                                                )
+                                            },
+                                        )
+                                    });
                                 if let Some(access) = source.table_access() {
                                     access.accept_scan_estimate(estimate.rows);
                                 }
@@ -732,7 +756,7 @@ pub(crate) fn build_from(
                 zone: ctx.session_zone(),
                 ..FromScope::default()
             };
-            if let Some(predicate) = demand.rows.and_then(|rows| {
+            let derived_trace_filter = demand.rows.and_then(|rows| {
                 rows.trace_filters_for(&visible)?
                     .iter()
                     .cloned()
@@ -743,16 +767,45 @@ pub(crate) fn build_from(
                             Box::new(right),
                         )
                     })
-            }) {
+            });
+            let has_access_residual = access_residual_filter.is_some();
+            let trace_filter = match (access_residual_filter, derived_trace_filter) {
+                (Some(left), Some(right)) if left == right => Some(left),
+                (Some(left), Some(right)) => Some(tidb_ast::Expr::Binary(
+                    tidb_ast::BinaryOp::LogicAnd,
+                    Box::new(left),
+                    Box::new(right),
+                )),
+                (Some(predicate), None) | (None, Some(predicate)) => Some(predicate),
+                (None, None) => None,
+            };
+            if let Some(predicate) = trace_filter {
                 if let Some(trace) = trace.as_deref_mut() {
-                    trace.selection(
-                        &predicate,
-                        &crate::plan_trace::Qualifier {
-                            db: current_db,
-                            scope: &scope,
-                        },
-                        Some(1.0),
-                    );
+                    let selectivity = match entry {
+                        TableEntry::Kv(table)
+                            if catalog.table_statistics(table.table_id).is_some() =>
+                        {
+                            crate::driver::access::stats_selectivity(
+                                catalog,
+                                table,
+                                &scope,
+                                Some(&predicate),
+                            )
+                        }
+                        TableEntry::Kv(_) => None,
+                        TableEntry::Mem(_) | TableEntry::View(_) | TableEntry::Sequence(_) => {
+                            Some(1.0)
+                        }
+                    };
+                    let qualify = crate::plan_trace::Qualifier {
+                        db: current_db,
+                        scope: &scope,
+                    };
+                    if has_access_residual {
+                        trace.residual_selection(&predicate, &qualify, selectivity);
+                    } else {
+                        trace.selection(&predicate, &qualify, selectivity);
+                    }
                 }
             }
             // What this leaf DELIVERS -- read off the branch that RAN, which
@@ -810,8 +863,31 @@ pub(crate) fn build_from(
             // of delivering it. Go's `PhysicalProjection.exhaustPhysicalPlans`
             // maps the property through the select list; see
             // `merge_decision::from_required_prop`.
+            let leaf_filter = alias.as_deref().and_then(|visible| {
+                demand.rows.and_then(|rows| {
+                    rows.filters_for(visible)?
+                        .iter()
+                        .cloned()
+                        .reduce(|left, right| {
+                            tidb_ast::Expr::Binary(
+                                tidb_ast::BinaryOp::LogicAnd,
+                                Box::new(left),
+                                Box::new(right),
+                            )
+                        })
+                })
+            });
+            let rewritten_subquery = alias.as_deref().and_then(|visible| {
+                super::derived_projection_pushdown::push_filters_into_derived(
+                    subquery,
+                    visible,
+                    column_names,
+                    leaf_filter.as_ref()?,
+                )
+            });
+            let planned_subquery = rewritten_subquery.as_ref().unwrap_or(subquery);
             let (exec, mut scope, actual_delivered) = build_derived_source(
-                subquery,
+                planned_subquery,
                 alias.as_deref(),
                 catalog,
                 current_db,
@@ -819,6 +895,11 @@ pub(crate) fn build_from(
                 trace,
                 required,
             )?;
+            if rewritten_subquery.is_some() {
+                if let (Some(rows), Some(visible)) = (demand.rows, alias.as_deref()) {
+                    rows.mark_leaf_filters_consumed(visible);
+                }
+            }
             rename_derived_columns(&mut scope.tables[0].columns, column_names)?;
             // A derived table is MATERIALIZED here -- `build_derived_source`
             // drains its subquery into a `MemTableSourceExec`, which replays
@@ -1896,6 +1977,36 @@ pub(crate) fn build_join(
     // `equal:[...]`/`other cond:` and the hash table's own keys are one
     // decision rather than two that can drift.
     let split = crate::hash_join::split_equi(&conditions, left_width);
+    let physical_conditions = {
+        let mut flattened = Vec::new();
+        for condition in &conditions {
+            collect_physical_join_conjuncts(condition, &mut flattened);
+        }
+        let columns = (0..scope.width())
+            .map(|offset| {
+                let path = scope.qualified_path(offset)?;
+                let [.., relation, column] = path.as_slice() else {
+                    return None;
+                };
+                let column = crate::driver::merge_decision::RelColumn {
+                    relation: relation.clone(),
+                    column: column.clone(),
+                };
+                crate::driver::merge_decision::physical_column_trace_name(
+                    if offset < left_width {
+                        &join.left
+                    } else {
+                        right_node
+                    },
+                    &column,
+                    catalog,
+                    current_db,
+                )
+            })
+            .collect::<Vec<_>>();
+        (flattened.len() == split.equal_mask.len() && columns.iter().any(Option::is_none))
+            .then_some((flattened, columns))
+    };
     // Go's stats-less build side: the inner (non-preserved) child, which is
     // the left one only for a RIGHT join. See `join.rs`'s module doc.
     let build_is_left = kind == JoinKind::Right;
@@ -2186,6 +2297,7 @@ pub(crate) fn build_join(
             .as_ref()
             .map_or(build_is_left, |decision| !decision.lookup_is_left),
         index_lookup: index_text,
+        physical_conditions,
         merge_keys: merged.as_ref().map(|plan| {
             plan.keys
                 .iter()
@@ -2297,6 +2409,18 @@ pub(crate) fn build_join(
     // [`FromScope::qualified_star_is_output_only`].
     scope.qualified_star_is_output_only = join.tp == tidb_ast::JoinType::Cross && join.on.is_some();
     Ok((meter(exec, trace), scope, delivered))
+}
+
+fn collect_physical_join_conjuncts(expression: &Expression, out: &mut Vec<Expression>) {
+    if let Expression::ScalarFunction(function) = expression {
+        if function.func_name.lowercase() == "and" {
+            for argument in &function.args {
+                collect_physical_join_conjuncts(argument, out);
+            }
+            return;
+        }
+    }
+    out.push(expression.clone());
 }
 
 /// `kv` with any `PARTITION (p, ...)` restriction on the reference applied,
