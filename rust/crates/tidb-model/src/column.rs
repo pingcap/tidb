@@ -30,13 +30,13 @@
 //! nested JSON nulls remain nil interfaces rather than a fabricated dynamic
 //! null type.
 
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, fmt};
 
 use serde::de::{DeserializeSeed, MapAccess, Visitor};
 use serde::{Deserialize, Serialize};
 use tidb_ast::CiString;
 use tidb_datatype::{
-    FieldType, FieldTypeCode, FieldTypeFlags, GoString, ERR_INVALID_DEFAULT,
+    type_to_str, FieldType, FieldTypeCode, FieldTypeFlags, GoString, ERR_INVALID_DEFAULT,
     STRICT_INTEGER_DISPLAY_WIDTH,
 };
 use tidb_error::mysql::{errname, FormatArg};
@@ -736,6 +736,13 @@ impl ColumnInfo {
         self.field_type.type_desc(STRICT_INTEGER_DISPLAY_WIDTH)
     }
 
+    /// Go `table.Column.IsPKHandleColumn`.  Rust stores no second wrapper
+    /// around `ColumnInfo`, so the embedded metadata owns the same predicate.
+    #[must_use]
+    pub fn is_pk_handle_column(&self, table: &TableInfo) -> bool {
+        self.get_flag() & u64::from(FieldTypeFlags::PRI_KEY) != 0 && table.pk_is_handle
+    }
+
     /// Go `IsGenerated`: whether the column is a generated column.
     #[must_use]
     pub fn is_generated(&self) -> bool {
@@ -765,6 +772,26 @@ impl ColumnInfo {
     #[must_use]
     pub fn get_changing_origin_name(&self) -> String {
         changing_origin_name(self.name.original())
+    }
+}
+
+/// Go `table.Column.String`: the diagnostic column spelling, distinct from
+/// the SQL type description returned by [`ColumnInfo::get_type_desc`].
+impl fmt::Display for ColumnInfo {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "{} {}",
+            self.name.original(),
+            type_to_str(self.get_type(), self.get_charset())
+        )?;
+        if self.get_flag() & u64::from(FieldTypeFlags::AUTO_INCREMENT) != 0 {
+            formatter.write_str(" AUTO_INCREMENT")?;
+        }
+        if self.get_flag() & u64::from(FieldTypeFlags::NOT_NULL) != 0 {
+            formatter.write_str(" NOT NULL")?;
+        }
+        Ok(())
     }
 }
 
@@ -1298,6 +1325,58 @@ mod tests {
         let d = year.get_type_desc();
         assert!(!d.contains("unsigned"));
         assert!(!d.contains("zerofill"));
+    }
+
+    #[test]
+    fn test_string() {
+        // Direct port of pkg/table/column_test.go::TestString.
+        let mut column = ColumnInfo {
+            field_type: FieldType::new(FieldTypeCode::Tiny),
+            state: SchemaState::PUBLIC,
+            ..ColumnInfo::default()
+        };
+        column.set_flen(2);
+        column.set_decimal(1);
+        column.set_charset("utf8mb4");
+        column.set_collate("utf8mb4_bin");
+        column.add_flag(u64::from(
+            FieldTypeFlags::ZEROFILL
+                | FieldTypeFlags::UNSIGNED
+                | FieldTypeFlags::BINARY
+                | FieldTypeFlags::AUTO_INCREMENT
+                | FieldTypeFlags::NOT_NULL,
+        ));
+
+        assert_eq!(column.get_type_desc(), "tinyint(2) unsigned zerofill");
+        let mut table = TableInfo::default();
+        assert!(!column.is_pk_handle_column(&table));
+        table.pk_is_handle = true;
+        column.add_flag(u64::from(FieldTypeFlags::PRI_KEY));
+        assert!(column.is_pk_handle_column(&table));
+        assert!(!column.to_string().is_empty());
+
+        column.set_type(FieldTypeCode::Enum);
+        column.set_flag(0);
+        column.set_elems(Some(vec![GoString::from("a"), GoString::from("b")]));
+        assert_eq!(column.get_type_desc(), "enum('a','b')");
+
+        column.set_elems(Some(vec![GoString::from("'a'"), GoString::from("b")]));
+        assert_eq!(column.get_type_desc(), "enum('''a''','b')");
+
+        column.set_type(FieldTypeCode::Float);
+        column.set_flen(8);
+        column.set_decimal(-1);
+        assert_eq!(column.get_type_desc(), "float");
+        column.set_decimal(1);
+        assert_eq!(column.get_type_desc(), "float(8,1)");
+
+        column.set_type(FieldTypeCode::Datetime);
+        column.set_decimal(6);
+        assert_eq!(column.get_type_desc(), "datetime(6)");
+        column.set_decimal(0);
+        assert_eq!(column.get_type_desc(), "datetime");
+        column.set_decimal(-1);
+        assert_eq!(column.get_type_desc(), "datetime");
     }
 
     #[test]
