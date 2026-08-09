@@ -197,7 +197,11 @@ impl Datum {
                 numeric_outcome(convert_float_to_int(*value, lower, upper, target))
             }
             Self::String(value) => {
-                let parsed = crate::str_to_int(value.as_utf8()?, false);
+                let parsed = crate::convert::str_to_int_with_truncate_policy(
+                    value.as_utf8()?,
+                    false,
+                    flags.truncate_as_warning() || flags.ignore_truncate_err(),
+                );
                 let bounded =
                     numeric_outcome(convert_int_to_int(parsed.value, lower, upper, target));
                 Converted {
@@ -206,7 +210,11 @@ impl Datum {
                 }
             }
             Self::Bytes(value) => {
-                let parsed = crate::str_to_int(std::str::from_utf8(value)?, false);
+                let parsed = crate::convert::str_to_int_with_truncate_policy(
+                    std::str::from_utf8(value)?,
+                    false,
+                    flags.truncate_as_warning() || flags.ignore_truncate_err(),
+                );
                 let bounded =
                     numeric_outcome(convert_int_to_int(parsed.value, lower, upper, target));
                 Converted {
@@ -291,8 +299,10 @@ impl Datum {
             Self::Real(value) | Self::Float32(value) => {
                 numeric_outcome(convert_float_to_uint(flags, *value, upper, target))
             }
-            Self::String(value) => string_to_unsigned(value.as_utf8()?, upper, target),
-            Self::Bytes(value) => string_to_unsigned(std::str::from_utf8(value)?, upper, target),
+            Self::String(value) => string_to_unsigned(value.as_utf8()?, upper, target, flags),
+            Self::Bytes(value) => {
+                string_to_unsigned(std::str::from_utf8(value)?, upper, target, flags)
+            }
             Self::Time(value) => decimal_to_unsigned(&value.to_number(), upper, target),
             Self::Duration(value) => decimal_to_unsigned(&value.to_number(), upper, target),
             Self::Decimal(value) => decimal_to_unsigned(value, upper, target),
@@ -1054,8 +1064,17 @@ fn increment_for_reverse(value: Datum, target: &FieldType) -> Datum {
     }
 }
 
-fn string_to_unsigned(text: &str, upper: u64, target: FieldTypeCode) -> Converted<u64> {
-    let parsed = crate::str_to_uint(text, false);
+fn string_to_unsigned(
+    text: &str,
+    upper: u64,
+    target: FieldTypeCode,
+    flags: ConversionFlags,
+) -> Converted<u64> {
+    let parsed = crate::convert::str_to_uint_with_truncate_policy(
+        text,
+        false,
+        flags.truncate_as_warning() || flags.ignore_truncate_err(),
+    );
     let bounded = numeric_outcome(convert_uint_to_uint(parsed.value, upper, target));
     Converted {
         value: bounded.value,
@@ -1376,6 +1395,44 @@ mod tests {
                 .value,
             Datum::new_decimal(Decimal::from_signed_literal("12.35"))
         );
+    }
+
+    /// Go `pkg/types/convert_test.go::TestGetValidIntPrefix` keeps the
+    /// decimal/exponent prefix when `Context.HandleTruncate` returns an
+    /// error. `strconv.ParseInt`/`ParseUint` then replaces the truncation
+    /// with BIGINT overflow and value zero. A warning or ignored truncation
+    /// instead continues through `floatStrToIntStr` and returns the rounded
+    /// integer prefix.
+    #[test]
+    fn strict_datum_integer_conversion_uses_source_truncation_policy() {
+        let signed = FieldType::new(FieldTypeCode::LongLong);
+        let unsigned = FieldType::new(FieldTypeCode::LongLong).with_unsigned(true);
+
+        for input in [
+            Datum::new_string("123..34"),
+            Datum::new_bytes(b"123..34".to_vec()),
+        ] {
+            for (target, strict_value, warning_value) in [
+                (&signed, Datum::Int(0), Datum::Int(123)),
+                (&unsigned, Datum::UInt(0), Datum::UInt(123)),
+            ] {
+                let strict = input.convert_to(target, crate::STRICT_FLAGS).unwrap();
+                assert_eq!(strict.value, strict_value);
+                assert!(matches!(
+                    strict.event,
+                    Some(ScalarConversionEvent::Overflow(_))
+                ));
+
+                for flags in [
+                    crate::STRICT_FLAGS.with_truncate_as_warning(true),
+                    crate::STRICT_FLAGS.with_ignore_truncate_err(true),
+                ] {
+                    let converted = input.convert_to(target, flags).unwrap();
+                    assert_eq!(converted.value, warning_value);
+                    assert_eq!(converted.event, Some(ScalarConversionEvent::Truncated));
+                }
+            }
+        }
     }
 
     #[test]
