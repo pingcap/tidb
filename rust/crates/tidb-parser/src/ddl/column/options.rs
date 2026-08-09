@@ -28,7 +28,7 @@ impl Parser {
     /// Direct Go port of `HandParser.parseColumnOptions`, after the column
     /// type is consumed. The ordered loop is intentional: duplicate and
     /// repeated options remain AST-visible exactly as Go leaves them.
-    pub(super) fn parse_column_options(&mut self, column_type: &str) -> PResult<Vec<ColumnOption>> {
+    pub(super) fn parse_column_options(&mut self) -> PResult<Vec<ColumnOption>> {
         let mut options = Vec::new();
         loop {
             let option = if self.is_kw("NOT") {
@@ -83,9 +83,6 @@ impl Parser {
                 self.bump();
                 ColumnOption::SecondaryEngineAttribute(self.decode_string(&token.text))
             } else if self.is_kw("COLLATE") {
-                if column_type == "JSON" {
-                    return Err(self.err_here("JSON does not allow COLLATE"));
-                }
                 // Go's yacc action checks `HasCollateOption` only in the
                 // base/first-option production.  Consequently a duplicate
                 // COLLATE is rejected when the first option is COLLATE, but

@@ -131,6 +131,12 @@ impl ColumnType {
         field_type_has_charset(code, flags)
     }
 
+    /// Whether TiDB's parser-time `mysql.BinaryFlag` is set for this type.
+    pub fn is_binary(&self) -> bool {
+        let (_, flags) = self.semantic_code_and_flags();
+        flags & FieldTypeFlags::BINARY != 0
+    }
+
     /// Returns parser-computed ENUM/SET display length, if applicable.
     pub fn enum_set_display_length(&self) -> Option<i64> {
         let code = match self.name.as_str() {

@@ -147,7 +147,10 @@ fn json_column_type_restore_and_scope() {
     assert!(parse("create table t (doc json(1))").is_err());
     assert!(parse("create table t (doc json unsigned)").is_err());
     assert!(parse("create table t (doc json character set utf8)").is_err());
-    assert!(parse("create table t (doc json collate utf8mb4_bin)").is_err());
+    assert_eq!(
+        r("create table t (doc json collate utf8mb4_bin)"),
+        "CREATE TABLE `t` (`doc` JSON COLLATE utf8mb4_bin)"
+    );
 }
 
 /// VECTOR is TiDB's Float32 vector field type. Its optional FLOAT/FLOAT4

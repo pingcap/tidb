@@ -311,11 +311,8 @@ impl Parser {
         }
         // Go's default parser configuration enables strict double-type
         // checking: a single-argument DOUBLE precision is a syntax error
-        // (`DOUBLE(10)`), while the `(M,D)` form remains valid. The parser
-        // carries no mutable SQL-mode state yet, so keep the public `parse`
-        // path on that default and reject the ambiguous one-argument form at
-        // the shared field-type boundary used by CREATE and ALTER.
-        if name == "DOUBLE" && args.len() == 1 {
+        // (`DOUBLE(10)`), while `SetStrictDoubleTypeCheck(false)` accepts it.
+        if self.strict_double_type_check && name == "DOUBLE" && args.len() == 1 {
             return Err(self.err_here("DOUBLE requires precision and scale"));
         }
         if year_type

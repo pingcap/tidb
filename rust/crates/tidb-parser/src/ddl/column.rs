@@ -56,7 +56,7 @@ impl Parser {
                 ColumnOption::AutoIncrement,
                 ColumnOption::InlineKey(InlineKeyOption::unique(false)),
             ];
-            options.extend(self.parse_column_options("BIGINT")?);
+            options.extend(self.parse_column_options()?);
             return Ok(ColumnDef {
                 qualifier,
                 name,
@@ -130,7 +130,7 @@ impl Parser {
                 }
             }
         }
-        let options = self.parse_column_options(&ty.name)?;
+        let options = self.parse_column_options()?;
         Ok(ColumnDef {
             qualifier,
             name,

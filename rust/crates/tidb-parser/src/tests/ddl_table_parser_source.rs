@@ -206,6 +206,76 @@ fn strict_double_type_check_rejects_single_argument_double() {
         r("create table double_type_check(id int, c double(10, 2))"),
         "CREATE TABLE `double_type_check` (`id` INT,`c` DOUBLE(10,2))"
     );
+    assert!(parse_with_strict_double_type_check(
+        "create table double_type_check(id int, c double(10))",
+        false,
+    )
+    .is_ok());
+}
+
+/// Structural cases from `pkg/parser/parser_test.go::TestDDLStatements`.
+#[test]
+fn test_ddl_statements() {
+    fn create_table(sql: &str) -> tidb_ast::CreateTableStmt {
+        let Stmt::Ddl(ddl) = parse(sql).unwrap_or_else(|error| panic!("{sql}: {error:?}")) else {
+            panic!("expected DDL: {sql}");
+        };
+        let tidb_ast::DdlStmt::CreateTable(table) = ddl.into_inner() else {
+            panic!("expected CREATE TABLE: {sql}");
+        };
+        *table
+    }
+
+    let table = create_table(
+        "CREATE TABLE t (\n\
+         a varchar(64) binary,\n\
+         b char(10) charset utf8 collate utf8_general_ci,\n\
+         c text charset latin1) ENGINE=innoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin",
+    );
+    assert!(table.columns[0].ty.is_binary());
+    assert!(!table.columns[1].ty.is_binary());
+    assert!(!table.columns[2].ty.is_binary());
+    assert!(table.table_options.iter().any(
+        |option| matches!(option, tidb_ast::TableOption::CharacterSet(value) if value == "UTF8")
+    ));
+    assert!(table.table_options.iter().any(
+        |option| matches!(option, tidb_ast::TableOption::Collate(value) if value == "UTF8_BIN")
+    ));
+
+    let table = create_table("CREATE TABLE t (a varbinary(64), b binary(10), c blob)");
+    assert!(table.columns.iter().all(|column| column.ty.is_binary()));
+
+    parse(
+        "CREATE TABLE t (\n\
+         c_int int collate utf8_bin, c_real real collate utf8_bin,\n\
+         c_float float collate utf8_bin, c_bool bool collate utf8_bin,\n\
+         c_char char collate utf8_bin, c_binary binary collate utf8_bin,\n\
+         c_varchar varchar(2) collate utf8_bin, c_year year collate utf8_bin,\n\
+         c_date date collate utf8_bin, c_time time collate utf8_bin,\n\
+         c_datetime datetime collate utf8_bin, c_timestamp timestamp collate utf8_bin,\n\
+         c_tinyblob tinyblob collate utf8_bin, c_blob blob collate utf8_bin,\n\
+         c_mediumblob mediumblob collate utf8_bin, c_longblob longblob collate utf8_bin,\n\
+         c_bit bit collate utf8_bin, c_long_varchar long varchar collate utf8_bin,\n\
+         c_tinytext tinytext collate utf8_bin, c_text text collate utf8_bin,\n\
+         c_mediumtext mediumtext collate utf8_bin, c_longtext longtext collate utf8_bin,\n\
+         c_decimal decimal collate utf8_bin, c_numeric numeric collate utf8_bin,\n\
+         c_enum enum('1') collate utf8_bin, c_set set('1') collate utf8_bin,\n\
+         c_json json collate utf8_bin)",
+    )
+    .expect("Go accepts COLLATE on every source type");
+
+    assert!(parse("CREATE TABLE t (c_double double(10))").is_err());
+    assert!(
+        parse_with_strict_double_type_check("CREATE TABLE t (c_double double(10))", false,).is_ok()
+    );
+    assert!(parse("CREATE TABLE t (c_double double(10, 2))").is_ok());
+    assert!(
+        parse("create global temporary table t010(local_01 int, local_03 varchar(20))").is_err()
+    );
+    assert!(parse(
+        "create global temporary table t010(local_01 int, local_03 varchar(20)) on commit preserve rows"
+    )
+    .is_ok());
 }
 
 /// Exact rows from `tests/integrationtest/t/types/const.test:151-177`'s

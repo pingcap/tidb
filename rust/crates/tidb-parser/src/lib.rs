@@ -429,6 +429,14 @@ pub fn parse_with_window_functions(sql: &str, enabled: bool) -> PResult<Stmt> {
     parse_one_with_parser(sql, &mut parser)
 }
 
+/// Parses one statement with Go's `Parser.SetStrictDoubleTypeCheck` switch.
+/// The ordinary [`parse`] entry point keeps TiDB's strict default.
+pub fn parse_with_strict_double_type_check(sql: &str, enabled: bool) -> PResult<Stmt> {
+    let mut parser = Parser::new_with_configuration(sql, false, SqlMode::default());
+    parser.strict_double_type_check = enabled;
+    parse_one_with_parser(sql, &mut parser)
+}
+
 fn parse_with_configuration(sql: &str, enable_mariadb: bool, sql_mode: SqlMode) -> PResult<Stmt> {
     parse_with_full_configuration(
         sql,
@@ -629,6 +637,7 @@ struct Parser {
     /// `PIPES_AS_CONCAT`: `||` builds `CONCAT(a, b)` at [`prec::CONCAT`]
     /// instead of a boolean `OR`.
     pipes_as_concat: bool,
+    strict_double_type_check: bool,
     warnings: Vec<HintDiagnostic>,
 }
 
@@ -682,6 +691,7 @@ impl Parser {
             high_not_precedence: sql_mode.high_not_precedence,
             ignore_space: sql_mode.ignore_space,
             pipes_as_concat: sql_mode.pipes_as_concat,
+            strict_double_type_check: true,
             warnings: lexer_warnings
                 .into_iter()
                 .map(|message| HintDiagnostic { message })
@@ -794,6 +804,7 @@ impl Parser {
             high_not_precedence: false,
             ignore_space: false,
             pipes_as_concat: false,
+            strict_double_type_check: true,
             warnings: Vec::new(),
         }
     }
