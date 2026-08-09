@@ -15,12 +15,11 @@
 //! `pkg/util/chunk`: the columnar row container that every executor produces
 //! and every expression `Eval*` consumes.
 //!
-//! SEED SCOPE (grown incrementally): [`column`] ports the `Column` columnar
-//! storage (fixed-length int/real + variable-length string/bytes/vector + the
-//! `getFixedLen`/`NewColumn` type dispatch); [`chunk`] the `Chunk` batch; and
-//! [`row`] the `Row` cursor that expression evaluation reads. DEFERRED
-//! (documented per module): `Reset(EvalType)`, the growth/pool paths,
-//! and a `str`-typed `GetString`.
+//! [`column`] provides packed fixed- and variable-width storage, guarded byte
+//! views, resize/reserve/reset operations, and the typed values consumed by
+//! expression evaluation. [`chunk`] owns a batch of columns and [`row`] is its
+//! read cursor. Go strings remain byte-authoritative and are represented by
+//! `tidb_datatype::GoString` at the value boundary.
 //!
 //! [`mutrow`] adds Go's `MutRow`, the mutable one-row chunk that partition
 //! pruning and ranger detachment evaluate expressions against.
@@ -42,8 +41,8 @@ pub mod chunk_in_disk;
 pub mod chunk_util;
 pub mod codec;
 pub mod column;
+mod column_view;
 pub mod compare;
-mod go_slice;
 pub mod iterator;
 pub mod list;
 pub mod mutrow;
@@ -52,6 +51,9 @@ pub mod row;
 pub mod row_container;
 pub mod row_container_reader;
 pub mod row_in_disk;
+mod shared_bytes;
+
+pub use column_view::{CellBytes, ColumnBytes};
 
 /// The spill tests all point the process-wide temporary-storage path at their
 /// own scratch directory, so exactly one of them may run at a time. ONE lock

@@ -54,6 +54,9 @@ use tidb_datatype::{
     MySqlDuration, MysqlEnum, MysqlSet, Time, VectorFloat32, MYDECIMAL_STRUCT_SIZE,
 };
 
+use crate::column_view::ColumnBytes;
+use crate::shared_bytes::SharedBytes;
+
 /// Go `VarElemLen` (`= -1`): the sentinel element length of a variable-length
 /// column.
 pub const VAR_ELEM_LEN: i64 = -1;
@@ -69,6 +72,9 @@ pub const MY_DECIMAL_STRUCT_SIZE: i64 = 40;
 
 /// Go `estimatedElemLen`: initial bytes reserved per variable-length row.
 pub const ESTIMATED_ELEM_LEN: usize = 8;
+
+/// Go's accepted 64-bit `Column` payload size, excluding backing allocations.
+const GO_COLUMN_PAYLOAD_BYTES: i64 = 112;
 
 /// Go `getFixedLen`: the fixed element width for a column of `field_type`, or
 /// [`VAR_ELEM_LEN`] when the type is variable-length.
@@ -100,10 +106,10 @@ pub struct Column {
     /// (Go `offsets`; empty for a fixed-length column).
     pub(crate) offsets: Vec<i64>,
     /// The packed element bytes (Go `data`).
-    pub(crate) data: Vec<u8>,
-    /// Scratch buffer sized to one fixed element; empty for a var-length column
-    /// (Go `elemBuf`).
-    pub(crate) elem_buf: Vec<u8>,
+    pub(crate) data: SharedBytes,
+    /// Scratch buffer sized to one fixed element. `None` identifies a
+    /// variable-length column, including the zero-width fixed edge case.
+    pub(crate) elem_buf: Option<Vec<u8>>,
     /// Go `avoidReusing`: keep this column out of the allocator's reuse pool.
     pub avoid_reusing: bool,
 }
@@ -113,17 +119,16 @@ impl Column {
     /// `unsafe.Sizeof(*col) + cap(nullBitmap) + cap(offsets)*8 + cap(data) +
     /// cap(elemBuf)`.
     ///
-    /// The struct's own size stands in for Go's `unsafe.Sizeof(*col)`; the
-    /// field list is the same one Go sums, in the same order, so the two
-    /// numbers agree whenever the two layouts do.
+    /// The public TiDB contract uses Go's accepted 64-bit payload constant;
+    /// Rust layout and synchronization bookkeeping are implementation details.
     #[must_use]
     pub fn memory_usage(&self) -> i64 {
         let of = |n: usize| i64::try_from(n).unwrap_or(i64::MAX);
-        of(size_of::<Column>())
+        GO_COLUMN_PAYLOAD_BYTES
             + of(self.null_bitmap.capacity())
             + of(self.offsets.capacity() * 8)
             + of(self.data.capacity())
-            + of(self.elem_buf.capacity())
+            + of(self.elem_buf.as_ref().map_or(0, Vec::capacity))
     }
 
     /// Go `newFixedLenColumn`: a fixed-length column whose elements are
@@ -131,8 +136,8 @@ impl Column {
     #[must_use]
     pub fn new_fixed_len(elem_len: usize, capacity: usize) -> Self {
         Column {
-            elem_buf: vec![0; elem_len],
-            data: Vec::with_capacity(elem_len * capacity),
+            elem_buf: Some(vec![0; elem_len]),
+            data: SharedBytes::with_capacity(elem_len * capacity),
             null_bitmap: Vec::with_capacity((capacity + 7) >> 3),
             offsets: Vec::new(),
             length: 0,
@@ -174,7 +179,7 @@ impl Column {
                 ..Column::default()
             },
             elem_len => Column {
-                elem_buf: vec![0; elem_len as usize],
+                elem_buf: Some(vec![0; elem_len as usize]),
                 ..Column::default()
             },
         }
@@ -190,8 +195,8 @@ impl Column {
             .checked_mul(capacity)
             .expect("variable-length column capacity overflow");
         Column {
-            elem_buf: Vec::new(),
-            data: Vec::with_capacity(data_capacity),
+            elem_buf: None,
+            data: SharedBytes::with_capacity(data_capacity),
             null_bitmap: Vec::with_capacity((capacity + 7) >> 3),
             offsets,
             length: 0,
@@ -202,17 +207,16 @@ impl Column {
     /// Go `IsFixed`: whether elements have a fixed length (i.e. `elemBuf != nil`).
     #[must_use]
     pub fn is_fixed(&self) -> bool {
-        !self.elem_buf.is_empty()
+        self.elem_buf.is_some()
     }
 
     /// Go `typeSize`: the fixed element size, or [`VAR_ELEM_LEN`] for var-length.
     #[must_use]
     pub fn type_size(&self) -> i64 {
-        if self.elem_buf.is_empty() {
-            VAR_ELEM_LEN
-        } else {
-            self.elem_buf.len() as i64
-        }
+        self.elem_buf
+            .as_ref()
+            .filter(|buffer| !buffer.is_empty())
+            .map_or(VAR_ELEM_LEN, |buffer| buffer.len() as i64)
     }
 
     /// Go `GetNullBitmapCap`.
@@ -236,7 +240,11 @@ impl Column {
     /// Go allocator's `cap(col.elemBuf)` type-eligibility check.
     #[must_use]
     pub(crate) fn elem_buffer_capacity(&self) -> usize {
-        self.elem_buf.capacity()
+        self.elem_buf.as_ref().map_or(0, Vec::capacity)
+    }
+
+    pub(crate) fn elem_buffer_len(&self) -> usize {
+        self.elem_buf.as_ref().map_or(0, Vec::len)
     }
 
     /// Go `Rows`: the number of rows currently stored.
@@ -282,7 +290,7 @@ impl Column {
     /// Go `CalculateLenDeltaForAppendCellNTimesForFixedElem`.
     #[must_use]
     pub fn fixed_len_delta_for_append_cell_n_times(src: &Column, times: usize) -> usize {
-        src.elem_buf.len().saturating_mul(times)
+        src.elem_buffer_len().saturating_mul(times)
     }
 
     /// Go `CalculateLenDeltaForAppendCellNTimesForVarElem`.
@@ -306,17 +314,18 @@ impl Column {
             self.append_multi_same_null_bitmap(not_null, times);
         }
         if self.is_fixed() {
-            let elem_len = src.elem_buf.len();
+            let elem_len = src.elem_buffer_len();
             let start = row * elem_len;
+            let cell = src.data.read()[start..start + elem_len].to_vec();
             for _ in 0..times {
-                self.data
-                    .extend_from_slice(&src.data[start..start + elem_len]);
+                self.data.extend_from_slice(&cell);
             }
         } else {
             let start = usize::try_from(src.offsets[row]).expect("non-negative offset");
             let end = usize::try_from(src.offsets[row + 1]).expect("non-negative offset");
+            let cell = src.data.read()[start..end].to_vec();
             for _ in 0..times {
-                self.data.extend_from_slice(&src.data[start..end]);
+                self.data.extend_from_slice(&cell);
                 self.offsets.push(self.data.len() as i64);
             }
         }
@@ -333,7 +342,7 @@ impl Column {
         } else if !self.is_fixed() {
             self.offsets.push(0);
         }
-        self.data.clear();
+        self.data.reset();
     }
 
     /// Go exported `Reset(EvalType)`: clear the column and reset its physical
@@ -353,32 +362,45 @@ impl Column {
 
     /// Go `finishAppendFixed`: commit the scratch `elem_buf` as one not-null row.
     fn finish_append_fixed(&mut self) {
-        self.data.extend_from_slice(&self.elem_buf);
+        self.data.extend_from_slice(
+            self.elem_buf
+                .as_deref()
+                .expect("fixed append requires a fixed column"),
+        );
         self.append_null_bitmap(true);
         self.length += 1;
     }
 
+    fn write_elem_buf(&mut self, bytes: &[u8]) {
+        let elem_buf = self
+            .elem_buf
+            .as_mut()
+            .expect("fixed append requires a fixed column");
+        let copied = elem_buf.len().min(bytes.len());
+        elem_buf[..copied].copy_from_slice(&bytes[..copied]);
+    }
+
     /// Go `AppendInt64`.
     pub fn append_int64(&mut self, value: i64) {
-        self.elem_buf.copy_from_slice(&value.to_ne_bytes());
+        self.write_elem_buf(&value.to_ne_bytes());
         self.finish_append_fixed();
     }
 
     /// Go `AppendUint64`.
     pub fn append_uint64(&mut self, value: u64) {
-        self.elem_buf.copy_from_slice(&value.to_ne_bytes());
+        self.write_elem_buf(&value.to_ne_bytes());
         self.finish_append_fixed();
     }
 
     /// Go `AppendFloat32`.
     pub fn append_float32(&mut self, value: f32) {
-        self.elem_buf.copy_from_slice(&value.to_ne_bytes());
+        self.write_elem_buf(&value.to_ne_bytes());
         self.finish_append_fixed();
     }
 
     /// Go `AppendFloat64`.
     pub fn append_float64(&mut self, value: f64) {
-        self.elem_buf.copy_from_slice(&value.to_ne_bytes());
+        self.write_elem_buf(&value.to_ne_bytes());
         self.finish_append_fixed();
     }
 
@@ -388,7 +410,7 @@ impl Column {
     /// `CoreTime` with the type/fsp metadata in the low 4 bits) via an
     /// `unsafe.Pointer` cast; `Time::go_raw` is that exact bit pattern.
     pub fn append_time(&mut self, t: Time) {
-        self.elem_buf.copy_from_slice(&t.go_raw().to_ne_bytes());
+        self.write_elem_buf(&t.go_raw().to_ne_bytes());
         self.finish_append_fixed();
     }
 
@@ -402,7 +424,7 @@ impl Column {
     /// `types.MyDecimal` struct (Go writes it through `unsafe.Pointer`; the
     /// bytes are identical).
     pub fn append_my_decimal(&mut self, dec: &MyDecimal) {
-        self.elem_buf.copy_from_slice(&dec.to_raw_bytes());
+        self.write_elem_buf(&dec.to_raw_bytes());
         self.finish_append_fixed();
     }
 
@@ -505,7 +527,11 @@ impl Column {
     pub fn append_null(&mut self) {
         self.append_null_bitmap(false);
         if self.is_fixed() {
-            self.data.extend_from_slice(&self.elem_buf);
+            self.data.extend_from_slice(
+                self.elem_buf
+                    .as_deref()
+                    .expect("fixed column has an element buffer"),
+            );
         } else {
             self.offsets.push(self.offsets[self.length]);
         }
@@ -520,7 +546,11 @@ impl Column {
         self.append_multi_same_null_bitmap(false, n);
         if self.is_fixed() {
             for _ in 0..n {
-                self.data.extend_from_slice(&self.elem_buf);
+                self.data.extend_from_slice(
+                    self.elem_buf
+                        .as_deref()
+                        .expect("fixed column has an element buffer"),
+                );
             }
         } else {
             let current = self.offsets[self.length];
@@ -538,9 +568,10 @@ impl Column {
     }
 
     /// Go `AppendString`: append a string's bytes as one row.
-    pub fn append_string(&mut self, str: &str) {
+    pub fn append_string(&mut self, value: impl Into<GoString>) {
         debug_assert!(!self.is_fixed(), "append_string on a fixed-length column");
-        self.data.extend_from_slice(str.as_bytes());
+        let value = value.into();
+        self.data.extend_from_slice(value.as_bytes());
         self.finish_append_var();
     }
 
@@ -558,7 +589,9 @@ impl Column {
             !self.is_fixed(),
             "append_vector_float32 on a fixed-length column"
         );
-        value.serialize_to(&mut self.data);
+        let mut encoded = Vec::new();
+        value.serialize_to(&mut encoded);
+        self.data.extend_from_slice(&encoded);
         self.finish_append_var();
     }
 
@@ -569,20 +602,24 @@ impl Column {
 
     /// Go `GetBytes`: the raw bytes of a variable-length row.
     ///
-    /// TiDB strings are arbitrary byte sequences, so this returns `&[u8]`; a
-    /// `str`-typed `GetString` waits on the crate-wide bytes-vs-str policy.
+    /// TiDB strings are arbitrary byte sequences. The returned guard behaves
+    /// like a byte slice while keeping shared storage stable for its borrow.
     #[must_use]
-    pub fn get_bytes(&self, row_id: usize) -> &[u8] {
+    pub fn get_bytes(&self, row_id: usize) -> ColumnBytes<'_> {
         let start = self.offsets[row_id] as usize;
         let end = self.offsets[row_id + 1] as usize;
-        &self.data[start..end]
+        ColumnBytes {
+            bytes: self.data.read(),
+            start,
+            end,
+        }
     }
 
     /// Go `Column.GetString`, represented with [`GoString`] so arbitrary Go
     /// string bytes are not rejected as invalid UTF-8.
     #[must_use]
     pub fn get_string(&self, row_id: usize) -> GoString {
-        GoString::from_bytes(self.get_bytes(row_id).to_vec())
+        GoString::from_bytes(self.get_bytes(row_id).as_ref().to_vec())
     }
 
     /// Go `GetJSON`: the cell's first byte is the JSON type code and the rest
@@ -597,28 +634,27 @@ impl Column {
     }
 
     /// Go `GetVectorFloat32`: deserialize one vector cell. A malformed cell
-    /// panics, matching Go's `panic(err)` path. The cell boundary must contain
-    /// exactly one vector image; accepting a suffix would silently hide a
-    /// corrupt chunk offset table.
+    /// panics, matching Go's `panic(err)` path. A valid leading vector is
+    /// accepted even when the cell has a suffix, matching the source decoder.
     #[must_use]
     pub fn get_vector_float32(&self, row_id: usize) -> VectorFloat32 {
         let cell = self.get_bytes(row_id);
-        let (value, remaining) = deserialize_vector_float32(cell)
+        let (value, _) = deserialize_vector_float32(cell.as_ref())
             .unwrap_or_else(|error| panic!("invalid VectorFloat32 chunk cell: {error}"));
-        assert!(
-            remaining.is_empty(),
-            "VectorFloat32 chunk cell has {} trailing bytes",
-            remaining.len()
-        );
         value
     }
 
     /// Go `GetRaw`: the raw element bytes of a row, for either column kind.
     #[must_use]
-    pub fn get_raw(&self, row_id: usize) -> &[u8] {
+    pub fn get_raw(&self, row_id: usize) -> ColumnBytes<'_> {
         if self.is_fixed() {
-            let elem_len = self.elem_buf.len();
-            &self.data[row_id * elem_len..row_id * elem_len + elem_len]
+            let elem_len = self.elem_buffer_len();
+            let start = row_id * elem_len;
+            ColumnBytes {
+                bytes: self.data.read(),
+                start,
+                end: start + elem_len,
+            }
         } else {
             self.get_bytes(row_id)
         }
@@ -628,22 +664,19 @@ impl Column {
     #[must_use]
     pub fn raw_len(&self, row_id: usize) -> usize {
         if self.is_fixed() {
-            self.elem_buf.len()
+            self.elem_buffer_len()
         } else {
             usize::try_from(self.offsets[row_id + 1] - self.offsets[row_id])
                 .expect("column offsets are non-decreasing")
         }
     }
 
-    /// Go `SetRaw`. The caller must provide exactly the existing variable-cell
-    /// width; this assertion turns Go's documented precondition into a checked
-    /// Rust boundary.
+    /// Go `SetRaw`: copy as many input bytes as fit in the existing cell.
+    /// Short input preserves the old tail; long input is truncated.
     pub fn set_raw(&mut self, row_id: usize, bytes: &[u8]) {
-        assert!(!self.is_fixed(), "SetRaw requires a variable-length column");
         let start = usize::try_from(self.offsets[row_id]).expect("non-negative offset");
         let end = usize::try_from(self.offsets[row_id + 1]).expect("non-negative offset");
-        assert_eq!(bytes.len(), end - start, "SetRaw width must not change");
-        self.data[start..end].copy_from_slice(bytes);
+        self.data.copy_from_slice(start..end, bytes);
     }
 
     /// Go `GetInt64`.
@@ -670,10 +703,133 @@ impl Column {
         f64::from_ne_bytes(self.fixed_elem::<8>(row_id))
     }
 
+    /// Mutate all `i64` cells through an aligned, borrow-scoped slice.
+    pub fn with_int64s_mut<R>(&mut self, mutate: impl FnOnce(&mut [i64]) -> R) -> R {
+        self.with_typed_values_mut(
+            8,
+            |bytes| i64::from_ne_bytes(bytes.try_into().expect("eight bytes")),
+            |value, encoded| encoded.extend_from_slice(&value.to_ne_bytes()),
+            mutate,
+        )
+    }
+
+    /// Mutate all `u64` cells through an aligned, borrow-scoped slice.
+    pub fn with_uint64s_mut<R>(&mut self, mutate: impl FnOnce(&mut [u64]) -> R) -> R {
+        self.with_typed_values_mut(
+            8,
+            |bytes| u64::from_ne_bytes(bytes.try_into().expect("eight bytes")),
+            |value, encoded| encoded.extend_from_slice(&value.to_ne_bytes()),
+            mutate,
+        )
+    }
+
+    /// Mutate all `f32` cells through an aligned, borrow-scoped slice.
+    pub fn with_float32s_mut<R>(&mut self, mutate: impl FnOnce(&mut [f32]) -> R) -> R {
+        self.with_typed_values_mut(
+            4,
+            |bytes| f32::from_ne_bytes(bytes.try_into().expect("four bytes")),
+            |value, encoded| encoded.extend_from_slice(&value.to_ne_bytes()),
+            mutate,
+        )
+    }
+
+    /// Mutate all `f64` cells through an aligned, borrow-scoped slice.
+    pub fn with_float64s_mut<R>(&mut self, mutate: impl FnOnce(&mut [f64]) -> R) -> R {
+        self.with_typed_values_mut(
+            8,
+            |bytes| f64::from_ne_bytes(bytes.try_into().expect("eight bytes")),
+            |value, encoded| encoded.extend_from_slice(&value.to_ne_bytes()),
+            mutate,
+        )
+    }
+
+    /// Mutate all Go duration nanosecond values through an aligned slice.
+    pub fn with_go_durations_mut<R>(&mut self, mutate: impl FnOnce(&mut [i64]) -> R) -> R {
+        self.with_int64s_mut(mutate)
+    }
+
+    /// Mutate all decimal cells through decoded `MyDecimal` values.
+    pub fn with_decimals_mut<R>(&mut self, mutate: impl FnOnce(&mut [MyDecimal]) -> R) -> R {
+        self.with_typed_values_mut(
+            MYDECIMAL_STRUCT_SIZE,
+            |bytes| {
+                let raw: [u8; MYDECIMAL_STRUCT_SIZE] =
+                    bytes.try_into().expect("decimal cell width");
+                MyDecimal::from_raw_bytes(raw).expect("chunk decimal cell holds a valid MyDecimal")
+            },
+            |value, encoded| encoded.extend_from_slice(&value.to_raw_bytes()),
+            mutate,
+        )
+    }
+
+    /// Mutate all packed time cells through decoded `Time` values.
+    pub fn with_times_mut<R>(&mut self, mutate: impl FnOnce(&mut [Time]) -> R) -> R {
+        self.with_typed_values_mut(
+            SIZE_TIME as usize,
+            |bytes| {
+                let raw = u64::from_ne_bytes(bytes.try_into().expect("time cell width"));
+                Time::from_go_raw(raw).expect("chunk Time cell holds a valid packed types.Time")
+            },
+            |value, encoded| encoded.extend_from_slice(&value.go_raw().to_ne_bytes()),
+            mutate,
+        )
+    }
+
+    /// Mutate one cell's bytes without retaining a lock across user code.
+    pub fn with_cell_bytes_mut<R>(
+        &mut self,
+        row_id: usize,
+        mutate: impl FnOnce(&mut [u8]) -> R,
+    ) -> R {
+        let (start, end) = if self.is_fixed() {
+            let width = self.elem_buffer_len();
+            (row_id * width, (row_id + 1) * width)
+        } else {
+            (
+                usize::try_from(self.offsets[row_id]).expect("non-negative offset"),
+                usize::try_from(self.offsets[row_id + 1]).expect("non-negative offset"),
+            )
+        };
+        let mut cell = self.data.read()[start..end].to_vec();
+        let result = mutate(&mut cell);
+        self.data.copy_from_slice(start..end, &cell);
+        result
+    }
+
+    fn with_typed_values_mut<T, R>(
+        &mut self,
+        width: usize,
+        mut decode: impl FnMut(&[u8]) -> T,
+        mut encode: impl FnMut(&T, &mut Vec<u8>),
+        mutate: impl FnOnce(&mut [T]) -> R,
+    ) -> R {
+        let byte_len = self
+            .length
+            .checked_mul(width)
+            .expect("typed column view size overflow");
+        let snapshot = self.data.snapshot();
+        assert!(
+            byte_len <= snapshot.len(),
+            "typed column view exceeds packed data"
+        );
+        let mut values: Vec<T> = snapshot[..byte_len]
+            .chunks_exact(width)
+            .map(&mut decode)
+            .collect();
+        let result = mutate(&mut values);
+        let mut encoded = Vec::with_capacity(byte_len);
+        for value in &values {
+            encode(value, &mut encoded);
+        }
+        assert_eq!(encoded.len(), byte_len, "typed encoder changed cell width");
+        self.data.copy_from_slice(0..byte_len, &encoded);
+        result
+    }
+
     /// Go `resize`, shared by the exported fixed-width resize helpers.
     fn resize_fixed(&mut self, n: usize, type_size: usize, is_null: bool) {
         let data_len = n.checked_mul(type_size).expect("column size overflow");
-        self.data.resize(data_len, 0);
+        self.data.resize_preserving(data_len);
         if !is_null {
             self.data.fill(0);
         }
@@ -693,7 +849,9 @@ impl Column {
         // AppendNull copies the last scratch value into the null cell.  Rust's
         // `Vec::resize` preserves the bytes when the length is unchanged,
         // which is the ordinary same-evaluation-type path.
-        self.elem_buf.resize(type_size, 0);
+        self.elem_buf
+            .get_or_insert_with(Vec::new)
+            .resize(type_size, 0);
         // Go's fixed-width resize does not touch `offsets`.  A column that was
         // previously variable-width therefore retains that slice header; it
         // is reused if the column later becomes variable-width again.
@@ -706,9 +864,9 @@ impl Column {
             .checked_mul(estimated_size)
             .expect("column reserve size overflow");
         if self.data.capacity() < data_capacity {
-            self.data = Vec::with_capacity(data_capacity);
+            self.data = SharedBytes::with_capacity(data_capacity);
         } else {
-            self.data.clear();
+            self.data.reset();
         }
         let bitmap_capacity = (n + 7) >> 3;
         if self.null_bitmap.capacity() < bitmap_capacity {
@@ -727,7 +885,7 @@ impl Column {
             // than manufacturing a new zero when the backing is reusable.
             self.offsets.truncate(1);
         }
-        self.elem_buf.clear();
+        self.elem_buf = None;
         self.length = 0;
     }
 
@@ -822,7 +980,7 @@ impl Column {
     /// Reads the `N` element bytes of a fixed-length row.
     fn fixed_elem<const N: usize>(&self, row_id: usize) -> [u8; N] {
         let start = row_id * N;
-        self.data[start..start + N]
+        self.data.read()[start..start + N]
             .try_into()
             .expect("fixed element")
     }
@@ -834,7 +992,7 @@ impl Column {
             length: self.length,
             null_bitmap: self.null_bitmap.clone(),
             offsets: self.offsets.clone(),
-            data: self.data.clone(),
+            data: self.data.deep_copy(),
             elem_buf: self.elem_buf.clone(),
             // Go intentionally does not propagate `avoidReusing`: the copy
             // owns all buffers even when the source was a zero-copy codec
@@ -854,10 +1012,10 @@ impl Column {
         destination.null_bitmap.extend_from_slice(&self.null_bitmap);
         destination.offsets.clear();
         destination.offsets.extend_from_slice(&self.offsets);
-        destination.data.clear();
-        destination.data.extend_from_slice(&self.data);
-        destination.elem_buf.clear();
-        destination.elem_buf.extend_from_slice(&self.elem_buf);
+        let data = self.data.snapshot();
+        destination.data.reset();
+        destination.data.extend_from_slice(&data);
+        destination.elem_buf = self.elem_buf.clone();
         destination
     }
 
@@ -878,9 +1036,9 @@ impl Column {
         if self.is_fixed() {
             // Go allocates a fresh scratch element in this branch while
             // retaining dst.offsets and dst.avoidReusing.
-            destination.elem_buf = vec![0; self.elem_buf.len()];
+            destination.elem_buf = Some(vec![0; self.elem_buffer_len()]);
         } else {
-            destination.elem_buf.clear();
+            destination.elem_buf = None;
             if destination.offsets.is_empty() {
                 destination.offsets.push(0);
             }
@@ -897,14 +1055,15 @@ impl Column {
     pub(crate) fn append_cell_from(&mut self, src: &Column, row_idx: usize) {
         self.append_null_bitmap(!src.is_null(row_idx));
         if src.is_fixed() {
-            let elem_len = src.elem_buf.len();
+            let elem_len = src.elem_buffer_len();
             let offset = row_idx * elem_len;
-            self.data
-                .extend_from_slice(&src.data[offset..offset + elem_len]);
+            let cell = src.data.read()[offset..offset + elem_len].to_vec();
+            self.data.extend_from_slice(&cell);
         } else {
             let start = src.offsets[row_idx] as usize;
             let end = src.offsets[row_idx + 1] as usize;
-            self.data.extend_from_slice(&src.data[start..end]);
+            let cell = src.data.read()[start..end].to_vec();
+            self.data.extend_from_slice(&cell);
             self.offsets.push(self.data.len() as i64);
         }
         self.length += 1;
@@ -965,8 +1124,9 @@ impl Column {
     /// Go `DestroyDataForTest`: overwrite every occupied byte so tests can
     /// prove a supposed copy does not retain the source backing.
     pub fn destroy_data_for_test(&mut self) {
-        for (index, byte) in self.data.iter_mut().enumerate() {
-            *byte = (index as u8).wrapping_mul(31).wrapping_add(0xa5);
+        for index in 0..self.data.len() {
+            self.data
+                .set(index, (index as u8).wrapping_mul(31).wrapping_add(0xa5));
         }
     }
 
@@ -990,7 +1150,7 @@ impl Column {
     /// backwards over itself and relies on `dst <= src`.
     pub fn reconstruct(&mut self, sel: &[usize]) {
         if self.is_fixed() {
-            let elem_len = self.elem_buf.len();
+            let elem_len = self.elem_buffer_len();
             for (dst, &src) in sel.iter().enumerate() {
                 let idx = dst >> 3;
                 let pos = dst & 7;
@@ -1092,14 +1252,16 @@ impl Column {
         self.append_multi_same_null_bitmap(!src.is_null(row_idx), num_rows);
         self.length += num_rows;
         if src.is_fixed() {
-            let elem_len = src.elem_buf.len();
+            let elem_len = src.elem_buffer_len();
             let start = row_idx * elem_len;
             let end = start + num_rows * elem_len;
-            self.data.extend_from_slice(&src.data[start..end]);
+            let cells = src.data.read()[start..end].to_vec();
+            self.data.extend_from_slice(&cells);
         } else {
             let start = src.offsets[row_idx] as usize;
             let end = src.offsets[row_idx + num_rows] as usize;
-            self.data.extend_from_slice(&src.data[start..end]);
+            let cells = src.data.read()[start..end].to_vec();
+            self.data.extend_from_slice(&cells);
             let elem_len = src.offsets[row_idx + 1] - src.offsets[row_idx];
             for _ in 0..num_rows {
                 let last = *self.offsets.last().expect("var-len column keeps offset 0");
@@ -1127,7 +1289,7 @@ pub fn append_cell_from_raw_data(
     current_offset: usize,
 ) -> usize {
     if destination.is_fixed() {
-        let width = destination.elem_buf.len();
+        let width = destination.elem_buffer_len();
         let end = current_offset
             .checked_add(width)
             .expect("fixed raw-cell offset overflow");
@@ -1158,663 +1320,5 @@ pub fn append_cell_from_raw_data(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Stands in for Go's `rand` in the reconstruct tests: those tests draw a
-    /// fresh random selection and null pattern on every run, so a fixed
-    /// generator run over several seeds keeps the same coverage while staying
-    /// reproducible when it fails.
-    struct Rng(u64);
-
-    impl Rng {
-        fn next_u64(&mut self) -> u64 {
-            self.0 ^= self.0 << 13;
-            self.0 ^= self.0 >> 7;
-            self.0 ^= self.0 << 17;
-            self.0
-        }
-
-        /// Go `rand.Intn(10)`.
-        fn intn10(&mut self) -> u64 {
-            self.next_u64() % 10
-        }
-
-        /// Go `rand.Int63()`.
-        fn int63(&mut self) -> i64 {
-            (self.next_u64() >> 1) as i64
-        }
-    }
-
-    /// Go `TestReconstructFixedLen` (`pkg/util/chunk/column_test.go:432`).
-    #[test]
-    fn reconstruct_fixed_len() {
-        for seed in 1..=8u64 {
-            let mut rng = Rng(seed);
-            let mut col = Column::new_column(
-                &FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
-                1024,
-            );
-            let mut results: Vec<i64> = Vec::with_capacity(1024);
-            let mut nulls: Vec<bool> = Vec::with_capacity(1024);
-            let mut sel: Vec<usize> = Vec::with_capacity(1024);
-            for i in 0..1024 {
-                if rng.intn10() < 6 {
-                    sel.push(i);
-                }
-                if rng.intn10() < 2 {
-                    col.append_null();
-                    nulls.push(true);
-                    results.push(0);
-                    continue;
-                }
-                let v = rng.int63();
-                col.append_int64(v);
-                results.push(v);
-                nulls.push(false);
-            }
-
-            col.reconstruct(&sel);
-            let mut null_cnt = 0;
-            for (n, &i) in sel.iter().enumerate() {
-                if nulls[i] {
-                    null_cnt += 1;
-                    assert!(col.is_null(n), "seed {seed}: row {n} should be null");
-                } else {
-                    assert_eq!(results[i], col.get_int64(n), "seed {seed}: row {n}");
-                }
-            }
-            assert_eq!(col.null_count(), null_cnt);
-            assert_eq!(sel.len(), col.length);
-
-            for i in 0..128i64 {
-                if i % 2 == 0 {
-                    col.append_null();
-                } else {
-                    col.append_int64(i * i * i);
-                }
-            }
-
-            assert_eq!(sel.len(), col.length - 128);
-            assert_eq!(null_cnt + 128 / 2, col.null_count());
-            for i in 0..128usize {
-                if i % 2 == 0 {
-                    assert!(col.is_null(sel.len() + i));
-                } else {
-                    let v = i as i64;
-                    assert_eq!(v * v * v, col.get_int64(sel.len() + i));
-                    assert!(!col.is_null(sel.len() + i));
-                }
-            }
-        }
-    }
-
-    /// Go `TestReconstructVarLen` (`pkg/util/chunk/column_test.go:488`).
-    #[test]
-    fn reconstruct_var_len() {
-        for seed in 1..=8u64 {
-            let mut rng = Rng(seed);
-            let mut col = Column::new_column(
-                &FieldType::new(tidb_datatype::FieldTypeCode::VarString),
-                1024,
-            );
-            let mut results: Vec<String> = Vec::with_capacity(1024);
-            let mut nulls: Vec<bool> = Vec::with_capacity(1024);
-            let mut sel: Vec<usize> = Vec::with_capacity(1024);
-            for i in 0..1024 {
-                if rng.intn10() < 6 {
-                    sel.push(i);
-                }
-                if rng.intn10() < 2 {
-                    col.append_null();
-                    nulls.push(true);
-                    results.push(String::new());
-                    continue;
-                }
-                let v = rng.int63().to_string();
-                col.append_string(&v);
-                results.push(v);
-                nulls.push(false);
-            }
-
-            col.reconstruct(&sel);
-            let mut null_cnt = 0;
-            for (n, &i) in sel.iter().enumerate() {
-                if nulls[i] {
-                    null_cnt += 1;
-                    assert!(col.is_null(n), "seed {seed}: row {n} should be null");
-                } else {
-                    assert_eq!(
-                        results[i].as_bytes(),
-                        col.get_bytes(n),
-                        "seed {seed}: row {n}"
-                    );
-                }
-            }
-            assert_eq!(col.null_count(), null_cnt);
-            assert_eq!(sel.len(), col.length);
-
-            for i in 0..128usize {
-                if i % 2 == 0 {
-                    col.append_null();
-                } else {
-                    col.append_string(&(i * i * i).to_string());
-                }
-            }
-
-            assert_eq!(sel.len(), col.length - 128);
-            assert_eq!(null_cnt + 128 / 2, col.null_count());
-            for i in 0..128usize {
-                if i % 2 == 0 {
-                    assert!(col.is_null(sel.len() + i));
-                } else {
-                    assert_eq!(
-                        (i * i * i).to_string().as_bytes(),
-                        col.get_bytes(sel.len() + i)
-                    );
-                    assert!(!col.is_null(sel.len() + i));
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn fixed_int64_append_get_null() {
-        let mut c = Column::new_fixed_len(8, 4);
-        assert!(c.is_fixed());
-        assert_eq!(c.type_size(), 8);
-        c.append_int64(10);
-        c.append_null();
-        c.append_int64(-3);
-        assert_eq!(c.rows(), 3);
-        assert_eq!(c.get_int64(0), 10);
-        assert!(!c.is_null(0));
-        assert!(c.is_null(1));
-        assert!(!c.is_null(2));
-        assert_eq!(c.get_int64(2), -3);
-    }
-
-    #[test]
-    fn null_bitmap_spans_multiple_bytes() {
-        let mut c = Column::new_fixed_len(8, 16);
-        for i in 0..10 {
-            if i % 2 == 0 {
-                c.append_int64(i);
-            } else {
-                c.append_null();
-            }
-        }
-        assert_eq!(c.rows(), 10);
-        for i in 0..10 {
-            assert_eq!(c.is_null(i as usize), i % 2 != 0, "row {i}");
-        }
-    }
-
-    #[test]
-    fn float_and_uint_roundtrip() {
-        let mut f = Column::new_fixed_len(8, 2);
-        f.append_float64(3.5);
-        f.append_float64(-1.25);
-        assert_eq!(f.get_float64(0), 3.5);
-        assert_eq!(f.get_float64(1), -1.25);
-
-        let mut f32c = Column::new_fixed_len(4, 1);
-        f32c.append_float32(2.5);
-        assert_eq!(f32c.get_float32(0), 2.5);
-
-        let mut u = Column::new_fixed_len(8, 1);
-        u.append_uint64(u64::MAX);
-        assert_eq!(u.get_uint64(0), u64::MAX);
-    }
-
-    #[test]
-    fn reset_clears_rows_keeps_kind() {
-        let mut c = Column::new_fixed_len(8, 2);
-        c.append_int64(7);
-        c.reset();
-        assert_eq!(c.rows(), 0);
-        assert!(c.is_fixed());
-        c.append_int64(9);
-        assert_eq!(c.get_int64(0), 9);
-    }
-
-    #[test]
-    fn var_len_column_shape() {
-        let c = Column::new_var_len(4);
-        assert!(!c.is_fixed());
-        assert_eq!(c.type_size(), VAR_ELEM_LEN);
-    }
-
-    #[test]
-    fn var_len_append_get_string_bytes_null() {
-        let mut c = Column::new_var_len(4);
-        c.append_string("hello");
-        c.append_null();
-        c.append_bytes(&[0x00, 0xff, 0x10]); // non-UTF8 binary
-        c.append_string("");
-        assert_eq!(c.rows(), 4);
-        assert_eq!(c.get_bytes(0), b"hello");
-        assert!(!c.is_null(0));
-        // Null row has zero width and is flagged null.
-        assert!(c.is_null(1));
-        assert_eq!(c.get_bytes(1), b"");
-        assert_eq!(c.get_bytes(2), &[0x00, 0xff, 0x10]);
-        assert_eq!(c.get_raw(2), &[0x00, 0xff, 0x10]);
-        assert_eq!(c.get_bytes(3), b"");
-        assert!(!c.is_null(3)); // empty string is NOT null
-    }
-
-    /// The append side must produce the exact cell bytes Go's
-    /// `Column.AppendEnum`/`AppendSet` produce, because the chunk-codec
-    /// decoder (`tidb-codec`'s `decode_column_datums`) reads that layout: an
-    /// 8-byte native-endian value followed by the element name.
-    ///
-    /// Captured from a real TiDB via a throwaway
-    /// `TestZZDumpTablesPriv` (`go test -tags=intest ./pkg/executor/`), which
-    /// printed `chunk.NewColumn(...).GetRaw(0)` for both types.
-    #[test]
-    fn enum_and_set_cells_are_the_bytes_go_writes() {
-        use tidb_datatype::FieldTypeCode;
-        let mut enums = Column::new_column(&FieldType::new(FieldTypeCode::Enum), 4);
-        enums.append_enum(&MysqlEnum::new("bb", 2));
-        assert_eq!(
-            enums.get_raw(0),
-            &[0x02, 0, 0, 0, 0, 0, 0, 0, b'b', b'b'],
-            "Go printed: 02 00 00 00 00 00 00 00 62 62"
-        );
-
-        // `mysql.tables_priv`.`Table_priv` spells GRANT OPTION `Grant`, and its
-        // element list puts it at bit 6, so `Select,Grant` is 1|64 = 0x41.
-        let mut sets = Column::new_column(&FieldType::new(FieldTypeCode::Set), 4);
-        sets.append_set(&MysqlSet::new("Select,Grant", 1 | 64));
-        let mut expected = vec![0x41, 0, 0, 0, 0, 0, 0, 0];
-        expected.extend_from_slice(b"Select,Grant");
-        assert_eq!(sets.get_raw(0), expected.as_slice());
-    }
-
-    #[test]
-    fn enum_and_set_cells_round_trip_including_the_empty_and_null_ones() {
-        use tidb_datatype::FieldTypeCode;
-        let mut c = Column::new_column(&FieldType::new(FieldTypeCode::Set), 4);
-        // Go's `getNameValue` answers the zero pair for a zero-width cell, and
-        // an empty SET (`Value == 0`) is written with no name -- but Go still
-        // writes the 8-byte prefix, so the cell is 8 bytes, not empty.
-        c.append_set(&MysqlSet::new("", 0));
-        c.append_null();
-        c.append_set(&MysqlSet::new("Select,Update", 1 | 4));
-        assert_eq!(c.get_set(0), MysqlSet::new("", 0));
-        assert_eq!(c.get_raw(0).len(), 8);
-        assert!(c.is_null(1));
-        // A null cell is zero-width, which is exactly the case Go's
-        // `getNameValue` short-circuits.
-        assert_eq!(c.get_name_value(1), (GoString::default(), 0));
-        assert_eq!(c.get_set(2), MysqlSet::new("Select,Update", 5));
-
-        let mut e = Column::new_column(&FieldType::new(FieldTypeCode::Enum), 2);
-        e.append_enum(&MysqlEnum::new("N", 1));
-        e.append_enum(&MysqlEnum::new("Y", 2));
-        assert_eq!(e.get_enum(0), MysqlEnum::new("N", 1));
-        assert_eq!(e.get_enum(1), MysqlEnum::new("Y", 2));
-
-        let mut raw = Column::new_column(&FieldType::new(FieldTypeCode::Enum), 2);
-        raw.append_enum(&MysqlEnum::new(vec![0xff], 1));
-        raw.append_set(&MysqlSet::new(vec![0xfe], 2));
-        assert_eq!(raw.get_enum(0).name_bytes(), &[0xff]);
-        assert_eq!(raw.get_set(1).name_bytes(), &[0xfe]);
-    }
-
-    #[test]
-    fn get_raw_fixed_and_var() {
-        let mut f = Column::new_fixed_len(8, 1);
-        f.append_int64(0x0102_0304_0506_0708);
-        assert_eq!(f.get_raw(0), &0x0102_0304_0506_0708i64.to_ne_bytes());
-
-        let mut v = Column::new_var_len(1);
-        v.append_bytes(b"abc");
-        assert_eq!(v.get_raw(0), b"abc");
-    }
-
-    #[test]
-    fn copy_construct_is_deep() {
-        let mut c = Column::new_fixed_len(8, 2);
-        c.append_int64(42);
-        let d = c.copy_construct();
-        assert_eq!(d.rows(), 1);
-        assert_eq!(d.get_int64(0), 42);
-    }
-
-    #[test]
-    fn time_append_get_null_roundtrip() {
-        use tidb_datatype::{CoreTime, TimeType};
-        let mut c = Column::new_column(&FieldType::new(FieldTypeCode::Datetime), 4);
-        assert_eq!(c.type_size(), SIZE_TIME);
-        let dt = Time::new(
-            CoreTime::from_date(2026, 7, 25, 12, 34, 56, 654_321),
-            TimeType::DateTime,
-            6,
-        )
-        .unwrap();
-        let ts = Time::new(
-            CoreTime::from_date(1999, 12, 31, 23, 59, 59, 0),
-            TimeType::Timestamp,
-            0,
-        )
-        .unwrap();
-        let date = Time::new(
-            CoreTime::from_date(2000, 2, 29, 0, 0, 0, 0),
-            TimeType::Date,
-            0,
-        )
-        .unwrap();
-        c.append_time(dt);
-        c.append_null();
-        c.append_time(ts);
-        c.append_time(date);
-        assert_eq!(c.rows(), 4);
-        assert_eq!(c.get_time(0), dt);
-        assert!(c.is_null(1));
-        assert!(!c.is_null(2));
-        assert_eq!(c.get_time(2), ts);
-        assert_eq!(c.get_time(3), date);
-        // The stored bytes are exactly Go's packed uint64 (native-endian).
-        assert_eq!(c.get_raw(0), &dt.go_raw().to_ne_bytes());
-    }
-
-    #[test]
-    fn duration_append_get_null_roundtrip() {
-        let mut c = Column::new_column(&FieldType::new(FieldTypeCode::Duration), 4);
-        assert_eq!(c.type_size(), 8);
-        let d = MySqlDuration::new(11, 22, 33, 456_789, 6).unwrap();
-        let neg = d.negated();
-        c.append_duration(d);
-        c.append_null();
-        c.append_duration(neg);
-        assert_eq!(c.rows(), 3);
-        // Append ignores fsp; the reader supplies it (Go GetDuration fillFsp).
-        assert_eq!(c.get_duration(0, 6), d);
-        assert_eq!(c.get_duration(0, 3).nanoseconds(), d.nanoseconds());
-        assert_eq!(c.get_duration(0, 3).fsp(), 3);
-        assert!(c.is_null(1));
-        assert_eq!(c.get_duration(2, 6), neg);
-        // Stored as Go's int64 nanoseconds.
-        assert_eq!(c.get_int64(0), d.nanoseconds());
-    }
-
-    #[test]
-    fn fixed_len_type_dispatch() {
-        use tidb_datatype::FieldTypeCode;
-        let ft = |c| FieldType::new(c);
-        assert_eq!(get_fixed_len(&ft(FieldTypeCode::Float)), 4);
-        assert_eq!(get_fixed_len(&ft(FieldTypeCode::Long)), 8);
-        assert_eq!(get_fixed_len(&ft(FieldTypeCode::LongLong)), 8);
-        assert_eq!(get_fixed_len(&ft(FieldTypeCode::Double)), 8);
-        assert_eq!(get_fixed_len(&ft(FieldTypeCode::Duration)), 8);
-        assert_eq!(get_fixed_len(&ft(FieldTypeCode::Datetime)), SIZE_TIME);
-        assert_eq!(
-            get_fixed_len(&ft(FieldTypeCode::NewDecimal)),
-            MY_DECIMAL_STRUCT_SIZE
-        );
-        assert_eq!(get_fixed_len(&ft(FieldTypeCode::VarString)), VAR_ELEM_LEN);
-        assert_eq!(get_fixed_len(&ft(FieldTypeCode::Blob)), VAR_ELEM_LEN);
-    }
-
-    #[test]
-    fn new_column_from_field_type() {
-        use tidb_datatype::FieldTypeCode;
-        let mut int_col = Column::new_column(&FieldType::new(FieldTypeCode::Long), 4);
-        assert!(int_col.is_fixed());
-        assert_eq!(int_col.type_size(), 8);
-        int_col.append_int64(5);
-        assert_eq!(int_col.get_int64(0), 5);
-
-        let mut str_col = Column::new_column(&FieldType::new(FieldTypeCode::VarString), 4);
-        assert!(!str_col.is_fixed());
-        str_col.append_string("x");
-        assert_eq!(str_col.get_bytes(0), b"x");
-
-        let empty_fixed = Column::new_empty_column(&FieldType::new(FieldTypeCode::Float));
-        assert!(empty_fixed.is_fixed());
-        assert_eq!(empty_fixed.type_size(), 4);
-        let empty_var = Column::new_empty_column(&FieldType::new(FieldTypeCode::Blob));
-        assert!(!empty_var.is_fixed());
-    }
-
-    #[test]
-    fn copy_construct_owns_buffers_and_clears_zero_copy_reuse_guard() {
-        let mut source = Column::new_var_len(2);
-        source.append_string("owned value");
-        source.avoid_reusing = true;
-
-        let copied = source.copy_construct();
-        assert_eq!(copied.get_bytes(0), b"owned value");
-        assert!(!copied.avoid_reusing);
-        assert!(source.avoid_reusing);
-    }
-
-    #[test]
-    fn resize_reserve_and_eval_type_reset_match_go_shapes() {
-        let mut column = Column::new_column(&FieldType::new(FieldTypeCode::LongLong), 2);
-        column.resize_int64(4, false);
-        assert_eq!(column.rows(), 4);
-        assert_eq!(column.null_bitmap, vec![0x0f]);
-        assert_eq!(column.data.len(), 32);
-        assert!(column.data.iter().all(|byte| *byte == 0));
-
-        column.resize_uint64(11, false);
-        assert_eq!(column.null_bitmap, vec![0xff, 0x07]);
-        column.resize_uint64(7, true);
-        assert_eq!(column.null_bitmap, vec![0]);
-
-        column.reset_for_eval_type(EvalType::Duration);
-        assert!(column.is_fixed());
-        assert_eq!(column.type_size(), 8);
-        assert_eq!(column.rows(), 0);
-        column.append_duration(MySqlDuration::from_nanoseconds(7, 0).unwrap());
-        assert_eq!(column.data.len(), 8);
-
-        column.reset_for_eval_type(EvalType::String);
-        assert!(!column.is_fixed());
-        assert_eq!(column.offsets, vec![0]);
-        column.append_string("x");
-        assert_eq!(column.get_bytes(0), b"x");
-    }
-
-    /// Go `Column.resize` re-slices rather than recreating the append scratch
-    /// and leaves the unrelated offsets slice alone.  Both details are
-    /// observable after an evaluation-type transition.
-    #[test]
-    fn resize_preserves_scratch_and_offset_headers() {
-        let mut fixed = Column::new_fixed_len(8, 2);
-        let scratch = 0x0102_0304_0506_0708_i64;
-        fixed.append_int64(scratch);
-        fixed.resize_int64(0, false);
-        fixed.append_null();
-        assert!(fixed.is_null(0));
-        assert_eq!(fixed.get_raw(0), &scratch.to_ne_bytes());
-
-        let mut changing = Column::new_var_len(2);
-        changing.offsets = vec![7, 9];
-        changing.resize_int64(0, false);
-        assert_eq!(changing.offsets, vec![7, 9]);
-        changing.reserve_string(1);
-        assert_eq!(changing.offsets, vec![7]);
-    }
-
-    #[test]
-    fn reserve_preserves_content_and_typed_reserve_clears_rows() {
-        let mut column = Column::new_var_len(0);
-        column.append_string("alpha");
-        let bitmap = column.null_bitmap.clone();
-        let offsets = column.offsets.clone();
-        let data = column.data.clone();
-        column.reserve(10, 10, 10);
-        assert_eq!(column.null_bitmap, bitmap);
-        assert_eq!(column.offsets, offsets);
-        assert_eq!(column.data, data);
-        assert!(column.null_bitmap.capacity() >= bitmap.len() + 10);
-        assert!(column.offsets.capacity() >= offsets.len() + 10);
-        assert!(column.data.capacity() >= data.len() + 10);
-
-        column.reserve_string_with_size_hint(9, 36);
-        assert_eq!(column.rows(), 0);
-        assert_eq!(column.offsets, vec![0]);
-        assert!(column.data_capacity() >= 9 * 36);
-        assert!(column.offset_capacity() >= 10);
-        assert!(column.null_bitmap_capacity() >= 2);
-    }
-
-    #[test]
-    fn append_cell_n_times_and_copy_reconstruct_cover_fixed_var_and_null() {
-        let mut fixed = Column::new_fixed_len(8, 4);
-        fixed.append_int64(11);
-        fixed.append_null();
-        fixed.append_int64(33);
-
-        let mut fixed_copy = Column::new_fixed_len(8, 0);
-        fixed_copy.append_cell_n_times(&fixed, 0, 3);
-        fixed_copy.append_cell_n_times(&fixed, 1, 2);
-        assert_eq!(fixed_copy.rows(), 5);
-        assert_eq!(fixed_copy.get_int64(0), 11);
-        assert_eq!(fixed_copy.get_int64(2), 11);
-        assert!(fixed_copy.is_null(3));
-        assert!(fixed_copy.is_null(4));
-
-        let mut variable = Column::new_var_len(4);
-        variable.append_string("a");
-        variable.append_null();
-        variable.append_string("ccc");
-        let selected = variable.copy_reconstruct(Some(&[2, 0, 1]), None);
-        assert_eq!(selected.get_bytes(0), b"ccc");
-        assert_eq!(selected.get_bytes(1), b"a");
-        assert!(selected.is_null(2));
-        assert_eq!(selected.offsets, vec![0, 3, 4, 4]);
-    }
-
-    #[test]
-    fn copy_reconstruct_reuses_destination_and_preserves_avoid_reusing() {
-        let mut fixed = Column::new_fixed_len(8, 3);
-        fixed.append_int64(10);
-        fixed.append_int64(20);
-        fixed.append_int64(30);
-
-        let mut borrowed = fixed.clone();
-        borrowed.avoid_reusing = true;
-        let owned = borrowed.copy_construct();
-        assert!(borrowed.avoid_reusing);
-        assert!(!owned.avoid_reusing);
-        assert_eq!(owned.data, borrowed.data);
-
-        let mut destination = Column::new_var_len(16);
-        destination.append_string("old");
-        destination.avoid_reusing = true;
-        let original_data_capacity = destination.data_capacity();
-        let full = fixed.copy_reconstruct(None, Some(destination));
-        assert!(full.avoid_reusing);
-        assert_eq!(full.rows(), 3);
-        assert_eq!(full.get_int64(1), 20);
-        assert!(full.data_capacity() >= original_data_capacity);
-        assert!(full.offsets.is_empty());
-
-        let mut destination = Column::new_var_len(8);
-        destination.avoid_reusing = true;
-        let selected = fixed.copy_reconstruct(Some(&[2, 0]), Some(destination));
-        assert!(selected.avoid_reusing);
-        assert_eq!(selected.rows(), 2);
-        assert_eq!(selected.get_int64(0), 30);
-        assert_eq!(selected.get_int64(1), 10);
-        // Go's selected fixed reconstruction leaves the former var-len
-        // destination's leading offset header in place.
-        assert_eq!(selected.offsets, vec![0]);
-    }
-
-    #[test]
-    fn direct_string_json_and_raw_join_cell_surfaces_match_go() {
-        let mut strings = Column::new_var_len(2);
-        strings.append_string("hello");
-        strings.append_bytes(&[0, 255]);
-        assert_eq!(strings.get_string(0).as_bytes(), b"hello");
-        assert_eq!(strings.get_string(1).as_bytes(), &[0, 255]);
-
-        let json = tidb_datatype::BinaryJSON::parse(r#"{"a": 1}"#).expect("JSON");
-        let mut json_column = Column::new_var_len(1);
-        json_column.append_json(&json);
-        assert_eq!(json_column.get_json(0), json);
-
-        let mut fixed = Column::new_fixed_len(8, 1);
-        fixed.append_null_bitmap(true);
-        let mut fixed_stream = vec![9, 8, 7];
-        fixed_stream.extend_from_slice(&123_i64.to_ne_bytes());
-        assert_eq!(append_cell_from_raw_data(&mut fixed, &fixed_stream, 3), 11);
-        assert_eq!(fixed.get_int64(0), 123);
-
-        let mut variable = Column::new_var_len(1);
-        variable.append_null_bitmap(true);
-        let mut variable_stream = vec![9, 8, 7];
-        variable_stream.extend_from_slice(&5_u32.to_ne_bytes());
-        variable_stream.extend_from_slice(b"hello");
-        assert_eq!(
-            append_cell_from_raw_data(&mut variable, &variable_stream, 3),
-            12
-        );
-        assert_eq!(variable.get_bytes(0), b"hello");
-    }
-
-    #[test]
-    fn set_null_ranges_and_merge_nulls_match_rowwise_and() {
-        let mut left = Column::new_fixed_len(8, 16);
-        let mut right = Column::new_fixed_len(8, 16);
-        let mut result = Column::new_fixed_len(8, 16);
-        left.resize_int64(11, false);
-        right.resize_int64(11, false);
-        result.resize_int64(11, false);
-        left.set_nulls(1, 4, true);
-        right.set_nulls(3, 8, true);
-        result.merge_nulls(&[&left, &right]);
-        for row in 0..11 {
-            assert_eq!(
-                result.is_null(row),
-                left.is_null(row) || right.is_null(row),
-                "row {row}"
-            );
-        }
-        assert_eq!(result.null_count(), 7);
-    }
-
-    /// Go `TestLargeStringColumnOffset` (`pkg/util/chunk/column_test.go`): a
-    /// var-length column's offsets are 64-BIT. A 6M string field at a batch
-    /// size of 1024 puts the offset past 6GB, which an `int32` offset would
-    /// silently wrap.
-    #[test]
-    fn go_test_large_string_column_offset() {
-        let mut col = Column::new_var_len(1);
-        col.offsets[0] = 6 << 30;
-        assert_eq!(col.offsets[0], 6_i64 << 30);
-    }
-
-    /// Go `TestJSONColumn` (`pkg/util/chunk/column_test.go`): 1024 distinct
-    /// JSON objects round-trip through the column, and reading them back
-    /// through the COLUMN and through a `Row` agrees, printed form included.
-    #[test]
-    fn go_test_json_column() {
-        let field = FieldType::new(FieldTypeCode::Json);
-        let mut chk = crate::chunk::Chunk::new_with_capacity(&[field], 1024);
-        for i in 0..1024 {
-            let json = tidb_datatype::BinaryJSON::parse(&format!("{{\"{i}\":{i}}}"))
-                .expect("valid JSON object");
-            chk.append_json(0, &json);
-        }
-
-        let mut it = crate::iterator::Iterator4Chunk::new(&chk);
-        let mut i = 0;
-        let mut row = crate::iterator::ChunkIterator::begin(&mut it);
-        while row.is_some() {
-            let j1 = chk.column(0).get_json(i);
-            let j2 = row.expect("not end").get_json(0);
-            assert_eq!(j2.to_string(), j1.to_string());
-            assert_eq!(j1.to_string(), format!("{{\"{i}\": {i}}}"));
-            i += 1;
-            row = crate::iterator::ChunkIterator::next_row(&mut it);
-        }
-        assert_eq!(i, 1024);
-    }
-}
+#[path = "column_tests.rs"]
+mod tests;

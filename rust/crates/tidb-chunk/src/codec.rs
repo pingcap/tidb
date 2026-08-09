@@ -31,6 +31,7 @@
 
 use crate::chunk::Chunk;
 use crate::column::{get_fixed_len, Column, VAR_ELEM_LEN};
+use crate::shared_bytes::SharedBytes;
 use tidb_datatype::FieldType;
 
 /// Go `chunk.Codec`: encodes and decodes a [`Chunk`] as bytes.
@@ -136,11 +137,11 @@ impl Codec {
             // Go grows `elemBuf` only when it is too small to hold one element;
             // an already-typed column (the `DecodeToChunk` case) keeps its own.
             if column.elem_buffer_capacity() < num_fixed_bytes {
-                column.elem_buf = vec![0; num_fixed_bytes];
+                column.elem_buf = Some(vec![0; num_fixed_bytes]);
             }
         }
 
-        column.data = buffer[..num_data_bytes].to_vec();
+        column.data = SharedBytes::from_vec(buffer[..num_data_bytes].to_vec());
         // Go points the column at the gRPC response's own memory and sets
         // `avoidReusing` so the allocator will not retain it. This port copies,
         // but keeps the flag: it is part of the decoded column's state and Go's
@@ -270,10 +271,9 @@ impl Decoder {
 
         source.null_bitmap.drain(..bitmap_bytes);
         destination.length += rows;
-        destination
-            .data
-            .extend_from_slice(&source.data[..data_bytes]);
-        source.data.drain(..data_bytes);
+        let data = source.data.read()[..data_bytes].to_vec();
+        destination.data.extend_from_slice(&data);
+        source.data.advance(data_bytes);
     }
 
     /// Go `Decoder.ReuseIntermChk`: normalize the remaining variable offsets,
@@ -330,7 +330,8 @@ fn encode_column(buffer: &mut Vec<u8>, column: &Column) {
         }
     }
 
-    buffer.extend_from_slice(&column.data);
+    let data = column.data.read();
+    buffer.extend_from_slice(data.as_ref());
 }
 
 /// Go `setAllNotNull`: a bitmap of all-ones, including the padding bits past

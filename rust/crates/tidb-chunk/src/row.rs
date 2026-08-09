@@ -21,10 +21,10 @@
 //! Ported: the accessors a simple query needs -- `chunk`, `idx`, `len`,
 //! `get_int64`/`get_uint64`/`get_float32`/`get_float64`, `get_bytes`/`get_raw`,
 //! `get_time`/`get_duration`, VectorFloat32, JSON, decimal, and `is_null`.
-//! DEFERRED (documented): `GetDatumRow`, `CopyConstruct`, and
-//! a `str`-typed `GetString` (pending the crate-wide bytes-vs-str policy).
+//! Byte cells use guard-backed views because a MutRow may share their backing.
 
 use crate::chunk::Chunk;
+use crate::CellBytes;
 use tidb_datatype::{
     Datum, Decimal, FieldType, FieldTypeCode, GoString, MyDecimal, MySqlDuration, Time,
     VectorFloat32,
@@ -163,13 +163,13 @@ impl<'a> Row<'a> {
 
     /// Go `GetBytes`: the raw bytes of a variable-length column's cell.
     #[must_use]
-    pub fn get_bytes(&self, col_idx: usize) -> &'a [u8] {
+    pub fn get_bytes(&self, col_idx: usize) -> CellBytes<'a> {
         self.chunk().columns()[col_idx].get_bytes(self.idx)
     }
 
     /// Go `GetRaw`: the raw element bytes for either column kind.
     #[must_use]
-    pub fn get_raw(&self, col_idx: usize) -> &'a [u8] {
+    pub fn get_raw(&self, col_idx: usize) -> CellBytes<'a> {
         self.chunk().columns()[col_idx].get_raw(self.idx)
     }
 

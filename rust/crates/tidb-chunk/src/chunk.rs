@@ -433,7 +433,7 @@ impl Chunk {
     }
 
     /// Go `AppendString`.
-    pub fn append_string(&mut self, col_idx: usize, value: &str) {
+    pub fn append_string(&mut self, col_idx: usize, value: impl Into<tidb_datatype::GoString>) {
         self.append_sel(col_idx);
         self.columns[col_idx].append_string(value);
     }
@@ -645,7 +645,7 @@ impl Chunk {
         for column in &mut self.columns {
             assert!(num_rows <= column.rows());
             if column.is_fixed() {
-                column.data.truncate(num_rows * column.elem_buf.len());
+                column.data.truncate(num_rows * column.elem_buffer_len());
             } else {
                 let data_len = usize::try_from(column.offsets[num_rows])
                     .expect("column offset is non-negative");

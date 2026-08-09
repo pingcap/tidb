@@ -163,8 +163,11 @@ fn cmp_string_with_collation_info(
     r_col: usize,
     collation: &str,
 ) -> Ordering {
-    null_order(l, l_col, r, r_col)
-        .unwrap_or_else(|| get_collator(collation).compare(l.get_bytes(l_col), r.get_bytes(r_col)))
+    null_order(l, l_col, r, r_col).unwrap_or_else(|| {
+        let left = l.get_bytes(l_col);
+        let right = r.get_bytes(r_col);
+        get_collator(collation).compare(left.as_ref(), right.as_ref())
+    })
 }
 
 /// Go `cmpFloat32`: both sides widen to `float64` before comparing.
@@ -216,8 +219,10 @@ fn cmp_name_value(l: Row<'_>, l_col: usize, r: Row<'_>, r_col: usize) -> Orderin
 /// and orders by LENGTH first -- NOT `bytes.Compare`.
 fn cmp_bit(l: Row<'_>, l_col: usize, r: Row<'_>, r_col: usize) -> Ordering {
     null_order(l, l_col, r, r_col).unwrap_or_else(|| {
-        let left = tidb_datatype::BinaryLiteral::from(l.get_bytes(l_col));
-        let right = tidb_datatype::BinaryLiteral::from(r.get_bytes(r_col));
+        let left_bytes = l.get_bytes(l_col);
+        let right_bytes = r.get_bytes(r_col);
+        let left = tidb_datatype::BinaryLiteral::from(left_bytes.as_ref());
+        let right = tidb_datatype::BinaryLiteral::from(right_bytes.as_ref());
         left.compare(&right)
     })
 }
@@ -281,11 +286,12 @@ pub fn compare(row: Row<'_>, col_idx: usize, ad: &Datum) -> Ordering {
         Datum::Float32(value) => cmp_float(f64::from(row.get_float32(col_idx)), *value),
         Datum::Real(value) => cmp_float(row.get_float64(col_idx), *value),
         Datum::String(value) => {
-            get_collator(value.collation().name()).compare(row.get_bytes(col_idx), value.bytes())
+            let bytes = row.get_bytes(col_idx);
+            get_collator(value.collation().name()).compare(bytes.as_ref(), value.bytes())
         }
-        Datum::Bytes(value) => row.get_bytes(col_idx).cmp(value.as_slice()),
+        Datum::Bytes(value) => row.get_bytes(col_idx).as_ref().cmp(value.as_slice()),
         Datum::BinaryLiteral(value) | Datum::Bit(value) => {
-            row.get_bytes(col_idx).cmp(value.as_bytes())
+            row.get_bytes(col_idx).as_ref().cmp(value.as_bytes())
         }
         // Go compares two `*types.MyDecimal`. This port's decimal DATUM is the
         // text-shaped `Decimal`, so it is re-parsed into a `MyDecimal` -- the

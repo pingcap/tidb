@@ -145,7 +145,8 @@ pub fn serialize_data_to_buf(chk: &Chunk, buf: &mut Vec<u8>) -> i64 {
         put_i64(buf, col.data.len() as i64);
         put_i64(buf, (col.offsets.len() * INT64_LEN) as i64);
         buf.extend_from_slice(&col.null_bitmap);
-        buf.extend_from_slice(&col.data);
+        let data = col.data.read();
+        buf.extend_from_slice(data.as_ref());
         for &offset in &col.offsets {
             put_i64(buf, offset);
         }
@@ -192,7 +193,7 @@ pub fn deserialize_data_to_chunk(chk: &mut Chunk, buf: &[u8]) {
         col.null_bitmap
             .extend_from_slice(&buf[pos..pos + null_map_size]);
         pos += null_map_size;
-        col.data.clear();
+        col.data.reset();
         col.data.extend_from_slice(&buf[pos..pos + data_size]);
         pos += data_size;
         col.offsets.clear();
@@ -465,8 +466,8 @@ mod tests {
     const GO_MIXED_SEL: &str = "1d0000000000000011000000000000001700000000000000180000000000000000000000000000000200000000000000040000000000000005000000000000000100000000000000280000000000000000000000000000001f0000000000000000e803000000000000d007000000000000b80b000000000000a00f000000000000050000000000000001000000000000000a0000000000000030000000000000001f73307331733273337334000000000000000002000000000000000400000000000000060000000000000008000000000000000a0000000000000005000000000000000100000000000000280000000000000000000000000000001f000000000000e03f000000000000f83f00000000000004400000000000000c400000000000001240";
     const GO_ZERO_ROWS: &str = "00000000000000000800000000000000080000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000";
 
-    fn hex(bytes: &[u8]) -> String {
-        bytes.iter().map(|b| format!("{b:02x}")).collect()
+    fn hex(bytes: impl AsRef<[u8]>) -> String {
+        bytes.as_ref().iter().map(|b| format!("{b:02x}")).collect()
     }
 
     fn int64_fields() -> Vec<FieldType> {

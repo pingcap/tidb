@@ -544,8 +544,8 @@ mod tests {
             .expect("fixture cipher")
     }
 
-    fn hex_of(bytes: &[u8]) -> String {
-        bytes.iter().map(|b| format!("{b:02x}")).collect()
+    fn hex_of(bytes: impl AsRef<[u8]>) -> String {
+        bytes.as_ref().iter().map(|b| format!("{b:02x}")).collect()
     }
 
     use crate::test_temp_storage::guard as temp_dir_guard;

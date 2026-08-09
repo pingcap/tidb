@@ -26,12 +26,7 @@
 //! a borrowed [`Row`] from [`MutRow::to_row`], which is the same thing with the
 //! lifetime made explicit.
 //!
-//! Two deliberate deviations, both documented at their method:
-//!
-//! * [`MutRow::shallow_copy_partial_row`] COPIES the source bytes where Go
-//!   reslices onto them. Every value a reader can observe is the same; what
-//!   differs is that a later write to the source chunk is not seen here.
-//! * Go's `MutRowFromValues`/`SetValue` take `any` and `MutRowFromDatums`/
+//! Go's `MutRowFromValues`/`SetValue` take `any` and `MutRowFromDatums`/
 //!   `SetDatum` take a `types.Datum`, the former reached through
 //!   `Datum.GetValue()`. This port has one value type, so
 //!   [`MutRow::from_datums`] covers both constructors; `SetValue` and
@@ -41,6 +36,7 @@
 use crate::chunk::Chunk;
 use crate::column::{Column, MY_DECIMAL_STRUCT_SIZE, SIZE_TIME};
 use crate::row::Row;
+use crate::shared_bytes::SharedBytes;
 use tidb_datatype::{
     BinaryJSON, Datum, FieldType, FieldTypeCode, MyDecimal, MySqlDuration, Time, TimeType,
     VectorFloat32,
@@ -105,18 +101,19 @@ impl MutRow {
             if source_column.is_null(row.idx()) {
                 continue;
             }
-            let elem_len = source_column.elem_buf.len();
+            let elem_len = source_column.elem_buffer_len();
             if elem_len > 0 {
                 let offset = row.idx() * elem_len;
-                let cell = &source_column.data[offset..offset + elem_len];
+                let cell = source_column.data.read()[offset..offset + elem_len].to_vec();
                 // Go copies with `copy(dst, src)`, which stops at the shorter
                 // of the two.
                 let n = target.data.len().min(cell.len());
-                target.data[..n].copy_from_slice(&cell[..n]);
+                target.data.copy_from_slice(0..n, &cell[..n]);
             } else {
                 let start = source_column.offsets[row.idx()] as usize;
                 let end = source_column.offsets[row.idx() + 1] as usize;
-                set_mut_row_bytes(target, &source_column.data[start..end]);
+                let cell = source_column.data.read()[start..end].to_vec();
+                set_mut_row_bytes(target, &cell);
             }
             target.null_bitmap[0] = 1;
         }
@@ -156,20 +153,28 @@ impl MutRow {
             Datum::UInt(u) => put_uint64(column, *u),
             Datum::Real(f) => put_uint64(column, f.to_bits()),
             Datum::Float32(f) => {
-                column.data[..4].copy_from_slice(&(*f as f32).to_bits().to_le_bytes());
+                column
+                    .data
+                    .copy_from_slice(0..4, &(*f as f32).to_bits().to_le_bytes());
             }
             Datum::String(s) => set_mut_row_bytes(column, s.bytes()),
             Datum::Bytes(b) => set_mut_row_bytes(column, b),
             Datum::BinaryLiteral(l) | Datum::Bit(l) => set_mut_row_bytes(column, l.as_bytes()),
             Datum::Duration(d) => {
-                column.data[..8].copy_from_slice(&d.nanoseconds().to_ne_bytes());
+                column
+                    .data
+                    .copy_from_slice(0..8, &d.nanoseconds().to_ne_bytes());
             }
             Datum::Decimal(d) => {
-                column.data[..MY_DECIMAL_STRUCT_SIZE as usize]
-                    .copy_from_slice(&my_decimal_of(d).to_raw_bytes());
+                column.data.copy_from_slice(
+                    0..MY_DECIMAL_STRUCT_SIZE as usize,
+                    &my_decimal_of(d).to_raw_bytes(),
+                );
             }
             Datum::Time(t) => {
-                column.data[..SIZE_TIME as usize].copy_from_slice(&t.go_raw().to_ne_bytes());
+                column
+                    .data
+                    .copy_from_slice(0..SIZE_TIME as usize, &t.go_raw().to_ne_bytes());
             }
             Datum::Enum(e, _) => set_mut_row_name_value(column, e.name_bytes(), e.value()),
             Datum::Set(s, _) => set_mut_row_name_value(column, s.name_bytes(), s.value()),
@@ -212,27 +217,35 @@ impl MutRow {
                     Datum::Real(f) => f.to_bits(),
                     _ => unreachable!("matched above"),
                 };
-                column.data[..8].copy_from_slice(&bits.to_le_bytes());
+                column.data.copy_from_slice(0..8, &bits.to_le_bytes());
             }
             Datum::Float32(f) => {
                 grow_data_to(column, 4);
-                column.data[..4].copy_from_slice(&(*f as f32).to_bits().to_le_bytes());
+                column
+                    .data
+                    .copy_from_slice(0..4, &(*f as f32).to_bits().to_le_bytes());
             }
             Datum::String(s) => set_mut_row_bytes(column, s.bytes()),
             Datum::Bytes(b) => set_mut_row_bytes(column, b),
             Datum::BinaryLiteral(l) | Datum::Bit(l) => set_mut_row_bytes(column, l.as_bytes()),
             Datum::Time(t) => {
                 grow_data_to(column, SIZE_TIME as usize);
-                column.data[..SIZE_TIME as usize].copy_from_slice(&t.go_raw().to_ne_bytes());
+                column
+                    .data
+                    .copy_from_slice(0..SIZE_TIME as usize, &t.go_raw().to_ne_bytes());
             }
             Datum::Duration(d) => {
                 grow_data_to(column, 8);
-                column.data[..8].copy_from_slice(&d.nanoseconds().to_ne_bytes());
+                column
+                    .data
+                    .copy_from_slice(0..8, &d.nanoseconds().to_ne_bytes());
             }
             Datum::Decimal(d) => {
                 grow_data_to(column, MY_DECIMAL_STRUCT_SIZE as usize);
-                column.data[..MY_DECIMAL_STRUCT_SIZE as usize]
-                    .copy_from_slice(&my_decimal_of(d).to_raw_bytes());
+                column.data.copy_from_slice(
+                    0..MY_DECIMAL_STRUCT_SIZE as usize,
+                    &my_decimal_of(d).to_raw_bytes(),
+                );
             }
             Datum::Json(j) => set_mut_row_json(column, j),
             Datum::VectorFloat32(v) => set_mut_row_bytes(column, &v.serialize()),
@@ -254,32 +267,23 @@ impl MutRow {
     /// Go `ShallowCopyPartialRow`: place `row`'s cells into the columns
     /// starting at `col_idx`.
     ///
-    /// DEVIATION, deliberate: Go points the destination `data` slice AT the
-    /// source chunk's bytes; this port copies them. Every read gives the same
-    /// answer; a later mutation of the source chunk is the only observable
-    /// difference, and Go's own callers treat the source as immutable for the
-    /// lifetime of the copy.
-    pub fn shallow_copy_partial_row(&mut self, col_idx: usize, row: Row<'_>) {
-        let source = row.chunk();
-        for (i, source_column) in source.columns().iter().enumerate() {
+    /// The mutable source borrow permits lazy promotion of only the aliased
+    /// byte backing; ordinary columns remain lock-free `Vec` storage.
+    pub fn shallow_copy_partial_row(&mut self, col_idx: usize, source: &mut Chunk, row_idx: usize) {
+        for i in 0..source.columns.len() {
+            let source_column = &mut source.columns[i];
             let target = &mut self.chunk.columns[col_idx + i];
             // A MutRow holds one row, so the whole byte is the null bit.
-            target.null_bitmap[0] = u8::from(!source_column.is_null(row.idx()));
+            target.null_bitmap[0] = u8::from(!source_column.is_null(row_idx));
 
             if source_column.is_fixed() {
-                let elem_len = source_column.elem_buf.len();
-                let offset = row.idx() * elem_len;
-                target.data.clear();
-                target
-                    .data
-                    .extend_from_slice(&source_column.data[offset..offset + elem_len]);
+                let elem_len = source_column.elem_buffer_len();
+                let offset = row_idx * elem_len;
+                target.data = source_column.data.share_range(offset, offset + elem_len);
             } else {
-                let start = source_column.offsets[row.idx()] as usize;
-                let end = source_column.offsets[row.idx() + 1] as usize;
-                target.data.clear();
-                target
-                    .data
-                    .extend_from_slice(&source_column.data[start..end]);
+                let start = source_column.offsets[row_idx] as usize;
+                let end = source_column.offsets[row_idx + 1] as usize;
+                target.data = source_column.data.share_range(start, end);
                 target.offsets[1] = target.data.len() as i64;
             }
         }
@@ -299,8 +303,8 @@ fn clean_col_of_mut_row(column: &mut Column) {
 fn new_mut_row_fixed_len_column(elem_size: usize) -> Column {
     Column {
         length: 1,
-        elem_buf: vec![0; elem_size],
-        data: vec![0; elem_size],
+        elem_buf: Some(vec![0; elem_size]),
+        data: SharedBytes::zeros(elem_size),
         null_bitmap: vec![1],
         offsets: Vec::new(),
         avoid_reusing: false,
@@ -313,8 +317,8 @@ fn new_mut_row_fixed_len_column(elem_size: usize) -> Column {
 fn new_mut_row_var_len_column(val_size: usize) -> Column {
     Column {
         length: 1,
-        elem_buf: Vec::new(),
-        data: vec![0; val_size],
+        elem_buf: None,
+        data: SharedBytes::zeros(val_size),
         null_bitmap: vec![1],
         offsets: vec![0, val_size as i64],
         avoid_reusing: false,
@@ -324,14 +328,14 @@ fn new_mut_row_var_len_column(val_size: usize) -> Column {
 /// Go `makeMutRowUint64Column`.
 fn make_mut_row_uint64_column(value: u64) -> Column {
     let mut column = new_mut_row_fixed_len_column(8);
-    column.data.copy_from_slice(&value.to_ne_bytes());
+    column.data.copy_from_slice(0..8, &value.to_ne_bytes());
     column
 }
 
 /// Go `makeMutRowBytesColumn`.
 fn make_mut_row_bytes_column(bytes: &[u8]) -> Column {
     let mut column = new_mut_row_var_len_column(bytes.len());
-    column.data.copy_from_slice(bytes);
+    column.data.copy_from_slice(0..bytes.len(), bytes);
     column
 }
 
@@ -372,7 +376,7 @@ fn make_mut_row_column(value: &Datum) -> Column {
             let mut column = new_mut_row_fixed_len_column(4);
             column
                 .data
-                .copy_from_slice(&(*f as f32).to_bits().to_ne_bytes());
+                .copy_from_slice(0..4, &(*f as f32).to_bits().to_ne_bytes());
             column
         }
         Datum::String(s) => make_mut_row_bytes_column(s.bytes()),
@@ -380,26 +384,32 @@ fn make_mut_row_column(value: &Datum) -> Column {
         Datum::BinaryLiteral(l) | Datum::Bit(l) => make_mut_row_bytes_column(l.as_bytes()),
         Datum::Decimal(d) => {
             let mut column = new_mut_row_fixed_len_column(MY_DECIMAL_STRUCT_SIZE as usize);
-            column
-                .data
-                .copy_from_slice(&my_decimal_of(d).to_raw_bytes());
+            column.data.copy_from_slice(
+                0..MY_DECIMAL_STRUCT_SIZE as usize,
+                &my_decimal_of(d).to_raw_bytes(),
+            );
             column
         }
         Datum::Time(t) => {
             let mut column = new_mut_row_fixed_len_column(SIZE_TIME as usize);
-            column.data.copy_from_slice(&t.go_raw().to_ne_bytes());
+            column
+                .data
+                .copy_from_slice(0..SIZE_TIME as usize, &t.go_raw().to_ne_bytes());
             column
         }
         Datum::Json(j) => {
-            let mut column = new_mut_row_var_len_column(j.value().len() + 1);
-            column.data[0] = j.type_code();
-            column.data[1..].copy_from_slice(j.value());
+            let data_len = j.value().len() + 1;
+            let mut column = new_mut_row_var_len_column(data_len);
+            column.data.set(0, j.type_code());
+            column.data.copy_from_slice(1..data_len, j.value());
             column
         }
         Datum::VectorFloat32(v) => make_mut_row_bytes_column(&v.serialize()),
         Datum::Duration(d) => {
             let mut column = new_mut_row_fixed_len_column(8);
-            column.data.copy_from_slice(&d.nanoseconds().to_ne_bytes());
+            column
+                .data
+                .copy_from_slice(0..8, &d.nanoseconds().to_ne_bytes());
             column
         }
         Datum::Enum(e, _) => make_name_value_column(e.name_bytes(), e.value()),
@@ -411,8 +421,8 @@ fn make_mut_row_column(value: &Datum) -> Column {
 /// followed by the element name.
 fn make_name_value_column(name: &[u8], value: u64) -> Column {
     let mut column = new_mut_row_var_len_column(name.len() + 8);
-    column.data[..8].copy_from_slice(&value.to_ne_bytes());
-    column.data[8..].copy_from_slice(name);
+    column.data.copy_from_slice(0..8, &value.to_ne_bytes());
+    column.data.copy_from_slice(8..8 + name.len(), name);
     column
 }
 
@@ -453,9 +463,10 @@ fn zero_column_for_type(field_type: &FieldType) -> Column {
         // Go `types.NewDecFromInt(0)`.
         C::NewDecimal => {
             let mut column = new_mut_row_fixed_len_column(MY_DECIMAL_STRUCT_SIZE as usize);
-            column
-                .data
-                .copy_from_slice(&MyDecimal::from_int(0).to_raw_bytes());
+            column.data.copy_from_slice(
+                0..MY_DECIMAL_STRUCT_SIZE as usize,
+                &MyDecimal::from_int(0).to_raw_bytes(),
+            );
             column
         }
         C::Date | C::Datetime | C::Timestamp => {
@@ -486,7 +497,7 @@ fn zero_column_for_type(field_type: &FieldType) -> Column {
 /// shared by every fixed-width arm of `SetDatum`.
 fn grow_data_to(column: &mut Column, n: usize) {
     if column.data.len() < n {
-        column.data = vec![0; n];
+        column.data = SharedBytes::zeros(n);
     }
 }
 
@@ -495,7 +506,7 @@ fn grow_data_to(column: &mut Column, n: usize) {
 /// # Panics
 /// Panics on a buffer shorter than 8 bytes, as Go's `PutUint64` does.
 fn put_uint64(column: &mut Column, value: u64) {
-    column.data[..8].copy_from_slice(&value.to_le_bytes());
+    column.data.copy_from_slice(0..8, &value.to_le_bytes());
 }
 
 /// Go `setMutRowBytes`: fit `bytes` into the cell, reslicing the existing
@@ -506,10 +517,10 @@ fn set_mut_row_bytes(column: &mut Column, bytes: &[u8]) {
     if column.data.len() >= bytes.len() {
         column.data.truncate(bytes.len());
     } else {
-        column.data = vec![0; bytes.len()];
+        column.data = SharedBytes::zeros(bytes.len());
         column.null_bitmap = vec![0];
     }
-    column.data.copy_from_slice(bytes);
+    column.data.copy_from_slice(0..bytes.len(), bytes);
     column.offsets[1] = bytes.len() as i64;
 }
 
@@ -519,11 +530,11 @@ fn set_mut_row_name_value(column: &mut Column, name: &[u8], value: u64) {
     if column.data.len() >= data_len {
         column.data.truncate(data_len);
     } else {
-        column.data = vec![0; data_len];
+        column.data = SharedBytes::zeros(data_len);
         column.null_bitmap = vec![0];
     }
-    column.data[..8].copy_from_slice(&value.to_le_bytes());
-    column.data[8..].copy_from_slice(name);
+    column.data.copy_from_slice(0..8, &value.to_le_bytes());
+    column.data.copy_from_slice(8..data_len, name);
     column.offsets[1] = data_len as i64;
 }
 
@@ -533,11 +544,11 @@ fn set_mut_row_json(column: &mut Column, value: &BinaryJSON) {
     if column.data.len() >= data_len {
         column.data.truncate(data_len);
     } else {
-        column.data = vec![0; data_len];
+        column.data = SharedBytes::zeros(data_len);
         column.null_bitmap = vec![0];
     }
-    column.data[0] = value.type_code();
-    column.data[1..].copy_from_slice(value.value());
+    column.data.set(0, value.type_code());
+    column.data.copy_from_slice(1..data_len, value.value());
     column.offsets[1] = data_len as i64;
 }
 
@@ -554,8 +565,8 @@ mod tests {
     const GO_VECTORS: &str =
         include_str!("../../../difftests/chunk-tests/fixtures/mutrow_vectors.tsv");
 
-    fn hex(bytes: &[u8]) -> String {
-        bytes.iter().map(|b| format!("{b:02x}")).collect()
+    fn hex(bytes: impl AsRef<[u8]>) -> String {
+        bytes.as_ref().iter().map(|b| format!("{b:02x}")).collect()
     }
 
     /// The Go fixture's lines for one case, in column order.
@@ -759,7 +770,7 @@ mod tests {
     fn set_datum_null_does_not_reallocate() {
         let types = the_types();
         let mut mut_row = MutRow::from_types(&types);
-        let before: Vec<(Vec<u8>, Vec<u8>)> = mut_row
+        let before: Vec<_> = mut_row
             .chunk
             .columns()
             .iter()
@@ -773,8 +784,8 @@ mod tests {
                 column.offsets.iter().all(|&off| off == 0),
                 "col {i}: offsets must be zeroed"
             );
-            assert_eq!(column.data, *data, "col {i}: data buffer changed");
-            assert_eq!(column.elem_buf, *elem_buf, "col {i}: elem buffer changed");
+            assert_eq!(&column.data, data, "col {i}: data buffer changed");
+            assert_eq!(&column.elem_buf, elem_buf, "col {i}: elem buffer changed");
         }
     }
 
@@ -941,11 +952,32 @@ mod tests {
         ];
         let mut mut_row = MutRow::from_types(&dest_types);
         mut_row.set_datum(0, &string("kept"));
-        mut_row.shallow_copy_partial_row(1, chunk.get_row(1));
+        mut_row.shallow_copy_partial_row(1, &mut chunk, 1);
         assert_matches_go("shallow_copy", &mut_row);
 
         let mut second = MutRow::from_types(&dest_types);
-        second.shallow_copy_partial_row(1, chunk.get_row(0));
+        second.shallow_copy_partial_row(1, &mut chunk, 0);
         assert_matches_go("shallow_copy_null", &second);
+
+        chunk.column_mut(0).with_int64s_mut(|values| values[0] = 42);
+        assert_eq!(second.to_row().get_int64(1), 42);
+
+        chunk
+            .column_mut(1)
+            .with_cell_bytes_mut(0, |cell| cell.copy_from_slice(b"SHALLOW"));
+        assert_eq!(second.to_row().get_bytes(2), b"SHALLOW");
+
+        chunk.column_mut(1).reset();
+        chunk.column_mut(1).append_string("RESET!!");
+        assert_eq!(second.to_row().get_bytes(2), b"RESET!!");
+
+        let grown_source = "source growth detaches this backing".repeat(2);
+        chunk.column_mut(1).reset();
+        chunk.column_mut(1).append_string(&grown_source);
+        assert_eq!(chunk.get_row(0).get_bytes(1), grown_source.as_bytes());
+        assert_eq!(second.to_row().get_bytes(2), b"RESET!!");
+
+        second.set_datum(2, &string("a value that forces detached storage"));
+        assert_eq!(chunk.get_row(0).get_bytes(1), grown_source.as_bytes());
     }
 }
