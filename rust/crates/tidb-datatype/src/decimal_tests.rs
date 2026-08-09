@@ -569,7 +569,7 @@ fn go_to_bin_byte_vectors() {
 
 /// `DecimalBinSize` vectors from TiDB `TestDecimalBinSize`.
 #[test]
-fn go_decimal_bin_size_vectors() {
+fn test_decimal_bin_size() {
     assert_eq!(decimal_bin_size(3, 1), Ok(2));
     assert_eq!(decimal_bin_size(-1, 0), Err(DecimalCodecError::BadNumber));
     assert_eq!(decimal_bin_size(3, 5), Err(DecimalCodecError::BadNumber));
@@ -580,7 +580,7 @@ fn go_decimal_bin_size_vectors() {
 /// must reproduce Go's exact rendered output (and `ToBin`'s soft
 /// truncation/overflow), and `FromBin` must not error on any of these.
 #[test]
-fn go_to_bin_from_bin_round_trip() {
+fn test_to_bin_from_bin() {
     let none = None;
     let trunc = Some(DecimalCodecWarning::Truncated);
     let over = Some(DecimalCodecWarning::Overflow);
