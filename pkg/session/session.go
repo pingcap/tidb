@@ -2425,7 +2425,36 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	return rs, err
 }
 
-func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (sqlexec.RecordSet, error) {
+func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (recordSet sqlexec.RecordSet, err error) {
+	var (
+		stmt                                    *executor.ExecStmt
+		publishStatementRUOutcomeOnNormalReturn bool
+	)
+	// This is deliberately the first defer: once Compile publishes a nonnil
+	// ExecStmt, it must observe errors and panics from the remaining body and
+	// every later defer. PointGet and delayed file-transfer success are also
+	// published here, after all of those paths have completed normally.
+	defer func() {
+		r := recover()
+		if stmt == nil {
+			if r != nil {
+				panic(r)
+			}
+			return
+		}
+		if r != nil {
+			stmt.RecordStatementRUFinalOutcome(false)
+			panic(r)
+		}
+		if err != nil {
+			stmt.RecordStatementRUFinalOutcome(false)
+			return
+		}
+		if publishStatementRUOutcomeOnNormalReturn {
+			stmt.RecordStatementRUFinalOutcome(true)
+		}
+	}()
+
 	r, ctx := tracing.StartRegionEx(ctx, "session.ExecuteStmt")
 	defer r.End()
 	ctx = execdetails.ContextWithMissingExecDetailsInitialized(ctx)
@@ -2554,15 +2583,17 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 		}
 	}
 
-	var stmt *executor.ExecStmt
-	var err error
-
 	{
 		// Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
 		compiler := executor.Compiler{Ctx: s}
 		stmt, err = compiler.Compile(ctx, stmtNode)
 		// TODO: report precise tracked heap inuse to the global mem-arbitrator if necessary
 	}
+	failpoint.Inject("statementRUPostCompilePanicForTest", func(val failpoint.Value) {
+		if val.(int) == int(sessVars.ConnectionID) {
+			panic("statement RU post-compile test panic")
+		}
+	})
 
 	// check if resource group hint is valid, can't do this in planner.Optimize because we can access
 	// infoschema there.
@@ -2597,7 +2628,6 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 		}
 		return nil, err
 	}
-
 	durCompile := time.Since(s.sessionVars.StartTime)
 	s.GetSessionVars().DurationCompile = durCompile
 	if s.isInternal() {
@@ -2664,8 +2694,8 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 		}()
 	}
 
-	var recordSet sqlexec.RecordSet
 	if stmt.PsStmt != nil { // point plan short path
+		publishStatementRUOutcomeOnNormalReturn = true
 		ctx, prevTraceID := resetStmtTraceID(ctx, s)
 
 		// Emit stmt.start trace event (simplified for point-get fast path)
@@ -2696,8 +2726,21 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 		recordSet, err = stmt.PointGet(ctx)
 		s.setLastTxnInfoBeforeTxnEnd()
 		s.txn.changeToInvalid()
+		failpoint.Inject("statementRUPointGetPostExecPanicForTest", func(val failpoint.Value) {
+			if val.(int) == int(sessVars.ConnectionID) {
+				panic("statement RU PointGet post-exec test panic")
+			}
+		})
 	} else {
 		recordSet, err = runStmt(ctx, s, stmt)
+		// A handler can survive a failed previous statement. A current result set must publish
+		// its own outcome in execStmtResult.Finish instead of being mistaken for file transfer.
+		publishStatementRUOutcomeOnNormalReturn = recordSet == nil && err == nil && s.hasFileTransInConn()
+		failpoint.Inject("statementRUFileTransferPostRunPanicForTest", func(val failpoint.Value) {
+			if val.(int) == int(sessVars.ConnectionID) && publishStatementRUOutcomeOnNormalReturn {
+				panic("statement RU file-transfer post-run test panic")
+			}
+		})
 	}
 
 	// Observe the resource group query total counter if the resource control is enabled and the
@@ -3029,6 +3072,11 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	}
 
 	rs, err = s.Exec(ctx)
+	failpoint.Inject("statementRUResultSetErrorForTest", func(val failpoint.Value) {
+		if val.(int) == int(sessVars.ConnectionID) && rs != nil {
+			err = errors.New("statement RU result-set test error")
+		}
+	})
 
 	if se.txn.Valid() && se.txn.IsPipelined() {
 		// Pipelined-DMLs can return assertion errors and write conflicts here because they flush
@@ -3045,6 +3093,9 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	se.updateTelemetryMetric(s.(*executor.ExecStmt))
 	sessVars.TxnCtx.StatementCount++
 	if rs != nil {
+		if err != nil {
+			s.(*executor.ExecStmt).RecordStatementRUFinalOutcome(false)
+		}
 		if se.GetSessionVars().StmtCtx.IsExplainAnalyzeDML {
 			if !sessVars.InTxn() {
 				se.StmtCommit(ctx)
@@ -3061,7 +3112,13 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	}
 
 	err = finishStmt(ctx, se, err, s)
-	if se.hasFileTransInConn() {
+	hasFileTrans := se.hasFileTransInConn()
+	// A file-transfer success remains provisional until executeStmtImpl and all
+	// of its later defers return normally. Failures still consume the owner here.
+	if err != nil || !hasFileTrans {
+		s.(*executor.ExecStmt).RecordStatementRUFinalOutcome(err == nil)
+	}
+	if hasFileTrans {
 		// The query will be handled later in handleFileTransInConn,
 		// then should call the ExecStmt.FinishExecuteStmt to finish this statement.
 		se.SetValue(ExecStmtVarKey, s.(*executor.ExecStmt))
@@ -3104,6 +3161,9 @@ func (rs *execStmtResult) Finish() error {
 			err1 = f.Finish()
 		}
 		err2 := finishStmt(context.Background(), rs.se, err, rs.sql)
+		if execStmt, ok := rs.sql.(*executor.ExecStmt); ok {
+			execStmt.RecordStatementRUFinalOutcome(err2 == nil)
+		}
 		if err1 != nil {
 			err = err1
 		} else {
