@@ -840,15 +840,53 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_time_encoding() {
-        let time =
-            Time::from_date_checked(2012, 12, 31, 11, 30, 45, 123_456, TimeType::DateTime, 6)
-                .unwrap();
-        let packed = time.to_packed_uint().unwrap();
+    fn test_codec() {
+        let parse = |input, kind, fsp| {
+            crate::parse_time(input, kind, fsp, false, false, false, &chrono_tz::UTC)
+                .map(|parsed| parsed.time)
+        };
+
+        assert!(parse("2016-12-00 00:00:00", TimeType::Timestamp, 0).is_err());
+        assert!(parse("2010-10-10 10:11:11", TimeType::Timestamp, 0)
+            .unwrap()
+            .to_packed_uint()
+            .is_ok());
+
+        let current = Time::current(TimeType::Timestamp);
+        let packed = current.to_packed_uint().unwrap();
         assert_eq!(
-            Time::from_packed_uint(packed, TimeType::DateTime, 6).unwrap(),
-            time
+            Time::from_packed_uint(packed, TimeType::Timestamp, 0).unwrap(),
+            current
         );
+
+        let zero = Time::new(CoreTime::default(), TimeType::DateTime, 0).unwrap();
+        let packed = zero.to_packed_uint().unwrap();
+        assert_eq!(
+            Time::from_packed_uint(packed, TimeType::DateTime, 0).unwrap(),
+            zero
+        );
+
+        let year_one = parse("0001-01-01 00:00:00", TimeType::DateTime, 0).unwrap();
+        let packed = year_one.to_packed_uint().unwrap();
+        assert_eq!(
+            Time::from_packed_uint(packed, TimeType::DateTime, 0).unwrap(),
+            year_one
+        );
+
+        for input in [
+            "2000-01-01 00:00:00.000000",
+            "2000-01-01 00:00:00.123456",
+            "0001-01-01 00:00:00.123456",
+            "2000-06-01 00:00:00.999999",
+        ] {
+            let time = parse(input, TimeType::DateTime, 6).unwrap();
+            let packed = time.to_packed_uint().unwrap();
+            assert_eq!(
+                Time::from_packed_uint(packed, TimeType::DateTime, 6).unwrap(),
+                time,
+                "{input}"
+            );
+        }
     }
 
     #[test]
