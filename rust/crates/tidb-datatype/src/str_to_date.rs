@@ -404,8 +404,8 @@ mod tests {
     }
 
     #[test]
-    fn test_str_to_date_source_rows() {
-        for (input, format, expected) in [
+    fn test_str_to_date() {
+        let rows = [
             (
                 "01,05,2013",
                 "%d,%m,%Y",
@@ -548,6 +548,11 @@ mod tests {
                 CoreTime::from_date(1970, 10, 22, 0, 0, 0, 0),
             ),
             (
+                "18/10/22",
+                "%Y/%m/%d",
+                CoreTime::from_date(2018, 10, 22, 0, 0, 0, 0),
+            ),
+            (
                 "100/10/22",
                 "%Y/%m/%d",
                 CoreTime::from_date(100, 10, 22, 0, 0, 0, 0),
@@ -664,7 +669,9 @@ mod tests {
                 "%d/%b/%Y %H:%i:%S.%f",
                 CoreTime::from_date(2016, 2, 30, 12, 34, 56, 123_400),
             ),
-        ] {
+        ];
+        assert_eq!(rows.len(), 63, "one entry per Go success source row");
+        for (input, format, expected) in rows {
             assert_eq!(
                 parse(input, format, true).unwrap(),
                 expected,
@@ -674,8 +681,8 @@ mod tests {
     }
 
     #[test]
-    fn test_str_to_date_source_errors() {
-        for (input, format, allow_invalid) in [
+    fn test_str_to_date_errors() {
+        let rows = [
             ("04/31/2004", "%m/%d/%Y", false),
             ("29/Feb/2021 12:34:56.", "%d/%b/%Y %H:%i:%s.%f", false),
             ("512 2021", "%m%d %Y", true),
@@ -693,7 +700,9 @@ mod tests {
             ("00:13:56 AM13/05/2019", "%r", true),
             ("00:13:56 pM13/05/2019", "%r", true),
             ("11:13:56a", "%r", true),
-        ] {
+        ];
+        assert_eq!(rows.len(), 17, "one entry per Go error source row");
+        for (input, format, allow_invalid) in rows {
             assert!(
                 parse(input, format, allow_invalid).is_err(),
                 "{input} {format}"
