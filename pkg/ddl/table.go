@@ -483,25 +483,8 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 		return ver, err
 	}
 	if jobCtx.oldDDLCtx != nil {
-		if oldTblInfo.TTLInfo != nil {
-			if err := jobCtx.oldDDLCtx.deleteTTLTableFromExternalWorkload(jobCtx.ctx, oldTblInfo.ID); err != nil {
-				return ver, cancelJobOnExternalTTLWorkloadError(job, err)
-			}
-		}
-		if oldTblInfo.TTLInfo != nil && oldTblInfo.TTLInfo.Enable {
-			newTTLTableInfo := oldTblInfo.Clone()
-			newTTLTableInfo.ID = args.NewTableID
-			if err := jobCtx.oldDDLCtx.registerTTLTableToExternalWorkload(jobCtx.ctx, newTTLTableInfo); err != nil {
-				if compensateErr := jobCtx.oldDDLCtx.registerTTLTableToExternalWorkload(jobCtx.ctx, oldTblInfo); compensateErr != nil {
-					logutil.DDLLogger().Warn("truncate TTL external workload compensation failed",
-						zap.String("keyword", truncateTTLRestoreOldRegistrationLogKey),
-						zap.Int64("oldTableID", oldTblInfo.ID),
-						zap.Int64("newTableID", newTTLTableInfo.ID),
-						zap.Error(compensateErr),
-						zap.NamedError("registerNewTableErr", err))
-				}
-				return ver, cancelJobOnExternalTTLWorkloadError(job, err)
-			}
+		if err := w.truncateTTLTableInExternalWorkload(jobCtx.ctx, job, oldTblInfo, args.NewTableID); err != nil {
+			return ver, err
 		}
 	}
 	err = metaMut.DropTableOrView(schemaID, tblInfo.ID)
@@ -662,6 +645,35 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 	args.NewPartitionIDs = newPartitionIDs
 	job.FillFinishedArgs(args)
 	return ver, nil
+}
+
+func (w *worker) truncateTTLTableInExternalWorkload(
+	ctx context.Context,
+	job *model.Job,
+	oldTblInfo *model.TableInfo,
+	newTableID int64,
+) error {
+	if oldTblInfo.TTLInfo != nil {
+		if err := w.deleteTTLTableFromExternalWorkload(ctx, oldTblInfo.ID); err != nil {
+			return cancelJobOnExternalTTLWorkloadError(job, err)
+		}
+	}
+	if oldTblInfo.TTLInfo != nil && oldTblInfo.TTLInfo.Enable {
+		newTTLTableInfo := oldTblInfo.Clone()
+		newTTLTableInfo.ID = newTableID
+		if err := w.registerTTLTableToExternalWorkload(ctx, newTTLTableInfo); err != nil {
+			if compensateErr := w.registerTTLTableToExternalWorkload(ctx, oldTblInfo); compensateErr != nil {
+				logutil.DDLLogger().Warn("truncate TTL external workload compensation failed",
+					zap.String("keyword", truncateTTLRestoreOldRegistrationLogKey),
+					zap.Int64("oldTableID", oldTblInfo.ID),
+					zap.Int64("newTableID", newTTLTableInfo.ID),
+					zap.Error(compensateErr),
+					zap.NamedError("registerNewTableErr", err))
+			}
+			return cancelJobOnExternalTTLWorkloadError(job, err)
+		}
+	}
+	return nil
 }
 
 func onRebaseAutoIncrementIDType(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
