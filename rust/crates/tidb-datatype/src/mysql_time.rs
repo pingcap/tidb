@@ -1044,7 +1044,7 @@ mod tests {
     }
 
     #[test]
-    fn test_date_format_source_rows() {
+    fn test_time_format_method() {
         let full_layout =
             "%b %M %m %c %D %d %e %j %k %h %i %p %r %T %s %f %U %u %V %v %a %W %w %X %x %Y %y %%";
         for (core, layout, expected) in [
