@@ -1484,11 +1484,20 @@ impl DriverError {
             value,
             column,
             row,
-        } => MysqlError::new(
-            1366,
-            *b"HY000",
-            format!("Incorrect {type_name} value: '{value}' for column '{column}' at row {row}"),
-        ),
+        } => {
+            // Go `table.CastValue` converts an invalid character group into
+            // the same 1366 error BEFORE an INSERT/UPDATE caller can append a
+            // row.  Row zero is the driver representation of that raw form;
+            // every completed write supplies a one-based row as before.
+            let message = if row == 0 && type_name == "string" {
+                format!("Incorrect string value '{value}' for column '{column}'")
+            } else {
+                format!(
+                    "Incorrect {type_name} value: '{value}' for column '{column}' at row {row}"
+                )
+            };
+            MysqlError::new(1366, *b"HY000", message)
+        }
         // Go: `types.ErrWrongValue` completed by `completeInsertErr`.
         DriverError::IncorrectTemporalValue {
             type_name,
@@ -1512,5 +1521,30 @@ impl DriverError {
             MysqlError::unknown("the shared catalog is unusable after a failed statement")
         }
         }
+    }
+}
+
+#[cfg(test)]
+mod source_tests {
+    use super::*;
+
+    #[test]
+    fn raw_incorrect_string_value_matches_table_cast_value() {
+        // pkg/table/column_test.go::TestCastValue expects the raw table error,
+        // before a statement-level caller has attached a row number.
+        let error = DriverError::IncorrectValue {
+            type_name: "string".to_owned(),
+            value: "\\x81".to_owned(),
+            column: String::new(),
+            row: 0,
+        }
+        .to_mysql_error();
+
+        assert_eq!(error.code, 1366);
+        assert_eq!(error.state, *b"HY000");
+        assert_eq!(
+            error.message,
+            "Incorrect string value '\\x81' for column ''"
+        );
     }
 }
