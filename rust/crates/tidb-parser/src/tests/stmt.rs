@@ -550,6 +550,24 @@ fn test_prepare() {
     }
 }
 
+/// `pkg/parser/parser_test.go::TestExecute`.
+#[test]
+fn test_execute() {
+    for (sql, expected) in [
+        ("EXECUTE test", "EXECUTE `test`"),
+        (
+            "EXECUTE test USING @var1,@var2",
+            "EXECUTE `test` USING @`var1`,@`var2`",
+        ),
+        (
+            "EXECUTE `` USING @var1,@var2",
+            "EXECUTE `` USING @`var1`,@`var2`",
+        ),
+    ] {
+        assert_eq!(r(sql), expected, "source SQL: {sql}");
+    }
+}
+
 #[test]
 fn current_time_functions() {
     // NOW always needs `()`; CURRENT_TIMESTAMP also parses bare (a real
