@@ -396,10 +396,17 @@ fn sub_file_config(cfg: &LogConfig, filename: &str) -> FileLogConfig {
 
 /// Initializes global, slow-query, and general loggers (Go `InitLogger`).
 pub fn init_logger(cfg: &LogConfig) -> Result<(), String> {
+    init_logger_with_core_fields(cfg, &[])
+}
+
+/// Go `InitLogger(cfg, zap.WrapCore(core.With(fields)))`: initializes the
+/// logger after attaching fields to its core, so every emitted entry carries
+/// them even when the call site supplies no context fields.
+pub fn init_logger_with_core_fields(cfg: &LogConfig, core_fields: &[Field]) -> Result<(), String> {
     let level = AtomicLevel::new(parse_level(&cfg.config.level)?);
     let mut registry: HashMap<String, SharedSink> = HashMap::new();
 
-    let encoder = TextEncoder::new(&cfg.config)?;
+    let encoder = TextEncoder::new(&cfg.config)?.with_fields(core_fields);
     let global_sink = build_sink(&cfg.config.file, &mut registry)?;
     let global = Logger::new(
         encoder.clone(),
@@ -415,7 +422,7 @@ pub fn init_logger(cfg: &LogConfig) -> Result<(), String> {
         let mut c = cfg.config.clone();
         c.disable_error_verbose = false;
         Logger::new(
-            TextEncoder::new(&c)?,
+            TextEncoder::new(&c)?.with_fields(core_fields),
             Encoding::Unified,
             Arc::clone(&global_sink),
             level.clone(),
@@ -792,6 +799,27 @@ mod tests {
         let logger =
             bg_logger().with_fields(&[Field::new("ctxKey", Value::Str("ctxValue".into()))]);
         test_logger_output(&logger, &filename, &key_val_pattern);
+    }
+
+    /// Source: `pkg/util/logutil/log_test.go::TestZapLoggerWithCore`.
+    #[test]
+    fn test_zap_logger_with_core() {
+        let _g = guard();
+        let filename = temp_file("zap_log_core.log");
+        let file_cfg = FileLogConfig {
+            filename: filename.clone(),
+            max_size: 4096,
+            ..Default::default()
+        };
+        let conf = new_log_config("info", DEFAULT_LOG_FORMAT, "", "", file_cfg, false);
+        init_logger_with_core_fields(
+            &conf,
+            &[Field::new("coreKey", Value::Str("coreValue".into()))],
+        )
+        .unwrap();
+
+        let core_pattern = format!(r"{PATTERN_BASE} \[coreKey=.*\] (\[.*=.*\])");
+        test_logger_output(&bg_logger(), &filename, &core_pattern);
     }
 
     // Go TestFieldsFromTraceInfo.
