@@ -16,7 +16,7 @@ This remains one cluster inside the incomplete `pkg/util/chunk` whole-package cl
 - [x] (2026-08-10) Mapped the Rust production owner, direct `tidb-expr`/`tidb-executor` swap consumers, spill callers, existing tests, and receipt state.
 - [x] (2026-08-10) Added a deterministic partial-write regression: baseline accepted 2 of 4 bytes as success; the root fix returns the subsequent storage error while retaining the accepted two-byte logical offset.
 - [x] (2026-08-10) Added one public cluster contract for column copies, join copies, alias-aware swaps, plaintext/AES spill-file behavior, and the deterministic benchmark workload observation.
-- [ ] Classify all 235 obligations and direct helper contracts, execute any new mutations/probes, and advance the incremental checker.
+- [x] (2026-08-10) Classified all 235 obligations as 205 PORTED, 17 evidence-backed DECLINED, and 13 structurally UNREACHABLE; all four mutations were independently killed and the benchmark probe was independently replayed.
 - [ ] Include the cluster in the next batched Ready validation and authorized dual-remote push.
 
 ## Surprises & Discoveries
@@ -26,6 +26,9 @@ This remains one cluster inside the incomplete `pkg/util/chunk` whole-package cl
 
 - Observation: `chunk_util.go` and `chunk_util_test.go` are one semantic cluster. The test's normal cases cover the production copy and alias paths; only Go `testing.B` timing/allocation machinery is outside the behavior contract.
   Evidence: all three benchmarks invoke the same copy/append operations as the normal tests, adding only `B.N`, timer reset, and allocation reporting.
+
+- Observation: the repository source-size ratchet currently fails on unchanged `rust/crates/tidb-executor/src/kv_table.rs` at 2,785 lines.
+  Evidence: the cluster diff contains only `tidb-chunk` paths; the focused public target, strict target Clippy, rustfmt, ledger checker, and diff checks pass. This baseline failure is not repaired in the chunk-util cluster.
 
 ## Decision Log
 
@@ -43,7 +46,9 @@ This remains one cluster inside the incomplete `pkg/util/chunk` whole-package cl
 
 ## Outcomes & Retrospective
 
-Pending cluster tests, receipt closure, and validation.
+The production short-write defect is fixed and the complete accepted chunk-util production/direct-test cluster has final verdicts. One guarded transformation preserved all first-seven ledger identity columns exactly and produced four semantic rules: 21 column-copy, 114 join-copy, 49 shared-column-swap, and 21 spill-file obligations. The benchmark adaptation covers all 17 `testing.B` obligations; the two structural proofs cover 13 guard-dominated or fixed-test paths. `M_CHUNK_UTIL_COLUMN_COPY`, `M_CHUNK_UTIL_JOIN_COPY`, `M_CHUNK_UTIL_COLUMN_SWAP`, and `M_CHUNK_UTIL_SPILL_FILE` were each KILLED in both run and replay. The incremental checker now stops at the first unrelated `codec.go` obligation `O1b22489651c000fe`.
+
+The cluster remains queued for the next batched Ready validation and dual-remote push.
 
 ## Context and Orientation
 

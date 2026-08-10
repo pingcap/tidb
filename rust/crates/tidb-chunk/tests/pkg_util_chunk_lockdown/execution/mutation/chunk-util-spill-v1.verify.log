@@ -1,0 +1,21 @@
+--- stdout ---
+
+running 1 test
+test spill_file_plaintext_and_aes_contract ... FAILED
+
+failures:
+
+failures:
+    spill_file_plaintext_and_aes_contract
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s
+
+
+--- stderr ---
+
+thread 'spill_file_plaintext_and_aes_contract' (224450617) panicked at crates/tidb-chunk/tests/chunk_util_contract.rs:366:5:
+assertion `left == right` failed
+  left: 0
+ right: 2086
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+error: test failed, to rerun pass `-p tidb-chunk --test chunk_util_contract`

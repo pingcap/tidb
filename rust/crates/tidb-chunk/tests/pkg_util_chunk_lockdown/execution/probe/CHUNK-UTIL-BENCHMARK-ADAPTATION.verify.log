@@ -1,0 +1,10 @@
+--- stdout ---
+
+running 1 test
+LOCKDOWN_OBSERVATION {"boundary_observations":[{"input":"1,024 rows with every seventh row excluded","name":"selected-join-workload","observed":"same-outer copy preserves selected count, order and values"},{"input":"the same 1,024-row selection","name":"direct-copy-workload","observed":"direct copy preserves selected count, order, values and virtual rows"},{"input":"the same selected rows appended individually","name":"append-selected-workload","observed":"row append produces the same count, order and endpoint values"},{"input":"accepted testing.B loops, timers and allocation reports","name":"benchmark-runtime-excluded","observed":"no TiDB result depends on Go benchmark-runner mechanics"}],"conclusion":"Rust deterministically preserves selected-row order, values, null behavior and virtual-row counts exercised by the accepted chunk-util benchmarks; Go testing.B iteration, timers and allocation reports are intentionally not reproduced.","probe_id":"CHUNK-UTIL-BENCHMARK-ADAPTATION","schema":"go-package-lockdown-runtime-observation-v1","source_commit":"665fc02e2be48a7199d5ffeb5d3d6bec1dfed04f"}
+test benchmark_runtime_adaptation_observation ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s
+
+
+--- stderr ---
