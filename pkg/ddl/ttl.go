@@ -123,7 +123,7 @@ func (dc *ddlCtx) registerTTLTableToExternalWorkload(ctx context.Context, tblInf
 	if !ok || tblInfo.TTLInfo == nil || !tblInfo.TTLInfo.Enable {
 		return nil
 	}
-	return manager.RegisterTTLTask(ctx, tblInfo.ID, vardef.EnableTTLJob.Load())
+	return manager.RegisterTTLTableInfo(ctx, tblInfo.ID, vardef.EnableTTLJob.Load())
 }
 
 // tblInfo must be non-nil.

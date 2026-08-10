@@ -76,7 +76,7 @@ func (*bootstrapExternalWorkloadManager) UpdateGCLifeTime(context.Context, time.
 	return nil
 }
 
-func (*bootstrapExternalWorkloadManager) RegisterTTLTask(context.Context, int64, bool) error {
+func (*bootstrapExternalWorkloadManager) RegisterTTLTableInfo(context.Context, int64, bool) error {
 	return nil
 }
 

@@ -76,7 +76,7 @@ func (*recordingExternalWorkloadManager) UpdateGCLifeTime(context.Context, time.
 	return nil
 }
 
-func (m *recordingExternalWorkloadManager) RegisterTTLTask(_ context.Context, tableID int64, _ bool) error {
+func (m *recordingExternalWorkloadManager) RegisterTTLTableInfo(_ context.Context, tableID int64, _ bool) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.registerErrFn != nil {

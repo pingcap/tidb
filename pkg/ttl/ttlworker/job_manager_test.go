@@ -63,7 +63,7 @@ func (*fakeExternalWorkloadManager) RecycleGCV2(context.Context, uint64) error {
 func (*fakeExternalWorkloadManager) UpdateGCLifeTime(context.Context, time.Duration) error {
 	return nil
 }
-func (*fakeExternalWorkloadManager) RegisterTTLTask(context.Context, int64, bool) error {
+func (*fakeExternalWorkloadManager) RegisterTTLTableInfo(context.Context, int64, bool) error {
 	return nil
 }
 func (*fakeExternalWorkloadManager) DeleteTTLTableInfo(context.Context, int64) error {

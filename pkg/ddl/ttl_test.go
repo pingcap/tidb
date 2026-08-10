@@ -185,7 +185,7 @@ func (*fakeExternalWorkloadManager) RecycleGCV2(context.Context, uint64) error {
 func (*fakeExternalWorkloadManager) UpdateGCLifeTime(context.Context, time.Duration) error {
 	return nil
 }
-func (m *fakeExternalWorkloadManager) RegisterTTLTask(_ context.Context, tableID int64, ttlJobEnable bool) error {
+func (m *fakeExternalWorkloadManager) RegisterTTLTableInfo(_ context.Context, tableID int64, ttlJobEnable bool) error {
 	m.registeredTable = tableID
 	m.registerEnabled = ttlJobEnable
 	return m.registerErr
