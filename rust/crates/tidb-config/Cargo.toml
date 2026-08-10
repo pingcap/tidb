@@ -11,8 +11,10 @@ description = "Transcreation of TiDB pkg/config leaf packages (configtypes, depl
 nextgen = []
 
 [dependencies]
+base64 = { workspace = true }
 serde = { workspace = true }
 regex = { workspace = true }
+rustix = { workspace = true }
 serde_ignored = "0.1"
 serde_json = { workspace = true }
 toml = "0.8"

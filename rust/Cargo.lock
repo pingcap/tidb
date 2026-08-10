@@ -1566,7 +1566,9 @@ dependencies = [
 name = "tidb-config"
 version = "0.0.0"
 dependencies = [
+ "base64",
  "regex",
+ "rustix",
  "serde",
  "serde_ignored",
  "serde_json",
