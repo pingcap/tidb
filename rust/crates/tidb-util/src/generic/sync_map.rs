@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Transcreation of Go `pkg/util/generic/sync_map.go`.
+//! Concurrent generic map from Go `pkg/util/generic`.
 
 use std::collections::HashMap;
 use std::hash::Hash;
@@ -72,6 +72,8 @@ impl<K: Eq + Hash, V> SyncMap<K, V> {
 #[cfg(test)]
 mod tests {
     use super::SyncMap;
+    use std::sync::Arc;
+    use std::thread;
 
     // Go `TestSyncMap`.
     #[test]
@@ -102,5 +104,34 @@ mod tests {
         let mut keys = sm.keys();
         keys.sort_unstable();
         assert_eq!(keys, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn concurrent_stores_loads_and_deletes_are_serialized() {
+        const WORKERS: usize = 8;
+        const KEYS_PER_WORKER: usize = 500;
+
+        let map = Arc::new(SyncMap::new(WORKERS * KEYS_PER_WORKER));
+        let workers: Vec<_> = (0..WORKERS)
+            .map(|worker| {
+                let map = Arc::clone(&map);
+                thread::spawn(move || {
+                    let start = worker * KEYS_PER_WORKER;
+                    for key in start..start + KEYS_PER_WORKER {
+                        map.store(key, key * 2);
+                        assert_eq!(map.load(&key), Some(key * 2));
+                    }
+                })
+            })
+            .collect();
+        for worker in workers {
+            worker.join().expect("map worker must not panic");
+        }
+
+        assert_eq!(map.keys().len(), WORKERS * KEYS_PER_WORKER);
+        for key in (0..WORKERS * KEYS_PER_WORKER).step_by(2) {
+            assert_eq!(map.delete(&key), Some(key * 2));
+        }
+        assert_eq!(map.keys().len(), WORKERS * KEYS_PER_WORKER / 2);
     }
 }

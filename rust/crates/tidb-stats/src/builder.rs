@@ -36,12 +36,12 @@
 //! table, not of the histogram. [`crate::histogram::Bucket::count`] below is
 //! cumulative, exactly as Go's in-memory `Bucket.Count` is.
 
-use std::sync::Arc;
+use std::{cmp::Ordering, sync::Arc};
 
 use tidb_datatype::{Collation, Datum, DatumValueError};
+use tidb_util::generic::BoundedMinHeap;
 use tidb_util::memory::Tracker;
 
-use crate::bounded_min_heap::BoundedMinHeap;
 use crate::cmsketch::TopN;
 use crate::correlation::calc_correlation;
 use crate::go_stable_sort::go_stable_sort_by;
@@ -318,9 +318,15 @@ struct TopNPolicy {
     sample_factor: f64,
 }
 
+type TopNHeap = BoundedMinHeap<TopNWithRange, fn(&TopNWithRange, &TopNWithRange) -> Ordering>;
+
+fn compare_topn(left: &TopNWithRange, right: &TopNWithRange) -> Ordering {
+    left.count.cmp(&right.count)
+}
+
 /// Go `processTopNValue`.
 fn process_topn_value(
-    heap: &mut BoundedMinHeap<TopNWithRange>,
+    heap: &mut TopNHeap,
     candidate: TopNWithRange,
     policy: &TopNPolicy,
     last_value: bool,
@@ -493,16 +499,8 @@ pub fn try_build_hist_and_topn_tracked<E>(
     };
 
     // Step 1: the TopN candidates, and the sorted-sample run each occupies.
-    let mut heap: BoundedMinHeap<TopNWithRange> = BoundedMinHeap::new(
-        num_topn,
-        Some(
-            |left: &TopNWithRange, right: &TopNWithRange| match left.count.cmp(&right.count) {
-                std::cmp::Ordering::Less => -1,
-                std::cmp::Ordering::Equal => 0,
-                std::cmp::Ordering::Greater => 1,
-            },
-        ),
-    );
+    assert!(num_topn >= 0, "maxSize cannot be negative");
+    let mut heap = BoundedMinHeap::new(num_topn as usize, compare_topn as _);
     let first_encoding = compared_bytes(&samples[0], is_column);
     if is_column {
         outer_memory.account_temporary(
@@ -575,7 +573,7 @@ pub fn try_build_hist_and_topn_tracked<E>(
         );
     }
 
-    let mut pruned = heap.to_sorted_slice().unwrap_or_default();
+    let mut pruned = heap.to_sorted_slice();
     if allow_pruning {
         pruned = prune_topn_item(pruned, ndv, null_count, sample_num, count);
         // A TopN that swallowed the whole sample leaves no buckets at all,

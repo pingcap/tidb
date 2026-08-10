@@ -42,7 +42,6 @@ pub mod auto_analyze_window;
 pub mod average_count;
 pub mod batch_update;
 pub mod bootstrap_sql;
-pub mod bounded_min_heap;
 pub mod builder;
 pub mod cache_metrics_labels;
 pub mod cmsketch;
@@ -163,7 +162,6 @@ pub use auto_analyze_window::{AutoAnalysisTimeWindow, UtcDayMinute};
 pub use average_count::avg_count_per_not_null_value;
 pub use batch_update::BatchUpdate;
 pub use bootstrap_sql::{gen_init_stats_histograms_sql, gen_init_stats_meta_sql, HistSqlOptions};
-pub use bounded_min_heap::BoundedMinHeap;
 pub use builder::{
     build_column, build_column_histogram, build_hist_and_topn, try_build_column_histogram,
     try_build_column_histogram_in_place, try_build_hist_and_topn, try_build_hist_and_topn_in_place,

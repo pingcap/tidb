@@ -12,12 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Complete transcreation of Go `pkg/util/generic` (`sync_map.go`,
-//! `bounded_min_heap.go`).
+//! Complete transcreation of Go `pkg/util/generic`.
 //!
-//! Go's type-parameterized helpers map directly onto Rust generics. The two
-//! production files become two modules re-exported here so the public surface
-//! (`SyncMap`, `BoundedMinHeap`) mirrors the Go package.
+//! The package provides a concurrent map and a fixed-capacity best-N heap.
 
 mod bounded_min_heap;
 mod sync_map;
