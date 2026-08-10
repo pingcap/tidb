@@ -727,6 +727,47 @@ pub(crate) fn exchange_table_partition_args_match_source() {
 }
 
 #[test]
+pub(crate) fn alter_table_partition_args_match_source() {
+    let label_rule = GoShared::new(serde_json::json!({
+        "id": "ss",
+        "index": 0,
+        "labels": null,
+        "rule_type": "",
+        "data": null,
+    }));
+    let policy_ref_info = GoShared::new(PolicyRefInfo {
+        id: 462,
+        ..Default::default()
+    });
+    let args = GoShared::new(AlterTablePartitionArgs {
+        partition_id: GoField::new(123),
+        label_rule: GoField::new(Some(label_rule.clone())),
+        policy_ref_info: GoField::new(Some(policy_ref_info.clone())),
+    });
+
+    for action in [
+        ActionType::ACTION_ALTER_TABLE_PARTITION_ATTRIBUTES,
+        ActionType::ACTION_ALTER_TABLE_PARTITION_PLACEMENT,
+    ] {
+        for version in [JobVersion::V1, JobVersion::V2] {
+            let mut job = encoded_job(version, action, args.clone());
+            let decoded = get_alter_table_partition_args(&mut job).unwrap().unwrap();
+            let decoded = decoded.read();
+            assert_eq!(decoded.partition_id.get(), 123);
+            if action == ActionType::ACTION_ALTER_TABLE_PARTITION_ATTRIBUTES {
+                let actual = decoded.label_rule.get();
+                let actual = actual.as_ref().unwrap();
+                assert_eq!(*actual.read(), *label_rule.read());
+            } else {
+                let actual = decoded.policy_ref_info.get();
+                let actual = actual.as_ref().unwrap();
+                assert_eq!(*actual.read(), *policy_ref_info.read());
+            }
+        }
+    }
+}
+
+#[test]
 pub(crate) fn rebase_auto_id_args_match_source_matrix() {
     let args = GoShared::new(RebaseAutoIDArgs {
         new_base: GoField::new(9527),

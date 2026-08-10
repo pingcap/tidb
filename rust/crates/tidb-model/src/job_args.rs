@@ -36,6 +36,7 @@ use crate::{
 
 const MODEL_PACKAGE_PATH: &str = "github.com/pingcap/tidb/pkg/meta/model";
 const AST_PACKAGE_PATH: &str = "github.com/pingcap/tidb/pkg/parser/ast";
+const PDHTTP_PACKAGE_PATH: &str = "github.com/tikv/pd/client/http";
 
 fn model_type(name: &str, kind: GoTypeKind) -> GoTypeIdentity {
     GoTypeIdentity::defined(MODEL_PACKAGE_PATH, name, format!("model.{name}"), kind)
@@ -47,6 +48,10 @@ fn builtin_type(name: &str, kind: GoTypeKind) -> GoTypeIdentity {
 
 fn ast_type(name: &str, kind: GoTypeKind) -> GoTypeIdentity {
     GoTypeIdentity::defined(AST_PACKAGE_PATH, name, format!("ast.{name}"), kind)
+}
+
+fn pdhttp_type(name: &str, kind: GoTypeKind) -> GoTypeIdentity {
+    GoTypeIdentity::defined(PDHTTP_PACKAGE_PATH, name, format!("http.{name}"), kind)
 }
 
 /// One addressable embedded Go struct field.
@@ -400,6 +405,8 @@ pub enum JobArgsValue {
     TablePartition(Option<GoShared<TablePartitionArgs>>),
     /// `*model.ExchangeTablePartitionArgs`, including a typed nil pointer.
     ExchangeTablePartition(Option<GoShared<ExchangeTablePartitionArgs>>),
+    /// `*model.AlterTablePartitionArgs`, including a typed nil pointer.
+    AlterTablePartition(Option<GoShared<AlterTablePartitionArgs>>),
     /// `*model.RebaseAutoIDArgs`, including a typed nil pointer.
     RebaseAutoId(Option<GoShared<RebaseAutoIDArgs>>),
     /// `*model.ModifyTableCommentArgs`, including a typed nil pointer.
@@ -436,6 +443,7 @@ impl JobArgsValue {
             Self::TruncateTable(_) => "TruncateTableArgs",
             Self::TablePartition(_) => "TablePartitionArgs",
             Self::ExchangeTablePartition(_) => "ExchangeTablePartitionArgs",
+            Self::AlterTablePartition(_) => "AlterTablePartitionArgs",
             Self::RebaseAutoId(_) => "RebaseAutoIDArgs",
             Self::ModifyTableComment(_) => "ModifyTableCommentArgs",
             Self::ModifyTableCharsetAndCollate(_) => "ModifyTableCharsetAndCollateArgs",
@@ -462,6 +470,7 @@ impl JobArgsValue {
             Self::TruncateTable(value) => value.as_ref().map(GoShared::identity_address),
             Self::TablePartition(value) => value.as_ref().map(GoShared::identity_address),
             Self::ExchangeTablePartition(value) => value.as_ref().map(GoShared::identity_address),
+            Self::AlterTablePartition(value) => value.as_ref().map(GoShared::identity_address),
             Self::RebaseAutoId(value) => value.as_ref().map(GoShared::identity_address),
             Self::ModifyTableComment(value) => value.as_ref().map(GoShared::identity_address),
             Self::ModifyTableCharsetAndCollate(value) => {
@@ -523,6 +532,11 @@ impl JobArgsValue {
             .go_json_projection(),
             Self::ExchangeTablePartition(value) => GoTypedPointer::new(
                 model_type("ExchangeTablePartitionArgs", GoTypeKind::Struct),
+                value.clone(),
+            )
+            .go_json_projection(),
+            Self::AlterTablePartition(value) => GoTypedPointer::new(
+                model_type("AlterTablePartitionArgs", GoTypeKind::Struct),
                 value.clone(),
             )
             .go_json_projection(),
@@ -1603,6 +1617,86 @@ impl JobArgs for ExchangeTablePartitionArgs {
 pub fn get_exchange_table_partition_args(
     job: &mut Job,
 ) -> Result<Option<GoShared<ExchangeTablePartitionArgs>>, serde_json::Error> {
+    get_or_decode_args(job)
+}
+
+/// Go `AlterTablePartitionArgs`.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct AlterTablePartitionArgs {
+    /// Partition identifier.
+    #[serde(
+        rename = "partition_id",
+        default,
+        skip_serializing_if = "field_is_default"
+    )]
+    pub partition_id: GoField<i64>,
+    /// Label rule for `ActionAlterTablePartitionAttributes`.
+    #[serde(
+        rename = "label_rule",
+        default,
+        skip_serializing_if = "field_shared_pointer_is_none"
+    )]
+    pub label_rule: GoField<Option<GoShared<serde_json::Value>>>,
+    /// Placement policy reference for `ActionAlterTablePartitionPlacement`.
+    #[serde(
+        rename = "policy_ref_info",
+        default,
+        skip_serializing_if = "field_shared_pointer_is_none"
+    )]
+    pub policy_ref_info: GoField<Option<GoShared<PolicyRefInfo>>>,
+}
+
+impl JobArgs for AlterTablePartitionArgs {
+    job_args_identity_methods!(AlterTablePartition);
+
+    fn get_args_v1(value: Option<&GoShared<Self>>, job: &Job) -> GoSharedSlice<GoAny> {
+        let value = value.expect("nil *AlterTablePartitionArgs receiver").read();
+        let partition_id = ColumnDefaultValue::Int(value.partition_id.get()).into();
+        if job.type_ == ActionType::ACTION_ALTER_TABLE_PARTITION_ATTRIBUTES {
+            return GoSharedSlice::from_vec(vec![
+                partition_id,
+                typed_pointer_any(
+                    pdhttp_type("LabelRule", GoTypeKind::Struct),
+                    value.label_rule.get(),
+                ),
+            ]);
+        }
+        GoSharedSlice::from_vec(vec![
+            partition_id,
+            typed_pointer_any(
+                model_type("PolicyRefInfo", GoTypeKind::Struct),
+                value.policy_ref_info.get(),
+            ),
+        ])
+    }
+
+    fn decode_v1(job: &mut Job) -> Result<Option<GoShared<Self>>, serde_json::Error> {
+        let value = GoShared::new(Self::default());
+        let mut decoder = V1Decoder::new(job)?;
+        decoder.decode(
+            &value.read().partition_id,
+            builtin_type("int64", GoTypeKind::Int64),
+        )?;
+        if job.type_ == ActionType::ACTION_ALTER_TABLE_PARTITION_ATTRIBUTES {
+            decoder.decode(
+                &value.read().label_rule,
+                pdhttp_type("LabelRule", GoTypeKind::Struct),
+            )?;
+        } else {
+            decoder.decode(
+                &value.read().policy_ref_info,
+                model_type("PolicyRefInfo", GoTypeKind::Struct),
+            )?;
+        }
+        decoder.finish(job);
+        Ok(Some(value))
+    }
+}
+
+/// Go `GetAlterTablePartitionArgs`.
+pub fn get_alter_table_partition_args(
+    job: &mut Job,
+) -> Result<Option<GoShared<AlterTablePartitionArgs>>, serde_json::Error> {
     get_or_decode_args(job)
 }
 

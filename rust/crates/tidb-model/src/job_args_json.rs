@@ -17,15 +17,16 @@
 use crate::go_runtime::GoSliceElementLayout;
 use crate::serde_helpers::{
     go_json_field_matches, ignore_unknown, impl_go_json_deserialize, impl_go_json_merge_object,
-    NullNoopSeed, OptionSharedMergeSeed, SharedPointerSliceSeed,
+    NullNoopSeed, OptionSharedAtomicReplaceSeed, OptionSharedMergeSeed, SharedPointerSliceSeed,
 };
 use crate::serde_shared_slices::{SharedObjectSliceSeed, SharedScalarSliceSeed};
 use crate::{
-    AlterIndexVisibilityArgs, AlterTableModeArgs, BatchCreateTableArgs, CreateSchemaArgs,
-    CreateTableArgs, DropForeignKeyArgs, DropSchemaArgs, EmptyArgs, ExchangeTablePartitionArgs,
-    ModifySchemaArgs, ModifyTableAutoIDCacheArgs, ModifyTableCharsetAndCollateArgs,
-    ModifyTableCommentArgs, ModifyTableEngineAttributeArgs, RebaseAutoIDArgs, RefreshMetaArgs,
-    SetDefaultValueArgs, ShardRowIDArgs, TableIDIndexID, TablePartitionArgs, TruncateTableArgs,
+    AlterIndexVisibilityArgs, AlterTableModeArgs, AlterTablePartitionArgs, BatchCreateTableArgs,
+    CreateSchemaArgs, CreateTableArgs, DropForeignKeyArgs, DropSchemaArgs, EmptyArgs,
+    ExchangeTablePartitionArgs, ModifySchemaArgs, ModifyTableAutoIDCacheArgs,
+    ModifyTableCharsetAndCollateArgs, ModifyTableCommentArgs, ModifyTableEngineAttributeArgs,
+    RebaseAutoIDArgs, RefreshMetaArgs, SetDefaultValueArgs, ShardRowIDArgs, TableIDIndexID,
+    TablePartitionArgs, TruncateTableArgs,
 };
 
 impl_go_json_merge_object!(EmptyArgs, _destination, map, _key, {
@@ -173,6 +174,24 @@ impl_go_json_merge_object!(ExchangeTablePartitionArgs, destination, map, key, {
     }
 });
 impl_go_json_deserialize!(ExchangeTablePartitionArgs);
+
+impl_go_json_merge_object!(AlterTablePartitionArgs, destination, map, key, {
+    if go_json_field_matches(&key, "partition_id") {
+        map.next_value_seed(NullNoopSeed(&mut *destination.partition_id.write()))?;
+    } else if go_json_field_matches(&key, "label_rule") {
+        map.next_value_seed(OptionSharedAtomicReplaceSeed::new(
+            &mut *destination.label_rule.write(),
+            serde_json::Value::default,
+        ))?;
+    } else if go_json_field_matches(&key, "policy_ref_info") {
+        map.next_value_seed(OptionSharedMergeSeed(
+            &mut *destination.policy_ref_info.write(),
+        ))?;
+    } else {
+        ignore_unknown(&mut map)?;
+    }
+});
+impl_go_json_deserialize!(AlterTablePartitionArgs);
 
 impl_go_json_merge_object!(RebaseAutoIDArgs, destination, map, key, {
     if go_json_field_matches(&key, "new_base") {
