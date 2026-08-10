@@ -19,8 +19,11 @@
 //! transaction-neutral implementation of Go's metadata rules. It talks to no
 //! cluster directly: callers supply [`transaction::RawTransaction`], while
 //! [`transaction::MemoryTransaction`] provides the exact in-memory boundary
-//! used by source-parity tests. Snapshot-only callers can still combine [`key`]
-//! and [`value`] directly:
+//! used by semantic tests. Snapshot adapters construct a reader with
+//! [`transaction::Mutator::new_reader`], which applies the internal metadata
+//! request authority without write-mutator configuration. Callers that only
+//! need the deterministic storage format can combine [`key`] and [`value`]
+//! directly:
 //!
 //! ```
 //! use tidb_meta::{key, value};

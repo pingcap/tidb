@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Boundary receipts for the transaction-backed part of Go `TestMeta`.
+//! Semantic tests for transaction-backed `pkg/meta` behavior.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -80,6 +80,21 @@ fn new_mutator_configures_transaction_and_runs_options_in_source_order() {
     assert!(meta
         .inspect(MemoryTransaction::configured_for_meta)
         .unwrap());
+}
+
+#[test]
+fn new_reader_marks_internal_metadata_without_mutator_configuration() {
+    let marks = Arc::new(AtomicUsize::new(0));
+    let reader = Mutator::new_reader(
+        MemoryTransaction::at_start_ts(77).with_internal_meta_mark_counter(Arc::clone(&marks)),
+    );
+
+    assert_eq!(reader.start_ts(), 77);
+    assert_eq!(marks.load(Ordering::SeqCst), 1);
+    assert!(!reader
+        .inspect(MemoryTransaction::configured_for_meta)
+        .unwrap());
+    assert_eq!(reader.global_id().unwrap(), 0);
 }
 
 #[test]
@@ -1047,6 +1062,10 @@ fn auto_id_accessors_keep_old_versions_shared_and_copy_zero_is_a_noop() {
     assert_eq!(meta.auto_ids(9, 8).row_id().get().unwrap(), 3);
     meta.auto_ids(1, 99).row_id().copy_to(9, 7).unwrap();
     assert_eq!(meta.auto_ids(9, 7).row_id().get().unwrap(), 0);
+    ids.sequence_cycle().put(6).unwrap();
+    assert_eq!(ids.sequence_cycle().get().unwrap(), 6);
+    ids.sequence_cycle().delete().unwrap();
+    assert_eq!(ids.sequence_cycle().get().unwrap(), 0);
     ids.delete().unwrap();
     assert_eq!(ids.get().unwrap(), AutoIdGroup::default());
 }

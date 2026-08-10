@@ -234,7 +234,7 @@ fn element_round_trips_and_reports_gos_two_failures() {
     );
 
     // Go String preserves arbitrary string bytes even though Rust's Display
-    // cannot. The byte receipt is the lossless equivalent.
+    // cannot. The byte result is the lossless equivalent.
     assert_eq!(
         Element {
             id: i64::MIN,

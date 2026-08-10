@@ -1,14 +1,16 @@
 schema = "semantic-package-gate-v3"
-claim = "package-seed"
+claim = "whole-go-package"
 go_package = "pkg/meta"
-source_commit = "e14a77f78d457d27c88d5892e1a173c28a586823"
-accepted_go_files = [
-  "pkg/meta/BUILD.bazel",
-  "pkg/meta/main_test.go",
-  "pkg/meta/meta.go",
-  "pkg/meta/meta_test.go",
+source_commit = "18db5e95316228e43907afeee3daca5967bba030"
+excluded_go_paths = [
+  "pkg/meta/autoid",
+  "pkg/meta/metabuild",
+  "pkg/meta/metadef",
+  "pkg/meta/model",
+  "pkg/meta/tidbvar",
 ]
 rust_files = [
+  "rust/crates/tidb-meta/Cargo.toml",
   "rust/crates/tidb-meta/src/element.rs",
   "rust/crates/tidb-meta/src/error.rs",
   "rust/crates/tidb-meta/src/key.rs",
@@ -27,3 +29,13 @@ rust_files = [
 name = "meta_semantics"
 cwd = "rust"
 argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-meta"]
+
+[[tests]]
+name = "meta_catalog_read_consumer"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-exec", "--test", "all", "cluster_catalog_loader_source"]
+
+[[tests]]
+name = "meta_catalog_write_consumer"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-exec", "--test", "all", "cluster_ddl_source"]

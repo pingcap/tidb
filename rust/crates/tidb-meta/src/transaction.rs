@@ -12,7 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Transaction-backed operations owned by `pkg/meta/meta.go`.
+//! Transaction-backed operations owned by `pkg/meta/meta.go`,
+//! `pkg/meta/meta_autoid.go`, and `pkg/meta/reader.go`.
 //!
 //! The Go owner builds its `Mutator` over `structure.TxStructure`; this module
 //! keeps the same division. [`RawTransaction`] owns raw encoded bytes while
@@ -837,6 +838,26 @@ impl<T> Clone for Mutator<T> {
     }
 }
 
+impl<T> Mutator<T> {
+    fn from_raw(transaction: T, start_ts: u64) -> Self {
+        Self {
+            transaction: Arc::new(Mutex::new(transaction)),
+            start_ts,
+        }
+    }
+}
+
+impl<T: MetaSnapshot> Mutator<T> {
+    /// Go `NewReader`: marks a snapshot as an internal metadata request
+    /// without applying the transaction-only mutator configuration.
+    #[must_use]
+    pub fn new_reader(mut snapshot: T) -> Self {
+        snapshot.mark_internal_meta_request();
+        let start_ts = snapshot.start_ts();
+        Self::from_raw(snapshot, start_ts)
+    }
+}
+
 impl<T: RawTransaction> Mutator<T> {
     /// Go `NewMutator` without options.
     #[must_use]
@@ -851,10 +872,7 @@ impl<T: RawTransaction> Mutator<T> {
     pub fn new_with_options(mut transaction: T, options: &mut [MutatorOption<T>]) -> Self {
         transaction.configure_meta_mutator();
         let start_ts = transaction.start_ts();
-        let mut meta = Self {
-            transaction: Arc::new(Mutex::new(transaction)),
-            start_ts,
-        };
+        let mut meta = Self::from_raw(transaction, start_ts);
         for option in options {
             option(&mut meta);
         }
