@@ -22,9 +22,9 @@
 //! represented. DEFERRED to when that hierarchy lands: `deriveCoercibilityFor*`,
 //! `deriveCollation`, `inferCollation`, `CheckAndDeriveCollationFromExprs`,
 //! `safeConvert`, `fixStringTypeForMaxLength`, and `illegalMixCollationErr` (all
-//! take `Expression`/`BuildContext`/`EvalContext`), and `collationInfo.Hash64`
-//! (Go uses `pkg/planner/cascades/base.Hasher`, which sits above this crate --
-//! porting it here would invert the layering).
+//! take `Expression`/`BuildContext`/`EvalContext`). `collationInfo.Hash64` is
+//! dependency-free here: it writes directly into the same FNV-1a accumulator
+//! instead of importing Go's planner-layer hasher interface.
 
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
@@ -124,6 +124,20 @@ pub struct CollationInfo {
 }
 
 impl CollationInfo {
+    /// Go `collationInfo.Hash64`, including the lazy-initialization bit as a
+    /// separate field from the current coercibility value.
+    #[must_use]
+    pub fn hash64(&self) -> u64 {
+        let mut hash = FNV_OFFSET_64;
+        fnv_hash_value(&mut hash, self.coer.load(Ordering::SeqCst) as u64);
+        fnv_hash_value(&mut hash, u64::from(self.coer_init.load(Ordering::SeqCst)));
+        fnv_hash_value(&mut hash, self.repertoire.0 as u64);
+        fnv_hash_string(&mut hash, &self.charset);
+        fnv_hash_string(&mut hash, &self.collation);
+        fnv_hash_value(&mut hash, u64::from(self.is_explicit_charset));
+        hash
+    }
+
     /// Go `HasCoercibility`: whether the coercibility has been initialized.
     #[must_use]
     pub fn has_coercibility(&self) -> bool {
@@ -206,6 +220,21 @@ impl PartialEq for CollationInfo {
 
 impl Eq for CollationInfo {}
 
+const FNV_OFFSET_64: u64 = 14_695_981_039_346_656_037;
+const FNV_PRIME_64: u64 = 1_099_511_628_211;
+
+fn fnv_hash_value(hash: &mut u64, value: u64) {
+    *hash ^= value;
+    *hash = hash.wrapping_mul(FNV_PRIME_64);
+}
+
+fn fnv_hash_string(hash: &mut u64, value: &str) {
+    fnv_hash_value(hash, value.len() as u64);
+    for character in value.chars() {
+        fnv_hash_value(hash, u64::from(character as u32));
+    }
+}
+
 /// Go `isUnicodeCollation`: whether the charset is a Unicode charset.
 #[must_use]
 pub fn is_unicode_collation(ch: &str) -> bool {
@@ -246,6 +275,18 @@ pub fn get_bin_collation(cs: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicBool, AtomicI32};
+
+    fn source_collation_info(charset: &str, collation: &str) -> CollationInfo {
+        CollationInfo {
+            coer: AtomicI32::new(1),
+            coer_init: AtomicBool::new(false),
+            repertoire: Repertoire(1),
+            charset: charset.to_owned(),
+            collation: collation.to_owned(),
+            is_explicit_charset: false,
+        }
+    }
 
     #[test]
     fn repertoire_bit_values() {
@@ -289,6 +330,42 @@ mod tests {
         let mut c = a.clone();
         c.set_repertoire(Repertoire::ASCII);
         assert_ne!(a, c);
+    }
+
+    /// Source: `pkg/expression/collation_test.go::TestCollationHashEquals`.
+    #[test]
+    fn collation_hash_equals_matches_source() {
+        let c1 = source_collation_info("aa", "bb");
+        let mut c2 = source_collation_info("aabb", "");
+        assert_ne!(c1.hash64(), c2.hash64());
+        assert_ne!(c1, c2);
+
+        c2.set_charset_and_collation("aa", "bb");
+        assert_eq!(c1.hash64(), c2.hash64());
+        assert_eq!(c1, c2);
+
+        c2.coer.store(2, Ordering::SeqCst);
+        assert_ne!(c1.hash64(), c2.hash64());
+        assert_ne!(c1, c2);
+
+        c2.coer.store(1, Ordering::SeqCst);
+        c2.coer_init.store(true, Ordering::SeqCst);
+        assert_ne!(c1.hash64(), c2.hash64());
+        assert_ne!(c1, c2);
+
+        c2.coer_init.store(false, Ordering::SeqCst);
+        c2.repertoire = Repertoire(2);
+        assert_ne!(c1.hash64(), c2.hash64());
+        assert_ne!(c1, c2);
+
+        c2.repertoire = Repertoire(1);
+        c2.set_charset_and_collation("", "aabb");
+        assert_ne!(c1.hash64(), c2.hash64());
+        assert_ne!(c1, c2);
+
+        c2.set_charset_and_collation("aa", "bb");
+        assert_eq!(c1.hash64(), c2.hash64());
+        assert_eq!(c1, c2);
     }
 
     #[test]
