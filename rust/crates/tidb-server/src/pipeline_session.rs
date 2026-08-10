@@ -216,6 +216,10 @@ impl QuerySessionFactory for PipelineSessionFactory {
 }
 
 impl QuerySession for PipelineServerSession {
+    fn wait_timeout(&self) -> std::time::Duration {
+        self.session.wait_timeout()
+    }
+
     /// The live status word Go reads with `cc.ctx.Status()` before every
     /// OK/EOF packet: this session owns a real transaction and a real
     /// `autocommit` variable, so both bits come from it rather than from a

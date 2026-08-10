@@ -24,8 +24,9 @@ use tidb_protocol::result_encoder::ResultEncoder;
 use tidb_protocol::{
     decode_command, decode_prepared_statement_close, decode_prepared_statement_fetch,
     decode_prepared_statement_send_long_data, encode_prepared_statement_prepare_response,
-    split_prepared_statement_execute, Command, PacketError, PacketReader, PreparedParameterType,
-    PreparedParameterTypes, PreparedValue, DEFAULT_MAX_ALLOWED_PACKET,
+    split_prepared_statement_execute, Command, CompressionAlgorithm, PacketError, PacketIoReader,
+    PacketIoWriter, PacketReader, PreparedParameterType, PreparedParameterTypes, PreparedValue,
+    DEFAULT_MAX_ALLOWED_PACKET,
 };
 
 use crate::auth_exchange::AuthSwitchRequest;
@@ -37,13 +38,14 @@ use crate::connection_writers::{
     access_denied_message, account_locked_message, prepared_parameter_column,
     prepared_statement_id, write_affected_rows_ok, write_eof_or_ok, write_error, write_ok,
     write_packet_to, write_payload, write_query_error, write_query_error_at,
-    write_unknown_statement, TcpResultSetSink, WireFraming,
+    write_unknown_statement, ConnectionPacketOutput, TcpResultSetSink, WireFraming,
 };
 use crate::cursor_state::{CursorFetchError, CursorState};
 use crate::handshake::{
     negotiate_capabilities, parse_response, parse_response_header, InitialHandshake,
-    AUTH_NATIVE_PASSWORD, CLIENT_CONNECT_ATTRS, CLIENT_CONNECT_WITH_DB, CLIENT_PLUGIN_AUTH,
-    CLIENT_PROTOCOL_41, CLIENT_SECURE_CONNECTION, CLIENT_SSL, DEFAULT_COLLATION_ID,
+    AUTH_NATIVE_PASSWORD, CLIENT_COMPRESS, CLIENT_CONNECT_ATTRS, CLIENT_CONNECT_WITH_DB,
+    CLIENT_PLUGIN_AUTH, CLIENT_PROTOCOL_41, CLIENT_SECURE_CONNECTION, CLIENT_SSL,
+    CLIENT_ZSTD_COMPRESSION_ALGORITHM, DEFAULT_COLLATION_ID,
 };
 use crate::mysql_tls::{ClientStream, MysqlServerTls};
 use crate::native_password::generate_handshake_salt;
@@ -78,9 +80,9 @@ enum PreparedCursorOpenError {
     Transport(MysqlConnectionError),
 }
 
-fn open_prepared_cursor(
+fn open_prepared_cursor<O: ConnectionPacketOutput + ?Sized>(
     result: &mut QueryResult<'_>,
-    output: &mut ClientStream,
+    output: &mut O,
     framing: WireFraming,
     result_encoder: ResultEncoder,
 ) -> Result<CursorState, PreparedCursorOpenError> {
@@ -155,11 +157,13 @@ const CLIENT_DEPRECATE_EOF: u32 = 1 << 24;
 /// the packet did not contain, so every field after the auth data -- database,
 /// auth plugin, connection attributes -- was read one field early.
 const SERVER_CAPABILITIES: u32 = CLIENT_PROTOCOL_41
+    | CLIENT_COMPRESS
     | CLIENT_CONNECT_WITH_DB
     | CLIENT_SECURE_CONNECTION
     | CLIENT_PLUGIN_AUTH
     | CLIENT_CONNECT_ATTRS
-    | CLIENT_DEPRECATE_EOF;
+    | CLIENT_DEPRECATE_EOF
+    | CLIENT_ZSTD_COMPRESSION_ALGORITHM;
 const ER_ACCESS_DENIED_ERROR: u16 = 1045;
 const ER_UNKNOWN_COM_ERROR: u16 = 1047;
 /// SQLSTATE `08S01` for [`ER_UNKNOWN_COM_ERROR`]. Go resolves every ERR
@@ -698,6 +702,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             });
         }
     };
+    let zstd_level = response.zstd_level;
     // Handshake parsing is byte-authoritative, matching Go strings. The
     // configured account/session owners are UTF-8-native today, so conversion
     // is explicit at that boundary rather than silently replacing bytes in
@@ -944,6 +949,22 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         protocol_41,
     )?;
 
+    // Authentication is always ordinary MySQL packet I/O. Only after its OK
+    // has been flushed does Go activate the negotiated command codec. Keep
+    // that one transition here, where both read and write directions are
+    // still owned together; zlib wins when a client advertises both bits.
+    let compression = if capabilities & CLIENT_COMPRESS != 0 {
+        CompressionAlgorithm::Zlib
+    } else if capabilities & CLIENT_ZSTD_COMPRESSION_ALGORITHM != 0 {
+        CompressionAlgorithm::Zstd
+    } else {
+        CompressionAlgorithm::None
+    };
+    let mut reader = PacketIoReader::new(reader.into_inner(), compression)?;
+    reader.set_max_allowed_packet(max_allowed_packet);
+    let mut output = PacketIoWriter::new(output, compression)?;
+    output.set_zstd_level(zstd_level);
+
     // The connection-lifetime half of the framing, and ALL of it: only the
     // capabilities negotiated at handshake live this long. The status word and
     // the warning count are per-statement facts Go re-reads off the session at
@@ -967,6 +988,17 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 exit: ConnectionExit::Killed,
             });
         }
+        // Go's PacketIO owns one compressed-envelope sequence shared by its
+        // reader and writer. Rust keeps the directional codecs separate, so
+        // the connection owner hands the next value across at each turn.
+        if let Some(sequence) = output.compressed_sequence() {
+            reader.set_compressed_sequence(sequence);
+        }
+        let wait_timeout = engine.wait_timeout();
+        reader
+            .get_ref()
+            .set_read_timeout((!wait_timeout.is_zero()).then_some(wait_timeout))
+            .map_err(MysqlConnectionError::Io)?;
         reader.set_sequence(0);
         let payload = match reader.read_packet() {
             Ok(payload) => payload,
@@ -991,6 +1023,9 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             }
             Err(error) => return Err(error.into()),
         };
+        if let Some(sequence) = reader.compressed_sequence() {
+            output.set_compressed_sequence(sequence);
+        }
         // Go `clientConn.dispatch` calls `initResultEncoder` here, once per
         // COMMAND: `@@character_set_results` can be `SET` between two
         // statements, and the second one has to go out in the new charset.

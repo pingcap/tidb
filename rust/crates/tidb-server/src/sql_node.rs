@@ -655,6 +655,15 @@ pub trait QuerySession {
     /// Starts one sequential query and returns its lazy result owner.
     fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError>;
 
+    /// Maximum idle time while waiting for the next command packet.
+    ///
+    /// Go refreshes `PacketIO` from this session's `@@wait_timeout` before
+    /// every command. Sessions without a variable store retain TiDB's 28,800
+    /// second default rather than inheriting a listener-wide timeout.
+    fn wait_timeout(&self) -> Duration {
+        Duration::from_secs(28_800)
+    }
+
     /// Prepares a statement of any shape, reporting the marker count and the
     /// result columns a PREPARE sends.
     ///

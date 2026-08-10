@@ -32,6 +32,8 @@ use crate::handshake_response::{HandshakeResponse41, WireString};
 
 /// MySQL `CLIENT_CONNECT_WITH_DB`.
 pub const CLIENT_CONNECT_WITH_DB: u32 = 1 << 3;
+/// MySQL `CLIENT_COMPRESS` (zlib compressed command packets).
+pub const CLIENT_COMPRESS: u32 = 1 << 5;
 /// MySQL `CLIENT_PROTOCOL_41`.
 pub const CLIENT_PROTOCOL_41: u32 = 1 << 9;
 /// MySQL `CLIENT_SSL`.

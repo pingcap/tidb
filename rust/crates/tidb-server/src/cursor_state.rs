@@ -25,9 +25,8 @@ use tidb_util::memory::{
     ActionWithPriority, ArcAction, DEF_CURSOR_FETCH_SPILL_PRIORITY, LABEL_FOR_CURSOR_FETCH,
 };
 
-use crate::connection_writers::{write_eof_or_ok, write_packet_to};
+use crate::connection_writers::{write_eof_or_ok, write_packet_to, ConnectionPacketOutput};
 use crate::mysql_connection::MysqlConnectionError;
-use crate::mysql_tls::ClientStream;
 use crate::resultset_source::ResultSetSource;
 use crate::sql_node::{CursorMaterializationAuthority, QueryResult, SqlQueryError};
 
@@ -173,9 +172,9 @@ impl CursorState {
         (row_count, row_count >= remaining)
     }
 
-    pub(crate) fn write_fetch(
+    pub(crate) fn write_fetch<O: ConnectionPacketOutput + ?Sized>(
         &mut self,
-        output: &mut ClientStream,
+        output: &mut O,
         row_count: usize,
         options: tidb_protocol::ResultSetOptions,
     ) -> Result<(), CursorFetchError> {

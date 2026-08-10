@@ -1206,6 +1206,10 @@ impl ClusterServerSession {
 }
 
 impl QuerySession for ClusterServerSession {
+    fn wait_timeout(&self) -> std::time::Duration {
+        self.session.wait_timeout()
+    }
+
     /// The live status word Go reads with `cc.ctx.Status()` before every
     /// OK/EOF packet. The driver session owns the transaction state this tier
     /// acts on, so the wire word and the tier's behaviour cannot disagree.

@@ -62,7 +62,6 @@ mod cluster_privileges;
 pub mod cluster_session;
 pub mod cluster_session_node;
 pub mod cluster_sysvar_seam;
-mod compressed_command_io;
 mod configured_user_store;
 pub mod connection_resultset;
 mod connection_writers;
@@ -117,9 +116,6 @@ pub use cluster_privileges::{registry_from_cluster, LoadedRegistry, SkippedGrant
 use cluster_session_node::run_cluster_session_node_with_spill;
 pub use cluster_session_node::{
     run_cluster_session_node, ClusterServerSession, ClusterSessionFactory,
-};
-pub use compressed_command_io::{
-    CommandIoError, CommandIoOutcome, CompressedCommandIo, NegotiatedCompression, CLIENT_COMPRESS,
 };
 pub use configured_user_store::{
     AuthenticatedIdentity, ConfiguredUserStore, ConfiguredUserStoreError,

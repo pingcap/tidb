@@ -40,6 +40,7 @@ use std::io::{self, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::{ServerConfig, ServerConnection, StreamOwned};
@@ -260,6 +261,19 @@ impl ClientStream {
         let stream = tls.accept(socket)?;
         *guard = ClientStreamInner::Tls(Box::new(stream));
         Ok(())
+    }
+
+    /// Applies the session's command read timeout to the underlying socket.
+    ///
+    /// TLS changes the byte codec, not the socket authority. Updating the
+    /// `TcpStream` inside `StreamOwned` keeps `SET wait_timeout` effective on
+    /// the next command in both transport modes.
+    pub fn set_read_timeout(&self, timeout: Option<Duration>) -> io::Result<()> {
+        match &*self.inner.lock().expect("client stream lock") {
+            ClientStreamInner::Plain(stream) => stream.set_read_timeout(timeout),
+            ClientStreamInner::Tls(stream) => stream.sock.set_read_timeout(timeout),
+            ClientStreamInner::Upgrading => Err(io::Error::other("connection is mid-upgrade")),
+        }
     }
 }
 

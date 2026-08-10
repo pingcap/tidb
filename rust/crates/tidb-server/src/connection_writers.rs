@@ -18,10 +18,12 @@
 //! split, and the fact that a status word is only ever read from live session
 //! facts (see [`WireStatus`]) — live in exactly one place.
 
+use std::io::Write;
 use tidb_protocol::result_encoder::ResultEncoder;
+
 use tidb_protocol::{
-    encode_error_packet, encode_ok_packet, ColumnInfo, ErrorPacket, OkPacket, PacketWriter,
-    ResultSetOptions, BINARY_DEFAULT_COLLATION_ID, MYSQL_TYPE_LONGLONG,
+    encode_error_packet, encode_ok_packet, ColumnInfo, ErrorPacket, OkPacket, PacketIoWriter,
+    PacketWriter, ResultSetOptions, BINARY_DEFAULT_COLLATION_ID, MYSQL_TYPE_LONGLONG,
 };
 
 use crate::mysql_connection::MysqlConnectionError;
@@ -32,8 +34,8 @@ use crate::sql_node::SqlQueryError;
 use crate::wire_status::WireStatus;
 
 /// Writes the OK packet that answers a successful prepared write.
-pub(crate) fn write_affected_rows_ok(
-    output: &mut ClientStream,
+pub(crate) fn write_affected_rows_ok<O: ConnectionPacketOutput + ?Sized>(
+    output: &mut O,
     sequence: u8,
     affected_rows: u64,
     last_insert_id: u64,
@@ -78,22 +80,21 @@ pub(crate) fn prepared_parameter_column() -> ColumnInfo {
 }
 
 /// Writes one packet with an explicit sequence number.
-pub(crate) fn write_packet_to(
-    output: &mut ClientStream,
+pub(crate) fn write_packet_to<O: ConnectionPacketOutput + ?Sized>(
+    output: &mut O,
     sequence: u8,
     payload: &[u8],
 ) -> Result<(), MysqlConnectionError> {
-    let mut writer = PacketWriter::with_sequence(output, sequence);
-    writer
-        .write_packet(payload)
-        .and_then(|()| writer.flush())
+    output
+        .write_packet(sequence, payload)
+        .map(|_| ())
         .map_err(|error| MysqlConnectionError::PartialResult(error.to_string()))
 }
 
 /// Writes the terminal EOF (or its deprecate-EOF OK form) carrying the given
 /// options' status flags.
-pub(crate) fn write_eof_or_ok(
-    output: &mut ClientStream,
+pub(crate) fn write_eof_or_ok<O: ConnectionPacketOutput + ?Sized>(
+    output: &mut O,
     sequence: u8,
     options: ResultSetOptions,
 ) -> Result<(), MysqlConnectionError> {
@@ -107,8 +108,8 @@ pub(crate) fn write_eof_or_ok(
     write_packet_to(output, sequence, &payload)
 }
 
-pub(crate) fn write_unknown_statement(
-    output: &mut ClientStream,
+pub(crate) fn write_unknown_statement<O: ConnectionPacketOutput + ?Sized>(
+    output: &mut O,
     statement_id: u32,
     command: &str,
     protocol_41: bool,
@@ -139,8 +140,8 @@ pub(crate) fn write_unknown_statement(
 /// None of these commands runs a statement, so none resets the warning buffer
 /// and each reports the count the preceding statement left -- which is what
 /// `ctx.WarningCount()` reads at that moment too.
-pub(crate) fn write_ok(
-    output: &mut ClientStream,
+pub(crate) fn write_ok<O: ConnectionPacketOutput + ?Sized>(
+    output: &mut O,
     sequence: u8,
     status: WireStatus,
     warnings: u16,
@@ -190,16 +191,16 @@ impl WireFraming {
     }
 }
 
-pub(crate) fn write_query_error(
-    output: &mut ClientStream,
+pub(crate) fn write_query_error<O: ConnectionPacketOutput + ?Sized>(
+    output: &mut O,
     error: &SqlQueryError,
     protocol_41: bool,
 ) -> Result<(), MysqlConnectionError> {
     write_query_error_at(output, 1, error, protocol_41)
 }
 
-pub(crate) fn write_query_error_at(
-    output: &mut ClientStream,
+pub(crate) fn write_query_error_at<O: ConnectionPacketOutput + ?Sized>(
+    output: &mut O,
     sequence: u8,
     error: &SqlQueryError,
     protocol_41: bool,
@@ -247,8 +248,8 @@ pub(crate) fn account_locked_message(user: &str, host: &str) -> String {
     format!("Access denied for user '{user}'@'{host}'. Account is locked.")
 }
 
-pub(crate) fn write_error(
-    output: &mut ClientStream,
+pub(crate) fn write_error<O: ConnectionPacketOutput + ?Sized>(
+    output: &mut O,
     sequence: u8,
     code: u16,
     state: [u8; 5],
@@ -264,25 +265,50 @@ pub(crate) fn write_error(
     write_payload(output, sequence, &payload)
 }
 
-pub(crate) fn write_payload(
-    output: &mut ClientStream,
+pub(crate) fn write_payload<O: ConnectionPacketOutput + ?Sized>(
+    output: &mut O,
     sequence: u8,
     payload: &[u8],
 ) -> Result<(), MysqlConnectionError> {
-    let mut writer = PacketWriter::with_sequence(output, sequence);
-    writer.write_packet(payload)?;
-    writer.flush()?;
-    Ok(())
+    output.write_packet(sequence, payload).map(|_| ())
 }
 
-pub(crate) struct TcpResultSetSink<'a> {
-    output: &'a mut ClientStream,
+/// One connection-owned logical-packet output.
+///
+/// Authentication uses the raw stream. After the authentication OK, the same
+/// response encoders use [`PacketIoWriter`] through this boundary, so packet
+/// framing and negotiated compression cannot diverge by command type.
+pub(crate) trait ConnectionPacketOutput {
+    fn write_packet(&mut self, sequence: u8, payload: &[u8]) -> Result<u8, MysqlConnectionError>;
+}
+
+impl ConnectionPacketOutput for ClientStream {
+    fn write_packet(&mut self, sequence: u8, payload: &[u8]) -> Result<u8, MysqlConnectionError> {
+        let mut writer = PacketWriter::with_sequence(self, sequence);
+        writer.write_packet(payload)?;
+        writer.flush()?;
+        Ok(writer.sequence())
+    }
+}
+
+impl<W: Write> ConnectionPacketOutput for PacketIoWriter<W> {
+    fn write_packet(&mut self, sequence: u8, payload: &[u8]) -> Result<u8, MysqlConnectionError> {
+        self.set_sequence(sequence);
+        self.write_packet(payload)?;
+        let next_sequence = self.sequence();
+        self.flush()?;
+        Ok(next_sequence)
+    }
+}
+
+pub(crate) struct TcpResultSetSink<'a, O: ConnectionPacketOutput + ?Sized> {
+    output: &'a mut O,
     sequence: u8,
     packets: usize,
 }
 
-impl<'a> TcpResultSetSink<'a> {
-    pub(crate) const fn new(output: &'a mut ClientStream, sequence: u8) -> Self {
+impl<'a, O: ConnectionPacketOutput + ?Sized> TcpResultSetSink<'a, O> {
+    pub(crate) const fn new(output: &'a mut O, sequence: u8) -> Self {
         Self {
             output,
             sequence,
@@ -291,15 +317,15 @@ impl<'a> TcpResultSetSink<'a> {
     }
 }
 
-impl ResultSetSink for TcpResultSetSink<'_> {
+impl<O: ConnectionPacketOutput + ?Sized> ResultSetSink for TcpResultSetSink<'_, O> {
     fn write_payload(&mut self, payload: &[u8]) -> Result<(), SinkWriteError> {
-        let mut writer = PacketWriter::with_sequence(&mut *self.output, self.sequence);
-        let result = writer.write_packet(payload).and_then(|()| writer.flush());
-        self.sequence = writer.sequence();
-        result.map_err(|error| SinkWriteError {
-            message: error.to_string(),
-            bytes_escaped: true,
-        })?;
+        self.sequence = self
+            .output
+            .write_packet(self.sequence, payload)
+            .map_err(|error| SinkWriteError {
+                message: error.to_string(),
+                bytes_escaped: true,
+            })?;
         self.packets += 1;
         Ok(())
     }

@@ -31,6 +31,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use tidb_ast::Stmt;
 use tidb_datatype::{Datum, FieldType};
@@ -664,6 +665,22 @@ impl Session {
     #[must_use]
     pub fn vars(&self) -> &SessionVars {
         &self.vars
+    }
+
+    /// The live `@@wait_timeout` used by the MySQL connection before reading
+    /// its next command packet.
+    ///
+    /// The registry validates this as an unsigned seconds value before it can
+    /// enter the session, so parsing here cannot depend on client input shape.
+    #[must_use]
+    pub fn wait_timeout(&self) -> Duration {
+        let seconds = self
+            .vars
+            .get_system("wait_timeout")
+            .expect("wait_timeout is a registered session variable")
+            .parse::<u64>()
+            .expect("wait_timeout validation stores unsigned decimal seconds");
+        Duration::from_secs(seconds)
     }
 
     /// A session sharing `catalog` with its peers.
