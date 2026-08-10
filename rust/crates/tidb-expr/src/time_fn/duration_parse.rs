@@ -535,3 +535,27 @@ pub(crate) fn parse_datetime(value: &str) -> Option<GoDateTime> {
         fsp: fsp.min(MAX_FSP),
     })
 }
+
+#[cfg(test)]
+mod source_tests {
+    use super::is_duration;
+
+    /// Exact Go `TestIsDuration` table. This predicate chooses ADDTIME's
+    /// duration-vs-datetime signature before either parser is invoked.
+    #[test]
+    fn test_is_duration() {
+        for (input, expected) in [
+            ("110:00:00", true),
+            ("aa:bb:cc", false),
+            ("1 01:00:00", true),
+            ("01:00:00.999999", true),
+            ("071231235959.999999", false),
+            ("20171231235959.999999", false),
+            ("2017-01-01 01:01:01.11", false),
+            ("07-12-31 23:59:59.999999", false),
+            ("2007-12-31 23:59:59.999999", false),
+        ] {
+            assert_eq!(is_duration(input), expected, "{input}");
+        }
+    }
+}
