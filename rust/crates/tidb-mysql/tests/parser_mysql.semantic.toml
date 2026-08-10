@@ -1,0 +1,62 @@
+schema = "semantic-package-gate-v3"
+claim = "whole-go-package"
+go_package = "pkg/parser/mysql"
+source_commit = "516a2f291b42bf00ecb5cec9019ec344b9e865a0"
+rust_files = [
+  "rust/crates/tidb-mysql/src/lib.rs",
+  "rust/crates/tidb-mysql/src/charset.rs",
+  "rust/crates/tidb-mysql/src/consts.rs",
+  "rust/crates/tidb-mysql/src/locale.rs",
+  "rust/crates/tidb-mysql/src/privilege.rs",
+  "rust/crates/tidb-mysql/src/simple_case.rs",
+  "rust/crates/tidb-mysql/src/types.rs",
+  "rust/crates/tidb-mysql/src/util.rs",
+  "rust/crates/tidb-mysql/tests/parser_mysql_package_source.rs",
+  "rust/crates/tidb-error/src/mysql/mod.rs",
+  "rust/crates/tidb-error/src/mysql/error.rs",
+  "rust/crates/tidb-error/src/mysql/state.rs",
+  "rust/crates/tidb-error/src/mysql/errcode/mod.rs",
+  "rust/crates/tidb-error/src/mysql/errcode/all_codes_1.rs",
+  "rust/crates/tidb-error/src/mysql/errcode/consts_1.rs",
+  "rust/crates/tidb-error/src/mysql/errcode/consts_2.rs",
+  "rust/crates/tidb-error/src/mysql/errname/mod.rs",
+  "rust/crates/tidb-error/src/mysql/errname/catalog_1.rs",
+  "rust/crates/tidb-error/src/mysql/errname/catalog_2.rs",
+  "rust/crates/tidb-error/src/mysql/errname/catalog_3.rs",
+  "rust/crates/tidb-error/src/mysql/errname/consts_1.rs",
+  "rust/crates/tidb-error/src/mysql/errname/consts_2.rs",
+  "rust/crates/tidb-error/src/mysql/errname/consts_3.rs",
+  "rust/crates/tidb-error/tests/parser_mysql_package_source.rs",
+  "rust/crates/tidb-error/tests/error_catalog_source.rs",
+]
+extra_artifacts = ["rust/scripts/generate-parser-mysql-unicode.py"]
+
+[[tests]]
+name = "parser_mysql_value_contracts"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-mysql", "--test", "parser_mysql_package_source"]
+
+[[tests]]
+name = "parser_mysql_error_contracts"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-error", "--test", "parser_mysql_package_source"]
+
+[[tests]]
+name = "parser_mysql_catalog_contracts"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-error", "--test", "error_catalog_source", "parser_mysql_"]
+
+[[tests]]
+name = "parser_mysql_sql_mode_consumer"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-parser", "--lib", "tests::field_type_source::real_as_float_sql_mode_matches_go", "--", "--exact"]
+
+[[tests]]
+name = "parser_mysql_wire_error_consumer"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-protocol", "--test", "all", "error_packet_source::"]
+
+[[tests]]
+name = "parser_mysql_wire_status_consumer"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-server", "--lib", "wire_status::tests::"]
