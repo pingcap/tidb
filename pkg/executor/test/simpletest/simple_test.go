@@ -320,8 +320,6 @@ func TestMaxUserConnections(t *testing.T) {
 }
 
 func TestUser(t *testing.T) {
-	t.Run("AlterUserPreservesRequire", testAlterUserPreservesRequire)
-
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	// Make sure user test not in mysql.User.
@@ -531,7 +529,7 @@ func TestUser(t *testing.T) {
 	tk.MustQuery("select user from mysql.user where user='engineering' and host = 'us'").Check(testkit.Rows())
 }
 
-func testAlterUserPreservesRequire(t *testing.T) {
+func TestAlterUserPreservesRequire(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
