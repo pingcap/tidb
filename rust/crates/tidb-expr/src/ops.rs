@@ -668,10 +668,17 @@ pub(crate) fn eval_binary_full(
             return Ok(Datum::Null);
         }
         let target_scale = a.scale() + effective_div_precision_increment(div_precision_increment);
-        return Ok(match a.true_div(&b, target_scale) {
-            Some(q) => Datum::Decimal(q),
-            None => Datum::Null,
-        });
+        let quotient = a
+            .true_div(&b, target_scale)
+            .ok_or(EvalError::DecimalOverflow)?;
+        let (precision, fraction) = quotient.precision_and_frac();
+        // Go MyDecimal has nine base-1e9 words. Fractional words may be
+        // rounded/truncated, but an integer part needing a tenth word is
+        // ErrOverflow (1690), as `TestDecimalErrOverflow` pins for `/`.
+        if precision - fraction > 81 {
+            return Err(EvalError::DecimalOverflow);
+        }
+        return Ok(Datum::Decimal(quotient));
     }
     // A Decimal operand (an Int operand promotes to a scale-0 decimal, MySQL's
     // implicit rule) arithmetics/compares exactly; handles its own NullEq.
@@ -1697,6 +1704,29 @@ mod tests {
         assert_eq!(div(dec("0.1"), dec("0.3")), "0.33333");
         assert_eq!(div(Datum::Int(5), Datum::Int(3)), "1.6667");
         assert_eq!(div(Datum::Int(1), Datum::Int(0)), "NULL".to_owned());
+    }
+
+    // Go TestDecimalErrOverflow. The executor layer maps this error class to
+    // errno 1690 / SQLSTATE 22003; this value tier pins which arithmetic
+    // operations must raise it.
+    #[test]
+    fn test_decimal_err_overflow() {
+        let positive = Decimal::from_signed_literal(&format!("81{}", "0".repeat(79)));
+        let negative = positive.negate();
+        let tenth = Decimal::from_literal("0.1");
+
+        for (op, lhs, rhs) in [
+            (BinaryOp::Plus, positive.clone(), positive.clone()),
+            (BinaryOp::Minus, positive.clone(), negative),
+            (BinaryOp::Mul, positive.clone(), positive.clone()),
+            (BinaryOp::Div, positive, tenth),
+        ] {
+            assert_eq!(
+                eval_binary(op, Datum::Decimal(lhs), Datum::Decimal(rhs)),
+                Err(EvalError::DecimalOverflow),
+                "op={op:?}"
+            );
+        }
     }
 
     #[test]
