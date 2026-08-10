@@ -160,6 +160,16 @@ impl List {
         &self.chunks[chk_idx]
     }
 
+    /// Mutable form of Go `GetChunk`.
+    ///
+    /// Go returns the live `*Chunk`, so callers such as table scans can swap
+    /// column owners without copying rows. Rust makes that authority explicit
+    /// by requiring an exclusive borrow of the list.
+    #[must_use]
+    pub fn get_chunk_mut(&mut self, chk_idx: usize) -> &mut Chunk {
+        &mut self.chunks[chk_idx]
+    }
+
     /// Go `AppendRow`: copy `row` into the tail chunk, starting a new one when
     /// the tail is full or has already been accounted (`consumedIdx`).
     pub fn append_row(&mut self, row: Row<'_>) -> RowPtr {

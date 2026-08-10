@@ -48,6 +48,7 @@ owned_rust_files = [
   "rust/crates/tidb-chunk/src/shared_bytes.rs",
   "rust/crates/tidb-chunk/src/sorted_row_container.rs",
   "rust/crates/tidb-chunk/tests/compare_vectors.rs",
+  "rust/crates/tidb-chunk/tests/list_contract.rs",
   "rust/crates/tidb-chunk/tests/pkg_util_chunk_fixture_observation.rs",
   "rust/crates/tidb-chunk/tests/pkg_util_chunk_fixture_probe.rs",
   "rust/crates/tidb-chunk/tests/row_container_contract.rs",
