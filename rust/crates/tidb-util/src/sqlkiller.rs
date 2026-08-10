@@ -16,19 +16,18 @@
 //! per-query kill switch checked by executors.
 //!
 //! Faithful Rust adaptations, none changing observable behavior:
-//! - Go's `chan struct{}` close-broadcast kill event becomes a
-//!   `Mutex`-guarded state with a `Condvar` broadcast: pollable via
-//!   [`SqlKiller::kill_event_triggered`] and blockable via
-//!   [`SqlKiller::wait_kill_event`] — the same one-shot,
-//!   already-triggered-means-immediately-ready semantics as a closed
-//!   channel.
+//! - Go's `chan struct{}` close-broadcast kill event becomes a stable
+//!   [`KillEventSubscription`] over a generation-tagged `Condvar`. Both a
+//!   kill and `Reset` release existing subscribers, while a subscriber
+//!   created after reset waits on the new generation.
 //! - The `Signal` CAS (`0 -> reason`, first signal wins) is the same
 //!   `compare_exchange` on an `AtomicU32`.
 //! - `logutil.BgLogger()` lines map to `tracing`; the `failpoint`
 //!   random-panic injection is Go test machinery with no runtime behavior
 //!   and is not ported.
-//! - Function-pointer fields (`Finish`, `IsConnectionAlive`) become
-//!   `Mutex<Option<Box<dyn Fn ...>>>`.
+//! - Function-pointer fields (`Finish`, `IsConnectionAlive`) become guarded
+//!   callback slots; liveness registration tokens preserve the source's
+//!   conditional compare-and-swap removal.
 //!
 //! The Go package ships no test; the tests below pin the contract:
 //! first-signal-wins, kill-event trigger/reset/late-subscribe semantics,
@@ -36,8 +35,8 @@
 //! `exeerrors` table), connection-alive interval gating (1s, 1ms under
 //! `intest`), and `Reset`.
 
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering::SeqCst};
-use std::sync::{Condvar, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering::SeqCst};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use tidb_error::mysql::FormatArg;
@@ -82,15 +81,65 @@ impl KillSignal {
 }
 
 #[derive(Default)]
-struct KillEvent {
+struct KillEventState {
+    generation: u64,
     triggered: bool,
     desc: String,
-    // Go tracks whether anyone made the channel; here subscription is
-    // implicit in the Condvar, so only the trigger state matters.
 }
 
-type AliveFn = Box<dyn Fn() -> bool + Send + Sync>;
+#[derive(Default)]
+struct KillEventShared {
+    state: Mutex<KillEventState>,
+    ready: Condvar,
+}
+
+/// A stable receiver for one Go kill-event channel generation.
+///
+/// A subscription becomes ready when its generation is killed or reset. A
+/// subscription created after reset belongs to the next generation and waits
+/// independently, matching `GetKillEventChan` returning a newly allocated
+/// channel after `Reset`.
+#[derive(Clone)]
+pub struct KillEventSubscription {
+    shared: Arc<KillEventShared>,
+    generation: u64,
+}
+
+impl KillEventSubscription {
+    fn ready(state: &KillEventState, generation: u64) -> bool {
+        state.triggered || state.generation != generation
+    }
+
+    /// Whether this subscription's channel has been closed.
+    pub fn is_ready(&self) -> bool {
+        let state = self.shared.state.lock().unwrap();
+        Self::ready(&state, self.generation)
+    }
+
+    /// Waits until a kill or reset closes this subscription.
+    pub fn wait(&self) {
+        let mut state = self.shared.state.lock().unwrap();
+        while !Self::ready(&state, self.generation) {
+            state = self.shared.ready.wait(state).unwrap();
+        }
+    }
+}
+
+type AliveFn = Arc<dyn Fn() -> bool + Send + Sync>;
 type FinishFn = Box<dyn Fn() + Send + Sync>;
+
+struct AliveProbe {
+    registration: u64,
+    callback: AliveFn,
+}
+
+/// Identifies one installed connection-liveness callback.
+///
+/// It provides the same conditional removal behavior as Go's
+/// `atomic.Pointer.CompareAndSwap`: clearing an older registration cannot
+/// remove a callback installed later.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ConnectionAliveRegistration(u64);
 
 /// Kills a query (Go `SQLKiller`).
 #[derive(Default)]
@@ -98,49 +147,57 @@ pub struct SqlKiller {
     signal: AtomicU32,
     /// The connection ID.
     pub conn_id: AtomicU64,
-    kill_event: Mutex<KillEvent>,
-    kill_event_cond: Condvar,
+    /// Whether the query is currently writing its result set.
+    pub in_write_result_set: AtomicBool,
+    kill_event: Arc<KillEventShared>,
     finish: Mutex<Option<FinishFn>>,
-    is_connection_alive: Mutex<Option<AliveFn>>,
+    is_connection_alive: Mutex<Option<AliveProbe>>,
+    next_alive_registration: AtomicU64,
     last_check_time: Mutex<Option<Instant>>,
 }
 
 impl SqlKiller {
-    /// Whether the kill event has been triggered (a closed Go channel).
-    pub fn kill_event_triggered(&self) -> bool {
-        self.kill_event.lock().unwrap().triggered
+    /// Returns the current kill-event subscription (Go
+    /// `GetKillEventChan`).
+    pub fn get_kill_event(&self) -> KillEventSubscription {
+        let generation = self.kill_event.state.lock().unwrap().generation;
+        KillEventSubscription {
+            shared: Arc::clone(&self.kill_event),
+            generation,
+        }
     }
 
-    /// Blocks until the kill event triggers (receiving on Go's channel); an
-    /// already-triggered event returns immediately.
+    /// Whether the kill event has been triggered (a closed Go channel).
+    pub fn kill_event_triggered(&self) -> bool {
+        self.kill_event.state.lock().unwrap().triggered
+    }
+
+    /// Subscribes to and waits for the current kill event.
     pub fn wait_kill_event(&self) {
-        let mut event = self.kill_event.lock().unwrap();
-        while !event.triggered {
-            event = self.kill_event_cond.wait(event).unwrap();
-        }
+        self.get_kill_event().wait();
     }
 
     fn trigger_kill_event(&self) {
-        let mut event = self.kill_event.lock().unwrap();
-        if event.triggered {
+        let mut state = self.kill_event.state.lock().unwrap();
+        if state.triggered {
             return;
         }
-        event.triggered = true;
-        self.kill_event_cond.notify_all();
+        state.triggered = true;
+        self.kill_event.ready.notify_all();
     }
 
     fn reset_kill_event(&self) {
-        let mut event = self.kill_event.lock().unwrap();
-        // Go closes a still-open channel so pending receivers wake.
-        event.triggered = false;
-        event.desc.clear();
-        self.kill_event_cond.notify_all();
+        let mut state = self.kill_event.state.lock().unwrap();
+        state.generation = state.generation.wrapping_add(1);
+        state.triggered = false;
+        state.desc.clear();
+        self.kill_event.ready.notify_all();
     }
 
     /// Sets the kill-event reason and sends the signal (Go
     /// `SendKillSignalWithKillEventReason`).
     pub fn send_kill_signal_with_reason(&self, signal: KillSignal, desc: &str) {
-        self.kill_event.lock().unwrap().desc = desc.to_string();
+        self.kill_event.state.lock().unwrap().desc = desc.to_string();
         self.send_kill_signal_inner(signal);
         self.trigger_kill_event();
     }
@@ -174,7 +231,7 @@ impl SqlKiller {
     }
 
     fn kill_event_reason(&self) -> String {
-        self.kill_event.lock().unwrap().desc.clone()
+        self.kill_event.state.lock().unwrap().desc.clone()
     }
 
     /// The error for a kill status (Go `getKillError`); `None` when no kill
@@ -232,35 +289,65 @@ impl SqlKiller {
         *self.finish.lock().unwrap() = None;
     }
 
-    /// Installs the connection-liveness probe.
-    pub fn set_is_connection_alive(&self, f: AliveFn) {
-        *self.is_connection_alive.lock().unwrap() = Some(f);
+    /// Installs the connection-liveness probe and returns its registration.
+    pub fn set_is_connection_alive(
+        &self,
+        f: Box<dyn Fn() -> bool + Send + Sync>,
+    ) -> ConnectionAliveRegistration {
+        let registration = self
+            .next_alive_registration
+            .fetch_add(1, SeqCst)
+            .wrapping_add(1);
+        *self.is_connection_alive.lock().unwrap() = Some(AliveProbe {
+            registration,
+            callback: Arc::from(f),
+        });
+        ConnectionAliveRegistration(registration)
+    }
+
+    /// Removes the probe only when `registration` still owns the slot.
+    pub fn clear_is_connection_alive(&self, registration: ConnectionAliveRegistration) -> bool {
+        let mut probe = self.is_connection_alive.lock().unwrap();
+        if probe.as_ref().map(|p| p.registration) != Some(registration.0) {
+            return false;
+        }
+        *probe = None;
+        true
     }
 
     /// Handles the kill signal, returning the pending kill error (Go
     /// `HandleSignal`). Also polls connection liveness at most once per
     /// second (1ms under `intest`), like the source.
     pub fn handle_signal(&self) -> Option<TerrorError> {
-        {
-            let alive = self.is_connection_alive.lock().unwrap();
-            if let Some(fn_alive) = alive.as_ref() {
-                let check_dur = if intest::IN_TEST {
-                    Duration::from_millis(1)
-                } else {
-                    Duration::from_secs(1)
-                };
-                let now = Instant::now();
+        let alive = self
+            .is_connection_alive
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|probe| Arc::clone(&probe.callback));
+        if let Some(fn_alive) = alive {
+            let check_dur = if intest::IN_TEST {
+                Duration::from_millis(1)
+            } else {
+                Duration::from_secs(1)
+            };
+            let now = Instant::now();
+            let should_check = {
                 let mut last = self.last_check_time.lock().unwrap();
                 match *last {
-                    None => *last = Some(now),
+                    None => {
+                        *last = Some(now);
+                        false
+                    }
                     Some(prev) if now.duration_since(prev) > check_dur => {
                         *last = Some(now);
-                        if !fn_alive() {
-                            self.send_kill_signal_inner(KillSignal::QueryInterrupted);
-                        }
+                        true
                     }
-                    _ => {}
+                    _ => false,
                 }
+            };
+            if should_check && !fn_alive() {
+                self.send_kill_signal_inner(KillSignal::QueryInterrupted);
             }
         }
 
@@ -277,8 +364,13 @@ impl SqlKiller {
 
     /// Checks connection liveness immediately (Go `CheckConnectionAlive`).
     pub fn check_connection_alive(&self) {
-        let alive = self.is_connection_alive.lock().unwrap();
-        if let Some(fn_alive) = alive.as_ref() {
+        let alive = self
+            .is_connection_alive
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|probe| Arc::clone(&probe.callback));
+        if let Some(fn_alive) = alive {
             if !fn_alive() {
                 self.send_kill_signal_inner(KillSignal::QueryInterrupted);
             }
@@ -300,7 +392,6 @@ impl SqlKiller {
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicBool;
-    use std::sync::Arc;
 
     #[test]
     fn first_signal_wins() {
@@ -324,20 +415,39 @@ mod tests {
         let killer = SqlKiller::default();
         killer.conn_id.store(42, SeqCst);
 
-        killer.send_kill_signal(KillSignal::QueryInterrupted);
-        let err = killer.handle_signal().expect("kill pending");
-        assert_eq!(err.code(), exeerrors::ERR_QUERY_INTERRUPTED.code());
+        let cases = [
+            (
+                KillSignal::QueryInterrupted,
+                &*exeerrors::ERR_QUERY_INTERRUPTED,
+            ),
+            (
+                KillSignal::MaxExecTimeExceeded,
+                &*exeerrors::ERR_MAX_EXEC_TIME_EXCEEDED,
+            ),
+            (
+                KillSignal::QueryMemoryExceeded,
+                &*exeerrors::ERR_MEMORY_EXCEED_FOR_QUERY,
+            ),
+            (
+                KillSignal::ServerMemoryExceeded,
+                &*exeerrors::ERR_MEMORY_EXCEED_FOR_INSTANCE,
+            ),
+            (
+                KillSignal::RunawayQueryExceeded,
+                &*exeerrors::ERR_RESOURCE_GROUP_QUERY_RUNAWAY_INTERRUPTED,
+            ),
+        ];
+        for (signal, expected) in cases {
+            killer.send_kill_signal(signal);
+            let err = killer.handle_signal().expect("kill pending");
+            assert_eq!(err.code(), expected.code(), "{signal:?}");
+            killer.reset();
+        }
 
-        killer.reset();
         killer.send_kill_signal_with_reason(KillSignal::KilledByMemArbitrator, "oom risk");
         let err = killer.handle_signal().expect("kill pending");
         assert_eq!(err.code(), exeerrors::ERR_QUERY_EXEC_STOPPED.code());
         assert!(err.message().contains("oom risk"), "{}", err.message());
-        assert!(err.message().contains("42"), "{}", err.message());
-
-        killer.reset();
-        killer.send_kill_signal(KillSignal::QueryMemoryExceeded);
-        let err = killer.handle_signal().expect("kill pending");
         assert!(err.message().contains("42"), "{}", err.message());
 
         killer.reset();
@@ -357,6 +467,35 @@ mod tests {
 
         // A subscriber arriving after the trigger returns immediately.
         killer.wait_kill_event();
+    }
+
+    #[test]
+    fn reset_releases_existing_kill_event_waiters() {
+        let killer = Arc::new(SqlKiller::default());
+        let old_subscription = killer.get_kill_event();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let waiter = {
+            let subscription = old_subscription.clone();
+            std::thread::spawn(move || {
+                started_tx.send(()).unwrap();
+                subscription.wait();
+                done_tx.send(()).unwrap();
+            })
+        };
+
+        started_rx.recv().unwrap();
+        killer.reset();
+        done_rx
+            .recv_timeout(Duration::from_millis(100))
+            .expect("reset must close the existing kill-event subscription");
+        waiter.join().unwrap();
+        assert!(old_subscription.is_ready());
+
+        let new_subscription = killer.get_kill_event();
+        assert!(!new_subscription.is_ready());
+        killer.send_kill_signal(KillSignal::QueryInterrupted);
+        new_subscription.wait();
     }
 
     #[test]
@@ -382,6 +521,22 @@ mod tests {
     }
 
     #[test]
+    fn stale_connection_registration_cannot_clear_replacement() {
+        let killer = SqlKiller::default();
+        let old = killer.set_is_connection_alive(Box::new(|| true));
+        let current = killer.set_is_connection_alive(Box::new(|| false));
+
+        assert!(!killer.clear_is_connection_alive(old));
+        killer.check_connection_alive();
+        assert_eq!(killer.get_kill_signal(), Some(KillSignal::QueryInterrupted));
+
+        killer.reset();
+        assert!(killer.clear_is_connection_alive(current));
+        killer.check_connection_alive();
+        assert_eq!(killer.get_kill_signal(), None);
+    }
+
+    #[test]
     fn finish_func_lifecycle() {
         let killer = SqlKiller::default();
         let called = Arc::new(AtomicU32::new(0));
@@ -395,5 +550,9 @@ mod tests {
         killer.clear_finish_func();
         killer.finish_result_set();
         assert_eq!(called.load(SeqCst), 2);
+
+        killer.in_write_result_set.store(true, SeqCst);
+        assert!(killer.in_write_result_set.load(SeqCst));
+        killer.in_write_result_set.store(false, SeqCst);
     }
 }
