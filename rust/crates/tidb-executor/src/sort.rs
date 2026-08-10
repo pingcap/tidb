@@ -836,18 +836,21 @@ mod tests {
         }]
     }
 
-    /// THE SPILL TEST. A quota the sort cannot hold its rows within, with
-    /// `tidb_enable_tmp_storage_on_oom` ON: the sort must spill (proved by a
-    /// spill file existing on disk while it runs, and by the disk tracker),
-    /// must produce SEVERAL NON-EMPTY sorted runs, and must return every row
-    /// in order -- the same rows the same sort returns unspilled.
+    /// Go source of truth: `sortexec.TestUnparallelSortSpillDisk`.
+    ///
+    /// This is the serial executor equivalent of that test's in-memory and
+    /// multi-partition spill cases. A quota the sort cannot hold its rows
+    /// within, with `tidb_enable_tmp_storage_on_oom` ON, must spill (proved by
+    /// a spill file existing while it runs and by the disk tracker), produce
+    /// several non-empty sorted runs, and return the same rows as an
+    /// unspilled reference execution.
     ///
     /// The input values are shuffled by a stride so that consecutive runs
     /// cover OVERLAPPING ranges. That is what makes the multi-way merge load
     /// bearing: a merge that drained run 0 and then run 1 would emit an
     /// unsorted sequence, and so would one that picked the wrong end.
     #[test]
-    fn a_sort_over_the_quota_spills_to_disk_and_returns_every_row() {
+    fn test_unparallel_sort_spill_disk() {
         let dir = scratch_temp_dir("sortexec");
 
         let n = 8192i64;
