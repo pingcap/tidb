@@ -129,3 +129,35 @@ drop table t;
 create table t (uuid varchar(36) charset utf8mb4 collate utf8mb4_bin, index idx_uuid(uuid));
 insert into t values ('7dce58ba-ba84-4297-94cf-c23cf3a39ed3');
 explain format='plan_tree' select * from t where uuid = cast('7dce58ba-ba84-4297-94cf-c23cf3a39ed3' as binary);
+# latin1_swedish_ci. latin1 still defaults to latin1_bin, so the collation has to be
+# asked for explicitly. The data is written as hex literals because latin1 stores the
+# client's bytes unchanged, and read back with HEX() so the results stay ASCII.
+drop table if exists t_latin1;
+create table t_latin1 (c varchar(10) charset latin1);
+show create table t_latin1;
+drop table if exists t_latin1;
+create table t_latin1 (c varchar(10) charset latin1 collate latin1_swedish_ci, key(c));
+show create table t_latin1;
+insert into t_latin1 values (_latin1 0x61), (_latin1 0x41), (_latin1 0xC4), (_latin1 0xE4), (_latin1 0xD6);
+# 'a' = 'A', and A-umlaut (0xC4) = a-umlaut (0xE4), but neither equals O-umlaut (0xD6).
+select hex(c) from t_latin1 where c = _latin1 0x41 order by hex(c);
+select hex(c) from t_latin1 where c = _latin1 0xC4 order by hex(c);
+select hex(c) from t_latin1 where c = _latin1 0xD6 order by hex(c);
+# The Swedish letters sort after the ASCII alphabet rather than folding into A and O.
+select hex(c) from t_latin1 order by c, hex(c);
+select hex(c) from t_latin1 where c like _latin1 0x41 order by hex(c);
+select count(distinct c) from t_latin1;
+drop table if exists t_latin1;
+# One latin1 byte is one character, including bytes that happen to form valid UTF-8:
+# 0xC3A978 is three latin1 characters, so 'x' sits at position 3 under both collations.
+# A literal on its own is latin1_bin, latin1 being a latin1_bin charset by default, so
+# the case-insensitive comparisons below have to come from the column side.
+drop table if exists t_latin1_pos;
+create table t_latin1_pos (c_bin varchar(10) charset latin1 collate latin1_bin, c_ci varchar(10) charset latin1 collate latin1_swedish_ci);
+insert into t_latin1_pos values (_latin1 0xC3A978, _latin1 0xC3A978), (_latin1 0x61C462, _latin1 0x61C462);
+select hex(c_bin), locate(_latin1 0x78, c_bin), locate(_latin1 0x78, c_ci) from t_latin1_pos order by hex(c_bin);
+select hex(c_bin), instr(c_bin, _latin1 0x78), instr(c_ci, _latin1 0x78) from t_latin1_pos order by hex(c_bin);
+# Only the latin1_swedish_ci column matches on case, or across the folded accents.
+select hex(c_bin), locate(_latin1 0x58, c_bin), locate(_latin1 0x58, c_ci) from t_latin1_pos order by hex(c_bin);
+select hex(c_bin), locate(_latin1 0xE4, c_bin), locate(_latin1 0xE4, c_ci) from t_latin1_pos order by hex(c_bin);
+drop table if exists t_latin1_pos;

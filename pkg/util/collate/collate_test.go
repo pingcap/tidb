@@ -145,11 +145,10 @@ func TestUTF8CollatorKey(t *testing.T) {
 	testKeyTable(t, collations, tests)
 }
 
-// latin1_swedish_ci is deliberately not registered in newCollatorMap yet, so the
-// latin1 tests below construct it directly instead of going through GetCollator.
-// See the doc comment on latin1SwedishCICollator.
+// Both latin1 collators are resolved through GetCollator, so these tests also cover
+// the registration in newCollatorMap.
 func latin1TestCollators() (collators []Collator, names []string) {
-	return []Collator{GetCollator("latin1_bin"), &latin1SwedishCICollator{}},
+	return []Collator{GetCollator("latin1_bin"), GetCollator("latin1_swedish_ci")},
 		[]string{"latin1_bin", "latin1_swedish_ci"}
 }
 

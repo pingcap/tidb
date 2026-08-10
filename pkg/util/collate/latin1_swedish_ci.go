@@ -22,18 +22,15 @@ import (
 
 // latin1SwedishCICollator is the collator for latin1_swedish_ci.
 //
-// It is deliberately NOT registered in newCollatorMap/newCollatorIDMap yet, so
-// GetCollationByName still rejects the collation and no column can be created with
-// it. Enabling it needs three things that are not in place:
-//   - TiKV and TiFlash collators, so pushed-down expression evaluation agrees with
-//     the sort key TiDB writes, plus a guard that keeps expressions in TiDB until
-//     the storage layer understands the collation.
-//   - A byte-safe case fold for the collate.IsCICollation fast paths in
-//     pkg/expression. Those apply strings.ToLower, which assumes UTF-8 and maps
-//     every latin1 byte >= 0x80 to U+FFFD, making distinct characters compare equal.
-//   - The documentation updates tracked in the feature request.
+// The collation is evaluated by TiDB only: TiKV and TiFlash have no collator for it,
+// so expression push-down is blocked for it by collate.SupportedByStorage. Index range
+// scans are not affected, because TiDB computes the range bounds itself and the
+// storage layer only scans the resulting raw byte range. Remove the entry in
+// SupportedByStorage once the storage layer ships a matching collator.
 //
-// Until then this type stands alone and is exercised directly by its unit tests.
+// latin1 remains latin1_bin by default (charset.CollationLatin1). Changing the default
+// to match MySQL would silently re-collate every existing CHARSET latin1 column on
+// upgrade; it would have to go through a switch like the one GBK uses.
 //
 // Unlike the utf8mb4 collators this one is byte-oriented rather than rune-oriented.
 // MySQL defines latin1_swedish_ci as a 256-entry weight table indexed by the cp1252
@@ -51,6 +48,12 @@ import (
 // length as the (space-trimmed) input and index key sizes are unchanged relative to
 // latin1_bin. The sort key is not the raw data though, so latin1_swedish_ci columns
 // need restored data in indexes - see types.NeedRestoredDataWithCollate.
+//
+// One known gap: REGEXP is matched by a UTF-8 based engine, which collate.IsCICollation
+// only makes case-insensitive by handing it the "i" flag. That gives ASCII the right
+// answers but folds bytes >= 0x80 as if they were UTF-8, so accent folding does not
+// follow the weight table there. This matches the accuracy latin1_bin already offers
+// for REGEXP rather than adding a new divergence.
 type latin1SwedishCICollator struct{}
 
 // Compare implements Collator interface.

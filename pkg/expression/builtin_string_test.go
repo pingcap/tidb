@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
@@ -1100,6 +1101,69 @@ func TestLocate(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, f)
 		require.Equalf(t, c["Want"][0], got, "[%d]: args: %v", i, c["Args"])
+	}
+}
+
+// TestLocateAndInstrLatin1 pins the character positions LOCATE and INSTR report for
+// latin1, which is byte oriented: one byte is one character, whether or not the bytes
+// happen to form a valid UTF-8 sequence.
+//
+// The test data spells the interesting characters as raw cp1252 bytes rather than as
+// Go source literals, which the compiler would encode as UTF-8. "\xC3\xA9" is two
+// latin1 characters (Ã ©), and is the case that used to be miscounted as one.
+func TestLocateAndInstrLatin1(t *testing.T) {
+	// New collation is enabled for the whole package by collate's init, and toggling
+	// it here would leak the disabled state into every test that runs afterwards.
+	require.True(t, collate.NewCollationEnabled())
+	ctx := createContext(t)
+
+	const ci = "latin1_swedish_ci"
+	tbl := []struct {
+		fn        string
+		collation string
+		args      []any
+		want      int64
+	}{
+		// A latin1 byte that is not valid UTF-8 counts as one character, and so does
+		// each byte of a sequence that happens to be valid UTF-8.
+		{ast.Locate, charset.CollationLatin1, []any{"x", "\xC4x"}, 2},
+		{ast.Locate, charset.CollationLatin1, []any{"x", "\xC3\xA9x"}, 3},
+		{ast.Locate, ci, []any{"X", "\xC3\xA9x"}, 3},
+		// latin1_bin is case- and accent-sensitive, latin1_swedish_ci folds both.
+		{ast.Locate, charset.CollationLatin1, []any{"\xE4", "a\xC4b"}, 0},
+		{ast.Locate, ci, []any{"\xE4", "a\xC4b"}, 2},
+		{ast.Locate, charset.CollationLatin1, []any{"A", "abc"}, 0},
+		{ast.Locate, ci, []any{"A", "abc"}, 1},
+		// Distinct latin1 characters must stay distinct. Folding with strings.ToLower
+		// would map every byte >= 0x80 to U+FFFD and match these against each other:
+		// Ä (0xC4) weighs 0x5C and Ö (0xD6) weighs 0x5D.
+		{ast.Locate, ci, []any{"\xC4", "\xD6x"}, 0},
+		{ast.Locate, ci, []any{"\xD6", "\xC4x"}, 0},
+		// Three-argument LOCATE starts at a character position.
+		{ast.Locate, ci, []any{"\xE4", "a\xC4b\xC4", 3}, 4},
+		{ast.Locate, ci, []any{"x", "\xC3\xA9x", 3}, 3},
+		{ast.Instr, charset.CollationLatin1, []any{"\xC3\xA9x", "x"}, 3},
+		{ast.Instr, charset.CollationLatin1, []any{"a\xC4b", "\xE4"}, 0},
+		{ast.Instr, ci, []any{"a\xC4b", "\xE4"}, 2},
+		{ast.Instr, ci, []any{"\xD6x", "\xC4"}, 0},
+	}
+
+	for i, c := range tbl {
+		args := types.MakeDatums(c.args...)
+		exprs := datumsToConstants(args)
+		for _, e := range exprs {
+			if e.GetType(ctx).EvalType() != types.ETString {
+				continue
+			}
+			e.GetType(ctx).SetCharset(charset.CharsetLatin1)
+			e.GetType(ctx).SetCollate(c.collation)
+		}
+		f, err := funcs[c.fn].getFunction(ctx, exprs)
+		require.NoErrorf(t, err, "[%d]", i)
+		got, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		require.NoErrorf(t, err, "[%d]", i)
+		require.Equalf(t, c.want, got.GetInt64(),
+			"[%d]: %s(%q) under %s", i, c.fn, c.args, c.collation)
 	}
 }
 
