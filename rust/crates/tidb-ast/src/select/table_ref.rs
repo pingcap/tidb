@@ -16,7 +16,7 @@
 
 use super::*;
 
-/// A table reference in `FROM` (Phase 0: a name path with optional alias).
+/// A table reference in `FROM`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TableRef {
     /// The dotted name path, e.g. `["db", "t"]` or `["t"]`.

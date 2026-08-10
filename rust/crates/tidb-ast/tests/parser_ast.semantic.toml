@@ -1,0 +1,43 @@
+schema = "semantic-package-gate-v3"
+claim = "whole-go-package"
+go_package = "pkg/parser/ast"
+source_commit = "db1d5fd04e8452530ef1032181399631ee2b26f2"
+rust_files = [
+  "rust/crates/tidb-ast/Cargo.toml",
+  "rust/crates/tidb-ast/src/lib.rs",
+  "rust/crates/tidb-ast/tests/all.rs",
+  "rust/crates/tidb-ast/benches/base_source.rs",
+  "rust/crates/tidb-parser/src/tests/mod.rs",
+  "rust/crates/tidb-parser/src/tests/ddl.rs",
+  "rust/crates/tidb-parser/src/tests/ddl_ast_source.rs",
+  "rust/crates/tidb-parser/src/tests/ddl_column_options_source.rs",
+  "rust/crates/tidb-parser/src/tests/ddl_remaining_source.rs",
+  "rust/crates/tidb-parser/src/tests/dml.rs",
+  "rust/crates/tidb-parser/src/tests/dml_join_restore_source.rs",
+  "rust/crates/tidb-parser/src/tests/dml_restore_source.rs",
+  "rust/crates/tidb-parser/src/tests/expressions.rs",
+  "rust/crates/tidb-parser/src/tests/flag.rs",
+  "rust/crates/tidb-parser/src/tests/flush.rs",
+  "rust/crates/tidb-parser/src/tests/format.rs",
+  "rust/crates/tidb-parser/src/tests/functions.rs",
+  "rust/crates/tidb-parser/src/tests/index_source.rs",
+  "rust/crates/tidb-parser/src/tests/load_data.rs",
+  "rust/crates/tidb-parser/src/tests/misc.rs",
+  "rust/crates/tidb-parser/src/tests/placement.rs",
+  "rust/crates/tidb-parser/src/tests/procedure.rs",
+  "rust/crates/tidb-parser/src/tests/resource_group.rs",
+  "rust/crates/tidb-parser/src/tests/restore_context.rs",
+  "rust/crates/tidb-parser/src/tests/sequence.rs",
+  "rust/crates/tidb-parser/src/tests/traffic.rs",
+  "rust/crates/tidb-parser/src/tests/util.rs",
+]
+
+[[tests]]
+name = "parser_ast_owner_contract"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-ast", "--all-targets"]
+
+[[tests]]
+name = "parser_ast_restore_and_visitor_consumers"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-parser", "--lib"]

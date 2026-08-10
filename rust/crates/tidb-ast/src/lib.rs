@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! TiDB SQL abstract syntax tree (Phase 0 subset) with SQL restore.
+//! TiDB SQL abstract syntax tree with canonical SQL restore.
 //!
 //! `restore()` regenerates canonical SQL matching the Go AST's
 //! `Restore(DefaultRestoreFlags)` output (uppercase keywords, back-quoted
