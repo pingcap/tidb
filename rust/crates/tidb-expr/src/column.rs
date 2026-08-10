@@ -123,6 +123,15 @@ impl Column {
         ConstLevel::NONE
     }
 
+    /// Go `InColumnArray`: membership is column identity (`UniqueID`), not
+    /// pointer identity or the legacy table-column `ID`.
+    #[must_use]
+    pub fn in_column_array(&self, columns: &[Column]) -> bool {
+        columns
+            .iter()
+            .any(|column| column.unique_id == self.unique_id)
+    }
+
     /// Go `Column.Eval`: read this column's cell (`row.GetDatum(Index, RetType)`).
     /// The `EvalContext` is unused, as in Go.
     pub fn eval(&self, row: Row<'_>) -> Result<Datum, EvalError> {
@@ -132,6 +141,22 @@ impl Column {
             .ok_or(EvalError::Unsupported("column has no result type"))?;
         Ok(row.get_datum(self.index as usize, ret_type))
     }
+}
+
+/// Go `Column2Exprs`: widen a column slice to the expression domain. Rust's
+/// expression enum owns its variants, so this is the source operation with
+/// the pointer-sharing detail translated into a clone.
+#[must_use]
+pub fn columns_to_expressions(columns: &[Column]) -> Vec<Expression> {
+    columns.iter().cloned().map(Expression::Column).collect()
+}
+
+/// The identity operation inside Go `ColInfo2Col`, separated from the model
+/// wrapper: return the first plan column whose legacy table-column `ID`
+/// equals the requested `ColumnInfo.ID`.
+#[must_use]
+pub fn column_by_id(columns: &[Column], id: i64) -> Option<&Column> {
+    columns.iter().find(|column| column.id == id)
 }
 
 /// Go `CorrelatedColumn`: a column reference bound to a value supplied by an
@@ -218,6 +243,57 @@ mod tests {
             // Go caches the encoded bytes; a second call must be unchanged.
             assert_eq!(column.hash_code(), expected.as_slice());
         }
+    }
+
+    /// Exact Go `TestColumn2Expr`: five columns preserve their position and
+    /// `EqualColumn` identity when widened to the expression domain.
+    #[test]
+    fn test_column2_expr() {
+        let columns: Vec<_> = (0..5).map(col).collect();
+        let expressions = columns_to_expressions(&columns);
+        assert_eq!(expressions.len(), columns.len());
+        for (column, expression) in columns.iter().zip(&expressions) {
+            assert!(column.equal_column(expression));
+        }
+    }
+
+    /// Go `TestColInfo2Col`: lookup uses `ColumnInfo.ID` and returns the first
+    /// matching plan column; an unknown ID returns nil/None.
+    #[test]
+    fn test_col_info2_col() {
+        let columns = [
+            Column {
+                id: 0,
+                unique_id: 10,
+                ..Default::default()
+            },
+            Column {
+                id: 1,
+                unique_id: 11,
+                ..Default::default()
+            },
+        ];
+        let found = column_by_id(&columns, 0).expect("ID 0 must exist");
+        assert!(std::ptr::eq(found, &columns[0]));
+        assert!(column_by_id(&columns, 3).is_none());
+    }
+
+    /// Exact Go `TestInColumnArray`: present, absent and empty/nil shapes.
+    #[test]
+    fn test_in_column_array() {
+        let column0 = Column {
+            id: 0,
+            unique_id: 0,
+            ..Default::default()
+        };
+        let column1 = Column {
+            id: 1,
+            unique_id: 1,
+            ..Default::default()
+        };
+        assert!(column0.in_column_array(&[column0.clone(), column1.clone()]));
+        assert!(!column0.in_column_array(&[column1]));
+        assert!(!column0.in_column_array(&[]));
     }
 
     #[test]
