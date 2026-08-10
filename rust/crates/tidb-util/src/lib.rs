@@ -21,6 +21,7 @@
 pub mod arena;
 pub mod backoff;
 pub mod bitmap;
+pub mod channel;
 pub mod checksum;
 pub mod column_mapping;
 pub mod context;

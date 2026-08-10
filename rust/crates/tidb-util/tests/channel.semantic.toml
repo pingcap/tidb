@@ -1,0 +1,14 @@
+schema = "semantic-package-gate-v3"
+claim = "whole-go-package"
+go_package = "pkg/util/channel"
+source_commit = "d9e197f3bee2ad884cb38c62dfe7c335c6680141"
+rust_files = [
+  "rust/crates/tidb-util/src/channel.rs",
+  "rust/crates/tidb-util/src/lib.rs",
+  "rust/crates/tidb-util/tests/channel_contract.rs",
+]
+
+[[tests]]
+name = "channel_package_semantics"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-util", "--test", "channel_contract"]
