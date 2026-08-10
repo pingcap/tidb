@@ -52,6 +52,8 @@ pub(crate) fn dispatch(
         "UTC_DATE" => utc_date(vals, cols),
         "CURTIME" | "CURRENT_TIME" => current_time(vals, cols),
         "UTC_TIME" => utc_time(vals, cols),
+        "MICROSECOND" => microsecond(vals),
+        "TIME" => time(vals, cols),
         "MONTH" => month(vals),
         "DAY" | "DAYOFMONTH" => day_of_month(vals),
         "DAYOFWEEK" => day_of_week(vals),
@@ -180,6 +182,44 @@ fn utc_time(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
         fsp.unwrap_or(0),
         fsp.is_some(),
     )))
+}
+
+/// `builtinMicroSecondSig.evalInt`: read the fractional component of the
+/// ETDuration argument. Go deliberately suppresses a duration-cast error and
+/// returns NULL, unlike `TIME()` which reports the same truncation through the
+/// statement context.
+fn microsecond(vals: &[Datum]) -> Result<Datum, EvalError> {
+    if vals.len() != 1 {
+        return Err(EvalError::Unsupported("bad function arity"));
+    }
+    let Some(value) = coerce_str(&vals[0])? else {
+        return Ok(Datum::Null);
+    };
+    let fsp = duration_parse::get_fsp(&value);
+    Ok(match duration_parse::parse_duration(&value, fsp) {
+        Ok(duration) => Datum::Int(duration.micro_second()),
+        Err(_) => Datum::Null,
+    })
+}
+
+/// `builtinTimeSig.evalDuration`: parse the string as a TiDB duration while
+/// preserving its written FSP. `ErrTruncatedWrongVal` is a statement warning
+/// for a SELECT and leaves Go's zero-value duration as the result.
+fn time(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
+    if vals.len() != 1 {
+        return Err(EvalError::Unsupported("bad function arity"));
+    }
+    let Some(value) = coerce_str(&vals[0])? else {
+        return Ok(Datum::Null);
+    };
+    let fsp = duration_parse::get_fsp(&value);
+    match duration_parse::parse_duration(&value, fsp) {
+        Ok(duration) => Ok(Datum::new_string(duration.format())),
+        Err(_) => {
+            cols.handle_truncate(&format!("Truncated incorrect time value: '{value}'"))?;
+            Ok(Datum::new_string("00:00:00".to_owned()))
+        }
+    }
 }
 
 fn no_clock_err() -> EvalError {
@@ -1040,6 +1080,91 @@ fn time_format(vals: &[Datum]) -> Result<Datum, EvalError> {
         }
     }
     Ok(Datum::new_string(out))
+}
+
+#[cfg(test)]
+mod clock_source_tests {
+    use std::cell::RefCell;
+
+    use super::*;
+
+    #[derive(Default)]
+    struct WarningContext {
+        warnings: RefCell<Vec<(u16, String)>>,
+    }
+
+    impl Columns for WarningContext {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+
+        fn append_warning(&self, code: u16, message: &str) {
+            self.warnings.borrow_mut().push((code, message.to_owned()));
+        }
+    }
+
+    fn source_eval(name: &str, args: &[Datum], ctx: &WarningContext) -> Result<Datum, EvalError> {
+        crate::func::eval_func_values_in(name, args, ctx)
+            .or_else(|| dispatch(name, args, ctx))
+            .expect("TestClock builtin must be dispatched")
+    }
+
+    fn string(value: &str) -> Datum {
+        Datum::new_string(value.to_owned())
+    }
+
+    /// Exact Go `TestClock`: HOUR, MINUTE, SECOND, MICROSECOND and TIME over
+    /// its three source values, every NULL arm, and the malformed TIME warning.
+    #[test]
+    fn test_clock() {
+        let ctx = WarningContext::default();
+        for (input, hour, minute, second, micros, time) in [
+            ("10:10:10.123456", 10, 10, 10, 123_456, "10:10:10.123456"),
+            ("11:11:11.11", 11, 11, 11, 110_000, "11:11:11.11"),
+            ("2010-10-10 11:11:11.11", 11, 11, 11, 110_000, "11:11:11.11"),
+        ] {
+            let args = [string(input)];
+            assert_eq!(source_eval("HOUR", &args, &ctx).unwrap(), Datum::Int(hour));
+            assert_eq!(
+                source_eval("MINUTE", &args, &ctx).unwrap(),
+                Datum::Int(minute)
+            );
+            assert_eq!(
+                source_eval("SECOND", &args, &ctx).unwrap(),
+                Datum::Int(second)
+            );
+            assert_eq!(
+                source_eval("MICROSECOND", &args, &ctx).unwrap(),
+                Datum::Int(micros)
+            );
+            assert_eq!(source_eval("TIME", &args, &ctx).unwrap(), string(time));
+        }
+
+        for name in ["HOUR", "MINUTE", "SECOND", "MICROSECOND", "TIME"] {
+            assert_eq!(
+                source_eval(name, &[Datum::Null], &ctx).unwrap(),
+                Datum::Null
+            );
+        }
+
+        let malformed = [string("2011-11-11 10:10:10.11.12")];
+        for name in ["HOUR", "MINUTE", "SECOND", "MICROSECOND"] {
+            assert_eq!(source_eval(name, &malformed, &ctx).unwrap(), Datum::Null);
+        }
+        let warning_count = ctx.warnings.borrow().len();
+        assert_eq!(
+            source_eval("TIME", &malformed, &ctx).unwrap(),
+            string("00:00:00")
+        );
+        assert_eq!(ctx.warnings.borrow().len(), warning_count + 1);
+        assert_eq!(
+            ctx.warnings.borrow().last(),
+            Some(&(
+                1292,
+                "Truncated incorrect time value: '2011-11-11 10:10:10.11.12'".to_owned()
+            ))
+        );
+    }
 }
 
 #[cfg(test)]
