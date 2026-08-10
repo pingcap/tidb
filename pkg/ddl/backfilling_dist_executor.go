@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
@@ -265,18 +266,42 @@ func (s *backfillDistExecutor) checkLocalSortFreeDisk(ctx context.Context) error
 func (s *backfillDistExecutor) getRunningLocalSortJobDiskUsage(
 	ctx context.Context,
 ) (jobCount int, runtimeSlots int, usedBytes uint64, err error) {
-	taskRuntimeSlotsByID := s.TaskRuntimeSlotsSnapshot()
-	for taskID, taskRuntimeSlots := range taskRuntimeSlotsByID {
-		if taskID == s.task.ID {
+	return getRunningLocalSortJobDiskUsage(
+		ctx,
+		s.GetTaskTable(),
+		s.task.ID,
+		s.TaskRuntimeSlotsSnapshot(),
+	)
+}
+
+func getRunningLocalSortJobDiskUsage(
+	ctx context.Context,
+	taskTable taskexecutor.TaskTable,
+	currentTaskID int64,
+	taskRuntimeSlotsByID map[int64]int,
+) (jobCount int, runtimeSlots int, usedBytes uint64, err error) {
+	taskIDs := make([]int64, 0, len(taskRuntimeSlotsByID))
+	for taskID := range taskRuntimeSlotsByID {
+		if taskID == currentTaskID {
 			// Resume does not guarantee cleanup of this task's previous local files. Any
 			// remaining files reduce available space, while its full growth budget is reserved again.
 			continue
 		}
+		taskIDs = append(taskIDs, taskID)
+	}
+	if len(taskIDs) == 0 {
+		return 0, 0, 0, nil
+	}
 
-		task, err := s.GetTaskTable().GetTaskByID(ctx, taskID)
-		if err != nil {
-			return 0, 0, 0, err
-		}
+	tasks, err := taskTable.GetTasksByIDs(ctx, taskIDs)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	if len(tasks) != len(taskIDs) {
+		return 0, 0, 0, errors.Trace(storage.ErrTaskNotFound)
+	}
+
+	for _, task := range tasks {
 		if task.Type != proto.Backfill || task.Step != proto.BackfillStepReadIndex {
 			continue
 		}
@@ -290,7 +315,7 @@ func (s *backfillDistExecutor) getRunningLocalSortJobDiskUsage(
 		}
 
 		jobCount++
-		runtimeSlots += taskRuntimeSlots
+		runtimeSlots += taskRuntimeSlotsByID[task.ID]
 		if ingest.LitDiskRoot != nil {
 			usedBytes += ingest.LitDiskRoot.GetJobDiskUsage(taskMeta.Job.ID)
 		}
