@@ -200,6 +200,7 @@ fn display_name(func_name: &str) -> &str {
         "gt" => ">",
         "ge" => ">=",
         "nulleq" => "<=>",
+        "istrue" => "IS TRUE",
         other => other,
     }
 }
@@ -657,6 +658,27 @@ pub fn charset_of_collation(collation: Collation) -> &'static str {
 #[must_use]
 pub fn collation_matches_charset(collation: Collation, charset: &str) -> bool {
     charset.eq_ignore_ascii_case(charset_of_collation(collation))
+}
+
+#[cfg(test)]
+mod display_name_source_tests {
+    use super::display_name;
+
+    /// Go `TestDisplayName`: operator-backed function classes expose their
+    /// SQL spelling in user-visible errors; ordinary and unknown names pass
+    /// through unchanged.
+    #[test]
+    fn test_display_name() {
+        for (name, expected) in [
+            ("eq", "="),
+            ("nulleq", "<=>"),
+            ("istrue", "IS TRUE"),
+            ("abs", "abs"),
+            ("other_unknown_func", "other_unknown_func"),
+        ] {
+            assert_eq!(display_name(name), expected, "{name}");
+        }
+    }
 }
 
 #[cfg(test)]
