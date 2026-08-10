@@ -46,6 +46,7 @@ type recordingExternalWorkloadManager struct {
 	mu               sync.Mutex
 	registeredTables []int64
 	deletedTables    []int64
+	activeTables     map[int64]struct{}
 	registerErrFn    func(int64) error
 	deleteErrFn      func(int64) error
 }
@@ -84,6 +85,10 @@ func (m *recordingExternalWorkloadManager) RegisterTTLTableInfo(_ context.Contex
 			return err
 		}
 	}
+	if m.activeTables == nil {
+		m.activeTables = make(map[int64]struct{})
+	}
+	m.activeTables[tableID] = struct{}{}
 	m.registeredTables = append(m.registeredTables, tableID)
 	return nil
 }
@@ -96,6 +101,7 @@ func (m *recordingExternalWorkloadManager) DeleteTTLTableInfo(_ context.Context,
 			return err
 		}
 	}
+	delete(m.activeTables, tableID)
 	m.deletedTables = append(m.deletedTables, tableID)
 	return nil
 }
@@ -126,6 +132,17 @@ func (m *recordingExternalWorkloadManager) deletedTTLTables() []int64 {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return append([]int64(nil), m.deletedTables...)
+}
+
+func (m *recordingExternalWorkloadManager) activeTTLTableIDs() []int64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	ids := make([]int64, 0, len(m.activeTables))
+	for tableID := range m.activeTables {
+		ids = append(ids, tableID)
+	}
+	return ids
 }
 
 func createTTLExternalWorkloadTestKit(t *testing.T, mgr *recordingExternalWorkloadManager) (*testkit.TestKit, kv.Storage) {
@@ -217,6 +234,104 @@ func TestExternalWorkloadTTLDDLIntegration(t *testing.T) {
 		currentTbl := external.GetTableByName(t, tk, "test", "t")
 		require.Equal(t, tbl.Meta().ID, currentTbl.Meta().ID)
 		require.Empty(t, mgr.deletedTTLTables())
+	})
+
+	t.Run("drop and flashback database sync ttl metadata", func(t *testing.T) {
+		mgr := &recordingExternalWorkloadManager{role: config.RoleMaster}
+		tk, _ := createTTLExternalWorkloadTestKit(t, mgr)
+
+		const dbName = "test_drop_schema_ttl"
+		tk.MustExec("create database " + dbName)
+		tk.MustExec(`create table ` + dbName + `.t_enabled_1(
+			id int primary key,
+			created_at datetime
+		) TTL = created_at + interval 1 day`)
+		tk.MustExec(`create table ` + dbName + `.t_enabled_2(
+			id int primary key,
+			created_at datetime
+		) TTL = created_at + interval 1 day`)
+		tk.MustExec(`create table ` + dbName + `.t_disabled(
+			id int primary key,
+			created_at datetime
+		) TTL = created_at + interval 1 day TTL_ENABLE='OFF'`)
+
+		enabledTbl1 := external.GetTableByName(t, tk, dbName, "t_enabled_1")
+		enabledTbl2 := external.GetTableByName(t, tk, dbName, "t_enabled_2")
+		disabledTbl := external.GetTableByName(t, tk, dbName, "t_disabled")
+
+		require.Len(t, mgr.registeredTTLTables(), 2)
+		require.ElementsMatch(t, []int64{enabledTbl1.Meta().ID, enabledTbl2.Meta().ID}, mgr.registeredTTLTables())
+		require.ElementsMatch(t, []int64{enabledTbl1.Meta().ID, enabledTbl2.Meta().ID}, mgr.activeTTLTableIDs())
+
+		tk.MustExec("drop database " + dbName)
+
+		require.ElementsMatch(t, []int64{enabledTbl1.Meta().ID, enabledTbl2.Meta().ID, disabledTbl.Meta().ID}, mgr.deletedTTLTables())
+		require.Empty(t, mgr.activeTTLTableIDs())
+
+		safePoint := time.Now().Add(-48 * time.Hour).Format("20060102-15:04:05 -0700 MST")
+		tk.MustExec("delete from mysql.tidb where variable_name in ('tikv_gc_safe_point', 'tikv_gc_enable')")
+		tk.MustExec("insert into mysql.tidb values ('tikv_gc_safe_point', '" + safePoint + "', '') on duplicate key update variable_value = '" + safePoint + "'")
+		tk.MustExec("insert into mysql.tidb values ('tikv_gc_enable', 'true', '') on duplicate key update variable_value = 'true'")
+
+		tk.MustExec("flashback database " + dbName)
+
+		require.Len(t, mgr.registeredTTLTables(), 2)
+		require.ElementsMatch(t, []int64{enabledTbl1.Meta().ID, enabledTbl2.Meta().ID}, mgr.registeredTTLTables())
+		require.Empty(t, mgr.activeTTLTableIDs())
+
+		for _, tblName := range []string{"t_enabled_1", "t_enabled_2", "t_disabled"} {
+			rows := tk.MustQuery("show create table " + dbName + "." + tblName).Rows()
+			require.Len(t, rows, 1)
+			require.Len(t, rows[0], 2)
+			require.Contains(t, rows[0][1], "TTL_ENABLE='OFF'")
+		}
+	})
+
+	t.Run("drop database delete failure restores ttl registrations", func(t *testing.T) {
+		mgr := &recordingExternalWorkloadManager{role: config.RoleMaster}
+		tk, _ := createTTLExternalWorkloadTestKit(t, mgr)
+
+		const dbName = "test_drop_schema_ttl_fail"
+		tk.MustExec("create database " + dbName)
+		tk.MustExec(`create table ` + dbName + `.t_enabled_1(
+			id int primary key,
+			created_at datetime
+		) TTL = created_at + interval 1 day`)
+		tk.MustExec(`create table ` + dbName + `.t_disabled(
+			id int primary key,
+			created_at datetime
+		) TTL = created_at + interval 1 day TTL_ENABLE='OFF'`)
+		tk.MustExec(`create table ` + dbName + `.t_enabled_2(
+			id int primary key,
+			created_at datetime
+		) TTL = created_at + interval 1 day`)
+
+		enabledTbl1 := external.GetTableByName(t, tk, dbName, "t_enabled_1")
+		disabledTbl := external.GetTableByName(t, tk, dbName, "t_disabled")
+		enabledTbl2 := external.GetTableByName(t, tk, dbName, "t_enabled_2")
+
+		require.ElementsMatch(t, []int64{enabledTbl1.Meta().ID, enabledTbl2.Meta().ID}, mgr.activeTTLTableIDs())
+
+		mgr.deleteErrFn = func(tableID int64) error {
+			if tableID == enabledTbl2.Meta().ID {
+				return context.DeadlineExceeded
+			}
+			return nil
+		}
+
+		err := tk.ExecToErr("drop database " + dbName)
+		require.ErrorContains(t, err, context.DeadlineExceeded.Error())
+
+		require.Len(t, mgr.registeredTTLTables(), 3)
+		require.ElementsMatch(t, []int64{enabledTbl1.Meta().ID, enabledTbl1.Meta().ID, enabledTbl2.Meta().ID}, mgr.registeredTTLTables())
+		require.ElementsMatch(t, []int64{enabledTbl1.Meta().ID, enabledTbl2.Meta().ID}, mgr.activeTTLTableIDs())
+
+		currentEnabledTbl1 := external.GetTableByName(t, tk, dbName, "t_enabled_1")
+		currentDisabledTbl := external.GetTableByName(t, tk, dbName, "t_disabled")
+		currentEnabledTbl2 := external.GetTableByName(t, tk, dbName, "t_enabled_2")
+		require.Equal(t, enabledTbl1.Meta().ID, currentEnabledTbl1.Meta().ID)
+		require.Equal(t, disabledTbl.Meta().ID, currentDisabledTbl.Meta().ID)
+		require.Equal(t, enabledTbl2.Meta().ID, currentEnabledTbl2.Meta().ID)
 	})
 
 	t.Run("truncate table refreshes ttl metadata", func(t *testing.T) {
