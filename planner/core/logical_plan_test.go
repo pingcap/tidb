@@ -684,14 +684,31 @@ func TestCS3389(t *testing.T) {
 	p, err = logicalOptimize(context.TODO(), flagBuildKeyInfo|flagPrunColumns|flagPrunColumnsAgain|flagEliminateProjection|flagJoinReOrder, p.(LogicalPlan))
 	require.NoError(t, err)
 
-	// Assert that all Projection is not empty and there is no Projection between Aggregation and Join.
+	// The v6.5 logical-plan interface cannot replace an empty Projection with its
+	// child during column pruning. The backport therefore keeps one real column
+	// in that Projection instead. Assert that every retained Projection is
+	// non-empty and that the expected Join remains below the Aggregation.
+	var assertNoEmptyProjection func(LogicalPlan)
+	assertNoEmptyProjection = func(plan LogicalPlan) {
+		if projection, ok := plan.(*LogicalProjection); ok {
+			require.NotEmpty(t, projection.Exprs)
+			require.NotEmpty(t, projection.Schema().Columns)
+		}
+		for _, child := range plan.Children() {
+			assertNoEmptyProjection(child)
+		}
+	}
+	assertNoEmptyProjection(p.(LogicalPlan))
+
 	proj, isProj := p.(*LogicalProjection)
 	require.True(t, isProj)
-	require.True(t, len(proj.Exprs) > 0)
 	child := proj.Children()[0]
 	agg, isAgg := child.(*LogicalAggregation)
 	require.True(t, isAgg)
 	child = agg.Children()[0]
+	if projection, ok := child.(*LogicalProjection); ok {
+		child = projection.Children()[0]
+	}
 	_, isJoin := child.(*LogicalJoin)
 	require.True(t, isJoin)
 }

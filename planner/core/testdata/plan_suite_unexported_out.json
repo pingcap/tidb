@@ -137,7 +137,7 @@
       "Join{Join{DataScan(t)->DataScan(x)->Aggr(firstrow(test.t.a))}(test.t.a,test.t.a)->Projection->DataScan(x)->Aggr(firstrow(test.t.a))}(test.t.a,test.t.a)->Projection->Projection",
       "Apply{DataScan(t1)->DataScan(t2)->Sel([eq(test.t.a, test.t.a)])->Projection->Sort->Limit}->Projection->Sel([eq(test.t.b, test.t.b)])->Projection",
       "Apply{DataScan(t2)->DataScan(t1)->Sel([eq(test.t.a, test.t.a)])->Projection}->Projection",
-      "Join{DataScan(t2)->DataScan(t1)->Aggr(firstrow(test.t.c),count(1))}(test.t.c,test.t.c)->Projection->Aggr(count(1))->Projection"
+      "Join{DataScan(t2)->DataScan(t1)->Aggr(count(test.t.a),firstrow(test.t.c))}(test.t.c,test.t.c)->Projection->Projection->Projection->Aggr(count(1))->Projection"
     ]
   },
   {
@@ -240,13 +240,13 @@
       "[planner:3586]Window '<unnamed window>': frame start or end is negative, NULL or of non-integral type",
       "[planner:3588]Window '<unnamed window>' with RANGE frame has ORDER BY expression of datetime type. Only INTERVAL bound value allowed.",
       "TableReader(Table(t))->Window(sum(cast(test.t.a, decimal(10,0) BINARY))->Column#14 over(order by test.t.a range between 1.0 preceding and 1 following))->Projection",
-      "IndexReader(Index(t.f)[[NULL,+inf]])->Window(row_number()->Column#14 over())->Projection",
+      "IndexReader(Index(t.f)[[NULL,+inf]])->Projection->Window(row_number()->Column#14 over())->Projection",
       "TableReader(Table(t))->HashAgg->Window(max(Column#13)->Column#15 over(rows between 1 preceding and 1 following))->Projection",
       "[planner:1210]Incorrect arguments to nth_value",
       "[planner:1210]Incorrect arguments to nth_value",
       "[planner:1210]Incorrect arguments to nth_value",
       "[planner:1210]Incorrect arguments to ntile",
-      "IndexReader(Index(t.f)[[NULL,+inf]])->Window(ntile(<nil>)->Column#14 over())->Projection",
+      "IndexReader(Index(t.f)[[NULL,+inf]])->Projection->Window(ntile(<nil>)->Column#14 over())->Projection",
       "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a, decimal(10,0) BINARY))->Column#14 over(partition by test.t.b))->Projection",
       "TableReader(Table(t))->Window(nth_value(test.t.i_date, 1)->Column#14 over())->Projection",
       "TableReader(Table(t))->Window(sum(cast(test.t.b, decimal(10,0) BINARY))->Column#15, sum(cast(test.t.c, decimal(10,0) BINARY))->Column#16 over(order by test.t.a range between unbounded preceding and current row))->Projection",
@@ -313,13 +313,13 @@
       "[planner:3586]Window '<unnamed window>': frame start or end is negative, NULL or of non-integral type",
       "[planner:3588]Window '<unnamed window>' with RANGE frame has ORDER BY expression of datetime type. Only INTERVAL bound value allowed.",
       "TableReader(Table(t))->Window(sum(cast(test.t.a, decimal(10,0) BINARY))->Column#14 over(order by test.t.a range between 1.0 preceding and 1 following))->Projection",
-      "IndexReader(Index(t.f)[[NULL,+inf]])->Window(row_number()->Column#14 over())->Projection",
+      "IndexReader(Index(t.f)[[NULL,+inf]])->Projection->Window(row_number()->Column#14 over())->Projection",
       "TableReader(Table(t))->HashAgg->Window(max(Column#13)->Column#15 over(rows between 1 preceding and 1 following))->Projection",
       "[planner:1210]Incorrect arguments to nth_value",
       "[planner:1210]Incorrect arguments to nth_value",
       "[planner:1210]Incorrect arguments to nth_value",
       "[planner:1210]Incorrect arguments to ntile",
-      "IndexReader(Index(t.f)[[NULL,+inf]])->Window(ntile(<nil>)->Column#14 over())->Projection",
+      "IndexReader(Index(t.f)[[NULL,+inf]])->Projection->Window(ntile(<nil>)->Column#14 over())->Projection",
       "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a, decimal(10,0) BINARY))->Column#14 over(partition by test.t.b))->Partition(execution info: concurrency:4, data sources:[TableReader_10])->Projection",
       "TableReader(Table(t))->Window(nth_value(test.t.i_date, 1)->Column#14 over())->Projection",
       "TableReader(Table(t))->Window(sum(cast(test.t.b, decimal(10,0) BINARY))->Column#15, sum(cast(test.t.c, decimal(10,0) BINARY))->Column#16 over(order by test.t.a range between unbounded preceding and current row))->Projection",
@@ -768,16 +768,17 @@
       },
       {
         "1": [
-          "test.t.a"
+          "test.t.b"
         ]
       },
       {
         "1": [
-          "test.t.a"
+          "test.t.b"
         ]
       },
       {
         "1": [
+          "test.t.b",
           "test.t.c"
         ]
       },
