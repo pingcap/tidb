@@ -31,6 +31,7 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 
 use tidb_protocol::{PacketReader, PacketWriter, COM_QUIT, DEFAULT_MAX_ALLOWED_PACKET};
+use tidb_parser::auth::hash_password_with_salt_bytes;
 use tidb_server::{
     serve_mysql_connection, AuthSwitchRequest, ConfiguredUserStore, ConnectionCancellation,
     ConnectionExit, ConnectionTracker, QueryResult, QuerySession, QuerySessionFactory,
@@ -99,6 +100,14 @@ fn store_with(user: &str, plugin: &str, password: Option<&str>) -> ConfiguredUse
     let accounts = PrivilegeRegistry::default();
     let credential = password.map_or(PluginCredential::None, PluginCredential::By);
     let stored = encode_password_for_plugin(plugin, &credential).expect("a valid credential");
+    accounts.create_user_with_plugin(user, "%", &stored, plugin);
+    ConfiguredUserStore::from_accounts(accounts)
+}
+
+fn store_with_password_bytes(user: &str, plugin: &str, password: &[u8]) -> ConfiguredUserStore {
+    let accounts = PrivilegeRegistry::default();
+    let stored = hash_password_with_salt_bytes(password, b"source-compatible-20", plugin);
+    let stored = String::from_utf8(stored).expect("authentication strings are ASCII");
     accounts.create_user_with_plugin(user, "%", &stored, plugin);
     ConfiguredUserStore::from_accounts(accounts)
 }
@@ -224,6 +233,29 @@ fn an_sm3_account_authenticates_through_the_same_exchange() {
     wire.reader.set_sequence(4);
     assert_eq!(wire.reader.read_packet().unwrap(), vec![1, 4]);
     write_packet(&mut wire.client, 5, b"sm3-pass\0");
+    wire.reader.set_sequence(6);
+    assert_eq!(wire.reader.read_packet().unwrap()[0], 0);
+    write_packet(&mut wire.client, 0, &[COM_QUIT]);
+    assert_eq!(worker.join().unwrap().exit, ConnectionExit::Quit);
+}
+
+#[test]
+fn an_arbitrary_byte_password_authenticates_without_utf8_narrowing() {
+    let password = b"not-utf8-\xff";
+    let (address, _factory, worker) = serve(store_with_password_bytes(
+        "bytes",
+        CACHING_SHA2,
+        password,
+    ));
+    let mut wire = open(address, "bytes", NATIVE, b"ignored");
+    let switch = AuthSwitchRequest::parse_payload(&wire.reader.read_packet().unwrap()).unwrap();
+    assert_eq!(switch.client_plugin, CACHING_SHA2);
+    write_packet(&mut wire.client, 3, b"scramble");
+    wire.reader.set_sequence(4);
+    assert_eq!(wire.reader.read_packet().unwrap(), vec![1, 4]);
+    let mut cleartext = password.to_vec();
+    cleartext.push(0);
+    write_packet(&mut wire.client, 5, &cleartext);
     wire.reader.set_sequence(6);
     assert_eq!(wire.reader.read_packet().unwrap()[0], 0);
     write_packet(&mut wire.client, 0, &[COM_QUIT]);

@@ -282,17 +282,6 @@ fn hex_lower(bytes: &[u8]) -> String {
     out
 }
 
-/// Uppercase hex with the same alphabet as Go's `%X` formatter.
-fn hex_upper(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 16] = b"0123456789ABCDEF";
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for &b in bytes {
-        out.push(ALPHABET[usize::from(b >> 4)] as char);
-        out.push(ALPHABET[usize::from(b & 0xf)] as char);
-    }
-    out
-}
-
 /// `PASSWORD(str)`: double-SHA1 the source `EvalString` bytes, prefix the
 /// uppercase hexadecimal digest with `*`, and return an empty string for an
 /// empty input. Port of `builtinPasswordSig.evalString` and
@@ -305,14 +294,8 @@ fn password_hash(value: &Datum) -> Result<Datum, EvalError> {
     let Some(bytes) = hash_input(value)? else {
         return Ok(Datum::Null);
     };
-    if bytes.is_empty() {
-        return Ok(Datum::new_string(""));
-    }
-    let stage1 = Sha1::digest(bytes.as_slice());
-    let stage2 = Sha1::digest(stage1.as_slice());
-    Ok(Datum::new_string(format!(
-        "*{}",
-        hex_upper(stage2.as_slice())
+    Ok(Datum::new_string(tidb_parser::auth::encode_password_bytes(
+        &bytes,
     )))
 }
 
@@ -519,7 +502,7 @@ fn parse_string_i64_saturating(value: &str) -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{dispatch, hex_upper};
+    use super::dispatch;
     use crate::Datum;
     use crate::Decimal;
 
@@ -543,6 +526,16 @@ mod tests {
             Datum::Bytes(value) => value.clone(),
             other => panic!("expected string/bytes datum, got {other:?}"),
         }
+    }
+
+    fn hex_upper(bytes: &[u8]) -> String {
+        const ALPHABET: &[u8; 16] = b"0123456789ABCDEF";
+        let mut output = String::with_capacity(bytes.len() * 2);
+        for &byte in bytes {
+            output.push(ALPHABET[usize::from(byte >> 4)] as char);
+            output.push(ALPHABET[usize::from(byte & 0x0f)] as char);
+        }
+        output
     }
 
     /// Vectors from `TestAESEncrypt`/`TestAESDecrypt` (default `aes-128-ecb`;

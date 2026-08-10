@@ -20,7 +20,6 @@
 //! `auth.CheckScrambledPassword` exactly and keeps the final hash comparison
 //! constant time.
 
-use sha1::{Digest, Sha1};
 use subtle::ConstantTimeEq;
 
 /// SHA-1 output and native-password response width.
@@ -66,26 +65,7 @@ impl NativePasswordHash {
         if salt.len() != HANDSHAKE_SALT_LEN {
             return false;
         }
-        let Ok(response) = <&[u8; NATIVE_PASSWORD_HASH_LEN]>::try_from(response) else {
-            return false;
-        };
-
-        let mut challenge_hasher = Sha1::new();
-        challenge_hasher.update(salt);
-        challenge_hasher.update(self.0);
-        let challenge = challenge_hasher.finalize();
-
-        let mut stage_one = [0; NATIVE_PASSWORD_HASH_LEN];
-        for ((destination, response), challenge) in stage_one
-            .iter_mut()
-            .zip(response.iter())
-            .zip(challenge.iter())
-        {
-            *destination = response ^ challenge;
-        }
-
-        let candidate_stage_two = Sha1::digest(stage_one);
-        bool::from(candidate_stage_two.as_slice().ct_eq(&self.0))
+        tidb_parser::auth::check_scrambled_password(salt, &self.0, response)
     }
 }
 

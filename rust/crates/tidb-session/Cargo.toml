@@ -18,8 +18,6 @@ tidb-parser = { path = "../tidb-parser" }
 tidb-planner = { path = "../tidb-planner" }
 tidb-util = { path = "../tidb-util" }
 tidb-vardef = { path = "../tidb-vardef" }
-sha1 = { workspace = true }
-sha2 = { workspace = true }
 
 [dev-dependencies]
 # `tests_dml_lock_keys` classifies the raw keys a DML statement leaves behind

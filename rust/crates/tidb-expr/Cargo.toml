@@ -17,6 +17,7 @@ tidb-codec = { path = "../tidb-codec" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-error = { path = "../tidb-error" }
 tidb-mysql = { path = "../tidb-mysql" }
+tidb-parser = { path = "../tidb-parser" }
 tidb-proto = { path = "../tidb-proto" }
 tidb-util = { path = "../tidb-util" }
 flate2 = { workspace = true }
@@ -27,6 +28,3 @@ md-5 = { workspace = true }
 sha1 = { workspace = true }
 sha2 = { workspace = true }
 serde_json = { workspace = true }
-
-[dev-dependencies]
-tidb-parser = { path = "../tidb-parser" }

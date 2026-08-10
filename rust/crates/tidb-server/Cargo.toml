@@ -30,6 +30,7 @@ tidb-planner = { path = "../tidb-planner" }
 tidb-executor = { path = "../tidb-executor" }
 tidb-model = { path = "../tidb-model" }
 tidb-pd-client = { path = "../tidb-pd-client" }
+tidb-parser = { path = "../tidb-parser" }
 tidb-protocol = { path = "../tidb-protocol" }
 tidb-session = { path = "../tidb-session" }
 tidb-txnkv = { path = "../tidb-txnkv" }
@@ -45,7 +46,6 @@ rcgen.workspace = true
 rustls.workspace = true
 rustls-pemfile.workspace = true
 tidb-ast = { path = "../tidb-ast" }
-tidb-parser = { path = "../tidb-parser" }
 tidb-proto = { path = "../tidb-proto" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 

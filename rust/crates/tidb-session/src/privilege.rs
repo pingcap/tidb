@@ -302,9 +302,8 @@ impl PrivilegeRegistry {
 
 #[cfg(test)]
 mod tests {
-    use sha1::Digest;
     use tidb_executor::DriverError;
-    use tidb_mysql::consts::{AuthTiDBSM3Password, SHAPWDHashLen};
+    use tidb_mysql::consts::{AuthCachingSha2Password, AuthTiDBSM3Password, SHAPWDHashLen};
 
     use super::*;
 
@@ -661,21 +660,32 @@ mod tests {
         // BY` calls never store the same bytes twice.
         assert_ne!(hash, hash_caching_sha2("hunter2"));
 
-        // Self-consistency: re-deriving the digest from the STORED salt and
-        // iteration count reproduces the stored hash exactly -- the same
-        // property Go's `CheckHashingPassword` relies on to verify a login,
-        // even though this port's wire front end does not call it yet (see
-        // `encode_password_for_plugin`'s deferral note).
-        let parts: Vec<&str> = hash.split('$').collect();
-        assert_eq!(parts.len(), 4);
-        assert_eq!(parts[1], "A");
-        let salt = &parts[3].as_bytes()[..SHA_CRYPT_SALT_LEN];
-        let iterations =
-            u32::from_str_radix(parts[2], 16).unwrap() * SHA_CRYPT_ITERATION_MULTIPLIER;
-        let rederived = sha_crypt("hunter2", salt, iterations, |input| {
-            Sha256Hash::digest(input).into()
-        });
-        assert_eq!(rederived, hash);
+        assert!(check_hashing_password(
+            &hash,
+            b"hunter2",
+            AuthCachingSha2Password,
+        ));
+    }
+
+    #[test]
+    fn hashing_password_consumer_preserves_go_string_bytes() {
+        let password = b"not-utf8-\xff";
+        let stored = tidb_parser::auth::hash_password_with_salt_bytes(
+            password,
+            b"source-compatible-20",
+            AuthCachingSha2Password,
+        );
+        let stored = String::from_utf8(stored).unwrap();
+        assert!(check_hashing_password(
+            &stored,
+            password,
+            AuthCachingSha2Password,
+        ));
+        assert!(!check_hashing_password(
+            &stored,
+            b"not-utf8-\xfe",
+            AuthCachingSha2Password,
+        ));
     }
 
     #[test]

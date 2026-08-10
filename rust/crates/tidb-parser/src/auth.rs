@@ -191,9 +191,9 @@ pub fn encode_password(password: &str) -> String {
 /// Decodes the hex bytes after the first stored-password byte.
 pub fn decode_password(password: &str) -> Result<Vec<u8>, AuthError> {
     let bytes = password.as_bytes();
-    // Preserve Go's direct `pwd[1:]` indexing, including its panic on an empty
-    // input. Callers pass the stored `*...` form.
-    let encoded = &bytes[1..];
+    let encoded = bytes
+        .get(1..)
+        .ok_or_else(|| AuthError::Hex("encoded password is empty".to_owned()))?;
     if !encoded.len().is_multiple_of(2) {
         return Err(AuthError::Hex(
             "encoding/hex: odd length hex string".to_owned(),
@@ -324,8 +324,8 @@ fn hash_crypt(plaintext: &[u8], salt: &[u8], iterations: i64, plugin: &str) -> V
         sum_a = current;
         sum_c = Some(current);
     }
-    // Go indexes `sumC` after the loop. Zero or negative iterations therefore
-    // panic; keeping that behavior avoids inventing a new accepted hash form.
+    // Public verification rejects non-positive iterations before reaching the
+    // algorithm; generated hashes always use 5,000 rounds.
     let sum_c = sum_c.expect("hashCrypt requires at least one iteration");
 
     let mut output = format!("$A${:03X}$", iterations / ITERATION_MULTIPLIER as i64).into_bytes();
@@ -378,7 +378,10 @@ pub fn check_hashing_password_bytes(
     let iterations = i64::from_str_radix(iterations_text, 16)
         .map_err(|_| AuthError::Iterations)?
         .wrapping_mul(ITERATION_MULTIPLIER as i64);
-    let salt = &parts[3][..SALT_LENGTH];
+    if iterations <= 0 {
+        return Err(AuthError::Iterations);
+    }
+    let salt = parts[3].get(..SALT_LENGTH).ok_or(AuthError::HashParts)?;
     let Some(_) = plugin_hash(&[], plugin) else {
         return Ok(false);
     };
@@ -403,15 +406,20 @@ pub fn new_hash_password_bytes(password: &[u8], plugin: &str) -> Result<Vec<u8>,
             *byte &= 0x7f;
         }
     }
+    Ok(hash_password_with_salt_bytes(password, &salt, plugin))
+}
+
+/// Creates a caching SHA-2 or TiDB SM3 password from a caller-provided salt.
+///
+/// This is the Rust ownership seam for account executors that already own a
+/// source-compatible random salt. Keeping the SHA-crypt algorithm here avoids
+/// a second implementation drifting from authentication verification. Unknown
+/// plugins return an empty value, matching [`new_hash_password_bytes`].
+pub fn hash_password_with_salt_bytes(password: &[u8], salt: &[u8], plugin: &str) -> Vec<u8> {
     if plugin != AuthCachingSha2Password && plugin != AuthTiDBSM3Password {
-        return Ok(Vec::new());
+        return Vec::new();
     }
-    Ok(hash_crypt(
-        password,
-        &salt,
-        5 * ITERATION_MULTIPLIER as i64,
-        plugin,
-    ))
+    hash_crypt(password, salt, 5 * ITERATION_MULTIPLIER as i64, plugin)
 }
 
 /// Incremental SM3 state transcreated from TiDB's Go implementation.
@@ -586,17 +594,21 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "range end index 20")]
-    fn hashing_password_keeps_go_short_salt_panic() {
-        let _ = check_hashing_password_bytes(b"$A$005$short", b"password", AuthCachingSha2Password);
+    fn hashing_password_rejects_a_short_salt_without_panicking() {
+        assert_eq!(
+            check_hashing_password_bytes(b"$A$005$short", b"password", AuthCachingSha2Password),
+            Err(AuthError::HashParts),
+        );
     }
 
     #[test]
-    #[should_panic(expected = "hashCrypt requires at least one iteration")]
-    fn hashing_password_keeps_go_zero_iteration_panic() {
+    fn hashing_password_rejects_zero_iterations_without_panicking() {
         let mut stored = b"$A$000$".to_vec();
         stored.extend_from_slice(&[b'x'; SALT_LENGTH + 43]);
-        let _ = check_hashing_password_bytes(&stored, b"password", AuthCachingSha2Password);
+        assert_eq!(
+            check_hashing_password_bytes(&stored, b"password", AuthCachingSha2Password),
+            Err(AuthError::Iterations),
+        );
     }
 
     #[test]

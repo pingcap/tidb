@@ -76,6 +76,7 @@ fn test_encode_password() {
 fn test_decode_password() {
     let decoded = decode_password(&encode_password("123")).unwrap();
     assert_eq!(decoded, sha1_hash(&sha1_hash(b"123")));
+    assert!(matches!(decode_password(""), Err(AuthError::Hex(_))));
     assert!(matches!(decode_password("*0"), Err(AuthError::Hex(_))));
     assert!(matches!(decode_password("*xx"), Err(AuthError::Hex(_))));
 }
@@ -116,6 +117,20 @@ fn test_check_sha_password_short() {
     assert_eq!(
         check_hashing_password(b"aaaaaaaa", "not_foobar", AuthCachingSha2Password),
         Err(AuthError::HashParts)
+    );
+    assert_eq!(
+        check_hashing_password(b"$A$005$short", "not_foobar", AuthCachingSha2Password),
+        Err(AuthError::HashParts)
+    );
+    let mut zero_iterations = b"$A$000$".to_vec();
+    zero_iterations.extend_from_slice(&[b'x'; 63]);
+    assert_eq!(
+        check_hashing_password(
+            &zero_iterations,
+            "not_foobar",
+            AuthCachingSha2Password,
+        ),
+        Err(AuthError::Iterations)
     );
 }
 

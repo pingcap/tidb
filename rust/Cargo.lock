@@ -1863,8 +1863,6 @@ version = "0.0.0"
 dependencies = [
  "chrono",
  "chrono-tz",
- "sha1",
- "sha2",
  "tidb-ast",
  "tidb-datatype",
  "tidb-executor",
