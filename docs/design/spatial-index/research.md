@@ -57,10 +57,11 @@ This project does not implement the geometry type or user-facing functions. It
 depends on a minimal scaffolding that must exist (or be revived) first. The prior
 art for that scaffolding lives in issue #6347 and its closed PRs:
 
-- `docs/design/2022-10-27-geospatial.md` (PR #38916, closed): Daniël van Eeden's
-  staged geospatial design. It explicitly defers the spatial index ("What's needed
-  to fully support geospatial indexes in TiDB/TiKV needs more research"), which is
-  exactly the gap this project fills.
+- The geospatial design proposed in PR #38916 (closed unmerged; its
+  `docs/design/2022-10-27-geospatial.md` never landed, so the path is not in the repo):
+  Daniël van Eeden's staged geospatial design. It explicitly defers the spatial index
+  ("What's needed to fully support geospatial indexes in TiDB/TiKV needs more
+  research"), which is exactly the gap this project fills.
 - PR #66602 (closed 2026-05-22): parser support for the spatial data types and the
   `SRID` column option, with a rejection check in `pkg/planner/core/preprocess.go`.
   The doc notes the type can be enabled "by removing the check for `TypeGeometry`".
@@ -226,8 +227,7 @@ Ningbo University, Ningbo, China. Open access (CC BY), MDPI.
 DOI: 10.3390/a15040113. Online: https://www.mdpi.com/1999-4893/15/4/113 .
 It was implemented on RocksDB for the paper's experiments; no public source repository
 was found, so the implementation appears to be an unreleased research prototype. The
-paper is also cited in dveeden's earlier TiDB geospatial design doc
-(`docs/design/2022-10-27-geospatial.md`).
+paper is also cited in dveeden's earlier TiDB geospatial design doc (PR #38916).
 
 **Background terms.** An *LSM-tree* (log-structured merge-tree) is the write-optimized
 storage structure used by RocksDB and therefore TiKV: writes are batched in memory and
@@ -370,7 +370,7 @@ CREATE TABLE t (id bigint primary key, position geometry, load json);
 
 `id bigint primary key` makes `t` a clustered table, so rows live at
 `t{T}_r{id} -> (position, load)` and `id` is the handle. The spatial index (index id
-`X`) is a separate keyspace. Sample rows: a point `id=1 POINT(30 40)` and a polygon
+`I`) is a separate keyspace. Sample rows: a point `id=1 POINT(30 40)` and a polygon
 `id=3 POLYGON(...)`. `H(...)` denotes a Hilbert value, `cell(...)` a covering-cell id
 (encoding level + space-filling-curve position).
 
@@ -412,21 +412,21 @@ Generic geometry is a true MVI: cover the geometry with a bounded set of cells a
 write one entry per covering cell (a point covers to one cell, a polygon fans out):
 
 ```
--- point id=1 covers to one cell (value carries the point/bbox; see review section):
-t{T}_i{I}_{cell(c0)}_{1} -> bbox(30,40,30,40)
--- polygon id=3 covers to several cells (<= max_cells), same bbox repeated:
-t{T}_i{I}_{cell(ca)}_{3} -> bbox(polygon 3)
-t{T}_i{I}_{cell(cb)}_{3} -> bbox(polygon 3)
-t{T}_i{I}_{cell(cc)}_{3} -> bbox(polygon 3)
-t{T}_i{I}_{cell(cd)}_{3} -> bbox(polygon 3)
+-- point id=1 covers to one cell (the point's x,y ride in the key; see review section):
+t{T}_i{I}_{cell(c0)}_{30}_{40}_{1} -> {}
+-- polygon id=3 covers to several cells (<= max_cells), same bbox repeated in each key:
+t{T}_i{I}_{cell(ca)}_{bbox(polygon 3)}_{3} -> {}
+t{T}_i{I}_{cell(cb)}_{bbox(polygon 3)}_{3} -> {}
+t{T}_i{I}_{cell(cc)}_{bbox(polygon 3)}_{3} -> {}
+t{T}_i{I}_{cell(cd)}_{bbox(polygon 3)}_{3} -> {}
 ```
 
 Query path: cover -> range-scan -> dedup -> lookback -> refine. No tree to maintain.
-The index value holds the geometry's bounding box (and, for a partitioned table, the
-`partition_id`), enabling a cheap bbox pre-filter before the lookback and, optionally,
-the full EWKB for a covering index that skips the lookback entirely. See "Index value
-contents and table partitioning" below for the value design and the global-index
-choice.
+Each entry carries the geometry's bounding box as trailing index **key** columns (and,
+for a global index on a partitioned table, the `partition_id`, also in the key),
+enabling a pushed-down bbox pre-filter before the lookback; optionally the full EWKB in
+the **value** makes a covering index that skips the lookback entirely. See "Index value
+contents and table partitioning" below for the layout and the global-index choice.
 
 ### Paper approach (Hilbert R-tree)
 
@@ -485,13 +485,15 @@ identical.
 
 Take a triangle `T` with vertices `(4,4), (8,4), (4,8)` (the area `x>=4, y>=4,
 x+y<=12`). Its bounding box is `minX=4, minY=4, maxX=8, maxY=8`: a small box well
-inside the domain, and the triangle fills only half of it.
+inside the domain, and the triangle fills only half of it. (A boundary subtlety the
+covering below returns to: the closed triangle's vertices `(8,4)` and `(4,8)` sit exactly
+on cell edges, so under half-open quantization they fall in cells outside `03`.)
 
 Cells are squares; a cell at level L has side `domain/2^L`. With quadrant digits
 `0=SW, 1=SE, 2=NW, 3=NE`, a cell id is the path of digits from the top, so a cell's
-ancestors are its prefixes and its descendants share its id as a prefix. The triangle
-lives inside the level-1 cell `0` = `[0,8)²` and, more tightly, the level-2 cell
-`03` = `[4,8)²`.
+ancestors are its prefixes and its descendants share its id as a prefix. The triangle's
+interior lies inside the level-1 cell `0` = `[0,8)²` and, more tightly, the level-2 cell
+`03` = `[4,8)²` (its boundary vertices do not, per the note above).
 
 The figure shows the example in the TiDB brand palette: the three geometries, their
 covering cells (dashed), the shared cell `0320`, and the quadtree grid levels.
@@ -503,7 +505,8 @@ level 3 (size-2 cells) the triangle's cell `03` splits into four:
 
 - `030` = `[4,6)²` (bottom-left): fully inside T, kept as one cell.
 - `031` = `[6,8)×[4,6)` and `032` = `[4,6)×[6,8)`: straddle the hypotenuse (partial).
-- `033` = `[6,8)²`: outside (the hypotenuse only grazes its corner).
+- `033` = `[6,8)²`: touched only at its corner `(6,6)` (a correct coverer keeps it, or
+  its descendant `0330`; dropped in this listing for readability, see below).
 
 Keeping `031`/`032` whole over-covers past the diagonal. Subdividing them one more level
 (size-1 cells) hugs the edge tighter, the precision-vs-fan-out knob:
@@ -512,32 +515,37 @@ Keeping `031`/`032` whole over-covers past the diagonal. Subdividing them one mo
 - `032` -> `0320 [4,5)×[6,7)` inside, `0321 [5,6)×[6,7)` and `0322 [4,5)×[7,8)` partial
 
 So the covering mixes levels: one size-2 cell for the solid corner plus six size-1
-cells along the edge: `{ 030, 0310, 0311, 0312, 0320, 0321, 0322 }`. (Cells the
-hypotenuse only touches at a corner are dropped here for clarity; the exact refine
-guarantees boundary correctness regardless.)
+cells along the edge: `{ 030, 0310, 0311, 0312, 0320, 0321, 0322 }`. (Simplified for
+readability: closed `T` also touches `0313`, `0323`, `0330` at the hypotenuse's lattice
+points, and its vertices `(8,4)`/`(4,8)` fall in half-open cells outside `03`. A correct
+coverer must keep every cell whose closed extent intersects the closed geometry: a
+dropped touch cell is a **false negative** for `ST_Intersects`/`ST_Touches` that the
+exact refine cannot recover, because refine only removes false positives. Refine handles
+over-cover, never under-cover.)
 
 **Storage.** The triangle `T` (row `id=42`) writes one index entry per covering cell,
 all sharing the same handle and bbox, differing only in `cell_key`. Two more geometries
 are included for contrast: id 1 is a triangle `(4,6),(5,6),(4,7)` (placed so it shares a
 cell with `T`) and id 75 is a rectangle `(3,3),(3,5),(6,5),(6,3)`. The entries are listed
-in `cell_key` order, as they are physically stored and scanned; the value is
-`(minX, minY, maxX, maxY)`:
+in `cell_key` order, as they are physically stored and scanned; the bbox
+`(minX, minY, maxX, maxY)` rides in the key between the `cell_key` and the handle, and
+the value is empty:
 
 ```
-t{T}_i{I}_0033_75 -> 3, 3, 6, 5     # Rectangle id 75: tiles into 6 unit cells (offset from grid)
-t{T}_i{I}_0122_75 -> 3, 3, 6, 5
-t{T}_i{I}_0123_75 -> 3, 3, 6, 5
-t{T}_i{I}_0211_75 -> 3, 3, 6, 5
-t{T}_i{I}_030_42  -> 4, 4, 8, 8     # Triangle T id 42: 7 cells (one size-2 + six size-1)
-t{T}_i{I}_0300_75 -> 3, 3, 6, 5     # rectangle cells 0300, 0301 are inside T's cell 030 (descendants)
-t{T}_i{I}_0301_75 -> 3, 3, 6, 5
-t{T}_i{I}_0310_42 -> 4, 4, 8, 8
-t{T}_i{I}_0311_42 -> 4, 4, 8, 8
-t{T}_i{I}_0312_42 -> 4, 4, 8, 8
-t{T}_i{I}_0320_1  -> 4, 6, 5, 7     # Triangle id 1: SAME cell_key 0320 as T below (shared cell)
-t{T}_i{I}_0320_42 -> 4, 4, 8, 8
-t{T}_i{I}_0321_42 -> 4, 4, 8, 8
-t{T}_i{I}_0322_42 -> 4, 4, 8, 8
+t{T}_i{I}_0033_3_3_6_5_75 -> {}     # Rectangle id 75: tiles into 6 unit cells (offset from grid)
+t{T}_i{I}_0122_3_3_6_5_75 -> {}
+t{T}_i{I}_0123_3_3_6_5_75 -> {}
+t{T}_i{I}_0211_3_3_6_5_75 -> {}
+t{T}_i{I}_030_4_4_8_8_42  -> {}     # Triangle T id 42: 7 cells (one size-2 + six size-1)
+t{T}_i{I}_0300_3_3_6_5_75 -> {}     # rectangle cells 0300, 0301 are inside T's cell 030 (descendants)
+t{T}_i{I}_0301_3_3_6_5_75 -> {}
+t{T}_i{I}_0310_4_4_8_8_42 -> {}
+t{T}_i{I}_0311_4_4_8_8_42 -> {}
+t{T}_i{I}_0312_4_4_8_8_42 -> {}
+t{T}_i{I}_0320_4_4_8_8_42 -> {}     # Triangle T and id 1: SAME cell_key 0320 (shared cell)
+t{T}_i{I}_0320_4_6_5_7_1  -> {}     # id 1 sorts after T here: same cell_key, larger minY
+t{T}_i{I}_0321_4_4_8_8_42 -> {}
+t{T}_i{I}_0322_4_4_8_8_42 -> {}
 ```
 
 The seven `…_42` entries for `T` are the multi-valued-index (MVI) fan-out: MVI means one
@@ -550,9 +558,9 @@ carry that row's own bbox.
 Two key relationships are visible in the listing, and both come down to *level*:
 
 - **Shared cell (same level)**: id 1 lands in cell `0320`, which is also one of `T`'s
-  covering cells, so `0320_1` and `0320_42` are two entries under the *same* `cell_key`
-  (adjacent in the listing, differing only by handle). This is the normal case in a
-  populated index: many rows under one cell.
+  covering cells, so the `0320_..._42` and `0320_..._1` entries share the *same*
+  `cell_key` (adjacent in the listing, differing in their trailing bbox columns and
+  handle). This is the normal case in a populated index: many rows under one cell.
 - **Descendant, not shared (different level)**: the rectangle's cells `0300` and `0301`
   are *children* of `T`'s coarse cell `030`, so they are different keys inside `030`'s
   territory (`030_42` is immediately followed by `0300_75`, `0301_75`). A range scan over
@@ -585,8 +593,8 @@ that are it, an ancestor, or a descendant):
 Pipeline: cover the query -> range-scan descendants + look up ancestors -> bbox
 pre-filter -> dedup handles -> fetch rows -> exact predicate. The cross-level
 ancestor/descendant matching is what makes a mixed-level covering searchable; the bbox
-in the value is a cheap pre-fetch reject (most valuable when coverings are coarse); the
-exact refine is always required for correctness.
+key columns are a cheap pushed-down reject before the row fetch (most valuable when
+coverings are coarse); the exact refine is always required for correctness.
 
 ## Index value contents and table partitioning (Sunny Bains review)
 
@@ -617,7 +625,12 @@ repeats across a polygon's covering-cell entries) and a rewrite when the geometr
 The bbox columns trail the cell key, so they cannot narrow the cell-key range scan (range
 building stops at the first non-equality column); they act purely as index filters, which
 is sufficient for MBR pruning. Per-entry size is small (a point's two float64s ~16 bytes; a
-general geometry's 4-float MBR ~32 bytes).
+general geometry's 4-float MBR ~32 bytes). Being a pre-filter, it must be conservative (a
+wrong reject is a wrong result, not over-cover): on SRID 4326 a query cap crossing the
+antimeridian yields a wrapping longitude interval whose filter must be split into two
+boxes or dropped, and a stored geometry spanning the antimeridian stores a non-wrapping
+full-width bbox; see the design doc's Query path for the full wraparound rule and the
+axis convention (MySQL `ST_X` on 4326 is latitude).
 
 ### Global vs local spatial index for partitioned tables
 
@@ -664,7 +677,8 @@ partition-key-co-constrained queries let a local index prune. Global is therefor
 stronger *default* for spatial, because pure spatial predicates do not carry the partition
 key, not because the local/global machinery differs. The rows stay distributed by the
 table's partitioning regardless; only the global index is unified, which is why
-`partition_id` is stored in its value.
+`partition_id` is carried in its entries (in the key, per the global-index V2 encoding,
+#65289).
 
 One might try to make spatial queries prune by range-partitioning the table on the
 Hilbert/S2 value itself. That is redundant with TiKV, which already range-partitions the
@@ -681,17 +695,18 @@ This is what `partition_id` means in the reviewed layout: the physical partition
 already implements global indexes for partitioned tables
 (`docs/design/2020-08-04-global-index.md`), so this rides on existing machinery.
 
-Reviewed index entry layout (generic geometry):
+Reviewed index entry layout (generic geometry), as later refined by the PoC (the review
+proposed the bbox in the value; the PoC moved it into the key, see above):
 
 ```
-t{table_id}_i{spatial_index_id}_{spatial_key}_{clustered_pk}
-  -> minX, minY, maxX, maxY, [optional geom summary], [optional EWKB if covering]
-     [+ partition_id, only for a global index on a partitioned table]
+t{table_id}_i{spatial_index_id}_{spatial_key}_{minX}_{minY}_{maxX}_{maxY}_{clustered_pk}
+  -> {}    [full EWKB in the value only for the optional covering variant]
 ```
 
-The value's core is the bounding box; `partition_id` is appended only by a global index
-on a partitioned table (for a non-partitioned table the physical table id is the table
-id, so it is unnecessary).
+The key's core after the cell key is the bounding box; `partition_id` (in the key, per
+the global-index V2 encoding #65289) is carried only by a global index on a partitioned
+table (for a non-partitioned table the physical table id is the table id, so it is
+unnecessary).
 
 ### Open questions from this review (resolve before deciding)
 
@@ -701,9 +716,9 @@ yet decided.
 1. **Value contents**: bbox only, bbox + simplified geometry, or full EWKB (covering)?
    Fixed per index, or a `WITH` option? What index-size / write-amplification budget is
    acceptable?
-2. **Where the bbox pre-filter runs**: in TiDB after the index scan, or pushed to the
-   TiKV coprocessor so candidates are filtered before being returned (needs the value
-   decoded coprocessor-side)?
+2. **Where the bbox pre-filter runs (RESOLVED)**: the bbox moved into index **key**
+   columns, so the existing index-filter machinery pushes it to the coprocessor and runs
+   it during the index scan, before the row lookup (Layer A; no value decode needed).
 3. **Global vs local policy**: since this is the general secondary-index tradeoff (not
    spatial-specific), the real question is the workload, are spatial queries pure-spatial
    (favor global, since they cannot prune partitions) or always co-constrained by the
@@ -1281,7 +1296,8 @@ that branch.
 ## References
 
 - TiDB issue #6347, "Support for SPATIAL functions, data types and indexes".
-- `docs/design/2022-10-27-geospatial.md` (PR #38916), dveeden's geospatial design.
+- dveeden's geospatial design (PR #38916, closed unmerged; its
+  `docs/design/2022-10-27-geospatial.md` never landed in the repo).
 - PRs #66602 (parser types + SRID), #60295 (earlier parser), #38611 (GEOMETRY type),
   tikv/tikv#13652 (TiKV GEOMETRY type).
 - CockroachDB spatial indexing (S2 covering over inverted indexes):

@@ -34,6 +34,8 @@ Concrete first deliverable: the points-only MVP is planned in detail in `docs/de
   Evidence: `ColumnarIndexTypeInverted` in `pkg/meta/model/index.go` is a TiFlash columnar index for integer columns; the TiKV fan-out primitive we reuse is the MVI.
 - Observation: prerequisite scaffolding already has substantial prior art that was closed for lack of progress, not for being wrong.
   Evidence: PRs #66602 (parser types + SRID), #38611 (GEOMETRY type), tikv/tikv#13652, and design doc PR #38916. The design doc explicitly defers the index as needing more research.
+- Observation: the MVI IndexMerge read path builds equality point ranges only, so the descendant (prefix-range) half of cross-level cell matching needs a planner extension.
+  Evidence: `buildPartialPaths4MVIndex` (`pkg/planner/core/indexmerge_path.go`) rewrites `member of` / `json_contains` / `json_overlaps` values to `EQ` conditions before range building; no range form over array elements exists. The spatial hook must inject coverer-produced cell-key ranges into the MVI IndexMerge partial paths (the write-path fan-out is unaffected). Found in the 2026-07-06 design-review pass; see the design doc's Phasing item 2.
 
 ## Decision Log
 
@@ -55,6 +57,7 @@ Concrete first deliverable: the points-only MVP is planned in detail in `docs/de
 
 - Decision: Distinguish two cell knobs: max level (precision) and max cells per geometry (fan-out cap). A point always writes exactly one MVI entry regardless of depth; only extended geometries fan out, bounded by the cap (default 4; CockroachDB's published default is also 4).
   Rationale: point-heavy "store locations" workloads then have one index entry per row independent of precision, keeping write amplification predictable.
+  Update 2026-07-06: the PoC ran S2 with maxCells 16 (research.md -> "Proof-of-concept validation"), so the shipped default (4 vs 16) is still open, pending the representative-data measurement tracked in the design doc's Unresolved Questions.
   Date/Author: 2026-06-23, Mattias Jonsson.
 
 - Decision: 2D index is required; design the cell-key encoding to be dimension-tagged so 3D can be added later, but do not build 3D.

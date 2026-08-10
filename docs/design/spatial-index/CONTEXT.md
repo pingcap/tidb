@@ -60,6 +60,10 @@ this directory are the supporting working material it references.
    same design for points, and converge for polygons (the MVI is the general form). A
    points-only plain index needs no MVI at all.
 7. Settled on the points-only MVP as the first deliverable and wrote its concrete plan.
+8. A design-review pass (2026-07-06) verified the codebase claims, added the covering
+   closed-cell boundary rule, exposed the Phase-2 MVI range-injection gap and the 4326
+   bbox wraparound rule, and reconciled stale bbox-in-value text (folded into these
+   docs; full notes in the review file accompanying the PR discussion).
 
 ## Key decisions (see Decision Logs in PLAN.md / PLAN-points-mvp.md for rationale)
 
@@ -108,9 +112,17 @@ this directory are the supporting working material it references.
 - Is a *clustered* spatial table ever a target use case, or is a secondary index on
   normally-clustered tables the only goal? This decides whether the ER-tree clustered
   direction is ever pursued.
-- S2 vs minimal in-house spherical coverer for 4326 (leaning S2 / golang/geo).
-- Whether `go-geom` covers exact `ST_Intersects`/`ST_Contains` for the refine step or
-  needs supplementary code.
+- Phase 2 read path: the MVI IndexMerge machinery builds equality point ranges only, so
+  descendant (prefix-range) matching needs the planner hook to inject coverer-produced
+  cell-key ranges into the partial paths (see the design doc's Phasing and PLAN.md ->
+  Surprises; check how the PoC branch handled this).
+- SRID 4326 bbox pre-filter wraparound: antimeridian-crossing query caps need a split
+  (or dropped) longitude filter, wrapping stored bboxes a full-width convention, and the
+  axis convention pinned (MySQL `ST_X` on 4326 is latitude); see the design doc's Query
+  path.
+- Coverer boundary rule: covering must keep cells the closed geometry merely touches
+  (dropping one is an unrecoverable false negative); property tests need
+  boundary-aligned cases (see the design doc's covering boundary rule).
 - The Sunny Bains review open questions (research.md -> "Index value contents and table
   partitioning"): index value payload (bbox vs +summary vs full EWKB), where the bbox
   pre-filter runs (TiDB vs coprocessor), global-vs-local policy for partitioned tables,
@@ -145,8 +157,9 @@ the throwaway proof that coverer-produced ranges can be injected into a planner
 
 ## Prior art (issue #6347)
 
-- `docs/design/2022-10-27-geospatial.md` (PR #38916, closed): dveeden's staged geospatial
-  design; defers the index as "needs more research".
+- PR #38916 (closed unmerged): dveeden's staged geospatial design (its
+  `docs/design/2022-10-27-geospatial.md` never landed in the repo); defers the index as
+  "needs more research".
 - PR #66602 (closed): parser support for spatial types + SRID; rejects them in
   `pkg/planner/core/preprocess.go` (enable by removing the `TypeGeometry` check).
 - PR #38611 + tikv/tikv#13652 (closed): the GEOMETRY column type.

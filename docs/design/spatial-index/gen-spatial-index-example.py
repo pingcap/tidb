@@ -2,7 +2,8 @@
 # Generates spatial-index-example.svg, the figure for the triangle worked example in
 # research.md (and the design doc). It draws the quadtree grid levels, the three sample
 # geometries (triangle id 42 "T", rectangle id 75, triangle id 1), their covering cells,
-# and the shared cell 0320. Domain [0,8)^2, unit = 64px.
+# and the shared cell 0320. Shows cell 0 = [0,8)^2 of the example's [0,16)^2 domain,
+# unit = 64px.
 #
 # Regenerate:  python3 gen-spatial-index-example.py   (writes the .svg next to this file)
 # To a PNG:    rsvg-convert -o spatial-index-example.png spatial-index-example.svg
@@ -12,7 +13,7 @@
 import os
 
 S = 64                      # px per unit
-MX, MY_TOP = 50, 60         # left margin, top margin (title)
+MX, MY_TOP = 50, 84         # left margin, top margin (title + subtitle)
 LEGEND_W = 230
 W = MX + 8*S + LEGEND_W
 H = MY_TOP + 8*S + 46
@@ -37,7 +38,8 @@ C_NOTE = "#74808B"       # Carbon 600, for the small legend note
 out = []
 out.append(f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" font-family="Helvetica,Arial,sans-serif">')
 out.append(f'<rect width="{W}" height="{H}" fill="#ffffff"/>')
-out.append(f'<text x="{MX}" y="34" font-size="20" font-weight="700" fill="{TXT}">Spatial index: covering cells for three geometries (domain [0,8)²)</text>')
+out.append(f'<text x="{MX}" y="34" font-size="20" font-weight="700" fill="{TXT}">Spatial index: covering cells for three geometries</text>')
+out.append(f'<text x="{MX}" y="58" font-size="14" fill="{C_NOTE}">cell 0 = [0,8)² of the example\'s [0,16)² domain</text>')
 
 # --- grid: unit, then L3 (size2), L2 (size4), L1 (size8) on top ---
 def vline(x,color,w): out.append(f'<line x1="{sx(x)}" y1="{sy(0)}" x2="{sx(x)}" y2="{sy(8)}" stroke="{color}" stroke-width="{w}"/>')

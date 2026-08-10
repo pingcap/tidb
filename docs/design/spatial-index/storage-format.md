@@ -206,8 +206,9 @@ Trade-off:
 
 **Benchmark before GA** (for SRID 0): Hilbert vs Morton on (a) ranges-per-query and
 covering false-positive ratio (pruning quality) and (b) encode ns/op (write cost).
-`pkg/util/spatial` already has `BenchmarkEncodePoint` / `BenchmarkCoverRect` and a
-false-positive-ratio test to extend. If Hilbert's pruning win exceeds its encode
+`pkg/util/spatial` (on the PoC branch, not yet in this repo) already has
+`BenchmarkEncodePoint` / `BenchmarkCoverRect` and a false-positive-ratio test to
+extend. If Hilbert's pruning win exceeds its encode
 cost for the target workloads, adopt it for SRID 0 too (consistency with the S2
 4326 path is a bonus). Gate the curve behind the format-version tag / index metadata
 so it stays evolvable.

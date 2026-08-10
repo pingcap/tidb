@@ -7,6 +7,7 @@
 ## Table of Contents
 
 * [Introduction](#introduction)
+* [Terminology](#terminology)
 * [Motivation or Background](#motivation-or-background)
 * [Detailed Design](#detailed-design)
 * [Test Design](#test-design)
@@ -24,19 +25,40 @@
 This document proposes a spatial index for TiDB that accelerates proximity ("within
 radius") and containment ("point in polygon", bounding-box overlap) queries on a
 geometry column. The index is a TiKV secondary index that decomposes a geometry into a
-set of covering cells of a space-filling curve (Hilbert ordering, S2 cells for
-geographic data and a planar quadtree for Cartesian data), stores one ordered key per
-covering cell using TiDB's existing multi-valued-index mechanism, and answers spatial
+set of covering cells of a [space-filling curve](#terminology)
+([Hilbert](#terminology) ordering, [S2](#terminology) cells for geographic data and a
+planar quadtree for Cartesian data), stores one ordered key per covering cell using
+TiDB's existing [multi-valued-index](#terminology) mechanism, and answers spatial
 queries by scanning the cell ranges that cover the query shape and then refining
 candidates with the exact predicate.
 
-The scope of this document is the **index only**. The `GEOMETRY` data type, its EWKB
-storage, and the `ST_*` functions are treated as a prerequisite that lands
-independently (see Motivation); the index is designed against a small contract from
-that type. Supporting working documents with the full survey, decision logs, and a
-concrete first-deliverable plan live alongside this file under
+The scope of this document is the **index only**. The `GEOMETRY` data type, its
+[EWKB](#terminology) storage, and the `ST_*` functions are treated as a prerequisite
+that lands independently (see Motivation); the index is designed against a small
+contract from that type. Supporting working documents with the full survey, decision
+logs, and a concrete first-deliverable plan live alongside this file under
 `docs/design/spatial-index/` (`research.md`, `PLAN.md`, `PLAN-points-mvp.md`,
 `CONTEXT.md`).
+
+## Terminology
+
+| Term | Meaning |
+| --- | --- |
+| [OGC](https://www.ogc.org/standard/sfa/) | Open Geospatial Consortium, the body behind *Simple Features*, the specification MySQL's spatial types and `ST_*` functions follow. |
+| [WKB](https://en.wikipedia.org/wiki/Well-known_text_representation_of_geometry) | Well-Known Binary, the OGC byte encoding of a geometry. |
+| [EWKB](https://libgeos.org/specifications/wkb/#extended-wkb) | Extended WKB, the PostGIS/GEOS superset whose type-word flags add Z, M and an embedded SRID. The prerequisite type layer stores it behind a format-version byte. Not [MySQL's internal format](https://dev.mysql.com/doc/refman/8.4/en/gis-data-formats.html), which is a 4-byte SRID prefix over 2D WKB. |
+| SRS | Spatial Reference System: the coordinate system a geometry's numbers are in, with its units, axis order and datum. Either *projected* (flat X/Y) or *geographic* (latitude/longitude on an ellipsoid), and that class decides whether measurement is planar or geodesic. |
+| [SRID](https://dev.mysql.com/doc/refman/8.4/en/spatial-reference-systems.html) | Spatial Reference System Identifier, the integer naming an SRS. This design covers 0 (the abstract Cartesian plane) and 4326; see [Coverer and SRID schemes](#coverer-and-srid-schemes). |
+| [EPSG](https://epsg.org/) | The EPSG Geodetic Parameter Dataset, the registry that assigns SRIDs. |
+| [WGS 84](https://en.wikipedia.org/wiki/World_Geodetic_System) | World Geodetic System 1984, the datum and reference ellipsoid used by GPS, registered as EPSG:4326. |
+| [Space-filling curve](https://en.wikipedia.org/wiki/Space-filling_curve) | A mapping that linearizes 2D space into a 1D ordering while preserving locality, so nearby geometries get nearby keys. The variants used here are the [Hilbert curve](https://en.wikipedia.org/wiki/Hilbert_curve) and [Morton / Z-order](https://en.wikipedia.org/wiki/Z-order_curve), the same idea behind [geohash](https://en.wikipedia.org/wiki/Geohash); see [Overall approach](#overall-approach). |
+| [S2](http://s2geometry.io/) | Google's spherical-geometry library, which decomposes the sphere into a hierarchy of Hilbert-ordered cells. Used for SRID 4326; see [Coverer and SRID schemes](#coverer-and-srid-schemes). |
+| Cell covering, refine | The covering is the set of curve cells whose union contains a geometry. Being a conservative approximation, an index scan over those cells yields candidates that still need an exact refine step; see [Query path](#query-path). |
+| [R-tree](https://en.wikipedia.org/wiki/R-tree), [GiST](https://www.postgresql.org/docs/current/gist.html) | The balanced tree of bounding rectangles that MySQL and MariaDB use for spatial indexes, and PostgreSQL's Generalized Search Tree framework through which PostGIS provides it. Rejected here because it assumes single-node, in-place tree maintenance; see [Overall approach](#overall-approach). |
+| MVI | [Multi-valued index](https://docs.pingcap.com/tidb/stable/sql-statements/sql-statement-create-index/), TiDB's existing index kind that writes many index entries for one row, built for JSON arrays. The fan-out primitive this design reuses; see [Index entry layout](#index-entry-layout). |
+| MBR | Minimum Bounding Rectangle, the axis-aligned box enclosing a geometry, used both as a cheap prefilter in the index key and as the basis of MySQL's `MBR*` predicate family. |
+| [DE-9IM](https://en.wikipedia.org/wiki/DE-9IM) | Dimensionally Extended 9-Intersection Model, the OGC model defining what `ST_Within`, `ST_Contains`, `ST_Intersects` and the other topological predicates mean. These are the predicates the index accelerates. |
+| KNN | K Nearest Neighbours, the "give me the closest k rows" query shape, as opposed to the bounded-radius search this design targets. |
 
 ## Motivation or Background
 
@@ -51,8 +73,8 @@ geofence queries.
 TiDB has no spatial support today: only the `mysql.TypeGeometry` type constant exists
 (`pkg/parser/mysql/type.go`), with no value representation and no `ST_*` functions. The
 geometry type and basic functions are expected to land independently, following the
-staged plan in the earlier geospatial design (PR #38916,
-`docs/design/2022-10-27-geospatial.md`) and its parser/type work
+staged plan in the earlier geospatial design proposed in PR #38916 (closed unmerged, so
+its `docs/design/2022-10-27-geospatial.md` is not in the repo) and its parser/type work
 (PRs #66602, #60295, #38611 and tikv/tikv#13652). That earlier design explicitly deferred the spatial index,
 stating it "needs more research". This document fills that gap.
 
@@ -200,6 +222,16 @@ bounded set of **point lookups** (one per coarser level, up to the index's max l
 with half-open range bounds. The covering is proven to have no false negatives by a
 property test (brute force vs covering over random points, for both SRIDs).
 
+**Covering boundary rule (closed cells vs half-open quantization).** Point-to-cell
+quantization assigns a point to exactly one half-open cell, but OGC geometries are closed
+sets (they include their boundary), so a geometry's upper/right edges and vertices can
+fall in cells adjacent to its interior. `Cover` must therefore include every cell whose
+**closed** extent intersects the closed geometry. Dropping a cell the geometry merely
+touches creates a false negative that the refine step cannot recover: refine only removes
+false positives, it never adds candidates. The property test must include
+boundary-aligned cases (edges and vertices exactly on cell boundaries), since random
+points essentially never sample them.
+
 The SRID-0 planar curve is Morton/Z-order initially, while SRID 4326 (S2) is Hilbert
 internally, so 4326 already gets Hilbert-quality locality and SRID 0 does not, an
 asymmetry worth resolving before GA (Hilbert maps a query rectangle to fewer, longer key
@@ -237,6 +269,17 @@ Index maintenance is transactional with the row, identical to any TiDB secondary
    a covering access; a covering index that stores the EWKB in the value also skips it.
 7. Apply the exact predicate (`ST_Intersects`/`ST_Contains`/exact distance) to produce
    the final result.
+
+The bbox pre-filter must be **conservative**: unlike over-cover, a wrongly rejected
+candidate is a wrong result the refine never sees. On SRID 0 the plain interval
+comparisons above are exactly that. On SRID 4326 they need a wraparound rule: a query cap
+crossing the antimeridian has a wrapping longitude interval, so its pushed filter must be
+split into two boxes (a disjunction) or the longitude constraint dropped; a near-pole cap
+spans all longitudes, handled the same way; and a stored geometry spanning the
+antimeridian (Phase 2) stores a non-wrapping, full-width longitude bbox so the interval
+comparisons stay valid. The axis convention must be pinned too: MySQL's axis order for
+SRID 4326 makes `ST_X` return *latitude*, and the point covering rewrite must reattach
+the SRID (a bare `ST_Point(x, y)` is SRID 0).
 
 Two pushdown layers exist. **Layer A (bbox-in-index)** is step 4: because the bbox lives in
 index columns, the existing index-filter machinery pushes it to the storage node and prunes
@@ -276,6 +319,11 @@ cells hugging the diagonal edge. For `T` that is one size-2 cell plus six size-1
     030                  (size 2, the solid interior corner)
     0310 0311 0312       (size 1, lower-right edge)
     0320 0321 0322       (size 1, upper-left edge)
+
+(Simplified for readability. Closed `T` also touches cells at the hypotenuse's lattice
+points (`0313`, `0323`, `0330`), and its vertices `(8,4)`/`(4,8)` fall in half-open cells
+outside `03`; a correct coverer keeps all of them, per the covering boundary rule above,
+because a dropped touch cell is a false negative the refine cannot recover.)
 
 Storage: row `id=42` writes one entry per covering cell. The bbox `(4,4,8,8)` rides in the
 key as trailing index columns after the `cell_key` (so it pre-filters during the scan); the
@@ -323,17 +371,28 @@ machinery (`docs/design/2020-08-04-global-index.md`).
 2. **Phase 2, generic geometry**: multi-cell covering via MVI and
    `ST_Intersects`/`ST_Contains` on polygons and linestrings. Concretely, an
    **array-valued** hidden generated column `tidb_spatial_keys(col)` returns the covering
-   cell keys as an array, indexed as a multi-valued index (`CAST(... AS CHAR ARRAY)`), and
-   queried through **IndexMerge** (`json_overlaps` against the query cells) with handle
-   dedup and the exact refine. This rides the existing JSON-array MVI + IndexMerge path
-   rather than generalizing `getIndexedValue` or relying on a direct multi-valued
-   `IndexReader` (whose duplicate-handle assumptions the planner avoids). The bbox columns
-   (`minx,miny,maxx,maxy`) are appended to the index key so the bbox pre-filter pushes to
-   the coprocessor via the existing index-filter machinery (no new operator), as for the
-   point index.
+   cell keys as an array, indexed as a multi-valued index (`CAST(... AS CHAR ARRAY)`).
+   The **write path** rides the existing JSON-array MVI machinery unchanged (no
+   generalizing of `getIndexedValue`). The **read path** is IndexMerge over partial paths
+   on the MVI, with handle dedup and the exact refine, but only partially rides the
+   existing path: the JSON-function machinery (`buildPartialPaths4MVIndex` in
+   `pkg/planner/core/indexmerge_path.go`) rewrites every array value to an **equality**
+   and builds point ranges only. Equality handles the *equal* and *stored-cell-is-ancestor*
+   cases (enumerate each query cell's ancestors as extra lookup values, bounded by max
+   level), but *stored-cell-is-descendant* matching needs prefix **range scans**, which
+   that machinery cannot express. The spatial planner hook must therefore inject
+   coverer-produced cell-key ranges into the MVI IndexMerge partial paths directly, the
+   Phase-2 analog of the Phase-1 range-injection hook (the executor is unaffected: an
+   index scan takes key ranges either way, and IndexMerge union dedups handles). The
+   planner still avoids a direct multi-valued `IndexReader` (whose duplicate-handle
+   assumptions it sidesteps). The bbox columns (`minx,miny,maxx,maxy`) are appended to the
+   index key so the bbox pre-filter pushes to the coprocessor via the existing
+   index-filter machinery (no new operator), as for the point index.
 3. **Phase 3, partitioned tables**: global spatial index, reusing TiDB's existing
    global-index encoding (partition id in the key for non-unique non-clustered indexes,
-   per the V2 work #65289), not a spatial-specific scheme.
+   per the V2 work #65289), not a spatial-specific scheme. One item to verify early: a
+   *global multi-valued* index (needed for generic geometries on partitioned tables) is a
+   combination the existing global-index machinery does not exercise today.
 4. **Later**: coprocessor pushdown of the refine predicate, expanding-ring kNN operator,
    and a TiFlash columnar spatial path (the coverer is kept engine-neutral to allow it).
 5. **Very late, not required for release**: composite (prefix-column) spatial indexes,
@@ -355,7 +414,10 @@ generator), `pkg/tablecodec/tablecodec.go`. Builtin registration: `pkg/expressio
 ### Compatibility
 
 - **Partition table**: a spatial index on a partitioned table should be global (see
-  above); local is valid only for partition-key-co-constrained workloads.
+  above); local is valid only for partition-key-co-constrained workloads. MySQL disallows
+  spatial columns in partitioned tables altogether (8.4 manual, "Restrictions and
+  Limitations on Partitioning"), so this whole surface is a TiDB extension: there is no
+  MySQL byte-form to match and no MySQL dump can contain it.
 - **Clustered index**: the spatial index is a secondary index; it does not change the
   table's clustering. A clustered-by-geometry organization is an explicitly rejected
   alternative (see Investigation).
@@ -392,7 +454,9 @@ generator), `pkg/tablecodec/tablecodec.go`. Builtin registration: `pkg/expressio
 
 - Coverer unit tests: a point encodes to one cell; `CoverQuery` of a shape returns
   ranges that include the cell of every contained point (zero false negatives vs a
-  brute-force check over random points), for both SRID 0 and 4326.
+  brute-force check over random points), for both SRID 0 and 4326, including
+  boundary-aligned cases (geometry edges and vertices exactly on cell boundaries), which
+  random sampling never hits (see the covering boundary rule).
 - Result-equivalence: for seeded tables, distance-within, `ST_Contains`/`ST_Within`, and
   `ST_Intersects` queries return identical rows with the index dropped and created.
 - Plan tests: `EXPLAIN` shows a spatial index range scan plus a refine filter instead of
@@ -404,12 +468,15 @@ generator), `pkg/tablecodec/tablecodec.go`. Builtin registration: `pkg/expressio
   plan-cache decision (reuse vs non-cacheable) behaves as specified.
 - Diagnostics: the covering diagnostic / `EXPLAIN` detail reports the cells and ranges a
   query generates.
+- `ADMIN CHECK TABLE` / `ADMIN CHECK INDEX` on a spatial index: the consistency checker
+  must recompute coverings through the hidden generated columns (plain and MVI).
 
 ### Scenario Tests
 
 - Proximity ("stores within 10 km of a point", including `ORDER BY distance LIMIT k`).
 - Geofence (point-in-polygon over a geofence table).
-- SRID 4326 edge cases: a query shape crossing the antimeridian and one near a pole.
+- SRID 4326 edge cases: a query shape crossing the antimeridian and one near a pole
+  (exercising both the S2 covering and the bbox pre-filter's wraparound rule).
 - Multi-tenant partitioned table: per-tenant spatial query (local index prunes) and, in
   Phase 3, cross-tenant spatial query (global index).
 
@@ -418,6 +485,10 @@ generator), `pkg/tablecodec/tablecodec.go`. Builtin registration: `pkg/expressio
 - Partition table (local and global), clustered and non-clustered tables, charset/
   collation irrelevance for the geometry value, async commit.
 - Parser/DDL/planner/statistics/executor as listed in Compatibility.
+- Online `ADD SPATIAL INDEX` under concurrent DML (backfill plus the temp-index merge
+  path), not just backfill of a quiescent table.
+- Phase 3: `EXCHANGE PARTITION` and `DROP`/`TRUNCATE PARTITION` clean up global
+  spatial-index entries.
 - External components: Dumpling/Lightning round-trip of a table with a spatial index;
   TiCDC and BR pass-through; behavior unaffected when TiFlash is absent.
 - Upgrade and downgrade paths.
@@ -431,8 +502,9 @@ generator), `pkg/tablecodec/tablecodec.go`. Builtin registration: `pkg/expressio
   insert/update throughput vs an unindexed table.
 - Query latency and rows-scanned vs a full table scan, across selectivities.
 - SRID-0 cell-key curve, Hilbert vs Morton/Z-order (pre-GA): ranges-per-query and covering
-  false-positive ratio (pruning quality) vs encode ns/op (write cost). `pkg/util/spatial`
-  has `BenchmarkEncodePoint`/`BenchmarkCoverRect` and a false-positive-ratio test to extend.
+  false-positive ratio (pruning quality) vs encode ns/op (write cost). The PoC branch's
+  `pkg/util/spatial` (not yet in this repo) has `BenchmarkEncodePoint`/`BenchmarkCoverRect`
+  and a false-positive-ratio test to extend.
 
 ## Impacts & Risks
 
@@ -521,7 +593,8 @@ A full survey is in `docs/design/spatial-index/research.md`. Summary:
   warn when a local spatial index cannot prune.
 - `partition_id` encoding (future, Phase 3): reuse the existing global-index encoding
   verbatim (partition id in the key for non-unique non-clustered indexes, per the V2 work
-  #65289).
+  #65289). Verify early that the machinery accepts a *global multi-valued* index (see
+  Phasing).
 - Phase 1 carries the point's `x,y` as additional hidden generated index **columns** (a
   normal composite index over `(cell_key, x, y)`), so the bbox/coords are in the key and the
   value stays empty; no index-value-generation extension is needed.
@@ -530,7 +603,8 @@ A full survey is in `docs/design/spatial-index/research.md`. Summary:
   Hilbert locality, so SRID 0 is the outlier), pending the pre-GA pruning-vs-encode
   benchmark (see Benchmark Tests). Either way, record the curve in the index metadata /
   cell-key version so it can change; the keys can be rebuilt by `DROP`/`CREATE INDEX`.
-- S2 library adoption (`github.com/golang/geo`) vs a minimal in-house spherical coverer.
+- S2 library adoption: resolved to `github.com/golang/geo` (decision 2026-06-23 in
+  `PLAN.md`, validated by the PoC); an in-house spherical coverer is not pursued.
 - Whether a clustered spatial table is ever a target use case (would revive the ER-tree
   direction).
 - 3D: 2D is required (MySQL/MariaDB are 2D-only; PostGIS has 3D/4D with ND-GiST). The
