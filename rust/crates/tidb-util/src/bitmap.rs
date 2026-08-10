@@ -12,27 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Complete transcreation of Go `pkg/util/bitmap` (`concurrent.go`).
+//! Complete transcreation of Go `pkg/util/bitmap`.
 //!
-//! A static-length bitmap that is thread-safe on setting, implemented with CAS
-//! because Go lacks atomic bitwise ops (golang/go#24244). Go stores the bits in
-//! a `[]uint32` and drives it with `atomic.LoadUint32` /
-//! `atomic.CompareAndSwapUint32` on `&segments[i]`. Rust's atomic operations are
-//! methods on the atomic type, not on a pointer to a plain integer, so the
-//! faithful mapping of that `[]uint32` is [`Vec<AtomicU32>`]: the atomic `Set`
-//! path uses `compare_exchange`, and the deliberately non-atomic `UnsafeSet` /
-//! `UnsafeIsSet` paths use exclusive `get_mut` / a relaxed load, which preserve
-//! the "not thread-safe" contract of the originals.
-//!
-//! Bit ordering matches the source exactly: bit `i` maps to
-//! `bitMask >> (i % 32)` within segment `i >> 5`, so bit 0 is the most
-//! significant bit of segment 0. `BytesConsumed` mirrors
-//! `unsafe.Sizeof(ConcurrentBitmap{}) + 4*cap(segments)` via
-//! [`std::mem::size_of`]; both the Go struct (slice header + int) and this Rust
-//! struct (`Vec` header + `usize`) are 32 bytes on a 64-bit target.
-//!
-//! `main_test.go` is a goroutine-leak `TestMain` (`goleak.VerifyTestMain`) with
-//! no observable behavior of its own; it has no Rust equivalent.
+//! The bitmap has a fixed logical length, ignores out-of-range indexes, and
+//! lets concurrent callers race to set a bit while reporting exactly one
+//! winner. [`AtomicU32`] provides the Rust-native segment authority; reset,
+//! clone, direct single-owner access, and memory accounting preserve the
+//! package's observable contracts.
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -171,13 +157,16 @@ mod tests {
     fn concurrent_bitmap_set() {
         const LOOP_COUNT: usize = 1000;
         const INTERVAL: usize = 2;
+        const WORKERS: usize = 16;
 
         let bm = Arc::new(ConcurrentBitmap::new(LOOP_COUNT * INTERVAL));
-        let mut handles = Vec::with_capacity(LOOP_COUNT);
-        for i in 0..LOOP_COUNT {
+        let mut handles = Vec::with_capacity(WORKERS);
+        for worker in 0..WORKERS {
             let bm = Arc::clone(&bm);
             handles.push(thread::spawn(move || {
-                bm.set((i * INTERVAL) as i64);
+                for i in (worker..LOOP_COUNT).step_by(WORKERS) {
+                    bm.set((i * INTERVAL) as i64);
+                }
             }));
         }
         for h in handles {
@@ -268,5 +257,50 @@ mod tests {
         assert!(!bm.unsafe_is_set(1));
         assert!(!bm.unsafe_is_set(3));
         assert!(!bm.unsafe_is_set(7));
+    }
+
+    #[test]
+    fn public_bounds_bit_order_and_single_owner_access() {
+        let mut bm = ConcurrentBitmap::new(33);
+
+        assert!(!bm.set(-1));
+        assert!(!bm.set(33));
+        bm.unsafe_set(-1);
+        bm.unsafe_set(33);
+        assert!(!bm.unsafe_is_set(-1));
+        assert!(!bm.unsafe_is_set(33));
+
+        assert!(bm.set(0));
+        assert!(!bm.set(0));
+        bm.unsafe_set(31);
+        bm.unsafe_set(32);
+        assert_eq!(bm.segments[0].load(Ordering::Relaxed), 0x8000_0001);
+        assert_eq!(bm.segments[1].load(Ordering::Relaxed), 0x8000_0000);
+        assert_eq!(
+            bm.bytes_consumed(),
+            (std::mem::size_of::<ConcurrentBitmap>()
+                + bm.segments.capacity() * std::mem::size_of::<u32>()) as i64
+        );
+    }
+
+    #[test]
+    fn clone_is_independent_and_reset_reuses_or_grows_storage() {
+        let mut bm = ConcurrentBitmap::new(64);
+        bm.unsafe_set(0);
+        bm.unsafe_set(63);
+        let clone = bm.clone();
+
+        bm.unsafe_set(31);
+        assert!(clone.unsafe_is_set(0));
+        assert!(clone.unsafe_is_set(63));
+        assert!(!clone.unsafe_is_set(31));
+
+        bm.reset(1);
+        assert_eq!(bm.segments.len(), 2);
+        assert!(!bm.unsafe_is_set(0));
+
+        bm.reset(65);
+        assert_eq!(bm.segments.len(), 3);
+        assert!(!bm.unsafe_is_set(64));
     }
 }
