@@ -188,7 +188,16 @@ fn parse_hms_extended(s: &str) -> Option<(u32, u32, u32)> {
         let h: i64 = fields.next()?.parse().ok()?;
         let m: u32 = fields.next()?.parse().ok()?;
         let sec: u32 = match fields.next() {
-            Some(f) => f.parse().ok()?,
+            Some(field) => {
+                let (whole, fraction) = field
+                    .split_once('.')
+                    .map_or((field, None), |(whole, fraction)| (whole, Some(fraction)));
+                if fraction.is_some_and(|digits| !digits.bytes().all(|byte| byte.is_ascii_digit()))
+                {
+                    return None;
+                }
+                whole.parse().ok()?
+            }
             None => 0,
         };
         clamp_hms(h, m, sec)
@@ -1950,6 +1959,26 @@ pub(crate) fn date_format(date: &Datum, fmt: &Datum) -> Result<Datum, EvalError>
         }
     }
     Ok(Datum::new_string(out))
+}
+
+#[cfg(test)]
+mod clock_source_tests {
+    use super::parse_hms_extended;
+
+    /// Go `TestClock` gives HOUR, MINUTE and SECOND all three fractional
+    /// source inputs. The fraction does not change those fields, but it must
+    /// not make the ETDuration cast NULL; the double-dot row stays invalid.
+    #[test]
+    fn test_clock_time_parts() {
+        for (input, expected) in [
+            ("10:10:10.123456", (10, 10, 10)),
+            ("11:11:11.11", (11, 11, 11)),
+            ("2010-10-10 11:11:11.11", (11, 11, 11)),
+        ] {
+            assert_eq!(parse_hms_extended(input), Some(expected));
+        }
+        assert_eq!(parse_hms_extended("2011-11-11 10:10:10.11.12"), None);
+    }
 }
 
 #[cfg(test)]

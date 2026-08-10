@@ -263,6 +263,36 @@ fn raw_arg_flen(args: &[Expression], i: usize) -> i64 {
         .map_or(tidb_datatype::UNSPECIFIED_LENGTH, FieldType::flen)
 }
 
+/// Go `getExpressionFsp` for `timeFunctionClass`: a constant uses the digits
+/// written after its first decimal point (capped at `MaxFsp`); a non-constant
+/// inherits the argument type's scale after the implicit TIME cast.
+fn time_argument_fsp(arg: &Expression) -> i64 {
+    const MAX_FSP: i64 = 6;
+    if let Expression::Constant(constant) = arg {
+        return constant.value.sql_string().ok().map_or(0, |value| {
+            value.find('.').map_or(0, |dot| {
+                (value.len() - dot - 1).min(MAX_FSP as usize) as i64
+            })
+        });
+    }
+    arg.static_type()
+        .map_or(0, FieldType::decimal)
+        .clamp(0, MAX_FSP)
+}
+
+/// `timeFunctionClass.getFunction` + `setDecimalAndFlenForTime`.
+fn time_return_type(args: &[Expression]) -> Option<FieldType> {
+    let [arg] = args else {
+        return None;
+    };
+    let fsp = time_argument_fsp(arg);
+    let mut ft = FieldType::new(FieldTypeCode::Duration);
+    ft.set_decimal(fsp);
+    ft.set_flen(10 + if fsp == 0 { 0 } else { fsp + 1 });
+    set_binary_charset(&mut ft);
+    Some(ft)
+}
+
 fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<FieldType> {
     let text = || {
         let mut ft = FieldType::new(FieldTypeCode::VarString);
@@ -468,12 +498,11 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
             set_binary_charset(&mut ft);
             ft
         }
-        // The date/time family. Every value this crate produces for them is
-        // a formatted string or an integer -- see `time_fn`'s own doc for
-        // why there is no `Time` value domain here -- so the result types
-        // are the string and integer ones rather than Go's temporal types.
-        // The VALUES match TiDB; the reported column type is the documented
-        // divergence, the same one the temporal casts carry.
+        // The date/time family. `TIME()` is the native Duration arm above;
+        // the remaining temporal values this crate produces are formatted
+        // strings or integers, so their reported column type retains the
+        // documented temporal-as-string divergence.
+        "time" => time_return_type(args)?,
         "now" | "current_timestamp" | "localtime" | "localtimestamp" | "utc_timestamp"
         | "curdate" | "current_date" | "utc_date"
         | "curtime" | "current_time" | "utc_time" | "monthname" | "dayname" | "last_day"
@@ -1373,6 +1402,70 @@ fn arg_numeric_type(args: &[Expression]) -> Option<FieldType> {
         // A string argument is read as a number, which Go does as a real.
         _ => FieldType::new(FieldTypeCode::Double),
     })
+}
+
+#[cfg(test)]
+mod time_source_tests {
+    use super::*;
+    use crate::NoColumns;
+    use tidb_ast::Expr;
+    use tidb_chunk::chunk::Chunk;
+
+    fn string_arg(value: &str) -> Expression {
+        let mut ft = FieldType::new(FieldTypeCode::VarString);
+        ft.set_flen(value.len() as i64);
+        Expression::Constant(Constant::new(Datum::new_string(value.to_owned()), ft))
+    }
+
+    fn chunk_time(value: &str) -> Datum {
+        let expression = Expr::Func {
+            name: "time".to_owned(),
+            args: vec![Expr::String(value.to_owned())],
+            origin_position: 0,
+        };
+        let rewritten = crate::rewriter::rewrite_expr(&expression).unwrap();
+        let mut chunk = Chunk::new_empty(&[]);
+        chunk.set_num_virtual_rows(1);
+        rewritten.eval(&NoColumns, chunk.get_row(0)).unwrap()
+    }
+
+    /// Exact metadata half of Go `TestTime`: the four positive spellings,
+    /// the negative maximum duration, and the integer-zero build boundary.
+    #[test]
+    fn test_time() {
+        for (value, fsp, flen) in [
+            ("2003-12-31 01:02:03", 0, 10),
+            ("2003-12-31 01:02:03.000123", 6, 17),
+            ("01:02:03.000123", 6, 17),
+            ("01:02:03", 0, 10),
+            ("-838:59:59.000000", 6, 17),
+        ] {
+            let result = builtin_return_type("time", &[string_arg(value)]).unwrap();
+            assert_eq!(result.code(), FieldTypeCode::Duration);
+            assert_eq!(result.charset_name(), "binary");
+            assert_eq!(result.collation_name(), "binary");
+            assert!(result.has_flag(tidb_datatype::FieldTypeFlags::BINARY));
+            assert_eq!(result.decimal(), fsp);
+            assert_eq!(result.flen(), flen);
+            let Datum::Duration(duration) = chunk_time(value) else {
+                panic!("TIME must evaluate into its declared duration domain")
+            };
+            let expected = value
+                .split_once(char::is_whitespace)
+                .map_or(value, |(_, time)| time);
+            assert_eq!(duration.to_string(), expected);
+        }
+
+        let zero = Expression::Constant(Constant::new(
+            Datum::Int(0),
+            FieldType::new(FieldTypeCode::LongLong),
+        ));
+        let result = builtin_return_type("time", &[zero]).unwrap();
+        assert_eq!(result.code(), FieldTypeCode::Duration);
+        assert_eq!(result.decimal(), 0);
+        assert_eq!(result.flen(), 10);
+        assert!(builtin_return_type("time", &[]).is_none());
+    }
 }
 
 #[cfg(test)]

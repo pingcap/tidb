@@ -31,14 +31,14 @@
 //!   other conversion failure in the source evaluator;
 //! - `''`/unknown zones, out-of-range offsets (`+14:01`, `+13:60`), NULL
 //!   arguments, and zero/invalid datetimes are all NULL;
-//! - `SYSTEM` maps to Go's process-local zone — session state this
-//!   value-only evaluator does not have, so it declines loudly instead of
-//!   producing a machine-dependent value.
+//! - `SYSTEM` maps to the process-local zone, matching Go's `time.Local`.
 
 use std::str::FromStr;
 use std::sync::LazyLock;
 
-use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, TimeZone as _, Utc};
+use chrono::{
+    DateTime, FixedOffset, Local, LocalResult, NaiveDate, NaiveDateTime, TimeZone as _, Utc,
+};
 use chrono_tz::Tz;
 use regex::Regex;
 
@@ -53,6 +53,7 @@ static TZ_OFFSET_RE: LazyLock<Regex> =
 enum ConvTz {
     Fixed(i32),
     Named(Tz),
+    System,
 }
 
 /// Resolves a CONVERT_TZ zone argument; `None` means the Go evaluator would
@@ -71,9 +72,7 @@ fn parse_conv_tz(s: &str) -> Result<Option<ConvTz>, EvalError> {
         return Ok(Some(ConvTz::Fixed(sign * (h * 3600 + m * 60))));
     }
     if s.eq_ignore_ascii_case("SYSTEM") {
-        // Go maps SYSTEM to the process-local zone; producing a
-        // machine-dependent value here would silently diverge.
-        return Err(EvalError::Unsupported("session time zone"));
+        return Ok(Some(ConvTz::System));
     }
     Ok(Tz::from_str(s).ok().map(ConvTz::Named))
 }
@@ -96,6 +95,14 @@ fn local_to_instant(naive: NaiveDateTime, tz: &ConvTz) -> Option<DateTime<Utc>> 
             )
         }
         ConvTz::Named(tz) => super::session_tz::local_to_instant(tz, &naive),
+        ConvTz::System => match Local.from_local_datetime(&naive) {
+            LocalResult::Single(value) => Some(value.with_timezone(&Utc)),
+            // Go's `time.Date` selects the post-transition occurrence for
+            // the process-local fall-back overlap (the same normal-time
+            // choice its Europe/Amsterdam source rows pin).
+            LocalResult::Ambiguous(_, later) => Some(later.with_timezone(&Utc)),
+            LocalResult::None => None,
+        },
     }
 }
 
@@ -153,6 +160,7 @@ pub(super) fn convert_tz(vals: &[Datum]) -> Result<Datum, EvalError> {
             instant.with_timezone(&offset).naive_local()
         }
         ConvTz::Named(tz) => instant.with_timezone(tz).naive_local(),
+        ConvTz::System => instant.with_timezone(&Local).naive_local(),
     };
 
     use chrono::{Datelike, Timelike};
@@ -176,6 +184,8 @@ pub(super) fn convert_tz(vals: &[Datum]) -> Result<Datum, EvalError> {
 mod tests {
     use super::convert_tz;
     use crate::Datum;
+    use chrono::{Local, LocalResult, NaiveDateTime, TimeZone as _};
+    use chrono_tz::Tz;
 
     fn s(v: &str) -> Datum {
         Datum::new_string(v.to_string())
@@ -183,6 +193,231 @@ mod tests {
 
     fn call(dt: &str, from: &str, to: &str) -> Datum {
         convert_tz(&[s(dt), s(from), s(to)]).unwrap()
+    }
+
+    /// Exact Go `TestConvertTz` scalar matrix. The two `SYSTEM` rows below
+    /// are computed separately from the process-local zone, just as the Go
+    /// test computes them with `time.LoadLocation("Local")`.
+    #[test]
+    fn test_convert_tz() {
+        let rows = [
+            (
+                s("2004-01-01 12:00:00.111"),
+                s("-00:00"),
+                s("+12:34"),
+                Some("2004-01-02 00:34:00.111"),
+            ),
+            (
+                s("2004-01-01 12:00:00.11"),
+                s("+00:00"),
+                s("+12:34"),
+                Some("2004-01-02 00:34:00.11"),
+            ),
+            (
+                s("2004-01-01 12:00:00.11111111111"),
+                s("-00:00"),
+                s("+12:34"),
+                Some("2004-01-02 00:34:00.111111"),
+            ),
+            (
+                s("2004-01-01 12:00:00"),
+                s("GMT"),
+                s("MET"),
+                Some("2004-01-01 13:00:00"),
+            ),
+            (
+                s("2004-01-01 12:00:00"),
+                s("-01:00"),
+                s("-12:00"),
+                Some("2004-01-01 01:00:00"),
+            ),
+            (
+                s("2004-01-01 12:00:00"),
+                s("-00:00"),
+                s("+13:00"),
+                Some("2004-01-02 01:00:00"),
+            ),
+            (
+                s("2004-01-01 12:00:00"),
+                s("-00:00"),
+                s("-13:00"),
+                Some("2003-12-31 23:00:00"),
+            ),
+            (s("2004-01-01 12:00:00"), s("-00:00"), s("-12:88"), None),
+            (s("2004-01-01 12:00:00"), s("+10:82"), s("GMT"), None),
+            (
+                s("2004-01-01 12:00:00"),
+                s("+00:00"),
+                s("GMT"),
+                Some("2004-01-01 12:00:00"),
+            ),
+            (
+                s("2004-01-01 12:00:00"),
+                s("GMT"),
+                s("+00:00"),
+                Some("2004-01-01 12:00:00"),
+            ),
+            (
+                Datum::Int(20_040_101),
+                s("+00:00"),
+                s("+10:32"),
+                Some("2004-01-01 10:32:00"),
+            ),
+            (
+                Datum::Real(314_159.0 / 100_000.0),
+                s("+00:00"),
+                s("+10:32"),
+                None,
+            ),
+            (s("2004-01-01 12:00:00"), s(""), s("GMT"), None),
+            (s("2004-01-01 12:00:00"), s("GMT"), s(""), None),
+            (s("2004-01-01 12:00:00"), s("a"), s("GMT"), None),
+            (s("2004-01-01 12:00:00"), s("0"), s("GMT"), None),
+            (s("2004-01-01 12:00:00"), s("GMT"), s("a"), None),
+            (s("2004-01-01 12:00:00"), s("GMT"), s("0"), None),
+            (Datum::Null, s("GMT"), s("+00:00"), None),
+            (s("2004-01-01 12:00:00"), Datum::Null, s("+00:00"), None),
+            (s("2004-01-01 12:00:00"), s("GMT"), Datum::Null, None),
+            (
+                s("2004-01-01 12:00:00"),
+                s("GMT"),
+                s("+10:00"),
+                Some("2004-01-01 22:00:00"),
+            ),
+            (
+                s("2004-01-01 12:00:00"),
+                s("+00:00"),
+                s("MET"),
+                Some("2004-01-01 13:00:00"),
+            ),
+            (
+                s("2004-01-01 12:00:00"),
+                s("+00:00"),
+                s("+14:00"),
+                Some("2004-01-02 02:00:00"),
+            ),
+            (
+                s("2021-10-31 02:59:59"),
+                s("+02:00"),
+                s("Europe/Amsterdam"),
+                Some("2021-10-31 02:59:59"),
+            ),
+            (
+                s("2021-10-31 03:00:00"),
+                s("+01:00"),
+                s("Europe/Amsterdam"),
+                Some("2021-10-31 03:00:00"),
+            ),
+            (
+                s("2021-10-31 02:00:00"),
+                s("+02:00"),
+                s("Europe/Amsterdam"),
+                Some("2021-10-31 02:00:00"),
+            ),
+            (
+                s("2021-10-31 02:59:59"),
+                s("+02:00"),
+                s("Europe/Amsterdam"),
+                Some("2021-10-31 02:59:59"),
+            ),
+            (
+                s("2021-10-31 03:00:00"),
+                s("+02:00"),
+                s("Europe/Amsterdam"),
+                Some("2021-10-31 02:00:00"),
+            ),
+            (
+                s("2021-10-31 02:30:00"),
+                s("+01:00"),
+                s("Europe/Amsterdam"),
+                Some("2021-10-31 02:30:00"),
+            ),
+            (
+                s("2021-10-31 03:00:00"),
+                s("+01:00"),
+                s("Europe/Amsterdam"),
+                Some("2021-10-31 03:00:00"),
+            ),
+            (
+                s("2021-10-31 02:00:00"),
+                s("Europe/Amsterdam"),
+                s("+02:00"),
+                Some("2021-10-31 03:00:00"),
+            ),
+            (
+                s("2021-10-31 02:59:59"),
+                s("Europe/Amsterdam"),
+                s("+02:00"),
+                Some("2021-10-31 03:59:59"),
+            ),
+            (
+                s("2021-10-31 02:00:00"),
+                s("Europe/Amsterdam"),
+                s("+01:00"),
+                Some("2021-10-31 02:00:00"),
+            ),
+            (
+                s("2021-10-31 03:00:00"),
+                s("Europe/Amsterdam"),
+                s("+01:00"),
+                Some("2021-10-31 03:00:00"),
+            ),
+            (
+                s("2021-03-28 02:30:00"),
+                s("Europe/Amsterdam"),
+                s("UTC"),
+                Some("2021-03-28 01:00:00"),
+            ),
+            (
+                s("2007-03-11 2:00:00"),
+                s("America/New_York"),
+                s("America/Chicago"),
+                Some("2007-03-11 01:00:00"),
+            ),
+            (
+                s("2007-03-11 3:00:00"),
+                s("America/New_York"),
+                s("America/Chicago"),
+                Some("2007-03-11 01:00:00"),
+            ),
+            (s("2004-10-00 12:00:00"), s("GMT"), s("MET"), None),
+            (s("2004-00-01 12:00:00"), s("GMT"), s("MET"), None),
+        ];
+        for (date, from, to, expected) in rows {
+            let actual = convert_tz(&[date, from, to]).unwrap();
+            assert_eq!(
+                actual,
+                expected.map_or(Datum::Null, s),
+                "expected {expected:?}"
+            );
+        }
+
+        let wall =
+            NaiveDateTime::parse_from_str("2021-10-22 10:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        let tallinn: Tz = "Europe/Tallinn".parse().unwrap();
+        let tallinn_instant = tallinn.from_local_datetime(&wall).single().unwrap();
+        let to_system = tallinn_instant
+            .with_timezone(&Local)
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+        assert_eq!(
+            call("2021-10-22 10:00:00", "Europe/Tallinn", "SYSTEM"),
+            s(&to_system)
+        );
+
+        let local_instant = match Local.from_local_datetime(&wall) {
+            LocalResult::Single(value) => value,
+            LocalResult::Ambiguous(_, later) => later,
+            LocalResult::None => panic!("source SYSTEM test wall clock must exist"),
+        };
+        let from_system = local_instant
+            .with_timezone(&tallinn)
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+        assert_eq!(
+            call("2021-10-22 10:00:00", "SYSTEM", "Europe/Tallinn"),
+            s(&from_system)
+        );
     }
 
     /// Every vector here is goeval output from TiDB's production engine.
@@ -344,7 +579,5 @@ mod tests {
             convert_tz(&[Datum::Null, s("+00:00"), s("+10:00")]).unwrap(),
             Datum::Null
         );
-        // SYSTEM needs session state: decline, never a machine-dependent value.
-        assert!(convert_tz(&[s("2004-01-01 12:00:00"), s("SYSTEM"), s("UTC")]).is_err());
     }
 }

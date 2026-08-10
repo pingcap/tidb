@@ -22,11 +22,13 @@
 //! values through a collator), `StringWithCtx`/`ExplainInfo`, `CanonicalHashCode`,
 //! and `MemoryUsage`.
 
+use std::hash::{Hash, Hasher};
+
 use crate::context::EvalError;
 use crate::expr_collation::CollationInfo;
 use crate::expression::{ConstLevel, Expression, CONSTANT_FLAG, PARAMETER_FLAG};
 use tidb_codec::{encode_int, hash_code};
-use tidb_datatype::{Datum, FieldType};
+use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 
 /// Go `ParamMarker`: a reference to a placeholder parameter in a prepared
 /// statement, by its position in `sessionVars.PreparedParams`.
@@ -72,6 +74,26 @@ impl Constant {
             ret_type: Some(ret_type),
             ..Default::default()
         }
+    }
+
+    /// Go `NewOne`: the unsigned `TINYINT(1)` constant used by boolean
+    /// rewrites without triggering integral promotion.
+    #[must_use]
+    pub fn new_one() -> Self {
+        Self::new(Datum::Int(1), specific_tiny_int_type(true))
+    }
+
+    /// Go `NewZero`: the unsigned `TINYINT(0)` constant used by boolean
+    /// rewrites without triggering integral promotion.
+    #[must_use]
+    pub fn new_zero() -> Self {
+        Self::new(Datum::Int(0), specific_tiny_int_type(true))
+    }
+
+    /// Go `NewNull`: a NULL constant declared as signed `TINYINT(1)`.
+    #[must_use]
+    pub fn new_null() -> Self {
+        Self::new(Datum::Null, specific_tiny_int_type(false))
     }
 
     /// Go `GetStaticType`: the declared result type (`None` for a nil pointer).
@@ -132,12 +154,201 @@ impl Constant {
         }
         &self.hashcode
     }
+
+    /// Go `Constant.Hash64`: hashes every field that participates in
+    /// [`Self::equals`] while deliberately ignoring the byte-cache and
+    /// `SubqueryRefID`, as the source does.
+    #[must_use]
+    pub fn hash64(&self) -> u64 {
+        let mut hasher = Fnv64::default();
+        hash_constant(self, &mut hasher);
+        hasher.finish()
+    }
+
+    /// Go `Constant.Equals`: structural equality for plan hash/equality keys.
+    /// This is distinct from Go `Constant.Equal(ctx, expr)`, which evaluates
+    /// values through an `EvalContext` and remains deferred.
+    #[must_use]
+    pub fn equals(&self, other: &Self) -> bool {
+        self.ret_type == other.ret_type
+            && self.collation == other.collation
+            && optional_expression_equals(&self.deferred_expr, &other.deferred_expr)
+            && self.param_marker == other.param_marker
+            && datum_equals(&self.value, &other.value)
+    }
+}
+
+const FNV_OFFSET_64: u64 = 14_695_981_039_346_656_037;
+const FNV_PRIME_64: u64 = 1_099_511_628_211;
+
+struct Fnv64(u64);
+
+impl Default for Fnv64 {
+    fn default() -> Self {
+        Self(FNV_OFFSET_64)
+    }
+}
+
+impl Hasher for Fnv64 {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for byte in bytes {
+            self.0 ^= u64::from(*byte);
+            self.0 = self.0.wrapping_mul(FNV_PRIME_64);
+        }
+    }
+}
+
+fn hash_constant(constant: &Constant, hasher: &mut Fnv64) {
+    hash_optional_field_type(constant.ret_type.as_ref(), hasher);
+    hash_collation(&constant.collation, hasher);
+    if let Some(deferred) = &constant.deferred_expr {
+        1_u8.hash(hasher);
+        hash_expression(deferred, hasher);
+    } else if let Some(param) = constant.param_marker {
+        PARAMETER_FLAG.hash(hasher);
+        param.order.hash(hasher);
+    } else {
+        CONSTANT_FLAG.hash(hasher);
+        hash_code(&constant.value).hash(hasher);
+    }
+}
+
+fn hash_expression(expression: &Expression, hasher: &mut Fnv64) {
+    match expression {
+        Expression::Constant(constant) => {
+            0_u8.hash(hasher);
+            hash_constant(constant, hasher);
+        }
+        Expression::Column(column) => {
+            1_u8.hash(hasher);
+            hash_column(column, hasher);
+        }
+        Expression::CorrelatedColumn(column) => {
+            2_u8.hash(hasher);
+            hash_column(&column.column, hasher);
+        }
+        Expression::ScalarFunction(function) => {
+            3_u8.hash(hasher);
+            function.func_name.lowercase().hash(hasher);
+            hash_optional_field_type(function.ret_type.as_ref(), hasher);
+            function.args.len().hash(hasher);
+            for argument in &function.args {
+                hash_expression(argument, hasher);
+            }
+        }
+    }
+}
+
+fn hash_column(column: &crate::column::Column, hasher: &mut Fnv64) {
+    hash_optional_field_type(column.ret_type.as_ref(), hasher);
+    column.id.hash(hasher);
+    column.unique_id.hash(hasher);
+    column.index.hash(hasher);
+    match &column.virtual_expr {
+        Some(expression) => {
+            1_u8.hash(hasher);
+            hash_expression(expression, hasher);
+        }
+        None => 0_u8.hash(hasher),
+    }
+    column.orig_name.hash(hasher);
+    column.is_hidden.hash(hasher);
+    column.is_prefix.hash(hasher);
+    column.in_operand.hash(hasher);
+    hash_collation(&column.collation, hasher);
+    column.correlated_col_unique_id.hash(hasher);
+}
+
+fn hash_optional_field_type(field_type: Option<&FieldType>, hasher: &mut Fnv64) {
+    match field_type {
+        Some(field_type) => {
+            1_u8.hash(hasher);
+            field_type.hash(hasher);
+        }
+        None => 0_u8.hash(hasher),
+    }
+}
+
+fn hash_collation(collation: &CollationInfo, hasher: &mut Fnv64) {
+    collation.coercibility().0.hash(hasher);
+    collation.has_coercibility().hash(hasher);
+    collation.repertoire().0.hash(hasher);
+    let (charset, name) = collation.charset_and_collation();
+    charset.hash(hasher);
+    name.hash(hasher);
+    collation.is_explicit_charset().hash(hasher);
+}
+
+fn optional_expression_equals(
+    left: &Option<Box<Expression>>,
+    right: &Option<Box<Expression>>,
+) -> bool {
+    match (left, right) {
+        (Some(left), Some(right)) => expression_equals(left, right),
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+fn expression_equals(left: &Expression, right: &Expression) -> bool {
+    match (left, right) {
+        (Expression::Constant(left), Expression::Constant(right)) => left.equals(right),
+        (Expression::Column(left), Expression::Column(right)) => column_equals(left, right),
+        (Expression::CorrelatedColumn(left), Expression::CorrelatedColumn(right)) => {
+            column_equals(&left.column, &right.column)
+        }
+        (Expression::ScalarFunction(left), Expression::ScalarFunction(right)) => {
+            left.func_name.lowercase() == right.func_name.lowercase()
+                && left.ret_type == right.ret_type
+                && left.args.len() == right.args.len()
+                && left
+                    .args
+                    .iter()
+                    .zip(&right.args)
+                    .all(|(left, right)| expression_equals(left, right))
+        }
+        _ => false,
+    }
+}
+
+fn column_equals(left: &crate::column::Column, right: &crate::column::Column) -> bool {
+    left.ret_type == right.ret_type
+        && optional_expression_equals(&left.virtual_expr, &right.virtual_expr)
+        && left.id == right.id
+        && left.unique_id == right.unique_id
+        && left.index == right.index
+        && left.orig_name == right.orig_name
+        && left.is_hidden == right.is_hidden
+        && left.is_prefix == right.is_prefix
+        && left.in_operand == right.in_operand
+        && left.collation == right.collation
+        && left.correlated_col_unique_id == right.correlated_col_unique_id
+}
+
+fn datum_equals(left: &Datum, right: &Datum) -> bool {
+    match (left, right) {
+        (Datum::Real(left), Datum::Real(right)) | (Datum::Float32(left), Datum::Float32(right)) => {
+            left.to_bits() == right.to_bits()
+        }
+        _ => left == right,
+    }
+}
+
+fn specific_tiny_int_type(unsigned: bool) -> FieldType {
+    FieldType::new(FieldTypeCode::Tiny)
+        .with_unsigned(unsigned)
+        .with_flen(1)
+        .with_decimal(0)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+    use tidb_datatype::{Datum, FieldType, FieldTypeFlags};
 
     fn ft() -> FieldType {
         FieldType::new(FieldTypeCode::Long)
@@ -187,5 +398,46 @@ mod tests {
         let d = c.clone();
         assert_eq!(d.value, Datum::Int(9));
         assert_eq!(d.subquery_ref_id, 7);
+    }
+
+    /// Source: `pkg/expression/constant_test.go::TestSpecificConstant`.
+    #[test]
+    fn specific_constant_matches_source() {
+        let cases = [
+            (Constant::new_one(), Datum::Int(1), true),
+            (Constant::new_zero(), Datum::Int(0), true),
+            (Constant::new_null(), Datum::Null, false),
+        ];
+
+        for (constant, expected_value, expected_unsigned) in cases {
+            assert_eq!(constant.value, expected_value);
+            let ret_type = constant.ret_type.expect("specific constants have a type");
+            assert_eq!(ret_type.code(), FieldTypeCode::Tiny);
+            assert_eq!(ret_type.flen(), 1);
+            assert_eq!(ret_type.decimal(), 0);
+            assert_eq!(ret_type.is_unsigned(), expected_unsigned);
+        }
+    }
+
+    /// Source: `pkg/expression/constant_test.go::TestConstantHashEquals`.
+    #[test]
+    fn constant_hash_equals_matches_source() {
+        let int_type = FieldType::new(FieldTypeCode::LongLong)
+            .with_added_flags(FieldTypeFlags::BINARY)
+            .with_flen(20);
+        let cst1 = Constant::new(Datum::Int(2333), int_type.clone());
+        let mut cst2 = Constant::new(Datum::Int(2333), int_type);
+
+        assert_eq!(cst1.hash64(), cst2.hash64());
+        assert!(cst1.equals(&cst2));
+
+        cst2.value = Datum::Int(2334);
+        assert_ne!(cst1.hash64(), cst2.hash64());
+        assert!(!cst1.equals(&cst2));
+
+        cst2.value = Datum::Int(2333);
+        cst2.ret_type = Some(FieldType::new(FieldTypeCode::VarString));
+        assert_ne!(cst1.hash64(), cst2.hash64());
+        assert!(!cst1.equals(&cst2));
     }
 }
