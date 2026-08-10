@@ -1,0 +1,28 @@
+schema = "semantic-package-gate-v3"
+claim = "whole-go-package"
+go_package = "pkg/util/rowcodec"
+source_commit = "ab1e19714d607a9f591cd6d9d5381c11d7c4d64b"
+rust_files = [
+  "rust/crates/tidb-codec/src/rowcodec.rs",
+  "rust/crates/tidb-codec/src/row_layout.rs",
+  "rust/crates/tidb-codec/src/row_encoder.rs",
+  "rust/crates/tidb-codec/src/row_decoder.rs",
+  "rust/crates/tidb-codec/tests/rowcodec_package_source.rs",
+  "rust/crates/tidb-codec/tests/row_layout_source.rs",
+  "rust/crates/tidb-codec/tests/row_encoder_source.rs",
+  "rust/crates/tidb-codec/tests/row_decoder_source.rs",
+  "rust/crates/tidb-codec/tests/rowv2_go_vectors.rs",
+  "rust/crates/tidb-codec/benches/codec.rs",
+  "rust/crates/tidb-tablecodec/src/table_row.rs",
+  "rust/crates/tidb-tablecodec/tests/tablecodec_package_source.rs",
+]
+
+[[tests]]
+name = "rowcodec_package_semantics"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-codec", "--test", "all", "row"]
+
+[[tests]]
+name = "tablecodec_row_consumer"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-tablecodec", "--test", "all", "row_codec"]
