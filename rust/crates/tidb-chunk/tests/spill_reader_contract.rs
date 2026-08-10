@@ -129,6 +129,44 @@ fn read_initial_chunks(initial: &[i64], late: i64) -> Vec<i64> {
 
 #[test]
 fn row_container_reader_extent_boundary() {
+    assert_eq!(read_initial_chunks(&[], 99), Vec::<i64>::new());
     assert_eq!(read_initial_chunks(&[11], 99), [11]);
     assert_eq!(read_initial_chunks(&[21, 22], 99), [21, 22]);
+
+    let storage = TestStorage::open("reader-error");
+    let fields = vec![FieldType::new(FieldTypeCode::Varchar).with_flen(4096)];
+    let mut rows = RowContainer::new(&fields, 1, storage.authority());
+    let mut chunk = Chunk::new_with_capacity(&fields, 2);
+    chunk.append_bytes(0, &vec![0x2a; 2048]);
+    chunk.append_bytes(0, &vec![0x7b; 2048]);
+    rows.add(chunk).expect("reader source chunk");
+    rows.spill_to_disk();
+    assert!(rows.already_spilled());
+
+    let data_path = std::fs::read_dir(&storage.path)
+        .expect("spill directory")
+        .filter_map(Result::ok)
+        .find_map(|entry| {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            (name.contains("chunk.DataInDiskByRows") && !name.contains("Offset"))
+                .then(|| entry.path())
+        })
+        .expect("reader data file");
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&data_path)
+        .expect("open reader spill image")
+        .set_len(CHECKSUM_BLOCK_SIZE as u64)
+        .expect("truncate reader spill image");
+
+    let mut reader = RowContainerReader::new(&rows);
+    assert!(reader.current().is_none());
+    assert!(reader.next_row().is_none());
+    assert!(reader.end().is_none());
+    assert!(reader.error().is_some());
+    reader.close();
+    reader.close();
+    assert!(reader.current().is_none());
+    rows.close();
 }

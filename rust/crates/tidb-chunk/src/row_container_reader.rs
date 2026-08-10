@@ -146,6 +146,8 @@ impl RowContainerReader {
 mod tests {
     use super::*;
     use crate::row_container::RowContainer;
+    use std::sync::{mpsc, Arc};
+    use std::time::Duration;
     use tidb_datatype::{FieldType, FieldTypeCode as C};
 
     /// Go `insertBytesRowsIntoRowContainer`, with a deterministic byte pattern
@@ -273,5 +275,98 @@ mod tests {
         assert_eq!(reader.error(), None);
         reader.close();
         rc.close();
+    }
+
+    /// Go `TestConcurrentSpillWithRowContainerReader`: a live reader keeps its
+    /// current owned chunk valid while another shallow handle spills the shared
+    /// container, then observes every remaining row exactly once and in order.
+    #[test]
+    fn a_live_reader_survives_a_concurrent_spill() {
+        let (rc, all_rows) = insert_bytes_rows(16, 16);
+        let reader_rc = rc.shallow_copy();
+        let (loaded_tx, loaded_rx) = mpsc::channel();
+        let (continue_tx, continue_rx) = mpsc::channel();
+        let reader_thread = std::thread::spawn(move || {
+            let mut reader = RowContainerReader::new(&reader_rc);
+            let first = reader
+                .current()
+                .expect("the reader loads its first row before the spill")
+                .get_bytes(0)
+                .to_vec();
+            loaded_tx.send(first).expect("report loaded row");
+            continue_rx.recv().expect("continue after spill");
+
+            let mut actual = Vec::new();
+            while let Some(row) = reader.current() {
+                actual.push(row.get_bytes(0).to_vec());
+                reader.next_row();
+            }
+            (actual, reader.error().map(str::to_owned))
+        });
+
+        assert_eq!(
+            loaded_rx.recv_timeout(Duration::from_secs(5)).unwrap(),
+            all_rows[0]
+        );
+        let mut spilling = rc.shallow_copy();
+        spilling.spill_to_disk();
+        assert!(rc.already_spilled());
+        continue_tx.send(()).expect("resume reader");
+        let (actual, error) = reader_thread.join().expect("reader thread");
+        assert_eq!(actual, all_rows);
+        assert_eq!(error, None);
+    }
+
+    #[test]
+    fn an_initial_chunk_error_is_latched_until_close() {
+        let (mut rc, _) = insert_bytes_rows(2, 2);
+        rc.spill_to_disk();
+        rc.set_spill_error_for_test("reader get-chunk failure");
+
+        let mut reader = RowContainerReader::new(&rc);
+        assert!(reader.current().is_none());
+        assert!(reader.next_row().is_none());
+        assert!(reader.end().is_none());
+        assert_eq!(reader.error(), Some("reader get-chunk failure"));
+        reader.close();
+        reader.close();
+        assert!(reader.current().is_none());
+        assert_eq!(reader.error(), Some("reader get-chunk failure"));
+    }
+
+    #[test]
+    fn a_mid_stream_chunk_error_preserves_preceding_rows_and_then_latches() {
+        let (mut rc, all_rows) = insert_bytes_rows(2, 2);
+        let mut reader = RowContainerReader::new(&rc);
+        rc.set_pre_spill(Arc::new(|| Err("reader mid-stream failure".to_owned())));
+        rc.spill_to_disk();
+
+        for want in all_rows.iter().take(2) {
+            assert_eq!(
+                reader.current().expect("preceding row").get_bytes(0),
+                &want[..]
+            );
+            reader.next_row();
+        }
+        assert!(reader.current().is_none());
+        assert!(reader.next_row().is_none());
+        assert_eq!(reader.error(), Some("reader mid-stream failure"));
+    }
+
+    #[test]
+    fn an_empty_reader_has_a_stable_end_and_close_is_idempotent() {
+        let fields = vec![FieldType::new(C::LongLong)];
+        let rc = RowContainer::new(&fields, 1, crate::test_temp_storage::storage());
+        let mut reader = RowContainerReader::new(&rc);
+
+        assert!(reader.current().is_none());
+        assert!(reader.next_row().is_none());
+        assert!(reader.end().is_none());
+        assert_eq!(reader.error(), None);
+        reader.close();
+        reader.close();
+        assert!(reader.current().is_none());
+        assert!(reader.next_row().is_none());
+        assert_eq!(reader.error(), None);
     }
 }

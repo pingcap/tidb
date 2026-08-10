@@ -116,13 +116,11 @@ impl CursorState {
         materialized?;
         closed?;
 
-        let reader = RowContainerReader::new(&cursor.rows);
-        if let Some(error) = reader.error() {
-            return Err(cursor_exec_error(tidb_executor::ExecError::SpillFailed(
-                error.to_owned(),
-            )));
-        }
-        cursor.reader = Some(reader);
+        // Go opens the cursor even when the reader worker has already latched
+        // a spill-read failure. COM_STMT_FETCH owns reporting that failure and
+        // atomically removes the cursor; surfacing it from COM_STMT_EXECUTE
+        // changes both the wire command and cleanup point.
+        cursor.reader = Some(RowContainerReader::new(&cursor.rows));
         cursor.finish_materialization();
         Ok(cursor)
     }

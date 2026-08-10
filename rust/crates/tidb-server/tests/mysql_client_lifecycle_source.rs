@@ -6,7 +6,9 @@
 #![allow(missing_docs)]
 
 use std::collections::VecDeque;
+use std::fs;
 use std::net::{TcpListener, TcpStream};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use sha1::{Digest, Sha1};
@@ -31,6 +33,7 @@ use tidb_server::{
     SessionTransaction, SqlQueryError, WireStatus, WriteOutcome, SERVER_STATUS_IN_TRANS,
 };
 use tidb_session::ResultMaterializationAuthority;
+use tidb_util::disk::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
 
 const CLIENT_PROTOCOL_41: u32 = 1 << 9;
 const CLIENT_SECURE_CONNECTION: u32 = 1 << 15;
@@ -585,6 +588,230 @@ fn cursor_fetch_encoding_error_resets_cursor_atomically() {
     write_packet(&mut client, 0, &[COM_QUIT]);
     drop(client);
     assert_eq!(worker.join().unwrap().exit, ConnectionExit::Quit);
+}
+
+struct CursorReaderFailureRows {
+    rows: VecDeque<Vec<Datum>>,
+    lifecycle: Arc<Mutex<Lifecycle>>,
+    spill_path: PathBuf,
+}
+
+impl ResultSetSource for CursorReaderFailureRows {
+    fn next_batch(&mut self, max_rows: usize) -> Result<Vec<Vec<Datum>>, String> {
+        Ok((0..max_rows.max(1))
+            .map_while(|_| self.rows.pop_front())
+            .collect())
+    }
+
+    fn columns(&mut self) -> Result<Vec<ColumnInfo>, String> {
+        Ok(vec![ColumnInfo {
+            schema: "test".to_owned(),
+            table: "reader_failure".to_owned(),
+            org_table: "reader_failure".to_owned(),
+            name: "v".to_owned(),
+            org_name: "v".to_owned(),
+            column_length: 4096,
+            charset: 63,
+            flag: 0,
+            decimal: 0,
+            type_code: TYPE_BLOB,
+            default_value: None,
+        }])
+    }
+
+    fn finish(&mut self) -> Result<(), String> {
+        self.lifecycle.lock().unwrap().finished += 1;
+        Ok(())
+    }
+
+    fn close(&mut self) -> Result<(), String> {
+        self.lifecycle.lock().unwrap().closed += 1;
+        let data_path = fs::read_dir(&self.spill_path)
+            .map_err(|error| error.to_string())?
+            .filter_map(Result::ok)
+            .find_map(|entry| {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                (name.contains("chunk.DataInDiskByRows") && !name.contains("Offset"))
+                    .then(|| entry.path())
+            })
+            .ok_or_else(|| "cursor did not create a row spill file".to_owned())?;
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&data_path)
+            .map_err(|error| format!("open {}: {error}", data_path.display()))?
+            .set_len(1024)
+            .map_err(|error| format!("truncate {}: {error}", data_path.display()))
+    }
+}
+
+struct CursorReaderFailureSession {
+    lifecycle: Arc<Mutex<Lifecycle>>,
+    storage: Arc<SpillStorage>,
+    spill_path: PathBuf,
+}
+
+impl QuerySession for CursorReaderFailureSession {
+    fn execute<'a>(&'a mut self, _sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+        Err(SqlQueryError::unknown(
+            "text execution is not part of this test",
+        ))
+    }
+
+    fn prepare_general(&mut self, sql: &str) -> Result<PreparedGeneral, SqlQueryError> {
+        Ok(PreparedGeneral::new(
+            sql.to_owned(),
+            0,
+            vec![ColumnInfo {
+                schema: "test".to_owned(),
+                table: "reader_failure".to_owned(),
+                org_table: "reader_failure".to_owned(),
+                name: "v".to_owned(),
+                org_name: "v".to_owned(),
+                column_length: 4096,
+                charset: 63,
+                flag: 0,
+                decimal: 0,
+                type_code: TYPE_BLOB,
+                default_value: None,
+            }],
+        ))
+    }
+
+    fn execute_general<'a>(
+        &'a mut self,
+        _statement: &PreparedGeneral,
+        _values: &[tidb_protocol::PreparedValue],
+    ) -> Result<GeneralExecuteOutcome<'a>, SqlQueryError> {
+        let field = FieldType::new(FieldTypeCode::Varchar).with_flen(4096);
+        let memory = StatementMemory::new(1, OomAction::Cancel, 9)
+            .with_spill_storage(Arc::clone(&self.storage))
+            .with_tmp_storage_on_oom(true);
+        let authority = ResultMaterializationAuthority::new(memory, 2, 8);
+        let rows = (0..32)
+            .map(|value| vec![Datum::Bytes(vec![value; 2048])])
+            .collect();
+        Ok(GeneralExecuteOutcome::Rows(
+            QueryResult::new(Box::new(CursorReaderFailureRows {
+                rows,
+                lifecycle: Arc::clone(&self.lifecycle),
+                spill_path: self.spill_path.clone(),
+            }))
+            .with_cursor_materialization(vec![field], authority),
+        ))
+    }
+}
+
+struct CursorReaderFailureFactory {
+    lifecycle: Arc<Mutex<Lifecycle>>,
+    storage: Arc<SpillStorage>,
+    spill_path: PathBuf,
+}
+
+impl QuerySessionFactory for CursorReaderFailureFactory {
+    type Session = CursorReaderFailureSession;
+
+    fn open_session(&self, _context: SessionContext) -> Result<Self::Session, SqlQueryError> {
+        Ok(CursorReaderFailureSession {
+            lifecycle: Arc::clone(&self.lifecycle),
+            storage: Arc::clone(&self.storage),
+            spill_path: self.spill_path.clone(),
+        })
+    }
+}
+
+#[test]
+fn cursor_reader_error_is_reported_by_fetch_and_closes_cursor() {
+    let spill_path =
+        std::env::temp_dir().join(format!("tidb_cursor_reader_failure_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&spill_path);
+    let storage = Arc::new(
+        SpillStorage::open(SpillStorageSpec {
+            path: spill_path.clone(),
+            quota_bytes: -1,
+            encryption: SpillEncryptionMethod::Plaintext,
+        })
+        .expect("isolated cursor spill authority"),
+    );
+    let lifecycle = Arc::new(Mutex::new(Lifecycle::default()));
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let worker_lifecycle = Arc::clone(&lifecycle);
+    let worker_storage = Arc::clone(&storage);
+    let worker_spill_path = spill_path.clone();
+    let tracker = Arc::new(ConnectionTracker::default());
+    let worker_tracker = Arc::clone(&tracker);
+    let worker = std::thread::spawn(move || {
+        let (stream, peer_addr) = listener.accept().unwrap();
+        serve_mysql_connection(
+            stream,
+            peer_addr,
+            ConnectionCancellation::default(),
+            &CursorReaderFailureFactory {
+                lifecycle: worker_lifecycle,
+                storage: worker_storage,
+                spill_path: worker_spill_path,
+            },
+            &users(),
+            &worker_tracker,
+            DEFAULT_MAX_ALLOWED_PACKET,
+        )
+        .unwrap()
+    });
+
+    let mut client = TcpStream::connect(address).unwrap();
+    let read_side = client.try_clone().unwrap();
+    let mut reader = PacketReader::new(read_side);
+    authenticate(&mut client, &mut reader, "alice", b"secret");
+    reader.set_sequence(2);
+    assert_eq!(reader.read_packet().unwrap()[0], 0);
+
+    let mut prepare = vec![COM_STMT_PREPARE];
+    prepare.extend_from_slice(b"SELECT broken_cursor_reader");
+    write_packet(&mut client, 0, &prepare);
+    reader.set_sequence(1);
+    let prepared = reader.read_packet().unwrap();
+    let statement_id = u32::from_le_bytes(prepared[1..5].try_into().unwrap());
+    assert_ne!(reader.read_packet().unwrap()[0], 0xff);
+
+    let mut execute = vec![COM_STMT_EXECUTE];
+    execute.extend_from_slice(&statement_id.to_le_bytes());
+    execute.push(1); // CURSOR_TYPE_READ_ONLY
+    execute.extend_from_slice(&1_u32.to_le_bytes());
+    write_packet(&mut client, 0, &execute);
+    reader.set_sequence(1);
+    assert_eq!(reader.read_packet().unwrap(), [1]);
+    assert_ne!(reader.read_packet().unwrap()[0], 0xff);
+    assert_eq!(reader.read_packet().unwrap()[0], 0xfe);
+    assert!(storage.global_tracker().bytes_consumed() > 0);
+
+    let mut fetch = vec![COM_STMT_FETCH];
+    fetch.extend_from_slice(&statement_id.to_le_bytes());
+    fetch.extend_from_slice(&1_u32.to_le_bytes());
+    write_packet(&mut client, 0, &fetch);
+    reader.set_sequence(1);
+    assert_mysql_error(&reader.read_packet().unwrap(), 1105, b"HY000");
+
+    write_packet(&mut client, 0, &fetch);
+    reader.set_sequence(1);
+    assert_mysql_error(&reader.read_packet().unwrap(), 1326, b"24000");
+    assert_eq!(storage.global_tracker().bytes_consumed(), 0);
+    assert_eq!(
+        fs::read_dir(&spill_path)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name() != "_dir.lock")
+            .count(),
+        0
+    );
+    assert_eq!(lifecycle.lock().unwrap().finished, 1);
+    assert_eq!(lifecycle.lock().unwrap().closed, 1);
+
+    write_packet(&mut client, 0, &[COM_QUIT]);
+    drop(client);
+    assert_eq!(worker.join().unwrap().exit, ConnectionExit::Quit);
+    drop(storage);
+    fs::remove_dir_all(spill_path).unwrap();
 }
 
 fn prepare_statement(client: &mut TcpStream, reader: &mut PacketReader<TcpStream>) -> u32 {
