@@ -393,6 +393,64 @@ mod tests {
         ))
     }
 
+    // Go TestSetFlenDecimal4RealOrDecimal.
+    #[test]
+    fn test_set_flen_decimal4_real_or_decimal() {
+        let field_type = |flen, decimal| {
+            FieldTypeBuilder::new()
+                .with_code(FieldTypeCode::NewDecimal)
+                .flen_set(flen)
+                .decimal_set(decimal)
+                .build()
+        };
+
+        let a = field_type(3, 1);
+        let mut b = field_type(0, 0);
+        let mut ret = field_type(0, 0);
+
+        set_flen_decimal4_real_or_decimal(&mut ret, &a, &b, true, false);
+        assert_eq!((ret.flen(), ret.decimal()), (4, 1));
+
+        b.set_flen(65);
+        set_flen_decimal4_real_or_decimal(&mut ret, &a, &b, true, false);
+        assert_eq!((ret.flen(), ret.decimal()), (MAX_REAL_WIDTH, 1));
+        set_flen_decimal4_real_or_decimal(&mut ret, &a, &b, false, false);
+        assert_eq!((ret.flen(), ret.decimal()), (MAX_DECIMAL_WIDTH, 1));
+
+        b.set_flen(UNSPECIFIED_LENGTH);
+        set_flen_decimal4_real_or_decimal(&mut ret, &a, &b, true, false);
+        assert_eq!((ret.flen(), ret.decimal()), (UNSPECIFIED_LENGTH, 1));
+
+        b.set_decimal(UNSPECIFIED_LENGTH);
+        set_flen_decimal4_real_or_decimal(&mut ret, &a, &b, true, false);
+        assert_eq!(
+            (ret.flen(), ret.decimal()),
+            (UNSPECIFIED_LENGTH, UNSPECIFIED_LENGTH)
+        );
+
+        let mut b = field_type(2, 0);
+        let mut ret = field_type(0, 0);
+        set_flen_decimal4_real_or_decimal(&mut ret, &a, &b, true, true);
+        assert_eq!((ret.flen(), ret.decimal()), (5, 1));
+
+        b.set_flen(65);
+        set_flen_decimal4_real_or_decimal(&mut ret, &a, &b, true, true);
+        assert_eq!((ret.flen(), ret.decimal()), (MAX_REAL_WIDTH, 1));
+        set_flen_decimal4_real_or_decimal(&mut ret, &a, &b, false, true);
+        assert_eq!((ret.flen(), ret.decimal()), (MAX_DECIMAL_WIDTH, 1));
+
+        b.set_flen(UNSPECIFIED_LENGTH);
+        set_flen_decimal4_real_or_decimal(&mut ret, &a, &b, true, true);
+        assert_eq!((ret.flen(), ret.decimal()), (UNSPECIFIED_LENGTH, 1));
+
+        b.set_decimal(UNSPECIFIED_LENGTH);
+        set_flen_decimal4_real_or_decimal(&mut ret, &a, &b, true, true);
+        assert_eq!(
+            (ret.flen(), ret.decimal()),
+            (UNSPECIFIED_LENGTH, UNSPECIFIED_LENGTH)
+        );
+    }
+
     #[test]
     fn int_plus_int_is_longlong() {
         let ret = infer_arithmetic_type("plus", &int_expr(1), &int_expr(2)).unwrap();
