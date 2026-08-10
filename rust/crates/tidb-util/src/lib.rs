@@ -30,6 +30,7 @@ pub mod disk;
 pub mod encrypt;
 pub mod fastrand;
 pub mod filter;
+pub mod format;
 pub mod generic;
 pub mod globalconn;
 pub mod intest;

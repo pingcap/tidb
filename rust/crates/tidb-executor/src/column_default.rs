@@ -122,10 +122,11 @@ impl ColumnDefault {
                 literal_text.to_owned()
             }
             // Go quotes the stored text through `format.OutputFormat`, which
-            // doubles a quote and escapes NUL/CR/LF -- without it a default
-            // holding any of them prints a body that does not re-parse.
+            // doubles quotes and backslashes and escapes NUL/CR/LF -- without
+            // it a default holding any of them prints a body that does not
+            // re-parse.
             ColumnDefault::Value(_) => {
-                format!("'{}'", tidb_datatype::output_format(literal_text))
+                format!("'{}'", tidb_util::format::output_format(literal_text))
             }
             ColumnDefault::Computed(computed) if !computed.is_expr => {
                 let fsp = field_type.decimal();

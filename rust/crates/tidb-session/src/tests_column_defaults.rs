@@ -1053,10 +1053,11 @@ fn a_column_that_cannot_hold_null_cannot_default_to_it() {
 ///
 /// ```text
 /// create table t_bin (a binary(4) default 0x61, b varbinary(4) default 0x61,
-///                     c varchar(4) default 0x61)
+///                     c varchar(4) default 0x61, d varchar(4) default 0x615c62)
 ///   `a` binary(4) DEFAULT 'a\0\0\0',
 ///   `b` varbinary(4) DEFAULT 'a',
 ///   `c` varchar(4) DEFAULT 'a'
+///   `d` varchar(4) DEFAULT 'a\\b'
 /// ```
 ///
 /// The default is written as the hex literal `0x61` rather than `'a'` on
@@ -1068,7 +1069,7 @@ fn a_fixed_width_binary_default_is_padded_to_the_columns_width() {
     session
         .run(
             "CREATE TABLE t_bin (a BINARY(4) DEFAULT 0x61, b VARBINARY(4) DEFAULT 0x61, \
-             c VARCHAR(4) DEFAULT 0x61)",
+             c VARCHAR(4) DEFAULT 0x61, d VARCHAR(4) DEFAULT 0x615c62)",
         )
         .unwrap();
     session.run("INSERT INTO t_bin VALUES ()").unwrap();
@@ -1086,6 +1087,9 @@ fn a_fixed_width_binary_default_is_padded_to_the_columns_width() {
         "`a` binary(4) DEFAULT 'a\\0\\0\\0'",
         "`b` varbinary(4) DEFAULT 'a'",
         "`c` varchar(4) DEFAULT 'a'",
+        // `pkg/util/format.OutputFormat`, unlike the parser package's
+        // same-named helper, doubles a backslash.
+        "`d` varchar(4) DEFAULT 'a\\\\b'",
     ] {
         assert!(body.contains(clause), "missing `{clause}`: {body:?}");
     }
