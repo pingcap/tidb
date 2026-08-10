@@ -549,6 +549,8 @@ func TestAlterUserPreservesRequire(t *testing.T) {
 	tk.MustQuery(`SELECT Priv FROM mysql.global_priv WHERE User='require_user' AND Host='%'`).Check(testkit.Rows(priv))
 	tk.MustExec(`ALTER USER 'require_user'@'%' PASSWORD EXPIRE`)
 	tk.MustQuery(`SELECT Priv FROM mysql.global_priv WHERE User='require_user' AND Host='%'`).Check(testkit.Rows(priv))
+	tk.MustExec(`ALTER USER 'require_user'@'%' COMMENT ''`)
+	tk.MustQuery(`SELECT Priv FROM mysql.global_priv WHERE User='require_user' AND Host='%'`).Check(testkit.Rows(priv))
 
 	// An explicit REQUIRE clause is still honored.
 	tk.MustExec(`ALTER USER 'require_user'@'%' REQUIRE SSL`)
