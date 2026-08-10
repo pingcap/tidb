@@ -83,17 +83,19 @@ func checkDefaultStaticExprCtx(t *testing.T, ctx *ExprContext) {
 }
 
 type exprCtxOptionsTestState struct {
-	evalCtx       *EvalContext
-	colIDAlloc    exprctx.PlanColumnIDAllocator
-	rng           *mathutil.MysqlRng
-	skipCacheArgs []any
+	evalCtx             *EvalContext
+	colIDAlloc          exprctx.PlanColumnIDAllocator
+	rng                 *mathutil.MysqlRng
+	skipCacheArgs       []any
+	newCollationEnabled bool
 }
 
 func getExprCtxOptionsForTest() ([]ExprCtxOption, *exprCtxOptionsTestState) {
 	s := &exprCtxOptionsTestState{
-		evalCtx:    NewEvalContext(WithLocation(time.FixedZone("UTC+11", 11*3600))),
-		colIDAlloc: exprctx.NewSimplePlanColumnIDAllocator(1024),
-		rng:        mathutil.NewWithSeed(12345678),
+		evalCtx:             NewEvalContext(WithLocation(time.FixedZone("UTC+11", 11*3600))),
+		colIDAlloc:          exprctx.NewSimplePlanColumnIDAllocator(1024),
+		rng:                 mathutil.NewWithSeed(12345678),
+		newCollationEnabled: false,
 	}
 	planCacheTracker := contextutil.NewPlanCacheTracker(s.evalCtx)
 
@@ -110,6 +112,7 @@ func getExprCtxOptionsForTest() ([]ExprCtxOption, *exprCtxOptionsTestState) {
 		WithConnectionID(778899),
 		WithWindowingUseHighPrecision(false),
 		WithGroupConcatMaxLen(2233445566),
+		WithNewCollationEnabled(s.newCollationEnabled),
 	}, s
 }
 
@@ -130,6 +133,7 @@ func checkOptionsStaticExprCtx(t *testing.T, ctx *ExprContext, s *exprCtxOptions
 	require.Equal(t, uint64(778899), ctx.ConnectionID())
 	require.False(t, ctx.GetWindowingUseHighPrecision())
 	require.Equal(t, uint64(2233445566), ctx.GetGroupConcatMaxLen())
+	require.Equal(t, s.newCollationEnabled, ctx.NewCollationEnabled())
 }
 
 func TestExprCtxColumnIDAllocator(t *testing.T) {
@@ -178,11 +182,11 @@ func TestMakeExprContextStatic(t *testing.T) {
 		WithConnectionID(1),
 		WithWindowingUseHighPrecision(false),
 		WithGroupConcatMaxLen(1),
+		WithNewCollationEnabled(false),
 	)
 
 	ignorePath := []string{
 		"$.exprCtxState.evalCtx**",
-		"$.exprCtxState.newCollationEnabled",
 	}
 	deeptest.AssertRecursivelyNotEqual(t, obj, NewExprContext(),
 		deeptest.WithIgnorePath(ignorePath),

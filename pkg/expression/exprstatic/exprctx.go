@@ -47,7 +47,7 @@ type exprCtxState struct {
 	connectionID               uint64
 	windowingUseHighPrecision  bool
 	groupConcatMaxLen          uint64
-	newCollationEnabled        *bool
+	newCollationEnabled        bool
 }
 
 // ExprCtxOption is the option to create or update the `ExprContext`
@@ -146,7 +146,7 @@ func WithGroupConcatMaxLen(maxLen uint64) ExprCtxOption {
 // WithNewCollationEnabled fixes the new-collation mode for expression building.
 func WithNewCollationEnabled(enabled bool) ExprCtxOption {
 	return func(s *exprCtxState) {
-		s.newCollationEnabled = &enabled
+		s.newCollationEnabled = enabled
 	}
 }
 
@@ -172,6 +172,7 @@ func NewExprContext(opts ...ExprCtxOption) *ExprContext {
 			noopFuncsMode:              variable.TiDBOptOnOffWarn(vardef.DefTiDBEnableNoopFuncs),
 			windowingUseHighPrecision:  true,
 			groupConcatMaxLen:          vardef.DefGroupConcatMaxLen,
+			newCollationEnabled:        collate.NewCollationEnabled(),
 		},
 	}
 	for _, opt := range opts {
@@ -234,10 +235,7 @@ func (ctx *ExprContext) GetDefaultCollationForUTF8MB4() string {
 
 // NewCollationEnabled implements the `ExprContext.NewCollationEnabled`.
 func (ctx *ExprContext) NewCollationEnabled() bool {
-	if ctx.newCollationEnabled != nil {
-		return *ctx.newCollationEnabled
-	}
-	return collate.NewCollationEnabled()
+	return ctx.newCollationEnabled
 }
 
 // GetBlockEncryptionMode implements the `ExprContext.GetBlockEncryptionMode`.
@@ -341,6 +339,7 @@ func MakeExprContextStatic(ctx exprctx.StaticConvertibleExprContext) *ExprContex
 		WithConnectionID(ctx.ConnectionID()),
 		WithWindowingUseHighPrecision(ctx.GetWindowingUseHighPrecision()),
 		WithGroupConcatMaxLen(ctx.GetGroupConcatMaxLen()),
+		WithNewCollationEnabled(ctx.NewCollationEnabled()),
 	)
 }
 

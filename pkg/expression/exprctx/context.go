@@ -102,7 +102,9 @@ type BuildContext interface {
 	GetCharsetInfo() (string, string)
 	// GetDefaultCollationForUTF8MB4 returns the default collation of UTF8MB4.
 	GetDefaultCollationForUTF8MB4() string
-	// NewCollationEnabled returns whether expression building should use new collation semantics.
+	// NewCollationEnabled returns the collation mode to use when building expressions.
+	// Builtins read it from the context instead of the process-global setting because a DXF worker can build
+	// expressions for a task submitted from a user keyspace with a different collation mode.
 	NewCollationEnabled() bool
 	// GetBlockEncryptionMode returns the variable `block_encryption_mode`.
 	GetBlockEncryptionMode() string
