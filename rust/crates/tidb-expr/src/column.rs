@@ -206,15 +206,18 @@ mod tests {
         assert!(!a.equal_column(&Expression::Column(b)));
     }
 
+    /// Exact Go `TestColumnHashCode` vectors from `column_test.go`.
     #[test]
-    fn hash_code_is_flag_plus_encoded_unique_id() {
-        let mut c = col(42);
-        let mut expected = vec![COLUMN_FLAG];
-        encode_int(&mut expected, 42);
-        assert_eq!(c.hash_code(), expected.as_slice());
-        // Cached: a second call returns the same bytes.
-        assert_eq!(c.hash_code(), expected.as_slice());
-        assert_eq!(expected.len(), 9);
+    fn test_column_hash_code() {
+        for (unique_id, expected) in [
+            (12, [0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0c]),
+            (2, [0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02]),
+        ] {
+            let mut column = col(unique_id);
+            assert_eq!(column.hash_code(), expected.as_slice());
+            // Go caches the encoded bytes; a second call must be unchanged.
+            assert_eq!(column.hash_code(), expected.as_slice());
+        }
     }
 
     #[test]
