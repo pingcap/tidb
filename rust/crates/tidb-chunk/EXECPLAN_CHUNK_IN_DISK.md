@@ -16,7 +16,7 @@ This is one artifact inside the larger incomplete `pkg/util/chunk` package. It m
 - [x] (2026-08-10 04:31Z) Added and ran the seven-case public source-shaped storage contract, including one combined deterministic replacement for the accepted random write/read failpoint. It passed against the existing implementation after correcting test-oracle setup mistakes; no production semantic gap was exposed.
 - [x] (2026-08-10 05:22Z) Classified all 102 production and 30 direct-test obligations: 113 PORTED, 10 evidence-backed DECLINED Go-only failure-injection/runtime mechanics, and 9 structurally UNREACHABLE valid-input or fixed-positive-loop branches.
 - [x] (2026-08-10 05:38Z) Ran and independently verified the measured deterministic failure-adaptation probe and all six semantic mutations. Every mutation passed at baseline, failed its named public assertion, restored the exact production bytes, passed after restoration, and independently verified.
-- [ ] Run the remaining Ready gates, merge current `hparser-integration`, and push the verified checkpoint to both remotes without force.
+- [x] (2026-08-10 05:50Z) Completed Ready validation, confirmed both remote tips were still the checkpoint base, and pushed exact checkpoint `8192aed2afd26949f1efe8b57d6750c3ad8cc957` to `origin/hparser-integration` and `ngaut/hparser-integration` without force.
 
 ## Surprises & Discoveries
 
@@ -56,7 +56,9 @@ This is one artifact inside the larger incomplete `pkg/util/chunk` package. It m
 
 The observable artifact contract and its receipt are closed without a production change. All 132 obligations have final verdicts (113 PORTED, 10 DECLINED, 9 UNREACHABLE), the deterministic failure adaptation is OBSERVED and independently VERIFIED, and six rules are guarded by independently KILLED mutations. The incremental checker advances to obligation `Oe3d590766a60c595` in the next unrelated artifact.
 
-The full `tidb-chunk` crate and the hash-aggregation, sort, and TopN spill consumers pass. Remote integration and the broad Ready gates remain before this checkpoint is shipped.
+The full `tidb-chunk` crate, strict all-target Clippy, the hash-aggregation/sort/TopN spill consumers, direct-dependent all-target checks, and workspace all-target compilation pass. `make -j12 lint` exits zero; it still prints the repository's known internal-package diagnostic for `rust/difftests/gobinaryrow` and BSD `find -n` portability diagnostic. The source-size ratchet still reports the unchanged baseline `tidb-executor/src/kv_table.rs` overage (2,785 lines versus 2,200).
+
+Checkpoint `8192aed2afd26949f1efe8b57d6750c3ad8cc957` was pushed without force to both authorized `hparser-integration` remotes after confirming both tips were still its base. This closes only the accepted whole-chunk spill artifact; the complete `pkg/util/chunk` package remains in progress.
 
 ## Context and Orientation
 
@@ -148,3 +150,5 @@ Revision note (2026-08-10 04:25Z): recorded the green six-case public contract a
 Revision note (2026-08-10 04:31Z): added the combined deterministic write/read failure adaptation used by the measured probe; a multi-block payload is required so the read crosses the checksum writer's live cache into the truncated file.
 
 Revision note (2026-08-10 05:38Z): closed all 132 obligations, recorded the verified measured probe and six independently killed mutations, and recorded the green full-crate and direct spill-consumer gates.
+
+Revision note (2026-08-10 05:50Z): recorded the Ready profile, known baseline-only diagnostics, and exact checkpoint pushed to both `hparser-integration` remotes.
