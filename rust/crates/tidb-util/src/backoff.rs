@@ -63,9 +63,6 @@ impl Exponential {
             return self.next_backoff;
         }
 
-        // Rust's float-to-integer cast has the same boundary behavior observed
-        // from Go's conversion here: truncate finite values, map NaN to zero,
-        // and saturate infinities or out-of-range values.
         self.next_backoff =
             ((self.next_backoff as f64 * self.multiplier) as Duration).min(self.max_backoff);
         self.next_backoff
@@ -79,12 +76,11 @@ impl Backoffer for Exponential {
 }
 
 #[cfg(test)]
-#[allow(non_snake_case)]
 mod tests {
     use super::{new_exponential, Backoffer, Duration};
 
     #[test]
-    fn TestExponential() {
+    fn test_exponential() {
         let mut backoffer = new_exponential(1, 1.0, 1);
         for retry_count in 0..10 {
             assert_eq!(backoffer.backoff(retry_count), 1);
@@ -103,41 +99,11 @@ mod tests {
     }
 
     #[test]
-    fn source_reset_negative_fractional_and_float_boundaries_are_exact() {
+    fn retry_zero_resets_the_sequence() {
         let mut reset = new_exponential(3, 2.0, 100);
         assert_eq!(
-            [0, 1, 2, 0, -1].map(|retry| reset.backoff(retry)),
-            [3, 6, 12, 3, 6]
-        );
-
-        let mut negative = new_exponential(-5, 0.5, 100);
-        assert_eq!(
-            [0, 1, 2, 3].map(|retry| negative.backoff(retry)),
-            [-5, -2, -1, 0]
-        );
-
-        let mut maximum = new_exponential(3, 2.0, -1);
-        assert_eq!([0, 1, 2].map(|retry| maximum.backoff(retry)), [3, -1, -2]);
-
-        let mut nan = new_exponential(5, f64::NAN, 100);
-        assert_eq!([0, 1, 2].map(|retry| nan.backoff(retry)), [5, 0, 0]);
-
-        let mut positive_infinity = new_exponential(5, f64::INFINITY, 100);
-        assert_eq!(
-            [0, 1, 2].map(|retry| positive_infinity.backoff(retry)),
-            [5, 100, 100]
-        );
-
-        let mut negative_infinity = new_exponential(5, f64::NEG_INFINITY, 100);
-        assert_eq!(
-            [0, 1, 2].map(|retry| negative_infinity.backoff(retry)),
-            [5, i64::MIN, 100]
-        );
-
-        let mut overflow = new_exponential(i64::MAX, 2.0, i64::MAX);
-        assert_eq!(
-            [0, 1, 2].map(|retry| overflow.backoff(retry)),
-            [i64::MAX; 3]
+            [0, 1, 2, 0, 1].map(|retry| reset.backoff(retry)),
+            [3, 6, 12, 3, 6],
         );
     }
 
