@@ -50,7 +50,8 @@ index) extends it without a new design. This replaces the earlier geospatial des
 | --- | --- |
 | [OGC](https://www.ogc.org/standard/sfa/) | Open Geospatial Consortium, the body behind *Simple Features*, the specification MySQL's spatial surface follows. |
 | [WKT / WKB](https://en.wikipedia.org/wiki/Well-known_text_representation_of_geometry) | The OGC text and byte encodings of a geometry (`POINT(1 2)` and its bytes). Neither carries an SRID. |
-| [EWKB](https://dev.mysql.com/doc/refman/8.4/en/gis-data-formats.html) | WKB with the SRID alongside it. MySQL uses `<srid u32 LE><WKB>`; see [Types and storage](#types-and-storage). |
+| [EWKB](https://libgeos.org/specifications/wkb/#extended-wkb) | Extended WKB, the PostGIS/GEOS superset of WKB: type-word flags add Z, M and an embedded SRID. The stored format here; see [Types and storage](#types-and-storage). Not to be confused with [MySQL's internal format](https://dev.mysql.com/doc/refman/8.4/en/gis-data-formats.html), a 4-byte SRID prefix over 2D WKB. |
+| ISO WKB | The other WKB extension (SFA 1.2.1 / SQL-MM), which encodes Z/M by adding 1000/2000/3000 to the type code instead of using flags, and carries no SRID. |
 | SRS | Spatial reference system: coordinate system, units, axis order, datum. Either *projected* (flat X/Y) or *geographic* (latitude/longitude on an ellipsoid). |
 | [SRID](https://dev.mysql.com/doc/refman/8.4/en/spatial-reference-systems.html) | The integer naming an SRS. v1 supports 0 and 4326; see [SRID model](#srid-model). |
 | [EPSG](https://epsg.org/) | The registry that assigns SRIDs, and the source of the SRS catalog. |
@@ -79,6 +80,15 @@ index work merges on top.
 
 ## Detailed Design
 
+**MySQL-compatible, extensible where the extension is free.** Every v1 function behaves as
+MySQL does, and where MySQL cannot express a value the function errors rather than
+inventing behavior. The storage layer is deliberately wider: it carries Z/M coordinates
+and any SRID losslessly, and WKB input accepts them, so such values are stored and read
+back intact even though no v1 function computes on them and the MySQL-shaped writers
+(`ST_AsBinary`, `ST_AsText`, `ST_AsGeoJSON`) reject them. Widening the functions later is
+an extension that breaks MySQL parity by addition, and belongs to the release that makes
+it, not to this one.
+
 ### Types and storage
 
 Types, all reusing the existing `mysql.TypeGeometry` field type with the subtype a
@@ -91,25 +101,31 @@ encoding is introduced.
 Stored value:
 
     <format_version u8><payload>
-    version 1:  <srid u32 LE><OGC WKB>          // EWKB
+    version 1:  EWKB
+
+**Version 1 is [EWKB](https://libgeos.org/specifications/wkb/#extended-wkb)** as defined
+by PostGIS and GEOS: standard WKB whose 32-bit type word carries three high-bit flags,
+`0x80000000` for Z, `0x40000000` for M, and `0x20000000` meaning a `u32` SRID follows the
+type word on the outermost geometry. It is chosen because it is a published format that
+already expresses everything this design has to store, and because it degrades exactly
+right: a 2D geometry with no SRID flag *is* plain OGC WKB, byte for byte.
 
 | Rule | |
 | --- | --- |
 | Versioning | Numbered from 1, so a leading `0x00` is always invalid and never a version. A release reads every earlier version and writes the current one, so a later format needs no migration. |
 | Lossless | Exact `f64` coordinates and full geometry structure, never truncated. |
-| SRID | Recoverable from the value, or from the column where it carries `SRID n`. Not droppable from the value unconditionally: an unrestricted `GEOMETRY` column holds a per-row SRID, and a geometry outside any column (function result, join or sort intermediate) has no column metadata. |
-| MySQL bytes | Not matched. `ST_AsBinary`, dump/reload and the wire protocol convert at the boundary; MySQL itself stores coordinates longitude-first internally and swaps per SRS on every WKT/WKB read and write (`axis-order.md`). |
-| Z and M coordinates | Stored and returned unchanged. Every v1 function is 2D, as in MySQL. |
+| SRID | Carried by the SRID flag. Where the column fixes it with `SRID n` the flag may be left unset, which is still valid EWKB, so this redundancy can be removed without leaving the format. It cannot be dropped unconditionally: an unrestricted `GEOMETRY` column holds a per-row SRID, and a geometry outside any column (function result, join or sort intermediate) has no column metadata to recover it from. |
+| Byte order | Left to EWKB, which flags it per geometry and permits both. |
+| MySQL bytes | Not matched. MySQL stores `<srid u32 LE><WKB>` and is 2D only; `ST_AsBinary`, dump/reload and the wire protocol convert at the boundary, which for a 2D value is dropping the SRID flag. MySQL itself converts too, storing coordinates longitude-first internally and swapping per SRS on every WKT/WKB read and write, visible as `HEX(g)` and `ST_AsBinary(g)` returning swapped coordinates for a 4326 point (`axis-order.md`). |
+| Coordinate dimension | XY, XYZ, XYM and XYZM are all storable, which covers GeoJSON positions (XY and XYZ) as well as measured geometry. Every v1 function is 2D, as in MySQL. |
 | SRIDs outside 0 and 4326 | Stored and returned unchanged in an unrestricted `GEOMETRY` column, as in MySQL. |
 
-Extended data (the last two rows) round-trips through `ST_GeomFromWKB`/`ST_GeomFromText`
-and `ST_AsBinary`/`ST_AsText`, with `ST_SRID` and `ST_GeometryType` still answering, while
-every function that interprets coordinates rejects it with a clear error. Storing more
-than v1 computes on is what lets 3D/measured geometry and the wider SRS catalog arrive
-later as functions over data written today.
-
-Why EWKB is version 1 and what a version 2 would strip:
-[Investigation & Alternatives](#investigation--alternatives).
+Extended data, meaning Z/M coordinates and SRIDs the functions do not support, follows the
+compatibility rule above: stored losslessly, read back unchanged, `ST_SRID` and
+`ST_GeometryType` still answering, everything that interprets coordinates erroring.
+Storing more than v1 computes on is what lets 3D/measured geometry and the wider SRS
+catalog arrive later as functions over data written today. Why EWKB rather than the
+alternatives: [Investigation & Alternatives](#investigation--alternatives).
 
 ### SRID model
 
@@ -171,9 +187,9 @@ it is present in MySQL 8.0.46 / 8.4 / 9.7, whose spatial function sets are ident
   later only if index-supported or by demand.
 
 The geometry-processing tail (`ST_Buffer`, `ST_Union`, `ST_Intersection`, ...), the typed
-I/O aliases, the `Multi*`/`GeometryCollection` constructors, the `MBR*` family, geohash
-and the niche accessors are a later milestone; `mysql-function-catalog.md` holds the
-authoritative v1-vs-tail split.
+I/O aliases, the `Multi*`/`GeometryCollection` constructors, the `MBR*` family, geohash,
+the niche accessors and the GeoJSON `options`/`srid` arguments are a later milestone;
+`mysql-function-catalog.md` holds the authoritative v1-vs-tail split.
 
 Semantics match MySQL, with three documented v1 limitations:
 
@@ -185,6 +201,23 @@ Semantics match MySQL, with three documented v1 limitations:
 - The predicates are OGC-correct via `simplefeatures`; on 4326 the region predicates use a
   geodesic point-in-polygon, which diverges from MySQL's planar refine near
   edges/poles/antimeridian. Polygon/polygon geodesic relations are a follow-up.
+
+**GeoJSON.** Every RFC 7946 geometry is supported, and the container and annotation members
+follow MySQL, verified against 8.4.6 and 9.7.2:
+
+| Input | Result |
+| --- | --- |
+| `Feature` | its bare geometry, so a Feature holding a point yields `POINT` |
+| `FeatureCollection` | `GEOMETRYCOLLECTION` of the features' geometries, `GEOMETRYCOLLECTION EMPTY` if there are none |
+| `"geometry": null` | SQL `NULL` |
+| `properties`, `id`, `bbox`, foreign members | ignored |
+| named `crs` URN | sets the SRID (`urn:ogc:def:crs:OGC:1.3:CRS84` is 4326, link-object CRSs are not accepted, and a nested `crs` naming a different SRID errors); absent, the SRID is 4326 |
+| position with more than two coordinates | rejected, MySQL error 3073 |
+
+MySQL's `options` argument, which accepts such positions and strips the extra coordinates,
+ships with the function tail, as do `ST_AsGeoJSON`'s bbox and CRS-URN flags. Round-trips
+are not idempotent: a FeatureCollection returns from `ST_AsGeoJSON` as a
+GeometryCollection.
 
 Every geometry-returning builtin is typed `GEOMETRY`, so a plain B-tree functional index
 over such an expression is correctly rejected; a spatial index is the index layer's job.
@@ -282,7 +315,7 @@ Out of scope here, each with a home:
 | DDL | New column types and the `SRID` attribute, restricted to 0/4326, plus subtype constraints. |
 | Planner, statistics, executor | `ST_*` evaluate on the normal expression path; predicates are ordinary `Selection`s. No new operator, access path or statistics. |
 | TiKV | None. Values are ordinary binary strings; pushdown is deferred. |
-| TiFlash, BR, TiCDC, Dumpling, Lightning | Regular column data. Tools need only carry the bytes and the `SRID`/type metadata; dump/reload uses MySQL EWKB / WKT. |
+| TiFlash, BR, TiCDC, Dumpling, Lightning | Regular column data. Tools need only carry the bytes and the `SRID`/type metadata; dump/reload uses MySQL's internal format or WKT, not the stored bytes. |
 | Upgrade | Additive, behind the flag. |
 | Downgrade | Geometry columns must be dropped first, as with other new type kinds (to be confirmed). |
 
@@ -299,8 +332,10 @@ Out of scope here, each with a home:
   pairs, matched to MySQL where semantics agree, with boundary cases explicit.
 - SRID validation: 4326 out-of-range errors on every ingest path, SRID 0 Inf/NaN
   rejection, mixed-SRID predicate errors.
-- Extended data: Z/M values and SRIDs outside 0 and 4326 store and read back
-  byte-identical, while every function that interprets coordinates errors clearly.
+- Extended data: Z/M values entered as WKB, and SRIDs outside 0 and 4326, store and read
+  back byte-identical, while `ST_AsBinary`/`ST_AsText`/`ST_AsGeoJSON` and every function
+  that interprets coordinates error clearly on them.
+- GeoJSON: the table above, each row matched against MySQL 8.4 and 9.7.
 - Format version: version 1 decodes; an unknown or zero version byte is rejected with a
   clear error rather than misparsed.
 - Type plumbing: geometry through the audited operation surface returns correct bytes.
@@ -351,14 +386,28 @@ Risks:
 
 ## Investigation & Alternatives
 
-- **EWKB as format version 1, rather than a leaner layout now.** EWKB is what the proof of
-  concept (PR #69475) implements and needs no conversion today, not what is optimal:
-  `storage-format.md` measures its redundancy (a per-row SRID the column usually fixes, a
-  byte-order flag per (sub)geometry, WKB framing) and finds geometry decode a measurable
-  share of both the index-maintenance write path and the refine read path. A version 2 can
-  strip those, shrink the type enum, or store a point as two bare `f64` values. The
-  version byte defers that choice without a migration, which is why it ships in v1 even
-  though the format is the smallest of the measured performance levers.
+- **Which WKB dialect for version 1.** Three candidates, all published:
+
+  | Candidate | SRID | Z/M | Notes |
+  | --- | --- | --- | --- |
+  | MySQL internal, `<srid u32 LE><WKB>` | prefix | **no** | 2D only, so it cannot hold what this design commits to storing |
+  | ISO WKB (SFA 1.2.1 / SQL-MM) | no | type code +1000/2000/3000 | what `simplefeatures` already reads and writes |
+  | **EWKB (PostGIS/GEOS)** | type-word flag | type-word flags | chosen |
+
+  EWKB wins on coverage: one defined format carrying SRID, Z, M and XYZM, a superset of
+  what GeoJSON positions can express, with plain 2D WKB as its degenerate case. It also
+  keeps the obvious space optimization inside the format, since a value whose SRID is
+  fixed by the column can simply leave the SRID flag unset. The cost is a codec:
+  `simplefeatures` implements the ISO type-code convention (`geomCode % 1000` for the
+  type, `/ 1000` for the dimension), not EWKB's flags, so TiDB owns the EWKB header
+  encode/decode and hands the body to the library. On the TiKV side the `geo` crate is
+  2D-only and already hand-rolls its decoder, so it needs a header change and nothing
+  more; Z/M values are not pushable regardless.
+- **A leaner layout as version 1.** Rejected for now, not forever. `storage-format.md`
+  measures EWKB's redundancy (a per-row SRID the column usually fixes, a byte-order flag
+  per (sub)geometry, WKB framing) and finds geometry decode a measurable share of both the
+  index-maintenance write path and the refine read path, but the format is the smallest of
+  the measured levers. The version byte defers the choice without a migration.
 - **Matching MySQL's stored bytes.** Rejected as a non-goal: I/O compatibility is a
   boundary conversion, and MySQL does the same thing internally (`axis-order.md`).
 - **cgo/libgeos (go-geos).** Rejected for v1: it gives OGC-correct geometry but needs
@@ -375,7 +424,10 @@ Risks:
 
 - **A leaner format version 2:** add one before GA, or ship version 1 and revisit?
   Benchmark-gated (`storage-format.md`); the version byte means it can also land after GA.
-  `ST_AsBinary` output stays MySQL EWKB either way.
+  `ST_AsBinary` output stays MySQL-compatible plain WKB either way.
+- **Reading a Z/M value back:** the writers reject it, so today it returns only as the raw
+  column value in the stored format. Confirm that is enough, or give `ST_AsBinary` an
+  opt-in that emits EWKB with the flags set.
 - **Geodesic `ST_Area` on 4326:** implement Karney ellipsoidal area in v1, or error like
   MySQL's Cartesian-only functions until it exists?
 - **MySQL error parity:** how closely to match MySQL's GIS error codes and wording for
