@@ -491,12 +491,24 @@ fn number_of(value: &Datum) -> Result<Option<f64>, EvalError> {
 /// differ and `SYSDATE() = NOW()` is `0` on a session whose statement clock
 /// was taken earlier.
 pub(crate) fn sysdate(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
+    if vals.len() > 1 {
+        return Err(EvalError::Unsupported("bad function arity"));
+    }
     let fsp = match vals.first() {
         None | Some(Datum::Null) => 0,
-        Some(value) => match value.to_i64() {
-            Ok(converted) => converted.value.clamp(0, i64::from(MAX_FSP)) as u32,
-            Err(_) => 0,
-        },
+        Some(Datum::Int(value)) if (0..=i64::from(MAX_FSP)).contains(value) => *value as u32,
+        Some(Datum::UInt(value)) if *value <= MAX_FSP as u64 => *value as u32,
+        Some(value) => {
+            let converted = value
+                .to_i64()
+                .map_err(|_| EvalError::Unsupported("bad fractional-seconds-precision argument"))?;
+            if !(0..=i64::from(MAX_FSP)).contains(&converted.value) {
+                return Err(EvalError::Unsupported(
+                    "bad fractional-seconds-precision argument",
+                ));
+            }
+            converted.value as u32
+        }
     };
     // Only the ZONE comes from the statement clock; the instant does not.
     let (_, _, tz_offset) = cols.now().ok_or(EvalError::Unsupported(
@@ -512,4 +524,68 @@ pub(crate) fn sysdate(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalE
         fsp,
         true,
     )))
+}
+
+#[cfg(test)]
+mod sysdate_source_tests {
+    use super::sysdate;
+    use crate::{Columns, Datum, EvalError};
+
+    struct StatementClock(i64);
+
+    impl Columns for StatementClock {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+
+        fn now(&self) -> Option<(i64, u32, i32)> {
+            Some((self.0, 0, 0))
+        }
+    }
+
+    fn host_now(fsp: u32) -> String {
+        let elapsed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap();
+        super::super::format_datetime(elapsed.as_secs() as i64, elapsed.subsec_nanos(), fsp, true)
+    }
+
+    /// Go `TestSysDate`: the function reads the host clock rather than the
+    /// statement `timestamp`, accepts FSP 0 through 6, and rejects a negative
+    /// constant. Rust has one evaluator, so the source's row/vector loops
+    /// converge on this same boundary.
+    #[test]
+    fn test_sys_date() {
+        for statement_timestamp in [1_234, 0] {
+            let before = host_now(0);
+            let result = sysdate(&[], &StatementClock(statement_timestamp)).unwrap();
+            let after = host_now(0);
+            let Datum::String(result) = result else {
+                panic!("SYSDATE must return its datetime string");
+            };
+            let result = result.as_utf8().unwrap();
+            assert!(before.as_str() <= result && result <= after.as_str());
+        }
+
+        for fsp in 0..=6 {
+            let before = host_now(fsp);
+            let result = sysdate(&[Datum::Int(i64::from(fsp))], &StatementClock(0)).unwrap();
+            let after = host_now(fsp);
+            let Datum::String(result) = result else {
+                panic!("SYSDATE({fsp}) must return its datetime string");
+            };
+            let result = result.as_utf8().unwrap();
+            assert!(
+                before.as_str() <= result && result <= after.as_str(),
+                "fsp={fsp}"
+            );
+        }
+
+        assert_eq!(
+            sysdate(&[Datum::Int(-2)], &StatementClock(0)),
+            Err(EvalError::Unsupported(
+                "bad fractional-seconds-precision argument"
+            ))
+        );
+    }
 }
