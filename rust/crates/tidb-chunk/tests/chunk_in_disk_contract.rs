@@ -266,7 +266,10 @@ fn truncated_chunk_read_is_rejected_before_destination_mutation() {
         .expect_err("truncated image must be rejected");
     assert!(matches!(error, DiskError::Io(_)));
     assert_eq!(destination.get_row(0).get_bytes(0).as_ref(), b"sentinel");
-    assert!(matches!(disk.get_chunk(0), Err(DiskError::Io(_))));
+    assert!(matches!(
+        tidb_chunk::chunk_in_disk::DataInDiskByChunks::get_chunk(&mut disk, 0),
+        Err(DiskError::Io(_))
+    ));
 }
 
 #[test]
