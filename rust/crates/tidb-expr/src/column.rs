@@ -26,6 +26,7 @@ use std::hash::{Hash, Hasher};
 use crate::context::EvalError;
 use crate::expr_collation::CollationInfo;
 use crate::expression::{ConstLevel, Expression, COLUMN_FLAG};
+use crate::schema::Schema;
 use tidb_chunk::row::Row;
 use tidb_codec::encode_int;
 use tidb_datatype::{Datum, FieldType};
@@ -103,6 +104,18 @@ impl Column {
         }
     }
 
+    /// Go `EqualByExprAndID`: identity by `UniqueID`, or for generated columns,
+    /// equality by matching scalar virtual expression plus result type.
+    #[must_use]
+    pub fn equal_by_expr_and_id(&self, expr: &Expression) -> bool {
+        let Expression::Column(other) = expr else {
+            return false;
+        };
+        let is_virtual_expr_matched = self.ret_type == other.ret_type
+            && crate::constant::optional_expression_equals(&self.virtual_expr, &other.virtual_expr);
+        other.unique_id == self.unique_id || is_virtual_expr_matched
+    }
+
     /// Go `HashCode`: `[columnFlag, EncodeInt(UniqueID)]`, cached on first call.
     pub fn hash_code(&mut self) -> &[u8] {
         if self.hashcode.is_empty() {
@@ -152,6 +165,12 @@ impl Column {
         ConstLevel::NONE
     }
 
+    /// Go `Column.Decorrelate`: a plain column is already decorrelated.
+    #[must_use]
+    pub fn decorrelate(&self) -> Expression {
+        Expression::Column(self.clone())
+    }
+
     /// Go `InColumnArray`: membership is column identity (`UniqueID`), not
     /// pointer identity or the legacy table-column `ID`.
     #[must_use]
@@ -159,6 +178,39 @@ impl Column {
         columns
             .iter()
             .any(|column| column.unique_id == self.unique_id)
+    }
+
+    /// Go `ResolveIndicesByVirtualExpr`: resolve to an exact schema column by
+    /// `UniqueID`; if no exact match exists, fall back to a matching generated
+    /// column virtual expression.
+    #[must_use]
+    pub fn resolve_indices_by_virtual_expr(&self, schema: &Schema) -> Option<Column> {
+        let mut resolved = self.clone();
+        if resolved.resolve_indices_by_virtual_expr_in_place(schema) {
+            Some(resolved)
+        } else {
+            None
+        }
+    }
+
+    fn resolve_indices_by_virtual_expr_in_place(&mut self, schema: &Schema) -> bool {
+        let mut fallback_idx = None;
+        for (idx, schema_column) in schema.columns.iter().enumerate() {
+            let target = Expression::Column(self.clone());
+            if schema_column.equal_column(&target) {
+                self.index = idx as i64;
+                return true;
+            }
+            if fallback_idx.is_none() && schema_column.equal_by_expr_and_id(&target) {
+                fallback_idx = Some(idx as i64);
+            }
+        }
+        if let Some(idx) = fallback_idx {
+            self.index = idx;
+            true
+        } else {
+            false
+        }
     }
 
     /// Go `Column.Eval`: read this column's cell (`row.GetDatum(Index, RetType)`).
@@ -288,6 +340,18 @@ pub fn column_by_id(columns: &[Column], id: i64) -> Option<&Column> {
     columns.iter().find(|column| column.id == id)
 }
 
+/// Go `GcColumnExprIsTidbShard`: whether a generated-column virtual expression
+/// is exactly a `tidb_shard(...)` scalar function.
+#[must_use]
+pub fn gc_column_expr_is_tidb_shard(virtual_expr: Option<&Expression>) -> bool {
+    match virtual_expr {
+        Some(Expression::ScalarFunction(function)) => {
+            function.func_name.lowercase() == "tidb_shard"
+        }
+        _ => false,
+    }
+}
+
 /// Go `CorrelatedColumn`: a column reference bound to a value supplied by an
 /// outer query (the correlated value lives in `Data`).
 #[derive(Clone, Debug, Default)]
@@ -311,12 +375,14 @@ impl CorrelatedColumn {
         ConstLevel::NONE
     }
 
-    /// Go `Equal` -> promoted `Column.EqualColumn`: equal to a plain [`Column`]
-    /// with the same `UniqueID`; any other expression (including another
-    /// correlated column) is unequal, matching Go's `expr.(*Column)` type assert.
+    /// Go `CorrelatedColumn.EqualColumn`: equal only to another correlated
+    /// column whose embedded [`Column`] has the same `UniqueID`.
     #[must_use]
     pub fn equal_column(&self, expr: &Expression) -> bool {
-        self.column.equal_column(expr)
+        match expr {
+            Expression::CorrelatedColumn(other) => self.column.unique_id == other.column.unique_id,
+            _ => false,
+        }
     }
 
     /// Go promoted `Column.HashCode`: hashes as the embedded column.
@@ -330,6 +396,17 @@ impl CorrelatedColumn {
         self.column.get_static_type()
     }
 
+    /// Go `CorrelatedColumn.Decorrelate`: replace with the embedded plain
+    /// column only when the outer schema contains that column.
+    #[must_use]
+    pub fn decorrelate(&self, schema: &Schema) -> Expression {
+        if schema.contains(&self.column) {
+            Expression::Column(self.column.clone())
+        } else {
+            Expression::CorrelatedColumn(self.clone())
+        }
+    }
+
     /// Go `CorrelatedColumn.Eval`: returns the bound outer value (`*Data`).
     /// Go dereferences the `Data` pointer; a not-yet-bound column yields NULL.
     #[must_use]
@@ -341,9 +418,13 @@ impl CorrelatedColumn {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scalar_function::ScalarFunction;
     use chrono::TimeZone;
+    use tidb_ast::CiString;
+    use tidb_chunk::chunk::Chunk;
     use tidb_datatype::{
-        core_time_from_datetime, Decimal, FieldType, FieldTypeCode, MySqlDuration, Time, TimeType,
+        core_time_from_datetime, parse_bit_str, Decimal, FieldType, FieldTypeCode, MySqlDuration,
+        MysqlEnum, MysqlSet, Time, TimeType,
     };
 
     fn col(unique_id: i64) -> Column {
@@ -410,6 +491,93 @@ mod tests {
         assert!(column_by_id(&columns, 3).is_none());
     }
 
+    /// Source: `pkg/expression/column_test.go::TestColumn` virtual-expression
+    /// resolution branch.
+    #[test]
+    fn resolve_indices_by_virtual_expr_prefers_exact_unique_id() {
+        let string_type = FieldType::new(FieldTypeCode::Varchar);
+        let base = Column::new(10, string_type.clone());
+        let virtual_expr = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("lower"),
+            string_type.clone(),
+            vec![Expression::Column(base.clone())],
+        ));
+
+        let expr_only = Column {
+            unique_id: 12,
+            ret_type: Some(string_type.clone()),
+            virtual_expr: Some(Box::new(virtual_expr.clone())),
+            ..Default::default()
+        };
+        let exact = Column {
+            unique_id: 11,
+            ret_type: Some(string_type.clone()),
+            virtual_expr: Some(Box::new(virtual_expr.clone())),
+            ..Default::default()
+        };
+
+        let target = Column {
+            unique_id: 11,
+            ret_type: Some(string_type.clone()),
+            virtual_expr: Some(Box::new(virtual_expr.clone())),
+            ..Default::default()
+        };
+        let resolved = target
+            .resolve_indices_by_virtual_expr(&Schema::new(vec![expr_only.clone(), exact.clone()]))
+            .expect("exact column id must resolve");
+        assert_eq!(resolved.index, 1);
+
+        let ambiguous = Column {
+            unique_id: 13,
+            ret_type: Some(string_type),
+            virtual_expr: Some(Box::new(virtual_expr)),
+            ..Default::default()
+        };
+        let resolved = ambiguous
+            .resolve_indices_by_virtual_expr(&Schema::new(vec![expr_only, exact]))
+            .expect("virtual expr fallback must resolve");
+        assert_eq!(resolved.index, 0);
+    }
+
+    /// Source: `pkg/expression/column_test.go::TestColHybird`.
+    #[test]
+    fn column_eval_preserves_hybrid_datums_from_rows() {
+        fn eval_one(field_type: FieldType, datum: &Datum) -> Datum {
+            let fields = [field_type.clone()];
+            let mut chunk = Chunk::new(&fields, 1, 1);
+            chunk.append_datum(0, datum);
+
+            let mut column = Column::new(1, field_type);
+            column.index = 0;
+            column.eval(chunk.get_row(0)).expect("column eval")
+        }
+
+        let bit_type = FieldType::new(FieldTypeCode::Bit);
+        for value in [0, 1, 7, 255, 1023] {
+            let literal = parse_bit_str(&format!("0b{value:b}")).expect("source bit literal");
+            let datum = Datum::new_mysql_bit(literal);
+            assert_eq!(eval_one(bit_type.clone(), &datum), datum, "bit {value}");
+        }
+
+        let enum_type = FieldType::new(FieldTypeCode::Enum);
+        for value in [0, 1, 7, 255, 1023] {
+            let datum = Datum::new_enum(
+                MysqlEnum::new(value.to_string(), value),
+                enum_type.collation(),
+            );
+            assert_eq!(eval_one(enum_type.clone(), &datum), datum, "enum {value}");
+        }
+
+        let set_type = FieldType::new(FieldTypeCode::Set);
+        for value in [0, 1, 7, 255, 1023] {
+            let datum = Datum::new_set(
+                MysqlSet::new(value.to_string(), value),
+                set_type.collation(),
+            );
+            assert_eq!(eval_one(set_type.clone(), &datum), datum, "set {value}");
+        }
+    }
+
     /// Exact Go `TestInColumnArray`: present, absent and empty/nil shapes.
     #[test]
     fn test_in_column_array() {
@@ -426,6 +594,30 @@ mod tests {
         assert!(column0.in_column_array(&[column0.clone(), column1.clone()]));
         assert!(!column0.in_column_array(&[column1]));
         assert!(!column0.in_column_array(&[]));
+    }
+
+    /// Source: `pkg/expression/column_test.go::TestGcColumnExprIsTidbShard`.
+    #[test]
+    fn gc_column_expr_is_tidb_shard_matches_source() {
+        let field_type = FieldType::new(FieldTypeCode::LongLong);
+        let column = Expression::Column(Column::new(1, field_type.clone()));
+
+        assert!(!gc_column_expr_is_tidb_shard(None));
+        assert!(!gc_column_expr_is_tidb_shard(Some(&column)));
+
+        let eq = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("eq"),
+            field_type.clone(),
+            vec![column.clone()],
+        ));
+        assert!(!gc_column_expr_is_tidb_shard(Some(&eq)));
+
+        let shard = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("TiDB_ShArD"),
+            field_type,
+            vec![column],
+        ));
+        assert!(gc_column_expr_is_tidb_shard(Some(&shard)));
     }
 
     #[test]
@@ -528,25 +720,40 @@ mod tests {
         let c = col(1);
         assert!(!c.is_correlated());
         assert_eq!(c.const_level(), ConstLevel::NONE);
+        assert!(matches!(c.decorrelate(), Expression::Column(column) if column.unique_id == 1));
     }
 
     #[test]
-    fn correlated_column_delegates_and_is_correlated() {
+    fn correlated_column_decorrelates_and_is_correlated() {
         let mut cc = CorrelatedColumn {
             column: col(5),
             data: Some(Datum::Int(3)),
         };
         assert!(cc.is_correlated());
         assert_eq!(cc.const_level(), ConstLevel::NONE);
-        // Equal to a plain column with the same UniqueID...
-        assert!(cc.equal_column(&Expression::Column(col(5))));
-        assert!(!cc.equal_column(&Expression::Column(col(6))));
-        // ...but not to another correlated column (Go's expr.(*Column) fails).
-        let other = Expression::CorrelatedColumn(CorrelatedColumn {
-            column: col(5),
-            data: None,
-        });
-        assert!(!cc.equal_column(&other));
+        // Equal only to another correlated column with the same UniqueID.
+        assert!(
+            cc.equal_column(&Expression::CorrelatedColumn(CorrelatedColumn {
+                column: col(5),
+                data: None,
+            }))
+        );
+        assert!(!cc.equal_column(&Expression::Column(col(5))));
+        assert!(
+            !cc.equal_column(&Expression::CorrelatedColumn(CorrelatedColumn {
+                column: col(6),
+                data: None,
+            }))
+        );
+        let contained = Schema::new(vec![col(5)]);
+        assert!(
+            matches!(cc.decorrelate(&contained), Expression::Column(column) if column.unique_id == 5)
+        );
+        let missing = Schema::new(vec![col(6)]);
+        assert!(matches!(
+            cc.decorrelate(&missing),
+            Expression::CorrelatedColumn(_)
+        ));
         // HashCode matches the embedded column's.
         let mut plain = col(5);
         assert_eq!(cc.hash_code(), plain.hash_code());

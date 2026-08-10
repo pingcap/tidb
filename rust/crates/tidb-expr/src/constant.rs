@@ -283,7 +283,7 @@ fn hash_collation(collation: &CollationInfo, hasher: &mut Fnv64) {
     collation.is_explicit_charset().hash(hasher);
 }
 
-fn optional_expression_equals(
+pub(crate) fn optional_expression_equals(
     left: &Option<Box<Expression>>,
     right: &Option<Box<Expression>>,
 ) -> bool {
@@ -294,7 +294,7 @@ fn optional_expression_equals(
     }
 }
 
-fn expression_equals(left: &Expression, right: &Expression) -> bool {
+pub(crate) fn expression_equals(left: &Expression, right: &Expression) -> bool {
     match (left, right) {
         (Expression::Constant(left), Expression::Constant(right)) => left.equals(right),
         (Expression::Column(left), Expression::Column(right)) => column_equals(left, right),
