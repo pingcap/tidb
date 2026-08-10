@@ -1542,7 +1542,9 @@ pub fn str_to_type(label: &str) -> FieldTypeCode {
 
 #[cfg(test)]
 mod tests {
-    use crate::GoString;
+    use crate::{Charset, Collation, GoString};
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
 
     use super::{
         FieldType, FieldTypeCode, FieldTypeFlags, MAX_DECIMAL_SCALE, MAX_DECIMAL_WIDTH,
@@ -1635,8 +1637,73 @@ mod tests {
             crate::Collator::New(Collation::Utf8Mb4Bin)
         );
     }
-    use crate::{Charset, Collation};
 
+    fn hash_field_type(field_type: &FieldType) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        field_type.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    /// Source: `pkg/expression/column_test.go::TestFieldTypeHashEquals`.
+    #[test]
+    fn field_type_hash_equals_matches_source() {
+        let base = FieldType::new(FieldTypeCode::LongLong);
+        let same = base.clone();
+        assert_eq!(hash_field_type(&base), hash_field_type(&same));
+        assert_eq!(base, same);
+
+        let different = base.clone().with_added_flags(FieldTypeFlags::NOT_NULL);
+        assert_ne!(hash_field_type(&base), hash_field_type(&different));
+        assert_ne!(base, different);
+
+        let base = base.with_added_flags(FieldTypeFlags::NOT_NULL);
+
+        let different = base.clone().with_flen(base.flen() + 1);
+        assert_ne!(hash_field_type(&base), hash_field_type(&different));
+        assert_ne!(base, different);
+
+        let different = base.clone().with_decimal(base.decimal() + 1);
+        assert_ne!(hash_field_type(&base), hash_field_type(&different));
+        assert_ne!(base, different);
+
+        let different = base
+            .clone()
+            .with_charset_name(format!("{}1", base.charset_name()));
+        assert_ne!(hash_field_type(&base), hash_field_type(&different));
+        assert_ne!(base, different);
+
+        let different = base
+            .clone()
+            .with_collation_name(format!("{}1", base.collation_name()));
+        assert_ne!(hash_field_type(&base), hash_field_type(&different));
+        assert_ne!(base, different);
+
+        let different = base.clone().with_code(FieldTypeCode::Long);
+        assert_ne!(hash_field_type(&base), hash_field_type(&different));
+        assert_ne!(base, different);
+
+        let mut different = base.clone();
+        different.set_elems(vec![GoString::from("a")]);
+        assert_ne!(hash_field_type(&base), hash_field_type(&different));
+        assert_ne!(base, different);
+
+        let mut left = base.clone().with_elems(vec!["a", "b"]);
+        left.set_elem_with_binary_literal(0, "1", true);
+        left.set_elem_with_binary_literal(1, "2", false);
+        let mut right = base.clone().with_elems(vec!["a", "b"]);
+        right.set_elem_with_binary_literal(0, "1", true);
+        right.set_elem_with_binary_literal(1, "2", true);
+        assert_ne!(hash_field_type(&left), hash_field_type(&right));
+        assert_ne!(left, right);
+
+        let different = base.clone().with_array(true);
+        assert_ne!(hash_field_type(&base), hash_field_type(&different));
+        assert_ne!(base, different);
+
+        let same = base.clone();
+        assert_eq!(hash_field_type(&base), hash_field_type(&same));
+        assert_eq!(base, same);
+    }
     /// Source: `pkg/types/field_type.go::DefaultCharsetForType` and
     /// `pkg/types/etc_test.go::TestIsBinaryStr`.
     #[test]
