@@ -76,10 +76,11 @@ pub(crate) fn agg_kind_and_type(
         // ([`cast_float_scalar_arg_to_double`]) and this arm stays a plain
         // "carry the argument's type".
         "MIN" | "MAX" => {
-            let t = arg
+            let mut t = arg
                 .static_type()
                 .cloned()
                 .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
+            t.del_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
             let kind = if name == "MIN" {
                 AggKind::Min
             } else {
@@ -281,6 +282,54 @@ pub(crate) fn agg_kind_and_type(
 const MAX_DECIMAL_WIDTH: i64 = 65;
 /// Go `mysql.MaxDecimalScale`.
 const MAX_DECIMAL_SCALE: i64 = 30;
+
+/// Go `typeInfer4GroupConcat`: derive the result's character metadata from
+/// every value argument plus the separator literal, then fill empty metadata
+/// from the connection charset/collation.
+fn group_concat_result_type(
+    args: &[Expression],
+    separator: &tidb_ast::TypedString,
+) -> Result<FieldType, DriverError> {
+    let mut collation_args = args.to_vec();
+    let mut separator_type = FieldType::parser(FieldTypeCode::VarString);
+    separator_type.set_charset_name(separator.charset.clone());
+    separator_type.set_collation_name(separator.collation.clone());
+    collation_args.push(Expression::Constant(tidb_expr::constant::Constant::new(
+        Datum::new_string(separator.value.clone()),
+        separator_type,
+    )));
+
+    let derived = tidb_expr::collation_derive::check_and_derive_collation_from_exprs(
+        "group_concat",
+        tidb_datatype::EvalType::String,
+        &collation_args,
+    )
+    .map_err(|error| DriverError::Exec(ExecError::Eval(error)))?;
+    let (connection_charset, connection_collation) =
+        tidb_expr::collation_derive::connection_charset_info();
+    let charset = if derived.charset.is_empty() {
+        connection_charset.to_owned()
+    } else {
+        derived.charset
+    };
+    let collation = if derived.collation.is_empty() {
+        if charset == connection_charset {
+            connection_collation.to_owned()
+        } else {
+            tidb_datatype::get_default_collation(&charset)
+                .unwrap_or_else(|_| connection_collation.to_owned())
+        }
+    } else {
+        derived.collation
+    };
+
+    let mut result = FieldType::new(FieldTypeCode::VarString);
+    result.set_charset_name(charset);
+    result.set_collation_name(collation);
+    result.set_flen(16_777_216); // mysql.MaxBlobWidth
+    result.set_decimal(0);
+    Ok(result)
+}
 
 /// The value of a row-independent expression, or `None` when it reads a
 /// column (Go's `ConstLevel() == ConstNone`).
@@ -676,8 +725,10 @@ pub(crate) fn build_agg_func(
             tidb_ast::Expr::Column(path) => resolver.orig_name(path).unwrap_or_default(),
             _ => String::new(),
         };
-        let mut ret_type = FieldType::new(FieldTypeCode::VarString);
-        ret_type.set_decimal(tidb_datatype::UNSPECIFIED_LENGTH);
+        let mut collation_args = Vec::with_capacity(1 + extra_args.len());
+        collation_args.push(arg.clone());
+        collation_args.extend(extra_args.iter().cloned());
+        let ret_type = group_concat_result_type(&collation_args, separator)?;
         return Ok((
             AggFunc {
                 kind: AggKind::GroupConcat {
@@ -764,4 +815,57 @@ pub(crate) fn build_agg_func(
         },
         ftype,
     ))
+}
+
+#[cfg(test)]
+mod source_tests {
+    use super::*;
+
+    fn column(unique_id: i64, field_type: FieldType) -> Expression {
+        Expression::Column(tidb_expr::column::Column::new(unique_id, field_type))
+    }
+
+    // Go pkg/expression/aggregation/base_func_test.go::
+    // TestBaseFunc_InferAggRetType.
+    #[test]
+    fn test_base_func_infer_agg_ret_type() {
+        for (unique_id, data_type) in [
+            (1, FieldType::new(FieldTypeCode::Double)),
+            (2, FieldType::new(FieldTypeCode::Bit)),
+        ] {
+            let mut not_null_type = data_type.clone();
+            not_null_type.add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+            let argument = column(unique_id, not_null_type);
+            for name in ["MAX", "MIN"] {
+                let (_, result_type) = agg_kind_and_type(name, std::slice::from_ref(&argument))
+                    .expect("MAX/MIN type inference");
+                assert_eq!(result_type, data_type, "{name} over {data_type:?}");
+            }
+        }
+
+        let mut non_binary_type = FieldType::new(FieldTypeCode::VarString);
+        non_binary_type.set_charset_name("utf8mb4");
+        non_binary_type.set_collation_name("utf8mb4_0900_ai_ci");
+        let non_binary = column(3, non_binary_type);
+        let matching_separator = tidb_ast::TypedString::new(" ", "utf8mb4", "utf8mb4_0900_ai_ci");
+        let result =
+            group_concat_result_type(std::slice::from_ref(&non_binary), &matching_separator)
+                .unwrap();
+        assert_eq!(result.charset_name(), "utf8mb4");
+        assert_eq!(result.collation_name(), "utf8mb4_0900_ai_ci");
+        assert_eq!(result.flen(), 16_777_216);
+        assert_eq!(result.decimal(), 0);
+
+        let empty_separator = tidb_ast::TypedString::new(",", "", "");
+        let numeric = column(4, FieldType::new(FieldTypeCode::LongLong));
+        let result =
+            group_concat_result_type(std::slice::from_ref(&numeric), &empty_separator).unwrap();
+        assert_eq!(result.charset_name(), "utf8mb4");
+        assert_eq!(result.collation_name(), "utf8mb4_bin");
+
+        let result =
+            group_concat_result_type(std::slice::from_ref(&non_binary), &empty_separator).unwrap();
+        assert_eq!(result.charset_name(), "utf8mb4");
+        assert_eq!(result.collation_name(), "utf8mb4_0900_ai_ci");
+    }
 }
