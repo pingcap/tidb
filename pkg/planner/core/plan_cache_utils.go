@@ -74,16 +74,26 @@ func NonPreparedPlanCacheEnabledForStmt(vars *variable.SessionVars, stmt ast.Stm
 	if vars == nil {
 		return false
 	}
+
+	enableSelect := vars.EnableNonPreparedPlanCache
+	enableDML := vars.EnableNonPreparedPlanCacheForDML
+	if !enableSelect && !enableDML {
+		return false
+	}
+	if enableSelect && enableDML {
+		return true
+	}
+
 	switch x := stmt.(type) {
 	case *ast.InsertStmt, *ast.UpdateStmt, *ast.DeleteStmt:
-		return vars.EnableNonPreparedPlanCacheForDML
+		return enableDML
 	case *ast.SelectStmt:
 		if x.LockInfo != nil {
-			return vars.EnableNonPreparedPlanCacheForDML
+			return enableDML
 		}
-		return vars.EnableNonPreparedPlanCache
+		return enableSelect
 	default:
-		return vars.EnableNonPreparedPlanCache
+		return enableSelect
 	}
 }
 
