@@ -3,6 +3,41 @@
 
 use crate::tests_support::*;
 use crate::*;
+use std::sync::Arc;
+
+#[test]
+fn server_spill_authority_reaches_every_statement_context() {
+    let path = std::env::temp_dir().join(format!(
+        "tidb-session-spill-authority-{}",
+        std::process::id()
+    ));
+    let storage = Arc::new(
+        tidb_util::disk::SpillStorage::open(tidb_util::disk::SpillStorageSpec {
+            path: path.clone(),
+            quota_bytes: -1,
+            encryption: tidb_util::disk::SpillEncryptionMethod::Aes128Ctr,
+        })
+        .unwrap(),
+    );
+    let mut session = Session::new();
+    session.set_spill_storage(Arc::clone(&storage));
+
+    for context in [
+        session.statement_context(false),
+        session.statement_context(true),
+    ] {
+        let inherited = context.statement_memory().spill_storage();
+        assert_eq!(inherited.path(), path);
+        assert_eq!(
+            inherited.encryption(),
+            tidb_util::disk::SpillEncryptionMethod::Aes128Ctr
+        );
+    }
+
+    drop(session);
+    drop(storage);
+    std::fs::remove_dir_all(path).unwrap();
+}
 
 /// A whole session lifecycle from SQL strings alone: DDL, writes, reads.
 #[test]

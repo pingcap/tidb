@@ -1,0 +1,134 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! Public boundaries for exact spill reads and bounded row-container scans.
+
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use tidb_chunk::chunk::Chunk;
+use tidb_chunk::chunk_in_disk::DiskError;
+use tidb_chunk::list::RowPtr;
+use tidb_chunk::row_container::RowContainer;
+use tidb_chunk::row_container_reader::RowContainerReader;
+use tidb_chunk::row_in_disk::DataInDiskByRows;
+use tidb_datatype::{FieldType, FieldTypeCode};
+use tidb_util::checksum::{CHECKSUM_BLOCK_SIZE, CHECKSUM_PAYLOAD_SIZE};
+use tidb_util::disk::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
+
+struct TestStorage {
+    authority: Option<Arc<SpillStorage>>,
+    path: PathBuf,
+}
+
+impl TestStorage {
+    fn open(case: &str) -> Self {
+        let path = std::env::temp_dir().join(format!(
+            "tidb_chunk_spill_reader_contract_{case}_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&path);
+        let authority = Arc::new(
+            SpillStorage::open(SpillStorageSpec {
+                path: path.clone(),
+                quota_bytes: -1,
+                encryption: SpillEncryptionMethod::Plaintext,
+            })
+            .expect("spill storage"),
+        );
+        Self {
+            authority: Some(authority),
+            path,
+        }
+    }
+
+    fn authority(&self) -> Arc<SpillStorage> {
+        Arc::clone(self.authority.as_ref().expect("live test storage"))
+    }
+}
+
+impl Drop for TestStorage {
+    fn drop(&mut self) {
+        drop(self.authority.take());
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
+
+#[test]
+fn row_spill_exact_read_boundary() {
+    let storage = TestStorage::open("short-read");
+    let field = FieldType::new(FieldTypeCode::VarString);
+    let mut rows = DataInDiskByRows::new(vec![field.clone()], storage.authority());
+    let payload = vec![0x5a; 2 * CHECKSUM_PAYLOAD_SIZE];
+    let mut chunk = Chunk::new_with_capacity(std::slice::from_ref(&field), 1);
+    chunk.append_bytes(0, &payload);
+    rows.add(&chunk).expect("spill row");
+
+    let pointer = RowPtr::new(0, 0);
+    let (loaded, row_index) = DataInDiskByRows::get_row(&rows, pointer).expect("exact row read");
+    assert_eq!(loaded.get_row(row_index).get_bytes(0).as_ref(), payload);
+
+    let path = rows.data_file_path().expect("data spill path");
+    assert_eq!(
+        std::fs::metadata(path).expect("spill metadata").len(),
+        (2 * CHECKSUM_BLOCK_SIZE) as u64
+    );
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .expect("open spill image")
+        .set_len(CHECKSUM_BLOCK_SIZE as u64)
+        .expect("truncate spill image");
+
+    match DataInDiskByRows::get_row(&rows, pointer) {
+        Err(DiskError::Io(error)) => {
+            assert_eq!(error.kind(), std::io::ErrorKind::UnexpectedEof)
+        }
+        Err(other) => panic!("expected an exact-read I/O error, got {other}"),
+        Ok(_) => panic!("a truncated spill image must never decode a zero-filled row"),
+    }
+    rows.close();
+}
+
+fn read_initial_chunks(initial: &[i64], late: i64) -> Vec<i64> {
+    let storage = TestStorage::open(&format!("extent-{}", initial.len()));
+    let fields = vec![FieldType::new(FieldTypeCode::LongLong)];
+    let mut rows = RowContainer::new(&fields, initial.len() + 1, storage.authority());
+    for value in initial {
+        let mut chunk = Chunk::new_with_capacity(&fields, 1);
+        chunk.append_int64(0, *value);
+        rows.add(chunk).expect("initial chunk");
+    }
+
+    let mut reader = RowContainerReader::new(&rows);
+    let mut appended_later = Chunk::new_with_capacity(&fields, 1);
+    appended_later.append_int64(0, late);
+    rows.add(appended_later).expect("late chunk");
+
+    let mut values = Vec::new();
+    while let Some(row) = reader.current() {
+        values.push(row.get_int64(0));
+        reader.next_row();
+    }
+    assert_eq!(reader.error(), None);
+    reader.close();
+    rows.close();
+    values
+}
+
+#[test]
+fn row_container_reader_extent_boundary() {
+    assert_eq!(read_initial_chunks(&[11], 99), [11]);
+    assert_eq!(read_initial_chunks(&[21, 22], 99), [21, 22]);
+}

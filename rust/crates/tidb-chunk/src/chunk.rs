@@ -118,6 +118,23 @@ impl Chunk {
         }
     }
 
+    /// Builds a stable metadata snapshot whose columns retain the same owners.
+    ///
+    /// Row-container reads use this to release the container lock before
+    /// returning. A later spill may drop the list's chunk, while this snapshot
+    /// keeps the exact column data alive without copying it.
+    pub(crate) fn alias_snapshot(&mut self) -> Self {
+        Chunk {
+            sel: self.sel.clone(),
+            columns: self.columns.iter_mut().map(ColumnSlot::alias).collect(),
+            columns_initialized: self.columns_initialized,
+            num_virtual_rows: self.num_virtual_rows,
+            capacity: self.capacity,
+            required_rows: self.required_rows,
+            in_complete_chunk: self.in_complete_chunk,
+        }
+    }
+
     /// Go `NumCols`.
     #[must_use]
     pub fn num_cols(&self) -> usize {
@@ -678,7 +695,8 @@ impl Chunk {
     ///
     /// Supports the kinds whose column storage exists (NULL, int/uint, real/
     /// float32, string/bytes, binary literal, time, duration, decimal, JSON,
-    /// enum, set). Other kinds panic, pending their column support.
+    /// enum, set). The two range-only sentinels have no source switch arm and
+    /// are exact no-ops; Rust has no untyped `KindInterface` datum variant.
     pub fn append_datum(&mut self, col_idx: usize, datum: &Datum) {
         match datum {
             Datum::Null => self.append_null(col_idx),
@@ -712,9 +730,7 @@ impl Chunk {
                 );
                 self.append_my_decimal(col_idx, &value);
             }
-            other => panic!(
-                "Chunk::append_datum: datum {other:?} not yet supported (pending its column storage)"
-            ),
+            Datum::MinNotNull | Datum::MaxValue => {}
         }
     }
 

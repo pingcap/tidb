@@ -38,6 +38,9 @@ pub struct RowContainerReader {
     /// The chunk the cursor is inside, decoded on demand.
     chunk: Option<Chunk>,
     chk_idx: usize,
+    /// The chunk extent captured when the reader starts. Appends made after
+    /// construction belong to a later scan, as in Go's bounded range loop.
+    end_chk_idx: usize,
     row_idx: usize,
     /// Set once the cursor has run off the end.
     ended: bool,
@@ -50,10 +53,12 @@ impl RowContainerReader {
     /// `Current()` already stands on the first row.
     #[must_use]
     pub fn new(rc: &RowContainer) -> Self {
+        let end_chk_idx = rc.num_chunks();
         let mut reader = RowContainerReader {
             rc: rc.shallow_copy(),
             chunk: None,
             chk_idx: 0,
+            end_chk_idx,
             row_idx: 0,
             ended: false,
             err: None,
@@ -66,7 +71,7 @@ impl RowContainerReader {
     /// iteration when there are no chunks left.
     fn load_chunk(&mut self) {
         loop {
-            if self.chk_idx >= self.rc.num_chunks() {
+            if self.chk_idx >= self.end_chk_idx {
                 self.chunk = None;
                 self.ended = true;
                 return;
@@ -142,18 +147,13 @@ mod tests {
     use super::*;
     use crate::row_container::RowContainer;
     use tidb_datatype::{FieldType, FieldTypeCode as C};
-    use tidb_util::disk;
-
-    use crate::test_temp_storage::guard as temp_dir_guard;
-
-    use crate::test_temp_storage::scratch_dir as scratch_temp_dir;
 
     /// Go `insertBytesRowsIntoRowContainer`, with a deterministic byte pattern
     /// where Go uses `crypto/rand`: what matters is that the rows are of
     /// varying length and distinguishable.
     fn insert_bytes_rows(chk_count: usize, row_per_chk: usize) -> (RowContainer, Vec<Vec<u8>>) {
         let fields = vec![FieldType::new(C::Varchar).with_flen(4096)];
-        let mut rc = RowContainer::new(&fields, chk_count);
+        let mut rc = RowContainer::new(&fields, chk_count, crate::test_temp_storage::storage());
         let mut all_rows = Vec::new();
         for c in 0..chk_count {
             let mut chk = Chunk::new_with_capacity(&fields, row_per_chk);
@@ -172,10 +172,6 @@ mod tests {
     /// comes back in order.
     #[test]
     fn the_reader_walks_a_spilled_container() {
-        let _guard = temp_dir_guard();
-        let dir = scratch_temp_dir("indisk");
-        disk::set_temp_storage_path(&dir);
-
         let (mut rc, all_rows) = insert_bytes_rows(16, 16);
         rc.spill_to_disk();
         assert_eq!(rc.spill_error(), None);
@@ -192,7 +188,6 @@ mod tests {
         assert_eq!(reader.error(), None);
         reader.close();
         drop(rc);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The same walk over a container that never spilled.
@@ -210,14 +205,31 @@ mod tests {
         assert!(reader.current().is_none());
     }
 
+    #[test]
+    fn the_reader_snapshots_its_chunk_extent_at_construction() {
+        let fields = vec![FieldType::new(C::LongLong)];
+        let mut rc = RowContainer::new(&fields, 2, crate::test_temp_storage::storage());
+        let mut first = Chunk::new_with_capacity(&fields, 1);
+        first.append_int64(0, 11);
+        rc.add(first).expect("first chunk");
+
+        let mut reader = RowContainerReader::new(&rc);
+        let mut appended_later = Chunk::new_with_capacity(&fields, 1);
+        appended_later.append_int64(0, 22);
+        rc.add(appended_later).expect("later chunk");
+
+        assert_eq!(reader.current().expect("first row").get_int64(0), 11);
+        assert!(
+            reader.next_row().is_none(),
+            "a reader must not include chunks appended after it started"
+        );
+        assert_eq!(reader.error(), None);
+    }
+
     /// Go `TestCloseRowContainerReader`: closing part-way through is allowed
     /// and stops the reader.
     #[test]
     fn closing_the_reader_part_way_through_stops_it() {
-        let _guard = temp_dir_guard();
-        let dir = scratch_temp_dir("close");
-        disk::set_temp_storage_path(&dir);
-
         let (mut rc, all_rows) = insert_bytes_rows(16, 16);
         rc.spill_to_disk();
 
@@ -230,7 +242,6 @@ mod tests {
         reader.close();
         assert!(reader.current().is_none(), "a closed reader yields nothing");
         drop(rc);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Go `TestReadAfterSpillWithRowContainerReader`: the reader owns its
@@ -238,10 +249,6 @@ mod tests {
     /// is loaded and the remaining values still appear exactly once in order.
     #[test]
     fn the_reader_crosses_a_mid_read_spill() {
-        let _guard = temp_dir_guard();
-        let dir = scratch_temp_dir("reader-mid-spill");
-        disk::set_temp_storage_path(&dir);
-
         let (mut rc, all_rows) = insert_bytes_rows(16, 16);
         let mut reader = RowContainerReader::new(&rc);
         for (i, want) in all_rows.iter().take(8 * 16).enumerate() {
@@ -266,6 +273,5 @@ mod tests {
         assert_eq!(reader.error(), None);
         reader.close();
         rc.close();
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

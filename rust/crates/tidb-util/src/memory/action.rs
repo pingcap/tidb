@@ -60,6 +60,47 @@ pub trait ActionOnExceed {
     fn is_finished(&self) -> bool;
 }
 
+/// Go `actionWithPriority`: a transparent action wrapper that changes only
+/// the fallback-chain priority.
+pub struct ActionWithPriority {
+    action: ArcAction,
+    priority: i64,
+}
+
+impl ActionWithPriority {
+    /// Go `NewActionWithPriority`.
+    #[must_use]
+    pub fn new(action: ArcAction, priority: i64) -> Self {
+        Self { action, priority }
+    }
+}
+
+impl ActionOnExceed for ActionWithPriority {
+    fn action(&self, tracker: &Arc<Tracker>) {
+        self.action.action(tracker);
+    }
+
+    fn set_fallback(&self, action: Option<ArcAction>) {
+        self.action.set_fallback(action);
+    }
+
+    fn get_fallback(&self) -> Option<ArcAction> {
+        self.action.get_fallback()
+    }
+
+    fn get_priority(&self) -> i64 {
+        self.priority
+    }
+
+    fn set_finished(&self) {
+        self.action.set_finished();
+    }
+
+    fn is_finished(&self) -> bool {
+        self.action.is_finished()
+    }
+}
+
 /// Manages the fallback chain for every action (Go `BaseOOMAction`).
 #[derive(Default)]
 pub struct BaseOomAction {

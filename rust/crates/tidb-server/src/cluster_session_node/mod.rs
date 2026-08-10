@@ -298,6 +298,7 @@ mod statistics;
 mod transactions;
 
 pub use boot::run_cluster_session_node;
+pub(crate) use boot::run_cluster_session_node_with_spill;
 pub use ddl::{ClusterDdl, RealClusterDdl};
 pub use tidb_exec::real_tikv_ddl::ClusterDdlReport;
 #[cfg(test)]
@@ -366,6 +367,8 @@ pub struct ClusterSessionFactory {
     /// per-session catalogs, because a reserved id range must outlive the
     /// `KvTable` that was handing it out; see [`crate::cluster_auto_id_seam`].
     auto_ids: Arc<dyn TableAutoIds>,
+    /// Process-owned spill authority inherited by every connection.
+    spill_storage: Option<Arc<tidb_util::disk::SpillStorage>>,
 }
 
 impl ClusterSessionFactory {
@@ -406,7 +409,15 @@ impl ClusterSessionFactory {
             global_vars,
             boot_skipped,
             stats,
+            spill_storage: None,
         }
+    }
+
+    /// Installs the startup-validated physical spill authority.
+    #[must_use]
+    pub fn with_spill_storage(mut self, spill_storage: Arc<tidb_util::disk::SpillStorage>) -> Self {
+        self.spill_storage = Some(spill_storage);
+        self
     }
 
     /// This node's loaded tables' statistics. The consuming estimator is a
@@ -465,6 +476,9 @@ impl QuerySessionFactory for ClusterSessionFactory {
         let statistics = self.stats.load();
         let built = cluster_session_catalog(&loaded, &storage, &statistics, self.auto_ids.as_ref());
         let mut session = Session::with_catalog(Arc::new(Mutex::new(built.catalog)));
+        if let Some(spill_storage) = self.spill_storage.as_ref() {
+            session.set_spill_storage(Arc::clone(spill_storage));
+        }
 
         let identity = &context.identity;
         session.set_user(
@@ -1397,20 +1411,29 @@ impl QuerySession for ClusterServerSession {
         let params = crate::pipeline_session::prepared_parameters(values);
         let sql = statement.sql().to_owned();
         let shape = self.session.statement_read_shape(&sql, &params);
-        let output = self.with_statement(shape, move |session| {
-            session.run_with_params(&sql, &params).map_err(map_error)
+        let (output, result_authority) = self.with_statement(shape, move |session| {
+            session
+                .run_with_params_and_result_authority(&sql, &params)
+                .map_err(map_error)
         })?;
         Ok(match output {
-            StmtOutput::Rows { columns, rows } => GeneralExecuteOutcome::Rows(
-                QueryResult::new(Box::new(MaterializedResultSetSource::new(
-                    crate::pipeline_session::select_columns(&columns),
-                    rows,
-                )))
-                .with_statement_status(
-                    self.session.wire_warning_count(),
-                    WireStatus::of_session(&self.session),
-                ),
-            ),
+            StmtOutput::Rows { columns, rows } => {
+                let field_types = columns.iter().map(|(_, field)| field.clone()).collect();
+                GeneralExecuteOutcome::Rows(
+                    QueryResult::new(Box::new(MaterializedResultSetSource::new(
+                        crate::pipeline_session::select_columns(&columns),
+                        rows,
+                    )))
+                    .with_cursor_materialization(
+                        field_types,
+                        result_authority.expect("a row result carries materialization authority"),
+                    )
+                    .with_statement_status(
+                        self.session.wire_warning_count(),
+                        WireStatus::of_session(&self.session),
+                    ),
+                )
+            }
             StmtOutput::Affected(count) => GeneralExecuteOutcome::Write(WriteOutcome {
                 affected_rows: count,
                 last_insert_id: self.session.statement_insert_id(),

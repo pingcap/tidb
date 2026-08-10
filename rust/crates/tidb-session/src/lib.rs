@@ -72,6 +72,45 @@ pub enum StmtOutput {
     Done(bool),
 }
 
+/// The statement-owned policy a server needs to retain an eager result set.
+///
+/// It is captured before `SET_VAR` overlays are restored, so a prepared
+/// cursor uses the same quota, OOM action, temporary-storage decision, and
+/// chunk bound as the statement that produced its rows.
+#[derive(Clone)]
+pub struct ResultMaterializationAuthority {
+    memory: tidb_executor::StatementMemory,
+    init_chunk_size: usize,
+    max_chunk_size: usize,
+}
+
+impl ResultMaterializationAuthority {
+    /// Builds a cursor-retention policy captured by a non-pipeline session.
+    ///
+    /// Production callers should pass the statement's actual memory policy
+    /// and the statement's chunk-size bounds; this constructor exists so an
+    /// external server-session implementation can support prepared cursors
+    /// without a crate-private back door.
+    #[must_use]
+    pub fn new(
+        memory: tidb_executor::StatementMemory,
+        init_chunk_size: usize,
+        max_chunk_size: usize,
+    ) -> Self {
+        Self {
+            memory,
+            init_chunk_size,
+            max_chunk_size,
+        }
+    }
+
+    /// Consumes the authority into its retained memory policy and chunk bounds.
+    #[must_use]
+    pub fn into_parts(self) -> (tidb_executor::StatementMemory, usize, usize) {
+        (self.memory, self.init_chunk_size, self.max_chunk_size)
+    }
+}
+
 /// A process-wide catalog shared by every session, as Go's domain-owned
 /// `infoschema` is shared by every session of a TiDB instance.
 pub type SharedCatalog = Arc<Mutex<Catalog>>;
@@ -85,6 +124,10 @@ pub type SharedCatalog = Arc<Mutex<Catalog>>;
 /// tier (documented deferral).
 pub struct Session {
     catalog: SharedCatalog,
+    /// Immutable physical spill authority installed by the server that owns
+    /// this session. Standalone sessions leave it absent and use the
+    /// executor's isolated fallback.
+    spill_storage: Option<Arc<tidb_util::disk::SpillStorage>>,
     /// The open transaction, if any.
     txn: Option<Transaction>,
     /// The session's system and user variables.
@@ -237,6 +280,7 @@ impl Default for Session {
     fn default() -> Self {
         Session {
             catalog: SharedCatalog::default(),
+            spill_storage: None,
             txn: None,
             vars: SessionVars::new(),
             warnings: Vec::new(),
@@ -430,6 +474,12 @@ impl Session {
         }
     }
 
+    /// Installs the server-owned spill policy for every statement created by
+    /// this session.
+    pub fn set_spill_storage(&mut self, storage: Arc<tidb_util::disk::SpillStorage>) {
+        self.spill_storage = Some(storage);
+    }
+
     /// The shared catalog handle, for opening a peer session over the same
     /// schema state.
     #[must_use]
@@ -465,6 +515,24 @@ impl Session {
         self.run_with_columns(&bound)
     }
 
+    /// Runs one parameterized statement and returns the exact policy needed
+    /// to retain a row result after the statement completes.
+    ///
+    /// The authority is present only for [`StmtOutput::Rows`]. It is captured
+    /// inside the statement lifecycle before `SET_VAR` restoration; a server
+    /// must not reconstruct it from post-statement session variables.
+    pub fn run_with_params_and_result_authority(
+        &mut self,
+        sql: &str,
+        params: &[Datum],
+    ) -> Result<(StmtOutput, Option<ResultMaterializationAuthority>), DriverError> {
+        if params.is_empty() && self.parameter_count(sql)? == 0 {
+            return self.run_with_columns_internal(sql, true);
+        }
+        let bound = tidb_executor::bind_parameters(sql, params, self.scanner_sql_mode())?;
+        self.run_with_columns_internal(&bound, true)
+    }
+
     /// Runs one SQL statement (Go `session.ExecuteStmt`): parses, dispatches by
     /// statement kind, and executes over the session catalog.
     pub fn run(&mut self, sql: &str) -> Result<StmtResult, DriverError> {
@@ -482,6 +550,15 @@ impl Session {
     /// warning buffer as an `Error`-level row, so `SHOW WARNINGS` right after
     /// a failure reports it.
     pub fn run_with_columns(&mut self, sql: &str) -> Result<StmtOutput, DriverError> {
+        self.run_with_columns_internal(sql, false)
+            .map(|(output, _)| output)
+    }
+
+    fn run_with_columns_internal(
+        &mut self,
+        sql: &str,
+        capture_result_authority: bool,
+    ) -> Result<(StmtOutput, Option<ResultMaterializationAuthority>), DriverError> {
         self.check_sandbox_mode(sql)?;
         // A statement is visible to a peer's SHOW PROCESSLIST for exactly as
         // long as it runs, which is why the process list is updated here --
@@ -507,6 +584,28 @@ impl Session {
         // rather than itself (that SELECT matches no binding of its own).
         self.prev_found_in_binding = std::mem::take(&mut self.found_in_binding);
         let result = self.execute_statement(sql);
+        let result_authority =
+            if capture_result_authority && matches!(&result, Ok(StmtOutput::Rows { .. })) {
+                let init_chunk_size = self
+                    .vars
+                    .get_system(tidb_vardef::tidb_vars::TIDB_INIT_CHUNK_SIZE)
+                    .ok()
+                    .and_then(|value| value.parse::<usize>().ok())
+                    .unwrap_or(32);
+                let max_chunk_size = self
+                    .vars
+                    .get_system(tidb_vardef::tidb_vars::TIDB_MAX_CHUNK_SIZE)
+                    .ok()
+                    .and_then(|value| value.parse::<usize>().ok())
+                    .unwrap_or(1024);
+                Some(ResultMaterializationAuthority::new(
+                    self.statement_context(false).statement_memory(),
+                    init_chunk_size,
+                    max_chunk_size,
+                ))
+            } else {
+                None
+            };
         // Go `ExecStmt` puts a `SET_VAR` hint's variables back when the
         // statement finishes, from the restore list the optimizer built --
         // which is why an overlay survives neither a successful statement nor
@@ -523,7 +622,7 @@ impl Session {
             let reported = error.clone().to_mysql_error();
             self.append_warning(WarningLevel::Error, reported.code, reported.message);
         }
-        result
+        result.map(|output| (output, result_authority))
     }
 }
 

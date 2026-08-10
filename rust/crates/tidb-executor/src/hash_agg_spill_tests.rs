@@ -23,7 +23,7 @@
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use crate::hash_agg::{AggFunc, AggKind, HashAggExec};
 use crate::mem_quota::{OomAction, StatementMemory};
-use crate::test_temp_storage::{guard as temp_dir_guard, scratch_dir as scratch_temp_dir};
+use crate::test_temp_storage::{scratch_dir as scratch_temp_dir, storage as test_storage};
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 use tidb_chunk::chunk::Chunk;
@@ -268,9 +268,7 @@ fn tight_quota() -> i64 {
 /// spill must really reach disk, and close must remove every spill file.
 #[test]
 fn test_get_correct_result() {
-    let _guard = temp_dir_guard();
     let dir = scratch_temp_dir("hashagg");
-    tidb_util::disk::set_temp_storage_path(&dir);
 
     let rows = interleaved_rows();
 
@@ -283,7 +281,8 @@ fn test_get_correct_result() {
     reference.close().unwrap();
 
     // The same aggregation under a quota it cannot hold its groups within.
-    let memory = StatementMemory::new(tight_quota(), OomAction::Cancel, 42);
+    let memory = StatementMemory::new(tight_quota(), OomAction::Cancel, 42)
+        .with_spill_storage(test_storage(&dir));
     let mut exec = grouped(&rows, 64, memory);
     exec.open().unwrap();
     let mut got = BTreeMap::new();
@@ -326,6 +325,7 @@ fn test_get_correct_result() {
         spill_files_in(&dir).is_empty(),
         "close must remove every spill file"
     );
+    drop(exec);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -337,12 +337,11 @@ fn test_get_correct_result() {
 /// reach 8175, rather than swallowing the overrun, and must create no file.
 #[test]
 fn test_fall_back_action() {
-    let _guard = temp_dir_guard();
     let dir = scratch_temp_dir("hashagggate");
-    tidb_util::disk::set_temp_storage_path(&dir);
 
-    let memory =
-        StatementMemory::new(tight_quota(), OomAction::Cancel, 42).with_tmp_storage_on_oom(false);
+    let memory = StatementMemory::new(tight_quota(), OomAction::Cancel, 42)
+        .with_spill_storage(test_storage(&dir))
+        .with_tmp_storage_on_oom(false);
     let mut exec = grouped(&interleaved_rows(), 64, memory);
     exec.open().unwrap();
     let mut req = exec.new_chunk();
@@ -351,6 +350,7 @@ fn test_fall_back_action() {
         other => panic!("expected 8175 with tmp storage disabled, got {other:?}"),
     }
     assert!(spill_files_in(&dir).is_empty(), "no file may be written");
+    drop(exec);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -364,13 +364,19 @@ fn test_fall_back_action() {
 /// complete statement charge.
 #[test]
 fn test_random_fail() {
-    let _guard = temp_dir_guard();
     let dir = scratch_temp_dir("hashaggfail");
-    let not_a_directory = dir.join("not-a-directory");
-    std::fs::write(&not_a_directory, b"block spill file creation").unwrap();
-    tidb_util::disk::set_temp_storage_path(&not_a_directory);
+    let storage_path = dir.join("storage");
+    let displaced_storage_path = dir.join("leased-storage");
+    let storage = test_storage(&storage_path);
 
-    let memory = StatementMemory::new(tight_quota(), OomAction::Cancel, 42);
+    // Keep the immutable authority alive while replacing only its pathname.
+    // Its next create_file call therefore reaches a real ENOTDIR boundary,
+    // without restoring the deleted process-global temp-directory switch.
+    std::fs::rename(&storage_path, &displaced_storage_path).unwrap();
+    std::fs::write(&storage_path, b"block spill file creation").unwrap();
+
+    let memory =
+        StatementMemory::new(tight_quota(), OomAction::Cancel, 42).with_spill_storage(storage);
     let mut exec = grouped(&interleaved_rows(), 64, memory.clone());
     exec.open().unwrap();
     let mut req = exec.new_chunk();
@@ -391,7 +397,8 @@ fn test_random_fail() {
         "failure followed by close must release every tracked byte"
     );
 
-    tidb_util::disk::set_temp_storage_path(&dir);
+    drop(exec);
+    drop(memory);
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -400,11 +407,10 @@ fn test_random_fail() {
 /// over the quota and the statement would die at 8175 anyway.
 #[test]
 fn each_round_gives_the_statements_budget_back() {
-    let _guard = temp_dir_guard();
     let dir = scratch_temp_dir("hashaggbudget");
-    tidb_util::disk::set_temp_storage_path(&dir);
 
-    let memory = StatementMemory::new(tight_quota(), OomAction::Cancel, 42);
+    let memory = StatementMemory::new(tight_quota(), OomAction::Cancel, 42)
+        .with_spill_storage(test_storage(&dir));
     let mut exec = grouped(&interleaved_rows(), 64, memory.clone());
     let got = drain(&mut exec);
     assert_eq!(got.len(), GROUPS as usize);
@@ -415,5 +421,7 @@ fn each_round_gives_the_statements_budget_back() {
         0,
         "close must return every byte to the statement"
     );
+    drop(exec);
+    drop(memory);
     let _ = std::fs::remove_dir_all(&dir);
 }

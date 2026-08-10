@@ -6,9 +6,14 @@
 #![allow(missing_docs)]
 
 use std::net::{IpAddr, Ipv4Addr};
+use std::path::PathBuf;
 use std::time::Duration;
 
-use tidb_server::{ConfiguredReadColumnKind, NodeConfig, NodeConfigError};
+use tidb_server::{
+    run_configured_node, ConfiguredReadColumnKind, NodeConfig, NodeConfigError,
+    RunConfiguredNodeError,
+};
+use tidb_util::disk::{SpillEncryptionMethod, SpillStorageOpenError};
 
 fn required() -> Vec<&'static str> {
     vec![
@@ -25,6 +30,200 @@ fn required() -> Vec<&'static str> {
         "--auth-file",
         "/tmp/campaign21-users.tsv",
     ]
+}
+
+struct ConfigFile(PathBuf);
+
+impl ConfigFile {
+    fn write(name: &str, contents: &str) -> Self {
+        let path = std::env::temp_dir().join(format!(
+            "tidb_rust_node_config_{name}_{}_{}.toml",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("thread")
+        ));
+        std::fs::write(&path, contents).expect("write config fixture");
+        Self(path)
+    }
+}
+
+impl Drop for ConfigFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+#[test]
+fn configured_spill_policy_is_loaded_from_the_tidb_config_file() {
+    let file = ConfigFile::write(
+        "spill_policy",
+        r#"
+host = "127.0.0.1"
+path = "127.0.0.1:2379"
+store = "tikv"
+tmp-storage-path = "/private/tmp/tidb-configured-spill"
+tmp-storage-quota = 1048576
+
+[security]
+spilled-file-encryption-method = "AeS128-CtR"
+"#,
+    );
+    let path = file.0.to_string_lossy().into_owned();
+    let config = NodeConfig::parse([
+        "tidb-server",
+        "--config",
+        &path,
+        "--load-table",
+        "test.rows",
+        "--auth-file",
+        "/tmp/campaign21-users.tsv",
+    ]);
+    let config =
+        config.unwrap_or_else(|error| panic!("configured startup must be admitted: {error}"));
+    assert_eq!(config.host, IpAddr::V4(Ipv4Addr::LOCALHOST));
+    assert_eq!(config.pd_endpoints, ["127.0.0.1:2379"]);
+    assert_eq!(config.spill_storage.quota_bytes, 1_048_576);
+    assert_eq!(
+        config.spill_storage.encryption,
+        SpillEncryptionMethod::Aes128Ctr
+    );
+    assert!(config
+        .spill_storage
+        .path
+        .starts_with("/private/tmp/tidb-configured-spill"));
+    assert_eq!(
+        config.spill_storage.path.file_name().unwrap(),
+        "tmp-storage"
+    );
+    assert_eq!(
+        config
+            .spill_storage
+            .path
+            .parent()
+            .and_then(std::path::Path::file_name)
+            .unwrap(),
+        "MTI3LjAuMC4xOjQwMDAvMC4wLjAuMDoxMDA4MA=="
+    );
+    #[cfg(unix)]
+    assert_eq!(
+        config
+            .spill_storage
+            .path
+            .parent()
+            .and_then(std::path::Path::parent)
+            .and_then(std::path::Path::file_name)
+            .unwrap(),
+        format!("{}_tidb", rustix::process::getuid().as_raw())
+            .as_str()
+    );
+}
+
+#[test]
+fn explicit_cli_values_override_the_config_before_validation() {
+    let file = ConfigFile::write(
+        "cli_precedence",
+        r#"
+host = "0.0.0.0"
+port = 70000
+path = "not-a-pd-endpoint"
+store = "bogus"
+lease = "not-a-duration"
+"#,
+    );
+    let path = file.0.to_string_lossy().into_owned();
+    let mut args = required();
+    args.extend([
+        "--config",
+        &path,
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "4406",
+        "--store",
+        "TIKV",
+        "--lease-ms",
+        "9000",
+    ]);
+    let config = NodeConfig::parse(args).unwrap();
+    assert_eq!(config.port, 4406);
+    assert_eq!(config.schema_lease, Duration::from_secs(9));
+    assert_eq!(config.pd_endpoints, ["127.0.0.1:2379", "127.0.0.1:2380"]);
+}
+
+#[test]
+fn recognized_but_unowned_config_leaves_fail_closed() {
+    for (name, contents, expected) in [
+        ("log", "[log]\nlevel = \"debug\"\n", "log.level"),
+        (
+            "status",
+            "[status]\nstatus-port = 10081\n",
+            "status.status-port",
+        ),
+        (
+            "sql_ca",
+            "[security]\nssl-ca = \"ca.pem\"\n",
+            "security.ssl-ca",
+        ),
+        (
+            "cluster_verify_cn",
+            "[security]\ncluster-verify-cn = [\"tidb\"]\n",
+            "security.cluster-verify-cn",
+        ),
+    ] {
+        let file = ConfigFile::write(name, contents);
+        let path = file.0.to_string_lossy().into_owned();
+        let mut args = required();
+        args.extend(["--config", &path]);
+        assert!(matches!(
+            NodeConfig::parse(args),
+            Err(NodeConfigError::UnsupportedConfigOptions(options)) if options == [expected]
+        ));
+    }
+}
+
+#[test]
+fn config_path_accepts_inline_syntax_and_reports_missing_files() {
+    assert!(NodeConfig::help_text().contains("--config <tidb.toml>"));
+    let file = ConfigFile::write("inline", "tmp-storage-quota = -1\n");
+    let inline = format!("--config={}", file.0.display());
+    let mut args = required()
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    args.push(inline);
+    assert!(NodeConfig::parse(args).is_ok());
+
+    let mut missing = required();
+    missing.extend(["--config", "/private/tmp/does-not-exist-tidb-config.toml"]);
+    assert!(matches!(
+        NodeConfig::parse(missing),
+        Err(NodeConfigError::ConfigFile { .. })
+    ));
+}
+
+#[test]
+fn impossible_spill_quota_fails_before_auth_listener_or_cluster_startup() {
+    let base = std::env::temp_dir().join(format!(
+        "tidb-server-impossible-spill-quota-{}",
+        std::process::id()
+    ));
+    let file = ConfigFile::write(
+        "impossible_quota",
+        &format!(
+            "tmp-storage-path = {:?}\ntmp-storage-quota = {}\n",
+            base,
+            i64::MAX
+        ),
+    );
+    let path = file.0.to_string_lossy().into_owned();
+    let mut args = required();
+    args.extend(["--config", &path]);
+    let config = NodeConfig::parse(args).unwrap();
+    let error = run_configured_node(config).unwrap_err();
+    assert!(matches!(
+        error,
+        RunConfiguredNodeError::Spill(SpillStorageOpenError::QuotaExceedsAvailable { .. })
+    ));
+    let _ = std::fs::remove_dir_all(base);
 }
 
 #[test]
@@ -149,11 +348,17 @@ fn unsupported_or_ambiguous_startup_options_fail_closed() {
         Err(NodeConfigError::UnsupportedStore(store)) if store == "mocktikv"
     ));
 
+    let file = ConfigFile::write("empty", "");
+    let path = file.0.to_string_lossy().into_owned();
     let mut config_file = required();
-    config_file.extend(["--config", "tidb.toml"]);
+    config_file.extend(["--config", &path]);
+    assert!(NodeConfig::parse(config_file).is_ok());
+
+    let mut duplicate_config = required();
+    duplicate_config.extend(["--config", &path, "--config", &path]);
     assert!(matches!(
-        NodeConfig::parse(config_file),
-        Err(NodeConfigError::UnknownOption(option)) if option == "--config"
+        NodeConfig::parse(duplicate_config),
+        Err(NodeConfigError::DuplicateOption(option)) if option == "--config"
     ));
 
     let mut removed_parallel_id = required();

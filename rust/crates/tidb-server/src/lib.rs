@@ -66,6 +66,7 @@ mod compressed_command_io;
 mod configured_user_store;
 pub mod connection_resultset;
 mod connection_writers;
+mod cursor_state;
 mod distinct_result_set;
 pub mod handshake;
 mod handshake_response;
@@ -115,6 +116,7 @@ pub use bootstrap::{
     BootstrapPhase, BOOTSTRAP_PHASE_ORDER, NOT_BOOTSTRAPPED,
 };
 pub use cluster_privileges::{registry_from_cluster, LoadedRegistry, SkippedGrant};
+use cluster_session_node::run_cluster_session_node_with_spill;
 pub use cluster_session_node::{
     run_cluster_session_node, ClusterServerSession, ClusterSessionFactory,
 };
@@ -151,12 +153,15 @@ pub use node_config::{
 pub use pipeline_session::{
     MaterializedResultSetSource, PipelineServerSession, PipelineSessionFactory,
 };
-use real_tikv_multi_node::run_bound_multi_node;
+use std::sync::Arc;
+
+use real_tikv_multi_node::{run_bound_multi_node, run_configured_multi_node_with_spill};
 pub use real_tikv_multi_node::{
     run_configured_multi_node, RealTiKvMultiServerSession, RealTiKvMultiSessionFactory,
 };
 use real_tikv_node::{
-    connect_loaded_catalog_authority, node_accounts, run_bound_node, LoadedCatalogAuthority,
+    connect_loaded_catalog_authority, node_accounts, run_bound_node,
+    run_configured_node_with_spill, LoadedCatalogAuthority,
 };
 pub use real_tikv_node::{
     run_configured_node as run_single_configured_node, run_with_process_shutdown,
@@ -170,9 +175,10 @@ pub use session_transaction::SessionTransaction;
 pub use sorting_result_set::SortingResultSetSource;
 pub use sql_node::{
     ActiveQueryCancellation, BoxedResultSetSource, ConcurrentSqlNode, ConnectionCancellation,
-    ConnectionTracker, PreparedPointRead, PreparedStatement, PreparedWrite, QueryCancellationLease,
-    QueryResult, QuerySession, QuerySessionFactory, SessionContext, ShutdownHandle, SqlNodeError,
-    SqlQueryError, WriteOutcome, RESULT_UNDETERMINED_MESSAGE,
+    ConnectionTracker, GeneralExecuteOutcome, PreparedGeneral, PreparedPointRead,
+    PreparedStatement, PreparedWrite, QueryCancellationLease, QueryResult, QuerySession,
+    QuerySessionFactory, SessionContext, ShutdownHandle, SqlNodeError, SqlQueryError, WriteOutcome,
+    RESULT_UNDETERMINED_MESSAGE,
 };
 pub use wire_status::{
     WireStatus, SERVER_MORE_RESULTS_EXISTS, SERVER_STATUS_AUTOCOMMIT, SERVER_STATUS_CURSOR_EXISTS,
@@ -195,8 +201,9 @@ pub use wire_status::{
 /// serves the cluster's whole loaded catalog through the wide-SQL session
 /// driver ([`cluster_session_node`]), so it is routed first.
 pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeError> {
+    let spill_storage = open_spill_storage(&config)?;
     if config.cluster_session {
-        return run_cluster_session_node(config);
+        return run_cluster_session_node_with_spill(config, spill_storage);
     }
     if !config.load_tables.is_empty() {
         return match connect_loaded_catalog_authority(&config)
@@ -204,11 +211,25 @@ pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeEr
         {
             LoadedCatalogAuthority::Single(factory, authority) => {
                 let (users, privilege_reloader) = node_accounts(&config, &authority)?;
-                run_bound_node(config, *factory, authority, users, privilege_reloader)
+                run_bound_node(
+                    config,
+                    *factory,
+                    authority,
+                    users,
+                    Arc::clone(&spill_storage),
+                    privilege_reloader,
+                )
             }
             LoadedCatalogAuthority::Multi(factory, authority) => {
                 let (users, privilege_reloader) = node_accounts(&config, &authority)?;
-                run_bound_multi_node(config, *factory, authority, users, privilege_reloader)
+                run_bound_multi_node(
+                    config,
+                    *factory,
+                    authority,
+                    users,
+                    Arc::clone(&spill_storage),
+                    privilege_reloader,
+                )
             }
         };
     }
@@ -223,10 +244,18 @@ pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeEr
         )));
     }
     match config.read_tables.len() {
-        1 => run_single_configured_node(config),
-        2 => run_configured_multi_node(config),
+        1 => run_configured_node_with_spill(config, spill_storage),
+        2 => run_configured_multi_node_with_spill(config, spill_storage),
         count => Err(RunConfiguredNodeError::Engine(SqlQueryError::unknown(
             format!("configured SQL node requires one or two tables, got {count}"),
         ))),
     }
+}
+
+fn open_spill_storage(
+    config: &NodeConfig,
+) -> Result<Arc<tidb_util::disk::SpillStorage>, RunConfiguredNodeError> {
+    tidb_util::disk::SpillStorage::open(config.spill_storage.clone())
+        .map(Arc::new)
+        .map_err(RunConfiguredNodeError::Spill)
 }

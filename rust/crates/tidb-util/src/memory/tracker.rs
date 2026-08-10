@@ -38,6 +38,8 @@ pub const LABEL_FOR_SQL_TEXT: i64 = -1;
 pub const LABEL_FOR_SESSION: i64 = -27;
 /// `LabelForMemDB`.
 pub const LABEL_FOR_MEM_DB: i64 = -28;
+/// `LabelForCursorFetch`: rows retained by an eager prepared cursor.
+pub const LABEL_FOR_CURSOR_FETCH: i64 = -29;
 /// `LabelForGlobalAnalyzeMemory`.
 pub const LABEL_FOR_GLOBAL_ANALYZE_MEMORY: i64 = -25;
 /// `LabelForChunkList`: an in-memory `chunk.List`.
@@ -46,6 +48,8 @@ pub const LABEL_FOR_CHUNK_LIST: i64 = -7;
 pub const LABEL_FOR_CHUNK_DATA_IN_DISK_BY_ROWS: i64 = -9;
 /// `LabelForRowContainer`.
 pub const LABEL_FOR_ROW_CONTAINER: i64 = -10;
+/// `LabelForGlobalStorage`: process-wide local temporary-storage accounting.
+pub const LABEL_FOR_GLOBAL_STORAGE: i64 = -11;
 /// `LabelForChunkDataInDiskByChunks`: the chunk-addressed spill file.
 pub const LABEL_FOR_CHUNK_DATA_IN_DISK_BY_CHUNKS: i64 = -30;
 
@@ -346,12 +350,24 @@ impl Tracker {
     /// tracker (Go `Consume`). Panics with the kill error when the session
     /// root's killer has a pending signal, as the source does.
     pub fn consume(self: &Arc<Self>, bs: i64) {
+        let _ = self.consume_and_check_exceed(bs);
+    }
+
+    /// Consumes bytes and reports whether this operation reached the hard
+    /// limit of this tracker or any ancestor.
+    ///
+    /// Disk spilling uses the result to return TiDB's local-temporary-space
+    /// error without reproducing Go's panic-based quota transport. Accounting
+    /// and configured tracker actions remain identical to [`Self::consume`].
+    #[must_use]
+    pub fn consume_and_check_exceed(self: &Arc<Self>, bs: i64) -> bool {
         if bs == 0 {
-            return;
+            return false;
         }
         let mut root_exceed: Option<Arc<Tracker>> = None;
         let mut root_exceed_soft: Option<Arc<Tracker>> = None;
         let mut session_root: Option<Arc<Tracker>> = None;
+        let mut hard_limit_reached = false;
 
         let mut cursor = Some(Arc::clone(self));
         while let Some(tracker) = cursor {
@@ -362,6 +378,7 @@ impl Tracker {
             let released = tracker.bytes_released.load(SeqCst);
             let limits = *tracker.limits.lock().unwrap();
             if consumed + released >= limits.hard && limits.hard > 0 {
+                hard_limit_reached = true;
                 root_exceed = Some(Arc::clone(&tracker));
             }
             if consumed + released >= limits.soft && limits.soft > 0 {
@@ -397,6 +414,7 @@ impl Tracker {
                 root.action_for_soft_limit.try_action(&root);
             }
         }
+        hard_limit_reached
     }
 
     /// Go `HandleKillSignal`.
@@ -678,7 +696,10 @@ fn byte_unit(b: i64) -> (i64, &'static str) {
 
 #[cfg(test)]
 mod tests {
-    use super::super::action::{ActionOnExceed, ArcAction, BaseOomAction};
+    use super::super::action::{
+        ActionOnExceed, ActionWithPriority, ArcAction, BaseOomAction,
+        DEF_CURSOR_FETCH_SPILL_PRIORITY, DEF_PANIC_PRIORITY, DEF_SPILL_PRIORITY,
+    };
     use super::*;
 
     /// Go's test `mockAction`: first call marks it, later calls delegate to
@@ -1113,5 +1134,41 @@ mod tests {
                 assert_eq!(action.called(), j >= i, "i={i} j={j}");
             }
         }
+    }
+
+    #[test]
+    fn priority_wrapper_delegates_state_and_unbinds_by_wrapper_identity() {
+        let tracker = Tracker::new(1, 1);
+        let inner = MockAction::with_priority(DEF_SPILL_PRIORITY);
+        let fallback = MockAction::with_priority(DEF_PANIC_PRIORITY);
+        let inner_action: ArcAction = inner.clone();
+        let wrapped: ArcAction = Arc::new(ActionWithPriority::new(
+            inner_action,
+            DEF_CURSOR_FETCH_SPILL_PRIORITY,
+        ));
+        assert_eq!(wrapped.get_priority(), DEF_CURSOR_FETCH_SPILL_PRIORITY);
+
+        wrapped.set_fallback(Some(fallback.clone()));
+        assert!(Arc::ptr_eq(
+            &wrapped.get_fallback().expect("delegated fallback"),
+            &(fallback.clone() as ArcAction)
+        ));
+        wrapped.set_fallback(None);
+        tracker.set_action_on_exceed(Some(fallback.clone()));
+        tracker.fallback_old_and_set_new_action(wrapped.clone());
+        assert!(Arc::ptr_eq(
+            &tracker
+                .get_fallback_for_test(false)
+                .expect("wrapper registered"),
+            &wrapped
+        ));
+        tracker.unbind_action_from_hard_limit(&wrapped);
+        let remaining = tracker
+            .get_fallback_for_test(false)
+            .expect("fallback remains after exact wrapper unbind");
+        assert!(Arc::ptr_eq(&remaining, &(fallback.clone() as ArcAction)));
+
+        wrapped.set_finished();
+        assert!(inner.is_finished());
     }
 }

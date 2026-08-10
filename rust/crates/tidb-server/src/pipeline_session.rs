@@ -340,21 +340,28 @@ impl QuerySession for PipelineServerSession {
         values: &[tidb_protocol::PreparedValue],
     ) -> Result<GeneralExecuteOutcome<'a>, SqlQueryError> {
         let params = prepared_parameters(values);
-        let output = self
+        let (output, result_authority) = self
             .session
-            .run_with_params(statement.sql(), &params)
+            .run_with_params_and_result_authority(statement.sql(), &params)
             .map_err(map_error)?;
         Ok(match output {
-            StmtOutput::Rows { columns, rows } => GeneralExecuteOutcome::Rows(
-                QueryResult::new(Box::new(MaterializedResultSetSource::new(
-                    select_columns(&columns),
-                    rows,
-                )))
-                .with_statement_status(
-                    self.session.wire_warning_count(),
-                    WireStatus::of_session(&self.session),
-                ),
-            ),
+            StmtOutput::Rows { columns, rows } => {
+                let field_types = columns.iter().map(|(_, field)| field.clone()).collect();
+                GeneralExecuteOutcome::Rows(
+                    QueryResult::new(Box::new(MaterializedResultSetSource::new(
+                        select_columns(&columns),
+                        rows,
+                    )))
+                    .with_cursor_materialization(
+                        field_types,
+                        result_authority.expect("a row result carries materialization authority"),
+                    )
+                    .with_statement_status(
+                        self.session.wire_warning_count(),
+                        WireStatus::of_session(&self.session),
+                    ),
+                )
+            }
             StmtOutput::Affected(count) => GeneralExecuteOutcome::Write(WriteOutcome {
                 affected_rows: count,
                 last_insert_id: self.session.statement_insert_id(),

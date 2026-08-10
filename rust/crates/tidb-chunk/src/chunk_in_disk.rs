@@ -45,13 +45,12 @@
 //! hex dumps produced by calling `serializeDataToBuf` in
 //! `pkg/util/chunk` and printing the buffer.
 
-use std::fs::{File, OpenOptions};
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use tidb_datatype::FieldType;
-use tidb_util::disk;
+use tidb_util::disk::{self, SpillStorage, LOCAL_TEMPORARY_SPACE_QUOTA_ERROR};
 use tidb_util::layered_io::ReadAt;
 use tidb_util::memory::LABEL_FOR_CHUNK_DATA_IN_DISK_BY_CHUNKS;
 
@@ -80,6 +79,10 @@ pub enum DiskError {
     /// An error recorded earlier and replayed, such as the error a failed
     /// spill leaves in `RowContainer`'s records.
     Owned(String),
+    /// Process-wide local temporary-storage quota was reached.
+    QuotaExceeded,
+    /// Go `ErrCannotAddBecauseSorted`.
+    CannotAddBecauseSorted,
 }
 
 impl From<io::Error> for DiskError {
@@ -94,6 +97,8 @@ impl std::fmt::Display for DiskError {
             DiskError::Io(error) => error.fmt(formatter),
             DiskError::Message(message) => formatter.write_str(message),
             DiskError::Owned(message) => formatter.write_str(message),
+            DiskError::QuotaExceeded => formatter.write_str(LOCAL_TEMPORARY_SPACE_QUOTA_ERROR),
+            DiskError::CannotAddBecauseSorted => formatter.write_str("can not add because sorted"),
         }
     }
 }
@@ -214,6 +219,7 @@ pub struct DataInDiskByChunks {
     total_data_size: i64,
     total_row_num: i64,
     disk_tracker: Arc<disk::Tracker>,
+    storage: Arc<SpillStorage>,
     data_file: DiskFileReaderWriter,
     /// Go `buf`: one scratch buffer reused by every write and read.
     buf: Vec<u8>,
@@ -223,7 +229,11 @@ pub struct DataInDiskByChunks {
 impl DataInDiskByChunks {
     /// Go `NewDataInDiskByChunks`.
     #[must_use]
-    pub fn new(field_types: Vec<FieldType>, file_name_prefix_for_test: &str) -> Self {
+    pub fn new(
+        field_types: Vec<FieldType>,
+        file_name_prefix_for_test: &str,
+        storage: Arc<SpillStorage>,
+    ) -> Self {
         DataInDiskByChunks {
             field_types,
             offset_of_each_chunk: Vec::new(),
@@ -231,6 +241,7 @@ impl DataInDiskByChunks {
             total_row_num: 0,
             // Go: "TODO: set the quota of disk usage."
             disk_tracker: disk::new_tracker(LABEL_FOR_CHUNK_DATA_IN_DISK_BY_CHUNKS, -1),
+            storage,
             data_file: DiskFileReaderWriter::default(),
             buf: Vec::with_capacity(4096),
             file_name_prefix_for_test: file_name_prefix_for_test.to_owned(),
@@ -239,14 +250,13 @@ impl DataInDiskByChunks {
 
     /// Go `initDiskFile`.
     fn init_disk_file(&mut self) -> Result<(), DiskError> {
-        disk::check_and_init_temp_dir()?;
         let name = format!(
             "{}{}{}",
             self.file_name_prefix_for_test,
             DEFAULT_CHUNK_DATA_IN_DISK_BY_CHUNKS_PATH,
             self.disk_tracker.label()
         );
-        self.data_file.init_with_file_name(&name)?;
+        self.data_file.init_with_file_name(&self.storage, &name)?;
         Ok(())
     }
 
@@ -279,7 +289,12 @@ impl DataInDiskByChunks {
         self.total_data_size += serialized_bytes_num;
         self.total_row_num += chk.num_rows() as i64;
 
-        self.disk_tracker.consume(serialized_bytes_num);
+        if self
+            .disk_tracker
+            .consume_and_check_exceed(serialized_bytes_num)
+        {
+            return Err(DiskError::QuotaExceeded);
+        }
         Ok(())
     }
 
@@ -365,32 +380,6 @@ impl Drop for DataInDiskByChunks {
     }
 }
 
-/// Creates the spill file Go's `os.CreateTemp(dir, prefix)` creates: `prefix`
-/// followed by a random decimal run, in the temp-storage directory.
-pub(crate) fn create_temp_file(prefix: &str) -> io::Result<(File, PathBuf)> {
-    let dir = disk::temp_storage_path();
-    for _ in 0..10_000 {
-        let path = dir.join(format!(
-            "{prefix}{}",
-            crate::chunk_util::next_random_suffix()
-        ));
-        match OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create_new(true)
-            .open(&path)
-        {
-            Ok(file) => return Ok((file, path)),
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
-            Err(error) => return Err(error),
-        }
-    }
-    Err(io::Error::new(
-        io::ErrorKind::AlreadyExists,
-        "cannot create a unique spill file",
-    ))
-}
-
 /// Reads exactly `destination.len()` bytes at `offset` through `reader`,
 /// Go's `io.ReadFull` over an `io.SectionReader`.
 pub(crate) fn read_full_at(
@@ -402,16 +391,22 @@ pub(crate) fn read_full_at(
     while total < destination.len() {
         let result = reader.read_at(&mut destination[total..], offset + total as i64);
         total += result.n;
+        if total == destination.len() {
+            return Ok(total);
+        }
         if let Some(error) = result.error {
-            if result.n == 0 || !error.is_eof() {
-                return match error {
-                    tidb_util::layered_io::ReadAtError::Eof => Ok(total),
-                    tidb_util::layered_io::ReadAtError::Io(error) => Err(error),
-                };
-            }
+            return match error {
+                tidb_util::layered_io::ReadAtError::Eof => {
+                    Err(io::Error::new(io::ErrorKind::UnexpectedEof, error))
+                }
+                tidb_util::layered_io::ReadAtError::Io(error) => Err(error),
+            };
         }
         if result.n == 0 {
-            break;
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "positional reader made no progress before filling the destination",
+            ));
         }
     }
     Ok(total)
@@ -422,6 +417,49 @@ mod tests {
     use super::*;
     use crate::chunk::Chunk;
     use tidb_datatype::FieldTypeCode;
+    use tidb_util::layered_io::{ReadAtError, ReadAtResult};
+
+    struct BytesReader(&'static [u8]);
+
+    impl ReadAt for BytesReader {
+        fn read_at(&self, destination: &mut [u8], offset: i64) -> ReadAtResult {
+            let Ok(offset) = usize::try_from(offset) else {
+                return ReadAtResult::io(
+                    0,
+                    io::Error::new(io::ErrorKind::InvalidInput, "negative offset"),
+                );
+            };
+            if offset >= self.0.len() {
+                return ReadAtResult::eof(0);
+            }
+            let count = destination.len().min(self.0.len() - offset);
+            destination[..count].copy_from_slice(&self.0[offset..offset + count]);
+            if count == destination.len() {
+                ReadAtResult::ok(count)
+            } else {
+                ReadAtResult {
+                    n: count,
+                    error: Some(ReadAtError::Eof),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn read_full_at_rejects_a_short_spill_read() {
+        let mut destination = [0x7f; 4];
+        let error = read_full_at(&BytesReader(&[1, 2]), &mut destination, 0)
+            .expect_err("a truncated spill image must not decode as zero-filled data");
+        assert_eq!(error.kind(), io::ErrorKind::UnexpectedEof);
+        assert_eq!(destination, [1, 2, 0x7f, 0x7f]);
+
+        let mut exact = [0; 2];
+        assert_eq!(
+            read_full_at(&BytesReader(&[3, 4]), &mut exact, 0).expect("exact read"),
+            2
+        );
+        assert_eq!(exact, [3, 4]);
+    }
 
     const ENCRYPTED_GO_VECTORS: &str =
         include_str!("../../../difftests/chunk-tests/fixtures/encrypted_spill_vectors.tsv");
@@ -559,12 +597,8 @@ mod tests {
         }
     }
 
-    /// `tmp-storage-path` is process-global (Go's is too: it lives in the
-    /// global config), so the tests that redirect it must not run at the same
-    /// time inside one test binary.
-    use crate::test_temp_storage::guard as temp_dir_guard;
-
-    use crate::test_temp_storage::scratch_dir as scratch_temp_dir;
+    use crate::test_temp_storage::isolated_storage;
+    use tidb_util::disk::SpillEncryptionMethod;
 
     /// Builds chunk `c` of `chunks` chunks x `rows` rows, deterministically.
     fn payload_chunk(fields: &[FieldType], c: usize, rows: usize) -> Chunk {
@@ -626,15 +660,15 @@ mod tests {
     /// file is gone after `close`.
     #[test]
     fn data_in_disk_by_chunks_round_trips_through_a_real_file() {
-        let _guard = temp_dir_guard();
-        let dir = scratch_temp_dir("bychunks");
-        disk::set_temp_storage_path(&dir);
+        let storage = isolated_storage("bychunks", SpillEncryptionMethod::Plaintext);
+        let dir = storage.path().to_path_buf();
 
         let fields = mixed_fields();
         // 40 chunks x 64 rows is far past the 1KiB checksum block, so the read
         // path exercises both flushed blocks and the writer's live cache.
         let (num_chunks, num_rows) = (40usize, 64usize);
-        let mut container = DataInDiskByChunks::new(fields.clone(), "roundtrip");
+        let mut container =
+            DataInDiskByChunks::new(fields.clone(), "roundtrip", Arc::clone(&storage));
         for c in 0..num_chunks {
             container
                 .add(&payload_chunk(&fields, c, num_rows))
@@ -681,21 +715,22 @@ mod tests {
 
         container.close();
         assert!(!path.exists(), "close must remove the spill file");
+        drop(container);
+        drop(storage);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn encrypted_chunk_file_matches_go_and_reads_through_both_live_caches() {
-        let _guard = temp_dir_guard();
-        let dir = scratch_temp_dir("encrypted-chunks");
-        disk::set_temp_storage_path(&dir);
-        disk::check_and_init_temp_dir().expect("temp dir");
+        let storage = isolated_storage("encrypted-chunks", SpillEncryptionMethod::Plaintext);
+        let dir = storage.path().to_path_buf();
 
         let (fields, chunks) = encrypted_chunks();
-        let mut container = DataInDiskByChunks::new(fields, "oracle");
+        let mut container = DataInDiskByChunks::new(fields, "oracle", Arc::clone(&storage));
         container
             .data_file
             .init_with_file_name_and_cipher(
+                &storage,
                 "oracle-encrypted-chunks",
                 fixture_cipher("chunks.data.cipher"),
             )
@@ -712,44 +747,33 @@ mod tests {
         );
 
         drop(container);
+        drop(storage);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn process_wide_aes_mode_selects_the_encrypted_stack() {
-        struct RestoreEncryptionMethod(crate::chunk_util::SpilledFileEncryptionMethod);
-        impl Drop for RestoreEncryptionMethod {
-            fn drop(&mut self) {
-                crate::chunk_util::set_spilled_file_encryption_method(self.0);
-            }
-        }
-
-        let _guard = temp_dir_guard();
-        let dir = scratch_temp_dir("encrypted-mode");
-        disk::set_temp_storage_path(&dir);
-        let _restore = RestoreEncryptionMethod(crate::chunk_util::spilled_file_encryption_method());
-        crate::chunk_util::set_spilled_file_encryption_method(
-            crate::chunk_util::SpilledFileEncryptionMethod::Aes128Ctr,
-        );
+    fn authority_aes_mode_selects_the_encrypted_stack() {
+        let storage = isolated_storage("encrypted-mode", SpillEncryptionMethod::Aes128Ctr);
+        let dir = storage.path().to_path_buf();
 
         let fields = int64_fields();
-        let mut container = DataInDiskByChunks::new(fields, "mode");
+        let mut container = DataInDiskByChunks::new(fields, "mode", Arc::clone(&storage));
         container.add(&int64_chunk()).expect("add");
         assert!(container.data_file.is_encrypted());
         assert_eq!(container.get_chunk(0).expect("get_chunk").num_rows(), 3);
 
         drop(container);
+        drop(storage);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Go returns an explicit error rather than writing a zero-row chunk.
     #[test]
     fn adding_an_empty_chunk_is_refused() {
-        let _guard = temp_dir_guard();
-        let dir = scratch_temp_dir("emptychunk");
-        disk::set_temp_storage_path(&dir);
+        let storage = isolated_storage("emptychunk", SpillEncryptionMethod::Plaintext);
+        let dir = storage.path().to_path_buf();
         let fields = int64_fields();
-        let mut container = DataInDiskByChunks::new(fields.clone(), "empty");
+        let mut container = DataInDiskByChunks::new(fields.clone(), "empty", Arc::clone(&storage));
         let error = container
             .add(&Chunk::new_with_capacity(&fields, 4))
             .expect_err("a zero-row chunk must be refused");
@@ -759,22 +783,51 @@ mod tests {
         );
         assert!(container.file_path().is_none(), "no file for a refused add");
         drop(container);
+        drop(storage);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Dropping without an explicit `close` still removes the file.
     #[test]
     fn drop_removes_the_spill_file() {
-        let _guard = temp_dir_guard();
-        let dir = scratch_temp_dir("dropfile");
-        disk::set_temp_storage_path(&dir);
+        let storage = isolated_storage("dropfile", SpillEncryptionMethod::Plaintext);
+        let dir = storage.path().to_path_buf();
         let fields = int64_fields();
         let path = {
-            let mut container = DataInDiskByChunks::new(fields.clone(), "dropped");
+            let mut container =
+                DataInDiskByChunks::new(fields.clone(), "dropped", Arc::clone(&storage));
             container.add(&int64_chunk()).expect("add");
             container.file_path().cloned().expect("spill file")
         };
         assert!(!path.exists(), "drop must remove the spill file");
+        drop(storage);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn process_quota_error_is_fallible_and_cleanup_releases_usage() {
+        let storage = crate::test_temp_storage::isolated_storage_with_quota(
+            "quota",
+            SpillEncryptionMethod::Plaintext,
+            1,
+        );
+        let fields = int64_fields();
+        let mut container = DataInDiskByChunks::new(fields, "quota", Arc::clone(&storage));
+        container
+            .disk_tracker()
+            .attach_to_global_tracker(storage.global_tracker());
+
+        let error = container
+            .add(&int64_chunk())
+            .expect_err("serialized chunk reaches the one-byte process quota");
+        assert!(matches!(error, DiskError::QuotaExceeded));
+        assert_eq!(
+            error.to_string(),
+            tidb_util::disk::LOCAL_TEMPORARY_SPACE_QUOTA_ERROR
+        );
+        assert!(storage.global_tracker().bytes_consumed() > 0);
+
+        container.close();
+        assert_eq!(storage.global_tracker().bytes_consumed(), 0);
     }
 }

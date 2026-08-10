@@ -35,11 +35,12 @@ use crate::connection_resultset::{
     write_connection_binary_result_set_to_sink, write_connection_result_set_to_sink,
 };
 use crate::connection_writers::{
-    access_denied_message, account_locked_message, drain_result_rows, prepared_parameter_column,
-    prepared_statement_id, write_affected_rows_ok, write_cursor_fetch_batch, write_eof_or_ok,
-    write_error, write_ok, write_packet_to, write_payload, write_query_error, write_query_error_at,
+    access_denied_message, account_locked_message, prepared_parameter_column,
+    prepared_statement_id, write_affected_rows_ok, write_eof_or_ok, write_error, write_ok,
+    write_packet_to, write_payload, write_query_error, write_query_error_at,
     write_unknown_statement, TcpResultSetSink, WireFraming,
 };
+use crate::cursor_state::{CursorFetchError, CursorState};
 use crate::handshake::{
     negotiate_capabilities, parse_response, parse_response_header, InitialHandshake,
     AUTH_NATIVE_PASSWORD, CLIENT_CONNECT_ATTRS, CLIENT_CONNECT_WITH_DB, CLIENT_PLUGIN_AUTH,
@@ -47,12 +48,12 @@ use crate::handshake::{
 };
 use crate::mysql_tls::{ClientStream, MysqlServerTls};
 use crate::native_password::generate_handshake_salt;
-use crate::resultset_source::ResultSetSource;
 use crate::resultset_writer::ResultSetSink;
 use crate::secure_transport::TransportKind;
 use crate::sql_node::{
     ConnectionCancellation, ConnectionClose, ConnectionTracker, GeneralExecuteOutcome,
-    PreparedStatement, QuerySession, QuerySessionFactory, SessionContext,
+    PreparedStatement, QueryResult, QuerySession, QuerySessionFactory, SessionContext,
+    SqlQueryError,
 };
 use crate::wire_status::{WireStatus, SERVER_STATUS_CURSOR_EXISTS, SERVER_STATUS_LAST_ROW_SEND};
 use tidb_planner::prepared_dml::PreparedBindValue;
@@ -71,6 +72,47 @@ fn point_read_integer_parameters(values: Vec<PreparedValue>) -> Result<Vec<i64>,
             _ => Err("prepared point read parameter must be an integer".to_owned()),
         })
         .collect()
+}
+
+enum PreparedCursorOpenError {
+    Query(SqlQueryError),
+    Transport(MysqlConnectionError),
+}
+
+fn open_prepared_cursor(
+    result: &mut QueryResult<'_>,
+    output: &mut ClientStream,
+    framing: WireFraming,
+    result_encoder: ResultEncoder,
+) -> Result<CursorState, PreparedCursorOpenError> {
+    let warnings = result.warning_count();
+    let status = result.wire_status();
+    let cursor = CursorState::materialize_result(result).map_err(PreparedCursorOpenError::Query)?;
+    let options = framing.result_set(
+        status.with(SERVER_STATUS_CURSOR_EXISTS),
+        warnings,
+        result_encoder,
+    );
+    let mut stream = tidb_protocol::BinaryResultSetStream::new(cursor.columns().to_vec(), options)
+        .map_err(|error| {
+            PreparedCursorOpenError::Query(SqlQueryError::unknown(error.to_string()))
+        })?;
+    let metadata = stream.metadata_packets().map_err(|error| {
+        PreparedCursorOpenError::Query(SqlQueryError::unknown(error.to_string()))
+    })?;
+    let mut sequence = 1;
+    for packet in metadata {
+        write_packet_to(output, sequence, &packet).map_err(PreparedCursorOpenError::Transport)?;
+        sequence = sequence.wrapping_add(1);
+    }
+    // Legacy metadata framing already includes its EOF. Under
+    // CLIENT_DEPRECATE_EOF the stream intentionally omits it, so cursor
+    // execute supplies the one OK-as-EOF terminator that advertises the open
+    // cursor without sending a row.
+    if framing.deprecate_eof {
+        write_eof_or_ok(output, sequence, options).map_err(PreparedCursorOpenError::Transport)?;
+    }
+    Ok(cursor)
 }
 
 /// Converts decoded execute values into the planner's storage-neutral bind
@@ -147,7 +189,6 @@ const ER_WRONG_ARGUMENTS: u16 = 1210;
 pub(crate) const ER_UNKNOWN_STMT_HANDLER: u16 = 1243;
 pub(crate) const RESULT_BATCH_SIZE: usize = 128;
 
-#[derive(Clone, Debug)]
 struct ConnectionPreparedStatement {
     statement: PreparedStatement,
     parameter_types: Option<Vec<PreparedParameterType>>,
@@ -186,14 +227,6 @@ enum AppendParamError {
     TooLarge,
 }
 
-#[derive(Clone, Debug)]
-struct CursorState {
-    columns: Vec<tidb_protocol::ColumnInfo>,
-    rows: Vec<Vec<tidb_datatype::Datum>>,
-    next_row: usize,
-}
-
-#[derive(Debug)]
 struct PreparedStatementRegistry {
     next_id: Option<u32>,
     statements: HashMap<u32, ConnectionPreparedStatement>,
@@ -240,8 +273,8 @@ impl PreparedStatementRegistry {
         }
     }
 
-    fn remove(&mut self, statement_id: u32) {
-        self.statements.remove(&statement_id);
+    fn remove(&mut self, statement_id: u32) -> Option<ConnectionPreparedStatement> {
+        self.statements.remove(&statement_id)
     }
 
     /// Go `stmt.Reset` (`pkg/server/driver_tidb.go:151-160`): returns the
@@ -250,18 +283,16 @@ impl PreparedStatementRegistry {
     /// itself installed -- and `handleStmtReset` names exactly those two
     /// things it must clear, the open cursor and "the argument sent through
     /// `SEND_LONG_DATA`" (`pkg/server/conn_stmt.go:627-631`). The remembered
-    /// parameter-type vector is dropped for the same reason: it is the other
-    /// piece of state an execute leaves behind.
-    fn reset(&mut self, statement_id: u32) -> bool {
+    /// parameter-type vector deliberately survives: Go's `TiDBStatement.Reset`
+    /// leaves `paramsType` untouched, so a later execute may keep its
+    /// new-parameter-bound flag clear.
+    fn reset(&mut self, statement_id: u32) -> Result<Option<CursorState>, ()> {
         match self.statements.get_mut(&statement_id) {
             Some(statement) => {
-                statement.parameter_types = None;
-                // Go's stmt.Reset closes the open cursor too.
-                statement.cursor = None;
                 statement.clear_bound_params();
-                true
+                Ok(statement.cursor.take())
             }
-            None => false,
+            None => Err(()),
         }
     }
 
@@ -314,22 +345,16 @@ impl PreparedStatementRegistry {
         }
     }
 
-    fn open_cursor(&mut self, statement_id: u32, state: CursorState) {
-        if let Some(statement) = self.statements.get_mut(&statement_id) {
-            statement.cursor = Some(state);
-        }
-    }
-
-    fn cursor_mut(&mut self, statement_id: u32) -> Option<&mut CursorState> {
+    fn open_cursor(&mut self, statement_id: u32, state: CursorState) -> Option<CursorState> {
         self.statements
             .get_mut(&statement_id)
-            .and_then(|statement| statement.cursor.as_mut())
+            .and_then(|statement| statement.cursor.replace(state))
     }
 
-    fn close_cursor(&mut self, statement_id: u32) {
-        if let Some(statement) = self.statements.get_mut(&statement_id) {
-            statement.cursor = None;
-        }
+    fn take_cursor(&mut self, statement_id: u32) -> Option<CursorState> {
+        self.statements
+            .get_mut(&statement_id)
+            .and_then(|statement| statement.cursor.take())
     }
 }
 
@@ -1173,7 +1198,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 ) {
                     Ok(packets) => packets,
                     Err(error) => {
-                        prepared.remove(statement_id);
+                        drop(prepared.remove(statement_id));
                         write_error(
                             &mut output,
                             1,
@@ -1228,6 +1253,11 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 // rejected execute still consumes the long data.
                 let bound_params = prepared.bound_params(statement_id).to_vec();
                 prepared.clear_bound_params(statement_id);
+                // Go calls `stmt.Reset()` after parsing every execute packet,
+                // successful or not. The retained cursor therefore closes
+                // before a replacement execution starts, and a malformed
+                // replacement cannot leave the old cursor fetchable.
+                drop(prepared.take_cursor(statement_id));
                 let execute = match decode_prepared_statement_execute_with_bound_params(
                     &bytes,
                     parameter_count,
@@ -1319,6 +1349,29 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                                     continue;
                                 }
                             };
+                        if execute.cursor_flags & tidb_protocol::CURSOR_TYPE_READ_ONLY != 0 {
+                            match open_prepared_cursor(
+                                &mut result,
+                                &mut output,
+                                framing,
+                                result_encoder,
+                            ) {
+                                Ok(cursor) => {
+                                    drop(result);
+                                    drop(prepared.open_cursor(statement_id, cursor));
+                                    queries += 1;
+                                    commands.stmt_execute_successes += 1;
+                                }
+                                Err(PreparedCursorOpenError::Query(error)) => {
+                                    drop(result);
+                                    write_query_error(&mut output, &error, protocol_41)?;
+                                }
+                                Err(PreparedCursorOpenError::Transport(error)) => {
+                                    return Err(error);
+                                }
+                            }
+                            continue;
+                        }
                         let write_result = {
                             let statement_options = framing.result_set(
                                 result.wire_status(),
@@ -1363,92 +1416,26 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                             let mut write_outcome = None;
                             match engine.execute_general(&general, &values) {
                                 Ok(GeneralExecuteOutcome::Rows(mut result)) => {
-                                    let columns = match result.source().columns() {
-                                        Ok(columns) => columns,
-                                        Err(message) => {
-                                            write_error(
-                                                &mut output,
-                                                1,
-                                                ER_UNKNOWN_ERROR,
-                                                *b"HY000",
-                                                message,
-                                                protocol_41,
-                                            )?;
-                                            continue;
-                                        }
-                                    };
-                                    let rows = match drain_result_rows(&mut result) {
-                                        Ok(rows) => rows,
-                                        Err(message) => {
-                                            write_error(
-                                                &mut output,
-                                                1,
-                                                ER_UNKNOWN_ERROR,
-                                                *b"HY000",
-                                                message,
-                                                protocol_41,
-                                            )?;
-                                            continue;
-                                        }
-                                    };
-                                    let warnings = result.warning_count();
-                                    let status = result.wire_status();
-                                    drop(result);
-                                    let cursor_options = framing.result_set(
-                                        status.with(SERVER_STATUS_CURSOR_EXISTS),
-                                        warnings,
+                                    match open_prepared_cursor(
+                                        &mut result,
+                                        &mut output,
+                                        framing,
                                         result_encoder,
-                                    );
-                                    let mut stream = match tidb_protocol::BinaryResultSetStream::new(
-                                        columns.clone(),
-                                        cursor_options,
                                     ) {
-                                        Ok(stream) => stream,
-                                        Err(error) => {
-                                            write_error(
-                                                &mut output,
-                                                1,
-                                                ER_UNKNOWN_ERROR,
-                                                *b"HY000",
-                                                error.to_string(),
-                                                protocol_41,
-                                            )?;
-                                            continue;
+                                        Ok(cursor) => {
+                                            drop(result);
+                                            drop(prepared.open_cursor(statement_id, cursor));
+                                            queries += 1;
+                                            commands.stmt_execute_successes += 1;
                                         }
-                                    };
-                                    let mut sequence = 1;
-                                    let metadata = match stream.metadata_packets() {
-                                        Ok(metadata) => metadata,
-                                        Err(error) => {
-                                            write_error(
-                                                &mut output,
-                                                1,
-                                                ER_UNKNOWN_ERROR,
-                                                *b"HY000",
-                                                error.to_string(),
-                                                protocol_41,
-                                            )?;
-                                            continue;
+                                        Err(PreparedCursorOpenError::Query(error)) => {
+                                            drop(result);
+                                            write_query_error(&mut output, &error, protocol_41)?;
                                         }
-                                    };
-                                    for packet in metadata {
-                                        write_packet_to(&mut output, sequence, &packet)?;
-                                        sequence += 1;
+                                        Err(PreparedCursorOpenError::Transport(error)) => {
+                                            return Err(error);
+                                        }
                                     }
-                                    // The deprecate-EOF mode still terminates
-                                    // the metadata with an OK-as-EOF here,
-                                    // because no row packets follow.
-                                    write_eof_or_ok(&mut output, sequence, cursor_options)?;
-                                    prepared.open_cursor(
-                                        statement_id,
-                                        CursorState {
-                                            columns,
-                                            rows,
-                                            next_row: 0,
-                                        },
-                                    );
-                                    queries += 1;
-                                    commands.stmt_execute_successes += 1;
                                 }
                                 // Go clears the cursor bit when the statement
                                 // produced no result set and answers a plain
@@ -1629,7 +1616,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             Command::StmtClose(bytes) => {
                 commands.stmt_close_commands += 1;
                 if let Ok(statement_id) = decode_prepared_statement_close(&bytes) {
-                    prepared.remove(statement_id);
+                    drop(prepared.remove(statement_id));
                 }
             }
             Command::StmtReset(bytes) => {
@@ -1637,27 +1624,28 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 match decode_prepared_statement_close(&bytes) {
                     // The payload is the same four-byte statement id the
                     // close command carries.
-                    Ok(statement_id) if prepared.reset(statement_id) => {
-                        // COM_STMT_RESET runs no statement, so like Go's
-                        // `writeOK` here it reports the buffer as it stands.
-                        write_affected_rows_ok(
-                            &mut output,
-                            1,
-                            0,
-                            0,
-                            engine.wire_status(),
-                            engine.warning_count(),
-                            protocol_41,
-                        )?;
-                    }
-                    Ok(statement_id) => {
-                        write_unknown_statement(
+                    Ok(statement_id) => match prepared.reset(statement_id) {
+                        Ok(cursor) => {
+                            drop(cursor);
+                            // COM_STMT_RESET runs no statement, so like Go's
+                            // `writeOK` here it reports the buffer as it stands.
+                            write_affected_rows_ok(
+                                &mut output,
+                                1,
+                                0,
+                                0,
+                                engine.wire_status(),
+                                engine.warning_count(),
+                                protocol_41,
+                            )?;
+                        }
+                        Err(()) => write_unknown_statement(
                             &mut output,
                             statement_id,
                             "stmt_reset",
                             protocol_41,
-                        )?;
-                    }
+                        )?,
+                    },
                     Err(error) => {
                         write_error(
                             &mut output,
@@ -1690,7 +1678,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     write_unknown_statement(&mut output, statement_id, "stmt_fetch", protocol_41)?;
                     continue;
                 }
-                let Some(cursor) = prepared.cursor_mut(statement_id) else {
+                let Some(mut cursor) = prepared.take_cursor(statement_id) else {
                     // Go `ErrSpCursorNotOpen` (1326).
                     write_error(
                         &mut output,
@@ -1705,15 +1693,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 // Go sends up to fetch_size binary rows and an EOF; when the
                 // iterator is exhausted the EOF drops the cursor bit, sets
                 // ServerStatusLastRowSend, and the statement resets.
-                let end = cursor
-                    .next_row
-                    .saturating_add(fetch_size as usize)
-                    .min(cursor.rows.len());
-                let batch: Vec<Vec<tidb_datatype::Datum>> =
-                    cursor.rows[cursor.next_row..end].to_vec();
-                cursor.next_row = end;
-                let exhausted = end >= cursor.rows.len();
-                let columns = cursor.columns.clone();
+                let (row_count, exhausted) = cursor.fetch_plan(fetch_size);
                 let status = if exhausted {
                     engine
                         .wire_status()
@@ -1722,31 +1702,30 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 } else {
                     engine.wire_status().with(SERVER_STATUS_CURSOR_EXISTS)
                 };
-                match write_cursor_fetch_batch(
+                match cursor.write_fetch(
                     &mut output,
-                    &columns,
-                    &batch,
-                    // COM_STMT_FETCH runs no statement of its own, so this is
-                    // still the execute's count -- which is what Go's
-                    // `writeEOF` reads here too.
-                    framing.result_set(status, engine.warning_count(), result_encoder),
+                    row_count,
+                    // Go clears the statement warning buffer before FETCH,
+                    // then writes the live transaction status.
+                    framing.result_set(status, 0, result_encoder),
                 ) {
                     Ok(()) => {
-                        if exhausted {
-                            prepared.close_cursor(statement_id);
+                        if !exhausted {
+                            drop(prepared.open_cursor(statement_id, cursor));
                         }
                         commands.stmt_fetch_successes += 1;
                     }
-                    Err(message) => {
+                    Err(CursorFetchError::Protocol { message, sequence }) => {
                         write_error(
                             &mut output,
-                            1,
+                            sequence,
                             ER_UNKNOWN_ERROR,
                             *b"HY000",
                             message,
                             protocol_41,
                         )?;
                     }
+                    Err(CursorFetchError::Transport(error)) => return Err(error),
                 }
             }
             // The `mysql` client implements `USE db` as COM_INIT_DB, not as a

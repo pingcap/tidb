@@ -40,14 +40,10 @@
 //! therefore never escape the records read guard, and readers may safely cross
 //! an in-memory-to-disk transition between chunks.
 //!
-//! # Deliberately not reproduced
-//!
-//! Go uses a spill goroutine, per-handle read locks, write-lock fan-out, cache
-//! padding, and `WaitForTest` to coordinate that runtime shape. None changes
-//! row values, ordering, tracker accounting, spill errors, or fallback order,
-//! so the Rust coordinator does not reproduce them. `SortedRowContainer` and
-//! `SortAndSpillDiskAction` remain a separate package obligation.
+//! Go's spill goroutine, per-handle lock fan-out, cache padding, and
+//! `WaitForTest` do not change package behavior and are not reproduced.
 
+use std::cmp::Ordering;
 use std::ops::Deref;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
@@ -135,8 +131,6 @@ impl Coordinator {
     }
 }
 
-/// Restores a non-busy phase and wakes waiters if a non-spill operation
-/// unwinds. It never locks records and never performs disk I/O.
 struct PhaseLease<'a> {
     shared: &'a RowContainerShared,
     active: CoordinatorPhase,
@@ -193,9 +187,6 @@ impl Drop for PhaseLease<'_> {
     }
 }
 
-/// Releases the coordinator's fallback slot and wakes lifecycle waiters even
-/// when a fallback callback unwinds. Its destructor performs no I/O or
-/// callback work.
 struct FallbackLease<'a> {
     shared: &'a RowContainerShared,
 }
@@ -247,7 +238,7 @@ impl SpillDiskAction {
         }
     }
 
-    /// Whether a reentrant in-memory operation has handed off a pending spill.
+    /// Whether an in-memory operation handed off a pending spill.
     #[must_use]
     pub fn is_triggered(&self) -> bool {
         self.shared.upgrade().is_some_and(|shared| {
@@ -276,9 +267,45 @@ impl SpillDiskAction {
         }
     }
 
-    /// Claim the serialized fallback slot for `generation`. `false` means a
-    /// reset won the terminal race and the caller must re-enter as an action
-    /// in the new generation.
+    pub(crate) fn action_with_admission(&self, tracker: &Arc<Tracker>, admitted: bool) {
+        if admitted {
+            self.action(tracker);
+        } else {
+            let Some(shared) = self.shared.upgrade() else {
+                self.finished.store(true, SeqCst);
+                return;
+            };
+            let thread_id = std::thread::current().id();
+            let mut coordinator = lock_unpoisoned(&shared.coordinator);
+            loop {
+                let reentrant = coordinator.active_mutator == Some(thread_id);
+                if coordinator.fallback_active
+                    || (!reentrant
+                        && matches!(
+                            coordinator.phase,
+                            CoordinatorPhase::AddingMemory
+                                | CoordinatorPhase::AddingDisk
+                                | CoordinatorPhase::Spilling
+                                | CoordinatorPhase::ResettingMemory
+                                | CoordinatorPhase::ResettingDisk
+                                | CoordinatorPhase::Closing
+                        ))
+                {
+                    coordinator = wait_unpoisoned(&shared.phase_changed, coordinator);
+                    continue;
+                }
+                if coordinator.phase == CoordinatorPhase::Closed {
+                    return;
+                }
+                coordinator.fallback_active = true;
+                break;
+            }
+            drop(coordinator);
+            let _lease = FallbackLease { shared: &shared };
+            self.invoke_fallback_if_needed(tracker);
+        }
+    }
+
     fn run_fallback_for_generation(
         &self,
         shared: &Arc<RowContainerShared>,
@@ -320,12 +347,6 @@ impl SpillDiskAction {
         }
     }
 
-    /// Finish the action generation that was observed while another thread
-    /// owned a memory mutation or while disk/spill work was active.
-    ///
-    /// `true` means the later call is complete. `false` means reset published
-    /// a new generation before this action could claim fallback, so the caller
-    /// must re-enter the action state machine.
     fn wait_for_generation(
         &self,
         shared: &Arc<RowContainerShared>,
@@ -509,14 +530,12 @@ impl ActionOnExceed for SpillDiskAction {
     }
 }
 
-/// Go `rowContainerRecord`: the in-memory half, the on-disk half, and the
-/// error a failed spill leaves behind.
 struct RowContainerRecord {
     in_memory: List,
     in_disk: Option<DataInDiskByRows>,
     spill_error: Option<String>,
 }
-
+type PreSpill = Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
 enum RowContainerChunkInner<'a> {
     InMemory {
         records: RwLockReadGuard<'a, RowContainerRecord>,
@@ -525,13 +544,7 @@ enum RowContainerChunkInner<'a> {
     Owned(Chunk),
 }
 
-/// A chunk read from a [`RowContainer`].
-///
-/// In-memory reads keep the shared records read guard alive and dereference to
-/// the live chunk, matching Go's no-copy access. Disk reads own the decoded
-/// chunk. Public mutating container methods retain `&mut self`, so safe
-/// same-handle code cannot hold this view and then deadlock itself on spill or
-/// reset; another shallow handle remains the concurrent path.
+/// A live guarded in-memory chunk or owned decoded disk chunk.
 pub struct RowContainerChunk<'a> {
     inner: RowContainerChunkInner<'a>,
 }
@@ -568,13 +581,53 @@ impl RowContainerChunk<'_> {
     }
 }
 
+enum RowContainerRowInner {
+    InMemory { chunk: Chunk, row_index: usize },
+    Appended { row_index: usize },
+}
+
+/// A row loaded through Go `GetRowAndAppendToChunkIfInDisk`.
+///
+/// While the container is in memory this value retains shallow column owners,
+/// so [`RowContainerRow::row`] remains valid across a later spill without
+/// retaining the container lock or touching the caller's scratch chunk. After
+/// a spill, the row is decoded into that scratch chunk and this value remembers
+/// its row index there.
+pub struct RowContainerRow {
+    inner: RowContainerRowInner,
+}
+
+impl RowContainerRow {
+    /// The appended row index, or `None` when the row is still a live
+    /// in-memory view.
+    #[must_use]
+    pub fn appended_row_index(&self) -> Option<usize> {
+        match &self.inner {
+            RowContainerRowInner::InMemory { .. } => None,
+            RowContainerRowInner::Appended { row_index } => Some(*row_index),
+        }
+    }
+
+    /// Returns the selected row. `appended_chunk` must be the scratch chunk
+    /// passed to [`RowContainer::get_row_and_append_to_chunk_if_in_disk`].
+    #[must_use]
+    pub fn row<'a>(&'a self, appended_chunk: &'a Chunk) -> Row<'a> {
+        match &self.inner {
+            RowContainerRowInner::InMemory { chunk, row_index } => chunk.get_row(*row_index),
+            RowContainerRowInner::Appended { row_index } => appended_chunk.get_row(*row_index),
+        }
+    }
+}
+
 struct RowContainerShared {
     records: RwLock<RowContainerRecord>,
     coordinator: Mutex<Coordinator>,
     phase_changed: Condvar,
     mem_tracker: Arc<Tracker>,
     disk_tracker: Arc<disk::Tracker>,
+    storage: Arc<disk::SpillStorage>,
     action_spill: Mutex<Option<Arc<SpillDiskAction>>>,
+    pre_spill: Mutex<Option<PreSpill>>,
     #[cfg(test)]
     spill_start_hook: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
     #[cfg(test)]
@@ -592,12 +645,29 @@ impl RowContainerShared {
             hook();
         }
 
+        let pre_spill = lock_unpoisoned(&self.pre_spill).clone();
+        let pre_spill_error =
+            pre_spill.and_then(
+                |prepare| match catch_unwind(AssertUnwindSafe(|| prepare())) {
+                    Ok(Ok(())) => None,
+                    Ok(Err(message)) => Some(message),
+                    Err(payload) => Some(panic_message(payload.as_ref())),
+                },
+            );
+
         let mut records = write_unpoisoned(&self.records);
         let spill = catch_unwind(AssertUnwindSafe(|| -> Result<(), String> {
             if records.in_disk.is_none() {
-                let in_disk = DataInDiskByRows::new(records.in_memory.field_types().to_vec());
+                let in_disk = DataInDiskByRows::new(
+                    records.in_memory.field_types().to_vec(),
+                    Arc::clone(&self.storage),
+                );
                 in_disk.disk_tracker().attach_to(&self.disk_tracker);
                 records.in_disk = Some(in_disk);
+            }
+
+            if let Some(message) = pre_spill_error {
+                return Err(message);
             }
 
             let RowContainerRecord {
@@ -760,7 +830,6 @@ enum AddMode {
     Memory,
     Disk,
 }
-
 /// Go `RowContainer`, with shallow-copy semantics provided by [`Clone`].
 #[derive(Clone)]
 pub struct RowContainer {
@@ -770,7 +839,11 @@ pub struct RowContainer {
 impl RowContainer {
     /// Go `NewRowContainer`.
     #[must_use]
-    pub fn new(field_types: &[FieldType], chunk_size: usize) -> Self {
+    pub fn new(
+        field_types: &[FieldType],
+        chunk_size: usize,
+        storage: Arc<disk::SpillStorage>,
+    ) -> Self {
         let list = List::new(field_types, chunk_size, chunk_size);
         let mem_tracker = Tracker::new(LABEL_FOR_ROW_CONTAINER, -1);
         list.mem_tracker().attach_to(&mem_tracker);
@@ -785,7 +858,9 @@ impl RowContainer {
                 phase_changed: Condvar::new(),
                 mem_tracker,
                 disk_tracker: disk::new_tracker(LABEL_FOR_ROW_CONTAINER, -1),
+                storage,
                 action_spill: Mutex::new(None),
+                pre_spill: Mutex::new(None),
                 #[cfg(test)]
                 spill_start_hook: Mutex::new(None),
                 #[cfg(test)]
@@ -798,12 +873,11 @@ impl RowContainer {
         }
     }
 
-    /// Idiomatic equivalent of Go `ShallowCopyWithNewMutex`.
+    /// Idiomatic Go `ShallowCopyWithNewMutex` equivalent.
     #[must_use]
     pub fn shallow_copy(&self) -> Self {
         self.clone()
     }
-
     /// Go `alreadySpilled` and `AlreadySpilledSafeForTest`.
     #[must_use]
     pub fn already_spilled(&self) -> bool {
@@ -830,6 +904,10 @@ impl RowContainer {
 
     /// Go `ActionSpill`: the action, created on first use.
     pub fn action_spill(&mut self) -> Arc<SpillDiskAction> {
+        self.action_spill_shared()
+    }
+
+    pub(crate) fn action_spill_shared(&self) -> Arc<SpillDiskAction> {
         let mut action = lock_unpoisoned(&self.shared.action_spill);
         Arc::clone(
             action.get_or_insert_with(|| {
@@ -881,12 +959,29 @@ impl RowContainer {
             .alloc_chunk()
     }
 
-    /// Go `Add`: appends a chunk, to memory or to the spill file.
-    ///
-    /// The spill the memory-quota action asked for happens HERE, on the way
-    /// out; see the module doc.
+    /// Go `Add`: appends a chunk to memory or the spill file.
     pub fn add(&mut self, chk: Chunk) -> Result<(), DiskError> {
+        self.add_shared_with_prepare(chk, || Ok(()))
+    }
+
+    pub(crate) fn add_shared_with_prepare<Prepare, Guard>(
+        &self,
+        chk: Chunk,
+        prepare: Prepare,
+    ) -> Result<(), DiskError>
+    where
+        Prepare: FnOnce() -> Result<Guard, DiskError>,
+    {
         let (mode, mut lease) = self.begin_add()?;
+        let guard = match prepare() {
+            Ok(guard) => guard,
+            Err(error) => {
+                if self.shared.finish_add(mode, &mut lease) {
+                    self.shared.perform_spill(&mut lease);
+                }
+                return Err(error);
+            }
+        };
         let result = {
             let mut records = write_unpoisoned(&self.shared.records);
             match mode {
@@ -901,6 +996,7 @@ impl RowContainer {
                     .add(&chk),
             }
         };
+        drop(guard);
         if self.shared.finish_add(mode, &mut lease) {
             self.shared.perform_spill(&mut lease);
         }
@@ -961,9 +1057,12 @@ impl RowContainer {
         }
     }
 
-    /// Go `SpillToDisk`/`spillToDisk(nil)`: move every in-memory chunk into a
-    /// fresh [`DataInDiskByRows`] and release the memory.
+    /// Go `SpillToDisk`/`spillToDisk(nil)`.
     pub fn spill_to_disk(&mut self) {
+        self.spill_to_disk_shared();
+    }
+
+    pub(crate) fn spill_to_disk_shared(&self) {
         let mut coordinator = lock_unpoisoned(&self.shared.coordinator);
         loop {
             match coordinator.phase {
@@ -996,8 +1095,7 @@ impl RowContainer {
         }
     }
 
-    /// Go `GetChunk`: a guard-backed live view in memory and an owned decoded
-    /// chunk on disk.
+    /// Go `GetChunk`.
     pub fn get_chunk(&self, chk_idx: usize) -> Result<RowContainerChunk<'_>, DiskError> {
         let records = read_unpoisoned(&self.shared.records);
         if records.in_disk.is_none() {
@@ -1021,38 +1119,59 @@ impl RowContainer {
         })
     }
 
-    /// Owned chunk snapshot for cursors that must outlive the records guard.
-    /// Public `get_chunk` deliberately keeps the in-memory no-copy contract.
     pub(crate) fn get_chunk_snapshot(&self, chk_idx: usize) -> Result<Chunk, DiskError> {
         self.get_chunk(chk_idx)
             .map(RowContainerChunk::into_snapshot)
     }
 
-    /// Go `GetRowAndAlwaysAppendToChunk`: append the row `ptr` points at to
-    /// `chk`, whether the container has spilled or not, and return its index
-    /// in `chk`.
-    pub fn get_row_and_always_append_to_chunk(
+    /// Go `GetRowAndAppendToChunkIfInDisk`.
+    ///
+    /// An in-memory row retains shallow column owners while leaving `chk`
+    /// untouched and retaining no container lock. A spilled row is decoded
+    /// into `chk`; the returned value then identifies that appended row.
+    /// Errors are reported before `chk` changes.
+    pub fn get_row_and_append_to_chunk_if_in_disk(
         &self,
         ptr: RowPtr,
         chk: &mut Chunk,
-    ) -> Result<usize, DiskError> {
-        let records = read_unpoisoned(&self.shared.records);
+    ) -> Result<RowContainerRow, DiskError> {
+        let mut records = write_unpoisoned(&self.shared.records);
         match &records.in_disk {
             Some(in_disk) => {
                 if let Some(error) = &records.spill_error {
                     return Err(DiskError::Owned(error.clone()));
                 }
-                in_disk.get_row_and_append_to_existing_chunk(ptr, chk)
+                let row_index = in_disk.get_row_and_append_to_existing_chunk(ptr, chk)?;
+                Ok(RowContainerRow {
+                    inner: RowContainerRowInner::Appended { row_index },
+                })
             }
             None => {
-                chk.append_row(records.in_memory.get_row(ptr));
-                Ok(chk.num_rows() - 1)
+                let (chunk, row_index) = records.in_memory.alias_row_owner(ptr);
+                Ok(RowContainerRow {
+                    inner: RowContainerRowInner::InMemory { chunk, row_index },
+                })
             }
         }
     }
 
-    /// The container's field types, owned for safe use outside the records
-    /// guard.
+    /// Go `GetRowAndAlwaysAppendToChunk`.
+    pub fn get_row_and_always_append_to_chunk(
+        &self,
+        ptr: RowPtr,
+        chk: &mut Chunk,
+    ) -> Result<usize, DiskError> {
+        let loaded = self.get_row_and_append_to_chunk_if_in_disk(ptr, chk)?;
+        match loaded.inner {
+            RowContainerRowInner::InMemory { chunk, row_index } => {
+                chk.append_row(chunk.get_row(row_index));
+                Ok(chk.num_rows() - 1)
+            }
+            RowContainerRowInner::Appended { row_index } => Ok(row_index),
+        }
+    }
+
+    /// Returns an owned copy of the configured field types.
     #[must_use]
     pub fn field_types(&self) -> Vec<FieldType> {
         read_unpoisoned(&self.shared.records)
@@ -1061,8 +1180,48 @@ impl RowContainer {
             .to_vec()
     }
 
+    pub(crate) fn in_memory_row_ptrs(&self) -> Result<Vec<RowPtr>, DiskError> {
+        let records = read_unpoisoned(&self.shared.records);
+        if records.in_disk.is_some() {
+            return Err(DiskError::Owned(
+                "cannot initialize sorted row pointers after spill".to_owned(),
+            ));
+        }
+        let mut pointers = Vec::with_capacity(records.in_memory.len());
+        for chunk_index in 0..records.in_memory.num_chunks() {
+            for row_index in 0..records.in_memory.num_rows_of_chunk(chunk_index) {
+                pointers.push(RowPtr::new(chunk_index as u32, row_index as u32));
+            }
+        }
+        Ok(pointers)
+    }
+
+    pub(crate) fn sort_in_memory_row_ptrs_by(
+        &self,
+        pointers: &mut [RowPtr],
+        mut compare: impl FnMut(Row<'_>, Row<'_>) -> Ordering,
+    ) -> Result<(), DiskError> {
+        let records = read_unpoisoned(&self.shared.records);
+        if records.in_disk.is_some() {
+            return Err(DiskError::Owned(
+                "cannot sort row pointers after spill".to_owned(),
+            ));
+        }
+        pointers.sort_unstable_by(|left, right| {
+            compare(
+                records.in_memory.get_row(*left),
+                records.in_memory.get_row(*right),
+            )
+        });
+        Ok(())
+    }
+
     /// Go `Reset`.
     pub fn reset(&mut self) {
+        self.reset_shared();
+    }
+
+    pub(crate) fn reset_shared(&self) {
         let (was_disk, mut lease) = match self.begin_reset() {
             Some(reset) => reset,
             None => return,
@@ -1156,12 +1315,12 @@ impl RowContainer {
         }
     }
 
-    /// Go `Close`.
-    ///
-    /// Go nils out `records.inMemory` so a later use panics; the list is
-    /// cleared here instead, so a later read sees an empty container rather
-    /// than a crash.
+    /// Go `Close`; later safe Rust reads observe the cleared container.
     pub fn close(&mut self) {
+        self.close_shared();
+    }
+
+    pub(crate) fn close_shared(&self) {
         let mut lease = match self.begin_close() {
             Some(lease) => lease,
             None => return,
@@ -1226,6 +1385,15 @@ impl RowContainer {
         }
     }
 
+    pub(crate) fn set_pre_spill(&self, prepare: PreSpill) {
+        let mut pre_spill = lock_unpoisoned(&self.shared.pre_spill);
+        assert!(
+            pre_spill.is_none(),
+            "row container pre-spill hook already set"
+        );
+        *pre_spill = Some(prepare);
+    }
+
     #[cfg(test)]
     fn phase(&self) -> CoordinatorPhase {
         lock_unpoisoned(&self.shared.coordinator).phase
@@ -1249,6 +1417,11 @@ impl RowContainer {
     #[cfg(test)]
     fn set_before_fallback_hook(&self, hook: Option<Arc<dyn Fn() + Send + Sync>>) {
         self.shared.set_before_fallback_hook(hook);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_spill_error_for_test(&self, message: impl Into<String>) {
+        write_unpoisoned(&self.shared.records).spill_error = Some(message.into());
     }
 }
 
@@ -1379,799 +1552,5 @@ impl<'a> Iterator4RowContainer<'a> {
 mod row_container_test_hooks;
 
 #[cfg(test)]
-mod tests {
-    use super::row_container_test_hooks::*;
-    use super::*;
-    use std::sync::atomic::AtomicUsize;
-    use std::sync::{mpsc, Barrier};
-    use tidb_datatype::FieldTypeCode as C;
-    use tidb_util::memory::BaseOomAction;
-
-    use crate::test_temp_storage::guard as temp_dir_guard;
-
-    use crate::test_temp_storage::scratch_dir as scratch_temp_dir;
-
-    fn int64_fields() -> Vec<FieldType> {
-        vec![FieldType::new(C::LongLong)]
-    }
-
-    fn int64_chunk(sz: usize) -> Chunk {
-        let fields = int64_fields();
-        let mut chk = Chunk::new_with_capacity(&fields, sz);
-        for i in 0..sz {
-            chk.append_int64(0, i as i64);
-        }
-        chk
-    }
-
-    #[derive(Default)]
-    struct CountingFallback {
-        base: BaseOomAction,
-        calls: AtomicUsize,
-    }
-
-    impl ActionOnExceed for CountingFallback {
-        fn action(&self, _tracker: &Arc<Tracker>) {
-            self.calls.fetch_add(1, SeqCst);
-        }
-
-        fn set_fallback(&self, action: Option<ArcAction>) {
-            self.base.set_fallback(action);
-        }
-
-        fn get_fallback(&self) -> Option<ArcAction> {
-            self.base.get_fallback()
-        }
-
-        fn get_priority(&self) -> i64 {
-            0
-        }
-
-        fn set_finished(&self) {
-            self.base.set_finished();
-        }
-
-        fn is_finished(&self) -> bool {
-            self.base.is_finished()
-        }
-    }
-
-    struct PausingFallback {
-        base: BaseOomAction,
-        calls: AtomicUsize,
-        started: Arc<Barrier>,
-        release: Arc<Barrier>,
-    }
-
-    impl ActionOnExceed for PausingFallback {
-        fn action(&self, _tracker: &Arc<Tracker>) {
-            self.calls.fetch_add(1, SeqCst);
-            self.started.wait();
-            self.release.wait();
-        }
-
-        fn set_fallback(&self, action: Option<ArcAction>) {
-            self.base.set_fallback(action);
-        }
-
-        fn get_fallback(&self) -> Option<ArcAction> {
-            self.base.get_fallback()
-        }
-
-        fn get_priority(&self) -> i64 {
-            0
-        }
-
-        fn set_finished(&self) {
-            self.base.set_finished();
-        }
-
-        fn is_finished(&self) -> bool {
-            self.base.is_finished()
-        }
-    }
-
-    /// Every row of the container, in order, as its first column's int64.
-    fn iterate(rc: &RowContainer) -> Vec<i64> {
-        let mut out = Vec::new();
-        let mut it = Iterator4RowContainer::new(rc);
-        let mut row = it.begin();
-        while row.is_some() {
-            out.push(row.expect("row").get_int64(0));
-            row = it.next_row();
-        }
-        assert_eq!(it.error(), None);
-        out
-    }
-
-    /// Go `TestNewRowContainer`.
-    #[test]
-    fn a_new_row_container_has_not_spilled() {
-        let rc = RowContainer::new(&int64_fields(), 1024);
-        assert!(!rc.already_spilled());
-        assert_eq!(rc.num_row(), 0);
-    }
-
-    /// In memory `GetChunk` exposes the live chunk under a records read guard;
-    /// it does not deep-clone row buffers merely because the container state is
-    /// shared.
-    #[test]
-    fn get_chunk_keeps_the_live_in_memory_view() {
-        let mut rc = RowContainer::new(&int64_fields(), 4);
-        rc.add(int64_chunk(4)).expect("add");
-        let stored = {
-            let records = read_unpoisoned(&rc.shared.records);
-            records.in_memory.get_chunk(0) as *const Chunk
-        };
-        let view = rc.get_chunk(0).expect("live chunk view");
-        assert_eq!(&*view as *const Chunk, stored);
-        assert_eq!(view.get_row(3).get_int64(0), 3);
-    }
-
-    /// Go `TestSel`: the selection vector survives the move to disk.
-    ///
-    /// Go drives this through `NewMultiIterator(NewIterator4RowContainer(rc),
-    /// NewIterator4Chunk(chk))`; [`Iterator4RowContainer`] is not a
-    /// `ChunkIterator` (see its doc), so the container half is iterated on its
-    /// own here and the trailing chunk is checked separately.
-    #[test]
-    fn a_selection_vector_survives_the_spill() {
-        let _guard = temp_dir_guard();
-        let dir = scratch_temp_dir("sel");
-        disk::set_temp_storage_path(&dir);
-
-        let fields = int64_fields();
-        let sz = 4usize;
-        let n = 64usize;
-        let mut rc = RowContainer::new(&fields, sz);
-        let mut chk = Chunk::new_with_capacity(&fields, sz);
-        let mut num_rows = 0;
-        for i in 0..(n - sz) {
-            chk.append_int64(0, i as i64);
-            if chk.num_rows() == sz {
-                chk.set_sel(Some(vec![0, 2]));
-                num_rows += 2;
-                rc.add(chk).expect("add");
-                chk = Chunk::new_with_capacity(&fields, sz);
-            }
-        }
-        assert_eq!(rc.num_chunks(), num_rows / 2);
-        assert_eq!(rc.num_row(), num_rows);
-
-        // Rows 0 and 2 of each four-row chunk.
-        let want: Vec<i64> = (0..(n - sz) as i64)
-            .filter(|i| i % 4 == 0 || i % 4 == 2)
-            .collect();
-        assert_eq!(iterate(&rc), want, "in memory");
-
-        rc.spill_to_disk();
-        assert_eq!(rc.spill_error(), None);
-        assert!(rc.already_spilled());
-        assert_eq!(iterate(&rc), want, "after spilling");
-
-        rc.close();
-        assert_eq!(rc.mem_tracker().bytes_consumed(), 0);
-        assert!(rc.mem_tracker().max_consumed() > 0);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// Go `TestSpillAction`: the second chunk pushes the tracker past its
-    /// limit, the container moves to disk, and later adds go straight there.
-    #[test]
-    fn the_spill_action_moves_the_container_to_disk() {
-        let _guard = temp_dir_guard();
-        let dir = scratch_temp_dir("spillaction");
-        disk::set_temp_storage_path(&dir);
-
-        let fields = int64_fields();
-        let sz = 4;
-        let mut rc = RowContainer::new(&fields, sz);
-        let chk = int64_chunk(sz);
-        let action = rc.action_spill();
-        rc.mem_tracker().set_bytes_limit(chk.memory_usage() + 1);
-        rc.mem_tracker()
-            .fallback_old_and_set_new_action(Arc::clone(&action) as ArcAction);
-
-        assert!(!rc.already_spilled());
-        rc.add(chk.clone()).expect("add");
-        assert!(!rc.already_spilled(), "one chunk is within the quota");
-        assert_eq!(rc.mem_tracker().bytes_consumed(), chk.memory_usage());
-
-        // Go's comment: adding the same chunk twice double-counts its memory;
-        // that is the point, it is how the quota is crossed.
-        rc.add(chk.clone()).expect("add");
-        assert!(rc.already_spilled(), "the quota was crossed");
-
-        {
-            let res = rc.get_chunk(0).expect("get_chunk");
-            assert_eq!(res.num_rows(), chk.num_rows());
-            for row_idx in 0..res.num_rows() {
-                assert_eq!(
-                    res.get_row(row_idx).get_int64(0),
-                    chk.get_row(row_idx).get_int64(0)
-                );
-            }
-        }
-
-        // Written again, this time straight to the spill file.
-        rc.add(chk.clone()).expect("add");
-        assert!(rc.already_spilled());
-        {
-            let res = rc.get_chunk(2).expect("get_chunk");
-            assert_eq!(res.num_rows(), chk.num_rows());
-            for row_idx in 0..res.num_rows() {
-                assert_eq!(
-                    res.get_row(row_idx).get_int64(0),
-                    chk.get_row(row_idx).get_int64(0)
-                );
-            }
-        }
-
-        rc.reset();
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// `List::add` may make two positive `Consume` calls when its tail was not
-    /// accounted yet. Both calls reenter the same action stack: the first arms
-    /// pending spill and every later call must return rather than wait on the
-    /// add that cannot finish until it returns.
-    #[test]
-    fn repeated_reentrant_actions_return_to_the_same_add() {
-        let _guard = temp_dir_guard();
-        let dir = scratch_temp_dir("repeated-reentrant-add");
-        disk::set_temp_storage_path(&dir);
-
-        let mut rc = RowContainer::new(&int64_fields(), 4);
-        let seed = int64_chunk(1);
-        write_unpoisoned(&rc.shared.records)
-            .in_memory
-            .append_row(seed.get_row(0));
-        assert_eq!(rc.mem_tracker().bytes_consumed(), 0, "tail is unaccounted");
-
-        let action = rc.action_spill();
-        rc.mem_tracker().set_bytes_limit(1);
-        rc.mem_tracker()
-            .set_action_on_exceed(Some(Arc::clone(&action) as ArcAction));
-        rc.add(int64_chunk(1)).expect("reentrant add finishes");
-
-        assert!(rc.already_spilled());
-        assert_eq!(rc.mem_tracker().bytes_consumed(), 0);
-        assert_eq!(iterate(&rc), vec![0, 0]);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// A repeat on the mutating thread must return to `List::add`, but a
-    /// second thread is a later action: it waits for the pending spill and
-    /// then checks fallback instead of disappearing with the reentrant call.
-    #[test]
-    fn a_concurrent_second_action_waits_for_the_reentrant_add_spill() {
-        let _guard = temp_dir_guard();
-        let dir = scratch_temp_dir("concurrent-second-action");
-        disk::set_temp_storage_path(&dir);
-
-        let mut rc = RowContainer::new(&int64_fields(), 4);
-        let statement_tracker = Tracker::new(-1, 1);
-        rc.mem_tracker().attach_to(&statement_tracker);
-        let unrelated_tracker = Tracker::new(-2, -1);
-        unrelated_tracker.attach_to(&statement_tracker);
-        unrelated_tracker.consume(2);
-
-        let action = rc.action_spill();
-        let fallback = Arc::new(CountingFallback::default());
-        action.set_fallback(Some(Arc::clone(&fallback) as ArcAction));
-        statement_tracker.set_action_on_exceed(Some(Arc::clone(&action) as ArcAction));
-        let (reentrant_started, reentrant_release) = pause_next_reentrant_action(&rc);
-        let (later_started, later_release) = pause_next_later_action(&rc);
-
-        let mut adding = rc.shallow_copy();
-        let add_handle = std::thread::spawn(move || adding.add(int64_chunk(4)));
-        reentrant_started.wait();
-
-        let later_action = Arc::clone(&action);
-        let later_tracker = Arc::clone(&statement_tracker);
-        let (done_tx, done_rx) = mpsc::channel();
-        let later_handle = std::thread::spawn(move || {
-            later_action.action(&later_tracker);
-            done_tx.send(()).expect("report later action");
-        });
-        later_started.wait();
-        assert_eq!(done_rx.try_recv(), Err(mpsc::TryRecvError::Empty));
-
-        later_release.wait();
-        reentrant_release.wait();
-        add_handle
-            .join()
-            .expect("add thread")
-            .expect("reentrant add");
-        later_handle.join().expect("later action thread");
-        done_rx.recv().expect("later action completion");
-
-        assert!(rc.already_spilled());
-        assert_eq!(fallback.calls.load(SeqCst), 1);
-        unrelated_tracker.consume(-2);
-        rc.close();
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// `List::reset` accounts its final unaccounted tail and can therefore
-    /// reenter the spill action. Reset releases records before processing that
-    /// pending spill, which clears the accounted freelist memory.
-    #[test]
-    fn resetting_memory_processes_its_reentrant_spill() {
-        let _guard = temp_dir_guard();
-        let dir = scratch_temp_dir("reentrant-reset");
-        disk::set_temp_storage_path(&dir);
-
-        let mut rc = RowContainer::new(&int64_fields(), 4);
-        let seed = int64_chunk(1);
-        write_unpoisoned(&rc.shared.records)
-            .in_memory
-            .append_row(seed.get_row(0));
-        let action = rc.action_spill();
-        rc.mem_tracker().set_bytes_limit(1);
-        rc.mem_tracker()
-            .set_action_on_exceed(Some(Arc::clone(&action) as ArcAction));
-
-        rc.reset();
-
-        assert!(rc.already_spilled());
-        assert_eq!(rc.num_row(), 0);
-        assert_eq!(rc.mem_tracker().bytes_consumed(), 0);
-        assert_eq!(action.status(), SpillStatus::SpilledYet);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// A quota action belongs to the shared statement tracker, so any child
-    /// allocation that crosses that quota must be able to spill this
-    /// container. The spill cannot depend on a later `RowContainer::add`.
-    #[test]
-    fn an_unrelated_parent_allocation_spills_without_another_add() {
-        let _guard = temp_dir_guard();
-        let dir = scratch_temp_dir("unrelated-parent-allocation");
-        disk::set_temp_storage_path(&dir);
-
-        let fields = int64_fields();
-        let mut rc = RowContainer::new(&fields, 4);
-        let statement_tracker = Tracker::new(-1, -1);
-        rc.mem_tracker().attach_to(&statement_tracker);
-        let unrelated_tracker = Tracker::new(-2, -1);
-        unrelated_tracker.attach_to(&statement_tracker);
-
-        let action = rc.action_spill();
-        statement_tracker.fallback_old_and_set_new_action(Arc::clone(&action) as ArcAction);
-        let chk = int64_chunk(4);
-        let container_bytes = chk.memory_usage();
-        statement_tracker.set_bytes_limit(container_bytes + 1);
-
-        rc.add(chk).expect("final add");
-        assert!(!rc.already_spilled(), "the final add is below quota");
-        assert_eq!(rc.mem_tracker().bytes_consumed(), container_bytes);
-        assert_eq!(iterate(&rc), vec![0, 1, 2, 3]);
-
-        unrelated_tracker.consume(2);
-
-        assert!(
-            rc.already_spilled(),
-            "the parent action must spill without another RowContainer::add"
-        );
-        assert_eq!(rc.mem_tracker().bytes_consumed(), 0);
-        assert!(rc.disk_tracker().bytes_consumed() > 0);
-        assert_eq!(iterate(&rc), vec![0, 1, 2, 3]);
-
-        rc.close();
-        unrelated_tracker.consume(-2);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// The first trigger is reserved for spill even when unrelated memory
-    /// remains above quota. Only a later trigger may invoke fallback.
-    #[test]
-    fn fallback_runs_only_after_the_first_trigger_finishes_spilling() {
-        let _guard = temp_dir_guard();
-        let dir = scratch_temp_dir("fallback-after-spill");
-        disk::set_temp_storage_path(&dir);
-
-        let mut rc = RowContainer::new(&int64_fields(), 4);
-        let statement_tracker = Tracker::new(-1, -1);
-        rc.mem_tracker().attach_to(&statement_tracker);
-        let unrelated_tracker = Tracker::new(-2, -1);
-        unrelated_tracker.attach_to(&statement_tracker);
-        let action = rc.action_spill();
-        let fallback = Arc::new(CountingFallback::default());
-        action.set_fallback(Some(Arc::clone(&fallback) as ArcAction));
-        statement_tracker.set_action_on_exceed(Some(Arc::clone(&action) as ArcAction));
-
-        let chk = int64_chunk(4);
-        let bytes = chk.memory_usage();
-        statement_tracker.set_bytes_limit(bytes + 1);
-        rc.add(chk).expect("add below quota");
-        unrelated_tracker.consume(bytes + 2);
-
-        assert!(rc.already_spilled());
-        assert_eq!(fallback.calls.load(SeqCst), 0, "first trigger spills only");
-        unrelated_tracker.consume(1);
-        assert_eq!(fallback.calls.load(SeqCst), 1, "later trigger falls back");
-
-        rc.close();
-        unrelated_tracker.consume(-(bytes + 3));
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// If reset publishes a new generation before a waiting action claims the
-    /// fallback slot, that action re-enters as the first trigger of the new
-    /// generation. It must not run a stale fallback from the spilled state.
-    #[test]
-    fn reset_wins_the_race_with_a_waiting_fallback() {
-        let _guard = temp_dir_guard();
-        let dir = scratch_temp_dir("reset-wins-fallback-race");
-        disk::set_temp_storage_path(&dir);
-
-        let mut rc = RowContainer::new(&int64_fields(), 4);
-        let statement_tracker = Tracker::new(-1, 1);
-        rc.mem_tracker().attach_to(&statement_tracker);
-        let unrelated_tracker = Tracker::new(-2, -1);
-        unrelated_tracker.attach_to(&statement_tracker);
-        unrelated_tracker.consume(2);
-        let action = rc.action_spill();
-        let fallback = Arc::new(CountingFallback::default());
-        action.set_fallback(Some(Arc::clone(&fallback) as ArcAction));
-        statement_tracker.set_action_on_exceed(Some(Arc::clone(&action) as ArcAction));
-        rc.add(int64_chunk(4)).expect("initial spill");
-        assert!(rc.already_spilled());
-
-        let (claim_started, claim_release) = pause_next_fallback_claim(&rc);
-        let waiting_action = Arc::clone(&action);
-        let waiting_tracker = Arc::clone(&statement_tracker);
-        let action_handle = std::thread::spawn(move || waiting_action.action(&waiting_tracker));
-        claim_started.wait();
-
-        rc.reset();
-        assert_eq!(rc.phase(), CoordinatorPhase::MemoryIdle);
-        claim_release.wait();
-        action_handle.join().expect("new-generation action");
-
-        assert!(rc.already_spilled(), "the re-entered first action spills");
-        assert_eq!(
-            fallback.calls.load(SeqCst),
-            0,
-            "the old-generation fallback must not run"
-        );
-        unrelated_tracker.consume(-2);
-        rc.close();
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// If a later action claims fallback first, reset waits for that callback
-    /// to finish before it closes storage and publishes the next generation.
-    #[test]
-    fn fallback_wins_the_race_with_reset() {
-        let _guard = temp_dir_guard();
-        let dir = scratch_temp_dir("fallback-wins-reset-race");
-        disk::set_temp_storage_path(&dir);
-
-        let mut rc = RowContainer::new(&int64_fields(), 4);
-        let statement_tracker = Tracker::new(-1, 1);
-        rc.mem_tracker().attach_to(&statement_tracker);
-        let unrelated_tracker = Tracker::new(-2, -1);
-        unrelated_tracker.attach_to(&statement_tracker);
-        unrelated_tracker.consume(2);
-        let action = rc.action_spill();
-        let fallback_started = Arc::new(Barrier::new(2));
-        let fallback_release = Arc::new(Barrier::new(2));
-        let fallback = Arc::new(PausingFallback {
-            base: BaseOomAction::default(),
-            calls: AtomicUsize::new(0),
-            started: Arc::clone(&fallback_started),
-            release: Arc::clone(&fallback_release),
-        });
-        action.set_fallback(Some(Arc::clone(&fallback) as ArcAction));
-        statement_tracker.set_action_on_exceed(Some(Arc::clone(&action) as ArcAction));
-        rc.add(int64_chunk(4)).expect("initial spill");
-        assert!(rc.already_spilled());
-
-        let waiting_action = Arc::clone(&action);
-        let waiting_tracker = Arc::clone(&statement_tracker);
-        let action_handle = std::thread::spawn(move || waiting_action.action(&waiting_tracker));
-        fallback_started.wait();
-
-        let mut resetting = rc.shallow_copy();
-        let (reset_tx, reset_rx) = mpsc::channel();
-        let reset_handle = std::thread::spawn(move || {
-            resetting.reset();
-            reset_tx.send(()).expect("report reset");
-        });
-        assert_eq!(reset_rx.try_recv(), Err(mpsc::TryRecvError::Empty));
-
-        fallback_release.wait();
-        action_handle.join().expect("fallback action");
-        reset_handle.join().expect("reset after fallback");
-        reset_rx.recv().expect("reset completion");
-
-        assert_eq!(fallback.calls.load(SeqCst), 1);
-        assert_eq!(rc.phase(), CoordinatorPhase::MemoryIdle);
-        assert!(!rc.already_spilled());
-        unrelated_tracker.consume(-2);
-        rc.close();
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// Go `TestRowContainerResetAndAction`: after a reset the container spills
-    /// again, which only works if the action's `once` was re-armed.
-    #[test]
-    fn a_reset_container_spills_again() {
-        let _guard = temp_dir_guard();
-        let dir = scratch_temp_dir("resetaction");
-        disk::set_temp_storage_path(&dir);
-
-        let fields = int64_fields();
-        let sz = 20;
-        let mut rc = RowContainer::new(&fields, sz);
-        let chk = int64_chunk(sz);
-        let action = rc.action_spill();
-        rc.mem_tracker().set_bytes_limit(chk.memory_usage() + 1);
-        rc.mem_tracker()
-            .fallback_old_and_set_new_action(Arc::clone(&action) as ArcAction);
-
-        rc.add(chk.clone()).expect("add");
-        assert_eq!(rc.disk_tracker().bytes_consumed(), 0);
-        rc.add(chk.clone()).expect("add");
-        assert!(rc.disk_tracker().bytes_consumed() > 0);
-
-        rc.reset();
-        assert_eq!(rc.disk_tracker().bytes_consumed(), 0);
-        assert!(!rc.already_spilled());
-        assert_eq!(action.status(), SpillStatus::NotSpilled);
-
-        rc.add(chk.clone()).expect("add");
-        rc.add(chk.clone()).expect("add");
-        assert!(rc.disk_tracker().bytes_consumed() > 0);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// Go `TestActionBlocked`, case 1: ten adds under a small quota end with
-    /// the action in `spilledYet`, the memory released, and disk in use.
-    #[test]
-    fn ten_adds_under_quota_end_spilled_with_the_memory_released() {
-        let _guard = temp_dir_guard();
-        let dir = scratch_temp_dir("actionblocked1");
-        disk::set_temp_storage_path(&dir);
-
-        let fields = int64_fields();
-        let sz = 4;
-        let mut rc = RowContainer::new(&fields, sz);
-        let action = rc.action_spill();
-        rc.mem_tracker().set_bytes_limit(1450);
-        rc.mem_tracker()
-            .fallback_old_and_set_new_action(Arc::clone(&action) as ArcAction);
-        for _ in 0..10 {
-            rc.add(int64_chunk(sz)).expect("add");
-        }
-        assert_eq!(action.status(), SpillStatus::SpilledYet);
-        assert_eq!(rc.mem_tracker().bytes_consumed(), 0);
-        assert!(rc.mem_tracker().max_consumed() > 0);
-        assert!(rc.disk_tracker().bytes_consumed() > 0);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// Go `TestActionBlocked`, case 2: an action that arrives while a spill is
-    /// in flight WAITS for it instead of falling through to the fallback,
-    /// because the memory is about to be released.
-    #[test]
-    fn an_action_blocks_while_a_spill_is_in_flight() {
-        let _guard = temp_dir_guard();
-        let dir = scratch_temp_dir("action-waits-for-spill");
-        disk::set_temp_storage_path(&dir);
-
-        let mut rc = RowContainer::new(&int64_fields(), 4);
-        rc.add(int64_chunk(4)).expect("add");
-        let tracker = Arc::clone(rc.mem_tracker());
-        let action = rc.action_spill();
-        let (started, release) = pause_next_spill(&rc);
-        let mut spilling = rc.shallow_copy();
-        let spill_handle = std::thread::spawn(move || spilling.spill_to_disk());
-        started.wait();
-
-        let (done_tx, done_rx) = mpsc::channel();
-        let waiting_action = Arc::clone(&action);
-        let action_handle = std::thread::spawn(move || {
-            waiting_action.action(&tracker);
-            done_tx.send(()).expect("report completion");
-        });
-        assert_eq!(done_rx.try_recv(), Err(mpsc::TryRecvError::Empty));
-
-        release.wait();
-        spill_handle.join().expect("spill thread");
-        action_handle.join().expect("action thread");
-        done_rx.recv().expect("action completion");
-        rc.set_spill_start_hook(None);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// Go `TestSpillActionDeadLock`: an action firing CONCURRENTLY with `Add`
-    /// must not deadlock. Go needs a goroutine to avoid taking the write lock
-    /// under the caller's read lock. Here the reentrant action only arms the
-    /// coordinator; `add` releases records before it performs the spill.
-    #[test]
-    fn a_concurrent_action_and_add_do_not_deadlock() {
-        let _guard = temp_dir_guard();
-        let dir = scratch_temp_dir("deadlock");
-        disk::set_temp_storage_path(&dir);
-
-        let fields = int64_fields();
-        let sz = 4;
-        let mut rc = RowContainer::new(&fields, sz);
-        let tracker = Arc::clone(rc.mem_tracker());
-        let action = rc.action_spill();
-        rc.mem_tracker().set_bytes_limit(1);
-        rc.mem_tracker()
-            .fallback_old_and_set_new_action(Arc::clone(&action) as ArcAction);
-
-        let hammer = Arc::clone(&action);
-        let hammer_tracker = Arc::clone(&tracker);
-        let handle = std::thread::spawn(move || {
-            for _ in 0..100 {
-                hammer.action(&hammer_tracker);
-            }
-        });
-        rc.add(int64_chunk(sz)).expect("add");
-        handle.join().expect("the action thread must finish");
-        assert!(rc.already_spilled());
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// Shallow handles share records and synchronization rather than closing
-    /// or snapshotting one another's state.
-    #[test]
-    fn shallow_copy_observes_spill_reset_and_close() {
-        let _guard = temp_dir_guard();
-        let dir = scratch_temp_dir("shallow-copy");
-        disk::set_temp_storage_path(&dir);
-
-        let mut rc = RowContainer::new(&int64_fields(), 4);
-        rc.add(int64_chunk(4)).expect("first add");
-        rc.add(int64_chunk(4)).expect("second add");
-        let mut copy = rc.shallow_copy();
-        assert!(Arc::ptr_eq(&rc.shared, &copy.shared));
-
-        let reading = copy.shallow_copy();
-        let reader = std::thread::spawn(move || iterate(&reading));
-        rc.spill_to_disk();
-        assert_eq!(reader.join().expect("reader"), vec![0, 1, 2, 3, 0, 1, 2, 3]);
-        assert!(copy.already_spilled());
-
-        copy.reset();
-        assert_eq!(rc.phase(), CoordinatorPhase::MemoryIdle);
-        assert_eq!(rc.num_row(), 0);
-        rc.add(int64_chunk(2)).expect("add after reset");
-        assert_eq!(iterate(&copy), vec![0, 1]);
-
-        rc.close();
-        assert_eq!(copy.phase(), CoordinatorPhase::Closed);
-        assert!(copy.add(int64_chunk(1)).is_err());
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// Reset and close claim lifecycle phases only after an active spill has
-    /// published its terminal disk phase; neither may strand a waiter.
-    #[test]
-    fn reset_and_close_serialize_with_spill() {
-        let _guard = temp_dir_guard();
-        let dir = scratch_temp_dir("lifecycle-vs-spill");
-        disk::set_temp_storage_path(&dir);
-
-        let mut reset_rc = RowContainer::new(&int64_fields(), 4);
-        reset_rc.add(int64_chunk(4)).expect("reset add");
-        let (started, release) = pause_next_spill(&reset_rc);
-        let mut spilling = reset_rc.shallow_copy();
-        let spill_handle = std::thread::spawn(move || spilling.spill_to_disk());
-        started.wait();
-        let (reset_tx, reset_rx) = mpsc::channel();
-        let mut resetting = reset_rc.shallow_copy();
-        let reset_handle = std::thread::spawn(move || {
-            resetting.reset();
-            reset_tx.send(()).expect("report reset");
-        });
-        assert_eq!(reset_rx.try_recv(), Err(mpsc::TryRecvError::Empty));
-        release.wait();
-        spill_handle.join().expect("spill before reset");
-        reset_handle.join().expect("reset thread");
-        reset_rx.recv().expect("reset completion");
-        reset_rc.set_spill_start_hook(None);
-        assert_eq!(reset_rc.phase(), CoordinatorPhase::MemoryIdle);
-        assert!(!reset_rc.already_spilled());
-
-        let mut close_rc = RowContainer::new(&int64_fields(), 4);
-        close_rc.add(int64_chunk(4)).expect("close add");
-        let (started, release) = pause_next_spill(&close_rc);
-        let mut spilling = close_rc.shallow_copy();
-        let spill_handle = std::thread::spawn(move || spilling.spill_to_disk());
-        started.wait();
-        let (close_tx, close_rx) = mpsc::channel();
-        let mut closing = close_rc.shallow_copy();
-        let close_handle = std::thread::spawn(move || {
-            closing.close();
-            close_tx.send(()).expect("report close");
-        });
-        assert_eq!(close_rx.try_recv(), Err(mpsc::TryRecvError::Empty));
-        release.wait();
-        spill_handle.join().expect("spill before close");
-        close_handle.join().expect("close thread");
-        close_rx.recv().expect("close completion");
-        assert_eq!(close_rc.phase(), CoordinatorPhase::Closed);
-        assert_eq!(close_rc.mem_tracker().bytes_consumed(), 0);
-        assert_eq!(close_rc.disk_tracker().bytes_consumed(), 0);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// The iterator's cursor protocol, on a container that never spills.
-    #[test]
-    fn the_iterator_walks_an_in_memory_container() {
-        let fields = int64_fields();
-        let mut rc = RowContainer::new(&fields, 4);
-        rc.add(int64_chunk(4)).expect("add");
-        rc.add(int64_chunk(4)).expect("add");
-
-        let mut it = Iterator4RowContainer::new(&rc);
-        assert_eq!(it.len(), 8);
-        assert_eq!(it.begin().expect("first").get_int64(0), 0);
-        let mut seen = 1;
-        while it.next_row().is_some() {
-            seen += 1;
-        }
-        assert_eq!(seen, 8);
-        // Past the end the cursor stays parked.
-        assert!(it.current().is_none());
-        assert!(it.next_row().is_none());
-    }
-
-    /// Go `TestInterruptedDuringSpilling`: a KILL raised while a long spill is
-    /// running is noticed, because the spill loop polls the session killer
-    /// after every chunk.
-    ///
-    /// Go proves it by timing -- 102400 chunks, a kill after 200ms, and the
-    /// spill must stop inside a second. The rule under the timing is the
-    /// per-chunk poll, so it is checked directly here: the signal is pending
-    /// before the spill starts, and the first poll must raise it.
-    #[test]
-    fn a_kill_signal_stops_a_spill_in_progress() {
-        let _guard = temp_dir_guard();
-        let dir = scratch_temp_dir("killduringspill");
-        disk::set_temp_storage_path(&dir);
-
-        let root = Tracker::new(-1, -1);
-        root.is_root_tracker_of_sess
-            .store(true, std::sync::atomic::Ordering::SeqCst);
-        root.killer.conn_id.store(1, SeqCst);
-
-        let fields = int64_fields();
-        let mut rc = RowContainer::new(&fields, 20);
-        rc.mem_tracker().attach_to(&root);
-        rc.add(int64_chunk(20)).expect("add");
-        rc.add(int64_chunk(20)).expect("add");
-
-        root.killer
-            .send_kill_signal(tidb_util::sqlkiller::KillSignal::QueryInterrupted);
-        rc.spill_to_disk();
-        // Go recovers the kill panic inside `spillToDisk` and leaves it in
-        // `spillError`, which every later read reports.
-        let error = rc.spill_error().expect("the kill must abort the spill");
-        assert!(
-            error.contains("1317") || error.to_lowercase().contains("interrupt"),
-            "{error}"
-        );
-        let mut chk = Chunk::new_with_capacity(&fields, 1);
-        assert!(rc
-            .get_row_and_always_append_to_chunk(RowPtr::new(0, 0), &mut chk)
-            .is_err());
-
-        rc.reset();
-        assert_eq!(
-            rc.spill_error().as_deref(),
-            Some(error.as_str()),
-            "Go preserves records.spillError across reset"
-        );
-        rc.spill_to_disk();
-        assert_eq!(rc.spill_error().as_deref(), Some(error.as_str()));
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-}
+#[path = "row_container_tests.rs"]
+mod tests;

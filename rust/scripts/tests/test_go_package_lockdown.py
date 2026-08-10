@@ -1225,6 +1225,37 @@ class GoPackageLockdownTest(unittest.TestCase):
         _schema, _header, rows = read_tsv(self.root / "evidence/mutation-results.tsv")
         self.assertNotEqual(rows[0]["verification_artifact_path"], "-")
 
+    def test_pretty_cargo_runner_preserves_legacy_receipts_and_named_output(self) -> None:
+        lockdown = LOCKDOWN.PackageLockdown(
+            self.root, SPEC, self._spec_source_commit(self.root)
+        )
+        legacy = lockdown._runner_argv(
+            "cargo-test", "tidb-sample", "sample_lockdown", "test_sample_boundary",
+            "legacy runner regression",
+        )
+        pretty = lockdown._runner_argv(
+            "cargo-test-pretty", "tidb-sample", "sample_lockdown", "test_sample_boundary",
+            "pretty runner regression",
+        )
+        self.assertEqual(pretty, [*legacy, "--format=pretty"])
+
+        completed = subprocess.CompletedProcess(
+            args=pretty, returncode=0,
+            stdout=b"running 1 test\ntest test_sample_boundary ... ok\n", stderr=b"",
+        )
+        with mock.patch.object(LOCKDOWN.subprocess, "run", return_value=completed) as invoked:
+            argv, result = lockdown._run_fixed_test(
+                "cargo-test-pretty", "tidb-sample", "sample_lockdown",
+                "test_sample_boundary", "pretty runner regression",
+            )
+        self.assertEqual(argv, pretty)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(invoked.call_args.kwargs["cwd"], (self.root / "rust").resolve())
+        LOCKDOWN.normalized_test_observation(
+            "cargo-test-pretty", "test_sample_boundary", result.returncode,
+            result.stdout, result.stderr,
+        )
+
     def test_fixed_go_runner_uses_failpoint_wrapper_from_accepted_tree(self) -> None:
         accepted = self._spec_source_commit(self.root)
         lockdown = LOCKDOWN.PackageLockdown(self.root, SPEC, accepted)

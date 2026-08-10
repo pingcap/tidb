@@ -157,6 +157,7 @@ impl<C: Columns> TopNExec<C> {
     ) -> Self {
         let count = count.min(u64::MAX - offset);
         let tracker = memory.operator_tracker(meta.id());
+        let disk_tracker = memory.operator_disk_tracker(meta.id());
         let enable_tmp_storage_on_oom = memory.tmp_storage_on_oom();
         TopNExec {
             meta,
@@ -173,7 +174,7 @@ impl<C: Columns> TopNExec<C> {
             cmp_err: None,
             memory,
             tracker,
-            disk_tracker: tidb_util::disk::new_tracker(-1, -1),
+            disk_tracker,
             enable_tmp_storage_on_oom,
             need_spill: Arc::new(AtomicBool::new(false)),
             registered_action: None,
@@ -539,6 +540,7 @@ impl<C: Columns> TopNExec<C> {
                 &self.row_ptrs,
                 self.spill_chunk_size,
                 &self.disk_tracker,
+                self.memory.spill_storage(),
             )?;
             self.runs.push(run);
             self.spilled_runs += 1;
@@ -1324,7 +1326,7 @@ mod spill_tests {
     use super::tests::{by, drain, schema_of, source};
     use super::*;
     use crate::mem_quota::OomAction;
-    use crate::test_temp_storage::{guard as temp_dir_guard, scratch_dir as scratch_temp_dir};
+    use crate::test_temp_storage::{scratch_dir as scratch_temp_dir, storage as test_storage};
     use tidb_expr::NoColumns;
 
     fn topn(
@@ -1373,16 +1375,14 @@ mod spill_tests {
 
     /// A quota this TopN's store cannot stay inside, but large enough that the
     /// operator's own bytes clear `hasEnoughDataToSpill`'s fifth.
-    fn tight() -> StatementMemory {
-        StatementMemory::new(1 << 14, OomAction::Cancel, 42)
+    fn tight(dir: &std::path::Path) -> StatementMemory {
+        StatementMemory::new(1 << 14, OomAction::Cancel, 42).with_spill_storage(test_storage(dir))
     }
 
     /// THE TOPN SPILL TEST.
     #[test]
     fn an_over_quota_topn_returns_exactly_what_the_unspilled_one_returns() {
-        let _guard = temp_dir_guard();
         let dir = scratch_temp_dir("topnexec");
-        tidb_util::disk::set_temp_storage_path(&dir);
 
         let rows = shuffled_rows(4096);
         let items = [(0, false), (1, false)];
@@ -1397,7 +1397,7 @@ mod spill_tests {
             "the reference must not spill"
         );
 
-        let mut exec = topn(&rows, &items, 0, 300, tight());
+        let mut exec = topn(&rows, &items, 0, 300, tight(&dir));
         exec.set_spill_chunk_size_for_test(64);
         exec.open().unwrap();
         let mut got = Vec::new();
@@ -1428,6 +1428,7 @@ mod spill_tests {
             spill_files_in(&dir).is_empty(),
             "close must remove every spill file"
         );
+        drop(exec);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1436,9 +1437,7 @@ mod spill_tests {
     /// offset are the merged ones, not each run's own first rows.
     #[test]
     fn a_spilled_topn_with_an_offset_drops_the_same_rows() {
-        let _guard = temp_dir_guard();
         let dir = scratch_temp_dir("topnoffset");
-        tidb_util::disk::set_temp_storage_path(&dir);
 
         let rows = shuffled_rows(4096);
         let items = [(0, false), (1, false)];
@@ -1446,11 +1445,12 @@ mod spill_tests {
         let expected = drain(&mut reference);
         assert_eq!(expected.len(), 200);
 
-        let mut exec = topn(&rows, &items, 137, 200, tight());
+        let mut exec = topn(&rows, &items, 137, 200, tight(&dir));
         exec.set_spill_chunk_size_for_test(64);
         let got = drain(&mut exec);
         assert!(exec.num_spilled_runs() > 1, "this test needs a merge");
         assert_eq!(got, expected);
+        drop(exec);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1458,20 +1458,19 @@ mod spill_tests {
     /// ways rather than only the one the ascending test pins.
     #[test]
     fn a_spilled_descending_topn_returns_the_same_rows() {
-        let _guard = temp_dir_guard();
         let dir = scratch_temp_dir("topndesc");
-        tidb_util::disk::set_temp_storage_path(&dir);
 
         let rows = shuffled_rows(4096);
         let items = [(0, true), (1, true)];
         let mut reference = topn(&rows, &items, 0, 250, StatementMemory::default());
         let expected = drain(&mut reference);
 
-        let mut exec = topn(&rows, &items, 0, 250, tight());
+        let mut exec = topn(&rows, &items, 0, 250, tight(&dir));
         exec.set_spill_chunk_size_for_test(64);
         let got = drain(&mut exec);
         assert!(exec.num_spilled_runs() > 1, "this test needs a merge");
         assert_eq!(got, expected);
+        drop(exec);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1479,9 +1478,7 @@ mod spill_tests {
     /// the same quota raises 8175 and writes no file.
     #[test]
     fn the_same_topn_raises_8175_when_tmp_storage_is_disabled() {
-        let _guard = temp_dir_guard();
         let dir = scratch_temp_dir("topngate");
-        tidb_util::disk::set_temp_storage_path(&dir);
 
         let rows = shuffled_rows(4096);
         let mut exec = topn(
@@ -1489,7 +1486,7 @@ mod spill_tests {
             &[(0, false), (1, false)],
             0,
             300,
-            tight().with_tmp_storage_on_oom(false),
+            tight(&dir).with_tmp_storage_on_oom(false),
         );
         exec.open().unwrap();
         let mut req = exec.new_chunk();
@@ -1498,6 +1495,7 @@ mod spill_tests {
             other => panic!("expected 8175 with tmp storage disabled, got {other:?}"),
         }
         assert!(spill_files_in(&dir).is_empty(), "no file may be written");
+        drop(exec);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1512,9 +1510,7 @@ mod spill_tests {
     /// is exactly why the RUN COUNT is what this test asserts.
     #[test]
     fn a_limit_larger_than_the_input_still_spills_while_loading() {
-        let _guard = temp_dir_guard();
         let dir = scratch_temp_dir("topnstage1");
-        tidb_util::disk::set_temp_storage_path(&dir);
 
         let rows = shuffled_rows(4096);
         let items = [(0, false), (1, false)];
@@ -1525,7 +1521,7 @@ mod spill_tests {
         assert_eq!(expected.len(), rows.len());
         assert_eq!(reference.num_spilled_runs(), 0);
 
-        let mut exec = topn(&rows, &items, 0, count, tight());
+        let mut exec = topn(&rows, &items, 0, count, tight(&dir));
         exec.set_spill_chunk_size_for_test(64);
         let got = drain(&mut exec);
         assert!(
@@ -1534,6 +1530,7 @@ mod spill_tests {
             exec.num_spilled_runs()
         );
         assert_eq!(got, expected);
+        drop(exec);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1541,11 +1538,9 @@ mod spill_tests {
     /// `close` releases what the last segment's heap still held.
     #[test]
     fn a_spilled_topn_returns_every_byte_on_close() {
-        let _guard = temp_dir_guard();
         let dir = scratch_temp_dir("topnbudget");
-        tidb_util::disk::set_temp_storage_path(&dir);
 
-        let memory = tight();
+        let memory = tight(&dir);
         let mut exec = topn(
             &shuffled_rows(4096),
             &[(0, false), (1, false)],
@@ -1557,6 +1552,8 @@ mod spill_tests {
         let _ = drain(&mut exec);
         assert!(exec.num_spilled_runs() > 0, "this test needs a spill");
         assert_eq!(memory.bytes_consumed(), 0);
+        drop(exec);
+        drop(memory);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

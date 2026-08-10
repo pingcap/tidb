@@ -63,6 +63,17 @@ fn write_packet(stream: &mut TcpStream, sequence: u8, payload: &[u8]) {
     writer.flush().unwrap();
 }
 
+fn assert_error_packet(packet: &[u8], code: u16, state: &[u8; 5]) {
+    assert_eq!(packet.first(), Some(&0xff), "ERR packet: {packet:?}");
+    assert_eq!(
+        u16::from_le_bytes([packet[1], packet[2]]),
+        code,
+        "ERR code: {packet:?}"
+    );
+    assert_eq!(&packet[3..4], b"#", "SQLSTATE marker: {packet:?}");
+    assert_eq!(&packet[4..9], state, "SQLSTATE: {packet:?}");
+}
+
 fn handshake_salt(initial: &[u8]) -> [u8; 20] {
     assert_eq!(initial[0], 10);
     let version_end = initial[1..]
@@ -1419,6 +1430,138 @@ fn mysql_client_runs_the_pipeline_end_to_end() {
     write_packet(&mut client, 0, &[0x01]);
     drop(client);
     worker.join().unwrap();
+}
+
+/// Cursor materialization is part of the executing statement's memory
+/// budget. With temporary storage disabled, exceeding that budget is 8175
+/// and the statement must not retain a half-built cursor.
+#[test]
+fn cursor_materialization_without_tmp_storage_is_8175_and_never_opens_cursor() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let address = listener.local_addr().unwrap();
+    let tracker = Arc::new(ConnectionTracker::default());
+    let worker_tracker = Arc::clone(&tracker);
+    let worker = std::thread::spawn(move || {
+        let (stream, peer_addr) = listener.accept().unwrap();
+        let store = users();
+        serve_mysql_connection(
+            stream,
+            peer_addr,
+            ConnectionCancellation::default(),
+            &PipelineSessionFactory::with_accounts(store.accounts()),
+            &store,
+            &worker_tracker,
+            DEFAULT_MAX_ALLOWED_PACKET,
+        )
+        .unwrap()
+    });
+
+    let mut client = TcpStream::connect(address).unwrap();
+    let read_side = client.try_clone().unwrap();
+    let mut reader = PacketReader::new(read_side);
+    authenticate(&mut client, &mut reader);
+
+    assert_eq!(
+        run_write(
+            &mut client,
+            &mut reader,
+            "CREATE TABLE cursor_quota (a BIGINT, b BIGINT)"
+        ),
+        0
+    );
+    assert_eq!(
+        run_write(
+            &mut client,
+            &mut reader,
+            "INSERT INTO cursor_quota VALUES (1,10),(2,20),(3,30),(4,40)"
+        ),
+        4
+    );
+    assert_eq!(
+        run_write(
+            &mut client,
+            &mut reader,
+            "SET @@global.tidb_mem_oom_action = 'CANCEL'"
+        ),
+        0
+    );
+    assert_eq!(
+        run_write(
+            &mut client,
+            &mut reader,
+            "SET @@global.tidb_enable_tmp_storage_on_oom = 0"
+        ),
+        0
+    );
+    let (statement_id, parameter_count, column_count) = prepare_statement(
+        &mut client,
+        &mut reader,
+        "SELECT a, b FROM cursor_quota",
+    );
+    assert_eq!((parameter_count, column_count), (0, 2));
+    assert_eq!(
+        run_write(
+            &mut client,
+            &mut reader,
+            "SET @@tidb_mem_quota_query = 1"
+        ),
+        0
+    );
+
+    let mut execute = vec![COM_STMT_EXECUTE];
+    execute.extend_from_slice(&statement_id.to_le_bytes());
+    execute.push(0x01); // CURSOR_TYPE_READ_ONLY
+    execute.extend_from_slice(&1_u32.to_le_bytes());
+    write_packet(&mut client, 0, &execute);
+    reader.set_sequence(1);
+    let execute_error = reader.read_packet().unwrap();
+    assert_error_packet(&execute_error, 8175, b"HY000");
+
+    let mut fetch = vec![COM_STMT_FETCH];
+    fetch.extend_from_slice(&statement_id.to_le_bytes());
+    fetch.extend_from_slice(&1_u32.to_le_bytes());
+    write_packet(&mut client, 0, &fetch);
+    reader.set_sequence(1);
+    let fetch_error = reader.read_packet().unwrap();
+    assert_error_packet(&fetch_error, 1326, b"24000");
+
+    // The same statement and quota succeed when the one policy difference is
+    // restored: cursor spill runs before CANCEL, and FETCH returns the exact
+    // rows through the binary protocol.
+    assert_eq!(
+        run_write(
+            &mut client,
+            &mut reader,
+            "SET @@global.tidb_enable_tmp_storage_on_oom = 1"
+        ),
+        0
+    );
+    let (columns, execute_status) =
+        execute_with_cursor(&mut client, &mut reader, statement_id, &[]);
+    assert_eq!(columns, 2);
+    assert_ne!(execute_status & 0x0040, 0);
+    let (rows, fetch_status) = fetch_rows(
+        &mut client,
+        &mut reader,
+        statement_id,
+        4,
+        &[0x08, 0x08],
+    );
+    assert_eq!(
+        rows,
+        vec![
+            vec!["1".to_owned(), "10".to_owned()],
+            vec!["2".to_owned(), "20".to_owned()],
+            vec!["3".to_owned(), "30".to_owned()],
+            vec!["4".to_owned(), "40".to_owned()],
+        ]
+    );
+    assert_eq!(fetch_status & 0x0040, 0);
+    assert_ne!(fetch_status & 0x0080, 0);
+
+    write_packet(&mut client, 0, &[0x01]);
+    drop(client);
+    assert_eq!(worker.join().unwrap().exit, ConnectionExit::Quit);
 }
 
 

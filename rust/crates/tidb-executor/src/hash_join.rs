@@ -67,6 +67,7 @@ use tidb_chunk::list::RowPtr;
 use tidb_chunk::row_container::{RowContainer, SpillDiskAction};
 use tidb_datatype::{Collation, Datum, EvalType, FieldType};
 use tidb_expr::expression::Expression;
+use tidb_util::disk::SpillStorage;
 use tidb_util::memory::Tracker;
 
 /// The comparison domain a hash join key column is encoded in.
@@ -338,9 +339,13 @@ impl BuildTable {
     /// An empty container over the build side's types, chunked at
     /// `chunk_size` -- Go `newHashRowContainer`, which passes
     /// `SessionVars.MaxChunkSize`.
-    pub(crate) fn new(field_types: &[FieldType], chunk_size: usize) -> Self {
+    pub(crate) fn new(
+        field_types: &[FieldType],
+        chunk_size: usize,
+        spill_storage: Arc<SpillStorage>,
+    ) -> Self {
         BuildTable {
-            rows: RowContainer::new(field_types, chunk_size),
+            rows: RowContainer::new(field_types, chunk_size, spill_storage),
             buckets: HashMap::new(),
         }
     }
@@ -393,12 +398,11 @@ impl BuildTable {
     /// Materializes the row `ptr` names, reading it back from the spill file
     /// when the container has spilled.
     ///
-    /// Go `GetMatchedRowsAndPtrs` calls `GetRowAndAppendToChunkIfInDisk`,
-    /// which skips the copy while still in memory. Here the row is converted
-    /// to owned `Datum`s either way -- the join's condition evaluation and
-    /// output both need owned values -- so the ALWAYS-append form is used and
-    /// there is one code path instead of two. `buf` is Go's `chkBuf`: the
-    /// reusable landing chunk for a disk read.
+    /// Go `GetMatchedRowsAndPtrs` calls `GetRowAndAppendToChunkIfInDisk`:
+    /// while the table is in memory the returned row remains a guarded live
+    /// view and `buf` stays empty; after spill, `buf` is the reusable landing
+    /// chunk for the decoded row. Datum materialization happens from either
+    /// view without changing that ownership contract.
     ///
     /// # Errors
     /// [`DiskError`] when the spill file cannot be read.
@@ -409,9 +413,8 @@ impl BuildTable {
         types: &[FieldType],
     ) -> Result<Vec<Datum>, DiskError> {
         buf.reset();
-        let index = self.rows.get_row_and_always_append_to_chunk(ptr, buf)?;
-        let row = buf.get_row(index);
-        Ok(row.get_datum_row(types))
+        let loaded = self.rows.get_row_and_append_to_chunk_if_in_disk(ptr, buf)?;
+        Ok(loaded.row(buf).get_datum_row(types))
     }
 
     /// Go `hashRowContainer.GetMemTracker`, which the build worker attaches

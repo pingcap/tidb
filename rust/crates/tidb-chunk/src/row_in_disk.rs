@@ -40,7 +40,7 @@
 
 use std::io;
 
-use tidb_util::disk;
+use tidb_util::disk::{self, SpillStorage};
 use tidb_util::layered_io::{ReadAt, ReadAtResult};
 use tidb_util::memory::LABEL_FOR_CHUNK_DATA_IN_DISK_BY_ROWS;
 
@@ -211,6 +211,7 @@ pub struct DataInDiskByRows {
     row_num_of_each_chunk_first_row: Vec<usize>,
     total_num_rows: usize,
     disk_tracker: std::sync::Arc<disk::Tracker>,
+    storage: std::sync::Arc<SpillStorage>,
     data_file: DiskFileReaderWriter,
     offset_file: DiskFileReaderWriter,
 }
@@ -218,7 +219,7 @@ pub struct DataInDiskByRows {
 impl DataInDiskByRows {
     /// Go `NewDataInDiskByRows`.
     #[must_use]
-    pub fn new(field_types: Vec<FieldType>) -> Self {
+    pub fn new(field_types: Vec<FieldType>, storage: std::sync::Arc<SpillStorage>) -> Self {
         DataInDiskByRows {
             field_types,
             num_rows_of_each_chunk: Vec::new(),
@@ -226,6 +227,7 @@ impl DataInDiskByRows {
             total_num_rows: 0,
             // Go: "TODO(fengliyuan): set the quota of disk usage."
             disk_tracker: disk::new_tracker(LABEL_FOR_CHUNK_DATA_IN_DISK_BY_ROWS, -1),
+            storage,
             data_file: DiskFileReaderWriter::default(),
             offset_file: DiskFileReaderWriter::default(),
         }
@@ -233,13 +235,15 @@ impl DataInDiskByRows {
 
     /// Go `initDiskFile`.
     fn init_disk_file(&mut self) -> io::Result<()> {
-        disk::check_and_init_temp_dir()?;
         let label = self.disk_tracker.label();
-        self.data_file
-            .init_with_file_name(&format!("{DEFAULT_DATA_IN_DISK_BY_ROWS_PATH}{label}"))?;
-        self.offset_file.init_with_file_name(&format!(
-            "{DEFAULT_DATA_IN_DISK_BY_ROWS_OFFSET_PATH}{label}"
-        ))
+        self.data_file.init_with_file_name(
+            &self.storage,
+            &format!("{DEFAULT_DATA_IN_DISK_BY_ROWS_PATH}{label}"),
+        )?;
+        self.offset_file.init_with_file_name(
+            &self.storage,
+            &format!("{DEFAULT_DATA_IN_DISK_BY_ROWS_OFFSET_PATH}{label}"),
+        )
     }
 
     /// Go `Len`.
@@ -317,7 +321,9 @@ impl DataInDiskByRows {
         i64_slice_to_bytes(&offsets_of_rows, &mut offset_buf);
         let n2 = self.offset_file.write(&offset_buf)? as i64;
 
-        self.disk_tracker.consume(n + n2);
+        if self.disk_tracker.consume_and_check_exceed(n + n2) {
+            return Err(DiskError::QuotaExceeded);
+        }
         self.total_num_rows += chk.num_rows();
         Ok(())
     }
@@ -548,9 +554,9 @@ mod tests {
         bytes.as_ref().iter().map(|b| format!("{b:02x}")).collect()
     }
 
-    use crate::test_temp_storage::guard as temp_dir_guard;
-
-    use crate::test_temp_storage::scratch_dir as scratch_temp_dir;
+    use crate::test_temp_storage::isolated_storage;
+    use std::sync::Arc;
+    use tidb_util::disk::{SpillEncryptionMethod, SpillStorage};
 
     /// Go generator case `mixed`.
     fn mixed_case() -> (Vec<FieldType>, Vec<Chunk>) {
@@ -627,8 +633,12 @@ mod tests {
         (fields, chunks)
     }
 
-    fn spill(fields: &[FieldType], chunks: &[Chunk]) -> DataInDiskByRows {
-        let mut container = DataInDiskByRows::new(fields.to_vec());
+    fn spill(
+        fields: &[FieldType],
+        chunks: &[Chunk],
+        storage: Arc<SpillStorage>,
+    ) -> DataInDiskByRows {
+        let mut container = DataInDiskByRows::new(fields.to_vec(), storage);
         for chk in chunks {
             container.add(chk).expect("add");
         }
@@ -681,11 +691,10 @@ mod tests {
     }
 
     fn run_case(name: &str, fields: Vec<FieldType>, chunks: Vec<Chunk>) {
-        let _guard = temp_dir_guard();
-        let dir = scratch_temp_dir(name);
-        disk::set_temp_storage_path(&dir);
+        let storage = isolated_storage(name, SpillEncryptionMethod::Plaintext);
+        let dir = storage.path().to_path_buf();
 
-        let container = spill(&fields, &chunks);
+        let container = spill(&fields, &chunks, Arc::clone(&storage));
 
         // 1. THE FILE BYTES ARE GO'S. Both spill files, checksum framing
         //    included, before `close` unlinks them.
@@ -722,6 +731,7 @@ mod tests {
             "{name} meta"
         );
         drop(container);
+        drop(storage);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -754,16 +764,15 @@ mod tests {
 
     #[test]
     fn encrypted_row_files_match_go_and_read_through_both_live_caches() {
-        let _guard = temp_dir_guard();
-        let dir = scratch_temp_dir("encrypted-rows");
-        disk::set_temp_storage_path(&dir);
-        disk::check_and_init_temp_dir().expect("temp dir");
+        let storage = isolated_storage("encrypted-rows", SpillEncryptionMethod::Plaintext);
+        let dir = storage.path().to_path_buf();
 
         let (fields, chunks) = encrypted_case();
-        let mut container = DataInDiskByRows::new(fields);
+        let mut container = DataInDiskByRows::new(fields, Arc::clone(&storage));
         container
             .data_file
             .init_with_file_name_and_cipher(
+                &storage,
                 "encrypted-rows-data",
                 fixture_cipher("rows.data.cipher"),
             )
@@ -771,6 +780,7 @@ mod tests {
         container
             .offset_file
             .init_with_file_name_and_cipher(
+                &storage,
                 "encrypted-rows-offsets",
                 fixture_cipher("rows.offsets.cipher"),
             )
@@ -790,6 +800,7 @@ mod tests {
         );
 
         drop(container);
+        drop(storage);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -797,11 +808,10 @@ mod tests {
     /// rows read one at a time.
     #[test]
     fn get_chunk_reads_a_whole_chunk_back() {
-        let _guard = temp_dir_guard();
-        let dir = scratch_temp_dir("getchunk");
-        disk::set_temp_storage_path(&dir);
+        let storage = isolated_storage("getchunk", SpillEncryptionMethod::Plaintext);
+        let dir = storage.path().to_path_buf();
         let (fields, chunks) = mixed_case();
-        let container = spill(&fields, &chunks);
+        let container = spill(&fields, &chunks, Arc::clone(&storage));
 
         for (chk_idx, original) in chunks.iter().enumerate() {
             let read = container.get_chunk(chk_idx).expect("get_chunk");
@@ -817,6 +827,7 @@ mod tests {
             }
         }
         drop(container);
+        drop(storage);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -824,11 +835,10 @@ mod tests {
     /// fresh capacity-1024 chunk. A full caller-owned chunk is not mutated.
     #[test]
     fn row_read_replaces_a_full_destination() {
-        let _guard = temp_dir_guard();
-        let dir = scratch_temp_dir("full-row-destination");
-        disk::set_temp_storage_path(&dir);
+        let storage = isolated_storage("full-row-destination", SpillEncryptionMethod::Plaintext);
+        let dir = storage.path().to_path_buf();
         let (fields, chunks) = int64_case();
-        let container = spill(&fields, &chunks);
+        let container = spill(&fields, &chunks, Arc::clone(&storage));
 
         let mut full = Chunk::new(&fields, 1, 1);
         full.append_int64(0, 99);
@@ -850,16 +860,17 @@ mod tests {
         assert_eq!(full.num_rows(), 1);
         assert_eq!(full.get_row(0).get_int64(0), 99);
         drop(container);
+        drop(storage);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn row_read_appends_to_a_non_full_destination() {
-        let _guard = temp_dir_guard();
-        let dir = scratch_temp_dir("non-full-row-destination");
-        disk::set_temp_storage_path(&dir);
+        let storage =
+            isolated_storage("non-full-row-destination", SpillEncryptionMethod::Plaintext);
+        let dir = storage.path().to_path_buf();
         let (fields, chunks) = int64_case();
-        let container = spill(&fields, &chunks);
+        let container = spill(&fields, &chunks, Arc::clone(&storage));
 
         let mut destination = Chunk::new(&fields, 1, 2);
         destination.append_int64(0, 99);
@@ -873,17 +884,17 @@ mod tests {
         assert_eq!(destination.num_rows(), 2);
 
         drop(container);
+        drop(storage);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Go `Add`'s first line: an empty chunk is refused.
     #[test]
     fn an_empty_chunk_is_refused() {
-        let _guard = temp_dir_guard();
-        let dir = scratch_temp_dir("emptyrow");
-        disk::set_temp_storage_path(&dir);
+        let storage = isolated_storage("emptyrow", SpillEncryptionMethod::Plaintext);
+        let dir = storage.path().to_path_buf();
         let fields = vec![FieldType::new(C::LongLong)];
-        let mut container = DataInDiskByRows::new(fields.clone());
+        let mut container = DataInDiskByRows::new(fields.clone(), Arc::clone(&storage));
         let error = container
             .add(&Chunk::new_with_capacity(&fields, 4))
             .expect_err("a zero-row chunk must be refused");
@@ -893,6 +904,7 @@ mod tests {
         );
         assert!(container.data_file_path().is_none());
         drop(container);
+        drop(storage);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -900,11 +912,10 @@ mod tests {
     /// files are gone and the disk tracker is back to zero.
     #[test]
     fn close_removes_the_files_and_releases_the_tracker() {
-        let _guard = temp_dir_guard();
-        let dir = scratch_temp_dir("closerow");
-        disk::set_temp_storage_path(&dir);
+        let storage = isolated_storage("closerow", SpillEncryptionMethod::Plaintext);
+        let dir = storage.path().to_path_buf();
         let (fields, chunks) = many_blocks_case();
-        let mut container = spill(&fields, &chunks);
+        let mut container = spill(&fields, &chunks, Arc::clone(&storage));
         assert!(container.disk_tracker().bytes_consumed() > 0);
         let data_path = container.data_file.path().cloned().expect("data file");
         let offset_path = container.offset_file.path().cloned().expect("offset file");
@@ -912,6 +923,8 @@ mod tests {
         assert!(!data_path.exists(), "data file must be removed");
         assert!(!offset_path.exists(), "offset file must be removed");
         assert_eq!(container.disk_tracker().bytes_consumed(), 0);
+        drop(container);
+        drop(storage);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

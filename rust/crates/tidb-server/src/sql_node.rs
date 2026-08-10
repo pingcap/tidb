@@ -300,6 +300,7 @@ pub const RESULT_UNDETERMINED_MESSAGE: &str = "execution result undetermined";
 /// A lazy query result owned by one worker-local session.
 pub struct QueryResult<'a> {
     source: BoxedResultSetSource<'a>,
+    cursor_materialization: Option<CursorMaterializationAuthority>,
     /// The count the result set's EOF packets carry (Go `writeEOF` reading
     /// `ctx.WarningCount()`).
     ///
@@ -321,6 +322,15 @@ pub struct QueryResult<'a> {
     status: WireStatus,
 }
 
+/// Typed statement policy retained only when a prepared cursor materializes
+/// this result after execution.
+pub(crate) struct CursorMaterializationAuthority {
+    pub(crate) field_types: Vec<tidb_datatype::FieldType>,
+    pub(crate) init_chunk_size: usize,
+    pub(crate) max_chunk_size: usize,
+    pub(crate) memory: tidb_executor::StatementMemory,
+}
+
 /// One connection-owned, typed prepared point-read definition.
 ///
 /// It contains no storage response, snapshot, or interpolated SQL. The
@@ -331,19 +341,28 @@ pub struct QueryResult<'a> {
 pub struct PreparedPointRead {
     template: ConfiguredPreparedPointReadTemplate,
     result_columns: Vec<ColumnInfo>,
+    result_field_types: Vec<tidb_datatype::FieldType>,
 }
 
 impl PreparedPointRead {
     /// Creates a concrete prepared definition after parser/catalog admission.
-    #[must_use]
     pub fn new(
         template: ConfiguredPreparedPointReadTemplate,
         result_columns: Vec<ColumnInfo>,
-    ) -> Self {
-        Self {
+        result_field_types: Vec<tidb_datatype::FieldType>,
+    ) -> Result<Self, SqlQueryError> {
+        if result_columns.len() != result_field_types.len() {
+            return Err(SqlQueryError::unknown(format!(
+                "prepared point-read schema has {} wire columns but {} chunk field types",
+                result_columns.len(),
+                result_field_types.len()
+            )));
+        }
+        Ok(Self {
             template,
             result_columns,
-        }
+            result_field_types,
+        })
     }
 
     /// Returns the immutable typed template retained by this connection.
@@ -356,6 +375,21 @@ impl PreparedPointRead {
     #[must_use]
     pub fn result_columns(&self) -> &[ColumnInfo] {
         &self.result_columns
+    }
+
+    /// Returns the exact storage/result types retained with the prepared
+    /// schema. Cursor materialization must not reconstruct these from MySQL
+    /// column packets, which omit collation, signedness, and temporal FSP
+    /// details needed by a [`tidb_chunk::chunk::Chunk`].
+    #[must_use]
+    pub fn result_field_types(&self) -> &[tidb_datatype::FieldType] {
+        &self.result_field_types
+    }
+
+    /// Positional markers the typed template binds at execute time.
+    #[must_use]
+    pub const fn parameter_count(&self) -> usize {
+        self.template.parameter_count()
     }
 }
 
@@ -468,7 +502,7 @@ impl PreparedStatement {
     #[must_use]
     pub fn parameter_count(&self) -> usize {
         match self {
-            Self::PointRead(_) => 1,
+            Self::PointRead(read) => read.parameter_count(),
             Self::Write(write) => write.parameter_count(),
             Self::General(general) => general.parameter_count(),
             // Transaction control has no markers to bind.
@@ -504,9 +538,34 @@ impl<'a> QueryResult<'a> {
     pub fn new(source: Box<dyn ResultSetSource + 'a>) -> Self {
         Self {
             source: BoxedResultSetSource { inner: source },
+            cursor_materialization: None,
             warnings: 0,
             status: WireStatus::AUTOCOMMIT,
         }
+    }
+
+    /// Attaches the exact typed policy captured inside the producing
+    /// statement, before any `SET_VAR` overlay was restored.
+    #[must_use]
+    pub fn with_cursor_materialization(
+        mut self,
+        field_types: Vec<tidb_datatype::FieldType>,
+        authority: tidb_session::ResultMaterializationAuthority,
+    ) -> Self {
+        let (memory, init_chunk_size, max_chunk_size) = authority.into_parts();
+        self.cursor_materialization = Some(CursorMaterializationAuthority {
+            field_types,
+            init_chunk_size,
+            max_chunk_size,
+            memory,
+        });
+        self
+    }
+
+    /// Takes the cursor authority exactly once. Ordinary result-set writers
+    /// never call this and retain their existing source-only path.
+    pub(crate) fn take_cursor_materialization(&mut self) -> Option<CursorMaterializationAuthority> {
+        self.cursor_materialization.take()
     }
 
     /// Attaches the warning count AND the status word this statement's EOF
@@ -1587,6 +1646,11 @@ mod tests {
             max_topn_rows: 1_024,
             schema_lease: Duration::from_millis(45_000),
             cluster_security: tidb_pd_client::ClusterSecurity::plaintext(),
+            spill_storage: tidb_util::disk::SpillStorageSpec {
+                path: std::env::temp_dir().join("tidb-sql-node-unit-spill"),
+                quota_bytes: -1,
+                encryption: tidb_util::disk::SpillEncryptionMethod::Plaintext,
+            },
         }
     }
 

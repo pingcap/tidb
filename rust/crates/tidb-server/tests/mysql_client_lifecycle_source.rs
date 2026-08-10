@@ -10,7 +10,8 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 
 use sha1::{Digest, Sha1};
-use tidb_datatype::Datum;
+use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+use tidb_executor::{OomAction, StatementMemory};
 use tidb_exec::real_tikv_dml::prepare_configured_write;
 use tidb_exec::real_tikv_read::prepare_configured_point_read;
 use tidb_planner::prepared_dml::{ConfiguredPreparedWrite, PreparedBindValue};
@@ -20,15 +21,16 @@ use tidb_planner::read_only_scan::{
 use tidb_planner::transaction_control::{classify_transaction_control, TransactionControl};
 use tidb_protocol::{
     ColumnInfo, PacketReader, PacketWriter, COM_INIT_DB, COM_PING, COM_QUERY, COM_QUIT,
-    COM_STMT_CLOSE, COM_STMT_EXECUTE, COM_STMT_PREPARE, COM_STMT_RESET, COM_STMT_SEND_LONG_DATA,
-    DEFAULT_MAX_ALLOWED_PACKET, TYPE_BLOB, TYPE_LONGLONG,
+    COM_STMT_CLOSE, COM_STMT_EXECUTE, COM_STMT_FETCH, COM_STMT_PREPARE, COM_STMT_RESET,
+    COM_STMT_SEND_LONG_DATA, DEFAULT_MAX_ALLOWED_PACKET, TYPE_BLOB, TYPE_LONGLONG,
 };
 use tidb_server::{
     serve_mysql_connection, ConfiguredUserStore, ConnectionCancellation, ConnectionExit,
-    ConnectionTracker, PreparedPointRead, PreparedWrite, QueryResult, QuerySession,
-    QuerySessionFactory, ResultSetSource, SessionContext, SessionTransaction, SqlQueryError,
-    WireStatus, WriteOutcome,
+    ConnectionTracker, GeneralExecuteOutcome, PreparedGeneral, PreparedPointRead, PreparedWrite,
+    PreparedStatement, QueryResult, QuerySession, QuerySessionFactory, ResultSetSource, SessionContext,
+    SessionTransaction, SqlQueryError, WireStatus, WriteOutcome, SERVER_STATUS_IN_TRANS,
 };
+use tidb_session::ResultMaterializationAuthority;
 
 const CLIENT_PROTOCOL_41: u32 = 1 << 9;
 const CLIENT_SECURE_CONNECTION: u32 = 1 << 15;
@@ -177,6 +179,16 @@ fn authenticate(
     user: &str,
     password: &[u8],
 ) {
+    authenticate_with_eof_mode(client, reader, user, password, true);
+}
+
+fn authenticate_with_eof_mode(
+    client: &mut TcpStream,
+    reader: &mut PacketReader<TcpStream>,
+    user: &str,
+    password: &[u8],
+    deprecate_eof: bool,
+) {
     reader.set_sequence(0);
     let initial = reader.read_packet().unwrap();
     let salt = handshake_salt(&initial);
@@ -187,11 +199,13 @@ fn authenticate(
         .unwrap();
     assert_eq!(initial[version_end + 16], 46);
 
-    let capabilities = CLIENT_PROTOCOL_41
+    let mut capabilities = CLIENT_PROTOCOL_41
         | CLIENT_SECURE_CONNECTION
         | CLIENT_PLUGIN_AUTH
-        | CLIENT_CONNECT_ATTRS
-        | CLIENT_DEPRECATE_EOF;
+        | CLIENT_CONNECT_ATTRS;
+    if deprecate_eof {
+        capabilities |= CLIENT_DEPRECATE_EOF;
+    }
     let mut response = Vec::new();
     response.extend_from_slice(&capabilities.to_le_bytes());
     response.extend_from_slice(&(DEFAULT_MAX_ALLOWED_PACKET as u32).to_le_bytes());
@@ -230,6 +244,13 @@ fn assert_column_packet(packet: &[u8], name: &[u8], org_name: &[u8], flags: u16)
     assert_eq!(u16::from_le_bytes([remaining[8], remaining[9]]), flags);
 }
 
+fn assert_mysql_error(packet: &[u8], code: u16, state: &[u8; 5]) {
+    assert_eq!(packet.first(), Some(&0xff), "ERR packet: {packet:?}");
+    assert_eq!(u16::from_le_bytes([packet[1], packet[2]]), code);
+    assert_eq!(&packet[3..4], b"#");
+    assert_eq!(&packet[4..9], state);
+}
+
 fn prepared_catalog() -> ConfiguredCatalog {
     ConfiguredCatalog::new([ConfiguredTable::new(
         "campaign27",
@@ -257,6 +278,24 @@ fn prepared_balance_column() -> ColumnInfo {
         type_code: TYPE_LONGLONG,
         default_value: None,
     }
+}
+
+#[test]
+fn prepared_point_range_keeps_its_two_marker_contract() {
+    let template = prepare_configured_point_read(
+        "SELECT balance FROM campaign27.rows WHERE id >= ? AND id <= ?",
+        &prepared_catalog(),
+    )
+    .unwrap();
+    let read = PreparedPointRead::new(
+        template,
+        vec![prepared_balance_column()],
+        vec![FieldType::new(FieldTypeCode::LongLong)],
+    )
+    .unwrap();
+    assert_eq!(read.parameter_count(), 2);
+    assert_eq!(read.result_field_types()[0].code(), FieldTypeCode::LongLong);
+    assert_eq!(PreparedStatement::PointRead(read).parameter_count(), 2);
 }
 
 struct PreparedRows {
@@ -303,10 +342,11 @@ impl QuerySession for PreparedSession {
     fn prepare_point_read(&mut self, sql: &str) -> Result<PreparedPointRead, SqlQueryError> {
         let template = prepare_configured_point_read(sql, &prepared_catalog())
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-        Ok(PreparedPointRead::new(
+        PreparedPointRead::new(
             template,
             vec![prepared_balance_column()],
-        ))
+            vec![FieldType::new(FieldTypeCode::LongLong)],
+        )
     }
 
     fn execute_prepared_point_read<'a>(
@@ -322,10 +362,24 @@ impl QuerySession for PreparedSession {
             return Err(SqlQueryError::unknown("expected one prepared value"));
         };
         self.executed_parameters.lock().unwrap().push(*value);
+        let authority = ResultMaterializationAuthority::new(
+            StatementMemory::new(-1, OomAction::Cancel, 1).with_tmp_storage_on_oom(false),
+            8,
+            8,
+        );
         Ok(QueryResult::new(Box::new(PreparedRows {
             value: Some(*value + 100),
             lifecycle: Arc::clone(&self.lifecycle),
-        })))
+        }))
+        .with_statement_status(0, self.wire_status())
+        .with_cursor_materialization(
+            statement.result_field_types().to_vec(),
+            authority,
+        ))
+    }
+
+    fn wire_status(&self) -> WireStatus {
+        WireStatus::AUTOCOMMIT.with(SERVER_STATUS_IN_TRANS)
     }
 
     fn prepare_write(&mut self, sql: &str) -> Result<PreparedWrite, SqlQueryError> {
@@ -378,7 +432,170 @@ impl QuerySessionFactory for PreparedFactory {
     }
 }
 
+struct CursorEncodingRows {
+    emitted: bool,
+    lifecycle: Arc<Mutex<Lifecycle>>,
+}
+
+impl ResultSetSource for CursorEncodingRows {
+    fn next_batch(&mut self, _max_rows: usize) -> Result<Vec<Vec<Datum>>, String> {
+        if std::mem::replace(&mut self.emitted, true) {
+            return Ok(Vec::new());
+        }
+        Ok(vec![vec![Datum::Bytes(b"not-an-integer".to_vec())]])
+    }
+
+    fn columns(&mut self) -> Result<Vec<ColumnInfo>, String> {
+        // Deliberately inconsistent with the exact Varchar FieldType below:
+        // materialization remains valid, while binary FETCH must reject this
+        // datum/metadata pair before advancing the cursor.
+        Ok(vec![prepared_balance_column()])
+    }
+
+    fn finish(&mut self) -> Result<(), String> {
+        self.lifecycle.lock().unwrap().finished += 1;
+        Ok(())
+    }
+
+    fn close(&mut self) -> Result<(), String> {
+        self.lifecycle.lock().unwrap().closed += 1;
+        Ok(())
+    }
+}
+
+struct CursorEncodingSession {
+    lifecycle: Arc<Mutex<Lifecycle>>,
+}
+
+impl QuerySession for CursorEncodingSession {
+    fn execute<'a>(&'a mut self, _sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+        Err(SqlQueryError::unknown(
+            "text execution is not part of this test",
+        ))
+    }
+
+    fn prepare_general(&mut self, sql: &str) -> Result<PreparedGeneral, SqlQueryError> {
+        Ok(PreparedGeneral::new(
+            sql.to_owned(),
+            0,
+            vec![prepared_balance_column()],
+        ))
+    }
+
+    fn execute_general<'a>(
+        &'a mut self,
+        _statement: &PreparedGeneral,
+        _values: &[tidb_protocol::PreparedValue],
+    ) -> Result<GeneralExecuteOutcome<'a>, SqlQueryError> {
+        let field = FieldType::new(FieldTypeCode::Varchar);
+        let authority = ResultMaterializationAuthority::new(
+            StatementMemory::new(-1, OomAction::Cancel, 1).with_tmp_storage_on_oom(false),
+            8,
+            8,
+        );
+        Ok(GeneralExecuteOutcome::Rows(
+            QueryResult::new(Box::new(CursorEncodingRows {
+                emitted: false,
+                lifecycle: Arc::clone(&self.lifecycle),
+            }))
+            .with_cursor_materialization(vec![field], authority),
+        ))
+    }
+}
+
+struct CursorEncodingFactory {
+    lifecycle: Arc<Mutex<Lifecycle>>,
+}
+
+impl QuerySessionFactory for CursorEncodingFactory {
+    type Session = CursorEncodingSession;
+
+    fn open_session(&self, _context: SessionContext) -> Result<Self::Session, SqlQueryError> {
+        Ok(CursorEncodingSession {
+            lifecycle: Arc::clone(&self.lifecycle),
+        })
+    }
+}
+
+#[test]
+fn cursor_fetch_encoding_error_resets_cursor_atomically() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let lifecycle = Arc::new(Mutex::new(Lifecycle::default()));
+    let worker_lifecycle = Arc::clone(&lifecycle);
+    let tracker = Arc::new(ConnectionTracker::default());
+    let worker_tracker = Arc::clone(&tracker);
+    let worker = std::thread::spawn(move || {
+        let (stream, peer_addr) = listener.accept().unwrap();
+        serve_mysql_connection(
+            stream,
+            peer_addr,
+            ConnectionCancellation::default(),
+            &CursorEncodingFactory {
+                lifecycle: worker_lifecycle,
+            },
+            &users(),
+            &worker_tracker,
+            DEFAULT_MAX_ALLOWED_PACKET,
+        )
+        .unwrap()
+    });
+
+    let mut client = TcpStream::connect(address).unwrap();
+    let read_side = client.try_clone().unwrap();
+    let mut reader = PacketReader::new(read_side);
+    authenticate(&mut client, &mut reader, "alice", b"secret");
+    reader.set_sequence(2);
+    assert_eq!(reader.read_packet().unwrap()[0], 0);
+
+    let mut prepare = vec![COM_STMT_PREPARE];
+    prepare.extend_from_slice(b"SELECT broken_cursor_value");
+    write_packet(&mut client, 0, &prepare);
+    reader.set_sequence(1);
+    let prepared = reader.read_packet().unwrap();
+    assert_eq!(prepared[0], 0);
+    assert_eq!(u16::from_le_bytes([prepared[5], prepared[6]]), 1);
+    assert_eq!(u16::from_le_bytes([prepared[7], prepared[8]]), 0);
+    let statement_id = u32::from_le_bytes(prepared[1..5].try_into().unwrap());
+    assert_ne!(reader.read_packet().unwrap()[0], 0xff);
+
+    let mut execute = vec![COM_STMT_EXECUTE];
+    execute.extend_from_slice(&statement_id.to_le_bytes());
+    execute.push(1); // CURSOR_TYPE_READ_ONLY
+    execute.extend_from_slice(&1_u32.to_le_bytes());
+    write_packet(&mut client, 0, &execute);
+    reader.set_sequence(1);
+    assert_eq!(reader.read_packet().unwrap(), [1]);
+    assert_ne!(reader.read_packet().unwrap()[0], 0xff);
+    assert_eq!(reader.read_packet().unwrap()[0], 0xfe);
+
+    let mut fetch = vec![COM_STMT_FETCH];
+    fetch.extend_from_slice(&statement_id.to_le_bytes());
+    fetch.extend_from_slice(&1_u32.to_le_bytes());
+    write_packet(&mut client, 0, &fetch);
+    reader.set_sequence(1);
+    assert_mysql_error(&reader.read_packet().unwrap(), 1105, b"HY000");
+
+    write_packet(&mut client, 0, &fetch);
+    reader.set_sequence(1);
+    assert_mysql_error(&reader.read_packet().unwrap(), 1326, b"24000");
+    assert_eq!(lifecycle.lock().unwrap().finished, 1);
+    assert_eq!(lifecycle.lock().unwrap().closed, 1);
+
+    write_packet(&mut client, 0, &[COM_QUIT]);
+    drop(client);
+    assert_eq!(worker.join().unwrap().exit, ConnectionExit::Quit);
+}
+
 fn prepare_statement(client: &mut TcpStream, reader: &mut PacketReader<TcpStream>) -> u32 {
+    prepare_statement_with_eof_mode(client, reader, true)
+}
+
+fn prepare_statement_with_eof_mode(
+    client: &mut TcpStream,
+    reader: &mut PacketReader<TcpStream>,
+    deprecate_eof: bool,
+) -> u32 {
     let mut command = vec![COM_STMT_PREPARE];
     command.extend_from_slice(b"SELECT balance FROM campaign27.rows WHERE id = ?");
     write_packet(client, 0, &command);
@@ -387,8 +604,10 @@ fn prepare_statement(client: &mut TcpStream, reader: &mut PacketReader<TcpStream
     assert_eq!(prepare_ok[0], 0);
     assert_eq!(u16::from_le_bytes([prepare_ok[5], prepare_ok[6]]), 1);
     assert_eq!(u16::from_le_bytes([prepare_ok[7], prepare_ok[8]]), 1);
-    assert_ne!(reader.read_packet().unwrap()[0], 0xff);
-    assert_ne!(reader.read_packet().unwrap()[0], 0xff);
+    let metadata_packets = if deprecate_eof { 2 } else { 4 };
+    for _ in 0..metadata_packets {
+        assert_ne!(reader.read_packet().unwrap()[0], 0xff);
+    }
     u32::from_le_bytes(prepare_ok[1..5].try_into().unwrap())
 }
 
@@ -404,6 +623,28 @@ fn prepared_execute_command(statement_id: u32, new_types: bool, value: i64) -> V
     }
     command.extend_from_slice(&value.to_le_bytes());
     command
+}
+
+fn open_prepared_point_cursor(
+    client: &mut TcpStream,
+    reader: &mut PacketReader<TcpStream>,
+    statement_id: u32,
+    new_types: bool,
+    value: i64,
+) -> u16 {
+    let mut execute = prepared_execute_command(statement_id, new_types, value);
+    execute[5] = 1; // CURSOR_TYPE_READ_ONLY
+    write_packet(client, 0, &execute);
+    reader.set_sequence(1);
+    assert_eq!(reader.read_packet().unwrap(), [1]);
+    assert_ne!(reader.read_packet().unwrap()[0], 0xff);
+    let execute_end = reader.read_packet().unwrap();
+    assert_eq!(
+        execute_end[0], 0xfe,
+        "cursor execute sends metadata only, not a row: {execute_end:?}"
+    );
+    assert_eq!(u16::from_le_bytes([execute_end[1], execute_end[2]]), 0);
+    u16::from_le_bytes([execute_end[3], execute_end[4]])
 }
 
 fn assert_prepared_binary_result(reader: &mut PacketReader<TcpStream>, expected_value: i64) {
@@ -635,6 +876,16 @@ fn real_tcp_prepared_lifecycle_reports_exact_eight_binary_executes_and_type_reus
             &prepared_execute_command(statement_id, value == 1, value),
         );
         assert_prepared_binary_result(&mut reader, value + 100);
+        if value == 4 {
+            // TiDBStatement.Reset clears the cursor and long-data buffers but
+            // deliberately retains paramsType. The fifth execute keeps its
+            // new-parameter-bound flag clear and must still decode as BIGINT.
+            let mut reset = vec![COM_STMT_RESET];
+            reset.extend_from_slice(&statement_id.to_le_bytes());
+            write_packet(&mut client, 0, &reset);
+            reader.set_sequence(1);
+            assert_eq!(reader.read_packet().unwrap()[0], 0);
+        }
     }
     let mut close = vec![COM_STMT_CLOSE];
     close.extend_from_slice(&statement_id.to_le_bytes());
@@ -661,6 +912,105 @@ fn real_tcp_prepared_lifecycle_reports_exact_eight_binary_executes_and_type_reus
     assert_eq!(tracker.completed(), 1);
     assert_eq!(tracker.active(), 0);
     assert_eq!(tracker.failed(), 0);
+}
+
+fn assert_prepared_point_read_cursor_protocol(deprecate_eof: bool) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let executed_parameters = Arc::new(Mutex::new(Vec::new()));
+    let lifecycle = Arc::new(Mutex::new(Lifecycle::default()));
+    let tracker = Arc::new(ConnectionTracker::default());
+    let worker_parameters = Arc::clone(&executed_parameters);
+    let worker_lifecycle = Arc::clone(&lifecycle);
+    let worker_tracker = Arc::clone(&tracker);
+    let worker = std::thread::spawn(move || {
+        let (stream, peer_addr) = listener.accept().unwrap();
+        serve_mysql_connection(
+            stream,
+            peer_addr,
+            ConnectionCancellation::default(),
+            &PreparedFactory {
+                executed_parameters: worker_parameters,
+                lifecycle: worker_lifecycle,
+            },
+            &users(),
+            &worker_tracker,
+            DEFAULT_MAX_ALLOWED_PACKET,
+        )
+        .unwrap()
+    });
+
+    let mut client = TcpStream::connect(address).unwrap();
+    let mut reader = PacketReader::new(client.try_clone().unwrap());
+    authenticate_with_eof_mode(
+        &mut client,
+        &mut reader,
+        "alice",
+        b"secret",
+        deprecate_eof,
+    );
+    reader.set_sequence(2);
+    assert_eq!(reader.read_packet().unwrap()[0], 0);
+
+    let statement_id = prepare_statement_with_eof_mode(&mut client, &mut reader, deprecate_eof);
+    assert_eq!(
+        open_prepared_point_cursor(&mut client, &mut reader, statement_id, true, 7),
+        0x0043,
+        "execute advertises exactly IN_TRANS | AUTOCOMMIT | CURSOR_EXISTS"
+    );
+    assert_eq!(
+        open_prepared_point_cursor(&mut client, &mut reader, statement_id, false, 8),
+        0x0043,
+        "replacement execute owns a fresh cursor"
+    );
+
+    let mut fetch = vec![COM_STMT_FETCH];
+    fetch.extend_from_slice(&statement_id.to_le_bytes());
+    fetch.extend_from_slice(&1_u32.to_le_bytes());
+    write_packet(&mut client, 0, &fetch);
+    reader.set_sequence(1);
+    let row = reader.read_packet().unwrap();
+    assert_eq!(&row[..2], [0, 0]);
+    assert_eq!(i64::from_le_bytes(row[2..10].try_into().unwrap()), 108);
+    let fetch_end = reader.read_packet().unwrap();
+    assert_eq!(fetch_end[0], 0xfe);
+    assert_eq!(u16::from_le_bytes([fetch_end[1], fetch_end[2]]), 0);
+    let fetch_status = u16::from_le_bytes([fetch_end[3], fetch_end[4]]);
+    assert_eq!(
+        fetch_status, 0x0083,
+        "final fetch reports exactly IN_TRANS | AUTOCOMMIT | LAST_ROW_SENT"
+    );
+
+    write_packet(&mut client, 0, &fetch);
+    reader.set_sequence(1);
+    assert_mysql_error(&reader.read_packet().unwrap(), 1326, b"24000");
+
+    assert_eq!(
+        open_prepared_point_cursor(&mut client, &mut reader, statement_id, false, 9),
+        0x0043,
+    );
+    let mut malformed = vec![COM_STMT_EXECUTE];
+    malformed.extend_from_slice(&statement_id.to_le_bytes());
+    write_packet(&mut client, 0, &malformed);
+    reader.set_sequence(1);
+    assert_mysql_error(&reader.read_packet().unwrap(), 1210, b"HY000");
+    write_packet(&mut client, 0, &fetch);
+    reader.set_sequence(1);
+    assert_mysql_error(&reader.read_packet().unwrap(), 1326, b"24000");
+
+    assert_eq!(executed_parameters.lock().unwrap().as_slice(), [7, 8, 9]);
+    assert_eq!(lifecycle.lock().unwrap().finished, 3);
+    assert_eq!(lifecycle.lock().unwrap().closed, 3);
+
+    write_packet(&mut client, 0, &[COM_QUIT]);
+    drop(client);
+    assert_eq!(worker.join().unwrap().exit, ConnectionExit::Quit);
+}
+
+#[test]
+fn prepared_point_read_honors_read_only_cursor_protocol() {
+    assert_prepared_point_read_cursor_protocol(true);
+    assert_prepared_point_read_cursor_protocol(false);
 }
 
 #[test]

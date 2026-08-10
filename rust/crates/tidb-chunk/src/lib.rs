@@ -54,6 +54,7 @@ pub mod row_container;
 pub mod row_container_reader;
 pub mod row_in_disk;
 mod shared_bytes;
+pub mod sorted_row_container;
 
 #[cfg(test)]
 mod chunk_identity_tests;
@@ -68,21 +69,52 @@ pub use column_view::{CellBytes, ColumnBytes};
 /// another was writing into.
 #[cfg(test)]
 pub(crate) mod test_temp_storage {
-    use std::path::PathBuf;
-    use std::sync::{Mutex, MutexGuard, PoisonError};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::{Arc, OnceLock};
 
-    static LOCK: Mutex<()> = Mutex::new(());
+    use tidb_util::disk::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
 
-    /// Held for the duration of a test that sets the temporary-storage path.
-    pub(crate) fn guard() -> MutexGuard<'static, ()> {
-        LOCK.lock().unwrap_or_else(PoisonError::into_inner)
+    /// One plaintext authority shared by ordinary unit tests. Production never
+    /// has an implicit process fallback; this exists only to keep test setup
+    /// focused on the chunk behavior under test.
+    pub(crate) fn storage() -> Arc<SpillStorage> {
+        static STORAGE: OnceLock<Arc<SpillStorage>> = OnceLock::new();
+        Arc::clone(
+            STORAGE.get_or_init(|| isolated_storage("shared", SpillEncryptionMethod::Plaintext)),
+        )
     }
 
-    /// A fresh scratch directory named after the test.
-    pub(crate) fn scratch_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("tidb_rust_spill_test_{name}"));
+    /// A separately configured authority for path/encryption-sensitive tests.
+    pub(crate) fn isolated_storage(
+        name: &str,
+        encryption: SpillEncryptionMethod,
+    ) -> Arc<SpillStorage> {
+        isolated_storage_with_quota(name, encryption, -1)
+    }
+
+    /// A separately configured authority with an exact quota.
+    pub(crate) fn isolated_storage_with_quota(
+        name: &str,
+        encryption: SpillEncryptionMethod,
+        quota_bytes: i64,
+    ) -> Arc<SpillStorage> {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let ordinal = NEXT.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "tidb_rust_spill_test_{}_{}_{}_{}",
+            std::process::id(),
+            name,
+            ordinal,
+            encryption.as_config_value()
+        ));
         let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("scratch temp dir");
-        dir
+        Arc::new(
+            SpillStorage::open(SpillStorageSpec {
+                path: dir,
+                quota_bytes,
+                encryption,
+            })
+            .expect("test spill storage"),
+        )
     }
 }

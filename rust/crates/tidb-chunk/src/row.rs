@@ -19,7 +19,8 @@
 //! chunk.
 //!
 //! Ported: the accessors a simple query needs -- `chunk`, `idx`, `len`,
-//! `get_int64`/`get_uint64`/`get_float32`/`get_float64`, `get_bytes`/`get_raw`,
+//! `get_int64`/`get_uint64`/`get_float32`/`get_float64`,
+//! `get_string`/`get_bytes`/`get_raw_len`/`get_raw`,
 //! `get_time`/`get_duration`, VectorFloat32, JSON, decimal, and `is_null`.
 //! Byte cells use guard-backed views because a MutRow may share their backing.
 
@@ -169,6 +170,19 @@ impl<'a> Row<'a> {
         self.chunk().column_slots()[col_idx].get_bytes(self.idx)
     }
 
+    /// Go `GetString`: a byte-preserving string view of a variable-length
+    /// column's cell.
+    #[must_use]
+    pub fn get_string(&self, col_idx: usize) -> GoString {
+        self.chunk().column(col_idx).get_string(self.idx)
+    }
+
+    /// Go `GetRawLen`: the encoded cell width for either column kind.
+    #[must_use]
+    pub fn get_raw_len(&self, col_idx: usize) -> usize {
+        self.chunk().column(col_idx).raw_len(self.idx)
+    }
+
     /// Go `GetRaw`: the raw element bytes for either column kind.
     #[must_use]
     pub fn get_raw(&self, col_idx: usize) -> CellBytes<'a> {
@@ -229,9 +243,9 @@ impl<'a> Row<'a> {
     /// family (as a collation-tagged string), `Date`/`Datetime`/`Timestamp`
     /// (as a Time datum), `Duration` (fsp filled from the field type's
     /// decimal, matching Go), and `Bit` (the cell's own bytes, Go
-    /// `SetMysqlBit`). The remaining types (VectorFloat32) land with their
-    /// column getters; reaching one here panics rather than returning a wrong or
-    /// silently-null datum.
+    /// `SetMysqlBit`). A source type with no switch arm leaves a caller-supplied
+    /// datum unchanged; [`Row::get_datum`] therefore returns its initialized
+    /// NULL value for that same type.
     #[must_use]
     pub fn get_datum(&self, col_idx: usize, field_type: &FieldType) -> Datum {
         let mut datum = Datum::Null;
@@ -246,7 +260,7 @@ impl<'a> Row<'a> {
             *datum = Datum::Null;
             return;
         }
-        *datum = match field_type.code() {
+        let materialized = match field_type.code() {
             FieldTypeCode::Tiny
             | FieldTypeCode::Short
             | FieldTypeCode::Int24
@@ -277,9 +291,9 @@ impl<'a> Row<'a> {
             // Go `d.SetMysqlBit(r.GetBytes(colIdx))`: a BIT column is a
             // VARIABLE-length chunk column (`getFixedLen` has no BIT arm), and
             // its cell is the binary literal's own bytes.
-            FieldTypeCode::Bit => {
-                Datum::Bit(tidb_datatype::BinaryLiteral::from(self.get_bytes(col_idx).to_vec()))
-            }
+            FieldTypeCode::Bit => Datum::Bit(tidb_datatype::BinaryLiteral::from(
+                self.get_bytes(col_idx).to_vec(),
+            )),
             // Go `GetJSON`: the cell's first byte is the type code and the
             // rest is the value, which is what `BinaryJSON` stores.
             FieldTypeCode::Json => {
@@ -294,14 +308,8 @@ impl<'a> Row<'a> {
             // Go `GetEnum`/`GetSet`: the cell is the 8-byte native value
             // followed by the element name, and the datum carries the column's
             // collation so name comparison stays collation-aware.
-            FieldTypeCode::Enum => Datum::new_enum(
-                self.get_enum(col_idx),
-                field_type.collation(),
-            ),
-            FieldTypeCode::Set => Datum::new_set(
-                self.get_set(col_idx),
-                field_type.collation(),
-            ),
+            FieldTypeCode::Enum => Datum::new_enum(self.get_enum(col_idx), field_type.collation()),
+            FieldTypeCode::Set => Datum::new_set(self.get_set(col_idx), field_type.collation()),
             FieldTypeCode::Date | FieldTypeCode::Datetime | FieldTypeCode::Timestamp => {
                 Datum::Time(self.get_time(col_idx))
             }
@@ -322,9 +330,12 @@ impl<'a> Row<'a> {
                 )
             }
             FieldTypeCode::VectorFloat32 => Datum::VectorFloat32(self.get_vector_float32(col_idx)),
-            other => panic!(
-                "chunk Row::get_datum: column type {other:?} not yet supported (deferred with its column getter)"
-            ),
+            // Go's switch has no default arm: an unmatched source type leaves
+            // the caller's reusable datum untouched. Rust's typed field-code
+            // boundary preserves that observable behavior without recreating
+            // Go's tagged datum storage.
+            _ => return,
         };
+        *datum = materialized;
     }
 }

@@ -18,12 +18,12 @@
 mod pkg_util_chunk_fixture_observation;
 
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use tidb_chunk::chunk::Chunk;
 use tidb_chunk::row_in_disk::DataInDiskByRows;
 use tidb_datatype::{FieldType, FieldTypeCode};
-use tidb_util::disk;
+use tidb_util::disk::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
 
 const CONCLUSION: &str = "the dynamic os.Stat/os.Open arguments are runtime-created spill paths, not repository fixture artifacts";
 const LIVE_RESULT: &str = "exists=true,temp-root=true,repository=false";
@@ -60,12 +60,19 @@ fn scratch_dir(case: &str) -> PathBuf {
 
 fn spilled_container(case: &str) -> (DataInDiskByRows, PathBuf, PathBuf, PathBuf) {
     let scratch = scratch_dir(case);
-    disk::set_temp_storage_path(&scratch);
+    let storage = Arc::new(
+        SpillStorage::open(SpillStorageSpec {
+            path: scratch.clone(),
+            quota_bytes: -1,
+            encryption: SpillEncryptionMethod::Plaintext,
+        })
+        .expect("spill storage"),
+    );
     let repository = repository_root();
     let fields = vec![FieldType::new(FieldTypeCode::LongLong)];
     let mut chunk = Chunk::new_with_capacity(&fields, 1);
     chunk.append_int64(0, 7);
-    let mut container = DataInDiskByRows::new(fields);
+    let mut container = DataInDiskByRows::new(fields, storage);
     container.add(&chunk).expect("spill one row");
     let path = container
         .data_file_path()
@@ -120,6 +127,7 @@ fn stat_dynamic_spill_path_has_no_repository_artifact() {
             ),
         ],
     );
+    drop(container);
     std::fs::remove_dir_all(scratch).expect("remove scratch directory");
 }
 
@@ -149,5 +157,6 @@ fn open_dynamic_spill_path_has_no_repository_artifact() {
             ),
         ],
     );
+    drop(container);
     std::fs::remove_dir_all(scratch).expect("remove scratch directory");
 }

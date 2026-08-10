@@ -25,9 +25,8 @@ use tidb_protocol::{
 };
 
 use crate::mysql_connection::MysqlConnectionError;
-use crate::mysql_connection::{ER_UNKNOWN_STMT_HANDLER, RESULT_BATCH_SIZE};
+use crate::mysql_connection::ER_UNKNOWN_STMT_HANDLER;
 use crate::mysql_tls::ClientStream;
-use crate::resultset_source::ResultSetSource;
 use crate::resultset_writer::{ResultSetSink, SinkWriteError};
 use crate::sql_node::SqlQueryError;
 use crate::wire_status::WireStatus;
@@ -78,23 +77,6 @@ pub(crate) fn prepared_parameter_column() -> ColumnInfo {
     }
 }
 
-/// Materializes every remaining row of a general execute's result, which the
-/// cursor holds for later fetches -- Go's eager cursor fetch fills a row
-/// container the same way.
-pub(crate) fn drain_result_rows(
-    result: &mut crate::sql_node::QueryResult<'_>,
-) -> Result<Vec<Vec<tidb_datatype::Datum>>, String> {
-    let mut rows = Vec::new();
-    loop {
-        let batch = result.source().next_batch(RESULT_BATCH_SIZE.max(1))?;
-        if batch.is_empty() {
-            result.source().finish()?;
-            return Ok(rows);
-        }
-        rows.extend(batch);
-    }
-}
-
 /// Writes one packet with an explicit sequence number.
 pub(crate) fn write_packet_to(
     output: &mut ClientStream,
@@ -123,46 +105,6 @@ pub(crate) fn write_eof_or_ok(
         info: Vec::new(),
     });
     write_packet_to(output, sequence, &payload)
-}
-
-/// Writes one `COM_STMT_FETCH` answer: up to the requested number of binary
-/// rows and the EOF whose status says whether the cursor survives.
-pub(crate) fn write_cursor_fetch_batch(
-    output: &mut ClientStream,
-    columns: &[tidb_protocol::ColumnInfo],
-    rows: &[Vec<tidb_datatype::Datum>],
-    options: ResultSetOptions,
-) -> Result<(), String> {
-    let mut stream = tidb_protocol::BinaryResultSetStream::new(columns.to_vec(), options)
-        .map_err(|error| error.to_string())?;
-    // The fetch answer has no metadata section: the client learned the
-    // columns at execute time. The stream still has to pass its own state
-    // machine, so the metadata packets are built and discarded.
-    let _ = stream
-        .metadata_packets()
-        .map_err(|error| error.to_string())?;
-    let mut sequence = 1;
-    for row in rows {
-        let cells: Vec<tidb_protocol::BinaryResultCell> = row
-            .iter()
-            .zip(columns)
-            .map(|(datum, column)| {
-                crate::connection_resultset::datum_to_binary_cell(datum.clone(), column.type_code)
-                    .ok_or_else(|| {
-                        format!(
-                            "cursor row datum does not match column type {}",
-                            column.type_code
-                        )
-                    })
-            })
-            .collect::<Result<_, _>>()?;
-        let packet = stream
-            .row_packet(&cells)
-            .map_err(|error| error.to_string())?;
-        write_packet_to(output, sequence, &packet).map_err(|error| error.to_string())?;
-        sequence += 1;
-    }
-    write_eof_or_ok(output, sequence, options).map_err(|error| error.to_string())
 }
 
 pub(crate) fn write_unknown_statement(
