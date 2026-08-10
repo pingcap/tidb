@@ -397,9 +397,9 @@ impl ChunkAllocator {
         let free_columns_per_type = MAX_FREE_COLUMNS_PER_TYPE.load(Ordering::Relaxed);
         Self {
             state: Arc::new(Mutex::new(AllocatorState {
-                pending_chunks: Vec::with_capacity(free_chunk_limit),
+                pending_chunks: Vec::new(),
                 pending_columns: HashMap::new(),
-                free_chunks: Vec::with_capacity(free_chunk_limit),
+                free_chunks: Vec::new(),
                 columns: PoolColumnAllocator::new(free_columns_per_type),
                 free_chunk_limit,
                 registered_chunks: 0,
@@ -637,6 +637,38 @@ mod tests {
             DEFAULT_MAX_FREE_COLUMNS_PER_TYPE as u32,
         );
         MAX_CACHED_LEN.store(16 * 1024, Ordering::Relaxed);
+    }
+
+    #[test]
+    fn allocator_configuration_does_not_eagerly_reserve_cache_limit() {
+        let _guard = CONFIG_TEST_LOCK.lock().expect("config test lock");
+        init_chunk_alloc_size(4096, 4096);
+
+        let allocator = new_allocator();
+        let (pending_capacity, free_capacity, chunk_limit, column_limit) = {
+            let state = lock_state(&allocator.state);
+            (
+                state.pending_chunks.capacity(),
+                state.free_chunks.capacity(),
+                state.free_chunk_limit,
+                state.columns.free_columns_per_type,
+            )
+        };
+        assert_eq!(chunk_limit, 4096);
+        assert_eq!(column_limit, 4096);
+
+        init_chunk_alloc_size(u32::MAX, u32::MAX);
+        let clamped = new_allocator();
+        let (clamped_chunk_limit, clamped_column_limit) = {
+            let state = lock_state(&clamped.state);
+            (state.free_chunk_limit, state.columns.free_columns_per_type)
+        };
+        restore_defaults();
+
+        assert_eq!(pending_capacity, 0);
+        assert_eq!(free_capacity, 0);
+        assert_eq!(clamped_chunk_limit, i32::MAX as usize);
+        assert_eq!(clamped_column_limit, i32::MAX as usize);
     }
 
     /// Go `TestAllocator` and `TestColumnAllocator`.
