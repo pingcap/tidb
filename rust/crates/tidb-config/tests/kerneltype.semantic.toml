@@ -1,0 +1,18 @@
+schema = "semantic-package-gate-v3"
+claim = "whole-go-package"
+go_package = "pkg/config/kerneltype"
+source_commit = "e14a77f78d457d27c88d5892e1a173c28a586823"
+rust_files = [
+  "rust/crates/tidb-config/src/kerneltype.rs",
+  "rust/crates/tidb-config/tests/kerneltype_source.rs",
+]
+
+[[tests]]
+name = "kerneltype_classic_semantics"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-config", "--test", "kerneltype_source"]
+
+[[tests]]
+name = "kerneltype_nextgen_semantics"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-config", "--features", "nextgen", "--test", "kerneltype_source"]
