@@ -1,0 +1,18 @@
+schema = "semantic-package-gate-v3"
+claim = "whole-go-package"
+go_package = "pkg/util/naming"
+source_commit = "e14a77f78d457d27c88d5892e1a173c28a586823"
+rust_files = [
+  "rust/crates/tidb-util/src/naming/mod.rs",
+  "rust/crates/tidb-config/src/config_tree/config.rs",
+]
+
+[[tests]]
+name = "naming_package_semantics"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-util", "--lib", "naming"]
+
+[[tests]]
+name = "keyspace_name_config_consumer"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-config", "--lib", "config_tree::config::tests::test_keyspace_name", "--", "--exact"]

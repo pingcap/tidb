@@ -14,23 +14,18 @@
 
 //! Complete transcreation of `pkg/util/naming`.
 //!
-//! `naming.go` and `naming_test.go` map to this module and its source-named
-//! test. `BUILD.bazel` maps to the `tidb-util` manifest. `OWNERS` is repository
-//! review metadata and remains authoritative in the Go source directory; it
-//! has no runtime Rust artifact. The package has no `TestMain`, benchmarks,
-//! fuzz targets, examples, fixtures, generated files, or build-tag variants.
+//! Names are bounded ASCII identifiers containing letters, digits, hyphens,
+//! and underscores. Empty names are valid, matching TiDB configuration rules.
 
-use regex::Regex;
 use std::fmt;
 
-const MAX_KEYSPACE_NAME_LENGTH: isize = 20;
-const MAX_GO_REGEXP_REPEAT: isize = 1_000;
+const MAX_KEYSPACE_NAME_LENGTH: usize = 20;
 
 /// The source validation failure with its exact valid-UTF-8 message.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NamingError {
     name: String,
-    max_len: isize,
+    max_len: usize,
 }
 
 impl NamingError {
@@ -42,7 +37,7 @@ impl NamingError {
 
     /// Returns the configured maximum length.
     #[must_use]
-    pub fn max_len(&self) -> isize {
+    pub fn max_len(&self) -> usize {
         self.max_len
     }
 }
@@ -69,21 +64,13 @@ pub fn check_keyspace_name(name: &str) -> Result<(), NamingError> {
     check_with_max_len(name, MAX_KEYSPACE_NAME_LENGTH)
 }
 
-/// Checks a name against the source's dynamically constructed regular
-/// expression.
-///
-/// # Panics
-///
-/// Go's `regexp.MustCompile` rejects repeat bounds outside `0..=1000`.
-/// This function preserves that boundary before compiling the same pattern.
-pub fn check_with_max_len(name: &str, max_len: isize) -> Result<(), NamingError> {
-    assert!(
-        (0..=MAX_GO_REGEXP_REPEAT).contains(&max_len),
-        "regexp: Compile(`^[a-zA-Z0-9_-]{{0,{max_len}}}$`): error parsing regexp: invalid repeat count"
-    );
-    let pattern = format!("^[a-zA-Z0-9_-]{{0,{max_len}}}$");
-    let name_regex = Regex::new(&pattern).expect("source-compatible naming regexp must compile");
-    if name_regex.is_match(name) {
+/// Checks a name against a caller-supplied maximum length.
+pub fn check_with_max_len(name: &str, max_len: usize) -> Result<(), NamingError> {
+    if name.len() <= max_len
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
         Ok(())
     } else {
         Err(NamingError {
@@ -94,12 +81,11 @@ pub fn check_with_max_len(name: &str, max_len: isize) -> Result<(), NamingError>
 }
 
 #[cfg(test)]
-#[allow(non_snake_case)]
 mod tests {
     use super::*;
 
     #[test]
-    fn TestScope() {
+    fn scope() {
         assert!(check("789z-_").is_ok());
         assert!(check("789z-_)").is_err());
         assert!(check(
@@ -112,15 +98,17 @@ mod tests {
     }
 
     #[test]
-    fn source_uncovered_keyspace_and_regexp_boundaries_are_preserved() {
+    fn keyspace_length_ascii_and_error_contracts() {
         assert!(check_keyspace_name("12345678901234567890").is_ok());
         assert!(check_keyspace_name("123456789012345678901").is_err());
+        assert!(check(&"a".repeat(64)).is_ok());
+        assert!(check(&"a".repeat(65)).is_err());
+        assert!(check("é").is_err());
+        assert!(check_with_max_len("", 0).is_ok());
+        assert!(check_with_max_len("a", 0).is_err());
         assert_eq!(
             check("bad name").expect_err("space is invalid").to_string(),
             "the value 'bad name' is invalid. It must be 64 characters or fewer and consist only of letters (a-z, A-Z), numbers (0-9), hyphens (-), and underscores (_)"
         );
-
-        assert!(std::panic::catch_unwind(|| check_with_max_len("", -1)).is_err());
-        assert!(std::panic::catch_unwind(|| check_with_max_len("", 1_001)).is_err());
     }
 }
