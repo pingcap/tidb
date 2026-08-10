@@ -1,0 +1,1 @@
+{"mutation_id":"M_ROW_RENDER","replacements":[{"expected_count":1,"new":"                output.extend_from_slice(b\"; \");","old":"                output.extend_from_slice(b\", \");"}],"rust_path":"rust/crates/tidb-chunk/src/row.rs","schema":"go-package-lockdown-mutation-operator-v1","source_sha256":"1a7437272be6b3c6756a43015dcad0e18c8cab55e9e17e8f8cd49f27cbec553d"}

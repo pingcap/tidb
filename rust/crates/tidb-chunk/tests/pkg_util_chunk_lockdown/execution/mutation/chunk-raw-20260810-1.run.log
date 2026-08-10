@@ -1,0 +1,21 @@
+--- stdout ---
+
+running 1 test
+test packed_raw_cell_contract ... FAILED
+
+failures:
+
+failures:
+    packed_raw_cell_contract
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.00s
+
+
+--- stderr ---
+
+thread 'packed_raw_cell_contract' (223945977) panicked at crates/tidb-chunk/tests/chunk_core_contract.rs:163:5:
+assertion `left == right` failed
+  left: []
+ right: [114, 97, 119]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+error: test failed, to rerun pass `-p tidb-chunk --test chunk_core_contract`

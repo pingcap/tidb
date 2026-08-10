@@ -1,0 +1,21 @@
+--- stdout ---
+
+running 1 test
+test row_text_covers_every_eval_type_and_preserves_source_bytes ... FAILED
+
+failures:
+
+failures:
+    row_text_covers_every_eval_type_and_preserves_source_bytes
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.00s
+
+
+--- stderr ---
+
+thread 'row_text_covers_every_eval_type_and_preserves_source_bytes' (223954414) panicked at crates/tidb-chunk/tests/chunk_core_contract.rs:316:5:
+assertion `left == right` failed
+  left: [45, 55, 59, 32, 255, 0, 120, 59, 32, 254, 101, 59, 32, 97, 0, 98, 59, 32, 48, 48, 48, 48, 45, 48, 48, 45, 48, 48, 32, 48, 48, 58, 48, 48, 58, 48, 48, 59, 32, 48, 48, 48, 48, 45, 48, 48, 45, 48, 48, 32, 48, 48, 58, 48, 48, 58, 48, 48, 59, 32, 45, 49, 50, 46, 51, 52, 48, 59, 32, 48, 49, 58, 48, 50, 58, 48, 51, 46, 52, 53, 48, 59, 32, 123, 34, 97, 34, 58, 32, 49, 125, 59, 32, 43, 73, 110, 102, 59, 32, 78, 97, 78, 59, 32, 91, 45, 49, 46, 50, 53, 44, 48, 44, 51, 46, 53, 93]
+ right: [45, 55, 44, 32, 255, 0, 120, 44, 32, 254, 101, 44, 32, 97, 0, 98, 44, 32, 48, 48, 48, 48, 45, 48, 48, 45, 48, 48, 32, 48, 48, 58, 48, 48, 58, 48, 48, 44, 32, 48, 48, 48, 48, 45, 48, 48, 45, 48, 48, 32, 48, 48, 58, 48, 48, 58, 48, 48, 44, 32, 45, 49, 50, 46, 51, 52, 48, 44, 32, 48, 49, 58, 48, 50, 58, 48, 51, 46, 52, 53, 48, 44, 32, 123, 34, 97, 34, 58, 32, 49, 125, 44, 32, 43, 73, 110, 102, 44, 32, 78, 97, 78, 44, 32, 91, 45, 49, 46, 50, 53, 44, 48, 44, 51, 46, 53, 93]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+error: test failed, to rerun pass `-p tidb-chunk --test chunk_core_contract`

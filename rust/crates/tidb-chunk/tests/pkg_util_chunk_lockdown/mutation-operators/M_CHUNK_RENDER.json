@@ -1,0 +1,1 @@
+{"mutation_id":"M_CHUNK_RENDER","replacements":[{"expected_count":1,"new":"            output.push(b' ');","old":"            output.push(b'\\n');"}],"rust_path":"rust/crates/tidb-chunk/src/chunk.rs","schema":"go-package-lockdown-mutation-operator-v1","source_sha256":"53cce564d189506836b830b582cf04c2bc79fa2fedb05a3e188336ad9a2429de"}

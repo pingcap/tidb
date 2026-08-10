@@ -18,6 +18,7 @@ After this plan, every observable contract in the two accepted files has an idio
 - [x] (2026-08-10 03:12Z) Preserved fail-before evidence: the copy-state regression failed with virtual-row count `3` instead of `0`, and the public contract failed to compile because `ZERO_CAPACITY`, `Row::copy_construct`, and row/chunk rendering did not exist.
 - [x] (2026-08-10 03:15Z) Implemented the Rust-native owned-row and byte-authoritative rendering surfaces plus the copy-state root fix.
 - [x] (2026-08-10 03:17Z) Added a public contract covering construction/state, row/range/projected appends, selection/materialization/truncation, whole-column identity, packed raw cells, datum conversion, the source text oracle, every valid evaluation type, arbitrary string bytes, selected rows, owned copies, and the zero-capacity/copy-state boundaries; all eight tests and the full `tidb-chunk` crate pass.
+- [x] (2026-08-10 04:12Z) Classified all 296 `chunk.go` and `row.go` obligations as 292 PORTED and four structurally UNREACHABLE, killed and independently verified all six semantic mutations, restored the three production files byte-for-byte, and advanced the official checker to the first unrelated `chunk_in_disk.go` obligation.
 - [x] (2026-08-10 03:25Z) Corrected `Row::chunk` to return `Option<&Chunk>` so the zero `Row{}` sentinel exposes Go's nil chunk without panicking; migrated every nonempty internal caller to an explicit expectation and kept the public target and strict Clippy green.
 - [ ] Classify all 222 `chunk.go` and 74 `row.go` obligations with exact symbols, rules, probes, structural evidence, and killed mutations.
 - [ ] Run WIP and Ready gates, merge the latest integration tip, and push the verified checkpoint to both remotes through `hparser-integration` only.
@@ -55,7 +56,7 @@ After this plan, every observable contract in the two accepted files has an idio
 
 ## Outcomes & Retrospective
 
-The production/API milestone is complete but the receipt and shipping milestones remain open. The fail-before tests proved one behavioral bug and three missing public surfaces; the implementation now passes the focused eight-test contract, all 184 crate unit tests, and strict crate Clippy. This closes neither production ledger nor the whole package until the exact obligation verdicts and immutable mutation evidence are checked in.
+The production/API and exact `chunk.go`/`row.go` receipt milestones are complete, while shipping and the rest of the package remain open. The fail-before tests proved one behavioral bug and three missing public surfaces; the implementation passes the focused eight-test contract, all 184 crate unit tests, and strict crate Clippy. Six independent mutation attempts are KILLED and verified, and the official checker now stops at the first unrelated `chunk_in_disk.go` UNCLASSIFIED obligation rather than either core ledger. This is a bounded production checkpoint, not a whole-package completion claim.
 
 ## Context and Orientation
 
@@ -147,4 +148,4 @@ The intended additions are:
 
 No new crate dependency is required.
 
-Revision note (2026-08-10 03:35Z): recorded the completed red-to-green API milestone, added the required milestone narrative, registered the public contract in the package-owned file census, closed the nullable `Row::Chunk` boundary, and expanded the public anchor to the full valid core surface before assigning receipt verdicts.
+Revision note (2026-08-10 04:12Z): recorded the completed red-to-green API milestone, added the required milestone narrative, registered the public contract in the package-owned file census, closed the nullable `Row::Chunk` boundary, expanded the public anchor to the full valid core surface, assigned every `chunk.go` and `row.go` verdict, and bound six verified mutations plus four typed-unreachable proofs to those verdicts.

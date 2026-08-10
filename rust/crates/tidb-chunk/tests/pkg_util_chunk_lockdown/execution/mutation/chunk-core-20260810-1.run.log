@@ -1,0 +1,21 @@
+--- stdout ---
+
+running 1 test
+test chunk_core_state_append_identity_and_transform_contract ... FAILED
+
+failures:
+
+failures:
+    chunk_core_state_append_identity_and_transform_contract
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.00s
+
+
+--- stderr ---
+
+thread 'chunk_core_state_append_identity_and_transform_contract' (223942393) panicked at crates/tidb-chunk/tests/chunk_core_contract.rs:60:5:
+assertion `left == right` failed
+  left: 8
+ right: 3
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+error: test failed, to rerun pass `-p tidb-chunk --test chunk_core_contract`

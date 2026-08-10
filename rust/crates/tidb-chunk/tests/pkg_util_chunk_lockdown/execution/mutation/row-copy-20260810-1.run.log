@@ -1,0 +1,21 @@
+--- stdout ---
+
+running 1 test
+test copied_row_owns_one_independent_row ... FAILED
+
+failures:
+
+failures:
+    copied_row_owns_one_independent_row
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.00s
+
+
+--- stderr ---
+
+thread 'copied_row_owns_one_independent_row' (223951699) panicked at crates/tidb-chunk/tests/chunk_core_contract.rs:219:5:
+assertion `left == right` failed
+  left: 2
+ right: 1
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+error: test failed, to rerun pass `-p tidb-chunk --test chunk_core_contract`
