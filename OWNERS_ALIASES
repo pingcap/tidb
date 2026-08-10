@@ -32,7 +32,7 @@ aliases:
     - XuHuaiyu
     - zanmato1984
     - cfzjywxk
-    - Benjamin2037
+    - bb7133
   sig-approvers-executor:
     - windtalker
     - XuHuaiyu
@@ -40,13 +40,13 @@ aliases:
   sig-approvers-executor-import:
     - D3Hunter
     - gmhdbjd
-    - Benjamin2037
+    - bb7133
   sig-approvers-expression:
     - windtalker
     - XuHuaiyu
     - zanmato1984
   sig-approvers-lightning:
-    - Benjamin2037
+    - bb7133
     - D3Hunter
     - gmhdbjd
     - OliverS929
@@ -56,58 +56,57 @@ aliases:
     - wjhuang2016
     - fzzf678
   sig-approvers-ddl:
-    - Benjamin2037
+    - bb7133
     - wjhuang2016
     - D3Hunter
     - gmhdbjd
     - fzzf678
   sig-approvers-disttask:
-    - Benjamin2037
+    - bb7133
     - D3Hunter
     - gmhdbjd
     - wjhuang2016
   sig-approvers-dumpling:
-    - Benjamin2037
+    - bb7133
     - gmhdbjd
     - D3Hunter
   sig-approvers-infoschema:
     - wjhuang2016
     - D3Hunter
-    - Benjamin2037
+    - bb7133
     - gmhdbjd
     - fzzf678
   sig-approvers-meta:
-    - Benjamin2037
+    - bb7133
     - gmhdbjd
     - wjhuang2016
     - D3Hunter
     - fzzf678
   sig-approvers-owner:
-    - Benjamin2037
+    - bb7133
     - wjhuang2016
     - D3Hunter
     - fzzf678
   sig-approvers-parser:
     - bb7133
-    - Benjamin2037
     - BornChanger
     - D3Hunter
   sig-approvers-resourcemanager:
-    - Benjamin2037
+    - bb7133
     - D3Hunter
     - gmhdbjd
     - wjhuang2016
   sig-approvers-table:
-    - Benjamin2037
+    - bb7133
     - cfzjywxk
     - gmhdbjd
     - wjhuang2016
     - fzzf678
   sig-approvers-lock:
-    - Benjamin2037
+    - bb7133
     - wjhuang2016
   sig-approvers-tidb-binlog:
-    - Benjamin2037
+    - bb7133
     - gmhdbjd
   sig-approvers-planner:
     - AilinKid
