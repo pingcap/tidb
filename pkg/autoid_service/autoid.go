@@ -450,6 +450,17 @@ func (s *Service) validateRequestKeyspace(requestKeyspaceID uint32, requestIdent
 	return errors.New("not leader")
 }
 
+func (s *Service) validateRebaseRequestKeyspace(req *autoid.RebaseRequest) error {
+	// V1/V2 RebaseRequest did not carry a keyspace field. Accept that legacy
+	// request only when the service itself is not using a V3 identity; V3
+	// requests must carry the complete keyspace identity.
+	serviceMeta := s.store.GetCodec().GetKeyspaceMeta()
+	if req.GetKeyspace() == nil && serviceMeta.GetKeyspaceIdentity() == nil {
+		return nil
+	}
+	return s.validateRequestKeyspace(req.GetKeyspaceID(), req.GetKeyspaceIdentity())
+}
+
 // AllocAutoID implements gRPC AutoIDAlloc interface.
 func (s *Service) AllocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*autoid.AutoIDResponse, error) {
 	if err := s.validateRequestKeyspace(req.GetKeyspaceID(), req.GetKeyspaceIdentity()); err != nil {
@@ -586,7 +597,7 @@ func (alloc *autoIDValue) forceRebase(ctx context.Context, store kv.Storage, dbI
 // Rebase implements gRPC AutoIDAlloc interface.
 // req.N = 0 is handled specially, it is used to return the current auto ID value.
 func (s *Service) Rebase(ctx context.Context, req *autoid.RebaseRequest) (*autoid.RebaseResponse, error) {
-	if err := s.validateRequestKeyspace(req.GetKeyspaceID(), req.GetKeyspaceIdentity()); err != nil {
+	if err := s.validateRebaseRequestKeyspace(req); err != nil {
 		return nil, errors.Trace(err)
 	}
 	if s.leaderShip != nil && !s.leaderShip.IsOwner() {

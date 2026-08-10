@@ -188,6 +188,15 @@ func testAPIWithKeyspace(t *testing.T, keyspaceMeta *keyspacepb.KeyspaceMeta) {
 
 	to := dest{dbID: dbInfo.ID, tblID: tbInfo.ID}
 	var force = struct{}{}
+	if keyspaceMeta != nil {
+		// V1/V2 clients sent RebaseRequest without a keyspace field.
+		_, err := cli.Rebase(context.Background(), &autoid.RebaseRequest{
+			DbID:  to.dbID,
+			TblID: to.tblID,
+			Base:  0,
+		})
+		require.NoError(t, err)
+	}
 
 	// basic auto id operation
 	autoIDRequest(t, cli, to, false, 1, reqKeyspaceID).check(0, 1)
