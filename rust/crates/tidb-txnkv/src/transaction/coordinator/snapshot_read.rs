@@ -26,7 +26,7 @@ use tidb_proto::{
 use crate::lock::{
     decode_lock_observation, resolve_optimistic_locks, LockRecoveryClient, TimestampSource,
 };
-use crate::region::RegionRecoveryLoader;
+use crate::region::{RegionBackoffBudget, RegionRecoveryLoader};
 use crate::rpc::{TransactionBatchPublication, TransactionBatchResponse, UnaryCallContext};
 
 use super::super::command_client::{PublishedCommand, TransactionCommandClient};
@@ -34,7 +34,7 @@ use super::super::region_batches::{point_route, RegionKeyBatch};
 use super::super::state::{CoordinatorState, SnapshotReadReceipt};
 use super::{
     alive_retry_delay, wait_with_call, OptimisticCoordinatorError, RealOptimisticTransaction,
-    RecoveryPhase, MAX_LOCK_ATTEMPTS,
+    RecoveryPhase,
 };
 
 /// Pairs one Scan page may return. client-go's `scanBatchSize`.
@@ -68,6 +68,32 @@ where
         key: &[u8],
         call: &UnaryCallContext,
     ) -> Result<SnapshotGetResult, OptimisticCoordinatorError> {
+        self.snapshot_get_at(key, self.start_ts, call)
+    }
+
+    /// Reads one encoded key at `read_ts` while retaining this transaction's
+    /// original `start_ts` for lock ownership and the final commit.
+    ///
+    /// A pessimistic statement calls this after advancing `for_update_ts` so
+    /// its retry sees the committed version that forced the retry. Ordinary
+    /// optimistic reads continue through [`Self::snapshot_get`] and therefore
+    /// remain fixed at `start_ts` for repeatable read.
+    ///
+    /// `read_ts` may only move forward from the transaction's `start_ts`.
+    /// Reading an older version inside the same transaction would violate the
+    /// monotonic statement-timestamp invariant and is refused explicitly.
+    pub fn snapshot_get_at(
+        &mut self,
+        key: &[u8],
+        read_ts: u64,
+        call: &UnaryCallContext,
+    ) -> Result<SnapshotGetResult, OptimisticCoordinatorError> {
+        if read_ts < self.start_ts {
+            return Err(OptimisticCoordinatorError::SnapshotGet(format!(
+                "read timestamp {read_ts} precedes transaction start timestamp {}",
+                self.start_ts
+            )));
+        }
         if key.is_empty() {
             return Err(OptimisticCoordinatorError::SnapshotGet(
                 "encoded key is empty".to_owned(),
@@ -76,7 +102,7 @@ where
         self.state
             .transition(CoordinatorState::Reading)
             .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
-        let mut lock_attempts = 0usize;
+        let mut lock_backoff = RegionBackoffBudget::campaign_default();
         loop {
             let route = point_route(&self.runtime, key)
                 .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
@@ -87,7 +113,7 @@ where
             self.resolved_locks.stamp(&mut context);
             let request = KvrpcGetRequest {
                 key: key.to_vec(),
-                version: self.start_ts,
+                version: read_ts,
                 need_commit_ts: true,
                 ..KvrpcGetRequest::default()
             };
@@ -110,7 +136,7 @@ where
                     let recovery = resolve_optimistic_locks(
                         &self.runtime,
                         &locks,
-                        self.start_ts,
+                        read_ts,
                         &context,
                         call,
                         &self.timestamps,
@@ -120,24 +146,26 @@ where
                     // Go `ClientHelper.ResolveLocks`: record before retrying,
                     // or the retry meets the same lock and never terminates.
                     self.resolved_locks.absorb(&recovery);
-                    if lock_attempts >= MAX_LOCK_ATTEMPTS {
-                        return Err(OptimisticCoordinatorError::SnapshotGet(
-                            "snapshot lock retry budget exhausted".to_owned(),
-                        ));
-                    }
                     if recovery.is_alive() {
-                        wait_with_call(call, alive_retry_delay(recovery.ttl)).map_err(|error| {
+                        let delay = alive_retry_delay(recovery.ttl, &mut lock_backoff).map_err(
+                            |exhausted| {
+                                OptimisticCoordinatorError::SnapshotGet(format!(
+                                    "snapshot lock backoff budget {:?} exhausted after {:?}",
+                                    exhausted.kind, exhausted.max_sleep
+                                ))
+                            },
+                        )?;
+                        wait_with_call(call, delay).map_err(|error| {
                             OptimisticCoordinatorError::SnapshotGet(error.to_string())
                         })?;
                     }
-                    lock_attempts += 1;
                     continue;
                 }
                 return Err(OptimisticCoordinatorError::SnapshotGet(format!(
                     "TiKV key error: {key_error:?}"
                 )));
             }
-            self.check_visibility()?;
+            self.check_visibility_at(read_ts)?;
             let value = if response.response.not_found {
                 None
             } else {
@@ -181,6 +209,29 @@ where
         limit: Option<usize>,
         call: &UnaryCallContext,
     ) -> Result<SnapshotScanPairs, OptimisticCoordinatorError> {
+        self.snapshot_scan_at(start_key, end_key, limit, self.start_ts, call)
+    }
+
+    /// Reads `[start_key, end_key)` at `read_ts` while preserving the
+    /// transaction's original `start_ts` for its locks and final commit.
+    ///
+    /// This is the range counterpart of [`Self::snapshot_get_at`]. A
+    /// pessimistic statement retry must use it for table and index scans so
+    /// point and range access cannot observe different versions.
+    pub fn snapshot_scan_at(
+        &mut self,
+        start_key: &[u8],
+        end_key: &[u8],
+        limit: Option<usize>,
+        read_ts: u64,
+        call: &UnaryCallContext,
+    ) -> Result<SnapshotScanPairs, OptimisticCoordinatorError> {
+        if read_ts < self.start_ts {
+            return Err(OptimisticCoordinatorError::SnapshotGet(format!(
+                "read timestamp {read_ts} precedes transaction start timestamp {}",
+                self.start_ts
+            )));
+        }
         if limit == Some(0) {
             return Ok(Vec::new());
         }
@@ -199,7 +250,7 @@ where
             .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
         let mut pairs = Vec::new();
         let mut cursor = start_key.to_vec();
-        let mut lock_attempts = 0usize;
+        let mut lock_backoff = RegionBackoffBudget::campaign_default();
         while cursor.as_slice() < end_key {
             let route = point_route(&self.runtime, &cursor)
                 .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
@@ -225,7 +276,7 @@ where
                 start_key: cursor.clone(),
                 end_key: page_end.clone(),
                 limit: page_limit,
-                version: self.start_ts,
+                version: read_ts,
                 ..KvrpcScanRequest::default()
             };
             let response = self.begin_scan(&route, &context, &request, call)?;
@@ -249,16 +300,10 @@ where
                 }
             }
             if !locked.is_empty() {
-                if lock_attempts >= MAX_LOCK_ATTEMPTS {
-                    return Err(OptimisticCoordinatorError::SnapshotGet(
-                        "scan lock retry budget exhausted".to_owned(),
-                    ));
-                }
-                lock_attempts += 1;
                 let recovery = resolve_optimistic_locks(
                     &self.runtime,
                     &locked,
-                    self.start_ts,
+                    read_ts,
                     &context,
                     call,
                     &self.timestamps,
@@ -267,7 +312,15 @@ where
                 .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
                 self.resolved_locks.absorb(&recovery);
                 if recovery.is_alive() {
-                    wait_with_call(call, alive_retry_delay(recovery.ttl)).map_err(|error| {
+                    let delay = alive_retry_delay(recovery.ttl, &mut lock_backoff).map_err(
+                        |exhausted| {
+                            OptimisticCoordinatorError::SnapshotGet(format!(
+                                "scan lock backoff budget {:?} exhausted after {:?}",
+                                exhausted.kind, exhausted.max_sleep
+                            ))
+                        },
+                    )?;
+                    wait_with_call(call, delay).map_err(|error| {
                         OptimisticCoordinatorError::SnapshotGet(error.to_string())
                     })?;
                 }
@@ -277,7 +330,7 @@ where
             // Per page, as client-go checks per `scan.Next` batch: a long scan
             // must not spend its whole range on the strength of one check made
             // before the first page.
-            self.check_visibility()?;
+            self.check_visibility_at(read_ts)?;
             let page_len = response.response.pairs.len();
             let last_key = response
                 .response

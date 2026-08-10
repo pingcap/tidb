@@ -23,8 +23,8 @@
 //! module derives.
 //!
 //! Node kinds are the ones a `t1, t5, (select ... from t2 join t3) dt` shape
-//! reaches: `DataSource`, `Selection`, `Projection` and inner `Join`. Each
-//! rule below is the Go body, not a re-derivation:
+//! reaches: `DataSource`, `Selection`, `Projection`, `Aggregation` and inner
+//! `Join`. Each rule below is the Go body, not a re-derivation:
 //!
 //! * `DataSource` -- `deriveStats4DataSource` (`core/stats.go:110-168`) sets
 //!   `ds.stats = ds.TableStats.Scale(vars, Selectivity(pushedDownConds))`,
@@ -38,6 +38,9 @@
 //! * `Projection` -- `LogicalProjection.DeriveStats`
 //!   (`logicalop/logical_projection.go:278-305`) passes the child's row count
 //!   through unchanged and re-derives one NDV per output expression.
+//! * `Aggregation` -- `LogicalAggregation.DeriveStats`
+//!   (`logicalop/logical_aggregation.go:219-246`) estimates the group-key NDV
+//!   and uses that number as both its row count and every output column's NDV.
 //! * `Join` -- `LogicalJoin.DeriveStats` (`logicalop/logical_join.go:560-616`)
 //!   takes `EstimateFullJoinRowCount` for an inner join and clamps every
 //!   inherited column NDV to the join's own row count.
@@ -213,6 +216,15 @@ pub enum LogicalNode {
         /// One entry per output column.
         exprs: Vec<ProjectionExpr>,
     },
+    /// A `LogicalAggregation`.
+    Aggregation {
+        /// The single child.
+        child: Box<LogicalNode>,
+        /// Every input column extracted from the `GROUP BY` expressions.
+        group_by: Vec<ColumnId>,
+        /// The aggregation's output schema columns.
+        columns: Vec<ColumnId>,
+    },
     /// A `LogicalJoin`.
     Join {
         /// The build/left child.
@@ -364,6 +376,24 @@ pub fn derive_stats(node: &LogicalNode, ctx: &DeriveStatsContext) -> DerivedNode
                         (expr.output, ndv)
                     })
                     .collect(),
+            };
+            DerivedNode {
+                stats,
+                children: vec![child],
+            }
+        }
+        LogicalNode::Aggregation {
+            child,
+            group_by,
+            columns,
+        } => {
+            let child = derive_stats(child, ctx);
+            let (ndv, _) = estimate_cols_ndv_with_matched_len(group_by, &child.stats);
+            let stats = StatsInfo {
+                row_count: ndv,
+                // Go deliberately uses the conservative group NDV for every
+                // aggregate output, including FIRST_ROW carriers.
+                col_ndvs: columns.iter().map(|id| (*id, ndv)).collect(),
             };
             DerivedNode {
                 stats,

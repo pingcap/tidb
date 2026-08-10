@@ -6,6 +6,1293 @@
 
 use super::*;
 
+/// TPCC condition 01: join pruning renumbers the merge-key column, but the
+/// committed MergeJoin still delivers that named order to the grouped
+/// StreamAgg. Go projects the three aggregate inputs between the join and the
+/// aggregation.
+#[test]
+fn tpcc_grouped_merge_join_keeps_order_through_pruning() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE district (d_id INT NOT NULL, d_w_id INT NOT NULL, d_ytd DECIMAL(12,2) NOT NULL, \
+            PRIMARY KEY (d_w_id,d_id))",
+        &mut catalog,
+    )
+    .unwrap();
+    let TableEntry::Kv(district) = catalog.get_mut_in("test", "district").unwrap() else {
+        panic!("district is not a KV table");
+    };
+    district.add_index(crate::kv_table::KvIndex {
+        id: 1,
+        name: "PRIMARY".to_owned(),
+        unique: true,
+        prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 2],
+        column_offsets: vec![1, 0],
+        visible: true,
+        global: false,
+    });
+    crate::run_create_table_on(
+        "CREATE TABLE warehouse (w_id INT PRIMARY KEY, w_ytd DECIMAL(12,2) NOT NULL)",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO district VALUES (1,1,10),(2,1,20),(1,2,40)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO warehouse VALUES (1,5),(2,7)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    let sql = "SELECT SUM(d_ytd)-MAX(w_ytd) diff FROM district, warehouse \
+        WHERE d_w_id=w_id AND w_id=1 GROUP BY d_w_id";
+    let result = run_select_on(sql, &catalog, &ctx).unwrap();
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[0].len(), 1);
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let cell = |row: usize, column: usize| match &rows[row][column] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+    assert_eq!(
+        (0..rows.len()).map(|row| cell(row, 0)).collect::<Vec<_>>(),
+        vec![
+            "Projection",
+            "└─StreamAgg",
+            "  └─Projection",
+            "    └─MergeJoin",
+            "      ├─TableReader(Build)",
+            "      │ └─TableRangeScan",
+            "      └─Point_Get(Probe)",
+        ],
+    );
+    assert!(cell(1, 4).contains("group by:test.district.d_w_id"));
+    assert!(cell(2, 4).contains("test.district.d_ytd"));
+}
+
+/// TPCC condition 03: a constant fixes the leading common-handle column, so
+/// the remaining `(district, order)` record order supplies the grouped stream
+/// directly. Go pushes the partial StreamAgg below a TableReader and keeps
+/// only the scalar arithmetic in the root Projection.
+#[test]
+fn tpcc_grouped_common_handle_uses_partial_and_final_stream_agg() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE new_order (\
+            no_o_id INT NOT NULL, no_d_id INT NOT NULL, no_w_id INT NOT NULL,\
+            PRIMARY KEY (no_w_id,no_d_id,no_o_id))",
+        &mut catalog,
+    )
+    .unwrap();
+    let TableEntry::Kv(table) = catalog.get_mut_in("test", "new_order").unwrap() else {
+        panic!("new_order is not a KV table");
+    };
+    table.add_index(crate::kv_table::KvIndex {
+        id: 1,
+        name: "PRIMARY".to_owned(),
+        unique: true,
+        prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 3],
+        column_offsets: vec![2, 1, 0],
+        visible: true,
+        global: false,
+    });
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO new_order VALUES (1,1,1),(2,1,1),(5,2,1),(7,2,1),(9,1,2)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    let sql = "SELECT MAX(no_o_id)-MIN(no_o_id)+1-COUNT(*) diff \
+        FROM new_order WHERE no_w_id=1 GROUP BY no_d_id";
+    assert_eq!(
+        run_select_on(sql, &catalog, &ctx).unwrap(),
+        vec![vec![Datum::Int(0)], vec![Datum::Int(1)]],
+    );
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let cell = |row: usize, column: usize| match &rows[row][column] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+    assert_eq!(
+        (0..rows.len()).map(|row| cell(row, 0)).collect::<Vec<_>>(),
+        vec![
+            "Projection",
+            "└─StreamAgg",
+            "  └─TableReader",
+            "    └─StreamAgg",
+            "      └─TableRangeScan",
+        ],
+    );
+    assert_eq!(
+        (0..rows.len()).map(|row| cell(row, 2)).collect::<Vec<_>>(),
+        vec!["root", "root", "root", "cop[tikv]", "cop[tikv]"],
+    );
+    assert!(cell(0, 4).starts_with("minus(plus(minus(Column#"));
+    assert!(cell(1, 4).contains("group by:test.new_order.no_d_id"));
+    assert!(cell(3, 4).contains("funcs:max(test.new_order.no_o_id)->Column#"));
+    assert!(cell(4, 4).contains("range:[1,1], keep order:true"));
+}
+
+/// A selected group key is a root FIRST_ROW carrier, not an extra TiKV
+/// function. The partial schema is `[count, group]`; the final projection
+/// restores the written `[group, count]` order.
+#[test]
+fn grouped_partial_count_carries_the_group_key() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE order_line (ol_o_id INT NOT NULL, ol_d_id INT NOT NULL, \
+            ol_w_id INT NOT NULL, ol_number INT NOT NULL, \
+            PRIMARY KEY (ol_w_id,ol_d_id,ol_o_id,ol_number))",
+        &mut catalog,
+    )
+    .unwrap();
+    let TableEntry::Kv(table) = catalog.get_mut_in("test", "order_line").unwrap() else {
+        panic!("order_line is not a KV table");
+    };
+    table.add_index(crate::kv_table::KvIndex {
+        id: 1,
+        name: "PRIMARY".to_owned(),
+        unique: true,
+        prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 4],
+        column_offsets: vec![2, 1, 0, 3],
+        visible: true,
+        global: false,
+    });
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO order_line VALUES (1,1,1,1),(1,1,1,2),(2,2,1,1),(1,1,2,1)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    let sql = "SELECT ol_d_id, COUNT(*) cn FROM order_line \
+        WHERE ol_w_id=1 GROUP BY ol_d_id";
+    assert_eq!(
+        run_select_on(sql, &catalog, &ctx).unwrap(),
+        vec![
+            vec![Datum::Int(1), Datum::Int(2)],
+            vec![Datum::Int(2), Datum::Int(1)],
+        ],
+    );
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let cell = |row: usize, column: usize| match &rows[row][column] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+    assert_eq!(
+        (0..rows.len()).map(|row| cell(row, 0)).collect::<Vec<_>>(),
+        vec![
+            "Projection",
+            "└─StreamAgg",
+            "  └─TableReader",
+            "    └─StreamAgg",
+            "      └─TableRangeScan",
+        ],
+    );
+    assert!(cell(0, 4).starts_with("test.order_line.ol_d_id, Column#"));
+    assert!(cell(1, 4).contains("funcs:count(Column#"));
+    assert!(cell(1, 4).contains("funcs:firstrow(test.order_line.ol_d_id)"));
+    assert!(!cell(3, 4).contains("firstrow"));
+}
+
+/// TPCC condition 04: the selected group key order survives materializing the
+/// inner aggregate and lets both the join and the aggregate above it stream.
+#[test]
+fn tpcc_condition_four_streams_across_a_grouped_derived_table() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE orders (o_id INT NOT NULL, o_d_id INT NOT NULL, o_w_id INT NOT NULL, \
+            o_ol_cnt INT NOT NULL, PRIMARY KEY (o_w_id,o_d_id,o_id))",
+        &mut catalog,
+    )
+    .unwrap();
+    let TableEntry::Kv(orders) = catalog.get_mut_in("test", "orders").unwrap() else {
+        panic!("orders is not a KV table");
+    };
+    orders.add_index(crate::kv_table::KvIndex {
+        id: 1,
+        name: "PRIMARY".to_owned(),
+        unique: true,
+        prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 3],
+        column_offsets: vec![2, 1, 0],
+        visible: true,
+        global: false,
+    });
+    crate::run_create_table_on(
+        "CREATE TABLE order_line (ol_o_id INT NOT NULL, ol_d_id INT NOT NULL, \
+            ol_w_id INT NOT NULL, ol_number INT NOT NULL, \
+            PRIMARY KEY (ol_w_id,ol_d_id,ol_o_id,ol_number))",
+        &mut catalog,
+    )
+    .unwrap();
+    let TableEntry::Kv(order_line) = catalog.get_mut_in("test", "order_line").unwrap() else {
+        panic!("order_line is not a KV table");
+    };
+    order_line.add_index(crate::kv_table::KvIndex {
+        id: 2,
+        name: "PRIMARY".to_owned(),
+        unique: true,
+        prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 4],
+        column_offsets: vec![2, 1, 0, 3],
+        visible: true,
+        global: false,
+    });
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO orders VALUES (1,1,1,2),(2,2,1,1)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO order_line VALUES (1,1,1,1),(1,1,1,2),(2,2,1,1)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    let sql = "SELECT COUNT(*) FROM (SELECT o_d_id, SUM(o_ol_cnt) sm1, MAX(cn) cn \
+        FROM orders, (SELECT ol_d_id, COUNT(*) cn FROM order_line \
+        WHERE ol_w_id=1 GROUP BY ol_d_id) ol WHERE o_w_id=1 AND ol_d_id=o_d_id \
+        GROUP BY o_d_id) t1 WHERE sm1<>cn";
+    assert_eq!(
+        run_select_on(sql, &catalog, &ctx).unwrap(),
+        vec![vec![Datum::Int(0)]],
+    );
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let cell = |row: usize, column: usize| match &rows[row][column] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+    assert_eq!(
+        (0..rows.len()).map(|row| cell(row, 0)).collect::<Vec<_>>(),
+        vec![
+            "StreamAgg",
+            "└─Selection",
+            "  └─StreamAgg",
+            "    └─Projection",
+            "      └─MergeJoin",
+            "        ├─StreamAgg(Build)",
+            "        │ └─TableReader",
+            "        │   └─StreamAgg",
+            "        │     └─TableRangeScan",
+            "        └─TableReader(Probe)",
+            "          └─TableRangeScan",
+        ],
+    );
+    assert!(
+        cell(3, 4).starts_with("cast(test.orders.o_ol_cnt, decimal(10,0) BINARY)"),
+        "{}",
+        cell(3, 4)
+    );
+    assert!(cell(3, 4).ends_with("test.orders.o_d_id->Column#2"));
+    assert_eq!(
+        cell(1, 4),
+        "ne(Column#0, cast(Column#1, decimal(20,0) BINARY))"
+    );
+    assert_eq!(
+        cell(2, 4),
+        "group by:Column#2, funcs:sum(Column#0)->Column#0, funcs:max(Column#1)->Column#1"
+    );
+    assert!(!cell(2, 4).contains("firstrow"));
+    assert!(cell(4, 4).contains("right key:test.order_line.ol_d_id"));
+}
+
+/// TPCC condition 06: the predicate above a pass-through derived projection
+/// rejects the LEFT JOIN's NULL row, so Go simplifies it to an inner merge
+/// join. The fixed warehouse key then reaches both common-handle scans, while
+/// the nullable left comparison operand becomes a coprocessor IS NOT NULL
+/// filter.
+#[test]
+fn tpcc_condition_six_simplifies_and_pushes_through_derived_tables() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE orders (o_id INT NOT NULL, o_d_id INT NOT NULL, o_w_id INT NOT NULL, \
+            o_ol_cnt INT, PRIMARY KEY (o_w_id,o_d_id,o_id))",
+        &mut catalog,
+    )
+    .unwrap();
+    let TableEntry::Kv(orders) = catalog.get_mut_in("test", "orders").unwrap() else {
+        panic!("orders is not a KV table");
+    };
+    orders.add_index(crate::kv_table::KvIndex {
+        id: 1,
+        name: "PRIMARY".to_owned(),
+        unique: true,
+        prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 3],
+        column_offsets: vec![2, 1, 0],
+        visible: true,
+        global: false,
+    });
+    crate::run_create_table_on(
+        "CREATE TABLE order_line (ol_o_id INT NOT NULL, ol_d_id INT NOT NULL, \
+            ol_w_id INT NOT NULL, ol_number INT NOT NULL, \
+            PRIMARY KEY (ol_w_id,ol_d_id,ol_o_id,ol_number))",
+        &mut catalog,
+    )
+    .unwrap();
+    let TableEntry::Kv(order_line) = catalog.get_mut_in("test", "order_line").unwrap() else {
+        panic!("order_line is not a KV table");
+    };
+    order_line.add_index(crate::kv_table::KvIndex {
+        id: 2,
+        name: "PRIMARY".to_owned(),
+        unique: true,
+        prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 4],
+        column_offsets: vec![2, 1, 0, 3],
+        visible: true,
+        global: false,
+    });
+
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO orders VALUES (1,1,1,2),(2,1,1,2),(3,2,1,NULL),(4,1,2,1)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO order_line VALUES \
+            (1,1,1,1),(1,1,1,2),(2,1,1,1),(3,2,1,1),(4,1,2,1)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    let sql = "SELECT COUNT(*) FROM \
+        (SELECT o_ol_cnt, order_line_count FROM orders LEFT JOIN \
+          (SELECT ol_w_id, ol_d_id, ol_o_id, count(*) order_line_count \
+           FROM order_line GROUP BY ol_w_id, ol_d_id, ol_o_id \
+           ORDER BY ol_w_id, ol_d_id, ol_o_id) AS order_line \
+         ON orders.o_w_id=order_line.ol_w_id \
+         AND orders.o_d_id=order_line.ol_d_id \
+         AND orders.o_id=order_line.ol_o_id \
+         WHERE orders.o_w_id=1) AS T \
+        WHERE T.o_ol_cnt != T.order_line_count";
+    assert_eq!(
+        run_select_on(sql, &catalog, &ctx).unwrap(),
+        vec![vec![Datum::Int(1)]],
+    );
+
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let cell = |row: usize, column: usize| match &rows[row][column] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+    assert_eq!(
+        (0..rows.len()).map(|row| cell(row, 0)).collect::<Vec<_>>(),
+        vec![
+            "StreamAgg",
+            "└─MergeJoin",
+            "  ├─StreamAgg(Build)",
+            "  │ └─TableReader",
+            "  │   └─StreamAgg",
+            "  │     └─TableRangeScan",
+            "  └─TableReader(Probe)",
+            "    └─Selection",
+            "      └─TableRangeScan",
+        ],
+    );
+    assert_eq!(cell(1, 1), "9.99", "selection estimate={}", cell(7, 1));
+    assert!(cell(1, 4).contains("inner join"), "{}", cell(1, 4));
+    assert!(cell(1, 4).contains("other cond:ne("), "{}", cell(1, 4));
+    assert!(cell(1, 4).contains(", Column#"), "{}", cell(1, 4));
+    assert!(
+        cell(2, 4).starts_with(
+            "group by:test.order_line.ol_d_id, test.order_line.ol_o_id, \
+             test.order_line.ol_w_id, funcs:count(Column#"
+        ),
+        "{}",
+        cell(2, 4)
+    );
+    assert!(
+        cell(2, 4).contains(
+            "funcs:firstrow(test.order_line.ol_o_id)->test.order_line.ol_o_id, \
+             funcs:firstrow(test.order_line.ol_d_id)->test.order_line.ol_d_id, \
+             funcs:firstrow(test.order_line.ol_w_id)->test.order_line.ol_w_id"
+        ),
+        "{}",
+        cell(2, 4)
+    );
+    assert!(
+        cell(4, 4).starts_with(
+            "group by:test.order_line.ol_d_id, test.order_line.ol_o_id, \
+             test.order_line.ol_w_id, funcs:count(1)->Column#"
+        ),
+        "{}",
+        cell(4, 4)
+    );
+    assert!(cell(5, 4).contains("range:[1,1]"), "{}", cell(5, 4));
+    assert!(cell(5, 4).contains("keep order:true"), "{}", cell(5, 4));
+    assert!(cell(7, 4).contains("not(isnull("), "{}", cell(7, 4));
+    assert_eq!(cell(7, 1), "9.99");
+    assert!(cell(8, 4).contains("range:[1,1]"), "{}", cell(8, 4));
+    assert!(cell(8, 4).contains("keep order:true"), "{}", cell(8, 4));
+}
+
+/// TPCC condition 08: the fixed warehouse row is the ordered outer side of
+/// an IndexHashJoin into history's secondary index. The grouped SUM carries
+/// `w_ytd` through FIRST_ROW because the derived table's outer predicate
+/// compares that value with the aggregate result.
+#[test]
+fn tpcc_condition_eight_uses_index_join_and_carries_warehouse_ytd() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE warehouse (w_id INT PRIMARY KEY, w_ytd DECIMAL(12,2) NOT NULL)",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE history (h_w_id INT NOT NULL, h_amount DECIMAL(6,2) NOT NULL, \
+            KEY idx_h_w_id(h_w_id))",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO warehouse VALUES (1,10.00),(2,20.00)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO history VALUES (1,3.00),(1,4.00),(2,20.00)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    let sql = "SELECT count(*) cn FROM \
+        (SELECT w_id,w_ytd,SUM(h_amount) sm FROM history,warehouse \
+         WHERE h_w_id=w_id and w_id=1 GROUP BY w_id) t1 WHERE w_ytd<>sm";
+    assert_eq!(
+        run_select_on(sql, &catalog, &ctx).unwrap(),
+        vec![vec![Datum::Int(1)]],
+    );
+
+    crate::driver::join_search::ANSWERS.with(|answers| answers.borrow_mut().clear());
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let answers = crate::driver::join_search::ANSWERS.with(|answers| answers.borrow().clone());
+    assert_eq!(answers.len(), 1, "{answers:#?}");
+    assert_eq!(
+        answers[0].chosen,
+        crate::driver::join_search::Chosen::IndexForSingleOuterRow,
+        "{answers:#?}"
+    );
+    let cell = |row: usize, column: usize| match &rows[row][column] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+    assert_eq!(
+        (0..rows.len()).map(|row| cell(row, 0)).collect::<Vec<_>>(),
+        vec![
+            "StreamAgg",
+            "└─Selection",
+            "  └─StreamAgg",
+            "    └─Projection",
+            "      └─IndexHashJoin",
+            "        ├─Point_Get(Build)",
+            "        └─IndexLookUp(Probe)",
+            "          ├─Selection(Build)",
+            "          │ └─IndexRangeScan",
+            "          └─TableRowIDScan(Probe)",
+        ],
+        "{rows:#?}",
+    );
+    assert_eq!(
+        cell(1, 4),
+        "ne(test.warehouse.w_ytd, Column#1)",
+        "{rows:#?}"
+    );
+    for row in [3, 4, 6, 7, 9] {
+        assert_eq!(cell(row, 1), "1.25", "{rows:#?}");
+    }
+    assert_eq!(cell(8, 1), "1250.00", "{rows:#?}");
+    assert_eq!(
+        cell(3, 4),
+        "test.history.h_amount, test.warehouse.w_id, test.warehouse.w_ytd"
+    );
+    assert!(cell(2, 4).contains("funcs:sum(test.history.h_amount)->Column#"));
+    assert!(
+        cell(2, 4).contains("funcs:firstrow(test.warehouse.w_ytd)->test.warehouse.w_ytd"),
+        "{}",
+        cell(2, 4)
+    );
+    assert!(cell(4, 4).contains("outer key:test.warehouse.w_id"));
+    assert!(cell(4, 4).contains("inner key:test.history.h_w_id"));
+    assert!(cell(5, 3).contains("table:warehouse"));
+    assert!(cell(8, 4).contains("range: decided by"));
+}
+
+/// TPCC condition 09 starts with a grouped district relation whose two group
+/// keys are the complete clustered primary key. Every group therefore holds
+/// at most one row, so Go eliminates the aggregation and widens the nullable
+/// DECIMAL `SUM` argument with a real projection cast.
+#[test]
+fn tpcc_condition_nine_eliminates_the_unique_district_aggregation() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE district (d_id INT NOT NULL, d_w_id INT NOT NULL, \
+            d_ytd DECIMAL(12,2), PRIMARY KEY (d_w_id,d_id))",
+        &mut catalog,
+    )
+    .unwrap();
+    let TableEntry::Kv(district) = catalog.get_mut_in("test", "district").unwrap() else {
+        panic!("district is not a KV table");
+    };
+    district.add_index(crate::kv_table::KvIndex {
+        id: 1,
+        name: "PRIMARY".to_owned(),
+        unique: true,
+        prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 2],
+        column_offsets: vec![1, 0],
+        visible: true,
+        global: false,
+    });
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO district VALUES (1,1,10.25),(2,1,NULL),(1,2,20.50)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    let sql = "SELECT d_id,d_w_id,SUM(d_ytd) s1 FROM district \
+        WHERE d_w_id=1 GROUP BY d_id,d_w_id";
+    let (columns, rows) = crate::run_select_meta_on(sql, &catalog, &ctx).unwrap();
+    assert_eq!(rows.len(), 2, "{rows:#?}");
+    assert!(rows.iter().any(|row| matches!(row[2], Datum::Null)));
+    assert_eq!(columns[2].1.code(), FieldTypeCode::NewDecimal);
+    assert_eq!(columns[2].1.flen(), 34);
+    assert_eq!(columns[2].1.decimal(), 2);
+
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, plan) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let cell = |row: usize, column: usize| match &plan[row][column] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+    assert_eq!(
+        (0..plan.len()).map(|row| cell(row, 0)).collect::<Vec<_>>(),
+        vec!["Projection", "└─TableReader", "  └─TableRangeScan"],
+        "{plan:#?}",
+    );
+    assert_eq!(
+        cell(0, 4),
+        "test.district.d_id, test.district.d_w_id, \
+         cast(test.district.d_ytd, decimal(34,2) BINARY)->Column#2"
+    );
+    assert_eq!(cell(1, 4), "data:TableRangeScan");
+    assert!(cell(2, 4).contains("range:[1,1]"), "{}", cell(2, 4));
+    assert!(cell(2, 4).contains("keep order:false"), "{}", cell(2, 4));
+}
+
+/// The other half of TPCC condition 09 is a grouped `history` derived table.
+/// Go retains that aggregation while rebuilding its indexed base-table read
+/// for each district probe.  The lookup path must therefore aggregate the
+/// fetched base rows before matching the derived outputs, including NULL SUM
+/// behavior, rather than joining raw history rows.
+#[test]
+fn tpcc_condition_nine_rebuilds_grouped_history_over_index_lookup() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE district (d_id INT NOT NULL, d_w_id INT NOT NULL, \
+            d_ytd DECIMAL(12,2), PRIMARY KEY (d_w_id,d_id))",
+        &mut catalog,
+    )
+    .unwrap();
+    let TableEntry::Kv(district) = catalog.get_mut_in("test", "district").unwrap() else {
+        panic!("district is not a KV table");
+    };
+    district.add_index(crate::kv_table::KvIndex {
+        id: 1,
+        name: "PRIMARY".to_owned(),
+        unique: true,
+        prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 2],
+        column_offsets: vec![1, 0],
+        visible: true,
+        global: false,
+    });
+    crate::run_create_table_on(
+        "CREATE TABLE history (h_d_id INT NOT NULL, h_w_id INT NOT NULL, \
+            h_amount DECIMAL(6,2), KEY idx_h_w_id(h_w_id))",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO district VALUES (1,1,10.00),(2,1,20.00),(1,2,30.00)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO history VALUES \
+            (1,1,4.00),(1,1,6.00),(1,1,NULL),(2,1,8.00),(1,2,30.00)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    let sql = "SELECT COUNT(*) FROM \
+        (SELECT d_id,d_w_id,SUM(d_ytd) s1 FROM district \
+         GROUP BY d_id,d_w_id) d, \
+        (SELECT h_d_id,h_w_id,SUM(h_amount) s2 FROM history \
+         WHERE h_w_id=1 GROUP BY h_d_id,h_w_id) h \
+        WHERE h_d_id=d_id AND d_w_id=h_w_id AND d_w_id=1 AND s1<>s2";
+    assert_eq!(
+        run_select_on(sql, &catalog, &ctx).unwrap(),
+        vec![vec![Datum::Int(1)]],
+    );
+
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, plan) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let cell = |row: usize, column: usize| match &plan[row][column] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+    let operators = plan
+        .iter()
+        .map(|row| match &row[0] {
+            Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+            other => format!("{other:?}"),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        operators,
+        vec![
+            "StreamAgg",
+            "└─IndexHashJoin",
+            "  ├─Projection(Build)",
+            "  │ └─TableReader",
+            "  │   └─Selection",
+            "  │     └─TableRangeScan",
+            "  └─Selection(Probe)",
+            "    └─HashAgg",
+            "      └─IndexLookUp",
+            "        ├─Selection(Build)",
+            "        │ └─IndexRangeScan",
+            "        └─TableRowIDScan(Probe)",
+        ],
+        "{plan:#?}",
+    );
+    assert_eq!(
+        cell(4, 4),
+        "not(isnull(cast(test.district.d_ytd, decimal(34,2) BINARY)))"
+    );
+    let answers = crate::driver::join_search::ANSWERS.with(|answers| answers.borrow().clone());
+    assert!(
+        operators
+            .iter()
+            .any(|operator| operator.contains("IndexHashJoin")),
+        "{plan:#?}\n{answers:#?}",
+    );
+}
+
+/// TPCC condition 11 pushes its outer predicates through two levels of
+/// pass-through derived projections. Go pins all three grouped leaves to the
+/// requested warehouse, places the aggregate comparison on the inner join,
+/// and preserves the grouped index orders through two merge joins.
+#[test]
+fn tpcc_condition_eleven_pushes_filters_through_nested_derived_joins() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE customer (c_id INT NOT NULL, c_d_id INT NOT NULL, c_w_id INT NOT NULL, \
+         c_first VARCHAR(16), c_middle CHAR(2), c_last VARCHAR(16), \
+         c_street_1 VARCHAR(20), c_street_2 VARCHAR(20), c_city VARCHAR(20), c_state CHAR(2), \
+         c_zip CHAR(9), c_phone CHAR(16), c_since DATETIME, c_credit CHAR(2), \
+         c_credit_lim DECIMAL(12,2), c_discount DECIMAL(4,4), c_balance DECIMAL(12,2), \
+         c_ytd_payment DECIMAL(12,2), c_payment_cnt INT, c_delivery_cnt INT, \
+         c_data VARCHAR(500), \
+         PRIMARY KEY(c_w_id,c_d_id,c_id), \
+         KEY idx_customer(c_w_id,c_d_id,c_last,c_first))",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE orders (o_id INT NOT NULL, o_d_id INT NOT NULL, o_w_id INT NOT NULL, \
+         o_c_id INT, o_entry_d DATETIME, o_carrier_id INT, o_ol_cnt INT, o_all_local INT, \
+         PRIMARY KEY(o_w_id,o_d_id,o_id), \
+         KEY idx_order(o_w_id,o_d_id,o_c_id,o_id))",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE new_order (no_o_id INT NOT NULL, no_d_id INT NOT NULL, \
+         no_w_id INT NOT NULL, PRIMARY KEY(no_w_id,no_d_id,no_o_id))",
+        &mut catalog,
+    )
+    .unwrap();
+
+    for (table_name, indexes) in [
+        (
+            "customer",
+            vec![
+                ("PRIMARY", true, vec![2, 1, 0]),
+                ("idx_customer", false, vec![2, 1, 5, 3]),
+            ],
+        ),
+        (
+            "orders",
+            vec![
+                ("PRIMARY", true, vec![2, 1, 0]),
+                ("idx_order", false, vec![2, 1, 3, 0]),
+            ],
+        ),
+        ("new_order", vec![("PRIMARY", true, vec![2, 1, 0])]),
+    ] {
+        let TableEntry::Kv(table) = catalog.get_mut_in("test", table_name).unwrap() else {
+            panic!("{table_name} is not a KV table");
+        };
+        for (position, (name, unique, column_offsets)) in indexes.into_iter().enumerate() {
+            table.add_index(crate::kv_table::KvIndex {
+                id: (position + 1) as i64,
+                name: name.to_owned(),
+                unique,
+                prefix_lengths: vec![
+                    crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
+                    column_offsets.len()
+                ],
+                column_offsets,
+                visible: true,
+                global: false,
+            });
+        }
+    }
+
+    // Keep one matching group and one filtered warehouse so predicate
+    // placement is observable in both the answer and the physical plan.
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO customer(c_id,c_d_id,c_w_id,c_first,c_last) VALUES \
+         (1,1,1,'A','A'),(2,1,1,'B','B'),(1,1,2,'C','C')",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO orders(o_id,o_d_id,o_w_id,o_c_id) VALUES \
+         (1,1,1,1),(2,1,1,2),(1,1,2,1)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO new_order VALUES (1,1,1),(1,1,2)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    let sql = "SELECT count(*) FROM \
+        (SELECT * FROM \
+          (SELECT o_w_id, o_d_id, count(*) order_count FROM orders \
+           GROUP BY o_w_id, o_d_id) orders \
+          JOIN \
+          (SELECT no_w_id, no_d_id, count(*) new_order_count FROM new_order \
+           GROUP BY no_w_id, no_d_id) new_order \
+          ON orders.o_w_id = new_order.no_w_id \
+             AND orders.o_d_id = new_order.no_d_id) order_new_order \
+        JOIN \
+        (SELECT c_w_id, c_d_id, count(*) customer_count FROM customer \
+         GROUP BY c_w_id, c_d_id) customer \
+        ON order_new_order.no_w_id = customer.c_w_id \
+           AND order_new_order.no_d_id = customer.c_d_id \
+        WHERE c_w_id = 1 AND order_count - 2100 != new_order_count";
+    assert_eq!(
+        run_select_on(sql, &catalog, &ctx).unwrap(),
+        vec![vec![Datum::Int(1)]]
+    );
+
+    let statement = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &statement else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, plan) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let cell = |row: &[Datum], column: usize| match &row[column] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+    let operators = plan.iter().map(|row| cell(row, 0)).collect::<Vec<_>>();
+    let details = plan.iter().map(|row| cell(row, 4)).collect::<Vec<_>>();
+    let access = plan.iter().map(|row| cell(row, 3)).collect::<Vec<_>>();
+
+    assert_eq!(
+        operators
+            .iter()
+            .filter(|operator| operator.contains("MergeJoin"))
+            .count(),
+        2,
+        "{operators:#?}\n{details:#?}\n{access:#?}"
+    );
+    let merge_details = operators
+        .iter()
+        .zip(&details)
+        .filter_map(|(operator, detail)| operator.contains("MergeJoin").then_some(detail))
+        .collect::<Vec<_>>();
+    assert_eq!(merge_details.len(), 2, "{operators:#?}\n{details:#?}");
+    assert!(
+        merge_details[0].contains("left key:test.new_order.no_w_id, test.new_order.no_d_id")
+            && merge_details[0]
+                .contains("right key:test.customer.c_w_id, test.customer.c_d_id"),
+        "top join must keep Go TiDB's order_new_order-to-customer orientation:\n{operators:#?}\n{details:#?}"
+    );
+    assert!(
+        merge_details[1].contains("left key:test.orders.o_w_id, test.orders.o_d_id")
+            && merge_details[1]
+                .contains("right key:test.new_order.no_w_id, test.new_order.no_d_id"),
+        "nested join must keep Go TiDB's orders-to-new_order orientation:\n{operators:#?}\n{details:#?}"
+    );
+    assert!(
+        operators.iter().all(|operator| {
+            !operator.contains("HashJoin")
+                && !operator.contains("Selection")
+                && !operator.contains("Projection")
+                && !operator.contains("FullScan")
+        }),
+        "{operators:#?}\n{details:#?}\n{access:#?}"
+    );
+    assert_eq!(
+        operators
+            .iter()
+            .filter(|operator| operator.contains("RangeScan"))
+            .count(),
+        3,
+        "{operators:#?}\n{details:#?}\n{access:#?}"
+    );
+    assert!(
+        details.iter().any(|detail| {
+            detail.contains("other cond:ne(minus(") && detail.contains(", 2100)")
+        }),
+        "{operators:#?}\n{details:#?}\n{access:#?}"
+    );
+    assert!(
+        access
+            .iter()
+            .any(|object| object.contains("customer") && object.contains("idx_customer")),
+        "{operators:#?}\n{details:#?}\n{access:#?}"
+    );
+    assert!(
+        access
+            .iter()
+            .any(|object| object.contains("orders") && object.contains("idx_order")),
+        "{operators:#?}\n{details:#?}\n{access:#?}"
+    );
+    let customer_aggregation = details
+        .iter()
+        .find(|detail| detail.starts_with("group by:test.customer.c_d_id"))
+        .expect("customer grouped StreamAgg");
+    let customer_district = customer_aggregation
+        .find("funcs:firstrow(test.customer.c_d_id)->test.customer.c_d_id")
+        .expect("customer district carrier");
+    let customer_warehouse = customer_aggregation
+        .find("funcs:firstrow(test.customer.c_w_id)->test.customer.c_w_id")
+        .expect("customer warehouse carrier");
+    let synthetic_count = customer_aggregation
+        .find("funcs:count(Column#")
+        .expect("synthetic customer row count");
+    assert!(
+        customer_district < customer_warehouse && customer_warehouse < synthetic_count,
+        "Go appends the synthetic COUNT after surviving FIRST_ROW carriers: {customer_aggregation}"
+    );
+}
+
+#[test]
+fn tpcc_condition_two_orders_group_uses_the_covering_index_range() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE orders (o_id INT NOT NULL, o_d_id INT NOT NULL, o_w_id INT NOT NULL, \
+            o_c_id INT, o_entry_d DATETIME, o_carrier_id INT, o_ol_cnt INT, o_all_local INT, \
+            PRIMARY KEY (o_w_id,o_d_id,o_id), \
+            KEY idx_order (o_w_id,o_d_id,o_c_id,o_id))",
+        &mut catalog,
+    )
+    .unwrap();
+    let TableEntry::Kv(orders) = catalog.get_mut_in("test", "orders").unwrap() else {
+        panic!("orders is not a KV table");
+    };
+    orders.add_index(crate::kv_table::KvIndex {
+        id: 1,
+        name: "PRIMARY".to_owned(),
+        unique: true,
+        prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 3],
+        column_offsets: vec![2, 1, 0],
+        visible: true,
+        global: false,
+    });
+    orders.add_index(crate::kv_table::KvIndex {
+        id: 2,
+        name: "idx_order".to_owned(),
+        unique: false,
+        prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 4],
+        column_offsets: vec![2, 1, 3, 0],
+        visible: true,
+        global: false,
+    });
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO orders VALUES \
+            (1,1,1,10,NULL,NULL,1,1),(2,1,1,20,NULL,NULL,1,1),\
+            (3,2,1,30,NULL,NULL,1,1),(4,1,2,40,NULL,NULL,1,1)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    let sql = "SELECT o_d_id, MAX(o_id) mo FROM orders WHERE o_w_id=1 GROUP BY o_d_id";
+    assert_eq!(
+        run_select_on(sql, &catalog, &ctx).unwrap(),
+        vec![
+            vec![Datum::Int(1), Datum::Int(2)],
+            vec![Datum::Int(2), Datum::Int(3)],
+        ]
+    );
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let cell = |row: usize, column: usize| match &rows[row][column] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+    let plan = (0..rows.len())
+        .map(|row| (cell(row, 0), cell(row, 3), cell(row, 4)))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        plan.iter()
+            .map(|(operator, _, _)| operator.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "Projection",
+            "└─StreamAgg",
+            "  └─IndexReader",
+            "    └─StreamAgg",
+            "      └─IndexRangeScan",
+        ]
+    );
+    assert!(
+        plan.iter().any(|(operator, access, info)| {
+            operator.contains("IndexRangeScan")
+                && access.contains("idx_order")
+                && info.contains("range:[1,1]")
+                && info.contains("keep order:true")
+        }),
+        "{plan:#?}"
+    );
+
+    crate::run_create_table_on(
+        "CREATE TABLE district (d_id INT NOT NULL, d_w_id INT NOT NULL, \
+            d_next_o_id INT NOT NULL, PRIMARY KEY (d_w_id,d_id))",
+        &mut catalog,
+    )
+    .unwrap();
+    let TableEntry::Kv(district) = catalog.get_mut_in("test", "district").unwrap() else {
+        panic!("district is not a KV table");
+    };
+    district.add_index(crate::kv_table::KvIndex {
+        id: 3,
+        name: "PRIMARY".to_owned(),
+        unique: true,
+        prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 2],
+        column_offsets: vec![1, 0],
+        visible: true,
+        global: false,
+    });
+    crate::run_create_table_on(
+        "CREATE TABLE new_order (no_o_id INT NOT NULL, no_d_id INT NOT NULL, \
+            no_w_id INT NOT NULL, PRIMARY KEY (no_w_id,no_d_id,no_o_id))",
+        &mut catalog,
+    )
+    .unwrap();
+    let TableEntry::Kv(new_order) = catalog.get_mut_in("test", "new_order").unwrap() else {
+        panic!("new_order is not a KV table");
+    };
+    new_order.add_index(crate::kv_table::KvIndex {
+        id: 4,
+        name: "PRIMARY".to_owned(),
+        unique: true,
+        prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 3],
+        column_offsets: vec![2, 1, 0],
+        visible: true,
+        global: false,
+    });
+    run_insert_on(
+        "INSERT INTO district VALUES (1,1,5),(2,1,6),(1,2,10)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO new_order VALUES (2,1,1),(3,2,1),(9,1,2)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    let condition = "SELECT POWER((d_next_o_id-1-mo),2) + \
+        POWER((d_next_o_id-1-mno),2) diff FROM district dis, \
+        (SELECT o_d_id,MAX(o_id) mo FROM orders WHERE o_w_id=1 GROUP BY o_d_id) q, \
+        (SELECT no_d_id,MAX(no_o_id) mno FROM new_order WHERE no_w_id=1 \
+        GROUP BY no_d_id) no WHERE d_w_id=1 AND q.o_d_id=dis.d_id \
+        AND no.no_d_id=dis.d_id";
+    assert_eq!(
+        run_select_on(condition, &catalog, &ctx).unwrap(),
+        vec![vec![Datum::Real(8.0)], vec![Datum::Real(8.0)]],
+    );
+    let stmt = tidb_parser::parse(condition).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let cell = |row: usize, column: usize| match &rows[row][column] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+    assert_eq!(cell(0, 1), "10.00");
+    assert!(
+        cell(0, 4)
+            .starts_with("plus(power(cast(minus(minus(test.district.d_next_o_id, 1), Column#"),
+        "{}",
+        cell(0, 4)
+    );
+    assert!(cell(0, 4).ends_with(")->Column#0"), "{}", cell(0, 4));
+    assert_eq!(cell(1, 1), "10.00");
+    assert!(
+        cell(1, 4).contains("left key:test.district.d_id"),
+        "{}",
+        cell(1, 4)
+    );
+    assert!(
+        cell(6, 4).contains("left key:test.district.d_id"),
+        "{}",
+        cell(6, 4)
+    );
+}
+
+/// Go splits a pseudo-statistics Sysbench SUM range into partial/final
+/// StreamAgg stages. The partial result is already DECIMAL, so the root cast
+/// projection used by the one-row plan is absent.
+#[test]
+fn global_integer_sum_uses_gos_stream_agg_and_cast_projection() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE sum_range (id INT PRIMARY KEY, k INT NOT NULL)",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO sum_range VALUES (1, 10), (2, 20)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    let sql = "SELECT SUM(k) FROM sum_range WHERE id BETWEEN 1 AND 100";
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let cell = |row: usize, column: usize| match &rows[row][column] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+    assert_eq!(
+        (0..rows.len()).map(|row| cell(row, 0)).collect::<Vec<_>>(),
+        vec![
+            "StreamAgg",
+            "└─TableReader",
+            "  └─StreamAgg",
+            "    └─TableRangeScan"
+        ]
+    );
+    assert_eq!(
+        (0..rows.len()).map(|row| cell(row, 2)).collect::<Vec<_>>(),
+        vec!["root", "root", "cop[tikv]", "cop[tikv]"]
+    );
+    assert!(cell(0, 4).starts_with("funcs:sum(Column#"));
+    assert!(cell(2, 4).contains("funcs:sum(test.sum_range.k)->Column#"));
+    assert_eq!(
+        run_select_on(sql, &catalog, &ctx).unwrap(),
+        vec![vec![Datum::Decimal(tidb_datatype::Decimal::from_int(30))]]
+    );
+}
+
+/// Go keeps Sysbench's random-range COUNT on the covering secondary index and
+/// places a partial StreamAgg over that scan below the IndexReader.
+#[test]
+fn global_count_over_index_ranges_uses_gos_stream_agg_and_index_reader() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE count_ranges (id INT PRIMARY KEY, k INT NOT NULL, KEY k_1(k))",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO count_ranges VALUES (1, 1), (2, 15), (3, 20)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    let sql = concat!(
+        "SELECT COUNT(k) FROM count_ranges WHERE ",
+        "(k BETWEEN 1 AND 6) OR (k BETWEEN 2 AND 7) OR ",
+        "(k BETWEEN 3 AND 8) OR (k BETWEEN 4 AND 9) OR ",
+        "(k BETWEEN 5 AND 10) OR (k BETWEEN 6 AND 11) OR ",
+        "(k BETWEEN 7 AND 12) OR (k BETWEEN 8 AND 13) OR ",
+        "(k BETWEEN 9 AND 14) OR (k BETWEEN 10 AND 15)"
+    );
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let cell = |row: usize, column: usize| match &rows[row][column] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+    assert_eq!(
+        (0..rows.len()).map(|row| cell(row, 0)).collect::<Vec<_>>(),
+        vec![
+            "StreamAgg",
+            "└─IndexReader",
+            "  └─StreamAgg",
+            "    └─IndexRangeScan"
+        ]
+    );
+    assert_eq!(
+        (0..rows.len()).map(|row| cell(row, 2)).collect::<Vec<_>>(),
+        vec!["root", "root", "cop[tikv]", "cop[tikv]"]
+    );
+    assert!(cell(0, 4).starts_with("funcs:count(Column#"));
+    assert_eq!(cell(1, 4), "index:StreamAgg");
+    assert!(cell(2, 4).starts_with("funcs:count(test.count_ranges.k)->Column#"));
+    assert!(cell(3, 3).contains("index:k_1(k)"));
+    assert_eq!(
+        run_select_on(sql, &catalog, &ctx).unwrap(),
+        vec![vec![Datum::Int(2)]]
+    );
+}
+
 #[test]
 fn aggregate_selects() {
     let catalog = test_catalog();
@@ -328,6 +1615,62 @@ fn select_distinct() {
             vec![Datum::Decimal(tidb_datatype::Decimal::from_int(9))],
         ]
     );
+}
+
+/// A pseudo-statistics Sysbench DISTINCT range is physically `Sort -> final
+/// HashAgg -> Reader -> partial HashAgg -> cop Scan`; the identity FIRST_ROW
+/// output projection is absorbed by the final aggregate.
+#[test]
+fn distinct_range_orders_gos_hash_agg_over_reader_tree() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE distinct_range (id INT PRIMARY KEY, c CHAR(4))",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO distinct_range VALUES (1, 'b'), (2, 'a'), (3, 'b')",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    let sql = "SELECT DISTINCT c FROM distinct_range WHERE id BETWEEN 1 AND 100 ORDER BY c";
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let cell = |row: usize, column: usize| match &rows[row][column] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+    assert_eq!(
+        (0..rows.len()).map(|row| cell(row, 0)).collect::<Vec<_>>(),
+        vec![
+            "Sort",
+            "└─HashAgg",
+            "  └─TableReader",
+            "    └─HashAgg",
+            "      └─TableRangeScan"
+        ]
+    );
+    assert_eq!(
+        (0..rows.len()).map(|row| cell(row, 2)).collect::<Vec<_>>(),
+        vec!["root", "root", "root", "cop[tikv]", "cop[tikv]"]
+    );
+    let values = run_select_on(sql, &catalog, &ctx)
+        .unwrap()
+        .into_iter()
+        .map(|row| row[0].sql_string().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(values, vec!["a", "b"]);
 }
 
 /// `BIT_AND`/`BIT_OR`/`BIT_XOR` return BIGINT **UNSIGNED**.

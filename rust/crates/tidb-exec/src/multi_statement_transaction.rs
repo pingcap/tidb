@@ -59,7 +59,7 @@ use tidb_tablecodec::decode_table_row_to_map;
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{
     CommitProtocol, LockKeepAlive, LockWaitTime, OptimisticCommitOutcome,
-    OptimisticCoordinatorError, OptimisticMutationKind, PessimisticLockFailure,
+    OptimisticCoordinatorError, OptimisticMutation, OptimisticMutationKind, PessimisticLockFailure,
     ProductionOptimisticTransaction, ProductionPessimisticTransaction,
     RealOptimisticTransactionOpener, TransactionMutationBuffer, MAX_OPTIMISTIC_MUTATIONS,
     MAX_OPTIMISTIC_TRANSACTION_BYTES,
@@ -79,6 +79,9 @@ use crate::real_tikv_dml::{
 /// `None` is a row the transaction deleted; `Some(row)` is its value in the
 /// read's own projection. A reader applies these over the snapshot's rows.
 pub type StagedRowOverlay = Vec<(i64, Option<Vec<Datum>>)>;
+
+/// Raw TiKV key/value pairs returned by a transaction snapshot scan.
+pub type RawSnapshotPairs = Vec<(Vec<u8>, Vec<u8>)>;
 
 /// How many times one locking statement re-acquires under a fresh
 /// `for_update_ts` after a write conflict.
@@ -155,6 +158,19 @@ impl std::fmt::Display for TransactionStatementError {
 
 impl std::error::Error for TransactionStatementError {}
 
+/// The result of one raw pessimistic lock attempt.
+///
+/// `Retry` means TiKV granted or rejected the lock because a newer commit was
+/// observed, advanced the transaction's `for_update_ts`, and left the caller
+/// responsible for rerunning the whole SQL statement at that timestamp.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum LockKeysOutcome {
+    /// Every requested key is held by this transaction.
+    Acquired,
+    /// The statement must be recomputed from the transaction's new read view.
+    Retry(LockSqlError),
+}
+
 /// How one transaction ended.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TransactionEnd {
@@ -175,19 +191,46 @@ enum OpenTransaction {
 }
 
 impl OpenTransaction {
-    /// The two-phase commit coordinator underneath, which is what serves every
-    /// snapshot read in either mode.
-    fn two_pc(&mut self) -> &mut ProductionOptimisticTransaction {
-        match self {
-            Self::Optimistic(transaction) => transaction,
-            Self::Pessimistic(transaction) => transaction.snapshot(),
-        }
-    }
-
     fn start_ts(&self) -> u64 {
         match self {
             Self::Optimistic(transaction) => transaction.start_ts(),
             Self::Pessimistic(transaction) => transaction.start_ts(),
+        }
+    }
+
+    fn statement_read_ts(&self) -> u64 {
+        match self {
+            Self::Optimistic(transaction) => transaction.start_ts(),
+            Self::Pessimistic(transaction) => transaction.statement_read_ts(),
+        }
+    }
+
+    fn snapshot_get(
+        &mut self,
+        key: &[u8],
+        call: &UnaryCallContext,
+    ) -> Result<Option<Vec<u8>>, OptimisticCoordinatorError> {
+        match self {
+            Self::Optimistic(transaction) => transaction.snapshot_get(key, call),
+            Self::Pessimistic(transaction) => transaction.statement_snapshot_get(key, call),
+        }
+        .map(|result| result.value)
+    }
+
+    fn snapshot_scan(
+        &mut self,
+        start_key: &[u8],
+        end_key: &[u8],
+        limit: Option<usize>,
+        call: &UnaryCallContext,
+    ) -> Result<RawSnapshotPairs, OptimisticCoordinatorError> {
+        match self {
+            Self::Optimistic(transaction) => {
+                transaction.snapshot_scan(start_key, end_key, limit, call)
+            }
+            Self::Pessimistic(transaction) => {
+                transaction.statement_snapshot_scan(start_key, end_key, limit, call)
+            }
         }
     }
 }
@@ -205,7 +248,7 @@ pub struct MultiStatementTransaction {
     mode: SessionTxnMode,
     /// The one table this node serves, needed to turn a clustered handle into
     /// the record key the buffer is keyed by.
-    table: ConfiguredTable,
+    table: Option<ConfiguredTable>,
     buffer: TransactionMutationBuffer,
     /// Per-statement RPC budget. Stored as a duration, never as an already
     /// minted [`UnaryCallContext`]: that type carries an absolute deadline, so
@@ -232,6 +275,36 @@ impl MultiStatementTransaction {
         fair_locking: bool,
         commit_protocol: CommitProtocol,
         table: ConfiguredTable,
+        timeout: Duration,
+    ) -> Result<Self, OptimisticCoordinatorError> {
+        Self::begin_with_table(
+            opener,
+            mode,
+            fair_locking,
+            commit_protocol,
+            Some(table),
+            timeout,
+        )
+    }
+
+    /// Opens a transaction for a wide-SQL cluster session, whose statement
+    /// executor supplies raw TiKV keys instead of one configured table.
+    pub fn begin_unconfigured(
+        opener: &RealOptimisticTransactionOpener,
+        mode: SessionTxnMode,
+        fair_locking: bool,
+        commit_protocol: CommitProtocol,
+        timeout: Duration,
+    ) -> Result<Self, OptimisticCoordinatorError> {
+        Self::begin_with_table(opener, mode, fair_locking, commit_protocol, None, timeout)
+    }
+
+    fn begin_with_table(
+        opener: &RealOptimisticTransactionOpener,
+        mode: SessionTxnMode,
+        fair_locking: bool,
+        commit_protocol: CommitProtocol,
+        table: Option<ConfiguredTable>,
         timeout: Duration,
     ) -> Result<Self, OptimisticCoordinatorError> {
         let open = match mode {
@@ -335,6 +408,41 @@ impl MultiStatementTransaction {
         self.open.start_ts()
     }
 
+    /// Timestamp the next statement reads at.
+    ///
+    /// It remains `start_ts` in optimistic mode. In pessimistic mode it is
+    /// the current `for_update_ts`, which advances when lock acquisition
+    /// discovers a newer committed version.
+    #[must_use]
+    pub fn statement_read_ts(&self) -> u64 {
+        self.open.statement_read_ts()
+    }
+
+    /// Reads one raw key at the transaction's current statement timestamp.
+    ///
+    /// The wide-SQL storage layer uses this instead of the configured-table
+    /// row overlay path. The transaction's lock and commit timestamp remain
+    /// separate from this read version in pessimistic mode.
+    pub fn snapshot_get_raw(
+        &mut self,
+        key: &[u8],
+        call: &UnaryCallContext,
+    ) -> Result<Option<Vec<u8>>, OptimisticCoordinatorError> {
+        self.open.snapshot_get(key, call)
+    }
+
+    /// Scans one raw key range at the transaction's current statement
+    /// timestamp, for the wide-SQL storage layer.
+    pub fn snapshot_scan_raw(
+        &mut self,
+        start_key: &[u8],
+        end_key: &[u8],
+        limit: Option<usize>,
+        call: &UnaryCallContext,
+    ) -> Result<RawSnapshotPairs, OptimisticCoordinatorError> {
+        self.open.snapshot_scan(start_key, end_key, limit, call)
+    }
+
     /// The mode this transaction runs in.
     #[must_use]
     pub const fn mode(&self) -> SessionTxnMode {
@@ -356,7 +464,8 @@ impl MultiStatementTransaction {
     /// the snapshot's rows.
     #[must_use]
     pub fn staged_row(&self, handle: i64) -> Option<Option<&[u8]>> {
-        let key = encode_row_key_with_handle(self.table.table_id(), &RecordHandle::Int(handle));
+        let table = self.table.as_ref()?;
+        let key = encode_row_key_with_handle(table.table_id(), &RecordHandle::Int(handle));
         let staged = self.buffer.staged(&key)?;
         match staged.kind() {
             OptimisticMutationKind::Delete => Some(None),
@@ -392,6 +501,11 @@ impl MultiStatementTransaction {
         projection: &[ResolvedProjectionColumn],
         ranges: &[SignedBigIntRange],
     ) -> Result<StagedRowOverlay, TransactionStatementError> {
+        let Some(table) = self.table.as_ref() else {
+            return Err(TransactionStatementError::refused(
+                "a configured table is required for staged row overlay",
+            ));
+        };
         let mut overlay = Vec::new();
         for staged in self.buffer.staged_entries() {
             // Only record keys carry rows; a secondary-index entry changes no
@@ -399,7 +513,7 @@ impl MultiStatementTransaction {
             let Ok((table_id, RecordHandle::Int(handle))) = decode_record_key(staged.key()) else {
                 continue;
             };
-            if table_id != self.table.table_id()
+            if table_id != table.table_id()
                 || !ranges
                     .iter()
                     .any(|range| range.start() <= handle && handle <= range.end())
@@ -496,7 +610,13 @@ impl MultiStatementTransaction {
         let keys = handles
             .iter()
             .map(|handle| {
-                encode_row_key_with_handle(self.table.table_id(), &RecordHandle::Int(*handle))
+                encode_row_key_with_handle(
+                    self.table
+                        .as_ref()
+                        .expect("handle locks require a configured table")
+                        .table_id(),
+                    &RecordHandle::Int(*handle),
+                )
             })
             .collect::<Vec<_>>();
         let wait = match wait {
@@ -584,6 +704,103 @@ impl MultiStatementTransaction {
         Ok(())
     }
 
+    /// Attempts one raw-key lock batch and advances `for_update_ts` when the
+    /// caller must rerun the whole SQL statement at the newer read timestamp.
+    ///
+    /// This is the wide-SQL counterpart of [`Self::lock_handles`]. It accepts
+    /// record and index keys because a general executor does not have one
+    /// configured table to turn handles into keys.
+    pub fn lock_keys_once(
+        &mut self,
+        keys: &[Vec<u8>],
+        presume_not_exists: &BTreeSet<Vec<u8>>,
+        wait: ReadLockWait,
+    ) -> Result<LockKeysOutcome, TransactionStatementError> {
+        if keys.is_empty() {
+            return Ok(LockKeysOutcome::Acquired);
+        }
+        if !self.mode.is_pessimistic() {
+            return Err(TransactionStatementError::refused(
+                "a locking read requires a pessimistic transaction; optimistic transactions \
+                 detect conflicts at COMMIT",
+            ));
+        }
+        let wait = match wait {
+            ReadLockWait::Blocking => LockWaitTime::session_lock_wait_timeout(),
+            ReadLockWait::NoWait => LockWaitTime::NoWait,
+            ReadLockWait::Seconds(seconds) => LockWaitTime::Timeout(Duration::from_secs(seconds)),
+        };
+        let call = self.statement_call();
+        let OpenTransaction::Pessimistic(transaction) = &mut self.open else {
+            unreachable!("the pessimistic mode check above admits only a pessimistic transaction");
+        };
+        let held: BTreeSet<Vec<u8>> = transaction.locked_keys().into_iter().collect();
+        let retry_reason = match transaction.acquire_locks(keys, presume_not_exists, wait, &call) {
+            Ok(acquired) if acquired.locked_with_conflict.is_empty() => {
+                let primary_key = acquired.primary_key;
+                let start_ts = transaction.start_ts();
+                self.ensure_lock_keep_alive(primary_key, start_ts)?;
+                return Ok(LockKeysOutcome::Acquired);
+            }
+            Ok(acquired) => {
+                let (key, conflict_commit_ts) = acquired
+                    .locked_with_conflict
+                    .iter()
+                    .max_by_key(|(_, conflict_ts)| *conflict_ts)
+                    .expect("the non-empty branch above admits a conflict");
+                locked_with_conflict_error(transaction.start_ts(), *conflict_commit_ts, key)
+            }
+            Err(failure) => {
+                let added = transaction
+                    .locked_keys()
+                    .into_iter()
+                    .filter(|key| !held.contains(key))
+                    .collect::<Vec<_>>();
+                if let Err(cause) = transaction.pessimistic_rollback(&added, &call) {
+                    return Err(TransactionStatementError::Transaction(
+                        transaction_cause_to_sql_error(&cause),
+                    ));
+                }
+                if !is_retryable_statement_failure(&failure) {
+                    return Err(TransactionStatementError::from_lock_failure(&failure));
+                }
+                lock_failure_to_sql_error(&failure)
+            }
+        };
+        transaction
+            .advance_for_update_ts()
+            .map_err(|error| TransactionStatementError::from_lock_failure(&error))?;
+        let primary_key = transaction.primary_key().map(ToOwned::to_owned);
+        let start_ts = transaction.start_ts();
+        if let Some(primary_key) = primary_key {
+            self.ensure_lock_keep_alive(primary_key, start_ts)?;
+        }
+        Ok(LockKeysOutcome::Retry(retry_reason))
+    }
+
+    fn ensure_lock_keep_alive(
+        &mut self,
+        primary_key: Vec<u8>,
+        start_ts: u64,
+    ) -> Result<(), TransactionStatementError> {
+        if self.keep_alive.is_none() {
+            let keep_alive = self
+                .opener
+                .start_lock_keep_alive(primary_key, start_ts)
+                .map_err(|error| {
+                    TransactionStatementError::Transaction(LockSqlError {
+                        code: 1105,
+                        state: *b"HY000",
+                        message: format!(
+                            "cannot keep the transaction's primary lock alive: {error}"
+                        ),
+                    })
+                })?;
+            self.keep_alive = Some(keep_alive);
+        }
+        Ok(())
+    }
+
     /// Publishes every buffered mutation in one two-phase commit.
     ///
     /// A transaction that staged nothing commits trivially — there is nothing to
@@ -592,6 +809,18 @@ impl MultiStatementTransaction {
     /// transaction beat it to a key: that is the 9007 the client sees.
     pub fn commit(self) -> Result<TransactionEnd, TransactionStatementError> {
         self.finish(true)
+    }
+
+    /// Commits mutations supplied by the wide-SQL `MutationBuffer`.
+    ///
+    /// The same pessimistic coordinator and Prewrite actions are used as the
+    /// configured-table path; only the executor-owned mutation container is
+    /// different.
+    pub fn commit_mutations(
+        self,
+        mutations: Vec<OptimisticMutation>,
+    ) -> Result<TransactionEnd, TransactionStatementError> {
+        self.finish_with_mutations(true, mutations)
     }
 
     /// Discards every buffered mutation and releases every held lock.
@@ -603,12 +832,20 @@ impl MultiStatementTransaction {
     }
 
     fn finish(mut self, publish: bool) -> Result<TransactionEnd, TransactionStatementError> {
-        let call = Self::transaction_end_call();
         let mutations = if publish {
             std::mem::take(&mut self.buffer).into_mutations()
         } else {
             Vec::new()
         };
+        self.finish_with_mutations(publish, mutations)
+    }
+
+    fn finish_with_mutations(
+        mut self,
+        publish: bool,
+        mutations: Vec<OptimisticMutation>,
+    ) -> Result<TransactionEnd, TransactionStatementError> {
+        let call = Self::transaction_end_call();
         // The keep-alive thread must stop before the locks it refreshes are
         // resolved, so a heartbeat can never revive a lock the commit released.
         if let Some(keep_alive) = self.keep_alive.take() {
@@ -687,7 +924,7 @@ impl WritePlanningSnapshot for MultiStatementTransaction {
                 OptimisticMutationKind::LockOnly => unreachable!("filtered above"),
             });
         }
-        Ok(self.open.two_pc().snapshot_get(key, call)?.value)
+        Ok(self.open.snapshot_get(key, call)?)
     }
 }
 
@@ -822,20 +1059,26 @@ mod tests {
 
     #[test]
     fn a_successful_commit_is_the_only_outcome_that_answers_ok() {
-        for cause in [
-            TransactionCause::Region {
-                detail: "epoch not match".to_owned(),
-            },
-            TransactionCause::Transport {
-                detail: "connection reset".to_owned(),
-            },
+        for (cause, expected_code) in [
+            (
+                TransactionCause::Region {
+                    detail: "epoch not match".to_owned(),
+                },
+                9005,
+            ),
+            (
+                TransactionCause::Transport {
+                    detail: "connection reset".to_owned(),
+                },
+                1105,
+            ),
         ] {
             let error = classify_commit_outcome(&rolled_back(cause))
                 .expect_err("a non-commit never reports durable rows");
             assert_eq!(
                 error.sql_error().code,
-                1105,
-                "only a write conflict earns 9007"
+                expected_code,
+                "only a write conflict earns 9007; region failures retain 9005"
             );
             assert!(!error.keeps_transaction_open());
         }

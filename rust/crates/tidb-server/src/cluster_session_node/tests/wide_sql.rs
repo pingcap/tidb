@@ -5,6 +5,7 @@
 
 use super::super::*;
 use super::node_fixture::*;
+use std::sync::atomic::Ordering;
 use tidb_datatype::Datum;
 
 /// A `SELECT` over a stored `ENUM`/`SET` column answers with the element
@@ -56,6 +57,78 @@ fn a_select_over_stored_enum_and_set_columns_answers_with_their_names() {
         }
         other => panic!("the ENUM/SET columns came back as {other:?}"),
     }
+}
+
+/// A wide-SQL locking read must collect the rows the executor actually
+/// consumed and send those raw keys to the transaction seam. The mock opener
+/// records the batch, which catches the old behaviour where `FOR UPDATE` was
+/// parsed but never issued a TiKV PessimisticLock.
+#[test]
+fn a_wide_sql_for_update_requests_raw_key_locks() {
+    let (mut session, node) = open_session();
+    session
+        .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
+        .expect("seed");
+    session
+        .control_transaction("BEGIN PESSIMISTIC")
+        .expect("begin pessimistic");
+
+    assert_eq!(
+        rows(&mut session, "SELECT v FROM t WHERE id = 1 FOR UPDATE"),
+        vec![vec![Datum::Int(10)]]
+    );
+    assert_eq!(
+        node.cluster
+            .lock_batches
+            .lock()
+            .expect("lock batches")
+            .len(),
+        1
+    );
+    assert!(!node
+        .cluster
+        .lock_batches
+        .lock()
+        .expect("lock batches")
+        .first()
+        .expect("one lock batch")
+        .is_empty());
+    session.control_transaction("ROLLBACK").expect("rollback");
+}
+
+/// Go retries one pessimistic statement up to
+/// `pessimistic-txn.max-retry-count`, whose default is 256. A smaller local
+/// budget leaks retryable 9007 errors under TPCC district-row contention.
+#[test]
+fn a_pessimistic_statement_retries_past_eight_conflicts_like_go() {
+    let (mut session, node) = open_session();
+    session
+        .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
+        .expect("seed");
+    node.cluster
+        .pessimistic_lock_retries_remaining
+        .store(9, Ordering::Release);
+    session
+        .control_transaction("BEGIN PESSIMISTIC")
+        .expect("begin pessimistic");
+
+    session
+        .execute_write("UPDATE t SET v = v + 1 WHERE id = 1")
+        .expect("Go's default retry budget survives nine lock conflicts");
+    assert_eq!(
+        node.cluster
+            .lock_batches
+            .lock()
+            .expect("lock batches")
+            .len(),
+        10,
+        "nine retries plus the successful lock attempt"
+    );
+    session.control_transaction("COMMIT").expect("commit");
+    assert_eq!(
+        rows(&mut session, "SELECT v FROM t WHERE id = 1"),
+        vec![vec![Datum::Int(11)]]
+    );
 }
 
 /// The catalog a session gets is the cluster's, minus exactly the tables

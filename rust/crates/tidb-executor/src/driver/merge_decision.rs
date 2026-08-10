@@ -104,6 +104,7 @@ use super::catalog::split_table_path;
 use super::catalog::{Catalog, TableEntry};
 use super::predicate_push_down::{offered_conjuncts, Offered};
 use crate::merge_join_plan::{MergeJoinKey, MergeJoinPlan};
+use std::collections::BTreeSet;
 use tidb_ast::{Expr, Join, JoinNode, JoinType, QueryStmt, SelectField, SelectStmt};
 
 /// One relation a `FROM` subtree exposes under a name, and where its columns
@@ -192,7 +193,7 @@ impl SideProperties {
     }
 
     /// The relation-qualified name of the column at `offset`.
-    fn column_at(&self, offset: usize) -> Option<RelColumn> {
+    pub(crate) fn column_at(&self, offset: usize) -> Option<RelColumn> {
         for relation in &self.relations {
             if offset >= relation.offset && offset - relation.offset < relation.columns.len() {
                 return Some(RelColumn {
@@ -239,6 +240,16 @@ pub(crate) struct MergeDecision {
     pub(crate) plan: MergeJoinPlan,
     /// The same keys as `(left, right)` relation-qualified names.
     pub(crate) names: Vec<(RelColumn, RelColumn)>,
+    /// The complete order the left child must build, including any leading
+    /// columns fixed by equality predicates.
+    pub(crate) left_required: Vec<usize>,
+    /// The complete order the right child must build, including any leading
+    /// columns fixed by equality predicates.
+    pub(crate) right_required: Vec<usize>,
+    /// [`Self::left_required`] named so it survives column pruning.
+    pub(crate) left_required_names: Vec<RelColumn>,
+    /// [`Self::right_required`] named so it survives column pruning.
+    pub(crate) right_required_names: Vec<RelColumn>,
 }
 
 /// WHICH of the two questions a properties walk is answering.
@@ -411,6 +422,192 @@ pub(crate) fn delivers(delivered: &[Vec<usize>], wanted: &[usize]) -> bool {
     delivered.iter().any(|order| order.starts_with(wanted))
 }
 
+/// The child order a grouped StreamAgg needs, including leading key columns
+/// fixed by equality predicates.
+///
+/// Go's access-path `EqCondCount` removes fixed leading index parts when it
+/// matches a physical property. This representation keeps those parts in the
+/// scan request -- the record/index walk really delivers them -- and records
+/// that the Selection below the aggregate fixes them, so the remaining suffix
+/// is ordered by the written group items.
+pub(crate) struct AggregationOrder {
+    required: tidb_planner::physical_property::PhysicalProperty,
+    required_columns: Vec<RelColumn>,
+    physical_group_columns: Vec<RelColumn>,
+}
+
+impl AggregationOrder {
+    /// The physical property to request from the `FROM` subtree.
+    #[must_use]
+    pub(crate) const fn required(&self) -> &tidb_planner::physical_property::PhysicalProperty {
+        &self.required
+    }
+
+    /// Whether the committed executor, rather than merely a catalog promise,
+    /// delivered the order this grouped aggregation relies on.
+    #[must_use]
+    pub(crate) fn is_delivered_by(
+        &self,
+        delivered: &[Vec<usize>],
+        scope: &super::FromScope,
+    ) -> bool {
+        let required_offsets = self
+            .required_columns
+            .iter()
+            .map(|required| {
+                scope
+                    .tables
+                    .iter()
+                    .find(|table| table.name.eq_ignore_ascii_case(&required.relation))
+                    .and_then(|table| {
+                        table
+                            .columns
+                            .iter()
+                            .position(|(column, _)| column.eq_ignore_ascii_case(&required.column))
+                            .map(|offset| table.offset + offset)
+                    })
+            })
+            .collect::<Option<Vec<_>>>();
+        required_offsets.is_some_and(|required| delivers(delivered, &required))
+    }
+
+    /// Group-key offsets in the physical StreamAgg tuple: ordered non-fixed
+    /// keys first, then equality-fixed keys. The returned offsets use the
+    /// committed (possibly pruned) source scope.
+    pub(crate) fn physical_group_offsets(&self, scope: &super::FromScope) -> Option<Vec<usize>> {
+        self.physical_group_columns
+            .iter()
+            .map(|required| {
+                scope
+                    .tables
+                    .iter()
+                    .find(|table| table.name.eq_ignore_ascii_case(&required.relation))
+                    .and_then(|table| {
+                        table
+                            .columns
+                            .iter()
+                            .position(|(column, _)| column.eq_ignore_ascii_case(&required.column))
+                            .map(|offset| table.offset + offset)
+                    })
+            })
+            .collect()
+    }
+}
+
+/// Finds Go's grouped-StreamAgg child property for this query block.
+pub(crate) fn aggregation_order(
+    select: &SelectStmt,
+    from: &Join,
+    catalog: &Catalog,
+    current_db: &str,
+    offered: Offered<'_>,
+) -> Option<AggregationOrder> {
+    if select.rollup || select.group_by.is_empty() {
+        return None;
+    }
+    let source = join_properties(from, catalog, current_db, offered, Phase::Promise)?;
+    let group_offsets: Vec<usize> = select
+        .group_by
+        .iter()
+        .map(|item| match &item.expr {
+            Expr::Column(path) => source.offset_of(path),
+            _ => None,
+        })
+        .collect::<Option<_>>()?;
+    let mut fixed = BTreeSet::new();
+    let mut conjuncts = Vec::new();
+    if let Some(predicate) = &select.where_clause {
+        crate::plan_trace::collect_and(predicate, &mut conjuncts);
+    }
+    for conjunct in conjuncts {
+        let Expr::Binary(tidb_ast::BinaryOp::Eq, left, right) = conjunct else {
+            continue;
+        };
+        let fixed_path = match (
+            strip_aggregation_parens(left),
+            strip_aggregation_parens(right),
+        ) {
+            (Expr::Column(path), value) if aggregation_constant(value) => Some(path),
+            (value, Expr::Column(path)) if aggregation_constant(value) => Some(path),
+            _ => None,
+        };
+        if let Some(offset) = fixed_path.and_then(|path| source.offset_of(path)) {
+            fixed.insert(offset);
+        }
+    }
+
+    for order in &source.orders {
+        let fixed_prefix = order
+            .iter()
+            .take_while(|offset| fixed.contains(offset))
+            .count();
+        // A fixed group key contributes no ordering demand of its own. Go's
+        // `EqCondCount` removes it while matching the property, even when the
+        // same column is also written in GROUP BY. Counting it a second time
+        // would ask `(w,d,o,n)` of an index that already delivers the needed
+        // `(w,d,o)` order for `WHERE w=1 GROUP BY w,d,o`.
+        let ordered_group_offsets: Vec<usize> = group_offsets
+            .iter()
+            .copied()
+            .filter(|offset| !fixed.contains(offset))
+            .collect();
+        if !order[fixed_prefix..].starts_with(&ordered_group_offsets) {
+            continue;
+        }
+        let required_offsets = order[..fixed_prefix + ordered_group_offsets.len()].to_vec();
+        let required_columns = required_offsets
+            .iter()
+            .map(|offset| source.column_at(*offset))
+            .collect::<Option<Vec<_>>>()?;
+        let physical_group_offsets = ordered_group_offsets
+            .iter()
+            .copied()
+            .chain(
+                group_offsets
+                    .iter()
+                    .copied()
+                    .filter(|offset| fixed.contains(offset)),
+            )
+            .collect::<Vec<_>>();
+        let physical_group_columns = physical_group_offsets
+            .iter()
+            .map(|offset| source.column_at(*offset))
+            .collect::<Option<Vec<_>>>()?;
+        return Some(AggregationOrder {
+            required: child_required_prop(required_offsets.iter().copied(), false),
+            required_columns,
+            physical_group_columns,
+        });
+    }
+    None
+}
+
+fn strip_aggregation_parens(mut expr: &Expr) -> &Expr {
+    while let Expr::Paren(inner) = expr {
+        expr = inner;
+    }
+    expr
+}
+
+fn aggregation_constant(expr: &Expr) -> bool {
+    match expr {
+        Expr::Paren(inner) => aggregation_constant(inner),
+        Expr::Unary(tidb_ast::UnaryOp::Minus | tidb_ast::UnaryOp::Plus, inner) => {
+            aggregation_constant(inner)
+        }
+        Expr::Int(_)
+        | Expr::Decimal(_)
+        | Expr::Float(_)
+        | Expr::Hex(_)
+        | Expr::Bit(_)
+        | Expr::String(_)
+        | Expr::RawString(_)
+        | Expr::CharsetString { .. }
+        | Expr::Bool(_) => true,
+        _ => false,
+    }
+}
+
 /// [`possible_properties`] for a join node: the two sides' relations
 /// concatenated, and the order the join's OWN chosen plan produces.
 pub(crate) fn join_properties(
@@ -517,6 +714,9 @@ fn derived_properties(
     let QueryStmt::Select(select) = subquery else {
         return None;
     };
+    if !select.group_by.is_empty() {
+        return grouped_derived_properties(select, alias, column_names, phase);
+    }
     // A derived table's own `WHERE` is the one offered INSIDE it, which is
     // what `run_select_stmt` hands its `FROM`.
     let inner_offered = offered_conjuncts(select.where_clause.as_ref());
@@ -564,6 +764,204 @@ fn derived_properties(
     ))
 }
 
+/// Go `LogicalAggregation.PreparePossibleProperties` projected into a
+/// derived table's output. A grouped StreamAgg can promise the selected group
+/// keys in written order; delivery is reported by the actual materialized
+/// SELECT build, so this function never guesses it in the delivered phase.
+fn grouped_derived_properties(
+    select: &SelectStmt,
+    alias: &str,
+    column_names: &[String],
+    phase: Phase,
+) -> Option<SideProperties> {
+    if phase == Phase::Delivered
+        || select.rollup
+        || select.distinct
+        || select.having.is_some()
+        || select.limit.is_some()
+        || !select.windows.is_empty()
+    {
+        return None;
+    }
+    let group_paths = select
+        .group_by
+        .iter()
+        .map(|item| match &item.expr {
+            Expr::Column(path) => Some(path),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()?;
+    if !select.order_by.is_empty()
+        && (select.order_by.len() != group_paths.len()
+            || select
+                .order_by
+                .iter()
+                .zip(&group_paths)
+                .any(|(item, group)| {
+                    item.desc || !matches!(&item.expr, Expr::Column(path) if path == *group)
+                }))
+    {
+        return None;
+    }
+
+    let mut columns = Vec::with_capacity(select.fields.fields().len());
+    for field in select.fields.fields() {
+        let SelectField::Expr {
+            expr,
+            alias: field_alias,
+        } = field
+        else {
+            return None;
+        };
+        columns.push(match expr {
+            Expr::Column(path) => field_alias
+                .clone()
+                .unwrap_or_else(|| path.last().cloned().unwrap_or_default()),
+            _ => field_alias.clone()?,
+        });
+    }
+    if !column_names.is_empty() {
+        if column_names.len() != columns.len() {
+            return None;
+        }
+        columns = column_names.to_vec();
+    }
+    let order = group_paths
+        .iter()
+        .map(|group| {
+            select.fields.fields().iter().position(|field| {
+                matches!(field, SelectField::Expr { expr: Expr::Column(path), .. } if path == *group)
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some(SideProperties::single(
+        alias.to_owned(),
+        columns,
+        vec![order],
+    ))
+}
+
+/// The source-column name behind a physical join key. Go's projection
+/// elimination keeps the original table identity in `MergeJoin` key text,
+/// even when SQL name resolution used a base-table or derived-table alias.
+/// Returning `None` leaves callers on the ordinary final-scope name.
+pub(crate) fn physical_column_trace_name(
+    node: &JoinNode,
+    column: &RelColumn,
+    catalog: &Catalog,
+    current_db: &str,
+) -> Option<String> {
+    let origin = physical_column_origin(node, column, catalog, current_db, true)?;
+    Some(format!(
+        "{}.{}.{}",
+        origin.database, origin.table, origin.column
+    ))
+}
+
+/// Whether the base column behind a projection-only output may be NULL.
+/// Aggregate/computed outputs have no single base origin and return `None`.
+pub(crate) fn physical_column_is_nullable(
+    node: &JoinNode,
+    column: &RelColumn,
+    catalog: &Catalog,
+    current_db: &str,
+) -> Option<bool> {
+    physical_column_origin(node, column, catalog, current_db, false).map(|origin| origin.nullable)
+}
+
+struct PhysicalColumnOrigin {
+    database: String,
+    table: String,
+    column: String,
+    nullable: bool,
+}
+
+fn physical_column_origin(
+    node: &JoinNode,
+    column: &RelColumn,
+    catalog: &Catalog,
+    current_db: &str,
+    cross_aggregation: bool,
+) -> Option<PhysicalColumnOrigin> {
+    if let JoinNode::Table(table_ref) = node {
+        let (database, name) = split_table_path(&table_ref.name, current_db).ok()?;
+        let visible = table_ref.alias.as_deref().unwrap_or(name);
+        if !visible.eq_ignore_ascii_case(&column.relation) {
+            return None;
+        }
+        let entry = catalog.get_in(database, name)?;
+        let (physical_name, field_type) = entry
+            .column_list()
+            .into_iter()
+            .find(|(candidate, _)| candidate.eq_ignore_ascii_case(&column.column))?;
+        return Some(PhysicalColumnOrigin {
+            database: database.to_owned(),
+            table: name.to_owned(),
+            column: physical_name,
+            nullable: !field_type.has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL),
+        });
+    }
+    if let JoinNode::Join(join) = node {
+        return physical_column_origin(&join.left, column, catalog, current_db, cross_aggregation)
+            .or_else(|| {
+                join.right.as_ref().and_then(|right| {
+                    physical_column_origin(right, column, catalog, current_db, cross_aggregation)
+                })
+            });
+    }
+    let JoinNode::Derived {
+        subquery,
+        alias: Some(alias),
+        lateral: false,
+        column_names,
+    } = node
+    else {
+        return None;
+    };
+    if !alias.eq_ignore_ascii_case(&column.relation) {
+        return None;
+    }
+    let QueryStmt::Select(select) = &**subquery else {
+        return None;
+    };
+    if !cross_aggregation && !select.group_by.is_empty() {
+        return None;
+    }
+    let mut output_names = super::from::derived_field_names(select)?;
+    if !column_names.is_empty() {
+        if column_names.len() != output_names.len() {
+            return None;
+        }
+        output_names = column_names.to_vec();
+    }
+    let output = output_names
+        .iter()
+        .position(|name| name.eq_ignore_ascii_case(&column.column))?;
+    let SelectField::Expr {
+        expr: Expr::Column(path),
+        ..
+    } = select.fields.fields().get(output)?
+    else {
+        return None;
+    };
+    let from = select.from.as_ref()?;
+    let source = join_properties(
+        from,
+        catalog,
+        current_db,
+        &offered_conjuncts(select.where_clause.as_ref()),
+        Phase::Promise,
+    )?;
+    let origin = source.column_at(source.offset_of(path)?)?;
+    physical_column_origin(&from.left, &origin, catalog, current_db, cross_aggregation).or_else(
+        || {
+            from.right.as_ref().and_then(|right| {
+                physical_column_origin(right, &origin, catalog, current_db, cross_aggregation)
+            })
+        },
+    )
+}
+
 /// Each of `orders` rewritten through a projection, where `sources[i]` is the
 /// child column the projection's `i`th output reads (and `None` for an output
 /// that is not a bare column).
@@ -601,6 +999,16 @@ fn project_orders(orders: &[Vec<usize>], sources: &[Option<usize>]) -> Vec<Vec<u
             (!projected.is_empty()).then_some(projected)
         })
         .collect()
+}
+
+/// Maps orders the built input actually delivered through a projection's
+/// output-to-input column mapping. This is the physical verification sibling
+/// of [`project_orders`]'s logical-property use in [`derived_properties`].
+pub(crate) fn project_delivered_orders(
+    orders: &[Vec<usize>],
+    sources: &[Option<usize>],
+) -> Vec<Vec<usize>> {
+    project_orders(orders, sources)
 }
 
 /// The `FROM` of a `SELECT` that carries its source's row order through
@@ -681,6 +1089,28 @@ pub(crate) fn decide(
             .collect();
         conjuncts.extend(repeated);
     }
+    let mut left_fixed = BTreeSet::new();
+    let mut right_fixed = BTreeSet::new();
+    for conjunct in &conjuncts {
+        let Expr::Binary(tidb_ast::BinaryOp::Eq, lhs, rhs) = conjunct else {
+            continue;
+        };
+        let fixed_path = match (strip_aggregation_parens(lhs), strip_aggregation_parens(rhs)) {
+            (Expr::Column(path), value) if aggregation_constant(value) => Some(path),
+            (value, Expr::Column(path)) if aggregation_constant(value) => Some(path),
+            _ => None,
+        };
+        let Some(path) = fixed_path else {
+            continue;
+        };
+        if let Some(offset) = left.offset_of(path) {
+            left_fixed.insert(offset);
+        }
+        if let Some(offset) = right.offset_of(path) {
+            right_fixed.insert(offset);
+        }
+    }
+
     let mut keys = Vec::new();
     for conjunct in conjuncts {
         let Expr::Binary(tidb_ast::BinaryOp::Eq, lhs, rhs) = conjunct else {
@@ -702,12 +1132,27 @@ pub(crate) fn decide(
             keys.push(MergeJoinKey { left: l, right: r });
         }
     }
+    // A fixed column that is itself a join key remains part of the merge
+    // order. Only constant columns BEFORE the first join key are neutral: in
+    // `d_w_id=w_id AND w_id=1`, both key columns are fixed but Go still
+    // merges on `d_w_id=w_id`; trimming them would erase the join key and
+    // incorrectly fall back to an index/hash join.
+    for key in &keys {
+        left_fixed.remove(&key.left);
+        right_fixed.remove(&key.right);
+    }
+    let left_effective = trim_fixed_prefixes(&left.orders, &left_fixed);
+    let right_effective = trim_fixed_prefixes(&right.orders, &right_fixed);
     let plan = crate::merge_join_plan::get_merge_join(
         &keys,
-        &left.orders,
-        &right.orders,
+        &left_effective,
+        &right_effective,
         required.all_same_order().1,
     )?;
+    let left_keys: Vec<usize> = plan.keys.iter().map(|key| key.left).collect();
+    let right_keys: Vec<usize> = plan.keys.iter().map(|key| key.right).collect();
+    let left_required = required_order(&left.orders, &left_fixed, &left_keys)?;
+    let right_required = required_order(&right.orders, &right_fixed, &right_keys)?;
     let names = plan
         .keys
         .iter()
@@ -718,7 +1163,57 @@ pub(crate) fn decide(
             ))
         })
         .collect::<Option<Vec<_>>>()?;
-    Some(MergeDecision { plan, names })
+    let left_required_names = left_required
+        .iter()
+        .map(|offset| left.column_at(*offset))
+        .collect::<Option<Vec<_>>>()?;
+    let right_required_names = right_required
+        .iter()
+        .map(|offset| right.column_at(*offset))
+        .collect::<Option<Vec<_>>>()?;
+    Some(MergeDecision {
+        plan,
+        names,
+        left_required,
+        right_required,
+        left_required_names,
+        right_required_names,
+    })
+}
+
+/// Removes only the leading columns whose equality predicates make them
+/// constant for every row. The remaining suffix is the order a merge join
+/// can compare; the original prefix is restored in [`required_order`] so the
+/// child still chooses the access path and range that provide it.
+fn trim_fixed_prefixes(orders: &[Vec<usize>], fixed: &BTreeSet<usize>) -> Vec<Vec<usize>> {
+    orders
+        .iter()
+        .filter_map(|order| {
+            let prefix = order
+                .iter()
+                .take_while(|offset| fixed.contains(offset))
+                .count();
+            (prefix < order.len()).then(|| order[prefix..].to_vec())
+        })
+        .collect()
+}
+
+/// Finds the original child order whose fixed-prefix-trimmed suffix starts
+/// with `keys`, and returns the whole prefix the child must actually build.
+fn required_order(
+    orders: &[Vec<usize>],
+    fixed: &BTreeSet<usize>,
+    keys: &[usize],
+) -> Option<Vec<usize>> {
+    orders.iter().find_map(|order| {
+        let fixed_prefix = order
+            .iter()
+            .take_while(|offset| fixed.contains(offset))
+            .count();
+        order[fixed_prefix..]
+            .starts_with(keys)
+            .then(|| order[..fixed_prefix + keys.len()].to_vec())
+    })
 }
 
 /// The merge join this join node commits to, read straight off the catalog
@@ -977,5 +1472,20 @@ mod tests {
             Some("t2".to_owned())
         );
         assert!(props.column_at(2).is_none());
+    }
+
+    /// A leading index column fixed by `column = constant` no longer blocks
+    /// a merge on the following key, but the child is still required to build
+    /// the complete `(fixed, key)` order so its access path remains truthful.
+    #[test]
+    fn a_fixed_index_prefix_is_trimmed_for_matching_and_restored_for_building() {
+        let fixed = BTreeSet::from([0]);
+        let orders = vec![vec![0, 1, 2], vec![3]];
+        assert_eq!(
+            trim_fixed_prefixes(&orders, &fixed),
+            vec![vec![1, 2], vec![3]]
+        );
+        assert_eq!(required_order(&orders, &fixed, &[1]), Some(vec![0, 1]));
+        assert_eq!(required_order(&orders, &fixed, &[2]), None);
     }
 }

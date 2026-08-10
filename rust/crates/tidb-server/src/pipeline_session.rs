@@ -36,6 +36,7 @@
 //! defaults.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use tidb_datatype::{Datum, FieldType, FieldTypeCode, UNSPECIFIED_LENGTH};
 use tidb_exec::{convert_result_field, ResultFieldMetadata, ResultFieldTypeMetadata};
@@ -46,8 +47,8 @@ use tidb_session::{GlobalSysvars, Session, SharedCatalog, StmtKind, StmtOutput, 
 
 use crate::resultset_source::ResultSetSource;
 use crate::sql_node::{
-    ConnectionKillTarget, GeneralExecuteOutcome, PreparedGeneral, QueryResult, QuerySession,
-    QuerySessionFactory, SessionContext, SqlQueryError, WriteOutcome,
+    session_wait_timeout, ConnectionKillTarget, GeneralExecuteOutcome, PreparedGeneral,
+    QueryResult, QuerySession, QuerySessionFactory, SessionContext, SqlQueryError, WriteOutcome,
 };
 use crate::wire_status::WireStatus;
 
@@ -237,6 +238,10 @@ impl QuerySession for PipelineServerSession {
         self.session.result_charset()
     }
 
+    fn wait_timeout(&self) -> Duration {
+        session_wait_timeout(&self.session)
+    }
+
     /// The handshake's initial database and `COM_INIT_DB`, which Go serves
     /// with one `useDB` each.
     fn select_database(&mut self, name: &str) -> Result<(), SqlQueryError> {
@@ -303,7 +308,7 @@ impl QuerySession for PipelineServerSession {
 
     /// Go reports a prepared statement's marker count and result columns at
     /// PREPARE time. The columns come from planning the statement with every
-    /// marker bound to NULL, which is side-effect free for a query; a
+    /// marker bound to NULL, without opening or draining its executor; a
     /// statement that answers with an OK packet reports none.
     fn prepare_general(&mut self, sql: &str) -> Result<PreparedGeneral, SqlQueryError> {
         let parameter_count = self.session.parameter_count(sql).map_err(map_error)?;
@@ -311,8 +316,8 @@ impl QuerySession for PipelineServerSession {
             StmtKind::Query => {
                 let probe: Vec<tidb_datatype::Datum> =
                     std::iter::repeat_n(tidb_datatype::Datum::Null, parameter_count).collect();
-                match self.session.run_with_params(sql, &probe) {
-                    Ok(StmtOutput::Rows { columns, .. }) => select_columns(&columns),
+                match self.session.plan_query_with_params(sql, &probe) {
+                    Ok(columns) => select_columns(&columns),
                     // A query whose metadata this tier cannot resolve without
                     // real values reports no columns at prepare time. That is
                     // a LAST resort and not a free one: a MySQL client frames

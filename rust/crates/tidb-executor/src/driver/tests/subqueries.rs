@@ -7,6 +7,283 @@
 
 use super::*;
 
+/// EXPLAIN infers a correlated scalar subquery's output type from its plan.
+/// It must not execute the inner query merely to discover that type: on TPCC
+/// condition 10 that planning-time scan alone exceeds the protocol timeout.
+#[test]
+fn explaining_a_correlated_scalar_type_reads_no_storage() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on("CREATE TABLE outer_t (k BIGINT)", &mut catalog).unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE inner_t (k BIGINT, v DECIMAL(6,2))",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on("INSERT INTO inner_t VALUES (1, 2.50)", &mut catalog, &ctx).unwrap();
+
+    let statement = tidb_parser::parse(
+        "SELECT (SELECT SUM(v) FROM inner_t WHERE inner_t.k=outer_t.k) FROM outer_t",
+    )
+    .unwrap();
+    let Stmt::Query(query) = &statement else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (explained, operations) = crate::storage::capture_storage_ops(|| {
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief)
+    });
+    explained.unwrap();
+    assert_eq!(operations, crate::storage::StorageOps::default());
+}
+
+/// Go decorrelates a scalar SUM over equality-correlated keys by pulling the
+/// aggregation above a left join. TPCC condition 12 depends on both halves:
+/// an unmatched customer still produces one outer row with a NULL SUM, while
+/// EXPLAIN contains the real HashAgg/Join pipeline rather than an opaque
+/// per-row scalar-subquery projection.
+#[test]
+fn tpcc_conditions_ten_and_twelve_decorrelate_scalar_sums() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE customer (c_w_id INT NOT NULL, c_d_id INT NOT NULL, \
+         c_id INT NOT NULL, c_balance DECIMAL(12,2), c_ytd_payment DECIMAL(12,2), \
+         PRIMARY KEY(c_w_id,c_d_id,c_id) CLUSTERED)",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE orders (o_w_id INT NOT NULL, o_d_id INT NOT NULL, \
+         o_id INT NOT NULL, o_c_id INT, PRIMARY KEY(o_w_id,o_d_id,o_id) CLUSTERED)",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE order_line (ol_w_id INT NOT NULL, ol_d_id INT NOT NULL, \
+         ol_o_id INT NOT NULL, ol_number INT NOT NULL, ol_amount DECIMAL(6,2), \
+         ol_delivery_d BIGINT, PRIMARY KEY(ol_w_id,ol_d_id,ol_o_id,ol_number) CLUSTERED)",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE history (h_c_id INT, h_c_d_id INT, h_c_w_id INT, \
+         h_amount DECIMAL(6,2), INDEX idx_h_c_w_id(h_c_w_id))",
+        &mut catalog,
+    )
+    .unwrap();
+    // Cluster-loaded metadata exposes the common-handle PRIMARY as a table
+    // access path. The in-memory DDL catalog stores only the handle, so add
+    // the corresponding planner index explicitly, as the join tests do.
+    for (table_name, column_offsets) in [
+        ("customer", vec![0, 1, 2]),
+        ("orders", vec![0, 1, 2]),
+        ("order_line", vec![0, 1, 2, 3]),
+    ] {
+        let TableEntry::Kv(table) = catalog.get_mut_in("test", table_name).unwrap() else {
+            panic!("{table_name} is not a KV table");
+        };
+        table.add_index(crate::kv_table::KvIndex {
+            id: 1,
+            name: "PRIMARY".to_owned(),
+            unique: true,
+            prefix_lengths: vec![
+                crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
+                column_offsets.len()
+            ],
+            column_offsets,
+            visible: true,
+            global: false,
+        });
+    }
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO customer VALUES \
+         (1,1,1,5.00,5.00),(1,1,2,0.00,0.00),(1,1,3,7.00,1.00)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO orders VALUES (1,1,11,1),(1,1,12,2)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO order_line VALUES \
+         (1,1,11,1,10.00,1),(1,1,11,2,100.00,NULL),(1,1,12,1,5.00,1)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO history VALUES (1,1,1,5.00),(2,1,1,5.00),(3,1,1,1.00)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    let sql = "SELECT count(*) FROM (SELECT c.c_id,c.c_d_id,c.c_balance c1, \
+        c_ytd_payment,(SELECT sum(ol_amount) FROM orders,order_line \
+        WHERE ol_w_id=o_w_id AND ol_d_id=o_d_id AND ol_o_id=o_id \
+        AND ol_delivery_d IS NOT NULL AND o_w_id=1 AND o_d_id=c.c_d_id \
+        AND o_c_id=c.c_id) sm FROM customer c WHERE c.c_w_id=1) t1 \
+        WHERE c1+c_ytd_payment<>sm";
+    assert_eq!(
+        run_select_on(sql, &catalog, &ctx).unwrap(),
+        vec![vec![Datum::Int(1)]]
+    );
+
+    let statement = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &statement else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, plan) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let operators = plan
+        .iter()
+        .map(|row| match &row[0] {
+            Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+            other => format!("{other:?}"),
+        })
+        .collect::<Vec<_>>();
+    let details = plan
+        .iter()
+        .map(|row| match &row[4] {
+            Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+            other => format!("{other:?}"),
+        })
+        .collect::<Vec<_>>();
+    let estimates = plan
+        .iter()
+        .map(|row| match &row[1] {
+            Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+            other => format!("{other:?}"),
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        operators
+            .iter()
+            .any(|operator| operator.contains("HashAgg")),
+        "{plan:#?}"
+    );
+    assert!(
+        operators
+            .iter()
+            .any(|operator| operator.contains("HashJoin")),
+        "{plan:#?}"
+    );
+    assert!(
+        operators
+            .iter()
+            .all(|operator| !operator.contains("Projection")),
+        "{plan:#?}"
+    );
+    assert_eq!(
+        operators
+            .iter()
+            .filter(|operator| operator.contains("TableRangeScan"))
+            .count(),
+        3,
+        "{plan:#?}"
+    );
+    assert_eq!(
+        operators
+            .iter()
+            .filter(|operator| operator.contains("Selection"))
+            .count(),
+        3,
+        "{plan:#?}"
+    );
+    assert!(
+        details.iter().all(|detail| !detail.contains("other cond")),
+        "{plan:#?}"
+    );
+    assert!(
+        details
+            .iter()
+            .any(|detail| detail.contains("test.customer.c_balance")),
+        "{plan:#?}"
+    );
+    assert!(
+        details.iter().all(|detail| !detail.contains("test.c.")),
+        "{plan:#?}"
+    );
+    assert!(
+        details.iter().any(|detail| {
+            detail.contains(
+                "equal:[eq(test.customer.c_d_id, test.orders.o_d_id) \
+                 eq(test.customer.c_id, test.orders.o_c_id)]",
+            )
+        }),
+        "{plan:#?}"
+    );
+    assert_eq!(
+        details
+            .iter()
+            .filter(|detail| detail.contains("range:[1,1], keep order:false"))
+            .count(),
+        1,
+        "{plan:#?}"
+    );
+    assert_eq!(&estimates[1..4], ["6.40", "8.00", "15.61"], "{plan:#?}");
+
+    let condition_ten = "SELECT count(*) FROM (\
+        SELECT c.c_id,c.c_d_id,c.c_w_id,c.c_balance c1,\
+        (SELECT sum(ol_amount) FROM orders,order_line \
+         WHERE ol_w_id=o_w_id AND ol_d_id=o_d_id AND ol_o_id=o_id \
+         AND ol_delivery_d IS NOT NULL AND o_w_id=1 AND o_d_id=c.c_d_id \
+         AND o_c_id=c.c_id) sm,\
+        (SELECT sum(h_amount) FROM history WHERE h_c_w_id=1 \
+         AND h_c_d_id=c.c_d_id AND h_c_id=c.c_id) smh \
+        FROM customer c WHERE c.c_w_id=1) t WHERE c1<>sm-smh";
+    assert_eq!(
+        run_select_on(condition_ten, &catalog, &ctx).unwrap(),
+        vec![vec![Datum::Int(0)]]
+    );
+    let statement = tidb_parser::parse(condition_ten).unwrap();
+    let Stmt::Query(query) = &statement else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, plan) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let text = |row: &[Datum], column: usize| match &row[column] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+    assert!(text(&plan[1], 0).contains("HashJoin"), "{plan:#?}");
+    assert_ne!(text(&plan[1], 1), "N/A", "{plan:#?}");
+    assert!(
+        plan.iter().any(|row| text(row, 0).contains("IndexLookUp")),
+        "{plan:#?}"
+    );
+    assert!(
+        plan.iter().any(|row| {
+            text(row, 0).contains("HashAgg")
+                && text(row, 2) == "cop[tikv]"
+                && text(row, 4).contains("sum(test.history.h_amount)")
+        }),
+        "{plan:#?}"
+    );
+    assert!(
+        plan.iter()
+            .all(|row| { !text(row, 4).contains("funcs:firstrow(test.customer.c_w_id)") }),
+        "{plan:#?}"
+    );
+}
+
 /// Uncorrelated subqueries are evaluated and folded into literals, the way
 /// Go's handleScalarSubquery does for the non-Apply case.
 #[test]

@@ -33,6 +33,10 @@ pub enum PdOperation {
     Tso,
     /// GC state (txn safe point) lookup.
     GetGcState,
+    /// Current scheduling operator for one region.
+    GetOperator,
+    /// Split regions at raw TiKV keys and scatter the new regions.
+    SplitAndScatterRegions,
 }
 
 impl std::fmt::Display for PdOperation {
@@ -47,6 +51,8 @@ impl std::fmt::Display for PdOperation {
             Self::GetStore => formatter.write_str("GetStore"),
             Self::Tso => formatter.write_str("Tso"),
             Self::GetGcState => formatter.write_str("GetGCState"),
+            Self::GetOperator => formatter.write_str("GetOperator"),
+            Self::SplitAndScatterRegions => formatter.write_str("SplitAndScatterRegions"),
         }
     }
 }

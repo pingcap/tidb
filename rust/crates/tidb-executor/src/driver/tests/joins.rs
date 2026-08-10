@@ -215,6 +215,203 @@ fn joins() {
     );
 }
 
+#[test]
+fn tpcc_check_five_keeps_only_the_cross_leaf_residual() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE orders (o_id INT NOT NULL, o_d_id INT NOT NULL, o_w_id INT NOT NULL, o_c_id INT, o_entry_d DATETIME, o_carrier_id INT, o_ol_cnt INT, o_all_local INT, PRIMARY KEY (o_w_id,o_d_id,o_id), KEY idx_order(o_w_id,o_d_id,o_c_id,o_id))",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE new_order (no_o_id INT NOT NULL, no_d_id INT NOT NULL, no_w_id INT NOT NULL, PRIMARY KEY (no_w_id,no_d_id,no_o_id))",
+        &mut catalog,
+    )
+    .unwrap();
+    let sql = "SELECT count(*) FROM orders LEFT JOIN new_order ON no_w_id=o_w_id AND o_d_id=no_d_id AND o_id=no_o_id WHERE o_w_id=1 AND ((o_carrier_id IS NULL and no_o_id IS NULL) OR (o_carrier_id IS NOT NULL and no_o_id IS NOT NULL))";
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not query")
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not select")
+    };
+    let (_, rows) = explain_select_stmt(
+        select,
+        &catalog,
+        "test",
+        &crate::StmtContext::for_query(),
+        ExplainFormat::Row,
+    )
+    .unwrap();
+    let plan = rows
+        .iter()
+        .map(|row| {
+            row.iter()
+                .map(|datum| match datum {
+                    Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+                    other => format!("{other:?}"),
+                })
+                .collect::<Vec<_>>()
+                .join("\t")
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        plan.iter().any(|line| line.contains("MergeJoin")),
+        "{plan:?}"
+    );
+    assert_eq!(
+        plan.iter()
+            .filter(|line| line
+                .split('\t')
+                .next()
+                .is_some_and(|id| id.contains("TableReader")))
+            .count(),
+        2,
+        "both ordered scans are TiKV tasks behind root readers: {plan:?}",
+    );
+    assert!(
+        plan.iter().any(|line| {
+            line.contains("or(and(isnull(test.orders.o_carrier_id)")
+                && !line.contains("eq(test.orders.o_w_id, 1)")
+        }),
+        "the root Selection retains only the cross-leaf residue: {plan:?}",
+    );
+    assert!(
+        plan.iter().any(|line| {
+            line.contains(
+                "or(isnull(test.orders.o_carrier_id), not(isnull(test.orders.o_carrier_id)))",
+            )
+        }),
+        "Go's DNF weakening is evaluated at the preserved orders leaf: {plan:?}",
+    );
+}
+
+#[test]
+fn tpcc_check_seven_propagates_the_warehouse_range_to_both_leaves() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE orders (o_id INT NOT NULL, o_d_id INT NOT NULL, o_w_id INT NOT NULL, o_carrier_id INT, PRIMARY KEY (o_w_id,o_d_id,o_id))",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE order_line (ol_o_id INT NOT NULL, ol_d_id INT NOT NULL, ol_w_id INT NOT NULL, ol_number INT NOT NULL, ol_delivery_d DATETIME, PRIMARY KEY (ol_w_id,ol_d_id,ol_o_id,ol_number))",
+        &mut catalog,
+    )
+    .unwrap();
+    // The cluster catalog carries a clustered PRIMARY as both the common
+    // handle and a plan access path. The in-memory DDL catalog stores only
+    // the former, so mirror the metadata the parity fixture exposes.
+    for (table_name, column_offsets) in
+        [("orders", vec![2, 1, 0]), ("order_line", vec![2, 1, 0, 3])]
+    {
+        let TableEntry::Kv(table) = catalog.get_mut_in("test", table_name).unwrap() else {
+            panic!("{table_name} is not a KV table");
+        };
+        table.add_index(crate::kv_table::KvIndex {
+            id: 1,
+            name: "PRIMARY".to_owned(),
+            unique: true,
+            prefix_lengths: vec![
+                crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
+                column_offsets.len()
+            ],
+            column_offsets,
+            visible: true,
+            global: false,
+        });
+    }
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO orders VALUES (1,1,1,7),(2,1,1,NULL)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO order_line VALUES \
+            (1,1,1,1,NULL),(1,1,1,2,'2026-01-01 00:00:00'),\
+            (2,1,1,1,'2026-01-01 00:00:00'),(2,1,1,2,NULL)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    let sql = "SELECT count(*) FROM orders, order_line WHERE o_id=ol_o_id AND o_d_id=ol_d_id AND ol_w_id=o_w_id AND o_w_id=1 AND ((ol_delivery_d IS NULL and o_carrier_id IS NOT NULL) or (o_carrier_id IS NULL and ol_delivery_d IS NOT NULL))";
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not query")
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not select")
+    };
+    let rows = crate::driver::join_reorder::row_source(
+        select.from.as_ref().expect("FROM"),
+        select.where_clause.as_ref(),
+        &catalog,
+        "test",
+        &crate::StmtContext::for_query(),
+    )
+    .expect("the TPCC join group is modelled");
+    let order_line = rows.filters_for("order_line").expect("order_line leaf");
+    assert!(
+        order_line.iter().any(|filter| {
+            let restored = filter.restore();
+            restored.contains("`order_line`.`ol_w_id`=1") || restored.contains("`ol_w_id`=1")
+        }),
+        "o_w_id=1 must propagate through the equality edge: {order_line:?}",
+    );
+    assert_eq!(
+        run_select_on(sql, &catalog, &ctx).unwrap(),
+        vec![vec![Datum::Int(2)]],
+        "the cross-leaf disjunction must be evaluated exactly once by the join",
+    );
+
+    let (_, rows) = crate::explain::explain_select_stmt(
+        select,
+        &catalog,
+        "test",
+        &ctx,
+        crate::explain::ExplainFormat::Brief,
+    )
+    .unwrap();
+    let plan: Vec<String> = rows
+        .iter()
+        .map(|row| {
+            row.iter()
+                .map(|datum| match datum {
+                    Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+                    other => format!("{other:?}"),
+                })
+                .collect::<Vec<_>>()
+                .join("\t")
+        })
+        .collect();
+    assert!(
+        plan.iter().any(|line| {
+            line.contains("MergeJoin")
+                && line.contains("other cond:or(and(isnull(test.order_line.ol_delivery_d)")
+        }),
+        "the cross-leaf disjunction must be reported as the merge join's other condition: {plan:?}",
+    );
+    for table in ["orders", "order_line"] {
+        assert!(
+            plan.iter().any(|line| {
+                line.contains("TableRangeScan") && line.contains(&format!("table:{table}"))
+            }),
+            "the propagated warehouse key must bound {table}'s common-handle scan: {plan:?}",
+        );
+        assert!(
+            !plan.iter().any(|line| {
+                line.contains("TableFullScan") && line.contains(&format!("table:{table}"))
+            }),
+            "the bounded {table} leaf must not fall back to a full scan: {plan:?}",
+        );
+    }
+}
+
 /// Every leaf of a join is costed, and a leaf whose parents read only the
 /// columns an index covers reads that index instead of the table -- Go's
 /// `findBestTask` recursing into each `DataSource` below a `LogicalJoin`.
@@ -305,6 +502,300 @@ fn a_join_leaf_reads_a_covering_index_without_moving_a_row() {
             vec![Datum::Int(3)],
         ]
     );
+}
+
+/// A predicate that references only one inner-join leaf can narrow that leaf
+/// before the join runs. The original WHERE remains above the join, so this
+/// checks both the access-path shape and the result-preservation contract.
+#[test]
+fn a_join_leaf_uses_a_single_table_constant_for_access() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE lp (id INT PRIMARY KEY, value INT)",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE rp (id INT PRIMARY KEY, value INT)",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO lp VALUES (1, 10), (2, 20), (3, 30)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO rp VALUES (7, 20), (8, 20), (9, 30)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    let sql = "SELECT lp.id, rp.id FROM lp JOIN rp ON lp.value = rp.value WHERE lp.id = 2";
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Row).unwrap();
+    let plan: Vec<String> = rows
+        .iter()
+        .map(|row| {
+            row.iter()
+                .map(|datum| match datum {
+                    Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+                    other => format!("{other:?}"),
+                })
+                .collect::<Vec<_>>()
+                .join("\\t")
+        })
+        .collect();
+
+    assert!(
+        plan.iter()
+            .any(|line| line.contains("Point_Get") && line.contains("table:lp")),
+        "the lp leaf should use its constant primary-key predicate, got {plan:?}"
+    );
+    assert_eq!(
+        run_select_on(sql, &catalog, &ctx).unwrap(),
+        vec![
+            vec![Datum::Int(2), Datum::Int(7)],
+            vec![Datum::Int(2), Datum::Int(8)],
+        ]
+    );
+}
+
+/// TPCC StockLevel must bound both clustered-primary-key leaves before the
+/// join. Scanning either complete table turns this low-frequency transaction
+/// into a worker-consuming minute-long query at benchmark scale.
+#[test]
+fn tpcc_stock_level_bounds_both_join_leaves() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE order_line (\
+            ol_o_id INT NOT NULL, ol_d_id INT NOT NULL, ol_w_id INT NOT NULL, \
+            ol_number INT NOT NULL, ol_i_id INT NOT NULL, \
+            PRIMARY KEY (ol_w_id, ol_d_id, ol_o_id, ol_number) CLUSTERED)",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE stock (\
+            s_i_id INT NOT NULL, s_w_id INT NOT NULL, s_quantity INT, \
+            PRIMARY KEY (s_w_id, s_i_id) CLUSTERED)",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO order_line VALUES \
+            (3627, 7, 1, 1, 100), (3630, 7, 1, 1, 101), \
+            (3647, 7, 1, 1, 102), (3630, 8, 1, 1, 101)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO stock VALUES \
+            (100, 1, 10), (101, 1, 20), (102, 1, 5), (100, 2, 5)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    // The cluster catalog exposes TiDB's clustered common-handle PRIMARY as a
+    // table access path. The in-memory DDL catalog stores only the handle, so
+    // mirror the loaded metadata shape explicitly after loading rows. There
+    // are deliberately no separate PRIMARY index entries to fall back to.
+    for (table_name, column_offsets) in [("order_line", vec![2, 1, 0, 3]), ("stock", vec![1, 0])] {
+        let TableEntry::Kv(table) = catalog.get_mut_in("test", table_name).unwrap() else {
+            panic!("{table_name} is not a KV table");
+        };
+        table.add_index(crate::kv_table::KvIndex {
+            id: 1,
+            name: "PRIMARY".to_owned(),
+            unique: true,
+            prefix_lengths: vec![
+                crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
+                column_offsets.len()
+            ],
+            column_offsets,
+            visible: true,
+            global: false,
+        });
+    }
+    let sql = "SELECT /*+ TIDB_INLJ(`order_line`, `stock`)*/ \
+        COUNT(DISTINCT (`s_i_id`)) AS `stock_count` \
+        FROM (`order_line`) JOIN `stock` \
+        WHERE `ol_w_id`=1 AND `ol_d_id`=7 \
+        AND `ol_o_id`<3647 AND `ol_o_id`>=3647-20 \
+        AND `s_w_id`=1 AND `s_i_id`=`ol_i_id` AND `s_quantity`<18";
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Row).unwrap();
+    let plan: Vec<String> = rows
+        .iter()
+        .map(|row| {
+            row.iter()
+                .map(|datum| match datum {
+                    Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+                    other => format!("{other:?}"),
+                })
+                .collect::<Vec<_>>()
+                .join("\\t")
+        })
+        .collect();
+
+    assert!(
+        plan.iter().any(|line| line.contains("StreamAgg")),
+        "COUNT(DISTINCT) over the forced lookup join must stream, got {plan:?}"
+    );
+    assert!(
+        plan.iter().any(|line| line.contains("IndexJoin")),
+        "TIDB_INLJ must force the viable clustered-handle lookup, got {plan:?}"
+    );
+    assert!(
+        plan.iter().any(|line| {
+            line.contains("TableReader") && line.contains("(Probe)") && line.contains(r"\t0.42\t")
+        }),
+        "the unique stock probe must apply its residual quantity selectivity, got {plan:?}"
+    );
+
+    for table in ["order_line", "stock"] {
+        assert!(
+            plan.iter().any(|line| {
+                line.contains("TableRangeScan") && line.contains(&format!("table:{table}"))
+            }),
+            "the {table} common handle must be read as a bounded table path, got {plan:?}"
+        );
+        assert!(
+            !plan.iter().any(|line| {
+                (line.contains("FullScan") || line.contains("IndexRangeScan"))
+                    && line.contains(&format!("table:{table}"))
+            }),
+            "the {table} leaf must neither scan the complete table nor double-read PRIMARY, got {plan:?}"
+        );
+    }
+    let (result, ops) =
+        crate::storage::capture_storage_ops(|| run_select_on(sql, &catalog, &ctx).unwrap());
+    assert_eq!(result, vec![vec![Datum::Int(1)]]);
+    assert_eq!(ops.scans, 2);
+    assert_eq!(
+        ops.gets, 2,
+        "the two distinct outer item keys must become common-handle point probes"
+    );
+}
+
+/// The TPCC NewOrder customer/warehouse lookup: a constant on warehouse's
+/// join key propagates to the customer's clustered composite primary key, so
+/// both leaves are direct lookups rather than full scans.
+#[test]
+fn tpcc_customer_warehouse_join_uses_two_point_gets() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE customer (\
+            c_id INT NOT NULL, c_d_id INT NOT NULL, c_w_id INT NOT NULL, \
+            c_discount INT, c_last VARCHAR(16), c_credit VARCHAR(2), \
+            PRIMARY KEY (c_w_id, c_d_id, c_id))",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE warehouse (w_id INT PRIMARY KEY, w_tax INT)",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO customer VALUES (629, 6, 1, 5, 'Smith', 'GC')",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    run_insert_on("INSERT INTO warehouse VALUES (1, 7)", &mut catalog, &ctx).unwrap();
+
+    let sql = "SELECT c_discount, c_last, c_credit, w_tax \
+        FROM customer, warehouse \
+        WHERE w_id = 1 AND c_w_id = w_id AND c_d_id = 6 AND c_id = 629";
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Row).unwrap();
+    let plan: Vec<String> = rows
+        .iter()
+        .map(|row| {
+            row.iter()
+                .map(|datum| match datum {
+                    Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+                    other => format!("{other:?}"),
+                })
+                .collect::<Vec<_>>()
+                .join("\\t")
+        })
+        .collect();
+    for table in ["customer", "warehouse"] {
+        assert!(
+            plan.iter().any(|line| {
+                line.contains("Point_Get") && line.contains(&format!("table:{table}"))
+            }),
+            "the {table} leaf should be a direct lookup, got {plan:?}"
+        );
+    }
+    assert!(
+        !plan.iter().any(|line| line.contains("Selection")),
+        "the point keys and join equality consume the complete WHERE, got {plan:?}"
+    );
+    assert!(
+        plan.iter().any(|line| {
+            (line.contains("MergeJoin") || line.contains("HashJoin"))
+                && line.split("\\t").nth(1) == Some("1.00")
+        }),
+        "two one-row point leaves produce a one-row join estimate, got {plan:?}"
+    );
+    assert_eq!(run_select_on(sql, &catalog, &ctx).unwrap().len(), 1);
+
+    let residual_sql = format!("{sql} AND c_credit = 'BC'");
+    let stmt = tidb_parser::parse(&residual_sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Row).unwrap();
+    assert!(
+        rows.iter().any(|row| match &row[0] {
+            Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).contains("Selection"),
+            _ => false,
+        }),
+        "a non-key residual predicate must remain above the point join"
+    );
+    assert!(run_select_on(&residual_sql, &catalog, &ctx)
+        .unwrap()
+        .is_empty());
 }
 
 /// THE ROW-DROP PIN: a parent merge join over a child join that HASHES.

@@ -620,7 +620,7 @@ impl RealTiKvServerSession {
         let snapshot = self
             .transaction
             .opened()
-            .map(MultiStatementTransaction::start_ts);
+            .map(MultiStatementTransaction::statement_read_ts);
         let query = match snapshot {
             Some(start_ts) => self
                 .inner

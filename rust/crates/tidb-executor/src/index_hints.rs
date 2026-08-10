@@ -449,20 +449,23 @@ enum HintedPath {
 }
 
 /// Go `getPathByIndexName`: an index of the table by name, or the table path
-/// when the name is `PRIMARY` and the primary key is the handle.
+/// when the name is `PRIMARY` and the primary key is the integer or common
+/// handle.
 ///
 /// Index names are case-insensitive, and an INVISIBLE index is not a path at
 /// all -- it is absent from `publicPaths`, which is why naming one is 1176
 /// rather than a plan that quietly reads it.
 fn resolve_index_name(table: &KvTable, name: &str) -> Option<HintedPath> {
+    if name.eq_ignore_ascii_case("primary")
+        && (table.pk_handle_offset().is_some() || !table.common_handle_offsets().is_empty())
+    {
+        return Some(HintedPath::Table);
+    }
     if let Some(index) = table
         .plan_indexes()
         .find(|index| index.name.eq_ignore_ascii_case(name))
     {
         return Some(HintedPath::Index(index.id));
-    }
-    if name.eq_ignore_ascii_case("primary") && table.pk_handle_offset().is_some() {
-        return Some(HintedPath::Table);
     }
     None
 }

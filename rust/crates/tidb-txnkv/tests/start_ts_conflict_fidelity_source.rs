@@ -145,6 +145,9 @@ type CommittedKey = (Vec<u8>, u64);
 #[derive(Clone)]
 struct ScriptedTikv {
     value: Vec<u8>,
+    /// A value committed after the transaction opened, visible only to reads
+    /// whose explicit version reaches its commit timestamp.
+    newer_value: Option<(u64, Vec<u8>)>,
     /// Keys a racing writer committed, with the timestamp it committed at. A
     /// prewrite whose `start_version` predates one is refused.
     committed_after: Arc<Mutex<Vec<CommittedKey>>>,
@@ -155,9 +158,15 @@ impl ScriptedTikv {
     fn new(committed_after: Vec<CommittedKey>) -> Self {
         Self {
             value: b"snapshot-value".to_vec(),
+            newer_value: None,
             committed_after: Arc::new(Mutex::new(committed_after)),
             recorded: Arc::new(Mutex::new(Recorded::default())),
         }
+    }
+
+    fn with_newer_value_at(mut self, commit_ts: u64, value: &[u8]) -> Self {
+        self.newer_value = Some((commit_ts, value.to_vec()));
+        self
     }
 
     /// TiKV's prewrite conflict check, in one line: any mutation whose key was
@@ -186,7 +195,11 @@ impl ScriptedTikv {
             RequestCmd::Get(body) => {
                 let request = KvrpcGetRequest::decode(body.as_slice())
                     .map_err(|error| tonic::Status::invalid_argument(error.to_string()))?;
-                let value = self.value.clone();
+                let value = self
+                    .newer_value
+                    .as_ref()
+                    .filter(|(commit_ts, _)| request.version >= *commit_ts)
+                    .map_or_else(|| self.value.clone(), |(_, value)| value.clone());
                 self.recorded.lock().unwrap().gets.push(request);
                 Ok(ResponseCmd::Get(
                     KvrpcGetResponse {
@@ -356,7 +369,6 @@ fn transaction(
     RealOptimisticTransaction::new_injected(
         runtime,
         FixedTimestampSource::new(NEXT_COMMIT_TS.fetch_add(1, Ordering::Relaxed)),
-        CALL_TIMEOUT,
         START_TS,
         Instant::now(),
         4,
@@ -368,6 +380,45 @@ fn transaction(
 // -----------------------------------------------------------------------------
 // Regressions
 // -----------------------------------------------------------------------------
+
+/// A pessimistic statement that advances `for_update_ts` must reread at that
+/// timestamp before it recomputes a write. Keeping the transaction's original
+/// snapshot here would make the lock retry appear successful while the SQL
+/// executor still derives its mutation from the losing value.
+#[test]
+fn an_explicit_statement_read_version_sees_the_commit_that_forced_the_retry() {
+    let service = ScriptedTikv::new(Vec::new())
+        .with_newer_value_at(RACING_COMMIT_TS, b"racing-commit-value");
+    let recorded = Arc::clone(&service.recorded);
+    let server = TestServer::start(service);
+    let topology = OneRegion {
+        address: server.store_address(),
+    };
+    let mut transaction = transaction(topology);
+    let call = UnaryCallContext::with_timeout(CALL_TIMEOUT);
+
+    let original = transaction
+        .snapshot_get(ROW_KEY, &call)
+        .expect("the transaction's repeatable-read snapshot");
+    assert_eq!(original.value.as_deref(), Some(b"snapshot-value".as_slice()));
+
+    let retried = transaction
+        .snapshot_get_at(ROW_KEY, RACING_COMMIT_TS, &call)
+        .expect("a pessimistic statement rereads at its advanced timestamp");
+    assert_eq!(
+        retried.value.as_deref(),
+        Some(b"racing-commit-value".as_slice())
+    );
+
+    let versions = recorded
+        .lock()
+        .unwrap()
+        .gets
+        .iter()
+        .map(|request| request.version)
+        .collect::<Vec<_>>();
+    assert_eq!(versions, [START_TS, RACING_COMMIT_TS]);
+}
 
 /// Several statements' reads and the final prewrite all carry the one timestamp
 /// the transaction opened at.

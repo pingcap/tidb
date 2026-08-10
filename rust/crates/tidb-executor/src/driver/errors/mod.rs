@@ -100,7 +100,9 @@ impl MysqlError {
 /// MySQL `ER_PARSE_ERROR`.
 const ER_PARSE_ERROR: u16 = 1064;
 /// TiDB `ErrWriteConflict`.
-const ER_WRITE_CONFLICT: u16 = 9007;
+const ER_WRITE_CONFLICT: u16 = tidb_error::tidb::errcode::ErrWriteConflict;
+/// TiDB `ErrRegionUnavailable`.
+const ER_REGION_UNAVAILABLE: u16 = tidb_error::tidb::errcode::ErrRegionUnavailable;
 /// MySQL `ER_UNKNOWN_SYSTEM_VARIABLE`.
 const ER_UNKNOWN_SYSTEM_VARIABLE: u16 = 1193;
 /// MySQL `ER_INCORRECT_GLOBAL_LOCAL_VAR`.
@@ -134,6 +136,11 @@ impl DriverError {
                 "Write conflict, please retry the transaction".to_owned(),
             )
         }
+        DriverError::Txn(crate::TxnErrorKind::RegionUnavailable) => MysqlError::new(
+            ER_REGION_UNAVAILABLE,
+            *b"HY000",
+            tidb_error::tidb::errname::ErrRegionUnavailable.raw.to_owned(),
+        ),
         // Go: "The used SELECT statements have a different number of columns".
         DriverError::WrongNumberOfColumnsInSelect => MysqlError::new(
             1222,

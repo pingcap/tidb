@@ -116,10 +116,21 @@ pub struct LoadedTableName {
 /// Complete startup input consumed by the concurrent SQL node.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NodeConfig {
-    /// Loopback address on which MySQL protocol connections are accepted.
+    /// Address on which MySQL protocol connections are accepted.
     pub host: IpAddr,
     /// MySQL protocol port. Zero requests an ephemeral test port.
     pub port: u16,
+    /// Address published to PD's TiDB topology for TiProxy discovery.
+    ///
+    /// `None` follows Go TiDB's default: use the listener address unless it
+    /// is unspecified, in which case startup resolves the route to PD.
+    pub advertise_address: Option<IpAddr>,
+    /// Address on which the TiDB-compatible HTTP status service listens.
+    pub status_host: IpAddr,
+    /// TiDB-compatible HTTP status port.
+    pub status_port: u16,
+    /// Whether the status service and TiProxy topology publication are active.
+    pub report_status: bool,
     /// Plaintext PD endpoints in configured order.
     pub pd_endpoints: Vec<String>,
     /// Checked tables exposed to the bounded planner in command-line order.
@@ -233,7 +244,7 @@ pub enum NodeConfigError {
     },
     /// Only the real TiKV store is supported by this executable.
     UnsupportedStore(String),
-    /// Native password without TLS must never bind a non-loopback address.
+    /// Configured-account mode must never bind a non-loopback address.
     NonLoopbackHost(IpAddr),
 }
 
@@ -264,7 +275,7 @@ impl fmt::Display for NodeConfigError {
             }
             Self::NonLoopbackHost(host) => write!(
                 formatter,
-                "refusing non-loopback MySQL listener {host} while TLS is not implemented"
+                "refusing non-loopback MySQL listener {host} for --auth-file; use --load-privileges for cluster deployment"
             ),
         }
     }
@@ -273,6 +284,7 @@ impl fmt::Display for NodeConfigError {
 impl std::error::Error for NodeConfigError {}
 
 const SUPPORTED_CONFIG_LEAVES: &[&str] = &[
+    "advertise-address",
     "host",
     "instance.max_connections",
     "lease",
@@ -288,6 +300,9 @@ const SUPPORTED_CONFIG_LEAVES: &[&str] = &[
     "security.ssl-cert",
     "security.ssl-key",
     "store",
+    "status.report-status",
+    "status.status-host",
+    "status.status-port",
     "tmp-storage-path",
     "tmp-storage-quota",
 ];
@@ -438,6 +453,10 @@ impl NodeConfig {
 
         let mut host = None;
         let mut port = None;
+        let mut advertise_address = None;
+        let mut status_host = None;
+        let mut status_port = None;
+        let mut report_status = None;
         let mut path = None;
         let mut store = None;
         let mut read_tables = Vec::new();
@@ -499,6 +518,10 @@ impl NodeConfig {
                 cluster_session = true;
                 continue;
             }
+            if argument == "--report-status" {
+                set_once(&mut report_status, "--report-status", "true".to_owned())?;
+                continue;
+            }
             if argument == "--read-table" {
                 read_tables.push(parse_read_table(&mut pending)?);
                 continue;
@@ -522,6 +545,10 @@ impl NodeConfig {
             match option {
                 "--host" => set_once(&mut host, option, value)?,
                 "--port" => set_once(&mut port, option, value)?,
+                "--advertise-address" => set_once(&mut advertise_address, option, value)?,
+                "--status-host" => set_once(&mut status_host, option, value)?,
+                "--status" => set_once(&mut status_port, option, value)?,
+                "--report-status" => set_once(&mut report_status, option, value)?,
                 "--path" => set_once(&mut path, option, value)?,
                 "--store" => set_once(&mut store, option, value)?,
                 "--read-table" => {
@@ -565,6 +592,18 @@ impl NodeConfig {
             }
             if port.is_none() && loaded.is_defined("port") {
                 port = Some(config.port.to_string());
+            }
+            if advertise_address.is_none() && loaded.is_defined("advertise-address") {
+                advertise_address = Some(config.advertise_address.clone());
+            }
+            if status_host.is_none() && loaded.is_defined("status.status-host") {
+                status_host = Some(config.status.status_host.clone());
+            }
+            if status_port.is_none() && loaded.is_defined("status.status-port") {
+                status_port = Some(config.status.status_port.to_string());
+            }
+            if report_status.is_none() && loaded.is_defined("status.report-status") {
+                report_status = Some(config.status.report_status.to_string());
             }
             if path.is_none() && loaded.is_defined("path") {
                 path = Some(config.path.clone());
@@ -624,7 +663,20 @@ impl NodeConfig {
         }
 
         let host = parse_ip("--host", host.as_deref().unwrap_or("127.0.0.1"))?;
-        if !host.is_loopback() {
+        let advertise_address = advertise_address
+            .as_deref()
+            .map(|value| parse_ip("--advertise-address", value))
+            .transpose()?;
+        let status_host = parse_ip("--status-host", status_host.as_deref().unwrap_or("0.0.0.0"))?;
+        let status_port = parse_number("--status", status_port.as_deref().unwrap_or("10080"))?;
+        let report_status = parse_bool(
+            "--report-status",
+            report_status.as_deref().unwrap_or("true"),
+        )?;
+        // Cluster privilege mode is used behind TiProxy on a private network.
+        // The configured auth-file mode keeps the original loopback-only
+        // boundary because it has no cluster-backed account lifecycle.
+        if !host.is_loopback() && !load_privileges {
             return Err(NodeConfigError::NonLoopbackHost(host));
         }
         let port = parse_number("--port", port.as_deref().unwrap_or("4000"))?;
@@ -711,6 +763,12 @@ impl NodeConfig {
             let config = &mut loaded.config;
             config.host = host.to_string();
             config.port = u32::from(port);
+            config.advertise_address = advertise_address
+                .map(|address| address.to_string())
+                .unwrap_or_default();
+            config.status.status_host = status_host.to_string();
+            config.status.status_port = u32::from(status_port);
+            config.status.report_status = report_status;
             config.store = tidb_config::store::StoreType("tikv".to_owned());
             config.path = pd_endpoints.join(",");
             config.max_allowed_packet = u64::try_from(max_allowed_packet).unwrap_or(u64::MAX);
@@ -745,6 +803,10 @@ impl NodeConfig {
         Ok(Self {
             host,
             port,
+            advertise_address,
+            status_host,
+            status_port,
+            report_status,
             pd_endpoints,
             read_tables,
             load_tables,
@@ -777,7 +839,9 @@ impl NodeConfig {
 [--max-connections <count>] [--connection-timeout-ms <milliseconds>] \
 [--max-topn-rows <rows>] [--lease-ms <milliseconds>] \
 [--auth-file <mode-0600-tsv> | --load-privileges] \
-[--host <loopback-ip>] [-P <port>|--port <port>] [--store tikv] \
+[--host <listen-ip>] [-P <port>|--port <port>] [--store tikv] \
+[--advertise-address <ip>] [--status-host <ip>] [--status <port>] \
+[--report-status=<bool>] \
 [--max-allowed-packet <bytes>] \
 [--ssl-cert <cert-pem> --ssl-key <key-pem>] [--no-auto-tls] \
 [--no-disconnect-on-expired-password] \
@@ -919,6 +983,14 @@ fn parse_ip(option: &str, value: &str) -> Result<IpAddr, NodeConfigError> {
     value
         .parse()
         .map_err(|_| invalid(option, "expected an IP address"))
+}
+
+fn parse_bool(option: &str, value: &str) -> Result<bool, NodeConfigError> {
+    match value {
+        "1" | "t" | "T" | "TRUE" | "true" | "True" => Ok(true),
+        "0" | "f" | "F" | "FALSE" | "false" | "False" => Ok(false),
+        _ => Err(invalid(option, "expected a boolean")),
+    }
 }
 
 fn parse_number<T>(option: &str, value: &str) -> Result<T, NodeConfigError>

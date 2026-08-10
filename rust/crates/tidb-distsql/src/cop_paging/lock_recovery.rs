@@ -14,10 +14,12 @@
 
 //! DistSQL continuation for bounded optimistic lock recovery.
 
+use std::cell::RefCell;
+
 use tidb_txnkv::lock::{
     decode_lock_observation, resolve_optimistic_locks, LockRecoveryClient, TimestampSource,
 };
-use tidb_txnkv::region::RegionRecoveryLoader;
+use tidb_txnkv::region::{RegionBackoffBudget, RegionBackoffKind, RegionRecoveryLoader};
 use tidb_txnkv::SharedReadRuntime;
 
 use super::{LockedResponseAction, LockedResponseDelegate, LockedResponseObservation};
@@ -26,13 +28,17 @@ use super::{LockedResponseAction, LockedResponseDelegate, LockedResponseObservat
 #[derive(Debug)]
 pub struct OptimisticLockRecovery<S> {
     timestamp_source: S,
+    lock_backoff: RefCell<RegionBackoffBudget>,
 }
 
 impl<S> OptimisticLockRecovery<S> {
     /// Creates a bounded recovery policy without another client or cache.
     #[must_use]
-    pub const fn new(timestamp_source: S) -> Self {
-        Self { timestamp_source }
+    pub fn new(timestamp_source: S) -> Self {
+        Self {
+            timestamp_source,
+            lock_backoff: RefCell::new(RegionBackoffBudget::campaign_default()),
+        }
     }
 
     /// Returns the injected timestamp authority.
@@ -68,16 +74,28 @@ where
         )
         .map_err(|error| error.to_string())?;
         if result.is_alive() {
-            let ttl = result.ttl;
+            // Go `BackoffWithMaxSleepTxnLockFast(int(msBeforeExpired), ...)`:
+            // retry a short transaction after a millisecond-scale backoff,
+            // capped by its TTL, instead of sleeping the whole TTL while the
+            // owner is normally about to commit.
+            let wait = self
+                .lock_backoff
+                .borrow_mut()
+                .next_delay_capped(RegionBackoffKind::TxnLockFast, result.ttl)
+                .map_err(|exhausted| {
+                    format!(
+                        "optimistic lock recovery exhausted {:?} backoff budget {:?}",
+                        exhausted.kind, exhausted.max_sleep
+                    )
+                })?;
             let deadline_budget = observation.call.timeout();
-            if deadline_budget.is_zero() {
+            if wait > deadline_budget {
                 return Err("optimistic lock recovery exceeded the unary deadline".to_owned());
             }
-            let wait = ttl.min(deadline_budget);
             if observation.call.cancellation().wait_timeout(wait) {
                 return Err("optimistic lock TTL wait cancelled by caller".to_owned());
             }
-            if wait < ttl {
+            if !wait.is_zero() && observation.call.timeout().is_zero() {
                 return Err("optimistic lock recovery exceeded the unary deadline".to_owned());
             }
         }

@@ -22,6 +22,55 @@
 use crate::direct_unary_client_fixture::*;
 
 #[test]
+fn cache_invalidation_between_binding_and_dispatch_reloads_and_resends() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let loader_calls = Rc::new(RefCell::new(Vec::new()));
+    let shared = tidb_txnkv::SharedReadRuntime::new_injected(
+        ScriptedClient {
+            calls: Rc::clone(&calls),
+            responses: VecDeque::from([Ok(response(b"reloaded"))]),
+            events: Rc::new(RefCell::new(Vec::new())),
+            liveness: RefCell::new(VecDeque::new()),
+            batch_errors: RefCell::new(VecDeque::new()),
+            batch_completion_gate: None,
+        },
+        RegionCache::new(ScriptedLoader {
+            cluster_id: 9001,
+            calls: Rc::clone(&loader_calls),
+            regions: VecDeque::from([
+                location(1, "a", "z", "tikv-old:20160"),
+                location(1, "a", "z", "tikv-new:20160"),
+            ]),
+        }),
+    );
+    let cache = shared.region_cache_handle();
+    let transport = DirectUnaryQueryTransport::with_shared_runtime(
+        shared,
+        DirectUnaryRuntimeConfig {
+            seed_read_bytes: 4096,
+            observation_time,
+            ..DirectUnaryRuntimeConfig::default()
+        },
+        tidb_txnkv::lock::FixedTimestampSource::new(1 << 18),
+    )
+    .unwrap();
+    let mut runtime = InjectedQueryRuntime::new(transport);
+    let mut result = select_result(&mut runtime, &transport_request(metadata("a", "z")));
+
+    cache
+        .with_cache(|cache| assert!(cache.invalidate(RegionVerId::new(1, 1, 2))))
+        .unwrap();
+
+    assert_eq!(result.next_raw().unwrap(), Some(b"reloaded".to_vec()));
+    assert_eq!(result.next_raw().unwrap(), None);
+    assert_eq!(
+        loader_calls.borrow().as_slice(),
+        [b"a".to_vec(), b"a".to_vec()]
+    );
+    assert_eq!(calls.borrow()[0].address, "tikv-new:20160");
+}
+
+#[test]
 fn nil_leader_sleeps_then_invalidates_reloads_and_resends() {
     let calls = Rc::new(RefCell::new(Vec::new()));
     let loader_calls = Rc::new(RefCell::new(Vec::new()));

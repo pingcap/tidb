@@ -22,8 +22,8 @@ use std::time::Duration;
 use prost::Message;
 use tidb_pd_client::{
     PdClient, PdKeyRange, PdNodeState, PdStoreState, BATCH_SCAN_REGIONS_PATH, GET_MEMBERS_PATH,
-    GET_PREV_REGION_PATH, GET_REGION_BY_ID_PATH, GET_REGION_PATH, GET_STORE_PATH,
-    SCAN_REGIONS_PATH,
+    GET_OPERATOR_PATH, GET_PREV_REGION_PATH, GET_REGION_BY_ID_PATH, GET_REGION_PATH,
+    GET_STORE_PATH, SCAN_REGIONS_PATH, SPLIT_AND_SCATTER_REGIONS_PATH,
 };
 use tidb_proto::metapb;
 use tidb_proto::pdpb::{
@@ -94,6 +94,10 @@ struct State {
     store_requests: Vec<pdpb::GetStoreRequest>,
     gc_state: Reply<pdpb::GetGcStateResponse>,
     gc_state_requests: Vec<pdpb::GetGcStateRequest>,
+    operator: Reply<pdpb::GetOperatorResponse>,
+    operator_requests: Vec<pdpb::GetOperatorRequest>,
+    split_and_scatter: Reply<pdpb::SplitAndScatterRegionsResponse>,
+    split_and_scatter_requests: Vec<pdpb::SplitAndScatterRegionsRequest>,
 }
 
 #[derive(Clone)]
@@ -160,6 +164,18 @@ impl Pd for MockPd {
         reply.send().await
     }
 
+    async fn get_operator(
+        &self,
+        request: tonic::Request<pdpb::GetOperatorRequest>,
+    ) -> Result<tonic::Response<pdpb::GetOperatorResponse>, tonic::Status> {
+        let reply = {
+            let mut state = self.state.lock().unwrap();
+            state.operator_requests.push(request.into_inner());
+            state.operator.clone()
+        };
+        reply.send().await
+    }
+
     async fn get_region(
         &self,
         request: tonic::Request<pdpb::GetRegionRequest>,
@@ -216,6 +232,18 @@ impl Pd for MockPd {
             let mut state = self.state.lock().unwrap();
             state.batch_scan_region_requests.push(request.into_inner());
             state.batch_scan_regions.clone()
+        };
+        reply.send().await
+    }
+
+    async fn split_and_scatter_regions(
+        &self,
+        request: tonic::Request<pdpb::SplitAndScatterRegionsRequest>,
+    ) -> Result<tonic::Response<pdpb::SplitAndScatterRegionsResponse>, tonic::Status> {
+        let reply = {
+            let mut state = self.state.lock().unwrap();
+            state.split_and_scatter_requests.push(request.into_inner());
+            state.split_and_scatter.clone()
         };
         reply.send().await
     }
@@ -479,6 +507,21 @@ fn valid_state() -> State {
             }),
         }),
         gc_state_requests: Vec::new(),
+        operator: Reply::Value(pdpb::GetOperatorResponse {
+            header: Some(header(CLUSTER_ID)),
+            region_id: 101,
+            desc: b"scatter-region".to_vec(),
+            status: pdpb::OperatorStatus::Running as i32,
+            kind: b"region".to_vec(),
+        }),
+        operator_requests: Vec::new(),
+        split_and_scatter: Reply::Value(pdpb::SplitAndScatterRegionsResponse {
+            header: Some(header(CLUSTER_ID)),
+            split_finished_percentage: 100,
+            scatter_finished_percentage: 75,
+            regions_id: vec![101, 102, 103, 104],
+        }),
+        split_and_scatter_requests: Vec::new(),
     }
 }
 
@@ -539,6 +582,11 @@ fn exact_methods_headers_wire_key_roles_and_store_states_are_preserved_once() {
     assert_eq!(SCAN_REGIONS_PATH, "/pdpb.PD/ScanRegions");
     assert_eq!(BATCH_SCAN_REGIONS_PATH, "/pdpb.PD/BatchScanRegions");
     assert_eq!(GET_STORE_PATH, "/pdpb.PD/GetStore");
+    assert_eq!(GET_OPERATOR_PATH, "/pdpb.PD/GetOperator");
+    assert_eq!(
+        SPLIT_AND_SCATTER_REGIONS_PATH,
+        "/pdpb.PD/SplitAndScatterRegions"
+    );
 
     let mut state = valid_state();
     let store = match state.stores.get_mut(&101).unwrap() {
@@ -626,6 +674,14 @@ fn exact_methods_headers_wire_key_roles_and_store_states_are_preserved_once() {
     let removing = client.get_store(102).unwrap().unwrap();
     assert_eq!(removing.state, PdStoreState::Offline);
     assert_eq!(removing.node_state, PdNodeState::Removing);
+    let split_keys = vec![b"t1".to_vec(), b"t2".to_vec()];
+    let split = client.split_and_scatter_regions(&split_keys, "42").unwrap();
+    assert_eq!(split.split_finished_percentage, 100);
+    assert_eq!(split.scatter_finished_percentage, 75);
+    assert_eq!(split.region_ids, [101, 102, 103, 104]);
+    assert!(client
+        .is_region_scattering_with_timeout(101, Duration::from_secs(2))
+        .unwrap());
 
     let state = server.state.lock().unwrap();
     assert_eq!(state.member_requests.len(), 1);
@@ -647,6 +703,43 @@ fn exact_methods_headers_wire_key_roles_and_store_states_are_preserved_once() {
         assert_exact_header(request.header.as_ref().unwrap());
         true
     }));
+    assert_eq!(state.split_and_scatter_requests.len(), 1);
+    let split_request = &state.split_and_scatter_requests[0];
+    assert_eq!(split_request.split_keys, split_keys);
+    assert_eq!(split_request.group, "42");
+    assert_eq!(split_request.retry_limit, 0);
+    assert_exact_header(split_request.header.as_ref().unwrap());
+    assert_eq!(state.operator_requests.len(), 1);
+    assert_eq!(state.operator_requests[0].region_id, 101);
+    assert_exact_header(state.operator_requests[0].header.as_ref().unwrap());
+}
+
+#[test]
+fn a_missing_scatter_operator_is_already_finished_like_client_go() {
+    // client-go tikv/split_region.go:WaitScatterRegionFinish checks the
+    // operator description and status before inspecting the response-header
+    // error. PD returns REGION_NOT_FOUND with an empty description and
+    // SUCCESS after an operator disappears, which therefore means finished.
+    let mut state = valid_state();
+    state.operator = Reply::Value(pdpb::GetOperatorResponse {
+        header: Some(pdpb::ResponseHeader {
+            cluster_id: CLUSTER_ID,
+            error: Some(pdpb::Error {
+                r#type: pdpb::ErrorType::RegionNotFound as i32,
+                message: "Not Found".to_owned(),
+            }),
+        }),
+        region_id: 101,
+        desc: Vec::new(),
+        status: pdpb::OperatorStatus::Success as i32,
+        kind: Vec::new(),
+    });
+    let server = Server::start(state);
+    let client = PdClient::connect(&server.address, Duration::from_secs(2)).unwrap();
+
+    assert!(!client
+        .is_region_scattering_with_timeout(101, Duration::from_secs(2))
+        .unwrap());
 }
 
 #[test]

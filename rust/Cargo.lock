@@ -1840,6 +1840,7 @@ dependencies = [
  "subtle",
  "tidb-ast",
  "tidb-chunk",
+ "tidb-codec",
  "tidb-config",
  "tidb-datatype",
  "tidb-distsql",

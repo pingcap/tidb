@@ -41,6 +41,10 @@
 //! left, and no cost can change which family wins:
 //!
 //! * INDEX BY ELIMINATION -- taken here.
+//! * INDEX FOR A SINGLE OUTER ROW -- taken when the estimate says one outer
+//!   row probes strictly fewer rows than reading the inner side whole. This is
+//!   the one cost choice the available row source can settle without pricing
+//!   a candidate tree.
 //! * anything else -- REFUSED here, and refused fail-closed. Choosing between
 //!   two families is `findBestTask`'s costing layer, which needs a priced
 //!   `Candidate` tree per side ([`tidb_planner::candidate_cost`]); this tier
@@ -73,9 +77,12 @@ use crate::hash_join::EquiKey;
 /// What the enumeration leaves standing at one join site.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Chosen {
-    /// Only index-join candidates were enumerated: the choice by elimination,
-    /// which no cost can overturn.
+    /// Index joins are the only enumerated candidates.
     Index,
+    /// A one-row outer side can probe a strict subset of the inner side. The
+    /// caller still verifies that the physical object is a non-primary
+    /// secondary index before committing this cost-shaped choice.
+    IndexForSingleOuterRow,
     /// Refused, and why. See [`Refusal`].
     Refused(Refusal),
 }
@@ -221,15 +228,31 @@ fn decide(input: &SearchInput<'_>, record: &mut Record) -> Chosen {
     let mut index = false;
     let mut hash = false;
     let mut merge = false;
+    let mut single_outer_row_dominates = false;
     for candidate in &candidates {
         match candidate.strategy {
-            JoinStrategy::Index { .. } => index = true,
+            JoinStrategy::Index { outer_idx, .. } => {
+                index = true;
+                let (outer_rows, inner_rows) = if outer_idx == 0 {
+                    (counts.left, counts.right)
+                } else {
+                    (counts.right, counts.left)
+                };
+                // With exactly one driver row, the index alternative performs
+                // one lookup. When that lookup is expected to return fewer
+                // rows than the inner side contains, it avoids a strict
+                // subset of the whole-side read required by hash and merge.
+                // This is deliberately the only cost-shaped comparison made
+                // without a complete candidate tree.
+                single_outer_row_dominates |= outer_rows == 1.0 && counts.joined < inner_rows;
+            }
             JoinStrategy::Hash(_) => hash = true,
             JoinStrategy::Merge { .. } => merge = true,
         }
     }
     match (index, hash, merge) {
         (true, false, false) => Chosen::Index,
+        (true, _, _) if single_outer_row_dominates => Chosen::IndexForSingleOuterRow,
         (true, true, _) => Chosen::Refused(Refusal::HashAlsoEnumerated),
         (true, false, true) => Chosen::Refused(Refusal::MergeAlsoEnumerated),
         (false, ..) => Chosen::Refused(Refusal::NoIndexCandidate),
@@ -277,6 +300,19 @@ fn side_names(join: &Join) -> Option<(Vec<String>, Vec<String>)> {
     leaf_names(&join.left, &mut left)?;
     leaf_names(join.right.as_ref()?, &mut right)?;
     (!left.is_empty() && !right.is_empty()).then_some((left, right))
+}
+
+/// Returns the statement-owned estimates for one join in left/right order.
+///
+/// This is the same answer [`choose`] records and lets the committed index
+/// strategy carry its outer/probe cardinalities into the physical-plan cost
+/// comparison without consulting EXPLAIN-only state.
+pub(crate) fn estimated_rows(
+    join: &Join,
+    rows: Option<&RowSource>,
+) -> Option<crate::driver::join_reorder::JoinRows> {
+    let (left, right) = side_names(join)?;
+    rows?.rows_of_join(&left, &right)
 }
 
 /// Every relation a `FROM` subtree exposes, in row order.

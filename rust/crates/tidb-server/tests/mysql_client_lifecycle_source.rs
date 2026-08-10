@@ -7,9 +7,10 @@
 
 use std::collections::VecDeque;
 use std::fs;
-use std::net::{TcpListener, TcpStream};
+use std::net::{Shutdown, TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use sha1::{Digest, Sha1};
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
@@ -299,6 +300,93 @@ fn prepared_point_range_keeps_its_two_marker_contract() {
     assert_eq!(read.parameter_count(), 2);
     assert_eq!(read.result_field_types()[0].code(), FieldTypeCode::LongLong);
     assert_eq!(PreparedStatement::PointRead(read).parameter_count(), 2);
+}
+
+#[test]
+fn peer_closing_during_handshake_is_a_clean_disconnect() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let tracker = Arc::new(ConnectionTracker::default());
+    let worker_tracker = Arc::clone(&tracker);
+    let worker = std::thread::spawn(move || {
+        let (stream, peer_addr) = listener.accept().unwrap();
+        serve_mysql_connection(
+            stream,
+            peer_addr,
+            ConnectionCancellation::default(),
+            &Factory {
+                queries: Arc::new(Mutex::new(Vec::new())),
+                lifecycle: Arc::new(Mutex::new(Lifecycle::default())),
+            },
+            &users(),
+            &worker_tracker,
+            DEFAULT_MAX_ALLOWED_PACKET,
+        )
+        .unwrap()
+    });
+
+    let client = TcpStream::connect(address).unwrap();
+    let mut reader = PacketReader::new(client.try_clone().unwrap());
+    assert_eq!(reader.read_packet().unwrap()[0], 10);
+    drop(reader);
+    client.shutdown(Shutdown::Both).unwrap();
+    drop(client);
+
+    let report = worker.join().unwrap();
+    assert_eq!(report.exit, ConnectionExit::PeerClosed);
+    assert_eq!(report.queries, 0);
+    assert_eq!(report.commands, Default::default());
+    assert_eq!(tracker.accepted(), 1);
+    assert_eq!(tracker.completed(), 1);
+    assert_eq!(tracker.active(), 0);
+    assert_eq!(tracker.failed(), 0);
+}
+
+#[test]
+fn authenticated_connection_idle_uses_wait_timeout_not_handshake_timeout() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let tracker = Arc::new(ConnectionTracker::default());
+    let worker_tracker = Arc::clone(&tracker);
+    let worker = std::thread::spawn(move || {
+        let (stream, peer_addr) = listener.accept().unwrap();
+        let handshake_timeout = Duration::from_millis(50);
+        stream.set_read_timeout(Some(handshake_timeout)).unwrap();
+        stream.set_write_timeout(Some(handshake_timeout)).unwrap();
+        serve_mysql_connection(
+            stream,
+            peer_addr,
+            ConnectionCancellation::default(),
+            &Factory {
+                queries: Arc::new(Mutex::new(Vec::new())),
+                lifecycle: Arc::new(Mutex::new(Lifecycle::default())),
+            },
+            &users(),
+            &worker_tracker,
+            DEFAULT_MAX_ALLOWED_PACKET,
+        )
+        .unwrap()
+    });
+
+    let mut client = TcpStream::connect(address).unwrap();
+    let read_side = client.try_clone().unwrap();
+    read_side
+        .set_read_timeout(Some(Duration::from_secs(1)))
+        .unwrap();
+    let mut reader = PacketReader::new(read_side);
+    authenticate(&mut client, &mut reader, "alice", b"secret");
+    reader.set_sequence(2);
+    assert_eq!(reader.read_packet().unwrap()[0], 0);
+
+    std::thread::sleep(Duration::from_millis(150));
+    write_packet(&mut client, 0, &[COM_PING]);
+    reader.set_sequence(1);
+    assert_eq!(reader.read_packet().unwrap()[0], 0);
+
+    write_packet(&mut client, 0, &[COM_QUIT]);
+    let report = worker.join().unwrap();
+    assert_eq!(report.exit, ConnectionExit::Quit);
+    assert_eq!(tracker.failed(), 0);
 }
 
 struct PreparedRows {

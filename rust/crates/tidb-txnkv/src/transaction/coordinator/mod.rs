@@ -44,7 +44,10 @@ use tidb_proto::KvrpcKeyError;
 
 use crate::gc_state::{GcStateCache, VisibilityError};
 use crate::lock::{LockRecoveryClient, TimestampSource};
-use crate::region::{RegionBackoffBudget, RegionErrorDisposition, RegionRecoveryLoader};
+use crate::region::{
+    RegionBackoffBudget, RegionBackoffExhausted, RegionBackoffKind, RegionErrorDisposition,
+    RegionRecoveryError, RegionRecoveryLoader,
+};
 use crate::rpc::{TonicCoprocessorClient, TransactionBatchPublication, UnaryCallContext};
 use crate::{PdRegionLoader, SharedReadRuntime};
 
@@ -57,7 +60,7 @@ use super::state::{
 };
 
 pub use opener::{PdLockTimestampSource, RealOptimisticTransactionOpener};
-pub use snapshot_read::SnapshotGetResult;
+pub use snapshot_read::{SnapshotGetResult, SnapshotScanPairs};
 
 const DEFAULT_LOCK_TTL_MS: u64 = 3_000;
 /// Go `config.DefaultConfig().TiKVClient.AsyncCommit.KeysLimit`.
@@ -188,7 +191,6 @@ impl CommitProtocol {
 pub struct RealOptimisticTransaction<C, L, T> {
     runtime: SharedReadRuntime<C, L>,
     timestamps: T,
-    timeout: Duration,
     start_ts: u64,
     planned_mutation_count: usize,
     planned_aggregate_bytes: usize,
@@ -283,7 +285,6 @@ where
     pub fn new_injected(
         runtime: SharedReadRuntime<C, L>,
         timestamps: T,
-        timeout: Duration,
         start_ts: u64,
         opened_at: Instant,
         planned_mutation_count: usize,
@@ -294,7 +295,6 @@ where
         Self::new_opened(
             runtime,
             timestamps,
-            timeout,
             start_ts,
             opened_at,
             planned_mutation_count,
@@ -316,7 +316,6 @@ where
     pub(super) fn new_opened(
         runtime: SharedReadRuntime<C, L>,
         timestamps: T,
-        timeout: Duration,
         start_ts: u64,
         opened_at: Instant,
         planned_mutation_count: usize,
@@ -332,7 +331,6 @@ where
         Ok(Self {
             runtime,
             timestamps,
-            timeout,
             start_ts,
             planned_mutation_count,
             planned_aggregate_bytes,
@@ -356,15 +354,15 @@ where
         self.protocol = protocol;
     }
 
-    /// Rejects a completed read whose `start_ts` GC has already passed.
+    /// Rejects a completed read whose exact read timestamp GC has passed.
     ///
     /// Called only after TiKV has answered, mirroring client-go's placement of
     /// `CheckVisibility` at the end of `snapshot.get` and `snapshot.scan`. A
     /// pre-read check would be worthless: GC can advance while the RPC is in
     /// flight, so only a post-read check covers the data actually returned.
-    fn check_visibility(&self) -> Result<(), OptimisticCoordinatorError> {
+    fn check_visibility_at(&self, read_ts: u64) -> Result<(), OptimisticCoordinatorError> {
         self.gc_state
-            .check_visibility(self.start_ts)
+            .check_visibility(read_ts)
             .map_err(OptimisticCoordinatorError::Visibility)
     }
 
@@ -392,10 +390,6 @@ where
         &self.timestamps
     }
 
-    pub(super) const fn call_timeout(&self) -> Duration {
-        self.timeout
-    }
-
     /// Snapshot timestamp allocated before any read or write.
     #[must_use]
     pub const fn start_ts(&self) -> u64 {
@@ -420,16 +414,19 @@ where
             RecoveryPhase::Secondary => &mut self.secondary_backoff,
             RecoveryPhase::Cleanup => &mut self.cleanup_backoff,
         };
-        let disposition = self
+        let recovery = self
             .runtime
             .region_cache_handle()
             .on_region_error(error, attempt.clone(), backoff)
             .map_err(|error| TransactionCause::Region {
                 detail: format!("RegionCache recovery lifecycle failed: {error}"),
-            })?
-            .map_err(|error| TransactionCause::Region {
-                detail: format!("RegionCache rejected region error: {error}"),
             })?;
+        let Some(disposition) = normalize_region_recovery(recovery)? else {
+            // Another request already advanced the shared cache beyond this
+            // attempt. The response cannot update canonical topology, but its
+            // caller still retries and locates against that newer topology.
+            return Ok(());
+        };
         let delay = match disposition {
             RegionErrorDisposition::RetryRoute { delay, .. }
             | RegionErrorDisposition::RetrySelector { delay, .. }
@@ -446,6 +443,18 @@ where
             }
         };
         wait_with_call(call, delay)
+    }
+}
+
+fn normalize_region_recovery(
+    recovery: Result<RegionErrorDisposition, RegionRecoveryError>,
+) -> Result<Option<RegionErrorDisposition>, TransactionCause> {
+    match recovery {
+        Ok(disposition) => Ok(Some(disposition)),
+        Err(RegionRecoveryError::StaleObservation(_)) => Ok(None),
+        Err(error) => Err(TransactionCause::Region {
+            detail: format!("RegionCache rejected region error: {error}"),
+        }),
     }
 }
 
@@ -524,8 +533,11 @@ pub(super) fn wait_with_call(
     Ok(())
 }
 
-pub(super) fn alive_retry_delay(remaining_ttl: Duration) -> Duration {
-    remaining_ttl.max(Duration::from_millis(10))
+pub(super) fn alive_retry_delay(
+    remaining_ttl: Duration,
+    backoff: &mut RegionBackoffBudget,
+) -> Result<Duration, RegionBackoffExhausted> {
+    backoff.next_delay_capped(RegionBackoffKind::TxnLockFast, remaining_ttl)
 }
 
 trait AttemptRoute {
@@ -645,7 +657,17 @@ mod tests {
 
     #[test]
     fn waits_use_the_absolute_call_deadline_and_cancellation() {
-        assert_eq!(alive_retry_delay(Duration::ZERO), Duration::from_millis(10));
+        let mut expired_lock = RegionBackoffBudget::with_jitter_seed(Duration::from_secs(20), 1);
+        assert_eq!(
+            alive_retry_delay(Duration::ZERO, &mut expired_lock).unwrap(),
+            Duration::ZERO,
+        );
+        let mut live_lock = RegionBackoffBudget::with_jitter_seed(Duration::from_secs(20), 1);
+        assert_eq!(
+            alive_retry_delay(Duration::from_secs(30), &mut live_lock).unwrap(),
+            Duration::from_millis(1),
+            "a live lock starts client-go's txnLockFast backoff instead of sleeping its full TTL",
+        );
         let expired = UnaryCallContext::with_timeout(Duration::ZERO);
         assert!(matches!(
             wait_with_call(&expired, Duration::from_millis(1)),
@@ -658,5 +680,18 @@ mod tests {
             wait_with_call(&cancelled, Duration::ZERO),
             Err(TransactionCause::Transport { .. })
         ));
+    }
+
+    #[test]
+    fn an_obsolete_region_response_retries_the_newer_shared_cache() {
+        let stale = RegionRecoveryError::StaleObservation(crate::region::RegionAttempt {
+            region: crate::region::RegionVerId::new(7, 3, 4),
+            peer_id: 11,
+            store_id: 101,
+            address: "tikv-101".to_owned(),
+            store_epoch: 7,
+        });
+
+        assert!(normalize_region_recovery(Err(stale)).unwrap().is_none());
     }
 }

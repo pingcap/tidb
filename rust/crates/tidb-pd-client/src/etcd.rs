@@ -39,9 +39,12 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use tidb_proto::etcdserverpb::kv_client::KvClient;
+use tidb_proto::etcdserverpb::lease_client::LeaseClient;
 use tidb_proto::etcdserverpb::watch_client::WatchClient;
 use tidb_proto::etcdserverpb::{
-    watch_request::RequestUnion, PutRequest, RangeRequest, WatchCreateRequest, WatchRequest,
+    watch_request::RequestUnion, DeleteRangeRequest, LeaseGrantRequest, LeaseKeepAliveRequest,
+    LeaseKeepAliveResponse, LeaseRevokeRequest, PutRequest, RangeRequest, WatchCreateRequest,
+    WatchRequest,
 };
 use tidb_proto::mvccpb::event::EventType;
 use tokio::sync::watch;
@@ -54,8 +57,16 @@ use crate::{secure_endpoint, ClusterSecurity, PdClientError};
 pub const ETCD_PUT_PATH: &str = "/etcdserverpb.KV/Put";
 /// Exact generated method path for reading one key back.
 pub const ETCD_RANGE_PATH: &str = "/etcdserverpb.KV/Range";
+/// Exact generated method path for removing one topology prefix.
+pub const ETCD_DELETE_RANGE_PATH: &str = "/etcdserverpb.KV/DeleteRange";
 /// Exact generated method path for the watch stream.
 pub const ETCD_WATCH_PATH: &str = "/etcdserverpb.Watch/Watch";
+/// Exact generated method path for creating a topology lease.
+pub const ETCD_LEASE_GRANT_PATH: &str = "/etcdserverpb.Lease/LeaseGrant";
+/// Exact generated method path for refreshing a topology lease.
+pub const ETCD_LEASE_KEEP_ALIVE_PATH: &str = "/etcdserverpb.Lease/LeaseKeepAlive";
+/// Exact generated method path for revoking a topology lease.
+pub const ETCD_LEASE_REVOKE_PATH: &str = "/etcdserverpb.Lease/LeaseRevoke";
 
 /// The etcd key TiDB publishes the cluster's schema version under.
 ///
@@ -162,11 +173,29 @@ enum EtcdCommand {
     Put {
         key: Vec<u8>,
         value: Vec<u8>,
+        lease_id: i64,
         reply: mpsc::Sender<Result<(), EtcdError>>,
     },
     Get {
         key: Vec<u8>,
         reply: mpsc::Sender<Result<Option<Vec<u8>>, EtcdError>>,
+    },
+    DeleteRange {
+        key: Vec<u8>,
+        range_end: Vec<u8>,
+        reply: mpsc::Sender<Result<i64, EtcdError>>,
+    },
+    GrantLease {
+        ttl: i64,
+        reply: mpsc::Sender<Result<i64, EtcdError>>,
+    },
+    KeepAliveLease {
+        lease_id: i64,
+        reply: mpsc::Sender<Result<i64, EtcdError>>,
+    },
+    RevokeLease {
+        lease_id: i64,
+        reply: mpsc::Sender<Result<(), EtcdError>>,
     },
     Close {
         reply: mpsc::Sender<()>,
@@ -282,8 +311,79 @@ impl EtcdClient {
             .send(EtcdCommand::Put {
                 key: key.to_vec(),
                 value: value.to_vec(),
+                lease_id: 0,
                 reply,
             })
+            .map_err(|_| EtcdError::Closed)?;
+        response.recv().unwrap_or(Err(EtcdError::Closed))
+    }
+
+    /// Puts one key attached to an existing etcd lease.
+    pub fn put_with_lease(&self, key: &[u8], value: &[u8], lease_id: i64) -> Result<(), EtcdError> {
+        if lease_id <= 0 {
+            return Err(EtcdError::UnexpectedResponse(format!(
+                "lease ID must be positive, got {lease_id}"
+            )));
+        }
+        let (reply, response) = mpsc::channel();
+        self.shared
+            .commands
+            .send(EtcdCommand::Put {
+                key: key.to_vec(),
+                value: value.to_vec(),
+                lease_id,
+                reply,
+            })
+            .map_err(|_| EtcdError::Closed)?;
+        response.recv().unwrap_or(Err(EtcdError::Closed))
+    }
+
+    /// Deletes every key below one non-empty prefix.
+    pub fn delete_prefix(&self, prefix: &[u8]) -> Result<i64, EtcdError> {
+        let range_end = prefix_range_end(prefix)?;
+        let (reply, response) = mpsc::channel();
+        self.shared
+            .commands
+            .send(EtcdCommand::DeleteRange {
+                key: prefix.to_vec(),
+                range_end,
+                reply,
+            })
+            .map_err(|_| EtcdError::Closed)?;
+        response.recv().unwrap_or(Err(EtcdError::Closed))
+    }
+
+    /// Grants a positive-TTL lease and returns etcd's chosen lease ID.
+    pub fn grant_lease(&self, ttl: i64) -> Result<i64, EtcdError> {
+        if ttl <= 0 {
+            return Err(EtcdError::UnexpectedResponse(format!(
+                "lease TTL must be positive, got {ttl}"
+            )));
+        }
+        let (reply, response) = mpsc::channel();
+        self.shared
+            .commands
+            .send(EtcdCommand::GrantLease { ttl, reply })
+            .map_err(|_| EtcdError::Closed)?;
+        response.recv().unwrap_or(Err(EtcdError::Closed))
+    }
+
+    /// Refreshes one lease and returns its remaining TTL.
+    pub fn keep_alive_lease(&self, lease_id: i64) -> Result<i64, EtcdError> {
+        let (reply, response) = mpsc::channel();
+        self.shared
+            .commands
+            .send(EtcdCommand::KeepAliveLease { lease_id, reply })
+            .map_err(|_| EtcdError::Closed)?;
+        response.recv().unwrap_or(Err(EtcdError::Closed))
+    }
+
+    /// Revokes a lease; every attached key is deleted atomically by etcd.
+    pub fn revoke_lease(&self, lease_id: i64) -> Result<(), EtcdError> {
+        let (reply, response) = mpsc::channel();
+        self.shared
+            .commands
+            .send(EtcdCommand::RevokeLease { lease_id, reply })
             .map_err(|_| EtcdError::Closed)?;
         response.recv().unwrap_or(Err(EtcdError::Closed))
     }
@@ -384,6 +484,7 @@ fn run_kv_worker(
     shutdown: &watch::Receiver<bool>,
 ) {
     let mut clients: HashMap<String, KvClient<Channel>> = HashMap::new();
+    let mut lease_clients: HashMap<String, LeaseClient<Channel>> = HashMap::new();
     while let Ok(command) = receiver.recv() {
         match command {
             EtcdCommand::Close { reply } => {
@@ -397,9 +498,22 @@ fn run_kv_worker(
                 EtcdCommand::Get { reply, .. } => {
                     let _ = reply.send(Err(EtcdError::Closed));
                 }
+                EtcdCommand::DeleteRange { reply, .. }
+                | EtcdCommand::GrantLease { reply, .. }
+                | EtcdCommand::KeepAliveLease { reply, .. } => {
+                    let _ = reply.send(Err(EtcdError::Closed));
+                }
+                EtcdCommand::RevokeLease { reply, .. } => {
+                    let _ = reply.send(Err(EtcdError::Closed));
+                }
                 EtcdCommand::Close { .. } => unreachable!("handled above"),
             },
-            EtcdCommand::Put { key, value, reply } => {
+            EtcdCommand::Put {
+                key,
+                value,
+                lease_id,
+                reply,
+            } => {
                 let result = across_endpoints(
                     runtime,
                     endpoints,
@@ -410,6 +524,7 @@ fn run_kv_worker(
                         let request = PutRequest {
                             key: key.clone(),
                             value: value.clone(),
+                            lease: lease_id,
                             ..Default::default()
                         };
                         runtime
@@ -446,8 +561,116 @@ fn run_kv_worker(
                 );
                 let _ = reply.send(result);
             }
+            EtcdCommand::DeleteRange {
+                key,
+                range_end,
+                reply,
+            } => {
+                let result = across_endpoints(
+                    runtime,
+                    endpoints,
+                    &mut clients,
+                    timeout,
+                    security,
+                    |runtime, client| {
+                        runtime
+                            .block_on(client.delete_range(with_deadline(
+                                DeleteRangeRequest {
+                                    key: key.clone(),
+                                    range_end: range_end.clone(),
+                                    ..Default::default()
+                                },
+                                timeout,
+                            )))
+                            .map(|response| response.into_inner().deleted)
+                    },
+                );
+                let _ = reply.send(result);
+            }
+            EtcdCommand::GrantLease { ttl, reply } => {
+                let result = across_lease_endpoints(
+                    runtime,
+                    endpoints,
+                    &mut lease_clients,
+                    timeout,
+                    security,
+                    |runtime, client| {
+                        runtime
+                            .block_on(client.lease_grant(with_deadline(
+                                LeaseGrantRequest { ttl, id: 0 },
+                                timeout,
+                            )))
+                            .map(tonic::Response::into_inner)
+                    },
+                )
+                .and_then(|response| {
+                    if !response.error.is_empty() || response.id <= 0 || response.ttl <= 0 {
+                        return Err(EtcdError::UnexpectedResponse(format!(
+                            "lease grant returned id={}, ttl={}, error={:?}",
+                            response.id, response.ttl, response.error
+                        )));
+                    }
+                    Ok(response.id)
+                });
+                let _ = reply.send(result);
+            }
+            EtcdCommand::KeepAliveLease { lease_id, reply } => {
+                let result = across_lease_endpoints(
+                    runtime,
+                    endpoints,
+                    &mut lease_clients,
+                    timeout,
+                    security,
+                    |runtime, client| runtime.block_on(keep_alive_once(client, lease_id, timeout)),
+                )
+                .and_then(|response| {
+                    if response.id != lease_id || response.ttl <= 0 {
+                        return Err(EtcdError::UnexpectedResponse(format!(
+                            "lease keepalive returned id={}, ttl={} for {lease_id}",
+                            response.id, response.ttl
+                        )));
+                    }
+                    Ok(response.ttl)
+                });
+                let _ = reply.send(result);
+            }
+            EtcdCommand::RevokeLease { lease_id, reply } => {
+                let result = across_lease_endpoints(
+                    runtime,
+                    endpoints,
+                    &mut lease_clients,
+                    timeout,
+                    security,
+                    |runtime, client| {
+                        runtime
+                            .block_on(client.lease_revoke(with_deadline(
+                                LeaseRevokeRequest { id: lease_id },
+                                timeout,
+                            )))
+                            .map(|_| ())
+                    },
+                );
+                let _ = reply.send(result);
+            }
         }
     }
+}
+
+async fn keep_alive_once(
+    client: &mut LeaseClient<Channel>,
+    lease_id: i64,
+    timeout: Duration,
+) -> Result<LeaseKeepAliveResponse, tonic::Status> {
+    let mut request =
+        tonic::Request::new(tokio_stream::iter([LeaseKeepAliveRequest { id: lease_id }]));
+    request.set_timeout(timeout);
+    let mut responses = client.lease_keep_alive(request).await?.into_inner();
+    tokio::time::timeout(timeout, responses.message())
+        .await
+        .map_err(|_| tonic::Status::deadline_exceeded("lease keepalive response timed out"))?
+        .and_then(|response| {
+            response.ok_or_else(|| tonic::Status::unavailable("lease keepalive stream ended"))
+        })
 }
 
 fn with_deadline<T>(message: T, timeout: Duration) -> tonic::Request<T> {
@@ -498,6 +721,62 @@ fn across_endpoints<T>(
         }
     }
     Err(last.unwrap_or(EtcdError::NoEndpoint))
+}
+
+fn across_lease_endpoints<T>(
+    runtime: &tokio::runtime::Runtime,
+    endpoints: &[String],
+    clients: &mut HashMap<String, LeaseClient<Channel>>,
+    timeout: Duration,
+    security: &ClusterSecurity,
+    mut call: impl FnMut(
+        &tokio::runtime::Runtime,
+        &mut LeaseClient<Channel>,
+    ) -> Result<T, tonic::Status>,
+) -> Result<T, EtcdError> {
+    let mut last = None;
+    for endpoint in endpoints {
+        if !clients.contains_key(endpoint) {
+            match connect_channel(runtime, endpoint, timeout, security) {
+                Ok(channel) => {
+                    clients.insert(endpoint.clone(), LeaseClient::new(channel));
+                }
+                Err(error) => {
+                    last = Some(error);
+                    continue;
+                }
+            }
+        }
+        let client = clients
+            .get_mut(endpoint)
+            .expect("the channel was just inserted");
+        match call(runtime, client) {
+            Ok(value) => return Ok(value),
+            Err(status) => {
+                clients.remove(endpoint);
+                last = Some(EtcdError::Unreachable {
+                    endpoint: endpoint.clone(),
+                    code: format!("{:?}", status.code()),
+                    message: status.message().to_owned(),
+                });
+            }
+        }
+    }
+    Err(last.unwrap_or(EtcdError::NoEndpoint))
+}
+
+fn prefix_range_end(prefix: &[u8]) -> Result<Vec<u8>, EtcdError> {
+    let mut end = prefix.to_vec();
+    for index in (0..end.len()).rev() {
+        if end[index] != u8::MAX {
+            end[index] += 1;
+            end.truncate(index + 1);
+            return Ok(end);
+        }
+    }
+    Err(EtcdError::UnexpectedResponse(
+        "etcd prefix must be non-empty and have a finite range end".to_owned(),
+    ))
 }
 
 fn connect_channel(
@@ -839,6 +1118,17 @@ mod tests {
     }
 
     #[test]
+    fn prefix_deletion_uses_etcds_lexicographic_range_end() {
+        assert_eq!(
+            prefix_range_end(b"/topology/tidb/a").unwrap(),
+            b"/topology/tidb/b"
+        );
+        assert_eq!(prefix_range_end(&[b'a', u8::MAX]).unwrap(), b"b");
+        assert!(prefix_range_end(b"").is_err());
+        assert!(prefix_range_end(&[u8::MAX]).is_err());
+    }
+
+    #[test]
     fn a_put_to_an_unreachable_endpoint_fails_without_hanging() {
         // Port 1 has no listener; the call must come back as Unreachable
         // rather than block the DDL path that is best-effort calling it.
@@ -897,6 +1187,30 @@ mod tests {
         assert_eq!(client.global_schema_version().unwrap(), Some(4242));
         assert!(watcher.stats().streams >= 1);
         watcher.shutdown();
+    }
+
+    /// End-to-end lease projection proof against a real PD, opt in with
+    /// `TIDB_ETCD_PROBE_PD=127.0.0.1:2379 cargo test -p tidb-pd-client -- --ignored`.
+    #[test]
+    #[ignore = "requires a live PD; set TIDB_ETCD_PROBE_PD"]
+    fn a_real_pd_lease_controls_an_attached_topology_key() {
+        let Ok(endpoint) = std::env::var("TIDB_ETCD_PROBE_PD") else {
+            panic!("set TIDB_ETCD_PROBE_PD to a PD client address");
+        };
+        let client = EtcdClient::connect([endpoint.as_str()], Duration::from_secs(5)).unwrap();
+        let prefix = format!("/topology/tidb/lease-probe-{}/", std::process::id());
+        let key = format!("{prefix}ttl");
+        client.delete_prefix(prefix.as_bytes()).unwrap();
+
+        let lease_id = client.grant_lease(5).unwrap();
+        client
+            .put_with_lease(key.as_bytes(), b"alive", lease_id)
+            .unwrap();
+        assert_eq!(client.get(key.as_bytes()).unwrap(), Some(b"alive".to_vec()));
+        assert!(client.keep_alive_lease(lease_id).unwrap() > 0);
+        client.revoke_lease(lease_id).unwrap();
+        assert_eq!(client.get(key.as_bytes()).unwrap(), None);
+        client.delete_prefix(prefix.as_bytes()).unwrap();
     }
 
     #[test]

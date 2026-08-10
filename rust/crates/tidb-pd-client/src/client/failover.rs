@@ -33,12 +33,13 @@ use tokio::sync::watch;
 use tonic::transport::Channel;
 
 use crate::{
-    secure_endpoint, ClusterSecurity, PdClientError, PdGcState, PdMemberSet, PdRegion, PdStore,
+    secure_endpoint, ClusterSecurity, PdClientError, PdGcState, PdMemberSet, PdRegion,
+    PdSplitAndScatterRegions, PdStore,
 };
 
 use super::requests::{
     batch_scan_regions, get_gc_state, get_members, get_prev_region, get_region, get_region_by_id,
-    get_store, scan_regions,
+    get_store, is_region_scattering, scan_regions, split_and_scatter_regions,
 };
 use super::topology::invalid_topology;
 use super::{PdSharedState, RpcControl};
@@ -211,6 +212,51 @@ pub(super) fn batch_scan_regions_with_failover(
         |runtime, clients, endpoint, cluster_id| {
             batch_scan_regions(
                 runtime, clients, endpoint, timeout, shutdown, cluster_id, request,
+            )
+        },
+    )
+}
+
+pub(super) fn split_and_scatter_regions_with_failover(
+    runtime: &tokio::runtime::Runtime,
+    clients: &mut PdChannelCache,
+    timeout: Duration,
+    state: &Arc<RwLock<PdSharedState>>,
+    shutdown: &watch::Receiver<bool>,
+    split_keys: &[Vec<u8>],
+    group: &str,
+) -> Result<PdSplitAndScatterRegions, PdClientError> {
+    foreground_with_failover(
+        runtime,
+        clients,
+        timeout,
+        state,
+        shutdown,
+        |runtime, clients, endpoint, cluster_id| {
+            split_and_scatter_regions(
+                runtime, clients, endpoint, timeout, shutdown, cluster_id, split_keys, group,
+            )
+        },
+    )
+}
+
+pub(super) fn is_region_scattering_with_failover(
+    runtime: &tokio::runtime::Runtime,
+    clients: &mut PdChannelCache,
+    timeout: Duration,
+    state: &Arc<RwLock<PdSharedState>>,
+    shutdown: &watch::Receiver<bool>,
+    region_id: u64,
+) -> Result<bool, PdClientError> {
+    foreground_with_failover(
+        runtime,
+        clients,
+        timeout,
+        state,
+        shutdown,
+        |runtime, clients, endpoint, cluster_id| {
+            is_region_scattering(
+                runtime, clients, endpoint, timeout, shutdown, cluster_id, region_id,
             )
         },
     )

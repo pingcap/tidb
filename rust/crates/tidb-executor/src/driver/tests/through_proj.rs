@@ -308,20 +308,25 @@ fn an_expression_join_key_gets_an_injected_column() {
     // closed: `plan_trace::index_join_operator` costs the two kinds with the
     // one term that differs between them and keeps the cheaper, which at this
     // site is Go's own answer (its measurement is quoted in that function).
-    // Every node of this tree is now the recorded one.
+    // The join families and leaf order are now the recorded ones. The trace
+    // also exposes every reader boundary it can prove; it deliberately keeps
+    // the scan below the injected Projection bare instead of claiming a
+    // pushdown boundary through that expression.
     assert_eq!(
         dissolved,
         vec![
-            "Projection_10".to_owned(),
-            "└─Selection_9".to_owned(),
-            "  └─MergeJoin_8".to_owned(),
-            "    ├─TableFullScan_1(Build)".to_owned(),
-            "    └─MergeJoin_7(Probe)".to_owned(),
-            "      ├─TableFullScan_2(Build)".to_owned(),
-            "      └─IndexHashJoin_6(Probe)".to_owned(),
-            "        ├─Projection_4(Build)".to_owned(),
-            "        │ └─TableFullScan_3".to_owned(),
-            "        └─IndexRangeScan_5(Probe)".to_owned(),
+            "Projection_12".to_owned(),
+            "└─MergeJoin_11".to_owned(),
+            "  ├─TableReader_2(Build)".to_owned(),
+            "  │ └─TableFullScan_1".to_owned(),
+            "  └─MergeJoin_10(Probe)".to_owned(),
+            "    ├─TableReader_4(Build)".to_owned(),
+            "    │ └─TableFullScan_3".to_owned(),
+            "    └─IndexHashJoin_9(Probe)".to_owned(),
+            "      ├─Projection_6(Build)".to_owned(),
+            "      │ └─TableFullScan_5".to_owned(),
+            "      └─IndexReader_8(Probe)".to_owned(),
+            "        └─IndexRangeScan_7".to_owned(),
         ],
     );
 }

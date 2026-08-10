@@ -1043,9 +1043,18 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         if replace_selector {
             let mut read_policy = self.read_policy;
             read_policy.selection_seed = self.selection_seed;
-            let mut selector = cache_operation(&self.shared_runtime, |region_cache| {
+            let selector = cache_operation(&self.shared_runtime, |region_cache| {
                 region_cache.request_selector(region, read_policy)
-            })??;
+            })?;
+            let mut selector = match selector {
+                Ok(selector) => selector,
+                Err(RegionRouteError::MissingLeader) => {
+                    let failed = self.runtime.consume_failed_attempt(attempt_id)?;
+                    self.request_selectors.remove(&logical_task_id);
+                    return self.rebuild_exhausted_region(failed, region.id);
+                }
+                Err(error) => return Err(DirectUnaryTransportError::Route(error)),
+            };
             selector.set_health_policy(ReplicaHealthPolicy {
                 try_leader: matches!(
                     read_policy.mode,
@@ -1412,9 +1421,13 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         }
         self.record_attempt_result(logical_task_id, &selected, dispatch_duration)?;
         cache_operation(&self.shared_runtime, |region_cache| {
-            region_cache
-                .on_route_success(&selected)
-                .map_err(|error| DirectUnaryTransportError::RegionRecovery(error.to_string()))?;
+            match region_cache.on_route_success(&selected) {
+                Ok(_) => {}
+                Err(RegionRecoveryError::StaleObservation(_)) => return Ok(()),
+                Err(error) => {
+                    return Err(DirectUnaryTransportError::RegionRecovery(error.to_string()));
+                }
+            }
             region_cache
                 .promote_successful_request(&selected)
                 .map_err(|error| DirectUnaryTransportError::RegionRecovery(error.to_string()))?;
@@ -1643,7 +1656,16 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                 .region_cache_handle()
                 .on_region_error(&region_error, observed_attempt, budget)
                 .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle)?
-                .map_err(|error| DirectUnaryTransportError::RegionRecovery(error.to_string()))?
+        };
+        let disposition = match disposition {
+            Ok(disposition) => disposition,
+            Err(RegionRecoveryError::StaleObservation(_)) => {
+                self.request_selectors.remove(&logical_task_id);
+                return self.rebuild_exhausted_region(failed, region_id);
+            }
+            Err(error) => {
+                return Err(DirectUnaryTransportError::RegionRecovery(error.to_string()));
+            }
         };
 
         match disposition {

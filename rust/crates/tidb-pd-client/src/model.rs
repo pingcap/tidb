@@ -160,3 +160,14 @@ pub struct PdGcState {
     /// Timestamp below which obsolete MVCC versions may already be deleted.
     pub gc_safe_point: u64,
 }
+
+/// Outcome of PD's atomic split-and-scatter control-plane operation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PdSplitAndScatterRegions {
+    /// Percentage of requested split points completed by PD.
+    pub split_finished_percentage: u64,
+    /// Percentage of the resulting regions whose scatter operation completed.
+    pub scatter_finished_percentage: u64,
+    /// IDs of the newly split regions returned by PD.
+    pub region_ids: Vec<u64>,
+}

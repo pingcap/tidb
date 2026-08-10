@@ -9,14 +9,18 @@
 //
 // Projection scope, and why each piece is here:
 //
-//   * `KV.Put`   — `pkg/ddl/schemaver/syncer.go` `OwnerUpdateGlobalVersion`
-//                  PUTs the decimal schema version to the global key.
+//   * `KV.Put`   — publishes schema notifications and TiDB topology records.
 //   * `KV.Range` — reads that same key back, which is how a watcher seeds
 //                  itself and how a test can assert what was written.
+//   * `KV.DeleteRange` — removes this TiDB node's topology prefix on a
+//                  graceful shutdown.
 //   * `Watch.Watch` — `pkg/infoschema/issyncer/syncer.go` `SyncLoop` selects
 //                  on the watch channel for that key.
+//   * `Lease.LeaseGrant`, `Lease.LeaseKeepAlive`, and `Lease.LeaseRevoke` —
+//                  preserve Go's 45-second topology-session lifetime so a
+//                  crashed SQL node disappears from TiProxy discovery.
 //
-// Methods this tier does not call (Txn, Compact, DeleteRange, Lease, Cluster,
+// Methods this tier does not call (Txn, Compact, LeaseTimeToLive, Cluster,
 // Maintenance, Auth) are omitted; omitting a method changes no method path of
 // the ones kept. `WatchRequest.request_union` keeps `create_request = 1` and
 // `cancel_request = 2`; `progress_request = 3` is omitted with its number
@@ -35,6 +39,9 @@ service KV {
 
   // Put puts the given key into the key-value store.
   rpc Put(PutRequest) returns (PutResponse) {}
+
+  // DeleteRange deletes the given range from the key-value store.
+  rpc DeleteRange(DeleteRangeRequest) returns (DeleteRangeResponse) {}
 }
 
 service Watch {
@@ -42,6 +49,17 @@ service Watch {
   // output are streams; the input stream is for creating and canceling
   // watchers and the output stream sends events.
   rpc Watch(stream WatchRequest) returns (stream WatchResponse) {}
+}
+
+service Lease {
+  // LeaseGrant creates a lease which expires without keepalive requests.
+  rpc LeaseGrant(LeaseGrantRequest) returns (LeaseGrantResponse) {}
+
+  // LeaseRevoke revokes a lease and deletes every key attached to it.
+  rpc LeaseRevoke(LeaseRevokeRequest) returns (LeaseRevokeResponse) {}
+
+  // LeaseKeepAlive refreshes leases over a bidirectional stream.
+  rpc LeaseKeepAlive(stream LeaseKeepAliveRequest) returns (stream LeaseKeepAliveResponse) {}
 }
 
 message ResponseHeader {
@@ -142,6 +160,23 @@ message PutResponse {
   mvccpb.KeyValue prev_kv = 2;
 }
 
+message DeleteRangeRequest {
+  // key is the first key to delete.
+  bytes key = 1;
+  // range_end is the upper bound on the deleted range [key, range_end).
+  bytes range_end = 2;
+  // prev_kv returns deleted key-value pairs when set.
+  bool prev_kv = 3;
+}
+
+message DeleteRangeResponse {
+  ResponseHeader header = 1;
+  // deleted is the number of keys removed.
+  int64 deleted = 2;
+  // prev_kvs contains deleted pairs when requested.
+  repeated mvccpb.KeyValue prev_kvs = 3;
+}
+
 message WatchRequest {
   // request_union is a request to either create a new watcher or cancel an
   // existing watcher.
@@ -218,4 +253,43 @@ message WatchResponse {
   bool fragment = 7;
 
   repeated mvccpb.Event events = 11;
+}
+
+message LeaseGrantRequest {
+  // TTL is the advisory time-to-live in seconds.
+  int64 TTL = 1;
+  // ID is zero when etcd should choose the lease ID.
+  int64 ID = 2;
+}
+
+message LeaseGrantResponse {
+  ResponseHeader header = 1;
+  // ID is the granted lease ID.
+  int64 ID = 2;
+  // TTL is the server-selected time-to-live in seconds.
+  int64 TTL = 3;
+  // error is a server-side grant failure from older etcd versions.
+  string error = 4;
+}
+
+message LeaseRevokeRequest {
+  // ID is the lease to revoke.
+  int64 ID = 1;
+}
+
+message LeaseRevokeResponse {
+  ResponseHeader header = 1;
+}
+
+message LeaseKeepAliveRequest {
+  // ID is the lease to refresh.
+  int64 ID = 1;
+}
+
+message LeaseKeepAliveResponse {
+  ResponseHeader header = 1;
+  // ID is the refreshed lease ID.
+  int64 ID = 2;
+  // TTL is the refreshed remaining time-to-live; zero means not found.
+  int64 TTL = 3;
 }

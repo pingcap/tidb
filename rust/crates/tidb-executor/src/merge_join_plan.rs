@@ -142,7 +142,9 @@ fn index_orders(table: &KvTable) -> Vec<Vec<usize>> {
 }
 
 /// The orders a whole-table scan of `table` ACTUALLY walks in -- the record
-/// key's own order, which for an integer handle is that column's order.
+/// key's own order. For an integer handle that is the one handle column; for
+/// a clustered common handle it is the complete primary-key tuple in encoded
+/// datum order.
 ///
 /// This is deliberately a DIFFERENT function from [`provided_orders`] even
 /// though the two agree today, and the difference is the whole point.
@@ -162,6 +164,13 @@ fn index_orders(table: &KvTable) -> Vec<Vec<usize>> {
 /// catch that if the verify side reads the BUILD, so the build side gets its
 /// own name here rather than sharing the promise's.
 pub(crate) fn table_scan_order(table: &KvTable) -> Vec<Vec<usize>> {
+    if !table.common_handle_offsets().is_empty() {
+        // A common handle is the mem-comparable key encoding of these datums
+        // in exactly this order. Unlike a prefix secondary index, every
+        // clustered-primary part is stored in full, so the record walk really
+        // delivers the whole tuple order it promises.
+        return vec![table.common_handle_offsets().to_vec()];
+    }
     let Some(offset) = table.pk_handle_offset() else {
         return Vec::new();
     };

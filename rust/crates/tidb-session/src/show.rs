@@ -273,8 +273,11 @@ fn show_create_table_text(
         clauses.push(clause);
     }
 
-    // Go emits a clustered primary key here, because a clustered key -- an
-    // int handle or a common handle -- is not in the index list.
+    // Go emits a clustered primary key here. A catalog freshly built by this
+    // executor omits that key from its secondary-index list, while a common
+    // handle reloaded from Go-compatible TableInfo can retain the mirrored
+    // PRIMARY IndexInfo. The loop below suppresses that persisted mirror so
+    // SHOW CREATE still reports the clustered primary key exactly once.
     let clustered: Vec<usize> = match table.pk_handle_offset() {
         Some(offset) => vec![offset],
         None => table.common_handle_offsets().to_vec(),
@@ -301,8 +304,10 @@ fn show_create_table_text(
             .collect::<Vec<_>>()
             .join(",");
         if index.name.eq_ignore_ascii_case("PRIMARY") {
-            // A primary key that is not the handle is non-clustered here,
-            // since this seed builds no clustered common handle.
+            if !clustered.is_empty() {
+                continue;
+            }
+            // A primary key that is not the handle is non-clustered here.
             clauses.push(format!(
                 "  PRIMARY KEY ({columns}) /*T![clustered_index] NONCLUSTERED */"
             ));
@@ -1817,6 +1822,51 @@ impl Session {
 mod column_description_source_tests {
     use super::*;
     use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags};
+
+    #[test]
+    fn show_create_deduplicates_reloaded_common_handle_primary_index() {
+        let primary_type = || {
+            FieldType::new(FieldTypeCode::Long)
+                .with_flags(FieldTypeFlags::NOT_NULL | FieldTypeFlags::PRI_KEY)
+        };
+        let column = |name: &str, id| tidb_executor::KvColumn {
+            name: name.to_owned(),
+            id,
+            field_type: primary_type(),
+            column_info_version: 1,
+            default_value: None,
+            origin_default: None,
+            generated: None,
+        };
+        let mut table = tidb_executor::KvTable::new(
+            1,
+            vec![column("warehouse_id", 1), column("district_id", 2)],
+        );
+        table.set_common_handle_offsets(vec![0, 1]);
+        // A common-handle PRIMARY IndexInfo is retained when TableInfo is
+        // loaded from TiKV even though the primary key is also the row handle.
+        table.add_index(tidb_executor::KvIndex {
+            id: 1,
+            name: "PRIMARY".to_owned(),
+            unique: true,
+            column_offsets: vec![0, 1],
+            prefix_lengths: vec![-1, -1],
+            visible: true,
+            global: false,
+        });
+
+        let create = show_create_table_text(
+            "test",
+            "district",
+            &table,
+            &tidb_executor::StmtContext::default(),
+        )
+        .unwrap();
+
+        assert_eq!(create.matches("PRIMARY KEY").count(), 1);
+        assert!(create.contains("/*T![clustered_index] CLUSTERED */"));
+        assert!(!create.contains("/*T![clustered_index] NONCLUSTERED */"));
+    }
 
     #[test]
     fn test_desc() {

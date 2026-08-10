@@ -827,6 +827,19 @@ fn backoff_arithmetic_preserves_strict_exponential_equal_jitter_and_busy_exclusi
         Duration::from_millis(2),
         "the excluded busy cap applies only to another excluded backoff"
     );
+
+    let mut lock = RegionBackoffBudget::with_jitter_seed(Duration::from_secs(20), 1);
+    assert_eq!(
+        lock.next_delay_capped(RegionBackoffKind::TxnLockFast, Duration::from_secs(30))
+            .unwrap(),
+        Duration::from_millis(1),
+    );
+    assert_eq!(
+        lock.next_delay_capped(RegionBackoffKind::TxnLockFast, Duration::from_millis(1))
+            .unwrap(),
+        Duration::from_millis(1),
+    );
+    assert_eq!(lock.total_sleep(), Duration::from_millis(2));
 }
 
 #[test]

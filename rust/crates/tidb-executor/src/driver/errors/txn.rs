@@ -18,4 +18,8 @@ pub enum TxnErrorKind {
     /// The catalog moved under the transaction, so committing would discard
     /// another session's writes.
     WriteConflict,
+    /// The storage route was stale or temporarily unavailable. Go exposes
+    /// this as `ErrRegionUnavailable` (9005), which an autocommit statement
+    /// may replay after refreshing its route.
+    RegionUnavailable,
 }

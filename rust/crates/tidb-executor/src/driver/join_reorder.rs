@@ -234,7 +234,7 @@
 //! `DataSource`s exist, what selectivity was pushed into each, and which
 //! column is which. See [`Rel`] and [`emit`].
 
-use std::collections::BTreeSet;
+use std::{cell::RefCell, collections::BTreeSet};
 
 use tidb_ast::{BinaryOp, Expr, Join, JoinNode, JoinType, QueryStmt, SelectField};
 use tidb_datatype::FieldType;
@@ -271,6 +271,9 @@ pub(crate) struct Reordered {
     /// already uses (`FromScope::star`).
     pub(crate) written_order: Vec<usize>,
 }
+
+type LeafColumn = (usize, usize);
+type JoinEdge = (LeafColumn, LeafColumn);
 
 /// One leaf of the join group: a relation the reorder moves but never opens.
 struct Leaf<'a> {
@@ -313,6 +316,9 @@ struct DerivedRel<'a> {
     visible: String,
     /// One entry per output column: its defining expression.
     exprs: Vec<&'a Expr>,
+    /// The aggregation's group expressions, or `None` for a plain projection.
+    /// `Some([])` is a global aggregation.
+    group_by: Option<Vec<&'a Expr>>,
     /// The output columns' names, for a conjunct written against them.
     names: Vec<String>,
     /// The output columns' ids.
@@ -320,7 +326,7 @@ struct DerivedRel<'a> {
     /// The subquery's own `FROM` leaves.
     inner: Vec<Leaf<'a>>,
     /// The subquery's own equi edges, as `(leaf, column)` pairs into `inner`.
-    inner_edges: Vec<((usize, usize), (usize, usize))>,
+    inner_edges: Vec<JoinEdge>,
     /// The subquery's own single-leaf conjuncts, per inner leaf.
     inner_filters: Vec<Vec<Expr>>,
 }
@@ -368,6 +374,7 @@ pub(crate) fn reorder(
     let threshold = ctx.join_reorder_threshold();
     let scope = Scope {
         outer_join_reorder: ctx.outer_join_reorder(),
+        allow_ordered_derived: false,
     };
     let mut ids = Ids::default();
     let mut leaves = Vec::new();
@@ -495,6 +502,20 @@ pub(crate) fn reorder(
         })
         .map(|cond| cond.expr)
         .collect();
+
+    // Go runs constant propagation before join reorder.  The cost model must
+    // therefore see the same transitive leaf predicates as the physical
+    // access-path builder: `customer.c_w_id = 1` plus
+    // `customer.c_w_id = order_new_order.no_w_id` narrows both sides before
+    // the greedy solver compares their cumulative costs.  Outer-join edges
+    // are deliberately excluded because a constant cannot cross a
+    // null-producing boundary in both directions.
+    let inner_edges: Vec<JoinEdge> = edges
+        .iter()
+        .filter(|edge| edge.outer.is_none())
+        .map(|edge| (edge.left, edge.right))
+        .collect();
+    propagate_leaf_constants(&leaves, &inner_edges, &mut filters);
 
     // Go's `not(isnull(key))`, derived by `LogicalJoin.PredicatePushDown` for
     // every equi key. An OUTER join derives it for the NULL-EXTENDED side
@@ -778,6 +799,10 @@ struct Outer {
 /// that the extended side be a single relation.
 struct Scope {
     outer_join_reorder: bool,
+    /// Row estimation may look through an ORDER BY because it does not
+    /// change cardinality. Logical join reordering keeps declining that
+    /// shape until it can prove the requested physical order survives.
+    allow_ordered_derived: bool,
 }
 
 /// Go's `extractJoinGroupImpl`, narrowed: walks the join spine, pushing every
@@ -834,7 +859,7 @@ fn collect<'a>(
                 return false;
             }
             let at = leaves.len();
-            match leaf_of(right, catalog, current_db, ids) {
+            match leaf_of(right, catalog, current_db, scope, ids) {
                 Some(leaf) => leaves.push(leaf),
                 None => return false,
             }
@@ -842,7 +867,7 @@ fn collect<'a>(
         }
         Some(_) => {
             let at = leaves.len();
-            match leaf_of(&join.left, catalog, current_db, ids) {
+            match leaf_of(&join.left, catalog, current_db, scope, ids) {
                 Some(leaf) => leaves.push(leaf),
                 None => return false,
             }
@@ -883,7 +908,7 @@ fn push_node<'a>(
     if let JoinNode::Join(inner) = node {
         return collect(inner, catalog, current_db, scope, ids, leaves, on_conds);
     }
-    match leaf_of(node, catalog, current_db, ids) {
+    match leaf_of(node, catalog, current_db, scope, ids) {
         Some(leaf) => {
             leaves.push(leaf);
             true
@@ -897,6 +922,7 @@ fn leaf_of<'a>(
     node: &'a JoinNode,
     catalog: &'a Catalog,
     current_db: &str,
+    scope: &Scope,
     ids: &mut Ids,
 ) -> Option<Leaf<'a>> {
     match node {
@@ -951,32 +977,32 @@ fn leaf_of<'a>(
             let QueryStmt::Select(select) = &**subquery else {
                 return None;
             };
-            // Only a plain projection over a join is a relation whose row
-            // count this module can derive; anything that changes the count on
-            // its own way up is a decline.
-            if !select.group_by.is_empty()
-                || select.having.is_some()
+            // LIMIT, DISTINCT and the remaining clauses change the relation
+            // through logical nodes this row source still does not model. A
+            // grouped/global aggregation is modelled explicitly below.
+            if select.having.is_some()
                 || select.distinct
                 || select.limit.is_some()
                 || select.with.is_some()
-                || !select.order_by.is_empty()
+                || (!scope.allow_ordered_derived && !select.order_by.is_empty())
                 || !select.windows.is_empty()
             {
                 return None;
             }
             let names = crate::driver::from::derived_field_names(select)?;
             let mut exprs = Vec::new();
+            let mut has_aggregate = false;
             for field in select.fields.fields() {
                 match field {
                     SelectField::Expr { expr, .. } => {
-                        if expr.has_aggregate_flag() {
-                            return None;
-                        }
+                        has_aggregate |= expr.has_aggregate_flag();
                         exprs.push(expr);
                     }
                     SelectField::Wildcard { .. } => return None,
                 }
             }
+            let group_by = (!select.group_by.is_empty() || has_aggregate)
+                .then(|| select.group_by.iter().map(|item| &item.expr).collect());
             let from = select.from.as_ref()?;
             let mut inner = Vec::new();
             let mut inner_on = Vec::new();
@@ -986,6 +1012,7 @@ fn leaf_of<'a>(
             // into the subquery; this module leaves that relation atomic.
             let inner_scope = Scope {
                 outer_join_reorder: false,
+                allow_ordered_derived: scope.allow_ordered_derived,
             };
             if !collect(
                 from,
@@ -1021,6 +1048,7 @@ fn leaf_of<'a>(
                 rel: Rel::Derived(DerivedRel {
                     visible: alias.to_owned(),
                     exprs,
+                    group_by,
                     names,
                     ids: column_ids,
                     inner,
@@ -1042,7 +1070,7 @@ fn leaf_of<'a>(
 fn emit(rel: &Rel<'_>, demand: &Demand) -> Option<LogicalNode> {
     match rel {
         Rel::Table(table) => {
-            let mut selectivity = table_selectivity(table, &demand.filters);
+            let mut selectivity = table_selectivity(table, &demand.filters, &demand.not_null);
             for column in &demand.not_null {
                 if table.nullable.get(*column).copied().unwrap_or(true) {
                     selectivity *= NOT_NULL_RATE;
@@ -1077,28 +1105,53 @@ fn emit(rel: &Rel<'_>, demand: &Demand) -> Option<LogicalNode> {
             for filter in &demand.filters {
                 push_filter(derived, filter, &mut inner)?;
             }
+            // A parent predicate may have entered this derived relation
+            // through one pass-through output.  Continue Go's equality
+            // propagation across the derived query's own inner-join graph so
+            // every narrowed base relation contributes the right reorder
+            // cost.
+            propagate_demand_constants(&derived.inner, &derived.inner_edges, &mut inner);
             let child = emit_tree(derived, &inner)?;
-            Some(LogicalNode::Projection {
-                child: Box::new(child),
-                exprs: (0..derived.exprs.len())
-                    .map(|output| ProjectionExpr {
-                        output: derived.ids[output],
-                        inputs: column_paths(derived.exprs[output])
-                            .iter()
-                            .filter_map(|path| {
-                                let (leaf, column) = resolve(path, &derived.inner)?;
-                                column_id(&derived.inner[leaf].rel, column)
-                            })
-                            .collect(),
-                    })
-                    .collect(),
-            })
+            if let Some(group_by) = &derived.group_by {
+                let mut group_columns = Vec::new();
+                for expression in group_by {
+                    for path in column_paths(expression) {
+                        let (leaf, column) = resolve(&path, &derived.inner)?;
+                        group_columns.push(column_id(&derived.inner[leaf].rel, column)?);
+                    }
+                }
+                Some(LogicalNode::Aggregation {
+                    child: Box::new(child),
+                    group_by: group_columns,
+                    columns: derived.ids.clone(),
+                })
+            } else {
+                Some(LogicalNode::Projection {
+                    child: Box::new(child),
+                    exprs: (0..derived.exprs.len())
+                        .map(|output| ProjectionExpr {
+                            output: derived.ids[output],
+                            inputs: column_paths(derived.exprs[output])
+                                .iter()
+                                .filter_map(|path| {
+                                    let (leaf, column) = resolve(path, &derived.inner)?;
+                                    column_id(&derived.inner[leaf].rel, column)
+                                })
+                                .collect(),
+                        })
+                        .collect(),
+                })
+            }
         }
     }
 }
 
 /// `cardinality.Selectivity` over the conjuncts pushed into one base table.
-fn table_selectivity(table: &TableRel<'_>, filters: &[Expr]) -> f64 {
+fn table_selectivity(
+    table: &TableRel<'_>,
+    filters: &[Expr],
+    derived_not_null: &BTreeSet<usize>,
+) -> f64 {
     if filters.is_empty() {
         return 1.0;
     }
@@ -1106,6 +1159,12 @@ fn table_selectivity(table: &TableRel<'_>, filters: &[Expr]) -> f64 {
     // to be reduced to its bare column name before it will resolve.
     let bare: Vec<Expr> = filters
         .iter()
+        // The row inventory keeps derived join-key `IS NOT NULL` predicates
+        // in `filters` so the physical leaf can execute and print them, and
+        // also in `Demand::not_null` so the stats model can apply Go's
+        // 0.999 pseudo NULL-bucket rate. Exclude the duplicate copy here;
+        // the loop in `emit` accounts for it exactly once.
+        .filter(|filter| !is_derived_not_null_filter(filter, table, derived_not_null))
         .filter_map(|filter| {
             rewrite_paths(filter, &|path| {
                 Some(vec![path.last().cloned().unwrap_or_default()])
@@ -1116,6 +1175,32 @@ fn table_selectivity(table: &TableRel<'_>, filters: &[Expr]) -> f64 {
     let resolver = crate::driver::from::scope_resolver(&scope);
     let conjuncts: Vec<&Expr> = bare.iter().collect();
     crate::access_cost::selectivity_of_conjuncts(&conjuncts, table.table, &resolver, table.stats)
+}
+
+fn is_derived_not_null_filter(
+    filter: &Expr,
+    table: &TableRel<'_>,
+    derived_not_null: &BTreeSet<usize>,
+) -> bool {
+    let Expr::Is {
+        expr,
+        target: tidb_ast::IsTarget::Null,
+        not: true,
+    } = strip(filter)
+    else {
+        return false;
+    };
+    let Expr::Column(path) = strip(expr) else {
+        return false;
+    };
+    let Some(name) = path.last() else {
+        return false;
+    };
+    table
+        .columns
+        .iter()
+        .position(|(column, _)| column.eq_ignore_ascii_case(name))
+        .is_some_and(|offset| derived_not_null.contains(&offset))
 }
 
 /// Pushes one output column's demand through a projection.
@@ -1853,17 +1938,210 @@ fn rebuild_node(plan: &Plan, leaves: &[Leaf<'_>], edges: &[Edge<'_>]) -> Option<
 /// only the tree over them moves.
 pub(crate) struct RowSource {
     leaves: Vec<RowLeaf>,
+    /// The immutable written topology, including outer-join preservation.
+    plan: RowPlan,
     /// `(leaf, column)` pairs, as [`Edge`] holds them.
-    edges: Vec<((usize, usize), (usize, usize))>,
+    edges: Vec<JoinEdge>,
     context: DeriveStatsContext,
+    /// Whether every written predicate belongs to one leaf or is an equality
+    /// edge between two leaves. An index join that installs every leaf's
+    /// filter can consume this wider class even when a leaf is not a point
+    /// get.
+    where_is_leaf_or_join_equality: bool,
+    /// The written WHERE inventory, classified against this join group.
+    where_parts: Vec<WherePart>,
+    /// Leaves whose complete local predicate was accepted by their actual
+    /// physical source. The builder records this only after it commits a
+    /// point/range/index/table access path, so residual selection placement
+    /// cannot drift from the executor that was built.
+    consumed_filter_leaves: RefCell<BTreeSet<usize>>,
+}
+
+struct WherePart {
+    expr: Expr,
+    class: WhereClass,
+}
+
+enum WhereClass {
+    /// Executed by an inner join equality.
+    Edge,
+    /// Eligible for one leaf, provided that leaf's committed path accepts it.
+    Single(usize),
+    /// Executed as an inner join's `other cond`.
+    JoinOther,
+    /// Must remain above the join.
+    Residual,
 }
 
 /// One relation of the group: how it is named, what it models, and the
 /// [`ColumnId`] of each of its output columns.
 struct RowLeaf {
     visible: String,
+    /// Output column names, for resolving a GROUP BY above this FROM.
+    columns: Vec<String>,
     model: LogicalNode,
     ids: Vec<ColumnId>,
+    /// The predicates that reference only this relation. The physical
+    /// builder reuses these for leaf access-path narrowing; the original
+    /// predicates remain above the join for semantic equivalence.
+    filters: Vec<Expr>,
+    /// DNF-derived predicates Go records as a cop Selection above this leaf.
+    trace_filters: Vec<Expr>,
+}
+
+/// The half-open leaf range an outer join null-extends in the row inventory.
+///
+/// Logical join reordering deliberately accepts only a one-leaf extended
+/// side, because moving a multi-relation unit would require Go's complete
+/// outer-bind machinery. Row estimation and predicate routing never move the
+/// tree, so they can safely retain the whole written subtree as this range.
+#[derive(Clone, Copy)]
+struct RowOuter {
+    start: usize,
+    end: usize,
+}
+
+impl RowOuter {
+    fn contains(self, leaf: usize) -> bool {
+        (self.start..self.end).contains(&leaf)
+    }
+}
+
+/// One written `ON` conjunct and the complete side it may null-extend.
+struct RowOnCond<'a> {
+    expr: &'a Expr,
+    outer: Option<RowOuter>,
+}
+
+/// The written join topology retained by the row-count inventory.
+///
+/// The ordinary reorder solver owns a different plan tree because it may
+/// move all-inner leaves. This one is immutable and exists only so cardinality
+/// derivation can preserve which side an outer join keeps.
+#[derive(Clone)]
+enum RowPlan {
+    Leaf(usize),
+    Join {
+        left: Box<RowPlan>,
+        right: Box<RowPlan>,
+        kind: JoinKind,
+    },
+}
+
+fn row_plan(join: &Join, leaves: &[Leaf<'_>]) -> Option<RowPlan> {
+    if join.right.is_none() && join.on.is_none() && join.using.is_empty() && !join.natural {
+        return row_plan_node(&join.left, leaves);
+    }
+    let left = row_plan_node(&join.left, leaves)?;
+    let right = row_plan_node(join.right.as_ref()?, leaves)?;
+    let kind = match join.tp {
+        JoinType::Cross => JoinKind::Inner,
+        JoinType::Left => JoinKind::LeftOuter,
+        JoinType::Right => JoinKind::RightOuter,
+    };
+    Some(RowPlan::Join {
+        left: Box::new(left),
+        right: Box::new(right),
+        kind,
+    })
+}
+
+fn row_plan_node(node: &JoinNode, leaves: &[Leaf<'_>]) -> Option<RowPlan> {
+    if let JoinNode::Join(join) = node {
+        return row_plan(join, leaves);
+    }
+    let visible = match node {
+        JoinNode::Table(table) => table
+            .alias
+            .as_deref()
+            .or_else(|| table.name.last().map(String::as_str))?,
+        JoinNode::Derived {
+            alias: Some(alias), ..
+        } => alias,
+        JoinNode::Derived { alias: None, .. } | JoinNode::Join(_) => return None,
+    };
+    leaves
+        .iter()
+        .position(|leaf| leaf.visible.eq_ignore_ascii_case(visible))
+        .map(RowPlan::Leaf)
+}
+
+/// Collects the written relation tree for [`row_source`] without reordering
+/// it. Unlike [`collect`], this accepts a multi-relation null-producing side:
+/// that extra freedom is valid here because this walk only routes safe leaf
+/// predicates and derives statistics; it never rebuilds the join tree.
+fn collect_rows<'a>(
+    join: &'a Join,
+    catalog: &'a Catalog,
+    current_db: &str,
+    ids: &mut Ids,
+    leaves: &mut Vec<Leaf<'a>>,
+    on_conds: &mut Vec<RowOnCond<'a>>,
+) -> bool {
+    if join.right.is_none() && join.on.is_none() && join.using.is_empty() && !join.natural {
+        return push_row_node(&join.left, catalog, current_db, ids, leaves, on_conds);
+    }
+    if join.straight || join.natural || !join.using.is_empty() {
+        return false;
+    }
+    let Some(right) = &join.right else {
+        return false;
+    };
+    if join.tp != JoinType::Cross && join.on.is_none() {
+        return false;
+    }
+
+    let left_start = leaves.len();
+    if !push_row_node(&join.left, catalog, current_db, ids, leaves, on_conds) {
+        return false;
+    }
+    let left_end = leaves.len();
+    let right_start = left_end;
+    if !push_row_node(right, catalog, current_db, ids, leaves, on_conds) {
+        return false;
+    }
+    let right_end = leaves.len();
+    let outer = match join.tp {
+        JoinType::Cross => None,
+        JoinType::Left => Some(RowOuter {
+            start: right_start,
+            end: right_end,
+        }),
+        JoinType::Right => Some(RowOuter {
+            start: left_start,
+            end: left_end,
+        }),
+    };
+    if let Some(on) = &join.on {
+        let mut conjuncts = Vec::new();
+        crate::plan_trace::collect_and(on, &mut conjuncts);
+        on_conds.extend(conjuncts.into_iter().map(|expr| RowOnCond { expr, outer }));
+    }
+    true
+}
+
+fn push_row_node<'a>(
+    node: &'a JoinNode,
+    catalog: &'a Catalog,
+    current_db: &str,
+    ids: &mut Ids,
+    leaves: &mut Vec<Leaf<'a>>,
+    on_conds: &mut Vec<RowOnCond<'a>>,
+) -> bool {
+    if let JoinNode::Join(join) = node {
+        return collect_rows(join, catalog, current_db, ids, leaves, on_conds);
+    }
+    let scope = Scope {
+        outer_join_reorder: false,
+        allow_ordered_derived: true,
+    };
+    match leaf_of(node, catalog, current_db, &scope, ids) {
+        Some(leaf) => {
+            leaves.push(leaf);
+            true
+        }
+        None => false,
+    }
 }
 
 /// Builds the [`RowSource`] of one `FROM`, or `None` for a group whose shape
@@ -1881,97 +2159,598 @@ pub(crate) fn row_source(
     let mut ids = Ids::default();
     let mut leaves = Vec::new();
     let mut on_conds = Vec::new();
-    // The row counts here feed a JOIN-STRATEGY comparison, whose
-    // [`LogicalNode::Join`] is built inner-only; an outer join's own count is
-    // `max(equality estimate, preserved side)` and is not derivable from the
-    // leaf set alone. So this source keeps declining an outer-join group,
-    // which is the answer it gave before [`reorder`] started accepting one.
-    let scope = Scope {
-        outer_join_reorder: false,
-    };
-    if !collect(
+    // This inventory never rebuilds the join tree. Its dedicated collector
+    // can therefore look through a multi-relation null-producing side while
+    // the logical reorder above keeps its stricter one-leaf boundary.
+    if !collect_rows(
         join,
         catalog,
         current_db,
-        &scope,
         &mut ids,
         &mut leaves,
         &mut on_conds,
     ) {
         return None;
     }
-    let mut conjuncts: Vec<(&Expr, Option<Outer>)> = on_conds
-        .iter()
-        .map(|cond| (cond.expr, cond.outer))
-        .collect();
+    let has_outer_join = on_conds.iter().any(|condition| condition.outer.is_some());
+    let mut where_conjuncts = Vec::new();
     if let Some(where_clause) = where_clause {
-        let mut flat = Vec::new();
-        crate::plan_trace::collect_and(where_clause, &mut flat);
-        conjuncts.extend(flat.into_iter().map(|expr| (expr, None)));
+        crate::plan_trace::collect_and(where_clause, &mut where_conjuncts);
     }
     let mut edges = Vec::new();
     let mut filters: Vec<Vec<Expr>> = vec![Vec::new(); leaves.len()];
-    for (conjunct, outer) in &conjuncts {
-        match classify(conjunct, &leaves, *outer)? {
-            Classified::Edge(edge) => edges.push((edge.left, edge.right)),
-            Classified::Single(leaf) => filters[leaf].push((*conjunct).clone()),
+    let mut trace_filters: Vec<Vec<Expr>> = vec![Vec::new(); leaves.len()];
+    let mut not_null: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); leaves.len()];
+    let extended: BTreeSet<usize> = on_conds
+        .iter()
+        .flat_map(|condition| {
+            condition
+                .outer
+                .into_iter()
+                .flat_map(|outer| outer.start..outer.end)
+        })
+        .collect();
+    // An outer join's ON predicate may be pushed only into its
+    // null-supplying side. Pushing a preserved-side condition would delete a
+    // row that the join must instead retain and NULL-extend.
+    for condition in &on_conds {
+        match classify(condition.expr, &leaves, None)? {
+            Classified::Edge(edge) => {
+                for side in [edge.left, edge.right] {
+                    if condition.outer.is_none_or(|outer| outer.contains(side.0)) {
+                        not_null[side.0].insert(side.1);
+                    }
+                }
+                edges.push((edge.left, edge.right));
+            }
+            Classified::Single(leaf)
+                if condition.outer.is_none_or(|outer| outer.contains(leaf)) =>
+            {
+                filters[leaf].push(condition.expr.clone());
+            }
+            Classified::Single(_) => {}
             Classified::Other(_) | Classified::Foreign => {}
         }
     }
+    let mut where_parts = Vec::with_capacity(where_conjuncts.len());
+    for conjunct in where_conjuncts {
+        let class = match classify(conjunct, &leaves, None)? {
+            Classified::Edge(edge) if !has_outer_join => {
+                not_null[edge.left.0].insert(edge.left.1);
+                not_null[edge.right.0].insert(edge.right.1);
+                edges.push((edge.left, edge.right));
+                WhereClass::Edge
+            }
+            Classified::Single(leaf) if !extended.contains(&leaf) => {
+                filters[leaf].push(conjunct.clone());
+                WhereClass::Single(leaf)
+            }
+            Classified::Other(_) => {
+                for leaf in 0..leaves.len() {
+                    if extended.contains(&leaf) {
+                        continue;
+                    }
+                    if let Some(derived) = project_dnf_to_leaf(conjunct, leaf, &leaves) {
+                        filters[leaf].push(derived.clone());
+                        trace_filters[leaf].push(derived);
+                    }
+                }
+                if !has_outer_join {
+                    WhereClass::JoinOther
+                } else {
+                    WhereClass::Residual
+                }
+            }
+            Classified::Edge(_) | Classified::Single(_) | Classified::Foreign => {
+                WhereClass::Residual
+            }
+        };
+        where_parts.push(WherePart {
+            expr: conjunct.clone(),
+            class,
+        });
+    }
+    // `LogicalJoin.PredicatePushDown` derives `not(isnull(key))` for both
+    // sides of an inner equality and only the null-producing side of an
+    // outer equality. Make that derived condition part of the same leaf
+    // predicate inventory the physical source must explicitly accept.
+    for (leaf, columns) in not_null.iter().enumerate() {
+        let Rel::Table(table) = &leaves[leaf].rel else {
+            continue;
+        };
+        for column in columns {
+            if !table.nullable.get(*column).copied().unwrap_or(true) {
+                continue;
+            }
+            filters[leaf].push(Expr::Is {
+                expr: Box::new(Expr::Column(vec![
+                    leaves[leaf].visible.clone(),
+                    leaves[leaf].columns[*column].clone(),
+                ])),
+                target: tidb_ast::IsTarget::Null,
+                not: true,
+            });
+        }
+    }
+    propagate_leaf_constants(&leaves, &edges, &mut filters);
+    let where_is_leaf_or_join_equality = !where_parts.is_empty()
+        && where_parts
+            .iter()
+            .all(|part| matches!(part.class, WhereClass::Edge | WhereClass::Single(_)));
     let mut demands: Vec<Demand> = (0..leaves.len()).map(|_| Demand::default()).collect();
-    for (left, right) in &edges {
-        demands[left.0].not_null.insert(left.1);
-        demands[right.0].not_null.insert(right.1);
+    for (demand, columns) in demands.iter_mut().zip(&not_null) {
+        demand.not_null.extend(columns.iter().copied());
     }
     for (demand, filters) in demands.iter_mut().zip(filters) {
         demand.filters = filters;
     }
+    let plan = row_plan(join, &leaves)?;
     let rows: Option<Vec<RowLeaf>> = leaves
         .iter()
         .zip(&demands)
-        .map(|(leaf, demand)| {
+        .enumerate()
+        .map(|(at, (leaf, demand))| {
             Some(RowLeaf {
                 visible: leaf.visible.clone(),
+                columns: leaf.columns.clone(),
                 model: emit(&leaf.rel, demand)?,
                 ids: (0..leaf.columns.len())
                     .map(|column| column_id(&leaf.rel, column))
                     .collect::<Option<Vec<_>>>()?,
+                filters: demand.filters.clone(),
+                trace_filters: trace_filters[at].clone(),
             })
         })
         .collect();
     Some(RowSource {
         leaves: rows?,
+        plan,
         edges,
         context: DeriveStatsContext::with_join_reorder_threshold(ctx.join_reorder_threshold()),
+        where_is_leaf_or_join_equality,
+        where_parts,
+        consumed_filter_leaves: RefCell::new(BTreeSet::new()),
     })
 }
 
+/// Go's DNF predicate pushdown: for `(a1 AND b1) OR (a2 AND b2)`, each leaf
+/// may evaluate the necessary weakening `a1 OR a2` / `b1 OR b2`. Every OR
+/// branch must contribute a predicate for the target leaf; otherwise the
+/// weakening is `TRUE` and no Selection is useful.
+fn project_dnf_to_leaf(expr: &Expr, target: usize, leaves: &[Leaf<'_>]) -> Option<Expr> {
+    fn collect_or<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
+        match expr {
+            Expr::Paren(inner) => collect_or(inner, out),
+            Expr::Binary(BinaryOp::LogicOr, left, right) => {
+                collect_or(left, out);
+                collect_or(right, out);
+            }
+            other => out.push(other),
+        }
+    }
+
+    let mut branches = Vec::new();
+    collect_or(expr, &mut branches);
+    if branches.len() < 2 {
+        return None;
+    }
+    branches
+        .into_iter()
+        .map(|branch| {
+            let mut conjuncts = Vec::new();
+            crate::plan_trace::collect_and(branch, &mut conjuncts);
+            conjuncts
+                .into_iter()
+                .filter(|conjunct| {
+                    matches!(classify(conjunct, leaves, None), Some(Classified::Single(leaf)) if leaf == target)
+                })
+                .cloned()
+                .reduce(|left, right| {
+                    Expr::Binary(BinaryOp::LogicAnd, Box::new(left), Box::new(right))
+                })
+        })
+        .collect::<Option<Vec<_>>>()?
+        .into_iter()
+        .reduce(|left, right| Expr::Binary(BinaryOp::LogicOr, Box::new(left), Box::new(right)))
+}
+
+/// Copies a constant equality through the inner-join equality graph. This is
+/// the narrow constant-propagation rule needed for composite leading keys:
+/// `warehouse.w_id = 1` plus `customer.c_w_id = warehouse.w_id` gives the
+/// customer leaf a local `c_w_id = 1` range. Only columns with the same
+/// integer domain are propagated; a derived output qualifies only when it is
+/// a bare pass-through column whose source type can be followed recursively.
+fn propagate_leaf_constants(leaves: &[Leaf<'_>], edges: &[JoinEdge], filters: &mut [Vec<Expr>]) {
+    let mut constants = Vec::new();
+    for predicates in filters.iter() {
+        for predicate in predicates {
+            let Some((column, value)) = local_constant_equality(predicate, leaves) else {
+                continue;
+            };
+            constants.push((column, value));
+        }
+    }
+    for (source, value) in constants {
+        let mut reachable = vec![source];
+        let mut seen = BTreeSet::from([source]);
+        let mut cursor = 0;
+        while let Some(column) = reachable.get(cursor).copied() {
+            cursor += 1;
+            for (left, right) in edges {
+                let next = if *left == column {
+                    *right
+                } else if *right == column {
+                    *left
+                } else {
+                    continue;
+                };
+                if seen.insert(next) {
+                    reachable.push(next);
+                }
+            }
+        }
+        for target in reachable.into_iter().filter(|target| *target != source) {
+            if !same_integer_domain(leaves, source, target) {
+                continue;
+            }
+            let Some(path) = leaf_column_path(leaves, target) else {
+                continue;
+            };
+            filters[target.0].push(tidb_ast::Expr::Binary(
+                tidb_ast::BinaryOp::Eq,
+                Box::new(tidb_ast::Expr::Column(path)),
+                Box::new(value.clone()),
+            ));
+        }
+    }
+}
+
+fn propagate_demand_constants(leaves: &[Leaf<'_>], edges: &[JoinEdge], demands: &mut [Demand]) {
+    let mut filters: Vec<Vec<Expr>> = demands
+        .iter_mut()
+        .map(|demand| std::mem::take(&mut demand.filters))
+        .collect();
+    propagate_leaf_constants(leaves, edges, &mut filters);
+    for (demand, filters) in demands.iter_mut().zip(filters) {
+        demand.filters = filters;
+    }
+}
+
+/// The `(leaf, column)` and constant expression of a local equality.
+fn local_constant_equality(
+    predicate: &Expr,
+    leaves: &[Leaf<'_>],
+) -> Option<((usize, usize), Expr)> {
+    let Expr::Binary(BinaryOp::Eq, lhs, rhs) = predicate else {
+        return None;
+    };
+    let (column, value) = match (strip(lhs), strip(rhs)) {
+        (Expr::Column(path), other) if propagatable_constant(other) => (path, other),
+        (other, Expr::Column(path)) if propagatable_constant(other) => (path, other),
+        _ => return None,
+    };
+    Some((resolve(column, leaves)?, value.clone()))
+}
+
+fn propagatable_constant(expr: &Expr) -> bool {
+    match expr {
+        Expr::Paren(inner) => propagatable_constant(inner),
+        Expr::Unary(tidb_ast::UnaryOp::Minus | tidb_ast::UnaryOp::Plus, inner) => {
+            propagatable_constant(inner)
+        }
+        Expr::Int(_)
+        | Expr::Decimal(_)
+        | Expr::Float(_)
+        | Expr::Hex(_)
+        | Expr::Bit(_)
+        | Expr::String(_)
+        | Expr::RawString(_)
+        | Expr::CharsetString { .. }
+        | Expr::Bool(_) => true,
+        _ => false,
+    }
+}
+
+fn leaf_column_path(leaves: &[Leaf<'_>], (leaf, column): (usize, usize)) -> Option<Vec<String>> {
+    Some(vec![
+        leaves.get(leaf)?.visible.clone(),
+        leaves.get(leaf)?.columns.get(column)?.clone(),
+    ])
+}
+
+fn same_integer_domain(leaves: &[Leaf<'_>], left: (usize, usize), right: (usize, usize)) -> bool {
+    let column_type = |(leaf, column): (usize, usize)| {
+        leaves
+            .get(leaf)
+            .and_then(|leaf| relation_column_type(&leaf.rel, column))
+    };
+    let (Some(left), Some(right)) = (column_type(left), column_type(right)) else {
+        return false;
+    };
+    left.code().is_type_integer()
+        && right.code().is_type_integer()
+        && left.is_unsigned() == right.is_unsigned()
+}
+
+fn relation_column_type<'a>(rel: &'a Rel<'a>, column: usize) -> Option<&'a FieldType> {
+    match rel {
+        Rel::Table(table) => table.columns.get(column).map(|(_, field_type)| field_type),
+        Rel::Derived(derived) => {
+            let Expr::Column(path) = strip(derived.exprs.get(column)?) else {
+                return None;
+            };
+            let (leaf, column) = resolve(path, &derived.inner)?;
+            relation_column_type(&derived.inner.get(leaf)?.rel, column)
+        }
+    }
+}
+
+impl RowPlan {
+    fn leaf_set(&self) -> BTreeSet<usize> {
+        match self {
+            RowPlan::Leaf(leaf) => [*leaf].into_iter().collect(),
+            RowPlan::Join { left, right, .. } => {
+                let mut leaves = left.leaf_set();
+                leaves.extend(right.leaf_set());
+                leaves
+            }
+        }
+    }
+
+    fn kind_for_split(
+        &self,
+        wanted_left: &BTreeSet<usize>,
+        wanted_right: &BTreeSet<usize>,
+    ) -> Option<JoinKind> {
+        let RowPlan::Join { left, right, kind } = self else {
+            return None;
+        };
+        let left_set = left.leaf_set();
+        let right_set = right.leaf_set();
+        if &left_set == wanted_left && &right_set == wanted_right {
+            return Some(*kind);
+        }
+        if &left_set == wanted_right && &right_set == wanted_left {
+            return Some(match kind {
+                JoinKind::Inner => JoinKind::Inner,
+                JoinKind::LeftOuter => JoinKind::RightOuter,
+                JoinKind::RightOuter => JoinKind::LeftOuter,
+            });
+        }
+        left.kind_for_split(wanted_left, wanted_right)
+            .or_else(|| right.kind_for_split(wanted_left, wanted_right))
+    }
+
+    fn model(&self, source: &RowSource) -> Option<LogicalNode> {
+        match self {
+            RowPlan::Leaf(leaf) => Some(source.leaves.get(*leaf)?.model.clone()),
+            RowPlan::Join { left, right, kind } => {
+                let left_set = left.leaf_set().into_iter().collect::<Vec<_>>();
+                let right_set = right.leaf_set().into_iter().collect::<Vec<_>>();
+                let (left_keys, right_keys) = source.keys_between(&left_set, &right_set)?;
+                Some(LogicalNode::Join {
+                    left: Box::new(left.model(source)?),
+                    right: Box::new(right.model(source)?),
+                    left_keys,
+                    right_keys,
+                    kind: *kind,
+                })
+            }
+        }
+    }
+}
+
 impl RowSource {
+    /// Whether installing every leaf-local filter and every join equality
+    /// accounts for the complete written `WHERE`.
+    pub(crate) const fn all_where_is_leaf_or_join_equality(&self) -> bool {
+        self.where_is_leaf_or_join_equality
+    }
+
+    /// Records that the committed access path for `visible` accepted every
+    /// leaf-local predicate offered to it.
+    pub(crate) fn mark_leaf_filters_consumed(&self, visible: &str) {
+        if let Some((leaf, _)) = self
+            .leaves
+            .iter()
+            .enumerate()
+            .find(|(_, leaf)| leaf.visible.eq_ignore_ascii_case(visible))
+        {
+            self.consumed_filter_leaves.borrow_mut().insert(leaf);
+        }
+    }
+
+    /// The part of the written `WHERE` that the committed leaf paths and
+    /// inner-join equalities did not consume.
+    pub(crate) fn residual_where(&self) -> Option<Expr> {
+        let consumed = self.consumed_filter_leaves.borrow();
+        self.where_parts
+            .iter()
+            .filter_map(|part| match part.class {
+                WhereClass::Edge | WhereClass::JoinOther => None,
+                WhereClass::Single(leaf) if consumed.contains(&leaf) => None,
+                WhereClass::Single(_) | WhereClass::Residual => Some(part.expr.clone()),
+            })
+            .reduce(|left, right| Expr::Binary(BinaryOp::LogicAnd, Box::new(left), Box::new(right)))
+    }
+
+    /// The written WHERE that remains after derived-table leaf predicates
+    /// have been substituted into their child SELECTs during logical
+    /// rewriting. Unlike [`Self::residual_where`], join equalities and
+    /// multi-relation `other cond` predicates remain here: no physical join
+    /// has been built yet to execute them.
+    pub(crate) fn residual_where_after_logical_leaf_pushdown(&self) -> Option<Expr> {
+        let consumed = self.consumed_filter_leaves.borrow();
+        self.where_parts
+            .iter()
+            .filter_map(|part| match part.class {
+                WhereClass::Single(leaf) if consumed.contains(&leaf) => None,
+                WhereClass::Edge
+                | WhereClass::Single(_)
+                | WhereClass::JoinOther
+                | WhereClass::Residual => Some(part.expr.clone()),
+            })
+            .reduce(|left, right| Expr::Binary(BinaryOp::LogicAnd, Box::new(left), Box::new(right)))
+    }
+
+    /// The part of one join node's written `ON` that its committed leaf
+    /// sources did not consume.
+    ///
+    /// A predicate is removed only when it belongs to exactly one leaf, was
+    /// present in that leaf's safe filter inventory, and that exact source
+    /// accepted its complete inventory. Join equalities and preserved-side
+    /// outer-join predicates therefore always remain at the join.
+    pub(crate) fn residual_on(&self, on: Option<&Expr>) -> Option<Expr> {
+        let on = on?;
+        let consumed = self.consumed_filter_leaves.borrow();
+        let mut conjuncts = Vec::new();
+        crate::plan_trace::collect_and(on, &mut conjuncts);
+        conjuncts
+            .into_iter()
+            .filter(|conjunct| {
+                let owners = column_paths(conjunct)
+                    .iter()
+                    .map(|path| self.resolve_output_path(path).map(|(leaf, _)| leaf))
+                    .collect::<Option<BTreeSet<_>>>();
+                let Some(owners) = owners else {
+                    return true;
+                };
+                if owners.len() != 1 {
+                    return true;
+                }
+                let leaf = *owners.first().expect("one predicate owner");
+                !consumed.contains(&leaf) || !self.leaves[leaf].filters.contains(*conjunct)
+            })
+            .cloned()
+            .reduce(|left, right| Expr::Binary(BinaryOp::LogicAnd, Box::new(left), Box::new(right)))
+    }
+
+    /// The predicates that can be evaluated using only the named leaf.
+    pub(crate) fn filters_for(&self, visible: &str) -> Option<&[Expr]> {
+        self.leaves
+            .iter()
+            .find(|leaf| leaf.visible.eq_ignore_ascii_case(visible))
+            .map(|leaf| leaf.filters.as_slice())
+    }
+
+    /// DNF-derived predicates that are physically evaluated at this leaf.
+    pub(crate) fn trace_filters_for(&self, visible: &str) -> Option<&[Expr]> {
+        self.leaves
+            .iter()
+            .find(|leaf| leaf.visible.eq_ignore_ascii_case(visible))
+            .map(|leaf| leaf.trace_filters.as_slice())
+    }
+
     /// The rows of a joined pair, and of each side, in one walk: the three
     /// counts a join-strategy comparison reads.
     pub(crate) fn rows_of_join(&self, left: &[String], right: &[String]) -> Option<JoinRows> {
         let (left_rows, left_model, left_at) = self.model_of(left)?;
         let (right_rows, right_model, right_at) = self.model_of(right)?;
         let (left_keys, right_keys) = self.keys_between(&left_at, &right_at)?;
+        let left_set = left_at.iter().copied().collect::<BTreeSet<_>>();
+        let right_set = right_at.iter().copied().collect::<BTreeSet<_>>();
+        let kind = self.plan.kind_for_split(&left_set, &right_set)?;
+        let outer_rows = (kind != JoinKind::Inner && !left_keys.is_empty()).then(|| {
+            let grouped_rows = |child: &LogicalNode, keys: &[ColumnId]| {
+                derive_stats(
+                    &LogicalNode::Aggregation {
+                        child: Box::new(child.clone()),
+                        group_by: keys.to_vec(),
+                        columns: Vec::new(),
+                    },
+                    &self.context,
+                )
+                .stats
+                .row_count
+            };
+            let left_ndv = grouped_rows(&left_model, &left_keys);
+            let right_ndv = grouped_rows(&right_model, &right_keys);
+            let equality_rows = left_rows * right_rows / left_ndv.max(right_ndv).max(1.0);
+            match kind {
+                JoinKind::Inner => equality_rows,
+                JoinKind::LeftOuter => equality_rows.max(left_rows),
+                JoinKind::RightOuter => equality_rows.max(right_rows),
+            }
+        });
         let model = LogicalNode::Join {
             left: Box::new(left_model),
             right: Box::new(right_model),
             left_keys,
             right_keys,
-            kind: JoinKind::Inner,
+            kind,
         };
         Some(JoinRows {
             left: left_rows,
             right: right_rows,
-            joined: derive_stats(&model, &self.context).stats.row_count,
+            joined: outer_rows
+                .unwrap_or_else(|| derive_stats(&model, &self.context).stats.row_count),
         })
+    }
+
+    /// Go's `LogicalAggregation.DeriveStats` row count for a GROUP BY above
+    /// this complete FROM tree. This is the group-key NDV after leaf filters
+    /// and join-key NDV clamping, so it distinguishes TPCC condition 01's
+    /// one-row join from condition 04's eight district groups without a
+    /// trace-only heuristic.
+    pub(crate) fn grouped_rows(&self, group_by: &[tidb_ast::GroupByItem]) -> Option<f64> {
+        if group_by.is_empty() {
+            return None;
+        }
+        let child = self.plan.model(self)?;
+        let mut group_columns = Vec::new();
+        for item in group_by {
+            for path in column_paths(&item.expr) {
+                let (leaf, column) = self.resolve_output_path(&path)?;
+                group_columns.push(*self.leaves.get(leaf)?.ids.get(column)?);
+            }
+        }
+        let model = LogicalNode::Aggregation {
+            child: Box::new(child),
+            group_by: group_columns,
+            // Only RowCount is read. Go assigns that same NDV to every
+            // output, so an empty synthetic schema loses no input here.
+            columns: Vec::new(),
+        };
+        Some(derive_stats(&model, &self.context).stats.row_count)
+    }
+
+    /// Resolves a column path against this row-count inventory with the same
+    /// ambiguity rule as the logical leaf walk.
+    fn resolve_output_path(&self, path: &[String]) -> Option<(usize, usize)> {
+        let (qualifier, name) = match path {
+            [name] => (None, name),
+            [table, name] | [_, table, name] => (Some(table), name),
+            _ => return None,
+        };
+        let mut found = None;
+        for (leaf, relation) in self.leaves.iter().enumerate() {
+            if qualifier.is_some_and(|table| !table.eq_ignore_ascii_case(&relation.visible)) {
+                continue;
+            }
+            let Some(column) = relation
+                .columns
+                .iter()
+                .position(|column| column.eq_ignore_ascii_case(name))
+            else {
+                continue;
+            };
+            if found.is_some() {
+                return None;
+            }
+            found = Some((leaf, column));
+        }
+        found
     }
 
     /// The model of one side, its row count, and which leaves it holds.
     fn model_of(&self, names: &[String]) -> Option<(f64, LogicalNode, Vec<usize>)> {
         let at: Option<Vec<usize>> = names
             .iter()
-            .map(|name| self.leaves.iter().position(|leaf| leaf.visible == *name))
+            .map(|name| {
+                self.leaves
+                    .iter()
+                    .position(|leaf| leaf.visible.eq_ignore_ascii_case(name))
+            })
             .collect();
         let at = at?;
         let (&first, rest) = at.split_first()?;

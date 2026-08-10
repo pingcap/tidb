@@ -41,7 +41,7 @@ use tokio::sync::watch;
 
 use crate::{
     ClusterSecurity, PdClientError, PdClientShutdownError, PdGcState, PdKeyRange, PdMemberSet,
-    PdOperation, PdRegion, PdStore,
+    PdOperation, PdRegion, PdSplitAndScatterRegions, PdStore,
 };
 
 use failover::retain_member_clients;
@@ -71,6 +71,10 @@ pub const GET_STORE_PATH: &str = "/pdpb.PD/GetStore";
 pub const TSO_PATH: &str = "/pdpb.PD/Tso";
 /// Exact GC-state lookup method path.
 pub const GET_GC_STATE_PATH: &str = "/pdpb.PD/GetGCState";
+/// Exact scheduling-operator lookup method path.
+pub const GET_OPERATOR_PATH: &str = "/pdpb.PD/GetOperator";
+/// Exact split-and-scatter method path.
+pub const SPLIT_AND_SCATTER_REGIONS_PATH: &str = "/pdpb.PD/SplitAndScatterRegions";
 
 enum WorkerCommand {
     RefreshMembers {
@@ -114,6 +118,17 @@ enum WorkerCommand {
     GetGcState {
         keyspace_id: Option<u32>,
         reply: mpsc::Sender<Result<PdGcState, PdClientError>>,
+    },
+    GetOperator {
+        region_id: u64,
+        timeout: Duration,
+        reply: mpsc::Sender<Result<bool, PdClientError>>,
+    },
+    SplitAndScatterRegions {
+        split_keys: Vec<Vec<u8>>,
+        group: String,
+        timeout: Duration,
+        reply: mpsc::Sender<Result<PdSplitAndScatterRegions, PdClientError>>,
     },
     Close {
         reply: mpsc::Sender<()>,
@@ -561,6 +576,68 @@ impl PdClient {
         self.shared
             .commands
             .send(WorkerCommand::GetGcState { keyspace_id, reply })
+            .map_err(|_| PdClientError::Closed)?;
+        response.recv().unwrap_or(Err(PdClientError::Closed))
+    }
+
+    /// Reports whether PD still has a running scatter operator for a region.
+    ///
+    /// The caller supplies the per-probe deadline because Go bounds every
+    /// probe by the remaining `tidb_wait_split_region_timeout`, not by the
+    /// short metadata-RPC timeout configured on the shared client.
+    pub fn is_region_scattering_with_timeout(
+        &self,
+        region_id: u64,
+        timeout: Duration,
+    ) -> Result<bool, PdClientError> {
+        if region_id == 0 {
+            return Err(invalid_topology(
+                "zero_region_id",
+                "requested scheduling operator for region ID zero",
+            ));
+        }
+        let (reply, response) = mpsc::channel();
+        self.shared
+            .commands
+            .send(WorkerCommand::GetOperator {
+                region_id,
+                timeout,
+                reply,
+            })
+            .map_err(|_| PdClientError::Closed)?;
+        response.recv().unwrap_or(Err(PdClientError::Closed))
+    }
+
+    /// Splits regions at already memcomparable-encoded PD wire keys and asks
+    /// PD to scatter the new regions.
+    pub fn split_and_scatter_regions(
+        &self,
+        split_keys: &[Vec<u8>],
+        group: &str,
+    ) -> Result<PdSplitAndScatterRegions, PdClientError> {
+        self.split_and_scatter_regions_with_timeout(split_keys, group, self.shared.timeout)
+    }
+
+    /// Split-and-scatter of encoded PD wire keys with an operation-specific
+    /// total deadline.
+    ///
+    /// Go gives region splitting its own `tidb_wait_split_region_timeout`
+    /// instead of the short deadline used by ordinary PD metadata lookups.
+    pub fn split_and_scatter_regions_with_timeout(
+        &self,
+        split_keys: &[Vec<u8>],
+        group: &str,
+        timeout: Duration,
+    ) -> Result<PdSplitAndScatterRegions, PdClientError> {
+        let (reply, response) = mpsc::channel();
+        self.shared
+            .commands
+            .send(WorkerCommand::SplitAndScatterRegions {
+                split_keys: split_keys.to_vec(),
+                group: group.to_owned(),
+                timeout,
+                reply,
+            })
             .map_err(|_| PdClientError::Closed)?;
         response.recv().unwrap_or(Err(PdClientError::Closed))
     }

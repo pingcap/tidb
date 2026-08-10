@@ -246,6 +246,22 @@ impl Pd for MockPd {
     ) -> Result<tonic::Response<pdpb::BatchScanRegionsResponse>, tonic::Status> {
         Err(tonic::Status::unimplemented("unused BatchScanRegions"))
     }
+
+    async fn get_operator(
+        &self,
+        _request: tonic::Request<pdpb::GetOperatorRequest>,
+    ) -> Result<tonic::Response<pdpb::GetOperatorResponse>, tonic::Status> {
+        Err(tonic::Status::unimplemented("unused GetOperator"))
+    }
+
+    async fn split_and_scatter_regions(
+        &self,
+        _request: tonic::Request<pdpb::SplitAndScatterRegionsRequest>,
+    ) -> Result<tonic::Response<pdpb::SplitAndScatterRegionsResponse>, tonic::Status> {
+        Err(tonic::Status::unimplemented(
+            "unused SplitAndScatterRegions",
+        ))
+    }
 }
 
 struct Server {

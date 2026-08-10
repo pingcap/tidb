@@ -13,6 +13,8 @@ service PD {
   rpc ScanRegions(ScanRegionsRequest) returns (ScanRegionsResponse) {}
   rpc BatchScanRegions(BatchScanRegionsRequest) returns (BatchScanRegionsResponse) {}
   rpc GetGCState(GetGCStateRequest) returns (GetGCStateResponse) {}
+  rpc GetOperator(GetOperatorRequest) returns (GetOperatorResponse) {}
+  rpc SplitAndScatterRegions(SplitAndScatterRegionsRequest) returns (SplitAndScatterRegionsResponse) {}
 }
 
 // A wrapper over keyspace_id, so that an unset keyspace scope (the null
@@ -47,6 +49,41 @@ message GetGCStateResponse {
   ResponseHeader header = 1;
 
   GCState gc_state = 2;
+}
+
+message SplitAndScatterRegionsRequest {
+  RequestHeader header = 1;
+  repeated bytes split_keys = 2;
+  string group = 3;
+  uint64 retry_limit = 4;
+}
+
+message SplitAndScatterRegionsResponse {
+  ResponseHeader header = 1;
+  uint64 split_finished_percentage = 2;
+  uint64 scatter_finished_percentage = 3;
+  repeated uint64 regions_id = 4;
+}
+
+message GetOperatorRequest {
+  RequestHeader header = 1;
+  uint64 region_id = 2;
+}
+
+enum OperatorStatus {
+  SUCCESS = 0;
+  TIMEOUT = 1;
+  CANCEL = 2;
+  REPLACE = 3;
+  RUNNING = 4;
+}
+
+message GetOperatorResponse {
+  ResponseHeader header = 1;
+  uint64 region_id = 2;
+  bytes desc = 3;
+  OperatorStatus status = 4;
+  bytes kind = 5;
 }
 
 message TsoRequest {

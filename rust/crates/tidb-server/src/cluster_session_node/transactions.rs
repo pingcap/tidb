@@ -18,6 +18,7 @@
 //! it is one of the independent seams that accreted there; see that module's
 //! doc comment for the statement lifecycle this seam is exercised by.
 
+use std::collections::BTreeSet;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -25,10 +26,13 @@ use std::time::Duration;
 use tidb_exec::cluster_table_storage::{
     commit_staged_buffer, SessionTransaction, StatementSnapshot,
 };
+use tidb_exec::multi_statement_transaction::{LockKeysOutcome, TransactionStatementError};
 use tidb_exec::pessimistic_lock_error::LockSqlError;
 use tidb_exec::real_tikv_read::RealOptimisticTransactionOpener;
 use tidb_executor::cluster_storage::{ClusterSnapshot, MutationBuffer, SnapshotPairs};
 use tidb_executor::storage::StorageError;
+use tidb_planner::read_only_scan::ReadLockWait;
+use tidb_planner::txn_mode::SessionTxnMode;
 use tidb_txnkv::Key;
 
 use crate::sql_node::SqlQueryError;
@@ -80,7 +84,7 @@ pub trait ClusterTransactions: Send + Sync {
 
     /// Opens the one transaction an explicit `BEGIN` holds until `COMMIT` or
     /// `ROLLBACK`.
-    fn begin(&self) -> Result<Box<dyn OpenClusterTransaction>, String>;
+    fn begin(&self, mode: SessionTxnMode) -> Result<Box<dyn OpenClusterTransaction>, String>;
 }
 
 /// The transaction an explicit `BEGIN` holds open across its statements.
@@ -90,9 +94,21 @@ pub trait ClusterTransactions: Send + Sync {
 /// same timestamp -- which is what makes a racing writer a write conflict
 /// instead of a silent overwrite.
 pub trait OpenClusterTransaction: Send {
+    /// The mode selected by `BEGIN` or `@@tidb_txn_mode`.
+    fn mode(&self) -> SessionTxnMode;
+
     /// One statement's read handle. Dropping it ends the statement, never the
     /// transaction.
     fn snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String>;
+
+    /// Attempts one statement's raw-key pessimistic lock batch. A retry result
+    /// means the caller must restore the statement image and rerun the SQL.
+    fn lock_keys_once(
+        &mut self,
+        keys: &[Vec<u8>],
+        presume_not_exists: &BTreeSet<Vec<u8>>,
+        wait: ReadLockWait,
+    ) -> Result<LockKeysOutcome, TransactionStatementError>;
 
     /// Publishes the staged writes at the transaction's own start timestamp and
     /// empties the buffer.
@@ -329,16 +345,35 @@ impl ClusterTransactions for RealClusterTransactions {
             .map_err(sql_error)
     }
 
-    fn begin(&self) -> Result<Box<dyn OpenClusterTransaction>, String> {
-        SessionTransaction::begin(Arc::clone(&self.opener), self.timeout)
-            .map(|transaction| Box::new(transaction) as Box<dyn OpenClusterTransaction>)
-            .map_err(|error| error.to_string())
+    fn begin(&self, mode: SessionTxnMode) -> Result<Box<dyn OpenClusterTransaction>, String> {
+        SessionTransaction::begin_mode(
+            Arc::clone(&self.opener),
+            self.timeout,
+            mode,
+            crate::session_transaction::session_fair_locking(),
+            tidb_exec::session_commit_protocol::session_commit_protocol(),
+        )
+        .map(|transaction| Box::new(transaction) as Box<dyn OpenClusterTransaction>)
+        .map_err(|error| error.to_string())
     }
 }
 
 impl OpenClusterTransaction for SessionTransaction {
+    fn mode(&self) -> SessionTxnMode {
+        SessionTransaction::mode(self)
+    }
+
     fn snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String> {
         SessionTransaction::snapshot(self).map_err(|error| error.to_string())
+    }
+
+    fn lock_keys_once(
+        &mut self,
+        keys: &[Vec<u8>],
+        presume_not_exists: &BTreeSet<Vec<u8>>,
+        wait: ReadLockWait,
+    ) -> Result<LockKeysOutcome, TransactionStatementError> {
+        SessionTransaction::lock_keys_once(self, keys, presume_not_exists, wait)
     }
 
     fn commit(self: Box<Self>, buffer: &MutationBuffer) -> Result<(), SqlQueryError> {

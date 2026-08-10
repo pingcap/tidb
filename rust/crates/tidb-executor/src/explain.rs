@@ -449,6 +449,7 @@ struct IdNode {
     est_rows: Option<f64>,
     access: String,
     info: String,
+    task: &'static str,
     left_side_child: Option<usize>,
     info_tail: String,
     label: &'static str,
@@ -472,6 +473,7 @@ fn assign_ids(node: PlanNode, counter: &mut usize) -> IdNode {
         est_rows: node.est_rows,
         access: node.access,
         info: node.info,
+        task: node.task,
         left_side_child: node.left_side_child,
         info_tail: node.info_tail,
         label: node.label,
@@ -558,8 +560,7 @@ fn flatten(
     out.push(vec![
         text(&draw_id(node, &prefix, is_root, is_last, format)),
         text(&est_text(node.est_rows)),
-        // Divergence 1: every operator here runs in the TiDB process.
-        text("root"),
+        text(node.task),
         text(&node.access),
         text(&info_text(node, format)),
     ]);
@@ -588,7 +589,7 @@ fn flatten_analyze(
         text(&draw_id(node, &prefix, is_root, is_last, format)),
         text(&est_text(node.est_rows)),
         text(&act),
-        text("root"),
+        text(node.task),
         text(&node.access),
         text("N/A"),
         text(&info_text(node, format)),

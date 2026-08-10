@@ -557,17 +557,37 @@ pub(crate) fn build_from(
             // offsets. Empty until an index branch fills it in; the table
             // branch's answer is read off the catalog at the end of the arm.
             let mut walked_index: Option<Vec<usize>> = None;
-            let exec: Box<dyn Executor> = match entry {
+            // A handle range consumes only its access conjuncts. The
+            // remainder is still executed by the scan as a cop Selection and
+            // must remain visible in the physical plan.
+            let mut access_residual_filter = None;
+            let mut access_consumed_filter = false;
+            // `RowSource` has already classified predicates that reference
+            // only this leaf. Keep them as one local WHERE for range costing;
+            // the written predicates still remain above the join.
+            let leaf_where = demand.rows.and_then(|rows| {
+                rows.filters_for(&visible)?
+                    .iter()
+                    .cloned()
+                    .reduce(|left, right| {
+                        tidb_ast::Expr::Binary(
+                            tidb_ast::BinaryOp::LogicAnd,
+                            Box::new(left),
+                            Box::new(right),
+                        )
+                    })
+            });
+            let mut exec: Box<dyn Executor> = match entry {
                 TableEntry::Mem(mem) => Box::new(MemTableSourceExec::new(
                     ExecutorMeta::new(schema, 0, INIT_CAP, MAX_CHUNK_SIZE),
                     mem.rows.clone(),
                 )),
                 // Go's `findBestTask` costs an access path for EVERY
                 // `DataSource` of the tree, this leaf included, and answers
-                // its parent with the cheapest. `leaf_index_path` is that
-                // costing. It is offered no condition, so the only path it
-                // can return is a WHOLE covering index -- the same rows the
-                // scan below reads, through a narrower structure.
+                // its parent with the cheapest. The local predicates are
+                // offered to the same chooser, so a bounded table/index path
+                // can replace the full scan without removing the filter from
+                // the join's upper pipeline.
                 //
                 // `keep_order` no longer DELETES that costing. It narrows it:
                 // Go's `findBestTask` under a NON-EMPTY property enumerates
@@ -597,22 +617,104 @@ pub(crate) fn build_from(
                             &visible,
                             &columns,
                             wanted,
+                            leaf_where.as_ref(),
                             &hints,
                             catalog,
                             &ctx.session_zone(),
                             wanted_order.as_deref(),
                         )
                     }) {
-                        Some(path) => {
+                        Some(crate::driver::leaf_access::LeafAccessPath::Point {
+                            handle,
+                            order,
+                        }) => {
+                            walked_index = Some(order);
+                            access_consumed_filter =
+                                crate::driver::access::point_get_predicate_is_consumed(
+                                    leaf_where.as_ref(),
+                                    kv,
+                                    &columns,
+                                    &ctx.session_zone(),
+                                );
+                            let handles = handle.iter().cloned().collect::<Vec<_>>();
+                            let source = HandleSourceExec::new_with_context(
+                                ExecutorMeta::new(schema, 0, INIT_CAP, MAX_CHUNK_SIZE),
+                                kv.clone(),
+                                handles,
+                                crate::kv_table::RowDecodeContext::for_query(ctx),
+                            );
+                            if let Some(trace) = trace.as_deref_mut() {
+                                trace.point_get(&visible, kv, handle.as_ref());
+                            }
+                            Box::new(source)
+                        }
+                        Some(crate::driver::leaf_access::LeafAccessPath::Index(path)) => {
                             walked_index = Some(path.order().to_vec());
-                            crate::driver::leaf_access::leaf_index_source(
+                            let source = crate::driver::leaf_access::leaf_index_source(
                                 kv,
                                 &visible,
                                 &columns,
                                 path,
                                 trace.as_deref_mut(),
                                 ctx,
-                            )
+                            );
+                            source
+                        }
+                        Some(crate::driver::leaf_access::LeafAccessPath::HandleRange {
+                            ranges,
+                            estimate,
+                        }) => {
+                            let mut source = TableScanExec::new_with_context(
+                                ExecutorMeta::new(schema, 0, INIT_CAP, MAX_CHUNK_SIZE),
+                                restricted_to_partitions(kv, &table_ref.partitions, name)?,
+                                crate::kv_table::RowDecodeContext::for_query(ctx),
+                                crate::remote_scan::PushdownStatementContext::from_stmt(ctx),
+                            );
+                            let accepted = source
+                                .table_access()
+                                .is_some_and(|access| access.accept_handle_ranges(&ranges));
+                            if accepted {
+                                access_residual_filter =
+                                    leaf_where.as_ref().and_then(|predicate| {
+                                        crate::handle_range::build_handle_ranges(
+                                            kv,
+                                            predicate,
+                                            &ctx.session_zone(),
+                                        )?
+                                        .residual
+                                        .into_iter()
+                                        .cloned()
+                                        .reduce(
+                                            |left, right| {
+                                                tidb_ast::Expr::Binary(
+                                                    tidb_ast::BinaryOp::LogicAnd,
+                                                    Box::new(left),
+                                                    Box::new(right),
+                                                )
+                                            },
+                                        )
+                                    });
+                                if let Some(access) = source.table_access() {
+                                    access.accept_scan_estimate(estimate.rows);
+                                }
+                                if let Some(trace) = trace.as_deref_mut() {
+                                    if ranges.is_empty() {
+                                        trace.empty_range_table_dual();
+                                    } else if let Some(handle) =
+                                        kv.pk_handle_offset().and_then(|_| {
+                                            crate::driver::access::single_point_handle(&ranges)
+                                        })
+                                    {
+                                        trace.point_get(&visible, kv, Some(&handle));
+                                    } else {
+                                        trace.table_range_scan(&visible, &ranges, estimate);
+                                        if keep_order {
+                                            trace.keep_order();
+                                        }
+                                    }
+                                }
+                            }
+                            Box::new(source)
                         }
                         None => Box::new(TableScanExec::new_with_context(
                             ExecutorMeta::new(schema, 0, INIT_CAP, MAX_CHUNK_SIZE),
@@ -630,9 +732,20 @@ pub(crate) fn build_from(
                     unreachable!("views and sequences take the branches above")
                 }
             };
+            // Record predicate consumption only from the physical path that
+            // was actually built. A point path consumes its exact key; a
+            // streaming source may accept the complete pushed filter. Any
+            // declined residue remains in the Selection above the join.
+            let scan_consumed_filter =
+                offer_leaf_filter(exec.as_mut(), leaf_where.as_ref(), &visible, &columns, ctx);
+            if leaf_where.is_some() && (access_consumed_filter || scan_consumed_filter) {
+                if let Some(rows) = demand.rows {
+                    rows.mark_leaf_filters_consumed(&visible);
+                }
+            }
             let scope = FromScope {
                 tables: vec![FromTable {
-                    name: visible,
+                    name: visible.clone(),
                     // An alias replaces the whole path, so `db.t.col` no
                     // longer names the table once it is aliased.
                     database: table_ref.alias.is_none().then(|| database.to_owned()),
@@ -643,6 +756,58 @@ pub(crate) fn build_from(
                 zone: ctx.session_zone(),
                 ..FromScope::default()
             };
+            let derived_trace_filter = demand.rows.and_then(|rows| {
+                rows.trace_filters_for(&visible)?
+                    .iter()
+                    .cloned()
+                    .reduce(|left, right| {
+                        tidb_ast::Expr::Binary(
+                            tidb_ast::BinaryOp::LogicAnd,
+                            Box::new(left),
+                            Box::new(right),
+                        )
+                    })
+            });
+            let has_access_residual = access_residual_filter.is_some();
+            let trace_filter = match (access_residual_filter, derived_trace_filter) {
+                (Some(left), Some(right)) if left == right => Some(left),
+                (Some(left), Some(right)) => Some(tidb_ast::Expr::Binary(
+                    tidb_ast::BinaryOp::LogicAnd,
+                    Box::new(left),
+                    Box::new(right),
+                )),
+                (Some(predicate), None) | (None, Some(predicate)) => Some(predicate),
+                (None, None) => None,
+            };
+            if let Some(predicate) = trace_filter {
+                if let Some(trace) = trace.as_deref_mut() {
+                    let selectivity = match entry {
+                        TableEntry::Kv(table)
+                            if catalog.table_statistics(table.table_id).is_some() =>
+                        {
+                            crate::driver::access::stats_selectivity(
+                                catalog,
+                                table,
+                                &scope,
+                                Some(&predicate),
+                            )
+                        }
+                        TableEntry::Kv(_) => None,
+                        TableEntry::Mem(_) | TableEntry::View(_) | TableEntry::Sequence(_) => {
+                            Some(1.0)
+                        }
+                    };
+                    let qualify = crate::plan_trace::Qualifier {
+                        db: current_db,
+                        scope: &scope,
+                    };
+                    if has_access_residual {
+                        trace.residual_selection(&predicate, &qualify, selectivity);
+                    } else {
+                        trace.selection(&predicate, &qualify, selectivity);
+                    }
+                }
+            }
             // What this leaf DELIVERS -- read off the branch that RAN, which
             // is the verify half of `merge_decision`'s promise/verify
             // contract.
@@ -698,8 +863,31 @@ pub(crate) fn build_from(
             // of delivering it. Go's `PhysicalProjection.exhaustPhysicalPlans`
             // maps the property through the select list; see
             // `merge_decision::from_required_prop`.
-            let (exec, mut scope) = build_derived_source(
-                subquery,
+            let leaf_filter = alias.as_deref().and_then(|visible| {
+                demand.rows.and_then(|rows| {
+                    rows.filters_for(visible)?
+                        .iter()
+                        .cloned()
+                        .reduce(|left, right| {
+                            tidb_ast::Expr::Binary(
+                                tidb_ast::BinaryOp::LogicAnd,
+                                Box::new(left),
+                                Box::new(right),
+                            )
+                        })
+                })
+            });
+            let rewritten_subquery = alias.as_deref().and_then(|visible| {
+                super::derived_projection_pushdown::push_filters_into_derived(
+                    subquery,
+                    visible,
+                    column_names,
+                    leaf_filter.as_ref()?,
+                )
+            });
+            let planned_subquery = rewritten_subquery.as_ref().unwrap_or(subquery);
+            let (exec, mut scope, actual_delivered) = build_derived_source(
+                planned_subquery,
                 alias.as_deref(),
                 catalog,
                 current_db,
@@ -707,6 +895,11 @@ pub(crate) fn build_from(
                 trace,
                 required,
             )?;
+            if rewritten_subquery.is_some() {
+                if let (Some(rows), Some(visible)) = (demand.rows, alias.as_deref()) {
+                    rows.mark_leaf_filters_consumed(visible);
+                }
+            }
             rename_derived_columns(&mut scope.tables[0].columns, column_names)?;
             // A derived table is MATERIALIZED here -- `build_derived_source`
             // drains its subquery into a `MemTableSourceExec`, which replays
@@ -716,17 +909,47 @@ pub(crate) fn build_from(
             // LOWER bound on the inner build (see its doc): the inner join
             // forms its candidates from the PROMISE and verifies them the same
             // way this one does, so it can only deliver more.
-            let delivered = crate::driver::merge_decision::delivered_properties(
-                node,
-                catalog,
-                current_db,
-                demand.offered,
-            )
-            .map(|properties| properties.orders)
-            .unwrap_or_default();
+            let delivered = if actual_delivered.is_empty() {
+                crate::driver::merge_decision::delivered_properties(
+                    node,
+                    catalog,
+                    current_db,
+                    demand.offered,
+                )
+                .map(|properties| properties.orders)
+                .unwrap_or_default()
+            } else {
+                actual_delivered
+            };
             Ok((exec, scope, delivered))
         }
     }
+}
+
+/// Offers a join leaf's local predicates to the storage source. Returns true
+/// only when that source accepted the complete predicate.
+fn offer_leaf_filter(
+    source: &mut dyn Executor,
+    where_clause: Option<&tidb_ast::Expr>,
+    visible: &str,
+    columns: &[(String, FieldType)],
+    ctx: &crate::StmtContext,
+) -> bool {
+    let Some(where_clause) = where_clause else {
+        return false;
+    };
+    let resolver = TableResolver {
+        table_name: visible,
+        columns,
+        zone: ctx.session_zone(),
+    };
+    let (pushed, residual) =
+        crate::driver::access::split_scan_predicates(where_clause, &resolver, ctx);
+    !pushed.is_empty()
+        && residual.is_none()
+        && source
+            .table_access()
+            .is_some_and(|access| access.accept_scan_filter(&pushed, ctx))
 }
 
 /// Runs a derived table's subquery and presents its rows as a `FROM` source.
@@ -757,9 +980,18 @@ pub(crate) fn build_derived_source(
     ctx: &crate::StmtContext,
     trace: Option<&mut PlanTrace>,
     required: &tidb_planner::physical_property::PhysicalProperty,
-) -> Result<(Box<dyn Executor>, FromScope), DriverError> {
-    let (alias, columns, rows) =
-        derived_source_relation(subquery, alias, catalog, current_db, ctx, trace, required)?;
+) -> Result<(Box<dyn Executor>, FromScope, Delivered), DriverError> {
+    let mut delivered = Delivered::new();
+    let (alias, columns, rows) = derived_source_relation_with_delivery(
+        subquery,
+        alias,
+        catalog,
+        current_db,
+        ctx,
+        trace,
+        required,
+        Some(&mut delivered),
+    )?;
     let schema_columns: Vec<Column> = columns
         .iter()
         .enumerate()
@@ -785,7 +1017,7 @@ pub(crate) fn build_derived_source(
         zone: ctx.session_zone(),
         ..FromScope::default()
     };
-    Ok((exec, scope))
+    Ok((exec, scope, delivered))
 }
 
 /// A derived table's MATERIALIZED relation: the alias it answers to, its
@@ -809,6 +1041,22 @@ pub(crate) fn derived_source_relation<'a>(
     trace: Option<&mut PlanTrace>,
     required: &tidb_planner::physical_property::PhysicalProperty,
 ) -> Result<DerivedSourceRelation<'a>, DriverError> {
+    derived_source_relation_with_delivery(
+        subquery, alias, catalog, current_db, ctx, trace, required, None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn derived_source_relation_with_delivery<'a>(
+    subquery: &QueryStmt,
+    alias: Option<&'a str>,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    trace: Option<&mut PlanTrace>,
+    required: &tidb_planner::physical_property::PhysicalProperty,
+    delivered: Option<&mut Delivered>,
+) -> Result<DerivedSourceRelation<'a>, DriverError> {
     // Captured from Go: an alias-less derived table is ErrDerivedMustHaveAlias
     // in a plain SELECT and in a view body alike.
     let alias = alias.filter(|alias| !alias.is_empty());
@@ -816,9 +1064,9 @@ pub(crate) fn derived_source_relation<'a>(
         return Err(DriverError::DerivedMustHaveAlias);
     };
     let (columns, rows) = match subquery {
-        QueryStmt::Select(select) => {
-            run_select_traced(select, catalog, current_db, ctx, trace, required)?
-        }
+        QueryStmt::Select(select) => super::run_select_traced_with_delivery(
+            select, catalog, current_db, ctx, trace, required, delivered,
+        )?,
         QueryStmt::SetOpr(set_opr) => {
             // A set operation has no traced builder: `run_set_opr_stmt` runs
             // its arms and concatenates them without recording an operator, so
@@ -969,12 +1217,12 @@ pub(crate) fn build_lateral_join(
         tidb_ast::JoinType::Left => {
             return Err(DriverError::InvalidLateralJoin(
                 "LEFT JOIN is not supported with LATERAL",
-            ))
+            ));
         }
         tidb_ast::JoinType::Right => {
             return Err(DriverError::InvalidLateralJoin(
                 "RIGHT JOIN is not supported with LATERAL",
-            ))
+            ));
         }
         // Comma syntax (which the parser spells `CrossJoin`) and an explicit
         // INNER JOIN are the shapes Go plans.
@@ -1439,14 +1687,15 @@ pub(crate) fn build_join(
         .map(|(left, right)| (left.orders.clone(), right.orders.clone()));
     let (left_required, right_required) = match &merge {
         // `tryToGetChildReqProp`: each child is required to produce ITS OWN
-        // join keys' order, in the direction the parent asked for.
+        // join keys' order, including any index prefix fixed by an equality
+        // predicate, in the direction the parent asked for.
         Some(decision) => (
             crate::driver::merge_decision::child_required_prop(
-                decision.plan.keys.iter().map(|key| key.left),
+                decision.left_required.iter().copied(),
                 decision.plan.desc,
             ),
             crate::driver::merge_decision::child_required_prop(
-                decision.plan.keys.iter().map(|key| key.right),
+                decision.right_required.iter().copied(),
                 decision.plan.desc,
             ),
         ),
@@ -1526,6 +1775,22 @@ pub(crate) fn build_join(
         demand,
         &right_required,
     )?;
+    // Predicate pushdown has now received an acceptance receipt from each
+    // concrete leaf source. Remove a leaf-local ON conjunct from the physical
+    // join only when that source accepted the exact predicate; equalities and
+    // outer-join preserved-side conditions remain untouched.
+    let pushed_join;
+    let join = match demand.rows {
+        Some(rows) => {
+            pushed_join = {
+                let mut join = join.clone();
+                join.on = rows.residual_on(join.on.as_ref());
+                join
+            };
+            &pushed_join
+        }
+        None => join,
+    };
 
     // VERIFY -- the second half of the promise/verify contract (see
     // `merge_decision`'s module doc). `merge` was formed from the PROMISE:
@@ -1545,11 +1810,19 @@ pub(crate) fn build_join(
     // identity `build_from` reported its delivery in; the pruning below
     // renumbers the joined row and happens after this.
     let merge = merge.filter(|decision| {
-        let left_keys: Vec<usize> = decision.plan.keys.iter().map(|key| key.left).collect();
-        let right_keys: Vec<usize> = decision.plan.keys.iter().map(|key| key.right).collect();
-        crate::driver::merge_decision::delivers(&left_delivered, &left_keys)
-            && crate::driver::merge_decision::delivers(&right_delivered, &right_keys)
+        crate::driver::merge_decision::delivers(&left_delivered, &decision.left_required)
+            && crate::driver::merge_decision::delivers(&right_delivered, &decision.right_required)
     });
+    // Keep the complete child orders by NAME before the decision is consumed
+    // while re-resolving its executor keys. They include any fixed leading
+    // index columns and become this join's truthful delivery receipt below.
+    let merge_required_names = merge.as_ref().map(|decision| {
+        (
+            decision.left_required_names.clone(),
+            decision.right_required_names.clone(),
+        )
+    });
+    let merge_trace_names = merge.as_ref().map(|decision| decision.names.clone());
 
     // The joined scope: the right tables' columns follow the left's.
     let mut left_width = left_scope.width();
@@ -1636,11 +1909,9 @@ pub(crate) fn build_join(
     // widths below are read back off the narrowed scope rather than assumed.
     // A coalesced join is exempt: its scope addresses columns by row offset
     // in `star`/`coalesced`, which renumbering would invalidate.
-    // Whether the joined row was RENUMBERED below. A pruned join is the top
-    // of its `FROM` plan (only the outermost one is offered a `prune`), so it
-    // has no parent to report a delivery to -- and the offsets its children
-    // reported are no longer the offsets of its row.
-    let mut pruned = false;
+    // The join may be renumbered below. Its committed merge plan is resolved
+    // again against the narrowed scope, so the delivery report later uses
+    // those final offsets rather than the children's pre-prune offsets.
     if let Some(select) = prune.filter(|_| !coalescing) {
         if let Some((left_columns, right_columns)) = crate::column_prune::prune_join_sides(
             select,
@@ -1649,7 +1920,6 @@ pub(crate) fn build_join(
             &mut left_exec,
             &mut right_exec,
         ) {
-            pruned = true;
             left_width = left_columns.len();
             scope.tables[0].columns = left_columns;
             scope.tables[0].offset = 0;
@@ -1723,6 +1993,37 @@ pub(crate) fn build_join(
     // `equal:[...]`/`other cond:` and the hash table's own keys are one
     // decision rather than two that can drift.
     let split = crate::hash_join::split_equi(&conditions, left_width);
+    let physical_conditions = {
+        let mut flattened = Vec::new();
+        for condition in &conditions {
+            collect_physical_join_conjuncts(condition, &mut flattened);
+        }
+        let columns = (0..scope.width())
+            .map(|offset| {
+                let path = scope.qualified_path(offset)?;
+                let [.., relation, column] = path.as_slice() else {
+                    return None;
+                };
+                let column = crate::driver::merge_decision::RelColumn {
+                    relation: relation.clone(),
+                    column: column.clone(),
+                };
+                crate::driver::merge_decision::physical_column_trace_name(
+                    if offset < left_width {
+                        &join.left
+                    } else {
+                        right_node
+                    },
+                    &column,
+                    catalog,
+                    current_db,
+                )
+            })
+            .collect::<Vec<_>>();
+        (flattened.len() == split.equal_mask.len()
+            && (demand.physical_source_names || columns.iter().any(Option::is_none)))
+        .then_some((flattened, columns))
+    };
     // Go's stats-less build side: the inner (non-preserved) child, which is
     // the left one only for a RIGHT join. See `join.rs`'s module doc.
     let build_is_left = kind == JoinKind::Right;
@@ -1731,6 +2032,19 @@ pub(crate) fn build_join(
     // executors know.
     let left_types = left_exec.ret_field_types().to_vec();
     let right_types = right_exec.ret_field_types().to_vec();
+    let mut comparison_not_null = Vec::new();
+    for condition in &conditions {
+        collect_comparison_not_null_columns(condition, &mut comparison_not_null);
+    }
+    comparison_not_null.sort_unstable();
+    comparison_not_null.dedup();
+    comparison_not_null.retain(|offset| {
+        left_types
+            .iter()
+            .chain(&right_types)
+            .nth(*offset)
+            .is_some_and(|field_type| !field_type.has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL))
+    });
     let mut join_exec = JoinExec::new(
         meta,
         kind,
@@ -1740,6 +2054,14 @@ pub(crate) fn build_join(
         ctx.clone(),
         ctx.statement_memory(),
     );
+    // When every stable WHERE conjunct belongs to this inner join, the join
+    // executor now evaluates the complete predicate (equal keys and `other
+    // cond` alike). Report that receipt so the equivalent Selection above it
+    // is removed. A partial push remains fail-closed and keeps the Selection.
+    let pushed_consumes_where = !demand.offered.is_empty()
+        && pushed.len() == demand.offered.len()
+        && join.tp == tidb_ast::JoinType::Cross;
+    join_exec.set_consumes_where(pushed_consumes_where);
     // The key offsets the decision computed are pre-pruning; the scope is
     // post-pruning. Re-resolving the key NAMES against it is what keeps the
     // executor's merge keys and the columns it actually holds one answer.
@@ -1787,35 +2109,65 @@ pub(crate) fn build_join(
                 .any(|equi| equi.left == key.left && equi.right == key.right)
         })
     });
-    if let Some(plan) = merged.clone() {
-        join_exec.set_merge_plan(plan);
-    }
     // The index strategy: one side read once per outer key rather than whole.
-    // It is asked only where the merge decision declined, and it refuses a
-    // coalesced join for the same reason the merge one is dropped there --
-    // that scope addresses columns by row offset, not by name.
+    // The search may choose it over an available merge plan for a one-row
+    // outer side. It refuses a coalesced join for the same reason the merge
+    // one is dropped there -- that scope addresses columns by row offset, not
+    // by name.
     //
     // WHICH strategy this site may use is asked of Go's own enumeration --
     // `exhaustPhysicalPlans4LogicalJoin` under the property this join was
     // required to produce -- and not of the structural rule underneath. See
     // `driver::join_search`.
-    let chosen = crate::driver::join_search::choose(&crate::driver::join_search::SearchInput {
-        join,
-        join_type: match kind {
-            JoinKind::Inner => tidb_planner::find_best_task::LogicalJoinType::Inner,
-            JoinKind::Left => tidb_planner::find_best_task::LogicalJoinType::LeftOuter,
-            JoinKind::Right => tidb_planner::find_best_task::LogicalJoinType::RightOuter,
-        },
-        keys: &split.keys,
-        left_width,
-        width: scope.width(),
-        orders: search_orders
-            .as_ref()
-            .map(|(left, right)| (left.as_slice(), right.as_slice())),
-        required,
-        rows: demand.rows,
+    let (hint_left, hint_right) = crate::driver::join_method_hints::side_aliases(join);
+    let forced_index_name = demand.join_hints.and_then(|hints| {
+        hints.forced_index_join_name(
+            (hint_left.as_deref(), hint_right.as_deref()),
+            required.is_sort_item_empty(),
+        )
     });
-    let index_join = (!coalescing && chosen == crate::driver::join_search::Chosen::Index)
+    let chosen = if forced_index_name.is_some() {
+        crate::driver::join_search::Chosen::Index
+    } else {
+        crate::driver::join_search::choose(&crate::driver::join_search::SearchInput {
+            join,
+            join_type: match kind {
+                JoinKind::Inner => tidb_planner::find_best_task::LogicalJoinType::Inner,
+                JoinKind::Left => tidb_planner::find_best_task::LogicalJoinType::LeftOuter,
+                JoinKind::Right => tidb_planner::find_best_task::LogicalJoinType::RightOuter,
+            },
+            keys: &split.keys,
+            left_width,
+            width: scope.width(),
+            orders: search_orders
+                .as_ref()
+                .map(|(left, right)| (left.as_slice(), right.as_slice())),
+            required,
+            rows: demand.rows,
+        })
+    };
+    let estimated_join_rows = crate::driver::join_search::estimated_rows(join, demand.rows);
+    let index_chosen = matches!(
+        chosen,
+        crate::driver::join_search::Chosen::Index
+            | crate::driver::join_search::Chosen::IndexForSingleOuterRow
+    );
+    let single_outer_row_choice =
+        chosen == crate::driver::join_search::Chosen::IndexForSingleOuterRow;
+    // Go's empty-property search also picks an index join on cost when a
+    // grouped derived inner has a constant on the dynamically probed key:
+    // at most one distinct outer key can return rows.  This is a strict
+    // dominance-sized subset of the unresolved full candidate-tree costing
+    // problem: admit it only when the outer and joined estimates are no
+    // larger than the materialized inner aggregate.  Every other
+    // HashAlsoEnumerated site remains fail-closed.
+    let grouped_cost_candidate = matches!(
+        chosen,
+        crate::driver::join_search::Chosen::Refused(
+            crate::driver::join_search::Refusal::HashAlsoEnumerated
+        )
+    );
+    let index_join = (!coalescing && (index_chosen || grouped_cost_candidate))
         .then(|| {
             let (left_side, right_side) = crate::driver::index_join_decision::join_sides(
                 join,
@@ -1826,17 +2178,59 @@ pub(crate) fn build_join(
                 &left_types,
                 &right_types,
             );
-            crate::driver::index_join_decision::index_join_decision(
+            crate::driver::index_join_decision::index_join_decision_with_context(
                 kind,
                 &split.keys,
                 &left_side,
                 &right_side,
-                merged.is_some(),
+                merged.is_some() && !single_outer_row_choice,
+                demand.rows,
+                ctx,
             )
         })
         .flatten();
+    let grouped_cost_choice = index_join.as_ref().is_some_and(|decision| {
+        if !grouped_cost_candidate
+            || decision.aggregation.is_none()
+            || !decision.constant_constrained_probe
+        {
+            return false;
+        }
+        estimated_join_rows.is_some_and(|rows| {
+            let (outer, inner) = if decision.lookup_is_left {
+                (rows.right, rows.left)
+            } else {
+                (rows.left, rows.right)
+            };
+            outer <= inner && rows.joined <= inner
+        })
+    });
+    let index_join = (index_chosen || grouped_cost_choice)
+        .then_some(index_join)
+        .flatten();
+    let index_join = index_join.filter(|decision| {
+        if !single_outer_row_choice {
+            return true;
+        }
+        let crate::access_path::LookupObject::Index(id) = &decision.object else {
+            return false;
+        };
+        decision
+            .table
+            .indexes()
+            .iter()
+            .find(|index| index.id == *id)
+            .is_some_and(|index| !index.name.eq_ignore_ascii_case("PRIMARY"))
+    });
+    // Commit exactly one strategy to the executor. A chosen index candidate
+    // replaces the merge candidate; if its structural decision fails closed,
+    // retain the already validated merge plan as the fallback.
+    let merged = if index_join.is_some() { None } else { merged };
+    if let Some(plan) = merged.clone() {
+        join_exec.set_merge_plan(plan);
+    }
     let index_text = index_join.as_ref().map(|decision| {
-        let source = crate::access_path::IndexJoinLookupExec::new_with_context(
+        let mut source = crate::access_path::IndexJoinLookupExec::new_with_context(
             ExecutorMeta::new(
                 Schema::new(
                     decision
@@ -1858,6 +2252,32 @@ pub(crate) fn build_join(
             decision.object.clone(),
             crate::kv_table::RowDecodeContext::for_query(ctx),
         );
+        source.set_probe_parts(decision.probe_parts.clone());
+        source.set_filters(decision.filter_exprs.clone(), ctx.clone());
+        let physical_name = |offset: usize| {
+            let fallback = qualified_scope_column(&scope, current_db, offset);
+            let Some(path) = scope.qualified_path(offset) else {
+                return fallback;
+            };
+            let [.., relation, column] = path.as_slice() else {
+                return fallback;
+            };
+            let column = crate::driver::merge_decision::RelColumn {
+                relation: relation.clone(),
+                column: column.clone(),
+            };
+            crate::driver::merge_decision::physical_column_trace_name(
+                if offset < left_width {
+                    &join.left
+                } else {
+                    right_node
+                },
+                &column,
+                catalog,
+                current_db,
+            )
+            .unwrap_or(fallback)
+        };
         let keys: Vec<(String, String)> = decision
             .probe_keys
             .iter()
@@ -1868,15 +2288,51 @@ pub(crate) fn build_join(
                 } else {
                     (key.left, left_width + key.right)
                 };
-                (
-                    qualified_scope_column(&scope, current_db, outer),
-                    qualified_scope_column(&scope, current_db, inner),
-                )
+                (physical_name(outer), physical_name(inner))
             })
             .collect();
+        let equal_conditions = split
+            .keys
+            .iter()
+            .map(|key| {
+                format!(
+                    "eq({}, {})",
+                    physical_name(key.left),
+                    physical_name(left_width + key.right)
+                )
+            })
+            .collect::<Vec<_>>();
         let index = match &decision.object {
             crate::access_path::LookupObject::Index(_) => true,
-            crate::access_path::LookupObject::Handle => false,
+            crate::access_path::LookupObject::Handle
+            | crate::access_path::LookupObject::CommonHandle => false,
+        };
+        let mut needed_columns = demand.columns.map_or_else(
+            || (0..decision.columns.len()).collect::<Vec<_>>(),
+            |columns| columns.needed(&decision.visible, &decision.columns),
+        );
+        if let Some(aggregation) = &decision.aggregation {
+            needed_columns.extend(aggregation.group_offsets.iter().copied());
+            needed_columns.push(aggregation.sum_offset);
+            needed_columns.sort_unstable();
+            needed_columns.dedup();
+        }
+        let index_lookup = match &decision.object {
+            crate::access_path::LookupObject::Index(id) => {
+                !crate::access_cost::index_is_covering(&decision.table, *id, &needed_columns)
+            }
+            crate::access_path::LookupObject::Handle
+            | crate::access_path::LookupObject::CommonHandle => false,
+        };
+        let unique = match &decision.object {
+            crate::access_path::LookupObject::Index(id) => decision
+                .table
+                .indexes()
+                .iter()
+                .find(|index| index.id == *id)
+                .is_some_and(|index| index.unique),
+            crate::access_path::LookupObject::Handle
+            | crate::access_path::LookupObject::CommonHandle => true,
         };
         let access = match &decision.object {
             crate::access_path::LookupObject::Index(id) => {
@@ -1899,17 +2355,91 @@ pub(crate) fn build_join(
                 )
             }
             crate::access_path::LookupObject::Handle => format!("table:{}", decision.visible),
+            crate::access_path::LookupObject::CommonHandle => {
+                format!("table:{}", decision.visible)
+            }
         };
+        let (estimated_outer_rows, estimated_probe_rows_one) =
+            estimated_join_rows.map_or((None, None), |rows| {
+                let outer = if decision.lookup_is_left {
+                    rows.right
+                } else {
+                    rows.left
+                };
+                let inner = if decision.lookup_is_left {
+                    rows.left
+                } else {
+                    rows.right
+                };
+                // A rebuilt grouped inner is costed for the complete group
+                // result of ONE dynamic range.  Its join output may be much
+                // smaller after equality matching, so dividing joined rows
+                // by outer rows underprices the IndexJoin hash table and can
+                // select `IndexJoin` where Go selects `IndexHashJoin`.
+                let probe_rows_one = if decision.aggregation.is_some() {
+                    inner
+                } else if outer > 0.0 {
+                    rows.joined / outer
+                } else {
+                    0.0
+                };
+                (Some(outer), Some(probe_rows_one))
+            });
+        // A unique lookup reads at most one pre-filter row for each outer
+        // key. Go prices the dynamic range at the outer row count and the
+        // cop Selection above it at that count times the residual filter
+        // selectivity. The full logical join estimator cannot recover this
+        // access-path fact: scaling the inner table's rows and join-key NDV
+        // together cancels the residual filter from its equality estimate.
+        let estimated_lookup_rows = if unique {
+            estimated_outer_rows.map(|rows| rows * decision.filter_selectivity)
+        } else {
+            estimated_join_rows.map(|rows| rows.joined)
+        };
+        let (outer_not_null, inner_not_null) = comparison_not_null.iter().copied().fold(
+            (Vec::new(), Vec::new()),
+            |mut offsets, offset| {
+                if decision.lookup_is_left {
+                    if offset < left_width {
+                        offsets.1.push(offset);
+                    } else {
+                        offsets.0.push(offset - left_width);
+                    }
+                } else if offset < left_width {
+                    offsets.0.push(offset);
+                } else {
+                    offsets.1.push(offset - left_width);
+                }
+                offsets
+            },
+        );
         join_exec.set_index_lookup_plan(crate::join::IndexLookupPlan {
             lookup_is_left: decision.lookup_is_left,
             probe_keys: decision.probe_keys.clone(),
             source,
+            aggregation: decision.aggregation.clone(),
+            outer_not_null: outer_not_null.clone(),
+            inner_not_null: inner_not_null.clone(),
         });
+        join_exec.set_consumes_where(pushed_consumes_where || decision.consumes_where);
         (
             crate::plan_trace::IndexJoinText {
-                reader: if index { "IndexReader" } else { "TableReader" },
+                reader: if decision.aggregation.is_some() && !inner_not_null.is_empty() {
+                    "Selection"
+                } else if decision.aggregation.is_some() {
+                    "HashAgg"
+                } else if index_lookup {
+                    "IndexLookUp"
+                } else if index {
+                    "IndexReader"
+                } else {
+                    "TableReader"
+                },
                 keys,
+                equal_conditions,
                 lookup_is_left: decision.lookup_is_left,
+                unique,
+                forced_name: forced_index_name,
                 // `getAvgRowSize(.., Schema().Columns)` for each side. Go
                 // reaches its `HistColl` branch when the child is a
                 // `DataSource`; this tier has no `HistColl` at a join's child
@@ -1929,11 +2459,18 @@ pub(crate) fn build_join(
                         &right_types
                     },
                 ),
+                estimated_outer_rows,
+                estimated_probe_rows_one,
+                estimated_join_rows: estimated_join_rows.map(|rows| rows.joined),
             },
             decision.lookup_is_left,
             access,
             decision.range_info.clone(),
             index,
+            index_lookup,
+            estimated_lookup_rows,
+            outer_not_null,
+            inner_not_null,
         )
     });
     // The plan row and the executor are one decision: if the recorder cannot
@@ -1941,9 +2478,51 @@ pub(crate) fn build_join(
     // refused rather than printed with a whole-table read under an index
     // join. The EXECUTOR is unaffected -- it still answers correctly.
     let index_text = match (index_text, trace.as_deref_mut()) {
-        (Some((text, lookup_is_left, access, range_info, index)), Some(trace)) => {
+        (
+            Some((
+                text,
+                lookup_is_left,
+                access,
+                range_info,
+                index,
+                index_lookup,
+                estimated_lookup_rows,
+                outer_not_null,
+                inner_not_null,
+            )),
+            Some(trace),
+        ) => {
+            let decision = index_join
+                .as_ref()
+                .expect("printable index text has an index decision");
+            let qualify = crate::plan_trace::Qualifier {
+                db: current_db,
+                scope: &scope,
+            };
+            let filters: Vec<String> = decision
+                .filters
+                .iter()
+                .map(|filter| qualify.expr(filter))
+                .collect();
             if trace
-                .index_join_inner_scan(lookup_is_left, access, &range_info, index)
+                .index_join_inner_scan(
+                    lookup_is_left,
+                    crate::plan_trace::IndexJoinInnerPathText {
+                        access,
+                        range_info: &range_info,
+                        index,
+                        index_lookup,
+                        visible: &decision.visible,
+                        estimated_rows: estimated_lookup_rows,
+                        unique: text.unique,
+                        grouped_derived: decision.aggregation.is_some(),
+                        aggregation_info: decision.aggregation_info.as_deref(),
+                        outer_not_null: &outer_not_null,
+                        inner_not_null: &inner_not_null,
+                    },
+                    &filters,
+                    decision.filter_selectivity,
+                )
                 .is_ok()
             {
                 Some(text)
@@ -1956,18 +2535,47 @@ pub(crate) fn build_join(
         (None, _) => None,
     };
     let exec: Box<dyn Executor> = Box::new(join_exec);
+    let build_is_left = if merged.is_none() && index_join.is_none() {
+        estimated_join_rows.map_or(build_is_left, |rows| {
+            if rows.left < rows.right {
+                true
+            } else if rows.right < rows.left {
+                false
+            } else {
+                build_is_left
+            }
+        })
+    } else {
+        build_is_left
+    };
     let strategy = crate::plan_trace::JoinStrategy {
         equal_mask: split.equal_mask.clone(),
-        build_is_left,
+        build_is_left: index_join
+            .as_ref()
+            .map_or(build_is_left, |decision| !decision.lookup_is_left),
         index_lookup: index_text,
+        physical_conditions,
+        estimated_join_rows: estimated_join_rows.map(|rows| rows.joined),
         merge_keys: merged.as_ref().map(|plan| {
             plan.keys
                 .iter()
-                .map(|key| {
-                    (
-                        qualified_scope_column(&scope, current_db, key.left),
-                        qualified_scope_column(&scope, current_db, left_width + key.right),
+                .zip(
+                    merge_trace_names
+                        .as_ref()
+                        .expect("a committed merge keeps its logical key names"),
+                )
+                .map(|(key, (left_name, right_name))| {
+                    let left = crate::driver::merge_decision::physical_column_trace_name(
+                        &join.left, left_name, catalog, current_db,
                     )
+                    .unwrap_or_else(|| qualified_scope_column(&scope, current_db, key.left));
+                    let right = crate::driver::merge_decision::physical_column_trace_name(
+                        right_node, right_name, catalog, current_db,
+                    )
+                    .unwrap_or_else(|| {
+                        qualified_scope_column(&scope, current_db, left_width + key.right)
+                    });
+                    (left, right)
                 })
                 .collect()
         }),
@@ -1987,14 +2595,26 @@ pub(crate) fn build_join(
     //
     // Either way the side an outer join NULL-EXTENDS is dropped, which is
     // `union_orders`' whole job.
-    let delivered = if pruned {
-        Delivered::new()
-    } else if let Some(plan) = &merged {
-        crate::driver::merge_decision::union_orders(
-            join.tp,
-            vec![plan.keys.iter().map(|key| key.left).collect()],
-            vec![plan.keys.iter().map(|key| key.right + left_width).collect()],
-        )
+    let merged_orders = merged.as_ref().and_then(|_| {
+        let (left_names, right_names) = merge_required_names.as_ref()?;
+        let left: Option<Vec<usize>> = left_names
+            .iter()
+            .map(|name| {
+                let offset = scope_offset_of(&scope, name)?;
+                (offset < left_width).then_some(offset)
+            })
+            .collect();
+        let right: Option<Vec<usize>> = right_names
+            .iter()
+            .map(|name| {
+                let offset = scope_offset_of(&scope, name)?;
+                (offset >= left_width).then_some(offset)
+            })
+            .collect();
+        Some((left?, right?))
+    });
+    let delivered = if let Some((left, right)) = merged_orders {
+        crate::driver::merge_decision::union_orders(join.tp, vec![left], vec![right])
     } else if let Some(decision) = &index_join {
         let outer = if decision.lookup_is_left {
             right_delivered
@@ -2030,11 +2650,16 @@ pub(crate) fn build_join(
             // The recorder prints the `ON` as written, and a coalesced join
             // has none -- its equalities are synthesized here.
             trace.refuse("NATURAL and USING joins are not printed yet");
-        } else if trace
-            .join(join, &scope, current_db, &pushed, &strategy)
-            .is_err()
-        {
-            trace.refuse("this join's plan is not supported yet");
+        } else {
+            if index_join.is_none() {
+                trace.join_scan_readers();
+            }
+            if trace
+                .join(join, &scope, current_db, &pushed, &strategy)
+                .is_err()
+            {
+                trace.refuse("this join's plan is not supported yet");
+            }
         }
     }
     // Set, never merged: this is a property of the node at the TOP of the
@@ -2042,6 +2667,42 @@ pub(crate) fn build_join(
     // [`FromScope::qualified_star_is_output_only`].
     scope.qualified_star_is_output_only = join.tp == tidb_ast::JoinType::Cross && join.on.is_some();
     Ok((meter(exec, trace), scope, delivered))
+}
+
+fn collect_physical_join_conjuncts(expression: &Expression, out: &mut Vec<Expression>) {
+    if let Expression::ScalarFunction(function) = expression {
+        if function.func_name.lowercase() == "and" {
+            for argument in &function.args {
+                collect_physical_join_conjuncts(argument, out);
+            }
+            return;
+        }
+    }
+    out.push(expression.clone());
+}
+
+/// Direct column arguments a NULL-propagating comparison proves non-NULL.
+/// `NullEQ` is deliberately absent: it is true for two NULL operands.
+fn collect_comparison_not_null_columns(expression: &Expression, out: &mut Vec<usize>) {
+    let Expression::ScalarFunction(function) = expression else {
+        return;
+    };
+    let name = function.func_name.lowercase();
+    if name == "and" {
+        for argument in &function.args {
+            collect_comparison_not_null_columns(argument, out);
+        }
+        return;
+    }
+    if !matches!(name, "eq" | "ne" | "lt" | "le" | "gt" | "ge") {
+        return;
+    }
+    out.extend(function.args.iter().filter_map(|argument| {
+        let Expression::Column(column) = argument else {
+            return None;
+        };
+        usize::try_from(column.index).ok()
+    }));
 }
 
 /// `kv` with any `PARTITION (p, ...)` restriction on the reference applied,

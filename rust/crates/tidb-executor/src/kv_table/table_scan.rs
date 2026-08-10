@@ -34,18 +34,19 @@ use super::{
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use crate::predicate_pushdown::ScanPredicate;
 use crate::remote_scan::{
-    PushdownRowStream, PushdownScanColumn, PushdownScanRequest, PushdownStatementContext,
+    PushdownAggregateKind, PushdownIndexScan, PushdownPartialAggregate, PushdownRowStream,
+    PushdownScanColumn, PushdownScanRequest, PushdownStatementContext, PushdownTopN,
     EXTRA_HANDLE_COLUMN_ID,
 };
 use crate::storage::StorageIterator;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use tidb_chunk::chunk::Chunk;
 use tidb_codec::table_key::{
     encode_index_seek_key, encode_row_key_with_handle, get_table_handle_key_range, RecordHandle,
     RECORD_ROW_KEY_LEN,
 };
 use tidb_codec::Encoder;
-use tidb_datatype::{Datum, FieldType, SessionTimeZone};
+use tidb_datatype::{Datum, Decimal, FieldType, SessionTimeZone};
 use tidb_expr::schema::Schema;
 use tidb_tablecodec::decode_table_row_to_map;
 use tidb_txnkv::Key;
@@ -114,7 +115,7 @@ impl KvTable {
             .iter()
             .enumerate()
             .filter(|(offset, _)| kept.as_ref().is_none_or(|kept| kept.contains(offset)))
-            .map(|(_, c)| (c.id, c.field_type.clone()))
+            .map(|(_, column)| (column.id, column.field_type.clone()))
             .collect();
         note_decoded_column_ids(column_types.keys().copied());
         RowDecoder {
@@ -164,7 +165,7 @@ impl KvTable {
     ) -> Result<RowCursor, KvTableError> {
         let decoder = self.row_decoder_projected(keep, context);
         let mut iterators = Vec::new();
-        for (low, upper) in self.record_key_ranges(handle_ranges) {
+        for (low, upper) in self.record_key_ranges(handle_ranges, context.zone())? {
             iterators.push(
                 self.store
                     .iter(Some(&low), Some(&upper))
@@ -199,10 +200,30 @@ impl KvTable {
     /// in ([`KvTable::record_key_range`]). With them it is the intervals
     /// [`crate::handle_range::record_key_ranges`] encodes, which is what
     /// makes a `TableRangeScan` read less than the table.
-    fn record_key_ranges(&self, handle_ranges: Option<&[IndexRange]>) -> Vec<(Key, Key)> {
-        handle_ranges
-            .and_then(|ranges| crate::handle_range::record_key_ranges(self, ranges))
-            .unwrap_or_else(|| self.record_key_range())
+    fn record_key_ranges(
+        &self,
+        handle_ranges: Option<&[IndexRange]>,
+        zone: &SessionTimeZone,
+    ) -> Result<Vec<(Key, Key)>, KvTableError> {
+        let full_common_handle = [IndexRange {
+            low: vec![Datum::MinNotNull],
+            high: vec![Datum::MaxValue],
+            low_exclusive: false,
+            high_exclusive: false,
+        }];
+        let handle_ranges = if handle_ranges.is_none()
+            && crate::handle_range::common_handle_primary(self).is_some()
+        {
+            Some(full_common_handle.as_slice())
+        } else {
+            handle_ranges
+        };
+        let encoded = match handle_ranges {
+            Some(ranges) => crate::handle_range::record_key_ranges(self, ranges, zone)
+                .map_err(|error| KvTableError::Encode(format!("{error:?}")))?,
+            None => None,
+        };
+        Ok(encoded.unwrap_or_else(|| self.record_key_range()))
     }
 
     /// The record ranges this table's rows live in, as the storage seam's
@@ -244,16 +265,21 @@ impl KvTable {
     /// this cursor cannot compare is a shape it must not claim to serve. So is
     /// a scan whose handle ranges cover no record at all, which a coprocessor
     /// request cannot express.
+    #[allow(clippy::too_many_arguments)]
     pub fn pushdown_row_cursor_with_context(
         &mut self,
         keep: &[usize],
         predicates: &[ScanPredicate],
+        output_offsets: Option<&[usize]>,
+        topn: Option<&PushdownTopN>,
         limit: Option<u64>,
         handle_ranges: Option<&[IndexRange]>,
         context: &RowDecodeContext,
         statement: &PushdownStatementContext,
     ) -> Result<Option<RemoteRowCursor>, KvTableError> {
-        if !self.common_handle_offsets.is_empty() {
+        let common_handle = !self.common_handle_offsets.is_empty();
+        let common_primary = crate::handle_range::common_handle_primary(self);
+        if common_handle && (self.has_dirty_content() || common_primary.is_none()) {
             return Ok(None);
         }
         // A pushdown request names ONE physical table id. A partitioned table
@@ -262,7 +288,7 @@ impl KvTable {
         if self.partition.is_some() {
             return Ok(None);
         }
-        let ranges = self.record_key_ranges(handle_ranges);
+        let ranges = self.record_key_ranges(handle_ranges, context.zone())?;
         // No range at all is a read of NOTHING -- `id > 100 AND id < 100`, or a
         // bound that is NULL -- and a coprocessor request has no way to say
         // that: its `Ranges` list is what the transport turns into region
@@ -285,37 +311,69 @@ impl KvTable {
                 }
             })
             .collect();
-        // The merge needs every remote row's handle. A projected integer
-        // primary key already carries it; otherwise the row handle is no
-        // column of the table (`_tidb_rowid`), so one is appended and dropped
-        // again before the row is emitted.
-        let handle_index = match self
-            .pk_handle_offset
-            .and_then(|offset| keep.iter().position(|kept| *kept == offset))
-        {
-            Some(index) => index,
-            None => {
-                columns.push(match self.pk_handle_offset {
-                    Some(offset) => PushdownScanColumn {
-                        id: self.columns[offset].id,
-                        field_type: self.columns[offset].field_type.clone(),
-                        is_handle: true,
-                    },
-                    None => PushdownScanColumn {
-                        id: EXTRA_HANDLE_COLUMN_ID,
-                        field_type: FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
-                        is_handle: true,
-                    },
-                });
-                columns.len() - 1
-            }
+        // An integer-handle merge needs every remote row's handle. A projected
+        // primary key already carries it; otherwise `_tidb_rowid` is appended
+        // and dropped before emission. A clean common-handle scan has no
+        // client-side merge, so it appends no synthetic handle.
+        let handle_index = if common_handle {
+            None
+        } else {
+            Some(
+                match self
+                    .pk_handle_offset
+                    .and_then(|offset| keep.iter().position(|kept| *kept == offset))
+                {
+                    Some(index) => index,
+                    None => {
+                        columns.push(match self.pk_handle_offset {
+                            Some(offset) => PushdownScanColumn {
+                                id: self.columns[offset].id,
+                                field_type: self.columns[offset].field_type.clone(),
+                                is_handle: true,
+                            },
+                            None => PushdownScanColumn {
+                                id: EXTRA_HANDLE_COLUMN_ID,
+                                field_type: FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                                is_handle: true,
+                            },
+                        });
+                        columns.len() - 1
+                    }
+                },
+            )
         };
+        let primary_column_ids: Vec<i64> = common_primary
+            .into_iter()
+            .flat_map(|index| index.column_offsets.iter())
+            .filter_map(|offset| self.columns.get(*offset))
+            .map(|column| column.id)
+            .collect();
+        let primary_prefix_column_ids: Vec<i64> = common_primary
+            .into_iter()
+            .flat_map(|index| {
+                index
+                    .column_offsets
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(position, offset)| {
+                        let column = self.columns.get(*offset)?;
+                        let prefix = index.prefix_length(position);
+                        (prefix > 0 && column.field_type.flen() > prefix).then_some(column.id)
+                    })
+            })
+            .collect();
         let request = PushdownScanRequest {
             table_id: self.table_id,
+            index: None,
             columns,
             handle_index,
+            primary_column_ids,
+            primary_prefix_column_ids,
             predicates: predicates.to_vec(),
+            output_offsets: output_offsets.map(<[usize]>::to_vec),
+            topn: topn.cloned(),
             limit,
+            aggregate: None,
             // The storage that owns the snapshot fills this in; the table has
             // no timestamp of its own.
             snapshot_ts: 0,
@@ -325,7 +383,11 @@ impl KvTable {
         let Some(scan) = self.store.open_remote_scan(&request) else {
             return Ok(None);
         };
-        let scan = scan.map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+        let mut scan = scan.map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+        if common_handle && !scan.staged.is_empty() {
+            scan.stream.close();
+            return Ok(None);
+        }
         // One request reached a region. Counted here rather than at the
         // storage seam so a backend that REFUSED the shape (and returned an
         // `Unsupported` the caller turned into a byte-level cursor) is not
@@ -345,7 +407,7 @@ impl KvTable {
             staged: staged.into_iter(),
             pending_staged: None,
             pending_remote: None,
-            width: keep.len(),
+            width: output_offsets.map_or(keep.len(), <[usize]>::len),
             handle_index,
             table_id: self.table_id,
             noted_rows: 0,
@@ -366,11 +428,194 @@ impl KvTable {
         self.pushdown_row_cursor_with_context(
             keep,
             predicates,
+            None,
+            None,
             limit,
             handle_ranges,
             &RowDecodeContext::legacy_default(zone),
             statement,
         )
+    }
+
+    /// Opens a coprocessor partial aggregation over this table, or returns
+    /// `None` so the executor computes the same partial result locally.
+    ///
+    /// An aggregate result cannot be merged with staged rows. A dirty table
+    /// therefore refuses before sending a request, and a backend-reported
+    /// staged buffer closes the request and falls back as a second guard.
+    #[allow(clippy::too_many_arguments)]
+    pub fn pushdown_partial_aggregate_cursor(
+        &mut self,
+        keep: &[usize],
+        predicates: &[ScanPredicate],
+        handle_ranges: Option<&[IndexRange]>,
+        aggregate: &PushdownPartialAggregate,
+        zone: &SessionTimeZone,
+        statement: &PushdownStatementContext,
+    ) -> Result<Option<Box<dyn PushdownRowStream>>, KvTableError> {
+        if self.has_dirty_content() || self.partition.is_some() {
+            return Ok(None);
+        }
+        let ranges = self.record_key_ranges(handle_ranges, zone)?;
+        if ranges.is_empty() {
+            return Ok(None);
+        }
+        let columns = keep
+            .iter()
+            .map(|offset| {
+                let column = &self.columns[*offset];
+                PushdownScanColumn {
+                    id: column.id,
+                    field_type: column.field_type.clone(),
+                    is_handle: self.pk_handle_offset == Some(*offset),
+                }
+            })
+            .collect();
+        let common_primary = crate::handle_range::common_handle_primary(self);
+        let primary_column_ids = common_primary
+            .into_iter()
+            .flat_map(|index| index.column_offsets.iter())
+            .filter_map(|offset| self.columns.get(*offset))
+            .map(|column| column.id)
+            .collect();
+        let primary_prefix_column_ids = common_primary
+            .into_iter()
+            .flat_map(|index| {
+                index
+                    .column_offsets
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(position, offset)| {
+                        let column = self.columns.get(*offset)?;
+                        let prefix = index.prefix_length(position);
+                        (prefix > 0 && column.field_type.flen() > prefix).then_some(column.id)
+                    })
+            })
+            .collect();
+        let request = PushdownScanRequest {
+            table_id: self.table_id,
+            index: None,
+            columns,
+            handle_index: None,
+            primary_column_ids,
+            primary_prefix_column_ids,
+            predicates: predicates.to_vec(),
+            output_offsets: None,
+            topn: None,
+            limit: None,
+            aggregate: Some(aggregate.clone()),
+            snapshot_ts: 0,
+            ranges,
+            statement: statement.clone(),
+        };
+        let Some(scan) = self.store.open_remote_scan(&request) else {
+            return Ok(None);
+        };
+        let mut scan = scan.map_err(|error| KvTableError::Storage(format!("{error:?}")))?;
+        if !scan.staged.is_empty() {
+            scan.stream.close();
+            return Ok(None);
+        }
+        crate::storage::note_storage_op(|ops| ops.cop_scans += 1);
+        Ok(Some(scan.stream))
+    }
+
+    /// Index-scan counterpart of [`Self::pushdown_partial_aggregate_cursor`].
+    /// The bounded path is the covering `COUNT(k)` shape used by Sysbench:
+    /// the aggregate input must be the index's leading key column.
+    pub fn pushdown_index_partial_aggregate_cursor(
+        &mut self,
+        index_id: i64,
+        ranges: &[IndexRange],
+        aggregate: &PushdownPartialAggregate,
+        zone: &SessionTimeZone,
+        statement: &PushdownStatementContext,
+    ) -> Result<Option<Box<dyn PushdownRowStream>>, KvTableError> {
+        if self.has_dirty_content() || self.partition.is_some() {
+            return Ok(None);
+        }
+        let Some(index) = self.indexes.iter().find(|index| index.id == index_id) else {
+            return Ok(None);
+        };
+        if index.column_offsets.is_empty()
+            || !matches!(aggregate, PushdownPartialAggregate::Count { .. })
+        {
+            return Ok(None);
+        }
+        let columns: Vec<PushdownScanColumn> = index
+            .column_offsets
+            .iter()
+            .filter_map(|offset| self.columns.get(*offset))
+            .map(|column| PushdownScanColumn {
+                id: column.id,
+                field_type: column.field_type.clone(),
+                is_handle: false,
+            })
+            .collect();
+        if columns.len() != index.column_offsets.len() {
+            return Ok(None);
+        }
+        let encode = |values: &[Datum]| -> Result<Vec<u8>, KvTableError> {
+            tidb_codec::encode_key_in_timezone(zone, values)
+                .map_err(|error| KvTableError::Encode(format!("{error:?}")))
+        };
+        let mut key_ranges = Vec::with_capacity(ranges.len());
+        for range in ranges {
+            let mut low = Key::from_bytes(encode_index_seek_key(
+                self.table_id,
+                index_id,
+                &encode(&range.low)?,
+            ));
+            if range.low_exclusive {
+                low = low.prefix_next();
+            }
+            let mut high = Key::from_bytes(encode_index_seek_key(
+                self.table_id,
+                index_id,
+                &encode(&range.high)?,
+            ));
+            if !range.high_exclusive {
+                high = high.prefix_next();
+            }
+            key_ranges.push((low, high));
+        }
+        if key_ranges.is_empty() {
+            return Ok(None);
+        }
+        let mut remote_aggregate = aggregate.clone();
+        if let PushdownPartialAggregate::Count { input_offset, .. } = &mut remote_aggregate {
+            *input_offset = 0;
+        }
+        let request = PushdownScanRequest {
+            table_id: self.table_id,
+            index: Some(PushdownIndexScan {
+                index_id,
+                declared_unique: index.unique,
+                index_column_count: index.column_offsets.len(),
+            }),
+            columns,
+            handle_index: None,
+            primary_column_ids: Vec::new(),
+            primary_prefix_column_ids: Vec::new(),
+            predicates: Vec::new(),
+            output_offsets: None,
+            topn: None,
+            limit: None,
+            aggregate: Some(remote_aggregate),
+            snapshot_ts: 0,
+            ranges: key_ranges,
+            statement: statement.clone(),
+        };
+        let Some(scan) = self.store.open_remote_scan(&request) else {
+            return Ok(None);
+        };
+        let mut scan = scan.map_err(|error| KvTableError::Storage(format!("{error:?}")))?;
+        if !scan.staged.is_empty() {
+            scan.stream.close();
+            return Ok(None);
+        }
+        crate::storage::note_storage_op(|ops| ops.cop_scans += 1);
+        Ok(Some(scan.stream))
     }
 
     /// Scans the table's record-key range in key order, decoding each value.
@@ -823,7 +1068,11 @@ type KeyedRow = (Vec<u8>, Vec<Datum>);
 type StagedRow = (Vec<u8>, Option<Vec<Datum>>);
 
 /// A forward cursor over a table's record range served by the backend's
-/// coprocessor, with the session's staged writes merged back in.
+/// coprocessor.
+///
+/// Integer-handle scans merge the session's staged writes back in. A
+/// common-handle scan reaches this cursor only while the table is clean, so
+/// it consumes the remote stream directly.
 ///
 /// # Why the merge is here and not at the backend
 ///
@@ -846,8 +1095,9 @@ pub struct RemoteRowCursor {
     /// Number of projected columns, which the remote row may exceed by the
     /// appended handle column.
     width: usize,
-    /// Where the handle sits in a remote row.
-    handle_index: usize,
+    /// Where the integer handle sits in a row to be merged. `None` is a
+    /// clean common-handle stream consumed without a staged overlay.
+    handle_index: Option<usize>,
     table_id: i64,
     /// How much of [`PushdownRowStream::rows_returned`] has already been
     /// reported to the storage probe, so each row is counted once. See
@@ -892,7 +1142,10 @@ impl RemoteRowCursor {
         let Some(mut row) = next else {
             return Ok(None);
         };
-        let handle = match row.get(self.handle_index) {
+        let handle_index = self
+            .handle_index
+            .expect("only an integer-handle merge asks for keyed remote rows");
+        let handle = match row.get(handle_index) {
             Some(Datum::Int(value)) => *value,
             Some(Datum::UInt(value)) => *value as i64,
             other => {
@@ -914,17 +1167,29 @@ impl RemoteRowCursor {
         self.pending_staged.clone()
     }
 
-    /// The next row of the merged stream in record-key order, or `None` when
-    /// both sides are exhausted.
-    pub fn next_row(&mut self) -> Result<Option<(TableHandle, Vec<Datum>)>, KvTableError> {
+    /// The next projected row, either directly from a clean common-handle
+    /// stream or from the integer-handle snapshot/staged merge.
+    pub fn next_row(&mut self) -> Result<Option<Vec<Datum>>, KvTableError> {
+        if self.handle_index.is_none() {
+            debug_assert!(self.staged.len() == 0);
+            let next = self
+                .stream
+                .next_row()
+                .map_err(|error| KvTableError::Storage(format!("{error:?}")))?;
+            self.note_wire_rows();
+            return Ok(next.map(|mut row| {
+                row.truncate(self.width);
+                row
+            }));
+        }
         loop {
             let remote = self.next_remote()?;
             let staged = self.next_staged();
             match (remote, staged) {
                 (None, None) => return Ok(None),
-                (Some((key, row)), None) => {
+                (Some((_, row)), None) => {
                     self.pending_remote = None;
-                    return Ok(Some((TableHandle::Int(decode_int_handle(&key)?), row)));
+                    return Ok(Some(row));
                 }
                 (remote, Some((staged_key, staged_row))) => {
                     // A staged write of the same key is the transaction's own
@@ -933,8 +1198,8 @@ impl RemoteRowCursor {
                     if let Some((remote_key, _)) = &remote {
                         match remote_key.as_slice().cmp(staged_key.as_slice()) {
                             std::cmp::Ordering::Less => {
-                                let (key, row) = self.pending_remote.take().expect("just peeked");
-                                return Ok(Some((TableHandle::Int(decode_int_handle(&key)?), row)));
+                                let (_, row) = self.pending_remote.take().expect("just peeked");
+                                return Ok(Some(row));
                             }
                             std::cmp::Ordering::Equal => self.pending_remote = None,
                             std::cmp::Ordering::Greater => {}
@@ -942,10 +1207,7 @@ impl RemoteRowCursor {
                     }
                     self.pending_staged = None;
                     if let Some(row) = staged_row {
-                        return Ok(Some((
-                            TableHandle::Int(decode_int_handle(&staged_key)?),
-                            row,
-                        )));
+                        return Ok(Some(row));
                     }
                 }
             }
@@ -1006,11 +1268,30 @@ pub struct TableScanExec {
     cursor: Option<RowCursor>,
     /// The open coprocessor-served cursor, when the backend has one.
     remote: Option<RemoteRowCursor>,
+    /// A TiKV partial-aggregation row stream. It is separate from `remote`
+    /// because aggregate rows have no record handle and no staged merge.
+    partial_remote: Option<Box<dyn PushdownRowStream>>,
+    /// Locally computed partial rows when the backend refuses aggregation.
+    partial_rows: Option<std::vec::IntoIter<Vec<Datum>>>,
+    /// Whether the local partial result has already been fully emitted.
+    partial_done: bool,
+    /// The partial aggregation this source accepted from the planner.
+    partial_aggregate: Option<PushdownPartialAggregate>,
+    /// Access-path cardinality selected by the optimizer. Go chooses the
+    /// partial/final split only above the one-row floor for these workloads.
+    estimated_rows: Option<f64>,
     /// Conjuncts this scan took over from the `Selection` above it.
     filter: Option<crate::predicate_pushdown::ScanFilterProbe>,
     /// The same conjuncts as a description, for a backend that can evaluate
     /// them at the region. They are applied locally regardless.
     pushed: Vec<ScanPredicate>,
+    /// Final offsets into the wider scan row, applied only after `filter`.
+    /// A remote cursor already returns this projection; the local path
+    /// applies it after evaluating the same filter against the wider row.
+    post_filter_projection: Option<Vec<usize>>,
+    /// A TopN the remote backend may execute after its complete Selection.
+    /// The driver retains a local partial TopN as the semantic fallback.
+    remote_topn: Option<PushdownTopN>,
     /// The table-column offsets this scan emits, in output order. Every
     /// column of the table until the driver prunes it.
     keep: Vec<usize>,
@@ -1059,8 +1340,15 @@ impl TableScanExec {
             table,
             cursor: None,
             remote: None,
+            partial_remote: None,
+            partial_rows: None,
+            partial_done: false,
+            partial_aggregate: None,
+            estimated_rows: None,
             filter: None,
             pushed: Vec::new(),
+            post_filter_projection: None,
+            remote_topn: None,
             keep,
             scanned: std::rc::Rc::new(std::cell::Cell::new(0)),
             limit: None,
@@ -1109,16 +1397,322 @@ impl TableScanExec {
     fn next_source_row(&mut self) -> Result<Option<Vec<Datum>>, ExecError> {
         let next = match (self.remote.as_mut(), self.cursor.as_mut()) {
             (Some(remote), _) => remote.next_row(),
-            (None, Some(cursor)) => cursor.next_row(),
+            (None, Some(cursor)) => cursor
+                .next_row()
+                .map(|row| row.map(|(_, projected)| projected)),
             (None, None) => return Ok(None),
         }
         .map_err(|_| ExecError::unsupported("table bytes failed to decode"))?;
         match next {
-            Some((_, row)) => Ok(Some(row)),
+            Some(row) => Ok(Some(row)),
             None => {
                 self.remote = None;
                 self.cursor = None;
                 Ok(None)
+            }
+        }
+    }
+
+    fn build_local_partial_rows(
+        &mut self,
+        aggregate: &PushdownPartialAggregate,
+    ) -> Result<Vec<Vec<Datum>>, ExecError> {
+        match aggregate {
+            PushdownPartialAggregate::Count { input_offset, .. } => {
+                let mut count = 0_i64;
+                while let Some(row) = self.next_source_row()? {
+                    self.scanned.set(self.scanned.get() + 1);
+                    if let Some(filter) = self.filter.as_mut() {
+                        if !filter.admits(&row)? {
+                            continue;
+                        }
+                    }
+                    if !matches!(row.get(*input_offset), None | Some(Datum::Null)) {
+                        count += 1;
+                    }
+                }
+                Ok(vec![vec![Datum::Int(count)]])
+            }
+            PushdownPartialAggregate::Sum { input_offset, .. } => {
+                let mut sum: Option<Decimal> = None;
+                while let Some(row) = self.next_source_row()? {
+                    self.scanned.set(self.scanned.get() + 1);
+                    if let Some(filter) = self.filter.as_mut() {
+                        if !filter.admits(&row)? {
+                            continue;
+                        }
+                    }
+                    let Some(value) = row.get(*input_offset) else {
+                        return Err(ExecError::unsupported(
+                            "partial SUM input is outside the scan row",
+                        ));
+                    };
+                    let addend = match value {
+                        Datum::Null => continue,
+                        Datum::Int(value) => Decimal::from_int(*value),
+                        Datum::UInt(value) => Decimal::from_uint(*value),
+                        Datum::Decimal(value) => value.clone(),
+                        _ => {
+                            return Err(ExecError::unsupported(
+                                "partial SUM requires an integer or decimal input",
+                            ));
+                        }
+                    };
+                    sum = Some(match sum.take() {
+                        Some(current) => current.add(&addend),
+                        None => addend,
+                    });
+                }
+                Ok(vec![vec![sum.map_or(Datum::Null, Datum::Decimal)]])
+            }
+            PushdownPartialAggregate::GroupBy {
+                input_offset,
+                output_type,
+            } => {
+                let mut seen = HashSet::new();
+                let mut rows = Vec::new();
+                while let Some(row) = self.next_source_row()? {
+                    self.scanned.set(self.scanned.get() + 1);
+                    if let Some(filter) = self.filter.as_mut() {
+                        if !filter.admits(&row)? {
+                            continue;
+                        }
+                    }
+                    let Some(value) = row.get(*input_offset).cloned() else {
+                        return Err(ExecError::unsupported(
+                            "partial GROUP BY input is outside the scan row",
+                        ));
+                    };
+                    let key = crate::hash_agg::group_key_part(&output_type.collation(), &value);
+                    if seen.insert(key) {
+                        rows.push(vec![value]);
+                    }
+                }
+                Ok(rows)
+            }
+            PushdownPartialAggregate::GroupBySum {
+                group_offset,
+                sum_offset,
+                sum_type: _,
+                group_type,
+            } => {
+                let mut groups: BTreeMap<Vec<u8>, (Datum, Option<Decimal>)> = BTreeMap::new();
+                while let Some(row) = self.next_source_row()? {
+                    self.scanned.set(self.scanned.get() + 1);
+                    if let Some(filter) = self.filter.as_mut() {
+                        if !filter.admits(&row)? {
+                            continue;
+                        }
+                    }
+                    let Some(group) = row.get(*group_offset).cloned() else {
+                        return Err(ExecError::unsupported(
+                            "partial GROUP BY input is outside the scan row",
+                        ));
+                    };
+                    let Some(value) = row.get(*sum_offset) else {
+                        return Err(ExecError::unsupported(
+                            "partial SUM input is outside the scan row",
+                        ));
+                    };
+                    let addend = match value {
+                        Datum::Null => None,
+                        Datum::Int(value) => Some(Decimal::from_int(*value)),
+                        Datum::UInt(value) => Some(Decimal::from_uint(*value)),
+                        Datum::Decimal(value) => Some(value.clone()),
+                        _ => {
+                            return Err(ExecError::unsupported(
+                                "partial SUM requires an integer or decimal input",
+                            ));
+                        }
+                    };
+                    let key = crate::hash_agg::group_key_part(&group_type.collation(), &group);
+                    let (_, sum) = groups.entry(key).or_insert((group, None));
+                    if let Some(addend) = addend {
+                        *sum = Some(match sum.take() {
+                            Some(current) => current.add(&addend),
+                            None => addend,
+                        });
+                    }
+                }
+                Ok(groups
+                    .into_values()
+                    .map(|(group, sum)| vec![sum.map_or(Datum::Null, Datum::Decimal), group])
+                    .collect())
+            }
+            PushdownPartialAggregate::Grouped {
+                group_offsets,
+                group_types,
+                functions,
+                streamed,
+            } => {
+                if group_offsets.len() != group_types.len() || group_offsets.is_empty() {
+                    return Err(ExecError::unsupported(
+                        "partial grouped aggregation requires typed group keys",
+                    ));
+                }
+
+                enum PartialValue {
+                    Count(i64),
+                    Sum(Option<Decimal>),
+                    Extreme { value: Option<Datum>, is_max: bool },
+                }
+
+                let new_values = || {
+                    functions
+                        .iter()
+                        .map(|function| match function.kind {
+                            PushdownAggregateKind::Count => PartialValue::Count(0),
+                            PushdownAggregateKind::Sum => PartialValue::Sum(None),
+                            PushdownAggregateKind::Min => PartialValue::Extreme {
+                                value: None,
+                                is_max: false,
+                            },
+                            PushdownAggregateKind::Max => PartialValue::Extreme {
+                                value: None,
+                                is_max: true,
+                            },
+                        })
+                        .collect::<Vec<_>>()
+                };
+                let finish = |groups: Vec<Datum>, values: Vec<PartialValue>| {
+                    values
+                        .into_iter()
+                        .map(|value| match value {
+                            PartialValue::Count(count) => Datum::Int(count),
+                            PartialValue::Sum(sum) => sum.map_or(Datum::Null, Datum::Decimal),
+                            PartialValue::Extreme { value, .. } => value.unwrap_or(Datum::Null),
+                        })
+                        .chain(groups)
+                        .collect::<Vec<_>>()
+                };
+                let group = |row: &[Datum]| -> Result<(Vec<u8>, Vec<Datum>), ExecError> {
+                    let groups = group_offsets
+                        .iter()
+                        .map(|offset| {
+                            row.get(*offset).cloned().ok_or_else(|| {
+                                ExecError::unsupported(
+                                    "partial GROUP BY input is outside the scan row",
+                                )
+                            })
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let mut key = Vec::new();
+                    for (group, field_type) in groups.iter().zip(group_types) {
+                        key.extend_from_slice(&crate::hash_agg::group_key_part(
+                            &field_type.collation(),
+                            group,
+                        ));
+                        key.push(0xff);
+                    }
+                    Ok((key, groups))
+                };
+                let update = |values: &mut [PartialValue],
+                              row: &[Datum]|
+                 -> Result<(), ExecError> {
+                    for (function, value) in functions.iter().zip(values.iter_mut()) {
+                        let input = function
+                            .input_offset
+                            .map(|offset| {
+                                row.get(offset).cloned().ok_or_else(|| {
+                                    ExecError::unsupported(
+                                        "partial aggregate input is outside the scan row",
+                                    )
+                                })
+                            })
+                            .transpose()?;
+                        match (value, input) {
+                            (PartialValue::Count(count), None) => *count += 1,
+                            (PartialValue::Count(_), Some(Datum::Null)) => {}
+                            (PartialValue::Count(count), Some(_)) => *count += 1,
+                            (PartialValue::Sum(_), None) | (PartialValue::Extreme { .. }, None) => {
+                                return Err(ExecError::unsupported(
+                                    "only COUNT may omit a partial aggregate input",
+                                ));
+                            }
+                            (PartialValue::Sum(_), Some(Datum::Null))
+                            | (PartialValue::Extreme { .. }, Some(Datum::Null)) => {}
+                            (PartialValue::Sum(sum), Some(input)) => {
+                                let addend = match input {
+                                    Datum::Int(value) => Decimal::from_int(value),
+                                    Datum::UInt(value) => Decimal::from_uint(value),
+                                    Datum::Decimal(value) => value,
+                                    _ => {
+                                        return Err(ExecError::unsupported(
+                                            "partial SUM requires an integer or decimal input",
+                                        ));
+                                    }
+                                };
+                                *sum = Some(match sum.take() {
+                                    Some(current) => current.add(&addend),
+                                    None => addend,
+                                });
+                            }
+                            (PartialValue::Extreme { value, is_max }, Some(candidate)) => {
+                                let replace = value.as_ref().is_none_or(|current| {
+                                    tidb_expr::compare_datums(&candidate, current).is_ok_and(
+                                        |ordering| {
+                                            if *is_max {
+                                                ordering.is_gt()
+                                            } else {
+                                                ordering.is_lt()
+                                            }
+                                        },
+                                    )
+                                });
+                                if replace {
+                                    *value = Some(candidate);
+                                }
+                            }
+                        }
+                    }
+                    Ok(())
+                };
+
+                if !streamed {
+                    let mut grouped = BTreeMap::<Vec<u8>, (Vec<Datum>, Vec<PartialValue>)>::new();
+                    while let Some(row) = self.next_source_row()? {
+                        self.scanned.set(self.scanned.get() + 1);
+                        if let Some(filter) = self.filter.as_mut() {
+                            if !filter.admits(&row)? {
+                                continue;
+                            }
+                        }
+                        let (key, groups) = group(&row)?;
+                        let (_, values) =
+                            grouped.entry(key).or_insert_with(|| (groups, new_values()));
+                        update(values, &row)?;
+                    }
+                    return Ok(grouped
+                        .into_values()
+                        .map(|(groups, values)| finish(groups, values))
+                        .collect());
+                }
+
+                let mut rows = Vec::new();
+                let mut current: Option<(Vec<u8>, Vec<Datum>, Vec<PartialValue>)> = None;
+                while let Some(row) = self.next_source_row()? {
+                    self.scanned.set(self.scanned.get() + 1);
+                    if let Some(filter) = self.filter.as_mut() {
+                        if !filter.admits(&row)? {
+                            continue;
+                        }
+                    }
+                    let (key, groups) = group(&row)?;
+                    if current
+                        .as_ref()
+                        .is_some_and(|(current_key, _, _)| current_key != &key)
+                    {
+                        let (_, previous_groups, previous_values) =
+                            current.take().expect("current group exists");
+                        rows.push(finish(previous_groups, previous_values));
+                    }
+                    let (_, _, values) = current.get_or_insert_with(|| (key, groups, new_values()));
+                    update(values, &row)?;
+                }
+                if let Some((_, groups, values)) = current {
+                    rows.push(finish(groups, values));
+                }
+                Ok(rows)
             }
         }
     }
@@ -1129,6 +1723,26 @@ impl Executor for TableScanExec {
         self.scanned.set(0);
         self.emitted = 0;
         self.cursor = None;
+        self.partial_remote = None;
+        self.partial_rows = None;
+        self.partial_done = false;
+        if let Some(aggregate) = self.partial_aggregate.clone() {
+            self.partial_remote = self
+                .table
+                .pushdown_partial_aggregate_cursor(
+                    &self.keep.clone(),
+                    &self.pushed,
+                    self.handle_ranges.as_deref(),
+                    &aggregate,
+                    self.decode_context.zone(),
+                    &self.statement,
+                )
+                .map_err(|_| ExecError::unsupported("table bytes failed to decode"))?;
+            if self.partial_remote.is_some() {
+                self.remote = None;
+                return Ok(());
+            }
+        }
         // A backend with a coprocessor evaluates the predicate, the cap and
         // the projection at the region, so only the surviving rows cross the
         // network. Nothing about the answer depends on it succeeding: the
@@ -1140,6 +1754,8 @@ impl Executor for TableScanExec {
             .pushdown_row_cursor_with_context(
                 &self.keep.clone(),
                 &self.pushed,
+                self.post_filter_projection.as_deref(),
+                self.remote_topn.as_ref(),
                 self.limit,
                 self.handle_ranges.as_deref(),
                 &self.decode_context,
@@ -1174,6 +1790,42 @@ impl Executor for TableScanExec {
     fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
         req.reset();
         let cap = self.meta.max_chunk_size();
+        if let Some(remote) = self.partial_remote.as_mut() {
+            while req.num_rows() < cap {
+                let Some(row) = remote.next_row().map_err(|error| {
+                    ExecError::unsupported(format!("partial aggregate response failed: {error:?}"))
+                })?
+                else {
+                    self.partial_remote = None;
+                    self.partial_done = true;
+                    break;
+                };
+                for (column, value) in row.iter().enumerate() {
+                    req.append_datum(column, value);
+                }
+            }
+            return Ok(());
+        }
+        if let Some(aggregate) = self.partial_aggregate.clone() {
+            if self.partial_done {
+                return Ok(());
+            }
+            if self.partial_rows.is_none() {
+                self.partial_rows = Some(self.build_local_partial_rows(&aggregate)?.into_iter());
+            }
+            let rows = self.partial_rows.as_mut().expect("just initialized");
+            while req.num_rows() < cap {
+                let Some(row) = rows.next() else {
+                    self.partial_rows = None;
+                    self.partial_done = true;
+                    break;
+                };
+                for (column, value) in row.iter().enumerate() {
+                    req.append_datum(column, value);
+                }
+            }
+            return Ok(());
+        }
         while req.num_rows() < cap {
             if self.limit.is_some_and(|limit| self.emitted >= limit) {
                 // Early stop: the cursor is dropped, so nothing past the
@@ -1185,17 +1837,35 @@ impl Executor for TableScanExec {
                 self.remote = None;
                 return Ok(());
             }
+            let remote_projected = self.remote.is_some() && self.post_filter_projection.is_some();
             let Some(row) = self.next_source_row()? else {
                 return Ok(());
             };
             self.scanned.set(self.scanned.get() + 1);
-            if let Some(filter) = self.filter.as_mut() {
-                if !filter.admits(&row)? {
-                    continue;
+            if !remote_projected {
+                if let Some(filter) = self.filter.as_mut() {
+                    if !filter.admits(&row)? {
+                        continue;
+                    }
                 }
             }
-            for (c, value) in row.iter().enumerate() {
-                req.append_datum(c, value);
+            if remote_projected {
+                for (column, value) in row.iter().enumerate() {
+                    req.append_datum(column, value);
+                }
+            } else if let Some(projection) = &self.post_filter_projection {
+                for (column, offset) in projection.iter().enumerate() {
+                    let Some(value) = row.get(*offset) else {
+                        return Err(ExecError::unsupported(
+                            "post-filter projection is outside the scan row",
+                        ));
+                    };
+                    req.append_datum(column, value);
+                }
+            } else {
+                for (column, value) in row.iter().enumerate() {
+                    req.append_datum(column, value);
+                }
             }
             self.emitted += 1;
         }
@@ -1205,6 +1875,9 @@ impl Executor for TableScanExec {
     fn close(&mut self) -> Result<(), ExecError> {
         self.cursor = None;
         self.remote = None;
+        self.partial_remote = None;
+        self.partial_rows = None;
+        self.partial_done = false;
         Ok(())
     }
 
@@ -1234,6 +1907,41 @@ impl Executor for TableScanExec {
 }
 
 impl crate::table_access::TableAccess for TableScanExec {
+    fn accept_scan_estimate(&mut self, rows: f64) {
+        self.estimated_rows = Some(rows);
+    }
+
+    fn accept_partial_aggregate(&mut self, aggregate: &PushdownPartialAggregate) -> bool {
+        if self.estimated_rows.is_none_or(|rows| rows <= 1.0)
+            || aggregate
+                .input_offsets()
+                .into_iter()
+                .any(|offset| offset >= self.keep.len())
+            || self.limit.is_some()
+            || self.partial_aggregate.is_some()
+        {
+            return false;
+        }
+        let columns = aggregate
+            .output_types()
+            .into_iter()
+            .enumerate()
+            .map(|(offset, field_type)| {
+                let mut column = tidb_expr::column::Column::new((offset + 1) as i64, field_type);
+                column.index = offset as i64;
+                column
+            })
+            .collect();
+        self.meta = ExecutorMeta::new(
+            Schema::new(columns),
+            self.meta.id(),
+            self.meta.init_cap(),
+            self.meta.max_chunk_size(),
+        );
+        self.partial_aggregate = Some(aggregate.clone());
+        true
+    }
+
     /// `scan_rows` reads the storage seam's merged stream -- the statement
     /// snapshot with the session's staged mutation buffer already merged in
     /// (`ClusterTableStorage`) -- and every row of it is tested here, whether
@@ -1254,6 +1962,58 @@ impl crate::table_access::TableAccess for TableScanExec {
             ctx.clone(),
             self.meta.new_chunk(),
         ));
+        true
+    }
+
+    fn accept_post_filter_projection(&mut self, keep: &[usize]) -> bool {
+        // The only current consumer is a clean clustered common-handle range.
+        // An integer-handle remote scan needs its handle column after the
+        // projection in order to merge staged rows, so it must keep using the
+        // unchanged wider-row contract until that handle is modelled as a
+        // separate transport field.
+        if self.filter.is_none()
+            || self.table.common_handle_offsets.is_empty()
+            || self.partial_aggregate.is_some()
+            || keep.is_empty()
+            || keep.iter().any(|offset| *offset >= self.keep.len())
+        {
+            return false;
+        }
+        let columns: Vec<tidb_expr::column::Column> = keep
+            .iter()
+            .enumerate()
+            .map(|(index, offset)| {
+                let mut column = self.meta.schema().columns[*offset].clone();
+                column.index = index as i64;
+                column.id = index as i64 + 1;
+                column
+            })
+            .collect();
+        self.meta = ExecutorMeta::new(
+            Schema::new(columns),
+            self.meta.id(),
+            self.meta.init_cap(),
+            self.meta.max_chunk_size(),
+        );
+        self.post_filter_projection = Some(keep.to_vec());
+        true
+    }
+
+    fn accept_remote_topn(&mut self, topn: &PushdownTopN) -> bool {
+        if topn.order_by.is_empty()
+            || topn.limit == 0
+            || topn
+                .order_by
+                .iter()
+                .any(|item| item.offset >= self.keep.len())
+            || self.partial_aggregate.is_some()
+            || self.post_filter_projection.is_some()
+            || self.limit.is_some()
+            || self.remote_topn.is_some()
+        {
+            return false;
+        }
+        self.remote_topn = Some(topn.clone());
         true
     }
 
@@ -1304,10 +2064,7 @@ impl crate::table_access::TableAccess for TableScanExec {
         if self.filter.is_some() || keep.is_empty() {
             return false;
         }
-        if !keep.windows(2).all(|pair| pair[0] < pair[1]) {
-            return false;
-        }
-        if keep.last().is_some_and(|last| *last >= self.keep.len()) {
+        if keep.iter().any(|offset| *offset >= self.keep.len()) {
             return false;
         }
         let columns: Vec<tidb_expr::column::Column> = keep

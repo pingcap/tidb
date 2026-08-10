@@ -380,7 +380,6 @@ fn transaction(
     let mut transaction = RealOptimisticTransaction::new_injected(
         runtime,
         timestamps,
-        CALL_TIMEOUT,
         START_TS,
         Instant::now(),
         8,

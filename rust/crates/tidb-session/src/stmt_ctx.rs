@@ -200,6 +200,46 @@ impl Session {
         self.parse(sql)
     }
 
+    /// The wait policy of a top-level `SELECT ... FOR UPDATE`, when present.
+    ///
+    /// A cluster front end needs this before execution so it can collect the
+    /// exact raw keys consumed by the statement and acquire their TiKV locks.
+    pub fn statement_lock_wait(
+        &self,
+        sql: &str,
+    ) -> Result<Option<tidb_planner::read_only_scan::ReadLockWait>, DriverError> {
+        let statement = self.parse(sql)?;
+        let tidb_ast::Stmt::Query(query) = statement else {
+            return Ok(None);
+        };
+        let lock = match &*query {
+            tidb_ast::QueryStmt::Select(select) => select.lock.as_ref(),
+            tidb_ast::QueryStmt::SetOpr(set) => set.lock.as_ref(),
+        };
+        let Some(lock) = lock else {
+            return Ok(None);
+        };
+        if lock.kind != tidb_ast::LockKind::Update {
+            return Err(DriverError::unsupported(
+                "FOR SHARE is not supported by the pessimistic cluster transaction yet",
+            ));
+        }
+        match lock.wait {
+            tidb_ast::LockWait::Default => {
+                Ok(Some(tidb_planner::read_only_scan::ReadLockWait::Blocking))
+            }
+            tidb_ast::LockWait::NoWait => {
+                Ok(Some(tidb_planner::read_only_scan::ReadLockWait::NoWait))
+            }
+            tidb_ast::LockWait::Wait(seconds) => Ok(Some(
+                tidb_planner::read_only_scan::ReadLockWait::Seconds(seconds),
+            )),
+            tidb_ast::LockWait::SkipLocked => Err(DriverError::unsupported(
+                "SELECT ... FOR UPDATE SKIP LOCKED is not supported yet",
+            )),
+        }
+    }
+
     pub(crate) fn parse(&self, sql: &str) -> Result<tidb_ast::Stmt, DriverError> {
         tidb_parser::parse_with_sql_mode(sql, self.scanner_sql_mode())
             .map_err(|e| DriverError::Parse(format!("{e:?}")))

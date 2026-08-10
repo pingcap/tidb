@@ -261,7 +261,6 @@ impl RealOptimisticTransactionOpener {
         let mut transaction = RealOptimisticTransaction::new_opened(
             runtime,
             PdLockTimestampSource(self.pd.clone()),
-            self.timeout,
             start_ts,
             opened_at,
             planned_mutation_count,

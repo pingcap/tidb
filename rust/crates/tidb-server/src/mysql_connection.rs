@@ -559,6 +559,20 @@ pub fn serve_mysql_connection_with_tls<F: QuerySessionFactory>(
         tls,
         &mut commands,
     );
+    // Go `server.onConn` treats an `io.EOF` returned by the handshake as a
+    // normal client-side close: it neither increments handshake errors nor
+    // emits a noticeable error (`pkg/server/server.go`). The command loop
+    // already converts its own packet-boundary EOF into `PeerClosed`, so an
+    // EOF reaching this boundary can only be the pre-command handshake case.
+    let result = match result {
+        Err(MysqlConnectionError::Packet(PacketError::EndOfStream)) => Ok(ConnectionReport {
+            connection_id: lease.id(),
+            queries: 0,
+            commands,
+            exit: ConnectionExit::PeerClosed,
+        }),
+        result => result,
+    };
     let failed = result.is_err() && !shutdown.is_cancelled();
     if failed {
         lease.mark_failed();
@@ -899,6 +913,9 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             });
         }
     };
+    close
+        .apply_authenticated_timeouts(engine.wait_timeout())
+        .map_err(MysqlConnectionError::Io)?;
     // Go's `openSessionAndDoAuth`: the handshake's initial database is applied
     // before the connection is reported ready, and a schema that does not
     // exist ends the connection with its own errno rather than the OK packet.
@@ -944,6 +961,9 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 exit: ConnectionExit::Killed,
             });
         }
+        close
+            .apply_authenticated_timeouts(engine.wait_timeout())
+            .map_err(MysqlConnectionError::Io)?;
         reader.set_sequence(0);
         let payload = match reader.read_packet() {
             Ok(payload) => payload,

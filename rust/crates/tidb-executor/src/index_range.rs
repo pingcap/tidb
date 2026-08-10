@@ -1330,6 +1330,103 @@ pub(crate) fn detach_conds_for_column<'a>(
     }
 }
 
+/// Builds the ranges for a row-valued `IN` over the leading index columns.
+///
+/// Go's ranger lowers `(a, b) IN ((1, 2), (3, 4))` to
+/// `(a = 1 AND b = 2) OR (a = 3 AND b = 4)` before detaching ranges. Reusing
+/// [`build_dnf_ranges`] for that normalized shape keeps endpoint conversion,
+/// prefix-index cutting, duplicate unioning and range validation in the one
+/// existing algebra instead of growing a second tuple-range implementation.
+///
+/// The normalized expression is temporary, so its residual references must
+/// not escape this function. The whole row-IN is an access condition and the
+/// caller already retains the written predicate above the scan, so only the
+/// owned range and column metadata is returned.
+fn build_row_in_ranges<'a>(
+    index_columns: &[RangeColumn],
+    condition: &Expr,
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Option<IndexRanges<'a>> {
+    let Expr::In {
+        expr,
+        list,
+        not: false,
+    } = condition
+    else {
+        return None;
+    };
+    let Expr::Row(left) = &**expr else {
+        return None;
+    };
+    if left.is_empty()
+        || left.len() > index_columns.len()
+        || !left
+            .iter()
+            .zip(index_columns)
+            .all(|(expr, column)| is_column(expr, &column.name))
+    {
+        return None;
+    }
+
+    let mut branches = Vec::with_capacity(list.len());
+    for candidate in list {
+        let Expr::Row(right) = candidate else {
+            return None;
+        };
+        if right.len() != left.len() {
+            return None;
+        }
+        let mut equalities = Vec::with_capacity(left.len());
+        let mut contains_null = false;
+        for (column, value) in left.iter().zip(right) {
+            let datum = constant_value(value, zone)?;
+            if datum == Datum::Null {
+                contains_null = true;
+                break;
+            }
+            equalities.push(Expr::Binary(
+                BinaryOp::Eq,
+                Box::new(column.clone()),
+                Box::new(value.clone()),
+            ));
+        }
+        // An ordinary row equality containing NULL can never be TRUE in a
+        // WHERE predicate, so this tuple contributes no range.
+        if contains_null {
+            continue;
+        }
+        let branch = equalities
+            .into_iter()
+            .reduce(|left, right| Expr::Binary(BinaryOp::LogicAnd, Box::new(left), Box::new(right)))
+            .expect("a row-valued IN has at least one column");
+        branches.push(branch);
+    }
+
+    if branches.is_empty() {
+        return Some(IndexRanges {
+            ranges: Vec::new(),
+            access_count: 1,
+            column_count: left.len(),
+            access_columns: (0..left.len()).collect(),
+            eq_or_in_count: left.len(),
+            residual: Vec::new(),
+        });
+    }
+    let dnf = branches
+        .into_iter()
+        .reduce(|left, right| Expr::Binary(BinaryOp::LogicOr, Box::new(left), Box::new(right)))
+        .expect("the empty branch set returned above");
+    let built = build_dnf_ranges(index_columns, &dnf, zone)?;
+    Some(IndexRanges {
+        ranges: built.ranges,
+        access_count: 1,
+        column_count: built.column_count,
+        access_columns: built.access_columns,
+        eq_or_in_count: built.eq_or_in_count,
+        residual: Vec::new(),
+    })
+}
+
 /// Go `DetachCondAndBuildRangeForIndex`: the index ranges a `WHERE` implies
 /// over one index's columns.
 ///
@@ -1344,6 +1441,11 @@ pub(crate) fn detach_cond_and_build_range_for_index<'a>(
     let mut conjuncts = Vec::new();
     collect_conjuncts(where_clause, &mut conjuncts);
 
+    if let [condition] = conjuncts.as_slice() {
+        if let Some(built) = build_row_in_ranges(index_columns, condition, zone) {
+            return Some(built);
+        }
+    }
     // A lone top-level OR is the DNF case. Go also detaches an OR that is one
     // conjunct among several (`extractBestCNFItemRanges`); that selection is
     // deferred, so a mixed AND/OR reaches the CNF walk, where the OR simply
@@ -1587,6 +1689,16 @@ mod tests {
             "a = 1 and b in (2, 3) and c = 4",
             "[1 2 4,1 2 4], [1 3 4,1 3 4]",
         ),
+        (
+            &["a", "b", "c", "d"],
+            "(a, b, c) in ((1, 1, 10), (1, 2, 20))",
+            "[1 1 10,1 1 10], [1 2 20,1 2 20]",
+        ),
+        (
+            &["a", "b", "c", "d"],
+            "(a, b, c) in ((1, 1, null), (1, 2, 20))",
+            "[1 2 20,1 2 20]",
+        ),
         // DNF / OR
         (&["a"], "a = 1 or a = 2", "[1,2]"),
         (&["a"], "a < 1 or a > 10", "[-inf,1), (10,+inf]"),
@@ -1647,6 +1759,10 @@ mod tests {
         assert_eq!(derive(&["a", "b"], "a = 1 or b = 2"), "<no range>");
         // Conditions that span the whole index bound nothing, so they stay
         // filters rather than turning a full scan into a full range scan.
+        assert_eq!(
+            derive(&["a", "b", "c"], "(a, b, c) not in ((1, 2, 3))"),
+            "<no range>"
+        );
         assert_eq!(derive(&["a"], "a is not null"), "<no range>");
         assert_eq!(derive(&["s"], "s like '%abc'"), "<no range>");
         assert_eq!(derive(&["s"], "s like '%'"), "<no range>");

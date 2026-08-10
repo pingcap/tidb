@@ -386,6 +386,56 @@ pub(crate) fn agg_kind_and_type(
     })
 }
 
+/// Go `typeInfer4Sum`: the result type and DECIMAL widening used both by the
+/// aggregate executor and by aggregation elimination's replacement cast.
+pub(super) fn sum_result_type(argument: Option<&FieldType>) -> FieldType {
+    const MAX_REAL_WIDTH: i64 = 23;
+
+    let Some(argument) = argument else {
+        let mut result = FieldType::new(FieldTypeCode::Double);
+        result.set_flen(MAX_REAL_WIDTH);
+        result.set_decimal(tidb_datatype::UNSPECIFIED_LENGTH);
+        result.add_flags(FieldTypeFlags::BINARY);
+        return result;
+    };
+    let mut result = match argument.code() {
+        FieldTypeCode::Tiny
+        | FieldTypeCode::Short
+        | FieldTypeCode::Int24
+        | FieldTypeCode::Long
+        | FieldTypeCode::LongLong
+        | FieldTypeCode::Year => {
+            let mut result = FieldType::new(FieldTypeCode::NewDecimal);
+            if argument.flen() < 0 {
+                result.set_flen(tidb_datatype::MAX_DECIMAL_WIDTH);
+            } else {
+                result.set_flen_under_limit(argument.flen() + 21);
+            }
+            result.set_decimal(0);
+            result
+        }
+        FieldTypeCode::NewDecimal => {
+            let mut result = FieldType::new(FieldTypeCode::NewDecimal);
+            result.update_flen_and_decimal_under_limit(argument, 0, 22);
+            result
+        }
+        FieldTypeCode::Double | FieldTypeCode::Float => {
+            let mut result = FieldType::new(FieldTypeCode::Double);
+            result.set_flen(MAX_REAL_WIDTH);
+            result.set_decimal(argument.decimal());
+            result
+        }
+        _ => {
+            let mut result = FieldType::new(FieldTypeCode::Double);
+            result.set_flen(MAX_REAL_WIDTH);
+            result.set_decimal(tidb_datatype::UNSPECIFIED_LENGTH);
+            result
+        }
+    };
+    result.add_flags(FieldTypeFlags::BINARY);
+    result
+}
+
 /// Go `mysql.MaxDecimalWidth`, the width `APPROX_PERCENTILE` gives a DECIMAL
 /// result.
 const MAX_DECIMAL_WIDTH: i64 = 65;

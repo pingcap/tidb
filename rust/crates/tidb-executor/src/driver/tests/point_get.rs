@@ -363,6 +363,60 @@ fn batch_point_get() {
     );
 }
 
+/// Go's `tryWhereIn2BatchPointGet` also accepts a row-valued `IN` when the
+/// tuples pin every column of a composite primary/unique key.
+#[test]
+fn batch_point_get_accepts_row_in_on_a_composite_key() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE c (a INT, b INT, v INT, PRIMARY KEY (a, b))",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO c VALUES (1, 1, 11), (1, 2, 12), (2, 1, 21)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    let Some(TableEntry::Kv(table)) = catalog.get_table_for_test("c") else {
+        panic!("expected a kv table");
+    };
+    let columns = table
+        .columns
+        .iter()
+        .map(|column| (column.name.clone(), column.field_type.clone()))
+        .collect::<Vec<_>>();
+    let stmt = tidb_parser::parse("SELECT v FROM c WHERE (a, b) IN ((1, 2), (2, 1))").unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    assert!(
+        try_batch_point_get(
+            select,
+            table,
+            &columns,
+            &tidb_datatype::SessionTimeZone::utc()
+        )
+        .unwrap()
+        .is_some(),
+        "a composite row IN should use Batch_Point_Get"
+    );
+    assert_eq!(
+        run_select_on(
+            "SELECT v FROM c WHERE (a, b) IN ((1, 2), (2, 1))",
+            &catalog,
+            &ctx
+        )
+        .unwrap(),
+        vec![vec![Datum::Int(12)], vec![Datum::Int(21)]],
+    );
+}
+
 /// The answers above would be right from a scan too, so this asserts the
 /// DECISION: which shapes Go's batch point get claims.
 #[test]
@@ -501,6 +555,268 @@ fn a_point_plan_keys_by_the_constant_in_the_columns_domain() {
     assert_eq!(
         rows("SELECT id FROM uq WHERE u = 1.5"),
         Vec::<Vec<Datum>>::new()
+    );
+}
+
+/// Go `TryFastPlan` replaces the complete query plan when one primary-key
+/// equality identifies the row and every selected field is a source column.
+/// The `PointGetPlan` itself owns the output schema, so no residual
+/// `Selection` or `Projection` remains.
+#[test]
+fn fast_point_get_replaces_selection_and_projection_like_go() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE fast_point (id INT PRIMARY KEY, c CHAR(8) NOT NULL)",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO fast_point VALUES (1, 'one')",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    let stmt = tidb_parser::parse("SELECT c FROM fast_point WHERE id = 1").unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let cell = |datum: &Datum| match datum {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+    let plan: Vec<String> = rows
+        .iter()
+        .map(|row| row.iter().map(cell).collect::<Vec<_>>().join("\t"))
+        .collect();
+
+    assert_eq!(
+        plan,
+        vec!["Point_Get\t1.00\troot\ttable:fast_point\thandle:1"]
+    );
+    assert_eq!(
+        run_select_on("SELECT c FROM fast_point WHERE id = 1", &catalog, &ctx).unwrap(),
+        vec![vec![Datum::new_string("one")]]
+    );
+}
+
+/// Go's point UPDATE/DELETE plans consume the primary-key predicate exactly
+/// as the SELECT fast plan does. An additional equality remains a real
+/// Selection and must still be evaluated before the write.
+#[test]
+fn fast_point_writes_remove_only_the_consumed_selection_like_go() {
+    use crate::explain::{explain_delete_stmt, explain_update_stmt, ExplainFormat};
+
+    fn explain_write(sql: &str, catalog: &mut Catalog, ctx: &crate::StmtContext) -> Vec<String> {
+        let stmt = tidb_parser::parse(sql).unwrap();
+        let Stmt::Dml(dml) = &stmt else {
+            panic!("not DML");
+        };
+        let (_, rows) = match &**dml {
+            tidb_ast::DmlStmt::Update(update) => {
+                explain_update_stmt(update, catalog, "test", ctx, ExplainFormat::Brief).unwrap()
+            }
+            tidb_ast::DmlStmt::Delete(delete) => {
+                explain_delete_stmt(delete, catalog, "test", ctx, ExplainFormat::Brief).unwrap()
+            }
+            _ => panic!("not an UPDATE or DELETE"),
+        };
+        let cell = |datum: &Datum| match datum {
+            Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+            other => format!("{other:?}"),
+        };
+        rows.iter()
+            .map(|row| row.iter().map(cell).collect::<Vec<_>>().join("\t"))
+            .collect()
+    }
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE fast_write (id INT PRIMARY KEY, c CHAR(8) NOT NULL)",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO fast_write VALUES (1, 'one')",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    assert_eq!(
+        explain_write(
+            "UPDATE fast_write SET c = 'two' WHERE id = 1",
+            &mut catalog,
+            &ctx,
+        ),
+        vec![
+            "Update\tN/A\troot\t\tN/A",
+            "└─Point_Get\t1.00\troot\ttable:fast_write\thandle:1",
+        ]
+    );
+    let guarded = explain_write(
+        "UPDATE fast_write SET c = 'bad' WHERE id = 1 AND c = 'missing'",
+        &mut catalog,
+        &ctx,
+    );
+    assert!(guarded.iter().any(|row| row.contains("Selection")));
+    assert_eq!(
+        run_update_on(
+            "UPDATE fast_write SET c = 'bad' WHERE id = 1 AND c = 'missing'",
+            &mut catalog,
+            &ctx,
+        )
+        .unwrap(),
+        0
+    );
+    assert_eq!(
+        run_update_on(
+            "UPDATE fast_write SET c = 'two' WHERE id = 1",
+            &mut catalog,
+            &ctx,
+        )
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        run_select_on("SELECT c FROM fast_write WHERE id = 1", &catalog, &ctx).unwrap(),
+        vec![vec![Datum::new_string("two")]]
+    );
+
+    assert_eq!(
+        explain_write("DELETE FROM fast_write WHERE id = 1", &mut catalog, &ctx,),
+        vec![
+            "Delete\tN/A\troot\t\tN/A",
+            "└─Point_Get\t1.00\troot\ttable:fast_write\thandle:1",
+        ]
+    );
+    assert_eq!(
+        run_delete_on("DELETE FROM fast_write WHERE id = 1", &mut catalog, &ctx,).unwrap(),
+        1
+    );
+    assert!(
+        run_select_on("SELECT c FROM fast_write WHERE id = 1", &catalog, &ctx)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+/// A handle range that represents the complete predicate is an access
+/// condition, not a residual Selection. Go pushes a simple column projection
+/// into TiKV and returns it through a TableReader.
+#[test]
+fn exact_handle_range_uses_the_go_cop_projection_tree() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE fast_range (id INT PRIMARY KEY, c CHAR(8) NOT NULL)",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO fast_range VALUES (1, 'one'), (2, 'two')",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    let stmt = tidb_parser::parse("SELECT c FROM fast_range WHERE id BETWEEN 1 AND 100").unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let cell = |row: usize, column: usize| match &rows[row][column] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+    assert_eq!(
+        (0..rows.len()).map(|row| cell(row, 0)).collect::<Vec<_>>(),
+        vec!["TableReader", "└─Projection", "  └─TableRangeScan"]
+    );
+    assert_eq!(
+        (0..rows.len()).map(|row| cell(row, 2)).collect::<Vec<_>>(),
+        vec!["root", "cop[tikv]", "cop[tikv]"]
+    );
+    assert_eq!(
+        run_select_on(
+            "SELECT c FROM fast_range WHERE id BETWEEN 1 AND 100",
+            &catalog,
+            &ctx,
+        )
+        .unwrap(),
+        vec![
+            vec![Datum::new_string("one")],
+            vec![Datum::new_string("two")]
+        ]
+    );
+}
+
+/// An ORDER BY stays in the root task, while the exact handle range still
+/// pushes its simple projection into TiKV. This is the Sysbench
+/// `oltp_common.lua` simple ordered-range shape.
+#[test]
+fn ordered_handle_range_keeps_the_go_cop_projection_below_sort() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE ordered_range (id INT PRIMARY KEY, c CHAR(8) NOT NULL)",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO ordered_range VALUES (1, 'z'), (2, 'a')",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    let sql = "SELECT c FROM ordered_range WHERE id BETWEEN 1 AND 100 ORDER BY c";
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let cell = |row: usize, column: usize| match &rows[row][column] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+    assert_eq!(
+        (0..rows.len()).map(|row| cell(row, 0)).collect::<Vec<_>>(),
+        vec![
+            "Sort",
+            "└─TableReader",
+            "  └─Projection",
+            "    └─TableRangeScan"
+        ]
+    );
+    assert_eq!(
+        (0..rows.len()).map(|row| cell(row, 2)).collect::<Vec<_>>(),
+        vec!["root", "root", "cop[tikv]", "cop[tikv]"]
+    );
+    assert_eq!(
+        run_select_on(sql, &catalog, &ctx).unwrap(),
+        vec![vec![Datum::new_string("a")], vec![Datum::new_string("z")]]
     );
 }
 

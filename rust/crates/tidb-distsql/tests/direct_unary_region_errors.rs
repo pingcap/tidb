@@ -22,6 +22,114 @@
 use crate::direct_unary_client_fixture::*;
 
 #[test]
+fn successful_response_ignores_feedback_for_a_concurrently_invalidated_route() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let loader_calls = Rc::new(RefCell::new(Vec::new()));
+    let shared = tidb_txnkv::SharedReadRuntime::new_injected(
+        ScriptedClient {
+            calls: Rc::clone(&calls),
+            responses: VecDeque::from([Ok(response(b"valid-response"))]),
+            events: Rc::new(RefCell::new(Vec::new())),
+            liveness: RefCell::new(VecDeque::new()),
+            batch_errors: RefCell::new(VecDeque::new()),
+            batch_completion_gate: None,
+        },
+        RegionCache::new(ScriptedLoader {
+            cluster_id: 9001,
+            calls: Rc::clone(&loader_calls),
+            regions: VecDeque::from([location(1, "a", "z", "tikv-1:20160")]),
+        }),
+    );
+    let cache = shared.region_cache_handle();
+    let transport = DirectUnaryQueryTransport::with_shared_runtime_batch_first(
+        shared,
+        DirectUnaryRuntimeConfig::default(),
+        tidb_txnkv::lock::FixedTimestampSource::new(1 << 18),
+    )
+    .unwrap();
+    let evidence = transport.evidence_handle();
+    let mut runtime = InjectedQueryRuntime::new(transport);
+    let mut result = select_result(&mut runtime, &transport_request(metadata("a", "z")));
+    evidence
+        .set_publication_observer(move |_| {
+            cache
+                .with_cache(|cache| assert!(cache.invalidate(RegionVerId::new(1, 1, 2))))
+                .unwrap();
+        })
+        .unwrap();
+
+    assert_eq!(
+        result.next_raw().unwrap(),
+        Some(b"valid-response".to_vec())
+    );
+    assert_eq!(result.next_raw().unwrap(), None);
+    assert_eq!(calls.borrow().len(), 1);
+    assert_eq!(loader_calls.borrow().as_slice(), [b"a".to_vec()]);
+}
+
+#[test]
+fn stale_region_error_rebuilds_ranges_from_the_current_route() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let loader_calls = Rc::new(RefCell::new(Vec::new()));
+    let shared = tidb_txnkv::SharedReadRuntime::new_injected(
+        ScriptedClient {
+            calls: Rc::clone(&calls),
+            responses: VecDeque::from([
+                Ok(not_leader(1, None)),
+                Ok(response(b"current-route")),
+            ]),
+            events: Rc::new(RefCell::new(Vec::new())),
+            liveness: RefCell::new(VecDeque::new()),
+            batch_errors: RefCell::new(VecDeque::new()),
+            batch_completion_gate: None,
+        },
+        RegionCache::new(ScriptedLoader {
+            cluster_id: 9001,
+            calls: Rc::clone(&loader_calls),
+            regions: VecDeque::from([
+                location(1, "a", "z", "tikv-old:20160"),
+                location(1, "a", "z", "tikv-new:20160"),
+            ]),
+        }),
+    );
+    let cache = shared.region_cache_handle();
+    let transport = DirectUnaryQueryTransport::with_shared_runtime_batch_first(
+        shared,
+        DirectUnaryRuntimeConfig::default(),
+        tidb_txnkv::lock::FixedTimestampSource::new(1 << 18),
+    )
+    .unwrap();
+    let evidence = transport.evidence_handle();
+    let mut runtime = InjectedQueryRuntime::new(transport);
+    let mut result = select_result(&mut runtime, &transport_request(metadata("a", "z")));
+    let invalidated = Rc::new(Cell::new(false));
+    evidence
+        .set_publication_observer(move |_| {
+            if !invalidated.replace(true) {
+                cache
+                    .with_cache(|cache| assert!(cache.invalidate(RegionVerId::new(1, 1, 2))))
+                    .unwrap();
+            }
+        })
+        .unwrap();
+
+    assert_eq!(result.next_raw().unwrap(), Some(b"current-route".to_vec()));
+    assert_eq!(result.next_raw().unwrap(), None);
+    assert_eq!(
+        calls
+            .borrow()
+            .iter()
+            .map(|call| call.address.as_str())
+            .collect::<Vec<_>>(),
+        ["tikv-old:20160", "tikv-new:20160"]
+    );
+    assert_eq!(
+        loader_calls.borrow().as_slice(),
+        [b"a".to_vec(), b"a".to_vec()]
+    );
+}
+
+#[test]
 fn cached_leader_data_is_not_ready_falls_through_without_reload_or_backoff() {
     let calls = Rc::new(RefCell::new(Vec::new()));
     let loader_calls = Rc::new(RefCell::new(Vec::new()));
