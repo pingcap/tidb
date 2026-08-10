@@ -218,11 +218,6 @@ func TestVarsutil(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, v.EnableAlternativeLogicalPlans)
 
-	require.False(t, v.EnableSharedLockUpgrade)
-	err = v.SetSystemVar(vardef.TiDBEnableSharedLockUpgrade, "1")
-	require.NoError(t, err)
-	require.True(t, v.EnableSharedLockUpgrade)
-
 	require.Equal(t, 32, v.InitChunkSize)
 	require.Equal(t, 1024, v.MaxChunkSize)
 	err = v.SetSystemVar(vardef.TiDBMaxChunkSize, "2")

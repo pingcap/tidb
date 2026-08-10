@@ -1759,6 +1759,84 @@ func TestTiDBForeignKeyCheckInSharedLockGate(t *testing.T) {
 	require.Equal(t, vardef.On, sessionVal)
 }
 
+func TestTiDBEnableSharedLockUpgradeGate(t *testing.T) {
+	ctx := context.Background()
+	restore := config.RestoreFunc()
+	t.Cleanup(restore)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowEnableForeignKeyCheckInSharedLock = false
+	})
+
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+
+	if !kerneltype.IsNextGen() {
+		for _, val := range []string{vardef.On, "1"} {
+			err := vars.SetSystemVar(vardef.TiDBEnableSharedLockUpgrade, val)
+			require.Error(t, err, val)
+			require.True(t, ErrWrongValueForVar.Equal(err), err)
+			require.False(t, vars.EnableSharedLockUpgrade)
+			sessionVal, err := vars.GetSessionOrGlobalSystemVar(
+				ctx, vardef.TiDBEnableSharedLockUpgrade,
+			)
+			require.NoError(t, err)
+			require.Equal(t, vardef.Off, sessionVal)
+		}
+		require.NoError(t, vars.SetSystemVar(
+			vardef.TiDBEnableSharedLockUpgrade, vardef.Off,
+		))
+		require.False(t, vars.EnableSharedLockUpgrade)
+
+		for _, val := range []string{vardef.On, "1"} {
+			err := mock.SetGlobalSysVar(
+				ctx, vardef.TiDBEnableSharedLockUpgrade, val,
+			)
+			require.Error(t, err, val)
+			require.True(t, ErrWrongValueForVar.Equal(err), err)
+			rawGlobalVal, err := mock.GetGlobalSysVar(
+				vardef.TiDBEnableSharedLockUpgrade,
+			)
+			require.NoError(t, err)
+			require.Equal(t, vardef.Off, rawGlobalVal)
+		}
+		require.NoError(t, mock.SetGlobalSysVar(
+			ctx, vardef.TiDBEnableSharedLockUpgrade, vardef.Off,
+		))
+		return
+	}
+
+	for _, val := range []string{vardef.On, "1"} {
+		require.NoError(t, vars.SetSystemVar(
+			vardef.TiDBEnableSharedLockUpgrade, val,
+		), val)
+		require.True(t, vars.EnableSharedLockUpgrade)
+		sessionVal, err := vars.GetSessionOrGlobalSystemVar(
+			ctx, vardef.TiDBEnableSharedLockUpgrade,
+		)
+		require.NoError(t, err)
+		require.Equal(t, vardef.On, sessionVal)
+		require.NoError(t, vars.SetSystemVar(
+			vardef.TiDBEnableSharedLockUpgrade, vardef.Off,
+		))
+	}
+
+	for _, val := range []string{vardef.On, "1"} {
+		require.NoError(t, mock.SetGlobalSysVar(
+			ctx, vardef.TiDBEnableSharedLockUpgrade, val,
+		), val)
+		globalVal, err := vars.GetGlobalSystemVar(
+			ctx, vardef.TiDBEnableSharedLockUpgrade,
+		)
+		require.NoError(t, err)
+		require.Equal(t, vardef.On, globalVal)
+		require.NoError(t, mock.SetGlobalSysVar(
+			ctx, vardef.TiDBEnableSharedLockUpgrade, vardef.Off,
+		))
+	}
+}
+
 func TestTiDBOptTxnAutoRetry(t *testing.T) {
 	sv := GetSysVar(vardef.TiDBDisableTxnAutoRetry)
 	vars := NewSessionVars(nil)
