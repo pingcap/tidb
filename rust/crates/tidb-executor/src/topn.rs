@@ -1379,6 +1379,72 @@ mod spill_tests {
         StatementMemory::new(1 << 14, OomAction::Cancel, 42).with_spill_storage(test_storage(dir))
     }
 
+    /// Go source of truth: `TestGenerateTopNResultsWhenSpillOnlyOnce` in
+    /// `pkg/executor/sortexec/topn_spill_test.go`.
+    ///
+    /// Go has a shortcut for one spilled run while Rust deliberately sends
+    /// one and many runs through the same merger. Exercise that one-run path
+    /// with both one and several on-disk chunks, including every offset
+    /// boundary Go pins.
+    #[test]
+    fn test_generate_topn_results_when_spill_only_once() {
+        let dir = scratch_temp_dir("topn-single-run");
+        let cases = [
+            (64_i64, 0_u64),
+            (64, 49),
+            (64, 63),
+            (64, 64),
+            (202, 0),
+            (202, 49),
+            (202, 138),
+            (202, 201),
+            (202, 202),
+        ];
+
+        for (total, offset) in cases {
+            let rows: Vec<Vec<Option<i64>>> = (0..total).map(|i| vec![Some(i), Some(i)]).collect();
+            let count = u64::try_from(total).unwrap() - offset;
+            let memory = StatementMemory::new(1 << 30, OomAction::Cancel, 42)
+                .with_spill_storage(test_storage(&dir));
+            let mut exec = topn(&rows, &[(0, false)], offset, count, memory);
+            exec.set_spill_chunk_size_for_test(64);
+            exec.open().unwrap();
+
+            assert!(
+                exec.run_one_segment().unwrap(),
+                "the manually spilled segment must consume all {total} rows"
+            );
+            exec.spill_heap().unwrap();
+            assert_eq!(
+                exec.num_spilled_runs(),
+                1,
+                "total={total} offset={offset} must exercise exactly one run"
+            );
+            exec.fetched = true;
+
+            let mut got = Vec::new();
+            loop {
+                let mut req = exec.new_chunk();
+                exec.next(&mut req).unwrap();
+                if req.num_rows() == 0 {
+                    break;
+                }
+                for row in 0..req.num_rows() {
+                    got.push(req.get_row(row).get_int64(0));
+                }
+            }
+            assert_eq!(got, (offset as i64..total).collect::<Vec<_>>());
+
+            exec.close().unwrap();
+            assert!(
+                spill_files_in(&dir).is_empty(),
+                "total={total} offset={offset} leaked its single run"
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// THE TOPN SPILL TEST.
     #[test]
     fn an_over_quota_topn_returns_exactly_what_the_unspilled_one_returns() {

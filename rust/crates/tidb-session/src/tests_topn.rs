@@ -176,6 +176,32 @@ fn an_order_by_without_a_limit_still_builds_a_sort() {
     );
 }
 
+/// Go source of truth: `TestIssue54206` in
+/// `pkg/executor/sortexec/topn_spill_test.go`.
+///
+/// Disabling temporary storage must not make the TopN over a projected LEFT
+/// JOIN result depend on a spill path. The false join predicate produces one
+/// null-extended row, whose projected value is still available to the alias
+/// used by `ORDER BY`.
+#[test]
+fn test_issue_54206() {
+    let mut session = Session::new();
+    session
+        .run("SET @@global.tidb_enable_tmp_storage_on_oom = 0")
+        .unwrap();
+    session.run("CREATE TABLE t1(a BIGINT, b BIGINT)").unwrap();
+    session.run("CREATE TABLE t2(a BIGINT, b BIGINT)").unwrap();
+    session.run("INSERT INTO t1 VALUES(1, 1)").unwrap();
+
+    assert_eq!(
+        flat(row_text(session.run(
+            "SELECT t1.a + t1.b AS result \
+             FROM t1 LEFT JOIN t2 ON 1 = 0 ORDER BY result LIMIT 1"
+        ))),
+        vec!["2".to_owned()]
+    );
+}
+
 /// A `GROUP BY` pipeline fuses above the aggregate, which is where Go's rule
 /// also stops: `LogicalAggregation` inherits `BaseLogicalPlan.PushDownTopN`,
 /// which attaches the `TopN` on top rather than pushing it through. Captured

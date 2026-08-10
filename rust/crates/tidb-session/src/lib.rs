@@ -281,6 +281,48 @@ impl ResultMaterializationAuthority {
 /// `infoschema` is shared by every session of a TiDB instance.
 pub type SharedCatalog = Arc<Mutex<Catalog>>;
 
+/// Go `domainMap`: one domain-level catalog authority per storage UUID.
+///
+/// A server can use this registry when opening sessions for more than one
+/// keyspace. Looking up `None` preserves the plugin-facing Go contract: reuse
+/// any available domain, or return [`NoAvailableDomain`] when the process has
+/// not opened one yet.
+#[derive(Default)]
+pub struct DomainMap {
+    domains: Mutex<HashMap<String, SharedCatalog>>,
+}
+
+/// A nil-store lookup found no domain that could be reused.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NoAvailableDomain;
+
+impl std::fmt::Display for NoAvailableDomain {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("can not find available domain for a nil store")
+    }
+}
+
+impl std::error::Error for NoAvailableDomain {}
+
+impl DomainMap {
+    /// Gets or creates the shared catalog for `store_uuid`.
+    ///
+    /// `None` never creates an entry. It returns an existing one when
+    /// available, matching the enterprise-plugin compatibility path in Go.
+    pub fn get(&self, store_uuid: Option<&str>) -> Result<SharedCatalog, NoAvailableDomain> {
+        let mut domains = self
+            .domains
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(store_uuid) = store_uuid else {
+            return domains.values().next().cloned().ok_or(NoAvailableDomain);
+        };
+        Ok(Arc::clone(
+            domains.entry(store_uuid.to_owned()).or_default(),
+        ))
+    }
+}
+
 /// A session: runs statements against a catalog shared with its peers.
 ///
 /// Go sessions borrow the process's schema state rather than owning private
@@ -794,7 +836,20 @@ impl Session {
 
 #[cfg(test)]
 mod session_source_tests {
-    use super::{approx_compile_plan_token_count, approx_parse_sql_token_count};
+    use super::{
+        approx_compile_plan_token_count, approx_parse_sql_token_count, DomainMap, NoAvailableDomain,
+    };
+
+    // Go pkg/session/tidb_test.go::TestDomapHandleNil.
+    #[test]
+    fn test_domap_handle_nil() {
+        let domains = DomainMap::default();
+        assert!(matches!(domains.get(None), Err(NoAvailableDomain)));
+
+        let opened = domains.get(Some("store-a")).unwrap();
+        let available = domains.get(None).unwrap();
+        assert!(std::sync::Arc::ptr_eq(&opened, &available));
+    }
 
     // Go pkg/session/session_test.go::TestMemArbitratorSession.
     #[test]
