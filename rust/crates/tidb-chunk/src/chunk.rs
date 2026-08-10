@@ -31,12 +31,16 @@ use crate::compare::{compare, sort_search};
 use crate::row::Row;
 use std::cmp::Ordering;
 use tidb_datatype::{
-    Datum, FieldType, GoStringSource, MyDecimal, MySqlDuration, Time, VectorFloat32,
+    Datum, FieldType, GoString, GoStringSource, MyDecimal, MySqlDuration, Time, VectorFloat32,
 };
 
 /// Go `chunk.InitialCapacity`: the capacity a chunk grows to when it is renewed
 /// from a chunk that had no capacity of its own.
 pub const INITIAL_CAPACITY: usize = 32;
+
+/// Go `chunk.ZeroCapacity`: the public executor-builder sentinel requesting a
+/// first batch that grows from zero capacity.
+pub const ZERO_CAPACITY: usize = 0;
 
 /// Go `chunk.Chunk`: a columnar batch of rows.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -771,7 +775,8 @@ impl Chunk {
     /// starting at `col_off`.
     pub fn append_partial_row(&mut self, col_off: usize, row: Row<'_>) {
         self.append_sel(col_off);
-        for (i, src_col) in row.chunk().columns.iter().enumerate() {
+        let source = row.chunk().expect("cannot append the empty Row sentinel");
+        for (i, src_col) in source.columns.iter().enumerate() {
             Self::append_cell_between(&mut self.columns[col_off + i], src_col, row.idx());
         }
     }
@@ -810,7 +815,9 @@ impl Chunk {
         for (dst_offset, &src_index) in col_idxs.iter().enumerate() {
             Self::append_cell_between(
                 &mut self.columns[col_off + dst_offset],
-                &row.chunk().columns[src_index],
+                &row.chunk()
+                    .expect("cannot append the empty Row sentinel")
+                    .columns[src_index],
                 row.idx(),
             );
         }
@@ -854,7 +861,9 @@ impl Chunk {
                 }
                 Self::append_cell_between(
                     &mut self.columns[col_off + dst_offset],
-                    &row.chunk().columns[dst_offset],
+                    &row.chunk()
+                        .expect("cannot append the empty Row sentinel")
+                        .columns[dst_offset],
                     row.idx(),
                 );
             }
@@ -957,12 +966,27 @@ impl Chunk {
         Chunk {
             sel: self.sel.clone(),
             columns: self.columns.iter().map(ColumnSlot::deep_copy).collect(),
-            columns_initialized: self.columns_initialized,
+            // Go assigns make([]*Column, len(c.columns)); even a nil source
+            // becomes a non-nil zero-length slice in the copy.
+            columns_initialized: true,
             num_virtual_rows: self.num_virtual_rows,
             capacity: self.capacity,
             required_rows: self.required_rows,
             in_complete_chunk: self.in_complete_chunk,
         }
+    }
+
+    /// Go `Chunk.ToString`: render every logical row and terminate each row
+    /// with one newline. The byte-authoritative result can contain invalid
+    /// UTF-8 through source string, ENUM, or SET cells.
+    #[must_use]
+    pub fn to_string(&self, field_types: &[FieldType]) -> GoString {
+        let mut output = Vec::with_capacity(self.num_rows().saturating_mul(2));
+        for row_idx in 0..self.num_rows() {
+            output.extend_from_slice(self.get_row(row_idx).to_string(field_types).as_bytes());
+            output.push(b'\n');
+        }
+        output.into()
     }
 
     /// The chunk's private ownership slots for dependency-closed helpers.

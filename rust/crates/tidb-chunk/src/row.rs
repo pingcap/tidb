@@ -27,7 +27,7 @@
 use crate::chunk::Chunk;
 use crate::CellBytes;
 use tidb_datatype::{
-    Datum, Decimal, FieldType, FieldTypeCode, GoString, MyDecimal, MySqlDuration, Time,
+    Datum, Decimal, EvalType, FieldType, FieldTypeCode, GoString, MyDecimal, MySqlDuration, Time,
     VectorFloat32, UNSPECIFIED_LENGTH,
 };
 
@@ -44,6 +44,36 @@ pub const ROW_SIZE: i64 = size_of::<Row<'static>>() as i64;
 pub struct Row<'a> {
     chunk: Option<&'a Chunk>,
     idx: usize,
+}
+
+/// An independently owned copy of one Go `chunk.Row`.
+///
+/// Go's `Row.CopyConstruct` returns a `Row` pointing at a newly allocated
+/// one-row `Chunk`; garbage collection keeps that chunk alive. Rust makes the
+/// same ownership explicit so the copied row can safely outlive its source.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OwnedRow {
+    chunk: Chunk,
+}
+
+impl OwnedRow {
+    /// Borrows the copied row.
+    #[must_use]
+    pub fn as_row(&self) -> Row<'_> {
+        self.chunk.get_row(0)
+    }
+
+    /// Borrows the one-row chunk that owns the copied row.
+    #[must_use]
+    pub const fn chunk(&self) -> &Chunk {
+        &self.chunk
+    }
+
+    /// Transfers ownership of the copied row's one-row chunk.
+    #[must_use]
+    pub fn into_chunk(self) -> Chunk {
+        self.chunk
+    }
 }
 
 /// Go compares two `Row`s with `==` on `{c *Chunk, idx int}`, which is chunk
@@ -82,9 +112,14 @@ impl<'a> Row<'a> {
         }
     }
 
-    /// Go `Chunk`: the chunk this row belongs to.
+    /// Go `Chunk`: the chunk this row belongs to, or `None` for the zero
+    /// `Row{}` sentinel (Go returns a nil `*Chunk` in that case).
     #[must_use]
-    pub fn chunk(&self) -> &'a Chunk {
+    pub const fn chunk(&self) -> Option<&'a Chunk> {
+        self.chunk
+    }
+
+    fn expect_chunk(&self) -> &'a Chunk {
         self.chunk.expect("empty Row has no Chunk")
     }
 
@@ -110,38 +145,38 @@ impl<'a> Row<'a> {
     /// Go `GetInt64`.
     #[must_use]
     pub fn get_int64(&self, col_idx: usize) -> i64 {
-        self.chunk().column(col_idx).get_int64(self.idx)
+        self.expect_chunk().column(col_idx).get_int64(self.idx)
     }
 
     /// Go `GetUint64`.
     #[must_use]
     pub fn get_uint64(&self, col_idx: usize) -> u64 {
-        self.chunk().column(col_idx).get_uint64(self.idx)
+        self.expect_chunk().column(col_idx).get_uint64(self.idx)
     }
 
     /// Go `GetFloat32`.
     #[must_use]
     pub fn get_float32(&self, col_idx: usize) -> f32 {
-        self.chunk().column(col_idx).get_float32(self.idx)
+        self.expect_chunk().column(col_idx).get_float32(self.idx)
     }
 
     /// Go `GetFloat64`.
     #[must_use]
     pub fn get_float64(&self, col_idx: usize) -> f64 {
-        self.chunk().column(col_idx).get_float64(self.idx)
+        self.expect_chunk().column(col_idx).get_float64(self.idx)
     }
 
     /// Go `GetTime`.
     #[must_use]
     pub fn get_time(&self, col_idx: usize) -> Time {
-        self.chunk().column(col_idx).get_time(self.idx)
+        self.expect_chunk().column(col_idx).get_time(self.idx)
     }
 
     /// Go `GetDuration`: reads the cell's nanoseconds and stamps `fill_fsp` on
     /// (the column stores no fsp).
     #[must_use]
     pub fn get_duration(&self, col_idx: usize, fill_fsp: i64) -> MySqlDuration {
-        self.chunk()
+        self.expect_chunk()
             .column(col_idx)
             .get_duration(self.idx, fill_fsp)
     }
@@ -149,68 +184,70 @@ impl<'a> Row<'a> {
     /// Go `GetMyDecimal`.
     #[must_use]
     pub fn get_my_decimal(&self, col_idx: usize) -> MyDecimal {
-        self.chunk().column(col_idx).get_my_decimal(self.idx)
+        self.expect_chunk().column(col_idx).get_my_decimal(self.idx)
     }
 
     /// Go `GetEnum`.
     #[must_use]
     pub fn get_enum(&self, col_idx: usize) -> tidb_datatype::MysqlEnum {
-        self.chunk().column(col_idx).get_enum(self.idx)
+        self.expect_chunk().column(col_idx).get_enum(self.idx)
     }
 
     /// Go `GetSet`.
     #[must_use]
     pub fn get_set(&self, col_idx: usize) -> tidb_datatype::MysqlSet {
-        self.chunk().column(col_idx).get_set(self.idx)
+        self.expect_chunk().column(col_idx).get_set(self.idx)
     }
 
     /// Go `GetBytes`: the raw bytes of a variable-length column's cell.
     #[must_use]
     pub fn get_bytes(&self, col_idx: usize) -> CellBytes<'a> {
-        self.chunk().column_slots()[col_idx].get_bytes(self.idx)
+        self.expect_chunk().column_slots()[col_idx].get_bytes(self.idx)
     }
 
     /// Go `GetString`: a byte-preserving string view of a variable-length
     /// column's cell.
     #[must_use]
     pub fn get_string(&self, col_idx: usize) -> GoString {
-        self.chunk().column(col_idx).get_string(self.idx)
+        self.expect_chunk().column(col_idx).get_string(self.idx)
     }
 
     /// Go `GetRawLen`: the encoded cell width for either column kind.
     #[must_use]
     pub fn get_raw_len(&self, col_idx: usize) -> usize {
-        self.chunk().column(col_idx).raw_len(self.idx)
+        self.expect_chunk().column(col_idx).raw_len(self.idx)
     }
 
     /// Go `GetRaw`: the raw element bytes for either column kind.
     #[must_use]
     pub fn get_raw(&self, col_idx: usize) -> CellBytes<'a> {
-        self.chunk().column_slots()[col_idx].get_raw(self.idx)
+        self.expect_chunk().column_slots()[col_idx].get_raw(self.idx)
     }
 
     /// Go `GetJSON`.
     #[must_use]
     pub fn get_json(&self, col_idx: usize) -> tidb_datatype::BinaryJSON {
-        self.chunk().column(col_idx).get_json(self.idx)
+        self.expect_chunk().column(col_idx).get_json(self.idx)
     }
 
     /// Go `GetVectorFloat32`.
     #[must_use]
     pub fn get_vector_float32(&self, col_idx: usize) -> VectorFloat32 {
-        self.chunk().column(col_idx).get_vector_float32(self.idx)
+        self.expect_chunk()
+            .column(col_idx)
+            .get_vector_float32(self.idx)
     }
 
     /// Go `getNameValue`: the `(name, value)` pair an ENUM/SET cell stores.
     #[must_use]
     pub fn get_name_value(&self, col_idx: usize) -> (GoString, u64) {
-        self.chunk().column(col_idx).get_name_value(self.idx)
+        self.expect_chunk().column(col_idx).get_name_value(self.idx)
     }
 
     /// Go `IsNull`.
     #[must_use]
     pub fn is_null(&self, col_idx: usize) -> bool {
-        self.chunk().column(col_idx).is_null(self.idx)
+        self.expect_chunk().column(col_idx).is_null(self.idx)
     }
 
     /// Go `GetDatumRow`: materializes every column with the corresponding
@@ -337,5 +374,89 @@ impl<'a> Row<'a> {
             _ => return,
         };
         *datum = materialized;
+    }
+
+    /// Go `Row.CopyConstruct`: deep-copy this physical row into an independently
+    /// owned one-row chunk.
+    #[must_use]
+    pub fn copy_construct(&self) -> OwnedRow {
+        let mut chunk = self.expect_chunk().renew_with_capacity(1, 1);
+        chunk.append_row(*self);
+        OwnedRow { chunk }
+    }
+
+    /// Go `Row.ToString`: render every field into one byte-authoritative row.
+    ///
+    /// The result is [`GoString`] because source string, ENUM, and SET cells
+    /// may contain arbitrary bytes. Numeric, temporal, JSON, and vector text is
+    /// ASCII and follows the corresponding source value formatter.
+    #[must_use]
+    pub fn to_string(&self, field_types: &[FieldType]) -> GoString {
+        assert!(
+            field_types.len() >= self.len(),
+            "Row::to_string needs one field type per column"
+        );
+        let mut output = Vec::new();
+        for (col_idx, field_type) in field_types.iter().take(self.len()).enumerate() {
+            if self.is_null(col_idx) {
+                output.extend_from_slice(b"NULL");
+            } else {
+                match field_type.eval_type() {
+                    EvalType::Int => {
+                        output.extend_from_slice(self.get_int64(col_idx).to_string().as_bytes());
+                    }
+                    EvalType::String => match field_type.code() {
+                        FieldTypeCode::Enum => {
+                            let value = self.get_enum(col_idx);
+                            output.extend_from_slice(value.name_bytes());
+                        }
+                        FieldTypeCode::Set => {
+                            let value = self.get_set(col_idx);
+                            output.extend_from_slice(value.name_bytes());
+                        }
+                        _ => output.extend_from_slice(self.get_string(col_idx).as_bytes()),
+                    },
+                    EvalType::Datetime | EvalType::Timestamp => {
+                        output.extend_from_slice(self.get_time(col_idx).to_string().as_bytes());
+                    }
+                    EvalType::Decimal => {
+                        output.extend_from_slice(&self.get_my_decimal(col_idx).to_string_bytes());
+                    }
+                    EvalType::Duration => {
+                        output.extend_from_slice(
+                            self.get_duration(col_idx, field_type.decimal())
+                                .to_string()
+                                .as_bytes(),
+                        );
+                    }
+                    EvalType::Json => {
+                        output.extend_from_slice(self.get_json(col_idx).to_string().as_bytes());
+                    }
+                    EvalType::Real => {
+                        let value = match field_type.code() {
+                            FieldTypeCode::Float => {
+                                Datum::Float32(f64::from(self.get_float32(col_idx)))
+                            }
+                            FieldTypeCode::Double => Datum::Real(self.get_float64(col_idx)),
+                            _ => unreachable!("only FLOAT and DOUBLE have real eval type"),
+                        };
+                        output.extend_from_slice(
+                            &value
+                                .sql_bytes()
+                                .expect("a numeric datum always has a text form"),
+                        );
+                    }
+                    EvalType::VectorFloat32 => {
+                        output.extend_from_slice(
+                            self.get_vector_float32(col_idx).to_string().as_bytes(),
+                        );
+                    }
+                }
+            }
+            if col_idx + 1 != self.len() {
+                output.extend_from_slice(b", ");
+            }
+        }
+        output.into()
     }
 }

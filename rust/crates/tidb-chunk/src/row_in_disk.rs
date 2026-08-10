@@ -85,7 +85,11 @@ impl DiskFormatRow {
     fn convert_from_row(row: Row<'_>, reuse: &mut DiskFormatRow) {
         reuse.sizes_of_columns.clear();
         reuse.cells.clear();
-        for col_idx in 0..row.chunk().num_cols() {
+        for col_idx in 0..row
+            .chunk()
+            .expect("cannot spill the empty Row sentinel")
+            .num_cols()
+        {
             if row.is_null(col_idx) {
                 reuse.sizes_of_columns.push(-1);
             } else {

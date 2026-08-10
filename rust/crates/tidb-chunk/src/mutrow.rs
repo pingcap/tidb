@@ -95,7 +95,7 @@ impl MutRow {
     /// NULL, exactly as in Go: the `continue` skips the write and the not-null
     /// bit is never set.
     pub fn set_row(&mut self, row: Row<'_>) {
-        let source = row.chunk();
+        let source = row.chunk().expect("cannot copy the empty Row sentinel");
         for col_idx in 0..source.num_cols() {
             let (is_null, elem_len, cell) = {
                 let source_column = source.column(col_idx);
