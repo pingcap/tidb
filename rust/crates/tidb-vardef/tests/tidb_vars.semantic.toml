@@ -1,0 +1,17 @@
+schema = "semantic-package-gate-v3"
+claim = "package-seed"
+go_package = "pkg/sessionctx/vardef"
+source_commit = "e14a77f78d457d27c88d5892e1a173c28a586823"
+accepted_go_files = [
+  "pkg/sessionctx/vardef/tidb_vars.go",
+  "pkg/sessionctx/vardef/tidb_vars_test.go",
+]
+rust_files = [
+  "rust/crates/tidb-vardef/src/lib.rs",
+  "rust/crates/tidb-vardef/tests/tidb_vars_source.rs",
+]
+
+[[tests]]
+name = "tidb_vars_mdl_nextgen_semantics"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-vardef", "--test", "tidb_vars_source", "mdl_is_always_enabled_in_nextgen_source"]

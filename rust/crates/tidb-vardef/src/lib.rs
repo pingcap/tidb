@@ -64,28 +64,3 @@ pub mod defaults;
 pub mod global_sysvar_initial;
 pub mod modes;
 pub mod tidb_vars;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    struct RestoreMdl(bool);
-
-    impl Drop for RestoreMdl {
-        fn drop(&mut self) {
-            set_enable_mdl(self.0);
-        }
-    }
-
-    /// Source: `pkg/sessionctx/vardef/tidb_vars_test.go::TestIsMDLEnabledInNextGen`.
-    #[test]
-    fn test_is_mdl_enabled_in_next_gen() {
-        let original = ENABLE_MDL.load(Ordering::SeqCst);
-        let _restore = RestoreMdl(original);
-
-        set_enable_mdl(false);
-        assert!(is_mdl_enabled(true));
-        set_enable_mdl(true);
-        assert!(is_mdl_enabled(true));
-    }
-}
