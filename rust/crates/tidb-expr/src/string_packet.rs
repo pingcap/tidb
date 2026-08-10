@@ -590,3 +590,108 @@ mod to_base64_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod weight_string_source_tests {
+    use super::weight_string;
+    use crate::{Datum, NoColumns};
+    use tidb_datatype::Collation;
+
+    type SourceCase = (&'static str, Option<(bool, i64)>, &'static [u8]);
+
+    fn check(collation: Collation, cases: &[SourceCase]) {
+        for &(input, padding, expected) in cases {
+            assert_eq!(
+                weight_string(
+                    &Datum::new_string(input.to_string()),
+                    padding,
+                    collation,
+                    &NoColumns,
+                ),
+                Ok(Datum::new_bytes(expected.to_vec())),
+                "{} {input:?} {padding:?}",
+                collation.name()
+            );
+        }
+    }
+
+    /// Exact 42-row port of Go `TestCIWeightString` in
+    /// `pkg/expression/builtin_string_test.go`. Expected values are the Go
+    /// test's literal bytes, independent of Rust's collator implementation.
+    #[test]
+    fn test_ci_weight_string() {
+        check(
+            Collation::Utf8Mb4GeneralCi,
+            &[
+                ("aAÁàãăâ", None, b"\x00A\x00A\x00A\x00A\x00A\x00A\x00A"),
+                ("中", None, b"\x4e\x2d"),
+                ("a", Some((false, 5)), b"\x00A"),
+                ("a ", Some((false, 5)), b"\x00A"),
+                ("中", Some((false, 5)), b"\x4e\x2d"),
+                ("中 ", Some((false, 5)), b"\x4e\x2d"),
+                ("a", Some((true, 1)), b"a"),
+                ("ab", Some((true, 1)), b"a"),
+                ("a", Some((true, 5)), b"a\0\0\0\0"),
+                ("a ", Some((true, 5)), b"a \0\0\0"),
+                ("中", Some((true, 1)), b"\xe4"),
+                ("中", Some((true, 2)), b"\xe4\xb8"),
+                ("中", Some((true, 3)), "中".as_bytes()),
+                ("中", Some((true, 5)), b"\xe4\xb8\xad\0\0"),
+            ],
+        );
+        check(
+            Collation::Utf8Mb4UnicodeCi,
+            &[
+                ("aAÁàãăâ", None, b"\x0e3\x0e3\x0e3\x0e3\x0e3\x0e3\x0e3"),
+                ("中", None, b"\xfb\x40\xce\x2d"),
+                ("a", Some((false, 5)), b"\x0e3"),
+                ("a ", Some((false, 5)), b"\x0e3"),
+                ("中", Some((false, 5)), b"\xfb\x40\xce\x2d"),
+                ("中 ", Some((false, 5)), b"\xfb\x40\xce\x2d"),
+                ("a", Some((true, 1)), b"a"),
+                ("ab", Some((true, 1)), b"a"),
+                ("a", Some((true, 5)), b"a\0\0\0\0"),
+                ("a ", Some((true, 5)), b"a \0\0\0"),
+                ("中", Some((true, 1)), b"\xe4"),
+                ("中", Some((true, 2)), b"\xe4\xb8"),
+                ("中", Some((true, 3)), "中".as_bytes()),
+                ("中", Some((true, 5)), b"\xe4\xb8\xad\0\0"),
+            ],
+        );
+        check(
+            Collation::Utf8Mb40900AiCi,
+            &[
+                ("aAÁàãăâ", None, b"\x1cG\x1cG\x1cG\x1cG\x1cG\x1cG\x1cG"),
+                ("中", None, b"\xfb\x40\xce\x2d"),
+                (
+                    "a",
+                    Some((false, 5)),
+                    b"\x1cG\x02\x09\x02\x09\x02\x09\x02\x09",
+                ),
+                (
+                    "a ",
+                    Some((false, 5)),
+                    b"\x1cG\x02\x09\x02\x09\x02\x09\x02\x09",
+                ),
+                (
+                    "中",
+                    Some((false, 5)),
+                    b"\xfb\x40\xce\x2d\x02\x09\x02\x09\x02\x09\x02\x09",
+                ),
+                (
+                    "中 ",
+                    Some((false, 5)),
+                    b"\xfb\x40\xce\x2d\x02\x09\x02\x09\x02\x09\x02\x09",
+                ),
+                ("a", Some((true, 1)), b"a"),
+                ("ab", Some((true, 1)), b"a"),
+                ("a", Some((true, 5)), b"a\0\0\0\0"),
+                ("a ", Some((true, 5)), b"a \0\0\0"),
+                ("中", Some((true, 1)), b"\xe4"),
+                ("中", Some((true, 2)), b"\xe4\xb8"),
+                ("中", Some((true, 3)), "中".as_bytes()),
+                ("中", Some((true, 5)), b"\xe4\xb8\xad\0\0"),
+            ],
+        );
+    }
+}

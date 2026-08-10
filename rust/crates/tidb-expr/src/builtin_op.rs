@@ -183,8 +183,9 @@ pub fn infer_unary_op_type(name: &str, arg: &Expression) -> Option<FieldType> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::column::Column;
     use crate::constant::Constant;
-    use tidb_datatype::{Datum, FieldTypeBuilder, FieldTypeCode, UNSPECIFIED_LENGTH};
+    use tidb_datatype::{Datum, Decimal, FieldTypeBuilder, FieldTypeCode, UNSPECIFIED_LENGTH};
 
     fn int_expr(v: i64) -> Expression {
         Expression::Constant(Constant::new(
@@ -257,6 +258,74 @@ mod tests {
         let real_ret = infer_unary_op_type("unaryminus", &real_expr(1.5)).unwrap();
         assert_eq!(real_ret.code(), FieldTypeCode::Double);
         assert_eq!(real_ret.flen(), 24);
+    }
+
+    /// Go `TestUnaryMinusDecimalRetTypeFlen`: a literal reserves a new sign
+    /// position, while a declared column width already includes it.
+    #[test]
+    fn test_unary_minus_decimal_ret_type_flen() {
+        let decimal_type = || {
+            FieldTypeBuilder::new()
+                .with_code(FieldTypeCode::NewDecimal)
+                .flen_set(10)
+                .decimal_set(2)
+                .build()
+        };
+        let literal = Expression::Constant(Constant::new(
+            Datum::new_decimal(Decimal::from_literal("123.45")),
+            decimal_type(),
+        ));
+        let literal_ret = infer_unary_op_type("unaryminus", &literal).unwrap();
+        assert_eq!(literal_ret.flen(), 11);
+        assert_eq!(literal_ret.decimal(), 2);
+
+        let column = Expression::Column(Column::new(1, decimal_type()));
+        let column_ret = infer_unary_op_type("unaryminus", &column).unwrap();
+        assert_eq!(column_ret.flen(), 10);
+        assert_eq!(column_ret.decimal(), 2);
+    }
+
+    /// Go `TestUnaryMinusIntRetTypeFlen`: signed and unsigned literals both
+    /// reserve a sign position; only a signed column keeps its declared width.
+    #[test]
+    fn test_unary_minus_int_ret_type_flen() {
+        let int_type = |flen, unsigned| {
+            let mut field_type = FieldTypeBuilder::new()
+                .with_code(FieldTypeCode::LongLong)
+                .flen_set(flen)
+                .decimal_set(0)
+                .build();
+            if unsigned {
+                field_type.add_flags(FieldTypeFlags::UNSIGNED);
+            }
+            field_type
+        };
+
+        let signed_literal =
+            Expression::Constant(Constant::new(Datum::Int(123), int_type(11, false)));
+        assert_eq!(
+            infer_unary_op_type("unaryminus", &signed_literal)
+                .unwrap()
+                .flen(),
+            12
+        );
+
+        let signed_column = Expression::Column(Column::new(1, int_type(11, false)));
+        assert_eq!(
+            infer_unary_op_type("unaryminus", &signed_column)
+                .unwrap()
+                .flen(),
+            11
+        );
+
+        let unsigned_literal =
+            Expression::Constant(Constant::new(Datum::UInt(123), int_type(10, true)));
+        assert_eq!(
+            infer_unary_op_type("unaryminus", &unsigned_literal)
+                .unwrap()
+                .flen(),
+            11
+        );
     }
 
     #[test]

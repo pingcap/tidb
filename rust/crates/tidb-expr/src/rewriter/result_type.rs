@@ -659,13 +659,16 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
             }
             ft
         }
-        // Go `lastInsertIDFunctionClass` adds `mysql.UnsignedFlag`, which is
-        // what makes `LAST_INSERT_ID(-1)` report 18446744073709551615 rather
-        // than -1. Both the zero-argument and one-argument forms are the same
-        // class and so the same result type.
+        // Go `lastInsertIDFunctionClass` adds `mysql.UnsignedFlag`, while
+        // `newBaseBuiltinFuncWithTp` stamps every integer result with
+        // `mysql.BinaryFlag`. Both arities therefore expose the same binary
+        // unsigned BIGINT metadata.
         "last_insert_id" if args.len() <= 1 => {
             let mut ft = int();
-            ft.add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
+            ft.add_flags(
+                tidb_datatype::FieldTypeFlags::UNSIGNED
+                    | tidb_datatype::FieldTypeFlags::BINARY,
+            );
             ft
         }
         // Go `bitCountFunctionClass` (`pkg/expression/builtin_other.go`):
@@ -1370,6 +1373,74 @@ fn arg_numeric_type(args: &[Expression]) -> Option<FieldType> {
         // A string argument is read as a number, which Go does as a real.
         _ => FieldType::new(FieldTypeCode::Double),
     })
+}
+
+#[cfg(test)]
+mod info_source_tests {
+    use std::cell::Cell;
+
+    use super::*;
+    use crate::Columns;
+
+    struct LastInsertColumns {
+        previous: u64,
+        published: Cell<Option<u64>>,
+    }
+
+    impl Columns for LastInsertColumns {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+
+        fn last_insert_id(&self) -> Option<u64> {
+            Some(self.previous)
+        }
+
+        fn set_last_insert_id(&self, value: u64) {
+            self.published.set(Some(value));
+        }
+    }
+
+    /// Go `TestLastInsertID`: both arities' wire metadata and the complete
+    /// source value matrix, including float rounding and two's-complement
+    /// publication of negative and maximum unsigned arguments.
+    #[test]
+    fn test_last_insert_id() {
+        let one_arg = [Expression::Constant(Constant::new(
+            Datum::Int(1),
+            FieldType::new(FieldTypeCode::LongLong),
+        ))];
+        for args in [&[][..], &one_arg[..]] {
+            let result_type = builtin_return_type("last_insert_id", args).unwrap();
+            assert_eq!(result_type.code(), FieldTypeCode::LongLong);
+            assert_eq!(result_type.charset_name(), "binary");
+            assert_eq!(result_type.collation_name(), "binary");
+            assert!(result_type.has_flag(tidb_datatype::FieldTypeFlags::BINARY));
+            assert!(result_type.is_unsigned());
+            assert_eq!(result_type.flen(), 20);
+        }
+
+        for (previous, args, expected, published) in [
+            (0, vec![Datum::Int(1)], 1, Some(1)),
+            (0, vec![Datum::Real(1.1)], 1, Some(1)),
+            (0, vec![Datum::UInt(u64::MAX)], u64::MAX, Some(u64::MAX)),
+            (0, vec![Datum::Int(-1)], u64::MAX, Some(u64::MAX)),
+            (1, vec![], 1, None),
+            (u64::MAX, vec![], u64::MAX, None),
+        ] {
+            let ctx = LastInsertColumns {
+                previous,
+                published: Cell::new(None),
+            };
+            assert_eq!(
+                crate::func::eval_func_values_in("LAST_INSERT_ID", &args, &ctx)
+                    .expect("LAST_INSERT_ID must be dispatched")
+                    .expect("source row must evaluate"),
+                Datum::UInt(expected)
+            );
+            assert_eq!(ctx.published.get(), published);
+        }
+    }
 }
 
 #[cfg(test)]

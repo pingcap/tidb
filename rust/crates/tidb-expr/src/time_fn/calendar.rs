@@ -730,7 +730,7 @@ pub(crate) fn date_add(
     sign: i64,
 ) -> Result<Datum, EvalError> {
     if let Some((index, cnt)) = composite_spec(unit) {
-        return date_add_composite(date, amount, sign, index, cnt);
+        return date_add_composite(unit, date, amount, sign, index, cnt);
     }
     let n = match amount {
         Datum::Null => return Ok(Datum::Null),
@@ -1075,6 +1075,36 @@ fn parse_composite_value(index: usize, cnt: usize, format: &str) -> (i64, i64, i
     (years, months, days, nanos)
 }
 
+/// Formats a DECIMAL amount for a composite `INTERVAL` unit exactly like
+/// Go's `baseDateArithmetical.getIntervalFromDecimal`. The apparent padding
+/// is significant at this boundary: it makes the decimal point land on the
+/// unit-specific field separator before `parse_composite_value` right-aligns
+/// the resulting numeric groups.
+fn format_decimal_composite_interval(unit: &str, decimal: &crate::Decimal) -> String {
+    let interval = decimal.to_string();
+    let (negative, magnitude) = interval
+        .strip_prefix('-')
+        .map_or((false, interval.as_str()), |value| (true, value));
+    let formatted = match unit.to_ascii_uppercase().as_str() {
+        "HOUR_MINUTE" | "MINUTE_SECOND" => magnitude.replace('.', ":"),
+        "YEAR_MONTH" => magnitude.replace('.', "-"),
+        "DAY_HOUR" => magnitude.replace('.', " "),
+        "DAY_MINUTE" => format!("0 {}", magnitude.replace('.', ":")),
+        "DAY_SECOND" => format!("0 00:{}", magnitude.replace('.', ":")),
+        "DAY_MICROSECOND" => format!("0 00:00:{magnitude}"),
+        "HOUR_MICROSECOND" => format!("00:00:{magnitude}"),
+        "HOUR_SECOND" => format!("00:{}", magnitude.replace('.', ":")),
+        "MINUTE_MICROSECOND" => format!("00:{magnitude}"),
+        "SECOND_MICROSECOND" => magnitude.to_string(),
+        _ => magnitude.to_string(),
+    };
+    if negative {
+        format!("-{formatted}")
+    } else {
+        formatted
+    }
+}
+
 /// `DATE_ADD`/`DATE_SUB` for a composite `INTERVAL` unit (see
 /// [`composite_spec`]/[`parse_composite_value`]). `YEAR_MONTH` is
 /// calendar-field arithmetic through the SAME [`add_months`] `MONTH`/`YEAR`
@@ -1084,6 +1114,7 @@ fn parse_composite_value(index: usize, cnt: usize, format: &str) -> (i64, i64, i
 /// families never mix within one composite unit, since exactly one of
 /// `(years, months)` or `(days, nanos)` is nonzero for any given unit.
 fn date_add_composite(
+    unit: &str,
     date: &Datum,
     amount: &Datum,
     sign: i64,
@@ -1094,7 +1125,7 @@ fn date_add_composite(
         Datum::Null => return Ok(Datum::Null),
         Datum::Int(i) => i.to_string(),
         Datum::UInt(i) => i.to_string(),
-        Datum::Decimal(d) => d.to_string(),
+        Datum::Decimal(d) => format_decimal_composite_interval(unit, d),
         Datum::String(_) | Datum::Bytes(_) => match coerce_str(amount)? {
             Some(s) => s,
             None => return Ok(Datum::Null),
@@ -1923,8 +1954,32 @@ pub(crate) fn date_format(date: &Datum, fmt: &Datum) -> Result<Datum, EvalError>
 
 #[cfg(test)]
 mod date_add_microsecond_tests {
-    use super::{date_add, round_micros_to_seconds};
-    use tidb_datatype::Datum;
+    use super::{date_add, format_decimal_composite_interval, round_micros_to_seconds};
+    use tidb_datatype::{Datum, Decimal};
+
+    /// Exact port of Go `TestGetIntervalFromDecimal` in
+    /// `pkg/expression/builtin_time_test.go`. These are the intermediate
+    /// strings produced before `ParseDurationValue`, not merely equivalent
+    /// final dates that could conceal a misplaced decimal field.
+    #[test]
+    fn test_get_interval_from_decimal() {
+        for (param, expected, unit) in [
+            ("1.100", "1:100", "MINUTE_SECOND"),
+            ("1.10000", "1-10000", "YEAR_MONTH"),
+            ("1.10000", "1 10000", "DAY_HOUR"),
+            ("11000", "0 00:00:11000", "DAY_MICROSECOND"),
+            ("11000", "00:00:11000", "HOUR_MICROSECOND"),
+            ("11.1000", "00:11:1000", "HOUR_SECOND"),
+            ("1000", "00:1000", "MINUTE_MICROSECOND"),
+        ] {
+            let decimal = Decimal::from_literal(param);
+            assert_eq!(
+                format_decimal_composite_interval(unit, &decimal),
+                expected,
+                "{unit} {param}"
+            );
+        }
+    }
 
     /// An `INTERVAL` amount too large for the arithmetic is `NULL`, not a
     /// panic. TiDB's own `expression/time` script asks for every one of these
