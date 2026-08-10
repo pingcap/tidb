@@ -290,7 +290,8 @@ func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {
 	require.Nil(t, errRes)
 	require.Zero(t, req.Paging.PagingSizeBytes)
 
-	// Analyze requests do not yet use store-batched coprocessor requests.
+	// StoreBatchSize alone must not change legacy eligibility for internal,
+	// unhinted Analyze requests; the merged-response contract is explicit opt-in.
 	ranges = copr.BuildKeyRanges("a", "c", "d", "e", "h", "x", "y", "z")
 	req = &kv.Request{
 		Tp:             kv.ReqTypeAnalyze,
@@ -302,12 +303,49 @@ func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {
 	req.RequestSource.RequestSourceInternal = true
 	it, errRes = copClient.BuildCopIterator(ctx, req, vars, opt)
 	require.Nil(t, errRes)
+	require.Len(t, it.GetTasks(), 4)
+
+	// BuildCopIterator clears StoreBatchSize in place; restore it so the second
+	// build changes only the capability.
+	req.StoreBatchSize = 3
+	req.AllowBatchTaskDataMerge = true
+	req.ExecuteBatchTasksSerially = true
+	it, errRes = copClient.BuildCopIterator(ctx, req, vars, opt)
+	require.Nil(t, errRes)
 	tasks = it.GetTasks()
-	require.Len(t, tasks, 4)
-	for _, task := range tasks {
-		require.Empty(t, task.ToPBBatchTasks())
-		require.Equal(t, -1, task.RowCountHint)
+	require.Len(t, tasks, 1)
+	require.Len(t, tasks[0].ToPBBatchTasks(), 3)
+	require.Equal(t, -1, tasks[0].RowCountHint)
+
+	// Cancel at the pre-send hook so this checks request encoding without depending
+	// on a TiKV response.
+	req.KeyRanges = kv.NewNonParitionedKeyRangesWithHint(copr.BuildKeyRanges("a", "c"), nil)
+	req.StoreBatchSize = 3
+	type batchRequestFlags struct {
+		allowMerge      bool
+		executeSerially bool
 	}
+	wireFlags := make(chan batchRequestFlags, 1)
+	sendCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/store/copr/onBeforeSendReqCtx", func(rpcReq *tikvrpc.Request) {
+		copReq, ok := rpcReq.Req.(*coprocessor.Request)
+		if !ok || copReq.Tp != kv.ReqTypeAnalyze {
+			return
+		}
+		wireFlags <- batchRequestFlags{
+			allowMerge:      copReq.AllowBatchTaskDataMerge,
+			executeSerially: copReq.ExecuteBatchTasksSerially,
+		}
+		cancel()
+	})
+	resp := copClient.Send(sendCtx, req, vars, opt)
+	_, err = resp.Next(sendCtx)
+	require.ErrorIs(t, err, context.Canceled)
+	require.NoError(t, resp.Close())
+	flags := <-wireFlags
+	require.True(t, flags.allowMerge)
+	require.True(t, flags.executeSerially)
 
 	// only small tasks will be batched.
 	ranges = copr.BuildKeyRanges("a", "b", "h", "i", "o", "p")
