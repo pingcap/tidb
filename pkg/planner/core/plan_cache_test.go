@@ -230,6 +230,35 @@ func TestNonPreparedPlanCacheBasically(t *testing.T) {
 		tk.MustQuery(query).Sort().Check(resultNormal.Rows())                  // equal to the result without plan-cache
 		tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // this plan is from plan-cache
 	}
+
+	tk.MustExec(`create table t_dml_only (a int, b int)`)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=0`)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache_for_dml=1`)
+	tk.MustExec(`insert into t_dml_only values (1, 1)`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustExec(`insert into t_dml_only values (2, 2)`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	tk.MustExec(`update t_dml_only set b = 3 where a = 1`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustExec(`update t_dml_only set b = 4 where a = 2`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	tk.MustExec(`delete from t_dml_only where a = 1`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustExec(`delete from t_dml_only where a = 2`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	tk.MustQuery(`select * from t_dml_only where a = 1`)
+	tk.MustQuery(`select * from t_dml_only where a = 2`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache_for_dml=0`)
+	tk.MustExec(`insert into t_dml_only values (3, 3)`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustExec(`insert into t_dml_only values (4, 4)`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 }
 
 func TestNonPreparedPlanCacheInternalSQL(t *testing.T) {
