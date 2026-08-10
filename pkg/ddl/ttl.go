@@ -43,10 +43,8 @@ func onTTLInfoRemove(jobCtx *jobContext, job *model.Job) (ver int64, err error) 
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	if jobCtx.oldDDLCtx != nil {
-		if err := jobCtx.oldDDLCtx.deleteTTLTableFromExternalWorkload(jobCtx.ctx, tblInfo.ID); err != nil {
-			return ver, cancelJobOnExternalTTLWorkloadError(job, err)
-		}
+	if err := jobCtx.oldDDLCtx.deleteTTLTableFromExternalWorkload(jobCtx.ctx, tblInfo.ID); err != nil {
+		return ver, cancelJobOnExternalTTLWorkloadError(job, err)
 	}
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	return ver, nil
@@ -95,10 +93,8 @@ func onTTLInfoChange(jobCtx *jobContext, job *model.Job) (ver int64, err error) 
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	if jobCtx.oldDDLCtx != nil {
-		if err := jobCtx.oldDDLCtx.syncTTLTableToExternalWorkload(jobCtx.ctx, tblInfo); err != nil {
-			return ver, cancelJobOnExternalTTLWorkloadError(job, err)
-		}
+	if err := jobCtx.oldDDLCtx.syncTTLTableToExternalWorkload(jobCtx.ctx, tblInfo); err != nil {
+		return ver, cancelJobOnExternalTTLWorkloadError(job, err)
 	}
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	return ver, nil
