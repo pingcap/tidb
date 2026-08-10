@@ -280,10 +280,12 @@ pub fn compare(row: Row<'_>, col_idx: usize, ad: &Datum) -> Ordering {
         Datum::MaxValue => Ordering::Less,
         Datum::Int(value) => row.get_int64(col_idx).cmp(value),
         Datum::UInt(value) => row.get_uint64(col_idx).cmp(value),
-        // Go keeps `KindFloat32` and `KindFloat64` as separate arms; the
-        // float32 one widens the CELL through `float32` first, which this
-        // port's `get_float32` already does.
-        Datum::Float32(value) => cmp_float(f64::from(row.get_float32(col_idx)), *value),
+        // Go's `Datum.GetFloat32` rounds the DATUM through `float32`, then
+        // widens both operands to `float64` for `cmp.Compare`.
+        Datum::Float32(value) => cmp_float(
+            f64::from(row.get_float32(col_idx)),
+            f64::from(*value as f32),
+        ),
         Datum::Real(value) => cmp_float(row.get_float64(col_idx), *value),
         Datum::String(value) => {
             let bytes = row.get_bytes(col_idx);

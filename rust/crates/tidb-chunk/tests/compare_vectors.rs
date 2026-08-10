@@ -25,12 +25,14 @@
 //! drives the REAL Go package; the recipes below rebuild the same cells and
 //! datums from the same names.
 
+mod pkg_util_chunk_fixture_observation;
+
 use std::cmp::Ordering;
 use tidb_chunk::chunk::Chunk;
 use tidb_chunk::compare::get_compare_func;
 use tidb_datatype::{
-    BinaryJSON, Collation, CoreTime, Datum, FieldType, FieldTypeCode, MyDecimal, MySqlDuration,
-    MysqlEnum, MysqlSet, Time, TimeType,
+    BinaryJSON, BinaryJSONValue, BinaryLiteral, Collation, CoreTime, Datum, Decimal, FieldType,
+    FieldTypeCode, MyDecimal, MySqlDuration, MysqlEnum, MysqlSet, Time, TimeType, VectorFloat32,
 };
 
 const FIXTURE: &str = include_str!("../../../difftests/chunk-tests/fixtures/compare_vectors.tsv");
@@ -300,6 +302,12 @@ fn ordering_from_go(value: &str) -> Ordering {
     }
 }
 
+fn compare_one(field_type: FieldType, append: impl FnOnce(&mut Chunk), datum: Datum) -> Ordering {
+    let mut chunk = Chunk::new_with_capacity(std::slice::from_ref(&field_type), 1);
+    append(&mut chunk);
+    tidb_chunk::compare::compare(chunk.get_row(0), 0, &datum)
+}
+
 /// Every `GetCompareFunc` answer Go produced for the fixture's columns.
 #[test]
 fn go_compare_func_answers_replay() {
@@ -362,4 +370,257 @@ fn go_bound_search_answers_replay() {
         checked += 1;
     }
     assert_eq!(checked, (10 + 10 + 7) * 2, "the fixture's lb/ub rows");
+}
+
+/// Go `Compare` reads a `KindFloat32` datum through `Datum.GetFloat32`, so the
+/// datum is rounded to `float32` before both operands are widened for compare.
+#[test]
+fn float32_datum_is_normalized_before_compare() {
+    let field_type = FieldType::new(FieldTypeCode::Float);
+    let mut chk = Chunk::new_with_capacity(std::slice::from_ref(&field_type), 1);
+    chk.append_float32(0, 1.0);
+
+    assert_eq!(
+        tidb_chunk::compare::compare(chk.get_row(0), 0, &Datum::Float32(1.000_000_01)),
+        Ordering::Equal,
+    );
+}
+
+/// One receipt anchor for every production surface in `compare.go`. The two
+/// fixture replays carry Go's own answers; the remaining cases cover datum
+/// kinds and dispatch exits that the original fixture does not instantiate.
+#[test]
+fn compare_public_contract() {
+    go_compare_func_answers_replay();
+    go_bound_search_answers_replay();
+
+    let null_field = FieldType::new(FieldTypeCode::Null);
+    let mut null_chunk = Chunk::new_with_capacity(std::slice::from_ref(&null_field), 1);
+    null_chunk.append_null(0);
+    let null_compare = tidb_chunk::compare::get_compare_func(&null_field)
+        .expect("the NULL field has a constant comparator");
+    assert_eq!(
+        null_compare(null_chunk.get_row(0), 0, null_chunk.get_row(0), 0),
+        Ordering::Equal,
+    );
+    assert!(
+        tidb_chunk::compare::get_compare_func(&FieldType::new(FieldTypeCode::Geometry)).is_none(),
+        "Go returns a nil CompareFunc for unsupported field types",
+    );
+
+    let vector_field = FieldType::new(FieldTypeCode::VectorFloat32);
+    let mut vector_chunk = Chunk::new_with_capacity(std::slice::from_ref(&vector_field), 3);
+    vector_chunk.append_null(0);
+    vector_chunk.append_vector_float32(0, &VectorFloat32::must_create(vec![1.0, 2.0]));
+    vector_chunk.append_vector_float32(0, &VectorFloat32::must_create(vec![1.0, 3.0]));
+    let vector_compare =
+        tidb_chunk::compare::get_compare_func(&vector_field).expect("the vector field compares");
+    assert_eq!(
+        vector_compare(vector_chunk.get_row(0), 0, vector_chunk.get_row(1), 0),
+        Ordering::Less,
+    );
+    assert_eq!(
+        vector_compare(vector_chunk.get_row(1), 0, vector_chunk.get_row(0), 0),
+        Ordering::Greater,
+    );
+    assert_eq!(
+        vector_compare(vector_chunk.get_row(1), 0, vector_chunk.get_row(2), 0),
+        Ordering::Less,
+    );
+
+    assert_eq!(
+        compare_one(
+            FieldType::new(FieldTypeCode::LongLong),
+            |chunk| chunk.append_int64(0, 2),
+            Datum::Int(3),
+        ),
+        Ordering::Less,
+    );
+    assert_eq!(
+        compare_one(
+            FieldType::new(FieldTypeCode::LongLong).with_unsigned(true),
+            |chunk| chunk.append_uint64(0, u64::MAX),
+            Datum::UInt(i64::MAX as u64),
+        ),
+        Ordering::Greater,
+    );
+
+    let float_field = FieldType::new(FieldTypeCode::Float);
+    let mut float_chunk = Chunk::new_with_capacity(std::slice::from_ref(&float_field), 1);
+    float_chunk.append_float32(0, 1.0);
+    assert_eq!(
+        tidb_chunk::compare::compare(float_chunk.get_row(0), 0, &Datum::Float32(1.000_000_01)),
+        Ordering::Equal,
+    );
+    assert_eq!(
+        compare_one(
+            FieldType::new(FieldTypeCode::Double),
+            |chunk| chunk.append_float64(0, f64::NAN),
+            Datum::Real(1.0),
+        ),
+        Ordering::Less,
+        "Go orders NaN before every non-NaN",
+    );
+
+    let mut string = Datum::Null;
+    string.set_string(b"A".to_vec(), Collation::Utf8Mb4Bin);
+    assert_eq!(
+        compare_one(
+            FieldType::new(FieldTypeCode::Varchar),
+            |chunk| chunk.append_string(0, "A "),
+            string,
+        ),
+        Ordering::Equal,
+        "the datum's collation controls string comparison",
+    );
+    assert_eq!(
+        compare_one(
+            FieldType::new(FieldTypeCode::Blob),
+            |chunk| chunk.append_bytes(0, &[0, 1]),
+            Datum::Bytes(vec![1]),
+        ),
+        Ordering::Less,
+    );
+    for datum in [
+        Datum::BinaryLiteral(BinaryLiteral::from(vec![1])),
+        Datum::Bit(BinaryLiteral::from(vec![1])),
+    ] {
+        assert_eq!(
+            compare_one(
+                FieldType::new(FieldTypeCode::Bit),
+                |chunk| chunk.append_bytes(0, &[0, 1]),
+                datum,
+            ),
+            Ordering::Less,
+            "Compare uses raw bytes for literal and BIT datums",
+        );
+    }
+
+    assert_eq!(
+        compare_one(
+            FieldType::new(FieldTypeCode::NewDecimal),
+            |chunk| chunk.append_my_decimal(0, &decimal("1.25")),
+            Datum::Decimal(Decimal::from_literal("1.250")),
+        ),
+        Ordering::Equal,
+    );
+    assert_eq!(
+        compare_one(
+            FieldType::new(FieldTypeCode::Duration),
+            |chunk| chunk.append_duration(0, duration_secs(1)),
+            Datum::Duration(duration_secs(2)),
+        ),
+        Ordering::Less,
+    );
+    assert_eq!(
+        compare_one(
+            FieldType::new(FieldTypeCode::Enum),
+            |chunk| chunk.append_enum(0, &MysqlEnum::new("z", 2)),
+            Datum::Enum(MysqlEnum::new("a", 2), Collation::Utf8Mb4Bin),
+        ),
+        Ordering::Equal,
+        "ENUM compares its numeric value, not its name",
+    );
+    assert_eq!(
+        compare_one(
+            FieldType::new(FieldTypeCode::Set),
+            |chunk| chunk.append_set(0, &MysqlSet::new("z", 2)),
+            Datum::Set(MysqlSet::new("a", 2), Collation::Utf8Mb4Bin),
+        ),
+        Ordering::Equal,
+        "SET compares its numeric value, not its name",
+    );
+
+    let json =
+        BinaryJSON::from_typed_value(&BinaryJSONValue::Int64(7)).expect("an integer is valid JSON");
+    assert_eq!(
+        compare_one(
+            FieldType::new(FieldTypeCode::Json),
+            |chunk| chunk.append_json(0, &json),
+            Datum::Json(json.clone()),
+        ),
+        Ordering::Equal,
+    );
+    assert_eq!(
+        compare_one(
+            vector_field,
+            |chunk| {
+                chunk.append_vector_float32(0, &VectorFloat32::must_create(vec![1.0, 2.0]));
+            },
+            Datum::VectorFloat32(VectorFloat32::must_create(vec![1.0, 3.0])),
+        ),
+        Ordering::Less,
+    );
+    assert_eq!(
+        compare_one(
+            FieldType::new(FieldTypeCode::Datetime),
+            |chunk| chunk.append_time(0, datetime(2000, 1, 1, 0, 0, 0)),
+            Datum::Time(datetime(2001, 1, 1, 0, 0, 0)),
+        ),
+        Ordering::Less,
+    );
+    assert_eq!(
+        compare_one(
+            FieldType::new(FieldTypeCode::Blob),
+            |chunk| chunk.append_bytes(0, &[9]),
+            Datum::Raw(vec![0]),
+        ),
+        Ordering::Equal,
+        "KindRaw takes Go Compare's default equal path",
+    );
+
+    let int_field = FieldType::new(FieldTypeCode::LongLong);
+    let mut nullable = Chunk::new_with_capacity(std::slice::from_ref(&int_field), 2);
+    nullable.append_null(0);
+    nullable.append_int64(0, 1);
+    assert_eq!(
+        tidb_chunk::compare::compare(nullable.get_row(0), 0, &Datum::Null),
+        Ordering::Equal,
+    );
+    assert_eq!(
+        tidb_chunk::compare::compare(nullable.get_row(1), 0, &Datum::Null),
+        Ordering::Greater,
+    );
+    assert_eq!(
+        tidb_chunk::compare::compare(nullable.get_row(0), 0, &Datum::MinNotNull),
+        Ordering::Less,
+    );
+    assert_eq!(
+        tidb_chunk::compare::compare(nullable.get_row(1), 0, &Datum::MinNotNull),
+        Ordering::Greater,
+    );
+    assert_eq!(
+        tidb_chunk::compare::compare(nullable.get_row(1), 0, &Datum::MaxValue),
+        Ordering::Less,
+    );
+
+    let mut bounds = Chunk::new_with_capacity(std::slice::from_ref(&int_field), 4);
+    for value in [1, 3, 3, 5] {
+        bounds.append_int64(0, value);
+    }
+    assert_eq!(
+        tidb_chunk::chunk::Chunk::lower_bound(&bounds, 0, &Datum::Int(3)),
+        (1, true),
+    );
+    assert_eq!(
+        tidb_chunk::chunk::Chunk::upper_bound(&bounds, 0, &Datum::Int(3)),
+        3,
+    );
+
+    pkg_util_chunk_fixture_observation::emit(
+        "CHUNK-COMPARE-TYPED-DATUM",
+        "Rust preserves every typed comparison contract; Go's opaque KindInterface is intentionally excluded rather than adding an untyped GoAny box.",
+        &[
+            (
+                "raw-default-equal",
+                "Datum::Raw([0]) against a nonmatching chunk cell",
+                "Ordering::Equal matches Go Compare's default arm",
+            ),
+            (
+                "opaque-interface-excluded",
+                "Go types.KindInterface",
+                "the Rust Datum enum has no opaque interface variant; SQL comparison callers remain typed",
+            ),
+        ],
+    );
 }
