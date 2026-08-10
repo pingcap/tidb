@@ -26,7 +26,8 @@ use tidb_proto::{
 
 use crate::lock::{
     decode_blocking_lock_observation, pessimistic_prewrite_recovery_enabled,
-    resolve_blocking_locks, BlockingLock, LockAdmissionError, LockRecoveryClient, TimestampSource,
+    resolve_blocking_locks, BlockingLock, LockAdmissionError, LockRecoveryClient,
+    LockRecoveryError, TimestampSource,
 };
 use crate::region::RegionRecoveryLoader;
 use crate::rpc::UnaryCallContext;
@@ -249,10 +250,8 @@ where
             call,
             &self.timestamps,
         )
-        .map_err(|error| TransactionCause::Lock {
-            key: eligible_locks[0].key().to_vec(),
-            detail: format!("Prewrite lock recovery failed: {error}"),
-        })? {
+        .map_err(|error| prewrite_lock_recovery_cause(eligible_locks[0].key(), error))?
+        {
             recovery if !recovery.is_alive() => Ok(()),
             recovery if alive_retry_delay(recovery.ttl) <= call.timeout() => {
                 wait_with_call(call, alive_retry_delay(recovery.ttl))?;
@@ -266,6 +265,24 @@ where
                 ),
             }),
         }
+    }
+}
+
+/// Keeps a region route failure visible as a retryable transaction error. A
+/// lock resolver can fail because the route for its recovery RPC is stale;
+/// collapsing that into `TransactionCause::Lock` makes the SQL layer report
+/// 1105 and prevents the autocommit replay from refreshing the route.
+fn prewrite_lock_recovery_cause(key: &[u8], error: LockRecoveryError) -> TransactionCause {
+    match error {
+        LockRecoveryError::RegionError(detail) => TransactionCause::Region {
+            detail: format!(
+                "Prewrite lock recovery failed: lock RPC returned region error: {detail}"
+            ),
+        },
+        other => TransactionCause::Lock {
+            key: key.to_vec(),
+            detail: format!("Prewrite lock recovery failed: {other}"),
+        },
     }
 }
 
@@ -358,5 +375,34 @@ impl AttemptedProtocol {
             self.use_async_commit = false;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::prewrite_lock_recovery_cause;
+    use crate::lock::LockRecoveryError;
+    use crate::transaction::TransactionCause;
+
+    #[test]
+    fn region_failures_during_lock_recovery_remain_region_causes() {
+        let cause = prewrite_lock_recovery_cause(
+            b"k",
+            LockRecoveryError::RegionError("epoch is stale".to_owned()),
+        );
+        assert!(
+            matches!(cause, TransactionCause::Region { detail } if detail.contains("epoch is stale"))
+        );
+    }
+
+    #[test]
+    fn non_region_lock_recovery_failures_keep_the_lock_cause() {
+        let cause = prewrite_lock_recovery_cause(
+            b"k",
+            LockRecoveryError::KeyError("primary mismatch".to_owned()),
+        );
+        assert!(
+            matches!(cause, TransactionCause::Lock { key, detail } if key == b"k" && detail.contains("primary mismatch"))
+        );
     }
 }
