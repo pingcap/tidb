@@ -128,6 +128,7 @@
 
 use std::collections::BTreeMap;
 
+use tidb_chunk::codec::estimate_type_width;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_planner::cardinality::pseudo::{
     pseudo_row_count_by_index_ranges, pseudo_row_count_by_scalar_ranges, pseudo_selectivity,
@@ -395,11 +396,7 @@ fn estimator_options() -> EstimatorOptions {
 pub(crate) fn schema_avg_row_size(types: &[FieldType]) -> f64 {
     let columns: Vec<RowSizeColumn> = types
         .iter()
-        .map(|field_type| {
-            RowSizeColumn::without_stats(
-                row_size_type(field_type).estimate_width(field_type.flen()),
-            )
-        })
+        .map(|field_type| RowSizeColumn::without_stats(estimate_type_width(field_type) as f64))
         .collect();
     tidb_planner::plan_cost_ver2::plan_avg_row_size(&columns, None)
 }
@@ -407,7 +404,7 @@ pub(crate) fn schema_avg_row_size(types: &[FieldType]) -> f64 {
 /// Go `getAvgRowSize`'s per-column input for one table column.
 fn row_size_column(column: &KvColumn, stats: Option<&TableStatistics>) -> RowSizeColumn {
     let kind = row_size_type(&column.field_type);
-    let width = kind.estimate_width(column.field_type.flen());
+    let width = estimate_type_width(&column.field_type) as f64;
     match stats.and_then(|stats| stats.columns.get(&column.id)) {
         Some(column_stats) => RowSizeColumn::with_stats(
             RowSizeColumnStats::new(
@@ -433,7 +430,7 @@ fn row_size_type(field_type: &FieldType) -> RowSizeType {
         FieldTypeCode::Float => RowSizeType::Float,
         FieldTypeCode::Double => RowSizeType::Double,
         FieldTypeCode::Duration => RowSizeType::Duration,
-        FieldTypeCode::Date | FieldTypeCode::NewDate => RowSizeType::Date,
+        FieldTypeCode::Date => RowSizeType::Date,
         FieldTypeCode::Datetime => RowSizeType::Datetime,
         FieldTypeCode::Timestamp => RowSizeType::Timestamp,
         FieldTypeCode::Tiny => RowSizeType::Tiny,
@@ -446,6 +443,7 @@ fn row_size_type(field_type: &FieldType) -> RowSizeType {
         FieldTypeCode::Bit => RowSizeType::Bit,
         FieldTypeCode::Set => RowSizeType::Set,
         FieldTypeCode::NewDecimal => RowSizeType::Decimal,
+        FieldTypeCode::NewDate => RowSizeType::Variable,
         _ => RowSizeType::Variable,
     }
 }
@@ -1839,6 +1837,12 @@ mod tests {
             origin_default: None,
             generated: None,
         }
+    }
+
+    #[test]
+    fn new_date_uses_chunk_estimate_type_width() {
+        let field_type = FieldType::new(FieldTypeCode::NewDate);
+        assert_eq!(schema_avg_row_size(&[field_type]), 32.0);
     }
 
     /// Go `isIndexColsCoveringCol`: a key part that stores only a PREFIX of

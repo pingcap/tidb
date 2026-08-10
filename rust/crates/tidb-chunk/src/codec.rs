@@ -25,14 +25,153 @@
 //! incremental `Decoder` that drains an intermediate decoded chunk in
 //! `RequiredRows` batches rounded to bitmap-byte boundaries.
 //!
-//! Note the type-width helpers that Go also keeps in this file: `getFixedLen`/
-//! `GetFixedLen` is [`crate::column::get_fixed_len`], and `EstimateTypeWidth`
-//! is `tidb_planner::cardinality::row_size::RowSizeType::estimate_width`.
+//! The accepted type-width helpers remain owned here as well. Column storage
+//! shares [`get_fixed_len`] with the codec, while [`estimate_type_width`]
+//! supplies the planner's type-only fallback without losing exact field-type
+//! distinctions such as `NewDate` versus `Date`.
 
 use crate::chunk::Chunk;
-use crate::column::{get_fixed_len, Column, VAR_ELEM_LEN};
+use crate::column::Column;
 use crate::shared_bytes::SharedBytes;
+use std::error::Error;
+use std::fmt;
 use tidb_datatype::FieldType;
+
+pub use crate::column::{get_fixed_len, VAR_ELEM_LEN};
+
+/// Go `EstimateTypeWidth`: estimate one field's average value width from its
+/// exact chunk representation and declared length.
+#[must_use]
+pub fn estimate_type_width(field_type: &FieldType) -> i64 {
+    let fixed = get_fixed_len(field_type);
+    if fixed != VAR_ELEM_LEN {
+        return fixed;
+    }
+
+    let declared = field_type.flen();
+    if declared <= 0 {
+        return 32;
+    }
+    if declared <= 32 {
+        return declared;
+    }
+    if declared < 1_000 {
+        return 32 + (declared - 32) / 2;
+    }
+    32 + (1_000 - 32) / 2
+}
+
+/// A malformed TypeChunk wire image rejected by the checked codec boundary.
+///
+/// Source-shaped [`Codec::decode`] and [`Codec::decode_to_chunk`] still panic
+/// for malformed trusted input. Network consumers use the checked method so a
+/// bad response becomes a normal query error instead of unwinding the server.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CodecDecodeError {
+    /// The image ended before one encoded section was complete.
+    Truncated {
+        /// Zero-based encoded column ordinal.
+        ordinal: usize,
+        /// Column section being decoded.
+        section: &'static str,
+        /// Bytes required for that section.
+        needed: usize,
+        /// Bytes still present in the image.
+        remaining: usize,
+    },
+    /// The image contains more encoded columns than declared field types.
+    MissingFieldType {
+        /// Zero-based encoded column ordinal.
+        ordinal: usize,
+        /// Number of field types supplied to the codec.
+        available: usize,
+    },
+    /// A declared null count exceeded the number of rows in the column.
+    InvalidNullCount {
+        /// Zero-based encoded column ordinal.
+        ordinal: usize,
+        /// Declared null count.
+        null_count: usize,
+        /// Declared row count.
+        rows: usize,
+    },
+    /// A variable-column offset was negative, did not begin at zero, or moved
+    /// backwards.
+    InvalidOffset {
+        /// Zero-based encoded column ordinal.
+        ordinal: usize,
+        /// Index within the offset table.
+        offset_index: usize,
+        /// Invalid signed offset.
+        value: i64,
+    },
+    /// A variable-column final offset could not fit the target address space.
+    DataLengthOutOfRange {
+        /// Zero-based encoded column ordinal.
+        ordinal: usize,
+        /// Signed final offset read from the image.
+        length: i64,
+    },
+    /// Fixed-width row count multiplication overflowed `usize`.
+    DataLengthOverflow {
+        /// Zero-based encoded column ordinal.
+        ordinal: usize,
+        /// Encoded row count.
+        rows: usize,
+        /// Fixed bytes per row.
+        width: usize,
+    },
+}
+
+impl fmt::Display for CodecDecodeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Truncated {
+                ordinal,
+                section,
+                needed,
+                remaining,
+            } => write!(
+                f,
+                "TypeChunk column {ordinal} {section} needs {needed} bytes, but only {remaining} remain"
+            ),
+            Self::MissingFieldType { ordinal, available } => write!(
+                f,
+                "TypeChunk column {ordinal} has no field type; only {available} were supplied"
+            ),
+            Self::InvalidNullCount {
+                ordinal,
+                null_count,
+                rows,
+            } => write!(
+                f,
+                "TypeChunk column {ordinal} declares {null_count} NULLs for {rows} rows"
+            ),
+            Self::InvalidOffset {
+                ordinal,
+                offset_index,
+                value,
+            } => write!(
+                f,
+                "TypeChunk column {ordinal} has invalid offset {value} at index {offset_index}"
+            ),
+            Self::DataLengthOutOfRange { ordinal, length } => write!(
+                f,
+                "TypeChunk column {ordinal} final offset {length} does not fit this target"
+            ),
+            Self::DataLengthOverflow {
+                ordinal,
+                rows,
+                width,
+            } => write!(
+                f,
+                "TypeChunk column {ordinal} data length overflows for {rows} rows of width {width}"
+            ),
+        }
+    }
+}
+
+impl Error for CodecDecodeError {}
 
 /// Go `chunk.Codec`: encodes and decodes a [`Chunk`] as bytes.
 ///
@@ -98,42 +237,107 @@ impl Codec {
     /// # Panics
     /// Panics on a truncated image, as Go does.
     pub fn decode_to_chunk<'a>(&self, buffer: &'a [u8], chunk: &mut Chunk) -> &'a [u8] {
+        self.try_decode_to_chunk(buffer, chunk)
+            .unwrap_or_else(|error| panic!("{error}"))
+    }
+
+    /// Checked [`Self::decode_to_chunk`] for untrusted response boundaries.
+    ///
+    /// Exactly the existing columns are decoded and the unconsumed suffix is
+    /// returned. This is the source `DecodeToChunk` contract; callers decide
+    /// whether the suffix belongs to a higher-level frame.
+    pub fn try_decode_to_chunk<'a>(
+        &self,
+        buffer: &'a [u8],
+        chunk: &mut Chunk,
+    ) -> Result<&'a [u8], CodecDecodeError> {
         let mut remained = buffer;
         for ordinal in 0..chunk.columns.len() {
             let mut column = chunk.columns[ordinal].write();
-            remained = self.decode_column(remained, &mut column, ordinal);
+            remained = self.try_decode_column(remained, &mut column, ordinal)?;
         }
-        remained
+        Ok(remained)
     }
 
     /// Go `decodeColumn`.
     fn decode_column<'a>(&self, buffer: &'a [u8], column: &mut Column, ordinal: usize) -> &'a [u8] {
-        let length = u32::from_le_bytes(buffer[..4].try_into().expect("four bytes")) as usize;
-        let null_count = u32::from_le_bytes(buffer[4..8].try_into().expect("four bytes")) as usize;
-        let mut buffer = &buffer[8..];
+        self.try_decode_column(buffer, column, ordinal)
+            .unwrap_or_else(|error| panic!("{error}"))
+    }
+
+    fn try_decode_column<'a>(
+        &self,
+        buffer: &'a [u8],
+        column: &mut Column,
+        ordinal: usize,
+    ) -> Result<&'a [u8], CodecDecodeError> {
+        let field_type = self
+            .col_types
+            .get(ordinal)
+            .ok_or(CodecDecodeError::MissingFieldType {
+                ordinal,
+                available: self.col_types.len(),
+            })?;
+        let mut buffer = buffer;
+        let header = take_prefix(&mut buffer, 8, ordinal, "header")?;
+        let length = u32::from_le_bytes(header[..4].try_into().expect("four bytes")) as usize;
+        let null_count = u32::from_le_bytes(header[4..8].try_into().expect("four bytes")) as usize;
+        if null_count > length {
+            return Err(CodecDecodeError::InvalidNullCount {
+                ordinal,
+                null_count,
+                rows: length,
+            });
+        }
         column.length = length;
 
         if null_count > 0 {
             let num_null_bitmap_bytes = length.div_ceil(8);
-            column.null_bitmap = buffer[..num_null_bitmap_bytes].to_vec();
-            buffer = &buffer[num_null_bitmap_bytes..];
+            column.null_bitmap =
+                take_prefix(&mut buffer, num_null_bitmap_bytes, ordinal, "null bitmap")?.to_vec();
         } else {
             set_all_not_null(column);
         }
 
-        let num_fixed_bytes = get_fixed_len(&self.col_types[ordinal]);
+        let num_fixed_bytes = get_fixed_len(field_type);
         let num_data_bytes;
         if num_fixed_bytes == VAR_ELEM_LEN {
             let num_offset_bytes = (length + 1) * 8;
-            column.offsets = buffer[..num_offset_bytes]
+            let offset_bytes = take_prefix(&mut buffer, num_offset_bytes, ordinal, "offset table")?;
+            column.offsets = offset_bytes
                 .chunks_exact(8)
                 .map(|word| i64::from_ne_bytes(word.try_into().expect("eight bytes")))
                 .collect();
-            buffer = &buffer[num_offset_bytes..];
-            num_data_bytes = column.offsets[length] as usize;
+            let mut previous = 0_i64;
+            for (offset_index, &value) in column.offsets.iter().enumerate() {
+                if value < 0
+                    || (offset_index == 0 && value != 0)
+                    || (offset_index > 0 && value < previous)
+                {
+                    return Err(CodecDecodeError::InvalidOffset {
+                        ordinal,
+                        offset_index,
+                        value,
+                    });
+                }
+                previous = value;
+            }
+            let final_offset = column.offsets[length];
+            num_data_bytes = usize::try_from(final_offset).map_err(|_| {
+                CodecDecodeError::DataLengthOutOfRange {
+                    ordinal,
+                    length: final_offset,
+                }
+            })?;
         } else {
             let num_fixed_bytes = num_fixed_bytes as usize;
-            num_data_bytes = num_fixed_bytes * length;
+            num_data_bytes = num_fixed_bytes.checked_mul(length).ok_or(
+                CodecDecodeError::DataLengthOverflow {
+                    ordinal,
+                    rows: length,
+                    width: num_fixed_bytes,
+                },
+            )?;
             // Go grows `elemBuf` only when it is too small to hold one element;
             // an already-typed column (the `DecodeToChunk` case) keeps its own.
             if column.elem_buffer_capacity() < num_fixed_bytes {
@@ -141,14 +345,35 @@ impl Codec {
             }
         }
 
-        column.data = SharedBytes::from_vec(buffer[..num_data_bytes].to_vec());
+        column.data = SharedBytes::from_vec(
+            take_prefix(&mut buffer, num_data_bytes, ordinal, "data")?.to_vec(),
+        );
         // Go points the column at the gRPC response's own memory and sets
         // `avoidReusing` so the allocator will not retain it. This port copies,
         // but keeps the flag: it is part of the decoded column's state and Go's
         // allocator reads it.
         column.avoid_reusing = true;
-        &buffer[num_data_bytes..]
+        Ok(buffer)
     }
+}
+
+fn take_prefix<'a>(
+    buffer: &mut &'a [u8],
+    length: usize,
+    ordinal: usize,
+    section: &'static str,
+) -> Result<&'a [u8], CodecDecodeError> {
+    if buffer.len() < length {
+        return Err(CodecDecodeError::Truncated {
+            ordinal,
+            section,
+            needed: length,
+            remaining: buffer.len(),
+        });
+    }
+    let (prefix, suffix) = buffer.split_at(length);
+    *buffer = suffix;
+    Ok(prefix)
 }
 
 /// Go `Decoder`: incrementally drains one decoded coprocessor chunk into
@@ -579,6 +804,80 @@ mod tests {
         let renewed = decoded.renew_with_capacity(7, 9);
         assert_eq!(renewed.capacity(), 0);
         assert_eq!(renewed.required_rows(), 0);
+    }
+
+    #[test]
+    fn checked_decode_reports_remote_truncation_and_returns_the_suffix() {
+        let fields = vec![ft(C::LongLong)];
+        let mut target = Chunk::new_empty(&fields);
+        assert_eq!(
+            Codec::new(fields.clone()).try_decode_to_chunk(&[1, 2, 3], &mut target),
+            Err(CodecDecodeError::Truncated {
+                ordinal: 0,
+                section: "header",
+                needed: 8,
+                remaining: 3,
+            })
+        );
+
+        let mut invalid_null_count = Vec::new();
+        invalid_null_count.extend_from_slice(&1_u32.to_le_bytes());
+        invalid_null_count.extend_from_slice(&2_u32.to_le_bytes());
+        assert_eq!(
+            Codec::new(fields.clone()).try_decode_to_chunk(&invalid_null_count, &mut target),
+            Err(CodecDecodeError::InvalidNullCount {
+                ordinal: 0,
+                null_count: 2,
+                rows: 1,
+            })
+        );
+
+        let variable_fields = vec![ft(C::Varchar)];
+        let mut invalid_offsets = Vec::new();
+        invalid_offsets.extend_from_slice(&1_u32.to_le_bytes());
+        invalid_offsets.extend_from_slice(&0_u32.to_le_bytes());
+        invalid_offsets.extend_from_slice(&0_i64.to_ne_bytes());
+        invalid_offsets.extend_from_slice(&(-1_i64).to_ne_bytes());
+        let mut variable_target = Chunk::new_empty(&variable_fields);
+        assert_eq!(
+            Codec::new(variable_fields).try_decode_to_chunk(&invalid_offsets, &mut variable_target),
+            Err(CodecDecodeError::InvalidOffset {
+                ordinal: 0,
+                offset_index: 1,
+                value: -1,
+            })
+        );
+
+        let (_, source) = int64_with_null();
+        let mut image = Codec::new(fields.clone()).encode(&source);
+        image.extend_from_slice(&[0xde, 0xad]);
+        let mut target = Chunk::new_empty(&fields);
+        let suffix = Codec::new(fields)
+            .try_decode_to_chunk(&image, &mut target)
+            .unwrap();
+        assert_eq!(suffix, [0xde, 0xad]);
+        assert_eq!(target.num_rows(), source.num_rows());
+    }
+
+    #[test]
+    fn estimate_type_width_uses_the_exact_chunk_type() {
+        let fixed = FieldType::new(C::LongLong).with_flen(2_000);
+        assert_eq!(estimate_type_width(&fixed), 8);
+
+        for (flen, expected) in [
+            (-1, 32),
+            (31, 31),
+            (32, 32),
+            (33, 32),
+            (999, 515),
+            (2_000, 516),
+        ] {
+            let variable = FieldType::new(C::Varchar).with_flen(flen);
+            assert_eq!(estimate_type_width(&variable), expected, "flen {flen}");
+        }
+
+        assert_eq!(estimate_type_width(&FieldType::new(C::Date)), 8);
+        assert_eq!(estimate_type_width(&FieldType::new(C::NewDate)), 32);
     }
 
     fn decoder_source(rows: usize) -> (Vec<FieldType>, Chunk) {

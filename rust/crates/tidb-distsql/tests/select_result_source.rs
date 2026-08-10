@@ -17,8 +17,10 @@
 use std::collections::BTreeMap;
 
 use prost::Message;
+use tidb_chunk::chunk::Chunk as DecodedChunk;
+use tidb_chunk::codec::Codec as ChunkCodec;
 use tidb_codec::{VALUE_COMPACT_BYTES_FLAG, VALUE_VARINT_FLAG};
-use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+use tidb_datatype::{BinaryJSON, Datum, FieldType, FieldTypeCode, VectorFloat32};
 use tidb_distsql::{
     select_with_runtime_stats, ChannelIter, ChannelIterError, ResponseChannel,
     ResponseChannelError, ResponseRuntimeStats, SelectInput, StoreType, WarningClass,
@@ -300,6 +302,70 @@ fn sel_resp_channel_iter_reads_default_and_type_chunk_rows_across_empty_chunks()
             assert_eq!(actual[1], Datum::new_int(value));
         }
     }
+}
+
+#[test]
+fn type_chunk_decode_to_chunk_ignores_the_unconsumed_suffix() {
+    let mut chunk = type_chunk(&[vec![Cell::Int(7)]]);
+    chunk
+        .rows_data
+        .get_or_insert_default()
+        .extend_from_slice(&[0xde, 0xad, 0xbe, 0xef]);
+    let response = SelectResponse {
+        encode_type: Some(EncodeType::TypeChunk as i32),
+        chunks: vec![chunk],
+        ..Default::default()
+    };
+    let mut iter = response_source([response]).into_select_iter(
+        vec![int_type()],
+        Vec::new(),
+        WarningCollector::new(),
+    );
+
+    assert_eq!(
+        iter.next_row().unwrap().unwrap().row,
+        vec![Datum::new_int(7)]
+    );
+    assert_eq!(iter.next_row().unwrap(), None);
+}
+
+#[test]
+fn type_chunk_rows_use_the_complete_chunk_datum_domain() {
+    let fields = vec![
+        FieldType::new(FieldTypeCode::Json),
+        FieldType::new(FieldTypeCode::VectorFloat32),
+    ];
+    let json = BinaryJSON::parse(r#"{"n":7}"#).unwrap();
+    let vector = VectorFloat32::must_create(vec![-1.25, 0.0, 3.5]);
+    let mut decoded = DecodedChunk::new_with_capacity(&fields, 2);
+    decoded.append_json(0, &json);
+    decoded.append_vector_float32(1, &vector);
+    decoded.append_null(0);
+    decoded.append_null(1);
+
+    let response = SelectResponse {
+        encode_type: Some(EncodeType::TypeChunk as i32),
+        chunks: vec![Chunk {
+            rows_data: Some(ChunkCodec::new(fields.clone()).encode(&decoded)),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let mut iter = response_source([response]).into_select_iter(
+        fields,
+        Vec::new(),
+        WarningCollector::new(),
+    );
+
+    assert_eq!(
+        iter.next_row().unwrap().unwrap().row,
+        vec![Datum::Json(json), Datum::VectorFloat32(vector)]
+    );
+    assert_eq!(
+        iter.next_row().unwrap().unwrap().row,
+        vec![Datum::Null, Datum::Null]
+    );
+    assert_eq!(iter.next_row().unwrap(), None);
 }
 
 #[test]

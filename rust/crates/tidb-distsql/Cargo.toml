@@ -14,6 +14,7 @@ build = "../../scripts/aggregate-tests.rs"
 
 [dependencies]
 prost.workspace = true
+tidb-chunk = { path = "../tidb-chunk" }
 tidb-codec = { path = "../tidb-codec" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-proto = { path = "../tidb-proto" }

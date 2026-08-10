@@ -1593,6 +1593,7 @@ name = "tidb-distsql"
 version = "0.0.0"
 dependencies = [
  "prost",
+ "tidb-chunk",
  "tidb-codec",
  "tidb-datatype",
  "tidb-proto",

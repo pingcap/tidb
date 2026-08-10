@@ -26,9 +26,10 @@ use std::collections::VecDeque;
 use std::error::Error;
 use std::fmt;
 
-use tidb_codec::ColumnLayout;
+use tidb_chunk::chunk::Chunk as DecodedChunk;
+use tidb_chunk::codec::Codec as ChunkCodec;
 use tidb_datatype::{Datum, FieldType};
-use tidb_proto::{Chunk, EncodeType, ExecutorExecutionSummary, SelectResponse};
+use tidb_proto::{Chunk as ResponseChunk, EncodeType, ExecutorExecutionSummary, SelectResponse};
 
 use super::channel_iter::{ChannelIter, ChannelIterError};
 use super::chunk_decode::{decode_chunk, decode_select_response, ChunkDecodeError};
@@ -525,10 +526,51 @@ struct RuntimeStatsBinding {
 struct SelectResponseChannel {
     channel_index: usize,
     raw_encode_type: Option<i32>,
-    chunks: Vec<Chunk>,
+    chunks: Vec<ResponseChunk>,
     field_types: Vec<FieldType>,
     next_chunk_index: usize,
-    decoded: Option<ChannelIter<Vec<Datum>>>,
+    decoded: Option<DecodedChannel>,
+}
+
+#[derive(Debug)]
+enum DecodedChannel {
+    Rows(ChannelIter<Vec<Datum>>),
+    TypeChunk {
+        chunk: DecodedChunk,
+        next_row_index: usize,
+    },
+}
+
+impl DecodedChannel {
+    fn next_row(
+        &mut self,
+        channel_index: usize,
+        field_types: &[FieldType],
+    ) -> Result<Option<super::channel_iter::ChannelRow<Vec<Datum>>>, ResponseChannelError> {
+        match self {
+            Self::Rows(rows) => rows.next_row().map_err(map_channel_error),
+            Self::TypeChunk {
+                chunk,
+                next_row_index,
+            } => {
+                if *next_row_index >= chunk.num_rows() {
+                    return Ok(None);
+                }
+                let row = chunk.get_row(*next_row_index).get_datum_row(field_types);
+                *next_row_index += 1;
+                Ok(Some(super::channel_iter::ChannelRow::new(
+                    channel_index,
+                    row,
+                )))
+            }
+        }
+    }
+
+    fn close(&mut self) {
+        if let Self::Rows(rows) = self {
+            rows.close();
+        }
+    }
 }
 
 impl SelectResponseChannel {
@@ -537,7 +579,7 @@ impl SelectResponseChannel {
     ) -> Result<Option<super::channel_iter::ChannelRow<Vec<Datum>>>, ResponseChannelError> {
         loop {
             if let Some(decoded) = &mut self.decoded {
-                if let Some(row) = decoded.next_row().map_err(map_channel_error)? {
+                if let Some(row) = decoded.next_row(self.channel_index, &self.field_types)? {
                     return Ok(Some(row));
                 }
                 self.decoded = None;
@@ -548,7 +590,7 @@ impl SelectResponseChannel {
             let decoded = decode_channel(
                 self.channel_index,
                 self.raw_encode_type,
-                std::slice::from_ref(chunk),
+                chunk,
                 &self.field_types,
             )?;
             self.next_chunk_index += 1;
@@ -839,66 +881,44 @@ impl SelectResponseIter {
 fn decode_channel(
     channel_index: usize,
     raw_encode_type: Option<i32>,
-    chunks: &[Chunk],
+    chunk: &ResponseChunk,
     field_types: &[FieldType],
-) -> Result<ChannelIter<Vec<Datum>>, ResponseChannelError> {
+) -> Result<DecodedChannel, ResponseChannelError> {
     let raw_encode_type = raw_encode_type.unwrap_or(EncodeType::TypeDefault as i32);
     let encode_type = EncodeType::try_from(raw_encode_type).map_err(|_| {
         ResponseChannelError::RowDecode(format!("invalid tipb encode type {raw_encode_type}"))
     })?;
-    let mut decoded_chunks = Vec::with_capacity(chunks.len());
-    for chunk in chunks {
-        if chunk.rows_data.as_deref().unwrap_or_default().is_empty() {
-            decoded_chunks.push(Vec::new());
-            continue;
-        }
-        let raw = decode_chunk(chunk, encode_type).map_err(map_chunk_error)?;
-        let rows = match encode_type {
-            EncodeType::TypeDefault => raw
+    if chunk.rows_data.as_deref().unwrap_or_default().is_empty() {
+        return Ok(DecodedChannel::Rows(ChannelIter::new(
+            channel_index,
+            [Vec::new()],
+        )));
+    }
+    let raw = decode_chunk(chunk, encode_type).map_err(map_chunk_error)?;
+    match encode_type {
+        EncodeType::TypeDefault => {
+            let rows = raw
                 .decode_default_datums(field_types.len())
-                .map_err(map_chunk_error)?,
-            EncodeType::TypeChunk => {
-                let layouts: Vec<_> = field_types
-                    .iter()
-                    .map(ColumnLayout::for_field_type)
-                    .collect();
-                let columnar = raw.decode_columnar(&layouts).map_err(map_chunk_error)?;
-                if !columnar.remainder.is_empty() {
-                    return Err(ResponseChannelError::RowDecode(format!(
-                        "TypeChunk channel has {} trailing bytes",
-                        columnar.remainder.len()
-                    )));
-                }
-                let typed = columnar
-                    .decode_datums(field_types)
-                    .map_err(map_chunk_error)?;
-                transpose_columns(typed.columns)?
-            }
-            EncodeType::TypeChBlock => {
-                return Err(ResponseChannelError::RowDecode(
-                    "TypeCHBlock row materialization is not implemented".to_owned(),
-                ));
-            }
-        };
-        decoded_chunks.push(rows);
-    }
-    Ok(ChannelIter::new(channel_index, decoded_chunks))
-}
-
-fn transpose_columns(columns: Vec<Vec<Datum>>) -> Result<Vec<Vec<Datum>>, ResponseChannelError> {
-    let row_count = columns.first().map_or(0, Vec::len);
-    if columns.iter().any(|column| column.len() != row_count) {
-        return Err(ResponseChannelError::RowDecode(
-            "TypeChunk columns have different row counts".to_owned(),
-        ));
-    }
-    let mut rows = vec![Vec::with_capacity(columns.len()); row_count];
-    for column in columns {
-        for (row, value) in rows.iter_mut().zip(column) {
-            row.push(value);
+                .map_err(map_chunk_error)?;
+            Ok(DecodedChannel::Rows(ChannelIter::new(
+                channel_index,
+                [rows],
+            )))
         }
+        EncodeType::TypeChunk => {
+            let mut decoded = DecodedChunk::new_empty(field_types);
+            let _unconsumed_suffix = ChunkCodec::new(field_types.to_vec())
+                .try_decode_to_chunk(raw.rows_data, &mut decoded)
+                .map_err(|error| ResponseChannelError::RowDecode(error.to_string()))?;
+            Ok(DecodedChannel::TypeChunk {
+                chunk: decoded,
+                next_row_index: 0,
+            })
+        }
+        EncodeType::TypeChBlock => Err(ResponseChannelError::RowDecode(
+            "TypeCHBlock row materialization is not implemented".to_owned(),
+        )),
     }
-    Ok(rows)
 }
 
 fn append_warning(collector: &WarningCollector, warning: Warning) {
