@@ -35,23 +35,3 @@ cargo test --offline --locked -j12 -p <affected-crate-one> -p <affected-crate-tw
 python3 <batch-generator-or-differential-check> --check
 git -C .. diff --check -- rust
 ```
-
-## Test-coverage inventory
-
-Measures which Go tests of a transcreated package have a Rust counterpart, so
-`AGENTS.md` non-negotiable 6 ("a claim includes every original test artifact")
-is checkable instead of assumed. Run from the repository root:
-
-```sh
-python3 rust/scripts/test-coverage-inventory.py           # rewrite the doc
-python3 rust/scripts/test-coverage-inventory.py --check   # fail if stale
-```
-
-It shells out to `rust/difftests/tools/go_test_declaration_inventory` for the
-Go side, so a working Go toolchain is required; pass `--cache <path>` to reuse
-that TSV across runs. Output is `docs/operations/test-coverage-inventory.md`
-(generated, do not hand-edit); the ranked gaps and the confidence accounting
-are hand-written in `docs/operations/test-coverage-gaps.md`.
-
-When a Go package is transcreated, add its `Mapping(...)` row to the script and
-regenerate.

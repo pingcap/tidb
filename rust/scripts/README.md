@@ -9,7 +9,6 @@ drift before a full workspace build.
 |---|---|---|
 | `check-source-size.sh` | has any source file grown past its recorded bound, or shrunk enough to retire its entry? | ~1s, no build |
 | `semantic-package-gate.py` | are accepted Go sources pinned and do their Rust semantic tests pass? | source check plus deduplicated tests |
-| `test-coverage-inventory.py` | how many Go tests still have no Rust counterpart, per package? | seconds with `--cache` |
 | `run-doctests.sh` | do the examples in `///` comments still compile, still pass, and still exist? | ~4s warm, needs the libs built |
 
 ### `semantic-package-gate.py` — semantic package gate
