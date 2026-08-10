@@ -12,28 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Complete transcreation of Go `pkg/util/prefetch` (`reader.go`).
+//! Background-prefetching reader for `pkg/util/prefetch`.
 //!
-//! A reader that prefetches from an underlying reader on a background thread,
-//! using two ping-pong buffers handed across an *unbuffered* rendezvous channel
-//! so that exactly one buffer is filled ahead of the consumer.
-//!
-//! Go/Rust idiom adaptations, all behavior-preserving:
-//! - Go's goroutine + `sync.WaitGroup` become a [`std::thread`] + `JoinHandle`.
-//! - Go's unbuffered `chan []byte` + `select { <-closedCh; bufCh<-buf }` become
-//!   a [`std::sync::mpsc::sync_channel`] of bound 0; cancellation is dropping the
-//!   receiver, which makes the producer's blocked `send` fail.
-//! - Go signals end-of-stream with an `io.EOF` *error*; Rust's [`Read`] signals
-//!   it with `Ok(0)`. The converted "`ErrUnexpectedEOF` at exactly `rangeSize`"
-//!   case therefore becomes a clean `Ok(0)`, while a genuine underlying
-//!   `UnexpectedEof` propagates as an `Err`.
-//! - Go reuses two ping-pong buffers; Rust hands ownership of a fresh `Vec` per
-//!   chunk across the channel. The rendezvous still fills exactly one buffer
-//!   ahead, so the observable prefetch depth is identical; only the allocation
-//!   is not reused.
-//! - Go's `io.ReadCloser.Close` returns the underlying `Close` error; Rust's
-//!   `Read` has no `Close`, so the underlying reader is dropped when the
-//!   producer thread ends and [`PrefetchReader::close`] returns `Ok(())`.
+//! A zero-capacity channel preserves the source's one-buffer-ahead contract.
+//! [`new_reader_with_close`] accepts the separate close operation needed by
+//! cancellable streams; [`new_reader`] is the convenience form for plain Rust
+//! [`Read`] values whose close operation is only cancellation and drop.
 
 use std::io::{self, Cursor, Read};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
@@ -131,6 +115,7 @@ pub struct PrefetchReader {
     cur: Option<Cursor<Vec<u8>>>,
     err: Arc<Mutex<Terminal>>,
     handle: Option<JoinHandle<()>>,
+    close_source: Option<Box<dyn FnOnce() -> io::Result<()> + Send>>,
     closed: bool,
 }
 
@@ -142,6 +127,23 @@ pub fn new_reader<R: Read + Send + 'static>(
     range_size: i64,
     prefetch_size: usize,
 ) -> PrefetchReader {
+    new_reader_with_close(reader, range_size, prefetch_size, || Ok(()))
+}
+
+/// Creates a prefetch reader whose close operation is invoked before the
+/// producer is joined. The callback may close a shared socket or response body
+/// to unblock an in-flight read, and its result is returned by
+/// [`PrefetchReader::close`].
+pub fn new_reader_with_close<R, C>(
+    reader: R,
+    range_size: i64,
+    prefetch_size: usize,
+    close_source: C,
+) -> PrefetchReader
+where
+    R: Read + Send + 'static,
+    C: FnOnce() -> io::Result<()> + Send + 'static,
+{
     let (sender, receiver) = sync_channel::<Vec<u8>>(0);
     let err = Arc::new(Mutex::new(Terminal::Pending));
     let shared = Arc::clone(&err);
@@ -153,6 +155,7 @@ pub fn new_reader<R: Read + Send + 'static>(
         cur: None,
         err,
         handle: Some(handle),
+        close_source: Some(Box::new(close_source)),
         closed: false,
     }
 }
@@ -164,6 +167,7 @@ impl PrefetchReader {
         if self.closed {
             return Ok(());
         }
+        let close_result = self.close_source.take().map_or(Ok(()), |close| close());
         // Dropping the receiver unblocks a producer waiting on `send` (the
         // equivalent of Go closing `closedCh`).
         self.receiver = None;
@@ -171,7 +175,7 @@ impl PrefetchReader {
             let _ = handle.join();
         }
         self.closed = true;
-        Ok(())
+        close_result
     }
 }
 
@@ -223,10 +227,10 @@ impl Drop for PrefetchReader {
 
 #[cfg(test)]
 mod tests {
-    use super::{new_reader, PrefetchReader};
+    use super::{new_reader, new_reader_with_close, PrefetchReader};
     use std::io::{Cursor, ErrorKind, Read};
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Arc;
+    use std::sync::{mpsc, Arc, Condvar, Mutex};
     use std::time::{Duration, Instant};
 
     fn eventually(cond: impl Fn() -> bool) {
@@ -302,6 +306,59 @@ mod tests {
         let source = Cursor::new(vec![0u8; 1024]);
         let mut r: PrefetchReader = new_reader(source, 1024, 2);
         assert!(r.close().is_ok());
+    }
+
+    #[test]
+    fn close_returns_the_source_error_once() {
+        let close_count = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&close_count);
+        let source = Cursor::new(vec![0u8; 1024]);
+        let mut reader = new_reader_with_close(source, 1024, 2, move || {
+            observed.fetch_add(1, Ordering::SeqCst);
+            Err(std::io::Error::other("source close failed"))
+        });
+
+        assert_eq!(
+            reader.close().unwrap_err().to_string(),
+            "source close failed"
+        );
+        assert_eq!(close_count.load(Ordering::SeqCst), 1);
+        assert!(reader.close().is_ok());
+        assert_eq!(close_count.load(Ordering::SeqCst), 1);
+    }
+
+    struct BlockingReader {
+        closed: Arc<(Mutex<bool>, Condvar)>,
+    }
+
+    impl Read for BlockingReader {
+        fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+            let (closed, wake) = &*self.closed;
+            let mut closed = closed.lock().unwrap();
+            while !*closed {
+                closed = wake.wait(closed).unwrap();
+            }
+            Ok(0)
+        }
+    }
+
+    #[test]
+    fn close_unblocks_an_inflight_source_read() {
+        let closed = Arc::new((Mutex::new(false), Condvar::new()));
+        let source = BlockingReader {
+            closed: Arc::clone(&closed),
+        };
+        let close_state = Arc::clone(&closed);
+        let mut reader = new_reader_with_close(source, 1, 2, move || {
+            let (closed, wake) = &*close_state;
+            *closed.lock().unwrap() = true;
+            wake.notify_all();
+            Ok(())
+        });
+        let (finished, result) = mpsc::sync_channel(0);
+        std::thread::spawn(move || finished.send(reader.close()).unwrap());
+
+        assert!(result.recv_timeout(Duration::from_secs(1)).unwrap().is_ok());
     }
 
     struct FragmentReader {
