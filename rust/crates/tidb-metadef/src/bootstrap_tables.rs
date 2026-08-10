@@ -38,6 +38,82 @@ pub struct BootstrapTable {
     pub create_sql: &'static str,
 }
 
+/// One incremental version of the DDL-owned `mysql.*` tables.
+///
+/// Go keeps this list separate from `systemTablesOfBaseNextGenVersion`: these
+/// tables are created before the ordinary bootstrap table set and each group
+/// advances `meta.DDLTableVersion` only after its tables exist.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VersionedDdlTables {
+    /// Go `meta.DDLTableVersion` (Base=1, MDL=2, Backfill=3, Notifier=4).
+    pub version: i64,
+    /// Tables introduced by this version, in descending reserved-ID order.
+    pub tables: &'static [BootstrapTable],
+}
+
+const DDL_JOB_TABLES: &[BootstrapTable] = &[
+    BootstrapTable {
+        id: TI_DBDDLJOB_TABLE_ID,
+        name: "tidb_ddl_job",
+        create_sql: CREATE_TI_DBDDLJOB_TABLE,
+    },
+    BootstrapTable {
+        id: TI_DBDDLREORG_TABLE_ID,
+        name: "tidb_ddl_reorg",
+        create_sql: CREATE_TI_DBREORG_TABLE,
+    },
+    BootstrapTable {
+        id: TI_DBDDLHISTORY_TABLE_ID,
+        name: "tidb_ddl_history",
+        create_sql: CREATE_TI_DBDDLHISTORY_TABLE,
+    },
+];
+
+const MDL_TABLES: &[BootstrapTable] = &[BootstrapTable {
+    id: TI_DBMDLINFO_TABLE_ID,
+    name: "tidb_mdl_info",
+    create_sql: CREATE_TI_DBMDLTABLE,
+}];
+
+const BACKFILL_TABLES: &[BootstrapTable] = &[
+    BootstrapTable {
+        id: TI_DBBACKGROUND_SUBTASK_TABLE_ID,
+        name: "tidb_background_subtask",
+        create_sql: CREATE_TI_DBBACKGROUND_SUBTASK_TABLE,
+    },
+    BootstrapTable {
+        id: TI_DBBACKGROUND_SUBTASK_HISTORY_TABLE_ID,
+        name: "tidb_background_subtask_history",
+        create_sql: CREATE_TI_DBBACKGROUND_SUBTASK_HISTORY_TABLE,
+    },
+];
+
+const DDL_NOTIFIER_TABLES: &[BootstrapTable] = &[BootstrapTable {
+    id: TI_DBDDLNOTIFIER_TABLE_ID,
+    name: "tidb_ddl_notifier",
+    create_sql: CREATE_TI_DBDDLNOTIFIER_TABLE,
+}];
+
+/// Go `ddlTableVersionTables`, in the order `InitDDLTables` applies it.
+pub const DDL_TABLE_VERSION_TABLES: &[VersionedDdlTables] = &[
+    VersionedDdlTables {
+        version: 1, // meta.BaseDDLTableVersion
+        tables: DDL_JOB_TABLES,
+    },
+    VersionedDdlTables {
+        version: 2, // meta.MDLTableVersion
+        tables: MDL_TABLES,
+    },
+    VersionedDdlTables {
+        version: 3, // meta.BackfillTableVersion
+        tables: BACKFILL_TABLES,
+    },
+    VersionedDdlTables {
+        version: 4, // meta.DDLNotifierTableVersion
+        tables: DDL_NOTIFIER_TABLES,
+    },
+];
+
 /// Go `systemTablesOfBaseNextGenVersion`.
 pub const BOOTSTRAP_TABLES: &[BootstrapTable] = &[
     BootstrapTable {
@@ -301,3 +377,61 @@ pub const BOOTSTRAP_TABLES: &[BootstrapTable] = &[
         create_sql: CREATE_TI_DBWORKLOAD_VALUES_TABLE,
     },
 ];
+
+#[cfg(test)]
+mod source_tests {
+    use std::collections::HashSet;
+
+    use super::*;
+
+    // Go pkg/session/session_test.go::TestDDLTableVersionTables.
+    #[test]
+    fn test_ddl_table_version_tables() {
+        assert!(
+            DDL_TABLE_VERSION_TABLES
+                .windows(2)
+                .all(|pair| pair[0].version <= pair[1].version),
+            "ddlTableVersionTables should be sorted by version"
+        );
+
+        let all_tables = DDL_TABLE_VERSION_TABLES
+            .iter()
+            .flat_map(|version| version.tables)
+            .collect::<Vec<_>>();
+        assert!(
+            all_tables.windows(2).all(|pair| pair[0].id > pair[1].id),
+            "tables should be sorted by table ID in descending order"
+        );
+        assert_eq!(
+            all_tables
+                .iter()
+                .map(|table| table.id)
+                .collect::<HashSet<_>>()
+                .len(),
+            all_tables.len(),
+            "table IDs should be unique"
+        );
+        assert_eq!(
+            all_tables
+                .iter()
+                .map(|table| table.name)
+                .collect::<HashSet<_>>()
+                .len(),
+            all_tables.len(),
+            "table names should be unique"
+        );
+
+        for table in all_tables {
+            assert!(table.id > RESERVED_GLOBAL_ID_LOWER_BOUND);
+            assert!(table.id <= RESERVED_GLOBAL_ID_UPPER_BOUND);
+            assert_eq!(table.name, table.name.to_ascii_lowercase());
+            assert!(
+                table
+                    .create_sql
+                    .contains(&format!(" mysql.{} (", table.name)),
+                "table SQL should contain mysql.{} (",
+                table.name
+            );
+        }
+    }
+}
