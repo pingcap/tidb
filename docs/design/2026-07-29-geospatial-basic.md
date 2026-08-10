@@ -52,13 +52,13 @@ The MySQL behaviors and measurements quoted below were verified against running 
 | Term | Meaning |
 | --- | --- |
 | [OGC](https://www.ogc.org/standard/sfa/) | Open Geospatial Consortium, the body behind *Simple Features*, the specification MySQL's spatial surface follows. |
-| [WKT / WKB](https://en.wikipedia.org/wiki/Well-known_text_representation_of_geometry) | The OGC text and byte encodings of a geometry (`POINT(1 2)` and its bytes). Neither carries an SRID. |
+| [WKT / WKB](https://en.wikipedia.org/wiki/Well-known_text_representation_of_geometry) | Well-Known Text and Well-Known Binary, the OGC encodings of a geometry: `POINT(1 2)` and its byte form. |
 | [EWKB](https://libgeos.org/specifications/wkb/#extended-wkb) | Extended WKB, the PostGIS/GEOS superset of WKB: type-word flags add Z, M and an embedded SRID. The stored format here; see [Types and storage](#types-and-storage). Not to be confused with [MySQL's internal format](https://dev.mysql.com/doc/refman/8.4/en/gis-data-formats.html), a 4-byte SRID prefix over 2D WKB. |
-| ISO WKB | The other WKB extension (SFA 1.2.1 / SQL-MM), which encodes Z/M by adding 1000/2000/3000 to the type code instead of using flags, and carries no SRID. |
+| ISO WKB | The other WKB extension (OGC Simple Feature Access 1.2.1, also ISO 13249-3 SQL/MM), which encodes Z/M by adding 1000/2000/3000 to the type code instead of using flags, and carries no SRID. |
 | SRS | Spatial reference system: coordinate system, units, axis order, datum. Either *projected* (flat X/Y) or *geographic* (latitude/longitude on an ellipsoid). |
-| [SRID](https://dev.mysql.com/doc/refman/8.4/en/spatial-reference-systems.html) | The integer naming an SRS. v1 supports 0 and 4326; see [SRID model](#srid-model). |
-| [EPSG](https://epsg.org/) | The registry that assigns SRIDs, and the source of the SRS catalog. |
-| [WGS 84](https://en.wikipedia.org/wiki/World_Geodetic_System) | The datum and reference ellipsoid used by GPS, EPSG:4326. |
+| [SRID](https://dev.mysql.com/doc/refman/8.4/en/spatial-reference-systems.html) | Spatial Reference System Identifier, the integer naming an SRS. v1 supports 0 and 4326; see [SRID model](#srid-model). |
+| [EPSG](https://epsg.org/) | The EPSG Geodetic Parameter Dataset, the registry that assigns SRIDs and the source of the SRS catalog. |
+| [WGS 84](https://en.wikipedia.org/wiki/World_Geodetic_System) | World Geodetic System 1984, the datum and reference ellipsoid used by GPS, registered as EPSG:4326. |
 | Planar vs geodesic | Measurement on a flat plane vs along the ellipsoid. Decided by SRS class, not per SRID. |
 | [DE-9IM](https://en.wikipedia.org/wiki/DE-9IM) | Dimensionally Extended 9-Intersection Model, the OGC model defining `ST_Within`, `ST_Contains`, `ST_Intersects` and the other topological predicates. |
 | [GeoJSON](https://datatracker.ietf.org/doc/html/rfc7946) | JSON geometry encoding (RFC 7946), the third I/O format. |
