@@ -27,6 +27,8 @@ use std::sync::{
     OnceLock, RwLock,
 };
 
+use base64::engine::general_purpose::URL_SAFE;
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 
 use super::big_sections::{
@@ -73,6 +75,22 @@ const DEF_PORT: u32 = 4000;
 const DEF_HOST: &str = "0.0.0.0";
 const DEF_TEMP_DIR: &str = "/tmp/tidb";
 const MAX_KEYSPACE_NAME_LENGTH: usize = 20;
+
+/// Go `encodeDefTempStorageDir`: isolate the default spill directory by the
+/// current OS user and both TiDB listen endpoints.
+fn encode_def_temp_storage_dir(
+    temp_dir: &std::path::Path,
+    host: &str,
+    status_host: &str,
+    port: u32,
+    status_port: u32,
+) -> std::path::PathBuf {
+    let endpoint = format!("{host}:{port}/{status_host}:{status_port}");
+    temp_dir
+        .join(format!("{}_tidb", rustix::process::getuid().as_raw()))
+        .join(URL_SAFE.encode(endpoint))
+        .join("tmp-storage")
+}
 
 fn valid_keyspace_name(name: &str) -> bool {
     name.len() <= MAX_KEYSPACE_NAME_LENGTH
@@ -352,6 +370,16 @@ pub struct Config {
 impl Default for Config {
     // Go `DefaultConfig` / `defaultConf`.
     fn default() -> Self {
+        let status = Status::default();
+        let temp_storage_path = encode_def_temp_storage_dir(
+            &std::env::temp_dir(),
+            DEF_HOST,
+            &status.status_host,
+            DEF_PORT,
+            status.status_port,
+        )
+        .to_string_lossy()
+        .into_owned();
         Config {
             host: DEF_HOST.into(),
             advertise_address: String::new(),
@@ -365,7 +393,7 @@ impl Default for Config {
             token_limit: 1000,
             max_allowed_packet: DEF_MAX_ALLOWED_PACKET,
             temp_dir: DEF_TEMP_DIR.into(),
-            temp_storage_path: String::new(),
+            temp_storage_path,
             temp_storage_quota: -1,
             txn_local_latches: tikvcfg::TxnLocalLatches::default(),
             server_version: String::new(),
@@ -379,7 +407,7 @@ impl Default for Config {
             log: Log::default(),
             instance: Instance::default(),
             security: Security::default(),
-            status: Status::default(),
+            status,
             performance: Performance::default(),
             prepared_plan_cache: PreparedPlanCache::default(),
             open_tracing: OpenTracing::default(),
@@ -825,6 +853,53 @@ mod tests {
     use super::*;
 
     static GLOBAL_CONFIG_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    // Go TestEncodeDefTempStorageDir.
+    #[test]
+    fn test_encode_def_temp_storage_dir() {
+        let temp_dir = std::env::temp_dir();
+        let prefix = temp_dir.join(format!("{}_tidb", rustix::process::getuid().as_raw()));
+        for (host, status_host, port, status_port, encoded) in [
+            (
+                "0.0.0.0",
+                "0.0.0.0",
+                4000,
+                10080,
+                "MC4wLjAuMDo0MDAwLzAuMC4wLjA6MTAwODA=",
+            ),
+            (
+                "127.0.0.1",
+                "127.16.5.1",
+                4000,
+                10080,
+                "MTI3LjAuMC4xOjQwMDAvMTI3LjE2LjUuMToxMDA4MA==",
+            ),
+            (
+                "127.0.0.1",
+                "127.16.5.1",
+                4000,
+                15532,
+                "MTI3LjAuMC4xOjQwMDAvMTI3LjE2LjUuMToxNTUzMg==",
+            ),
+        ] {
+            assert_eq!(
+                encode_def_temp_storage_dir(&temp_dir, host, status_host, port, status_port,),
+                prefix.join(encoded).join("tmp-storage")
+            );
+        }
+
+        let config = new_config();
+        assert_eq!(
+            std::path::Path::new(&config.temp_storage_path),
+            encode_def_temp_storage_dir(
+                &temp_dir,
+                &config.host,
+                &config.status.status_host,
+                config.port,
+                config.status.status_port,
+            )
+        );
+    }
 
     // Go TestCloneConf.
     #[test]
