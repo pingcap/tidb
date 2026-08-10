@@ -145,6 +145,26 @@ fn now_current_timestamp() {
     );
 }
 
+/// `pkg/expression/helper_test.go::TestCurrentTimestampTimeZone`.
+#[test]
+fn current_timestamp_time_zone_source() {
+    // The Go helper test sets @@timestamp=1234 and then flips @@time_zone.
+    // `FixedClock` carries the same two observable inputs into Rust's
+    // current-timestamp seam: the instant and the session zone offset.
+    let utc = FixedClock(1_234, 0, 0);
+    let plus_eight = FixedClock(1_234, 0, 8 * 3_600);
+
+    assert_eq!(e_at("current_timestamp", &utc), "STR:1970-01-01 00:20:34");
+    assert_eq!(
+        e_at("current_timestamp", &plus_eight),
+        "STR:1970-01-01 08:20:34"
+    );
+    assert_eq!(
+        e_at("current_timestamp()", &plus_eight),
+        "STR:1970-01-01 08:20:34"
+    );
+}
+
 #[test]
 fn test_current_date() {
     // A nonzero `time_zone` offset (+05:30, matching the epoch/offset probed
