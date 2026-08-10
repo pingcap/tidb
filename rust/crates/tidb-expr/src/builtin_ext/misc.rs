@@ -387,6 +387,7 @@ fn hex_nibble(byte: u8) -> Option<u8> {
 mod tests {
     use super::dispatch;
     use crate::Datum;
+    use tidb_datatype::{BinaryLiteral, Collation, MysqlEnum, MysqlSet};
 
     /// Exact scalar vectors from `TestAnyValue` in
     /// `pkg/expression/builtin_miscellaneous_test.go`. Each Go signature's
@@ -412,6 +413,43 @@ mod tests {
                     .expect("ANY_VALUE must dispatch")
                     .expect("ANY_VALUE must evaluate"),
                 want
+            );
+        }
+    }
+
+    /// Go `TestAnyValueHybridStringEvalWithIntSig`: ENUM, SET and BIT select
+    /// the integer signature but must still expose their underlying hybrid
+    /// bytes in string context. Rust has one value dispatcher rather than
+    /// separate scalar/vector signatures, so both halves are asserted here:
+    /// `ANY_VALUE` preserves the hybrid datum and string coercion reads its
+    /// name/raw bytes instead of its integer ordinal.
+    #[test]
+    fn test_any_value_hybrid_string_eval_with_int_sig() {
+        let cases = [
+            (
+                Datum::Enum(MysqlEnum::new("b", 2), Collation::Utf8Mb4Bin),
+                b"b".as_slice(),
+            ),
+            (
+                Datum::Set(MysqlSet::new("a,b", 3), Collation::Utf8Mb4Bin),
+                b"a,b".as_slice(),
+            ),
+            (
+                Datum::Bit(BinaryLiteral::from(vec![0x01])),
+                b"\x01".as_slice(),
+            ),
+        ];
+
+        for (argument, expected_string) in cases {
+            let result = dispatch("ANY_VALUE", std::slice::from_ref(&argument))
+                .expect("ANY_VALUE must dispatch")
+                .expect("hybrid source row must evaluate");
+            assert_eq!(result, argument, "the hybrid datum must be preserved");
+            assert_eq!(
+                crate::coerce::coerce_str_bytes(&result)
+                    .expect("hybrid string coercion must succeed")
+                    .expect("source rows are non-NULL"),
+                expected_string
             );
         }
     }
