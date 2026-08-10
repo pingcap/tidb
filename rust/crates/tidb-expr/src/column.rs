@@ -21,6 +21,8 @@
 //! `Decorrelate`, and `MemoryUsage`. `CorrelatedColumn` is deferred with the
 //! other node variants.
 
+use std::hash::{Hash, Hasher};
+
 use crate::context::EvalError;
 use crate::expr_collation::CollationInfo;
 use crate::expression::{ConstLevel, Expression, COLUMN_FLAG};
@@ -111,6 +113,33 @@ impl Column {
         &self.hashcode
     }
 
+    /// Go `Column.Hash64`: structural plan-key hash over every source field
+    /// except the lazy `HashCode` cache.
+    #[must_use]
+    pub fn hash64(&self) -> u64 {
+        let mut hasher = Fnv64::default();
+        hash_column(self, &mut hasher);
+        hasher.finish()
+    }
+
+    /// Go `Column.Equals`: structural plan-key equality. This is deliberately
+    /// stricter than [`Self::equal_column`], whose execution identity is only
+    /// `UniqueID`.
+    #[must_use]
+    pub fn equals(&self, other: &Self) -> bool {
+        self.ret_type == other.ret_type
+            && optional_expression_equals(&self.virtual_expr, &other.virtual_expr)
+            && self.id == other.id
+            && self.unique_id == other.unique_id
+            && self.index == other.index
+            && self.orig_name == other.orig_name
+            && self.is_hidden == other.is_hidden
+            && self.is_prefix == other.is_prefix
+            && self.in_operand == other.in_operand
+            && self.collation == other.collation
+            && self.correlated_col_unique_id == other.correlated_col_unique_id
+    }
+
     /// Go `IsCorrelated`: a plain column is never correlated.
     #[must_use]
     pub fn is_correlated(&self) -> bool {
@@ -140,6 +169,106 @@ impl Column {
             .as_ref()
             .ok_or(EvalError::Unsupported("column has no result type"))?;
         Ok(row.get_datum(self.index as usize, ret_type))
+    }
+}
+
+const FNV_OFFSET_64: u64 = 14_695_981_039_346_656_037;
+const FNV_PRIME_64: u64 = 1_099_511_628_211;
+
+struct Fnv64(u64);
+
+impl Default for Fnv64 {
+    fn default() -> Self {
+        Self(FNV_OFFSET_64)
+    }
+}
+
+impl Hasher for Fnv64 {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for byte in bytes {
+            self.0 ^= u64::from(*byte);
+            self.0 = self.0.wrapping_mul(FNV_PRIME_64);
+        }
+    }
+}
+
+fn hash_column(column: &Column, hasher: &mut Fnv64) {
+    column.ret_type.hash(hasher);
+    column.id.hash(hasher);
+    column.unique_id.hash(hasher);
+    column.index.hash(hasher);
+    match &column.virtual_expr {
+        Some(expression) => {
+            1_u8.hash(hasher);
+            expression_hash64(expression).hash(hasher);
+        }
+        None => 0_u8.hash(hasher),
+    }
+    column.orig_name.hash(hasher);
+    column.is_hidden.hash(hasher);
+    column.is_prefix.hash(hasher);
+    column.in_operand.hash(hasher);
+    column.collation.hash64().hash(hasher);
+    column.correlated_col_unique_id.hash(hasher);
+}
+
+fn expression_hash64(expression: &Expression) -> u64 {
+    match expression {
+        Expression::Constant(constant) => constant.hash64(),
+        Expression::Column(column) => column.hash64(),
+        Expression::CorrelatedColumn(column) => {
+            let mut hasher = Fnv64::default();
+            6_u8.hash(&mut hasher);
+            hash_column(&column.column, &mut hasher);
+            hasher.finish()
+        }
+        Expression::ScalarFunction(function) => {
+            let mut hasher = Fnv64::default();
+            3_u8.hash(&mut hasher);
+            function.func_name.lowercase().hash(&mut hasher);
+            function.ret_type.hash(&mut hasher);
+            function.args.len().hash(&mut hasher);
+            for argument in &function.args {
+                expression_hash64(argument).hash(&mut hasher);
+            }
+            hasher.finish()
+        }
+    }
+}
+
+fn optional_expression_equals(
+    left: &Option<Box<Expression>>,
+    right: &Option<Box<Expression>>,
+) -> bool {
+    match (left, right) {
+        (Some(left), Some(right)) => expression_equals(left, right),
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+fn expression_equals(left: &Expression, right: &Expression) -> bool {
+    match (left, right) {
+        (Expression::Constant(left), Expression::Constant(right)) => left.equals(right),
+        (Expression::Column(left), Expression::Column(right)) => left.equals(right),
+        (Expression::CorrelatedColumn(left), Expression::CorrelatedColumn(right)) => {
+            left.column.equals(&right.column)
+        }
+        (Expression::ScalarFunction(left), Expression::ScalarFunction(right)) => {
+            left.func_name.lowercase() == right.func_name.lowercase()
+                && left.ret_type == right.ret_type
+                && left.args.len() == right.args.len()
+                && left
+                    .args
+                    .iter()
+                    .zip(&right.args)
+                    .all(|(left, right)| expression_equals(left, right))
+        }
+        _ => false,
     }
 }
 
@@ -301,6 +430,67 @@ mod tests {
         let mut c1 = col(1);
         let mut c2 = col(2);
         assert_ne!(c1.hash_code(), c2.hash_code());
+    }
+
+    /// Source: `pkg/expression/column_test.go::TestColumnHashEquals`.
+    #[test]
+    fn column_hash_equals_matches_source() {
+        let col1 = Column {
+            unique_id: 1,
+            ..Default::default()
+        };
+        let mut col2 = col1.clone();
+        assert_eq!(col1.hash64(), col2.hash64());
+        assert!(col1.equals(&col2));
+
+        col2.unique_id = 2;
+        assert_ne!(col1.hash64(), col2.hash64());
+        assert!(!col1.equals(&col2));
+
+        col2.unique_id = col1.unique_id;
+        col2.id = 2;
+        assert_ne!(col1.hash64(), col2.hash64());
+        assert!(!col1.equals(&col2));
+
+        col2.id = col1.id;
+        col2.ret_type = Some(FieldType::new(FieldTypeCode::LongLong));
+        assert_ne!(col1.hash64(), col2.hash64());
+        assert!(!col1.equals(&col2));
+
+        col2.ret_type = col1.ret_type.clone();
+        col2.index = 1;
+        assert_ne!(col1.hash64(), col2.hash64());
+        assert!(!col1.equals(&col2));
+
+        col2.index = col1.index;
+        col2.orig_name = "a".to_owned();
+        assert_ne!(col1.hash64(), col2.hash64());
+        assert!(!col1.equals(&col2));
+
+        col2.orig_name.clone_from(&col1.orig_name);
+        col2.is_hidden = true;
+        assert_ne!(col1.hash64(), col2.hash64());
+        assert!(!col1.equals(&col2));
+
+        col2.is_hidden = col1.is_hidden;
+        col2.is_prefix = true;
+        assert_ne!(col1.hash64(), col2.hash64());
+        assert!(!col1.equals(&col2));
+
+        col2.is_prefix = col1.is_prefix;
+        col2.in_operand = true;
+        assert_ne!(col1.hash64(), col2.hash64());
+        assert!(!col1.equals(&col2));
+
+        col2.in_operand = col1.in_operand;
+        col2.collation.set_charset_and_collation("", "aa");
+        assert_ne!(col1.hash64(), col2.hash64());
+        assert!(!col1.equals(&col2));
+
+        col2.collation = col1.collation.clone();
+        col2.correlated_col_unique_id = 1;
+        assert_ne!(col1.hash64(), col2.hash64());
+        assert!(!col1.equals(&col2));
     }
 
     #[test]
