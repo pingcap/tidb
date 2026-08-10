@@ -127,7 +127,9 @@ right: a 2D geometry with no SRID flag *is* plain OGC WKB, byte for byte.
 
 Extended data, meaning Z/M coordinates and SRIDs the functions do not support, follows the
 compatibility rule above: stored losslessly, read back unchanged, `ST_SRID` and
-`ST_GeometryType` still answering, everything that interprets coordinates erroring.
+`ST_GeometryType` still answering, everything that interprets coordinates erroring. Such a
+value comes back as the raw column value, which is enough for v1; giving the writers an
+opt-in that emits it is a later extension nothing here blocks.
 Storing more than v1 computes on is what lets 3D/measured geometry and the wider SRS
 catalog arrive later as functions over data written today. Why EWKB rather than the
 alternatives: [Investigation & Alternatives](#investigation--alternatives).
@@ -141,8 +143,22 @@ alternatives: [Investigation & Alternatives](#investigation--alternatives).
 | Rejected on ingest | Inf/NaN, MySQL `ERROR 3037` | out-of-range latitude (`ERROR 3617`) and longitude (`ERROR 3616`) |
 | Measurement | planar (Cartesian) | geodesic on the WGS 84 ellipsoid, as MySQL |
 
-Those codes and their wording are matched as closely as practical, on `ST_GeomFromText`,
-the constructors, `ST_GeomFromGeoJSON` and `ST_GeomFromWKB` alike.
+Those codes and their wording are matched as closely as possible, on `ST_GeomFromText`,
+the constructors, `ST_GeomFromGeoJSON` and `ST_GeomFromWKB` alike. The same goes for the
+other GIS errors (`ERROR 3618` for a function not implemented on a geographic SRS,
+`ERROR 3643` for an SRID that does not match the column). Where a message cannot be
+matched exactly it is a compatibility gap to close later, not a reason to invent a
+different code.
+
+**Catalog.** `information_schema.st_spatial_reference_systems` ships with MySQL's shape
+(`SRS_NAME`, `SRS_ID`, `ORGANIZATION`, `ORGANIZATION_COORDSYS_ID`, `DEFINITION`,
+`DESCRIPTION`) and exactly the two supported rows, copied from MySQL: SRID 0 with an
+empty name and definition and no organization, and 4326 as `WGS 84` / `EPSG` / 4326 with
+the EPSG `GEOGCS["WGS 84",DATUM[...]]` definition string. It is read-only, so
+`CREATE SPATIAL REFERENCE SYSTEM` is rejected, and DDL validates the `SRID n` attribute
+against it rather than against a hardcoded pair, which makes widening SRID support a
+matter of adding rows. It also gives a client an honest answer to "which SRIDs does this
+server support", where today the question is an unknown-table error.
 
 Planar versus geodesic is decided by the **SRS class** (SRID 0 and projected are
 Cartesian, geographic is geodesic), exactly as MySQL decides it, rather than by a
@@ -171,7 +187,7 @@ difference is invisible outside the stored bytes.
 
 | Step | Cost |
 | --- | --- |
-| SRS catalog: populate `information_schema.st_spatial_reference_systems` from EPSG (MySQL ships ~5,200 rows) with class, axis order, bounds, unit, ellipsoid | moderate, and a prerequisite for the rest |
+| Fill the catalog from the full EPSG dataset (MySQL ships 5,238 rows in both 8.4 and 9.7) with class, axis order, bounds, unit, ellipsoid | moderate, and a prerequisite for the rest |
 | All projected SRSs (e.g. 3857 Web Mercator) | low: planar X/Y, so the same Cartesian functions apply and only the bounds are per-SRS |
 | Geographic SRSs beyond 4326 | moderate: exact geodesic refine per ellipsoid |
 | PostGIS level (`CREATE SPATIAL REFERENCE SYSTEM`, `ST_Transform`) | bigger: on-the-fly reprojection needs a PROJ-like library; out of scope |
@@ -183,7 +199,10 @@ SRID (see [Types and storage](#types-and-storage)).
 ### Function set
 
 v1 is the minimal set needed to store, read, inspect, measure and filter geometry. All of
-it is present in MySQL 8.0.46 / 8.4 / 9.7, whose spatial function sets are identical.
+it is present in MySQL 8.0.46 / 8.4 / 9.7, whose spatial function sets are identical. The
+list below is an **allowlist**: only these functions are registered, and anything else
+spatial is simply an unknown function until a later milestone adds it. Growing the
+surface is then an explicit act rather than the default.
 
 - **I/O readers:** `ST_GeomFromText`, `ST_GeomFromWKB`, `ST_GeomFromGeoJSON`.
 - **I/O writers:** `ST_AsText` (`ST_AsWKT`), `ST_AsBinary` (`ST_AsWKB`), `ST_AsGeoJSON`.
@@ -210,14 +229,15 @@ Semantics match MySQL, with three documented v1 limitations:
 
 - On 4326, `ST_Distance`/`ST_Length` are ellipsoidal (Andoyer, matching MySQL to
   sub-metre); `ST_Distance_Sphere` is the great-circle variant.
-- `ST_Area` on 4326 is a gap. MySQL computes it geodesically (12308778368.75 m2 for a
-  1-degree box), so v1 either implements the same (Karney ellipsoidal area) or errors in
-  the shape MySQL uses for its own Cartesian-only functions, `ERROR 3618` (Unresolved
-  Questions). It must not silently return a planar degree2 or an off-by-0.45% spherical
-  value.
-- The predicates are OGC-correct via `simplefeatures`; on 4326 the region predicates use a
-  geodesic point-in-polygon, which diverges from MySQL's planar refine near
-  edges/poles/antimeridian. Polygon/polygon geodesic relations are a follow-up.
+- `ST_Area` on 4326 **errors** in the shape MySQL uses for its own Cartesian-only
+  functions (`ERROR 3618`, "has not been implemented for geographic spatial reference
+  systems"). This is a documented divergence: MySQL does compute it geodesically
+  (12308778368.75 m2 for a 1-degree box). Erroring beats the alternatives, since a planar
+  degree2 or an off-by-0.45% spherical value would be silently wrong, and implementing
+  Karney ellipsoidal area is a later extension nothing here blocks.
+- The predicates are OGC-correct via `simplefeatures`, which is planar. On 4326 the region
+  predicates get a geodesic point-in-polygon, but polygon/polygon relations stay planar,
+  which diverges from MySQL. See Unresolved Questions: this is the one open item.
 
 **GeoJSON.** Every RFC 7946 geometry is supported, and the container and annotation members
 follow MySQL, verified against 8.4.6 and 9.7.2:
@@ -300,7 +320,7 @@ spatial index syntax is part of this layer.
 
 ### Feature flag and rollout
 
-The layer is gated on a session/global system variable, `tidb_enable_spatial`, default
+The layer is gated on a session/global system variable, `tidb_enable_geospatial`, default
 off. This is a **launch gate, not a compatibility switch**: there is no prior
 implementation to fall back to, so once the feature is stable in master the flag and its
 dead branches are removed in a cleanup PR, tracked in #6347. The index layer ships behind
@@ -323,6 +343,9 @@ Out of scope here, each with a home:
   cross-repo work (tipb signatures plus a TiKV-side evaluator) and is specified with the
   index design, which owns the pushdown contract. Nothing in this layer blocks it, and for
   this design it is fine that the functions evaluate at the TiDB root.
+- **The other two spatial `information_schema` tables**: `st_geometry_columns`, one row
+  per geometry column and derivable from the schema, and `st_units_of_measure`, 47 static
+  rows in MySQL that only start to matter once projected SRSs with varied units exist.
 - **The axis-order controls**: MySQL's `axis-order=long-lat` option argument on
   `ST_GeomFromText`/`ST_GeomFromWKB`/`ST_AsText`/`ST_AsBinary`, and `ST_SwapXY`, which let
   a client read or write longitude-first against a latitude-first SRS. Both exist in MySQL
@@ -338,12 +361,13 @@ Out of scope here, each with a home:
 | Partition table, clustered index, async commit | None. It cannot be a primary or clustering key, having no meaningful ordering. |
 | Charset and collation | Not applicable; the value is binary. |
 | Parser | One-time type and `SRID` grammar change; regenerates `parser.go`, run `make bazel_prepare`. `ST_*` are generic calls. |
-| DDL | New column types and the `SRID` attribute, restricted to 0/4326, plus subtype constraints. |
+| DDL | New column types and the `SRID` attribute, restricted to 0/4326, plus subtype constraints. `ALTER` follows MySQL, verified on 8.4.6: adding or changing `SRID n` validates every existing row and fails with `ERROR 3643` on the first mismatch; dropping the attribute always succeeds; narrowing the subtype (`GEOMETRY` to `POINT`) succeeds only if every value fits, else `ERROR 1416`; widening always succeeds; converting the column to a binary type carries the bytes over; `DROP COLUMN` is ordinary. No reinterpretation ever happens: an SRID change is validation, never a coordinate rewrite. |
+| `information_schema` | One new table, `st_spatial_reference_systems`, read-only with two static rows. Its two siblings in MySQL are deferred. |
 | Planner, statistics, executor | `ST_*` evaluate on the normal expression path; geometry predicates are ordinary `Selection`s with no access path of their own, so they filter whatever rows the chosen path returns. No new operator, access path or statistics. |
 | TiKV | None. Values are ordinary binary strings; pushdown is deferred. |
 | TiFlash, BR, TiCDC, Dumpling, Lightning | Regular column data. Tools need only carry the bytes and the `SRID`/type metadata; dump/reload uses MySQL's internal format or WKT, not the stored bytes. |
 | Upgrade | Additive, behind the flag. |
-| Downgrade | Geometry columns must be dropped first, as with other new type kinds (to be confirmed). |
+| Downgrade | The usual new-type situation: a release without the type cannot read a table that has a geometry column, so those columns have to go first, which is an ordinary `DROP COLUMN`. |
 
 ## Test Design
 
@@ -359,6 +383,8 @@ Out of scope here, each with a home:
   pairs, matched to MySQL where semantics agree, with boundary cases explicit.
 - SRID validation: 4326 out-of-range errors on every ingest path, SRID 0 Inf/NaN
   rejection, mixed-SRID predicate errors.
+- The catalog: `st_spatial_reference_systems` returns the two rows with the same column
+  values MySQL gives for SRID 0 and 4326, and `CREATE SPATIAL REFERENCE SYSTEM` errors.
 - Extended data: Z/M values entered as WKB, and SRIDs outside 0 and 4326, store and read
   back byte-identical, while `ST_AsBinary`/`ST_AsText`/`ST_AsGeoJSON` and every function
   that interprets coordinates error clearly on them.
@@ -451,21 +477,27 @@ Risks:
 
 ## Unresolved Questions
 
-- **A leaner format version 2:** add one before GA, or ship version 1 and revisit?
-  Benchmark-gated; the version byte means it can also land after GA.
-  `ST_AsBinary` output stays MySQL-compatible plain WKB either way.
-- **Reading a Z/M value back:** the writers reject it, so today it returns only as the raw
-  column value in the stored format. Confirm that is enough, or give `ST_AsBinary` an
-  opt-in that emits EWKB with the flags set.
-- **Geodesic `ST_Area` on 4326:** implement Karney ellipsoidal area in v1, or error like
-  MySQL's Cartesian-only functions until it exists?
-- **MySQL error parity:** how closely to match MySQL's GIS error codes and wording for
-  out-of-range coordinates, invalid geometries and mixed-SRID errors.
-- **Feature-flag name and default:** confirm `tidb_enable_spatial` and the removal
-  milestone.
-- **4326 refine scope for v1:** accept planar polygon/polygon refine plus the geodesic
-  point-in-polygon as a documented limitation, or widen geodesic coverage before GA?
-- **Exact v1 function boundary:** confirm which accessors and aliases are v1 rather than
-  tail (e.g. `ST_Centroid`, the typed `*FromText`/`*FromWKB` aliases).
-- **Downgrade mechanics:** confirm the drop-geometry-columns-first requirement, and
-  whether any metadata-only downgrade is possible.
+**Polygon/polygon relations on 4326.** MySQL treats a geographic polygon's edges as
+geodesics; `simplefeatures`, and every other pure-Go option, treats them as straight
+lines in latitude/longitude. That is not a near-boundary rounding difference. For
+`POLYGON((0 0, 0 80, 60 0, 0 0))` on 4326, MySQL 8.4.6 answers `ST_Within` **true** for
+the points `(30 40)`, `(33 40)`, `(36 40)` and `(40 40)`, while the same coordinates
+against the same ring evaluated planar (SRID 0) answer **false** for all four: the
+great-circle edge bows away from the straight one by degrees, so whole regions flip.
+Small polygons, the common geofence case, are unaffected.
+
+Three ways to resolve it, in increasing cost:
+
+1. **Ship planar polygon/polygon and document it.** Correct for small geofences, wrong
+   for continental ones, and wrong silently, which is the objection.
+2. **Error when it would matter.** Reject a geographic polygon/polygon relate whose
+   operands exceed some extent, so the answer is never silently wrong. Needs a defensible
+   threshold, and the error is a divergence of its own since MySQL answers.
+3. **Implement geodesic relate.** Full parity, and the only option that makes the index
+   layer's refine exact on 4326, but it needs a geographic DE-9IM implementation on both
+   the TiDB side and, once pushdown lands, the TiKV side. No pure-Go library provides
+   it today; S2 gives coverings and predicates on spherical shapes but not the DE-9IM
+   matrix, so this is real work rather than a dependency swap.
+
+The decision belongs to this design because the type layer owns predicate semantics, and
+it is a compatibility question rather than a format one, so it does not lock any bytes in.
