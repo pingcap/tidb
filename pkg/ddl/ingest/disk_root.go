@@ -54,8 +54,9 @@ type DiskRoot interface {
 const (
 	capacityThreshold = 0.9
 	// TiDB nodes typically have 2 GiB memory per CPU slot, and local sort flushes
-	// a similar-sized batch. Reserve 2 GiB per slot for efficient flush/import
-	// cycles, capped by tidb_ddl_disk_quota.
+	// a similar-sized batch. Use 2 GiB per slot as a best-effort estimate of the
+	// aggregate headroom needed to reduce frequent small flush/import cycles across
+	// concurrent jobs, capped by tidb_ddl_disk_quota.
 	localSortBytesPerSlot = 2 * size.GB
 )
 
@@ -219,8 +220,9 @@ func RiskOfDiskFull(available, capacity uint64) bool {
 	return float64(available) < (1-capacityThreshold)*float64(capacity)
 }
 
-// CheckLocalSortFreeDisk ensures the local ingest temp directory has enough free
-// disk space for the incoming local-sort job.
+// CheckLocalSortFreeDisk performs a best-effort precheck of aggregate headroom
+// before a local-sort job starts, reducing the risk that all concurrent jobs
+// frequently import small SST batches.
 func CheckLocalSortFreeDisk(
 	execID string,
 	runningJobCount int,
@@ -260,9 +262,10 @@ func checkLocalSortFreeDisk(
 	newJobRuntimeSlots int,
 ) error {
 	allJobsRequiredBytes := uint64(runningJobRuntimeSlots+newJobRuntimeSlots) * localSortBytesPerSlot
-	// Slot-based reservations and the ingest quota are shared soft budgets.
-	// Exceeding the quota triggers an import that releases disk, so check the
-	// aggregate growth until the smaller target is reached.
+	// Use a best-effort aggregate growth target to reduce the risk that all
+	// concurrent local-sort jobs frequently import small SST batches. Cap it at
+	// tidb_ddl_disk_quota because crossing the quota triggers an import that
+	// releases disk; this does not guarantee per-job headroom or performance.
 	allJobsTargetBytes := min(allJobsRequiredBytes, vardef.DDLDiskQuota.Load())
 	allJobsGapBytes := uint64(0)
 	if allJobsTargetBytes > runningJobUsedBytes {

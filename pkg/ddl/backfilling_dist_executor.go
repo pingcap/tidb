@@ -232,8 +232,10 @@ func (s *backfillDistExecutor) Init(ctx context.Context) error {
 
 func (s *backfillDistExecutor) checkLocalSortFreeDisk(ctx context.Context) error {
 	// TODO: Recheck local disk when users increase concurrency with ADMIN ALTER DDL JOB.
-	// This precheck reserves future growth only for local-sort DXF backfills. Local-sort
-	// IMPORT INTO FROM FILE is excluded because its quota-based import/reset mechanism
+	// This point-in-time, best-effort precheck accounts for aggregate growth of concurrent
+	// local-sort DXF backfills to reduce the risk that all concurrent jobs frequently import
+	// small SST batches; it does not reserve disk or guarantee performance.
+	// Local-sort IMPORT INTO FROM FILE is excluded because its quota-based import/reset mechanism
 	// manages temporary-disk growth. IMPORT INTO FROM SELECT is excluded because its final
 	// size cannot be reliably estimated. Their current disk usage is reflected in the
 	// filesystem's available space.
@@ -249,10 +251,12 @@ func (s *backfillDistExecutor) checkLocalSortFreeDisk(ctx context.Context) error
 		runningJobUsedBytes,
 		s.task.GetRuntimeSlots(),
 	); err != nil {
-		// The growth reservation is capped by tidb_ddl_disk_quota (100 GiB by default).
-		// Available space also reflects untracked usage such as logs. Reject the task because
-		// insufficient local disk space can degrade SST ingestion. Operators should inspect
-		// the TiDB node for large files that can be safely removed.
+		// The aggregate growth target is capped by tidb_ddl_disk_quota (100 GiB by
+		// default), and available space includes untracked log usage. Reject the task
+		// before local sorting starts to avoid adding disk pressure that can make all
+		// concurrent jobs frequently import small SST batches. Disk usage may still
+		// change after the check. Operators should inspect the TiDB node for large
+		// files that can be safely removed.
 		return err
 	}
 	return nil
