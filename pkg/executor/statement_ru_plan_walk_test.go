@@ -41,7 +41,7 @@ func newStatementRUPlanForTest() (*ExecStmt, *atomic.Int64) {
 		GoCtx: context.Background(),
 		Plan:  plan,
 	}
-	stmt.statementRUPlanWalkOwner = newStatementRUPlanWalkOwner(
+	stmt.statementRUPlanWalkOwner = newStatementRUPlanWalkVisitorOwner(
 		stmt,
 		func(statementRUPlanTreeKind, int, int, *plannercore.FlatOperator) {
 			visits.Add(1)
@@ -75,13 +75,13 @@ func (ctx *statementRUPanicOnceContext) Value(key any) any {
 	return ctx.Context.Value(key)
 }
 
-// InstallStatementRUPlanWalkOwnerForTest installs the otherwise-dark owner on
-// an ExecStmt compiled by a test-only failpoint.
+// InstallStatementRUPlanWalkOwnerForTest replaces any narrow production owner
+// on an ExecStmt compiled by a test-only failpoint.
 func InstallStatementRUPlanWalkOwnerForTest(
 	stmt *ExecStmt,
 	visit func(treeKind string, treeIndex int, operatorIndex int, operator *plannercore.FlatOperator),
 ) {
-	stmt.statementRUPlanWalkOwner = newStatementRUPlanWalkOwner(
+	stmt.statementRUPlanWalkOwner = newStatementRUPlanWalkVisitorOwner(
 		stmt,
 		func(kind statementRUPlanTreeKind, treeIndex, operatorIndex int, operator *plannercore.FlatOperator) {
 			visit(statementRUPlanTreeKindForTest(kind), treeIndex, operatorIndex, operator)
@@ -310,7 +310,7 @@ func TestStatementRUPlanWalkUsesStmtCtxFlatPlanCache(t *testing.T) {
 		Ctx:  ctx,
 		Plan: currentPlan,
 	}
-	stmt.statementRUPlanWalkOwner = newStatementRUPlanWalkOwner(
+	stmt.statementRUPlanWalkOwner = newStatementRUPlanWalkVisitorOwner(
 		stmt,
 		func(_ statementRUPlanTreeKind, _, _ int, operator *plannercore.FlatOperator) {
 			sawCurrent = sawCurrent || operator.Origin == currentPlan

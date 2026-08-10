@@ -206,6 +206,7 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	numRows := req.NumRows()
 	if numRows == 0 {
 		if a.stmt != nil {
+			a.stmt.recordStatementRURootEOF()
 			a.stmt.Ctx.GetSessionVars().LastFoundRows = a.stmt.Ctx.GetSessionVars().StmtCtx.FoundRows()
 		}
 		return nil
@@ -261,6 +262,9 @@ func (a *recordSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
 func (a *recordSet) Finish() error {
 	var err error
 	a.once.Do(func() {
+		if a.stmt != nil {
+			a.stmt.sealStatementRUResultTermination()
+		}
 		if a.executor != nil {
 			err = exec.Close(a.executor)
 			a.executor = nil
@@ -364,10 +368,9 @@ type ExecStmt struct {
 	InfoSchema infoschema.InfoSchema
 	// Plan stores a reference to the final physical plan.
 	Plan base.Plan
-	// statementRUPlanWalkOwner is nil unless the dark statement RU walk is
-	// explicitly enabled by a later production layer or the test-only hook. It
-	// must be installed before the ExecStmt is published and must not be replaced
-	// after execution begins.
+	// statementRUPlanWalkOwner is nil unless the narrow simple-SELECT statement
+	// RU path or a test hook installs it. It must be installed before the ExecStmt
+	// is published and must not be replaced after execution begins.
 	statementRUPlanWalkOwner *statementRUPlanWalkOwner
 
 	StmtNode ast.StmtNode
@@ -1712,7 +1715,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 
 	a.finalizeStatementRUV2Metrics()
 	a.updateNetworkTrafficStatsAndMetrics()
-	a.finishStatementRUPlanWalk(err)
+	a.finishStatementRUPlanWalkWithExecDetails(err, &statementRUTerminalExecDetailsView{execDetails: execDetail})
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
 	a.SummaryStmt(succ)

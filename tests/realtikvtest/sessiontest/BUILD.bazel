@@ -10,10 +10,11 @@ go_test(
         "main_test.go",
         "paging_test.go",
         "session_fail_test.go",
+        "statement_ru_test.go",
     ],
     flaky = True,
     race = "on",
-    shard_count = 18,
+    shard_count = 19,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
