@@ -1166,6 +1166,58 @@ func TestHandleBatchCopResponse(t *testing.T) {
 	t.Run("resolves a child lock", testHandleBatchCopResponseResolvesChildLock)
 	t.Run("updates child buckets on version mismatch", testHandleBatchCopResponseUpdatesChildBucketsOnVersionNotMatch)
 	t.Run("counts fallbacks after Region split", testHandleBatchCopResponseFallbackCountersAfterRegionSplit)
+	t.Run("flattens a store batch after a Region cache miss", testHandleStoreBatchRegionCacheMiss)
+}
+
+func testHandleStoreBatchRegionCacheMiss(t *testing.T) {
+	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	_, regionIDs, _ := testutils.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
+	tikvStore, err := tikv.NewTestTiKVStore(mockClient, pdClient, nil, nil, 0)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, tikvStore.Close()) })
+	copStore, err := NewStore(tikvStore, nil)
+	require.NoError(t, err)
+	t.Cleanup(copStore.Close)
+
+	ctx := context.Background()
+	killed := uint32(0)
+	req := &kv.Request{
+		Tp:                      kv.ReqTypeAnalyze,
+		StoreType:               kv.TiKV,
+		KeyRanges:               kv.NewNonPartitionedKeyRanges(BuildKeyRanges("a", "z")),
+		Concurrency:             1,
+		StoreBatchSize:          3,
+		AllowBatchTaskDataMerge: true,
+	}
+	req.RequestSource.RequestSourceInternal = true
+	it, errRes := (&CopClient{store: copStore}).BuildCopIterator(ctx, req, kv.NewVariables(&killed), &kv.ClientSendOption{})
+	require.Nil(t, errRes)
+	require.Len(t, it.tasks, 1)
+	require.Zero(t, req.StoreBatchSize)
+	failedTask := it.tasks[0]
+	require.Len(t, failedTask.batchTaskList, 3)
+
+	newRegionID, newPeerID := cluster.AllocID(), cluster.AllocID()
+	cluster.Split(regionIDs[0], newRegionID, []byte("d"), []uint64{newPeerID}, newPeerID)
+
+	cache := copStore.GetRegionCache()
+	cache.InvalidateCachedRegion(failedTask.region)
+	for _, child := range failedTask.batchTaskList {
+		cache.InvalidateCachedRegion(child.task.region)
+	}
+
+	result, err := newCopIteratorWorker(it, nil).handleCopResponse(
+		backoff.NewBackofferWithVars(ctx, 3000, nil), nil,
+		&copResponse{pbResp: &coprocessor.Response{RegionError: &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{}}}},
+		nil, nil, failedTask, 0,
+	)
+	require.NoError(t, err)
+	require.Zero(t, req.StoreBatchSize)
+	require.Len(t, result.remains, 5)
+	for _, task := range result.remains {
+		require.Empty(t, task.batchTaskList)
+	}
 }
 
 func testHandleBatchCopResponseResolvesChildLock(t *testing.T) {
