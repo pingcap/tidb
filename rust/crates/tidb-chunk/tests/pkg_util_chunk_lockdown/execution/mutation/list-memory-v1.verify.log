@@ -1,0 +1,19 @@
+--- stdout ---
+
+running 1 test
+test list_public_contract ... FAILED
+
+failures:
+
+failures:
+    list_public_contract
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+--- stderr ---
+
+thread 'list_public_contract' (223333910) panicked at crates/tidb-chunk/tests/list_contract.rs:103:5:
+assertion failed: list.mem_tracker().bytes_consumed() > charged_before_reset
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+error: test failed, to rerun pass `-p tidb-chunk --test list_contract`

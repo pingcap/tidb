@@ -1,0 +1,1 @@
+{"mutation_id":"M_CHUNK_LIST_WALK_STOP","replacements":[{"expected_count":1,"new":"                let _ = walk_func(chk.get_row(j));","old":"                walk_func(chk.get_row(j))?;"}],"rust_path":"rust/crates/tidb-chunk/src/list.rs","schema":"go-package-lockdown-mutation-operator-v1","source_sha256":"db932c275633a145c259207a65bce8a41081c2cf0f59d0caa1b6f09335a8b870"}

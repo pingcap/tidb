@@ -1,0 +1,27 @@
+--- stdout ---
+
+running 1 test
+test list_public_contract ... FAILED
+
+failures:
+
+failures:
+    list_public_contract
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+--- stderr ---
+warning: unused variable: `chk_idx`
+   --> crates/tidb-chunk/src/list.rs:169:37
+    |
+169 |     pub fn get_chunk_mut(&mut self, chk_idx: usize) -> &mut Chunk {
+    |                                     ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_chk_idx`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+
+thread 'list_public_contract' (223332180) panicked at crates/tidb-chunk/tests/list_contract.rs:87:5:
+assertion failed: !list.get_row(first).is_null(0)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+error: test failed, to rerun pass `-p tidb-chunk --test list_contract`
