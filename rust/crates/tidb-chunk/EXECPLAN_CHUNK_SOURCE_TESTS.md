@@ -14,9 +14,11 @@ This remains one test artifact inside the incomplete `pkg/util/chunk` package an
 
 - [x] (2026-08-10) Read all 1,204 accepted source lines and all 642 ledger obligations at source commit `665fc02e2be48a7199d5ffeb5d3d6bec1dfed04f`.
 - [x] (2026-08-10) Mapped all 14 normal tests to existing Rust production methods, public contract tests, and previously killed semantic rules.
-- [ ] Add the compact source-shaped public contract and prove the unchanged implementation passes it.
-- [ ] Classify all 642 obligations and advance the incremental checker to the next artifact.
-- [ ] Run Ready validation, integrate current `hparser-integration`, and push the checkpoint to both authorized remotes.
+- [x] (2026-08-10) Added the compact source-shaped public contract; all four tests pass without a production-code change.
+- [x] (2026-08-10) Classified all 642 obligations as 342 PORTED, 271 DECLINED, and 29 UNREACHABLE; the checker now advances to `chunk_util.go` obligation `O4fe286ed088dbeeb`.
+- [x] (2026-08-10) Ran and verified measured probe `CHUNK-TEST-BENCHMARK-ADAPTATION`; it records that benchmark-only runtime mechanics do not enter production while the underlying operations remain covered by deterministic tests.
+- [x] (2026-08-10) Ran Ready validation on the current merge candidate; both authorized `hparser-integration` tips remained at parent `77ab18cd3d` with no integration conflict.
+- [ ] Push the validated checkpoint to both authorized remotes and verify their exact tips.
 
 ## Surprises & Discoveries
 
@@ -38,7 +40,11 @@ This remains one test artifact inside the incomplete `pkg/util/chunk` package an
 
 ## Outcomes & Retrospective
 
-Pending classification and validation.
+The artifact is closed without changing production code. The public source contract consolidates previously scattered evidence for append/projection, required-row and selection transitions, truncate, copy, decimal metadata, memory accounting, alias identity, rendering, and benchmark workload outcomes. The final ledger is 342 PORTED, 271 evidence-backed DECLINED benchmark/runtime obligations, 29 structurally UNREACHABLE fixed-positive zero-loop arms, and zero UNCLASSIFIED obligations.
+
+The official measured probe is OBSERVED and VERIFIED. Existing killed semantic rules remain the fault-detection evidence for the production behavior; the incremental checker accepts the extended obligation sets and now stops at the first `chunk_util.go` obligation.
+
+Ready validation passed: the full `tidb-chunk` suite ran 184 unit tests plus every integration target; strict all-target Clippy passed; `tidb-expr`, `tidb-executor`, and `tidb-server` all-target checks passed; the workspace all-target check passed; and `make -j12 lint` exited zero. The lint command still prints the known pre-existing internal-package diagnostic for `rust/difftests/gobinaryrow` and BSD `find -n` usage, but its gate result is success. Only the two authorized remote pushes remain.
 
 ## Context and Orientation
 
@@ -50,7 +56,7 @@ The Rust production owner is `rust/crates/tidb-chunk/src/chunk.rs`, with identit
 
 Add one compact public integration target with three source-shaped groups: row/batch append and projection across NULL, integer, arbitrary bytes, decimal, and JSON values; required-row, selection, append, and truncation state transitions; and copy/decimal/memory/identity behavior. Keep comparison and text evidence in their existing exact public targets.
 
-Classify normal-test identities, assertions, rows, entered loops, reachable branches, switch cases, and semantic helpers as PORTED. Classify zero-iteration arms under fixed-positive accepted bounds as UNREACHABLE with one structural proof. Classify benchmark-only roots and support as DECLINED with a proof that records both their lack of production reachability and the deterministic semantic tests that cover their underlying operations.
+Classify normal-test identities, assertions, rows, entered loops, reachable branches, switch cases, and semantic helpers as PORTED. Classify zero-iteration arms under fixed-positive accepted bounds as UNREACHABLE with one structural proof. Classify benchmark-only roots and support as DECLINED with a measured probe that records both their lack of production reachability and the deterministic semantic tests that cover their underlying operations.
 
 ## Concrete Steps
 
@@ -78,6 +84,14 @@ Initial ledger:
 
     obligations   642
     UNCLASSIFIED  642
+
+Final ledger:
+
+    obligations   642
+    PORTED        342
+    DECLINED      271
+    UNREACHABLE    29
+    UNCLASSIFIED    0
 
 ## Interfaces and Dependencies
 
